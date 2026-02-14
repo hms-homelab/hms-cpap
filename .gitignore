@@ -1,0 +1,73 @@
+# Build directories
+build/
+cmake-build-*/
+*.dir/
+
+# Compiled objects
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cmake
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment and secrets
+.env
+*.pem
+*.key
+*.crt
+*.p12
+config.json
+secrets/
+
+# Data directories
+cpap_data/
+cpap_archive/
+*.edf
+*.EDF
+
+# Logs
+*.log
+logs/
+
+# Testing
+Testing/
+tests/output/
+coverage/
+
+# Docker
+.dockerignore
+
+# Backup files
+*.backup
+*.bak
+*~
+
+# Python (if any helper scripts)
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+env/
+venv/
+ENV/
+
+# Archives
+*.tar.gz
+*.zip
+*.7z

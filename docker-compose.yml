@@ -1,0 +1,128 @@
+version: '3.8'
+
+services:
+  # =============================================================================
+  # HMS-CPAP Service
+  # =============================================================================
+  hms-cpap:
+    image: ghcr.io/aamat09/hms-cpap:latest
+    container_name: hms-cpap
+    restart: unless-stopped
+
+    environment:
+      # Device Configuration
+      - CPAP_DEVICE_ID=${CPAP_DEVICE_ID:-resmed_airsense10}
+      - CPAP_DEVICE_NAME=${CPAP_DEVICE_NAME:-ResMed AirSense 10}
+
+      # ez Share Configuration
+      - EZSHARE_BASE_URL=${EZSHARE_BASE_URL:-http://192.168.4.1}
+      - BURST_INTERVAL=${BURST_INTERVAL:-120}
+
+      # Storage
+      - CPAP_TEMP_DIR=/tmp/hms-cpap
+      - CPAP_ARCHIVE_DIR=/data/cpap_archive
+
+      # Database (use service name if using built-in postgres)
+      - DB_HOST=${DB_HOST:-postgres}
+      - DB_PORT=${DB_PORT:-5432}
+      - DB_NAME=${DB_NAME:-cpap_data}
+      - DB_USER=${DB_USER:-cpap_user}
+      - DB_PASSWORD=${DB_PASSWORD:-changeme_secure_password}
+
+      # MQTT (use service name if using built-in mosquitto)
+      - MQTT_BROKER=${MQTT_BROKER:-mosquitto}
+      - MQTT_PORT=${MQTT_PORT:-1883}
+      - MQTT_USER=${MQTT_USER:-mqtt_user}
+      - MQTT_PASSWORD=${MQTT_PASSWORD:-changeme_secure_password}
+      - MQTT_CLIENT_ID=hms_cpap
+
+      # Health Check
+      - HEALTH_CHECK_PORT=8893
+
+    volumes:
+      # Permanent archive storage
+      - cpap_archive:/data/cpap_archive
+      # Temporary processing directory
+      - cpap_temp:/tmp/hms-cpap
+
+    ports:
+      - "8893:8893"  # Health check endpoint
+
+    depends_on:
+      - postgres
+      - mosquitto
+
+    networks:
+      - cpap-network
+
+    # Logging configuration
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # =============================================================================
+  # PostgreSQL Database (Optional - comment out if using external DB)
+  # =============================================================================
+  postgres:
+    image: postgres:17-alpine
+    container_name: hms-cpap-postgres
+    restart: unless-stopped
+
+    environment:
+      - POSTGRES_DB=${DB_NAME:-cpap_data}
+      - POSTGRES_USER=${DB_USER:-cpap_user}
+      - POSTGRES_PASSWORD=${DB_PASSWORD:-changeme_secure_password}
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+    networks:
+      - cpap-network
+
+    # Uncomment to expose PostgreSQL port (not recommended for production)
+    # ports:
+    #   - "5432:5432"
+
+  # =============================================================================
+  # Mosquitto MQTT Broker (Optional - comment out if using external MQTT)
+  # =============================================================================
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: hms-cpap-mosquitto
+    restart: unless-stopped
+
+    volumes:
+      - mosquitto_data:/mosquitto/data
+      - mosquitto_logs:/mosquitto/log
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+
+    ports:
+      - "1883:1883"  # MQTT port
+      - "9001:9001"  # WebSocket port (optional)
+
+    networks:
+      - cpap-network
+
+# =============================================================================
+# Volumes
+# =============================================================================
+volumes:
+  cpap_archive:
+    driver: local
+  cpap_temp:
+    driver: local
+  postgres_data:
+    driver: local
+  mosquitto_data:
+    driver: local
+  mosquitto_logs:
+    driver: local
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  cpap-network:
+    driver: bridge

@@ -1,0 +1,227 @@
+#pragma once
+
+#include "models/CPAPModels.h"
+#include <pqxx/pqxx>
+#include <memory>
+#include <string>
+#include <mutex>
+
+namespace hms_cpap {
+
+/**
+ * DatabaseService - PostgreSQL database client for CPAP data
+ *
+ * Stores CPAP session data in cpap_monitoring database:
+ * - Session metadata
+ * - Breathing summaries
+ * - Respiratory events
+ * - Vital signs (SpO2, HR)
+ * - Aggregated metrics
+ *
+ * Thread-safe with connection pooling and automatic reconnection.
+ */
+class DatabaseService {
+public:
+    /**
+     * Constructor
+     *
+     * @param connection_string PostgreSQL connection string
+     */
+    explicit DatabaseService(const std::string& connection_string);
+
+    /**
+     * Destructor
+     */
+    ~DatabaseService();
+
+    // Disable copy
+    DatabaseService(const DatabaseService&) = delete;
+    DatabaseService& operator=(const DatabaseService&) = delete;
+
+    /**
+     * Connect to database
+     *
+     * @return true if connected successfully
+     */
+    bool connect();
+
+    /**
+     * Disconnect from database
+     */
+    void disconnect();
+
+    /**
+     * Check if connected
+     *
+     * @return true if connected
+     */
+    bool isConnected() const;
+
+    /**
+     * Save complete CPAP session to database
+     *
+     * Saves all session data in a single transaction:
+     * - Device metadata (upsert)
+     * - Session record
+     * - Breathing summaries
+     * - Events
+     * - Vitals
+     * - Session metrics
+     *
+     * @param session CPAPSession object
+     * @return true if saved successfully
+     */
+    bool saveSession(const CPAPSession& session);
+
+    /**
+     * Update device last_seen timestamp
+     *
+     * @param device_id Device identifier
+     * @return true if updated successfully
+     */
+    bool updateDeviceLastSeen(const std::string& device_id);
+
+    /**
+     * Get the most recent session start timestamp for a device
+     *
+     * Used for delta collection: only download sessions newer than this.
+     *
+     * @param device_id Device identifier (e.g., "cpap_resmed_23243570851")
+     * @return Optional timestamp of last session, nullopt if no sessions found
+     */
+    std::optional<std::chrono::system_clock::time_point>
+        getLastSessionStart(const std::string& device_id);
+
+    /**
+     * Check if a session already exists in database
+     *
+     * Used to avoid re-downloading sessions we already have stored.
+     *
+     * @param device_id Device identifier
+     * @param session_start Session start timestamp
+     * @return true if session exists in DB
+     */
+    bool sessionExists(const std::string& device_id,
+                      const std::chrono::system_clock::time_point& session_start);
+
+    /**
+     * Get last downloaded checkpoint file sizes for a session
+     *
+     * Returns individual checkpoint file sizes (BRP/PLD/SAD) as stored in DB.
+     * Used to detect if specific files have grown or new files appeared.
+     *
+     * @param device_id Device identifier
+     * @param session_start Session start timestamp
+     * @return Map of filename -> size in KB (empty if not found)
+     */
+    std::map<std::string, int> getCheckpointFileSizes(const std::string& device_id,
+                                                       const std::chrono::system_clock::time_point& session_start);
+
+    /**
+     * Update checkpoint file sizes for a session
+     *
+     * Stores individual checkpoint file sizes (BRP/PLD/SAD only) in JSONB.
+     * CSL/EVE files are excluded as they're not used for session stop detection.
+     *
+     * @param device_id Device identifier
+     * @param session_start Session start timestamp
+     * @param file_sizes Map of checkpoint filename -> size in KB
+     * @return true if updated successfully
+     */
+    bool updateCheckpointFileSizes(const std::string& device_id,
+                                    const std::chrono::system_clock::time_point& session_start,
+                                    const std::map<std::string, int>& file_sizes);
+
+    /**
+     * Mark session as COMPLETED
+     *
+     * Sets session_end to current timestamp when session stops growing.
+     *
+     * @param device_id Device identifier
+     * @param session_start Session start timestamp
+     * @return true if updated successfully
+     */
+    bool markSessionCompleted(const std::string& device_id,
+                              const std::chrono::system_clock::time_point& session_start);
+
+private:
+    std::string connection_string_;
+    std::unique_ptr<pqxx::connection> conn_;
+    mutable std::recursive_mutex mutex_;
+
+    /**
+     * Ensure connection is alive (reconnect if needed)
+     *
+     * @return true if connection is ready
+     */
+    bool ensureConnection();
+
+    /**
+     * Upsert device record
+     *
+     * @param work Transaction
+     * @param session Session data
+     */
+    void upsertDevice(pqxx::work& work, const CPAPSession& session);
+
+    /**
+     * Insert session record
+     *
+     * @param work Transaction
+     * @param session Session data
+     * @return session_id
+     */
+    int insertSession(pqxx::work& work, const CPAPSession& session);
+
+    /**
+     * Insert breathing summaries
+     *
+     * @param work Transaction
+     * @param session_id Session ID
+     * @param summaries Breathing summaries
+     */
+    void insertBreathingSummaries(pqxx::work& work, int session_id,
+                                   const std::vector<BreathingSummary>& summaries);
+
+    /**
+     * Insert events
+     *
+     * @param work Transaction
+     * @param session_id Session ID
+     * @param events Events
+     */
+    void insertEvents(pqxx::work& work, int session_id,
+                      const std::vector<CPAPEvent>& events);
+
+    /**
+     * Insert vitals
+     *
+     * @param work Transaction
+     * @param session_id Session ID
+     * @param vitals Vitals
+     */
+    void insertVitals(pqxx::work& work, int session_id,
+                      const std::vector<CPAPVitals>& vitals);
+
+    /**
+     * Insert session metrics
+     *
+     * @param work Transaction
+     * @param session_id Session ID
+     * @param metrics Session metrics
+     */
+    void insertSessionMetrics(pqxx::work& work, int session_id,
+                              const SessionMetrics& metrics);
+
+    /**
+     * Insert calculated respiratory metrics (OSCAR-style)
+     *
+     * @param work Transaction
+     * @param session_id Session ID
+     * @param summaries Breathing summaries with calculated metrics
+     */
+    void insertCalculatedMetrics(pqxx::work& work, int session_id,
+                                  const std::vector<BreathingSummary>& summaries);
+};
+
+} // namespace hms_cpap
