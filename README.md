@@ -432,10 +432,6 @@ Yes! HMS-CPAP uses OSCAR algorithms for parsing. You can:
 - Manual collection acceptable
 - Don't mind WiFi switching
 
-### What's the ESP32-C3 alternative?
-
-See [hms-cpap-c3](https://github.com/aamat09/hms-cpap-c3) - dual ESP32-C3 firmware with zero network disruption, no Pi required. Trade-off: Less powerful parsing, no PostgreSQL.
-
 ## 📊 Metrics Reference
 
 ### Real-Time Metrics (updated every 2 minutes)
