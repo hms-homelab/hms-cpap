@@ -41,6 +41,13 @@ bool MqttClient::connect(const std::string& broker_address,
             onConnectionLost(cause);
         });
 
+        // Set connected callback (called when auto-reconnect succeeds)
+        client_->set_connected_handler([this](const std::string& cause) {
+            std::lock_guard<std::mutex> lock(connection_mutex_);
+            connected_ = true;
+            std::cout << "✅ MQTT: Reconnected successfully: " << cause << std::endl;
+        });
+
         // Connection options
         mqtt::connect_options connOpts;
         connOpts.set_keep_alive_interval(60);  // 60 seconds keep-alive

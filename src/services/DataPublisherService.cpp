@@ -29,6 +29,18 @@ DataPublisherService::~DataPublisherService() {
 }
 
 bool DataPublisherService::initialize() {
+    // Subscribe to Home Assistant status to republish discovery on HA restart
+    if (mqtt_client_ && mqtt_client_->isConnected()) {
+        mqtt_client_->subscribe("homeassistant/status",
+            [this](const std::string& topic, const std::string& payload) {
+                if (payload == "online") {
+                    std::cout << "🏠 Home Assistant restarted, republishing discovery..." << std::endl;
+                    publishDiscovery();
+                }
+            }, 1);
+        std::cout << "✅ Subscribed to homeassistant/status" << std::endl;
+    }
+
     std::cout << "✅ DataPublisherService initialized" << std::endl;
     return true;
 }
@@ -563,12 +575,16 @@ bool DataPublisherService::publishSession(const CPAPSession& session) {
     }
 
     // 2. Publish to MQTT
+    static bool discovery_published = false;
+    static bool was_disconnected = false;
+
     if (mqtt_client_ && mqtt_client_->isConnected()) {
-        // Publish discovery on first run
-        static bool discovery_published = false;
-        if (!discovery_published) {
+        // Publish discovery on first run or after reconnection
+        // Discovery messages are retained, so safe to republish
+        if (!discovery_published || was_disconnected) {
             publishDiscovery();
             discovery_published = true;
+            was_disconnected = false;
         }
 
         // Publish state
@@ -577,6 +593,7 @@ bool DataPublisherService::publishSession(const CPAPSession& session) {
     } else {
         std::cerr << "⚠️  MQTT: Not connected, skipping MQTT publish" << std::endl;
         mqtt_success = false;
+        was_disconnected = true;  // Mark that we were disconnected
     }
 
     std::cout << std::string(60, '=') << std::endl;

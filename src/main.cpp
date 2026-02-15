@@ -33,7 +33,7 @@ void printBanner() {
 ║      ResMed AirSense 10 via ez Share                     ║
 ║      Configurable via EZSHARE_BASE_URL                   ║
 ║                                                           ║
-║      Version: 1.1.1+20260213 - Pi Zero 2 W Support       ║
+║      Version: 1.1.2+20260215 - MQTT Reliability Fixes    ║
 ║      Platform: Linux                                      ║
 ║                                                           ║
 ╚═══════════════════════════════════════════════════════════╝

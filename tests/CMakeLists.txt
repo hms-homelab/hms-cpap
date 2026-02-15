@@ -21,9 +21,11 @@ set(TEST_SOURCES
     parsers/test_EDFParser.cpp
     database/test_DatabaseService.cpp
     services/test_BurstCollectorService.cpp
+    services/test_DataPublisherService.cpp
     models/test_CPAPModels.cpp
     utils/test_ConfigManager.cpp
     clients/test_EzShareClient.cpp
+    mqtt/test_MqttClient.cpp
 )
 
 # Create test executable
