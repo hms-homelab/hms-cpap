@@ -1,0 +1,8 @@
+# ezshare-monitor configuration
+# Copy to /etc/ezshare-monitor.conf and fill in your values
+
+# Home Assistant
+HA_HOST=192.168.2.7
+HA_PORT=8123
+HA_TOKEN=your_long_lived_access_token_here
+NOTIFY_SERVICE=notify.mobile_app_your_phone
