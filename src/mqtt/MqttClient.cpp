@@ -94,26 +94,31 @@ void MqttClient::disconnect() {
 }
 
 bool MqttClient::isConnected() const {
-    std::cout << "  [isConnected] ENTER" << std::endl;
-
-    std::cout << "  [isConnected] trying lock..." << std::endl;
-    std::lock_guard<std::recursive_mutex> lock(connection_mutex_);
-    std::cout << "  [isConnected] got lock" << std::endl;
-
+    // Don't hold mutex while calling paho - callbacks may hold it
+    // First check our cached flag without locking (atomic read is safe)
     if (!connected_) {
-        std::cout << "  [isConnected] -> false (connected_=false)" << std::endl;
-        return false;
-    }
-    if (!client_) {
-        std::cout << "  [isConnected] -> false (client_=null)" << std::endl;
         return false;
     }
 
-    std::cout << "  [isConnected] calling paho is_connected()..." << std::endl;
-    bool paho_connected = client_->is_connected();
-    std::cout << "  [isConnected] paho returned " << paho_connected << std::endl;
+    // Check if client exists (needs brief lock)
+    mqtt::async_client* client_ptr = nullptr;
+    {
+        std::unique_lock<std::recursive_mutex> lock(connection_mutex_, std::try_to_lock);
+        if (!lock.owns_lock()) {
+            // Mutex is held by callback thread - just return cached state
+            std::cout << "  [isConnected] mutex busy, returning cached connected_=" << connected_.load() << std::endl;
+            return connected_;
+        }
+        client_ptr = client_.get();
+    }
+    // Mutex released here
 
-    return paho_connected;
+    if (!client_ptr) {
+        return false;
+    }
+
+    // Call paho WITHOUT holding our mutex
+    return client_ptr->is_connected();
 }
 
 bool MqttClient::subscribe(const std::string& topic, MessageCallback callback, int qos) {

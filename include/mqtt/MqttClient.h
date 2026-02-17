@@ -6,6 +6,7 @@
 #include <mutex>
 #include <memory>
 #include <map>
+#include <atomic>
 
 namespace hms_cpap {
 
@@ -150,8 +151,8 @@ private:
     std::string broker_address_;
     std::string username_;
     std::string password_;
-    bool connected_;
-    mutable std::recursive_mutex connection_mutex_;  // Recursive to avoid deadlock in callbacks
+    std::atomic<bool> connected_;  // Atomic for lock-free reads
+    mutable std::recursive_mutex connection_mutex_;  // For client_ access only
 
     // Auto-reconnect enabled
     bool auto_reconnect_;
