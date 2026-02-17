@@ -67,8 +67,8 @@ TEST_F(ConfigManagerTest, EnvVarMissing_UsesDefault) {
     EXPECT_EQ(value, nullptr);
 
     // In ConfigManager, this would use the default
-    std::string host = (value != nullptr) ? value : "192.168.2.78";
-    EXPECT_EQ(host, "192.168.2.78");
+    std::string host = (value != nullptr) ? value : "192.168.4.1";
+    EXPECT_EQ(host, "192.168.4.1");
 }
 
 TEST_F(ConfigManagerTest, EnvVarEmpty_UsesDefault) {
@@ -80,8 +80,8 @@ TEST_F(ConfigManagerTest, EnvVarEmpty_UsesDefault) {
     EXPECT_STREQ(value, "");
 
     // Empty string should use default
-    std::string host = (value != nullptr && strlen(value) > 0) ? value : "192.168.2.78";
-    EXPECT_EQ(host, "192.168.2.78");
+    std::string host = (value != nullptr && strlen(value) > 0) ? value : "192.168.4.1";
+    EXPECT_EQ(host, "192.168.4.1");
 }
 
 // ============================================================================
@@ -152,7 +152,7 @@ TEST_F(ConfigManagerTest, DefaultValues_EzShare) {
     unsetenv("EZSHARE_HOST");
     unsetenv("EZSHARE_PORT");
 
-    std::string host = "192.168.2.78";  // Default
+    std::string host = "192.168.4.1";  // Default
     int port = 81;  // Default
 
     const char* env_host = std::getenv("EZSHARE_HOST");
@@ -165,7 +165,7 @@ TEST_F(ConfigManagerTest, DefaultValues_EzShare) {
         port = std::stoi(env_port);
     }
 
-    EXPECT_EQ(host, "192.168.2.78");
+    EXPECT_EQ(host, "192.168.4.1");
     EXPECT_EQ(port, 81);
 }
 
@@ -217,7 +217,7 @@ TEST_F(ConfigManagerTest, DefaultValues_MQTT) {
 TEST_F(ConfigManagerTest, Override_EzShareHost) {
     setenv("EZSHARE_HOST", "192.168.2.100", 1);
 
-    std::string host = "192.168.2.78";  // Default
+    std::string host = "192.168.4.1";  // Default
     const char* env_host = std::getenv("EZSHARE_HOST");
 
     if (env_host != nullptr && strlen(env_host) > 0) {
@@ -263,7 +263,7 @@ TEST_F(ConfigManagerTest, Validation_PortRange) {
 TEST_F(ConfigManagerTest, Validation_HostFormat) {
     std::vector<std::string> valid_hosts = {
         "localhost",
-        "192.168.2.78",
+        "192.168.4.1",
         "example.com",
         "192.168.2.15"
     };

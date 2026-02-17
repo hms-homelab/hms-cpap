@@ -1,6 +1,6 @@
 #pragma once
 
-// WiFiSwitchClient no longer needed - ez Share is bridged at 192.168.2.78:81
+// WiFiSwitchClient no longer needed - ez Share accessed via dedicated interface
 #include "clients/EzShareClient.h"
 #include "parsers/EDFParser.h"
 #include "models/CPAPModels.h"
@@ -21,7 +21,7 @@ namespace hms_cpap {
  *
  * Implements periodic collection pattern:
  * 1. Wait for burst interval
- * 2. Access ez Share via bridge (192.168.2.78:81)
+ * 2. Access ez Share via EZSHARE_BASE_URL
  * 3. Download session EDF files
  * 4. Parse EDF files
  * 5. Publish to MQTT / save to database

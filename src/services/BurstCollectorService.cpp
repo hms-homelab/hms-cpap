@@ -16,7 +16,7 @@ BurstCollectorService::BurstCollectorService(int burst_interval_seconds)
     // Load configuration from environment
     device_id_ = ConfigManager::get("CPAP_DEVICE_ID", "cpap_resmed_23243570851");
     device_name_ = ConfigManager::get("CPAP_DEVICE_NAME", "ResMed AirSense 10");
-    // Note: WiFi switching no longer needed - ez Share now bridged at 192.168.2.78:81
+    // ez Share accessed via dedicated wlan1 interface (192.168.4.1)
 
     // Initialize clients
     ezshare_client_ = std::make_unique<EzShareClient>();
@@ -66,7 +66,7 @@ BurstCollectorService::BurstCollectorService(int burst_interval_seconds)
     std::cout << "🚀 BurstCollectorService initialized" << std::endl;
     std::cout << "   Device: " << device_name_ << " (" << device_id_ << ")" << std::endl;
     std::cout << "   Burst interval: " << burst_interval_seconds_ << " seconds" << std::endl;
-    std::cout << "   ez Share: Bridged at 192.168.2.78:81 (no WiFi switching)" << std::endl;
+    std::cout << "   ez Share: " << ConfigManager::get("EZSHARE_BASE_URL", "http://192.168.4.1") << std::endl;
 }
 
 BurstCollectorService::~BurstCollectorService() {
@@ -332,8 +332,8 @@ bool BurstCollectorService::executeBurstCycle() {
         std::cout << "📊 CPAP: No previous sessions in DB (first run)" << std::endl;
     }
 
-    // Step 2: ez Share is now bridged at 192.168.2.78:81 (no WiFi switching needed!)
-    std::cout << "✅ CPAP: Accessing ez Share via bridge (192.168.2.78:81)" << std::endl;
+    // Step 2: Access ez Share via configured URL
+    std::cout << "✅ CPAP: Accessing ez Share at " << ConfigManager::get("EZSHARE_BASE_URL", "http://192.168.4.1") << std::endl;
 
     // Step 3: Discover new sessions (delta logic)
     std::vector<SessionFileSet> new_sessions;
