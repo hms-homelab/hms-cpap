@@ -10,6 +10,17 @@
 
 using namespace hms_cpap;
 
+// Test constants - centralized for easy configuration
+namespace test_defaults {
+    constexpr const char* EZSHARE_HOST = "192.168.4.1";  // ez Share direct connection default
+    constexpr int EZSHARE_PORT = 80;
+    constexpr const char* DB_HOST = "localhost";
+    constexpr int DB_PORT = 5432;
+    constexpr const char* DB_NAME = "cpap_monitoring";
+    constexpr const char* MQTT_HOST = "localhost";
+    constexpr int MQTT_PORT = 1883;
+}
+
 // Test fixture
 class ConfigManagerTest : public ::testing::Test {
 protected:
@@ -67,8 +78,8 @@ TEST_F(ConfigManagerTest, EnvVarMissing_UsesDefault) {
     EXPECT_EQ(value, nullptr);
 
     // In ConfigManager, this would use the default
-    std::string host = (value != nullptr) ? value : "192.168.4.1";
-    EXPECT_EQ(host, "192.168.4.1");
+    std::string host = (value != nullptr) ? value : test_defaults::EZSHARE_HOST;
+    EXPECT_EQ(host, test_defaults::EZSHARE_HOST);
 }
 
 TEST_F(ConfigManagerTest, EnvVarEmpty_UsesDefault) {
@@ -80,8 +91,8 @@ TEST_F(ConfigManagerTest, EnvVarEmpty_UsesDefault) {
     EXPECT_STREQ(value, "");
 
     // Empty string should use default
-    std::string host = (value != nullptr && strlen(value) > 0) ? value : "192.168.4.1";
-    EXPECT_EQ(host, "192.168.4.1");
+    std::string host = (value != nullptr && strlen(value) > 0) ? value : test_defaults::EZSHARE_HOST;
+    EXPECT_EQ(host, test_defaults::EZSHARE_HOST);
 }
 
 // ============================================================================
@@ -152,8 +163,8 @@ TEST_F(ConfigManagerTest, DefaultValues_EzShare) {
     unsetenv("EZSHARE_HOST");
     unsetenv("EZSHARE_PORT");
 
-    std::string host = "192.168.4.1";  // Default
-    int port = 81;  // Default
+    std::string host = test_defaults::EZSHARE_HOST;
+    int port = test_defaults::EZSHARE_PORT;
 
     const char* env_host = std::getenv("EZSHARE_HOST");
     const char* env_port = std::getenv("EZSHARE_PORT");
@@ -165,8 +176,8 @@ TEST_F(ConfigManagerTest, DefaultValues_EzShare) {
         port = std::stoi(env_port);
     }
 
-    EXPECT_EQ(host, "192.168.4.1");
-    EXPECT_EQ(port, 81);
+    EXPECT_EQ(host, test_defaults::EZSHARE_HOST);
+    EXPECT_EQ(port, test_defaults::EZSHARE_PORT);
 }
 
 TEST_F(ConfigManagerTest, DefaultValues_Database) {
@@ -175,9 +186,9 @@ TEST_F(ConfigManagerTest, DefaultValues_Database) {
     unsetenv("DB_PORT");
     unsetenv("DB_NAME");
 
-    std::string host = "localhost";  // Default
-    int port = 5432;  // Default
-    std::string name = "cpap_monitoring";  // Default
+    std::string host = test_defaults::DB_HOST;
+    int port = test_defaults::DB_PORT;
+    std::string name = test_defaults::DB_NAME;
 
     const char* env_host = std::getenv("DB_HOST");
     const char* env_port = std::getenv("DB_PORT");
@@ -187,9 +198,9 @@ TEST_F(ConfigManagerTest, DefaultValues_Database) {
     if (env_port != nullptr && strlen(env_port) > 0) port = std::stoi(env_port);
     if (env_name != nullptr && strlen(env_name) > 0) name = env_name;
 
-    EXPECT_EQ(host, "localhost");
-    EXPECT_EQ(port, 5432);
-    EXPECT_EQ(name, "cpap_monitoring");
+    EXPECT_EQ(host, test_defaults::DB_HOST);
+    EXPECT_EQ(port, test_defaults::DB_PORT);
+    EXPECT_EQ(name, test_defaults::DB_NAME);
 }
 
 TEST_F(ConfigManagerTest, DefaultValues_MQTT) {
@@ -197,8 +208,8 @@ TEST_F(ConfigManagerTest, DefaultValues_MQTT) {
     unsetenv("MQTT_HOST");
     unsetenv("MQTT_PORT");
 
-    std::string host = "localhost";  // Default
-    int port = 1883;  // Default
+    std::string host = test_defaults::MQTT_HOST;
+    int port = test_defaults::MQTT_PORT;
 
     const char* env_host = std::getenv("MQTT_HOST");
     const char* env_port = std::getenv("MQTT_PORT");
@@ -206,8 +217,8 @@ TEST_F(ConfigManagerTest, DefaultValues_MQTT) {
     if (env_host != nullptr && strlen(env_host) > 0) host = env_host;
     if (env_port != nullptr && strlen(env_port) > 0) port = std::stoi(env_port);
 
-    EXPECT_EQ(host, "localhost");
-    EXPECT_EQ(port, 1883);
+    EXPECT_EQ(host, test_defaults::MQTT_HOST);
+    EXPECT_EQ(port, test_defaults::MQTT_PORT);
 }
 
 // ============================================================================
@@ -215,29 +226,31 @@ TEST_F(ConfigManagerTest, DefaultValues_MQTT) {
 // ============================================================================
 
 TEST_F(ConfigManagerTest, Override_EzShareHost) {
-    setenv("EZSHARE_HOST", "192.168.2.100", 1);
+    const char* override_value = "192.168.2.100";
+    setenv("EZSHARE_HOST", override_value, 1);
 
-    std::string host = "192.168.4.1";  // Default
+    std::string host = test_defaults::EZSHARE_HOST;
     const char* env_host = std::getenv("EZSHARE_HOST");
 
     if (env_host != nullptr && strlen(env_host) > 0) {
         host = env_host;
     }
 
-    EXPECT_EQ(host, "192.168.2.100");
+    EXPECT_EQ(host, override_value);
 }
 
 TEST_F(ConfigManagerTest, Override_DatabasePort) {
-    setenv("DB_PORT", "5433", 1);
+    const int override_port = 5433;
+    setenv("DB_PORT", std::to_string(override_port).c_str(), 1);
 
-    int port = 5432;  // Default
+    int port = test_defaults::DB_PORT;
     const char* env_port = std::getenv("DB_PORT");
 
     if (env_port != nullptr && strlen(env_port) > 0) {
         port = std::stoi(env_port);
     }
 
-    EXPECT_EQ(port, 5433);
+    EXPECT_EQ(port, override_port);
 }
 
 // ============================================================================
