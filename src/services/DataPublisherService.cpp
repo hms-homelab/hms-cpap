@@ -578,9 +578,14 @@ bool DataPublisherService::publishSession(const CPAPSession& session) {
     static bool discovery_published = false;
     static bool was_disconnected = false;
 
-    std::cerr << "DEBUG: Checking MQTT connection..." << std::flush;
-    bool mqtt_connected = mqtt_client_ && mqtt_client_->isConnected();
-    std::cerr << " done (" << (mqtt_connected ? "connected" : "disconnected") << ")" << std::endl;
+    std::cerr << "DEBUG: Checking MQTT connection (mqtt_client_=" << (mqtt_client_ ? "valid" : "null") << ")..." << std::endl;
+    bool mqtt_connected = false;
+    if (mqtt_client_) {
+        std::cerr << "DEBUG: Calling mqtt_client_->isConnected()..." << std::endl;
+        mqtt_connected = mqtt_client_->isConnected();
+        std::cerr << "DEBUG: isConnected() returned " << mqtt_connected << std::endl;
+    }
+    std::cerr << "DEBUG: MQTT check done (" << (mqtt_connected ? "connected" : "disconnected") << ")" << std::endl;
 
     if (mqtt_connected) {
         // Publish discovery on first run or after reconnection
