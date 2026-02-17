@@ -43,9 +43,12 @@ bool MqttClient::connect(const std::string& broker_address,
 
         // Set connected callback (called when auto-reconnect succeeds)
         client_->set_connected_handler([this](const std::string& cause) {
+            std::cerr << "  [connected_handler] CALLBACK ENTER, cause=" << cause << std::flush;
             std::lock_guard<std::recursive_mutex> lock(connection_mutex_);
+            std::cerr << " got lock" << std::endl;
             connected_ = true;
             std::cout << "✅ MQTT: Reconnected successfully: " << cause << std::endl;
+            std::cerr << "  [connected_handler] CALLBACK EXIT" << std::endl;
         });
 
         // Connection options
@@ -91,8 +94,24 @@ void MqttClient::disconnect() {
 }
 
 bool MqttClient::isConnected() const {
+    std::cerr << "  [isConnected] entering, trying lock..." << std::flush;
     std::lock_guard<std::recursive_mutex> lock(connection_mutex_);
-    return connected_ && client_ && client_->is_connected();
+    std::cerr << " got lock, checking connected_=" << connected_ << std::flush;
+
+    if (!connected_) {
+        std::cerr << " -> false (not connected_)" << std::endl;
+        return false;
+    }
+    if (!client_) {
+        std::cerr << " -> false (no client)" << std::endl;
+        return false;
+    }
+
+    std::cerr << ", calling client_->is_connected()..." << std::flush;
+    bool paho_connected = client_->is_connected();
+    std::cerr << " -> " << paho_connected << std::endl;
+
+    return paho_connected;
 }
 
 bool MqttClient::subscribe(const std::string& topic, MessageCallback callback, int qos) {
@@ -274,7 +293,9 @@ void MqttClient::onMessageArrived(mqtt::const_message_ptr msg) {
 }
 
 void MqttClient::onConnectionLost(const std::string& cause) {
+    std::cerr << "  [onConnectionLost] CALLBACK ENTER, cause=" << cause << std::flush;
     std::lock_guard<std::recursive_mutex> lock(connection_mutex_);
+    std::cerr << " got lock" << std::endl;
     connected_ = false;
 
     std::cerr << "⚠️  MQTT: Connection lost: " << cause << std::endl;
@@ -282,6 +303,7 @@ void MqttClient::onConnectionLost(const std::string& cause) {
     if (auto_reconnect_) {
         std::cout << "🔄 MQTT: Auto-reconnect enabled (handled by paho-mqtt)" << std::endl;
     }
+    std::cerr << "  [onConnectionLost] CALLBACK EXIT" << std::endl;
 }
 
 }  // namespace hms_cpap
