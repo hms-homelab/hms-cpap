@@ -94,22 +94,24 @@ void MqttClient::disconnect() {
 }
 
 bool MqttClient::isConnected() const {
-    std::cerr << "  [isConnected] entering, trying lock..." << std::flush;
+    std::cout << "  [isConnected] ENTER" << std::endl;
+
+    std::cout << "  [isConnected] trying lock..." << std::endl;
     std::lock_guard<std::recursive_mutex> lock(connection_mutex_);
-    std::cerr << " got lock, checking connected_=" << connected_ << std::flush;
+    std::cout << "  [isConnected] got lock" << std::endl;
 
     if (!connected_) {
-        std::cerr << " -> false (not connected_)" << std::endl;
+        std::cout << "  [isConnected] -> false (connected_=false)" << std::endl;
         return false;
     }
     if (!client_) {
-        std::cerr << " -> false (no client)" << std::endl;
+        std::cout << "  [isConnected] -> false (client_=null)" << std::endl;
         return false;
     }
 
-    std::cerr << ", calling client_->is_connected()..." << std::flush;
+    std::cout << "  [isConnected] calling paho is_connected()..." << std::endl;
     bool paho_connected = client_->is_connected();
-    std::cerr << " -> " << paho_connected << std::endl;
+    std::cout << "  [isConnected] paho returned " << paho_connected << std::endl;
 
     return paho_connected;
 }
