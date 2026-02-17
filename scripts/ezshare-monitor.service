@@ -1,0 +1,21 @@
+[Unit]
+Description=ez Share WiFi Connection Monitor
+After=network.target NetworkManager.service
+
+[Service]
+Type=simple
+User=aamat
+ExecStart=/usr/local/bin/ezshare-monitor.sh
+Restart=always
+RestartSec=5
+
+# Load config from file (contains HA_TOKEN and other secrets)
+EnvironmentFile=/etc/ezshare-monitor.conf
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ezshare-monitor
+
+[Install]
+WantedBy=multi-user.target
