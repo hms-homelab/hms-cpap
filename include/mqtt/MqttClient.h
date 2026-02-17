@@ -151,7 +151,7 @@ private:
     std::string username_;
     std::string password_;
     bool connected_;
-    mutable std::mutex connection_mutex_;
+    mutable std::recursive_mutex connection_mutex_;  // Recursive to avoid deadlock in callbacks
 
     // Auto-reconnect enabled
     bool auto_reconnect_;
