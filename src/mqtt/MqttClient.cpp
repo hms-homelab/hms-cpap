@@ -19,7 +19,7 @@ MqttClient::~MqttClient() {
 bool MqttClient::connect(const std::string& broker_address,
                          const std::string& username,
                          const std::string& password) {
-    std::lock_guard<std::mutex> lock(connection_mutex_);
+    std::lock_guard<std::recursive_mutex> lock(connection_mutex_);
 
     broker_address_ = broker_address;
     username_ = username;
@@ -43,7 +43,7 @@ bool MqttClient::connect(const std::string& broker_address,
 
         // Set connected callback (called when auto-reconnect succeeds)
         client_->set_connected_handler([this](const std::string& cause) {
-            std::lock_guard<std::mutex> lock(connection_mutex_);
+            std::lock_guard<std::recursive_mutex> lock(connection_mutex_);
             connected_ = true;
             std::cout << "✅ MQTT: Reconnected successfully: " << cause << std::endl;
         });
@@ -76,7 +76,7 @@ bool MqttClient::connect(const std::string& broker_address,
 }
 
 void MqttClient::disconnect() {
-    std::lock_guard<std::mutex> lock(connection_mutex_);
+    std::lock_guard<std::recursive_mutex> lock(connection_mutex_);
 
     if (client_ && connected_) {
         try {
@@ -91,7 +91,7 @@ void MqttClient::disconnect() {
 }
 
 bool MqttClient::isConnected() const {
-    std::lock_guard<std::mutex> lock(connection_mutex_);
+    std::lock_guard<std::recursive_mutex> lock(connection_mutex_);
     return connected_ && client_ && client_->is_connected();
 }
 
@@ -105,7 +105,7 @@ bool MqttClient::subscribe(const std::string& topic, MessageCallback callback, i
         std::cout << "📡 MQTT: Subscribing to: " << topic << " (QoS " << qos << ")" << std::endl;
 
         {
-            std::lock_guard<std::mutex> lock(connection_mutex_);
+            std::lock_guard<std::recursive_mutex> lock(connection_mutex_);
             client_->subscribe(topic, qos)->wait();  // Wait for subscription
         }
 
@@ -147,7 +147,7 @@ bool MqttClient::unsubscribe(const std::string& topic) {
 
     try {
         {
-            std::lock_guard<std::mutex> lock(connection_mutex_);
+            std::lock_guard<std::recursive_mutex> lock(connection_mutex_);
             client_->unsubscribe(topic)->wait();
         }
 
@@ -181,7 +181,7 @@ bool MqttClient::publish(const std::string& topic,
         pubmsg->set_retained(retain);
 
         {
-            std::lock_guard<std::mutex> lock(connection_mutex_);
+            std::lock_guard<std::recursive_mutex> lock(connection_mutex_);
             client_->publish(pubmsg)->wait();
         }
 
@@ -274,7 +274,7 @@ void MqttClient::onMessageArrived(mqtt::const_message_ptr msg) {
 }
 
 void MqttClient::onConnectionLost(const std::string& cause) {
-    std::lock_guard<std::mutex> lock(connection_mutex_);
+    std::lock_guard<std::recursive_mutex> lock(connection_mutex_);
     connected_ = false;
 
     std::cerr << "⚠️  MQTT: Connection lost: " << cause << std::endl;
