@@ -130,9 +130,19 @@ bool MqttClient::subscribe(const std::string& topic, MessageCallback callback, i
     try {
         std::cout << "📡 MQTT: Subscribing to: " << topic << " (QoS " << qos << ")" << std::endl;
 
+        // Get client pointer
+        mqtt::async_client* client_ptr = nullptr;
         {
-            std::lock_guard<std::recursive_mutex> lock(connection_mutex_);
-            client_->subscribe(topic, qos)->wait();  // Wait for subscription
+            std::unique_lock<std::recursive_mutex> lock(connection_mutex_, std::try_to_lock);
+            if (!lock.owns_lock()) {
+                std::cerr << "⚠️  MQTT: Mutex busy, cannot subscribe now" << std::endl;
+                return false;
+            }
+            client_ptr = client_.get();
+        }
+
+        if (client_ptr) {
+            client_ptr->subscribe(topic, qos)->wait();
         }
 
         // Store callback
@@ -206,9 +216,22 @@ bool MqttClient::publish(const std::string& topic,
         pubmsg->set_qos(qos);
         pubmsg->set_retained(retain);
 
+        // Get client pointer without holding mutex during publish
+        mqtt::async_client* client_ptr = nullptr;
         {
-            std::lock_guard<std::recursive_mutex> lock(connection_mutex_);
-            client_->publish(pubmsg)->wait();
+            std::unique_lock<std::recursive_mutex> lock(connection_mutex_, std::try_to_lock);
+            if (!lock.owns_lock()) {
+                // Mutex busy (callback running) - still publish async, don't wait
+                std::cout << "  [publish] mutex busy, async publish to " << topic << std::endl;
+                client_->publish(pubmsg);  // Fire and forget
+                return true;
+            }
+            client_ptr = client_.get();
+        }
+
+        if (client_ptr) {
+            // Publish and wait (no mutex held)
+            client_ptr->publish(pubmsg)->wait();
         }
 
         // Simplified logging for state messages (too verbose otherwise)
