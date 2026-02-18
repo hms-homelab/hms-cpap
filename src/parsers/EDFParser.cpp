@@ -472,9 +472,25 @@ bool EDFParser::parseBRPFile(const std::string& filepath, CPAPSession& session) 
         session.duration_seconds = static_cast<int>(duration.count());
         std::cout << "Parser: Actual session end detected from flow data" << std::endl;
     } else if (session_active) {
-        // Session is still ongoing - no end time yet
-        session.session_end = std::nullopt;
-        std::cout << "Parser: Session still active (ongoing)" << std::endl;
+        // Check if data is stale (>30 minutes since last sample)
+        // If file hasn't grown in 30 min, session is definitely over
+        auto last_data_time = file_start + std::chrono::seconds(static_cast<int>(flow_data.size() / sample_rate));
+        auto now = std::chrono::system_clock::now();
+        auto staleness = std::chrono::duration_cast<std::chrono::minutes>(now - last_data_time).count();
+
+        if (staleness > 30) {
+            // Data is stale - session ended when file stopped growing
+            session.session_end = last_data_time;
+            auto duration = std::chrono::duration_cast<std::chrono::seconds>(
+                last_data_time - actual_start.value_or(file_start)
+            );
+            session.duration_seconds = static_cast<int>(duration.count());
+            std::cout << "Parser: Session marked COMPLETED (data stale by " << staleness << " min)" << std::endl;
+        } else {
+            // Session is still ongoing - no end time yet
+            session.session_end = std::nullopt;
+            std::cout << "Parser: Session still active (ongoing, data is " << staleness << " min old)" << std::endl;
+        }
     }
 
     std::cout << "Parser: BRP parsed — " << n_minutes << " minutes, "
