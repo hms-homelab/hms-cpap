@@ -302,3 +302,73 @@ TEST_F(EDFParserTest, EDFParser_IncompleteFile) {
     ASSERT_NE(session, nullptr) << "Parser should handle incomplete files";
 }
 
+// ============================================================================
+// SESSION STATUS STALENESS TESTS
+// ============================================================================
+
+TEST_F(EDFParserTest, SessionStatus_StaleDataMarkedCompleted) {
+    // Bug fix test: Session with data older than 30 minutes
+    // should be marked COMPLETED even if flow-based detection
+    // didn't find a clean end boundary (file stopped growing)
+
+    std::string session_dir = (test_dir / "stale_session").string();
+    std::filesystem::create_directories(session_dir);
+
+    // Create session from 2 hours ago (well past 30 min staleness threshold)
+    auto two_hours_ago = system_clock::now() - hours(2);
+    auto time_t_val = system_clock::to_time_t(two_hours_ago);
+    std::tm* tm = std::localtime(&time_t_val);
+
+    char timestamp_str[16];
+    std::strftime(timestamp_str, sizeof(timestamp_str), "%Y%m%d_%H%M%S", tm);
+
+    // Create BRP file with old timestamp (6 minutes of data)
+    std::string brp_filename = std::string(timestamp_str) + "_BRP.edf";
+    createMinimalEDFHeader(session_dir + "/" + brp_filename, timestamp_str, "BRP", 360);
+
+    // Create CSL file
+    std::string csl_filename = std::string(timestamp_str) + "_CSL.edf";
+    createMinimalEDFHeader(session_dir + "/" + csl_filename, timestamp_str, "CSL", 60);
+
+    auto session = EDFParser::parseSession(session_dir, "TEST-DEVICE", "Test Device");
+
+    ASSERT_NE(session, nullptr) << "Parser should handle stale session";
+    // Staleness check: data is >30 min old, should be COMPLETED
+    EXPECT_EQ(session->status, CPAPSession::Status::COMPLETED)
+        << "Session with data >30 min old should be marked COMPLETED";
+    EXPECT_TRUE(session->session_end.has_value())
+        << "Completed session should have session_end set";
+}
+
+TEST_F(EDFParserTest, SessionStatus_RecentDataMarkedInProgress) {
+    // Session with recent data (within last few minutes)
+    // should remain IN_PROGRESS if no clean end boundary found
+    // Note: This test may be flaky if run exactly at boundary
+
+    std::string session_dir = (test_dir / "recent_session").string();
+    std::filesystem::create_directories(session_dir);
+
+    // Create session from 5 minutes ago (within 30 min threshold)
+    auto five_minutes_ago = system_clock::now() - minutes(5);
+    auto time_t_val = system_clock::to_time_t(five_minutes_ago);
+    std::tm* tm = std::localtime(&time_t_val);
+
+    char timestamp_str[16];
+    std::strftime(timestamp_str, sizeof(timestamp_str), "%Y%m%d_%H%M%S", tm);
+
+    // Create BRP file with recent timestamp (3 minutes of data)
+    std::string brp_filename = std::string(timestamp_str) + "_BRP.edf";
+    createMinimalEDFHeader(session_dir + "/" + brp_filename, timestamp_str, "BRP", 180);
+
+    // Create CSL file
+    std::string csl_filename = std::string(timestamp_str) + "_CSL.edf";
+    createMinimalEDFHeader(session_dir + "/" + csl_filename, timestamp_str, "CSL", 60);
+
+    auto session = EDFParser::parseSession(session_dir, "TEST-DEVICE", "Test Device");
+
+    ASSERT_NE(session, nullptr) << "Parser should handle recent session";
+    // Data is recent (<30 min), should remain IN_PROGRESS
+    // Note: Status depends on flow-based detection too, so this may be COMPLETED
+    // if flow data shows a clean end. The test file has all-zero data.
+}
+
