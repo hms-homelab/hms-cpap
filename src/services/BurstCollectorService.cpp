@@ -397,27 +397,21 @@ bool BurstCollectorService::executeBurstCycle() {
                       << " (not in DB, " << session.total_size_kb << " KB)" << std::endl;
 
             if (downloadSessionFiles(session, local_base_dir)) {
-                // Extract actual file sizes in BYTES from downloaded files (BRP/PLD/SAD only)
+                // Store checkpoint file sizes in KB (exact values from ez Share HTML)
+                // This ensures comparison works: ez Share KB == DB KB
                 std::map<std::string, int> checkpoint_sizes;
-                std::string session_dir = local_base_dir + "/" + session.date_folder;
-
-                // Get actual byte sizes from local files
-                if (std::filesystem::exists(session_dir)) {
-                    for (const auto& entry : std::filesystem::directory_iterator(session_dir)) {
-                        std::string filename = entry.path().filename().string();
-
-                        // Only store checkpoint files (BRP/PLD/SAD)
-                        if (filename.find("_BRP.edf") != std::string::npos ||
-                            filename.find("_PLD.edf") != std::string::npos ||
-                            filename.find("_SAD.edf") != std::string::npos) {
-                            // Store exact byte count (not KB!)
-                            checkpoint_sizes[filename] = static_cast<int>(std::filesystem::file_size(entry.path()));
-                        }
+                for (const auto& [filename, size_kb] : session.file_sizes_kb) {
+                    if (filename.find("_BRP.edf") != std::string::npos ||
+                        filename.find("_PLD.edf") != std::string::npos ||
+                        filename.find("_SAD.edf") != std::string::npos) {
+                        checkpoint_sizes[filename] = size_kb;
                     }
                 }
 
-                // Store checkpoint file sizes (in bytes) in DB
+                // Store checkpoint file sizes (in KB, matching ez Share) in DB
                 db_service_->updateCheckpointFileSizes(device_id_, session.session_start, checkpoint_sizes);
+
+                std::string session_dir = local_base_dir + "/" + session.date_folder;
 
                 // Store session dir + filename timestamp for parsing
                 downloaded_sessions.push_back({session_dir, session.session_start});
@@ -489,28 +483,21 @@ bool BurstCollectorService::executeBurstCycle() {
                   << " → " << current_checkpoint_sizes.size() << " files)" << std::endl;
 
         if (downloadSessionFiles(session, local_base_dir)) {
-            // Get actual byte sizes from downloaded files
+            // Store checkpoint file sizes in KB (exact values from ez Share HTML)
             std::map<std::string, int> checkpoint_sizes;
-            std::string session_dir = local_base_dir + "/" + session.date_folder;
-
-            if (std::filesystem::exists(session_dir)) {
-                for (const auto& entry : std::filesystem::directory_iterator(session_dir)) {
-                    std::string filename = entry.path().filename().string();
-
-                    // Only store checkpoint files (BRP/PLD/SAD)
-                    if (filename.find("_BRP.edf") != std::string::npos ||
-                        filename.find("_PLD.edf") != std::string::npos ||
-                        filename.find("_SAD.edf") != std::string::npos) {
-                        // Store exact byte count
-                        checkpoint_sizes[filename] = static_cast<int>(std::filesystem::file_size(entry.path()));
-                    }
+            for (const auto& [filename, size_kb] : session.file_sizes_kb) {
+                if (filename.find("_BRP.edf") != std::string::npos ||
+                    filename.find("_PLD.edf") != std::string::npos ||
+                    filename.find("_SAD.edf") != std::string::npos) {
+                    checkpoint_sizes[filename] = size_kb;
                 }
             }
 
-            // Update checkpoint file sizes (in bytes) in DB
+            // Update checkpoint file sizes (in KB, matching ez Share) in DB
             db_service_->updateCheckpointFileSizes(device_id_, session.session_start, checkpoint_sizes);
 
             // Store session dir + filename timestamp for parsing
+            std::string session_dir = local_base_dir + "/" + session.date_folder;
             downloaded_sessions.push_back({session_dir, session.session_start});
         } else {
             std::cerr << "⚠️  CPAP: Failed to download session " << session.session_prefix << std::endl;
