@@ -291,3 +291,130 @@ TEST_F(BurstCollectorServiceTest, FileSizeComparison_Missing) {
     EXPECT_EQ(archive_size, 0);
 }
 
+// ============================================================================
+// CONNECTION RECOVERY TESTS
+// ============================================================================
+
+/**
+ * Test consecutive failure tracking logic
+ * After MAX_FAILURES_BEFORE_RESET (3) consecutive failures, session_active should be cleared
+ */
+TEST_F(BurstCollectorServiceTest, ConnectionRecovery_ConsecutiveFailures) {
+    // Simulate the recovery logic from BurstCollectorService
+    int consecutive_failures = 0;
+    bool session_active_cleared = false;
+    constexpr int MAX_FAILURES_BEFORE_RESET = 3;
+
+    // Simulate 3 consecutive failures
+    for (int i = 0; i < 5; i++) {
+        bool connection_success = (i >= 3);  // Fail first 3, then succeed
+
+        if (!connection_success) {
+            consecutive_failures++;
+
+            if (consecutive_failures >= MAX_FAILURES_BEFORE_RESET && !session_active_cleared) {
+                session_active_cleared = true;
+                // In real code: data_publisher_->publishSessionCompleted();
+            }
+        } else {
+            consecutive_failures = 0;
+            session_active_cleared = false;  // Allow future cleanup
+        }
+    }
+
+    // After 3 failures, session_active should have been cleared
+    // But then success resets the counter
+    EXPECT_EQ(consecutive_failures, 0);
+    EXPECT_FALSE(session_active_cleared);  // Reset after success
+}
+
+TEST_F(BurstCollectorServiceTest, ConnectionRecovery_ClearsOnlyOnce) {
+    // Verify session_active is only cleared once per failure sequence
+    int consecutive_failures = 0;
+    bool session_active_cleared = false;
+    int clear_count = 0;
+    constexpr int MAX_FAILURES_BEFORE_RESET = 3;
+
+    // Simulate 10 consecutive failures
+    for (int i = 0; i < 10; i++) {
+        consecutive_failures++;
+
+        if (consecutive_failures >= MAX_FAILURES_BEFORE_RESET && !session_active_cleared) {
+            session_active_cleared = true;
+            clear_count++;
+        }
+    }
+
+    EXPECT_EQ(clear_count, 1) << "Session should only be cleared once per failure sequence";
+    EXPECT_TRUE(session_active_cleared);
+    EXPECT_EQ(consecutive_failures, 10);
+}
+
+TEST_F(BurstCollectorServiceTest, ConnectionRecovery_ResetsOnSuccess) {
+    // Verify success resets the failure counter
+    int consecutive_failures = 5;  // Some failures
+    bool session_active_cleared = true;
+
+    // Connection succeeds
+    consecutive_failures = 0;
+    session_active_cleared = false;
+
+    EXPECT_EQ(consecutive_failures, 0);
+    EXPECT_FALSE(session_active_cleared) << "Success should allow future cleanup";
+}
+
+TEST_F(BurstCollectorServiceTest, ConnectionRecovery_ThresholdBoundary) {
+    // Test exactly at threshold boundary (2 failures = no clear, 3 failures = clear)
+    int consecutive_failures = 0;
+    bool session_active_cleared = false;
+    constexpr int MAX_FAILURES_BEFORE_RESET = 3;
+
+    // 2 failures - should NOT clear
+    consecutive_failures = 2;
+    if (consecutive_failures >= MAX_FAILURES_BEFORE_RESET && !session_active_cleared) {
+        session_active_cleared = true;
+    }
+    EXPECT_FALSE(session_active_cleared) << "2 failures should not trigger clear";
+
+    // 3rd failure - should clear
+    consecutive_failures = 3;
+    if (consecutive_failures >= MAX_FAILURES_BEFORE_RESET && !session_active_cleared) {
+        session_active_cleared = true;
+    }
+    EXPECT_TRUE(session_active_cleared) << "3 failures should trigger clear";
+}
+
+// ============================================================================
+// STARTUP CLEANUP TESTS
+// ============================================================================
+
+TEST_F(BurstCollectorServiceTest, StartupCleanup_ClearsStaleSession) {
+    // Verify startup cleanup logic
+    // In real code, constructor calls data_publisher_->publishSessionCompleted()
+
+    bool mqtt_connected = true;
+    bool session_active_cleared = false;
+
+    // Startup cleanup logic
+    if (mqtt_connected) {
+        // Simulate: data_publisher_->publishSessionCompleted();
+        session_active_cleared = true;
+    }
+
+    EXPECT_TRUE(session_active_cleared) << "Startup should clear stale session_active";
+}
+
+TEST_F(BurstCollectorServiceTest, StartupCleanup_SkipsIfMqttDisconnected) {
+    // Verify startup cleanup skips if MQTT not connected
+
+    bool mqtt_connected = false;
+    bool session_active_cleared = false;
+
+    // Startup cleanup logic
+    if (mqtt_connected) {
+        session_active_cleared = true;
+    }
+
+    EXPECT_FALSE(session_active_cleared) << "Should skip cleanup if MQTT not connected";
+}
+

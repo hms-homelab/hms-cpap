@@ -96,6 +96,11 @@ private:
     // State
     std::chrono::system_clock::time_point last_burst_time_;
 
+    // Connection recovery tracking
+    int consecutive_failures_ = 0;
+    static constexpr int MAX_FAILURES_BEFORE_RESET = 3;  // Reset session_active after 3 consecutive failures
+    bool session_active_cleared_ = false;  // Track if we've already cleared stale session
+
     /**
      * Worker thread main loop
      */

@@ -67,6 +67,14 @@ BurstCollectorService::BurstCollectorService(int burst_interval_seconds)
     std::cout << "   Device: " << device_name_ << " (" << device_id_ << ")" << std::endl;
     std::cout << "   Burst interval: " << burst_interval_seconds_ << " seconds" << std::endl;
     std::cout << "   ez Share: " << ConfigManager::get("EZSHARE_BASE_URL", "http://192.168.4.1") << std::endl;
+
+    // STARTUP CLEANUP: Clear any stale session_active state from previous run
+    // This prevents stuck "session active" in HA after service restart or crash
+    if (data_publisher_ && mqtt_client_ && mqtt_client_->isConnected()) {
+        std::cout << "🧹 Startup: Clearing stale session_active state..." << std::endl;
+        data_publisher_->publishSessionCompleted();
+        session_active_cleared_ = true;
+    }
 }
 
 BurstCollectorService::~BurstCollectorService() {
@@ -340,8 +348,30 @@ bool BurstCollectorService::executeBurstCycle() {
 
     try {
         new_sessions = discovery_service_->discoverNewSessions(last_session_start);
+        // Reset failure counter on successful connection
+        consecutive_failures_ = 0;
+        session_active_cleared_ = false;  // Allow future cleanup if needed
     } catch (const std::exception& e) {
         std::cerr << "❌ CPAP: Session discovery failed: " << e.what() << std::endl;
+
+        // CONNECTION RECOVERY: Track consecutive failures
+        consecutive_failures_++;
+        std::cerr << "   ⚠️  Consecutive failures: " << consecutive_failures_
+                  << "/" << MAX_FAILURES_BEFORE_RESET << std::endl;
+
+        // After MAX_FAILURES_BEFORE_RESET consecutive failures, clear session_active
+        // This prevents stuck "session running" in HA when connection is lost
+        if (consecutive_failures_ >= MAX_FAILURES_BEFORE_RESET && !session_active_cleared_) {
+            std::cout << "🔄 RECOVERY: Clearing session_active after "
+                      << consecutive_failures_ << " consecutive failures" << std::endl;
+
+            if (data_publisher_) {
+                data_publisher_->publishSessionCompleted();
+                session_active_cleared_ = true;
+                std::cout << "   ✅ Published session_active=OFF to MQTT" << std::endl;
+            }
+        }
+
         return false;
     }
 
