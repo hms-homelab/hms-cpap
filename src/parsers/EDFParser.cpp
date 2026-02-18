@@ -164,14 +164,20 @@ bool EDFFile::open(const std::string& filepath) {
     }
 
     // Completeness check
+    // ResMed writes num_records_header=1 at session start, then appends data
+    // So we use actual_records from file size, NOT the stale header value
     if (num_records_header == -1) {
         // EDF+ unknown length (still recording)
         complete = false;
-    } else if (actual_records >= num_records_header) {
-        actual_records = num_records_header;  // Don't read past declared end
+    } else if (actual_records > num_records_header) {
+        // File has MORE data than header declared = still recording
+        // Keep actual_records as-is (read all data from file)
+        complete = false;
+    } else if (actual_records == num_records_header) {
+        // File matches header exactly - complete
         complete = true;
     } else {
-        // File is truncated or still being written
+        // actual_records < num_records_header = truncated
         complete = false;
     }
 
@@ -472,24 +478,34 @@ bool EDFParser::parseBRPFile(const std::string& filepath, CPAPSession& session) 
         session.duration_seconds = static_cast<int>(duration.count());
         std::cout << "Parser: Actual session end detected from flow data" << std::endl;
     } else if (session_active) {
-        // Check if data is stale (>30 minutes since last sample)
-        // If file hasn't grown in 30 min, session is definitely over
-        auto last_data_time = file_start + std::chrono::seconds(static_cast<int>(flow_data.size() / sample_rate));
-        auto now = std::chrono::system_clock::now();
-        auto staleness = std::chrono::duration_cast<std::chrono::minutes>(now - last_data_time).count();
-
-        if (staleness > 30) {
-            // Data is stale - session ended when file stopped growing
-            session.session_end = last_data_time;
-            auto duration = std::chrono::duration_cast<std::chrono::seconds>(
-                last_data_time - actual_start.value_or(file_start)
-            );
-            session.duration_seconds = static_cast<int>(duration.count());
-            std::cout << "Parser: Session marked COMPLETED (data stale by " << staleness << " min)" << std::endl;
-        } else {
-            // Session is still ongoing - no end time yet
+        // Determine session status from EDF file completeness
+        // If actual_records > header (edf.complete=false), file is still being written = IN_PROGRESS
+        if (!edf.complete) {
+            // File is still being written - session is IN_PROGRESS
             session.session_end = std::nullopt;
-            std::cout << "Parser: Session still active (ongoing, data is " << staleness << " min old)" << std::endl;
+            session.status = CPAPSession::Status::IN_PROGRESS;
+            std::cout << "Parser: Session IN_PROGRESS (file still growing, "
+                      << edf.actual_records << " records > header " << edf.num_records_header << ")" << std::endl;
+        } else {
+            // File is complete but flow detection didn't find end
+            // Use staleness check as fallback
+            auto last_data_time = file_start + std::chrono::seconds(static_cast<int>(flow_data.size() / sample_rate));
+            auto now = std::chrono::system_clock::now();
+            auto staleness = std::chrono::duration_cast<std::chrono::minutes>(now - last_data_time).count();
+
+            if (staleness > 30) {
+                // Data is stale - session ended when file stopped growing
+                session.session_end = last_data_time;
+                auto duration = std::chrono::duration_cast<std::chrono::seconds>(
+                    last_data_time - actual_start.value_or(file_start)
+                );
+                session.duration_seconds = static_cast<int>(duration.count());
+                std::cout << "Parser: Session marked COMPLETED (data stale by " << staleness << " min)" << std::endl;
+            } else {
+                // Session is still ongoing - no end time yet
+                session.session_end = std::nullopt;
+                std::cout << "Parser: Session still active (ongoing, data is " << staleness << " min old)" << std::endl;
+            }
         }
     }
 
