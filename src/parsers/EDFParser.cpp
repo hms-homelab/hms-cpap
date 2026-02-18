@@ -169,16 +169,24 @@ bool EDFFile::open(const std::string& filepath) {
     if (num_records_header == -1) {
         // EDF+ unknown length (still recording)
         complete = false;
+        growing = true;
+        extra_records = actual_records;  // All records are "extra" when header is -1
     } else if (actual_records > num_records_header) {
         // File has MORE data than header declared = still recording
         // Keep actual_records as-is (read all data from file)
         complete = false;
+        growing = true;
+        extra_records = actual_records - num_records_header;
     } else if (actual_records == num_records_header) {
         // File matches header exactly - complete
         complete = true;
+        growing = false;
+        extra_records = 0;
     } else {
         // actual_records < num_records_header = truncated
         complete = false;
+        growing = false;
+        extra_records = 0;
     }
 
     return true;
@@ -484,8 +492,9 @@ bool EDFParser::parseBRPFile(const std::string& filepath, CPAPSession& session) 
             // File is still being written - session is IN_PROGRESS
             session.session_end = std::nullopt;
             session.status = CPAPSession::Status::IN_PROGRESS;
-            std::cout << "Parser: Session IN_PROGRESS (file still growing, "
-                      << edf.actual_records << " records > header " << edf.num_records_header << ")" << std::endl;
+            std::cout << "Parser: Session IN_PROGRESS (file growing: "
+                      << edf.extra_records << " extra records beyond header "
+                      << edf.num_records_header << ")" << std::endl;
         } else {
             // File is complete but flow detection didn't find end
             // Use staleness check as fallback

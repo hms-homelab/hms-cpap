@@ -58,7 +58,9 @@ public:
     // Computed
     int record_size_bytes = 0;  // Bytes per data record (all signals)
     int actual_records = 0;     // Records actually present in file
-    bool complete = false;      // true if actual_records >= num_records_header
+    int extra_records = 0;      // Records beyond header declaration (actual - header, 0 if complete)
+    bool complete = false;      // true if actual_records == num_records_header
+    bool growing = false;       // true if actual_records > num_records_header (file still being written)
 
     bool open(const std::string& filepath);
 
