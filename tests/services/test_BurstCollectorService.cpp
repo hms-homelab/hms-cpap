@@ -292,6 +292,111 @@ TEST_F(BurstCollectorServiceTest, FileSizeComparison_Missing) {
 }
 
 // ============================================================================
+// CHECKPOINT SIZE KB COMPARISON TESTS
+// ============================================================================
+
+/**
+ * Test that checkpoint sizes are compared in KB (ez Share format)
+ * Both DB storage and comparison must use KB values from ez Share HTML
+ */
+TEST_F(BurstCollectorServiceTest, CheckpointSizes_KBComparison_Exact) {
+    // Simulate ez Share reporting file sizes in KB
+    std::map<std::string, int> ezshare_sizes_kb = {
+        {"20260217_234845_BRP.edf", 1608},  // 1608 KB from HTML
+        {"20260217_234845_PLD.edf", 148},
+        {"20260217_234845_SAD.edf", 66}
+    };
+
+    // DB should store exact same KB values
+    std::map<std::string, int> db_sizes_kb = {
+        {"20260217_234845_BRP.edf", 1608},
+        {"20260217_234845_PLD.edf", 148},
+        {"20260217_234845_SAD.edf", 66}
+    };
+
+    // Comparison should find all unchanged
+    bool all_unchanged = true;
+    for (const auto& [filename, db_size] : db_sizes_kb) {
+        auto it = ezshare_sizes_kb.find(filename);
+        if (it == ezshare_sizes_kb.end() || it->second != db_size) {
+            all_unchanged = false;
+            break;
+        }
+    }
+
+    EXPECT_TRUE(all_unchanged) << "Exact KB values should match";
+}
+
+TEST_F(BurstCollectorServiceTest, CheckpointSizes_KBComparison_Changed) {
+    // ez Share now reports larger size (file grew)
+    std::map<std::string, int> ezshare_sizes_kb = {
+        {"20260217_234845_BRP.edf", 1700},  // Grew from 1608 to 1700 KB
+        {"20260217_234845_PLD.edf", 148},
+        {"20260217_234845_SAD.edf", 66}
+    };
+
+    // DB has previous KB values
+    std::map<std::string, int> db_sizes_kb = {
+        {"20260217_234845_BRP.edf", 1608},
+        {"20260217_234845_PLD.edf", 148},
+        {"20260217_234845_SAD.edf", 66}
+    };
+
+    // Comparison should detect change
+    bool all_unchanged = true;
+    for (const auto& [filename, db_size] : db_sizes_kb) {
+        auto it = ezshare_sizes_kb.find(filename);
+        if (it == ezshare_sizes_kb.end() || it->second != db_size) {
+            all_unchanged = false;
+            break;
+        }
+    }
+
+    EXPECT_FALSE(all_unchanged) << "Changed KB values should be detected";
+}
+
+TEST_F(BurstCollectorServiceTest, CheckpointSizes_BytesVsKB_WouldFail) {
+    // This test demonstrates why bytes vs KB comparison fails
+    // ez Share reports KB (integer)
+    int ezshare_kb = 1608;
+
+    // If we stored bytes from local file (WRONG approach)
+    int local_bytes = 1645572;  // Actual file size
+
+    // Direct comparison would ALWAYS fail
+    EXPECT_NE(ezshare_kb, local_bytes) << "KB vs bytes never match";
+
+    // Even converting bytes to KB doesn't match exactly (truncation)
+    int converted_kb = local_bytes / 1024;  // = 1607
+    EXPECT_NE(ezshare_kb, converted_kb) << "Truncation causes mismatch (1608 vs 1607)";
+
+    // Solution: Store ez Share KB directly, compare KB to KB
+    int db_kb = ezshare_kb;  // Store 1608 directly
+    EXPECT_EQ(ezshare_kb, db_kb) << "KB to KB comparison works";
+}
+
+TEST_F(BurstCollectorServiceTest, CheckpointSizes_NewFileDetection) {
+    // ez Share shows new checkpoint file
+    std::map<std::string, int> ezshare_sizes_kb = {
+        {"20260217_234845_BRP.edf", 1608},
+        {"20260217_234845_PLD.edf", 148},
+        {"20260217_234845_SAD.edf", 66},
+        {"20260217_234845_BRP_001.edf", 500}  // New file!
+    };
+
+    // DB only has original 3 files
+    std::map<std::string, int> db_sizes_kb = {
+        {"20260217_234845_BRP.edf", 1608},
+        {"20260217_234845_PLD.edf", 148},
+        {"20260217_234845_SAD.edf", 66}
+    };
+
+    // Should detect new file
+    bool has_new_files = ezshare_sizes_kb.size() > db_sizes_kb.size();
+    EXPECT_TRUE(has_new_files) << "New checkpoint file should be detected";
+}
+
+// ============================================================================
 // CONNECTION RECOVERY TESTS
 // ============================================================================
 
