@@ -33,7 +33,7 @@ void printBanner() {
 ║      ResMed AirSense 10 via ez Share                     ║
 ║      Configurable via EZSHARE_BASE_URL                   ║
 ║                                                           ║
-║      Version: 1.1.2+20260215 - MQTT Reliability Fixes    ║
+║      Version: 1.1.3+20260219 - KB Fix + Recovery         ║
 ║      Platform: Linux                                      ║
 ║                                                           ║
 ╚═══════════════════════════════════════════════════════════╝
