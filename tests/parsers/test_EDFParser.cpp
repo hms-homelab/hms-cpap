@@ -486,6 +486,263 @@ TEST_F(EDFParserTest, EDFFile_ActualRecordsEqualsHeader_MarkedComplete) {
     EXPECT_TRUE(edf.complete) << "File should be marked complete when actual == header";
 }
 
+// ============================================================================
+// EXTRA_RECORDS AND GROWING FIELD TESTS
+// ============================================================================
+
+TEST_F(EDFParserTest, ExtraRecords_CorrectCount_WhenGrowing) {
+    // Verify extra_records field correctly counts records beyond header
+    std::string filepath = (test_dir / "extra_records_test.edf").string();
+
+    std::ofstream ofs(filepath, std::ios::binary);
+
+    char header[256] = {0};
+    memcpy(header, "0       ", 8);
+    memcpy(header + 8, "X X X X", 7);
+    memcpy(header + 88, "Startdate 06-FEB-2026", 21);
+    memcpy(header + 168, "06.02.26", 8);
+    memcpy(header + 176, "14.01.31", 8);
+    memcpy(header + 184, "512     ", 8);
+    memcpy(header + 236, "5       ", 8);  // Header says 5 records
+    memcpy(header + 244, "1       ", 8);
+    memcpy(header + 252, "1   ", 4);
+    ofs.write(header, 256);
+
+    char signal_header[256] = {0};
+    memcpy(signal_header, "Flow            ", 16);
+    memcpy(signal_header + 96, "L/min   ", 8);
+    memcpy(signal_header + 104, "-100    ", 8);
+    memcpy(signal_header + 112, "100     ", 8);
+    memcpy(signal_header + 120, "-32768  ", 8);
+    memcpy(signal_header + 128, "32767   ", 8);
+    memcpy(signal_header + 216, "25      ", 8);
+    ofs.write(signal_header, 256);
+
+    // Write 15 records (10 more than header declares)
+    for (int rec = 0; rec < 15; ++rec) {
+        for (int samp = 0; samp < 25; ++samp) {
+            int16_t value = 0;
+            ofs.write(reinterpret_cast<char*>(&value), 2);
+        }
+    }
+    ofs.close();
+
+    EDFFile edf;
+    ASSERT_TRUE(edf.open(filepath));
+
+    EXPECT_EQ(edf.num_records_header, 5) << "Header says 5 records";
+    EXPECT_EQ(edf.actual_records, 15) << "File has 15 records";
+    EXPECT_EQ(edf.extra_records, 10) << "Should have 10 extra records (15 - 5)";
+    EXPECT_TRUE(edf.growing) << "File with extra records should be marked growing";
+    EXPECT_FALSE(edf.complete) << "Growing file is not complete";
+}
+
+TEST_F(EDFParserTest, ExtraRecords_ZeroWhenComplete) {
+    // When file matches header, extra_records should be 0
+    std::string filepath = (test_dir / "no_extra_records.edf").string();
+
+    std::ofstream ofs(filepath, std::ios::binary);
+
+    char header[256] = {0};
+    memcpy(header, "0       ", 8);
+    memcpy(header + 8, "X X X X", 7);
+    memcpy(header + 88, "Startdate 06-FEB-2026", 21);
+    memcpy(header + 168, "06.02.26", 8);
+    memcpy(header + 176, "14.01.31", 8);
+    memcpy(header + 184, "512     ", 8);
+    memcpy(header + 236, "20      ", 8);  // Header says 20 records
+    memcpy(header + 244, "1       ", 8);
+    memcpy(header + 252, "1   ", 4);
+    ofs.write(header, 256);
+
+    char signal_header[256] = {0};
+    memcpy(signal_header, "Flow            ", 16);
+    memcpy(signal_header + 96, "L/min   ", 8);
+    memcpy(signal_header + 104, "-100    ", 8);
+    memcpy(signal_header + 112, "100     ", 8);
+    memcpy(signal_header + 120, "-32768  ", 8);
+    memcpy(signal_header + 128, "32767   ", 8);
+    memcpy(signal_header + 216, "25      ", 8);
+    ofs.write(signal_header, 256);
+
+    // Write exactly 20 records (matches header)
+    for (int rec = 0; rec < 20; ++rec) {
+        for (int samp = 0; samp < 25; ++samp) {
+            int16_t value = 0;
+            ofs.write(reinterpret_cast<char*>(&value), 2);
+        }
+    }
+    ofs.close();
+
+    EDFFile edf;
+    ASSERT_TRUE(edf.open(filepath));
+
+    EXPECT_EQ(edf.num_records_header, 20);
+    EXPECT_EQ(edf.actual_records, 20);
+    EXPECT_EQ(edf.extra_records, 0) << "Complete file has no extra records";
+    EXPECT_FALSE(edf.growing) << "Complete file is not growing";
+    EXPECT_TRUE(edf.complete) << "File matching header is complete";
+}
+
+TEST_F(EDFParserTest, ExtraRecords_ZeroWhenTruncated) {
+    // When file has fewer records than header, extra_records should be 0
+    std::string filepath = (test_dir / "truncated_extra.edf").string();
+
+    std::ofstream ofs(filepath, std::ios::binary);
+
+    char header[256] = {0};
+    memcpy(header, "0       ", 8);
+    memcpy(header + 8, "X X X X", 7);
+    memcpy(header + 88, "Startdate 06-FEB-2026", 21);
+    memcpy(header + 168, "06.02.26", 8);
+    memcpy(header + 176, "14.01.31", 8);
+    memcpy(header + 184, "512     ", 8);
+    memcpy(header + 236, "50      ", 8);  // Header says 50 records
+    memcpy(header + 244, "1       ", 8);
+    memcpy(header + 252, "1   ", 4);
+    ofs.write(header, 256);
+
+    char signal_header[256] = {0};
+    memcpy(signal_header, "Flow            ", 16);
+    memcpy(signal_header + 96, "L/min   ", 8);
+    memcpy(signal_header + 104, "-100    ", 8);
+    memcpy(signal_header + 112, "100     ", 8);
+    memcpy(signal_header + 120, "-32768  ", 8);
+    memcpy(signal_header + 128, "32767   ", 8);
+    memcpy(signal_header + 216, "25      ", 8);
+    ofs.write(signal_header, 256);
+
+    // Write only 10 records (fewer than header's 50)
+    for (int rec = 0; rec < 10; ++rec) {
+        for (int samp = 0; samp < 25; ++samp) {
+            int16_t value = 0;
+            ofs.write(reinterpret_cast<char*>(&value), 2);
+        }
+    }
+    ofs.close();
+
+    EDFFile edf;
+    ASSERT_TRUE(edf.open(filepath));
+
+    EXPECT_EQ(edf.num_records_header, 50);
+    EXPECT_EQ(edf.actual_records, 10) << "Only 10 records in file";
+    EXPECT_EQ(edf.extra_records, 0) << "Truncated file has no extra records";
+    EXPECT_FALSE(edf.growing) << "Truncated file is not growing";
+    EXPECT_FALSE(edf.complete) << "Truncated file is not complete";
+}
+
+TEST_F(EDFParserTest, GrowingFlag_SessionStopDetection) {
+    // Verify that growing=false triggers session stop detection logic
+    // while growing=true keeps session as IN_PROGRESS
+
+    // First test: growing file should be IN_PROGRESS
+    std::string session_dir1 = (test_dir / "growing_session_test").string();
+    std::filesystem::create_directories(session_dir1);
+
+    std::string filepath1 = session_dir1 + "/20260206_140131_BRP.edf";
+    {
+        std::ofstream ofs(filepath1, std::ios::binary);
+        char header[256] = {0};
+        memcpy(header, "0       ", 8);
+        memcpy(header + 8, "X X X X", 7);
+        memcpy(header + 88, "Startdate 06-FEB-2026 PSG-CPAP-Device Sn 20123456789", 50);
+        memcpy(header + 168, "06.02.26", 8);
+        memcpy(header + 176, "14.01.31", 8);
+        memcpy(header + 184, "512     ", 8);
+        memcpy(header + 192, "EDF+C   ", 8);
+        memcpy(header + 236, "1       ", 8);  // Header says 1
+        memcpy(header + 244, "1       ", 8);
+        memcpy(header + 252, "1   ", 4);
+        ofs.write(header, 256);
+
+        char signal_header[256] = {0};
+        memcpy(signal_header, "Flow            ", 16);
+        memcpy(signal_header + 96, "L/min   ", 8);
+        memcpy(signal_header + 104, "-100    ", 8);
+        memcpy(signal_header + 112, "100     ", 8);
+        memcpy(signal_header + 120, "-32768  ", 8);
+        memcpy(signal_header + 128, "32767   ", 8);
+        memcpy(signal_header + 216, "25      ", 8);
+        ofs.write(signal_header, 256);
+
+        // Write 60 records (growing)
+        for (int rec = 0; rec < 60; ++rec) {
+            for (int samp = 0; samp < 25; ++samp) {
+                int16_t value = static_cast<int16_t>(sin(samp * 0.5) * 10000);
+                ofs.write(reinterpret_cast<char*>(&value), 2);
+            }
+        }
+    }
+
+    createMinimalEDFHeader(session_dir1 + "/20260206_140131_CSL.edf", "20260206_140131", "CSL");
+
+    auto session1 = EDFParser::parseSession(session_dir1, "TEST-DEVICE", "Test Device");
+    ASSERT_NE(session1, nullptr);
+    EXPECT_EQ(session1->status, CPAPSession::Status::IN_PROGRESS)
+        << "Growing file should result in IN_PROGRESS session";
+
+    // Second test: complete file with old data should be COMPLETED
+    std::string session_dir2 = (test_dir / "complete_session_test").string();
+    std::filesystem::create_directories(session_dir2);
+
+    // Create session from 2 hours ago
+    auto two_hours_ago = system_clock::now() - hours(2);
+    auto time_t_val = system_clock::to_time_t(two_hours_ago);
+    std::tm* tm = std::localtime(&time_t_val);
+    char timestamp_str[16];
+    std::strftime(timestamp_str, sizeof(timestamp_str), "%Y%m%d_%H%M%S", tm);
+
+    std::string filepath2 = session_dir2 + "/" + std::string(timestamp_str) + "_BRP.edf";
+    {
+        std::ofstream ofs(filepath2, std::ios::binary);
+        char header[256] = {0};
+        memcpy(header, "0       ", 8);
+        memcpy(header + 8, "X X X X", 7);
+        memcpy(header + 88, "Startdate 06-FEB-2026 PSG-CPAP-Device Sn 20123456789", 50);
+
+        // Parse date/time for header
+        std::string date = std::string(timestamp_str).substr(6, 2) + "." +
+                          std::string(timestamp_str).substr(4, 2) + "." +
+                          std::string(timestamp_str).substr(2, 2);
+        std::string time = std::string(timestamp_str).substr(9, 2) + "." +
+                          std::string(timestamp_str).substr(11, 2) + "." +
+                          std::string(timestamp_str).substr(13, 2);
+        memcpy(header + 168, date.c_str(), 8);
+        memcpy(header + 176, time.c_str(), 8);
+        memcpy(header + 184, "512     ", 8);
+        memcpy(header + 192, "EDF+C   ", 8);
+        memcpy(header + 236, "60      ", 8);  // Header says 60 (matches actual)
+        memcpy(header + 244, "1       ", 8);
+        memcpy(header + 252, "1   ", 4);
+        ofs.write(header, 256);
+
+        char signal_header[256] = {0};
+        memcpy(signal_header, "Flow            ", 16);
+        memcpy(signal_header + 96, "L/min   ", 8);
+        memcpy(signal_header + 104, "-100    ", 8);
+        memcpy(signal_header + 112, "100     ", 8);
+        memcpy(signal_header + 120, "-32768  ", 8);
+        memcpy(signal_header + 128, "32767   ", 8);
+        memcpy(signal_header + 216, "25      ", 8);
+        ofs.write(signal_header, 256);
+
+        // Write exactly 60 records (complete file)
+        for (int rec = 0; rec < 60; ++rec) {
+            for (int samp = 0; samp < 25; ++samp) {
+                int16_t value = static_cast<int16_t>(sin(samp * 0.5) * 10000);
+                ofs.write(reinterpret_cast<char*>(&value), 2);
+            }
+        }
+    }
+
+    createMinimalEDFHeader(session_dir2 + "/" + std::string(timestamp_str) + "_CSL.edf", timestamp_str, "CSL");
+
+    auto session2 = EDFParser::parseSession(session_dir2, "TEST-DEVICE", "Test Device");
+    ASSERT_NE(session2, nullptr);
+    EXPECT_EQ(session2->status, CPAPSession::Status::COMPLETED)
+        << "Complete file with old data should be COMPLETED";
+}
+
 TEST_F(EDFParserTest, EDFFile_HeaderMinusOne_MarkedIncomplete) {
     // EDF+ with num_records_header = -1 means "unknown length" (still recording)
 

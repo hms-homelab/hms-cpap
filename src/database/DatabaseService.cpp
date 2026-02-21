@@ -227,11 +227,17 @@ void DatabaseService::insertSessionMetrics(pqxx::work& work, int session_id,
                                             const SessionMetrics& metrics) {
     std::string query = R"(
         INSERT INTO cpap_session_metrics
-        (session_id, total_events, ahi, avg_spo2, min_spo2, avg_heart_rate, max_heart_rate, min_heart_rate)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        (session_id, total_events, ahi, obstructive_apneas, central_apneas, hypopneas, reras, clear_airway_apneas,
+         avg_spo2, min_spo2, avg_heart_rate, max_heart_rate, min_heart_rate)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         ON CONFLICT (session_id) DO UPDATE
         SET total_events = EXCLUDED.total_events,
             ahi = EXCLUDED.ahi,
+            obstructive_apneas = EXCLUDED.obstructive_apneas,
+            central_apneas = EXCLUDED.central_apneas,
+            hypopneas = EXCLUDED.hypopneas,
+            reras = EXCLUDED.reras,
+            clear_airway_apneas = EXCLUDED.clear_airway_apneas,
             avg_spo2 = EXCLUDED.avg_spo2,
             min_spo2 = EXCLUDED.min_spo2,
             avg_heart_rate = EXCLUDED.avg_heart_rate,
@@ -243,6 +249,11 @@ void DatabaseService::insertSessionMetrics(pqxx::work& work, int session_id,
         session_id,
         metrics.total_events,
         metrics.ahi,
+        metrics.obstructive_apneas,
+        metrics.central_apneas,
+        metrics.hypopneas,
+        metrics.reras,
+        metrics.clear_airway_apneas,
         metrics.avg_spo2.value_or(0),
         metrics.min_spo2.value_or(0),
         metrics.avg_heart_rate.value_or(0),
