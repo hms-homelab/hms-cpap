@@ -334,8 +334,8 @@ HMS-CPAP groups these by timestamp proximity (±2 minutes) to create complete se
 
 ### Build & Test
 
+**Native x86 Build:**
 ```bash
-# Build
 mkdir build && cd build
 cmake -DCMAKE_BUILD_TYPE=Release ..
 make -j$(nproc)
@@ -346,6 +346,26 @@ make test
 # Run with verbose output
 ./hms_cpap
 ```
+
+**ARM Cross-Compilation (for Pi Zero 2 W):**
+```bash
+# One-time setup: Install ARM toolchain
+sudo apt-get install -y g++-arm-linux-gnueabihf sshpass
+
+# Sync Pi libraries to sysroot (one-time, ~220MB)
+mkdir -p sysroot/usr sysroot/lib/arm-linux-gnueabihf
+rsync -avz aamat@192.168.2.73:/usr/include ./sysroot/usr/
+rsync -avz aamat@192.168.2.73:/usr/lib ./sysroot/usr/
+rsync -avz aamat@192.168.2.73:/lib/arm-linux-gnueabihf ./sysroot/lib/
+
+# Build for ARM (40 seconds vs 5 minutes on Pi!)
+./build_arm.sh
+
+# Deploy to Pi and restart service
+./deploy_to_pi.sh
+```
+
+**📖 Full documentation:** See [docs/CROSS_COMPILATION.md](docs/CROSS_COMPILATION.md) for detailed setup, troubleshooting, and architecture details.
 
 ### Project Structure
 

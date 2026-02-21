@@ -1,7 +1,11 @@
 # Build directories
 build/
+build-arm/
 cmake-build-*/
 *.dir/
+
+# Cross-compilation sysroot (synced from Pi)
+sysroot/
 
 # Compiled objects
 *.o
