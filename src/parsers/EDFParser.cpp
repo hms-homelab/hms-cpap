@@ -401,6 +401,8 @@ bool EDFParser::parseBRPFile(const std::string& filepath, CPAPSession& session) 
                           std::chrono::seconds(session.duration_seconds.value());
     session.data_records = edf.actual_records;
     session.file_complete = edf.complete;
+    session.extra_records = edf.extra_records;
+    session.growing = edf.growing;
 
     // Find Flow and Pressure signals
     int flow_idx = edf.findSignal("Flow");

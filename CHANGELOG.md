@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.3] - 2026-02-21
+
+### Fixed
+- **Event Metrics Publishing**: Fixed obstructive apneas, central apneas, and hypopneas not being published to Home Assistant
+- **Database Schema**: Added missing event count columns to `cpap_session_metrics` table (obstructive_apneas, central_apneas, hypopneas, reras, clear_airway_apneas)
+- **Data Integrity**: Event counts now correctly stored and retrieved from PostgreSQL database
+
+### Added
+- Unit tests for event counting in calculateMetrics() function
+- Database migration script for backfilling event counts from cpap_events table
+- Tests for mixed event types, high AHI scenarios, and zero-event sessions
+
+### Changed
+- Updated DatabaseService.insertSessionMetrics() to include all event type columns
+- Improved SessionMetrics structure documentation
+
 ## [1.1.2] - 2026-02-15
 
 ### Fixed

@@ -217,6 +217,10 @@ struct CPAPSession {
     int data_records = 0;
     bool file_complete = false;  // false if EDF files still being written
 
+    // EDF file growth tracking (ResMed writes header=1, then appends data)
+    int extra_records = 0;       // Records beyond header declaration (actual - header, 0 if complete)
+    bool growing = false;        // true if actual_records > num_records_header (file still being written)
+
     // Session status tracking (for live updates)
     enum class Status {
         IN_PROGRESS,  // Has breathing data, no EVE file yet
