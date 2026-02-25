@@ -34,7 +34,7 @@ void DatabaseService::disconnect() {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
 
     if (conn_ && conn_->is_open()) {
-        conn_->close();
+        conn_.reset();
         std::cout << "🔌 DB: Disconnected" << std::endl;
     }
 }

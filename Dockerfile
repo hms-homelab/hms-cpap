@@ -10,11 +10,32 @@ FROM debian:bookworm-slim AS builder
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     cmake \
+    git \
     ca-certificates \
     libcurl4-openssl-dev \
     libpq-dev \
+    libpqxx-dev \
     libssl-dev \
+    libjsoncpp-dev \
     && rm -rf /var/lib/apt/lists/*
+
+# Build Paho MQTT C client from source (not in Debian repos)
+WORKDIR /deps
+RUN git clone --depth 1 --branch v1.3.13 https://github.com/eclipse/paho.mqtt.c.git && \
+    cd paho.mqtt.c && \
+    cmake -B build -DPAHO_WITH_SSL=ON -DPAHO_BUILD_SHARED=ON -DPAHO_BUILD_STATIC=OFF && \
+    cmake --build build -j$(nproc) && \
+    cmake --install build
+
+# Build Paho MQTT C++ client from source
+RUN git clone --depth 1 --branch v1.4.1 https://github.com/eclipse/paho.mqtt.cpp.git && \
+    cd paho.mqtt.cpp && \
+    cmake -B build -DPAHO_WITH_SSL=ON -DPAHO_BUILD_SHARED=ON -DPAHO_BUILD_STATIC=OFF && \
+    cmake --build build -j$(nproc) && \
+    cmake --install build
+
+# Update linker cache after installing Paho libs
+RUN ldconfig
 
 # Copy source code
 WORKDIR /build
@@ -22,9 +43,9 @@ COPY CMakeLists.txt VERSION ./
 COPY src/ ./src/
 COPY include/ ./include/
 
-# Build HMS-CPAP
+# Build HMS-CPAP (disable tests for production image)
 RUN mkdir build && cd build && \
-    cmake .. && \
+    cmake -DBUILD_TESTS=OFF .. && \
     make -j$(nproc) && \
     strip hms_cpap
 
@@ -36,10 +57,17 @@ FROM debian:bookworm-slim
 # Install runtime dependencies only
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
+    curl \
     libcurl4 \
     libpq5 \
+    libpqxx-6.4 \
     libssl3 \
+    libjsoncpp25 \
     && rm -rf /var/lib/apt/lists/*
+
+# Copy Paho MQTT shared libraries from builder
+COPY --from=builder /usr/local/lib/libpaho-mqtt* /usr/local/lib/
+RUN ldconfig
 
 # Create non-root user for security
 RUN useradd -r -u 1000 -m -s /bin/bash cpap

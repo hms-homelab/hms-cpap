@@ -1,0 +1,70 @@
+# Build directories
+build/
+build-arm/
+cmake-build-*/
+
+# ARM cross-compilation sysroot (220 MB, not needed in container)
+sysroot/
+
+# Git
+.git/
+.gitignore
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment and secrets
+.env
+*.pem
+*.key
+*.crt
+secrets/
+
+# Data and logs
+cpap_data/
+cpap_archive/
+*.edf
+*.EDF
+*.log
+logs/
+
+# Tests (not needed in production image)
+tests/
+Testing/
+coverage/
+
+# Documentation
+docs/
+*.md
+LICENSE
+CONTRIBUTING.md
+
+# CI/CD
+.github/
+
+# ARM-specific build files
+CMakeLists.txt.arm
+build_arm.sh
+deploy_to_pi.sh
+
+# Docker
+docker-compose.yml
+mosquitto.conf
+Dockerfile
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+venv/
+
+# Schema (applied externally)
+schema.sql
+
+# Misc
+*.backup
+*.bak
+*~
+.DS_Store

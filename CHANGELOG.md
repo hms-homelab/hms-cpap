@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.4] - 2026-02-25
+
+### Fixed
+- **Docker build**: Added missing build dependencies (libjsoncpp-dev, libpqxx-dev, Paho MQTT C/C++ from source)
+- **libpqxx 6.x compatibility**: Replaced `conn_->close()` with `conn_.reset()` in DatabaseService (close() is protected in libpqxx 6.x)
+
+### Added
+- `.dockerignore` to exclude sysroot (220 MB), build dirs, and unnecessary files from Docker context
+- `curl` in runtime image for health check endpoint
+
+### Changed
+- Restored native CMakeLists.txt (was accidentally overwritten with ARM cross-compilation config)
+- Docker image reduced to 99 MB with proper dependency management
+
 ## [1.1.3] - 2026-02-21
 
 ### Fixed
@@ -87,13 +101,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Version History Summary
 
+- **1.1.4** - Docker build fixes, libpqxx 6.x compatibility
+- **1.1.3** - Event metrics publishing fixes
 - **1.1.2** - MQTT reconnection fixes, Home Assistant status subscription
 - **1.1.1** - Pi Zero 2 W optimization, comprehensive testing
 - **1.1.0** - Session discovery, archival, 34 metrics
 - **1.0.0** - Initial release with core functionality
 
-[Unreleased]: https://github.com/aamat09/hms-cpap/compare/v1.1.2...HEAD
-[1.1.2]: https://github.com/aamat09/hms-cpap/compare/v1.1.1...v1.1.2
+[Unreleased]: https://github.com/hms-homelab/hms-cpap/compare/v1.1.4...HEAD
+[1.1.4]: https://github.com/hms-homelab/hms-cpap/compare/v1.1.3...v1.1.4
+[1.1.3]: https://github.com/hms-homelab/hms-cpap/compare/v1.1.2...v1.1.3
+[1.1.2]: https://github.com/hms-homelab/hms-cpap/compare/v1.1.1...v1.1.2
 [1.1.1]: https://github.com/aamat09/hms-cpap/compare/v1.1.0...v1.1.1
 [1.1.0]: https://github.com/aamat09/hms-cpap/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/aamat09/hms-cpap/releases/tag/v1.0.0

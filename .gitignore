@@ -54,8 +54,7 @@ Testing/
 tests/output/
 coverage/
 
-# Docker
-.dockerignore
+# Docker (keep .dockerignore tracked - needed for CI builds)
 
 # Backup files
 *.backup
