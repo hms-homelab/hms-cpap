@@ -1,41 +1,24 @@
 # HMS-CPAP - Multi-stage Docker build
-# Produces ~150MB final image with C++ runtime
+# Produces ~100MB final image with C++ runtime
 
 # =============================================================================
 # Stage 1: Builder
 # =============================================================================
 FROM debian:bookworm-slim AS builder
 
-# Install build dependencies
+# Install build dependencies (all from Debian repos, multi-arch safe)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     cmake \
-    git \
     ca-certificates \
     libcurl4-openssl-dev \
     libpq-dev \
     libpqxx-dev \
     libssl-dev \
     libjsoncpp-dev \
+    libpaho-mqtt-dev \
+    libpaho-mqttpp-dev \
     && rm -rf /var/lib/apt/lists/*
-
-# Build Paho MQTT C client from source (not in Debian repos)
-WORKDIR /deps
-RUN git clone --depth 1 --branch v1.3.13 https://github.com/eclipse/paho.mqtt.c.git && \
-    cd paho.mqtt.c && \
-    cmake -B build -DPAHO_WITH_SSL=ON -DPAHO_BUILD_SHARED=ON -DPAHO_BUILD_STATIC=OFF && \
-    cmake --build build -j$(nproc) && \
-    cmake --install build
-
-# Build Paho MQTT C++ client from source
-RUN git clone --depth 1 --branch v1.4.1 https://github.com/eclipse/paho.mqtt.cpp.git && \
-    cd paho.mqtt.cpp && \
-    cmake -B build -DPAHO_WITH_SSL=ON -DPAHO_BUILD_SHARED=ON -DPAHO_BUILD_STATIC=OFF && \
-    cmake --build build -j$(nproc) && \
-    cmake --install build
-
-# Update linker cache after installing Paho libs
-RUN ldconfig
 
 # Copy source code
 WORKDIR /build
@@ -63,11 +46,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpqxx-6.4 \
     libssl3 \
     libjsoncpp25 \
+    libpaho-mqtt1.3 \
+    libpaho-mqttpp3-1 \
     && rm -rf /var/lib/apt/lists/*
-
-# Copy Paho MQTT shared libraries from builder
-COPY --from=builder /usr/local/lib/libpaho-mqtt* /usr/local/lib/
-RUN ldconfig
 
 # Create non-root user for security
 RUN useradd -r -u 1000 -m -s /bin/bash cpap
