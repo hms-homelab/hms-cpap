@@ -3,12 +3,14 @@ name: Docker Build and Publish
 on:
   push:
     branches:
+      - master
       - main
       - develop
     tags:
       - 'v*'
   pull_request:
     branches:
+      - master
       - main
 
 env:
@@ -50,8 +52,8 @@ jobs:
             type=ref,event=pr
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=sha,prefix={{branch}}-
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=sha-
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main' }}
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
