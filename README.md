@@ -3,6 +3,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Docker](https://img.shields.io/docker/v/aamat09/hms-cpap?label=docker)](https://ghcr.io/aamat09/hms-cpap)
 [![Build Status](https://github.com/aamat09/hms-cpap/workflows/Build/badge.svg)](https://github.com/aamat09/hms-cpap/actions)
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-%23FFDD00.svg?logo=buy-me-a-coffee)](https://www.buymeacoffee.com/aamat09)
 
 **Lightweight C++ microservice for ResMed CPAP data collection via ez Share WiFi SD card with Home Assistant integration.**
 
@@ -527,3 +528,10 @@ This project is licensed under the **MIT License** - see [LICENSE](LICENSE) file
 **Made with ❤️ for better sleep and open health data**
 
 *If this project helps you sleep better, consider starring ⭐ the repository!*
+---
+
+## ☕ Support
+
+If this project is useful to you, consider buying me a coffee!
+
+[![Buy Me A Coffee](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://www.buymeacoffee.com/aamat09)
