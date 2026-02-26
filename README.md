@@ -1,7 +1,7 @@
 # HMS-CPAP 🫁
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Docker](https://img.shields.io/docker/v/aamat09/hms-cpap?label=docker)](https://ghcr.io/aamat09/hms-cpap)
+[![GHCR](https://img.shields.io/badge/ghcr.io-hms--cpap-blue?logo=docker)](https://github.com/hms-homelab/hms-cpap/pkgs/container/hms-cpap)
 [![Build Status](https://github.com/aamat09/hms-cpap/workflows/Build/badge.svg)](https://github.com/aamat09/hms-cpap/actions)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-%23FFDD00.svg?logo=buy-me-a-coffee)](https://www.buymeacoffee.com/aamat09)
 
