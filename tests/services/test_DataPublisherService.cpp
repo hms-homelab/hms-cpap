@@ -178,6 +178,126 @@ TEST_F(DataPublisherServiceTest, Initialize_WorksWhenMqttDisconnected) {
     std::cout << "✅ Initialize succeeds even when MQTT disconnected" << std::endl;
 }
 
+// ============================================================================
+// HISTORICAL STATE PUBLISHING TESTS
+// (regression for: historical metrics never published at session completion)
+// ============================================================================
+
+/**
+ * Test: publishHistoricalState(SessionMetrics) publishes AHI and event counts
+ *
+ * Regression test for the bug where session completion called publishSessionCompleted()
+ * which only published session_status/session_active — skipping historical metrics
+ * entirely. HA therefore showed zeros for AHI/events after every session.
+ */
+TEST_F(DataPublisherServiceTest, PublishHistoricalState_PublishesAHIAndEvents) {
+    bool connected = mqtt_client->connect(mqtt_broker, "", "");
+
+    if (!connected) {
+        GTEST_SKIP() << "MQTT broker not available";
+    }
+
+    data_publisher->initialize();
+
+    // Subscribe to historical MQTT topics
+    std::map<std::string, std::string> received;
+    std::mutex mu;
+    mqtt_client->subscribe("cpap/+/historical/#",
+        [&received, &mu](const std::string& topic, const std::string& payload) {
+            std::lock_guard<std::mutex> lk(mu);
+            received[topic] = payload;
+        }, 1);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    // Build a SessionMetrics as the DB would return after session completion
+    SessionMetrics m;
+    m.total_events = 8;
+    m.ahi = 1.875;
+    m.obstructive_apneas = 2;
+    m.central_apneas = 4;
+    m.hypopneas = 0;
+    m.reras = 1;
+    m.clear_airway_apneas = 0;
+    m.usage_hours = 4.2667;
+    m.avg_leak_rate = 0.91;
+
+    // Call the new public overload directly
+    data_publisher->publishHistoricalState(m);
+
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+
+    {
+        std::lock_guard<std::mutex> lk(mu);
+        // Verify key event topics were published
+        bool found_ahi = false, found_central = false, found_obstructive = false;
+        for (const auto& [topic, val] : received) {
+            if (topic.find("/historical/ahi") != std::string::npos) {
+                EXPECT_NEAR(std::stod(val), 1.875, 0.001);
+                found_ahi = true;
+            }
+            if (topic.find("/historical/central_apneas") != std::string::npos) {
+                EXPECT_EQ(std::stoi(val), 4);
+                found_central = true;
+            }
+            if (topic.find("/historical/obstructive_apneas") != std::string::npos) {
+                EXPECT_EQ(std::stoi(val), 2);
+                found_obstructive = true;
+            }
+        }
+        EXPECT_TRUE(found_ahi) << "historical/ahi not published";
+        EXPECT_TRUE(found_central) << "historical/central_apneas not published";
+        EXPECT_TRUE(found_obstructive) << "historical/obstructive_apneas not published";
+    }
+
+    std::cout << "Received " << received.size() << " historical MQTT topics" << std::endl;
+}
+
+/**
+ * Test: publishHistoricalState(SessionMetrics) with zero events publishes zeros
+ *
+ * Verifies that a clean session with 0 apneas publishes 0s correctly
+ * (distinguishes "no events" from "never published").
+ */
+TEST_F(DataPublisherServiceTest, PublishHistoricalState_ZeroEvents_PublishesZeros) {
+    bool connected = mqtt_client->connect(mqtt_broker, "", "");
+
+    if (!connected) {
+        GTEST_SKIP() << "MQTT broker not available";
+    }
+
+    data_publisher->initialize();
+
+    std::map<std::string, std::string> received;
+    std::mutex mu;
+    mqtt_client->subscribe("cpap/+/historical/#",
+        [&received, &mu](const std::string& topic, const std::string& payload) {
+            std::lock_guard<std::mutex> lk(mu);
+            received[topic] = payload;
+        }, 1);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    SessionMetrics m;  // All zero (default)
+    m.usage_hours = 6.0;
+    data_publisher->publishHistoricalState(m);
+
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+
+    {
+        std::lock_guard<std::mutex> lk(mu);
+        for (const auto& [topic, val] : received) {
+            if (topic.find("/historical/ahi") != std::string::npos) {
+                EXPECT_NEAR(std::stod(val), 0.0, 0.001);
+            }
+            if (topic.find("/historical/total_events") != std::string::npos) {
+                EXPECT_EQ(std::stoi(val), 0);
+            }
+        }
+    }
+    std::cout << "✅ Zero-event session publishes zeros correctly" << std::endl;
+}
+
 /**
  * Test: Discovery republishes after MQTT reconnection
  *

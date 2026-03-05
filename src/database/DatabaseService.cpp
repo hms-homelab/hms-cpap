@@ -741,4 +741,109 @@ bool DatabaseService::markSessionCompleted(
     }
 }
 
+std::optional<SessionMetrics> DatabaseService::getSessionMetrics(
+    const std::string& device_id,
+    const std::chrono::system_clock::time_point& session_start) {
+
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+
+    if (!ensureConnection()) {
+        std::cerr << "DB: getSessionMetrics failed - no connection" << std::endl;
+        return std::nullopt;
+    }
+
+    try {
+        pqxx::work txn(*conn_);
+
+        auto start_time_t = std::chrono::system_clock::to_time_t(session_start);
+        std::tm* start_tm = std::localtime(&start_time_t);
+        std::ostringstream start_oss;
+        start_oss << std::put_time(start_tm, "%Y-%m-%d %H:%M:%S");
+
+        std::string query = R"(
+            SELECT sm.total_events, sm.ahi, sm.obstructive_apneas, sm.central_apneas,
+                   sm.hypopneas, sm.reras, sm.clear_airway_apneas,
+                   sm.avg_event_duration, sm.max_event_duration, sm.time_in_apnea_percent,
+                   sm.avg_spo2, sm.min_spo2, sm.avg_heart_rate, sm.max_heart_rate, sm.min_heart_rate,
+                   round(s.duration_seconds / 3600.0, 4) AS usage_hours,
+                   round(s.duration_seconds / 3600.0 * 100.0 / 8.0, 4) AS usage_percent,
+                   c.avg_leak, c.max_leak, c.avg_rr, c.avg_tv, c.avg_mv,
+                   c.avg_it, c.avg_et, c.avg_ie, c.avg_fl, c.fp95, c.pp95
+            FROM cpap_session_metrics sm
+            JOIN cpap_sessions s ON s.id = sm.session_id
+            LEFT JOIN (
+                SELECT session_id,
+                       AVG(leak_rate) AS avg_leak, MAX(leak_rate) AS max_leak,
+                       AVG(respiratory_rate) AS avg_rr, AVG(tidal_volume) AS avg_tv,
+                       AVG(minute_ventilation) AS avg_mv, AVG(inspiratory_time) AS avg_it,
+                       AVG(expiratory_time) AS avg_et, AVG(ie_ratio) AS avg_ie,
+                       AVG(flow_limitation) AS avg_fl, AVG(flow_p95) AS fp95,
+                       AVG(pressure_p95) AS pp95
+                FROM cpap_calculated_metrics GROUP BY session_id
+            ) c ON c.session_id = sm.session_id
+            WHERE s.device_id = $1
+              AND s.session_start BETWEEN $2::timestamp - INTERVAL '5 seconds'
+                                      AND $2::timestamp + INTERVAL '5 seconds'
+        )";
+
+        auto result = txn.exec_params(query, device_id, start_oss.str());
+        txn.commit();
+
+        if (result.empty()) return std::nullopt;
+
+        const auto& row = result[0];
+        SessionMetrics m;
+        m.total_events        = row["total_events"].as<int>(0);
+        m.ahi                 = row["ahi"].as<double>(0.0);
+        m.obstructive_apneas  = row["obstructive_apneas"].as<int>(0);
+        m.central_apneas      = row["central_apneas"].as<int>(0);
+        m.hypopneas           = row["hypopneas"].as<int>(0);
+        m.reras               = row["reras"].as<int>(0);
+        m.clear_airway_apneas = row["clear_airway_apneas"].as<int>(0);
+
+        if (!row["avg_event_duration"].is_null())
+            m.avg_event_duration = row["avg_event_duration"].as<double>();
+        if (!row["max_event_duration"].is_null())
+            m.max_event_duration = row["max_event_duration"].as<double>();
+        if (!row["time_in_apnea_percent"].is_null())
+            m.time_in_apnea_percent = row["time_in_apnea_percent"].as<double>();
+        if (!row["usage_hours"].is_null())
+            m.usage_hours = row["usage_hours"].as<double>();
+        if (!row["usage_percent"].is_null())
+            m.usage_percent = row["usage_percent"].as<double>();
+        if (!row["avg_leak"].is_null())
+            m.avg_leak_rate = row["avg_leak"].as<double>();
+        if (!row["max_leak"].is_null())
+            m.max_leak_rate = row["max_leak"].as<double>();
+        if (!row["avg_rr"].is_null())
+            m.avg_respiratory_rate = row["avg_rr"].as<double>();
+        if (!row["avg_tv"].is_null())
+            m.avg_tidal_volume = row["avg_tv"].as<double>();
+        if (!row["avg_mv"].is_null())
+            m.avg_minute_ventilation = row["avg_mv"].as<double>();
+        if (!row["avg_it"].is_null())
+            m.avg_inspiratory_time = row["avg_it"].as<double>();
+        if (!row["avg_et"].is_null())
+            m.avg_expiratory_time = row["avg_et"].as<double>();
+        if (!row["avg_ie"].is_null())
+            m.avg_ie_ratio = row["avg_ie"].as<double>();
+        if (!row["avg_fl"].is_null())
+            m.avg_flow_limitation = row["avg_fl"].as<double>();
+        if (!row["fp95"].is_null())
+            m.flow_p95 = row["fp95"].as<double>();
+        if (!row["pp95"].is_null())
+            m.pressure_p95 = row["pp95"].as<double>();
+        if (!row["avg_spo2"].is_null() && row["avg_spo2"].as<double>(0.0) > 0)
+            m.avg_spo2 = row["avg_spo2"].as<double>();
+        if (!row["avg_heart_rate"].is_null() && row["avg_heart_rate"].as<int>(0) > 0)
+            m.avg_heart_rate = row["avg_heart_rate"].as<int>();
+
+        return m;
+
+    } catch (const std::exception& e) {
+        std::cerr << "DB: getSessionMetrics error: " << e.what() << std::endl;
+        return std::nullopt;
+    }
+}
+
 } // namespace hms_cpap

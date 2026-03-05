@@ -75,6 +75,14 @@ public:
      */
     bool publishSessionCompleted();
 
+    /**
+     * Publish historical MQTT sensors from pre-loaded metrics
+     *
+     * Called after session completion to republish event/AHI data
+     * that was not yet published when the session was still IN_PROGRESS.
+     */
+    void publishHistoricalState(const SessionMetrics& m);
+
 private:
     std::shared_ptr<MqttClient> mqtt_client_;
     std::shared_ptr<DatabaseService> db_service_;

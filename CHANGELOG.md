@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.5] - 2026-03-04
+
+### Fixed
+- **Historical MQTT never published on session completion**: When BRP files stopped changing
+  (session complete), code called `publishSessionCompleted()` which only published
+  `session_status=completed` and `session_active=OFF` — AHI, event counts, and all other
+  historical metrics were never sent to Home Assistant. HA showed stale zeros for every session.
+- Fix: on session completion, load `SessionMetrics` from DB via new `getSessionMetrics()` and
+  call `publishHistoricalState(const SessionMetrics&)` before the status publish.
+
+### Added
+- `DatabaseService::getSessionMetrics()` — loads aggregated session metrics from
+  `cpap_session_metrics` + `cpap_calculated_metrics` for MQTT republishing
+- `DataPublisherService::publishHistoricalState(const SessionMetrics&)` — public overload
+  that publishes historical MQTT topics directly from a metrics struct (no full CPAPSession needed)
+- Unit tests: `SessionMetrics_DefaultValues_AreZero`, `SessionMetrics_PopulatedFromSession`,
+  `PublishHistoricalState_PublishesAHIAndEvents`, `PublishHistoricalState_ZeroEvents_PublishesZeros`
+
 ## [1.1.4] - 2026-02-25
 
 ### Fixed

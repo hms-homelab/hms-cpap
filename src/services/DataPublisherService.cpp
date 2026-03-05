@@ -382,7 +382,10 @@ void DataPublisherService::publishRealtimeState(const CPAPSession& session) {
 }
 
 void DataPublisherService::publishHistoricalState(const CPAPSession& session) {
-    const auto& m = session.metrics.value();
+    publishHistoricalState(session.metrics.value());
+}
+
+void DataPublisherService::publishHistoricalState(const SessionMetrics& m) {
 
     // USAGE
     if (m.usage_hours.has_value()) {

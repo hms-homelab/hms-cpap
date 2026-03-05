@@ -467,8 +467,12 @@ bool BurstCollectorService::executeBurstCycle() {
                 std::cout << "   ✅ Marked as COMPLETED in database" << std::endl;
             }
 
-            // Always publish session completed status to MQTT (ensure consistency)
+            // Publish historical metrics + completed status to MQTT
             if (data_publisher_) {
+                auto metrics = db_service_->getSessionMetrics(device_id_, session.session_start);
+                if (metrics.has_value()) {
+                    data_publisher_->publishHistoricalState(metrics.value());
+                }
                 data_publisher_->publishSessionCompleted();
             }
 

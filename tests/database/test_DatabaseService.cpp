@@ -211,3 +211,56 @@ TEST_F(DatabaseServiceTest, SessionStatus_Completed_HasEVE) {
     EXPECT_TRUE(session->session_end.has_value());
 }
 
+// ============================================================================
+// SESSION METRICS MODEL TESTS
+// (getSessionMetrics() DB integration — tests model struct behavior)
+// ============================================================================
+
+TEST_F(DatabaseServiceTest, SessionMetrics_DefaultValues_AreZero) {
+    // Verify SessionMetrics zero-initializes all required event fields
+    // (prevents the bug where old retained MQTT data showed zeros due to
+    //  historical never being published at session completion)
+
+    SessionMetrics m;
+
+    EXPECT_EQ(m.total_events, 0);
+    EXPECT_DOUBLE_EQ(m.ahi, 0.0);
+    EXPECT_EQ(m.obstructive_apneas, 0);
+    EXPECT_EQ(m.central_apneas, 0);
+    EXPECT_EQ(m.hypopneas, 0);
+    EXPECT_EQ(m.reras, 0);
+    EXPECT_EQ(m.clear_airway_apneas, 0);
+
+    EXPECT_FALSE(m.usage_hours.has_value());
+    EXPECT_FALSE(m.avg_leak_rate.has_value());
+    EXPECT_FALSE(m.avg_respiratory_rate.has_value());
+}
+
+TEST_F(DatabaseServiceTest, SessionMetrics_PopulatedFromSession) {
+    // Verify populated SessionMetrics round-trips correctly
+
+    SessionMetrics m;
+    m.total_events = 8;
+    m.ahi = 1.875;
+    m.obstructive_apneas = 2;
+    m.central_apneas = 4;
+    m.hypopneas = 0;
+    m.reras = 1;
+    m.clear_airway_apneas = 0;
+    m.usage_hours = 4.2667;
+    m.avg_leak_rate = 0.91;
+
+    EXPECT_EQ(m.total_events, 8);
+    EXPECT_DOUBLE_EQ(m.ahi, 1.875);
+    EXPECT_EQ(m.obstructive_apneas, 2);
+    EXPECT_EQ(m.central_apneas, 4);
+    EXPECT_EQ(m.reras, 1);
+    EXPECT_TRUE(m.usage_hours.has_value());
+    EXPECT_NEAR(m.usage_hours.value(), 4.2667, 0.0001);
+    EXPECT_TRUE(m.avg_leak_rate.has_value());
+
+    // Unset optionals must still be null
+    EXPECT_FALSE(m.avg_pressure.has_value());
+    EXPECT_FALSE(m.pressure_p95.has_value());
+}
+

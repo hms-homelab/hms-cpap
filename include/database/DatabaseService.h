@@ -144,6 +144,12 @@ public:
     bool markSessionCompleted(const std::string& device_id,
                               const std::chrono::system_clock::time_point& session_start);
 
+    /**
+     * Load session metrics from DB for MQTT republishing on session completion
+     */
+    std::optional<SessionMetrics> getSessionMetrics(const std::string& device_id,
+                                                    const std::chrono::system_clock::time_point& session_start);
+
 private:
     std::string connection_string_;
     std::unique_ptr<pqxx::connection> conn_;
