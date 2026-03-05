@@ -889,17 +889,17 @@ std::optional<SessionMetrics> DatabaseService::getNightlyMetrics(
                 MAX(sm.avg_event_duration)                      AS avg_event_duration,
                 MAX(sm.max_event_duration)                      AS max_event_duration,
                 CASE WHEN SUM(s.duration_seconds) > 0
-                     THEN round(SUM(s.duration_seconds) / 3600.0, 4)
+                     THEN round((SUM(s.duration_seconds) / 3600.0)::numeric, 4)
                      ELSE 0 END                                 AS usage_hours,
                 CASE WHEN SUM(s.duration_seconds) > 0
-                     THEN round(SUM(s.duration_seconds) / 3600.0 * 100.0 / 8.0, 4)
+                     THEN round((SUM(s.duration_seconds) / 3600.0 * 100.0 / 8.0)::numeric, 4)
                      ELSE 0 END                                 AS usage_percent,
                 CASE WHEN SUM(s.duration_seconds) > 0
-                     THEN round(MAX(sm.total_events) * 3600.0 / SUM(s.duration_seconds), 4)
+                     THEN round((MAX(sm.total_events) * 3600.0 / SUM(s.duration_seconds))::numeric, 4)
                      ELSE 0 END                                 AS ahi,
-                CASE WHEN SUM(s.duration_seconds) > 0
-                     THEN round(MAX(sm.total_events) * MAX(sm.avg_event_duration)
-                              / SUM(s.duration_seconds) * 100.0, 4)
+                CASE WHEN SUM(s.duration_seconds) > 0 AND MAX(sm.avg_event_duration) IS NOT NULL
+                     THEN round((MAX(sm.total_events) * MAX(sm.avg_event_duration)
+                              / SUM(s.duration_seconds) * 100.0)::numeric, 4)
                      ELSE 0 END                                 AS time_in_apnea_pct,
                 AVG(c.avg_leak)  AS avg_leak,  MAX(c.max_leak) AS max_leak,
                 AVG(c.avg_rr)    AS avg_rr,    AVG(c.avg_tv)   AS avg_tv,
