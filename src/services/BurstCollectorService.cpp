@@ -467,11 +467,17 @@ bool BurstCollectorService::executeBurstCycle() {
                 std::cout << "   ✅ Marked as COMPLETED in database" << std::endl;
             }
 
-            // Publish historical metrics + completed status to MQTT
+            // Publish nightly aggregated metrics + completed status to MQTT.
+            // Use getNightlyMetrics() (not getSessionMetrics) so that all therapy
+            // periods in the same sleep night are summed for duration and AHI is
+            // recomputed over total hours — not just this single BRP session.
             if (data_publisher_) {
-                auto metrics = db_service_->getSessionMetrics(device_id_, session.session_start);
+                auto metrics = db_service_->getNightlyMetrics(device_id_, session.session_start);
                 if (metrics.has_value()) {
                     data_publisher_->publishHistoricalState(metrics.value());
+                    std::cout << "   ✅ Nightly metrics published ("
+                              << metrics.value().usage_hours.value_or(0.0) << "h, AHI "
+                              << metrics.value().ahi << ")" << std::endl;
                 }
                 data_publisher_->publishSessionCompleted();
             }

@@ -150,6 +150,18 @@ public:
     std::optional<SessionMetrics> getSessionMetrics(const std::string& device_id,
                                                     const std::chrono::system_clock::time_point& session_start);
 
+    /**
+     * Load nightly aggregated metrics for the sleep day containing session_start.
+     *
+     * Sleep day = noon-to-noon window (DATE(session_start - 12h)).
+     * All BRP sessions from the same night are summed for duration; event counts
+     * use MAX (events come from shared EVE file, so they are identical across
+     * all BRP-derived sessions in the same night).
+     * AHI is recomputed as total_events / total_hours.
+     */
+    std::optional<SessionMetrics> getNightlyMetrics(const std::string& device_id,
+                                                    const std::chrono::system_clock::time_point& session_start);
+
 private:
     std::string connection_string_;
     std::unique_ptr<pqxx::connection> conn_;

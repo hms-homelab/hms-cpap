@@ -846,4 +846,139 @@ std::optional<SessionMetrics> DatabaseService::getSessionMetrics(
     }
 }
 
+std::optional<SessionMetrics> DatabaseService::getNightlyMetrics(
+    const std::string& device_id,
+    const std::chrono::system_clock::time_point& session_start) {
+
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+
+    if (!ensureConnection()) {
+        std::cerr << "DB: getNightlyMetrics failed - no connection" << std::endl;
+        return std::nullopt;
+    }
+
+    try {
+        pqxx::work txn(*conn_);
+
+        auto start_time_t = std::chrono::system_clock::to_time_t(session_start);
+        std::tm* start_tm = std::localtime(&start_time_t);
+        std::ostringstream start_oss;
+        start_oss << std::put_time(start_tm, "%Y-%m-%d %H:%M:%S");
+
+        // Sleep day = DATE(session_start - 12h), groups evening→morning of one night.
+        // Events use MAX because all BRP sessions share the same nightly EVE file.
+        // Duration is summed across all therapy periods in the night.
+        // AHI recomputed from MAX(total_events) / SUM(duration).
+        std::string query = R"(
+            WITH night AS (
+                SELECT DATE(session_start - INTERVAL '12 hours') AS sleep_day
+                FROM cpap_sessions
+                WHERE device_id = $1
+                  AND session_start BETWEEN $2::timestamp - INTERVAL '5 seconds'
+                                        AND $2::timestamp + INTERVAL '5 seconds'
+                LIMIT 1
+            )
+            SELECT
+                SUM(s.duration_seconds)                         AS total_seconds,
+                MAX(sm.total_events)                            AS total_events,
+                MAX(sm.obstructive_apneas)                      AS obstructive_apneas,
+                MAX(sm.central_apneas)                          AS central_apneas,
+                MAX(sm.hypopneas)                               AS hypopneas,
+                MAX(sm.reras)                                   AS reras,
+                MAX(sm.clear_airway_apneas)                     AS clear_airway_apneas,
+                MAX(sm.avg_event_duration)                      AS avg_event_duration,
+                MAX(sm.max_event_duration)                      AS max_event_duration,
+                CASE WHEN SUM(s.duration_seconds) > 0
+                     THEN round(SUM(s.duration_seconds) / 3600.0, 4)
+                     ELSE 0 END                                 AS usage_hours,
+                CASE WHEN SUM(s.duration_seconds) > 0
+                     THEN round(SUM(s.duration_seconds) / 3600.0 * 100.0 / 8.0, 4)
+                     ELSE 0 END                                 AS usage_percent,
+                CASE WHEN SUM(s.duration_seconds) > 0
+                     THEN round(MAX(sm.total_events) * 3600.0 / SUM(s.duration_seconds), 4)
+                     ELSE 0 END                                 AS ahi,
+                CASE WHEN SUM(s.duration_seconds) > 0
+                     THEN round(MAX(sm.total_events) * MAX(sm.avg_event_duration)
+                              / SUM(s.duration_seconds) * 100.0, 4)
+                     ELSE 0 END                                 AS time_in_apnea_pct,
+                AVG(c.avg_leak)  AS avg_leak,  MAX(c.max_leak) AS max_leak,
+                AVG(c.avg_rr)    AS avg_rr,    AVG(c.avg_tv)   AS avg_tv,
+                AVG(c.avg_mv)    AS avg_mv,    AVG(c.avg_it)   AS avg_it,
+                AVG(c.avg_et)    AS avg_et,    AVG(c.avg_ie)   AS avg_ie,
+                AVG(c.avg_fl)    AS avg_fl,    AVG(c.fp95)     AS fp95,
+                AVG(c.pp95)      AS pp95
+            FROM cpap_sessions s
+            JOIN cpap_session_metrics sm ON sm.session_id = s.id
+            LEFT JOIN (
+                SELECT session_id,
+                       AVG(leak_rate) AS avg_leak, MAX(leak_rate) AS max_leak,
+                       AVG(respiratory_rate) AS avg_rr, AVG(tidal_volume) AS avg_tv,
+                       AVG(minute_ventilation) AS avg_mv, AVG(inspiratory_time) AS avg_it,
+                       AVG(expiratory_time) AS avg_et, AVG(ie_ratio) AS avg_ie,
+                       AVG(flow_limitation) AS avg_fl, AVG(flow_p95) AS fp95,
+                       AVG(pressure_p95) AS pp95
+                FROM cpap_calculated_metrics GROUP BY session_id
+            ) c ON c.session_id = sm.session_id
+            WHERE s.device_id = $1
+              AND DATE(s.session_start - INTERVAL '12 hours') = (SELECT sleep_day FROM night)
+        )";
+
+        auto result = txn.exec_params(query, device_id, start_oss.str());
+        txn.commit();
+
+        if (result.empty()) return std::nullopt;
+
+        const auto& row = result[0];
+        if (row["total_seconds"].is_null()) return std::nullopt;
+
+        SessionMetrics m;
+        m.total_events        = row["total_events"].as<int>(0);
+        m.ahi                 = row["ahi"].as<double>(0.0);
+        m.obstructive_apneas  = row["obstructive_apneas"].as<int>(0);
+        m.central_apneas      = row["central_apneas"].as<int>(0);
+        m.hypopneas           = row["hypopneas"].as<int>(0);
+        m.reras               = row["reras"].as<int>(0);
+        m.clear_airway_apneas = row["clear_airway_apneas"].as<int>(0);
+
+        if (!row["avg_event_duration"].is_null())
+            m.avg_event_duration = row["avg_event_duration"].as<double>();
+        if (!row["max_event_duration"].is_null())
+            m.max_event_duration = row["max_event_duration"].as<double>();
+        if (!row["time_in_apnea_pct"].is_null())
+            m.time_in_apnea_percent = row["time_in_apnea_pct"].as<double>();
+        if (!row["usage_hours"].is_null())
+            m.usage_hours = row["usage_hours"].as<double>();
+        if (!row["usage_percent"].is_null())
+            m.usage_percent = row["usage_percent"].as<double>();
+        if (!row["avg_leak"].is_null())
+            m.avg_leak_rate = row["avg_leak"].as<double>();
+        if (!row["max_leak"].is_null())
+            m.max_leak_rate = row["max_leak"].as<double>();
+        if (!row["avg_rr"].is_null())
+            m.avg_respiratory_rate = row["avg_rr"].as<double>();
+        if (!row["avg_tv"].is_null())
+            m.avg_tidal_volume = row["avg_tv"].as<double>();
+        if (!row["avg_mv"].is_null())
+            m.avg_minute_ventilation = row["avg_mv"].as<double>();
+        if (!row["avg_it"].is_null())
+            m.avg_inspiratory_time = row["avg_it"].as<double>();
+        if (!row["avg_et"].is_null())
+            m.avg_expiratory_time = row["avg_et"].as<double>();
+        if (!row["avg_ie"].is_null())
+            m.avg_ie_ratio = row["avg_ie"].as<double>();
+        if (!row["avg_fl"].is_null())
+            m.avg_flow_limitation = row["avg_fl"].as<double>();
+        if (!row["fp95"].is_null())
+            m.flow_p95 = row["fp95"].as<double>();
+        if (!row["pp95"].is_null())
+            m.pressure_p95 = row["pp95"].as<double>();
+
+        return m;
+
+    } catch (const std::exception& e) {
+        std::cerr << "DB: getNightlyMetrics error: " << e.what() << std::endl;
+        return std::nullopt;
+    }
+}
+
 } // namespace hms_cpap

@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.6] - 2026-03-05
+
+### Fixed
+- **Historical metrics based on single BRP session instead of full night**: `publishHistoricalState()`
+  was called with metrics from one BRP session only. Nights with multiple therapy periods (CPAP
+  turned off and back on) showed partial duration and wrong AHI, because each BRP file creates its
+  own session row. Fix: new `getNightlyMetrics()` aggregates all sessions in the same sleep day
+  (noon-to-noon window), sums `duration_seconds` for total usage hours, uses `MAX` for event counts
+  (all sessions share the same EVE file so events are identical), and recomputes AHI as
+  `total_events / total_hours`. All historical MQTT metrics now reflect the full night's therapy.
+
 ## [1.1.5] - 2026-03-04
 
 ### Fixed
