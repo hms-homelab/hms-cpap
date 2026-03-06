@@ -3,6 +3,7 @@
 #include <regex>
 #include <map>
 #include <iostream>
+#include <filesystem>
 
 namespace hms_cpap {
 
@@ -382,6 +383,185 @@ SessionDiscoveryService::discoverNewSessions(
               << " new sessions to download" << std::endl;
 
     return all_sessions;
+}
+
+std::vector<SessionFileSet>
+SessionDiscoveryService::groupLocalFolder(
+    const std::string& dir_path,
+    const std::string& date_folder) {
+
+    if (!std::filesystem::exists(dir_path) || !std::filesystem::is_directory(dir_path)) {
+        return {};
+    }
+
+    const std::chrono::hours SESSION_GAP_THRESHOLD(2);
+
+    struct CheckpointFile {
+        std::string name;
+        std::string prefix;
+        std::chrono::system_clock::time_point timestamp;
+        int size_kb;
+        bool is_brp;
+        bool is_pld;
+        bool is_sad;
+    };
+
+    std::vector<CheckpointFile> checkpoints;
+    std::map<std::string, std::pair<std::string, int>> csl_files;  // prefix -> {name, size_kb}
+    std::map<std::string, std::pair<std::string, int>> eve_files;
+
+    // Helper to extract prefix (same regex as instance method)
+    auto extractPrefix = [](const std::string& filename) -> std::string {
+        std::regex prefix_regex(R"(^(\d{8}_\d{6})_)");
+        std::smatch match;
+        if (std::regex_search(filename, match, prefix_regex)) {
+            return match[1].str();
+        }
+        return "";
+    };
+
+    // Helper to parse timestamp from prefix (same logic as instance method)
+    auto parseTime = [](const std::string& prefix) -> std::chrono::system_clock::time_point {
+        if (prefix.size() != 15) return {};
+        std::tm tm = {};
+        tm.tm_year = std::stoi(prefix.substr(0, 4)) - 1900;
+        tm.tm_mon  = std::stoi(prefix.substr(4, 2)) - 1;
+        tm.tm_mday = std::stoi(prefix.substr(6, 2));
+        tm.tm_hour = std::stoi(prefix.substr(9, 2));
+        tm.tm_min  = std::stoi(prefix.substr(11, 2));
+        tm.tm_sec  = std::stoi(prefix.substr(13, 2));
+        tm.tm_isdst = -1;
+        return std::chrono::system_clock::from_time_t(std::mktime(&tm));
+    };
+
+    for (const auto& entry : std::filesystem::directory_iterator(dir_path)) {
+        if (!entry.is_regular_file()) continue;
+
+        std::string filename = entry.path().filename().string();
+        std::string name_lower = filename;
+        std::transform(name_lower.begin(), name_lower.end(), name_lower.begin(), ::tolower);
+
+        std::string prefix = extractPrefix(filename);
+        if (prefix.empty()) continue;
+
+        int size_kb = static_cast<int>(std::filesystem::file_size(entry.path()) / 1024);
+
+        if (name_lower.find("_csl.edf") != std::string::npos) {
+            csl_files[prefix] = {filename, size_kb};
+            continue;
+        } else if (name_lower.find("_eve.edf") != std::string::npos) {
+            eve_files[prefix] = {filename, size_kb};
+            continue;
+        }
+
+        bool is_brp = name_lower.find("_brp.edf") != std::string::npos;
+        bool is_pld = name_lower.find("_pld.edf") != std::string::npos;
+        bool is_sad = name_lower.find("_sad.edf") != std::string::npos;
+
+        if (is_brp || is_pld || is_sad) {
+            CheckpointFile cp;
+            cp.name = filename;
+            cp.prefix = prefix;
+            cp.timestamp = parseTime(prefix);
+            cp.size_kb = size_kb;
+            cp.is_brp = is_brp;
+            cp.is_pld = is_pld;
+            cp.is_sad = is_sad;
+            checkpoints.push_back(cp);
+        }
+    }
+
+    if (checkpoints.empty()) return {};
+
+    std::sort(checkpoints.begin(), checkpoints.end(),
+              [](const CheckpointFile& a, const CheckpointFile& b) {
+                  return a.timestamp < b.timestamp;
+              });
+
+    // Split into session groups by 2-hour gaps
+    std::vector<std::vector<CheckpointFile>> session_groups;
+    std::vector<CheckpointFile> current_group;
+    current_group.push_back(checkpoints[0]);
+
+    for (size_t i = 1; i < checkpoints.size(); ++i) {
+        auto gap = std::chrono::duration_cast<std::chrono::hours>(
+            checkpoints[i].timestamp - checkpoints[i-1].timestamp);
+        if (gap >= SESSION_GAP_THRESHOLD) {
+            session_groups.push_back(current_group);
+            current_group.clear();
+        }
+        current_group.push_back(checkpoints[i]);
+    }
+    if (!current_group.empty()) {
+        session_groups.push_back(current_group);
+    }
+
+    std::cout << "  Split " << checkpoints.size() << " checkpoint files into "
+              << session_groups.size() << " session(s)" << std::endl;
+
+    // Build SessionFileSet for each group
+    std::vector<SessionFileSet> sessions;
+
+    for (size_t group_idx = 0; group_idx < session_groups.size(); ++group_idx) {
+        const auto& group = session_groups[group_idx];
+        std::string session_prefix = group[0].prefix;
+        auto session_start = group[0].timestamp;
+
+        SessionFileSet session;
+        session.date_folder = date_folder;
+        session.session_prefix = session_prefix;
+        session.session_start = session_start;
+
+        for (const auto& cp : group) {
+            session.total_size_kb += cp.size_kb;
+            session.file_sizes_kb[cp.name] = cp.size_kb;
+            if (cp.is_brp) session.brp_files.push_back(cp.name);
+            else if (cp.is_pld) session.pld_files.push_back(cp.name);
+            else if (cp.is_sad) session.sad_files.push_back(cp.name);
+        }
+
+        // Match CSL/EVE to this session
+        bool is_last_session = (group_idx == session_groups.size() - 1);
+
+        for (const auto& [csl_prefix, csl_info] : csl_files) {
+            auto csl_time = parseTime(csl_prefix);
+            auto time_diff = std::chrono::abs(csl_time - session_start);
+            bool time_match = time_diff < std::chrono::hours(12);
+            if (is_last_session || time_match) {
+                session.csl_file = csl_info.first;
+                session.total_size_kb += csl_info.second;
+                session.file_sizes_kb[csl_info.first] = csl_info.second;
+                break;
+            }
+        }
+
+        for (const auto& [eve_prefix, eve_info] : eve_files) {
+            auto eve_time = parseTime(eve_prefix);
+            auto time_diff = std::chrono::abs(eve_time - session_start);
+            bool time_match = time_diff < std::chrono::hours(12);
+            if (is_last_session || time_match) {
+                session.eve_file = eve_info.first;
+                session.total_size_kb += eve_info.second;
+                session.file_sizes_kb[eve_info.first] = eve_info.second;
+                break;
+            }
+        }
+
+        sessions.push_back(session);
+    }
+
+    // Print summary
+    for (const auto& session : sessions) {
+        std::cout << "  Session " << session.session_prefix
+                  << ": BRP=" << session.brp_files.size()
+                  << " PLD=" << session.pld_files.size()
+                  << " SAD=" << session.sad_files.size()
+                  << " CSL=" << (session.csl_file.empty() ? "no" : "yes")
+                  << " EVE=" << (session.eve_file.empty() ? "no" : "yes")
+                  << " (" << session.total_size_kb << " KB)" << std::endl;
+    }
+
+    return sessions;
 }
 
 } // namespace hms_cpap

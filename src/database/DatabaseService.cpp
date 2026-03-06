@@ -981,6 +981,32 @@ std::optional<SessionMetrics> DatabaseService::getNightlyMetrics(
     }
 }
 
+int DatabaseService::deleteSessionsByDateFolder(const std::string& device_id,
+                                                 const std::string& date_folder) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!ensureConnection()) return -1;
+
+    try {
+        pqxx::work work(*conn_);
+
+        // Match sessions whose brp_file_path contains the date folder
+        std::string pattern = "%DATALOG/" + date_folder + "/%";
+        auto result = work.exec_params(
+            "DELETE FROM cpap_sessions "
+            "WHERE device_id = $1 AND brp_file_path::text LIKE $2",
+            device_id, pattern);
+
+        int deleted = static_cast<int>(result.affected_rows());
+        work.commit();
+        return deleted;
+
+    } catch (const std::exception& e) {
+        std::cerr << "DB: Failed to delete sessions for " << date_folder
+                  << ": " << e.what() << std::endl;
+        return -1;
+    }
+}
+
 bool DatabaseService::saveSTRDailyRecords(const std::vector<STRDailyRecord>& records) {
     if (records.empty()) return true;
 

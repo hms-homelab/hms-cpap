@@ -151,6 +151,18 @@ public:
                                                     const std::chrono::system_clock::time_point& session_start);
 
     /**
+     * Delete sessions whose brp_file_path matches a date folder.
+     *
+     * Cascades to events, metrics, vitals, breathing_summary, calculated_metrics.
+     *
+     * @param device_id Device identifier
+     * @param date_folder Date folder name (e.g., "20250818")
+     * @return Number of sessions deleted (-1 on error)
+     */
+    int deleteSessionsByDateFolder(const std::string& device_id,
+                                   const std::string& date_folder);
+
+    /**
      * Save STR daily records to cpap_daily_summary table (upsert).
      *
      * @param records Vector of STRDailyRecord

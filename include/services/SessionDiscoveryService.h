@@ -6,6 +6,7 @@
 #include <string>
 #include <chrono>
 #include <optional>
+#include <filesystem>
 
 namespace hms_cpap {
 
@@ -53,27 +54,19 @@ public:
      */
     std::vector<SessionFileSet> groupSessionsInFolder(const std::string& date_folder);
 
+    /**
+     * Group files in a local directory into sessions (same 2-hour gap logic).
+     *
+     * Static method -- no EzShareClient needed. Used by --reparse CLI.
+     */
+    static std::vector<SessionFileSet> groupLocalFolder(
+        const std::string& dir_path,
+        const std::string& date_folder);
+
 private:
     EzShareClient& ezshare_client_;
 
-    /**
-     * Extract session prefix from filename (YYYYMMDD_HHMMSS)
-     *
-     * Example: "20260204_001809_CSL.edf" → "20260204_001809"
-     *
-     * @param filename Filename from ez Share listing
-     * @return Session prefix or empty string if invalid format
-     */
     std::string extractSessionPrefix(const std::string& filename);
-
-    /**
-     * Parse session start time from filename prefix
-     *
-     * Example: "20260204_001809" → 2026-02-04 00:18:09
-     *
-     * @param prefix Session prefix (YYYYMMDD_HHMMSS)
-     * @return Time point for session start
-     */
     std::chrono::system_clock::time_point parseSessionTime(const std::string& prefix);
 
     /**

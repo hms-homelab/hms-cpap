@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-03-06
+
+### Added
+- **`--reparse` CLI mode**: Re-parse sessions from local archive for a date range.
+  Usage: `hms_cpap --reparse /mnt/public/cpap_data/DATALOG 2025-08-18 2025-09-09`.
+  Scans date folders, groups files into sessions (same 2-hour gap logic), deletes
+  old DB records (cascade), and saves freshly parsed data. Works with archived files
+  that are no longer on the ezShare SD card.
+- `SessionDiscoveryService::groupLocalFolder()` — static method for local filesystem
+  session grouping (no EzShareClient dependency). Replicates the 2-hour gap splitting
+  and CSL/EVE matching logic using `std::filesystem`.
+- `DatabaseService::deleteSessionsByDateFolder()` — deletes sessions by `brp_file_path`
+  date folder match with FK cascade to all child tables.
+
 ## [1.2.0] - 2026-03-06
 
 ### Added
