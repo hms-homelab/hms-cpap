@@ -29,7 +29,6 @@ add_executable(${PROJECT_NAME} ${SOURCES})
 # Include directories
 target_include_directories(${PROJECT_NAME} PRIVATE
     include
-    /usr/local/include
 )
 
 # Link libraries

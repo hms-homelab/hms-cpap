@@ -467,19 +467,27 @@ bool BurstCollectorService::executeBurstCycle() {
                 std::cout << "   ✅ Marked as COMPLETED in database" << std::endl;
             }
 
-            // Publish nightly aggregated metrics + completed status to MQTT.
-            // Use getNightlyMetrics() (not getSessionMetrics) so that all therapy
-            // periods in the same sleep night are summed for duration and AHI is
-            // recomputed over total hours — not just this single BRP session.
-            if (data_publisher_) {
-                auto metrics = db_service_->getNightlyMetrics(device_id_, session.session_start);
-                if (metrics.has_value()) {
-                    data_publisher_->publishHistoricalState(metrics.value());
-                    std::cout << "   ✅ Nightly metrics published ("
-                              << metrics.value().usage_hours.value_or(0.0) << "h, AHI "
-                              << metrics.value().ahi << ")" << std::endl;
+            // Only publish nightly metrics for sessions in the CURRENT sleep night.
+            // Old sessions from previous nights are re-scanned every cycle but their
+            // metrics must not overwrite the current night's historical MQTT topics.
+            {
+                auto now = std::chrono::system_clock::now();
+                auto now_t = std::chrono::system_clock::to_time_t(now);
+                auto sess_t = std::chrono::system_clock::to_time_t(session.session_start);
+                // Sleep day = calendar date of (timestamp - 12h)
+                auto now_day = (now_t - 12*3600) / 86400;
+                auto sess_day = (sess_t - 12*3600) / 86400;
+
+                if (sess_day == now_day && data_publisher_) {
+                    auto metrics = db_service_->getNightlyMetrics(device_id_, session.session_start);
+                    if (metrics.has_value()) {
+                        data_publisher_->publishHistoricalState(metrics.value());
+                        std::cout << "   ✅ Nightly metrics published ("
+                                  << metrics.value().usage_hours.value_or(0.0) << "h, AHI "
+                                  << metrics.value().ahi << ")" << std::endl;
+                    }
+                    data_publisher_->publishSessionCompleted();
                 }
-                data_publisher_->publishSessionCompleted();
             }
 
             // Don't download/parse - nothing changed
@@ -643,6 +651,16 @@ bool BurstCollectorService::executeBurstCycle() {
             std::cout << std::string(60, '-') << std::endl;
 
             data_publisher_->publishSession(*latest);
+
+            // Also publish nightly aggregated metrics while session is active
+            // so historical/ MQTT topics stay current (not just on session stop)
+            auto metrics = db_service_->getNightlyMetrics(device_id_, latest->session_start.value());
+            if (metrics.has_value()) {
+                data_publisher_->publishHistoricalState(metrics.value());
+                std::cout << "   Nightly metrics updated ("
+                          << metrics.value().usage_hours.value_or(0.0) << "h, AHI "
+                          << metrics.value().ahi << ")" << std::endl;
+            }
         }
     }
 

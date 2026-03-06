@@ -12,16 +12,9 @@ BUILD_DIR="build-arm"
 mkdir -p "$BUILD_DIR"
 cd "$BUILD_DIR"
 
-# Temporarily use ARM CMakeLists
-cp ../CMakeLists.txt.arm ../CMakeLists.txt.backup
-cp ../CMakeLists.txt.arm ../CMakeLists.txt
-
-# Configure
+# Configure with ARM toolchain (uses native CMakeLists.txt + toolchain file)
 echo "Configuring ARM build..."
-cmake -DBUILD_TESTS=OFF ..
-
-# Restore original CMakeLists
-mv ../CMakeLists.txt.backup ../CMakeLists.txt
+cmake -DBUILD_TESTS=OFF -DCMAKE_TOOLCHAIN_FILE=../arm-toolchain.cmake ..
 
 # Build
 echo ""
@@ -31,11 +24,11 @@ make -j$(nproc)
 # Check result
 if [ -f "hms_cpap" ]; then
     echo ""
-    echo "✅ ARM build successful!"
+    echo "ARM build successful!"
     ls -lh hms_cpap
     file hms_cpap
 else
     echo ""
-    echo "❌ ARM build failed"
+    echo "ARM build failed"
     exit 1
 fi

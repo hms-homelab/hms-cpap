@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.8] - 2026-03-06
+
+### Fixed
+- **Stale nightly metrics from previous nights overwriting current**: Old completed sessions
+  (re-discovered every cycle via 48-hour window) published their nightly metrics to MQTT,
+  overwriting current night's values. Fix: sleep-day comparison skips publish for sessions
+  outside the current noon-to-noon window.
+- **Nightly metrics only published on session completion**: Historical MQTT topics (usage hours,
+  AHI, events) were never updated during an active session — only when "stopped" was detected.
+  Fix: publish nightly metrics after every active session parse, so HA stays current in real time.
+
+### Changed
+- ARM cross-compilation uses toolchain file instead of CMakeLists.txt swap hack
+- Removed hardcoded `/usr/local/include` from native CMakeLists.txt
+
 ## [1.1.7] - 2026-03-05
 
 ### Fixed
