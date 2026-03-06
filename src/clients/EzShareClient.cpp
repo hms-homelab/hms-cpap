@@ -244,6 +244,59 @@ bool EzShareClient::downloadFile(const std::string& date_folder,
     return true;
 }
 
+bool EzShareClient::downloadRootFile(const std::string& filename,
+                                      const std::string& local_path) {
+    // Root-level file: /download?file=DATALOG%5Cfilename (no date subfolder)
+    std::string url = base_url_ + "/download?file=DATALOG%5C" + filename;
+
+    std::cout << "EzShare: downloading root file " << filename << std::endl;
+
+    std::filesystem::create_directories(
+        std::filesystem::path(local_path).parent_path()
+    );
+
+    std::ofstream output(local_path, std::ios::binary);
+    if (!output.is_open()) {
+        std::cerr << "EzShare: cannot open " << local_path << std::endl;
+        return false;
+    }
+
+    curl_easy_setopt(curl_, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl_, CURLOPT_WRITEFUNCTION, WriteFileCallback);
+    curl_easy_setopt(curl_, CURLOPT_WRITEDATA, &output);
+    curl_easy_setopt(curl_, CURLOPT_TIMEOUT, DOWNLOAD_TIMEOUT);
+    curl_easy_setopt(curl_, CURLOPT_CONNECTTIMEOUT, CONNECTION_TIMEOUT);
+    curl_easy_setopt(curl_, CURLOPT_FOLLOWLOCATION, 0L);
+
+    CURLcode res = curl_easy_perform(curl_);
+    output.close();
+
+    if (res != CURLE_OK && res != CURLE_PARTIAL_FILE) {
+        std::cerr << "EzShare: root download failed (" << filename << "): "
+                  << curl_easy_strerror(res) << std::endl;
+        std::filesystem::remove(local_path);
+        return false;
+    }
+
+    long http_code = 0;
+    curl_easy_getinfo(curl_, CURLINFO_RESPONSE_CODE, &http_code);
+    if (http_code != 200) {
+        std::cerr << "EzShare: HTTP " << http_code << " for " << filename << std::endl;
+        std::filesystem::remove(local_path);
+        return false;
+    }
+
+    auto file_size = std::filesystem::file_size(local_path);
+    if (file_size == 0) {
+        std::cerr << "EzShare: empty file " << filename << std::endl;
+        std::filesystem::remove(local_path);
+        return false;
+    }
+
+    std::cout << "EzShare: " << filename << " -> " << file_size << " bytes" << std::endl;
+    return true;
+}
+
 bool EzShareClient::downloadFileRange(const std::string& date_folder,
                                         const std::string& filename,
                                         const std::string& local_path,

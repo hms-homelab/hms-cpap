@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-03-06
+
+### Added
+- **STR.edf daily therapy summaries**: Parse ResMed STR.edf (81 signals, 1 record/day) for
+  official AHI, mask timing, pressure/leak/SpO2 percentiles, device settings, and cumulative
+  patient hours. Data unavailable from BRP/EVE/CSL parsing alone.
+- **13 new MQTT sensors** under `cpap/{device_id}/daily/`: str_ahi, str_oai, str_cai, str_hi,
+  str_rin, str_csr, str_usage_hours, str_mask_events, str_leak_95, str_press_95, str_spo2_50,
+  str_patient_hours, ahi_delta (cross-validation of STR vs calculated AHI)
+- **`cpap_daily_summary` PostgreSQL table**: 30-column schema with UPSERT for idempotent writes,
+  JSONB mask_pairs with on/off timestamps
+- **`--backfill` CLI mode**: `hms_cpap --backfill /path/to/STR.edf` parses and saves all records
+- **Python backfill script** (`scripts/str_backfill.py`): Custom lenient EDF parser (pyedflib
+  rejects ResMed's non-standard Physical Dimension), bulk upsert with deduplication
+- **STR download in burst cycle**: Downloads STR.EDF from ezShare root via `downloadRootFile()`,
+  saves last 7 days to DB, publishes latest to MQTT (non-fatal on failure)
+- `EDFFile::findSignalExact()` for unambiguous signal lookup (MaskOn vs MaskOff)
+- `EzShareClient::downloadRootFile()` for DATALOG root files
+- 21 new tests: 11 STR parser tests, 10 integration tests (DB upsert, MQTT publish, end-to-end)
+- HA discovery count updated from 33 to 46 sensors
+
+### Fixed
+- **`HAStatusOffline_DoesNotRepublish` test flaky failure**: Retained MQTT messages from prior
+  runs were counted as new. Fix: drain retained messages before asserting.
+- **DST-safe date computation in STR parser**: Uses calendar arithmetic (mktime with tm_mday
+  overflow) instead of epoch + seconds, preventing 1-hour offset when crossing DST boundaries.
+
+### Changed
+- Project cleanup: removed stale files from root (async_client.cpp.o, mosquitto.conf,
+  REPO_STRUCTURE.txt, CMakeLists.txt.backup), moved docs to docs/, ARM toolchain to cmake/,
+  schema to scripts/
+
 ## [1.1.8] - 2026-03-06
 
 ### Fixed
@@ -153,6 +185,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Version History Summary
 
+- **1.2.0** - STR.edf daily therapy summaries, 13 new MQTT sensors, backfill CLI, project cleanup
+- **1.1.8** - Stale nightly metrics fix, ARM toolchain cleanup
 - **1.1.4** - Docker build fixes, libpqxx 6.x compatibility
 - **1.1.3** - Event metrics publishing fixes
 - **1.1.2** - MQTT reconnection fixes, Home Assistant status subscription
@@ -160,7 +194,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **1.1.0** - Session discovery, archival, 34 metrics
 - **1.0.0** - Initial release with core functionality
 
-[Unreleased]: https://github.com/hms-homelab/hms-cpap/compare/v1.1.4...HEAD
+[Unreleased]: https://github.com/hms-homelab/hms-cpap/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/hms-homelab/hms-cpap/compare/v1.1.8...v1.2.0
+[1.1.8]: https://github.com/hms-homelab/hms-cpap/compare/v1.1.4...v1.1.8
 [1.1.4]: https://github.com/hms-homelab/hms-cpap/compare/v1.1.3...v1.1.4
 [1.1.3]: https://github.com/hms-homelab/hms-cpap/compare/v1.1.2...v1.1.3
 [1.1.2]: https://github.com/hms-homelab/hms-cpap/compare/v1.1.1...v1.1.2

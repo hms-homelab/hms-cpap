@@ -256,4 +256,56 @@ struct CPAPSession {
     std::string toString() const;
 };
 
+/**
+ * STRDailyRecord - Daily therapy summary from STR.edf
+ *
+ * ResMed writes STR.edf at the SD root with 81 signals, 1 record per day
+ * (86400s duration). Contains official ResMed values: AHI, mask timing,
+ * pressure/leak percentiles, device settings, and cumulative hours.
+ */
+struct STRDailyRecord {
+    std::string device_id;
+    std::chrono::system_clock::time_point record_date;  // noon of this day
+
+    // Mask timing (on/off pairs as timestamps)
+    std::vector<std::pair<
+        std::chrono::system_clock::time_point,
+        std::chrono::system_clock::time_point>> mask_pairs;
+    int mask_events = 0;           // raw count from STR (divide by 2 for pair count)
+
+    // Duration
+    double duration_minutes = 0;   // therapy time this day
+    double patient_hours = 0;      // cumulative lifetime hours
+
+    // Official ResMed indices (events/hour)
+    double ahi = 0, hi = 0, ai = 0, oai = 0, cai = 0, uai = 0;
+    double rin = 0;                // RERA index
+    double csr = 0;                // Cheyne-Stokes minutes
+
+    // Pressure (cmH2O)
+    double blow_press_95 = 0, blow_press_5 = 0;
+    double mask_press_50 = 0, mask_press_95 = 0, mask_press_max = 0;
+
+    // Leak (L/min -- stored as L/s in EDF, multiply by 60)
+    double leak_50 = 0, leak_95 = 0, leak_70 = 0, leak_max = 0;
+
+    // SpO2 (%)
+    double spo2_50 = 0, spo2_95 = 0, spo2_max = 0;
+
+    // Respiratory
+    double resp_rate_50 = 0, resp_rate_95 = 0, resp_rate_max = 0;
+    double tid_vol_50 = 0, tid_vol_95 = 0, tid_vol_max = 0;
+    double min_vent_50 = 0, min_vent_95 = 0, min_vent_max = 0;
+
+    // Settings
+    int mode = 0;
+    double epr_level = 0, pressure_setting = 0;
+    double max_pressure = 0, min_pressure = 0;
+
+    // Faults
+    int fault_device = 0, fault_alarm = 0;
+
+    bool hasTherapy() const { return duration_minutes > 0; }
+};
+
 } // namespace hms_cpap

@@ -151,6 +151,22 @@ public:
                                                     const std::chrono::system_clock::time_point& session_start);
 
     /**
+     * Save STR daily records to cpap_daily_summary table (upsert).
+     *
+     * @param records Vector of STRDailyRecord
+     * @return true if saved successfully
+     */
+    bool saveSTRDailyRecords(const std::vector<STRDailyRecord>& records);
+
+    /**
+     * Get the last STR record date for a device.
+     *
+     * @param device_id Device identifier
+     * @return "YYYY-MM-DD" string or nullopt
+     */
+    std::optional<std::string> getLastSTRDate(const std::string& device_id);
+
+    /**
      * Load nightly aggregated metrics for the sleep day containing session_start.
      *
      * Sleep day = noon-to-noon window (DATE(session_start - 12h)).

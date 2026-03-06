@@ -21,6 +21,7 @@ CMakeFiles/
 cmake_install.cmake
 Makefile
 *.cmake
+!cmake/arm-toolchain.cmake
 
 # IDE
 .vscode/

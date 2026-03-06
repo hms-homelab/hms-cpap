@@ -76,6 +76,9 @@ public:
     /** Find signal index whose label contains partial_label (-1 if not found). */
     int findSignal(const std::string& partial_label) const;
 
+    /** Find signal index whose label matches exactly (after trimming). -1 if not found. */
+    int findSignalExact(const std::string& label) const;
+
     bool isEDFPlus() const { return reserved.find("EDF+") != std::string::npos; }
 
 private:
@@ -104,6 +107,17 @@ public:
         const std::string& device_name,
         std::optional<std::chrono::system_clock::time_point> session_start_from_filename = std::nullopt
     );
+
+    /**
+     * Parse STR.edf file containing daily therapy summaries.
+     *
+     * @param filepath Path to STR.edf file
+     * @param device_id Device identifier
+     * @return Vector of daily records (only days with therapy)
+     */
+    static std::vector<STRDailyRecord> parseSTRFile(
+        const std::string& filepath,
+        const std::string& device_id);
 
 private:
     static bool parseDeviceInfo(const std::string& filepath,

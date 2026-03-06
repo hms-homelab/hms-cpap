@@ -139,6 +139,12 @@ private:
                             const std::string& archive_base_dir);
 
     /**
+     * Process STR.edf: download, parse, save to DB, publish to MQTT.
+     * Non-fatal: failure does not affect the session cycle.
+     */
+    void processSTRFile();
+
+    /**
      * Get current date string (YYYYMMDD format)
      *
      * @return Date string for today

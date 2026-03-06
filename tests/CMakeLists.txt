@@ -19,6 +19,7 @@ list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*main\\.cpp$")
 # Test sources
 set(TEST_SOURCES
     parsers/test_EDFParser.cpp
+    parsers/test_STRParser.cpp
     database/test_DatabaseService.cpp
     services/test_BurstCollectorService.cpp
     services/test_DataPublisherService.cpp
@@ -26,6 +27,7 @@ set(TEST_SOURCES
     utils/test_ConfigManager.cpp
     clients/test_EzShareClient.cpp
     mqtt/test_MqttClient.cpp
+    integration/test_STRIntegration.cpp
 )
 
 # Create test executable
