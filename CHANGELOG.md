@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.1.7] - 2026-03-05
+
+### Fixed
+- **MQTT subscriptions lost after reconnect**: `set_connected_handler` restored `connected_` flag
+  but did not re-subscribe topics (wiped by `clean_session=true`). The `homeassistant/status`
+  subscription was silently lost, so HA restarts no longer triggered discovery republish. Fix:
+  re-subscribe all stored callbacks in the connected handler.
+
 ## [1.1.6] - 2026-03-05
 
 ### Fixed

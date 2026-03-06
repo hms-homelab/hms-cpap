@@ -43,12 +43,24 @@ bool MqttClient::connect(const std::string& broker_address,
 
         // Set connected callback (called when auto-reconnect succeeds)
         client_->set_connected_handler([this](const std::string& cause) {
-            std::cerr << "  [connected_handler] CALLBACK ENTER, cause=" << cause << std::flush;
-            std::lock_guard<std::recursive_mutex> lock(connection_mutex_);
-            std::cerr << " got lock" << std::endl;
-            connected_ = true;
-            std::cout << "✅ MQTT: Reconnected successfully: " << cause << std::endl;
-            std::cerr << "  [connected_handler] CALLBACK EXIT" << std::endl;
+            if (!initial_connect_done_) return;  // Skip during initial connect()
+
+            {
+                std::lock_guard<std::recursive_mutex> lock(connection_mutex_);
+                connected_ = true;
+            }
+            std::cout << "✅ MQTT: Reconnected: " << cause << std::endl;
+
+            // Re-subscribe without waiting — async fire-and-forget
+            std::lock_guard<std::mutex> lock(callbacks_mutex_);
+            for (const auto& [topic, callback] : message_callbacks_) {
+                try {
+                    client_->subscribe(topic, 1);  // No ->wait()
+                    std::cout << "✅ MQTT: Re-subscribed to " << topic << std::endl;
+                } catch (const mqtt::exception& e) {
+                    std::cerr << "❌ MQTT: Re-subscribe failed for " << topic << ": " << e.what() << std::endl;
+                }
+            }
         });
 
         // Connection options
@@ -67,6 +79,7 @@ bool MqttClient::connect(const std::string& broker_address,
         conntok->wait();  // Wait for connection
 
         connected_ = true;
+        initial_connect_done_ = true;
         std::cout << "✅ MQTT: Connected successfully" << std::endl;
 
         return true;
@@ -311,17 +324,14 @@ void MqttClient::onMessageArrived(mqtt::const_message_ptr msg) {
 }
 
 void MqttClient::onConnectionLost(const std::string& cause) {
-    std::cerr << "  [onConnectionLost] CALLBACK ENTER, cause=" << cause << std::flush;
     std::lock_guard<std::recursive_mutex> lock(connection_mutex_);
-    std::cerr << " got lock" << std::endl;
     connected_ = false;
 
-    std::cerr << "⚠️  MQTT: Connection lost: " << cause << std::endl;
+    std::cerr << "MQTT: Connection lost: " << cause << std::endl;
 
     if (auto_reconnect_) {
-        std::cout << "🔄 MQTT: Auto-reconnect enabled (handled by paho-mqtt)" << std::endl;
+        std::cout << "MQTT: Auto-reconnect enabled (handled by paho-mqtt)" << std::endl;
     }
-    std::cerr << "  [onConnectionLost] CALLBACK EXIT" << std::endl;
 }
 
 }  // namespace hms_cpap

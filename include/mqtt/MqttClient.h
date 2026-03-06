@@ -152,6 +152,7 @@ private:
     std::string username_;
     std::string password_;
     std::atomic<bool> connected_;  // Atomic for lock-free reads
+    bool initial_connect_done_ = false;
     mutable std::recursive_mutex connection_mutex_;  // For client_ access only
 
     // Auto-reconnect enabled
