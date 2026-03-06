@@ -531,6 +531,9 @@ bool BurstCollectorService::executeBurstCycle() {
                                   << metrics.value().ahi << ")" << std::endl;
                     }
                     data_publisher_->publishSessionCompleted();
+
+                    // Download and publish STR daily summary on session completion
+                    processSTRFile();
                 }
             }
 
@@ -708,10 +711,7 @@ bool BurstCollectorService::executeBurstCycle() {
         }
     }
 
-    // Step 9: Process STR.edf (non-fatal)
-    processSTRFile();
-
-    // Step 10: Update device last_seen
+    // Step 9: Update device last_seen
     db_service_->updateDeviceLastSeen(device_id_);
 
     auto cycle_end = std::chrono::steady_clock::now();

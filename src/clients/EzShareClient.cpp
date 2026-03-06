@@ -246,8 +246,8 @@ bool EzShareClient::downloadFile(const std::string& date_folder,
 
 bool EzShareClient::downloadRootFile(const std::string& filename,
                                       const std::string& local_path) {
-    // Root-level file: /download?file=DATALOG%5Cfilename (no date subfolder)
-    std::string url = base_url_ + "/download?file=DATALOG%5C" + filename;
+    // Root-level file on SD card: /download?file=filename
+    std::string url = base_url_ + "/download?file=" + filename;
 
     std::cout << "EzShare: downloading root file " << filename << std::endl;
 
