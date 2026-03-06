@@ -311,6 +311,50 @@ bool BurstCollectorService::archiveSessionFiles(
     }
 }
 
+void BurstCollectorService::processSTRFile() {
+    try {
+        std::string local_base = ConfigManager::get("CPAP_TEMP_DIR", "/tmp/cpap_data");
+        std::string str_local_path = local_base + "/STR.EDF";
+
+        // Download STR.EDF from SD card root
+        if (!ezshare_client_->downloadRootFile("STR.EDF", str_local_path)) {
+            std::cerr << "STR: Download failed (non-fatal)" << std::endl;
+            return;
+        }
+
+        // Parse all daily records
+        auto all_records = EDFParser::parseSTRFile(str_local_path, device_id_);
+        if (all_records.empty()) {
+            std::cerr << "STR: No therapy days found" << std::endl;
+            return;
+        }
+
+        // Save last 7 days to DB (avoid rewriting full history every cycle)
+        size_t save_count = std::min(all_records.size(), static_cast<size_t>(7));
+        std::vector<STRDailyRecord> recent(
+            all_records.end() - save_count, all_records.end());
+        db_service_->saveSTRDailyRecords(recent);
+
+        // Publish latest therapy day to MQTT
+        const auto& latest = all_records.back();
+        if (data_publisher_ && mqtt_client_ && mqtt_client_->isConnected()) {
+            // Get our calculated nightly AHI for delta comparison
+            double nightly_ahi = 0;
+            auto nightly = db_service_->getNightlyMetrics(device_id_, latest.record_date);
+            if (nightly.has_value()) {
+                nightly_ahi = nightly->ahi;
+            }
+            data_publisher_->publishSTRState(latest, nightly_ahi);
+        }
+
+        std::cout << "STR: Processed " << all_records.size() << " therapy days, saved "
+                  << save_count << " recent to DB" << std::endl;
+
+    } catch (const std::exception& e) {
+        std::cerr << "STR: Processing failed (non-fatal): " << e.what() << std::endl;
+    }
+}
+
 std::string BurstCollectorService::getCurrentDateString() const {
     auto now = std::chrono::system_clock::now();
     std::time_t now_time = std::chrono::system_clock::to_time_t(now);
@@ -664,7 +708,10 @@ bool BurstCollectorService::executeBurstCycle() {
         }
     }
 
-    // Step 9: Update device last_seen
+    // Step 9: Process STR.edf (non-fatal)
+    processSTRFile();
+
+    // Step 10: Update device last_seen
     db_service_->updateDeviceLastSeen(device_id_);
 
     auto cycle_end = std::chrono::steady_clock::now();

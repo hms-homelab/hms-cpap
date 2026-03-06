@@ -981,4 +981,150 @@ std::optional<SessionMetrics> DatabaseService::getNightlyMetrics(
     }
 }
 
+bool DatabaseService::saveSTRDailyRecords(const std::vector<STRDailyRecord>& records) {
+    if (records.empty()) return true;
+
+    if (!ensureConnection()) {
+        std::cerr << "DB: saveSTRDailyRecords failed - no connection" << std::endl;
+        return false;
+    }
+
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+
+    try {
+        pqxx::work txn(*conn_);
+
+        // Ensure table exists
+        txn.exec(R"(
+            CREATE TABLE IF NOT EXISTS cpap_daily_summary (
+                id SERIAL PRIMARY KEY,
+                device_id TEXT NOT NULL,
+                record_date DATE NOT NULL,
+                mask_pairs JSONB DEFAULT '[]',
+                mask_events INT DEFAULT 0,
+                duration_minutes FLOAT DEFAULT 0,
+                patient_hours FLOAT DEFAULT 0,
+                ahi FLOAT, hi FLOAT, ai FLOAT, oai FLOAT, cai FLOAT, uai FLOAT,
+                rin FLOAT, csr FLOAT,
+                mask_press_50 FLOAT, mask_press_95 FLOAT, mask_press_max FLOAT,
+                leak_50 FLOAT, leak_95 FLOAT, leak_max FLOAT,
+                spo2_50 FLOAT, spo2_95 FLOAT,
+                resp_rate_50 FLOAT, tid_vol_50 FLOAT, min_vent_50 FLOAT,
+                mode INT, epr_level FLOAT, pressure_setting FLOAT,
+                fault_device INT DEFAULT 0, fault_alarm INT DEFAULT 0,
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW(),
+                UNIQUE (device_id, record_date)
+            )
+        )");
+
+        for (const auto& r : records) {
+            auto date_t = std::chrono::system_clock::to_time_t(r.record_date);
+            std::tm* tm = std::localtime(&date_t);
+            std::ostringstream date_oss;
+            date_oss << std::put_time(tm, "%Y-%m-%d");
+
+            // Build mask_pairs JSON
+            std::ostringstream pairs_json;
+            pairs_json << "[";
+            for (size_t i = 0; i < r.mask_pairs.size(); ++i) {
+                if (i > 0) pairs_json << ",";
+                auto on_t = std::chrono::system_clock::to_time_t(r.mask_pairs[i].first);
+                auto off_t = std::chrono::system_clock::to_time_t(r.mask_pairs[i].second);
+                std::tm on_tm = *std::localtime(&on_t);
+                std::tm off_tm = *std::localtime(&off_t);
+                std::ostringstream on_oss, off_oss;
+                on_oss << std::put_time(&on_tm, "%Y-%m-%dT%H:%M:%S");
+                off_oss << std::put_time(&off_tm, "%Y-%m-%dT%H:%M:%S");
+                pairs_json << "{\"on\":\"" << on_oss.str() << "\",\"off\":\"" << off_oss.str() << "\"}";
+            }
+            pairs_json << "]";
+
+            std::string query = R"(
+                INSERT INTO cpap_daily_summary
+                    (device_id, record_date, mask_pairs, mask_events, duration_minutes, patient_hours,
+                     ahi, hi, ai, oai, cai, uai, rin, csr,
+                     mask_press_50, mask_press_95, mask_press_max,
+                     leak_50, leak_95, leak_max,
+                     spo2_50, spo2_95,
+                     resp_rate_50, tid_vol_50, min_vent_50,
+                     mode, epr_level, pressure_setting,
+                     fault_device, fault_alarm, updated_at)
+                VALUES ($1, $2, $3::jsonb, $4, $5, $6,
+                        $7, $8, $9, $10, $11, $12, $13, $14,
+                        $15, $16, $17,
+                        $18, $19, $20,
+                        $21, $22,
+                        $23, $24, $25,
+                        $26, $27, $28,
+                        $29, $30, NOW())
+                ON CONFLICT (device_id, record_date) DO UPDATE SET
+                    mask_pairs = EXCLUDED.mask_pairs,
+                    mask_events = EXCLUDED.mask_events,
+                    duration_minutes = EXCLUDED.duration_minutes,
+                    patient_hours = EXCLUDED.patient_hours,
+                    ahi = EXCLUDED.ahi, hi = EXCLUDED.hi, ai = EXCLUDED.ai,
+                    oai = EXCLUDED.oai, cai = EXCLUDED.cai, uai = EXCLUDED.uai,
+                    rin = EXCLUDED.rin, csr = EXCLUDED.csr,
+                    mask_press_50 = EXCLUDED.mask_press_50,
+                    mask_press_95 = EXCLUDED.mask_press_95,
+                    mask_press_max = EXCLUDED.mask_press_max,
+                    leak_50 = EXCLUDED.leak_50, leak_95 = EXCLUDED.leak_95,
+                    leak_max = EXCLUDED.leak_max,
+                    spo2_50 = EXCLUDED.spo2_50, spo2_95 = EXCLUDED.spo2_95,
+                    resp_rate_50 = EXCLUDED.resp_rate_50,
+                    tid_vol_50 = EXCLUDED.tid_vol_50,
+                    min_vent_50 = EXCLUDED.min_vent_50,
+                    mode = EXCLUDED.mode, epr_level = EXCLUDED.epr_level,
+                    pressure_setting = EXCLUDED.pressure_setting,
+                    fault_device = EXCLUDED.fault_device,
+                    fault_alarm = EXCLUDED.fault_alarm,
+                    updated_at = NOW()
+            )";
+
+            txn.exec_params(query,
+                r.device_id, date_oss.str(), pairs_json.str(),
+                r.mask_events, r.duration_minutes, r.patient_hours,
+                r.ahi, r.hi, r.ai, r.oai, r.cai, r.uai, r.rin, r.csr,
+                r.mask_press_50, r.mask_press_95, r.mask_press_max,
+                r.leak_50, r.leak_95, r.leak_max,
+                r.spo2_50, r.spo2_95,
+                r.resp_rate_50, r.tid_vol_50, r.min_vent_50,
+                r.mode, r.epr_level, r.pressure_setting,
+                r.fault_device, r.fault_alarm
+            );
+        }
+
+        txn.commit();
+        std::cout << "DB: Saved " << records.size() << " STR daily records" << std::endl;
+        return true;
+
+    } catch (const std::exception& e) {
+        std::cerr << "DB: saveSTRDailyRecords error: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+std::optional<std::string> DatabaseService::getLastSTRDate(const std::string& device_id) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+
+    if (!ensureConnection()) return std::nullopt;
+
+    try {
+        pqxx::work txn(*conn_);
+        auto result = txn.exec_params(
+            "SELECT MAX(record_date)::text FROM cpap_daily_summary WHERE device_id = $1",
+            device_id
+        );
+        txn.commit();
+
+        if (result.empty() || result[0][0].is_null()) return std::nullopt;
+        return result[0][0].as<std::string>();
+
+    } catch (const std::exception& e) {
+        std::cerr << "DB: getLastSTRDate error: " << e.what() << std::endl;
+        return std::nullopt;
+    }
+}
+
 } // namespace hms_cpap

@@ -128,16 +128,22 @@ TEST_F(DataPublisherServiceTest, HAStatusOffline_DoesNotRepublish) {
             discovery_count++;
         }, 1);
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    // Wait for retained messages from prior runs to arrive, then reset counter
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    int retained_count = discovery_count.load();
+    discovery_count.store(0);
 
     // Publish "offline" (should NOT trigger discovery)
     publisher_client->publish("homeassistant/status", "offline", 1, true);
 
     std::this_thread::sleep_for(std::chrono::seconds(1));
 
-    // Should NOT have received discovery messages
-    EXPECT_EQ(discovery_count.load(), 0);
-    std::cout << "✅ HA 'offline' status does not trigger discovery" << std::endl;
+    // Should NOT have received NEW discovery messages (only retained from before)
+    EXPECT_EQ(discovery_count.load(), 0)
+        << "Got " << discovery_count.load() << " new discovery messages after 'offline' "
+        << "(ignored " << retained_count << " pre-existing retained messages)";
+    std::cout << "✅ HA 'offline' status does not trigger discovery"
+              << " (ignored " << retained_count << " retained)" << std::endl;
 
     publisher_client->disconnect();
 }

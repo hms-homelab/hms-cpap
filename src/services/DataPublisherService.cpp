@@ -63,9 +63,10 @@ bool DataPublisherService::publishDiscovery() {
 
     bool rt_success = publishRealtimeDiscovery();
     bool hist_success = publishHistoricalDiscovery();
+    bool str_success = publishSTRDiscovery();
 
-    if (rt_success && hist_success) {
-        std::cout << "✅ MQTT: Discovery published (8 realtime + 25 historical = 33 sensors)" << std::endl;
+    if (rt_success && hist_success && str_success) {
+        std::cout << "✅ MQTT: Discovery published (8 realtime + 25 historical + 13 daily = 46 sensors)" << std::endl;
         return true;
     }
 
@@ -544,6 +545,101 @@ void DataPublisherService::publishHistoricalState(const SessionMetrics& m) {
     }
 
     std::cout << "  ✓ Historical state published (39 metrics)" << std::endl;
+}
+
+bool DataPublisherService::publishSTRDiscovery() {
+    std::cout << "  📊 STR daily sensors (13)..." << std::endl;
+
+    std::string device_json = createDeviceJson();
+
+    struct SensorDef {
+        std::string name;
+        std::string unit;
+        std::string device_class;
+        std::string icon;
+    };
+
+    std::vector<SensorDef> str_sensors = {
+        {"str_ahi",           "events/h", "", "mdi:alert-circle-outline"},
+        {"str_oai",           "events/h", "", "mdi:alert"},
+        {"str_cai",           "events/h", "", "mdi:alert-octagon"},
+        {"str_hi",            "events/h", "", "mdi:alert-circle"},
+        {"str_rin",           "events/h", "", "mdi:alert-outline"},
+        {"str_csr",           "min",      "", "mdi:chart-timeline"},
+        {"str_usage_hours",   "h",        "duration", "mdi:clock-check"},
+        {"str_mask_events",   "",         "", "mdi:face-mask"},
+        {"str_leak_95",       "L/min",    "", "mdi:leak"},
+        {"str_press_95",      "cmH2O",    "", "mdi:gauge"},
+        {"str_spo2_50",       "%",        "", "mdi:heart-pulse"},
+        {"str_patient_hours", "h",        "duration", "mdi:counter"},
+        {"ahi_delta",         "events/h", "", "mdi:delta"},
+    };
+
+    for (const auto& sensor : str_sensors) {
+        std::string object_id = device_id_ + "_daily_" + sensor.name;
+        std::string state_topic = "cpap/" + device_id_ + "/daily/" + sensor.name;
+
+        Json::Value config;
+        config["name"] = "STR " + sensor.name;
+        config["unique_id"] = object_id;
+        config["state_topic"] = state_topic;
+
+        Json::CharReaderBuilder reader_builder;
+        std::istringstream device_stream(device_json);
+        Json::parseFromStream(reader_builder, device_stream, &config["device"], nullptr);
+
+        if (!sensor.unit.empty())
+            config["unit_of_measurement"] = sensor.unit;
+        if (!sensor.device_class.empty())
+            config["device_class"] = sensor.device_class;
+        if (!sensor.icon.empty())
+            config["icon"] = sensor.icon;
+
+        std::string discovery_topic = "homeassistant/sensor/" + device_id_ + "/daily_" + sensor.name + "/config";
+
+        Json::StreamWriterBuilder builder;
+        builder["indentation"] = "";
+        std::string config_json = Json::writeString(builder, config);
+
+        if (!mqtt_client_->publish(discovery_topic, config_json, 1, true)) {
+            std::cerr << "MQTT: Failed to publish STR discovery for " << sensor.name << std::endl;
+            return false;
+        }
+    }
+
+    std::cout << "    13 STR daily sensors" << std::endl;
+    return true;
+}
+
+void DataPublisherService::publishSTRState(const STRDailyRecord& record, double nightly_ahi) {
+    std::string prefix = "cpap/" + device_id_ + "/daily/";
+
+    auto pub = [&](const std::string& name, double value) {
+        std::ostringstream oss;
+        oss << std::fixed << std::setprecision(2) << value;
+        mqtt_client_->publish(prefix + name, oss.str(), 0, true);
+    };
+
+    pub("str_ahi", record.ahi);
+    pub("str_oai", record.oai);
+    pub("str_cai", record.cai);
+    pub("str_hi", record.hi);
+    pub("str_rin", record.rin);
+    pub("str_csr", record.csr);
+    pub("str_usage_hours", record.duration_minutes / 60.0);
+    pub("str_mask_events", static_cast<double>(record.mask_events / 2));  // pairs
+    pub("str_leak_95", record.leak_95);
+    pub("str_press_95", record.mask_press_95);
+    pub("str_spo2_50", record.spo2_50);
+    pub("str_patient_hours", record.patient_hours);
+
+    // AHI delta: str_ahi - our calculated ahi
+    double delta = (nightly_ahi > 0) ? record.ahi - nightly_ahi : 0;
+    pub("ahi_delta", delta);
+
+    std::cout << "  STR daily state published (AHI=" << record.ahi
+              << ", usage=" << record.duration_minutes / 60.0 << "h"
+              << ", delta=" << delta << ")" << std::endl;
 }
 
 bool DataPublisherService::publishSessionCompleted() {

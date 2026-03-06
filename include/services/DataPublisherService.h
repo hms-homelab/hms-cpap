@@ -83,6 +83,14 @@ public:
      */
     void publishHistoricalState(const SessionMetrics& m);
 
+    /**
+     * Publish STR daily summary to MQTT (daily/ namespace).
+     *
+     * @param record Latest STR daily record
+     * @param nightly_ahi Our calculated AHI for delta comparison (0 = unavailable)
+     */
+    void publishSTRState(const STRDailyRecord& record, double nightly_ahi = 0);
+
 private:
     std::shared_ptr<MqttClient> mqtt_client_;
     std::shared_ptr<DatabaseService> db_service_;
@@ -112,6 +120,13 @@ private:
      * @return true if published successfully
      */
     bool publishHistoricalDiscovery();
+
+    /**
+     * Publish STR daily discovery (13 sensors)
+     *
+     * @return true if published successfully
+     */
+    bool publishSTRDiscovery();
 
     /**
      * Publish session state to MQTT (realtime + historical)

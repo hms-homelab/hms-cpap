@@ -89,6 +89,15 @@ public:
     bool downloadSession(const std::string& date_folder,
                          const std::string& local_dir);
 
+    /**
+     * Download a file from the SD card root (not inside a date folder)
+     * Used for STR.EDF which lives at DATALOG root level.
+     *
+     * @param filename e.g., "STR.EDF"
+     * @param local_path Local path to save
+     */
+    bool downloadRootFile(const std::string& filename, const std::string& local_path);
+
     std::string getBaseURL() const { return base_url_; }
     void setBaseURL(const std::string& url) { base_url_ = url; }
 

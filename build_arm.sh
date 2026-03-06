@@ -14,7 +14,7 @@ cd "$BUILD_DIR"
 
 # Configure with ARM toolchain (uses native CMakeLists.txt + toolchain file)
 echo "Configuring ARM build..."
-cmake -DBUILD_TESTS=OFF -DCMAKE_TOOLCHAIN_FILE=../arm-toolchain.cmake ..
+cmake -DBUILD_TESTS=OFF -DCMAKE_TOOLCHAIN_FILE=../cmake/arm-toolchain.cmake ..
 
 # Build
 echo ""

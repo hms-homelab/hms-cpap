@@ -1,10 +1,14 @@
 #include "services/BurstCollectorService.h"
+#include "parsers/EDFParser.h"
+#include "database/DatabaseService.h"
 #include "utils/ConfigManager.h"
 #include <iostream>
 #include <iomanip>
 #include <csignal>
 #include <atomic>
 #include <memory>
+#include <string>
+#include <cstring>
 
 std::atomic<bool> shutdown_requested(false);
 std::unique_ptr<hms_cpap::BurstCollectorService> burst_service;
@@ -33,7 +37,7 @@ void printBanner() {
 ║      ResMed AirSense 10 via ez Share                     ║
 ║      Configurable via EZSHARE_BASE_URL                   ║
 ║                                                           ║
-║      Version: 1.1.3+20260219 - KB Fix + Recovery         ║
+║      Version: 1.2.0+20260306 - STR Daily Summaries       ║
 ║      Platform: Linux                                      ║
 ║                                                           ║
 ╚═══════════════════════════════════════════════════════════╝
@@ -54,9 +58,71 @@ void printConfiguration() {
 }
 
 /**
+ * Run STR.edf backfill: parse file and save ALL records to DB.
+ *
+ * Usage: hms_cpap --backfill /path/to/str.edf
+ */
+int runBackfill(const std::string& filepath) {
+    std::string device_id = hms_cpap::ConfigManager::get("CPAP_DEVICE_ID", "cpap_resmed_23243570851");
+
+    std::cout << "STR Backfill: Parsing " << filepath << std::endl;
+    auto records = hms_cpap::EDFParser::parseSTRFile(filepath, device_id);
+    if (records.empty()) {
+        std::cerr << "STR Backfill: No therapy days found in " << filepath << std::endl;
+        return 1;
+    }
+    std::cout << "STR Backfill: Found " << records.size() << " therapy days" << std::endl;
+
+    // Connect to DB
+    std::string db_host = hms_cpap::ConfigManager::get("DB_HOST", "localhost");
+    std::string db_port = hms_cpap::ConfigManager::get("DB_PORT", "5432");
+    std::string db_name = hms_cpap::ConfigManager::get("DB_NAME", "cpap_monitoring");
+    std::string db_user = hms_cpap::ConfigManager::get("DB_USER", "maestro");
+    std::string db_password = hms_cpap::ConfigManager::get("DB_PASSWORD", "maestro_postgres_2026_secure");
+
+    std::string conn_str = "host=" + db_host + " port=" + db_port +
+                           " dbname=" + db_name + " user=" + db_user +
+                           " password=" + db_password;
+
+    hms_cpap::DatabaseService db(conn_str);
+    if (!db.connect()) {
+        std::cerr << "STR Backfill: DB connection failed" << std::endl;
+        return 1;
+    }
+
+    if (!db.saveSTRDailyRecords(records)) {
+        std::cerr << "STR Backfill: Failed to save records" << std::endl;
+        return 1;
+    }
+
+    // Print summary
+    const auto& first = records.front();
+    const auto& last = records.back();
+    auto first_t = std::chrono::system_clock::to_time_t(first.record_date);
+    auto last_t = std::chrono::system_clock::to_time_t(last.record_date);
+    std::cout << "STR Backfill: Saved " << records.size() << " days ("
+              << std::put_time(std::localtime(&first_t), "%Y-%m-%d") << " to "
+              << std::put_time(std::localtime(&last_t), "%Y-%m-%d") << ")"
+              << std::endl;
+
+    return 0;
+}
+
+/**
  * Main entry point
  */
 int main(int argc, char** argv) {
+    // Handle --backfill mode
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--backfill") == 0) {
+            if (i + 1 >= argc) {
+                std::cerr << "Usage: hms_cpap --backfill <path/to/str.edf>" << std::endl;
+                return 1;
+            }
+            return runBackfill(argv[i + 1]);
+        }
+    }
+
     // Print banner
     printBanner();
 
