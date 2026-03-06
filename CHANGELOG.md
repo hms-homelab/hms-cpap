@@ -218,6 +218,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Version History Summary
 
+- **1.4.0** - Local source mode (CPAP_SOURCE=local), no ezShare needed
+- **1.3.0** - --reparse CLI for local archive re-parsing
 - **1.2.0** - STR.edf daily therapy summaries, 13 new MQTT sensors, backfill CLI, project cleanup
 - **1.1.8** - Stale nightly metrics fix, ARM toolchain cleanup
 - **1.1.4** - Docker build fixes, libpqxx 6.x compatibility
@@ -227,7 +229,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **1.1.0** - Session discovery, archival, 34 metrics
 - **1.0.0** - Initial release with core functionality
 
-[Unreleased]: https://github.com/hms-homelab/hms-cpap/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/hms-homelab/hms-cpap/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/hms-homelab/hms-cpap/compare/v1.3.0...v1.4.0
+[1.3.0]: https://github.com/hms-homelab/hms-cpap/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/hms-homelab/hms-cpap/compare/v1.1.8...v1.2.0
 [1.1.8]: https://github.com/hms-homelab/hms-cpap/compare/v1.1.4...v1.1.8
 [1.1.4]: https://github.com/hms-homelab/hms-cpap/compare/v1.1.3...v1.1.4
