@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-03-06
+
+### Added
+- **Local source mode** (`CPAP_SOURCE=local`): Run HMS-CPAP against a local directory
+  instead of an ezShare WiFi SD card. Set `CPAP_LOCAL_DIR=/path/to/DATALOG` and the
+  burst cycle reads EDF files from the filesystem (SMB mount, USB, manual SD copy).
+  Same session grouping, change detection, parsing, DB, and MQTT pipeline — no ezShare
+  or WiFi dongle needed. Docker example:
+  ```
+  docker run -v /mnt/sd-card:/data/DATALOG \
+    -e CPAP_SOURCE=local -e CPAP_LOCAL_DIR=/data/DATALOG \
+    -e DB_HOST=postgres -e MQTT_BROKER=mqtt \
+    ghcr.io/hms-homelab/hms-cpap:latest
+  ```
+- `SessionDiscoveryService::discoverLocalSessions()` — static method for local filesystem
+  session discovery with same date filtering and 48-hour recent session logic.
+- Change detection in local mode uses file sizes from `std::filesystem::file_size()`
+  stored in KB (same format as ezShare mode) for consistent comparison.
+
 ## [1.3.0] - 2026-03-06
 
 ### Added

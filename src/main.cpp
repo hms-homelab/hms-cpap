@@ -40,7 +40,7 @@ void printBanner() {
 ║      ResMed AirSense 10 via ez Share                     ║
 ║      Configurable via EZSHARE_BASE_URL                   ║
 ║                                                           ║
-║      Version: 1.3.0+20260306 - Reparse CLI               ║
+║      Version: 1.4.0+20260306 - Local Source Mode          ║
 ║      Platform: Linux                                      ║
 ║                                                           ║
 ╚═══════════════════════════════════════════════════════════╝
@@ -52,9 +52,16 @@ void printBanner() {
  */
 void printConfiguration() {
     std::cout << "Configuration:" << std::endl;
+    std::string source = hms_cpap::ConfigManager::get("CPAP_SOURCE", "ezshare");
     std::cout << "  Device ID:          " << hms_cpap::ConfigManager::get("CPAP_DEVICE_ID", "cpap_resmed_23243570851") << std::endl;
     std::cout << "  Device Name:        " << hms_cpap::ConfigManager::get("CPAP_DEVICE_NAME", "ResMed AirSense 10") << std::endl;
-    std::cout << "  ez Share URL:       " << hms_cpap::ConfigManager::get("EZSHARE_BASE_URL", "http://192.168.4.1") << std::endl;
+    if (source == "local") {
+        std::cout << "  Source:             Local directory" << std::endl;
+        std::cout << "  Local Dir:          " << hms_cpap::ConfigManager::get("CPAP_LOCAL_DIR", "(not set)") << std::endl;
+    } else {
+        std::cout << "  Source:             ez Share" << std::endl;
+        std::cout << "  ez Share URL:       " << hms_cpap::ConfigManager::get("EZSHARE_BASE_URL", "http://192.168.4.1") << std::endl;
+    }
     std::cout << "  Burst Interval:     " << hms_cpap::ConfigManager::getInt("BURST_INTERVAL", 120) << " seconds" << std::endl;
     std::cout << "  Health Check Port:  " << hms_cpap::ConfigManager::getInt("HEALTH_CHECK_PORT", 8893) << std::endl;
     std::cout << std::endl;
@@ -324,8 +331,13 @@ int main(int argc, char** argv) {
         burst_service = std::make_unique<hms_cpap::BurstCollectorService>(burst_interval);
         burst_service->start();
 
-        std::cout << "🚀 HMS-CPAP service is running..." << std::endl;
-        std::cout << "   Accessing ez Share at " << hms_cpap::ConfigManager::get("EZSHARE_BASE_URL", "http://192.168.4.1") << std::endl;
+        std::cout << "HMS-CPAP service is running..." << std::endl;
+        std::string src = hms_cpap::ConfigManager::get("CPAP_SOURCE", "ezshare");
+        if (src == "local") {
+            std::cout << "   Source: Local directory at " << hms_cpap::ConfigManager::get("CPAP_LOCAL_DIR", "") << std::endl;
+        } else {
+            std::cout << "   Source: ez Share at " << hms_cpap::ConfigManager::get("EZSHARE_BASE_URL", "http://192.168.4.1") << std::endl;
+        }
         std::cout << "   Burst interval: " << burst_interval << " seconds" << std::endl;
         std::cout << "   Press Ctrl+C to stop" << std::endl << std::endl;
 

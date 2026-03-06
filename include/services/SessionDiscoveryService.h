@@ -57,11 +57,25 @@ public:
     /**
      * Group files in a local directory into sessions (same 2-hour gap logic).
      *
-     * Static method -- no EzShareClient needed. Used by --reparse CLI.
+     * Static method -- no EzShareClient needed. Used by --reparse and local source mode.
      */
     static std::vector<SessionFileSet> groupLocalFolder(
         const std::string& dir_path,
         const std::string& date_folder);
+
+    /**
+     * Discover sessions from a local DATALOG directory (no ezShare needed).
+     *
+     * Same logic as discoverNewSessions() but reads date folders from filesystem.
+     * Used by CPAP_SOURCE=local mode.
+     *
+     * @param local_datalog_dir Path to DATALOG directory (contains YYYYMMDD folders)
+     * @param last_session_start Last stored session (nullopt = get all)
+     * @return Vector of session file sets to process
+     */
+    static std::vector<SessionFileSet> discoverLocalSessions(
+        const std::string& local_datalog_dir,
+        std::optional<std::chrono::system_clock::time_point> last_session_start);
 
 private:
     EzShareClient& ezshare_client_;

@@ -16,13 +16,21 @@ BurstCollectorService::BurstCollectorService(int burst_interval_seconds)
     // Load configuration from environment
     device_id_ = ConfigManager::get("CPAP_DEVICE_ID", "cpap_resmed_23243570851");
     device_name_ = ConfigManager::get("CPAP_DEVICE_NAME", "ResMed AirSense 10");
-    // ez Share accessed via dedicated wlan1 interface (192.168.4.1)
 
-    // Initialize clients
-    ezshare_client_ = std::make_unique<EzShareClient>();
-
-    // Initialize discovery service
-    discovery_service_ = std::make_unique<SessionDiscoveryService>(*ezshare_client_);
+    // Check for local source mode (CPAP_SOURCE=local + CPAP_LOCAL_DIR)
+    std::string source = ConfigManager::get("CPAP_SOURCE", "ezshare");
+    if (source == "local") {
+        local_source_dir_ = ConfigManager::get("CPAP_LOCAL_DIR", "");
+        if (local_source_dir_.empty()) {
+            std::cerr << "CPAP_SOURCE=local but CPAP_LOCAL_DIR not set!" << std::endl;
+            throw std::runtime_error("CPAP_LOCAL_DIR required when CPAP_SOURCE=local");
+        }
+        std::cout << "CPAP: Local source mode — reading from " << local_source_dir_ << std::endl;
+    } else {
+        // ez Share mode: initialize HTTP client and discovery service
+        ezshare_client_ = std::make_unique<EzShareClient>();
+        discovery_service_ = std::make_unique<SessionDiscoveryService>(*ezshare_client_);
+    }
 
     // Initialize MQTT client
     std::string mqtt_broker = ConfigManager::get("MQTT_BROKER", "192.168.2.15");
@@ -66,7 +74,11 @@ BurstCollectorService::BurstCollectorService(int burst_interval_seconds)
     std::cout << "🚀 BurstCollectorService initialized" << std::endl;
     std::cout << "   Device: " << device_name_ << " (" << device_id_ << ")" << std::endl;
     std::cout << "   Burst interval: " << burst_interval_seconds_ << " seconds" << std::endl;
-    std::cout << "   ez Share: " << ConfigManager::get("EZSHARE_BASE_URL", "http://192.168.4.1") << std::endl;
+    if (local_source_dir_.empty()) {
+        std::cout << "   Source: ez Share at " << ConfigManager::get("EZSHARE_BASE_URL", "http://192.168.4.1") << std::endl;
+    } else {
+        std::cout << "   Source: Local directory at " << local_source_dir_ << std::endl;
+    }
 
     // STARTUP CLEANUP: Clear any stale session_active state from previous run
     // This prevents stuck "session active" in HA after service restart or crash
@@ -384,171 +396,113 @@ bool BurstCollectorService::executeBurstCycle() {
         std::cout << "📊 CPAP: No previous sessions in DB (first run)" << std::endl;
     }
 
-    // Step 2: Access ez Share via configured URL
-    std::cout << "✅ CPAP: Accessing ez Share at " << ConfigManager::get("EZSHARE_BASE_URL", "http://192.168.4.1") << std::endl;
-
-    // Step 3: Discover new sessions (delta logic)
+    // Step 2-5: Discover sessions and prepare for parsing
+    // Two modes: ezShare (HTTP) or local filesystem
     std::vector<SessionFileSet> new_sessions;
+    std::vector<std::pair<std::string, std::chrono::system_clock::time_point>> downloaded_sessions;
+    auto download_start = std::chrono::steady_clock::now();
 
-    try {
-        new_sessions = discovery_service_->discoverNewSessions(last_session_start);
-        // Reset failure counter on successful connection
-        consecutive_failures_ = 0;
-        session_active_cleared_ = false;  // Allow future cleanup if needed
-    } catch (const std::exception& e) {
-        std::cerr << "❌ CPAP: Session discovery failed: " << e.what() << std::endl;
+    if (!local_source_dir_.empty()) {
+        // ===== LOCAL SOURCE MODE =====
+        std::cout << "CPAP: Scanning local directory " << local_source_dir_ << std::endl;
 
-        // CONNECTION RECOVERY: Track consecutive failures
-        consecutive_failures_++;
-        std::cerr << "   ⚠️  Consecutive failures: " << consecutive_failures_
-                  << "/" << MAX_FAILURES_BEFORE_RESET << std::endl;
+        new_sessions = SessionDiscoveryService::discoverLocalSessions(
+            local_source_dir_, last_session_start);
 
-        // After MAX_FAILURES_BEFORE_RESET consecutive failures, clear session_active
-        // This prevents stuck "session running" in HA when connection is lost
-        if (consecutive_failures_ >= MAX_FAILURES_BEFORE_RESET && !session_active_cleared_) {
-            std::cout << "🔄 RECOVERY: Clearing session_active after "
-                      << consecutive_failures_ << " consecutive failures" << std::endl;
-
-            if (data_publisher_) {
-                data_publisher_->publishSessionCompleted();
-                session_active_cleared_ = true;
-                std::cout << "   ✅ Published session_active=OFF to MQTT" << std::endl;
-            }
+        if (new_sessions.empty()) {
+            std::cout << "CPAP: No new sessions found locally" << std::endl;
+            return true;
         }
 
-        return false;
-    }
+        std::cout << "CPAP: Found " << new_sessions.size() << " session(s) to process" << std::endl;
 
-    if (new_sessions.empty()) {
-        std::cout << "ℹ️  CPAP: No new sessions to download" << std::endl;
-        return true;  // Success - just nothing new
-    }
+        // For each session, create a temp directory with symlinks for session isolation
+        // (parseSession reads ALL files in a dir, so we isolate each session's files)
+        std::string temp_base = "/tmp/cpap_local";
+        std::filesystem::create_directories(temp_base);
 
-    std::cout << "📦 CPAP: Found " << new_sessions.size() << " new session(s)" << std::endl;
+        for (const auto& session : new_sessions) {
+            bool exists_in_db = db_service_->sessionExists(device_id_, session.session_start);
 
-    // Step 4: Download new session files
-    auto download_start = std::chrono::steady_clock::now();
-    std::string local_base_dir = ConfigManager::get("CPAP_TEMP_DIR", "/tmp/cpap_data");
-    std::vector<std::pair<std::string, std::chrono::system_clock::time_point>> downloaded_sessions;
+            if (exists_in_db) {
+                // Check if checkpoint files changed (using file sizes from filesystem)
+                auto db_checkpoint_sizes = db_service_->getCheckpointFileSizes(device_id_, session.session_start);
 
-    for (const auto& session : new_sessions) {
-        // Check if session exists in DB
-        bool exists_in_db = db_service_->sessionExists(device_id_, session.session_start);
-
-        if (!exists_in_db) {
-            // New session - download all files
-            std::cout << "📦 CPAP: New session " << session.session_prefix
-                      << " (not in DB, " << session.total_size_kb << " KB)" << std::endl;
-
-            if (downloadSessionFiles(session, local_base_dir)) {
-                // Store checkpoint file sizes in KB (exact values from ez Share HTML)
-                // This ensures comparison works: ez Share KB == DB KB
-                std::map<std::string, int> checkpoint_sizes;
+                std::map<std::string, int> current_checkpoint_sizes;
                 for (const auto& [filename, size_kb] : session.file_sizes_kb) {
                     if (filename.find("_BRP.edf") != std::string::npos ||
                         filename.find("_PLD.edf") != std::string::npos ||
                         filename.find("_SAD.edf") != std::string::npos) {
-                        checkpoint_sizes[filename] = size_kb;
+                        current_checkpoint_sizes[filename] = size_kb;
                     }
                 }
 
-                // Store checkpoint file sizes (in KB, matching ez Share) in DB
-                db_service_->updateCheckpointFileSizes(device_id_, session.session_start, checkpoint_sizes);
+                bool all_unchanged = true;
+                for (const auto& [filename, db_size] : db_checkpoint_sizes) {
+                    auto it = current_checkpoint_sizes.find(filename);
+                    if (it == current_checkpoint_sizes.end() || it->second != db_size) {
+                        all_unchanged = false;
+                        break;
+                    }
+                }
+                if (current_checkpoint_sizes.size() > db_checkpoint_sizes.size()) {
+                    all_unchanged = false;
+                }
 
-                std::string session_dir = local_base_dir + "/" + session.date_folder;
+                if (all_unchanged) {
+                    // Session unchanged — mark completed, publish if current night
+                    std::cout << "CPAP: Session " << session.session_prefix
+                              << " unchanged" << std::endl;
+                    db_service_->markSessionCompleted(device_id_, session.session_start);
 
-                // Store session dir + filename timestamp for parsing
-                downloaded_sessions.push_back({session_dir, session.session_start});
+                    auto now = std::chrono::system_clock::now();
+                    auto now_t = std::chrono::system_clock::to_time_t(now);
+                    auto sess_t = std::chrono::system_clock::to_time_t(session.session_start);
+                    auto now_day = (now_t - 12*3600) / 86400;
+                    auto sess_day = (sess_t - 12*3600) / 86400;
+
+                    if (sess_day == now_day && data_publisher_) {
+                        auto metrics = db_service_->getNightlyMetrics(device_id_, session.session_start);
+                        if (metrics.has_value()) {
+                            data_publisher_->publishHistoricalState(metrics.value());
+                        }
+                        data_publisher_->publishSessionCompleted();
+                    }
+                    continue;
+                }
+
+                std::cout << "CPAP: Session " << session.session_prefix
+                          << " changed, re-parsing" << std::endl;
             } else {
-                std::cerr << "⚠️  CPAP: Failed to download session " << session.session_prefix << std::endl;
-            }
-            continue;
-        }
-
-        // Session exists - check if checkpoint files changed
-        auto db_checkpoint_sizes = db_service_->getCheckpointFileSizes(device_id_, session.session_start);
-
-        // Extract current checkpoint sizes from ez Share
-        std::map<std::string, int> current_checkpoint_sizes;
-        for (const auto& [filename, size_kb] : session.file_sizes_kb) {
-            if (filename.find("_BRP.edf") != std::string::npos ||
-                filename.find("_PLD.edf") != std::string::npos ||
-                filename.find("_SAD.edf") != std::string::npos) {
-                current_checkpoint_sizes[filename] = size_kb;
-            }
-        }
-
-        // Detect session stop: ALL checkpoint files unchanged AND no new checkpoint files
-        bool all_unchanged = true;
-        bool has_new_files = false;
-
-        // Check if any existing files grew
-        for (const auto& [filename, db_size] : db_checkpoint_sizes) {
-            auto it = current_checkpoint_sizes.find(filename);
-            if (it == current_checkpoint_sizes.end()) {
-                // File disappeared (unlikely, but handle it)
-                all_unchanged = false;
-                break;
-            }
-            if (it->second != db_size) {
-                all_unchanged = false;
-                break;
-            }
-        }
-
-        // Check if there are new checkpoint files
-        if (current_checkpoint_sizes.size() > db_checkpoint_sizes.size()) {
-            has_new_files = true;
-            all_unchanged = false;  // New files mean activity
-        }
-
-        if (all_unchanged && !has_new_files) {
-            // Session stopped - mark as COMPLETED in DB
-            std::cout << "🛑 CPAP: Session " << session.session_prefix
-                      << " stopped (all checkpoint files unchanged, no new files)" << std::endl;
-
-            if (db_service_->markSessionCompleted(device_id_, session.session_start)) {
-                std::cout << "   ✅ Marked as COMPLETED in database" << std::endl;
+                std::cout << "CPAP: New session " << session.session_prefix
+                          << " (" << session.total_size_kb << " KB)" << std::endl;
             }
 
-            // Only publish nightly metrics for sessions in the CURRENT sleep night.
-            // Old sessions from previous nights are re-scanned every cycle but their
-            // metrics must not overwrite the current night's historical MQTT topics.
-            {
-                auto now = std::chrono::system_clock::now();
-                auto now_t = std::chrono::system_clock::to_time_t(now);
-                auto sess_t = std::chrono::system_clock::to_time_t(session.session_start);
-                // Sleep day = calendar date of (timestamp - 12h)
-                auto now_day = (now_t - 12*3600) / 86400;
-                auto sess_day = (sess_t - 12*3600) / 86400;
+            // Create temp dir with symlinks for this session's files only
+            std::string temp_dir = temp_base + "/" + session.date_folder + "_" + session.session_prefix;
+            std::filesystem::create_directories(temp_dir);
 
-                if (sess_day == now_day && data_publisher_) {
-                    auto metrics = db_service_->getNightlyMetrics(device_id_, session.session_start);
-                    if (metrics.has_value()) {
-                        data_publisher_->publishHistoricalState(metrics.value());
-                        std::cout << "   ✅ Nightly metrics published ("
-                                  << metrics.value().usage_hours.value_or(0.0) << "h, AHI "
-                                  << metrics.value().ahi << ")" << std::endl;
-                    }
-                    data_publisher_->publishSessionCompleted();
+            // Clear previous symlinks
+            for (const auto& entry : std::filesystem::directory_iterator(temp_dir)) {
+                std::filesystem::remove(entry.path());
+            }
 
-                    // Download and publish STR daily summary on session completion
-                    processSTRFile();
+            std::string src_dir = local_source_dir_ + "/" + session.date_folder;
+            auto symlinkFile = [&](const std::string& filename) {
+                auto src = std::filesystem::path(src_dir) / filename;
+                auto dst = std::filesystem::path(temp_dir) / filename;
+                if (std::filesystem::exists(src)) {
+                    std::filesystem::create_symlink(src, dst);
                 }
-            }
+            };
 
-            // Don't download/parse - nothing changed
-            std::cout << "   ⏭️  Skipping download (no changes)" << std::endl;
-            continue;
-        }
+            for (const auto& f : session.brp_files) symlinkFile(f);
+            for (const auto& f : session.pld_files) symlinkFile(f);
+            for (const auto& f : session.sad_files) symlinkFile(f);
+            if (!session.csl_file.empty()) symlinkFile(session.csl_file);
+            if (!session.eve_file.empty()) symlinkFile(session.eve_file);
 
-        // Checkpoint files changed - re-download and parse
-        std::cout << "📈 CPAP: Re-downloading session " << session.session_prefix
-                  << " (checkpoint files changed: " << db_checkpoint_sizes.size()
-                  << " → " << current_checkpoint_sizes.size() << " files)" << std::endl;
-
-        if (downloadSessionFiles(session, local_base_dir)) {
-            // Store checkpoint file sizes in KB (exact values from ez Share HTML)
+            // Store checkpoint sizes for change detection on next cycle
             std::map<std::string, int> checkpoint_sizes;
             for (const auto& [filename, size_kb] : session.file_sizes_kb) {
                 if (filename.find("_BRP.edf") != std::string::npos ||
@@ -557,49 +511,180 @@ bool BurstCollectorService::executeBurstCycle() {
                     checkpoint_sizes[filename] = size_kb;
                 }
             }
-
-            // Update checkpoint file sizes (in KB, matching ez Share) in DB
             db_service_->updateCheckpointFileSizes(device_id_, session.session_start, checkpoint_sizes);
 
-            // Store session dir + filename timestamp for parsing
-            std::string session_dir = local_base_dir + "/" + session.date_folder;
-            downloaded_sessions.push_back({session_dir, session.session_start});
-        } else {
-            std::cerr << "⚠️  CPAP: Failed to download session " << session.session_prefix << std::endl;
+            downloaded_sessions.push_back({temp_dir, session.session_start});
+        }
+
+        if (downloaded_sessions.empty()) {
+            std::cout << "CPAP: No sessions need processing" << std::endl;
+            return true;
+        }
+
+    } else {
+        // ===== EZSHARE MODE (original) =====
+        std::cout << "CPAP: Accessing ez Share at " << ConfigManager::get("EZSHARE_BASE_URL", "http://192.168.4.1") << std::endl;
+
+        try {
+            new_sessions = discovery_service_->discoverNewSessions(last_session_start);
+            consecutive_failures_ = 0;
+            session_active_cleared_ = false;
+        } catch (const std::exception& e) {
+            std::cerr << "CPAP: Session discovery failed: " << e.what() << std::endl;
+
+            consecutive_failures_++;
+            std::cerr << "   Consecutive failures: " << consecutive_failures_
+                      << "/" << MAX_FAILURES_BEFORE_RESET << std::endl;
+
+            if (consecutive_failures_ >= MAX_FAILURES_BEFORE_RESET && !session_active_cleared_) {
+                std::cout << "RECOVERY: Clearing session_active after "
+                          << consecutive_failures_ << " consecutive failures" << std::endl;
+                if (data_publisher_) {
+                    data_publisher_->publishSessionCompleted();
+                    session_active_cleared_ = true;
+                }
+            }
+
+            return false;
+        }
+
+        if (new_sessions.empty()) {
+            std::cout << "CPAP: No new sessions to download" << std::endl;
+            return true;
+        }
+
+        std::cout << "CPAP: Found " << new_sessions.size() << " new session(s)" << std::endl;
+
+        std::string local_base_dir = ConfigManager::get("CPAP_TEMP_DIR", "/tmp/cpap_data");
+
+        for (const auto& session : new_sessions) {
+            bool exists_in_db = db_service_->sessionExists(device_id_, session.session_start);
+
+            if (!exists_in_db) {
+                std::cout << "CPAP: New session " << session.session_prefix
+                          << " (not in DB, " << session.total_size_kb << " KB)" << std::endl;
+
+                if (downloadSessionFiles(session, local_base_dir)) {
+                    std::map<std::string, int> checkpoint_sizes;
+                    for (const auto& [filename, size_kb] : session.file_sizes_kb) {
+                        if (filename.find("_BRP.edf") != std::string::npos ||
+                            filename.find("_PLD.edf") != std::string::npos ||
+                            filename.find("_SAD.edf") != std::string::npos) {
+                            checkpoint_sizes[filename] = size_kb;
+                        }
+                    }
+                    db_service_->updateCheckpointFileSizes(device_id_, session.session_start, checkpoint_sizes);
+                    std::string session_dir = local_base_dir + "/" + session.date_folder;
+                    downloaded_sessions.push_back({session_dir, session.session_start});
+                } else {
+                    std::cerr << "CPAP: Failed to download session " << session.session_prefix << std::endl;
+                }
+                continue;
+            }
+
+            auto db_checkpoint_sizes = db_service_->getCheckpointFileSizes(device_id_, session.session_start);
+
+            std::map<std::string, int> current_checkpoint_sizes;
+            for (const auto& [filename, size_kb] : session.file_sizes_kb) {
+                if (filename.find("_BRP.edf") != std::string::npos ||
+                    filename.find("_PLD.edf") != std::string::npos ||
+                    filename.find("_SAD.edf") != std::string::npos) {
+                    current_checkpoint_sizes[filename] = size_kb;
+                }
+            }
+
+            bool all_unchanged = true;
+            bool has_new_files = false;
+
+            for (const auto& [filename, db_size] : db_checkpoint_sizes) {
+                auto it = current_checkpoint_sizes.find(filename);
+                if (it == current_checkpoint_sizes.end()) {
+                    all_unchanged = false;
+                    break;
+                }
+                if (it->second != db_size) {
+                    all_unchanged = false;
+                    break;
+                }
+            }
+
+            if (current_checkpoint_sizes.size() > db_checkpoint_sizes.size()) {
+                has_new_files = true;
+                all_unchanged = false;
+            }
+
+            if (all_unchanged && !has_new_files) {
+                std::cout << "CPAP: Session " << session.session_prefix
+                          << " stopped (all checkpoint files unchanged)" << std::endl;
+
+                db_service_->markSessionCompleted(device_id_, session.session_start);
+
+                {
+                    auto now = std::chrono::system_clock::now();
+                    auto now_t = std::chrono::system_clock::to_time_t(now);
+                    auto sess_t = std::chrono::system_clock::to_time_t(session.session_start);
+                    auto now_day = (now_t - 12*3600) / 86400;
+                    auto sess_day = (sess_t - 12*3600) / 86400;
+
+                    if (sess_day == now_day && data_publisher_) {
+                        auto metrics = db_service_->getNightlyMetrics(device_id_, session.session_start);
+                        if (metrics.has_value()) {
+                            data_publisher_->publishHistoricalState(metrics.value());
+                            std::cout << "   Nightly metrics published ("
+                                      << metrics.value().usage_hours.value_or(0.0) << "h, AHI "
+                                      << metrics.value().ahi << ")" << std::endl;
+                        }
+                        data_publisher_->publishSessionCompleted();
+                        processSTRFile();
+                    }
+                }
+
+                std::cout << "   Skipping download (no changes)" << std::endl;
+                continue;
+            }
+
+            std::cout << "CPAP: Re-downloading session " << session.session_prefix
+                      << " (checkpoint files changed)" << std::endl;
+
+            if (downloadSessionFiles(session, local_base_dir)) {
+                std::map<std::string, int> checkpoint_sizes;
+                for (const auto& [filename, size_kb] : session.file_sizes_kb) {
+                    if (filename.find("_BRP.edf") != std::string::npos ||
+                        filename.find("_PLD.edf") != std::string::npos ||
+                        filename.find("_SAD.edf") != std::string::npos) {
+                        checkpoint_sizes[filename] = size_kb;
+                    }
+                }
+                db_service_->updateCheckpointFileSizes(device_id_, session.session_start, checkpoint_sizes);
+                std::string session_dir = local_base_dir + "/" + session.date_folder;
+                downloaded_sessions.push_back({session_dir, session.session_start});
+            } else {
+                std::cerr << "CPAP: Failed to download session " << session.session_prefix << std::endl;
+            }
+        }
+
+        if (downloaded_sessions.empty()) {
+            std::cerr << "CPAP: No sessions downloaded successfully" << std::endl;
+            return false;
+        }
+
+        auto download_end = std::chrono::steady_clock::now();
+        auto download_ms = std::chrono::duration_cast<std::chrono::milliseconds>(download_end - download_start).count();
+        std::cout << "CPAP: Downloaded " << downloaded_sessions.size()
+                  << " session(s) in " << download_ms << " ms" << std::endl;
+
+        // Archive downloaded files to permanent storage
+        std::string permanent_archive = ConfigManager::get("CPAP_ARCHIVE_DIR", "/home/aamat/maestro_hub/cpap_data");
+        std::set<std::string> date_folders;
+        for (const auto& session : new_sessions) {
+            date_folders.insert(session.date_folder);
+        }
+        for (const auto& date_folder : date_folders) {
+            archiveSessionFiles(date_folder, local_base_dir, permanent_archive);
         }
     }
 
-    // Step 5: No WiFi disconnect needed (using bridged ez Share)
-    std::cout << "✅ CPAP: Session download complete (bridged connection)" << std::endl;
-
-    if (downloaded_sessions.empty()) {
-        std::cerr << "❌ CPAP: No sessions downloaded successfully" << std::endl;
-        return false;
-    }
-
-    auto download_end = std::chrono::steady_clock::now();
-    auto download_ms = std::chrono::duration_cast<std::chrono::milliseconds>(download_end - download_start).count();
-
-    std::cout << "✅ CPAP: Downloaded " << downloaded_sessions.size()
-              << " session(s) in " << download_ms << " ms" << std::endl;
-
-    // Step 5a: Archive downloaded files to permanent storage
-    std::cout << "📦 CPAP: Archiving files to permanent storage..." << std::endl;
-    std::string permanent_archive = ConfigManager::get("CPAP_ARCHIVE_DIR", "/home/aamat/maestro_hub/cpap_data");
-
-    // Get unique date folders from downloaded sessions
-    std::set<std::string> date_folders;
-    for (const auto& session : new_sessions) {
-        date_folders.insert(session.date_folder);
-    }
-
-    for (const auto& date_folder : date_folders) {
-        archiveSessionFiles(date_folder, local_base_dir, permanent_archive);
-    }
-
-    std::cout << "✅ CPAP: Files archived to " << permanent_archive << "/DATALOG/" << std::endl;
-
-    // Step 6: Parse all downloaded sessions
+    // Step 6: Parse all sessions (same for both modes)
     auto parse_start = std::chrono::steady_clock::now();
     std::vector<CPAPSession> parsed_sessions;
 
@@ -714,17 +799,22 @@ bool BurstCollectorService::executeBurstCycle() {
     // Step 9: Update device last_seen
     db_service_->updateDeviceLastSeen(device_id_);
 
+    // Cleanup temp symlink dirs (local mode only)
+    if (!local_source_dir_.empty()) {
+        std::filesystem::remove_all("/tmp/cpap_local");
+    }
+
     auto cycle_end = std::chrono::steady_clock::now();
     auto cycle_ms = std::chrono::duration_cast<std::chrono::milliseconds>(cycle_end - cycle_start).count();
 
     std::cout << "\n" << std::string(60, '=') << std::endl;
-    std::cout << "✅ CPAP: Burst cycle completed successfully" << std::endl;
-    std::cout << "   Downloaded: " << downloaded_sessions.size() << " sessions" << std::endl;
+    std::cout << "CPAP: Burst cycle completed successfully" << std::endl;
+    std::cout << "   Processed: " << downloaded_sessions.size() << " sessions" << std::endl;
     std::cout << "   Parsed: " << parsed_sessions.size() << " sessions" << std::endl;
     std::cout << "   Saved to DB: " << saved_count << " sessions" << std::endl;
-    std::cout << "   ⏱️  Timing: Download=" << download_ms << "ms, Parse=" << parse_ms << "ms, Total=" << cycle_ms << "ms" << std::endl;
+    std::cout << "   Parse=" << parse_ms << "ms, Total=" << cycle_ms << "ms" << std::endl;
     if (cycle_ms > 60000) {
-        std::cout << "   ⚠️  WARNING: Cycle took >" << (cycle_ms/1000) << "s! Consider increasing BURST_INTERVAL" << std::endl;
+        std::cout << "   WARNING: Cycle took >" << (cycle_ms/1000) << "s! Consider increasing BURST_INTERVAL" << std::endl;
     }
     std::cout << std::string(60, '=') << std::endl << std::endl;
 

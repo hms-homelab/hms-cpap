@@ -76,6 +76,7 @@ private:
     int burst_interval_seconds_;
     std::string device_id_;
     std::string device_name_;
+    std::string local_source_dir_;  // Empty = ezShare mode, set = local filesystem mode
 
     // Clients
     std::unique_ptr<EzShareClient> ezshare_client_;

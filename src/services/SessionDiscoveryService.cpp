@@ -386,6 +386,122 @@ SessionDiscoveryService::discoverNewSessions(
 }
 
 std::vector<SessionFileSet>
+SessionDiscoveryService::discoverLocalSessions(
+    const std::string& local_datalog_dir,
+    std::optional<std::chrono::system_clock::time_point> last_session_start) {
+
+    std::cout << "CPAP: Discovering sessions from local directory: " << local_datalog_dir << std::endl;
+
+    if (!std::filesystem::exists(local_datalog_dir)) {
+        std::cerr << "CPAP: Local directory not found: " << local_datalog_dir << std::endl;
+        return {};
+    }
+
+    // List all YYYYMMDD date folders
+    std::vector<std::string> date_folders;
+    std::regex date_regex(R"(^\d{8}$)");
+
+    for (const auto& entry : std::filesystem::directory_iterator(local_datalog_dir)) {
+        if (!entry.is_directory()) continue;
+        std::string name = entry.path().filename().string();
+        if (std::regex_match(name, date_regex)) {
+            date_folders.push_back(name);
+        }
+    }
+
+    std::sort(date_folders.begin(), date_folders.end());
+
+    if (date_folders.empty()) {
+        std::cout << "CPAP: No date folders found in " << local_datalog_dir << std::endl;
+        return {};
+    }
+
+    std::cout << "CPAP: Found " << date_folders.size() << " date folders" << std::endl;
+
+    // Filter folders by last session date (same logic as discoverNewSessions)
+    std::vector<std::string> relevant_folders;
+
+    if (last_session_start.has_value()) {
+        auto last_tp = last_session_start.value();
+        std::time_t last_time = std::chrono::system_clock::to_time_t(last_tp);
+        std::tm* last_tm = std::localtime(&last_time);
+
+        char last_date_str[9];
+        std::strftime(last_date_str, sizeof(last_date_str), "%Y%m%d", last_tm);
+        std::string last_date(last_date_str);
+
+        std::cout << "CPAP: Last stored session date: " << last_date << std::endl;
+
+        for (const auto& folder : date_folders) {
+            if (folder >= last_date) {
+                relevant_folders.push_back(folder);
+            }
+        }
+
+        // Add previous day folder (for early AM sessions)
+        std::tm prev_tm = *last_tm;
+        prev_tm.tm_mday -= 1;
+        std::mktime(&prev_tm);
+        char prev_date_str[9];
+        std::strftime(prev_date_str, sizeof(prev_date_str), "%Y%m%d", &prev_tm);
+        std::string prev_date(prev_date_str);
+
+        if (std::find(date_folders.begin(), date_folders.end(), prev_date) != date_folders.end() &&
+            std::find(relevant_folders.begin(), relevant_folders.end(), prev_date) == relevant_folders.end()) {
+            relevant_folders.push_back(prev_date);
+        }
+
+        std::cout << "CPAP: " << relevant_folders.size()
+                  << " folders with potentially new data" << std::endl;
+    } else {
+        std::cout << "CPAP: No previous sessions in DB, will scan all folders" << std::endl;
+        relevant_folders = date_folders;
+    }
+
+    if (relevant_folders.empty()) {
+        return {};
+    }
+
+    // Discover sessions in each folder
+    std::vector<SessionFileSet> all_sessions;
+
+    for (const auto& folder : relevant_folders) {
+        std::string folder_path = local_datalog_dir + "/" + folder;
+        std::cout << "CPAP: Scanning local folder " << folder << "..." << std::endl;
+
+        auto folder_sessions = groupLocalFolder(folder_path, folder);
+        std::cout << "CPAP: Found " << folder_sessions.size()
+                  << " sessions in " << folder << std::endl;
+
+        // Same filtering as discoverNewSessions: new or recent sessions
+        auto now = std::chrono::system_clock::now();
+        auto forty_eight_hours_ago = now - std::chrono::hours(48);
+
+        std::time_t now_time = std::chrono::system_clock::to_time_t(now);
+        std::tm* now_tm = std::localtime(&now_time);
+        char today_str[9];
+        std::strftime(today_str, sizeof(today_str), "%Y%m%d", now_tm);
+        std::string today(today_str);
+
+        for (const auto& session : folder_sessions) {
+            bool is_today = (folder == today);
+            bool is_new = (!last_session_start.has_value() ||
+                          session.session_start > last_session_start.value());
+            bool is_recent = (session.session_start > forty_eight_hours_ago);
+
+            if (is_new || is_today || is_recent) {
+                all_sessions.push_back(session);
+            }
+        }
+    }
+
+    std::cout << "CPAP: Discovered " << all_sessions.size()
+              << " session(s) to process" << std::endl;
+
+    return all_sessions;
+}
+
+std::vector<SessionFileSet>
 SessionDiscoveryService::groupLocalFolder(
     const std::string& dir_path,
     const std::string& date_folder) {
