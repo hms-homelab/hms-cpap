@@ -1,4 +1,5 @@
 #include "services/SessionDiscoveryService.h"
+#include "utils/ConfigManager.h"
 #include <algorithm>
 #include <regex>
 #include <map>
@@ -78,11 +79,12 @@ SessionDiscoveryService::groupSessionsInFolder(const std::string& date_folder) {
         return {};
     }
 
-    // SESSION SPLITTING FIX: Split checkpoint files by 2-hour gaps
-    // ResMed machines write checkpoint files during sessions - if there's a 2+ hour gap
-    // between consecutive BRP files, they're from different sleep sessions
+    // SESSION SPLITTING FIX: Split checkpoint files by time gaps
+    // ResMed considers a session over 1 hour after the last file is closed.
+    // Configurable via SESSION_GAP_MINUTES (default: 60)
 
-    const std::chrono::hours SESSION_GAP_THRESHOLD(2);  // 2 hours = new session
+    const std::chrono::minutes SESSION_GAP_THRESHOLD(
+        ConfigManager::getInt("SESSION_GAP_MINUTES", 60));
 
     // Step 1: Collect and sort ALL checkpoint files by timestamp
     struct CheckpointFile {
@@ -144,7 +146,7 @@ SessionDiscoveryService::groupSessionsInFolder(const std::string& date_folder) {
                   return a.timestamp < b.timestamp;
               });
 
-    // Step 2: Split checkpoints into session groups based on 2-hour gaps
+    // Step 2: Split checkpoints into session groups based on session time gaps
     std::vector<std::vector<CheckpointFile>> session_groups;
     std::vector<CheckpointFile> current_group;
 
@@ -510,7 +512,8 @@ SessionDiscoveryService::groupLocalFolder(
         return {};
     }
 
-    const std::chrono::hours SESSION_GAP_THRESHOLD(2);
+    const std::chrono::minutes SESSION_GAP_THRESHOLD(
+        ConfigManager::getInt("SESSION_GAP_MINUTES", 60));
 
     struct CheckpointFile {
         std::string name;
@@ -594,7 +597,7 @@ SessionDiscoveryService::groupLocalFolder(
                   return a.timestamp < b.timestamp;
               });
 
-    // Split into session groups by 2-hour gaps
+    // Split into session groups by session time gaps
     std::vector<std::vector<CheckpointFile>> session_groups;
     std::vector<CheckpointFile> current_group;
     current_group.push_back(checkpoints[0]);

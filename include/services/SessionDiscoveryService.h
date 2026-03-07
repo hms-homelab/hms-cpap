@@ -55,7 +55,7 @@ public:
     std::vector<SessionFileSet> groupSessionsInFolder(const std::string& date_folder);
 
     /**
-     * Group files in a local directory into sessions (same 2-hour gap logic).
+     * Group files in a local directory into sessions (same session gap logic).
      *
      * Static method -- no EzShareClient needed. Used by --reparse and local source mode.
      */

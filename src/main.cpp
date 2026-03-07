@@ -63,6 +63,7 @@ void printConfiguration() {
         std::cout << "  ez Share URL:       " << hms_cpap::ConfigManager::get("EZSHARE_BASE_URL", "http://192.168.4.1") << std::endl;
     }
     std::cout << "  Burst Interval:     " << hms_cpap::ConfigManager::getInt("BURST_INTERVAL", 120) << " seconds" << std::endl;
+    std::cout << "  Session Gap:        " << hms_cpap::ConfigManager::getInt("SESSION_GAP_MINUTES", 60) << " minutes" << std::endl;
     std::cout << "  Health Check Port:  " << hms_cpap::ConfigManager::getInt("HEALTH_CHECK_PORT", 8893) << std::endl;
     std::cout << std::endl;
 }
@@ -124,7 +125,7 @@ int runBackfill(const std::string& filepath) {
  * Usage: hms_cpap --reparse /mnt/public/cpap_data/DATALOG 2025-08-18 [2025-09-09]
  *
  * Scans date folders in the given range, groups files into sessions using
- * the same 2-hour gap logic, deletes old DB records, and re-parses fresh.
+ * the same session gap logic (SESSION_GAP_MINUTES, default 60), deletes old DB records, and re-parses fresh.
  */
 int runReparse(const std::string& archive_dir, const std::string& start_str, const std::string& end_str) {
     std::string device_id = hms_cpap::ConfigManager::get("CPAP_DEVICE_ID", "cpap_resmed_23243570851");
