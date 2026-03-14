@@ -21,16 +21,19 @@ find_library(PAHO_MQTT3AS_LIB paho-mqtt3as)
 find_library(PQXX_LIB pqxx)
 find_library(PQ_LIB pq)
 
-# ── hms-shared LLM module (lightweight, no extra deps) ──────────────────────
-# Use local path during development; switch to FetchContent after push:
-#   FetchContent_Declare(hms_shared GIT_REPOSITORY https://github.com/hms-homelab/hms-shared.git GIT_TAG main)
-set(HMS_SHARED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../hms-shared")
+# ── hms-shared LLM module (via FetchContent) ────────────────────────────────
+include(FetchContent)
+FetchContent_Declare(hms_shared
+    GIT_REPOSITORY https://github.com/hms-homelab/hms-shared.git
+    GIT_TAG        v1.4.0
+)
+FetchContent_Populate(hms_shared)
 
 add_library(hms_llm STATIC
-    ${HMS_SHARED_DIR}/llm/src/llm_client.cpp
+    ${hms_shared_SOURCE_DIR}/llm/src/llm_client.cpp
 )
 target_include_directories(hms_llm PUBLIC
-    ${HMS_SHARED_DIR}/llm/include
+    ${hms_shared_SOURCE_DIR}/llm/include
 )
 target_link_libraries(hms_llm PUBLIC
     nlohmann_json::nlohmann_json
