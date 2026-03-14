@@ -14,11 +14,28 @@ if(BUILD_WITH_HEALTHCHECK)
 endif()
 
 find_package(jsoncpp REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
+find_package(CURL REQUIRED)
 find_library(PAHO_MQTTPP3_LIB paho-mqttpp3)
 find_library(PAHO_MQTT3AS_LIB paho-mqtt3as)
 find_library(PQXX_LIB pqxx)
 find_library(PQ_LIB pq)
-find_library(CURL_LIB curl)
+
+# ── hms-shared LLM module (lightweight, no extra deps) ──────────────────────
+# Use local path during development; switch to FetchContent after push:
+#   FetchContent_Declare(hms_shared GIT_REPOSITORY https://github.com/hms-homelab/hms-shared.git GIT_TAG main)
+set(HMS_SHARED_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../hms-shared")
+
+add_library(hms_llm STATIC
+    ${HMS_SHARED_DIR}/llm/src/llm_client.cpp
+)
+target_include_directories(hms_llm PUBLIC
+    ${HMS_SHARED_DIR}/llm/include
+)
+target_link_libraries(hms_llm PUBLIC
+    nlohmann_json::nlohmann_json
+    CURL::libcurl
+)
 
 # Source files
 file(GLOB_RECURSE SOURCES "src/*.cpp")
@@ -38,7 +55,8 @@ target_link_libraries(${PROJECT_NAME}
     ${PAHO_MQTT3AS_LIB}
     ${PQXX_LIB}
     ${PQ_LIB}
-    ${CURL_LIB}
+    CURL::libcurl
+    hms_llm
     pthread
     ssl
     crypto
@@ -64,7 +82,7 @@ message(STATUS "HMS-CPAP Build Configuration:")
 message(STATUS "  C++ Standard: ${CMAKE_CXX_STANDARD}")
 message(STATUS "  Compiler: ${CMAKE_CXX_COMPILER}")
 message(STATUS "  EDF: raw parser (ResMed compatible)")
-message(STATUS "  CURL: ${CURL_LIB}")
 message(STATUS "  Paho MQTT: ${PAHO_MQTTPP3_LIB}")
 message(STATUS "  PostgreSQL: ${PQXX_LIB}")
+message(STATUS "  LLM: hms_llm (from hms-shared)")
 message(STATUS "  Build Tests: ${BUILD_TESTS}")

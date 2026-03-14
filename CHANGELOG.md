@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-03-14
+
+### Added
+- **LLM session summaries**: After each CPAP session completes, generates a
+  natural language summary via configurable LLM provider (Ollama, OpenAI,
+  Gemini, or Anthropic Claude). Summary published to MQTT as retained message
+  at `cpap/{device_id}/daily/session_summary` with HA MQTT discovery.
+- **Multi-provider LLM client** from `hms-shared` library (`hms::LLMClient`):
+  supports Ollama `/api/generate`, OpenAI `/v1/chat/completions`, Google Gemini
+  `/v1beta/models/:generateContent`, and Anthropic `/v1/messages`.
+- **Prompt template file** (`LLM_PROMPT_FILE`): customizable prompt with
+  `{metrics}` placeholder substitution. Ships with default `llm_prompt.txt`.
+- **Model eviction** (`keep_alive: 0`): Ollama unloads model from VRAM
+  immediately after generating, freeing GPU memory between nightly sessions.
+- **n8n workflow** (`C7VJL3y93XXNv8Cw`): MQTT trigger on session summary
+  pushes notification to iPhone via Home Assistant.
+
+### Configuration (env vars)
+- `LLM_ENABLED` — `true`/`false` (default: `false`)
+- `LLM_PROVIDER` — `ollama`, `openai`, `gemini`, `anthropic` (default: `ollama`)
+- `LLM_ENDPOINT` — API base URL (default: `http://192.168.2.5:11434`)
+- `LLM_MODEL` — model name (default: `llama3.1:8b-instruct-q4_K_M`)
+- `LLM_API_KEY` — API key (not needed for Ollama)
+- `LLM_PROMPT_FILE` — path to prompt template file
+- `LLM_KEEP_ALIVE` — seconds to keep model loaded, 0 = evict (default: `0`)
+
+### Changed
+- CMakeLists.txt: added `hms_llm` static library from `hms-shared` (nlohmann_json + curl)
+- DataPublisherService: 47 sensors (was 46), added `session_summary` to STR discovery
+
 ## [1.4.1] - 2026-03-07
 
 ### Changed

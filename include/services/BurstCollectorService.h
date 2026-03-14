@@ -2,6 +2,7 @@
 
 // WiFiSwitchClient no longer needed - ez Share accessed via dedicated interface
 #include "clients/EzShareClient.h"
+#include "llm_client.h"
 #include "parsers/EDFParser.h"
 #include "models/CPAPModels.h"
 #include "services/DataPublisherService.h"
@@ -97,6 +98,11 @@ private:
     // State
     std::chrono::system_clock::time_point last_burst_time_;
 
+    // LLM summary
+    std::unique_ptr<hms::LLMClient> llm_client_;
+    bool llm_enabled_ = false;
+    std::string llm_prompt_template_;
+
     // Connection recovery tracking
     int consecutive_failures_ = 0;
     static constexpr int MAX_FAILURES_BEFORE_RESET = 3;  // Reset session_active after 3 consecutive failures
@@ -144,6 +150,30 @@ private:
      * Non-fatal: failure does not affect the session cycle.
      */
     void processSTRFile();
+
+    /**
+     * Generate LLM summary of session metrics and publish to MQTT.
+     * Non-fatal: failure does not affect the session cycle.
+     *
+     * @param metrics Aggregated session metrics
+     * @param str_record Optional STR daily record for additional context
+     */
+    void generateAndPublishSummary(const SessionMetrics& metrics,
+                                   const STRDailyRecord* str_record = nullptr);
+
+    /**
+     * Build metrics string from session data for LLM prompt substitution.
+     */
+    std::string buildMetricsString(const SessionMetrics& metrics,
+                                   const STRDailyRecord* str_record = nullptr) const;
+
+    /**
+     * Load prompt template from file.
+     *
+     * @param filepath Path to prompt template file
+     * @return Prompt template string, or empty on failure
+     */
+    static std::string loadPromptFile(const std::string& filepath);
 
     /**
      * Get current date string (YYYYMMDD format)

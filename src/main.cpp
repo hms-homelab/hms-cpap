@@ -40,7 +40,7 @@ void printBanner() {
 ║      ResMed AirSense 10 via ez Share                     ║
 ║      Configurable via EZSHARE_BASE_URL                   ║
 ║                                                           ║
-║      Version: 1.4.0+20260306 - Local Source Mode          ║
+║      Version: 1.5.0 - LLM Session Summaries               ║
 ║      Platform: Linux                                      ║
 ║                                                           ║
 ╚═══════════════════════════════════════════════════════════╝

@@ -3,6 +3,7 @@
 #include <iostream>
 #include <iomanip>
 #include <sstream>
+#include <fstream>
 #include <filesystem>
 #include <algorithm>
 #include <set>
@@ -80,10 +81,42 @@ BurstCollectorService::BurstCollectorService(int burst_interval_seconds)
         std::cout << "   Source: Local directory at " << local_source_dir_ << std::endl;
     }
 
+    // Initialize LLM client (optional)
+    std::string llm_enabled_str = ConfigManager::get("LLM_ENABLED", "false");
+    llm_enabled_ = (llm_enabled_str == "true" || llm_enabled_str == "1");
+
+    if (llm_enabled_) {
+        hms::LLMConfig llm_config;
+        llm_config.enabled = true;
+        llm_config.provider = hms::LLMClient::parseProvider(
+            ConfigManager::get("LLM_PROVIDER", "ollama"));
+        llm_config.endpoint = ConfigManager::get("LLM_ENDPOINT", "http://192.168.2.5:11434");
+        llm_config.model = ConfigManager::get("LLM_MODEL", "llama3.1:8b-instruct-q4_K_M");
+        llm_config.api_key = ConfigManager::get("LLM_API_KEY", "");
+        llm_config.keep_alive_seconds = ConfigManager::getInt("LLM_KEEP_ALIVE", 0);
+
+        llm_client_ = std::make_unique<hms::LLMClient>(llm_config);
+
+        // Load prompt template
+        std::string prompt_file = ConfigManager::get("LLM_PROMPT_FILE", "");
+        if (!prompt_file.empty()) {
+            llm_prompt_template_ = hms::LLMClient::loadPromptFile(prompt_file);
+        }
+        if (llm_prompt_template_.empty()) {
+            llm_prompt_template_ =
+                "Summarize this CPAP session in 3-5 sentences. "
+                "Include AHI assessment, usage compliance, and any concerns.\n\n"
+                "Session data:\n{metrics}";
+        }
+
+        std::cout << "LLM: Enabled (" << hms::LLMClient::providerName(llm_config.provider)
+                  << " / " << llm_config.model << " at " << llm_config.endpoint << ")" << std::endl;
+    }
+
     // STARTUP CLEANUP: Clear any stale session_active state from previous run
     // This prevents stuck "session active" in HA after service restart or crash
     if (data_publisher_ && mqtt_client_ && mqtt_client_->isConnected()) {
-        std::cout << "🧹 Startup: Clearing stale session_active state..." << std::endl;
+        std::cout << "Startup: Clearing stale session_active state..." << std::endl;
         data_publisher_->publishSessionCompleted();
         session_active_cleared_ = true;
     }
@@ -636,6 +669,11 @@ bool BurstCollectorService::executeBurstCycle() {
                         }
                         data_publisher_->publishSessionCompleted();
                         processSTRFile();
+
+                        // Generate LLM summary (non-fatal)
+                        if (llm_enabled_ && llm_client_) {
+                            generateAndPublishSummary(metrics.value());
+                        }
                     }
                 }
 
@@ -856,6 +894,98 @@ void BurstCollectorService::runLoop() {
     }
 
     std::cout << "🔁 BurstCollectorService worker thread stopped" << std::endl;
+}
+
+// ─── LLM Summary ────────────────────────────────────────────────────────────
+
+void BurstCollectorService::generateAndPublishSummary(const SessionMetrics& metrics,
+                                                       const STRDailyRecord* str_record) {
+    std::cout << "LLM: Generating session summary..." << std::endl;
+
+    std::string metrics_str = buildMetricsString(metrics, str_record);
+    std::string prompt = hms::LLMClient::substituteTemplate(
+        llm_prompt_template_, {{"metrics", metrics_str}});
+
+    auto summary = llm_client_->generate(prompt);
+    if (!summary) {
+        std::cerr << "LLM: Summary generation failed (non-fatal)" << std::endl;
+        return;
+    }
+
+    std::cout << "LLM: Summary generated (" << summary->size() << " chars)" << std::endl;
+
+    if (data_publisher_) {
+        data_publisher_->publishSessionSummary(summary.value());
+    }
+}
+
+std::string BurstCollectorService::buildMetricsString(const SessionMetrics& metrics,
+                                                       const STRDailyRecord* str_record) const {
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(2);
+
+    // Usage
+    oss << "Usage: " << metrics.usage_hours.value_or(0.0) << " hours"
+        << " (" << metrics.usage_percent.value_or(0.0) << "% of 8h target)\n";
+
+    // AHI and events
+    oss << "AHI: " << metrics.ahi << " events/hour\n";
+    oss << "Total events: " << metrics.total_events
+        << " (obstructive=" << metrics.obstructive_apneas
+        << ", central=" << metrics.central_apneas
+        << ", hypopnea=" << metrics.hypopneas
+        << ", RERA=" << metrics.reras << ")\n";
+
+    if (metrics.avg_event_duration.has_value()) {
+        oss << "Avg event duration: " << metrics.avg_event_duration.value() << "s";
+        if (metrics.max_event_duration.has_value()) {
+            oss << ", max: " << metrics.max_event_duration.value() << "s";
+        }
+        oss << "\n";
+    }
+
+    // Pressure
+    oss << "Pressure: avg=" << metrics.avg_pressure.value_or(0.0) << " cmH2O";
+    if (metrics.pressure_p95.has_value()) {
+        oss << ", 95th=" << metrics.pressure_p95.value() << " cmH2O";
+    }
+    oss << "\n";
+
+    // Leak
+    oss << "Leak: avg=" << metrics.avg_leak_rate.value_or(0.0) << " L/min";
+    if (metrics.leak_p95.has_value()) {
+        oss << ", 95th=" << metrics.leak_p95.value() << " L/min";
+    }
+    oss << "\n";
+
+    // Respiratory
+    if (metrics.avg_respiratory_rate.has_value()) {
+        oss << "Respiratory rate: " << metrics.avg_respiratory_rate.value() << " breaths/min\n";
+    }
+    if (metrics.avg_tidal_volume.has_value()) {
+        oss << "Tidal volume: " << metrics.avg_tidal_volume.value() << " mL\n";
+    }
+    if (metrics.avg_minute_ventilation.has_value()) {
+        oss << "Minute ventilation: " << metrics.avg_minute_ventilation.value() << " L/min\n";
+    }
+    if (metrics.avg_flow_limitation.has_value()) {
+        oss << "Flow limitation: " << metrics.avg_flow_limitation.value() << " (0-1 scale)\n";
+    }
+
+    // STR data (if available)
+    if (str_record) {
+        oss << "\nResMed official daily summary:\n";
+        oss << "  STR AHI: " << str_record->ahi << " events/hour\n";
+        oss << "  Mask events: " << (str_record->mask_events / 2) << " (on/off pairs)\n";
+        oss << "  95th leak: " << str_record->leak_95 << " L/min\n";
+        oss << "  95th pressure: " << str_record->mask_press_95 << " cmH2O\n";
+    }
+
+    return oss.str();
+}
+
+std::string BurstCollectorService::loadPromptFile(const std::string& filepath) {
+    return hms::LLMClient::loadPromptFile(filepath);
 }
 
 } // namespace hms_cpap
