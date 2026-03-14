@@ -14,8 +14,18 @@ if(BUILD_WITH_HEALTHCHECK)
 endif()
 
 find_package(jsoncpp REQUIRED)
-find_package(nlohmann_json CONFIG REQUIRED)
 find_package(CURL REQUIRED)
+
+# nlohmann_json: header-only, use host headers when cross-compiling
+# (sysroot cmake config has broken INTERFACE_INCLUDE_DIRECTORIES)
+if(CMAKE_CROSSCOMPILING)
+    add_library(nlohmann_json::nlohmann_json INTERFACE IMPORTED)
+    set_target_properties(nlohmann_json::nlohmann_json PROPERTIES
+        INTERFACE_INCLUDE_DIRECTORIES "/usr/include"
+    )
+else()
+    find_package(nlohmann_json CONFIG REQUIRED)
+endif()
 find_library(PAHO_MQTTPP3_LIB paho-mqttpp3)
 find_library(PAHO_MQTT3AS_LIB paho-mqtt3as)
 find_library(PQXX_LIB pqxx)
