@@ -66,7 +66,7 @@ bool DataPublisherService::publishDiscovery() {
     bool str_success = publishSTRDiscovery();
 
     if (rt_success && hist_success && str_success) {
-        std::cout << "✅ MQTT: Discovery published (8 realtime + 25 historical + 13 daily = 46 sensors)" << std::endl;
+        std::cout << "✅ MQTT: Discovery published (8 realtime + 25 historical + 14 daily = 47 sensors)" << std::endl;
         return true;
     }
 
@@ -573,6 +573,7 @@ bool DataPublisherService::publishSTRDiscovery() {
         {"str_spo2_50",       "%",        "", "mdi:heart-pulse"},
         {"str_patient_hours", "h",        "duration", "mdi:counter"},
         {"ahi_delta",         "events/h", "", "mdi:delta"},
+        {"session_summary",   "",         "", "mdi:text-box-outline"},
     };
 
     for (const auto& sensor : str_sensors) {
@@ -607,7 +608,7 @@ bool DataPublisherService::publishSTRDiscovery() {
         }
     }
 
-    std::cout << "    13 STR daily sensors" << std::endl;
+    std::cout << "    14 STR daily sensors" << std::endl;
     return true;
 }
 
@@ -717,6 +718,20 @@ bool DataPublisherService::publishSession(const CPAPSession& session) {
     std::cout << std::string(60, '=') << std::endl << std::endl;
 
     return db_success || mqtt_success;
+}
+
+bool DataPublisherService::publishSessionSummary(const std::string& summary) {
+    if (!mqtt_client_ || !mqtt_client_->isConnected()) {
+        std::cerr << "MQTT: Not connected, skipping summary publish" << std::endl;
+        return false;
+    }
+
+    // Publish summary as retained message
+    std::string topic = "cpap/" + device_id_ + "/daily/session_summary";
+    mqtt_client_->publish(topic, summary, 0, true);
+
+    std::cout << "  LLM summary published to " << topic << std::endl;
+    return true;
 }
 
 } // namespace hms_cpap

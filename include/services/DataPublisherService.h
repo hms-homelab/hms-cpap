@@ -91,6 +91,14 @@ public:
      */
     void publishSTRState(const STRDailyRecord& record, double nightly_ahi = 0);
 
+    /**
+     * Publish LLM-generated session summary to MQTT.
+     *
+     * @param summary Generated summary text
+     * @return true if published successfully
+     */
+    bool publishSessionSummary(const std::string& summary);
+
 private:
     std::shared_ptr<MqttClient> mqtt_client_;
     std::shared_ptr<DatabaseService> db_service_;

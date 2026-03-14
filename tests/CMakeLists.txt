@@ -46,7 +46,8 @@ target_link_libraries(run_tests
     ${PAHO_MQTT3AS_LIB}
     ${PQXX_LIB}
     ${PQ_LIB}
-    ${CURL_LIB}
+    CURL::libcurl
+    hms_llm
     pthread
     ssl
     crypto
