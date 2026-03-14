@@ -990,19 +990,35 @@ std::string BurstCollectorService::buildMetricsString(const SessionMetrics& metr
         oss << "\n";
     }
 
-    // Pressure
-    oss << "Pressure: avg=" << metrics.avg_pressure.value_or(0.0) << " cmH2O";
-    if (metrics.pressure_p95.has_value()) {
-        oss << ", 95th=" << metrics.pressure_p95.value() << " cmH2O";
+    // Pressure (only include fields that have data)
+    if (metrics.avg_pressure.has_value() || metrics.pressure_p95.has_value()) {
+        oss << "Pressure:";
+        if (metrics.avg_pressure.has_value()) {
+            oss << " avg=" << metrics.avg_pressure.value() << " cmH2O";
+        }
+        if (metrics.min_pressure.has_value()) {
+            oss << ", min=" << metrics.min_pressure.value() << " cmH2O";
+        }
+        if (metrics.max_pressure.has_value()) {
+            oss << ", max=" << metrics.max_pressure.value() << " cmH2O";
+        }
+        if (metrics.pressure_p95.has_value()) {
+            oss << ", 95th=" << metrics.pressure_p95.value() << " cmH2O";
+        }
+        oss << "\n";
     }
-    oss << "\n";
 
-    // Leak
-    oss << "Leak: avg=" << metrics.avg_leak_rate.value_or(0.0) << " L/min";
-    if (metrics.leak_p95.has_value()) {
-        oss << ", 95th=" << metrics.leak_p95.value() << " L/min";
+    // Leak (only include fields that have data)
+    if (metrics.avg_leak_rate.has_value() || metrics.max_leak_rate.has_value()) {
+        oss << "Leak:";
+        if (metrics.avg_leak_rate.has_value()) {
+            oss << " avg=" << metrics.avg_leak_rate.value() << " L/min";
+        }
+        if (metrics.max_leak_rate.has_value()) {
+            oss << ", max=" << metrics.max_leak_rate.value() << " L/min";
+        }
+        oss << "\n";
     }
-    oss << "\n";
 
     // Respiratory
     if (metrics.avg_respiratory_rate.has_value()) {

@@ -907,7 +907,10 @@ std::optional<SessionMetrics> DatabaseService::getNightlyMetrics(
                 AVG(c.avg_mv)    AS avg_mv,    AVG(c.avg_it)   AS avg_it,
                 AVG(c.avg_et)    AS avg_et,    AVG(c.avg_ie)   AS avg_ie,
                 AVG(c.avg_fl)    AS avg_fl,    AVG(c.fp95)     AS fp95,
-                AVG(c.pp95)      AS pp95
+                AVG(c.pp95)      AS pp95,
+                AVG(b.avg_press) AS avg_pressure,
+                MAX(b.max_press) AS max_pressure,
+                MIN(b.min_press) AS min_pressure
             FROM cpap_sessions s
             JOIN cpap_session_metrics sm ON sm.session_id = s.id
             LEFT JOIN (
@@ -920,6 +923,13 @@ std::optional<SessionMetrics> DatabaseService::getNightlyMetrics(
                        AVG(pressure_p95) AS pp95
                 FROM cpap_calculated_metrics GROUP BY session_id
             ) c ON c.session_id = sm.session_id
+            LEFT JOIN (
+                SELECT session_id,
+                       AVG(avg_pressure) AS avg_press,
+                       MAX(max_pressure) AS max_press,
+                       MIN(min_pressure) AS min_press
+                FROM cpap_breathing_summary GROUP BY session_id
+            ) b ON b.session_id = sm.session_id
             WHERE s.device_id = $1
               AND DATE(s.session_start - INTERVAL '12 hours') = (SELECT sleep_day FROM night)
         )";
@@ -973,6 +983,12 @@ std::optional<SessionMetrics> DatabaseService::getNightlyMetrics(
             m.flow_p95 = row["fp95"].as<double>();
         if (!row["pp95"].is_null())
             m.pressure_p95 = row["pp95"].as<double>();
+        if (!row["avg_pressure"].is_null())
+            m.avg_pressure = row["avg_pressure"].as<double>();
+        if (!row["max_pressure"].is_null())
+            m.max_pressure = row["max_pressure"].as<double>();
+        if (!row["min_pressure"].is_null())
+            m.min_pressure = row["min_pressure"].as<double>();
 
         return m;
 

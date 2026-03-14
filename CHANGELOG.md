@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-03-14
+
+### Fixed
+- **LLM prompt missing pressure data**: `avg_pressure` was never queried from DB —
+  data lives in `cpap_breathing_summary` but `getNightlyMetrics()` only joined
+  `cpap_calculated_metrics`. Added LEFT JOIN on `cpap_breathing_summary` to pull
+  avg/min/max pressure. Also: omit pressure/leak lines entirely when data is
+  unavailable instead of showing `0.00 cmH2O`.
+
+### Changed
+- LLM prompt now includes min/max pressure and max leak rate for richer context.
+
 ## [1.6.0] - 2026-03-14
 
 ### Added
