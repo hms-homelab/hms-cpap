@@ -11,6 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     cmake \
     ca-certificates \
+    git \
     libcurl4-openssl-dev \
     libpq-dev \
     libpqxx-dev \
@@ -18,6 +19,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libjsoncpp-dev \
     libpaho-mqtt-dev \
     libpaho-mqttpp-dev \
+    nlohmann-json3-dev \
+    libspdlog-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy source code
@@ -25,6 +28,7 @@ WORKDIR /build
 COPY CMakeLists.txt VERSION ./
 COPY src/ ./src/
 COPY include/ ./include/
+COPY llm_prompt.txt ./
 
 # Build HMS-CPAP (disable tests for production image)
 RUN mkdir build && cd build && \
@@ -48,6 +52,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libjsoncpp25 \
     libpaho-mqtt1.3 \
     libpaho-mqttpp3-1 \
+    libspdlog1.15 \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user for security
