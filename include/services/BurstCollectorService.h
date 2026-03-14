@@ -7,7 +7,7 @@
 #include "models/CPAPModels.h"
 #include "services/DataPublisherService.h"
 #include "services/SessionDiscoveryService.h"
-#include "mqtt/MqttClient.h"
+#include "mqtt_client.h"
 #include "database/DatabaseService.h"
 #include <memory>
 #include <thread>
@@ -86,7 +86,7 @@ private:
     std::unique_ptr<SessionDiscoveryService> discovery_service_;
 
     // Publishers
-    std::shared_ptr<MqttClient> mqtt_client_;
+    std::shared_ptr<hms::MqttClient> mqtt_client_;
     std::shared_ptr<DatabaseService> db_service_;
     std::unique_ptr<DataPublisherService> data_publisher_;
 

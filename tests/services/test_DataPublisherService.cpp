@@ -7,13 +7,21 @@
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
 #include "services/DataPublisherService.h"
-#include "mqtt/MqttClient.h"
+#include "mqtt_client.h"
 #include "database/DatabaseService.h"
 #include <thread>
 #include <chrono>
 #include <atomic>
 
 using namespace hms_cpap;
+
+static hms::MqttConfig testMqttConfig(const std::string& client_id) {
+    hms::MqttConfig cfg;
+    cfg.broker = "localhost";
+    cfg.port = 1883;
+    cfg.client_id = client_id;
+    return cfg;
+}
 
 // Test fixture
 class DataPublisherServiceTest : public ::testing::Test {
@@ -22,7 +30,7 @@ protected:
         mqtt_broker = "tcp://localhost:1883";
 
         // Create MQTT client and database service
-        mqtt_client = std::make_shared<MqttClient>("test_data_publisher");
+        mqtt_client = std::make_shared<hms::MqttClient>(testMqttConfig("test_data_publisher"));
         db_service = std::make_shared<DatabaseService>("postgresql://localhost/test");  // Dummy connection string
 
         // Create DataPublisherService
@@ -36,7 +44,7 @@ protected:
     }
 
     std::string mqtt_broker;
-    std::shared_ptr<MqttClient> mqtt_client;
+    std::shared_ptr<hms::MqttClient> mqtt_client;
     std::shared_ptr<DatabaseService> db_service;
     std::unique_ptr<DataPublisherService> data_publisher;
 };
@@ -45,7 +53,7 @@ protected:
  * Test: DataPublisherService subscribes to homeassistant/status on initialization
  */
 TEST_F(DataPublisherServiceTest, Initialize_SubscribesToHAStatus) {
-    bool connected = mqtt_client->connect(mqtt_broker, "", "");
+    bool connected = mqtt_client->connect();
 
     if (!connected) {
         GTEST_SKIP() << "MQTT broker not available at " << mqtt_broker;
@@ -68,7 +76,7 @@ TEST_F(DataPublisherServiceTest, Initialize_SubscribesToHAStatus) {
  * the service republishes discovery messages.
  */
 TEST_F(DataPublisherServiceTest, HAStatusOnline_RepublishesDiscovery) {
-    bool connected = mqtt_client->connect(mqtt_broker, "", "");
+    bool connected = mqtt_client->connect();
 
     if (!connected) {
         GTEST_SKIP() << "MQTT broker not available";
@@ -78,8 +86,8 @@ TEST_F(DataPublisherServiceTest, HAStatusOnline_RepublishesDiscovery) {
     data_publisher->initialize();
 
     // Create a separate client to publish HA status
-    auto publisher_client = std::make_unique<MqttClient>("test_ha_simulator");
-    publisher_client->connect(mqtt_broker, "", "");
+    auto publisher_client = std::make_unique<hms::MqttClient>(testMqttConfig("test_ha_simulator"));
+    publisher_client->connect();
 
     // Subscribe to discovery topic to verify republishing
     std::atomic<int> discovery_count{0};
@@ -109,7 +117,7 @@ TEST_F(DataPublisherServiceTest, HAStatusOnline_RepublishesDiscovery) {
  * Test: HA status "offline" message does NOT trigger discovery
  */
 TEST_F(DataPublisherServiceTest, HAStatusOffline_DoesNotRepublish) {
-    bool connected = mqtt_client->connect(mqtt_broker, "", "");
+    bool connected = mqtt_client->connect();
 
     if (!connected) {
         GTEST_SKIP() << "MQTT broker not available";
@@ -118,8 +126,8 @@ TEST_F(DataPublisherServiceTest, HAStatusOffline_DoesNotRepublish) {
     data_publisher->initialize();
 
     // Create separate client to simulate HA
-    auto publisher_client = std::make_unique<MqttClient>("test_ha_sim_offline");
-    publisher_client->connect(mqtt_broker, "", "");
+    auto publisher_client = std::make_unique<hms::MqttClient>(testMqttConfig("test_ha_sim_offline"));
+    publisher_client->connect();
 
     // Subscribe to discovery topic
     std::atomic<int> discovery_count{0};
@@ -155,7 +163,7 @@ TEST_F(DataPublisherServiceTest, HAStatusOffline_DoesNotRepublish) {
  * This ensures Home Assistant can discover devices even if it starts after HMS-CPAP.
  */
 TEST_F(DataPublisherServiceTest, DiscoveryMessages_AreRetained) {
-    bool connected = mqtt_client->connect(mqtt_broker, "", "");
+    bool connected = mqtt_client->connect();
 
     if (!connected) {
         GTEST_SKIP() << "MQTT broker not available";
@@ -197,7 +205,7 @@ TEST_F(DataPublisherServiceTest, Initialize_WorksWhenMqttDisconnected) {
  * entirely. HA therefore showed zeros for AHI/events after every session.
  */
 TEST_F(DataPublisherServiceTest, PublishHistoricalState_PublishesAHIAndEvents) {
-    bool connected = mqtt_client->connect(mqtt_broker, "", "");
+    bool connected = mqtt_client->connect();
 
     if (!connected) {
         GTEST_SKIP() << "MQTT broker not available";
@@ -266,7 +274,7 @@ TEST_F(DataPublisherServiceTest, PublishHistoricalState_PublishesAHIAndEvents) {
  * (distinguishes "no events" from "never published").
  */
 TEST_F(DataPublisherServiceTest, PublishHistoricalState_ZeroEvents_PublishesZeros) {
-    bool connected = mqtt_client->connect(mqtt_broker, "", "");
+    bool connected = mqtt_client->connect();
 
     if (!connected) {
         GTEST_SKIP() << "MQTT broker not available";
@@ -314,7 +322,7 @@ TEST_F(DataPublisherServiceTest, MQTTReconnection_RepublishesDiscovery) {
     // This test requires the static flag logic in publishSession()
     // to detect reconnection and republish discovery
 
-    bool connected = mqtt_client->connect(mqtt_broker, "", "");
+    bool connected = mqtt_client->connect();
 
     if (!connected) {
         GTEST_SKIP() << "MQTT broker not available";
@@ -332,7 +340,7 @@ TEST_F(DataPublisherServiceTest, MQTTReconnection_RepublishesDiscovery) {
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
     // Reconnect
-    mqtt_client->connect(mqtt_broker, "", "");
+    mqtt_client->connect();
     std::this_thread::sleep_for(std::chrono::milliseconds(500));
 
     // Subscribe to discovery to verify republish

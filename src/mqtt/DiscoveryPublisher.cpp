@@ -3,7 +3,7 @@
 
 namespace hms_cpap {
 
-DiscoveryPublisher::DiscoveryPublisher(std::shared_ptr<MqttClient> mqtt_client,
+DiscoveryPublisher::DiscoveryPublisher(std::shared_ptr<hms::MqttClient> mqtt_client,
                                        const std::string& device_id,
                                        const std::string& device_name,
                                        const std::string& manufacturer,

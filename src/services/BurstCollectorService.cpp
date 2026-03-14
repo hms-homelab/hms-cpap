@@ -40,10 +40,17 @@ BurstCollectorService::BurstCollectorService(int burst_interval_seconds)
     std::string mqtt_password = ConfigManager::get("MQTT_PASSWORD", "exploracion");
     std::string mqtt_client_id = ConfigManager::get("MQTT_CLIENT_ID", "hms_cpap_service");
 
-    mqtt_client_ = std::make_shared<MqttClient>(mqtt_client_id);
+    hms::MqttConfig mqtt_config;
+    mqtt_config.broker = mqtt_broker;
+    mqtt_config.port = std::stoi(mqtt_port);
+    mqtt_config.username = mqtt_user;
+    mqtt_config.password = mqtt_password;
+    mqtt_config.client_id = mqtt_client_id;
+
+    mqtt_client_ = std::make_shared<hms::MqttClient>(mqtt_config);
     std::string broker_address = "tcp://" + mqtt_broker + ":" + mqtt_port;
 
-    if (mqtt_client_->connect(broker_address, mqtt_user, mqtt_password)) {
+    if (mqtt_client_->connect()) {
         std::cout << "✅ MQTT: Connected to " << broker_address << std::endl;
     } else {
         std::cerr << "⚠️  MQTT: Connection failed (will retry)" << std::endl;

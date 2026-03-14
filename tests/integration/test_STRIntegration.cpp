@@ -10,7 +10,7 @@
 #include "parsers/EDFParser.h"
 #include "database/DatabaseService.h"
 #include "services/DataPublisherService.h"
-#include "mqtt/MqttClient.h"
+#include "mqtt_client.h"
 #include <filesystem>
 #include <thread>
 #include <chrono>
@@ -21,6 +21,14 @@
 
 using namespace hms_cpap;
 using namespace std::chrono;
+
+static hms::MqttConfig testMqttConfig(const std::string& client_id) {
+    hms::MqttConfig cfg;
+    cfg.broker = "localhost";
+    cfg.port = 1883;
+    cfg.client_id = client_id;
+    return cfg;
+}
 
 // Locate fixture files
 static std::string findFixture(const std::string& name) {
@@ -233,8 +241,8 @@ TEST_F(STRDatabaseIntegrationTest, BackfillOldThenCurrentMerges) {
 
 class STRMqttIntegrationTest : public ::testing::Test {
 protected:
-    std::shared_ptr<MqttClient> mqtt_client;
-    std::shared_ptr<MqttClient> sub_client;
+    std::shared_ptr<hms::MqttClient> mqtt_client;
+    std::shared_ptr<hms::MqttClient> sub_client;
     std::shared_ptr<DatabaseService> db_service;
     std::unique_ptr<DataPublisherService> publisher;
     std::string device_id = "cpap_resmed_23243570851";  // matches default config
@@ -246,15 +254,15 @@ protected:
             GTEST_SKIP() << "str_current.edf not found";
         }
 
-        mqtt_client = std::make_shared<MqttClient>("test_str_mqtt_pub");
-        sub_client = std::make_shared<MqttClient>("test_str_mqtt_sub");
+        mqtt_client = std::make_shared<hms::MqttClient>(testMqttConfig("test_str_mqtt_pub"));
+        sub_client = std::make_shared<hms::MqttClient>(testMqttConfig("test_str_mqtt_sub"));
         db_service = std::make_shared<DatabaseService>("host=localhost dbname=cpap_monitoring "
                                                        "user=maestro password=maestro_postgres_2026_secure");
 
-        if (!mqtt_client->connect("tcp://localhost:1883", "", "")) {
+        if (!mqtt_client->connect()) {
             GTEST_SKIP() << "MQTT broker not available";
         }
-        if (!sub_client->connect("tcp://localhost:1883", "", "")) {
+        if (!sub_client->connect()) {
             GTEST_SKIP() << "MQTT subscriber connection failed";
         }
 
@@ -288,8 +296,8 @@ TEST_F(STRMqttIntegrationTest, PublishSTRDiscovery) {
     // Can't assert exact count since wildcard + matching is broker-dependent
     // Instead, check by subscribing to the exact pattern
     std::atomic<int> str_count{0};
-    auto sub2 = std::make_shared<MqttClient>("test_str_mqtt_sub2");
-    sub2->connect("tcp://localhost:1883", "", "");
+    auto sub2 = std::make_shared<hms::MqttClient>(testMqttConfig("test_str_mqtt_sub2"));
+    sub2->connect();
     sub2->subscribe("homeassistant/sensor/" + device_id + "/daily_str_ahi/config",
         [&str_count](const std::string&, const std::string& payload) {
             if (!payload.empty()) str_count++;
@@ -386,8 +394,8 @@ TEST_F(STRMqttIntegrationTest, AHIDeltaZeroWhenNoNightlyAHI) {
 
 class STRFullPipelineTest : public ::testing::Test {
 protected:
-    std::shared_ptr<MqttClient> mqtt_client;
-    std::shared_ptr<MqttClient> sub_client;
+    std::shared_ptr<hms::MqttClient> mqtt_client;
+    std::shared_ptr<hms::MqttClient> sub_client;
     std::shared_ptr<DatabaseService> db;
     std::unique_ptr<DataPublisherService> publisher;
     std::string device_id = "test_str_pipeline";
@@ -404,11 +412,11 @@ protected:
         if (!db->connect()) GTEST_SKIP() << "PostgreSQL not available";
 
         // MQTT
-        mqtt_client = std::make_shared<MqttClient>("test_str_pipeline_pub");
-        sub_client = std::make_shared<MqttClient>("test_str_pipeline_sub");
-        if (!mqtt_client->connect("tcp://localhost:1883", "", ""))
+        mqtt_client = std::make_shared<hms::MqttClient>(testMqttConfig("test_str_pipeline_pub"));
+        sub_client = std::make_shared<hms::MqttClient>(testMqttConfig("test_str_pipeline_sub"));
+        if (!mqtt_client->connect())
             GTEST_SKIP() << "MQTT not available";
-        sub_client->connect("tcp://localhost:1883", "", "");
+        sub_client->connect();
 
         publisher = std::make_unique<DataPublisherService>(mqtt_client, db);
     }
