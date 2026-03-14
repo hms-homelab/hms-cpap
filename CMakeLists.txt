@@ -58,7 +58,6 @@ add_library(hms_mqtt STATIC
 )
 target_include_directories(hms_mqtt PUBLIC
     ${hms_shared_SOURCE_DIR}/mqtt/include
-    ${hms_shared_SOURCE_DIR}/config/include
 )
 target_link_libraries(hms_mqtt PUBLIC
     spdlog::spdlog
