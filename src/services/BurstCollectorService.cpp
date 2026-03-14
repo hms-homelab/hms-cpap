@@ -658,32 +658,6 @@ bool BurstCollectorService::executeBurstCycle() {
                           << " stopped (all checkpoint files unchanged)" << std::endl;
 
                 db_service_->markSessionCompleted(device_id_, session.session_start);
-
-                {
-                    auto now = std::chrono::system_clock::now();
-                    auto now_t = std::chrono::system_clock::to_time_t(now);
-                    auto sess_t = std::chrono::system_clock::to_time_t(session.session_start);
-                    auto now_day = (now_t - 12*3600) / 86400;
-                    auto sess_day = (sess_t - 12*3600) / 86400;
-
-                    if (sess_day == now_day && data_publisher_) {
-                        auto metrics = db_service_->getNightlyMetrics(device_id_, session.session_start);
-                        if (metrics.has_value()) {
-                            data_publisher_->publishHistoricalState(metrics.value());
-                            std::cout << "   Nightly metrics published ("
-                                      << metrics.value().usage_hours.value_or(0.0) << "h, AHI "
-                                      << metrics.value().ahi << ")" << std::endl;
-                        }
-                        data_publisher_->publishSessionCompleted();
-                        processSTRFile();
-
-                        // Generate LLM summary (non-fatal)
-                        if (llm_enabled_ && llm_client_) {
-                            generateAndPublishSummary(metrics.value());
-                        }
-                    }
-                }
-
                 std::cout << "   Skipping download (no changes)" << std::endl;
                 continue;
             }
@@ -829,14 +803,28 @@ bool BurstCollectorService::executeBurstCycle() {
 
             data_publisher_->publishSession(*latest);
 
-            // Also publish nightly aggregated metrics while session is active
-            // so historical/ MQTT topics stay current (not just on session stop)
+            // Also publish nightly aggregated metrics
             auto metrics = db_service_->getNightlyMetrics(device_id_, latest->session_start.value());
             if (metrics.has_value()) {
                 data_publisher_->publishHistoricalState(metrics.value());
                 std::cout << "   Nightly metrics updated ("
                           << metrics.value().usage_hours.value_or(0.0) << "h, AHI "
                           << metrics.value().ahi << ")" << std::endl;
+            }
+
+            // Only publish session completed when the session is actually done
+            // (all files finalized, no longer growing)
+            if (latest->status == CPAPSession::Status::COMPLETED) {
+                std::cout << "  ✓ Session status: completed" << std::endl;
+                data_publisher_->publishSessionCompleted();
+                processSTRFile();
+
+                // Generate LLM summary (non-fatal)
+                if (llm_enabled_ && llm_client_ && metrics.has_value()) {
+                    generateAndPublishSummary(metrics.value());
+                }
+            } else {
+                std::cout << "  ⏳ Session status: in_progress (files still growing)" << std::endl;
             }
         }
     }

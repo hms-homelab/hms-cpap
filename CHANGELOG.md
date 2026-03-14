@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-03-14
+
+### Fixed
+- **Session active bug**: Old completed sessions were calling `publishSessionCompleted()`
+  every burst cycle, setting `session_active=OFF` even when a newer session was actively
+  running. Now unchanged sessions only update the DB without touching MQTT state, and
+  session completion is gated on `status == COMPLETED` after parsing.
+
 ## [1.5.0] - 2026-03-14
 
 ### Added
