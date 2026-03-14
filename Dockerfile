@@ -4,7 +4,7 @@
 # =============================================================================
 # Stage 1: Builder
 # =============================================================================
-FROM debian:bookworm-slim AS builder
+FROM debian:trixie-slim AS builder
 
 # Install build dependencies (all from Debian repos, multi-arch safe)
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -39,20 +39,21 @@ RUN mkdir build && cd build && \
 # =============================================================================
 # Stage 2: Runtime
 # =============================================================================
-FROM debian:bookworm-slim
+FROM debian:trixie-slim
 
 # Install runtime dependencies only
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
-    libcurl4 \
+    libcurl4t64 \
     libpq5 \
-    libpqxx-6.4 \
+    libpqxx-7.10 \
     libssl3 \
-    libjsoncpp25 \
+    libjsoncpp26 \
     libpaho-mqtt1.3 \
     libpaho-mqttpp3-1 \
     libspdlog1.15 \
+    libfmt10 \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user for security
