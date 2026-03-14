@@ -31,14 +31,15 @@ find_library(PAHO_MQTT3AS_LIB paho-mqtt3as)
 find_library(PQXX_LIB pqxx)
 find_library(PQ_LIB pq)
 
-# ── hms-shared LLM module (via FetchContent) ────────────────────────────────
+# ── hms-shared modules (via FetchContent) ───────────────────────────────────
 include(FetchContent)
 FetchContent_Declare(hms_shared
     GIT_REPOSITORY https://github.com/hms-homelab/hms-shared.git
-    GIT_TAG        v1.4.0
+    GIT_TAG        main
 )
 FetchContent_Populate(hms_shared)
 
+# LLM module (nlohmann_json + curl only)
 add_library(hms_llm STATIC
     ${hms_shared_SOURCE_DIR}/llm/src/llm_client.cpp
 )
@@ -48,6 +49,21 @@ target_include_directories(hms_llm PUBLIC
 target_link_libraries(hms_llm PUBLIC
     nlohmann_json::nlohmann_json
     CURL::libcurl
+)
+
+# MQTT module (spdlog + paho)
+find_package(spdlog REQUIRED)
+add_library(hms_mqtt STATIC
+    ${hms_shared_SOURCE_DIR}/mqtt/src/mqtt_client.cpp
+)
+target_include_directories(hms_mqtt PUBLIC
+    ${hms_shared_SOURCE_DIR}/mqtt/include
+    ${hms_shared_SOURCE_DIR}/config/include
+)
+target_link_libraries(hms_mqtt PUBLIC
+    spdlog::spdlog
+    ${PAHO_MQTTPP3_LIB}
+    ${PAHO_MQTT3AS_LIB}
 )
 
 # Source files
@@ -70,6 +86,7 @@ target_link_libraries(${PROJECT_NAME}
     ${PQ_LIB}
     CURL::libcurl
     hms_llm
+    hms_mqtt
     pthread
     ssl
     crypto

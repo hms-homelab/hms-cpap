@@ -1,7 +1,7 @@
 #pragma once
 
 #include "models/CPAPModels.h"
-#include "mqtt/MqttClient.h"
+#include "mqtt_client.h"
 #include "mqtt/DiscoveryPublisher.h"
 #include "database/DatabaseService.h"
 #include <memory>
@@ -30,7 +30,7 @@ public:
      * @param mqtt_client Shared MQTT client
      * @param db_service Database service
      */
-    DataPublisherService(std::shared_ptr<MqttClient> mqtt_client,
+    DataPublisherService(std::shared_ptr<hms::MqttClient> mqtt_client,
                          std::shared_ptr<DatabaseService> db_service);
 
     /**
@@ -100,7 +100,7 @@ public:
     bool publishSessionSummary(const std::string& summary);
 
 private:
-    std::shared_ptr<MqttClient> mqtt_client_;
+    std::shared_ptr<hms::MqttClient> mqtt_client_;
     std::shared_ptr<DatabaseService> db_service_;
     std::unique_ptr<DiscoveryPublisher> discovery_publisher_;
 

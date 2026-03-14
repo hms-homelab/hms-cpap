@@ -1,6 +1,6 @@
 #pragma once
 
-#include "mqtt/MqttClient.h"
+#include "mqtt_client.h"
 #include <memory>
 #include <string>
 #include <json/json.h>
@@ -24,7 +24,7 @@ public:
      * @param manufacturer Device manufacturer (e.g., "American Power Conversion")
      * @param model Device model (e.g., "Back-UPS XS 1000M")
      */
-    DiscoveryPublisher(std::shared_ptr<MqttClient> mqtt_client,
+    DiscoveryPublisher(std::shared_ptr<hms::MqttClient> mqtt_client,
                        const std::string& device_id,
                        const std::string& device_name,
                        const std::string& manufacturer = "American Power Conversion",
@@ -89,7 +89,7 @@ private:
      */
     Json::Value buildDeviceInfo() const;
 
-    std::shared_ptr<MqttClient> mqtt_client_;
+    std::shared_ptr<hms::MqttClient> mqtt_client_;
     std::string device_id_;
     std::string device_name_;
     std::string manufacturer_;

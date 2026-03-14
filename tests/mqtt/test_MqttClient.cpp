@@ -6,11 +6,19 @@
 
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
-#include "mqtt/MqttClient.h"
+#include "mqtt_client.h"
 #include <thread>
 #include <chrono>
 
-using namespace hms_cpap;
+using namespace hms;
+
+static hms::MqttConfig testMqttConfig(const std::string& client_id) {
+    hms::MqttConfig cfg;
+    cfg.broker = "localhost";
+    cfg.port = 1883;
+    cfg.client_id = client_id;
+    return cfg;
+}
 
 // Note: These tests require a local MQTT broker running
 // To run: docker run -d -p 1883:1883 eclipse-mosquitto:latest
@@ -21,7 +29,7 @@ protected:
         // Skip tests if MQTT broker not available
         mqtt_broker = "tcp://localhost:1883";
 
-        client = std::make_unique<MqttClient>("test_client");
+        client = std::make_unique<hms::MqttClient>(testMqttConfig("test_client"));
     }
 
     void TearDown() override {
@@ -31,14 +39,14 @@ protected:
     }
 
     std::string mqtt_broker;
-    std::unique_ptr<MqttClient> client;
+    std::unique_ptr<hms::MqttClient> client;
 };
 
 /**
  * Test: Connected flag is set to true on initial connection
  */
 TEST_F(MqttClientTest, InitialConnection_SetsConnectedFlag) {
-    bool connected = client->connect(mqtt_broker, "", "");
+    bool connected = client->connect();
 
     if (connected) {
         EXPECT_TRUE(client->isConnected());
@@ -52,7 +60,7 @@ TEST_F(MqttClientTest, InitialConnection_SetsConnectedFlag) {
  * Test: Connected flag is updated to false on disconnection
  */
 TEST_F(MqttClientTest, Disconnect_UpdatesConnectedFlag) {
-    bool connected = client->connect(mqtt_broker, "", "");
+    bool connected = client->connect();
 
     if (!connected) {
         GTEST_SKIP() << "MQTT broker not available";
@@ -90,7 +98,7 @@ TEST_F(MqttClientTest, PublishWhenDisconnected_ReturnsFalse) {
  * Test: Publish succeeds when connected
  */
 TEST_F(MqttClientTest, PublishWhenConnected_Succeeds) {
-    bool connected = client->connect(mqtt_broker, "", "");
+    bool connected = client->connect();
 
     if (!connected) {
         GTEST_SKIP() << "MQTT broker not available";
@@ -110,7 +118,7 @@ TEST_F(MqttClientTest, PublishWhenConnected_Succeeds) {
  * which is tested in integration tests.
  */
 TEST_F(MqttClientTest, AutoReconnect_IsEnabled) {
-    bool connected = client->connect(mqtt_broker, "", "");
+    bool connected = client->connect();
 
     if (!connected) {
         GTEST_SKIP() << "MQTT broker not available";
@@ -131,7 +139,7 @@ TEST_F(MqttClientTest, AutoReconnect_IsEnabled) {
  * NOTE: Requires manual broker restart or network disruption
  */
 TEST_F(MqttClientTest, DISABLED_Reconnection_UpdatesConnectedFlag) {
-    bool connected = client->connect(mqtt_broker, "", "");
+    bool connected = client->connect();
 
     if (!connected) {
         GTEST_SKIP() << "MQTT broker not available";

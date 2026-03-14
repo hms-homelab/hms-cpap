@@ -48,6 +48,7 @@ target_link_libraries(run_tests
     ${PQ_LIB}
     CURL::libcurl
     hms_llm
+    hms_mqtt
     pthread
     ssl
     crypto
