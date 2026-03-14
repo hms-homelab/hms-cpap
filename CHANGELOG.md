@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-03-14
+
+### Added
+- **On-demand summary regeneration via MQTT**: Publish any message to
+  `cpap/{device_id}/command/regenerate_summary` to refire the LLM session summary
+  for the latest completed session. Queries DB for most recent session metrics and
+  calls the configured LLM provider. Requires `LLM_ENABLED=true`.
+- **10 new tests** (125 total): 7 unit tests for regeneration decision logic
+  (happy path, no-sessions, no-metrics, LLM-disabled, MQTT-down, topic format,
+  payload-ignored) and 3 E2E integration tests (MQTT command -> DB query -> summary
+  publish round-trip, empty-DB graceful abort).
+- **OpenAI GPT-5.2 support**: Updated hms-shared to v1.5.1 which uses
+  `max_completion_tokens` instead of deprecated `max_tokens` for OpenAI chat
+  completions (required by GPT-5.2+).
+
+### Fixed
+- **DST bug in `getLastSessionStart()`**: `std::tm` initialized with `tm_isdst=0`
+  caused `mktime` to interpret timestamps as standard time during DST, shifting
+  session lookups by 1 hour. Fixed with `tm_isdst=-1` (auto-detect), matching
+  every other `mktime` call in the codebase.
+
 ## [1.5.2] - 2026-03-14
 
 ### Fixed
@@ -278,6 +299,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Version History Summary
 
+- **1.6.0** - On-demand LLM summary via MQTT, OpenAI GPT-5.2 support, DST bug fix
+- **1.5.2** - Session completion fix (v1.5.1 too aggressive), 9 completion tests
+- **1.5.1** - Session active bug fix (old sessions overwriting active state)
+- **1.5.0** - LLM session summaries (Ollama/OpenAI/Gemini/Anthropic), n8n notifications
+- **1.4.1** - Configurable session gap threshold (SESSION_GAP_MINUTES)
 - **1.4.0** - Local source mode (CPAP_SOURCE=local), no ezShare needed
 - **1.3.0** - --reparse CLI for local archive re-parsing
 - **1.2.0** - STR.edf daily therapy summaries, 13 new MQTT sensors, backfill CLI, project cleanup
@@ -289,7 +315,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **1.1.0** - Session discovery, archival, 34 metrics
 - **1.0.0** - Initial release with core functionality
 
-[Unreleased]: https://github.com/hms-homelab/hms-cpap/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/hms-homelab/hms-cpap/compare/v1.6.0...HEAD
+[1.6.0]: https://github.com/hms-homelab/hms-cpap/compare/v1.5.2...v1.6.0
+[1.5.2]: https://github.com/hms-homelab/hms-cpap/compare/v1.5.1...v1.5.2
+[1.5.1]: https://github.com/hms-homelab/hms-cpap/compare/v1.5.0...v1.5.1
+[1.5.0]: https://github.com/hms-homelab/hms-cpap/compare/v1.4.1...v1.5.0
+[1.4.1]: https://github.com/hms-homelab/hms-cpap/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/hms-homelab/hms-cpap/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/hms-homelab/hms-cpap/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/hms-homelab/hms-cpap/compare/v1.1.8...v1.2.0

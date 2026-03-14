@@ -120,6 +120,27 @@ BurstCollectorService::BurstCollectorService(int burst_interval_seconds)
                   << " / " << llm_config.model << " at " << llm_config.endpoint << ")" << std::endl;
     }
 
+    // Subscribe to summary regeneration command
+    if (llm_enabled_ && mqtt_client_ && mqtt_client_->isConnected()) {
+        std::string cmd_topic = "cpap/" + device_id_ + "/command/regenerate_summary";
+        mqtt_client_->subscribe(cmd_topic,
+            [this](const std::string& /*topic*/, const std::string& /*payload*/) {
+                std::cout << "LLM: Regenerate summary requested via MQTT" << std::endl;
+                auto last_start = db_service_->getLastSessionStart(device_id_);
+                if (!last_start.has_value()) {
+                    std::cerr << "LLM: No sessions found for summary regeneration" << std::endl;
+                    return;
+                }
+                auto metrics = db_service_->getNightlyMetrics(device_id_, last_start.value());
+                if (!metrics.has_value()) {
+                    std::cerr << "LLM: No metrics found for latest session" << std::endl;
+                    return;
+                }
+                generateAndPublishSummary(metrics.value());
+            }, 1);
+        std::cout << "LLM: Subscribed to " << cmd_topic << " for on-demand summary" << std::endl;
+    }
+
     // STARTUP CLEANUP: Clear any stale session_active state from previous run
     // This prevents stuck "session active" in HA after service restart or crash
     if (data_publisher_ && mqtt_client_ && mqtt_client_->isConnected()) {

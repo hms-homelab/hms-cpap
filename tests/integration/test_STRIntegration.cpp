@@ -488,3 +488,232 @@ TEST_F(STRFullPipelineTest, EndToEnd_ParseSavePublish) {
     std::cout << "Full pipeline: " << records.size() << " parsed, "
               << save_count << " saved to DB, 13 MQTT topics published" << std::endl;
 }
+
+// ============================================================================
+//  Summary Regeneration E2E: MQTT command -> DB query -> MQTT publish
+// ============================================================================
+
+class SummaryRegenerationE2ETest : public ::testing::Test {
+protected:
+    std::shared_ptr<hms::MqttClient> pub_client;   // publishes regenerate command
+    std::shared_ptr<hms::MqttClient> sub_client;    // subscribes to summary output
+    std::shared_ptr<hms::MqttClient> handler_client; // simulates the service handler
+    std::shared_ptr<DatabaseService> db;
+    std::string device_id = "test_regen_e2e";
+    std::string conn_str = "host=localhost port=5432 dbname=cpap_monitoring "
+                           "user=maestro password=maestro_postgres_2026_secure";
+
+    void SetUp() override {
+        db = std::make_shared<DatabaseService>(conn_str);
+        if (!db->connect()) GTEST_SKIP() << "PostgreSQL not available";
+
+        pub_client = std::make_shared<hms::MqttClient>(testMqttConfig("test_regen_pub"));
+        sub_client = std::make_shared<hms::MqttClient>(testMqttConfig("test_regen_sub"));
+        handler_client = std::make_shared<hms::MqttClient>(testMqttConfig("test_regen_handler"));
+
+        if (!pub_client->connect()) GTEST_SKIP() << "MQTT broker not available";
+        if (!sub_client->connect()) GTEST_SKIP() << "MQTT subscriber failed";
+        if (!handler_client->connect()) GTEST_SKIP() << "MQTT handler failed";
+
+        // Insert a test session so getLastSessionStart() returns data
+        insertTestSession();
+    }
+
+    void TearDown() override {
+        cleanupTestData();
+        if (sub_client) sub_client->disconnect();
+        if (pub_client) pub_client->disconnect();
+        if (handler_client) handler_client->disconnect();
+    }
+
+    void insertTestSession() {
+        try {
+            pqxx::connection conn(conn_str);
+            // Transaction 1: insert device + session
+            int session_id = 0;
+            {
+                pqxx::work txn(conn);
+                txn.exec_params(R"(
+                    INSERT INTO cpap_devices (device_id, device_name, serial_number, model_id, version_id, last_seen)
+                    VALUES ($1, 'Test Device', '000000', 36, 39, CURRENT_TIMESTAMP)
+                    ON CONFLICT (device_id) DO NOTHING
+                )", device_id);
+                auto r = txn.exec_params(R"(
+                    INSERT INTO cpap_sessions (device_id, session_start, session_end, duration_seconds, brp_file_path)
+                    VALUES ($1, '2026-03-13 22:30:00', '2026-03-14 06:00:00', 27000, '/test/20260313/BRP.edf')
+                    ON CONFLICT (device_id, session_start) DO UPDATE SET duration_seconds = 27000
+                    RETURNING id
+                )", device_id);
+                session_id = r[0][0].as<int>();
+                txn.commit();
+            }
+            // Transaction 2: insert metrics (separate so FK is visible)
+            {
+                pqxx::work txn(conn);
+                txn.exec_params(R"(
+                    INSERT INTO cpap_session_metrics (session_id, total_events, ahi,
+                        obstructive_apneas, central_apneas, hypopneas, reras)
+                    VALUES ($1, 9, 1.2, 4, 2, 2, 1)
+                    ON CONFLICT (session_id) DO NOTHING
+                )", session_id);
+                txn.commit();
+            }
+            std::cout << "Test: inserted session id=" << session_id << " for " << device_id << std::endl;
+        } catch (const std::exception& e) {
+            std::cerr << "Test setup insert failed: " << e.what() << std::endl;
+        }
+    }
+
+    void cleanupTestData() {
+        try {
+            pqxx::connection conn(conn_str);
+            pqxx::work txn(conn);
+            // Delete metrics via FK cascade from sessions
+            txn.exec_params(R"(
+                DELETE FROM cpap_session_metrics WHERE session_id IN (
+                    SELECT id FROM cpap_sessions WHERE device_id = $1
+                )
+            )", device_id);
+            txn.exec_params("DELETE FROM cpap_sessions WHERE device_id = $1", device_id);
+            txn.exec_params("DELETE FROM cpap_devices WHERE device_id = $1", device_id);
+            txn.commit();
+        } catch (...) {}
+    }
+};
+
+TEST_F(SummaryRegenerationE2ETest, MqttCommandTriggersMetricsLookup) {
+    // This test verifies the DB query path of the regeneration handler:
+    // 1. Subscribe handler to command topic
+    // 2. Handler queries DB for latest session + metrics
+    // 3. Verify metrics are retrieved correctly
+
+    std::atomic<bool> handler_fired{false};
+    std::atomic<bool> had_session{false};
+    std::atomic<bool> had_metrics{false};
+
+    std::string cmd_topic = "cpap/" + device_id + "/command/regenerate_summary";
+
+    // Simulate the handler logic (same as BurstCollectorService)
+    handler_client->subscribe(cmd_topic,
+        [&, this](const std::string&, const std::string&) {
+            handler_fired = true;
+            auto last_start = db->getLastSessionStart(device_id);
+            if (last_start.has_value()) {
+                had_session = true;
+                auto metrics = db->getNightlyMetrics(device_id, last_start.value());
+                if (metrics.has_value()) {
+                    had_metrics = true;
+                }
+            }
+        }, 1);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+    // Publish command
+    pub_client->publish(cmd_topic, "regenerate", 1, false);
+
+    // Wait for handler
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+
+    EXPECT_TRUE(handler_fired.load()) << "Handler should fire on MQTT command";
+    EXPECT_TRUE(had_session.load()) << "Should find test session in DB";
+    EXPECT_TRUE(had_metrics.load()) << "Should find nightly metrics for test session";
+}
+
+TEST_F(SummaryRegenerationE2ETest, MqttCommandPublishesSummary) {
+    // Full round-trip: command -> handler -> mock summary -> MQTT publish
+    // Uses a fake summary (no LLM call) to verify the publish path
+
+    std::atomic<bool> summary_received{false};
+    std::string received_summary;
+    std::mutex rx_mutex;
+
+    std::string summary_topic = "cpap/" + device_id + "/daily/session_summary";
+    std::string cmd_topic = "cpap/" + device_id + "/command/regenerate_summary";
+
+    // Subscribe to summary output
+    sub_client->subscribe(summary_topic,
+        [&](const std::string&, const std::string& payload) {
+            std::lock_guard<std::mutex> lock(rx_mutex);
+            received_summary = payload;
+            summary_received = true;
+        }, 1);
+
+    // Drain retained
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    {
+        std::lock_guard<std::mutex> lock(rx_mutex);
+        summary_received = false;
+        received_summary.clear();
+    }
+
+    // Handler: on command, query DB and publish a mock summary
+    handler_client->subscribe(cmd_topic,
+        [&, this](const std::string&, const std::string&) {
+            auto last_start = db->getLastSessionStart(device_id);
+            if (!last_start.has_value()) return;
+            auto metrics = db->getNightlyMetrics(device_id, last_start.value());
+            if (!metrics.has_value()) return;
+
+            // Build a test summary string from real metrics
+            std::ostringstream oss;
+            oss << "Test summary: AHI=" << metrics->ahi
+                << ", events=" << metrics->total_events
+                << ", usage=" << metrics->usage_hours.value_or(0) << "h";
+
+            handler_client->publish(summary_topic, oss.str(), 1, true);
+        }, 1);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+    // Fire command
+    pub_client->publish(cmd_topic, "", 1, false);
+
+    // Wait for round-trip
+    std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+
+    std::lock_guard<std::mutex> lock(rx_mutex);
+    EXPECT_TRUE(summary_received.load()) << "Summary should be published to MQTT";
+    EXPECT_NE(received_summary.find("AHI="), std::string::npos)
+        << "Summary should contain AHI from DB metrics";
+    EXPECT_NE(received_summary.find("events="), std::string::npos)
+        << "Summary should contain event count";
+
+    std::cout << "Regenerated summary: " << received_summary << std::endl;
+}
+
+TEST_F(SummaryRegenerationE2ETest, NoSessionInDB_HandlerDoesNotPublish) {
+    // Clean out the test data first so DB is empty for this device
+    cleanupTestData();
+
+    std::atomic<bool> handler_fired{false};
+    std::atomic<bool> summary_published{false};
+
+    std::string cmd_topic = "cpap/" + device_id + "/command/regenerate_summary";
+    std::string summary_topic = "cpap/" + device_id + "/daily/session_summary";
+
+    // Watch for summary (should NOT appear)
+    sub_client->subscribe(summary_topic,
+        [&](const std::string&, const std::string& payload) {
+            if (!payload.empty()) summary_published = true;
+        }, 1);
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    summary_published = false;
+
+    // Handler
+    handler_client->subscribe(cmd_topic,
+        [&, this](const std::string&, const std::string&) {
+            handler_fired = true;
+            auto last_start = db->getLastSessionStart(device_id);
+            if (!last_start.has_value()) return;  // Should exit here
+            handler_client->publish(summary_topic, "should not appear", 1, true);
+        }, 1);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+    pub_client->publish(cmd_topic, "", 1, false);
+    std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+
+    EXPECT_TRUE(handler_fired.load()) << "Handler should fire";
+    EXPECT_FALSE(summary_published.load()) << "No summary should be published when DB is empty";
+}

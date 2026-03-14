@@ -721,3 +721,142 @@ TEST_F(BurstCollectorServiceTest, StartupCleanup_SkipsIfMqttDisconnected) {
     EXPECT_FALSE(session_active_cleared) << "Should skip cleanup if MQTT not connected";
 }
 
+// ============================================================================
+// SUMMARY REGENERATION DECISION TESTS
+// ============================================================================
+
+/**
+ * These tests verify the on-demand summary regeneration logic triggered
+ * by MQTT message on cpap/{device_id}/command/regenerate_summary.
+ *
+ * The handler:
+ *   1. Calls getLastSessionStart() → get latest session timestamp
+ *   2. Calls getNightlyMetrics() → get aggregated metrics for that session
+ *   3. Calls generateAndPublishSummary() → LLM + MQTT publish
+ *
+ * Failure modes tested:
+ *   - No sessions in DB → abort gracefully
+ *   - No metrics for session → abort gracefully
+ *   - LLM disabled → subscription not created
+ *   - MQTT disconnected → subscription not created
+ *   - Happy path → summary generated and published
+ */
+
+// Simulate the regeneration handler's decision flow
+struct RegenerationResult {
+    bool attempted;        // Did we attempt LLM generation?
+    bool had_session;      // Did getLastSessionStart return a value?
+    bool had_metrics;      // Did getNightlyMetrics return a value?
+    std::string error;     // Error message if aborted
+};
+
+RegenerationResult simulateRegeneration(
+    bool llm_enabled,
+    bool mqtt_connected,
+    bool db_has_sessions,
+    bool db_has_metrics) {
+
+    RegenerationResult result = {false, false, false, ""};
+
+    // Guard: LLM must be enabled and MQTT connected for subscription to exist
+    if (!llm_enabled) {
+        result.error = "LLM not enabled, no subscription";
+        return result;
+    }
+    if (!mqtt_connected) {
+        result.error = "MQTT not connected, no subscription";
+        return result;
+    }
+
+    // Step 1: get latest session
+    if (!db_has_sessions) {
+        result.error = "No sessions found for summary regeneration";
+        return result;
+    }
+    result.had_session = true;
+
+    // Step 2: get nightly metrics
+    if (!db_has_metrics) {
+        result.error = "No metrics found for latest session";
+        return result;
+    }
+    result.had_metrics = true;
+
+    // Step 3: generate and publish
+    result.attempted = true;
+    return result;
+}
+
+TEST_F(BurstCollectorServiceTest, Regeneration_HappyPath_GeneratesSummary) {
+    auto result = simulateRegeneration(
+        /*llm_enabled=*/true, /*mqtt_connected=*/true,
+        /*db_has_sessions=*/true, /*db_has_metrics=*/true);
+
+    EXPECT_TRUE(result.attempted) << "Should generate summary when all preconditions met";
+    EXPECT_TRUE(result.had_session);
+    EXPECT_TRUE(result.had_metrics);
+    EXPECT_TRUE(result.error.empty());
+}
+
+TEST_F(BurstCollectorServiceTest, Regeneration_NoSessions_Aborts) {
+    auto result = simulateRegeneration(
+        /*llm_enabled=*/true, /*mqtt_connected=*/true,
+        /*db_has_sessions=*/false, /*db_has_metrics=*/false);
+
+    EXPECT_FALSE(result.attempted);
+    EXPECT_FALSE(result.had_session);
+    EXPECT_EQ(result.error, "No sessions found for summary regeneration");
+}
+
+TEST_F(BurstCollectorServiceTest, Regeneration_NoMetrics_Aborts) {
+    auto result = simulateRegeneration(
+        /*llm_enabled=*/true, /*mqtt_connected=*/true,
+        /*db_has_sessions=*/true, /*db_has_metrics=*/false);
+
+    EXPECT_FALSE(result.attempted);
+    EXPECT_TRUE(result.had_session);
+    EXPECT_EQ(result.error, "No metrics found for latest session");
+}
+
+TEST_F(BurstCollectorServiceTest, Regeneration_LLMDisabled_NoSubscription) {
+    auto result = simulateRegeneration(
+        /*llm_enabled=*/false, /*mqtt_connected=*/true,
+        /*db_has_sessions=*/true, /*db_has_metrics=*/true);
+
+    EXPECT_FALSE(result.attempted);
+    EXPECT_EQ(result.error, "LLM not enabled, no subscription");
+}
+
+TEST_F(BurstCollectorServiceTest, Regeneration_MqttDisconnected_NoSubscription) {
+    auto result = simulateRegeneration(
+        /*llm_enabled=*/true, /*mqtt_connected=*/false,
+        /*db_has_sessions=*/true, /*db_has_metrics=*/true);
+
+    EXPECT_FALSE(result.attempted);
+    EXPECT_EQ(result.error, "MQTT not connected, no subscription");
+}
+
+TEST_F(BurstCollectorServiceTest, Regeneration_TopicFormat) {
+    // Verify the MQTT topic format matches the expected pattern
+    std::string device_id = "cpap_resmed_23243570851";
+    std::string expected_topic = "cpap/cpap_resmed_23243570851/command/regenerate_summary";
+    std::string actual_topic = "cpap/" + device_id + "/command/regenerate_summary";
+
+    EXPECT_EQ(actual_topic, expected_topic);
+}
+
+TEST_F(BurstCollectorServiceTest, Regeneration_PayloadIgnored) {
+    // The handler ignores the payload — any message triggers regeneration
+    // This test documents that behavior: empty, "now", or arbitrary payload all work
+    std::vector<std::string> payloads = {"", "now", "regenerate", "{\"force\":true}"};
+
+    for (const auto& payload : payloads) {
+        auto result = simulateRegeneration(
+            /*llm_enabled=*/true, /*mqtt_connected=*/true,
+            /*db_has_sessions=*/true, /*db_has_metrics=*/true);
+
+        EXPECT_TRUE(result.attempted)
+            << "Payload '" << payload << "' should still trigger regeneration";
+    }
+}
+

@@ -510,6 +510,7 @@ DatabaseService::getLastSessionStart(const std::string& device_id) {
             return std::nullopt;
         }
 
+        tm.tm_isdst = -1;  // Let mktime auto-detect DST
         auto tp = std::chrono::system_clock::from_time_t(std::mktime(&tm));
 
         std::cout << "DB: Last session for " << device_id
