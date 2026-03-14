@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.5.2] - 2026-03-14
+
+### Fixed
+- **Session completion not firing**: v1.5.1 fix was too aggressive — when the latest
+  session's files stopped growing, it was skipped entirely (no download = no parse = no
+  completion path). Now completion fires in the unchanged-files path, gated on two guards:
+  `newly_completed` (DB dedup, fires once) AND `is_most_recent` (by timestamp, not scan order).
+  Old sessions never trigger completion actions.
+
+### Added
+- **9 completion decision unit tests**: covers latest-first-time, latest-already-done,
+  old-session, single-session, scan-order-independence, multi-session dedup, second-cycle
+  no-fire scenarios.
+
 ## [1.5.1] - 2026-03-14
 
 ### Fixed

@@ -657,7 +657,37 @@ bool BurstCollectorService::executeBurstCycle() {
                 std::cout << "CPAP: Session " << session.session_prefix
                           << " stopped (all checkpoint files unchanged)" << std::endl;
 
-                db_service_->markSessionCompleted(device_id_, session.session_start);
+                // markSessionCompleted returns true only the FIRST time
+                // (when session_end was not yet set). Returns false if already completed.
+                bool newly_completed = db_service_->markSessionCompleted(device_id_, session.session_start);
+
+                // Only trigger completion actions once, and only for the most recent
+                // session by timestamp (not list position, which depends on scan order).
+                // newly_completed ensures this fires exactly once (DB dedup).
+                auto most_recent_start = std::max_element(
+                    new_sessions.begin(), new_sessions.end(),
+                    [](const SessionFileSet& a, const SessionFileSet& b) {
+                        return a.session_start < b.session_start;
+                    })->session_start;
+                bool is_most_recent = (session.session_start == most_recent_start);
+
+                if (newly_completed && is_most_recent && data_publisher_) {
+                    auto metrics = db_service_->getNightlyMetrics(device_id_, session.session_start);
+                    if (metrics.has_value()) {
+                        data_publisher_->publishHistoricalState(metrics.value());
+                        std::cout << "   Nightly metrics published ("
+                                  << metrics.value().usage_hours.value_or(0.0) << "h, AHI "
+                                  << metrics.value().ahi << ")" << std::endl;
+                    }
+                    data_publisher_->publishSessionCompleted();
+                    processSTRFile();
+
+                    // Generate LLM summary (non-fatal)
+                    if (llm_enabled_ && llm_client_ && metrics.has_value()) {
+                        generateAndPublishSummary(metrics.value());
+                    }
+                }
+
                 std::cout << "   Skipping download (no changes)" << std::endl;
                 continue;
             }

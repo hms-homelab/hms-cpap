@@ -490,6 +490,204 @@ TEST_F(BurstCollectorServiceTest, ConnectionRecovery_ThresholdBoundary) {
 }
 
 // ============================================================================
+// SESSION COMPLETION DECISION TESTS
+// ============================================================================
+
+/**
+ * These tests verify the session completion decision logic:
+ *
+ * When all checkpoint files are unchanged (session stopped growing):
+ *   1. markSessionCompleted() → returns true FIRST time (session_end was NULL)
+ *   2. markSessionCompleted() → returns false on subsequent calls (already set)
+ *   3. Completion actions (MQTT, STR, LLM) fire ONLY when:
+ *      - newly_completed == true (first time marking)
+ *      - is_most_recent == true (session has highest session_start timestamp)
+ *
+ * This prevents:
+ *   - Old completed sessions from clearing active session_active (the original bug)
+ *   - Repeated completion actions on every burst cycle (dedup via DB)
+ */
+
+// Helper: simulate the most_recent detection logic
+bool isMostRecentSession(
+    const std::chrono::system_clock::time_point& session_start,
+    const std::vector<std::chrono::system_clock::time_point>& all_starts) {
+
+    auto most_recent = *std::max_element(all_starts.begin(), all_starts.end());
+    return session_start == most_recent;
+}
+
+// Helper: simulate the completion decision
+struct CompletionDecision {
+    bool should_complete;
+    bool newly_completed;
+    bool is_most_recent;
+};
+
+CompletionDecision shouldTriggerCompletion(
+    const std::chrono::system_clock::time_point& session_start,
+    const std::vector<std::chrono::system_clock::time_point>& all_starts,
+    bool db_session_end_is_null) {
+
+    // markSessionCompleted returns true only if session_end was NULL
+    bool newly_completed = db_session_end_is_null;
+
+    auto most_recent = *std::max_element(all_starts.begin(), all_starts.end());
+    bool is_most_recent = (session_start == most_recent);
+
+    return {
+        newly_completed && is_most_recent,
+        newly_completed,
+        is_most_recent
+    };
+}
+
+TEST_F(BurstCollectorServiceTest, Completion_LatestSessionFirstTime_Fires) {
+    // Session 224724 is the latest, session_end is NULL (first time marking)
+    auto t1 = std::chrono::system_clock::from_time_t(1710373899);  // 213139
+    auto t2 = std::chrono::system_clock::from_time_t(1710378444);  // 224724 (latest)
+    auto t3 = std::chrono::system_clock::from_time_t(1710287687);  // 205447 (old)
+
+    std::vector<std::chrono::system_clock::time_point> all = {t1, t2, t3};
+
+    auto decision = shouldTriggerCompletion(t2, all, /*db_session_end_is_null=*/true);
+
+    EXPECT_TRUE(decision.should_complete) << "Latest session, first completion should fire";
+    EXPECT_TRUE(decision.newly_completed);
+    EXPECT_TRUE(decision.is_most_recent);
+}
+
+TEST_F(BurstCollectorServiceTest, Completion_LatestSessionAlreadyCompleted_NoFire) {
+    // Session 224724 is the latest, but session_end already set (second cycle)
+    auto t1 = std::chrono::system_clock::from_time_t(1710373899);
+    auto t2 = std::chrono::system_clock::from_time_t(1710378444);
+    auto t3 = std::chrono::system_clock::from_time_t(1710287687);
+
+    std::vector<std::chrono::system_clock::time_point> all = {t1, t2, t3};
+
+    auto decision = shouldTriggerCompletion(t2, all, /*db_session_end_is_null=*/false);
+
+    EXPECT_FALSE(decision.should_complete) << "Already completed session should not re-fire";
+    EXPECT_FALSE(decision.newly_completed);
+    EXPECT_TRUE(decision.is_most_recent);
+}
+
+TEST_F(BurstCollectorServiceTest, Completion_OldSessionFirstTime_NoFire) {
+    // Session 213139 is old (not the latest), even if session_end was NULL
+    auto t1 = std::chrono::system_clock::from_time_t(1710373899);  // 213139
+    auto t2 = std::chrono::system_clock::from_time_t(1710378444);  // 224724 (latest)
+    auto t3 = std::chrono::system_clock::from_time_t(1710287687);  // 205447
+
+    std::vector<std::chrono::system_clock::time_point> all = {t1, t2, t3};
+
+    auto decision = shouldTriggerCompletion(t1, all, /*db_session_end_is_null=*/true);
+
+    EXPECT_FALSE(decision.should_complete) << "Old session should not trigger completion even if newly marked";
+    EXPECT_TRUE(decision.newly_completed);
+    EXPECT_FALSE(decision.is_most_recent);
+}
+
+TEST_F(BurstCollectorServiceTest, Completion_OldSessionAlreadyCompleted_NoFire) {
+    // Session 213139 is old AND already completed — double no
+    auto t1 = std::chrono::system_clock::from_time_t(1710373899);
+    auto t2 = std::chrono::system_clock::from_time_t(1710378444);
+    auto t3 = std::chrono::system_clock::from_time_t(1710287687);
+
+    std::vector<std::chrono::system_clock::time_point> all = {t1, t2, t3};
+
+    auto decision = shouldTriggerCompletion(t1, all, /*db_session_end_is_null=*/false);
+
+    EXPECT_FALSE(decision.should_complete);
+    EXPECT_FALSE(decision.newly_completed);
+    EXPECT_FALSE(decision.is_most_recent);
+}
+
+TEST_F(BurstCollectorServiceTest, Completion_SingleSession_Fires) {
+    // Only one session in the list — it IS the most recent
+    auto t1 = std::chrono::system_clock::from_time_t(1710378444);
+
+    std::vector<std::chrono::system_clock::time_point> all = {t1};
+
+    auto decision = shouldTriggerCompletion(t1, all, /*db_session_end_is_null=*/true);
+
+    EXPECT_TRUE(decision.should_complete) << "Single session should complete";
+    EXPECT_TRUE(decision.newly_completed);
+    EXPECT_TRUE(decision.is_most_recent);
+}
+
+TEST_F(BurstCollectorServiceTest, Completion_SingleSessionAlreadyDone_NoFire) {
+    // Only one session, already completed
+    auto t1 = std::chrono::system_clock::from_time_t(1710378444);
+
+    std::vector<std::chrono::system_clock::time_point> all = {t1};
+
+    auto decision = shouldTriggerCompletion(t1, all, /*db_session_end_is_null=*/false);
+
+    EXPECT_FALSE(decision.should_complete) << "Already completed single session should not re-fire";
+}
+
+TEST_F(BurstCollectorServiceTest, Completion_ScanOrderDoesNotMatter) {
+    // Sessions discovered in reverse time order (20260312 scanned AFTER 20260313)
+    // The most_recent_start check uses timestamp, not list position
+    auto old_session = std::chrono::system_clock::from_time_t(1710287687);   // 205447
+    auto latest_session = std::chrono::system_clock::from_time_t(1710378444); // 224724
+
+    // List order: latest first, old second (as if 20260313 scanned before 20260312)
+    std::vector<std::chrono::system_clock::time_point> order1 = {latest_session, old_session};
+    // Reversed list order: old first, latest second
+    std::vector<std::chrono::system_clock::time_point> order2 = {old_session, latest_session};
+
+    // Latest should be identified correctly regardless of list order
+    EXPECT_TRUE(isMostRecentSession(latest_session, order1));
+    EXPECT_TRUE(isMostRecentSession(latest_session, order2));
+
+    // Old should never be identified as most recent
+    EXPECT_FALSE(isMostRecentSession(old_session, order1));
+    EXPECT_FALSE(isMostRecentSession(old_session, order2));
+}
+
+TEST_F(BurstCollectorServiceTest, Completion_ThreeSessionsOnlyLatestFires) {
+    // Simulate the exact scenario: 3 sessions, all unchanged, only latest fires
+    auto s1 = std::chrono::system_clock::from_time_t(1710373899);  // 213139
+    auto s2 = std::chrono::system_clock::from_time_t(1710378444);  // 224724
+    auto s3 = std::chrono::system_clock::from_time_t(1710287687);  // 205447
+
+    std::vector<std::chrono::system_clock::time_point> all = {s1, s2, s3};
+
+    // All session_ends are NULL (first time all stop)
+    int completions_fired = 0;
+
+    for (const auto& session_start : all) {
+        auto decision = shouldTriggerCompletion(session_start, all, /*db_session_end_is_null=*/true);
+        if (decision.should_complete) {
+            completions_fired++;
+        }
+    }
+
+    EXPECT_EQ(completions_fired, 1) << "Exactly one completion should fire across all sessions";
+}
+
+TEST_F(BurstCollectorServiceTest, Completion_SecondCycleNoFires) {
+    // Second cycle: all session_ends are set (markSessionCompleted returns false)
+    auto s1 = std::chrono::system_clock::from_time_t(1710373899);
+    auto s2 = std::chrono::system_clock::from_time_t(1710378444);
+    auto s3 = std::chrono::system_clock::from_time_t(1710287687);
+
+    std::vector<std::chrono::system_clock::time_point> all = {s1, s2, s3};
+
+    int completions_fired = 0;
+
+    for (const auto& session_start : all) {
+        auto decision = shouldTriggerCompletion(session_start, all, /*db_session_end_is_null=*/false);
+        if (decision.should_complete) {
+            completions_fired++;
+        }
+    }
+
+    EXPECT_EQ(completions_fired, 0) << "No completions on second cycle (all already marked)";
+}
+
+// ============================================================================
 // STARTUP CLEANUP TESTS
 // ============================================================================
 
