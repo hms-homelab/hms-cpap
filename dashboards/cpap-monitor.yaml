@@ -1,0 +1,681 @@
+title: ResMed CPAP Monitor
+icon: mdi:lungs
+path: cpap-monitor
+theme: Backend-selected
+views:
+  - title: Overview
+    path: overview
+    icon: mdi:home-analytics
+    badges:
+      - entity: sensor.resmed_airsense_10_hist_ahi
+      - entity: sensor.resmed_airsense_10_hist_usage_hours
+      - entity: binary_sensor.resmed_airsense_10_rt_session_active
+    cards:
+      - type: custom:mushroom-title-card
+        title: ResMed AirSense 10 Sleep Therapy
+        subtitle: >-
+          Last Session - {{
+          states('sensor.resmed_airsense_10_rt_last_session_time') |
+          as_timestamp | timestamp_custom('%b %d') }}
+      - type: vertical-stack
+        cards:
+          - type: custom:mushroom-title-card
+            title: Key Metrics
+            subtitle: Last Session Performance
+          - type: horizontal-stack
+            cards:
+              - type: custom:mushroom-template-card
+                entity: sensor.resmed_airsense_10_hist_ahi
+                primary: AHI Score
+                secondary: >-
+                  {% set ahi = states('sensor.resmed_airsense_10_hist_ahi') |
+                  float(999) %}
+
+                  {% if ahi < 5 %}
+                    Excellent!
+                  {% elif ahi < 15 %}
+                    Mild Apnea
+                  {% elif ahi < 30 %}
+                    Moderate
+                  {% else %}
+                    Severe
+                  {% endif %}
+                icon: mdi:heart-pulse
+                icon_color: >-
+                  {% set ahi = states('sensor.resmed_airsense_10_hist_ahi') |
+                  float(999) %}
+
+                  {% if ahi < 5 %}
+                    green
+                  {% elif ahi < 15 %}
+                    orange
+                  {% elif ahi < 30 %}
+                    red
+                  {% else %}
+                    purple
+                  {% endif %}
+                badge_icon: mdi:heart-pulse
+                badge_color: transparent
+                layout: vertical
+                tap_action:
+                  action: more-info
+                multiline_secondary: false
+                fill_container: false
+              - type: custom:mushroom-template-card
+                entity: sensor.resmed_airsense_10_hist_usage_hours
+                primary: Usage
+                secondary: >-
+                  {% set hours =
+                  states('sensor.resmed_airsense_10_hist_usage_hours') |
+                  float(0) %}
+
+                  {% if hours >= 4 %}
+                    {{ hours | round(1) }}h - 4h+ target met
+                  {% else %}
+                    {{ hours | round(1) }}h
+                  {% endif %}
+                icon: mdi:clock-check
+                icon_color: >-
+                  {% set hours =
+                  states('sensor.resmed_airsense_10_hist_usage_hours') |
+                  float(0) %}
+
+                  {% if hours >= 4 %}
+                    green
+                  {% elif hours >= 2 %}
+                    orange
+                  {% else %}
+                    red
+                  {% endif %}
+                layout: vertical
+                tap_action:
+                  action: more-info
+          - type: horizontal-stack
+            cards:
+              - type: custom:mushroom-template-card
+                entity: sensor.resmed_airsense_10_hist_leak_p95
+                primary: Mask Leak
+                secondary: >-
+                  {% set leak =
+                  states('sensor.resmed_airsense_10_hist_leak_p95') | float(100)
+                  %}
+
+                  {% if leak < 10 %}
+                    Excellent
+                  {% elif leak < 24 %}
+                    Acceptable
+                  {% else %}
+                    High Leak
+                  {% endif %}
+                icon: mdi:air-filter
+                icon_color: >-
+                  {% set leak =
+                  states('sensor.resmed_airsense_10_hist_leak_p95') | float(100)
+                  %}
+
+                  {% if leak < 10 %}
+                    green
+                  {% elif leak < 24 %}
+                    orange
+                  {% else %}
+                    red
+                  {% endif %}
+                layout: vertical
+                tap_action:
+                  action: more-info
+              - type: custom:mushroom-template-card
+                entity: sensor.resmed_airsense_10_hist_total_events
+                primary: Total Events
+                secondary: >-
+                  {{ states('sensor.resmed_airsense_10_hist_ahi') | round(1) }}
+                  events/hr
+                icon: mdi:alert-circle
+                icon_color: >-
+                  {% set events =
+                  states('sensor.resmed_airsense_10_hist_total_events') |
+                  int(999) %}
+
+                  {% if events < 10 %}
+                    green
+                  {% elif events < 30 %}
+                    orange
+                  {% else %}
+                    red
+                  {% endif %}
+                layout: vertical
+                tap_action:
+                  action: more-info
+              - type: custom:mushroom-template-card
+                entity: binary_sensor.resmed_airsense_10_rt_session_active
+                primary: Session
+                secondary: >-
+                  {% if
+                  is_state('binary_sensor.resmed_airsense_10_rt_session_active',
+                  'on') %}
+                    Running
+                  {% else %}
+                    Completed
+                  {% endif %}
+                icon: mdi:sleep
+                icon_color: >-
+                  {% if
+                  is_state('binary_sensor.resmed_airsense_10_rt_session_active',
+                  'on') %}
+                    green
+                  {% else %}
+                    grey
+                  {% endif %}
+                layout: vertical
+                tap_action:
+                  action: more-info
+      - type: vertical-stack
+        cards:
+          - type: custom:mushroom-title-card
+            title: AI Session Summary
+            subtitle: LLM-generated analysis of last session
+          - type: markdown
+            content: >-
+              {% set summary = state_attr('sensor.resmed_airsense_10_str_session_summary', 'summary') %}
+              {% if summary %}
+              {{ summary }}
+              {% else %}
+              No summary available yet. A summary is generated after each therapy session.
+              {% endif %}
+      - type: vertical-stack
+        cards:
+          - type: custom:mushroom-title-card
+            title: Therapy Insights
+            subtitle: >-
+              {{ state_attr('sensor.resmed_airsense_10_therapy_insights',
+              'insights') | length }} automated observations
+          - type: markdown
+            content: >-
+              {% set insights =
+              state_attr('sensor.resmed_airsense_10_therapy_insights',
+              'insights') %}
+
+              {% if insights %}
+                {% for i in insights %}
+              {% if i.category == 'positive' %}&#x2705;{% elif i.category == 'warning' %}&#x26A0;&#xFE0F;{% elif i.category == 'alert' %}&#x1F534;{% elif i.category == 'actionable' %}&#x1F4A1;{% else %}&#x2139;&#xFE0F;{% endif %} **{{ i.title }}**
+
+              {{ i.body }}
+
+                {% endfor %}
+              {% else %}
+              No insights available yet. Insights are generated after STR data is processed.
+              {% endif %}
+      - type: vertical-stack
+        cards:
+          - type: custom:mushroom-title-card
+            title: STR Daily Metrics
+            subtitle: Official ResMed indices from STR.edf
+          - type: horizontal-stack
+            cards:
+              - type: custom:mushroom-template-card
+                entity: sensor.resmed_airsense_10_str_str_ahi
+                primary: STR AHI
+                secondary: >-
+                  {{ states('sensor.resmed_airsense_10_str_str_ahi') |
+                  float(0) | round(1) }}
+                icon: mdi:heart-pulse
+                icon_color: >-
+                  {% set v =
+                  states('sensor.resmed_airsense_10_str_str_ahi') | float(99) %}
+                  {% if v < 5 %}green{% elif v < 15 %}orange{% else %}red{% endif %}
+                layout: vertical
+              - type: custom:mushroom-template-card
+                entity: sensor.resmed_airsense_10_str_str_usage_hours
+                primary: STR Usage
+                secondary: >-
+                  {{ states('sensor.resmed_airsense_10_str_str_usage_hours') |
+                  float(0) | round(1) }}h
+                icon: mdi:clock
+                icon_color: >-
+                  {% set v =
+                  states('sensor.resmed_airsense_10_str_str_usage_hours') |
+                  float(0) %}
+                  {% if v >= 4 %}green{% elif v >= 2 %}orange{% else %}red{% endif %}
+                layout: vertical
+              - type: custom:mushroom-template-card
+                entity: sensor.resmed_airsense_10_str_str_leak_95
+                primary: STR Leak P95
+                secondary: >-
+                  {{ states('sensor.resmed_airsense_10_str_str_leak_95') |
+                  float(0) | round(1) }} L/min
+                icon: mdi:leak
+                icon_color: >-
+                  {% set v =
+                  states('sensor.resmed_airsense_10_str_str_leak_95') |
+                  float(99) %}
+                  {% if v < 10 %}green{% elif v < 24 %}orange{% else %}red{% endif %}
+                layout: vertical
+          - type: horizontal-stack
+            cards:
+              - type: custom:mushroom-entity-card
+                entity: sensor.resmed_airsense_10_str_str_oai
+                name: OAI
+                icon: mdi:alert-octagon
+              - type: custom:mushroom-entity-card
+                entity: sensor.resmed_airsense_10_str_str_cai
+                name: CAI
+                icon: mdi:alert-circle
+              - type: custom:mushroom-entity-card
+                entity: sensor.resmed_airsense_10_str_str_hi
+                name: HI
+                icon: mdi:speedometer-medium
+              - type: custom:mushroom-entity-card
+                entity: sensor.resmed_airsense_10_str_str_rin
+                name: RERA
+                icon: mdi:waves
+      - type: vertical-stack
+        cards:
+          - type: custom:mushroom-title-card
+            title: Sleep Events Breakdown
+            subtitle: Apnea & Hypopnea Analysis
+          - type: horizontal-stack
+            cards:
+              - type: custom:mushroom-entity-card
+                entity: sensor.resmed_airsense_10_hist_obstructive_apneas
+                name: Obstructive
+                icon: mdi:alert-octagon
+                icon_color: >-
+                  {% set val =
+                  states('sensor.resmed_airsense_10_hist_obstructive_apneas') |
+                  int(0) %}
+
+                  {% if val == 0 %}
+                    green
+                  {% elif val < 10 %}
+                    orange
+                  {% else %}
+                    red
+                  {% endif %}
+              - type: custom:mushroom-entity-card
+                entity: sensor.resmed_airsense_10_hist_central_apneas
+                name: Central
+                icon: mdi:alert-circle
+                icon_color: >-
+                  {% set val =
+                  states('sensor.resmed_airsense_10_hist_central_apneas') |
+                  int(0) %}
+
+                  {% if val == 0 %}
+                    green
+                  {% elif val < 5 %}
+                    orange
+                  {% else %}
+                    red
+                  {% endif %}
+              - type: custom:mushroom-entity-card
+                entity: sensor.resmed_airsense_10_hist_hypopneas
+                name: Hypopneas
+                icon: mdi:speedometer-medium
+                icon_color: >-
+                  {% set val =
+                  states('sensor.resmed_airsense_10_hist_hypopneas') | int(0) %}
+
+                  {% if val == 0 %}
+                    green
+                  {% elif val < 10 %}
+                    orange
+                  {% else %}
+                    red
+                  {% endif %}
+          - type: horizontal-stack
+            cards:
+              - type: custom:mushroom-entity-card
+                entity: sensor.resmed_airsense_10_hist_reras
+                name: RERAs
+                icon: mdi:waves
+                icon_color: blue
+                secondary_info: Respiratory Effort
+              - type: custom:mushroom-template-card
+                entity: sensor.resmed_airsense_10_hist_max_event_duration
+                primary: Max Event
+                secondary: >-
+                  {{ states('sensor.resmed_airsense_10_hist_max_event_duration')
+                  | float(0) | round(1) }}s
+                icon: mdi:timer
+                icon_color: >-
+                  {% set val =
+                  states('sensor.resmed_airsense_10_hist_max_event_duration') |
+                  float(0) %}
+
+                  {% if val < 10 %}
+                    green
+                  {% elif val < 20 %}
+                    orange
+                  {% else %}
+                    red
+                  {% endif %}
+                layout: vertical
+              - type: custom:mushroom-template-card
+                entity: sensor.resmed_airsense_10_hist_avg_event_duration
+                primary: Avg Event
+                secondary: >-
+                  {{ states('sensor.resmed_airsense_10_hist_avg_event_duration')
+                  | float(0) | round(1) }}s
+                icon: mdi:timer-outline
+                icon_color: blue
+                layout: vertical
+      - type: vertical-stack
+        cards:
+          - type: custom:mushroom-title-card
+            title: Therapy Pressure
+            subtitle: Auto-Adjusting CPAP Metrics
+          - type: horizontal-stack
+            cards:
+              - type: gauge
+                entity: sensor.resmed_airsense_10_hist_avg_pressure
+                name: Average Pressure
+                unit: cmH2O
+                min: 4
+                max: 20
+                severity:
+                  green: 4
+                  yellow: 15
+                  red: 18
+                needle: true
+              - type: gauge
+                entity: sensor.resmed_airsense_10_hist_pressure_p95
+                name: 95th Percentile
+                unit: cmH2O
+                min: 4
+                max: 20
+                severity:
+                  green: 4
+                  yellow: 15
+                  red: 18
+                needle: true
+          - type: horizontal-stack
+            cards:
+              - type: custom:mushroom-template-card
+                entity: sensor.resmed_airsense_10_hist_pressure_p50
+                primary: Median (P50)
+                secondary: >-
+                  {{ states('sensor.resmed_airsense_10_hist_pressure_p50') |
+                  float(0) | round(1) }} cmH2O
+                icon: mdi:gauge
+                icon_color: cyan
+                layout: vertical
+              - type: custom:mushroom-template-card
+                entity: sensor.resmed_airsense_10_rt_current_pressure
+                primary: Current Pressure
+                secondary: >-
+                  {{ states('sensor.resmed_airsense_10_rt_current_pressure') |
+                  float(0) | round(1) }} cmH2O
+                icon: mdi:gauge-full
+                icon_color: blue
+                layout: vertical
+              - type: custom:mushroom-template-card
+                entity: sensor.resmed_airsense_10_hist_leak_p95
+                primary: Leak Rate (P95)
+                secondary: >-
+                  {{ states('sensor.resmed_airsense_10_hist_leak_p95') |
+                  float(0) | round(1) }} L/min
+                icon: mdi:leak
+                icon_color: >-
+                  {% set leak =
+                  states('sensor.resmed_airsense_10_hist_leak_p95') | float(100)
+                  %}
+
+                  {% if leak < 10 %}
+                    green
+                  {% elif leak < 24 %}
+                    orange
+                  {% else %}
+                    red
+                  {% endif %}
+                layout: vertical
+      - type: vertical-stack
+        cards:
+          - type: custom:mushroom-title-card
+            title: Respiratory Metrics
+            subtitle: Breathing Patterns & Ventilation
+          - type: horizontal-stack
+            cards:
+              - type: custom:mushroom-template-card
+                entity: sensor.resmed_airsense_10_hist_avg_respiratory_rate
+                primary: Respiratory Rate
+                secondary: >-
+                  {% set rate =
+                  states('sensor.resmed_airsense_10_hist_avg_respiratory_rate')
+                  | float(0) %}
+
+                  {{ rate | round(1) }} br/min - {% if rate >= 12 and rate <= 20
+                  %}Normal{% else %}Check{% endif %}
+                icon: mdi:lungs
+                icon_color: >-
+                  {% set rate =
+                  states('sensor.resmed_airsense_10_hist_avg_respiratory_rate')
+                  | float(0) %}
+
+                  {% if rate >= 12 and rate <= 20 %}
+                    green
+                  {% elif rate >= 10 and rate <= 25 %}
+                    orange
+                  {% else %}
+                    red
+                  {% endif %}
+                layout: vertical
+              - type: custom:mushroom-template-card
+                entity: sensor.resmed_airsense_10_hist_avg_tidal_volume
+                primary: Tidal Volume
+                secondary: >-
+                  {{ states('sensor.resmed_airsense_10_hist_avg_tidal_volume') |
+                  float(0) | round(1) }} mL
+                icon: mdi:air-purifier
+                icon_color: blue
+                layout: vertical
+              - type: custom:mushroom-template-card
+                entity: sensor.resmed_airsense_10_hist_avg_minute_ventilation
+                primary: Minute Ventilation
+                secondary: >-
+                  {{
+                  states('sensor.resmed_airsense_10_hist_avg_minute_ventilation')
+                  | float(0) | round(1) }} L/min
+                icon: mdi:chart-line
+                icon_color: cyan
+                layout: vertical
+          - type: horizontal-stack
+            cards:
+              - type: custom:mushroom-template-card
+                entity: sensor.resmed_airsense_10_hist_avg_inspiratory_time
+                primary: Inspiratory Time
+                secondary: >-
+                  {{
+                  states('sensor.resmed_airsense_10_hist_avg_inspiratory_time')
+                  | float(0) | round(1) }}s
+                icon: mdi:arrow-expand-down
+                icon_color: green
+                layout: vertical
+              - type: custom:mushroom-template-card
+                entity: sensor.resmed_airsense_10_hist_avg_expiratory_time
+                primary: Expiratory Time
+                secondary: >-
+                  {{
+                  states('sensor.resmed_airsense_10_hist_avg_expiratory_time') |
+                  float(0) | round(1) }}s
+                icon: mdi:arrow-collapse-up
+                icon_color: orange
+                layout: vertical
+              - type: custom:mushroom-template-card
+                entity: sensor.resmed_airsense_10_hist_avg_ie_ratio
+                primary: I:E Ratio
+                secondary: >-
+                  {{ states('sensor.resmed_airsense_10_hist_avg_ie_ratio') |
+                  float(0) | round(1) }}
+                icon: mdi:swap-horizontal
+                icon_color: purple
+                layout: vertical
+          - type: horizontal-stack
+            cards:
+              - type: custom:mushroom-template-card
+                entity: sensor.resmed_airsense_10_hist_avg_flow_limitation
+                primary: Flow Limitation
+                secondary: >-
+                  {{
+                  states('sensor.resmed_airsense_10_hist_avg_flow_limitation') |
+                  float(0) | round(1) }}
+                icon: mdi:traffic-cone
+                icon_color: >-
+                  {% set fl =
+                  states('sensor.resmed_airsense_10_hist_avg_flow_limitation') |
+                  float(0) %}
+
+                  {% if fl < 0.3 %}
+                    green
+                  {% elif fl < 0.5 %}
+                    orange
+                  {% else %}
+                    red
+                  {% endif %}
+                layout: vertical
+              - type: custom:mushroom-template-card
+                entity: sensor.resmed_airsense_10_hist_avg_flow_rate
+                primary: Avg Flow Rate
+                secondary: >-
+                  {{ states('sensor.resmed_airsense_10_hist_avg_flow_rate') |
+                  float(0) | round(1) }} L/min
+                icon: mdi:speedometer
+                icon_color: blue
+                layout: vertical
+              - type: custom:mushroom-template-card
+                entity: sensor.resmed_airsense_10_rt_current_flow_rate
+                primary: Current Flow
+                secondary: >-
+                  {{ states('sensor.resmed_airsense_10_rt_current_flow_rate') |
+                  float(0) | round(1) }} L/min
+                icon: mdi:speedometer-medium
+                icon_color: cyan
+                layout: vertical
+      - type: vertical-stack
+        cards:
+          - type: custom:mushroom-title-card
+            title: Real-Time Status
+            subtitle: Current Session Information
+          - type: horizontal-stack
+            cards:
+              - type: custom:mushroom-entity-card
+                entity: sensor.resmed_airsense_10_rt_session_status
+                name: Session Status
+                icon: mdi:information
+                icon_color: >-
+                  {% if is_state('sensor.resmed_airsense_10_rt_session_status',
+                  'active') %}
+                    green
+                  {% elif
+                  is_state('sensor.resmed_airsense_10_rt_session_status',
+                  'completed') %}
+                    blue
+                  {% else %}
+                    grey
+                  {% endif %}
+              - type: custom:mushroom-entity-card
+                entity: sensor.resmed_airsense_10_rt_session_duration
+                name: Session Duration
+                icon: mdi:timer
+                icon_color: blue
+              - type: custom:mushroom-entity-card
+                entity: sensor.resmed_airsense_10_rt_last_session_time
+                name: Last Session
+                icon: mdi:clock-outline
+                icon_color: cyan
+          - type: vertical-stack
+            cards:
+              - type: custom:mushroom-title-card
+                title: Current Pressure Range
+              - type: horizontal-stack
+                cards:
+                  - type: custom:mushroom-template-card
+                    entity: sensor.resmed_airsense_10_rt_min_pressure
+                    primary: Minimum Pressure
+                    secondary: >-
+                      {{ states('sensor.resmed_airsense_10_rt_min_pressure') |
+                      float(0) | round(1) }} cmH2O
+                    icon: mdi:arrow-down-bold
+                    icon_color: blue
+                    layout: vertical
+                  - type: custom:mushroom-template-card
+                    entity: sensor.resmed_airsense_10_rt_current_pressure
+                    primary: Current Pressure
+                    secondary: >-
+                      {{ states('sensor.resmed_airsense_10_rt_current_pressure')
+                      | float(0) | round(1) }} cmH2O
+                    icon: mdi:gauge
+                    icon_color: green
+                    layout: vertical
+                  - type: custom:mushroom-template-card
+                    entity: sensor.resmed_airsense_10_rt_max_pressure
+                    primary: Maximum Pressure
+                    secondary: >-
+                      {{ states('sensor.resmed_airsense_10_rt_max_pressure') |
+                      float(0) | round(1) }} cmH2O
+                    icon: mdi:arrow-up-bold
+                    icon_color: orange
+                    layout: vertical
+      - type: vertical-stack
+        cards:
+          - type: custom:mushroom-title-card
+            title: Historical Trends
+            subtitle: 7-Day Sleep Therapy Performance
+          - type: history-graph
+            title: AHI Trend
+            hours_to_show: 168
+            refresh_interval: 300
+            entities:
+              - entity: sensor.resmed_airsense_10_hist_ahi
+                name: AHI (events/hr)
+          - type: history-graph
+            title: Usage Time
+            hours_to_show: 168
+            refresh_interval: 300
+            entities:
+              - entity: sensor.resmed_airsense_10_hist_usage_hours
+                name: Hours Used
+          - type: history-graph
+            title: Mask Leak & Pressure
+            hours_to_show: 168
+            refresh_interval: 300
+            entities:
+              - entity: sensor.resmed_airsense_10_hist_leak_p95
+                name: Leak P95 (L/min)
+              - entity: sensor.resmed_airsense_10_hist_avg_pressure
+                name: Avg Pressure
+          - type: history-graph
+            title: Event Breakdown
+            hours_to_show: 168
+            refresh_interval: 300
+            entities:
+              - entity: sensor.resmed_airsense_10_hist_obstructive_apneas
+                name: Obstructive
+              - entity: sensor.resmed_airsense_10_hist_central_apneas
+                name: Central
+              - entity: sensor.resmed_airsense_10_hist_hypopneas
+                name: Hypopneas
+              - entity: sensor.resmed_airsense_10_hist_reras
+                name: RERAs
+      - type: markdown
+        content: >
+          ### Data Collection
+
+          **Last Session:** {{
+          states('sensor.resmed_airsense_10_rt_last_session_time') |
+          as_timestamp | timestamp_custom('%b %d, %I:%M %p') }}
+
+
+          **Source:** HMS-CPAP (local, via ez Share WiFi SD)
+
+
+          ---
+
+
+          **Understanding Your Metrics:**
+
+          - **AHI < 5:** Normal/Excellent sleep therapy
+
+          - **Leak P95 < 24 L/min:** Good seal, therapy effective
+
+          - **Usage >= 4hrs:** Minimum for effective treatment
+
+          - **Flow Limitation < 0.3:** Minimal upper airway obstruction
