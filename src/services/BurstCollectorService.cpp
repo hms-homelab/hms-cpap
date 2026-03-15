@@ -1,4 +1,5 @@
 #include "services/BurstCollectorService.h"
+#include "services/InsightsEngine.h"
 #include "utils/ConfigManager.h"
 #include <iostream>
 #include <iomanip>
@@ -139,6 +140,24 @@ BurstCollectorService::BurstCollectorService(int burst_interval_seconds)
                 generateAndPublishSummary(metrics.value());
             }, 1);
         std::cout << "LLM: Subscribed to " << cmd_topic << " for on-demand summary" << std::endl;
+    }
+
+    // Subscribe to insights regeneration command
+    if (mqtt_client_ && mqtt_client_->isConnected()) {
+        std::string insights_topic = "cpap/" + device_id_ + "/command/regenerate_insights";
+        mqtt_client_->subscribe(insights_topic,
+            [this](const std::string& /*topic*/, const std::string& /*payload*/) {
+                std::cout << "Insights: Regenerate requested via MQTT" << std::endl;
+                if (last_str_records_.empty()) {
+                    std::cerr << "Insights: No STR records cached, run processSTRFile first" << std::endl;
+                    return;
+                }
+                auto insights = InsightsEngine::analyze(last_str_records_);
+                if (data_publisher_) {
+                    data_publisher_->publishInsights(insights);
+                }
+            }, 1);
+        std::cout << "Insights: Subscribed to " << insights_topic << " for on-demand regeneration" << std::endl;
     }
 
     // STARTUP CLEANUP: Clear any stale session_active state from previous run
@@ -418,6 +437,15 @@ void BurstCollectorService::processSTRFile() {
                 nightly_ahi = nightly->ahi;
             }
             data_publisher_->publishSTRState(latest, nightly_ahi);
+        }
+
+        // Cache for on-demand regeneration via MQTT command
+        last_str_records_ = all_records;
+
+        // Run insights engine on full STR history
+        if (data_publisher_ && mqtt_client_ && mqtt_client_->isConnected()) {
+            auto insights = InsightsEngine::analyze(all_records);
+            data_publisher_->publishInsights(insights);
         }
 
         std::cout << "STR: Processed " << all_records.size() << " therapy days, saved "

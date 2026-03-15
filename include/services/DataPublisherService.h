@@ -1,6 +1,7 @@
 #pragma once
 
 #include "models/CPAPModels.h"
+#include "services/InsightsEngine.h"
 #include "mqtt_client.h"
 #include "mqtt/DiscoveryPublisher.h"
 #include "database/DatabaseService.h"
@@ -92,6 +93,13 @@ public:
     void publishSTRState(const STRDailyRecord& record, double nightly_ahi = 0);
 
     /**
+     * Publish therapy insights to MQTT.
+     *
+     * @param insights Vector of insights from InsightsEngine
+     */
+    void publishInsights(const std::vector<Insight>& insights);
+
+    /**
      * Publish LLM-generated session summary to MQTT.
      *
      * @param summary Generated summary text
@@ -128,6 +136,13 @@ private:
      * @return true if published successfully
      */
     bool publishHistoricalDiscovery();
+
+    /**
+     * Publish insights discovery (1 sensor)
+     *
+     * @return true if published successfully
+     */
+    bool publishInsightsDiscovery();
 
     /**
      * Publish STR daily discovery (13 sensors)
