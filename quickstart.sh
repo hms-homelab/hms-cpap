@@ -1,75 +1,67 @@
 #!/bin/bash
 # HMS-CPAP Quick Start Script
+# Builds and runs hms-cpap natively (no Docker)
 
 set -e
 
-echo "╔═══════════════════════════════════════════════╗"
-echo "║   HMS-CPAP Quick Start                        ║"
-echo "║   CPAP Data Collection Setup                  ║"
-echo "╚═══════════════════════════════════════════════╝"
+echo "HMS-CPAP Quick Start"
+echo "===================="
 echo ""
 
-# Check if Docker is installed
-if ! command -v docker &> /dev/null; then
-    echo "❌ Docker is not installed."
-    echo "   Install Docker: https://docs.docker.com/get-docker/"
+# Check build dependencies
+MISSING=""
+for cmd in cmake g++ pkg-config; do
+    if ! command -v "$cmd" &> /dev/null; then
+        MISSING="$MISSING $cmd"
+    fi
+done
+if [ -n "$MISSING" ]; then
+    echo "Missing build tools:$MISSING"
+    echo "Install: sudo apt-get install build-essential cmake pkg-config"
     exit 1
 fi
 
-# Check if docker-compose is installed
-if ! command -v docker-compose &> /dev/null; then
-    echo "❌ docker-compose is not installed."
-    echo "   Install docker-compose: https://docs.docker.com/compose/install/"
+# Check library dependencies
+for lib in libcurl4-openssl-dev libpqxx-dev libpq-dev libssl-dev libspdlog-dev; do
+    if ! dpkg -s "$lib" &>/dev/null 2>&1; then
+        MISSING="$MISSING $lib"
+    fi
+done
+if [ -n "$MISSING" ]; then
+    echo "Missing libraries:$MISSING"
+    echo "Install: sudo apt-get install$MISSING"
     exit 1
 fi
 
-echo "✅ Docker and docker-compose found"
-echo ""
+echo "Dependencies OK"
 
-# Create .env if it doesn't exist
+# Create .env if needed
 if [ ! -f .env ]; then
-    echo "📝 Creating .env configuration file..."
+    echo ""
+    echo "Creating .env from .env.example..."
     cp .env.example .env
+    echo "Edit .env with your settings before running."
     echo ""
-    echo "⚠️  IMPORTANT: Edit .env with your settings:"
-    echo "   - EZSHARE_BASE_URL (ez Share IP/port)"
-    echo "   - MQTT_BROKER (MQTT broker address)"
-    echo "   - DB_HOST (PostgreSQL host)"
-    echo "   - MQTT_PASSWORD and DB_PASSWORD"
-    echo ""
-    read -p "Press Enter to edit .env now, or Ctrl+C to cancel..."
-    ${EDITOR:-nano} .env
-else
-    echo "✅ .env file already exists"
 fi
 
+# Build
 echo ""
-echo "🐳 Starting HMS-CPAP services..."
-docker-compose up -d
+echo "Building..."
+mkdir -p build && cd build
+cmake -DCMAKE_BUILD_TYPE=Release .. 2>&1 | tail -3
+make -j$(nproc) 2>&1 | tail -5
+
+# Run tests
+echo ""
+echo "Running tests..."
+./tests/run_tests --gtest_brief=1 2>&1 | tail -3
 
 echo ""
-echo "⏳ Waiting for services to start..."
-sleep 5
-
-# Check health
+echo "Build complete: build/hms_cpap"
 echo ""
-echo "🏥 Checking service health..."
-if curl -sf http://localhost:8893/health > /dev/null 2>&1; then
-    echo "✅ HMS-CPAP is healthy!"
-    echo ""
-    echo "📊 Service URLs:"
-    echo "   Health check: http://localhost:8893/health"
-    echo "   PostgreSQL:   localhost:5432"
-    echo "   MQTT:         localhost:1883"
-    echo ""
-    echo "📖 Next steps:"
-    echo "   1. Check logs: docker-compose logs -f hms-cpap"
-    echo "   2. Configure Home Assistant MQTT integration"
-    echo "   3. View README.md for dashboard examples"
-else
-    echo "⚠️  Health check failed. Check logs:"
-    echo "   docker-compose logs hms-cpap"
-fi
-
+echo "Run modes:"
+echo "  CPAP_SOURCE=ezshare ./hms_cpap   # Poll ezShare WiFi SD (default)"
+echo "  CPAP_SOURCE=local   ./hms_cpap   # Read from local directory"
+echo "  CPAP_SOURCE=fysetc  ./hms_cpap   # Receive from FYSETC via MQTT"
 echo ""
-echo "🎉 Setup complete!"
+echo "See docs/FYSETC_RECEIVER.md for FYSETC setup."
