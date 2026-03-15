@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.0] - 2026-03-15
+
+### Added
+- **InsightsEngine**: Automated therapy trend analysis published to MQTT
+  - AHI trend (30-day vs prior period comparison)
+  - Leak-AHI correlation (median split, actionable if >0.5 AHI diff)
+  - Pressure trend (auto-adjusting direction detection)
+  - Therapy compliance (4-hour threshold, usage frequency)
+  - Best vs worst night comparison with all metrics
+  - 7-day rolling summary
+  - MQTT topic: `cpap/{device_id}/insights/state` (retained JSON array)
+  - HA discovery sensor: `therapy_insights` with JSON attributes
+  - On-demand: `cpap/{device_id}/command/regenerate_insights`
+- **MQTT discovery on startup**: Discovery messages now published on service
+  start, not just on HA restart. Prevents missing entities after deploy.
+
+### Fixed
+- **Session summary**: Published as JSON `{"summary": "..."}` instead of plain
+  text to work within HA's 255-char state limit. Full text accessible via
+  `summary` attribute. Dashboard uses `state_attr()`.
+- **regenerate_insights**: Auto-downloads STR.edf if cache is empty (e.g. after
+  service restart with no new sessions).
+
 ## [1.7.0] - 2026-03-15
 
 ### Added
