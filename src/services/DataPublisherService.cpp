@@ -597,6 +597,14 @@ bool DataPublisherService::publishSTRDiscovery() {
         if (!sensor.icon.empty())
             config["icon"] = sensor.icon;
 
+        // Session summary exceeds HA's 255-char state limit.
+        // Use value_template to show "Available" and attributes for full text.
+        if (sensor.name == "session_summary") {
+            config["value_template"] = "{% if value %}Available{% else %}Unavailable{% endif %}";
+            config["json_attributes_topic"] = state_topic;
+            config["json_attributes_template"] = "{{ {'summary': value} | tojson }}";
+        }
+
         std::string discovery_topic = "homeassistant/sensor/" + device_id_ + "/daily_" + sensor.name + "/config";
 
         Json::StreamWriterBuilder builder;
