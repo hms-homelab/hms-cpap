@@ -597,12 +597,11 @@ bool DataPublisherService::publishSTRDiscovery() {
         if (!sensor.icon.empty())
             config["icon"] = sensor.icon;
 
-        // Session summary exceeds HA's 255-char state limit.
-        // Use value_template to show "Available" and attributes for full text.
+        // Session summary is published as JSON {"summary": "..."}.
+        // Use value_template for short state, json_attributes_topic for full text.
         if (sensor.name == "session_summary") {
-            config["value_template"] = "{% if value %}Available{% else %}Unavailable{% endif %}";
+            config["value_template"] = "{{ value_json.summary[:50] }}...";
             config["json_attributes_topic"] = state_topic;
-            config["json_attributes_template"] = "{{ {'summary': value} | tojson }}";
         }
 
         std::string discovery_topic = "homeassistant/sensor/" + device_id_ + "/daily_" + sensor.name + "/config";
@@ -735,9 +734,14 @@ bool DataPublisherService::publishSessionSummary(const std::string& summary) {
         return false;
     }
 
-    // Publish summary as retained message
+    // Publish summary as JSON (plain text exceeds HA's 255-char state limit)
     std::string topic = "cpap/" + device_id_ + "/daily/session_summary";
-    mqtt_client_->publish(topic, summary, 0, true);
+    Json::Value json;
+    json["summary"] = summary;
+    Json::StreamWriterBuilder writer;
+    writer["indentation"] = "";
+    std::string payload = Json::writeString(writer, json);
+    mqtt_client_->publish(topic, payload, 0, true);
 
     std::cout << "  LLM summary published to " << topic << std::endl;
     return true;
