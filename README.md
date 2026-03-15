@@ -5,118 +5,80 @@
 [![Build](https://github.com/hms-homelab/hms-cpap/actions/workflows/docker-build.yml/badge.svg)](https://github.com/hms-homelab/hms-cpap/actions)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-%23FFDD00.svg?logo=buy-me-a-coffee)](https://www.buymeacoffee.com/aamat09)
 
-**Lightweight C++ microservice for ResMed CPAP data collection via ez Share WiFi SD card with Home Assistant integration.**
+**Lightweight C++ microservice for ResMed CPAP data collection with Home Assistant integration.**
 
-Automatically extracts sleep therapy data from your ResMed AirSense 10/11 CPAP machine using an ez Share WiFi SD card, parses the data using OSCAR algorithms, and publishes 34+ metrics to Home Assistant via MQTT discovery.
+Automatically extracts sleep therapy data from your ResMed AirSense 10/11 CPAP machine, parses EDF files using OSCAR algorithms, and publishes 47+ metrics to Home Assistant via MQTT discovery. Supports three data sources: ez Share WiFi SD (HTTP polling), FYSETC SD WiFi Pro (MQTT push with realtime therapy data), or local filesystem.
 
 ![Home Assistant Dashboard](docs/images/ha-dashboard-preview.png)
 
 ## ✨ Features
 
-- 🔌 **Zero Network Disruption** - Bridge architecture eliminates WiFi switching
-- 📊 **34+ Metrics** - AHI, leak rate, pressure, usage hours, events (real-time + session summary)
-- 🏠 **Home Assistant Auto-Discovery** - Instant MQTT integration with sensor entities
-- 🗄️ **PostgreSQL Storage** - Historical data for ML analysis and long-term trends
-- 📁 **Session Grouping** - Intelligently combines BRP/PLD/SAD files into therapy sessions
-- 🔍 **Active File Detection** - Waits for machine to finish writing before downloading
-- 🪶 **Ultra-Lightweight** - 6.5 MB native, ~150 MB Docker image
-- 🧪 **Well-Tested** - 52 unit tests with 95%+ coverage
+- **3 Data Sources** - ezShare WiFi SD (polling), FYSETC SD WiFi Pro (MQTT push), or local files
+- **47+ Metrics** - AHI, leak rate, pressure, usage hours, events, STR daily summary, LLM AI summary
+- **Home Assistant Auto-Discovery** - Instant MQTT integration with 47 sensor entities
+- **PostgreSQL Storage** - Historical data for ML analysis and long-term trends
+- **Session Grouping** - Intelligently combines BRP/PLD/SAD/EVE/CSL files into therapy sessions
+- **Realtime Therapy Data** - FYSETC mode streams BRP data every 60s during therapy
+- **LLM Session Summary** - Optional AI-generated therapy analysis via Ollama
+- **Ultra-Lightweight** - 6.5 MB native binary
+- **155 Unit Tests** - Comprehensive coverage across all services
 
 ## 📋 Table of Contents
 
 - [Quick Start](#-quick-start)
-- [Hardware Setup](#-hardware-setup)
+- [Data Sources](#-data-sources)
 - [Configuration](#-configuration)
-- [Deployment Options](#-deployment-options)
+- [Deployment](#-deployment)
 - [Home Assistant Integration](#-home-assistant-integration)
 - [Architecture](#-architecture)
 - [Development](#-development)
 - [FAQ](#-faq)
 - [Contributing](#-contributing)
 
-## 🚀 Quick Start
-
-### Docker (Recommended)
+## Quick Start
 
 ```bash
-# 1. Clone repository
-git clone https://github.com/aamat09/hms-cpap.git
+# 1. Clone and build
+git clone https://github.com/hms-homelab/hms-cpap.git
 cd hms-cpap
-
-# 2. Create configuration
-cp .env.example .env
-nano .env  # Edit with your settings
-
-# 3. Start services
-docker-compose up -d
-
-# 4. Check health
-curl http://localhost:8893/health
-```
-
-### Native Installation
-
-```bash
-# 1. Install dependencies (Debian/Ubuntu)
-sudo apt-get install build-essential cmake libcurl4-openssl-dev libpq-dev
-
-# 2. Build
 mkdir build && cd build
-cmake ..
-make -j$(nproc)
+cmake .. && make -j$(nproc)
 
-# 3. Configure environment
-export EZSHARE_BASE_URL="http://192.168.4.1"
-export MQTT_BROKER="localhost"
-export DB_HOST="localhost"
-# ... (see .env.example for all variables)
+# 2. Configure
+cp ../.env.example ../.env
+nano ../.env  # Set MQTT, DB, and source settings
 
-# 4. Run
-./hms_cpap
+# 3. Run (choose your data source)
+CPAP_SOURCE=ezshare ./hms_cpap   # ezShare WiFi SD polling
+CPAP_SOURCE=fysetc  ./hms_cpap   # FYSETC SD WiFi Pro MQTT push
+CPAP_SOURCE=local   ./hms_cpap   # Local filesystem
 ```
 
-## 🔧 Hardware Setup
+## Data Sources
 
-### Option A: Direct Connection (Simple)
+### Option A: ezShare WiFi SD (Original)
 
-**Components:**
-- ResMed AirSense 10/11 CPAP machine
-- ez Share WiFi SD card (Class 10, 8GB+)
+**How it works:** HTTP polling every 65s via WiFi bridge on Raspberry Pi.
 
-**Setup:**
-1. Insert ez Share SD card into CPAP machine
-2. Connect your device to ez Share WiFi AP (SSID: `ezShare_XXXXX`)
-3. Set `EZSHARE_BASE_URL=http://192.168.4.1`
+**Hardware:** ezShare WiFi SD card + Raspberry Pi with dual WiFi (wlan0=home, wlan1=ezShare AP).
 
-**Pros:** Simple, no extra hardware
-**Cons:** Switches WiFi network, may lose internet connection
+**Pros:** Simple, no hardware mods. **Cons:** 2-4 min session detection latency, requires dedicated Pi WiFi interface.
 
-### Option B: Bridge Setup (Recommended)
+### Option B: FYSETC SD WiFi Pro (Recommended)
 
-**Components:**
-- ResMed AirSense 10/11 CPAP machine
-- ez Share WiFi SD card
-- Raspberry Pi Zero 2 W
-- USB WiFi dongle (dual WiFi)
-- SD card extension ribbon cable (optional, for external placement)
+**How it works:** ESP32-based PCB sits between CPAP and SD card on the SPI bus. Passively monitors CS line via hardware pulse counter, performs surgical bus steals (<10ms) during therapy, pushes EDF data via MQTT.
 
-**Setup:**
-1. **Hardware:**
-   - Connect Pi Zero 2 W with dual WiFi (built-in + USB dongle)
-   - One WiFi interface → ez Share AP (192.168.4.1)
-   - Other WiFi interface → Home network
+**Hardware:** FYSETC SD WiFi Pro board installed inside CPAP machine.
 
-2. **Bridge Configuration:**
-   - Configure Pi as WiFi bridge/repeater
-   - Access ez Share at `http://BRIDGE_IP:81`
-   - Set `EZSHARE_BASE_URL=http://BRIDGE_IP:81`
+**Pros:** 65s end-to-end latency, realtime BRP streaming during therapy, zero network disruption, BRP-validated therapy detection. **Cons:** Requires hardware installation inside CPAP.
 
-3. **Optional:** Use SD extension ribbon to place ez Share adapter outside machine for better signal
+See [docs/FYSETC_RECEIVER.md](docs/FYSETC_RECEIVER.md) for the full protocol, MQTT topics, and FSM state diagram.
 
-**Pros:** Zero network disruption, stable connection, WAF-friendly
-**Cons:** Requires additional hardware (~$30)
+### Option C: Local Filesystem
 
-> 📖 **Detailed Guide:** See [docs/HARDWARE_SETUP.md](docs/HARDWARE_SETUP.md) for step-by-step instructions with images
+**How it works:** Reads EDF files from a local directory (e.g. mounted SD card or NAS).
+
+**Use case:** Offline analysis, backfill, or reparse of archived data.
 
 ## ⚙️ Configuration
 
@@ -155,56 +117,28 @@ DB_PASSWORD=your_db_password
 HEALTH_CHECK_PORT=8893
 ```
 
-## 🐳 Deployment Options
+## Deployment
 
-### Docker Compose (Full Stack)
-
-Includes HMS-CPAP + PostgreSQL + Mosquitto MQTT:
+### Native Systemd (Recommended)
 
 ```bash
-docker-compose up -d
+# Build
+mkdir build && cd build && cmake .. && make -j$(nproc)
+
+# Install
+sudo cp hms_cpap /usr/local/bin/
+sudo cp ../.env /etc/hms-cpap/.env  # Edit with your settings
+
+# Service file: /etc/systemd/system/hms-cpap.service
 ```
 
-### Docker Only (Use Existing Services)
-
-If you already have PostgreSQL and MQTT:
-
-```bash
-docker run -d \
-  --name hms-cpap \
-  --restart unless-stopped \
-  -e EZSHARE_BASE_URL=http://192.168.1.100:81 \
-  -e MQTT_BROKER=192.168.1.5 \
-  -e DB_HOST=192.168.1.5 \
-  -e DB_PASSWORD=your_password \
-  -e MQTT_PASSWORD=your_password \
-  -p 8893:8893 \
-  -v cpap_archive:/data/cpap_archive \
-  ghcr.io/aamat09/hms-cpap:latest
-```
-
-### Native Systemd Service
-
-```bash
-# Install binary
-sudo cp build/hms_cpap /usr/local/bin/
-
-# Create service file
-sudo nano /etc/systemd/system/hms-cpap.service
-```
-
-**Service file:**
 ```ini
 [Unit]
 Description=HMS-CPAP Data Collection Service
-After=network.target postgresql.service mosquitto.service
+After=network.target postgresql.service emqx.service
 
 [Service]
 Type=simple
-User=cpap
-Environment="EZSHARE_BASE_URL=http://192.168.1.100:81"
-Environment="MQTT_BROKER=localhost"
-Environment="DB_HOST=localhost"
 EnvironmentFile=/etc/hms-cpap/.env
 ExecStart=/usr/local/bin/hms_cpap
 Restart=always
@@ -215,9 +149,26 @@ WantedBy=multi-user.target
 ```
 
 ```bash
-# Enable and start
+sudo systemctl daemon-reload
 sudo systemctl enable hms-cpap
 sudo systemctl start hms-cpap
+```
+
+### ARM Cross-Compilation (Raspberry Pi)
+
+```bash
+./build_arm.sh          # Cross-compile for ARM
+./deploy_to_pi.sh       # Build + deploy + restart in one step
+```
+
+See [docs/CROSS_COMPILATION.md](docs/CROSS_COMPILATION.md) for sysroot setup.
+
+### Docker (CI/GHCR)
+
+Docker image available for CI and containerized deployments:
+
+```bash
+docker run -d --env-file .env -p 8893:8893 ghcr.io/hms-homelab/hms-cpap:latest
 ```
 
 ## 🏠 Home Assistant Integration
@@ -271,59 +222,65 @@ entities:
 
 > 📖 **Full Guide:** See [docs/HOME_ASSISTANT.md](docs/HOME_ASSISTANT.md) for dashboard examples and automations
 
-## 🏗️ Architecture
+## Architecture
 
 ```
 ┌─────────────────┐
 │  ResMed CPAP    │
 │  AirSense 10    │
 └────────┬────────┘
-         │ SD Card
-         ↓
-┌─────────────────┐      ┌──────────────┐
-│  ez Share WiFi  │◄────►│  Pi Zero 2W  │ (Optional Bridge)
-│  SD Adapter     │      │  Dual WiFi   │
-└────────┬────────┘      └──────┬───────┘
-         │                      │
-         ↓                      ↓
-    ┌────────────────────────────────┐
-    │        HMS-CPAP Service        │
-    │   (EDF Parser + Session Mgmt)  │
-    └─────────┬─────────┬────────────┘
-              │         │
-      ┌───────┘         └────────┐
-      ↓                          ↓
-┌──────────────┐       ┌─────────────────┐
-│  PostgreSQL  │       │  MQTT Broker    │
-│  (History)   │       │  (Real-time)    │
-└──────────────┘       └────────┬────────┘
-                                │
-                                ↓
-                       ┌─────────────────┐
-                       │ Home Assistant  │
-                       │  (Dashboard)    │
-                       └─────────────────┘
+         │ SD Card (SPI bus)
+         │
+    ┌────┴────────────────┐
+    │                     │
+    ▼                     ▼
+┌──────────┐    ┌──────────────────┐
+│ ezShare  │    │ FYSETC SD WiFi   │
+│ WiFi SD  │    │ Pro (ESP32)      │
+│          │    │ - CS line PCNT   │
+│ HTTP     │    │ - <10ms steals   │
+│ polling  │    │ - MQTT push      │
+└────┬─────┘    └────────┬─────────┘
+     │ HTTP               │ MQTT
+     ▼                    ▼
+┌──────────────────────────────────┐
+│          HMS-CPAP Service        │
+│  BurstCollector | FysetcReceiver │
+│  EDFParser + SessionDiscovery    │
+│  DataPublisher + LLM Summary     │
+└──────────┬──────────┬────────────┘
+           │          │
+    ┌──────┘          └──────┐
+    ▼                        ▼
+┌──────────┐       ┌──────────────┐
+│PostgreSQL│       │ MQTT (EMQX)  │
+│(history) │       │ 47 sensors   │
+└──────────┘       └──────┬───────┘
+                          │
+                          ▼
+                  ┌───────────────┐
+                  │Home Assistant │
+                  └───────────────┘
 ```
 
 ### Data Flow
 
-1. **Collection:** HMS-CPAP polls ez Share every 2 minutes
-2. **Detection:** Checks if CPAP is actively writing files
-3. **Download:** Fetches new/updated EDF files (BRP, PLD, SAD)
-4. **Parsing:** Extracts therapy metrics using OSCAR algorithms
-5. **Grouping:** Combines checkpoint files into therapy sessions
-6. **Storage:** Saves to PostgreSQL + archives files
-7. **Publishing:** Sends MQTT messages with sensor data
-8. **Display:** Home Assistant shows real-time dashboard
+**ezShare mode:** Poll HTTP every 65s -> download EDF deltas -> detect session stop (files unchanged across 2 cycles) -> parse -> publish
 
-### Session Grouping Logic
+**FYSETC mode:** Receive BRP chunks in realtime during therapy -> post-therapy: manifest + STR from FYSETC -> diff & fetch missing files -> parse -> publish + LLM summary
 
-Multiple EDF files = ONE therapy session:
-- **BRP files** - Breathing waveform data (every 5-15 min)
-- **PLD files** - Pressure/leak data (every 5-15 min)
-- **SAD files** - Session statistics (end of session)
+### EDF File Types
 
-HMS-CPAP groups these by timestamp proximity (±2 minutes) to create complete session records.
+| File | Content | During Therapy | After Mask-Off |
+|------|---------|----------------|----------------|
+| BRP.edf | Flow/pressure (25 Hz) | Grows every 60s | Final flush |
+| PLD.edf | Pressure/leak (0.5 Hz) | Grows every 60s | Final flush |
+| SAD.edf | SpO2/HR (1 Hz) | Grows every 60s | Final flush |
+| EVE.edf | Apnea/hypopnea events | Updated live | Final flush |
+| CSL.edf | Clinical summary | Created at start | Final flush |
+| STR.edf | Daily therapy summary | N/A | Written ~50s after mask-off |
+
+Multiple checkpoint files per session are grouped by `SESSION_GAP_MINUTES` (default 60).
 
 ## 🛠️ Development
 
@@ -373,42 +330,42 @@ rsync -avz aamat@192.168.2.73:/lib/arm-linux-gnueabihf ./sysroot/lib/
 ```
 hms-cpap/
 ├── src/
-│   ├── main.cpp
+│   ├── main.cpp                    # Entry point (ezshare/fysetc/local modes)
 │   ├── clients/
-│   │   ├── EzShareClient.cpp      # WiFi SD HTTP client
-│   │   └── WiFiSwitchClient.cpp   # Network management
+│   │   └── EzShareClient.cpp       # WiFi SD HTTP client
 │   ├── parsers/
-│   │   └── EDFParser.cpp          # EDF file parsing (OSCAR)
+│   │   └── EDFParser.cpp           # EDF file parsing (OSCAR algorithms)
 │   ├── services/
-│   │   ├── BurstCollectorService.cpp
-│   │   ├── SessionDiscoveryService.cpp
-│   │   └── DataPublisherService.cpp
+│   │   ├── BurstCollectorService.cpp     # ezShare/local polling mode
+│   │   ├── FysetcReceiverService.cpp     # FYSETC MQTT push mode
+│   │   ├── SessionDiscoveryService.cpp   # Session grouping
+│   │   └── DataPublisherService.cpp      # MQTT + DB publishing
 │   ├── database/
-│   │   └── DatabaseService.cpp    # PostgreSQL interface
+│   │   └── DatabaseService.cpp     # PostgreSQL interface
 │   └── mqtt/
-│       ├── MqttClient.cpp         # MQTT communication
-│       └── DiscoveryPublisher.cpp # HA auto-discovery
-├── include/                       # Header files
-├── tests/                         # Unit tests (52 tests)
-├── docs/                          # Documentation
-├── Dockerfile                     # Multi-stage build
-├── docker-compose.yml             # Full stack
+│       └── DiscoveryPublisher.cpp  # HA MQTT auto-discovery
+├── include/                        # Header files (mirrors src/)
+├── tests/                          # 155 unit tests (GTest + GMock)
+├── docs/                           # FYSETC_RECEIVER, RESMED_WRITE_TIMING, etc.
+├── cmake/                          # ARM cross-compilation toolchain
+├── scripts/                        # Utility scripts
 └── CMakeLists.txt
 ```
 
 ### Running Tests
 
 ```bash
-cd build
+cd build && make -j$(nproc)
 ./tests/run_tests
 ```
 
-**Test Coverage:** 52 tests, 95%+ coverage across:
-- EDF parsing
-- Session grouping
-- MQTT publishing
+**155 tests** across 14 test suites:
+- EDF parsing (BRP, EVE, SAD, STR)
+- Session discovery and grouping
+- MQTT publishing and discovery
 - Database operations
-- Configuration management
+- FysetcReceiver (sync, chunk, manifest, base64)
+- Configuration, models, integration
 
 ## ❓ FAQ
 
@@ -519,8 +476,8 @@ This project is licensed under the **MIT License** - see [LICENSE](LICENSE) file
 
 ## 📞 Support
 
-- **Issues:** [GitHub Issues](https://github.com/aamat09/hms-cpap/issues)
-- **Discussions:** [GitHub Discussions](https://github.com/aamat09/hms-cpap/discussions)
+- **Issues:** [GitHub Issues](https://github.com/hms-homelab/hms-cpap/issues)
+- **Discussions:** [GitHub Discussions](https://github.com/hms-homelab/hms-cpap/discussions)
 - **Reddit:** r/CPAP, r/homeassistant
 
 ---
