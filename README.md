@@ -72,6 +72,8 @@ CPAP_SOURCE=local   ./hms_cpap   # Local filesystem
 
 **Pros:** 65s end-to-end latency, realtime BRP streaming during therapy, zero network disruption, BRP-validated therapy detection. **Cons:** Requires hardware installation inside CPAP.
 
+**Firmware:** [hms-cpap-fysetc](https://github.com/hms-homelab/hms-cpap-fysetc) -- ESP-IDF project, builds with `idf.py build`.
+
 See [docs/FYSETC_RECEIVER.md](docs/FYSETC_RECEIVER.md) for the full protocol, MQTT topics, and FSM state diagram.
 
 ### Option C: Local Filesystem
