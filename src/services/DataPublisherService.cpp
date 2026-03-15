@@ -64,9 +64,10 @@ bool DataPublisherService::publishDiscovery() {
     bool rt_success = publishRealtimeDiscovery();
     bool hist_success = publishHistoricalDiscovery();
     bool str_success = publishSTRDiscovery();
+    bool insights_success = publishInsightsDiscovery();
 
-    if (rt_success && hist_success && str_success) {
-        std::cout << "✅ MQTT: Discovery published (8 realtime + 25 historical + 14 daily = 47 sensors)" << std::endl;
+    if (rt_success && hist_success && str_success && insights_success) {
+        std::cout << "MQTT: Discovery published (8 realtime + 25 historical + 14 daily + 1 insights = 48 sensors)" << std::endl;
         return true;
     }
 
@@ -732,6 +733,50 @@ bool DataPublisherService::publishSessionSummary(const std::string& summary) {
 
     std::cout << "  LLM summary published to " << topic << std::endl;
     return true;
+}
+
+bool DataPublisherService::publishInsightsDiscovery() {
+    std::cout << "  Insights sensor (1)..." << std::endl;
+
+    // Single sensor that holds JSON array of insights
+    std::string topic = "homeassistant/sensor/" + device_id_ + "/therapy_insights/config";
+
+    Json::Value config;
+    config["name"] = "Therapy Insights";
+    config["unique_id"] = device_id_ + "_therapy_insights";
+    config["state_topic"] = "cpap/" + device_id_ + "/insights/state";
+    config["icon"] = "mdi:lightbulb-on";
+    config["value_template"] = "{{ value_json | length }}";
+    config["json_attributes_topic"] = "cpap/" + device_id_ + "/insights/state";
+    config["json_attributes_template"] = "{{ {'insights': value_json} | tojson }}";
+
+    Json::Value device;
+    device["identifiers"].append(device_id_);
+    device["name"] = device_name_;
+    device["manufacturer"] = "ResMed";
+    device["model"] = "AirSense 10";
+    config["device"] = device;
+
+    Json::StreamWriterBuilder builder;
+    builder["indentation"] = "";
+    std::string payload = Json::writeString(builder, config);
+
+    bool ok = mqtt_client_->publish(topic, payload, 1, true);
+    if (ok) std::cout << "    1 insights sensor" << std::endl;
+    return ok;
+}
+
+void DataPublisherService::publishInsights(const std::vector<Insight>& insights) {
+    auto json = InsightsEngine::toJson(insights);
+
+    Json::StreamWriterBuilder builder;
+    builder["indentation"] = "";
+    std::string payload = Json::writeString(builder, json);
+
+    std::string topic = "cpap/" + device_id_ + "/insights/state";
+    mqtt_client_->publish(topic, payload, 0, true);
+
+    std::cout << "  Insights published (" << insights.size() << " insights)" << std::endl;
 }
 
 } // namespace hms_cpap

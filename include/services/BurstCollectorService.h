@@ -103,6 +103,9 @@ private:
     bool llm_enabled_ = false;
     std::string llm_prompt_template_;
 
+    // Cached STR records for on-demand insights regeneration
+    std::vector<STRDailyRecord> last_str_records_;
+
     // Connection recovery tracking
     int consecutive_failures_ = 0;
     static constexpr int MAX_FAILURES_BEFORE_RESET = 3;  // Reset session_active after 3 consecutive failures
