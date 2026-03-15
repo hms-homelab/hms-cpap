@@ -1,7 +1,10 @@
 #include "services/BurstCollectorService.h"
+#include "services/FysetcReceiverService.h"
 #include "services/SessionDiscoveryService.h"
+#include "services/DataPublisherService.h"
 #include "parsers/EDFParser.h"
 #include "database/DatabaseService.h"
+#include "mqtt_client.h"
 #include "utils/ConfigManager.h"
 #include <iostream>
 #include <iomanip>
@@ -15,6 +18,7 @@
 
 std::atomic<bool> shutdown_requested(false);
 std::unique_ptr<hms_cpap::BurstCollectorService> burst_service;
+std::unique_ptr<hms_cpap::FysetcReceiverService> fysetc_service;
 
 /**
  * Signal handler for graceful shutdown
@@ -25,6 +29,9 @@ void signalHandler(int signal) {
 
     if (burst_service) {
         burst_service->stop();
+    }
+    if (fysetc_service) {
+        fysetc_service->stop();
     }
 }
 
@@ -37,10 +44,10 @@ void printBanner() {
 ║                                                           ║
 ║      HMS-CPAP - CPAP Data Collection Service             ║
 ║                                                           ║
-║      ResMed AirSense 10 via ez Share                     ║
-║      Configurable via EZSHARE_BASE_URL                   ║
+║      ResMed AirSense 10 Data Collection                  ║
+║      Sources: ezShare, local, FYSETC SD WiFi Pro         ║
 ║                                                           ║
-║      Version: 1.5.0 - LLM Session Summaries               ║
+║      Version: 1.7.0 - FYSETC Receiver Service             ║
 ║      Platform: Linux                                      ║
 ║                                                           ║
 ╚═══════════════════════════════════════════════════════════╝
@@ -58,6 +65,8 @@ void printConfiguration() {
     if (source == "local") {
         std::cout << "  Source:             Local directory" << std::endl;
         std::cout << "  Local Dir:          " << hms_cpap::ConfigManager::get("CPAP_LOCAL_DIR", "(not set)") << std::endl;
+    } else if (source == "fysetc") {
+        std::cout << "  Source:             FYSETC SD WiFi Pro (MQTT push)" << std::endl;
     } else {
         std::cout << "  Source:             ez Share" << std::endl;
         std::cout << "  ez Share URL:       " << hms_cpap::ConfigManager::get("EZSHARE_BASE_URL", "http://192.168.4.1") << std::endl;
@@ -326,21 +335,78 @@ int main(int argc, char** argv) {
     std::signal(SIGTERM, signalHandler);
 
     try {
-        // Burst interval: default 2 minutes (120 seconds)
-        int burst_interval = hms_cpap::ConfigManager::getInt("BURST_INTERVAL", 120);
-
-        burst_service = std::make_unique<hms_cpap::BurstCollectorService>(burst_interval);
-        burst_service->start();
-
-        std::cout << "HMS-CPAP service is running..." << std::endl;
         std::string src = hms_cpap::ConfigManager::get("CPAP_SOURCE", "ezshare");
-        if (src == "local") {
-            std::cout << "   Source: Local directory at " << hms_cpap::ConfigManager::get("CPAP_LOCAL_DIR", "") << std::endl;
+
+        if (src == "fysetc") {
+            // FYSETC mode: event-driven via MQTT (no polling)
+            // Initialize MQTT client
+            std::string mqtt_broker = hms_cpap::ConfigManager::get("MQTT_BROKER", "192.168.2.15");
+            std::string mqtt_port = hms_cpap::ConfigManager::get("MQTT_PORT", "1883");
+            std::string mqtt_user = hms_cpap::ConfigManager::get("MQTT_USER", "aamat");
+            std::string mqtt_password = hms_cpap::ConfigManager::get("MQTT_PASSWORD", "exploracion");
+            std::string mqtt_client_id = hms_cpap::ConfigManager::get("MQTT_CLIENT_ID", "hms_cpap_fysetc");
+
+            hms::MqttConfig mqtt_config;
+            mqtt_config.broker = mqtt_broker;
+            mqtt_config.port = std::stoi(mqtt_port);
+            mqtt_config.username = mqtt_user;
+            mqtt_config.password = mqtt_password;
+            mqtt_config.client_id = mqtt_client_id;
+
+            auto mqtt_client = std::make_shared<hms::MqttClient>(mqtt_config);
+            if (mqtt_client->connect()) {
+                std::cout << "MQTT: Connected to tcp://" << mqtt_broker << ":" << mqtt_port << std::endl;
+            } else {
+                std::cerr << "MQTT: Connection failed (will retry)" << std::endl;
+            }
+
+            // Initialize database service
+            std::string db_host = hms_cpap::ConfigManager::get("DB_HOST", "localhost");
+            std::string db_port_str = hms_cpap::ConfigManager::get("DB_PORT", "5432");
+            std::string db_name = hms_cpap::ConfigManager::get("DB_NAME", "cpap_monitoring");
+            std::string db_user = hms_cpap::ConfigManager::get("DB_USER", "maestro");
+            std::string db_password = hms_cpap::ConfigManager::get("DB_PASSWORD", "maestro_postgres_2026_secure");
+
+            std::string conn_str = "host=" + db_host + " port=" + db_port_str +
+                                   " dbname=" + db_name + " user=" + db_user +
+                                   " password=" + db_password;
+
+            auto db_service = std::make_shared<hms_cpap::DatabaseService>(conn_str);
+            if (db_service->connect()) {
+                std::cout << "DB: Connected to " << db_name << std::endl;
+            } else {
+                std::cerr << "DB: Connection failed (will retry)" << std::endl;
+            }
+
+            // Initialize data publisher
+            auto data_publisher = std::make_shared<hms_cpap::DataPublisherService>(mqtt_client, db_service);
+            data_publisher->initialize();
+
+            // Start FYSETC receiver
+            fysetc_service = std::make_unique<hms_cpap::FysetcReceiverService>(
+                mqtt_client, db_service, data_publisher);
+            fysetc_service->start();
+
+            std::cout << "HMS-CPAP service is running..." << std::endl;
+            std::cout << "   Source: FYSETC SD WiFi Pro (MQTT push)" << std::endl;
+            std::cout << "   Press Ctrl+C to stop" << std::endl << std::endl;
+
         } else {
-            std::cout << "   Source: ez Share at " << hms_cpap::ConfigManager::get("EZSHARE_BASE_URL", "http://192.168.4.1") << std::endl;
+            // ezShare or local mode: polling via BurstCollectorService
+            int burst_interval = hms_cpap::ConfigManager::getInt("BURST_INTERVAL", 120);
+
+            burst_service = std::make_unique<hms_cpap::BurstCollectorService>(burst_interval);
+            burst_service->start();
+
+            std::cout << "HMS-CPAP service is running..." << std::endl;
+            if (src == "local") {
+                std::cout << "   Source: Local directory at " << hms_cpap::ConfigManager::get("CPAP_LOCAL_DIR", "") << std::endl;
+            } else {
+                std::cout << "   Source: ez Share at " << hms_cpap::ConfigManager::get("EZSHARE_BASE_URL", "http://192.168.4.1") << std::endl;
+            }
+            std::cout << "   Burst interval: " << burst_interval << " seconds" << std::endl;
+            std::cout << "   Press Ctrl+C to stop" << std::endl << std::endl;
         }
-        std::cout << "   Burst interval: " << burst_interval << " seconds" << std::endl;
-        std::cout << "   Press Ctrl+C to stop" << std::endl << std::endl;
 
         // Main loop - wait for shutdown signal
         while (!shutdown_requested) {
@@ -348,14 +414,20 @@ int main(int argc, char** argv) {
         }
 
         // Cleanup
-        burst_service->stop();
-        burst_service.reset();
+        if (burst_service) {
+            burst_service->stop();
+            burst_service.reset();
+        }
+        if (fysetc_service) {
+            fysetc_service->stop();
+            fysetc_service.reset();
+        }
 
-        std::cout << "✅ HMS-CPAP service stopped cleanly" << std::endl;
+        std::cout << "HMS-CPAP service stopped cleanly" << std::endl;
         return 0;
 
     } catch (const std::exception& e) {
-        std::cerr << "❌ Fatal error: " << e.what() << std::endl;
+        std::cerr << "Fatal error: " << e.what() << std::endl;
         return 1;
     }
 }

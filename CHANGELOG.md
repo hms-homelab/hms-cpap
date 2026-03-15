@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-03-15
+
+### Added
+- **FysetcReceiverService**: New `CPAP_SOURCE=fysetc` mode that receives EDF data
+  from FYSETC SD WiFi Pro via MQTT push instead of polling ezShare over HTTP.
+  Manifest-driven protocol where hms-cpap controls file management:
+  - `sync/request` + `sync/response` for realtime delta sync during therapy
+  - `manifest` from FYSETC lists all files after therapy, hms-cpap diffs and
+    sends `cmd/fetch` for missing/incomplete files (CSL, EVE, etc.)
+  - `cmd/rescan` forces FYSETC to publish manifest + STR (sent on startup)
+  - Base64-encoded chunks written to disk at correct byte offsets
+  - STR.edf fetched from SD root (not in date folders) for daily therapy summary
+  - Full session processing pipeline: EDFParser, DataPublisher, DB, nightly metrics
+  - LLM session summary generation (same as ezShare mode, requires `LLM_ENABLED=true`)
+  - Upload retry after bus yield interruption (`s_upload_pending` flag)
+- **BRP-validated therapy detection** (FYSETC firmware): Bus activity alone no longer
+  triggers session ON. Prescan must confirm BRP file exists -- prevents false
+  positives from CPAP boot, settings changes, or STR updates.
+- **8 new unit tests** for FysetcReceiverService: sync response, chunk write (new file
+  + append at offset), manifest diff logic, root file handling, base64 round-trip.
+- **Documentation**: `docs/FYSETC_RECEIVER.md` -- comprehensive protocol docs, MQTT
+  topics, ResMed write timing, FSM states, configuration, ezShare vs FYSETC comparison.
+
+### Changed
+- `POST_THERAPY_IDLE_SEC` reduced from 120s to 65s -- empirically verified that
+  STR.edf is written ~50s after mask-off, and BRP write interval is exactly 60s.
+- FYSETC `session_active=OFF` deferred until post-therapy upload + manifest complete,
+  ensuring hms-cpap has all data before triggering session processing.
+- FYSETC FSM: new `FETCHING` state for `cmd/fetch` fulfillment with yield safety.
+  New `fsm_on_rescan_request` + `fsm_on_fetch_request` callbacks from MQTT.
+
 ## [1.6.1] - 2026-03-14
 
 ### Fixed
