@@ -41,7 +41,10 @@ bool DataPublisherService::initialize() {
         std::cout << "✅ Subscribed to homeassistant/status" << std::endl;
     }
 
-    std::cout << "✅ DataPublisherService initialized" << std::endl;
+    // Publish discovery on startup
+    publishDiscovery();
+
+    std::cout << "DataPublisherService initialized" << std::endl;
     return true;
 }
 
