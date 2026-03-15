@@ -149,7 +149,12 @@ BurstCollectorService::BurstCollectorService(int burst_interval_seconds)
             [this](const std::string& /*topic*/, const std::string& /*payload*/) {
                 std::cout << "Insights: Regenerate requested via MQTT" << std::endl;
                 if (last_str_records_.empty()) {
-                    std::cerr << "Insights: No STR records cached, run processSTRFile first" << std::endl;
+                    // Cache is empty (e.g. after restart) -- download and parse STR first
+                    std::cout << "Insights: Cache empty, running processSTRFile..." << std::endl;
+                    processSTRFile();
+                }
+                if (last_str_records_.empty()) {
+                    std::cerr << "Insights: Still no STR records after download" << std::endl;
                     return;
                 }
                 auto insights = InsightsEngine::analyze(last_str_records_);
@@ -167,6 +172,7 @@ BurstCollectorService::BurstCollectorService(int burst_interval_seconds)
         data_publisher_->publishSessionCompleted();
         session_active_cleared_ = true;
     }
+
 }
 
 BurstCollectorService::~BurstCollectorService() {
