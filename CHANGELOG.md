@@ -7,12 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.8.1] - 2026-03-18
+## [1.8.2] - 2026-03-18
 
 ### Added
 - **force_complete MQTT command**: `cpap/{device}/command/force_complete` to
   manually mark a stuck session as completed, publish status, process STR,
   and generate LLM summary.
+- **force_completed DB flag**: Sessions flagged `force_completed=TRUE` are
+  skipped entirely in burst cycles (no download, no parse, no MQTT overwrite).
+  Prevents parser's growing flag from undoing the force_complete.
+- **Auto-migration**: `force_completed` column added to `cpap_sessions` on
+  connect via `ALTER TABLE ADD COLUMN IF NOT EXISTS`.
 
 ## [1.8.0] - 2026-03-15
 
