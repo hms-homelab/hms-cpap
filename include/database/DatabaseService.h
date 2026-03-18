@@ -141,6 +141,18 @@ public:
      * @param session_start Session start timestamp
      * @return true if updated successfully
      */
+    /**
+     * Check if a session has been force-completed (skip in burst cycle)
+     */
+    bool isForceCompleted(const std::string& device_id,
+                          const std::chrono::system_clock::time_point& session_start);
+
+    /**
+     * Set force_completed flag on a session (prevents re-parsing)
+     */
+    bool setForceCompleted(const std::string& device_id,
+                           const std::chrono::system_clock::time_point& session_start);
+
     bool markSessionCompleted(const std::string& device_id,
                               const std::chrono::system_clock::time_point& session_start);
 
