@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.8.1] - 2026-03-18
+
+### Added
+- **force_complete MQTT command**: `cpap/{device}/command/force_complete` to
+  manually mark a stuck session as completed, publish status, process STR,
+  and generate LLM summary.
+
 ## [1.8.0] - 2026-03-15
 
 ### Added
