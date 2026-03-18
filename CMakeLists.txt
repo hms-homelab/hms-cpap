@@ -35,7 +35,7 @@ find_library(PQ_LIB pq)
 include(FetchContent)
 FetchContent_Declare(hms_shared
     GIT_REPOSITORY https://github.com/hms-homelab/hms-shared.git
-    GIT_TAG        main
+    GIT_TAG        v1.6.5
 )
 FetchContent_Populate(hms_shared)
 
@@ -65,6 +65,18 @@ target_link_libraries(hms_mqtt PUBLIC
     ${PAHO_MQTT3AS_LIB}
 )
 
+# DB module (DbPool connection pool)
+add_library(hms_db STATIC
+    ${hms_shared_SOURCE_DIR}/db/src/db_pool.cpp
+)
+target_include_directories(hms_db PUBLIC
+    ${hms_shared_SOURCE_DIR}/db/include
+)
+target_link_libraries(hms_db PUBLIC
+    ${PQXX_LIB}
+    ${PQ_LIB}
+)
+
 # Source files
 file(GLOB_RECURSE SOURCES "src/*.cpp")
 
@@ -86,6 +98,7 @@ target_link_libraries(${PROJECT_NAME}
     CURL::libcurl
     hms_llm
     hms_mqtt
+    hms_db
     pthread
     ssl
     crypto
@@ -114,4 +127,5 @@ message(STATUS "  EDF: raw parser (ResMed compatible)")
 message(STATUS "  Paho MQTT: ${PAHO_MQTTPP3_LIB}")
 message(STATUS "  PostgreSQL: ${PQXX_LIB}")
 message(STATUS "  LLM: hms_llm (from hms-shared)")
+message(STATUS "  DB Pool: hms_db (from hms-shared)")
 message(STATUS "  Build Tests: ${BUILD_TESTS}")

@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.9.0] - 2026-03-18
+
+### Added
+- **Agentic AI module**: Conversational CPAP therapy assistant via MQTT
+  - Natural language queries: `cpap/{device}/agent/query` -> `agent/response`
+  - LLM tool-use loop with 7 read-only SQL tools (sessions, daily summary,
+    trends, comparisons, vitals, statistics)
+  - Multi-provider support: OpenAI, Ollama, Anthropic, Gemini for chat;
+    separate Ollama endpoint for embeddings (nomic-embed-text 768-dim)
+  - pgvector conversation memory: multi-turn context, summary embeddings,
+    similar conversation retrieval, long-term fact storage
+  - Parallel sub-agents: memory search runs concurrently with tool-use loop
+  - Retained status topic: `cpap/{device}/agent/status` (idle/processing/error)
+  - 26 unit tests (AgentTools, AgentMemory, AgentService with mock LLM)
+  - 4 DB integration tests (schema, conversations, messages, expiry cleanup)
+- **hms-shared v1.6.5**: Pinned tag with `generateWithTools()`, `embed()`,
+  `toVectorLiteral()`, `DbPool` connection pool
+- **Agent schema**: `scripts/agent_schema.sql` (3 tables: agent_conversations,
+  agent_messages, agent_memory with pgvector indexes)
+- **AGENT_ENABLED env var**: Opt-in activation (default false)
+
 ## [1.8.2] - 2026-03-18
 
 ### Added

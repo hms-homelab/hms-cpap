@@ -4,7 +4,10 @@
 #include "services/DataPublisherService.h"
 #include "parsers/EDFParser.h"
 #include "database/DatabaseService.h"
+#include "agent/AgentService.h"
+#include "agent/IAgentLLM.h"
 #include "mqtt_client.h"
+#include "llm_client.h"
 #include "utils/ConfigManager.h"
 #include <iostream>
 #include <iomanip>
@@ -19,6 +22,7 @@
 std::atomic<bool> shutdown_requested(false);
 std::unique_ptr<hms_cpap::BurstCollectorService> burst_service;
 std::unique_ptr<hms_cpap::FysetcReceiverService> fysetc_service;
+std::unique_ptr<hms_cpap::AgentService> agent_service;
 
 /**
  * Signal handler for graceful shutdown
@@ -32,6 +36,9 @@ void signalHandler(int signal) {
     }
     if (fysetc_service) {
         fysetc_service->stop();
+    }
+    if (agent_service) {
+        agent_service->stop();
     }
 }
 
@@ -408,12 +415,104 @@ int main(int argc, char** argv) {
             std::cout << "   Press Ctrl+C to stop" << std::endl << std::endl;
         }
 
+        // Start Agent module if enabled
+        std::string agent_enabled = hms_cpap::ConfigManager::get("AGENT_ENABLED", "false");
+        if (agent_enabled == "true" || agent_enabled == "1") {
+            std::string agent_provider = hms_cpap::ConfigManager::get("AGENT_LLM_PROVIDER", "ollama");
+            std::string agent_endpoint = hms_cpap::ConfigManager::get("AGENT_LLM_ENDPOINT", "http://192.168.2.5:11434");
+            std::string agent_model = hms_cpap::ConfigManager::get("AGENT_LLM_MODEL", "gpt-oss:120b-cloud");
+            std::string agent_api_key = hms_cpap::ConfigManager::get("AGENT_LLM_API_KEY", "");
+            std::string agent_embed = hms_cpap::ConfigManager::get("AGENT_EMBED_MODEL", "nomic-embed-text");
+            double agent_temp = std::stod(hms_cpap::ConfigManager::get("AGENT_LLM_TEMPERATURE", "0.3"));
+            int agent_max_tokens = hms_cpap::ConfigManager::getInt("AGENT_LLM_MAX_TOKENS", 2048);
+
+            hms::LLMConfig llm_config;
+            llm_config.enabled = true;
+            llm_config.provider = hms::LLMClient::parseProvider(agent_provider);
+            llm_config.endpoint = agent_endpoint;
+            llm_config.model = agent_model;
+            llm_config.api_key = agent_api_key;
+            llm_config.temperature = agent_temp;
+            llm_config.max_tokens = agent_max_tokens;
+
+            auto llm_client = std::make_shared<hms::LLMClient>(llm_config);
+
+            // Embeddings always go to Ollama (nomic-embed-text is local)
+            std::shared_ptr<hms_cpap::AgentLLM> agent_llm;
+            std::string embed_endpoint = hms_cpap::ConfigManager::get("AGENT_EMBED_ENDPOINT", "http://192.168.2.5:11434");
+            if (llm_config.provider != hms::LLMProvider::OLLAMA) {
+                hms::LLMConfig embed_config;
+                embed_config.enabled = true;
+                embed_config.provider = hms::LLMProvider::OLLAMA;
+                embed_config.endpoint = embed_endpoint;
+                embed_config.model = agent_embed;
+                auto embed_client = std::make_shared<hms::LLMClient>(embed_config);
+                agent_llm = std::make_shared<hms_cpap::AgentLLM>(llm_client, embed_client, agent_embed);
+            } else {
+                agent_llm = std::make_shared<hms_cpap::AgentLLM>(llm_client, agent_embed);
+            }
+
+            // Build DB connection string for agent
+            std::string a_db_host = hms_cpap::ConfigManager::get("DB_HOST", "localhost");
+            std::string a_db_port = hms_cpap::ConfigManager::get("DB_PORT", "5432");
+            std::string a_db_name = hms_cpap::ConfigManager::get("DB_NAME", "cpap_monitoring");
+            std::string a_db_user = hms_cpap::ConfigManager::get("DB_USER", "maestro");
+            std::string a_db_pass = hms_cpap::ConfigManager::get("DB_PASSWORD", "maestro_postgres_2026_secure");
+            std::string a_conn_str = "host=" + a_db_host + " port=" + a_db_port +
+                                     " dbname=" + a_db_name + " user=" + a_db_user +
+                                     " password=" + a_db_pass;
+
+            std::string device_id = hms_cpap::ConfigManager::get("CPAP_DEVICE_ID", "cpap_resmed_23243570851");
+
+            hms_cpap::AgentService::Config agent_cfg;
+            agent_cfg.device_id = device_id;
+            agent_cfg.db_connection_string = a_conn_str;
+            agent_cfg.embed_model = agent_embed;
+            agent_cfg.temperature = agent_temp;
+            agent_cfg.max_iterations = hms_cpap::ConfigManager::getInt("AGENT_MAX_ITERATIONS", 5);
+            agent_cfg.max_context = hms_cpap::ConfigManager::getInt("AGENT_MAX_CONTEXT", 20);
+            agent_cfg.memory_limit = hms_cpap::ConfigManager::getInt("AGENT_MEMORY_LIMIT", 3);
+
+            // Reuse MQTT client from fysetc mode, or create one for burst mode
+            std::shared_ptr<hms::MqttClient> agent_mqtt;
+            if (src == "fysetc" && fysetc_service) {
+                // FYSETC mode already has mqtt_client in scope above
+                // Need to create a separate one for agent since mqtt_client is local to that block
+                hms::MqttConfig amqtt_cfg;
+                amqtt_cfg.broker = hms_cpap::ConfigManager::get("MQTT_BROKER", "192.168.2.15");
+                amqtt_cfg.port = std::stoi(hms_cpap::ConfigManager::get("MQTT_PORT", "1883"));
+                amqtt_cfg.username = hms_cpap::ConfigManager::get("MQTT_USER", "aamat");
+                amqtt_cfg.password = hms_cpap::ConfigManager::get("MQTT_PASSWORD", "exploracion");
+                amqtt_cfg.client_id = hms_cpap::ConfigManager::get("MQTT_CLIENT_ID", "hms_cpap") + "_agent";
+                agent_mqtt = std::make_shared<hms::MqttClient>(amqtt_cfg);
+                agent_mqtt->connect();
+            } else {
+                hms::MqttConfig amqtt_cfg;
+                amqtt_cfg.broker = hms_cpap::ConfigManager::get("MQTT_BROKER", "192.168.2.15");
+                amqtt_cfg.port = std::stoi(hms_cpap::ConfigManager::get("MQTT_PORT", "1883"));
+                amqtt_cfg.username = hms_cpap::ConfigManager::get("MQTT_USER", "aamat");
+                amqtt_cfg.password = hms_cpap::ConfigManager::get("MQTT_PASSWORD", "exploracion");
+                amqtt_cfg.client_id = hms_cpap::ConfigManager::get("MQTT_CLIENT_ID", "hms_cpap") + "_agent";
+                agent_mqtt = std::make_shared<hms::MqttClient>(amqtt_cfg);
+                agent_mqtt->connect();
+            }
+
+            agent_service = std::make_unique<hms_cpap::AgentService>(agent_cfg, agent_mqtt, agent_llm);
+            agent_service->start();
+
+            std::cout << "Agent: AI module enabled (model: " << agent_model << ")" << std::endl;
+        }
+
         // Main loop - wait for shutdown signal
         while (!shutdown_requested) {
             std::this_thread::sleep_for(std::chrono::seconds(1));
         }
 
         // Cleanup
+        if (agent_service) {
+            agent_service->stop();
+            agent_service.reset();
+        }
         if (burst_service) {
             burst_service->stop();
             burst_service.reset();

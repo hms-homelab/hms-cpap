@@ -29,6 +29,9 @@ set(TEST_SOURCES
     clients/test_EzShareClient.cpp
     mqtt/test_MqttClient.cpp
     integration/test_STRIntegration.cpp
+    agent/test_AgentTools.cpp
+    agent/test_AgentMemory.cpp
+    agent/test_AgentService.cpp
 )
 
 # Create test executable
@@ -50,6 +53,7 @@ target_link_libraries(run_tests
     CURL::libcurl
     hms_llm
     hms_mqtt
+    hms_db
     pthread
     ssl
     crypto
