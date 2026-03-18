@@ -21,6 +21,16 @@ bool DatabaseService::connect() {
 
         if (conn_->is_open()) {
             std::cout << "✅ DB: Connected to PostgreSQL (" << conn_->dbname() << ")" << std::endl;
+
+            // Auto-migrate: add force_completed column if missing
+            try {
+                pqxx::work txn(*conn_);
+                txn.exec("ALTER TABLE cpap_sessions ADD COLUMN IF NOT EXISTS force_completed BOOLEAN DEFAULT FALSE");
+                txn.commit();
+            } catch (...) {
+                // Column may already exist or table not yet created — ignore
+            }
+
             return true;
         }
     } catch (const std::exception& e) {
@@ -738,6 +748,69 @@ bool DatabaseService::markSessionCompleted(
 
     } catch (const std::exception& e) {
         std::cerr << "DB: markSessionCompleted error: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+bool DatabaseService::isForceCompleted(
+    const std::string& device_id,
+    const std::chrono::system_clock::time_point& session_start) {
+
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!ensureConnection()) return false;
+
+    try {
+        pqxx::work txn(*conn_);
+        auto start_time_t = std::chrono::system_clock::to_time_t(session_start);
+        std::tm* start_tm = std::localtime(&start_time_t);
+        std::ostringstream oss;
+        oss << std::put_time(start_tm, "%Y-%m-%d %H:%M:%S");
+
+        auto result = txn.exec_params(
+            "SELECT COALESCE(force_completed, FALSE) FROM cpap_sessions "
+            "WHERE device_id = $1 "
+            "AND session_start BETWEEN $2::timestamp - INTERVAL '5 seconds' "
+            "AND $2::timestamp + INTERVAL '5 seconds' "
+            "LIMIT 1",
+            device_id, oss.str());
+        txn.commit();
+
+        return !result.empty() && result[0][0].as<bool>(false);
+    } catch (const std::exception& e) {
+        std::cerr << "DB: isForceCompleted error: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+bool DatabaseService::setForceCompleted(
+    const std::string& device_id,
+    const std::chrono::system_clock::time_point& session_start) {
+
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!ensureConnection()) return false;
+
+    try {
+        pqxx::work txn(*conn_);
+        auto start_time_t = std::chrono::system_clock::to_time_t(session_start);
+        std::tm* start_tm = std::localtime(&start_time_t);
+        std::ostringstream oss;
+        oss << std::put_time(start_tm, "%Y-%m-%d %H:%M:%S");
+
+        auto result = txn.exec_params(
+            "UPDATE cpap_sessions SET force_completed = TRUE, updated_at = CURRENT_TIMESTAMP "
+            "WHERE device_id = $1 "
+            "AND session_start BETWEEN $2::timestamp - INTERVAL '5 seconds' "
+            "AND $2::timestamp + INTERVAL '5 seconds'",
+            device_id, oss.str());
+        txn.commit();
+
+        if (result.affected_rows() > 0) {
+            std::cout << "DB: Session " << oss.str() << " marked force_completed" << std::endl;
+            return true;
+        }
+        return false;
+    } catch (const std::exception& e) {
+        std::cerr << "DB: setForceCompleted error: " << e.what() << std::endl;
         return false;
     }
 }

@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS cpap_sessions (
 
     -- Session metadata
     session_status VARCHAR(50) DEFAULT 'in_progress',  -- 'in_progress', 'completed'
+    force_completed BOOLEAN DEFAULT FALSE,              -- Manual override: skip in burst cycle
 
     -- Checkpoint file tracking (JSONB)
     -- Stores individual file sizes for stop detection
@@ -207,6 +208,13 @@ CREATE TRIGGER update_cpap_devices_updated_at
 -- Add checkpoint_files column if upgrading from v1.0.0
 -- ALTER TABLE cpap_sessions ADD COLUMN IF NOT EXISTS checkpoint_files JSONB DEFAULT '{}'::jsonb;
 -- CREATE INDEX IF NOT EXISTS idx_cpap_sessions_checkpoint_files ON cpap_sessions USING GIN(checkpoint_files);
+
+-- =============================================================================
+-- Migration from v1.8.0 to v1.8.1
+-- =============================================================================
+
+-- Add force_completed flag (auto-migrated on connect, included here for reference)
+-- ALTER TABLE cpap_sessions ADD COLUMN IF NOT EXISTS force_completed BOOLEAN DEFAULT FALSE;
 
 -- =============================================================================
 -- End of schema

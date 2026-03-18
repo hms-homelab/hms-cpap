@@ -176,12 +176,8 @@ BurstCollectorService::BurstCollectorService(int burst_interval_seconds)
                     std::cerr << "Force complete: no session found in DB" << std::endl;
                     return;
                 }
-                bool newly_completed = db_service_->markSessionCompleted(device_id_, last_start.value());
-                if (newly_completed) {
-                    std::cout << "Force complete: session marked completed in DB" << std::endl;
-                } else {
-                    std::cout << "Force complete: session already completed" << std::endl;
-                }
+                db_service_->markSessionCompleted(device_id_, last_start.value());
+                db_service_->setForceCompleted(device_id_, last_start.value());
                 if (data_publisher_) {
                     data_publisher_->publishSessionCompleted();
                     processSTRFile();
@@ -549,6 +545,13 @@ bool BurstCollectorService::executeBurstCycle() {
         std::filesystem::create_directories(temp_base);
 
         for (const auto& session : new_sessions) {
+            // Skip sessions that were force-completed (manual override)
+            if (db_service_->isForceCompleted(device_id_, session.session_start)) {
+                std::cout << "CPAP: Session " << session.session_prefix
+                          << " force_completed, skipping" << std::endl;
+                continue;
+            }
+
             bool exists_in_db = db_service_->sessionExists(device_id_, session.session_start);
 
             if (exists_in_db) {
@@ -685,6 +688,13 @@ bool BurstCollectorService::executeBurstCycle() {
         std::string local_base_dir = ConfigManager::get("CPAP_TEMP_DIR", "/tmp/cpap_data");
 
         for (const auto& session : new_sessions) {
+            // Skip sessions that were force-completed (manual override)
+            if (db_service_->isForceCompleted(device_id_, session.session_start)) {
+                std::cout << "CPAP: Session " << session.session_prefix
+                          << " force_completed, skipping" << std::endl;
+                continue;
+            }
+
             bool exists_in_db = db_service_->sessionExists(device_id_, session.session_start);
 
             if (!exists_in_db) {
