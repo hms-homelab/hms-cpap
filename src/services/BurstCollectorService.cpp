@@ -165,6 +165,38 @@ BurstCollectorService::BurstCollectorService(int burst_interval_seconds)
         std::cout << "Insights: Subscribed to " << insights_topic << " for on-demand regeneration" << std::endl;
     }
 
+    // Subscribe to force_complete command (manual override for stuck sessions)
+    if (mqtt_client_ && mqtt_client_->isConnected()) {
+        std::string complete_topic = "cpap/" + device_id_ + "/command/force_complete";
+        mqtt_client_->subscribe(complete_topic,
+            [this](const std::string& /*topic*/, const std::string& /*payload*/) {
+                std::cout << "Force complete: requested via MQTT" << std::endl;
+                auto last_start = db_service_->getLastSessionStart(device_id_);
+                if (!last_start.has_value()) {
+                    std::cerr << "Force complete: no session found in DB" << std::endl;
+                    return;
+                }
+                bool newly_completed = db_service_->markSessionCompleted(device_id_, last_start.value());
+                if (newly_completed) {
+                    std::cout << "Force complete: session marked completed in DB" << std::endl;
+                } else {
+                    std::cout << "Force complete: session already completed" << std::endl;
+                }
+                if (data_publisher_) {
+                    data_publisher_->publishSessionCompleted();
+                    processSTRFile();
+                    auto metrics = db_service_->getNightlyMetrics(device_id_, last_start.value());
+                    if (metrics.has_value()) {
+                        data_publisher_->publishHistoricalState(metrics.value());
+                        if (llm_enabled_ && llm_client_) {
+                            generateAndPublishSummary(metrics.value());
+                        }
+                    }
+                }
+            }, 1);
+        std::cout << "Commands: Subscribed to " << complete_topic << std::endl;
+    }
+
     // STARTUP CLEANUP: Clear any stale session_active state from previous run
     // This prevents stuck "session active" in HA after service restart or crash
     if (data_publisher_ && mqtt_client_ && mqtt_client_->isConnected()) {
