@@ -783,6 +783,11 @@ bool BurstCollectorService::executeBurstCycle() {
                     if (llm_enabled_ && llm_client_ && metrics.has_value()) {
                         generateAndPublishSummary(metrics.value());
                     }
+                } else if (!newly_completed && is_most_recent && data_publisher_) {
+                    // Session was already completed (session_end set by prior cycle),
+                    // but session_active may still be ON if publishSessionCompleted()
+                    // never fired. Ensure it's cleared.
+                    data_publisher_->publishSessionCompleted();
                 }
 
                 std::cout << "   Skipping download (no changes)" << std::endl;
