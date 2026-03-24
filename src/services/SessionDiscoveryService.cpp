@@ -1,5 +1,6 @@
 #include "services/SessionDiscoveryService.h"
 #include "utils/ConfigManager.h"
+#include "utils/FileUtils.h"
 #include <algorithm>
 #include <regex>
 #include <map>
@@ -121,7 +122,7 @@ SessionDiscoveryService::groupSessionsInFolder(const std::string& date_folder) {
         // Collect checkpoint files
         bool is_brp = name_lower.find("_brp.edf") != std::string::npos;
         bool is_pld = name_lower.find("_pld.edf") != std::string::npos;
-        bool is_sad = name_lower.find("_sad.edf") != std::string::npos;
+        bool is_sad = isOximetryFile(file.name);
 
         if (is_brp || is_pld || is_sad) {
             CheckpointFile cp;
@@ -575,7 +576,7 @@ SessionDiscoveryService::groupLocalFolder(
 
         bool is_brp = name_lower.find("_brp.edf") != std::string::npos;
         bool is_pld = name_lower.find("_pld.edf") != std::string::npos;
-        bool is_sad = name_lower.find("_sad.edf") != std::string::npos;
+        bool is_sad = isOximetryFile(filename);
 
         if (is_brp || is_pld || is_sad) {
             CheckpointFile cp;

@@ -70,7 +70,7 @@ bool DataPublisherService::publishDiscovery() {
     bool insights_success = publishInsightsDiscovery();
 
     if (rt_success && hist_success && str_success && insights_success) {
-        std::cout << "MQTT: Discovery published (8 realtime + 25 historical + 14 daily + 1 insights = 48 sensors)" << std::endl;
+        std::cout << "MQTT: Discovery published (11 realtime + 31 historical + 14 daily + 1 insights = 57 sensors)" << std::endl;
         return true;
     }
 
@@ -78,7 +78,7 @@ bool DataPublisherService::publishDiscovery() {
 }
 
 bool DataPublisherService::publishRealtimeDiscovery() {
-    std::cout << "  📊 Real-time sensors (8)..." << std::endl;
+    std::cout << "  📊 Real-time sensors (11)..." << std::endl;
 
     std::string device_json = createDeviceJson();
 
@@ -89,7 +89,7 @@ bool DataPublisherService::publishRealtimeDiscovery() {
         std::string icon;
     };
 
-    // 8 REAL-TIME METRICS (updated while mask ON)
+    // 11 REAL-TIME METRICS (updated while mask ON)
     std::vector<SensorDef> realtime_sensors = {
         // Session info
         {"session_status", "", "", "mdi:sleep"},
@@ -103,7 +103,12 @@ bool DataPublisherService::publishRealtimeDiscovery() {
 
         // Current flow
         {"current_flow_rate", "L/min", "", "mdi:air-filter"},
-        {"max_flow_rate", "L/min", "", "mdi:wind-turbine"}
+        {"max_flow_rate", "L/min", "", "mdi:wind-turbine"},
+
+        // PLD-derived (machine's own calculations)
+        {"current_mask_pressure", "cmH2O", "", "mdi:gauge"},
+        {"current_snore", "", "", "mdi:volume-high"},
+        {"current_target_ventilation", "L/min", "", "mdi:lungs"}
     };
 
     for (const auto& sensor : realtime_sensors) {
@@ -166,12 +171,12 @@ bool DataPublisherService::publishRealtimeDiscovery() {
         mqtt_client_->publish(discovery_topic, config_json, 1, true);
     }
 
-    std::cout << "    ✓ 8 realtime sensors + 1 binary" << std::endl;
+    std::cout << "    ✓ 11 realtime sensors + 1 binary" << std::endl;
     return true;
 }
 
 bool DataPublisherService::publishHistoricalDiscovery() {
-    std::cout << "  📈 Historical sensors (25)..." << std::endl;
+    std::cout << "  📈 Historical sensors (31)..." << std::endl;
 
     std::string device_json = createDeviceJson();
 
@@ -182,7 +187,7 @@ bool DataPublisherService::publishHistoricalDiscovery() {
         std::string icon;
     };
 
-    // 25 HISTORICAL METRICS (calculated after session completes)
+    // 31 HISTORICAL METRICS (calculated after session completes)
     std::vector<SensorDef> historical_sensors = {
         // Usage (2)
         {"usage_hours", "h", "duration", "mdi:clock-check"},
@@ -217,7 +222,16 @@ bool DataPublisherService::publishHistoricalDiscovery() {
         {"avg_expiratory_time", "s", "duration", "mdi:timer-sand-empty"},
         {"avg_ie_ratio", "", "", "mdi:division"},
         {"avg_flow_limitation", "", "", "mdi:alert-circle-outline"},
-        {"avg_leak_rate", "L/min", "", "mdi:leak"}
+        {"avg_leak_rate", "L/min", "", "mdi:leak"},
+
+        // PLD metrics (5)
+        {"avg_mask_pressure", "cmH2O", "", "mdi:gauge"},
+        {"avg_epr_pressure", "cmH2O", "", "mdi:gauge-low"},
+        {"avg_snore", "", "", "mdi:volume-high"},
+        {"leak_p50", "L/min", "", "mdi:leak"},
+        // ASV-specific
+        {"avg_target_ventilation", "L/min", "", "mdi:lungs"},
+        {"therapy_mode", "", "", "mdi:cog"}
     };
 
     for (const auto& sensor : historical_sensors) {
@@ -255,7 +269,7 @@ bool DataPublisherService::publishHistoricalDiscovery() {
         }
     }
 
-    std::cout << "    ✓ 25 historical sensors" << std::endl;
+    std::cout << "    ✓ 31 historical sensors" << std::endl;
     return true;
 }
 
@@ -383,6 +397,24 @@ void DataPublisherService::publishRealtimeState(const CPAPSession& session) {
         }
     }
 
+    // PLD-derived realtime metrics
+    if (!session.breathing_summary.empty()) {
+        const auto& latest = session.breathing_summary.back();
+
+        if (latest.mask_pressure.has_value()) {
+            mqtt_client_->publish("cpap/" + device_id_ + "/realtime/current_mask_pressure",
+                                 std::to_string(latest.mask_pressure.value()), 0, true);
+        }
+        if (latest.snore_index.has_value()) {
+            mqtt_client_->publish("cpap/" + device_id_ + "/realtime/current_snore",
+                                 std::to_string(latest.snore_index.value()), 0, true);
+        }
+        if (latest.target_ventilation.has_value()) {
+            mqtt_client_->publish("cpap/" + device_id_ + "/realtime/current_target_ventilation",
+                                 std::to_string(latest.target_ventilation.value()), 0, true);
+        }
+    }
+
     std::cout << "  ✓ Real-time state published" << std::endl;
 }
 
@@ -497,6 +529,33 @@ void DataPublisherService::publishHistoricalState(const SessionMetrics& m) {
     if (m.avg_flow_limitation.has_value()) {
         mqtt_client_->publish("cpap/" + device_id_ + "/historical/avg_flow_limitation",
                              std::to_string(m.avg_flow_limitation.value()), 0, true);
+    }
+
+    // PLD METRICS
+    if (m.avg_mask_pressure.has_value()) {
+        mqtt_client_->publish("cpap/" + device_id_ + "/historical/avg_mask_pressure",
+                             std::to_string(m.avg_mask_pressure.value()), 0, true);
+    }
+    if (m.avg_epr_pressure.has_value()) {
+        mqtt_client_->publish("cpap/" + device_id_ + "/historical/avg_epr_pressure",
+                             std::to_string(m.avg_epr_pressure.value()), 0, true);
+    }
+    if (m.avg_snore.has_value()) {
+        mqtt_client_->publish("cpap/" + device_id_ + "/historical/avg_snore",
+                             std::to_string(m.avg_snore.value()), 0, true);
+    }
+    if (m.leak_p50.has_value()) {
+        mqtt_client_->publish("cpap/" + device_id_ + "/historical/leak_p50",
+                             std::to_string(m.leak_p50.value()), 0, true);
+    }
+    // ASV-specific
+    if (m.avg_target_ventilation.has_value()) {
+        mqtt_client_->publish("cpap/" + device_id_ + "/historical/avg_target_ventilation",
+                             std::to_string(m.avg_target_ventilation.value()), 0, true);
+    }
+    if (m.therapy_mode.has_value()) {
+        mqtt_client_->publish("cpap/" + device_id_ + "/historical/therapy_mode",
+                             std::to_string(m.therapy_mode.value()), 0, true);
     }
 
     // SPO2

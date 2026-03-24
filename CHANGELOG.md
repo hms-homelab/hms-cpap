@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-03-24
+
+### Added
+- **PLD file parsing**: Machine's own 2-second summaries now parsed for all
+  users. Extracts mask pressure, EPR/EPAP pressure, leak rate, respiratory
+  rate, tidal volume, minute ventilation, snore index, and flow limitation.
+  PLD values overwrite BRP-derived estimates (machine calculations are
+  authoritative).
+- **SA2 file support**: ResMed ASV and newer devices use `_SA2.edf` instead
+  of `_SAD.edf` for oximetry data. Both recognized via `isOximetryFile()`.
+- **ASV device support**: Full support for ResMed AirCurve ASV (Mode=7/8).
+  Extracts ASV settings from STR.edf (S.AV.EPAP, pressure support min/max,
+  S.AA.* for ASVAuto) and target percentiles (TgtIPAP, TgtEPAP, TgtVent).
+- **ASV target ventilation**: PLD `TgtVent.2s` channel parsed on ASV devices,
+  published via MQTT. NULL on CPAP/APAP devices.
+- **New MQTT sensors** (57 total, up from 48): `current_mask_pressure`,
+  `current_snore`, `current_target_ventilation` (realtime); `avg_mask_pressure`,
+  `avg_epr_pressure`, `avg_snore`, `leak_p50`, `avg_target_ventilation`,
+  `therapy_mode` (historical).
+- **LLM summary enriched**: AI summary now includes mask pressure, EPR, snore,
+  leak percentiles, and ASV-specific data (target ventilation, pressure support).
+- **DB schema v2.0.0**: Auto-migration adds PLD/ASV columns to session_metrics
+  and calculated_metrics tables.
+- **37 new tests** (210 total): PLD parser, SA2 parser, ASV STR parser,
+  ASV integration E2E, session discovery SA2.
+- **Test fixtures**: Real ASV data from community contributor.
+
 ## [1.9.0] - 2026-03-18
 
 ### Added

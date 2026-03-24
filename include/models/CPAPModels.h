@@ -75,6 +75,12 @@ struct BreathingSummary {
     std::optional<double> flow_limitation;       // Flow limitation score 0-1
     std::optional<double> leak_rate;             // Unintentional leak L/min
 
+    // PLD-derived metrics (machine's own calculations)
+    std::optional<double> mask_pressure;       // cmH2O (PLD MaskPress.2s)
+    std::optional<double> epr_pressure;        // cmH2O (PLD EprPress.2s)
+    std::optional<double> snore_index;         // 0-5 (PLD Snore.2s)
+    std::optional<double> target_ventilation;  // L/min (PLD TgtVent.2s, ASV only)
+
     // Percentile statistics
     std::optional<double> flow_p95;              // 95th percentile flow
     std::optional<double> pressure_p95;          // 95th percentile pressure
@@ -117,6 +123,7 @@ struct SessionMetrics {
     std::optional<double> avg_leak_rate;          // L/min
     std::optional<double> max_leak_rate;          // L/min
     std::optional<double> leak_p95;               // 95th percentile L/min
+    std::optional<double> leak_p50;                // Median L/min
 
     // ===== FLOW METRICS =====
     std::optional<double> avg_flow_rate;          // L/min
@@ -131,6 +138,14 @@ struct SessionMetrics {
     std::optional<double> avg_expiratory_time;    // Te seconds
     std::optional<double> avg_ie_ratio;           // I:E ratio
     std::optional<double> avg_flow_limitation;    // 0-1 score
+
+    // ===== PLD-DERIVED METRICS =====
+    std::optional<double> avg_mask_pressure;       // cmH2O
+    std::optional<double> avg_epr_pressure;        // cmH2O
+    std::optional<double> avg_snore;               // 0-5 average
+    // ASV-specific (NULL for CPAP/APAP)
+    std::optional<double> avg_target_ventilation;  // L/min
+    std::optional<int> therapy_mode;               // 0=CPAP, 1=APAP, 7=ASV, 8=ASVAuto
 
     // ===== SPO2 METRICS =====
     std::optional<double> avg_spo2;               // %
@@ -304,6 +319,27 @@ struct STRDailyRecord {
 
     // Faults
     int fault_device = 0, fault_alarm = 0;
+
+    // ===== ASV SETTINGS (Mode=7: ASV Fixed EPAP, Mode=8: ASV Variable EPAP) =====
+    std::optional<double> asv_start_press;   // S.AV.StartPress (cmH2O)
+    std::optional<double> asv_epap;          // S.AV.EPAP (cmH2O)
+    std::optional<double> asv_max_ps;        // S.AV.MaxPS (cmH2O, max pressure support)
+    std::optional<double> asv_min_ps;        // S.AV.MinPS (cmH2O, min pressure support)
+
+    // ASVAuto settings (Mode=8 only)
+    std::optional<double> asvauto_min_epap;  // S.AA.MinEPAP (cmH2O)
+    std::optional<double> asvauto_max_epap;  // S.AA.MaxEPAP (cmH2O)
+
+    // ===== TARGET PERCENTILES (ASV daily targets) =====
+    std::optional<double> tgt_ipap_50;       // TgtIPAP.50 (cmH2O)
+    std::optional<double> tgt_ipap_95;       // TgtIPAP.95 (cmH2O)
+    std::optional<double> tgt_ipap_max;      // TgtIPAP.Max (cmH2O)
+    std::optional<double> tgt_epap_50;       // TgtEPAP.50 (cmH2O)
+    std::optional<double> tgt_epap_95;       // TgtEPAP.95 (cmH2O)
+    std::optional<double> tgt_epap_max;      // TgtEPAP.Max (cmH2O)
+    std::optional<double> tgt_vent_50;       // TgtVent.50 (L/min)
+    std::optional<double> tgt_vent_95;       // TgtVent.95 (L/min)
+    std::optional<double> tgt_vent_max;      // TgtVent.Max (L/min)
 
     bool hasTherapy() const { return duration_minutes > 0; }
 };

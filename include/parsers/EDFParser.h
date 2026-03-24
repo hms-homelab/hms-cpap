@@ -128,6 +128,7 @@ private:
     static bool parseBRPFile(const std::string& filepath, CPAPSession& session);
     static bool parseEVEFile(const std::string& filepath, CPAPSession& session);
     static bool parseSADFile(const std::string& filepath, CPAPSession& session);
+    static bool parsePLDFile(const std::string& filepath, CPAPSession& session);
 
     // Flow-based session boundary detection
     static void detectFlowBasedSessionBoundaries(

@@ -103,6 +103,7 @@ void CPAPSession::calculateMetrics() {
     if (!breathing_summary.empty()) {
         std::vector<double> pressure_vals, leak_vals, flow_vals;
         std::vector<double> rr_vals, tv_vals, mv_vals, ti_vals, te_vals, ie_vals, fl_vals;
+        std::vector<double> mask_press_vals, epr_press_vals, snore_vals, tgt_vent_vals;
 
         for (const auto& breath : breathing_summary) {
             // Pressure
@@ -138,6 +139,18 @@ void CPAPSession::calculateMetrics() {
             if (breath.flow_limitation.has_value()) {
                 fl_vals.push_back(breath.flow_limitation.value());
             }
+            if (breath.mask_pressure.has_value()) {
+                mask_press_vals.push_back(breath.mask_pressure.value());
+            }
+            if (breath.epr_pressure.has_value()) {
+                epr_press_vals.push_back(breath.epr_pressure.value());
+            }
+            if (breath.snore_index.has_value()) {
+                snore_vals.push_back(breath.snore_index.value());
+            }
+            if (breath.target_ventilation.has_value()) {
+                tgt_vent_vals.push_back(breath.target_ventilation.value());
+            }
         }
 
         // Pressure statistics
@@ -156,6 +169,7 @@ void CPAPSession::calculateMetrics() {
             metrics->avg_leak_rate = sum / leak_vals.size();
             metrics->max_leak_rate = *std::max_element(leak_vals.begin(), leak_vals.end());
             metrics->leak_p95 = calculatePercentile(leak_vals, 95.0);
+            metrics->leak_p50 = calculatePercentile(leak_vals, 50.0);
         }
 
         // Flow statistics
@@ -206,6 +220,30 @@ void CPAPSession::calculateMetrics() {
         if (!fl_vals.empty()) {
             double sum = std::accumulate(fl_vals.begin(), fl_vals.end(), 0.0);
             metrics->avg_flow_limitation = sum / fl_vals.size();
+        }
+
+        // Mask pressure (PLD)
+        if (!mask_press_vals.empty()) {
+            double sum = std::accumulate(mask_press_vals.begin(), mask_press_vals.end(), 0.0);
+            metrics->avg_mask_pressure = sum / mask_press_vals.size();
+        }
+
+        // EPR pressure (PLD)
+        if (!epr_press_vals.empty()) {
+            double sum = std::accumulate(epr_press_vals.begin(), epr_press_vals.end(), 0.0);
+            metrics->avg_epr_pressure = sum / epr_press_vals.size();
+        }
+
+        // Snore index (PLD)
+        if (!snore_vals.empty()) {
+            double sum = std::accumulate(snore_vals.begin(), snore_vals.end(), 0.0);
+            metrics->avg_snore = sum / snore_vals.size();
+        }
+
+        // Target ventilation (PLD, ASV only)
+        if (!tgt_vent_vals.empty()) {
+            double sum = std::accumulate(tgt_vent_vals.begin(), tgt_vent_vals.end(), 0.0);
+            metrics->avg_target_ventilation = sum / tgt_vent_vals.size();
         }
     }
 

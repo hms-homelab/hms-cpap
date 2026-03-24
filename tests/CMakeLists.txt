@@ -20,6 +20,9 @@ list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*main\\.cpp$")
 set(TEST_SOURCES
     parsers/test_EDFParser.cpp
     parsers/test_STRParser.cpp
+    parsers/test_PLDParser.cpp
+    parsers/test_SA2Parser.cpp
+    parsers/test_STRParser_ASV.cpp
     database/test_DatabaseService.cpp
     services/test_BurstCollectorService.cpp
     services/test_DataPublisherService.cpp
@@ -29,6 +32,7 @@ set(TEST_SOURCES
     clients/test_EzShareClient.cpp
     mqtt/test_MqttClient.cpp
     integration/test_STRIntegration.cpp
+    integration/test_ASVIntegration.cpp
     agent/test_AgentTools.cpp
     agent/test_AgentMemory.cpp
     agent/test_AgentService.cpp

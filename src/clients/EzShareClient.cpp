@@ -386,7 +386,7 @@ bool EzShareClient::downloadSession(const std::string& date_folder,
 
     // Filter for EDF files (BRP, EVE, SAD, PLD, CSL)
     std::vector<std::string> edf_suffixes = {"_BRP.edf", "_EVE.edf", "_SAD.edf",
-                                              "_PLD.edf", "_CSL.edf"};
+                                              "_SA2.edf", "_PLD.edf", "_CSL.edf"};
     std::vector<std::string> edf_files;
 
     for (const auto& f : files) {

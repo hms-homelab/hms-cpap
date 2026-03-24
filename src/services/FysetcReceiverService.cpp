@@ -666,7 +666,30 @@ std::string FysetcReceiverService::buildMetricsString(const SessionMetrics& metr
         oss << "Leak:";
         if (metrics.avg_leak_rate.has_value()) oss << " avg=" << metrics.avg_leak_rate.value() << " L/min";
         if (metrics.max_leak_rate.has_value()) oss << ", max=" << metrics.max_leak_rate.value() << " L/min";
+        if (metrics.leak_p95.has_value()) oss << ", 95th=" << metrics.leak_p95.value() << " L/min";
+        if (metrics.leak_p50.has_value()) oss << ", median=" << metrics.leak_p50.value() << " L/min";
         oss << "\n";
+    }
+
+    // PLD-derived metrics (machine's own calculations)
+    if (metrics.avg_mask_pressure.has_value())
+        oss << "Mask pressure (actual): " << metrics.avg_mask_pressure.value() << " cmH2O\n";
+    if (metrics.avg_epr_pressure.has_value())
+        oss << "EPR/EPAP pressure: " << metrics.avg_epr_pressure.value() << " cmH2O\n";
+    if (metrics.avg_snore.has_value())
+        oss << "Snore index: " << metrics.avg_snore.value() << " (0-5 scale)\n";
+
+    // ASV-specific metrics
+    if (metrics.avg_target_ventilation.has_value() && metrics.avg_target_ventilation.value() > 0)
+        oss << "Target ventilation (ASV): " << metrics.avg_target_ventilation.value() << " L/min\n";
+    if (metrics.therapy_mode.has_value()) {
+        int mode = metrics.therapy_mode.value();
+        std::string mode_name = "Unknown";
+        if (mode == 0) mode_name = "CPAP";
+        else if (mode == 1) mode_name = "APAP";
+        else if (mode == 7) mode_name = "ASV (Fixed EPAP)";
+        else if (mode == 8) mode_name = "ASV (Variable EPAP)";
+        oss << "Therapy mode: " << mode_name << "\n";
     }
 
     if (metrics.avg_respiratory_rate.has_value())
@@ -684,6 +707,16 @@ std::string FysetcReceiverService::buildMetricsString(const SessionMetrics& metr
         oss << "  Mask events: " << (str_record->mask_events / 2) << " (on/off pairs)\n";
         oss << "  95th leak: " << str_record->leak_95 << " L/min\n";
         oss << "  95th pressure: " << str_record->mask_press_95 << " cmH2O\n";
+        if (str_record->asv_epap.has_value()) {
+            oss << "  ASV EPAP: " << str_record->asv_epap.value() << " cmH2O\n";
+            oss << "  ASV Pressure Support: " << str_record->asv_min_ps.value_or(0) << "-"
+                << str_record->asv_max_ps.value_or(0) << " cmH2O\n";
+        }
+        if (str_record->tgt_ipap_50.has_value()) {
+            oss << "  Target IPAP (median): " << str_record->tgt_ipap_50.value() << " cmH2O\n";
+            oss << "  Target EPAP (median): " << str_record->tgt_epap_50.value_or(0) << " cmH2O\n";
+            oss << "  Target ventilation (median): " << str_record->tgt_vent_50.value_or(0) << " L/min\n";
+        }
     }
 
     return oss.str();

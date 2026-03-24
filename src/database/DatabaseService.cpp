@@ -31,6 +31,31 @@ bool DatabaseService::connect() {
                 // Column may already exist or table not yet created — ignore
             }
 
+            // Auto-migrate v2.0.0: PLD and ASV support
+            try {
+                pqxx::work txn(*conn_);
+                // PLD-derived columns on cpap_session_metrics
+                txn.exec("ALTER TABLE cpap_session_metrics ADD COLUMN IF NOT EXISTS avg_mask_pressure FLOAT");
+                txn.exec("ALTER TABLE cpap_session_metrics ADD COLUMN IF NOT EXISTS avg_epr_pressure FLOAT");
+                txn.exec("ALTER TABLE cpap_session_metrics ADD COLUMN IF NOT EXISTS avg_snore FLOAT");
+                txn.exec("ALTER TABLE cpap_session_metrics ADD COLUMN IF NOT EXISTS leak_p50 FLOAT");
+                txn.exec("ALTER TABLE cpap_session_metrics ADD COLUMN IF NOT EXISTS leak_p95 FLOAT");
+                txn.exec("ALTER TABLE cpap_session_metrics ADD COLUMN IF NOT EXISTS avg_leak_rate FLOAT");
+                txn.exec("ALTER TABLE cpap_session_metrics ADD COLUMN IF NOT EXISTS max_leak_rate FLOAT");
+                // ASV-specific
+                txn.exec("ALTER TABLE cpap_session_metrics ADD COLUMN IF NOT EXISTS avg_target_ventilation FLOAT");
+                txn.exec("ALTER TABLE cpap_session_metrics ADD COLUMN IF NOT EXISTS therapy_mode INT");
+                // PLD columns on cpap_calculated_metrics (per-minute)
+                txn.exec("ALTER TABLE cpap_calculated_metrics ADD COLUMN IF NOT EXISTS mask_pressure FLOAT");
+                txn.exec("ALTER TABLE cpap_calculated_metrics ADD COLUMN IF NOT EXISTS epr_pressure FLOAT");
+                txn.exec("ALTER TABLE cpap_calculated_metrics ADD COLUMN IF NOT EXISTS snore_index FLOAT");
+                txn.exec("ALTER TABLE cpap_calculated_metrics ADD COLUMN IF NOT EXISTS target_ventilation FLOAT");
+                txn.commit();
+                std::cout << "  DB: v2.0.0 migration (PLD/ASV columns) applied" << std::endl;
+            } catch (...) {
+                // Tables may not exist yet — ignore
+            }
+
             return true;
         }
     } catch (const std::exception& e) {
@@ -238,8 +263,11 @@ void DatabaseService::insertSessionMetrics(pqxx::work& work, int session_id,
     std::string query = R"(
         INSERT INTO cpap_session_metrics
         (session_id, total_events, ahi, obstructive_apneas, central_apneas, hypopneas, reras, clear_airway_apneas,
-         avg_spo2, min_spo2, avg_heart_rate, max_heart_rate, min_heart_rate)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+         avg_spo2, min_spo2, avg_heart_rate, max_heart_rate, min_heart_rate,
+         avg_mask_pressure, avg_epr_pressure, avg_snore, leak_p50, leak_p95, avg_leak_rate, max_leak_rate,
+         avg_target_ventilation, therapy_mode)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
+                $14, $15, $16, $17, $18, $19, $20, $21, $22)
         ON CONFLICT (session_id) DO UPDATE
         SET total_events = EXCLUDED.total_events,
             ahi = EXCLUDED.ahi,
@@ -252,8 +280,21 @@ void DatabaseService::insertSessionMetrics(pqxx::work& work, int session_id,
             min_spo2 = EXCLUDED.min_spo2,
             avg_heart_rate = EXCLUDED.avg_heart_rate,
             max_heart_rate = EXCLUDED.max_heart_rate,
-            min_heart_rate = EXCLUDED.min_heart_rate
+            min_heart_rate = EXCLUDED.min_heart_rate,
+            avg_mask_pressure = EXCLUDED.avg_mask_pressure,
+            avg_epr_pressure = EXCLUDED.avg_epr_pressure,
+            avg_snore = EXCLUDED.avg_snore,
+            leak_p50 = EXCLUDED.leak_p50,
+            leak_p95 = EXCLUDED.leak_p95,
+            avg_leak_rate = EXCLUDED.avg_leak_rate,
+            max_leak_rate = EXCLUDED.max_leak_rate,
+            avg_target_ventilation = EXCLUDED.avg_target_ventilation,
+            therapy_mode = EXCLUDED.therapy_mode
     )";
+
+    // Helper for optional<double> -> NULL or value
+    auto opt_dbl = [](const std::optional<double>& v) -> std::optional<double> { return v; };
+    auto opt_int = [](const std::optional<int>& v) -> std::optional<int> { return v; };
 
     work.exec_params(query,
         session_id,
@@ -268,7 +309,16 @@ void DatabaseService::insertSessionMetrics(pqxx::work& work, int session_id,
         metrics.min_spo2.value_or(0),
         metrics.avg_heart_rate.value_or(0),
         metrics.max_heart_rate.value_or(0),
-        metrics.min_heart_rate.value_or(0)
+        metrics.min_heart_rate.value_or(0),
+        metrics.avg_mask_pressure.value_or(0),
+        metrics.avg_epr_pressure.value_or(0),
+        metrics.avg_snore.value_or(0),
+        metrics.leak_p50.value_or(0),
+        metrics.leak_p95.value_or(0),
+        metrics.avg_leak_rate.value_or(0),
+        metrics.max_leak_rate.value_or(0),
+        metrics.avg_target_ventilation.value_or(0),
+        metrics.therapy_mode.value_or(0)
     );
 }
 
@@ -276,11 +326,13 @@ void DatabaseService::insertCalculatedMetrics(pqxx::work& work, int session_id,
                                                 const std::vector<BreathingSummary>& summaries) {
     if (summaries.empty()) return;
 
-    // Only insert summaries that have calculated metrics
+    // Only insert summaries that have calculated metrics (BRP or PLD derived)
     std::vector<const BreathingSummary*> with_metrics;
     for (const auto& s : summaries) {
         if (s.respiratory_rate.has_value() || s.tidal_volume.has_value() ||
-            s.minute_ventilation.has_value() || s.flow_limitation.has_value()) {
+            s.minute_ventilation.has_value() || s.flow_limitation.has_value() ||
+            s.mask_pressure.has_value() || s.snore_index.has_value() ||
+            s.target_ventilation.has_value()) {
             with_metrics.push_back(&s);
         }
     }
@@ -292,7 +344,8 @@ void DatabaseService::insertCalculatedMetrics(pqxx::work& work, int session_id,
     query << "INSERT INTO cpap_calculated_metrics "
           << "(session_id, timestamp, respiratory_rate, tidal_volume, minute_ventilation, "
           << "inspiratory_time, expiratory_time, ie_ratio, flow_limitation, leak_rate, "
-          << "flow_p95, flow_p90, pressure_p95, pressure_p90) VALUES ";
+          << "flow_p95, flow_p90, pressure_p95, pressure_p90, "
+          << "mask_pressure, epr_pressure, snore_index, target_ventilation) VALUES ";
 
     for (size_t i = 0; i < with_metrics.size(); ++i) {
         const auto& s = *with_metrics[i];
@@ -388,7 +441,38 @@ void DatabaseService::insertCalculatedMetrics(pqxx::work& work, int session_id,
         query << ", ";
 
         // Pressure P90 (not currently calculated, placeholder)
-        query << "NULL";
+        query << "NULL, ";
+
+        // PLD-derived: mask_pressure
+        if (s.mask_pressure.has_value()) {
+            query << s.mask_pressure.value();
+        } else {
+            query << "NULL";
+        }
+        query << ", ";
+
+        // PLD-derived: epr_pressure
+        if (s.epr_pressure.has_value()) {
+            query << s.epr_pressure.value();
+        } else {
+            query << "NULL";
+        }
+        query << ", ";
+
+        // PLD-derived: snore_index
+        if (s.snore_index.has_value()) {
+            query << s.snore_index.value();
+        } else {
+            query << "NULL";
+        }
+        query << ", ";
+
+        // PLD-derived: target_ventilation (ASV only)
+        if (s.target_ventilation.has_value()) {
+            query << s.target_ventilation.value();
+        } else {
+            query << "NULL";
+        }
 
         query << ")";
 
@@ -981,9 +1065,16 @@ std::optional<SessionMetrics> DatabaseService::getNightlyMetrics(
                 AVG(c.avg_et)    AS avg_et,    AVG(c.avg_ie)   AS avg_ie,
                 AVG(c.avg_fl)    AS avg_fl,    AVG(c.fp95)     AS fp95,
                 AVG(c.pp95)      AS pp95,
+                AVG(c.avg_mask_press) AS avg_mask_pressure,
+                AVG(c.avg_epr_press)  AS avg_epr_pressure,
+                AVG(c.avg_snore_idx)  AS avg_snore,
+                AVG(c.avg_tgt_vent)   AS avg_target_ventilation,
                 AVG(b.avg_press) AS avg_pressure,
                 MAX(b.max_press) AS max_pressure,
-                MIN(b.min_press) AS min_pressure
+                MIN(b.min_press) AS min_pressure,
+                MAX(sm.leak_p50) AS leak_p50,
+                MAX(sm.leak_p95) AS leak_p95_sess,
+                MAX(sm.therapy_mode) AS therapy_mode
             FROM cpap_sessions s
             JOIN cpap_session_metrics sm ON sm.session_id = s.id
             LEFT JOIN (
@@ -993,7 +1084,11 @@ std::optional<SessionMetrics> DatabaseService::getNightlyMetrics(
                        AVG(minute_ventilation) AS avg_mv, AVG(inspiratory_time) AS avg_it,
                        AVG(expiratory_time) AS avg_et, AVG(ie_ratio) AS avg_ie,
                        AVG(flow_limitation) AS avg_fl, AVG(flow_p95) AS fp95,
-                       AVG(pressure_p95) AS pp95
+                       AVG(pressure_p95) AS pp95,
+                       AVG(mask_pressure) AS avg_mask_press,
+                       AVG(epr_pressure) AS avg_epr_press,
+                       AVG(snore_index) AS avg_snore_idx,
+                       AVG(target_ventilation) AS avg_tgt_vent
                 FROM cpap_calculated_metrics GROUP BY session_id
             ) c ON c.session_id = sm.session_id
             LEFT JOIN (
@@ -1062,6 +1157,21 @@ std::optional<SessionMetrics> DatabaseService::getNightlyMetrics(
             m.max_pressure = row["max_pressure"].as<double>();
         if (!row["min_pressure"].is_null())
             m.min_pressure = row["min_pressure"].as<double>();
+        // PLD-derived
+        if (!row["avg_mask_pressure"].is_null())
+            m.avg_mask_pressure = row["avg_mask_pressure"].as<double>();
+        if (!row["avg_epr_pressure"].is_null())
+            m.avg_epr_pressure = row["avg_epr_pressure"].as<double>();
+        if (!row["avg_snore"].is_null())
+            m.avg_snore = row["avg_snore"].as<double>();
+        if (!row["avg_target_ventilation"].is_null() && row["avg_target_ventilation"].as<double>(0) > 0)
+            m.avg_target_ventilation = row["avg_target_ventilation"].as<double>();
+        if (!row["leak_p50"].is_null())
+            m.leak_p50 = row["leak_p50"].as<double>();
+        if (!row["leak_p95_sess"].is_null())
+            m.leak_p95 = row["leak_p95_sess"].as<double>();
+        if (!row["therapy_mode"].is_null())
+            m.therapy_mode = row["therapy_mode"].as<int>();
 
         return m;
 
