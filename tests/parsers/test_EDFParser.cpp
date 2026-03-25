@@ -307,15 +307,13 @@ TEST_F(EDFParserTest, EDFParser_IncompleteFile) {
 // SESSION STATUS STALENESS TESTS
 // ============================================================================
 
-TEST_F(EDFParserTest, SessionStatus_StaleDataMarkedCompleted) {
-    // Bug fix test: Session with data older than 30 minutes
-    // should be marked COMPLETED even if flow-based detection
-    // didn't find a clean end boundary (file stopped growing)
+TEST_F(EDFParserTest, SessionStatus_ParserAlwaysInProgress) {
+    // Parser always returns IN_PROGRESS. Session completion is
+    // determined by the burst cycle (checkpoint files stop growing).
 
-    std::string session_dir = (test_dir / "stale_session").string();
+    std::string session_dir = (test_dir / "status_session").string();
     std::filesystem::create_directories(session_dir);
 
-    // Create session from 2 hours ago (well past 30 min staleness threshold)
     auto two_hours_ago = system_clock::now() - hours(2);
     auto time_t_val = system_clock::to_time_t(two_hours_ago);
     std::tm* tm = std::localtime(&time_t_val);
@@ -323,22 +321,19 @@ TEST_F(EDFParserTest, SessionStatus_StaleDataMarkedCompleted) {
     char timestamp_str[16];
     std::strftime(timestamp_str, sizeof(timestamp_str), "%Y%m%d_%H%M%S", tm);
 
-    // Create BRP file with old timestamp (6 minutes of data)
     std::string brp_filename = std::string(timestamp_str) + "_BRP.edf";
     createMinimalEDFHeader(session_dir + "/" + brp_filename, timestamp_str, "BRP", 360);
 
-    // Create CSL file
     std::string csl_filename = std::string(timestamp_str) + "_CSL.edf";
     createMinimalEDFHeader(session_dir + "/" + csl_filename, timestamp_str, "CSL", 60);
 
     auto session = EDFParser::parseSession(session_dir, "TEST-DEVICE", "Test Device");
 
-    ASSERT_NE(session, nullptr) << "Parser should handle stale session";
-    // Staleness check: data is >30 min old, should be COMPLETED
-    EXPECT_EQ(session->status, CPAPSession::Status::COMPLETED)
-        << "Session with data >30 min old should be marked COMPLETED";
+    ASSERT_NE(session, nullptr);
+    EXPECT_EQ(session->status, CPAPSession::Status::IN_PROGRESS)
+        << "Parser should always return IN_PROGRESS";
     EXPECT_TRUE(session->session_end.has_value())
-        << "Completed session should have session_end set";
+        << "session_end should still be set from EDF data";
 }
 
 TEST_F(EDFParserTest, SessionStatus_RecentDataMarkedInProgress) {

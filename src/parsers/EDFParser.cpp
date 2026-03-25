@@ -1284,15 +1284,8 @@ std::unique_ptr<CPAPSession> EDFParser::parseSession(
         session->has_summary = false;
     }
 
-    // Set session status based on flow-based detection
-    // If session_end is set, session is completed; if nullopt, still in progress
-    if (session->session_end.has_value()) {
-        session->status = CPAPSession::Status::COMPLETED;
-        std::cout << "Parser: Session status = COMPLETED (session ended)" << std::endl;
-    } else {
-        session->status = CPAPSession::Status::IN_PROGRESS;
-        std::cout << "Parser: Session status = IN_PROGRESS (session active)" << std::endl;
-    }
+    // Session status defaults to IN_PROGRESS.
+    // Completion is determined by the burst cycle when checkpoint files stop growing.
 
     // Calculate aggregated metrics
     session->calculateMetrics();

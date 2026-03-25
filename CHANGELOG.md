@@ -26,8 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   session completion is the burst cycle's responsibility.
 
 ### Changed
-- Parser no longer sets `CPAPSession::Status::IN_PROGRESS`. Session status
-  is determined by the burst cycle (file growth detection), not the parser.
+- Parser no longer sets session status (always defaults to IN_PROGRESS).
+  Session completion is determined by the burst cycle (checkpoint file sizes
+  stop changing), not the parser. EVE file is not reliable for this since
+  it gets updated during the session.
 - `session_end` is always calculated as last BRP's EDF header start time +
   (actual_records * record_duration), giving correct results for both single
   and multi-BRP sessions.
