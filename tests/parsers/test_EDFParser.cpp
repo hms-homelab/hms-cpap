@@ -631,11 +631,10 @@ TEST_F(EDFParserTest, ExtraRecords_ZeroWhenTruncated) {
     EXPECT_FALSE(edf.complete) << "Truncated file is not complete";
 }
 
-TEST_F(EDFParserTest, GrowingFlag_SessionStopDetection) {
-    // Verify that growing=false triggers session stop detection logic
-    // while growing=true keeps session as IN_PROGRESS
+TEST_F(EDFParserTest, GrowingFlag_SessionEndFromEDFData) {
+    // Parser always calculates session_end from EDF data (start + records * duration).
+    // Session completion is determined by the burst cycle, not the parser.
 
-    // First test: growing file should be IN_PROGRESS
     std::string session_dir1 = (test_dir / "growing_session_test").string();
     std::filesystem::create_directories(session_dir1);
 
@@ -650,8 +649,8 @@ TEST_F(EDFParserTest, GrowingFlag_SessionStopDetection) {
         memcpy(header + 176, "14.01.31", 8);
         memcpy(header + 184, "512     ", 8);
         memcpy(header + 192, "EDF+C   ", 8);
-        memcpy(header + 236, "1       ", 8);  // Header says 1
-        memcpy(header + 244, "1       ", 8);
+        memcpy(header + 236, "1       ", 8);  // Header says 1 (growing file)
+        memcpy(header + 244, "60      ", 8);  // 60 seconds per record
         memcpy(header + 252, "1   ", 4);
         ofs.write(header, 256);
 
@@ -665,7 +664,7 @@ TEST_F(EDFParserTest, GrowingFlag_SessionStopDetection) {
         memcpy(signal_header + 216, "25      ", 8);
         ofs.write(signal_header, 256);
 
-        // Write 60 records (growing)
+        // Write 60 records (60 minutes of data, more than header declares)
         for (int rec = 0; rec < 60; ++rec) {
             for (int samp = 0; samp < 25; ++samp) {
                 int16_t value = static_cast<int16_t>(sin(samp * 0.5) * 10000);
@@ -678,69 +677,12 @@ TEST_F(EDFParserTest, GrowingFlag_SessionStopDetection) {
 
     auto session1 = EDFParser::parseSession(session_dir1, "TEST-DEVICE", "Test Device");
     ASSERT_NE(session1, nullptr);
-    EXPECT_EQ(session1->status, CPAPSession::Status::IN_PROGRESS)
-        << "Growing file should result in IN_PROGRESS session";
-
-    // Second test: complete file with old data should be COMPLETED
-    std::string session_dir2 = (test_dir / "complete_session_test").string();
-    std::filesystem::create_directories(session_dir2);
-
-    // Create session from 2 hours ago
-    auto two_hours_ago = system_clock::now() - hours(2);
-    auto time_t_val = system_clock::to_time_t(two_hours_ago);
-    std::tm* tm = std::localtime(&time_t_val);
-    char timestamp_str[16];
-    std::strftime(timestamp_str, sizeof(timestamp_str), "%Y%m%d_%H%M%S", tm);
-
-    std::string filepath2 = session_dir2 + "/" + std::string(timestamp_str) + "_BRP.edf";
-    {
-        std::ofstream ofs(filepath2, std::ios::binary);
-        char header[256] = {0};
-        memcpy(header, "0       ", 8);
-        memcpy(header + 8, "X X X X", 7);
-        memcpy(header + 88, "Startdate 06-FEB-2026 PSG-CPAP-Device Sn 20123456789", 50);
-
-        // Parse date/time for header
-        std::string date = std::string(timestamp_str).substr(6, 2) + "." +
-                          std::string(timestamp_str).substr(4, 2) + "." +
-                          std::string(timestamp_str).substr(2, 2);
-        std::string time = std::string(timestamp_str).substr(9, 2) + "." +
-                          std::string(timestamp_str).substr(11, 2) + "." +
-                          std::string(timestamp_str).substr(13, 2);
-        memcpy(header + 168, date.c_str(), 8);
-        memcpy(header + 176, time.c_str(), 8);
-        memcpy(header + 184, "512     ", 8);
-        memcpy(header + 192, "EDF+C   ", 8);
-        memcpy(header + 236, "60      ", 8);  // Header says 60 (matches actual)
-        memcpy(header + 244, "1       ", 8);
-        memcpy(header + 252, "1   ", 4);
-        ofs.write(header, 256);
-
-        char signal_header[256] = {0};
-        memcpy(signal_header, "Flow            ", 16);
-        memcpy(signal_header + 96, "L/min   ", 8);
-        memcpy(signal_header + 104, "-100    ", 8);
-        memcpy(signal_header + 112, "100     ", 8);
-        memcpy(signal_header + 120, "-32768  ", 8);
-        memcpy(signal_header + 128, "32767   ", 8);
-        memcpy(signal_header + 216, "25      ", 8);
-        ofs.write(signal_header, 256);
-
-        // Write exactly 60 records (complete file)
-        for (int rec = 0; rec < 60; ++rec) {
-            for (int samp = 0; samp < 25; ++samp) {
-                int16_t value = static_cast<int16_t>(sin(samp * 0.5) * 10000);
-                ofs.write(reinterpret_cast<char*>(&value), 2);
-            }
-        }
-    }
-
-    createMinimalEDFHeader(session_dir2 + "/" + std::string(timestamp_str) + "_CSL.edf", timestamp_str, "CSL");
-
-    auto session2 = EDFParser::parseSession(session_dir2, "TEST-DEVICE", "Test Device");
-    ASSERT_NE(session2, nullptr);
-    EXPECT_EQ(session2->status, CPAPSession::Status::COMPLETED)
-        << "Complete file with old data should be COMPLETED";
+    // session_end should be set from EDF data regardless of growing state
+    EXPECT_TRUE(session1->session_end.has_value())
+        << "Parser should always set session_end from EDF data";
+    EXPECT_TRUE(session1->duration_seconds.has_value());
+    EXPECT_EQ(session1->duration_seconds.value(), 3600)
+        << "60 records * 60s = 3600s";
 }
 
 TEST_F(EDFParserTest, EDFFile_HeaderMinusOne_MarkedIncomplete) {
@@ -1019,9 +961,10 @@ TEST_F(EDFParserTest, SessionStatus_GrowingFileMarkedInProgress) {
 
     ASSERT_NE(session, nullptr) << "Parser should handle growing file";
 
-    // Key assertion: session should be IN_PROGRESS because file has more data than header
-    EXPECT_EQ(session->status, CPAPSession::Status::IN_PROGRESS)
-        << "Session with actual_records > header should be IN_PROGRESS";
+    // Parser sets session_end from EDF data, not IN_PROGRESS status.
+    // Completion is determined by the burst cycle (file growth stopped).
+    EXPECT_TRUE(session->session_end.has_value())
+        << "Parser should always set session_end from EDF data";
 
     // Verify we parsed all the data (2 minutes worth)
     EXPECT_GE(session->breathing_summary.size(), 2)
