@@ -102,6 +102,7 @@ BurstCollectorService::BurstCollectorService(int burst_interval_seconds)
         llm_config.endpoint = ConfigManager::get("LLM_ENDPOINT", "http://192.168.2.5:11434");
         llm_config.model = ConfigManager::get("LLM_MODEL", "llama3.1:8b-instruct-q4_K_M");
         llm_config.api_key = ConfigManager::get("LLM_API_KEY", "");
+        llm_config.max_tokens = ConfigManager::getInt("LLM_MAX_TOKENS", 1024);
         llm_config.keep_alive_seconds = ConfigManager::getInt("LLM_KEEP_ALIVE", 0);
 
         llm_client_ = std::make_unique<hms::LLMClient>(llm_config);
