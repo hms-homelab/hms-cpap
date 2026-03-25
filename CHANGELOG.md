@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-03-25
+
+### Fixed
+- **Multi-BRP session_start override bug**: Flow detection in `parseBRPFile`
+  unconditionally overwrote `session_start` on each checkpoint. For multi-BRP
+  sessions parsed after-the-fact (both files present), the second BRP's EDF
+  start time replaced the first, causing a timestamp mismatch with discovery
+  (which uses the first BRP's filename). This made `sessionExists()` fail on
+  every cycle, triggering an infinite re-download/re-parse/re-publish loop.
+  Fix: removed flow-based session boundary overrides entirely. Session
+  timestamps now come from the filename (session_start) and EDF data
+  (session_end = last BRP's start + data duration). Session completion is
+  determined by the burst cycle's checkpoint size comparison, not the parser.
+- **session_end NULL for archived sessions**: The parser's IN_PROGRESS/staleness
+  logic (`records=-1` in EDF header) was nullifying `session_end` after it was
+  correctly calculated from EDF data. Removed staleness check from parser —
+  session completion is the burst cycle's responsibility.
+
+### Changed
+- Parser no longer sets `CPAPSession::Status::IN_PROGRESS`. Session status
+  is determined by the burst cycle (file growth detection), not the parser.
+- `session_end` is always calculated as last BRP's EDF header start time +
+  (actual_records * record_duration), giving correct results for both single
+  and multi-BRP sessions.
+
 ## [2.0.0] - 2026-03-24
 
 ### Added

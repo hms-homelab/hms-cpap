@@ -405,9 +405,14 @@ bool EDFParser::parseBRPFile(const std::string& filepath, CPAPSession& session) 
         std::cout << "Parser: Using EDF header timestamp (no filename timestamp provided)" << std::endl;
     }
 
-    session.duration_seconds = static_cast<int>(edf.actual_records * edf.record_duration);
-    session.session_end = session.session_start.value() +
-                          std::chrono::seconds(session.duration_seconds.value());
+    // Track this BRP's end time (EDF start + data duration).
+    // For multi-BRP sessions, the last BRP's end is the session end.
+    auto brp_end = file_start + std::chrono::seconds(
+        static_cast<int>(edf.actual_records * edf.record_duration));
+    session.session_end = brp_end;
+    session.duration_seconds = static_cast<int>(
+        std::chrono::duration_cast<std::chrono::seconds>(
+            brp_end - session.session_start.value()).count());
     session.data_records = edf.actual_records;
     session.file_complete = edf.complete;
     session.extra_records = edf.extra_records;
@@ -484,50 +489,9 @@ bool EDFParser::parseBRPFile(const std::string& filepath, CPAPSession& session) 
     detectFlowBasedSessionBoundaries(flow_data, sample_rate, file_start,
                                      actual_start, actual_end, session_active);
 
-    // Override file-based timestamps with flow-based timestamps
-    if (actual_start.has_value()) {
-        session.session_start = actual_start;
-        std::cout << "Parser: Actual session start detected from flow data" << std::endl;
-    }
-    if (actual_end.has_value()) {
-        session.session_end = actual_end;
-        auto duration = std::chrono::duration_cast<std::chrono::seconds>(
-            actual_end.value() - actual_start.value_or(file_start)
-        );
-        session.duration_seconds = static_cast<int>(duration.count());
-        std::cout << "Parser: Actual session end detected from flow data" << std::endl;
-    } else if (session_active) {
-        // Determine session status from EDF file completeness
-        // If actual_records > header (edf.complete=false), file is still being written = IN_PROGRESS
-        if (!edf.complete) {
-            // File is still being written - session is IN_PROGRESS
-            session.session_end = std::nullopt;
-            session.status = CPAPSession::Status::IN_PROGRESS;
-            std::cout << "Parser: Session IN_PROGRESS (file growing: "
-                      << edf.extra_records << " extra records beyond header "
-                      << edf.num_records_header << ")" << std::endl;
-        } else {
-            // File is complete but flow detection didn't find end
-            // Use staleness check as fallback
-            auto last_data_time = file_start + std::chrono::seconds(static_cast<int>(flow_data.size() / sample_rate));
-            auto now = std::chrono::system_clock::now();
-            auto staleness = std::chrono::duration_cast<std::chrono::minutes>(now - last_data_time).count();
-
-            if (staleness > 30) {
-                // Data is stale - session ended when file stopped growing
-                session.session_end = last_data_time;
-                auto duration = std::chrono::duration_cast<std::chrono::seconds>(
-                    last_data_time - actual_start.value_or(file_start)
-                );
-                session.duration_seconds = static_cast<int>(duration.count());
-                std::cout << "Parser: Session marked COMPLETED (data stale by " << staleness << " min)" << std::endl;
-            } else {
-                // Session is still ongoing - no end time yet
-                session.session_end = std::nullopt;
-                std::cout << "Parser: Session still active (ongoing, data is " << staleness << " min old)" << std::endl;
-            }
-        }
-    }
+    // Session boundaries come from EDF data (set above), not flow detection.
+    // session_end = last BRP's EDF start + data duration.
+    // Session completion is determined by the burst cycle (file growth stopped).
 
     std::cout << "Parser: BRP parsed — " << n_minutes << " minutes, "
               << flow_data.size() << " flow samples"
