@@ -275,6 +275,19 @@ int runReparse(const std::string& archive_dir, const std::string& start_str, con
             // Save to DB
             if (db.saveSession(*parsed)) {
                 total_saved++;
+
+                // Store checkpoint file sizes (same as burst cycle)
+                std::map<std::string, int> checkpoint_sizes;
+                for (const auto& [filename, size_kb] : session.file_sizes_kb) {
+                    if (filename.find("_BRP.edf") != std::string::npos ||
+                        filename.find("_PLD.edf") != std::string::npos ||
+                        filename.find("_SAD.edf") != std::string::npos ||
+                        filename.find("_SA2.edf") != std::string::npos) {
+                        checkpoint_sizes[filename] = size_kb;
+                    }
+                }
+                db.updateCheckpointFileSizes(device_id, session.session_start, checkpoint_sizes);
+
                 double hours = parsed->duration_seconds.value_or(0) / 3600.0;
                 double ahi = parsed->metrics.has_value() ? parsed->metrics->ahi : 0.0;
                 std::cout << "  Saved: " << session.session_prefix
