@@ -187,7 +187,9 @@ BurstCollectorService::BurstCollectorService(int burst_interval_seconds)
                     if (metrics.has_value()) {
                         data_publisher_->publishHistoricalState(metrics.value());
                         if (llm_enabled_ && llm_client_) {
-                            generateAndPublishSummary(metrics.value());
+                            const STRDailyRecord* str_rec = !last_str_records_.empty()
+                                ? &last_str_records_.back() : nullptr;
+                            generateAndPublishSummary(metrics.value(), str_rec);
                         }
                     }
                 }
@@ -582,23 +584,25 @@ bool BurstCollectorService::executeBurstCycle() {
                 }
 
                 if (all_unchanged) {
-                    // Session unchanged — mark completed, publish if current night
                     std::cout << "CPAP: Session " << session.session_prefix
-                              << " unchanged" << std::endl;
-                    db_service_->markSessionCompleted(device_id_, session.session_start);
+                              << " stopped (all checkpoint files unchanged)" << std::endl;
 
-                    auto now = std::chrono::system_clock::now();
-                    auto now_t = std::chrono::system_clock::to_time_t(now);
-                    auto sess_t = std::chrono::system_clock::to_time_t(session.session_start);
-                    auto now_day = (now_t - 12*3600) / 86400;
-                    auto sess_day = (sess_t - 12*3600) / 86400;
+                    bool newly_completed = db_service_->markSessionCompleted(device_id_, session.session_start);
 
-                    if (sess_day == now_day && data_publisher_) {
+                    if (newly_completed && data_publisher_) {
                         auto metrics = db_service_->getNightlyMetrics(device_id_, session.session_start);
                         if (metrics.has_value()) {
                             data_publisher_->publishHistoricalState(metrics.value());
+                            std::cout << "   Nightly metrics published ("
+                                      << metrics.value().usage_hours.value_or(0.0) << "h, AHI "
+                                      << metrics.value().ahi << ")" << std::endl;
                         }
                         data_publisher_->publishSessionCompleted();
+
+                        // Generate LLM summary (non-fatal)
+                        if (llm_enabled_ && llm_client_ && metrics.has_value()) {
+                            generateAndPublishSummary(metrics.value());
+                        }
                     }
                     continue;
                 }
@@ -781,9 +785,11 @@ bool BurstCollectorService::executeBurstCycle() {
                     data_publisher_->publishSessionCompleted();
                     processSTRFile();
 
-                    // Generate LLM summary (non-fatal)
+                    // Generate LLM summary with STR data if available (non-fatal)
                     if (llm_enabled_ && llm_client_ && metrics.has_value()) {
-                        generateAndPublishSummary(metrics.value());
+                        const STRDailyRecord* str_rec = !last_str_records_.empty()
+                            ? &last_str_records_.back() : nullptr;
+                        generateAndPublishSummary(metrics.value(), str_rec);
                     }
                 } else if (!newly_completed && is_most_recent && data_publisher_) {
                     // Session was already completed (session_end set by prior cycle),
@@ -946,20 +952,10 @@ bool BurstCollectorService::executeBurstCycle() {
                           << metrics.value().ahi << ")" << std::endl;
             }
 
-            // Only publish session completed when the session is actually done
-            // (all files finalized, no longer growing)
-            if (latest->status == CPAPSession::Status::COMPLETED) {
-                std::cout << "  ✓ Session status: completed" << std::endl;
-                data_publisher_->publishSessionCompleted();
-                processSTRFile();
-
-                // Generate LLM summary (non-fatal)
-                if (llm_enabled_ && llm_client_ && metrics.has_value()) {
-                    generateAndPublishSummary(metrics.value());
-                }
-            } else {
-                std::cout << "  ⏳ Session status: in_progress (files still growing)" << std::endl;
-            }
+            // Session is always IN_PROGRESS during parsing.
+            // Completion (metrics, STR, summary) fires from the checkpoint
+            // path when file sizes stop changing between cycles.
+            std::cout << "  Session status: in_progress (files still growing)" << std::endl;
         }
     }
 

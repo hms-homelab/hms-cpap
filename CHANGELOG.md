@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.2] - 2026-03-25
+
+### Fixed
+- **Session completion summary not firing**: After parser refactoring (v2.0.1),
+  the post-parse COMPLETED branch was dead code (parser always returns
+  IN_PROGRESS). Summary generation now fires correctly from the checkpoint
+  path when file sizes stop changing.
+- **Local mode missing summary**: Local source mode checkpoint never called
+  `generateAndPublishSummary()`. Added full completion sequence matching
+  ezShare mode, plus `newly_completed` guard to prevent repeated marking.
+- **STR data missing from LLM summary**: `processSTRFile()` was called before
+  summary generation but STR record was not passed. Now passes latest STR
+  record to enrich the summary with ResMed official daily metrics.
+
+### Changed
+- `publishMqttState` / `publishRealtimeState` simplified: always publishes
+  `in_progress` + `session_active=ON` during parsing. Completion status
+  is handled by `publishSessionCompleted()` from the checkpoint path.
+- Removed dead `if (status == COMPLETED)` branch from post-parse flow.
+
 ## [2.0.1] - 2026-03-25
 
 ### Fixed

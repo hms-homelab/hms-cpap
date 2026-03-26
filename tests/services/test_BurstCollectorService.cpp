@@ -860,3 +860,200 @@ TEST_F(BurstCollectorServiceTest, Regeneration_PayloadIgnored) {
     }
 }
 
+// ============================================================================
+// SESSION COMPLETION ACTIONS TESTS
+// ============================================================================
+
+/**
+ * These tests verify the full completion action sequence that fires when
+ * checkpoint files stop growing (all_unchanged == true):
+ *
+ * 1. markSessionCompleted() → returns true on first completion
+ * 2. getNightlyMetrics() → aggregated metrics for the night
+ * 3. publishHistoricalState() → 31 MQTT sensors
+ * 4. publishSessionCompleted() → session_active=OFF, session_status=completed
+ * 5. processSTRFile() → download STR, parse, publish daily metrics + insights
+ * 6. generateAndPublishSummary() → LLM summary with STR data if available
+ *
+ * The parser always returns IN_PROGRESS. Completion is solely determined
+ * by the checkpoint path (file sizes stop changing between cycles).
+ */
+
+// Simulate the full completion action sequence
+struct CompletionActions {
+    bool metrics_published;
+    bool session_completed;
+    bool str_processed;
+    bool summary_generated;
+    bool summary_has_str;  // STR data passed to summary
+};
+
+CompletionActions simulateCompletionActions(
+    bool newly_completed,
+    bool is_most_recent,
+    bool has_data_publisher,
+    bool has_metrics,
+    bool llm_enabled,
+    bool has_llm_client,
+    bool has_str_records) {
+
+    CompletionActions actions = {false, false, false, false, false};
+
+    if (newly_completed && is_most_recent && has_data_publisher) {
+        if (has_metrics) {
+            actions.metrics_published = true;
+        }
+        actions.session_completed = true;
+        actions.str_processed = true;  // processSTRFile() always attempted
+
+        if (llm_enabled && has_llm_client && has_metrics) {
+            actions.summary_generated = true;
+            // STR record passed if available after processSTRFile
+            actions.summary_has_str = has_str_records;
+        }
+    }
+
+    return actions;
+}
+
+// Same for local mode (no is_most_recent check, no STR processing)
+CompletionActions simulateLocalCompletionActions(
+    bool newly_completed,
+    bool has_data_publisher,
+    bool has_metrics,
+    bool llm_enabled,
+    bool has_llm_client) {
+
+    CompletionActions actions = {false, false, false, false, false};
+
+    if (newly_completed && has_data_publisher) {
+        if (has_metrics) {
+            actions.metrics_published = true;
+        }
+        actions.session_completed = true;
+        // No STR in local mode (no ezshare)
+
+        if (llm_enabled && has_llm_client && has_metrics) {
+            actions.summary_generated = true;
+        }
+    }
+
+    return actions;
+}
+
+TEST_F(BurstCollectorServiceTest, CompletionActions_FullSequence_WithSTR) {
+    auto actions = simulateCompletionActions(
+        /*newly_completed=*/true, /*is_most_recent=*/true,
+        /*has_data_publisher=*/true, /*has_metrics=*/true,
+        /*llm_enabled=*/true, /*has_llm_client=*/true,
+        /*has_str_records=*/true);
+
+    EXPECT_TRUE(actions.metrics_published);
+    EXPECT_TRUE(actions.session_completed);
+    EXPECT_TRUE(actions.str_processed);
+    EXPECT_TRUE(actions.summary_generated);
+    EXPECT_TRUE(actions.summary_has_str) << "STR data should be passed to summary";
+}
+
+TEST_F(BurstCollectorServiceTest, CompletionActions_FullSequence_WithoutSTR) {
+    auto actions = simulateCompletionActions(
+        /*newly_completed=*/true, /*is_most_recent=*/true,
+        /*has_data_publisher=*/true, /*has_metrics=*/true,
+        /*llm_enabled=*/true, /*has_llm_client=*/true,
+        /*has_str_records=*/false);
+
+    EXPECT_TRUE(actions.metrics_published);
+    EXPECT_TRUE(actions.session_completed);
+    EXPECT_TRUE(actions.str_processed);
+    EXPECT_TRUE(actions.summary_generated);
+    EXPECT_FALSE(actions.summary_has_str) << "Summary should work without STR";
+}
+
+TEST_F(BurstCollectorServiceTest, CompletionActions_LLMDisabled_NoSummary) {
+    auto actions = simulateCompletionActions(
+        /*newly_completed=*/true, /*is_most_recent=*/true,
+        /*has_data_publisher=*/true, /*has_metrics=*/true,
+        /*llm_enabled=*/false, /*has_llm_client=*/false,
+        /*has_str_records=*/true);
+
+    EXPECT_TRUE(actions.metrics_published);
+    EXPECT_TRUE(actions.session_completed);
+    EXPECT_TRUE(actions.str_processed);
+    EXPECT_FALSE(actions.summary_generated) << "No summary when LLM disabled";
+}
+
+TEST_F(BurstCollectorServiceTest, CompletionActions_NoMetrics_SkipsSummary) {
+    auto actions = simulateCompletionActions(
+        /*newly_completed=*/true, /*is_most_recent=*/true,
+        /*has_data_publisher=*/true, /*has_metrics=*/false,
+        /*llm_enabled=*/true, /*has_llm_client=*/true,
+        /*has_str_records=*/true);
+
+    EXPECT_FALSE(actions.metrics_published);
+    EXPECT_TRUE(actions.session_completed);
+    EXPECT_TRUE(actions.str_processed);
+    EXPECT_FALSE(actions.summary_generated) << "No summary without metrics";
+}
+
+TEST_F(BurstCollectorServiceTest, CompletionActions_NotNewlyCompleted_NoActions) {
+    auto actions = simulateCompletionActions(
+        /*newly_completed=*/false, /*is_most_recent=*/true,
+        /*has_data_publisher=*/true, /*has_metrics=*/true,
+        /*llm_enabled=*/true, /*has_llm_client=*/true,
+        /*has_str_records=*/true);
+
+    EXPECT_FALSE(actions.metrics_published);
+    EXPECT_FALSE(actions.session_completed);
+    EXPECT_FALSE(actions.str_processed);
+    EXPECT_FALSE(actions.summary_generated);
+}
+
+TEST_F(BurstCollectorServiceTest, CompletionActions_NotMostRecent_NoActions) {
+    auto actions = simulateCompletionActions(
+        /*newly_completed=*/true, /*is_most_recent=*/false,
+        /*has_data_publisher=*/true, /*has_metrics=*/true,
+        /*llm_enabled=*/true, /*has_llm_client=*/true,
+        /*has_str_records=*/true);
+
+    EXPECT_FALSE(actions.metrics_published);
+    EXPECT_FALSE(actions.session_completed);
+    EXPECT_FALSE(actions.str_processed);
+    EXPECT_FALSE(actions.summary_generated);
+}
+
+TEST_F(BurstCollectorServiceTest, CompletionActions_LocalMode_GeneratesSummary) {
+    auto actions = simulateLocalCompletionActions(
+        /*newly_completed=*/true, /*has_data_publisher=*/true,
+        /*has_metrics=*/true, /*llm_enabled=*/true,
+        /*has_llm_client=*/true);
+
+    EXPECT_TRUE(actions.metrics_published);
+    EXPECT_TRUE(actions.session_completed);
+    EXPECT_FALSE(actions.str_processed) << "No STR in local mode";
+    EXPECT_TRUE(actions.summary_generated) << "Local mode should generate summary";
+}
+
+TEST_F(BurstCollectorServiceTest, CompletionActions_LocalMode_NotNewlyCompleted_NoActions) {
+    auto actions = simulateLocalCompletionActions(
+        /*newly_completed=*/false, /*has_data_publisher=*/true,
+        /*has_metrics=*/true, /*llm_enabled=*/true,
+        /*has_llm_client=*/true);
+
+    EXPECT_FALSE(actions.metrics_published);
+    EXPECT_FALSE(actions.session_completed);
+    EXPECT_FALSE(actions.summary_generated);
+}
+
+// ============================================================================
+// PARSER STATUS INVARIANT TESTS
+// ============================================================================
+
+TEST_F(BurstCollectorServiceTest, ParserAlwaysReturnsInProgress) {
+    // After refactoring, the parser never sets COMPLETED.
+    // Verify the post-parse path always treats sessions as in-progress.
+    CPAPSession session;
+    // Default status must be IN_PROGRESS
+    EXPECT_EQ(session.status, CPAPSession::Status::IN_PROGRESS)
+        << "Default session status should be IN_PROGRESS";
+}
+

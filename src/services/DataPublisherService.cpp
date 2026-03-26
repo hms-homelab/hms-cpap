@@ -274,39 +274,19 @@ bool DataPublisherService::publishHistoricalDiscovery() {
 }
 
 void DataPublisherService::publishMqttState(const CPAPSession& session) {
-    std::cout << "📡 MQTT: Publishing session state..." << std::endl;
+    std::cout << "MQTT: Publishing session state..." << std::endl;
 
-    bool is_completed = (session.status == CPAPSession::Status::COMPLETED);
-
-    // ===== REAL-TIME METRICS (always publish) =====
+    // Publish realtime metrics (session is always IN_PROGRESS during parsing).
+    // Historical metrics and completion status are published separately
+    // from the checkpoint path when file sizes stop changing.
     publishRealtimeState(session);
-
-    // ===== HISTORICAL METRICS (only if session completed) =====
-    if (is_completed && session.metrics.has_value()) {
-        publishHistoricalState(session);
-    }
 }
 
 void DataPublisherService::publishRealtimeState(const CPAPSession& session) {
-    bool is_completed = (session.status == CPAPSession::Status::COMPLETED);
-
-    // Session status
-    std::string status_str = is_completed ? "completed" : "in_progress";
-    mqtt_client_->publish("cpap/" + device_id_ + "/realtime/session_status", status_str, 0, true);
-
-    // Session active (binary)
-    // If session status is IN_PROGRESS, it means files are still growing = active
-    // Otherwise check if breathing data is recent (within 5 minutes)
-    bool is_recently_active = !is_completed;  // IN_PROGRESS = active
-    if (is_completed && !session.breathing_summary.empty()) {
-        const auto& latest = session.breathing_summary.back();
-        auto now = std::chrono::system_clock::now();
-        auto seconds_since_last = std::chrono::duration_cast<std::chrono::seconds>(
-            now - latest.timestamp).count();
-        is_recently_active = (seconds_since_last < 300);
-    }
-    mqtt_client_->publish("cpap/" + device_id_ + "/realtime/session_active",
-                         is_recently_active ? "ON" : "OFF", 0, true);
+    // During parsing, session is always IN_PROGRESS (files still growing).
+    // publishSessionCompleted() handles the transition to "completed" / OFF.
+    mqtt_client_->publish("cpap/" + device_id_ + "/realtime/session_status", "in_progress", 0, true);
+    mqtt_client_->publish("cpap/" + device_id_ + "/realtime/session_active", "ON", 0, true);
 
     // Session duration
     if (session.duration_seconds.has_value()) {

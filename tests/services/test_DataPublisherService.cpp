@@ -331,9 +331,9 @@ TEST_F(DataPublisherServiceTest, MQTTReconnection_RepublishesDiscovery) {
     data_publisher->initialize();
 
     // Create a dummy session to trigger publishSession
+    // (status is always IN_PROGRESS during parsing — completion is handled separately)
     CPAPSession dummy_session;
     dummy_session.device_id = "cpap_test_device";
-    dummy_session.status = CPAPSession::Status::COMPLETED;
 
     // Simulate disconnect
     mqtt_client->disconnect();
