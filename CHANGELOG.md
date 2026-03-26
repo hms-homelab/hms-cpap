@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.3] - 2026-03-26
+
+### Fixed
+- **LLM summary never firing on session completion**: `saveSession()` UPSERT
+  was writing `session_end` from EDF-parsed data on every re-download cycle.
+  When files finally stabilized, `markSessionCompleted()` found `session_end`
+  already set (IS NULL guard failed), returned false, and `generateAndPublishSummary()`
+  was never called. Fixed by removing `session_end` from the UPSERT entirely —
+  `markSessionCompleted()` is now the sole writer of `session_end`.
+
 ## [2.0.2] - 2026-03-25
 
 ### Fixed

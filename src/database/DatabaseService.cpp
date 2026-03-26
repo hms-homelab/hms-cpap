@@ -116,22 +116,15 @@ int DatabaseService::insertSession(pqxx::work& work, const CPAPSession& session)
     std::ostringstream start_oss;
     start_oss << std::put_time(start_tm, "%Y-%m-%d %H:%M:%S");
 
-    std::string end_str = "NULL";
-    if (session.session_end.has_value()) {
-        auto end_time_t = std::chrono::system_clock::to_time_t(session.session_end.value());
-        std::tm* end_tm = std::localtime(&end_time_t);
-        std::ostringstream end_oss;
-        end_oss << std::put_time(end_tm, "%Y-%m-%d %H:%M:%S");
-        end_str = "'" + end_oss.str() + "'";
-    }
-
+    // session_end is intentionally never written here — markSessionCompleted() owns it.
+    // Writing it from EDF data would pre-empt the IS NULL guard in markSessionCompleted
+    // and prevent the LLM summary from firing.
     std::string query = R"(
         INSERT INTO cpap_sessions (device_id, session_start, session_end, duration_seconds, data_records,
                                    brp_file_path, eve_file_path, sad_file_path, pld_file_path, csl_file_path)
-        VALUES ($1, $2, )" + end_str + R"(, $3, $4, $5, $6, $7, $8, $9)
+        VALUES ($1, $2, NULL, $3, $4, $5, $6, $7, $8, $9)
         ON CONFLICT (device_id, session_start) DO UPDATE
-        SET session_end = EXCLUDED.session_end,
-            duration_seconds = EXCLUDED.duration_seconds,
+        SET duration_seconds = EXCLUDED.duration_seconds,
             data_records = EXCLUDED.data_records,
             brp_file_path = EXCLUDED.brp_file_path,
             eve_file_path = EXCLUDED.eve_file_path,
