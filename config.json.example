@@ -1,0 +1,41 @@
+{
+  "device_id": "cpap_resmed_23243570851",
+  "device_name": "ResMed AirSense 10",
+  "source": "ezshare",
+  "ezshare_url": "http://192.168.4.1",
+  "local_dir": "",
+  "burst_interval": 300,
+  "web_port": 8893,
+  "static_dir": "./static/browser",
+  "setup_complete": false,
+  "database": {
+    "type": "sqlite",
+    "sqlite_path": "",
+    "host": "",
+    "port": 0,
+    "name": "",
+    "user": "",
+    "password": ""
+  },
+  "mqtt": {
+    "enabled": false,
+    "broker": "",
+    "port": 1883,
+    "username": "",
+    "password": "",
+    "client_id": "hms_cpap"
+  },
+  "llm": {
+    "enabled": false,
+    "provider": "ollama",
+    "endpoint": "",
+    "model": "",
+    "api_key": "",
+    "max_tokens": 1024
+  },
+  "agent": {
+    "enabled": false,
+    "embed_model": "nomic-embed-text",
+    "temperature": 0.3
+  }
+}
