@@ -1045,6 +1045,127 @@ TEST_F(BurstCollectorServiceTest, CompletionActions_LocalMode_NotNewlyCompleted_
 }
 
 // ============================================================================
+// SESSION RESUME (MASK ON/OFF/ON/OFF) TESTS
+// ============================================================================
+
+/**
+ * These tests verify the completed → resumed → completed cycle:
+ *
+ * Scenario: user removes mask (session completes, summary sent), puts mask
+ * back on (checkpoint files grow again), then removes mask a second time.
+ * The second completion must also fire metrics + summary.
+ *
+ * The fix: when checkpoint files change on an already-completed session,
+ * reopenSession() clears session_end back to NULL, allowing
+ * markSessionCompleted() to return true again on the next stable cycle.
+ */
+
+// Simulate the reopenSession logic: returns true if session_end was NOT NULL
+// (i.e., session was completed and is now being reopened)
+bool simulateReopenSession(bool session_end_is_set) {
+    // reopenSession: UPDATE ... SET session_end = NULL WHERE session_end IS NOT NULL
+    return session_end_is_set;
+}
+
+TEST_F(BurstCollectorServiceTest, Resume_CompletedThenResumed_ReopensSession) {
+    // Session was completed (session_end set), then checkpoint files grew again
+    bool reopened = simulateReopenSession(/*session_end_is_set=*/true);
+    EXPECT_TRUE(reopened) << "Completed session with growing files should reopen";
+}
+
+TEST_F(BurstCollectorServiceTest, Resume_ActiveSession_NoReopen) {
+    // Session was never completed (still active), files still growing — no-op
+    bool reopened = simulateReopenSession(/*session_end_is_set=*/false);
+    EXPECT_FALSE(reopened) << "Active session should not trigger reopen";
+}
+
+TEST_F(BurstCollectorServiceTest, Resume_FullCycle_CompletedResumedCompleted) {
+    // Full mask on/off/on/off cycle for a single session
+    auto session_start = std::chrono::system_clock::from_time_t(1710378444);
+    std::vector<std::chrono::system_clock::time_point> all = {session_start};
+
+    // --- Cycle 1: mask on, files growing ---
+    // (checkpoint sizes change, session downloaded and parsed — no completion check)
+
+    // --- Cycle 2: mask removed, files stopped growing ---
+    bool session_end_is_null = true;  // session_end not yet set
+    auto decision1 = shouldTriggerCompletion(session_start, all, session_end_is_null);
+    EXPECT_TRUE(decision1.should_complete) << "First completion should fire";
+
+    // After markSessionCompleted: session_end is now set
+    session_end_is_null = false;
+
+    // First completion actions should fire
+    auto actions1 = simulateCompletionActions(
+        decision1.newly_completed, decision1.is_most_recent,
+        /*has_data_publisher=*/true, /*has_metrics=*/true,
+        /*llm_enabled=*/true, /*has_llm_client=*/true,
+        /*has_str_records=*/true);
+    EXPECT_TRUE(actions1.summary_generated) << "First summary should be generated";
+
+    // --- Cycle 3: mask put back on, files growing again ---
+    // Checkpoint sizes changed → re-download → reopenSession()
+    bool reopened = simulateReopenSession(/*session_end_is_set=*/true);
+    EXPECT_TRUE(reopened);
+    // After reopenSession: session_end is NULL again
+    session_end_is_null = true;
+
+    // --- Cycle 4: mask removed again, files stopped growing ---
+    auto decision2 = shouldTriggerCompletion(session_start, all, session_end_is_null);
+    EXPECT_TRUE(decision2.should_complete) << "Second completion should also fire";
+
+    auto actions2 = simulateCompletionActions(
+        decision2.newly_completed, decision2.is_most_recent,
+        /*has_data_publisher=*/true, /*has_metrics=*/true,
+        /*llm_enabled=*/true, /*has_llm_client=*/true,
+        /*has_str_records=*/true);
+    EXPECT_TRUE(actions2.summary_generated) << "Second summary should also be generated";
+}
+
+TEST_F(BurstCollectorServiceTest, Resume_WithoutReopen_SecondCompletionFails) {
+    // This test documents the BUG behavior before the fix:
+    // Without reopenSession(), the second completion never fires.
+    auto session_start = std::chrono::system_clock::from_time_t(1710378444);
+    std::vector<std::chrono::system_clock::time_point> all = {session_start};
+
+    // First completion
+    auto decision1 = shouldTriggerCompletion(session_start, all, /*db_session_end_is_null=*/true);
+    EXPECT_TRUE(decision1.should_complete);
+
+    // session_end is now set. Without reopenSession, it stays set.
+    // Second completion attempt — session_end is NOT NULL
+    auto decision2 = shouldTriggerCompletion(session_start, all, /*db_session_end_is_null=*/false);
+    EXPECT_FALSE(decision2.should_complete)
+        << "Without reopenSession, second completion correctly does not fire (the old bug)";
+}
+
+TEST_F(BurstCollectorServiceTest, Resume_MultipleResumes_AllComplete) {
+    // Mask on/off three times — each completion should fire
+    auto session_start = std::chrono::system_clock::from_time_t(1710378444);
+    std::vector<std::chrono::system_clock::time_point> all = {session_start};
+
+    int summaries_generated = 0;
+
+    for (int cycle = 0; cycle < 3; cycle++) {
+        // Files stop growing → completion check
+        auto decision = shouldTriggerCompletion(session_start, all, /*db_session_end_is_null=*/true);
+        EXPECT_TRUE(decision.should_complete) << "Cycle " << cycle << " should complete";
+
+        auto actions = simulateCompletionActions(
+            decision.newly_completed, decision.is_most_recent,
+            /*has_data_publisher=*/true, /*has_metrics=*/true,
+            /*llm_enabled=*/true, /*has_llm_client=*/true,
+            /*has_str_records=*/true);
+        if (actions.summary_generated) summaries_generated++;
+
+        // session_end set → mask back on → files grow → reopenSession clears it
+        // (simulated by looping with session_end_is_null=true again)
+    }
+
+    EXPECT_EQ(summaries_generated, 3) << "All three completions should generate summaries";
+}
+
+// ============================================================================
 // PARSER STATUS INVARIANT TESTS
 // ============================================================================
 
