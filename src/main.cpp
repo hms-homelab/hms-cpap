@@ -647,6 +647,9 @@ int main(int argc, char** argv) {
                 .setDocumentRoot(static_dir)
                 .setIdleConnectionTimeout(120);
 
+            // SPA fallback handled by Angular dev server proxy (dev) or
+            // reverse proxy (prod). Drogon serves static files from document root.
+
             std::cout << "Web UI: http://0.0.0.0:" << web_port << std::endl;
             std::cout << "  /health         - Health check" << std::endl;
             std::cout << "  /api/dashboard  - Dashboard data" << std::endl;

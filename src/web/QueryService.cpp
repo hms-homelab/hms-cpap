@@ -11,8 +11,8 @@ Json::Value QueryService::getDashboard() {
     std::string q_latest =
         "SELECT " + sql::sleepDay("s.session_start", dt_) + " as sleep_day,"
         " " + sql::round("s.duration_seconds / 3600.0", 2, dt_) + " as usage_hours,"
-        " m.ahi,"
-        " COALESCE(m.avg_leak_rate, 0) as leak_avg"
+        " " + sql::round("m.ahi", 2, dt_) + " as ahi,"
+        " " + sql::round("COALESCE(m.avg_leak_rate, 0)", 1, dt_) + " as leak_avg"
         " FROM cpap_sessions s"
         " LEFT JOIN cpap_session_metrics m ON m.session_id = s.id"
         " WHERE s.device_id = " + sql::param(1, dt_) + " AND s.session_end IS NOT NULL"
@@ -75,7 +75,7 @@ Json::Value QueryService::getSessions(int days, int limit) {
     std::string q =
         "SELECT s.session_start, s.session_end, s.duration_seconds,"
         " " + sql::round("s.duration_seconds / 3600.0", 2, dt_) + " as duration_hours,"
-        " m.ahi, m.total_events, m.obstructive_apneas, m.central_apneas,"
+        " " + sql::round("m.ahi", 2, dt_) + " as ahi, m.total_events, m.obstructive_apneas, m.central_apneas,"
         " m.hypopneas, m.reras,"
         " m.avg_spo2, m.min_spo2,"
         " m.avg_heart_rate, m.min_heart_rate, m.max_heart_rate"
@@ -95,7 +95,7 @@ Json::Value QueryService::getSessionDetail(const std::string& date) {
     std::string q_sessions =
         "SELECT s.id, s.session_start, s.session_end, s.duration_seconds,"
         " " + sql::round("s.duration_seconds / 3600.0", 2, dt_) + " as duration_hours,"
-        " m.ahi, m.total_events, m.obstructive_apneas, m.central_apneas,"
+        " " + sql::round("m.ahi", 2, dt_) + " as ahi, m.total_events, m.obstructive_apneas, m.central_apneas,"
         " m.hypopneas, m.reras, m.clear_airway_apneas,"
         " m.avg_event_duration, m.max_event_duration, m.time_in_apnea_percent,"
         " m.avg_spo2, m.min_spo2,"
