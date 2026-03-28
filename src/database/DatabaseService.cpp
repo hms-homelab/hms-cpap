@@ -829,6 +829,50 @@ bool DatabaseService::markSessionCompleted(
     }
 }
 
+bool DatabaseService::reopenSession(
+    const std::string& device_id,
+    const std::chrono::system_clock::time_point& session_start) {
+
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+
+    if (!ensureConnection()) {
+        std::cerr << "DB: reopenSession failed - no connection" << std::endl;
+        return false;
+    }
+
+    try {
+        pqxx::work txn(*conn_);
+
+        auto start_time_t = std::chrono::system_clock::to_time_t(session_start);
+        std::tm* start_tm = std::localtime(&start_time_t);
+        std::ostringstream start_oss;
+        start_oss << std::put_time(start_tm, "%Y-%m-%d %H:%M:%S");
+
+        std::string query = R"(
+            UPDATE cpap_sessions
+            SET session_end = NULL, updated_at = CURRENT_TIMESTAMP
+            WHERE device_id = $1
+              AND session_start BETWEEN $2::timestamp - INTERVAL '5 seconds'
+                                    AND $2::timestamp + INTERVAL '5 seconds'
+              AND session_end IS NOT NULL
+        )";
+
+        auto result = txn.exec_params(query, device_id, start_oss.str());
+        txn.commit();
+
+        if (result.affected_rows() > 0) {
+            std::cout << "DB: Reopened session " << start_oss.str()
+                      << " (session_end cleared, session resumed)" << std::endl;
+            return true;
+        }
+        return false;
+
+    } catch (const std::exception& e) {
+        std::cerr << "DB: reopenSession error: " << e.what() << std::endl;
+        return false;
+    }
+}
+
 bool DatabaseService::isForceCompleted(
     const std::string& device_id,
     const std::chrono::system_clock::time_point& session_start) {

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.4] - 2026-03-28
+
+### Fixed
+- **Second summary not sent after mask re-wear**: When user removes mask
+  (session completes, summary sent), puts mask back on (checkpoint files
+  grow), then removes mask again, the second completion never fired.
+  Root cause: `session_end` was set on first completion but never cleared
+  when files resumed growing. Added `reopenSession()` to clear `session_end`
+  back to NULL when checkpoint files change on an already-completed session.
+
+### Added
+- `DatabaseService::reopenSession()` — clears `session_end` when a completed
+  session resumes (checkpoint files grow again after mask re-wear).
+- 5 unit tests for the completed → resumed → completed cycle (227 total).
+
 ## [2.0.3] - 2026-03-26
 
 ### Fixed

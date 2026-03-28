@@ -157,6 +157,14 @@ public:
                               const std::chrono::system_clock::time_point& session_start);
 
     /**
+     * Clear session_end back to NULL when a completed session resumes
+     * (checkpoint files start growing again after mask was put back on).
+     * Returns true if session_end was cleared.
+     */
+    bool reopenSession(const std::string& device_id,
+                       const std::chrono::system_clock::time_point& session_start);
+
+    /**
      * Load session metrics from DB for MQTT republishing on session completion
      */
     std::optional<SessionMetrics> getSessionMetrics(const std::string& device_id,

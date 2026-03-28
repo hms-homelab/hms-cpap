@@ -815,6 +815,11 @@ bool BurstCollectorService::executeBurstCycle() {
                     }
                 }
                 db_service_->updateCheckpointFileSizes(device_id_, session.session_start, checkpoint_sizes);
+
+                // Session resumed (mask put back on) — clear session_end so
+                // markSessionCompleted() can fire again when it truly stops.
+                db_service_->reopenSession(device_id_, session.session_start);
+
                 std::string session_dir = local_base_dir + "/" + session.date_folder;
                 downloaded_sessions.push_back({session_dir, session.session_start});
             } else {
