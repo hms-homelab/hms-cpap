@@ -142,6 +142,30 @@ BurstCollectorService::BurstCollectorService(int burst_interval_seconds)
                 generateAndPublishSummary(metrics.value());
             }, 1);
         std::cout << "LLM: Subscribed to " << cmd_topic << " for on-demand summary" << std::endl;
+
+        // On-demand weekly/monthly summary commands.
+        // Payload is optional JSON: {"days": 14} overrides the default range.
+        // Empty payload or no "days" key → default (7 for weekly, 30 for monthly).
+        for (auto [cmd, period] : std::vector<std::pair<std::string, SummaryPeriod>>{
+                 {"generate_weekly_summary",  SummaryPeriod::WEEKLY},
+                 {"generate_monthly_summary", SummaryPeriod::MONTHLY}}) {
+            std::string topic = "cpap/" + device_id_ + "/command/" + cmd;
+            mqtt_client_->subscribe(topic,
+                [this, period](const std::string& /*topic*/, const std::string& payload) {
+                    int days_override = 0;
+                    if (!payload.empty()) {
+                        Json::Value json;
+                        Json::CharReaderBuilder rb;
+                        std::istringstream ss(payload);
+                        if (Json::parseFromStream(rb, ss, &json, nullptr)
+                            && json.isMember("days") && json["days"].isInt()) {
+                            days_override = json["days"].asInt();
+                        }
+                    }
+                    generateRangeSummary(period, days_override);
+                }, 1);
+            std::cout << "LLM: Subscribed to " << topic << std::endl;
+        }
     }
 
     // Subscribe to insights regeneration command
@@ -790,6 +814,17 @@ bool BurstCollectorService::executeBurstCycle() {
                         const STRDailyRecord* str_rec = !last_str_records_.empty()
                             ? &last_str_records_.back() : nullptr;
                         generateAndPublishSummary(metrics.value(), str_rec);
+
+                        // Auto-trigger weekly summary on Sundays, monthly on 1st
+                        auto now = std::chrono::system_clock::now();
+                        auto now_t = std::chrono::system_clock::to_time_t(now);
+                        std::tm* tm = std::localtime(&now_t);
+                        if (tm->tm_wday == 0) {  // Sunday
+                            generateRangeSummary(SummaryPeriod::WEEKLY);
+                        }
+                        if (tm->tm_mday == 1) {  // 1st of month
+                            generateRangeSummary(SummaryPeriod::MONTHLY);
+                        }
                     }
                 } else if (!newly_completed && is_most_recent && data_publisher_) {
                     // Session was already completed (session_end set by prior cycle),
@@ -1027,6 +1062,127 @@ void BurstCollectorService::runLoop() {
 }
 
 // ─── LLM Summary ────────────────────────────────────────────────────────────
+
+// --- Range summaries (weekly / monthly) ---
+//
+// Flow:
+//   1. Query DB for per-night metrics over the last N days
+//   2. Format each night into a concise line + compute period averages
+//   3. Build a period-specific LLM prompt
+//   4. Call LLM and publish result to cpap/{device}/weekly|monthly/summary
+
+void BurstCollectorService::generateRangeSummary(SummaryPeriod period, int days_override) {
+    int days_back = days_override > 0 ? days_override
+                  : (period == SummaryPeriod::WEEKLY) ? 7 : 30;
+    std::string period_str = (period == SummaryPeriod::WEEKLY) ? "weekly" : "monthly";
+
+    std::cout << "LLM: Generating " << period_str << " summary ("
+              << days_back << " days)..." << std::endl;
+
+    auto nights = db_service_->getMetricsForDateRange(device_id_, days_back);
+    if (nights.empty()) {
+        std::cerr << "LLM: No data for " << period_str << " summary" << std::endl;
+        return;
+    }
+
+    std::string metrics_str = buildRangeMetricsString(nights, period);
+
+    // Period-specific prompt — the LLM sees all the per-night data and averages
+    std::string prompt;
+    if (period == SummaryPeriod::WEEKLY) {
+        prompt = "You are a CPAP therapy analyst. Summarize this week of CPAP data "
+                 "in 4-6 sentences. Highlight trends (improving/worsening AHI, "
+                 "usage consistency), flag any concerning nights, and give one "
+                 "actionable suggestion.\n\n" + metrics_str;
+    } else {
+        prompt = "You are a CPAP therapy analyst. Summarize this month of CPAP data "
+                 "in 5-8 sentences. Identify overall trends in AHI, usage compliance, "
+                 "and leak control. Compare the first half vs second half of the month. "
+                 "Note any patterns (weekday vs weekend, etc.) and provide "
+                 "recommendations.\n\n" + metrics_str;
+    }
+
+    auto summary = llm_client_->generate(prompt);
+    if (!summary) {
+        std::cerr << "LLM: " << period_str << " summary generation failed" << std::endl;
+        return;
+    }
+
+    std::cout << "LLM: " << period_str << " summary generated ("
+              << summary->size() << " chars)" << std::endl;
+
+    if (data_publisher_) {
+        data_publisher_->publishRangeSummary(period, summary.value());
+    }
+}
+
+std::string BurstCollectorService::buildRangeMetricsString(
+    const std::vector<SessionMetrics>& nights, SummaryPeriod period) const {
+
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(2);
+
+    std::string period_str = (period == SummaryPeriod::WEEKLY) ? "Weekly" : "Monthly";
+    oss << period_str << " CPAP report (" << nights.size() << " nights)\n";
+    oss << "─────────────────────────────────────\n\n";
+
+    // Per-night summary line
+    oss << "Night-by-night:\n";
+    double total_ahi = 0, total_hours = 0, total_leak = 0;
+    int leak_count = 0;
+
+    for (const auto& n : nights) {
+        double hours = n.usage_hours.value_or(0.0);
+        oss << "  " << n.sleep_day
+            << " | " << hours << "h"
+            << " | AHI " << n.ahi
+            << " | events " << n.total_events
+            << " (OA=" << n.obstructive_apneas
+            << " CA=" << n.central_apneas
+            << " H=" << n.hypopneas
+            << " R=" << n.reras << ")";
+        if (n.avg_leak_rate.has_value())
+            oss << " | leak avg " << n.avg_leak_rate.value() << " L/min";
+        if (n.avg_pressure.has_value())
+            oss << " | press " << n.avg_pressure.value() << " cmH2O";
+        oss << "\n";
+
+        total_ahi += n.ahi;
+        total_hours += hours;
+        if (n.avg_leak_rate.has_value()) {
+            total_leak += n.avg_leak_rate.value();
+            leak_count++;
+        }
+    }
+
+    // Period averages
+    int count = static_cast<int>(nights.size());
+    oss << "\n" << period_str << " averages:\n";
+    oss << "  Avg AHI: " << (total_ahi / count) << " events/hour\n";
+    oss << "  Avg usage: " << (total_hours / count) << " hours/night\n";
+    oss << "  Total usage: " << total_hours << " hours\n";
+    if (leak_count > 0)
+        oss << "  Avg leak: " << (total_leak / leak_count) << " L/min\n";
+
+    // Compliance: nights >= 4h
+    int compliant = 0;
+    for (const auto& n : nights)
+        if (n.usage_hours.value_or(0.0) >= 4.0) compliant++;
+    oss << "  Compliance (>=4h): " << compliant << "/" << count
+        << " nights (" << (100.0 * compliant / count) << "%)\n";
+
+    // Best and worst nights
+    auto best = std::min_element(nights.begin(), nights.end(),
+        [](const SessionMetrics& a, const SessionMetrics& b) { return a.ahi < b.ahi; });
+    auto worst = std::max_element(nights.begin(), nights.end(),
+        [](const SessionMetrics& a, const SessionMetrics& b) { return a.ahi < b.ahi; });
+    oss << "  Best AHI: " << best->ahi << " (" << best->sleep_day << ")\n";
+    oss << "  Worst AHI: " << worst->ahi << " (" << worst->sleep_day << ")\n";
+
+    return oss.str();
+}
+
+// --- Daily summary (single night) ---
 
 void BurstCollectorService::generateAndPublishSummary(const SessionMetrics& metrics,
                                                        const STRDailyRecord* str_record) {

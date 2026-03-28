@@ -171,6 +171,26 @@ private:
                                    const STRDailyRecord* str_record = nullptr) const;
 
     /**
+     * Generate and publish a weekly or monthly LLM summary.
+     *
+     * Queries the DB for per-night metrics over the date range, formats them
+     * into a multi-night report, sends to the LLM, and publishes to MQTT.
+     * Called automatically on Sundays (weekly) and 1st of month (monthly),
+     * or on-demand via MQTT command.
+     *
+     * @param period WEEKLY (7 days) or MONTHLY (30 days)
+     * @param days_override Override the default range (0 = use default for period)
+     */
+    void generateRangeSummary(SummaryPeriod period, int days_override = 0);
+
+    /**
+     * Build a multi-night metrics string for the LLM (weekly/monthly).
+     * Lists each night with key metrics, then appends period averages.
+     */
+    std::string buildRangeMetricsString(const std::vector<SessionMetrics>& nights,
+                                        SummaryPeriod period) const;
+
+    /**
      * Load prompt template from file.
      *
      * @param filepath Path to prompt template file

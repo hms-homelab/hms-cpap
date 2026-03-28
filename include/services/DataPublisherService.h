@@ -107,6 +107,16 @@ public:
      */
     bool publishSessionSummary(const std::string& summary);
 
+    /**
+     * Publish weekly or monthly LLM summary to MQTT.
+     * Topic: cpap/{device_id}/weekly/summary or cpap/{device_id}/monthly/summary
+     *
+     * @param period WEEKLY or MONTHLY (DAILY goes through publishSessionSummary)
+     * @param summary Generated summary text
+     * @return true if published successfully
+     */
+    bool publishRangeSummary(SummaryPeriod period, const std::string& summary);
+
 private:
     std::shared_ptr<hms::MqttClient> mqtt_client_;
     std::shared_ptr<DatabaseService> db_service_;
