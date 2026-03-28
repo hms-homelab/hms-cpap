@@ -54,20 +54,18 @@ target_link_libraries(run_tests
     jsoncpp_lib
     ${PAHO_MQTTPP3_LIB}
     ${PAHO_MQTT3AS_LIB}
-    ${PQXX_LIB}
-    ${PQ_LIB}
     CURL::libcurl
+    ${SQLITE3_LIB}
     hms_llm
     hms_mqtt
-    hms_db
     pthread
     ssl
     crypto
 )
 
-# Link Drogon if health check is enabled
-if(BUILD_WITH_HEALTHCHECK)
-    target_link_libraries(run_tests Drogon::Drogon)
+# Optional DB backends for tests
+if(BUILD_WITH_POSTGRESQL)
+    target_link_libraries(run_tests ${PQXX_LIB} ${PQ_LIB} hms_db)
 endif()
 
 # Discover tests

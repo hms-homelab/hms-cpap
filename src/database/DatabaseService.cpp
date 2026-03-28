@@ -1,3 +1,4 @@
+#ifdef WITH_POSTGRESQL
 #include "database/DatabaseService.h"
 #include <iostream>
 #include <iomanip>
@@ -1600,3 +1601,5 @@ std::optional<std::string> DatabaseService::getLastSTRDate(const std::string& de
 }
 
 } // namespace hms_cpap
+
+#endif // WITH_POSTGRESQL

@@ -1,4 +1,5 @@
 #pragma once
+#ifdef WITH_POSTGRESQL
 
 #include "models/CPAPModels.h"
 #include <pqxx/pqxx>
@@ -339,3 +340,5 @@ private:
 };
 
 } // namespace hms_cpap
+
+#endif // WITH_POSTGRESQL
