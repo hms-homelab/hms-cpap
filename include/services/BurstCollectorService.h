@@ -106,6 +106,10 @@ private:
     // Cached STR records for on-demand insights regeneration
     std::vector<STRDailyRecord> last_str_records_;
 
+    // Pending range summary requests (set by MQTT callback, executed by worker thread)
+    std::atomic<int> pending_weekly_days_{0};   // >0 = generate weekly with N days
+    std::atomic<int> pending_monthly_days_{0};  // >0 = generate monthly with N days
+
     // Connection recovery tracking
     int consecutive_failures_ = 0;
     static constexpr int MAX_FAILURES_BEFORE_RESET = 3;  // Reset session_active after 3 consecutive failures

@@ -152,17 +152,26 @@ BurstCollectorService::BurstCollectorService(int burst_interval_seconds)
             std::string topic = "cpap/" + device_id_ + "/command/" + cmd;
             mqtt_client_->subscribe(topic,
                 [this, period](const std::string& /*topic*/, const std::string& payload) {
-                    int days_override = 0;
+                    // Parse optional {"days": N} override
+                    int days = (period == SummaryPeriod::WEEKLY) ? 7 : 30;
                     if (!payload.empty()) {
-                        Json::Value json;
-                        Json::CharReaderBuilder rb;
-                        std::istringstream ss(payload);
-                        if (Json::parseFromStream(rb, ss, &json, nullptr)
-                            && json.isMember("days") && json["days"].isInt()) {
-                            days_override = json["days"].asInt();
-                        }
+                        try {
+                            Json::Value json;
+                            Json::CharReaderBuilder rb;
+                            std::istringstream ss(payload);
+                            if (Json::parseFromStream(rb, ss, &json, nullptr)
+                                && json.isMember("days") && json["days"].isInt()) {
+                                days = json["days"].asInt();
+                            }
+                        } catch (...) {}
                     }
-                    generateRangeSummary(period, days_override);
+                    // Queue for worker thread (pqxx is NOT thread-safe across threads)
+                    if (period == SummaryPeriod::WEEKLY)
+                        pending_weekly_days_.store(days);
+                    else
+                        pending_monthly_days_.store(days);
+                    std::cout << "LLM: " << (period == SummaryPeriod::WEEKLY ? "Weekly" : "Monthly")
+                              << " summary queued (" << days << " days)" << std::endl;
                 }, 1);
             std::cout << "LLM: Subscribed to " << topic << std::endl;
         }
@@ -1039,6 +1048,15 @@ void BurstCollectorService::runLoop() {
             last_burst_time_ = std::chrono::system_clock::now();
         }
 
+        // Process any pending range summary requests (queued by MQTT callbacks).
+        // Must run on the worker thread because pqxx is not thread-safe.
+        if (int days = pending_weekly_days_.exchange(0); days > 0) {
+            generateRangeSummary(SummaryPeriod::WEEKLY, days);
+        }
+        if (int days = pending_monthly_days_.exchange(0); days > 0) {
+            generateRangeSummary(SummaryPeriod::MONTHLY, days);
+        }
+
         // Wait for next cycle
         auto next_cycle = std::chrono::system_clock::now() + std::chrono::seconds(burst_interval_seconds_);
         std::time_t next_time = std::chrono::system_clock::to_time_t(next_cycle);
@@ -1083,7 +1101,14 @@ void BurstCollectorService::generateRangeSummary(SummaryPeriod period, int days_
     std::cout << "LLM: Generating " << period_str << " summary ("
               << days_back << " days)..." << std::endl;
 
+    if (!db_service_) {
+        std::cerr << "LLM: DB service not available for " << period_str << " summary" << std::endl;
+        return;
+    }
+
+    std::cout << "LLM: Calling getMetricsForDateRange..." << std::endl;
     auto nights = db_service_->getMetricsForDateRange(device_id_, days_back);
+    std::cout << "LLM: Got " << nights.size() << " nights from DB" << std::endl;
     if (nights.empty()) {
         std::cerr << "LLM: No data for " << period_str << " summary" << std::endl;
         return;
