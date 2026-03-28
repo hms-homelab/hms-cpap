@@ -659,6 +659,33 @@ bool DataPublisherService::publishSTRDiscovery() {
     }
 
     std::cout << "    14 STR daily sensors" << std::endl;
+
+    // Weekly and monthly summary sensors (same JSON pattern as daily session_summary)
+    for (const auto& [period, icon] : std::vector<std::pair<std::string, std::string>>{
+             {"weekly", "mdi:calendar-week"}, {"monthly", "mdi:calendar-month"}}) {
+
+        std::string obj_id = device_id_ + "_" + period + "_summary";
+        std::string state_topic = "cpap/" + device_id_ + "/" + period + "/summary";
+
+        Json::Value cfg;
+        cfg["name"] = period + " summary";
+        cfg["unique_id"] = obj_id;
+        cfg["state_topic"] = state_topic;
+        cfg["icon"] = icon;
+        cfg["value_template"] = "{{ value_json.summary[:50] }}...";
+        cfg["json_attributes_topic"] = state_topic;
+
+        Json::CharReaderBuilder rb;
+        std::istringstream ds(device_json);
+        Json::parseFromStream(rb, ds, &cfg["device"], nullptr);
+
+        std::string disc_topic = "homeassistant/sensor/" + device_id_ + "/" + period + "_summary/config";
+        Json::StreamWriterBuilder wb;
+        wb["indentation"] = "";
+        mqtt_client_->publish(disc_topic, Json::writeString(wb, cfg), 1, true);
+    }
+    std::cout << "    2 range summary sensors (weekly, monthly)" << std::endl;
+
     return true;
 }
 
@@ -786,6 +813,27 @@ bool DataPublisherService::publishSessionSummary(const std::string& summary) {
     mqtt_client_->publish(topic, payload, 0, true);
 
     std::cout << "  LLM summary published to " << topic << std::endl;
+    return true;
+}
+
+bool DataPublisherService::publishRangeSummary(SummaryPeriod period,
+                                                const std::string& summary) {
+    if (!mqtt_client_ || !mqtt_client_->isConnected()) {
+        std::cerr << "MQTT: Not connected, skipping range summary publish" << std::endl;
+        return false;
+    }
+
+    std::string period_str = (period == SummaryPeriod::WEEKLY) ? "weekly" : "monthly";
+    std::string topic = "cpap/" + device_id_ + "/" + period_str + "/summary";
+
+    Json::Value json;
+    json["summary"] = summary;
+    Json::StreamWriterBuilder writer;
+    writer["indentation"] = "";
+    std::string payload = Json::writeString(writer, json);
+    mqtt_client_->publish(topic, payload, 0, true);
+
+    std::cout << "  LLM " << period_str << " summary published to " << topic << std::endl;
     return true;
 }
 

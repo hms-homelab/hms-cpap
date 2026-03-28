@@ -210,6 +210,20 @@ public:
     std::optional<SessionMetrics> getNightlyMetrics(const std::string& device_id,
                                                     const std::chrono::system_clock::time_point& session_start);
 
+    /**
+     * Get per-night metrics for a date range (for weekly/monthly summaries).
+     *
+     * Returns one SessionMetrics per sleep-night within [range_start, range_end].
+     * Each entry also has usage_hours and the sleep_day date filled in.
+     * Ordered oldest-first so the LLM can see the trend.
+     *
+     * @param device_id Device identifier
+     * @param days_back Number of days to look back from today (7 = weekly, 30 = monthly)
+     * @return Vector of per-night metrics, empty if no data
+     */
+    std::vector<SessionMetrics> getMetricsForDateRange(const std::string& device_id,
+                                                        int days_back);
+
 private:
     std::string connection_string_;
     std::unique_ptr<pqxx::connection> conn_;

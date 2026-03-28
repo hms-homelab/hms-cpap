@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-03-28
+
+### Added
+- **Weekly and monthly AI summaries**: LLM-generated trend analysis over
+  7 or 30 days. Includes per-night breakdown, period averages, compliance
+  rate, best/worst nights, and actionable recommendations.
+- `DatabaseService::getMetricsForDateRange(days_back)` — queries per-night
+  metrics across a date range (one row per sleep-night, oldest first).
+- `DataPublisherService::publishRangeSummary(period, summary)` — publishes
+  to `cpap/{device}/weekly/summary` or `cpap/{device}/monthly/summary`.
+- HA discovery for weekly and monthly summary sensors (calendar-week/month icons).
+- MQTT commands for on-demand generation:
+  - `cpap/{device}/command/generate_weekly_summary` (default 7 days)
+  - `cpap/{device}/command/generate_monthly_summary` (default 30 days)
+  - Both accept optional JSON payload `{"days": N}` to override the range.
+- Auto-trigger: weekly summary on Sundays, monthly on 1st of month
+  (fires after daily summary on session completion).
+- `SummaryPeriod` enum (DAILY, WEEKLY, MONTHLY) in CPAPModels.
+- `sleep_day` field on `SessionMetrics` for date-labeled range queries.
+- 9 unit tests for range summary logic (236 total).
+
 ## [2.0.4] - 2026-03-28
 
 ### Fixed

@@ -9,6 +9,14 @@
 namespace hms_cpap {
 
 /**
+ * Summary period — controls which date range and LLM prompt to use.
+ * Daily: single night (existing behavior).
+ * Weekly: last 7 nights (auto-triggered on Sundays).
+ * Monthly: last 30 nights (auto-triggered on 1st of month).
+ */
+enum class SummaryPeriod { DAILY, WEEKLY, MONTHLY };
+
+/**
  * Event types for respiratory events
  */
 enum class EventType {
@@ -165,6 +173,9 @@ struct SessionMetrics {
     // ===== USAGE METRICS =====
     std::optional<double> usage_hours;            // Total hours
     std::optional<double> usage_percent;          // % of 8-hour target
+
+    // ===== DATE LABEL (for range queries) =====
+    std::string sleep_day;  // "YYYY-MM-DD", filled by getMetricsForDateRange()
 };
 
 /**
