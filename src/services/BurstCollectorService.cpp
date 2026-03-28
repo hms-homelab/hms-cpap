@@ -815,14 +815,18 @@ bool BurstCollectorService::executeBurstCycle() {
                             ? &last_str_records_.back() : nullptr;
                         generateAndPublishSummary(metrics.value(), str_rec);
 
-                        // Auto-trigger weekly summary on Sundays, monthly on 1st
+                        // Auto-trigger weekly/monthly summaries based on config.
+                        // WEEKLY_SUMMARY_DAY: 0=Sun..6=Sat (default 0=Sunday)
+                        // MONTHLY_SUMMARY_DAY: day of month (default 1)
                         auto now = std::chrono::system_clock::now();
                         auto now_t = std::chrono::system_clock::to_time_t(now);
                         std::tm* tm = std::localtime(&now_t);
-                        if (tm->tm_wday == 0) {  // Sunday
+                        int weekly_day = ConfigManager::getInt("WEEKLY_SUMMARY_DAY", 0);
+                        int monthly_day = ConfigManager::getInt("MONTHLY_SUMMARY_DAY", 1);
+                        if (tm->tm_wday == weekly_day) {
                             generateRangeSummary(SummaryPeriod::WEEKLY);
                         }
-                        if (tm->tm_mday == 1) {  // 1st of month
+                        if (tm->tm_mday == monthly_day) {
                             generateRangeSummary(SummaryPeriod::MONTHLY);
                         }
                     }

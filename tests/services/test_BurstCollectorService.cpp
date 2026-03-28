@@ -1256,31 +1256,35 @@ TEST_F(BurstCollectorServiceTest, RangeSummary_AveragesCorrect) {
     EXPECT_DOUBLE_EQ(avg_leak, 7.5);
 }
 
-TEST_F(BurstCollectorServiceTest, RangeSummary_AutoTrigger_Sunday) {
-    // tm_wday == 0 is Sunday → should trigger weekly
+TEST_F(BurstCollectorServiceTest, RangeSummary_AutoTrigger_WeeklyDay) {
+    // Default WEEKLY_SUMMARY_DAY=0 (Sunday). Configurable 0-6.
+    int weekly_day = 0;  // default
     std::tm sunday = {};
     sunday.tm_wday = 0;
-    sunday.tm_mday = 15;  // not 1st
-    EXPECT_EQ(sunday.tm_wday, 0) << "Sunday triggers weekly";
+    sunday.tm_mday = 15;
+    EXPECT_EQ(sunday.tm_wday, weekly_day) << "Matches configured weekly day";
     EXPECT_NE(sunday.tm_mday, 1) << "Not 1st, so no monthly";
 }
 
-TEST_F(BurstCollectorServiceTest, RangeSummary_AutoTrigger_FirstOfMonth) {
-    // tm_mday == 1 → should trigger monthly
+TEST_F(BurstCollectorServiceTest, RangeSummary_AutoTrigger_MonthlyDay) {
+    // Default MONTHLY_SUMMARY_DAY=1. Configurable 1-28.
+    int monthly_day = 1;  // default
     std::tm first = {};
-    first.tm_wday = 3;   // Wednesday, not Sunday
+    first.tm_wday = 3;   // Wednesday
     first.tm_mday = 1;
-    EXPECT_NE(first.tm_wday, 0) << "Not Sunday, so no weekly";
-    EXPECT_EQ(first.tm_mday, 1) << "1st triggers monthly";
+    EXPECT_NE(first.tm_wday, 0) << "Not default weekly day";
+    EXPECT_EQ(first.tm_mday, monthly_day) << "Matches configured monthly day";
 }
 
-TEST_F(BurstCollectorServiceTest, RangeSummary_AutoTrigger_SundayFirst) {
-    // Sunday AND 1st → both weekly and monthly should fire
+TEST_F(BurstCollectorServiceTest, RangeSummary_AutoTrigger_BothDays) {
+    // When weekly day and monthly day coincide, both fire
+    int weekly_day = 0;
+    int monthly_day = 1;
     std::tm both = {};
-    both.tm_wday = 0;
-    both.tm_mday = 1;
-    EXPECT_EQ(both.tm_wday, 0) << "Sunday triggers weekly";
-    EXPECT_EQ(both.tm_mday, 1) << "1st triggers monthly";
+    both.tm_wday = 0;   // Sunday
+    both.tm_mday = 1;   // 1st
+    EXPECT_EQ(both.tm_wday, weekly_day);
+    EXPECT_EQ(both.tm_mday, monthly_day);
 }
 
 TEST_F(BurstCollectorServiceTest, RangeSummary_DaysOverride) {
