@@ -114,8 +114,18 @@ BurstCollectorService::BurstCollectorService(int burst_interval_seconds)
         }
         if (llm_prompt_template_.empty()) {
             llm_prompt_template_ =
-                "Summarize this CPAP session in 3-5 sentences. "
-                "Include AHI assessment, usage compliance, and any concerns.\n\n"
+                "You are a CPAP therapy analyst. Summarize this CPAP session using "
+                "this exact markdown structure:\n\n"
+                "**Overall**\n"
+                "* AHI assessment (good/moderate/elevated) with value\n"
+                "* Usage hours and compliance vs 8h target\n"
+                "* Leak control assessment\n\n"
+                "**Events**\n"
+                "* Breakdown of event types (obstructive, central, hypopnea, RERA)\n"
+                "* Any concerning patterns\n\n"
+                "**Recommendations**\n"
+                "* 1-2 actionable suggestions based on the data\n\n"
+                "Use bullet points with * prefix. Keep it concise.\n\n"
                 "Session data:\n{metrics}";
         }
 
@@ -1119,16 +1129,38 @@ void BurstCollectorService::generateRangeSummary(SummaryPeriod period, int days_
     // Period-specific prompt — the LLM sees all the per-night data and averages
     std::string prompt;
     if (period == SummaryPeriod::WEEKLY) {
-        prompt = "You are a CPAP therapy analyst. Summarize this week of CPAP data "
-                 "in 4-6 sentences. Highlight trends (improving/worsening AHI, "
-                 "usage consistency), flag any concerning nights, and give one "
-                 "actionable suggestion.\n\n" + metrics_str;
+        prompt =
+            "You are a CPAP therapy analyst. Summarize this week of CPAP data "
+            "using this exact markdown structure:\n\n"
+            "**Overall Trends**\n"
+            "* Average AHI with assessment (good/moderate/elevated)\n"
+            "* Average usage hours/night and total hours\n"
+            "* Leak control assessment\n\n"
+            "**Night-by-Night Highlights**\n"
+            "* Best night: date and AHI\n"
+            "* Worst night: date and AHI\n"
+            "* Flag any concerning nights with reasons\n\n"
+            "**Recommendations**\n"
+            "* 1-2 actionable suggestions based on trends\n\n"
+            "Use bullet points with * prefix. Keep it concise.\n\n"
+            + metrics_str;
     } else {
-        prompt = "You are a CPAP therapy analyst. Summarize this month of CPAP data "
-                 "in 5-8 sentences. Identify overall trends in AHI, usage compliance, "
-                 "and leak control. Compare the first half vs second half of the month. "
-                 "Note any patterns (weekday vs weekend, etc.) and provide "
-                 "recommendations.\n\n" + metrics_str;
+        prompt =
+            "You are a CPAP therapy analyst. Summarize this month of CPAP data "
+            "using this exact markdown structure:\n\n"
+            "**Overall Trends**\n"
+            "* Average AHI with assessment (good/moderate/elevated)\n"
+            "* Average usage hours/night and total hours\n"
+            "* Leak control assessment\n\n"
+            "**First Half vs Second Half**\n"
+            "* Compare AHI averages between first and second half of the month\n"
+            "* Compare usage compliance between halves\n\n"
+            "**Patterns and Recommendations**\n"
+            "* Weekday vs weekend differences (if any)\n"
+            "* Best and worst nights with dates and AHI values\n"
+            "* 2-3 actionable recommendations\n\n"
+            "Use bullet points with * prefix. Keep it concise.\n\n"
+            + metrics_str;
     }
 
     auto summary = llm_client_->generate(prompt);
