@@ -7,6 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-03-28
+
+### Added
+- **Drogon Web Server**: hms-cpap now serves a REST API + Angular SPA on
+  port 8893 alongside data collection. 12 endpoints: /health, /api/dashboard,
+  /api/sessions, /api/sessions/:date, /api/daily-summary, /api/trends/:metric,
+  /api/statistics, /api/summaries, GET/PUT /api/config, POST /api/setup,
+  GET /api/config/test-ezshare.
+- **Multi-database support**: IDatabase interface with 3 backends:
+  - SQLite (default, embedded, zero dependencies)
+  - MySQL/MariaDB (optional, compile-time flag BUILD_WITH_MYSQL)
+  - PostgreSQL (optional, compile-time flag BUILD_WITH_POSTGRESQL)
+  Runtime DB selection via config.json `database.type` field.
+- **SqlDialect helpers**: Header-only SQL dialect functions for portable
+  queries across all 3 databases (round, sleepDay, daysAgo, castDate, etc.)
+- **AppConfig**: JSON-based config system at ~/.hms-cpap/config.json,
+  replaces environment variables. Load/save/toJson with password redaction.
+  Env var bridge for backward compatibility with existing services.
+- **QueryService**: Multi-DB query service using IDatabase::executeQuery()
+  + SqlDialect. All 7 data queries work across SQLite/MySQL/PostgreSQL.
+- **cpap_summaries table**: Persists all AI-generated daily/weekly/monthly
+  summaries with metrics for future UI display.
+- **Angular SPA** (separate repo hms-cpap-ui): Dashboard with Chart.js
+  (AHI trend + usage bars), sessions table, session detail with events,
+  settings page (5 collapsible sections), setup wizard (3-step first-run).
+- **deploy_to_pi_native.sh**: Native Pi build script (workaround for
+  cross-compiler codegen bug).
+
+### Changed
+- BUILD_WITH_WEB replaces BUILD_WITH_HEALTHCHECK (default ON).
+- Structured markdown LLM prompts for daily/weekly/monthly summaries.
+- Weekly/monthly auto-trigger days configurable via WEEKLY_SUMMARY_DAY
+  and MONTHLY_SUMMARY_DAY env vars.
+- Dockerfile: added libsqlite3, BUILD_WITH_WEB=OFF until Drogon in image.
+
+### Fixed
+- **Session resume SEGV**: reopenSession() clears session_end when
+  checkpoint files resume growing after mask re-wear.
+- **Cross-compiler SEGV**: arm-linux-gnueabihf-g++ 14.2.0 produces
+  NULL zview pointers for new DatabaseService methods. Native Pi build
+  works perfectly. Root cause: cross-compiler codegen bug (not ABI mismatch).
+
 ## [2.1.0] - 2026-03-28
 
 ### Added
