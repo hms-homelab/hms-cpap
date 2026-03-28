@@ -1175,6 +1175,27 @@ void BurstCollectorService::generateRangeSummary(SummaryPeriod period, int days_
     if (data_publisher_) {
         data_publisher_->publishRangeSummary(period, summary.value());
     }
+
+    // Save to DB for future UI
+    if (db_service_ && !nights.empty()) {
+        double total_ahi = 0, total_hours = 0;
+        int compliant = 0;
+        for (const auto& n : nights) {
+            total_ahi += n.ahi;
+            total_hours += n.usage_hours.value_or(0.0);
+            if (n.usage_hours.value_or(0.0) >= 4.0) compliant++;
+        }
+        int count = static_cast<int>(nights.size());
+        db_service_->saveSummary(
+            device_id_, period_str,
+            nights.front().sleep_day,
+            nights.back().sleep_day,
+            count,
+            total_ahi / count,
+            total_hours / count,
+            100.0 * compliant / count,
+            summary.value());
+    }
 }
 
 std::string BurstCollectorService::buildRangeMetricsString(
@@ -1263,6 +1284,23 @@ void BurstCollectorService::generateAndPublishSummary(const SessionMetrics& metr
 
     if (data_publisher_) {
         data_publisher_->publishSessionSummary(summary.value());
+    }
+
+    // Save to DB for future UI
+    if (db_service_) {
+        // Sleep day = today - 12h (session that ended this morning started last night)
+        auto now_t = std::chrono::system_clock::to_time_t(
+            std::chrono::system_clock::now() - std::chrono::hours(12));
+        std::tm* day_tm = std::localtime(&now_t);
+        std::ostringstream day_oss;
+        day_oss << std::put_time(day_tm, "%Y-%m-%d");
+        std::string sleep_day = day_oss.str();
+
+        double hours = metrics.usage_hours.value_or(0.0);
+        double compliance = (hours >= 4.0) ? 100.0 : 0.0;
+        db_service_->saveSummary(
+            device_id_, "daily", sleep_day, sleep_day,
+            1, metrics.ahi, hours, compliance, summary.value());
     }
 }
 

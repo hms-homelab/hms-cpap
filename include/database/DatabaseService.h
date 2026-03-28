@@ -224,6 +224,30 @@ public:
     std::vector<SessionMetrics> getMetricsForDateRange(const std::string& device_id,
                                                         int days_back);
 
+    /**
+     * Save an AI-generated summary to the cpap_summaries table.
+     *
+     * @param device_id Device identifier
+     * @param period "daily", "weekly", or "monthly"
+     * @param range_start First sleep-night date covered
+     * @param range_end Last sleep-night date covered
+     * @param nights_count Number of nights in the range
+     * @param avg_ahi Average AHI across the range
+     * @param avg_usage_hours Average usage hours/night
+     * @param compliance_pct Percentage of nights >= 4h
+     * @param summary_text The LLM-generated summary text
+     * @return true if saved successfully
+     */
+    bool saveSummary(const std::string& device_id,
+                     const std::string& period,
+                     const std::string& range_start,
+                     const std::string& range_end,
+                     int nights_count,
+                     double avg_ahi,
+                     double avg_usage_hours,
+                     double compliance_pct,
+                     const std::string& summary_text);
+
 private:
     std::string connection_string_;
     std::unique_ptr<pqxx::connection> conn_;
