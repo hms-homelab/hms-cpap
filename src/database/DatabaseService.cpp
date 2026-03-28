@@ -56,6 +56,32 @@ bool DatabaseService::connect() {
                 // Tables may not exist yet — ignore
             }
 
+            // Auto-migrate v2.1.0: AI summaries table
+            try {
+                pqxx::work txn(*conn_);
+                txn.exec(R"(
+                    CREATE TABLE IF NOT EXISTS cpap_summaries (
+                        id              SERIAL PRIMARY KEY,
+                        device_id       TEXT NOT NULL,
+                        period          TEXT NOT NULL CHECK (period IN ('daily', 'weekly', 'monthly')),
+                        range_start     DATE NOT NULL,
+                        range_end       DATE NOT NULL,
+                        nights_count    INT NOT NULL DEFAULT 1,
+                        avg_ahi         DOUBLE PRECISION,
+                        avg_usage_hours DOUBLE PRECISION,
+                        compliance_pct  DOUBLE PRECISION,
+                        summary_text    TEXT NOT NULL,
+                        created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    )
+                )");
+                txn.exec(R"(
+                    CREATE INDEX IF NOT EXISTS idx_cpap_summaries_device_period
+                    ON cpap_summaries (device_id, period, range_end DESC)
+                )");
+                txn.commit();
+                std::cout << "  DB: v2.1.0 migration (cpap_summaries table) applied" << std::endl;
+            } catch (...) {}
+
             return true;
         }
     } catch (const std::exception& e) {
@@ -1306,62 +1332,54 @@ std::vector<SessionMetrics> DatabaseService::getMetricsForDateRange(
         auto result = txn.exec_params(query, device_id, cutoff_oss.str());
         txn.commit();
 
+        // Column access by position — works around a cross-compiler codegen
+        // bug where pqxx::zview (from string literals) gets a NULL data pointer
+        // when passed to PQfnumber/strcmp (SEGV in row["col_name"]).
+        // Column order matches SELECT above:
+        //  0=sleep_day  1=total_seconds  2=total_events  3=obstructive_apneas
+        //  4=central_apneas  5=hypopneas  6=reras  7=clear_airway_apneas
+        //  8=avg_event_duration  9=max_event_duration  10=usage_hours
+        //  11=usage_percent  12=ahi  13=avg_leak  14=max_leak  15=avg_rr
+        //  16=avg_tv  17=avg_mv  18=avg_fl  19=pp95  20=avg_mask_pressure
+        //  21=avg_epr_pressure  22=avg_snore  23=avg_target_ventilation
+        //  24=avg_pressure  25=max_pressure  26=min_pressure  27=leak_p50
+        //  28=leak_p95_sess  29=therapy_mode
         std::vector<SessionMetrics> nights;
         for (const auto& row : result) {
-            if (row["total_seconds"].is_null()) continue;
+            if (row[1].is_null()) continue;  // total_seconds
 
             SessionMetrics m;
-            m.sleep_day           = row["sleep_day"].as<std::string>();
-            m.total_events        = row["total_events"].as<int>(0);
-            m.ahi                 = row["ahi"].as<double>(0.0);
-            m.obstructive_apneas  = row["obstructive_apneas"].as<int>(0);
-            m.central_apneas      = row["central_apneas"].as<int>(0);
-            m.hypopneas           = row["hypopneas"].as<int>(0);
-            m.reras               = row["reras"].as<int>(0);
-            m.clear_airway_apneas = row["clear_airway_apneas"].as<int>(0);
+            m.sleep_day           = row[0].as<std::string>();
+            m.total_events        = row[2].as<int>(0);
+            m.ahi                 = row[12].as<double>(0.0);
+            m.obstructive_apneas  = row[3].as<int>(0);
+            m.central_apneas      = row[4].as<int>(0);
+            m.hypopneas           = row[5].as<int>(0);
+            m.reras               = row[6].as<int>(0);
+            m.clear_airway_apneas = row[7].as<int>(0);
 
-            if (!row["avg_event_duration"].is_null())
-                m.avg_event_duration = row["avg_event_duration"].as<double>();
-            if (!row["max_event_duration"].is_null())
-                m.max_event_duration = row["max_event_duration"].as<double>();
-            if (!row["usage_hours"].is_null())
-                m.usage_hours = row["usage_hours"].as<double>();
-            if (!row["usage_percent"].is_null())
-                m.usage_percent = row["usage_percent"].as<double>();
-            if (!row["avg_leak"].is_null())
-                m.avg_leak_rate = row["avg_leak"].as<double>();
-            if (!row["max_leak"].is_null())
-                m.max_leak_rate = row["max_leak"].as<double>();
-            if (!row["avg_rr"].is_null())
-                m.avg_respiratory_rate = row["avg_rr"].as<double>();
-            if (!row["avg_tv"].is_null())
-                m.avg_tidal_volume = row["avg_tv"].as<double>();
-            if (!row["avg_mv"].is_null())
-                m.avg_minute_ventilation = row["avg_mv"].as<double>();
-            if (!row["avg_fl"].is_null())
-                m.avg_flow_limitation = row["avg_fl"].as<double>();
-            if (!row["pp95"].is_null())
-                m.pressure_p95 = row["pp95"].as<double>();
-            if (!row["avg_pressure"].is_null())
-                m.avg_pressure = row["avg_pressure"].as<double>();
-            if (!row["max_pressure"].is_null())
-                m.max_pressure = row["max_pressure"].as<double>();
-            if (!row["min_pressure"].is_null())
-                m.min_pressure = row["min_pressure"].as<double>();
-            if (!row["avg_mask_pressure"].is_null())
-                m.avg_mask_pressure = row["avg_mask_pressure"].as<double>();
-            if (!row["avg_epr_pressure"].is_null())
-                m.avg_epr_pressure = row["avg_epr_pressure"].as<double>();
-            if (!row["avg_snore"].is_null())
-                m.avg_snore = row["avg_snore"].as<double>();
-            if (!row["avg_target_ventilation"].is_null() && row["avg_target_ventilation"].as<double>(0) > 0)
-                m.avg_target_ventilation = row["avg_target_ventilation"].as<double>();
-            if (!row["leak_p50"].is_null())
-                m.leak_p50 = row["leak_p50"].as<double>();
-            if (!row["leak_p95_sess"].is_null())
-                m.leak_p95 = row["leak_p95_sess"].as<double>();
-            if (!row["therapy_mode"].is_null())
-                m.therapy_mode = row["therapy_mode"].as<int>();
+            if (!row[8].is_null())  m.avg_event_duration     = row[8].as<double>();
+            if (!row[9].is_null())  m.max_event_duration     = row[9].as<double>();
+            if (!row[10].is_null()) m.usage_hours            = row[10].as<double>();
+            if (!row[11].is_null()) m.usage_percent          = row[11].as<double>();
+            if (!row[13].is_null()) m.avg_leak_rate          = row[13].as<double>();
+            if (!row[14].is_null()) m.max_leak_rate          = row[14].as<double>();
+            if (!row[15].is_null()) m.avg_respiratory_rate   = row[15].as<double>();
+            if (!row[16].is_null()) m.avg_tidal_volume       = row[16].as<double>();
+            if (!row[17].is_null()) m.avg_minute_ventilation = row[17].as<double>();
+            if (!row[18].is_null()) m.avg_flow_limitation    = row[18].as<double>();
+            if (!row[19].is_null()) m.pressure_p95           = row[19].as<double>();
+            if (!row[24].is_null()) m.avg_pressure           = row[24].as<double>();
+            if (!row[25].is_null()) m.max_pressure           = row[25].as<double>();
+            if (!row[26].is_null()) m.min_pressure           = row[26].as<double>();
+            if (!row[20].is_null()) m.avg_mask_pressure      = row[20].as<double>();
+            if (!row[21].is_null()) m.avg_epr_pressure       = row[21].as<double>();
+            if (!row[22].is_null()) m.avg_snore              = row[22].as<double>();
+            if (!row[23].is_null() && row[23].as<double>(0) > 0)
+                m.avg_target_ventilation = row[23].as<double>();
+            if (!row[27].is_null()) m.leak_p50               = row[27].as<double>();
+            if (!row[28].is_null()) m.leak_p95               = row[28].as<double>();
+            if (!row[29].is_null()) m.therapy_mode           = row[29].as<int>();
 
             nights.push_back(std::move(m));
         }
@@ -1373,6 +1391,39 @@ std::vector<SessionMetrics> DatabaseService::getMetricsForDateRange(
     } catch (const std::exception& e) {
         std::cerr << "DB: getMetricsForDateRange error: " << e.what() << std::endl;
         return {};
+    }
+}
+
+bool DatabaseService::saveSummary(
+    const std::string& device_id,
+    const std::string& period,
+    const std::string& range_start,
+    const std::string& range_end,
+    int nights_count,
+    double avg_ahi,
+    double avg_usage_hours,
+    double compliance_pct,
+    const std::string& summary_text) {
+
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!ensureConnection()) return false;
+
+    try {
+        pqxx::work txn(*conn_);
+        txn.exec_params(R"(
+            INSERT INTO cpap_summaries
+                (device_id, period, range_start, range_end, nights_count,
+                 avg_ahi, avg_usage_hours, compliance_pct, summary_text)
+            VALUES ($1, $2, $3::date, $4::date, $5, $6, $7, $8, $9)
+        )", device_id, period, range_start, range_end, nights_count,
+            avg_ahi, avg_usage_hours, compliance_pct, summary_text);
+        txn.commit();
+        std::cout << "DB: Saved " << period << " summary (" << range_start
+                  << " to " << range_end << ", " << nights_count << " nights)" << std::endl;
+        return true;
+    } catch (const std::exception& e) {
+        std::cerr << "DB: saveSummary error: " << e.what() << std::endl;
+        return false;
     }
 }
 
