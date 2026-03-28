@@ -248,6 +248,16 @@ public:
                      double compliance_pct,
                      const std::string& summary_text);
 
+    /**
+     * Get raw pqxx connection (for QueryService read-only queries).
+     * Caller must hold no other locks — acquires the recursive mutex.
+     */
+    pqxx::connection* rawConnection() {
+        std::lock_guard<std::recursive_mutex> lock(mutex_);
+        ensureConnection();
+        return conn_.get();
+    }
+
 private:
     std::string connection_string_;
     std::unique_ptr<pqxx::connection> conn_;

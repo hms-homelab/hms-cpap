@@ -1,3 +1,8 @@
+#ifdef BUILD_WITH_WEB
+#include <drogon/drogon.h>
+#include "controllers/CpapController.h"
+#include "web/QueryService.h"
+#endif
 #include "services/BurstCollectorService.h"
 #include "services/FysetcReceiverService.h"
 #include "services/SessionDiscoveryService.h"
@@ -40,6 +45,9 @@ void signalHandler(int signal) {
     if (agent_service) {
         agent_service->stop();
     }
+#ifdef BUILD_WITH_WEB
+    drogon::app().quit();
+#endif
 }
 
 /**
@@ -516,10 +524,52 @@ int main(int argc, char** argv) {
             std::cout << "Agent: AI module enabled (model: " << agent_model << ")" << std::endl;
         }
 
-        // Main loop - wait for shutdown signal
+#ifdef BUILD_WITH_WEB
+        // Start web UI server (Drogon blocks until shutdown)
+        {
+            int web_port = hms_cpap::ConfigManager::getInt("HEALTH_CHECK_PORT", 8893);
+            std::string static_dir = hms_cpap::ConfigManager::get("STATIC_DIR", "./static/browser");
+
+            // Wire QueryService to controller — reuses the DB connection from burst/fysetc mode
+            std::shared_ptr<hms_cpap::DatabaseService> web_db;
+            {
+                std::string db_host = hms_cpap::ConfigManager::get("DB_HOST", "localhost");
+                std::string db_port_s = hms_cpap::ConfigManager::get("DB_PORT", "5432");
+                std::string db_name = hms_cpap::ConfigManager::get("DB_NAME", "cpap_monitoring");
+                std::string db_user = hms_cpap::ConfigManager::get("DB_USER", "maestro");
+                std::string db_pass = hms_cpap::ConfigManager::get("DB_PASSWORD", "maestro_postgres_2026_secure");
+                std::string conn = "host=" + db_host + " port=" + db_port_s +
+                                   " dbname=" + db_name + " user=" + db_user +
+                                   " password=" + db_pass;
+                web_db = std::make_shared<hms_cpap::DatabaseService>(conn);
+                web_db->connect();
+            }
+
+            std::string device_id = hms_cpap::ConfigManager::get("CPAP_DEVICE_ID", "cpap_resmed_23243570851");
+            auto query_service = std::make_shared<hms_cpap::QueryService>(web_db, device_id);
+            hms_cpap::CpapController::setQueryService(query_service);
+
+            drogon::app()
+                .setLogLevel(trantor::Logger::kWarn)
+                .addListener("0.0.0.0", web_port)
+                .setThreadNum(2)
+                .setDocumentRoot(static_dir)
+                .setIdleConnectionTimeout(120);
+
+            std::cout << "Web UI: http://0.0.0.0:" << web_port << std::endl;
+            std::cout << "  /health         - Health check" << std::endl;
+            std::cout << "  /api/dashboard  - Dashboard data" << std::endl;
+            std::cout << "  /api/sessions   - Session list" << std::endl;
+            std::cout << std::endl;
+
+            drogon::app().run();  // Blocks until quit()
+        }
+#else
+        // No web UI — simple sleep loop
         while (!shutdown_requested) {
             std::this_thread::sleep_for(std::chrono::seconds(1));
         }
+#endif
 
         // Cleanup
         if (agent_service) {
