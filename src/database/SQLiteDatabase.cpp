@@ -4,6 +4,7 @@
 #include <iomanip>
 #include <sstream>
 #include <cstring>
+#include <filesystem>
 
 namespace hms_cpap {
 
@@ -93,6 +94,10 @@ bool SQLiteDatabase::connect() {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
 
     if (db_) return true;  // already open
+
+    // Create parent directory if it doesn't exist
+    auto parent = std::filesystem::path(db_path_).parent_path();
+    if (!parent.empty()) std::filesystem::create_directories(parent);
 
     int rc = sqlite3_open(db_path_.c_str(), &db_);
     if (rc != SQLITE_OK) {

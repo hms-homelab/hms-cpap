@@ -9,11 +9,17 @@
 #include "services/DataPublisherService.h"
 #include "parsers/EDFParser.h"
 #include "database/DatabaseService.h"
+#include "database/IDatabase.h"
+#include "database/SQLiteDatabase.h"
+#ifdef WITH_POSTGRESQL
+#include "database/PostgresDatabase.h"
+#endif
 #include "agent/AgentService.h"
 #include "agent/IAgentLLM.h"
 #include "mqtt_client.h"
 #include "llm_client.h"
 #include "utils/ConfigManager.h"
+#include "utils/AppConfig.h"
 #include <iostream>
 #include <iomanip>
 #include <csignal>
@@ -21,6 +27,7 @@
 #include <memory>
 #include <string>
 #include <cstring>
+#include <cstdlib>
 #include <filesystem>
 #include <sstream>
 
@@ -325,7 +332,101 @@ int runReparse(const std::string& archive_dir, const std::string& start_str, con
  * Main entry point
  */
 int main(int argc, char** argv) {
-    // Handle CLI modes
+    // ── Load AppConfig ──────────────────────────────────────────────
+    std::string data_dir = hms_cpap::AppConfig::dataDir();
+    std::string config_path = data_dir + "/config.json";
+
+    // Allow --config <path> override (scan before CLI modes)
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--config") == 0 && i + 1 < argc) {
+            config_path = argv[i + 1];
+            break;
+        }
+    }
+
+    hms_cpap::AppConfig config;
+    bool config_existed = hms_cpap::AppConfig::load(config_path, config);
+
+    // Default sqlite_path if empty
+    if (config.database.sqlite_path.empty()) {
+        config.database.sqlite_path = data_dir + "/cpap.db";
+    }
+
+    // Save config (creates file on first run)
+    config.save(config_path);
+
+    // ── Bridge: set env vars from AppConfig so existing services work ──
+    setenv("CPAP_DEVICE_ID", config.device_id.c_str(), 1);
+    setenv("CPAP_DEVICE_NAME", config.device_name.c_str(), 1);
+    setenv("CPAP_SOURCE", config.source.c_str(), 1);
+    setenv("EZSHARE_BASE_URL", config.ezshare_url.c_str(), 1);
+    setenv("BURST_INTERVAL", std::to_string(config.burst_interval).c_str(), 1);
+    setenv("HEALTH_CHECK_PORT", std::to_string(config.web_port).c_str(), 1);
+    if (!config.local_dir.empty()) setenv("CPAP_LOCAL_DIR", config.local_dir.c_str(), 1);
+
+    // DB env vars (for existing DatabaseService inside BurstCollectorService)
+    setenv("DB_HOST", config.database.host.c_str(), 1);
+    setenv("DB_PORT", std::to_string(config.database.port).c_str(), 1);
+    setenv("DB_NAME", config.database.name.c_str(), 1);
+    setenv("DB_USER", config.database.user.c_str(), 1);
+    setenv("DB_PASSWORD", config.database.password.c_str(), 1);
+
+    // MQTT env vars
+    if (config.mqtt.enabled) {
+        setenv("MQTT_BROKER", config.mqtt.broker.c_str(), 1);
+        setenv("MQTT_PORT", std::to_string(config.mqtt.port).c_str(), 1);
+        setenv("MQTT_USER", config.mqtt.username.c_str(), 1);
+        setenv("MQTT_PASSWORD", config.mqtt.password.c_str(), 1);
+        setenv("MQTT_CLIENT_ID", config.mqtt.client_id.c_str(), 1);
+    }
+
+    // LLM env vars
+    if (config.llm.enabled) {
+        setenv("LLM_ENABLED", "true", 1);
+        setenv("LLM_PROVIDER", config.llm.provider.c_str(), 1);
+        setenv("LLM_ENDPOINT", config.llm.endpoint.c_str(), 1);
+        setenv("LLM_MODEL", config.llm.model.c_str(), 1);
+        setenv("LLM_API_KEY", config.llm.api_key.c_str(), 1);
+        setenv("LLM_MAX_TOKENS", std::to_string(config.llm.max_tokens).c_str(), 1);
+    }
+
+    // Agent env vars
+    if (config.agent.enabled) {
+        setenv("AGENT_ENABLED", "true", 1);
+        setenv("AGENT_LLM_PROVIDER", config.llm.provider.c_str(), 1);
+        setenv("AGENT_LLM_ENDPOINT", config.llm.endpoint.c_str(), 1);
+        setenv("AGENT_LLM_MODEL", config.llm.model.c_str(), 1);
+        setenv("AGENT_LLM_API_KEY", config.llm.api_key.c_str(), 1);
+        setenv("AGENT_EMBED_MODEL", config.agent.embed_model.c_str(), 1);
+    }
+
+    // ── Create IDatabase from config ────────────────────────────────
+    std::shared_ptr<hms_cpap::IDatabase> db;
+    std::string pg_conn_str;  // reused later for web/agent
+    if (config.database.type == "postgresql") {
+#ifdef WITH_POSTGRESQL
+        pg_conn_str = "host=" + config.database.host + " port=" + std::to_string(config.database.port) +
+                      " dbname=" + config.database.name + " user=" + config.database.user +
+                      " password=" + config.database.password;
+        db = std::make_shared<hms_cpap::PostgresDatabase>(pg_conn_str);
+#else
+        std::cerr << "PostgreSQL support not compiled in" << std::endl;
+        return 1;
+#endif
+    } else {
+        // Default: SQLite
+        db = std::make_shared<hms_cpap::SQLiteDatabase>(config.database.sqlite_path);
+    }
+    db->connect();
+
+    // Print config source
+    std::cout << "Config: " << config_path << (config_existed ? "" : " (created)") << std::endl;
+    std::cout << "Database: " << config.database.type;
+    if (config.database.type == "sqlite") std::cout << " (" << config.database.sqlite_path << ")";
+    else std::cout << " (" << config.database.host << "/" << config.database.name << ")";
+    std::cout << std::endl;
+
+    // ── Handle CLI modes ────────────────────────────────────────────
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--backfill") == 0) {
             if (i + 1 >= argc) {
@@ -527,27 +628,19 @@ int main(int argc, char** argv) {
 #ifdef BUILD_WITH_WEB
         // Start web UI server (Drogon blocks until shutdown)
         {
-            int web_port = hms_cpap::ConfigManager::getInt("HEALTH_CHECK_PORT", 8893);
-            std::string static_dir = hms_cpap::ConfigManager::get("STATIC_DIR", "./static/browser");
+            int web_port = config.web_port;
+            std::string static_dir = config.static_dir;
 
-            // Wire QueryService to controller — reuses the DB connection from burst/fysetc mode
-            std::shared_ptr<hms_cpap::DatabaseService> web_db;
-            {
-                std::string db_host = hms_cpap::ConfigManager::get("DB_HOST", "localhost");
-                std::string db_port_s = hms_cpap::ConfigManager::get("DB_PORT", "5432");
-                std::string db_name = hms_cpap::ConfigManager::get("DB_NAME", "cpap_monitoring");
-                std::string db_user = hms_cpap::ConfigManager::get("DB_USER", "maestro");
-                std::string db_pass = hms_cpap::ConfigManager::get("DB_PASSWORD", "maestro_postgres_2026_secure");
-                std::string conn = "host=" + db_host + " port=" + db_port_s +
-                                   " dbname=" + db_name + " user=" + db_user +
-                                   " password=" + db_pass;
-                web_db = std::make_shared<hms_cpap::DatabaseService>(conn);
+            // QueryService needs PostgreSQL for now (raw pqxx queries)
+            if (config.database.type == "postgresql") {
+#ifdef WITH_POSTGRESQL
+                auto web_db = std::make_shared<hms_cpap::DatabaseService>(pg_conn_str);
                 web_db->connect();
+                auto query_service = std::make_shared<hms_cpap::QueryService>(web_db, config.device_id);
+                hms_cpap::CpapController::setQueryService(query_service);
+#endif
             }
-
-            std::string device_id = hms_cpap::ConfigManager::get("CPAP_DEVICE_ID", "cpap_resmed_23243570851");
-            auto query_service = std::make_shared<hms_cpap::QueryService>(web_db, device_id);
-            hms_cpap::CpapController::setQueryService(query_service);
+            // TODO: SQLite QueryService support
 
             drogon::app()
                 .setLogLevel(trantor::Logger::kWarn)
