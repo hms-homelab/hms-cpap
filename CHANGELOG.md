@@ -22,11 +22,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `cpap/{device}/command/generate_weekly_summary` (default 7 days)
   - `cpap/{device}/command/generate_monthly_summary` (default 30 days)
   - Both accept optional JSON payload `{"days": N}` to override the range.
-- Auto-trigger: weekly summary on Sundays, monthly on 1st of month
-  (fires after daily summary on session completion).
+- Auto-trigger: weekly summary configurable via `WEEKLY_SUMMARY_DAY` env
+  (0=Sun..6=Sat, default 0), monthly via `MONTHLY_SUMMARY_DAY` (default 1).
 - `SummaryPeriod` enum (DAILY, WEEKLY, MONTHLY) in CPAPModels.
 - `sleep_day` field on `SessionMetrics` for date-labeled range queries.
+- `deploy_to_pi_native.sh` — builds natively on Pi instead of cross-compiling.
+- Worker-thread queueing for MQTT-triggered range summaries (pqxx thread safety).
+- n8n workflows: CPAP Weekly Summary - Discord (`detNx9TfVvp5lxnN`),
+  CPAP Monthly Summary - Discord (`IDne0iIIay0dNakU`). Both active.
 - 9 unit tests for range summary logic (236 total).
+
+### Fixed
+- **Cross-compiler SEGV**: Any new `DatabaseService` method SEGVs when
+  cross-compiled with `arm-linux-gnueabihf-g++` 14.2.0 on x86, but works
+  fine when built natively on Pi with the same GCC version. Same headers,
+  same libs, same ABI — suspected cross-compiler codegen bug. Workaround:
+  use `deploy_to_pi_native.sh` for Pi deployments.
 
 ## [2.0.4] - 2026-03-28
 
