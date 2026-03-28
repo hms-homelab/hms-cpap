@@ -12,9 +12,11 @@ include_directories(
     /usr/local/include
 )
 
-# Collect all source files from main project (except main.cpp)
+# Collect all source files from main project (except main.cpp and web/controllers)
 file(GLOB_RECURSE PROJECT_SOURCES "${CMAKE_SOURCE_DIR}/src/*.cpp")
 list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*main\\.cpp$")
+list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/controllers/.*")
+list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/web/.*")
 
 # Test sources
 set(TEST_SOURCES

@@ -6,11 +6,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -O2 -pthread")
 
 # Find required packages
-option(BUILD_WITH_HEALTHCHECK "Build with Drogon health check endpoint" OFF)
+option(BUILD_WITH_WEB "Build with Drogon web UI server" ON)
 
-if(BUILD_WITH_HEALTHCHECK)
+if(BUILD_WITH_WEB)
     find_package(Drogon CONFIG REQUIRED)
-    add_definitions(-DBUILD_WITH_HEALTHCHECK)
+    add_definitions(-DBUILD_WITH_WEB)
 endif()
 
 find_package(jsoncpp REQUIRED)
@@ -104,7 +104,7 @@ target_link_libraries(${PROJECT_NAME}
     crypto
 )
 
-if(BUILD_WITH_HEALTHCHECK)
+if(BUILD_WITH_WEB)
     target_link_libraries(${PROJECT_NAME} Drogon::Drogon)
 endif()
 
