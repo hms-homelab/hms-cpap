@@ -365,11 +365,15 @@ int main(int argc, char** argv) {
     if (!config.local_dir.empty()) setenv("CPAP_LOCAL_DIR", config.local_dir.c_str(), 1);
 
     // DB env vars (for existing DatabaseService inside BurstCollectorService)
-    setenv("DB_HOST", config.database.host.c_str(), 1);
-    setenv("DB_PORT", std::to_string(config.database.port).c_str(), 1);
-    setenv("DB_NAME", config.database.name.c_str(), 1);
-    setenv("DB_USER", config.database.user.c_str(), 1);
-    setenv("DB_PASSWORD", config.database.password.c_str(), 1);
+    // Only set when using PostgreSQL — otherwise BurstCollector tries to connect
+    // to PG with empty credentials and fails
+    if (config.database.type == "postgresql") {
+        setenv("DB_HOST", config.database.host.c_str(), 1);
+        setenv("DB_PORT", std::to_string(config.database.port).c_str(), 1);
+        setenv("DB_NAME", config.database.name.c_str(), 1);
+        setenv("DB_USER", config.database.user.c_str(), 1);
+        setenv("DB_PASSWORD", config.database.password.c_str(), 1);
+    }
 
     // MQTT env vars
     if (config.mqtt.enabled) {
@@ -631,16 +635,10 @@ int main(int argc, char** argv) {
             int web_port = config.web_port;
             std::string static_dir = config.static_dir;
 
-            // QueryService needs PostgreSQL for now (raw pqxx queries)
-            if (config.database.type == "postgresql") {
-#ifdef WITH_POSTGRESQL
-                auto web_db = std::make_shared<hms_cpap::DatabaseService>(pg_conn_str);
-                web_db->connect();
-                auto query_service = std::make_shared<hms_cpap::QueryService>(web_db, config.device_id);
-                hms_cpap::CpapController::setQueryService(query_service);
-#endif
-            }
-            // TODO: SQLite QueryService support
+            // QueryService works with all database backends via IDatabase::executeQuery
+            auto query_service = std::make_shared<hms_cpap::QueryService>(db, config.device_id);
+            hms_cpap::CpapController::setQueryService(query_service);
+            hms_cpap::CpapController::setConfig(&config, config_path);
 
             drogon::app()
                 .setLogLevel(trantor::Logger::kWarn)

@@ -94,6 +94,11 @@ public:
 
     void* rawConnection() override;
 
+    // -- Generic query --------------------------------------------------------
+
+    Json::Value executeQuery(const std::string& sql,
+                             const std::vector<std::string>& params = {}) override;
+
 private:
     std::string db_path_;
     sqlite3* db_ = nullptr;

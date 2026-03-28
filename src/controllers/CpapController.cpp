@@ -1,12 +1,21 @@
 #ifdef BUILD_WITH_WEB
 
 #include "controllers/CpapController.h"
+#include "utils/AppConfig.h"
+#include <sstream>
 
 namespace hms_cpap {
 
 std::shared_ptr<QueryService> CpapController::qs_;
+hms_cpap::AppConfig* CpapController::config_ = nullptr;
+std::string CpapController::config_path_;
 
 void CpapController::setQueryService(std::shared_ptr<QueryService> qs) { qs_ = qs; }
+
+void CpapController::setConfig(hms_cpap::AppConfig* cfg, const std::string& path) {
+    config_ = cfg;
+    config_path_ = path;
+}
 
 static drogon::HttpResponsePtr jsonError(const std::string& msg, drogon::HttpStatusCode code) {
     Json::Value err;
@@ -108,6 +117,115 @@ void CpapController::summaries(const drogon::HttpRequestPtr& req,
     } catch (const std::exception& e) {
         cb(jsonError(e.what(), drogon::k500InternalServerError));
     }
+}
+
+void CpapController::getConfig(const drogon::HttpRequestPtr&,
+                                std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    if (!config_) {
+        cb(jsonError("Config not initialized", drogon::k500InternalServerError));
+        return;
+    }
+    auto resp_json = config_->toJson();
+    Json::Value result;
+    Json::CharReaderBuilder builder;
+    std::string errs;
+    std::istringstream stream(resp_json.dump());
+    Json::parseFromStream(builder, stream, &result, &errs);
+    cb(drogon::HttpResponse::newHttpJsonResponse(result));
+}
+
+void CpapController::updateConfig(const drogon::HttpRequestPtr& req,
+                                   std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    if (!config_) {
+        cb(jsonError("Config not initialized", drogon::k500InternalServerError));
+        return;
+    }
+    auto body = req->getJsonObject();
+    if (!body) {
+        cb(jsonError("Invalid JSON body", drogon::k400BadRequest));
+        return;
+    }
+    auto& j = *body;
+
+    // Update fields if present
+    if (j.isMember("device_id")) config_->device_id = j["device_id"].asString();
+    if (j.isMember("device_name")) config_->device_name = j["device_name"].asString();
+    if (j.isMember("source")) config_->source = j["source"].asString();
+    if (j.isMember("ezshare_url")) config_->ezshare_url = j["ezshare_url"].asString();
+    if (j.isMember("local_dir")) config_->local_dir = j["local_dir"].asString();
+    if (j.isMember("burst_interval")) config_->burst_interval = j["burst_interval"].asInt();
+
+    if (j.isMember("database")) {
+        auto& d = j["database"];
+        if (d.isMember("type")) config_->database.type = d["type"].asString();
+        if (d.isMember("sqlite_path")) config_->database.sqlite_path = d["sqlite_path"].asString();
+        if (d.isMember("host")) config_->database.host = d["host"].asString();
+        if (d.isMember("port")) config_->database.port = d["port"].asInt();
+        if (d.isMember("name")) config_->database.name = d["name"].asString();
+        if (d.isMember("user")) config_->database.user = d["user"].asString();
+        if (d.isMember("password") && d["password"].asString() != "********")
+            config_->database.password = d["password"].asString();
+    }
+
+    if (j.isMember("mqtt")) {
+        auto& m = j["mqtt"];
+        if (m.isMember("enabled")) config_->mqtt.enabled = m["enabled"].asBool();
+        if (m.isMember("broker")) config_->mqtt.broker = m["broker"].asString();
+        if (m.isMember("port")) config_->mqtt.port = m["port"].asInt();
+        if (m.isMember("username")) config_->mqtt.username = m["username"].asString();
+        if (m.isMember("password") && m["password"].asString() != "********")
+            config_->mqtt.password = m["password"].asString();
+    }
+
+    if (j.isMember("llm")) {
+        auto& l = j["llm"];
+        if (l.isMember("enabled")) config_->llm.enabled = l["enabled"].asBool();
+        if (l.isMember("provider")) config_->llm.provider = l["provider"].asString();
+        if (l.isMember("endpoint")) config_->llm.endpoint = l["endpoint"].asString();
+        if (l.isMember("model")) config_->llm.model = l["model"].asString();
+        if (l.isMember("api_key") && l["api_key"].asString() != "********")
+            config_->llm.api_key = l["api_key"].asString();
+    }
+
+    // Save to disk
+    config_->save(config_path_);
+
+    // Return redacted config
+    auto resp_json = config_->toJson();
+    Json::Value result;
+    Json::CharReaderBuilder builder;
+    std::string errs;
+    std::istringstream stream(resp_json.dump());
+    Json::parseFromStream(builder, stream, &result, &errs);
+
+    cb(drogon::HttpResponse::newHttpJsonResponse(result));
+}
+
+void CpapController::setupComplete(const drogon::HttpRequestPtr&,
+                                    std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    if (!config_) {
+        cb(jsonError("Config not initialized", drogon::k500InternalServerError));
+        return;
+    }
+    config_->setup_complete = true;
+    config_->save(config_path_);
+
+    Json::Value result;
+    result["status"] = "ok";
+    result["setup_complete"] = true;
+    cb(drogon::HttpResponse::newHttpJsonResponse(result));
+}
+
+void CpapController::testEzshare(const drogon::HttpRequestPtr& req,
+                                  std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    std::string url = req->getParameter("url");
+    if (url.empty() && config_) url = config_->ezshare_url;
+
+    Json::Value result;
+    result["url"] = url;
+    result["configured"] = !url.empty();
+    result["status"] = url.empty() ? "not_configured" : "configured";
+    cb(drogon::HttpResponse::newHttpJsonResponse(result));
 }
 
 } // namespace hms_cpap
