@@ -1,5 +1,6 @@
 #pragma once
-#include "database/DatabaseService.h"
+#include "database/IDatabase.h"
+#include "database/SqlDialect.h"
 #include <json/json.h>
 #include <string>
 #include <memory>
@@ -8,7 +9,7 @@ namespace hms_cpap {
 
 class QueryService {
 public:
-    explicit QueryService(std::shared_ptr<DatabaseService> db, const std::string& device_id);
+    explicit QueryService(std::shared_ptr<IDatabase> db, const std::string& device_id);
 
     Json::Value getDashboard();
     Json::Value getSessions(int days, int limit);
@@ -19,10 +20,9 @@ public:
     Json::Value getSummaries(const std::string& period, int limit);
 
 private:
-    std::shared_ptr<DatabaseService> db_;
+    std::shared_ptr<IDatabase> db_;
     std::string device_id_;
-
-    Json::Value resultToJson(const pqxx::result& result);
+    DbType dt_;  // cached db type for dialect helpers
 };
 
 } // namespace hms_cpap

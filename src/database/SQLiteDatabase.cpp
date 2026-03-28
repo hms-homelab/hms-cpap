@@ -1622,4 +1622,42 @@ bool SQLiteDatabase::saveSummary(
     return true;
 }
 
+// -- Generic query ------------------------------------------------------------
+
+Json::Value SQLiteDatabase::executeQuery(const std::string& sql,
+                                         const std::vector<std::string>& params) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    Json::Value arr(Json::arrayValue);
+    if (!db_) return arr;
+
+    StmtGuard g;
+    if (sqlite3_prepare_v2(db_, sql.c_str(), -1, &g.stmt, nullptr) != SQLITE_OK) {
+        std::cerr << "SQLite::executeQuery prepare error: " << sqlite3_errmsg(db_) << std::endl;
+        return arr;
+    }
+
+    // Bind string params (1-based)
+    for (size_t i = 0; i < params.size(); ++i) {
+        sqlite3_bind_text(g.stmt, static_cast<int>(i + 1),
+                          params[i].c_str(), -1, SQLITE_TRANSIENT);
+    }
+
+    int col_count = sqlite3_column_count(g.stmt);
+    while (sqlite3_step(g.stmt) == SQLITE_ROW) {
+        Json::Value obj;
+        for (int c = 0; c < col_count; ++c) {
+            const char* name = sqlite3_column_name(g.stmt, c);
+            if (sqlite3_column_type(g.stmt, c) == SQLITE_NULL) {
+                obj[name] = Json::nullValue;
+            } else {
+                const unsigned char* text = sqlite3_column_text(g.stmt, c);
+                obj[name] = text ? reinterpret_cast<const char*>(text) : "";
+            }
+        }
+        arr.append(obj);
+    }
+
+    return arr;
+}
+
 } // namespace hms_cpap

@@ -103,6 +103,11 @@ public:
 
     void* rawConnection() override;
 
+    // -- Generic query --------------------------------------------------------
+
+    Json::Value executeQuery(const std::string& sql,
+                             const std::vector<std::string>& params = {}) override;
+
 private:
     std::unique_ptr<DatabaseService> db_;
 };

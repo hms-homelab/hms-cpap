@@ -1953,6 +1953,90 @@ bool MySQLDatabase::saveSummary(
     return true;
 }
 
+// -- Generic query ------------------------------------------------------------
+
+Json::Value MySQLDatabase::executeQuery(const std::string& sql,
+                                        const std::vector<std::string>& params) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    Json::Value arr(Json::arrayValue);
+    if (!conn_) return arr;
+
+    MYSQL_STMT* stmt = mysql_stmt_init(conn_);
+    if (!stmt) return arr;
+
+    // RAII cleanup
+    struct StmtClose { MYSQL_STMT* s; ~StmtClose() { mysql_stmt_close(s); } } guard{stmt};
+
+    if (mysql_stmt_prepare(stmt, sql.c_str(), sql.size()) != 0) {
+        std::cerr << "MySQL::executeQuery prepare error: " << mysql_stmt_error(stmt) << std::endl;
+        return arr;
+    }
+
+    // Bind input params (all as strings)
+    std::vector<MYSQL_BIND> in_binds(params.size());
+    std::vector<unsigned long> param_lengths(params.size());
+    memset(in_binds.data(), 0, sizeof(MYSQL_BIND) * params.size());
+    for (size_t i = 0; i < params.size(); ++i) {
+        param_lengths[i] = params[i].size();
+        in_binds[i].buffer_type = MYSQL_TYPE_STRING;
+        in_binds[i].buffer = const_cast<char*>(params[i].c_str());
+        in_binds[i].buffer_length = params[i].size();
+        in_binds[i].length = &param_lengths[i];
+    }
+    if (!params.empty()) {
+        mysql_stmt_bind_param(stmt, in_binds.data());
+    }
+
+    if (mysql_stmt_execute(stmt) != 0) {
+        std::cerr << "MySQL::executeQuery execute error: " << mysql_stmt_error(stmt) << std::endl;
+        return arr;
+    }
+
+    // Get result metadata
+    MYSQL_RES* meta = mysql_stmt_result_metadata(stmt);
+    if (!meta) return arr;  // no result set (not a SELECT)
+
+    unsigned int num_cols = mysql_num_fields(meta);
+    MYSQL_FIELD* fields = mysql_fetch_fields(meta);
+
+    // Collect column names
+    std::vector<std::string> col_names(num_cols);
+    for (unsigned int c = 0; c < num_cols; ++c) {
+        col_names[c] = fields[c].name;
+    }
+
+    // Bind output buffers (all as strings)
+    std::vector<MYSQL_BIND> out_binds(num_cols);
+    std::vector<std::vector<char>> buffers(num_cols, std::vector<char>(4096));
+    std::vector<unsigned long> lengths(num_cols);
+    std::vector<my_bool> nulls(num_cols);
+    memset(out_binds.data(), 0, sizeof(MYSQL_BIND) * num_cols);
+    for (unsigned int c = 0; c < num_cols; ++c) {
+        out_binds[c].buffer_type = MYSQL_TYPE_STRING;
+        out_binds[c].buffer = buffers[c].data();
+        out_binds[c].buffer_length = buffers[c].size();
+        out_binds[c].length = &lengths[c];
+        out_binds[c].is_null = &nulls[c];
+    }
+    mysql_stmt_bind_result(stmt, out_binds.data());
+    mysql_stmt_store_result(stmt);
+
+    while (mysql_stmt_fetch(stmt) == 0) {
+        Json::Value obj;
+        for (unsigned int c = 0; c < num_cols; ++c) {
+            if (nulls[c]) {
+                obj[col_names[c]] = Json::nullValue;
+            } else {
+                obj[col_names[c]] = std::string(buffers[c].data(), lengths[c]);
+            }
+        }
+        arr.append(obj);
+    }
+
+    mysql_free_result(meta);
+    return arr;
+}
+
 } // namespace hms_cpap
 
 #endif // WITH_MYSQL

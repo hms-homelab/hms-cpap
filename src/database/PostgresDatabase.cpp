@@ -1,6 +1,7 @@
 #ifdef WITH_POSTGRESQL
 
 #include "database/PostgresDatabase.h"
+#include <iostream>
 
 namespace hms_cpap {
 
@@ -126,6 +127,49 @@ bool PostgresDatabase::saveSummary(const std::string& device_id,
 
 void* PostgresDatabase::rawConnection() {
     return static_cast<void*>(db_->rawConnection());
+}
+
+// -- Generic query ------------------------------------------------------------
+
+Json::Value PostgresDatabase::executeQuery(const std::string& sql,
+                                           const std::vector<std::string>& params) {
+    Json::Value arr(Json::arrayValue);
+    try {
+        auto* conn = db_->rawConnection();
+        if (!conn) return arr;
+
+        pqxx::work txn(*conn);
+
+        // Replace $N placeholders with quoted values (reverse order to avoid $1 matching inside $10)
+        std::string resolved = sql;
+        for (size_t i = params.size(); i > 0; --i) {
+            std::string placeholder = "$" + std::to_string(i);
+            std::string::size_type pos = 0;
+            std::string quoted = txn.quote(params[i - 1]);
+            while ((pos = resolved.find(placeholder, pos)) != std::string::npos) {
+                resolved.replace(pos, placeholder.length(), quoted);
+                pos += quoted.length();
+            }
+        }
+
+        auto result = txn.exec(resolved);
+        txn.commit();
+
+        for (const auto& row : result) {
+            Json::Value obj;
+            for (pqxx::row_size_type c = 0; c < row.size(); ++c) {
+                std::string col_name(result.column_name(c));
+                if (row[c].is_null())
+                    obj[col_name] = Json::nullValue;
+                else
+                    obj[col_name] = row[c].c_str();
+            }
+            arr.append(obj);
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "PostgresDatabase::executeQuery error: " << e.what() << std::endl;
+    }
+    return arr;
 }
 
 } // namespace hms_cpap

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "models/CPAPModels.h"
+#include <json/json.h>
 #include <chrono>
 #include <map>
 #include <memory>
@@ -114,6 +115,22 @@ public:
      * (e.g., pqxx::connection* for PostgreSQL).
      */
     virtual void* rawConnection() = 0;
+
+    // -- Generic query --------------------------------------------------------
+
+    /**
+     * Execute a SELECT query and return results as a JSON array of objects.
+     * Each row becomes a JSON object with column names as keys, values as strings
+     * (or null for SQL NULLs). Parameters use positional placeholders: $1,$2,...
+     * for PostgreSQL, ? for SQLite/MySQL.
+     *
+     * Default implementation returns an empty array (backends override).
+     */
+    virtual Json::Value executeQuery(const std::string& sql,
+                                     const std::vector<std::string>& params = {}) {
+        (void)sql; (void)params;
+        return Json::Value(Json::arrayValue);
+    }
 };
 
 } // namespace hms_cpap

@@ -3,7 +3,9 @@
 
 #include <drogon/HttpController.h>
 #include "web/QueryService.h"
+#include "utils/AppConfig.h"
 #include <memory>
+#include <string>
 
 namespace hms_cpap {
 
@@ -18,6 +20,10 @@ public:
     ADD_METHOD_TO(CpapController::trend,         "/api/trends/{metric}",    drogon::Get);
     ADD_METHOD_TO(CpapController::statistics,    "/api/statistics",         drogon::Get);
     ADD_METHOD_TO(CpapController::summaries,     "/api/summaries",          drogon::Get);
+    ADD_METHOD_TO(CpapController::getConfig,     "/api/config",              drogon::Get);
+    ADD_METHOD_TO(CpapController::updateConfig,  "/api/config",              drogon::Put);
+    ADD_METHOD_TO(CpapController::setupComplete, "/api/setup",               drogon::Post);
+    ADD_METHOD_TO(CpapController::testEzshare,   "/api/config/test-ezshare", drogon::Get);
     METHOD_LIST_END
 
     void health(const drogon::HttpRequestPtr& req,
@@ -39,10 +45,22 @@ public:
     void summaries(const drogon::HttpRequestPtr& req,
                    std::function<void(const drogon::HttpResponsePtr&)>&& cb);
 
+    void getConfig(const drogon::HttpRequestPtr& req,
+                   std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+    void updateConfig(const drogon::HttpRequestPtr& req,
+                      std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+    void setupComplete(const drogon::HttpRequestPtr& req,
+                       std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+    void testEzshare(const drogon::HttpRequestPtr& req,
+                     std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+
     static void setQueryService(std::shared_ptr<QueryService> qs);
+    static void setConfig(hms_cpap::AppConfig* cfg, const std::string& config_path);
 
 private:
     static std::shared_ptr<QueryService> qs_;
+    static hms_cpap::AppConfig* config_;
+    static std::string config_path_;
 };
 
 } // namespace hms_cpap

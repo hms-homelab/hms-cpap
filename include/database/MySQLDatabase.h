@@ -104,6 +104,11 @@ public:
 
     void* rawConnection() override;
 
+    // -- Generic query --------------------------------------------------------
+
+    Json::Value executeQuery(const std::string& sql,
+                             const std::vector<std::string>& params = {}) override;
+
 private:
     std::string host_;
     unsigned int port_;

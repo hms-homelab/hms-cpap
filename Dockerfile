@@ -21,6 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpaho-mqttpp-dev \
     nlohmann-json3-dev \
     libspdlog-dev \
+    libsqlite3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy source code
@@ -31,8 +32,9 @@ COPY include/ ./include/
 COPY llm_prompt.txt ./
 
 # Build HMS-CPAP (disable tests for production image)
+# Note: BUILD_WITH_WEB=OFF until Drogon is added to Docker image
 RUN mkdir build && cd build && \
-    cmake -DBUILD_TESTS=OFF .. && \
+    cmake -DBUILD_TESTS=OFF -DBUILD_WITH_WEB=OFF .. && \
     make -j$(nproc) && \
     strip hms_cpap
 
@@ -54,6 +56,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libpaho-mqttpp3-1 \
     libspdlog1.15 \
     libfmt10 \
+    libsqlite3-0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user for security

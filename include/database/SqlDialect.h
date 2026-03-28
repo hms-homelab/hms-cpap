@@ -108,6 +108,16 @@ inline std::string now(DbType type) {
     return "";
 }
 
+// STDDEV(expr) -- SQLite has no built-in stddev, return NULL
+inline std::string stddev(const std::string& expr, DbType type) {
+    switch (type) {
+        case DbType::POSTGRESQL: return "STDDEV(" + expr + ")";
+        case DbType::MYSQL:      return "STDDEV(" + expr + ")";
+        case DbType::SQLITE:     return "NULL";
+    }
+    return "NULL";
+}
+
 // Auto-increment primary key for CREATE TABLE
 inline std::string autoId(DbType type) {
     switch (type) {
