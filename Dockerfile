@@ -68,8 +68,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libspdlog1.15 \
     libfmt10 \
     libsqlite3-0 \
-    libdrogon1.9 \
-    libtrantor1.5 \
+    libdrogon1t64 \
+    libtrantor1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user for security
