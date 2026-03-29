@@ -29,7 +29,6 @@ import { AppConfig } from '../../models/config.model';
               <select [(ngModel)]="config.source" name="source">
                 <option value="ezshare">ezShare</option>
                 <option value="local">Local</option>
-                <option value="fysetc">FYSETC</option>
               </select>
             </label>
             <label *ngIf="config.source === 'ezshare'">

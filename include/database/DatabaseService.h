@@ -250,6 +250,16 @@ public:
                      const std::string& summary_text);
 
     /**
+     * Execute arbitrary SQL (DDL or DML) in a single transaction.
+     *
+     * Used by FysetcSniffService for CREATE TABLE and INSERT statements.
+     *
+     * @param sql Raw SQL string
+     * @return true if executed successfully
+     */
+    bool executeRaw(const std::string& sql);
+
+    /**
      * Get raw pqxx connection (for QueryService read-only queries).
      * Caller must hold no other locks — acquires the recursive mutex.
      */

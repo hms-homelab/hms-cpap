@@ -1625,6 +1625,21 @@ std::optional<std::string> DatabaseService::getLastSTRDate(const std::string& de
     }
 }
 
+bool DatabaseService::executeRaw(const std::string& sql) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!ensureConnection()) return false;
+
+    try {
+        pqxx::work txn(*conn_);
+        txn.exec(sql);
+        txn.commit();
+        return true;
+    } catch (const std::exception& e) {
+        std::cerr << "DB: executeRaw error: " << e.what() << std::endl;
+        return false;
+    }
+}
+
 } // namespace hms_cpap
 
 #endif // WITH_POSTGRESQL
