@@ -259,6 +259,26 @@ public:
      */
     bool executeRaw(const std::string& sql);
 
+    // ── Fysetc poll server offset tracking ──────────────────────────
+
+    /**
+     * Get all confirmed file offsets for a device (for /init known_files).
+     */
+    std::vector<std::pair<std::string, int64_t>>
+        getFysetcFileOffsets(const std::string& device_id);
+
+    /**
+     * Upsert a single file offset.
+     */
+    bool saveFysetcFileOffset(const std::string& device_id,
+                              const std::string& path, int64_t offset);
+
+    /**
+     * Upsert multiple file offsets in one transaction.
+     */
+    bool saveFysetcFileOffsets(const std::string& device_id,
+                               const std::vector<std::pair<std::string, int64_t>>& offsets);
+
     /**
      * Get raw pqxx connection (for QueryService read-only queries).
      * Caller must hold no other locks — acquires the recursive mutex.

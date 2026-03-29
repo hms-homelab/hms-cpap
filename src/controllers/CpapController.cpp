@@ -228,6 +228,45 @@ void CpapController::testEzshare(const drogon::HttpRequestPtr& req,
     cb(drogon::HttpResponse::newHttpJsonResponse(result));
 }
 
+// ── Fysetc poll server ──────────────────────────────────────────────────────
+
+std::shared_ptr<FysetcPollService> CpapController::fysetc_poll_svc_;
+
+void CpapController::setFysetcPollService(std::shared_ptr<FysetcPollService> svc) {
+    fysetc_poll_svc_ = svc;
+}
+
+void CpapController::fysetcAnnounce(const drogon::HttpRequestPtr& req,
+                                     std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    auto body = req->getJsonObject();
+    if (!body) {
+        cb(jsonError("Invalid JSON", drogon::k400BadRequest));
+        return;
+    }
+
+    auto& j = *body;
+    std::string ip = j.get("ip", "").asString();
+    std::string device_id = j.get("device_id", "").asString();
+    int poll_sec = j.get("poll_interval_sec", 65).asInt();
+    std::string fw = j.get("fw", "").asString();
+
+    if (ip.empty() || device_id.empty()) {
+        cb(jsonError("Missing ip or device_id", drogon::k400BadRequest));
+        return;
+    }
+
+    std::cout << "Fysetc announce: " << device_id << " at " << ip
+              << " (poll=" << poll_sec << "s, fw=" << fw << ")" << std::endl;
+
+    if (fysetc_poll_svc_) {
+        fysetc_poll_svc_->onAnnounce(ip, device_id, poll_sec, fw);
+    }
+
+    Json::Value resp;
+    resp["status"] = "ok";
+    cb(drogon::HttpResponse::newHttpJsonResponse(resp));
+}
+
 } // namespace hms_cpap
 
 #endif // BUILD_WITH_WEB

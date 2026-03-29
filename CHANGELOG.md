@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-03-29
+
+### Added
+- **Fysetc HTTP poll client**: New data source mode `fysetc_poll` replaces the
+  MQTT-based FysetcReceiverService with a diff/ack HTTP protocol. The Fysetc
+  device announces itself via `POST /fysetc/announce`, then hms-cpap polls it
+  periodically for new/changed EDF files. Avoids SD bus corruption caused by
+  WiFi radio interference during MQTT transmit.
+- **FysetcHttpClient**: HTTP client for the 5 poll server endpoints
+  (`/init`, `/poll`, `/file`, `/ack`, `/api/status`) with SD-busy retry logic.
+- **FysetcPollService**: Worker thread with state machine
+  (wait for announce -> init -> poll -> fetch -> ack -> session processing).
+  Session completion detected via 2 consecutive stable polls.
+- **`POST /fysetc/announce` endpoint**: Drogon route on port 8893 that receives
+  the Fysetc device's IP and triggers the poll loop.
+- **`fysetc_file_offsets` DB table**: Byte-exact offset persistence for
+  incremental EDF transfers. Auto-migrated on connect.
+
 ## [3.0.1] - 2026-03-29
 
 ### Fixed

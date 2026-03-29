@@ -6,6 +6,7 @@
 #include "services/BurstCollectorService.h"
 #include "services/FysetcReceiverService.h"
 #include "services/FysetcSniffService.h"
+#include "services/FysetcPollService.h"
 #include "services/SessionDiscoveryService.h"
 #include "services/DataPublisherService.h"
 #include "parsers/EDFParser.h"
@@ -37,6 +38,7 @@ std::unique_ptr<hms_cpap::BurstCollectorService> burst_service;
 std::unique_ptr<hms_cpap::FysetcReceiverService> fysetc_service;
 std::unique_ptr<hms_cpap::FysetcSniffService> sniff_service;
 std::unique_ptr<hms_cpap::AgentService> agent_service;
+std::shared_ptr<hms_cpap::FysetcPollService> fysetc_poll_service;
 
 /**
  * Signal handler for graceful shutdown
@@ -56,6 +58,9 @@ void signalHandler(int signal) {
     }
     if (agent_service) {
         agent_service->stop();
+    }
+    if (fysetc_poll_service) {
+        fysetc_poll_service->stop();
     }
 #ifdef BUILD_WITH_WEB
     drogon::app().quit();
@@ -472,14 +477,25 @@ int main(int argc, char** argv) {
     try {
         std::string src = hms_cpap::ConfigManager::get("CPAP_SOURCE", "ezshare");
 
-        // Primary data source: ezShare/local polling
-        {
+        std::cout << "HMS-CPAP service is running..." << std::endl;
+
+        if (src == "fysetc_poll") {
+            // Fysetc HTTP poll mode: worker thread waits for device announce
+            fysetc_poll_service = std::make_shared<hms_cpap::FysetcPollService>();
+            fysetc_poll_service->start();
+
+#ifdef BUILD_WITH_WEB
+            hms_cpap::CpapController::setFysetcPollService(fysetc_poll_service);
+#endif
+
+            std::cout << "   Source: Fysetc poll server (waiting for announce on POST /fysetc/announce)" << std::endl;
+        } else {
+            // Primary data source: ezShare/local polling
             int burst_interval = hms_cpap::ConfigManager::getInt("BURST_INTERVAL", 120);
 
             burst_service = std::make_unique<hms_cpap::BurstCollectorService>(burst_interval);
             burst_service->start();
 
-            std::cout << "HMS-CPAP service is running..." << std::endl;
             if (src == "local") {
                 std::cout << "   Source: Local directory at " << hms_cpap::ConfigManager::get("CPAP_LOCAL_DIR", "") << std::endl;
             } else {
@@ -488,9 +504,9 @@ int main(int argc, char** argv) {
             std::cout << "   Burst interval: " << burst_interval << " seconds" << std::endl;
         }
 
-        // Fysetc MQTT subscribers (always active, independent of primary source).
-        // These are passive listeners -- they only do work if the Fysetc firmware
-        // is actually publishing. Zero overhead when Fysetc is offline.
+        // Fysetc MQTT subscribers (only when NOT in fysetc_poll mode).
+        // These are passive listeners for the old MQTT-based protocol.
+        if (src != "fysetc_poll")
         {
             std::string mqtt_broker = hms_cpap::ConfigManager::get("MQTT_BROKER", "192.168.2.15");
             std::string mqtt_port = hms_cpap::ConfigManager::get("MQTT_PORT", "1883");
@@ -667,6 +683,10 @@ int main(int argc, char** argv) {
         if (sniff_service) {
             sniff_service->stop();
             sniff_service.reset();
+        }
+        if (fysetc_poll_service) {
+            fysetc_poll_service->stop();
+            fysetc_poll_service.reset();
         }
 
         std::cout << "HMS-CPAP service stopped cleanly" << std::endl;
