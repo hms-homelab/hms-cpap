@@ -1,4 +1,4 @@
-name: Docker Build and Publish
+name: Build, Test, and Publish
 
 on:
   push:
@@ -18,7 +18,7 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  build-and-push:
+  build-and-test:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -28,6 +28,48 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # ── Angular UI ──────────────────────────────────────────────
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci --no-audit --no-fund
+
+      - name: Build Angular UI
+        working-directory: frontend
+        run: npx ng build --configuration production
+
+      # ── C++ Build + Tests ───────────────────────────────────────
+      - name: Install C++ dependencies
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends \
+            build-essential cmake \
+            libcurl4-openssl-dev libpq-dev libpqxx-dev libssl-dev \
+            libjsoncpp-dev libpaho-mqtt-dev libpaho-mqttpp-dev \
+            nlohmann-json3-dev libspdlog-dev libsqlite3-dev \
+            libdrogon-dev libgtest-dev libgmock-dev
+
+      - name: Build HMS-CPAP
+        run: |
+          mkdir build && cd build
+          cmake -DBUILD_TESTS=ON -DBUILD_WITH_WEB=ON ..
+          make -j$(nproc)
+
+      - name: Run tests
+        run: cd build && ./tests/run_tests
+
+      # ── Copy UI into build output ──────────────────────────────
+      - name: Bundle UI with binary
+        run: |
+          mkdir -p build/static/browser
+          cp -r frontend/dist/frontend/browser/* build/static/browser/
+
+      # ── Docker Image ────────────────────────────────────────────
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
@@ -67,4 +109,5 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Image digest
+        if: github.event_name != 'pull_request'
         run: echo ${{ steps.meta.outputs.digest }}
