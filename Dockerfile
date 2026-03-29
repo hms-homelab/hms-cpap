@@ -2,14 +2,14 @@
 # Produces ~100MB final image with C++ runtime + Angular Web UI
 
 # =============================================================================
-# Stage 1: Angular UI Builder (optional — skipped if hms-cpap-ui/ not present)
+# Stage 1: Angular UI Builder (optional — skipped if frontend/ not present)
 # =============================================================================
 FROM node:22-slim AS ui-builder
 
 WORKDIR /ui
-COPY hms-cpap-ui/package*.json ./
+COPY frontend/package*.json ./
 RUN npm ci --no-audit --no-fund
-COPY hms-cpap-ui/ ./
+COPY frontend/ ./
 RUN npx ng build --configuration production
 
 # =============================================================================

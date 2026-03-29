@@ -49,7 +49,7 @@ echo "✅ Binary deployed"
 echo ""
 
 # Step 5: Deploy Web UI static files
-UI_DIR="../hms-cpap-ui/dist/frontend/browser"
+UI_DIR="frontend/dist/frontend/browser"
 if [ -d "$UI_DIR" ]; then
     echo "🌐 Step 5: Deploying Web UI..."
     sshpass -p "$PI_PASSWORD" ssh -o StrictHostKeyChecking=no "$PI_HOST" "mkdir -p ~/static/browser"

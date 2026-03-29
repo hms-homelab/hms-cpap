@@ -45,7 +45,7 @@ $SSH "echo '$PI_PASSWORD' | sudo -S cp $PI_BINARY_PATH ${PI_BINARY_PATH}.backup 
 echo ""
 
 # Step 5: Deploy Web UI
-UI_DIR="../hms-cpap-ui/dist/frontend/browser"
+UI_DIR="frontend/dist/frontend/browser"
 if [ -d "$UI_DIR" ]; then
     echo "Step 5: Deploying Web UI..."
     $SSH "mkdir -p ~/static/browser"
