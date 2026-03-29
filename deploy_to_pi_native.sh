@@ -44,13 +44,24 @@ $SSH "echo '$PI_PASSWORD' | sudo -S cp $PI_BINARY_PATH ${PI_BINARY_PATH}.backup 
       echo '$PI_PASSWORD' | sudo -S chmod +x $PI_BINARY_PATH"
 echo ""
 
-# Step 5: Restart
-echo "Step 5: Restarting service..."
+# Step 5: Deploy Web UI
+UI_DIR="../hms-cpap-ui/dist/frontend/browser"
+if [ -d "$UI_DIR" ]; then
+    echo "Step 5: Deploying Web UI..."
+    $SSH "mkdir -p ~/static/browser"
+    sshpass -p "$PI_PASSWORD" rsync -az "$UI_DIR/" "$PI_HOST:~/static/browser/"
+else
+    echo "Step 5: Web UI not found, skipping"
+fi
+echo ""
+
+# Step 6: Restart
+echo "Step 6: Restarting service..."
 $SSH "echo '$PI_PASSWORD' | sudo -S systemctl start $SERVICE_NAME"
 sleep 3
 echo ""
 
-# Step 6: Show logs
+# Step 7: Show logs
 echo "Recent logs:"
 echo "---"
 $SSH "journalctl -u $SERVICE_NAME --since '10 seconds ago' --no-pager -n 15"

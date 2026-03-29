@@ -28,6 +28,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Checkout UI repository
+        uses: actions/checkout@v4
+        continue-on-error: true
+        with:
+          repository: hms-homelab/hms-cpap-ui
+          path: hms-cpap-ui
+          token: ${{ secrets.UI_REPO_TOKEN }}
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 

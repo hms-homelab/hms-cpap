@@ -48,22 +48,34 @@ sshpass -p "$PI_PASSWORD" ssh -o StrictHostKeyChecking=no "$PI_HOST" \
 echo "✅ Binary deployed"
 echo ""
 
-# Step 5: Restart service
-echo "🔄 Step 5: Restarting HMS-CPAP service..."
+# Step 5: Deploy Web UI static files
+UI_DIR="../hms-cpap-ui/dist/frontend/browser"
+if [ -d "$UI_DIR" ]; then
+    echo "🌐 Step 5: Deploying Web UI..."
+    sshpass -p "$PI_PASSWORD" ssh -o StrictHostKeyChecking=no "$PI_HOST" "mkdir -p ~/static/browser"
+    sshpass -p "$PI_PASSWORD" rsync -az "$UI_DIR/" "$PI_HOST:~/static/browser/"
+    echo "✅ Web UI deployed"
+else
+    echo "⏭️  Step 5: Web UI not found at $UI_DIR, skipping"
+fi
+echo ""
+
+# Step 6: Restart service
+echo "🔄 Step 6: Restarting HMS-CPAP service..."
 sshpass -p "$PI_PASSWORD" ssh -o StrictHostKeyChecking=no "$PI_HOST" \
     "echo '$PI_PASSWORD' | sudo -S systemctl start $SERVICE_NAME"
 sleep 3
 echo "✅ Service restarted"
 echo ""
 
-# Step 6: Check service status
-echo "📊 Step 6: Checking service status..."
+# Step 7: Check service status
+echo "📊 Step 7: Checking service status..."
 echo ""
 sshpass -p "$PI_PASSWORD" ssh -o StrictHostKeyChecking=no "$PI_HOST" \
     "systemctl status $SERVICE_NAME --no-pager | head -20"
 echo ""
 
-# Step 7: Show recent logs
+# Step 8: Show recent logs
 echo "📋 Recent logs:"
 echo "───────────────────────────────────────────────────────────"
 sshpass -p "$PI_PASSWORD" ssh -o StrictHostKeyChecking=no "$PI_HOST" \

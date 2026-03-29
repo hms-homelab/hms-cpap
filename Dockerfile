@@ -1,8 +1,19 @@
 # HMS-CPAP - Multi-stage Docker build
-# Produces ~100MB final image with C++ runtime
+# Produces ~100MB final image with C++ runtime + Angular Web UI
 
 # =============================================================================
-# Stage 1: Builder
+# Stage 1: Angular UI Builder (optional — skipped if hms-cpap-ui/ not present)
+# =============================================================================
+FROM node:22-slim AS ui-builder
+
+WORKDIR /ui
+COPY hms-cpap-ui/package*.json ./
+RUN npm ci --no-audit --no-fund
+COPY hms-cpap-ui/ ./
+RUN npx ng build --configuration production
+
+# =============================================================================
+# Stage 2: C++ Builder
 # =============================================================================
 FROM debian:trixie-slim AS builder
 
@@ -22,6 +33,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     nlohmann-json3-dev \
     libspdlog-dev \
     libsqlite3-dev \
+    libdrogon-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy source code
@@ -31,15 +43,14 @@ COPY src/ ./src/
 COPY include/ ./include/
 COPY llm_prompt.txt ./
 
-# Build HMS-CPAP (disable tests for production image)
-# Note: BUILD_WITH_WEB=OFF until Drogon is added to Docker image
+# Build HMS-CPAP with Web UI support
 RUN mkdir build && cd build && \
-    cmake -DBUILD_TESTS=OFF -DBUILD_WITH_WEB=OFF .. && \
+    cmake -DBUILD_TESTS=OFF -DBUILD_WITH_WEB=ON .. && \
     make -j$(nproc) && \
     strip hms_cpap
 
 # =============================================================================
-# Stage 2: Runtime
+# Stage 3: Runtime
 # =============================================================================
 FROM debian:trixie-slim
 
@@ -57,6 +68,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libspdlog1.15 \
     libfmt10 \
     libsqlite3-0 \
+    libdrogon1.9 \
+    libtrantor1.5 \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user for security
@@ -66,9 +79,12 @@ RUN useradd -r -u 1000 -m -s /bin/bash cpap
 COPY --from=builder /build/build/hms_cpap /usr/local/bin/hms_cpap
 RUN chmod +x /usr/local/bin/hms_cpap
 
+# Copy Angular UI from ui-builder
+COPY --from=ui-builder /ui/dist/frontend/browser/ /home/cpap/static/browser/
+
 # Create data directories
 RUN mkdir -p /data/cpap_archive /tmp/hms-cpap && \
-    chown -R cpap:cpap /data /tmp/hms-cpap
+    chown -R cpap:cpap /data /tmp/hms-cpap /home/cpap/static
 
 # Switch to non-root user
 USER cpap
@@ -78,7 +94,7 @@ WORKDIR /home/cpap
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:${HEALTH_CHECK_PORT:-8893}/health || exit 1
 
-# Expose health check port
+# Expose health check / web UI port
 EXPOSE 8893
 
 # Run HMS-CPAP
