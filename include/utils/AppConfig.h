@@ -16,7 +16,7 @@ struct AppConfig {
     std::string source = "ezshare";  // "ezshare", "local", "fysetc"
     std::string ezshare_url = "http://192.168.4.1";
     std::string local_dir;
-    int burst_interval = 300;
+    int burst_interval = 65;
 
     // Web server
     int web_port = 8893;
@@ -63,6 +63,86 @@ struct AppConfig {
     } agent;
 
     bool setup_complete = false;
+
+    /// Fill empty config fields from environment variables (fallback).
+    /// Call AFTER loading config.json so file values take precedence.
+    void applyEnvFallbacks() {
+        auto env = [](const char* name) -> std::string {
+            const char* v = std::getenv(name);
+            return v ? v : "";
+        };
+        auto envInt = [&](const char* name, int def) -> int {
+            auto s = env(name);
+            return s.empty() ? def : std::stoi(s);
+        };
+
+        // Device / source
+        if (device_id.empty())   device_id   = env("CPAP_DEVICE_ID");
+        if (device_name.empty()) device_name = env("CPAP_DEVICE_NAME");
+        if (source.empty())      source      = env("CPAP_SOURCE");
+        if (ezshare_url.empty()) ezshare_url = env("EZSHARE_BASE_URL");
+        if (local_dir.empty())   local_dir   = env("CPAP_LOCAL_DIR");
+        if (burst_interval == 65) {
+            int v = envInt("BURST_INTERVAL", 0);
+            if (v > 0) burst_interval = v;
+        }
+        if (web_port == 8893) {
+            int v = envInt("HEALTH_CHECK_PORT", 0);
+            if (v > 0) web_port = v;
+        }
+
+        // Database — env vars imply postgresql
+        if (database.host.empty()) database.host = env("DB_HOST");
+        if (database.name.empty()) database.name = env("DB_NAME");
+        if (database.user.empty()) database.user = env("DB_USER");
+        if (database.password.empty()) database.password = env("DB_PASSWORD");
+        if (database.port == 0) {
+            int v = envInt("DB_PORT", 0);
+            if (v > 0) database.port = v;
+        }
+        // If DB credentials came from env, switch type to postgresql
+        if (database.type == "sqlite" && !database.host.empty() && !database.name.empty())
+            database.type = "postgresql";
+
+        // MQTT — env vars imply enabled
+        if (mqtt.broker.empty())    mqtt.broker    = env("MQTT_BROKER");
+        if (mqtt.username.empty())  mqtt.username  = env("MQTT_USER");
+        if (mqtt.password.empty())  mqtt.password  = env("MQTT_PASSWORD");
+        if (mqtt.client_id == "hms_cpap") {
+            auto v = env("MQTT_CLIENT_ID");
+            if (!v.empty()) mqtt.client_id = v;
+        }
+        if (mqtt.port == 1883) {
+            int v = envInt("MQTT_PORT", 0);
+            if (v > 0) mqtt.port = v;
+        }
+        if (!mqtt.enabled && !mqtt.broker.empty())
+            mqtt.enabled = true;
+
+        // LLM
+        if (llm.endpoint.empty()) llm.endpoint = env("LLM_ENDPOINT");
+        if (llm.model.empty())    llm.model    = env("LLM_MODEL");
+        if (llm.api_key.empty())  llm.api_key  = env("LLM_API_KEY");
+        if (llm.provider == "ollama") {
+            auto v = env("LLM_PROVIDER");
+            if (!v.empty()) llm.provider = v;
+        }
+        if (llm.prompt_file.empty()) llm.prompt_file = env("LLM_PROMPT_FILE");
+        if (llm.max_tokens == 1024) {
+            int v = envInt("LLM_MAX_TOKENS", 0);
+            if (v > 0) llm.max_tokens = v;
+        }
+        if (!llm.enabled && env("LLM_ENABLED") == "true")
+            llm.enabled = true;
+
+        // Agent
+        if (!agent.enabled && env("AGENT_ENABLED") == "true")
+            agent.enabled = true;
+        if (agent.embed_model == "nomic-embed-text") {
+            auto v = env("AGENT_EMBED_MODEL");
+            if (!v.empty()) agent.embed_model = v;
+        }
+    }
 
     // Get default data directory (~/.hms-cpap/)
     static std::string dataDir() {

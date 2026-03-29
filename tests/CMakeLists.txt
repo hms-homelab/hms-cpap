@@ -31,6 +31,7 @@ set(TEST_SOURCES
     services/test_FysetcReceiverService.cpp
     models/test_CPAPModels.cpp
     utils/test_ConfigManager.cpp
+    utils/test_AppConfig.cpp
     clients/test_EzShareClient.cpp
     mqtt/test_MqttClient.cpp
     integration/test_STRIntegration.cpp

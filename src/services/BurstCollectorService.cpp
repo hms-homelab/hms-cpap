@@ -651,7 +651,7 @@ bool BurstCollectorService::executeBurstCycle() {
                 }
 
                 std::cout << "CPAP: Session " << session.session_prefix
-                          << " changed, re-parsing" << std::endl;
+                          << " files changed, re-parsing" << std::endl;
             } else {
                 std::cout << "CPAP: New session " << session.session_prefix
                           << " (" << session.total_size_kb << " KB)" << std::endl;
@@ -856,12 +856,12 @@ bool BurstCollectorService::executeBurstCycle() {
                     data_publisher_->publishSessionCompleted();
                 }
 
-                std::cout << "   Skipping download (no changes)" << std::endl;
+                std::cout << "   No changes, skipping download" << std::endl;
                 continue;
             }
 
-            std::cout << "CPAP: Re-downloading session " << session.session_prefix
-                      << " (checkpoint files changed)" << std::endl;
+            std::cout << "CPAP: Session " << session.session_prefix
+                      << " files changed, downloading updates" << std::endl;
 
             if (downloadSessionFiles(session, local_base_dir)) {
                 std::map<std::string, int> checkpoint_sizes;
