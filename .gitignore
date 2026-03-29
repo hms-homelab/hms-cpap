@@ -75,3 +75,4 @@ ENV/
 *.tar.gz
 *.zip
 *.7z
+build-arm-dbg/

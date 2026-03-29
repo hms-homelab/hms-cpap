@@ -1,5 +1,6 @@
 #ifdef WITH_POSTGRESQL
 #include "database/DatabaseService.h"
+#include <postgresql/libpq-fe.h>
 #include <iostream>
 #include <iomanip>
 #include <sstream>
@@ -1256,14 +1257,13 @@ std::vector<SessionMetrics> DatabaseService::getMetricsForDateRange(
     }
 
     try {
-        pqxx::work txn(*conn_);
-
-        // Compute cutoff as a timestamp string (avoids integer param casting issues).
         auto cutoff = std::chrono::system_clock::now() - std::chrono::hours(days_back * 24);
         auto cutoff_t = std::chrono::system_clock::to_time_t(cutoff);
         std::tm* cutoff_tm = std::localtime(&cutoff_t);
         std::ostringstream cutoff_oss;
         cutoff_oss << std::put_time(cutoff_tm, "%Y-%m-%d %H:%M:%S");
+
+
 
         // One row per sleep-night, same aggregation as getNightlyMetrics.
         // Oldest-first so the LLM sees the trend chronologically.
@@ -1323,67 +1323,87 @@ std::vector<SessionMetrics> DatabaseService::getMetricsForDateRange(
                        MIN(min_pressure) AS min_press
                 FROM cpap_breathing_summary GROUP BY session_id
             ) b ON b.session_id = sm.session_id
-            WHERE s.device_id = $1
-              AND s.session_start >= $2::timestamp
+            WHERE s.device_id = ')" + device_id + R"('
+              AND s.session_start >= ')" + cutoff_oss.str() + R"('::timestamp
               AND s.session_end IS NOT NULL
             GROUP BY DATE(s.session_start - INTERVAL '12 hours')
             ORDER BY sleep_day ASC
         )";
+        // Use libpq C API directly to avoid pqxx cross-compiler ABI issues
+        // with field::as<T>() template instantiations (SEGV on ARM).
+        PGconn* pgconn = PQconnectdb(connection_string_.c_str());
+        if (PQstatus(pgconn) != CONNECTION_OK) {
+            std::cerr << "DB: libpq connect failed: " << PQerrorMessage(pgconn) << std::endl;
+            PQfinish(pgconn);
+            return {};
+        }
+        PGresult* pgr = PQexec(pgconn, query.c_str());
 
-        auto result = txn.exec_params(query, device_id, cutoff_oss.str());
-        txn.commit();
+        if (PQresultStatus(pgr) != PGRES_TUPLES_OK) {
+            std::cerr << "DB: getMetricsForDateRange query failed: "
+                      << PQresultErrorMessage(pgr) << std::endl;
+            PQclear(pgr);
+            return {};
+        }
 
-        // Column access by position — works around a cross-compiler codegen
-        // bug where pqxx::zview (from string literals) gets a NULL data pointer
-        // when passed to PQfnumber/strcmp (SEGV in row["col_name"]).
-        // Column order matches SELECT above:
-        //  0=sleep_day  1=total_seconds  2=total_events  3=obstructive_apneas
-        //  4=central_apneas  5=hypopneas  6=reras  7=clear_airway_apneas
-        //  8=avg_event_duration  9=max_event_duration  10=usage_hours
-        //  11=usage_percent  12=ahi  13=avg_leak  14=max_leak  15=avg_rr
-        //  16=avg_tv  17=avg_mv  18=avg_fl  19=pp95  20=avg_mask_pressure
-        //  21=avg_epr_pressure  22=avg_snore  23=avg_target_ventilation
-        //  24=avg_pressure  25=max_pressure  26=min_pressure  27=leak_p50
-        //  28=leak_p95_sess  29=therapy_mode
+        int nrows = PQntuples(pgr);
+        int ncols = PQnfields(pgr);
+
+
+        auto pgStr = [&](int row, int col) -> std::string {
+            return PQgetisnull(pgr, row, col) ? "" : PQgetvalue(pgr, row, col);
+        };
+        auto pgInt = [&](int row, int col, int def = 0) -> int {
+            return PQgetisnull(pgr, row, col) ? def : std::stoi(PQgetvalue(pgr, row, col));
+        };
+        auto pgDbl = [&](int row, int col, double def = 0.0) -> double {
+            return PQgetisnull(pgr, row, col) ? def : std::stod(PQgetvalue(pgr, row, col));
+        };
+        auto pgNull = [&](int row, int col) -> bool {
+            return PQgetisnull(pgr, row, col) != 0;
+        };
+
         std::vector<SessionMetrics> nights;
-        for (const auto& row : result) {
-            if (row[1].is_null()) continue;  // total_seconds
+        for (int r = 0; r < nrows; r++) {
+            if (pgNull(r, 1)) continue;
 
             SessionMetrics m;
-            m.sleep_day           = row[0].as<std::string>();
-            m.total_events        = row[2].as<int>(0);
-            m.ahi                 = row[12].as<double>(0.0);
-            m.obstructive_apneas  = row[3].as<int>(0);
-            m.central_apneas      = row[4].as<int>(0);
-            m.hypopneas           = row[5].as<int>(0);
-            m.reras               = row[6].as<int>(0);
-            m.clear_airway_apneas = row[7].as<int>(0);
+            m.sleep_day           = pgStr(r, 0);
+            m.total_events        = pgInt(r, 2);
+            m.ahi                 = pgDbl(r, 12);
+            m.obstructive_apneas  = pgInt(r, 3);
+            m.central_apneas      = pgInt(r, 4);
+            m.hypopneas           = pgInt(r, 5);
+            m.reras               = pgInt(r, 6);
+            m.clear_airway_apneas = pgInt(r, 7);
 
-            if (!row[8].is_null())  m.avg_event_duration     = row[8].as<double>();
-            if (!row[9].is_null())  m.max_event_duration     = row[9].as<double>();
-            if (!row[10].is_null()) m.usage_hours            = row[10].as<double>();
-            if (!row[11].is_null()) m.usage_percent          = row[11].as<double>();
-            if (!row[13].is_null()) m.avg_leak_rate          = row[13].as<double>();
-            if (!row[14].is_null()) m.max_leak_rate          = row[14].as<double>();
-            if (!row[15].is_null()) m.avg_respiratory_rate   = row[15].as<double>();
-            if (!row[16].is_null()) m.avg_tidal_volume       = row[16].as<double>();
-            if (!row[17].is_null()) m.avg_minute_ventilation = row[17].as<double>();
-            if (!row[18].is_null()) m.avg_flow_limitation    = row[18].as<double>();
-            if (!row[19].is_null()) m.pressure_p95           = row[19].as<double>();
-            if (!row[24].is_null()) m.avg_pressure           = row[24].as<double>();
-            if (!row[25].is_null()) m.max_pressure           = row[25].as<double>();
-            if (!row[26].is_null()) m.min_pressure           = row[26].as<double>();
-            if (!row[20].is_null()) m.avg_mask_pressure      = row[20].as<double>();
-            if (!row[21].is_null()) m.avg_epr_pressure       = row[21].as<double>();
-            if (!row[22].is_null()) m.avg_snore              = row[22].as<double>();
-            if (!row[23].is_null() && row[23].as<double>(0) > 0)
-                m.avg_target_ventilation = row[23].as<double>();
-            if (!row[27].is_null()) m.leak_p50               = row[27].as<double>();
-            if (!row[28].is_null()) m.leak_p95               = row[28].as<double>();
-            if (!row[29].is_null()) m.therapy_mode           = row[29].as<int>();
+            if (!pgNull(r, 8))  m.avg_event_duration     = pgDbl(r, 8);
+            if (!pgNull(r, 9))  m.max_event_duration     = pgDbl(r, 9);
+            if (!pgNull(r, 10)) m.usage_hours            = pgDbl(r, 10);
+            if (!pgNull(r, 11)) m.usage_percent          = pgDbl(r, 11);
+            if (!pgNull(r, 13)) m.avg_leak_rate          = pgDbl(r, 13);
+            if (!pgNull(r, 14)) m.max_leak_rate          = pgDbl(r, 14);
+            if (!pgNull(r, 15)) m.avg_respiratory_rate   = pgDbl(r, 15);
+            if (!pgNull(r, 16)) m.avg_tidal_volume       = pgDbl(r, 16);
+            if (!pgNull(r, 17)) m.avg_minute_ventilation = pgDbl(r, 17);
+            if (!pgNull(r, 18)) m.avg_flow_limitation    = pgDbl(r, 18);
+            if (!pgNull(r, 19)) m.pressure_p95           = pgDbl(r, 19);
+            if (!pgNull(r, 24)) m.avg_pressure           = pgDbl(r, 24);
+            if (!pgNull(r, 25)) m.max_pressure           = pgDbl(r, 25);
+            if (!pgNull(r, 26)) m.min_pressure           = pgDbl(r, 26);
+            if (!pgNull(r, 20)) m.avg_mask_pressure      = pgDbl(r, 20);
+            if (!pgNull(r, 21)) m.avg_epr_pressure       = pgDbl(r, 21);
+            if (!pgNull(r, 22)) m.avg_snore              = pgDbl(r, 22);
+            if (!pgNull(r, 23) && pgDbl(r, 23) > 0)
+                m.avg_target_ventilation = pgDbl(r, 23);
+            if (!pgNull(r, 27)) m.leak_p50               = pgDbl(r, 27);
+            if (!pgNull(r, 28)) m.leak_p95               = pgDbl(r, 28);
+            if (!pgNull(r, 29)) m.therapy_mode           = pgInt(r, 29);
 
             nights.push_back(std::move(m));
         }
+        PQclear(pgr);
+        PQfinish(pgconn);
 
         std::cout << "DB: getMetricsForDateRange(" << days_back << " days) returned "
                   << nights.size() << " nights" << std::endl;
@@ -1411,13 +1431,18 @@ bool DatabaseService::saveSummary(
 
     try {
         pqxx::work txn(*conn_);
-        txn.exec_params(R"(
-            INSERT INTO cpap_summaries
-                (device_id, period, range_start, range_end, nights_count,
-                 avg_ahi, avg_usage_hours, compliance_pct, summary_text)
-            VALUES ($1, $2, $3::date, $4::date, $5, $6, $7, $8, $9)
-        )", device_id, period, range_start, range_end, nights_count,
-            avg_ahi, avg_usage_hours, compliance_pct, summary_text);
+        std::string query =
+            "INSERT INTO cpap_summaries"
+            " (device_id, period, range_start, range_end, nights_count,"
+            "  avg_ahi, avg_usage_hours, compliance_pct, summary_text)"
+            " VALUES (" + txn.quote(device_id) + ", " + txn.quote(period) + ", "
+            + txn.quote(range_start) + "::date, " + txn.quote(range_end) + "::date, "
+            + std::to_string(nights_count) + ", "
+            + std::to_string(avg_ahi) + ", "
+            + std::to_string(avg_usage_hours) + ", "
+            + std::to_string(compliance_pct) + ", "
+            + txn.quote(summary_text) + ")";
+        txn.exec(query);
         txn.commit();
         std::cout << "DB: Saved " << period << " summary (" << range_start
                   << " to " << range_end << ", " << nights_count << " nights)" << std::endl;
