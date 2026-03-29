@@ -52,7 +52,7 @@ jobs:
             libcurl4-openssl-dev libpq-dev libpqxx-dev libssl-dev \
             libjsoncpp-dev libpaho-mqtt-dev libpaho-mqttpp-dev \
             nlohmann-json3-dev libspdlog-dev libsqlite3-dev \
-            libdrogon-dev libgtest-dev libgmock-dev
+            libdrogon-dev libgtest-dev libgmock-dev uuid-dev
 
       - name: Build HMS-CPAP
         run: |
