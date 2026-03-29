@@ -34,6 +34,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libspdlog-dev \
     libsqlite3-dev \
     libdrogon-dev \
+    uuid-dev libmariadb-dev libhiredis-dev libbrotli-dev \
+    libyaml-cpp-dev zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy source code
