@@ -114,7 +114,7 @@ private:
     std::string base_url_;
 
     static constexpr long DOWNLOAD_TIMEOUT  = 60L;
-    static constexpr long CONNECTION_TIMEOUT = 10L;
+    static constexpr long CONNECTION_TIMEOUT = 3L;   // Short: Fysetc sleeps between polls
 
     static size_t WriteStringCallback(void* contents, size_t size, size_t nmemb, void* userp);
     static size_t WriteBinaryCallback(void* contents, size_t size, size_t nmemb, void* userp);
