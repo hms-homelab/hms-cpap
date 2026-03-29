@@ -347,15 +347,20 @@ int main(int argc, char** argv) {
     hms_cpap::AppConfig config;
     bool config_existed = hms_cpap::AppConfig::load(config_path, config);
 
+    // Env vars fill any empty fields (fallback for systemd Environment= lines)
+    config.applyEnvFallbacks();
+
     // Default sqlite_path if empty
     if (config.database.sqlite_path.empty()) {
         config.database.sqlite_path = data_dir + "/cpap.db";
     }
 
-    // Save config (creates file on first run)
+    // Save merged config (creates file on first run, updates on subsequent)
     config.save(config_path);
 
-    // ── Bridge: set env vars from AppConfig so existing services work ──
+    // ── Bridge: set env vars from merged config so BurstCollectorService works ──
+    // Config.json is the single source of truth; env vars are set for
+    // legacy code that reads them via ConfigManager.
     setenv("CPAP_DEVICE_ID", config.device_id.c_str(), 1);
     setenv("CPAP_DEVICE_NAME", config.device_name.c_str(), 1);
     setenv("CPAP_SOURCE", config.source.c_str(), 1);
@@ -364,9 +369,6 @@ int main(int argc, char** argv) {
     setenv("HEALTH_CHECK_PORT", std::to_string(config.web_port).c_str(), 1);
     if (!config.local_dir.empty()) setenv("CPAP_LOCAL_DIR", config.local_dir.c_str(), 1);
 
-    // DB env vars (for existing DatabaseService inside BurstCollectorService)
-    // Only set when using PostgreSQL — otherwise BurstCollector tries to connect
-    // to PG with empty credentials and fails
     if (config.database.type == "postgresql") {
         setenv("DB_HOST", config.database.host.c_str(), 1);
         setenv("DB_PORT", std::to_string(config.database.port).c_str(), 1);
@@ -375,7 +377,6 @@ int main(int argc, char** argv) {
         setenv("DB_PASSWORD", config.database.password.c_str(), 1);
     }
 
-    // MQTT env vars
     if (config.mqtt.enabled) {
         setenv("MQTT_BROKER", config.mqtt.broker.c_str(), 1);
         setenv("MQTT_PORT", std::to_string(config.mqtt.port).c_str(), 1);
@@ -384,7 +385,6 @@ int main(int argc, char** argv) {
         setenv("MQTT_CLIENT_ID", config.mqtt.client_id.c_str(), 1);
     }
 
-    // LLM env vars
     if (config.llm.enabled) {
         setenv("LLM_ENABLED", "true", 1);
         setenv("LLM_PROVIDER", config.llm.provider.c_str(), 1);
@@ -394,7 +394,6 @@ int main(int argc, char** argv) {
         setenv("LLM_MAX_TOKENS", std::to_string(config.llm.max_tokens).c_str(), 1);
     }
 
-    // Agent env vars
     if (config.agent.enabled) {
         setenv("AGENT_ENABLED", "true", 1);
         setenv("AGENT_LLM_PROVIDER", config.llm.provider.c_str(), 1);

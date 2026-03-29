@@ -369,8 +369,8 @@ SessionDiscoveryService::discoverNewSessions(
                 all_sessions.push_back(session);
 
                 std::string reason = is_new ? "New session" :
-                                    is_today ? "Re-downloading today's session" :
-                                    "Re-downloading recent session (catch late EVE files)";
+                                    is_today ? "Checking today's session" :
+                                    "Checking recent session (catch late EVE files)";
 
                 std::cout << "  - " << reason << ": " << session.session_prefix
                           << " (" << session.total_size_kb << " KB)"
