@@ -15,8 +15,14 @@ echo "║         HMS-CPAP Pi Zero 2 W Deployment                 ║"
 echo "╚══════════════════════════════════════════════════════════╝"
 echo ""
 
-# Step 1: Build ARM binary
-echo "📦 Step 1: Building ARM binary..."
+# Step 1a: Build frontend
+echo "📦 Step 1a: Building Angular frontend..."
+(cd frontend && npm run build --quiet 2>&1 | tail -3)
+echo "✅ Frontend built"
+echo ""
+
+# Step 1b: Build ARM binary
+echo "📦 Step 1b: Building ARM binary..."
 ./build_arm.sh
 if [ ! -f "build-arm/hms_cpap" ]; then
     echo "❌ ARM build failed!"

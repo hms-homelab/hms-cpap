@@ -649,8 +649,10 @@ int main(int argc, char** argv) {
                 .setDocumentRoot(static_dir)
                 .setIdleConnectionTimeout(120);
 
-            // SPA fallback handled by Angular dev server proxy (dev) or
-            // reverse proxy (prod). Drogon serves static files from document root.
+            // SPA fallback: serve index.html for non-API routes that don't match a file
+            drogon::app().setCustom404Page(
+                drogon::HttpResponse::newFileResponse(static_dir + "/index.html"),
+                false);
 
             std::cout << "Web UI: http://0.0.0.0:" << web_port << std::endl;
             std::cout << "  /health         - Health check" << std::endl;
