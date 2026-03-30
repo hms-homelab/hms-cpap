@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.1] - 2026-03-29
+
+### Fixed
+- **Settings page**: Add all 4 source modes to dropdown (ezShare WiFi SD, Local Directory, Fysetc Poll HTTP, Fysetc MQTT) — previously only ezShare and Local were listed.
+
 ## [3.1.0] - 2026-03-29
 
 ### Added
