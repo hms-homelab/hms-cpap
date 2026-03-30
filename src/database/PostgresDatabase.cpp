@@ -6,12 +6,15 @@
 namespace hms_cpap {
 
 PostgresDatabase::PostgresDatabase(const std::string& connection_string)
-    : db_(std::make_unique<DatabaseService>(connection_string)) {}
+    : db_(std::make_unique<DatabaseService>(connection_string)), conn_str_(connection_string) {}
 
 // -- Connection management ----------------------------------------------------
 
 bool PostgresDatabase::connect() { return db_->connect(); }
-void PostgresDatabase::disconnect() { db_->disconnect(); }
+void PostgresDatabase::disconnect() {
+    if (query_conn_) { PQfinish(query_conn_); query_conn_ = nullptr; }
+    db_->disconnect();
+}
 bool PostgresDatabase::isConnected() const { return db_->isConnected(); }
 
 // -- Session CRUD -------------------------------------------------------------
@@ -129,47 +132,56 @@ void* PostgresDatabase::rawConnection() {
     return static_cast<void*>(db_->rawConnection());
 }
 
-// -- Generic query ------------------------------------------------------------
+// -- Generic query (pure libpq — avoids pqxx cross-compile SEGV) -------------
+
+bool PostgresDatabase::ensureQueryConn() {
+    if (query_conn_ && PQstatus(query_conn_) == CONNECTION_OK) return true;
+    if (query_conn_) PQfinish(query_conn_);
+    query_conn_ = PQconnectdb(conn_str_.c_str());
+    if (PQstatus(query_conn_) != CONNECTION_OK) {
+        std::cerr << "executeQuery: PQ connect failed: " << PQerrorMessage(query_conn_) << std::endl;
+        PQfinish(query_conn_);
+        query_conn_ = nullptr;
+        return false;
+    }
+    return true;
+}
 
 Json::Value PostgresDatabase::executeQuery(const std::string& sql,
                                            const std::vector<std::string>& params) {
     Json::Value arr(Json::arrayValue);
     std::lock_guard<std::mutex> lock(query_mutex_);
-    try {
-        auto* conn = db_->rawConnection();
-        if (!conn) return arr;
+    if (!ensureQueryConn()) return arr;
 
-        pqxx::work txn(*conn);
+    // Build C arrays for PQexecParams
+    std::vector<const char*> pvals;
+    pvals.reserve(params.size());
+    for (auto& p : params) pvals.push_back(p.c_str());
 
-        // Replace $N placeholders with quoted values (reverse order to avoid $1 matching inside $10)
-        std::string resolved = sql;
-        for (size_t i = params.size(); i > 0; --i) {
-            std::string placeholder = "$" + std::to_string(i);
-            std::string::size_type pos = 0;
-            std::string quoted = txn.quote(params[i - 1]);
-            while ((pos = resolved.find(placeholder, pos)) != std::string::npos) {
-                resolved.replace(pos, placeholder.length(), quoted);
-                pos += quoted.length();
-            }
-        }
-
-        auto result = txn.exec(resolved);
-        txn.commit();
-
-        for (const auto& row : result) {
-            Json::Value obj;
-            for (pqxx::row_size_type c = 0; c < row.size(); ++c) {
-                std::string col_name(result.column_name(c));
-                if (row[c].is_null())
-                    obj[col_name] = Json::nullValue;
-                else
-                    obj[col_name] = row[c].c_str();
-            }
-            arr.append(obj);
-        }
-    } catch (const std::exception& e) {
-        std::cerr << "PostgresDatabase::executeQuery error: " << e.what() << std::endl;
+    PGresult* res = PQexecParams(query_conn_, sql.c_str(),
+                                 static_cast<int>(params.size()),
+                                 nullptr, pvals.data(), nullptr, nullptr, 0);
+    if (!res || (PQresultStatus(res) != PGRES_TUPLES_OK &&
+                 PQresultStatus(res) != PGRES_COMMAND_OK)) {
+        std::cerr << "executeQuery error: " << PQerrorMessage(query_conn_) << std::endl;
+        if (res) PQclear(res);
+        return arr;
     }
+
+    int nrows = PQntuples(res);
+    int ncols = PQnfields(res);
+    for (int r = 0; r < nrows; ++r) {
+        Json::Value obj;
+        for (int c = 0; c < ncols; ++c) {
+            const char* col = PQfname(res, c);
+            if (PQgetisnull(res, r, c))
+                obj[col] = Json::nullValue;
+            else
+                obj[col] = PQgetvalue(res, r, c);
+        }
+        arr.append(obj);
+    }
+    PQclear(res);
     return arr;
 }
 
