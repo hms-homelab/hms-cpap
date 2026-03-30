@@ -4,6 +4,7 @@
 #include "database/IDatabase.h"
 #include "database/DatabaseService.h"
 #include <memory>
+#include <mutex>
 #include <string>
 
 namespace hms_cpap {
@@ -110,6 +111,7 @@ public:
 
 private:
     std::unique_ptr<DatabaseService> db_;
+    mutable std::mutex query_mutex_;
 };
 
 } // namespace hms_cpap
