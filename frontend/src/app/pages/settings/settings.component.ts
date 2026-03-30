@@ -27,13 +27,16 @@ import { AppConfig } from '../../models/config.model';
             <label>
               Source Type
               <select [(ngModel)]="config.source" name="source">
-                <option value="ezshare">ezShare</option>
-                <option value="local">Local</option>
+                <option value="ezshare">ezShare WiFi SD</option>
+                <option value="local">Local Directory</option>
+                <option value="fysetc_poll">Fysetc Poll (HTTP)</option>
+                <option value="fysetc">Fysetc (MQTT)</option>
               </select>
             </label>
-            <label *ngIf="config.source === 'ezshare'">
-              ezShare URL
-              <input type="text" [(ngModel)]="config.ezshare_url" name="ezshare_url" placeholder="http://192.168.4.1" />
+            <label *ngIf="config.source === 'ezshare' || config.source === 'fysetc_poll'">
+              {{ config.source === 'ezshare' ? 'ezShare URL' : 'Fysetc Device URL' }}
+              <input type="text" [(ngModel)]="config.ezshare_url" name="ezshare_url"
+                     [placeholder]="config.source === 'ezshare' ? 'http://192.168.4.1' : 'http://192.168.2.134'" />
             </label>
             <label *ngIf="config.source === 'local'">
               Local Directory
