@@ -18,10 +18,20 @@ void CpapController::setConfig(hms_cpap::AppConfig* cfg, const std::string& path
 }
 
 static drogon::HttpResponsePtr jsonError(const std::string& msg, drogon::HttpStatusCode code) {
-    Json::Value err;
-    err["error"] = msg;
-    auto resp = drogon::HttpResponse::newHttpJsonResponse(err);
+    auto resp = drogon::HttpResponse::newHttpResponse();
+    resp->setContentTypeCode(drogon::CT_APPLICATION_JSON);
     resp->setStatusCode(code);
+    resp->setBody("{\"error\":\"" + msg + "\"}");
+    return resp;
+}
+
+// Bypass Drogon's newHttpJsonResponse (crashes in cross-compiled ARM binary)
+static drogon::HttpResponsePtr jsonResp(const Json::Value& val) {
+    Json::StreamWriterBuilder wb;
+    wb["indentation"] = "";
+    auto resp = drogon::HttpResponse::newHttpResponse();
+    resp->setContentTypeCode(drogon::CT_APPLICATION_JSON);
+    resp->setBody(Json::writeString(wb, val));
     return resp;
 }
 
@@ -31,13 +41,13 @@ void CpapController::health(const drogon::HttpRequestPtr&,
     j["status"] = "ok";
     j["version"] = "2.1.0";
     j["service"] = "hms-cpap";
-    cb(drogon::HttpResponse::newHttpJsonResponse(j));
+    cb(jsonResp(j));
 }
 
 void CpapController::dashboard(const drogon::HttpRequestPtr&,
                                 std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
     try {
-        cb(drogon::HttpResponse::newHttpJsonResponse(qs_->getDashboard()));
+        cb(jsonResp(qs_->getDashboard()));
     } catch (const std::exception& e) {
         cb(jsonError(e.what(), drogon::k500InternalServerError));
     }
@@ -49,7 +59,7 @@ void CpapController::sessions(const drogon::HttpRequestPtr& req,
     if (auto p = req->getOptionalParameter<int>("days")) days = *p;
     if (auto p = req->getOptionalParameter<int>("limit")) limit = *p;
     try {
-        cb(drogon::HttpResponse::newHttpJsonResponse(qs_->getSessions(days, limit)));
+        cb(jsonResp(qs_->getSessions(days, limit)));
     } catch (const std::exception& e) {
         cb(jsonError(e.what(), drogon::k500InternalServerError));
     }
@@ -59,7 +69,7 @@ void CpapController::sessionDetail(const drogon::HttpRequestPtr&,
                                     std::function<void(const drogon::HttpResponsePtr&)>&& cb,
                                     const std::string& date) {
     try {
-        cb(drogon::HttpResponse::newHttpJsonResponse(qs_->getSessionDetail(date)));
+        cb(jsonResp(qs_->getSessionDetail(date)));
     } catch (const std::exception& e) {
         cb(jsonError(e.what(), drogon::k500InternalServerError));
     }
@@ -74,7 +84,7 @@ void CpapController::dailySummary(const drogon::HttpRequestPtr& req,
         return;
     }
     try {
-        cb(drogon::HttpResponse::newHttpJsonResponse(qs_->getDailySummary(start, end)));
+        cb(jsonResp(qs_->getDailySummary(start, end)));
     } catch (const std::exception& e) {
         cb(jsonError(e.what(), drogon::k500InternalServerError));
     }
@@ -86,7 +96,7 @@ void CpapController::trend(const drogon::HttpRequestPtr& req,
     int days = 30;
     if (auto p = req->getOptionalParameter<int>("days")) days = *p;
     try {
-        cb(drogon::HttpResponse::newHttpJsonResponse(qs_->getTrend(metric, days)));
+        cb(jsonResp(qs_->getTrend(metric, days)));
     } catch (const std::exception& e) {
         cb(jsonError(e.what(), drogon::k500InternalServerError));
     }
@@ -101,7 +111,7 @@ void CpapController::statistics(const drogon::HttpRequestPtr& req,
         return;
     }
     try {
-        cb(drogon::HttpResponse::newHttpJsonResponse(qs_->getStatistics(start, end)));
+        cb(jsonResp(qs_->getStatistics(start, end)));
     } catch (const std::exception& e) {
         cb(jsonError(e.what(), drogon::k500InternalServerError));
     }
@@ -113,7 +123,7 @@ void CpapController::summaries(const drogon::HttpRequestPtr& req,
     int limit = 10;
     if (auto p = req->getOptionalParameter<int>("limit")) limit = *p;
     try {
-        cb(drogon::HttpResponse::newHttpJsonResponse(qs_->getSummaries(period, limit)));
+        cb(jsonResp(qs_->getSummaries(period, limit)));
     } catch (const std::exception& e) {
         cb(jsonError(e.what(), drogon::k500InternalServerError));
     }
@@ -131,7 +141,7 @@ void CpapController::getConfig(const drogon::HttpRequestPtr&,
     std::string errs;
     std::istringstream stream(resp_json.dump());
     Json::parseFromStream(builder, stream, &result, &errs);
-    cb(drogon::HttpResponse::newHttpJsonResponse(result));
+    cb(jsonResp(result));
 }
 
 void CpapController::updateConfig(const drogon::HttpRequestPtr& req,
@@ -198,7 +208,7 @@ void CpapController::updateConfig(const drogon::HttpRequestPtr& req,
     std::istringstream stream(resp_json.dump());
     Json::parseFromStream(builder, stream, &result, &errs);
 
-    cb(drogon::HttpResponse::newHttpJsonResponse(result));
+    cb(jsonResp(result));
 }
 
 void CpapController::setupComplete(const drogon::HttpRequestPtr&,
@@ -213,7 +223,7 @@ void CpapController::setupComplete(const drogon::HttpRequestPtr&,
     Json::Value result;
     result["status"] = "ok";
     result["setup_complete"] = true;
-    cb(drogon::HttpResponse::newHttpJsonResponse(result));
+    cb(jsonResp(result));
 }
 
 void CpapController::testEzshare(const drogon::HttpRequestPtr& req,
@@ -225,7 +235,7 @@ void CpapController::testEzshare(const drogon::HttpRequestPtr& req,
     result["url"] = url;
     result["configured"] = !url.empty();
     result["status"] = url.empty() ? "not_configured" : "configured";
-    cb(drogon::HttpResponse::newHttpJsonResponse(result));
+    cb(jsonResp(result));
 }
 
 // ── Fysetc poll server ──────────────────────────────────────────────────────
@@ -264,7 +274,7 @@ void CpapController::fysetcAnnounce(const drogon::HttpRequestPtr& req,
 
     Json::Value resp;
     resp["status"] = "ok";
-    cb(drogon::HttpResponse::newHttpJsonResponse(resp));
+    cb(jsonResp(resp));
 }
 
 } // namespace hms_cpap

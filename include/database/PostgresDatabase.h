@@ -3,6 +3,7 @@
 
 #include "database/IDatabase.h"
 #include "database/DatabaseService.h"
+#include <libpq-fe.h>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -111,7 +112,11 @@ public:
 
 private:
     std::unique_ptr<DatabaseService> db_;
+    std::string conn_str_;
+    PGconn* query_conn_ = nullptr;  // Separate libpq connection for web queries
     mutable std::mutex query_mutex_;
+
+    bool ensureQueryConn();
 };
 
 } // namespace hms_cpap

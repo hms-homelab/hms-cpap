@@ -53,6 +53,11 @@ find_library(PAHO_MQTT3AS_LIB paho-mqtt3as)
 if(BUILD_WITH_POSTGRESQL)
     find_library(PQXX_LIB pqxx)
     find_library(PQ_LIB pq)
+    # libpq-fe.h lives in /usr/include/postgresql on Debian
+    find_path(PQ_INCLUDE_DIR libpq-fe.h PATHS /usr/include/postgresql)
+    if(PQ_INCLUDE_DIR)
+        include_directories(${PQ_INCLUDE_DIR})
+    endif()
 endif()
 
 # ── hms-shared modules (via FetchContent) ───────────────────────────────────
