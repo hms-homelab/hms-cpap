@@ -1,5 +1,6 @@
 #ifdef BUILD_WITH_WEB
 #include <drogon/drogon.h>
+#include <fstream>
 #include "controllers/CpapController.h"
 #include "web/QueryService.h"
 #endif
@@ -649,10 +650,26 @@ int main(int argc, char** argv) {
                 .setDocumentRoot(static_dir)
                 .setIdleConnectionTimeout(120);
 
-            // SPA fallback: serve index.html for non-API routes that don't match a file
-            drogon::app().setCustom404Page(
-                drogon::HttpResponse::newFileResponse(static_dir + "/index.html"),
-                false);
+            // SPA fallback: serve index.html content for 404s so Angular handles routing
+            std::string index_html;
+            {
+                std::ifstream ifs(static_dir + "/index.html");
+                if (ifs) index_html.assign(std::istreambuf_iterator<char>(ifs), {});
+            }
+            if (!index_html.empty()) {
+                drogon::app().setCustomErrorHandler(
+                    [index_html](drogon::HttpStatusCode code) -> drogon::HttpResponsePtr {
+                        if (code == drogon::k404NotFound) {
+                            auto resp = drogon::HttpResponse::newHttpResponse();
+                            resp->setContentTypeCode(drogon::CT_TEXT_HTML);
+                            resp->setBody(index_html);
+                            return resp;
+                        }
+                        Json::Value err;
+                        err["error"] = static_cast<int>(code);
+                        return drogon::HttpResponse::newHttpJsonResponse(err);
+                    });
+            }
 
             std::cout << "Web UI: http://0.0.0.0:" << web_port << std::endl;
             std::cout << "  /health         - Health check" << std::endl;
