@@ -638,8 +638,18 @@ int main(int argc, char** argv) {
             int web_port = config.web_port;
             std::string static_dir = config.static_dir;
 
-            // QueryService works with all database backends via IDatabase::executeQuery
-            auto query_service = std::make_shared<hms_cpap::QueryService>(db, config.device_id);
+            // Separate DB connection for web queries (pqxx is not thread-safe)
+            std::shared_ptr<hms_cpap::IDatabase> web_db;
+            if (config.database.type == "postgresql") {
+#ifdef WITH_POSTGRESQL
+                web_db = std::make_shared<hms_cpap::PostgresDatabase>(pg_conn_str);
+                web_db->connect();
+#endif
+            } else {
+                web_db = db; // SQLite has its own locking
+            }
+            auto query_service = std::make_shared<hms_cpap::QueryService>(
+                web_db ? web_db : db, config.device_id);
             hms_cpap::CpapController::setQueryService(query_service);
             hms_cpap::CpapController::setConfig(&config, config_path);
 

@@ -134,6 +134,7 @@ void* PostgresDatabase::rawConnection() {
 Json::Value PostgresDatabase::executeQuery(const std::string& sql,
                                            const std::vector<std::string>& params) {
     Json::Value arr(Json::arrayValue);
+    std::lock_guard<std::mutex> lock(query_mutex_);
     try {
         auto* conn = db_->rawConnection();
         if (!conn) return arr;
