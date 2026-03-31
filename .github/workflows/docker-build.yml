@@ -147,7 +147,7 @@ jobs:
       # ── vcpkg + C++ Build ───────────────────────────────────────
       - name: Install vcpkg dependencies
         run: |
-          vcpkg install curl jsoncpp nlohmann-json spdlog sqlite3 openssl paho-mqtt paho-mqttpp3 libpqxx drogon gtest zlib --triplet x64-windows
+          vcpkg install --triplet x64-windows
 
       - name: Build HMS-CPAP (MSVC)
         run: |
