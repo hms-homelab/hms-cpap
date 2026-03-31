@@ -1,6 +1,6 @@
 #ifdef WITH_POSTGRESQL
 #include "database/DatabaseService.h"
-#include <postgresql/libpq-fe.h>
+#include <libpq-fe.h>
 #include <iostream>
 #include <iomanip>
 #include <sstream>
