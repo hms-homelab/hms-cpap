@@ -28,8 +28,6 @@ set(TEST_SOURCES
     database/test_DatabaseService.cpp
     services/test_BurstCollectorService.cpp
     services/test_DataPublisherService.cpp
-    services/test_FysetcReceiverService.cpp
-    services/test_FysetcSniffService.cpp
     models/test_CPAPModels.cpp
     utils/test_ConfigManager.cpp
     utils/test_AppConfig.cpp

@@ -58,26 +58,6 @@ bool DatabaseService::connect() {
                 // Tables may not exist yet — ignore
             }
 
-            // Auto-migrate: Fysetc poll server offset tracking
-            try {
-                pqxx::work txn(*conn_);
-                txn.exec(R"(
-                    CREATE TABLE IF NOT EXISTS fysetc_file_offsets (
-                        id               SERIAL PRIMARY KEY,
-                        device_id        VARCHAR(64) NOT NULL,
-                        file_path        VARCHAR(256) NOT NULL,
-                        confirmed_offset BIGINT NOT NULL DEFAULT 0,
-                        updated_at       TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-                        UNIQUE(device_id, file_path)
-                    )
-                )");
-                txn.exec(R"(
-                    CREATE INDEX IF NOT EXISTS idx_fysetc_offsets_device
-                    ON fysetc_file_offsets(device_id)
-                )");
-                txn.commit();
-            } catch (...) {}
-
             // Auto-migrate v2.1.0: AI summaries table
             try {
                 pqxx::work txn(*conn_);
@@ -1656,78 +1636,6 @@ bool DatabaseService::executeRaw(const std::string& sql) {
         return true;
     } catch (const std::exception& e) {
         std::cerr << "DB: executeRaw error: " << e.what() << std::endl;
-        return false;
-    }
-}
-
-// ── Fysetc poll server offset tracking ──────────────────────────────────────
-
-std::vector<std::pair<std::string, int64_t>>
-DatabaseService::getFysetcFileOffsets(const std::string& device_id) {
-    std::lock_guard<std::recursive_mutex> lock(mutex_);
-    std::vector<std::pair<std::string, int64_t>> result;
-
-    if (!ensureConnection()) return result;
-
-    try {
-        pqxx::work txn(*conn_);
-        auto rows = txn.exec_params(
-            "SELECT file_path, confirmed_offset FROM fysetc_file_offsets WHERE device_id = $1",
-            device_id);
-        txn.commit();
-
-        for (const auto& row : rows) {
-            result.emplace_back(row[0].as<std::string>(), row[1].as<int64_t>());
-        }
-    } catch (const std::exception& e) {
-        std::cerr << "DB: getFysetcFileOffsets error: " << e.what() << std::endl;
-    }
-    return result;
-}
-
-bool DatabaseService::saveFysetcFileOffset(const std::string& device_id,
-                                           const std::string& path,
-                                           int64_t offset) {
-    std::lock_guard<std::recursive_mutex> lock(mutex_);
-    if (!ensureConnection()) return false;
-
-    try {
-        pqxx::work txn(*conn_);
-        txn.exec_params(R"(
-            INSERT INTO fysetc_file_offsets (device_id, file_path, confirmed_offset, updated_at)
-            VALUES ($1, $2, $3, NOW())
-            ON CONFLICT (device_id, file_path)
-            DO UPDATE SET confirmed_offset = $3, updated_at = NOW()
-        )", device_id, path, offset);
-        txn.commit();
-        return true;
-    } catch (const std::exception& e) {
-        std::cerr << "DB: saveFysetcFileOffset error: " << e.what() << std::endl;
-        return false;
-    }
-}
-
-bool DatabaseService::saveFysetcFileOffsets(const std::string& device_id,
-                                            const std::vector<std::pair<std::string, int64_t>>& offsets) {
-    if (offsets.empty()) return true;
-
-    std::lock_guard<std::recursive_mutex> lock(mutex_);
-    if (!ensureConnection()) return false;
-
-    try {
-        pqxx::work txn(*conn_);
-        for (const auto& [path, offset] : offsets) {
-            txn.exec_params(R"(
-                INSERT INTO fysetc_file_offsets (device_id, file_path, confirmed_offset, updated_at)
-                VALUES ($1, $2, $3, NOW())
-                ON CONFLICT (device_id, file_path)
-                DO UPDATE SET confirmed_offset = $3, updated_at = NOW()
-            )", device_id, path, offset);
-        }
-        txn.commit();
-        return true;
-    } catch (const std::exception& e) {
-        std::cerr << "DB: saveFysetcFileOffsets error: " << e.what() << std::endl;
         return false;
     }
 }

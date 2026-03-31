@@ -5,9 +5,6 @@
 #include "web/QueryService.h"
 #endif
 #include "services/BurstCollectorService.h"
-#include "services/FysetcReceiverService.h"
-#include "services/FysetcSniffService.h"
-#include "services/FysetcPollService.h"
 #include "services/SessionDiscoveryService.h"
 #include "services/DataPublisherService.h"
 #include "parsers/EDFParser.h"
@@ -36,10 +33,7 @@
 
 std::atomic<bool> shutdown_requested(false);
 std::unique_ptr<hms_cpap::BurstCollectorService> burst_service;
-std::unique_ptr<hms_cpap::FysetcReceiverService> fysetc_service;
-std::unique_ptr<hms_cpap::FysetcSniffService> sniff_service;
 std::unique_ptr<hms_cpap::AgentService> agent_service;
-std::shared_ptr<hms_cpap::FysetcPollService> fysetc_poll_service;
 
 /**
  * Signal handler for graceful shutdown
@@ -51,17 +45,8 @@ void signalHandler(int signal) {
     if (burst_service) {
         burst_service->stop();
     }
-    if (fysetc_service) {
-        fysetc_service->stop();
-    }
-    if (sniff_service) {
-        sniff_service->stop();
-    }
     if (agent_service) {
         agent_service->stop();
-    }
-    if (fysetc_poll_service) {
-        fysetc_poll_service->stop();
     }
 #ifdef BUILD_WITH_WEB
     drogon::app().quit();
@@ -78,9 +63,9 @@ void printBanner() {
 ║      HMS-CPAP - CPAP Data Collection Service             ║
 ║                                                           ║
 ║      ResMed AirSense 10 Data Collection                  ║
-║      Sources: ezShare, local, FYSETC SD WiFi Pro         ║
+║      Sources: HTTP, local                                 ║
 ║                                                           ║
-║      Version: 1.7.0 - FYSETC Receiver Service             ║
+║      Version: 2.2.0                                        ║
 ║      Platform: Linux                                      ║
 ║                                                           ║
 ╚═══════════════════════════════════════════════════════════╝
@@ -480,82 +465,18 @@ int main(int argc, char** argv) {
 
         std::cout << "HMS-CPAP service is running..." << std::endl;
 
-        if (src == "fysetc_poll") {
-            // Fysetc HTTP poll mode: worker thread waits for device announce
-            fysetc_poll_service = std::make_shared<hms_cpap::FysetcPollService>();
-            fysetc_poll_service->start();
+        // Data source: HTTP polling (ezShare or Fysetc) or local directory
+        int burst_interval = hms_cpap::ConfigManager::getInt("BURST_INTERVAL", 120);
 
-#ifdef BUILD_WITH_WEB
-            hms_cpap::CpapController::setFysetcPollService(fysetc_poll_service);
-#endif
+        burst_service = std::make_unique<hms_cpap::BurstCollectorService>(burst_interval);
+        burst_service->start();
 
-            std::cout << "   Source: Fysetc poll server (waiting for announce on POST /fysetc/announce)" << std::endl;
+        if (src == "local") {
+            std::cout << "   Source: Local directory at " << hms_cpap::ConfigManager::get("CPAP_LOCAL_DIR", "") << std::endl;
         } else {
-            // Primary data source: ezShare/local polling
-            int burst_interval = hms_cpap::ConfigManager::getInt("BURST_INTERVAL", 120);
-
-            burst_service = std::make_unique<hms_cpap::BurstCollectorService>(burst_interval);
-            burst_service->start();
-
-            if (src == "local") {
-                std::cout << "   Source: Local directory at " << hms_cpap::ConfigManager::get("CPAP_LOCAL_DIR", "") << std::endl;
-            } else {
-                std::cout << "   Source: ez Share at " << hms_cpap::ConfigManager::get("EZSHARE_BASE_URL", "http://192.168.4.1") << std::endl;
-            }
-            std::cout << "   Burst interval: " << burst_interval << " seconds" << std::endl;
+            std::cout << "   Source: HTTP at " << hms_cpap::ConfigManager::get("EZSHARE_BASE_URL", "http://192.168.4.1") << std::endl;
         }
-
-        // Fysetc MQTT subscribers (only when NOT in fysetc_poll mode).
-        // These are passive listeners for the old MQTT-based protocol.
-        if (src != "fysetc_poll")
-        {
-            std::string mqtt_broker = hms_cpap::ConfigManager::get("MQTT_BROKER", "192.168.2.15");
-            std::string mqtt_port = hms_cpap::ConfigManager::get("MQTT_PORT", "1883");
-            std::string mqtt_user = hms_cpap::ConfigManager::get("MQTT_USER", "aamat");
-            std::string mqtt_password = hms_cpap::ConfigManager::get("MQTT_PASSWORD", "exploracion");
-
-            hms::MqttConfig fysetc_mqtt_cfg;
-            fysetc_mqtt_cfg.broker = mqtt_broker;
-            fysetc_mqtt_cfg.port = std::stoi(mqtt_port);
-            fysetc_mqtt_cfg.username = mqtt_user;
-            fysetc_mqtt_cfg.password = mqtt_password;
-            fysetc_mqtt_cfg.client_id = "hms_cpap_fysetc";
-
-            auto fysetc_mqtt = std::make_shared<hms::MqttClient>(fysetc_mqtt_cfg);
-            if (!fysetc_mqtt->connect()) {
-                std::cerr << "Fysetc MQTT: Connection failed (will retry)" << std::endl;
-            }
-
-            std::string db_host = hms_cpap::ConfigManager::get("DB_HOST", "localhost");
-            std::string db_port_str = hms_cpap::ConfigManager::get("DB_PORT", "5432");
-            std::string db_name = hms_cpap::ConfigManager::get("DB_NAME", "cpap_monitoring");
-            std::string db_user = hms_cpap::ConfigManager::get("DB_USER", "maestro");
-            std::string db_password = hms_cpap::ConfigManager::get("DB_PASSWORD", "maestro_postgres_2026_secure");
-
-            std::string conn_str = "host=" + db_host + " port=" + db_port_str +
-                                   " dbname=" + db_name + " user=" + db_user +
-                                   " password=" + db_password;
-
-            auto fysetc_db = std::make_shared<hms_cpap::DatabaseService>(conn_str);
-            if (!fysetc_db->connect()) {
-                std::cerr << "Fysetc DB: Connection failed (will retry)" << std::endl;
-            }
-
-            // Fysetc receiver: handles chunk/sync/manifest when firmware is in normal mode
-            auto data_publisher = std::make_shared<hms_cpap::DataPublisherService>(fysetc_mqtt, fysetc_db);
-            data_publisher->initialize();
-
-            fysetc_service = std::make_unique<hms_cpap::FysetcReceiverService>(
-                fysetc_mqtt, fysetc_db, data_publisher);
-            fysetc_service->start();
-
-            // Fysetc sniff: logs PCNT pulse counts when firmware is in sniff mode
-            sniff_service = std::make_unique<hms_cpap::FysetcSniffService>(
-                fysetc_mqtt, fysetc_db);
-            sniff_service->start();
-
-            std::cout << "   Fysetc: receiver + sniff subscribers active" << std::endl;
-        }
+        std::cout << "   Burst interval: " << burst_interval << " seconds" << std::endl;
 
         std::cout << "   Press Ctrl+C to stop" << std::endl << std::endl;
 
@@ -704,18 +625,6 @@ int main(int argc, char** argv) {
         if (burst_service) {
             burst_service->stop();
             burst_service.reset();
-        }
-        if (fysetc_service) {
-            fysetc_service->stop();
-            fysetc_service.reset();
-        }
-        if (sniff_service) {
-            sniff_service->stop();
-            sniff_service.reset();
-        }
-        if (fysetc_poll_service) {
-            fysetc_poll_service->stop();
-            fysetc_poll_service.reset();
         }
 
         std::cout << "HMS-CPAP service stopped cleanly" << std::endl;

@@ -252,32 +252,10 @@ public:
     /**
      * Execute arbitrary SQL (DDL or DML) in a single transaction.
      *
-     * Used by FysetcSniffService for CREATE TABLE and INSERT statements.
-     *
      * @param sql Raw SQL string
      * @return true if executed successfully
      */
     bool executeRaw(const std::string& sql);
-
-    // ── Fysetc poll server offset tracking ──────────────────────────
-
-    /**
-     * Get all confirmed file offsets for a device (for /init known_files).
-     */
-    std::vector<std::pair<std::string, int64_t>>
-        getFysetcFileOffsets(const std::string& device_id);
-
-    /**
-     * Upsert a single file offset.
-     */
-    bool saveFysetcFileOffset(const std::string& device_id,
-                              const std::string& path, int64_t offset);
-
-    /**
-     * Upsert multiple file offsets in one transaction.
-     */
-    bool saveFysetcFileOffsets(const std::string& device_id,
-                               const std::vector<std::pair<std::string, int64_t>>& offsets);
 
     /**
      * Get raw pqxx connection (for QueryService read-only queries).

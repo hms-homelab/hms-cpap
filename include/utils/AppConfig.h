@@ -13,7 +13,7 @@ struct AppConfig {
     std::string device_name = "ResMed AirSense 10";
 
     // Data source
-    std::string source = "ezshare";  // "ezshare", "local", "fysetc"
+    std::string source = "ezshare";  // "ezshare" (HTTP), "local"
     std::string ezshare_url = "http://192.168.4.1";
     std::string local_dir;
     int burst_interval = 65;
