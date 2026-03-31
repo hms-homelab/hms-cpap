@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 project(hms_cpap CXX)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Platform-aware compiler flags
@@ -115,8 +115,8 @@ target_include_directories(hms_mqtt PUBLIC
 if(MSVC)
     target_link_libraries(hms_mqtt PUBLIC
         spdlog::spdlog
-        PahoMqttCpp::paho-mqttpp3-static
-        eclipse-paho-mqtt-c::paho-mqtt3as-static
+        PahoMqttCpp::paho-mqttpp3
+        eclipse-paho-mqtt-c::paho-mqtt3as
     )
 else()
     target_link_libraries(hms_mqtt PUBLIC
@@ -158,8 +158,8 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 if(MSVC)
     target_link_libraries(${PROJECT_NAME}
         jsoncpp_lib
-        PahoMqttCpp::paho-mqttpp3-static
-        eclipse-paho-mqtt-c::paho-mqtt3as-static
+        PahoMqttCpp::paho-mqttpp3
+        eclipse-paho-mqtt-c::paho-mqtt3as
         CURL::libcurl
         unofficial::sqlite3::sqlite3
         OpenSSL::SSL

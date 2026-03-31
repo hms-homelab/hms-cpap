@@ -56,8 +56,8 @@ if(MSVC)
         GTest::gtest_main
         GTest::gmock
         jsoncpp_lib
-        PahoMqttCpp::paho-mqttpp3-static
-        eclipse-paho-mqtt-c::paho-mqtt3as-static
+        PahoMqttCpp::paho-mqttpp3
+        eclipse-paho-mqtt-c::paho-mqtt3as
         CURL::libcurl
         unofficial::sqlite3::sqlite3
         OpenSSL::SSL
