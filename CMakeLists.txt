@@ -1,7 +1,13 @@
 cmake_minimum_required(VERSION 3.16)
 project(hms_cpap CXX)
 
-set(CMAKE_CXX_STANDARD 20)
+# C++20 on MSVC (needed for designated initializers in hms-shared/db),
+# C++17 on Linux (system pqxx is built with C++17 — ABI mismatch if we use C++20)
+if(MSVC)
+    set(CMAKE_CXX_STANDARD 20)
+else()
+    set(CMAKE_CXX_STANDARD 17)
+endif()
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Platform-aware compiler flags
