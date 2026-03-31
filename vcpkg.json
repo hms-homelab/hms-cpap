@@ -1,0 +1,19 @@
+{
+  "name": "hms-cpap",
+  "version-string": "2.2.0",
+  "description": "CPAP data collection service for ResMed devices",
+  "dependencies": [
+    "curl",
+    "jsoncpp",
+    "nlohmann-json",
+    "spdlog",
+    "sqlite3",
+    "openssl",
+    "paho-mqtt",
+    "paho-mqttpp3",
+    "libpqxx",
+    "drogon",
+    "gtest",
+    "zlib"
+  ]
+}

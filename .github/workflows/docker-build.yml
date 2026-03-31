@@ -18,6 +18,7 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  # ── Linux Build + Docker ──────────────────────────────────────────
   build-and-test:
     runs-on: ubuntu-latest
     permissions:
@@ -113,3 +114,103 @@ jobs:
       - name: Image digest
         if: github.event_name != 'pull_request'
         run: echo ${{ steps.meta.outputs.digest }}
+
+  # ── Windows Build ─────────────────────────────────────────────────
+  windows-build:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+
+    env:
+      VCPKG_DEFAULT_TRIPLET: x64-windows
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── Angular UI ──────────────────────────────────────────────
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci --no-audit --no-fund
+
+      - name: Build Angular UI
+        working-directory: frontend
+        run: npx ng build --configuration production
+
+      # ── vcpkg + C++ Build ───────────────────────────────────────
+      - name: Install vcpkg dependencies
+        run: |
+          vcpkg install curl jsoncpp nlohmann-json spdlog sqlite3 openssl paho-mqtt paho-mqttpp3 libpqxx drogon gtest zlib --triplet x64-windows
+
+      - name: Build HMS-CPAP (MSVC)
+        run: |
+          mkdir build
+          cd build
+          cmake -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DBUILD_TESTS=ON -DBUILD_WITH_WEB=ON -DBUILD_WITH_POSTGRESQL=ON ..
+          cmake --build . --config Release --parallel
+
+      - name: Run tests
+        run: cd build && ctest --build-config Release --output-on-failure
+
+      # ── Package Windows release ─────────────────────────────────
+      - name: Bundle release
+        run: |
+          mkdir release
+          Copy-Item build\Release\hms_cpap.exe release\
+          # Copy vcpkg DLLs
+          Get-ChildItem -Path build\Release\*.dll -ErrorAction SilentlyContinue | Copy-Item -Destination release\
+          # Bundle Angular UI
+          mkdir release\static\browser -Force
+          Copy-Item -Recurse frontend\dist\frontend\browser\* release\static\browser\
+          # Sample config
+          @'
+          {
+            "device_id": "cpap_resmed_SERIAL",
+            "device_name": "ResMed AirSense 10",
+            "source": "ezshare",
+            "ezshare_url": "http://192.168.4.1",
+            "burst_interval": 65,
+            "web_port": 8893,
+            "database": { "type": "sqlite" },
+            "mqtt": { "enabled": false }
+          }
+          '@ | Out-File -Encoding utf8 release\config.example.json
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hms-cpap-windows-x64
+          path: release/
+
+  # ── GitHub Release (on tag push) ──────────────────────────────────
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build-and-test, windows-build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: hms-cpap-windows-x64
+          path: windows-release/
+
+      - name: Create Windows zip
+        run: |
+          cd windows-release
+          zip -r ../hms-cpap-windows-x64.zip .
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: hms-cpap-windows-x64.zip

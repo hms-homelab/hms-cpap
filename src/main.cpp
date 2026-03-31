@@ -30,28 +30,42 @@
 #include <cstdlib>
 #include <filesystem>
 #include <sstream>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 std::atomic<bool> shutdown_requested(false);
 std::unique_ptr<hms_cpap::BurstCollectorService> burst_service;
 std::unique_ptr<hms_cpap::AgentService> agent_service;
 
 /**
- * Signal handler for graceful shutdown
+ * Graceful shutdown logic (shared by all platforms)
  */
-void signalHandler(int signal) {
-    std::cout << "\n⚠️  Received signal " << signal << ", shutting down gracefully..." << std::endl;
+void requestShutdown() {
     shutdown_requested = true;
-
-    if (burst_service) {
-        burst_service->stop();
-    }
-    if (agent_service) {
-        agent_service->stop();
-    }
+    if (burst_service) burst_service->stop();
+    if (agent_service) agent_service->stop();
 #ifdef BUILD_WITH_WEB
     drogon::app().quit();
 #endif
 }
+
+void signalHandler(int signal) {
+    std::cout << "\nReceived signal " << signal << ", shutting down gracefully..." << std::endl;
+    requestShutdown();
+}
+
+#ifdef _WIN32
+BOOL WINAPI consoleCtrlHandler(DWORD ctrlType) {
+    if (ctrlType == CTRL_C_EVENT || ctrlType == CTRL_CLOSE_EVENT ||
+        ctrlType == CTRL_BREAK_EVENT) {
+        std::cout << "\nReceived console event, shutting down gracefully..." << std::endl;
+        requestShutdown();
+        return TRUE;
+    }
+    return FALSE;
+}
+#endif
 
 /**
  * Print banner
@@ -66,10 +80,24 @@ void printBanner() {
 ║      Sources: HTTP, local                                 ║
 ║                                                           ║
 ║      Version: 2.2.0                                        ║
-║      Platform: Linux                                      ║
+║      Platform: Cross-platform (Linux, Windows)            ║
 ║                                                           ║
 ╚═══════════════════════════════════════════════════════════╝
 )" << std::endl;
+}
+
+// Portable setenv wrapper
+inline void portableSetenv(const char* name, const char* value) {
+#ifdef _WIN32
+    _putenv_s(name, value);
+#else
+    setenv(name, value, 1);
+#endif
+}
+
+// Portable temp directory
+inline std::string tempDir() {
+    return (std::filesystem::temp_directory_path()).string();
 }
 
 /**
@@ -240,7 +268,7 @@ int runReparse(const std::string& archive_dir, const std::string& start_str, con
         // Parse each session group
         for (const auto& session : sessions) {
             // Create temp directory with only this session's files (symlinks)
-            std::string temp_dir = "/tmp/cpap_reparse/" + folder + "_" + session.session_prefix;
+            std::string temp_dir = (std::filesystem::temp_directory_path() / "cpap_reparse" / (folder + "_" + session.session_prefix)).string();
             std::filesystem::create_directories(temp_dir);
 
             // Clear any previous symlinks
@@ -248,20 +276,20 @@ int runReparse(const std::string& archive_dir, const std::string& start_str, con
                 std::filesystem::remove(entry.path());
             }
 
-            // Symlink all files belonging to this session
-            auto symlinkFile = [&](const std::string& filename) {
+            // Copy session files into temp dir for isolated parsing
+            auto stageFile = [&](const std::string& filename) {
                 std::filesystem::path src = std::filesystem::path(folder_path) / filename;
                 std::filesystem::path dst = std::filesystem::path(temp_dir) / filename;
                 if (std::filesystem::exists(src)) {
-                    std::filesystem::create_symlink(src, dst);
+                    std::filesystem::copy_file(src, dst, std::filesystem::copy_options::overwrite_existing);
                 }
             };
 
-            for (const auto& f : session.brp_files) symlinkFile(f);
-            for (const auto& f : session.pld_files) symlinkFile(f);
-            for (const auto& f : session.sad_files) symlinkFile(f);
-            if (!session.csl_file.empty()) symlinkFile(session.csl_file);
-            if (!session.eve_file.empty()) symlinkFile(session.eve_file);
+            for (const auto& f : session.brp_files) stageFile(f);
+            for (const auto& f : session.pld_files) stageFile(f);
+            for (const auto& f : session.sad_files) stageFile(f);
+            if (!session.csl_file.empty()) stageFile(session.csl_file);
+            if (!session.eve_file.empty()) stageFile(session.eve_file);
 
             // Parse
             total_parsed++;
@@ -312,7 +340,7 @@ int runReparse(const std::string& archive_dir, const std::string& start_str, con
     }
 
     // Cleanup
-    std::filesystem::remove_all("/tmp/cpap_reparse");
+    std::filesystem::remove_all(std::filesystem::temp_directory_path() / "cpap_reparse");
 
     std::cout << "\nReparse complete:" << std::endl;
     std::cout << "  Deleted: " << total_deleted << " old session(s)" << std::endl;
@@ -355,46 +383,46 @@ int main(int argc, char** argv) {
     // ── Bridge: set env vars from merged config so BurstCollectorService works ──
     // Config.json is the single source of truth; env vars are set for
     // legacy code that reads them via ConfigManager.
-    setenv("CPAP_DEVICE_ID", config.device_id.c_str(), 1);
-    setenv("CPAP_DEVICE_NAME", config.device_name.c_str(), 1);
-    setenv("CPAP_SOURCE", config.source.c_str(), 1);
-    setenv("EZSHARE_BASE_URL", config.ezshare_url.c_str(), 1);
-    setenv("BURST_INTERVAL", std::to_string(config.burst_interval).c_str(), 1);
-    setenv("HEALTH_CHECK_PORT", std::to_string(config.web_port).c_str(), 1);
-    if (!config.local_dir.empty()) setenv("CPAP_LOCAL_DIR", config.local_dir.c_str(), 1);
+    portableSetenv("CPAP_DEVICE_ID", config.device_id.c_str());
+    portableSetenv("CPAP_DEVICE_NAME", config.device_name.c_str());
+    portableSetenv("CPAP_SOURCE", config.source.c_str());
+    portableSetenv("EZSHARE_BASE_URL", config.ezshare_url.c_str());
+    portableSetenv("BURST_INTERVAL", std::to_string(config.burst_interval).c_str());
+    portableSetenv("HEALTH_CHECK_PORT", std::to_string(config.web_port).c_str());
+    if (!config.local_dir.empty()) portableSetenv("CPAP_LOCAL_DIR", config.local_dir.c_str());
 
     if (config.database.type == "postgresql") {
-        setenv("DB_HOST", config.database.host.c_str(), 1);
-        setenv("DB_PORT", std::to_string(config.database.port).c_str(), 1);
-        setenv("DB_NAME", config.database.name.c_str(), 1);
-        setenv("DB_USER", config.database.user.c_str(), 1);
-        setenv("DB_PASSWORD", config.database.password.c_str(), 1);
+        portableSetenv("DB_HOST", config.database.host.c_str());
+        portableSetenv("DB_PORT", std::to_string(config.database.port).c_str());
+        portableSetenv("DB_NAME", config.database.name.c_str());
+        portableSetenv("DB_USER", config.database.user.c_str());
+        portableSetenv("DB_PASSWORD", config.database.password.c_str());
     }
 
     if (config.mqtt.enabled) {
-        setenv("MQTT_BROKER", config.mqtt.broker.c_str(), 1);
-        setenv("MQTT_PORT", std::to_string(config.mqtt.port).c_str(), 1);
-        setenv("MQTT_USER", config.mqtt.username.c_str(), 1);
-        setenv("MQTT_PASSWORD", config.mqtt.password.c_str(), 1);
-        setenv("MQTT_CLIENT_ID", config.mqtt.client_id.c_str(), 1);
+        portableSetenv("MQTT_BROKER", config.mqtt.broker.c_str());
+        portableSetenv("MQTT_PORT", std::to_string(config.mqtt.port).c_str());
+        portableSetenv("MQTT_USER", config.mqtt.username.c_str());
+        portableSetenv("MQTT_PASSWORD", config.mqtt.password.c_str());
+        portableSetenv("MQTT_CLIENT_ID", config.mqtt.client_id.c_str());
     }
 
     if (config.llm.enabled) {
-        setenv("LLM_ENABLED", "true", 1);
-        setenv("LLM_PROVIDER", config.llm.provider.c_str(), 1);
-        setenv("LLM_ENDPOINT", config.llm.endpoint.c_str(), 1);
-        setenv("LLM_MODEL", config.llm.model.c_str(), 1);
-        setenv("LLM_API_KEY", config.llm.api_key.c_str(), 1);
-        setenv("LLM_MAX_TOKENS", std::to_string(config.llm.max_tokens).c_str(), 1);
+        portableSetenv("LLM_ENABLED", "true");
+        portableSetenv("LLM_PROVIDER", config.llm.provider.c_str());
+        portableSetenv("LLM_ENDPOINT", config.llm.endpoint.c_str());
+        portableSetenv("LLM_MODEL", config.llm.model.c_str());
+        portableSetenv("LLM_API_KEY", config.llm.api_key.c_str());
+        portableSetenv("LLM_MAX_TOKENS", std::to_string(config.llm.max_tokens).c_str());
     }
 
     if (config.agent.enabled) {
-        setenv("AGENT_ENABLED", "true", 1);
-        setenv("AGENT_LLM_PROVIDER", config.llm.provider.c_str(), 1);
-        setenv("AGENT_LLM_ENDPOINT", config.llm.endpoint.c_str(), 1);
-        setenv("AGENT_LLM_MODEL", config.llm.model.c_str(), 1);
-        setenv("AGENT_LLM_API_KEY", config.llm.api_key.c_str(), 1);
-        setenv("AGENT_EMBED_MODEL", config.agent.embed_model.c_str(), 1);
+        portableSetenv("AGENT_ENABLED", "true");
+        portableSetenv("AGENT_LLM_PROVIDER", config.llm.provider.c_str());
+        portableSetenv("AGENT_LLM_ENDPOINT", config.llm.endpoint.c_str());
+        portableSetenv("AGENT_LLM_MODEL", config.llm.model.c_str());
+        portableSetenv("AGENT_LLM_API_KEY", config.llm.api_key.c_str());
+        portableSetenv("AGENT_EMBED_MODEL", config.agent.embed_model.c_str());
     }
 
     // ── Create IDatabase from config ────────────────────────────────
@@ -458,7 +486,11 @@ int main(int argc, char** argv) {
 
     // Register signal handlers
     std::signal(SIGINT, signalHandler);
+#ifndef _WIN32
     std::signal(SIGTERM, signalHandler);
+#else
+    SetConsoleCtrlHandler(consoleCtrlHandler, TRUE);
+#endif
 
     try {
         std::string src = hms_cpap::ConfigManager::get("CPAP_SOURCE", "ezshare");

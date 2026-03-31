@@ -9,14 +9,17 @@ include(GoogleTest)
 include_directories(
     ${CMAKE_SOURCE_DIR}/include
     ${GTEST_INCLUDE_DIRS}
-    /usr/local/include
 )
+if(NOT MSVC)
+    include_directories(/usr/local/include)
+endif()
 
 # Collect all source files from main project (except main.cpp and web/controllers)
 file(GLOB_RECURSE PROJECT_SOURCES "${CMAKE_SOURCE_DIR}/src/*.cpp")
 list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*main\\.cpp$")
 list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/controllers/.*")
 list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/web/.*")
+list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/WiFiSwitchClient\\.cpp$")
 
 # Test sources
 set(TEST_SOURCES
@@ -47,25 +50,46 @@ add_executable(run_tests
 )
 
 # Link libraries (same as main project + GTest)
-target_link_libraries(run_tests
-    GTest::gtest
-    GTest::gtest_main
-    GTest::gmock
-    jsoncpp_lib
-    ${PAHO_MQTTPP3_LIB}
-    ${PAHO_MQTT3AS_LIB}
-    CURL::libcurl
-    ${SQLITE3_LIB}
-    hms_llm
-    hms_mqtt
-    pthread
-    ssl
-    crypto
-)
+if(MSVC)
+    target_link_libraries(run_tests
+        GTest::gtest
+        GTest::gtest_main
+        GTest::gmock
+        jsoncpp_lib
+        PahoMqttCpp::paho-mqttpp3-static
+        eclipse-paho-mqtt-c::paho-mqtt3as-static
+        CURL::libcurl
+        unofficial::sqlite3::sqlite3
+        OpenSSL::SSL
+        OpenSSL::Crypto
+        hms_llm
+        hms_mqtt
+    )
+else()
+    target_link_libraries(run_tests
+        GTest::gtest
+        GTest::gtest_main
+        GTest::gmock
+        jsoncpp_lib
+        ${PAHO_MQTTPP3_LIB}
+        ${PAHO_MQTT3AS_LIB}
+        CURL::libcurl
+        ${SQLITE3_LIB}
+        OpenSSL::SSL
+        OpenSSL::Crypto
+        hms_llm
+        hms_mqtt
+        pthread
+    )
+endif()
 
 # Optional DB backends for tests
 if(BUILD_WITH_POSTGRESQL)
-    target_link_libraries(run_tests ${PQXX_LIB} ${PQ_LIB} hms_db)
+    if(MSVC)
+        target_link_libraries(run_tests libpqxx::pqxx PostgreSQL::PostgreSQL hms_db)
+    else()
+        target_link_libraries(run_tests ${PQXX_LIB} ${PQ_LIB} hms_db)
+    endif()
 endif()
 
 # Discover tests

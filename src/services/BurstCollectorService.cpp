@@ -1,6 +1,7 @@
 #include "services/BurstCollectorService.h"
 #include "services/InsightsEngine.h"
 #include "utils/ConfigManager.h"
+#include "utils/AppConfig.h"
 #include "utils/FileUtils.h"
 #include <iostream>
 #include <iomanip>
@@ -486,7 +487,7 @@ bool BurstCollectorService::archiveSessionFiles(
 
 void BurstCollectorService::processSTRFile() {
     try {
-        std::string local_base = ConfigManager::get("CPAP_TEMP_DIR", "/tmp/cpap_data");
+        std::string local_base = ConfigManager::get("CPAP_TEMP_DIR", (std::filesystem::temp_directory_path() / "cpap_data").string());
         std::string str_local_path = local_base + "/STR.EDF";
 
         // Download STR.EDF from SD card root
@@ -588,7 +589,7 @@ bool BurstCollectorService::executeBurstCycle() {
 
         // For each session, create a temp directory with symlinks for session isolation
         // (parseSession reads ALL files in a dir, so we isolate each session's files)
-        std::string temp_base = "/tmp/cpap_local";
+        std::string temp_base = (std::filesystem::temp_directory_path() / "cpap_local").string();
         std::filesystem::create_directories(temp_base);
 
         for (const auto& session : new_sessions) {
@@ -667,19 +668,19 @@ bool BurstCollectorService::executeBurstCycle() {
             }
 
             std::string src_dir = local_source_dir_ + "/" + session.date_folder;
-            auto symlinkFile = [&](const std::string& filename) {
+            auto stageFile = [&](const std::string& filename) {
                 auto src = std::filesystem::path(src_dir) / filename;
                 auto dst = std::filesystem::path(temp_dir) / filename;
                 if (std::filesystem::exists(src)) {
-                    std::filesystem::create_symlink(src, dst);
+                    std::filesystem::copy_file(src, dst, std::filesystem::copy_options::overwrite_existing);
                 }
             };
 
-            for (const auto& f : session.brp_files) symlinkFile(f);
-            for (const auto& f : session.pld_files) symlinkFile(f);
-            for (const auto& f : session.sad_files) symlinkFile(f);
-            if (!session.csl_file.empty()) symlinkFile(session.csl_file);
-            if (!session.eve_file.empty()) symlinkFile(session.eve_file);
+            for (const auto& f : session.brp_files) stageFile(f);
+            for (const auto& f : session.pld_files) stageFile(f);
+            for (const auto& f : session.sad_files) stageFile(f);
+            if (!session.csl_file.empty()) stageFile(session.csl_file);
+            if (!session.eve_file.empty()) stageFile(session.eve_file);
 
             // Store checkpoint sizes for change detection on next cycle
             std::map<std::string, int> checkpoint_sizes;
@@ -734,7 +735,7 @@ bool BurstCollectorService::executeBurstCycle() {
 
         std::cout << "CPAP: Found " << new_sessions.size() << " new session(s)" << std::endl;
 
-        std::string local_base_dir = ConfigManager::get("CPAP_TEMP_DIR", "/tmp/cpap_data");
+        std::string local_base_dir = ConfigManager::get("CPAP_TEMP_DIR", (std::filesystem::temp_directory_path() / "cpap_data").string());
 
         for (const auto& session : new_sessions) {
             // Skip sessions that were force-completed (manual override)
@@ -896,7 +897,8 @@ bool BurstCollectorService::executeBurstCycle() {
                   << " session(s) in " << download_ms << " ms" << std::endl;
 
         // Archive downloaded files to permanent storage
-        std::string permanent_archive = ConfigManager::get("CPAP_ARCHIVE_DIR", "/home/aamat/maestro_hub/cpap_data");
+        std::string default_archive = (std::filesystem::path(hms_cpap::AppConfig::dataDir()) / "cpap_data").string();
+        std::string permanent_archive = ConfigManager::get("CPAP_ARCHIVE_DIR", default_archive);
         std::set<std::string> date_folders;
         for (const auto& session : new_sessions) {
             date_folders.insert(session.date_folder);
@@ -1027,7 +1029,7 @@ bool BurstCollectorService::executeBurstCycle() {
 
     // Cleanup temp symlink dirs (local mode only)
     if (!local_source_dir_.empty()) {
-        std::filesystem::remove_all("/tmp/cpap_local");
+        std::filesystem::remove_all(std::filesystem::temp_directory_path() / "cpap_local");
     }
 
     auto cycle_end = std::chrono::steady_clock::now();
