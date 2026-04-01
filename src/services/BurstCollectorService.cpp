@@ -246,7 +246,7 @@ BurstCollectorService::BurstCollectorService(int burst_interval_seconds)
     if (data_publisher_ && mqtt_client_ && mqtt_client_->isConnected()) {
         std::cout << "Startup: Clearing stale session_active state..." << std::endl;
         data_publisher_->publishSessionCompleted();
-        session_active_cleared_ = true;
+        recovery_logged_ = true;
     }
 
 }
@@ -708,21 +708,25 @@ bool BurstCollectorService::executeBurstCycle() {
         try {
             new_sessions = discovery_service_->discoverNewSessions(last_session_start);
             consecutive_failures_ = 0;
-            session_active_cleared_ = false;
+            recovery_logged_ = false;
         } catch (const std::exception& e) {
-            std::cerr << "CPAP: Session discovery failed: " << e.what() << std::endl;
-
             consecutive_failures_++;
-            std::cerr << "   Consecutive failures: " << consecutive_failures_
-                      << "/" << MAX_FAILURES_BEFORE_RESET << std::endl;
 
-            if (consecutive_failures_ >= MAX_FAILURES_BEFORE_RESET && !session_active_cleared_) {
-                std::cout << "RECOVERY: Clearing session_active after "
-                          << consecutive_failures_ << " consecutive failures" << std::endl;
-                if (data_publisher_) {
-                    data_publisher_->publishSessionCompleted();
-                    session_active_cleared_ = true;
-                }
+            if (!recovery_logged_) {
+                std::cerr << "CPAP: Session discovery failed: " << e.what() << std::endl;
+                std::cerr << "   Consecutive failures: " << consecutive_failures_
+                          << "/" << MAX_FAILURES_BEFORE_RESET << std::endl;
+            }
+
+            if (consecutive_failures_ >= MAX_FAILURES_BEFORE_RESET && !recovery_logged_) {
+                std::cout << "RECOVERY: Device unreachable after "
+                          << consecutive_failures_ << " consecutive failures. "
+                          << "Suppressing further logs until device is reachable again." << std::endl;
+                // TODO: Publish device health telemetry (device_reachable=OFF,
+                // last_successful_contact, consecutive_failures) instead of
+                // faking session completion. Session state should stay untouched.
+                // See: device health telemetry design in claude-mem.
+                recovery_logged_ = true;
             }
 
             return false;

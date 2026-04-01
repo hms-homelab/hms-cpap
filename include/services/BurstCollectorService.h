@@ -112,8 +112,8 @@ private:
 
     // Connection recovery tracking
     int consecutive_failures_ = 0;
-    static constexpr int MAX_FAILURES_BEFORE_RESET = 3;  // Reset session_active after 3 consecutive failures
-    bool session_active_cleared_ = false;  // Track if we've already cleared stale session
+    static constexpr int MAX_FAILURES_BEFORE_RESET = 3;  // Log recovery after 3 consecutive failures
+    bool recovery_logged_ = false;  // Prevent repeated recovery log messages
 
     /**
      * Worker thread main loop
