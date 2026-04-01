@@ -59,9 +59,9 @@ std::string EzShareClient::httpGet(const std::string& url) {
 
     CURLcode res = curl_easy_perform(curl_);
     if (res != CURLE_OK) {
-        std::cerr << "HTTP GET failed (" << url << "): "
-                  << curl_easy_strerror(res) << std::endl;
-        return "";
+        std::string error = std::string("HTTP GET failed (") + url + "): " + curl_easy_strerror(res);
+        std::cerr << error << std::endl;
+        throw std::runtime_error(error);
     }
 
     return response;
