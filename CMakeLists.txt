@@ -52,7 +52,11 @@ if(BUILD_WITH_MYSQL)
     endif()
 endif()
 
-find_package(jsoncpp REQUIRED)
+if(MSVC)
+    find_package(jsoncpp CONFIG REQUIRED)
+else()
+    find_package(jsoncpp REQUIRED)
+endif()
 find_package(CURL REQUIRED)
 find_package(OpenSSL REQUIRED)
 
@@ -163,7 +167,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 # Link libraries
 if(MSVC)
     target_link_libraries(${PROJECT_NAME}
-        jsoncpp_lib
+        JsonCpp::JsonCpp
         PahoMqttCpp::paho-mqttpp3
         eclipse-paho-mqtt-c::paho-mqtt3as
         CURL::libcurl

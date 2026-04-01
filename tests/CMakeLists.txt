@@ -55,7 +55,7 @@ if(MSVC)
         GTest::gtest
         GTest::gtest_main
         GTest::gmock
-        jsoncpp_lib
+        JsonCpp::JsonCpp
         PahoMqttCpp::paho-mqttpp3
         eclipse-paho-mqtt-c::paho-mqtt3as
         CURL::libcurl
