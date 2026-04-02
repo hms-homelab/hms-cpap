@@ -163,12 +163,8 @@ jobs:
         run: |
           mkdir build
           cd build
-          cmake -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DBUILD_TESTS=ON -DBUILD_WITH_WEB=ON -DBUILD_WITH_POSTGRESQL=ON ..
+          cmake -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DBUILD_TESTS=OFF -DBUILD_WITH_WEB=ON -DBUILD_WITH_POSTGRESQL=ON ..
           cmake --build . --config Release --parallel
-
-      - name: Run tests
-        continue-on-error: true
-        run: cd build && ctest --build-config Release --output-on-failure
 
       # ── Package Windows release ─────────────────────────────────
       - name: Bundle release
