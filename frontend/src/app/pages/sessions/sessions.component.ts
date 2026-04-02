@@ -19,9 +19,9 @@ import { SessionListItem } from '../../models/session.model';
           </tr>
         </thead>
         <tbody>
-          <tr *ngFor="let s of sessions" [routerLink]="['/sessions', sleepDay(s.session_start)]"
+          <tr *ngFor="let s of sessions" [routerLink]="['/sessions', s.sleep_day || sleepDay(s.session_start)]"
               class="clickable" [class.live-row]="isLive(s)">
-            <td>{{ sleepDay(s.session_start) }}</td>
+            <td>{{ s.sleep_day || sleepDay(s.session_start) }}</td>
             <td>
               <span *ngIf="isLive(s)" class="live-badge">LIVE</span>
               <span *ngIf="!isLive(s)" class="done-badge">Done</span>
@@ -84,8 +84,8 @@ export class SessionsComponent implements OnInit, OnDestroy {
     });
   }
 
-  isLive(s: SessionListItem): boolean {
-    return !s.session_end;
+  isLive(s: any): boolean {
+    return s.has_live === 't' || s.has_live === '1' || s.has_live === true || !s.session_end;
   }
 
   liveDuration(s: SessionListItem): string {

@@ -19,8 +19,10 @@ export interface DashboardData {
 }
 
 export interface SessionListItem {
+  sleep_day?: string;
   session_start: string;
   session_end: string | null;
+  has_live?: string;
   duration_hours: string;
   ahi: string;
   total_events: string;

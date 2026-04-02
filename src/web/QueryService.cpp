@@ -76,18 +76,31 @@ Json::Value QueryService::getDashboard() {
 }
 
 Json::Value QueryService::getSessions(int days, int limit) {
+    // Group by sleep day (date shifted -12h) so multiple mask-on/off
+    // events in the same night appear as one row
     std::string q =
-        "SELECT s.session_start, s.session_end, s.duration_seconds,"
-        " " + sql::round("s.duration_seconds / 3600.0", 2, dt_) + " as duration_hours,"
-        " " + sql::round("m.ahi", 2, dt_) + " as ahi, m.total_events, m.obstructive_apneas, m.central_apneas,"
-        " m.hypopneas, m.reras,"
-        " m.avg_spo2, m.min_spo2,"
-        " m.avg_heart_rate, m.min_heart_rate, m.max_heart_rate"
+        "SELECT " + sql::sleepDay("MIN(s.session_start)", dt_) + " as sleep_day,"
+        " MIN(s.session_start) as session_start,"
+        " MAX(s.session_end) as session_end,"
+        " SUM(s.duration_seconds) as duration_seconds,"
+        " " + sql::round("SUM(s.duration_seconds) / 3600.0", 2, dt_) + " as duration_hours,"
+        " " + sql::round("CASE WHEN SUM(s.duration_seconds) > 0"
+        "   THEN SUM(COALESCE(m.total_events, 0)) / (SUM(s.duration_seconds) / 3600.0)"
+        "   ELSE 0 END", 2, dt_) + " as ahi,"
+        " SUM(COALESCE(m.total_events, 0)) as total_events,"
+        " SUM(COALESCE(m.obstructive_apneas, 0)) as obstructive_apneas,"
+        " SUM(COALESCE(m.central_apneas, 0)) as central_apneas,"
+        " SUM(COALESCE(m.hypopneas, 0)) as hypopneas,"
+        " SUM(COALESCE(m.reras, 0)) as reras,"
+        " " + sql::round("AVG(NULLIF(m.avg_spo2, 0))", 1, dt_) + " as avg_spo2,"
+        " " + sql::round("AVG(NULLIF(m.avg_heart_rate, 0))", 0, dt_) + " as avg_heart_rate,"
+        " SUM(CASE WHEN s.session_end IS NULL THEN 1 ELSE 0 END) as has_live"
         " FROM cpap_sessions s"
         " LEFT JOIN cpap_session_metrics m ON m.session_id = s.id"
         " WHERE s.device_id = " + sql::param(1, dt_) +
         " AND s.session_start >= " + sql::daysAgo(days, dt_) +
-        " ORDER BY s.session_start DESC"
+        " GROUP BY " + sql::sleepDay("s.session_start", dt_) +
+        " ORDER BY sleep_day DESC"
         " LIMIT " + std::to_string(limit);
 
     return db_->executeQuery(q, {device_id_});
