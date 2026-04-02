@@ -129,6 +129,38 @@ void CpapController::summaries(const drogon::HttpRequestPtr& req,
     }
 }
 
+void CpapController::sessionSignals(const drogon::HttpRequestPtr&,
+                                    std::function<void(const drogon::HttpResponsePtr&)>&& cb,
+                                    const std::string& date) {
+    try {
+        cb(jsonResp(qs_->getSessionSignals(date)));
+    } catch (const std::exception& e) {
+        cb(jsonError(e.what(), drogon::k500InternalServerError));
+    }
+}
+
+void CpapController::sessionVitals(const drogon::HttpRequestPtr& req,
+                                   std::function<void(const drogon::HttpResponsePtr&)>&& cb,
+                                   const std::string& date) {
+    int interval = 30;
+    if (auto p = req->getOptionalParameter<int>("interval")) interval = *p;
+    try {
+        cb(jsonResp(qs_->getSessionVitals(date, interval)));
+    } catch (const std::exception& e) {
+        cb(jsonError(e.what(), drogon::k500InternalServerError));
+    }
+}
+
+void CpapController::sessionEvents(const drogon::HttpRequestPtr&,
+                                   std::function<void(const drogon::HttpResponsePtr&)>&& cb,
+                                   const std::string& date) {
+    try {
+        cb(jsonResp(qs_->getSessionEvents(date)));
+    } catch (const std::exception& e) {
+        cb(jsonError(e.what(), drogon::k500InternalServerError));
+    }
+}
+
 void CpapController::getConfig(const drogon::HttpRequestPtr&,
                                 std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
     if (!config_) {

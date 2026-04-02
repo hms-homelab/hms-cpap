@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.2.0] - 2026-04-02
+
+### Added
+- **Full OSCAR/SleepHQ-grade charting** — 12 overnight signal charts with
+  per-minute resolution from `cpap_breathing_summary` and `cpap_calculated_metrics`:
+  Flow Rate (with min/max band), Pressure (with min/max band), Mask Pressure,
+  Leak Rate, Flow Limitation, Snore Index, Respiratory Rate, Tidal Volume,
+  Minute Ventilation, I:E Ratio, EPR Pressure, Target Ventilation.
+- **SpO2 and Heart Rate charts** — downsampled from per-second `cpap_vitals`
+  (auto-hidden when no pulse oximeter data).
+- **OSCAR-style overview + detail layout** — clickable thumbnail grid expands
+  each signal into a large zoomable detail panel.
+- **Time-range controls** — 30m / 1h / 2h / All range buttons with a slider
+  to pan through the night. Mouse wheel zoom and drag pan via
+  `chartjs-plugin-zoom`.
+- **Event markers** — respiratory events (OA, CA, H, RERA) overlaid as colored
+  dashed vertical lines on waveform charts.
+- **Event distribution doughnut chart** on session detail page.
+- **Date navigation** — prev/next day buttons and date picker on session detail.
+- **Dashboard: 7 new charts** (was 2, now 9):
+  - Pressure Trend (P50/P95, 30 days)
+  - Leak Trend (L50/L95, 30 days)
+  - Event Breakdown (stacked bar: OA/CA/H/RERA, 30 days)
+  - Respiratory Trends (dual-axis: Resp Rate, Min Ventilation, Tidal Volume)
+  - Cheyne-Stokes Respiration (bar chart, minutes per night)
+  - EPR Level (stepped line, 30 days)
+  - Therapy Mode card (CPAP/APAP/ASV/ASVAuto)
+- **Mode-based chart visibility** — CSR and EPR charts hidden in CPAP mode;
+  Target Ventilation only shown in ASV/ASVAuto mode (7/8). Mode sourced from
+  `cpap_daily_summary.mode`.
+- **3 new REST API endpoints**:
+  - `GET /api/sessions/{date}/signals` — column-oriented per-minute signal data
+  - `GET /api/sessions/{date}/vitals?interval=N` — server-side downsampled SpO2/HR
+  - `GET /api/sessions/{date}/events` — event markers for chart annotations
+- **2 new trend metrics**: `events` (oai/cai/hi/rin) and `respiratory`
+  (resp_rate_50/tid_vol_50/min_vent_50) for `/api/trends/{metric}`.
+- **4 database indexes** on timestamp columns for `cpap_calculated_metrics`,
+  `cpap_vitals`, `cpap_breathing_summary`, and `cpap_events`.
+- **Reusable SignalChartComponent** — standalone Angular component for
+  Chart.js line charts with dark theme, annotation support, and configurable
+  height/scales.
+- **chart-helpers.ts** — utility functions for timestamp formatting, event-to-
+  annotation conversion, dataset factory, and fill band generation.
+
+### Dependencies
+- Added `chartjs-plugin-annotation` (event markers on charts)
+- Added `chartjs-plugin-zoom` (wheel zoom, pinch zoom, drag pan)
+
 ## [3.1.1] - 2026-03-29
 
 ### Fixed

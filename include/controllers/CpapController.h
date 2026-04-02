@@ -20,6 +20,9 @@ public:
     ADD_METHOD_TO(CpapController::trend,         "/api/trends/{metric}",    drogon::Get);
     ADD_METHOD_TO(CpapController::statistics,    "/api/statistics",         drogon::Get);
     ADD_METHOD_TO(CpapController::summaries,     "/api/summaries",          drogon::Get);
+    ADD_METHOD_TO(CpapController::sessionSignals, "/api/sessions/{date}/signals", drogon::Get);
+    ADD_METHOD_TO(CpapController::sessionVitals,  "/api/sessions/{date}/vitals",  drogon::Get);
+    ADD_METHOD_TO(CpapController::sessionEvents,  "/api/sessions/{date}/events",  drogon::Get);
     ADD_METHOD_TO(CpapController::getConfig,     "/api/config",              drogon::Get);
     ADD_METHOD_TO(CpapController::updateConfig,  "/api/config",              drogon::Put);
     ADD_METHOD_TO(CpapController::setupComplete, "/api/setup",               drogon::Post);
@@ -44,6 +47,16 @@ public:
                     std::function<void(const drogon::HttpResponsePtr&)>&& cb);
     void summaries(const drogon::HttpRequestPtr& req,
                    std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+
+    void sessionSignals(const drogon::HttpRequestPtr& req,
+                        std::function<void(const drogon::HttpResponsePtr&)>&& cb,
+                        const std::string& date);
+    void sessionVitals(const drogon::HttpRequestPtr& req,
+                       std::function<void(const drogon::HttpResponsePtr&)>&& cb,
+                       const std::string& date);
+    void sessionEvents(const drogon::HttpRequestPtr& req,
+                       std::function<void(const drogon::HttpResponsePtr&)>&& cb,
+                       const std::string& date);
 
     void getConfig(const drogon::HttpRequestPtr& req,
                    std::function<void(const drogon::HttpResponsePtr&)>&& cb);
