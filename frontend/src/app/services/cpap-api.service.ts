@@ -1,7 +1,7 @@
 import { Injectable } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Observable } from 'rxjs';
-import { DashboardData, SessionListItem, SessionDetail, TrendPoint } from '../models/session.model';
+import { DashboardData, SessionListItem, SessionDetail, SessionEvent, TrendPoint, SignalData, VitalsData } from '../models/session.model';
 import { AppConfig } from '../models/config.model';
 
 @Injectable({ providedIn: 'root' })
@@ -36,6 +36,19 @@ export class CpapApiService {
 
   completeSetup(): Observable<any> {
     return this.http.post('/api/setup', {});
+  }
+
+  getSessionSignals(date: string): Observable<SignalData> {
+    return this.http.get<SignalData>(`/api/sessions/${date}/signals`);
+  }
+
+  getSessionVitals(date: string, interval = 30): Observable<VitalsData> {
+    const params = new HttpParams().set('interval', interval);
+    return this.http.get<VitalsData>(`/api/sessions/${date}/vitals`, { params });
+  }
+
+  getSessionEvents(date: string): Observable<SessionEvent[]> {
+    return this.http.get<SessionEvent[]>(`/api/sessions/${date}/events`);
   }
 
   testEzshare(url: string): Observable<{ status: string; url: string }> {
