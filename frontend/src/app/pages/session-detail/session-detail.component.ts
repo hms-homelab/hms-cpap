@@ -439,7 +439,7 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
       vitals: this.api.getSessionVitals(this.date).pipe(catchError(() => of(null))),
       events: this.api.getSessionEvents(this.date).pipe(catchError(() => of([]))),
     }).subscribe(({ detail, signals, vitals, events }) => {
-      if (detail.length > 0) this.session = detail[0];
+      if (detail.length > 0) this.session = this.mergeSessions(detail);
       this.signalData = signals;
       this.vitalsData = vitals;
       this.events = events as SessionEvent[];
@@ -454,7 +454,7 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
       }
 
       // Session completed while we were watching
-      if (this.session && this.session.session_end) {
+      if (!detail.some(s => !s.session_end)) {
         this.isLive = false;
         this.stopPolling();
       }
