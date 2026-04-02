@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.2.1] - 2026-04-02
+
+### Fixed
+- **Local mode crash** — `processSTRFile()` dereferenced null `ezshare_client_`
+  when running with `CPAP_SOURCE=local`, causing a segfault after session
+  completion. Now reads `STR.EDF` directly from the local directory.
+- **Windows MSVC linker error** — added `PAHO_MQTTPP_IMPORTS` compile definition
+  to `hms_mqtt` target so `mqtt::message::EMPTY_STR` resolves correctly from
+  the Paho DLL.
+- **GHCR package visibility** — CI workflow now sets the container package to
+  public after Docker push (fixes unauthorized/404 on `docker pull`).
+
+### Changed
+- **Database schema files** — updated `scripts/schema.sql` (PostgreSQL) to v3.2.0
+  with all 9 tables. Added `scripts/schema_sqlite.sql` and
+  `scripts/schema_mysql.sql` reference files.
+
 ## [3.2.0] - 2026-04-02
 
 ### Added
