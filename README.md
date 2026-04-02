@@ -1,39 +1,62 @@
-# HMS-CPAP 🫁
+# HMS-CPAP
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![GHCR](https://img.shields.io/badge/ghcr.io-hms--cpap-blue?logo=docker)](https://github.com/hms-homelab/hms-cpap/pkgs/container/hms-cpap)
 [![Build](https://github.com/hms-homelab/hms-cpap/actions/workflows/docker-build.yml/badge.svg)](https://github.com/hms-homelab/hms-cpap/actions)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-%23FFDD00.svg?logo=buy-me-a-coffee)](https://www.buymeacoffee.com/aamat09)
 
-**Lightweight C++ microservice for ResMed CPAP data collection with Home Assistant integration.**
+**Lightweight C++ microservice for ResMed CPAP data collection with built-in web dashboard and Home Assistant integration.**
 
-Automatically extracts sleep therapy data from your ResMed AirSense 10/11 CPAP machine, parses EDF files using OSCAR algorithms, and publishes 47+ metrics to Home Assistant via MQTT discovery. Supports three data sources: ez Share WiFi SD (HTTP polling), FYSETC SD WiFi Pro (MQTT push with realtime therapy data), or local filesystem.
+Automatically extracts sleep therapy data from your ResMed AirSense 10/11 CPAP machine, parses EDF files using OSCAR algorithms, and publishes 47+ metrics to Home Assistant via MQTT discovery. Includes a full Angular web UI with OSCAR/SleepHQ-grade charting. Supports three data sources: ez Share WiFi SD (HTTP polling), FYSETC SD WiFi Pro (HTTP poll), or local filesystem.
 
-![Home Assistant Dashboard](docs/images/ha-dashboard-preview.png)
+## Screenshots
 
-## ✨ Features
+**Dashboard** -- 30-day trends for AHI, usage, pressure, leak, events, respiratory metrics, CSR, and EPR. Mode-aware chart visibility (CPAP/APAP/ASV).
 
-- **3 Data Sources** - ezShare WiFi SD (polling), FYSETC SD WiFi Pro (MQTT push), or local files
+![Dashboard](docs/images/dashboard.png)
+
+**Sessions** -- Nightly session list with live indicator for in-progress sessions. Click any row for full detail.
+
+![Sessions](docs/images/sessions-live.png)
+
+**Session Detail** -- Live session view with pulsing LIVE badge, running duration, and real-time metrics. Auto-refreshes every 65s.
+
+![Session Detail](docs/images/session-detail-live.png)
+
+**Signal Charts** -- 12 overnight signal charts (flow, pressure, mask pressure, leak, flow limitation, snore, respiratory rate, tidal volume, minute ventilation, I:E ratio, EPR, target ventilation). Clickable thumbnail grid with zoomable detail panels.
+
+![Charts Overview](docs/images/charts-overview.png)
+
+**30-Minute Zoom** -- Mouse wheel zoom and drag pan via chartjs-plugin-zoom. Range buttons (30m/1h/2h/All) with slider navigation.
+
+![Flow 30m Zoom](docs/images/flow-30m-zoom.png)
+
+## Features
+
+- **Built-in Web Dashboard** - Angular SPA with OSCAR/SleepHQ-grade charting, dark theme, live session support
+- **3 Data Sources** - ezShare WiFi SD (polling), FYSETC SD WiFi Pro (HTTP poll), or local files
 - **47+ Metrics** - AHI, leak rate, pressure, usage hours, events, STR daily summary, LLM AI summary
 - **Home Assistant Auto-Discovery** - Instant MQTT integration with 47 sensor entities
-- **PostgreSQL Storage** - Historical data for ML analysis and long-term trends
+- **Multi-Database** - PostgreSQL, MySQL/MariaDB, or SQLite (auto-created on first run)
+- **12 Signal Charts** - Per-minute resolution from BRP/PLD/SAD with event markers
+- **Live Sessions** - Pulsing LIVE badge, 65s auto-refresh, growing charts during therapy
 - **Session Grouping** - Intelligently combines BRP/PLD/SAD/EVE/CSL files into therapy sessions
-- **Realtime Therapy Data** - FYSETC mode streams BRP data every 60s during therapy
 - **LLM Session Summary** - Optional AI-generated therapy analysis via Ollama
+- **Windows + Linux** - Native builds for both platforms, Docker image for CI
 - **Ultra-Lightweight** - 6.5 MB native binary
-- **155 Unit Tests** - Comprehensive coverage across all services
+- **247 Unit Tests** - Comprehensive coverage across all services
 
-## 📋 Table of Contents
+## Table of Contents
 
-- [Quick Start](#-quick-start)
-- [Data Sources](#-data-sources)
-- [Configuration](#-configuration)
-- [Deployment](#-deployment)
-- [Home Assistant Integration](#-home-assistant-integration)
-- [Architecture](#-architecture)
-- [Development](#-development)
-- [FAQ](#-faq)
-- [Contributing](#-contributing)
+- [Quick Start](#quick-start)
+- [Data Sources](#data-sources)
+- [Configuration](#configuration)
+- [Deployment](#deployment)
+- [Home Assistant Integration](#home-assistant-integration)
+- [Architecture](#architecture)
+- [Development](#development)
+- [FAQ](#faq)
+- [Contributing](#contributing)
 
 ## Quick Start
 
@@ -50,15 +73,17 @@ nano ../.env  # Set MQTT, DB, and source settings
 
 # 3. Run (choose your data source)
 CPAP_SOURCE=ezshare ./hms_cpap   # ezShare WiFi SD polling
-CPAP_SOURCE=fysetc  ./hms_cpap   # FYSETC SD WiFi Pro MQTT push
 CPAP_SOURCE=local   ./hms_cpap   # Local filesystem
+
+# 4. Open the dashboard
+# http://localhost:8893
 ```
 
 ## Data Sources
 
-### Option A: ezShare WiFi SD (Original)
+### Option A: ezShare WiFi SD
 
-**How it works:** HTTP polling every 65s via WiFi bridge on Raspberry Pi.
+**How it works:** HTTP polling every 65s via WiFi bridge.
 
 **Hardware:** ezShare WiFi SD card + Raspberry Pi with dual WiFi (wlan0=home, wlan1=ezShare AP).
 
@@ -66,15 +91,13 @@ CPAP_SOURCE=local   ./hms_cpap   # Local filesystem
 
 ### Option B: FYSETC SD WiFi Pro (Recommended)
 
-**How it works:** ESP32-based PCB sits between CPAP and SD card on the SPI bus. Passively monitors CS line via hardware pulse counter, performs surgical bus steals (<10ms) during therapy, pushes EDF data via MQTT.
+**How it works:** ESP32-based PCB replaces SD card in CPAP. Serves EDF files over HTTP. HMS-CPAP polls it every 65s for new/changed files.
 
 **Hardware:** FYSETC SD WiFi Pro board installed inside CPAP machine.
 
-**Pros:** 65s end-to-end latency, realtime BRP streaming during therapy, zero network disruption, BRP-validated therapy detection. **Cons:** Requires hardware installation inside CPAP.
+**Pros:** 65s end-to-end latency, direct WiFi connection, no network disruption. **Cons:** Requires hardware installation inside CPAP.
 
-**Firmware:** [hms-cpap-fysetc](https://github.com/hms-homelab/hms-cpap-fysetc) -- ESP-IDF project, builds with `idf.py build`.
-
-See [docs/FYSETC_RECEIVER.md](docs/FYSETC_RECEIVER.md) for the full protocol, MQTT topics, and FSM state diagram.
+**Firmware:** [hms-cpap-fysetc](https://github.com/hms-homelab/hms-cpap-fysetc) -- open-source ESP-IDF firmware (MIT).
 
 ### Option C: Local Filesystem
 
@@ -82,15 +105,16 @@ See [docs/FYSETC_RECEIVER.md](docs/FYSETC_RECEIVER.md) for the full protocol, MQ
 
 **Use case:** Offline analysis, backfill, or reparse of archived data.
 
-## ⚙️ Configuration
+## Configuration
 
 All configuration via environment variables (12-factor app). See [`.env.example`](.env.example) for complete reference.
 
 ### Required Variables
 
 ```bash
-# ez Share WiFi SD card base URL
-EZSHARE_BASE_URL=http://192.168.4.1
+# Data source
+CPAP_SOURCE=ezshare          # ezshare, fysetc_poll, or local
+EZSHARE_BASE_URL=http://192.168.4.1  # ezShare or Fysetc IP
 
 # MQTT broker (required for Home Assistant)
 MQTT_BROKER=localhost
@@ -107,16 +131,17 @@ CPAP_DEVICE_ID=resmed_airsense10
 CPAP_DEVICE_NAME="ResMed AirSense 10"
 
 # Collection interval (seconds)
-BURST_INTERVAL=120  # Default: 2 minutes
+BURST_INTERVAL=65
 
-# PostgreSQL (for historical storage)
+# Database (defaults to SQLite if not set)
+DB_TYPE=sqlite                # sqlite, postgresql, or mysql
 DB_HOST=localhost
 DB_NAME=cpap_data
 DB_USER=cpap_user
 DB_PASSWORD=your_db_password
 
-# Health check port
-HEALTH_CHECK_PORT=8893
+# Web UI port
+WEB_PORT=8893
 ```
 
 ## Deployment
@@ -156,24 +181,28 @@ sudo systemctl enable hms-cpap
 sudo systemctl start hms-cpap
 ```
 
-### ARM Cross-Compilation (Raspberry Pi)
+### Docker
 
 ```bash
-./build_arm.sh          # Cross-compile for ARM
-./deploy_to_pi.sh       # Build + deploy + restart in one step
+docker run -d \
+  --name hms-cpap \
+  --env-file .env \
+  -p 8893:8893 \
+  -v cpap_data:/data \
+  ghcr.io/hms-homelab/hms-cpap:latest
 ```
 
-See [docs/CROSS_COMPILATION.md](docs/CROSS_COMPILATION.md) for sysroot setup.
+### Windows
 
-### Docker (CI/GHCR)
+Download the latest release from [Releases](https://github.com/hms-homelab/hms-cpap/releases). Unzip and run:
 
-Docker image available for CI and containerized deployments:
-
-```bash
-docker run -d --env-file .env -p 8893:8893 ghcr.io/hms-homelab/hms-cpap:latest
+```powershell
+# Edit config.example.json with your settings
+hms_cpap.exe
+# Open http://localhost:8893
 ```
 
-## 🏠 Home Assistant Integration
+## Home Assistant Integration
 
 HMS-CPAP uses **MQTT Discovery** for automatic Home Assistant integration.
 
@@ -182,47 +211,22 @@ HMS-CPAP uses **MQTT Discovery** for automatic Home Assistant integration.
 `configuration.yaml`:
 ```yaml
 mqtt:
-  broker: localhost  # Your MQTT broker
+  broker: localhost
   username: mqtt_user
   password: your_mqtt_password
-  discovery: true  # Enable discovery
+  discovery: true
 ```
 
 ### 2. Restart Home Assistant
 
-Sensors will auto-appear as a device:
+Sensors auto-appear as a device with 47+ entities:
 
-**Device:** `ResMed AirSense 10`
-
-**Sensors (34 total):**
 - `sensor.cpap_ahi` - Apnea-Hypopnea Index
 - `sensor.cpap_leak_rate` - Leak rate (L/min)
 - `sensor.cpap_pressure_current` - Current pressure (cmH2O)
 - `sensor.cpap_usage_hours` - Total usage hours
-- `sensor.cpap_session_start` - Last session start time
-- `sensor.cpap_central_apneas` - Central apnea events
-- `sensor.cpap_obstructive_apneas` - Obstructive apnea events
-- ... and 27 more metrics
-
-### 3. Create Dashboard
-
-Example Lovelace card:
-
-```yaml
-type: entities
-title: CPAP Therapy
-entities:
-  - entity: sensor.cpap_ahi
-    name: AHI (events/hour)
-  - entity: sensor.cpap_leak_rate
-    name: Leak Rate
-  - entity: sensor.cpap_usage_hours
-    name: Usage Tonight
-  - entity: sensor.cpap_pressure_current
-    name: Current Pressure
-```
-
-> 📖 **Full Guide:** See [docs/HOME_ASSISTANT.md](docs/HOME_ASSISTANT.md) for dashboard examples and automations
+- `binary_sensor.cpap_session_active` - Live session indicator
+- ... and 42 more metrics
 
 ## Architecture
 
@@ -239,37 +243,28 @@ entities:
 ┌──────────┐    ┌──────────────────┐
 │ ezShare  │    │ FYSETC SD WiFi   │
 │ WiFi SD  │    │ Pro (ESP32)      │
-│          │    │ - CS line PCNT   │
-│ HTTP     │    │ - <10ms steals   │
-│ polling  │    │ - MQTT push      │
 └────┬─────┘    └────────┬─────────┘
-     │ HTTP               │ MQTT
+     │ HTTP               │ HTTP
      ▼                    ▼
 ┌──────────────────────────────────┐
 │          HMS-CPAP Service        │
-│  BurstCollector | FysetcReceiver │
-│  EDFParser + SessionDiscovery    │
+│  BurstCollector + EDFParser      │
+│  Angular Web UI (port 8893)      │
 │  DataPublisher + LLM Summary     │
 └──────────┬──────────┬────────────┘
            │          │
     ┌──────┘          └──────┐
     ▼                        ▼
 ┌──────────┐       ┌──────────────┐
-│PostgreSQL│       │ MQTT (EMQX)  │
-│(history) │       │ 47 sensors   │
-└──────────┘       └──────┬───────┘
-                          │
+│ Database │       │ MQTT (EMQX)  │
+│ PG/MySQL │       │ 47 sensors   │
+│ /SQLite  │       └──────┬───────┘
+└──────────┘              │
                           ▼
                   ┌───────────────┐
                   │Home Assistant │
                   └───────────────┘
 ```
-
-### Data Flow
-
-**ezShare mode:** Poll HTTP every 65s -> download EDF deltas -> detect session stop (files unchanged across 2 cycles) -> parse -> publish
-
-**FYSETC mode:** Receive BRP chunks in realtime during therapy -> post-therapy: manifest + STR from FYSETC -> diff & fetch missing files -> parse -> publish + LLM summary
 
 ### EDF File Types
 
@@ -282,103 +277,67 @@ entities:
 | CSL.edf | Clinical summary | Created at start | Final flush |
 | STR.edf | Daily therapy summary | N/A | Written ~50s after mask-off |
 
-Multiple checkpoint files per session are grouped by `SESSION_GAP_MINUTES` (default 60).
-
-## 🛠️ Development
+## Development
 
 ### Build Requirements
 
-- C++17 compiler (GCC 9+, Clang 10+)
+- C++17 compiler (GCC 9+, Clang 10+, MSVC 2022+)
 - CMake 3.16+
-- libcurl, libpq, libssl
+- Node.js 22+ (for Angular frontend)
 
 ### Build & Test
 
-**Native x86 Build:**
 ```bash
+# Build frontend
+cd frontend && npm ci && npx ng build --configuration production && cd ..
+
+# Build backend
 mkdir build && cd build
-cmake -DCMAKE_BUILD_TYPE=Release ..
+cmake -DBUILD_TESTS=ON -DBUILD_WITH_WEB=ON ..
 make -j$(nproc)
 
 # Run tests
-make test
+./tests/run_tests
 
-# Run with verbose output
+# Run service
 ./hms_cpap
 ```
 
-**ARM Cross-Compilation (for Pi Zero 2 W):**
+### Database Setup
+
+**SQLite** (default) -- auto-created, no setup needed.
+
+**PostgreSQL:**
 ```bash
-# One-time setup: Install ARM toolchain
-sudo apt-get install -y g++-arm-linux-gnueabihf sshpass
-
-# Sync Pi libraries to sysroot (one-time, ~220MB)
-mkdir -p sysroot/usr sysroot/lib/arm-linux-gnueabihf
-rsync -avz aamat@192.168.2.73:/usr/include ./sysroot/usr/
-rsync -avz aamat@192.168.2.73:/usr/lib ./sysroot/usr/
-rsync -avz aamat@192.168.2.73:/lib/arm-linux-gnueabihf ./sysroot/lib/
-
-# Build for ARM (40 seconds vs 5 minutes on Pi!)
-./build_arm.sh
-
-# Deploy to Pi and restart service
-./deploy_to_pi.sh
+psql -U postgres -c "CREATE DATABASE cpap_monitoring;"
+psql -U postgres -d cpap_monitoring -f scripts/schema.sql
 ```
 
-**📖 Full documentation:** See [docs/CROSS_COMPILATION.md](docs/CROSS_COMPILATION.md) for detailed setup, troubleshooting, and architecture details.
-
-### Project Structure
-
-```
-hms-cpap/
-├── src/
-│   ├── main.cpp                    # Entry point (ezshare/fysetc/local modes)
-│   ├── clients/
-│   │   └── EzShareClient.cpp       # WiFi SD HTTP client
-│   ├── parsers/
-│   │   └── EDFParser.cpp           # EDF file parsing (OSCAR algorithms)
-│   ├── services/
-│   │   ├── BurstCollectorService.cpp     # ezShare/local polling mode
-│   │   ├── FysetcReceiverService.cpp     # FYSETC MQTT push mode
-│   │   ├── SessionDiscoveryService.cpp   # Session grouping
-│   │   └── DataPublisherService.cpp      # MQTT + DB publishing
-│   ├── database/
-│   │   └── DatabaseService.cpp     # PostgreSQL interface
-│   └── mqtt/
-│       └── DiscoveryPublisher.cpp  # HA MQTT auto-discovery
-├── include/                        # Header files (mirrors src/)
-├── tests/                          # 155 unit tests (GTest + GMock)
-├── docs/                           # FYSETC_RECEIVER, RESMED_WRITE_TIMING, etc.
-├── cmake/                          # ARM cross-compilation toolchain
-├── scripts/                        # Utility scripts
-└── CMakeLists.txt
+**MySQL:**
+```bash
+mysql -u root -e "CREATE DATABASE cpap_monitoring;"
+mysql -u root cpap_monitoring < scripts/schema_mysql.sql
 ```
 
 ### Running Tests
 
 ```bash
-cd build && make -j$(nproc)
-./tests/run_tests
+cd build && ./tests/run_tests
 ```
 
-**155 tests** across 14 test suites:
-- EDF parsing (BRP, EVE, SAD, STR)
-- Session discovery and grouping
-- MQTT publishing and discovery
-- Database operations
-- FysetcReceiver (sync, chunk, manifest, base64)
-- Configuration, models, integration
+**247 tests** across 22 test suites covering EDF parsing, session discovery, MQTT publishing, database operations, configuration, and more.
 
-## ❓ FAQ
+## FAQ
 
 ### Why not use existing CPAP data solutions?
 
 Most solutions require cloud services, proprietary apps, or manual SD card removal. HMS-CPAP provides:
 - 100% local, no cloud
 - Automatic collection via WiFi
+- Built-in web dashboard with full signal charting
 - Open-source algorithms (OSCAR)
 - Home Assistant integration
-- ML-ready PostgreSQL storage
+- ML-ready database storage
 
 ### Does this work with other CPAP brands?
 
@@ -390,74 +349,22 @@ All data stays local:
 - No cloud services
 - No external API calls
 - Your network only
-- PostgreSQL encryption optional
-- MQTT can use TLS
 
-### Can I use this with Oscar?
+### Can I use this alongside OSCAR?
 
-Yes! HMS-CPAP uses OSCAR algorithms for parsing. You can:
-- Import HMS-CPAP archives into OSCAR
-- Run both simultaneously
-- Cross-validate metrics
+Yes! HMS-CPAP uses OSCAR algorithms for parsing. You can run both simultaneously and cross-validate metrics.
 
-### Bridge setup seems complex. Is it worth it?
-
-**Yes, if you value:**
-- Stable WiFi (no network switching)
-- Reliable collection (always connected)
-- WAF (Wife Acceptance Factor - no disruptions)
-
-**Direct connection works fine if:**
-- Single user, dedicated device
-- Manual collection acceptable
-- Don't mind WiFi switching
-
-## 📊 Metrics Reference
-
-### Real-Time Metrics (updated every 2 minutes)
-
-| Metric | Description | Unit |
-|--------|-------------|------|
-| AHI | Apnea-Hypopnea Index | events/hour |
-| Leak Rate | Current leak rate | L/min |
-| Pressure | Current therapy pressure | cmH2O |
-| Tidal Volume | Breath volume | mL |
-| Minute Ventilation | Respiratory rate × tidal volume | L/min |
-| Respiratory Rate | Breaths per minute | breaths/min |
-
-### Session Summary Metrics (after session ends)
-
-| Metric | Description |
-|--------|-------------|
-| Session Duration | Total therapy time |
-| Usage Hours | Hours with mask on |
-| Total Apneas | Central + Obstructive + Hypopneas |
-| 95th Percentile Leak | Peak leak rate |
-| Median Pressure | Middle pressure value |
-| Efficacy | Overall therapy effectiveness |
-
-> 📖 **Complete List:** See [docs/METRICS.md](docs/METRICS.md)
-
-## 🤝 Contributing
+## Contributing
 
 Contributions welcome! Please:
 
 1. Fork repository
 2. Create feature branch (`git checkout -b feature/amazing-feature`)
 3. Add tests for new functionality
-4. Ensure tests pass (`make test`)
-5. Commit changes (`git commit -m 'Add amazing feature'`)
-6. Push to branch (`git push origin feature/amazing-feature`)
-7. Open Pull Request
+4. Ensure tests pass (`./tests/run_tests`)
+5. Open Pull Request
 
-### Code Style
-
-- C++17 standard
-- Google C++ Style Guide
-- Include unit tests
-- Document public APIs
-
-## 📄 License
+## License
 
 This project is licensed under the **MIT License** - see [LICENSE](LICENSE) file.
 
@@ -467,29 +374,25 @@ This project is licensed under the **MIT License** - see [LICENSE](LICENSE) file
 - **libcurl** - MIT-style license
 - **PostgreSQL libpq** - PostgreSQL License
 - **Paho MQTT** - EPL 2.0
+- **Angular** - MIT License
+- **Chart.js** - MIT License
 
-## 🙏 Acknowledgments
+## Acknowledgments
 
 - [OSCAR Project](https://www.sleepfiles.com/OSCAR/) - EDF parsing algorithms
 - [ResMed](https://www.resmed.com/) - CPAP hardware
-- [ez Share](http://www.ezshare.com/) - WiFi SD card
 - [Home Assistant](https://www.home-assistant.io/) - Smart home platform
 - CPAP community on Reddit
 
-## 📞 Support
+---
 
-- **Issues:** [GitHub Issues](https://github.com/hms-homelab/hms-cpap/issues)
-- **Discussions:** [GitHub Discussions](https://github.com/hms-homelab/hms-cpap/discussions)
-- **Reddit:** r/CPAP, r/homeassistant
+**Made for better sleep and open health data**
+
+*If this project helps you, consider starring the repository!*
 
 ---
 
-**Made with ❤️ for better sleep and open health data**
-
-*If this project helps you sleep better, consider starring ⭐ the repository!*
----
-
-## ☕ Support
+## Support
 
 If this project is useful to you, consider buying me a coffee!
 
