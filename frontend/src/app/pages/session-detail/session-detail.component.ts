@@ -317,17 +317,21 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
       vitals: this.api.getSessionVitals(this.date).pipe(catchError(() => of(null))),
       events: this.api.getSessionEvents(this.date).pipe(catchError(() => of([]))),
     }).subscribe(({ detail, signals, vitals, events }) => {
-      if (detail.length > 0) this.session = detail[0];
+      // Merge all sessions for the night into one combined view
+      if (detail.length > 0) {
+        this.session = this.mergeSessions(detail);
+      }
 
-      // Detect live session
-      this.isLive = !!(this.session && !this.session.session_end);
+      // Detect live session (any session in the night still in-progress)
+      this.isLive = detail.some(s => !s.session_end);
       if (this.isLive && this.session) {
-        this.sessionStart = new Date(this.session.session_start.replace(' ', 'T'));
+        // Use earliest session start for live duration
+        const earliest = detail.reduce((a, b) =>
+          a.session_start < b.session_start ? a : b);
+        this.sessionStart = new Date(earliest.session_start.replace(' ', 'T'));
         this.liveStartTime = this.sessionStart.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         this.updateLiveDuration();
-        // Update duration display every 10s
         this.durationTimer = setInterval(() => this.updateLiveDuration(), 10000);
-        // Re-fetch signal data every 65s
         this.pollTimer = setInterval(() => this.refreshLiveData(), 65000);
       }
 
@@ -465,6 +469,28 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
         }
       }, 50);
     });
+  }
+
+  private mergeSessions(sessions: SessionDetail[]): SessionDetail {
+    if (sessions.length === 1) return sessions[0];
+    const first = sessions[0];
+    const totalSeconds = sessions.reduce((sum, s) => sum + (+s.duration_hours || 0) * 3600, 0);
+    const totalEvents = sessions.reduce((sum, s) => sum + +(s.total_events || 0), 0);
+    const totalHours = totalSeconds / 3600;
+    const allEvents = sessions.flatMap(s => s.events || []);
+
+    return {
+      ...first,
+      duration_hours: totalHours.toFixed(2),
+      ahi: totalHours > 0 ? (totalEvents / totalHours).toFixed(2) : '0',
+      total_events: totalEvents.toString(),
+      obstructive_apneas: sessions.reduce((sum, s) => sum + +(s.obstructive_apneas || 0), 0).toString(),
+      central_apneas: sessions.reduce((sum, s) => sum + +(s.central_apneas || 0), 0).toString(),
+      hypopneas: sessions.reduce((sum, s) => sum + +(s.hypopneas || 0), 0).toString(),
+      reras: sessions.reduce((sum, s) => sum + +(s.reras || 0), 0).toString(),
+      session_end: sessions.some(s => !s.session_end) ? null : sessions[sessions.length - 1].session_end,
+      events: allEvents,
+    } as SessionDetail;
   }
 
   private getTimestamps(): string[] {
