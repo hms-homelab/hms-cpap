@@ -1,96 +1,198 @@
 -- HMS-CPAP Database Schema
 -- PostgreSQL 13+
 --
--- This schema is automatically created by HMS-CPAP on first run.
--- This file is provided for reference and manual database setup.
+-- This schema is automatically created by HMS-CPAP when using SQLite.
+-- For PostgreSQL, run this file manually before first start:
+--   psql -h localhost -U maestro -d cpap_monitoring -f scripts/schema.sql
 --
--- Version: 1.1.1
--- Date: 2026-02-14
+-- Version: 3.2.0
+-- Date: 2026-04-02
 
 -- =============================================================================
--- Main Tables
+-- Core Tables
 -- =============================================================================
 
--- CPAP Sessions table
--- Stores therapy session data from ResMed devices
+-- Device registry
+CREATE TABLE IF NOT EXISTS cpap_devices (
+    device_id       TEXT PRIMARY KEY,
+    device_name     TEXT,
+    serial_number   TEXT,
+    model_id        INT DEFAULT 0,
+    version_id      INT DEFAULT 0,
+    last_seen       TIMESTAMP DEFAULT NOW(),
+    created_at      TIMESTAMP DEFAULT NOW()
+);
+
+-- CPAP Sessions
 CREATE TABLE IF NOT EXISTS cpap_sessions (
-    id SERIAL PRIMARY KEY,
-
-    -- Device identification
-    device_id VARCHAR(255) NOT NULL,
-    device_name VARCHAR(255),
-
-    -- Session timing
-    session_start TIMESTAMP NOT NULL,
-    session_end TIMESTAMP,
-    duration_seconds INT DEFAULT 0,
-
-    -- Session metadata
-    session_status VARCHAR(50) DEFAULT 'in_progress',  -- 'in_progress', 'completed'
-    force_completed BOOLEAN DEFAULT FALSE,              -- Manual override: skip in burst cycle
-
-    -- Checkpoint file tracking (JSONB)
-    -- Stores individual file sizes for stop detection
-    -- Example: {"20260209_003608_BRP.edf": 576, "20260209_003609_PLD.edf": 55}
-    checkpoint_files JSONB DEFAULT '{}'::jsonb,
-
-    -- File paths (permanent archive references)
-    brp_file_path TEXT,    -- Breathing waveform data
-    pld_file_path TEXT,    -- Pressure/leak data
-    sad_file_path TEXT,    -- Session statistics
-    eve_file_path TEXT,    -- Event data
-    csl_file_path TEXT,    -- Session log
-
-    -- Therapy metrics (real-time from checkpoints)
-    ahi FLOAT DEFAULT 0,                    -- Apnea-Hypopnea Index (events/hour)
-    leak_rate FLOAT DEFAULT 0,              -- L/min
-    pressure_current FLOAT DEFAULT 0,       -- cmH2O
-    pressure_min FLOAT DEFAULT 0,
-    pressure_max FLOAT DEFAULT 0,
-    pressure_avg FLOAT DEFAULT 0,
-
-    -- Events (from EVE file)
-    total_apneas INT DEFAULT 0,
-    obstructive_apneas INT DEFAULT 0,
-    central_apneas INT DEFAULT 0,
-    hypopneas INT DEFAULT 0,
-    rera INT DEFAULT 0,                     -- Respiratory Effort Related Arousal
-
-    -- Vitals (from SAD file)
-    spo2_avg FLOAT DEFAULT 0,               -- SpO2 average %
-    spo2_min FLOAT DEFAULT 0,               -- SpO2 minimum %
-    heart_rate_avg FLOAT DEFAULT 0,         -- bpm
-
-    -- Breathing summary
-    respiratory_rate FLOAT DEFAULT 0,       -- breaths/min
-    tidal_volume FLOAT DEFAULT 0,           -- mL
-    minute_ventilation FLOAT DEFAULT 0,     -- L/min
-
-    -- Timestamps
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW(),
-
-    -- Indexes
+    id                SERIAL PRIMARY KEY,
+    device_id         TEXT NOT NULL,
+    session_start     TIMESTAMP NOT NULL,
+    session_end       TIMESTAMP,
+    duration_seconds  INT DEFAULT 0,
+    data_records      INT DEFAULT 0,
+    brp_file_path     TEXT,
+    eve_file_path     TEXT,
+    sad_file_path     TEXT,
+    pld_file_path     TEXT,
+    csl_file_path     TEXT,
+    checkpoint_files  JSONB DEFAULT '{}'::jsonb,
+    force_completed   BOOLEAN DEFAULT FALSE,
+    session_status    VARCHAR(50) DEFAULT 'in_progress',
+    created_at        TIMESTAMP DEFAULT NOW(),
+    updated_at        TIMESTAMP DEFAULT NOW(),
     UNIQUE (device_id, session_start)
 );
 
--- Index for fast session lookups
-CREATE INDEX IF NOT EXISTS idx_cpap_sessions_device_start
+CREATE INDEX IF NOT EXISTS idx_cpap_sessions_device
+    ON cpap_sessions(device_id);
+CREATE INDEX IF NOT EXISTS idx_cpap_sessions_start
     ON cpap_sessions(device_id, session_start DESC);
-
--- Index for status queries
 CREATE INDEX IF NOT EXISTS idx_cpap_sessions_status
     ON cpap_sessions(device_id, session_status);
-
--- Index for checkpoint file tracking (JSONB)
 CREATE INDEX IF NOT EXISTS idx_cpap_sessions_checkpoint_files
     ON cpap_sessions USING GIN(checkpoint_files);
 
+-- Session metrics (one row per session)
+CREATE TABLE IF NOT EXISTS cpap_session_metrics (
+    id                     SERIAL PRIMARY KEY,
+    session_id             INT NOT NULL UNIQUE,
+    total_events           INT DEFAULT 0,
+    ahi                    FLOAT DEFAULT 0,
+    obstructive_apneas     INT DEFAULT 0,
+    central_apneas         INT DEFAULT 0,
+    hypopneas              INT DEFAULT 0,
+    reras                  INT DEFAULT 0,
+    clear_airway_apneas    INT DEFAULT 0,
+    avg_event_duration     FLOAT,
+    max_event_duration     FLOAT,
+    time_in_apnea_percent  FLOAT,
+    avg_spo2               FLOAT,
+    min_spo2               FLOAT,
+    avg_heart_rate         INT,
+    max_heart_rate         INT,
+    min_heart_rate         INT,
+    avg_mask_pressure      FLOAT,
+    avg_epr_pressure       FLOAT,
+    avg_snore              FLOAT,
+    leak_p50               FLOAT,
+    leak_p95               FLOAT,
+    avg_leak_rate          FLOAT,
+    max_leak_rate          FLOAT,
+    avg_target_ventilation FLOAT,
+    therapy_mode           INT,
+    created_at             TIMESTAMP DEFAULT NOW(),
+    FOREIGN KEY (session_id) REFERENCES cpap_sessions(id) ON DELETE CASCADE
+);
+
+-- Breathing summaries (per-interval aggregates)
+CREATE TABLE IF NOT EXISTS cpap_breathing_summary (
+    id              SERIAL PRIMARY KEY,
+    session_id      INT NOT NULL,
+    timestamp       TIMESTAMP NOT NULL,
+    avg_flow_rate   FLOAT,
+    max_flow_rate   FLOAT,
+    min_flow_rate   FLOAT,
+    avg_pressure    FLOAT,
+    max_pressure    FLOAT,
+    min_pressure    FLOAT,
+    UNIQUE (session_id, timestamp),
+    FOREIGN KEY (session_id) REFERENCES cpap_sessions(id) ON DELETE CASCADE
+);
+
+-- Events (apneas, hypopneas, RERAs)
+CREATE TABLE IF NOT EXISTS cpap_events (
+    id                SERIAL PRIMARY KEY,
+    session_id        INT NOT NULL,
+    event_type        TEXT,
+    event_timestamp   TIMESTAMP NOT NULL,
+    duration_seconds  FLOAT DEFAULT 0,
+    details           TEXT,
+    UNIQUE (session_id, event_timestamp),
+    FOREIGN KEY (session_id) REFERENCES cpap_sessions(id) ON DELETE CASCADE
+);
+
+-- Vitals (SpO2, heart rate)
+CREATE TABLE IF NOT EXISTS cpap_vitals (
+    id          SERIAL PRIMARY KEY,
+    session_id  INT NOT NULL,
+    timestamp   TIMESTAMP NOT NULL,
+    spo2        FLOAT,
+    heart_rate  INT,
+    UNIQUE (session_id, timestamp),
+    FOREIGN KEY (session_id) REFERENCES cpap_sessions(id) ON DELETE CASCADE
+);
+
+-- Calculated metrics (per-minute respiratory data)
+CREATE TABLE IF NOT EXISTS cpap_calculated_metrics (
+    id                   SERIAL PRIMARY KEY,
+    session_id           INT NOT NULL,
+    timestamp            TIMESTAMP NOT NULL,
+    respiratory_rate     FLOAT,
+    tidal_volume         FLOAT,
+    minute_ventilation   FLOAT,
+    inspiratory_time     FLOAT,
+    expiratory_time      FLOAT,
+    ie_ratio             FLOAT,
+    flow_limitation      FLOAT,
+    leak_rate            FLOAT,
+    flow_p95             FLOAT,
+    flow_p90             FLOAT,
+    pressure_p95         FLOAT,
+    pressure_p90         FLOAT,
+    mask_pressure        FLOAT,
+    epr_pressure         FLOAT,
+    snore_index          FLOAT,
+    target_ventilation   FLOAT,
+    UNIQUE (session_id, timestamp),
+    FOREIGN KEY (session_id) REFERENCES cpap_sessions(id) ON DELETE CASCADE
+);
+
+-- STR daily summary (therapy day records from STR.EDF)
+CREATE TABLE IF NOT EXISTS cpap_daily_summary (
+    id                SERIAL PRIMARY KEY,
+    device_id         TEXT NOT NULL,
+    record_date       DATE NOT NULL,
+    mask_pairs        JSONB DEFAULT '[]',
+    mask_events       INT DEFAULT 0,
+    duration_minutes  FLOAT DEFAULT 0,
+    patient_hours     FLOAT DEFAULT 0,
+    ahi               FLOAT, hi FLOAT, ai FLOAT, oai FLOAT, cai FLOAT, uai FLOAT,
+    rin               FLOAT, csr FLOAT,
+    mask_press_50     FLOAT, mask_press_95 FLOAT, mask_press_max FLOAT,
+    leak_50           FLOAT, leak_95 FLOAT, leak_max FLOAT,
+    spo2_50           FLOAT, spo2_95 FLOAT,
+    resp_rate_50      FLOAT, tid_vol_50 FLOAT, min_vent_50 FLOAT,
+    mode              INT, epr_level FLOAT, pressure_setting FLOAT,
+    fault_device      INT DEFAULT 0,
+    fault_alarm       INT DEFAULT 0,
+    created_at        TIMESTAMP DEFAULT NOW(),
+    updated_at        TIMESTAMP DEFAULT NOW(),
+    UNIQUE (device_id, record_date)
+);
+
+-- AI-generated summaries (daily, weekly, monthly)
+CREATE TABLE IF NOT EXISTS cpap_summaries (
+    id              SERIAL PRIMARY KEY,
+    device_id       TEXT NOT NULL,
+    period          TEXT NOT NULL CHECK (period IN ('daily', 'weekly', 'monthly')),
+    range_start     DATE NOT NULL,
+    range_end       DATE NOT NULL,
+    nights_count    INT NOT NULL DEFAULT 1,
+    avg_ahi         DOUBLE PRECISION,
+    avg_usage_hours DOUBLE PRECISION,
+    compliance_pct  DOUBLE PRECISION,
+    summary_text    TEXT NOT NULL,
+    created_at      TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_cpap_summaries_device_period
+    ON cpap_summaries(device_id, period, range_end DESC);
+
 -- =============================================================================
--- Functions
+-- Triggers
 -- =============================================================================
 
--- Update timestamp trigger
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
 BEGIN
@@ -99,123 +201,16 @@ BEGIN
 END;
 $$ language 'plpgsql';
 
-CREATE TRIGGER update_cpap_sessions_updated_at
-    BEFORE UPDATE ON cpap_sessions
-    FOR EACH ROW
-    EXECUTE FUNCTION update_updated_at_column();
+DO $$ BEGIN
+    CREATE TRIGGER update_cpap_sessions_updated_at
+        BEFORE UPDATE ON cpap_sessions
+        FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
--- =============================================================================
--- Optional: Device Registry Table
--- =============================================================================
-
--- Device registry (optional, for multi-device deployments)
-CREATE TABLE IF NOT EXISTS cpap_devices (
-    id SERIAL PRIMARY KEY,
-    device_id VARCHAR(255) UNIQUE NOT NULL,
-    device_name VARCHAR(255) NOT NULL,
-    device_model VARCHAR(255),
-    serial_number VARCHAR(255),
-
-    -- Last seen tracking
-    last_seen TIMESTAMP,
-    last_session_start TIMESTAMP,
-
-    -- Metadata
-    created_at TIMESTAMP DEFAULT NOW(),
-    updated_at TIMESTAMP DEFAULT NOW()
-);
-
-CREATE TRIGGER update_cpap_devices_updated_at
-    BEFORE UPDATE ON cpap_devices
-    FOR EACH ROW
-    EXECUTE FUNCTION update_updated_at_column();
-
--- =============================================================================
--- Sample Queries
--- =============================================================================
-
--- Get latest session for a device
--- SELECT * FROM cpap_sessions
--- WHERE device_id = 'resmed_airsense10'
--- ORDER BY session_start DESC LIMIT 1;
-
--- Get all sessions from last 7 days
--- SELECT * FROM cpap_sessions
--- WHERE session_start >= NOW() - INTERVAL '7 days'
--- ORDER BY session_start DESC;
-
--- Get average AHI over last month
--- SELECT AVG(ahi) as avg_ahi
--- FROM cpap_sessions
--- WHERE session_start >= NOW() - INTERVAL '30 days'
---   AND session_status = 'completed';
-
--- Get sessions with high leak rate
--- SELECT session_start, leak_rate
--- FROM cpap_sessions
--- WHERE leak_rate > 24
--- ORDER BY session_start DESC;
-
--- Check for stopped sessions (checkpoint tracking)
--- SELECT session_start, session_end, checkpoint_files
--- FROM cpap_sessions
--- WHERE session_end IS NOT NULL
--- ORDER BY session_start DESC LIMIT 10;
-
--- =============================================================================
--- Maintenance
--- =============================================================================
-
--- Clean up old sessions (optional, keep 1 year)
--- DELETE FROM cpap_sessions
--- WHERE session_start < NOW() - INTERVAL '1 year';
-
--- Vacuum and analyze for performance
--- VACUUM ANALYZE cpap_sessions;
-
--- Check table size
--- SELECT pg_size_pretty(pg_total_relation_size('cpap_sessions'));
-
--- =============================================================================
--- Notes
--- =============================================================================
-
--- 1. checkpoint_files JSONB column stores file sizes for intelligent polling
---    - Only BRP, PLD, SAD checkpoint files (not EVE/CSL)
---    - Used for session stop detection
---    - See: docs/CHECKPOINT_FILE_TRACKING.md
---
--- 2. File paths (brp_file_path, etc.) reference permanent archive locations
---    - Enables file retrieval without re-parsing
---    - Format: /data/cpap_archive/YYYYMMDD/HHMMSS/filename.edf
---
--- 3. Session status transitions:
---    - 'in_progress': Active session, checkpoint files growing
---    - 'completed': Session ended, EVE file present OR checkpoints stopped
---
--- 4. Timestamp tolerance: 2-5 seconds for session lookups
---    - Accounts for slight variations in session_start timestamps
---    - See DatabaseService::sessionExists() implementation
---
--- 5. AHI calculation: total_apneas / (duration_seconds / 3600)
---    - Automatically calculated when EVE file is parsed
---    - Updated in real-time as session progresses
-
--- =============================================================================
--- Migration from v1.0.0 to v1.1.0
--- =============================================================================
-
--- Add checkpoint_files column if upgrading from v1.0.0
--- ALTER TABLE cpap_sessions ADD COLUMN IF NOT EXISTS checkpoint_files JSONB DEFAULT '{}'::jsonb;
--- CREATE INDEX IF NOT EXISTS idx_cpap_sessions_checkpoint_files ON cpap_sessions USING GIN(checkpoint_files);
-
--- =============================================================================
--- Migration from v1.8.0 to v1.8.1
--- =============================================================================
-
--- Add force_completed flag (auto-migrated on connect, included here for reference)
--- ALTER TABLE cpap_sessions ADD COLUMN IF NOT EXISTS force_completed BOOLEAN DEFAULT FALSE;
-
--- =============================================================================
--- End of schema
--- =============================================================================
+DO $$ BEGIN
+    CREATE TRIGGER update_cpap_daily_summary_updated_at
+        BEFORE UPDATE ON cpap_daily_summary
+        FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;

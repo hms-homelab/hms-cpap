@@ -487,13 +487,23 @@ bool BurstCollectorService::archiveSessionFiles(
 
 void BurstCollectorService::processSTRFile() {
     try {
-        std::string local_base = ConfigManager::get("CPAP_TEMP_DIR", (std::filesystem::temp_directory_path() / "cpap_data").string());
-        std::string str_local_path = local_base + "/STR.EDF";
+        std::string str_local_path;
 
-        // Download STR.EDF from SD card root
-        if (!ezshare_client_->downloadRootFile("STR.EDF", str_local_path)) {
-            std::cerr << "STR: Download failed (non-fatal)" << std::endl;
-            return;
+        if (!local_source_dir_.empty()) {
+            // Local mode: STR.EDF lives in the local CPAP data directory
+            str_local_path = local_source_dir_ + "/STR.EDF";
+            if (!std::filesystem::exists(str_local_path)) {
+                std::cerr << "STR: Not found at " << str_local_path << " (non-fatal)" << std::endl;
+                return;
+            }
+        } else {
+            // ezShare/Fysetc mode: download from SD card
+            std::string local_base = ConfigManager::get("CPAP_TEMP_DIR", (std::filesystem::temp_directory_path() / "cpap_data").string());
+            str_local_path = local_base + "/STR.EDF";
+            if (!ezshare_client_->downloadRootFile("STR.EDF", str_local_path)) {
+                std::cerr << "STR: Download failed (non-fatal)" << std::endl;
+                return;
+            }
         }
 
         // Parse all daily records

@@ -115,6 +115,15 @@ jobs:
         if: github.event_name != 'pull_request'
         run: echo ${{ steps.meta.outputs.digest }}
 
+      - name: Make GHCR package public
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api --method PUT \
+            orgs/${{ github.repository_owner }}/packages/container/hms-cpap \
+            -f visibility=public || echo "Could not set visibility (may need org admin token)"
+
   # ── Windows Build ─────────────────────────────────────────────────
   windows-build:
     runs-on: windows-latest
