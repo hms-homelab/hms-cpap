@@ -20,6 +20,7 @@ export interface DashboardData {
 
 export interface SessionListItem {
   session_start: string;
+  session_end: string | null;
   duration_hours: string;
   ahi: string;
   total_events: string;

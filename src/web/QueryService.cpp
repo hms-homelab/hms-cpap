@@ -87,7 +87,6 @@ Json::Value QueryService::getSessions(int days, int limit) {
         " LEFT JOIN cpap_session_metrics m ON m.session_id = s.id"
         " WHERE s.device_id = " + sql::param(1, dt_) +
         " AND s.session_start >= " + sql::daysAgo(days, dt_) +
-        " AND s.session_end IS NOT NULL"
         " ORDER BY s.session_start DESC"
         " LIMIT " + std::to_string(limit);
 
@@ -231,7 +230,6 @@ Json::Value QueryService::getSessionSignals(const std::string& date) {
         " LEFT JOIN cpap_calculated_metrics c ON c.session_id = s.id AND c.timestamp = b.timestamp"
         " WHERE s.device_id = " + sql::param(1, dt_) +
         " AND " + sql::sleepDay("s.session_start", dt_) + " = " + sql::castDate(2, dt_) +
-        " AND s.session_end IS NOT NULL"
         " ORDER BY b.timestamp";
 
     auto rows = db_->executeQuery(q, {device_id_, date});
@@ -320,7 +318,6 @@ Json::Value QueryService::getSessionVitals(const std::string& date, int interval
         " JOIN cpap_vitals v ON v.session_id = s.id"
         " WHERE s.device_id = " + sql::param(1, dt_) +
         " AND " + sql::sleepDay("s.session_start", dt_) + " = " + sql::castDate(2, dt_) +
-        " AND s.session_end IS NOT NULL"
         " AND v.spo2 > 0"
         " GROUP BY bucket ORDER BY bucket";
 
@@ -357,7 +354,6 @@ Json::Value QueryService::getSessionEvents(const std::string& date) {
         " JOIN cpap_events e ON e.session_id = s.id"
         " WHERE s.device_id = " + sql::param(1, dt_) +
         " AND " + sql::sleepDay("s.session_start", dt_) + " = " + sql::castDate(2, dt_) +
-        " AND s.session_end IS NOT NULL"
         " ORDER BY e.event_timestamp";
 
     return db_->executeQuery(q, {device_id_, date});
