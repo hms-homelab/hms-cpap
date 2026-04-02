@@ -1,4 +1,4 @@
-import { Component, OnInit, ChangeDetectorRef } from '@angular/core';
+import { Component, OnInit, OnDestroy, ChangeDetectorRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterLink } from '@angular/router';
 import { CpapApiService } from '../../services/cpap-api.service';
@@ -14,20 +14,25 @@ import { SessionListItem } from '../../models/session.model';
       <table class="session-table" *ngIf="sessions.length > 0">
         <thead>
           <tr>
-            <th>Date</th><th>Duration</th><th>AHI</th><th>Events</th>
+            <th>Date</th><th>Status</th><th>Duration</th><th>AHI</th><th>Events</th>
             <th>OA</th><th>CA</th><th>H</th><th>RERA</th><th>SpO2</th>
           </tr>
         </thead>
         <tbody>
-          <tr *ngFor="let s of sessions" [routerLink]="['/sessions', sleepDay(s.session_start)]" class="clickable">
+          <tr *ngFor="let s of sessions" [routerLink]="['/sessions', sleepDay(s.session_start)]"
+              class="clickable" [class.live-row]="isLive(s)">
             <td>{{ sleepDay(s.session_start) }}</td>
-            <td>{{ s.duration_hours }}h</td>
-            <td [class.elevated]="+s.ahi > 5">{{ s.ahi }}</td>
-            <td>{{ s.total_events }}</td>
-            <td>{{ s.obstructive_apneas }}</td>
-            <td>{{ s.central_apneas }}</td>
-            <td>{{ s.hypopneas }}</td>
-            <td>{{ s.reras }}</td>
+            <td>
+              <span *ngIf="isLive(s)" class="live-badge">LIVE</span>
+              <span *ngIf="!isLive(s)" class="done-badge">Done</span>
+            </td>
+            <td>{{ isLive(s) ? liveDuration(s) : s.duration_hours + 'h' }}</td>
+            <td [class.elevated]="+s.ahi > 5">{{ s.ahi || '-' }}</td>
+            <td>{{ s.total_events || '-' }}</td>
+            <td>{{ s.obstructive_apneas || '-' }}</td>
+            <td>{{ s.central_apneas || '-' }}</td>
+            <td>{{ s.hypopneas || '-' }}</td>
+            <td>{{ s.reras || '-' }}</td>
             <td>{{ s.avg_spo2 ? s.avg_spo2 + '%' : '-' }}</td>
           </tr>
         </tbody>
@@ -43,23 +48,57 @@ import { SessionListItem } from '../../models/session.model';
     .clickable { cursor: pointer; }
     .clickable:hover td { background: rgba(100,181,246,0.06); }
     .elevated { color: #ff8a65; font-weight: 600; }
+    .live-row td { border-bottom-color: rgba(76,175,80,0.3); }
+    .live-badge {
+      background: #4caf50; color: #fff; padding: 0.15rem 0.5rem; border-radius: 10px;
+      font-size: 0.65rem; font-weight: 700; letter-spacing: 0.5px;
+      animation: pulse-live 1.5s ease-in-out infinite;
+    }
+    .done-badge { color: #666; font-size: 0.7rem; }
+    @keyframes pulse-live {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
   `]
 })
-export class SessionsComponent implements OnInit {
+export class SessionsComponent implements OnInit, OnDestroy {
   sessions: SessionListItem[] = [];
+  private refreshTimer: any = null;
 
   constructor(private api: CpapApiService, private cdr: ChangeDetectorRef) {}
 
   ngOnInit() {
+    this.loadSessions();
+    // Refresh every 30s to detect new live sessions or session completion
+    this.refreshTimer = setInterval(() => this.loadSessions(), 30000);
+  }
+
+  ngOnDestroy() {
+    if (this.refreshTimer) clearInterval(this.refreshTimer);
+  }
+
+  private loadSessions() {
     this.api.getSessions(30, 30).subscribe({
       next: s => { this.sessions = s; this.cdr.detectChanges(); },
       error: e => console.error('Sessions error:', e)
     });
   }
 
+  isLive(s: SessionListItem): boolean {
+    return !s.session_end;
+  }
+
+  liveDuration(s: SessionListItem): string {
+    const start = new Date(s.session_start.replace(' ', 'T'));
+    const now = new Date();
+    const mins = Math.floor((now.getTime() - start.getTime()) / 60000);
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    return h > 0 ? `${h}h ${m}m` : `${m}m`;
+  }
+
   sleepDay(sessionStart: string): string {
     if (!sessionStart) return '';
-    // PG returns "2026-03-27 23:34:06" — replace space with T for valid ISO
     const d = new Date(sessionStart.replace(' ', 'T'));
     if (isNaN(d.getTime())) return sessionStart.slice(0, 10);
     d.setHours(d.getHours() - 12);

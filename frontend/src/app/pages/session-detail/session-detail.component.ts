@@ -62,9 +62,17 @@ const SIGNAL_DEFS: SignalDef[] = [
         </div>
       </div>
 
+      <!-- LIVE BANNER -->
+      <div class="live-banner" *ngIf="isLive">
+        <span class="live-dot"></span>
+        <span class="live-text">LIVE</span>
+        <span class="live-info">Started {{ liveStartTime }} &mdash; {{ liveDuration }}</span>
+        <span class="live-poll">Refreshing every 65s</span>
+      </div>
+
       <div class="cards">
         <app-metric-card label="AHI" [value]="session.ahi || '0'" unit="events/h" />
-        <app-metric-card label="Duration" [value]="session.duration_hours || '0'" unit="hours" />
+        <app-metric-card label="Duration" [value]="isLive ? liveDuration : (session.duration_hours || '0') + ' hours'" unit="" />
         <app-metric-card label="Events" [value]="session.total_events || '0'" unit="" />
         <app-metric-card label="SpO2" [value]="session.avg_spo2 || '-'" unit="%" />
         <app-metric-card label="Heart Rate" [value]="session.avg_heart_rate || '-'" unit="bpm" />
@@ -181,6 +189,25 @@ const SIGNAL_DEFS: SignalDef[] = [
     .doughnut-section { margin-top: 0.75rem; }
     .doughnut-container { max-width: 300px; margin: 0 auto; }
 
+    /* Live banner */
+    .live-banner {
+      display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
+      background: linear-gradient(135deg, rgba(76,175,80,0.15), rgba(76,175,80,0.05));
+      border: 1px solid rgba(76,175,80,0.4); border-radius: 8px;
+      padding: 0.6rem 1rem; margin-bottom: 0.75rem;
+    }
+    .live-dot {
+      width: 10px; height: 10px; border-radius: 50%; background: #4caf50;
+      animation: pulse-dot 1.5s ease-in-out infinite;
+    }
+    .live-text { color: #4caf50; font-weight: 700; font-size: 0.85rem; letter-spacing: 1px; }
+    .live-info { color: #ccc; font-size: 0.8rem; }
+    .live-poll { color: #666; font-size: 0.7rem; margin-left: auto; }
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(76,175,80,0.4); }
+      50% { opacity: 0.6; box-shadow: 0 0 0 6px rgba(76,175,80,0); }
+    }
+
     .loading { color: #666; padding: 2rem; text-align: center; }
     @media (max-width: 768px) {
       .cards { flex-direction: column; }
@@ -197,6 +224,14 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
   session: SessionDetail | null = null;
   loadError = '';
   hasEvents = false;
+
+  // Live session
+  isLive = false;
+  liveStartTime = '';
+  liveDuration = '';
+  private pollTimer: any = null;
+  private durationTimer: any = null;
+  private sessionStart: Date | null = null;
 
   // Raw data
   private signalData: SignalData | null = null;
@@ -243,6 +278,7 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
 
   ngOnDestroy() {
     this.destroyCharts();
+    this.stopPolling();
   }
 
   private destroyCharts() {
@@ -252,12 +288,28 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
     this.detailChart = null;
   }
 
+  private stopPolling() {
+    if (this.pollTimer) { clearInterval(this.pollTimer); this.pollTimer = null; }
+    if (this.durationTimer) { clearInterval(this.durationTimer); this.durationTimer = null; }
+  }
+
+  private updateLiveDuration() {
+    if (!this.sessionStart) return;
+    const now = new Date();
+    const mins = Math.floor((now.getTime() - this.sessionStart.getTime()) / 60000);
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+    this.liveDuration = h > 0 ? `${h}h ${m}m` : `${m}m`;
+  }
+
   private loadSession() {
     this.destroyCharts();
+    this.stopPolling();
     this.selectedSignal = null;
     this.signalLabels = [];
     this.loadError = '';
     this.session = null;
+    this.isLive = false;
 
     forkJoin({
       detail: this.api.getSessionDetail(this.date).pipe(catchError(() => of([]))),
@@ -266,6 +318,19 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
       events: this.api.getSessionEvents(this.date).pipe(catchError(() => of([]))),
     }).subscribe(({ detail, signals, vitals, events }) => {
       if (detail.length > 0) this.session = detail[0];
+
+      // Detect live session
+      this.isLive = !!(this.session && !this.session.session_end);
+      if (this.isLive && this.session) {
+        this.sessionStart = new Date(this.session.session_start.replace(' ', 'T'));
+        this.liveStartTime = this.sessionStart.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        this.updateLiveDuration();
+        // Update duration display every 10s
+        this.durationTimer = setInterval(() => this.updateLiveDuration(), 10000);
+        // Re-fetch signal data every 65s
+        this.pollTimer = setInterval(() => this.refreshLiveData(), 65000);
+      }
+
       this.signalData = signals;
       this.vitalsData = vitals;
       this.events = events as SessionEvent[];
@@ -359,6 +424,47 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
       this.date = input.value;
       this.loadSession();
     }
+  }
+
+  private refreshLiveData() {
+    // Re-fetch signals and events without full page reload
+    const currentSignal = this.selectedSignal;
+    forkJoin({
+      detail: this.api.getSessionDetail(this.date).pipe(catchError(() => of([]))),
+      signals: this.api.getSessionSignals(this.date).pipe(catchError(() => of(null))),
+      vitals: this.api.getSessionVitals(this.date).pipe(catchError(() => of(null))),
+      events: this.api.getSessionEvents(this.date).pipe(catchError(() => of([]))),
+    }).subscribe(({ detail, signals, vitals, events }) => {
+      if (detail.length > 0) this.session = detail[0];
+      this.signalData = signals;
+      this.vitalsData = vitals;
+      this.events = events as SessionEvent[];
+
+      if (signals?.timestamps?.length) {
+        this.signalTimestamps = signals.timestamps;
+        this.signalLabels = formatTimestamps(signals.timestamps);
+      }
+      if (vitals?.timestamps?.length) {
+        this.vitalsTimestamps = vitals.timestamps;
+        this.vitalsLabels = formatTimestamps(vitals.timestamps);
+      }
+
+      // Session completed while we were watching
+      if (this.session && this.session.session_end) {
+        this.isLive = false;
+        this.stopPolling();
+      }
+
+      // Re-render charts
+      this.destroyCharts();
+      setTimeout(() => {
+        this.renderOverviewCharts();
+        if (currentSignal) {
+          this.selectedSignal = currentSignal;
+          this.renderDetailChart();
+        }
+      }, 50);
+    });
   }
 
   private getTimestamps(): string[] {

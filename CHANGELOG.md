@@ -51,6 +51,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **chart-helpers.ts** — utility functions for timestamp formatting, event-to-
   annotation conversion, dataset factory, and fill band generation.
 
+### Added (Live Session Support)
+- **Live session indicator** on sessions list — pulsing green "LIVE" badge with
+  running duration for in-progress sessions. List auto-refreshes every 30s.
+- **Live session detail view** — green banner showing start time, running
+  duration (updates every 10s), and "Refreshing every 65s" indicator.
+  Signal charts auto-refresh via 65s polling to match the burst collection
+  interval. Polling stops automatically when session completes.
+- **Sessions query** now includes in-progress sessions (removed
+  `session_end IS NOT NULL` filter from sessions, signals, vitals, events).
+
 ### Dependencies
 - Added `chartjs-plugin-annotation` (event markers on charts)
 - Added `chartjs-plugin-zoom` (wheel zoom, pinch zoom, drag pan)
