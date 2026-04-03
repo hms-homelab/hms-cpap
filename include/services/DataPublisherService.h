@@ -1,6 +1,6 @@
 #pragma once
 
-#include "models/CPAPModels.h"
+#include "parsers/SleeplinkBridge.h"
 #include "services/InsightsEngine.h"
 #include "mqtt_client.h"
 #include "mqtt/DiscoveryPublisher.h"

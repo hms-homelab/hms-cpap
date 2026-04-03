@@ -1,7 +1,7 @@
 #pragma once
 
 #include "clients/EzShareClient.h"
-#include "models/CPAPModels.h"
+#include "parsers/SleeplinkBridge.h"
 #include <vector>
 #include <string>
 #include <chrono>

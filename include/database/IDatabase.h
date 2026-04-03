@@ -1,6 +1,6 @@
 #pragma once
 
-#include "models/CPAPModels.h"
+#include "parsers/SleeplinkBridge.h"
 #include <json/json.h>
 #include <chrono>
 #include <map>

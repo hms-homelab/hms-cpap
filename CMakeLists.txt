@@ -94,8 +94,17 @@ if(BUILD_WITH_POSTGRESQL)
     endif()
 endif()
 
-# ── hms-shared modules (via FetchContent) ───────────────────────────────────
+# ── External libraries (via FetchContent) ────────────────────────────────────
 include(FetchContent)
+
+# sleeplink-parser: shared CPAP parsing library (ResMed EDF + Philips DS2)
+set(SLEEPLINK_PARSER_WITH_PHILIPS ON CACHE BOOL "Enable Philips DreamStation parser" FORCE)
+FetchContent_Declare(sleeplink_parser
+    SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../hms-sleeplink/hms-sleeplink-parser
+)
+FetchContent_MakeAvailable(sleeplink_parser)
+
+# hms-shared modules
 FetchContent_Declare(hms_shared
     GIT_REPOSITORY https://github.com/hms-homelab/hms-shared.git
     GIT_TAG        v1.6.6
@@ -152,10 +161,13 @@ if(BUILD_WITH_POSTGRESQL)
     endif()
 endif()
 
-# Source files — exclude platform-specific code
+# Source files — exclude platform-specific code and duplicates now in sleeplink-parser
 file(GLOB_RECURSE SOURCES "src/*.cpp")
 # WiFiSwitchClient is Linux-only (wpa_supplicant, dhcpcd); exclude on all platforms (dead code)
 list(FILTER SOURCES EXCLUDE REGEX ".*/WiFiSwitchClient\\.cpp$")
+# EDFParser + CPAPModels are now provided by sleeplink-parser library
+list(FILTER SOURCES EXCLUDE REGEX ".*/parsers/EDFParser\\.cpp$")
+list(FILTER SOURCES EXCLUDE REGEX ".*/models/CPAPModels\\.cpp$")
 
 # Executable
 add_executable(${PROJECT_NAME} ${SOURCES})
@@ -180,6 +192,7 @@ if(MSVC)
     )
 else()
     target_link_libraries(${PROJECT_NAME}
+        sleeplink_parser
         jsoncpp_lib
         ${PAHO_MQTTPP3_LIB}
         ${PAHO_MQTT3AS_LIB}

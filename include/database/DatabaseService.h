@@ -1,7 +1,7 @@
 #pragma once
 #ifdef WITH_POSTGRESQL
 
-#include "models/CPAPModels.h"
+#include "parsers/SleeplinkBridge.h"
 #include <pqxx/pqxx>
 #include <memory>
 #include <string>
