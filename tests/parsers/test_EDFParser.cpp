@@ -6,7 +6,7 @@
 
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
-#include "parsers/EDFParser.h"
+#include "parsers/SleeplinkBridge.h"
 #include <filesystem>
 #include <fstream>
 #include <chrono>

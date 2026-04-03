@@ -5,7 +5,7 @@
  */
 
 #include <gtest/gtest.h>
-#include "parsers/EDFParser.h"
+#include "parsers/SleeplinkBridge.h"
 #include <filesystem>
 #include <cmath>
 

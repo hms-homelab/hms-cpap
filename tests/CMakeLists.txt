@@ -20,6 +20,9 @@ list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*main\\.cpp$")
 list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/controllers/.*")
 list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/web/.*")
 list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/WiFiSwitchClient\\.cpp$")
+# EDFParser + CPAPModels now provided by sleeplink-parser library
+list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/parsers/EDFParser\\.cpp$")
+list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/models/CPAPModels\\.cpp$")
 
 # Test sources
 set(TEST_SOURCES
@@ -70,6 +73,7 @@ else()
         GTest::gtest
         GTest::gtest_main
         GTest::gmock
+        sleeplink_parser
         jsoncpp_lib
         ${PAHO_MQTTPP3_LIB}
         ${PAHO_MQTT3AS_LIB}
@@ -92,8 +96,8 @@ if(BUILD_WITH_POSTGRESQL)
     endif()
 endif()
 
-# Discover tests
-gtest_discover_tests(run_tests)
+# Discover tests (PRE_TEST defers discovery until ctest runs, fixing MSVC multi-config)
+gtest_discover_tests(run_tests DISCOVERY_MODE PRE_TEST)
 
 # Print test configuration
 message(STATUS "Unit Tests Configuration:")

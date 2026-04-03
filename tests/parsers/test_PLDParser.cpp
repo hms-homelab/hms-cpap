@@ -9,8 +9,7 @@
  */
 
 #include <gtest/gtest.h>
-#include "parsers/EDFParser.h"
-#include "models/CPAPModels.h"
+#include "parsers/SleeplinkBridge.h"
 #include <filesystem>
 #include <cmath>
 #include <algorithm>

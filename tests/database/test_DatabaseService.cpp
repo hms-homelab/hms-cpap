@@ -7,7 +7,7 @@
 
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
-#include "models/CPAPModels.h"
+#include "parsers/SleeplinkBridge.h"
 #include <chrono>
 #include <optional>
 

@@ -7,7 +7,7 @@
  */
 
 #include <gtest/gtest.h>
-#include "parsers/EDFParser.h"
+#include "parsers/SleeplinkBridge.h"
 #include "database/DatabaseService.h"
 #include "services/DataPublisherService.h"
 #include "mqtt_client.h"

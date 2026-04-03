@@ -7,7 +7,7 @@
 #include "services/BurstCollectorService.h"
 #include "services/SessionDiscoveryService.h"
 #include "services/DataPublisherService.h"
-#include "parsers/EDFParser.h"
+#include "parsers/SleeplinkBridge.h"
 #include "database/DatabaseService.h"
 #include "database/IDatabase.h"
 #include "database/SQLiteDatabase.h"

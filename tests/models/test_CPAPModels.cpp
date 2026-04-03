@@ -5,7 +5,7 @@
  */
 
 #include <gtest/gtest.h>
-#include "models/CPAPModels.h"
+#include "parsers/SleeplinkBridge.h"
 #include <chrono>
 
 using namespace hms_cpap;
