@@ -97,7 +97,7 @@ CPAP_SOURCE=local   ./hms_cpap   # Local filesystem
 
 **Pros:** 65s end-to-end latency, direct WiFi connection, no network disruption. **Cons:** Requires purchasing the FYSETC board.
 
-**Firmware:** [hms-fysetc](https://github.com/hms-homelab/hms-fysetc) -- open-source ESP-IDF firmware (MIT). *Experimental -- not yet tested on hardware.*
+**Firmware:** [hms-fysetc](https://github.com/hms-homelab/hms-fysetc) -- open-source ESP-IDF firmware (MIT).
 
 ### Option C: Local Filesystem
 
