@@ -7,7 +7,7 @@
 
 **Lightweight C++ microservice for ResMed CPAP data collection with built-in web dashboard and Home Assistant integration.**
 
-Automatically extracts sleep therapy data from your ResMed AirSense 10/11 CPAP machine, parses EDF files using OSCAR algorithms, and publishes 47+ metrics to Home Assistant via MQTT discovery. Includes a full Angular web UI with OSCAR/SleepHQ-grade charting. Supports three data sources: ez Share WiFi SD (HTTP polling), FYSETC SD WiFi Pro (HTTP poll), or local filesystem.
+Automatically extracts sleep therapy data from your ResMed AirSense 10/11 CPAP machine, parses EDF files using OSCAR algorithms, and publishes 47+ metrics to Home Assistant via MQTT discovery. Includes a full Angular web UI with OSCAR/SleepHQ-grade charting. Supports three data sources: ezShare WiFi SD, FYSETC SD WiFi Pro, or local filesystem. Both WiFi SD options plug into the CPAP's SD card slot -- no disassembly required.
 
 ## Screenshots
 
@@ -34,7 +34,7 @@ Automatically extracts sleep therapy data from your ResMed AirSense 10/11 CPAP m
 ## Features
 
 - **Built-in Web Dashboard** - Angular SPA with OSCAR/SleepHQ-grade charting, dark theme, live session support
-- **3 Data Sources** - ezShare WiFi SD (polling), FYSETC SD WiFi Pro (HTTP poll), or local files
+- **3 Data Sources** - ezShare WiFi SD, FYSETC SD WiFi Pro, or local files (WiFi options are optional hardware -- plug into SD slot, no CPAP disassembly)
 - **47+ Metrics** - AHI, leak rate, pressure, usage hours, events, STR daily summary, LLM AI summary
 - **Home Assistant Auto-Discovery** - Instant MQTT integration with 47 sensor entities
 - **Multi-Database** - PostgreSQL, MySQL/MariaDB, or SQLite (auto-created on first run)
@@ -81,23 +81,23 @@ CPAP_SOURCE=local   ./hms_cpap   # Local filesystem
 
 ## Data Sources
 
-### Option A: ezShare WiFi SD
+### Option A: ezShare WiFi SD (Optional Hardware)
 
 **How it works:** HTTP polling every 65s via WiFi bridge.
 
-**Hardware:** ezShare WiFi SD card + Raspberry Pi with dual WiFi (wlan0=home, wlan1=ezShare AP).
+**Hardware (optional):** ezShare WiFi SD card + Raspberry Pi with dual WiFi (wlan0=home, wlan1=ezShare AP). Plugs into the CPAP's SD card slot like a normal SD card -- no disassembly, no modification to the CPAP.
 
 **Pros:** Simple, no hardware mods. **Cons:** 2-4 min session detection latency, requires dedicated Pi WiFi interface.
 
-### Option B: FYSETC SD WiFi Pro (Recommended)
+### Option B: FYSETC SD WiFi Pro (Optional Hardware, Recommended)
 
-**How it works:** ESP32-based PCB replaces SD card in CPAP. Serves EDF files over HTTP. HMS-CPAP polls it every 65s for new/changed files.
+**How it works:** The FYSETC SD WiFi Pro is an SD-card-shaped board with an ESP32 and a micro SD slot. Insert your CPAP's micro SD into the FYSETC, then plug the FYSETC into the CPAP's SD card slot. It joins your home WiFi and serves EDF files over HTTP. HMS-CPAP polls it every 65s for new/changed files.
 
-**Hardware:** FYSETC SD WiFi Pro board installed inside CPAP machine.
+**Hardware (optional):** FYSETC SD WiFi Pro board. Plugs into the CPAP's SD card slot like a normal SD card -- no disassembly, no modification to the CPAP.
 
-**Pros:** 65s end-to-end latency, direct WiFi connection, no network disruption. **Cons:** Requires hardware installation inside CPAP.
+**Pros:** 65s end-to-end latency, direct WiFi connection, no network disruption. **Cons:** Requires purchasing the FYSETC board.
 
-**Firmware:** [hms-cpap-fysetc](https://github.com/hms-homelab/hms-cpap-fysetc) -- open-source ESP-IDF firmware (MIT).
+**Firmware:** [hms-fysetc](https://github.com/hms-homelab/hms-fysetc) -- open-source ESP-IDF firmware (MIT). *Experimental -- not yet tested on hardware.*
 
 ### Option C: Local Filesystem
 
