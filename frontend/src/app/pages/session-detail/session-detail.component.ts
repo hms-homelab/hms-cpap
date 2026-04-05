@@ -294,12 +294,19 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
   }
 
   private updateLiveDuration() {
-    if (!this.sessionStart) return;
-    const now = new Date();
-    const mins = Math.floor((now.getTime() - this.sessionStart.getTime()) / 60000);
-    const h = Math.floor(mins / 60);
-    const m = mins % 60;
-    this.liveDuration = h > 0 ? `${h}h ${m}m` : `${m}m`;
+    if (!this.session) return;
+    // Use actual parsed BRP data duration (not wall clock).
+    // Wall clock (now - session_start) overestimates because it includes
+    // the delay before Fysetc starts serving files and any downtime gaps.
+    const hours = +(this.session.duration_hours || 0);
+    if (hours > 0) {
+      const totalMins = Math.round(hours * 60);
+      const h = Math.floor(totalMins / 60);
+      const m = totalMins % 60;
+      this.liveDuration = h > 0 ? `${h}h ${m}m` : `${m}m`;
+    } else {
+      this.liveDuration = '0m';
+    }
   }
 
   private loadSession() {

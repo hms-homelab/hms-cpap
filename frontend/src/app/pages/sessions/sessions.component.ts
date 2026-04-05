@@ -89,12 +89,16 @@ export class SessionsComponent implements OnInit, OnDestroy {
   }
 
   liveDuration(s: SessionListItem): string {
-    const start = new Date(s.session_start.replace(' ', 'T'));
-    const now = new Date();
-    const mins = Math.floor((now.getTime() - start.getTime()) / 60000);
-    const h = Math.floor(mins / 60);
-    const m = mins % 60;
-    return h > 0 ? `${h}h ${m}m` : `${m}m`;
+    // Use actual parsed BRP data duration (not wall clock).
+    // Wall clock overestimates due to Fysetc startup delay and downtime gaps.
+    const hours = +(s.duration_hours || 0);
+    if (hours > 0) {
+      const totalMins = Math.round(hours * 60);
+      const h = Math.floor(totalMins / 60);
+      const m = totalMins % 60;
+      return h > 0 ? `${h}h ${m}m` : `${m}m`;
+    }
+    return '0m';
   }
 
   sleepDay(sessionStart: string): string {
