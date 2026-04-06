@@ -99,9 +99,17 @@ include(FetchContent)
 
 # sleeplink-parser: shared CPAP parsing library (ResMed EDF + Philips DS2)
 set(SLEEPLINK_PARSER_WITH_PHILIPS ON CACHE BOOL "Enable Philips DreamStation parser" FORCE)
-FetchContent_Declare(sleeplink_parser
-    SOURCE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../hms-sleeplink/hms-sleeplink-parser
-)
+set(SLEEPLINK_PARSER_LOCAL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../hms-sleeplink/hms-sleeplink-parser)
+if(EXISTS ${SLEEPLINK_PARSER_LOCAL_DIR}/CMakeLists.txt)
+    FetchContent_Declare(sleeplink_parser
+        SOURCE_DIR ${SLEEPLINK_PARSER_LOCAL_DIR}
+    )
+else()
+    FetchContent_Declare(sleeplink_parser
+        GIT_REPOSITORY https://github.com/hms-homelab/hms-sleeplink-parser.git
+        GIT_TAG        master
+    )
+endif()
 FetchContent_MakeAvailable(sleeplink_parser)
 
 # hms-shared modules
