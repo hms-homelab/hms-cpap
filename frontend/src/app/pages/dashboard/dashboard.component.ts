@@ -18,7 +18,7 @@ const MODE_LABELS: Record<string, string> = {
       <h2>Dashboard</h2>
       <div class="cards" *ngIf="data">
         <app-metric-card label="Last Night AHI" [value]="data.latest_night.ahi" unit="events/h" />
-        <app-metric-card label="Usage" [value]="data.latest_night.usage_hours" unit="hours" />
+        <app-metric-card label="Last Night Usage" [value]="data.latest_night.usage_hours" unit="hours" />
         <app-metric-card label="Compliance" [value]="data.latest_night.compliance_pct" unit="%" />
         <app-metric-card label="Avg Leak" [value]="data.latest_night.leak_avg" unit="L/min" />
         <app-metric-card label="Mode" [value]="modeName" unit="" />
