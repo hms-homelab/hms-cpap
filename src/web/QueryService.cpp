@@ -7,19 +7,16 @@ QueryService::QueryService(std::shared_ptr<IDatabase> db, const std::string& dev
     : db_(db), device_id_(device_id), dt_(db->dbType()) {}
 
 Json::Value QueryService::getDashboard() {
-    // --- Latest night ---
+    // --- Latest night (from daily summary — whole night, not single session) ---
     std::string q_latest =
-        "SELECT " + sql::sleepDay("s.session_start", dt_) + " as sleep_day,"
-        " " + sql::round("s.duration_seconds / 3600.0", 2, dt_) + " as usage_hours,"
-        " " + sql::round("m.ahi", 2, dt_) + " as ahi,"
-        " " + sql::round("COALESCE(m.avg_leak_rate, 0)", 1, dt_) + " as leak_avg,"
-        " COALESCE(d.mode, 0) as therapy_mode"
-        " FROM cpap_sessions s"
-        " LEFT JOIN cpap_session_metrics m ON m.session_id = s.id"
-        " LEFT JOIN cpap_daily_summary d ON d.device_id = s.device_id"
-        " AND d.record_date = " + sql::sleepDay("s.session_start", dt_) +
-        " WHERE s.device_id = " + sql::param(1, dt_) + " AND s.session_end IS NOT NULL"
-        " ORDER BY s.session_start DESC LIMIT 1";
+        "SELECT record_date as sleep_day,"
+        " " + sql::round("duration_minutes / 60.0", 2, dt_) + " as usage_hours,"
+        " " + sql::round("ahi", 2, dt_) + " as ahi,"
+        " " + sql::round("COALESCE(leak_50, 0)", 1, dt_) + " as leak_avg,"
+        " COALESCE(mode, 0) as therapy_mode"
+        " FROM cpap_daily_summary"
+        " WHERE device_id = " + sql::param(1, dt_) +
+        " ORDER BY record_date DESC LIMIT 1";
 
     // --- AHI trend (30 days) ---
     std::string q_ahi =
