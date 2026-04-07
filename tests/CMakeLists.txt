@@ -44,6 +44,11 @@ set(TEST_SOURCES
     agent/test_AgentTools.cpp
     agent/test_AgentMemory.cpp
     agent/test_AgentService.cpp
+    ml/test_StandardScaler.cpp
+    ml/test_DecisionTree.cpp
+    ml/test_RandomForest.cpp
+    ml/test_FeatureEngine.cpp
+    ml/test_MLTrainingService.cpp
 )
 
 # Create test executable

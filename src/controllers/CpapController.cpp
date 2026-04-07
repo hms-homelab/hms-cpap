@@ -9,6 +9,8 @@ namespace hms_cpap {
 std::shared_ptr<QueryService> CpapController::qs_;
 hms_cpap::AppConfig* CpapController::config_ = nullptr;
 std::string CpapController::config_path_;
+std::function<void()> CpapController::ml_train_trigger_;
+std::function<Json::Value()> CpapController::ml_status_getter_;
 
 void CpapController::setQueryService(std::shared_ptr<QueryService> qs) { qs_ = qs; }
 
@@ -39,7 +41,7 @@ void CpapController::health(const drogon::HttpRequestPtr&,
                              std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
     Json::Value j;
     j["status"] = "ok";
-    j["version"] = "2.1.0";
+    j["version"] = "3.0.0";
     j["service"] = "hms-cpap";
     cb(jsonResp(j));
 }
@@ -229,6 +231,15 @@ void CpapController::updateConfig(const drogon::HttpRequestPtr& req,
             config_->llm.api_key = l["api_key"].asString();
     }
 
+    if (j.isMember("ml_training")) {
+        auto& ml = j["ml_training"];
+        if (ml.isMember("enabled")) config_->ml_training.enabled = ml["enabled"].asBool();
+        if (ml.isMember("schedule")) config_->ml_training.schedule = ml["schedule"].asString();
+        if (ml.isMember("model_dir")) config_->ml_training.model_dir = ml["model_dir"].asString();
+        if (ml.isMember("min_days")) config_->ml_training.min_days = ml["min_days"].asInt();
+        if (ml.isMember("max_training_days")) config_->ml_training.max_training_days = ml["max_training_days"].asInt();
+    }
+
     // Save to disk
     config_->save(config_path_);
 
@@ -268,6 +279,87 @@ void CpapController::testEzshare(const drogon::HttpRequestPtr& req,
     result["configured"] = !url.empty();
     result["status"] = url.empty() ? "not_configured" : "configured";
     cb(jsonResp(result));
+}
+
+void CpapController::triggerMlTrain(const drogon::HttpRequestPtr&,
+                                    std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    if (ml_train_trigger_) {
+        ml_train_trigger_();
+        Json::Value result;
+        result["status"] = "training_started";
+        cb(jsonResp(result));
+    } else {
+        cb(jsonError("ML training not configured", drogon::k503ServiceUnavailable));
+    }
+}
+
+void CpapController::mlStatus(const drogon::HttpRequestPtr&,
+                               std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    if (ml_status_getter_) {
+        cb(jsonResp(ml_status_getter_()));
+    } else {
+        Json::Value result;
+        result["status"] = "not_configured";
+        result["last_trained"] = "never";
+        result["models"] = Json::Value(Json::arrayValue);
+        cb(jsonResp(result));
+    }
+}
+
+void CpapController::getLlmPrompt(const drogon::HttpRequestPtr&,
+                                   std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    std::string path;
+    if (config_ && !config_->llm.prompt_file.empty()) {
+        path = config_->llm.prompt_file;
+    } else {
+        const char* env_path = std::getenv("LLM_PROMPT_FILE");
+        path = env_path ? env_path : "./llm_prompt.txt";
+    }
+
+    Json::Value result;
+    result["path"] = path;
+    try {
+        std::ifstream f(path);
+        if (f.is_open()) {
+            std::ostringstream ss;
+            ss << f.rdbuf();
+            result["prompt"] = ss.str();
+        } else {
+            result["prompt"] = "";
+        }
+    } catch (...) {
+        result["prompt"] = "";
+    }
+    cb(jsonResp(result));
+}
+
+void CpapController::updateLlmPrompt(const drogon::HttpRequestPtr& req,
+                                      std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    auto body = req->getJsonObject();
+    if (!body || !(*body).isMember("prompt")) {
+        cb(jsonError("Missing 'prompt' field", drogon::k400BadRequest));
+        return;
+    }
+
+    std::string path;
+    if (config_ && !config_->llm.prompt_file.empty()) {
+        path = config_->llm.prompt_file;
+    } else {
+        const char* env_path = std::getenv("LLM_PROMPT_FILE");
+        path = env_path ? env_path : "./llm_prompt.txt";
+    }
+
+    try {
+        std::ofstream f(path);
+        f << (*body)["prompt"].asString();
+        Json::Value result;
+        result["status"] = "saved";
+        result["path"] = path;
+        cb(jsonResp(result));
+    } catch (const std::exception& e) {
+        cb(jsonError(std::string("Failed to write prompt: ") + e.what(),
+                     drogon::k500InternalServerError));
+    }
 }
 
 } // namespace hms_cpap

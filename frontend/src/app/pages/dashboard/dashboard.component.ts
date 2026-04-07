@@ -23,6 +23,56 @@ const MODE_LABELS: Record<string, string> = {
         <app-metric-card label="Avg Leak" [value]="data.latest_night.leak_avg" unit="L/min" />
         <app-metric-card label="Mode" [value]="modeName" unit="" />
       </div>
+      <!-- ML Insights -->
+      <div class="ml-section" *ngIf="mlStatus?.models_loaded">
+        <h3>ML Insights</h3>
+        <div class="ml-cards">
+          <div class="ml-card">
+            <div class="ml-label">Predicted AHI</div>
+            <div class="ml-value">{{ mlPredictions?.predicted_ahi?.toFixed(1) || '--' }}</div>
+            <div class="ml-unit">events/hr</div>
+          </div>
+          <div class="ml-card">
+            <div class="ml-label">Predicted Hours</div>
+            <div class="ml-value">{{ mlPredictions?.predicted_hours?.toFixed(1) || '--' }}</div>
+            <div class="ml-unit">hours</div>
+          </div>
+          <div class="ml-card">
+            <div class="ml-label">Leak Risk</div>
+            <div class="ml-value" [class.risk-high]="(mlPredictions?.leak_risk_pct || 0) > 50">
+              {{ mlPredictions?.leak_risk_pct?.toFixed(0) || '--' }}%
+            </div>
+            <div class="ml-unit">probability</div>
+          </div>
+          <div class="ml-card">
+            <div class="ml-label">Anomaly</div>
+            <div class="ml-value" [class.anomaly-normal]="mlPredictions?.anomaly_class === 'NORMAL'"
+                 [class.anomaly-warn]="mlPredictions?.anomaly_class !== 'NORMAL'">
+              {{ mlPredictions?.anomaly_class || '--' }}
+            </div>
+            <div class="ml-unit">detection</div>
+          </div>
+        </div>
+        <div class="ml-meta">
+          <span class="ml-meta-item">Last trained: {{ mlStatus?.last_trained || 'never' }}</span>
+          <span class="ml-meta-item">Models: {{ mlStatus?.models?.length || 0 }}</span>
+          <span class="ml-meta-item">Samples: {{ mlStatus?.models?.[0]?.samples_used || 0 }}</span>
+          <button class="btn-inference" (click)="runInference()" [disabled]="inferring">
+            {{ inferring ? 'Running...' : 'Run Inference' }}
+          </button>
+        </div>
+        <div class="ml-model-metrics" *ngIf="showModelDetails">
+          <div class="model-row" *ngFor="let m of mlStatus.models">
+            <span class="model-name">{{ m.name }}</span>
+            <span class="model-metric">{{ m.name.includes('predictor') || m.name.includes('detector') ? 'Acc' : 'R2' }}: {{ m.primary_metric.toFixed(3) }}</span>
+            <span class="model-metric">{{ m.name.includes('predictor') || m.name.includes('detector') ? 'F1' : 'MAE' }}: {{ m.secondary_metric.toFixed(3) }}</span>
+          </div>
+        </div>
+        <button class="btn-details" (click)="showModelDetails = !showModelDetails">
+          {{ showModelDetails ? 'Hide model details' : 'Show model details' }}
+        </button>
+      </div>
+
       <div class="charts">
         <div class="chart-container">
           <canvas #ahiChart></canvas>
@@ -61,6 +111,48 @@ const MODE_LABELS: Record<string, string> = {
     .chart-container { background: #1e1e2f; border: 1px solid #333; border-radius: 8px; padding: 1rem; }
     .chart-container.wide { grid-column: 1 / -1; }
     @media (max-width: 768px) { .charts { grid-template-columns: 1fr; } }
+
+    /* ML Insights */
+    .ml-section {
+      background: #1e1e2f; border: 1px solid #333; border-radius: 8px;
+      padding: 1.25rem; margin-bottom: 1.5rem;
+    }
+    .ml-section h3 { color: #ce93d8; margin: 0 0 1rem; font-size: 1rem; }
+    .ml-cards { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
+    .ml-card {
+      flex: 1; min-width: 120px; background: #15152a; border: 1px solid #333;
+      border-radius: 6px; padding: 0.75rem; text-align: center;
+    }
+    .ml-label { color: #888; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }
+    .ml-value { color: #e0e0e0; font-size: 1.5rem; font-weight: 700; margin: 0.25rem 0; }
+    .ml-unit { color: #666; font-size: 0.7rem; }
+    .risk-high { color: #ef5350; }
+    .anomaly-normal { color: #66bb6a; }
+    .anomaly-warn { color: #ffa726; }
+    .ml-meta {
+      display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
+      font-size: 0.8rem; color: #888; margin-bottom: 0.5rem;
+    }
+    .ml-meta-item { }
+    .btn-inference {
+      background: #7e57c2; color: #fff; border: none; border-radius: 4px;
+      padding: 0.35rem 1rem; font-size: 0.8rem; font-weight: 600;
+      cursor: pointer; margin-left: auto;
+    }
+    .btn-inference:hover { background: #9575cd; }
+    .btn-inference:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-details {
+      background: none; border: none; color: #64b5f6; font-size: 0.75rem;
+      cursor: pointer; padding: 0; margin-top: 0.5rem;
+    }
+    .btn-details:hover { text-decoration: underline; }
+    .ml-model-metrics { margin-top: 0.5rem; }
+    .model-row {
+      display: flex; gap: 1rem; padding: 0.25rem 0; font-size: 0.8rem;
+      border-bottom: 1px solid #2a2a3d;
+    }
+    .model-name { color: #90caf9; min-width: 160px; }
+    .model-metric { color: #aaa; font-family: monospace; }
   `]
 })
 export class DashboardComponent implements OnInit, AfterViewInit {
@@ -78,6 +170,12 @@ export class DashboardComponent implements OnInit, AfterViewInit {
   isCpapMode = true;
   private charts: Chart[] = [];
 
+  // ML state
+  mlStatus: any = null;
+  mlPredictions: any = null;
+  inferring = false;
+  showModelDetails = false;
+
   constructor(private api: CpapApiService) {}
 
   ngOnInit() {
@@ -86,10 +184,42 @@ export class DashboardComponent implements OnInit, AfterViewInit {
       const mode = d.latest_night.therapy_mode || '0';
       this.modeName = MODE_LABELS[mode] || 'Unknown';
       this.isCpapMode = mode === '0';
-      // Delay to let *ngIf render conditional elements
       setTimeout(() => {
         if (this.ahiChartRef) this.renderCharts();
       }, 50);
+    });
+
+    // Load ML status + predictions
+    this.api.getMlStatus().subscribe({
+      next: (s) => {
+        this.mlStatus = s;
+        if (s.models_loaded) {
+          this.mlPredictions = s.predictions || null;
+        }
+      },
+      error: () => {},
+    });
+  }
+
+  runInference(): void {
+    this.inferring = true;
+    // Trigger training (which also runs inference after)
+    // For pure inference, we use the same train trigger — it will just predict if models exist
+    this.api.triggerMlTraining().subscribe({
+      next: () => {
+        // Poll for updated predictions
+        setTimeout(() => {
+          this.api.getMlStatus().subscribe({
+            next: (s) => {
+              this.mlStatus = s;
+              this.mlPredictions = s.predictions || this.mlPredictions;
+              this.inferring = false;
+            },
+            error: () => { this.inferring = false; },
+          });
+        }, 5000);
+      },
+      error: () => { this.inferring = false; },
     });
   }
 

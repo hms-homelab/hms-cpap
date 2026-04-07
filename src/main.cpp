@@ -15,6 +15,7 @@
 #include "database/PostgresDatabase.h"
 #endif
 #include "agent/AgentService.h"
+#include "services/MLTrainingService.h"
 #include "agent/IAgentLLM.h"
 #include "mqtt_client.h"
 #include "llm_client.h"
@@ -37,6 +38,7 @@
 std::atomic<bool> shutdown_requested(false);
 std::unique_ptr<hms_cpap::BurstCollectorService> burst_service;
 std::unique_ptr<hms_cpap::AgentService> agent_service;
+std::unique_ptr<hms_cpap::MLTrainingService> ml_service;
 
 /**
  * Graceful shutdown logic (shared by all platforms)
@@ -45,6 +47,7 @@ void requestShutdown() {
     shutdown_requested = true;
     if (burst_service) burst_service->stop();
     if (agent_service) agent_service->stop();
+    if (ml_service) ml_service->stop();
 #ifdef BUILD_WITH_WEB
     drogon::app().quit();
 #endif
@@ -512,6 +515,59 @@ int main(int argc, char** argv) {
 
         std::cout << "   Press Ctrl+C to stop" << std::endl << std::endl;
 
+        // Start ML Training module if enabled
+        if (config.ml_training.enabled) {
+            hms_cpap::MLTrainingService::Config ml_cfg;
+            ml_cfg.enabled = true;
+            ml_cfg.schedule = config.ml_training.schedule;
+            ml_cfg.min_days = config.ml_training.min_days;
+            ml_cfg.max_training_days = config.ml_training.max_training_days;
+            ml_cfg.device_id = config.device_id;
+
+            // Determine model directory
+            if (!config.ml_training.model_dir.empty()) {
+                ml_cfg.model_dir = config.ml_training.model_dir;
+            } else {
+                std::string data_dir = std::getenv("HOME") ? std::string(std::getenv("HOME")) + "/.hms-cpap" : ".";
+                ml_cfg.model_dir = data_dir + "/models";
+            }
+
+            // Separate DB connection for ML (pqxx is not thread-safe)
+            std::shared_ptr<hms_cpap::IDatabase> ml_db;
+            if (config.database.type == "postgresql") {
+#ifdef WITH_POSTGRESQL
+                std::string ml_conn = "host=" + config.database.host +
+                    " port=" + std::to_string(config.database.port) +
+                    " dbname=" + config.database.name +
+                    " user=" + config.database.user +
+                    " password=" + config.database.password;
+                ml_db = std::make_shared<hms_cpap::PostgresDatabase>(ml_conn);
+                ml_db->connect();
+#endif
+            } else {
+                ml_db = db; // SQLite has its own locking
+            }
+
+            // Create ML MQTT client (separate from burst service)
+            std::shared_ptr<hms::MqttClient> ml_mqtt;
+            if (config.mqtt.enabled) {
+                hms::MqttConfig ml_mqtt_cfg;
+                ml_mqtt_cfg.broker = config.mqtt.broker;
+                ml_mqtt_cfg.port = config.mqtt.port;
+                ml_mqtt_cfg.username = config.mqtt.username;
+                ml_mqtt_cfg.password = config.mqtt.password;
+                ml_mqtt_cfg.client_id = config.mqtt.client_id + "_ml";
+                ml_mqtt = std::make_shared<hms::MqttClient>(ml_mqtt_cfg);
+                ml_mqtt->connect();
+            }
+
+            ml_service = std::make_unique<hms_cpap::MLTrainingService>(ml_cfg, ml_db, ml_mqtt);
+            ml_service->start();
+
+            std::cout << "ML Training: enabled (schedule: " << config.ml_training.schedule
+                      << ", min_days: " << config.ml_training.min_days << ")" << std::endl;
+        }
+
         // Start Agent module if enabled
         std::string agent_enabled = hms_cpap::ConfigManager::get("AGENT_ENABLED", "false");
         if (agent_enabled == "true" || agent_enabled == "1") {
@@ -606,6 +662,16 @@ int main(int argc, char** argv) {
             hms_cpap::CpapController::setQueryService(query_service);
             hms_cpap::CpapController::setConfig(&config, config_path);
 
+            // Wire ML service triggers to controller
+            if (ml_service) {
+                hms_cpap::CpapController::ml_train_trigger_ = [&]() {
+                    ml_service->triggerTraining();
+                };
+                hms_cpap::CpapController::ml_status_getter_ = [&]() -> Json::Value {
+                    return ml_service->getStatus();
+                };
+            }
+
             drogon::app()
                 .setLogLevel(trantor::Logger::kWarn)
                 .addListener("0.0.0.0", web_port)
@@ -650,6 +716,10 @@ int main(int argc, char** argv) {
 #endif
 
         // Cleanup
+        if (ml_service) {
+            ml_service->stop();
+            ml_service.reset();
+        }
         if (agent_service) {
             agent_service->stop();
             agent_service.reset();

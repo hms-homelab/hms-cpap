@@ -62,6 +62,15 @@ struct AppConfig {
         int max_iterations = 5;
     } agent;
 
+    // ML Training (optional)
+    struct MlTraining {
+        bool enabled = false;
+        std::string schedule = "weekly";  // "daily", "weekly", "monthly"
+        std::string model_dir;            // default: empty (uses dataDir()/models)
+        int min_days = 30;                // minimum therapy days before training
+        int max_training_days = 0;        // 0 = use all data, >0 = limit lookback
+    } ml_training;
+
     bool setup_complete = false;
 
     /// Fill empty config fields from environment variables (fallback).
@@ -142,6 +151,23 @@ struct AppConfig {
             auto v = env("AGENT_EMBED_MODEL");
             if (!v.empty()) agent.embed_model = v;
         }
+
+        // ML Training
+        if (!ml_training.enabled && env("ML_ENABLED") == "true")
+            ml_training.enabled = true;
+        if (ml_training.schedule == "weekly") {
+            auto v = env("ML_SCHEDULE");
+            if (!v.empty()) ml_training.schedule = v;
+        }
+        if (ml_training.model_dir.empty()) ml_training.model_dir = env("ML_MODEL_DIR");
+        if (ml_training.max_training_days == 0) {
+            int v = envInt("ML_MAX_TRAINING_DAYS", 0);
+            if (v > 0) ml_training.max_training_days = v;
+        }
+        if (ml_training.min_days == 30) {
+            int v = envInt("ML_MIN_DAYS", 0);
+            if (v > 0) ml_training.min_days = v;
+        }
     }
 
     // Get default data directory (~/.hms-cpap/)
@@ -214,6 +240,15 @@ struct AppConfig {
                 if (a.contains("max_iterations")) config.agent.max_iterations = a["max_iterations"];
             }
 
+            if (j.contains("ml_training")) {
+                auto& ml = j["ml_training"];
+                if (ml.contains("enabled"))   config.ml_training.enabled = ml["enabled"];
+                if (ml.contains("schedule"))  config.ml_training.schedule = ml["schedule"];
+                if (ml.contains("model_dir")) config.ml_training.model_dir = ml["model_dir"];
+                if (ml.contains("min_days"))  config.ml_training.min_days = ml["min_days"];
+                if (ml.contains("max_training_days")) config.ml_training.max_training_days = ml["max_training_days"];
+            }
+
             return true;
         } catch (const std::exception& e) {
             std::cerr << "Config load error: " << e.what() << std::endl;
@@ -264,6 +299,12 @@ struct AppConfig {
             j["agent"]["temperature"] = agent.temperature;
             j["agent"]["max_iterations"] = agent.max_iterations;
 
+            j["ml_training"]["enabled"] = ml_training.enabled;
+            j["ml_training"]["schedule"] = ml_training.schedule;
+            j["ml_training"]["model_dir"] = ml_training.model_dir;
+            j["ml_training"]["min_days"] = ml_training.min_days;
+            j["ml_training"]["max_training_days"] = ml_training.max_training_days;
+
             std::ofstream f(path);
             f << j.dump(2);
             return true;
@@ -310,6 +351,12 @@ struct AppConfig {
         j["agent"]["embed_model"] = agent.embed_model;
         j["agent"]["temperature"] = agent.temperature;
         j["agent"]["max_iterations"] = agent.max_iterations;
+
+        j["ml_training"]["enabled"] = ml_training.enabled;
+        j["ml_training"]["schedule"] = ml_training.schedule;
+        j["ml_training"]["model_dir"] = ml_training.model_dir;
+        j["ml_training"]["min_days"] = ml_training.min_days;
+        j["ml_training"]["max_training_days"] = ml_training.max_training_days;
 
         return j;
     }

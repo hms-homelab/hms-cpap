@@ -56,4 +56,20 @@ export class CpapApiService {
       `/api/config/test-ezshare?url=${encodeURIComponent(url)}`
     );
   }
+
+  triggerMlTraining(): Observable<any> {
+    return this.http.post<any>('/api/ml/train', {});
+  }
+
+  getMlStatus(): Observable<any> {
+    return this.http.get<any>('/api/ml/status');
+  }
+
+  getLlmPrompt(): Observable<{prompt: string; path: string}> {
+    return this.http.get<{prompt: string; path: string}>('/api/llm-prompt');
+  }
+
+  updateLlmPrompt(prompt: string): Observable<any> {
+    return this.http.put<any>('/api/llm-prompt', { prompt });
+  }
 }
