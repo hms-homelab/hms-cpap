@@ -60,6 +60,8 @@ void MLTrainingService::start() {
     // Try to load existing models from disk
     if (loadModels()) {
         spdlog::info("MLTrainingService: loaded 4 models from {}", config_.model_dir);
+        // Generate initial predictions so dashboard has data
+        try { predictLatest(); } catch (...) {}
     } else {
         spdlog::info("MLTrainingService: no existing models found — will train on first run");
     }

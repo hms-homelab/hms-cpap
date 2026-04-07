@@ -308,13 +308,16 @@ void CpapController::mlStatus(const drogon::HttpRequestPtr&,
 
 void CpapController::getLlmPrompt(const drogon::HttpRequestPtr&,
                                    std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
-    std::string path;
-    if (config_ && !config_->llm.prompt_file.empty()) {
-        path = config_->llm.prompt_file;
-    } else {
+    auto resolve_prompt_path = [this]() -> std::string {
+        if (config_ && !config_->llm.prompt_file.empty())
+            return config_->llm.prompt_file;
         const char* env_path = std::getenv("LLM_PROMPT_FILE");
-        path = env_path ? env_path : "./llm_prompt.txt";
-    }
+        if (env_path) return env_path;
+        const char* home = std::getenv("HOME");
+        return std::string(home ? home : ".") + "/.hms-cpap/llm_prompt.txt";
+    };
+
+    std::string path = resolve_prompt_path();
 
     Json::Value result;
     result["path"] = path;
@@ -341,13 +344,15 @@ void CpapController::updateLlmPrompt(const drogon::HttpRequestPtr& req,
         return;
     }
 
-    std::string path;
-    if (config_ && !config_->llm.prompt_file.empty()) {
-        path = config_->llm.prompt_file;
-    } else {
+    auto resolve_prompt_path = [this]() -> std::string {
+        if (config_ && !config_->llm.prompt_file.empty())
+            return config_->llm.prompt_file;
         const char* env_path = std::getenv("LLM_PROMPT_FILE");
-        path = env_path ? env_path : "./llm_prompt.txt";
-    }
+        if (env_path) return env_path;
+        const char* home = std::getenv("HOME");
+        return std::string(home ? home : ".") + "/.hms-cpap/llm_prompt.txt";
+    };
+    std::string path = resolve_prompt_path();
 
     try {
         std::ofstream f(path);
