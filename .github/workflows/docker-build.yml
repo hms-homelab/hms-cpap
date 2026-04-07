@@ -151,6 +151,13 @@ jobs:
         run: npx ng build --configuration production
 
       # ── vcpkg + C++ Build ───────────────────────────────────────
+      - name: Cache vcpkg packages
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\vcpkg\archives
+          key: vcpkg-win-x64-${{ hashFiles('vcpkg.json') }}
+          restore-keys: vcpkg-win-x64-
+
       - name: Install vcpkg dependencies
         run: |
           vcpkg install --triplet x64-windows
