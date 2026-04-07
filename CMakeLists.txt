@@ -188,6 +188,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 # Link libraries
 if(MSVC)
     target_link_libraries(${PROJECT_NAME}
+        sleeplink_parser
         JsonCpp::JsonCpp
         PahoMqttCpp::paho-mqttpp3
         eclipse-paho-mqtt-c::paho-mqtt3as

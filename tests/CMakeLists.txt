@@ -63,6 +63,7 @@ if(MSVC)
         GTest::gtest
         GTest::gtest_main
         GTest::gmock
+        sleeplink_parser
         JsonCpp::JsonCpp
         PahoMqttCpp::paho-mqttpp3
         eclipse-paho-mqtt-c::paho-mqtt3as
