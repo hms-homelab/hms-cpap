@@ -30,4 +30,11 @@ export interface AppConfig {
     model: string;
     api_key: string;
   };
+  ml_training: {
+    enabled: boolean;
+    schedule: string;
+    model_dir: string;
+    min_days: number;
+    max_training_days: number;
+  };
 }

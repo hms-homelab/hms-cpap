@@ -4,6 +4,7 @@
 #include <drogon/HttpController.h>
 #include "web/QueryService.h"
 #include "utils/AppConfig.h"
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -27,6 +28,10 @@ public:
     ADD_METHOD_TO(CpapController::updateConfig,  "/api/config",              drogon::Put);
     ADD_METHOD_TO(CpapController::setupComplete, "/api/setup",               drogon::Post);
     ADD_METHOD_TO(CpapController::testEzshare,   "/api/config/test-ezshare", drogon::Get);
+    ADD_METHOD_TO(CpapController::triggerMlTrain, "/api/ml/train",     drogon::Post);
+    ADD_METHOD_TO(CpapController::mlStatus,       "/api/ml/status",    drogon::Get);
+    ADD_METHOD_TO(CpapController::getLlmPrompt,   "/api/llm-prompt",   drogon::Get);
+    ADD_METHOD_TO(CpapController::updateLlmPrompt,"/api/llm-prompt",   drogon::Put);
     METHOD_LIST_END
 
     void health(const drogon::HttpRequestPtr& req,
@@ -67,8 +72,20 @@ public:
     void testEzshare(const drogon::HttpRequestPtr& req,
                      std::function<void(const drogon::HttpResponsePtr&)>&& cb);
 
+    void triggerMlTrain(const drogon::HttpRequestPtr& req,
+                        std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+    void mlStatus(const drogon::HttpRequestPtr& req,
+                  std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+    void getLlmPrompt(const drogon::HttpRequestPtr& req,
+                      std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+    void updateLlmPrompt(const drogon::HttpRequestPtr& req,
+                         std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+
     static void setQueryService(std::shared_ptr<QueryService> qs);
     static void setConfig(hms_cpap::AppConfig* cfg, const std::string& config_path);
+
+    static std::function<void()> ml_train_trigger_;
+    static std::function<Json::Value()> ml_status_getter_;
 
 private:
     static std::shared_ptr<QueryService> qs_;

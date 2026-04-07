@@ -210,6 +210,8 @@ else()
         OpenSSL::Crypto
         hms_llm
         hms_mqtt
+        spdlog::spdlog
+        stdc++fs
         pthread
     )
 endif()

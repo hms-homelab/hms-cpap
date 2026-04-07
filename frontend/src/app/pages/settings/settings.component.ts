@@ -164,7 +164,99 @@ import { AppConfig } from '../../models/config.model';
           </div>
         </div>
 
-        <!-- Section 5: Device -->
+        <!-- Section 5: ML Training -->
+        <div class="section">
+          <div class="section-header" (click)="toggle('ml_training')">
+            <span class="chevron" [class.open]="open['ml_training']">&#9654;</span>
+            ML Training
+            <span class="badge" *ngIf="!config.ml_training.enabled">optional</span>
+          </div>
+          <div class="section-body" *ngIf="open['ml_training']">
+            <label class="toggle-row">
+              Enabled
+              <input type="checkbox" [(ngModel)]="config.ml_training.enabled" name="ml_enabled" />
+            </label>
+            <ng-container *ngIf="config.ml_training.enabled">
+              <label>
+                Retrain Schedule
+                <select [(ngModel)]="config.ml_training.schedule" name="ml_schedule">
+                  <option value="daily">Daily</option>
+                  <option value="weekly">Weekly</option>
+                  <option value="monthly">Monthly</option>
+                </select>
+              </label>
+              <label>
+                Minimum Therapy Days
+                <input type="number" [(ngModel)]="config.ml_training.min_days" name="ml_min_days" min="7" />
+              </label>
+              <label>
+                Max Training Lookback (days)
+                <input type="number" [(ngModel)]="config.ml_training.max_training_days" name="ml_max_days" min="0"
+                       placeholder="0 = use all data" />
+                <span class="hint">0 = train on all available data</span>
+              </label>
+              <label>
+                Model Directory
+                <input type="text" [(ngModel)]="config.ml_training.model_dir" name="ml_model_dir"
+                       placeholder="~/.hms-cpap/models" />
+              </label>
+
+              <!-- ML Status -->
+              <div class="ml-status" *ngIf="mlStatus">
+                <div class="status-row">
+                  <span class="status-label">Status</span>
+                  <span class="status-value" [class.status-active]="mlStatus.status === 'training'">
+                    {{ mlStatus.status }}
+                  </span>
+                </div>
+                <div class="status-row">
+                  <span class="status-label">Last Trained</span>
+                  <span class="status-value">{{ mlStatus.last_trained || 'Never' }}</span>
+                </div>
+                <div class="status-row" *ngIf="mlStatus.models_loaded">
+                  <span class="status-label">Models</span>
+                  <span class="status-value">{{ mlStatus.model_count }} loaded</span>
+                </div>
+                <div class="model-metrics" *ngIf="mlStatus.models?.length">
+                  <div class="metric-row" *ngFor="let m of mlStatus.models">
+                    <span class="metric-name">{{ m.name }}</span>
+                    <span class="metric-val">{{ m.primary_metric | number:'1.4-4' }}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="ml-actions">
+                <button type="button" class="btn-train" (click)="trainNow()" [disabled]="mlTraining">
+                  {{ mlTraining ? 'Training...' : 'Train Now' }}
+                </button>
+              </div>
+            </ng-container>
+          </div>
+        </div>
+
+        <!-- Section 6: LLM Prompt -->
+        <div class="section">
+          <div class="section-header" (click)="toggle('llm_prompt')">
+            <span class="chevron" [class.open]="open['llm_prompt']">&#9654;</span>
+            LLM Prompt Template
+          </div>
+          <div class="section-body" *ngIf="open['llm_prompt']">
+            <label>
+              Prompt Text
+              <textarea [(ngModel)]="llmPrompt" name="llm_prompt_text" rows="10"
+                        placeholder="Loading..."></textarea>
+            </label>
+            <div class="prompt-path" *ngIf="llmPromptPath">File: {{ llmPromptPath }}</div>
+            <div class="prompt-actions">
+              <button type="button" class="btn-save-prompt" (click)="saveLlmPrompt()" [disabled]="savingPrompt">
+                {{ savingPrompt ? 'Saving...' : 'Save Prompt' }}
+              </button>
+              <button type="button" class="btn-reset" (click)="resetLlmPrompt()">Reset to Default</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Section 7: Device -->
         <div class="section">
           <div class="section-header" (click)="toggle('device')">
             <span class="chevron" [class.open]="open['device']">&#9654;</span>
@@ -262,6 +354,56 @@ import { AppConfig } from '../../models/config.model';
     }
     .toast-error { background: #c62828; }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+    /* ML Training */
+    .ml-status { margin-top: 1rem; }
+    .status-row {
+      display: flex; justify-content: space-between; padding: 0.3rem 0;
+      font-size: 0.85rem; border-bottom: 1px solid #2a2a3d;
+    }
+    .status-label { color: #888; }
+    .status-value { color: #e0e0e0; }
+    .status-active { color: #66bb6a; font-weight: 600; }
+    .model-metrics { margin-top: 0.5rem; }
+    .metric-row {
+      display: flex; justify-content: space-between; padding: 0.2rem 0;
+      font-size: 0.8rem; color: #aaa;
+    }
+    .metric-name { color: #90caf9; }
+    .metric-val { font-family: monospace; }
+    .ml-actions { margin-top: 0.75rem; }
+    .btn-train {
+      background: #7e57c2; color: #fff; border: none; border-radius: 6px;
+      padding: 0.5rem 1.5rem; font-size: 0.9rem; font-weight: 600;
+      cursor: pointer; transition: background 0.2s;
+    }
+    .btn-train:hover { background: #9575cd; }
+    .btn-train:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* LLM Prompt */
+    textarea {
+      background: #15152a; border: 1px solid #444; border-radius: 4px;
+      color: #e0e0e0; padding: 0.5rem 0.6rem; font-size: 0.85rem;
+      font-family: monospace; width: 100%; resize: vertical;
+      outline: none; transition: border-color 0.2s;
+    }
+    textarea:focus { border-color: #64b5f6; }
+    .prompt-path { font-size: 0.75rem; color: #666; margin-top: 0.3rem; }
+    .prompt-actions { margin-top: 0.75rem; display: flex; gap: 0.75rem; }
+    .btn-save-prompt {
+      background: #64b5f6; color: #111; border: none; border-radius: 6px;
+      padding: 0.5rem 1.5rem; font-size: 0.9rem; font-weight: 600;
+      cursor: pointer; transition: background 0.2s;
+    }
+    .btn-save-prompt:hover { background: #90caf9; }
+    .btn-save-prompt:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-reset {
+      background: transparent; color: #888; border: 1px solid #555; border-radius: 6px;
+      padding: 0.5rem 1rem; font-size: 0.85rem; cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-reset:hover { color: #e0e0e0; border-color: #888; }
+    .hint { font-size: 0.7rem; color: #666; font-style: italic; }
   `]
 })
 export class SettingsComponent implements OnInit {
@@ -272,11 +414,23 @@ export class SettingsComponent implements OnInit {
   toast = '';
   toastError = false;
 
+  // ML Training state
+  mlStatus: any = null;
+  mlTraining = false;
+
+  // LLM Prompt state
+  llmPrompt = '';
+  llmPromptPath = '';
+  savingPrompt = false;
+  defaultPrompt = '';
+
   open: Record<string, boolean> = {
     source: true,
     database: true,
     mqtt: false,
     llm: false,
+    ml_training: false,
+    llm_prompt: false,
     device: true,
   };
 
@@ -285,13 +439,29 @@ export class SettingsComponent implements OnInit {
   ngOnInit(): void {
     this.api.getConfig().subscribe({
       next: (cfg) => {
+        // Ensure ml_training exists with defaults
+        if (!cfg.ml_training) {
+          cfg.ml_training = { enabled: false, schedule: 'weekly', model_dir: '', min_days: 30, max_training_days: 0 };
+        }
         this.config = cfg;
         this.loading = false;
+        // Load ML status if enabled
+        if (cfg.ml_training?.enabled) this.loadMlStatus();
       },
       error: (err) => {
         this.error = 'Failed to load configuration.';
         this.loading = false;
       },
+    });
+
+    // Load LLM prompt
+    this.api.getLlmPrompt().subscribe({
+      next: (res) => {
+        this.llmPrompt = res.prompt;
+        this.llmPromptPath = res.path;
+        this.defaultPrompt = res.prompt;
+      },
+      error: () => {},
     });
   }
 
@@ -312,6 +482,57 @@ export class SettingsComponent implements OnInit {
         this.showToast('Save failed.', true);
       },
     });
+  }
+
+  loadMlStatus(): void {
+    this.api.getMlStatus().subscribe({
+      next: (status) => this.mlStatus = status,
+      error: () => {},
+    });
+  }
+
+  trainNow(): void {
+    this.mlTraining = true;
+    this.api.triggerMlTraining().subscribe({
+      next: () => {
+        this.showToast('Training started.', false);
+        // Poll status every 5s for up to 2 minutes
+        let polls = 0;
+        const interval = setInterval(() => {
+          this.loadMlStatus();
+          polls++;
+          if (this.mlStatus?.status !== 'training' || polls > 24) {
+            clearInterval(interval);
+            this.mlTraining = false;
+            if (this.mlStatus?.status !== 'training') {
+              this.showToast('Training complete.', false);
+            }
+          }
+        }, 5000);
+      },
+      error: () => {
+        this.mlTraining = false;
+        this.showToast('Failed to start training.', true);
+      },
+    });
+  }
+
+  saveLlmPrompt(): void {
+    this.savingPrompt = true;
+    this.api.updateLlmPrompt(this.llmPrompt).subscribe({
+      next: () => {
+        this.savingPrompt = false;
+        this.showToast('Prompt saved.', false);
+      },
+      error: () => {
+        this.savingPrompt = false;
+        this.showToast('Failed to save prompt.', true);
+      },
+    });
+  }
+
+  resetLlmPrompt(): void {
+    this.llmPrompt = this.defaultPrompt;
   }
 
   private showToast(msg: string, isError: boolean): void {
