@@ -43,27 +43,32 @@ BurstCollectorService::BurstCollectorService(int burst_interval_seconds)
         discovery_service_ = std::make_unique<SessionDiscoveryService>(*ezshare_client_);
     }
 
-    // Initialize MQTT client
-    std::string mqtt_broker = ConfigManager::get("MQTT_BROKER", "192.168.2.15");
-    std::string mqtt_port = ConfigManager::get("MQTT_PORT", "1883");
-    std::string mqtt_user = ConfigManager::get("MQTT_USER", "aamat");
-    std::string mqtt_password = ConfigManager::get("MQTT_PASSWORD", "exploracion");
-    std::string mqtt_client_id = ConfigManager::get("MQTT_CLIENT_ID", "hms_cpap_service");
+    // Initialize MQTT client (skip if disabled)
+    std::string mqtt_enabled_env = ConfigManager::get("MQTT_ENABLED", "true");
+    if (mqtt_enabled_env == "true") {
+        std::string mqtt_broker = ConfigManager::get("MQTT_BROKER", "192.168.2.15");
+        std::string mqtt_port = ConfigManager::get("MQTT_PORT", "1883");
+        std::string mqtt_user = ConfigManager::get("MQTT_USER", "");
+        std::string mqtt_password = ConfigManager::get("MQTT_PASSWORD", "");
+        std::string mqtt_client_id = ConfigManager::get("MQTT_CLIENT_ID", "hms_cpap_service");
 
-    hms::MqttConfig mqtt_config;
-    mqtt_config.broker = mqtt_broker;
-    mqtt_config.port = std::stoi(mqtt_port);
-    mqtt_config.username = mqtt_user;
-    mqtt_config.password = mqtt_password;
-    mqtt_config.client_id = mqtt_client_id;
+        hms::MqttConfig mqtt_config;
+        mqtt_config.broker = mqtt_broker;
+        mqtt_config.port = std::stoi(mqtt_port);
+        mqtt_config.username = mqtt_user;
+        mqtt_config.password = mqtt_password;
+        mqtt_config.client_id = mqtt_client_id;
 
-    mqtt_client_ = std::make_shared<hms::MqttClient>(mqtt_config);
-    std::string broker_address = "tcp://" + mqtt_broker + ":" + mqtt_port;
+        mqtt_client_ = std::make_shared<hms::MqttClient>(mqtt_config);
+        std::string broker_address = "tcp://" + mqtt_broker + ":" + mqtt_port;
 
-    if (mqtt_client_->connect()) {
-        std::cout << "✅ MQTT: Connected to " << broker_address << std::endl;
+        if (mqtt_client_->connect()) {
+            std::cout << "✅ MQTT: Connected to " << broker_address << std::endl;
+        } else {
+            std::cerr << "⚠️  MQTT: Connection failed (will retry)" << std::endl;
+        }
     } else {
-        std::cerr << "⚠️  MQTT: Connection failed (will retry)" << std::endl;
+        std::cout << "ℹ️  MQTT: Disabled" << std::endl;
     }
 
     // Initialize database service — pick backend from DB_TYPE

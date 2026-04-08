@@ -103,6 +103,11 @@ if(BUILD_WITH_POSTGRESQL)
     endif()
 endif()
 
+if(BUILD_WITH_MYSQL)
+    target_link_libraries(run_tests ${MYSQLCLIENT_LIBRARIES})
+    target_include_directories(run_tests PRIVATE ${MYSQLCLIENT_INCLUDE_DIRS})
+endif()
+
 # Discover tests (PRE_TEST defers discovery until ctest runs, fixing MSVC multi-config)
 gtest_discover_tests(run_tests DISCOVERY_MODE PRE_TEST)
 

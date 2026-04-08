@@ -413,6 +413,7 @@ int main(int argc, char** argv) {
         portableSetenv("DB_PASSWORD", config.database.password.c_str());
     }
 
+    portableSetenv("MQTT_ENABLED", config.mqtt.enabled ? "true" : "false");
     if (config.mqtt.enabled) {
         portableSetenv("MQTT_BROKER", config.mqtt.broker.c_str());
         std::string mqtt_port_str = std::to_string(config.mqtt.port);
