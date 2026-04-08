@@ -2,9 +2,6 @@ name: Build, Test, and Publish
 
 on:
   push:
-    branches:
-      - master
-      - main
     tags:
       - 'v*'
   pull_request:
