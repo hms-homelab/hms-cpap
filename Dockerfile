@@ -47,7 +47,7 @@ COPY llm_prompt.txt ./
 
 # Build HMS-CPAP with Web UI support
 RUN mkdir build && cd build && \
-    cmake -DBUILD_TESTS=OFF -DBUILD_WITH_WEB=ON .. && \
+    cmake -DBUILD_TESTS=OFF -DBUILD_WITH_WEB=ON -DBUILD_WITH_MYSQL=ON .. && \
     make -j$(nproc) && \
     strip hms_cpap
 
@@ -70,6 +70,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libspdlog1.15 \
     libfmt10 \
     libsqlite3-0 \
+    libmariadb3 \
     libdrogon1t64 \
     libtrantor1 \
     && rm -rf /var/lib/apt/lists/*
