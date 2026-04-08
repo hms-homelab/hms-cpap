@@ -11,6 +11,7 @@ namespace hms_cpap {
 std::shared_ptr<QueryService> CpapController::qs_;
 hms_cpap::AppConfig* CpapController::config_ = nullptr;
 std::string CpapController::config_path_;
+BurstCollectorService* CpapController::burst_service_ = nullptr;
 std::function<void()> CpapController::ml_train_trigger_;
 std::function<Json::Value()> CpapController::ml_status_getter_;
 std::function<void(const std::string&, const std::string&, const std::string&)> CpapController::backfill_trigger_;
@@ -22,6 +23,8 @@ void CpapController::setConfig(hms_cpap::AppConfig* cfg, const std::string& path
     config_ = cfg;
     config_path_ = path;
 }
+
+void CpapController::setBurstService(BurstCollectorService* svc) { burst_service_ = svc; }
 
 static drogon::HttpResponsePtr jsonError(const std::string& msg, drogon::HttpStatusCode code) {
     auto resp = drogon::HttpResponse::newHttpResponse();
@@ -246,6 +249,9 @@ void CpapController::updateConfig(const drogon::HttpRequestPtr& req,
 
     // Save to disk
     config_->save(config_path_);
+
+    // Signal hot-reload to BurstCollectorService
+    if (burst_service_) burst_service_->markConfigDirty();
 
     // Return redacted config
     auto resp_json = config_->toJson();

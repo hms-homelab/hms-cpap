@@ -4,6 +4,7 @@
 #include <drogon/HttpController.h>
 #include "web/QueryService.h"
 #include "utils/AppConfig.h"
+#include "services/BurstCollectorService.h"
 #include <functional>
 #include <memory>
 #include <string>
@@ -93,6 +94,7 @@ public:
 
     static void setQueryService(std::shared_ptr<QueryService> qs);
     static void setConfig(hms_cpap::AppConfig* cfg, const std::string& config_path);
+    static void setBurstService(BurstCollectorService* svc);
 
     static std::function<void()> ml_train_trigger_;
     static std::function<Json::Value()> ml_status_getter_;
@@ -103,6 +105,7 @@ private:
     static std::shared_ptr<QueryService> qs_;
     static hms_cpap::AppConfig* config_;
     static std::string config_path_;
+    static BurstCollectorService* burst_service_;
 };
 
 } // namespace hms_cpap

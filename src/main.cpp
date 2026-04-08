@@ -518,6 +518,7 @@ int main(int argc, char** argv) {
         int burst_interval = hms_cpap::ConfigManager::getInt("BURST_INTERVAL", 120);
 
         burst_service = std::make_unique<hms_cpap::BurstCollectorService>(burst_interval);
+        burst_service->setAppConfig(&config);
         burst_service->start();
 
         if (src == "local") {
@@ -675,6 +676,7 @@ int main(int argc, char** argv) {
                 web_db ? web_db : db, config.device_id);
             hms_cpap::CpapController::setQueryService(query_service);
             hms_cpap::CpapController::setConfig(&config, config_path);
+            hms_cpap::CpapController::setBurstService(burst_service.get());
 
             // Wire ML service triggers to controller
             if (ml_service) {
