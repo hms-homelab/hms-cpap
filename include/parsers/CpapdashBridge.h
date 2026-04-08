@@ -1,43 +1,43 @@
 #pragma once
 
 /**
- * SleeplinkBridge.h — Type aliases bridging sleeplink::parser into hms_cpap namespace.
+ * CpapdashBridge.h — Type aliases bridging cpapdash::parser into hms_cpap namespace.
  *
  * hms-cpap used to have its own EDFParser + CPAPModels. These are now in the
- * hms-sleeplink-parser shared library (sleeplink::parser namespace). This bridge
+ * hms-cpapdash-parser shared library (cpapdash::parser namespace). This bridge
  * lets existing hms-cpap code compile unchanged via type aliases.
  */
 
-#include <sleeplink/parser/Models.h>
-#include <sleeplink/parser/EDFFile.h>
-#include <sleeplink/parser/EDFParser.h>
-#include <sleeplink/parser/ISessionParser.h>
+#include <cpapdash/parser/Models.h>
+#include <cpapdash/parser/EDFFile.h>
+#include <cpapdash/parser/EDFParser.h>
+#include <cpapdash/parser/ISessionParser.h>
 
 namespace hms_cpap {
 
 // ── Core types ──────────────────────────────────────────────────────────────
-using EventType        = sleeplink::parser::EventType;
-using DeviceManufacturer = sleeplink::parser::DeviceManufacturer;
-using DeviceSettings   = sleeplink::parser::DeviceSettings;
-using CPAPEvent        = sleeplink::parser::SleepEvent;
-using CPAPVitals       = sleeplink::parser::VitalSample;
-using BreathingSummary = sleeplink::parser::BreathingSummary;
-using SessionMetrics   = sleeplink::parser::SessionMetrics;
-using CPAPSession      = sleeplink::parser::ParsedSession;
-using STRDailyRecord   = sleeplink::parser::STRDailyRecord;
+using EventType        = cpapdash::parser::EventType;
+using DeviceManufacturer = cpapdash::parser::DeviceManufacturer;
+using DeviceSettings   = cpapdash::parser::DeviceSettings;
+using CPAPEvent        = cpapdash::parser::SleepEvent;
+using CPAPVitals       = cpapdash::parser::VitalSample;
+using BreathingSummary = cpapdash::parser::BreathingSummary;
+using SessionMetrics   = cpapdash::parser::SessionMetrics;
+using CPAPSession      = cpapdash::parser::ParsedSession;
+using STRDailyRecord   = cpapdash::parser::STRDailyRecord;
 
 // ── Parser types ────────────────────────────────────────────────────────────
-using EDFSignal        = sleeplink::parser::EDFSignal;
-using EDFAnnotation    = sleeplink::parser::EDFAnnotation;
-using EDFFile          = sleeplink::parser::EDFFile;
-using EDFParser        = sleeplink::parser::EDFParser;
-using ISessionParser   = sleeplink::parser::ISessionParser;
+using EDFSignal        = cpapdash::parser::EDFSignal;
+using EDFAnnotation    = cpapdash::parser::EDFAnnotation;
+using EDFFile          = cpapdash::parser::EDFFile;
+using EDFParser        = cpapdash::parser::EDFParser;
+using ISessionParser   = cpapdash::parser::ISessionParser;
 
 // ── Free functions ──────────────────────────────────────────────────────────
-using sleeplink::parser::eventTypeToString;
-using sleeplink::parser::createParser;
+using cpapdash::parser::eventTypeToString;
+using cpapdash::parser::createParser;
 
-// ── hms-cpap-specific types (not in sleeplink-parser) ───────────────────────
+// ── hms-cpap-specific types (not in cpapdash-parser) ────────────────────────
 
 /**
  * Summary period — controls which date range and LLM prompt to use.

@@ -44,10 +44,13 @@ endif()
 if(BUILD_WITH_MYSQL)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(MYSQLCLIENT mysqlclient)
+    if(NOT MYSQLCLIENT_FOUND)
+        pkg_check_modules(MYSQLCLIENT mariadb)
+    endif()
     if(MYSQLCLIENT_FOUND)
         add_definitions(-DWITH_MYSQL)
     else()
-        message(WARNING "MySQL client not found — MySQL support disabled")
+        message(WARNING "MySQL/MariaDB client not found — MySQL support disabled")
         set(BUILD_WITH_MYSQL OFF)
     endif()
 endif()
@@ -97,20 +100,20 @@ endif()
 # ── External libraries (via FetchContent) ────────────────────────────────────
 include(FetchContent)
 
-# sleeplink-parser: shared CPAP parsing library (ResMed EDF + Philips DS2)
-set(SLEEPLINK_PARSER_WITH_PHILIPS ON CACHE BOOL "Enable Philips DreamStation parser" FORCE)
-set(SLEEPLINK_PARSER_LOCAL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../hms-sleeplink/hms-sleeplink-parser)
-if(EXISTS ${SLEEPLINK_PARSER_LOCAL_DIR}/CMakeLists.txt)
-    FetchContent_Declare(sleeplink_parser
-        SOURCE_DIR ${SLEEPLINK_PARSER_LOCAL_DIR}
+# cpapdash-parser: shared CPAP parsing library (ResMed EDF + Philips DS2)
+set(CPAPDASH_PARSER_WITH_PHILIPS ON CACHE BOOL "Enable Philips DreamStation parser" FORCE)
+set(CPAPDASH_PARSER_LOCAL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../hms-cpapdash/hms-cpapdash-parser)
+if(EXISTS ${CPAPDASH_PARSER_LOCAL_DIR}/CMakeLists.txt)
+    FetchContent_Declare(cpapdash_parser
+        SOURCE_DIR ${CPAPDASH_PARSER_LOCAL_DIR}
     )
 else()
-    FetchContent_Declare(sleeplink_parser
+    FetchContent_Declare(cpapdash_parser
         GIT_REPOSITORY https://github.com/hms-homelab/hms-cpapdash-parser.git
         GIT_TAG        master
     )
 endif()
-FetchContent_MakeAvailable(sleeplink_parser)
+FetchContent_MakeAvailable(cpapdash_parser)
 
 # hms-shared modules
 FetchContent_Declare(hms_shared
@@ -169,11 +172,11 @@ if(BUILD_WITH_POSTGRESQL)
     endif()
 endif()
 
-# Source files — exclude platform-specific code and duplicates now in sleeplink-parser
+# Source files — exclude platform-specific code and duplicates now in cpapdash-parser
 file(GLOB_RECURSE SOURCES "src/*.cpp")
 # WiFiSwitchClient is Linux-only (wpa_supplicant, dhcpcd); exclude on all platforms (dead code)
 list(FILTER SOURCES EXCLUDE REGEX ".*/WiFiSwitchClient\\.cpp$")
-# EDFParser + CPAPModels are now provided by sleeplink-parser library
+# EDFParser + CPAPModels are now provided by cpapdash-parser library
 list(FILTER SOURCES EXCLUDE REGEX ".*/parsers/EDFParser\\.cpp$")
 list(FILTER SOURCES EXCLUDE REGEX ".*/models/CPAPModels\\.cpp$")
 
@@ -188,7 +191,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 # Link libraries
 if(MSVC)
     target_link_libraries(${PROJECT_NAME}
-        sleeplink_parser
+        cpapdash_parser
         JsonCpp::JsonCpp
         PahoMqttCpp::paho-mqttpp3
         eclipse-paho-mqtt-c::paho-mqtt3as
@@ -201,7 +204,7 @@ if(MSVC)
     )
 else()
     target_link_libraries(${PROJECT_NAME}
-        sleeplink_parser
+        cpapdash_parser
         jsoncpp_lib
         ${PAHO_MQTTPP3_LIB}
         ${PAHO_MQTT3AS_LIB}

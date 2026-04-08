@@ -3,6 +3,13 @@
 #include "utils/ConfigManager.h"
 #include "utils/AppConfig.h"
 #include "utils/FileUtils.h"
+#include "database/SQLiteDatabase.h"
+#ifdef WITH_POSTGRESQL
+#include "database/DatabaseService.h"
+#endif
+#ifdef WITH_MYSQL
+#include "database/MySQLDatabase.h"
+#endif
 #include <iostream>
 #include <iomanip>
 #include <sstream>
@@ -59,23 +66,60 @@ BurstCollectorService::BurstCollectorService(int burst_interval_seconds)
         std::cerr << "⚠️  MQTT: Connection failed (will retry)" << std::endl;
     }
 
-    // Initialize database service
-    std::string db_host = ConfigManager::get("DB_HOST", "localhost");
-    std::string db_port = ConfigManager::get("DB_PORT", "5432");
-    std::string db_name = ConfigManager::get("DB_NAME", "cpap_monitoring");
-    std::string db_user = ConfigManager::get("DB_USER", "maestro");
-    std::string db_password = ConfigManager::get("DB_PASSWORD", "maestro_postgres_2026_secure");
+    // Initialize database service — pick backend from DB_TYPE
+    std::string db_type = ConfigManager::get("DB_TYPE", "sqlite");
+    if (db_type == "sqlite") {
+        std::string sqlite_path = ConfigManager::get("SQLITE_PATH",
+            hms_cpap::AppConfig::dataDir() + "/cpap.db");
+        db_service_ = std::make_shared<SQLiteDatabase>(sqlite_path);
+        if (db_service_->connect()) {
+            std::cout << "✅ DB: SQLite at " << sqlite_path << std::endl;
+        } else {
+            std::cerr << "⚠️  DB: SQLite open failed: " << sqlite_path << std::endl;
+        }
+    }
+#ifdef WITH_POSTGRESQL
+    else if (db_type == "postgresql") {
+        std::string db_host = ConfigManager::get("DB_HOST", "localhost");
+        std::string db_port = ConfigManager::get("DB_PORT", "5432");
+        std::string db_name = ConfigManager::get("DB_NAME", "cpap_monitoring");
+        std::string db_user = ConfigManager::get("DB_USER", "maestro");
+        std::string db_password = ConfigManager::get("DB_PASSWORD", "");
 
-    std::string connection_string = "host=" + db_host + " port=" + db_port +
-                                   " dbname=" + db_name + " user=" + db_user +
-                                   " password=" + db_password;
+        std::string connection_string = "host=" + db_host + " port=" + db_port +
+                                       " dbname=" + db_name + " user=" + db_user +
+                                       " password=" + db_password;
 
-    db_service_ = std::make_shared<DatabaseService>(connection_string);
+        db_service_ = std::make_shared<DatabaseService>(connection_string);
+        if (db_service_->connect()) {
+            std::cout << "✅ DB: PostgreSQL " << db_name << "@" << db_host << std::endl;
+        } else {
+            std::cerr << "⚠️  DB: PostgreSQL connection failed (will retry)" << std::endl;
+        }
+    }
+#endif
+#ifdef WITH_MYSQL
+    else if (db_type == "mysql") {
+        std::string db_host = ConfigManager::get("DB_HOST", "localhost");
+        int db_port = ConfigManager::getInt("DB_PORT", 3306);
+        std::string db_name = ConfigManager::get("DB_NAME", "cpap_monitoring");
+        std::string db_user = ConfigManager::get("DB_USER", "");
+        std::string db_password = ConfigManager::get("DB_PASSWORD", "");
 
-    if (db_service_->connect()) {
-        std::cout << "✅ DB: Connected to " << db_name << std::endl;
-    } else {
-        std::cerr << "⚠️  DB: Connection failed (will retry)" << std::endl;
+        db_service_ = std::make_shared<MySQLDatabase>(db_host, db_port, db_user, db_password, db_name);
+        if (db_service_->connect()) {
+            std::cout << "✅ DB: MySQL " << db_name << "@" << db_host << ":" << db_port << std::endl;
+        } else {
+            std::cerr << "⚠️  DB: MySQL connection failed" << std::endl;
+        }
+    }
+#endif
+    else {
+        std::cerr << "⚠️  DB: Unknown DB_TYPE '" << db_type << "', falling back to SQLite" << std::endl;
+        std::string sqlite_path = ConfigManager::get("SQLITE_PATH",
+            hms_cpap::AppConfig::dataDir() + "/cpap.db");
+        db_service_ = std::make_shared<SQLiteDatabase>(sqlite_path);
+        db_service_->connect();
     }
 
     // Initialize data publisher

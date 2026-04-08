@@ -3,7 +3,11 @@
 #ifdef WITH_MYSQL
 
 #include "database/IDatabase.h"
+#if __has_include(<mysql/mysql.h>)
 #include <mysql/mysql.h>
+#else
+#include <mariadb/mysql.h>
+#endif
 #include <mutex>
 #include <string>
 

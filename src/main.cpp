@@ -7,7 +7,7 @@
 #include "services/BurstCollectorService.h"
 #include "services/SessionDiscoveryService.h"
 #include "services/DataPublisherService.h"
-#include "parsers/SleeplinkBridge.h"
+#include "parsers/CpapdashBridge.h"
 #include "database/DatabaseService.h"
 #include "database/IDatabase.h"
 #include "database/SQLiteDatabase.h"
@@ -393,13 +393,21 @@ int main(int argc, char** argv) {
     portableSetenv("CPAP_DEVICE_NAME", config.device_name.c_str());
     portableSetenv("CPAP_SOURCE", config.source.c_str());
     portableSetenv("EZSHARE_BASE_URL", config.ezshare_url.c_str());
-    portableSetenv("BURST_INTERVAL", std::to_string(config.burst_interval).c_str());
-    portableSetenv("HEALTH_CHECK_PORT", std::to_string(config.web_port).c_str());
+    // Store numeric conversions in locals to avoid dangling pointer from temporary
+    std::string burst_str = std::to_string(config.burst_interval);
+    std::string port_str  = std::to_string(config.web_port);
+    portableSetenv("BURST_INTERVAL", burst_str.c_str());
+    portableSetenv("HEALTH_CHECK_PORT", port_str.c_str());
     if (!config.local_dir.empty()) portableSetenv("CPAP_LOCAL_DIR", config.local_dir.c_str());
 
-    if (config.database.type == "postgresql") {
+    // Database — always set DB_TYPE so BurstCollectorService picks the right backend
+    portableSetenv("DB_TYPE", config.database.type.c_str());
+    if (config.database.type == "sqlite") {
+        portableSetenv("SQLITE_PATH", config.database.sqlite_path.c_str());
+    } else if (config.database.type == "postgresql" || config.database.type == "mysql") {
         portableSetenv("DB_HOST", config.database.host.c_str());
-        portableSetenv("DB_PORT", std::to_string(config.database.port).c_str());
+        std::string db_port_str = std::to_string(config.database.port);
+        portableSetenv("DB_PORT", db_port_str.c_str());
         portableSetenv("DB_NAME", config.database.name.c_str());
         portableSetenv("DB_USER", config.database.user.c_str());
         portableSetenv("DB_PASSWORD", config.database.password.c_str());
@@ -407,7 +415,8 @@ int main(int argc, char** argv) {
 
     if (config.mqtt.enabled) {
         portableSetenv("MQTT_BROKER", config.mqtt.broker.c_str());
-        portableSetenv("MQTT_PORT", std::to_string(config.mqtt.port).c_str());
+        std::string mqtt_port_str = std::to_string(config.mqtt.port);
+        portableSetenv("MQTT_PORT", mqtt_port_str.c_str());
         portableSetenv("MQTT_USER", config.mqtt.username.c_str());
         portableSetenv("MQTT_PASSWORD", config.mqtt.password.c_str());
         portableSetenv("MQTT_CLIENT_ID", config.mqtt.client_id.c_str());
@@ -419,7 +428,8 @@ int main(int argc, char** argv) {
         portableSetenv("LLM_ENDPOINT", config.llm.endpoint.c_str());
         portableSetenv("LLM_MODEL", config.llm.model.c_str());
         portableSetenv("LLM_API_KEY", config.llm.api_key.c_str());
-        portableSetenv("LLM_MAX_TOKENS", std::to_string(config.llm.max_tokens).c_str());
+        std::string llm_tokens_str = std::to_string(config.llm.max_tokens);
+        portableSetenv("LLM_MAX_TOKENS", llm_tokens_str.c_str());
     }
 
     if (config.agent.enabled) {

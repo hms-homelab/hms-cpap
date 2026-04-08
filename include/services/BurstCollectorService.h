@@ -3,11 +3,11 @@
 // WiFiSwitchClient no longer needed - ez Share accessed via dedicated interface
 #include "clients/EzShareClient.h"
 #include "llm_client.h"
-#include "parsers/SleeplinkBridge.h"
+#include "parsers/CpapdashBridge.h"
 #include "services/DataPublisherService.h"
 #include "services/SessionDiscoveryService.h"
 #include "mqtt_client.h"
-#include "database/DatabaseService.h"
+#include "database/IDatabase.h"
 #include <memory>
 #include <thread>
 #include <atomic>
@@ -86,7 +86,7 @@ private:
 
     // Publishers
     std::shared_ptr<hms::MqttClient> mqtt_client_;
-    std::shared_ptr<DatabaseService> db_service_;
+    std::shared_ptr<IDatabase> db_service_;
     std::unique_ptr<DataPublisherService> data_publisher_;
 
     // Worker thread

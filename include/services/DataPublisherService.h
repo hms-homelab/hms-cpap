@@ -1,10 +1,10 @@
 #pragma once
 
-#include "parsers/SleeplinkBridge.h"
+#include "parsers/CpapdashBridge.h"
 #include "services/InsightsEngine.h"
 #include "mqtt_client.h"
 #include "mqtt/DiscoveryPublisher.h"
-#include "database/DatabaseService.h"
+#include "database/IDatabase.h"
 #include <memory>
 #include <string>
 
@@ -32,7 +32,7 @@ public:
      * @param db_service Database service
      */
     DataPublisherService(std::shared_ptr<hms::MqttClient> mqtt_client,
-                         std::shared_ptr<DatabaseService> db_service);
+                         std::shared_ptr<IDatabase> db_service);
 
     /**
      * Destructor
@@ -119,7 +119,7 @@ public:
 
 private:
     std::shared_ptr<hms::MqttClient> mqtt_client_;
-    std::shared_ptr<DatabaseService> db_service_;
+    std::shared_ptr<IDatabase> db_service_;
     std::unique_ptr<DiscoveryPublisher> discovery_publisher_;
 
     std::string device_id_;

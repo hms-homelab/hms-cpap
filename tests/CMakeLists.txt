@@ -20,7 +20,7 @@ list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*main\\.cpp$")
 list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/controllers/.*")
 list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/web/.*")
 list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/WiFiSwitchClient\\.cpp$")
-# EDFParser + CPAPModels now provided by sleeplink-parser library
+# EDFParser + CPAPModels now provided by cpapdash-parser library
 list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/parsers/EDFParser\\.cpp$")
 list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/models/CPAPModels\\.cpp$")
 
@@ -64,7 +64,7 @@ if(MSVC)
         GTest::gtest
         GTest::gtest_main
         GTest::gmock
-        sleeplink_parser
+        cpapdash_parser
         JsonCpp::JsonCpp
         PahoMqttCpp::paho-mqttpp3
         eclipse-paho-mqtt-c::paho-mqtt3as
@@ -80,7 +80,7 @@ else()
         GTest::gtest
         GTest::gtest_main
         GTest::gmock
-        sleeplink_parser
+        cpapdash_parser
         jsoncpp_lib
         ${PAHO_MQTTPP3_LIB}
         ${PAHO_MQTT3AS_LIB}

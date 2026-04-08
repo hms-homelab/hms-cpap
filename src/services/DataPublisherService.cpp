@@ -8,7 +8,7 @@
 namespace hms_cpap {
 
 DataPublisherService::DataPublisherService(std::shared_ptr<hms::MqttClient> mqtt_client,
-                                           std::shared_ptr<DatabaseService> db_service)
+                                           std::shared_ptr<IDatabase> db_service)
     : mqtt_client_(mqtt_client),
       db_service_(db_service) {
 
