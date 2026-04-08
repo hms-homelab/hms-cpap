@@ -106,7 +106,7 @@ if(EXISTS ${SLEEPLINK_PARSER_LOCAL_DIR}/CMakeLists.txt)
     )
 else()
     FetchContent_Declare(sleeplink_parser
-        GIT_REPOSITORY https://github.com/hms-homelab/hms-sleeplink-parser.git
+        GIT_REPOSITORY https://github.com/hms-homelab/hms-cpapdash-parser.git
         GIT_TAG        master
     )
 endif()
