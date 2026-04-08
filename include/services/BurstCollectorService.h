@@ -8,6 +8,7 @@
 #include "services/SessionDiscoveryService.h"
 #include "mqtt_client.h"
 #include "database/IDatabase.h"
+#include "utils/AppConfig.h"
 #include <memory>
 #include <thread>
 #include <atomic>
@@ -37,6 +38,12 @@ public:
      * @param burst_interval_seconds Interval between burst cycles (default: 300s = 5 min)
      */
     explicit BurstCollectorService(int burst_interval_seconds = 300);
+
+    /// Set live config pointer for hot-reload (called once after construction)
+    void setAppConfig(AppConfig* cfg);
+
+    /// Signal that config changed (called from controller thread, safe)
+    void markConfigDirty() { config_dirty_ = true; }
 
     /**
      * Destructor - cleanup and stop service
@@ -207,6 +214,31 @@ private:
      * @return Date string for today
      */
     std::string getCurrentDateString() const;
+
+    // ── Hot-reload ──────────────────────────────────────────────────────
+    AppConfig* app_config_ = nullptr;
+    std::atomic<bool> config_dirty_{false};
+
+    struct ConfigSnapshot {
+        std::string source, ezshare_url, local_dir;
+        std::string db_type, db_host, db_name, db_user, db_password, sqlite_path;
+        int db_port = 0;
+        bool mqtt_enabled = false;
+        std::string mqtt_broker, mqtt_user, mqtt_password, mqtt_client_id;
+        int mqtt_port = 1883;
+        bool llm_enabled = false;
+        std::string llm_provider, llm_endpoint, llm_model, llm_api_key;
+        std::string device_id, device_name;
+        int burst_interval = 0;
+    };
+    ConfigSnapshot last_config_;
+
+    /// Check dirty flag and reinitialize changed clients
+    void reloadConfig();
+    /// Copy live AppConfig into snapshot
+    void snapshotConfig(ConfigSnapshot& snap);
+    /// (Re)create MQTT subscriptions for commands
+    void setupMqttSubscriptions();
 };
 
 } // namespace hms_cpap

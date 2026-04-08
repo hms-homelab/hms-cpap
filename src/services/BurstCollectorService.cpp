@@ -183,112 +183,8 @@ BurstCollectorService::BurstCollectorService(int burst_interval_seconds)
                   << " / " << llm_config.model << " at " << llm_config.endpoint << ")" << std::endl;
     }
 
-    // Subscribe to summary regeneration command
-    if (llm_enabled_ && mqtt_client_ && mqtt_client_->isConnected()) {
-        std::string cmd_topic = "cpap/" + device_id_ + "/command/regenerate_summary";
-        mqtt_client_->subscribe(cmd_topic,
-            [this](const std::string& /*topic*/, const std::string& /*payload*/) {
-                std::cout << "LLM: Regenerate summary requested via MQTT" << std::endl;
-                auto last_start = db_service_->getLastSessionStart(device_id_);
-                if (!last_start.has_value()) {
-                    std::cerr << "LLM: No sessions found for summary regeneration" << std::endl;
-                    return;
-                }
-                auto metrics = db_service_->getNightlyMetrics(device_id_, last_start.value());
-                if (!metrics.has_value()) {
-                    std::cerr << "LLM: No metrics found for latest session" << std::endl;
-                    return;
-                }
-                generateAndPublishSummary(metrics.value());
-            }, 1);
-        std::cout << "LLM: Subscribed to " << cmd_topic << " for on-demand summary" << std::endl;
-
-        // On-demand weekly/monthly summary commands.
-        // Payload is optional JSON: {"days": 14} overrides the default range.
-        // Empty payload or no "days" key → default (7 for weekly, 30 for monthly).
-        for (auto [cmd, period] : std::vector<std::pair<std::string, SummaryPeriod>>{
-                 {"generate_weekly_summary",  SummaryPeriod::WEEKLY},
-                 {"generate_monthly_summary", SummaryPeriod::MONTHLY}}) {
-            std::string topic = "cpap/" + device_id_ + "/command/" + cmd;
-            mqtt_client_->subscribe(topic,
-                [this, period](const std::string& /*topic*/, const std::string& payload) {
-                    // Parse optional {"days": N} override
-                    int days = (period == SummaryPeriod::WEEKLY) ? 7 : 30;
-                    if (!payload.empty()) {
-                        try {
-                            Json::Value json;
-                            Json::CharReaderBuilder rb;
-                            std::istringstream ss(payload);
-                            if (Json::parseFromStream(rb, ss, &json, nullptr)
-                                && json.isMember("days") && json["days"].isInt()) {
-                                days = json["days"].asInt();
-                            }
-                        } catch (...) {}
-                    }
-                    // Queue for worker thread (pqxx is NOT thread-safe across threads)
-                    if (period == SummaryPeriod::WEEKLY)
-                        pending_weekly_days_.store(days);
-                    else
-                        pending_monthly_days_.store(days);
-                    std::cout << "LLM: " << (period == SummaryPeriod::WEEKLY ? "Weekly" : "Monthly")
-                              << " summary queued (" << days << " days)" << std::endl;
-                }, 1);
-            std::cout << "LLM: Subscribed to " << topic << std::endl;
-        }
-    }
-
-    // Subscribe to insights regeneration command
-    if (mqtt_client_ && mqtt_client_->isConnected()) {
-        std::string insights_topic = "cpap/" + device_id_ + "/command/regenerate_insights";
-        mqtt_client_->subscribe(insights_topic,
-            [this](const std::string& /*topic*/, const std::string& /*payload*/) {
-                std::cout << "Insights: Regenerate requested via MQTT" << std::endl;
-                if (last_str_records_.empty()) {
-                    // Cache is empty (e.g. after restart) -- download and parse STR first
-                    std::cout << "Insights: Cache empty, running processSTRFile..." << std::endl;
-                    processSTRFile();
-                }
-                if (last_str_records_.empty()) {
-                    std::cerr << "Insights: Still no STR records after download" << std::endl;
-                    return;
-                }
-                auto insights = InsightsEngine::analyze(last_str_records_);
-                if (data_publisher_) {
-                    data_publisher_->publishInsights(insights);
-                }
-            }, 1);
-        std::cout << "Insights: Subscribed to " << insights_topic << " for on-demand regeneration" << std::endl;
-    }
-
-    // Subscribe to force_complete command (manual override for stuck sessions)
-    if (mqtt_client_ && mqtt_client_->isConnected()) {
-        std::string complete_topic = "cpap/" + device_id_ + "/command/force_complete";
-        mqtt_client_->subscribe(complete_topic,
-            [this](const std::string& /*topic*/, const std::string& /*payload*/) {
-                std::cout << "Force complete: requested via MQTT" << std::endl;
-                auto last_start = db_service_->getLastSessionStart(device_id_);
-                if (!last_start.has_value()) {
-                    std::cerr << "Force complete: no session found in DB" << std::endl;
-                    return;
-                }
-                db_service_->markSessionCompleted(device_id_, last_start.value());
-                db_service_->setForceCompleted(device_id_, last_start.value());
-                if (data_publisher_) {
-                    data_publisher_->publishSessionCompleted();
-                    processSTRFile();
-                    auto metrics = db_service_->getNightlyMetrics(device_id_, last_start.value());
-                    if (metrics.has_value()) {
-                        data_publisher_->publishHistoricalState(metrics.value());
-                        if (llm_enabled_ && llm_client_) {
-                            const STRDailyRecord* str_rec = !last_str_records_.empty()
-                                ? &last_str_records_.back() : nullptr;
-                            generateAndPublishSummary(metrics.value(), str_rec);
-                        }
-                    }
-                }
-            }, 1);
-        std::cout << "Commands: Subscribed to " << complete_topic << std::endl;
-    }
+    // Subscribe to MQTT command topics (LLM, insights, force_complete)
+    setupMqttSubscriptions();
 
     // STARTUP CLEANUP: Clear any stale session_active state from previous run
     // This prevents stuck "session active" in HA after service restart or crash
@@ -1116,6 +1012,9 @@ void BurstCollectorService::runLoop() {
     std::cout << "🔁 BurstCollectorService worker thread started" << std::endl;
 
     while (running_) {
+        // Hot-reload config if changed via web UI
+        reloadConfig();
+
         // Execute burst cycle
         bool success = executeBurstCycle();
 
@@ -1494,6 +1393,230 @@ std::string BurstCollectorService::buildMetricsString(const SessionMetrics& metr
 
 std::string BurstCollectorService::loadPromptFile(const std::string& filepath) {
     return hms::LLMClient::loadPromptFile(filepath);
+}
+
+// ── Hot-reload ──────────────────────────────────────────────────────────────
+
+void BurstCollectorService::setAppConfig(AppConfig* cfg) {
+    app_config_ = cfg;
+    if (cfg) snapshotConfig(last_config_);
+}
+
+void BurstCollectorService::snapshotConfig(ConfigSnapshot& snap) {
+    if (!app_config_) return;
+    snap.source = app_config_->source;
+    snap.ezshare_url = app_config_->ezshare_url;
+    snap.local_dir = app_config_->local_dir;
+    snap.db_type = app_config_->database.type;
+    snap.db_host = app_config_->database.host;
+    snap.db_port = app_config_->database.port;
+    snap.db_name = app_config_->database.name;
+    snap.db_user = app_config_->database.user;
+    snap.db_password = app_config_->database.password;
+    snap.sqlite_path = app_config_->database.sqlite_path;
+    snap.mqtt_enabled = app_config_->mqtt.enabled;
+    snap.mqtt_broker = app_config_->mqtt.broker;
+    snap.mqtt_port = app_config_->mqtt.port;
+    snap.mqtt_user = app_config_->mqtt.username;
+    snap.mqtt_password = app_config_->mqtt.password;
+    snap.mqtt_client_id = app_config_->mqtt.client_id;
+    snap.llm_enabled = app_config_->llm.enabled;
+    snap.llm_provider = app_config_->llm.provider;
+    snap.llm_endpoint = app_config_->llm.endpoint;
+    snap.llm_model = app_config_->llm.model;
+    snap.llm_api_key = app_config_->llm.api_key;
+    snap.device_id = app_config_->device_id;
+    snap.device_name = app_config_->device_name;
+    snap.burst_interval = app_config_->burst_interval;
+}
+
+void BurstCollectorService::reloadConfig() {
+    if (!app_config_ || !config_dirty_.exchange(false))
+        return;
+
+    ConfigSnapshot nc;
+    snapshotConfig(nc);
+    bool rebuild_publisher = false;
+
+    // Burst interval
+    if (nc.burst_interval != last_config_.burst_interval) {
+        burst_interval_seconds_ = nc.burst_interval;
+        std::cout << "Config reload: burst_interval -> " << burst_interval_seconds_ << "s" << std::endl;
+    }
+
+    // Device identity
+    if (nc.device_id != last_config_.device_id || nc.device_name != last_config_.device_name) {
+        device_id_ = nc.device_id;
+        device_name_ = nc.device_name;
+        std::cout << "Config reload: device -> " << device_name_ << " (" << device_id_ << ")" << std::endl;
+    }
+
+    // Source / discovery
+    if (nc.source != last_config_.source || nc.ezshare_url != last_config_.ezshare_url ||
+        nc.local_dir != last_config_.local_dir) {
+        if (nc.source == "local") {
+            local_source_dir_ = nc.local_dir;
+            ezshare_client_.reset();
+            discovery_service_.reset();
+        } else {
+            local_source_dir_.clear();
+            setenv("EZSHARE_BASE_URL", nc.ezshare_url.c_str(), 1);
+            ezshare_client_ = std::make_unique<EzShareClient>();
+            discovery_service_ = std::make_unique<SessionDiscoveryService>(*ezshare_client_);
+        }
+        std::cout << "Config reload: source -> " << nc.source << std::endl;
+    }
+
+    // Database
+    if (nc.db_type != last_config_.db_type || nc.db_host != last_config_.db_host ||
+        nc.db_port != last_config_.db_port || nc.db_name != last_config_.db_name ||
+        nc.db_user != last_config_.db_user || nc.db_password != last_config_.db_password ||
+        nc.sqlite_path != last_config_.sqlite_path) {
+        if (db_service_) db_service_->disconnect();
+        if (nc.db_type == "sqlite") {
+            db_service_ = std::make_shared<SQLiteDatabase>(nc.sqlite_path);
+        }
+#ifdef WITH_POSTGRESQL
+        else if (nc.db_type == "postgresql") {
+            std::string cs = "host=" + nc.db_host + " port=" + std::to_string(nc.db_port) +
+                             " dbname=" + nc.db_name + " user=" + nc.db_user +
+                             " password=" + nc.db_password;
+            db_service_ = std::make_shared<DatabaseService>(cs);
+        }
+#endif
+#ifdef WITH_MYSQL
+        else if (nc.db_type == "mysql") {
+            db_service_ = std::make_shared<MySQLDatabase>(nc.db_host, nc.db_port, nc.db_user, nc.db_password, nc.db_name);
+        }
+#endif
+        if (db_service_ && db_service_->connect()) {
+            std::cout << "Config reload: DB -> " << nc.db_type << std::endl;
+        }
+        rebuild_publisher = true;
+    }
+
+    // MQTT
+    if (nc.mqtt_enabled != last_config_.mqtt_enabled || nc.mqtt_broker != last_config_.mqtt_broker ||
+        nc.mqtt_port != last_config_.mqtt_port || nc.mqtt_user != last_config_.mqtt_user ||
+        nc.mqtt_password != last_config_.mqtt_password) {
+        if (mqtt_client_) mqtt_client_->disconnect();
+        if (nc.mqtt_enabled) {
+            hms::MqttConfig mc;
+            mc.broker = nc.mqtt_broker;
+            mc.port = nc.mqtt_port;
+            mc.username = nc.mqtt_user;
+            mc.password = nc.mqtt_password;
+            mc.client_id = nc.mqtt_client_id;
+            mqtt_client_ = std::make_shared<hms::MqttClient>(mc);
+            mqtt_client_->connect();
+            std::cout << "Config reload: MQTT -> " << nc.mqtt_broker << ":" << nc.mqtt_port << std::endl;
+        } else {
+            mqtt_client_.reset();
+            std::cout << "Config reload: MQTT -> disabled" << std::endl;
+        }
+        rebuild_publisher = true;
+    }
+
+    // Rebuild DataPublisherService if DB or MQTT changed
+    if (rebuild_publisher) {
+        data_publisher_ = std::make_unique<DataPublisherService>(mqtt_client_, db_service_);
+        data_publisher_->initialize();
+        setupMqttSubscriptions();
+    }
+
+    // LLM
+    if (nc.llm_enabled != last_config_.llm_enabled || nc.llm_provider != last_config_.llm_provider ||
+        nc.llm_endpoint != last_config_.llm_endpoint || nc.llm_model != last_config_.llm_model ||
+        nc.llm_api_key != last_config_.llm_api_key) {
+        llm_enabled_ = nc.llm_enabled;
+        if (llm_enabled_) {
+            hms::LLMConfig lc;
+            lc.enabled = true;
+            lc.provider = hms::LLMClient::parseProvider(nc.llm_provider);
+            lc.endpoint = nc.llm_endpoint;
+            lc.model = nc.llm_model;
+            lc.api_key = nc.llm_api_key;
+            llm_client_ = std::make_unique<hms::LLMClient>(lc);
+            std::cout << "Config reload: LLM -> " << nc.llm_provider << "/" << nc.llm_model << std::endl;
+        } else {
+            llm_client_.reset();
+            std::cout << "Config reload: LLM -> disabled" << std::endl;
+        }
+    }
+
+    last_config_ = nc;
+}
+
+void BurstCollectorService::setupMqttSubscriptions() {
+    if (!mqtt_client_ || !mqtt_client_->isConnected()) return;
+
+    // LLM summary commands
+    if (llm_enabled_) {
+        std::string cmd_topic = "cpap/" + device_id_ + "/command/regenerate_summary";
+        mqtt_client_->subscribe(cmd_topic,
+            [this](const std::string&, const std::string&) {
+                auto last_start = db_service_->getLastSessionStart(device_id_);
+                if (!last_start) return;
+                auto metrics = db_service_->getNightlyMetrics(device_id_, last_start.value());
+                if (metrics) generateAndPublishSummary(metrics.value());
+            }, 1);
+
+        for (auto [cmd, period] : std::vector<std::pair<std::string, SummaryPeriod>>{
+                 {"generate_weekly_summary",  SummaryPeriod::WEEKLY},
+                 {"generate_monthly_summary", SummaryPeriod::MONTHLY}}) {
+            mqtt_client_->subscribe("cpap/" + device_id_ + "/command/" + cmd,
+                [this, period](const std::string&, const std::string& payload) {
+                    int days = (period == SummaryPeriod::WEEKLY) ? 7 : 30;
+                    if (!payload.empty()) {
+                        try {
+                            Json::Value json;
+                            Json::CharReaderBuilder rb;
+                            std::istringstream ss(payload);
+                            if (Json::parseFromStream(rb, ss, &json, nullptr)
+                                && json.isMember("days") && json["days"].isInt())
+                                days = json["days"].asInt();
+                        } catch (...) {}
+                    }
+                    if (period == SummaryPeriod::WEEKLY) pending_weekly_days_.store(days);
+                    else pending_monthly_days_.store(days);
+                }, 1);
+        }
+    }
+
+    // Insights regeneration
+    mqtt_client_->subscribe("cpap/" + device_id_ + "/command/regenerate_insights",
+        [this](const std::string&, const std::string&) {
+            if (last_str_records_.empty()) processSTRFile();
+            if (last_str_records_.empty()) return;
+            auto insights = InsightsEngine::analyze(last_str_records_);
+            if (data_publisher_) data_publisher_->publishInsights(insights);
+        }, 1);
+
+    // Force complete
+    mqtt_client_->subscribe("cpap/" + device_id_ + "/command/force_complete",
+        [this](const std::string&, const std::string&) {
+            auto last_start = db_service_->getLastSessionStart(device_id_);
+            if (!last_start) return;
+            db_service_->markSessionCompleted(device_id_, last_start.value());
+            db_service_->setForceCompleted(device_id_, last_start.value());
+            if (data_publisher_) {
+                data_publisher_->publishSessionCompleted();
+                processSTRFile();
+                auto metrics = db_service_->getNightlyMetrics(device_id_, last_start.value());
+                if (metrics) {
+                    data_publisher_->publishHistoricalState(metrics.value());
+                    if (llm_enabled_ && llm_client_) {
+                        const STRDailyRecord* str_rec = !last_str_records_.empty()
+                            ? &last_str_records_.back() : nullptr;
+                        generateAndPublishSummary(metrics.value(), str_rec);
+                    }
+                }
+            }
+        }, 1);
+
+    // Session completed subscription (for ML training trigger)
+    mqtt_client_->subscribe("cpap/" + device_id_ + "/session/completed",
+        [](const std::string&, const std::string&) {}, 1);
 }
 
 } // namespace hms_cpap
