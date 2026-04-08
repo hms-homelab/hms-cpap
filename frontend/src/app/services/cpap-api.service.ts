@@ -65,6 +65,21 @@ export class CpapApiService {
     return this.http.get<any>('/api/ml/status');
   }
 
+  triggerBackfill(startDate?: string, endDate?: string): Observable<any> {
+    const body: any = {};
+    if (startDate) body.start_date = startDate;
+    if (endDate) body.end_date = endDate;
+    return this.http.post<any>('/api/backfill', body);
+  }
+
+  getBackfillStatus(): Observable<any> {
+    return this.http.get<any>('/api/backfill/status');
+  }
+
+  scanBackfillDates(): Observable<{folders: number; start_date?: string; end_date?: string; local_dir?: string; message?: string}> {
+    return this.http.get<any>('/api/backfill/scan');
+  }
+
   getLlmPrompt(): Observable<{prompt: string; path: string}> {
     return this.http.get<{prompt: string; path: string}>('/api/llm-prompt');
   }

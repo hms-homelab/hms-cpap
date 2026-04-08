@@ -49,6 +49,76 @@ import { AppConfig } from '../../models/config.model';
           </div>
         </div>
 
+        <!-- Section: Import History -->
+        <div class="section" *ngIf="config.local_dir">
+          <div class="section-header" (click)="toggle('backfill')">
+            <span class="chevron" [class.open]="open['backfill']">&#9654;</span>
+            Import History
+          </div>
+          <div class="section-body" *ngIf="open['backfill']">
+            <p class="section-desc">
+              Import therapy sessions from your DATALOG directory into the database.
+              Existing sessions in the date range will be re-parsed.
+            </p>
+            <div class="backfill-dates">
+              <label>
+                Start Date
+                <input type="date" [(ngModel)]="backfillStart" name="backfill_start" />
+              </label>
+              <label>
+                End Date
+                <input type="date" [(ngModel)]="backfillEnd" name="backfill_end" />
+              </label>
+            </div>
+            <span class="hint" *ngIf="backfillStart && backfillEnd">
+              Leave empty to import all available data.
+            </span>
+
+            <!-- Backfill Status -->
+            <div class="ml-status" *ngIf="backfillProgress">
+              <div class="status-row">
+                <span class="status-label">Status</span>
+                <span class="status-value" [class.status-active]="backfillProgress.status === 'running'">
+                  {{ backfillProgress.status }}
+                </span>
+              </div>
+              <div class="status-row" *ngIf="backfillProgress.folders_total > 0">
+                <span class="status-label">Folders</span>
+                <span class="status-value">{{ backfillProgress.folders_done }} / {{ backfillProgress.folders_total }}</span>
+              </div>
+              <div class="status-row" *ngIf="backfillProgress.sessions_saved > 0 || backfillProgress.sessions_parsed > 0">
+                <span class="status-label">Sessions</span>
+                <span class="status-value">{{ backfillProgress.sessions_saved }} saved ({{ backfillProgress.sessions_parsed }} parsed)</span>
+              </div>
+              <div class="status-row" *ngIf="backfillProgress.sessions_deleted > 0">
+                <span class="status-label">Replaced</span>
+                <span class="status-value">{{ backfillProgress.sessions_deleted }} old session(s)</span>
+              </div>
+              <div class="status-row" *ngIf="backfillProgress.errors > 0">
+                <span class="status-label">Errors</span>
+                <span class="status-value" style="color: #ef5350;">{{ backfillProgress.errors }}</span>
+              </div>
+              <div class="status-row" *ngIf="backfillProgress.completed_at">
+                <span class="status-label">Completed</span>
+                <span class="status-value">{{ backfillProgress.completed_at }}</span>
+              </div>
+            </div>
+
+            <!-- Progress bar -->
+            <div class="progress-bar" *ngIf="backfillRunning && backfillProgress?.folders_total > 0">
+              <div class="progress-fill"
+                   [style.width.%]="(backfillProgress.folders_done / backfillProgress.folders_total) * 100">
+              </div>
+            </div>
+
+            <div class="ml-actions">
+              <button type="button" class="btn-train" (click)="startBackfill()" [disabled]="backfillRunning">
+                {{ backfillRunning ? 'Importing...' : 'Import History' }}
+              </button>
+            </div>
+          </div>
+        </div>
+
         <!-- Section 2: Database -->
         <div class="section">
           <div class="section-header" (click)="toggle('database')">
@@ -404,6 +474,23 @@ import { AppConfig } from '../../models/config.model';
     }
     .btn-reset:hover { color: #e0e0e0; border-color: #888; }
     .hint { font-size: 0.7rem; color: #666; font-style: italic; }
+
+    /* Backfill / Import History */
+    .section-desc {
+      color: #999; font-size: 0.85rem; margin: 0.5rem 0 0.75rem;
+      line-height: 1.4;
+    }
+    .backfill-dates {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem;
+    }
+    .progress-bar {
+      margin-top: 0.75rem; height: 6px; background: #2a2a3d;
+      border-radius: 3px; overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%; background: #64b5f6; border-radius: 3px;
+      transition: width 0.3s ease;
+    }
   `]
 })
 export class SettingsComponent implements OnInit {
@@ -418,6 +505,12 @@ export class SettingsComponent implements OnInit {
   mlStatus: any = null;
   mlTraining = false;
 
+  // Backfill state
+  backfillStart = '';
+  backfillEnd = '';
+  backfillRunning = false;
+  backfillProgress: any = null;
+
   // LLM Prompt state
   llmPrompt = '';
   llmPromptPath = '';
@@ -426,6 +519,7 @@ export class SettingsComponent implements OnInit {
 
   open: Record<string, boolean> = {
     source: true,
+    backfill: false,
     database: true,
     mqtt: false,
     llm: false,
@@ -447,6 +541,8 @@ export class SettingsComponent implements OnInit {
         this.loading = false;
         // Load ML status if enabled
         if (cfg.ml_training?.enabled) this.loadMlStatus();
+        // Auto-detect backfill date range if local_dir is set
+        if (cfg.local_dir) this.scanBackfillDates();
       },
       error: (err) => {
         this.error = 'Failed to load configuration.';
@@ -515,6 +611,69 @@ export class SettingsComponent implements OnInit {
         this.showToast('Failed to start training.', true);
       },
     });
+  }
+
+  scanBackfillDates(): void {
+    this.api.scanBackfillDates().subscribe({
+      next: (res) => {
+        if (res.start_date) this.backfillStart = res.start_date;
+        if (res.end_date) this.backfillEnd = res.end_date;
+      },
+      error: () => {},
+    });
+    // Also load any existing backfill progress
+    this.api.getBackfillStatus().subscribe({
+      next: (status) => {
+        if (status.status !== 'idle' && status.status !== 'not_available') {
+          this.backfillProgress = status;
+          if (status.status === 'running') {
+            this.backfillRunning = true;
+            this.pollBackfillStatus();
+          }
+        }
+      },
+      error: () => {},
+    });
+  }
+
+  startBackfill(): void {
+    this.backfillRunning = true;
+    this.backfillProgress = null;
+    const start = this.backfillStart || undefined;
+    const end = this.backfillEnd || undefined;
+    this.api.triggerBackfill(start, end).subscribe({
+      next: () => {
+        this.showToast('Import started.', false);
+        this.pollBackfillStatus();
+      },
+      error: () => {
+        this.backfillRunning = false;
+        this.showToast('Failed to start import.', true);
+      },
+    });
+  }
+
+  private pollBackfillStatus(): void {
+    let polls = 0;
+    const interval = setInterval(() => {
+      this.api.getBackfillStatus().subscribe({
+        next: (status) => {
+          this.backfillProgress = status;
+          if (status.status !== 'running' || polls > 200) {
+            clearInterval(interval);
+            this.backfillRunning = false;
+            if (status.status === 'complete') {
+              this.showToast(
+                `Import complete: ${status.sessions_saved} session(s) saved.`, false);
+            } else if (status.status === 'error') {
+              this.showToast('Import failed: ' + (status.error_message || 'unknown error'), true);
+            }
+          }
+        },
+        error: () => {},
+      });
+      polls++;
+    }, 3000);
   }
 
   saveLlmPrompt(): void {

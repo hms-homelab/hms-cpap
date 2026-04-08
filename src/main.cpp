@@ -16,6 +16,7 @@
 #endif
 #include "agent/AgentService.h"
 #include "services/MLTrainingService.h"
+#include "services/BackfillService.h"
 #include "agent/IAgentLLM.h"
 #include "mqtt_client.h"
 #include "llm_client.h"
@@ -39,6 +40,7 @@ std::atomic<bool> shutdown_requested(false);
 std::unique_ptr<hms_cpap::BurstCollectorService> burst_service;
 std::unique_ptr<hms_cpap::AgentService> agent_service;
 std::unique_ptr<hms_cpap::MLTrainingService> ml_service;
+std::unique_ptr<hms_cpap::BackfillService> backfill_service;
 
 /**
  * Graceful shutdown logic (shared by all platforms)
@@ -48,6 +50,7 @@ void requestShutdown() {
     if (burst_service) burst_service->stop();
     if (agent_service) agent_service->stop();
     if (ml_service) ml_service->stop();
+    if (backfill_service) backfill_service->stop();
 #ifdef BUILD_WITH_WEB
     drogon::app().quit();
 #endif
@@ -669,6 +672,37 @@ int main(int argc, char** argv) {
                 };
                 hms_cpap::CpapController::ml_status_getter_ = [&]() -> Json::Value {
                     return ml_service->getStatus();
+                };
+            }
+
+            // Wire BackfillService (local source mode only)
+            if (src == "local" || src == "ezshare" || src == "fysetc_poll") {
+                hms_cpap::BackfillService::Config bf_cfg;
+                bf_cfg.device_id = config.device_id;
+                bf_cfg.device_name = config.device_name;
+                bf_cfg.local_dir = config.local_dir;
+
+                // Separate DB connection (pqxx not thread-safe)
+                std::shared_ptr<hms_cpap::IDatabase> bf_db;
+                if (config.database.type == "postgresql") {
+#ifdef WITH_POSTGRESQL
+                    bf_db = std::make_shared<hms_cpap::PostgresDatabase>(pg_conn_str);
+                    bf_db->connect();
+#endif
+                } else {
+                    bf_db = db;  // SQLite has its own locking
+                }
+
+                backfill_service = std::make_unique<hms_cpap::BackfillService>(
+                    bf_cfg, bf_db ? bf_db : db);
+                backfill_service->start();
+
+                hms_cpap::CpapController::backfill_trigger_ =
+                    [&](const std::string& start, const std::string& end, const std::string& local_dir) {
+                        backfill_service->trigger(start, end, local_dir);
+                    };
+                hms_cpap::CpapController::backfill_status_getter_ = [&]() -> Json::Value {
+                    return backfill_service->getStatus();
                 };
             }
 

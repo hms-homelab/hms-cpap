@@ -51,6 +51,7 @@ Automatically extracts sleep therapy data from your ResMed AirSense 10/11 CPAP m
 - [Quick Start](#quick-start)
 - [Data Sources](#data-sources)
 - [Configuration](#configuration)
+- [CLI Reference](#cli-reference)
 - [Deployment](#deployment)
 - [Home Assistant Integration](#home-assistant-integration)
 - [Architecture](#architecture)
@@ -105,9 +106,51 @@ There are two hardware paths for wireless data collection, plus a local filesyst
 
 ### Local Filesystem
 
-**How it works:** Reads EDF files from a local directory (e.g. mounted SD card or NAS).
+**How it works:** Reads EDF files directly from a local directory (mounted SD card, USB drive, or NAS share).
 
-**Use case:** Offline analysis, backfill, or reparse of archived data.
+**Use case:** Offline analysis, importing historical data, or running without WiFi SD hardware.
+
+**Setup:**
+
+1. Copy your ResMed SD card's `DATALOG` folder to a local path (or mount the SD card directly):
+   ```bash
+   # Example: mount SD card
+   sudo mount /dev/sdb1 /mnt/cpap-sd
+
+   # Or copy to NAS/local disk
+   cp -r /mnt/cpap-sd/DATALOG /mnt/archive/cpap/DATALOG
+   ```
+
+2. Configure hms-cpap to use local mode:
+   ```bash
+   CPAP_SOURCE=local
+   CPAP_LOCAL_DIR=/mnt/archive/cpap/DATALOG
+   ```
+   Or via `~/.hms-cpap/config.json`:
+   ```json
+   {
+     "source": "local",
+     "local_dir": "/mnt/archive/cpap/DATALOG"
+   }
+   ```
+
+3. Start hms-cpap. It will poll the directory each burst interval for new sessions.
+
+4. **Import existing history:** Open Settings in the web UI, expand "Import History", and click **Import History**. The start/end dates auto-populate from your DATALOG folder. This parses all EDF files and saves them to the database. See also the [CLI Reference](#cli-reference) for command-line alternatives.
+
+**Expected directory structure:**
+```
+DATALOG/
+  20250815/
+    23243570851_BRP.edf    # Breathing pattern
+    23243570851_PLD.edf    # Pressure/leak data
+    23243570851_EVE.edf    # Events (apneas, hypopneas)
+    23243570851_SAD.edf    # SpO2/heart rate (if oximeter)
+    23243570851_CSL.edf    # Clinical summary
+  20250816/
+    ...
+  STR.edf                  # Daily therapy summaries
+```
 
 ## Configuration
 
@@ -130,6 +173,9 @@ MQTT_PASSWORD=your_mqtt_password
 ### Optional Variables
 
 ```bash
+# Local directory (required when CPAP_SOURCE=local, config.json key: local_dir)
+CPAP_LOCAL_DIR=/path/to/DATALOG
+
 # Device identification
 CPAP_DEVICE_ID=resmed_airsense10
 CPAP_DEVICE_NAME="ResMed AirSense 10"
@@ -146,6 +192,38 @@ DB_PASSWORD=your_db_password
 
 # Web UI port
 WEB_PORT=8893
+```
+
+## CLI Reference
+
+HMS-CPAP supports several command-line modes for batch operations. These run once and exit (no web server, no polling loop).
+
+### Reparse Sessions
+
+Re-parse therapy sessions from a local DATALOG archive for a date range. Deletes existing DB records for those dates and re-imports from the EDF files.
+
+```bash
+# Reparse a date range
+hms_cpap --reparse /path/to/DATALOG 2025-08-15 2025-09-15
+
+# Reparse a single day
+hms_cpap --reparse /path/to/DATALOG 2025-08-15
+```
+
+This is the CLI equivalent of the "Import History" button in the web UI Settings page.
+
+### Backfill STR Daily Summaries
+
+Parse a ResMed `STR.edf` file and upsert all daily therapy summaries into the database. This populates the `cpap_daily_summary` table with AHI, usage hours, leak rates, and other per-day metrics.
+
+```bash
+hms_cpap --backfill /path/to/STR.edf
+```
+
+### Custom Config Path
+
+```bash
+hms_cpap --config /etc/hms-cpap/config.json
 ```
 
 ## Deployment

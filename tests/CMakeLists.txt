@@ -49,6 +49,7 @@ set(TEST_SOURCES
     ml/test_RandomForest.cpp
     ml/test_FeatureEngine.cpp
     ml/test_MLTrainingService.cpp
+    services/test_BackfillService.cpp
 )
 
 # Create test executable

@@ -2,6 +2,8 @@
 
 #include "controllers/CpapController.h"
 #include "utils/AppConfig.h"
+#include <filesystem>
+#include <regex>
 #include <sstream>
 
 namespace hms_cpap {
@@ -11,6 +13,8 @@ hms_cpap::AppConfig* CpapController::config_ = nullptr;
 std::string CpapController::config_path_;
 std::function<void()> CpapController::ml_train_trigger_;
 std::function<Json::Value()> CpapController::ml_status_getter_;
+std::function<void(const std::string&, const std::string&, const std::string&)> CpapController::backfill_trigger_;
+std::function<Json::Value()> CpapController::backfill_status_getter_;
 
 void CpapController::setQueryService(std::shared_ptr<QueryService> qs) { qs_ = qs; }
 
@@ -41,7 +45,7 @@ void CpapController::health(const drogon::HttpRequestPtr&,
                              std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
     Json::Value j;
     j["status"] = "ok";
-    j["version"] = "3.0.0";
+    j["version"] = "3.1.0";
     j["service"] = "hms-cpap";
     cb(jsonResp(j));
 }
@@ -365,6 +369,95 @@ void CpapController::updateLlmPrompt(const drogon::HttpRequestPtr& req,
         cb(jsonError(std::string("Failed to write prompt: ") + e.what(),
                      drogon::k500InternalServerError));
     }
+}
+
+// ── Backfill ────────────────────────────────────────────────────────────
+
+void CpapController::triggerBackfill(const drogon::HttpRequestPtr& req,
+                                     std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    if (!backfill_trigger_) {
+        cb(jsonError("Backfill not available (source is not local)",
+                     drogon::k503ServiceUnavailable));
+        return;
+    }
+
+    std::string start_date, end_date;
+    auto body = req->getJsonObject();
+    if (body) {
+        if (body->isMember("start_date")) start_date = (*body)["start_date"].asString();
+        if (body->isMember("end_date"))   end_date = (*body)["end_date"].asString();
+    }
+
+    std::string local_dir = config_ ? config_->local_dir : "";
+    backfill_trigger_(start_date, end_date, local_dir);
+
+    Json::Value result;
+    result["status"] = "backfill_started";
+    cb(jsonResp(result));
+}
+
+void CpapController::backfillStatus(const drogon::HttpRequestPtr&,
+                                    std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    if (backfill_status_getter_) {
+        cb(jsonResp(backfill_status_getter_()));
+    } else {
+        Json::Value result;
+        result["status"] = "not_available";
+        cb(jsonResp(result));
+    }
+}
+
+void CpapController::backfillScan(const drogon::HttpRequestPtr&,
+                                  std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    if (!config_) {
+        cb(jsonError("Not configured", drogon::k503ServiceUnavailable));
+        return;
+    }
+
+    std::string local_dir = config_->local_dir;
+    if (local_dir.empty()) {
+        cb(jsonError("No local_dir configured", drogon::k400BadRequest));
+        return;
+    }
+
+    if (!std::filesystem::exists(local_dir)) {
+        cb(jsonError("Directory not found: " + local_dir, drogon::k404NotFound));
+        return;
+    }
+
+    // Scan YYYYMMDD folders
+    std::vector<std::string> folders;
+    std::regex date_re(R"(^\d{8}$)");
+
+    for (const auto& entry : std::filesystem::directory_iterator(local_dir)) {
+        if (!entry.is_directory()) continue;
+        std::string name = entry.path().filename().string();
+        if (std::regex_match(name, date_re)) {
+            folders.push_back(name);
+        }
+    }
+
+    if (folders.empty()) {
+        Json::Value result;
+        result["folders"] = 0;
+        result["message"] = "No date folders found in " + local_dir;
+        cb(jsonResp(result));
+        return;
+    }
+
+    std::sort(folders.begin(), folders.end());
+
+    // Convert YYYYMMDD to YYYY-MM-DD
+    auto toIso = [](const std::string& f) -> std::string {
+        return f.substr(0, 4) + "-" + f.substr(4, 2) + "-" + f.substr(6, 2);
+    };
+
+    Json::Value result;
+    result["folders"] = static_cast<int>(folders.size());
+    result["start_date"] = toIso(folders.front());
+    result["end_date"] = toIso(folders.back());
+    result["local_dir"] = local_dir;
+    cb(jsonResp(result));
 }
 
 } // namespace hms_cpap

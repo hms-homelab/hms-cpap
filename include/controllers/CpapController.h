@@ -32,6 +32,9 @@ public:
     ADD_METHOD_TO(CpapController::mlStatus,       "/api/ml/status",    drogon::Get);
     ADD_METHOD_TO(CpapController::getLlmPrompt,   "/api/llm-prompt",   drogon::Get);
     ADD_METHOD_TO(CpapController::updateLlmPrompt,"/api/llm-prompt",   drogon::Put);
+    ADD_METHOD_TO(CpapController::triggerBackfill, "/api/backfill",        drogon::Post);
+    ADD_METHOD_TO(CpapController::backfillStatus,  "/api/backfill/status", drogon::Get);
+    ADD_METHOD_TO(CpapController::backfillScan,    "/api/backfill/scan",   drogon::Get);
     METHOD_LIST_END
 
     void health(const drogon::HttpRequestPtr& req,
@@ -81,11 +84,20 @@ public:
     void updateLlmPrompt(const drogon::HttpRequestPtr& req,
                          std::function<void(const drogon::HttpResponsePtr&)>&& cb);
 
+    void triggerBackfill(const drogon::HttpRequestPtr& req,
+                         std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+    void backfillStatus(const drogon::HttpRequestPtr& req,
+                        std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+    void backfillScan(const drogon::HttpRequestPtr& req,
+                      std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+
     static void setQueryService(std::shared_ptr<QueryService> qs);
     static void setConfig(hms_cpap::AppConfig* cfg, const std::string& config_path);
 
     static std::function<void()> ml_train_trigger_;
     static std::function<Json::Value()> ml_status_getter_;
+    static std::function<void(const std::string&, const std::string&, const std::string&)> backfill_trigger_;
+    static std::function<Json::Value()> backfill_status_getter_;
 
 private:
     static std::shared_ptr<QueryService> qs_;
