@@ -435,19 +435,44 @@ void BurstCollectorService::processSTRFile() {
         std::string str_local_path;
 
         if (!local_source_dir_.empty()) {
-            // Local mode: STR.EDF lives in the local CPAP data directory
-            str_local_path = local_source_dir_ + "/STR.EDF";
-            if (!std::filesystem::exists(str_local_path)) {
-                std::cerr << "STR: Not found at " << str_local_path << " (non-fatal)" << std::endl;
+            // Local mode: STR.edf lives at the SD root, one level above DATALOG
+            // local_source_dir_ points to .../DATALOG, so look in parent
+            auto parent = std::filesystem::path(local_source_dir_).parent_path();
+            for (auto& name : {"STR.edf", "STR.EDF"}) {
+                auto p = parent / name;
+                if (std::filesystem::exists(p)) { str_local_path = p.string(); break; }
+            }
+            // Also check inside local_source_dir_ as fallback
+            if (str_local_path.empty()) {
+                for (auto& name : {"STR.edf", "STR.EDF"}) {
+                    auto p = std::filesystem::path(local_source_dir_) / name;
+                    if (std::filesystem::exists(p)) { str_local_path = p.string(); break; }
+                }
+            }
+            if (str_local_path.empty()) {
+                std::cerr << "STR: Not found in " << parent.string()
+                          << " or " << local_source_dir_ << " (non-fatal)" << std::endl;
                 return;
             }
         } else {
-            // ezShare/Fysetc mode: download from SD card
-            std::string local_base = ConfigManager::get("CPAP_TEMP_DIR", (std::filesystem::temp_directory_path() / "cpap_data").string());
-            str_local_path = local_base + "/STR.EDF";
-            if (!ezshare_client_->downloadRootFile("STR.EDF", str_local_path)) {
-                std::cerr << "STR: Download failed (non-fatal)" << std::endl;
-                return;
+            // ezShare/Fysetc mode: download from SD card root
+            std::string local_base = ConfigManager::get("CPAP_TEMP_DIR",
+                (std::filesystem::temp_directory_path() / "cpap_data").string());
+            std::filesystem::create_directories(local_base);
+            str_local_path = local_base + "/STR.edf";
+            // Try both cases (ResMed uses STR.edf on newer firmware)
+            if (!ezshare_client_->downloadRootFile("STR.edf", str_local_path)) {
+                if (!ezshare_client_->downloadRootFile("STR.EDF", str_local_path)) {
+                    std::cerr << "STR: Download failed (non-fatal)" << std::endl;
+                    return;
+                }
+            }
+            // Archive to permanent storage alongside DATALOG
+            std::string archive_dir = ConfigManager::get("CPAP_ARCHIVE_DIR", "");
+            if (!archive_dir.empty()) {
+                auto dest = std::filesystem::path(archive_dir) / "STR.edf";
+                std::filesystem::copy_file(str_local_path, dest,
+                    std::filesystem::copy_options::overwrite_existing);
             }
         }
 
