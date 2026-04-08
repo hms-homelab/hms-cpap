@@ -29,6 +29,10 @@ DataPublisherService::~DataPublisherService() {
 }
 
 bool DataPublisherService::initialize() {
+    if (!mqtt_client_) {
+        std::cout << "DataPublisherService initialized (MQTT disabled)" << std::endl;
+        return true;
+    }
     // Subscribe to Home Assistant status to republish discovery on HA restart
     if (mqtt_client_ && mqtt_client_->isConnected()) {
         mqtt_client_->subscribe("homeassistant/status",
@@ -62,6 +66,7 @@ std::string DataPublisherService::createDeviceJson() const {
 }
 
 bool DataPublisherService::publishDiscovery() {
+    if (!mqtt_client_) return true;
     std::cout << "📡 MQTT: Publishing discovery messages..." << std::endl;
 
     bool rt_success = publishRealtimeDiscovery();
@@ -274,6 +279,7 @@ bool DataPublisherService::publishHistoricalDiscovery() {
 }
 
 void DataPublisherService::publishMqttState(const CPAPSession& session) {
+    if (!mqtt_client_) return;
     std::cout << "MQTT: Publishing session state..." << std::endl;
 
     // Publish realtime metrics (session is always IN_PROGRESS during parsing).
@@ -403,6 +409,7 @@ void DataPublisherService::publishHistoricalState(const CPAPSession& session) {
 }
 
 void DataPublisherService::publishHistoricalState(const SessionMetrics& m) {
+    if (!mqtt_client_) return;
 
     // USAGE
     if (m.usage_hours.has_value()) {
@@ -690,6 +697,7 @@ bool DataPublisherService::publishSTRDiscovery() {
 }
 
 void DataPublisherService::publishSTRState(const STRDailyRecord& record, double nightly_ahi) {
+    if (!mqtt_client_) return;
     std::string prefix = "cpap/" + device_id_ + "/daily/";
 
     auto pub = [&](const std::string& name, double value) {
@@ -721,6 +729,7 @@ void DataPublisherService::publishSTRState(const STRDailyRecord& record, double 
 }
 
 bool DataPublisherService::publishSessionCompleted() {
+    if (!mqtt_client_) return true;
     std::cout << "📤 MQTT: Publishing session completed status..." << std::endl;
 
     // Publish session_status = completed
@@ -869,6 +878,7 @@ bool DataPublisherService::publishInsightsDiscovery() {
 }
 
 void DataPublisherService::publishInsights(const std::vector<Insight>& insights) {
+    if (!mqtt_client_) return;
     auto json = InsightsEngine::toJson(insights);
 
     Json::StreamWriterBuilder builder;

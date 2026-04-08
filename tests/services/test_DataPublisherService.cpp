@@ -8,7 +8,8 @@
 #include <gmock/gmock.h>
 #include "services/DataPublisherService.h"
 #include "mqtt_client.h"
-#include "database/DatabaseService.h"
+#include "database/IDatabase.h"
+#include "database/SQLiteDatabase.h"
 #include <thread>
 #include <chrono>
 #include <atomic>
@@ -31,7 +32,7 @@ protected:
 
         // Create MQTT client and database service
         mqtt_client = std::make_shared<hms::MqttClient>(testMqttConfig("test_data_publisher"));
-        db_service = std::make_shared<DatabaseService>("postgresql://localhost/test");  // Dummy connection string
+        db_service = std::make_shared<SQLiteDatabase>(":memory:");
 
         // Create DataPublisherService
         data_publisher = std::make_unique<DataPublisherService>(mqtt_client, db_service);
@@ -45,7 +46,7 @@ protected:
 
     std::string mqtt_broker;
     std::shared_ptr<hms::MqttClient> mqtt_client;
-    std::shared_ptr<DatabaseService> db_service;
+    std::shared_ptr<IDatabase> db_service;
     std::unique_ptr<DataPublisherService> data_publisher;
 };
 
@@ -360,4 +361,66 @@ TEST_F(DataPublisherServiceTest, MQTTReconnection_RepublishesDiscovery) {
     // Should have republished discovery
     EXPECT_GT(discovery_count.load(), 0);
     std::cout << "✅ Discovery republished after MQTT reconnection" << std::endl;
+}
+
+// ============================================================================
+// MQTT DISABLED TESTS
+// (verify no crash when mqtt.enabled=false → null mqtt_client)
+// ============================================================================
+
+class MqttDisabledTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        db = std::make_shared<SQLiteDatabase>(":memory:");
+        db->connect();
+        // null mqtt_client — simulates mqtt.enabled=false
+        publisher = std::make_unique<DataPublisherService>(nullptr, db);
+    }
+
+    std::shared_ptr<IDatabase> db;
+    std::unique_ptr<DataPublisherService> publisher;
+};
+
+TEST_F(MqttDisabledTest, Initialize_NoMqtt_NoCrash) {
+    EXPECT_TRUE(publisher->initialize());
+}
+
+TEST_F(MqttDisabledTest, PublishDiscovery_NoMqtt_NoCrash) {
+    EXPECT_TRUE(publisher->publishDiscovery());
+}
+
+TEST_F(MqttDisabledTest, PublishSessionCompleted_NoMqtt_NoCrash) {
+    EXPECT_TRUE(publisher->publishSessionCompleted());
+}
+
+TEST_F(MqttDisabledTest, PublishHistoricalState_NoMqtt_NoCrash) {
+    SessionMetrics m;
+    m.ahi = 2.5;
+    m.usage_hours = 6.0;
+    m.total_events = 10;
+    publisher->publishHistoricalState(m);  // void — just verify no crash
+}
+
+TEST_F(MqttDisabledTest, PublishSTRState_NoMqtt_NoCrash) {
+    STRDailyRecord rec;
+    rec.device_id = "test";
+    rec.ahi = 1.5;
+    rec.duration_minutes = 360;
+    publisher->publishSTRState(rec);  // void — no crash
+}
+
+TEST_F(MqttDisabledTest, PublishSessionSummary_NoMqtt_NoCrash) {
+    EXPECT_FALSE(publisher->publishSessionSummary("test summary"));  // returns false (not connected)
+}
+
+TEST_F(MqttDisabledTest, PublishInsights_NoMqtt_NoCrash) {
+    std::vector<Insight> insights;
+    publisher->publishInsights(insights);  // void — no crash
+}
+
+TEST_F(MqttDisabledTest, PublishSession_NoMqtt_NoCrash) {
+    CPAPSession session;
+    session.device_id = "test_device";
+    // publishSession saves to DB + publishes MQTT; with null MQTT it should still save
+    publisher->publishSession(session);
 }
