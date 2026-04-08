@@ -2,6 +2,9 @@ name: Build, Test, and Publish
 
 on:
   push:
+    branches:
+      - master
+      - main
     tags:
       - 'v*'
   pull_request:
@@ -56,7 +59,7 @@ jobs:
       - name: Build HMS-CPAP
         run: |
           mkdir build && cd build
-          cmake -DBUILD_TESTS=ON -DBUILD_WITH_WEB=ON ..
+          cmake -DBUILD_TESTS=ON -DBUILD_WITH_WEB=ON -DBUILD_WITH_MYSQL=ON ..
           make -j$(nproc)
 
       - name: Run tests
