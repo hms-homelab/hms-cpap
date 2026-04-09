@@ -1485,7 +1485,11 @@ void BurstCollectorService::reloadConfig() {
             discovery_service_.reset();
         } else {
             local_source_dir_.clear();
+#ifdef _WIN32
+            _putenv_s("EZSHARE_BASE_URL", nc.ezshare_url.c_str());
+#else
             setenv("EZSHARE_BASE_URL", nc.ezshare_url.c_str(), 1);
+#endif
             ezshare_client_ = std::make_unique<EzShareClient>();
             discovery_service_ = std::make_unique<SessionDiscoveryService>(*ezshare_client_);
         }

@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.2.4] - 2026-04-08
+
+### Fixed
+- **Config loader ignores source/db type** — `BurstCollectorService` always
+  defaulted to ezShare + PostgreSQL regardless of `config.json`. Root causes:
+  `std::to_string().c_str()` dangling pointer UB in env var bridge, `DB_TYPE`
+  env var never set, and `BurstCollectorService` hardcoded `DatabaseService`
+  (PostgreSQL) instead of using `IDatabase` interface.
+- **MQTT connects even when disabled** — `mqtt.enabled: false` in config now
+  fully skips MqttClient creation. All `DataPublisherService` methods are
+  null-safe (8 unit tests).
+- **STR.edf not found in local mode** — `local_dir` points to DATALOG but
+  STR.edf lives one level up at the SD root. Now checks parent directory first
+  with case-insensitive fallback.
+- **Windows MSVC** — `setenv` -> `_putenv_s`, `localtime_r` -> `localtime_s`.
+
+### Added
+- **Hot-reload config from web UI** — Settings page changes take effect on the
+  next burst cycle without restart. Dirty-flag mechanism compares config
+  snapshots and reinitializes only changed clients (DB, MQTT, LLM, source).
+- **MySQL/MariaDB backend** — `database.type: "mysql"` now wired into
+  `BurstCollectorService` via `IDatabase`. Docker image includes `libmariadb3`.
+  CMake falls back to `mariadb` pkg-config when `mysqlclient` is unavailable.
+- **STR.edf archival** — HTTP mode archives downloaded STR.edf to
+  `CPAP_ARCHIVE_DIR` for persistence across container restarts.
+
+### Changed
+- **Renamed sleeplink -> cpapdash** — `SleeplinkBridge.h` -> `CpapdashBridge.h`,
+  include paths `sleeplink/parser/` -> `cpapdash/parser/`, namespace
+  `sleeplink::parser` -> `cpapdash::parser`, CMake target `sleeplink_parser`
+  -> `cpapdash_parser`.
+- **DatabaseService inherits IDatabase** — all methods marked `override`,
+  `rawConnection()` returns `void*` (typed accessor via `pgConnection()`).
+- **CI** — enabled `-DBUILD_WITH_MYSQL=ON` in Linux build + tests.
+
 ## [3.2.1] - 2026-04-02
 
 ### Fixed
