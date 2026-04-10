@@ -319,6 +319,9 @@ int runReparse(const std::string& archive_dir, const std::string& start_str, con
             if (db.saveSession(*parsed)) {
                 total_saved++;
 
+                // Reparsed sessions are complete — set session_end
+                db.markSessionCompleted(device_id, session.session_start);
+
                 // Store checkpoint file sizes (same as burst cycle)
                 std::map<std::string, int> checkpoint_sizes;
                 for (const auto& [filename, size_kb] : session.file_sizes_kb) {

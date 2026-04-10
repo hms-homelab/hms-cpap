@@ -1,4 +1,5 @@
 #include "services/BackfillService.h"
+#include "parsers/CpapdashBridge.h"
 
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -214,6 +215,11 @@ void BackfillService::executeBackfill(const std::string& start_date,
                     std::lock_guard<std::mutex> lock(progress_mutex_);
                     progress_.sessions_saved++;
 
+                    // Backfilled sessions are complete (files aren't growing).
+                    // markSessionCompleted() sets session_end so they show as
+                    // "Done" instead of "LIVE" in the sessions list.
+                    db_->markSessionCompleted(config_.device_id, session.session_start);
+
                     // Store checkpoint file sizes
                     std::map<std::string, int> checkpoint_sizes;
                     for (const auto& [filename, size_kb] : session.file_sizes_kb) {
@@ -246,6 +252,10 @@ void BackfillService::executeBackfill(const std::string& start_date,
         // Cleanup top-level temp
         std::filesystem::remove_all(
             std::filesystem::temp_directory_path() / "cpap_backfill");
+
+        // Process STR.edf to populate cpap_daily_summary (feeds the dashboard).
+        // STR.edf lives at the SD root, one level above DATALOG.
+        processSTRFile();
 
         {
             std::lock_guard<std::mutex> lock(progress_mutex_);
@@ -324,6 +334,39 @@ std::string BackfillService::currentTimestamp() {
     std::ostringstream oss;
     oss << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");
     return oss.str();
+}
+
+void BackfillService::processSTRFile() {
+    // STR.edf lives at the SD root, one level above DATALOG
+    auto parent = std::filesystem::path(config_.local_dir).parent_path();
+    std::string str_path;
+
+    for (auto& name : {"STR.edf", "STR.EDF"}) {
+        auto p = parent / name;
+        if (std::filesystem::exists(p)) { str_path = p.string(); break; }
+    }
+    // Also check inside DATALOG as fallback
+    if (str_path.empty()) {
+        for (auto& name : {"STR.edf", "STR.EDF"}) {
+            auto p = std::filesystem::path(config_.local_dir) / name;
+            if (std::filesystem::exists(p)) { str_path = p.string(); break; }
+        }
+    }
+    if (str_path.empty()) {
+        spdlog::warn("BackfillService: STR.edf not found — dashboard will be empty");
+        return;
+    }
+
+    try {
+        auto records = EDFParser::parseSTRFile(str_path, config_.device_id);
+        if (!records.empty()) {
+            db_->saveSTRDailyRecords(records);
+            spdlog::info("BackfillService: STR.edf processed — {} daily record(s)",
+                         records.size());
+        }
+    } catch (const std::exception& e) {
+        spdlog::warn("BackfillService: STR.edf parse error — {}", e.what());
+    }
 }
 
 }  // namespace hms_cpap

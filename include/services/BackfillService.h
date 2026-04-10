@@ -82,6 +82,9 @@ private:
                                              const std::string& end_date) const;
 
     static std::string currentTimestamp();
+
+    /// Parse STR.edf and save daily summaries to populate the dashboard.
+    void processSTRFile();
 };
 
 }  // namespace hms_cpap
