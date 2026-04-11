@@ -356,6 +356,151 @@ TEST_F(EzShareClientTest, MissingLocalFileHandling) {
     EXPECT_EQ(std::filesystem::file_size(test_file), 2048u);
 }
 
+// ── Directory listing parser tests (firmware compatibility) ──────────────────
+
+class EzShareParserTest : public ::testing::Test {
+protected:
+    EzShareClient client;
+};
+
+// HTML-entity encoded &lt;DIR&gt; — newer firmware / our Fysetc mule
+TEST_F(EzShareParserTest, ParsesHtmlEntityEncodedDIR) {
+    std::string html = R"(
+<pre>
+2026- 2- 3   20:50:32         &lt;DIR&gt;   <a href="dir?dir=A:DATALOG\20260203"> 20260203</a>
+2026- 2- 4   01:15:00         &lt;DIR&gt;   <a href="dir?dir=A:DATALOG\20260204"> 20260204</a>
+</pre>)";
+
+    auto entries = client.parseDirectoryListing(html);
+    ASSERT_EQ(entries.size(), 2);
+    EXPECT_TRUE(entries[0].is_dir);
+    EXPECT_EQ(entries[0].name, "20260203");
+    EXPECT_EQ(entries[0].year, 2026);
+    EXPECT_EQ(entries[0].month, 2);
+    EXPECT_EQ(entries[0].day, 3);
+    EXPECT_TRUE(entries[1].is_dir);
+    EXPECT_EQ(entries[1].name, "20260204");
+}
+
+// Literal <DIR> — older/cheaper Chinese ezShare clones
+TEST_F(EzShareParserTest, ParsesLiteralDIR) {
+    std::string html = R"(
+<pre>
+2026- 2- 3   20:50:32         <DIR>   <a href="dir?dir=A:DATALOG\20260203"> 20260203</a>
+2026- 2- 4   01:15:00         <DIR>   <a href="dir?dir=A:DATALOG\20260204"> 20260204</a>
+</pre>)";
+
+    auto entries = client.parseDirectoryListing(html);
+    ASSERT_EQ(entries.size(), 2);
+    EXPECT_TRUE(entries[0].is_dir);
+    EXPECT_EQ(entries[0].name, "20260203");
+    EXPECT_TRUE(entries[1].is_dir);
+    EXPECT_EQ(entries[1].name, "20260204");
+}
+
+// Mixed: some firmware encode, some don't (belt and suspenders)
+TEST_F(EzShareParserTest, ParsesMixedDIRFormats) {
+    std::string html = R"(
+<pre>
+2026- 2- 3   20:50:32         &lt;DIR&gt;   <a href="dir?dir=A:DATALOG\20260203"> 20260203</a>
+2026- 2- 4   01:15:00         <DIR>   <a href="dir?dir=A:DATALOG\20260204"> 20260204</a>
+</pre>)";
+
+    auto entries = client.parseDirectoryListing(html);
+    ASSERT_EQ(entries.size(), 2);
+    EXPECT_EQ(entries[0].name, "20260203");
+    EXPECT_EQ(entries[1].name, "20260204");
+}
+
+// Files with KB sizes (not directories)
+TEST_F(EzShareParserTest, ParsesFilesWithSizes) {
+    std::string html = R"(
+<pre>
+2026- 2- 4   01:18:09         535KB   <a href="/download?file=DATALOG%5C20260204%5C20260204_011809_BRP.edf"> 20260204_011809_BRP.edf</a>
+2026- 2- 4   01:18:10          51KB   <a href="/download?file=DATALOG%5C20260204%5C20260204_011810_PLD.edf"> 20260204_011810_PLD.edf</a>
+2026- 2- 4   01:18:10          23KB   <a href="/download?file=DATALOG%5C20260204%5C20260204_011810_SAD.edf"> 20260204_011810_SAD.edf</a>
+</pre>)";
+
+    auto entries = client.parseDirectoryListing(html);
+    ASSERT_EQ(entries.size(), 3);
+    EXPECT_FALSE(entries[0].is_dir);
+    EXPECT_EQ(entries[0].name, "20260204_011809_BRP.edf");
+    EXPECT_EQ(entries[0].size_kb, 535);
+    EXPECT_FALSE(entries[1].is_dir);
+    EXPECT_EQ(entries[1].name, "20260204_011810_PLD.edf");
+    EXPECT_EQ(entries[1].size_kb, 51);
+    EXPECT_FALSE(entries[2].is_dir);
+    EXPECT_EQ(entries[2].name, "20260204_011810_SAD.edf");
+    EXPECT_EQ(entries[2].size_kb, 23);
+}
+
+// Mixed dirs and files in same listing (literal <DIR>)
+TEST_F(EzShareParserTest, ParsesMixedDirsAndFilesLiteralDIR) {
+    std::string html = R"(
+<pre>
+2026- 2- 3   20:50:32         <DIR>   <a href="dir?dir=A:DATALOG\20260203"> .</a>
+2026- 2- 3   20:50:32         <DIR>   <a href="dir?dir=A:DATALOG"> ..</a>
+2026- 2- 4   01:18:09         535KB   <a href="/download?file=20260204_011809_BRP.edf"> 20260204_011809_BRP.edf</a>
+2026- 2- 4   01:47:47           1KB   <a href="/download?file=20260204_014747_CSL.edf"> 20260204_014747_CSL.edf</a>
+</pre>)";
+
+    auto entries = client.parseDirectoryListing(html);
+    // . and .. should be skipped
+    ASSERT_EQ(entries.size(), 2);
+    EXPECT_FALSE(entries[0].is_dir);
+    EXPECT_EQ(entries[0].name, "20260204_011809_BRP.edf");
+    EXPECT_EQ(entries[0].size_kb, 535);
+    EXPECT_FALSE(entries[1].is_dir);
+    EXPECT_EQ(entries[1].name, "20260204_014747_CSL.edf");
+    EXPECT_EQ(entries[1].size_kb, 1);
+}
+
+// Same test with HTML-entity <DIR> (our mule / newer firmware)
+TEST_F(EzShareParserTest, ParsesMixedDirsAndFilesEncodedDIR) {
+    std::string html = R"(
+<pre>
+2026- 2- 3   20:50:32         &lt;DIR&gt;   <a href="dir?dir=A:DATALOG\20260203"> .</a>
+2026- 2- 3   20:50:32         &lt;DIR&gt;   <a href="dir?dir=A:DATALOG"> ..</a>
+2026- 2- 4   01:18:09         535KB   <a href="/download?file=20260204_011809_BRP.edf"> 20260204_011809_BRP.edf</a>
+</pre>)";
+
+    auto entries = client.parseDirectoryListing(html);
+    ASSERT_EQ(entries.size(), 1);
+    EXPECT_EQ(entries[0].name, "20260204_011809_BRP.edf");
+    EXPECT_EQ(entries[0].size_kb, 535);
+}
+
+// Timestamp parsing edge cases — single-digit month/day (some firmware quirks)
+TEST_F(EzShareParserTest, ParsesSingleDigitMonthDay) {
+    std::string html = R"(
+<pre>
+2026- 1- 5    3:05:09         100KB   <a href="/download?file=test.edf"> test.edf</a>
+</pre>)";
+
+    auto entries = client.parseDirectoryListing(html);
+    ASSERT_EQ(entries.size(), 1);
+    EXPECT_EQ(entries[0].year, 2026);
+    EXPECT_EQ(entries[0].month, 1);
+    EXPECT_EQ(entries[0].day, 5);
+    EXPECT_EQ(entries[0].hour, 3);
+    EXPECT_EQ(entries[0].minute, 5);
+    EXPECT_EQ(entries[0].second, 9);
+}
+
+// Empty listing — no files, no crash
+TEST_F(EzShareParserTest, EmptyListingReturnsEmpty) {
+    std::string html = "<pre>\n</pre>";
+    auto entries = client.parseDirectoryListing(html);
+    EXPECT_TRUE(entries.empty());
+}
+
+// Garbage HTML — no crash
+TEST_F(EzShareParserTest, GarbageHtmlReturnsEmpty) {
+    std::string html = "<html><body>Not an ezShare page</body></html>";
+    auto entries = client.parseDirectoryListing(html);
+    EXPECT_TRUE(entries.empty());
+}
+
 // Run all tests
 int main(int argc, char** argv) {
     testing::InitGoogleTest(&argc, argv);

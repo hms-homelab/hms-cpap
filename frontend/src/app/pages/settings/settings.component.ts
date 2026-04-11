@@ -1,6 +1,8 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { Subject, Subscription, timer } from 'rxjs';
+import { switchMap, takeUntil, takeWhile, tap } from 'rxjs/operators';
 import { CpapApiService } from '../../services/cpap-api.service';
 import { AppConfig } from '../../models/config.model';
 
@@ -493,7 +495,7 @@ import { AppConfig } from '../../models/config.model';
     }
   `]
 })
-export class SettingsComponent implements OnInit {
+export class SettingsComponent implements OnInit, OnDestroy {
   config: AppConfig | null = null;
   loading = true;
   saving = false;
@@ -510,6 +512,8 @@ export class SettingsComponent implements OnInit {
   backfillEnd = '';
   backfillRunning = false;
   backfillProgress: any = null;
+
+  private destroy$ = new Subject<void>();
 
   // LLM Prompt state
   llmPrompt = '';
@@ -529,6 +533,11 @@ export class SettingsComponent implements OnInit {
   };
 
   constructor(private api: CpapApiService) {}
+
+  ngOnDestroy(): void {
+    this.destroy$.next();
+    this.destroy$.complete();
+  }
 
   ngOnInit(): void {
     this.api.getConfig().subscribe({
@@ -592,19 +601,24 @@ export class SettingsComponent implements OnInit {
     this.api.triggerMlTraining().subscribe({
       next: () => {
         this.showToast('Training started.', false);
-        // Poll status every 5s for up to 2 minutes
+        // Poll status every 5s for up to 2 minutes using switchMap to prevent overlapping requests
         let polls = 0;
-        const interval = setInterval(() => {
-          this.loadMlStatus();
-          polls++;
-          if (this.mlStatus?.status !== 'training' || polls > 24) {
-            clearInterval(interval);
+        timer(0, 5000).pipe(
+          takeUntil(this.destroy$),
+          switchMap(() => this.api.getMlStatus()),
+          tap((status) => {
+            this.mlStatus = status;
+            polls++;
+          }),
+          takeWhile((status) => status?.status === 'training' && polls <= 24),
+        ).subscribe({
+          complete: () => {
             this.mlTraining = false;
             if (this.mlStatus?.status !== 'training') {
               this.showToast('Training complete.', false);
             }
-          }
-        }, 5000);
+          },
+        });
       },
       error: () => {
         this.mlTraining = false;
@@ -655,25 +669,26 @@ export class SettingsComponent implements OnInit {
 
   private pollBackfillStatus(): void {
     let polls = 0;
-    const interval = setInterval(() => {
-      this.api.getBackfillStatus().subscribe({
-        next: (status) => {
-          this.backfillProgress = status;
-          if (status.status !== 'running' || polls > 200) {
-            clearInterval(interval);
-            this.backfillRunning = false;
-            if (status.status === 'complete') {
-              this.showToast(
-                `Import complete: ${status.sessions_saved} session(s) saved.`, false);
-            } else if (status.status === 'error') {
-              this.showToast('Import failed: ' + (status.error_message || 'unknown error'), true);
-            }
-          }
-        },
-        error: () => {},
-      });
-      polls++;
-    }, 3000);
+    timer(0, 3000).pipe(
+      takeUntil(this.destroy$),
+      switchMap(() => this.api.getBackfillStatus()),
+      tap((status) => {
+        this.backfillProgress = status;
+        polls++;
+      }),
+      takeWhile((status) => status.status === 'running' && polls <= 200),
+    ).subscribe({
+      complete: () => {
+        this.backfillRunning = false;
+        const status = this.backfillProgress;
+        if (status?.status === 'complete') {
+          this.showToast(
+            `Import complete: ${status.sessions_saved} session(s) saved.`, false);
+        } else if (status?.status === 'error') {
+          this.showToast('Import failed: ' + (status.error_message || 'unknown error'), true);
+        }
+      },
+    });
   }
 
   saveLlmPrompt(): void {

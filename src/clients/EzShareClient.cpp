@@ -85,7 +85,7 @@ std::vector<EzShareFileEntry> EzShareClient::parseDirectoryListing(const std::st
     //   YYYY- M- D   HH:MM:SS   <DIR>    <a href="..."> NAME</a>
     std::regex entry_regex(
         R"((\d{4})-\s*(\d{1,2})-\s*(\d{1,2})\s+(\d{1,2}):\s*(\d{1,2}):\s*(\d{1,2})\s+)"
-        R"((?:(\d+)KB|&lt;DIR&gt;)\s+)"
+        R"((?:(\d+)KB|(?:&lt;DIR&gt;|<DIR>))\s+)"
         R"(<a\s+href="[^"]*">\s*([^<]+)</a>)",
         std::regex_constants::icase
     );

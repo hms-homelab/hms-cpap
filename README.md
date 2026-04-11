@@ -44,7 +44,7 @@ Automatically extracts sleep therapy data from your ResMed AirSense 10/11 CPAP m
 - **LLM Session Summary** - Optional AI-generated therapy analysis via Ollama
 - **Windows + Linux** - Native builds for both platforms, Docker image for CI
 - **Ultra-Lightweight** - 6.5 MB native binary
-- **247 Unit Tests** - Comprehensive coverage across all services
+- **309 Unit Tests** - Comprehensive coverage across all services
 
 ## Table of Contents
 
@@ -231,10 +231,12 @@ hms_cpap --config /etc/hms-cpap/config.json
 ### Native Systemd (Recommended)
 
 ```bash
-# Build
-mkdir build && cd build && cmake .. && make -j$(nproc)
+# Build frontend + backend, run tests, and deploy
+./build_and_deploy.sh --deploy
 
-# Install
+# Or manually:
+cd frontend && npm ci && npx ng build --configuration production && cd ..
+mkdir build && cd build && cmake -DBUILD_WITH_WEB=ON .. && make -j$(nproc)
 sudo cp hms_cpap /usr/local/bin/
 sudo cp ../.env /etc/hms-cpap/.env  # Edit with your settings
 
@@ -273,6 +275,42 @@ docker run -d \
   -v cpap_data:/data \
   ghcr.io/hms-homelab/hms-cpap:latest
 ```
+
+### Raspberry Pi
+
+Two deployment scripts are provided for running hms-cpap on a Raspberry Pi. Both read `PI_HOST` and `PI_PASSWORD` from environment variables or your `.env` file -- no hardcoded IPs or passwords.
+
+**Setup:** Add your Pi credentials to `.env`:
+
+```bash
+# In .env
+PI_HOST=user@192.168.1.50
+PI_PASSWORD=your_password
+```
+
+Or pass them inline:
+
+```bash
+PI_HOST=user@192.168.1.50 PI_PASSWORD=mypass ./deploy_to_pi.sh
+```
+
+If either variable is missing, the script exits with a clear error message telling you what to set.
+
+**Cross-compile deploy** (build on your machine, deploy ARM binary to Pi):
+
+```bash
+./deploy_to_pi.sh
+```
+
+Builds the Angular frontend, cross-compiles the C++ backend for ARM, copies the binary and static files to the Pi, and restarts the service.
+
+**Native build deploy** (push code to Pi, build on Pi):
+
+```bash
+./deploy_to_pi_native.sh
+```
+
+Pushes via git, builds natively on the Pi (slower but avoids cross-compilation issues), deploys, and restarts. Use this if cross-compiled binaries have issues on your Pi model.
 
 ### Windows
 
@@ -376,6 +414,21 @@ Sensors auto-appear as a device with 47+ entities:
 
 ### Build & Test
 
+The recommended way to build is via the build script, which handles frontend + backend + tests in one step:
+
+```bash
+# Build everything (frontend + backend + run tests)
+./build_and_deploy.sh
+
+# Build and deploy to systemd service
+./build_and_deploy.sh --deploy
+
+# Backend only (skip Angular build)
+./build_and_deploy.sh --skip-fe
+```
+
+Or manually:
+
 ```bash
 # Build frontend
 cd frontend && npm ci && npx ng build --configuration production && cd ..
@@ -414,7 +467,7 @@ mysql -u root cpap_monitoring < scripts/schema_mysql.sql
 cd build && ./tests/run_tests
 ```
 
-**247 tests** across 22 test suites covering EDF parsing, session discovery, MQTT publishing, database operations, configuration, and more.
+**309 tests** across 32 test suites covering EDF parsing, session discovery, ezShare firmware compatibility, MQTT publishing, database operations, ML training, and more.
 
 ## FAQ
 

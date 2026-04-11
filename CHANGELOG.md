@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.2.5] - 2026-04-11
+
+### Fixed
+- **Session gap truncation** — `duration_cast<hours>` silently truncated sub-hour
+  gaps to zero, preventing session splits when `SESSION_GAP_MINUTES` < 60. Now
+  casts to minutes correctly (both ezShare and local code paths).
+- **CSL/EVE file cross-assignment** — Matched CSL/EVE entries were never erased
+  from the lookup map, causing the last session in a multi-session night to steal
+  the first session's CSL file. Iterator-based erase after match (both code paths).
+- **Docker timezone mismatch** — `is_today` folder check used `localtime()` which
+  defaults to UTC in Docker containers, breaking live session polling for US/EU
+  timezones. Now checks both local and UTC dates.
+- **Frontend polling race conditions** — `trainNow()` and `pollBackfillStatus()`
+  used `setInterval` + raw `subscribe`, allowing overlapping HTTP requests that
+  could resolve out-of-order under Docker load. Replaced with RxJS
+  `timer` + `switchMap` + `takeWhile`.
+- **ezShare `<DIR>` regex** — Parser only matched HTML-entity `&lt;DIR&gt;`,
+  failing silently on older/cheaper ezShare clones that send literal `<DIR>`.
+  Now accepts both formats.
+- **Deploy scripts hardcoded Pi IP** — `deploy_to_pi.sh` and
+  `deploy_to_pi_native.sh` had hardcoded IP and password. Now read from
+  `PI_HOST`/`PI_PASSWORD` env vars or `.env` file, with clear error if unset.
+
+### Added
+- **`build_and_deploy.sh`** — Single script to build frontend + backend, run
+  tests, and optionally deploy. Supports `--deploy` and `--skip-fe` flags.
+- **15 new unit tests** (309 total) — Session gap splitting (3), CSL/EVE map
+  assignment (3), ezShare HTML parser firmware compatibility (9).
+
 ## [3.2.4] - 2026-04-08
 
 ### Fixed

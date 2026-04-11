@@ -3,14 +3,32 @@
 # Pushes code to Pi, builds natively, and restarts the service.
 # Use this instead of deploy_to_pi.sh when cross-compilation produces
 # bad binaries (e.g. the getMetricsForDateRange SEGV).
+#
+# Usage:
+#   PI_HOST=user@192.168.1.50 PI_PASSWORD=mypass ./deploy_to_pi_native.sh
+#
+# Environment variables:
+#   PI_HOST       - SSH target (default: from .env or PI_HOST env)
+#   PI_PASSWORD   - SSH/sudo password (default: from .env or PI_PASSWORD env)
+#   PI_BINARY_PATH - Remote binary path (default: /usr/local/bin/hms_cpap)
+#   PI_REPO_DIR   - Repo path on Pi (default: $HOME/hms-cpap)
+#   SERVICE_NAME  - Systemd service name (default: hms-cpap)
 
 set -e
 
-PI_HOST="aamat@192.168.2.73"
-PI_PASSWORD="exploracion"
-PI_BINARY_PATH="/usr/local/bin/hms_cpap"
-PI_REPO_DIR="\$HOME/hms-cpap"
-SERVICE_NAME="hms-cpap"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Load .env if present (for PI_HOST / PI_PASSWORD)
+if [ -f "$SCRIPT_DIR/.env" ]; then
+    # shellcheck disable=SC1091
+    source <(grep -E '^PI_(HOST|PASSWORD)=' "$SCRIPT_DIR/.env")
+fi
+
+PI_HOST="${PI_HOST:?Set PI_HOST (e.g. PI_HOST=user@192.168.1.50)}"
+PI_PASSWORD="${PI_PASSWORD:?Set PI_PASSWORD}"
+PI_BINARY_PATH="${PI_BINARY_PATH:-/usr/local/bin/hms_cpap}"
+PI_REPO_DIR="${PI_REPO_DIR:-\$HOME/hms-cpap}"
+SERVICE_NAME="${SERVICE_NAME:-hms-cpap}"
 
 SSH="sshpass -p $PI_PASSWORD ssh -o StrictHostKeyChecking=no $PI_HOST"
 

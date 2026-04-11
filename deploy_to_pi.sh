@@ -1,14 +1,30 @@
 #!/bin/bash
 # HMS-CPAP Pi Deployment Script
-# Builds for ARM, deploys to Pi, and restarts the service
+# Cross-compiles for ARM, deploys to Pi, and restarts the service.
+#
+# Usage:
+#   PI_HOST=user@192.168.1.50 PI_PASSWORD=mypass ./deploy_to_pi.sh
+#
+# Environment variables:
+#   PI_HOST       - SSH target (default: from .env or PI_HOST env)
+#   PI_PASSWORD   - SSH/sudo password (default: from .env or PI_PASSWORD env)
+#   PI_BINARY_PATH - Remote binary path (default: /usr/local/bin/hms_cpap)
+#   SERVICE_NAME  - Systemd service name (default: hms-cpap)
 
 set -e
 
-# Configuration
-PI_HOST="aamat@192.168.2.73"
-PI_PASSWORD="exploracion"
-PI_BINARY_PATH="/usr/local/bin/hms_cpap"
-SERVICE_NAME="hms-cpap"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Load .env if present (for PI_HOST / PI_PASSWORD)
+if [ -f "$SCRIPT_DIR/.env" ]; then
+    # shellcheck disable=SC1091
+    source <(grep -E '^PI_(HOST|PASSWORD)=' "$SCRIPT_DIR/.env")
+fi
+
+PI_HOST="${PI_HOST:?Set PI_HOST (e.g. PI_HOST=user@192.168.1.50)}"
+PI_PASSWORD="${PI_PASSWORD:?Set PI_PASSWORD}"
+PI_BINARY_PATH="${PI_BINARY_PATH:-/usr/local/bin/hms_cpap}"
+SERVICE_NAME="${SERVICE_NAME:-hms-cpap}"
 
 echo "╔══════════════════════════════════════════════════════════╗"
 echo "║         HMS-CPAP Pi Zero 2 W Deployment                 ║"

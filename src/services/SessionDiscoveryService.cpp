@@ -154,7 +154,7 @@ SessionDiscoveryService::groupSessionsInFolder(const std::string& date_folder) {
     current_group.push_back(checkpoints[0]);
 
     for (size_t i = 1; i < checkpoints.size(); ++i) {
-        auto gap = std::chrono::duration_cast<std::chrono::hours>(
+        auto gap = std::chrono::duration_cast<std::chrono::minutes>(
             checkpoints[i].timestamp - checkpoints[i-1].timestamp
         );
 
@@ -162,7 +162,7 @@ SessionDiscoveryService::groupSessionsInFolder(const std::string& date_folder) {
             // Gap detected - start new session
             session_groups.push_back(current_group);
             current_group.clear();
-            std::cout << "  ⏱️  Detected " << gap.count() << "-hour gap - splitting into new session" << std::endl;
+            std::cout << "  ⏱️  Detected " << gap.count() << "-minute gap - splitting into new session" << std::endl;
         }
 
         current_group.push_back(checkpoints[i]);
@@ -218,8 +218,8 @@ SessionDiscoveryService::groupSessionsInFolder(const std::string& date_folder) {
 
         bool is_last_session = (group_idx == session_groups.size() - 1);
 
-        for (const auto& [csl_prefix, csl_file] : csl_files) {
-            auto csl_time = parseSessionTime(csl_prefix);
+        for (auto it = csl_files.begin(); it != csl_files.end(); ++it) {
+            auto csl_time = parseSessionTime(it->first);
 
             // Match CSL to session if:
             // 1. This is the last session group (CSL written at end)
@@ -228,26 +228,28 @@ SessionDiscoveryService::groupSessionsInFolder(const std::string& date_folder) {
             bool time_match = time_diff < std::chrono::hours(12);
 
             if (is_last_session || time_match) {
-                session.csl_file = csl_file.name;
-                session.total_size_kb += csl_file.size_kb;
-                session.file_sizes_kb[csl_file.name] = csl_file.size_kb;  // Store individual size
-                std::cout << "    CSL: " << csl_file.name << std::endl;
-                break;  // Only one CSL per session
+                session.csl_file = it->second.name;
+                session.total_size_kb += it->second.size_kb;
+                session.file_sizes_kb[it->second.name] = it->second.size_kb;
+                std::cout << "    CSL: " << it->second.name << std::endl;
+                csl_files.erase(it);
+                break;
             }
         }
 
-        for (const auto& [eve_prefix, eve_file] : eve_files) {
-            auto eve_time = parseSessionTime(eve_prefix);
+        for (auto it = eve_files.begin(); it != eve_files.end(); ++it) {
+            auto eve_time = parseSessionTime(it->first);
 
             auto time_diff = std::chrono::abs(eve_time - session_start);
             bool time_match = time_diff < std::chrono::hours(12);
 
             if (is_last_session || time_match) {
-                session.eve_file = eve_file.name;
-                session.total_size_kb += eve_file.size_kb;
-                session.file_sizes_kb[eve_file.name] = eve_file.size_kb;  // Store individual size
-                std::cout << "    EVE: " << eve_file.name << std::endl;
-                break;  // Only one EVE per session
+                session.eve_file = it->second.name;
+                session.total_size_kb += it->second.size_kb;
+                session.file_sizes_kb[it->second.name] = it->second.size_kb;
+                std::cout << "    EVE: " << it->second.name << std::endl;
+                eve_files.erase(it);
+                break;
             }
         }
 
@@ -347,19 +349,21 @@ SessionDiscoveryService::discoverNewSessions(
                   << " sessions in " << folder << std::endl;
 
         // Filter sessions: include NEW sessions OR sessions from TODAY (growing files)
+        // Use both localtime and UTC to handle Docker containers that default to UTC
         auto now = std::chrono::system_clock::now();
         std::time_t now_time = std::chrono::system_clock::to_time_t(now);
-        std::tm* now_tm = std::localtime(&now_time);
 
-        char today_str[9];
-        std::strftime(today_str, sizeof(today_str), "%Y%m%d", now_tm);
-        std::string today(today_str);
+        char today_local[9], today_utc[9];
+        std::tm* local_tm = std::localtime(&now_time);
+        std::strftime(today_local, sizeof(today_local), "%Y%m%d", local_tm);
+        std::tm* utc_tm = std::gmtime(&now_time);
+        std::strftime(today_utc, sizeof(today_utc), "%Y%m%d", utc_tm);
 
         // Calculate 48 hours ago (to catch late EVE files that can be written hours later)
         auto forty_eight_hours_ago = now - std::chrono::hours(48);
 
         for (const auto& session : folder_sessions) {
-            bool is_today = (folder == today);
+            bool is_today = (folder == today_local || folder == today_utc);
             bool is_new = (!last_session_start.has_value() ||
                           session.session_start > last_session_start.value());
             bool is_recent = (session.session_start > forty_eight_hours_ago);
@@ -477,17 +481,19 @@ SessionDiscoveryService::discoverLocalSessions(
                   << " sessions in " << folder << std::endl;
 
         // Same filtering as discoverNewSessions: new or recent sessions
+        // Use both localtime and UTC to handle Docker containers that default to UTC
         auto now = std::chrono::system_clock::now();
         auto forty_eight_hours_ago = now - std::chrono::hours(48);
 
         std::time_t now_time = std::chrono::system_clock::to_time_t(now);
-        std::tm* now_tm = std::localtime(&now_time);
-        char today_str[9];
-        std::strftime(today_str, sizeof(today_str), "%Y%m%d", now_tm);
-        std::string today(today_str);
+        char today_local[9], today_utc[9];
+        std::tm* local_tm = std::localtime(&now_time);
+        std::strftime(today_local, sizeof(today_local), "%Y%m%d", local_tm);
+        std::tm* utc_tm = std::gmtime(&now_time);
+        std::strftime(today_utc, sizeof(today_utc), "%Y%m%d", utc_tm);
 
         for (const auto& session : folder_sessions) {
-            bool is_today = (folder == today);
+            bool is_today = (folder == today_local || folder == today_utc);
             bool is_new = (!last_session_start.has_value() ||
                           session.session_start > last_session_start.value());
             bool is_recent = (session.session_start > forty_eight_hours_ago);
@@ -604,7 +610,7 @@ SessionDiscoveryService::groupLocalFolder(
     current_group.push_back(checkpoints[0]);
 
     for (size_t i = 1; i < checkpoints.size(); ++i) {
-        auto gap = std::chrono::duration_cast<std::chrono::hours>(
+        auto gap = std::chrono::duration_cast<std::chrono::minutes>(
             checkpoints[i].timestamp - checkpoints[i-1].timestamp);
         if (gap >= SESSION_GAP_THRESHOLD) {
             session_groups.push_back(current_group);
@@ -643,26 +649,28 @@ SessionDiscoveryService::groupLocalFolder(
         // Match CSL/EVE to this session
         bool is_last_session = (group_idx == session_groups.size() - 1);
 
-        for (const auto& [csl_prefix, csl_info] : csl_files) {
-            auto csl_time = parseTime(csl_prefix);
+        for (auto it = csl_files.begin(); it != csl_files.end(); ++it) {
+            auto csl_time = parseTime(it->first);
             auto time_diff = std::chrono::abs(csl_time - session_start);
             bool time_match = time_diff < std::chrono::hours(12);
             if (is_last_session || time_match) {
-                session.csl_file = csl_info.first;
-                session.total_size_kb += csl_info.second;
-                session.file_sizes_kb[csl_info.first] = csl_info.second;
+                session.csl_file = it->second.first;
+                session.total_size_kb += it->second.second;
+                session.file_sizes_kb[it->second.first] = it->second.second;
+                csl_files.erase(it);
                 break;
             }
         }
 
-        for (const auto& [eve_prefix, eve_info] : eve_files) {
-            auto eve_time = parseTime(eve_prefix);
+        for (auto it = eve_files.begin(); it != eve_files.end(); ++it) {
+            auto eve_time = parseTime(it->first);
             auto time_diff = std::chrono::abs(eve_time - session_start);
             bool time_match = time_diff < std::chrono::hours(12);
             if (is_last_session || time_match) {
-                session.eve_file = eve_info.first;
-                session.total_size_kb += eve_info.second;
-                session.file_sizes_kb[eve_info.first] = eve_info.second;
+                session.eve_file = it->second.first;
+                session.total_size_kb += it->second.second;
+                session.file_sizes_kb[it->second.first] = it->second.second;
+                eve_files.erase(it);
                 break;
             }
         }

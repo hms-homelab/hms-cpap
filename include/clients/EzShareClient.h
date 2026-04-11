@@ -101,6 +101,9 @@ public:
     std::string getBaseURL() const { return base_url_; }
     void setBaseURL(const std::string& url) { base_url_ = url; }
 
+    /** Parse ez Share HTML directory listing */
+    std::vector<EzShareFileEntry> parseDirectoryListing(const std::string& html);
+
 private:
     CURL* curl_;
     std::string base_url_;
@@ -113,9 +116,6 @@ private:
 
     /** Fetch HTML from a URL */
     std::string httpGet(const std::string& url);
-
-    /** Parse ez Share HTML directory listing */
-    std::vector<EzShareFileEntry> parseDirectoryListing(const std::string& html);
 };
 
 } // namespace hms_cpap

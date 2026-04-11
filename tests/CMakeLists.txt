@@ -50,6 +50,7 @@ set(TEST_SOURCES
     ml/test_FeatureEngine.cpp
     ml/test_MLTrainingService.cpp
     services/test_BackfillService.cpp
+    services/test_SessionDiscoveryService.cpp
 )
 
 # Create test executable
