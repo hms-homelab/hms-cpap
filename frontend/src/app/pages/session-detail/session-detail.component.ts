@@ -6,7 +6,7 @@ import { forkJoin, of } from 'rxjs';
 import { catchError } from 'rxjs/operators';
 import { CpapApiService } from '../../services/cpap-api.service';
 import { MetricCardComponent } from '../../components/metric-card/metric-card.component';
-import { SessionDetail, SessionEvent, SignalData, VitalsData } from '../../models/session.model';
+import { SessionDetail, SessionEvent, SignalData, VitalsData, OximetryData } from '../../models/session.model';
 import { formatTimestamps, eventAnnotations, makeDataset, makeFillBand, EVENT_COLORS } from '../../utils/chart-helpers';
 import { Chart, ChartDataset, registerables } from 'chart.js';
 import annotationPlugin from 'chartjs-plugin-annotation';
@@ -25,7 +25,7 @@ interface SignalDef {
   bandMinKey?: string;
   bandMaxKey?: string;
   showEvents?: boolean;    // overlay event markers
-  source: 'signals' | 'vitals';
+  source: 'signals' | 'vitals' | 'oximetry';
   fill?: boolean;
   minMode?: number;        // only show if therapy_mode >= this (e.g., 1=not CPAP, 7=ASV only)
 }
@@ -45,6 +45,8 @@ const SIGNAL_DEFS: SignalDef[] = [
   { key: 'target_ventilation', title: 'Target Ventilation', unit: 'L/min', color: '#4fc3f7', source: 'signals', minMode: 7 },
   { key: 'spo2', title: 'SpO2', unit: '%', color: '#e57373', yMin: 85, yMax: 100, hasBand: true, bandMinKey: 'spo2_min', bandMaxKey: 'spo2', source: 'vitals' },
   { key: 'heart_rate', title: 'Heart Rate', unit: 'bpm', color: '#f06292', hasBand: true, bandMinKey: 'hr_min', bandMaxKey: 'hr_max', source: 'vitals' },
+  { key: 'spo2', title: 'O2Ring SpO2', unit: '%', color: '#ef5350', yMin: 85, yMax: 100, source: 'oximetry' },
+  { key: 'heart_rate', title: 'O2Ring Heart Rate', unit: 'bpm', color: '#ec407a', source: 'oximetry' },
 ];
 
 @Component({
@@ -236,6 +238,7 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
   // Raw data
   private signalData: SignalData | null = null;
   private vitalsData: VitalsData | null = null;
+  private oximetryData: OximetryData | null = null;
   private events: SessionEvent[] = [];
 
   // Labels
@@ -243,6 +246,8 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
   private signalTimestamps: string[] = [];
   private vitalsLabels: string[] = [];
   private vitalsTimestamps: string[] = [];
+  private oximetryLabels: string[] = [];
+  private oximetryTimestamps: string[] = [];
 
   // Overview charts
   availableSignals: SignalDef[] = [];
@@ -322,8 +327,9 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
       detail: this.api.getSessionDetail(this.date).pipe(catchError(() => of([]))),
       signals: this.api.getSessionSignals(this.date).pipe(catchError(() => of(null))),
       vitals: this.api.getSessionVitals(this.date).pipe(catchError(() => of(null))),
+      oximetry: this.api.getSessionOximetry(this.date).pipe(catchError(() => of(null))),
       events: this.api.getSessionEvents(this.date).pipe(catchError(() => of([]))),
-    }).subscribe(({ detail, signals, vitals, events }) => {
+    }).subscribe(({ detail, signals, vitals, oximetry, events }) => {
       // Merge all sessions for the night into one combined view
       if (detail.length > 0) {
         this.session = this.mergeSessions(detail);
@@ -344,6 +350,7 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
 
       this.signalData = signals;
       this.vitalsData = vitals;
+      this.oximetryData = oximetry;
       this.events = events as SessionEvent[];
 
       if (signals?.timestamps?.length) {
@@ -354,10 +361,15 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
         this.vitalsTimestamps = vitals.timestamps;
         this.vitalsLabels = formatTimestamps(vitals.timestamps);
       }
+      if (oximetry?.timestamps?.length) {
+        this.oximetryTimestamps = oximetry.timestamps;
+        this.oximetryLabels = formatTimestamps(oximetry.timestamps);
+      }
 
       // Determine available signals (skip those with no data or wrong mode)
       const therapyMode = +(this.session?.therapy_mode || '0');
       this.availableSignals = SIGNAL_DEFS.filter(s => {
+        if (s.source === 'oximetry') return oximetry?.timestamps?.length;
         if (s.source === 'vitals') return vitals?.timestamps?.length;
         if (!signals?.timestamps?.length) return false;
         if (s.minMode !== undefined && therapyMode < s.minMode) return false;
@@ -444,11 +456,13 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
       detail: this.api.getSessionDetail(this.date).pipe(catchError(() => of([]))),
       signals: this.api.getSessionSignals(this.date).pipe(catchError(() => of(null))),
       vitals: this.api.getSessionVitals(this.date).pipe(catchError(() => of(null))),
+      oximetry: this.api.getSessionOximetry(this.date).pipe(catchError(() => of(null))),
       events: this.api.getSessionEvents(this.date).pipe(catchError(() => of([]))),
-    }).subscribe(({ detail, signals, vitals, events }) => {
+    }).subscribe(({ detail, signals, vitals, oximetry, events }) => {
       if (detail.length > 0) this.session = this.mergeSessions(detail);
       this.signalData = signals;
       this.vitalsData = vitals;
+      this.oximetryData = oximetry;
       this.events = events as SessionEvent[];
 
       if (signals?.timestamps?.length) {
@@ -458,6 +472,10 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
       if (vitals?.timestamps?.length) {
         this.vitalsTimestamps = vitals.timestamps;
         this.vitalsLabels = formatTimestamps(vitals.timestamps);
+      }
+      if (oximetry?.timestamps?.length) {
+        this.oximetryTimestamps = oximetry.timestamps;
+        this.oximetryLabels = formatTimestamps(oximetry.timestamps);
       }
 
       // Session completed while we were watching
@@ -502,17 +520,20 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
 
   private getTimestamps(): string[] {
     if (!this.selectedSignal) return [];
+    if (this.selectedSignal.source === 'oximetry') return this.oximetryTimestamps;
     return this.selectedSignal.source === 'vitals' ? this.vitalsTimestamps : this.signalTimestamps;
   }
 
   private getLabels(): string[] {
     if (!this.selectedSignal) return [];
+    if (this.selectedSignal.source === 'oximetry') return this.oximetryLabels;
     return this.selectedSignal.source === 'vitals' ? this.vitalsLabels : this.signalLabels;
   }
 
   private getData(key: string): (number | null)[] {
     if (!this.selectedSignal) return [];
-    const src = this.selectedSignal.source === 'vitals' ? this.vitalsData : this.signalData;
+    const src = this.selectedSignal.source === 'oximetry' ? this.oximetryData
+      : this.selectedSignal.source === 'vitals' ? this.vitalsData : this.signalData;
     return (src as any)?.[key] || [];
   }
 
@@ -637,8 +658,10 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
       const canvas = document.getElementById('ov-' + sig.key) as HTMLCanvasElement;
       if (!canvas) continue;
 
-      const labels = sig.source === 'vitals' ? this.vitalsLabels : this.signalLabels;
-      const src = sig.source === 'vitals' ? this.vitalsData : this.signalData;
+      const labels = sig.source === 'oximetry' ? this.oximetryLabels
+        : sig.source === 'vitals' ? this.vitalsLabels : this.signalLabels;
+      const src = sig.source === 'oximetry' ? this.oximetryData
+        : sig.source === 'vitals' ? this.vitalsData : this.signalData;
       const data = (src as any)?.[sig.key] || [];
 
       const chart = new Chart(canvas, {

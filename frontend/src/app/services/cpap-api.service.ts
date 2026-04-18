@@ -1,7 +1,7 @@
 import { Injectable } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Observable } from 'rxjs';
-import { DashboardData, SessionListItem, SessionDetail, SessionEvent, TrendPoint, SignalData, VitalsData } from '../models/session.model';
+import { DashboardData, SessionListItem, SessionDetail, SessionEvent, TrendPoint, SignalData, VitalsData, OximetryData } from '../models/session.model';
 import { AppConfig } from '../models/config.model';
 
 @Injectable({ providedIn: 'root' })
@@ -45,6 +45,11 @@ export class CpapApiService {
   getSessionVitals(date: string, interval = 30): Observable<VitalsData> {
     const params = new HttpParams().set('interval', interval);
     return this.http.get<VitalsData>(`/api/sessions/${date}/vitals`, { params });
+  }
+
+  getSessionOximetry(date: string, interval = 4): Observable<OximetryData> {
+    const params = new HttpParams().set('interval', interval);
+    return this.http.get<OximetryData>(`/api/sessions/${date}/oximetry`, { params });
   }
 
   getSessionEvents(date: string): Observable<SessionEvent[]> {

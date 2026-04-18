@@ -85,3 +85,10 @@ export interface VitalsData {
   hr_min: (number | null)[];
   hr_max: (number | null)[];
 }
+
+export interface OximetryData {
+  timestamps: string[];
+  spo2: (number | null)[];
+  heart_rate: (number | null)[];
+  motion: (number | null)[];
+}

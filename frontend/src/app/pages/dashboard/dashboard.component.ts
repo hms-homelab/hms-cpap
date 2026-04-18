@@ -2,7 +2,7 @@ import { Component, OnInit, ViewChild, ElementRef, AfterViewInit } from '@angula
 import { CommonModule } from '@angular/common';
 import { CpapApiService } from '../../services/cpap-api.service';
 import { MetricCardComponent } from '../../components/metric-card/metric-card.component';
-import { DashboardData, TrendPoint } from '../../models/session.model';
+import { DashboardData, TrendPoint, OximetryData } from '../../models/session.model';
 import Chart from 'chart.js/auto';
 
 const MODE_LABELS: Record<string, string> = {
@@ -22,6 +22,11 @@ const MODE_LABELS: Record<string, string> = {
         <app-metric-card label="Compliance" [value]="data.latest_night.compliance_pct" unit="%" />
         <app-metric-card label="Avg Leak" [value]="data.latest_night.leak_avg" unit="L/min" />
         <app-metric-card label="Mode" [value]="modeName" unit="" />
+      </div>
+      <!-- O2Ring Oximetry -->
+      <div class="cards" *ngIf="oxiAvgSpo2">
+        <app-metric-card label="O2Ring SpO2" [value]="oxiAvgSpo2" unit="%" />
+        <app-metric-card label="O2Ring HR" [value]="oxiAvgHr" unit="bpm" />
       </div>
       <!-- ML Insights -->
       <div class="ml-section" *ngIf="mlStatus?.models_loaded">
@@ -170,6 +175,10 @@ export class DashboardComponent implements OnInit, AfterViewInit {
   isCpapMode = true;
   private charts: Chart[] = [];
 
+  // O2Ring oximetry
+  oxiAvgSpo2 = '';
+  oxiAvgHr = '';
+
   // ML state
   mlStatus: any = null;
   mlPredictions: any = null;
@@ -187,6 +196,25 @@ export class DashboardComponent implements OnInit, AfterViewInit {
       setTimeout(() => {
         if (this.ahiChartRef) this.renderCharts();
       }, 50);
+
+      // Fetch O2Ring oximetry for latest night
+      if (d.latest_night.date) {
+        this.api.getSessionOximetry(d.latest_night.date).subscribe({
+          next: (oxi) => {
+            if (oxi?.spo2?.length) {
+              const validSpo2 = oxi.spo2.map(v => Number(v)).filter(v => !isNaN(v) && v > 0 && v < 255);
+              const validHr = oxi.heart_rate.map(v => Number(v)).filter(v => !isNaN(v) && v > 0 && v < 255);
+              if (validSpo2.length) {
+                this.oxiAvgSpo2 = (validSpo2.reduce((a, b) => a + b, 0) / validSpo2.length).toFixed(1);
+              }
+              if (validHr.length) {
+                this.oxiAvgHr = (validHr.reduce((a, b) => a + b, 0) / validHr.length).toFixed(0);
+              }
+            }
+          },
+          error: () => {},
+        });
+      }
     });
 
     // Load ML status + predictions

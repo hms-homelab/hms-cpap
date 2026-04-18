@@ -21,6 +21,7 @@ public:
     Json::Value getSessionSignals(const std::string& date);
     Json::Value getSessionVitals(const std::string& date, int interval);
     Json::Value getSessionEvents(const std::string& date);
+    Json::Value getSessionOximetry(const std::string& date, int interval);
 
 private:
     std::shared_ptr<IDatabase> db_;
