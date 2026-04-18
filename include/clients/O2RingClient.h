@@ -70,8 +70,8 @@ private:
     std::string base_url_;
     int cached_battery_ = -1;
 
-    static constexpr long DOWNLOAD_TIMEOUT  = 30L;
-    static constexpr long CONNECTION_TIMEOUT = 10L;
+    static constexpr long DOWNLOAD_TIMEOUT  = 60L;
+    static constexpr long CONNECTION_TIMEOUT = 5L;
 
     static size_t WriteCallback(void* contents, size_t size, size_t nmemb, void* userp);
     static size_t WriteBinaryCallback(void* contents, size_t size, size_t nmemb, void* userp);

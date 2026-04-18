@@ -76,7 +76,6 @@ struct AppConfig {
         bool enabled = false;
         std::string mode = "http";      // "http" or "ble"
         std::string mule_url;           // e.g. "http://192.168.2.74"
-        int file_interval_cycles = 5;   // check for .vld files every N burst cycles
     } o2ring;
 
     bool setup_complete = false;
@@ -262,7 +261,6 @@ struct AppConfig {
                 if (o.contains("enabled"))              config.o2ring.enabled = o["enabled"];
                 if (o.contains("mode"))                 config.o2ring.mode = o["mode"];
                 if (o.contains("mule_url"))             config.o2ring.mule_url = o["mule_url"];
-                if (o.contains("file_interval_cycles")) config.o2ring.file_interval_cycles = o["file_interval_cycles"];
             }
 
             return true;
@@ -324,7 +322,6 @@ struct AppConfig {
             j["o2ring"]["enabled"] = o2ring.enabled;
             j["o2ring"]["mode"] = o2ring.mode;
             j["o2ring"]["mule_url"] = o2ring.mule_url;
-            j["o2ring"]["file_interval_cycles"] = o2ring.file_interval_cycles;
 
             std::ofstream f(path);
             f << j.dump(2);
@@ -382,7 +379,6 @@ struct AppConfig {
         j["o2ring"]["enabled"] = o2ring.enabled;
         j["o2ring"]["mode"] = o2ring.mode;
         j["o2ring"]["mule_url"] = o2ring.mule_url;
-        j["o2ring"]["file_interval_cycles"] = o2ring.file_interval_cycles;
 
         return j;
     }

@@ -39,8 +39,7 @@ export interface AppConfig {
   };
   o2ring: {
     enabled: boolean;
-    mode: string;          // 'http' | 'ble' | 'off'
+    mode: string;          // 'http' | 'ble'
     mule_url: string;      // for HTTP mode
-    file_interval_cycles: number;
   };
 }

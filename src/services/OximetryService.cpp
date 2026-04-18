@@ -78,11 +78,10 @@ bool OximetryService::collectAndPublish() {
 
 O2RingClient::LiveReading OximetryService::pollLive() {
     last_live_ = client_->getLive();
-    if (last_live_.valid) {
-        std::cout << "O2Ring: Live SpO2=" << last_live_.spo2
-                  << " HR=" << last_live_.hr
-                  << " Motion=" << last_live_.motion << std::endl;
-    }
+    std::cout << "O2Ring: active=" << (last_live_.active ? "ON" : "OFF")
+              << " SpO2=" << last_live_.spo2
+              << " HR=" << last_live_.hr
+              << " Motion=" << last_live_.motion << std::endl;
     return last_live_;
 }
 

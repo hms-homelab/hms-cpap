@@ -84,6 +84,52 @@ bool DatabaseService::connect() {
                 std::cout << "  DB: v2.1.0 migration (cpap_summaries table) applied" << std::endl;
             } catch (...) {}
 
+            // Auto-migrate v2.2.0: Oximetry tables (O2 Ring)
+            try {
+                pqxx::work txn(*conn_);
+                txn.exec(R"(
+                    CREATE TABLE IF NOT EXISTS oximetry_sessions (
+                        id                  SERIAL PRIMARY KEY,
+                        device_id           TEXT NOT NULL,
+                        filename            TEXT UNIQUE NOT NULL,
+                        start_time          TIMESTAMP NOT NULL,
+                        end_time            TIMESTAMP NOT NULL,
+                        duration_seconds    INT,
+                        sample_interval     DOUBLE PRECISION,
+                        avg_spo2            DOUBLE PRECISION,
+                        min_spo2            DOUBLE PRECISION,
+                        spo2_baseline       DOUBLE PRECISION,
+                        time_below_90       DOUBLE PRECISION,
+                        time_below_88       DOUBLE PRECISION,
+                        odi_3pct            DOUBLE PRECISION,
+                        desat_count         INT,
+                        avg_hr              DOUBLE PRECISION,
+                        min_hr              INT,
+                        max_hr              INT,
+                        valid_samples       INT,
+                        total_samples       INT,
+                        cpap_session_date   TEXT,
+                        created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                )");
+                txn.exec(R"(
+                    CREATE TABLE IF NOT EXISTS oximetry_samples (
+                        id                      SERIAL PRIMARY KEY,
+                        oximetry_session_id     INT REFERENCES oximetry_sessions(id) ON DELETE CASCADE,
+                        timestamp               TIMESTAMP NOT NULL,
+                        spo2                    INT,
+                        heart_rate              INT,
+                        motion                  INT,
+                        vibration               INT,
+                        valid                   BOOLEAN,
+                        source                  TEXT DEFAULT 'vld'
+                    )
+                )");
+                txn.exec("CREATE INDEX IF NOT EXISTS idx_oximetry_samples_session ON oximetry_samples(oximetry_session_id)");
+                txn.commit();
+                std::cout << "  DB: v2.2.0 migration (oximetry tables) applied" << std::endl;
+            } catch (...) {}
+
             return true;
         }
     } catch (const std::exception& e) {
@@ -1636,6 +1682,174 @@ bool DatabaseService::executeRaw(const std::string& sql) {
         return true;
     } catch (const std::exception& e) {
         std::cerr << "DB: executeRaw error: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+// ── Oximetry (O2 Ring) ──────────────────────────────────────────────────
+
+static std::string fmtTs(std::chrono::system_clock::time_point tp) {
+    auto tt = std::chrono::system_clock::to_time_t(tp);
+    std::tm tm{}; gmtime_r(&tt, &tm);
+    std::ostringstream oss;
+    oss << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");
+    return oss.str();
+}
+
+bool DatabaseService::saveOximetrySession(const std::string& device_id,
+                                           const cpapdash::parser::OximetrySession& session) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!ensureConnection()) return false;
+
+    try {
+        pqxx::work txn(*conn_);
+
+        // Upsert session
+        auto r = txn.exec_params(R"(
+            INSERT INTO oximetry_sessions
+                (device_id, filename, start_time, end_time, duration_seconds,
+                 sample_interval, avg_spo2, min_spo2, spo2_baseline,
+                 time_below_90, time_below_88, odi_3pct, desat_count,
+                 avg_hr, min_hr, max_hr, valid_samples, total_samples,
+                 cpap_session_date)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+            ON CONFLICT (filename) DO UPDATE SET
+                end_time = EXCLUDED.end_time,
+                duration_seconds = EXCLUDED.duration_seconds,
+                avg_spo2 = EXCLUDED.avg_spo2,
+                min_spo2 = EXCLUDED.min_spo2,
+                spo2_baseline = EXCLUDED.spo2_baseline,
+                time_below_90 = EXCLUDED.time_below_90,
+                time_below_88 = EXCLUDED.time_below_88,
+                odi_3pct = EXCLUDED.odi_3pct,
+                desat_count = EXCLUDED.desat_count,
+                avg_hr = EXCLUDED.avg_hr,
+                min_hr = EXCLUDED.min_hr,
+                max_hr = EXCLUDED.max_hr,
+                valid_samples = EXCLUDED.valid_samples,
+                total_samples = EXCLUDED.total_samples
+            RETURNING id
+        )",
+            device_id, session.filename,
+            fmtTs(session.start_time),
+            fmtTs(session.end_time),
+            session.duration_seconds, session.sample_interval,
+            session.metrics.avg_spo2, session.metrics.min_spo2,
+            session.metrics.spo2_baseline,
+            session.metrics.time_below_90_pct, session.metrics.time_below_88_pct,
+            session.metrics.odi_3pct, session.metrics.desat_count_3pct,
+            session.metrics.avg_hr, session.metrics.min_hr, session.metrics.max_hr,
+            session.metrics.valid_samples, session.metrics.total_samples,
+            session.date_str()
+        );
+
+        int session_id = r[0][0].as<int>();
+
+        // Delete old samples, reinsert
+        txn.exec_params("DELETE FROM oximetry_samples WHERE oximetry_session_id = $1", session_id);
+
+        if (!session.samples.empty()) {
+            std::ostringstream q;
+            q << "INSERT INTO oximetry_samples (oximetry_session_id, timestamp, spo2, heart_rate, motion, vibration, valid, source) VALUES ";
+
+            for (size_t i = 0; i < session.samples.size(); i++) {
+                const auto& s = session.samples[i];
+                auto tt = std::chrono::system_clock::to_time_t(s.timestamp);
+                std::tm* tm = std::localtime(&tt);
+                std::ostringstream ts;
+                ts << std::put_time(tm, "%Y-%m-%d %H:%M:%S");
+
+                q << "(" << session_id << ", '" << ts.str() << "', "
+                  << (int)s.spo2 << ", " << (int)s.heart_rate << ", "
+                  << (int)s.motion << ", " << (int)s.vibration << ", "
+                  << (s.valid() ? "true" : "false") << ", 'vld')";
+
+                if (i < session.samples.size() - 1) q << ", ";
+            }
+
+            txn.exec(q.str());
+        }
+
+        txn.commit();
+        std::cout << "O2Ring: Saved to PostgreSQL (" << session.filename
+                  << ", " << session.samples.size() << " samples)" << std::endl;
+        return true;
+
+    } catch (const std::exception& e) {
+        std::cerr << "O2Ring: PostgreSQL save failed: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+bool DatabaseService::oximetrySessionExists(const std::string& device_id,
+                                             const std::string& filename) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!ensureConnection()) return false;
+
+    try {
+        pqxx::work txn(*conn_);
+        auto r = txn.exec_params(
+            "SELECT 1 FROM oximetry_sessions WHERE device_id = $1 AND filename = $2",
+            device_id, filename);
+        txn.commit();
+        return !r.empty();
+    } catch (...) {
+        return false;
+    }
+}
+
+bool DatabaseService::saveLiveOximetrySample(const std::string& device_id,
+                                              const std::string& date,
+                                              int spo2, int hr, int motion) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!ensureConnection()) return false;
+
+    try {
+        pqxx::work txn(*conn_);
+
+        std::string live_filename = "live_" + date + ".vld";
+
+        // Get or create live session
+        auto r = txn.exec_params(
+            "SELECT id FROM oximetry_sessions WHERE device_id = $1 AND filename = $2",
+            device_id, live_filename);
+
+        int session_id;
+        if (r.empty()) {
+            auto ins = txn.exec_params(R"(
+                INSERT INTO oximetry_sessions
+                    (device_id, filename, start_time, end_time, duration_seconds,
+                     sample_interval, valid_samples, total_samples)
+                VALUES ($1, $2, NOW(), NOW(), 0, 0, 0, 0)
+                RETURNING id
+            )", device_id, live_filename);
+            session_id = ins[0][0].as<int>();
+        } else {
+            session_id = r[0][0].as<int>();
+        }
+
+        // Insert sample
+        txn.exec_params(R"(
+            INSERT INTO oximetry_samples
+                (oximetry_session_id, timestamp, spo2, heart_rate, motion, vibration, valid, source)
+            VALUES ($1, NOW(), $2, $3, $4, 0, true, 'live')
+        )", session_id, spo2, hr, motion);
+
+        // Update session counts
+        txn.exec_params(R"(
+            UPDATE oximetry_sessions SET
+                end_time = NOW(),
+                duration_seconds = EXTRACT(EPOCH FROM (NOW() - start_time))::INT,
+                total_samples = (SELECT COUNT(*) FROM oximetry_samples WHERE oximetry_session_id = $1),
+                valid_samples = (SELECT COUNT(*) FROM oximetry_samples WHERE oximetry_session_id = $1 AND valid = true)
+            WHERE id = $1
+        )", session_id);
+
+        txn.commit();
+        return true;
+
+    } catch (const std::exception& e) {
+        std::cerr << "O2Ring: PostgreSQL live sample failed: " << e.what() << std::endl;
         return false;
     }
 }

@@ -116,20 +116,13 @@ public:
                      const std::string& summary_text) override;
 
     bool saveOximetrySession(const std::string& device_id,
-                             const cpapdash::parser::OximetrySession& session) override {
-        (void)device_id; (void)session;
-        std::cerr << "PostgreSQL: saveOximetrySession not yet implemented" << std::endl;
-        return false;
-    }
+                             const cpapdash::parser::OximetrySession& session) override;
 
     bool oximetrySessionExists(const std::string& device_id,
-                               const std::string& filename) override {
-        (void)device_id; (void)filename;
-        return false;
-    }
+                               const std::string& filename) override;
 
-    bool saveLiveOximetrySample(const std::string&, const std::string&,
-                                 int, int, int) override { return false; }
+    bool saveLiveOximetrySample(const std::string& device_id, const std::string& date,
+                                 int spo2, int hr, int motion) override;
 
     void* rawConnection() override {
         std::lock_guard<std::recursive_mutex> lock(mutex_);

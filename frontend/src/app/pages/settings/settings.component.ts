@@ -76,12 +76,6 @@ import { AppConfig } from '../../models/config.model';
               <label *ngIf="config.o2ring.mode === 'ble'">
                 <span class="hint">BLE direct mode uses the host Bluetooth adapter to connect to the O2 Ring.</span>
               </label>
-              <label>
-                File Check Interval (burst cycles)
-                <input type="number" [(ngModel)]="config.o2ring.file_interval_cycles" name="o2ring_file_interval"
-                       min="1" max="100" />
-                <span class="hint">Check for .vld files every N burst cycles (ring must be off-wrist)</span>
-              </label>
             </ng-container>
           </div>
         </div>
@@ -598,7 +592,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
           cfg.ml_training = { enabled: false, schedule: 'weekly', model_dir: '', min_days: 30, max_training_days: 0 };
         }
         if (!cfg.o2ring) {
-          cfg.o2ring = { enabled: false, mode: 'http', mule_url: '', file_interval_cycles: 5 };
+          cfg.o2ring = { enabled: false, mode: 'http', mule_url: '' };
         }
         this.config = cfg;
         this.loading = false;

@@ -551,33 +551,61 @@ bool BurstCollectorService::executeBurstCycle() {
     std::cout << "🔄 CPAP: Starting burst cycle..." << std::endl;
     std::cout << std::string(60, '=') << std::endl;
 
-    // O2 Ring: poll live SpO2/HR every burst (runs before CPAP to avoid early returns)
+    // ── O2 Ring State Machine ──────────────────────────────────────────
+    //
+    // Ring has two mutually exclusive states:
+    //   ACTIVE  (on finger) → live SpO2/HR available, no files to download
+    //   INACTIVE (off finger) → .vld files available, no live data
+    //
+    // We always poll /o2ring/live to detect the current state.
+    // File download triggers ONLY on the active→inactive transition
+    // (session just ended, .vld file freshly written to ring storage).
+    //
+    // Three outcomes from pollLive():
+    //   1. active=true  → ring on finger, save live sample + MQTT
+    //   2. active=false, reachable → ring off finger (spo2=255)
+    //   3. unreachable (timeout) → mule can't connect to ring, all zeros
+    //
+    // Edge case: if ring is unreachable (off/out of range), we do NOT
+    // reset o2ring_was_active — we wait until we get a confirmed
+    // active=true before triggering any file download.
+    //
     if (oximetry_service_) {
         try {
+            static bool o2ring_was_active = false;
+
             auto live = oximetry_service_->pollLive();
 
-            // Always publish active state to MQTT
+            // Always publish to MQTT (active ON/OFF + raw values)
             if (data_publisher_) {
                 data_publisher_->publishOximetryLive(device_id_, live);
             }
 
-            // Only save to DB when ring is active with valid readings
-            if (live.valid) {
+            // Reachable = mule responded with real data (not a timeout)
+            // Timeout: getLive() returns spo2=0, hr=0, active=false
+            // Inactive but reachable: mule returns spo2=255, active=false
+            bool reachable = (live.spo2 != 0 || live.active);
+
+            if (live.active) {
+                // STATE: Ring on finger — recording
                 auto now = std::chrono::system_clock::now();
                 auto tt = std::chrono::system_clock::to_time_t(now);
                 std::tm tm{}; gmtime_r(&tt, &tm);
                 char date_buf[9];
                 std::strftime(date_buf, sizeof(date_buf), "%Y%m%d", &tm);
-                db_service_->saveLiveOximetrySample("o2ring", date_buf,
-                                                     live.spo2, live.hr, live.motion);
-            }
-
-            static int o2ring_file_cycles = 0;
-            int file_interval = (app_config_ ? app_config_->o2ring.file_interval_cycles : 5);
-            if (++o2ring_file_cycles >= file_interval) {
-                o2ring_file_cycles = 0;
+                if (live.valid) {
+                    db_service_->saveLiveOximetrySample("o2ring", date_buf,
+                                                         live.spo2, live.hr, live.motion);
+                }
+                o2ring_was_active = true;
+            } else if (o2ring_was_active && reachable) {
+                // STATE: Session just ended (active→inactive transition)
+                // Ring wrote .vld file — download it now
+                std::cout << "O2Ring: Session ended — checking for new files" << std::endl;
                 oximetry_service_->collectAndPublish();
+                o2ring_was_active = false;
             }
+            // STATE: Unreachable or was already inactive — no action, wait
         } catch (const std::exception& e) {
             std::cerr << "O2Ring: Failed (non-fatal): " << e.what() << std::endl;
         }
@@ -1514,7 +1542,6 @@ void BurstCollectorService::snapshotConfig(ConfigSnapshot& snap) {
     snap.o2ring_enabled = app_config_->o2ring.enabled;
     snap.o2ring_mode = app_config_->o2ring.mode;
     snap.o2ring_mule_url = app_config_->o2ring.mule_url;
-    snap.o2ring_file_interval = app_config_->o2ring.file_interval_cycles;
 }
 
 void BurstCollectorService::reloadConfig() {
