@@ -86,27 +86,27 @@ There are two hardware paths for wireless data collection, plus a local filesyst
 
 ### Path 1: FYSETC SD WiFi Pro (Optional Hardware, Recommended)
 
-**How it works:** An SD-card-shaped board with an ESP32 and a micro SD slot. Insert your CPAP's micro SD into the board, then plug it into the CPAP's SD card slot. It joins your home WiFi and serves EDF files over HTTP. HMS-CPAP polls it every 65s for new/changed files.
+**How it works:** A WiFi-enabled board that sits inside the CPAP's SD card slot. It joins your home WiFi and serves EDF files over HTTP. HMS-CPAP polls it every 65s for new/changed files.
 
 **Hardware (optional):** FYSETC SD WiFi Pro board.
 
-**Pros:** Single device, 65s latency, direct WiFi connection. **Cons:** Requires the FYSETC board.
+**Pros:** Single device, 65s latency, direct WiFi connection. **Cons:** Requires the specific board.
 
 **Firmware:** [hms-fysetc](https://github.com/hms-homelab/hms-fysetc) -- open-source ESP-IDF firmware (MIT).
 
 ### Path 2: ezShare WiFi SD + hms-mm Bridge (Optional Hardware)
 
-**How it works:** The ezShare WiFi SD card creates its own WiFi AP. Since a single device can't be on both the ezShare AP and your home network at the same time, [hms-mm](https://github.com/hms-homelab/hms-mm) uses two ESP32-C3 microcontrollers connected by UART -- one connects to the ezShare WiFi to download files (miner), the other connects to your home WiFi to serve them over HTTP (mule). HMS-CPAP polls the mule every 65s.
+**How it works:** The ezShare creates its own WiFi AP. Since a single device can't be on both the ezShare AP and your home network at the same time, [hms-mm](https://github.com/hms-homelab/hms-mm) uses two ESP32-C3 microcontrollers connected by SPI -- one connects to the ezShare WiFi to download files (miner), the other connects to your home WiFi to serve them over HTTP (mule). HMS-CPAP polls the mule every 65s.
 
-**Hardware (optional):** ezShare WiFi SD card + 2x ESP32-C3 boards.
+**Hardware (optional):** ezShare WiFi adapter + 2x ESP32-C3 boards.
 
-**Pros:** Uses a standard WiFi SD card, no special board required. **Cons:** Two microcontrollers needed, slightly more setup.
+**Pros:** Uses a standard ezShare adapter, no special board required. **Cons:** Two microcontrollers needed, slightly more setup.
 
 **Firmware:** [hms-mm](https://github.com/hms-homelab/hms-mm) -- open-source dual ESP32-C3 firmware (MIT).
 
 ### Local Filesystem
 
-**How it works:** Reads EDF files directly from a local directory (mounted SD card, USB drive, or NAS share).
+**How it works:** Reads EDF files directly from a local directory (USB drive, NAS share, or mounted storage).
 
 **Use case:** Offline analysis, importing historical data, or running without WiFi SD hardware.
 
@@ -355,7 +355,7 @@ Sensors auto-appear as a device with 47+ entities:
 │  ResMed CPAP    │
 │  AirSense 10    │
 └────────┬────────┘
-         │ SD Card (SPI bus)
+         │ Card Slot (SPI bus)
          │
     ┌────┴──────────────────────┐
     │                           │
