@@ -8,7 +8,7 @@ namespace hms_cpap {
 
 using VLDParser = cpapdash::parser::VLDParser;
 
-OximetryService::OximetryService(std::shared_ptr<O2RingClient> client,
+OximetryService::OximetryService(std::shared_ptr<IO2RingClient> client,
                                  std::shared_ptr<IDatabase> db)
     : client_(std::move(client)),
       db_(std::move(db)) {}
@@ -76,7 +76,7 @@ bool OximetryService::collectAndPublish() {
     return any_new;
 }
 
-O2RingClient::LiveReading OximetryService::pollLive() {
+IO2RingClient::LiveReading OximetryService::pollLive() {
     last_live_ = client_->getLive();
     std::cout << "O2Ring: active=" << (last_live_.active ? "ON" : "OFF")
               << " SpO2=" << last_live_.spo2

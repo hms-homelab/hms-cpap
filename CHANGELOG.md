@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.3.0] - 2026-04-18
+
+### Added
+- **Wellue O2 Ring oximetry integration** — overnight SpO2/HR/motion data correlated with CPAP therapy
+- **Direct BLE mode** — native C++ BlueZ D-Bus client (sdbus-c++) connects directly to O2 Ring via USB Bluetooth adapter, no mule needed. Build with `-DBUILD_WITH_BLE=ON`
+- **HTTP mule mode** — polls O2 Ring data via mule ESP32-C3 at `/o2ring/live` and `/o2ring/files`
+- **State machine** — detects ring active/inactive transitions, polls live SpO2 when on finger, downloads .vld files when session ends (active→inactive edge)
+- **VLD v3 parser** — shared C++ library (hms-cpapdash-parser) parses O2 Ring binary files: header, 5-byte records, timestamp reconstruction, ODI calculation
+- **PostgreSQL storage** — `oximetry_sessions` + `oximetry_samples` tables (v2.2.0 migration), live samples with `source='live'` overwritten by VLD import
+- **MQTT discovery** — 6 new HA sensors: spo2, heart_rate, motion, active (binary), last_spo2, last_heart_rate (retained)
+- **Angular charts** — O2Ring SpO2 and Heart Rate in session detail overview grid + dashboard metric cards
+- **LLM correlation** — daily/weekly/monthly summaries include oximetry metrics (ODI, time below 90%, SpO2 baseline), LLM detects AHI vs ODI discrepancies
+- **Settings UI** — O2 Ring section: enabled toggle, mode selector (HTTP/BLE), mule URL, all persisted via config API
+- **IO2RingClient interface** — abstract base for HTTP and BLE clients, swappable at runtime
+- **28 unit tests** — state machine (9), VLD parser integration (4), LiveReading (4), Viatom BLE protocol (11): CRC-8, command building, frame reassembly, MTU chunking
+
+### Changed
+- **README** — removed misleading micro SD card references, updated ezShare description
+
 ## [3.2.5] - 2026-04-11
 
 ### Fixed
