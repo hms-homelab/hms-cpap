@@ -161,6 +161,7 @@ private:
      * @return true if published successfully
      */
     bool publishInsightsDiscovery();
+    bool publishOximetryDiscovery();
 
     /**
      * Publish STR daily discovery (13 sensors)

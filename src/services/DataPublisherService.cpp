@@ -73,9 +73,10 @@ bool DataPublisherService::publishDiscovery() {
     bool hist_success = publishHistoricalDiscovery();
     bool str_success = publishSTRDiscovery();
     bool insights_success = publishInsightsDiscovery();
+    bool oxi_success = publishOximetryDiscovery();
 
-    if (rt_success && hist_success && str_success && insights_success) {
-        std::cout << "MQTT: Discovery published (11 realtime + 31 historical + 14 daily + 1 insights = 57 sensors)" << std::endl;
+    if (rt_success && hist_success && str_success && insights_success && oxi_success) {
+        std::cout << "MQTT: Discovery published (11 realtime + 31 historical + 14 daily + 1 insights + 6 oximetry = 63 sensors)" << std::endl;
         return true;
     }
 
@@ -891,6 +892,77 @@ void DataPublisherService::publishInsights(const std::vector<Insight>& insights)
     std::cout << "  Insights published (" << insights.size() << " insights)" << std::endl;
 }
 
+bool DataPublisherService::publishOximetryDiscovery() {
+    std::cout << "  💍 Oximetry sensors (4)..." << std::endl;
+
+    std::string device_json = createDeviceJson();
+
+    struct SensorDef {
+        std::string name;
+        std::string unit;
+        std::string icon;
+        bool is_binary;
+    };
+
+    std::vector<SensorDef> sensors = {
+        {"spo2",          "%",   "mdi:pulse",          false},
+        {"heart_rate",    "bpm", "mdi:heart-pulse",     false},
+        {"motion",        "",    "mdi:motion-sensor",   false},
+        {"last_spo2",     "%",   "mdi:pulse",          false},
+        {"last_heart_rate","bpm","mdi:heart-pulse",     false},
+    };
+
+    for (const auto& sensor : sensors) {
+        std::string object_id = device_id_ + "_oxi_" + sensor.name;
+        std::string state_topic = "cpap/" + device_id_ + "/oximetry/" + sensor.name;
+
+        Json::Value config;
+        config["name"] = "O2Ring " + sensor.name;
+        config["unique_id"] = object_id;
+        config["state_topic"] = state_topic;
+        if (!sensor.unit.empty()) config["unit_of_measurement"] = sensor.unit;
+        config["icon"] = sensor.icon;
+
+        Json::CharReaderBuilder reader_builder;
+        std::istringstream device_stream(device_json);
+        Json::parseFromStream(reader_builder, device_stream, &config["device"], nullptr);
+
+        std::string discovery_topic = "homeassistant/sensor/" + device_id_ + "/oxi_" + sensor.name + "/config";
+
+        Json::StreamWriterBuilder builder;
+        builder["indentation"] = "";
+        std::string config_json = Json::writeString(builder, config);
+        mqtt_client_->publish(discovery_topic, config_json, 1, true);
+    }
+
+    // Binary sensor: O2Ring active
+    {
+        std::string object_id = device_id_ + "_oxi_active";
+        std::string state_topic = "cpap/" + device_id_ + "/oximetry/active";
+
+        Json::Value config;
+        config["name"] = "O2Ring active";
+        config["unique_id"] = object_id;
+        config["state_topic"] = state_topic;
+        config["device_class"] = "running";
+        config["icon"] = "mdi:ring";
+
+        Json::CharReaderBuilder reader_builder;
+        std::istringstream device_stream(device_json);
+        Json::parseFromStream(reader_builder, device_stream, &config["device"], nullptr);
+
+        std::string discovery_topic = "homeassistant/binary_sensor/" + device_id_ + "/oxi_active/config";
+
+        Json::StreamWriterBuilder builder;
+        builder["indentation"] = "";
+        std::string config_json = Json::writeString(builder, config);
+        mqtt_client_->publish(discovery_topic, config_json, 1, true);
+    }
+
+    std::cout << "    ✓ 5 oximetry sensors + 1 binary" << std::endl;
+    return true;
+}
+
 void DataPublisherService::publishOximetryLive(const std::string& device_id,
                                                 const O2RingClient::LiveReading& live) {
     if (!mqtt_client_ || !mqtt_client_->isConnected()) return;
@@ -900,6 +972,12 @@ void DataPublisherService::publishOximetryLive(const std::string& device_id,
     mqtt_client_->publish(prefix + "spo2", std::to_string(live.spo2), 1, true);
     mqtt_client_->publish(prefix + "heart_rate", std::to_string(live.hr), 1, true);
     mqtt_client_->publish(prefix + "motion", std::to_string(live.motion), 1, true);
+
+    // Last valid readings — only updated when ring is active with valid data
+    if (live.valid) {
+        mqtt_client_->publish(prefix + "last_spo2", std::to_string(live.spo2), 1, true);
+        mqtt_client_->publish(prefix + "last_heart_rate", std::to_string(live.hr), 1, true);
+    }
 }
 
 } // namespace hms_cpap
