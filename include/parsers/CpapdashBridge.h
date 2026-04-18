@@ -12,6 +12,7 @@
 #include <cpapdash/parser/EDFFile.h>
 #include <cpapdash/parser/EDFParser.h>
 #include <cpapdash/parser/ISessionParser.h>
+#include <cpapdash/parser/VLDParser.h>
 
 namespace hms_cpap {
 
@@ -36,6 +37,12 @@ using ISessionParser   = cpapdash::parser::ISessionParser;
 // ── Free functions ──────────────────────────────────────────────────────────
 using cpapdash::parser::eventTypeToString;
 using cpapdash::parser::createParser;
+
+// ── VLD / Oximetry types ───────────────────────────────────────────────────
+using VLDParser        = cpapdash::parser::VLDParser;
+using OximetrySession  = cpapdash::parser::OximetrySession;
+using OximetrySample   = cpapdash::parser::OximetrySample;
+using OximetryMetrics  = cpapdash::parser::OximetryMetrics;
 
 // ── hms-cpap-specific types (not in cpapdash-parser) ────────────────────────
 

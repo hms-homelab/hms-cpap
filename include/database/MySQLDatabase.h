@@ -10,6 +10,7 @@
 #endif
 #include <mutex>
 #include <string>
+#include <iostream>
 
 namespace hms_cpap {
 
@@ -105,6 +106,19 @@ public:
                      double avg_usage_hours,
                      double compliance_pct,
                      const std::string& summary_text) override;
+
+    bool saveOximetrySession(const std::string& device_id,
+                             const cpapdash::parser::OximetrySession& session) override {
+        (void)device_id; (void)session;
+        std::cerr << "MySQL: saveOximetrySession not yet implemented" << std::endl;
+        return false;
+    }
+
+    bool oximetrySessionExists(const std::string& device_id,
+                               const std::string& filename) override {
+        (void)device_id; (void)filename;
+        return false;
+    }
 
     void* rawConnection() override;
 

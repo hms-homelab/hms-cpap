@@ -47,6 +47,8 @@ public:
     MOCK_METHOD((std::vector<SessionMetrics>), getMetricsForDateRange, (const std::string&, int), (override));
     MOCK_METHOD(bool, saveSummary, (const std::string&, const std::string&, const std::string&, const std::string&, int, double, double, double, const std::string&), (override));
     MOCK_METHOD(void*, rawConnection, (), (override));
+    MOCK_METHOD(bool, saveOximetrySession, (const std::string&, const cpapdash::parser::OximetrySession&), (override));
+    MOCK_METHOD(bool, oximetrySessionExists, (const std::string&, const std::string&), (override));
 };
 
 // ── Status reporting ────────────────────────────────────────────────────
