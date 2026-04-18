@@ -239,6 +239,16 @@ if(BUILD_WITH_WEB)
     target_link_libraries(${PROJECT_NAME} Drogon::Drogon)
 endif()
 
+# BLE support (optional, requires libsdbus-c++)
+option(BUILD_WITH_BLE "Build with BLE support for direct O2 Ring connectivity" OFF)
+if(BUILD_WITH_BLE)
+    find_package(sdbus-c++ REQUIRED)
+    target_link_libraries(${PROJECT_NAME} SDBusCpp::sdbus-c++)
+    target_compile_definitions(${PROJECT_NAME} PUBLIC WITH_BLE=1)
+    target_sources(${PROJECT_NAME} PRIVATE src/clients/O2RingBleClient.cpp)
+    message(STATUS "BLE: Enabled (sdbus-c++ ${sdbus-c++_VERSION})")
+endif()
+
 # Install target
 if(WIN32)
     install(TARGETS ${PROJECT_NAME} DESTINATION bin)

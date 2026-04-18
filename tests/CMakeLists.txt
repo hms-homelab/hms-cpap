@@ -53,6 +53,7 @@ set(TEST_SOURCES
     services/test_SessionDiscoveryService.cpp
     services/test_OximetryService.cpp
     clients/test_O2RingClient.cpp
+    clients/test_O2RingBleProtocol.cpp
 )
 
 # Create test executable

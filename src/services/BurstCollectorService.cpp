@@ -1,6 +1,9 @@
 #include "services/BurstCollectorService.h"
 #include "services/InsightsEngine.h"
 #include "clients/O2RingClient.h"
+#ifdef WITH_BLE
+#include "clients/O2RingBleClient.h"
+#endif
 #include "utils/ConfigManager.h"
 #include "utils/AppConfig.h"
 #include "utils/FileUtils.h"
@@ -191,11 +194,21 @@ BurstCollectorService::BurstCollectorService(int burst_interval_seconds)
         std::string o2ring_mode = app_config_ ? app_config_->o2ring.mode : "http";
         if (o2ring_url.empty()) o2ring_url = ConfigManager::get("O2RING_MULE_URL", "");
         if (!o2ring_enabled && !o2ring_url.empty()) o2ring_enabled = true;
-        if (o2ring_enabled && !o2ring_url.empty()) {
-            auto o2ring_client = std::make_shared<O2RingClient>(o2ring_url);
-            oximetry_service_ = std::make_unique<OximetryService>(o2ring_client, db_service_);
-            std::cout << "O2Ring: Enabled (mode=" << o2ring_mode
-                      << ", mule=" << o2ring_url << ")" << std::endl;
+        if (o2ring_enabled) {
+            std::shared_ptr<IO2RingClient> client;
+#ifdef WITH_BLE
+            if (o2ring_mode == "ble") {
+                client = std::make_shared<O2RingBleClient>();
+                std::cout << "O2Ring: Enabled (mode=ble, direct BlueZ)" << std::endl;
+            }
+#endif
+            if (!client && !o2ring_url.empty()) {
+                client = std::make_shared<O2RingClient>(o2ring_url);
+                std::cout << "O2Ring: Enabled (mode=http, mule=" << o2ring_url << ")" << std::endl;
+            }
+            if (client) {
+                oximetry_service_ = std::make_unique<OximetryService>(client, db_service_);
+            }
         }
     }
 
@@ -1548,11 +1561,21 @@ void BurstCollectorService::setAppConfig(AppConfig* cfg) {
         snapshotConfig(last_config_);
 
         // Initialize O2 Ring if enabled in config (first call after construction)
-        if (!oximetry_service_ && cfg->o2ring.enabled && !cfg->o2ring.mule_url.empty()) {
-            auto client = std::make_shared<O2RingClient>(cfg->o2ring.mule_url);
-            oximetry_service_ = std::make_unique<OximetryService>(client, db_service_);
-            std::cout << "O2Ring: Enabled (mode=" << cfg->o2ring.mode
-                      << ", mule=" << cfg->o2ring.mule_url << ")" << std::endl;
+        if (!oximetry_service_ && cfg->o2ring.enabled) {
+            std::shared_ptr<IO2RingClient> client;
+#ifdef WITH_BLE
+            if (cfg->o2ring.mode == "ble") {
+                client = std::make_shared<O2RingBleClient>();
+                std::cout << "O2Ring: Enabled (mode=ble, direct BlueZ)" << std::endl;
+            }
+#endif
+            if (!client && !cfg->o2ring.mule_url.empty()) {
+                client = std::make_shared<O2RingClient>(cfg->o2ring.mule_url);
+                std::cout << "O2Ring: Enabled (mode=http, mule=" << cfg->o2ring.mule_url << ")" << std::endl;
+            }
+            if (client) {
+                oximetry_service_ = std::make_unique<OximetryService>(client, db_service_);
+            }
         }
     }
 }
@@ -1708,12 +1731,23 @@ void BurstCollectorService::reloadConfig() {
 
     // O2 Ring
     if (nc.o2ring_enabled != last_config_.o2ring_enabled ||
-        nc.o2ring_mule_url != last_config_.o2ring_mule_url) {
-        if (nc.o2ring_enabled && !nc.o2ring_mule_url.empty()) {
-            auto client = std::make_shared<O2RingClient>(nc.o2ring_mule_url);
-            oximetry_service_ = std::make_unique<OximetryService>(client, db_service_);
-            std::cout << "Config reload: O2Ring -> enabled (mode=" << nc.o2ring_mode
-                      << ", mule=" << nc.o2ring_mule_url << ")" << std::endl;
+        nc.o2ring_mule_url != last_config_.o2ring_mule_url ||
+        nc.o2ring_mode != last_config_.o2ring_mode) {
+        if (nc.o2ring_enabled) {
+            std::shared_ptr<IO2RingClient> client;
+#ifdef WITH_BLE
+            if (nc.o2ring_mode == "ble") {
+                client = std::make_shared<O2RingBleClient>();
+                std::cout << "Config reload: O2Ring -> ble (direct BlueZ)" << std::endl;
+            }
+#endif
+            if (!client && !nc.o2ring_mule_url.empty()) {
+                client = std::make_shared<O2RingClient>(nc.o2ring_mule_url);
+                std::cout << "Config reload: O2Ring -> http (mule=" << nc.o2ring_mule_url << ")" << std::endl;
+            }
+            if (client) {
+                oximetry_service_ = std::make_unique<OximetryService>(client, db_service_);
+            }
         } else {
             oximetry_service_.reset();
             std::cout << "Config reload: O2Ring -> disabled" << std::endl;

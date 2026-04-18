@@ -5,7 +5,7 @@
 #include "mqtt_client.h"
 #include "mqtt/DiscoveryPublisher.h"
 #include "database/IDatabase.h"
-#include "clients/O2RingClient.h"
+#include "clients/IO2RingClient.h"
 #include <memory>
 #include <string>
 
@@ -123,7 +123,7 @@ public:
      * Topics: cpap/{device_id}/oximetry/{spo2,hr,motion}
      */
     void publishOximetryLive(const std::string& device_id,
-                              const O2RingClient::LiveReading& live);
+                              const IO2RingClient::LiveReading& live);
 
 private:
     std::shared_ptr<hms::MqttClient> mqtt_client_;

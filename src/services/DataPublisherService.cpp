@@ -964,7 +964,7 @@ bool DataPublisherService::publishOximetryDiscovery() {
 }
 
 void DataPublisherService::publishOximetryLive(const std::string& device_id,
-                                                const O2RingClient::LiveReading& live) {
+                                                const IO2RingClient::LiveReading& live) {
     if (!mqtt_client_ || !mqtt_client_->isConnected()) return;
 
     std::string prefix = "cpap/" + device_id + "/oximetry/";

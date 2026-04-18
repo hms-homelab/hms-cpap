@@ -1,6 +1,6 @@
 #pragma once
 
-#include "clients/O2RingClient.h"
+#include "clients/IO2RingClient.h"
 #include "database/IDatabase.h"
 #include "parsers/CpapdashBridge.h"
 #include <memory>
@@ -17,7 +17,7 @@ namespace hms_cpap {
  */
 class OximetryService {
 public:
-    OximetryService(std::shared_ptr<O2RingClient> client,
+    OximetryService(std::shared_ptr<IO2RingClient> client,
                     std::shared_ptr<IDatabase> db);
 
     /**
@@ -30,16 +30,16 @@ public:
      * Poll live SpO2/HR from ring (connect on demand via mule).
      * @return live reading, check .valid before using
      */
-    O2RingClient::LiveReading pollLive();
+    IO2RingClient::LiveReading pollLive();
 
     /** Get last live reading (from most recent pollLive call). */
-    const O2RingClient::LiveReading& getLastLive() const { return last_live_; }
+    const IO2RingClient::LiveReading& getLastLive() const { return last_live_; }
 
 private:
-    std::shared_ptr<O2RingClient> client_;
+    std::shared_ptr<IO2RingClient> client_;
     std::shared_ptr<IDatabase> db_;
     std::set<std::string> processed_files_;
-    O2RingClient::LiveReading last_live_;
+    IO2RingClient::LiveReading last_live_;
 };
 
 } // namespace hms_cpap
