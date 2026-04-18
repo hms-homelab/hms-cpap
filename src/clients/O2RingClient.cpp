@@ -145,4 +145,26 @@ std::vector<uint8_t> O2RingClient::downloadFile(const std::string& filename) {
     return data;
 }
 
+O2RingClient::LiveReading O2RingClient::getLive() {
+    LiveReading reading;
+
+    try {
+        std::string url = base_url_ + "/o2ring/live";
+        std::string response = httpGet(url);
+        if (response.empty()) return reading;
+
+        auto json = nlohmann::json::parse(response);
+        reading.spo2 = json.value("spo2", 0);
+        reading.hr = json.value("hr", 0);
+        reading.motion = json.value("motion", 0);
+        reading.vibration = json.value("vibration", 0);
+        reading.valid = (reading.spo2 > 0 && reading.hr > 0);
+
+    } catch (const std::exception& e) {
+        std::cerr << "O2Ring: Live reading failed: " << e.what() << std::endl;
+    }
+
+    return reading;
+}
+
 } // namespace hms_cpap

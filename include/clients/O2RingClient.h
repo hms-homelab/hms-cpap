@@ -42,6 +42,20 @@ public:
      */
     std::vector<uint8_t> downloadFile(const std::string& filename);
 
+    struct LiveReading {
+        int spo2 = 0;       // 0-100
+        int hr = 0;         // bpm
+        int motion = 0;
+        int vibration = 0;
+        bool valid = false;
+    };
+
+    /**
+     * Poll live SpO2/HR from ring via mule.
+     * GET /o2ring/live — mule connects BLE on demand.
+     */
+    LiveReading getLive();
+
     /**
      * Get battery level from last status/list call.
      * @return 0-100 percent, or -1 if unknown

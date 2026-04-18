@@ -49,6 +49,7 @@ public:
     MOCK_METHOD(void*, rawConnection, (), (override));
     MOCK_METHOD(bool, saveOximetrySession, (const std::string&, const cpapdash::parser::OximetrySession&), (override));
     MOCK_METHOD(bool, oximetrySessionExists, (const std::string&, const std::string&), (override));
+    MOCK_METHOD(bool, saveLiveOximetrySample, (const std::string&, const std::string&, int, int, int), (override));
 };
 
 // ── Status reporting ────────────────────────────────────────────────────

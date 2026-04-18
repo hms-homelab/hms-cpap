@@ -128,6 +128,9 @@ public:
         return false;
     }
 
+    bool saveLiveOximetrySample(const std::string&, const std::string&,
+                                 int, int, int) override { return false; }
+
     void* rawConnection() override {
         std::lock_guard<std::recursive_mutex> lock(mutex_);
         ensureConnection();

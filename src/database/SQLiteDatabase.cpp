@@ -362,7 +362,8 @@ void SQLiteDatabase::createSchema() {
             oximetry_session_id INTEGER REFERENCES oximetry_sessions(id) ON DELETE CASCADE,
             timestamp TEXT NOT NULL,
             spo2 INTEGER, heart_rate INTEGER,
-            motion INTEGER, vibration INTEGER, valid INTEGER
+            motion INTEGER, vibration INTEGER, valid INTEGER,
+            source TEXT DEFAULT 'vld'
         )
     )");
 
@@ -1784,8 +1785,8 @@ bool SQLiteDatabase::saveOximetrySession(const std::string& device_id,
             const char* sample_sql = R"(
                 INSERT INTO oximetry_samples
                     (oximetry_session_id, timestamp, spo2, heart_rate,
-                     motion, vibration, valid)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                     motion, vibration, valid, source)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'vld')
             )";
 
             StmtGuard gs;
@@ -1849,6 +1850,82 @@ bool SQLiteDatabase::oximetrySessionExists(const std::string& device_id,
     }
 
     return exists;
+}
+
+bool SQLiteDatabase::saveLiveOximetrySample(const std::string& device_id,
+                                              const std::string& date,
+                                              int spo2, int hr, int motion) {
+    if (!db_) return false;
+
+    try {
+        // Get or create a "live" session for today
+        std::string live_filename = "live_" + date + ".vld";
+
+        // Check if session exists
+        StmtGuard g1;
+        sqlite3_prepare_v2(db_,
+            "SELECT id FROM oximetry_sessions WHERE device_id = ? AND filename = ?",
+            -1, &g1.stmt, nullptr);
+        bind_text(g1.stmt, 1, device_id);
+        bind_text(g1.stmt, 2, live_filename);
+
+        int64_t session_id = 0;
+        if (sqlite3_step(g1.stmt) == SQLITE_ROW) {
+            session_id = sqlite3_column_int64(g1.stmt, 0);
+        } else {
+            // Create session for today
+            StmtGuard g2;
+            sqlite3_prepare_v2(db_, R"(
+                INSERT INTO oximetry_sessions
+                    (device_id, filename, start_time, end_time, duration_seconds,
+                     sample_interval, valid_samples, total_samples)
+                VALUES (?, ?, datetime('now'), datetime('now'), 0, 0, 0, 0)
+            )", -1, &g2.stmt, nullptr);
+            bind_text(g2.stmt, 1, device_id);
+            bind_text(g2.stmt, 2, live_filename);
+            if (sqlite3_step(g2.stmt) != SQLITE_DONE) return false;
+            session_id = sqlite3_last_insert_rowid(db_);
+        }
+
+        // Insert sample
+        StmtGuard gs;
+        sqlite3_prepare_v2(db_, R"(
+            INSERT INTO oximetry_samples
+                (oximetry_session_id, timestamp, spo2, heart_rate,
+                 motion, vibration, valid, source)
+            VALUES (?, datetime('now'), ?, ?, ?, 0, 1, 'live')
+        )", -1, &gs.stmt, nullptr);
+        bind_int64(gs.stmt, 1, session_id);
+        bind_int(gs.stmt, 2, spo2);
+        bind_int(gs.stmt, 3, hr);
+        bind_int(gs.stmt, 4, motion);
+
+        if (sqlite3_step(gs.stmt) != SQLITE_DONE) {
+            std::cerr << "SQLite: live sample insert error: " << sqlite3_errmsg(db_) << std::endl;
+            return false;
+        }
+
+        // Update session end_time and counts
+        StmtGuard gu;
+        sqlite3_prepare_v2(db_, R"(
+            UPDATE oximetry_sessions SET
+                end_time = datetime('now'),
+                duration_seconds = CAST((julianday(datetime('now')) - julianday(start_time)) * 86400 AS INTEGER),
+                total_samples = (SELECT COUNT(*) FROM oximetry_samples WHERE oximetry_session_id = ?),
+                valid_samples = (SELECT COUNT(*) FROM oximetry_samples WHERE oximetry_session_id = ? AND valid = 1)
+            WHERE id = ?
+        )", -1, &gu.stmt, nullptr);
+        bind_int64(gu.stmt, 1, session_id);
+        bind_int64(gu.stmt, 2, session_id);
+        bind_int64(gu.stmt, 3, session_id);
+        sqlite3_step(gu.stmt);
+
+        return true;
+
+    } catch (const std::exception& e) {
+        std::cerr << "SQLite: saveLiveOximetrySample error: " << e.what() << std::endl;
+        return false;
+    }
 }
 
 } // namespace hms_cpap

@@ -123,6 +123,15 @@ public:
     virtual bool oximetrySessionExists(const std::string& device_id,
                                        const std::string& filename) = 0;
 
+    /**
+     * Append a live oximetry sample (from burst poll).
+     * Creates a session for today if none exists. Source='live'.
+     * Overwritten when full VLD file arrives.
+     */
+    virtual bool saveLiveOximetrySample(const std::string& device_id,
+                                         const std::string& date,
+                                         int spo2, int hr, int motion) = 0;
+
     // -- Raw connection -------------------------------------------------------
 
     /**

@@ -1020,11 +1020,34 @@ bool BurstCollectorService::executeBurstCycle() {
     // Step 9: Update device last_seen
     db_service_->updateDeviceLastSeen(device_id_);
 
-    // Step 10: O2 Ring oximetry collection (non-fatal)
+    // Step 10: O2 Ring — poll live SpO2/HR every burst, file download periodically
     if (oximetry_service_) {
         try {
-            std::cout << "O2Ring: Checking for new oximetry data..." << std::endl;
-            oximetry_service_->collectAndPublish();
+            // Live poll every burst cycle (connect → read → disconnect)
+            auto live = oximetry_service_->pollLive();
+            if (live.valid) {
+                // Save to DB (source='live', overwritten when VLD arrives)
+                auto now = std::chrono::system_clock::now();
+                auto tt = std::chrono::system_clock::to_time_t(now);
+                std::tm tm{}; gmtime_r(&tt, &tm);
+                char date_buf[9];
+                std::strftime(date_buf, sizeof(date_buf), "%Y%m%d", &tm);
+                db_service_->saveLiveOximetrySample("o2ring", date_buf,
+                                                     live.spo2, live.hr, live.motion);
+
+                // Publish to MQTT
+                if (data_publisher_) {
+                    data_publisher_->publishOximetryLive(device_id_, live);
+                }
+            }
+
+            // File collection less frequently (ring must be off-wrist)
+            static int o2ring_file_cycles = 0;
+            int file_interval = ConfigManager::getInt("O2RING_FILE_INTERVAL_CYCLES", 5);
+            if (++o2ring_file_cycles >= file_interval) {
+                o2ring_file_cycles = 0;
+                oximetry_service_->collectAndPublish();
+            }
         } catch (const std::exception& e) {
             std::cerr << "O2Ring: Collection failed (non-fatal): " << e.what() << std::endl;
         }
