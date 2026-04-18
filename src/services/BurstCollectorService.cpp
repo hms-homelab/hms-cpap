@@ -551,6 +551,34 @@ bool BurstCollectorService::executeBurstCycle() {
     std::cout << "🔄 CPAP: Starting burst cycle..." << std::endl;
     std::cout << std::string(60, '=') << std::endl;
 
+    // O2 Ring: poll live SpO2/HR every burst (runs before CPAP to avoid early returns)
+    if (oximetry_service_) {
+        try {
+            auto live = oximetry_service_->pollLive();
+            if (live.valid) {
+                auto now = std::chrono::system_clock::now();
+                auto tt = std::chrono::system_clock::to_time_t(now);
+                std::tm tm{}; gmtime_r(&tt, &tm);
+                char date_buf[9];
+                std::strftime(date_buf, sizeof(date_buf), "%Y%m%d", &tm);
+                db_service_->saveLiveOximetrySample("o2ring", date_buf,
+                                                     live.spo2, live.hr, live.motion);
+                if (data_publisher_) {
+                    data_publisher_->publishOximetryLive(device_id_, live);
+                }
+            }
+
+            static int o2ring_file_cycles = 0;
+            int file_interval = (app_config_ ? app_config_->o2ring.file_interval_cycles : 5);
+            if (++o2ring_file_cycles >= file_interval) {
+                o2ring_file_cycles = 0;
+                oximetry_service_->collectAndPublish();
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "O2Ring: Failed (non-fatal): " << e.what() << std::endl;
+        }
+    }
+
     // Step 1: Query DB for last stored session (delta collection)
     auto last_session_start = db_service_->getLastSessionStart(device_id_);
 
@@ -1027,39 +1055,6 @@ bool BurstCollectorService::executeBurstCycle() {
     // Step 9: Update device last_seen
     db_service_->updateDeviceLastSeen(device_id_);
 
-    // Step 10: O2 Ring — poll live SpO2/HR every burst, file download periodically
-    if (oximetry_service_) {
-        try {
-            // Live poll every burst cycle (connect → read → disconnect)
-            auto live = oximetry_service_->pollLive();
-            if (live.valid) {
-                // Save to DB (source='live', overwritten when VLD arrives)
-                auto now = std::chrono::system_clock::now();
-                auto tt = std::chrono::system_clock::to_time_t(now);
-                std::tm tm{}; gmtime_r(&tt, &tm);
-                char date_buf[9];
-                std::strftime(date_buf, sizeof(date_buf), "%Y%m%d", &tm);
-                db_service_->saveLiveOximetrySample("o2ring", date_buf,
-                                                     live.spo2, live.hr, live.motion);
-
-                // Publish to MQTT
-                if (data_publisher_) {
-                    data_publisher_->publishOximetryLive(device_id_, live);
-                }
-            }
-
-            // File collection less frequently (ring must be off-wrist)
-            static int o2ring_file_cycles = 0;
-            int file_interval = (app_config_ ? app_config_->o2ring.file_interval_cycles : 5);
-            if (++o2ring_file_cycles >= file_interval) {
-                o2ring_file_cycles = 0;
-                oximetry_service_->collectAndPublish();
-            }
-        } catch (const std::exception& e) {
-            std::cerr << "O2Ring: Collection failed (non-fatal): " << e.what() << std::endl;
-        }
-    }
-
     // Cleanup temp symlink dirs (local mode only)
     if (!local_source_dir_.empty()) {
         std::filesystem::remove_all(std::filesystem::temp_directory_path() / "cpap_local");
@@ -1473,7 +1468,17 @@ std::string BurstCollectorService::loadPromptFile(const std::string& filepath) {
 
 void BurstCollectorService::setAppConfig(AppConfig* cfg) {
     app_config_ = cfg;
-    if (cfg) snapshotConfig(last_config_);
+    if (cfg) {
+        snapshotConfig(last_config_);
+
+        // Initialize O2 Ring if enabled in config (first call after construction)
+        if (!oximetry_service_ && cfg->o2ring.enabled && !cfg->o2ring.mule_url.empty()) {
+            auto client = std::make_shared<O2RingClient>(cfg->o2ring.mule_url);
+            oximetry_service_ = std::make_unique<OximetryService>(client, db_service_);
+            std::cout << "O2Ring: Enabled (mode=" << cfg->o2ring.mode
+                      << ", mule=" << cfg->o2ring.mule_url << ")" << std::endl;
+        }
+    }
 }
 
 void BurstCollectorService::snapshotConfig(ConfigSnapshot& snap) {
@@ -1502,6 +1507,10 @@ void BurstCollectorService::snapshotConfig(ConfigSnapshot& snap) {
     snap.device_id = app_config_->device_id;
     snap.device_name = app_config_->device_name;
     snap.burst_interval = app_config_->burst_interval;
+    snap.o2ring_enabled = app_config_->o2ring.enabled;
+    snap.o2ring_mode = app_config_->o2ring.mode;
+    snap.o2ring_mule_url = app_config_->o2ring.mule_url;
+    snap.o2ring_file_interval = app_config_->o2ring.file_interval_cycles;
 }
 
 void BurstCollectorService::reloadConfig() {
@@ -1619,6 +1628,20 @@ void BurstCollectorService::reloadConfig() {
         } else {
             llm_client_.reset();
             std::cout << "Config reload: LLM -> disabled" << std::endl;
+        }
+    }
+
+    // O2 Ring
+    if (nc.o2ring_enabled != last_config_.o2ring_enabled ||
+        nc.o2ring_mule_url != last_config_.o2ring_mule_url) {
+        if (nc.o2ring_enabled && !nc.o2ring_mule_url.empty()) {
+            auto client = std::make_shared<O2RingClient>(nc.o2ring_mule_url);
+            oximetry_service_ = std::make_unique<OximetryService>(client, db_service_);
+            std::cout << "Config reload: O2Ring -> enabled (mode=" << nc.o2ring_mode
+                      << ", mule=" << nc.o2ring_mule_url << ")" << std::endl;
+        } else {
+            oximetry_service_.reset();
+            std::cout << "Config reload: O2Ring -> disabled" << std::endl;
         }
     }
 

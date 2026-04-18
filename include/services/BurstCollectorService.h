@@ -234,6 +234,9 @@ private:
         std::string llm_provider, llm_endpoint, llm_model, llm_api_key;
         std::string device_id, device_name;
         int burst_interval = 0;
+        bool o2ring_enabled = false;
+        std::string o2ring_mode, o2ring_mule_url;
+        int o2ring_file_interval = 5;
     };
     ConfigSnapshot last_config_;
 
