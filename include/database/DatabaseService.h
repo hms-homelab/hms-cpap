@@ -124,6 +124,13 @@ public:
     bool saveLiveOximetrySample(const std::string& device_id, const std::string& date,
                                  int spo2, int hr, int motion) override;
 
+    OxiSummary getOximetrySummary(const std::string& device_id,
+                                   const std::string& date,
+                                   const std::string& next_day) override;
+    OxiRangeSummary getOximetryRangeSummary(const std::string& device_id,
+                                              const std::string& start,
+                                              const std::string& end) override;
+
     void* rawConnection() override {
         std::lock_guard<std::recursive_mutex> lock(mutex_);
         ensureConnection();

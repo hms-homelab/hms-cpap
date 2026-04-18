@@ -50,6 +50,8 @@ public:
     MOCK_METHOD(bool, saveOximetrySession, (const std::string&, const cpapdash::parser::OximetrySession&), (override));
     MOCK_METHOD(bool, oximetrySessionExists, (const std::string&, const std::string&), (override));
     MOCK_METHOD(bool, saveLiveOximetrySample, (const std::string&, const std::string&, int, int, int), (override));
+    OxiSummary getOximetrySummary(const std::string&, const std::string&, const std::string&) override { return {}; }
+    OxiRangeSummary getOximetryRangeSummary(const std::string&, const std::string&, const std::string&) override { return {}; }
 };
 
 // ── Status reporting ────────────────────────────────────────────────────

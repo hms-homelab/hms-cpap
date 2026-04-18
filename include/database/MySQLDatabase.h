@@ -123,6 +123,11 @@ public:
     bool saveLiveOximetrySample(const std::string&, const std::string&,
                                  int, int, int) override { return false; }
 
+    OxiSummary getOximetrySummary(const std::string&, const std::string&,
+                                   const std::string&) override { return {}; }
+    OxiRangeSummary getOximetryRangeSummary(const std::string&, const std::string&,
+                                              const std::string&) override { return {}; }
+
     void* rawConnection() override;
 
     // -- Generic query --------------------------------------------------------

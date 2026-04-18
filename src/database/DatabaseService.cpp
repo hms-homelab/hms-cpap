@@ -1854,6 +1854,87 @@ bool DatabaseService::saveLiveOximetrySample(const std::string& device_id,
     }
 }
 
+IDatabase::OxiSummary DatabaseService::getOximetrySummary(
+    const std::string& device_id, const std::string& date,
+    const std::string& next_day) {
+    OxiSummary s;
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!ensureConnection()) return s;
+
+    try {
+        pqxx::work txn(*conn_);
+        auto r = txn.exec_params(
+            "SELECT avg_spo2, min_spo2, spo2_baseline, odi_3pct, "
+            "time_below_90, time_below_88, avg_hr, min_hr, max_hr, "
+            "valid_samples, duration_seconds "
+            "FROM oximetry_sessions WHERE device_id = $1 "
+            "AND (cpap_session_date = $2 OR cpap_session_date = $3) "
+            "AND duration_seconds > 60 "
+            "ORDER BY duration_seconds DESC LIMIT 1",
+            device_id, date, next_day);
+        txn.commit();
+
+        if (!r.empty()) {
+            s.found = true;
+            s.avg_spo2 = r[0]["avg_spo2"].as<double>(0);
+            s.min_spo2 = r[0]["min_spo2"].as<double>(0);
+            s.spo2_baseline = r[0]["spo2_baseline"].as<double>(0);
+            s.odi_3pct = r[0]["odi_3pct"].as<double>(0);
+            s.time_below_90 = r[0]["time_below_90"].as<double>(0);
+            s.time_below_88 = r[0]["time_below_88"].as<double>(0);
+            s.avg_hr = r[0]["avg_hr"].as<double>(0);
+            s.min_hr = r[0]["min_hr"].as<int>(0);
+            s.max_hr = r[0]["max_hr"].as<int>(0);
+            s.valid_samples = r[0]["valid_samples"].as<int>(0);
+            s.duration_seconds = r[0]["duration_seconds"].as<int>(0);
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "getOximetrySummary error: " << e.what() << std::endl;
+    }
+
+    return s;
+}
+
+IDatabase::OxiRangeSummary DatabaseService::getOximetryRangeSummary(
+    const std::string& device_id, const std::string& start,
+    const std::string& end) {
+    OxiRangeSummary s;
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!ensureConnection()) return s;
+
+    try {
+        pqxx::work txn(*conn_);
+        auto r = txn.exec_params(
+            "SELECT COUNT(*) as nights, "
+            "ROUND(AVG(avg_spo2)::numeric, 1) as avg_spo2, "
+            "MIN(min_spo2) as min_spo2, "
+            "ROUND(AVG(odi_3pct)::numeric, 1) as avg_odi, "
+            "ROUND(AVG(time_below_90)::numeric, 1) as avg_below_90, "
+            "ROUND(AVG(avg_hr)::numeric, 0) as avg_hr "
+            "FROM oximetry_sessions WHERE device_id = $1 "
+            "AND cpap_session_date >= $2 AND cpap_session_date <= $3 "
+            "AND duration_seconds > 60",
+            device_id, start, end);
+        txn.commit();
+
+        if (!r.empty()) {
+            s.nights = r[0]["nights"].as<int>(0);
+            if (s.nights > 0) {
+                s.found = true;
+                s.avg_spo2 = r[0]["avg_spo2"].as<double>(0);
+                s.min_spo2 = r[0]["min_spo2"].as<double>(0);
+                s.avg_odi = r[0]["avg_odi"].as<double>(0);
+                s.avg_below_90 = r[0]["avg_below_90"].as<double>(0);
+                s.avg_hr = r[0]["avg_hr"].as<double>(0);
+            }
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "getOximetryRangeSummary error: " << e.what() << std::endl;
+    }
+
+    return s;
+}
+
 } // namespace hms_cpap
 
 #endif // WITH_POSTGRESQL

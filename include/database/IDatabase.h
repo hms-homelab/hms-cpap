@@ -132,6 +132,34 @@ public:
                                          const std::string& date,
                                          int spo2, int hr, int motion) = 0;
 
+    struct OxiSummary {
+        double avg_spo2 = 0, min_spo2 = 0, spo2_baseline = 0;
+        double odi_3pct = 0, time_below_90 = 0, time_below_88 = 0;
+        double avg_hr = 0;
+        int min_hr = 0, max_hr = 0;
+        int valid_samples = 0, duration_seconds = 0;
+        bool found = false;
+    };
+
+    /**
+     * Get oximetry summary for a date (checks both date and date+1 for midnight crossing).
+     */
+    virtual OxiSummary getOximetrySummary(const std::string& device_id,
+                                           const std::string& date_yyyymmdd,
+                                           const std::string& next_day_yyyymmdd) = 0;
+
+    struct OxiRangeSummary {
+        int nights = 0;
+        double avg_spo2 = 0, min_spo2 = 0;
+        double avg_odi = 0, avg_below_90 = 0;
+        double avg_hr = 0;
+        bool found = false;
+    };
+
+    virtual OxiRangeSummary getOximetryRangeSummary(const std::string& device_id,
+                                                      const std::string& start_yyyymmdd,
+                                                      const std::string& end_yyyymmdd) = 0;
+
     // -- Raw connection -------------------------------------------------------
 
     /**
