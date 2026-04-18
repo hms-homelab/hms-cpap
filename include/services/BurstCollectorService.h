@@ -5,6 +5,7 @@
 #include "llm_client.h"
 #include "parsers/CpapdashBridge.h"
 #include "services/DataPublisherService.h"
+#include "services/OximetryService.h"
 #include "services/SessionDiscoveryService.h"
 #include "mqtt_client.h"
 #include "database/IDatabase.h"
@@ -95,6 +96,9 @@ private:
     std::shared_ptr<hms::MqttClient> mqtt_client_;
     std::shared_ptr<IDatabase> db_service_;
     std::unique_ptr<DataPublisherService> data_publisher_;
+
+    // O2 Ring oximetry
+    std::unique_ptr<OximetryService> oximetry_service_;
 
     // Worker thread
     std::thread worker_thread_;

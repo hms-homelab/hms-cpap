@@ -1,5 +1,6 @@
 #include "services/BurstCollectorService.h"
 #include "services/InsightsEngine.h"
+#include "clients/O2RingClient.h"
 #include "utils/ConfigManager.h"
 #include "utils/AppConfig.h"
 #include "utils/FileUtils.h"
@@ -181,6 +182,14 @@ BurstCollectorService::BurstCollectorService(int burst_interval_seconds)
 
         std::cout << "LLM: Enabled (" << hms::LLMClient::providerName(llm_config.provider)
                   << " / " << llm_config.model << " at " << llm_config.endpoint << ")" << std::endl;
+    }
+
+    // Initialize O2 Ring oximetry (optional)
+    std::string o2ring_url = ConfigManager::get("O2RING_MULE_URL", "");
+    if (!o2ring_url.empty()) {
+        auto o2ring_client = std::make_shared<O2RingClient>(o2ring_url);
+        oximetry_service_ = std::make_unique<OximetryService>(o2ring_client, db_service_);
+        std::cout << "O2Ring: Enabled (mule at " << o2ring_url << ")" << std::endl;
     }
 
     // Subscribe to MQTT command topics (LLM, insights, force_complete)
@@ -1010,6 +1019,16 @@ bool BurstCollectorService::executeBurstCycle() {
 
     // Step 9: Update device last_seen
     db_service_->updateDeviceLastSeen(device_id_);
+
+    // Step 10: O2 Ring oximetry collection (non-fatal)
+    if (oximetry_service_) {
+        try {
+            std::cout << "O2Ring: Checking for new oximetry data..." << std::endl;
+            oximetry_service_->collectAndPublish();
+        } catch (const std::exception& e) {
+            std::cerr << "O2Ring: Collection failed (non-fatal): " << e.what() << std::endl;
+        }
+    }
 
     // Cleanup temp symlink dirs (local mode only)
     if (!local_source_dir_.empty()) {

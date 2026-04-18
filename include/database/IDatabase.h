@@ -107,6 +107,22 @@ public:
                              double compliance_pct,
                              const std::string& summary_text) = 0;
 
+    // -- Oximetry (O2 Ring) ---------------------------------------------------
+
+    /**
+     * Save a parsed oximetry session (header + samples) to the database.
+     * @param device_id  e.g. "o2ring"
+     * @param session    Parsed OximetrySession from VLDParser
+     */
+    virtual bool saveOximetrySession(const std::string& device_id,
+                                     const cpapdash::parser::OximetrySession& session) = 0;
+
+    /**
+     * Check if an oximetry session (by filename) already exists.
+     */
+    virtual bool oximetrySessionExists(const std::string& device_id,
+                                       const std::string& filename) = 0;
+
     // -- Raw connection -------------------------------------------------------
 
     /**

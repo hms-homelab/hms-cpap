@@ -101,6 +101,19 @@ public:
                      double compliance_pct,
                      const std::string& summary_text) override;
 
+    // -- Oximetry (O2 Ring) ---------------------------------------------------
+
+    bool saveOximetrySession(const std::string& device_id,
+                              const cpapdash::parser::OximetrySession& session) override {
+        if (db_) return db_->saveOximetrySession(device_id, session);
+        return false;
+    }
+    bool oximetrySessionExists(const std::string& device_id,
+                                const std::string& filename) override {
+        if (db_) return db_->oximetrySessionExists(device_id, filename);
+        return false;
+    }
+
     // -- Raw connection -------------------------------------------------------
 
     void* rawConnection() override;

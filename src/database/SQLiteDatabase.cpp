@@ -335,6 +335,37 @@ void SQLiteDatabase::createSchema() {
         )
     )");
 
+    // oximetry_sessions (O2 Ring)
+    exec(R"(
+        CREATE TABLE IF NOT EXISTS oximetry_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            device_id TEXT NOT NULL,
+            filename TEXT UNIQUE NOT NULL,
+            start_time TEXT NOT NULL,
+            end_time TEXT NOT NULL,
+            duration_seconds INTEGER,
+            sample_interval REAL,
+            avg_spo2 REAL, min_spo2 REAL, spo2_baseline REAL,
+            time_below_90 REAL, time_below_88 REAL,
+            odi_3pct REAL, desat_count INTEGER,
+            avg_hr REAL, min_hr INTEGER, max_hr INTEGER,
+            valid_samples INTEGER, total_samples INTEGER,
+            cpap_session_date TEXT,
+            created_at TEXT DEFAULT (datetime('now'))
+        )
+    )");
+
+    // oximetry_samples
+    exec(R"(
+        CREATE TABLE IF NOT EXISTS oximetry_samples (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            oximetry_session_id INTEGER REFERENCES oximetry_sessions(id) ON DELETE CASCADE,
+            timestamp TEXT NOT NULL,
+            spo2 INTEGER, heart_rate INTEGER,
+            motion INTEGER, vibration INTEGER, valid INTEGER
+        )
+    )");
+
     // Indexes
     exec("CREATE INDEX IF NOT EXISTS idx_cpap_sessions_device ON cpap_sessions(device_id)");
     exec("CREATE INDEX IF NOT EXISTS idx_cpap_sessions_start ON cpap_sessions(device_id, session_start)");
@@ -1658,6 +1689,166 @@ Json::Value SQLiteDatabase::executeQuery(const std::string& sql,
     }
 
     return arr;
+}
+
+// ---------------------------------------------------------------------------
+// saveOximetrySession
+// ---------------------------------------------------------------------------
+
+bool SQLiteDatabase::saveOximetrySession(const std::string& device_id,
+                                          const cpapdash::parser::OximetrySession& session) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!db_) { std::cerr << "SQLite: Not connected" << std::endl; return false; }
+
+    exec("BEGIN TRANSACTION");
+
+    try {
+        // Insert session header
+        const char* sql = R"(
+            INSERT INTO oximetry_sessions
+                (device_id, filename, start_time, end_time, duration_seconds,
+                 sample_interval, avg_spo2, min_spo2, spo2_baseline,
+                 time_below_90, time_below_88, odi_3pct, desat_count,
+                 avg_hr, min_hr, max_hr, valid_samples, total_samples,
+                 cpap_session_date)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (filename) DO UPDATE SET
+                start_time      = excluded.start_time,
+                end_time        = excluded.end_time,
+                duration_seconds = excluded.duration_seconds,
+                sample_interval = excluded.sample_interval,
+                avg_spo2        = excluded.avg_spo2,
+                min_spo2        = excluded.min_spo2,
+                spo2_baseline   = excluded.spo2_baseline,
+                time_below_90   = excluded.time_below_90,
+                time_below_88   = excluded.time_below_88,
+                odi_3pct        = excluded.odi_3pct,
+                desat_count     = excluded.desat_count,
+                avg_hr          = excluded.avg_hr,
+                min_hr          = excluded.min_hr,
+                max_hr          = excluded.max_hr,
+                valid_samples   = excluded.valid_samples,
+                total_samples   = excluded.total_samples,
+                cpap_session_date = excluded.cpap_session_date
+        )";
+
+        StmtGuard g;
+        sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr);
+
+        bind_text(g.stmt, 1, device_id);
+        bind_text(g.stmt, 2, session.filename);
+        bind_text(g.stmt, 3, fmtTimestamp(session.start_time));
+        bind_text(g.stmt, 4, fmtTimestamp(session.end_time));
+        bind_int(g.stmt, 5, session.duration_seconds);
+        bind_double(g.stmt, 6, session.sample_interval);
+        bind_double(g.stmt, 7, session.metrics.avg_spo2);
+        bind_double(g.stmt, 8, session.metrics.min_spo2);
+        bind_double(g.stmt, 9, session.metrics.spo2_baseline);
+        bind_double(g.stmt, 10, session.metrics.time_below_90_pct);
+        bind_double(g.stmt, 11, session.metrics.time_below_88_pct);
+        bind_double(g.stmt, 12, session.metrics.odi_3pct);
+        bind_int(g.stmt, 13, session.metrics.desat_count_3pct);
+        bind_double(g.stmt, 14, session.metrics.avg_hr);
+        bind_int(g.stmt, 15, session.metrics.min_hr);
+        bind_int(g.stmt, 16, session.metrics.max_hr);
+        bind_int(g.stmt, 17, session.metrics.valid_samples);
+        bind_int(g.stmt, 18, session.metrics.total_samples);
+        bind_text(g.stmt, 19, session.date_str());
+
+        if (sqlite3_step(g.stmt) != SQLITE_DONE) {
+            std::cerr << "SQLite: saveOximetrySession error: " << sqlite3_errmsg(db_) << std::endl;
+            exec("ROLLBACK");
+            return false;
+        }
+
+        // Get session id
+        StmtGuard g2;
+        sqlite3_prepare_v2(db_, "SELECT id FROM oximetry_sessions WHERE filename = ?",
+                            -1, &g2.stmt, nullptr);
+        bind_text(g2.stmt, 1, session.filename);
+
+        int64_t session_id = 0;
+        if (sqlite3_step(g2.stmt) == SQLITE_ROW) {
+            session_id = sqlite3_column_int64(g2.stmt, 0);
+        }
+
+        // Delete existing samples for this session (upsert pattern)
+        StmtGuard g3;
+        sqlite3_prepare_v2(db_, "DELETE FROM oximetry_samples WHERE oximetry_session_id = ?",
+                            -1, &g3.stmt, nullptr);
+        bind_int64(g3.stmt, 1, session_id);
+        sqlite3_step(g3.stmt);
+
+        // Insert samples (batch)
+        if (!session.samples.empty()) {
+            const char* sample_sql = R"(
+                INSERT INTO oximetry_samples
+                    (oximetry_session_id, timestamp, spo2, heart_rate,
+                     motion, vibration, valid)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            )";
+
+            StmtGuard gs;
+            sqlite3_prepare_v2(db_, sample_sql, -1, &gs.stmt, nullptr);
+
+            for (const auto& s : session.samples) {
+                sqlite3_reset(gs.stmt);
+                sqlite3_clear_bindings(gs.stmt);
+
+                bind_int64(gs.stmt, 1, session_id);
+                bind_text(gs.stmt, 2, fmtTimestamp(s.timestamp));
+                bind_int(gs.stmt, 3, static_cast<int>(s.spo2));
+                bind_int(gs.stmt, 4, static_cast<int>(s.heart_rate));
+                bind_int(gs.stmt, 5, static_cast<int>(s.motion));
+                bind_int(gs.stmt, 6, static_cast<int>(s.vibration));
+                bind_int(gs.stmt, 7, s.valid() ? 1 : 0);
+
+                if (sqlite3_step(gs.stmt) != SQLITE_DONE) {
+                    std::cerr << "SQLite: oximetry sample insert error: "
+                              << sqlite3_errmsg(db_) << std::endl;
+                }
+            }
+        }
+
+        exec("COMMIT");
+        std::cout << "SQLite: Oximetry session saved (" << session.filename
+                  << ", " << session.samples.size() << " samples)" << std::endl;
+        return true;
+
+    } catch (const std::exception& e) {
+        exec("ROLLBACK");
+        std::cerr << "SQLite: Failed to save oximetry session: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// oximetrySessionExists
+// ---------------------------------------------------------------------------
+
+bool SQLiteDatabase::oximetrySessionExists(const std::string& device_id,
+                                            const std::string& filename) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!db_) return false;
+
+    const char* sql = R"(
+        SELECT EXISTS(
+            SELECT 1 FROM oximetry_sessions
+            WHERE device_id = ? AND filename = ?
+        )
+    )";
+
+    StmtGuard g;
+    sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr);
+    bind_text(g.stmt, 1, device_id);
+    bind_text(g.stmt, 2, filename);
+
+    bool exists = false;
+    if (sqlite3_step(g.stmt) == SQLITE_ROW) {
+        exists = sqlite3_column_int(g.stmt, 0) != 0;
+    }
+
+    return exists;
 }
 
 } // namespace hms_cpap

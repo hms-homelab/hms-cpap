@@ -92,6 +92,12 @@ public:
                      double compliance_pct,
                      const std::string& summary_text) override;
 
+    bool saveOximetrySession(const std::string& device_id,
+                             const cpapdash::parser::OximetrySession& session) override;
+
+    bool oximetrySessionExists(const std::string& device_id,
+                               const std::string& filename) override;
+
     void* rawConnection() override;
 
     // -- Generic query --------------------------------------------------------
