@@ -51,6 +51,8 @@ set(TEST_SOURCES
     ml/test_MLTrainingService.cpp
     services/test_BackfillService.cpp
     services/test_SessionDiscoveryService.cpp
+    services/test_OximetryService.cpp
+    clients/test_O2RingClient.cpp
 )
 
 # Create test executable
