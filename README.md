@@ -100,7 +100,7 @@ There are two hardware paths for wireless data collection, plus a local filesyst
 
 **Hardware (optional):** ezShare WiFi adapter + 2x ESP32-C3 boards.
 
-**Pros:** Uses an off-the-shelf ezShare WiFi SD adapter. **Cons:** Two microcontrollers needed, slightly more setup.
+**Pros:** Uses an ezShare WiFi SD adapter. **Cons:** Two microcontrollers needed, slightly more setup.
 
 **Firmware:** [hms-mm](https://github.com/hms-homelab/hms-mm) -- open-source dual ESP32-C3 firmware (MIT).
 
