@@ -896,6 +896,7 @@ void DataPublisherService::publishOximetryLive(const std::string& device_id,
     if (!mqtt_client_ || !mqtt_client_->isConnected()) return;
 
     std::string prefix = "cpap/" + device_id + "/oximetry/";
+    mqtt_client_->publish(prefix + "active", live.active ? "ON" : "OFF", 1, true);
     mqtt_client_->publish(prefix + "spo2", std::to_string(live.spo2), 1, true);
     mqtt_client_->publish(prefix + "heart_rate", std::to_string(live.hr), 1, true);
     mqtt_client_->publish(prefix + "motion", std::to_string(live.motion), 1, true);

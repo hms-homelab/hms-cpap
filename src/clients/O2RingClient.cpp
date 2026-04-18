@@ -158,7 +158,8 @@ O2RingClient::LiveReading O2RingClient::getLive() {
         reading.hr = json.value("hr", 0);
         reading.motion = json.value("motion", 0);
         reading.vibration = json.value("vibration", 0);
-        reading.valid = (reading.spo2 > 0 && reading.hr > 0);
+        reading.active = json.value("active", false);
+        reading.valid = reading.active && reading.spo2 > 0 && reading.hr > 0;
 
     } catch (const std::exception& e) {
         std::cerr << "O2Ring: Live reading failed: " << e.what() << std::endl;

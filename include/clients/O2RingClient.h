@@ -47,7 +47,8 @@ public:
         int hr = 0;         // bpm
         int motion = 0;
         int vibration = 0;
-        bool valid = false;
+        bool active = false;
+        bool valid = false;  // active && spo2 > 0 && hr > 0
     };
 
     /**

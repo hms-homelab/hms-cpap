@@ -555,6 +555,13 @@ bool BurstCollectorService::executeBurstCycle() {
     if (oximetry_service_) {
         try {
             auto live = oximetry_service_->pollLive();
+
+            // Always publish active state to MQTT
+            if (data_publisher_) {
+                data_publisher_->publishOximetryLive(device_id_, live);
+            }
+
+            // Only save to DB when ring is active with valid readings
             if (live.valid) {
                 auto now = std::chrono::system_clock::now();
                 auto tt = std::chrono::system_clock::to_time_t(now);
@@ -563,9 +570,6 @@ bool BurstCollectorService::executeBurstCycle() {
                 std::strftime(date_buf, sizeof(date_buf), "%Y%m%d", &tm);
                 db_service_->saveLiveOximetrySample("o2ring", date_buf,
                                                      live.spo2, live.hr, live.motion);
-                if (data_publisher_) {
-                    data_publisher_->publishOximetryLive(device_id_, live);
-                }
             }
 
             static int o2ring_file_cycles = 0;
