@@ -120,6 +120,9 @@ public:
         return false;
     }
 
+    bool saveLiveOximetrySample(const std::string&, const std::string&,
+                                 int, int, int) override { return false; }
+
     void* rawConnection() override;
 
     // -- Generic query --------------------------------------------------------

@@ -114,6 +114,12 @@ public:
         return false;
     }
 
+    bool saveLiveOximetrySample(const std::string& d, const std::string& dt,
+                                 int spo2, int hr, int m) override {
+        if (db_) return db_->saveLiveOximetrySample(d, dt, spo2, hr, m);
+        return false;
+    }
+
     // -- Raw connection -------------------------------------------------------
 
     void* rawConnection() override;

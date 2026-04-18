@@ -98,6 +98,10 @@ public:
     bool oximetrySessionExists(const std::string& device_id,
                                const std::string& filename) override;
 
+    bool saveLiveOximetrySample(const std::string& device_id,
+                                 const std::string& date,
+                                 int spo2, int hr, int motion) override;
+
     void* rawConnection() override;
 
     // -- Generic query --------------------------------------------------------

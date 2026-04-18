@@ -76,4 +76,14 @@ bool OximetryService::collectAndPublish() {
     return any_new;
 }
 
+O2RingClient::LiveReading OximetryService::pollLive() {
+    last_live_ = client_->getLive();
+    if (last_live_.valid) {
+        std::cout << "O2Ring: Live SpO2=" << last_live_.spo2
+                  << " HR=" << last_live_.hr
+                  << " Motion=" << last_live_.motion << std::endl;
+    }
+    return last_live_;
+}
+
 } // namespace hms_cpap

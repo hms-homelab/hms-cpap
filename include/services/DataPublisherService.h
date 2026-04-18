@@ -5,6 +5,7 @@
 #include "mqtt_client.h"
 #include "mqtt/DiscoveryPublisher.h"
 #include "database/IDatabase.h"
+#include "clients/O2RingClient.h"
 #include <memory>
 #include <string>
 
@@ -116,6 +117,13 @@ public:
      * @return true if published successfully
      */
     bool publishRangeSummary(SummaryPeriod period, const std::string& summary);
+
+    /**
+     * Publish live O2 Ring reading to MQTT.
+     * Topics: cpap/{device_id}/oximetry/{spo2,hr,motion}
+     */
+    void publishOximetryLive(const std::string& device_id,
+                              const O2RingClient::LiveReading& live);
 
 private:
     std::shared_ptr<hms::MqttClient> mqtt_client_;
