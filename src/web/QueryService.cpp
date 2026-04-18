@@ -1,5 +1,7 @@
 #include "web/QueryService.h"
 #include <sstream>
+#include <algorithm>
+#include <ctime>
 
 namespace hms_cpap {
 
@@ -367,6 +369,63 @@ Json::Value QueryService::getSessionEvents(const std::string& date) {
         " ORDER BY e.event_timestamp";
 
     return db_->executeQuery(q, {device_id_, date});
+}
+
+Json::Value QueryService::getSessionOximetry(const std::string& date, int interval) {
+    if (interval < 1) interval = 4;
+
+    // sleep_day is the evening date (e.g. 2026-04-17) but the ring records
+    // with the next morning date (20260418). Match both the sleep_day and
+    // the next day's YYYYMMDD in cpap_session_date and filename prefix.
+    // Strip dashes: "2026-04-17" → "20260417"
+    std::string date_nodash = date;
+    date_nodash.erase(std::remove(date_nodash.begin(), date_nodash.end(), '-'), date_nodash.end());
+
+    // Next day: parse YYYYMMDD, add 1 day
+    std::string next_day;
+    {
+        std::tm tm{};
+        tm.tm_year = std::stoi(date_nodash.substr(0, 4)) - 1900;
+        tm.tm_mon = std::stoi(date_nodash.substr(4, 2)) - 1;
+        tm.tm_mday = std::stoi(date_nodash.substr(6, 2)) + 1;
+        mktime(&tm);
+        char buf[9];
+        strftime(buf, sizeof(buf), "%Y%m%d", &tm);
+        next_day = buf;
+    }
+
+    std::string q =
+        "SELECT s.timestamp" + std::string(dt_ == DbType::POSTGRESQL ? "::text" : "") + " AS ts,"
+        " s.spo2, s.heart_rate, s.motion"
+        " FROM oximetry_sessions os"
+        " JOIN oximetry_samples s ON s.oximetry_session_id = os.id"
+        " WHERE os.device_id = " + sql::param(1, dt_) +
+        " AND (os.cpap_session_date IN (" + sql::param(2, dt_) + ", " + sql::param(3, dt_) + ")" +
+        "  OR os.filename LIKE " + sql::param(2, dt_) + " || '%'" +
+        "  OR os.filename LIKE " + sql::param(3, dt_) + " || '%')" +
+        " AND s." + std::string(dt_ == DbType::SQLITE ? "valid = 1" : "valid = true") +
+        " ORDER BY s.timestamp";
+
+    auto rows = db_->executeQuery(q, {"o2ring", date_nodash, next_day});
+
+    Json::Value result;
+    Json::Value timestamps(Json::arrayValue);
+    Json::Value spo2(Json::arrayValue);
+    Json::Value heart_rate(Json::arrayValue);
+    Json::Value motion(Json::arrayValue);
+
+    for (const auto& r : rows) {
+        timestamps.append(r.get("ts", Json::nullValue));
+        spo2.append(r.get("spo2", Json::nullValue));
+        heart_rate.append(r.get("heart_rate", Json::nullValue));
+        motion.append(r.get("motion", Json::nullValue));
+    }
+
+    result["timestamps"] = timestamps;
+    result["spo2"] = spo2;
+    result["heart_rate"] = heart_rate;
+    result["motion"] = motion;
+    return result;
 }
 
 } // namespace hms_cpap
