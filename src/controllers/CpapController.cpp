@@ -247,6 +247,14 @@ void CpapController::updateConfig(const drogon::HttpRequestPtr& req,
         if (ml.isMember("max_training_days")) config_->ml_training.max_training_days = ml["max_training_days"].asInt();
     }
 
+    if (j.isMember("o2ring")) {
+        auto& o = j["o2ring"];
+        if (o.isMember("enabled")) config_->o2ring.enabled = o["enabled"].asBool();
+        if (o.isMember("mode")) config_->o2ring.mode = o["mode"].asString();
+        if (o.isMember("mule_url")) config_->o2ring.mule_url = o["mule_url"].asString();
+        if (o.isMember("file_interval_cycles")) config_->o2ring.file_interval_cycles = o["file_interval_cycles"].asInt();
+    }
+
     // Save to disk
     config_->save(config_path_);
 

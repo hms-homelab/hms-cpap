@@ -184,12 +184,19 @@ BurstCollectorService::BurstCollectorService(int burst_interval_seconds)
                   << " / " << llm_config.model << " at " << llm_config.endpoint << ")" << std::endl;
     }
 
-    // Initialize O2 Ring oximetry (optional)
-    std::string o2ring_url = ConfigManager::get("O2RING_MULE_URL", "");
-    if (!o2ring_url.empty()) {
-        auto o2ring_client = std::make_shared<O2RingClient>(o2ring_url);
-        oximetry_service_ = std::make_unique<OximetryService>(o2ring_client, db_service_);
-        std::cout << "O2Ring: Enabled (mule at " << o2ring_url << ")" << std::endl;
+    // Initialize O2 Ring oximetry (from config or env var fallback)
+    {
+        bool o2ring_enabled = app_config_ ? app_config_->o2ring.enabled : false;
+        std::string o2ring_url = app_config_ ? app_config_->o2ring.mule_url : "";
+        std::string o2ring_mode = app_config_ ? app_config_->o2ring.mode : "http";
+        if (o2ring_url.empty()) o2ring_url = ConfigManager::get("O2RING_MULE_URL", "");
+        if (!o2ring_enabled && !o2ring_url.empty()) o2ring_enabled = true;
+        if (o2ring_enabled && !o2ring_url.empty()) {
+            auto o2ring_client = std::make_shared<O2RingClient>(o2ring_url);
+            oximetry_service_ = std::make_unique<OximetryService>(o2ring_client, db_service_);
+            std::cout << "O2Ring: Enabled (mode=" << o2ring_mode
+                      << ", mule=" << o2ring_url << ")" << std::endl;
+        }
     }
 
     // Subscribe to MQTT command topics (LLM, insights, force_complete)
@@ -1043,7 +1050,7 @@ bool BurstCollectorService::executeBurstCycle() {
 
             // File collection less frequently (ring must be off-wrist)
             static int o2ring_file_cycles = 0;
-            int file_interval = ConfigManager::getInt("O2RING_FILE_INTERVAL_CYCLES", 5);
+            int file_interval = (app_config_ ? app_config_->o2ring.file_interval_cycles : 5);
             if (++o2ring_file_cycles >= file_interval) {
                 o2ring_file_cycles = 0;
                 oximetry_service_->collectAndPublish();

@@ -71,6 +71,14 @@ struct AppConfig {
         int max_training_days = 0;        // 0 = use all data, >0 = limit lookback
     } ml_training;
 
+    // O2 Ring Oximetry (optional)
+    struct O2Ring {
+        bool enabled = false;
+        std::string mode = "http";      // "http" or "ble"
+        std::string mule_url;           // e.g. "http://192.168.2.74"
+        int file_interval_cycles = 5;   // check for .vld files every N burst cycles
+    } o2ring;
+
     bool setup_complete = false;
 
     /// Fill empty config fields from environment variables (fallback).
@@ -249,6 +257,14 @@ struct AppConfig {
                 if (ml.contains("max_training_days")) config.ml_training.max_training_days = ml["max_training_days"];
             }
 
+            if (j.contains("o2ring")) {
+                auto& o = j["o2ring"];
+                if (o.contains("enabled"))              config.o2ring.enabled = o["enabled"];
+                if (o.contains("mode"))                 config.o2ring.mode = o["mode"];
+                if (o.contains("mule_url"))             config.o2ring.mule_url = o["mule_url"];
+                if (o.contains("file_interval_cycles")) config.o2ring.file_interval_cycles = o["file_interval_cycles"];
+            }
+
             return true;
         } catch (const std::exception& e) {
             std::cerr << "Config load error: " << e.what() << std::endl;
@@ -305,6 +321,11 @@ struct AppConfig {
             j["ml_training"]["min_days"] = ml_training.min_days;
             j["ml_training"]["max_training_days"] = ml_training.max_training_days;
 
+            j["o2ring"]["enabled"] = o2ring.enabled;
+            j["o2ring"]["mode"] = o2ring.mode;
+            j["o2ring"]["mule_url"] = o2ring.mule_url;
+            j["o2ring"]["file_interval_cycles"] = o2ring.file_interval_cycles;
+
             std::ofstream f(path);
             f << j.dump(2);
             return true;
@@ -357,6 +378,11 @@ struct AppConfig {
         j["ml_training"]["model_dir"] = ml_training.model_dir;
         j["ml_training"]["min_days"] = ml_training.min_days;
         j["ml_training"]["max_training_days"] = ml_training.max_training_days;
+
+        j["o2ring"]["enabled"] = o2ring.enabled;
+        j["o2ring"]["mode"] = o2ring.mode;
+        j["o2ring"]["mule_url"] = o2ring.mule_url;
+        j["o2ring"]["file_interval_cycles"] = o2ring.file_interval_cycles;
 
         return j;
     }
