@@ -44,6 +44,55 @@ import { AppConfig } from '../../models/config.model';
               Local Directory
               <input type="text" [(ngModel)]="config.local_dir" name="local_dir" placeholder="/path/to/sd/DATALOG" />
             </label>
+          </div>
+        </div>
+
+        <!-- Section: O2 Ring Oximetry -->
+        <div class="section">
+          <div class="section-header" (click)="toggle('o2ring')">
+            <span class="chevron" [class.open]="open['o2ring']">&#9654;</span>
+            O2 Ring Oximetry
+            <span class="badge" *ngIf="!config.o2ring?.enabled">optional</span>
+          </div>
+          <div class="section-body" *ngIf="open['o2ring']">
+            <label class="toggle-row">
+              Enabled
+              <input type="checkbox" [(ngModel)]="config.o2ring.enabled" name="o2ring_enabled" />
+            </label>
+            <ng-container *ngIf="config.o2ring.enabled">
+              <label>
+                Mode
+                <select [(ngModel)]="config.o2ring.mode" name="o2ring_mode">
+                  <option value="http">HTTP (via Mule C3)</option>
+                  <option value="ble">BLE Direct</option>
+                </select>
+              </label>
+              <label *ngIf="config.o2ring.mode === 'http'">
+                Mule URL
+                <input type="text" [(ngModel)]="config.o2ring.mule_url" name="o2ring_mule_url"
+                       placeholder="http://192.168.2.74" />
+                <span class="hint">IP of the mule C3 bridging the O2 Ring via BLE</span>
+              </label>
+              <label *ngIf="config.o2ring.mode === 'ble'">
+                <span class="hint">BLE direct mode uses the host Bluetooth adapter to connect to the O2 Ring.</span>
+              </label>
+              <label>
+                File Check Interval (burst cycles)
+                <input type="number" [(ngModel)]="config.o2ring.file_interval_cycles" name="o2ring_file_interval"
+                       min="1" max="100" />
+                <span class="hint">Check for .vld files every N burst cycles (ring must be off-wrist)</span>
+              </label>
+            </ng-container>
+          </div>
+        </div>
+
+        <!-- Section: Collection Timing -->
+        <div class="section">
+          <div class="section-header" (click)="toggle('timing')">
+            <span class="chevron" [class.open]="open['timing']">&#9654;</span>
+            Collection Timing
+          </div>
+          <div class="section-body" *ngIf="open['timing']">
             <label>
               Burst Interval (seconds)
               <input type="number" [(ngModel)]="config.burst_interval" name="burst_interval" min="1" />
@@ -523,6 +572,8 @@ export class SettingsComponent implements OnInit, OnDestroy {
 
   open: Record<string, boolean> = {
     source: true,
+    o2ring: false,
+    timing: false,
     backfill: false,
     database: true,
     mqtt: false,
@@ -545,6 +596,9 @@ export class SettingsComponent implements OnInit, OnDestroy {
         // Ensure ml_training exists with defaults
         if (!cfg.ml_training) {
           cfg.ml_training = { enabled: false, schedule: 'weekly', model_dir: '', min_days: 30, max_training_days: 0 };
+        }
+        if (!cfg.o2ring) {
+          cfg.o2ring = { enabled: false, mode: 'http', mule_url: '', file_interval_cycles: 5 };
         }
         this.config = cfg;
         this.loading = false;

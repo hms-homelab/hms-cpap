@@ -37,4 +37,10 @@ export interface AppConfig {
     min_days: number;
     max_training_days: number;
   };
+  o2ring: {
+    enabled: boolean;
+    mode: string;          // 'http' | 'ble' | 'off'
+    mule_url: string;      // for HTTP mode
+    file_interval_cycles: number;
+  };
 }
