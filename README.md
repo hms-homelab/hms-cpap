@@ -94,15 +94,11 @@ There are two hardware paths for wireless data collection, plus a local filesyst
 
 **Firmware:** [hms-fysetc](https://github.com/hms-homelab/hms-fysetc) -- open-source ESP-IDF firmware (MIT).
 
-### Path 2: ezShare WiFi SD + hms-mm Bridge (Optional Hardware)
+### Path 2: ezShare WiFi SD (Optional Hardware)
 
-**How it works:** The ezShare creates its own WiFi AP. Since a single device can't be on both the ezShare AP and your home network at the same time, [hms-mm](https://github.com/hms-homelab/hms-mm) uses two ESP32-C3 microcontrollers connected by SPI -- one connects to the ezShare WiFi to download files (miner), the other connects to your home WiFi to serve them over HTTP (mule). HMS-CPAP polls the mule every 65s.
+**How it works:** The ezShare creates its own WiFi AP, which means it can't talk to your home network directly. You'll need a bridge to bring it onto your network. A convenient dual-WiFi bridge is provided by [hms-mm](https://github.com/hms-homelab/hms-mm) -- one radio connects to the ezShare, the other to your home WiFi, and it serves the files over HTTP. HMS-CPAP polls the bridge every 65s.
 
-**Hardware (optional):** ezShare WiFi adapter + 2x ESP32-C3 boards.
-
-**Pros:** Uses an ezShare WiFi SD adapter. **Cons:** Two microcontrollers needed, slightly more setup.
-
-**Firmware:** [hms-mm](https://github.com/hms-homelab/hms-mm) -- open-source dual ESP32-C3 firmware (MIT).
+**Hardware (optional):** ezShare WiFi SD adapter + a bridge device running [hms-mm](https://github.com/hms-homelab/hms-mm) firmware.
 
 ### Local Filesystem
 
