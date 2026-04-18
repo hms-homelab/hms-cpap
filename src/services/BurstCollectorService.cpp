@@ -1326,6 +1326,23 @@ std::string BurstCollectorService::buildRangeMetricsString(
     oss << "  Best AHI: " << best->ahi << " (" << best->sleep_day << ")\n";
     oss << "  Worst AHI: " << worst->ahi << " (" << worst->sleep_day << ")\n";
 
+    // O2 Ring oximetry across the date range
+    if (db_service_) {
+        std::string start_nd = nights.front().sleep_day, end_nd = nights.back().sleep_day;
+        start_nd.erase(std::remove(start_nd.begin(), start_nd.end(), '-'), start_nd.end());
+        end_nd.erase(std::remove(end_nd.begin(), end_nd.end(), '-'), end_nd.end());
+
+        auto oxi = db_service_->getOximetryRangeSummary("o2ring", start_nd, end_nd);
+        if (oxi.found) {
+            oss << "\nO2 Ring Oximetry (" << oxi.nights << " nights with data):\n";
+            oss << "  Avg SpO2: " << oxi.avg_spo2 << "%\n";
+            oss << "  Lowest SpO2: " << oxi.min_spo2 << "%\n";
+            oss << "  Avg ODI (3%): " << oxi.avg_odi << " events/hour\n";
+            oss << "  Avg time below 90%: " << oxi.avg_below_90 << "%\n";
+            oss << "  Avg HR: " << oxi.avg_hr << " bpm\n";
+        }
+    }
+
     return oss.str();
 }
 
@@ -1467,6 +1484,33 @@ std::string BurstCollectorService::buildMetricsString(const SessionMetrics& metr
     }
     if (metrics.avg_flow_limitation.has_value()) {
         oss << "Flow limitation: " << metrics.avg_flow_limitation.value() << " (0-1 scale)\n";
+    }
+
+    // O2 Ring oximetry (if available for this night)
+    if (db_service_) {
+        auto now_t = std::chrono::system_clock::to_time_t(
+            std::chrono::system_clock::now() - std::chrono::hours(12));
+        std::tm* day_tm = std::localtime(&now_t);
+        char date_buf[9], next_buf[9];
+        std::strftime(date_buf, sizeof(date_buf), "%Y%m%d", day_tm);
+        std::tm next_tm = *day_tm;
+        next_tm.tm_mday += 1;
+        mktime(&next_tm);
+        std::strftime(next_buf, sizeof(next_buf), "%Y%m%d", &next_tm);
+
+        auto oxi = db_service_->getOximetrySummary("o2ring", date_buf, next_buf);
+        if (oxi.found) {
+            oss << "\nO2 Ring Oximetry (overnight):\n";
+            oss << "  Avg SpO2: " << oxi.avg_spo2 << "%\n";
+            oss << "  Min SpO2: " << oxi.min_spo2 << "%\n";
+            oss << "  SpO2 baseline (P95): " << oxi.spo2_baseline << "%\n";
+            oss << "  ODI (3%): " << oxi.odi_3pct << " events/hour\n";
+            oss << "  Time below 90%: " << oxi.time_below_90 << "%\n";
+            oss << "  Time below 88%: " << oxi.time_below_88 << "%\n";
+            oss << "  Avg HR: " << oxi.avg_hr << " bpm\n";
+            oss << "  HR range: " << oxi.min_hr << "-" << oxi.max_hr << " bpm\n";
+            std::cout << "O2Ring LLM: oximetry included (avg_spo2=" << oxi.avg_spo2 << ")" << std::endl;
+        }
     }
 
     // STR data (if available)

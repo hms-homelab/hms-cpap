@@ -158,9 +158,28 @@ Json::Value PostgresDatabase::executeQuery(const std::string& sql,
     pvals.reserve(params.size());
     for (auto& p : params) pvals.push_back(p.c_str());
 
+    // Debug: log query with params substituted
+    if (sql.find("oximetry") != std::string::npos) {
+        std::string debug_sql = sql;
+        for (size_t i = 0; i < params.size(); i++) {
+            std::string placeholder = "$" + std::to_string(i + 1);
+            auto pos = debug_sql.find(placeholder);
+            if (pos != std::string::npos)
+                debug_sql.replace(pos, placeholder.size(), "'" + params[i] + "'");
+        }
+        std::cout << "PG executeQuery [oximetry]: " << debug_sql << std::endl;
+    }
+
     PGresult* res = PQexecParams(query_conn_, sql.c_str(),
                                  static_cast<int>(params.size()),
                                  nullptr, pvals.data(), nullptr, nullptr, 0);
+
+    // Debug: log result for oximetry queries
+    if (sql.find("oximetry") != std::string::npos) {
+        std::cout << "PG result: status=" << PQresStatus(PQresultStatus(res))
+                  << " rows=" << PQntuples(res) << std::endl;
+    }
+
     if (!res || (PQresultStatus(res) != PGRES_TUPLES_OK &&
                  PQresultStatus(res) != PGRES_COMMAND_OK)) {
         std::cerr << "executeQuery error: " << PQerrorMessage(query_conn_) << std::endl;

@@ -102,6 +102,11 @@ public:
                                  const std::string& date,
                                  int spo2, int hr, int motion) override;
 
+    OxiSummary getOximetrySummary(const std::string&, const std::string&,
+                                   const std::string&) override { return {}; }
+    OxiRangeSummary getOximetryRangeSummary(const std::string&, const std::string&,
+                                              const std::string&) override { return {}; }
+
     void* rawConnection() override;
 
     // -- Generic query --------------------------------------------------------

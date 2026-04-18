@@ -120,6 +120,17 @@ public:
         return false;
     }
 
+    OxiSummary getOximetrySummary(const std::string& dev, const std::string& d,
+                                   const std::string& nd) override {
+        if (db_) return db_->getOximetrySummary(dev, d, nd);
+        return {};
+    }
+    OxiRangeSummary getOximetryRangeSummary(const std::string& dev, const std::string& s,
+                                              const std::string& e) override {
+        if (db_) return db_->getOximetryRangeSummary(dev, s, e);
+        return {};
+    }
+
     // -- Raw connection -------------------------------------------------------
 
     void* rawConnection() override;
