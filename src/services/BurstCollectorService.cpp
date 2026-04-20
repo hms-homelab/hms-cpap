@@ -32,7 +32,7 @@ BurstCollectorService::BurstCollectorService(int burst_interval_seconds)
     device_id_ = ConfigManager::get("CPAP_DEVICE_ID", "cpap_resmed_23243570851");
     device_name_ = ConfigManager::get("CPAP_DEVICE_NAME", "ResMed AirSense 10");
 
-    // Check for local source mode (CPAP_SOURCE=local + CPAP_LOCAL_DIR)
+    // Check source mode: "ezshare", "local", or "fysetc"
     std::string source = ConfigManager::get("CPAP_SOURCE", "ezshare");
     if (source == "local") {
         local_source_dir_ = ConfigManager::get("CPAP_LOCAL_DIR", "");
@@ -41,6 +41,37 @@ BurstCollectorService::BurstCollectorService(int burst_interval_seconds)
             throw std::runtime_error("CPAP_LOCAL_DIR required when CPAP_SOURCE=local");
         }
         std::cout << "CPAP: Local source mode — reading from " << local_source_dir_ << std::endl;
+    } else if (source == "fysetc") {
+        // Fysetc TCP raw-sector push mode
+        int port = std::stoi(ConfigManager::get("FYSETC_LISTEN_PORT", "9000"));
+        std::string bind = ConfigManager::get("FYSETC_LISTEN_BIND", "0.0.0.0");
+        std::string archive_dir = ConfigManager::get("FYSETC_ARCHIVE_DIR", "");
+        if (archive_dir.empty()) {
+            archive_dir = (std::filesystem::path(AppConfig::dataDir()) / "cpap_data").string();
+        }
+
+        fysetc_server_ = std::make_unique<FysetcTcpServer>(port, bind);
+        fysetc_server_->setLogCallback([](fysetc::LogLevel level, const std::string& tag,
+                                           const std::string& msg) {
+            const char* lvl_str = "?";
+            switch (level) {
+                case fysetc::LogLevel::ERR:  lvl_str = "E"; break;
+                case fysetc::LogLevel::WARN: lvl_str = "W"; break;
+                case fysetc::LogLevel::INFO: lvl_str = "I"; break;
+                case fysetc::LogLevel::DEBUG: lvl_str = "D"; break;
+                default: break;
+            }
+            std::cout << "Fysetc[" << lvl_str << "] " << tag << ": " << msg << std::endl;
+        });
+        fysetc_server_->start();
+
+        fysetc_collector_ = std::make_unique<FysetcSectorCollectorService>(
+            *fysetc_server_, archive_dir);
+
+        // Set local_source_dir so the existing parse pipeline can find the files
+        local_source_dir_ = archive_dir + "/DATALOG";
+        std::cout << "CPAP: Fysetc TCP mode — listening on " << bind << ":" << port
+                  << ", archive at " << archive_dir << std::endl;
     } else {
         // ez Share mode: initialize HTTP client and discovery service
         ezshare_client_ = std::make_unique<EzShareClient>();
@@ -637,13 +668,27 @@ bool BurstCollectorService::executeBurstCycle() {
     }
 
     // Step 2-5: Discover sessions and prepare for parsing
-    // Two modes: ezShare (HTTP) or local filesystem
+    // Three modes: ezShare (HTTP), fysetc (TCP raw sectors), or local filesystem
     std::vector<SessionFileSet> new_sessions;
     std::vector<std::pair<std::string, std::chrono::system_clock::time_point>> downloaded_sessions;
     auto download_start = std::chrono::steady_clock::now();
 
+    // Fysetc pre-step: collect sectors and reconstruct files into archive
+    if (fysetc_collector_) {
+        if (fysetc_server_->isConnected()) {
+            auto result = fysetc_collector_->collect();
+            if (result.success && (result.new_files > 0 || result.updated_files > 0)) {
+                std::cout << "CPAP: Fysetc collected " << result.new_files << " new, "
+                          << result.updated_files << " updated files ("
+                          << result.bytes_received << " bytes)" << std::endl;
+            }
+        } else {
+            std::cout << "CPAP: Fysetc not connected, skipping collection" << std::endl;
+        }
+    }
+
     if (!local_source_dir_.empty()) {
-        // ===== LOCAL SOURCE MODE =====
+        // ===== LOCAL SOURCE MODE (also used by Fysetc after collection) =====
         std::cout << "CPAP: Scanning local directory " << local_source_dir_ << std::endl;
 
         new_sessions = SessionDiscoveryService::discoverLocalSessions(

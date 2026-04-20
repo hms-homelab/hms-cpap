@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.3.1] - 2026-04-18
+
+### Added
+- **ODI metric on dashboard** — replaces motion with Oxygen Desaturation Index (3% drops/hr)
+- **SpO2 color coding** — green >=95%, orange 85-94%, red <85%
+- **BLE adapter detection** — `/api/config/test-ble` endpoint, Angular settings shows adapter status
+- **Service log warning** — clear message when no BLE adapter found
+
 ## [3.3.0] - 2026-04-18
 
 ### Added

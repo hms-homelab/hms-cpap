@@ -53,7 +53,7 @@ std::vector<uint8_t> O2RingBleClient::buildCmd(uint8_t cmd, uint16_t block,
 O2RingBleClient::O2RingBleClient() {
     adapter_path_ = findAdapter();
     if (adapter_path_.empty()) {
-        std::cerr << "O2Ring BLE: No Bluetooth adapter found" << std::endl;
+        std::cerr << "O2Ring BLE: No Bluetooth adapter detected — plug in a USB BLE adapter or switch to HTTP mode" << std::endl;
         return;
     }
     startDBusLoop();

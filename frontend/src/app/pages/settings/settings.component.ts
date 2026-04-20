@@ -74,7 +74,11 @@ import { AppConfig } from '../../models/config.model';
                 <span class="hint">IP of the mule C3 bridging the O2 Ring via BLE</span>
               </label>
               <label *ngIf="config.o2ring.mode === 'ble'">
-                <span class="hint">BLE direct mode uses the host Bluetooth adapter to connect to the O2 Ring.</span>
+                <span class="hint" *ngIf="bleStatus === 'checking'">Checking Bluetooth adapter...</span>
+                <span class="hint" *ngIf="bleStatus === 'ok'" style="color: #4ade80;">Bluetooth adapter detected. BLE direct mode ready.</span>
+                <span class="hint" *ngIf="bleStatus === 'no_adapter'" style="color: #ef4444;">No Bluetooth adapter detected. Plug in a USB BLE adapter.</span>
+                <span class="hint" *ngIf="bleStatus === 'not_compiled'" style="color: #fb923c;">BLE support not compiled. Rebuild with -DBUILD_WITH_BLE=ON.</span>
+                <span class="hint" *ngIf="bleStatus === 'error'" style="color: #ef4444;">BlueZ error — check Bluetooth service.</span>
               </label>
             </ng-container>
           </div>
@@ -558,6 +562,9 @@ export class SettingsComponent implements OnInit, OnDestroy {
 
   private destroy$ = new Subject<void>();
 
+  // BLE adapter status
+  bleStatus = '';
+
   // LLM Prompt state
   llmPrompt = '';
   llmPromptPath = '';
@@ -600,6 +607,8 @@ export class SettingsComponent implements OnInit, OnDestroy {
         if (cfg.ml_training?.enabled) this.loadMlStatus();
         // Auto-detect backfill date range if local_dir is set
         if (cfg.local_dir) this.scanBackfillDates();
+        // Check BLE adapter if BLE mode
+        if (cfg.o2ring?.mode === 'ble') this.checkBleAdapter();
       },
       error: (err) => {
         this.error = 'Failed to load configuration.';
@@ -755,6 +764,18 @@ export class SettingsComponent implements OnInit, OnDestroy {
 
   resetLlmPrompt(): void {
     this.llmPrompt = this.defaultPrompt;
+  }
+
+  checkBleAdapter(): void {
+    this.bleStatus = 'checking';
+    this.api.testBle().subscribe({
+      next: (res) => {
+        if (!res.compiled) this.bleStatus = 'not_compiled';
+        else if (res.available) this.bleStatus = 'ok';
+        else this.bleStatus = 'no_adapter';
+      },
+      error: () => this.bleStatus = 'error',
+    });
   }
 
   private showToast(msg: string, isError: boolean): void {

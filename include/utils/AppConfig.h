@@ -78,6 +78,16 @@ struct AppConfig {
         std::string mule_url;           // e.g. "http://192.168.2.74"
     } o2ring;
 
+    // Fysetc TCP (raw sector push mode)
+    struct Fysetc {
+        bool enabled = false;
+        int listen_port = 9000;
+        std::string listen_bind = "0.0.0.0";
+        int connection_timeout_s = 30;
+        std::string archive_dir;
+        std::string log_dir = "/var/log/maestro_hub";
+    } fysetc;
+
     bool setup_complete = false;
 
     /// Fill empty config fields from environment variables (fallback).
@@ -157,6 +167,19 @@ struct AppConfig {
         if (agent.embed_model == "nomic-embed-text") {
             auto v = env("AGENT_EMBED_MODEL");
             if (!v.empty()) agent.embed_model = v;
+        }
+
+        // Fysetc TCP
+        if (!fysetc.enabled && env("FYSETC_ENABLED") == "true")
+            fysetc.enabled = true;
+        if (fysetc.listen_port == 9000) {
+            int v = envInt("FYSETC_LISTEN_PORT", 0);
+            if (v > 0) fysetc.listen_port = v;
+        }
+        if (fysetc.archive_dir.empty()) fysetc.archive_dir = env("FYSETC_ARCHIVE_DIR");
+        if (fysetc.log_dir == "/var/log/maestro_hub") {
+            auto v = env("FYSETC_LOG_DIR");
+            if (!v.empty()) fysetc.log_dir = v;
         }
 
         // ML Training
@@ -254,6 +277,16 @@ struct AppConfig {
                 if (ml.contains("model_dir")) config.ml_training.model_dir = ml["model_dir"];
                 if (ml.contains("min_days"))  config.ml_training.min_days = ml["min_days"];
                 if (ml.contains("max_training_days")) config.ml_training.max_training_days = ml["max_training_days"];
+            }
+
+            if (j.contains("fysetc")) {
+                auto& f = j["fysetc"];
+                if (f.contains("enabled"))            config.fysetc.enabled = f["enabled"];
+                if (f.contains("listen_port"))        config.fysetc.listen_port = f["listen_port"];
+                if (f.contains("listen_bind"))        config.fysetc.listen_bind = f["listen_bind"];
+                if (f.contains("connection_timeout_s")) config.fysetc.connection_timeout_s = f["connection_timeout_s"];
+                if (f.contains("archive_dir"))        config.fysetc.archive_dir = f["archive_dir"];
+                if (f.contains("log_dir"))            config.fysetc.log_dir = f["log_dir"];
             }
 
             if (j.contains("o2ring")) {
