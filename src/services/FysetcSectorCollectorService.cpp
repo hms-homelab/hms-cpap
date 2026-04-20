@@ -186,11 +186,9 @@ FysetcSectorCollectorService::collect() {
 
     if (!scanDatalogDir()) return result;
 
-    // Process most recent date folders (last 3)
-    int folders_to_scan = std::min(static_cast<int>(datalog_entries_.size()), 3);
     std::set<std::string> updated_folders;
 
-    for (int i = 0; i < folders_to_scan; ++i) {
+    for (size_t i = 0; i < datalog_entries_.size(); ++i) {
         auto& date_entry = datalog_entries_[i];
         if (!date_entry.is_directory) continue;
 
