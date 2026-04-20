@@ -27,6 +27,7 @@ list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/models/CPAPModels\\.cpp$")
 # Test sources
 set(TEST_SOURCES
     parsers/test_EDFParser.cpp
+    parsers/test_Fat32Parser.cpp
     parsers/test_STRParser.cpp
     parsers/test_PLDParser.cpp
     parsers/test_SA2Parser.cpp
@@ -38,6 +39,7 @@ set(TEST_SOURCES
     utils/test_ConfigManager.cpp
     utils/test_AppConfig.cpp
     clients/test_EzShareClient.cpp
+    clients/test_FysetcTcpServer.cpp
     mqtt/test_MqttClient.cpp
     integration/test_STRIntegration.cpp
     integration/test_ASVIntegration.cpp
@@ -52,6 +54,7 @@ set(TEST_SOURCES
     services/test_BackfillService.cpp
     services/test_SessionDiscoveryService.cpp
     services/test_OximetryService.cpp
+    services/test_FysetcSectorCollectorService.cpp
     clients/test_O2RingClient.cpp
     clients/test_O2RingBleProtocol.cpp
 )

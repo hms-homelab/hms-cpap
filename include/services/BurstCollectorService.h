@@ -2,6 +2,8 @@
 
 // WiFiSwitchClient no longer needed - ez Share accessed via dedicated interface
 #include "clients/EzShareClient.h"
+#include "clients/FysetcTcpServer.h"
+#include "services/FysetcSectorCollectorService.h"
 #include "llm_client.h"
 #include "parsers/CpapdashBridge.h"
 #include "services/DataPublisherService.h"
@@ -88,6 +90,8 @@ private:
 
     // Clients
     std::unique_ptr<EzShareClient> ezshare_client_;
+    std::unique_ptr<FysetcTcpServer> fysetc_server_;
+    std::unique_ptr<FysetcSectorCollectorService> fysetc_collector_;
 
     // Services
     std::unique_ptr<SessionDiscoveryService> discovery_service_;

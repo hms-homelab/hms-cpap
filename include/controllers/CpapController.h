@@ -30,6 +30,7 @@ public:
     ADD_METHOD_TO(CpapController::updateConfig,  "/api/config",              drogon::Put);
     ADD_METHOD_TO(CpapController::setupComplete, "/api/setup",               drogon::Post);
     ADD_METHOD_TO(CpapController::testEzshare,   "/api/config/test-ezshare", drogon::Get);
+    ADD_METHOD_TO(CpapController::testBle,       "/api/config/test-ble",     drogon::Get);
     ADD_METHOD_TO(CpapController::triggerMlTrain, "/api/ml/train",     drogon::Post);
     ADD_METHOD_TO(CpapController::mlStatus,       "/api/ml/status",    drogon::Get);
     ADD_METHOD_TO(CpapController::getLlmPrompt,   "/api/llm-prompt",   drogon::Get);
@@ -79,6 +80,8 @@ public:
                        std::function<void(const drogon::HttpResponsePtr&)>&& cb);
     void testEzshare(const drogon::HttpRequestPtr& req,
                      std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+    void testBle(const drogon::HttpRequestPtr& req,
+                  std::function<void(const drogon::HttpResponsePtr&)>&& cb);
 
     void triggerMlTrain(const drogon::HttpRequestPtr& req,
                         std::function<void(const drogon::HttpResponsePtr&)>&& cb);

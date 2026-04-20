@@ -5,6 +5,9 @@
 #include <filesystem>
 #include <regex>
 #include <sstream>
+#ifdef WITH_BLE
+#include <sdbus-c++/sdbus-c++.h>
+#endif
 
 namespace hms_cpap {
 
@@ -307,6 +310,42 @@ void CpapController::testEzshare(const drogon::HttpRequestPtr& req,
     result["url"] = url;
     result["configured"] = !url.empty();
     result["status"] = url.empty() ? "not_configured" : "configured";
+    cb(jsonResp(result));
+}
+
+void CpapController::testBle(const drogon::HttpRequestPtr&,
+                              std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    Json::Value result;
+#ifdef WITH_BLE
+    result["compiled"] = true;
+    // Check if BlueZ adapter exists via D-Bus
+    try {
+        auto conn = sdbus::createSystemBusConnection();
+        auto proxy = sdbus::createProxy(*conn, sdbus::ServiceName{"org.bluez"}, sdbus::ObjectPath{"/"});
+        std::map<sdbus::ObjectPath, std::map<std::string, std::map<std::string, sdbus::Variant>>> objects;
+        proxy->callMethod("GetManagedObjects")
+            .onInterface("org.freedesktop.DBus.ObjectManager")
+            .storeResultsTo(objects);
+        bool found = false;
+        for (auto& [path, ifaces] : objects) {
+            if (ifaces.count("org.bluez.Adapter1")) {
+                result["adapter"] = std::string(path);
+                found = true;
+                break;
+            }
+        }
+        result["available"] = found;
+        result["status"] = found ? "adapter_found" : "no_adapter";
+    } catch (const std::exception& e) {
+        result["available"] = false;
+        result["status"] = "bluez_error";
+        result["error"] = e.what();
+    }
+#else
+    result["compiled"] = false;
+    result["available"] = false;
+    result["status"] = "not_compiled";
+#endif
     cb(jsonResp(result));
 }
 

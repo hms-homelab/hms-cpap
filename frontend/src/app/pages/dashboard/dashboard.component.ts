@@ -25,8 +25,10 @@ const MODE_LABELS: Record<string, string> = {
       </div>
       <!-- O2Ring Oximetry -->
       <div class="cards" *ngIf="oxiAvgSpo2">
-        <app-metric-card label="O2Ring SpO2" [value]="oxiAvgSpo2" unit="%" />
+        <app-metric-card label="O2Ring SpO2" [value]="oxiAvgSpo2" unit="%"
+          [style.color]="oxiSpo2Num >= 95 ? '#4ade80' : oxiSpo2Num >= 85 ? '#fb923c' : '#ef4444'" />
         <app-metric-card label="O2Ring HR" [value]="oxiAvgHr" unit="bpm" />
+        <app-metric-card label="O2Ring ODI" [value]="oxiOdi" unit="events/hr" *ngIf="oxiOdi" />
       </div>
       <!-- ML Insights -->
       <div class="ml-section" *ngIf="mlStatus?.models_loaded">
@@ -178,6 +180,8 @@ export class DashboardComponent implements OnInit, AfterViewInit {
   // O2Ring oximetry
   oxiAvgSpo2 = '';
   oxiAvgHr = '';
+  oxiOdi = '';
+  oxiSpo2Num = 0;
 
   // ML state
   mlStatus: any = null;
@@ -205,7 +209,29 @@ export class DashboardComponent implements OnInit, AfterViewInit {
               const validSpo2 = oxi.spo2.map(v => Number(v)).filter(v => !isNaN(v) && v > 0 && v < 255);
               const validHr = oxi.heart_rate.map(v => Number(v)).filter(v => !isNaN(v) && v > 0 && v < 255);
               if (validSpo2.length) {
-                this.oxiAvgSpo2 = (validSpo2.reduce((a, b) => a + b, 0) / validSpo2.length).toFixed(1);
+                const avg = validSpo2.reduce((a, b) => a + b, 0) / validSpo2.length;
+                this.oxiAvgSpo2 = avg.toFixed(1);
+                this.oxiSpo2Num = avg;
+
+                // Calculate ODI (3% desaturations per hour)
+                // ~4s sample interval, so recording hours = samples * 4 / 3600
+                const hours = validSpo2.length * 4 / 3600;
+                if (hours > 0) {
+                  let desatCount = 0;
+                  let inDesat = false;
+                  const window = 30; // ~120s at 4s intervals
+                  for (let i = 0; i < validSpo2.length; i++) {
+                    let baseline = validSpo2[i];
+                    const start = Math.max(0, i - window);
+                    for (let j = start; j < i; j++) {
+                      if (validSpo2[j] > baseline) baseline = validSpo2[j];
+                    }
+                    const drop = baseline - validSpo2[i];
+                    if (drop >= 3 && !inDesat) { desatCount++; inDesat = true; }
+                    else if (drop < 1) { inDesat = false; }
+                  }
+                  this.oxiOdi = (desatCount / hours).toFixed(1);
+                }
               }
               if (validHr.length) {
                 this.oxiAvgHr = (validHr.reduce((a, b) => a + b, 0) / validHr.length).toFixed(0);
