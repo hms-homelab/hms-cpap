@@ -5,19 +5,9 @@
 #include <string>
 #include <vector>
 #include <map>
-#include <mutex>
 #include <functional>
 
 namespace hms_cpap {
-
-struct TrackedFile {
-    std::string path;
-    uint32_t first_cluster = 0;
-    uint32_t size = 0;
-    uint32_t confirmed_bytes = 0;
-    uint16_t modify_date = 0;
-    uint16_t modify_time = 0;
-};
 
 class FysetcSectorCollectorService {
 public:
@@ -40,10 +30,6 @@ public:
 
     void setArchiveCallback(ArchiveCallback cb) { archive_callback_ = std::move(cb); }
 
-    const std::map<std::string, TrackedFile>& trackedFiles() const { return tracked_files_; }
-
-    bool needsFullSync() const { return needs_full_sync_; }
-
 private:
     bool refreshFatLayout();
     bool scanDatalogDir();
@@ -53,18 +39,16 @@ private:
 
     Fat32Parser::SectorReader makeSectorReader();
 
+    uint32_t getArchivedFileSize(const std::string& rel_path);
+
     FysetcTcpServer& tcp_;
     std::string archive_dir_;
     std::unique_ptr<Fat32Parser> fat_;
-    bool needs_full_sync_ = true;
 
     // Cached FAT layout
     uint32_t datalog_cluster_ = 0;
     std::vector<Fat32DirEntry> datalog_entries_;
     std::vector<Fat32DirEntry> root_entries_;
-
-    // Per-file tracking
-    std::map<std::string, TrackedFile> tracked_files_;
 
     ArchiveCallback archive_callback_;
 };

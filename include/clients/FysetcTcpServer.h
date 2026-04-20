@@ -39,7 +39,6 @@ public:
     void setLogCallback(LogCallback cb) { log_callback_ = std::move(cb); }
 
     const FysetcDeviceState& deviceState() const { return device_state_; }
-    void clearFullSyncFlag() { device_state_.needs_full_sync = false; }
 
     bool readSectors(const std::vector<fysetc::SectorRange>& ranges,
                      std::vector<uint8_t>& out_data,

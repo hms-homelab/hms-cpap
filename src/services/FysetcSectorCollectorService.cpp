@@ -42,6 +42,9 @@ bool FysetcSectorCollectorService::refreshFatLayout() {
         if (!initFat()) return false;
     }
 
+    // Clear FAT cache each cycle so grown files get fresh cluster chains
+    fat_->clearFatCache();
+
     root_entries_ = fat_->listDir(fat_->bpb().root_cluster);
     datalog_cluster_ = 0;
 
@@ -66,7 +69,6 @@ bool FysetcSectorCollectorService::refreshFatLayout() {
 bool FysetcSectorCollectorService::scanDatalogDir() {
     if (!refreshFatLayout()) return false;
 
-    // Sort date folders by name (YYYYMMDD) descending — most recent first
     std::sort(datalog_entries_.begin(), datalog_entries_.end(),
               [](const Fat32DirEntry& a, const Fat32DirEntry& b) {
                   return a.name > b.name;
@@ -75,35 +77,35 @@ bool FysetcSectorCollectorService::scanDatalogDir() {
     return true;
 }
 
+uint32_t FysetcSectorCollectorService::getArchivedFileSize(const std::string& rel_path) {
+    std::string full_path = archive_dir_ + "/" + rel_path;
+    try {
+        if (std::filesystem::exists(full_path)) {
+            return static_cast<uint32_t>(std::filesystem::file_size(full_path));
+        }
+    } catch (...) {}
+    return 0;
+}
+
 bool FysetcSectorCollectorService::syncFile(const std::string& date_folder,
                                              const Fat32DirEntry& entry) {
     std::string rel_path = "DATALOG/" + date_folder + "/" + entry.name;
-    auto& tracked = tracked_files_[rel_path];
 
-    bool is_new = (tracked.first_cluster == 0);
-    bool has_grown = (entry.size > tracked.confirmed_bytes);
-    bool cluster_changed = (entry.first_cluster != tracked.first_cluster && !is_new);
+    uint32_t archived_size = getArchivedFileSize(rel_path);
+    uint32_t fat_size = entry.size;
 
-    if (!is_new && !has_grown && !cluster_changed) return true;
+    // Already up to date
+    if (archived_size >= fat_size) return true;
 
-    tracked.path = rel_path;
-    tracked.first_cluster = entry.first_cluster;
-    tracked.size = entry.size;
-    tracked.modify_date = entry.modify_date;
-    tracked.modify_time = entry.modify_time;
-
-    uint32_t offset = is_new ? 0 : tracked.confirmed_bytes;
-    uint32_t bytes_needed = entry.size - offset;
+    uint32_t offset = archived_size;
+    uint32_t bytes_needed = fat_size - offset;
 
     if (bytes_needed == 0) return true;
 
-    auto ranges = fat_->fileSectorRanges(entry.first_cluster, entry.size, offset);
+    auto ranges = fat_->fileSectorRanges(entry.first_cluster, fat_size, offset);
     if (ranges.empty()) return true;
 
-    // Read sectors in batches of <=16 ranges per protocol spec
-    std::vector<uint8_t> file_data;
-
-    // First, flatten all ranges into <=64-sector chunks
+    // Flatten into <=64-sector chunks, send in batches of 16
     std::vector<fysetc::SectorRange> all_chunks;
     for (auto& r : ranges) {
         uint32_t lba = r.lba;
@@ -116,7 +118,7 @@ bool FysetcSectorCollectorService::syncFile(const std::string& date_folder,
         }
     }
 
-    // Send in batches of 16
+    std::vector<uint8_t> file_data;
     for (size_t i = 0; i < all_chunks.size(); ) {
         size_t batch_end = std::min(i + 16, all_chunks.size());
         std::vector<fysetc::SectorRange> batch(all_chunks.begin() + i,
@@ -134,14 +136,12 @@ bool FysetcSectorCollectorService::syncFile(const std::string& date_folder,
         i = batch_end;
     }
 
-    // Trim to exact file size (last sector may have padding)
     if (file_data.size() > bytes_needed) {
         file_data.resize(bytes_needed);
     }
 
     if (!writeFileData(rel_path, file_data, offset)) return false;
 
-    tracked.confirmed_bytes = entry.size;
     return true;
 }
 
@@ -161,10 +161,8 @@ bool FysetcSectorCollectorService::writeFileData(const std::string& rel_path,
 
     std::fstream f(full_path, mode);
     if (!f.is_open() && offset > 0) {
-        // File doesn't exist yet but offset > 0 — create it
         f.open(full_path, std::ios::binary | std::ios::out);
         if (!f.is_open()) return false;
-        // Pad to offset
         std::vector<uint8_t> pad(offset, 0);
         f.write(reinterpret_cast<const char*>(pad.data()), pad.size());
     }
@@ -186,19 +184,9 @@ FysetcSectorCollectorService::collect() {
         return result;
     }
 
-    if (tcp_.deviceState().needs_full_sync || needs_full_sync_) {
-        fat_.reset();
-        tracked_files_.clear();
-        needs_full_sync_ = false;
-        tcp_.clearFullSyncFlag();
-    }
-
-    // Clear FAT cache each cycle so grown files get fresh cluster chains
-    if (fat_) fat_->clearFatCache();
-
     if (!scanDatalogDir()) return result;
 
-    // Process the most recent date folders (last 3)
+    // Process most recent date folders (last 3)
     int folders_to_scan = std::min(static_cast<int>(datalog_entries_.size()), 3);
     std::set<std::string> updated_folders;
 
@@ -215,86 +203,75 @@ FysetcSectorCollectorService::collect() {
             std::transform(name_lower.begin(), name_lower.end(),
                           name_lower.begin(), ::tolower);
 
-            // Only sync EDF files
             if (name_lower.size() < 4 ||
                 name_lower.substr(name_lower.size() - 4) != ".edf") continue;
 
             std::string rel_path = "DATALOG/" + date_entry.name + "/" + file.name;
-            bool was_new = (tracked_files_.find(rel_path) == tracked_files_.end());
-            bool was_smaller = (!was_new &&
-                                tracked_files_[rel_path].confirmed_bytes < file.size);
+            uint32_t archived_size = getArchivedFileSize(rel_path);
+            bool is_new = (archived_size == 0);
+            bool has_grown = (file.size > archived_size);
+
+            if (!is_new && !has_grown) continue;
 
             if (syncFile(date_entry.name, file)) {
-                if (was_new) {
-                    result.new_files++;
-                    updated_folders.insert(date_entry.name);
-                } else if (was_smaller) {
-                    result.updated_files++;
-                    updated_folders.insert(date_entry.name);
-                }
-                result.bytes_received += file.size -
-                    (was_new ? 0 : tracked_files_[rel_path].confirmed_bytes);
+                if (is_new) result.new_files++;
+                else result.updated_files++;
+                result.bytes_received += file.size - archived_size;
+                updated_folders.insert(date_entry.name);
             }
         }
     }
 
-    // Also sync STR.edf from root (reuse root listing from refreshFatLayout)
-    auto root = root_entries_;
-    for (auto& e : root) {
+    // Sync STR.edf from root (reuse cached root listing)
+    for (auto& e : root_entries_) {
         std::string name_lower = e.name;
         std::transform(name_lower.begin(), name_lower.end(),
                       name_lower.begin(), ::tolower);
-        if (name_lower == "str.edf") {
-            Fat32DirEntry str_entry = e;
-            str_entry.name = e.name;  // preserve original case
-            // Treat STR.edf as root-level file with empty date folder
-            std::string rel_path = e.name;
-            auto& tracked = tracked_files_[rel_path];
-            if (tracked.first_cluster == 0 || e.size > tracked.confirmed_bytes) {
-                uint32_t offset = tracked.confirmed_bytes;
-                auto ranges = fat_->fileSectorRanges(e.first_cluster, e.size, offset);
-                if (!ranges.empty()) {
-                    // Flatten + cap at 16 per batch (same as syncFile)
-                    std::vector<fysetc::SectorRange> all_chunks;
-                    for (auto& r : ranges) {
-                        uint32_t lba = r.lba;
-                        uint32_t remaining = r.count;
-                        while (remaining > 0) {
-                            uint16_t chunk = static_cast<uint16_t>(std::min(remaining, 64u));
-                            all_chunks.push_back({lba, chunk});
-                            lba += chunk;
-                            remaining -= chunk;
-                        }
-                    }
-                    std::vector<uint8_t> data;
-                    bool read_ok = true;
-                    for (size_t ci = 0; ci < all_chunks.size(); ) {
-                        size_t ce = std::min(ci + 16, all_chunks.size());
-                        std::vector<fysetc::SectorRange> batch(all_chunks.begin() + ci,
-                                                                all_chunks.begin() + ce);
-                        std::vector<uint8_t> chunk_data;
-                        std::vector<std::pair<uint32_t, uint16_t>> delivered;
-                        if (!tcp_.readSectors(batch, chunk_data, delivered)) {
-                            read_ok = false;
-                            break;
-                        }
-                        data.insert(data.end(), chunk_data.begin(), chunk_data.end());
-                        ci = ce;
-                    }
-                    if (read_ok) {
-                        uint32_t bytes_needed = e.size - offset;
-                        if (data.size() > bytes_needed) data.resize(bytes_needed);
-                        writeFileData(rel_path, data, offset);
-                        tracked.path = rel_path;
-                        tracked.first_cluster = e.first_cluster;
-                        tracked.size = e.size;
-                        tracked.confirmed_bytes = e.size;
-                        result.updated_files++;
-                    }
-                }
+        if (name_lower != "str.edf") continue;
+
+        uint32_t archived_size = getArchivedFileSize(e.name);
+        if (e.size <= archived_size) break;
+
+        uint32_t offset = archived_size;
+        auto ranges = fat_->fileSectorRanges(e.first_cluster, e.size, offset);
+        if (ranges.empty()) break;
+
+        std::vector<fysetc::SectorRange> all_chunks;
+        for (auto& r : ranges) {
+            uint32_t lba = r.lba;
+            uint32_t remaining = r.count;
+            while (remaining > 0) {
+                uint16_t chunk = static_cast<uint16_t>(std::min(remaining, 64u));
+                all_chunks.push_back({lba, chunk});
+                lba += chunk;
+                remaining -= chunk;
             }
-            break;
         }
+
+        std::vector<uint8_t> data;
+        bool read_ok = true;
+        for (size_t ci = 0; ci < all_chunks.size(); ) {
+            size_t ce = std::min(ci + 16, all_chunks.size());
+            std::vector<fysetc::SectorRange> batch(all_chunks.begin() + ci,
+                                                    all_chunks.begin() + ce);
+            std::vector<uint8_t> chunk_data;
+            std::vector<std::pair<uint32_t, uint16_t>> delivered;
+            if (!tcp_.readSectors(batch, chunk_data, delivered)) {
+                read_ok = false;
+                break;
+            }
+            data.insert(data.end(), chunk_data.begin(), chunk_data.end());
+            ci = ce;
+        }
+
+        if (read_ok) {
+            uint32_t bytes_needed = e.size - offset;
+            if (data.size() > bytes_needed) data.resize(bytes_needed);
+            writeFileData(e.name, data, offset);
+            result.updated_files++;
+        }
+
+        break;
     }
 
     result.success = true;
