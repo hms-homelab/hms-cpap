@@ -66,7 +66,12 @@ BurstCollectorService::BurstCollectorService(int burst_interval_seconds)
         std::cout << "CPAP: Fysetc TCP mode — listening on " << bind << ":" << port << std::endl;
     } else {
         // ez Share mode
-        data_source_ = std::make_unique<EzShareClient>();
+        auto ez = std::make_unique<EzShareClient>();
+        std::string range_env = ConfigManager::get("EZSHARE_SUPPORTS_RANGE", "true");
+        if (range_env == "false" || range_env == "0") {
+            ez->setSupportsRange(false);
+        }
+        data_source_ = std::move(ez);
         discovery_service_ = std::make_unique<SessionDiscoveryService>(*data_source_);
     }
 
@@ -306,14 +311,13 @@ bool BurstCollectorService::downloadSessionFiles(
     int range_downloads = 0;
     int full_downloads = 0;
 
-    // Helper lambda for smart download (Range if file exists, full otherwise)
+    // Helper lambda for smart download (Range if supported + file exists, full otherwise)
     auto smartDownload = [&](const std::string& filename, const std::string& local_path) -> bool {
-        // Check if file exists locally
         bool file_exists = std::filesystem::exists(local_path);
         size_t existing_size = file_exists ? std::filesystem::file_size(local_path) : 0;
 
-        if (file_exists && existing_size > 0) {
-            // Use Range download (incremental)
+        if (file_exists && existing_size > 0 && data_source_->supportsRange()) {
+            // Server supports Range — use incremental download
             size_t bytes_downloaded = 0;
             bool success = data_source_->downloadFileRange(
                 session.date_folder, filename, local_path, existing_size, bytes_downloaded
@@ -332,10 +336,10 @@ bool BurstCollectorService::downloadSessionFiles(
 
             // Range failed, fallback to full download
             std::cerr << "⚠️  Range download failed for " << filename << ", trying full download..." << std::endl;
-            std::filesystem::remove(local_path);  // Remove partial file
+            std::filesystem::remove(local_path);
         }
 
-        // Full download (new file or Range fallback)
+        // Full download (new file, Range not supported, or Range fallback)
         if (data_source_->downloadFile(session.date_folder, filename, local_path)) {
             full_downloads++;
             return true;

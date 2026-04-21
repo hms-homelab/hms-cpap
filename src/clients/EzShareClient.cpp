@@ -354,7 +354,7 @@ bool EzShareClient::downloadFileRange(const std::string& date_folder,
         return false;
     }
 
-    // Check HTTP status (200 OK or 206 Partial Content)
+    // Check HTTP status
     long http_code = 0;
     curl_easy_getinfo(curl_, CURLINFO_RESPONSE_CODE, &http_code);
     if (http_code != 200 && http_code != 206) {

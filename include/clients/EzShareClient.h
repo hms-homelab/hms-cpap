@@ -99,6 +99,9 @@ public:
      */
     bool downloadRootFile(const std::string& filename, const std::string& local_path) override;
 
+    bool supportsRange() const override { return supports_range_; }
+    void setSupportsRange(bool v) { supports_range_ = v; }
+
     std::string getBaseURL() const { return base_url_; }
     void setBaseURL(const std::string& url) { base_url_ = url; }
 
@@ -108,6 +111,7 @@ public:
 private:
     CURL* curl_;
     std::string base_url_;
+    bool supports_range_ = true;
 
     static constexpr long DOWNLOAD_TIMEOUT  = 60L;   // large BRP files ~2 MB
     static constexpr long CONNECTION_TIMEOUT = 10L;

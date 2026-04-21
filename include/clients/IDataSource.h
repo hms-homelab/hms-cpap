@@ -11,6 +11,8 @@ class IDataSource {
 public:
     virtual ~IDataSource() = default;
 
+    virtual bool supportsRange() const { return true; }
+
     virtual std::vector<std::string> listDateFolders() = 0;
 
     virtual std::vector<EzShareFileEntry> listFiles(const std::string& date_folder) = 0;
