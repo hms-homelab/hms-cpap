@@ -102,6 +102,9 @@ private:
     std::unique_ptr<DataPublisherService> data_publisher_;
 
     // O2 Ring oximetry
+public:
+    OximetryService* getOximetryService() const { return oximetry_service_.get(); }
+private:
     std::unique_ptr<OximetryService> oximetry_service_;
 
     // Worker thread

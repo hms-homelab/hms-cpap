@@ -185,6 +185,36 @@ void CpapController::sessionOximetry(const drogon::HttpRequestPtr& req,
     }
 }
 
+void CpapController::realtime(const drogon::HttpRequestPtr&,
+                               std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    Json::Value result;
+
+    // Live session from most recent session
+    if (qs_) {
+        try {
+            auto sessions = qs_->getSessions(1, 1);
+            if (!sessions.empty() && sessions[0].isMember("has_live") &&
+                sessions[0]["has_live"].asString() == "1") {
+                result["session"] = sessions[0];
+            }
+        } catch (...) {}
+    }
+
+    // O2Ring live data from BurstCollectorService
+    if (burst_service_ && burst_service_->getOximetryService()) {
+        auto live = burst_service_->getOximetryService()->getLastLive();
+        Json::Value oxi;
+        oxi["active"] = live.active;
+        oxi["spo2"] = live.spo2;
+        oxi["hr"] = live.hr;
+        oxi["motion"] = live.motion;
+        oxi["valid"] = live.valid;
+        result["oximetry"] = oxi;
+    }
+
+    cb(jsonResp(result));
+}
+
 void CpapController::getConfig(const drogon::HttpRequestPtr&,
                                 std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
     if (!config_) {
