@@ -2,7 +2,7 @@ import { Component, OnInit, ViewChild, ElementRef, AfterViewInit } from '@angula
 import { CommonModule } from '@angular/common';
 import { CpapApiService } from '../../services/cpap-api.service';
 import { MetricCardComponent } from '../../components/metric-card/metric-card.component';
-import { DashboardData, TrendPoint, OximetryData } from '../../models/session.model';
+import { DashboardData, TrendPoint, OximetryData, SessionListItem } from '../../models/session.model';
 import Chart from 'chart.js/auto';
 
 const MODE_LABELS: Record<string, string> = {
@@ -16,6 +16,34 @@ const MODE_LABELS: Record<string, string> = {
   template: `
     <div class="dashboard">
       <h2>Dashboard</h2>
+      <!-- Live Session (shown when therapy is in progress) -->
+      <div class="live-banner" *ngIf="liveSession">
+        <div class="live-indicator"><span class="live-dot"></span> LIVE SESSION</div>
+        <div class="live-gauges">
+          <div class="gauge-container">
+            <canvas #ahiGauge width="140" height="140"></canvas>
+            <div class="gauge-label">AHI</div>
+          </div>
+          <div class="gauge-container">
+            <canvas #durationGauge width="140" height="140"></canvas>
+            <div class="gauge-label">Duration</div>
+          </div>
+          <div class="gauge-container" *ngIf="liveSpO2">
+            <canvas #spo2Gauge width="140" height="140"></canvas>
+            <div class="gauge-label">SpO2</div>
+          </div>
+          <div class="gauge-container" *ngIf="liveHR">
+            <canvas #hrGauge width="140" height="140"></canvas>
+            <div class="gauge-label">Heart Rate</div>
+          </div>
+          <div class="gauge-container">
+            <canvas #eventsPie width="140" height="140"></canvas>
+            <div class="gauge-label">Events ({{liveSession.total_events}})</div>
+          </div>
+        </div>
+      </div>
+      <!-- Last Night (from STR daily summary) -->
+      <h3 *ngIf="liveSession && data" class="section-label">Last Night</h3>
       <div class="cards" *ngIf="data">
         <app-metric-card label="Last Night AHI" [value]="data.latest_night.ahi" unit="events/h" />
         <app-metric-card label="Last Night Usage" [value]="data.latest_night.usage_hours" unit="hours" />
@@ -114,6 +142,15 @@ const MODE_LABELS: Record<string, string> = {
     .dashboard { padding: 1.5rem; }
     h2 { color: #e0e0e0; margin-bottom: 1rem; }
     .cards { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
+    .section-label { color: #888; font-size: 0.9rem; margin: 0.5rem 0; font-weight: normal; }
+    .live-banner { background: #1a2a1a; border: 1px solid #2d5a2d; border-radius: 10px; padding: 1rem 1.5rem; margin-bottom: 1.5rem; }
+    .live-banner .cards { margin-bottom: 0; }
+    .live-indicator { display: flex; align-items: center; gap: 0.5rem; color: #4ade80; font-weight: 700; font-size: 0.85rem; letter-spacing: 0.1em; margin-bottom: 0.75rem; }
+    .live-dot { width: 10px; height: 10px; border-radius: 50%; background: #4ade80; animation: pulse-live 1.5s ease-in-out infinite; }
+    @keyframes pulse-live { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+    .live-gauges { display: flex; gap: 1.5rem; flex-wrap: wrap; justify-content: center; }
+    .gauge-container { display: flex; flex-direction: column; align-items: center; }
+    .gauge-label { color: #888; font-size: 0.75rem; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.05em; }
     .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
     .chart-container { background: #1e1e2f; border: 1px solid #333; border-radius: 8px; padding: 1rem; }
     .chart-container.wide { grid-column: 1 / -1; }
@@ -172,10 +209,20 @@ export class DashboardComponent implements OnInit, AfterViewInit {
   @ViewChild('csrChart') csrChartRef!: ElementRef<HTMLCanvasElement>;
   @ViewChild('eprChart') eprChartRef!: ElementRef<HTMLCanvasElement>;
 
+  @ViewChild('ahiGauge') ahiGaugeRef!: ElementRef<HTMLCanvasElement>;
+  @ViewChild('durationGauge') durationGaugeRef!: ElementRef<HTMLCanvasElement>;
+  @ViewChild('spo2Gauge') spo2GaugeRef!: ElementRef<HTMLCanvasElement>;
+  @ViewChild('hrGauge') hrGaugeRef!: ElementRef<HTMLCanvasElement>;
+  @ViewChild('eventsPie') eventsPieRef!: ElementRef<HTMLCanvasElement>;
+
   data: DashboardData | null = null;
+  liveSession: SessionListItem | null = null;
+  liveSpO2 = '';
+  liveHR = '';
   modeName = '';
   isCpapMode = true;
   private charts: Chart[] = [];
+  private liveCharts: Chart[] = [];
 
   // O2Ring oximetry
   oxiAvgSpo2 = '';
@@ -192,6 +239,18 @@ export class DashboardComponent implements OnInit, AfterViewInit {
   constructor(private api: CpapApiService) {}
 
   ngOnInit() {
+    // Check for live session + O2Ring data
+    this.api.getRealtime().subscribe(rt => {
+      if (rt.session) {
+        this.liveSession = rt.session;
+      }
+      if (rt.oximetry?.active) {
+        this.liveSpO2 = rt.oximetry.spo2 > 0 ? String(rt.oximetry.spo2) : '';
+        this.liveHR = rt.oximetry.hr > 0 ? String(rt.oximetry.hr) : '';
+      }
+      setTimeout(() => this.renderLiveCharts(), 50);
+    });
+
     this.api.getDashboard().subscribe(d => {
       this.data = d;
       const mode = d.latest_night.therapy_mode || '0';
@@ -279,6 +338,136 @@ export class DashboardComponent implements OnInit, AfterViewInit {
 
   ngAfterViewInit() {
     if (this.data) this.renderCharts();
+  }
+
+  private renderLiveCharts() {
+    if (!this.liveSession) return;
+    this.liveCharts.forEach(c => c.destroy());
+    this.liveCharts = [];
+
+    const makeGauge = (ref: ElementRef<HTMLCanvasElement> | undefined, value: number, max: number, color: string, unit: string) => {
+      if (!ref) return;
+      const pct = Math.min(value / max, 1);
+      const chart = new Chart(ref.nativeElement, {
+        type: 'doughnut',
+        data: {
+          datasets: [{
+            data: [pct * 100, 100 - pct * 100],
+            backgroundColor: [color, '#2a2a3a'],
+            borderWidth: 0,
+          }]
+        },
+        options: {
+          cutout: '75%',
+          rotation: -90,
+          circumference: 180,
+          responsive: false,
+          plugins: { legend: { display: false }, tooltip: { enabled: false } },
+        },
+        plugins: [{
+          id: 'gaugeText',
+          afterDraw: (chart: any) => {
+            const ctx = chart.ctx;
+            ctx.save();
+            ctx.font = 'bold 22px system-ui';
+            ctx.fillStyle = color;
+            ctx.textAlign = 'center';
+            ctx.fillText(value % 1 === 0 ? String(value) : value.toFixed(1), chart.width / 2, chart.height - 30);
+            ctx.font = '11px system-ui';
+            ctx.fillStyle = '#888';
+            ctx.fillText(unit, chart.width / 2, chart.height - 15);
+            ctx.restore();
+          }
+        }]
+      });
+      this.liveCharts.push(chart);
+    };
+
+    const ahi = parseFloat(this.liveSession.ahi || '0');
+    const hours = parseFloat(this.liveSession.duration_hours || '0');
+    const ahiColor = ahi < 5 ? '#4ade80' : ahi < 15 ? '#fb923c' : '#ef4444';
+    makeGauge(this.ahiGaugeRef, ahi, 10, ahiColor, 'events/h');
+    makeGauge(this.durationGaugeRef, hours, 10, '#667eea', 'hours');
+
+    if (this.liveSpO2) {
+      const spo2 = parseInt(this.liveSpO2);
+      const spo2Color = spo2 >= 95 ? '#4ade80' : spo2 >= 90 ? '#fb923c' : '#ef4444';
+      makeGauge(this.spo2GaugeRef, spo2, 100, spo2Color, '%');
+    }
+    if (this.liveHR) {
+      makeGauge(this.hrGaugeRef, parseInt(this.liveHR), 120, '#667eea', 'bpm');
+    }
+
+    // Events pie
+    if (this.eventsPieRef) {
+      const oa = parseInt(this.liveSession.obstructive_apneas || '0');
+      const ca = parseInt(this.liveSession.central_apneas || '0');
+      const h = parseInt(this.liveSession.hypopneas || '0');
+      const r = parseInt(this.liveSession.reras || '0');
+      const total = oa + ca + h + r;
+      if (total > 0) {
+        const chart = new Chart(this.eventsPieRef.nativeElement, {
+          type: 'doughnut',
+          data: {
+            labels: ['OA', 'CA', 'Hypopnea', 'RERA'],
+            datasets: [{
+              data: [oa, ca, h, r],
+              backgroundColor: ['#dc6b6b', '#c9966b', '#c9b96b', '#6b8dc9'],
+              borderWidth: 0,
+            }]
+          },
+          options: {
+            responsive: false,
+            plugins: {
+              legend: { display: false },
+              tooltip: { enabled: true },
+            },
+          },
+          plugins: [{
+            id: 'pieCenter',
+            afterDraw: (chart: any) => {
+              const ctx = chart.ctx;
+              ctx.save();
+              ctx.font = 'bold 20px system-ui';
+              ctx.fillStyle = '#e0e0e0';
+              ctx.textAlign = 'center';
+              ctx.fillText(String(total), chart.width / 2, chart.height / 2 + 6);
+              ctx.restore();
+            }
+          }]
+        });
+        this.liveCharts.push(chart);
+      } else {
+        // No events - show a "clean" indicator
+        const chart = new Chart(this.eventsPieRef.nativeElement, {
+          type: 'doughnut',
+          data: {
+            datasets: [{
+              data: [1],
+              backgroundColor: ['#4ade80'],
+              borderWidth: 0,
+            }]
+          },
+          options: {
+            responsive: false,
+            plugins: { legend: { display: false }, tooltip: { enabled: false } },
+          },
+          plugins: [{
+            id: 'cleanText',
+            afterDraw: (chart: any) => {
+              const ctx = chart.ctx;
+              ctx.save();
+              ctx.font = 'bold 16px system-ui';
+              ctx.fillStyle = '#4ade80';
+              ctx.textAlign = 'center';
+              ctx.fillText('0', chart.width / 2, chart.height / 2 + 6);
+              ctx.restore();
+            }
+          }]
+        });
+        this.liveCharts.push(chart);
+      }
+    }
   }
 
   private renderCharts() {

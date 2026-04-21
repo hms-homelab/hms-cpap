@@ -12,6 +12,10 @@ export class CpapApiService {
     return this.http.get<DashboardData>('/api/dashboard');
   }
 
+  getRealtime(): Observable<any> {
+    return this.http.get<any>('/api/realtime');
+  }
+
   getSessions(days = 30, limit = 20): Observable<SessionListItem[]> {
     const params = new HttpParams().set('days', days).set('limit', limit);
     return this.http.get<SessionListItem[]>('/api/sessions', { params });
