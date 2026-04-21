@@ -42,13 +42,9 @@ BurstCollectorService::BurstCollectorService(int burst_interval_seconds)
         }
         std::cout << "CPAP: Local source mode — reading from " << local_source_dir_ << std::endl;
     } else if (source == "fysetc") {
-        // Fysetc TCP raw-sector push mode
+        // Fysetc TCP raw-sector mode — looks like ezShare to the pipeline
         int port = std::stoi(ConfigManager::get("FYSETC_LISTEN_PORT", "9000"));
         std::string bind = ConfigManager::get("FYSETC_LISTEN_BIND", "0.0.0.0");
-        std::string archive_dir = ConfigManager::get("FYSETC_ARCHIVE_DIR", "");
-        if (archive_dir.empty()) {
-            archive_dir = (std::filesystem::path(AppConfig::dataDir()) / "cpap_data").string();
-        }
 
         fysetc_server_ = std::make_unique<FysetcTcpServer>(port, bind);
         fysetc_server_->setLogCallback([](fysetc::LogLevel level, const std::string& tag,
@@ -65,17 +61,13 @@ BurstCollectorService::BurstCollectorService(int burst_interval_seconds)
         });
         fysetc_server_->start();
 
-        fysetc_collector_ = std::make_unique<FysetcSectorCollectorService>(
-            *fysetc_server_, archive_dir);
-
-        // Set local_source_dir so the existing parse pipeline can find the files
-        local_source_dir_ = archive_dir + "/DATALOG";
-        std::cout << "CPAP: Fysetc TCP mode — listening on " << bind << ":" << port
-                  << ", archive at " << archive_dir << std::endl;
+        data_source_ = std::make_unique<FysetcDataSource>(*fysetc_server_);
+        discovery_service_ = std::make_unique<SessionDiscoveryService>(*data_source_);
+        std::cout << "CPAP: Fysetc TCP mode — listening on " << bind << ":" << port << std::endl;
     } else {
-        // ez Share mode: initialize HTTP client and discovery service
-        ezshare_client_ = std::make_unique<EzShareClient>();
-        discovery_service_ = std::make_unique<SessionDiscoveryService>(*ezshare_client_);
+        // ez Share mode
+        data_source_ = std::make_unique<EzShareClient>();
+        discovery_service_ = std::make_unique<SessionDiscoveryService>(*data_source_);
     }
 
     // Initialize MQTT client (skip if disabled)
@@ -323,7 +315,7 @@ bool BurstCollectorService::downloadSessionFiles(
         if (file_exists && existing_size > 0) {
             // Use Range download (incremental)
             size_t bytes_downloaded = 0;
-            bool success = ezshare_client_->downloadFileRange(
+            bool success = data_source_->downloadFileRange(
                 session.date_folder, filename, local_path, existing_size, bytes_downloaded
             );
 
@@ -344,7 +336,7 @@ bool BurstCollectorService::downloadSessionFiles(
         }
 
         // Full download (new file or Range fallback)
-        if (ezshare_client_->downloadFile(session.date_folder, filename, local_path)) {
+        if (data_source_->downloadFile(session.date_folder, filename, local_path)) {
             full_downloads++;
             return true;
         }
@@ -355,7 +347,7 @@ bool BurstCollectorService::downloadSessionFiles(
     // Download CSL (session summary) - always full download (small, doesn't grow)
     if (!session.csl_file.empty()) {
         std::string local_path = local_dir + "/" + session.csl_file;
-        if (ezshare_client_->downloadFile(session.date_folder, session.csl_file, local_path)) {
+        if (data_source_->downloadFile(session.date_folder, session.csl_file, local_path)) {
             downloaded++;
             full_downloads++;
         } else {
@@ -366,7 +358,7 @@ bool BurstCollectorService::downloadSessionFiles(
     // Download EVE (events) - always full download (small, doesn't grow)
     if (!session.eve_file.empty()) {
         std::string local_path = local_dir + "/" + session.eve_file;
-        if (ezshare_client_->downloadFile(session.date_folder, session.eve_file, local_path)) {
+        if (data_source_->downloadFile(session.date_folder, session.eve_file, local_path)) {
             downloaded++;
             full_downloads++;
         } else {
@@ -521,8 +513,8 @@ void BurstCollectorService::processSTRFile() {
             std::filesystem::create_directories(local_base);
             str_local_path = local_base + "/STR.edf";
             // Try both cases (ResMed uses STR.edf on newer firmware)
-            if (!ezshare_client_->downloadRootFile("STR.edf", str_local_path)) {
-                if (!ezshare_client_->downloadRootFile("STR.EDF", str_local_path)) {
+            if (!data_source_->downloadRootFile("STR.edf", str_local_path)) {
+                if (!data_source_->downloadRootFile("STR.EDF", str_local_path)) {
                     std::cerr << "STR: Download failed (non-fatal)" << std::endl;
                     return;
                 }
@@ -673,22 +665,8 @@ bool BurstCollectorService::executeBurstCycle() {
     std::vector<std::pair<std::string, std::chrono::system_clock::time_point>> downloaded_sessions;
     auto download_start = std::chrono::steady_clock::now();
 
-    // Fysetc pre-step: collect sectors and reconstruct files into archive
-    if (fysetc_collector_) {
-        if (fysetc_server_->isConnected()) {
-            auto result = fysetc_collector_->collect();
-            if (result.success && (result.new_files > 0 || result.updated_files > 0)) {
-                std::cout << "CPAP: Fysetc collected " << result.new_files << " new, "
-                          << result.updated_files << " updated files ("
-                          << result.bytes_received << " bytes)" << std::endl;
-            }
-        } else {
-            std::cout << "CPAP: Fysetc not connected, skipping collection" << std::endl;
-        }
-    }
-
     if (!local_source_dir_.empty()) {
-        // ===== LOCAL SOURCE MODE (also used by Fysetc after collection) =====
+        // ===== LOCAL SOURCE MODE =====
         std::cout << "CPAP: Scanning local directory " << local_source_dir_ << std::endl;
 
         new_sessions = SessionDiscoveryService::discoverLocalSessions(
@@ -1682,8 +1660,15 @@ void BurstCollectorService::reloadConfig() {
         nc.local_dir != last_config_.local_dir) {
         if (nc.source == "local") {
             local_source_dir_ = nc.local_dir;
-            ezshare_client_.reset();
+            data_source_.reset();
             discovery_service_.reset();
+        } else if (nc.source == "fysetc") {
+            local_source_dir_.clear();
+            // Fysetc data source reuses existing fysetc_server_
+            if (fysetc_server_) {
+                data_source_ = std::make_unique<FysetcDataSource>(*fysetc_server_);
+                discovery_service_ = std::make_unique<SessionDiscoveryService>(*data_source_);
+            }
         } else {
             local_source_dir_.clear();
 #ifdef _WIN32
@@ -1691,8 +1676,8 @@ void BurstCollectorService::reloadConfig() {
 #else
             setenv("EZSHARE_BASE_URL", nc.ezshare_url.c_str(), 1);
 #endif
-            ezshare_client_ = std::make_unique<EzShareClient>();
-            discovery_service_ = std::make_unique<SessionDiscoveryService>(*ezshare_client_);
+            data_source_ = std::make_unique<EzShareClient>();
+            discovery_service_ = std::make_unique<SessionDiscoveryService>(*data_source_);
         }
         std::cout << "Config reload: source -> " << nc.source << std::endl;
     }

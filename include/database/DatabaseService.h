@@ -74,6 +74,9 @@ public:
     std::map<std::string, int> getCheckpointFileSizes(const std::string& device_id,
                                                        const std::chrono::system_clock::time_point& session_start) override;
 
+    std::map<std::string, int> getCheckpointFilesByFolder(const std::string& device_id,
+                                                          const std::string& date_folder) override;
+
     bool updateCheckpointFileSizes(const std::string& device_id,
                                     const std::chrono::system_clock::time_point& session_start,
                                     const std::map<std::string, int>& file_sizes) override;

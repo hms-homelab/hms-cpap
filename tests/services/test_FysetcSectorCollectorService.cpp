@@ -271,14 +271,14 @@ protected:
 TEST_F(FysetcCollectorTest, CollectNewFile) {
     FakeFat32ImageForTcp image;
 
-    // Build: root/DATALOG/20260418/TEST.EDF (1024 bytes of 0xAA)
+    // Build: root/DATALOG/20260418/20260418_210832_BRP.edf (1024 bytes of 0xAA)
     image.addDirEntry(2, "DATALOG", 3, 0, true);
     image.setFatEntry(3, 0x0FFFFFFF);
 
     image.addDirEntry(3, "20260418", 4, 0, true);
     image.setFatEntry(4, 0x0FFFFFFF);
 
-    image.addDirEntry(4, "TEST.EDF", 5, 1024, false);
+    image.addDirEntry(4, "20260418.edf", 5, 1024, false);
     image.setFatEntry(5, 0x0FFFFFFF);
     std::vector<uint8_t> file_data(1024, 0xAA);
     image.writeClusterData(5, file_data);
@@ -296,14 +296,13 @@ TEST_F(FysetcCollectorTest, CollectNewFile) {
     ASSERT_TRUE(server.isConnected());
 
     // Run collector
-    FysetcSectorCollectorService collector(server, scratch_dir_);
+    FysetcSectorCollectorService collector(server, scratch_dir_, "test_device");
     auto result = collector.collect();
 
     EXPECT_TRUE(result.success);
     EXPECT_GE(result.new_files, 1);
 
-    // Verify file was written
-    std::string expected_path = scratch_dir_ + "/DATALOG/20260418/TEST.EDF";
+    std::string expected_path = scratch_dir_ + "/DATALOG/20260418/20260418.EDF";
     ASSERT_TRUE(std::filesystem::exists(expected_path));
 
     std::ifstream f(expected_path, std::ios::binary | std::ios::ate);
@@ -341,7 +340,7 @@ TEST_F(FysetcCollectorTest, IncrementalGrowth) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     ASSERT_TRUE(server.isConnected());
 
-    FysetcSectorCollectorService collector(server, scratch_dir_);
+    FysetcSectorCollectorService collector(server, scratch_dir_, "test_device");
 
     // First collect
     auto r1 = collector.collect();

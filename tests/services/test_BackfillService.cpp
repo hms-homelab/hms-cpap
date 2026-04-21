@@ -31,6 +31,7 @@ public:
     MOCK_METHOD(bool, isForceCompleted, (const std::string&, const std::chrono::system_clock::time_point&), (override));
     MOCK_METHOD(bool, setForceCompleted, (const std::string&, const std::chrono::system_clock::time_point&), (override));
     MOCK_METHOD((std::map<std::string, int>), getCheckpointFileSizes, (const std::string&, const std::chrono::system_clock::time_point&), (override));
+    MOCK_METHOD((std::map<std::string, int>), getCheckpointFilesByFolder, (const std::string&, const std::string&), (override));
 
     // GMock needs parens around complex return/param types with commas
     bool updateCheckpointFileSizes(

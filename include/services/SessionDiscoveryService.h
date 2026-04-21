@@ -1,5 +1,6 @@
 #pragma once
 
+#include "clients/IDataSource.h"
 #include "clients/EzShareClient.h"
 #include "parsers/CpapdashBridge.h"
 #include <vector>
@@ -25,7 +26,7 @@ namespace hms_cpap {
  */
 class SessionDiscoveryService {
 public:
-    explicit SessionDiscoveryService(EzShareClient& ezshare_client);
+    explicit SessionDiscoveryService(IDataSource& data_source);
 
     /**
      * Discover new sessions since last stored timestamp
@@ -78,7 +79,7 @@ public:
         std::optional<std::chrono::system_clock::time_point> last_session_start);
 
 private:
-    EzShareClient& ezshare_client_;
+    IDataSource& data_source_;
 
     std::string extractSessionPrefix(const std::string& filename);
     std::chrono::system_clock::time_point parseSessionTime(const std::string& prefix);

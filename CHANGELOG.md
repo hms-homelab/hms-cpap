@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.0] - 2026-04-21
+
+### Added
+- **Fysetc raw-sector TCP protocol** — new data acquisition path that reads raw SD sectors over TCP from the Fysetc WiFi SD Pro. No FAT mount on ESP32, no HTTP server. Device becomes a thin sector I/O service with <10ms bus hold times.
+- **IDataSource interface** — extracted from EzShareClient. Both EzShareClient and FysetcDataSource implement it. SessionDiscoveryService and BurstCollectorService work through IDataSource, making data source swappable.
+- **FysetcDataSource adapter** — translates FAT32 sector reads into IDataSource interface. Existing session discovery, checkpoint comparison, and download pipeline runs unchanged.
+- **Fat32Parser** — read-only FAT32 parser with bulk 64-sector prefetch cache. BPB, cluster chains, LFN entries, byte-offset sector ranges.
+- **FysetcTcpServer** — TCP listener (port 9000). HELLO handshake, SECTOR_READ request/response, LOG forwarding, TCP keepalive.
+- **FysetcProtocol.h** — binary wire format codec, 10 message types, length-prefixed.
+- **Firmware log forwarding** — ESP_LOG ring buffer drained over TCP. Crash diagnostics survive reboots.
+- **WiFi RSSI + stats monitoring** — logged every 30s via forwarded LOG messages.
+- **32 new tests** — Fat32Parser (17), FysetcTcpServer (8), FysetcProtocol (5), FysetcCollector (2).
+
+### Changed
+- **SessionDiscoveryService** — takes `IDataSource&` instead of `EzShareClient&`.
+- **BurstCollectorService** — uses `unique_ptr<IDataSource>`. Source selected by config: `"ezshare"`, `"fysetc"`, or `"local"`.
+- **EzShareClient** — inherits from `IDataSource`, `override` on 5 methods.
+
 ## [3.3.1] - 2026-04-18
 
 ### Added

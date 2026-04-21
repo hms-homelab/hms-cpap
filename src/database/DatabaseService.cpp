@@ -803,6 +803,87 @@ std::map<std::string, int> DatabaseService::getCheckpointFileSizes(
     }
 }
 
+std::map<std::string, int> DatabaseService::getCheckpointFilesByFolder(
+    const std::string& device_id,
+    const std::string& date_folder) {
+
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+
+    if (!ensureConnection()) {
+        std::cerr << "DB: getCheckpointFilesByFolder failed - no connection" << std::endl;
+        return {};
+    }
+
+    try {
+        pqxx::work txn(*conn_);
+
+        // Search checkpoint_files for any filename matching the date folder
+        // OR the next day (cross-midnight sessions stored in previous day's folder)
+        // e.g., folder 20260418 may contain files named 20260419_...
+        int year, month, day;
+        if (sscanf(date_folder.c_str(), "%4d%2d%2d", &year, &month, &day) != 3) return {};
+
+        // Build next day string
+        std::tm tm = {};
+        tm.tm_year = year - 1900; tm.tm_mon = month - 1; tm.tm_mday = day + 1;
+        tm.tm_isdst = -1;
+        std::mktime(&tm);
+        char next_day[9];
+        std::strftime(next_day, sizeof(next_day), "%Y%m%d", &tm);
+
+        std::string like1 = "%" + date_folder + "%";
+        std::string like2 = "%" + std::string(next_day) + "%";
+
+        std::string query = R"(
+            SELECT checkpoint_files
+            FROM cpap_sessions
+            WHERE device_id = $1
+              AND checkpoint_files IS NOT NULL
+              AND (checkpoint_files::text LIKE $2 OR checkpoint_files::text LIKE $3)
+        )";
+
+        pqxx::result result = txn.exec_params(query, device_id, like1, like2);
+
+        std::map<std::string, int> all_files;
+
+        for (const auto& row : result) {
+            if (row[0].is_null()) continue;
+
+            std::string json_str = row[0].as<std::string>();
+
+            // Parse JSONB: {"file1": 123, "file2": 456}
+            size_t pos = 0;
+            while ((pos = json_str.find("\"", pos)) != std::string::npos) {
+                size_t name_start = pos + 1;
+                size_t name_end = json_str.find("\"", name_start);
+                if (name_end == std::string::npos) break;
+
+                std::string filename = json_str.substr(name_start, name_end - name_start);
+
+                size_t colon_pos = json_str.find(":", name_end);
+                if (colon_pos == std::string::npos) break;
+
+                size_t value_start = colon_pos + 1;
+                size_t value_end = json_str.find_first_of(",}", value_start);
+                if (value_end == std::string::npos) break;
+
+                std::string value_str = json_str.substr(value_start, value_end - value_start);
+                value_str.erase(0, value_str.find_first_not_of(" \t"));
+                value_str.erase(value_str.find_last_not_of(" \t") + 1);
+
+                all_files[filename] = std::stoi(value_str);
+                pos = value_end;
+            }
+        }
+
+        return all_files;
+
+    } catch (const std::exception& e) {
+        std::cerr << "DB: getCheckpointFilesByFolder error: " << e.what() << std::endl;
+        return {};
+    }
+}
+
 bool DatabaseService::updateCheckpointFileSizes(
     const std::string& device_id,
     const std::chrono::system_clock::time_point& session_start,

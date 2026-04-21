@@ -4,12 +4,16 @@
 #include <iostream>
 #include <algorithm>
 #include <set>
+#include <cstdio>
+#include <cstdlib>
+#include <ctime>
 
 namespace hms_cpap {
 
 FysetcSectorCollectorService::FysetcSectorCollectorService(
-    FysetcTcpServer& tcp_server, const std::string& archive_dir)
-    : tcp_(tcp_server), archive_dir_(archive_dir) {}
+    FysetcTcpServer& tcp_server, const std::string& archive_dir,
+    const std::string& device_id)
+    : tcp_(tcp_server), archive_dir_(archive_dir), device_id_(device_id) {}
 
 Fat32Parser::SectorReader FysetcSectorCollectorService::makeSectorReader() {
     return [this](uint32_t lba, uint32_t count,
@@ -42,7 +46,6 @@ bool FysetcSectorCollectorService::refreshFatLayout() {
         if (!initFat()) return false;
     }
 
-    // Clear FAT cache each cycle so grown files get fresh cluster chains
     fat_->clearFatCache();
 
     root_entries_ = fat_->listDir(fat_->bpb().root_cluster);
@@ -77,24 +80,168 @@ bool FysetcSectorCollectorService::scanDatalogDir() {
     return true;
 }
 
-uint32_t FysetcSectorCollectorService::getArchivedFileSize(const std::string& rel_path) {
-    std::string full_path = archive_dir_ + "/" + rel_path;
-    try {
-        if (std::filesystem::exists(full_path)) {
-            return static_cast<uint32_t>(std::filesystem::file_size(full_path));
+// Parse "YYYYMMDD_HHMMSS" from filename into time_point
+static std::chrono::system_clock::time_point parseTimestamp(const std::string& name) {
+    std::tm tm = {};
+    if (name.size() >= 15) {
+        sscanf(name.c_str(), "%4d%2d%2d_%2d%2d%2d",
+               &tm.tm_year, &tm.tm_mon, &tm.tm_mday,
+               &tm.tm_hour, &tm.tm_min, &tm.tm_sec);
+        tm.tm_year -= 1900;
+        tm.tm_mon -= 1;
+        tm.tm_isdst = -1;
+    }
+    return std::chrono::system_clock::from_time_t(std::mktime(&tm));
+}
+
+// Check if a file is a checkpoint type (BRP/PLD/SAD/SA2)
+static bool isCheckpointFile(const std::string& name_lower) {
+    return name_lower.find("_brp.edf") != std::string::npos ||
+           name_lower.find("_pld.edf") != std::string::npos ||
+           name_lower.find("_sad.edf") != std::string::npos ||
+           name_lower.find("_sa2.edf") != std::string::npos;
+}
+
+// Group files into sessions using the same gap logic as SessionDiscoveryService:
+// Sort checkpoint files by creation timestamp. Gap between file N's mtime and
+// file N+1's creation timestamp > 1 hour = new session.
+struct FatSession {
+    std::chrono::system_clock::time_point session_start;
+    std::vector<Fat32DirEntry*> all_files;
+    std::map<std::string, int> checkpoint_sizes_kb;  // BRP/PLD/SAD only
+};
+
+static std::vector<FatSession> groupIntoSessions(std::vector<Fat32DirEntry>& files) {
+    // Separate checkpoint files (BRP/PLD/SAD) from summary files (CSL/EVE)
+    struct CheckpointFile {
+        Fat32DirEntry* entry;
+        std::chrono::system_clock::time_point created;  // from filename
+        std::chrono::system_clock::time_point modified;  // from FAT mtime
+    };
+
+    std::vector<CheckpointFile> checkpoints;
+    std::vector<Fat32DirEntry*> summary_files;  // CSL/EVE
+    std::vector<Fat32DirEntry*> ungrouped;       // short names, non-standard
+
+    for (auto& file : files) {
+        if (file.is_directory) continue;
+
+        if (file.name.size() < 15) {
+            std::string nl = file.name;
+            std::transform(nl.begin(), nl.end(), nl.begin(), ::tolower);
+            if (nl.size() >= 4 && nl.substr(nl.size() - 4) == ".edf")
+                ungrouped.push_back(&file);
+            continue;
         }
-    } catch (...) {}
-    return 0;
+
+        std::string name_lower = file.name;
+        std::transform(name_lower.begin(), name_lower.end(),
+                      name_lower.begin(), ::tolower);
+
+        if (name_lower.size() < 4 ||
+            name_lower.substr(name_lower.size() - 4) != ".edf") continue;
+
+        if (isCheckpointFile(name_lower)) {
+            checkpoints.push_back({
+                &file,
+                parseTimestamp(file.name),
+                file.modTime()
+            });
+        } else {
+            summary_files.push_back(&file);
+        }
+    }
+
+    if (checkpoints.empty()) {
+        // No checkpoint files but may have ungrouped files
+        if (!ungrouped.empty()) {
+            FatSession s;
+            s.session_start = std::chrono::system_clock::time_point{};
+            s.all_files = ungrouped;
+            return {s};
+        }
+        return {};
+    }
+
+    // Sort by creation time
+    std::sort(checkpoints.begin(), checkpoints.end(),
+              [](const CheckpointFile& a, const CheckpointFile& b) {
+                  return a.created < b.created;
+              });
+
+    // Group by time gaps: gap between prev file's mtime and next file's created time
+    std::vector<FatSession> sessions;
+    FatSession current;
+    current.session_start = checkpoints[0].created;
+    current.all_files.push_back(checkpoints[0].entry);
+    int size_kb = static_cast<int>((checkpoints[0].entry->size + 1023) / 1024);
+    current.checkpoint_sizes_kb[checkpoints[0].entry->name] = size_kb;
+
+    for (size_t i = 1; i < checkpoints.size(); ++i) {
+        auto gap = checkpoints[i].created - checkpoints[i-1].modified;
+        auto gap_minutes = std::chrono::duration_cast<std::chrono::minutes>(gap).count();
+
+        if (gap_minutes > 60) {
+            // New session — push previous
+            sessions.push_back(std::move(current));
+            current = FatSession{};
+            current.session_start = checkpoints[i].created;
+        }
+
+        current.all_files.push_back(checkpoints[i].entry);
+        int kb = static_cast<int>((checkpoints[i].entry->size + 1023) / 1024);
+        current.checkpoint_sizes_kb[checkpoints[i].entry->name] = kb;
+    }
+    // Add ungrouped files to last session
+    for (auto* uf : ungrouped) {
+        current.all_files.push_back(uf);
+    }
+
+    sessions.push_back(std::move(current));
+
+    // Match CSL/EVE to sessions (same logic as SessionDiscoveryService:
+    // match to last session, or by timestamp within 12 hours)
+    for (auto* sf : summary_files) {
+        auto sf_time = parseTimestamp(sf->name);
+
+        // Try last session first
+        if (!sessions.empty()) {
+            auto& last = sessions.back();
+            auto diff = std::chrono::abs(sf_time - last.session_start);
+            if (diff < std::chrono::hours(12)) {
+                last.all_files.push_back(sf);
+                continue;
+            }
+        }
+
+        // Try each session by time proximity
+        for (auto& sess : sessions) {
+            auto diff = std::chrono::abs(sf_time - sess.session_start);
+            if (diff < std::chrono::hours(12)) {
+                sess.all_files.push_back(sf);
+                break;
+            }
+        }
+    }
+
+    return sessions;
 }
 
 bool FysetcSectorCollectorService::syncFile(const std::string& date_folder,
                                              const Fat32DirEntry& entry) {
     std::string rel_path = "DATALOG/" + date_folder + "/" + entry.name;
 
-    uint32_t archived_size = getArchivedFileSize(rel_path);
+    // Use archive file size for byte-level resume offset
+    uint32_t archived_size = 0;
+    std::string full_path = archive_dir_ + "/" + rel_path;
+    try {
+        if (std::filesystem::exists(full_path)) {
+            archived_size = static_cast<uint32_t>(std::filesystem::file_size(full_path));
+        }
+    } catch (...) {}
+
     uint32_t fat_size = entry.size;
 
-    // Already up to date
     if (archived_size >= fat_size) return true;
 
     uint32_t offset = archived_size;
@@ -105,7 +252,6 @@ bool FysetcSectorCollectorService::syncFile(const std::string& date_folder,
     auto ranges = fat_->fileSectorRanges(entry.first_cluster, fat_size, offset);
     if (ranges.empty()) return true;
 
-    // Flatten into <=64-sector chunks, send in batches of 16
     std::vector<fysetc::SectorRange> all_chunks;
     for (auto& r : ranges) {
         uint32_t lba = r.lba;
@@ -194,40 +340,99 @@ FysetcSectorCollectorService::collect() {
 
         auto files = fat_->listDir(date_entry.first_cluster);
 
-        for (auto& file : files) {
-            if (file.is_directory) continue;
+        // Group files into sessions using mtime-based gap detection
+        auto sessions = groupIntoSessions(files);
 
-            std::string name_lower = file.name;
-            std::transform(name_lower.begin(), name_lower.end(),
-                          name_lower.begin(), ::tolower);
+        for (auto& session : sessions) {
+            // Step 1: Check if session exists in DB
+            bool exists = db_ && db_->sessionExists(device_id_, session.session_start);
 
-            if (name_lower.size() < 4 ||
-                name_lower.substr(name_lower.size() - 4) != ".edf") continue;
+            if (!exists) {
+                // New session — download all files
+                for (auto* file : session.all_files) {
+                    if (syncFile(date_entry.name, *file)) {
+                        result.new_files++;
+                        result.bytes_received += file->size;
+                        updated_folders.insert(date_entry.name);
+                    }
+                }
+                continue;
+            }
 
-            std::string rel_path = "DATALOG/" + date_entry.name + "/" + file.name;
-            uint32_t archived_size = getArchivedFileSize(rel_path);
-            bool is_new = (archived_size == 0);
-            bool has_grown = (file.size > archived_size);
+            // Step 2: Compare BRP/PLD/SAD sizes against DB checkpoints
+            auto db_sizes = db_->getCheckpointFileSizes(device_id_, session.session_start);
 
-            if (!is_new && !has_grown) continue;
+            bool any_changed = false;
 
-            if (syncFile(date_entry.name, file)) {
-                if (is_new) result.new_files++;
-                else result.updated_files++;
-                result.bytes_received += file.size - archived_size;
-                updated_folders.insert(date_entry.name);
+            for (auto& [name, current_kb] : session.checkpoint_sizes_kb) {
+                auto it = db_sizes.find(name);
+                if (it == db_sizes.end()) {
+                    // New checkpoint file — session is active
+                    any_changed = true;
+                    break;
+                }
+                if (std::abs(it->second - current_kb) > 1) {
+                    // Size changed beyond rounding tolerance — session is active
+                    any_changed = true;
+                    break;
+                }
+            }
+
+            // Check for new checkpoint files not yet in DB
+            if (!any_changed && session.checkpoint_sizes_kb.size() > db_sizes.size()) {
+                any_changed = true;
+            }
+
+            if (!any_changed) continue;  // session completed, skip everything
+
+            // Step 3: Session is active — download changed files
+            for (auto* file : session.all_files) {
+                std::string name_lower = file->name;
+                std::transform(name_lower.begin(), name_lower.end(),
+                              name_lower.begin(), ::tolower);
+
+                if (isCheckpointFile(name_lower)) {
+                    // BRP/PLD/SAD: check if this specific file changed
+                    auto it = db_sizes.find(file->name);
+                    int file_kb = static_cast<int>((file->size + 1023) / 1024);
+
+                    if (it != db_sizes.end() && std::abs(it->second - file_kb) <= 1) {
+                        continue;  // this checkpoint unchanged, skip
+                    }
+
+                    // Changed or new — download delta (syncFile uses archive offset)
+                    if (syncFile(date_entry.name, *file)) {
+                        result.updated_files++;
+                        result.bytes_received += file->size;
+                        updated_folders.insert(date_entry.name);
+                    }
+                } else {
+                    // CSL/EVE — session is active, re-download in full
+                    if (syncFile(date_entry.name, *file)) {
+                        result.updated_files++;
+                        result.bytes_received += file->size;
+                        updated_folders.insert(date_entry.name);
+                    }
+                }
             }
         }
     }
 
-    // Sync STR.edf from root (reuse cached root listing)
+    // Sync STR.edf from root
     for (auto& e : root_entries_) {
         std::string name_lower = e.name;
         std::transform(name_lower.begin(), name_lower.end(),
                       name_lower.begin(), ::tolower);
         if (name_lower != "str.edf") continue;
 
-        uint32_t archived_size = getArchivedFileSize(e.name);
+        uint32_t archived_size = 0;
+        {
+            std::string str_path = archive_dir_ + "/" + e.name;
+            try {
+                if (std::filesystem::exists(str_path))
+                    archived_size = static_cast<uint32_t>(std::filesystem::file_size(str_path));
+            } catch (...) {}
+        }
         if (e.size <= archived_size) break;
 
         uint32_t offset = archived_size;

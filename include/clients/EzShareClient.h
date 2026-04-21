@@ -4,6 +4,7 @@
 #include <vector>
 #include <chrono>
 #include <curl/curl.h>
+#include "clients/IDataSource.h"
 
 namespace hms_cpap {
 
@@ -35,7 +36,7 @@ struct EzShareFileEntry {
  * We construct download URLs ourselves using the correct DATALOG prefix.
  * Backslash (%5C) is required; forward slashes return 404.
  */
-class EzShareClient {
+class EzShareClient : public IDataSource {
 public:
     EzShareClient();
     ~EzShareClient();
@@ -46,14 +47,14 @@ public:
     /**
      * List available date folders in DATALOG (e.g., ["20260203", "20260204"])
      */
-    std::vector<std::string> listDateFolders();
+    std::vector<std::string> listDateFolders() override;
 
     /**
      * List files in a date folder
      * @param date_folder e.g., "20260203"
      * @return File entries with name and size
      */
-    std::vector<EzShareFileEntry> listFiles(const std::string& date_folder);
+    std::vector<EzShareFileEntry> listFiles(const std::string& date_folder) override;
 
     /**
      * Download a single file from a date folder
@@ -63,7 +64,7 @@ public:
      */
     bool downloadFile(const std::string& date_folder,
                       const std::string& filename,
-                      const std::string& local_path);
+                      const std::string& local_path) override;
 
     /**
      * Download file using HTTP Range (incremental/resume)
@@ -78,7 +79,7 @@ public:
                           const std::string& filename,
                           const std::string& local_path,
                           size_t start_byte,
-                          size_t& bytes_downloaded);
+                          size_t& bytes_downloaded) override;
 
     /**
      * Download complete CPAP session (BRP, EVE, SAD, PLD, CSL EDF files)
@@ -96,7 +97,7 @@ public:
      * @param filename e.g., "STR.EDF"
      * @param local_path Local path to save
      */
-    bool downloadRootFile(const std::string& filename, const std::string& local_path);
+    bool downloadRootFile(const std::string& filename, const std::string& local_path) override;
 
     std::string getBaseURL() const { return base_url_; }
     void setBaseURL(const std::string& url) { base_url_ = url; }

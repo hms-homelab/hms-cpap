@@ -76,6 +76,12 @@ public:
         const std::chrono::system_clock::time_point& session_start,
         const std::map<std::string, int>& file_sizes) = 0;
 
+    // -- Checkpoint files by date folder (flat map across sessions in folder) -
+
+    virtual std::map<std::string, int> getCheckpointFilesByFolder(
+        const std::string& device_id,
+        const std::string& date_folder) = 0;
+
     // -- Device ---------------------------------------------------------------
 
     virtual bool updateDeviceLastSeen(const std::string& device_id) = 0;

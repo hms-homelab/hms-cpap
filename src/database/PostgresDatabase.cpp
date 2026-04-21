@@ -74,6 +74,12 @@ std::map<std::string, int> PostgresDatabase::getCheckpointFileSizes(
     return db_->getCheckpointFileSizes(device_id, session_start);
 }
 
+std::map<std::string, int> PostgresDatabase::getCheckpointFilesByFolder(
+    const std::string& device_id,
+    const std::string& date_folder) {
+    return db_->getCheckpointFilesByFolder(device_id, date_folder);
+}
+
 bool PostgresDatabase::updateCheckpointFileSizes(
     const std::string& device_id,
     const std::chrono::system_clock::time_point& session_start,

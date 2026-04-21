@@ -1,9 +1,10 @@
 #pragma once
 
 // WiFiSwitchClient no longer needed - ez Share accessed via dedicated interface
+#include "clients/IDataSource.h"
 #include "clients/EzShareClient.h"
 #include "clients/FysetcTcpServer.h"
-#include "services/FysetcSectorCollectorService.h"
+#include "clients/FysetcDataSource.h"
 #include "llm_client.h"
 #include "parsers/CpapdashBridge.h"
 #include "services/DataPublisherService.h"
@@ -88,10 +89,9 @@ private:
     std::string device_name_;
     std::string local_source_dir_;  // Empty = ezShare mode, set = local filesystem mode
 
-    // Clients
-    std::unique_ptr<EzShareClient> ezshare_client_;
+    // Data source (ezShare HTTP or Fysetc TCP — both implement IDataSource)
+    std::unique_ptr<IDataSource> data_source_;
     std::unique_ptr<FysetcTcpServer> fysetc_server_;
-    std::unique_ptr<FysetcSectorCollectorService> fysetc_collector_;
 
     // Services
     std::unique_ptr<SessionDiscoveryService> discovery_service_;

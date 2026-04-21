@@ -2,9 +2,11 @@
 
 #include "clients/FysetcTcpServer.h"
 #include "parsers/Fat32Parser.h"
+#include "database/IDatabase.h"
 #include <string>
 #include <vector>
 #include <map>
+#include <memory>
 #include <functional>
 
 namespace hms_cpap {
@@ -14,7 +16,10 @@ public:
     using ArchiveCallback = std::function<void(const std::string& date_folder)>;
 
     FysetcSectorCollectorService(FysetcTcpServer& tcp_server,
-                                  const std::string& archive_dir);
+                                  const std::string& archive_dir,
+                                  const std::string& device_id);
+
+    void setDatabase(std::shared_ptr<IDatabase> db) { db_ = db; }
 
     bool initFat();
 
@@ -39,10 +44,11 @@ private:
 
     Fat32Parser::SectorReader makeSectorReader();
 
-    uint32_t getArchivedFileSize(const std::string& rel_path);
 
     FysetcTcpServer& tcp_;
     std::string archive_dir_;
+    std::string device_id_;
+    std::shared_ptr<IDatabase> db_;
     std::unique_ptr<Fat32Parser> fat_;
 
     // Cached FAT layout

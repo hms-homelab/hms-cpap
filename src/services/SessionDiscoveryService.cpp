@@ -9,8 +9,8 @@
 
 namespace hms_cpap {
 
-SessionDiscoveryService::SessionDiscoveryService(EzShareClient& ezshare_client)
-    : ezshare_client_(ezshare_client) {}
+SessionDiscoveryService::SessionDiscoveryService(IDataSource& data_source)
+    : data_source_(data_source) {}
 
 std::string SessionDiscoveryService::extractSessionPrefix(const std::string& filename) {
     // Extract YYYYMMDD_HHMMSS from "20260204_001809_CSL.edf"
@@ -74,7 +74,7 @@ std::string SessionDiscoveryService::findLargestFile(
 
 std::vector<SessionFileSet>
 SessionDiscoveryService::groupSessionsInFolder(const std::string& date_folder) {
-    auto files = ezshare_client_.listFiles(date_folder);
+    auto files = data_source_.listFiles(date_folder);
 
     if (files.empty()) {
         return {};
@@ -277,7 +277,7 @@ SessionDiscoveryService::discoverNewSessions(
     std::cout << "CPAP: Discovering sessions on ez Share..." << std::endl;
 
     // List all date folders on card
-    auto date_folders = ezshare_client_.listDateFolders();
+    auto date_folders = data_source_.listDateFolders();
 
     if (date_folders.empty()) {
         std::cout << "CPAP: No date folders found on ez Share" << std::endl;
