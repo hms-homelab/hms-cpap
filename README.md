@@ -7,7 +7,7 @@
 
 **Lightweight C++ microservice for ResMed CPAP data collection with built-in web dashboard and Home Assistant integration.**
 
-Automatically extracts sleep therapy data from your ResMed AirSense 10/11 CPAP machine, parses EDF files using OSCAR algorithms, and publishes 47+ metrics to Home Assistant via MQTT discovery. Includes a full Angular web UI with OSCAR/SleepHQ-grade charting. Supports three data sources: FYSETC SD WiFi Pro, ezShare WiFi SD with hms-mm bridge, or local filesystem.
+Automatically extracts sleep therapy data from your ResMed AirSense 10/11 CPAP machine, parses EDF files using OSCAR algorithms, and publishes 47+ metrics to Home Assistant via MQTT discovery. Includes a full Angular web UI with OSCAR/SleepHQ-grade charting. Supports four data sources: FYSETC SD WiFi Pro (raw TCP or HTTP mode), ezShare WiFi SD with bridge, or local filesystem.
 
 ## Screenshots
 
@@ -34,7 +34,7 @@ Automatically extracts sleep therapy data from your ResMed AirSense 10/11 CPAP m
 ## Features
 
 - **Built-in Web Dashboard** - Angular SPA with OSCAR/SleepHQ-grade charting, dark theme, live session support
-- **3 Data Sources** - FYSETC SD WiFi Pro, ezShare WiFi SD + hms-mm bridge, or local files (WiFi options are optional hardware)
+- **4 Data Sources** - FYSETC SD WiFi Pro (raw TCP or HTTP), ezShare WiFi SD + bridge, or local files
 - **47+ Metrics** - AHI, leak rate, pressure, usage hours, events, STR daily summary, LLM AI summary
 - **Home Assistant Auto-Discovery** - Instant MQTT integration with 47 sensor entities
 - **Multi-Database** - PostgreSQL, MySQL/MariaDB, or SQLite (auto-created on first run)
@@ -73,7 +73,8 @@ cp ../.env.example ../.env
 nano ../.env  # Set MQTT, DB, and source settings
 
 # 3. Run (choose your data source)
-CPAP_SOURCE=ezshare ./hms_cpap   # ezShare WiFi SD polling
+CPAP_SOURCE=fysetc  ./hms_cpap   # FYSETC raw TCP (recommended)
+CPAP_SOURCE=ezshare ./hms_cpap   # ezShare / FYSETC HTTP mode
 CPAP_SOURCE=local   ./hms_cpap   # Local filesystem
 
 # 4. Open the dashboard
@@ -82,19 +83,39 @@ CPAP_SOURCE=local   ./hms_cpap   # Local filesystem
 
 ## Data Sources
 
-There are two hardware paths for wireless data collection, plus a local filesystem option:
+Three hardware paths for wireless data collection, plus a local filesystem option:
 
-### Path 1: FYSETC SD WiFi Pro (Optional Hardware, Recommended)
+### Path 1: FYSETC SD WiFi Pro — Raw TCP Mode (Recommended)
 
-**How it works:** A WiFi-enabled board that sits inside the CPAP's SD card slot. It joins your home WiFi and serves EDF files over HTTP. HMS-CPAP polls it every 65s for new/changed files.
+**How it works:** The FYSETC SD WiFi Pro board sits in the CPAP's SD card slot. Custom firmware reads raw sectors from the onboard NAND flash and streams them over TCP to HMS-CPAP. HMS-CPAP parses FAT32 from the raw sectors, discovers sessions, and downloads only what changed. No FAT mount or HTTP server on the device — minimal bus hold time, maximum reliability.
 
-**Hardware (optional):** FYSETC SD WiFi Pro board.
+**Hardware:** [FYSETC SD WiFi Pro](https://www.fysetc.com/products/fysetc-upgrade-sd-wifi-pro-with-card-reader-module-run-wireless-by-esp32-chip-web-server-reader-uploader-3d-printer-parts) board + SD extension ribbon cable + external 5V USB power source. The ribbon cable lets the board sit outside the CPAP enclosure for better WiFi signal and heat dissipation. External power avoids brownouts from the CPAP's limited 3.3V SD rail during sustained WiFi transmissions.
 
-**Pros:** Single device, 65s latency, direct WiFi connection. **Cons:** Requires the specific board.
+**Firmware:** Closed-source, available as a pre-built binary. The TCP protocol and the server-side implementation (Fat32Parser, FysetcTcpServer, IDataSource adapter) are open-source in this repo. See [Fysetc TCP Architecture](docs/FYSETC_TCP_ARCHITECTURE.md) for the full protocol spec and implementation guide.
 
-**Firmware:** [hms-fysetc](https://github.com/hms-homelab/hms-fysetc) -- open-source ESP-IDF firmware (MIT).
+**Pros:** Most reliable, lowest bus contention, incremental delta downloads, firmware log forwarding for remote diagnostics. **Cons:** Requires hardware mod (ribbon cable + external power).
 
-### Path 2: ezShare WiFi SD (Optional Hardware)
+```bash
+CPAP_SOURCE=fysetc
+FYSETC_LISTEN_PORT=9000
+```
+
+### Path 2: FYSETC SD WiFi Pro — HTTP Mode
+
+**How it works:** Same FYSETC board, but running open-source firmware that emulates an ezShare WiFi SD card. Serves EDF files over HTTP on your home network. HMS-CPAP polls it every 65s for new/changed files using the same ezShare HTTP protocol.
+
+**Hardware:** [FYSETC SD WiFi Pro](https://www.fysetc.com/products/fysetc-upgrade-sd-wifi-pro-with-card-reader-module-run-wireless-by-esp32-chip-web-server-reader-uploader-3d-printer-parts) board. Can sit directly in the SD slot (no ribbon cable needed for basic use).
+
+**Firmware:** [hms-fysetc](https://github.com/hms-homelab/hms-fysetc) -- open-source ESP-IDF firmware (MIT). Emulates the ezShare HTTP API.
+
+**Pros:** Simple setup, open-source firmware, no hardware mod. **Cons:** Holds the SD bus for entire HTTP responses (seconds for large files), which can cause brownouts on the CPAP's 3.3V rail with large BRP files.
+
+```bash
+CPAP_SOURCE=ezshare
+EZSHARE_BASE_URL=http://<fysetc-ip>
+```
+
+### Path 3: ezShare WiFi SD
 
 **How it works:** The ezShare creates its own WiFi AP, which means it can't talk to your home network directly. You'll need a bridge to bring it onto your network. A convenient dual-WiFi bridge is provided by [hms-mm](https://github.com/hms-homelab/hms-mm) -- one radio connects to the ezShare, the other to your home WiFi, and it serves the files over HTTP. HMS-CPAP polls the bridge every 65s.
 
