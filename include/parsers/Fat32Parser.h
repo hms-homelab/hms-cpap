@@ -6,7 +6,7 @@
 #include <functional>
 #include <optional>
 #include <chrono>
-#include <unordered_map>
+#include <map>
 
 namespace hms_cpap {
 
@@ -74,8 +74,8 @@ private:
     bool initialized_ = false;
 
     // FAT sector cache: maps FAT sector LBA → 512 bytes
-    static constexpr size_t FAT_CACHE_MAX_SECTORS = 128;  // 64KB cache = 16384 FAT entries
-    std::unordered_map<uint32_t, std::vector<uint8_t>> fat_cache_;
+    static constexpr size_t FAT_CACHE_MAX_SECTORS = 128;
+    std::map<uint32_t, std::vector<uint8_t>> fat_cache_;
     bool readFatSector(uint32_t fat_sector_lba, std::vector<uint8_t>& out);
 };
 
