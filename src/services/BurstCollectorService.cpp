@@ -67,8 +67,7 @@ BurstCollectorService::BurstCollectorService(int burst_interval_seconds)
     } else {
         // ez Share mode
         auto ez = std::make_unique<EzShareClient>();
-        std::string range_env = ConfigManager::get("EZSHARE_SUPPORTS_RANGE", "true");
-        if (range_env == "false" || range_env == "0") {
+        if (app_config_ && !app_config_->ezshare_range) {
             ez->setSupportsRange(false);
         }
         data_source_ = std::move(ez);
@@ -1680,7 +1679,11 @@ void BurstCollectorService::reloadConfig() {
 #else
             setenv("EZSHARE_BASE_URL", nc.ezshare_url.c_str(), 1);
 #endif
-            data_source_ = std::make_unique<EzShareClient>();
+            auto ez = std::make_unique<EzShareClient>();
+            if (app_config_ && !app_config_->ezshare_range) {
+                ez->setSupportsRange(false);
+            }
+            data_source_ = std::move(ez);
             discovery_service_ = std::make_unique<SessionDiscoveryService>(*data_source_);
         }
         std::cout << "Config reload: source -> " << nc.source << std::endl;

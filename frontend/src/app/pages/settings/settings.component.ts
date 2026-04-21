@@ -40,6 +40,10 @@ import { AppConfig } from '../../models/config.model';
               <input type="text" [(ngModel)]="config.ezshare_url" name="ezshare_url"
                      [placeholder]="config.source === 'ezshare' ? 'http://192.168.4.1' : 'http://192.168.2.134'" />
             </label>
+            <label class="toggle-row" *ngIf="config.source === 'ezshare' || config.source === 'fysetc_poll'">
+              <input type="checkbox" [(ngModel)]="config.ezshare_range" name="ezshare_range" />
+              Range request downloads
+            </label>
             <label *ngIf="config.source === 'local'">
               Local Directory
               <input type="text" [(ngModel)]="config.local_dir" name="local_dir" placeholder="/path/to/sd/DATALOG" />

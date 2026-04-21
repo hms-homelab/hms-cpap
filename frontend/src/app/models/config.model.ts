@@ -3,6 +3,7 @@ export interface AppConfig {
   device_name: string;
   source: string;
   ezshare_url: string;
+  ezshare_range: boolean;
   local_dir: string;
   burst_interval: number;
   web_port: number;

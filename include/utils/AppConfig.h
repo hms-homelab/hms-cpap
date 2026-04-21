@@ -15,6 +15,7 @@ struct AppConfig {
     // Data source
     std::string source = "ezshare";  // "ezshare" (HTTP), "local"
     std::string ezshare_url = "http://192.168.4.1";
+    bool ezshare_range = true;
     std::string local_dir;
     int burst_interval = 65;
 
@@ -107,6 +108,10 @@ struct AppConfig {
         if (device_name.empty()) device_name = env("CPAP_DEVICE_NAME");
         if (source.empty())      source      = env("CPAP_SOURCE");
         if (ezshare_url.empty()) ezshare_url = env("EZSHARE_BASE_URL");
+        {
+            auto v = env("EZSHARE_SUPPORTS_RANGE");
+            if (v == "false" || v == "0") ezshare_range = false;
+        }
         if (local_dir.empty())   local_dir   = env("CPAP_LOCAL_DIR");
         if (burst_interval == 65) {
             int v = envInt("BURST_INTERVAL", 0);
@@ -223,8 +228,9 @@ struct AppConfig {
             if (j.contains("device_id"))    config.device_id = j["device_id"];
             if (j.contains("device_name"))  config.device_name = j["device_name"];
             if (j.contains("source"))       config.source = j["source"];
-            if (j.contains("ezshare_url"))  config.ezshare_url = j["ezshare_url"];
-            if (j.contains("local_dir"))    config.local_dir = j["local_dir"];
+            if (j.contains("ezshare_url"))    config.ezshare_url = j["ezshare_url"];
+            if (j.contains("ezshare_range")) config.ezshare_range = j["ezshare_range"];
+            if (j.contains("local_dir"))     config.local_dir = j["local_dir"];
             if (j.contains("burst_interval")) config.burst_interval = j["burst_interval"];
             if (j.contains("web_port"))     config.web_port = j["web_port"];
             if (j.contains("static_dir"))   config.static_dir = j["static_dir"];
@@ -312,6 +318,7 @@ struct AppConfig {
             j["device_name"] = device_name;
             j["source"] = source;
             j["ezshare_url"] = ezshare_url;
+            j["ezshare_range"] = ezshare_range;
             j["local_dir"] = local_dir;
             j["burst_interval"] = burst_interval;
             j["web_port"] = web_port;
@@ -372,6 +379,7 @@ struct AppConfig {
         j["device_name"] = device_name;
         j["source"] = source;
         j["ezshare_url"] = ezshare_url;
+        j["ezshare_range"] = ezshare_range;
         j["local_dir"] = local_dir;
         j["burst_interval"] = burst_interval;
         j["web_port"] = web_port;

@@ -51,7 +51,7 @@ void CpapController::health(const drogon::HttpRequestPtr&,
                              std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
     Json::Value j;
     j["status"] = "ok";
-    j["version"] = "3.1.0";
+    j["version"] = "4.0.4";
     j["service"] = "hms-cpap";
     cb(jsonResp(j));
 }
@@ -248,6 +248,7 @@ void CpapController::updateConfig(const drogon::HttpRequestPtr& req,
     if (j.isMember("device_name")) config_->device_name = j["device_name"].asString();
     if (j.isMember("source")) config_->source = j["source"].asString();
     if (j.isMember("ezshare_url")) config_->ezshare_url = j["ezshare_url"].asString();
+    if (j.isMember("ezshare_range")) config_->ezshare_range = j["ezshare_range"].asBool();
     if (j.isMember("local_dir")) config_->local_dir = j["local_dir"].asString();
     if (j.isMember("burst_interval")) config_->burst_interval = j["burst_interval"].asInt();
 

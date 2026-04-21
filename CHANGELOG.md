@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.4] - 2026-04-21
+
+### Added
+- **Range request toggle in settings UI** — checkbox under Data Source to enable/disable HTTP Range downloads for ezShare and Fysetc Poll modes
+- **`ezshare_range` config field** — persisted to config.json, env fallback `EZSHARE_SUPPORTS_RANGE`, hot-reloadable
+
+### Changed
+- **BurstCollectorService** — reads range support from `AppConfig.ezshare_range` instead of environment variable
+
 ## [4.0.0] - 2026-04-21
 
 ### Added
