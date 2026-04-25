@@ -1,3 +1,4 @@
+#include "utils/TimeCompat.h"
 #include "services/BurstCollectorService.h"
 #include "services/InsightsEngine.h"
 #include "clients/O2RingClient.h"

@@ -1,4 +1,5 @@
 #ifdef WITH_POSTGRESQL
+#include "utils/TimeCompat.h"
 #include "database/DatabaseService.h"
 #include <libpq-fe.h>
 #include <iostream>

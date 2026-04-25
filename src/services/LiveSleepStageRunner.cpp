@@ -1,3 +1,4 @@
+#include "utils/TimeCompat.h"
 #include "services/LiveSleepStageRunner.h"
 #include "services/SleepStageClassifier.h"
 #include "database/IDatabase.h"

@@ -1,3 +1,4 @@
+#include "utils/TimeCompat.h"
 #include "services/SleepStageClassifier.h"
 #include "ml/HmmSmoother.h"
 #include "ml/SleepStageFeatureExtractor.h"
