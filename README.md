@@ -11,40 +11,34 @@ Automatically extracts sleep therapy data from your ResMed AirSense 10/11 CPAP m
 
 ## Screenshots
 
-**Dashboard** -- 30-day trends for AHI, usage, pressure, leak, events, respiratory metrics, CSR, and EPR. Mode-aware chart visibility (CPAP/APAP/ASV).
+**Dashboard** -- HA-style layout with key metrics, O2Ring oximetry, AI session summary, therapy insights, STR daily indices, sleep events, pressure gauges, respiratory metrics, ML intelligence, and 30-day trend charts.
 
-![Dashboard](docs/images/dashboard.png)
+![Dashboard](docs/screenshots/dashboard.png)
 
-**Sessions** -- Nightly session list with live indicator for in-progress sessions. Click any row for full detail.
+**Sessions** -- Nightly session list with O2Ring SpO2 fallback, event breakdown, and live session indicator.
 
-![Sessions](docs/images/sessions-live.png)
+![Sessions](docs/screenshots/sessions.png)
 
-**Session Detail** -- Live session view with pulsing LIVE badge, running duration, and real-time metrics. Auto-refreshes every 65s.
+**Session Detail** -- Per-session metrics with O2Ring SpO2/HR, 13 zoomable signal charts, event overlay, and doughnut event distribution.
 
-![Session Detail](docs/images/session-detail-live.png)
-
-**Signal Charts** -- 12 overnight signal charts (flow, pressure, mask pressure, leak, flow limitation, snore, respiratory rate, tidal volume, minute ventilation, I:E ratio, EPR, target ventilation). Clickable thumbnail grid with zoomable detail panels.
-
-![Charts Overview](docs/images/charts-overview.png)
-
-**30-Minute Zoom** -- Mouse wheel zoom and drag pan via chartjs-plugin-zoom. Range buttons (30m/1h/2h/All) with slider navigation.
-
-![Flow 30m Zoom](docs/images/flow-30m-zoom.png)
+![Session Detail](docs/screenshots/session-detail.png)
 
 ## Features
 
-- **Built-in Web Dashboard** - Angular SPA with OSCAR/SleepHQ-grade charting, dark theme, live session support
+- **HA-Style Web Dashboard** - 10 section components with Font Awesome icons, pressure gauges, AI summary, therapy insights, ML predictions
 - **4 Data Sources** - FYSETC SD WiFi Pro (raw TCP or HTTP), ezShare WiFi SD + bridge, or local files
 - **47+ Metrics** - AHI, leak rate, pressure, usage hours, events, STR daily summary, LLM AI summary
 - **Home Assistant Auto-Discovery** - Instant MQTT integration with 47 sensor entities
+- **Therapy Insights Engine** - Automated analysis of AHI trends, leak correlation, compliance, best/worst nights
+- **O2Ring Integration** - Wellue O2Ring SpO2/HR with ODI calculation and fallback in session cards
 - **Multi-Database** - PostgreSQL, MySQL/MariaDB, or SQLite (auto-created on first run)
-- **12 Signal Charts** - Per-minute resolution from BRP/PLD/SAD with event markers
+- **13 Signal Charts** - Per-minute resolution from BRP/PLD/SAD with event markers and O2Ring overlay
 - **Live Sessions** - Pulsing LIVE badge, 65s auto-refresh, growing charts during therapy
-- **Session Grouping** - Intelligently combines BRP/PLD/SAD/EVE/CSL files into therapy sessions
-- **LLM Session Summary** - Optional AI-generated therapy analysis via Ollama
+- **ML Intelligence** - AHI prediction, compliance forecasting, mask fit risk, anomaly detection
+- **LLM Session Summary** - AI-generated therapy analysis via Ollama
 - **Windows + Linux** - Native builds for both platforms, Docker image for CI
 - **Ultra-Lightweight** - 6.5 MB native binary
-- **309 Unit Tests** - Comprehensive coverage across all services
+- **413 Unit Tests** - Comprehensive coverage across all services
 
 ## Table of Contents
 
