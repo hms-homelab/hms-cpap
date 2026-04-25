@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.1.0] - 2026-04-25
+
+### Added
+- **HA-style dashboard** -- full redesign with 10 new section components matching Home Assistant Mushroom card layout
+- **Key Metrics row** -- AHI score, usage, mask leak, total events, session status with color-coded FA icons
+- **O2 Ring Oximetry section** -- SpO2, heart rate, ODI, ring status from Wellue O2Ring
+- **AI Session Summary** -- LLM-generated markdown analysis with Overall/Events/Recommendations
+- **Therapy Insights** -- InsightsEngine analysis (AHI trend, leak correlation, compliance, best/worst nights)
+- **STR Daily Metrics** -- official ResMed indices (OAI/CAI/HI/RERA) from STR.edf
+- **Sleep Events Breakdown** -- obstructive, central, hypopneas, RERAs with color coding
+- **Therapy Pressure section** -- half-doughnut gauges for avg and P95 pressure
+- **Respiratory Metrics** -- rate, tidal volume, minute ventilation
+- **Real-Time Status** -- session info and pressure range
+- **ML Intelligence section** -- predicted AHI, trend, hours, mask fit risk, anomaly detection
+- **`/api/insights` endpoint** -- exposes InsightsEngine analysis via REST (QueryService + CpapController)
+- **Font Awesome 6.5** -- all icons replaced with FA for consistency
+- **O2Ring fallback in session detail** -- SpO2/HR cards pull from O2Ring when machine values are 0
+- **O2Ring SpO2 in sessions table** -- fetches oximetry for recent sessions without machine SpO2
+- **Sleep stage classification** -- HMM-smoothed 4-stage classifier (Wake/Light/Deep/REM) from CPAP signals
+- **`/api/sessions/{date}/sleep_stages` endpoint** -- per-session hypnogram data
+- **`/api/sleep-stages/status` endpoint** -- model status and configuration
+
+### Changed
+- **Dashboard Key Metrics** -- now uses session-aggregated data (matching sessions table) instead of STR for AHI/usage/events
+- **MetricCardComponent** -- added optional FA icon and iconColor inputs
+- **Session detail cards** -- FA icons with dynamic color coding (AHI, events, SpO2)
+
+### Fixed
+- **Insights query** -- removed non-existent `leak_70` column that caused silent SQL failure
+- **JSON string-to-double parsing** -- added `jdouble()` helper for safe conversion of DB string values
+
 ## [4.0.4] - 2026-04-21
 
 ### Added

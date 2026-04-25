@@ -1,0 +1,4 @@
+pyedflib>=0.1.34
+numpy>=1.24
+pandas>=2.0
+scipy>=1.10

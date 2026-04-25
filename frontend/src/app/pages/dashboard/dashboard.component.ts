@@ -1,7 +1,16 @@
 import { Component, OnInit, ViewChild, ElementRef, AfterViewInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { CpapApiService } from '../../services/cpap-api.service';
-import { MetricCardComponent } from '../../components/metric-card/metric-card.component';
+import { KeyMetricsComponent, KeyMetricsData } from '../../components/dashboard/key-metrics.component';
+import { OximetryRowComponent, OximetryRowData } from '../../components/dashboard/oximetry-row.component';
+import { AiSummaryComponent } from '../../components/dashboard/ai-summary.component';
+import { TherapyInsightsComponent } from '../../components/dashboard/therapy-insights.component';
+import { StrMetricsComponent, StrMetricsData } from '../../components/dashboard/str-metrics.component';
+import { EventsBreakdownComponent, EventsBreakdownData } from '../../components/dashboard/events-breakdown.component';
+import { PressureSectionComponent, PressureSectionData } from '../../components/dashboard/pressure-section.component';
+import { RespiratoryMetricsComponent, RespiratoryMetricsData } from '../../components/dashboard/respiratory-metrics.component';
+import { RealtimeStatusComponent, RealtimeStatusData } from '../../components/dashboard/realtime-status.component';
+import { MlIntelligenceComponent } from '../../components/dashboard/ml-intelligence.component';
 import { DashboardData, TrendPoint, OximetryData, SessionListItem } from '../../models/session.model';
 import Chart from 'chart.js/auto';
 
@@ -12,11 +21,16 @@ const MODE_LABELS: Record<string, string> = {
 @Component({
   selector: 'app-dashboard',
   standalone: true,
-  imports: [CommonModule, MetricCardComponent],
+  imports: [CommonModule, KeyMetricsComponent, OximetryRowComponent, AiSummaryComponent,
+            TherapyInsightsComponent, StrMetricsComponent, EventsBreakdownComponent,
+            PressureSectionComponent, RespiratoryMetricsComponent, RealtimeStatusComponent,
+            MlIntelligenceComponent],
   template: `
     <div class="dashboard">
-      <h2>Dashboard</h2>
-      <!-- Live Session (shown when therapy is in progress) -->
+      <h2>ResMed AirSense 10 Sleep Therapy</h2>
+      <div class="dash-subtitle" *ngIf="data">Last Session - {{ formatDate(data.latest_night.date) }}</div>
+
+      <!-- Live Session Banner -->
       <div class="live-banner" *ngIf="liveSession">
         <div class="live-indicator"><span class="live-dot"></span> LIVE SESSION</div>
         <div class="live-gauges">
@@ -42,72 +56,41 @@ const MODE_LABELS: Record<string, string> = {
           </div>
         </div>
       </div>
-      <!-- Last Night (from STR daily summary) -->
-      <h3 *ngIf="liveSession && data" class="section-label">Last Night</h3>
-      <div class="cards" *ngIf="data">
-        <app-metric-card label="Last Night AHI" [value]="data.latest_night.ahi" unit="events/h" />
-        <app-metric-card label="Last Night Usage" [value]="data.latest_night.usage_hours" unit="hours" />
-        <app-metric-card label="Compliance" [value]="data.latest_night.compliance_pct" unit="%" />
-        <app-metric-card label="Avg Leak" [value]="data.latest_night.leak_avg" unit="L/min" />
-        <app-metric-card label="Mode" [value]="modeName" unit="" />
-      </div>
-      <!-- O2Ring Oximetry -->
-      <div class="cards" *ngIf="oxiAvgSpo2">
-        <app-metric-card label="O2Ring SpO2" [value]="oxiAvgSpo2" unit="%"
-          [style.color]="oxiSpo2Num >= 95 ? '#4ade80' : oxiSpo2Num >= 85 ? '#fb923c' : '#ef4444'" />
-        <app-metric-card label="O2Ring HR" [value]="oxiAvgHr" unit="bpm" />
-        <app-metric-card label="O2Ring ODI" [value]="oxiOdi" unit="events/hr" *ngIf="oxiOdi" />
-      </div>
-      <!-- ML Insights -->
-      <div class="ml-section" *ngIf="mlStatus?.models_loaded">
-        <h3>ML Insights</h3>
-        <div class="ml-cards">
-          <div class="ml-card">
-            <div class="ml-label">Predicted AHI</div>
-            <div class="ml-value">{{ mlPredictions?.predicted_ahi?.toFixed(1) || '--' }}</div>
-            <div class="ml-unit">events/hr</div>
-          </div>
-          <div class="ml-card">
-            <div class="ml-label">Predicted Hours</div>
-            <div class="ml-value">{{ mlPredictions?.predicted_hours?.toFixed(1) || '--' }}</div>
-            <div class="ml-unit">hours</div>
-          </div>
-          <div class="ml-card">
-            <div class="ml-label">Leak Risk</div>
-            <div class="ml-value" [class.risk-high]="(mlPredictions?.leak_risk_pct || 0) > 50">
-              {{ mlPredictions?.leak_risk_pct?.toFixed(0) || '--' }}%
-            </div>
-            <div class="ml-unit">probability</div>
-          </div>
-          <div class="ml-card">
-            <div class="ml-label">Anomaly</div>
-            <div class="ml-value" [class.anomaly-normal]="mlPredictions?.anomaly_class === 'NORMAL'"
-                 [class.anomaly-warn]="mlPredictions?.anomaly_class !== 'NORMAL'">
-              {{ mlPredictions?.anomaly_class || '--' }}
-            </div>
-            <div class="ml-unit">detection</div>
-          </div>
-        </div>
-        <div class="ml-meta">
-          <span class="ml-meta-item">Last trained: {{ mlStatus?.last_trained || 'never' }}</span>
-          <span class="ml-meta-item">Models: {{ mlStatus?.models?.length || 0 }}</span>
-          <span class="ml-meta-item">Samples: {{ mlStatus?.models?.[0]?.samples_used || 0 }}</span>
-          <button class="btn-inference" (click)="runInference()" [disabled]="inferring">
-            {{ inferring ? 'Running...' : 'Run Inference' }}
-          </button>
-        </div>
-        <div class="ml-model-metrics" *ngIf="showModelDetails">
-          <div class="model-row" *ngFor="let m of mlStatus.models">
-            <span class="model-name">{{ m.name }}</span>
-            <span class="model-metric">{{ m.name.includes('predictor') || m.name.includes('detector') ? 'Acc' : 'R2' }}: {{ m.primary_metric.toFixed(3) }}</span>
-            <span class="model-metric">{{ m.name.includes('predictor') || m.name.includes('detector') ? 'F1' : 'MAE' }}: {{ m.secondary_metric.toFixed(3) }}</span>
-          </div>
-        </div>
-        <button class="btn-details" (click)="showModelDetails = !showModelDetails">
-          {{ showModelDetails ? 'Hide model details' : 'Show model details' }}
-        </button>
+
+      <!-- 1. Key Metrics -->
+      <app-key-metrics [data]="keyMetrics" />
+
+      <!-- 2. O2 Ring Oximetry -->
+      <app-oximetry-row [data]="oximetryData" *ngIf="oximetryData" />
+
+      <!-- Two-column layout for Summary + Insights -->
+      <div class="two-col" *ngIf="aiSummaryText || insights.length">
+        <!-- 3. AI Session Summary -->
+        <app-ai-summary [summaryText]="aiSummaryText" *ngIf="aiSummaryText" />
+        <!-- 4. Therapy Insights -->
+        <app-therapy-insights [insights]="insights" *ngIf="insights.length" />
       </div>
 
+      <!-- 5. STR Daily Metrics -->
+      <app-str-metrics [data]="strMetrics" *ngIf="strMetrics" />
+
+      <!-- 6. Sleep Events Breakdown -->
+      <app-events-breakdown [data]="eventsData" *ngIf="eventsData" />
+
+      <!-- 7. Therapy Pressure -->
+      <app-pressure-section [data]="pressureData" *ngIf="pressureData" />
+
+      <!-- 8. Respiratory Metrics -->
+      <app-respiratory-metrics [data]="respiratoryData" *ngIf="respiratoryData" />
+
+      <!-- 9. Real-Time Status -->
+      <app-realtime-status [data]="realtimeData" *ngIf="realtimeData" />
+
+      <!-- 10. ML Intelligence -->
+      <app-ml-intelligence [mlStatus]="mlStatus" [mlPredictions]="mlPredictions"
+        (runInference)="runInference()" [inferring]="inferring" *ngIf="mlStatus?.models_loaded" />
+
+      <!-- 11. Historical Charts -->
       <div class="charts">
         <div class="chart-container">
           <canvas #ahiChart></canvas>
@@ -139,64 +122,22 @@ const MODE_LABELS: Record<string, string> = {
     </div>
   `,
   styles: [`
-    .dashboard { padding: 1.5rem; }
-    h2 { color: #e0e0e0; margin-bottom: 1rem; }
-    .cards { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.5rem; }
-    .section-label { color: #888; font-size: 0.9rem; margin: 0.5rem 0; font-weight: normal; }
+    .dashboard { padding: 1.5rem; max-width: 1200px; margin: 0 auto; }
+    h2 { color: #e0e0e0; margin-bottom: 0.25rem; font-size: 1.3rem; }
+    .dash-subtitle { color: #888; font-size: 0.85rem; margin-bottom: 1.25rem; }
     .live-banner { background: #1a2a1a; border: 1px solid #2d5a2d; border-radius: 10px; padding: 1rem 1.5rem; margin-bottom: 1.5rem; }
-    .live-banner .cards { margin-bottom: 0; }
     .live-indicator { display: flex; align-items: center; gap: 0.5rem; color: #4ade80; font-weight: 700; font-size: 0.85rem; letter-spacing: 0.1em; margin-bottom: 0.75rem; }
     .live-dot { width: 10px; height: 10px; border-radius: 50%; background: #4ade80; animation: pulse-live 1.5s ease-in-out infinite; }
     @keyframes pulse-live { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
     .live-gauges { display: flex; gap: 1.5rem; flex-wrap: wrap; justify-content: center; }
     .gauge-container { display: flex; flex-direction: column; align-items: center; }
     .gauge-label { color: #888; font-size: 0.75rem; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.05em; }
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1.5rem; }
+    @media (max-width: 900px) { .two-col { grid-template-columns: 1fr; } }
     .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
     .chart-container { background: #1e1e2f; border: 1px solid #333; border-radius: 8px; padding: 1rem; }
     .chart-container.wide { grid-column: 1 / -1; }
     @media (max-width: 768px) { .charts { grid-template-columns: 1fr; } }
-
-    /* ML Insights */
-    .ml-section {
-      background: #1e1e2f; border: 1px solid #333; border-radius: 8px;
-      padding: 1.25rem; margin-bottom: 1.5rem;
-    }
-    .ml-section h3 { color: #ce93d8; margin: 0 0 1rem; font-size: 1rem; }
-    .ml-cards { display: flex; gap: 1rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
-    .ml-card {
-      flex: 1; min-width: 120px; background: #15152a; border: 1px solid #333;
-      border-radius: 6px; padding: 0.75rem; text-align: center;
-    }
-    .ml-label { color: #888; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }
-    .ml-value { color: #e0e0e0; font-size: 1.5rem; font-weight: 700; margin: 0.25rem 0; }
-    .ml-unit { color: #666; font-size: 0.7rem; }
-    .risk-high { color: #ef5350; }
-    .anomaly-normal { color: #66bb6a; }
-    .anomaly-warn { color: #ffa726; }
-    .ml-meta {
-      display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
-      font-size: 0.8rem; color: #888; margin-bottom: 0.5rem;
-    }
-    .ml-meta-item { }
-    .btn-inference {
-      background: #7e57c2; color: #fff; border: none; border-radius: 4px;
-      padding: 0.35rem 1rem; font-size: 0.8rem; font-weight: 600;
-      cursor: pointer; margin-left: auto;
-    }
-    .btn-inference:hover { background: #9575cd; }
-    .btn-inference:disabled { opacity: 0.5; cursor: not-allowed; }
-    .btn-details {
-      background: none; border: none; color: #64b5f6; font-size: 0.75rem;
-      cursor: pointer; padding: 0; margin-top: 0.5rem;
-    }
-    .btn-details:hover { text-decoration: underline; }
-    .ml-model-metrics { margin-top: 0.5rem; }
-    .model-row {
-      display: flex; gap: 1rem; padding: 0.25rem 0; font-size: 0.8rem;
-      border-bottom: 1px solid #2a2a3d;
-    }
-    .model-name { color: #90caf9; min-width: 160px; }
-    .model-metric { color: #aaa; font-family: monospace; }
   `]
 })
 export class DashboardComponent implements OnInit, AfterViewInit {
@@ -224,19 +165,38 @@ export class DashboardComponent implements OnInit, AfterViewInit {
   private charts: Chart[] = [];
   private liveCharts: Chart[] = [];
 
-  // O2Ring oximetry
-  oxiAvgSpo2 = '';
-  oxiAvgHr = '';
-  oxiOdi = '';
-  oxiSpo2Num = 0;
+  // Section data
+  keyMetrics: KeyMetricsData | null = null;
+  oximetryData: OximetryRowData | null = null;
+  aiSummaryText = '';
+  insights: any[] = [];
+  strMetrics: StrMetricsData | null = null;
+  eventsData: EventsBreakdownData | null = null;
+  pressureData: PressureSectionData | null = null;
+  respiratoryData: RespiratoryMetricsData | null = null;
+  realtimeData: RealtimeStatusData | null = null;
 
   // ML state
   mlStatus: any = null;
   mlPredictions: any = null;
   inferring = false;
-  showModelDetails = false;
 
   constructor(private api: CpapApiService) {}
+
+  fmtDuration(val: string | number | undefined): string {
+    const hours = +(val || 0);
+    if (hours <= 0) return '0m';
+    const totalMins = Math.round(hours * 60);
+    const h = Math.floor(totalMins / 60);
+    const m = totalMins % 60;
+    return h > 0 ? `${h}h ${String(m).padStart(2, '0')}m` : `${m}m`;
+  }
+
+  formatDate(dateStr: string): string {
+    if (!dateStr) return '';
+    const d = new Date(dateStr + 'T12:00:00');
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  }
 
   ngOnInit() {
     // Check for live session + O2Ring data
@@ -248,6 +208,14 @@ export class DashboardComponent implements OnInit, AfterViewInit {
         this.liveSpO2 = rt.oximetry.spo2 > 0 ? String(rt.oximetry.spo2) : '';
         this.liveHR = rt.oximetry.hr > 0 ? String(rt.oximetry.hr) : '';
       }
+      this.realtimeData = {
+        sessionStatus: rt.session ? 'active' : 'completed',
+        sessionDuration: rt.session?.duration_hours || '',
+        lastSessionTime: '',
+        currentPressure: rt.session?.current_pressure || 0,
+        minPressure: rt.session?.min_pressure || 0,
+        maxPressure: rt.session?.max_pressure || 0,
+      };
       setTimeout(() => this.renderLiveCharts(), 50);
     });
 
@@ -256,12 +224,83 @@ export class DashboardComponent implements OnInit, AfterViewInit {
       const mode = d.latest_night.therapy_mode || '0';
       this.modeName = MODE_LABELS[mode] || 'Unknown';
       this.isCpapMode = mode === '0';
-      setTimeout(() => {
-        if (this.ahiChartRef) this.renderCharts();
-      }, 50);
 
-      // Fetch O2Ring oximetry for latest night
+      // Populate key metrics (initial from STR, overridden by sessions below)
+      this.keyMetrics = {
+        ahi: parseFloat(d.latest_night.ahi) || 0,
+        usageHours: parseFloat(d.latest_night.usage_hours) || 0,
+        leakP95: parseFloat(d.latest_night.leak_avg) || 0,
+        totalEvents: 0,
+        compliancePct: parseFloat(d.latest_night.compliance_pct) || 0,
+        sessionActive: !!this.liveSession,
+        mode: this.modeName,
+      };
+
+      // Fetch session-aggregated data to match sessions table values
+      this.api.getSessions(7, 1).subscribe({
+        next: (sessions) => {
+          if (sessions?.length && this.keyMetrics) {
+            const s = sessions[0];
+            this.keyMetrics.ahi = parseFloat(s.ahi) || this.keyMetrics.ahi;
+            this.keyMetrics.usageHours = parseFloat(s.duration_hours) || this.keyMetrics.usageHours;
+            this.keyMetrics.totalEvents = parseInt(s.total_events) || 0;
+          }
+        },
+        error: () => {},
+      });
+
+      // Fetch STR daily summary for latest night
       if (d.latest_night.date) {
+        this.api.getDailySummaryForDate(d.latest_night.date).subscribe({
+          next: (rows) => {
+            if (rows?.length) {
+              const r = rows[0];
+              this.strMetrics = {
+                ahi: parseFloat(r.ahi) || 0,
+                usageHours: (parseFloat(r.duration_minutes) || 0) / 60,
+                leakP95: parseFloat(r.leak_95) || 0,
+                oai: parseFloat(r.oai) || 0,
+                cai: parseFloat(r.cai) || 0,
+                hi: parseFloat(r.hi) || 0,
+                rin: parseFloat(r.rin) || 0,
+              };
+              const oa = Math.round((parseFloat(r.oai) || 0) * (parseFloat(r.duration_minutes) || 0) / 60);
+              const ca = Math.round((parseFloat(r.cai) || 0) * (parseFloat(r.duration_minutes) || 0) / 60);
+              const hy = Math.round((parseFloat(r.hi) || 0) * (parseFloat(r.duration_minutes) || 0) / 60);
+              const re = Math.round((parseFloat(r.rin) || 0) * (parseFloat(r.duration_minutes) || 0) / 60);
+              this.eventsData = {
+                obstructive: oa, central: ca, hypopneas: hy, reras: re,
+                totalEvents: oa + ca + hy + re,
+                maxEventDuration: 0, avgEventDuration: 0,
+              };
+              if (this.keyMetrics) {
+                this.keyMetrics.totalEvents = oa + ca + hy + re;
+                this.keyMetrics.leakP95 = parseFloat(r.leak_95) || 0;
+              }
+              this.pressureData = {
+                avgPressure: parseFloat(r.mask_press_50) || 0,
+                p95Pressure: parseFloat(r.mask_press_95) || 0,
+                p50Pressure: parseFloat(r.mask_press_50) || 0,
+                maxPressure: parseFloat(r.mask_press_max) || 0,
+                leakP95: parseFloat(r.leak_95) || 0,
+                currentPressure: 0,
+              };
+              this.respiratoryData = {
+                respRate: parseFloat(r.resp_rate_50) || 0,
+                tidalVolume: (parseFloat(r.tid_vol_50) || 0) * 1000,
+                minuteVent: parseFloat(r.min_vent_50) || 0,
+                inspiratoryTime: 0, expiratoryTime: 0, ieRatio: 0,
+                flowLimitation: 0, avgFlowRate: 0, currentFlowRate: 0,
+              };
+              if (this.realtimeData) {
+                this.realtimeData.lastSessionTime = d.latest_night.date;
+              }
+            }
+          },
+          error: () => {},
+        });
+
+        // Fetch O2Ring oximetry for latest night
         this.api.getSessionOximetry(d.latest_night.date).subscribe({
           next: (oxi) => {
             if (oxi?.spo2?.length) {
@@ -269,19 +308,13 @@ export class DashboardComponent implements OnInit, AfterViewInit {
               const validHr = oxi.heart_rate.map(v => Number(v)).filter(v => !isNaN(v) && v > 0 && v < 255);
               if (validSpo2.length) {
                 const avg = validSpo2.reduce((a, b) => a + b, 0) / validSpo2.length;
-                this.oxiAvgSpo2 = avg.toFixed(1);
-                this.oxiSpo2Num = avg;
-
-                // Calculate ODI (3% desaturations per hour)
-                // ~4s sample interval, so recording hours = samples * 4 / 3600
+                let odi = 0;
                 const hours = validSpo2.length * 4 / 3600;
                 if (hours > 0) {
-                  let desatCount = 0;
-                  let inDesat = false;
-                  const window = 30; // ~120s at 4s intervals
+                  let desatCount = 0, inDesat = false;
                   for (let i = 0; i < validSpo2.length; i++) {
                     let baseline = validSpo2[i];
-                    const start = Math.max(0, i - window);
+                    const start = Math.max(0, i - 30);
                     for (let j = start; j < i; j++) {
                       if (validSpo2[j] > baseline) baseline = validSpo2[j];
                     }
@@ -289,17 +322,40 @@ export class DashboardComponent implements OnInit, AfterViewInit {
                     if (drop >= 3 && !inDesat) { desatCount++; inDesat = true; }
                     else if (drop < 1) { inDesat = false; }
                   }
-                  this.oxiOdi = (desatCount / hours).toFixed(1);
+                  odi = desatCount / hours;
                 }
-              }
-              if (validHr.length) {
-                this.oxiAvgHr = (validHr.reduce((a, b) => a + b, 0) / validHr.length).toFixed(0);
+                const avgHr = validHr.length
+                  ? validHr.reduce((a, b) => a + b, 0) / validHr.length : 0;
+                this.oximetryData = {
+                  spo2: avg, heartRate: Math.round(avgHr), odi,
+                  active: false,
+                };
               }
             }
           },
           error: () => {},
         });
       }
+
+      setTimeout(() => {
+        if (this.ahiChartRef) this.renderCharts();
+      }, 50);
+    });
+
+    // Load AI summary
+    this.api.getLatestSummary().subscribe({
+      next: (rows) => {
+        if (rows?.length && rows[0].summary_text) {
+          this.aiSummaryText = rows[0].summary_text;
+        }
+      },
+      error: () => {},
+    });
+
+    // Load therapy insights
+    this.api.getInsights().subscribe({
+      next: (items) => { this.insights = items || []; },
+      error: () => {},
     });
 
     // Load ML status + predictions
@@ -386,8 +442,11 @@ export class DashboardComponent implements OnInit, AfterViewInit {
     const ahi = parseFloat(this.liveSession.ahi || '0');
     const hours = parseFloat(this.liveSession.duration_hours || '0');
     const ahiColor = ahi < 5 ? '#4ade80' : ahi < 15 ? '#fb923c' : '#ef4444';
+    // Duration thresholds: <4h red (below insurance compliance min),
+    // 4–6h yellow (compliant but short), >=6h green.
+    const durationColor = hours < 4 ? '#ef4444' : hours < 6 ? '#fbbf24' : '#4ade80';
     makeGauge(this.ahiGaugeRef, ahi, 10, ahiColor, 'events/h');
-    makeGauge(this.durationGaugeRef, hours, 10, '#667eea', 'hours');
+    makeGauge(this.durationGaugeRef, hours, 10, durationColor, this.fmtDuration(hours));
 
     if (this.liveSpO2) {
       const spo2 = parseInt(this.liveSpO2);

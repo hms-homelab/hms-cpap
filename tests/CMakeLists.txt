@@ -20,6 +20,7 @@ list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*main\\.cpp$")
 list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/controllers/.*")
 list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/web/.*")
 list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/WiFiSwitchClient\\.cpp$")
+list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/cli/.*\\.cpp$")
 # EDFParser + CPAPModels now provided by cpapdash-parser library
 list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/parsers/EDFParser\\.cpp$")
 list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/models/CPAPModels\\.cpp$")
@@ -51,12 +52,16 @@ set(TEST_SOURCES
     ml/test_RandomForest.cpp
     ml/test_FeatureEngine.cpp
     ml/test_MLTrainingService.cpp
+    ml/test_sleep_stage_feature_extractor.cpp
+    ml/test_hmm_smoother.cpp
+    ml/test_sleep_stage_trainer.cpp
     services/test_BackfillService.cpp
     services/test_SessionDiscoveryService.cpp
     services/test_OximetryService.cpp
     services/test_FysetcSectorCollectorService.cpp
     clients/test_O2RingClient.cpp
     clients/test_O2RingBleProtocol.cpp
+    services/test_sleep_stage_classifier.cpp
 )
 
 # Create test executable

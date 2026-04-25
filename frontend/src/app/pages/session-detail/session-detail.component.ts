@@ -73,11 +73,18 @@ const SIGNAL_DEFS: SignalDef[] = [
       </div>
 
       <div class="cards">
-        <app-metric-card label="AHI" [value]="session.ahi || '0'" unit="events/h" />
-        <app-metric-card label="Duration" [value]="isLive ? liveDuration : (session.duration_hours || '0') + ' hours'" unit="" />
-        <app-metric-card label="Events" [value]="session.total_events || '0'" unit="" />
-        <app-metric-card label="SpO2" [value]="session.avg_spo2 || '-'" unit="%" />
-        <app-metric-card label="Heart Rate" [value]="session.avg_heart_rate || '-'" unit="bpm" />
+        <app-metric-card label="AHI" [value]="session.ahi || '0'" unit="events/h"
+          icon="fa-solid fa-heart-pulse" [iconColor]="ahiColor" />
+        <app-metric-card label="Duration" [value]="isLive ? liveDuration : fmtDuration(session.duration_hours)" unit=""
+          icon="fa-solid fa-clock-rotate-left" iconColor="#60a5fa" />
+        <app-metric-card label="Events" [value]="session.total_events || '0'" unit=""
+          icon="fa-solid fa-triangle-exclamation" [iconColor]="eventsColor" />
+        <app-metric-card *ngIf="hasSpo2"
+          label="SpO2" [value]="displaySpo2.toFixed(1)" unit="%"
+          icon="fa-solid fa-droplet" [iconColor]="spo2Color" />
+        <app-metric-card *ngIf="hasHr"
+          label="Heart Rate" [value]="'' + displayHr" unit="bpm"
+          icon="fa-solid fa-heart-pulse" iconColor="#f06292" />
       </div>
 
       <div class="event-summary" *ngIf="session.total_events && +session.total_events > 0">
@@ -303,16 +310,51 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
     // Use actual parsed BRP data duration (not wall clock).
     // Wall clock (now - session_start) overestimates because it includes
     // the delay before Fysetc starts serving files and any downtime gaps.
-    const hours = +(this.session.duration_hours || 0);
-    if (hours > 0) {
-      const totalMins = Math.round(hours * 60);
-      const h = Math.floor(totalMins / 60);
-      const m = totalMins % 60;
-      this.liveDuration = h > 0 ? `${h}h ${m}m` : `${m}m`;
-    } else {
-      this.liveDuration = '0m';
-    }
+    this.liveDuration = this.fmtDuration(this.session.duration_hours);
   }
+
+  fmtDuration(val: string | number | undefined): string {
+    const hours = +(val || 0);
+    if (hours <= 0) return '0m';
+    const totalMins = Math.round(hours * 60);
+    const h = Math.floor(totalMins / 60);
+    const m = totalMins % 60;
+    return h > 0 ? `${h}h ${String(m).padStart(2, '0')}m` : `${m}m`;
+  }
+
+  get ahiColor(): string {
+    const ahi = +(this.session?.ahi || 0);
+    return ahi < 5 ? '#4ade80' : ahi < 15 ? '#fb923c' : '#ef4444';
+  }
+  get eventsColor(): string {
+    const e = +(this.session?.total_events || 0);
+    return e < 10 ? '#4ade80' : e < 30 ? '#fb923c' : '#ef4444';
+  }
+  get spo2Color(): string {
+    const v = this.displaySpo2;
+    return v >= 95 ? '#4ade80' : v >= 90 ? '#fb923c' : v > 0 ? '#ef4444' : '#888';
+  }
+
+  get displaySpo2(): number {
+    const machine = +(this.session?.avg_spo2 || 0);
+    if (machine > 0) return machine;
+    if (!this.oximetryData?.spo2?.length) return 0;
+    const valid = this.oximetryData.spo2
+      .map(v => Number(v)).filter(v => !isNaN(v) && v > 0 && v < 255);
+    return valid.length ? valid.reduce((a, b) => a + b, 0) / valid.length : 0;
+  }
+
+  get displayHr(): number {
+    const machine = +(this.session?.avg_heart_rate || 0);
+    if (machine > 0) return machine;
+    if (!this.oximetryData?.heart_rate?.length) return 0;
+    const valid = (this.oximetryData.heart_rate as any[])
+      .map(v => Number(v)).filter(v => !isNaN(v) && v > 0 && v < 255);
+    return valid.length ? Math.round(valid.reduce((a, b) => a + b, 0) / valid.length) : 0;
+  }
+
+  get hasSpo2(): boolean { return this.displaySpo2 > 0; }
+  get hasHr(): boolean { return this.displayHr > 0; }
 
   private loadSession() {
     this.destroyCharts();

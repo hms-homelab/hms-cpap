@@ -1,7 +1,9 @@
 #include "web/QueryService.h"
+#include "services/InsightsEngine.h"
 #include <sstream>
 #include <algorithm>
 #include <ctime>
+#include <iostream>
 
 namespace hms_cpap {
 
@@ -226,6 +228,73 @@ Json::Value QueryService::getSummaries(const std::string& period, int limit) {
     q += " ORDER BY created_at DESC LIMIT " + std::to_string(limit);
 
     return db_->executeQuery(q, params);
+}
+
+static double jdouble(const Json::Value& obj, const char* key) {
+    auto v = obj.get(key, Json::nullValue);
+    if (v.isNull()) return 0;
+    if (v.isDouble() || v.isInt()) return v.asDouble();
+    if (v.isString()) { try { return std::stod(v.asString()); } catch (...) {} }
+    return 0;
+}
+
+Json::Value QueryService::getInsights(int days) {
+    std::string q =
+        "SELECT record_date, duration_minutes, ahi, hi, ai, oai, cai, uai, rin,"
+        " COALESCE(csr, 0) as csr,"
+        " mask_press_50, mask_press_95, mask_press_max,"
+        " leak_50, leak_95, leak_max,"
+        " spo2_50, spo2_95,"
+        " resp_rate_50, tid_vol_50, min_vent_50,"
+        " COALESCE(mode, 0) as mode, epr_level, pressure_setting"
+        " FROM cpap_daily_summary"
+        " WHERE device_id = " + sql::param(1, dt_) +
+        " AND record_date >= " + sql::currentDateMinus(days, dt_) +
+        " ORDER BY record_date";
+
+    auto rows = db_->executeQuery(q, {device_id_});
+
+    std::vector<STRDailyRecord> records;
+    for (const auto& r : rows) {
+        STRDailyRecord rec;
+        rec.device_id = device_id_;
+        std::string date_str = r.get("record_date", "").asString();
+        if (date_str.size() >= 10) {
+            std::tm tm{};
+            tm.tm_year = std::stoi(date_str.substr(0, 4)) - 1900;
+            tm.tm_mon  = std::stoi(date_str.substr(5, 2)) - 1;
+            tm.tm_mday = std::stoi(date_str.substr(8, 2));
+            tm.tm_hour = 12;
+            rec.record_date = std::chrono::system_clock::from_time_t(std::mktime(&tm));
+        }
+        rec.duration_minutes = jdouble(r, "duration_minutes");
+        rec.ahi = jdouble(r, "ahi");
+        rec.hi = jdouble(r, "hi");
+        rec.ai = jdouble(r, "ai");
+        rec.oai = jdouble(r, "oai");
+        rec.cai = jdouble(r, "cai");
+        rec.uai = jdouble(r, "uai");
+        rec.rin = jdouble(r, "rin");
+        rec.csr = jdouble(r, "csr");
+        rec.mask_press_50 = jdouble(r, "mask_press_50");
+        rec.mask_press_95 = jdouble(r, "mask_press_95");
+        rec.mask_press_max = jdouble(r, "mask_press_max");
+        rec.leak_50 = jdouble(r, "leak_50");
+        rec.leak_95 = jdouble(r, "leak_95");
+        rec.leak_max = jdouble(r, "leak_max");
+        rec.spo2_50 = jdouble(r, "spo2_50");
+        rec.spo2_95 = jdouble(r, "spo2_95");
+        rec.resp_rate_50 = jdouble(r, "resp_rate_50");
+        rec.tid_vol_50 = jdouble(r, "tid_vol_50");
+        rec.min_vent_50 = jdouble(r, "min_vent_50");
+        rec.mode = static_cast<int>(jdouble(r, "mode"));
+        rec.epr_level = jdouble(r, "epr_level");
+        rec.pressure_setting = jdouble(r, "pressure_setting");
+        records.push_back(rec);
+    }
+
+    auto insights = InsightsEngine::analyze(records);
+    return InsightsEngine::toJson(insights);
 }
 
 Json::Value QueryService::getSessionSignals(const std::string& date) {

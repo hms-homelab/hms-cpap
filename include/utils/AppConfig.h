@@ -79,6 +79,14 @@ struct AppConfig {
         std::string mule_url;           // e.g. "http://192.168.2.74"
     } o2ring;
 
+    // Sleep Stage Inference (optional)
+    struct SleepStage {
+        bool enabled = false;
+        bool live_inference = true;
+        std::string model_dir;          // default: empty (uses dataDir()/models)
+        std::string model_version = "shhs-rf-v1";
+    } sleep_stage;
+
     // Fysetc TCP (raw sector push mode)
     struct Fysetc {
         bool enabled = false;
@@ -203,6 +211,19 @@ struct AppConfig {
             int v = envInt("ML_MIN_DAYS", 0);
             if (v > 0) ml_training.min_days = v;
         }
+
+        // Sleep Stage
+        if (!sleep_stage.enabled && env("SLEEP_STAGE_ENABLED") == "true")
+            sleep_stage.enabled = true;
+        {
+            auto v = env("SLEEP_STAGE_LIVE");
+            if (v == "false" || v == "0") sleep_stage.live_inference = false;
+        }
+        if (sleep_stage.model_dir.empty()) sleep_stage.model_dir = env("SLEEP_STAGE_MODEL_DIR");
+        if (sleep_stage.model_version == "shhs-rf-v1") {
+            auto v = env("SLEEP_STAGE_MODEL_VERSION");
+            if (!v.empty()) sleep_stage.model_version = v;
+        }
     }
 
     // Get default data directory (~/.hms-cpap/)
@@ -302,6 +323,14 @@ struct AppConfig {
                 if (o.contains("mule_url"))             config.o2ring.mule_url = o["mule_url"];
             }
 
+            if (j.contains("sleep_stage")) {
+                auto& ss = j["sleep_stage"];
+                if (ss.contains("enabled"))        config.sleep_stage.enabled = ss["enabled"];
+                if (ss.contains("live_inference"))  config.sleep_stage.live_inference = ss["live_inference"];
+                if (ss.contains("model_dir"))      config.sleep_stage.model_dir = ss["model_dir"];
+                if (ss.contains("model_version"))  config.sleep_stage.model_version = ss["model_version"];
+            }
+
             return true;
         } catch (const std::exception& e) {
             std::cerr << "Config load error: " << e.what() << std::endl;
@@ -363,6 +392,11 @@ struct AppConfig {
             j["o2ring"]["mode"] = o2ring.mode;
             j["o2ring"]["mule_url"] = o2ring.mule_url;
 
+            j["sleep_stage"]["enabled"] = sleep_stage.enabled;
+            j["sleep_stage"]["live_inference"] = sleep_stage.live_inference;
+            j["sleep_stage"]["model_dir"] = sleep_stage.model_dir;
+            j["sleep_stage"]["model_version"] = sleep_stage.model_version;
+
             std::ofstream f(path);
             f << j.dump(2);
             return true;
@@ -420,6 +454,11 @@ struct AppConfig {
         j["o2ring"]["enabled"] = o2ring.enabled;
         j["o2ring"]["mode"] = o2ring.mode;
         j["o2ring"]["mule_url"] = o2ring.mule_url;
+
+        j["sleep_stage"]["enabled"] = sleep_stage.enabled;
+        j["sleep_stage"]["live_inference"] = sleep_stage.live_inference;
+        j["sleep_stage"]["model_dir"] = sleep_stage.model_dir;
+        j["sleep_stage"]["model_version"] = sleep_stage.model_version;
 
         return j;
     }

@@ -82,6 +82,17 @@ public:
      */
     std::chrono::system_clock::time_point getLastBurstTime() const;
 
+    /// Lifecycle decision for the Fysetc TCP listener on a source change.
+    enum class FysetcLifecycleAction { None, Start, Stop };
+
+    /// Pure decision: what to do with the fysetc TCP server when source changes.
+    /// Start when switching into fysetc mode without a live server.
+    /// Stop when switching out of fysetc mode with a live server.
+    static FysetcLifecycleAction decideFysetcLifecycle(
+        const std::string& old_source,
+        const std::string& new_source,
+        bool server_exists);
+
 private:
     // Configuration
     int burst_interval_seconds_;
@@ -252,6 +263,10 @@ private:
     void snapshotConfig(ConfigSnapshot& snap);
     /// (Re)create MQTT subscriptions for commands
     void setupMqttSubscriptions();
+    /// Create and start fysetc_server_ (idempotent; reads port/bind from env)
+    void startFysetcServer();
+    /// Stop and destroy fysetc_server_ (safe to call when null)
+    void stopFysetcServer();
 };
 
 } // namespace hms_cpap

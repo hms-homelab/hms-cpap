@@ -117,6 +117,10 @@ void printConfiguration() {
     if (source == "local") {
         std::cout << "  Source:             Local directory" << std::endl;
         std::cout << "  Local Dir:          " << hms_cpap::ConfigManager::get("CPAP_LOCAL_DIR", "(not set)") << std::endl;
+    } else if (source == "fysetc") {
+        std::cout << "  Source:             Fysetc" << std::endl;
+        std::cout << "  Listen:             " << hms_cpap::ConfigManager::get("FYSETC_LISTEN_BIND", "0.0.0.0")
+                  << ":" << hms_cpap::ConfigManager::getInt("FYSETC_LISTEN_PORT", 9000) << std::endl;
     } else {
         std::cout << "  Source:             ez Share" << std::endl;
         std::cout << "  ez Share URL:       " << hms_cpap::ConfigManager::get("EZSHARE_BASE_URL", "http://192.168.4.1") << std::endl;
@@ -526,6 +530,10 @@ int main(int argc, char** argv) {
 
         if (src == "local") {
             std::cout << "   Source: Local directory at " << hms_cpap::ConfigManager::get("CPAP_LOCAL_DIR", "") << std::endl;
+        } else if (src == "fysetc") {
+            std::cout << "   Source: Fysetc TCP on "
+                      << hms_cpap::ConfigManager::get("FYSETC_LISTEN_BIND", "0.0.0.0") << ":"
+                      << hms_cpap::ConfigManager::getInt("FYSETC_LISTEN_PORT", 9000) << std::endl;
         } else {
             std::cout << "   Source: HTTP at " << hms_cpap::ConfigManager::get("EZSHARE_BASE_URL", "http://192.168.4.1") << std::endl;
         }
@@ -692,7 +700,7 @@ int main(int argc, char** argv) {
             }
 
             // Wire BackfillService (local source mode only)
-            if (src == "local" || src == "ezshare" || src == "fysetc_poll") {
+            if (src == "local" || src == "ezshare") {
                 hms_cpap::BackfillService::Config bf_cfg;
                 bf_cfg.device_id = config.device_id;
                 bf_cfg.device_name = config.device_name;
@@ -729,20 +737,21 @@ int main(int argc, char** argv) {
                 .setDocumentRoot(static_dir)
                 .setIdleConnectionTimeout(120);
 
-            // SPA fallback: serve index.html content for 404s so Angular handles routing
-            std::string index_html;
-            {
-                std::ifstream ifs(static_dir + "/index.html");
-                if (ifs) index_html.assign(std::istreambuf_iterator<char>(ifs), {});
-            }
-            if (!index_html.empty()) {
+            // SPA fallback: read index.html from disk on each 404 so
+            // frontend rebuilds take effect without restarting the service
+            std::string spa_index_path = static_dir + "/index.html";
+            if (std::filesystem::exists(spa_index_path)) {
                 drogon::app().setCustomErrorHandler(
-                    [index_html](drogon::HttpStatusCode code) -> drogon::HttpResponsePtr {
+                    [spa_index_path](drogon::HttpStatusCode code) -> drogon::HttpResponsePtr {
                         if (code == drogon::k404NotFound) {
-                            auto resp = drogon::HttpResponse::newHttpResponse();
-                            resp->setContentTypeCode(drogon::CT_TEXT_HTML);
-                            resp->setBody(index_html);
-                            return resp;
+                            std::ifstream ifs(spa_index_path);
+                            if (ifs) {
+                                std::string html(std::istreambuf_iterator<char>(ifs), {});
+                                auto resp = drogon::HttpResponse::newHttpResponse();
+                                resp->setContentTypeCode(drogon::CT_TEXT_HTML);
+                                resp->setBody(std::move(html));
+                                return resp;
+                            }
                         }
                         Json::Value err;
                         err["error"] = static_cast<int>(code);

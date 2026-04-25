@@ -1320,3 +1320,63 @@ TEST_F(BurstCollectorServiceTest, ParserAlwaysReturnsInProgress) {
         << "Default session status should be IN_PROGRESS";
 }
 
+// ============================================================================
+// FYSETC HOT-RELOAD LIFECYCLE TESTS
+// ============================================================================
+// Covers the pure decision function used by reloadConfig() to decide whether
+// to spin up or tear down the Fysetc TCP listener on a source-mode change.
+
+using FysetcAction = BurstCollectorService::FysetcLifecycleAction;
+
+TEST(FysetcLifecycle, StartWhenSwitchingInFromEzshareWithoutServer) {
+    EXPECT_EQ(BurstCollectorService::decideFysetcLifecycle("ezshare", "fysetc", false),
+              FysetcAction::Start);
+}
+
+TEST(FysetcLifecycle, StartWhenSwitchingInFromLocalWithoutServer) {
+    EXPECT_EQ(BurstCollectorService::decideFysetcLifecycle("local", "fysetc", false),
+              FysetcAction::Start);
+}
+
+TEST(FysetcLifecycle, NoActionWhenSwitchingInButServerAlreadyRunning) {
+    EXPECT_EQ(BurstCollectorService::decideFysetcLifecycle("ezshare", "fysetc", true),
+              FysetcAction::None);
+}
+
+TEST(FysetcLifecycle, StopWhenSwitchingOutToEzshare) {
+    EXPECT_EQ(BurstCollectorService::decideFysetcLifecycle("fysetc", "ezshare", true),
+              FysetcAction::Stop);
+}
+
+TEST(FysetcLifecycle, StopWhenSwitchingOutToLocal) {
+    EXPECT_EQ(BurstCollectorService::decideFysetcLifecycle("fysetc", "local", true),
+              FysetcAction::Stop);
+}
+
+TEST(FysetcLifecycle, NoActionWhenSwitchingOutWithoutRunningServer) {
+    // Defensive: should never happen in practice, but helper must handle it.
+    EXPECT_EQ(BurstCollectorService::decideFysetcLifecycle("fysetc", "ezshare", false),
+              FysetcAction::None);
+}
+
+TEST(FysetcLifecycle, NoActionWhenStayingFysetc) {
+    EXPECT_EQ(BurstCollectorService::decideFysetcLifecycle("fysetc", "fysetc", true),
+              FysetcAction::None);
+}
+
+TEST(FysetcLifecycle, NoActionWhenEzshareToLocal) {
+    EXPECT_EQ(BurstCollectorService::decideFysetcLifecycle("ezshare", "local", false),
+              FysetcAction::None);
+}
+
+TEST(FysetcLifecycle, NoActionWhenEmptyInitialSourceToEzshare) {
+    // First-ever reload where last_config_.source hasn't been populated.
+    EXPECT_EQ(BurstCollectorService::decideFysetcLifecycle("", "ezshare", false),
+              FysetcAction::None);
+}
+
+TEST(FysetcLifecycle, StartWhenEmptyInitialSourceToFysetc) {
+    EXPECT_EQ(BurstCollectorService::decideFysetcLifecycle("", "fysetc", false),
+              FysetcAction::Start);
+}
+

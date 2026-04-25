@@ -19,6 +19,7 @@ std::function<void()> CpapController::ml_train_trigger_;
 std::function<Json::Value()> CpapController::ml_status_getter_;
 std::function<void(const std::string&, const std::string&, const std::string&)> CpapController::backfill_trigger_;
 std::function<Json::Value()> CpapController::backfill_status_getter_;
+std::function<Json::Value()> CpapController::sleep_stage_status_getter_;
 
 void CpapController::setQueryService(std::shared_ptr<QueryService> qs) { qs_ = qs; }
 
@@ -51,7 +52,7 @@ void CpapController::health(const drogon::HttpRequestPtr&,
                              std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
     Json::Value j;
     j["status"] = "ok";
-    j["version"] = "4.0.4";
+    j["version"] = "4.1.0";
     j["service"] = "hms-cpap";
     cb(jsonResp(j));
 }
@@ -553,6 +554,160 @@ void CpapController::backfillScan(const drogon::HttpRequestPtr&,
     result["end_date"] = toIso(folders.back());
     result["local_dir"] = local_dir;
     cb(jsonResp(result));
+}
+
+// ── Sleep Stages ───────────────────────────────────────────────────────────
+
+void CpapController::sessionSleepStages(
+        const drogon::HttpRequestPtr&,
+        std::function<void(const drogon::HttpResponsePtr&)>&& cb,
+        const std::string& date) {
+    try {
+        if (!qs_) {
+            cb(jsonError("QueryService not initialized", drogon::k500InternalServerError));
+            return;
+        }
+
+        // Validate date format (YYYY-MM-DD)
+        if (date.size() != 10 || date[4] != '-' || date[7] != '-') {
+            cb(jsonError("Invalid date format, expected YYYY-MM-DD", drogon::k400BadRequest));
+            return;
+        }
+
+        // Query sleep stage epochs joined with sessions for this date.
+        // The cpap_sleep_stages table uses session_id FK to cpap_sessions.
+        std::string sql =
+            "SELECT ss.epoch_start_ts, ss.epoch_duration_sec, ss.stage, "
+            "ss.confidence, ss.provisional, ss.model_version "
+            "FROM cpap_sleep_stages ss "
+            "JOIN cpap_sessions s ON ss.session_id = s.id "
+            "WHERE s.session_start::date = '" + date + "' "
+            "ORDER BY ss.epoch_start_ts";
+
+        // Use the raw DB connection via QueryService's db handle
+        // Fall back to qs_ method if available, otherwise use static db_
+        auto db = qs_->getDb();
+        if (!db || !db->isConnected()) {
+            cb(jsonError("Database not connected", drogon::k503ServiceUnavailable));
+            return;
+        }
+
+        auto rows = db->executeQuery(sql);
+
+        // Build epochs array
+        Json::Value epochs(Json::arrayValue);
+        int wake_epochs = 0, light_epochs = 0, deep_epochs = 0, rem_epochs = 0;
+        int first_sleep = -1, first_rem = -1, first_deep = -1;
+        std::string model_version;
+
+        for (int i = 0; i < static_cast<int>(rows.size()); ++i) {
+            const auto& row = rows[i];
+            Json::Value e;
+            e["epoch_start"] = row.get("epoch_start_ts", "").asString();
+            e["epoch_duration_sec"] = row.get("epoch_duration_sec", "30").asInt();
+
+            int stage = 0;
+            auto stage_val = row.get("stage", "0");
+            if (stage_val.isString()) {
+                try { stage = std::stoi(stage_val.asString()); } catch (...) {}
+            } else {
+                stage = stage_val.asInt();
+            }
+            e["stage"] = stage;
+
+            // Stage name
+            const char* stage_names[] = {"Wake", "Light", "Deep", "REM"};
+            e["stage_name"] = (stage >= 0 && stage <= 3) ? stage_names[stage] : "Unknown";
+
+            double confidence = 0;
+            auto conf_val = row.get("confidence", "0");
+            if (conf_val.isString()) {
+                try { confidence = std::stod(conf_val.asString()); } catch (...) {}
+            } else {
+                confidence = conf_val.asDouble();
+            }
+            e["confidence"] = confidence;
+
+            bool provisional = false;
+            auto prov_val = row.get("provisional", "false");
+            if (prov_val.isString()) {
+                provisional = (prov_val.asString() == "true" || prov_val.asString() == "1" ||
+                               prov_val.asString() == "t");
+            } else {
+                provisional = prov_val.asBool();
+            }
+            e["provisional"] = provisional;
+
+            epochs.append(e);
+
+            // Accumulate for summary
+            switch (stage) {
+                case 0: ++wake_epochs; break;
+                case 1: ++light_epochs; break;
+                case 2: ++deep_epochs; break;
+                case 3: ++rem_epochs; break;
+            }
+            if (first_sleep < 0 && stage != 0) first_sleep = i;
+            if (first_rem < 0 && stage == 3) first_rem = i;
+            if (first_deep < 0 && stage == 2) first_deep = i;
+
+            if (model_version.empty()) {
+                model_version = row.get("model_version", "").asString();
+            }
+        }
+
+        // Build summary
+        Json::Value summary;
+        int total = static_cast<int>(rows.size());
+        summary["wake_minutes"] = wake_epochs / 2;
+        summary["light_minutes"] = light_epochs / 2;
+        summary["deep_minutes"] = deep_epochs / 2;
+        summary["rem_minutes"] = rem_epochs / 2;
+        summary["total_epochs"] = total;
+
+        int sleep_min = (light_epochs + deep_epochs + rem_epochs) / 2;
+        int total_min = total / 2;
+        summary["sleep_efficiency_pct"] = total_min > 0
+            ? std::round(1000.0 * sleep_min / total_min) / 10.0 : 0.0;
+
+        summary["rem_latency_min"] = (first_sleep >= 0 && first_rem >= 0)
+            ? (first_rem - first_sleep) / 2 : 0;
+        summary["first_deep_min"] = (first_sleep >= 0 && first_deep >= 0)
+            ? (first_deep - first_sleep) / 2 : 0;
+        summary["model_version"] = model_version;
+
+        Json::Value result;
+        result["date"] = date;
+        result["epochs"] = epochs;
+        result["summary"] = summary;
+        cb(jsonResp(result));
+
+    } catch (const std::exception& e) {
+        cb(jsonError(e.what(), drogon::k500InternalServerError));
+    }
+}
+
+void CpapController::sleepStageStatus(
+        const drogon::HttpRequestPtr&,
+        std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    if (sleep_stage_status_getter_) {
+        cb(jsonResp(sleep_stage_status_getter_()));
+    } else {
+        Json::Value result;
+        result["status"] = "not_configured";
+        cb(jsonResp(result));
+    }
+}
+
+void CpapController::insights(const drogon::HttpRequestPtr& req,
+                               std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    int days = 90;
+    if (auto p = req->getOptionalParameter<int>("days")) days = *p;
+    try {
+        cb(jsonResp(qs_->getInsights(days)));
+    } catch (const std::exception& e) {
+        cb(jsonError(e.what(), drogon::k500InternalServerError));
+    }
 }
 
 } // namespace hms_cpap

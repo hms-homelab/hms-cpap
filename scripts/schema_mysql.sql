@@ -175,3 +175,24 @@ CREATE TABLE IF NOT EXISTS cpap_summaries (
 
 CREATE INDEX idx_cpap_summaries_device_period
     ON cpap_summaries(device_id, period, range_end DESC);
+
+-- =============================================================================
+-- Sleep Stage Inference (Phase 20)
+-- =============================================================================
+
+-- Per-epoch sleep stage predictions (30s epochs)
+CREATE TABLE IF NOT EXISTS cpap_sleep_stages (
+    id                 INT AUTO_INCREMENT PRIMARY KEY,
+    session_id         INT NOT NULL,
+    epoch_start_ts     DATETIME(3) NOT NULL,
+    epoch_duration_sec INT NOT NULL DEFAULT 30,
+    stage              TINYINT NOT NULL,         -- 0=Wake 1=Light 2=Deep 3=REM
+    confidence         FLOAT NOT NULL,
+    provisional        TINYINT(1) NOT NULL DEFAULT 0,
+    model_version      VARCHAR(64) NOT NULL,
+    UNIQUE KEY uq_session_epoch (session_id, epoch_start_ts),
+    FOREIGN KEY (session_id) REFERENCES cpap_sessions(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE INDEX idx_cpap_sleep_stages_session
+    ON cpap_sleep_stages(session_id);

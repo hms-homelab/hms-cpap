@@ -18,10 +18,14 @@ public:
     Json::Value getTrend(const std::string& metric, int days);
     Json::Value getStatistics(const std::string& start, const std::string& end);
     Json::Value getSummaries(const std::string& period, int limit);
+    Json::Value getInsights(int days = 90);
     Json::Value getSessionSignals(const std::string& date);
     Json::Value getSessionVitals(const std::string& date, int interval);
     Json::Value getSessionEvents(const std::string& date);
     Json::Value getSessionOximetry(const std::string& date, int interval);
+
+    /// Access the underlying database (for ad-hoc queries by controller endpoints).
+    std::shared_ptr<IDatabase> getDb() const { return db_; }
 
 private:
     std::shared_ptr<IDatabase> db_;

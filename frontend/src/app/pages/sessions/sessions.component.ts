@@ -26,14 +26,18 @@ import { SessionListItem } from '../../models/session.model';
               <span *ngIf="isLive(s)" class="live-badge">LIVE</span>
               <span *ngIf="!isLive(s)" class="done-badge">Done</span>
             </td>
-            <td>{{ isLive(s) ? liveDuration(s) : s.duration_hours + 'h' }}</td>
-            <td [class.elevated]="+s.ahi > 5">{{ s.ahi || '-' }}</td>
+            <td>{{ fmtDuration(s.duration_hours) }}</td>
+            <td [class.elevated]="+s.ahi > 5">{{ (+s.ahi).toFixed(1) || '-' }}</td>
             <td>{{ s.total_events || '-' }}</td>
             <td>{{ s.obstructive_apneas || '-' }}</td>
             <td>{{ s.central_apneas || '-' }}</td>
             <td>{{ s.hypopneas || '-' }}</td>
             <td>{{ s.reras || '-' }}</td>
-            <td>{{ s.avg_spo2 ? s.avg_spo2 + '%' : '-' }}</td>
+            <td>
+              <span *ngIf="s.avg_spo2 && +s.avg_spo2 > 0">{{ s.avg_spo2 }}%</span>
+              <span *ngIf="!(s.avg_spo2 && +s.avg_spo2 > 0) && oxiMap[s.sleep_day || sleepDay(s.session_start)]">{{ oxiMap[s.sleep_day || sleepDay(s.session_start)] }}%</span>
+              <span *ngIf="!(s.avg_spo2 && +s.avg_spo2 > 0) && !oxiMap[s.sleep_day || sleepDay(s.session_start)]">-</span>
+            </td>
           </tr>
         </tbody>
       </table>
@@ -63,13 +67,13 @@ import { SessionListItem } from '../../models/session.model';
 })
 export class SessionsComponent implements OnInit, OnDestroy {
   sessions: SessionListItem[] = [];
+  oxiMap: Record<string, string> = {};
   private refreshTimer: any = null;
 
   constructor(private api: CpapApiService, private cdr: ChangeDetectorRef) {}
 
   ngOnInit() {
     this.loadSessions();
-    // Refresh every 30s to detect new live sessions or session completion
     this.refreshTimer = setInterval(() => this.loadSessions(), 30000);
   }
 
@@ -79,26 +83,49 @@ export class SessionsComponent implements OnInit, OnDestroy {
 
   private loadSessions() {
     this.api.getSessions(30, 30).subscribe({
-      next: s => { this.sessions = s; this.cdr.detectChanges(); },
+      next: s => {
+        this.sessions = s;
+        this.loadOximetryForSessions(s);
+        this.cdr.detectChanges();
+      },
       error: e => console.error('Sessions error:', e)
     });
+  }
+
+  private loadOximetryForSessions(sessions: SessionListItem[]) {
+    const noSpo2 = sessions.filter(s => !(s.avg_spo2 && +s.avg_spo2 > 0));
+    // Only fetch for recent sessions without machine SpO2 (limit to 7 to avoid spam)
+    const toFetch = noSpo2.slice(0, 7);
+    for (const s of toFetch) {
+      const day = s.sleep_day || this.sleepDay(s.session_start);
+      if (this.oxiMap[day] !== undefined) continue;
+      this.oxiMap[day] = '';
+      this.api.getSessionOximetry(day).subscribe({
+        next: (oxi) => {
+          if (oxi?.spo2?.length) {
+            const valid = oxi.spo2.map(v => Number(v)).filter(v => !isNaN(v) && v > 0 && v < 255);
+            if (valid.length) {
+              this.oxiMap[day] = (valid.reduce((a, b) => a + b, 0) / valid.length).toFixed(1);
+              this.cdr.detectChanges();
+            }
+          }
+        },
+        error: () => {},
+      });
+    }
   }
 
   isLive(s: any): boolean {
     return s.has_live === 't' || s.has_live === '1' || s.has_live === true || !s.session_end;
   }
 
-  liveDuration(s: SessionListItem): string {
-    // Use actual parsed BRP data duration (not wall clock).
-    // Wall clock overestimates due to Fysetc startup delay and downtime gaps.
-    const hours = +(s.duration_hours || 0);
-    if (hours > 0) {
-      const totalMins = Math.round(hours * 60);
-      const h = Math.floor(totalMins / 60);
-      const m = totalMins % 60;
-      return h > 0 ? `${h}h ${m}m` : `${m}m`;
-    }
-    return '0m';
+  fmtDuration(val: string | number | undefined): string {
+    const hours = +(val || 0);
+    if (hours <= 0) return '0m';
+    const totalMins = Math.round(hours * 60);
+    const h = Math.floor(totalMins / 60);
+    const m = totalMins % 60;
+    return h > 0 ? `${h}h ${String(m).padStart(2, '0')}m` : `${m}m`;
   }
 
   sleepDay(sessionStart: string): string {

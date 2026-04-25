@@ -8,6 +8,10 @@ import { AppConfig } from '../models/config.model';
 export class CpapApiService {
   constructor(private http: HttpClient) {}
 
+  getHealth(): Observable<{ service: string; status: string; version: string }> {
+    return this.http.get<{ service: string; status: string; version: string }>('/health');
+  }
+
   getDashboard(): Observable<DashboardData> {
     return this.http.get<DashboardData>('/api/dashboard');
   }
@@ -99,5 +103,20 @@ export class CpapApiService {
 
   testBle(): Observable<{compiled: boolean; available: boolean; status: string; adapter?: string}> {
     return this.http.get<any>('/api/config/test-ble');
+  }
+
+  getInsights(days = 90): Observable<any[]> {
+    const params = new HttpParams().set('days', days);
+    return this.http.get<any[]>('/api/insights', { params });
+  }
+
+  getLatestSummary(): Observable<any[]> {
+    const params = new HttpParams().set('period', 'daily').set('limit', 1);
+    return this.http.get<any[]>('/api/summaries', { params });
+  }
+
+  getDailySummaryForDate(date: string): Observable<any[]> {
+    const params = new HttpParams().set('start', date).set('end', date);
+    return this.http.get<any[]>('/api/daily-summary', { params });
   }
 }

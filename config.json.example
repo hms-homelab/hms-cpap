@@ -37,5 +37,11 @@
     "enabled": false,
     "embed_model": "nomic-embed-text",
     "temperature": 0.3
+  },
+  "sleep_stage": {
+    "enabled": false,
+    "live_inference": true,
+    "model_dir": "",
+    "model_version": "shhs-rf-v1"
   }
 }

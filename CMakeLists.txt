@@ -179,6 +179,8 @@ list(FILTER SOURCES EXCLUDE REGEX ".*/WiFiSwitchClient\\.cpp$")
 # EDFParser + CPAPModels are now provided by cpapdash-parser library
 list(FILTER SOURCES EXCLUDE REGEX ".*/parsers/EDFParser\\.cpp$")
 list(FILTER SOURCES EXCLUDE REGEX ".*/models/CPAPModels\\.cpp$")
+# CLI binaries have their own main() — exclude from main executable
+list(FILTER SOURCES EXCLUDE REGEX ".*/cli/.*\\.cpp$")
 
 # Executable
 add_executable(${PROJECT_NAME} ${SOURCES})
@@ -249,11 +251,29 @@ if(BUILD_WITH_BLE)
     message(STATUS "BLE: Enabled (sdbus-c++ ${sdbus-c++_VERSION})")
 endif()
 
+# ── Sleep Stage Training CLI ─────────────────────────────────────────────────
+# Only needs ML source files (RandomForest, DecisionTree, Scaler, Trainer, etc.)
+file(GLOB_RECURSE TRAINER_LIB_SOURCES "src/ml/*.cpp")
+
+add_executable(hms_cpap_train_sleep_stage
+    src/cli/train_sleep_stage_main.cpp
+    ${TRAINER_LIB_SOURCES}
+)
+
+target_include_directories(hms_cpap_train_sleep_stage PRIVATE include)
+
+target_link_libraries(hms_cpap_train_sleep_stage
+    cpapdash_parser
+    nlohmann_json::nlohmann_json
+    spdlog::spdlog
+    stdc++fs pthread
+)
+
 # Install target
 if(WIN32)
-    install(TARGETS ${PROJECT_NAME} DESTINATION bin)
+    install(TARGETS ${PROJECT_NAME} hms_cpap_train_sleep_stage DESTINATION bin)
 else()
-    install(TARGETS ${PROJECT_NAME} DESTINATION /usr/local/bin)
+    install(TARGETS ${PROJECT_NAME} hms_cpap_train_sleep_stage DESTINATION /usr/local/bin)
 endif()
 
 # Testing support

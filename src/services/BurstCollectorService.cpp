@@ -43,27 +43,9 @@ BurstCollectorService::BurstCollectorService(int burst_interval_seconds)
         std::cout << "CPAP: Local source mode — reading from " << local_source_dir_ << std::endl;
     } else if (source == "fysetc") {
         // Fysetc TCP raw-sector mode — looks like ezShare to the pipeline
-        int port = std::stoi(ConfigManager::get("FYSETC_LISTEN_PORT", "9000"));
-        std::string bind = ConfigManager::get("FYSETC_LISTEN_BIND", "0.0.0.0");
-
-        fysetc_server_ = std::make_unique<FysetcTcpServer>(port, bind);
-        fysetc_server_->setLogCallback([](fysetc::LogLevel level, const std::string& tag,
-                                           const std::string& msg) {
-            const char* lvl_str = "?";
-            switch (level) {
-                case fysetc::LogLevel::ERR:  lvl_str = "E"; break;
-                case fysetc::LogLevel::WARN: lvl_str = "W"; break;
-                case fysetc::LogLevel::INFO: lvl_str = "I"; break;
-                case fysetc::LogLevel::DEBUG: lvl_str = "D"; break;
-                default: break;
-            }
-            std::cout << "Fysetc[" << lvl_str << "] " << tag << ": " << msg << std::endl;
-        });
-        fysetc_server_->start();
-
+        startFysetcServer();
         data_source_ = std::make_unique<FysetcDataSource>(*fysetc_server_);
         discovery_service_ = std::make_unique<SessionDiscoveryService>(*data_source_);
-        std::cout << "CPAP: Fysetc TCP mode — listening on " << bind << ":" << port << std::endl;
     } else {
         // ez Share mode
         auto ez = std::make_unique<EzShareClient>();
@@ -1661,13 +1643,25 @@ void BurstCollectorService::reloadConfig() {
     // Source / discovery
     if (nc.source != last_config_.source || nc.ezshare_url != last_config_.ezshare_url ||
         nc.local_dir != last_config_.local_dir) {
+        auto action = decideFysetcLifecycle(last_config_.source, nc.source,
+                                            fysetc_server_ != nullptr);
+        if (action == FysetcLifecycleAction::Stop) {
+            // Drop the data_source_ before destroying the server — FysetcDataSource
+            // holds a reference to *fysetc_server_.
+            data_source_.reset();
+            discovery_service_.reset();
+            stopFysetcServer();
+        }
+
         if (nc.source == "local") {
             local_source_dir_ = nc.local_dir;
             data_source_.reset();
             discovery_service_.reset();
         } else if (nc.source == "fysetc") {
             local_source_dir_.clear();
-            // Fysetc data source reuses existing fysetc_server_
+            if (action == FysetcLifecycleAction::Start) {
+                startFysetcServer();
+            }
             if (fysetc_server_) {
                 data_source_ = std::make_unique<FysetcDataSource>(*fysetc_server_);
                 discovery_service_ = std::make_unique<SessionDiscoveryService>(*data_source_);
@@ -1864,6 +1858,46 @@ void BurstCollectorService::setupMqttSubscriptions() {
     // Session completed subscription (for ML training trigger)
     mqtt_client_->subscribe("cpap/" + device_id_ + "/session/completed",
         [](const std::string&, const std::string&) {}, 1);
+}
+
+BurstCollectorService::FysetcLifecycleAction
+BurstCollectorService::decideFysetcLifecycle(const std::string& old_source,
+                                             const std::string& new_source,
+                                             bool server_exists) {
+    if (new_source == "fysetc" && !server_exists) return FysetcLifecycleAction::Start;
+    if (old_source == "fysetc" && new_source != "fysetc" && server_exists)
+        return FysetcLifecycleAction::Stop;
+    return FysetcLifecycleAction::None;
+}
+
+void BurstCollectorService::startFysetcServer() {
+    if (fysetc_server_) return;  // idempotent
+
+    int port = std::stoi(ConfigManager::get("FYSETC_LISTEN_PORT", "9000"));
+    std::string bind = ConfigManager::get("FYSETC_LISTEN_BIND", "0.0.0.0");
+
+    fysetc_server_ = std::make_unique<FysetcTcpServer>(port, bind);
+    fysetc_server_->setLogCallback([](fysetc::LogLevel level, const std::string& tag,
+                                       const std::string& msg) {
+        const char* lvl_str = "?";
+        switch (level) {
+            case fysetc::LogLevel::ERR:  lvl_str = "E"; break;
+            case fysetc::LogLevel::WARN: lvl_str = "W"; break;
+            case fysetc::LogLevel::INFO: lvl_str = "I"; break;
+            case fysetc::LogLevel::DEBUG: lvl_str = "D"; break;
+            default: break;
+        }
+        std::cout << "Fysetc[" << lvl_str << "] " << tag << ": " << msg << std::endl;
+    });
+    fysetc_server_->start();
+    std::cout << "CPAP: Fysetc TCP mode — listening on " << bind << ":" << port << std::endl;
+}
+
+void BurstCollectorService::stopFysetcServer() {
+    if (!fysetc_server_) return;
+    fysetc_server_->stop();
+    fysetc_server_.reset();
+    std::cout << "CPAP: Fysetc TCP server stopped" << std::endl;
 }
 
 } // namespace hms_cpap

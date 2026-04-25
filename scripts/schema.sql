@@ -214,3 +214,23 @@ DO $$ BEGIN
         FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
+
+-- =============================================================================
+-- Sleep Stage Inference (Phase 20)
+-- =============================================================================
+
+-- Per-epoch sleep stage predictions (30s epochs)
+CREATE TABLE IF NOT EXISTS cpap_sleep_stages (
+    id              SERIAL PRIMARY KEY,
+    session_id      INTEGER NOT NULL REFERENCES cpap_sessions(id) ON DELETE CASCADE,
+    epoch_start_ts  TIMESTAMPTZ NOT NULL,
+    epoch_duration_sec INTEGER NOT NULL DEFAULT 30,
+    stage           SMALLINT NOT NULL,         -- 0=Wake 1=Light 2=Deep 3=REM
+    confidence      REAL NOT NULL,
+    provisional     BOOLEAN NOT NULL DEFAULT FALSE,
+    model_version   TEXT NOT NULL,
+    UNIQUE (session_id, epoch_start_ts)
+);
+
+CREATE INDEX IF NOT EXISTS idx_cpap_sleep_stages_session
+    ON cpap_sleep_stages(session_id);
