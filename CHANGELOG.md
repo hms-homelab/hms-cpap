@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.6] - 2026-04-26
+
+### Fixed
+- **Dashboard crash on SQLite/Docker** -- `getRealtime()` null guard prevents `Cannot read properties of null (reading 'session')` error when no live device exists. Charts now render correctly in local/Docker mode.
+
 ## [4.1.0] - 2026-04-25
 
 ### Added

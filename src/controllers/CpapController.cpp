@@ -52,7 +52,7 @@ void CpapController::health(const drogon::HttpRequestPtr&,
                              std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
     Json::Value j;
     j["status"] = "ok";
-    j["version"] = "4.0.5";
+    j["version"] = "4.0.6";
     j["service"] = "hms-cpap";
     cb(jsonResp(j));
 }

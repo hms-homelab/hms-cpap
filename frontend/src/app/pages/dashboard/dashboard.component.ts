@@ -200,23 +200,27 @@ export class DashboardComponent implements OnInit, AfterViewInit {
 
   ngOnInit() {
     // Check for live session + O2Ring data
-    this.api.getRealtime().subscribe(rt => {
-      if (rt.session) {
-        this.liveSession = rt.session;
-      }
-      if (rt.oximetry?.active) {
-        this.liveSpO2 = rt.oximetry.spo2 > 0 ? String(rt.oximetry.spo2) : '';
-        this.liveHR = rt.oximetry.hr > 0 ? String(rt.oximetry.hr) : '';
-      }
-      this.realtimeData = {
-        sessionStatus: rt.session ? 'active' : 'completed',
-        sessionDuration: rt.session?.duration_hours || '',
-        lastSessionTime: '',
-        currentPressure: rt.session?.current_pressure || 0,
-        minPressure: rt.session?.min_pressure || 0,
-        maxPressure: rt.session?.max_pressure || 0,
-      };
-      setTimeout(() => this.renderLiveCharts(), 50);
+    this.api.getRealtime().subscribe({
+      next: (rt) => {
+        if (!rt) return;
+        if (rt.session) {
+          this.liveSession = rt.session;
+        }
+        if (rt.oximetry?.active) {
+          this.liveSpO2 = rt.oximetry.spo2 > 0 ? String(rt.oximetry.spo2) : '';
+          this.liveHR = rt.oximetry.hr > 0 ? String(rt.oximetry.hr) : '';
+        }
+        this.realtimeData = {
+          sessionStatus: rt.session ? 'active' : 'completed',
+          sessionDuration: rt.session?.duration_hours || '',
+          lastSessionTime: '',
+          currentPressure: rt.session?.current_pressure || 0,
+          minPressure: rt.session?.min_pressure || 0,
+          maxPressure: rt.session?.max_pressure || 0,
+        };
+        setTimeout(() => this.renderLiveCharts(), 50);
+      },
+      error: () => {},
     });
 
     this.api.getDashboard().subscribe(d => {
