@@ -11,6 +11,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - **Dashboard crash on SQLite/Docker** -- `getRealtime()` null guard prevents `Cannot read properties of null (reading 'session')` error when no live device exists. Charts now render correctly in local/Docker mode.
+- **Config file overwritten on startup** -- binary no longer overwrites user-provided config.json with defaults. Only creates config on first run.
+- **MSVC C4456 warning** -- renamed shadowed lock variable in MLTrainingService
 
 ## [4.1.0] - 2026-04-25
 

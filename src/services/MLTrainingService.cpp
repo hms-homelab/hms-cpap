@@ -658,7 +658,7 @@ MLTrainingService::Predictions MLTrainingService::predictLatest() {
 
     // Store for status endpoint
     {
-        std::lock_guard<std::mutex> lock(result_mutex_);
+        std::lock_guard<std::mutex> result_lock(result_mutex_);
         last_predictions_ = preds;
     }
 

@@ -390,8 +390,10 @@ int main(int argc, char** argv) {
         config.database.sqlite_path = data_dir + "/cpap.db";
     }
 
-    // Save merged config (creates file on first run, updates on subsequent)
-    config.save(config_path);
+    // Only create config file on first run -- don't overwrite user's config
+    if (!config_existed) {
+        config.save(config_path);
+    }
 
     // ── Bridge: set env vars from merged config so BurstCollectorService works ──
     // Config.json is the single source of truth; env vars are set for
