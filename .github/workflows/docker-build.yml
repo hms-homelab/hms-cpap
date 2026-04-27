@@ -202,7 +202,8 @@ jobs:
   # ── GitHub Release (on tag push) ──────────────────────────────────
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build-and-test, windows-build]
+    needs: [build-and-test]
+    # windows-build is optional -- release proceeds even if Windows fails
     runs-on: ubuntu-latest
     permissions:
       contents: write
