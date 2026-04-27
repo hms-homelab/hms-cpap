@@ -181,6 +181,10 @@ list(FILTER SOURCES EXCLUDE REGEX ".*/parsers/EDFParser\\.cpp$")
 list(FILTER SOURCES EXCLUDE REGEX ".*/models/CPAPModels\\.cpp$")
 # CLI binaries have their own main() — exclude from main executable
 list(FILTER SOURCES EXCLUDE REGEX ".*/cli/.*\\.cpp$")
+if(MSVC)
+    list(FILTER SOURCES EXCLUDE REGEX ".*/FysetcTcpServer\\.cpp$")
+    list(FILTER SOURCES EXCLUDE REGEX ".*/FysetcSectorCollectorService\\.cpp$")
+endif()
 
 # Executable
 add_executable(${PROJECT_NAME} ${SOURCES})
@@ -266,8 +270,10 @@ target_link_libraries(hms_cpap_train_sleep_stage
     cpapdash_parser
     nlohmann_json::nlohmann_json
     spdlog::spdlog
-    stdc++fs pthread
 )
+if(NOT MSVC)
+    target_link_libraries(hms_cpap_train_sleep_stage stdc++fs pthread)
+endif()
 
 # Install target
 if(WIN32)
