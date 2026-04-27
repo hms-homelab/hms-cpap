@@ -21,6 +21,10 @@ list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/controllers/.*")
 list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/web/.*")
 list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/WiFiSwitchClient\\.cpp$")
 list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/cli/.*\\.cpp$")
+if(MSVC)
+    list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/FysetcTcpServer\\.cpp$")
+    list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/FysetcSectorCollectorService\\.cpp$")
+endif()
 # EDFParser + CPAPModels now provided by cpapdash-parser library
 list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/parsers/EDFParser\\.cpp$")
 list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/models/CPAPModels\\.cpp$")
@@ -63,6 +67,9 @@ set(TEST_SOURCES
     clients/test_O2RingBleProtocol.cpp
     services/test_sleep_stage_classifier.cpp
 )
+if(MSVC)
+    list(FILTER TEST_SOURCES EXCLUDE REGEX ".*Fysetc.*")
+endif()
 
 # Create test executable
 add_executable(run_tests
