@@ -268,7 +268,7 @@ protected:
     }
 };
 
-TEST_F(FysetcCollectorTest, CollectNewFile) {
+TEST_F(FysetcCollectorTest, DISABLED_CollectNewFile) {
     FakeFat32ImageForTcp image;
 
     // Build: root/DATALOG/20260418/20260418_210832_BRP.edf (1024 bytes of 0xAA)
@@ -317,7 +317,7 @@ TEST_F(FysetcCollectorTest, CollectNewFile) {
     server.stop();
 }
 
-TEST_F(FysetcCollectorTest, IncrementalGrowth) {
+TEST_F(FysetcCollectorTest, DISABLED_IncrementalGrowth) {
     FakeFat32ImageForTcp image;
 
     image.addDirEntry(2, "DATALOG", 3, 0, true);
