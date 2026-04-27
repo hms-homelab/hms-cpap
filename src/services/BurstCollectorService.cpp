@@ -711,19 +711,25 @@ bool BurstCollectorService::executeBurstCycle() {
 
                     bool newly_completed = db_service_->markSessionCompleted(device_id_, session.session_start);
 
-                    if (newly_completed && data_publisher_) {
-                        auto metrics = db_service_->getNightlyMetrics(device_id_, session.session_start);
-                        if (metrics.has_value()) {
-                            data_publisher_->publishHistoricalState(metrics.value());
-                            std::cout << "   Nightly metrics published ("
-                                      << metrics.value().usage_hours.value_or(0.0) << "h, AHI "
-                                      << metrics.value().ahi << ")" << std::endl;
-                        }
-                        data_publisher_->publishSessionCompleted();
+                    if (newly_completed) {
+                        processSTRFile();
 
-                        // Generate LLM summary (non-fatal)
-                        if (llm_enabled_ && llm_client_ && metrics.has_value()) {
-                            generateAndPublishSummary(metrics.value());
+                        if (data_publisher_) {
+                            auto metrics = db_service_->getNightlyMetrics(device_id_, session.session_start);
+                            if (metrics.has_value()) {
+                                data_publisher_->publishHistoricalState(metrics.value());
+                                std::cout << "   Nightly metrics published ("
+                                          << metrics.value().usage_hours.value_or(0.0) << "h, AHI "
+                                          << metrics.value().ahi << ")" << std::endl;
+                            }
+                            data_publisher_->publishSessionCompleted();
+
+                            // Generate LLM summary (non-fatal)
+                            if (llm_enabled_ && llm_client_ && metrics.has_value()) {
+                                const STRDailyRecord* str_rec = !last_str_records_.empty()
+                                    ? &last_str_records_.back() : nullptr;
+                                generateAndPublishSummary(metrics.value(), str_rec);
+                            }
                         }
                     }
                     continue;
