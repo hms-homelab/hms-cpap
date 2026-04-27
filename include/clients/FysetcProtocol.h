@@ -23,9 +23,9 @@ enum class MsgType : uint8_t {
 };
 
 enum class SectorReadStatus : uint8_t {
-    OK      = 0x00,
-    PARTIAL = 0x01,
-    ERROR   = 0x02,
+    OK       = 0x00,
+    PARTIAL  = 0x01,
+    ERR      = 0x02,
 };
 
 enum class SectorReadErrCode : uint8_t {
