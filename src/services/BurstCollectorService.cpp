@@ -28,12 +28,34 @@ namespace hms_cpap {
 BurstCollectorService::BurstCollectorService(int burst_interval_seconds)
     : burst_interval_seconds_(burst_interval_seconds),
       running_(false) {
-
-    // Load configuration from environment
     device_id_ = ConfigManager::get("CPAP_DEVICE_ID", "cpap_resmed_23243570851");
     device_name_ = ConfigManager::get("CPAP_DEVICE_NAME", "ResMed AirSense 10");
+}
 
-    // Check source mode: "ezshare", "local", or "fysetc"
+void BurstCollectorService::initialize(AppConfig* cfg) {
+    app_config_ = cfg;
+
+    initDataSource();
+    initDatabase();
+    initMqtt();
+    initDataPublisher();
+    initLlm();
+    initO2Ring();
+    setupMqttSubscriptions();
+
+    if (cfg) snapshotConfig(last_config_);
+
+    std::cout << "BurstCollectorService worker thread started" << std::endl;
+
+    // Clear any stale session_active state from a previous run
+    if (data_publisher_ && mqtt_client_ && mqtt_client_->isConnected()) {
+        std::cout << "Startup: Clearing stale session_active state..." << std::endl;
+        data_publisher_->publishSessionCompleted();
+        recovery_logged_ = true;
+    }
+}
+
+void BurstCollectorService::initDataSource() {
     std::string source = ConfigManager::get("CPAP_SOURCE", "ezshare");
     if (source == "local") {
         local_source_dir_ = ConfigManager::get("CPAP_LOCAL_DIR", "");
@@ -43,12 +65,10 @@ BurstCollectorService::BurstCollectorService(int burst_interval_seconds)
         }
         std::cout << "CPAP: Local source mode — reading from " << local_source_dir_ << std::endl;
     } else if (source == "fysetc") {
-        // Fysetc TCP raw-sector mode — looks like ezShare to the pipeline
         startFysetcServer();
         data_source_ = std::make_unique<FysetcDataSource>(*fysetc_server_);
         discovery_service_ = std::make_unique<SessionDiscoveryService>(*data_source_);
     } else {
-        // ez Share mode
         auto ez = std::make_unique<EzShareClient>();
         if (app_config_ && !app_config_->ezshare_range) {
             ez->setSupportsRange(false);
@@ -56,36 +76,9 @@ BurstCollectorService::BurstCollectorService(int burst_interval_seconds)
         data_source_ = std::move(ez);
         discovery_service_ = std::make_unique<SessionDiscoveryService>(*data_source_);
     }
+}
 
-    // Initialize MQTT client (skip if disabled)
-    std::string mqtt_enabled_env = ConfigManager::get("MQTT_ENABLED", "true");
-    if (mqtt_enabled_env == "true") {
-        std::string mqtt_broker = ConfigManager::get("MQTT_BROKER", "192.168.2.15");
-        std::string mqtt_port = ConfigManager::get("MQTT_PORT", "1883");
-        std::string mqtt_user = ConfigManager::get("MQTT_USER", "");
-        std::string mqtt_password = ConfigManager::get("MQTT_PASSWORD", "");
-        std::string mqtt_client_id = ConfigManager::get("MQTT_CLIENT_ID", "hms_cpap_service");
-
-        hms::MqttConfig mqtt_config;
-        mqtt_config.broker = mqtt_broker;
-        mqtt_config.port = std::stoi(mqtt_port);
-        mqtt_config.username = mqtt_user;
-        mqtt_config.password = mqtt_password;
-        mqtt_config.client_id = mqtt_client_id;
-
-        mqtt_client_ = std::make_shared<hms::MqttClient>(mqtt_config);
-        std::string broker_address = "tcp://" + mqtt_broker + ":" + mqtt_port;
-
-        if (mqtt_client_->connect()) {
-            std::cout << "✅ MQTT: Connected to " << broker_address << std::endl;
-        } else {
-            std::cerr << "⚠️  MQTT: Connection failed (will retry)" << std::endl;
-        }
-    } else {
-        std::cout << "ℹ️  MQTT: Disabled" << std::endl;
-    }
-
-    // Initialize database service — pick backend from DB_TYPE
+void BurstCollectorService::initDatabase() {
     std::string db_type = ConfigManager::get("DB_TYPE", "sqlite");
     if (db_type == "sqlite") {
         std::string sqlite_path = ConfigManager::get("SQLITE_PATH",
@@ -99,17 +92,16 @@ BurstCollectorService::BurstCollectorService(int burst_interval_seconds)
     }
 #ifdef WITH_POSTGRESQL
     else if (db_type == "postgresql") {
-        std::string db_host = ConfigManager::get("DB_HOST", "localhost");
-        std::string db_port = ConfigManager::get("DB_PORT", "5432");
-        std::string db_name = ConfigManager::get("DB_NAME", "cpap_monitoring");
-        std::string db_user = ConfigManager::get("DB_USER", "maestro");
+        std::string db_host     = ConfigManager::get("DB_HOST", "localhost");
+        std::string db_port     = ConfigManager::get("DB_PORT", "5432");
+        std::string db_name     = ConfigManager::get("DB_NAME", "cpap_monitoring");
+        std::string db_user     = ConfigManager::get("DB_USER", "maestro");
         std::string db_password = ConfigManager::get("DB_PASSWORD", "");
 
-        std::string connection_string = "host=" + db_host + " port=" + db_port +
-                                       " dbname=" + db_name + " user=" + db_user +
-                                       " password=" + db_password;
-
-        db_service_ = std::make_shared<DatabaseService>(connection_string);
+        std::string conn = "host=" + db_host + " port=" + db_port +
+                           " dbname=" + db_name + " user=" + db_user +
+                           " password=" + db_password;
+        db_service_ = std::make_shared<DatabaseService>(conn);
         if (db_service_->connect()) {
             std::cout << "✅ DB: PostgreSQL " << db_name << "@" << db_host << std::endl;
         } else {
@@ -119,12 +111,11 @@ BurstCollectorService::BurstCollectorService(int burst_interval_seconds)
 #endif
 #ifdef WITH_MYSQL
     else if (db_type == "mysql") {
-        std::string db_host = ConfigManager::get("DB_HOST", "localhost");
-        int db_port = ConfigManager::getInt("DB_PORT", 3306);
-        std::string db_name = ConfigManager::get("DB_NAME", "cpap_monitoring");
-        std::string db_user = ConfigManager::get("DB_USER", "");
+        std::string db_host     = ConfigManager::get("DB_HOST", "localhost");
+        int         db_port     = ConfigManager::getInt("DB_PORT", 3306);
+        std::string db_name     = ConfigManager::get("DB_NAME", "cpap_monitoring");
+        std::string db_user     = ConfigManager::get("DB_USER", "");
         std::string db_password = ConfigManager::get("DB_PASSWORD", "");
-
         db_service_ = std::make_shared<MySQLDatabase>(db_host, db_port, db_user, db_password, db_name);
         if (db_service_->connect()) {
             std::cout << "✅ DB: MySQL " << db_name << "@" << db_host << ":" << db_port << std::endl;
@@ -140,99 +131,104 @@ BurstCollectorService::BurstCollectorService(int burst_interval_seconds)
         db_service_ = std::make_shared<SQLiteDatabase>(sqlite_path);
         db_service_->connect();
     }
+}
 
-    // Initialize data publisher
+void BurstCollectorService::initMqtt() {
+    std::string mqtt_enabled_env = ConfigManager::get("MQTT_ENABLED", "true");
+    if (mqtt_enabled_env != "true") {
+        std::cout << "ℹ️  MQTT: Disabled" << std::endl;
+        return;
+    }
+
+    std::string mqtt_broker    = ConfigManager::get("MQTT_BROKER", "192.168.2.15");
+    std::string mqtt_port      = ConfigManager::get("MQTT_PORT", "1883");
+    std::string mqtt_user      = ConfigManager::get("MQTT_USER", "");
+    std::string mqtt_password  = ConfigManager::get("MQTT_PASSWORD", "");
+    std::string mqtt_client_id = ConfigManager::get("MQTT_CLIENT_ID", "hms_cpap_service");
+
+    hms::MqttConfig mqtt_config;
+    mqtt_config.broker    = mqtt_broker;
+    mqtt_config.port      = std::stoi(mqtt_port);
+    mqtt_config.username  = mqtt_user;
+    mqtt_config.password  = mqtt_password;
+    mqtt_config.client_id = mqtt_client_id;
+
+    mqtt_client_ = std::make_shared<hms::MqttClient>(mqtt_config);
+    if (mqtt_client_->connect()) {
+        std::cout << "✅ MQTT: Connected to tcp://" << mqtt_broker << ":" << mqtt_port << std::endl;
+    } else {
+        std::cerr << "⚠️  MQTT: Connection failed (will retry)" << std::endl;
+    }
+}
+
+void BurstCollectorService::initDataPublisher() {
     data_publisher_ = std::make_unique<DataPublisherService>(mqtt_client_, db_service_);
     data_publisher_->initialize();
+}
 
-    std::cout << "🚀 BurstCollectorService initialized" << std::endl;
-    std::cout << "   Device: " << device_name_ << " (" << device_id_ << ")" << std::endl;
-    std::cout << "   Burst interval: " << burst_interval_seconds_ << " seconds" << std::endl;
-    if (local_source_dir_.empty()) {
-        std::cout << "   Source: ez Share at " << ConfigManager::get("EZSHARE_BASE_URL", "http://192.168.4.1") << std::endl;
-    } else {
-        std::cout << "   Source: Local directory at " << local_source_dir_ << std::endl;
-    }
-
-    // Initialize LLM client (optional)
+void BurstCollectorService::initLlm() {
     std::string llm_enabled_str = ConfigManager::get("LLM_ENABLED", "false");
     llm_enabled_ = (llm_enabled_str == "true" || llm_enabled_str == "1");
+    if (!llm_enabled_) return;
 
-    if (llm_enabled_) {
-        hms::LLMConfig llm_config;
-        llm_config.enabled = true;
-        llm_config.provider = hms::LLMClient::parseProvider(
-            ConfigManager::get("LLM_PROVIDER", "ollama"));
-        llm_config.endpoint = ConfigManager::get("LLM_ENDPOINT", "http://192.168.2.5:11434");
-        llm_config.model = ConfigManager::get("LLM_MODEL", "llama3.1:8b-instruct-q4_K_M");
-        llm_config.api_key = ConfigManager::get("LLM_API_KEY", "");
-        llm_config.max_tokens = ConfigManager::getInt("LLM_MAX_TOKENS", 1024);
-        llm_config.keep_alive_seconds = ConfigManager::getInt("LLM_KEEP_ALIVE", 0);
+    hms::LLMConfig llm_config;
+    llm_config.enabled          = true;
+    llm_config.provider         = hms::LLMClient::parseProvider(ConfigManager::get("LLM_PROVIDER", "ollama"));
+    llm_config.endpoint         = ConfigManager::get("LLM_ENDPOINT", "http://192.168.2.5:11434");
+    llm_config.model            = ConfigManager::get("LLM_MODEL", "llama3.1:8b-instruct-q4_K_M");
+    llm_config.api_key          = ConfigManager::get("LLM_API_KEY", "");
+    llm_config.max_tokens       = ConfigManager::getInt("LLM_MAX_TOKENS", 1024);
+    llm_config.keep_alive_seconds = ConfigManager::getInt("LLM_KEEP_ALIVE", 0);
 
-        llm_client_ = std::make_unique<hms::LLMClient>(llm_config);
+    llm_client_ = std::make_unique<hms::LLMClient>(llm_config);
 
-        // Load prompt template
-        std::string prompt_file = ConfigManager::get("LLM_PROMPT_FILE", "");
-        if (!prompt_file.empty()) {
-            llm_prompt_template_ = hms::LLMClient::loadPromptFile(prompt_file);
-        }
-        if (llm_prompt_template_.empty()) {
-            llm_prompt_template_ =
-                "You are a CPAP therapy analyst. Summarize this CPAP session using "
-                "this exact markdown structure:\n\n"
-                "**Overall**\n"
-                "* AHI assessment (good/moderate/elevated) with value\n"
-                "* Usage hours and compliance vs 8h target\n"
-                "* Leak control assessment\n\n"
-                "**Events**\n"
-                "* Breakdown of event types (obstructive, central, hypopnea, RERA)\n"
-                "* Any concerning patterns\n\n"
-                "**Recommendations**\n"
-                "* 1-2 actionable suggestions based on the data\n\n"
-                "Use bullet points with * prefix. Keep it concise.\n\n"
-                "Session data:\n{metrics}";
-        }
+    std::string prompt_file = ConfigManager::get("LLM_PROMPT_FILE", "");
+    if (!prompt_file.empty())
+        llm_prompt_template_ = hms::LLMClient::loadPromptFile(prompt_file);
 
-        std::cout << "LLM: Enabled (" << hms::LLMClient::providerName(llm_config.provider)
-                  << " / " << llm_config.model << " at " << llm_config.endpoint << ")" << std::endl;
+    if (llm_prompt_template_.empty()) {
+        llm_prompt_template_ =
+            "You are a CPAP therapy analyst. Summarize this CPAP session using "
+            "this exact markdown structure:\n\n"
+            "**Overall**\n"
+            "* AHI assessment (good/moderate/elevated) with value\n"
+            "* Usage hours and compliance vs 8h target\n"
+            "* Leak control assessment\n\n"
+            "**Events**\n"
+            "* Breakdown of event types (obstructive, central, hypopnea, RERA)\n"
+            "* Any concerning patterns\n\n"
+            "**Recommendations**\n"
+            "* 1-2 actionable suggestions based on the data\n\n"
+            "Use bullet points with * prefix. Keep it concise.\n\n"
+            "Session data:\n{metrics}";
     }
 
-    // Initialize O2 Ring oximetry (from config or env var fallback)
-    {
-        bool o2ring_enabled = app_config_ ? app_config_->o2ring.enabled : false;
-        std::string o2ring_url = app_config_ ? app_config_->o2ring.mule_url : "";
-        std::string o2ring_mode = app_config_ ? app_config_->o2ring.mode : "http";
-        if (o2ring_url.empty()) o2ring_url = ConfigManager::get("O2RING_MULE_URL", "");
-        if (!o2ring_enabled && !o2ring_url.empty()) o2ring_enabled = true;
-        if (o2ring_enabled) {
-            std::shared_ptr<IO2RingClient> client;
+    std::cout << "LLM: Enabled (" << hms::LLMClient::providerName(llm_config.provider)
+              << " / " << llm_config.model << " at " << llm_config.endpoint << ")" << std::endl;
+}
+
+void BurstCollectorService::initO2Ring() {
+    bool o2ring_enabled       = app_config_ ? app_config_->o2ring.enabled   : false;
+    std::string o2ring_url    = app_config_ ? app_config_->o2ring.mule_url  : "";
+    std::string o2ring_mode   = app_config_ ? app_config_->o2ring.mode      : "http";
+
+    if (o2ring_url.empty()) o2ring_url = ConfigManager::get("O2RING_MULE_URL", "");
+    if (!o2ring_enabled && !o2ring_url.empty()) o2ring_enabled = true;
+    if (!o2ring_enabled) return;
+
+    std::shared_ptr<IO2RingClient> client;
 #ifdef WITH_BLE
-            if (o2ring_mode == "ble") {
-                client = std::make_shared<O2RingBleClient>();
-                std::cout << "O2Ring: Enabled (mode=ble, direct BlueZ)" << std::endl;
-            }
+    if (o2ring_mode == "ble") {
+        client = std::make_shared<O2RingBleClient>();
+        std::cout << "O2Ring: Enabled (mode=ble, direct BlueZ)" << std::endl;
+    }
 #endif
-            if (!client && !o2ring_url.empty()) {
-                client = std::make_shared<O2RingClient>(o2ring_url);
-                std::cout << "O2Ring: Enabled (mode=http, mule=" << o2ring_url << ")" << std::endl;
-            }
-            if (client) {
-                oximetry_service_ = std::make_unique<OximetryService>(client, db_service_);
-            }
-        }
+    if (!client && !o2ring_url.empty()) {
+        client = std::make_shared<O2RingClient>(o2ring_url);
+        std::cout << "O2Ring: Enabled (mode=http, mule=" << o2ring_url << ")" << std::endl;
     }
-
-    // Subscribe to MQTT command topics (LLM, insights, force_complete)
-    setupMqttSubscriptions();
-
-    // STARTUP CLEANUP: Clear any stale session_active state from previous run
-    // This prevents stuck "session active" in HA after service restart or crash
-    if (data_publisher_ && mqtt_client_ && mqtt_client_->isConnected()) {
-        std::cout << "Startup: Clearing stale session_active state..." << std::endl;
-        data_publisher_->publishSessionCompleted();
-        recovery_logged_ = true;
-    }
-
+    if (client)
+        oximetry_service_ = std::make_unique<OximetryService>(client, db_service_);
 }
 
 BurstCollectorService::~BurstCollectorService() {
@@ -1570,30 +1566,6 @@ std::string BurstCollectorService::loadPromptFile(const std::string& filepath) {
 
 // ── Hot-reload ──────────────────────────────────────────────────────────────
 
-void BurstCollectorService::setAppConfig(AppConfig* cfg) {
-    app_config_ = cfg;
-    if (cfg) {
-        snapshotConfig(last_config_);
-
-        // Initialize O2 Ring if enabled in config (first call after construction)
-        if (!oximetry_service_ && cfg->o2ring.enabled) {
-            std::shared_ptr<IO2RingClient> client;
-#ifdef WITH_BLE
-            if (cfg->o2ring.mode == "ble") {
-                client = std::make_shared<O2RingBleClient>();
-                std::cout << "O2Ring: Enabled (mode=ble, direct BlueZ)" << std::endl;
-            }
-#endif
-            if (!client && !cfg->o2ring.mule_url.empty()) {
-                client = std::make_shared<O2RingClient>(cfg->o2ring.mule_url);
-                std::cout << "O2Ring: Enabled (mode=http, mule=" << cfg->o2ring.mule_url << ")" << std::endl;
-            }
-            if (client) {
-                oximetry_service_ = std::make_unique<OximetryService>(client, db_service_);
-            }
-        }
-    }
-}
 
 void BurstCollectorService::snapshotConfig(ConfigSnapshot& snap) {
     if (!app_config_) return;

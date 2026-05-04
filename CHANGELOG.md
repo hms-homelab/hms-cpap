@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.1.2] - 2026-05-04
+
+### Refactored
+- **BurstCollectorService lifecycle** — constructor is now minimal (device ID/name only); all subsystem init (data source, DB, MQTT, LLM, O2Ring) moved into explicit `initialize(AppConfig*)` method called after construction. Fixes `app_config_` being null during EzShareClient creation, which caused range config to never apply.
+
 ## [4.1.1] - 2026-05-04
 
 ### Fixed

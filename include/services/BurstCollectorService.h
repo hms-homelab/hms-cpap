@@ -47,8 +47,11 @@ public:
      */
     explicit BurstCollectorService(int burst_interval_seconds = 300);
 
-    /// Set live config pointer for hot-reload (called once after construction)
-    void setAppConfig(AppConfig* cfg);
+    /// Initialize all subsystems (call once after construction, before start())
+    void initialize(AppConfig* cfg);
+
+    /// Set live config pointer for hot-reload only (does NOT reinit subsystems)
+    void setAppConfig(AppConfig* cfg) { app_config_ = cfg; }
 
     /// Signal that config changed (called from controller thread, safe)
     void markConfigDirty() { config_dirty_ = true; }
@@ -275,6 +278,14 @@ private:
     #endif
     /// Stop and destroy fysetc_server_ (safe to call when null)
     void stopFysetcServer();
+
+    /// Subsystem init helpers — called from initialize()
+    void initDataSource();
+    void initDatabase();
+    void initMqtt();
+    void initDataPublisher();
+    void initLlm();
+    void initO2Ring();
 };
 
 } // namespace hms_cpap

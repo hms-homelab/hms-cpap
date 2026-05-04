@@ -527,7 +527,7 @@ int main(int argc, char** argv) {
         int burst_interval = hms_cpap::ConfigManager::getInt("BURST_INTERVAL", 120);
 
         burst_service = std::make_unique<hms_cpap::BurstCollectorService>(burst_interval);
-        burst_service->setAppConfig(&config);
+        burst_service->initialize(&config);
         burst_service->start();
 
         if (src == "local") {
