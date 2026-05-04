@@ -73,10 +73,38 @@ void FysetcTcpServer::stop() {
 }
 
 void FysetcTcpServer::disconnect() {
+    stopDrainLoop();
     std::lock_guard<std::mutex> lock(fd_mutex_);
     if (client_fd_ >= 0) {
         close(client_fd_);
         client_fd_ = -1;
+    }
+}
+
+void FysetcTcpServer::startDrainLoop() {
+    stopDrainLoop();
+    pause_drain_ = false;
+    drain_thread_ = std::thread(&FysetcTcpServer::drainLoop, this);
+}
+
+void FysetcTcpServer::stopDrainLoop() {
+    pause_drain_ = true;
+    if (drain_thread_.joinable()) {
+        drain_thread_.join();
+    }
+}
+
+void FysetcTcpServer::drainLoop() {
+    while (running_ && client_fd_ >= 0) {
+        if (pause_drain_) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            continue;
+        }
+        fysetc::MsgHeader hdr;
+        std::vector<uint8_t> payload;
+        recvMessage(hdr, payload, 200);
+        // LOG and STATUS are consumed inside recvMessage automatically.
+        // Any other message type arriving here is unexpected — ignore it.
     }
 }
 
@@ -168,9 +196,9 @@ void FysetcTcpServer::handleConnection(int fd) {
               << (device_state_.fw_version & 0xFF)
               << ", session " << device_state_.session_id << ")" << std::endl;
 
-    // Connection is now established. We stay connected and service
-    // readSectors() calls from the acquisition service. Incoming LOG/STATUS
-    // messages are drained opportunistically during recvMessage().
+    // Start drain loop to continuously consume LOG/STATUS messages
+    // so the firmware's TCP send buffer never fills up and causes a crash.
+    startDrainLoop();
 }
 
 bool FysetcTcpServer::processHello(const fysetc::MsgHeader& hdr,
@@ -247,16 +275,14 @@ bool FysetcTcpServer::sendMessage(const std::vector<uint8_t>& msg) {
     return true;
 }
 
-bool FysetcTcpServer::recvMessage(fysetc::MsgHeader& hdr,
-                                   std::vector<uint8_t>& payload,
-                                   int timeout_ms) {
-    std::lock_guard<std::mutex> lock(recv_mutex_);
+bool FysetcTcpServer::recvMessageLocked(fysetc::MsgHeader& hdr,
+                                         std::vector<uint8_t>& payload,
+                                         int timeout_ms) {
     if (client_fd_ < 0) return false;
 
     auto deadline = std::chrono::steady_clock::now() +
                     std::chrono::milliseconds(timeout_ms);
 
-    // Helper: recv exactly `len` bytes into `buf` respecting deadline
     auto recvExact = [&](uint8_t* buf, size_t len) -> bool {
         size_t got = 0;
         while (got < len) {
@@ -287,7 +313,6 @@ bool FysetcTcpServer::recvMessage(fysetc::MsgHeader& hdr,
 
         if (payload_size > 0 && !recvExact(payload.data(), payload_size)) return false;
 
-        // Consume async messages in-place — loop back for next header
         if (hdr.type == fysetc::MsgType::LOG) {
             processLog(payload);
             if (!recvExact(hdr_buf, fysetc::MsgHeader::WIRE_SIZE)) return false;
@@ -305,62 +330,93 @@ bool FysetcTcpServer::recvMessage(fysetc::MsgHeader& hdr,
     }
 }
 
+bool FysetcTcpServer::recvMessage(fysetc::MsgHeader& hdr,
+                                   std::vector<uint8_t>& payload,
+                                   int timeout_ms) {
+    std::lock_guard<std::mutex> lock(recv_mutex_);
+    return recvMessageLocked(hdr, payload, timeout_ms);
+}
+
 bool FysetcTcpServer::readSectors(const std::vector<fysetc::SectorRange>& ranges,
                                    std::vector<uint8_t>& out_data,
                                    std::vector<std::pair<uint32_t, uint16_t>>& out_delivered) {
     if (client_fd_ < 0 || ranges.empty()) return false;
 
+    // Pause drain thread so it doesn't consume our responses.
+    pause_drain_ = true;
+
     uint16_t req_id = next_req_id_++;
     auto req = fysetc::encodeSectorReadReq(req_id, ranges);
-    if (!sendMessage(req)) return false;
+    if (!sendMessage(req)) {
+        pause_drain_ = false;
+        return false;
+    }
 
     out_data.clear();
     out_delivered.clear();
 
-    for (size_t i = 0; i < ranges.size(); ++i) {
-        fysetc::MsgHeader hdr;
-        std::vector<uint8_t> payload;
+    bool ok = true;
+    {
+        std::lock_guard<std::mutex> lock(recv_mutex_);
+        for (size_t i = 0; i < ranges.size(); ++i) {
+            fysetc::MsgHeader hdr;
+            std::vector<uint8_t> payload;
 
-        if (!recvMessage(hdr, payload, 30000)) return false;
+            if (!recvMessageLocked(hdr, payload, 30000)) { ok = false; break; }
 
-        if (hdr.type == fysetc::MsgType::SECTOR_READ_ERR) {
-            std::cerr << "FysetcTcp: Sector read error for range " << i << std::endl;
-            return false;  // fail entire request — caller retries next cycle
+            if (hdr.type == fysetc::MsgType::SECTOR_READ_ERR) {
+                std::cerr << "FysetcTcp: Sector read error for range " << i << std::endl;
+                ok = false;
+                break;
+            }
+
+            if (hdr.type != fysetc::MsgType::SECTOR_READ_RESP) { ok = false; break; }
+
+            uint32_t sector_lba;
+            uint16_t count;
+            fysetc::SectorReadStatus status;
+            const uint8_t* data_ptr;
+            size_t data_len;
+
+            if (!fysetc::decodeSectorReadResp(payload.data(), payload.size(),
+                                               sector_lba, count, status,
+                                               data_ptr, data_len)) {
+                ok = false;
+                break;
+            }
+
+            out_data.insert(out_data.end(), data_ptr, data_ptr + data_len);
+            out_delivered.push_back({sector_lba, count});
         }
-
-        if (hdr.type != fysetc::MsgType::SECTOR_READ_RESP) return false;
-
-        uint32_t sector_lba;
-        uint16_t count;
-        fysetc::SectorReadStatus status;
-        const uint8_t* data_ptr;
-        size_t data_len;
-
-        if (!fysetc::decodeSectorReadResp(payload.data(), payload.size(),
-                                           sector_lba, count, status,
-                                           data_ptr, data_len)) {
-            return false;
-        }
-
-        out_data.insert(out_data.end(), data_ptr, data_ptr + data_len);
-        out_delivered.push_back({sector_lba, count});
     }
 
-    return true;
+    pause_drain_ = false;
+    return ok;
 }
 
 bool FysetcTcpServer::ping(uint32_t nonce) {
     if (client_fd_ < 0) return false;
 
+    pause_drain_ = true;
+
     uint16_t req_id = next_req_id_++;
     auto msg = fysetc::encodePing(req_id, nonce);
-    if (!sendMessage(msg)) return false;
+    if (!sendMessage(msg)) {
+        pause_drain_ = false;
+        return false;
+    }
 
     fysetc::MsgHeader hdr;
     std::vector<uint8_t> payload;
-    if (!recvMessage(hdr, payload, 5000)) return false;
+    bool ok = false;
+    {
+        std::lock_guard<std::mutex> lock(recv_mutex_);
+        ok = recvMessageLocked(hdr, payload, 5000) &&
+             hdr.type == fysetc::MsgType::PONG;
+    }
 
-    return hdr.type == fysetc::MsgType::PONG;
+    pause_drain_ = false;
+    return ok;
 }
 
 }  // namespace hms_cpap
