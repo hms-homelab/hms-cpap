@@ -3,8 +3,12 @@
 // WiFiSwitchClient no longer needed - ez Share accessed via dedicated interface
 #include "clients/IDataSource.h"
 #include "clients/EzShareClient.h"
+#ifndef _WIN32
 #include "clients/FysetcTcpServer.h"
+#endif
+#ifndef _WIN32
 #include "clients/FysetcDataSource.h"
+#endif
 #include "llm_client.h"
 #include "parsers/CpapdashBridge.h"
 #include "services/DataPublisherService.h"
@@ -102,7 +106,9 @@ private:
 
     // Data source (ezShare HTTP or Fysetc TCP — both implement IDataSource)
     std::unique_ptr<IDataSource> data_source_;
+    #ifndef _WIN32
     std::unique_ptr<FysetcTcpServer> fysetc_server_;
+#endif
 
     // Services
     std::unique_ptr<SessionDiscoveryService> discovery_service_;
@@ -264,7 +270,9 @@ private:
     /// (Re)create MQTT subscriptions for commands
     void setupMqttSubscriptions();
     /// Create and start fysetc_server_ (idempotent; reads port/bind from env)
+    #ifndef _WIN32
     void startFysetcServer();
+    #endif
     /// Stop and destroy fysetc_server_ (safe to call when null)
     void stopFysetcServer();
 };

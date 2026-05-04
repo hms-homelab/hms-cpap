@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.1.1] - 2026-05-04
+
+### Fixed
+- **Live session not shown in realtime API** — `has_live` is a count, not a boolean; fixed comparison from `== "1"` to `> 0` so nights with multiple open sessions display correctly
+- **Range downloads ignored config** — `EZSHARE_SUPPORTS_RANGE=false` env var and `ezshare_range: false` config were set but stale binary still attempted range requests; rebuild enforces correct behavior
+- **ezShare URL pointed at Fysetc** — service env had `EZSHARE_BASE_URL=http://192.168.2.75` (Fysetc) instead of real ezShare `.40`
+
 ## [4.0.6] - 2026-04-26
 
 ### Fixed

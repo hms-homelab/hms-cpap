@@ -195,7 +195,7 @@ void CpapController::realtime(const drogon::HttpRequestPtr&,
         try {
             auto sessions = qs_->getSessions(1, 1);
             if (!sessions.empty() && sessions[0].isMember("has_live") &&
-                sessions[0]["has_live"].asString() == "1") {
+                std::stoi(sessions[0]["has_live"].asString()) > 0) {
                 result["session"] = sessions[0];
             }
         } catch (...) {}
