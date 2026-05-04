@@ -459,7 +459,7 @@ bool EDFParser::parseBRPFile(const std::string& filepath, CPAPSession& session) 
         auto flow_begin = flow_data.begin() + start;
         auto flow_end   = flow_data.begin() + end;
 
-        BreathingSummary summary(session.session_start.value() + std::chrono::minutes(min));
+        BreathingSummary summary(file_start + std::chrono::minutes(min));
 
         // Basic flow statistics
         double sum = std::accumulate(flow_begin, flow_end, 0.0);

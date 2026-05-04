@@ -199,8 +199,8 @@ int DatabaseService::insertSession(pqxx::work& work, const CPAPSession& session)
                                    brp_file_path, eve_file_path, sad_file_path, pld_file_path, csl_file_path)
         VALUES ($1, $2, NULL, $3, $4, $5, $6, $7, $8, $9)
         ON CONFLICT (device_id, session_start) DO UPDATE
-        SET duration_seconds = EXCLUDED.duration_seconds,
-            data_records = EXCLUDED.data_records,
+        SET duration_seconds = GREATEST(cpap_sessions.duration_seconds, EXCLUDED.duration_seconds),
+            data_records = GREATEST(cpap_sessions.data_records, EXCLUDED.data_records),
             brp_file_path = EXCLUDED.brp_file_path,
             eve_file_path = EXCLUDED.eve_file_path,
             sad_file_path = EXCLUDED.sad_file_path,
