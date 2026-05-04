@@ -1,5 +1,7 @@
 #pragma once
 
+#ifndef _WIN32
+
 #include "clients/FysetcProtocol.h"
 #include <string>
 #include <vector>
@@ -53,10 +55,14 @@ private:
     void handleConnection(int fd);
     bool sendMessage(const std::vector<uint8_t>& msg);
     bool recvMessage(fysetc::MsgHeader& hdr, std::vector<uint8_t>& payload, int timeout_ms);
+    bool recvMessageLocked(fysetc::MsgHeader& hdr, std::vector<uint8_t>& payload, int timeout_ms);
     bool processHello(const fysetc::MsgHeader& hdr, const std::vector<uint8_t>& payload);
     void processLog(const std::vector<uint8_t>& payload);
     void processStatus(const std::vector<uint8_t>& payload);
     void processPong(const std::vector<uint8_t>& payload);
+    void startDrainLoop();
+    void stopDrainLoop();
+    void drainLoop();
 
     int port_;
     std::string bind_addr_;
@@ -65,6 +71,8 @@ private:
     std::mutex fd_mutex_;
     std::atomic<bool> running_{false};
     std::thread accept_thread_;
+    std::thread drain_thread_;
+    std::atomic<bool> pause_drain_{false};
     std::mutex send_mutex_;
     std::mutex recv_mutex_;
     uint16_t next_req_id_ = 1;
@@ -73,3 +81,5 @@ private:
 };
 
 }  // namespace hms_cpap
+
+#endif // _WIN32
