@@ -1650,6 +1650,7 @@ void BurstCollectorService::reloadConfig() {
     // Source / discovery
     if (nc.source != last_config_.source || nc.ezshare_url != last_config_.ezshare_url ||
         nc.local_dir != last_config_.local_dir) {
+#ifndef _WIN32
         auto action = decideFysetcLifecycle(last_config_.source, nc.source,
                                             fysetc_server_ != nullptr);
         if (action == FysetcLifecycleAction::Stop) {
@@ -1660,6 +1661,7 @@ void BurstCollectorService::reloadConfig() {
             stopFysetcServer();
         }
 
+#endif
         if (nc.source == "local") {
             local_source_dir_ = nc.local_dir;
             data_source_.reset();
@@ -1868,6 +1870,7 @@ void BurstCollectorService::setupMqttSubscriptions() {
 }
 
 BurstCollectorService::FysetcLifecycleAction
+#ifndef _WIN32
 BurstCollectorService::decideFysetcLifecycle(const std::string& old_source,
                                              const std::string& new_source,
                                              bool server_exists) {
@@ -1906,5 +1909,7 @@ void BurstCollectorService::stopFysetcServer() {
     fysetc_server_.reset();
     std::cout << "CPAP: Fysetc TCP server stopped" << std::endl;
 }
+
+#endif // _WIN32
 
 } // namespace hms_cpap

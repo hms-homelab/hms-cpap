@@ -1,5 +1,7 @@
 #pragma once
 
+#ifndef _WIN32
+
 #include "clients/IDataSource.h"
 #include "clients/EzShareClient.h"
 #include "clients/FysetcTcpServer.h"
@@ -45,3 +47,5 @@ private:
 };
 
 }  // namespace hms_cpap
+
+#endif // _WIN32
