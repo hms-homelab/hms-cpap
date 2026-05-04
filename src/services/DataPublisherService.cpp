@@ -753,15 +753,10 @@ bool DataPublisherService::publishSession(const CPAPSession& session) {
     bool db_success = true;
     bool mqtt_success = true;
 
-    // 1. Save to database
-    if (db_service_ && db_service_->isConnected()) {
-        db_success = db_service_->saveSession(session);
-    } else {
-        std::cerr << "⚠️  DB: Not connected, skipping database save" << std::endl;
-        db_success = false;
-    }
+    // DB save is handled by BurstCollectorService before publishSession() is called.
+    // No re-save here — avoids double-inserting breathing_summary records.
 
-    // 2. Publish to MQTT
+    // Publish to MQTT
     static bool discovery_published = false;
     static bool was_disconnected = false;
 
