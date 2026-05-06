@@ -1910,8 +1910,8 @@ void BurstCollectorService::setupMqttSubscriptions() {
         [](const std::string&, const std::string&) {}, 1);
 }
 
-BurstCollectorService::FysetcLifecycleAction
 #ifndef _WIN32
+BurstCollectorService::FysetcLifecycleAction
 BurstCollectorService::decideFysetcLifecycle(const std::string& old_source,
                                              const std::string& new_source,
                                              bool server_exists) {
