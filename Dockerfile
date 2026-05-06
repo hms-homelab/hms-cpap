@@ -74,7 +74,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libmariadb3 \
     libdrogon1t64 \
     libtrantor1 \
-    libhpdf2.4.0t64 \
+    libhpdf-2.3.0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user for security
