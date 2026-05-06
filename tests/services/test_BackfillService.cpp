@@ -54,6 +54,7 @@ public:
     MOCK_METHOD(bool, saveLiveOximetrySample, (const std::string&, const std::string&, int, int, int), (override));
     OxiSummary getOximetrySummary(const std::string&, const std::string&, const std::string&) override { return {}; }
     OxiRangeSummary getOximetryRangeSummary(const std::string&, const std::string&, const std::string&) override { return {}; }
+    std::vector<OxiNightlyPoint> getOximetryNightlySpo2(const std::string&, const std::string&, const std::string&) override { return {}; }
 };
 
 // ── Status reporting ────────────────────────────────────────────────────

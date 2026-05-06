@@ -2050,6 +2050,36 @@ IDatabase::OxiRangeSummary DatabaseService::getOximetryRangeSummary(
     return s;
 }
 
+std::vector<IDatabase::OxiNightlyPoint> DatabaseService::getOximetryNightlySpo2(
+    const std::string& device_id, const std::string& start, const std::string& end) {
+    std::vector<IDatabase::OxiNightlyPoint> pts;
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!ensureConnection()) return pts;
+    try {
+        pqxx::work txn(*conn_);
+        // One row per night: pick session with longest duration when multiple exist
+        auto rows = txn.exec_params(
+            "SELECT DISTINCT ON (cpap_session_date) cpap_session_date, avg_spo2, min_spo2 "
+            "FROM oximetry_sessions "
+            "WHERE device_id = $1 "
+            "AND cpap_session_date >= $2 AND cpap_session_date <= $3 "
+            "AND avg_spo2 IS NOT NULL AND duration_seconds > 60 "
+            "ORDER BY cpap_session_date ASC, duration_seconds DESC",
+            device_id, start, end);
+        txn.commit();
+        for (const auto& r : rows) {
+            IDatabase::OxiNightlyPoint p;
+            p.date     = r["cpap_session_date"].as<std::string>("");
+            p.avg_spo2 = r["avg_spo2"].is_null() ? 0 : r["avg_spo2"].as<double>(0);
+            p.min_spo2 = r["min_spo2"].is_null() ? 0 : r["min_spo2"].as<double>(0);
+            pts.push_back(p);
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "getOximetryNightlySpo2 error: " << e.what() << std::endl;
+    }
+    return pts;
+}
+
 } // namespace hms_cpap
 
 #endif // WITH_POSTGRESQL

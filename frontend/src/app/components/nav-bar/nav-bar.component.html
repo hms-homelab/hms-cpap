@@ -1,0 +1,13 @@
+<nav class="nav-bar">
+  <div class="nav-brand">
+    <img src="logo.png" alt="" class="nav-logo" />
+    HMS-CPAP
+    <span class="nav-version" *ngIf="version">v{{version}}</span>
+  </div>
+  <div class="nav-links">
+    <a routerLink="/dashboard" routerLinkActive="active">Dashboard</a>
+    <a routerLink="/sessions" routerLinkActive="active">Sessions</a>
+    <a routerLink="/reports" routerLinkActive="active">Reports</a>
+    <a routerLink="/settings" routerLinkActive="active">Settings</a>
+  </div>
+</nav>

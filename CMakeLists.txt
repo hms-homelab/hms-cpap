@@ -63,6 +63,16 @@ endif()
 find_package(CURL REQUIRED)
 find_package(OpenSSL REQUIRED)
 
+# libharu for PDF generation (Linux/macOS only — not available via vcpkg for Windows)
+if(NOT MSVC)
+    find_library(HPDF_LIB hpdf)
+    find_path(HPDF_INCLUDE_DIR hpdf.h)
+    if(NOT HPDF_LIB OR NOT HPDF_INCLUDE_DIR)
+        message(FATAL_ERROR "libhpdf not found — run: sudo apt install libhpdf-dev")
+    endif()
+    include_directories(${HPDF_INCLUDE_DIR})
+endif()
+
 # nlohmann_json: header-only, use host headers when cross-compiling (Linux)
 if(CMAKE_CROSSCOMPILING AND NOT WIN32)
     add_library(nlohmann_json::nlohmann_json INTERFACE IMPORTED)
@@ -183,7 +193,13 @@ list(FILTER SOURCES EXCLUDE REGEX ".*/models/CPAPModels\\.cpp$")
 list(FILTER SOURCES EXCLUDE REGEX ".*/cli/.*\\.cpp$")
 if(MSVC)
     list(FILTER SOURCES EXCLUDE REGEX ".*/FysetcTcpServer\\.cpp$")
+    list(FILTER SOURCES EXCLUDE REGEX ".*/FysetcDataSource\\.cpp$")
     list(FILTER SOURCES EXCLUDE REGEX ".*/FysetcSectorCollectorService\\.cpp$")
+    # PDF/report/gnuplot not available on Windows
+    list(FILTER SOURCES EXCLUDE REGEX ".*/PdfRenderer\\.cpp$")
+    list(FILTER SOURCES EXCLUDE REGEX ".*/GnuplotService\\.cpp$")
+    list(FILTER SOURCES EXCLUDE REGEX ".*/ReportGeneratorService\\.cpp$")
+    list(FILTER SOURCES EXCLUDE REGEX ".*/services/reports/.*\\.cpp$")
 endif()
 
 # Executable
@@ -243,6 +259,12 @@ endif()
 
 if(BUILD_WITH_WEB)
     target_link_libraries(${PROJECT_NAME} Drogon::Drogon)
+endif()
+
+# libharu PDF generation (Linux only)
+if(NOT MSVC)
+    target_link_options(${PROJECT_NAME} PRIVATE -Wl,--no-as-needed)
+    target_link_libraries(${PROJECT_NAME} /usr/lib/x86_64-linux-gnu/libhpdf.so)
 endif()
 
 # BLE support (optional, requires libsdbus-c++)

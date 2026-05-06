@@ -77,13 +77,15 @@ export class SessionsComponent implements OnInit, OnDestroy {
   isRowBusy(s: any): boolean {
     const day = s.sleep_day || this.sleepDay(s.session_start);
     return !!(this.actionInProgress[day] || this.actionInProgress[day + '_sum'] ||
-              this.actionInProgress[day + '_rep'] || this.actionInProgress[day + '_oxi']);
+              this.actionInProgress[day + '_rep'] || this.actionInProgress[day + '_oxi'] ||
+              this.actionInProgress[day + '_pdf']);
   }
 
   rowMessage(s: any): string {
     const day = s.sleep_day || this.sleepDay(s.session_start);
     return this.actionMessage[day] || this.actionMessage[day + '_sum'] ||
-           this.actionMessage[day + '_rep'] || this.actionMessage[day + '_oxi'] || '';
+           this.actionMessage[day + '_rep'] || this.actionMessage[day + '_oxi'] ||
+           this.actionMessage[day + '_pdf'] || '';
   }
 
   isLive(s: any): boolean {
@@ -154,6 +156,49 @@ export class SessionsComponent implements OnInit, OnDestroy {
       },
       error: () => {
         this.actionInProgress[day + '_rep'] = false;
+      }
+    });
+  }
+
+  downloadDayPdf(event: Event, s: any): void {
+    event.stopPropagation();
+    const day = s.sleep_day || this.sleepDay(s.session_start);
+    this.openMenu = null;
+    const key = day + '_pdf';
+    this.actionInProgress[key] = true;
+    this.api.generateReport(day, day).subscribe({
+      next: (r) => {
+        this.pollAndDownload(r.report_id, key);
+      },
+      error: () => {
+        this.actionMessage[key] = 'Failed';
+        this.actionInProgress[key] = false;
+      }
+    });
+  }
+
+  private pollAndDownload(reportId: number, key: string, attempts = 0): void {
+    this.api.getReportStatus(reportId).subscribe({
+      next: (r) => {
+        if (r.status === 'ready') {
+          this.actionInProgress[key] = false;
+          const a = document.createElement('a');
+          a.href = this.api.downloadReportUrl(reportId);
+          a.download = r.filename || `cpap_report_${reportId}.pdf`;
+          a.click();
+        } else if (r.status === 'error') {
+          this.actionMessage[key] = 'Failed';
+          this.actionInProgress[key] = false;
+        } else if (attempts < 30) {
+          setTimeout(() => this.pollAndDownload(reportId, key, attempts + 1), 2000);
+        } else {
+          this.actionMessage[key] = 'Timeout';
+          this.actionInProgress[key] = false;
+        }
+      },
+      error: () => {
+        this.actionMessage[key] = 'Failed';
+        this.actionInProgress[key] = false;
       }
     });
   }

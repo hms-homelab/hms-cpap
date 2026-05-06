@@ -23,11 +23,17 @@ list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/WiFiSwitchClient\\.cpp$")
 list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/cli/.*\\.cpp$")
 if(MSVC)
     list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/FysetcTcpServer\\.cpp$")
+    list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/FysetcDataSource\\.cpp$")
     list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/FysetcSectorCollectorService\\.cpp$")
 endif()
 # EDFParser + CPAPModels now provided by cpapdash-parser library
 list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/parsers/EDFParser\\.cpp$")
 list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/models/CPAPModels\\.cpp$")
+# PDF/report services depend on QueryService (web/) and libhpdf — exclude from test build
+list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/PdfRenderer\\.cpp$")
+list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/GnuplotService\\.cpp$")
+list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/ReportGeneratorService\\.cpp$")
+list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/services/reports/.*\\.cpp$")
 
 # Test sources
 set(TEST_SOURCES

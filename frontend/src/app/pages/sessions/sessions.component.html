@@ -53,6 +53,11 @@
                 <i class="fa-solid fa-heart-pulse"></i>
                 {{ actionInProgress[(s.sleep_day || sleepDay(s.session_start)) + '_oxi'] ? '...' : 'Fetch O2 History' }}
               </button>
+              <button [disabled]="actionInProgress[(s.sleep_day || sleepDay(s.session_start)) + '_pdf']"
+                (click)="downloadDayPdf($event, s)">
+                <i class="fa-solid fa-file-pdf"></i>
+                {{ actionInProgress[(s.sleep_day || sleepDay(s.session_start)) + '_pdf'] ? 'Generating...' : 'Day PDF' }}
+              </button>
             </div>
             </div>
             <div class="action-status" *ngIf="isRowBusy(s) || rowMessage(s)">

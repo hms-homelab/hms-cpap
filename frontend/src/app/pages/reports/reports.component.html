@@ -1,0 +1,62 @@
+<div class="reports-page">
+  <h2>PDF Reports</h2>
+
+  <div class="generate-card">
+    <h3>Generate Report</h3>
+    <div class="form-row">
+      <div class="field">
+        <label>Start Date</label>
+        <input type="date" [(ngModel)]="startDate" />
+      </div>
+      <div class="field">
+        <label>End Date</label>
+        <input type="date" [(ngModel)]="endDate" />
+      </div>
+      <button class="generate-btn" (click)="generate()" [disabled]="generating || !startDate || !endDate">
+        <i class="fa-solid fa-file-pdf" *ngIf="!generating"></i>
+        <i class="fa-solid fa-circle-notch fa-spin" *ngIf="generating"></i>
+        {{ generating ? 'Generating...' : 'Generate PDF' }}
+      </button>
+    </div>
+    <div class="error-msg" *ngIf="generateError">{{ generateError }}</div>
+  </div>
+
+  <div class="table-section">
+    <h3>Generated Reports</h3>
+    <div class="empty" *ngIf="reports.length === 0">No reports yet.</div>
+    <table class="reports-table" *ngIf="reports.length > 0">
+      <thead>
+        <tr>
+          <th>Period</th>
+          <th>Nights</th>
+          <th>Created</th>
+          <th>Status</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr *ngFor="let r of reports" [class.generating-row]="isGenerating(r)">
+          <td class="period-cell">
+            {{ r.range_start }} &rarr; {{ r.range_end }}
+          </td>
+          <td>{{ r.nights_count ?? '—' }}</td>
+          <td>{{ fmtDate(r.created_at) }}</td>
+          <td>
+            <span class="status-badge" [class]="'status-' + r.status">
+              <i class="fa-solid fa-circle-notch fa-spin" *ngIf="isGenerating(r)"></i>
+              {{ statusLabel(r.status) }}
+            </span>
+          </td>
+          <td>
+            <button class="download-btn"
+              [disabled]="r.status !== 'ready' || downloading[r.id]"
+              (click)="download(r)">
+              <i class="fa-solid fa-download"></i>
+              {{ downloading[r.id] ? '...' : 'Download' }}
+            </button>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>

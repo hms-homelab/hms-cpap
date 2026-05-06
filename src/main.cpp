@@ -3,6 +3,9 @@
 #include <fstream>
 #include "controllers/CpapController.h"
 #include "web/QueryService.h"
+#ifndef _WIN32
+#include "services/ReportGeneratorService.h"
+#endif
 #endif
 #include "services/BurstCollectorService.h"
 #include "services/SessionDiscoveryService.h"
@@ -690,6 +693,41 @@ int main(int argc, char** argv) {
             hms_cpap::CpapController::setQueryService(query_service);
             hms_cpap::CpapController::setConfig(&config, config_path);
             hms_cpap::CpapController::setBurstService(burst_service.get());
+
+            // Wire report generator (PDF/gnuplot not available on Windows)
+#ifndef _WIN32
+            {
+                std::string archive_dir = hms_cpap::ConfigManager::get("CPAP_ARCHIVE_DIR",
+                    hms_cpap::AppConfig::dataDir());
+                std::shared_ptr<hms_cpap::IDatabase> rpt_db;
+#ifdef WITH_POSTGRESQL
+                if (config.database.type == "postgresql") {
+                    rpt_db = std::make_shared<hms_cpap::PostgresDatabase>(pg_conn_str);
+                    rpt_db->connect();
+                }
+#endif
+                if (!rpt_db) rpt_db = db;
+
+                std::shared_ptr<hms::MqttClient> rpt_mqtt;
+                if (config.mqtt.enabled) {
+                    hms::MqttConfig rpt_cfg;
+                    rpt_cfg.broker   = config.mqtt.broker;
+                    rpt_cfg.port     = config.mqtt.port;
+                    rpt_cfg.username = config.mqtt.username;
+                    rpt_cfg.password = config.mqtt.password;
+                    rpt_cfg.client_id = config.mqtt.client_id + "_rpt";
+                    rpt_mqtt = std::make_shared<hms::MqttClient>(rpt_cfg);
+                    rpt_mqtt->connect();
+                }
+
+                std::string logo_path = config.static_dir + "/logo.png";
+                if (!std::filesystem::exists(logo_path)) logo_path = "";
+
+                auto report_svc = std::make_shared<hms_cpap::ReportGeneratorService>(
+                    rpt_db, query_service, rpt_mqtt, config.device_id, archive_dir, logo_path);
+                hms_cpap::CpapController::setReportService(report_svc);
+            }
+#endif // _WIN32
 
             // Wire ML service triggers to controller
             if (ml_service) {

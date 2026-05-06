@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.2.0] - 2026-05-06
+
+### Added
+- **PDF Report Generation** — OOP class hierarchy: `BaseReportGenerator` + `RangeReportGenerator` (multi-night) + `DailyReportGenerator` (single-night per-minute detail)
+- **Daily Detail Report** — 8 charts with data tables: mask pressure, respiratory rate, tidal volume, minute ventilation, leak rate, snore index, SpO2 and heart rate from O2Ring (only rendered when ring data exists for that session)
+- **Range Report SpO2 chart** — O2Ring nightly SpO2 trend via `getOximetryNightlySpo2()` on `IDatabase`
+- **Reports page** (`/reports`) — date range form, generate button, auto-refreshing status table with download
+- **Sessions "Day PDF" action** — generates single-day report from session dropdown and auto-downloads on ready
+- **Nav bar** split to separate `.html`/`.css` files; Reports link added between Sessions and Settings
+
+### Fixed
+- **30-min bucket averaging** — daily charts bucket per-second/per-minute signals into 30-min averages; `extractCol30` now correctly parses numeric-as-string JSON values from DB (was falling through to `0.0`)
+- **Spurious zero filtering** — `vmin` threshold per signal skips invalid zero readings for pressure, RR, tidal volume, SpO2, HR
+- **GnuplotService** — deletes partial output file when gnuplot exits non-zero, preventing libharu `ec=4155` stream overflow on corrupt PNG load
+- **`std::isfinite` guards** — both in data extraction and before gnuplot data write to prevent NaN propagation
+- **Windows MSVC build** — `FysetcDataSource.cpp` now excluded alongside `FysetcTcpServer.cpp`; `libhpdf`/gnuplot/report services gated behind `#ifndef _WIN32` / MSVC CMake exclusions
+
 ## [4.1.2] - 2026-05-04
 
 ### Refactored

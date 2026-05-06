@@ -135,4 +135,20 @@ export class CpapApiService {
   collectOximetry(): Observable<any> {
     return this.http.post<any>('/api/oximetry/collect', {});
   }
+
+  generateReport(start: string, end: string): Observable<{ report_id: number; status: string }> {
+    return this.http.post<any>('/api/reports/generate', { start, end });
+  }
+
+  listReports(): Observable<any[]> {
+    return this.http.get<any[]>('/api/reports');
+  }
+
+  getReportStatus(id: number): Observable<any> {
+    return this.http.get<any>(`/api/reports/${id}/status`);
+  }
+
+  downloadReportUrl(id: number): string {
+    return `/api/reports/${id}/download`;
+  }
 }

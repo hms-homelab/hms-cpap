@@ -5,6 +5,7 @@
 #include "web/QueryService.h"
 #include "utils/AppConfig.h"
 #include "services/BurstCollectorService.h"
+#include "services/ReportGeneratorService.h"
 #include <functional>
 #include <memory>
 #include <string>
@@ -45,7 +46,11 @@ public:
     ADD_METHOD_TO(CpapController::sessionForceComplete,   "/api/sessions/{date}/force-complete",   drogon::Post);
     ADD_METHOD_TO(CpapController::sessionGenerateSummary, "/api/sessions/{date}/generate-summary", drogon::Post);
     ADD_METHOD_TO(CpapController::sessionReparse,         "/api/sessions/{date}/reparse",          drogon::Post);
-    ADD_METHOD_TO(CpapController::oximetryCollect, "/api/oximetry/collect", drogon::Post);
+    ADD_METHOD_TO(CpapController::oximetryCollect,   "/api/oximetry/collect",       drogon::Post);
+    ADD_METHOD_TO(CpapController::generateReport,    "/api/reports/generate",       drogon::Post);
+    ADD_METHOD_TO(CpapController::listReports,       "/api/reports",                drogon::Get);
+    ADD_METHOD_TO(CpapController::reportStatus,      "/api/reports/{id}/status",    drogon::Get);
+    ADD_METHOD_TO(CpapController::downloadReport,    "/api/reports/{id}/download",  drogon::Get);
     METHOD_LIST_END
 
     void health(const drogon::HttpRequestPtr& req,
@@ -128,6 +133,19 @@ public:
     void oximetryCollect(const drogon::HttpRequestPtr& req,
                          std::function<void(const drogon::HttpResponsePtr&)>&& cb);
 
+    void generateReport(const drogon::HttpRequestPtr& req,
+                        std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+    void listReports(const drogon::HttpRequestPtr& req,
+                     std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+    void reportStatus(const drogon::HttpRequestPtr& req,
+                      std::function<void(const drogon::HttpResponsePtr&)>&& cb,
+                      const std::string& id);
+    void downloadReport(const drogon::HttpRequestPtr& req,
+                        std::function<void(const drogon::HttpResponsePtr&)>&& cb,
+                        const std::string& id);
+
+    static void setReportService(std::shared_ptr<ReportGeneratorService> svc);
+
     static void setQueryService(std::shared_ptr<QueryService> qs);
     static void setConfig(hms_cpap::AppConfig* cfg, const std::string& config_path);
     static void setBurstService(BurstCollectorService* svc);
@@ -139,7 +157,8 @@ public:
     static std::function<Json::Value()> sleep_stage_status_getter_;
 
 private:
-    static std::shared_ptr<QueryService> qs_;
+    static std::shared_ptr<QueryService>          qs_;
+    static std::shared_ptr<ReportGeneratorService> report_svc_;
     static hms_cpap::AppConfig* config_;
     static std::string config_path_;
     static BurstCollectorService* burst_service_;

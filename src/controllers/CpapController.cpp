@@ -764,6 +764,131 @@ void CpapController::oximetryCollect(const drogon::HttpRequestPtr&,
     cb(jsonResp(result));
 }
 
+// ----- Report endpoints ------------------------------------------------
+
+std::shared_ptr<ReportGeneratorService> CpapController::report_svc_;
+
+void CpapController::setReportService(std::shared_ptr<ReportGeneratorService> svc) {
+    report_svc_ = svc;
+}
+
+void CpapController::generateReport(const drogon::HttpRequestPtr& req,
+                                     std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    if (!report_svc_) {
+        cb(jsonError("Report service not available", drogon::k503ServiceUnavailable));
+        return;
+    }
+    auto body = req->getJsonObject();
+    if (!body || !(*body)["start"].isString() || !(*body)["end"].isString()) {
+        cb(jsonError("Body must include 'start' and 'end' (YYYY-MM-DD)", drogon::k400BadRequest));
+        return;
+    }
+    std::string start = (*body)["start"].asString();
+    std::string end   = (*body)["end"].asString();
+    if (start > end) {
+        cb(jsonError("'start' must be before 'end'", drogon::k400BadRequest));
+        return;
+    }
+
+    int id = report_svc_->triggerReport(start, end);
+    if (id < 0) {
+        cb(jsonError("Failed to create report job", drogon::k500InternalServerError));
+        return;
+    }
+    Json::Value result;
+    result["report_id"] = id;
+    result["status"]    = "generating";
+    result["start"]     = start;
+    result["end"]       = end;
+    cb(jsonResp(result));
+}
+
+void CpapController::listReports(const drogon::HttpRequestPtr&,
+                                  std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    if (!report_svc_) {
+        cb(jsonError("Report service not available", drogon::k503ServiceUnavailable));
+        return;
+    }
+    auto jobs = report_svc_->listReports(50);
+    Json::Value arr(Json::arrayValue);
+    for (const auto& j : jobs) {
+        Json::Value o;
+        o["id"]           = j.id;
+        o["range_start"]  = j.range_start;
+        o["range_end"]    = j.range_end;
+        o["nights_count"] = j.nights_count;
+        o["filename"]     = j.filename;
+        o["status"]       = j.status;
+        o["error_msg"]    = j.error_msg;
+        o["created_at"]   = j.created_at;
+        o["completed_at"] = j.completed_at;
+        arr.append(o);
+    }
+    cb(jsonResp(arr));
+}
+
+void CpapController::reportStatus(const drogon::HttpRequestPtr&,
+                                   std::function<void(const drogon::HttpResponsePtr&)>&& cb,
+                                   const std::string& id) {
+    if (!report_svc_) {
+        cb(jsonError("Report service not available", drogon::k503ServiceUnavailable));
+        return;
+    }
+    int rid = 0;
+    try { rid = std::stoi(id); } catch (...) {
+        cb(jsonError("Invalid report id", drogon::k400BadRequest));
+        return;
+    }
+    auto job = report_svc_->getReport(rid);
+    if (!job) {
+        cb(jsonError("Report not found", drogon::k404NotFound));
+        return;
+    }
+    Json::Value o;
+    o["id"]           = job->id;
+    o["range_start"]  = job->range_start;
+    o["range_end"]    = job->range_end;
+    o["nights_count"] = job->nights_count;
+    o["filename"]     = job->filename;
+    o["status"]       = job->status;
+    o["error_msg"]    = job->error_msg;
+    o["created_at"]   = job->created_at;
+    o["completed_at"] = job->completed_at;
+    cb(jsonResp(o));
+}
+
+void CpapController::downloadReport(const drogon::HttpRequestPtr&,
+                                     std::function<void(const drogon::HttpResponsePtr&)>&& cb,
+                                     const std::string& id) {
+    if (!report_svc_) {
+        cb(jsonError("Report service not available", drogon::k503ServiceUnavailable));
+        return;
+    }
+    int rid = 0;
+    try { rid = std::stoi(id); } catch (...) {
+        cb(jsonError("Invalid report id", drogon::k400BadRequest));
+        return;
+    }
+    auto job = report_svc_->getReport(rid);
+    if (!job) {
+        cb(jsonError("Report not found", drogon::k404NotFound));
+        return;
+    }
+    if (job->status != "ready") {
+        cb(jsonError("Report not ready (status: " + job->status + ")", drogon::k409Conflict));
+        return;
+    }
+    if (!std::filesystem::exists(job->filepath)) {
+        cb(jsonError("Report file missing from disk", drogon::k404NotFound));
+        return;
+    }
+    auto resp = drogon::HttpResponse::newFileResponse(job->filepath);
+    resp->addHeader("Content-Disposition",
+                    "attachment; filename=\"" + job->filename + "\"");
+    resp->setContentTypeString("application/pdf");
+    cb(resp);
+}
+
 } // namespace hms_cpap
 
 #endif // BUILD_WITH_WEB

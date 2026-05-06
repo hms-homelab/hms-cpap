@@ -115,6 +115,8 @@ public:
                                    const std::string&) override { return {}; }
     OxiRangeSummary getOximetryRangeSummary(const std::string&, const std::string&,
                                               const std::string&) override { return {}; }
+    std::vector<OxiNightlyPoint> getOximetryNightlySpo2(const std::string&, const std::string&,
+                                                         const std::string&) override { return {}; }
 
     void* rawConnection() override;
 

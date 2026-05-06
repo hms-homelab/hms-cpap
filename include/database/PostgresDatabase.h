@@ -139,6 +139,12 @@ public:
         if (db_) return db_->getOximetryRangeSummary(dev, s, e);
         return {};
     }
+    std::vector<OxiNightlyPoint> getOximetryNightlySpo2(const std::string& dev,
+                                                         const std::string& s,
+                                                         const std::string& e) override {
+        if (db_) return db_->getOximetryNightlySpo2(dev, s, e);
+        return {};
+    }
 
     // -- Raw connection -------------------------------------------------------
 

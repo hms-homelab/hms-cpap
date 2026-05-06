@@ -138,6 +138,9 @@ public:
     OxiRangeSummary getOximetryRangeSummary(const std::string& device_id,
                                               const std::string& start,
                                               const std::string& end) override;
+    std::vector<OxiNightlyPoint> getOximetryNightlySpo2(const std::string& device_id,
+                                                         const std::string& start,
+                                                         const std::string& end) override;
 
     void* rawConnection() override {
         std::lock_guard<std::recursive_mutex> lock(mutex_);
