@@ -153,7 +153,10 @@ target_include_directories(hms_mqtt PUBLIC
     ${hms_shared_SOURCE_DIR}/mqtt/include
 )
 if(MSVC)
-    target_compile_definitions(hms_mqtt PUBLIC PAHO_MQTTPP_IMPORTS)
+    # PAHO_MQTTPP_IMPORTS is only for dynamic (DLL) builds — skip for static triplets
+    if(NOT VCPKG_TARGET_TRIPLET MATCHES "static")
+        target_compile_definitions(hms_mqtt PUBLIC PAHO_MQTTPP_IMPORTS)
+    endif()
     target_link_libraries(hms_mqtt PUBLIC
         spdlog::spdlog
         PahoMqttCpp::paho-mqttpp3
