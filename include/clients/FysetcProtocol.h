@@ -20,11 +20,7 @@ enum class MsgType : uint8_t {
     PING             = 0x40,
     PONG             = 0x41,
     BYE              = 0x50,
-    RADIO_SILENCE    = 0x60,  // Fysetc→server: going radio-silent to read SD
 };
-
-// HELLO flags
-constexpr uint8_t HELLO_FLAG_HAS_PENDING_RESP = 0x01;  // reconnecting with buffered SECTOR_READ_RESP
 
 enum class SectorReadStatus : uint8_t {
     OK       = 0x00,

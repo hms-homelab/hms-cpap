@@ -196,17 +196,6 @@ void FysetcTcpServer::handleConnection(int fd) {
               << (device_state_.fw_version & 0xFF)
               << ", session " << device_state_.session_id << ")" << std::endl;
 
-    // If device reconnected after radio silence, receive the buffered sector resp
-    // and signal readSectors() which is waiting on radio_silence_cv_.
-    if (hdr.flags & fysetc::HELLO_FLAG_HAS_PENDING_RESP) {
-        std::cout << "FysetcTcp: Receiving pending sector resp after radio silence" << std::endl;
-        if (!receivePendingResponse()) {
-            std::cerr << "FysetcTcp: Failed to receive pending sector resp" << std::endl;
-            disconnect();
-            return;
-        }
-    }
-
     // Start drain loop to continuously consume LOG/STATUS messages
     // so the firmware's TCP send buffer never fills up and causes a crash.
     startDrainLoop();
@@ -337,19 +326,6 @@ bool FysetcTcpServer::recvMessageLocked(fysetc::MsgHeader& hdr,
         if (hdr.type == fysetc::MsgType::PONG) {
             processPong(payload);
         }
-        if (hdr.type == fysetc::MsgType::RADIO_SILENCE) {
-            std::cout << "FysetcTcp: Radio silence — device disconnecting to read SD" << std::endl;
-            {
-                std::lock_guard<std::mutex> lk(radio_silence_mutex_);
-                radio_silence_active_ = true;
-            }
-            radio_silence_cv_.notify_all();
-            {
-                std::lock_guard<std::mutex> lk(fd_mutex_);
-                if (client_fd_ >= 0) { close(client_fd_); client_fd_ = -1; }
-            }
-            return false;
-        }
         return true;
     }
 }
@@ -361,43 +337,6 @@ bool FysetcTcpServer::recvMessage(fysetc::MsgHeader& hdr,
     return recvMessageLocked(hdr, payload, timeout_ms);
 }
 
-bool FysetcTcpServer::receivePendingResponse() {
-    std::vector<uint8_t> data;
-    std::vector<std::pair<uint32_t, uint16_t>> delivered;
-
-    std::lock_guard<std::mutex> lock(recv_mutex_);
-    for (int i = 0; i < pending_resp_range_count_; ++i) {
-        fysetc::MsgHeader hdr;
-        std::vector<uint8_t> payload;
-        if (!recvMessageLocked(hdr, payload, 30000)) return false;
-
-        if (hdr.type == fysetc::MsgType::SECTOR_READ_ERR) {
-            std::cerr << "FysetcTcp: Pending resp range " << i << " returned error" << std::endl;
-            return false;
-        }
-        if (hdr.type != fysetc::MsgType::SECTOR_READ_RESP) return false;
-
-        uint32_t sector_lba; uint16_t count;
-        fysetc::SectorReadStatus status;
-        const uint8_t* data_ptr; size_t data_len;
-        if (!fysetc::decodeSectorReadResp(payload.data(), payload.size(),
-                                           sector_lba, count, status, data_ptr, data_len))
-            return false;
-
-        data.insert(data.end(), data_ptr, data_ptr + data_len);
-        delivered.push_back({sector_lba, count});
-    }
-
-    {
-        std::lock_guard<std::mutex> lk(radio_silence_mutex_);
-        pending_resp_data_      = std::move(data);
-        pending_resp_delivered_ = std::move(delivered);
-        pending_resp_ready_     = true;
-    }
-    radio_silence_cv_.notify_all();
-    return true;
-}
-
 bool FysetcTcpServer::readSectors(const std::vector<fysetc::SectorRange>& ranges,
                                    std::vector<uint8_t>& out_data,
                                    std::vector<std::pair<uint32_t, uint16_t>>& out_delivered) {
@@ -405,14 +344,6 @@ bool FysetcTcpServer::readSectors(const std::vector<fysetc::SectorRange>& ranges
 
     // Pause drain thread so it doesn't consume our responses.
     pause_drain_ = true;
-
-    // Record range count so receivePendingResponse knows how many frames to expect.
-    {
-        std::lock_guard<std::mutex> lk(radio_silence_mutex_);
-        pending_resp_range_count_ = static_cast<int>(ranges.size());
-        radio_silence_active_     = false;
-        pending_resp_ready_       = false;
-    }
 
     uint16_t req_id = next_req_id_++;
     auto req = fysetc::encodeSectorReadReq(req_id, ranges);
@@ -456,28 +387,6 @@ bool FysetcTcpServer::readSectors(const std::vector<fysetc::SectorRange>& ranges
 
             out_data.insert(out_data.end(), data_ptr, data_ptr + data_len);
             out_delivered.push_back({sector_lba, count});
-        }
-    }
-
-    // If connection dropped due to radio silence, wait for the device to reconnect
-    // and deliver the buffered sector resp via receivePendingResponse().
-    if (!ok) {
-        std::unique_lock<std::mutex> lk(radio_silence_mutex_);
-        if (radio_silence_active_) {
-            std::cout << "FysetcTcp: Waiting for pending sector resp (radio silence, up to 30s)..."
-                      << std::endl;
-            bool got = radio_silence_cv_.wait_for(lk, std::chrono::seconds(30),
-                [this] { return pending_resp_ready_ || !running_; });
-            if (got && pending_resp_ready_) {
-                out_data      = std::move(pending_resp_data_);
-                out_delivered = std::move(pending_resp_delivered_);
-                radio_silence_active_ = false;
-                pending_resp_ready_   = false;
-                pause_drain_ = false;
-                return true;
-            }
-            radio_silence_active_ = false;
-            pending_resp_ready_   = false;
         }
     }
 
