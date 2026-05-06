@@ -127,4 +127,8 @@ export class CpapApiService {
   generateSessionSummary(date: string): Observable<any> {
     return this.http.post<any>(`/api/sessions/${date}/generate-summary`, {});
   }
+
+  reparseSession(date: string): Observable<any> {
+    return this.http.post<any>(`/api/sessions/${date}/reparse`, {});
+  }
 }

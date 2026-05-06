@@ -1,0 +1,28 @@
+.sessions-page { padding: 1.5rem; }
+h2 { color: #e0e0e0; margin-bottom: 1rem; }
+.session-table { width: 100%; border-collapse: collapse; }
+.session-table th { text-align: left; padding: 0.6rem; color: #888; border-bottom: 2px solid #333; font-size: 0.8rem; text-transform: uppercase; }
+.session-table td { padding: 0.6rem; color: #e0e0e0; border-bottom: 1px solid #2a2a3a; }
+.clickable { cursor: pointer; }
+.clickable:hover td { background: rgba(100,181,246,0.06); }
+.elevated { color: #ff8a65; font-weight: 600; }
+.live-row td { border-bottom-color: rgba(76,175,80,0.3); }
+.live-badge {
+  background: #4caf50; color: #fff; padding: 0.15rem 0.5rem; border-radius: 10px;
+  font-size: 0.65rem; font-weight: 700; letter-spacing: 0.5px;
+  animation: pulse-live 1.5s ease-in-out infinite;
+}
+.done-badge { color: #666; font-size: 0.7rem; }
+@keyframes pulse-live {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+.actions-cell { white-space: nowrap; }
+.menu-wrap { position: relative; display: inline-block; }
+.menu-btn { background: none; border: 1px solid #444; color: #aaa; padding: 0.2rem 0.5rem; border-radius: 4px; cursor: pointer; font-size: 1rem; line-height: 1; }
+.menu-btn:hover { border-color: #888; color: #e0e0e0; }
+.dropdown { position: absolute; right: 0; top: 100%; background: #1e1e2e; border: 1px solid #333; border-radius: 6px; min-width: 140px; z-index: 100; box-shadow: 0 4px 16px rgba(0,0,0,0.5); }
+.dropdown button { display: block; width: 100%; text-align: left; padding: 0.5rem 0.9rem; background: none; border: none; color: #e0e0e0; cursor: pointer; font-size: 0.8rem; }
+.dropdown button:hover:not(:disabled) { background: rgba(255,255,255,0.07); }
+.dropdown button:disabled { opacity: 0.4; cursor: not-allowed; }
+.dropdown .danger { color: #ef9a9a; }

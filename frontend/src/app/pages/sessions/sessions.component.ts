@@ -1,4 +1,4 @@
-import { Component, OnInit, OnDestroy, ChangeDetectorRef } from '@angular/core';
+import { Component, OnInit, OnDestroy, ChangeDetectorRef, HostListener } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterLink } from '@angular/router';
 import { CpapApiService } from '../../services/cpap-api.service';
@@ -8,93 +8,15 @@ import { SessionListItem } from '../../models/session.model';
   selector: 'app-sessions',
   standalone: true,
   imports: [CommonModule, RouterLink],
-  template: `
-    <div class="sessions-page">
-      <h2>Sessions ({{ sessions.length }})</h2>
-      <table class="session-table" *ngIf="sessions.length > 0">
-        <thead>
-          <tr>
-            <th>Date</th><th>Status</th><th>Duration</th><th>AHI</th><th>Events</th>
-            <th>OA</th><th>CA</th><th>H</th><th>RERA</th><th>SpO2</th><th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr *ngFor="let s of sessions" [routerLink]="['/sessions', s.sleep_day || sleepDay(s.session_start)]"
-              class="clickable" [class.live-row]="isLive(s)">
-            <td>{{ s.sleep_day || sleepDay(s.session_start) }}</td>
-            <td>
-              <span *ngIf="isLive(s)" class="live-badge">LIVE</span>
-              <span *ngIf="!isLive(s)" class="done-badge">Done</span>
-            </td>
-            <td>{{ fmtDuration(s.duration_hours) }}</td>
-            <td [class.elevated]="+s.ahi > 5">{{ (+s.ahi).toFixed(1) || '-' }}</td>
-            <td>{{ s.total_events || '-' }}</td>
-            <td>{{ s.obstructive_apneas || '-' }}</td>
-            <td>{{ s.central_apneas || '-' }}</td>
-            <td>{{ s.hypopneas || '-' }}</td>
-            <td>{{ s.reras || '-' }}</td>
-            <td>
-              <span *ngIf="s.avg_spo2 && +s.avg_spo2 > 0">{{ s.avg_spo2 }}%</span>
-              <span *ngIf="!(s.avg_spo2 && +s.avg_spo2 > 0) && oxiMap[s.sleep_day || sleepDay(s.session_start)]">{{ oxiMap[s.sleep_day || sleepDay(s.session_start)] }}%</span>
-              <span *ngIf="!(s.avg_spo2 && +s.avg_spo2 > 0) && !oxiMap[s.sleep_day || sleepDay(s.session_start)]">-</span>
-            </td>
-            <td class="actions-cell" (click)="$event.stopPropagation()">
-              <button *ngIf="isLive(s)" class="action-btn force-btn"
-                [disabled]="actionInProgress[s.sleep_day || sleepDay(s.session_start)]"
-                (click)="forceComplete($event, s)"
-                title="Force complete this session">
-                {{ actionInProgress[s.sleep_day || sleepDay(s.session_start)] ? '...' : actionMessage[s.sleep_day || sleepDay(s.session_start)] || 'Force Done' }}
-              </button>
-              <button class="action-btn summary-btn"
-                [disabled]="actionInProgress[(s.sleep_day || sleepDay(s.session_start)) + '_sum']"
-                (click)="generateSummary($event, s)"
-                title="Generate AI summary">
-                {{ actionInProgress[(s.sleep_day || sleepDay(s.session_start)) + '_sum'] ? '...' : actionMessage[(s.sleep_day || sleepDay(s.session_start)) + '_sum'] || 'AI Summary' }}
-              </button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-  `,
-  styles: [`
-    .sessions-page { padding: 1.5rem; }
-    h2 { color: #e0e0e0; margin-bottom: 1rem; }
-    .session-table { width: 100%; border-collapse: collapse; }
-    .session-table th { text-align: left; padding: 0.6rem; color: #888; border-bottom: 2px solid #333; font-size: 0.8rem; text-transform: uppercase; }
-    .session-table td { padding: 0.6rem; color: #e0e0e0; border-bottom: 1px solid #2a2a3a; }
-    .clickable { cursor: pointer; }
-    .clickable:hover td { background: rgba(100,181,246,0.06); }
-    .elevated { color: #ff8a65; font-weight: 600; }
-    .live-row td { border-bottom-color: rgba(76,175,80,0.3); }
-    .live-badge {
-      background: #4caf50; color: #fff; padding: 0.15rem 0.5rem; border-radius: 10px;
-      font-size: 0.65rem; font-weight: 700; letter-spacing: 0.5px;
-      animation: pulse-live 1.5s ease-in-out infinite;
-    }
-    .done-badge { color: #666; font-size: 0.7rem; }
-    @keyframes pulse-live {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.5; }
-    }
-    .actions-cell { white-space: nowrap; }
-    .action-btn {
-      font-size: 0.65rem; padding: 0.2rem 0.5rem; border-radius: 4px;
-      border: none; cursor: pointer; margin-right: 0.3rem;
-      font-weight: 600; letter-spacing: 0.3px; transition: opacity 0.2s;
-    }
-    .action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-    .force-btn { background: #f44336; color: #fff; }
-    .force-btn:hover:not(:disabled) { background: #d32f2f; }
-    .summary-btn { background: #1976d2; color: #fff; }
-    .summary-btn:hover:not(:disabled) { background: #1565c0; }
-  `]
+  templateUrl: './sessions.component.html',
+  styleUrls: ['./sessions.component.css']
 })
 export class SessionsComponent implements OnInit, OnDestroy {
   sessions: SessionListItem[] = [];
   oxiMap: Record<string, string> = {};
   actionInProgress: Record<string, boolean> = {};
   actionMessage: Record<string, string> = {};
+  openMenu: string | null = null;
   private refreshTimer: any = null;
 
   constructor(private api: CpapApiService, private cdr: ChangeDetectorRef) {}
@@ -106,6 +28,16 @@ export class SessionsComponent implements OnInit, OnDestroy {
 
   ngOnDestroy() {
     if (this.refreshTimer) clearInterval(this.refreshTimer);
+  }
+
+  @HostListener('document:click')
+  onDocumentClick() {
+    this.openMenu = null;
+  }
+
+  toggleMenu(event: Event, day: string): void {
+    event.stopPropagation();
+    this.openMenu = this.openMenu === day ? null : day;
   }
 
   private loadSessions() {
@@ -166,6 +98,7 @@ export class SessionsComponent implements OnInit, OnDestroy {
   forceComplete(event: Event, s: any): void {
     event.stopPropagation();
     const day = s.sleep_day || this.sleepDay(s.session_start);
+    this.openMenu = null;
     this.actionInProgress[day] = true;
     this.api.forceCompleteSession(day).subscribe({
       next: (r) => {
@@ -183,6 +116,7 @@ export class SessionsComponent implements OnInit, OnDestroy {
   generateSummary(event: Event, s: any): void {
     event.stopPropagation();
     const day = s.sleep_day || this.sleepDay(s.session_start);
+    this.openMenu = null;
     this.actionInProgress[day + '_sum'] = true;
     this.api.generateSessionSummary(day).subscribe({
       next: () => {
@@ -192,6 +126,22 @@ export class SessionsComponent implements OnInit, OnDestroy {
       error: () => {
         this.actionMessage[day + '_sum'] = 'Failed';
         this.actionInProgress[day + '_sum'] = false;
+      }
+    });
+  }
+
+  reparse(event: Event, s: any): void {
+    event.stopPropagation();
+    const day = s.sleep_day || this.sleepDay(s.session_start);
+    this.openMenu = null;
+    this.actionInProgress[day + '_rep'] = true;
+    this.api.reparseSession(day).subscribe({
+      next: () => {
+        this.actionInProgress[day + '_rep'] = false;
+        setTimeout(() => this.loadSessions(), 2000);
+      },
+      error: () => {
+        this.actionInProgress[day + '_rep'] = false;
       }
     });
   }

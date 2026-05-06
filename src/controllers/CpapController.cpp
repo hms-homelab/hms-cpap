@@ -52,7 +52,7 @@ void CpapController::health(const drogon::HttpRequestPtr&,
                              std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
     Json::Value j;
     j["status"] = "ok";
-    j["version"] = "4.0.7";
+    j["version"] = "4.0.8";
     j["service"] = "hms-cpap";
     cb(jsonResp(j));
 }
@@ -734,6 +734,20 @@ void CpapController::sessionGenerateSummary(const drogon::HttpRequestPtr&,
     bool ok = burst_service_->generateSummaryForDate(date);
     Json::Value result;
     result["status"] = ok ? "started" : "failed";
+    result["date"] = date;
+    cb(jsonResp(result));
+}
+
+void CpapController::sessionReparse(const drogon::HttpRequestPtr&,
+                                     std::function<void(const drogon::HttpResponsePtr&)>&& cb,
+                                     const std::string& date) {
+    if (!burst_service_) {
+        cb(jsonError("Service not available", drogon::k503ServiceUnavailable));
+        return;
+    }
+    bool ok = burst_service_->reparseSession(date);
+    Json::Value result;
+    result["status"] = ok ? "queued" : "not_found";
     result["date"] = date;
     cb(jsonResp(result));
 }
