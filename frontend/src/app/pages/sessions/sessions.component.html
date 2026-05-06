@@ -28,11 +28,8 @@
           <span *ngIf="!(s.avg_spo2 && +s.avg_spo2 > 0) && !oxiMap[s.sleep_day || sleepDay(s.session_start)]">-</span>
         </td>
         <td class="actions-cell" (click)="$event.stopPropagation()">
-          <div class="action-status" *ngIf="isRowBusy(s) || rowMessage(s)">
-            <i class="fa-solid fa-circle-notch fa-spin" *ngIf="isRowBusy(s)"></i>
-            <span class="msg" *ngIf="rowMessage(s)">{{ rowMessage(s) }}</span>
-          </div>
-          <div class="menu-wrap">
+          <div class="actions-inner">
+            <div class="menu-wrap">
             <button class="menu-btn" (click)="toggleMenu($event, s.sleep_day || sleepDay(s.session_start))">⋮</button>
             <div class="dropdown" *ngIf="openMenu === (s.sleep_day || sleepDay(s.session_start))">
               <button *ngIf="isLive(s)" class="danger"
@@ -56,6 +53,11 @@
                 <i class="fa-solid fa-heart-pulse"></i>
                 {{ actionInProgress[(s.sleep_day || sleepDay(s.session_start)) + '_oxi'] ? '...' : 'Fetch O2 History' }}
               </button>
+            </div>
+            </div>
+            <div class="action-status" *ngIf="isRowBusy(s) || rowMessage(s)">
+              <i class="fa-solid fa-circle-notch fa-spin" *ngIf="isRowBusy(s)"></i>
+              <span class="msg" *ngIf="rowMessage(s)">{{ rowMessage(s) }}</span>
             </div>
           </div>
         </td>
