@@ -44,6 +44,7 @@ public:
     ADD_METHOD_TO(CpapController::insights,           "/api/insights",                     drogon::Get);
     ADD_METHOD_TO(CpapController::sessionForceComplete,   "/api/sessions/{date}/force-complete",   drogon::Post);
     ADD_METHOD_TO(CpapController::sessionGenerateSummary, "/api/sessions/{date}/generate-summary", drogon::Post);
+    ADD_METHOD_TO(CpapController::sessionReparse,         "/api/sessions/{date}/reparse",          drogon::Post);
     ADD_METHOD_TO(CpapController::oximetryCollect, "/api/oximetry/collect", drogon::Post);
     METHOD_LIST_END
 
@@ -121,6 +122,9 @@ public:
     void sessionGenerateSummary(const drogon::HttpRequestPtr& req,
                                 std::function<void(const drogon::HttpResponsePtr&)>&& cb,
                                 const std::string& date);
+    void sessionReparse(const drogon::HttpRequestPtr& req,
+                        std::function<void(const drogon::HttpResponsePtr&)>&& cb,
+                        const std::string& date);
     void oximetryCollect(const drogon::HttpRequestPtr& req,
                          std::function<void(const drogon::HttpResponsePtr&)>&& cb);
 
