@@ -24,6 +24,7 @@ public:
     MOCK_METHOD(bool, saveSession, (const CPAPSession&), (override));
     MOCK_METHOD(bool, sessionExists, (const std::string&, const std::chrono::system_clock::time_point&), (override));
     MOCK_METHOD((std::optional<std::chrono::system_clock::time_point>), getLastSessionStart, (const std::string&), (override));
+    MOCK_METHOD((std::optional<std::chrono::system_clock::time_point>), getSessionStartForSleepDay, (const std::string&, const std::string&, bool), (override));
     MOCK_METHOD((std::optional<SessionMetrics>), getSessionMetrics, (const std::string&, const std::chrono::system_clock::time_point&), (override));
     MOCK_METHOD(bool, markSessionCompleted, (const std::string&, const std::chrono::system_clock::time_point&), (override));
     MOCK_METHOD(bool, reopenSession, (const std::string&, const std::chrono::system_clock::time_point&), (override));

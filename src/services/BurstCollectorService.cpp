@@ -265,6 +265,55 @@ bool BurstCollectorService::isRunning() const {
     return running_;
 }
 
+bool BurstCollectorService::forceCompleteSession(const std::string& sleep_day) {
+    auto session_start = db_service_->getSessionStartForSleepDay(device_id_, sleep_day, true);
+    if (!session_start) {
+        // No open session — try any session for that day to still publish metrics
+        session_start = db_service_->getSessionStartForSleepDay(device_id_, sleep_day, false);
+        if (!session_start) {
+            std::cerr << "forceCompleteSession: no session found for " << sleep_day << std::endl;
+            return false;
+        }
+    }
+    db_service_->markSessionCompleted(device_id_, session_start.value());
+    db_service_->setForceCompleted(device_id_, session_start.value());
+    if (data_publisher_) {
+        data_publisher_->publishSessionCompleted();
+        processSTRFile();
+        auto metrics = db_service_->getNightlyMetrics(device_id_, session_start.value());
+        if (metrics) {
+            data_publisher_->publishHistoricalState(metrics.value());
+            if (llm_enabled_ && llm_client_) {
+                const STRDailyRecord* str_rec = !last_str_records_.empty()
+                    ? &last_str_records_.back() : nullptr;
+                generateAndPublishSummary(metrics.value(), str_rec);
+            }
+        }
+    }
+    return true;
+}
+
+bool BurstCollectorService::generateSummaryForDate(const std::string& sleep_day) {
+    if (!llm_enabled_ || !llm_client_) {
+        std::cerr << "generateSummaryForDate: LLM not enabled" << std::endl;
+        return false;
+    }
+    auto session_start = db_service_->getSessionStartForSleepDay(device_id_, sleep_day, false);
+    if (!session_start) {
+        std::cerr << "generateSummaryForDate: no session found for " << sleep_day << std::endl;
+        return false;
+    }
+    auto metrics = db_service_->getNightlyMetrics(device_id_, session_start.value());
+    if (!metrics) {
+        std::cerr << "generateSummaryForDate: no metrics for " << sleep_day << std::endl;
+        return false;
+    }
+    const STRDailyRecord* str_rec = !last_str_records_.empty()
+        ? &last_str_records_.back() : nullptr;
+    generateAndPublishSummary(metrics.value(), str_rec);
+    return true;
+}
+
 std::chrono::system_clock::time_point BurstCollectorService::getLastBurstTime() const {
     return last_burst_time_;
 }
@@ -727,6 +776,9 @@ bool BurstCollectorService::executeBurstCycle() {
                                 generateAndPublishSummary(metrics.value(), str_rec);
                             }
                         }
+
+                        // Pull any pending O2Ring VLD files at session end
+                        if (oximetry_service_) oximetry_service_->collectAndPublish();
                     }
                     continue;
                 }

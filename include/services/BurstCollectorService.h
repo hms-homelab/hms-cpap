@@ -81,6 +81,8 @@ public:
      * @return true if worker thread is active
      */
     bool isRunning() const;
+    bool forceCompleteSession(const std::string& sleep_day);
+    bool generateSummaryForDate(const std::string& sleep_day);
 
     /**
      * Get last burst execution time

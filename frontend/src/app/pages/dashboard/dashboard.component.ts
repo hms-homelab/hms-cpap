@@ -64,9 +64,21 @@ const MODE_LABELS: Record<string, string> = {
       <app-oximetry-row [data]="oximetryData" *ngIf="oximetryData" />
 
       <!-- Two-column layout for Summary + Insights -->
-      <div class="two-col" *ngIf="aiSummaryText || insights.length">
+      <div class="two-col" *ngIf="aiSummaryText || insights.length || true">
         <!-- 3. AI Session Summary -->
-        <app-ai-summary [summaryText]="aiSummaryText" *ngIf="aiSummaryText" />
+        <div class="ai-summary-wrapper">
+          <div class="ai-summary-header">
+            <span class="ai-summary-label" *ngIf="aiSummaryText">AI Session Summary</span>
+            <button class="refresh-summary-btn"
+              [disabled]="summaryRefreshing || !data?.latest_night?.date"
+              (click)="refreshAiSummary()"
+              title="Regenerate AI summary for latest session">
+              {{ summaryRefreshing ? 'Generating...' : 'Refresh Summary' }}
+            </button>
+            <span class="refresh-msg" *ngIf="summaryRefreshMsg">{{ summaryRefreshMsg }}</span>
+          </div>
+          <app-ai-summary [summaryText]="aiSummaryText" *ngIf="aiSummaryText" />
+        </div>
         <!-- 4. Therapy Insights -->
         <app-therapy-insights [insights]="insights" *ngIf="insights.length" />
       </div>
@@ -138,6 +150,17 @@ const MODE_LABELS: Record<string, string> = {
     .chart-container { background: #1e1e2f; border: 1px solid #333; border-radius: 8px; padding: 1rem; }
     .chart-container.wide { grid-column: 1 / -1; }
     @media (max-width: 768px) { .charts { grid-template-columns: 1fr; } }
+    .ai-summary-wrapper { display: flex; flex-direction: column; }
+    .ai-summary-header { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.5rem; flex-wrap: wrap; }
+    .ai-summary-label { color: #888; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.5px; }
+    .refresh-summary-btn {
+      font-size: 0.7rem; padding: 0.25rem 0.75rem; border-radius: 4px;
+      border: 1px solid #1976d2; background: transparent; color: #64b5f6;
+      cursor: pointer; font-weight: 600; transition: all 0.2s;
+    }
+    .refresh-summary-btn:hover:not(:disabled) { background: #1976d2; color: #fff; }
+    .refresh-summary-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .refresh-msg { color: #888; font-size: 0.7rem; font-style: italic; }
   `]
 })
 export class DashboardComponent implements OnInit, AfterViewInit {
@@ -180,6 +203,10 @@ export class DashboardComponent implements OnInit, AfterViewInit {
   mlStatus: any = null;
   mlPredictions: any = null;
   inferring = false;
+
+  // Summary refresh state
+  summaryRefreshing = false;
+  summaryRefreshMsg = '';
 
   constructor(private api: CpapApiService) {}
 
@@ -371,6 +398,32 @@ export class DashboardComponent implements OnInit, AfterViewInit {
         }
       },
       error: () => {},
+    });
+  }
+
+  refreshAiSummary(): void {
+    if (!this.data?.latest_night?.date) return;
+    this.summaryRefreshing = true;
+    this.summaryRefreshMsg = '';
+    this.api.generateSessionSummary(this.data.latest_night.date).subscribe({
+      next: () => {
+        this.summaryRefreshMsg = 'Summary queued — check back in ~30s';
+        this.summaryRefreshing = false;
+        setTimeout(() => {
+          this.api.getLatestSummary().subscribe({
+            next: (rows) => {
+              if (rows?.length && rows[0].summary_text) {
+                this.aiSummaryText = rows[0].summary_text;
+              }
+            },
+            error: () => {},
+          });
+        }, 35000);
+      },
+      error: () => {
+        this.summaryRefreshMsg = 'Failed to queue summary';
+        this.summaryRefreshing = false;
+      }
     });
   }
 

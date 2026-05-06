@@ -52,7 +52,7 @@ void CpapController::health(const drogon::HttpRequestPtr&,
                              std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
     Json::Value j;
     j["status"] = "ok";
-    j["version"] = "4.0.6";
+    j["version"] = "4.0.7";
     j["service"] = "hms-cpap";
     cb(jsonResp(j));
 }
@@ -708,6 +708,46 @@ void CpapController::insights(const drogon::HttpRequestPtr& req,
     } catch (const std::exception& e) {
         cb(jsonError(e.what(), drogon::k500InternalServerError));
     }
+}
+
+void CpapController::sessionForceComplete(const drogon::HttpRequestPtr&,
+                                           std::function<void(const drogon::HttpResponsePtr&)>&& cb,
+                                           const std::string& date) {
+    if (!burst_service_) {
+        cb(jsonError("Service not available", drogon::k503ServiceUnavailable));
+        return;
+    }
+    bool ok = burst_service_->forceCompleteSession(date);
+    Json::Value result;
+    result["status"] = ok ? "completed" : "already_completed";
+    result["date"] = date;
+    cb(jsonResp(result));
+}
+
+void CpapController::sessionGenerateSummary(const drogon::HttpRequestPtr&,
+                                             std::function<void(const drogon::HttpResponsePtr&)>&& cb,
+                                             const std::string& date) {
+    if (!burst_service_) {
+        cb(jsonError("Service not available", drogon::k503ServiceUnavailable));
+        return;
+    }
+    bool ok = burst_service_->generateSummaryForDate(date);
+    Json::Value result;
+    result["status"] = ok ? "started" : "failed";
+    result["date"] = date;
+    cb(jsonResp(result));
+}
+
+void CpapController::oximetryCollect(const drogon::HttpRequestPtr&,
+                                      std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    if (!burst_service_ || !burst_service_->getOximetryService()) {
+        cb(jsonError("Oximetry service not available", drogon::k503ServiceUnavailable));
+        return;
+    }
+    bool ok = burst_service_->getOximetryService()->collectAndPublish();
+    Json::Value result;
+    result["status"] = ok ? "collected" : "no_new_files";
+    cb(jsonResp(result));
 }
 
 } // namespace hms_cpap

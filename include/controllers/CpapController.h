@@ -42,6 +42,9 @@ public:
     ADD_METHOD_TO(CpapController::sessionSleepStages, "/api/sessions/{date}/sleep_stages", drogon::Get);
     ADD_METHOD_TO(CpapController::sleepStageStatus,   "/api/sleep-stages/status",          drogon::Get);
     ADD_METHOD_TO(CpapController::insights,           "/api/insights",                     drogon::Get);
+    ADD_METHOD_TO(CpapController::sessionForceComplete,   "/api/sessions/{date}/force-complete",   drogon::Post);
+    ADD_METHOD_TO(CpapController::sessionGenerateSummary, "/api/sessions/{date}/generate-summary", drogon::Post);
+    ADD_METHOD_TO(CpapController::oximetryCollect, "/api/oximetry/collect", drogon::Post);
     METHOD_LIST_END
 
     void health(const drogon::HttpRequestPtr& req,
@@ -112,6 +115,14 @@ public:
                           std::function<void(const drogon::HttpResponsePtr&)>&& cb);
     void insights(const drogon::HttpRequestPtr& req,
                   std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+    void sessionForceComplete(const drogon::HttpRequestPtr& req,
+                              std::function<void(const drogon::HttpResponsePtr&)>&& cb,
+                              const std::string& date);
+    void sessionGenerateSummary(const drogon::HttpRequestPtr& req,
+                                std::function<void(const drogon::HttpResponsePtr&)>&& cb,
+                                const std::string& date);
+    void oximetryCollect(const drogon::HttpRequestPtr& req,
+                         std::function<void(const drogon::HttpResponsePtr&)>&& cb);
 
     static void setQueryService(std::shared_ptr<QueryService> qs);
     static void setConfig(hms_cpap::AppConfig* cfg, const std::string& config_path);

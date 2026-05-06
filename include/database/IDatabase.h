@@ -44,6 +44,11 @@ public:
     virtual std::optional<std::chrono::system_clock::time_point>
         getLastSessionStart(const std::string& device_id) = 0;
 
+    virtual std::optional<std::chrono::system_clock::time_point>
+        getSessionStartForSleepDay(const std::string& device_id,
+                                   const std::string& sleep_day,
+                                   bool open_only = false) = 0;
+
     virtual std::optional<SessionMetrics> getSessionMetrics(
         const std::string& device_id,
         const std::chrono::system_clock::time_point& session_start) = 0;
