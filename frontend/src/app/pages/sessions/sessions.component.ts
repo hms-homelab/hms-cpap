@@ -74,6 +74,18 @@ export class SessionsComponent implements OnInit, OnDestroy {
     }
   }
 
+  isRowBusy(s: any): boolean {
+    const day = s.sleep_day || this.sleepDay(s.session_start);
+    return !!(this.actionInProgress[day] || this.actionInProgress[day + '_sum'] ||
+              this.actionInProgress[day + '_rep'] || this.actionInProgress[day + '_oxi']);
+  }
+
+  rowMessage(s: any): string {
+    const day = s.sleep_day || this.sleepDay(s.session_start);
+    return this.actionMessage[day] || this.actionMessage[day + '_sum'] ||
+           this.actionMessage[day + '_rep'] || this.actionMessage[day + '_oxi'] || '';
+  }
+
   isLive(s: any): boolean {
     return s.has_live === 't' || s.has_live === '1' || s.has_live === true || !s.session_end;
   }

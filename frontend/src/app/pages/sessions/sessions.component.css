@@ -17,12 +17,16 @@ h2 { color: #e0e0e0; margin-bottom: 1rem; }
   0%, 100% { opacity: 1; }
   50% { opacity: 0.5; }
 }
-.actions-cell { white-space: nowrap; }
+.actions-cell { white-space: nowrap; vertical-align: middle; }
+.action-status { display: flex; align-items: center; gap: 0.35rem; margin-top: 0.3rem; font-size: 0.68rem; color: #90caf9; }
+.action-status i { font-size: 0.7rem; }
+.action-status .msg { color: #a5d6a7; }
 .menu-wrap { position: relative; display: inline-block; }
 .menu-btn { background: none; border: 1px solid #444; color: #aaa; padding: 0.2rem 0.5rem; border-radius: 4px; cursor: pointer; font-size: 1rem; line-height: 1; }
 .menu-btn:hover { border-color: #888; color: #e0e0e0; }
 .dropdown { position: absolute; right: 0; top: 100%; background: #1e1e2e; border: 1px solid #333; border-radius: 6px; min-width: 140px; z-index: 100; box-shadow: 0 4px 16px rgba(0,0,0,0.5); }
-.dropdown button { display: block; width: 100%; text-align: left; padding: 0.5rem 0.9rem; background: none; border: none; color: #e0e0e0; cursor: pointer; font-size: 0.8rem; }
+.dropdown button { display: flex; align-items: center; gap: 0.5rem; width: 100%; text-align: left; padding: 0.5rem 0.9rem; background: none; border: none; color: #e0e0e0; cursor: pointer; font-size: 0.8rem; }
+.dropdown button i { width: 0.9rem; text-align: center; opacity: 0.8; }
 .dropdown button:hover:not(:disabled) { background: rgba(255,255,255,0.07); }
 .dropdown button:disabled { opacity: 0.4; cursor: not-allowed; }
 .dropdown .danger { color: #ef9a9a; }
