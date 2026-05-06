@@ -44,6 +44,10 @@
                 (click)="reparse($event, s)">
                 {{ actionInProgress[(s.sleep_day || sleepDay(s.session_start)) + '_rep'] ? '...' : 'Reparse' }}
               </button>
+              <button [disabled]="actionInProgress[(s.sleep_day || sleepDay(s.session_start)) + '_oxi']"
+                (click)="fetchOximetry($event, s)">
+                {{ actionInProgress[(s.sleep_day || sleepDay(s.session_start)) + '_oxi'] ? '...' : 'Fetch O2 History' }}
+              </button>
             </div>
           </div>
         </td>

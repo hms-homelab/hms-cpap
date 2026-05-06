@@ -131,4 +131,8 @@ export class CpapApiService {
   reparseSession(date: string): Observable<any> {
     return this.http.post<any>(`/api/sessions/${date}/reparse`, {});
   }
+
+  collectOximetry(): Observable<any> {
+    return this.http.post<any>('/api/oximetry/collect', {});
+  }
 }

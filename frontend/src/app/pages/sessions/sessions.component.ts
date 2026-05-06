@@ -145,4 +145,22 @@ export class SessionsComponent implements OnInit, OnDestroy {
       }
     });
   }
+
+  fetchOximetry(event: Event, s: any): void {
+    event.stopPropagation();
+    const day = s.sleep_day || this.sleepDay(s.session_start);
+    this.openMenu = null;
+    this.actionInProgress[day + '_oxi'] = true;
+    this.api.collectOximetry().subscribe({
+      next: () => {
+        this.actionInProgress[day + '_oxi'] = false;
+        // Reload oximetry for this row
+        delete this.oxiMap[day];
+        this.loadSessions();
+      },
+      error: () => {
+        this.actionInProgress[day + '_oxi'] = false;
+      }
+    });
+  }
 }
