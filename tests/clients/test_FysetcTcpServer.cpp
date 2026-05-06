@@ -70,8 +70,9 @@ static bool recvAll(int fd, std::vector<uint8_t>& out, size_t count, int timeout
 
 // Helper: build a HELLO message
 static std::vector<uint8_t> makeHello(const char* serial, uint16_t fw_ver,
-                                       uint32_t boot_count, uint16_t req_id = 1) {
-    auto buf = encodeHeader(MsgType::HELLO, 0, req_id, HelloPayload::WIRE_SIZE);
+                                       uint32_t boot_count, uint16_t req_id = 1,
+                                       uint8_t flags = 0) {
+    auto buf = encodeHeader(MsgType::HELLO, flags, req_id, HelloPayload::WIRE_SIZE);
     buf.resize(MsgHeader::WIRE_SIZE + HelloPayload::WIRE_SIZE, 0);
     size_t off = MsgHeader::WIRE_SIZE;
     std::memset(&buf[off], 0, 16);
@@ -129,11 +130,11 @@ protected:
         server.reset();
     }
 
-    int connectAndHandshake(uint32_t boot_count = 1) {
+    int connectAndHandshake(uint32_t boot_count = 1, uint8_t flags = 0) {
         int fd = connectTo(test_port_);
         if (fd < 0) return -1;
 
-        auto hello = makeHello("TEST_DEVICE", 0x0100, boot_count);
+        auto hello = makeHello("TEST_DEVICE", 0x0100, boot_count, 1, flags);
         if (!sendAll(fd, hello)) { close(fd); return -1; }
 
         // Receive HELLO_ACK
@@ -454,4 +455,126 @@ TEST(FysetcProtocolTest, ByeEncoding) {
     ASSERT_TRUE(decodeHeader(encoded.data(), encoded.size(), hdr));
     EXPECT_EQ(hdr.type, MsgType::BYE);
     EXPECT_EQ(encoded[MsgHeader::WIRE_SIZE], 0x01);
+}
+
+// Full radio-silence flow:
+//   readSectors() → SECTOR_READ_REQ sent →
+//   device sends RADIO_SILENCE + disconnects →
+//   readSectors() waits on CV →
+//   device reconnects with HELLO_FLAG_HAS_PENDING_RESP →
+//   server calls receivePendingResponse() →
+//   device sends SECTOR_READ_RESP →
+//   readSectors() returns with correct data
+TEST_F(FysetcTcpServerTest, RadioSilenceDeliversSectors) {
+    int fd1 = connectAndHandshake();
+    ASSERT_GE(fd1, 0);
+
+    std::vector<uint8_t> fake_data(512, 0xCD);
+    std::vector<SectorRange> req_ranges = {{500, 1}};
+    std::vector<uint8_t> out_data;
+    std::vector<std::pair<uint32_t, uint16_t>> out_delivered;
+
+    // Device simulator: receive REQ, send RADIO_SILENCE, disconnect,
+    // reconnect with pending-resp flag, send SECTOR_READ_RESP.
+    std::thread device([&]() {
+        // Receive SECTOR_READ_REQ
+        std::vector<uint8_t> req_hdr_buf;
+        if (!recvAll(fd1, req_hdr_buf, MsgHeader::WIRE_SIZE, 5000)) return;
+        MsgHeader hdr;
+        decodeHeader(req_hdr_buf.data(), MsgHeader::WIRE_SIZE, hdr);
+        uint32_t plen = hdr.length - 4;
+        if (plen > 0) {
+            std::vector<uint8_t> payload(plen);
+            recvAll(fd1, payload, plen, 5000);
+        }
+
+        // Send RADIO_SILENCE then drop the connection
+        auto silence = encodeHeader(MsgType::RADIO_SILENCE, 0, hdr.req_id, 0);
+        sendAll(fd1, silence);
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        close(fd1);
+
+        // Simulate SD read time
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+        // Reconnect with pending-resp flag; server will call receivePendingResponse()
+        int fd2 = connectAndHandshake(1, HELLO_FLAG_HAS_PENDING_RESP);
+        if (fd2 < 0) return;
+
+        // Send the buffered SECTOR_READ_RESP
+        auto resp = makeSectorResp(hdr.req_id, 500, 1, SectorReadStatus::OK, fake_data);
+        sendAll(fd2, resp);
+
+        // Keep alive until server processes the resp
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        close(fd2);
+    });
+
+    bool result = server->readSectors(req_ranges, out_data, out_delivered);
+    device.join();
+
+    EXPECT_TRUE(result);
+    ASSERT_EQ(out_delivered.size(), 1u);
+    EXPECT_EQ(out_delivered[0].first,  500u);
+    EXPECT_EQ(out_delivered[0].second, 1u);
+    ASSERT_EQ(out_data.size(), 512u);
+    EXPECT_EQ(out_data[0],   0xCD);
+    EXPECT_EQ(out_data[511], 0xCD);
+}
+
+// Multi-range radio silence: 2 ranges in the original REQ,
+// device delivers both SECTOR_READ_RESP frames after reconnect.
+TEST_F(FysetcTcpServerTest, RadioSilenceMultiRange) {
+    int fd1 = connectAndHandshake();
+    ASSERT_GE(fd1, 0);
+
+    std::vector<SectorRange> req_ranges = {{100, 1}, {200, 2}};
+    std::vector<uint8_t> out_data;
+    std::vector<std::pair<uint32_t, uint16_t>> out_delivered;
+
+    std::thread device([&]() {
+        std::vector<uint8_t> req_hdr_buf;
+        if (!recvAll(fd1, req_hdr_buf, MsgHeader::WIRE_SIZE, 5000)) return;
+        MsgHeader hdr;
+        decodeHeader(req_hdr_buf.data(), MsgHeader::WIRE_SIZE, hdr);
+        uint32_t plen = hdr.length - 4;
+        if (plen > 0) {
+            std::vector<uint8_t> payload(plen);
+            recvAll(fd1, payload, plen, 5000);
+        }
+
+        auto silence = encodeHeader(MsgType::RADIO_SILENCE, 0, hdr.req_id, 0);
+        sendAll(fd1, silence);
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        close(fd1);
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+        int fd2 = connectAndHandshake(1, HELLO_FLAG_HAS_PENDING_RESP);
+        if (fd2 < 0) return;
+
+        // Send both ranges
+        std::vector<uint8_t> data1(512, 0xAA);
+        std::vector<uint8_t> data2(1024, 0xBB);
+        sendAll(fd2, makeSectorResp(hdr.req_id, 100, 1, SectorReadStatus::OK, data1));
+        sendAll(fd2, makeSectorResp(hdr.req_id, 200, 2, SectorReadStatus::OK, data2));
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(500));
+        close(fd2);
+    });
+
+    bool result = server->readSectors(req_ranges, out_data, out_delivered);
+    device.join();
+
+    EXPECT_TRUE(result);
+    ASSERT_EQ(out_delivered.size(), 2u);
+    EXPECT_EQ(out_delivered[0].first,  100u);
+    EXPECT_EQ(out_delivered[0].second, 1u);
+    EXPECT_EQ(out_delivered[1].first,  200u);
+    EXPECT_EQ(out_delivered[1].second, 2u);
+    ASSERT_EQ(out_data.size(), 3u * 512u);
+    EXPECT_EQ(out_data[0],    0xAA);
+    EXPECT_EQ(out_data[511],  0xAA);
+    EXPECT_EQ(out_data[512],  0xBB);
+    EXPECT_EQ(out_data[1535], 0xBB);
 }
