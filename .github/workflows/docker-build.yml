@@ -129,7 +129,7 @@ jobs:
       contents: read
 
     env:
-      VCPKG_DEFAULT_TRIPLET: x64-windows
+      VCPKG_DEFAULT_TRIPLET: x64-windows-static-md
 
     steps:
       - name: Checkout repository
@@ -156,18 +156,18 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~\AppData\Local\vcpkg\archives
-          key: vcpkg-win-x64-${{ hashFiles('vcpkg.json') }}
-          restore-keys: vcpkg-win-x64-
+          key: vcpkg-win-x64-static-md-${{ hashFiles('vcpkg.json') }}
+          restore-keys: vcpkg-win-x64-static-md-
 
       - name: Install vcpkg dependencies
         run: |
-          vcpkg install --triplet x64-windows
+          vcpkg install --triplet x64-windows-static-md
 
       - name: Build HMS-CPAP (MSVC)
         run: |
           mkdir build
           cd build
-          cmake -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DBUILD_TESTS=OFF -DBUILD_WITH_WEB=ON -DBUILD_WITH_POSTGRESQL=ON ..
+          cmake -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static-md -DBUILD_TESTS=OFF -DBUILD_WITH_WEB=ON -DBUILD_WITH_POSTGRESQL=ON ..
           cmake --build . --config Release --parallel
 
       # ── Package Windows release ─────────────────────────────────
