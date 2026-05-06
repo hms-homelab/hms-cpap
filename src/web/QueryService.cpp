@@ -471,7 +471,9 @@ Json::Value QueryService::getSessionOximetry(const std::string& date, int interv
         " WHERE os.device_id = " + sql::param(1, dt_) +
         " AND (os.cpap_session_date IN (" + sql::param(2, dt_) + ", " + sql::param(3, dt_) + ")" +
         "  OR os.filename LIKE " + sql::param(2, dt_) + " || '%'" +
-        "  OR os.filename LIKE " + sql::param(3, dt_) + " || '%')" +
+        "  OR os.filename LIKE " + sql::param(3, dt_) + " || '%'" +
+        "  OR os.filename LIKE '%' || " + sql::param(2, dt_) + " || '%'" +
+        "  OR os.filename LIKE '%' || " + sql::param(3, dt_) + " || '%')" +
         " AND s." + std::string(dt_ == DbType::SQLITE ? "valid = 1" : "valid = true") +
         " ORDER BY s.timestamp";
 
