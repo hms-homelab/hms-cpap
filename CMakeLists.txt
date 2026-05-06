@@ -87,6 +87,14 @@ endif()
 if(MSVC)
     find_package(eclipse-paho-mqtt-c CONFIG REQUIRED)
     find_package(PahoMqttCpp CONFIG REQUIRED)
+    # Static triplets (x64-windows-static-md) use -static suffixed targets
+    if(VCPKG_TARGET_TRIPLET MATCHES "static")
+        set(PAHO_C_TARGET   eclipse-paho-mqtt-c::paho-mqtt3as-static)
+        set(PAHO_CPP_TARGET PahoMqttCpp::paho-mqttpp3-static)
+    else()
+        set(PAHO_C_TARGET   eclipse-paho-mqtt-c::paho-mqtt3as)
+        set(PAHO_CPP_TARGET PahoMqttCpp::paho-mqttpp3)
+    endif()
 else()
     find_library(PAHO_MQTTPP3_LIB paho-mqttpp3)
     find_library(PAHO_MQTT3AS_LIB paho-mqtt3as)
@@ -159,8 +167,8 @@ if(MSVC)
     endif()
     target_link_libraries(hms_mqtt PUBLIC
         spdlog::spdlog
-        PahoMqttCpp::paho-mqttpp3
-        eclipse-paho-mqtt-c::paho-mqtt3as
+        ${PAHO_CPP_TARGET}
+        ${PAHO_C_TARGET}
     )
 else()
     target_link_libraries(hms_mqtt PUBLIC
@@ -218,8 +226,8 @@ if(MSVC)
     target_link_libraries(${PROJECT_NAME}
         cpapdash_parser
         JsonCpp::JsonCpp
-        PahoMqttCpp::paho-mqttpp3
-        eclipse-paho-mqtt-c::paho-mqtt3as
+        ${PAHO_CPP_TARGET}
+        ${PAHO_C_TARGET}
         CURL::libcurl
         unofficial::sqlite3::sqlite3
         OpenSSL::SSL
