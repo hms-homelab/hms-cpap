@@ -8,6 +8,7 @@
 #include <functional>
 #include <thread>
 #include <mutex>
+#include <condition_variable>
 #include <atomic>
 #include <chrono>
 #include <queue>
@@ -63,6 +64,7 @@ private:
     void startDrainLoop();
     void stopDrainLoop();
     void drainLoop();
+    bool receivePendingResponse();
 
     int port_;
     std::string bind_addr_;
@@ -78,6 +80,15 @@ private:
     uint16_t next_req_id_ = 1;
     FysetcDeviceState device_state_;
     LogCallback log_callback_;
+
+    // Radio silence state: Fysetc stops WiFi, reads SD, reconnects with buffered resp.
+    std::mutex radio_silence_mutex_;
+    std::condition_variable radio_silence_cv_;
+    bool radio_silence_active_  = false;
+    bool pending_resp_ready_    = false;
+    int  pending_resp_range_count_ = 0;
+    std::vector<uint8_t>                        pending_resp_data_;
+    std::vector<std::pair<uint32_t, uint16_t>>  pending_resp_delivered_;
 };
 
 }  // namespace hms_cpap
