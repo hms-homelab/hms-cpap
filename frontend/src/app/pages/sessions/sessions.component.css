@@ -18,9 +18,10 @@ h2 { color: #e0e0e0; margin-bottom: 1rem; }
   50% { opacity: 0.5; }
 }
 .actions-cell { white-space: nowrap; vertical-align: middle; }
-.action-status { display: flex; align-items: center; gap: 0.35rem; margin-top: 0.3rem; font-size: 0.68rem; color: #90caf9; }
+.actions-inner { display: flex; align-items: center; gap: 0.5rem; }
+.action-status { display: flex; align-items: center; gap: 0.3rem; font-size: 0.68rem; color: #90caf9; }
 .action-status i { font-size: 0.7rem; }
-.action-status .msg { color: #a5d6a7; }
+.action-status .msg { color: #a5d6a7; white-space: nowrap; }
 .menu-wrap { position: relative; display: inline-block; }
 .menu-btn { background: none; border: 1px solid #444; color: #aaa; padding: 0.2rem 0.5rem; border-radius: 4px; cursor: pointer; font-size: 1rem; line-height: 1; }
 .menu-btn:hover { border-color: #888; color: #e0e0e0; }
