@@ -119,4 +119,12 @@ export class CpapApiService {
     const params = new HttpParams().set('start', date).set('end', date);
     return this.http.get<any[]>('/api/daily-summary', { params });
   }
+
+  forceCompleteSession(date: string): Observable<any> {
+    return this.http.post<any>(`/api/sessions/${date}/force-complete`, {});
+  }
+
+  generateSessionSummary(date: string): Observable<any> {
+    return this.http.post<any>(`/api/sessions/${date}/generate-summary`, {});
+  }
 }

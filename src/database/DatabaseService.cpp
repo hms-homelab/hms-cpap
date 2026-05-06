@@ -686,6 +686,39 @@ DatabaseService::getLastSessionStart(const std::string& device_id) {
     }
 }
 
+std::optional<std::chrono::system_clock::time_point>
+DatabaseService::getSessionStartForSleepDay(const std::string& device_id,
+                                             const std::string& sleep_day,
+                                             bool open_only) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!ensureConnection()) return std::nullopt;
+    try {
+        pqxx::work txn(*conn_);
+        std::string query = R"(
+            SELECT session_start
+            FROM cpap_sessions
+            WHERE device_id = $1
+              AND DATE(session_start - INTERVAL '12 hours') = $2::date
+        )";
+        if (open_only) query += " AND session_end IS NULL";
+        query += " ORDER BY session_start LIMIT 1";
+
+        auto result = txn.exec_params(query, device_id, sleep_day);
+        if (result.empty()) return std::nullopt;
+
+        std::string ts = result[0][0].as<std::string>();
+        std::tm tm = {};
+        std::istringstream ss(ts);
+        ss >> std::get_time(&tm, "%Y-%m-%d %H:%M:%S");
+        if (ss.fail()) return std::nullopt;
+        tm.tm_isdst = -1;
+        return std::chrono::system_clock::from_time_t(std::mktime(&tm));
+    } catch (const std::exception& e) {
+        std::cerr << "DB: getSessionStartForSleepDay error: " << e.what() << std::endl;
+        return std::nullopt;
+    }
+}
+
 bool DatabaseService::sessionExists(const std::string& device_id,
                                     const std::chrono::system_clock::time_point& session_start) {
     std::lock_guard<std::recursive_mutex> lock(mutex_);

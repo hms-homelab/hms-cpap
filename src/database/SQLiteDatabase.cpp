@@ -805,6 +805,11 @@ SQLiteDatabase::getLastSessionStart(const std::string& device_id) {
     return tp;
 }
 
+std::optional<std::chrono::system_clock::time_point>
+SQLiteDatabase::getSessionStartForSleepDay(const std::string&, const std::string&, bool) {
+    return std::nullopt;
+}
+
 // ---------------------------------------------------------------------------
 // getSessionMetrics
 // ---------------------------------------------------------------------------

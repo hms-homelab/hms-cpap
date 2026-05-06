@@ -15,7 +15,7 @@ import { SessionListItem } from '../../models/session.model';
         <thead>
           <tr>
             <th>Date</th><th>Status</th><th>Duration</th><th>AHI</th><th>Events</th>
-            <th>OA</th><th>CA</th><th>H</th><th>RERA</th><th>SpO2</th>
+            <th>OA</th><th>CA</th><th>H</th><th>RERA</th><th>SpO2</th><th>Actions</th>
           </tr>
         </thead>
         <tbody>
@@ -37,6 +37,20 @@ import { SessionListItem } from '../../models/session.model';
               <span *ngIf="s.avg_spo2 && +s.avg_spo2 > 0">{{ s.avg_spo2 }}%</span>
               <span *ngIf="!(s.avg_spo2 && +s.avg_spo2 > 0) && oxiMap[s.sleep_day || sleepDay(s.session_start)]">{{ oxiMap[s.sleep_day || sleepDay(s.session_start)] }}%</span>
               <span *ngIf="!(s.avg_spo2 && +s.avg_spo2 > 0) && !oxiMap[s.sleep_day || sleepDay(s.session_start)]">-</span>
+            </td>
+            <td class="actions-cell" (click)="$event.stopPropagation()">
+              <button *ngIf="isLive(s)" class="action-btn force-btn"
+                [disabled]="actionInProgress[s.sleep_day || sleepDay(s.session_start)]"
+                (click)="forceComplete($event, s)"
+                title="Force complete this session">
+                {{ actionInProgress[s.sleep_day || sleepDay(s.session_start)] ? '...' : actionMessage[s.sleep_day || sleepDay(s.session_start)] || 'Force Done' }}
+              </button>
+              <button class="action-btn summary-btn"
+                [disabled]="actionInProgress[(s.sleep_day || sleepDay(s.session_start)) + '_sum']"
+                (click)="generateSummary($event, s)"
+                title="Generate AI summary">
+                {{ actionInProgress[(s.sleep_day || sleepDay(s.session_start)) + '_sum'] ? '...' : actionMessage[(s.sleep_day || sleepDay(s.session_start)) + '_sum'] || 'AI Summary' }}
+              </button>
             </td>
           </tr>
         </tbody>
@@ -63,11 +77,24 @@ import { SessionListItem } from '../../models/session.model';
       0%, 100% { opacity: 1; }
       50% { opacity: 0.5; }
     }
+    .actions-cell { white-space: nowrap; }
+    .action-btn {
+      font-size: 0.65rem; padding: 0.2rem 0.5rem; border-radius: 4px;
+      border: none; cursor: pointer; margin-right: 0.3rem;
+      font-weight: 600; letter-spacing: 0.3px; transition: opacity 0.2s;
+    }
+    .action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .force-btn { background: #f44336; color: #fff; }
+    .force-btn:hover:not(:disabled) { background: #d32f2f; }
+    .summary-btn { background: #1976d2; color: #fff; }
+    .summary-btn:hover:not(:disabled) { background: #1565c0; }
   `]
 })
 export class SessionsComponent implements OnInit, OnDestroy {
   sessions: SessionListItem[] = [];
   oxiMap: Record<string, string> = {};
+  actionInProgress: Record<string, boolean> = {};
+  actionMessage: Record<string, string> = {};
   private refreshTimer: any = null;
 
   constructor(private api: CpapApiService, private cdr: ChangeDetectorRef) {}
@@ -134,5 +161,38 @@ export class SessionsComponent implements OnInit, OnDestroy {
     if (isNaN(d.getTime())) return sessionStart.slice(0, 10);
     d.setHours(d.getHours() - 12);
     return d.toISOString().slice(0, 10);
+  }
+
+  forceComplete(event: Event, s: any): void {
+    event.stopPropagation();
+    const day = s.sleep_day || this.sleepDay(s.session_start);
+    this.actionInProgress[day] = true;
+    this.api.forceCompleteSession(day).subscribe({
+      next: (r) => {
+        this.actionMessage[day] = r.status === 'completed' ? 'Completed' : 'Already done';
+        this.actionInProgress[day] = false;
+        setTimeout(() => this.loadSessions(), 2000);
+      },
+      error: () => {
+        this.actionMessage[day] = 'Failed';
+        this.actionInProgress[day] = false;
+      }
+    });
+  }
+
+  generateSummary(event: Event, s: any): void {
+    event.stopPropagation();
+    const day = s.sleep_day || this.sleepDay(s.session_start);
+    this.actionInProgress[day + '_sum'] = true;
+    this.api.generateSessionSummary(day).subscribe({
+      next: () => {
+        this.actionMessage[day + '_sum'] = 'Queued';
+        this.actionInProgress[day + '_sum'] = false;
+      },
+      error: () => {
+        this.actionMessage[day + '_sum'] = 'Failed';
+        this.actionInProgress[day + '_sum'] = false;
+      }
+    });
   }
 }

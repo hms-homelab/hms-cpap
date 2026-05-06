@@ -33,6 +33,13 @@ PostgresDatabase::getLastSessionStart(const std::string& device_id) {
     return db_->getLastSessionStart(device_id);
 }
 
+std::optional<std::chrono::system_clock::time_point>
+PostgresDatabase::getSessionStartForSleepDay(const std::string& device_id,
+                                              const std::string& sleep_day,
+                                              bool open_only) {
+    return db_->getSessionStartForSleepDay(device_id, sleep_day, open_only);
+}
+
 std::optional<SessionMetrics> PostgresDatabase::getSessionMetrics(
     const std::string& device_id,
     const std::chrono::system_clock::time_point& session_start) {
