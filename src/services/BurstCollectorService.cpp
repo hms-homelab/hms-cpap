@@ -65,9 +65,11 @@ void BurstCollectorService::initDataSource() {
         }
         std::cout << "CPAP: Local source mode — reading from " << local_source_dir_ << std::endl;
     } else if (source == "fysetc") {
+#ifndef _WIN32
         startFysetcServer();
         data_source_ = std::make_unique<FysetcDataSource>(*fysetc_server_);
         discovery_service_ = std::make_unique<SessionDiscoveryService>(*data_source_);
+#endif
     } else {
         auto ez = std::make_unique<EzShareClient>();
         if (app_config_ && !app_config_->ezshare_range) {
@@ -1705,6 +1707,7 @@ void BurstCollectorService::reloadConfig() {
             discovery_service_.reset();
         } else if (nc.source == "fysetc") {
             local_source_dir_.clear();
+#ifndef _WIN32
             if (action == FysetcLifecycleAction::Start) {
                 startFysetcServer();
             }
@@ -1712,6 +1715,7 @@ void BurstCollectorService::reloadConfig() {
                 data_source_ = std::make_unique<FysetcDataSource>(*fysetc_server_);
                 discovery_service_ = std::make_unique<SessionDiscoveryService>(*data_source_);
             }
+#endif
         } else {
             local_source_dir_.clear();
 #ifdef _WIN32

@@ -5,7 +5,9 @@
 #include "web/QueryService.h"
 #include "utils/AppConfig.h"
 #include "services/BurstCollectorService.h"
+#ifndef _WIN32
 #include "services/ReportGeneratorService.h"
+#endif
 #include <functional>
 #include <memory>
 #include <string>
@@ -47,10 +49,12 @@ public:
     ADD_METHOD_TO(CpapController::sessionGenerateSummary, "/api/sessions/{date}/generate-summary", drogon::Post);
     ADD_METHOD_TO(CpapController::sessionReparse,         "/api/sessions/{date}/reparse",          drogon::Post);
     ADD_METHOD_TO(CpapController::oximetryCollect,   "/api/oximetry/collect",       drogon::Post);
+#ifndef _WIN32
     ADD_METHOD_TO(CpapController::generateReport,    "/api/reports/generate",       drogon::Post);
     ADD_METHOD_TO(CpapController::listReports,       "/api/reports",                drogon::Get);
     ADD_METHOD_TO(CpapController::reportStatus,      "/api/reports/{id}/status",    drogon::Get);
     ADD_METHOD_TO(CpapController::downloadReport,    "/api/reports/{id}/download",  drogon::Get);
+#endif
     METHOD_LIST_END
 
     void health(const drogon::HttpRequestPtr& req,
@@ -133,6 +137,7 @@ public:
     void oximetryCollect(const drogon::HttpRequestPtr& req,
                          std::function<void(const drogon::HttpResponsePtr&)>&& cb);
 
+#ifndef _WIN32
     void generateReport(const drogon::HttpRequestPtr& req,
                         std::function<void(const drogon::HttpResponsePtr&)>&& cb);
     void listReports(const drogon::HttpRequestPtr& req,
@@ -145,6 +150,7 @@ public:
                         const std::string& id);
 
     static void setReportService(std::shared_ptr<ReportGeneratorService> svc);
+#endif
 
     static void setQueryService(std::shared_ptr<QueryService> qs);
     static void setConfig(hms_cpap::AppConfig* cfg, const std::string& config_path);
@@ -158,7 +164,9 @@ public:
 
 private:
     static std::shared_ptr<QueryService>          qs_;
+#ifndef _WIN32
     static std::shared_ptr<ReportGeneratorService> report_svc_;
+#endif
     static hms_cpap::AppConfig* config_;
     static std::string config_path_;
     static BurstCollectorService* burst_service_;

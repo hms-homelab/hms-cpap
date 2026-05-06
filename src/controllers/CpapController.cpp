@@ -765,6 +765,7 @@ void CpapController::oximetryCollect(const drogon::HttpRequestPtr&,
 }
 
 // ----- Report endpoints ------------------------------------------------
+#ifndef _WIN32
 
 std::shared_ptr<ReportGeneratorService> CpapController::report_svc_;
 
@@ -888,6 +889,8 @@ void CpapController::downloadReport(const drogon::HttpRequestPtr&,
     resp->setContentTypeString("application/pdf");
     cb(resp);
 }
+
+#endif // _WIN32
 
 } // namespace hms_cpap
 

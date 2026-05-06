@@ -264,7 +264,7 @@ endif()
 # libharu PDF generation (Linux only)
 if(NOT MSVC)
     target_link_options(${PROJECT_NAME} PRIVATE -Wl,--no-as-needed)
-    target_link_libraries(${PROJECT_NAME} /usr/lib/x86_64-linux-gnu/libhpdf.so)
+    target_link_libraries(${PROJECT_NAME} ${HPDF_LIB})
 endif()
 
 # BLE support (optional, requires libsdbus-c++)
