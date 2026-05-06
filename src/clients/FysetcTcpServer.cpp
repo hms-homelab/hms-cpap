@@ -95,11 +95,9 @@ void FysetcTcpServer::stopDrainLoop() {
 }
 
 void FysetcTcpServer::drainLoop() {
-    while (running_ && client_fd_ >= 0) {
-        if (pause_drain_) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(20));
-            continue;
-        }
+    // Exit loop when pause_drain_ is set so stopDrainLoop()+join() is safe.
+    // recvMessage has a 200ms timeout so the thread exits within 200ms of pause.
+    while (running_ && client_fd_ >= 0 && !pause_drain_) {
         fysetc::MsgHeader hdr;
         std::vector<uint8_t> payload;
         recvMessage(hdr, payload, 200);
@@ -122,6 +120,10 @@ void FysetcTcpServer::acceptLoop() {
         char ip[INET_ADDRSTRLEN];
         inet_ntop(AF_INET, &client_addr.sin_addr, ip, sizeof(ip));
         std::cout << "FysetcTcp: Connection from " << ip << std::endl;
+
+        // Stop the drain loop from the previous connection BEFORE taking the new fd.
+        // This prevents the drain thread from racing with handleConnection's HELLO recv.
+        stopDrainLoop();
 
         // Close any existing connection (single-tenant)
         {
@@ -342,13 +344,15 @@ bool FysetcTcpServer::readSectors(const std::vector<fysetc::SectorRange>& ranges
                                    std::vector<std::pair<uint32_t, uint16_t>>& out_delivered) {
     if (client_fd_ < 0 || ranges.empty()) return false;
 
-    // Pause drain thread so it doesn't consume our responses.
-    pause_drain_ = true;
+    // Stop drain thread fully before sending the request — this ensures the drain
+    // thread is not holding recv_mutex_ when the device sends its response back.
+    // Stopping BEFORE send means no response is in-flight yet, so no steal risk.
+    stopDrainLoop();
 
     uint16_t req_id = next_req_id_++;
     auto req = fysetc::encodeSectorReadReq(req_id, ranges);
     if (!sendMessage(req)) {
-        pause_drain_ = false;
+        startDrainLoop();
         return false;
     }
 
@@ -390,19 +394,19 @@ bool FysetcTcpServer::readSectors(const std::vector<fysetc::SectorRange>& ranges
         }
     }
 
-    pause_drain_ = false;
+    startDrainLoop();
     return ok;
 }
 
 bool FysetcTcpServer::ping(uint32_t nonce) {
     if (client_fd_ < 0) return false;
 
-    pause_drain_ = true;
+    stopDrainLoop();
 
     uint16_t req_id = next_req_id_++;
     auto msg = fysetc::encodePing(req_id, nonce);
     if (!sendMessage(msg)) {
-        pause_drain_ = false;
+        startDrainLoop();
         return false;
     }
 
@@ -415,7 +419,7 @@ bool FysetcTcpServer::ping(uint32_t nonce) {
              hdr.type == fysetc::MsgType::PONG;
     }
 
-    pause_drain_ = false;
+    startDrainLoop();
     return ok;
 }
 
