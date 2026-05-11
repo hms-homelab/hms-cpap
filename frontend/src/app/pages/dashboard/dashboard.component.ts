@@ -27,7 +27,7 @@ const MODE_LABELS: Record<string, string> = {
             MlIntelligenceComponent],
   template: `
     <div class="dashboard">
-      <h2>ResMed AirSense 10 Sleep Therapy</h2>
+      <h2>{{ deviceName }} Sleep Therapy</h2>
       <div class="dash-subtitle" *ngIf="data">Last Session - {{ formatDate(data.latest_night.date) }}</div>
 
       <!-- Live Session Banner -->
@@ -180,6 +180,7 @@ export class DashboardComponent implements OnInit, AfterViewInit {
   @ViewChild('eventsPie') eventsPieRef!: ElementRef<HTMLCanvasElement>;
 
   data: DashboardData | null = null;
+  deviceName = 'CPAP'; // overridden from /api/config in ngOnInit
   liveSession: SessionListItem | null = null;
   liveSpO2 = '';
   liveHR = '';
@@ -226,6 +227,17 @@ export class DashboardComponent implements OnInit, AfterViewInit {
   }
 
   ngOnInit() {
+    // Load device name from config so the title reflects the actual machine
+    // (e.g. "ResMed AirSense 11 AutoSet Sleep Therapy" instead of hardcoded model).
+    this.api.getConfig().subscribe({
+      next: (cfg) => {
+        if (cfg?.device_name) {
+          this.deviceName = cfg.device_name;
+        }
+      },
+      error: () => {},
+    });
+
     // Check for live session + O2Ring data
     this.api.getRealtime().subscribe({
       next: (rt) => {
