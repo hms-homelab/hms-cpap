@@ -125,6 +125,13 @@ public:
     void publishOximetryLive(const std::string& device_id,
                               const IO2RingClient::LiveReading& live);
 
+    /**
+     * Publish O2Ring session summary to MQTT (retained).
+     * Fetches avg_spo2 + avg_hr from DB for the given sleep date and publishes
+     * to cpap/{device_id}/oximetry/avg_spo2 and avg_heart_rate.
+     */
+    void publishOximetrySummary(const std::string& sleep_date_yyyymmdd);
+
 private:
     std::shared_ptr<hms::MqttClient> mqtt_client_;
     std::shared_ptr<IDatabase> db_service_;

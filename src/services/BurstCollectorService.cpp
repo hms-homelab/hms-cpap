@@ -1474,6 +1474,15 @@ void BurstCollectorService::generateAndPublishSummary(const SessionMetrics& metr
         db_service_->saveSummary(
             device_id_, "daily", sleep_day, sleep_day,
             1, metrics.ahi, hours, compliance, summary.value());
+
+        // Publish O2Ring session-level summary (avg_spo2, avg_hr) as retained MQTT topics
+        if (data_publisher_) {
+            // Convert sleep_day (YYYY-MM-DD) to YYYYMMDD for getOximetrySummary
+            std::string date_compact = sleep_day.substr(0, 4)
+                                     + sleep_day.substr(5, 2)
+                                     + sleep_day.substr(8, 2);
+            data_publisher_->publishOximetrySummary(date_compact);
+        }
     }
 }
 

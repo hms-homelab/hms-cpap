@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.2.1] - 2026-05-11
+
+### Added
+- **O2Ring avg HR MQTT** — `publishOximetrySummary()` publishes retained `cpap/{device_id}/oximetry/avg_spo2` and `cpap/{device_id}/oximetry/avg_heart_rate` after each session completes; two new HA discovery sensors (65 total)
+- **Sessions HR column** — sessions table shows avg heart rate with machine HR first, O2Ring fallback; fetches O2Ring data for all recent sessions (not just those missing machine SpO2)
+
 ## [4.2.0] - 2026-05-06
 
 ### Added

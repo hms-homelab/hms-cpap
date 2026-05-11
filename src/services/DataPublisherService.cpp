@@ -4,6 +4,7 @@
 #include <iostream>
 #include <iomanip>
 #include <sstream>
+#include <cmath>
 
 namespace hms_cpap {
 
@@ -76,7 +77,7 @@ bool DataPublisherService::publishDiscovery() {
     bool oxi_success = publishOximetryDiscovery();
 
     if (rt_success && hist_success && str_success && insights_success && oxi_success) {
-        std::cout << "MQTT: Discovery published (11 realtime + 31 historical + 14 daily + 1 insights + 6 oximetry = 63 sensors)" << std::endl;
+        std::cout << "MQTT: Discovery published (11 realtime + 31 historical + 14 daily + 1 insights + 8 oximetry = 65 sensors)" << std::endl;
         return true;
     }
 
@@ -900,11 +901,13 @@ bool DataPublisherService::publishOximetryDiscovery() {
     };
 
     std::vector<SensorDef> sensors = {
-        {"spo2",          "%",   "mdi:pulse",          false},
-        {"heart_rate",    "bpm", "mdi:heart-pulse",     false},
-        {"motion",        "",    "mdi:motion-sensor",   false},
-        {"last_spo2",     "%",   "mdi:pulse",          false},
-        {"last_heart_rate","bpm","mdi:heart-pulse",     false},
+        {"spo2",             "%",   "mdi:pulse",          false},
+        {"heart_rate",       "bpm", "mdi:heart-pulse",    false},
+        {"motion",           "",    "mdi:motion-sensor",  false},
+        {"last_spo2",        "%",   "mdi:pulse",          false},
+        {"last_heart_rate",  "bpm", "mdi:heart-pulse",    false},
+        {"avg_spo2",         "%",   "mdi:pulse",          false},
+        {"avg_heart_rate",   "bpm", "mdi:heart-pulse",    false},
     };
 
     for (const auto& sensor : sensors) {
@@ -954,8 +957,34 @@ bool DataPublisherService::publishOximetryDiscovery() {
         mqtt_client_->publish(discovery_topic, config_json, 1, true);
     }
 
-    std::cout << "    ✓ 5 oximetry sensors + 1 binary" << std::endl;
+    std::cout << "    ✓ 7 oximetry sensors + 1 binary" << std::endl;
     return true;
+}
+
+void DataPublisherService::publishOximetrySummary(const std::string& sleep_date_yyyymmdd) {
+    if (!mqtt_client_ || !mqtt_client_->isConnected()) return;
+    if (device_id_.empty()) return;
+
+    // Build date window: sleep_date → next day (same logic as LLM context)
+    struct tm day_tm = {};
+    strptime(sleep_date_yyyymmdd.c_str(), "%Y%m%d", &day_tm);
+    struct tm next_tm = day_tm;
+    next_tm.tm_mday += 1;
+    mktime(&next_tm);
+    char next_buf[9];
+    strftime(next_buf, sizeof(next_buf), "%Y%m%d", &next_tm);
+
+    auto oxi = db_service_->getOximetrySummary("o2ring", sleep_date_yyyymmdd, next_buf);
+    if (!oxi.found) return;
+
+    std::string prefix = "cpap/" + device_id_ + "/oximetry/";
+    mqtt_client_->publish(prefix + "avg_spo2",
+                          std::to_string(static_cast<int>(std::round(oxi.avg_spo2))), 1, true);
+    mqtt_client_->publish(prefix + "avg_heart_rate",
+                          std::to_string(static_cast<int>(std::round(oxi.avg_hr))), 1, true);
+
+    std::cout << "MQTT: O2Ring summary published (avg_spo2=" << oxi.avg_spo2
+              << " avg_hr=" << oxi.avg_hr << ")" << std::endl;
 }
 
 void DataPublisherService::publishOximetryLive(const std::string& device_id,

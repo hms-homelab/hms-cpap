@@ -1,6 +1,11 @@
 cmake_minimum_required(VERSION 3.16)
 project(hms_cpap CXX)
 
+# Read version from VERSION file
+file(STRINGS "${CMAKE_SOURCE_DIR}/VERSION" HMS_CPAP_VERSION LIMIT_COUNT 1)
+string(STRIP "${HMS_CPAP_VERSION}" HMS_CPAP_VERSION)
+add_compile_definitions(HMS_CPAP_VERSION="${HMS_CPAP_VERSION}")
+
 # C++20 on MSVC (needed for designated initializers in hms-shared/db),
 # C++17 on Linux (system pqxx is built with C++17 — ABI mismatch if we use C++20)
 if(MSVC)

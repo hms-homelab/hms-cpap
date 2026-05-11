@@ -14,6 +14,7 @@ import { SessionListItem } from '../../models/session.model';
 export class SessionsComponent implements OnInit, OnDestroy {
   sessions: SessionListItem[] = [];
   oxiMap: Record<string, string> = {};
+  hrMap: Record<string, string> = {};
   actionInProgress: Record<string, boolean> = {};
   actionMessage: Record<string, string> = {};
   openMenu: string | null = null;
@@ -52,22 +53,29 @@ export class SessionsComponent implements OnInit, OnDestroy {
   }
 
   private loadOximetryForSessions(sessions: SessionListItem[]) {
-    const noSpo2 = sessions.filter(s => !(s.avg_spo2 && +s.avg_spo2 > 0));
-    // Only fetch for recent sessions without machine SpO2 (limit to 7 to avoid spam)
-    const toFetch = noSpo2.slice(0, 7);
+    // Fetch for all recent sessions (limit to 7) to get HR even when machine has SpO2
+    const toFetch = sessions.slice(0, 7);
     for (const s of toFetch) {
       const day = s.sleep_day || this.sleepDay(s.session_start);
-      if (this.oxiMap[day] !== undefined) continue;
-      this.oxiMap[day] = '';
+      if (this.hrMap[day] !== undefined) continue;
+      const hasMachineSpo2 = s.avg_spo2 && +s.avg_spo2 > 0;
+      if (!hasMachineSpo2) this.oxiMap[day] = '';
+      this.hrMap[day] = '';
       this.api.getSessionOximetry(day).subscribe({
         next: (oxi) => {
-          if (oxi?.spo2?.length) {
+          if (!hasMachineSpo2 && oxi?.spo2?.length) {
             const valid = oxi.spo2.map(v => Number(v)).filter(v => !isNaN(v) && v > 0 && v < 255);
             if (valid.length) {
               this.oxiMap[day] = (valid.reduce((a, b) => a + b, 0) / valid.length).toFixed(1);
-              this.cdr.detectChanges();
             }
           }
+          if (oxi?.heart_rate?.length) {
+            const valid = (oxi.heart_rate as any[]).map(v => Number(v)).filter(v => !isNaN(v) && v > 20 && v < 250);
+            if (valid.length) {
+              this.hrMap[day] = Math.round(valid.reduce((a, b) => a + b, 0) / valid.length).toString();
+            }
+          }
+          this.cdr.detectChanges();
         },
         error: () => {},
       });
@@ -213,6 +221,7 @@ export class SessionsComponent implements OnInit, OnDestroy {
         this.actionInProgress[day + '_oxi'] = false;
         // Reload oximetry for this row
         delete this.oxiMap[day];
+        delete this.hrMap[day];
         this.loadSessions();
       },
       error: () => {
