@@ -13,6 +13,7 @@
 #include "parsers/CpapdashBridge.h"
 #include "services/DataPublisherService.h"
 #include "services/OximetryService.h"
+#include "services/PrismaIngestion.h"
 #include "services/SessionDiscoveryService.h"
 #include "mqtt_client.h"
 #include "database/IDatabase.h"
@@ -109,9 +110,11 @@ private:
     std::string device_id_;
     std::string device_name_;
     std::string local_source_dir_;  // Empty = ezShare mode, set = local filesystem mode
+    std::string cpap_source_;       // "ezshare", "local", "fysetc", or "lowenstein"
 
     // Data source (ezShare HTTP or Fysetc TCP — both implement IDataSource)
     std::unique_ptr<IDataSource> data_source_;
+    std::unique_ptr<PrismaIngestion> prisma_ingestion_;
     #ifndef _WIN32
     std::unique_ptr<FysetcTcpServer> fysetc_server_;
 #endif
@@ -193,9 +196,13 @@ private:
                             const std::string& archive_base_dir);
 
     /**
-     * Process STR.edf: download, parse, save to DB, publish to MQTT.
+     * Process manufacturer-specific summary data on session completion.
+     * ResMed: download + parse STR.edf, save to DB, publish to MQTT.
+     * Lowenstein: parse statistics_year.bin (future).
      * Non-fatal: failure does not affect the session cycle.
      */
+    void processSessionSummary();
+
     void processSTRFile();
 
     /**

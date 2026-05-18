@@ -123,12 +123,18 @@ endif()
 # ── External libraries (via FetchContent) ────────────────────────────────────
 include(FetchContent)
 
-# cpapdash-parser: shared CPAP parsing library (ResMed EDF + Philips DS2)
+# cpapdash-parser: shared CPAP parsing library (ResMed EDF + Philips DS2 + Lowenstein Prisma)
 set(CPAPDASH_PARSER_WITH_PHILIPS ON CACHE BOOL "Enable Philips DreamStation parser" FORCE)
-set(CPAPDASH_PARSER_LOCAL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../hms-cpapdash/hms-cpapdash-parser)
+set(CPAPDASH_PARSER_WITH_LOWENSTEIN ON CACHE BOOL "Enable Lowenstein Prisma parser" FORCE)
+set(CPAPDASH_PARSER_LOCAL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../hms-cpapdash-parser)
+set(CPAPDASH_PARSER_LOCAL_DIR2 ${CMAKE_CURRENT_SOURCE_DIR}/../hms-cpapdash/hms-cpapdash-parser)
 if(EXISTS ${CPAPDASH_PARSER_LOCAL_DIR}/CMakeLists.txt)
     FetchContent_Declare(cpapdash_parser
         SOURCE_DIR ${CPAPDASH_PARSER_LOCAL_DIR}
+    )
+elseif(EXISTS ${CPAPDASH_PARSER_LOCAL_DIR2}/CMakeLists.txt)
+    FetchContent_Declare(cpapdash_parser
+        SOURCE_DIR ${CPAPDASH_PARSER_LOCAL_DIR2}
     )
 else()
     FetchContent_Declare(cpapdash_parser
@@ -137,6 +143,13 @@ else()
     )
 endif()
 FetchContent_MakeAvailable(cpapdash_parser)
+
+# miniz: ZIP library (for Lowenstein Prisma Line therapy.pdat extraction)
+FetchContent_Declare(miniz
+    GIT_REPOSITORY https://github.com/richgel999/miniz.git
+    GIT_TAG        3.0.2
+)
+FetchContent_MakeAvailable(miniz)
 
 # hms-shared modules
 FetchContent_Declare(hms_shared
@@ -243,6 +256,7 @@ if(MSVC)
 else()
     target_link_libraries(${PROJECT_NAME}
         cpapdash_parser
+        miniz
         jsoncpp_lib
         ${PAHO_MQTTPP3_LIB}
         ${PAHO_MQTT3AS_LIB}

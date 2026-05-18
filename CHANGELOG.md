@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.3.0] - 2026-05-18
+
+### Added
+- **Lowenstein Prisma support** — full session parsing for Prisma Line and Prisma Smart machines (WMEDF signals + XML events). Auto-detects raw directory trees (Prisma Smart) and therapy.pdat ZIP archives (Prisma Line). AHI, event metrics, breathing summaries, device info, and pressure/flow/SpO2 signal extraction.
+- **PrismaIngestion service** — session discovery, file pairing (event+signal by sequence number), staging, ZIP extraction via miniz, and WMEDF header timestamp parsing. Integrated into BurstCollectorService as `CPAP_SOURCE=lowenstein`.
+- **Manufacturer-aware session completion** — `processSessionSummary()` dispatches by source: ResMed runs STR.edf processing, Lowenstein stub ready for statistics_year.bin (future).
+- **14 new tests** — PrismaIngestion unit tests (11) + PrismaE2E integration tests (3, 43/43 real sessions verified)
+- **Updated screenshots** — refreshed dashboard, sessions, session-detail; new reports and settings page screenshots
+- **Supported Devices table in README** — ResMed (live + import), Philips DreamStation 2 (import), Lowenstein Prisma (import)
+
+### Changed
+- **README overhaul** — multi-manufacturer framing, architecture diagram with shared data source paths, Lowenstein setup docs, generic feature descriptions, updated test count (425)
+- **BurstCollectorService** — Lowenstein branch in `executeBurstCycle()` and `reloadConfig()`, hot-reload support for source switching
+
 ## [4.2.1] - 2026-05-11
 
 ### Added

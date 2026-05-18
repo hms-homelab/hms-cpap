@@ -72,6 +72,8 @@ set(TEST_SOURCES
     clients/test_O2RingClient.cpp
     clients/test_O2RingBleProtocol.cpp
     services/test_sleep_stage_classifier.cpp
+    services/test_PrismaIngestion.cpp
+    integration/test_PrismaE2E.cpp
 )
 if(MSVC)
     list(FILTER TEST_SOURCES EXCLUDE REGEX ".*Fysetc.*")
@@ -106,6 +108,7 @@ else()
         GTest::gtest_main
         GTest::gmock
         cpapdash_parser
+        miniz
         jsoncpp_lib
         ${PAHO_MQTTPP3_LIB}
         ${PAHO_MQTT3AS_LIB}
