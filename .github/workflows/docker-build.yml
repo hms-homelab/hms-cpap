@@ -167,7 +167,7 @@ jobs:
         run: |
           mkdir build
           cd build
-          cmake -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static-md -DBUILD_TESTS=OFF -DBUILD_WITH_WEB=ON -DBUILD_WITH_POSTGRESQL=ON ..
+          cmake -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static-md -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DBUILD_TESTS=OFF -DBUILD_WITH_WEB=ON -DBUILD_WITH_POSTGRESQL=ON ..
           cmake --build . --config Release --parallel
 
       # ── Package Windows release ─────────────────────────────────
