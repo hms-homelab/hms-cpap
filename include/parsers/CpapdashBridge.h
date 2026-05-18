@@ -13,6 +13,9 @@
 #include <cpapdash/parser/EDFParser.h>
 #include <cpapdash/parser/ISessionParser.h>
 #include <cpapdash/parser/VLDParser.h>
+#ifdef CPAPDASH_WITH_LOWENSTEIN
+#include <cpapdash/parser/PrismaParser.h>
+#endif
 
 namespace hms_cpap {
 

@@ -5,43 +5,67 @@
 [![Build](https://github.com/hms-homelab/hms-cpap/actions/workflows/docker-build.yml/badge.svg)](https://github.com/hms-homelab/hms-cpap/actions)
 [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-%23FFDD00.svg?logo=buy-me-a-coffee)](https://www.buymeacoffee.com/aamat09)
 
-**Lightweight C++ microservice for ResMed CPAP data collection with built-in web dashboard and Home Assistant integration.**
+**Lightweight C++ microservice for CPAP data collection with built-in web dashboard, PDF reports, and Home Assistant integration.**
 
-Automatically extracts sleep therapy data from your ResMed AirSense 10/11 CPAP machine, parses EDF files using OSCAR algorithms, and publishes 47+ metrics to Home Assistant via MQTT discovery. Includes a full Angular web UI with OSCAR/SleepHQ-grade charting. Supports four data sources: FYSETC SD WiFi Pro (raw TCP or HTTP mode), ezShare WiFi SD with bridge, or local filesystem.
+Automatically extracts sleep therapy data from ResMed and Lowenstein Prisma CPAP machines, parses EDF/WMEDF files using OSCAR algorithms, and publishes 47+ metrics to Home Assistant via MQTT discovery. Includes a full Angular web UI with OSCAR/SleepHQ-grade charting, PDF report generation, O2Ring pulse oximetry, LLM-powered session summaries, and ML intelligence. Supports four data sources: FYSETC SD WiFi Pro (raw TCP or HTTP mode), ezShare WiFi SD with bridge, or local filesystem.
 
 ## Screenshots
 
-**Dashboard** -- HA-style layout with key metrics, O2Ring oximetry, AI session summary, therapy insights, STR daily indices, sleep events, pressure gauges, respiratory metrics, ML intelligence, and 30-day trend charts.
+**Dashboard** -- Key metrics, AI session summary, therapy insights, STR daily indices, sleep events, pressure gauges, respiratory metrics, ML intelligence, and 30-day trend charts.
 
 ![Dashboard](docs/screenshots/dashboard.png)
 
-**Sessions** -- Nightly session list with O2Ring SpO2 fallback, event breakdown, and live session indicator.
+**Sessions** -- Nightly session list with O2Ring SpO2/HR, event breakdown, and live session indicator.
 
 ![Sessions](docs/screenshots/sessions.png)
 
-**Session Detail** -- Per-session metrics with O2Ring SpO2/HR, 13 zoomable signal charts, event overlay, and doughnut event distribution.
+**Session Detail** -- Per-session metrics with O2Ring SpO2/HR overlay, 13 zoomable signal charts, event markers, and doughnut event distribution.
 
 ![Session Detail](docs/screenshots/session-detail.png)
 
+**PDF Reports** -- Generate multi-night therapy reports with date range picker. Download as PDF for sharing with your doctor.
+
+![Reports](docs/screenshots/reports.png)
+
+**Settings** -- Configure data source, O2Ring oximetry, database, MQTT, LLM summaries, ML training, and device identity. Hot-reload without restart.
+
+![Settings](docs/screenshots/settings.png)
+
+## Supported Devices
+
+| Manufacturer | Models | Live Sessions | Data Import |
+|---|---|---|---|
+| **ResMed** | AirSense 10, AirSense 11 | Yes -- EDF files grow during therapy, real-time charts with 65s refresh | Yes |
+| **Philips** | DreamStation 2 | No | Yes |
+| **Lowenstein** | Prisma Line (20A, 20C, 25S, 25ST), Prisma Smart (Max, Plus, Soft) | No -- files written post-session | Yes |
+
+All data sources (FYSETC SD WiFi Pro, ezShare WiFi SD, local filesystem) work with both manufacturers -- the WiFi SD adapters sit in the machine's SD card slot regardless of brand.
+
+**ResMed** EDF files grow incrementally during therapy, enabling live session monitoring with pulsing LIVE badge and auto-refreshing charts.
+
+**Lowenstein Prisma** files are written atomically after each mask-on/mask-off cycle. Prisma Line machines write `therapy.pdat` (ZIP archive) to SD card. Prisma Smart machines write raw directory trees. Both formats are auto-detected. Full session parsing includes WMEDF signals, XML events, AHI/event metrics, and breathing summaries.
+
 ## Features
 
-- **HA-Style Web Dashboard** - 10 section components with Font Awesome icons, pressure gauges, AI summary, therapy insights, ML predictions
+- **HA-Style Web Dashboard** - 10 section components with pressure gauges, AI summary, therapy insights, ML predictions
 - **4 Data Sources** - FYSETC SD WiFi Pro (raw TCP or HTTP), ezShare WiFi SD + bridge, or local files
-- **47+ Metrics** - AHI, leak rate, pressure, usage hours, events, STR daily summary, LLM AI summary
+- **47+ Metrics** - AHI, leak rate, pressure, usage hours, events, daily summary, LLM AI summary
 - **Home Assistant Auto-Discovery** - Instant MQTT integration with 47 sensor entities
+- **PDF Reports** - Generate multi-night therapy reports for sharing with your doctor
 - **Therapy Insights Engine** - Automated analysis of AHI trends, leak correlation, compliance, best/worst nights
-- **O2Ring Integration** - Wellue O2Ring SpO2/HR with ODI calculation and fallback in session cards
+- **Pulse Oximetry** - Wellue O2Ring SpO2/HR with ODI calculation, session overlay, and fallback in session cards
 - **Multi-Database** - PostgreSQL, MySQL/MariaDB, or SQLite (auto-created on first run)
-- **13 Signal Charts** - Per-minute resolution from BRP/PLD/SAD with event markers and O2Ring overlay
+- **Signal Charts** - Per-minute resolution with event markers and oximetry overlay
 - **Live Sessions** - Pulsing LIVE badge, 65s auto-refresh, growing charts during therapy
 - **ML Intelligence** - AHI prediction, compliance forecasting, mask fit risk, anomaly detection
-- **LLM Session Summary** - AI-generated therapy analysis via Ollama
+- **LLM Session Summary** - AI-generated therapy analysis via Ollama (daily, weekly, monthly)
 - **Windows + Linux** - Native builds for both platforms, Docker image for CI
 - **Ultra-Lightweight** - 6.5 MB native binary
-- **413 Unit Tests** - Comprehensive coverage across all services
+- **425 Unit Tests** - Comprehensive coverage across all services
 
 ## Table of Contents
 
+- [Supported Devices](#supported-devices)
 - [Quick Start](#quick-start)
 - [Data Sources](#data-sources)
 - [Configuration](#configuration)
@@ -67,9 +91,10 @@ cp ../.env.example ../.env
 nano ../.env  # Set MQTT, DB, and source settings
 
 # 3. Run (choose your data source)
-CPAP_SOURCE=fysetc  ./hms_cpap   # FYSETC raw TCP (recommended)
-CPAP_SOURCE=ezshare ./hms_cpap   # ezShare / FYSETC HTTP mode
-CPAP_SOURCE=local   ./hms_cpap   # Local filesystem
+CPAP_SOURCE=fysetc     ./hms_cpap   # FYSETC raw TCP (recommended)
+CPAP_SOURCE=ezshare    ./hms_cpap   # ezShare / FYSETC HTTP mode
+CPAP_SOURCE=local      ./hms_cpap   # Local filesystem (ResMed DATALOG)
+CPAP_SOURCE=lowenstein ./hms_cpap   # Lowenstein Prisma (local dir or WiFi SD)
 
 # 4. Open the dashboard
 # http://localhost:8893
@@ -77,7 +102,7 @@ CPAP_SOURCE=local   ./hms_cpap   # Local filesystem
 
 ## Data Sources
 
-Three hardware paths for wireless data collection, plus a local filesystem option:
+Three hardware paths for wireless data collection, plus a local filesystem option. All paths work with both ResMed and Lowenstein machines -- the WiFi SD adapters sit in any standard SD card slot:
 
 ### Path 1: ezShare WiFi SD (Recommended)
 
@@ -161,6 +186,40 @@ FYSETC_LISTEN_PORT=9000
 ```bash
 CPAP_SOURCE=ezshare
 EZSHARE_BASE_URL=http://<fysetc-ip>
+```
+
+### Lowenstein Prisma
+
+All the data source paths above (ezShare, FYSETC, local) work with Lowenstein machines. Set `CPAP_SOURCE=lowenstein` and point `CPAP_LOCAL_DIR` at the SD card contents or a copy. HMS-CPAP auto-detects both Prisma formats:
+
+**Prisma Smart** writes a raw directory tree:
+```
+therapy/
+  events/
+    20260514/
+      event_000370.xml      # Respiratory events (apneas, hypopneas)
+    20260515/
+      event_000380.xml
+  signals/
+    20260514/
+      signal_000370.wmedf   # Therapy signals (pressure, flow, SpO2)
+    20260515/
+      signal_000380.wmedf
+```
+
+**Prisma Line** writes ZIP archives:
+```
+therapy.pdat              # ZIP containing the directory tree above
+config.pcfg               # ZIP containing device.xml and configuration
+```
+
+Configuration example:
+```json
+{
+  "source": "lowenstein",
+  "local_dir": "/mnt/archive/prisma",
+  "device_name": "Lowenstein Prisma 20A"
+}
 ```
 
 ## Configuration
@@ -362,34 +421,36 @@ Sensors auto-appear as a device with 47+ entities:
 ## Architecture
 
 ```
-┌─────────────────┐
-│  ResMed CPAP    │
-│  AirSense 10    │
-└────────┬────────┘
-         │ Card Slot (SPI bus)
-         │
-    ┌────┴──────────────────────┐
-    │                           │
-    ▼                           ▼
-┌──────────┐          ┌──────────────────┐
-│ ezShare  │          │ FYSETC SD WiFi   │
-│ WiFi SD  │          │ Pro (ESP32)      │
-└────┬─────┘          └────────┬─────────┘
-     │ WiFi AP                  │ HTTP (home WiFi)
-     ▼                          │
-┌──────────────┐                │
-│  hms-mm      │                │
-│  miner+mule  │                │
-│  (2x ESP32-C3)                │
-└──────┬───────┘                │
-       │ HTTP (home WiFi)       │
-       ▼                        ▼
-┌──────────────────────────────────┐
-│          HMS-CPAP Service        │
-│  BurstCollector + EDFParser      │
-│  Angular Web UI (port 8893)      │
-│  DataPublisher + LLM Summary     │
-└──────────┬──────────┬────────────┘
+┌─────────────────┐     ┌──────────────────┐
+│  ResMed CPAP    │     │ Lowenstein Prisma │
+│  AirSense 10/11 │     │ Line / Smart      │
+└────────┬────────┘     └────────┬──────────┘
+         │ SD Card Slot          │ SD Card Slot
+         │                       │
+         └───────────┬───────────┘
+                     │
+        ┌────────────┼────────────┐
+        │            │            │
+        ▼            ▼            ▼
+  ┌──────────┐ ┌──────────┐ ┌──────────┐
+  │ ezShare  │ │ FYSETC   │ │  Local   │
+  │ WiFi SD  │ │ SD WiFi  │ │  FS/USB  │
+  └────┬─────┘ └────┬─────┘ └────┬─────┘
+       │ WiFi AP     │ TCP/HTTP   │
+       ▼             │            │
+  ┌──────────┐       │            │
+  │ hms-mm   │       │            │
+  │ bridge   │       │            │
+  └────┬─────┘       │            │
+       │ HTTP        │            │
+       ▼             ▼            ▼
+┌──────────────────────────────────────────┐
+│            HMS-CPAP Service              │
+│  BurstCollector + PrismaIngestion        │
+│  EDFParser + PrismaParser (WMEDF/XML)    │
+│  Angular Web UI (port 8893)              │
+│  PDF Reports + LLM Summary + ML Intel    │
+└──────────┬──────────┬────────────────────┘
            │          │
     ┌──────┘          └──────┐
     ▼                        ▼
@@ -404,7 +465,7 @@ Sensors auto-appear as a device with 47+ entities:
                   └───────────────┘
 ```
 
-### EDF File Types
+### ResMed EDF File Types
 
 | File | Content | During Therapy | After Mask-Off |
 |------|---------|----------------|----------------|
@@ -414,6 +475,14 @@ Sensors auto-appear as a device with 47+ entities:
 | EVE.edf | Apnea/hypopnea events | Updated live | Final flush |
 | CSL.edf | Clinical summary | Created at start | Final flush |
 | STR.edf | Daily therapy summary | N/A | Written ~50s after mask-off |
+
+### Lowenstein Prisma File Types
+
+| File | Content | Notes |
+|------|---------|-------|
+| signal_NNNNNN.wmedf | Therapy signals (pressure, flow, leak, SpO2, HR) | 8-bit or 16-bit EDF variant, 1s resolution |
+| event_NNNNNN.xml | Respiratory events (apneas, hypopneas, RERA, snore) | Flat XML with RespEvent and DeviceEvent elements |
+| device.xml | Device serial number, type, firmware version | In config.pcfg ZIP or conf/ directory |
 
 ## Development
 
@@ -478,7 +547,7 @@ mysql -u root cpap_monitoring < scripts/schema_mysql.sql
 cd build && ./tests/run_tests
 ```
 
-**309 tests** across 32 test suites covering EDF parsing, session discovery, ezShare firmware compatibility, MQTT publishing, database operations, ML training, and more.
+**425 tests** across 34 test suites covering EDF/WMEDF parsing, session discovery, Prisma ingestion, ezShare firmware compatibility, MQTT publishing, database operations, ML training, and more.
 
 ## FAQ
 
@@ -494,7 +563,7 @@ Most solutions require cloud services, proprietary apps, or manual SD card remov
 
 ### Does this work with other CPAP brands?
 
-Currently optimized for **ResMed AirSense 10/11** (EDF format). Other ResMed models may work. Philips/Respironics use different formats and would need parser modifications.
+Currently supports **ResMed AirSense 10/11** (real-time + import) and **Lowenstein Prisma** (import). ResMed has full real-time live session support via WiFi SD adapters. Lowenstein Prisma supports SD card data import with full session parsing, event detection, and breathing signal analysis. Philips/Respironics support is planned.
 
 ### What about data privacy?
 
@@ -527,13 +596,15 @@ This project is licensed under the **MIT License** - see [LICENSE](LICENSE) file
 - **libcurl** - MIT-style license
 - **PostgreSQL libpq** - PostgreSQL License
 - **Paho MQTT** - EPL 2.0
+- **miniz** - MIT License (ZIP extraction for Lowenstein therapy.pdat)
 - **Angular** - MIT License
 - **Chart.js** - MIT License
 
 ## Acknowledgments
 
-- [OSCAR Project](https://www.sleepfiles.com/OSCAR/) - EDF parsing algorithms
+- [OSCAR Project](https://www.sleepfiles.com/OSCAR/) - EDF parsing algorithms and Prisma loader reference
 - [ResMed](https://www.resmed.com/) - CPAP hardware
+- [Lowenstein Medical](https://www.lowensteinmedical.com/) - Prisma CPAP hardware
 - [Home Assistant](https://www.home-assistant.io/) - Smart home platform
 - CPAP community on Reddit
 

@@ -57,6 +57,7 @@ void BurstCollectorService::initialize(AppConfig* cfg) {
 
 void BurstCollectorService::initDataSource() {
     std::string source = ConfigManager::get("CPAP_SOURCE", "ezshare");
+    cpap_source_ = source;
     if (source == "local") {
         local_source_dir_ = ConfigManager::get("CPAP_LOCAL_DIR", "");
         if (local_source_dir_.empty()) {
@@ -64,6 +65,14 @@ void BurstCollectorService::initDataSource() {
             throw std::runtime_error("CPAP_LOCAL_DIR required when CPAP_SOURCE=local");
         }
         std::cout << "CPAP: Local source mode — reading from " << local_source_dir_ << std::endl;
+    } else if (source == "lowenstein") {
+        std::string data_dir = ConfigManager::get("CPAP_LOCAL_DIR", "");
+        if (data_dir.empty()) {
+            std::cerr << "CPAP_SOURCE=lowenstein but CPAP_LOCAL_DIR not set!" << std::endl;
+            throw std::runtime_error("CPAP_LOCAL_DIR required when CPAP_SOURCE=lowenstein");
+        }
+        prisma_ingestion_ = std::make_unique<PrismaIngestion>(data_dir);
+        std::cout << "CPAP: Lowenstein Prisma mode — reading from " << data_dir << std::endl;
     } else if (source == "fysetc") {
 #ifndef _WIN32
         startFysetcServer();
@@ -281,7 +290,7 @@ bool BurstCollectorService::forceCompleteSession(const std::string& sleep_day) {
     db_service_->setForceCompleted(device_id_, session_start.value());
     if (data_publisher_) {
         data_publisher_->publishSessionCompleted();
-        processSTRFile();
+        processSessionSummary();
         auto metrics = db_service_->getNightlyMetrics(device_id_, session_start.value());
         if (metrics) {
             data_publisher_->publishHistoricalState(metrics.value());
@@ -528,6 +537,19 @@ bool BurstCollectorService::archiveSessionFiles(
     }
 }
 
+void BurstCollectorService::processSessionSummary() {
+    if (cpap_source_ == "lowenstein") {
+        // Lowenstein: statistics_year.bin parsing (not yet implemented)
+        // Per-session metrics are already computed by PrismaParser::calculateMetrics()
+        // so basic AHI/events/pressure stats are available without this.
+        // TODO: parse statistics_year.bin for daily aggregated stats + trend data
+        return;
+    }
+
+    // ResMed (and default): process STR.edf
+    processSTRFile();
+}
+
 void BurstCollectorService::processSTRFile() {
     try {
         std::string str_local_path;
@@ -706,12 +728,87 @@ bool BurstCollectorService::executeBurstCycle() {
     }
 
     // Step 2-5: Discover sessions and prepare for parsing
-    // Three modes: ezShare (HTTP), fysetc (TCP raw sectors), or local filesystem
+    // Four modes: ezShare (HTTP), fysetc (TCP raw sectors), local filesystem, or Lowenstein Prisma
     std::vector<SessionFileSet> new_sessions;
     std::vector<std::pair<std::string, std::chrono::system_clock::time_point>> downloaded_sessions;
     auto download_start = std::chrono::steady_clock::now();
 
-    if (!local_source_dir_.empty()) {
+    if (prisma_ingestion_) {
+        // ===== LOWENSTEIN PRISMA MODE =====
+        if (!prisma_ingestion_->initialize()) {
+            std::cerr << "CPAP: Lowenstein data initialization failed" << std::endl;
+            return false;
+        }
+
+        auto prisma_sessions = prisma_ingestion_->discoverSessions(last_session_start);
+        if (prisma_sessions.empty()) {
+            std::cout << "CPAP: No new Lowenstein sessions found" << std::endl;
+            return true;
+        }
+
+        std::cout << "CPAP: Found " << prisma_sessions.size()
+                  << " Lowenstein session(s) to process" << std::endl;
+
+        auto parser = createParser(DeviceManufacturer::LOWENSTEIN);
+        if (!parser) {
+            std::cerr << "CPAP: Lowenstein parser not available (not compiled in?)" << std::endl;
+            return false;
+        }
+
+        for (const auto& ps : prisma_sessions) {
+            if (db_service_->sessionExists(device_id_, ps.session_start)) {
+                continue;
+            }
+
+            std::string staged_dir = prisma_ingestion_->stageSession(ps);
+            auto parsed = parser->parseSession(staged_dir, device_id_, device_name_);
+
+            std::filesystem::remove_all(staged_dir);
+
+            if (!parsed) {
+                std::cerr << "CPAP: Failed to parse Lowenstein session seq="
+                          << ps.sequence_number << std::endl;
+                continue;
+            }
+
+            std::cout << "CPAP: Parsed Lowenstein session " << ps.date_folder
+                      << " seq=" << ps.sequence_number;
+            if (parsed->duration_seconds)
+                std::cout << " (" << (*parsed->duration_seconds / 60) << " min)";
+            if (parsed->metrics)
+                std::cout << " AHI=" << parsed->metrics->ahi;
+            std::cout << std::endl;
+
+            if (db_service_) {
+                db_service_->saveSession(*parsed);
+                db_service_->markSessionCompleted(device_id_, ps.session_start);
+            }
+
+            if (data_publisher_) {
+                data_publisher_->publishSession(*parsed);
+                auto metrics = db_service_->getNightlyMetrics(device_id_, ps.session_start);
+                if (metrics) {
+                    data_publisher_->publishHistoricalState(*metrics);
+                    if (llm_enabled_ && llm_client_) {
+                        const STRDailyRecord* str_rec = !last_str_records_.empty()
+                            ? &last_str_records_.back() : nullptr;
+                        generateAndPublishSummary(*metrics, str_rec);
+                    }
+                }
+            }
+        }
+
+        if (data_publisher_) {
+            data_publisher_->publishSessionCompleted();
+        }
+
+        auto cycle_end = std::chrono::steady_clock::now();
+        auto cycle_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            cycle_end - cycle_start).count();
+        std::cout << "CPAP: Lowenstein burst cycle completed in " << cycle_ms << " ms" << std::endl;
+        return true;
+
+    } else if (!local_source_dir_.empty()) {
         // ===== LOCAL SOURCE MODE =====
         std::cout << "CPAP: Scanning local directory " << local_source_dir_ << std::endl;
 
@@ -772,7 +869,7 @@ bool BurstCollectorService::executeBurstCycle() {
                     bool newly_completed = db_service_->markSessionCompleted(device_id_, session.session_start);
 
                     if (newly_completed) {
-                        processSTRFile();
+                        processSessionSummary();
 
                         if (data_publisher_) {
                             auto metrics = db_service_->getNightlyMetrics(device_id_, session.session_start);
@@ -978,7 +1075,7 @@ bool BurstCollectorService::executeBurstCycle() {
                                   << metrics.value().ahi << ")" << std::endl;
                     }
                     data_publisher_->publishSessionCompleted();
-                    processSTRFile();
+                    processSessionSummary();
 
                     // Generate LLM summary with STR data if available (non-fatal)
                     if (llm_enabled_ && llm_client_ && metrics.has_value()) {
@@ -1710,12 +1807,19 @@ void BurstCollectorService::reloadConfig() {
         }
 
 #endif
-        if (nc.source == "local") {
+        if (nc.source == "lowenstein") {
+            local_source_dir_.clear();
+            data_source_.reset();
+            discovery_service_.reset();
+            prisma_ingestion_ = std::make_unique<PrismaIngestion>(nc.local_dir);
+        } else if (nc.source == "local") {
             local_source_dir_ = nc.local_dir;
             data_source_.reset();
             discovery_service_.reset();
+            prisma_ingestion_.reset();
         } else if (nc.source == "fysetc") {
             local_source_dir_.clear();
+            prisma_ingestion_.reset();
 #ifndef _WIN32
             if (action == FysetcLifecycleAction::Start) {
                 startFysetcServer();
@@ -1727,6 +1831,7 @@ void BurstCollectorService::reloadConfig() {
 #endif
         } else {
             local_source_dir_.clear();
+            prisma_ingestion_.reset();
 #ifdef _WIN32
             _putenv_s("EZSHARE_BASE_URL", nc.ezshare_url.c_str());
 #else
@@ -1739,6 +1844,7 @@ void BurstCollectorService::reloadConfig() {
             data_source_ = std::move(ez);
             discovery_service_ = std::make_unique<SessionDiscoveryService>(*data_source_);
         }
+        cpap_source_ = nc.source;
         std::cout << "Config reload: source -> " << nc.source << std::endl;
     }
 
@@ -1886,7 +1992,7 @@ void BurstCollectorService::setupMqttSubscriptions() {
     // Insights regeneration
     mqtt_client_->subscribe("cpap/" + device_id_ + "/command/regenerate_insights",
         [this](const std::string&, const std::string&) {
-            if (last_str_records_.empty()) processSTRFile();
+            if (last_str_records_.empty()) processSessionSummary();
             if (last_str_records_.empty()) return;
             auto insights = InsightsEngine::analyze(last_str_records_);
             if (data_publisher_) data_publisher_->publishInsights(insights);
@@ -1901,7 +2007,7 @@ void BurstCollectorService::setupMqttSubscriptions() {
             db_service_->setForceCompleted(device_id_, last_start.value());
             if (data_publisher_) {
                 data_publisher_->publishSessionCompleted();
-                processSTRFile();
+                processSessionSummary();
                 auto metrics = db_service_->getNightlyMetrics(device_id_, last_start.value());
                 if (metrics) {
                     data_publisher_->publishHistoricalState(metrics.value());
