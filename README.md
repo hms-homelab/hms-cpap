@@ -98,7 +98,7 @@ FYSETC_LISTEN_PORT=9000
 
 **How it works:** Same FYSETC board, but running open-source firmware that emulates an ezShare WiFi SD card. Serves EDF files over HTTP on your home network. HMS-CPAP polls it every 65s for new/changed files using the same ezShare HTTP protocol.
 
-**Hardware:** [FYSETC SD WiFi Pro](https://www.fysetc.com/products/fysetc-upgrade-sd-wifi-pro-with-card-reader-module-run-wireless-by-esp32-chip-web-server-reader-uploader-3d-printer-parts) board. Can sit directly in the SD slot (no ribbon cable needed for basic use).
+**Hardware:** FYSETC SD WiFi Pro(Manufacturer has removed the original listing recently but it may be still available in AliExpress) board. Can sit directly in the SD slot
 
 **Firmware:** [hms-fysetc](https://github.com/hms-homelab/hms-fysetc) -- open-source ESP-IDF firmware (MIT). Emulates the ezShare HTTP API.
 
