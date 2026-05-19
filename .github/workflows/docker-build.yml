@@ -140,6 +140,9 @@ jobs:
         with:
           cmakeVersion: 3.31.7
 
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+
       # ── Angular UI ──────────────────────────────────────────────
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -172,16 +175,16 @@ jobs:
         run: |
           mkdir build
           cd build
-          cmake -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static-md -DBUILD_TESTS=OFF -DBUILD_WITH_WEB=ON -DBUILD_WITH_POSTGRESQL=ON ..
-          cmake --build . --config Release --parallel
+          cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static-md -DBUILD_TESTS=OFF -DBUILD_WITH_WEB=ON -DBUILD_WITH_POSTGRESQL=ON ..
+          cmake --build . --parallel
 
       # ── Package Windows release ─────────────────────────────────
       - name: Bundle release
         run: |
           mkdir release
-          Copy-Item build\Release\hms_cpap.exe release\
-          # Copy vcpkg DLLs
-          Get-ChildItem -Path build\Release\*.dll -ErrorAction SilentlyContinue | Copy-Item -Destination release\
+          Copy-Item build\hms_cpap.exe release\
+          # Copy any DLLs
+          Get-ChildItem -Path build\*.dll -ErrorAction SilentlyContinue | Copy-Item -Destination release\
           # Bundle Angular UI
           mkdir release\static\browser -Force
           Copy-Item -Recurse frontend\dist\frontend\browser\* release\static\browser\
