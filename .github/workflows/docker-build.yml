@@ -135,6 +135,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Pin CMake 3.31 (vcpkg Drogon incompatible with CMake 4.x)
+        uses: lukka/get-cmake@latest
+        with:
+          cmakeVersion: 3.31.7
+
       # ── Angular UI ──────────────────────────────────────────────
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -167,7 +172,7 @@ jobs:
         run: |
           mkdir build
           cd build
-          cmake -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static-md -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DBUILD_TESTS=OFF -DBUILD_WITH_WEB=ON -DBUILD_WITH_POSTGRESQL=ON ..
+          cmake -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static-md -DBUILD_TESTS=OFF -DBUILD_WITH_WEB=ON -DBUILD_WITH_POSTGRESQL=ON ..
           cmake --build . --config Release --parallel
 
       # ── Package Windows release ─────────────────────────────────
