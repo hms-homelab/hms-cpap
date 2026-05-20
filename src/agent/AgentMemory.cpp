@@ -1,4 +1,5 @@
 #include "agent/AgentMemory.h"
+#ifdef WITH_POSTGRESQL
 #include <iostream>
 #include <optional>
 #include <sstream>
@@ -273,3 +274,4 @@ std::string AgentMemory::expiryFromImportance(int importance) {
 }
 
 } // namespace hms_cpap
+#endif // WITH_POSTGRESQL
