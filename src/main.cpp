@@ -11,13 +11,15 @@
 #include "services/SessionDiscoveryService.h"
 #include "services/DataPublisherService.h"
 #include "parsers/CpapdashBridge.h"
-#include "database/DatabaseService.h"
 #include "database/IDatabase.h"
 #include "database/SQLiteDatabase.h"
 #ifdef WITH_POSTGRESQL
+#include "database/DatabaseService.h"
 #include "database/PostgresDatabase.h"
 #endif
+#ifdef WITH_POSTGRESQL
 #include "agent/AgentService.h"
+#endif
 #include "services/MLTrainingService.h"
 #include "services/BackfillService.h"
 #include "agent/IAgentLLM.h"
@@ -41,7 +43,9 @@
 
 std::atomic<bool> shutdown_requested(false);
 std::unique_ptr<hms_cpap::BurstCollectorService> burst_service;
+#ifdef WITH_POSTGRESQL
 std::unique_ptr<hms_cpap::AgentService> agent_service;
+#endif
 std::unique_ptr<hms_cpap::MLTrainingService> ml_service;
 std::unique_ptr<hms_cpap::BackfillService> backfill_service;
 
@@ -51,7 +55,9 @@ std::unique_ptr<hms_cpap::BackfillService> backfill_service;
 void requestShutdown() {
     shutdown_requested = true;
     if (burst_service) burst_service->stop();
+#ifdef WITH_POSTGRESQL
     if (agent_service) agent_service->stop();
+#endif
     if (ml_service) ml_service->stop();
     if (backfill_service) backfill_service->stop();
 #ifdef BUILD_WITH_WEB
@@ -599,6 +605,7 @@ int main(int argc, char** argv) {
                       << ", min_days: " << config.ml_training.min_days << ")" << std::endl;
         }
 
+#ifdef WITH_POSTGRESQL
         // Start Agent module if enabled
         std::string agent_enabled = hms_cpap::ConfigManager::get("AGENT_ENABLED", "false");
         if (agent_enabled == "true" || agent_enabled == "1") {
@@ -671,6 +678,7 @@ int main(int argc, char** argv) {
 
             std::cout << "Agent: AI module enabled (model: " << agent_model << ")" << std::endl;
         }
+#endif // WITH_POSTGRESQL
 
 #ifdef BUILD_WITH_WEB
         // Start web UI server (Drogon blocks until shutdown)
@@ -819,10 +827,12 @@ int main(int argc, char** argv) {
             ml_service->stop();
             ml_service.reset();
         }
+#ifdef WITH_POSTGRESQL
         if (agent_service) {
             agent_service->stop();
             agent_service.reset();
         }
+#endif
         if (burst_service) {
             burst_service->stop();
             burst_service.reset();
