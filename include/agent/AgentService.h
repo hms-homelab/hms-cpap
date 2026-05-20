@@ -52,7 +52,9 @@ private:
     std::shared_ptr<hms::MqttClient> mqtt_;
     std::shared_ptr<IAgentLLM> llm_;
     std::unique_ptr<AgentTools> tools_;
+#ifdef WITH_POSTGRESQL
     std::unique_ptr<AgentMemory> memory_;
+#endif
     std::atomic<bool> running_{false};
     std::atomic<bool> abort_{false};
     std::mutex processing_mutex_;

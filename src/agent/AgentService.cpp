@@ -1,4 +1,5 @@
 #include "agent/AgentService.h"
+#ifdef WITH_POSTGRESQL
 #include "utils/ConfigManager.h"
 #include <nlohmann/json.hpp>
 #include <pqxx/pqxx>
@@ -245,3 +246,4 @@ std::string AgentService::runToolLoop(std::vector<hms::ChatMessage>& messages) {
 }
 
 } // namespace hms_cpap
+#endif // WITH_POSTGRESQL

@@ -243,6 +243,7 @@ target_include_directories(${PROJECT_NAME} PRIVATE
 if(MSVC)
     target_link_libraries(${PROJECT_NAME}
         cpapdash_parser
+        miniz
         JsonCpp::JsonCpp
         ${PAHO_CPP_TARGET}
         ${PAHO_C_TARGET}
@@ -267,9 +268,10 @@ else()
         hms_llm
         hms_mqtt
         spdlog::spdlog
-        stdc++fs
-        pthread
     )
+    if(NOT APPLE)
+        target_link_libraries(${PROJECT_NAME} stdc++fs pthread)
+    endif()
 endif()
 
 # PostgreSQL libraries (optional)
@@ -291,9 +293,11 @@ if(BUILD_WITH_WEB)
     target_link_libraries(${PROJECT_NAME} Drogon::Drogon)
 endif()
 
-# libharu PDF generation (Linux only)
+# libharu PDF generation (Linux/macOS)
 if(NOT MSVC)
-    target_link_options(${PROJECT_NAME} PRIVATE -Wl,--no-as-needed)
+    if(NOT APPLE)
+        target_link_options(${PROJECT_NAME} PRIVATE -Wl,--no-as-needed)
+    endif()
     target_link_libraries(${PROJECT_NAME} ${HPDF_LIB})
 endif()
 
@@ -323,7 +327,7 @@ target_link_libraries(hms_cpap_train_sleep_stage
     nlohmann_json::nlohmann_json
     spdlog::spdlog
 )
-if(NOT MSVC)
+if(NOT MSVC AND NOT APPLE)
     target_link_libraries(hms_cpap_train_sleep_stage stdc++fs pthread)
 endif()
 
