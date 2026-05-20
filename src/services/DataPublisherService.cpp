@@ -967,7 +967,9 @@ void DataPublisherService::publishOximetrySummary(const std::string& sleep_date_
 
     // Build date window: sleep_date → next day (same logic as LLM context)
     struct tm day_tm = {};
-    strptime(sleep_date_yyyymmdd.c_str(), "%Y%m%d", &day_tm);
+    day_tm.tm_year = std::stoi(sleep_date_yyyymmdd.substr(0, 4)) - 1900;
+    day_tm.tm_mon  = std::stoi(sleep_date_yyyymmdd.substr(4, 2)) - 1;
+    day_tm.tm_mday = std::stoi(sleep_date_yyyymmdd.substr(6, 2));
     struct tm next_tm = day_tm;
     next_tm.tm_mday += 1;
     mktime(&next_tm);
