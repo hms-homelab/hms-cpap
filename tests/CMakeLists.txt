@@ -76,6 +76,8 @@ set(TEST_SOURCES
     integration/test_PrismaE2E.cpp
     services/test_InsightsEngine.cpp
     database/test_SQLiteDatabase.cpp
+    mqtt/test_DiscoveryPublisher.cpp
+    database/test_DatabaseService_pg.cpp
 )
 if(MSVC)
     list(FILTER TEST_SOURCES EXCLUDE REGEX ".*Fysetc.*")

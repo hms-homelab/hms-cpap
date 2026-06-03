@@ -128,8 +128,28 @@ jobs:
   # in the build-and-test job above.
   coverage:
     runs-on: ubuntu-latest
+    # Postgres so the DatabaseService (pqxx) suite runs here too instead of
+    # GTEST_SKIPping (it isolates each test in a throwaway schema). Creds match
+    # the suite's defaults so it connects with no extra wiring.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: maestro
+          POSTGRES_PASSWORD: REDACTED
+          POSTGRES_DB: cpap_monitoring
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U maestro"
+          --health-interval 5s --health-timeout 5s --health-retries 10
     env:
-      COVERAGE_MIN: "42"
+      COVERAGE_MIN: "55"
+      PGHOST: localhost
+      PGPORT: "5432"
+      PGUSER: maestro
+      PGPASSWORD: REDACTED
+      PGDATABASE: cpap_monitoring
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
