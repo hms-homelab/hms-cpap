@@ -290,3 +290,241 @@ TEST_F(SleepStageClassifierTest, DisabledConfig) {
     auto status = classifier.getStatus();
     EXPECT_FALSE(status["enabled"].asBool());
 }
+
+// --- classifyFinal guard branches -----------------------------------------
+
+TEST_F(SleepStageClassifierTest, ClassifyFinalReturnsEmptyWhenModelNotLoaded) {
+    SleepStageClassifier classifier(config_);
+    ASSERT_FALSE(classifier.isReady());
+
+    auto session = makeSyntheticSession(300);
+    auto oximetry = makeSyntheticOximetry(300, *session.session_start);
+
+    auto epochs = classifier.classifyFinal(session, oximetry);
+    EXPECT_TRUE(epochs.empty());
+}
+
+TEST_F(SleepStageClassifierTest, ClassifyFinalReturnsEmptyWhenNoSessionStart) {
+    ASSERT_TRUE(createTestModels());
+
+    SleepStageClassifier classifier(config_);
+    ASSERT_TRUE(classifier.loadModels());
+
+    // Session with no start time should short-circuit.
+    CPAPSession session;
+    session.duration_seconds = 300;
+    std::vector<OximetrySample> oximetry;
+
+    auto epochs = classifier.classifyFinal(session, oximetry);
+    EXPECT_TRUE(epochs.empty());
+}
+
+TEST_F(SleepStageClassifierTest, ClassifyFinalDerivesEndFromDurationWhenNoEnd) {
+    ASSERT_TRUE(createTestModels());
+
+    SleepStageClassifier classifier(config_);
+    ASSERT_TRUE(classifier.loadModels());
+
+    // Build a session that has start + duration but NO explicit session_end,
+    // exercising the value_or(start + duration) fallback.
+    int duration = 300;
+    auto session = makeSyntheticSession(duration);
+    session.session_end.reset();  // force fallback path
+
+    auto oximetry = makeSyntheticOximetry(duration, *session.session_start);
+    auto epochs = classifier.classifyFinal(session, oximetry);
+
+    // End is derived from duration, so epochs should still be produced.
+    EXPECT_GE(static_cast<int>(epochs.size()), 1);
+    for (const auto& e : epochs) {
+        EXPECT_FALSE(e.provisional);
+        EXPECT_EQ(e.model_version, config_.model_version);
+        EXPECT_EQ(e.epoch_duration_sec, EPOCH_DURATION_SEC);
+    }
+}
+
+TEST_F(SleepStageClassifierTest, ClassifyFinalReturnsEmptyWhenNoEpochsProduced) {
+    ASSERT_TRUE(createTestModels());
+
+    SleepStageClassifier classifier(config_);
+    ASSERT_TRUE(classifier.loadModels());
+
+    // start == end (and no vitals/breathing/oximetry) -> no epochs aggregated.
+    CPAPSession session;
+    auto now = Clock::now();
+    session.session_start = now;
+    session.session_end = now;
+    session.duration_seconds = 0;
+
+    std::vector<OximetrySample> oximetry;
+    auto epochs = classifier.classifyFinal(session, oximetry);
+    EXPECT_TRUE(epochs.empty());
+}
+
+// --- classifyLive guard branches -------------------------------------------
+
+TEST_F(SleepStageClassifierTest, ClassifyLiveReturnsEmptyWhenLiveModelNotLoaded) {
+    // Only write the final model so live_loaded_ stays false.
+    ASSERT_TRUE(createTestModels());
+    std::filesystem::remove(temp_dir_.string() + "/" + config_.model_version + "_live.json");
+
+    SleepStageClassifier classifier(config_);
+    ASSERT_TRUE(classifier.loadModels());  // final loads, ready
+    ASSERT_TRUE(classifier.isReady());
+
+    auto status = classifier.getStatus();
+    EXPECT_TRUE(status["final_model_loaded"].asBool());
+    EXPECT_FALSE(status["live_model_loaded"].asBool());
+
+    int duration = 300;
+    auto start = Clock::now() - std::chrono::seconds(duration);
+    auto oximetry = makeSyntheticOximetry(duration, start);
+
+    auto epochs = classifier.classifyLive({}, {}, oximetry, start, 0);
+    EXPECT_TRUE(epochs.empty());
+}
+
+TEST_F(SleepStageClassifierTest, ClassifyLiveReturnsEmptyWhenNoEpochData) {
+    ASSERT_TRUE(createTestModels());
+
+    SleepStageClassifier classifier(config_);
+    ASSERT_TRUE(classifier.loadModels());
+
+    // No vitals/breathing/oximetry, start==now -> aggregateToEpochs empty.
+    auto start = Clock::now();
+    auto epochs = classifier.classifyLive({}, {}, {}, start, 0);
+    EXPECT_TRUE(epochs.empty());
+}
+
+TEST_F(SleepStageClassifierTest, ClassifyLiveReturnsEmptyWhenStartEpochBeyondData) {
+    ASSERT_TRUE(createTestModels());
+
+    SleepStageClassifier classifier(config_);
+    ASSERT_TRUE(classifier.loadModels());
+
+    int duration = 300;
+    auto start = Clock::now() - std::chrono::seconds(duration);
+
+    std::vector<CPAPVitals> vitals;
+    std::vector<BreathingSummary> breathing;
+    for (int i = 0; i < duration; ++i) {
+        auto ts = start + std::chrono::seconds(i);
+        CPAPVitals v(ts);
+        v.spo2 = 96.0;
+        v.heart_rate = 65;
+        vitals.push_back(v);
+
+        BreathingSummary b(ts);
+        b.respiratory_rate = 14.0;
+        b.tidal_volume = 0.4;
+        b.minute_ventilation = 6.0;
+        b.ie_ratio = 0.4;
+        b.leak_rate = 2.0;
+        b.flow_p95 = 30.0;
+        breathing.push_back(b);
+    }
+    auto oximetry = makeSyntheticOximetry(duration, start);
+
+    // start_epoch far beyond produced epochs -> empty result.
+    auto epochs = classifier.classifyLive(vitals, breathing, oximetry, start, 100000);
+    EXPECT_TRUE(epochs.empty());
+}
+
+TEST_F(SleepStageClassifierTest, ClassifyLiveRespectsStartEpochOffset) {
+    ASSERT_TRUE(createTestModels());
+
+    SleepStageClassifier classifier(config_);
+    ASSERT_TRUE(classifier.loadModels());
+
+    int duration = 600;  // ~20 epochs of 30s
+    auto start = Clock::now() - std::chrono::seconds(duration);
+
+    std::vector<CPAPVitals> vitals;
+    std::vector<BreathingSummary> breathing;
+    for (int i = 0; i < duration; ++i) {
+        auto ts = start + std::chrono::seconds(i);
+        CPAPVitals v(ts);
+        v.spo2 = 96.0;
+        v.heart_rate = 65;
+        vitals.push_back(v);
+
+        BreathingSummary b(ts);
+        b.respiratory_rate = 14.0;
+        b.tidal_volume = 0.4;
+        b.minute_ventilation = 6.0;
+        b.ie_ratio = 0.4;
+        b.leak_rate = 2.0;
+        b.flow_p95 = 30.0;
+        breathing.push_back(b);
+    }
+    auto oximetry = makeSyntheticOximetry(duration, start);
+
+    auto all = classifier.classifyLive(vitals, breathing, oximetry, start, 0);
+    ASSERT_GE(static_cast<int>(all.size()), 3);
+
+    // Classify only from epoch index 2 onward; should return fewer epochs,
+    // and the first returned epoch should align with all[2]'s timestamp.
+    auto offset = classifier.classifyLive(vitals, breathing, oximetry, start, 2);
+    ASSERT_FALSE(offset.empty());
+    EXPECT_EQ(static_cast<int>(offset.size()),
+              static_cast<int>(all.size()) - 2);
+    EXPECT_EQ(offset.front().epoch_start, all[2].epoch_start);
+
+    for (const auto& e : offset) {
+        EXPECT_TRUE(e.provisional);
+        EXPECT_EQ(e.model_version, config_.model_version);
+    }
+}
+
+// --- loadOneModel error branch ---------------------------------------------
+
+TEST_F(SleepStageClassifierTest, LoadModelsFailsOnCorruptFinalModel) {
+    // Write a syntactically valid JSON file that is missing the expected
+    // "model"/"scaler"/"features" keys -> parse throws -> loadOneModel returns false.
+    std::string final_path = temp_dir_.string() + "/" + config_.model_version + "_final.json";
+    std::ofstream ofs(final_path);
+    ofs << R"({"garbage": true})";
+    ofs.close();
+
+    SleepStageClassifier classifier(config_);
+    EXPECT_FALSE(classifier.loadModels());
+    EXPECT_FALSE(classifier.isReady());
+
+    auto status = classifier.getStatus();
+    EXPECT_EQ(status["status"].asString(), "no_models");
+    EXPECT_FALSE(status["final_model_loaded"].asBool());
+}
+
+TEST_F(SleepStageClassifierTest, LoadModelsFailsOnMalformedJson) {
+    // Not even valid JSON -> nlohmann parse throws.
+    std::string final_path = temp_dir_.string() + "/" + config_.model_version + "_final.json";
+    std::ofstream ofs(final_path);
+    ofs << "{ this is not json ";
+    ofs.close();
+
+    SleepStageClassifier classifier(config_);
+    EXPECT_FALSE(classifier.loadModels());
+    EXPECT_FALSE(classifier.isReady());
+}
+
+TEST_F(SleepStageClassifierTest, LoadModelsFailsWhenModelDirEmpty) {
+    config_.model_dir = "";
+    SleepStageClassifier classifier(config_);
+    EXPECT_FALSE(classifier.loadModels());
+    EXPECT_FALSE(classifier.isReady());
+}
+
+TEST_F(SleepStageClassifierTest, GetStatusReportsFeatureCountsAfterLoad) {
+    ASSERT_TRUE(createTestModels());
+
+    SleepStageClassifier classifier(config_);
+    ASSERT_TRUE(classifier.loadModels());
+
+    auto status = classifier.getStatus();
+    ASSERT_TRUE(status.isMember("final_features"));
+    ASSERT_TRUE(status.isMember("live_features"));
+    EXPECT_GT(status["final_features"].asInt(), 0);
+    EXPECT_GT(status["live_features"].asInt(), 0);
+    EXPECT_EQ(status["model_version"].asString(), config_.model_version);
+    EXPECT_TRUE(status["live_inference"].asBool());
+}

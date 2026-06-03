@@ -129,7 +129,7 @@ jobs:
   coverage:
     runs-on: ubuntu-latest
     env:
-      COVERAGE_MIN: "25"
+      COVERAGE_MIN: "30"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
