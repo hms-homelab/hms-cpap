@@ -103,6 +103,21 @@ public:
         const std::string& new_source,
         bool server_exists);
 
+    // ── Test seam (unit tests only) ──────────────────────────────────────
+    // Inject collaborators directly, bypassing initialize() (which opens real
+    // DB/MQTT/network connections). Lets the burst cycle, completion, archive
+    // and summary logic be unit-tested with a MockDatabase, a fake IDataSource,
+    // and a DataPublisherService built with a null MqttClient (publishes no-op).
+    // Production code never calls this.
+    void injectDependenciesForTest(
+        std::shared_ptr<IDatabase> db,
+        std::unique_ptr<IDataSource> source,
+        std::unique_ptr<DataPublisherService> publisher,
+        std::unique_ptr<SessionDiscoveryService> discovery = nullptr);
+
+    /// Run a single burst cycle synchronously (no worker thread). Test-only.
+    bool runBurstCycleForTest() { return executeBurstCycle(); }
+
 private:
     // Configuration
     int burst_interval_seconds_;
