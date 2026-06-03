@@ -56,9 +56,14 @@ lcov --remove "$OUT_DIR/coverage.info" \
      "$PROJECT_DIR/build*/*" "*/_deps/*" "*/tests/*" \
      --output-file "$OUT_DIR/coverage.info" $LCOV_FLAGS >/dev/null
 
-genhtml "$OUT_DIR/coverage.info" --output-directory "$OUT_DIR/html" \
-     $LCOV_FLAGS >/dev/null 2>&1 || \
-genhtml "$OUT_DIR/coverage.info" --output-directory "$OUT_DIR/html" $LCOV_FLAGS
+# genhtml is only the human-readable artifact; the gate uses lcov --summary
+# below. genhtml's valid --ignore-errors categories differ from geninfo's
+# (it rejects 'gcov'/'mismatch') and vary by version, so try a safe set, then
+# bare, and never fail the run on report generation.
+GENHTML_FLAGS="--ignore-errors source,unused,empty,inconsistent,category"
+genhtml "$OUT_DIR/coverage.info" --output-directory "$OUT_DIR/html" $GENHTML_FLAGS >/dev/null 2>&1 \
+  || genhtml "$OUT_DIR/coverage.info" --output-directory "$OUT_DIR/html" >/dev/null 2>&1 \
+  || echo "WARNING: genhtml report failed (non-fatal); summary below is still valid"
 
 echo ""
 echo "== Coverage summary =="
