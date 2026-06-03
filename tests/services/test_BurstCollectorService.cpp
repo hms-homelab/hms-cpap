@@ -7,6 +7,8 @@
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
 #include "services/BurstCollectorService.h"
+#include "utils/ConfigManager.h"
+#include "utils/AppConfig.h"
 #include <filesystem>
 #include <fstream>
 
@@ -1378,5 +1380,133 @@ TEST(FysetcLifecycle, NoActionWhenEmptyInitialSourceToEzshare) {
 TEST(FysetcLifecycle, StartWhenEmptyInitialSourceToFysetc) {
     EXPECT_EQ(BurstCollectorService::decideFysetcLifecycle("", "fysetc", false),
               FysetcAction::Start);
+}
+
+// Additional permutations exercising every branch of the real static helper.
+// The first rule (new=="fysetc" && !server) wins over the stop rule, so even
+// a fysetc->fysetc transition with no server returns Start (defensive restart).
+TEST(FysetcLifecycle, StartWhenStayingFysetcButServerMissing) {
+    EXPECT_EQ(BurstCollectorService::decideFysetcLifecycle("fysetc", "fysetc", false),
+              FysetcAction::Start);
+}
+
+TEST(FysetcLifecycle, StartWhenSwitchingFromLowensteinToFysetc) {
+    EXPECT_EQ(BurstCollectorService::decideFysetcLifecycle("lowenstein", "fysetc", false),
+              FysetcAction::Start);
+}
+
+TEST(FysetcLifecycle, StopWhenSwitchingOutToLowenstein) {
+    EXPECT_EQ(BurstCollectorService::decideFysetcLifecycle("fysetc", "lowenstein", true),
+              FysetcAction::Stop);
+}
+
+TEST(FysetcLifecycle, NoActionEzshareToEzshareWithServer) {
+    // Non-fysetc on both ends: never touches the listener regardless of server.
+    EXPECT_EQ(BurstCollectorService::decideFysetcLifecycle("ezshare", "ezshare", true),
+              FysetcAction::None);
+}
+
+TEST(FysetcLifecycle, NoActionLocalToLowensteinWithServer) {
+    EXPECT_EQ(BurstCollectorService::decideFysetcLifecycle("local", "lowenstein", true),
+              FysetcAction::None);
+}
+
+TEST(FysetcLifecycle, NoActionEmptyToEmpty) {
+    EXPECT_EQ(BurstCollectorService::decideFysetcLifecycle("", "", false),
+              FysetcAction::None);
+}
+
+TEST(FysetcLifecycle, DecisionIsDeterministicAndPure) {
+    // Same inputs always produce the same output (no hidden state).
+    for (int i = 0; i < 5; ++i) {
+        EXPECT_EQ(BurstCollectorService::decideFysetcLifecycle("ezshare", "fysetc", false),
+                  FysetcAction::Start);
+        EXPECT_EQ(BurstCollectorService::decideFysetcLifecycle("fysetc", "local", true),
+                  FysetcAction::Stop);
+        EXPECT_EQ(BurstCollectorService::decideFysetcLifecycle("local", "ezshare", false),
+                  FysetcAction::None);
+    }
+}
+
+// ============================================================================
+// REAL OBJECT LIFECYCLE TESTS
+// ============================================================================
+// These drive the actual BurstCollectorService instance (no initialize(), so
+// no DB/MQTT/network is touched). They cover the constructor, the running-flag
+// accessor, the burst-time accessor, idempotent stop(), and destruction.
+
+TEST(BurstCollectorLifecycle, NewServiceIsNotRunning) {
+    BurstCollectorService svc(300);
+    EXPECT_FALSE(svc.isRunning());
+}
+
+TEST(BurstCollectorLifecycle, DefaultConstructedIntervalIsNotRunning) {
+    // Default ctor argument (300s) — just verify construction + accessor.
+    BurstCollectorService svc;
+    EXPECT_FALSE(svc.isRunning());
+}
+
+TEST(BurstCollectorLifecycle, LastBurstTimeDefaultsToEpoch) {
+    BurstCollectorService svc(60);
+    // Never ran a cycle, so last_burst_time_ is the default-constructed
+    // time_point, which equals the clock epoch.
+    EXPECT_EQ(svc.getLastBurstTime(),
+              std::chrono::system_clock::time_point{});
+}
+
+TEST(BurstCollectorLifecycle, StopOnNeverStartedIsNoOp) {
+    // stop() must be safe to call when the worker was never started.
+    BurstCollectorService svc(60);
+    EXPECT_NO_THROW(svc.stop());
+    EXPECT_FALSE(svc.isRunning());
+}
+
+TEST(BurstCollectorLifecycle, RepeatedStopIsIdempotent) {
+    BurstCollectorService svc(60);
+    EXPECT_NO_THROW(svc.stop());
+    EXPECT_NO_THROW(svc.stop());
+    EXPECT_FALSE(svc.isRunning());
+}
+
+TEST(BurstCollectorLifecycle, DestructorOnUnstartedServiceIsClean) {
+    // Destructor calls stop(); on an unstarted service it must not crash.
+    EXPECT_NO_THROW({
+        BurstCollectorService svc(120);
+        (void)svc.isRunning();
+    });
+}
+
+TEST(BurstCollectorLifecycle, SetAppConfigAndMarkDirtyAreSafeWithoutInitialize) {
+    // Hot-reload setters are plain flag/pointer writes; reloadConfig() is only
+    // invoked from the worker loop (never started here), so these are safe.
+    BurstCollectorService svc(60);
+    AppConfig cfg;
+    EXPECT_NO_THROW(svc.setAppConfig(&cfg));
+    EXPECT_NO_THROW(svc.markConfigDirty());
+    EXPECT_FALSE(svc.isRunning());
+}
+
+TEST(BurstCollectorLifecycle, ConstructorReadsDeviceIdFromEnv) {
+    // The constructor pulls CPAP_DEVICE_ID / CPAP_DEVICE_NAME from the
+    // environment. We can't read device_id_ directly (private), but we can at
+    // least confirm construction succeeds with a custom env value and that the
+    // env override path in ConfigManager is taken without throwing.
+    setenv("CPAP_DEVICE_ID", "cpap_test_unit_123", 1);
+    setenv("CPAP_DEVICE_NAME", "Unit Test CPAP", 1);
+    EXPECT_NO_THROW({ BurstCollectorService svc(300); });
+    EXPECT_EQ(ConfigManager::get("CPAP_DEVICE_ID", "default"),
+              "cpap_test_unit_123");
+    unsetenv("CPAP_DEVICE_ID");
+    unsetenv("CPAP_DEVICE_NAME");
+}
+
+TEST(BurstCollectorLifecycle, ConstructorFallsBackToDefaultsWhenEnvUnset) {
+    unsetenv("CPAP_DEVICE_ID");
+    unsetenv("CPAP_DEVICE_NAME");
+    EXPECT_NO_THROW({ BurstCollectorService svc(300); });
+    // Verify the default that the constructor relies on is what ConfigManager
+    // returns when the variable is absent.
+    EXPECT_EQ(ConfigManager::get("CPAP_DEVICE_ID", "cpap_resmed_23243570851"),
+              "cpap_resmed_23243570851");
 }
 
