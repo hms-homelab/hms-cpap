@@ -144,7 +144,7 @@ jobs:
           --health-cmd "pg_isready -U maestro"
           --health-interval 5s --health-timeout 5s --health-retries 10
     env:
-      COVERAGE_MIN: "55"
+      COVERAGE_MIN: "57"
       PGHOST: localhost
       PGPORT: "5432"
       PGUSER: maestro

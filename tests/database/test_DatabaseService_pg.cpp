@@ -83,8 +83,11 @@ std::string makeConnInfo(const std::string& dbname,
                      " dbname=" + dbname +
                      " connect_timeout=3";
     if (!search_path.empty()) {
-        // Force all unqualified table access into the throwaway schema.
-        ci += " options=-csearch_path=" + search_path;
+        // Force all unqualified table access into the throwaway schema, with a
+        // public fallback so connect()-time auto-migration has a valid schema
+        // even before our DDL runs. Applies to every connection built from this
+        // string (DatabaseService keeps a separate read connection).
+        ci += " options=-csearch_path=" + search_path + ",public";
     }
     return ci;
 }
@@ -306,22 +309,30 @@ protected:
         schema_ = "cpap_test_" + std::to_string(::getpid()) + "_" +
                   std::to_string(counter++);
 
+        // 1. Create the throwaway schema FIRST, via a plain admin connection, so
+        //    it exists before DatabaseService connects with search_path pinned to
+        //    it. (Pinning a not-yet-existent schema makes connect()'s own
+        //    auto-migration fail with "no schema has been selected to create in"
+        //    on a fresh DB — masked locally only by pre-existing public tables.)
+        try {
+            pqxx::connection admin(makeConnInfo(testDbName()));
+            pqxx::work txn(admin);
+            txn.exec("CREATE SCHEMA IF NOT EXISTS " + schema_);
+            txn.commit();
+        } catch (const std::exception& e) {
+            GTEST_SKIP() << "Cannot create schema " << schema_ << " in "
+                         << testDbName() << " — skipping (" << e.what() << ").";
+        }
+
+        // 2. Connect with search_path pinned to the schema (public fallback).
+        //    Both DatabaseService's write conn_ and its separate read query_conn_
+        //    inherit this, so reads (e.g. getMetricsForDateRange) and writes both
+        //    resolve unqualified tables inside the isolated schema.
         db_ = std::make_unique<DatabaseService>(makeConnInfo(testDbName(), schema_));
         ASSERT_TRUE(db_->connect());
         ASSERT_TRUE(db_->isConnected());
 
-        // Create the isolated schema. search_path already points at it, so the
-        // schema must exist before the core DDL runs.
-        if (!db_->executeRaw("CREATE SCHEMA IF NOT EXISTS " + schema_)) {
-            db_.reset();
-            GTEST_SKIP() << "Cannot create schema " << schema_ << " in "
-                         << testDbName() << " — skipping (insufficient grants).";
-        }
-        // Re-point search_path now that the schema exists (CREATE SCHEMA does
-        // not change the session search_path mid-connection on all versions).
-        ASSERT_TRUE(db_->executeRaw("SET search_path TO " + schema_));
-
-        // Apply the core schema (connect() only auto-migrates a subset).
+        // 3. Apply the full DDL into the schema.
         ASSERT_TRUE(db_->executeRaw(kSchema))
             << "Failed to apply schema DDL into " << schema_;
     }
