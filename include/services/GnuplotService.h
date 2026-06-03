@@ -23,6 +23,11 @@ public:
         double ymax = -1.0  // -1 = auto
     );
 
+    // Strip characters that could break out of / inject into a single-quoted
+    // gnuplot string (quotes, backslash, backtick, newlines, ';'). Applied to
+    // caller-supplied chart title / axis labels.
+    static std::string sanitizeLabel(const std::string& s);
+
 private:
     static std::string escapePath(const std::string& p);
 };
