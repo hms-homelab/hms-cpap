@@ -741,14 +741,24 @@ void CpapController::sessionGenerateSummary(const drogon::HttpRequestPtr&,
 void CpapController::sessionReparse(const drogon::HttpRequestPtr&,
                                      std::function<void(const drogon::HttpResponsePtr&)>&& cb,
                                      const std::string& date) {
-    if (!burst_service_) {
-        cb(jsonError("Service not available", drogon::k503ServiceUnavailable));
+    // Reparse re-reads the night's files from the permanent archive and
+    // rebuilds the DB rows for that sleep-day. We delegate to BackfillService
+    // with a single-day range: that path works for sessions of ANY age,
+    // unlike the burst collector which only revisits the last ~2 nights (so
+    // an older session's reparse silently never ran). BackfillService maps
+    // YYYY-MM-DD → folder YYYYMMDD and scopes delete+reparse to that one
+    // folder, leaving the adjacent night untouched.
+    if (!backfill_trigger_) {
+        cb(jsonError("Reparse not available (archive source not configured)",
+                     drogon::k503ServiceUnavailable));
         return;
     }
-    bool ok = burst_service_->reparseSession(date);
+    // Empty local_dir → BackfillService uses its configured archive path.
+    backfill_trigger_(date, date, "");
     Json::Value result;
-    result["status"] = ok ? "queued" : "not_found";
+    result["status"] = "queued";
     result["date"] = date;
+    result["message"] = "Reparsing from archive; poll /api/backfill/status";
     cb(jsonResp(result));
 }
 

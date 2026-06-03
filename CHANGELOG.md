@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.3.1] - 2026-06-03
+
+### Fixed
+- **Per-session reparse now works for sessions of any age** — the UI reparse button previously only cleared checkpoint sizes and reopened the session, relying on the next burst cycle to re-download and reparse. But the burst collector only revisits the last ~2 nights, so reparsing an older session silently never ran (and could leave the row stuck open). Reparse now delegates to a single-day archive backfill (group → delete that day's rows → parse → save → mark completed), which works regardless of session age.
+
+### Changed
+- **BackfillService wired in all source modes** — previously only `local`/`ezshare`. It reparses from the permanent archive, so it must be available in every mode; the per-session reparse depends on it.
+- Reparse stays scoped to exactly one night's folder (`sleep_day → YYYYMMDD`), never touching the adjacent night, guarded by a new unit test (`SingleDayReparseTouchesOnlyThatFolder`).
+
+### Removed
+- Dead `BurstCollectorService::reparseSession()` (the broken clear-checkpoints-and-defer path that caused stale open sessions).
+
 ## [4.3.0] - 2026-05-18
 
 ### Added

@@ -325,19 +325,6 @@ bool BurstCollectorService::generateSummaryForDate(const std::string& sleep_day)
     return true;
 }
 
-bool BurstCollectorService::reparseSession(const std::string& sleep_day) {
-    auto session_start = db_service_->getSessionStartForSleepDay(device_id_, sleep_day, false);
-    if (!session_start) {
-        std::cerr << "reparseSession: no session found for " << sleep_day << std::endl;
-        return false;
-    }
-    db_service_->updateCheckpointFileSizes(device_id_, session_start.value(), {});
-    db_service_->reopenSession(device_id_, session_start.value());
-    if (oximetry_service_) oximetry_service_->collectAndPublish();
-    std::cout << "reparseSession: cleared checkpoints for " << sleep_day << ", next burst will reparse" << std::endl;
-    return true;
-}
-
 std::chrono::system_clock::time_point BurstCollectorService::getLastBurstTime() const {
     return last_burst_time_;
 }

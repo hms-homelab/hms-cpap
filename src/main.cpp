@@ -747,8 +747,11 @@ int main(int argc, char** argv) {
                 };
             }
 
-            // Wire BackfillService (local source mode only)
-            if (src == "local" || src == "ezshare") {
+            // Wire BackfillService whenever an archive/local DATALOG path is
+            // known. It reparses from the permanent archive, so it must be
+            // available in every source mode (ezshare/fysetc/local) — the
+            // per-session UI reparse delegates to it.
+            if (!config.local_dir.empty()) {
                 hms_cpap::BackfillService::Config bf_cfg;
                 bf_cfg.device_id = config.device_id;
                 bf_cfg.device_name = config.device_name;

@@ -277,3 +277,63 @@ TEST(BackfillServiceTest, BackfillWithoutSaveDoesNotMarkCompleted) {
 
     std::filesystem::remove_all(tmp);
 }
+
+// ── Single-day reparse is folder-scoped ─────────────────────────────────
+// A reparse of sleep-day D must operate on folder D ONLY, and must NOT touch
+// the adjacent (previous) night's folder — even though that folder may hold
+// files timestamped on day D (cross-midnight early-AM sessions belong to the
+// night that began the evening before, and live under that earlier folder).
+// This is the guarantee the per-session UI reparse depends on.
+TEST(BackfillServiceTest, SingleDayReparseTouchesOnlyThatFolder) {
+    auto tmp = std::filesystem::temp_directory_path() / "cpap_test_backfill_scope";
+    // Previous night's folder (must be left alone): contains a file whose
+    // *filename* is dated 20260522 but which belongs to the 20260521 night.
+    auto prev = tmp / "20260521";
+    // Target folder for the reparse.
+    auto target = tmp / "20260522";
+    std::filesystem::create_directories(prev);
+    std::filesystem::create_directories(target);
+
+    writeMinimalEDF(prev / "20260522_043426_BRP.edf", "20260522_043426", "BRP", 300);
+    writeMinimalEDF(target / "20260522_234902_BRP.edf", "20260522_234902", "BRP", 300);
+
+    auto mock_db = std::make_shared<MockDatabase>();
+
+    BackfillService::Config cfg;
+    cfg.local_dir = tmp.string();
+    cfg.device_id = "test_device";
+    cfg.device_name = "Test CPAP";
+
+    // ONLY the target folder may be deleted/reparsed.
+    EXPECT_CALL(*mock_db, deleteSessionsByDateFolder("test_device", "20260522"))
+        .WillOnce(Return(0));
+    // The previous night's folder must NEVER be touched.
+    EXPECT_CALL(*mock_db, deleteSessionsByDateFolder("test_device", "20260521"))
+        .Times(0);
+
+    EXPECT_CALL(*mock_db, saveSession(_)).WillOnce(Return(true));
+    EXPECT_CALL(*mock_db, markSessionCompleted("test_device", _))
+        .Times(1).WillOnce(Return(true));
+    EXPECT_CALL(*mock_db, updateCheckpointFileSizesMock("test_device", _))
+        .WillOnce(Return(true));
+
+    BackfillService svc(cfg, mock_db);
+    svc.start();
+    // Reparse only sleep-day 2026-05-22 → folder 20260522.
+    svc.trigger("2026-05-22", "2026-05-22");
+
+    for (int i = 0; i < 30; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        auto status = svc.getStatus();
+        if (status["status"].asString() != "running" &&
+            status["status"].asString() != "idle") break;
+    }
+    svc.stop();
+
+    auto status = svc.getStatus();
+    EXPECT_EQ(status["status"].asString(), "complete");
+    EXPECT_EQ(status["folders_total"].asInt(), 1);
+    EXPECT_EQ(status["sessions_saved"].asInt(), 1);
+
+    std::filesystem::remove_all(tmp);
+}
