@@ -20,9 +20,9 @@ bool GnuplotService::renderLineChart(
     std::ostringstream script;
     script << "set terminal pngcairo size 900,300 enhanced font 'DejaVu Sans,11'\n";
     script << "set output '" << escapePath(out_png) << "'\n";
-    script << "set title '" << title << "' font 'DejaVu Sans Bold,12'\n";
+    script << "set title '" << sanitizeLabel(title) << "' font 'DejaVu Sans Bold,12'\n";
     script << "set xlabel 'Date'\n";
-    script << "set ylabel '" << ylabel << "'\n";
+    script << "set ylabel '" << sanitizeLabel(ylabel) << "'\n";
     script << "set style data linespoints\n";
     script << "set grid ytics lt 0 lc rgb '#dddddd'\n";
     script << "set border 3\n";
@@ -76,6 +76,25 @@ std::string GnuplotService::escapePath(const std::string& p) {
     for (char c : p) {
         if (c == '\'') out += "\\'";
         else out += c;
+    }
+    return out;
+}
+
+// Sanitize a caller-supplied label (chart title / axis label) before it is
+// embedded inside a single-quoted gnuplot string that gets piped to gnuplot.
+// gnuplot single-quoted strings do not honor backslash escapes, so a stray
+// single quote would terminate the string early — and because gnuplot can run
+// system() commands, an attacker-controlled quote is a script-injection vector.
+// We drop quotes/backslashes/backticks and control characters (newlines etc.).
+std::string GnuplotService::sanitizeLabel(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    for (unsigned char c : s) {
+        if (c == '\'' || c == '"' || c == '`' || c == '\\' ||
+            c == '\n' || c == '\r' || c == ';') {
+            continue;
+        }
+        out += static_cast<char>(c);
     }
     return out;
 }
