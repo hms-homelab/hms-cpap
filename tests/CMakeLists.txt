@@ -78,6 +78,9 @@ set(TEST_SOURCES
     database/test_SQLiteDatabase.cpp
     mqtt/test_DiscoveryPublisher.cpp
     database/test_DatabaseService_pg.cpp
+    services/test_DataPublisherDeeper.cpp
+    clients/test_FysetcDataSource.cpp
+    services/test_LiveSleepStageRunner.cpp
 )
 if(MSVC)
     list(FILTER TEST_SOURCES EXCLUDE REGEX ".*Fysetc.*")
