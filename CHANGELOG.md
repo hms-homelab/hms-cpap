@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.3.2] - 2026-06-03
+
+### Added
+- **Code coverage (gcov/lcov)** — `ENABLE_COVERAGE` CMake flag + `scripts/coverage.sh`
+  (instrumented build → tests → lcov HTML report + ratchet gate). New CI
+  `coverage` job (with a Postgres service so the pqxx suite runs) enforcing a
+  ratchet `COVERAGE_MIN`.
+- **Test coverage 27.4% → 60.6%** — ~330 new tests across SessionDiscovery,
+  Fat32Parser, DataPublisher, SleepStageClassifier, a SQLite DB CRUD suite,
+  InsightsEngine, EzShare/Prisma parsing, a Postgres DatabaseService suite
+  (throwaway-schema, skips without PG), O2Ring decode, DiscoveryPublisher,
+  the agent subsystem, and BurstCollectorService lifecycle. All deterministic
+  (temp dirs, fakes, fixed epochs; no live broker/device/clock).
+
 ## [4.3.1] - 2026-06-03
 
 ### Fixed
