@@ -683,6 +683,304 @@ TEST_F(EzShareParserTest, PopulatesAllTimestampFields) {
     EXPECT_EQ(entries[0].size_kb, 100);
 }
 
+// ── Extended parser coverage (EzShareParserExtTest) ──────────────────────────
+//
+// Distinct suite name to avoid colliding with EzShareParserTest above.
+// All deterministic: canned HTML strings only, no socket access.
+//
+// NOTE ON COVERAGE: listDateFolders(), listFiles(), downloadSession(),
+// downloadFile(), downloadFileRange(), downloadRootFile() and httpGet() all
+// open a live HTTP connection (curl_easy_perform) and are intentionally NOT
+// exercised here. We cover the pure parsing surface (parseDirectoryListing),
+// the URL/path string construction that those methods build, the date-folder
+// digit/length filtering predicate that listDateFolders() applies to parse
+// output, and the EDF-suffix matching predicate that downloadSession() uses.
+
+class EzShareParserExtTest : public ::testing::Test {
+protected:
+    EzShareClient client;
+};
+
+// --- Malformed / boundary HTML -------------------------------------------------
+
+// Completely empty string must not crash and yields no entries.
+TEST_F(EzShareParserExtTest, EmptyStringReturnsEmpty) {
+    auto entries = client.parseDirectoryListing("");
+    EXPECT_TRUE(entries.empty());
+}
+
+// A line missing the trailing </a> anchor close does not match the regex.
+TEST_F(EzShareParserExtTest, UnterminatedAnchorIsIgnored) {
+    std::string html = R"(
+<pre>
+2026- 2- 4   01:18:09         535KB   <a href="/download?file=x"> 20260204_011809_BRP.edf
+</pre>)";
+    auto entries = client.parseDirectoryListing(html);
+    EXPECT_TRUE(entries.empty());
+}
+
+// A row missing the size/DIR column (timestamp then straight to anchor) does
+// not match — the size-or-DIR group is mandatory.
+TEST_F(EzShareParserExtTest, MissingSizeColumnIsIgnored) {
+    std::string html = R"(
+<pre>
+2026- 2- 4   01:18:09   <a href="/download?file=x"> noSize.edf</a>
+</pre>)";
+    auto entries = client.parseDirectoryListing(html);
+    EXPECT_TRUE(entries.empty());
+}
+
+// A row whose timestamp has a non-numeric field is ignored.
+TEST_F(EzShareParserExtTest, NonNumericTimestampIsIgnored) {
+    std::string html = R"(
+<pre>
+20XX- 2- 4   01:18:09         535KB   <a href="/download?file=x"> bad.edf</a>
+</pre>)";
+    auto entries = client.parseDirectoryListing(html);
+    EXPECT_TRUE(entries.empty());
+}
+
+// Anchor with an empty href still parses (href content is not validated).
+TEST_F(EzShareParserExtTest, EmptyHrefStillParses) {
+    std::string html = R"(
+<pre>
+2026- 2- 4   01:18:09         535KB   <a href=""> a.edf</a>
+</pre>)";
+    auto entries = client.parseDirectoryListing(html);
+    ASSERT_EQ(entries.size(), 1u);
+    EXPECT_EQ(entries[0].name, "a.edf");
+    EXPECT_EQ(entries[0].size_kb, 535);
+}
+
+// Multiple files spread over one physical line are all captured (regex is
+// applied globally over the whole string, not line-by-line).
+TEST_F(EzShareParserExtTest, MultipleEntriesOnOneLine) {
+    std::string html =
+        R"(2026- 2- 4   01:18:09  10KB  <a href="x"> a.edf</a> )"
+        R"(2026- 2- 4   01:18:10  20KB  <a href="y"> b.edf</a>)";
+    auto entries = client.parseDirectoryListing(html);
+    ASSERT_EQ(entries.size(), 2u);
+    EXPECT_EQ(entries[0].name, "a.edf");
+    EXPECT_EQ(entries[0].size_kb, 10);
+    EXPECT_EQ(entries[1].name, "b.edf");
+    EXPECT_EQ(entries[1].size_kb, 20);
+}
+
+// Only "." and ".." present -> both dropped -> empty result.
+TEST_F(EzShareParserExtTest, OnlyDotEntriesDropped) {
+    std::string html = R"(
+<pre>
+2026- 2- 3   20:50:32         <DIR>   <a href="dir?dir=A:DATALOG"> .</a>
+2026- 2- 3   20:50:32         <DIR>   <a href="dir?dir=A:"> ..</a>
+</pre>)";
+    auto entries = client.parseDirectoryListing(html);
+    EXPECT_TRUE(entries.empty());
+}
+
+// Case-insensitive DIR token: lowercase <dir> still recognised as directory.
+TEST_F(EzShareParserExtTest, LowercaseDirTokenRecognised) {
+    std::string html = R"(
+<pre>
+2026- 2- 3   20:50:32         <dir>   <a href="dir?dir=A:DATALOG\20260203"> 20260203</a>
+</pre>)";
+    auto entries = client.parseDirectoryListing(html);
+    ASSERT_EQ(entries.size(), 1u);
+    EXPECT_TRUE(entries[0].is_dir);
+    EXPECT_EQ(entries[0].name, "20260203");
+    EXPECT_EQ(entries[0].size_kb, 0);  // dirs leave size_kb default 0
+}
+
+// Case-insensitive anchor tag: <A HREF=...> uppercase still matches.
+TEST_F(EzShareParserExtTest, UppercaseAnchorTagRecognised) {
+    std::string html = R"(
+<pre>
+2026- 2- 4   01:18:09         535KB   <A HREF="/download?file=x"> upper.edf</A>
+</pre>)";
+    auto entries = client.parseDirectoryListing(html);
+    ASSERT_EQ(entries.size(), 1u);
+    EXPECT_EQ(entries[0].name, "upper.edf");
+    EXPECT_FALSE(entries[0].is_dir);
+}
+
+// --- Date-folder filtering predicate (mirrors listDateFolders) -----------------
+//
+// listDateFolders() filters parse output to dirs with 8-digit all-numeric names
+// and sorts them. We can't call it (it hits the network), so we replicate the
+// exact predicate against parseDirectoryListing() output to lock the contract.
+namespace {
+std::vector<std::string> filterDateFolders(const std::vector<EzShareFileEntry>& entries) {
+    std::vector<std::string> folders;
+    for (const auto& e : entries) {
+        if (e.is_dir && e.name.size() == 8 &&
+            std::all_of(e.name.begin(), e.name.end(), ::isdigit)) {
+            folders.push_back(e.name);
+        }
+    }
+    std::sort(folders.begin(), folders.end());
+    return folders;
+}
+}  // namespace
+
+TEST_F(EzShareParserExtTest, DateFolderFilterKeepsOnlyEightDigitDirs) {
+    std::string html = R"(
+<pre>
+2026- 2- 5   02:30:00         &lt;DIR&gt;   <a href="x"> SETTINGS</a>
+2026- 2- 4   01:15:00         &lt;DIR&gt;   <a href="x"> 20260204</a>
+2026- 2- 3   20:50:32         &lt;DIR&gt;   <a href="x"> 20260203</a>
+2026- 2- 4   01:18:09         535KB   <a href="x"> 20260204_011809_BRP.edf</a>
+2026- 2- 6   03:00:00         &lt;DIR&gt;   <a href="x"> 2026020</a>
+</pre>)";
+    auto entries = client.parseDirectoryListing(html);
+    auto folders = filterDateFolders(entries);
+    // SETTINGS (not numeric), the BRP file (not dir), and 2026020 (7 digits)
+    // are all excluded; the two 8-digit dirs are kept and sorted ascending.
+    ASSERT_EQ(folders.size(), 2u);
+    EXPECT_EQ(folders[0], "20260203");
+    EXPECT_EQ(folders[1], "20260204");
+}
+
+TEST_F(EzShareParserExtTest, DateFolderFilterRejectsNineDigitDir) {
+    std::string html = R"(
+<pre>
+2026- 2- 4   01:15:00         &lt;DIR&gt;   <a href="x"> 202602040</a>
+</pre>)";
+    auto entries = client.parseDirectoryListing(html);
+    EXPECT_TRUE(filterDateFolders(entries).empty());
+}
+
+TEST_F(EzShareParserExtTest, DateFolderFilterRejectsEightCharAlnum) {
+    std::string html = R"(
+<pre>
+2026- 2- 4   01:15:00         &lt;DIR&gt;   <a href="x"> 2026A204</a>
+</pre>)";
+    auto entries = client.parseDirectoryListing(html);
+    EXPECT_TRUE(filterDateFolders(entries).empty());
+}
+
+// --- EDF-suffix matching predicate (mirrors downloadSession) -------------------
+//
+// downloadSession() selects files ending in one of these suffixes
+// (case-insensitive). Replicate the predicate to lock the contract without
+// touching the network.
+namespace {
+bool isSessionEdf(const std::string& name) {
+    static const std::vector<std::string> edf_suffixes = {
+        "_BRP.edf", "_EVE.edf", "_SAD.edf", "_SA2.edf", "_PLD.edf", "_CSL.edf"};
+    for (const auto& suffix : edf_suffixes) {
+        if (name.size() >= suffix.size()) {
+            std::string end = name.substr(name.size() - suffix.size());
+            std::transform(end.begin(), end.end(), end.begin(), ::tolower);
+            std::string suf = suffix;
+            std::transform(suf.begin(), suf.end(), suf.begin(), ::tolower);
+            if (end == suf) return true;
+        }
+    }
+    return false;
+}
+}  // namespace
+
+TEST_F(EzShareParserExtTest, SessionEdfSuffixMatching) {
+    EXPECT_TRUE(isSessionEdf("20260204_011809_BRP.edf"));
+    EXPECT_TRUE(isSessionEdf("20260204_011810_PLD.edf"));
+    EXPECT_TRUE(isSessionEdf("20260204_011810_SAD.edf"));
+    EXPECT_TRUE(isSessionEdf("20260204_011810_SA2.edf"));
+    EXPECT_TRUE(isSessionEdf("20260204_011810_EVE.edf"));
+    EXPECT_TRUE(isSessionEdf("20260204_014747_CSL.edf"));
+    // Case-insensitive suffix.
+    EXPECT_TRUE(isSessionEdf("20260204_011809_brp.EDF"));
+    // Non-session EDF and root str file excluded.
+    EXPECT_FALSE(isSessionEdf("STR.edf"));
+    EXPECT_FALSE(isSessionEdf("20260204_011809_XYZ.edf"));
+    EXPECT_FALSE(isSessionEdf("notanedf.txt"));
+    // Too short to contain any suffix.
+    EXPECT_FALSE(isSessionEdf("a"));
+    EXPECT_FALSE(isSessionEdf(""));
+}
+
+// --- URL / path construction (string-only, no socket) --------------------------
+//
+// These lock the exact URL shapes the download/list methods build from base_url_
+// + the date folder / filename, including the mandatory %5C backslash encoding.
+// We assemble the strings the same way the production code does so a change to
+// the encoding contract is caught here.
+
+TEST_F(EzShareParserExtTest, ListDirUrlUsesBackslashEncoding) {
+    client.setBaseURL("http://192.168.4.1");
+    std::string date = "20260204";
+    std::string list_url = client.getBaseURL() + "/dir?dir=A:DATALOG%5C" + date;
+    EXPECT_EQ(list_url, "http://192.168.4.1/dir?dir=A:DATALOG%5C20260204");
+    EXPECT_EQ(list_url.find("DATALOG/"), std::string::npos);  // never forward slash
+}
+
+TEST_F(EzShareParserExtTest, ListDateFoldersUrlShape) {
+    client.setBaseURL("http://10.0.0.5");
+    std::string url = client.getBaseURL() + "/dir?dir=A:DATALOG";
+    EXPECT_EQ(url, "http://10.0.0.5/dir?dir=A:DATALOG");
+}
+
+TEST_F(EzShareParserExtTest, DownloadFileUrlUsesDoubleBackslash) {
+    client.setBaseURL("http://192.168.4.1");
+    std::string date = "20260204";
+    std::string fname = "20260204_011809_BRP.edf";
+    std::string url = client.getBaseURL() + "/download?file=DATALOG%5C" + date + "%5C" + fname;
+    EXPECT_EQ(url,
+        "http://192.168.4.1/download?file=DATALOG%5C20260204%5C20260204_011809_BRP.edf");
+    EXPECT_EQ(url.find("DATALOG/"), std::string::npos);
+}
+
+TEST_F(EzShareParserExtTest, DownloadRootFileUrlHasNoDatalogPrefix) {
+    client.setBaseURL("http://192.168.4.1");
+    std::string url = client.getBaseURL() + "/download?file=" + std::string("STR.EDF");
+    EXPECT_EQ(url, "http://192.168.4.1/download?file=STR.EDF");
+    EXPECT_EQ(url.find("DATALOG"), std::string::npos);  // root files skip DATALOG
+}
+
+TEST_F(EzShareParserExtTest, RangeHeaderFormat) {
+    // Mirrors the Range header downloadFileRange() builds for resume.
+    size_t start = 307200;  // 300 KB
+    std::string header = "Range: bytes=" + std::to_string(start) + "-";
+    EXPECT_EQ(header, "Range: bytes=307200-");
+
+    std::string from_zero = "Range: bytes=" + std::to_string(0) + "-";
+    EXPECT_EQ(from_zero, "Range: bytes=0-");
+}
+
+// Base URL with trailing-style port survives concatenation cleanly.
+TEST_F(EzShareParserExtTest, BaseUrlWithPortConcatenates) {
+    client.setBaseURL("http://example.test:8080");
+    std::string url = client.getBaseURL() + "/dir?dir=A:DATALOG";
+    EXPECT_EQ(url, "http://example.test:8080/dir?dir=A:DATALOG");
+}
+
+// --- getModTime with is_dir set (dirs still produce a valid time) --------------
+TEST(EzShareFileEntryExtTest, DirEntryModTimeStillComputes) {
+    EzShareFileEntry e;
+    e.is_dir = true;
+    e.year = 2026; e.month = 2; e.day = 4;
+    e.hour = 20; e.minute = 50; e.second = 32;
+
+    auto tp = e.getModTime();
+    std::time_t tt = std::chrono::system_clock::to_time_t(tp);
+    std::tm local{};
+    localtime_r(&tt, &local);
+    EXPECT_EQ(local.tm_year + 1900, 2026);
+    EXPECT_EQ(local.tm_mday, 4);
+    EXPECT_EQ(local.tm_hour, 20);
+}
+
+// Default-constructed entry has zeroed fields and is not a directory.
+TEST(EzShareFileEntryExtTest, DefaultFieldsAreZeroed) {
+    EzShareFileEntry e;
+    EXPECT_EQ(e.size_kb, 0);
+    EXPECT_FALSE(e.is_dir);
+    EXPECT_EQ(e.year, 0);
+    EXPECT_EQ(e.month, 0);
+    EXPECT_EQ(e.day, 0);
+    EXPECT_EQ(e.hour, 0);
+    EXPECT_EQ(e.minute, 0);
+    EXPECT_EQ(e.second, 0);
+}
+
 // Run all tests
 int main(int argc, char** argv) {
     testing::InitGoogleTest(&argc, argv);

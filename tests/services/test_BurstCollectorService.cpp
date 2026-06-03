@@ -1713,6 +1713,21 @@ protected:
             mkEntry("20200101_220000_EVE.edf", 2),
         };
     }
+
+    // TWO sessions in one date folder. The default SESSION_GAP_MINUTES is 60;
+    // 22:00:00 and 23:30:00 are 90 minutes apart -> two distinct sessions.
+    // The 23:30:00 group is the most-recent (highest session_start timestamp).
+    static void seedTwoSessions(FakeDataSource& ds) {
+        ds.date_folders = {"20200101"};
+        ds.folder_files["20200101"] = {
+            // Earlier session (NOT most recent)
+            mkEntry("20200101_220000_BRP.edf", 100),
+            mkEntry("20200101_220000_PLD.edf", 20),
+            // Later session (MOST recent)
+            mkEntry("20200101_233000_BRP.edf", 80),
+            mkEntry("20200101_233000_PLD.edf", 15),
+        };
+    }
 };
 
 // Scenario 1: New session not in DB -> downloaded, checkpoints stored, last_seen
@@ -1918,6 +1933,223 @@ TEST_F(BurstOrchestrationTest, GenerateSummaryForDate_LLMDisabled_ReturnsFalse) 
     EXPECT_CALL(*db_raw, getNightlyMetrics(_, _)).Times(0);
 
     EXPECT_FALSE(svc->generateSummaryForDate("2020-01-01"));
+}
+
+// ── EXTENDED COVERAGE: multi-session, most-recent selection, consecutive ─────
+// ── cycles, reopen-after-change, force-complete mid-list, last-burst time. ───
+
+// Recompute a session_start the same way SessionDiscoveryService::parseSessionTime
+// does (local time via mktime), so we can script per-session mock returns.
+static std::chrono::system_clock::time_point sessionTime(const std::string& prefix) {
+    std::tm tm = {};
+    tm.tm_year = std::stoi(prefix.substr(0, 4)) - 1900;
+    tm.tm_mon  = std::stoi(prefix.substr(4, 2)) - 1;
+    tm.tm_mday = std::stoi(prefix.substr(6, 2));
+    tm.tm_hour = std::stoi(prefix.substr(9, 2));
+    tm.tm_min  = std::stoi(prefix.substr(11, 2));
+    tm.tm_sec  = std::stoi(prefix.substr(13, 2));
+    tm.tm_isdst = -1;
+    return std::chrono::system_clock::from_time_t(std::mktime(&tm));
+}
+
+// Two unchanged sessions in one cycle: BOTH get markSessionCompleted (newly
+// completed), but completion ACTIONS (getNightlyMetrics) fire only for the
+// most-recent one (23:30) — the earlier (22:00) is gated by is_most_recent.
+TEST_F(BurstOrchestrationTest, MultiSession_OnlyMostRecentTriggersMetrics) {
+    auto svc = makeService(&BurstOrchestrationTest::seedTwoSessions);
+
+    auto t_early = sessionTime("20200101_220000");
+    auto t_late  = sessionTime("20200101_233000");
+
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, sessionExists(_, _)).WillRepeatedly(Return(true));
+
+    // Each session's stored checkpoint sizes match exactly -> all_unchanged.
+    std::map<std::string, int> early_sizes = {
+        {"20200101_220000_BRP.edf", 100}, {"20200101_220000_PLD.edf", 20}};
+    std::map<std::string, int> late_sizes = {
+        {"20200101_233000_BRP.edf", 80}, {"20200101_233000_PLD.edf", 15}};
+    EXPECT_CALL(*db_raw, getCheckpointFileSizes(_, t_early)).WillRepeatedly(Return(early_sizes));
+    EXPECT_CALL(*db_raw, getCheckpointFileSizes(_, t_late)).WillRepeatedly(Return(late_sizes));
+
+    // Both sessions are newly completed (session_end was NULL).
+    EXPECT_CALL(*db_raw, markSessionCompleted(_, t_early)).Times(1).WillOnce(Return(true));
+    EXPECT_CALL(*db_raw, markSessionCompleted(_, t_late)).Times(1).WillOnce(Return(true));
+
+    // Completion actions (metrics) fire ONLY for the most-recent (late) session.
+    EXPECT_CALL(*db_raw, getNightlyMetrics(_, t_late)).Times(1).WillOnce(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, getNightlyMetrics(_, t_early)).Times(0);
+
+    EXPECT_CALL(*db_raw, updateCheckpointFileSizesMock(_, _)).Times(0);
+
+    svc->runBurstCycleForTest();
+    EXPECT_EQ(src_raw->download_count, 0) << "All unchanged -> no downloads";
+}
+
+// Multi-session where the EARLIER session changed (re-download + reopen) and the
+// LATER session is unchanged (completes). Verifies per-session branch routing.
+TEST_F(BurstOrchestrationTest, MultiSession_EarlierChanged_LaterCompletes) {
+    auto svc = makeService(&BurstOrchestrationTest::seedTwoSessions);
+
+    auto t_early = sessionTime("20200101_220000");
+    auto t_late  = sessionTime("20200101_233000");
+
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, sessionExists(_, _)).WillRepeatedly(Return(true));
+
+    // Early session: stored BRP smaller -> changed -> re-download + reopen.
+    std::map<std::string, int> early_old = {
+        {"20200101_220000_BRP.edf", 50}, {"20200101_220000_PLD.edf", 20}};
+    // Late session: matches exactly -> unchanged -> completes.
+    std::map<std::string, int> late_sizes = {
+        {"20200101_233000_BRP.edf", 80}, {"20200101_233000_PLD.edf", 15}};
+    EXPECT_CALL(*db_raw, getCheckpointFileSizes(_, t_early)).WillRepeatedly(Return(early_old));
+    EXPECT_CALL(*db_raw, getCheckpointFileSizes(_, t_late)).WillRepeatedly(Return(late_sizes));
+
+    // Changed early session: persists new sizes + reopen, no completion mark.
+    EXPECT_CALL(*db_raw, updateCheckpointFileSizesMock(_, t_early)).Times(AtLeast(1));
+    EXPECT_CALL(*db_raw, reopenSession(_, t_early)).Times(1).WillOnce(Return(true));
+    EXPECT_CALL(*db_raw, markSessionCompleted(_, t_early)).Times(0);
+
+    // Unchanged late session: completes (most recent). The completion path AND
+    // the post-parse publish path may both consult getNightlyMetrics, so accept
+    // any session_start here — the load-bearing assertions are the per-session
+    // markSessionCompleted / reopenSession routing above.
+    EXPECT_CALL(*db_raw, markSessionCompleted(_, t_late)).Times(1).WillOnce(Return(true));
+    EXPECT_CALL(*db_raw, getNightlyMetrics(_, _)).WillRepeatedly(Return(std::nullopt));
+
+    svc->runBurstCycleForTest();
+    EXPECT_GT(src_raw->download_count, 0) << "Changed early session must re-download";
+}
+
+// has_new_files branch: stored sizes are a SUBSET of discovered (a brand-new
+// checkpoint file appeared) -> treated as changed -> re-download + reopen, even
+// though every shared file is byte-identical.
+TEST_F(BurstOrchestrationTest, ExistingSession_NewCheckpointFile_Redownloads) {
+    auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
+    auto t = sessionTime("20200101_220000");
+
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, sessionExists(_, _)).WillRepeatedly(Return(true));
+
+    // DB knows only the BRP file; the PLD is "new" -> current count > stored count.
+    std::map<std::string, int> stored = {{"20200101_220000_BRP.edf", 100}};
+    EXPECT_CALL(*db_raw, getCheckpointFileSizes(_, t)).WillRepeatedly(Return(stored));
+
+    EXPECT_CALL(*db_raw, updateCheckpointFileSizesMock(_, t)).Times(AtLeast(1));
+    EXPECT_CALL(*db_raw, reopenSession(_, t)).Times(1).WillOnce(Return(true));
+    EXPECT_CALL(*db_raw, markSessionCompleted(_, _)).Times(0);
+
+    svc->runBurstCycleForTest();
+    EXPECT_GT(src_raw->download_count, 0) << "New checkpoint file triggers re-download";
+}
+
+// Consecutive cycles on one service instance: NEW -> (sizes stored) ; then
+// UNCHANGED -> completes. Drives executeBurstCycle twice through the seam,
+// exercising the new-then-complete transition without rebuilding the service.
+TEST_F(BurstOrchestrationTest, ConsecutiveCycles_NewThenUnchangedCompletes) {
+    auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
+    auto t = sessionTime("20200101_220000");
+
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+
+    // Cycle 1: not in DB -> download + store checkpoints.
+    // Cycle 2: in DB, unchanged -> completes.
+    ::testing::Sequence seq;
+    EXPECT_CALL(*db_raw, sessionExists(_, t))
+        .InSequence(seq).WillOnce(Return(false));   // cycle 1
+    EXPECT_CALL(*db_raw, sessionExists(_, t))
+        .InSequence(seq).WillRepeatedly(Return(true)); // cycle 2+
+
+    EXPECT_CALL(*db_raw, updateCheckpointFileSizesMock(_, t)).Times(AtLeast(1)); // cycle 1
+    std::map<std::string, int> stored = {
+        {"20200101_220000_BRP.edf", 100}, {"20200101_220000_PLD.edf", 20}};
+    EXPECT_CALL(*db_raw, getCheckpointFileSizes(_, t)).WillRepeatedly(Return(stored));
+    EXPECT_CALL(*db_raw, markSessionCompleted(_, t)).Times(1).WillOnce(Return(true)); // cycle 2
+    EXPECT_CALL(*db_raw, getNightlyMetrics(_, t)).WillRepeatedly(Return(std::nullopt));
+
+    svc->runBurstCycleForTest();   // cycle 1: new -> download
+    int after_first = src_raw->download_count;
+    EXPECT_GT(after_first, 0);
+
+    svc->runBurstCycleForTest();   // cycle 2: unchanged -> complete (no new download)
+    EXPECT_EQ(src_raw->download_count, after_first) << "Unchanged cycle must not re-download";
+}
+
+// Consecutive cycles: GROWS (changed -> reopen + re-download) then UNCHANGED
+// (completes). Mirrors the mask-on/off resume cycle end-to-end via the seam.
+TEST_F(BurstOrchestrationTest, ConsecutiveCycles_GrowsThenUnchangedReopensThenCompletes) {
+    auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
+    auto t = sessionTime("20200101_220000");
+
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, sessionExists(_, t)).WillRepeatedly(Return(true));
+
+    // Cycle 1: DB has SMALLER BRP -> changed -> reopen + re-download.
+    // Cycle 2: DB now matches -> unchanged -> complete.
+    std::map<std::string, int> old_sizes = {
+        {"20200101_220000_BRP.edf", 50}, {"20200101_220000_PLD.edf", 20}};
+    std::map<std::string, int> new_sizes = {
+        {"20200101_220000_BRP.edf", 100}, {"20200101_220000_PLD.edf", 20}};
+    ::testing::Sequence seq;
+    EXPECT_CALL(*db_raw, getCheckpointFileSizes(_, t))
+        .InSequence(seq).WillOnce(Return(old_sizes));      // cycle 1: changed
+    EXPECT_CALL(*db_raw, getCheckpointFileSizes(_, t))
+        .InSequence(seq).WillRepeatedly(Return(new_sizes)); // cycle 2: unchanged
+
+    EXPECT_CALL(*db_raw, reopenSession(_, t)).Times(1).WillOnce(Return(true));      // cycle 1
+    EXPECT_CALL(*db_raw, updateCheckpointFileSizesMock(_, t)).Times(AtLeast(1));    // cycle 1
+    EXPECT_CALL(*db_raw, markSessionCompleted(_, t)).Times(1).WillOnce(Return(true)); // cycle 2
+    EXPECT_CALL(*db_raw, getNightlyMetrics(_, t)).WillRepeatedly(Return(std::nullopt));
+
+    svc->runBurstCycleForTest();   // grows
+    int after_first = src_raw->download_count;
+    EXPECT_GT(after_first, 0);
+
+    svc->runBurstCycleForTest();   // unchanged -> completes
+    EXPECT_EQ(src_raw->download_count, after_first);
+}
+
+// forceCompleteSession on the EARLIER of two sessions (mid-list): the day lookup
+// returns the early session's start; that exact session is marked + forced.
+TEST_F(BurstOrchestrationTest, ForceCompleteSession_MidList_TargetsLookupResult) {
+    auto svc = makeService(&BurstOrchestrationTest::seedTwoSessions);
+    auto t_early = sessionTime("20200101_220000");
+
+    // open_only lookup resolves to the earlier session.
+    EXPECT_CALL(*db_raw, getSessionStartForSleepDay(_, "2020-01-01", true))
+        .WillOnce(Return(t_early));
+    // The marked/forced session must be exactly the lookup result.
+    EXPECT_CALL(*db_raw, markSessionCompleted(_, t_early)).Times(1).WillOnce(Return(true));
+    EXPECT_CALL(*db_raw, setForceCompleted(_, t_early)).Times(1).WillOnce(Return(true));
+    EXPECT_CALL(*db_raw, getNightlyMetrics(_, t_early)).WillOnce(Return(std::nullopt));
+
+    EXPECT_TRUE(svc->forceCompleteSession("2020-01-01"));
+}
+
+// getLastBurstTime() is updated by the WORKER LOOP, not executeBurstCycle().
+// Driving the cycle directly via the seam must therefore leave it at the epoch.
+// This documents/locks the accessor's behavior under the test seam.
+TEST_F(BurstOrchestrationTest, GetLastBurstTime_NotUpdatedByDirectCycle) {
+    auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, sessionExists(_, _)).WillRepeatedly(Return(false));
+
+    auto before = svc->getLastBurstTime();
+    EXPECT_EQ(before, std::chrono::system_clock::time_point{})
+        << "Fresh service -> epoch";
+
+    svc->runBurstCycleForTest();
+
+    // executeBurstCycle does not touch last_burst_time_ (set only in the loop).
+    EXPECT_EQ(svc->getLastBurstTime(), std::chrono::system_clock::time_point{})
+        << "Direct cycle must NOT advance last_burst_time_";
 }
 
 }  // namespace burst_orch

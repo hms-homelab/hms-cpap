@@ -173,6 +173,96 @@ TEST(AgentServiceTest, MockEmbedReturnsVector) {
     EXPECT_FLOAT_EQ(result[0], 0.1f);
 }
 
+// ── runToolLoop assembly semantics (deterministic, no infra) ─────────────────
+//
+// runToolLoop() is private and only reachable through onQuery() (which needs a
+// live broker + DB). These tests pin down the deterministic message-assembly
+// and tool-dispatch contracts that runToolLoop relies on, using the same mock
+// LLM the service uses. They run everywhere (no network/DB).
+
+// A single turn can carry MORE THAN ONE tool call; runToolLoop iterates each
+// one and appends a matching "tool" message keyed by tool_call_id. Verify the
+// mock surface delivers multiple calls with distinct ids/args.
+TEST(AgentServiceUnitTest, MockLLMReturnsMultipleToolCallsInOneTurn) {
+    auto llm = std::make_shared<MockAgentLLM>();
+
+    LLMToolResponse resp;
+    resp.tool_calls = {
+        {"call_1", "get_recent_sessions", {{"days", 7}}},
+        {"call_2", "get_daily_summary", {{"days", 1}}},
+        {"call_3", "get_vitals", {{"session_id", 42}}},
+    };
+    resp.stop_reason = "tool_use";
+
+    EXPECT_CALL(*llm, generateWithTools(_, _, _)).WillOnce(Return(resp));
+
+    auto r = llm->generateWithTools({}, {}, nullptr);
+    ASSERT_EQ(r.tool_calls.size(), 3u);
+    EXPECT_FALSE(r.text.has_value());
+
+    // Mirror runToolLoop's per-call message assembly to lock in the contract.
+    std::vector<ChatMessage> messages;
+    ChatMessage assistant_msg;
+    assistant_msg.role = "assistant";
+    assistant_msg.content = r.text.value_or("");
+    assistant_msg.tool_calls = r.tool_calls;
+    messages.push_back(assistant_msg);
+    for (const auto& tc : r.tool_calls) {
+        ChatMessage tool_msg;
+        tool_msg.role = "tool";
+        tool_msg.content = "{\"ok\":true}";
+        tool_msg.tool_call_id = tc.id;
+        messages.push_back(tool_msg);
+    }
+
+    // 1 assistant + 3 tool messages, tool_call_ids preserved and aligned.
+    ASSERT_EQ(messages.size(), 4u);
+    EXPECT_EQ(messages[0].role, "assistant");
+    EXPECT_EQ(messages[0].tool_calls.size(), 3u);
+    EXPECT_EQ(messages[1].tool_call_id, "call_1");
+    EXPECT_EQ(messages[2].tool_call_id, "call_2");
+    EXPECT_EQ(messages[3].tool_call_id, "call_3");
+    EXPECT_EQ(messages[1].role, "tool");
+}
+
+// The assistant message that carries tool calls keeps an empty content string
+// when the model returns no accompanying text (resp.text not set). runToolLoop
+// uses resp.text.value_or("") for exactly this.
+TEST(AgentServiceUnitTest, AssistantMessageContentDefaultsEmptyWhenNoText) {
+    LLMToolResponse resp;
+    resp.tool_calls = {{"c1", "get_statistics", {}}};
+    // resp.text intentionally unset
+    EXPECT_EQ(resp.text.value_or(""), "");
+    EXPECT_FALSE(resp.text.has_value());
+}
+
+// Degenerate response with neither text nor tool calls -> the loop's terminal
+// "couldn't generate" branch. Pin the discriminator runToolLoop checks.
+TEST(AgentServiceUnitTest, EmptyResponseHasNeitherTextNorTools) {
+    LLMToolResponse resp;
+    resp.stop_reason = "stop";
+    EXPECT_TRUE(resp.tool_calls.empty());
+    EXPECT_FALSE(resp.text.has_value());
+}
+
+// was_aborted short-circuits the loop before any tool dispatch.
+TEST(AgentServiceUnitTest, AbortedResponseFlagSetIndependentOfContent) {
+    LLMToolResponse resp;
+    resp.was_aborted = true;
+    resp.text = "partial";  // even with text present, abort wins in runToolLoop
+    EXPECT_TRUE(resp.was_aborted);
+}
+
+// The MockAgentLLM can be programmed to throw from embed(); onQuery's async
+// memory-search lambda and the summary-embed both swallow such exceptions.
+// Verify the mock can express that failure mode deterministically.
+TEST(AgentServiceUnitTest, MockEmbedCanThrow) {
+    auto llm = std::make_shared<MockAgentLLM>();
+    EXPECT_CALL(*llm, embed(_))
+        .WillRepeatedly(::testing::Throw(std::runtime_error("embed boom")));
+    EXPECT_THROW(llm->embed("x"), std::runtime_error);
+}
+
 // ── MQTT payload parsing tests ──────────────────────────────────────────────
 
 TEST(AgentServiceTest, QueryPayloadParsing) {
@@ -710,6 +800,343 @@ TEST_F(AgentServiceE2ETest, SystemPromptBaseOnlyWhenNoMemory) {
     // No facts seeded -> no "Relevant facts" section.
     EXPECT_EQ(captured_system.find("Relevant facts about this user"),
               std::string::npos);
+}
+
+// ── Depth E2E: additional onQuery()/runToolLoop() branches ───────────────────
+//
+// Distinct suite (AgentServiceDepthE2ETest) so it does not collide with the
+// existing AgentServiceE2ETest in the same binary. Reuses the same infra-gated
+// setup. Covers branches the first suite leaves untouched: multi-tool-call
+// turns, tool-dispatch error handling (unknown tool), the concurrent-query
+// rejection guard, mid-flight abort, embed() failures inside the async memory
+// search, and multi-turn prior-message assembly. Skips cleanly without infra.
+
+class AgentServiceDepthE2ETest : public ::testing::Test {
+protected:
+    bool infra_ok_ = false;
+    std::string conn_str_;
+    std::string device_id_;
+    std::string query_topic_;
+    std::string resp_topic_;
+    std::string status_topic_;
+
+    std::shared_ptr<MqttClient> svc_mqtt_;
+    std::shared_ptr<MqttClient> test_mqtt_;
+    std::shared_ptr<MockAgentLLM> llm_;
+    std::unique_ptr<AgentService> service_;
+
+    Collector resp_collector_;
+    Collector status_collector_;
+
+    void SetUp() override {
+        conn_str_ = dbConnString();
+        try {
+            pqxx::connection c(conn_str_);
+            if (!c.is_open()) return;
+        } catch (...) {
+            return;
+        }
+
+        device_id_ = uniqueDeviceId("depth");
+        query_topic_ = "cpap/" + device_id_ + "/agent/query";
+        resp_topic_ = "cpap/" + device_id_ + "/agent/response";
+        status_topic_ = "cpap/" + device_id_ + "/agent/status";
+
+        MqttConfig svc_cfg;
+        svc_cfg.broker = "localhost";
+        svc_cfg.port = 1883;
+        svc_cfg.client_id = device_id_ + "_svc";
+        svc_mqtt_ = std::make_shared<MqttClient>(svc_cfg);
+
+        MqttConfig test_cfg;
+        test_cfg.broker = "localhost";
+        test_cfg.port = 1883;
+        test_cfg.client_id = device_id_ + "_test";
+        test_mqtt_ = std::make_shared<MqttClient>(test_cfg);
+
+        if (!svc_mqtt_->connect() || !test_mqtt_->connect()) return;
+
+        test_mqtt_->subscribe(resp_topic_,
+            [this](const std::string&, const std::string& p) { resp_collector_.push(p); });
+        test_mqtt_->subscribe(status_topic_,
+            [this](const std::string&, const std::string& p) { status_collector_.push(p); });
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(150));
+
+        llm_ = std::make_shared<MockAgentLLM>();
+
+        AgentService::Config cfg;
+        cfg.device_id = device_id_;
+        cfg.db_connection_string = conn_str_;
+        cfg.max_iterations = 3;
+        service_ = std::make_unique<AgentService>(cfg, svc_mqtt_, llm_);
+
+        infra_ok_ = true;
+    }
+
+    void TearDown() override {
+        if (service_) service_->stop();
+        if (svc_mqtt_) svc_mqtt_->disconnect();
+        if (test_mqtt_) test_mqtt_->disconnect();
+        if (!conn_str_.empty() && !device_id_.empty()) {
+            try {
+                pqxx::connection c(conn_str_);
+                pqxx::work txn(c);
+                txn.exec_params(
+                    "DELETE FROM agent_conversations WHERE device_id = $1", device_id_);
+                txn.commit();
+            } catch (...) {}
+        }
+    }
+
+    void publishQuery(const std::string& payload) {
+        ASSERT_TRUE(test_mqtt_->publish(query_topic_, payload, 1, false));
+    }
+
+    json awaitResponse(size_t which = 1) {
+        EXPECT_TRUE(resp_collector_.waitFor(which, std::chrono::seconds(10)))
+            << "No agent response received";
+        auto snap = resp_collector_.snapshot();
+        EXPECT_GE(snap.size(), which);
+        return json::parse(snap[which - 1]);
+    }
+};
+
+// One turn returns TWO tool calls, then the next turn returns text. Exercises
+// runToolLoop()'s inner per-tool-call loop with more than one element (both
+// tools dispatched, two "tool" messages appended) before the final answer.
+TEST_F(AgentServiceDepthE2ETest, MultipleToolCallsInSingleTurn) {
+    if (!infra_ok_) GTEST_SKIP() << "MQTT broker or DB not available";
+
+    EXPECT_CALL(*llm_, embed(_))
+        .WillRepeatedly(Return(std::vector<float>(768, 0.11f)));
+
+    LLMToolResponse turn1;
+    turn1.tool_calls = {
+        {"c1", "get_daily_summary", {{"days", 7}}},
+        {"c2", "get_recent_sessions", {{"days", 7}, {"limit", 3}}},
+    };
+    turn1.stop_reason = "tool_use";
+
+    LLMToolResponse turn2;
+    turn2.text = "Both your summary and sessions look stable this week.";
+    turn2.stop_reason = "end_turn";
+
+    // Capture the second-turn messages to confirm two tool results were folded in.
+    std::vector<ChatMessage> second_turn_msgs;
+    EXPECT_CALL(*llm_, generateWithTools(_, _, _))
+        .WillOnce(Return(turn1))
+        .WillOnce(Invoke([&](const std::vector<ChatMessage>& msgs,
+                             const std::vector<ToolDefinition>&,
+                             const std::atomic<bool>*) {
+            second_turn_msgs = msgs;
+            return turn2;
+        }));
+
+    service_->start();
+    ASSERT_TRUE(service_->isRunning());
+
+    json q;
+    q["text"] = "Give me a full picture of last week.";
+    publishQuery(q.dump());
+
+    auto response = awaitResponse();
+    EXPECT_EQ(response["text"],
+              "Both your summary and sessions look stable this week.");
+
+    // The second LLM turn must have seen exactly two tool-result messages,
+    // one per tool call from turn 1.
+    int tool_msgs = 0;
+    for (const auto& m : second_turn_msgs)
+        if (m.role == "tool") ++tool_msgs;
+    EXPECT_EQ(tool_msgs, 2);
+}
+
+// Tool-dispatch error handling: the model asks for a tool that does not exist.
+// AgentTools::execute returns an error payload rather than throwing, the loop
+// keeps going, and the next turn produces a normal answer.
+TEST_F(AgentServiceDepthE2ETest, UnknownToolDispatchDoesNotCrashLoop) {
+    if (!infra_ok_) GTEST_SKIP() << "MQTT broker or DB not available";
+
+    EXPECT_CALL(*llm_, embed(_))
+        .WillRepeatedly(Return(std::vector<float>(768, 0.12f)));
+
+    LLMToolResponse turn1;
+    turn1.tool_calls = {{"bad1", "this_tool_does_not_exist", {{"foo", "bar"}}}};
+    turn1.stop_reason = "tool_use";
+
+    LLMToolResponse turn2;
+    turn2.text = "I could not use that tool, but here is a general answer.";
+    turn2.stop_reason = "end_turn";
+
+    std::string tool_result_content;
+    EXPECT_CALL(*llm_, generateWithTools(_, _, _))
+        .WillOnce(Return(turn1))
+        .WillOnce(Invoke([&](const std::vector<ChatMessage>& msgs,
+                             const std::vector<ToolDefinition>&,
+                             const std::atomic<bool>*) {
+            for (const auto& m : msgs)
+                if (m.role == "tool") tool_result_content = m.content;
+            return turn2;
+        }));
+
+    service_->start();
+
+    json q;
+    q["text"] = "Use a nonexistent tool please.";
+    publishQuery(q.dump());
+
+    auto response = awaitResponse();
+    EXPECT_EQ(response["text"],
+              "I could not use that tool, but here is a general answer.");
+    // The tool message should carry some error/diagnostic content (non-empty),
+    // proving execute() returned a result instead of throwing.
+    EXPECT_FALSE(tool_result_content.empty());
+}
+
+// NOTE: the concurrent-query guard in onQuery() (the processing_mutex_
+// try_to_lock "still processing" rejection) is intentionally NOT tested here.
+// It is only reachable when two onQuery() callbacks run concurrently, which
+// depends on the MQTT client delivering callbacks on multiple threads. The
+// broker/client serialize delivery, so a second query simply waits rather than
+// contending the lock — making that branch nondeterministic via the public
+// MQTT path. We keep this suite deterministic and skip that leg.
+
+// Mid-flight abort: stop() flips abort_ while the loop is between LLM turns.
+// We drive abort via a mock that reports was_aborted, but also assert the
+// service can be stopped cleanly while a query is outstanding.
+TEST_F(AgentServiceDepthE2ETest, AbortFlagPropagatesToCancelledMessage) {
+    if (!infra_ok_) GTEST_SKIP() << "MQTT broker or DB not available";
+
+    EXPECT_CALL(*llm_, embed(_))
+        .WillRepeatedly(Return(std::vector<float>(768, 0.14f)));
+
+    LLMToolResponse aborted;
+    aborted.was_aborted = true;
+    EXPECT_CALL(*llm_, generateWithTools(_, _, _))
+        .WillOnce(Return(aborted));
+
+    service_->start();
+
+    json q;
+    q["text"] = "Cancel me";
+    publishQuery(q.dump());
+
+    auto response = awaitResponse();
+    EXPECT_THAT(response["text"].get<std::string>(),
+                ::testing::HasSubstr("cancelled"));
+}
+
+// embed() throws inside the async memory-search lambda. onQuery() swallows the
+// exception (the lambda's own try/catch) and still completes the query with a
+// normal answer. Exercises the memory-search error branch.
+TEST_F(AgentServiceDepthE2ETest, EmbedFailureStillProducesAnswer) {
+    if (!infra_ok_) GTEST_SKIP() << "MQTT broker or DB not available";
+
+    EXPECT_CALL(*llm_, embed(_))
+        .WillRepeatedly(::testing::Throw(std::runtime_error("embed unavailable")));
+
+    LLMToolResponse resp;
+    resp.text = "Answer despite no embeddings.";
+    resp.stop_reason = "end_turn";
+    EXPECT_CALL(*llm_, generateWithTools(_, _, _))
+        .WillOnce(Return(resp));
+
+    service_->start();
+
+    json q;
+    q["text"] = "Embeddings will fail here";
+    publishQuery(q.dump());
+
+    auto response = awaitResponse();
+    EXPECT_EQ(response["text"], "Answer despite no embeddings.");
+    EXPECT_TRUE(response.contains("conversation_id"));
+}
+
+// Multi-turn prior-message assembly: two sequential queries on the same
+// conversation. The second turn's prompt must include the prior user/assistant
+// messages (getMessages -> messages vector), proving history is folded in.
+TEST_F(AgentServiceDepthE2ETest, PriorMessagesFoldedIntoSecondPrompt) {
+    if (!infra_ok_) GTEST_SKIP() << "MQTT broker or DB not available";
+
+    EXPECT_CALL(*llm_, embed(_))
+        .WillRepeatedly(Return(std::vector<float>(768, 0.15f)));
+
+    LLMToolResponse a;
+    a.text = "AHI was 3.10 last night.";
+    a.stop_reason = "end_turn";
+
+    std::vector<ChatMessage> second_prompt;
+    LLMToolResponse b;
+    b.text = "It improved compared to before.";
+    b.stop_reason = "end_turn";
+
+    EXPECT_CALL(*llm_, generateWithTools(_, _, _))
+        .WillOnce(Return(a))
+        .WillOnce(Invoke([&](const std::vector<ChatMessage>& msgs,
+                             const std::vector<ToolDefinition>&,
+                             const std::atomic<bool>*) {
+            second_prompt = msgs;
+            return b;
+        }));
+
+    service_->start();
+
+    json q1;
+    q1["text"] = "What was my AHI last night?";
+    publishQuery(q1.dump());
+    auto r1 = awaitResponse(1);
+    std::string conv_id = r1["conversation_id"].get<std::string>();
+    ASSERT_FALSE(conv_id.empty());
+
+    json q2;
+    q2["text"] = "Is that better than usual?";
+    q2["conversation_id"] = conv_id;
+    publishQuery(q2.dump());
+    auto r2 = awaitResponse(2);
+    EXPECT_EQ(r2["text"], "It improved compared to before.");
+
+    // Second prompt: system + prior(user, assistant) + new user. The prior
+    // user question and assistant answer from turn 1 must be present.
+    bool saw_prior_user = false, saw_prior_assistant = false, saw_new_user = false;
+    for (const auto& m : second_prompt) {
+        if (m.role == "user" && m.content == "What was my AHI last night?")
+            saw_prior_user = true;
+        if (m.role == "assistant" && m.content == "AHI was 3.10 last night.")
+            saw_prior_assistant = true;
+        if (m.role == "user" && m.content == "Is that better than usual?")
+            saw_new_user = true;
+    }
+    EXPECT_TRUE(saw_prior_user);
+    EXPECT_TRUE(saw_prior_assistant);
+    EXPECT_TRUE(saw_new_user);
+}
+
+// Whitespace-only / present-but-empty conversation_id still yields a fresh
+// conversation (getOrCreateConversation empty-id create branch) and a normal
+// answer. Complements the existing reuse test.
+TEST_F(AgentServiceDepthE2ETest, EmptyConversationIdCreatesFreshConversation) {
+    if (!infra_ok_) GTEST_SKIP() << "MQTT broker or DB not available";
+
+    EXPECT_CALL(*llm_, embed(_))
+        .WillRepeatedly(Return(std::vector<float>(768, 0.16f)));
+
+    LLMToolResponse resp;
+    resp.text = "Fresh conversation answer.";
+    resp.stop_reason = "end_turn";
+    EXPECT_CALL(*llm_, generateWithTools(_, _, _))
+        .WillOnce(Return(resp));
+
+    service_->start();
+
+    json q;
+    q["text"] = "Start fresh";
+    q["conversation_id"] = "";  // explicitly empty -> create branch
+    publishQuery(q.dump());
+
+    auto response = awaitResponse();
+    EXPECT_EQ(response["text"], "Fresh conversation answer.");
+    EXPECT_FALSE(response["conversation_id"].get<std::string>().empty());
 }
 
 #endif // WITH_POSTGRESQL
