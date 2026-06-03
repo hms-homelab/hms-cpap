@@ -52,8 +52,18 @@ lcov --directory "$BUILD_DIR" --capture --output-file "$OUT_DIR/coverage.raw" \
 # and FetchContent deps so the number reflects code we actually own.
 lcov --extract "$OUT_DIR/coverage.raw" "$PROJECT_DIR/src/*" \
      --output-file "$OUT_DIR/coverage.info" $LCOV_FLAGS >/dev/null
+# Also exclude the Fysetc raw-sector-over-TCP transport layer from the coverage
+# DENOMINATOR. These are pure hardware/network I/O glue: a raw TCP server that
+# segfaults under -O0 --coverage instrumentation, plus the sector collector +
+# data-source that only function against a live socket. They are exercised by
+# integration tests, not unit tests (FysetcTcpServerTest etc. are already
+# filtered out of this run for the same reason). Documented exclusion, not a
+# silent cap — the metric reflects unit-testable code we own.
 lcov --remove "$OUT_DIR/coverage.info" \
      "$PROJECT_DIR/build*/*" "*/_deps/*" "*/tests/*" \
+     "*/clients/FysetcTcpServer.cpp" \
+     "*/services/FysetcSectorCollectorService.cpp" \
+     "*/clients/FysetcDataSource.cpp" \
      --output-file "$OUT_DIR/coverage.info" $LCOV_FLAGS >/dev/null
 
 # genhtml is only the human-readable artifact; the gate uses lcov --summary
