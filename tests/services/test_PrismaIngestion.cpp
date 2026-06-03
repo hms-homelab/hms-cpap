@@ -1,11 +1,38 @@
 #include <gtest/gtest.h>
 #include "services/PrismaIngestion.h"
+#include "miniz.h"
 
 #include <filesystem>
 #include <fstream>
+#include <string>
+#include <vector>
+#include <utility>
 
 using namespace hms_cpap;
 namespace fs = std::filesystem;
+
+namespace {
+
+// Build a ZIP archive at `zip_path` from a list of (in-archive-name, content)
+// entries using miniz's writer API. Returns true on success.
+bool buildZip(const std::string& zip_path,
+              const std::vector<std::pair<std::string, std::string>>& entries) {
+    mz_zip_archive zip{};
+    if (!mz_zip_writer_init_file(&zip, zip_path.c_str(), 0)) return false;
+    bool ok = true;
+    for (const auto& [name, content] : entries) {
+        if (!mz_zip_writer_add_mem(&zip, name.c_str(), content.data(),
+                                   content.size(), MZ_DEFAULT_COMPRESSION)) {
+            ok = false;
+            break;
+        }
+    }
+    if (!mz_zip_writer_finalize_archive(&zip)) ok = false;
+    mz_zip_writer_end(&zip);
+    return ok;
+}
+
+}  // namespace
 
 class PrismaIngestionTest : public ::testing::Test {
 protected:
@@ -14,11 +41,15 @@ protected:
     void SetUp() override {
         tmp_dir = "/tmp/prisma_ingestion_test_" + std::to_string(getpid());
         fs::create_directories(tmp_dir);
+        // ZIP mode extracts into a shared cache dir keyed only by temp path;
+        // start each test from a clean slate so caching behaviour is testable.
+        fs::remove_all(fs::temp_directory_path() / "prisma_cache");
     }
 
     void TearDown() override {
         fs::remove_all(tmp_dir);
         fs::remove_all(fs::temp_directory_path() / "prisma_staged");
+        fs::remove_all(fs::temp_directory_path() / "prisma_cache");
     }
 
     void createRawTree() {
@@ -236,4 +267,307 @@ TEST_F(PrismaIngestionTest, RealSampleData) {
         EXPECT_FALSE(s.signal_path.empty());
         EXPECT_NE(s.session_start, std::chrono::system_clock::time_point{});
     }
+}
+
+// ── ZIP mode (Prisma Line: therapy.pdat + config.pcfg) ──────────────────────
+
+// Builds therapy.pdat / config.pcfg archives whose extracted contents form a
+// nested mnt/flash tree, then verifies discovery works end-to-end from ZIPs.
+TEST_F(PrismaIngestionTest, ZipModeExtractsAndDiscovers) {
+    ASSERT_TRUE(buildZip(tmp_dir + "/therapy.pdat", {
+        {"mnt/flash/data/therapy/events/20260601/event_000500.xml", "<desc></desc>"},
+        {"mnt/flash/data/therapy/signals/20260601/signal_000500.wmedf", "dummy"},
+        {"mnt/flash/data/therapy/events/20260601/event_000501.xml", "<desc></desc>"},
+        {"mnt/flash/data/therapy/signals/20260601/signal_000501.wmedf", "dummy"},
+    }));
+    ASSERT_TRUE(buildZip(tmp_dir + "/config.pcfg", {
+        {"mnt/flash/conf/device.xml", "<DeviceSerialNumber value=\"99887766\"/>"},
+    }));
+
+    PrismaIngestion ingestion(tmp_dir);
+    ASSERT_TRUE(ingestion.initialize());
+
+    auto sessions = ingestion.discoverSessions(std::nullopt);
+    ASSERT_EQ(sessions.size(), 2u);
+    EXPECT_EQ(sessions[0].sequence_number, 500);
+    EXPECT_EQ(sessions[1].sequence_number, 501);
+    EXPECT_EQ(sessions[0].date_folder, "20260601");
+    EXPECT_FALSE(sessions[0].signal_path.empty());
+}
+
+// device.xml lives only inside config.pcfg; deviceXmlPath() must find it in the
+// extracted config cache (config_dir_), not just in data_dir_.
+TEST_F(PrismaIngestionTest, ZipModeDeviceXmlFromConfigArchive) {
+    ASSERT_TRUE(buildZip(tmp_dir + "/therapy.pdat", {
+        {"mnt/flash/data/therapy/events/20260601/event_000500.xml", "<desc></desc>"},
+        {"mnt/flash/data/therapy/signals/20260601/signal_000500.wmedf", "dummy"},
+    }));
+    ASSERT_TRUE(buildZip(tmp_dir + "/config.pcfg", {
+        {"mnt/flash/conf/device.xml", "<DeviceSerialNumber value=\"99887766\"/>"},
+    }));
+
+    PrismaIngestion ingestion(tmp_dir);
+    ASSERT_TRUE(ingestion.initialize());
+
+    std::string dev = ingestion.deviceXmlPath();
+    ASSERT_FALSE(dev.empty());
+    EXPECT_TRUE(fs::exists(dev));
+    // Should resolve into the extracted config cache, not the raw data dir.
+    EXPECT_NE(dev.find("prisma_cache"), std::string::npos);
+
+    // And stageSession should pull it in as device.xml.
+    auto sessions = ingestion.discoverSessions(std::nullopt);
+    ASSERT_EQ(sessions.size(), 1u);
+    std::string staged = ingestion.stageSession(sessions[0]);
+    EXPECT_TRUE(fs::exists(fs::path(staged) / "device.xml"));
+    fs::remove_all(staged);
+}
+
+// therapy.pdat present but no config.pcfg: ZIP mode still triggers and discovery
+// works from the extracted therapy tree.
+TEST_F(PrismaIngestionTest, ZipModeTherapyOnlyNoConfig) {
+    ASSERT_TRUE(buildZip(tmp_dir + "/therapy.pdat", {
+        {"mnt/flash/data/therapy/events/20260601/event_000500.xml", "<desc></desc>"},
+        {"mnt/flash/data/therapy/signals/20260601/signal_000500.wmedf", "dummy"},
+    }));
+
+    PrismaIngestion ingestion(tmp_dir);
+    ASSERT_TRUE(ingestion.initialize());
+
+    auto sessions = ingestion.discoverSessions(std::nullopt);
+    EXPECT_EQ(sessions.size(), 1u);
+    EXPECT_EQ(sessions[0].sequence_number, 500);
+}
+
+// Re-running initialize() on a fresh instance must reuse the extraction cache
+// (no re-extract) and still discover the same sessions deterministically.
+TEST_F(PrismaIngestionTest, ZipModeReusesExtractionCache) {
+    ASSERT_TRUE(buildZip(tmp_dir + "/therapy.pdat", {
+        {"mnt/flash/data/therapy/events/20260601/event_000500.xml", "<desc></desc>"},
+        {"mnt/flash/data/therapy/signals/20260601/signal_000500.wmedf", "dummy"},
+    }));
+
+    {
+        PrismaIngestion first(tmp_dir);
+        ASSERT_TRUE(first.initialize());
+        EXPECT_EQ(first.discoverSessions(std::nullopt).size(), 1u);
+    }
+
+    // Cache now exists; a second instance must reuse it and still work.
+    std::string therapy_cache =
+        (fs::temp_directory_path() / "prisma_cache" / "therapy").string();
+    ASSERT_TRUE(fs::is_directory(therapy_cache));
+
+    PrismaIngestion second(tmp_dir);
+    ASSERT_TRUE(second.initialize());
+    auto sessions = second.discoverSessions(std::nullopt);
+    ASSERT_EQ(sessions.size(), 1u);
+    EXPECT_EQ(sessions[0].sequence_number, 500);
+}
+
+// A corrupt/non-ZIP therapy.pdat triggers ZIP mode but extraction fails; with no
+// usable events/signals tree, initialize() must fail.
+TEST_F(PrismaIngestionTest, ZipModeCorruptArchiveFailsInit) {
+    std::ofstream(tmp_dir + "/therapy.pdat") << "this is not a zip file";
+
+    PrismaIngestion ingestion(tmp_dir);
+    EXPECT_FALSE(ingestion.initialize());
+}
+
+// ── deviceXmlPath fallbacks ─────────────────────────────────────────────────
+
+// device.xml sitting directly in the data dir (no conf/ subdir) is the last
+// fallback in deviceXmlPath().
+TEST_F(PrismaIngestionTest, DeviceXmlDirectInDataDir) {
+    createRawTree();
+    std::ofstream(tmp_dir + "/device.xml") << "<DeviceSerialNumber value=\"11112222\"/>";
+
+    PrismaIngestion ingestion(tmp_dir);
+    ASSERT_TRUE(ingestion.initialize());
+
+    std::string dev = ingestion.deviceXmlPath();
+    ASSERT_FALSE(dev.empty());
+    EXPECT_EQ(dev, tmp_dir + "/device.xml");
+}
+
+// conf/device.xml (without the mnt/flash prefix) is a recognised fallback.
+TEST_F(PrismaIngestionTest, DeviceXmlInConfSubdir) {
+    createRawTree();
+    fs::create_directories(tmp_dir + "/conf");
+    std::ofstream(tmp_dir + "/conf/device.xml") << "<DeviceSerialNumber value=\"33334444\"/>";
+
+    PrismaIngestion ingestion(tmp_dir);
+    ASSERT_TRUE(ingestion.initialize());
+
+    std::string dev = ingestion.deviceXmlPath();
+    EXPECT_EQ(dev, tmp_dir + "/conf/device.xml");
+}
+
+// No device.xml anywhere -> empty path, and stageSession copies no device.xml.
+TEST_F(PrismaIngestionTest, DeviceXmlAbsentReturnsEmpty) {
+    createRawTree();
+
+    PrismaIngestion ingestion(tmp_dir);
+    ASSERT_TRUE(ingestion.initialize());
+
+    EXPECT_TRUE(ingestion.deviceXmlPath().empty());
+
+    auto sessions = ingestion.discoverSessions(std::nullopt);
+    ASSERT_GE(sessions.size(), 1u);
+    std::string staged = ingestion.stageSession(sessions[0]);
+    EXPECT_FALSE(fs::exists(fs::path(staged) / "device.xml"));
+    fs::remove_all(staged);
+}
+
+// ── File pairing / discovery edge cases ─────────────────────────────────────
+
+// A date folder in events/ with no matching folder in signals/ is skipped.
+TEST_F(PrismaIngestionTest, EventDateFolderWithoutSignalFolderSkipped) {
+    fs::create_directories(tmp_dir + "/events/20260514");
+    fs::create_directories(tmp_dir + "/events/20260515");
+    fs::create_directories(tmp_dir + "/signals/20260514");
+    // No signals/20260515 directory at all.
+
+    std::ofstream(tmp_dir + "/events/20260514/event_000370.xml") << "<desc></desc>";
+    std::ofstream(tmp_dir + "/signals/20260514/signal_000370.wmedf") << "dummy";
+    std::ofstream(tmp_dir + "/events/20260515/event_000380.xml") << "<desc></desc>";
+
+    PrismaIngestion ingestion(tmp_dir);
+    ASSERT_TRUE(ingestion.initialize());
+    auto sessions = ingestion.discoverSessions(std::nullopt);
+
+    ASSERT_EQ(sessions.size(), 1u);
+    EXPECT_EQ(sessions[0].date_folder, "20260514");
+    EXPECT_EQ(sessions[0].sequence_number, 370);
+}
+
+// Non-8-digit date folders and files that don't match the seq regex are ignored.
+TEST_F(PrismaIngestionTest, NonMatchingFoldersAndFilesIgnored) {
+    fs::create_directories(tmp_dir + "/events/20260514");
+    fs::create_directories(tmp_dir + "/signals/20260514");
+    // Bogus date folders that must be ignored (wrong length / non-numeric).
+    fs::create_directories(tmp_dir + "/events/2026051");      // 7 digits
+    fs::create_directories(tmp_dir + "/events/notadate1");    // non-numeric
+    fs::create_directories(tmp_dir + "/signals/2026051");
+    fs::create_directories(tmp_dir + "/signals/notadate1");
+
+    // Valid pair.
+    std::ofstream(tmp_dir + "/events/20260514/event_000370.xml") << "<desc></desc>";
+    std::ofstream(tmp_dir + "/signals/20260514/signal_000370.wmedf") << "dummy";
+    // Files that don't match the (event|signal)_<6digits> pattern -> ignored.
+    std::ofstream(tmp_dir + "/events/20260514/readme.txt") << "ignore";
+    std::ofstream(tmp_dir + "/signals/20260514/signal_abc.wmedf") << "ignore";
+    std::ofstream(tmp_dir + "/signals/20260514/signal_12345.wmedf") << "ignore"; // 5 digits
+
+    PrismaIngestion ingestion(tmp_dir);
+    ASSERT_TRUE(ingestion.initialize());
+    auto sessions = ingestion.discoverSessions(std::nullopt);
+
+    ASSERT_EQ(sessions.size(), 1u);
+    EXPECT_EQ(sessions[0].sequence_number, 370);
+    EXPECT_FALSE(sessions[0].event_path.empty());
+}
+
+// discoverSessions() lazily initialises when initialize() was not called first.
+TEST_F(PrismaIngestionTest, DiscoverSessionsLazyInitializes) {
+    createRawTree();
+
+    PrismaIngestion ingestion(tmp_dir);
+    // No explicit initialize() call.
+    auto sessions = ingestion.discoverSessions(std::nullopt);
+    EXPECT_EQ(sessions.size(), 3u);
+}
+
+// discoverSessions() on an uninitialisable tree returns empty (lazy init fails).
+TEST_F(PrismaIngestionTest, DiscoverSessionsReturnsEmptyWhenInitFails) {
+    // tmp_dir has no events/signals and no ZIPs.
+    PrismaIngestion ingestion(tmp_dir);
+    auto sessions = ingestion.discoverSessions(std::nullopt);
+    EXPECT_TRUE(sessions.empty());
+}
+
+// last_session_start in the past keeps all date folders (date >= last_date) and
+// the timestamp filter does not drop sessions strictly after it.
+TEST_F(PrismaIngestionTest, PastFilterKeepsAllSessions) {
+    createRawTree();
+
+    PrismaIngestion ingestion(tmp_dir);
+    ASSERT_TRUE(ingestion.initialize());
+
+    // A clearly-past timestamp: 2000-01-01.
+    std::tm tm{};
+    tm.tm_year = 2000 - 1900;
+    tm.tm_mon = 0;
+    tm.tm_mday = 1;
+    auto past = std::chrono::system_clock::from_time_t(mktime(&tm));
+
+    auto sessions = ingestion.discoverSessions(past);
+    EXPECT_EQ(sessions.size(), 3u);
+}
+
+// A future last_session_start filters out everything (date folders < last_date).
+TEST_F(PrismaIngestionTest, FutureFilterDropsAllSessions) {
+    createRawTree();
+
+    PrismaIngestion ingestion(tmp_dir);
+    ASSERT_TRUE(ingestion.initialize());
+
+    std::tm tm{};
+    tm.tm_year = 2099 - 1900;
+    tm.tm_mon = 11;
+    tm.tm_mday = 31;
+    auto future = std::chrono::system_clock::from_time_t(mktime(&tm));
+
+    auto sessions = ingestion.discoverSessions(future);
+    EXPECT_TRUE(sessions.empty());
+}
+
+// stageSession with an empty event_path copies only the signal (event optional).
+TEST_F(PrismaIngestionTest, StageSessionWithoutEventCopiesSignalOnly) {
+    fs::create_directories(tmp_dir + "/events/20260514");
+    fs::create_directories(tmp_dir + "/signals/20260514");
+    std::ofstream(tmp_dir + "/signals/20260514/signal_000370.wmedf") << "dummy";
+
+    PrismaIngestion ingestion(tmp_dir);
+    ASSERT_TRUE(ingestion.initialize());
+    auto sessions = ingestion.discoverSessions(std::nullopt);
+    ASSERT_EQ(sessions.size(), 1u);
+    ASSERT_TRUE(sessions[0].event_path.empty());
+
+    std::string staged = ingestion.stageSession(sessions[0]);
+    bool has_signal = false, has_event = false;
+    for (const auto& entry : fs::directory_iterator(staged)) {
+        std::string name = entry.path().filename().string();
+        if (name.rfind("signal_", 0) == 0) has_signal = true;
+        if (name.rfind("event_", 0) == 0) has_event = true;
+    }
+    EXPECT_TRUE(has_signal);
+    EXPECT_FALSE(has_event);
+    fs::remove_all(staged);
+}
+
+// stageSession is idempotent: re-staging clears stale contents and re-copies.
+TEST_F(PrismaIngestionTest, StageSessionClearsStaleContents) {
+    createRawTree();
+
+    PrismaIngestion ingestion(tmp_dir);
+    ASSERT_TRUE(ingestion.initialize());
+    auto sessions = ingestion.discoverSessions(std::nullopt);
+    ASSERT_GE(sessions.size(), 1u);
+
+    std::string staged = ingestion.stageSession(sessions[0]);
+    // Plant a stale file that should be wiped on the next stage.
+    std::ofstream(fs::path(staged) / "stale_marker.txt") << "old";
+    ASSERT_TRUE(fs::exists(fs::path(staged) / "stale_marker.txt"));
+
+    std::string staged2 = ingestion.stageSession(sessions[0]);
+    EXPECT_EQ(staged, staged2);
+    EXPECT_FALSE(fs::exists(fs::path(staged) / "stale_marker.txt"));
+
+    bool has_signal = false;
+    for (const auto& entry : fs::directory_iterator(staged)) {
+        if (entry.path().filename().string().rfind("signal_", 0) == 0) has_signal = true;
+    }
+    EXPECT_TRUE(has_signal);
+    fs::remove_all(staged);
 }

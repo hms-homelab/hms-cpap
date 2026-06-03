@@ -501,6 +501,188 @@ TEST_F(EzShareParserTest, GarbageHtmlReturnsEmpty) {
     EXPECT_TRUE(entries.empty());
 }
 
+// ── EzShareFileEntry::getModTime() round-trip ────────────────────────────────
+
+// Reconstruct the broken-down fields from a parsed entry's mod time and verify
+// they round-trip through std::mktime / from_time_t. Uses localtime to match
+// the mktime() used internally (no wall-clock dependence — fixed input).
+TEST(EzShareFileEntryTest, GetModTimeRoundTrip) {
+    EzShareFileEntry e;
+    e.year = 2026; e.month = 2; e.day = 4;
+    e.hour = 1; e.minute = 18; e.second = 9;
+
+    auto tp = e.getModTime();
+    std::time_t tt = std::chrono::system_clock::to_time_t(tp);
+
+    std::tm local{};
+    localtime_r(&tt, &local);
+
+    EXPECT_EQ(local.tm_year + 1900, 2026);
+    EXPECT_EQ(local.tm_mon + 1, 2);
+    EXPECT_EQ(local.tm_mday, 4);
+    EXPECT_EQ(local.tm_hour, 1);
+    EXPECT_EQ(local.tm_min, 18);
+    EXPECT_EQ(local.tm_sec, 9);
+}
+
+// Two entries one second apart compare correctly through getModTime().
+TEST(EzShareFileEntryTest, GetModTimeOrdering) {
+    EzShareFileEntry earlier;
+    earlier.year = 2026; earlier.month = 2; earlier.day = 4;
+    earlier.hour = 1; earlier.minute = 18; earlier.second = 9;
+
+    EzShareFileEntry later = earlier;
+    later.second = 10;
+
+    EXPECT_LT(earlier.getModTime(), later.getModTime());
+    auto diff = std::chrono::duration_cast<std::chrono::seconds>(
+        later.getModTime() - earlier.getModTime());
+    EXPECT_EQ(diff.count(), 1);
+}
+
+// A whole-minute rollover (59 -> next minute) is one second apart.
+TEST(EzShareFileEntryTest, GetModTimeMinuteRollover) {
+    EzShareFileEntry a;
+    a.year = 2026; a.month = 6; a.day = 1;
+    a.hour = 23; a.minute = 59; a.second = 59;
+
+    EzShareFileEntry b = a;
+    b.year = 2026; b.month = 6; b.day = 2;
+    b.hour = 0; b.minute = 0; b.second = 0;
+
+    auto diff = std::chrono::duration_cast<std::chrono::seconds>(
+        b.getModTime() - a.getModTime());
+    EXPECT_EQ(diff.count(), 1);
+}
+
+// ── Base URL / range accessor round-trips ────────────────────────────────────
+
+TEST(EzShareConfigTest, BaseURLDefaultAndOverride) {
+    EzShareClient client;
+    // Default comes from config (ConfigManager fallback "http://192.168.4.1").
+    EXPECT_FALSE(client.getBaseURL().empty());
+
+    client.setBaseURL("http://10.0.0.5");
+    EXPECT_EQ(client.getBaseURL(), "http://10.0.0.5");
+
+    client.setBaseURL("http://example.test:8080");
+    EXPECT_EQ(client.getBaseURL(), "http://example.test:8080");
+}
+
+TEST(EzShareConfigTest, SupportsRangeToggle) {
+    EzShareClient client;
+    // Defaults to true per header.
+    EXPECT_TRUE(client.supportsRange());
+
+    client.setSupportsRange(false);
+    EXPECT_FALSE(client.supportsRange());
+
+    client.setSupportsRange(true);
+    EXPECT_TRUE(client.supportsRange());
+}
+
+// ── Additional parser coverage ───────────────────────────────────────────────
+
+// Real-hardware mixed listing: DIR entries with 8-digit names plus . / ..
+// Mirrors what listDateFolders() consumes (we test parse output directly).
+TEST_F(EzShareParserTest, ParsesDateFolderListing) {
+    std::string html = R"(
+<pre>
+2026- 2- 3   20:50:32         &lt;DIR&gt;   <a href="dir?dir=A:DATALOG"> .</a>
+2026- 2- 3   20:50:32         &lt;DIR&gt;   <a href="dir?dir=A:"> ..</a>
+2026- 2- 3   20:50:32         &lt;DIR&gt;   <a href="dir?dir=A:DATALOG\20260203"> 20260203</a>
+2026- 2- 4   01:15:00         &lt;DIR&gt;   <a href="dir?dir=A:DATALOG\20260204"> 20260204</a>
+2026- 2- 5   02:30:00         &lt;DIR&gt;   <a href="dir?dir=A:DATALOG\SETTINGS"> SETTINGS</a>
+</pre>)";
+
+    auto entries = client.parseDirectoryListing(html);
+    // . and .. dropped; SETTINGS kept (parser does not filter by digit pattern).
+    ASSERT_EQ(entries.size(), 3);
+    EXPECT_TRUE(entries[0].is_dir);
+    EXPECT_EQ(entries[0].name, "20260203");
+    EXPECT_EQ(entries[1].name, "20260204");
+    EXPECT_EQ(entries[2].name, "SETTINGS");
+}
+
+// Name whitespace trimming: leading space after <a href>...> is stripped on
+// both ends; interior characters preserved.
+TEST_F(EzShareParserTest, TrimsLeadingAndTrailingWhitespaceInName) {
+    std::string html = R"(
+<pre>
+2026- 2- 4   01:18:09         535KB   <a href="/download?file=x">    20260204_011809_BRP.edf   </a>
+</pre>)";
+
+    auto entries = client.parseDirectoryListing(html);
+    ASSERT_EQ(entries.size(), 1);
+    EXPECT_EQ(entries[0].name, "20260204_011809_BRP.edf");
+}
+
+// Zero-KB file is still a file (not a dir) with size_kb == 0.
+TEST_F(EzShareParserTest, ParsesZeroKbFile) {
+    std::string html = R"(
+<pre>
+2026- 2- 4   01:18:09           0KB   <a href="/download?file=empty.edf"> empty.edf</a>
+</pre>)";
+
+    auto entries = client.parseDirectoryListing(html);
+    ASSERT_EQ(entries.size(), 1);
+    EXPECT_FALSE(entries[0].is_dir);
+    EXPECT_EQ(entries[0].size_kb, 0);
+    EXPECT_EQ(entries[0].name, "empty.edf");
+}
+
+// Large multi-KB sizes parse as full integer KB values.
+TEST_F(EzShareParserTest, ParsesLargeKbSize) {
+    std::string html = R"(
+<pre>
+2026- 2- 4   05:00:00        1843KB   <a href="/download?file=big_BRP.edf"> 20260204_050000_BRP.edf</a>
+</pre>)";
+
+    auto entries = client.parseDirectoryListing(html);
+    ASSERT_EQ(entries.size(), 1);
+    EXPECT_EQ(entries[0].size_kb, 1843);
+    EXPECT_FALSE(entries[0].is_dir);
+}
+
+// Lines that do not match the timestamp/size/anchor pattern are ignored,
+// while valid lines interleaved with junk are still extracted.
+TEST_F(EzShareParserTest, IgnoresNonMatchingLinesAmongValidEntries) {
+    std::string html = R"(
+<html><head><title>ez Share</title></head><body>
+<pre>
+Index of A:DATALOG
+2026- 2- 4   01:18:09         535KB   <a href="/download?file=a.edf"> a.edf</a>
+this is a garbage line with no timestamp
+2026- 2- 4   01:19:00          12KB   <a href="/download?file=b.edf"> b.edf</a>
+</pre>
+</body></html>)";
+
+    auto entries = client.parseDirectoryListing(html);
+    ASSERT_EQ(entries.size(), 2);
+    EXPECT_EQ(entries[0].name, "a.edf");
+    EXPECT_EQ(entries[0].size_kb, 535);
+    EXPECT_EQ(entries[1].name, "b.edf");
+    EXPECT_EQ(entries[1].size_kb, 12);
+}
+
+// Full timestamp fields populated correctly for a typical file row.
+TEST_F(EzShareParserTest, PopulatesAllTimestampFields) {
+    std::string html = R"(
+<pre>
+2026-12-31   23:59:58         100KB   <a href="/download?file=eoy.edf"> eoy.edf</a>
+</pre>)";
+
+    auto entries = client.parseDirectoryListing(html);
+    ASSERT_EQ(entries.size(), 1);
+    EXPECT_EQ(entries[0].year, 2026);
+    EXPECT_EQ(entries[0].month, 12);
+    EXPECT_EQ(entries[0].day, 31);
+    EXPECT_EQ(entries[0].hour, 23);
+    EXPECT_EQ(entries[0].minute, 59);
+    EXPECT_EQ(entries[0].second, 58);
+    EXPECT_EQ(entries[0].size_kb, 100);
+}
+
 // Run all tests
 int main(int argc, char** argv) {
     testing::InitGoogleTest(&argc, argv);

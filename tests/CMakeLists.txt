@@ -74,6 +74,8 @@ set(TEST_SOURCES
     services/test_sleep_stage_classifier.cpp
     services/test_PrismaIngestion.cpp
     integration/test_PrismaE2E.cpp
+    services/test_InsightsEngine.cpp
+    database/test_SQLiteDatabase.cpp
 )
 if(MSVC)
     list(FILTER TEST_SOURCES EXCLUDE REGEX ".*Fysetc.*")
