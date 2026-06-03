@@ -276,6 +276,20 @@ bool BurstCollectorService::isRunning() const {
     return running_;
 }
 
+void BurstCollectorService::injectDependenciesForTest(
+    std::shared_ptr<IDatabase> db,
+    std::unique_ptr<IDataSource> source,
+    std::unique_ptr<DataPublisherService> publisher,
+    std::unique_ptr<SessionDiscoveryService> discovery) {
+    // Test-only: wire collaborators without initialize(). Optional members
+    // (mqtt_client_, oximetry_service_, prisma_ingestion_, llm_client_) stay
+    // null and are guarded in executeBurstCycle().
+    db_service_ = std::move(db);
+    data_source_ = std::move(source);
+    data_publisher_ = std::move(publisher);
+    if (discovery) discovery_service_ = std::move(discovery);
+}
+
 bool BurstCollectorService::forceCompleteSession(const std::string& sleep_day) {
     auto session_start = db_service_->getSessionStartForSleepDay(device_id_, sleep_day, true);
     if (!session_start) {
