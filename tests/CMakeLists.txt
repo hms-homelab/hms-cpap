@@ -85,6 +85,14 @@ add_executable(run_tests
     ${PROJECT_SOURCES}
 )
 
+# Opt-in code coverage (gcov/lcov). OFF by default; enable with
+# -DENABLE_COVERAGE=ON (see scripts/coverage.sh). Not supported on MSVC.
+option(ENABLE_COVERAGE "Instrument run_tests with gcov coverage" OFF)
+if(ENABLE_COVERAGE AND NOT MSVC)
+    target_compile_options(run_tests PRIVATE --coverage -O0 -g -fno-inline)
+    target_link_options(run_tests PRIVATE --coverage)
+endif()
+
 # Link libraries (same as main project + GTest)
 if(MSVC)
     target_link_libraries(run_tests

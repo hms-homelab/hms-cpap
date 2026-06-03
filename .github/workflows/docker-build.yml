@@ -121,6 +121,52 @@ jobs:
             orgs/${{ github.repository_owner }}/packages/container/hms-cpap \
             -f visibility=public || echo "Could not set visibility (may need org admin token)"
 
+  # ── Code Coverage (gcov/lcov) ─────────────────────────────────────
+  # Ratchet gate: raise COVERAGE_MIN as test batches land, target 75-80%.
+  # Networking E2E suites are excluded by scripts/coverage.sh (they race /
+  # segfault under -O0 instrumentation and need a live broker); they still run
+  # in the build-and-test job above.
+  coverage:
+    runs-on: ubuntu-latest
+    env:
+      COVERAGE_MIN: "25"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install C++ dependencies
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends \
+            build-essential cmake \
+            libcurl4-openssl-dev libpq-dev libpqxx-dev libssl-dev \
+            libjsoncpp-dev libpaho-mqtt-dev libpaho-mqttpp-dev \
+            nlohmann-json3-dev libspdlog-dev libsqlite3-dev \
+            libdrogon-dev libgtest-dev libgmock-dev \
+            uuid-dev libmariadb-dev libhiredis-dev libbrotli-dev \
+            libyaml-cpp-dev zlib1g-dev \
+            libhpdf-dev gnuplot lcov
+
+      - name: Run coverage (build instrumented, run tests, enforce ratchet)
+        run: bash scripts/coverage.sh "$COVERAGE_MIN"
+
+      - name: Coverage summary to job log
+        if: always()
+        run: |
+          if [ -f coverage/coverage.info ]; then
+            { echo '### hms-cpap coverage'; echo '```'; \
+              lcov --summary coverage/coverage.info 2>/dev/null \
+                --ignore-errors empty,unused,inconsistent || true; \
+              echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload HTML coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-html
+          path: coverage/html
+          if-no-files-found: ignore
+
   # ── Windows Build ─────────────────────────────────────────────────
   windows-build:
     runs-on: windows-latest

@@ -81,3 +81,7 @@ build-arm-dbg/
 frontend/node_modules/
 frontend/dist/
 frontend/.angular/
+
+# Coverage
+build-coverage/
+coverage/
