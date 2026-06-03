@@ -7,10 +7,17 @@
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
 #include "services/BurstCollectorService.h"
+#include "services/DataPublisherService.h"
+#include "services/SessionDiscoveryService.h"
+#include "clients/IDataSource.h"
+#include "clients/EzShareClient.h"
+#include "database/IDatabase.h"
+#include "mqtt_client.h"
 #include "utils/ConfigManager.h"
 #include "utils/AppConfig.h"
 #include <filesystem>
 #include <fstream>
+#include <map>
 
 using namespace hms_cpap;
 
@@ -1509,4 +1516,409 @@ TEST(BurstCollectorLifecycle, ConstructorFallsBackToDefaultsWhenEnvUnset) {
     EXPECT_EQ(ConfigManager::get("CPAP_DEVICE_ID", "cpap_resmed_23243570851"),
               "cpap_resmed_23243570851");
 }
+
+// ============================================================================
+// BURST CYCLE ORCHESTRATION TESTS (real executeBurstCycle via DI seam)
+// ============================================================================
+//
+// These tests drive the actual executeBurstCycle() through the test-only
+// injectDependenciesForTest()/runBurstCycleForTest() seam. They use:
+//   - A gmock MockDatabase (IDatabase) to observe/script DB interactions.
+//   - An in-memory FakeDataSource (IDataSource) returning canned date folders
+//     and EzShareFileEntry listings; downloadFile() writes deterministic bytes
+//     into the temp dir so the download path succeeds (parse will then fail on
+//     garbage EDF — expected; we assert the pre-parse DB calls).
+//   - A DataPublisherService built with a NULL MqttClient (all publishes are
+//     guarded no-ops — no broker required).
+//   - A real SessionDiscoveryService bound to the same fake source.
+//
+// Mode: ezShare (local_source_dir_ empty, prisma_ingestion_ null — both stay
+// unset because injectDependenciesForTest bypasses initialize()).
+//
+// Coverage notes:
+//   * Prisma branch is NOT reachable: prisma_ingestion_ is a private member with
+//     no setter and stays null. Skipped by design.
+//   * Oximetry / LLM branches are NOT reachable: oximetry_service_, llm_client_
+//     stay null and llm_enabled_ stays false (no public setters). Skipped.
+//   * generateSummaryForDate() can only exercise its LLM-disabled early return
+//     (llm_enabled_ is false with no setter). The happy path is unreachable via
+//     the seam; documented in its test.
+
+using ::testing::_;
+using ::testing::Return;
+using ::testing::AnyNumber;
+using ::testing::AtLeast;
+using ::testing::NiceMock;
+
+namespace burst_orch {
+
+// ── Mock database (adapted from tests/services/test_BackfillService.cpp) ──────
+class MockDatabase : public IDatabase {
+public:
+    DbType dbType() const override { return DbType::SQLITE; }
+
+    MOCK_METHOD(bool, connect, (), (override));
+    MOCK_METHOD(void, disconnect, (), (override));
+    MOCK_METHOD(bool, isConnected, (), (const, override));
+
+    MOCK_METHOD(bool, saveSession, (const CPAPSession&), (override));
+    MOCK_METHOD(bool, sessionExists, (const std::string&, const std::chrono::system_clock::time_point&), (override));
+    MOCK_METHOD((std::optional<std::chrono::system_clock::time_point>), getLastSessionStart, (const std::string&), (override));
+    MOCK_METHOD((std::optional<std::chrono::system_clock::time_point>), getSessionStartForSleepDay, (const std::string&, const std::string&, bool), (override));
+    MOCK_METHOD((std::optional<SessionMetrics>), getSessionMetrics, (const std::string&, const std::chrono::system_clock::time_point&), (override));
+    MOCK_METHOD(bool, markSessionCompleted, (const std::string&, const std::chrono::system_clock::time_point&), (override));
+    MOCK_METHOD(bool, reopenSession, (const std::string&, const std::chrono::system_clock::time_point&), (override));
+    MOCK_METHOD(int, deleteSessionsByDateFolder, (const std::string&, const std::string&), (override));
+    MOCK_METHOD(bool, isForceCompleted, (const std::string&, const std::chrono::system_clock::time_point&), (override));
+    MOCK_METHOD(bool, setForceCompleted, (const std::string&, const std::chrono::system_clock::time_point&), (override));
+    MOCK_METHOD((std::map<std::string, int>), getCheckpointFileSizes, (const std::string&, const std::chrono::system_clock::time_point&), (override));
+    MOCK_METHOD((std::map<std::string, int>), getCheckpointFilesByFolder, (const std::string&, const std::string&), (override));
+
+    // GMock needs parens around complex param types with commas; route the
+    // 3-arg override through a 2-arg mock so EXPECT_CALL is ergonomic.
+    bool updateCheckpointFileSizes(
+        const std::string& device_id,
+        const std::chrono::system_clock::time_point& session_start,
+        const std::map<std::string, int>& /*file_sizes*/) override {
+        return updateCheckpointFileSizesMock(device_id, session_start);
+    }
+    MOCK_METHOD(bool, updateCheckpointFileSizesMock, (const std::string&, const std::chrono::system_clock::time_point&));
+    MOCK_METHOD(bool, updateDeviceLastSeen, (const std::string&), (override));
+    MOCK_METHOD(bool, saveSTRDailyRecords, (const std::vector<STRDailyRecord>&), (override));
+    MOCK_METHOD((std::optional<std::string>), getLastSTRDate, (const std::string&), (override));
+    MOCK_METHOD((std::optional<SessionMetrics>), getNightlyMetrics, (const std::string&, const std::chrono::system_clock::time_point&), (override));
+    MOCK_METHOD((std::vector<SessionMetrics>), getMetricsForDateRange, (const std::string&, int), (override));
+    MOCK_METHOD(bool, saveSummary, (const std::string&, const std::string&, const std::string&, const std::string&, int, double, double, double, const std::string&), (override));
+    MOCK_METHOD(void*, rawConnection, (), (override));
+    MOCK_METHOD(bool, saveOximetrySession, (const std::string&, const cpapdash::parser::OximetrySession&), (override));
+    MOCK_METHOD(bool, oximetrySessionExists, (const std::string&, const std::string&), (override));
+    MOCK_METHOD(bool, saveLiveOximetrySample, (const std::string&, const std::string&, int, int, int), (override));
+    OxiSummary getOximetrySummary(const std::string&, const std::string&, const std::string&) override { return {}; }
+    OxiRangeSummary getOximetryRangeSummary(const std::string&, const std::string&, const std::string&) override { return {}; }
+    std::vector<OxiNightlyPoint> getOximetryNightlySpo2(const std::string&, const std::string&, const std::string&) override { return {}; }
+};
+
+// ── In-memory fake data source (pattern from test_SessionDiscoveryService) ────
+class FakeDataSource : public IDataSource {
+public:
+    std::vector<std::string> date_folders;
+    std::map<std::string, std::vector<EzShareFileEntry>> folder_files;
+    int download_count = 0;
+
+    std::vector<std::string> listDateFolders() override { return date_folders; }
+
+    std::vector<EzShareFileEntry> listFiles(const std::string& date_folder) override {
+        auto it = folder_files.find(date_folder);
+        return it == folder_files.end() ? std::vector<EzShareFileEntry>{} : it->second;
+    }
+
+    // Write deterministic bytes so downloadSessionFiles() succeeds. Content is
+    // garbage EDF — parse fails later, which is fine: we assert pre-parse DB calls.
+    bool downloadFile(const std::string& /*date_folder*/, const std::string& /*filename*/,
+                      const std::string& local_path) override {
+        ++download_count;
+        std::filesystem::create_directories(std::filesystem::path(local_path).parent_path());
+        std::ofstream ofs(local_path, std::ios::binary);
+        ofs << "NOT_A_REAL_EDF_FILE";
+        return true;
+    }
+    bool downloadFileRange(const std::string&, const std::string&, const std::string& local_path,
+                           size_t, size_t& bytes_downloaded) override {
+        ++download_count;
+        std::filesystem::create_directories(std::filesystem::path(local_path).parent_path());
+        std::ofstream ofs(local_path, std::ios::binary);
+        ofs << "NOT_A_REAL_EDF_FILE";
+        bytes_downloaded = 19;
+        return true;
+    }
+    bool downloadRootFile(const std::string&, const std::string& local_path) override {
+        std::ofstream ofs(local_path, std::ios::binary);
+        ofs << "ROOT";
+        return true;
+    }
+};
+
+EzShareFileEntry mkEntry(const std::string& name, int size_kb) {
+    EzShareFileEntry e;
+    e.name = name;
+    e.size_kb = size_kb;
+    return e;
+}
+
+// Fixture: unique temp/archive dirs per pid; wires the service via the seam.
+class BurstOrchestrationTest : public ::testing::Test {
+protected:
+    std::filesystem::path temp_dir;
+    std::filesystem::path archive_dir;
+    MockDatabase* db_raw = nullptr;        // owned by shared_ptr below
+    FakeDataSource* src_raw = nullptr;     // owned by the service after inject
+    std::shared_ptr<MockDatabase> mock_db;
+
+    void SetUp() override {
+        // Deterministic, unique, isolated directories.
+        auto base = std::filesystem::temp_directory_path();
+        temp_dir = base / ("hms_cpap_burst_temp_" + std::to_string(getpid()));
+        archive_dir = base / ("hms_cpap_burst_arch_" + std::to_string(getpid()));
+        std::filesystem::remove_all(temp_dir);
+        std::filesystem::remove_all(archive_dir);
+        std::filesystem::create_directories(temp_dir);
+        std::filesystem::create_directories(archive_dir);
+
+        setenv("CPAP_TEMP_DIR", temp_dir.c_str(), 1);
+        setenv("CPAP_ARCHIVE_DIR", archive_dir.c_str(), 1);
+        // ezShare mode: ensure local source / prisma stay unset (they do via the seam).
+        unsetenv("SESSION_GAP_MINUTES");
+
+        mock_db = std::make_shared<NiceMock<MockDatabase>>();
+        db_raw = mock_db.get();
+    }
+
+    void TearDown() override {
+        std::filesystem::remove_all(temp_dir);
+        std::filesystem::remove_all(archive_dir);
+        unsetenv("CPAP_TEMP_DIR");
+        unsetenv("CPAP_ARCHIVE_DIR");
+    }
+
+    // Build a service wired to a fake source seeded with one single-session
+    // folder (BRP+PLD+CSL+EVE). Returns the service; the fake source pointer is
+    // stashed in src_raw (owned by the service).
+    std::unique_ptr<BurstCollectorService> makeService(
+        std::function<void(FakeDataSource&)> seed) {
+        auto fake = std::make_unique<FakeDataSource>();
+        seed(*fake);
+        src_raw = fake.get();
+
+        // SessionDiscoveryService holds an IDataSource& — bind it to the SAME
+        // fake instance that we then move into the service. Moving the unique_ptr
+        // does not relocate the heap object, so the reference stays valid.
+        auto discovery = std::make_unique<SessionDiscoveryService>(*fake);
+
+        auto publisher = std::make_unique<DataPublisherService>(
+            std::shared_ptr<hms::MqttClient>{}, mock_db);
+
+        auto svc = std::make_unique<BurstCollectorService>(60);
+        svc->injectDependenciesForTest(mock_db, std::move(fake),
+                                       std::move(publisher), std::move(discovery));
+        return svc;
+    }
+
+    // A single session: one BRP + one PLD checkpoint, plus CSL + EVE.
+    static void seedOneSession(FakeDataSource& ds) {
+        ds.date_folders = {"20200101"};
+        ds.folder_files["20200101"] = {
+            mkEntry("20200101_220000_BRP.edf", 100),
+            mkEntry("20200101_220000_PLD.edf", 20),
+            mkEntry("20200101_220000_CSL.edf", 1),
+            mkEntry("20200101_220000_EVE.edf", 2),
+        };
+    }
+};
+
+// Scenario 1: New session not in DB -> downloaded, checkpoints stored, last_seen
+// updated. (Parse fails on garbage EDF, so the cycle ultimately returns false,
+// but the download + updateCheckpointFileSizes calls fire first.)
+TEST_F(BurstOrchestrationTest, NewSession_DownloadsAndStoresCheckpoints) {
+    auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
+
+    // First run: no previous session in DB.
+    EXPECT_CALL(*db_raw, getLastSessionStart(_))
+        .WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, sessionExists(_, _)).WillRepeatedly(Return(false));
+
+    // The checkpoint sizes must be persisted for the freshly downloaded session.
+    EXPECT_CALL(*db_raw, updateCheckpointFileSizesMock(_, _)).Times(AtLeast(1));
+
+    svc->runBurstCycleForTest();
+
+    // The fake source must have been asked to download the session's files.
+    EXPECT_GT(src_raw->download_count, 0) << "New session should be downloaded";
+}
+
+// Scenario 4: A discovered session flagged force-completed must be skipped:
+// no sessionExists/download/checkpoint work for it.
+TEST_F(BurstOrchestrationTest, ForceCompletedSession_IsSkipped) {
+    auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
+
+    EXPECT_CALL(*db_raw, getLastSessionStart(_))
+        .WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(true));
+
+    // Force-completed sessions are skipped before sessionExists() is consulted
+    // and before any download/checkpoint persistence.
+    EXPECT_CALL(*db_raw, sessionExists(_, _)).Times(0);
+    EXPECT_CALL(*db_raw, updateCheckpointFileSizesMock(_, _)).Times(0);
+
+    svc->runBurstCycleForTest();
+
+    EXPECT_EQ(src_raw->download_count, 0) << "Skipped session should not download";
+}
+
+// Scenario 2: Existing session, checkpoints UNCHANGED -> markSessionCompleted
+// fires and (newly_completed + most_recent) drives the completion path
+// (getNightlyMetrics + publishSessionCompleted via the null-MQTT publisher).
+TEST_F(BurstOrchestrationTest, ExistingSession_Unchanged_MarksCompleted) {
+    auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
+
+    EXPECT_CALL(*db_raw, getLastSessionStart(_))
+        .WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, sessionExists(_, _)).WillRepeatedly(Return(true));
+
+    // DB checkpoint sizes EXACTLY match the discovered BRP+PLD sizes (CSL/EVE are
+    // not checkpoints) -> all_unchanged == true.
+    std::map<std::string, int> stored = {
+        {"20200101_220000_BRP.edf", 100},
+        {"20200101_220000_PLD.edf", 20},
+    };
+    EXPECT_CALL(*db_raw, getCheckpointFileSizes(_, _))
+        .WillRepeatedly(Return(stored));
+
+    // Completion path: first time marking returns true (was NULL).
+    EXPECT_CALL(*db_raw, markSessionCompleted(_, _)).Times(1).WillOnce(Return(true));
+    // newly_completed && is_most_recent -> getNightlyMetrics is consulted.
+    EXPECT_CALL(*db_raw, getNightlyMetrics(_, _))
+        .WillRepeatedly(Return(std::nullopt));
+
+    // No download / no checkpoint update on the unchanged path.
+    EXPECT_CALL(*db_raw, updateCheckpointFileSizesMock(_, _)).Times(0);
+
+    svc->runBurstCycleForTest();
+
+    EXPECT_EQ(src_raw->download_count, 0) << "Unchanged session must not re-download";
+}
+
+// Scenario 2b: Existing session unchanged but already completed
+// (markSessionCompleted returns false) -> publishSessionCompleted still fires
+// to clear stale session_active, but no metrics fetch is required.
+TEST_F(BurstOrchestrationTest, ExistingSession_AlreadyCompleted_NoReMark) {
+    auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
+
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, sessionExists(_, _)).WillRepeatedly(Return(true));
+
+    std::map<std::string, int> stored = {
+        {"20200101_220000_BRP.edf", 100},
+        {"20200101_220000_PLD.edf", 20},
+    };
+    EXPECT_CALL(*db_raw, getCheckpointFileSizes(_, _)).WillRepeatedly(Return(stored));
+
+    // Already completed: markSessionCompleted returns false.
+    EXPECT_CALL(*db_raw, markSessionCompleted(_, _)).Times(1).WillOnce(Return(false));
+    // The !newly_completed branch only calls publishSessionCompleted(); it does
+    // NOT fetch metrics for this session.
+    EXPECT_CALL(*db_raw, getNightlyMetrics(_, _)).Times(0);
+
+    svc->runBurstCycleForTest();
+
+    EXPECT_EQ(src_raw->download_count, 0);
+}
+
+// Scenario 3: Existing session, checkpoint sizes CHANGED -> re-download, persist
+// new sizes, and reopenSession() (clears session_end for the resumed session).
+TEST_F(BurstOrchestrationTest, ExistingSession_Changed_RedownloadsAndReopens) {
+    auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
+
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, sessionExists(_, _)).WillRepeatedly(Return(true));
+
+    // DB has an OLD (smaller) BRP size -> change detected.
+    std::map<std::string, int> stored = {
+        {"20200101_220000_BRP.edf", 50},   // discovered is 100 -> changed
+        {"20200101_220000_PLD.edf", 20},
+    };
+    EXPECT_CALL(*db_raw, getCheckpointFileSizes(_, _)).WillRepeatedly(Return(stored));
+
+    // Changed path: persist new sizes + reopen, no completion marking.
+    EXPECT_CALL(*db_raw, updateCheckpointFileSizesMock(_, _)).Times(AtLeast(1));
+    EXPECT_CALL(*db_raw, reopenSession(_, _)).Times(1).WillOnce(Return(true));
+    EXPECT_CALL(*db_raw, markSessionCompleted(_, _)).Times(0);
+
+    svc->runBurstCycleForTest();
+
+    EXPECT_GT(src_raw->download_count, 0) << "Changed session should re-download";
+}
+
+// No date folders discovered -> cycle returns true early, only getLastSessionStart
+// is consulted. Exercises the empty-discovery short-circuit.
+TEST_F(BurstOrchestrationTest, NoSessions_ReturnsTrueEarly) {
+    auto svc = makeService([](FakeDataSource& ds) {
+        ds.date_folders = {};  // nothing to discover
+    });
+
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).Times(0);
+    EXPECT_CALL(*db_raw, sessionExists(_, _)).Times(0);
+
+    EXPECT_TRUE(svc->runBurstCycleForTest()) << "Empty discovery should succeed (no-op)";
+    EXPECT_EQ(src_raw->download_count, 0);
+}
+
+// Scenario 5: forceCompleteSession(sleep_day) — open session found ->
+// markSessionCompleted + setForceCompleted + publish + metrics.
+TEST_F(BurstOrchestrationTest, ForceCompleteSession_OpenSession_MarksAndForces) {
+    auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
+    auto ts = std::chrono::system_clock::from_time_t(1577919600);  // arbitrary
+
+    // open_only=true lookup returns a session.
+    EXPECT_CALL(*db_raw, getSessionStartForSleepDay(_, "2020-01-01", true))
+        .WillOnce(Return(ts));
+    EXPECT_CALL(*db_raw, markSessionCompleted(_, _)).Times(1).WillOnce(Return(true));
+    EXPECT_CALL(*db_raw, setForceCompleted(_, _)).Times(1).WillOnce(Return(true));
+    // Publisher present -> metrics fetched (nullopt -> no historical publish, OK).
+    EXPECT_CALL(*db_raw, getNightlyMetrics(_, _)).WillOnce(Return(std::nullopt));
+
+    EXPECT_TRUE(svc->forceCompleteSession("2020-01-01"));
+}
+
+// Scenario 5b: forceCompleteSession falls back to any session (open_only=false)
+// when no open session exists for the day.
+TEST_F(BurstOrchestrationTest, ForceCompleteSession_FallsBackToAnySession) {
+    auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
+    auto ts = std::chrono::system_clock::from_time_t(1577919600);
+
+    EXPECT_CALL(*db_raw, getSessionStartForSleepDay(_, "2020-01-01", true))
+        .WillOnce(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, getSessionStartForSleepDay(_, "2020-01-01", false))
+        .WillOnce(Return(ts));
+    EXPECT_CALL(*db_raw, markSessionCompleted(_, _)).Times(1).WillOnce(Return(true));
+    EXPECT_CALL(*db_raw, setForceCompleted(_, _)).Times(1).WillOnce(Return(true));
+    EXPECT_CALL(*db_raw, getNightlyMetrics(_, _)).WillOnce(Return(std::nullopt));
+
+    EXPECT_TRUE(svc->forceCompleteSession("2020-01-01"));
+}
+
+// Scenario 5c: forceCompleteSession with no session at all -> returns false,
+// never marks/forces.
+TEST_F(BurstOrchestrationTest, ForceCompleteSession_NoSession_ReturnsFalse) {
+    auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
+
+    EXPECT_CALL(*db_raw, getSessionStartForSleepDay(_, "2099-12-31", true))
+        .WillOnce(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, getSessionStartForSleepDay(_, "2099-12-31", false))
+        .WillOnce(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, markSessionCompleted(_, _)).Times(0);
+    EXPECT_CALL(*db_raw, setForceCompleted(_, _)).Times(0);
+
+    EXPECT_FALSE(svc->forceCompleteSession("2099-12-31"));
+}
+
+// Scenario 6: generateSummaryForDate — only the LLM-disabled early return is
+// reachable via the seam (llm_enabled_ stays false; no public setter). The
+// happy path (getSessionStartForSleepDay + getNightlyMetrics + LLM) cannot be
+// exercised here and is left to integration testing. Documented limitation.
+TEST_F(BurstOrchestrationTest, GenerateSummaryForDate_LLMDisabled_ReturnsFalse) {
+    auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
+
+    // LLM disabled -> returns false before touching the DB at all.
+    EXPECT_CALL(*db_raw, getSessionStartForSleepDay(_, _, _)).Times(0);
+    EXPECT_CALL(*db_raw, getNightlyMetrics(_, _)).Times(0);
+
+    EXPECT_FALSE(svc->generateSummaryForDate("2020-01-01"));
+}
+
+}  // namespace burst_orch
 
