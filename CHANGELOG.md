@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.3.3] - 2026-06-03
+
+### Added
+- **Test coverage 27.4% → 75.0%** — ~470 new deterministic tests across parsers,
+  DB layers (SQLite + Postgres via throwaway-schema fixtures), services, agent
+  subsystem, ML training, and the burst-collector orchestration. Coverage CI job
+  with a Postgres service + ratchet gate.
+- **BurstCollectorService DI seam** — `injectDependenciesForTest()` /
+  `runBurstCycleForTest()` (production-inert) make the orchestration unit-testable.
+
+### Fixed
+- **GnuplotService injection** — chart title/ylabel are now sanitized before
+  entering the single-quoted gnuplot script piped to gnuplot (`sanitizeLabel`).
+- **PG test schema isolation** — the DatabaseService Postgres suite now runs on a
+  fresh DB in CI (create schema first, then connect with `search_path=<schema>,public`).
+
 ## [4.3.2] - 2026-06-03
 
 ### Added
