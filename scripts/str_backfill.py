@@ -13,6 +13,7 @@ Matches the C++ parser logic exactly:
   - Duration <= 0 -> skip (no therapy)
 """
 
+import os
 import sys
 import json
 import struct
@@ -20,7 +21,7 @@ from datetime import datetime, timedelta
 import psycopg2
 from psycopg2.extras import execute_values
 
-DB_CONN = "host=localhost port=5432 dbname=cpap_monitoring user=maestro password=REDACTED"
+DB_CONN = f"host=localhost port=5432 dbname=cpap_monitoring user=maestro password={os.getenv('DB_PASSWORD', '')}"
 DEVICE_ID = "cpap_resmed_23243570851"
 
 

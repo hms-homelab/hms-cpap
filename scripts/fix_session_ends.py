@@ -14,7 +14,7 @@ import struct
 from datetime import datetime, timedelta
 import psycopg2
 
-DB_CONN = "host=localhost port=5432 dbname=cpap_monitoring user=maestro password=REDACTED"
+DB_CONN = f"host=localhost port=5432 dbname=cpap_monitoring user=maestro password={os.getenv('DB_PASSWORD', '')}"
 DEVICE_ID = "cpap_resmed_23243570851"
 ARCHIVE_BASE = "/mnt/public/cpap_data"
 

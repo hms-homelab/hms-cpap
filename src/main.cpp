@@ -161,7 +161,7 @@ int runBackfill(const std::string& filepath) {
     std::string db_port = hms_cpap::ConfigManager::get("DB_PORT", "5432");
     std::string db_name = hms_cpap::ConfigManager::get("DB_NAME", "cpap_monitoring");
     std::string db_user = hms_cpap::ConfigManager::get("DB_USER", "maestro");
-    std::string db_password = hms_cpap::ConfigManager::get("DB_PASSWORD", "REDACTED");
+    std::string db_password = hms_cpap::ConfigManager::get("DB_PASSWORD", "");
 
     std::string conn_str = "host=" + db_host + " port=" + db_port +
                            " dbname=" + db_name + " user=" + db_user +
@@ -654,7 +654,7 @@ int main(int argc, char** argv) {
             std::string a_db_port = hms_cpap::ConfigManager::get("DB_PORT", "5432");
             std::string a_db_name = hms_cpap::ConfigManager::get("DB_NAME", "cpap_monitoring");
             std::string a_db_user = hms_cpap::ConfigManager::get("DB_USER", "maestro");
-            std::string a_db_pass = hms_cpap::ConfigManager::get("DB_PASSWORD", "REDACTED");
+            std::string a_db_pass = hms_cpap::ConfigManager::get("DB_PASSWORD", "");
             std::string a_conn_str = "host=" + a_db_host + " port=" + a_db_port +
                                      " dbname=" + a_db_name + " user=" + a_db_user +
                                      " password=" + a_db_pass;
@@ -674,7 +674,7 @@ int main(int argc, char** argv) {
             amqtt_cfg.broker = hms_cpap::ConfigManager::get("MQTT_BROKER", "127.0.0.1");
             amqtt_cfg.port = std::stoi(hms_cpap::ConfigManager::get("MQTT_PORT", "1883"));
             amqtt_cfg.username = hms_cpap::ConfigManager::get("MQTT_USER", "aamat");
-            amqtt_cfg.password = hms_cpap::ConfigManager::get("MQTT_PASSWORD", "REDACTED");
+            amqtt_cfg.password = hms_cpap::ConfigManager::get("MQTT_PASSWORD", "");
             amqtt_cfg.client_id = hms_cpap::ConfigManager::get("MQTT_CLIENT_ID", "hms_cpap") + "_agent";
             auto agent_mqtt = std::make_shared<hms::MqttClient>(amqtt_cfg);
             agent_mqtt->connect();
