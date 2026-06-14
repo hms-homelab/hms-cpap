@@ -1,6 +1,6 @@
 import { Component, OnInit, OnDestroy, ChangeDetectorRef, HostListener } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { RouterLink } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
 import { CpapApiService } from '../../services/cpap-api.service';
 import { SessionListItem } from '../../models/session.model';
 
@@ -20,7 +20,43 @@ export class SessionsComponent implements OnInit, OnDestroy {
   openMenu: string | null = null;
   private refreshTimer: any = null;
 
-  constructor(private api: CpapApiService, private cdr: ChangeDetectorRef) {}
+  // Compare-nights selection.
+  compareMode = false;
+  selectedDays: string[] = [];
+
+  constructor(private api: CpapApiService, private cdr: ChangeDetectorRef, private router: Router) {}
+
+  dayOf(s: SessionListItem): string {
+    return s.sleep_day || this.sleepDay(s.session_start);
+  }
+
+  toggleCompareMode(): void {
+    this.compareMode = !this.compareMode;
+    this.selectedDays = [];
+    this.openMenu = null;
+  }
+
+  isSelected(s: SessionListItem): boolean {
+    return this.selectedDays.includes(this.dayOf(s));
+  }
+
+  toggleSelect(s: SessionListItem): void {
+    const d = this.dayOf(s);
+    const i = this.selectedDays.indexOf(d);
+    if (i >= 0) this.selectedDays.splice(i, 1);
+    else if (this.selectedDays.length < 2) this.selectedDays.push(d);
+  }
+
+  openCompare(): void {
+    if (this.selectedDays.length === 2) {
+      this.router.navigate(['/compare', this.selectedDays[0], this.selectedDays[1]]);
+    }
+  }
+
+  onRow(s: SessionListItem): void {
+    if (this.compareMode) this.toggleSelect(s);
+    else this.router.navigate(['/sessions', this.dayOf(s)]);
+  }
 
   ngOnInit() {
     this.loadSessions();

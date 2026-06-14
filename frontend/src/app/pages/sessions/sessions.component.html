@@ -1,5 +1,22 @@
 <div class="sessions-page">
-  <h2>Sessions ({{ sessions.length }})</h2>
+  <div class="sessions-head">
+    <h2>Sessions ({{ sessions.length }})</h2>
+    <button class="cmp-toggle" [class.active]="compareMode" (click)="toggleCompareMode()">
+      <i class="fa-solid" [class.fa-code-compare]="!compareMode" [class.fa-xmark]="compareMode"></i>
+      {{ compareMode ? 'Cancel' : 'Compare nights' }}
+    </button>
+  </div>
+
+  <!-- Expanding compare bar -->
+  <div class="cmp-bar" *ngIf="compareMode">
+    <i class="fa-solid fa-hand-pointer"></i>
+    <span *ngIf="selectedDays.length < 2">Pick two nights to compare ({{ selectedDays.length }}/2)</span>
+    <span *ngIf="selectedDays.length === 2">{{ selectedDays[0] }} vs {{ selectedDays[1] }}</span>
+    <button class="cmp-go" [disabled]="selectedDays.length !== 2" (click)="openCompare()">
+      <i class="fa-solid fa-chart-line"></i> Compare
+    </button>
+  </div>
+
   <table class="session-table" *ngIf="sessions.length > 0">
     <thead>
       <tr>
@@ -8,9 +25,13 @@
       </tr>
     </thead>
     <tbody>
-      <tr *ngFor="let s of sessions" [routerLink]="['/sessions', s.sleep_day || sleepDay(s.session_start)]"
-          class="clickable" [class.live-row]="isLive(s)">
-        <td>{{ s.sleep_day || sleepDay(s.session_start) }}</td>
+      <tr *ngFor="let s of sessions" (click)="onRow(s)"
+          class="clickable" [class.live-row]="isLive(s)" [class.cmp-selected]="compareMode && isSelected(s)">
+        <td>
+          <i *ngIf="compareMode" class="fa-solid sel-box"
+            [class.fa-square-check]="isSelected(s)" [class.fa-square]="!isSelected(s)"></i>
+          {{ s.sleep_day || sleepDay(s.session_start) }}
+        </td>
         <td>
           <span *ngIf="isLive(s)" class="live-badge">LIVE</span>
           <span *ngIf="!isLive(s)" class="done-badge">Done</span>

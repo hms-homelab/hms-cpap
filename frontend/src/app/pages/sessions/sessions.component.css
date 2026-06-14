@@ -31,3 +31,19 @@ h2 { color: #e0e0e0; margin-bottom: 1rem; }
 .dropdown button:hover:not(:disabled) { background: rgba(255,255,255,0.07); }
 .dropdown button:disabled { opacity: 0.4; cursor: not-allowed; }
 .dropdown .danger { color: #ef9a9a; }
+
+/* Compare-nights selection */
+.sessions-head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.cmp-toggle { background: #2a2a3a; border: 1px solid #444; color: #cbd5e1; padding: 0.4rem 0.8rem;
+  border-radius: 6px; cursor: pointer; font-size: 0.85rem; }
+.cmp-toggle:hover { background: #34344a; }
+.cmp-toggle.active { background: #60a5fa22; border-color: #60a5fa; color: #93c5fd; }
+.cmp-toggle i { margin-right: 0.4rem; }
+.cmp-bar { display: flex; align-items: center; gap: 0.6rem; margin: 0.6rem 0; padding: 0.6rem 0.9rem;
+  background: #60a5fa18; border: 1px solid #60a5fa55; border-radius: 8px; color: #cbd5e1; font-size: 0.85rem; }
+.cmp-bar i.fa-hand-pointer { color: #60a5fa; }
+.cmp-go { margin-left: auto; background: linear-gradient(135deg,#60a5fa,#a78bfa); border: none; color: #fff;
+  padding: 0.4rem 0.9rem; border-radius: 6px; cursor: pointer; font-size: 0.85rem; font-weight: 600; }
+.cmp-go:disabled { opacity: 0.4; cursor: not-allowed; }
+.session-table tr.cmp-selected { outline: 2px solid #60a5fa; background: #60a5fa14; }
+.sel-box { margin-right: 0.5rem; color: #60a5fa; }
