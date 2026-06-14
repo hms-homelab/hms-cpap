@@ -95,7 +95,7 @@ const SIGNAL_DEFS: SignalDef[] = [
       </div>
 
       <!-- DETAIL VIEW -->
-      <div class="detail-section" *ngIf="selectedSignal">
+      <div class="detail-section" *ngIf="selectedSignal" [class.expanded]="isExpanded">
         <div class="detail-header">
           <h3>{{ selectedSignal.title }} <span class="detail-unit">({{ selectedSignal.unit }})</span></h3>
           <div class="detail-controls">
@@ -104,6 +104,10 @@ const SIGNAL_DEFS: SignalDef[] = [
                 (click)="setRange(r.value)">{{ r.label }}</button>
             </div>
             <button class="reset-btn" (click)="resetZoom()">Reset Zoom</button>
+            <button class="reset-btn" (click)="toggleExpand()" [title]="isExpanded ? 'Close full screen' : 'Full screen'">
+              <i class="fa-solid" [class.fa-expand]="!isExpanded" [class.fa-compress]="isExpanded"></i>
+              {{ isExpanded ? 'Close' : 'Full screen' }}
+            </button>
           </div>
         </div>
         <div class="detail-chart-container">
@@ -177,6 +181,10 @@ const SIGNAL_DEFS: SignalDef[] = [
     .reset-btn { background: #333; border: 1px solid #555; color: #ccc; padding: 0.2rem 0.5rem; font-size: 0.7rem; cursor: pointer; border-radius: 3px; }
     .detail-chart-container { margin-top: 0.5rem; height: 300px; position: relative; }
     .detail-chart-container canvas { width: 100% !important; height: 100% !important; }
+    /* Full-screen chart */
+    .detail-section.expanded { position: fixed; inset: 0; z-index: 1000; margin: 0;
+      border-radius: 0; overflow: auto; box-shadow: 0 0 0 100vmax rgba(0,0,0,0.6); }
+    .detail-section.expanded .detail-chart-container { height: calc(100vh - 170px); }
 
     /* Slider */
     .slider-container { margin-top: 0.5rem; }
@@ -263,6 +271,13 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
   // Detail chart
   selectedSignal: SignalDef | null = null;
   private detailChart: Chart | null = null;
+  isExpanded = false;
+
+  toggleExpand(): void {
+    this.isExpanded = !this.isExpanded;
+    // Let the container resize, then tell Chart.js to repaint at the new size.
+    setTimeout(() => this.detailChart?.resize(), 60);
+  }
 
   // Time range
   rangeOptions = [
