@@ -36,7 +36,6 @@ Automatically extracts sleep therapy data from ResMed and Lowenstein Prisma CPAP
 | Manufacturer | Models | Live Sessions | Data Import |
 |---|---|---|---|
 | **ResMed** | AirSense 10, AirSense 11 | Yes -- EDF files grow during therapy, real-time charts with 65s refresh | Yes |
-| **Philips** | DreamStation 2 | No | Yes |
 | **Lowenstein** | Prisma Line (20A, 20C, 25S, 25ST), Prisma Smart (Max, Plus, Soft) | No -- files written post-session | Yes |
 
 All data sources (ezShare WiFi SD, local filesystem) work with both manufacturers -- the WiFi SD adapter sits in the machine's SD card slot regardless of brand.
@@ -532,7 +531,7 @@ Most solutions require cloud services, proprietary apps, or manual SD card remov
 
 ### Does this work with other CPAP brands?
 
-Currently supports **ResMed AirSense 10/11** (real-time + import) and **Lowenstein Prisma** (import). ResMed has full real-time live session support via WiFi SD adapters. Lowenstein Prisma supports SD card data import with full session parsing, event detection, and breathing signal analysis. Philips/Respironics support is planned.
+Currently supports **ResMed AirSense 10/11** (real-time + import) and **Lowenstein Prisma** (import). ResMed has full real-time live session support via WiFi SD adapters. Lowenstein Prisma supports SD card data import with full session parsing, event detection, and breathing signal analysis.
 
 ### What about data privacy?
 
