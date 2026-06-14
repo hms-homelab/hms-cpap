@@ -123,8 +123,7 @@ endif()
 # ── External libraries (via FetchContent) ────────────────────────────────────
 include(FetchContent)
 
-# cpapdash-parser: shared CPAP parsing library (ResMed EDF + Philips DS2 + Lowenstein Prisma)
-set(CPAPDASH_PARSER_WITH_PHILIPS ON CACHE BOOL "Enable Philips DreamStation parser" FORCE)
+# cpapdash-parser: shared CPAP parsing library (ResMed EDF + Lowenstein Prisma)
 set(CPAPDASH_PARSER_WITH_LOWENSTEIN ON CACHE BOOL "Enable Lowenstein Prisma parser" FORCE)
 set(CPAPDASH_PARSER_LOCAL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../hms-cpapdash-parser)
 set(CPAPDASH_PARSER_LOCAL_DIR2 ${CMAKE_CURRENT_SOURCE_DIR}/../hms-cpapdash/hms-cpapdash-parser)
@@ -139,7 +138,7 @@ elseif(EXISTS ${CPAPDASH_PARSER_LOCAL_DIR2}/CMakeLists.txt)
 else()
     FetchContent_Declare(cpapdash_parser
         GIT_REPOSITORY https://github.com/hms-homelab/hms-cpapdash-parser.git
-        GIT_TAG        v2026.1.1
+        GIT_TAG        v2026.1.2
     )
 endif()
 FetchContent_MakeAvailable(cpapdash_parser)
