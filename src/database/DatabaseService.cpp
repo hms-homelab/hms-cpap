@@ -59,6 +59,29 @@ bool DatabaseService::connect() {
                 // Tables may not exist yet — ignore
             }
 
+            // Auto-migrate v2.2.0: advanced signal analysis (desat + breaths)
+            try {
+                pqxx::work txn(*conn_);
+                txn.exec("ALTER TABLE cpap_session_metrics ADD COLUMN IF NOT EXISTS spo2_drops INT");
+                txn.exec("ALTER TABLE cpap_session_metrics ADD COLUMN IF NOT EXISTS odi FLOAT");
+                txn.exec(R"(
+                    CREATE TABLE IF NOT EXISTS cpap_breaths (
+                        id                SERIAL PRIMARY KEY,
+                        session_id        INTEGER NOT NULL REFERENCES cpap_sessions(id) ON DELETE CASCADE,
+                        onset             TIMESTAMP NOT NULL,
+                        tidal_volume      REAL,
+                        inspiratory_time  REAL,
+                        expiratory_time   REAL,
+                        flow_limitation   REAL,
+                        UNIQUE (session_id, onset)
+                    )
+                )");
+                txn.commit();
+                std::cout << "  DB: v2.2.0 migration (desat + breaths) applied" << std::endl;
+            } catch (...) {
+                // Tables may not exist yet — ignore
+            }
+
             // Auto-migrate v2.1.0: AI summaries table
             try {
                 pqxx::work txn(*conn_);
@@ -282,6 +305,39 @@ void DatabaseService::insertEvents(pqxx::work& work, int session_id,
     }
 }
 
+void DatabaseService::insertDesaturations(pqxx::work& work, int session_id,
+                                          const std::vector<DesatEvent>& desats) {
+    if (desats.empty()) return;
+    for (const auto& d : desats) {
+        auto tt = std::chrono::system_clock::to_time_t(d.onset);
+        std::ostringstream oss;
+        oss << std::put_time(std::localtime(&tt), "%Y-%m-%d %H:%M:%S");
+        char details[96];
+        std::snprintf(details, sizeof(details), "{\"nadir\":%.1f,\"depth\":%.1f}", d.nadir, d.depth);
+        work.exec_params(R"(
+            INSERT INTO cpap_events (session_id, event_type, event_timestamp, duration_seconds, details)
+            VALUES ($1, 'Desaturation', $2, $3, $4)
+            ON CONFLICT (session_id, event_timestamp) DO NOTHING
+        )", session_id, oss.str(), d.duration_seconds, std::string(details));
+    }
+}
+
+void DatabaseService::insertBreaths(pqxx::work& work, int session_id,
+                                    const std::vector<Breath>& breaths) {
+    if (breaths.empty()) return;
+    for (const auto& b : breaths) {
+        auto tt = std::chrono::system_clock::to_time_t(b.onset);
+        std::ostringstream oss;
+        oss << std::put_time(std::localtime(&tt), "%Y-%m-%d %H:%M:%S");
+        work.exec_params(R"(
+            INSERT INTO cpap_breaths
+                (session_id, onset, tidal_volume, inspiratory_time, expiratory_time, flow_limitation)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            ON CONFLICT (session_id, onset) DO NOTHING
+        )", session_id, oss.str(), b.tidal_volume, b.inspiratory_time, b.expiratory_time, b.flow_limitation);
+    }
+}
+
 void DatabaseService::insertVitals(pqxx::work& work, int session_id,
                                     const std::vector<CPAPVitals>& vitals) {
     if (vitals.empty()) return;
@@ -333,9 +389,9 @@ void DatabaseService::insertSessionMetrics(pqxx::work& work, int session_id,
         (session_id, total_events, ahi, obstructive_apneas, central_apneas, hypopneas, reras, clear_airway_apneas,
          avg_spo2, min_spo2, avg_heart_rate, max_heart_rate, min_heart_rate,
          avg_mask_pressure, avg_epr_pressure, avg_snore, leak_p50, leak_p95, avg_leak_rate, max_leak_rate,
-         avg_target_ventilation, therapy_mode)
+         avg_target_ventilation, therapy_mode, spo2_drops, odi)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-                $14, $15, $16, $17, $18, $19, $20, $21, $22)
+                $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
         ON CONFLICT (session_id) DO UPDATE
         SET total_events = EXCLUDED.total_events,
             ahi = EXCLUDED.ahi,
@@ -357,7 +413,9 @@ void DatabaseService::insertSessionMetrics(pqxx::work& work, int session_id,
             avg_leak_rate = EXCLUDED.avg_leak_rate,
             max_leak_rate = EXCLUDED.max_leak_rate,
             avg_target_ventilation = EXCLUDED.avg_target_ventilation,
-            therapy_mode = EXCLUDED.therapy_mode
+            therapy_mode = EXCLUDED.therapy_mode,
+            spo2_drops = EXCLUDED.spo2_drops,
+            odi = EXCLUDED.odi
     )";
 
     // Helper for optional<double> -> NULL or value
@@ -386,7 +444,9 @@ void DatabaseService::insertSessionMetrics(pqxx::work& work, int session_id,
         metrics.avg_leak_rate.value_or(0),
         metrics.max_leak_rate.value_or(0),
         metrics.avg_target_ventilation.value_or(0),
-        metrics.therapy_mode.value_or(0)
+        metrics.therapy_mode.value_or(0),
+        metrics.spo2_drops.value_or(0),
+        metrics.odi.value_or(0)
     );
 }
 
@@ -587,6 +647,18 @@ bool DatabaseService::saveSession(const CPAPSession& session) {
         if (!session.events.empty()) {
             insertEvents(txn, session_id, session.events);
             std::cout << "   Events: " << session.events.size() << std::endl;
+        }
+
+        // 4a. Insert SpO2 desaturations (as Desaturation events)
+        if (!session.desaturations.empty()) {
+            insertDesaturations(txn, session_id, session.desaturations);
+            std::cout << "   Desaturations: " << session.desaturations.size() << std::endl;
+        }
+
+        // 4b. Insert breath-by-breath detail
+        if (!session.breaths.empty()) {
+            insertBreaths(txn, session_id, session.breaths);
+            std::cout << "   Breaths: " << session.breaths.size() << std::endl;
         }
 
         // 5. Insert vitals

@@ -206,6 +206,12 @@ private:
     void insertEvents(pqxx::work& work, int session_id,
                       const std::vector<CPAPEvent>& events);
 
+    void insertDesaturations(pqxx::work& work, int session_id,
+                             const std::vector<DesatEvent>& desats);
+
+    void insertBreaths(pqxx::work& work, int session_id,
+                       const std::vector<Breath>& breaths);
+
     /**
      * Insert vitals
      *

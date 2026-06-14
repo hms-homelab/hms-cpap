@@ -240,19 +240,25 @@ int runReparse(const std::string& archive_dir, const std::string& start_str, con
               << archive_dir << std::endl;
 
     // Connect to DB
-    std::string db_host = hms_cpap::ConfigManager::get("DB_HOST", "localhost");
-    std::string db_port = hms_cpap::ConfigManager::get("DB_PORT", "5432");
-    std::string db_name = hms_cpap::ConfigManager::get("DB_NAME", "cpap_monitoring");
-    std::string db_user = hms_cpap::ConfigManager::get("DB_USER", "maestro");
-    std::string db_password = hms_cpap::ConfigManager::get("DB_PASSWORD", "REDACTED");
-
-    std::string conn_str = "host=" + db_host + " port=" + db_port +
-                           " dbname=" + db_name + " user=" + db_user +
-                           " password=" + db_password;
-
-    hms_cpap::DatabaseService db(conn_str);
-    if (!db.connect()) {
-        std::cerr << "Reparse: DB connection failed" << std::endl;
+    // Honor the configured DB type (env set from config by main()): SQLite for
+    // local runs, PostgreSQL otherwise. Previously this always forced Postgres.
+    std::string db_type = hms_cpap::ConfigManager::get("DB_TYPE", "sqlite");
+    std::shared_ptr<hms_cpap::IDatabase> db;
+    if (db_type == "postgresql") {
+        std::string conn_str =
+            "host=" + hms_cpap::ConfigManager::get("DB_HOST", "localhost") +
+            " port=" + hms_cpap::ConfigManager::get("DB_PORT", "5432") +
+            " dbname=" + hms_cpap::ConfigManager::get("DB_NAME", "cpap_monitoring") +
+            " user=" + hms_cpap::ConfigManager::get("DB_USER", "maestro") +
+            " password=" + hms_cpap::ConfigManager::get("DB_PASSWORD", "");
+        db = std::make_shared<hms_cpap::DatabaseService>(conn_str);
+    } else {
+        db = std::make_shared<hms_cpap::SQLiteDatabase>(
+            hms_cpap::ConfigManager::get("SQLITE_PATH",
+                std::string(getenv("HOME") ? getenv("HOME") : ".") + "/.hms-cpap/cpap.db"));
+    }
+    if (!db->connect()) {
+        std::cerr << "Reparse: DB connection failed (" << db_type << ")" << std::endl;
         return 1;
     }
 
@@ -278,7 +284,7 @@ int runReparse(const std::string& archive_dir, const std::string& start_str, con
         }
 
         // Delete existing sessions for this date folder
-        int deleted = db.deleteSessionsByDateFolder(device_id, folder);
+        int deleted = db->deleteSessionsByDateFolder(device_id, folder);
         if (deleted > 0) {
             std::cout << "  Deleted " << deleted << " existing session(s) from DB" << std::endl;
             total_deleted += deleted;
@@ -329,11 +335,11 @@ int runReparse(const std::string& archive_dir, const std::string& start_str, con
             if (!session.csl_file.empty()) parsed->csl_file_path = relative_base + session.csl_file;
 
             // Save to DB
-            if (db.saveSession(*parsed)) {
+            if (db->saveSession(*parsed)) {
                 total_saved++;
 
                 // Reparsed sessions are complete — set session_end
-                db.markSessionCompleted(device_id, session.session_start);
+                db->markSessionCompleted(device_id, session.session_start);
 
                 // Store checkpoint file sizes (same as burst cycle)
                 std::map<std::string, int> checkpoint_sizes;
@@ -345,7 +351,7 @@ int runReparse(const std::string& archive_dir, const std::string& start_str, con
                         checkpoint_sizes[filename] = size_kb;
                     }
                 }
-                db.updateCheckpointFileSizes(device_id, session.session_start, checkpoint_sizes);
+                db->updateCheckpointFileSizes(device_id, session.session_start, checkpoint_sizes);
 
                 double hours = parsed->duration_seconds.value_or(0) / 3600.0;
                 double ahi = parsed->metrics.has_value() ? parsed->metrics->ahi : 0.0;

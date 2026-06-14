@@ -115,7 +115,7 @@ Json::Value QueryService::getSessionDetail(const std::string& date) {
         " " + sql::round("m.ahi", 2, dt_) + " as ahi, m.total_events, m.obstructive_apneas, m.central_apneas,"
         " m.hypopneas, m.reras, m.clear_airway_apneas,"
         " m.avg_event_duration, m.max_event_duration, m.time_in_apnea_percent,"
-        " m.avg_spo2, m.min_spo2,"
+        " m.avg_spo2, m.min_spo2, m.spo2_drops, m.odi,"
         " m.avg_heart_rate, m.min_heart_rate, m.max_heart_rate,"
         " COALESCE(d.mode, 0) as therapy_mode"
         " FROM cpap_sessions s"
@@ -430,12 +430,24 @@ Json::Value QueryService::getSessionVitals(const std::string& date, int interval
 
 Json::Value QueryService::getSessionEvents(const std::string& date) {
     std::string q =
-        "SELECT e.event_type, e.event_timestamp, e.duration_seconds"
+        "SELECT e.event_type, e.event_timestamp, e.duration_seconds, e.details"
         " FROM cpap_sessions s"
         " JOIN cpap_events e ON e.session_id = s.id"
         " WHERE s.device_id = " + sql::param(1, dt_) +
         " AND " + sql::sleepDay("s.session_start", dt_) + " = " + sql::castDate(2, dt_) +
         " ORDER BY e.event_timestamp";
+
+    return db_->executeQuery(q, {device_id_, date});
+}
+
+Json::Value QueryService::getSessionBreaths(const std::string& date) {
+    std::string q =
+        "SELECT b.onset, b.tidal_volume, b.inspiratory_time, b.expiratory_time, b.flow_limitation"
+        " FROM cpap_sessions s"
+        " JOIN cpap_breaths b ON b.session_id = s.id"
+        " WHERE s.device_id = " + sql::param(1, dt_) +
+        " AND " + sql::sleepDay("s.session_start", dt_) + " = " + sql::castDate(2, dt_) +
+        " ORDER BY b.onset";
 
     return db_->executeQuery(q, {device_id_, date});
 }

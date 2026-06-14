@@ -174,6 +174,16 @@ void CpapController::sessionEvents(const drogon::HttpRequestPtr&,
     }
 }
 
+void CpapController::sessionBreaths(const drogon::HttpRequestPtr&,
+                                    std::function<void(const drogon::HttpResponsePtr&)>&& cb,
+                                    const std::string& date) {
+    try {
+        cb(jsonResp(qs_->getSessionBreaths(date)));
+    } catch (const std::exception& e) {
+        cb(jsonError(e.what(), drogon::k500InternalServerError));
+    }
+}
+
 void CpapController::sessionOximetry(const drogon::HttpRequestPtr& req,
                                       std::function<void(const drogon::HttpResponsePtr&)>&& cb,
                                       const std::string& date) {
