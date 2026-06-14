@@ -60,6 +60,10 @@ export class CpapApiService {
     return this.http.get<OximetryData>(`/api/sessions/${date}/oximetry`, { params });
   }
 
+  getSessionBreaths(date: string): Observable<{ onset: string[]; tidal_volume: number[]; inspiratory_time: number[]; expiratory_time: number[]; flow_limitation: number[] }> {
+    return this.http.get<any>(`/api/sessions/${date}/breaths`);
+  }
+
   getSessionEvents(date: string): Observable<SessionEvent[]> {
     return this.http.get<SessionEvent[]>(`/api/sessions/${date}/events`);
   }

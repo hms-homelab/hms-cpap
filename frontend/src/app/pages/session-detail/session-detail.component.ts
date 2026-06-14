@@ -8,6 +8,7 @@ import { CpapApiService } from '../../services/cpap-api.service';
 import { MetricCardComponent } from '../../components/metric-card/metric-card.component';
 import { SessionDetail, SessionEvent, SignalData, VitalsData, OximetryData } from '../../models/session.model';
 import { formatTimestamps, eventAnnotations, makeDataset, makeFillBand, EVENT_COLORS } from '../../utils/chart-helpers';
+import { detectDesaturations, desatAnnotations, odiPerHour, inferSampleSec } from '../../utils/signal-analysis';
 import { Chart, ChartDataset, registerables } from 'chart.js';
 import annotationPlugin from 'chartjs-plugin-annotation';
 import zoomPlugin from 'chartjs-plugin-zoom';
@@ -25,6 +26,7 @@ interface SignalDef {
   bandMinKey?: string;
   bandMaxKey?: string;
   showEvents?: boolean;    // overlay event markers
+  desat?: boolean;         // overlay SpO2 desaturation spans + ODI
   source: 'signals' | 'vitals' | 'oximetry';
   fill?: boolean;
   minMode?: number;        // only show if therapy_mode >= this (e.g., 1=not CPAP, 7=ASV only)
@@ -43,9 +45,9 @@ const SIGNAL_DEFS: SignalDef[] = [
   { key: 'ie_ratio', title: 'I:E Ratio', unit: 'ratio', color: '#fff176', source: 'signals' },
   { key: 'epr_pressure', title: 'EPR Pressure', unit: 'cmH2O', color: '#9575cd', source: 'signals', minMode: 1 },
   { key: 'target_ventilation', title: 'Target Ventilation', unit: 'L/min', color: '#4fc3f7', source: 'signals', minMode: 7 },
-  { key: 'spo2', title: 'SpO2', unit: '%', color: '#e57373', yMin: 85, yMax: 100, hasBand: true, bandMinKey: 'spo2_min', bandMaxKey: 'spo2', source: 'vitals' },
+  { key: 'spo2', title: 'SpO2', unit: '%', color: '#e57373', yMin: 85, yMax: 100, hasBand: true, bandMinKey: 'spo2_min', bandMaxKey: 'spo2', source: 'vitals', desat: true },
   { key: 'heart_rate', title: 'Heart Rate', unit: 'bpm', color: '#f06292', hasBand: true, bandMinKey: 'hr_min', bandMaxKey: 'hr_max', source: 'vitals' },
-  { key: 'spo2', title: 'O2Ring SpO2', unit: '%', color: '#ef5350', yMin: 85, yMax: 100, source: 'oximetry' },
+  { key: 'spo2', title: 'O2Ring SpO2', unit: '%', color: '#ef5350', yMin: 85, yMax: 100, source: 'oximetry', desat: true },
   { key: 'heart_rate', title: 'O2Ring Heart Rate', unit: 'bpm', color: '#ec407a', source: 'oximetry' },
 ];
 
@@ -97,7 +99,13 @@ const SIGNAL_DEFS: SignalDef[] = [
       <!-- DETAIL VIEW -->
       <div class="detail-section" *ngIf="selectedSignal" [class.expanded]="isExpanded">
         <div class="detail-header">
-          <h3>{{ selectedSignal.title }} <span class="detail-unit">({{ selectedSignal.unit }})</span></h3>
+          <h3>
+            {{ selectedSignal.title }} <span class="detail-unit">({{ selectedSignal.unit }})</span>
+            <span class="odi-badge" *ngIf="detailOdi !== null" [style.color]="odiColor"
+              title="Oxygen Desaturation Index — desaturations ≥3% per hour">
+              <i class="fa-solid fa-arrow-trend-down"></i> ODI {{ detailOdi.toFixed(1) }}/hr
+            </span>
+          </h3>
           <div class="detail-controls">
             <div class="range-buttons">
               <button *ngFor="let r of rangeOptions" [class.active]="activeRange === r.value"
@@ -272,6 +280,12 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
   selectedSignal: SignalDef | null = null;
   private detailChart: Chart | null = null;
   isExpanded = false;
+  detailOdi: number | null = null;   // ODI for the selected SpO2 chart (F2)
+
+  get odiColor(): string {
+    const o = this.detailOdi ?? 0;
+    return o < 5 ? '#4ade80' : o < 15 ? '#fb923c' : '#ef4444';
+  }
 
   toggleExpand(): void {
     this.isExpanded = !this.isExpanded;
@@ -425,9 +439,15 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
 
       // Determine available signals (skip those with no data or wrong mode)
       const therapyMode = +(this.session?.therapy_mode || '0');
+      const machineSpo2 = ((vitals as any)?.spo2 || []).some((v: any) => Number(v) > 0 && Number(v) <= 100);
       this.availableSignals = SIGNAL_DEFS.filter(s => {
         if (s.source === 'oximetry') return oximetry?.timestamps?.length;
-        if (s.source === 'vitals') return vitals?.timestamps?.length;
+        if (s.source === 'vitals') {
+          // Machine SpO2 only if the EDF actually carried it; otherwise fall
+          // back to the O2Ring SpO2 chart (which keeps its own desat overlay).
+          if (s.key === 'spo2') return machineSpo2;
+          return vitals?.timestamps?.length;
+        }
         if (!signals?.timestamps?.length) return false;
         if (s.minMode !== undefined && therapyMode < s.minMode) return false;
         return true;
@@ -639,6 +659,19 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
     // Event annotations
     if (sig.showEvents && this.events.length) {
       evtAnns = eventAnnotations(this.events, labels, timestamps);
+    }
+
+    // F2 — SpO2 desaturation spans + ODI. Runs on whichever SpO2 series this
+    // chart shows: machine EDF SpO2 if present, else the O2Ring fallback.
+    this.detailOdi = null;
+    if (sig.desat) {
+      const fullData = this.getData(sig.key);
+      const sampleSec = inferSampleSec(this.getTimestamps(), sig.source === 'oximetry' ? 4 : 1);
+      // ODI over the whole recording; spans drawn for the visible window.
+      const allSpans = detectDesaturations(fullData as (number | null)[], { sampleSec });
+      this.detailOdi = odiPerHour(allSpans.length, fullData.length, sampleSec);
+      const viewSpans = detectDesaturations(mainData as (number | null)[], { sampleSec });
+      evtAnns = evtAnns.concat(desatAnnotations(viewSpans));
     }
 
     const canvas = this.detailCanvasRef.nativeElement;

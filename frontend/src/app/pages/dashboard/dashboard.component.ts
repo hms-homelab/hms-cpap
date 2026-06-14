@@ -12,6 +12,7 @@ import { RespiratoryMetricsComponent, RespiratoryMetricsData } from '../../compo
 import { RealtimeStatusComponent, RealtimeStatusData } from '../../components/dashboard/realtime-status.component';
 import { MlIntelligenceComponent } from '../../components/dashboard/ml-intelligence.component';
 import { DashboardData, TrendPoint, OximetryData, SessionListItem } from '../../models/session.model';
+import { detectDesaturations, odiPerHour, inferSampleSec } from '../../utils/signal-analysis';
 import Chart from 'chart.js/auto';
 
 const MODE_LABELS: Record<string, string> = {
@@ -351,22 +352,10 @@ export class DashboardComponent implements OnInit, AfterViewInit {
               const validHr = oxi.heart_rate.map(v => Number(v)).filter(v => !isNaN(v) && v > 0 && v < 255);
               if (validSpo2.length) {
                 const avg = validSpo2.reduce((a, b) => a + b, 0) / validSpo2.length;
-                let odi = 0;
-                const hours = validSpo2.length * 4 / 3600;
-                if (hours > 0) {
-                  let desatCount = 0, inDesat = false;
-                  for (let i = 0; i < validSpo2.length; i++) {
-                    let baseline = validSpo2[i];
-                    const start = Math.max(0, i - 30);
-                    for (let j = start; j < i; j++) {
-                      if (validSpo2[j] > baseline) baseline = validSpo2[j];
-                    }
-                    const drop = baseline - validSpo2[i];
-                    if (drop >= 3 && !inDesat) { desatCount++; inDesat = true; }
-                    else if (drop < 1) { inDesat = false; }
-                  }
-                  odi = desatCount / hours;
-                }
+                // Reuse the shared desaturation detector (O2Ring is 4s/sample).
+                const sampleSec = inferSampleSec(oxi.timestamps || [], 4);
+                const desats = detectDesaturations(validSpo2, { sampleSec });
+                const odi = odiPerHour(desats.length, validSpo2.length, sampleSec);
                 const avgHr = validHr.length
                   ? validHr.reduce((a, b) => a + b, 0) / validHr.length : 0;
                 this.oximetryData = {
