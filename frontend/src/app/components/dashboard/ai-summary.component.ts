@@ -8,7 +8,7 @@ import { CommonModule } from '@angular/common';
   template: `
     <div class="section-card">
       <div class="section-header">
-        <div class="section-title">AI Session Summary</div>
+        <div class="section-title"><i class="fa-solid fa-wand-magic-sparkles"></i> AI Session Summary</div>
         <div class="section-subtitle">LLM-generated analysis of last session</div>
       </div>
       <div class="summary-body" [innerHTML]="renderedHtml"></div>

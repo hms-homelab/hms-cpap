@@ -18,7 +18,7 @@ export interface StrMetricsData {
   template: `
     <div class="section" *ngIf="data">
       <div class="section-header">
-        <div class="section-title">STR Daily Metrics</div>
+        <div class="section-title"><i class="fa-solid fa-calendar-day"></i> STR Daily Metrics</div>
         <div class="section-subtitle">Official ResMed indices from STR.edf</div>
       </div>
       <div class="metrics-row">
