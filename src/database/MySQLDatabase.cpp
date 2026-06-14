@@ -365,6 +365,8 @@ void MySQLDatabase::createSchema() {
             max_leak_rate          DOUBLE,
             avg_target_ventilation DOUBLE,
             therapy_mode           INT,
+            spo2_drops             INT,
+            odi                    DOUBLE,
             created_at             DATETIME DEFAULT NOW(),
             FOREIGN KEY (session_id) REFERENCES cpap_sessions(id) ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
@@ -397,6 +399,21 @@ void MySQLDatabase::createSchema() {
             duration_seconds  DOUBLE DEFAULT 0,
             details           TEXT,
             UNIQUE KEY uq_session_event_ts (session_id, event_timestamp),
+            FOREIGN KEY (session_id) REFERENCES cpap_sessions(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    )");
+
+    // cpap_breaths
+    exec(R"(
+        CREATE TABLE IF NOT EXISTS cpap_breaths (
+            id                INT AUTO_INCREMENT PRIMARY KEY,
+            session_id        INT NOT NULL,
+            onset             DATETIME NOT NULL,
+            tidal_volume      DOUBLE,
+            inspiratory_time  DOUBLE,
+            expiratory_time   DOUBLE,
+            flow_limitation   DOUBLE,
+            UNIQUE KEY uq_session_onset (session_id, onset),
             FOREIGN KEY (session_id) REFERENCES cpap_sessions(id) ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     )");
@@ -514,6 +531,14 @@ bool MySQLDatabase::saveSession(const CPAPSession& session) {
 
         if (!session.events.empty()) {
             insertEvents(session_id, session.events);
+        }
+
+        if (!session.desaturations.empty()) {
+            insertDesaturations(session_id, session.desaturations);
+        }
+
+        if (!session.breaths.empty()) {
+            insertBreaths(session_id, session.breaths);
         }
 
         if (!session.vitals.empty()) {
@@ -717,6 +742,62 @@ void MySQLDatabase::insertEvents(int64_t session_id, const std::vector<CPAPEvent
     }
 }
 
+void MySQLDatabase::insertDesaturations(int64_t session_id, const std::vector<DesatEvent>& desats) {
+    if (desats.empty()) return;
+    const char* sql = R"(
+        INSERT IGNORE INTO cpap_events
+            (session_id, event_type, event_timestamp, duration_seconds, details)
+        VALUES (?, 'Desaturation', ?, ?, ?)
+    )";
+    MysqlStmtGuard g;
+    g.stmt = mysql_stmt_init(conn_);
+    if (mysql_stmt_prepare(g.stmt, sql, std::strlen(sql)) != 0) {
+        std::cerr << "MySQL: insertDesaturations prepare error: " << mysql_stmt_error(g.stmt) << std::endl;
+        return;
+    }
+    for (const auto& d : desats) {
+        char details[96];
+        std::snprintf(details, sizeof(details), "{\"nadir\":%.1f,\"depth\":%.1f}", d.nadir, d.depth);
+        ParamBinder p(4);
+        p.bindInt64(0, session_id);
+        p.bindText(1, fmtTimestamp(d.onset));
+        p.bindDouble(2, d.duration_seconds);
+        p.bindText(3, std::string(details));
+        mysql_stmt_bind_param(g.stmt, p.data());
+        if (mysql_stmt_execute(g.stmt) != 0) {
+            std::cerr << "MySQL: insertDesaturations error: " << mysql_stmt_error(g.stmt) << std::endl;
+        }
+    }
+}
+
+void MySQLDatabase::insertBreaths(int64_t session_id, const std::vector<Breath>& breaths) {
+    if (breaths.empty()) return;
+    const char* sql = R"(
+        INSERT IGNORE INTO cpap_breaths
+            (session_id, onset, tidal_volume, inspiratory_time, expiratory_time, flow_limitation)
+        VALUES (?, ?, ?, ?, ?, ?)
+    )";
+    MysqlStmtGuard g;
+    g.stmt = mysql_stmt_init(conn_);
+    if (mysql_stmt_prepare(g.stmt, sql, std::strlen(sql)) != 0) {
+        std::cerr << "MySQL: insertBreaths prepare error: " << mysql_stmt_error(g.stmt) << std::endl;
+        return;
+    }
+    for (const auto& b : breaths) {
+        ParamBinder p(6);
+        p.bindInt64(0, session_id);
+        p.bindText(1, fmtTimestamp(b.onset));
+        p.bindDouble(2, b.tidal_volume);
+        p.bindDouble(3, b.inspiratory_time);
+        p.bindDouble(4, b.expiratory_time);
+        p.bindDouble(5, b.flow_limitation);
+        mysql_stmt_bind_param(g.stmt, p.data());
+        if (mysql_stmt_execute(g.stmt) != 0) {
+            std::cerr << "MySQL: insertBreaths error: " << mysql_stmt_error(g.stmt) << std::endl;
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // insertVitals
 // ---------------------------------------------------------------------------
@@ -764,8 +845,8 @@ void MySQLDatabase::insertSessionMetrics(int64_t session_id, const SessionMetric
              avg_spo2, min_spo2, avg_heart_rate, max_heart_rate, min_heart_rate,
              avg_mask_pressure, avg_epr_pressure, avg_snore,
              leak_p50, leak_p95, avg_leak_rate, max_leak_rate,
-             avg_target_ventilation, therapy_mode)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             avg_target_ventilation, therapy_mode, spo2_drops, odi)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
             total_events           = VALUES(total_events),
             ahi                    = VALUES(ahi),
@@ -787,7 +868,9 @@ void MySQLDatabase::insertSessionMetrics(int64_t session_id, const SessionMetric
             avg_leak_rate          = VALUES(avg_leak_rate),
             max_leak_rate          = VALUES(max_leak_rate),
             avg_target_ventilation = VALUES(avg_target_ventilation),
-            therapy_mode           = VALUES(therapy_mode)
+            therapy_mode           = VALUES(therapy_mode),
+            spo2_drops             = VALUES(spo2_drops),
+            odi                    = VALUES(odi)
     )";
 
     MysqlStmtGuard g;
@@ -797,7 +880,7 @@ void MySQLDatabase::insertSessionMetrics(int64_t session_id, const SessionMetric
         return;
     }
 
-    ParamBinder p(22);
+    ParamBinder p(24);
     p.bindInt64(0, session_id);
     p.bindInt(1, m.total_events);
     p.bindDouble(2, m.ahi);
@@ -820,6 +903,8 @@ void MySQLDatabase::insertSessionMetrics(int64_t session_id, const SessionMetric
     p.bindOptDouble(19, m.max_leak_rate);
     p.bindOptDouble(20, m.avg_target_ventilation);
     p.bindOptInt(21, m.therapy_mode);
+    p.bindOptInt(22, m.spo2_drops);
+    p.bindOptDouble(23, m.odi);
 
     mysql_stmt_bind_param(g.stmt, p.data());
     if (mysql_stmt_execute(g.stmt) != 0) {

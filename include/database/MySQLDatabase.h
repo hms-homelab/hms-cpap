@@ -177,6 +177,12 @@ private:
     /// Insert events
     void insertEvents(int64_t session_id, const std::vector<CPAPEvent>& events);
 
+    /// Insert SpO2 desaturations (as cpap_events of type "Desaturation")
+    void insertDesaturations(int64_t session_id, const std::vector<DesatEvent>& desats);
+
+    /// Insert breath-by-breath detail (batch)
+    void insertBreaths(int64_t session_id, const std::vector<Breath>& breaths);
+
     /// Insert vitals (batch)
     void insertVitals(int64_t session_id, const std::vector<CPAPVitals>& vitals);
 

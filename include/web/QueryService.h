@@ -22,6 +22,7 @@ public:
     Json::Value getSessionSignals(const std::string& date);
     Json::Value getSessionVitals(const std::string& date, int interval);
     Json::Value getSessionEvents(const std::string& date);
+    Json::Value getSessionBreaths(const std::string& date);
     Json::Value getSessionOximetry(const std::string& date, int interval);
 
     /// Access the underlying database (for ad-hoc queries by controller endpoints).

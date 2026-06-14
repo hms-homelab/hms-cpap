@@ -217,10 +217,15 @@ void SQLiteDatabase::createSchema() {
             max_leak_rate          REAL,
             avg_target_ventilation REAL,
             therapy_mode           INTEGER,
+            spo2_drops             INTEGER,
+            odi                    REAL,
             created_at             TEXT DEFAULT (datetime('now')),
             FOREIGN KEY (session_id) REFERENCES cpap_sessions(id) ON DELETE CASCADE
         )
     )");
+    // Migrations for pre-existing DBs (ignore "duplicate column" errors).
+    sqlite3_exec(db_, "ALTER TABLE cpap_session_metrics ADD COLUMN spo2_drops INTEGER", nullptr, nullptr, nullptr);
+    sqlite3_exec(db_, "ALTER TABLE cpap_session_metrics ADD COLUMN odi REAL", nullptr, nullptr, nullptr);
 
     // cpap_breathing_summary
     exec(R"(
@@ -249,6 +254,21 @@ void SQLiteDatabase::createSchema() {
             duration_seconds  REAL DEFAULT 0,
             details           TEXT,
             UNIQUE (session_id, event_timestamp),
+            FOREIGN KEY (session_id) REFERENCES cpap_sessions(id) ON DELETE CASCADE
+        )
+    )");
+
+    // cpap_breaths (breath-by-breath detail from zero-crossing detection)
+    exec(R"(
+        CREATE TABLE IF NOT EXISTS cpap_breaths (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id        INTEGER NOT NULL,
+            onset             TEXT NOT NULL,
+            tidal_volume      REAL,
+            inspiratory_time  REAL,
+            expiratory_time   REAL,
+            flow_limitation   REAL,
+            UNIQUE (session_id, onset),
             FOREIGN KEY (session_id) REFERENCES cpap_sessions(id) ON DELETE CASCADE
         )
     )");
@@ -398,6 +418,14 @@ bool SQLiteDatabase::saveSession(const CPAPSession& session) {
 
         if (!session.events.empty()) {
             insertEvents(session_id, session.events);
+        }
+
+        if (!session.desaturations.empty()) {
+            insertDesaturations(session_id, session.desaturations);
+        }
+
+        if (!session.breaths.empty()) {
+            insertBreaths(session_id, session.breaths);
         }
 
         if (!session.vitals.empty()) {
@@ -602,6 +630,63 @@ void SQLiteDatabase::insertVitals(int64_t session_id, const std::vector<CPAPVita
 }
 
 // ---------------------------------------------------------------------------
+// insertDesaturations  (stored in cpap_events as type "Desaturation")
+// ---------------------------------------------------------------------------
+
+void SQLiteDatabase::insertDesaturations(int64_t session_id,
+                                         const std::vector<DesatEvent>& desats) {
+    if (desats.empty()) return;
+    const char* sql = R"(
+        INSERT OR IGNORE INTO cpap_events
+            (session_id, event_type, event_timestamp, duration_seconds, details)
+        VALUES (?, 'Desaturation', ?, ?, ?)
+    )";
+    StmtGuard g;
+    sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr);
+    for (const auto& d : desats) {
+        sqlite3_reset(g.stmt);
+        sqlite3_clear_bindings(g.stmt);
+        char details[96];
+        std::snprintf(details, sizeof(details), "{\"nadir\":%.1f,\"depth\":%.1f}", d.nadir, d.depth);
+        bind_int64(g.stmt, 1, session_id);
+        bind_text(g.stmt, 2, fmtTimestamp(d.onset));
+        bind_double(g.stmt, 3, d.duration_seconds);
+        bind_text(g.stmt, 4, details);
+        if (sqlite3_step(g.stmt) != SQLITE_DONE) {
+            std::cerr << "SQLite: insertDesaturations error: " << sqlite3_errmsg(db_) << std::endl;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// insertBreaths
+// ---------------------------------------------------------------------------
+
+void SQLiteDatabase::insertBreaths(int64_t session_id, const std::vector<Breath>& breaths) {
+    if (breaths.empty()) return;
+    const char* sql = R"(
+        INSERT OR IGNORE INTO cpap_breaths
+            (session_id, onset, tidal_volume, inspiratory_time, expiratory_time, flow_limitation)
+        VALUES (?, ?, ?, ?, ?, ?)
+    )";
+    StmtGuard g;
+    sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr);
+    for (const auto& b : breaths) {
+        sqlite3_reset(g.stmt);
+        sqlite3_clear_bindings(g.stmt);
+        bind_int64(g.stmt, 1, session_id);
+        bind_text(g.stmt, 2, fmtTimestamp(b.onset));
+        bind_double(g.stmt, 3, b.tidal_volume);
+        bind_double(g.stmt, 4, b.inspiratory_time);
+        bind_double(g.stmt, 5, b.expiratory_time);
+        bind_double(g.stmt, 6, b.flow_limitation);
+        if (sqlite3_step(g.stmt) != SQLITE_DONE) {
+            std::cerr << "SQLite: insertBreaths error: " << sqlite3_errmsg(db_) << std::endl;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // insertSessionMetrics
 // ---------------------------------------------------------------------------
 
@@ -613,8 +698,8 @@ void SQLiteDatabase::insertSessionMetrics(int64_t session_id, const SessionMetri
              avg_spo2, min_spo2, avg_heart_rate, max_heart_rate, min_heart_rate,
              avg_mask_pressure, avg_epr_pressure, avg_snore,
              leak_p50, leak_p95, avg_leak_rate, max_leak_rate,
-             avg_target_ventilation, therapy_mode)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             avg_target_ventilation, therapy_mode, spo2_drops, odi)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (session_id) DO UPDATE SET
             total_events           = excluded.total_events,
             ahi                    = excluded.ahi,
@@ -636,7 +721,9 @@ void SQLiteDatabase::insertSessionMetrics(int64_t session_id, const SessionMetri
             avg_leak_rate          = excluded.avg_leak_rate,
             max_leak_rate          = excluded.max_leak_rate,
             avg_target_ventilation = excluded.avg_target_ventilation,
-            therapy_mode           = excluded.therapy_mode
+            therapy_mode           = excluded.therapy_mode,
+            spo2_drops             = excluded.spo2_drops,
+            odi                    = excluded.odi
     )";
 
     StmtGuard g;
@@ -664,6 +751,8 @@ void SQLiteDatabase::insertSessionMetrics(int64_t session_id, const SessionMetri
     bind_opt_double(g.stmt, 20, m.max_leak_rate);
     bind_opt_double(g.stmt, 21, m.avg_target_ventilation);
     bind_opt_int(g.stmt, 22, m.therapy_mode);
+    bind_opt_int(g.stmt, 23, m.spo2_drops);
+    bind_opt_double(g.stmt, 24, m.odi);
 
     if (sqlite3_step(g.stmt) != SQLITE_DONE) {
         std::cerr << "SQLite: insertSessionMetrics error: " << sqlite3_errmsg(db_) << std::endl;
