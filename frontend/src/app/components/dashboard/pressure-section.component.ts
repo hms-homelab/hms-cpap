@@ -18,7 +18,7 @@ export interface PressureSectionData {
   template: `
     <div class="section" *ngIf="data">
       <div class="section-header">
-        <div class="section-title">Therapy Pressure</div>
+        <div class="section-title"><i class="fa-solid fa-gauge-high"></i> Therapy Pressure</div>
         <div class="section-subtitle">Auto-Adjusting CPAP Metrics</div>
       </div>
       <div class="gauge-row">

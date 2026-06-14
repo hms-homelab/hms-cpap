@@ -18,7 +18,7 @@ export interface EventsBreakdownData {
   template: `
     <div class="section" *ngIf="data">
       <div class="section-header">
-        <div class="section-title">Sleep Events Breakdown</div>
+        <div class="section-title"><i class="fa-solid fa-chart-pie"></i> Sleep Events Breakdown</div>
         <div class="section-subtitle">Apnea &amp; Hypopnea Analysis</div>
       </div>
       <div class="metrics-row">

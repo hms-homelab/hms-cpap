@@ -15,7 +15,7 @@ export interface OximetryRowData {
   template: `
     <div class="section" *ngIf="data">
       <div class="section-header">
-        <div class="section-title">O2 Ring Oximetry</div>
+        <div class="section-title"><i class="fa-solid fa-droplet"></i> O2 Ring Oximetry</div>
         <div class="section-subtitle">Wellue O2Ring -- SpO2 &amp; Heart Rate</div>
       </div>
       <div class="metrics-row">

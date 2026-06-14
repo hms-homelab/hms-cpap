@@ -17,7 +17,7 @@ export interface RealtimeStatusData {
   template: `
     <div class="section" *ngIf="data">
       <div class="section-header">
-        <div class="section-title">Real-Time Status</div>
+        <div class="section-title"><i class="fa-solid fa-tower-broadcast"></i> Real-Time Status</div>
         <div class="section-subtitle">Current Session Information</div>
       </div>
       <div class="metrics-row">

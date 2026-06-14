@@ -8,7 +8,7 @@ import { CommonModule } from '@angular/common';
   template: `
     <div class="section-card">
       <div class="section-header">
-        <div class="section-title">ML Intelligence</div>
+        <div class="section-title"><i class="fa-solid fa-brain"></i> ML Intelligence</div>
         <div class="section-subtitle">
           Predictions from {{ mlStatus?.models?.[0]?.samples_used || 0 }} therapy days
           - Last run {{ mlStatus?.last_trained || 'never' }}
