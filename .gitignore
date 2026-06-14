@@ -85,3 +85,7 @@ frontend/.angular/
 # Coverage
 build-coverage/
 coverage/
+
+# Playwright MCP scratch (local screenshots)
+.playwright-mcp/
+**/.playwright-mcp/
