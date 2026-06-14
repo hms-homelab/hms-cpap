@@ -296,6 +296,108 @@ TEST_F(SQLiteDatabaseTest, SaveSession_BreathingSummaryWithoutCalcMetrics) {
 }
 
 // ============================================================================
+// Advanced signal analysis (F2/F3): breaths, desaturations, ODI / spo2_drops
+// ============================================================================
+
+// Per-breath records round-trip into cpap_breaths with their TV/Ti/Te/flow-lim.
+TEST_F(SQLiteDatabaseTest, SaveSession_BreathsStored) {
+    auto start = tpFromEpoch(kBaseEpoch);
+    auto s = makeSession("DEVBR", start);
+
+    Breath b1;
+    b1.onset = start + seconds(10);
+    b1.tidal_volume = 450.0;
+    b1.inspiratory_time = 1.6;
+    b1.expiratory_time = 2.4;
+    b1.flow_limitation = 0.2;
+    Breath b2;
+    b2.onset = start + seconds(14);
+    b2.tidal_volume = 480.0;
+    b2.inspiratory_time = 1.5;
+    b2.expiratory_time = 2.6;
+    b2.flow_limitation = 0.7;
+    s.breaths = {b1, b2};
+
+    ASSERT_TRUE(db_->saveSession(s));
+
+    auto n = db_->executeQuery("SELECT COUNT(*) AS n FROM cpap_breaths");
+    ASSERT_EQ(n.size(), 1u);
+    EXPECT_EQ(n[0]["n"].asString(), "2");
+
+    // The exact per-breath payload survived (TV + flow-limitation columns).
+    auto hit = db_->executeQuery(
+        "SELECT COUNT(*) AS n FROM cpap_breaths "
+        "WHERE ROUND(tidal_volume,1)=480.0 AND ROUND(flow_limitation,1)=0.7 "
+        "AND ROUND(inspiratory_time,1)=1.5 AND ROUND(expiratory_time,1)=2.6");
+    ASSERT_EQ(hit.size(), 1u);
+    EXPECT_EQ(hit[0]["n"].asString(), "1");
+}
+
+// Desaturations are persisted into cpap_events as type 'Desaturation' carrying a
+// {"nadir":..,"depth":..} details blob -- and must NOT masquerade as apneas.
+TEST_F(SQLiteDatabaseTest, SaveSession_DesaturationsStoredAsEvents) {
+    auto start = tpFromEpoch(kBaseEpoch);
+    auto s = makeSession("DEVDS", start);
+
+    // One real respiratory event + two desats: only the apnea counts toward AHI.
+    s.events.emplace_back(EventType::OBSTRUCTIVE, start + seconds(30), 12.0);
+
+    DesatEvent d1;
+    d1.onset = start + seconds(100);
+    d1.duration_seconds = 18.0;
+    d1.nadir = 88.0;
+    d1.depth = 6.0;
+    DesatEvent d2;
+    d2.onset = start + seconds(300);
+    d2.duration_seconds = 11.0;
+    d2.nadir = 90.0;
+    d2.depth = 4.0;
+    s.desaturations = {d1, d2};
+
+    ASSERT_TRUE(db_->saveSession(s));
+
+    auto desat = db_->executeQuery(
+        "SELECT COUNT(*) AS n FROM cpap_events WHERE event_type='Desaturation'");
+    ASSERT_EQ(desat.size(), 1u);
+    EXPECT_EQ(desat[0]["n"].asString(), "2");
+
+    // details JSON carries nadir + depth for the chart overlay.
+    auto det = db_->executeQuery(
+        "SELECT COUNT(*) AS n FROM cpap_events "
+        "WHERE event_type='Desaturation' AND details LIKE '%\"nadir\":88.0%' "
+        "AND details LIKE '%\"depth\":6.0%'");
+    ASSERT_EQ(det.size(), 1u);
+    EXPECT_EQ(det[0]["n"].asString(), "1");
+
+    // The obstructive apnea is a distinct, non-Desaturation row.
+    auto apnea = db_->executeQuery(
+        "SELECT COUNT(*) AS n FROM cpap_events WHERE event_type!='Desaturation'");
+    ASSERT_EQ(apnea.size(), 1u);
+    EXPECT_EQ(apnea[0]["n"].asString(), "1");
+}
+
+// ODI + spo2_drops persist on the session metrics row.
+TEST_F(SQLiteDatabaseTest, SaveSession_MetricsOdiAndSpo2Drops) {
+    auto start = tpFromEpoch(kBaseEpoch);
+    auto s = makeSession("DEVODI", start);
+
+    SessionMetrics m;
+    m.total_events = 4;
+    m.ahi = 1.0;
+    m.spo2_drops = 3;
+    m.odi = 2.5;
+    s.metrics = m;
+
+    ASSERT_TRUE(db_->saveSession(s));
+
+    auto got = db_->executeQuery(
+        "SELECT COUNT(*) AS n FROM cpap_session_metrics "
+        "WHERE spo2_drops=3 AND ROUND(odi,1)=2.5");
+    ASSERT_EQ(got.size(), 1u);
+    EXPECT_EQ(got[0]["n"].asString(), "1");
+}
+
+// ============================================================================
 // markSessionCompleted / reopenSession
 // ============================================================================
 
