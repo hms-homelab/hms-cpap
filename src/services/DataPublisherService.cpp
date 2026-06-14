@@ -748,7 +748,7 @@ bool DataPublisherService::publishSessionCompleted() {
 
 bool DataPublisherService::publishSession(const CPAPSession& session) {
     std::cout << "\n" << std::string(60, '=') << std::endl;
-    std::cout << "📤 Publishing OSCAR-compatible session data..." << std::endl;
+    std::cout << "📤 Publishing session data..." << std::endl;
     std::cout << std::string(60, '=') << std::endl;
 
     bool db_success = true;
@@ -790,7 +790,7 @@ bool DataPublisherService::publishSession(const CPAPSession& session) {
 
     std::cout << std::string(60, '=') << std::endl;
     if (db_success && mqtt_success) {
-        std::cout << "✅ OSCAR metrics published successfully (DB + MQTT)" << std::endl;
+        std::cout << "✅ Session metrics published successfully (DB + MQTT)" << std::endl;
     } else if (db_success) {
         std::cout << "⚠️  Session published to DB only" << std::endl;
     } else if (mqtt_success) {

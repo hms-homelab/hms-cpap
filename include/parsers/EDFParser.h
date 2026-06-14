@@ -140,7 +140,7 @@ private:
         bool& session_active
     );
 
-    // Breath analysis and calculated metrics (OSCAR-style)
+    // Breath analysis and calculated respiratory metrics
     struct BreathCycle {
         int start_idx;
         int end_idx;

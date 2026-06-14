@@ -6,7 +6,7 @@
 
 ## Problem
 
-hms-cpap collects bursts (`BurstCollectorService`), parses with the shared `hms-cpapdash-parser`, stores to its `cpap_*` tables, serves the Angular SPA, and publishes to MQTT/Home Assistant (`DataPublisherService`). Measured against OSCAR, three signal-analysis affordances are missing:
+hms-cpap collects bursts (`BurstCollectorService`), parses with the shared `hms-cpapdash-parser`, stores to its `cpap_*` tables, serves the Angular SPA, and publishes to MQTT/Home Assistant (`DataPublisherService`). Compared with established CPAP analysis tools, three signal-analysis affordances are missing:
 
 1. **Event overlay on flow is vertical-lines-only.** `frontend` `signal-chart` + `session-detail` render events via `chart-helpers.ts` `eventAnnotations()` as dashed vertical lines; `duration_seconds` is fetched but unused, so an event's *span* over the flow trace isn't shown.
 2. **No desaturation detection on the machine-SpO2 path.** SpO2 from SAD.edf is charted via `cpap_vitals`, but there's no desaturation/ODI on that path (ODI exists only for O2Ring oximetry today).
@@ -56,7 +56,7 @@ Publish `odi` and `spo2_drops` as additional session attributes/sensors so HA da
 
 1. **F1 — event spans.** `chart-helpers.ts` `eventAnnotations()`: emit a chartjs-plugin-annotation **`box`** annotation `{ xMin: onsetIdx, xMax: idx(onset+duration) }` with a translucent type color, instead of (or alongside) the line. Zero-duration types (RERA) keep the dashed line. Extend `session-detail`'s window re-indexing to shift `xMin`/`xMax` together. Add an event-type **legend** strip (extend the badges component to render a color key, not just counts).
 2. **F2 — desaturation.** No new fetch: desat events arrive via `/events` and render as orange spans on the **SpO2** signal (`showEvents: true` on the SpO2 signal def, filtered to `Desaturation`). Add an **ODI** value to the SpO2 metric card + the events breakdown.
-3. **F3 — breaths.** `session-detail.component.ts` adds a `getSessionBreaths(date)` call. New chart mode on the flow chart: when zoomed to a window ≤ ~60 s, overlay breath boundaries (faint line annotations at each onset) + alternating-breath shading (matches OSCAR's breath bands), and enable the already-registered `chartjs-plugin-zoom` for wheel/pinch zoom. Add a per-breath **Flow Limitation** mini-chart to the overview strip.
+3. **F3 — breaths.** `session-detail.component.ts` adds a `getSessionBreaths(date)` call. New chart mode on the flow chart: when zoomed to a window ≤ ~60 s, overlay breath boundaries (faint line annotations at each onset) + alternating-breath shading, and enable the already-registered `chartjs-plugin-zoom` for wheel/pinch zoom. Add a per-breath **Flow Limitation** mini-chart to the overview strip.
 
 ## Tests
 

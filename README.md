@@ -7,7 +7,7 @@
 
 **Lightweight C++ microservice for CPAP data collection with built-in web dashboard, PDF reports, and Home Assistant integration.**
 
-Automatically extracts sleep therapy data from ResMed and Lowenstein Prisma CPAP machines, parses EDF/WMEDF files using OSCAR algorithms, and publishes 47+ metrics to Home Assistant via MQTT discovery. Includes a full Angular web UI with OSCAR/SleepHQ-grade charting, PDF report generation, O2Ring pulse oximetry, LLM-powered session summaries, and ML intelligence. Supports two data sources: ezShare WiFi SD with bridge, or local filesystem.
+Automatically extracts sleep therapy data from ResMed and Lowenstein Prisma CPAP machines, parses EDF/WMEDF files with its own signal-analysis engine, and publishes 47+ metrics to Home Assistant via MQTT discovery. Includes a full Angular web UI with clinical-grade signal charting, PDF report generation, O2Ring pulse oximetry, LLM-powered session summaries, and ML intelligence. Supports two data sources: ezShare WiFi SD with bridge, or local filesystem.
 
 ## Screenshots
 
@@ -525,7 +525,7 @@ Most solutions require cloud services, proprietary apps, or manual SD card remov
 - 100% local, no cloud
 - Automatic collection via WiFi
 - Built-in web dashboard with full signal charting
-- Open-source algorithms (OSCAR)
+- Open-source parsing & analysis algorithms
 - Home Assistant integration
 - ML-ready database storage
 
@@ -542,7 +542,7 @@ All data stays local:
 
 ### Can I use this alongside OSCAR?
 
-Yes! HMS-CPAP uses OSCAR algorithms for parsing. You can run both simultaneously and cross-validate metrics.
+Yes. HMS-CPAP reads the same SD-card files independently, so you can run both simultaneously and cross-validate metrics.
 
 ## Contributing
 
@@ -560,7 +560,6 @@ This project is licensed under the **MIT License** - see [LICENSE](LICENSE) file
 
 ### Third-Party Components
 
-- **OSCAR algorithms** - GPL-3.0 (EDF parsing logic)
 - **libcurl** - MIT-style license
 - **PostgreSQL libpq** - PostgreSQL License
 - **Paho MQTT** - EPL 2.0
@@ -570,7 +569,7 @@ This project is licensed under the **MIT License** - see [LICENSE](LICENSE) file
 
 ## Acknowledgments
 
-- [OSCAR Project](https://www.sleepfiles.com/OSCAR/) - EDF parsing algorithms and Prisma loader reference
+- The open-source CPAP community - public documentation of the EDF/WMEDF file formats
 - [ResMed](https://www.resmed.com/) - CPAP hardware
 - [Lowenstein Medical](https://www.lowensteinmedical.com/) - Prisma CPAP hardware
 - [Home Assistant](https://www.home-assistant.io/) - Smart home platform

@@ -189,7 +189,7 @@ private:
     /// Insert/upsert session metrics
     void insertSessionMetrics(int64_t session_id, const SessionMetrics& metrics);
 
-    /// Insert calculated metrics (OSCAR-style, batch)
+    /// Insert calculated respiratory metrics (batch)
     void insertCalculatedMetrics(int64_t session_id,
                                   const std::vector<BreathingSummary>& summaries);
 };

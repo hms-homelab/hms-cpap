@@ -60,7 +60,7 @@ struct CPAPVitals {
 
 /**
  * BreathingSummary - Summary statistics for breathing waveforms (from BRP.edf)
- * Includes OSCAR-style calculated metrics
+ * Includes calculated respiratory metrics
  */
 struct BreathingSummary {
     std::chrono::system_clock::time_point timestamp;
@@ -73,7 +73,7 @@ struct BreathingSummary {
     double max_pressure;
     double min_pressure;
 
-    // Calculated respiratory metrics (OSCAR-style)
+    // Calculated respiratory metrics (calculated)
     std::optional<double> respiratory_rate;      // Breaths per minute
     std::optional<double> tidal_volume;          // mL per breath (avg)
     std::optional<double> minute_ventilation;    // L/min (RR × TV)
@@ -101,7 +101,7 @@ struct BreathingSummary {
 };
 
 /**
- * SessionMetrics - Aggregated metrics for a CPAP session (OSCAR-compatible)
+ * SessionMetrics - Aggregated metrics for a CPAP session
  */
 struct SessionMetrics {
     // ===== EVENT METRICS =====

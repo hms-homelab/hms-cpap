@@ -638,7 +638,7 @@ bool DatabaseService::saveSession(const CPAPSession& session) {
             insertBreathingSummaries(txn, session_id, session.breathing_summary);
             std::cout << "   Breathing summaries: " << session.breathing_summary.size() << std::endl;
 
-            // 3a. Insert calculated metrics (OSCAR-style)
+            // 3a. Insert calculated respiratory metrics
             insertCalculatedMetrics(txn, session_id, session.breathing_summary);
             std::cout << "   Calculated metrics saved (RR, TV, MV, Ti/Te, I:E, FL, P95)" << std::endl;
         }

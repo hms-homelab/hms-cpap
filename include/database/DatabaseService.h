@@ -233,7 +233,7 @@ private:
                               const SessionMetrics& metrics);
 
     /**
-     * Insert calculated respiratory metrics (OSCAR-style)
+     * Insert calculated respiratory metrics (calculated)
      *
      * @param work Transaction
      * @param session_id Session ID

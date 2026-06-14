@@ -439,7 +439,6 @@ bool EDFParser::parseBRPFile(const std::string& filepath, CPAPSession& session) 
     }
 
     // ResMed stores flow in L/sec - convert to L/min (multiply by 60)
-    // Reference: OSCAR resmed_loader.cpp line 3121
     for (double& val : flow_data) {
         val *= 60.0;
     }
@@ -477,7 +476,7 @@ bool EDFParser::parseBRPFile(const std::string& filepath, CPAPSession& session) 
             summary.min_pressure = *std::min_element(p_begin, p_end);
         }
 
-        // Calculate OSCAR-style respiratory metrics (RR, TV, MV, Ti/Te, I:E, FL, percentiles)
+        // Calculate calculated respiratory metrics (RR, TV, MV, Ti/Te, I:E, FL, percentiles)
         calculateRespiratoryMetrics(flow_data, press_data, sample_rate, min, summary);
 
         session.breathing_summary.push_back(summary);
@@ -552,7 +551,7 @@ void EDFParser::detectFlowBasedSessionBoundaries(
 }
 
 // ============================================================================
-//  Respiratory Metrics Calculation (OSCAR-style)
+//  Respiratory Metrics Calculation (calculated)
 // ============================================================================
 
 double EDFParser::calculatePercentile(
@@ -890,7 +889,7 @@ void EDFParser::calculateRespiratoryMetrics(
             double avg_leak_ml_per_breath = total_leak / valid_breaths;
             summary.leak_rate = (avg_leak_ml_per_breath * summary.respiratory_rate.value()) / 1000.0;
 
-            // Sanity check: typical leak 0-40 L/min, mask leaks >24 L/min problematic per OSCAR
+            // Sanity check: typical leak 0-40 L/min, mask leaks >24 L/min problematic
             if (summary.leak_rate.value() < 0 || summary.leak_rate.value() > 100.0) {
                 summary.leak_rate = std::nullopt;  // Invalid, discard
             }
