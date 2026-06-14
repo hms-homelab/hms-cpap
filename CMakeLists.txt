@@ -153,7 +153,7 @@ FetchContent_MakeAvailable(miniz)
 # hms-shared modules
 FetchContent_Declare(hms_shared
     GIT_REPOSITORY https://github.com/hms-homelab/hms-shared.git
-    GIT_TAG        v1.6.6
+    GIT_TAG        v1.6.7
 )
 FetchContent_Populate(hms_shared)
 
