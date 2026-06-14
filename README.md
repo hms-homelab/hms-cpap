@@ -7,7 +7,7 @@
 
 **Lightweight C++ microservice for CPAP data collection with built-in web dashboard, PDF reports, and Home Assistant integration.**
 
-Automatically extracts sleep therapy data from ResMed and Lowenstein Prisma CPAP machines, parses EDF/WMEDF files using OSCAR algorithms, and publishes 47+ metrics to Home Assistant via MQTT discovery. Includes a full Angular web UI with OSCAR/SleepHQ-grade charting, PDF report generation, O2Ring pulse oximetry, LLM-powered session summaries, and ML intelligence. Supports four data sources: FYSETC SD WiFi Pro (raw TCP or HTTP mode), ezShare WiFi SD with bridge, or local filesystem.
+Automatically extracts sleep therapy data from ResMed and Lowenstein Prisma CPAP machines, parses EDF/WMEDF files using OSCAR algorithms, and publishes 47+ metrics to Home Assistant via MQTT discovery. Includes a full Angular web UI with OSCAR/SleepHQ-grade charting, PDF report generation, O2Ring pulse oximetry, LLM-powered session summaries, and ML intelligence. Supports two data sources: ezShare WiFi SD with bridge, or local filesystem.
 
 ## Screenshots
 
@@ -39,7 +39,7 @@ Automatically extracts sleep therapy data from ResMed and Lowenstein Prisma CPAP
 | **Philips** | DreamStation 2 | No | Yes |
 | **Lowenstein** | Prisma Line (20A, 20C, 25S, 25ST), Prisma Smart (Max, Plus, Soft) | No -- files written post-session | Yes |
 
-All data sources (FYSETC SD WiFi Pro, ezShare WiFi SD, local filesystem) work with both manufacturers -- the WiFi SD adapters sit in the machine's SD card slot regardless of brand.
+All data sources (ezShare WiFi SD, local filesystem) work with both manufacturers -- the WiFi SD adapter sits in the machine's SD card slot regardless of brand.
 
 **ResMed** EDF files grow incrementally during therapy, enabling live session monitoring with pulsing LIVE badge and auto-refreshing charts.
 
@@ -48,7 +48,7 @@ All data sources (FYSETC SD WiFi Pro, ezShare WiFi SD, local filesystem) work wi
 ## Features
 
 - **HA-Style Web Dashboard** - 10 section components with pressure gauges, AI summary, therapy insights, ML predictions
-- **4 Data Sources** - FYSETC SD WiFi Pro (raw TCP or HTTP), ezShare WiFi SD + bridge, or local files
+- **2 Data Sources** - ezShare WiFi SD + bridge, or local files
 - **47+ Metrics** - AHI, leak rate, pressure, usage hours, events, daily summary, LLM AI summary
 - **Home Assistant Auto-Discovery** - Instant MQTT integration with 47 sensor entities
 - **PDF Reports** - Generate multi-night therapy reports for sharing with your doctor
@@ -91,8 +91,7 @@ cp ../.env.example ../.env
 nano ../.env  # Set MQTT, DB, and source settings
 
 # 3. Run (choose your data source)
-CPAP_SOURCE=fysetc     ./hms_cpap   # FYSETC raw TCP (recommended)
-CPAP_SOURCE=ezshare    ./hms_cpap   # ezShare / FYSETC HTTP mode
+CPAP_SOURCE=ezshare    ./hms_cpap   # ezShare WiFi SD via bridge (recommended)
 CPAP_SOURCE=local      ./hms_cpap   # Local filesystem (ResMed DATALOG)
 CPAP_SOURCE=lowenstein ./hms_cpap   # Lowenstein Prisma (local dir or WiFi SD)
 
@@ -102,9 +101,9 @@ CPAP_SOURCE=lowenstein ./hms_cpap   # Lowenstein Prisma (local dir or WiFi SD)
 
 ## Data Sources
 
-Three hardware paths for wireless data collection, plus a local filesystem option. All paths work with both ResMed and Lowenstein machines -- the WiFi SD adapters sit in any standard SD card slot:
+One wireless hardware path plus a local filesystem option. Both work with ResMed and Lowenstein machines -- the WiFi SD adapter sits in any standard SD card slot:
 
-### Path 1: ezShare WiFi SD (Recommended)
+### ezShare WiFi SD (Recommended)
 
 **How it works:** The ezShare creates its own WiFi AP, which means it can't talk to your home network directly. You'll need a bridge to bring it onto your network. A convenient dual-WiFi bridge is provided by [hms-mm](https://github.com/hms-homelab/hms-mm) -- one radio connects to the ezShare, the other to your home WiFi, and it serves the files over HTTP. HMS-CPAP polls the bridge every 65s.
 
@@ -158,39 +157,9 @@ DATALOG/
   STR.edf                  # Daily therapy summaries
 ```
 
-### Path 2: FYSETC SD WiFi Pro — Raw TCP Mode
-
-**How it works:** The FYSETC SD WiFi Pro board sits in the CPAP's SD card slot. Custom firmware reads raw sectors from the onboard NAND flash and streams them over TCP to HMS-CPAP. HMS-CPAP parses FAT32 from the raw sectors, discovers sessions, and downloads only what changed. No FAT mount or HTTP server on the device — minimal bus hold time, maximum reliability.
-
-**Hardware:** FYSETC SD WiFi Pro(Manufacturer has removed the original listing recently but it may be still available in AliExpress) board + SD extension ribbon cable + external 5V USB power source. The ribbon cable lets the board sit outside the CPAP enclosure for better WiFi signal and heat dissipation. External power avoids brownouts from the CPAP's limited 3.3V SD rail during sustained WiFi transmissions.
-
-**Firmware:** Closed-source, available as a pre-built binary. The TCP protocol and the server-side implementation (Fat32Parser, FysetcTcpServer, IDataSource adapter) are open-source in this repo. See [Fysetc TCP Architecture](docs/FYSETC_TCP_ARCHITECTURE.md) for the full protocol spec and implementation guide.
-
-**Pros:** Most reliable, lowest bus contention, incremental delta downloads, firmware log forwarding for remote diagnostics. **Cons:** Requires hardware mod (ribbon cable + external power).
-
-```bash
-CPAP_SOURCE=fysetc
-FYSETC_LISTEN_PORT=9000
-```
-
-### Path 3: FYSETC SD WiFi Pro — HTTP Mode
-
-**How it works:** Same FYSETC board, but running open-source firmware that emulates an ezShare WiFi SD card. Serves EDF files over HTTP on your home network. HMS-CPAP polls it every 65s for new/changed files using the same ezShare HTTP protocol.
-
-**Hardware:** FYSETC SD WiFi Pro(Manufacturer has removed the original listing recently but it may be still available in AliExpress) board. Can sit directly in the SD slot
-
-**Firmware:** [hms-fysetc](https://github.com/hms-homelab/hms-fysetc) -- open-source ESP-IDF firmware (MIT). Emulates the ezShare HTTP API.
-
-**Pros:** Simple setup, open-source firmware, no hardware mod. **Cons:** Holds the SD bus for entire HTTP responses (seconds for large files), which can cause brownouts on the CPAP's 3.3V rail with large BRP files.
-
-```bash
-CPAP_SOURCE=ezshare
-EZSHARE_BASE_URL=http://<fysetc-ip>
-```
-
 ### Lowenstein Prisma
 
-All the data source paths above (ezShare, FYSETC, local) work with Lowenstein machines. Set `CPAP_SOURCE=lowenstein` and point `CPAP_LOCAL_DIR` at the SD card contents or a copy. HMS-CPAP auto-detects both Prisma formats:
+Both data source paths above (ezShare, local) work with Lowenstein machines. Set `CPAP_SOURCE=lowenstein` and point `CPAP_LOCAL_DIR` at the SD card contents or a copy. HMS-CPAP auto-detects both Prisma formats:
 
 **Prisma Smart** writes a raw directory tree:
 ```
@@ -230,8 +199,8 @@ All configuration via environment variables (12-factor app). See [`.env.example`
 
 ```bash
 # Data source
-CPAP_SOURCE=ezshare          # ezshare, fysetc_poll, or local
-EZSHARE_BASE_URL=http://192.168.4.1  # ezShare or Fysetc IP
+CPAP_SOURCE=ezshare          # ezshare or local
+EZSHARE_BASE_URL=http://192.168.4.1  # ezShare bridge IP
 
 # MQTT broker (required for Home Assistant)
 MQTT_BROKER=localhost
@@ -429,21 +398,21 @@ Sensors auto-appear as a device with 47+ entities:
          │                       │
          └───────────┬───────────┘
                      │
-        ┌────────────┼────────────┐
-        │            │            │
-        ▼            ▼            ▼
-  ┌──────────┐ ┌──────────┐ ┌──────────┐
-  │ ezShare  │ │ FYSETC   │ │  Local   │
-  │ WiFi SD  │ │ SD WiFi  │ │  FS/USB  │
-  └────┬─────┘ └────┬─────┘ └────┬─────┘
-       │ WiFi AP     │ TCP/HTTP   │
-       ▼             │            │
-  ┌──────────┐       │            │
-  │ hms-mm   │       │            │
-  │ bridge   │       │            │
-  └────┬─────┘       │            │
-       │ HTTP        │            │
-       ▼             ▼            ▼
+             ┌───────────┴───────────┐
+             │                       │
+             ▼                       ▼
+       ┌──────────┐            ┌──────────┐
+       │ ezShare  │            │  Local   │
+       │ WiFi SD  │            │  FS/USB  │
+       └────┬─────┘            └────┬─────┘
+            │ WiFi AP               │
+            ▼                       │
+       ┌──────────┐                 │
+       │ hms-mm   │                 │
+       │ bridge   │                 │
+       └────┬─────┘                 │
+            │ HTTP                  │
+            ▼                       ▼
 ┌──────────────────────────────────────────┐
 │            HMS-CPAP Service              │
 │  BurstCollector + PrismaIngestion        │
