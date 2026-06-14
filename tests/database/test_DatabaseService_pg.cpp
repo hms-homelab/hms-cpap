@@ -151,7 +151,20 @@ CREATE TABLE IF NOT EXISTS cpap_session_metrics (
     max_leak_rate          FLOAT,
     avg_target_ventilation FLOAT,
     therapy_mode           INT,
+    spo2_drops             INT,
+    odi                    FLOAT,
     created_at             TIMESTAMP DEFAULT NOW(),
+    FOREIGN KEY (session_id) REFERENCES cpap_sessions(id) ON DELETE CASCADE
+);
+CREATE TABLE IF NOT EXISTS cpap_breaths (
+    id                SERIAL PRIMARY KEY,
+    session_id        INT NOT NULL,
+    onset             TIMESTAMP NOT NULL,
+    tidal_volume      FLOAT,
+    inspiratory_time  FLOAT,
+    expiratory_time   FLOAT,
+    flow_limitation   FLOAT,
+    UNIQUE (session_id, onset),
     FOREIGN KEY (session_id) REFERENCES cpap_sessions(id) ON DELETE CASCADE
 );
 CREATE TABLE IF NOT EXISTS cpap_breathing_summary (
@@ -332,7 +345,16 @@ protected:
         ASSERT_TRUE(db_->connect());
         ASSERT_TRUE(db_->isConnected());
 
-        // 3. Apply the full DDL into the schema.
+        // 3. The connect()-time auto-migration runs against an EMPTY schema_ (our
+        //    DDL has not run yet), so any table it creates whose FK references a
+        //    not-yet-existent schema_ table binds that FK to the public fallback
+        //    instead. cpap_breaths is the one such table; drop the prematurely
+        //    bound copy so the DDL below recreates it with the FK pointing at
+        //    schema_.cpap_sessions. (In production cpap_sessions always predates
+        //    the cpap_breaths migration, so this ordering issue can't occur.)
+        db_->executeRaw("DROP TABLE IF EXISTS cpap_breaths CASCADE");
+
+        // 4. Apply the full DDL into the schema.
         ASSERT_TRUE(db_->executeRaw(kSchema))
             << "Failed to apply schema DDL into " << schema_;
     }
@@ -599,6 +621,83 @@ TEST_F(PgDatabaseTest, SaveSession_BreathingSummaryWithoutCalcMetrics) {
 
     EXPECT_EQ(count("cpap_breathing_summary"), 1);
     EXPECT_EQ(count("cpap_calculated_metrics"), 0);
+}
+
+// ============================================================================
+// Advanced signal analysis (F2/F3): breaths, desaturations, ODI / spo2_drops
+// Postgres parity for the SQLiteDatabase equivalents.
+// ============================================================================
+
+TEST_F(PgDatabaseTest, SaveSession_BreathsStored) {
+    auto start = tpFromEpoch(kBaseEpoch);
+    auto s = makeSession("DEVBR", start);
+
+    Breath b1;
+    b1.onset = start + seconds(10);
+    b1.tidal_volume = 450.0;
+    b1.inspiratory_time = 1.6;
+    b1.expiratory_time = 2.4;
+    b1.flow_limitation = 0.2;
+    Breath b2;
+    b2.onset = start + seconds(14);
+    b2.tidal_volume = 480.0;
+    b2.inspiratory_time = 1.5;
+    b2.expiratory_time = 2.6;
+    b2.flow_limitation = 0.7;
+    s.breaths = {b1, b2};
+
+    ASSERT_TRUE(db_->saveSession(s));
+
+    EXPECT_EQ(count("cpap_breaths"), 2);
+    EXPECT_EQ(count("cpap_breaths",
+                    "ROUND(tidal_volume::numeric,1)=480.0 AND "
+                    "ROUND(flow_limitation::numeric,1)=0.7 AND "
+                    "ROUND(inspiratory_time::numeric,1)=1.5 AND "
+                    "ROUND(expiratory_time::numeric,1)=2.6"), 1);
+}
+
+TEST_F(PgDatabaseTest, SaveSession_DesaturationsStoredAsEvents) {
+    auto start = tpFromEpoch(kBaseEpoch);
+    auto s = makeSession("DEVDS", start);
+
+    s.events.emplace_back(EventType::OBSTRUCTIVE, start + seconds(30), 12.0);
+
+    DesatEvent d1;
+    d1.onset = start + seconds(100);
+    d1.duration_seconds = 18.0;
+    d1.nadir = 88.0;
+    d1.depth = 6.0;
+    DesatEvent d2;
+    d2.onset = start + seconds(300);
+    d2.duration_seconds = 11.0;
+    d2.nadir = 90.0;
+    d2.depth = 4.0;
+    s.desaturations = {d1, d2};
+
+    ASSERT_TRUE(db_->saveSession(s));
+
+    EXPECT_EQ(count("cpap_events", "event_type='Desaturation'"), 2);
+    EXPECT_EQ(count("cpap_events",
+                    "event_type='Desaturation' AND details LIKE '%\"nadir\":88.0%' "
+                    "AND details LIKE '%\"depth\":6.0%'"), 1);
+    EXPECT_EQ(count("cpap_events", "event_type<>'Desaturation'"), 1);
+}
+
+TEST_F(PgDatabaseTest, SaveSession_MetricsOdiAndSpo2Drops) {
+    auto start = tpFromEpoch(kBaseEpoch);
+    auto s = makeSession("DEVODI", start);
+
+    SessionMetrics m;
+    m.total_events = 4;
+    m.ahi = 1.0;
+    m.spo2_drops = 3;
+    m.odi = 2.5;
+    s.metrics = m;
+
+    ASSERT_TRUE(db_->saveSession(s));
+
+    EXPECT_EQ(count("cpap_session_metrics",
+                    "spo2_drops=3 AND ROUND(odi::numeric,1)=2.5"), 1);
 }
 
 // ============================================================================
