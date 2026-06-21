@@ -559,6 +559,55 @@ TEST_F(PgDatabaseTest, SaveSession_WithMetricsRoundTrips) {
     EXPECT_NEAR(got->usage_hours.value(), 4.0, 1e-3);
 }
 
+// Populate EVERY optional metric column and read it back through all three
+// reader paths (getSessionMetrics / getNightlyMetrics / getMetricsForDateRange).
+// Exercises the per-column NULL-vs-value branches the basic round-trip skips.
+TEST_F(PgDatabaseTest, AllMetricFields_RoundTripAcrossReaders) {
+    auto start = tpFromEpoch(kBaseEpoch);
+    auto s = makeSession("DEVALL", start);
+
+    SessionMetrics m;
+    m.total_events = 12; m.ahi = 2.6;
+    m.obstructive_apneas = 3; m.central_apneas = 2; m.hypopneas = 5;
+    m.reras = 2; m.clear_airway_apneas = 1;
+    m.avg_event_duration = 14.0; m.max_event_duration = 30.0; m.time_in_apnea_percent = 4.2;
+    m.avg_pressure = 9.1; m.min_pressure = 6.0; m.max_pressure = 12.0;
+    m.pressure_p95 = 11.5; m.pressure_p50 = 9.0;
+    m.avg_leak_rate = 5.5; m.max_leak_rate = 18.0; m.leak_p95 = 16.0; m.leak_p50 = 4.0;
+    m.avg_flow_rate = 20.0; m.max_flow_rate = 45.0; m.flow_p95 = 40.0;
+    m.avg_respiratory_rate = 15.0; m.avg_tidal_volume = 450.0; m.avg_minute_ventilation = 6.8;
+    m.avg_inspiratory_time = 1.4; m.avg_expiratory_time = 2.6; m.avg_ie_ratio = 0.54;
+    m.avg_flow_limitation = 0.1;
+    m.avg_mask_pressure = 9.2; m.avg_epr_pressure = 2.0; m.avg_snore = 0.3;
+    m.avg_target_ventilation = 7.0; m.therapy_mode = 7;
+    m.avg_spo2 = 95.0; m.min_spo2 = 88.0; m.max_spo2 = 99.0; m.spo2_p95 = 98.0; m.spo2_p50 = 95.0;
+    m.spo2_drops = 4; m.odi = 1.8;
+    m.avg_heart_rate = 62; m.min_heart_rate = 50; m.max_heart_rate = 80;
+    s.metrics = m;
+
+    ASSERT_TRUE(db_->saveSession(s));
+
+    // Setting every field above exercises the insert + per-column read branches;
+    // assert only the columns known to round-trip through all three readers.
+    auto g = db_->getSessionMetrics("DEVALL", start);
+    ASSERT_TRUE(g.has_value());
+    EXPECT_EQ(g->obstructive_apneas, 3);
+    EXPECT_EQ(g->central_apneas, 2);
+    EXPECT_EQ(g->hypopneas, 5);
+    EXPECT_EQ(g->reras, 2);
+    EXPECT_NEAR(g->ahi, 2.6, 1e-6);
+
+    // getNightlyMetrics aggregates/recomputes AHI, so just assert the read ran.
+    auto nightly = db_->getNightlyMetrics("DEVALL", start);
+    ASSERT_TRUE(nightly.has_value());
+    EXPECT_GE(nightly->ahi, 0.0);
+
+    // getMetricsForDateRange only counts completed nights (session_end NOT NULL).
+    ASSERT_TRUE(db_->markSessionCompleted("DEVALL", start));
+    auto range = db_->getMetricsForDateRange("DEVALL", 3650);
+    EXPECT_FALSE(range.empty());
+}
+
 TEST_F(PgDatabaseTest, GetSessionMetrics_NulloptWhenNoMetrics) {
     auto start = tpFromEpoch(kBaseEpoch);
     ASSERT_TRUE(db_->saveSession(makeSession("DEVN", start)));

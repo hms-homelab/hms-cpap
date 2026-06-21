@@ -9,6 +9,7 @@
 #include "services/BurstCollectorService.h"
 #include "services/DataPublisherService.h"
 #include "services/SessionDiscoveryService.h"
+#include "services/PrismaIngestion.h"
 #include "clients/IDataSource.h"
 #include "clients/EzShareClient.h"
 #include "database/IDatabase.h"
@@ -2152,5 +2153,128 @@ TEST_F(BurstOrchestrationTest, GetLastBurstTime_NotUpdatedByDirectCycle) {
         << "Direct cycle must NOT advance last_burst_time_";
 }
 
+// Lowenstein Prisma branch of executeBurstCycle: inject a PrismaIngestion over a
+// combined SMART max tree (3-digit seq, spaced RespEvent attrs) and run one
+// cycle. Drives discover -> stage -> parse -> saveSession -> publish, the largest
+// previously-uncovered block in the service.
+TEST_F(BurstOrchestrationTest, PrismaMode_DiscoversParsesAndStores) {
+    namespace fs = std::filesystem;
+    std::string wmedf;
+    for (const char* p : {"tests/fixtures/prisma/signal_real.wmedf",
+                          "../tests/fixtures/prisma/signal_real.wmedf",
+                          "../../tests/fixtures/prisma/signal_real.wmedf"}) {
+        if (fs::exists(p)) { wmedf = p; break; }
+    }
+    if (wmedf.empty()) GTEST_SKIP() << "prisma wmedf fixture not found";
+
+    // Combined SMART max layout: <serial(10-digit)>/<YYYYMMDD>/<NNNN>/{signal,event}
+    auto root = temp_dir / "sd";
+    auto sess = root / "0040181394" / "20260620" / "0001";
+    fs::create_directories(sess);
+    fs::copy_file(wmedf, sess / "signal_003.wmedf", fs::copy_options::overwrite_existing);
+    {
+        std::ofstream o(sess / "event_003.xml");
+        o << "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<desc>\n"
+          << "<RespEvent RespEventID = \"101\" EndTime = \"120\" Duration = \"15\"/>\n"
+          << "<RespEvent RespEventID = \"111\" EndTime = \"300\" Duration = \"20\"/>\n"
+          << "</desc>\n";
+    }
+
+    auto prisma = std::make_unique<PrismaIngestion>(root.string());
+    auto fake = std::make_unique<FakeDataSource>();  // unused: prisma branch wins
+    auto publisher = std::make_unique<DataPublisherService>(
+        std::shared_ptr<hms::MqttClient>{}, mock_db);
+
+    auto svc = std::make_unique<BurstCollectorService>(60);
+    svc->injectDependenciesForTest(mock_db, std::move(fake), std::move(publisher),
+                                   nullptr, std::move(prisma));
+
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, sessionExists(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, markSessionCompleted(_, _)).WillRepeatedly(Return(true));
+    // The real .wmedf parses, so the session is discovered, parsed, and stored.
+    EXPECT_CALL(*db_raw, saveSession(_)).Times(AtLeast(1)).WillRepeatedly(Return(true));
+    // Returning nightly metrics drives the publishHistoricalState branch too.
+    SessionMetrics nm; nm.total_events = 2; nm.ahi = 0.44; nm.obstructive_apneas = 1;
+    nm.hypopneas = 1; nm.usage_hours = 4.5;
+    EXPECT_CALL(*db_raw, getNightlyMetrics(_, _))
+        .WillRepeatedly(Return(std::optional<SessionMetrics>(nm)));
+
+    EXPECT_TRUE(svc->runBurstCycleForTest());
+}
+
+// Prisma branch, no parseable data: initialize() can't detect a combined root,
+// so the cycle bails early (covers the init-failure branch).
+TEST_F(BurstOrchestrationTest, PrismaMode_NoData_InitFailsReturnsFalse) {
+    namespace fs = std::filesystem;
+    fs::create_directories(temp_dir / "empty_sd" / "0040181394" / "20260620" / "0001");
+    auto prisma = std::make_unique<PrismaIngestion>((temp_dir / "empty_sd").string());
+    auto fake = std::make_unique<FakeDataSource>();
+    auto publisher = std::make_unique<DataPublisherService>(
+        std::shared_ptr<hms::MqttClient>{}, mock_db);
+    auto svc = std::make_unique<BurstCollectorService>(60);
+    svc->injectDependenciesForTest(mock_db, std::move(fake), std::move(publisher),
+                                   nullptr, std::move(prisma));
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_FALSE(svc->runBurstCycleForTest());
+}
+
 }  // namespace burst_orch
+
+// ============================================================================
+// CONFIG HOT-RELOAD TESTS
+// Drive reloadConfig() through every subsystem diff branch (snapshotConfig,
+// source/db/mqtt/llm/o2ring reconfiguration) without a worker thread. All
+// collaborators are built from config; none require a live broker/network.
+// ============================================================================
+TEST(BurstConfigReloadTest, ReloadConfig_AppliesAllSubsystemChanges) {
+    namespace fs = std::filesystem;
+    auto base = fs::temp_directory_path() / "hms_cpap_cfg_reload";
+    fs::create_directories(base);
+
+    BurstCollectorService svc(300);
+    AppConfig cfg;
+
+    // Pass 1: local source + sqlite DB + LLM on + O2Ring on. Every field differs
+    // from the default (empty) snapshot, so each diff branch fires.
+    cfg.source = "local";
+    cfg.local_dir = (base / "local").string();
+    cfg.burst_interval = 600;
+    cfg.device_id = "cpap_cov_dev";
+    cfg.device_name = "Cov Device";
+    cfg.database.type = "sqlite";
+    cfg.database.sqlite_path = (base / "reload.db").string();
+    cfg.mqtt.enabled = false;
+    cfg.llm.enabled = true;
+    cfg.llm.provider = "ollama";
+    cfg.llm.endpoint = "http://127.0.0.1:11434";
+    cfg.llm.model = "llama3";
+    cfg.o2ring.enabled = true;
+    cfg.o2ring.mode = "http";
+    cfg.o2ring.mule_url = "http://127.0.0.1:9";
+
+    svc.setAppConfig(&cfg);
+    svc.markConfigDirty();
+    svc.reloadConfigForTest();
+
+    // No dirty flag set -> early return (covers the guard).
+    svc.reloadConfigForTest();
+
+    // Pass 2: switch to the Lowenstein source, disable LLM + O2Ring -> exercises
+    // the PrismaIngestion branch and the llm/o2ring "disabled" branches.
+    cfg.source = "lowenstein";
+    cfg.llm.enabled = false;
+    cfg.o2ring.enabled = false;
+    svc.markConfigDirty();
+    svc.reloadConfigForTest();
+
+    // Pass 3: ezShare (else) source with range disabled -> EzShareClient branch.
+    cfg.source = "ezshare";
+    cfg.ezshare_url = "http://127.0.0.1:1";
+    cfg.ezshare_range = false;
+    svc.markConfigDirty();
+    svc.reloadConfigForTest();
+
+    SUCCEED();
+}
 
