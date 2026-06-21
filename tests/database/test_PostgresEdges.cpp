@@ -140,6 +140,8 @@ CREATE TABLE IF NOT EXISTS cpap_session_metrics (
     max_leak_rate          FLOAT,
     avg_target_ventilation FLOAT,
     therapy_mode           INT,
+    spo2_drops             INT,
+    odi                    FLOAT,
     created_at             TIMESTAMP DEFAULT NOW(),
     FOREIGN KEY (session_id) REFERENCES cpap_sessions(id) ON DELETE CASCADE
 );
