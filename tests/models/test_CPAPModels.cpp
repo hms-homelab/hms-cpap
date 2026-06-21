@@ -253,7 +253,8 @@ TEST_F(CPAPModelsTest, Metrics_EventCounting_MixedEvents) {
     EXPECT_EQ(session->metrics->hypopneas, 0);
     EXPECT_EQ(session->metrics->reras, 1);
     EXPECT_EQ(session->metrics->total_events, 4);
-    EXPECT_NEAR(session->metrics->ahi, 1.76, 0.01);  // 4 events / 2.27 hours ≈ 1.76
+    // AHI counts apneas + hypopneas only (1 OA + 2 CA = 3); the RERA is excluded.
+    EXPECT_NEAR(session->metrics->ahi, 1.32, 0.01);  // 3 / 2.27 hours ≈ 1.32
 }
 
 TEST_F(CPAPModelsTest, Metrics_EventCounting_NoEvents) {

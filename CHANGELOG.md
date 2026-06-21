@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.4.3] - 2026-06-21
+
+### Fixed
+- **Green CI.** `CPAPModelsTest.Metrics_EventCounting_MixedEvents` still asserted
+  the pre-fix AHI (counted a RERA). Updated to the correct apnea+hypopnea-only
+  value (1.32) that the parser (2026.1.3) now computes. No code change — the AHI
+  fix already shipped via the shared parser; this only realigns the stale test.
+
 ## [4.4.2] - 2026-06-21
 
 ### Fixed
