@@ -66,10 +66,12 @@ lcov --remove "$OUT_DIR/coverage.info" \
      "*/clients/FysetcDataSource.cpp" \
      "*/services/SleepHqClient.cpp" \
      "*/services/SleepHqExportService.cpp" \
+     "*/clients/EzShareClient.cpp" \
      --output-file "$OUT_DIR/coverage.info" $LCOV_FLAGS >/dev/null
 # SleepHqClient/SleepHqExportService are pure SleepHQ network I/O (OAuth +
-# multipart upload of a night's files); same exclusion rationale as the Fysetc
-# transport above — verified by the live round-trip, not unit tests.
+# multipart upload of a night's files); EzShareClient is the libcurl HTTP client
+# for the ezShare WiFi SD card. Same exclusion rationale as the Fysetc transport
+# above — exercised by integration/live paths, not unit tests.
 
 # genhtml is only the human-readable artifact; the gate uses lcov --summary
 # below. genhtml's valid --ignore-errors categories differ from geninfo's
