@@ -79,7 +79,82 @@ protected:
         std::ofstream(tmp_dir + "/mnt/flash/conf/device.xml")
             << "<DeviceSerialNumber value=\"12345678\"/>";
     }
+
+    // SMART max (fw 3.17) combined layout: <serial>/<YYYYMMDD>/<NNNN>/ holding
+    // event_NNN.xml + signal_NNN.wmedf together, with 3-digit sequence numbers.
+    void createCombinedTree() {
+        std::string serial = tmp_dir + "/0040181394";
+        auto pair = [](const std::string& dir, int i) {
+            char e[40], s[40];
+            std::snprintf(e, sizeof e, "/event_%03d.xml", i);
+            std::snprintf(s, sizeof s, "/signal_%03d.wmedf", i);
+            std::ofstream(dir + e) << "<desc></desc>";
+            std::ofstream(dir + s) << "dummy";
+        };
+        fs::create_directories(serial + "/20260607/0000");
+        for (int i = 0; i < 3; ++i) pair(serial + "/20260607/0000", i);   // 3 pairs
+        std::ofstream(serial + "/20260607/0000/trendCurves.tc") << "tc";
+
+        fs::create_directories(serial + "/20260620/0001");
+        for (int i = 3; i < 5; ++i) pair(serial + "/20260620/0001", i);   // 2 pairs
+        std::ofstream(serial + "/20260620/0001/trendCurves.tc") << "tc";
+
+        // stray log dir at the serial root must be ignored
+        fs::create_directories(serial + "/log");
+        std::ofstream(serial + "/log/service.log") << "log";
+    }
 };
+
+// ── Combined layout detection (Prisma SMART max, fw 3.17) ───────────────────
+
+TEST_F(PrismaIngestionTest, DetectsCombinedSmartMaxLayout) {
+    createCombinedTree();
+
+    // data_dir is the SD root that holds the <serial>/ folder.
+    PrismaIngestion ingestion(tmp_dir);
+    ASSERT_TRUE(ingestion.initialize());
+
+    auto sessions = ingestion.discoverSessions(std::nullopt);
+    EXPECT_EQ(sessions.size(), 5u);   // 3 pairs on 0607 + 2 pairs on 0620
+}
+
+TEST_F(PrismaIngestionTest, CombinedLayoutPairsThreeDigitSequence) {
+    createCombinedTree();
+
+    PrismaIngestion ingestion(tmp_dir);
+    ingestion.initialize();
+    auto sessions = ingestion.discoverSessions(std::nullopt);
+
+    ASSERT_EQ(sessions.size(), 5u);
+    for (const auto& s : sessions) {
+        EXPECT_FALSE(s.event_path.empty());
+        EXPECT_FALSE(s.signal_path.empty());
+        EXPECT_EQ(s.date_folder.size(), 8u);   // YYYYMMDD, not the NNNN subfolder
+    }
+}
+
+TEST_F(PrismaIngestionTest, CombinedLayoutWorksWhenRootIsSerialFolder) {
+    createCombinedTree();
+
+    // data_dir points straight at the serial folder (no SD-root wrapper).
+    PrismaIngestion ingestion(tmp_dir + "/0040181394");
+    ASSERT_TRUE(ingestion.initialize());
+    EXPECT_EQ(ingestion.discoverSessions(std::nullopt).size(), 5u);
+}
+
+TEST_F(PrismaIngestionTest, CombinedLayoutRespectsLastSessionFilter) {
+    createCombinedTree();
+
+    PrismaIngestion ingestion(tmp_dir);
+    ingestion.initialize();
+    auto all = ingestion.discoverSessions(std::nullopt);
+    ASSERT_EQ(all.size(), 5u);
+
+    // Everything on/before the first night should be skipped on the next pass.
+    auto cutoff = all.front().session_start;
+    auto rest = ingestion.discoverSessions(cutoff);
+    EXPECT_LT(rest.size(), all.size());
+}
 
 // ── Raw directory detection (Prisma Smart) ──────────────────────────────────
 
@@ -454,10 +529,11 @@ TEST_F(PrismaIngestionTest, NonMatchingFoldersAndFilesIgnored) {
     // Valid pair.
     std::ofstream(tmp_dir + "/events/20260514/event_000370.xml") << "<desc></desc>";
     std::ofstream(tmp_dir + "/signals/20260514/signal_000370.wmedf") << "dummy";
-    // Files that don't match the (event|signal)_<6digits> pattern -> ignored.
+    // Files that don't match the (event|signal)_<digits> pattern -> ignored.
+    // (Sequence width varies by model: 6 digits on Prisma Smart, 3 on SMART max,
+    // so only a non-numeric sequence is reliably "not a session file".)
     std::ofstream(tmp_dir + "/events/20260514/readme.txt") << "ignore";
     std::ofstream(tmp_dir + "/signals/20260514/signal_abc.wmedf") << "ignore";
-    std::ofstream(tmp_dir + "/signals/20260514/signal_12345.wmedf") << "ignore"; // 5 digits
 
     PrismaIngestion ingestion(tmp_dir);
     ASSERT_TRUE(ingestion.initialize());

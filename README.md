@@ -176,6 +176,24 @@ therapy/
       signal_000380.wmedf
 ```
 
+**Prisma SMART max** (newer firmware, e.g. 3.17) writes a combined tree, with
+events and signals together under a per-night session folder and 3-digit
+sequence numbers:
+```
+0040181394/                # device serial
+  20260607/
+    0000/                  # session index
+      event_000.xml
+      signal_000.wmedf
+      trendCurves.tc
+  20260620/
+    0001/
+      event_003.xml
+      signal_003.wmedf
+```
+Point `local_dir` at either the SD root (containing the serial folder) or the
+serial folder itself; HMS-CPAP detects this layout automatically.
+
 **Prisma Line** writes ZIP archives:
 ```
 therapy.pdat              # ZIP containing the directory tree above

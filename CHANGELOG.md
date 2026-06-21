@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.5.0] - 2026-06-21
+
+### Added
+- **Löwenstein Prisma SMART max support** (GitHub #6). Newer firmware (e.g.
+  3.17) drops the split events//signals trees and nests everything under
+  `<serial>/<YYYYMMDD>/<NNNN>/` with events, signals, and trendCurves together
+  and 3-digit sequence numbers. `PrismaIngestion` now auto-detects this combined
+  layout (root may be the SD root or the serial folder) and pairs event/signal
+  by sequence within each session subfolder. Verified against a real SMART max
+  sample (21/21 sessions discovered and parsed).
+
+### Changed
+- Prisma sequence-number matching relaxed from exactly 6 digits to any width, so
+  both Prisma Smart (6-digit) and SMART max (3-digit) parse.
+
 ## [4.4.0] - 2026-06-21
 
 ### Added
