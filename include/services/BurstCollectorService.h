@@ -113,10 +113,15 @@ public:
         std::shared_ptr<IDatabase> db,
         std::unique_ptr<IDataSource> source,
         std::unique_ptr<DataPublisherService> publisher,
-        std::unique_ptr<SessionDiscoveryService> discovery = nullptr);
+        std::unique_ptr<SessionDiscoveryService> discovery = nullptr,
+        std::unique_ptr<PrismaIngestion> prisma = nullptr);
 
     /// Run a single burst cycle synchronously (no worker thread). Test-only.
     bool runBurstCycleForTest() { return executeBurstCycle(); }
+
+    /// Apply a pending config change synchronously. Test-only — drives the same
+    /// reloadConfig() path the worker thread runs when markConfigDirty() fires.
+    void reloadConfigForTest() { reloadConfig(); }
 
 private:
     // Configuration

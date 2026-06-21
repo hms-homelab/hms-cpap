@@ -122,7 +122,7 @@ jobs:
             -f visibility=public || echo "Could not set visibility (may need org admin token)"
 
   # ── Code Coverage (gcov/lcov) ─────────────────────────────────────
-  # Ratchet gate: raise COVERAGE_MIN as test batches land, target 75-80%.
+  # Ratchet gate: raise COVERAGE_MIN as test batches land. At 80% (2026-06).
   # Networking E2E suites are excluded by scripts/coverage.sh (they race /
   # segfault under -O0 instrumentation and need a live broker); they still run
   # in the build-and-test job above.
@@ -146,7 +146,7 @@ jobs:
           --health-cmd "pg_isready -U maestro"
           --health-interval 5s --health-timeout 5s --health-retries 10
     env:
-      COVERAGE_MIN: "73"
+      COVERAGE_MIN: "80"
       PGHOST: localhost
       PGPORT: "5432"
       PGUSER: maestro
