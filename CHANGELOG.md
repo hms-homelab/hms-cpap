@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.4.0] - 2026-06-21
+
+### Added
+- **SleepHQ auto-export.** Forward completed therapy nights to SleepHQ via their
+  public API (OAuth password grant, create import, multipart upload with MD5
+  content_hash, process_files). Shared design with the cloud (SDD-009).
+  - Auto-triggers, each toggleable: on session complete (live collector) and on
+    local-mode/backfill import.
+  - Manual per-night export: "Upload to SleepHQ" item in the Sessions row menu
+    (`POST /api/sleephq/export/{date}`), shown only when enabled.
+  - Settings "SleepHQ Sync" card (enabled, client ID/secret, the two auto
+    toggles); creds persist via the existing config save.
+  - Verified end-to-end against the live SleepHQ API.
+
+### Fixed
+- **Build break:** `BackfillService::Config` referenced a `sleephq` field it
+  never declared (the SleepHQ C++ had not been compiled until now). Added the
+  nested gate, populated from `AppConfig`.
+
 ## [4.3.3] - 2026-06-03
 
 ### Added
