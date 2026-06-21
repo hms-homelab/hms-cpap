@@ -87,6 +87,45 @@ import { AppConfig } from '../../models/config.model';
           </div>
         </div>
 
+        <!-- Section: SleepHQ Sync -->
+        <div class="section">
+          <div class="section-header" (click)="toggle('sleephq')">
+            <span class="chevron" [class.open]="open['sleephq']">&#9654;</span>
+            SleepHQ Sync
+            <span class="badge" *ngIf="!config.sleephq.enabled">optional</span>
+          </div>
+          <div class="section-body" *ngIf="open['sleephq']">
+            <p class="section-desc">
+              Forward your therapy nights to SleepHQ via their public API. Create
+              API credentials in SleepHQ under Account &rarr; API.
+            </p>
+            <label class="toggle-row">
+              Enabled
+              <input type="checkbox" [(ngModel)]="config.sleephq.enabled" name="sleephq_enabled" />
+            </label>
+            <ng-container *ngIf="config.sleephq.enabled">
+              <label>
+                Client ID
+                <input type="text" [(ngModel)]="config.sleephq.client_id" name="sleephq_client_id"
+                       placeholder="SleepHQ API client ID" />
+              </label>
+              <label>
+                Client Secret
+                <input type="password" [(ngModel)]="config.sleephq.client_secret" name="sleephq_client_secret"
+                       placeholder="SleepHQ API client secret" />
+              </label>
+              <label class="toggle-row">
+                <input type="checkbox" [(ngModel)]="config.sleephq.auto_on_session" name="sleephq_auto_session" />
+                Upload automatically when a session completes
+              </label>
+              <label class="toggle-row">
+                <input type="checkbox" [(ngModel)]="config.sleephq.auto_on_backfill" name="sleephq_auto_backfill" />
+                Upload automatically when importing local data
+              </label>
+            </ng-container>
+          </div>
+        </div>
+
         <!-- Section: Collection Timing -->
         <div class="section">
           <div class="section-header" (click)="toggle('timing')">
@@ -577,6 +616,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
   open: Record<string, boolean> = {
     source: true,
     o2ring: false,
+    sleephq: false,
     timing: false,
     backfill: false,
     database: true,
@@ -603,6 +643,10 @@ export class SettingsComponent implements OnInit, OnDestroy {
         }
         if (!cfg.o2ring) {
           cfg.o2ring = { enabled: false, mode: 'http', mule_url: '' };
+        }
+        if (!cfg.sleephq) {
+          cfg.sleephq = { enabled: false, client_id: '', client_secret: '',
+                          auto_on_session: true, auto_on_backfill: true };
         }
         this.config = cfg;
         this.loading = false;

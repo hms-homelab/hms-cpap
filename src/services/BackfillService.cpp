@@ -1,5 +1,6 @@
 #include "utils/TimeCompat.h"
 #include "services/BackfillService.h"
+#include "services/SleepHqExportService.h"
 #include "parsers/CpapdashBridge.h"
 
 #include <spdlog/spdlog.h>
@@ -243,6 +244,12 @@ void BackfillService::executeBackfill(const std::string& start_date,
                 // Cleanup temp dir
                 std::filesystem::remove_all(temp_dir);
             }
+
+            // SleepHQ export (best-effort, async) — one import per backfilled
+            // folder, from the local source dir (not the archive).
+            if (config_.sleephq.enabled && config_.sleephq.auto_on_backfill)
+                SleepHqExportService::getInstance().exportFolderAsync(
+                    folder, folder_path, config_.local_dir);
 
             {
                 std::lock_guard<std::mutex> lock(progress_mutex_);

@@ -2,6 +2,7 @@
 
 #include "controllers/CpapController.h"
 #include "utils/AppConfig.h"
+#include "services/SleepHqExportService.h"
 #include <filesystem>
 #include <regex>
 #include <sstream>
@@ -309,6 +310,16 @@ void CpapController::updateConfig(const drogon::HttpRequestPtr& req,
         if (o.isMember("enabled")) config_->o2ring.enabled = o["enabled"].asBool();
         if (o.isMember("mode")) config_->o2ring.mode = o["mode"].asString();
         if (o.isMember("mule_url")) config_->o2ring.mule_url = o["mule_url"].asString();
+    }
+
+    if (j.isMember("sleephq")) {
+        auto& sh = j["sleephq"];
+        if (sh.isMember("enabled")) config_->sleephq.enabled = sh["enabled"].asBool();
+        if (sh.isMember("client_id")) config_->sleephq.client_id = sh["client_id"].asString();
+        if (sh.isMember("client_secret") && sh["client_secret"].asString() != "********")
+            config_->sleephq.client_secret = sh["client_secret"].asString();
+        if (sh.isMember("auto_on_session")) config_->sleephq.auto_on_session = sh["auto_on_session"].asBool();
+        if (sh.isMember("auto_on_backfill")) config_->sleephq.auto_on_backfill = sh["auto_on_backfill"].asBool();
     }
 
     // Save to disk
@@ -781,6 +792,29 @@ void CpapController::oximetryCollect(const drogon::HttpRequestPtr&,
     bool ok = burst_service_->getOximetryService()->collectAndPublish();
     Json::Value result;
     result["status"] = ok ? "collected" : "no_new_files";
+    cb(jsonResp(result));
+}
+
+// Manual per-night export to SleepHQ (Sessions menu "Upload to SleepHQ").
+// Fires the archive-based export for the given date (YYYYMMDD or YYYY-MM-DD);
+// local-only setups are covered by the auto_on_backfill trigger.
+void CpapController::sleephqExport(const drogon::HttpRequestPtr&,
+                                   std::function<void(const drogon::HttpResponsePtr&)>&& cb,
+                                   const std::string& date) {
+    if (!config_ || !config_->sleephq.enabled) {
+        cb(jsonError("SleepHQ not enabled", drogon::k400BadRequest));
+        return;
+    }
+    std::string folder;
+    for (char c : date) if (c != '-') folder += c;   // accept YYYYMMDD or YYYY-MM-DD
+    if (folder.size() != 8) {
+        cb(jsonError("Invalid date (expected YYYYMMDD)", drogon::k400BadRequest));
+        return;
+    }
+    SleepHqExportService::getInstance().exportDateAsync(folder);
+    Json::Value result;
+    result["status"] = "queued";
+    result["date"]   = folder;
     cb(jsonResp(result));
 }
 

@@ -18,6 +18,7 @@ export class SessionsComponent implements OnInit, OnDestroy {
   actionInProgress: Record<string, boolean> = {};
   actionMessage: Record<string, string> = {};
   openMenu: string | null = null;
+  sleephqEnabled = false;   // gates the per-session "Upload to SleepHQ" action
   private refreshTimer: any = null;
 
   // Compare-nights selection.
@@ -61,6 +62,10 @@ export class SessionsComponent implements OnInit, OnDestroy {
   ngOnInit() {
     this.loadSessions();
     this.refreshTimer = setInterval(() => this.loadSessions(), 30000);
+    this.api.getConfig().subscribe({
+      next: (cfg) => this.sleephqEnabled = !!cfg.sleephq?.enabled,
+      error: () => {},
+    });
   }
 
   ngOnDestroy() {
@@ -122,14 +127,14 @@ export class SessionsComponent implements OnInit, OnDestroy {
     const day = s.sleep_day || this.sleepDay(s.session_start);
     return !!(this.actionInProgress[day] || this.actionInProgress[day + '_sum'] ||
               this.actionInProgress[day + '_rep'] || this.actionInProgress[day + '_oxi'] ||
-              this.actionInProgress[day + '_pdf']);
+              this.actionInProgress[day + '_pdf'] || this.actionInProgress[day + '_shq']);
   }
 
   rowMessage(s: any): string {
     const day = s.sleep_day || this.sleepDay(s.session_start);
     return this.actionMessage[day] || this.actionMessage[day + '_sum'] ||
            this.actionMessage[day + '_rep'] || this.actionMessage[day + '_oxi'] ||
-           this.actionMessage[day + '_pdf'] || '';
+           this.actionMessage[day + '_pdf'] || this.actionMessage[day + '_shq'] || '';
   }
 
   isLive(s: any): boolean {
@@ -262,6 +267,26 @@ export class SessionsComponent implements OnInit, OnDestroy {
       },
       error: () => {
         this.actionInProgress[day + '_oxi'] = false;
+      }
+    });
+  }
+
+  uploadToSleepHq(event: Event, s: any): void {
+    event.stopPropagation();
+    const day = s.sleep_day || this.sleepDay(s.session_start);
+    this.openMenu = null;
+    const key = day + '_shq';
+    this.actionInProgress[key] = true;
+    // hms-cpap stores DATALOG folders as YYYYMMDD; the API takes that form.
+    const folder = day.replace(/-/g, '');
+    this.api.exportSleepHq(folder).subscribe({
+      next: () => {
+        this.actionMessage[key] = 'Queued';
+        this.actionInProgress[key] = false;
+      },
+      error: () => {
+        this.actionMessage[key] = 'Failed';
+        this.actionInProgress[key] = false;
       }
     });
   }

@@ -43,5 +43,12 @@
     "live_inference": true,
     "model_dir": "",
     "model_version": "shhs-rf-v1"
+  },
+  "sleephq": {
+    "enabled": false,
+    "client_id": "",
+    "client_secret": "",
+    "auto_on_session": true,
+    "auto_on_backfill": true
   }
 }

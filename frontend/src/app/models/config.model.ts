@@ -43,4 +43,11 @@ export interface AppConfig {
     mode: string;          // 'http' | 'ble'
     mule_url: string;      // for HTTP mode
   };
+  sleephq: {
+    enabled: boolean;
+    client_id: string;
+    client_secret: string;
+    auto_on_session: boolean;   // upload when a live session completes
+    auto_on_backfill: boolean;  // upload when local-mode/backfill ingests a night
+  };
 }

@@ -97,6 +97,15 @@ struct AppConfig {
         std::string log_dir = "/var/log/maestro_hub";
     } fysetc;
 
+    // SleepHQ export (optional) — push completed sessions' raw SD files to SleepHQ.
+    struct SleepHQ {
+        bool enabled = false;
+        std::string client_id;
+        std::string client_secret;
+        bool auto_on_session = true;   // export when a live session completes
+        bool auto_on_backfill = true;  // export when a local-mode / backfill folder ingests
+    } sleephq;
+
     bool setup_complete = false;
 
     /// Fill empty config fields from environment variables (fallback).
@@ -194,6 +203,12 @@ struct AppConfig {
             auto v = env("FYSETC_LOG_DIR");
             if (!v.empty()) fysetc.log_dir = v;
         }
+
+        // SleepHQ export
+        if (!sleephq.enabled && env("SLEEPHQ_ENABLED") == "true")
+            sleephq.enabled = true;
+        if (sleephq.client_id.empty())     sleephq.client_id = env("SLEEPHQ_CLIENT_ID");
+        if (sleephq.client_secret.empty()) sleephq.client_secret = env("SLEEPHQ_CLIENT_SECRET");
 
         // ML Training
         if (!ml_training.enabled && env("ML_ENABLED") == "true")
@@ -331,6 +346,15 @@ struct AppConfig {
                 if (ss.contains("model_version"))  config.sleep_stage.model_version = ss["model_version"];
             }
 
+            if (j.contains("sleephq")) {
+                auto& sh = j["sleephq"];
+                if (sh.contains("enabled"))           config.sleephq.enabled = sh["enabled"];
+                if (sh.contains("client_id"))         config.sleephq.client_id = sh["client_id"];
+                if (sh.contains("client_secret"))     config.sleephq.client_secret = sh["client_secret"];
+                if (sh.contains("auto_on_session"))   config.sleephq.auto_on_session = sh["auto_on_session"];
+                if (sh.contains("auto_on_backfill"))  config.sleephq.auto_on_backfill = sh["auto_on_backfill"];
+            }
+
             return true;
         } catch (const std::exception& e) {
             std::cerr << "Config load error: " << e.what() << std::endl;
@@ -397,6 +421,12 @@ struct AppConfig {
             j["sleep_stage"]["model_dir"] = sleep_stage.model_dir;
             j["sleep_stage"]["model_version"] = sleep_stage.model_version;
 
+            j["sleephq"]["enabled"] = sleephq.enabled;
+            j["sleephq"]["client_id"] = sleephq.client_id;
+            j["sleephq"]["client_secret"] = sleephq.client_secret;
+            j["sleephq"]["auto_on_session"] = sleephq.auto_on_session;
+            j["sleephq"]["auto_on_backfill"] = sleephq.auto_on_backfill;
+
             std::ofstream f(path);
             f << j.dump(2);
             return true;
@@ -459,6 +489,12 @@ struct AppConfig {
         j["sleep_stage"]["live_inference"] = sleep_stage.live_inference;
         j["sleep_stage"]["model_dir"] = sleep_stage.model_dir;
         j["sleep_stage"]["model_version"] = sleep_stage.model_version;
+
+        j["sleephq"]["enabled"] = sleephq.enabled;
+        j["sleephq"]["client_id"] = sleephq.client_id;
+        j["sleephq"]["client_secret"] = sleephq.client_secret.empty() ? "" : "********";
+        j["sleephq"]["auto_on_session"] = sleephq.auto_on_session;
+        j["sleephq"]["auto_on_backfill"] = sleephq.auto_on_backfill;
 
         return j;
     }

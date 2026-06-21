@@ -50,6 +50,7 @@ public:
     ADD_METHOD_TO(CpapController::sessionGenerateSummary, "/api/sessions/{date}/generate-summary", drogon::Post);
     ADD_METHOD_TO(CpapController::sessionReparse,         "/api/sessions/{date}/reparse",          drogon::Post);
     ADD_METHOD_TO(CpapController::oximetryCollect,   "/api/oximetry/collect",       drogon::Post);
+    ADD_METHOD_TO(CpapController::sleephqExport,      "/api/sleephq/export/{date}",  drogon::Post);
 #ifndef _WIN32
     ADD_METHOD_TO(CpapController::generateReport,    "/api/reports/generate",       drogon::Post);
     ADD_METHOD_TO(CpapController::listReports,       "/api/reports",                drogon::Get);
@@ -140,6 +141,9 @@ public:
                         const std::string& date);
     void oximetryCollect(const drogon::HttpRequestPtr& req,
                          std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+    void sleephqExport(const drogon::HttpRequestPtr& req,
+                       std::function<void(const drogon::HttpResponsePtr&)>&& cb,
+                       const std::string& date);
 
 #ifndef _WIN32
     void generateReport(const drogon::HttpRequestPtr& req,

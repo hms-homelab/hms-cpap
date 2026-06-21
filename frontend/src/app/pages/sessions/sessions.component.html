@@ -84,6 +84,12 @@
                 <i class="fa-solid fa-file-pdf"></i>
                 {{ actionInProgress[(s.sleep_day || sleepDay(s.session_start)) + '_pdf'] ? 'Generating...' : 'Day PDF' }}
               </button>
+              <button *ngIf="sleephqEnabled"
+                [disabled]="actionInProgress[(s.sleep_day || sleepDay(s.session_start)) + '_shq']"
+                (click)="uploadToSleepHq($event, s)">
+                <i class="fa-solid fa-cloud-arrow-up"></i>
+                {{ actionInProgress[(s.sleep_day || sleepDay(s.session_start)) + '_shq'] ? '...' : 'Upload to SleepHQ' }}
+              </button>
             </div>
             </div>
             <div class="action-status" *ngIf="isRowBusy(s) || rowMessage(s)">

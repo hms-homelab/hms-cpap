@@ -140,6 +140,10 @@ export class CpapApiService {
     return this.http.post<any>('/api/oximetry/collect', {});
   }
 
+  exportSleepHq(date: string): Observable<any> {
+    return this.http.post<any>(`/api/sleephq/export/${date}`, {});
+  }
+
   generateReport(start: string, end: string): Observable<{ report_id: number; status: string }> {
     return this.http.post<any>('/api/reports/generate', { start, end });
   }

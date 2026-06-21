@@ -1,6 +1,7 @@
 #include "utils/TimeCompat.h"
 #include "services/BurstCollectorService.h"
 #include "services/InsightsEngine.h"
+#include "services/SleepHqExportService.h"
 #include "clients/O2RingClient.h"
 #ifdef WITH_BLE
 #include "clients/O2RingBleClient.h"
@@ -34,6 +35,7 @@ BurstCollectorService::BurstCollectorService(int burst_interval_seconds)
 
 void BurstCollectorService::initialize(AppConfig* cfg) {
     app_config_ = cfg;
+    SleepHqExportService::getInstance().initialize(cfg);
 
     initDataSource();
     initDatabase();
@@ -871,6 +873,9 @@ bool BurstCollectorService::executeBurstCycle() {
 
                     if (newly_completed) {
                         processSessionSummary();
+                        // SleepHQ export (best-effort, async; no-op if disabled).
+                        if (app_config_ && app_config_->sleephq.auto_on_session)
+                            SleepHqExportService::getInstance().exportDateAsync(session.date_folder);
 
                         if (data_publisher_) {
                             auto metrics = db_service_->getNightlyMetrics(device_id_, session.session_start);
@@ -1066,6 +1071,12 @@ bool BurstCollectorService::executeBurstCycle() {
                         return a.session_start < b.session_start;
                     })->session_start;
                 bool is_most_recent = (session.session_start == most_recent_start);
+
+                // SleepHQ export (best-effort, async; no-op if disabled) — fires
+                // regardless of whether MQTT/data_publisher_ is configured.
+                if (newly_completed && is_most_recent &&
+                    app_config_ && app_config_->sleephq.auto_on_session)
+                    SleepHqExportService::getInstance().exportDateAsync(session.date_folder);
 
                 if (newly_completed && is_most_recent && data_publisher_) {
                     auto metrics = db_service_->getNightlyMetrics(device_id_, session.session_start);
