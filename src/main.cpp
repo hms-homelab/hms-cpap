@@ -762,6 +762,8 @@ int main(int argc, char** argv) {
                 bf_cfg.device_id = config.device_id;
                 bf_cfg.device_name = config.device_name;
                 bf_cfg.local_dir = config.local_dir;
+                bf_cfg.sleephq.enabled = config.sleephq.enabled;
+                bf_cfg.sleephq.auto_on_backfill = config.sleephq.auto_on_backfill;
 
                 // Separate DB connection (pqxx not thread-safe)
                 std::shared_ptr<hms_cpap::IDatabase> bf_db;

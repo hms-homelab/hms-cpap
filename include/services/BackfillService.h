@@ -23,6 +23,13 @@ public:
         std::string local_dir;     // DATALOG directory path
         std::string device_id;
         std::string device_name;
+        // SleepHQ auto-export gate for local-mode/backfill ingests. Creds and the
+        // enabled flag live on the global AppConfig (read live by the export
+        // service); only the backfill-specific toggle is snapshotted here.
+        struct {
+            bool enabled = false;
+            bool auto_on_backfill = true;
+        } sleephq;
     };
 
     struct Progress {
