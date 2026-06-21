@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.4.2] - 2026-06-21
+
+### Fixed
+- **SMART max events now parse + correct AHI** via the shared parser bump to
+  2026.1.3: tolerate spaced `RespEvent` attributes (`RespEventID = "101"`, was 0
+  events), and AHI counts apneas + hypopneas only (was inflated by flow
+  limitation / RERA / snore / leak). Added an hms-cpap test covering both.
+- **CI green again.** `PostgresEdgesTest` fixture was missing the `spo2_drops` /
+  `odi` columns the metrics insert writes (failed only in the fresh-schema
+  coverage job). Excluded the SleepHQ network glue (`SleepHqClient`,
+  `SleepHqExportService`) from the coverage denominator, matching the existing
+  Fysetc transport exclusion.
+
 ## [4.4.1] - 2026-06-21
 
 ### Added

@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 #include "services/PrismaIngestion.h"
 #include "miniz.h"
+#include <cpapdash/parser/PrismaParser.h>
+#include <cpapdash/parser/Models.h>
 
 #include <filesystem>
 #include <fstream>
@@ -154,6 +156,39 @@ TEST_F(PrismaIngestionTest, CombinedLayoutRespectsLastSessionFilter) {
     auto cutoff = all.front().session_start;
     auto rest = ingestion.discoverSessions(cutoff);
     EXPECT_LT(rest.size(), all.size());
+}
+
+// SMART max event XML uses spaced RespEvent attributes (RespEventID = "101").
+// Validates, through hms-cpap's linked shared parser, that (a) spaced attributes
+// parse (was 0 events) and (b) AHI counts apneas + hypopneas only — not RERA or
+// flow limitation.
+TEST_F(PrismaIngestionTest, SmartMaxSpacedEventsParseAndAhiExcludesNonRespiratory) {
+    std::string xml = tmp_dir + "/event_003.xml";
+    {
+        std::ofstream o(xml);
+        o << "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<desc>\n"
+          << "<DeviceEvent  DeviceEventID=\"0\" Time=\"0\" ParameterID=\"1003\" NewValue=\"2\"/>\n"
+          << "<RespEvent RespEventID = \"101\" EndTime = \"120\" Duration = \"15\"/>\n"  // OA
+          << "<RespEvent RespEventID = \"102\" EndTime = \"200\" Duration = \"12\"/>\n"  // CA
+          << "<RespEvent RespEventID = \"111\" EndTime = \"300\" Duration = \"20\"/>\n"  // hypopnea
+          << "<RespEvent RespEventID = \"151\" EndTime = \"400\" Duration = \"5\"/>\n"   // flow limit (not AHI)
+          << "<RespEvent RespEventID = \"121\" EndTime = \"500\" Duration = \"8\"/>\n"   // RERA (not AHI)
+          << "</desc>\n";
+    }
+
+    cpapdash::parser::ParsedSession session;
+    auto now = std::chrono::system_clock::now();
+    ASSERT_TRUE(cpapdash::parser::PrismaParser::parseEventXml(xml, session, now));
+
+    // Spaced attributes parsed: all 5 mapped RespEvents recorded.
+    EXPECT_EQ(session.events.size(), 5u);
+
+    session.duration_seconds = 3600.0;  // 1 hour
+    session.calculateMetrics();
+    ASSERT_TRUE(session.metrics.has_value());
+    // AHI = (OA 1 + CA 1 + hypopnea 1) / 1h = 3.0; RERA + flow limitation excluded.
+    EXPECT_NEAR(session.metrics->ahi, 3.0, 0.01);
+    EXPECT_EQ(session.metrics->total_events, 5);  // all still recorded for display
 }
 
 // ── Raw directory detection (Prisma Smart) ──────────────────────────────────
