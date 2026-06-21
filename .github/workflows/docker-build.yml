@@ -133,7 +133,9 @@ jobs:
     # the suite's defaults so it connects with no extra wiring.
     services:
       postgres:
-        image: postgres:16
+        # pgvector image so the AgentMemory pgvector tests run (CREATE EXTENSION
+        # vector) instead of skipping — recovers AgentMemory coverage.
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_USER: maestro
           POSTGRES_PASSWORD: REDACTED
