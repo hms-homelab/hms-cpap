@@ -7,7 +7,7 @@
 
 **Lightweight C++ microservice for CPAP data collection with built-in web dashboard, PDF reports, and Home Assistant integration.**
 
-Automatically extracts sleep therapy data from ResMed and Lowenstein Prisma CPAP machines, parses EDF/WMEDF files with its own signal-analysis engine, and publishes 47+ metrics to Home Assistant via MQTT discovery. Includes a full Angular web UI with clinical-grade signal charting, PDF report generation, O2Ring pulse oximetry, LLM-powered session summaries, and ML intelligence. Supports two data sources: ezShare WiFi SD with bridge, or local filesystem.
+Automatically extracts sleep therapy data from ResMed and Lowenstein Prisma CPAP machines, parses EDF/WMEDF files with its own signal-analysis engine, and publishes 47+ metrics to Home Assistant via MQTT discovery. Includes a full Angular web UI with clinical-grade signal charting, PDF report generation, O2Ring pulse oximetry, automatic SleepHQ export, LLM-powered session summaries, and ML intelligence. Supports two data sources: ezShare WiFi SD with bridge, or local filesystem.
 
 ## Screenshots
 
@@ -27,7 +27,7 @@ Automatically extracts sleep therapy data from ResMed and Lowenstein Prisma CPAP
 
 ![Reports](docs/screenshots/reports.png)
 
-**Settings** -- Configure data source, O2Ring oximetry, database, MQTT, LLM summaries, ML training, and device identity. Hot-reload without restart.
+**Settings** -- Configure data source, O2Ring oximetry, SleepHQ sync, database, MQTT, LLM summaries, ML training, and device identity. Hot-reload without restart.
 
 ![Settings](docs/screenshots/settings.png)
 
@@ -53,6 +53,7 @@ All data sources (ezShare WiFi SD, local filesystem) work with both manufacturer
 - **PDF Reports** - Generate multi-night therapy reports for sharing with your doctor
 - **Therapy Insights Engine** - Automated analysis of AHI trends, leak correlation, compliance, best/worst nights
 - **Pulse Oximetry** - Wellue O2Ring SpO2/HR with ODI calculation, session overlay, and fallback in session cards
+- **SleepHQ Auto-Export** - Automatically forward each completed night's raw data to SleepHQ via their public API, toggleable on session complete and on local import, plus a manual per-night "Upload to SleepHQ" button
 - **Multi-Database** - PostgreSQL, MySQL/MariaDB, or SQLite (auto-created on first run)
 - **Signal Charts** - Per-minute resolution with event markers and oximetry overlay
 - **Live Sessions** - Pulsing LIVE badge, 65s auto-refresh, growing charts during therapy
