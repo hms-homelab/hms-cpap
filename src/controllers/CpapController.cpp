@@ -69,11 +69,13 @@ void CpapController::dashboard(const drogon::HttpRequestPtr&,
 
 void CpapController::sessions(const drogon::HttpRequestPtr& req,
                                std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
-    int days = 30, limit = 20;
-    if (auto p = req->getOptionalParameter<int>("days")) days = *p;
+    int limit = 20, offset = 0;
     if (auto p = req->getOptionalParameter<int>("limit")) limit = *p;
+    if (auto p = req->getOptionalParameter<int>("offset")) offset = *p;
+    if (limit < 1) limit = 20;
+    if (offset < 0) offset = 0;
     try {
-        cb(jsonResp(qs_->getSessions(days, limit)));
+        cb(jsonResp(qs_->getSessions(limit, offset)));
     } catch (const std::exception& e) {
         cb(jsonError(e.what(), drogon::k500InternalServerError));
     }
@@ -204,7 +206,7 @@ void CpapController::realtime(const drogon::HttpRequestPtr&,
     // Live session from most recent session
     if (qs_) {
         try {
-            auto sessions = qs_->getSessions(1, 1);
+            auto sessions = qs_->getSessions(1, 0);
             if (!sessions.empty() && sessions[0].isMember("has_live") &&
                 std::stoi(sessions[0]["has_live"].asString()) > 0) {
                 result["session"] = sessions[0];

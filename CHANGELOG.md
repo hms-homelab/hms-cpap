@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.4.4] - 2026-06-22
+
+### Changed
+- **Sessions list is now recency-paginated instead of date-windowed.**
+  `GET /api/sessions` takes `limit` + `offset` (was `days` + `limit`) and no
+  longer filters by a 30-day window, so the full night history is reachable.
+  The Sessions page loads the latest 20 nights with a "Load more" button that
+  walks back through every night; the 30s auto-refresh keeps however many pages
+  are already expanded. Dashboard "latest night" tile and the realtime
+  live-session probe now fetch the most recent night regardless of its age.
+
 ## [4.4.3] - 2026-06-21
 
 ### Fixed

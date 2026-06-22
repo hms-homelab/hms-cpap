@@ -76,9 +76,11 @@ Json::Value QueryService::getDashboard() {
     return result;
 }
 
-Json::Value QueryService::getSessions(int days, int limit) {
+Json::Value QueryService::getSessions(int limit, int offset) {
     // Group by sleep day (date shifted -12h) so multiple mask-on/off
-    // events in the same night appear as one row
+    // events in the same night appear as one row. Returns the most recent
+    // nights first, paginated by limit/offset (no date window) so the UI
+    // can "load more" back through the full history.
     std::string q =
         "SELECT " + sql::sleepDay("MIN(s.session_start)", dt_) + " as sleep_day,"
         " MIN(s.session_start) as session_start,"
@@ -99,10 +101,10 @@ Json::Value QueryService::getSessions(int days, int limit) {
         " FROM cpap_sessions s"
         " LEFT JOIN cpap_session_metrics m ON m.session_id = s.id"
         " WHERE s.device_id = " + sql::param(1, dt_) +
-        " AND s.session_start >= " + sql::daysAgo(days, dt_) +
         " GROUP BY " + sql::sleepDay("s.session_start", dt_) +
         " ORDER BY sleep_day DESC"
-        " LIMIT " + std::to_string(limit);
+        " LIMIT " + std::to_string(limit) +
+        " OFFSET " + std::to_string(offset);
 
     return db_->executeQuery(q, {device_id_});
 }

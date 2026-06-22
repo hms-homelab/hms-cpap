@@ -12,7 +12,7 @@ public:
     explicit QueryService(std::shared_ptr<IDatabase> db, const std::string& device_id);
 
     Json::Value getDashboard();
-    Json::Value getSessions(int days, int limit);
+    Json::Value getSessions(int limit, int offset);
     Json::Value getSessionDetail(const std::string& date);
     Json::Value getDailySummary(const std::string& start, const std::string& end);
     Json::Value getTrend(const std::string& metric, int days);

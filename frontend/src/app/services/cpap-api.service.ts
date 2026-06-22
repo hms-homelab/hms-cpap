@@ -20,8 +20,8 @@ export class CpapApiService {
     return this.http.get<any>('/api/realtime');
   }
 
-  getSessions(days = 30, limit = 20): Observable<SessionListItem[]> {
-    const params = new HttpParams().set('days', days).set('limit', limit);
+  getSessions(limit = 20, offset = 0): Observable<SessionListItem[]> {
+    const params = new HttpParams().set('limit', limit).set('offset', offset);
     return this.http.get<SessionListItem[]>('/api/sessions', { params });
   }
 
