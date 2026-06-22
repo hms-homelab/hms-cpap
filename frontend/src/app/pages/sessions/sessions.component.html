@@ -101,4 +101,11 @@
       </tr>
     </tbody>
   </table>
+
+  <div class="load-more-bar" *ngIf="sessions.length > 0 && hasMore">
+    <button class="load-more" [disabled]="loadingMore" (click)="loadMore()">
+      <i class="fa-solid" [class.fa-chevron-down]="!loadingMore" [class.fa-circle-notch]="loadingMore" [class.fa-spin]="loadingMore"></i>
+      {{ loadingMore ? 'Loading...' : 'Load more' }}
+    </button>
+  </div>
 </div>

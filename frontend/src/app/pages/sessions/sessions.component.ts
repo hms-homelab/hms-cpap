@@ -21,6 +21,12 @@ export class SessionsComponent implements OnInit, OnDestroy {
   sleephqEnabled = false;   // gates the per-session "Upload to SleepHQ" action
   private refreshTimer: any = null;
 
+  // Recency-based pagination: load the latest `pageSize` nights, then "Load more"
+  // walks back through history a page at a time.
+  readonly pageSize = 20;
+  hasMore = true;
+  loadingMore = false;
+
   // Compare-nights selection.
   compareMode = false;
   selectedDays: string[] = [];
@@ -83,13 +89,35 @@ export class SessionsComponent implements OnInit, OnDestroy {
   }
 
   private loadSessions() {
-    this.api.getSessions(30, 30).subscribe({
+    // Refresh keeps however many pages are already loaded so the 30s poll
+    // doesn't snap the list back to the first page.
+    const limit = Math.max(this.pageSize, this.sessions.length);
+    this.api.getSessions(limit, 0).subscribe({
       next: s => {
         this.sessions = s;
+        this.hasMore = s.length === limit;
         this.loadOximetryForSessions(s);
         this.cdr.detectChanges();
       },
       error: e => console.error('Sessions error:', e)
+    });
+  }
+
+  loadMore() {
+    if (this.loadingMore || !this.hasMore) return;
+    this.loadingMore = true;
+    this.api.getSessions(this.pageSize, this.sessions.length).subscribe({
+      next: s => {
+        this.sessions = [...this.sessions, ...s];
+        this.hasMore = s.length === this.pageSize;
+        this.loadingMore = false;
+        this.loadOximetryForSessions(this.sessions);
+        this.cdr.detectChanges();
+      },
+      error: e => {
+        console.error('Load more error:', e);
+        this.loadingMore = false;
+      }
     });
   }
 

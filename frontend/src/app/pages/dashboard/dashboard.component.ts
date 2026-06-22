@@ -281,7 +281,7 @@ export class DashboardComponent implements OnInit, AfterViewInit {
       };
 
       // Fetch session-aggregated data to match sessions table values
-      this.api.getSessions(7, 1).subscribe({
+      this.api.getSessions(1, 0).subscribe({
         next: (sessions) => {
           if (sessions?.length && this.keyMetrics) {
             const s = sessions[0];
