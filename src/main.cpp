@@ -22,6 +22,8 @@
 #endif
 #include "services/MLTrainingService.h"
 #include "services/BackfillService.h"
+#include "services/O2RingCsvParser.h"
+#include "services/PrismaIngestion.h"
 #include "agent/IAgentLLM.h"
 #include "mqtt_client.h"
 #include "llm_client.h"
@@ -32,6 +34,8 @@
 #include <csignal>
 #include <atomic>
 #include <memory>
+#include <set>
+#include <regex>
 #include <string>
 #include <cstring>
 #include <cstdlib>
@@ -753,6 +757,32 @@ int main(int argc, char** argv) {
                 };
             }
 
+            // Wire O2 Ring CSV upload: parse a Wellue export server-side and
+            // store it under the same "o2ring" device the BLE path uses.
+            {
+                std::shared_ptr<hms_cpap::IDatabase> oxi_db = web_db ? web_db : db;
+                hms_cpap::CpapController::oxi_csv_import_ =
+                    [oxi_db](const std::string& content, const std::string& filename) -> Json::Value {
+                        Json::Value r;
+                        auto session = hms_cpap::O2RingCsvParser::parse(content, filename);
+                        if (session.samples.empty()) {
+                            r["error"] = "No readable rows in CSV (expected a Wellue / O2 Ring export)";
+                            return r;
+                        }
+                        if (!oxi_db->saveOximetrySession("o2ring", session)) {
+                            r["error"] = "Failed to save oximetry session";
+                            return r;
+                        }
+                        r["samples"]          = (int)session.samples.size();
+                        r["valid_samples"]    = session.metrics.valid_samples;
+                        r["avg_spo2"]         = session.metrics.avg_spo2;
+                        r["min_spo2"]         = session.metrics.min_spo2;
+                        r["sample_interval"]  = session.sample_interval;
+                        r["duration_seconds"] = session.duration_seconds;
+                        return r;
+                    };
+            }
+
             // Wire BackfillService whenever an archive/local DATALOG path is
             // known. It reparses from the permanent archive, so it must be
             // available in every source mode (ezshare/fysetc/local) — the
@@ -787,6 +817,61 @@ int main(int argc, char** argv) {
                 hms_cpap::CpapController::backfill_status_getter_ = [&]() -> Json::Value {
                     return backfill_service->getStatus();
                 };
+
+                // Wire CPAP zip upload: extract the SD card's DATALOG date
+                // folders into the archive, then reparse them via backfill.
+                std::string archive_dir = config.local_dir;
+                hms_cpap::CpapController::cpap_zip_import_ =
+                    [archive_dir](const std::string& zip_path) -> Json::Value {
+                        namespace fs = std::filesystem;
+                        Json::Value r;
+                        std::error_code ec;
+                        fs::path staging = fs::temp_directory_path() /
+                            ("cpap_stage_" +
+                             std::to_string(std::chrono::steady_clock::now()
+                                                .time_since_epoch().count()));
+                        fs::create_directories(staging, ec);
+                        if (!hms_cpap::PrismaIngestion::extractZip(zip_path, staging.string())) {
+                            fs::remove_all(staging, ec);
+                            r["error"] = "Could not read zip archive";
+                            return r;
+                        }
+                        // Merge every YYYYMMDD folder found in the extraction
+                        // into the DATALOG archive.
+                        std::set<std::string> dates;
+                        std::regex datedir("^[0-9]{8}$");
+                        for (auto it = fs::recursive_directory_iterator(staging, ec);
+                             it != fs::recursive_directory_iterator(); it.increment(ec)) {
+                            if (ec) break;
+                            if (!it->is_directory(ec)) continue;
+                            std::string name = it->path().filename().string();
+                            if (!std::regex_match(name, datedir)) continue;
+                            fs::path dest = fs::path(archive_dir) / name;
+                            fs::create_directories(dest, ec);
+                            for (auto& fentry : fs::directory_iterator(it->path(), ec)) {
+                                if (!fentry.is_regular_file(ec)) continue;
+                                fs::copy_file(fentry.path(), dest / fentry.path().filename(),
+                                              fs::copy_options::overwrite_existing, ec);
+                            }
+                            dates.insert(name);
+                        }
+                        fs::remove_all(staging, ec);
+                        if (dates.empty()) {
+                            r["error"] = "No DATALOG date folders (YYYYMMDD) found in zip";
+                            return r;
+                        }
+                        auto dash = [](const std::string& d) {
+                            return d.substr(0, 4) + "-" + d.substr(4, 2) + "-" + d.substr(6, 2);
+                        };
+                        backfill_service->trigger(dash(*dates.begin()), dash(*dates.rbegin()), "");
+                        Json::Value arr(Json::arrayValue);
+                        for (auto& d : dates) arr.append(d);
+                        r["status"]          = "queued";
+                        r["sessions_found"]  = (int)dates.size();
+                        r["dates"]           = arr;
+                        r["message"]         = "Files added to archive; parsing. Poll /api/backfill/status";
+                        return r;
+                    };
             }
 
             drogon::app()
@@ -794,7 +879,9 @@ int main(int argc, char** argv) {
                 .addListener("0.0.0.0", web_port)
                 .setThreadNum(2)
                 .setDocumentRoot(static_dir)
-                .setIdleConnectionTimeout(120);
+                .setIdleConnectionTimeout(120)
+                // Allow large CPAP zip / oximetry CSV uploads (default is 1 MB).
+                .setClientMaxBodySize(512 * 1024 * 1024);
 
             // SPA fallback: read index.html from disk on each 404 so
             // frontend rebuilds take effect without restarting the service

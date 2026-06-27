@@ -7,6 +7,7 @@ export const routes: Routes = [
   { path: 'sessions/:date', loadComponent: () => import('./pages/session-detail/session-detail.component').then(m => m.SessionDetailComponent) },
   { path: 'compare/:a/:b', loadComponent: () => import('./pages/compare/compare.component').then(m => m.CompareComponent) },
   { path: 'reports', loadComponent: () => import('./pages/reports/reports.component').then(m => m.ReportsComponent) },
+  { path: 'upload', loadComponent: () => import('./pages/upload/upload.component').then(m => m.UploadComponent) },
   { path: 'setup', loadComponent: () => import('./pages/setup/setup.component').then(m => m.SetupComponent) },
   { path: 'settings', loadComponent: () => import('./pages/settings/settings.component').then(m => m.SettingsComponent) },
   { path: '**', redirectTo: 'dashboard' },

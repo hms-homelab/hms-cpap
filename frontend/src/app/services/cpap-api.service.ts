@@ -93,6 +93,18 @@ export class CpapApiService {
     return this.http.get<any>('/api/backfill/status');
   }
 
+  uploadOximetryCsv(file: File): Observable<any> {
+    const fd = new FormData();
+    fd.append('file', file);
+    return this.http.post<any>('/api/upload/oximetry', fd);
+  }
+
+  uploadCpapZip(file: File): Observable<any> {
+    const fd = new FormData();
+    fd.append('file', file);
+    return this.http.post<any>('/api/upload/cpap', fd);
+  }
+
   scanBackfillDates(): Observable<{folders: number; start_date?: string; end_date?: string; local_dir?: string; message?: string}> {
     return this.http.get<any>('/api/backfill/scan');
   }
