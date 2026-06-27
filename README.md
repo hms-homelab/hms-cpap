@@ -31,6 +31,10 @@ Automatically extracts sleep therapy data from ResMed and Lowenstein Prisma CPAP
 
 ![Settings](docs/screenshots/settings.png)
 
+**Upload** -- Bring data in by hand from any browser -- no shared network or WiFi SD required. Drop a CPAP `.zip` (ResMed or Lowenstein) and it merges into the archive and reparses; drop a Wellue O2 Ring `.csv` export and it parses server-side into an oximetry session. The O2 Ring path is a simple, OSCAR-free way to actually view your pulse-oximetry data.
+
+![Upload](docs/screenshots/upload.png)
+
 ## Supported Devices
 
 | Manufacturer | Models | Live Sessions | Data Import |
@@ -53,6 +57,7 @@ All data sources (ezShare WiFi SD, local filesystem) work with both manufacturer
 - **PDF Reports** - Generate multi-night therapy reports for sharing with your doctor
 - **Therapy Insights Engine** - Automated analysis of AHI trends, leak correlation, compliance, best/worst nights
 - **Pulse Oximetry** - Wellue O2Ring SpO2/HR with ODI calculation, session overlay, and fallback in session cards
+- **Manual Upload Page** - Drag-and-drop a CPAP `.zip` or a Wellue O2 Ring `.csv` from any browser, no shared network needed. CPAP zips merge into the archive and reparse; O2 Ring CSVs (both Wellue export dialects, auto-detected sample interval) become oximetry sessions -- an OSCAR-free way to view your O2 ring data. See [docs/UPLOAD.md](docs/UPLOAD.md)
 - **SleepHQ Auto-Export** - Automatically forward each completed night's raw data to SleepHQ via their public API, toggleable on session complete and on local import, plus a manual per-night "Upload to SleepHQ" button
 - **Multi-Database** - PostgreSQL, MySQL/MariaDB, or SQLite (auto-created on first run)
 - **Signal Charts** - Per-minute resolution with event markers and oximetry overlay
