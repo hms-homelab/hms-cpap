@@ -50,6 +50,8 @@ public:
     ADD_METHOD_TO(CpapController::sessionGenerateSummary, "/api/sessions/{date}/generate-summary", drogon::Post);
     ADD_METHOD_TO(CpapController::sessionReparse,         "/api/sessions/{date}/reparse",          drogon::Post);
     ADD_METHOD_TO(CpapController::oximetryCollect,   "/api/oximetry/collect",       drogon::Post);
+    ADD_METHOD_TO(CpapController::uploadOximetryCsv,  "/api/upload/oximetry",        drogon::Post);
+    ADD_METHOD_TO(CpapController::uploadCpapZip,      "/api/upload/cpap",            drogon::Post);
     ADD_METHOD_TO(CpapController::sleephqExport,      "/api/sleephq/export/{date}",  drogon::Post);
 #ifndef _WIN32
     ADD_METHOD_TO(CpapController::generateReport,    "/api/reports/generate",       drogon::Post);
@@ -141,6 +143,10 @@ public:
                         const std::string& date);
     void oximetryCollect(const drogon::HttpRequestPtr& req,
                          std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+    void uploadOximetryCsv(const drogon::HttpRequestPtr& req,
+                           std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+    void uploadCpapZip(const drogon::HttpRequestPtr& req,
+                       std::function<void(const drogon::HttpResponsePtr&)>&& cb);
     void sleephqExport(const drogon::HttpRequestPtr& req,
                        std::function<void(const drogon::HttpResponsePtr&)>&& cb,
                        const std::string& date);
@@ -169,6 +175,10 @@ public:
     static std::function<void(const std::string&, const std::string&, const std::string&)> backfill_trigger_;
     static std::function<Json::Value()> backfill_status_getter_;
     static std::function<Json::Value()> sleep_stage_status_getter_;
+    // CSV content + filename -> result Json ("error" key on failure).
+    static std::function<Json::Value(const std::string&, const std::string&)> oxi_csv_import_;
+    // Path to an uploaded zip on disk -> result Json ("error" key on failure).
+    static std::function<Json::Value(const std::string&)> cpap_zip_import_;
 
 private:
     static std::shared_ptr<QueryService>          qs_;

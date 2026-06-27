@@ -1,0 +1,56 @@
+.upload-page { padding: 1.5rem; max-width: 760px; }
+
+h1 {
+  color: #e0e0e0;
+  font-size: 1.4rem;
+  margin-bottom: 1.5rem;
+}
+
+.card {
+  background: #1e1e2e;
+  border: 1px solid #2a2a3a;
+  border-radius: 8px;
+  padding: 1.25rem 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.card h2 {
+  color: #e0e0e0;
+  font-size: 1.05rem;
+  margin: 0 0 0.5rem;
+}
+
+.hint {
+  color: #9a9ab0;
+  font-size: 0.85rem;
+  margin: 0 0 1rem;
+  line-height: 1.4;
+}
+
+.drop-zone {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  min-height: 90px;
+  padding: 1rem;
+  border: 2px dashed #3a3a55;
+  border-radius: 8px;
+  color: #c0c0d0;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.drop-zone:hover { border-color: #667eea; }
+.drop-zone.dragover { border-color: #667eea; background: #23233a; }
+
+.drop-zone i { margin-right: 0.5rem; }
+.drop-zone .ok { color: #4ade80; }
+.drop-zone .err { color: #f87171; }
+
+.dates {
+  margin-top: 0.75rem;
+  font-size: 0.8rem;
+  color: #9a9ab0;
+  word-break: break-word;
+}

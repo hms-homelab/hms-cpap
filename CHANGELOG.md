@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.4.5] - 2026-06-27
+
+### Added
+- **Web upload page** (`/upload`, plus an "Upload" nav link) with two drop zones,
+  mirroring the cpapdash-api upload UX:
+  - **CPAP Data (.zip)** — `POST /api/upload/cpap`. Extracts the zip's `DATALOG`
+    date folders into the configured archive and reparses them via the existing
+    backfill pipeline (async; the page polls `/api/backfill/status`).
+  - **O2 Ring Oximetry (.csv)** — `POST /api/upload/oximetry`. Parses a Wellue /
+    Viatom "O2 Ring" CSV server-side and stores it under the `o2ring` device,
+    returning the parsed summary synchronously.
+- **`O2RingCsvParser`** — handles both Wellue export dialects (24-hour
+  `06:53:07 Apr 12 2026` and the O2 Ring S 12-hour quoted, comma-after-day
+  `"11:20:29PM Jun 19, 2026"`), auto-detects the sample interval from the
+  timestamps, and maps sentinel "no reading" values (SpO₂ 255 / HR 65535) to
+  `0xFF` so `OximetrySample::valid()` excludes them. Emits the shared
+  `OximetrySession` and reuses `VLDParser::calculateMetrics`. 5 unit tests.
+
+### Changed
+- Raised the Drogon client max body size to 512 MB so multi-MB zip / CSV uploads
+  aren't rejected with `413` (default was 1 MB).
+- `PrismaIngestion::extractZip` is now public so the CPAP zip upload reuses it.
+
 ## [4.4.4] - 2026-06-22
 
 ### Changed

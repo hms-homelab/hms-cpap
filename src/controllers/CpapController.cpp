@@ -3,7 +3,10 @@
 #include "controllers/CpapController.h"
 #include "utils/AppConfig.h"
 #include "services/SleepHqExportService.h"
+#include <drogon/MultiPart.h>
+#include <atomic>
 #include <filesystem>
+#include <fstream>
 #include <regex>
 #include <sstream>
 #ifdef WITH_BLE
@@ -21,6 +24,8 @@ std::function<Json::Value()> CpapController::ml_status_getter_;
 std::function<void(const std::string&, const std::string&, const std::string&)> CpapController::backfill_trigger_;
 std::function<Json::Value()> CpapController::backfill_status_getter_;
 std::function<Json::Value()> CpapController::sleep_stage_status_getter_;
+std::function<Json::Value(const std::string&, const std::string&)> CpapController::oxi_csv_import_;
+std::function<Json::Value(const std::string&)> CpapController::cpap_zip_import_;
 
 void CpapController::setQueryService(std::shared_ptr<QueryService> qs) { qs_ = qs; }
 
@@ -795,6 +800,75 @@ void CpapController::oximetryCollect(const drogon::HttpRequestPtr&,
     Json::Value result;
     result["status"] = ok ? "collected" : "no_new_files";
     cb(jsonResp(result));
+}
+
+// Upload a Wellue / O2 Ring CSV export (multipart form field "file"). Parses
+// server-side and stores it as an oximetry session, mirroring the cpapdash-api
+// flow. Synchronous: returns the parsed summary.
+void CpapController::uploadOximetryCsv(const drogon::HttpRequestPtr& req,
+                                       std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    if (!oxi_csv_import_) {
+        cb(jsonError("Oximetry import not available", drogon::k503ServiceUnavailable));
+        return;
+    }
+    drogon::MultiPartParser parser;
+    if (parser.parse(req) != 0 || parser.getFiles().empty()) {
+        cb(jsonError("No file uploaded (multipart field 'file')", drogon::k400BadRequest));
+        return;
+    }
+    const auto& f = parser.getFiles()[0];
+    std::string content(f.fileContent());
+    std::string filename = f.getFileName();
+    try {
+        Json::Value result = oxi_csv_import_(content, filename);
+        if (result.isMember("error")) {
+            cb(jsonError(result["error"].asString(), drogon::k400BadRequest));
+            return;
+        }
+        cb(jsonResp(result));
+    } catch (const std::exception& e) {
+        cb(jsonError(e.what(), drogon::k500InternalServerError));
+    }
+}
+
+// Upload a compressed CPAP data set (multipart form field "file"): a zip of the
+// SD card's DATALOG folders. Files are extracted into the archive and parsed
+// asynchronously via the backfill pipeline; poll /api/backfill/status.
+void CpapController::uploadCpapZip(const drogon::HttpRequestPtr& req,
+                                   std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    if (!cpap_zip_import_) {
+        cb(jsonError("CPAP upload not available (archive directory not configured)",
+                     drogon::k503ServiceUnavailable));
+        return;
+    }
+    drogon::MultiPartParser parser;
+    if (parser.parse(req) != 0 || parser.getFiles().empty()) {
+        cb(jsonError("No file uploaded (multipart field 'file')", drogon::k400BadRequest));
+        return;
+    }
+    const auto& f = parser.getFiles()[0];
+    static std::atomic<uint64_t> seq{0};
+    std::filesystem::path tmp = std::filesystem::temp_directory_path() /
+        ("cpap_upload_" + std::to_string(seq++) + ".zip");
+    {
+        auto content = f.fileContent();
+        std::ofstream o(tmp, std::ios::binary);
+        o.write(content.data(), static_cast<std::streamsize>(content.size()));
+    }
+    try {
+        Json::Value result = cpap_zip_import_(tmp.string());
+        std::error_code ec;
+        std::filesystem::remove(tmp, ec);
+        if (result.isMember("error")) {
+            cb(jsonError(result["error"].asString(), drogon::k400BadRequest));
+            return;
+        }
+        cb(jsonResp(result));
+    } catch (const std::exception& e) {
+        std::error_code ec;
+        std::filesystem::remove(tmp, ec);
+        cb(jsonError(e.what(), drogon::k500InternalServerError));
+    }
 }
 
 // Manual per-night export to SleepHQ (Sessions menu "Upload to SleepHQ").

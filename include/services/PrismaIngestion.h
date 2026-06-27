@@ -18,6 +18,10 @@ struct PrismaSessionFile {
 
 class PrismaIngestion {
 public:
+    // Extract a zip archive into dest_dir (preserving internal paths). Reused
+    // by the CPAP zip upload endpoint.
+    static bool extractZip(const std::string& zip_path, const std::string& dest_dir);
+
     explicit PrismaIngestion(const std::string& data_dir);
 
     bool initialize();
@@ -49,8 +53,6 @@ private:
     std::vector<PrismaSessionFile> discoverCombined(
         const std::string& last_date,
         std::optional<std::chrono::system_clock::time_point> last_session_start);
-
-    static bool extractZip(const std::string& zip_path, const std::string& dest_dir);
 };
 
 } // namespace hms_cpap
