@@ -11,6 +11,7 @@
 #include "utils/FileUtils.h"
 #include "utils/CardResidue.h"
 #include "database/SQLiteDatabase.h"
+#include "database/DatabaseFactory.h"
 #ifdef WITH_POSTGRESQL
 #include "database/DatabaseService.h"
 #endif
@@ -93,57 +94,14 @@ void BurstCollectorService::initDataSource() {
 }
 
 void BurstCollectorService::initDatabase() {
+    // Backend selection lives in the shared factory so CLI tools (--backfill,
+    // --reparse) and this service can never disagree on which DB to use (issue #8).
     std::string db_type = ConfigManager::get("DB_TYPE", "sqlite");
-    if (db_type == "sqlite") {
-        std::string sqlite_path = ConfigManager::get("SQLITE_PATH",
-            hms_cpap::AppConfig::dataDir() + "/cpap.db");
-        db_service_ = std::make_shared<SQLiteDatabase>(sqlite_path);
-        if (db_service_->connect()) {
-            std::cout << "✅ DB: SQLite at " << sqlite_path << std::endl;
-        } else {
-            std::cerr << "⚠️  DB: SQLite open failed: " << sqlite_path << std::endl;
-        }
-    }
-#ifdef WITH_POSTGRESQL
-    else if (db_type == "postgresql") {
-        std::string db_host     = ConfigManager::get("DB_HOST", "localhost");
-        std::string db_port     = ConfigManager::get("DB_PORT", "5432");
-        std::string db_name     = ConfigManager::get("DB_NAME", "cpap_monitoring");
-        std::string db_user     = ConfigManager::get("DB_USER", "maestro");
-        std::string db_password = ConfigManager::get("DB_PASSWORD", "");
-
-        std::string conn = "host=" + db_host + " port=" + db_port +
-                           " dbname=" + db_name + " user=" + db_user +
-                           " password=" + db_password;
-        db_service_ = std::make_shared<DatabaseService>(conn);
-        if (db_service_->connect()) {
-            std::cout << "✅ DB: PostgreSQL " << db_name << "@" << db_host << std::endl;
-        } else {
-            std::cerr << "⚠️  DB: PostgreSQL connection failed (will retry)" << std::endl;
-        }
-    }
-#endif
-#ifdef WITH_MYSQL
-    else if (db_type == "mysql") {
-        std::string db_host     = ConfigManager::get("DB_HOST", "localhost");
-        int         db_port     = ConfigManager::getInt("DB_PORT", 3306);
-        std::string db_name     = ConfigManager::get("DB_NAME", "cpap_monitoring");
-        std::string db_user     = ConfigManager::get("DB_USER", "");
-        std::string db_password = ConfigManager::get("DB_PASSWORD", "");
-        db_service_ = std::make_shared<MySQLDatabase>(db_host, db_port, db_user, db_password, db_name);
-        if (db_service_->connect()) {
-            std::cout << "✅ DB: MySQL " << db_name << "@" << db_host << ":" << db_port << std::endl;
-        } else {
-            std::cerr << "⚠️  DB: MySQL connection failed" << std::endl;
-        }
-    }
-#endif
-    else {
-        std::cerr << "⚠️  DB: Unknown DB_TYPE '" << db_type << "', falling back to SQLite" << std::endl;
-        std::string sqlite_path = ConfigManager::get("SQLITE_PATH",
-            hms_cpap::AppConfig::dataDir() + "/cpap.db");
-        db_service_ = std::make_shared<SQLiteDatabase>(sqlite_path);
-        db_service_->connect();
+    db_service_ = makeDatabaseFromConfig();
+    if (db_service_->connect()) {
+        std::cout << "✅ DB: connected (" << db_type << ")" << std::endl;
+    } else {
+        std::cerr << "⚠️  DB: connection failed (" << db_type << ", will retry)" << std::endl;
     }
 }
 
@@ -695,11 +653,13 @@ void BurstCollectorService::processSTRFile() {
             return;
         }
 
-        // Save last 7 days to DB (avoid rewriting full history every cycle)
-        size_t save_count = std::min(all_records.size(), static_cast<size_t>(7));
-        std::vector<STRDailyRecord> recent(
-            all_records.end() - save_count, all_records.end());
-        db_service_->saveSTRDailyRecords(recent);
+        // Persist the FULL STR history. saveSTRDailyRecords is a single-transaction
+        // idempotent upsert (ON CONFLICT(device_id,record_date) DO UPDATE), so
+        // re-asserting all days is cheap and self-healing — it back-fills any gap
+        // and never freezes the dashboard. (Previously this saved only a trailing
+        // 7-day window, which left cpap_daily_summary stuck whenever STR processing
+        // lagged and made the dashboard depend on a separate backfill — issue #8.)
+        db_service_->saveSTRDailyRecords(all_records);
 
         // Publish latest therapy day to MQTT
         const auto& latest = all_records.back();
@@ -722,8 +682,8 @@ void BurstCollectorService::processSTRFile() {
             data_publisher_->publishInsights(insights);
         }
 
-        std::cout << "STR: Processed " << all_records.size() << " therapy days, saved "
-                  << save_count << " recent to DB" << std::endl;
+        std::cout << "STR: Processed and saved " << all_records.size()
+                  << " therapy days to DB" << std::endl;
 
     } catch (const std::exception& e) {
         std::cerr << "STR: Processing failed (non-fatal): " << e.what() << std::endl;
@@ -906,6 +866,16 @@ bool BurstCollectorService::executeBurstCycle() {
 
         new_sessions = SessionDiscoveryService::discoverLocalSessions(
             local_source_dir_, last_session_start);
+
+        // Local mode: STR.edf is static lifetime history on disk, and these
+        // sessions never transition to "completed" the way growing ezShare files
+        // do — discoverLocalSessions filters out already-seen sessions, so the
+        // completion-gated STR path below is never reached. That left
+        // cpap_daily_summary (the dashboard's source) frozen after the first run
+        // (issue #8). Process STR every cycle here instead: parseSTRFile + an
+        // idempotent single-transaction upsert of the FULL history — cheap, and
+        // self-healing if the mounted directory gains new days.
+        processSessionSummary();
 
         if (new_sessions.empty()) {
             std::cout << "CPAP: No new sessions found locally" << std::endl;

@@ -79,6 +79,7 @@ set(TEST_SOURCES
     integration/test_PrismaE2E.cpp
     services/test_InsightsEngine.cpp
     database/test_SQLiteDatabase.cpp
+    database/test_DatabaseFactory.cpp
     mqtt/test_DiscoveryPublisher.cpp
     database/test_DatabaseService_pg.cpp
     database/test_PostgresEdges.cpp

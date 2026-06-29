@@ -13,6 +13,7 @@
 #include "parsers/CpapdashBridge.h"
 #include "database/IDatabase.h"
 #include "database/SQLiteDatabase.h"
+#include "database/DatabaseFactory.h"
 #ifdef WITH_POSTGRESQL
 #include "database/DatabaseService.h"
 #include "database/PostgresDatabase.h"
@@ -160,24 +161,16 @@ int runBackfill(const std::string& filepath) {
     }
     std::cout << "STR Backfill: Found " << records.size() << " therapy days" << std::endl;
 
-    // Connect to DB
-    std::string db_host = hms_cpap::ConfigManager::get("DB_HOST", "localhost");
-    std::string db_port = hms_cpap::ConfigManager::get("DB_PORT", "5432");
-    std::string db_name = hms_cpap::ConfigManager::get("DB_NAME", "cpap_monitoring");
-    std::string db_user = hms_cpap::ConfigManager::get("DB_USER", "maestro");
-    std::string db_password = hms_cpap::ConfigManager::get("DB_PASSWORD", "");
-
-    std::string conn_str = "host=" + db_host + " port=" + db_port +
-                           " dbname=" + db_name + " user=" + db_user +
-                           " password=" + db_password;
-
-    hms_cpap::DatabaseService db(conn_str);
-    if (!db.connect()) {
+    // Connect to the configured DB backend (sqlite/postgresql/mysql). Previously
+    // this hardcoded a PostgreSQL DatabaseService, so --backfill failed for
+    // SQLite users (issue #8). Use the shared factory so it matches the service.
+    auto db = hms_cpap::makeDatabaseFromConfig();
+    if (!db->connect()) {
         std::cerr << "STR Backfill: DB connection failed" << std::endl;
         return 1;
     }
 
-    if (!db.saveSTRDailyRecords(records)) {
+    if (!db->saveSTRDailyRecords(records)) {
         std::cerr << "STR Backfill: Failed to save records" << std::endl;
         return 1;
     }
@@ -243,26 +236,12 @@ int runReparse(const std::string& archive_dir, const std::string& start_str, con
     std::cout << "Reparse: Scanning " << date_folders.size() << " date folder(s) in "
               << archive_dir << std::endl;
 
-    // Connect to DB
-    // Honor the configured DB type (env set from config by main()): SQLite for
-    // local runs, PostgreSQL otherwise. Previously this always forced Postgres.
-    std::string db_type = hms_cpap::ConfigManager::get("DB_TYPE", "sqlite");
-    std::shared_ptr<hms_cpap::IDatabase> db;
-    if (db_type == "postgresql") {
-        std::string conn_str =
-            "host=" + hms_cpap::ConfigManager::get("DB_HOST", "localhost") +
-            " port=" + hms_cpap::ConfigManager::get("DB_PORT", "5432") +
-            " dbname=" + hms_cpap::ConfigManager::get("DB_NAME", "cpap_monitoring") +
-            " user=" + hms_cpap::ConfigManager::get("DB_USER", "maestro") +
-            " password=" + hms_cpap::ConfigManager::get("DB_PASSWORD", "");
-        db = std::make_shared<hms_cpap::DatabaseService>(conn_str);
-    } else {
-        db = std::make_shared<hms_cpap::SQLiteDatabase>(
-            hms_cpap::ConfigManager::get("SQLITE_PATH",
-                std::string(getenv("HOME") ? getenv("HOME") : ".") + "/.hms-cpap/cpap.db"));
-    }
+    // Connect to the configured DB backend via the shared factory (sqlite/
+    // postgresql/mysql) so CLI tools and the service never disagree.
+    auto db = hms_cpap::makeDatabaseFromConfig();
     if (!db->connect()) {
-        std::cerr << "Reparse: DB connection failed (" << db_type << ")" << std::endl;
+        std::cerr << "Reparse: DB connection failed ("
+                  << hms_cpap::ConfigManager::get("DB_TYPE", "sqlite") << ")" << std::endl;
         return 1;
     }
 
