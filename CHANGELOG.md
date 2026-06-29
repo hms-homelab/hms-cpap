@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.4.6] - 2026-06-29
+
+### Added
+- Full-card OSCAR residue capture (SDD-002): the per-night `.crc` plus root
+  `Identification.*`, `SETTINGS/`, and `JOURNAL` are now pulled into the OSCAR
+  archive (ezShare transport), so `~/.hms-cpap/` is a complete, OSCAR-importable
+  card image and SleepHQ uploads include the residue.
+
+### Fixed
+- SQLite / local-directory dashboard freeze (#8): in local-directory mode the STR
+  daily summary (`cpap_daily_summary`, the dashboard's source) was only written on
+  session completion, which never fires for static local sessions — so the
+  dashboard froze on an old date. STR is now processed every burst cycle in local
+  mode (idempotent upsert; self-healing).
+- STR `--backfill` and `--reparse` honored `DB_TYPE` instead of hardcoding
+  PostgreSQL (#8): they failed for SQLite users (Synology Docker) trying to reach
+  `localhost:5432`. Backend selection now goes through a shared `DatabaseFactory`.
+- `processSTRFile` persists the full STR history instead of only a trailing
+  7-day window.
+
+### Changed
+- Coverage gate restored to 80% (test backfill); the unit CI gate skips the
+  flaky / broker-dependent integration suites.
+
 ## [4.4.5] - 2026-06-27
 
 ### Added
