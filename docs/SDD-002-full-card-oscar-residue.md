@@ -1,7 +1,7 @@
 # SDD-002: Full-Card OSCAR Residue Capture — non-EDF/non-junk files for a complete card image
 
-**Status:** Draft
-**Date:** 2026-06-28
+**Status:** Implemented (v1: ezShare transport)
+**Date:** 2026-06-28 (implemented 2026-06-29)
 **Companion:** the CpapDash cloud's full-card backup + OSCAR export capability (general residual sweep + DATALOG `.crc` capture, shipped cloud v2026.6.1)
 
 ## Parity mandate (the "must")

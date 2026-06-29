@@ -57,6 +57,20 @@ public:
     std::vector<EzShareFileEntry> listFiles(const std::string& date_folder) override;
 
     /**
+     * List an arbitrary card directory (files AND directories), for the SDD-002
+     * residue sweep. card_path is backslash-separated and card-relative;
+     * "" lists the card root (/dir?dir=A:).
+     */
+    std::vector<EzShareFileEntry> listDir(const std::string& card_path) override;
+
+    /**
+     * Download a file by its card-relative path (backslash-separated), e.g.
+     * "SETTINGS\\AGL.tgt" or "Identification.tgt". Used by the residue sweep.
+     */
+    bool downloadByPath(const std::string& card_rel_path,
+                        const std::string& local_path) override;
+
+    /**
      * Download a single file from a date folder
      * @param date_folder e.g., "20260203"
      * @param filename Display name from listFiles (e.g., "20260204_001809_CSL.edf")
@@ -121,6 +135,9 @@ private:
 
     /** Fetch HTML from a URL */
     std::string httpGet(const std::string& url);
+
+    /** Encode a backslash-separated card path for ez Share URLs (\ -> %5C). */
+    static std::string encodeCardPath(const std::string& path);
 };
 
 } // namespace hms_cpap

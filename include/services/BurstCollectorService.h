@@ -215,6 +215,23 @@ private:
                             const std::string& archive_base_dir);
 
     /**
+     * SDD-002: download the non-EDF / non-junk residue (the per-night .crc and any
+     * brand-agnostic metadata) for a DATALOG date folder into the temp dir, so
+     * archiveSessionFiles() copies it into the OSCAR layout. EDFs are pulled by
+     * downloadSessionFiles(); this captures only what that path skips.
+     */
+    void downloadDatalogResidue(const std::string& date_folder,
+                                const std::string& local_dir);
+
+    /**
+     * SDD-002: recursive sweep of the card root + every non-DATALOG directory
+     * (Identification.*, SETTINGS/, JOURNAL, unknown vendor layouts), writing each
+     * non-junk file straight into the OSCAR archive root. Backup-only (never parsed).
+     * ezShare only — transports without listDir()/downloadByPath() no-op here.
+     */
+    void captureCardResidue(const std::string& archive_root);
+
+    /**
      * Process manufacturer-specific summary data on session completion.
      * ResMed: download + parse STR.edf, save to DB, publish to MQTT.
      * Lowenstein: parse statistics_year.bin (future).

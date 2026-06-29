@@ -9,6 +9,7 @@
 #include "utils/ConfigManager.h"
 #include "utils/AppConfig.h"
 #include "utils/FileUtils.h"
+#include "utils/CardResidue.h"
 #include "database/SQLiteDatabase.h"
 #ifdef WITH_POSTGRESQL
 #include "database/DatabaseService.h"
@@ -540,6 +541,92 @@ bool BurstCollectorService::archiveSessionFiles(
                   << ": " << e.what() << std::endl;
         return false;
     }
+}
+
+void BurstCollectorService::downloadDatalogResidue(const std::string& date_folder,
+                                                   const std::string& local_dir) {
+    std::vector<EzShareFileEntry> files;
+    try {
+        files = data_source_->listFiles(date_folder);
+    } catch (const std::exception& e) {
+        std::cerr << "📎 Residue: list failed for " << date_folder << ": " << e.what() << std::endl;
+        return;
+    }
+
+    int captured = 0;
+    for (const auto& f : files) {
+        if (isCpapEdf(f.name)) continue;  // analytical — already pulled by downloadSessionFiles()
+        uint64_t size_bytes = static_cast<uint64_t>(f.size_kb) * 1024;
+        if (residualSkip(f.name, size_bytes)) continue;  // junk / >20 MB
+
+        std::string local_path = local_dir + "/" + f.name;
+        // .crc rides the night's EDFs; re-fetch each cycle (tiny) so an active
+        // night's checksum stays in sync. archiveSessionFiles() dedups by size.
+        if (data_source_->downloadFile(date_folder, f.name, local_path)) {
+            captured++;
+        } else {
+            std::cerr << "📎 Residue: failed " << f.name << " in " << date_folder << std::endl;
+        }
+    }
+
+    if (captured > 0)
+        std::cout << "📎 Residue: captured " << captured << " non-EDF file(s) in "
+                  << date_folder << std::endl;
+}
+
+void BurstCollectorService::captureCardResidue(const std::string& archive_root) {
+    if (archive_root.empty()) return;
+
+    // Breadth-first walk: "" is the card root; every non-DATALOG subdir is enqueued.
+    std::vector<std::string> queue = {""};
+    size_t head = 0;
+    int captured = 0, dirs_listed = 0;
+    constexpr int kMaxDirs = 256;  // guard against pathological / looping listings
+
+    while (head < queue.size() && dirs_listed < kMaxDirs) {
+        const std::string dir = queue[head++];
+        dirs_listed++;
+
+        std::vector<EzShareFileEntry> entries;
+        try {
+            entries = data_source_->listDir(dir);  // no-op ({}) on transports w/o support
+        } catch (const std::exception& e) {
+            std::cerr << "📎 Residue: listDir failed '" << dir << "': " << e.what() << std::endl;
+            continue;
+        }
+
+        for (const auto& e : entries) {
+            if (e.name == "." || e.name == "..") continue;
+            const std::string rel = dir.empty() ? e.name : (dir + "\\" + e.name);
+
+            if (e.is_dir) {
+                if (!e.name.empty() && e.name[0] == '.') continue;     // .Spotlight-V100, .fseventsd
+                if (dir.empty() && e.name == "DATALOG") continue;      // analytical walk owns DATALOG
+                queue.push_back(rel);
+                continue;
+            }
+
+            std::string lname = e.name;
+            std::transform(lname.begin(), lname.end(), lname.begin(), ::tolower);
+            if (dir.empty() && lname == "str.edf") continue;           // analytical (processSTRFile)
+            uint64_t size_bytes = static_cast<uint64_t>(e.size_kb) * 1024;
+            if (residualSkip(e.name, size_bytes)) continue;            // junk / >20 MB
+
+            // Mirror the card layout under the OSCAR archive root (\\ -> /).
+            std::string rel_os = rel;
+            std::replace(rel_os.begin(), rel_os.end(), '\\', '/');
+            std::filesystem::path local_path = std::filesystem::path(archive_root) / rel_os;
+
+            if (data_source_->downloadByPath(rel, local_path.string()))
+                captured++;
+        }
+    }
+
+    if (dirs_listed >= kMaxDirs)
+        std::cerr << "📎 Residue: sweep hit dir cap (" << kMaxDirs << "), stopping" << std::endl;
+    if (captured > 0)
+        std::cout << "📎 Residue: captured " << captured
+                  << " card-root file(s) into archive" << std::endl;
 }
 
 void BurstCollectorService::processSessionSummary() {
@@ -1166,8 +1253,15 @@ bool BurstCollectorService::executeBurstCycle() {
             date_folders.insert(session.date_folder);
         }
         for (const auto& date_folder : date_folders) {
+            // SDD-002: pull the per-night .crc (and any non-junk metadata) into the
+            // temp folder first, so archiveSessionFiles() lands it in the OSCAR layout.
+            downloadDatalogResidue(date_folder, local_base_dir + "/" + date_folder);
             archiveSessionFiles(date_folder, local_base_dir, permanent_archive);
         }
+
+        // SDD-002: full-card residue sweep (Identification.*, SETTINGS/, JOURNAL, …)
+        // straight into the archive root. ezShare only; no-ops on other transports.
+        captureCardResidue(permanent_archive);
     }
 
     // Step 6: Parse all sessions (same for both modes)
