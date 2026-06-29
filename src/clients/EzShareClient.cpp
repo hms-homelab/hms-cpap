@@ -433,4 +433,86 @@ bool EzShareClient::downloadSession(const std::string& date_folder,
     return downloaded > 0;
 }
 
+std::string EzShareClient::encodeCardPath(const std::string& path) {
+    // ez Share requires backslash separators URL-encoded as %5C; forward slashes 404.
+    std::string out;
+    out.reserve(path.size() + 8);
+    for (char c : path) {
+        if (c == '\\') out += "%5C";
+        else out += c;
+    }
+    return out;
+}
+
+std::vector<EzShareFileEntry> EzShareClient::listDir(const std::string& card_path) {
+    // "" -> card root (/dir?dir=A:), otherwise /dir?dir=A:<backslash-path>.
+    // Unlike listFiles(), this returns directories too — the residue sweep
+    // recurses into every non-DATALOG subdir.
+    std::string url = base_url_ + "/dir?dir=A:" + encodeCardPath(card_path);
+
+    std::cout << "EzShare: listing dir '" << (card_path.empty() ? "<root>" : card_path)
+              << "'" << std::endl;
+
+    std::string html = httpGet(url);
+    if (html.empty()) {
+        std::cerr << "EzShare: empty response listing '" << card_path << "'" << std::endl;
+        return {};
+    }
+
+    return parseDirectoryListing(html);  // includes both files and <DIR> entries
+}
+
+bool EzShareClient::downloadByPath(const std::string& card_rel_path,
+                                    const std::string& local_path) {
+    // Generic single-file download by card-relative (backslash) path.
+    std::string url = base_url_ + "/download?file=" + encodeCardPath(card_rel_path);
+
+    std::cout << "EzShare: downloading by path " << card_rel_path << std::endl;
+
+    std::filesystem::create_directories(
+        std::filesystem::path(local_path).parent_path()
+    );
+
+    std::ofstream output(local_path, std::ios::binary);
+    if (!output.is_open()) {
+        std::cerr << "EzShare: cannot open " << local_path << std::endl;
+        return false;
+    }
+
+    curl_easy_setopt(curl_, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl_, CURLOPT_WRITEFUNCTION, WriteFileCallback);
+    curl_easy_setopt(curl_, CURLOPT_WRITEDATA, &output);
+    curl_easy_setopt(curl_, CURLOPT_TIMEOUT, DOWNLOAD_TIMEOUT);
+    curl_easy_setopt(curl_, CURLOPT_CONNECTTIMEOUT, CONNECTION_TIMEOUT);
+    curl_easy_setopt(curl_, CURLOPT_FOLLOWLOCATION, 0L);
+
+    CURLcode res = curl_easy_perform(curl_);
+    output.close();
+
+    if (res != CURLE_OK && res != CURLE_PARTIAL_FILE) {
+        std::cerr << "EzShare: download-by-path failed (" << card_rel_path << "): "
+                  << curl_easy_strerror(res) << std::endl;
+        std::filesystem::remove(local_path);
+        return false;
+    }
+
+    long http_code = 0;
+    curl_easy_getinfo(curl_, CURLINFO_RESPONSE_CODE, &http_code);
+    if (http_code != 200) {
+        std::cerr << "EzShare: HTTP " << http_code << " for " << card_rel_path << std::endl;
+        std::filesystem::remove(local_path);
+        return false;
+    }
+
+    auto file_size = std::filesystem::file_size(local_path);
+    if (file_size == 0) {
+        std::cerr << "EzShare: empty file " << card_rel_path << std::endl;
+        std::filesystem::remove(local_path);
+        return false;
+    }
+
+    std::cout << "EzShare: " << card_rel_path << " -> " << file_size << " bytes" << std::endl;
+    return true;
+}
+
 } // namespace hms_cpap

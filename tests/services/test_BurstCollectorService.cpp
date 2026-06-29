@@ -1605,6 +1605,11 @@ public:
     std::vector<std::string> date_folders;
     std::map<std::string, std::vector<EzShareFileEntry>> folder_files;
     int download_count = 0;
+    // SDD-002 residue test seams: arbitrary-dir listings (key "" = card root),
+    // and records of what the residue paths actually fetched.
+    std::map<std::string, std::vector<EzShareFileEntry>> dir_listings;
+    std::vector<std::string> downloaded_files;     // filenames via downloadFile()
+    std::vector<std::string> downloaded_by_path;   // card-rel paths via downloadByPath()
 
     std::vector<std::string> listDateFolders() override { return date_folders; }
 
@@ -1613,11 +1618,26 @@ public:
         return it == folder_files.end() ? std::vector<EzShareFileEntry>{} : it->second;
     }
 
+    std::vector<EzShareFileEntry> listDir(const std::string& card_path) override {
+        auto it = dir_listings.find(card_path);
+        return it == dir_listings.end() ? std::vector<EzShareFileEntry>{} : it->second;
+    }
+
+    bool downloadByPath(const std::string& card_rel_path,
+                        const std::string& local_path) override {
+        downloaded_by_path.push_back(card_rel_path);
+        std::filesystem::create_directories(std::filesystem::path(local_path).parent_path());
+        std::ofstream ofs(local_path, std::ios::binary);
+        ofs << "RESIDUE_BYTES";
+        return true;
+    }
+
     // Write deterministic bytes so downloadSessionFiles() succeeds. Content is
     // garbage EDF — parse fails later, which is fine: we assert pre-parse DB calls.
-    bool downloadFile(const std::string& /*date_folder*/, const std::string& /*filename*/,
+    bool downloadFile(const std::string& /*date_folder*/, const std::string& filename,
                       const std::string& local_path) override {
         ++download_count;
+        downloaded_files.push_back(filename);
         std::filesystem::create_directories(std::filesystem::path(local_path).parent_path());
         std::ofstream ofs(local_path, std::ios::binary);
         ofs << "NOT_A_REAL_EDF_FILE";
@@ -1639,10 +1659,11 @@ public:
     }
 };
 
-EzShareFileEntry mkEntry(const std::string& name, int size_kb) {
+EzShareFileEntry mkEntry(const std::string& name, int size_kb, bool is_dir = false) {
     EzShareFileEntry e;
     e.name = name;
     e.size_kb = size_kb;
+    e.is_dir = is_dir;
     return e;
 }
 
@@ -2217,6 +2238,111 @@ TEST_F(BurstOrchestrationTest, PrismaMode_NoData_InitFailsReturnsFalse) {
                                    nullptr, std::move(prisma));
     EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
     EXPECT_FALSE(svc->runBurstCycleForTest());
+}
+
+// ── SDD-002: full-card OSCAR residue capture ────────────────────────────────
+// These drive a full new-session burst cycle (download -> archive) and assert
+// the residue paths (downloadDatalogResidue + captureCardResidue) ran. The fake
+// source records what each path fetched; the OSCAR archive layout is checked on
+// disk. The residue passes only run after a successful download, so each test
+// seeds a fresh single session.
+
+// A single session folder that ALSO holds the per-night .crc residue next to the
+// EDFs, plus a junk file the denylist must drop, plus an oversize non-EDF.
+static void seedSessionWithResidue(FakeDataSource& ds) {
+    ds.date_folders = {"20200101"};
+    ds.folder_files["20200101"] = {
+        mkEntry("20200101_220000_BRP.edf", 100),
+        mkEntry("20200101_220000_PLD.edf", 20),
+        mkEntry("20200101_220000_CSL.edf", 1),
+        mkEntry("20200101_220000_EVE.edf", 2),
+        mkEntry("20200101_220000_BRP.crc", 1),   // residue: keep
+        mkEntry("20200101_220000_PLD.crc", 1),   // residue: keep
+        mkEntry("vacation.jpg", 3000),           // junk: drop
+        mkEntry("huge.bin", 25 * 1024),          // >20 MB non-EDF: drop
+    };
+}
+
+// Wire the standard new-session DB expectations for a fresh download.
+static void expectFreshDownload(MockDatabase& db) {
+    EXPECT_CALL(db, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(db, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(db, sessionExists(_, _)).WillRepeatedly(Return(false));
+}
+
+TEST_F(BurstOrchestrationTest, Residue_DatalogCrc_CapturedIntoArchive) {
+    auto svc = makeService(&seedSessionWithResidue);
+    expectFreshDownload(*db_raw);
+    EXPECT_CALL(*db_raw, updateCheckpointFileSizesMock(_, _)).Times(AtLeast(1));
+
+    svc->runBurstCycleForTest();
+
+    namespace fs = std::filesystem;
+    auto datalog = archive_dir / "DATALOG" / "20200101";
+    // The .crc residue rode the download into the OSCAR archive...
+    EXPECT_TRUE(fs::exists(datalog / "20200101_220000_BRP.crc"));
+    EXPECT_TRUE(fs::exists(datalog / "20200101_220000_PLD.crc"));
+    // ...alongside the EDFs...
+    EXPECT_TRUE(fs::exists(datalog / "20200101_220000_BRP.edf"));
+    // ...but junk and oversize non-EDF were dropped.
+    EXPECT_FALSE(fs::exists(datalog / "vacation.jpg"));
+    EXPECT_FALSE(fs::exists(datalog / "huge.bin"));
+
+    // The .crc were fetched via downloadFile; the EDFs too. Junk never fetched.
+    auto fetched = [&](const std::string& n) {
+        return std::find(src_raw->downloaded_files.begin(),
+                         src_raw->downloaded_files.end(), n) != src_raw->downloaded_files.end();
+    };
+    EXPECT_TRUE(fetched("20200101_220000_BRP.crc"));
+    EXPECT_FALSE(fetched("vacation.jpg"));
+    EXPECT_FALSE(fetched("huge.bin"));
+}
+
+TEST_F(BurstOrchestrationTest, Residue_CardRootSweep_RecursesAndSkips) {
+    auto svc = makeService([](FakeDataSource& ds) {
+        seedOneSession(ds);  // a plain session so the cycle downloads + archives
+        // Card root: Identification.* (keep), STR.edf (analytical, skip),
+        // ezshare.cfg (junk, skip), a SETTINGS dir (recurse) and a DATALOG dir
+        // (must NOT be recursed — the analytical walk owns it), plus a dot-dir.
+        ds.dir_listings[""] = {
+            mkEntry("Identification.tgt", 1),
+            mkEntry("Identification.crc", 1),
+            mkEntry("STR.edf", 50),
+            mkEntry("ezshare.cfg", 1),
+            mkEntry("SETTINGS", 0, /*is_dir=*/true),
+            mkEntry("DATALOG", 0, /*is_dir=*/true),
+            mkEntry(".Spotlight-V100", 0, /*is_dir=*/true),
+        };
+        ds.dir_listings["SETTINGS"] = {
+            mkEntry("AGL.tgt", 1),
+            mkEntry("DLL.log", 2),
+        };
+    });
+    expectFreshDownload(*db_raw);
+    EXPECT_CALL(*db_raw, updateCheckpointFileSizesMock(_, _)).Times(AtLeast(1));
+
+    svc->runBurstCycleForTest();
+
+    namespace fs = std::filesystem;
+    // Root metadata captured straight into the OSCAR archive root.
+    EXPECT_TRUE(fs::exists(archive_dir / "Identification.tgt"));
+    EXPECT_TRUE(fs::exists(archive_dir / "Identification.crc"));
+    // SETTINGS recursed into and its files captured under the mirrored subdir.
+    EXPECT_TRUE(fs::exists(archive_dir / "SETTINGS" / "AGL.tgt"));
+    EXPECT_TRUE(fs::exists(archive_dir / "SETTINGS" / "DLL.log"));
+
+    auto pulled = [&](const std::string& rel) {
+        return std::find(src_raw->downloaded_by_path.begin(),
+                         src_raw->downloaded_by_path.end(), rel) != src_raw->downloaded_by_path.end();
+    };
+    // Root STR.edf is analytical and must NOT be swept as residue.
+    EXPECT_FALSE(pulled("STR.edf"));
+    // ezShare.cfg is junk — never pulled.
+    EXPECT_FALSE(pulled("ezshare.cfg"));
+    // DATALOG is owned by the analytical walk — never re-listed (no children pulled
+    // from it), and the dot-dir was skipped.
+    EXPECT_TRUE(pulled("Identification.tgt"));
+    EXPECT_TRUE(pulled("SETTINGS\\AGL.tgt"));
 }
 
 }  // namespace burst_orch
