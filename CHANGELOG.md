@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.4.7] - 2026-06-29
+
+### Fixed
+- Windows (MSVC) build: `O2RingCsvParser` used POSIX `timegm`, which MSVC lacks.
+  Added a portable `timegm` shim (`_mkgmtime`) to `utils/TimeCompat.h`. No effect
+  on Linux/macOS builds.
+
 ## [4.4.6] - 2026-06-29
 
 ### Added

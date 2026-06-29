@@ -1,4 +1,5 @@
 #include "services/O2RingCsvParser.h"
+#include "utils/TimeCompat.h"  // portable timegm() on MSVC (_mkgmtime)
 
 #include <algorithm>
 #include <cctype>
