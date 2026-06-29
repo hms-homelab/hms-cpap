@@ -8,7 +8,15 @@ inline struct tm* gmtime_r(const time_t* timer, struct tm* result) {
 inline struct tm* localtime_r(const time_t* timer, struct tm* result) {
     return localtime_s(result, timer) == 0 ? result : nullptr;
 }
-// POSIX timegm() has no MSVC equivalent; _mkgmtime() is the Win32 counterpart
-// (interprets the struct tm as UTC). Same signature/semantics.
-inline time_t timegm(struct tm* tm) { return _mkgmtime(tm); }
 #endif
+
+// Portable "interpret struct tm as UTC -> time_t". Uniquely named to avoid
+// colliding with libc's or Drogon's own timegm symbol on Windows (Drogon already
+// exports timegm in drogon.lib, so defining our own caused LNK2005).
+inline time_t timegm_utc(struct tm* tm) {
+#ifdef _WIN32
+    return _mkgmtime(tm);
+#else
+    return timegm(tm);
+#endif
+}

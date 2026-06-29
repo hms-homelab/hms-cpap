@@ -85,7 +85,7 @@ bool parseTimestamp(std::string t, std::chrono::system_clock::time_point& out) {
     tm.tm_hour = hh;
     tm.tm_min = mm;
     tm.tm_sec = ssec;
-    out = std::chrono::system_clock::from_time_t(timegm(&tm));
+    out = std::chrono::system_clock::from_time_t(timegm_utc(&tm));
     return true;
 }
 

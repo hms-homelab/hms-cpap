@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.4.8] - 2026-06-29
+
+### Fixed
+- Windows (MSVC) link error: the v4.4.7 `timegm` shim collided with Drogon's own
+  `timegm` export (`LNK2005`). Renamed the helper to `timegm_utc` (unique symbol)
+  in `utils/TimeCompat.h` and updated the call site. No effect on Linux/macOS.
+
 ## [4.4.7] - 2026-06-29
 
 ### Fixed
