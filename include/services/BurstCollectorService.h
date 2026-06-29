@@ -123,6 +123,17 @@ public:
     /// reloadConfig() path the worker thread runs when markConfigDirty() fires.
     void reloadConfigForTest() { reloadConfig(); }
 
+    /// Test-only thin wrappers over the private LLM-prompt formatters so their
+    /// many optional-field branches can be unit-tested without a live LLM/MQTT.
+    std::string buildMetricsStringForTest(const SessionMetrics& metrics,
+                                          const STRDailyRecord* str_record = nullptr) const {
+        return buildMetricsString(metrics, str_record);
+    }
+    std::string buildRangeMetricsStringForTest(const std::vector<SessionMetrics>& nights,
+                                               SummaryPeriod period) const {
+        return buildRangeMetricsString(nights, period);
+    }
+
 private:
     // Configuration
     int burst_interval_seconds_;

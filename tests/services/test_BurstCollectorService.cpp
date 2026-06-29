@@ -2345,6 +2345,26 @@ TEST_F(BurstOrchestrationTest, Residue_CardRootSweep_RecursesAndSkips) {
     EXPECT_TRUE(pulled("SETTINGS\\AGL.tgt"));
 }
 
+// forceCompleteSession() drives the manual-completion path: mark + force-complete
+// in the DB, publish completion, and run the manufacturer summary (ezShare STR
+// branch downloads the root STR.edf via the fake source, then parse no-ops on the
+// stub bytes). Exercises forceCompleteSession + processSessionSummary +
+// processSTRFile(ezShare) with the null-MQTT publisher.
+TEST_F(BurstOrchestrationTest, ForceCompleteSession_DrivesCompletionAndSummary) {
+    auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
+    auto start = std::chrono::system_clock::now();
+
+    EXPECT_CALL(*db_raw, getSessionStartForSleepDay(_, _, _))
+        .WillRepeatedly(Return(std::optional<std::chrono::system_clock::time_point>(start)));
+    EXPECT_CALL(*db_raw, markSessionCompleted(_, _)).WillRepeatedly(Return(true));
+    EXPECT_CALL(*db_raw, setForceCompleted(_, _)).WillRepeatedly(Return(true));
+    SessionMetrics nm; nm.ahi = 1.5; nm.total_events = 4; nm.usage_hours = 6.0;
+    EXPECT_CALL(*db_raw, getNightlyMetrics(_, _))
+        .WillRepeatedly(Return(std::optional<SessionMetrics>(nm)));
+
+    EXPECT_TRUE(svc->forceCompleteSession("2020-01-01"));
+}
+
 }  // namespace burst_orch
 
 // ============================================================================
@@ -2403,4 +2423,223 @@ TEST(BurstConfigReloadTest, ReloadConfig_AppliesAllSubsystemChanges) {
 
     SUCCEED();
 }
+
+// ============================================================================
+// LLM PROMPT FORMATTER TESTS (SDD-002 coverage backfill)
+// buildMetricsString / buildRangeMetricsString are pure string builders over the
+// metrics structs with many optional-field branches. Exercised here directly via
+// the test seam (no live LLM/MQTT/DB needed — db_service_ stays null, so the
+// oximetry blocks are guarded off).
+// ============================================================================
+namespace burst_fmt {
+
+TEST(BurstMetricsFormatTest, MetricsString_AllFieldsPopulated) {
+    BurstCollectorService svc(60);
+    SessionMetrics m;
+    m.usage_hours = 7.5; m.usage_percent = 93.75;
+    m.ahi = 3.21; m.total_events = 24; m.obstructive_apneas = 10;
+    m.central_apneas = 2; m.hypopneas = 10; m.reras = 2;
+    m.avg_event_duration = 18.4; m.max_event_duration = 41.0;
+    m.avg_pressure = 9.2; m.min_pressure = 6.0; m.max_pressure = 12.0; m.pressure_p95 = 11.4;
+    m.avg_leak_rate = 12.0; m.max_leak_rate = 30.0; m.leak_p95 = 24.0; m.leak_p50 = 8.0;
+    m.avg_mask_pressure = 9.0; m.avg_epr_pressure = 6.5; m.avg_snore = 0.4;
+    m.avg_target_ventilation = 7.2; m.therapy_mode = 8;  // ASV (Variable EPAP)
+    m.avg_respiratory_rate = 15.0; m.avg_tidal_volume = 480.0;
+    m.avg_minute_ventilation = 7.1; m.avg_flow_limitation = 0.12;
+
+    STRDailyRecord str;
+    str.ahi = 3.0; str.mask_events = 4; str.leak_95 = 20.0; str.mask_press_95 = 11.0;
+    str.asv_epap = 6.0; str.asv_min_ps = 3.0; str.asv_max_ps = 10.0;
+    str.tgt_ipap_50 = 12.0; str.tgt_epap_50 = 6.0; str.tgt_vent_50 = 7.0;
+
+    std::string out = svc.buildMetricsStringForTest(m, &str);
+
+    EXPECT_NE(out.find("Usage: 7.50 hours"), std::string::npos);
+    EXPECT_NE(out.find("AHI: 3.21 events/hour"), std::string::npos);
+    EXPECT_NE(out.find("Avg event duration: 18.40s, max: 41.00s"), std::string::npos);
+    EXPECT_NE(out.find("Pressure: avg=9.20 cmH2O"), std::string::npos);
+    EXPECT_NE(out.find("Leak: avg=12.00 L/min"), std::string::npos);
+    EXPECT_NE(out.find("EPR/EPAP pressure:"), std::string::npos);
+    EXPECT_NE(out.find("Therapy mode: ASV (Variable EPAP)"), std::string::npos);
+    EXPECT_NE(out.find("Respiratory rate:"), std::string::npos);
+    EXPECT_NE(out.find("ResMed official daily summary:"), std::string::npos);
+    EXPECT_NE(out.find("ASV EPAP: 6.00 cmH2O"), std::string::npos);
+    EXPECT_NE(out.find("Target IPAP (median): 12.00 cmH2O"), std::string::npos);
+}
+
+TEST(BurstMetricsFormatTest, MetricsString_MinimalNoOptionals) {
+    BurstCollectorService svc(60);
+    SessionMetrics m;  // all optionals empty
+    m.ahi = 1.0; m.total_events = 3;
+
+    std::string out = svc.buildMetricsStringForTest(m, nullptr);
+
+    EXPECT_NE(out.find("AHI: 1.00 events/hour"), std::string::npos);
+    EXPECT_NE(out.find("Usage: 0.00 hours"), std::string::npos);
+    // None of the optional sections should appear.
+    EXPECT_EQ(out.find("Pressure:"), std::string::npos);
+    EXPECT_EQ(out.find("Leak:"), std::string::npos);
+    EXPECT_EQ(out.find("Therapy mode:"), std::string::npos);
+    EXPECT_EQ(out.find("ResMed official daily summary:"), std::string::npos);
+}
+
+TEST(BurstMetricsFormatTest, MetricsString_TherapyModeNames) {
+    BurstCollectorService svc(60);
+    auto modeName = [&](int mode) {
+        SessionMetrics m; m.therapy_mode = mode;
+        return svc.buildMetricsStringForTest(m, nullptr);
+    };
+    EXPECT_NE(modeName(0).find("Therapy mode: CPAP"), std::string::npos);
+    EXPECT_NE(modeName(1).find("Therapy mode: APAP"), std::string::npos);
+    EXPECT_NE(modeName(7).find("Therapy mode: ASV (Fixed EPAP)"), std::string::npos);
+    EXPECT_NE(modeName(99).find("Therapy mode: Unknown"), std::string::npos);
+}
+
+TEST(BurstMetricsFormatTest, RangeMetricsString_WeeklyAndMonthly) {
+    BurstCollectorService svc(60);
+    std::vector<SessionMetrics> nights;
+    SessionMetrics a; a.sleep_day = "2026-06-01"; a.ahi = 2.0; a.usage_hours = 6.0;
+    a.total_events = 12; a.avg_leak_rate = 10.0; a.avg_pressure = 9.0;
+    SessionMetrics b; b.sleep_day = "2026-06-02"; b.ahi = 8.0; b.usage_hours = 3.0;
+    b.total_events = 40;  // no leak/pressure -> exercises the "absent" branch + non-compliant
+    nights = {a, b};
+
+    std::string wk = svc.buildRangeMetricsStringForTest(nights, SummaryPeriod::WEEKLY);
+    EXPECT_NE(wk.find("Weekly CPAP report (2 nights)"), std::string::npos);
+    EXPECT_NE(wk.find("Weekly averages:"), std::string::npos);
+    EXPECT_NE(wk.find("Compliance (>=4h): 1/2"), std::string::npos);
+    EXPECT_NE(wk.find("Best AHI: 2.00 (2026-06-01)"), std::string::npos);
+    EXPECT_NE(wk.find("Worst AHI: 8.00 (2026-06-02)"), std::string::npos);
+    EXPECT_NE(wk.find("leak avg 10.00 L/min"), std::string::npos);
+
+    std::string mo = svc.buildRangeMetricsStringForTest(nights, SummaryPeriod::MONTHLY);
+    EXPECT_NE(mo.find("Monthly CPAP report (2 nights)"), std::string::npos);
+    EXPECT_NE(mo.find("Monthly averages:"), std::string::npos);
+}
+
+TEST(BurstMetricsFormatTest, MetricsString_PartialOptionalBranches) {
+    BurstCollectorService svc(60);
+    // Event duration present but no max; pressure block via p95 only (no avg/min/max);
+    // leak block via max only; PLD + ASV + respiratory singletons; STR with neither
+    // asv_epap nor tgt_ipap_50 set (covers the str header without the ASV sub-blocks).
+    SessionMetrics m;
+    m.ahi = 2.5; m.total_events = 5;
+    m.avg_event_duration = 12.0;          // no max_event_duration
+    m.pressure_p95 = 10.5;                 // gate true via p95, avg/min/max absent
+    m.max_leak_rate = 28.0;                // gate true via max, avg absent
+    m.avg_mask_pressure = 8.8;
+    m.avg_snore = 1.2;
+    m.avg_tidal_volume = 450.0;
+    m.avg_minute_ventilation = 6.8;
+    m.avg_flow_limitation = 0.05;
+    m.therapy_mode = 1;                    // APAP
+
+    STRDailyRecord str;
+    str.ahi = 2.0; str.mask_events = 2; str.leak_95 = 15.0; str.mask_press_95 = 10.0;
+    // asv_epap and tgt_ipap_50 intentionally left unset.
+
+    std::string out = svc.buildMetricsStringForTest(m, &str);
+    EXPECT_NE(out.find("Avg event duration: 12.00s"), std::string::npos);
+    EXPECT_EQ(out.find(", max:"), std::string::npos);          // no max segment
+    EXPECT_NE(out.find("Pressure:"), std::string::npos);
+    EXPECT_NE(out.find("95th=10.50 cmH2O"), std::string::npos);
+    EXPECT_NE(out.find("Leak:"), std::string::npos);
+    EXPECT_NE(out.find("Mask pressure (actual):"), std::string::npos);
+    EXPECT_NE(out.find("Snore index:"), std::string::npos);
+    EXPECT_NE(out.find("Therapy mode: APAP"), std::string::npos);
+    EXPECT_NE(out.find("ResMed official daily summary:"), std::string::npos);
+    EXPECT_EQ(out.find("ASV EPAP:"), std::string::npos);       // ASV sub-block absent
+    EXPECT_EQ(out.find("Target IPAP"), std::string::npos);     // tgt sub-block absent
+}
+
+TEST(BurstMetricsFormatTest, RangeMetricsString_SingleNightNoLeak) {
+    BurstCollectorService svc(60);
+    SessionMetrics a; a.sleep_day = "2026-06-10"; a.ahi = 4.0; a.usage_hours = 5.0;
+    a.total_events = 20;  // no leak -> leak_count==0 branch (no avg-leak line)
+    std::string out = svc.buildRangeMetricsStringForTest({a}, SummaryPeriod::WEEKLY);
+    EXPECT_NE(out.find("Weekly CPAP report (1 nights)"), std::string::npos);
+    EXPECT_NE(out.find("Compliance (>=4h): 1/1"), std::string::npos);
+    EXPECT_EQ(out.find("Avg leak:"), std::string::npos);  // no leak data -> line omitted
+}
+
+}  // namespace burst_fmt
+
+// ============================================================================
+// INITIALIZE() PATH TESTS (SDD-002 coverage backfill)
+// initialize() + the initX helpers read env-driven config and are bypassed by
+// injectDependenciesForTest(). Drive them on safe, network-free branches:
+// sqlite DB, local/ezShare source, MQTT off. No broker/LLM endpoint is hit.
+// ============================================================================
+namespace burst_init {
+
+class BurstInitTest : public ::testing::Test {
+protected:
+    std::filesystem::path base;
+    void SetUp() override {
+        base = std::filesystem::temp_directory_path() /
+               ("hms_cpap_init_" + std::to_string(getpid()));
+        std::filesystem::remove_all(base);
+        std::filesystem::create_directories(base / "DATALOG");
+    }
+    void TearDown() override {
+        std::filesystem::remove_all(base);
+        for (const char* k : {"CPAP_SOURCE", "CPAP_LOCAL_DIR", "DB_TYPE", "SQLITE_PATH",
+                              "MQTT_ENABLED", "LLM_ENABLED", "LLM_PROVIDER",
+                              "O2RING_MULE_URL"})
+            unsetenv(k);
+    }
+};
+
+// local source + sqlite, MQTT + LLM + O2Ring all disabled.
+TEST_F(BurstInitTest, Initialize_LocalSqlite_NoMqttNoLlm) {
+    setenv("CPAP_SOURCE", "local", 1);
+    setenv("CPAP_LOCAL_DIR", base.c_str(), 1);
+    setenv("DB_TYPE", "sqlite", 1);
+    setenv("SQLITE_PATH", (base / "init.db").c_str(), 1);
+    setenv("MQTT_ENABLED", "false", 1);
+    setenv("LLM_ENABLED", "false", 1);
+    unsetenv("O2RING_MULE_URL");
+
+    AppConfig cfg;
+    cfg.o2ring.enabled = false;
+    cfg.ezshare_range = true;
+    BurstCollectorService svc(60);
+    svc.initialize(&cfg);  // initDataSource(local)/initDatabase(sqlite)/initMqtt(off)/initLlm(off)/initO2Ring(off)
+    SUCCEED();
+}
+
+// ezShare source (range disabled branch) + sqlite, LLM enabled (constructs the
+// client + default prompt template — no endpoint is contacted at init time).
+TEST_F(BurstInitTest, Initialize_EzShareSqlite_LlmEnabled) {
+    setenv("CPAP_SOURCE", "ezshare", 1);
+    setenv("DB_TYPE", "sqlite", 1);
+    setenv("SQLITE_PATH", (base / "init2.db").c_str(), 1);
+    setenv("MQTT_ENABLED", "false", 1);
+    setenv("LLM_ENABLED", "true", 1);
+    setenv("LLM_PROVIDER", "ollama", 1);
+
+    AppConfig cfg;
+    cfg.o2ring.enabled = false;
+    cfg.ezshare_range = false;  // exercises EzShareClient::setSupportsRange(false)
+    BurstCollectorService svc(60);
+    svc.initialize(&cfg);
+    SUCCEED();
+}
+
+// Unknown DB_TYPE falls back to sqlite (covers the fallback branch).
+TEST_F(BurstInitTest, Initialize_UnknownDbType_FallsBackToSqlite) {
+    setenv("CPAP_SOURCE", "ezshare", 1);
+    setenv("DB_TYPE", "bogus", 1);
+    setenv("SQLITE_PATH", (base / "init3.db").c_str(), 1);
+    setenv("MQTT_ENABLED", "false", 1);
+    setenv("LLM_ENABLED", "false", 1);
+
+    AppConfig cfg;
+    cfg.o2ring.enabled = false;
+    BurstCollectorService svc(60);
+    svc.initialize(&cfg);
+    SUCCEED();
+}
+
+}  // namespace burst_init
 
