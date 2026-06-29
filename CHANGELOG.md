@@ -7,19 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [4.4.8] - 2026-06-29
-
 ### Fixed
-- Windows (MSVC) link error: the v4.4.7 `timegm` shim collided with Drogon's own
-  `timegm` export (`LNK2005`). Renamed the helper to `timegm_utc` (unique symbol)
-  in `utils/TimeCompat.h` and updated the call site. No effect on Linux/macOS.
-
-## [4.4.7] - 2026-06-29
-
-### Fixed
-- Windows (MSVC) build: `O2RingCsvParser` used POSIX `timegm`, which MSVC lacks.
-  Added a portable `timegm` shim (`_mkgmtime`) to `utils/TimeCompat.h`. No effect
-  on Linux/macOS builds.
+- Windows (MSVC) build portability: `O2RingCsvParser` used POSIX `timegm`, which
+  MSVC lacks. Added a uniquely named `timegm_utc` helper to `utils/TimeCompat.h`
+  (POSIX `timegm` / Win32 `_mkgmtime`), avoiding both the missing-identifier error
+  and an `LNK2005` clash with Drogon's own `timegm`. No effect on Linux/macOS, and
+  not a separate release (build-only fix).
 
 ## [4.4.6] - 2026-06-29
 
