@@ -56,6 +56,7 @@ CREATE TABLE IF NOT EXISTS cpap_session_metrics (
     time_in_apnea_percent  DOUBLE,
     avg_spo2               DOUBLE,
     min_spo2               DOUBLE,
+    spo2_drops             FLOAT,
     avg_heart_rate         INT,
     max_heart_rate         INT,
     min_heart_rate         INT,
