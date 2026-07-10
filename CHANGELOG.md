@@ -14,6 +14,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and an `LNK2005` clash with Drogon's own `timegm`. No effect on Linux/macOS, and
   not a separate release (build-only fix).
 
+## [4.4.9] - 2026-07-10
+
+### Fixed
+- **Session grouping now measures mask-off gaps end-to-start.** Gaps between
+  checkpoint blocks were measured start-to-start from filename prefixes, so any
+  recording block longer than `SESSION_GAP_MINUTES` looked like a gap: a 4-hour
+  evening block followed by a 9-minute mask-off break split one night into two
+  sessions, halving durations and doubling apparent AHI. Each checkpoint now
+  carries an estimated write-close time (BRP size at ~6 KB/min, plus the file's
+  modified time when plausible), and the split compares the next block's start
+  against the running end of the current group. Applies to both ezShare and
+  local-folder grouping. Re-run affected nights with a reparse to regroup them.
+- **Card-root residue no longer re-downloads every burst.** The full-card
+  residue sweep re-fetched every `SETTINGS/`, `Identification.*` and `Journal.dat`
+  file on each session-bearing burst (40+ extra ezShare round-trips per cycle
+  during an active night). Files already archived at the listed size are skipped.
+
 ## [4.4.6] - 2026-06-29
 
 ### Added
