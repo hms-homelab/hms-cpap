@@ -575,6 +575,20 @@ void BurstCollectorService::captureCardResidue(const std::string& archive_root) 
             std::replace(rel_os.begin(), rel_os.end(), '\\', '/');
             std::filesystem::path local_path = std::filesystem::path(archive_root) / rel_os;
 
+            // Already archived at this listed size -> skip. Without this the
+            // sweep re-downloaded every SETTINGS/Identification/Journal file on
+            // every session-bearing burst (40+ ezShare round-trips per cycle,
+            // all night). Residue is backup, not analytical data: a same-KB
+            // rewrite (listing sizes are KB-rounded) is not worth re-fetching --
+            // the same trade the cloud API's residual ledger makes.
+            {
+                std::error_code ec;
+                auto local_sz = std::filesystem::file_size(local_path, ec);
+                if (!ec && (local_sz + 1023) / 1024 ==
+                               static_cast<uint64_t>(e.size_kb))
+                    continue;
+            }
+
             if (data_source_->downloadByPath(rel, local_path.string()))
                 captured++;
         }
