@@ -41,6 +41,30 @@ SessionDiscoveryService::parseSessionTime(const std::string& prefix) {
     return std::chrono::system_clock::from_time_t(std::mktime(&tm));
 }
 
+// Estimate when a checkpoint file STOPPED being written. Session gaps must be
+// measured end-to-start (ResMed closes a session ~1h after the last file is
+// CLOSED): the filename prefix only gives the block's START, so measuring
+// start-to-start makes any recording block longer than the threshold look like
+// a gap and phantom-splits the night (tickets 39/41: a 4h07m evening block
+// followed by a 9-minute mask-off break split one night into two "sessions",
+// halving durations and doubling apparent AHI).
+// Two estimators: (1) BRP size — ResMed flow data runs ~6 KB/min (observed
+// 5.9-6.0 across AirSense nights), so start + size/6 min approximates the end;
+// (2) the file's modified time (ezShare listing FAT time / fs mtime), trusted
+// only when it falls within (start, start+24h] — a copied or freshly-touched
+// file whose mtime has nothing to do with therapy fails the gate and falls
+// back to the size estimate.
+static std::chrono::system_clock::time_point estimateCheckpointEnd(
+    std::chrono::system_clock::time_point start, bool is_brp, int size_kb,
+    std::chrono::system_clock::time_point mtime) {
+    auto end = start;
+    if (is_brp && size_kb > 0)
+        end = start + std::chrono::minutes(size_kb / 6);
+    if (mtime > start && mtime <= start + std::chrono::hours(24))
+        end = std::max(end, mtime);
+    return end;
+}
+
 std::string SessionDiscoveryService::findLargestFile(
     const std::vector<EzShareFileEntry>& files,
     const std::string& prefix,
@@ -92,6 +116,7 @@ SessionDiscoveryService::groupSessionsInFolder(const std::string& date_folder) {
         std::string name;
         std::string prefix;
         std::chrono::system_clock::time_point timestamp;
+        std::chrono::system_clock::time_point end;   // estimated write-close time
         int size_kb;
         bool is_brp;
         bool is_pld;
@@ -129,6 +154,8 @@ SessionDiscoveryService::groupSessionsInFolder(const std::string& date_folder) {
             cp.name = file.name;
             cp.prefix = prefix;
             cp.timestamp = parseSessionTime(prefix);
+            cp.end = estimateCheckpointEnd(cp.timestamp, is_brp, file.size_kb,
+                                           file.getModTime());
             cp.size_kb = file.size_kb;
             cp.is_brp = is_brp;
             cp.is_pld = is_pld;
@@ -147,22 +174,29 @@ SessionDiscoveryService::groupSessionsInFolder(const std::string& date_folder) {
                   return a.timestamp < b.timestamp;
               });
 
-    // Step 2: Split checkpoints into session groups based on session time gaps
+    // Step 2: Split checkpoints into session groups based on session time gaps.
+    // END-to-start: the mask-off gap is next block's start minus when the
+    // current group STOPPED writing (see estimateCheckpointEnd), never
+    // start-to-start, which counted a long block's own duration as "gap".
     std::vector<std::vector<CheckpointFile>> session_groups;
     std::vector<CheckpointFile> current_group;
 
     current_group.push_back(checkpoints[0]);
+    auto group_end = checkpoints[0].end;
 
     for (size_t i = 1; i < checkpoints.size(); ++i) {
         auto gap = std::chrono::duration_cast<std::chrono::minutes>(
-            checkpoints[i].timestamp - checkpoints[i-1].timestamp
+            checkpoints[i].timestamp - group_end
         );
 
         if (gap >= SESSION_GAP_THRESHOLD) {
             // Gap detected - start new session
             session_groups.push_back(current_group);
             current_group.clear();
+            group_end = checkpoints[i].end;
             std::cout << "  ⏱️  Detected " << gap.count() << "-minute gap - splitting into new session" << std::endl;
+        } else {
+            group_end = std::max(group_end, checkpoints[i].end);
         }
 
         current_group.push_back(checkpoints[i]);
@@ -526,6 +560,7 @@ SessionDiscoveryService::groupLocalFolder(
         std::string name;
         std::string prefix;
         std::chrono::system_clock::time_point timestamp;
+        std::chrono::system_clock::time_point end;   // estimated write-close time
         int size_kb;
         bool is_brp;
         bool is_pld;
@@ -589,6 +624,14 @@ SessionDiscoveryService::groupLocalFolder(
             cp.name = filename;
             cp.prefix = prefix;
             cp.timestamp = parseTime(prefix);
+            // fs mtime -> system_clock (C++17: bridge via the two clocks' nows).
+            // A copied file's mtime is the copy time, not therapy time -- the
+            // plausibility gate in estimateCheckpointEnd discards it then.
+            auto ftime = entry.last_write_time();
+            auto mtime = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+                ftime - std::filesystem::file_time_type::clock::now()
+                + std::chrono::system_clock::now());
+            cp.end = estimateCheckpointEnd(cp.timestamp, is_brp, size_kb, mtime);
             cp.size_kb = size_kb;
             cp.is_brp = is_brp;
             cp.is_pld = is_pld;
@@ -604,17 +647,22 @@ SessionDiscoveryService::groupLocalFolder(
                   return a.timestamp < b.timestamp;
               });
 
-    // Split into session groups by session time gaps
+    // Split into session groups by session time gaps (END-to-start: a long
+    // block's own duration is not a gap -- see estimateCheckpointEnd).
     std::vector<std::vector<CheckpointFile>> session_groups;
     std::vector<CheckpointFile> current_group;
     current_group.push_back(checkpoints[0]);
+    auto group_end = checkpoints[0].end;
 
     for (size_t i = 1; i < checkpoints.size(); ++i) {
         auto gap = std::chrono::duration_cast<std::chrono::minutes>(
-            checkpoints[i].timestamp - checkpoints[i-1].timestamp);
+            checkpoints[i].timestamp - group_end);
         if (gap >= SESSION_GAP_THRESHOLD) {
             session_groups.push_back(current_group);
             current_group.clear();
+            group_end = checkpoints[i].end;
+        } else {
+            group_end = std::max(group_end, checkpoints[i].end);
         }
         current_group.push_back(checkpoints[i]);
     }

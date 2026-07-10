@@ -108,6 +108,51 @@ TEST_F(SessionGapTest, NinetyMinuteGapSplitsWithDefaultThreshold) {
     EXPECT_EQ(sessions[1].brp_files.size(), 1);
 }
 
+// ── Tickets 39/41: gaps are END-to-start, a long block's duration is not a gap ─
+
+TEST_F(SessionGapTest, LongBlockThenShortMaskOffBreak_StaysOneSession) {
+    // Michael's 2026-07-08 night, real sizes: a 4h07m evening block (BRP grows
+    // ~6 KB/min, so 1449 KB ≈ 241 min), a ~9-minute mask-off break, a 10-minute
+    // blip, another ~10-minute break, then the rest of the night. Start-to-start
+    // measured the first "gap" as 255 min and split the night in half (halved
+    // durations, doubled apparent AHI). End-to-start sees ~15 min and keeps ONE
+    // session. File mtimes here are "now" (implausible vs the 2026-03 prefixes),
+    // so the BRP size estimate is what carries the test — as it does for copied
+    // data where mtimes lie.
+    touchFileSized(tmp_dir, "20260301_230200_BRP.edf", 1449);
+    touchFileSized(tmp_dir, "20260301_230200_PLD.edf", 133);
+    touchFileSized(tmp_dir, "20260301_230200_SAD.edf", 60);
+    touchFile(tmp_dir, "20260301_230200_CSL.edf");
+    touchFile(tmp_dir, "20260301_230200_EVE.edf");
+    touchFileSized(tmp_dir, "20260302_031800_BRP.edf", 43);
+    touchFileSized(tmp_dir, "20260302_031800_PLD.edf", 7);
+    touchFileSized(tmp_dir, "20260302_031800_SAD.edf", 3);
+    touchFileSized(tmp_dir, "20260302_033800_BRP.edf", 1525);
+    touchFileSized(tmp_dir, "20260302_033800_PLD.edf", 141);
+    touchFileSized(tmp_dir, "20260302_033800_SAD.edf", 63);
+
+    auto sessions = SessionDiscoveryService::groupLocalFolder(tmp_dir, "20260301");
+
+    ASSERT_EQ(sessions.size(), 1) << "long block + short breaks must stay one night";
+    EXPECT_EQ(sessions[0].brp_files.size(), 3);
+    EXPECT_EQ(sessions[0].session_prefix, "20260301_230200");
+    EXPECT_FALSE(sessions[0].eve_file.empty()) << "the night keeps its EVE";
+}
+
+TEST_F(SessionGapTest, RealGapAfterLongBlock_StillSplits) {
+    // A genuinely separate second session after a long block must still split:
+    // 1449 KB block starting 22:00 ends ~01:41; next start 05:00 -> ~199 min
+    // real mask-off gap >= 60 min threshold.
+    touchFileSized(tmp_dir, "20260301_220000_BRP.edf", 1449);
+    touchFileSized(tmp_dir, "20260302_050000_BRP.edf", 100);
+
+    auto sessions = SessionDiscoveryService::groupLocalFolder(tmp_dir, "20260301");
+
+    ASSERT_EQ(sessions.size(), 2);
+    EXPECT_EQ(sessions[0].brp_files.size(), 1);
+    EXPECT_EQ(sessions[1].brp_files.size(), 1);
+}
+
 // ── Bug #2: CSL/EVE map entries must be erased after matching ────────────────
 
 class CSLEVEMapTest : public ::testing::Test {
