@@ -104,6 +104,7 @@ struct AppConfig {
         std::string client_secret;
         bool auto_on_session = true;   // export when a live session completes
         bool auto_on_backfill = true;  // export when a local-mode / backfill folder ingests
+        int quiet_minutes = 15;        // archive must be quiet this long before export (SDD-003)
     } sleephq;
 
     bool setup_complete = false;
@@ -209,6 +210,10 @@ struct AppConfig {
             sleephq.enabled = true;
         if (sleephq.client_id.empty())     sleephq.client_id = env("SLEEPHQ_CLIENT_ID");
         if (sleephq.client_secret.empty()) sleephq.client_secret = env("SLEEPHQ_CLIENT_SECRET");
+        if (sleephq.quiet_minutes == 15) {
+            auto v = env("SLEEPHQ_QUIET_MINUTES");
+            if (!v.empty()) sleephq.quiet_minutes = std::stoi(v);
+        }
 
         // ML Training
         if (!ml_training.enabled && env("ML_ENABLED") == "true")
@@ -353,6 +358,7 @@ struct AppConfig {
                 if (sh.contains("client_secret"))     config.sleephq.client_secret = sh["client_secret"];
                 if (sh.contains("auto_on_session"))   config.sleephq.auto_on_session = sh["auto_on_session"];
                 if (sh.contains("auto_on_backfill"))  config.sleephq.auto_on_backfill = sh["auto_on_backfill"];
+                if (sh.contains("quiet_minutes"))     config.sleephq.quiet_minutes = sh["quiet_minutes"];
             }
 
             return true;
@@ -426,6 +432,7 @@ struct AppConfig {
             j["sleephq"]["client_secret"] = sleephq.client_secret;
             j["sleephq"]["auto_on_session"] = sleephq.auto_on_session;
             j["sleephq"]["auto_on_backfill"] = sleephq.auto_on_backfill;
+            j["sleephq"]["quiet_minutes"] = sleephq.quiet_minutes;
 
             std::ofstream f(path);
             f << j.dump(2);
@@ -495,6 +502,7 @@ struct AppConfig {
         j["sleephq"]["client_secret"] = sleephq.client_secret.empty() ? "" : "********";
         j["sleephq"]["auto_on_session"] = sleephq.auto_on_session;
         j["sleephq"]["auto_on_backfill"] = sleephq.auto_on_backfill;
+        j["sleephq"]["quiet_minutes"] = sleephq.quiet_minutes;
 
         return j;
     }

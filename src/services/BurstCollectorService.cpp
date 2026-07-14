@@ -946,9 +946,10 @@ bool BurstCollectorService::executeBurstCycle() {
 
                     if (newly_completed) {
                         processSessionSummary();
-                        // SleepHQ export (best-effort, async; no-op if disabled).
+                        // SleepHQ: mark night dirty; the debounced sweep in
+                        // runLoop() exports once the folder settles (SDD-003).
                         if (app_config_ && app_config_->sleephq.auto_on_session)
-                            SleepHqExportService::getInstance().exportDateAsync(session.date_folder);
+                            SleepHqExportService::getInstance().markDirty(session.date_folder);
 
                         if (data_publisher_) {
                             auto metrics = db_service_->getNightlyMetrics(device_id_, session.session_start);
@@ -1145,11 +1146,12 @@ bool BurstCollectorService::executeBurstCycle() {
                     })->session_start;
                 bool is_most_recent = (session.session_start == most_recent_start);
 
-                // SleepHQ export (best-effort, async; no-op if disabled) — fires
-                // regardless of whether MQTT/data_publisher_ is configured.
+                // SleepHQ: mark night dirty; the debounced sweep in runLoop()
+                // exports once the folder settles (SDD-003). Fires regardless
+                // of whether MQTT/data_publisher_ is configured.
                 if (newly_completed && is_most_recent &&
                     app_config_ && app_config_->sleephq.auto_on_session)
-                    SleepHqExportService::getInstance().exportDateAsync(session.date_folder);
+                    SleepHqExportService::getInstance().markDirty(session.date_folder);
 
                 if (newly_completed && is_most_recent && data_publisher_) {
                     auto metrics = db_service_->getNightlyMetrics(device_id_, session.session_start);
@@ -1401,6 +1403,11 @@ void BurstCollectorService::runLoop() {
 
         if (success) {
             last_burst_time_ = std::chrono::system_clock::now();
+        }
+
+        // SleepHQ debounced export — after the cycle so the archive is settled.
+        if (app_config_ && app_config_->sleephq.auto_on_session) {
+            SleepHqExportService::getInstance().sweep();
         }
 
         // Process any pending range summary requests (queued by MQTT callbacks).

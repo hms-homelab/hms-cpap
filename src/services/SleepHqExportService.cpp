@@ -3,11 +3,22 @@
 #include "utils/AppConfig.h"
 #include "utils/ConfigManager.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <thread>
 #include <iostream>
 
 namespace hms_cpap {
+
+namespace {
+constexpr int kMaxAttempts = 8;
+
+std::chrono::minutes backoffAfter(int failures) {
+    // 5, 10, 20, 40, 60, 60, ... minutes
+    int mins = 5 * (1 << std::min(failures - 1, 4));
+    return std::chrono::minutes(std::min(mins, 60));
+}
+} // namespace
 
 SleepHqExportService& SleepHqExportService::getInstance() {
     static SleepHqExportService instance;
@@ -16,6 +27,138 @@ SleepHqExportService& SleepHqExportService::getInstance() {
 
 static bool sleephqReady(const AppConfig* cfg) {
     return cfg && cfg->sleephq.enabled && !cfg->sleephq.client_id.empty();
+}
+
+std::map<std::string, std::uintmax_t> SleepHqExportService::scanFolder(
+    const std::string& archive_base, const std::string& folder) {
+    namespace fs = std::filesystem;
+    std::map<std::string, std::uintmax_t> snap;
+    std::error_code ec;
+    fs::path dir = fs::path(archive_base) / "DATALOG" / folder;
+    if (!fs::exists(dir, ec)) return snap;
+    for (const auto& e : fs::directory_iterator(dir, ec)) {
+        if (!e.is_regular_file(ec)) continue;
+        snap[e.path().filename().string()] = e.file_size(ec);
+    }
+    return snap;
+}
+
+void SleepHqExportService::markDirty(const std::string& date_folder) {
+    if (!sleephqReady(config_) || date_folder.empty()) return;
+    std::lock_guard<std::mutex> lock(mu_);
+    auto& st = dirty_[date_folder];
+    st.last_change = std::chrono::steady_clock::now();
+}
+
+void SleepHqExportService::sweep(std::chrono::steady_clock::time_point now) {
+    if (!sleephqReady(config_)) return;
+
+    std::string archive_base = ConfigManager::get("CPAP_ARCHIVE_DIR", "");
+    if (archive_base.empty()) {
+        std::lock_guard<std::mutex> lock(mu_);
+        if (!dirty_.empty())
+            std::cerr << "[sleephq] CPAP_ARCHIVE_DIR not set; "
+                      << dirty_.size() << " pending export(s) blocked" << std::endl;
+        return;
+    }
+
+    int quiet_minutes = std::max(1, config_->sleephq.quiet_minutes);
+    auto quiet = std::chrono::minutes(quiet_minutes);
+
+    std::string candidate;
+    std::map<std::string, std::uintmax_t> pre_snapshot;
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        for (auto& [folder, st] : dirty_) {
+            auto snap = scanFolder(archive_base, folder);
+            if (snap != st.snapshot) {
+                // Still settling (growing session, late EVE/CSL/STR, archive
+                // catch-up) — restart the quiet window.
+                st.snapshot = std::move(snap);
+                st.last_change = now;
+                continue;
+            }
+            if (export_in_flight_) continue;          // one upload at a time
+            if (now < st.next_attempt) continue;      // failure backoff
+            if (now - st.last_change < quiet) continue;
+            candidate = folder;
+            pre_snapshot = st.snapshot;
+            export_in_flight_ = true;
+            break;
+        }
+    }
+    if (candidate.empty()) return;
+
+    std::cout << "[sleephq] " << candidate << " quiet for " << quiet_minutes
+              << "m — exporting" << std::endl;
+
+    if (export_hook_) {
+        bool ok = export_hook_(candidate);
+        finishExport(candidate, ok, std::move(pre_snapshot), now);
+        return;
+    }
+    std::thread([this, candidate, pre = std::move(pre_snapshot)]() mutable {
+        bool ok = exportDate(candidate);
+        finishExport(candidate, ok, std::move(pre),
+                     std::chrono::steady_clock::now());
+    }).detach();
+}
+
+void SleepHqExportService::finishExport(
+    const std::string& folder, bool ok,
+    std::map<std::string, std::uintmax_t> pre_snapshot,
+    std::chrono::steady_clock::time_point now) {
+    std::string archive_base = ConfigManager::get("CPAP_ARCHIVE_DIR", "");
+    auto current = scanFolder(archive_base, folder);
+
+    std::lock_guard<std::mutex> lock(mu_);
+    export_in_flight_ = false;
+    auto it = dirty_.find(folder);
+    if (it == dirty_.end()) return;
+
+    if (ok) {
+        if (current == pre_snapshot) {
+            dirty_.erase(it);
+            return;
+        }
+        // Files landed while uploading — keep dirty so the complete folder
+        // re-exports after the next quiet window.
+        it->second.snapshot = std::move(current);
+        it->second.last_change = now;
+        it->second.failures = 0;
+        it->second.next_attempt = {};
+        std::cout << "[sleephq] " << folder
+                  << " changed during upload; will re-export" << std::endl;
+        return;
+    }
+
+    it->second.failures++;
+    if (it->second.failures >= kMaxAttempts) {
+        std::cerr << "[sleephq] giving up on " << folder << " after "
+                  << it->second.failures << " failed attempts" << std::endl;
+        dirty_.erase(it);
+        return;
+    }
+    it->second.next_attempt = now + backoffAfter(it->second.failures);
+    std::cerr << "[sleephq] export of " << folder << " failed (attempt "
+              << it->second.failures << "); will retry" << std::endl;
+}
+
+void SleepHqExportService::setExportHookForTest(
+    std::function<bool(const std::string&)> hook) {
+    export_hook_ = std::move(hook);
+}
+
+void SleepHqExportService::resetForTest() {
+    std::lock_guard<std::mutex> lock(mu_);
+    dirty_.clear();
+    export_in_flight_ = false;
+    export_hook_ = nullptr;
+}
+
+bool SleepHqExportService::isDirtyForTest(const std::string& date_folder) {
+    std::lock_guard<std::mutex> lock(mu_);
+    return dirty_.count(date_folder) > 0;
 }
 
 void SleepHqExportService::exportDateAsync(const std::string& date_folder) {

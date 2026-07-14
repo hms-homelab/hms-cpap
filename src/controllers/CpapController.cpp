@@ -327,6 +327,7 @@ void CpapController::updateConfig(const drogon::HttpRequestPtr& req,
             config_->sleephq.client_secret = sh["client_secret"].asString();
         if (sh.isMember("auto_on_session")) config_->sleephq.auto_on_session = sh["auto_on_session"].asBool();
         if (sh.isMember("auto_on_backfill")) config_->sleephq.auto_on_backfill = sh["auto_on_backfill"].asBool();
+        if (sh.isMember("quiet_minutes")) config_->sleephq.quiet_minutes = std::max(1, sh["quiet_minutes"].asInt());
     }
 
     // Save to disk
