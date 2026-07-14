@@ -5,14 +5,24 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [4.4.10] - 2026-07-13
 
 ### Fixed
+- **Schema scripts caught up with the runtime migrations.** The checked-in
+  `scripts/schema{,_mysql,_sqlite}.sql` had drifted behind the v2.2.0 in-code
+  migrations, so databases created from the scripts (e.g. an external
+  PostgreSQL where the app user cannot ALTER) failed session saves with
+  `column "spo2_drops" of relation "cpap_session_metrics" does not exist`.
+  `spo2_drops` is now present with the integer type the code expects, and the
+  also-missing `odi` column and `cpap_breaths` table were added to all three
+  dialects. Thanks to @ToasterDEV for the report and initial fix (#10).
 - Windows (MSVC) build portability: `O2RingCsvParser` used POSIX `timegm`, which
   MSVC lacks. Added a uniquely named `timegm_utc` helper to `utils/TimeCompat.h`
   (POSIX `timegm` / Win32 `_mkgmtime`), avoiding both the missing-identifier error
-  and an `LNK2005` clash with Drogon's own `timegm`. No effect on Linux/macOS, and
-  not a separate release (build-only fix).
+  and an `LNK2005` clash with Drogon's own `timegm`. No effect on Linux/macOS.
+
+### Added
+- CI: newly opened GitHub issues are auto-assigned to the maintainer.
 
 ## [4.4.9] - 2026-07-10
 
