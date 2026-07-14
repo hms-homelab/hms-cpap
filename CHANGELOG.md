@@ -5,6 +5,22 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.4.11] - 2026-07-14
+
+### Fixed
+- **SleepHQ auto-export no longer ships partial nights.** Exports fired the
+  moment any session was marked completed, which happens 1-2 minutes after
+  ANY mask-off, including mid-night breaks: a 1-minute mask-on fragment could
+  be uploaded as the entire night, and a single failed file upload silently
+  killed the full-night export with no retry. Exports are now debounced
+  (SDD-003): a completed session marks its date folder dirty, and the export
+  runs only once the archive folder has been quiet for
+  `sleephq.quiet_minutes` (default 15, `SLEEPHQ_QUIET_MINUTES`), so late EVE/
+  CSL files and the delayed STR flush are included. Failed exports retry with
+  exponential backoff, and a folder that changes mid-upload is re-exported in
+  full. The manual per-night "Upload to SleepHQ" button still exports
+  immediately.
+
 ## [4.4.10] - 2026-07-13
 
 ### Fixed
