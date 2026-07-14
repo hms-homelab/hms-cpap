@@ -89,3 +89,6 @@ coverage/
 # Playwright MCP scratch (local screenshots)
 .playwright-mcp/
 **/.playwright-mcp/
+
+# Local Claude Code guidance (kept out of the public repo)
+CLAUDE.md
