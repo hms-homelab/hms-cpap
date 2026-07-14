@@ -86,6 +86,7 @@ set(TEST_SOURCES
     services/test_DataPublisherDeeper.cpp
     clients/test_FysetcDataSource.cpp
     services/test_LiveSleepStageRunner.cpp
+    services/test_SleepHqExportService.cpp
 )
 if(MSVC)
     list(FILTER TEST_SOURCES EXCLUDE REGEX ".*Fysetc.*")
