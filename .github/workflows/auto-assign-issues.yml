@@ -1,0 +1,17 @@
+name: Auto-assign issues
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  issues: write
+
+jobs:
+  assign:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Assign issue to aamat09
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh issue edit "${{ github.event.issue.number }}" --repo "${{ github.repository }}" --add-assignee aamat09
