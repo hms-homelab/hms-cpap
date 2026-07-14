@@ -56,7 +56,8 @@ CREATE TABLE IF NOT EXISTS cpap_session_metrics (
     time_in_apnea_percent  DOUBLE,
     avg_spo2               DOUBLE,
     min_spo2               DOUBLE,
-    spo2_drops             FLOAT,
+    spo2_drops             INT,
+    odi                    DOUBLE,
     avg_heart_rate         INT,
     max_heart_rate         INT,
     min_heart_rate         INT,
@@ -85,6 +86,19 @@ CREATE TABLE IF NOT EXISTS cpap_breathing_summary (
     max_pressure    DOUBLE,
     min_pressure    DOUBLE,
     UNIQUE KEY uq_session_ts (session_id, timestamp),
+    FOREIGN KEY (session_id) REFERENCES cpap_sessions(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Breath-by-breath detail (zero-crossing detection)
+CREATE TABLE IF NOT EXISTS cpap_breaths (
+    id                INT AUTO_INCREMENT PRIMARY KEY,
+    session_id        INT NOT NULL,
+    onset             DATETIME NOT NULL,
+    tidal_volume      DOUBLE,
+    inspiratory_time  DOUBLE,
+    expiratory_time   DOUBLE,
+    flow_limitation   DOUBLE,
+    UNIQUE KEY uq_session_onset (session_id, onset),
     FOREIGN KEY (session_id) REFERENCES cpap_sessions(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 

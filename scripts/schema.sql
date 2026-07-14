@@ -69,7 +69,8 @@ CREATE TABLE IF NOT EXISTS cpap_session_metrics (
     time_in_apnea_percent  FLOAT,
     avg_spo2               FLOAT,
     min_spo2               FLOAT,
-    spo2_drops             FLOAT,
+    spo2_drops             INT,
+    odi                    FLOAT,
     avg_heart_rate         INT,
     max_heart_rate         INT,
     min_heart_rate         INT,
@@ -99,6 +100,18 @@ CREATE TABLE IF NOT EXISTS cpap_breathing_summary (
     min_pressure    FLOAT,
     UNIQUE (session_id, timestamp),
     FOREIGN KEY (session_id) REFERENCES cpap_sessions(id) ON DELETE CASCADE
+);
+
+-- Breath-by-breath detail (zero-crossing detection)
+CREATE TABLE IF NOT EXISTS cpap_breaths (
+    id                SERIAL PRIMARY KEY,
+    session_id        INTEGER NOT NULL REFERENCES cpap_sessions(id) ON DELETE CASCADE,
+    onset             TIMESTAMP NOT NULL,
+    tidal_volume      REAL,
+    inspiratory_time  REAL,
+    expiratory_time   REAL,
+    flow_limitation   REAL,
+    UNIQUE (session_id, onset)
 );
 
 -- Events (apneas, hypopneas, RERAs)
