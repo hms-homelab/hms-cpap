@@ -6,6 +6,9 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#ifndef _WIN32
+#include <unistd.h>  // geteuid — UnreadableFolderTest skips under root
+#endif
 
 using namespace hms_cpap;
 namespace fs = std::filesystem;
@@ -490,6 +493,94 @@ TEST_F(DiscoverLocalSessionsTest, OlderSessionInRelevantFolderIsFilteredOut) {
     auto sessions = SessionDiscoveryService::discoverLocalSessions(root, last);
     EXPECT_TRUE(sessions.empty());
 }
+
+// ── Incident 2026-07-17: unreadable date folder crash-looped the service ─────
+// DATALOG date folders uploaded root-owned 0750 made the burst cycle throw an
+// uncaught std::filesystem_error from directory_iterator ("cannot open
+// directory: Permission denied [/data/sdcard/DATALOG/20260627]"), terminating
+// the process every cycle. Discovery must skip unreadable folders with a
+// warning and keep processing the readable ones.
+#ifndef _WIN32
+
+class UnreadableFolderTest : public ::testing::Test {
+protected:
+    std::string root;  // simulated DATALOG dir
+
+    void SetUp() override {
+        root = "/tmp/cpap_test_unreadable_" + std::to_string(getpid());
+        fs::create_directories(root);
+    }
+
+    void TearDown() override {
+        // Re-add owner perms (root first, then children) so remove_all can
+        // descend into folders the tests locked down.
+        std::error_code ec;
+        fs::permissions(root, fs::perms::owner_all, fs::perm_options::add, ec);
+        for (const auto& e : fs::directory_iterator(root, ec)) {
+            fs::permissions(e.path(), fs::perms::owner_all,
+                            fs::perm_options::add, ec);
+        }
+        fs::remove_all(root, ec);
+    }
+
+    std::string makeDateFolder(const std::string& yyyymmdd) {
+        std::string p = root + "/" + yyyymmdd;
+        fs::create_directories(p);
+        return p;
+    }
+};
+
+TEST_F(UnreadableFolderTest, GroupLocalFolderSkipsUnreadableFolder) {
+    if (::geteuid() == 0) GTEST_SKIP() << "permission bits do not bind for root";
+
+    std::string dir = makeDateFolder("20260627");
+    touchFile(dir, "20260627_234552_BRP.edf");
+    fs::permissions(dir, fs::perms::none);  // mimic root-owned 0750 upload
+
+    std::vector<SessionFileSet> sessions;
+    EXPECT_NO_THROW(
+        sessions = SessionDiscoveryService::groupLocalFolder(dir, "20260627"));
+    EXPECT_TRUE(sessions.empty());
+}
+
+TEST_F(UnreadableFolderTest, DiscoverLocalSessionsContinuesPastUnreadableFolder) {
+    if (::geteuid() == 0) GTEST_SKIP() << "permission bits do not bind for root";
+
+    // Readable folder before the bad one (like 20260625 in the incident)...
+    std::string before = makeDateFolder("20260625");
+    touchFile(before, "20260625_232620_BRP.edf");
+    // ...the unreadable upload...
+    std::string bad = makeDateFolder("20260627");
+    touchFile(bad, "20260627_234552_BRP.edf");
+    // ...and a readable folder sorting after it, which the crashing code
+    // never reached.
+    std::string after = makeDateFolder("20260701");
+    touchFile(after, "20260701_010000_BRP.edf");
+
+    fs::permissions(bad, fs::perms::none);
+
+    std::vector<SessionFileSet> sessions;
+    ASSERT_NO_THROW(
+        sessions = SessionDiscoveryService::discoverLocalSessions(root, std::nullopt));
+
+    // Both readable folders contribute their session; the bad one is skipped.
+    ASSERT_EQ(sessions.size(), 2u);
+    EXPECT_EQ(sessions[0].session_prefix, "20260625_232620");
+    EXPECT_EQ(sessions[1].session_prefix, "20260701_010000");
+}
+
+TEST_F(UnreadableFolderTest, DiscoverLocalSessionsSurvivesUnreadableRoot) {
+    if (::geteuid() == 0) GTEST_SKIP() << "permission bits do not bind for root";
+
+    fs::permissions(root, fs::perms::none);
+
+    std::vector<SessionFileSet> sessions;
+    EXPECT_NO_THROW(
+        sessions = SessionDiscoveryService::discoverLocalSessions(root, std::nullopt));
+    EXPECT_TRUE(sessions.empty());
+}
+
+#endif  // !_WIN32
 
 // ── discoverNewSessions: ezShare path via a fake IDataSource ─────────────────
 
