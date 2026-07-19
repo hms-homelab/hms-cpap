@@ -8,8 +8,36 @@
 #include <algorithm>
 #include <numeric>
 #include <sstream>
+#include <optional>
 
 namespace hms_cpap {
+
+// ResMed names every checkpoint file YYYYMMDD_HHMMSS_TYPE.edf. That name is the
+// trustworthy clock: the EDF header inside has been observed a full week stale on
+// real hardware (header 29.06.26 inside 20260706_195339_BRP.edf), which corrupted
+// session durations. Returns nullopt when the name carries no usable timestamp.
+static std::optional<std::chrono::system_clock::time_point>
+timestampFromFilename(const std::string& filepath) {
+    const std::string name = std::filesystem::path(filepath).filename().string();
+    if (name.size() < 15) return std::nullopt;
+
+    std::tm tm{};
+    if (std::sscanf(name.c_str(), "%4d%2d%2d_%2d%2d%2d",
+                    &tm.tm_year, &tm.tm_mon, &tm.tm_mday,
+                    &tm.tm_hour, &tm.tm_min, &tm.tm_sec) != 6) {
+        return std::nullopt;
+    }
+    if (tm.tm_year < 1970 || tm.tm_mon < 1 || tm.tm_mon > 12 ||
+        tm.tm_mday < 1 || tm.tm_mday > 31) {
+        return std::nullopt;
+    }
+    tm.tm_year -= 1900;
+    tm.tm_mon  -= 1;
+    tm.tm_isdst = -1;              // let mktime resolve DST for the local zone
+    const std::time_t t = std::mktime(&tm);
+    if (t == static_cast<std::time_t>(-1)) return std::nullopt;
+    return std::chrono::system_clock::from_time_t(t);
+}
 
 // ============================================================================
 //  EDFFile — raw EDF reader tolerant of ResMed non-standard files
@@ -405,14 +433,45 @@ bool EDFParser::parseBRPFile(const std::string& filepath, CPAPSession& session) 
         std::cout << "Parser: Using EDF header timestamp (no filename timestamp provided)" << std::endl;
     }
 
-    // Track this BRP's end time (EDF start + data duration).
-    // For multi-BRP sessions, the last BRP's end is the session end.
-    auto brp_end = file_start + std::chrono::seconds(
-        static_cast<int>(edf.actual_records * edf.record_duration));
-    session.session_end = brp_end;
-    session.duration_seconds = static_cast<int>(
-        std::chrono::duration_cast<std::chrono::seconds>(
-            brp_end - session.session_start.value()).count());
+    // Track this BRP's end time. THE FILENAME IS THE SOURCE OF TRUTH, not the EDF
+    // header: a ResMed AirSense 10 was observed writing header date 29.06.26 into
+    // 20260706_195339_BRP.edf — exactly one week behind. Anchoring the end to the
+    // header while session_start came from the filename made end < start and stored
+    // duration -603360s (-7 days) for what was really a 24-minute session.
+    //
+    // Each BRP anchors to ITS OWN filename so multi-BRP sessions still measure the
+    // real span (checkpoint N starts later than checkpoint 1); the header is only a
+    // fallback for files whose name carries no timestamp.
+    const auto data_duration = std::chrono::seconds(
+        static_cast<long long>(edf.actual_records * edf.record_duration));
+
+    auto anchor = file_start;
+    if (auto from_name = timestampFromFilename(filepath); from_name.has_value()) {
+        if (from_name.value() != file_start) {
+            std::cout << "Parser: NOTE - EDF header time disagrees with filename for "
+                      << std::filesystem::path(filepath).filename().string()
+                      << "; trusting the filename" << std::endl;
+        }
+        anchor = from_name.value();
+    }
+
+    auto brp_end = anchor + data_duration;
+    // Multi-BRP: keep the latest end seen so far.
+    if (!session.session_end.has_value() || brp_end > session.session_end.value())
+        session.session_end = brp_end;
+
+    auto span = std::chrono::duration_cast<std::chrono::seconds>(
+        session.session_end.value() - session.session_start.value());
+    if (span.count() < 0) {
+        // Should be unreachable now that both ends share the filename clock, but a
+        // negative duration is never meaningful — floor it to the data duration
+        // rather than storing nonsense.
+        std::cout << "Parser: WARNING - computed negative span; flooring to data duration "
+                  << data_duration.count() << "s" << std::endl;
+        span = data_duration;
+        session.session_end = session.session_start.value() + data_duration;
+    }
+    session.duration_seconds = static_cast<int>(span.count());
     session.data_records = edf.actual_records;
     session.file_complete = edf.complete;
     session.extra_records = edf.extra_records;
