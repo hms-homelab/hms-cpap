@@ -5,6 +5,30 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.5.1] - 2026-07-19
+
+> Version jumps past 4.4.11 on purpose. A stray `v4.5.0` tag already sits on an
+> older commit (it points at "set version 4.4.1"), so 4.5.1 is the first number
+> unambiguously ahead of everything published.
+
+### Fixed
+- **Unreachable-device log storm.** When the ez Share / Mule device is offline the
+  poll loop retries about once a minute, and every attempt logged a full error —
+  three identical lines per cycle, because `O2RingClient::getLive()` also re-logged
+  the failure `httpGet()` had already reported. A single offline device produced
+  hundreds of identical lines a day (102 for the `A:DATALOG` listing, 101 each for
+  the O2Ring live read and its duplicate), burying real signal in the journal and
+  keeping the health summary red with no added information. HTTP failures now go
+  through a `FailureLogThrottle`: the first failure is logged in full (an outage
+  stays immediately visible), identical repeats are counted and suppressed, one
+  summary line is emitted per 15 minutes ("still failing: N consecutive failures
+  over M min; K identical errors suppressed"), and recovery is announced with the
+  streak length. A *different* error still logs immediately, so new information is
+  never hidden. Measured: 2 lines per outage instead of ~15 per five minutes.
+- **Startup banner reported the wrong version.** It hardcoded `Version: 2.2.0` and
+  had drifted years behind the `VERSION` file, so startup logs were actively
+  misleading about what was deployed. The banner now reads `HMS_CPAP_VERSION`.
+
 ## [4.4.11] - 2026-07-14
 
 ### Fixed

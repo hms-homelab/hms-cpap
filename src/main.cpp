@@ -91,6 +91,15 @@ BOOL WINAPI consoleCtrlHandler(DWORD ctrlType) {
  * Print banner
  */
 void printBanner() {
+    // The version line is built at runtime from HMS_CPAP_VERSION (the VERSION
+    // file, injected by CMake) and padded to the box width. It used to be the
+    // hardcoded string "2.2.0", which had drifted years behind the real version
+    // and made startup logs actively misleading about what was deployed.
+    constexpr size_t kBoxInnerWidth = 59;
+    std::string version_line = "      Version: " + std::string(HMS_CPAP_VERSION);
+    if (version_line.size() < kBoxInnerWidth)
+        version_line.append(kBoxInnerWidth - version_line.size(), ' ');
+
     std::cout << R"(
 ╔═══════════════════════════════════════════════════════════╗
 ║                                                           ║
@@ -98,8 +107,9 @@ void printBanner() {
 ║                                                           ║
 ║      ResMed AirSense 10 Data Collection                  ║
 ║      Sources: HTTP, local                                 ║
-║                                                           ║
-║      Version: 2.2.0                                        ║
+║                                                           ║)"
+              << "\n║" << version_line << "║"
+              << R"(
 ║      Platform: Cross-platform (Linux, Windows)            ║
 ║                                                           ║
 ╚═══════════════════════════════════════════════════════════╝

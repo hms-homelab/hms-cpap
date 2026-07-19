@@ -51,6 +51,7 @@ set(TEST_SOURCES
     utils/test_AppConfig.cpp
     utils/test_FileUtils.cpp
     utils/test_CardResidue.cpp
+    utils/test_FailureLogThrottle.cpp
     clients/test_EzShareClient.cpp
     clients/test_FysetcTcpServer.cpp
     mqtt/test_MqttClient.cpp

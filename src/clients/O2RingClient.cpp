@@ -45,9 +45,15 @@ std::string O2RingClient::httpGet(const std::string& url) {
     CURLcode res = curl_easy_perform(curl_);
     if (res != CURLE_OK) {
         std::string error = std::string("HTTP GET failed (") + url + "): " + curl_easy_strerror(res);
-        std::cerr << error << std::endl;
+        // An offline device fails every poll cycle; log the first one, then
+        // summarise instead of repeating the same line thousands of times.
+        auto decision = http_fail_log_.onFailure(error);
+        if (decision.log) std::cerr << decision.message << std::endl;
         throw std::runtime_error(error);
     }
+
+    if (auto recovered = http_fail_log_.onSuccess(); recovered.log)
+        std::cerr << "O2Ring " << recovered.message << std::endl;
 
     return response;
 }
@@ -161,8 +167,9 @@ O2RingClient::LiveReading O2RingClient::getLive() {
         reading.active = json.value("active", false);
         reading.valid = reading.active && reading.spo2 > 0 && reading.hr > 0;
 
-    } catch (const std::exception& e) {
-        std::cerr << "O2Ring: Live reading failed: " << e.what() << std::endl;
+    } catch (const std::exception&) {
+        // Deliberately silent: httpGet() already reported this failure through
+        // the throttle. Re-logging here doubled every offline-device error.
     }
 
     return reading;
