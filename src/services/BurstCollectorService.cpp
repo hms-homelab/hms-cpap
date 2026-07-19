@@ -194,10 +194,25 @@ void BurstCollectorService::initO2Ring() {
         client = std::make_shared<O2RingBleClient>();
         std::cout << "O2Ring: Enabled (mode=ble, direct BlueZ)" << std::endl;
     }
+#else
+    // Without this warning the config silently lies: `mode: "ble"` produced a
+    // working HTTP client and a `mode=http` log line, so anyone reading the
+    // config believed BLE was in use and would debug a BLE problem that does
+    // not exist. Say so out loud instead.
+    if (o2ring_mode == "ble") {
+        std::cout << "O2Ring: config requests mode=ble, but this build has BLE "
+                     "disabled (BUILD_WITH_BLE=OFF) - falling back to HTTP via the mule"
+                  << std::endl;
+    }
 #endif
     if (!client && !o2ring_url.empty()) {
         client = std::make_shared<O2RingClient>(o2ring_url);
         std::cout << "O2Ring: Enabled (mode=http, mule=" << o2ring_url << ")" << std::endl;
+    }
+    if (!client) {
+        std::cout << "O2Ring: enabled but NO client could be created "
+                     "(mode=" << o2ring_mode << ", mule_url empty) - oximetry is OFF"
+                  << std::endl;
     }
     if (client)
         oximetry_service_ = std::make_unique<OximetryService>(client, db_service_);
@@ -2035,10 +2050,22 @@ void BurstCollectorService::reloadConfig() {
                 client = std::make_shared<O2RingBleClient>();
                 std::cout << "Config reload: O2Ring -> ble (direct BlueZ)" << std::endl;
             }
+#else
+            // Same silent-fallback trap as the startup path — announce it.
+            if (nc.o2ring_mode == "ble") {
+                std::cout << "Config reload: O2Ring requests mode=ble, but this build has "
+                             "BLE disabled (BUILD_WITH_BLE=OFF) - falling back to HTTP"
+                          << std::endl;
+            }
 #endif
             if (!client && !nc.o2ring_mule_url.empty()) {
                 client = std::make_shared<O2RingClient>(nc.o2ring_mule_url);
                 std::cout << "Config reload: O2Ring -> http (mule=" << nc.o2ring_mule_url << ")" << std::endl;
+            }
+            if (!client) {
+                std::cout << "Config reload: O2Ring enabled but NO client could be created "
+                             "(mode=" << nc.o2ring_mode << ", mule_url empty) - oximetry is OFF"
+                          << std::endl;
             }
             if (client) {
                 oximetry_service_ = std::make_unique<OximetryService>(client, db_service_);
