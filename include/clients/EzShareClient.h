@@ -5,6 +5,7 @@
 #include <chrono>
 #include <curl/curl.h>
 #include "clients/IDataSource.h"
+#include "utils/FailureLogThrottle.h"
 
 namespace hms_cpap {
 
@@ -124,6 +125,9 @@ public:
 
 private:
     CURL* curl_;
+    // Collapses repeated identical HTTP failures (offline device) into one
+    // line plus periodic summaries, instead of one error per poll cycle.
+    FailureLogThrottle http_fail_log_;
     std::string base_url_;
     bool supports_range_ = true;
 
