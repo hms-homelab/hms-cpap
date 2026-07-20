@@ -41,6 +41,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   editing, and a catalog-driven add row.
 
 ### Fixed
+- **Windows build broke on the supply publisher.** `SupplyPublisher.cpp` calls
+  `gmtime_r`, which does not exist on MSVC; every other caller includes
+  `utils/TimeCompat.h` for the `gmtime_s`-backed shim and this one did not.
+  Linux and the tests never noticed. Include added.
 - **Cloud sync could silently discard a genuine edit.** Applying a row from the
   CpapDash cloud stamped `updated_at = now()` — the moment we MIRRORED the row,
   not the moment the user CHANGED it. That makes a copy outrank its own original
