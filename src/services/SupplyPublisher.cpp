@@ -1,5 +1,6 @@
 #include "services/SupplyPublisher.h"
 #include "services/SupplyStatus.h"
+#include "utils/TimeCompat.h"
 
 #include <algorithm>
 #include <cctype>
