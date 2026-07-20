@@ -442,12 +442,32 @@ SessionDiscoveryService::discoverLocalSessions(
     std::vector<std::string> date_folders;
     std::regex date_regex(R"(^\d{8}$)");
 
-    for (const auto& entry : std::filesystem::directory_iterator(local_datalog_dir)) {
-        if (!entry.is_directory()) continue;
+    // Iterate with error_code: an unreadable DATALOG dir must degrade to an
+    // empty scan, not an uncaught filesystem_error that kills the burst
+    // worker (incident 2026-07-17: root-owned 0750 upload crash-looped the
+    // service).
+    std::error_code dir_ec;
+    std::filesystem::directory_iterator root_it(local_datalog_dir, dir_ec);
+    if (dir_ec) {
+        std::cerr << "CPAP: ⚠️  Cannot read local directory " << local_datalog_dir
+                  << " (" << dir_ec.message()
+                  << ") — fix ownership/permissions so the service user can read it"
+                  << std::endl;
+        return {};
+    }
+    for (; root_it != std::filesystem::directory_iterator();
+         root_it.increment(dir_ec)) {
+        const auto& entry = *root_it;
+        std::error_code entry_ec;
+        if (!entry.is_directory(entry_ec) || entry_ec) continue;
         std::string name = entry.path().filename().string();
         if (std::regex_match(name, date_regex)) {
             date_folders.push_back(name);
         }
+    }
+    if (dir_ec) {
+        std::cerr << "CPAP: ⚠️  Listing of " << local_datalog_dir
+                  << " ended early (" << dir_ec.message() << ")" << std::endl;
     }
 
     std::sort(date_folders.begin(), date_folders.end());
@@ -510,7 +530,18 @@ SessionDiscoveryService::discoverLocalSessions(
         std::string folder_path = local_datalog_dir + "/" + folder;
         std::cout << "CPAP: Scanning local folder " << folder << "..." << std::endl;
 
-        auto folder_sessions = groupLocalFolder(folder_path, folder);
+        // Belt-and-braces: groupLocalFolder degrades gracefully itself, but a
+        // scan surprise in one folder must never abort discovery of the rest
+        // (an escape here reaches the burst worker thread and terminates the
+        // whole process).
+        std::vector<SessionFileSet> folder_sessions;
+        try {
+            folder_sessions = groupLocalFolder(folder_path, folder);
+        } catch (const std::exception& e) {
+            std::cerr << "CPAP: ⚠️  Skipping folder " << folder
+                      << " after scan error: " << e.what() << std::endl;
+            continue;
+        }
         std::cout << "CPAP: Found " << folder_sessions.size()
                   << " sessions in " << folder << std::endl;
 
@@ -595,8 +626,25 @@ SessionDiscoveryService::groupLocalFolder(
         return std::chrono::system_clock::from_time_t(std::mktime(&tm));
     };
 
-    for (const auto& entry : std::filesystem::directory_iterator(dir_path)) {
-        if (!entry.is_regular_file()) continue;
+    // Iterate with error_code (mirrors the SleepHq/Prisma scans): a date
+    // folder the service user cannot open — e.g. uploaded root-owned 0750 —
+    // is skipped with a warning instead of throwing an uncaught
+    // filesystem_error that terminates the service (incident 2026-07-17).
+    std::error_code dir_ec;
+    std::filesystem::directory_iterator dir_it(dir_path, dir_ec);
+    if (dir_ec) {
+        std::cerr << "CPAP: ⚠️  Skipping unreadable folder " << dir_path
+                  << " (" << dir_ec.message()
+                  << ") — fix ownership/permissions so the service user can read it"
+                  << std::endl;
+        return {};
+    }
+
+    for (; dir_it != std::filesystem::directory_iterator();
+         dir_it.increment(dir_ec)) {
+        const auto& entry = *dir_it;
+        std::error_code entry_ec;
+        if (!entry.is_regular_file(entry_ec) || entry_ec) continue;
 
         std::string filename = entry.path().filename().string();
         std::string name_lower = filename;
@@ -605,7 +653,9 @@ SessionDiscoveryService::groupLocalFolder(
         std::string prefix = extractPrefix(filename);
         if (prefix.empty()) continue;
 
-        int size_kb = static_cast<int>(std::filesystem::file_size(entry.path()) / 1024);
+        auto file_bytes = std::filesystem::file_size(entry.path(), entry_ec);
+        if (entry_ec) continue;
+        int size_kb = static_cast<int>(file_bytes / 1024);
 
         if (name_lower.find("_csl.edf") != std::string::npos) {
             csl_files[prefix] = {filename, size_kb};
@@ -627,7 +677,8 @@ SessionDiscoveryService::groupLocalFolder(
             // fs mtime -> system_clock (C++17: bridge via the two clocks' nows).
             // A copied file's mtime is the copy time, not therapy time -- the
             // plausibility gate in estimateCheckpointEnd discards it then.
-            auto ftime = entry.last_write_time();
+            auto ftime = entry.last_write_time(entry_ec);
+            if (entry_ec) continue;
             auto mtime = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
                 ftime - std::filesystem::file_time_type::clock::now()
                 + std::chrono::system_clock::now());
@@ -638,6 +689,11 @@ SessionDiscoveryService::groupLocalFolder(
             cp.is_sad = is_sad;
             checkpoints.push_back(cp);
         }
+    }
+
+    if (dir_ec) {
+        std::cerr << "CPAP: ⚠️  Scan of " << dir_path << " ended early ("
+                  << dir_ec.message() << ")" << std::endl;
     }
 
     if (checkpoints.empty()) return {};
