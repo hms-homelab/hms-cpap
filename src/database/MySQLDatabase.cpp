@@ -2222,6 +2222,23 @@ std::string normalize_started(const std::string& ts) {
     return out;
 }
 
+/// Equipment writes accept an ISO-8601 UTC override ("2026-07-19T11:00:00Z") that
+/// must land in updated_at verbatim when mirroring a cloud row. A DATETIME column
+/// will not take the 'T' separator or the trailing 'Z', so render it as
+/// "YYYY-MM-DD HH:MM:SS". "" (no override) and anything that does not parse to
+/// that shape return "", which makes the statement's NOW() fallback stamp the
+/// current time instead of writing garbage into the column.
+std::string eqTsOverride(const std::string& iso) {
+    // Shared gate first, so every engine accepts and rejects exactly the same
+    // strings; only the wire format differs. MySQL DATETIME will not take the
+    // trailing "Z", so the canonical form is rewritten to "YYYY-MM-DD HH:MM:SS".
+    const std::string canon = IDatabase::sanitizeUpdatedAtOverride(iso);
+    if (canon.empty()) return {};
+    std::string out = canon.substr(0, 19);
+    out[10] = ' ';
+    return out;
+}
+
 /// mysql_stmt_init + prepare with the file's usual error logging.
 bool eqPrepare(MYSQL* conn, MysqlStmtGuard& g, const std::string& sql, const char* who) {
     g.stmt = mysql_stmt_init(conn);
@@ -2593,27 +2610,31 @@ std::optional<IDatabase::EquipmentProfile> MySQLDatabase::getEquipmentProfile(in
     return std::nullopt;
 }
 
-int MySQLDatabase::upsertEquipmentProfile(const EquipmentProfile& p) {
+int MySQLDatabase::upsertEquipmentProfile(const EquipmentProfile& p,
+                                          const std::string& updated_at_override) {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!conn_) return -1;
+
+    const std::string ts = eqTsOverride(updated_at_override);
 
     if (p.id > 0) {
         const char* sql = R"(
             UPDATE cpap_equipment_profiles SET
                 client_uuid = ?, name = ?, active = ?, deleted = ?,
-                updated_at = NOW()
+                updated_at = COALESCE(NULLIF(?, ''), NOW())
             WHERE id = ?
         )";
 
         MysqlStmtGuard g;
         if (!eqPrepare(conn_, g, sql, "upsertEquipmentProfile")) return -1;
 
-        ParamBinder b(5);
+        ParamBinder b(6);
         b.bindTextOrNull(0, p.client_uuid);
         b.bindText(1, p.name);
         b.bindInt(2, p.active ? 1 : 0);
         b.bindInt(3, p.deleted ? 1 : 0);
-        b.bindInt(4, p.id);
+        b.bindText(4, ts);
+        b.bindInt(5, p.id);
         mysql_stmt_bind_param(g.stmt, b.data());
 
         if (mysql_stmt_execute(g.stmt) != 0) {
@@ -2628,18 +2649,19 @@ int MySQLDatabase::upsertEquipmentProfile(const EquipmentProfile& p) {
 
     const char* sql = R"(
         INSERT INTO cpap_equipment_profiles
-            (client_uuid, name, active, deleted)
-        VALUES (?, ?, ?, ?)
+            (client_uuid, name, active, deleted, updated_at)
+        VALUES (?, ?, ?, ?, COALESCE(NULLIF(?, ''), NOW()))
     )";
 
     MysqlStmtGuard g;
     if (!eqPrepare(conn_, g, sql, "upsertEquipmentProfile")) return -1;
 
-    ParamBinder b(4);
+    ParamBinder b(5);
     b.bindTextOrNull(0, p.client_uuid);
     b.bindText(1, p.name);
     b.bindInt(2, p.active ? 1 : 0);
     b.bindInt(3, p.deleted ? 1 : 0);
+    b.bindText(4, ts);
     mysql_stmt_bind_param(g.stmt, b.data());
 
     if (mysql_stmt_execute(g.stmt) != 0) {
@@ -2650,29 +2672,35 @@ int MySQLDatabase::upsertEquipmentProfile(const EquipmentProfile& p) {
     return static_cast<int>(mysql_stmt_insert_id(g.stmt));
 }
 
-bool MySQLDatabase::tombstoneEquipmentProfile(int id) {
+bool MySQLDatabase::tombstoneEquipmentProfile(int id,
+                                              const std::string& updated_at_override) {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!conn_) return false;
+
+    const std::string ts = eqTsOverride(updated_at_override);
 
     // Soft cascade: the FK cascade only fires on a hard DELETE, so the items of a
     // tombstoned profile are tombstoned explicitly. Clearing active as well frees
     // the one-live-machine slot for the profile.
     const char* sql_profile = R"(
         UPDATE cpap_equipment_profiles
-           SET deleted = 1, active = 0, updated_at = NOW()
+           SET deleted = 1, active = 0,
+               updated_at = COALESCE(NULLIF(?, ''), NOW())
          WHERE id = ? AND deleted = 0
     )";
     const char* sql_items = R"(
         UPDATE cpap_equipment_items
-           SET deleted = 1, active = 0, updated_at = NOW()
+           SET deleted = 1, active = 0,
+               updated_at = COALESCE(NULLIF(?, ''), NOW())
          WHERE profile_id = ? AND deleted = 0
     )";
 
     MysqlStmtGuard g;
     if (!eqPrepare(conn_, g, sql_profile, "tombstoneEquipmentProfile")) return false;
 
-    ParamBinder p(1);
-    p.bindInt(0, id);
+    ParamBinder p(2);
+    p.bindText(0, ts);
+    p.bindInt(1, id);
     mysql_stmt_bind_param(g.stmt, p.data());
 
     if (mysql_stmt_execute(g.stmt) != 0) {
@@ -2685,8 +2713,9 @@ bool MySQLDatabase::tombstoneEquipmentProfile(int id) {
 
     MysqlStmtGuard gi;
     if (eqPrepare(conn_, gi, sql_items, "tombstoneEquipmentProfile items")) {
-        ParamBinder pi(1);
-        pi.bindInt(0, id);
+        ParamBinder pi(2);
+        pi.bindText(0, ts);
+        pi.bindInt(1, id);
         mysql_stmt_bind_param(gi.stmt, pi.data());
         if (mysql_stmt_execute(gi.stmt) != 0) {
             std::cerr << "MySQL: tombstoneEquipmentProfile items error: "
@@ -2723,7 +2752,7 @@ int MySQLDatabase::ensureDefaultEquipmentProfile() {
 
     EquipmentProfile p;
     p.name = "My CPAP";
-    int id = upsertEquipmentProfile(p);
+    int id = upsertEquipmentProfile(p, "");  // local write: stamp now()
     if (id > 0) {
         std::cout << "MySQL: Created default equipment profile 'My CPAP' (id "
                   << id << ")" << std::endl;
@@ -2832,7 +2861,8 @@ bool MySQLDatabase::profileHasMachine(int profile_id, int exclude_item_id) {
     return has;
 }
 
-int MySQLDatabase::upsertEquipmentItem(const EquipmentItem& item) {
+int MySQLDatabase::upsertEquipmentItem(const EquipmentItem& item,
+                                       const std::string& updated_at_override) {
     // An empty category is resolved from the type before anything is written --
     // storing '' would make category = 'machine' never match and silently disable
     // the one-machine-per-profile rule. Unknown types fall back to 'accessory'.
@@ -2845,6 +2875,8 @@ int MySQLDatabase::upsertEquipmentItem(const EquipmentItem& item) {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!conn_) return -1;
 
+    const std::string ts = eqTsOverride(updated_at_override);
+
     // NOTE: unlike SQLite/Postgres there is no DB-level backstop for the
     // one-live-machine rule here -- MySQL cannot express a partial unique index.
     // Callers must consult profileHasMachine() before writing a machine row.
@@ -2854,14 +2886,14 @@ int MySQLDatabase::upsertEquipmentItem(const EquipmentItem& item) {
                 profile_id = ?, client_uuid = ?, type_key = ?, category = ?,
                 brand = ?, model = ?, variant = ?, started_using_at = ?,
                 replace_after_days = ?, notes = ?, active = ?, deleted = ?,
-                updated_at = NOW()
+                updated_at = COALESCE(NULLIF(?, ''), NOW())
             WHERE id = ?
         )";
 
         MysqlStmtGuard g;
         if (!eqPrepare(conn_, g, sql, "upsertEquipmentItem")) return -1;
 
-        ParamBinder p(13);
+        ParamBinder p(14);
         p.bindInt(0, item.profile_id);
         p.bindTextOrNull(1, item.client_uuid);
         p.bindText(2, item.type_key);
@@ -2874,7 +2906,8 @@ int MySQLDatabase::upsertEquipmentItem(const EquipmentItem& item) {
         p.bindText(9, item.notes);
         p.bindInt(10, item.active ? 1 : 0);
         p.bindInt(11, item.deleted ? 1 : 0);
-        p.bindInt(12, item.id);
+        p.bindText(12, ts);
+        p.bindInt(13, item.id);
         mysql_stmt_bind_param(g.stmt, p.data());
 
         if (mysql_stmt_execute(g.stmt) != 0) {
@@ -2890,14 +2923,15 @@ int MySQLDatabase::upsertEquipmentItem(const EquipmentItem& item) {
     const char* sql = R"(
         INSERT INTO cpap_equipment_items
             (profile_id, client_uuid, type_key, category, brand, model, variant,
-             started_using_at, replace_after_days, notes, active, deleted)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             started_using_at, replace_after_days, notes, active, deleted, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                COALESCE(NULLIF(?, ''), NOW()))
     )";
 
     MysqlStmtGuard g;
     if (!eqPrepare(conn_, g, sql, "upsertEquipmentItem")) return -1;
 
-    ParamBinder p(12);
+    ParamBinder p(13);
     p.bindInt(0, item.profile_id);
     p.bindTextOrNull(1, item.client_uuid);
     p.bindText(2, item.type_key);
@@ -2910,6 +2944,7 @@ int MySQLDatabase::upsertEquipmentItem(const EquipmentItem& item) {
     p.bindText(9, item.notes);
     p.bindInt(10, item.active ? 1 : 0);
     p.bindInt(11, item.deleted ? 1 : 0);
+    p.bindText(12, ts);
     mysql_stmt_bind_param(g.stmt, p.data());
 
     if (mysql_stmt_execute(g.stmt) != 0) {
@@ -2920,21 +2955,24 @@ int MySQLDatabase::upsertEquipmentItem(const EquipmentItem& item) {
     return static_cast<int>(mysql_stmt_insert_id(g.stmt));
 }
 
-bool MySQLDatabase::tombstoneEquipmentItem(int id) {
+bool MySQLDatabase::tombstoneEquipmentItem(int id,
+                                           const std::string& updated_at_override) {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!conn_) return false;
 
     const char* sql = R"(
         UPDATE cpap_equipment_items
-           SET deleted = 1, active = 0, updated_at = NOW()
+           SET deleted = 1, active = 0,
+               updated_at = COALESCE(NULLIF(?, ''), NOW())
          WHERE id = ? AND deleted = 0
     )";
 
     MysqlStmtGuard g;
     if (!eqPrepare(conn_, g, sql, "tombstoneEquipmentItem")) return false;
 
-    ParamBinder p(1);
-    p.bindInt(0, id);
+    ParamBinder p(2);
+    p.bindText(0, eqTsOverride(updated_at_override));
+    p.bindInt(1, id);
     mysql_stmt_bind_param(g.stmt, p.data());
 
     if (mysql_stmt_execute(g.stmt) != 0) {

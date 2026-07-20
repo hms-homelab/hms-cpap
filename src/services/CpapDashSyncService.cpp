@@ -250,7 +250,7 @@ int CpapDashSyncService::backfillUuids() {
     for (auto p : db_->listEquipmentProfiles(/*include_deleted=*/true)) {
         if (!p.client_uuid.empty()) continue;
         p.client_uuid = makeUuid();
-        if (db_->upsertEquipmentProfile(p) > 0) ++n;
+        if (db_->upsertEquipmentProfile(p, "") > 0) ++n;
     }
     // Tombstoned items are deliberately skipped: listEquipmentItems() cannot see
     // them, and a tombstone with no uuid was never mirrored, so the cloud has
@@ -258,7 +258,7 @@ int CpapDashSyncService::backfillUuids() {
     for (auto it : db_->listEquipmentItems(/*include_history=*/true)) {
         if (!it.client_uuid.empty()) continue;
         it.client_uuid = makeUuid();
-        if (db_->upsertEquipmentItem(it) > 0) ++n;
+        if (db_->upsertEquipmentItem(it, "") > 0) ++n;
     }
     return n;
 }
@@ -324,6 +324,16 @@ bool CpapDashSyncService::exchange(const std::string& watermark, State& state, R
         return row_epoch > wm_epoch;
     };
     long long max_pushed = -1;
+
+    // A row we APPLIED from the cloud is, by definition, in sync with the cloud at
+    // the remote's timestamp. It must move the watermark too. Tracking only pushes
+    // leaves every applied row sitting above the watermark forever, so each sweep
+    // pushes back exactly what it just pulled and sync never settles.
+    long long max_applied = -1;
+    auto noteApplied = [&max_applied](const std::string& remote_ts) {
+        const long long e = parseTimestampEpoch(remote_ts);
+        if (e > max_applied) max_applied = e;
+    };
 
     // ── Build the push ───────────────────────────────────────────────────────
     auto profiles = db_->listEquipmentProfiles(/*include_deleted=*/true);
@@ -447,8 +457,9 @@ bool CpapDashSyncService::exchange(const std::string& watermark, State& state, R
                 p.name        = jstr(rp, "name");
                 if (p.name.empty()) p.name = "My CPAP";
                 p.active      = jbool(rp, "active", true);
-                const int id = db_->upsertEquipmentProfile(p);
+                const int id = db_->upsertEquipmentProfile(p, jstr(rp, "updated_at"));
                 if (id > 0) {
+                    noteApplied(jstr(rp, "updated_at"));
                     ++acc.applied_profiles;
                     profile_uuid_to_local[uuid] = id;
                     local_profile_uuid[id] = uuid;
@@ -460,13 +471,19 @@ bool CpapDashSyncService::exchange(const std::string& watermark, State& state, R
             if (!remoteWins(jstr(rp, "updated_at"), local.updated_at)) { ++acc.kept_local; continue; }
 
             if (rdel && !local.deleted) {
-                if (db_->tombstoneEquipmentProfile(local.id)) ++acc.deleted_locally;
+                if (db_->tombstoneEquipmentProfile(local.id, jstr(rp, "updated_at"))) {
+                    noteApplied(jstr(rp, "updated_at"));
+                    ++acc.deleted_locally;
+                }
                 continue;
             }
             local.name    = jstr(rp, "name").empty() ? local.name : jstr(rp, "name");
             local.active  = jbool(rp, "active", local.active);
             local.deleted = rdel;
-            if (db_->upsertEquipmentProfile(local) > 0) ++acc.applied_profiles;
+            if (db_->upsertEquipmentProfile(local, jstr(rp, "updated_at")) > 0) {
+                noteApplied(jstr(rp, "updated_at"));
+                ++acc.applied_profiles;
+            }
         }
     }
 
@@ -501,8 +518,11 @@ bool CpapDashSyncService::exchange(const std::string& watermark, State& state, R
             if (found == local_item_by_uuid.end() && rdel) continue;
 
             if (found != local_item_by_uuid.end() && rdel) {
-                if (!found->second.deleted && db_->tombstoneEquipmentItem(found->second.id))
+                if (!found->second.deleted &&
+                    db_->tombstoneEquipmentItem(found->second.id, jstr(ri, "updated_at"))) {
+                    noteApplied(jstr(ri, "updated_at"));
                     ++acc.deleted_locally;
+                }
                 continue;
             }
 
@@ -536,8 +556,12 @@ bool CpapDashSyncService::exchange(const std::string& watermark, State& state, R
             // A rejection here is almost always the one-machine-per-profile index
             // refusing a second machine. Local keeps what it has; the row is not
             // fatal to the rest of the batch.
-            if (db_->upsertEquipmentItem(item) > 0) ++acc.applied_items;
-            else                                    ++acc.kept_local;
+            if (db_->upsertEquipmentItem(item, jstr(ri, "updated_at")) > 0) {
+                noteApplied(jstr(ri, "updated_at"));
+                ++acc.applied_items;
+            } else {
+                ++acc.kept_local;
+            }
         }
     }
 
@@ -546,9 +570,10 @@ bool CpapDashSyncService::exchange(const std::string& watermark, State& state, R
 
     // Advance only as far as the newest row actually pushed, so an edit made
     // during the round trip is picked up next time instead of being skipped.
-    if (max_pushed >= 0) {
+    const long long max_synced = std::max(max_pushed, max_applied);
+    if (max_synced >= 0) {
         char buf[32];
-        std::time_t t = static_cast<std::time_t>(max_pushed);
+        std::time_t t = static_cast<std::time_t>(max_synced);
         struct tm tm {};
         gmtime_r(&t, &tm);
         std::strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%SZ", &tm);

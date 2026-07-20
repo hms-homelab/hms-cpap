@@ -171,12 +171,14 @@ std::optional<IDatabase::EquipmentProfile> PostgresDatabase::getEquipmentProfile
     return db_->getEquipmentProfile(id);
 }
 
-int PostgresDatabase::upsertEquipmentProfile(const EquipmentProfile& p) {
-    return db_->upsertEquipmentProfile(p);
+int PostgresDatabase::upsertEquipmentProfile(const EquipmentProfile& p,
+                                             const std::string& updated_at_override) {
+    return db_->upsertEquipmentProfile(p, updated_at_override);
 }
 
-bool PostgresDatabase::tombstoneEquipmentProfile(int id) {
-    return db_->tombstoneEquipmentProfile(id);
+bool PostgresDatabase::tombstoneEquipmentProfile(int id,
+                                                 const std::string& updated_at_override) {
+    return db_->tombstoneEquipmentProfile(id, updated_at_override);
 }
 
 int PostgresDatabase::ensureDefaultEquipmentProfile() {
@@ -196,12 +198,14 @@ bool PostgresDatabase::profileHasMachine(int profile_id, int exclude_item_id) {
     return db_->profileHasMachine(profile_id, exclude_item_id);
 }
 
-int PostgresDatabase::upsertEquipmentItem(const EquipmentItem& item) {
-    return db_->upsertEquipmentItem(item);
+int PostgresDatabase::upsertEquipmentItem(const EquipmentItem& item,
+                                          const std::string& updated_at_override) {
+    return db_->upsertEquipmentItem(item, updated_at_override);
 }
 
-bool PostgresDatabase::tombstoneEquipmentItem(int id) {
-    return db_->tombstoneEquipmentItem(id);
+bool PostgresDatabase::tombstoneEquipmentItem(int id,
+                                              const std::string& updated_at_override) {
+    return db_->tombstoneEquipmentItem(id, updated_at_override);
 }
 
 // -- Raw connection -----------------------------------------------------------

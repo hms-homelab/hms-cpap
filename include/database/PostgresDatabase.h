@@ -156,15 +156,19 @@ public:
 
     std::vector<EquipmentProfile> listEquipmentProfiles(bool include_deleted) override;
     std::optional<EquipmentProfile> getEquipmentProfile(int id) override;
-    int  upsertEquipmentProfile(const EquipmentProfile& p) override;
-    bool tombstoneEquipmentProfile(int id) override;
+    int  upsertEquipmentProfile(const EquipmentProfile& p,
+                                const std::string& updated_at_override) override;
+    bool tombstoneEquipmentProfile(int id,
+                                   const std::string& updated_at_override) override;
     int  ensureDefaultEquipmentProfile() override;
 
     std::vector<EquipmentItem> listEquipmentItems(bool include_history) override;
     std::optional<EquipmentItem> getEquipmentItem(int id) override;
     bool profileHasMachine(int profile_id, int exclude_item_id) override;
-    int  upsertEquipmentItem(const EquipmentItem& item) override;
-    bool tombstoneEquipmentItem(int id) override;
+    int  upsertEquipmentItem(const EquipmentItem& item,
+                             const std::string& updated_at_override) override;
+    bool tombstoneEquipmentItem(int id,
+                                const std::string& updated_at_override) override;
 
     // -- Raw connection -------------------------------------------------------
 

@@ -75,6 +75,7 @@ All data sources (ezShare WiFi SD, local filesystem) work with both manufacturer
 - **Therapy Insights Engine** - Automated analysis of AHI trends, leak correlation, compliance, best/worst nights
 - **Pulse Oximetry** - Wellue O2Ring SpO2/HR with ODI calculation, session overlay, and fallback in session cards
 - **Manual Upload Page** - Drag-and-drop a CPAP `.zip` or a Wellue O2 Ring `.csv` from any browser, no shared network needed. CPAP zips merge into the archive and reparse; O2 Ring CSVs (both Wellue export dialects, auto-detected sample interval) become oximetry sessions -- an OSCAR-free way to view your O2 ring data. See [docs/UPLOAD.md](docs/UPLOAD.md)
+- **Equipment & Supply Reminders** - Track machine and accessories per profile, with wear computed from your in-use dates. Publishes days-left and wear sensors to Home Assistant plus a due/overdue event so an automation fires once per crossing. Optional CpapDash cloud sync. See [Equipment & Supplies](#equipment--supplies)
 - **SleepHQ Auto-Export** - Automatically forward each completed night's raw data to SleepHQ via their public API, toggleable on session complete and on local import, plus a manual per-night "Upload to SleepHQ" button
 - **Multi-Database** - PostgreSQL, MySQL/MariaDB, or SQLite (auto-created on first run)
 - **Signal Charts** - Per-minute resolution with event markers and oximetry overlay
@@ -93,6 +94,7 @@ All data sources (ezShare WiFi SD, local filesystem) work with both manufacturer
 - [Configuration](#configuration)
 - [CLI Reference](#cli-reference)
 - [Deployment](#deployment)
+- [Equipment & Supplies](#equipment--supplies)
 - [Home Assistant Integration](#home-assistant-integration)
 - [Architecture](#architecture)
 - [Development](#development)
@@ -400,6 +402,84 @@ Download the latest release from [Releases](https://github.com/hms-homelab/hms-c
 hms_cpap.exe
 # Open http://localhost:8893
 ```
+
+## Equipment & Supplies
+
+Track what you actually run and get told when a part is due, without a spreadsheet.
+
+### Profiles
+
+A **profile** is one named setup: exactly one machine plus its accessories. Most
+people need a single profile. A second is useful when you genuinely run two rigs
+-- a home AirSense and a travel AirMini, say -- and want their wear tracked apart.
+
+Each item records what it is (from a type catalog), optionally brand and model,
+the date you started using it, and how often it should be replaced. Leave the
+interval blank to inherit the type's default; set it to override.
+
+### Wear is computed, never stored
+
+Nothing runs a nightly job to decrement a counter. Days-left and wear percent are
+derived from your in-use date and the interval every time they are read, so a
+value can never drift, go stale, or need repairing after downtime. Change the
+date and every number updates instantly.
+
+An item is **untracked** if it has no in-use date, or no interval -- machines
+included. Untracked items are skipped rather than reported as 0% worn, because a
+sensor pinned at zero forever is worse than no sensor.
+
+States: `fresh`, `due_soon` (inside 14 days), `overdue`.
+
+### In Home Assistant
+
+Published on the normal collection cycle, under your existing CPAP device -- no
+extra scheduler, no new integration to install.
+
+**Retained sensors** (state -- what IS true):
+
+```
+cpap/<device_id>/supplies/<profile>_<type>/days_left
+cpap/<device_id>/supplies/<profile>_<type>/wear_percent
+cpap/<device_id>/supplies/due                          # ON if anything is due
+```
+
+**Events** (what just CHANGED) -- not retained, one message per crossing:
+
+```
+cpap/<device_id>/supplies/event
+{"entity":"home_mask","profile":"Home","type":"mask",
+ "from":"fresh","state":"overdue","days_left":-3,"replace_by":"2026-07-16"}
+```
+
+Retained state cannot say "this just went overdue" -- the value looks identical
+on the cycle it crossed and every cycle after -- so an automation built on state
+alone either fires once and misses later items, or re-fires on every cycle. The
+event topic exists for exactly that, and it fires on the crossing back to `fresh`
+too so an automation can clear whatever it raised. Crossings are remembered
+across restarts, so a restart does not re-announce anything.
+
+```yaml
+automation:
+  - alias: CPAP supply due
+    trigger:
+      platform: mqtt
+      topic: cpap/cpap_resmed_12345/supplies/event
+    condition: "{{ trigger.payload_json.state in ['due_soon', 'overdue'] }}"
+    action:
+      service: notify.mobile_app_phone
+      data:
+        message: >-
+          {{ trigger.payload_json.type }} is
+          {{ trigger.payload_json.state | replace('_', ' ') }}
+```
+
+### Optional cloud sync
+
+Equipment can mirror to [CpapDash](https://www.cpapdash.com) so the same profiles
+appear in the app. **Off by default**, opt-in with a pasted token, and local stays
+the source of truth -- an unreachable cloud degrades to local-only with no data
+loss. Only equipment data syncs; therapy and session data never leave. See
+[PRIVACY.md](PRIVACY.md).
 
 ## Home Assistant Integration
 

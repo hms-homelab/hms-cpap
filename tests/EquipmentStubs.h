@@ -34,10 +34,11 @@
     std::optional<IDatabase::EquipmentProfile> getEquipmentProfile(int) override {    \
         return std::nullopt;                                                         \
     }                                                                                \
-    int upsertEquipmentProfile(const IDatabase::EquipmentProfile&) override {         \
+    int upsertEquipmentProfile(const IDatabase::EquipmentProfile&,                    \
+                               const std::string&) override {                        \
         return -1;                                                                   \
     }                                                                                \
-    bool tombstoneEquipmentProfile(int) override { return false; }                   \
+    bool tombstoneEquipmentProfile(int, const std::string&) override { return false; }\
     int ensureDefaultEquipmentProfile() override { return -1; }                      \
     std::vector<IDatabase::EquipmentItem> listEquipmentItems(bool) override {         \
         return {};                                                                   \
@@ -46,5 +47,6 @@
         return std::nullopt;                                                         \
     }                                                                                \
     bool profileHasMachine(int, int) override { return false; }                      \
-    int upsertEquipmentItem(const IDatabase::EquipmentItem&) override { return -1; }  \
-    bool tombstoneEquipmentItem(int) override { return false; }
+    int upsertEquipmentItem(const IDatabase::EquipmentItem&,                          \
+                            const std::string&) override { return -1; }               \
+    bool tombstoneEquipmentItem(int, const std::string&) override { return false; }

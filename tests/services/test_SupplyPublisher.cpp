@@ -433,7 +433,7 @@ TEST(SupplyPublisherTest, CollectJoinsProfilesItemsAndTypeDefaults) {
 
     IDatabase::EquipmentProfile profile;
     profile.name = "Travel Setup";
-    int profile_id = db.upsertEquipmentProfile(profile);
+    int profile_id = db.upsertEquipmentProfile(profile, "");
     ASSERT_GT(profile_id, 0);
 
     // Mask with no override: must pick up the seeded catalog default of 90.
@@ -445,7 +445,7 @@ TEST(SupplyPublisherTest, CollectJoinsProfilesItemsAndTypeDefaults) {
     mask.started_using_at = "2026-01-01T00:00:00Z";
     mask.started_epoch = 1767225600LL;
     mask.replace_after_days = -1;  // NULL -> type default
-    ASSERT_GT(db.upsertEquipmentItem(mask), 0);
+    ASSERT_GT(db.upsertEquipmentItem(mask, ""), 0);
 
     // Filter with an explicit override: the override wins.
     IDatabase::EquipmentItem filter;
@@ -455,7 +455,7 @@ TEST(SupplyPublisherTest, CollectJoinsProfilesItemsAndTypeDefaults) {
     filter.started_using_at = "2026-01-01T00:00:00Z";
     filter.started_epoch = 1767225600LL;
     filter.replace_after_days = 14;
-    ASSERT_GT(db.upsertEquipmentItem(filter), 0);
+    ASSERT_GT(db.upsertEquipmentItem(filter, ""), 0);
 
     auto entries = SupplyPublisher::collect(db);
     ASSERT_EQ(entries.size(), 2u);

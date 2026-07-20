@@ -105,7 +105,7 @@ protected:
         it.type_key    = "mask";
         it.brand       = brand;
         it.model       = "AirFit P10";
-        return db_->upsertEquipmentItem(it);
+        return db_->upsertEquipmentItem(it, "");
     }
 
     const json& lastRequest() const { return requests_.back(); }
@@ -307,7 +307,7 @@ TEST_F(CpapDashSync, LocalTombstoneIsPushedToTheCloud) {
     ASSERT_TRUE(svc_.syncNow().ok);
     const std::string iuuid = uuidOfItem(iid);
 
-    ASSERT_TRUE(db_->tombstoneEquipmentItem(iid));
+    ASSERT_TRUE(db_->tombstoneEquipmentItem(iid, ""));
     // Force it past the push watermark (SQLite stamps whole seconds).
     setUpdatedAt("cpap_equipment_items", iid, "2030-01-01 00:00:00");
 
@@ -530,3 +530,147 @@ TEST(CpapDashSyncUuid, LooksLikeAV4UuidAndDoesNotRepeat) {
 }
 
 } // namespace
+
+// -- Mirroring must not restamp the row ---------------------------------------
+//
+// Applying a remote row locally used to write updated_at = now(), which is the
+// time we MIRRORED it, not the time the user CHANGED it. Two consequences, and
+// the second one loses data:
+//
+//   1. The freshly-applied row looks locally-modified, so the next sync pushes it
+//      straight back. With any clock skew it re-qualifies every sweep.
+//   2. A mirror outranks the original. Device A edits at T1; device B mirrors it
+//      at T2 > T1; A then makes a REAL edit at T3 with T1 < T3 < T2. B's untouched
+//      copy now beats A's genuine edit under last-write-wins, and the edit is
+//      silently discarded.
+//
+// The remote row's own updated_at must therefore survive the write. The server
+// already works this way (COALESCE(NULLIF($7,''), NOW())), so this makes the two
+// sides symmetric.
+
+TEST_F(CpapDashSync, ApplyingARemoteRowPreservesItsUpdatedAt) {
+    IDatabase::EquipmentProfile p;
+    p.name        = "Home";
+    p.client_uuid = "uuid-home";
+    int pid = db_->upsertEquipmentProfile(p, "");
+    ASSERT_GT(pid, 0);
+    setUpdatedAt("cpap_equipment_profiles", pid, "2026-07-19T10:00:00Z");
+
+    // Cloud has a newer name for the same row.
+    json resp = emptyResponse("2026-07-19T12:00:00Z");
+    resp["profiles"].push_back({{"id", 7},
+                                {"client_uuid", "uuid-home"},
+                                {"name", "Home Renamed"},
+                                {"active", true},
+                                {"deleted", false},
+                                {"updated_at", "2026-07-19T11:00:00Z"}});
+    next_response_ = resp;
+
+    auto r = svc_.syncNow();
+    ASSERT_TRUE(r.ok) << r.error;
+    ASSERT_EQ(r.applied_profiles, 1);
+
+    auto stored = db_->getEquipmentProfile(pid);
+    ASSERT_TRUE(stored.has_value());
+    EXPECT_EQ(stored->name, "Home Renamed");
+    EXPECT_EQ(stored->updated_at.substr(0, 10), "2026-07-19");
+    EXPECT_NE(stored->updated_at.find("11:00:00"), std::string::npos)
+        << "mirroring restamped the row to now(); it must keep the remote's "
+           "updated_at, or a mirror outranks the original under last-write-wins. "
+           "got: " << stored->updated_at;
+}
+
+TEST_F(CpapDashSync, SyncQuiescesInsteadOfRePushingWhatItJustPulled) {
+    IDatabase::EquipmentProfile p;
+    p.name        = "Home";
+    p.client_uuid = "uuid-home";
+    int pid = db_->upsertEquipmentProfile(p, "");
+    setUpdatedAt("cpap_equipment_profiles", pid, "2026-07-19T10:00:00Z");
+
+    json resp = emptyResponse("2026-07-19T12:00:00Z");
+    resp["profiles"].push_back({{"id", 7},
+                                {"client_uuid", "uuid-home"},
+                                {"name", "Home Renamed"},
+                                {"active", true},
+                                {"deleted", false},
+                                {"updated_at", "2026-07-19T11:00:00Z"}});
+    next_response_ = resp;
+    ASSERT_TRUE(svc_.syncNow().ok);
+
+    // Nothing changed locally since. A second sync must have nothing to say.
+    requests_.clear();
+    next_response_ = emptyResponse("2026-07-19T13:00:00Z");
+    auto second = svc_.syncNow();
+
+    ASSERT_TRUE(second.ok) << second.error;
+    EXPECT_EQ(second.pushed_profiles, 0)
+        << "the row we just pulled was pushed straight back — sync never settles";
+    ASSERT_FALSE(requests_.empty());
+    EXPECT_TRUE(requests_.back()["profiles"].empty())
+        << "second sync still carried a profile payload";
+}
+
+TEST_F(CpapDashSync, AMirroredRowDoesNotOutrankALaterGenuineEdit) {
+    IDatabase::EquipmentProfile p;
+    p.name        = "Home";
+    p.client_uuid = "uuid-home";
+    int pid = db_->upsertEquipmentProfile(p, "");
+    setUpdatedAt("cpap_equipment_profiles", pid, "2026-07-19T10:00:00Z");
+
+    // Mirror a remote edit stamped 11:00.
+    json resp = emptyResponse("2026-07-19T12:00:00Z");
+    resp["profiles"].push_back({{"id", 7},
+                                {"client_uuid", "uuid-home"},
+                                {"name", "From Device A"},
+                                {"active", true},
+                                {"deleted", false},
+                                {"updated_at", "2026-07-19T11:00:00Z"}});
+    next_response_ = resp;
+    ASSERT_TRUE(svc_.syncNow().ok);
+
+    // Device A now makes a genuine edit at 11:30 — later than the original 11:00,
+    // but earlier than the wall clock at which we mirrored it.
+    json second = emptyResponse("2026-07-19T14:00:00Z");
+    second["profiles"].push_back({{"id", 7},
+                                  {"client_uuid", "uuid-home"},
+                                  {"name", "Genuinely Edited"},
+                                  {"active", true},
+                                  {"deleted", false},
+                                  {"updated_at", "2026-07-19T11:30:00Z"}});
+    next_response_ = second;
+    ASSERT_TRUE(svc_.syncNow().ok);
+
+    auto stored = db_->getEquipmentProfile(pid);
+    ASSERT_TRUE(stored.has_value());
+    EXPECT_EQ(stored->name, "Genuinely Edited")
+        << "a real edit was discarded because our own mirror carried a newer "
+           "timestamp than the row it copied";
+}
+
+TEST_F(CpapDashSync, ApplyingARemoteTombstonePreservesItsUpdatedAt) {
+    IDatabase::EquipmentProfile p;
+    p.name        = "Doomed";
+    p.client_uuid = "uuid-doomed";
+    int pid = db_->upsertEquipmentProfile(p, "");
+    setUpdatedAt("cpap_equipment_profiles", pid, "2026-07-19T10:00:00Z");
+
+    json resp = emptyResponse("2026-07-19T12:00:00Z");
+    resp["profiles"].push_back({{"id", 7},
+                                {"client_uuid", "uuid-doomed"},
+                                {"name", "Doomed"},
+                                {"active", false},
+                                {"deleted", true},
+                                {"updated_at", "2026-07-19T11:00:00Z"}});
+    next_response_ = resp;
+
+    auto r = svc_.syncNow();
+    ASSERT_TRUE(r.ok) << r.error;
+    EXPECT_EQ(r.deleted_locally, 1);
+
+    requests_.clear();
+    next_response_ = emptyResponse("2026-07-19T13:00:00Z");
+    auto second = svc_.syncNow();
+    ASSERT_TRUE(second.ok);
+    EXPECT_EQ(second.pushed_profiles, 0)
+        << "an applied tombstone re-pushes itself every sweep";
+}

@@ -246,7 +246,7 @@ void EquipmentController::createProfile(const drogon::HttpRequestPtr& req,
     p.active      = body->get("active", true).asBool();
     if (p.name.empty()) { cb(jsonError("Profile name is required", drogon::k400BadRequest)); return; }
 
-    int pid = db_->upsertEquipmentProfile(p);
+    int pid = db_->upsertEquipmentProfile(p, "");
     if (pid < 0) { cb(jsonError("Failed to create profile", drogon::k500InternalServerError)); return; }
 
     // Optionally seed items in the same call. One machine only, checked here
@@ -268,7 +268,7 @@ void EquipmentController::createProfile(const drogon::HttpRequestPtr& req,
                 }
                 machine_seen = true;
             }
-            db_->upsertEquipmentItem(it);
+            db_->upsertEquipmentItem(it, "");
         }
     }
 
@@ -307,7 +307,7 @@ void EquipmentController::updateProfile(const drogon::HttpRequestPtr& req,
     p.active = body->get("active", existing->active).asBool();
     if (p.name.empty()) { cb(jsonError("Profile name is required", drogon::k400BadRequest)); return; }
 
-    if (db_->upsertEquipmentProfile(p) < 0) {
+    if (db_->upsertEquipmentProfile(p, "") < 0) {
         cb(jsonError("Failed to update profile", drogon::k500InternalServerError)); return;
     }
     auto stored = db_->getEquipmentProfile(id);
@@ -325,7 +325,7 @@ void EquipmentController::deleteProfile(const drogon::HttpRequestPtr&,
                                         std::function<void(const drogon::HttpResponsePtr&)>&& cb, int id) {
     if (!db_) { cb(jsonError("Database unavailable", drogon::k503ServiceUnavailable)); return; }
     if (!db_->getEquipmentProfile(id)) { cb(jsonError("Profile not found", drogon::k404NotFound)); return; }
-    if (!db_->tombstoneEquipmentProfile(id)) {
+    if (!db_->tombstoneEquipmentProfile(id, "")) {
         cb(jsonError("Failed to remove profile", drogon::k500InternalServerError)); return;
     }
     Json::Value j; j["message"] = "Profile removed";
@@ -364,7 +364,7 @@ void EquipmentController::createItem(const drogon::HttpRequestPtr& req,
         cb(jsonError("A profile can have only one machine", drogon::k400BadRequest)); return;
     }
 
-    int id = db_->upsertEquipmentItem(it);
+    int id = db_->upsertEquipmentItem(it, "");
     if (id < 0) { cb(jsonError("Failed to create equipment", drogon::k500InternalServerError)); return; }
 
     auto stored = db_->getEquipmentItem(id);
@@ -402,7 +402,7 @@ void EquipmentController::updateItem(const drogon::HttpRequestPtr& req,
         cb(jsonError("A profile can have only one machine", drogon::k400BadRequest)); return;
     }
 
-    if (db_->upsertEquipmentItem(it) < 0) {
+    if (db_->upsertEquipmentItem(it, "") < 0) {
         cb(jsonError("Failed to update equipment", drogon::k500InternalServerError)); return;
     }
     auto stored = db_->getEquipmentItem(id);
@@ -415,7 +415,7 @@ void EquipmentController::deleteItem(const drogon::HttpRequestPtr&,
                                      std::function<void(const drogon::HttpResponsePtr&)>&& cb, int id) {
     if (!db_) { cb(jsonError("Database unavailable", drogon::k503ServiceUnavailable)); return; }
     if (!db_->getEquipmentItem(id)) { cb(jsonError("Equipment not found", drogon::k404NotFound)); return; }
-    if (!db_->tombstoneEquipmentItem(id)) {
+    if (!db_->tombstoneEquipmentItem(id, "")) {
         cb(jsonError("Failed to remove equipment", drogon::k500InternalServerError)); return;
     }
     Json::Value j; j["message"] = "Equipment removed";

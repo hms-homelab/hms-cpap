@@ -2287,48 +2287,55 @@ std::string itemCols() {
         " COALESCE(notes, '') AS notes, active, deleted,") + kIsoCols;
 }
 
-IDatabase::EquipmentType rowToType(const pqxx::row& r) {
+// Templated on the row type: libpqxx 7.10+ yields pqxx::row_ref when iterating a
+// result, older versions yield pqxx::row. Naming either one concretely breaks the
+// other, and the Windows CI runner (vcpkg) ships the newer one while Linux does
+// not — so this only failed on Windows.
+template <typename Row>
+IDatabase::EquipmentType rowToType(const Row& r) {
     IDatabase::EquipmentType t;
-    t.id                         = r["id"].as<int>(0);
-    t.type_key                   = r["type_key"].as<std::string>("");
-    t.label                      = r["label"].as<std::string>("");
-    t.category                   = r["category"].as<std::string>("");
-    t.default_replace_after_days = r["default_replace_after_days"].as<int>(-1);
-    t.is_system                  = r["is_system"].as<bool>(false);
-    t.active                     = r["active"].as<bool>(true);
+    t.id                         = r["id"].template as<int>(0);
+    t.type_key                   = r["type_key"].template as<std::string>("");
+    t.label                      = r["label"].template as<std::string>("");
+    t.category                   = r["category"].template as<std::string>("");
+    t.default_replace_after_days = r["default_replace_after_days"].template as<int>(-1);
+    t.is_system                  = r["is_system"].template as<bool>(false);
+    t.active                     = r["active"].template as<bool>(true);
     return t;
 }
 
-IDatabase::EquipmentProfile rowToProfile(const pqxx::row& r) {
+template <typename Row>
+IDatabase::EquipmentProfile rowToProfile(const Row& r) {
     IDatabase::EquipmentProfile p;
-    p.id          = r["id"].as<int>(0);
-    p.client_uuid = r["client_uuid"].as<std::string>("");
-    p.name        = r["name"].as<std::string>("");
-    p.active      = r["active"].as<bool>(true);
-    p.deleted     = r["deleted"].as<bool>(false);
-    p.created_at  = r["created_at"].as<std::string>("");
-    p.updated_at  = r["updated_at"].as<std::string>("");
+    p.id          = r["id"].template as<int>(0);
+    p.client_uuid = r["client_uuid"].template as<std::string>("");
+    p.name        = r["name"].template as<std::string>("");
+    p.active      = r["active"].template as<bool>(true);
+    p.deleted     = r["deleted"].template as<bool>(false);
+    p.created_at  = r["created_at"].template as<std::string>("");
+    p.updated_at  = r["updated_at"].template as<std::string>("");
     return p;
 }
 
-IDatabase::EquipmentItem rowToItem(const pqxx::row& r) {
+template <typename Row>
+IDatabase::EquipmentItem rowToItem(const Row& r) {
     IDatabase::EquipmentItem it;
-    it.id                 = r["id"].as<int>(0);
-    it.profile_id         = r["profile_id"].as<int>(0);
-    it.client_uuid        = r["client_uuid"].as<std::string>("");
-    it.type_key           = r["type_key"].as<std::string>("");
-    it.category           = r["category"].as<std::string>("");
-    it.brand              = r["brand"].as<std::string>("");
-    it.model              = r["model"].as<std::string>("");
-    it.variant            = r["variant"].as<std::string>("");
-    it.started_using_at   = r["started_using_at"].as<std::string>("");
-    it.started_epoch      = r["started_epoch"].as<long long>(0);
-    it.replace_after_days = r["replace_after_days"].as<int>(-1);
-    it.notes              = r["notes"].as<std::string>("");
-    it.active             = r["active"].as<bool>(true);
-    it.deleted            = r["deleted"].as<bool>(false);
-    it.created_at         = r["created_at"].as<std::string>("");
-    it.updated_at         = r["updated_at"].as<std::string>("");
+    it.id                 = r["id"].template as<int>(0);
+    it.profile_id         = r["profile_id"].template as<int>(0);
+    it.client_uuid        = r["client_uuid"].template as<std::string>("");
+    it.type_key           = r["type_key"].template as<std::string>("");
+    it.category           = r["category"].template as<std::string>("");
+    it.brand              = r["brand"].template as<std::string>("");
+    it.model              = r["model"].template as<std::string>("");
+    it.variant            = r["variant"].template as<std::string>("");
+    it.started_using_at   = r["started_using_at"].template as<std::string>("");
+    it.started_epoch      = r["started_epoch"].template as<long long>(0);
+    it.replace_after_days = r["replace_after_days"].template as<int>(-1);
+    it.notes              = r["notes"].template as<std::string>("");
+    it.active             = r["active"].template as<bool>(true);
+    it.deleted            = r["deleted"].template as<bool>(false);
+    it.created_at         = r["created_at"].template as<std::string>("");
+    it.updated_at         = r["updated_at"].template as<std::string>("");
     return it;
 }
 
@@ -2485,7 +2492,9 @@ std::optional<IDatabase::EquipmentProfile> DatabaseService::getEquipmentProfile(
     }
 }
 
-int DatabaseService::upsertEquipmentProfile(const IDatabase::EquipmentProfile& p) {
+int DatabaseService::upsertEquipmentProfile(const IDatabase::EquipmentProfile& p,
+                                            const std::string& updated_at_override) {
+    const std::string ts = sanitizeUpdatedAtOverride(updated_at_override);
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!ensureConnection()) return -1;
 
@@ -2494,10 +2503,12 @@ int DatabaseService::upsertEquipmentProfile(const IDatabase::EquipmentProfile& p
 
         if (p.id <= 0) {
             auto r = txn.exec_params(R"(
-                INSERT INTO cpap_equipment_profiles (client_uuid, name, active, deleted)
-                VALUES (NULLIF($1::text, ''), $2, $3, $4)
+                INSERT INTO cpap_equipment_profiles
+                    (client_uuid, name, active, deleted, updated_at)
+                VALUES (NULLIF($1::text, ''), $2, $3, $4,
+                        COALESCE(NULLIF($5::text, '')::timestamptz, NOW()))
                 RETURNING id
-            )", p.client_uuid, p.name, p.active, p.deleted);
+            )", p.client_uuid, p.name, p.active, p.deleted, ts);
             txn.commit();
             if (r.empty()) return -1;
             return r[0]["id"].as<int>(-1);
@@ -2509,9 +2520,9 @@ int DatabaseService::upsertEquipmentProfile(const IDatabase::EquipmentProfile& p
                 name        = $3,
                 active      = $4,
                 deleted     = $5,
-                updated_at  = NOW()
+                updated_at  = COALESCE(NULLIF($6::text, '')::timestamptz, NOW())
             WHERE id = $1
-        )", p.id, p.client_uuid, p.name, p.active, p.deleted);
+        )", p.id, p.client_uuid, p.name, p.active, p.deleted, ts);
         txn.commit();
         return r.affected_rows() > 0 ? p.id : -1;
 
@@ -2521,7 +2532,9 @@ int DatabaseService::upsertEquipmentProfile(const IDatabase::EquipmentProfile& p
     }
 }
 
-bool DatabaseService::tombstoneEquipmentProfile(int id) {
+bool DatabaseService::tombstoneEquipmentProfile(int id,
+                                                const std::string& updated_at_override) {
+    const std::string ts = sanitizeUpdatedAtOverride(updated_at_override);
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!ensureConnection()) return false;
 
@@ -2529,17 +2542,19 @@ bool DatabaseService::tombstoneEquipmentProfile(int id) {
         pqxx::work txn(*conn_);
         auto r = txn.exec_params(
             "UPDATE cpap_equipment_profiles "
-            "SET deleted = TRUE, active = FALSE, updated_at = NOW() "
+            "SET deleted = TRUE, active = FALSE, "
+            "    updated_at = COALESCE(NULLIF($2::text, '')::timestamptz, NOW()) "
             "WHERE id = $1 AND deleted = FALSE",
-            id);
+            id, ts);
         // Soft cascade: the FK cascade only fires on a hard DELETE, and the items
         // must disappear from the supply view with their profile. Clearing active
         // as well frees the one-live-machine slot for the profile.
         txn.exec_params(
             "UPDATE cpap_equipment_items "
-            "SET deleted = TRUE, active = FALSE, updated_at = NOW() "
+            "SET deleted = TRUE, active = FALSE, "
+            "    updated_at = COALESCE(NULLIF($2::text, '')::timestamptz, NOW()) "
             "WHERE profile_id = $1 AND deleted = FALSE",
-            id);
+            id, ts);
         txn.commit();
         return r.affected_rows() > 0;
     } catch (const std::exception& e) {
@@ -2636,7 +2651,9 @@ bool DatabaseService::profileHasMachine(int profile_id, int exclude_item_id) {
     }
 }
 
-int DatabaseService::upsertEquipmentItem(const IDatabase::EquipmentItem& item) {
+int DatabaseService::upsertEquipmentItem(const IDatabase::EquipmentItem& item,
+                                         const std::string& updated_at_override) {
+    const std::string ts = sanitizeUpdatedAtOverride(updated_at_override);
     // Resolve the category from the type before opening our own transaction
     // (resolveEquipmentType runs its own txn; nesting one inside another throws).
     std::string category = item.category;
@@ -2655,16 +2672,18 @@ int DatabaseService::upsertEquipmentItem(const IDatabase::EquipmentItem& item) {
             auto r = txn.exec_params(R"(
                 INSERT INTO cpap_equipment_items
                     (profile_id, client_uuid, type_key, category, brand, model, variant,
-                     started_using_at, replace_after_days, notes, active, deleted)
+                     started_using_at, replace_after_days, notes, active, deleted,
+                     updated_at)
                 VALUES ($1, NULLIF($2::text, ''), $3, $4, $5, $6, $7,
                         NULLIF($8::text, '')::timestamp AT TIME ZONE 'UTC',
-                        NULLIF($9::int, -1), $10, $11, $12)
+                        NULLIF($9::int, -1), $10, $11, $12,
+                        COALESCE(NULLIF($13::text, '')::timestamptz, NOW()))
                 RETURNING id
             )",
                 item.profile_id, item.client_uuid, item.type_key, category,
                 item.brand, item.model, item.variant,
                 item.started_using_at, item.replace_after_days, item.notes,
-                item.active, item.deleted);
+                item.active, item.deleted, ts);
             txn.commit();
             if (r.empty()) return -1;
             return r[0]["id"].as<int>(-1);
@@ -2684,13 +2703,13 @@ int DatabaseService::upsertEquipmentItem(const IDatabase::EquipmentItem& item) {
                 notes              = $11,
                 active             = $12,
                 deleted            = $13,
-                updated_at         = NOW()
+                updated_at         = COALESCE(NULLIF($14::text, '')::timestamptz, NOW())
             WHERE id = $1
         )",
             item.id, item.profile_id, item.client_uuid, item.type_key, category,
             item.brand, item.model, item.variant,
             item.started_using_at, item.replace_after_days, item.notes,
-            item.active, item.deleted);
+            item.active, item.deleted, ts);
         txn.commit();
         return r.affected_rows() > 0 ? item.id : -1;
 
@@ -2701,7 +2720,9 @@ int DatabaseService::upsertEquipmentItem(const IDatabase::EquipmentItem& item) {
     }
 }
 
-bool DatabaseService::tombstoneEquipmentItem(int id) {
+bool DatabaseService::tombstoneEquipmentItem(int id,
+                                             const std::string& updated_at_override) {
+    const std::string ts = sanitizeUpdatedAtOverride(updated_at_override);
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!ensureConnection()) return false;
 
@@ -2709,9 +2730,10 @@ bool DatabaseService::tombstoneEquipmentItem(int id) {
         pqxx::work txn(*conn_);
         auto r = txn.exec_params(
             "UPDATE cpap_equipment_items "
-            "SET deleted = TRUE, active = FALSE, updated_at = NOW() "
+            "SET deleted = TRUE, active = FALSE, "
+            "    updated_at = COALESCE(NULLIF($2::text, '')::timestamptz, NOW()) "
             "WHERE id = $1 AND deleted = FALSE",
-            id);
+            id, ts);
         txn.commit();
         return r.affected_rows() > 0;
     } catch (const std::exception& e) {
