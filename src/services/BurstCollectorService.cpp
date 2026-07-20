@@ -1413,8 +1413,21 @@ void BurstCollectorService::runLoop() {
         // Hot-reload config if changed via web UI
         reloadConfig();
 
-        // Execute burst cycle
-        bool success = executeBurstCycle();
+        // Execute burst cycle. Never let an exception escape: this is a
+        // std::thread body, so anything uncaught calls std::terminate and
+        // takes the whole service down (incident 2026-07-17: an unreadable
+        // DATALOG folder crash-looped the container this way). A failed
+        // cycle logs and retries on the normal schedule.
+        bool success = false;
+        try {
+            success = executeBurstCycle();
+        } catch (const std::exception& e) {
+            std::cerr << "CPAP: ❌ Burst cycle failed: " << e.what()
+                      << " — will retry next cycle" << std::endl;
+        } catch (...) {
+            std::cerr << "CPAP: ❌ Burst cycle failed with unknown error"
+                      << " — will retry next cycle" << std::endl;
+        }
 
         if (success) {
             last_burst_time_ = std::chrono::system_clock::now();
