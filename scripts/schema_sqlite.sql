@@ -213,3 +213,79 @@ CREATE TABLE IF NOT EXISTS cpap_sleep_stages (
 
 CREATE INDEX IF NOT EXISTS idx_cpap_sleep_stages_session
     ON cpap_sleep_stages(session_id);
+
+-- =============================================================================
+-- Equipment profiles + supplies (SDD-004)
+-- =============================================================================
+-- Local-first mirror of the cloud model (hms-cpapdash-api SDD-035), minus
+-- user_id: hms-cpap is single-household. A profile ("setup") owns exactly one
+-- machine plus its accessories; supply wear is COMPUTED on read, never stored.
+-- client_uuid exists only so optional cloud sync is idempotent; unused offline.
+-- Keep this in lockstep with SQLiteDatabase::createSchema().
+
+-- Catalog: seeded system defaults + user customs
+CREATE TABLE IF NOT EXISTS cpap_equipment_types (
+    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    type_key                    TEXT NOT NULL UNIQUE,
+    label                       TEXT NOT NULL,
+    category                    TEXT NOT NULL,
+    default_replace_after_days  INTEGER,
+    is_system                   INTEGER DEFAULT 0,
+    active                      INTEGER DEFAULT 1,
+    created_at                  TEXT DEFAULT (datetime('now')),
+    updated_at                  TEXT DEFAULT (datetime('now'))
+);
+
+-- Named setups
+CREATE TABLE IF NOT EXISTS cpap_equipment_profiles (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    client_uuid  TEXT,
+    name         TEXT NOT NULL,
+    active       INTEGER DEFAULT 1,
+    deleted      INTEGER DEFAULT 0,
+    created_at   TEXT DEFAULT (datetime('now')),
+    updated_at   TEXT DEFAULT (datetime('now'))
+);
+
+-- The gear; category denormalized from the type so the one-machine-per-profile
+-- index can enforce it at the DB level
+CREATE TABLE IF NOT EXISTS cpap_equipment_items (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    profile_id          INTEGER NOT NULL REFERENCES cpap_equipment_profiles(id) ON DELETE CASCADE,
+    client_uuid         TEXT,
+    type_key            TEXT NOT NULL,
+    category            TEXT NOT NULL DEFAULT 'accessory',
+    brand               TEXT DEFAULT '',
+    model               TEXT DEFAULT '',
+    variant             TEXT,
+    started_using_at    TEXT,
+    replace_after_days  INTEGER,
+    notes               TEXT,
+    active              INTEGER DEFAULT 1,
+    deleted             INTEGER DEFAULT 0,
+    created_at          TEXT DEFAULT (datetime('now')),
+    updated_at          TEXT DEFAULT (datetime('now'))
+);
+
+-- Seed the six system types verbatim from the app's supply_defaults.dart, so
+-- local, cloud and the phone app all compute the same due dates.
+INSERT OR IGNORE INTO cpap_equipment_types
+    (type_key, label, category, default_replace_after_days, is_system)
+VALUES
+    ('machine',    'Machine',    'machine',   NULL, 1),
+    ('mask',       'Mask',       'accessory',   90, 1),
+    ('tubing',     'Tubing',     'accessory',   90, 1),
+    ('filter',     'Filter',     'accessory',   30, 1),
+    ('humidifier', 'Humidifier', 'accessory',  180, 1),
+    ('headgear',   'Headgear',   'accessory',  180, 1);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_eq_profile_uuid
+    ON cpap_equipment_profiles(client_uuid) WHERE client_uuid IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_eq_item_uuid
+    ON cpap_equipment_items(client_uuid) WHERE client_uuid IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_eq_item_profile
+    ON cpap_equipment_items(profile_id, active);
+-- HARD RULE: at most one live machine per profile.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_eq_one_machine_per_profile
+    ON cpap_equipment_items(profile_id)
+    WHERE category = 'machine' AND active = 1 AND deleted = 0;

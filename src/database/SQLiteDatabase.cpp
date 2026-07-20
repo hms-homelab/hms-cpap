@@ -1,9 +1,12 @@
 #include "database/SQLiteDatabase.h"
 #include "database/SqlDialect.h"
+#include "utils/TimeCompat.h"  // timegm_utc() for started_epoch
 #include <iostream>
 #include <iomanip>
 #include <sstream>
 #include <cstring>
+#include <cstdlib>
+#include <ctime>
 #include <filesystem>
 
 namespace hms_cpap {
@@ -386,6 +389,88 @@ void SQLiteDatabase::createSchema() {
             source TEXT DEFAULT 'vld'
         )
     )");
+
+    // ── SDD-004: equipment profiles + supplies ──────────────────────────────
+    // Local-first mirror of the cloud model (hms-cpapdash-api SDD-035), minus
+    // user_id: hms-cpap is single-household. A profile ("setup") owns exactly one
+    // machine plus its accessories; supply wear is COMPUTED on read, never stored.
+    // client_uuid exists only so optional cloud sync is idempotent; it is unused
+    // offline. Keep this in lockstep with scripts/schema_sqlite.sql.
+
+    // cpap_equipment_types — catalog: seeded system defaults + user customs
+    exec(R"(
+        CREATE TABLE IF NOT EXISTS cpap_equipment_types (
+            id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+            type_key                    TEXT NOT NULL UNIQUE,
+            label                       TEXT NOT NULL,
+            category                    TEXT NOT NULL,
+            default_replace_after_days  INTEGER,
+            is_system                   INTEGER DEFAULT 0,
+            active                      INTEGER DEFAULT 1,
+            created_at                  TEXT DEFAULT (datetime('now')),
+            updated_at                  TEXT DEFAULT (datetime('now'))
+        )
+    )");
+
+    // cpap_equipment_profiles — named setups
+    exec(R"(
+        CREATE TABLE IF NOT EXISTS cpap_equipment_profiles (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            client_uuid  TEXT,
+            name         TEXT NOT NULL,
+            active       INTEGER DEFAULT 1,
+            deleted      INTEGER DEFAULT 0,
+            created_at   TEXT DEFAULT (datetime('now')),
+            updated_at   TEXT DEFAULT (datetime('now'))
+        )
+    )");
+
+    // cpap_equipment_items — the gear; category denormalized from the type so the
+    // one-machine-per-profile index can enforce it at the DB level
+    exec(R"(
+        CREATE TABLE IF NOT EXISTS cpap_equipment_items (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            profile_id          INTEGER NOT NULL REFERENCES cpap_equipment_profiles(id) ON DELETE CASCADE,
+            client_uuid         TEXT,
+            type_key            TEXT NOT NULL,
+            category            TEXT NOT NULL DEFAULT 'accessory',
+            brand               TEXT DEFAULT '',
+            model               TEXT DEFAULT '',
+            variant             TEXT,
+            started_using_at    TEXT,
+            replace_after_days  INTEGER,
+            notes               TEXT,
+            active              INTEGER DEFAULT 1,
+            deleted             INTEGER DEFAULT 0,
+            created_at          TEXT DEFAULT (datetime('now')),
+            updated_at          TEXT DEFAULT (datetime('now'))
+        )
+    )");
+
+    // Seed the six system types verbatim from the app's supply_defaults.dart, so
+    // local, cloud and the phone app all compute the same due dates.
+    exec(R"(
+        INSERT OR IGNORE INTO cpap_equipment_types
+            (type_key, label, category, default_replace_after_days, is_system)
+        VALUES
+            ('machine',    'Machine',    'machine',   NULL, 1),
+            ('mask',       'Mask',       'accessory',   90, 1),
+            ('tubing',     'Tubing',     'accessory',   90, 1),
+            ('filter',     'Filter',     'accessory',   30, 1),
+            ('humidifier', 'Humidifier', 'accessory',  180, 1),
+            ('headgear',   'Headgear',   'accessory',  180, 1)
+    )");
+
+    exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_eq_profile_uuid "
+         "ON cpap_equipment_profiles(client_uuid) WHERE client_uuid IS NOT NULL");
+    exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_eq_item_uuid "
+         "ON cpap_equipment_items(client_uuid) WHERE client_uuid IS NOT NULL");
+    exec("CREATE INDEX IF NOT EXISTS idx_eq_item_profile "
+         "ON cpap_equipment_items(profile_id, active)");
+    // HARD RULE: at most one live machine per profile.
+    exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_eq_one_machine_per_profile "
+         "ON cpap_equipment_items(profile_id) "
+         "WHERE category = 'machine' AND active = 1 AND deleted = 0");
 
     // Indexes
     exec("CREATE INDEX IF NOT EXISTS idx_cpap_sessions_device ON cpap_sessions(device_id)");
@@ -2020,6 +2105,604 @@ bool SQLiteDatabase::saveLiveOximetrySample(const std::string& device_id,
         std::cerr << "SQLite: saveLiveOximetrySample error: " << e.what() << std::endl;
         return false;
     }
+}
+
+// ---------------------------------------------------------------------------
+// SDD-004: equipment profiles + supplies
+//
+// Conventions (shared by all three backends, see IDatabase.h):
+//   replace_after_days == -1  <-> SQL NULL ("use the type default")
+//   client_uuid == ""         <-> SQL NULL
+//   started_using_at == ""    <-> SQL NULL; started_epoch is derived on read
+// SQLite stores booleans as INTEGER 0/1 and timestamps as TEXT.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// "YYYY-MM-DD", "YYYY-MM-DD HH:MM:SS" or "YYYY-MM-DDTHH:MM:SS[Z|±hh:mm]".
+// Returns unix seconds (UTC), or 0 when unset/unparseable.
+long long iso_to_epoch(const std::string& iso) {
+    if (iso.size() < 10) return 0;
+
+    std::tm tm{};
+    tm.tm_year = std::atoi(iso.substr(0, 4).c_str()) - 1900;
+    tm.tm_mon  = std::atoi(iso.substr(5, 2).c_str()) - 1;
+    tm.tm_mday = std::atoi(iso.substr(8, 2).c_str());
+    if (iso.size() >= 19) {
+        tm.tm_hour = std::atoi(iso.substr(11, 2).c_str());
+        tm.tm_min  = std::atoi(iso.substr(14, 2).c_str());
+        tm.tm_sec  = std::atoi(iso.substr(17, 2).c_str());
+    }
+    if (tm.tm_mon < 0 || tm.tm_mon > 11 || tm.tm_mday < 1 || tm.tm_mday > 31) return 0;
+
+    time_t t = timegm_utc(&tm);
+    return t < 0 ? 0 : static_cast<long long>(t);
+}
+
+// created_at/updated_at cross the contract as ISO-8601 UTC with a trailing Z
+// ("YYYY-MM-DDTHH:MM:SSZ"), identically on every backend: the sync layer does
+// last-write-wins by comparing these strings, so the shape must not drift.
+// SQLite stores datetime('now') as "YYYY-MM-DD HH:MM:SS" (already UTC).
+std::string to_iso_z(const std::string& ts) {
+    if (ts.size() < 19) return ts;
+    std::string out = ts.substr(0, 19);
+    out[10] = 'T';
+    out += 'Z';
+    return out;
+}
+
+// started_using_at is user-supplied and may arrive date-only ("2024-03-01"),
+// space-separated, or already ISO-Z. Postgres re-renders it as full ISO-Z on read,
+// so normalise here too and the column round-trips identically on every backend.
+// "" stays "" (unset).
+std::string normalize_started(const std::string& ts) {
+    if (ts.empty()) return ts;
+    if (ts.size() == 10) return ts + "T00:00:00Z";   // date-only
+    return to_iso_z(ts);
+}
+
+// "" binds as NULL (client_uuid, started_using_at)
+void bind_text_or_null(sqlite3_stmt* s, int i, const std::string& v) {
+    if (v.empty()) sqlite3_bind_null(s, i);
+    else           bind_text(s, i, v);
+}
+
+// -1 binds as NULL (replace_after_days, default_replace_after_days)
+void bind_days_or_null(sqlite3_stmt* s, int i, int days) {
+    if (days < 0) sqlite3_bind_null(s, i);
+    else          bind_int(s, i, days);
+}
+
+constexpr const char* kTypeCols =
+    "id, type_key, label, category, default_replace_after_days, is_system, active";
+
+constexpr const char* kProfileCols =
+    "id, client_uuid, name, active, deleted, created_at, updated_at";
+
+constexpr const char* kItemCols =
+    "id, profile_id, client_uuid, type_key, category, brand, model, variant, "
+    "started_using_at, replace_after_days, notes, active, deleted, created_at, updated_at";
+
+} // namespace
+
+IDatabase::EquipmentType SQLiteDatabase::parseEquipmentTypeRow(sqlite3_stmt* s) {
+    EquipmentType t;
+    t.id                         = col_int(s, 0);
+    t.type_key                   = col_text(s, 1);
+    t.label                      = col_text(s, 2);
+    t.category                   = col_text(s, 3);
+    t.default_replace_after_days = col_is_null(s, 4) ? -1 : sqlite3_column_int(s, 4);
+    t.is_system                  = col_int(s, 5) != 0;
+    t.active                     = col_int(s, 6) != 0;
+    return t;
+}
+
+IDatabase::EquipmentProfile SQLiteDatabase::parseEquipmentProfileRow(sqlite3_stmt* s) {
+    EquipmentProfile p;
+    p.id          = col_int(s, 0);
+    p.client_uuid = col_text(s, 1);
+    p.name        = col_text(s, 2);
+    p.active      = col_int(s, 3) != 0;
+    p.deleted     = col_int(s, 4) != 0;
+    p.created_at  = to_iso_z(col_text(s, 5));
+    p.updated_at  = to_iso_z(col_text(s, 6));
+    return p;
+}
+
+IDatabase::EquipmentItem SQLiteDatabase::parseEquipmentItemRow(sqlite3_stmt* s) {
+    EquipmentItem it;
+    it.id                 = col_int(s, 0);
+    it.profile_id         = col_int(s, 1);
+    it.client_uuid        = col_text(s, 2);
+    it.type_key           = col_text(s, 3);
+    it.category           = col_text(s, 4);
+    it.brand              = col_text(s, 5);
+    it.model              = col_text(s, 6);
+    it.variant            = col_text(s, 7);
+    // Normalise on read so the same stored instant reads back identically on every
+    // backend. Postgres re-renders this column as ISO-Z; without this, writing
+    // "2024-03-01" would read back "2024-03-01" here but "2024-03-01T00:00:00Z"
+    // there, and any client comparing the raw strings across backends would see a
+    // spurious difference. started_epoch already agreed; this makes the text agree.
+    it.started_using_at   = normalize_started(col_text(s, 8));
+    it.started_epoch      = iso_to_epoch(it.started_using_at);
+    it.replace_after_days = col_is_null(s, 9) ? -1 : sqlite3_column_int(s, 9);
+    it.notes              = col_text(s, 10);
+    it.active             = col_int(s, 11) != 0;
+    it.deleted            = col_int(s, 12) != 0;
+    it.created_at         = to_iso_z(col_text(s, 13));
+    it.updated_at         = to_iso_z(col_text(s, 14));
+    return it;
+}
+
+// -- Types --------------------------------------------------------------------
+
+std::vector<IDatabase::EquipmentType> SQLiteDatabase::listEquipmentTypes() {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::vector<EquipmentType> out;
+    if (!db_) return out;
+
+    const std::string sql = std::string("SELECT ") + kTypeCols +
+        " FROM cpap_equipment_types WHERE active = 1 "
+        " ORDER BY is_system DESC, id";
+
+    StmtGuard g;
+    if (sqlite3_prepare_v2(db_, sql.c_str(), -1, &g.stmt, nullptr) != SQLITE_OK) {
+        std::cerr << "SQLite: listEquipmentTypes error: " << sqlite3_errmsg(db_) << std::endl;
+        return out;
+    }
+    while (sqlite3_step(g.stmt) == SQLITE_ROW) out.push_back(parseEquipmentTypeRow(g.stmt));
+    return out;
+}
+
+std::optional<IDatabase::EquipmentType>
+SQLiteDatabase::resolveEquipmentType(const std::string& type_key) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!db_) return std::nullopt;
+
+    // Deliberately NOT filtered on active: an item may still reference a type
+    // the user has since retired, and SupplyStatus needs its default interval.
+    const std::string sql = std::string("SELECT ") + kTypeCols +
+        " FROM cpap_equipment_types WHERE type_key = ?";
+
+    StmtGuard g;
+    if (sqlite3_prepare_v2(db_, sql.c_str(), -1, &g.stmt, nullptr) != SQLITE_OK) {
+        std::cerr << "SQLite: resolveEquipmentType error: " << sqlite3_errmsg(db_) << std::endl;
+        return std::nullopt;
+    }
+    bind_text(g.stmt, 1, type_key);
+
+    if (sqlite3_step(g.stmt) == SQLITE_ROW) return parseEquipmentTypeRow(g.stmt);
+    return std::nullopt;
+}
+
+int SQLiteDatabase::addEquipmentType(const EquipmentType& t) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!db_) return -1;
+
+    const char* sql = R"(
+        INSERT INTO cpap_equipment_types
+            (type_key, label, category, default_replace_after_days, is_system, active)
+        VALUES (?, ?, ?, ?, ?, ?)
+    )";
+
+    StmtGuard g;
+    if (sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr) != SQLITE_OK) {
+        std::cerr << "SQLite: addEquipmentType error: " << sqlite3_errmsg(db_) << std::endl;
+        return -1;
+    }
+    bind_text(g.stmt, 1, t.type_key);
+    bind_text(g.stmt, 2, t.label);
+    bind_text(g.stmt, 3, t.category);
+    bind_days_or_null(g.stmt, 4, t.default_replace_after_days);
+    bind_int(g.stmt, 5, t.is_system ? 1 : 0);
+    bind_int(g.stmt, 6, t.active ? 1 : 0);
+
+    if (sqlite3_step(g.stmt) != SQLITE_DONE) {
+        // Duplicate type_key lands here (UNIQUE constraint)
+        std::cerr << "SQLite: addEquipmentType error: " << sqlite3_errmsg(db_) << std::endl;
+        return -1;
+    }
+    return static_cast<int>(sqlite3_last_insert_rowid(db_));
+}
+
+bool SQLiteDatabase::updateEquipmentType(int id, const EquipmentType& t) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!db_) return false;
+
+    // is_system is never reassigned by an update. On a seeded row type_key and
+    // category are pinned too: renaming the 'machine' type would orphan every
+    // item referencing it. Label/interval/active stay editable.
+    const char* sql = R"(
+        UPDATE cpap_equipment_types SET
+            type_key = CASE WHEN is_system = 1 THEN type_key ELSE ? END,
+            label    = ?,
+            category = CASE WHEN is_system = 1 THEN category ELSE ? END,
+            default_replace_after_days = ?, active = ?,
+            updated_at = datetime('now')
+        WHERE id = ?
+    )";
+
+    StmtGuard g;
+    if (sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr) != SQLITE_OK) {
+        std::cerr << "SQLite: updateEquipmentType error: " << sqlite3_errmsg(db_) << std::endl;
+        return false;
+    }
+    bind_text(g.stmt, 1, t.type_key);
+    bind_text(g.stmt, 2, t.label);
+    bind_text(g.stmt, 3, t.category);
+    bind_days_or_null(g.stmt, 4, t.default_replace_after_days);
+    bind_int(g.stmt, 5, t.active ? 1 : 0);
+    bind_int(g.stmt, 6, id);
+
+    if (sqlite3_step(g.stmt) != SQLITE_DONE) {
+        std::cerr << "SQLite: updateEquipmentType error: " << sqlite3_errmsg(db_) << std::endl;
+        return false;
+    }
+    return sqlite3_changes(db_) > 0;
+}
+
+bool SQLiteDatabase::deleteEquipmentType(int id) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!db_) return false;
+
+    // Soft delete, and never a seeded system row.
+    const char* sql = R"(
+        UPDATE cpap_equipment_types
+           SET active = 0, updated_at = datetime('now')
+         WHERE id = ? AND is_system = 0
+    )";
+
+    StmtGuard g;
+    if (sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr) != SQLITE_OK) {
+        std::cerr << "SQLite: deleteEquipmentType error: " << sqlite3_errmsg(db_) << std::endl;
+        return false;
+    }
+    bind_int(g.stmt, 1, id);
+
+    if (sqlite3_step(g.stmt) != SQLITE_DONE) {
+        std::cerr << "SQLite: deleteEquipmentType error: " << sqlite3_errmsg(db_) << std::endl;
+        return false;
+    }
+    return sqlite3_changes(db_) > 0;
+}
+
+// -- Profiles -----------------------------------------------------------------
+
+std::vector<IDatabase::EquipmentProfile>
+SQLiteDatabase::listEquipmentProfiles(bool include_deleted) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::vector<EquipmentProfile> out;
+    if (!db_) return out;
+
+    const std::string sql = std::string("SELECT ") + kProfileCols +
+        " FROM cpap_equipment_profiles WHERE (deleted = 0 OR ? = 1) ORDER BY id";
+
+    StmtGuard g;
+    if (sqlite3_prepare_v2(db_, sql.c_str(), -1, &g.stmt, nullptr) != SQLITE_OK) {
+        std::cerr << "SQLite: listEquipmentProfiles error: " << sqlite3_errmsg(db_) << std::endl;
+        return out;
+    }
+    bind_int(g.stmt, 1, include_deleted ? 1 : 0);
+
+    while (sqlite3_step(g.stmt) == SQLITE_ROW) out.push_back(parseEquipmentProfileRow(g.stmt));
+    return out;
+}
+
+std::optional<IDatabase::EquipmentProfile> SQLiteDatabase::getEquipmentProfile(int id) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!db_) return std::nullopt;
+
+    const std::string sql = std::string("SELECT ") + kProfileCols +
+        // get-by-id is the controller's existence check: a tombstone reads as absent.
+        " FROM cpap_equipment_profiles WHERE id = ? AND deleted = 0";
+
+    StmtGuard g;
+    if (sqlite3_prepare_v2(db_, sql.c_str(), -1, &g.stmt, nullptr) != SQLITE_OK) {
+        std::cerr << "SQLite: getEquipmentProfile error: " << sqlite3_errmsg(db_) << std::endl;
+        return std::nullopt;
+    }
+    bind_int(g.stmt, 1, id);
+
+    if (sqlite3_step(g.stmt) == SQLITE_ROW) return parseEquipmentProfileRow(g.stmt);
+    return std::nullopt;
+}
+
+int SQLiteDatabase::upsertEquipmentProfile(const EquipmentProfile& p) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!db_) return -1;
+
+    if (p.id > 0) {
+        const char* sql = R"(
+            UPDATE cpap_equipment_profiles SET
+                client_uuid = ?, name = ?, active = ?, deleted = ?,
+                updated_at = datetime('now')
+            WHERE id = ?
+        )";
+
+        StmtGuard g;
+        if (sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr) != SQLITE_OK) {
+            std::cerr << "SQLite: upsertEquipmentProfile error: " << sqlite3_errmsg(db_) << std::endl;
+            return -1;
+        }
+        bind_text_or_null(g.stmt, 1, p.client_uuid);
+        bind_text(g.stmt, 2, p.name);
+        bind_int(g.stmt, 3, p.active ? 1 : 0);
+        bind_int(g.stmt, 4, p.deleted ? 1 : 0);
+        bind_int(g.stmt, 5, p.id);
+
+        if (sqlite3_step(g.stmt) != SQLITE_DONE) {
+            std::cerr << "SQLite: upsertEquipmentProfile error: " << sqlite3_errmsg(db_) << std::endl;
+            return -1;
+        }
+        return sqlite3_changes(db_) > 0 ? p.id : -1;
+    }
+
+    const char* sql = R"(
+        INSERT INTO cpap_equipment_profiles
+            (client_uuid, name, active, deleted)
+        VALUES (?, ?, ?, ?)
+    )";
+
+    StmtGuard g;
+    if (sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr) != SQLITE_OK) {
+        std::cerr << "SQLite: upsertEquipmentProfile error: " << sqlite3_errmsg(db_) << std::endl;
+        return -1;
+    }
+    bind_text_or_null(g.stmt, 1, p.client_uuid);
+    bind_text(g.stmt, 2, p.name);
+    bind_int(g.stmt, 3, p.active ? 1 : 0);
+    bind_int(g.stmt, 4, p.deleted ? 1 : 0);
+
+    if (sqlite3_step(g.stmt) != SQLITE_DONE) {
+        std::cerr << "SQLite: upsertEquipmentProfile error: " << sqlite3_errmsg(db_) << std::endl;
+        return -1;
+    }
+    return static_cast<int>(sqlite3_last_insert_rowid(db_));
+}
+
+bool SQLiteDatabase::tombstoneEquipmentProfile(int id) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!db_) return false;
+
+    // Soft cascade: the FK cascade only fires on a hard DELETE, so the items of a
+    // tombstoned profile are tombstoned explicitly. Clearing active as well frees
+    // the one-live-machine slot for the profile.
+    const char* sql_profile = R"(
+        UPDATE cpap_equipment_profiles
+           SET deleted = 1, active = 0, updated_at = datetime('now')
+         WHERE id = ? AND deleted = 0
+    )";
+    const char* sql_items = R"(
+        UPDATE cpap_equipment_items
+           SET deleted = 1, active = 0, updated_at = datetime('now')
+         WHERE profile_id = ? AND deleted = 0
+    )";
+
+    StmtGuard g;
+    if (sqlite3_prepare_v2(db_, sql_profile, -1, &g.stmt, nullptr) != SQLITE_OK) {
+        std::cerr << "SQLite: tombstoneEquipmentProfile error: " << sqlite3_errmsg(db_) << std::endl;
+        return false;
+    }
+    bind_int(g.stmt, 1, id);
+
+    if (sqlite3_step(g.stmt) != SQLITE_DONE) {
+        std::cerr << "SQLite: tombstoneEquipmentProfile error: " << sqlite3_errmsg(db_) << std::endl;
+        return false;
+    }
+    if (sqlite3_changes(db_) == 0) return false;
+
+    StmtGuard gi;
+    if (sqlite3_prepare_v2(db_, sql_items, -1, &gi.stmt, nullptr) == SQLITE_OK) {
+        bind_int(gi.stmt, 1, id);
+        if (sqlite3_step(gi.stmt) != SQLITE_DONE) {
+            std::cerr << "SQLite: tombstoneEquipmentProfile items error: "
+                      << sqlite3_errmsg(db_) << std::endl;
+        }
+    }
+    return true;
+}
+
+int SQLiteDatabase::ensureDefaultEquipmentProfile() {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!db_) return -1;
+
+    StmtGuard g;
+    if (sqlite3_prepare_v2(db_,
+            "SELECT id FROM cpap_equipment_profiles WHERE deleted = 0 "
+            "ORDER BY active DESC, id LIMIT 1",
+            -1, &g.stmt, nullptr) != SQLITE_OK) {
+        std::cerr << "SQLite: ensureDefaultEquipmentProfile error: "
+                  << sqlite3_errmsg(db_) << std::endl;
+        return -1;
+    }
+    if (sqlite3_step(g.stmt) == SQLITE_ROW) return sqlite3_column_int(g.stmt, 0);
+
+    EquipmentProfile p;
+    p.name = "My CPAP";
+    int id = upsertEquipmentProfile(p);
+    if (id > 0) {
+        std::cout << "SQLite: Created default equipment profile 'My CPAP' (id "
+                  << id << ")" << std::endl;
+    }
+    return id;
+}
+
+// -- Items --------------------------------------------------------------------
+
+std::vector<IDatabase::EquipmentItem> SQLiteDatabase::listEquipmentItems(bool include_history) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::vector<EquipmentItem> out;
+    if (!db_) return out;
+
+    // Tombstones stay hidden either way; include_history adds retired rows.
+    const std::string sql = std::string("SELECT ") + kItemCols +
+        " FROM cpap_equipment_items"
+        " WHERE deleted = 0 AND (active = 1 OR ? = 1)"
+        " ORDER BY CASE WHEN category = 'machine' THEN 0 ELSE 1 END, id";
+
+    StmtGuard g;
+    if (sqlite3_prepare_v2(db_, sql.c_str(), -1, &g.stmt, nullptr) != SQLITE_OK) {
+        std::cerr << "SQLite: listEquipmentItems error: " << sqlite3_errmsg(db_) << std::endl;
+        return out;
+    }
+    bind_int(g.stmt, 1, include_history ? 1 : 0);
+
+    while (sqlite3_step(g.stmt) == SQLITE_ROW) out.push_back(parseEquipmentItemRow(g.stmt));
+    return out;
+}
+
+std::optional<IDatabase::EquipmentItem> SQLiteDatabase::getEquipmentItem(int id) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!db_) return std::nullopt;
+
+    const std::string sql = std::string("SELECT ") + kItemCols +
+        // get-by-id is the controller's existence check: a tombstone reads as absent.
+        " FROM cpap_equipment_items WHERE id = ? AND deleted = 0";
+
+    StmtGuard g;
+    if (sqlite3_prepare_v2(db_, sql.c_str(), -1, &g.stmt, nullptr) != SQLITE_OK) {
+        std::cerr << "SQLite: getEquipmentItem error: " << sqlite3_errmsg(db_) << std::endl;
+        return std::nullopt;
+    }
+    bind_int(g.stmt, 1, id);
+
+    if (sqlite3_step(g.stmt) == SQLITE_ROW) return parseEquipmentItemRow(g.stmt);
+    return std::nullopt;
+}
+
+bool SQLiteDatabase::profileHasMachine(int profile_id, int exclude_item_id) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!db_) return false;
+
+    const char* sql = R"(
+        SELECT EXISTS(
+            SELECT 1 FROM cpap_equipment_items
+             WHERE profile_id = ? AND category = 'machine'
+               AND active = 1 AND deleted = 0
+               AND id <> ?
+        )
+    )";
+
+    StmtGuard g;
+    if (sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr) != SQLITE_OK) {
+        std::cerr << "SQLite: profileHasMachine error: " << sqlite3_errmsg(db_) << std::endl;
+        return false;
+    }
+    bind_int(g.stmt, 1, profile_id);
+    bind_int(g.stmt, 2, exclude_item_id);
+
+    bool has = false;
+    if (sqlite3_step(g.stmt) == SQLITE_ROW) has = sqlite3_column_int(g.stmt, 0) != 0;
+    return has;
+}
+
+int SQLiteDatabase::upsertEquipmentItem(const EquipmentItem& item) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!db_) return -1;
+
+    // HARD RULE: category is never stored empty. A caller that omits it gets the
+    // category of its type from the catalog, falling back to 'accessory' for an
+    // unknown type_key — otherwise category = '' would never match 'machine' and
+    // the one-machine-per-profile rule would silently not apply.
+    std::string category = item.category;
+    if (category.empty()) {
+        auto type = resolveEquipmentType(item.type_key);  // recursive mutex: re-entrant
+        category = (type && !type->category.empty()) ? type->category : "accessory";
+    }
+
+    // The partial unique index idx_eq_one_machine_per_profile is the DB-level
+    // backstop for the one-live-machine rule; a violating write fails here.
+    if (item.id > 0) {
+        const char* sql = R"(
+            UPDATE cpap_equipment_items SET
+                profile_id = ?, client_uuid = ?, type_key = ?, category = ?,
+                brand = ?, model = ?, variant = ?, started_using_at = ?,
+                replace_after_days = ?, notes = ?, active = ?, deleted = ?,
+                updated_at = datetime('now')
+            WHERE id = ?
+        )";
+
+        StmtGuard g;
+        if (sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr) != SQLITE_OK) {
+            std::cerr << "SQLite: upsertEquipmentItem error: " << sqlite3_errmsg(db_) << std::endl;
+            return -1;
+        }
+        bind_int(g.stmt, 1, item.profile_id);
+        bind_text_or_null(g.stmt, 2, item.client_uuid);
+        bind_text(g.stmt, 3, item.type_key);
+        bind_text(g.stmt, 4, category);
+        bind_text(g.stmt, 5, item.brand);
+        bind_text(g.stmt, 6, item.model);
+        bind_text(g.stmt, 7, item.variant);
+        bind_text_or_null(g.stmt, 8, item.started_using_at);
+        bind_days_or_null(g.stmt, 9, item.replace_after_days);
+        bind_text(g.stmt, 10, item.notes);
+        bind_int(g.stmt, 11, item.active ? 1 : 0);
+        bind_int(g.stmt, 12, item.deleted ? 1 : 0);
+        bind_int(g.stmt, 13, item.id);
+
+        if (sqlite3_step(g.stmt) != SQLITE_DONE) {
+            std::cerr << "SQLite: upsertEquipmentItem error: " << sqlite3_errmsg(db_) << std::endl;
+            return -1;
+        }
+        return sqlite3_changes(db_) > 0 ? item.id : -1;
+    }
+
+    const char* sql = R"(
+        INSERT INTO cpap_equipment_items
+            (profile_id, client_uuid, type_key, category, brand, model, variant,
+             started_using_at, replace_after_days, notes, active, deleted)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    )";
+
+    StmtGuard g;
+    if (sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr) != SQLITE_OK) {
+        std::cerr << "SQLite: upsertEquipmentItem error: " << sqlite3_errmsg(db_) << std::endl;
+        return -1;
+    }
+    bind_int(g.stmt, 1, item.profile_id);
+    bind_text_or_null(g.stmt, 2, item.client_uuid);
+    bind_text(g.stmt, 3, item.type_key);
+    bind_text(g.stmt, 4, category);
+    bind_text(g.stmt, 5, item.brand);
+    bind_text(g.stmt, 6, item.model);
+    bind_text(g.stmt, 7, item.variant);
+    bind_text_or_null(g.stmt, 8, item.started_using_at);
+    bind_days_or_null(g.stmt, 9, item.replace_after_days);
+    bind_text(g.stmt, 10, item.notes);
+    bind_int(g.stmt, 11, item.active ? 1 : 0);
+    bind_int(g.stmt, 12, item.deleted ? 1 : 0);
+
+    if (sqlite3_step(g.stmt) != SQLITE_DONE) {
+        std::cerr << "SQLite: upsertEquipmentItem error: " << sqlite3_errmsg(db_) << std::endl;
+        return -1;
+    }
+    return static_cast<int>(sqlite3_last_insert_rowid(db_));
+}
+
+bool SQLiteDatabase::tombstoneEquipmentItem(int id) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!db_) return false;
+
+    const char* sql = R"(
+        UPDATE cpap_equipment_items
+           SET deleted = 1, active = 0, updated_at = datetime('now')
+         WHERE id = ? AND deleted = 0
+    )";
+
+    StmtGuard g;
+    if (sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr) != SQLITE_OK) {
+        std::cerr << "SQLite: tombstoneEquipmentItem error: " << sqlite3_errmsg(db_) << std::endl;
+        return false;
+    }
+    bind_int(g.stmt, 1, id);
+
+    if (sqlite3_step(g.stmt) != SQLITE_DONE) {
+        std::cerr << "SQLite: tombstoneEquipmentItem error: " << sqlite3_errmsg(db_) << std::endl;
+        return false;
+    }
+    return sqlite3_changes(db_) > 0;
 }
 
 } // namespace hms_cpap

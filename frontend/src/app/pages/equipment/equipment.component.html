@@ -1,0 +1,137 @@
+<div class="equipment-page">
+  <h2>Equipment</h2>
+
+  <div class="loading" *ngIf="loading">Loading equipment...</div>
+  <div class="error-msg" *ngIf="error">{{ error }}</div>
+
+  <ng-container *ngIf="!loading">
+
+    <!-- Empty state: one button, nothing else -->
+    <div class="empty-state" *ngIf="profiles.length === 0 && !creatingProfile">
+      <button class="primary-btn" (click)="startCreateProfile()">
+        <i class="fa-solid fa-plus"></i> New profile
+      </button>
+    </div>
+
+    <!-- Profile chips -->
+    <div class="chip-row" *ngIf="profiles.length > 0 || creatingProfile">
+      <button class="chip" *ngFor="let p of profiles"
+              [class.active]="p.id === selectedId"
+              (click)="select(p)">
+        {{ p.name }}
+        <span class="chip-badge" *ngIf="hasAlert(p)"></span>
+      </button>
+      <button class="chip chip-add" *ngIf="!creatingProfile" (click)="startCreateProfile()"
+              title="New profile">
+        <i class="fa-solid fa-plus"></i>
+      </button>
+      <span class="inline-form" *ngIf="creatingProfile">
+        <input type="text" [(ngModel)]="newProfileName" placeholder="Profile name"
+               (keyup.enter)="createProfile()" />
+        <button class="mini-btn" (click)="createProfile()" [disabled]="busy || !newProfileName.trim()">Create</button>
+        <button class="mini-btn ghost" (click)="cancelCreateProfile()">Cancel</button>
+      </span>
+    </div>
+
+    <div class="profile-panel" *ngIf="selected as p">
+
+      <div class="profile-header">
+        <ng-container *ngIf="!renaming">
+          <h3>{{ p.name }}</h3>
+          <button class="icon-btn" (click)="startRename()"
+                  title="Rename profile" aria-label="Rename profile">
+            <i class="fa-solid fa-pen"></i>
+          </button>
+          <button class="icon-btn danger" (click)="deleteProfile()" [disabled]="busy"
+                  title="Delete profile" aria-label="Delete profile">
+            <i class="fa-solid fa-trash"></i>
+          </button>
+        </ng-container>
+        <ng-container *ngIf="renaming">
+          <input type="text" [(ngModel)]="renameValue" (keyup.enter)="saveRename()" />
+          <button class="mini-btn" (click)="saveRename()" [disabled]="busy || !renameValue.trim()">Save</button>
+          <button class="mini-btn ghost" (click)="cancelRename()">Cancel</button>
+        </ng-container>
+      </div>
+
+      <!-- Machine -->
+      <h4 class="group-title">Machine</h4>
+      <div class="empty" *ngIf="!machine">No machine in this profile yet.</div>
+      <div class="item-card machine-card" *ngIf="machine as m">
+        <ng-container [ngTemplateOutlet]="itemBody" [ngTemplateOutletContext]="{ item: m }"></ng-container>
+      </div>
+
+      <!-- Accessories -->
+      <h4 class="group-title">Accessories</h4>
+      <div class="empty" *ngIf="accessories.length === 0">No accessories in this profile yet.</div>
+      <div class="item-card" *ngFor="let it of accessories">
+        <ng-container [ngTemplateOutlet]="itemBody" [ngTemplateOutletContext]="{ item: it }"></ng-container>
+      </div>
+
+      <!-- Add from the catalog -->
+      <div class="add-row">
+        <select [(ngModel)]="addTypeKey">
+          <option value="">Add equipment...</option>
+          <option *ngFor="let t of addableTypes" [value]="t.type_key">{{ t.label }}</option>
+        </select>
+        <button class="mini-btn" (click)="addItem()" [disabled]="busy || !addTypeKey">
+          <i class="fa-solid fa-plus"></i> Add
+        </button>
+      </div>
+    </div>
+  </ng-container>
+</div>
+
+<!-- One card body, used for the machine and every accessory -->
+<ng-template #itemBody let-item="item">
+  <div class="item-head">
+    <span class="item-type">{{ typeLabel(item.type_key) }}</span>
+    <span class="item-name" *ngIf="!isEditing(item)">
+      {{ item.brand || item.model ? (item.brand + ' ' + item.model).trim() : 'Unnamed' }}
+    </span>
+    <span class="item-actions">
+      <button class="mini-btn ghost" *ngIf="!isEditing(item)" (click)="startEdit(item)">Edit</button>
+      <button class="mini-btn" *ngIf="isEditing(item)" (click)="saveEdit(item)" [disabled]="busy">Save</button>
+      <button class="mini-btn ghost" *ngIf="isEditing(item)" (click)="cancelEdit()">Cancel</button>
+      <button class="mini-btn danger" (click)="removeItem(item)" [disabled]="busy">Remove</button>
+    </span>
+  </div>
+
+  <!-- Inline edit fields -->
+  <div class="edit-row" *ngIf="isEditing(item)">
+    <label class="field">
+      <span>Brand</span>
+      <input type="text" [(ngModel)]="draft.brand" placeholder="ResMed" />
+    </label>
+    <label class="field">
+      <span>Model</span>
+      <input type="text" [(ngModel)]="draft.model" placeholder="AirSense 11" />
+    </label>
+    <label class="field">
+      <span>In use since</span>
+      <input type="date" [(ngModel)]="draft.since" />
+    </label>
+    <label class="field" *ngIf="item.category !== 'machine'">
+      <span>Replace every (days)</span>
+      <input type="number" min="0" [(ngModel)]="draft.replaceEvery"
+             [placeholder]="defaultDays(item) !== null ? 'Default ' + defaultDays(item) : 'Not tracked'" />
+    </label>
+  </div>
+
+  <!-- Read-only summary -->
+  <div class="meta-row" *ngIf="!isEditing(item)">
+    <span class="meta">In use since {{ toDateInput(item.started_using_at) || '—' }}</span>
+    <span class="meta" *ngIf="item.category !== 'machine' && replaceByLabel(item)">
+      Replace by {{ replaceByLabel(item) }}
+    </span>
+  </div>
+
+  <!-- Wear -->
+  <div class="wear" *ngIf="item.category !== 'machine'">
+    <div class="wear-track">
+      <div class="wear-fill" [class]="'wear-' + item.supply.state"
+           [style.width.%]="wearPercent(item)"></div>
+    </div>
+    <span class="wear-text" [class]="'text-' + item.supply.state">{{ stateLabel(item) }}</span>
+  </div>
+</ng-template>

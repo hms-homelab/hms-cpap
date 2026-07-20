@@ -1,3 +1,4 @@
+#include "EquipmentStubs.h"
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
 #include "services/BackfillService.h"
@@ -15,6 +16,7 @@ using ::testing::Invoke;
 
 class MockDatabase : public IDatabase {
 public:
+    HMS_CPAP_STUB_EQUIPMENT_METHODS
     DbType dbType() const override { return DbType::SQLITE; }
 
     MOCK_METHOD(bool, connect, (), (override));

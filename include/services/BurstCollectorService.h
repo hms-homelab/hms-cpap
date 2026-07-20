@@ -12,6 +12,8 @@
 #include "llm_client.h"
 #include "parsers/CpapdashBridge.h"
 #include "services/DataPublisherService.h"
+#include "services/SupplyPublisher.h"
+#include "services/CpapDashSyncService.h"
 #include "services/OximetryService.h"
 #include "services/PrismaIngestion.h"
 #include "services/SessionDiscoveryService.h"
@@ -77,6 +79,15 @@ public:
     void stop();
 
     /**
+     * SDD-004: inject the optional cloud-sync service. When left unset the burst
+     * cycle simply never calls sweep(), so the equipment feature stays entirely
+     * local — which is the default and the supported offline path.
+     */
+    void setCpapDashSync(std::shared_ptr<CpapDashSyncService> sync) {
+        cpapdash_sync_ = std::move(sync);
+    }
+
+    /**
      * Check if service is running
      *
      * @return true if worker thread is active
@@ -137,7 +148,14 @@ public:
 private:
     // Configuration
     int burst_interval_seconds_;
+    /// SleepHQ fallback: queue archive date folders that hold files but produced
+    /// no session (our parser rejected them). SleepHQ parses independently, so
+    /// dropping these loses real nights. Ported from hms-cpapdash-api 6bc1a2a.
+    void markUnparsedNightsForExport();
+
     std::string device_id_;
+    /// SDD-004 optional cloud mirror; null when the feature is off.
+    std::shared_ptr<CpapDashSyncService> cpapdash_sync_;
     std::string device_name_;
     std::string local_source_dir_;  // Empty = ezShare mode, set = local filesystem mode
     std::string cpap_source_;       // "ezshare", "local", "fysetc", or "lowenstein"

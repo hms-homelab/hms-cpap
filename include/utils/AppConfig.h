@@ -76,7 +76,7 @@ struct AppConfig {
     struct O2Ring {
         bool enabled = false;
         std::string mode = "http";      // "http" or "ble"
-        std::string mule_url;           // e.g. "http://192.168.2.74"
+        std::string mule_url;           // e.g. "http://cpapdash.local"
     } o2ring;
 
     // Sleep Stage Inference (optional)
@@ -106,6 +106,18 @@ struct AppConfig {
         bool auto_on_backfill = true;  // export when a local-mode / backfill folder ingests
         int quiet_minutes = 15;        // archive must be quiet this long before export (SDD-003)
     } sleephq;
+
+    /// SDD-004 optional cloud mirror of equipment/supplies to hms-cpapdash-api.
+    /// Local is always the source of truth; with enabled=false the whole equipment
+    /// feature works untouched. Auth is a pasted long-lived TOKEN rather than an
+    /// account password, so no cloud password is ever at rest here and it can be
+    /// revoked without changing the account.
+    struct {
+        bool enabled = false;
+        std::string api_url = "https://api.cpapdash.com";
+        std::string token;
+        bool auto_sync = false;        // also sync on the burst sweep after local edits
+    } cpapdash;
 
     bool setup_complete = false;
 
@@ -351,6 +363,14 @@ struct AppConfig {
                 if (ss.contains("model_version"))  config.sleep_stage.model_version = ss["model_version"];
             }
 
+            if (j.contains("cpapdash")) {
+                auto& cd = j["cpapdash"];
+                if (cd.contains("enabled"))   config.cpapdash.enabled = cd["enabled"];
+                if (cd.contains("api_url"))   config.cpapdash.api_url = cd["api_url"];
+                if (cd.contains("token"))     config.cpapdash.token = cd["token"];
+                if (cd.contains("auto_sync")) config.cpapdash.auto_sync = cd["auto_sync"];
+            }
+
             if (j.contains("sleephq")) {
                 auto& sh = j["sleephq"];
                 if (sh.contains("enabled"))           config.sleephq.enabled = sh["enabled"];
@@ -427,7 +447,17 @@ struct AppConfig {
             j["sleep_stage"]["model_dir"] = sleep_stage.model_dir;
             j["sleep_stage"]["model_version"] = sleep_stage.model_version;
 
-            j["sleephq"]["enabled"] = sleephq.enabled;
+            j["cpapdash"]["enabled"] = cpapdash.enabled;
+            j["cpapdash"]["api_url"] = cpapdash.api_url;
+            j["cpapdash"]["token"] = cpapdash.token;
+            j["cpapdash"]["auto_sync"] = cpapdash.auto_sync;
+
+            j["cpapdash"]["enabled"] = cpapdash.enabled;
+        j["cpapdash"]["api_url"] = cpapdash.api_url;
+        j["cpapdash"]["token"] = cpapdash.token.empty() ? "" : "********";
+        j["cpapdash"]["auto_sync"] = cpapdash.auto_sync;
+
+        j["sleephq"]["enabled"] = sleephq.enabled;
             j["sleephq"]["client_id"] = sleephq.client_id;
             j["sleephq"]["client_secret"] = sleephq.client_secret;
             j["sleephq"]["auto_on_session"] = sleephq.auto_on_session;

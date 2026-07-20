@@ -247,9 +247,20 @@ void BackfillService::executeBackfill(const std::string& start_date,
 
             // SleepHQ export (best-effort, async) — one import per backfilled
             // folder, from the local source dir (not the archive).
-            if (config_.sleephq.enabled && config_.sleephq.auto_on_backfill)
+            //
+            // root_dir must be the CARD ROOT, not local_dir: STR.edf and
+            // Identification.* live one level above DATALOG (see processSTRFile
+            // below, which already gets this right). Passing local_dir made
+            // exportFolder probe DATALOG/STR.edf, find nothing, and silently skip
+            // every root file — producing machine-less SleepHQ imports that
+            // process into nothing visible. Same failure hms-cpapdash-api hit in
+            // 4d1fb05; different cause (wrong directory, not wrong layout probe).
+            if (config_.sleephq.enabled && config_.sleephq.auto_on_backfill) {
+                const std::string card_root =
+                    std::filesystem::path(config_.local_dir).parent_path().string();
                 SleepHqExportService::getInstance().exportFolderAsync(
-                    folder, folder_path, config_.local_dir);
+                    folder, folder_path, card_root);
+            }
 
             {
                 std::lock_guard<std::mutex> lock(progress_mutex_);

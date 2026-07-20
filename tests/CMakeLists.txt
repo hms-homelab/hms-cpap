@@ -8,6 +8,7 @@ include(GoogleTest)
 # Include directories (same as main project)
 include_directories(
     ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}   # shared test headers, e.g. EquipmentStubs.h
     ${GTEST_INCLUDE_DIRS}
 )
 if(NOT MSVC)
@@ -18,6 +19,11 @@ endif()
 file(GLOB_RECURSE PROJECT_SOURCES "${CMAKE_SOURCE_DIR}/src/*.cpp")
 list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*main\\.cpp$")
 list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/controllers/.*")
+# ...but EquipmentController is testable in-process: unlike CpapController it pulls in
+# no QueryService/web machinery, only IDatabase + SupplyStatus. Its handlers are driven
+# directly by tests/controllers/test_EquipmentController.cpp (testing it over a socket
+# is useless here — the SPA fallback answers 404s with index.html).
+list(APPEND PROJECT_SOURCES "${CMAKE_SOURCE_DIR}/src/controllers/EquipmentController.cpp")
 list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/web/.*")
 list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/WiFiSwitchClient\\.cpp$")
 list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/cli/.*\\.cpp$")
@@ -44,6 +50,7 @@ set(TEST_SOURCES
     parsers/test_SA2Parser.cpp
     parsers/test_STRParser_ASV.cpp
     database/test_DatabaseService.cpp
+    database/test_EquipmentBackends.cpp
     services/test_BurstCollectorService.cpp
     services/test_DataPublisherService.cpp
     models/test_CPAPModels.cpp
@@ -88,6 +95,10 @@ set(TEST_SOURCES
     clients/test_FysetcDataSource.cpp
     services/test_LiveSleepStageRunner.cpp
     services/test_SleepHqExportService.cpp
+    services/test_CpapDashSyncService.cpp
+    services/test_SupplyStatus.cpp
+    services/test_SupplyPublisher.cpp
+    controllers/test_EquipmentController.cpp
 )
 if(MSVC)
     list(FILTER TEST_SOURCES EXCLUDE REGEX ".*Fysetc.*")
@@ -142,6 +153,13 @@ else()
         hms_mqtt
         pthread
     )
+endif()
+
+# EquipmentController is exercised in-process by the controller tests, so the test
+# binary needs Drogon's request/response types. find_package(Drogon) already ran in
+# the parent scope when BUILD_WITH_WEB is on.
+if(BUILD_WITH_WEB)
+    target_link_libraries(run_tests Drogon::Drogon)
 endif()
 
 # Optional DB backends for tests

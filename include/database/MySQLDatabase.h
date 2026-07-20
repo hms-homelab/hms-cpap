@@ -139,6 +139,30 @@ public:
     std::vector<OxiNightlyPoint> getOximetryNightlySpo2(const std::string&, const std::string&,
                                                          const std::string&) override { return {}; }
 
+    // -- Equipment profiles + supplies (SDD-004) ------------------------------
+    // Conventions (see IDatabase.h): replace_after_days == -1 <-> SQL NULL,
+    // client_uuid == "" <-> SQL NULL, started_using_at == "" <-> SQL NULL.
+    // MySQL has NO partial indexes, so the one-live-machine-per-profile rule is
+    // enforced by profileHasMachine() in the controller, not by the schema.
+
+    std::vector<EquipmentType> listEquipmentTypes() override;
+    std::optional<EquipmentType> resolveEquipmentType(const std::string& type_key) override;
+    int  addEquipmentType(const EquipmentType& t) override;
+    bool updateEquipmentType(int id, const EquipmentType& t) override;
+    bool deleteEquipmentType(int id) override;
+
+    std::vector<EquipmentProfile> listEquipmentProfiles(bool include_deleted) override;
+    std::optional<EquipmentProfile> getEquipmentProfile(int id) override;
+    int  upsertEquipmentProfile(const EquipmentProfile& p) override;
+    bool tombstoneEquipmentProfile(int id) override;
+    int  ensureDefaultEquipmentProfile() override;
+
+    std::vector<EquipmentItem> listEquipmentItems(bool include_history) override;
+    std::optional<EquipmentItem> getEquipmentItem(int id) override;
+    bool profileHasMachine(int profile_id, int exclude_item_id) override;
+    int  upsertEquipmentItem(const EquipmentItem& item) override;
+    bool tombstoneEquipmentItem(int id) override;
+
     void* rawConnection() override;
 
     // -- Generic query --------------------------------------------------------

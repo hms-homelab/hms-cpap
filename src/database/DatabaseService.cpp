@@ -154,6 +154,94 @@ bool DatabaseService::connect() {
                 std::cout << "  DB: v2.2.0 migration (oximetry tables) applied" << std::endl;
             } catch (...) {}
 
+            // Auto-migrate SDD-004: equipment profiles, items and supply types.
+            // Keep in lockstep with scripts/schema.sql — drift here is what forced v4.4.10.
+            try {
+                pqxx::work txn(*conn_);
+                txn.exec(R"(
+                    CREATE TABLE IF NOT EXISTS cpap_equipment_types (
+                        id                          SERIAL PRIMARY KEY,
+                        type_key                    TEXT NOT NULL UNIQUE,
+                        label                       TEXT NOT NULL,
+                        category                    TEXT NOT NULL CHECK (category IN ('machine','accessory')),
+                        default_replace_after_days  INT,
+                        is_system                   BOOLEAN NOT NULL DEFAULT FALSE,
+                        active                      BOOLEAN NOT NULL DEFAULT TRUE,
+                        created_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        updated_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                )");
+                txn.exec(R"(
+                    CREATE TABLE IF NOT EXISTS cpap_equipment_profiles (
+                        id          SERIAL PRIMARY KEY,
+                        client_uuid TEXT,
+                        name        TEXT NOT NULL,
+                        active      BOOLEAN NOT NULL DEFAULT TRUE,
+                        deleted     BOOLEAN NOT NULL DEFAULT FALSE,
+                        created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                )");
+                txn.exec(R"(
+                    CREATE TABLE IF NOT EXISTS cpap_equipment_items (
+                        id                 SERIAL PRIMARY KEY,
+                        profile_id         INTEGER NOT NULL
+                                           REFERENCES cpap_equipment_profiles(id) ON DELETE CASCADE,
+                        client_uuid        TEXT,
+                        type_key           TEXT NOT NULL,
+                        category           TEXT NOT NULL DEFAULT 'accessory',
+                        brand              TEXT,
+                        model              TEXT,
+                        variant            TEXT,
+                        started_using_at   TIMESTAMPTZ,
+                        replace_after_days INT,
+                        notes              TEXT,
+                        active             BOOLEAN NOT NULL DEFAULT TRUE,
+                        deleted            BOOLEAN NOT NULL DEFAULT FALSE,
+                        created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                        updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                )");
+                // client_uuid is only for optional cloud sync; NULL offline, unique when set
+                txn.exec(R"(
+                    CREATE UNIQUE INDEX IF NOT EXISTS uq_cpap_equipment_profiles_uuid
+                    ON cpap_equipment_profiles(client_uuid) WHERE client_uuid IS NOT NULL
+                )");
+                // Same for items: without this a replayed sync double-inserts
+                txn.exec(R"(
+                    CREATE UNIQUE INDEX IF NOT EXISTS uq_cpap_equipment_items_uuid
+                    ON cpap_equipment_items(client_uuid) WHERE client_uuid IS NOT NULL
+                )");
+                // HARD RULE: at most one live machine per profile
+                txn.exec(R"(
+                    CREATE UNIQUE INDEX IF NOT EXISTS uq_cpap_equipment_one_machine
+                    ON cpap_equipment_items(profile_id)
+                    WHERE category = 'machine' AND active AND NOT deleted
+                )");
+                txn.exec(R"(
+                    CREATE INDEX IF NOT EXISTS idx_cpap_equipment_items_profile
+                    ON cpap_equipment_items(profile_id)
+                )");
+                // Seed system types verbatim from the app's supply_defaults.dart so
+                // local, cloud and app all compute identical due dates.
+                txn.exec(R"(
+                    INSERT INTO cpap_equipment_types
+                        (type_key, label, category, default_replace_after_days, is_system, active)
+                    VALUES
+                        ('machine',    'Machine',    'machine',   NULL, TRUE, TRUE),
+                        ('mask',       'Mask',       'accessory',   90, TRUE, TRUE),
+                        ('tubing',     'Tubing',     'accessory',   90, TRUE, TRUE),
+                        ('filter',     'Filter',     'accessory',   30, TRUE, TRUE),
+                        ('humidifier', 'Humidifier', 'accessory',  180, TRUE, TRUE),
+                        ('headgear',   'Headgear',   'accessory',  180, TRUE, TRUE)
+                    ON CONFLICT (type_key) DO NOTHING
+                )");
+                txn.commit();
+                std::cout << "  DB: SDD-004 migration (equipment tables) applied" << std::endl;
+            } catch (const std::exception& e) {
+                std::cerr << "DB: SDD-004 equipment migration failed: " << e.what() << std::endl;
+            }
+
             return true;
         }
     } catch (const std::exception& e) {
@@ -2150,6 +2238,486 @@ std::vector<IDatabase::OxiNightlyPoint> DatabaseService::getOximetryNightlySpo2(
         std::cerr << "getOximetryNightlySpo2 error: " << e.what() << std::endl;
     }
     return pts;
+}
+
+// ── Equipment profiles + supplies (SDD-004) ─────────────────────────────
+//
+// Conventions (shared with the SQLite/MySQL backends):
+//   replace_after_days == -1  -> SQL NULL ("use the type default")
+//   client_uuid == ""         -> SQL NULL
+//   started_using_at == ""    -> SQL NULL; started_epoch == 0 when unset
+//   deleted rows are tombstones: hidden from list*/get*, kept for sync,
+//                               and tombstoning also clears active.
+//   all instants are UTC: naive timestamp strings are read AS UTC on write and
+//                         emitted as "YYYY-MM-DDTHH:MM:SSZ" on read, never in
+//                         the server's local zone.
+
+namespace {
+
+// ISO-8601 UTC, matching what the app and the cloud API exchange.
+constexpr const char* kIsoCols = R"(
+    to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS created_at,
+    to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS updated_at
+)";
+
+std::string typeCols() {
+    return " id, type_key, label, category,"
+           " COALESCE(default_replace_after_days, -1) AS default_replace_after_days,"
+           " is_system, active ";
+}
+
+std::string profileCols() {
+    return std::string(" id, COALESCE(client_uuid, '') AS client_uuid, name, active, deleted,")
+           + kIsoCols;
+}
+
+std::string itemCols() {
+    return std::string(
+        " id, profile_id, COALESCE(client_uuid, '') AS client_uuid, type_key, category,"
+        " COALESCE(brand, '') AS brand, COALESCE(model, '') AS model,"
+        " COALESCE(variant, '') AS variant,"
+        " COALESCE(to_char(started_using_at AT TIME ZONE 'UTC',"
+        "                  'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'), '') AS started_using_at,"
+        // Extracted through UTC explicitly so started_epoch is identical on every
+        // backend (SQLite/MySQL derive it in C++ with timegm_utc); a bare EXTRACT
+        // would follow the server's TimeZone and shift due dates by a day.
+        " COALESCE(EXTRACT(EPOCH FROM (started_using_at AT TIME ZONE 'UTC'))::bigint, 0)"
+        "     AS started_epoch,"
+        " COALESCE(replace_after_days, -1) AS replace_after_days,"
+        " COALESCE(notes, '') AS notes, active, deleted,") + kIsoCols;
+}
+
+IDatabase::EquipmentType rowToType(const pqxx::row& r) {
+    IDatabase::EquipmentType t;
+    t.id                         = r["id"].as<int>(0);
+    t.type_key                   = r["type_key"].as<std::string>("");
+    t.label                      = r["label"].as<std::string>("");
+    t.category                   = r["category"].as<std::string>("");
+    t.default_replace_after_days = r["default_replace_after_days"].as<int>(-1);
+    t.is_system                  = r["is_system"].as<bool>(false);
+    t.active                     = r["active"].as<bool>(true);
+    return t;
+}
+
+IDatabase::EquipmentProfile rowToProfile(const pqxx::row& r) {
+    IDatabase::EquipmentProfile p;
+    p.id          = r["id"].as<int>(0);
+    p.client_uuid = r["client_uuid"].as<std::string>("");
+    p.name        = r["name"].as<std::string>("");
+    p.active      = r["active"].as<bool>(true);
+    p.deleted     = r["deleted"].as<bool>(false);
+    p.created_at  = r["created_at"].as<std::string>("");
+    p.updated_at  = r["updated_at"].as<std::string>("");
+    return p;
+}
+
+IDatabase::EquipmentItem rowToItem(const pqxx::row& r) {
+    IDatabase::EquipmentItem it;
+    it.id                 = r["id"].as<int>(0);
+    it.profile_id         = r["profile_id"].as<int>(0);
+    it.client_uuid        = r["client_uuid"].as<std::string>("");
+    it.type_key           = r["type_key"].as<std::string>("");
+    it.category           = r["category"].as<std::string>("");
+    it.brand              = r["brand"].as<std::string>("");
+    it.model              = r["model"].as<std::string>("");
+    it.variant            = r["variant"].as<std::string>("");
+    it.started_using_at   = r["started_using_at"].as<std::string>("");
+    it.started_epoch      = r["started_epoch"].as<long long>(0);
+    it.replace_after_days = r["replace_after_days"].as<int>(-1);
+    it.notes              = r["notes"].as<std::string>("");
+    it.active             = r["active"].as<bool>(true);
+    it.deleted            = r["deleted"].as<bool>(false);
+    it.created_at         = r["created_at"].as<std::string>("");
+    it.updated_at         = r["updated_at"].as<std::string>("");
+    return it;
+}
+
+} // namespace
+
+std::vector<IDatabase::EquipmentType> DatabaseService::listEquipmentTypes() {
+    std::vector<IDatabase::EquipmentType> types;
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!ensureConnection()) return types;
+
+    try {
+        pqxx::work txn(*conn_);
+        auto rows = txn.exec("SELECT" + typeCols() +
+                             "FROM cpap_equipment_types WHERE active = TRUE "
+                             "ORDER BY is_system DESC, id");
+        txn.commit();
+        for (const auto& r : rows) types.push_back(rowToType(r));
+    } catch (const std::exception& e) {
+        std::cerr << "DB: listEquipmentTypes error: " << e.what() << std::endl;
+    }
+    return types;
+}
+
+std::optional<IDatabase::EquipmentType>
+DatabaseService::resolveEquipmentType(const std::string& type_key) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!ensureConnection()) return std::nullopt;
+
+    try {
+        pqxx::work txn(*conn_);
+        // Deliberately not filtered on active: existing items must still resolve
+        // their interval after the user retires a type from the picker.
+        auto rows = txn.exec_params("SELECT" + typeCols() +
+                                    "FROM cpap_equipment_types WHERE type_key = $1",
+                                    type_key);
+        txn.commit();
+        if (rows.empty()) return std::nullopt;
+        return rowToType(rows[0]);
+    } catch (const std::exception& e) {
+        std::cerr << "DB: resolveEquipmentType error: " << e.what() << std::endl;
+        return std::nullopt;
+    }
+}
+
+int DatabaseService::addEquipmentType(const IDatabase::EquipmentType& t) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!ensureConnection()) return -1;
+
+    try {
+        pqxx::work txn(*conn_);
+        auto r = txn.exec_params(R"(
+            INSERT INTO cpap_equipment_types
+                (type_key, label, category, default_replace_after_days, is_system, active)
+            VALUES ($1, $2, $3, NULLIF($4::int, -1), $5, $6)
+            ON CONFLICT (type_key) DO NOTHING
+            RETURNING id
+        )",
+            t.type_key, t.label, t.category,
+            t.default_replace_after_days, t.is_system, t.active);
+        txn.commit();
+
+        if (r.empty()) {
+            std::cerr << "DB: addEquipmentType duplicate type_key '" << t.type_key << "'" << std::endl;
+            return -1;
+        }
+        return r[0]["id"].as<int>(-1);
+    } catch (const std::exception& e) {
+        std::cerr << "DB: addEquipmentType error: " << e.what() << std::endl;
+        return -1;
+    }
+}
+
+bool DatabaseService::updateEquipmentType(int id, const IDatabase::EquipmentType& t) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!ensureConnection()) return false;
+
+    try {
+        pqxx::work txn(*conn_);
+        // Seeded rows keep their key/category (items reference them); the interval
+        // and label stay editable so a user can retune the resupply cadence.
+        auto r = txn.exec_params(R"(
+            UPDATE cpap_equipment_types SET
+                type_key                   = CASE WHEN is_system THEN type_key ELSE $2 END,
+                label                      = $3,
+                category                   = CASE WHEN is_system THEN category ELSE $4 END,
+                default_replace_after_days = NULLIF($5::int, -1),
+                active                     = $6,
+                updated_at                 = NOW()
+            WHERE id = $1
+        )",
+            id, t.type_key, t.label, t.category, t.default_replace_after_days, t.active);
+        txn.commit();
+        return r.affected_rows() > 0;
+    } catch (const std::exception& e) {
+        std::cerr << "DB: updateEquipmentType error: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+bool DatabaseService::deleteEquipmentType(int id) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!ensureConnection()) return false;
+
+    try {
+        pqxx::work txn(*conn_);
+        auto r = txn.exec_params(
+            "UPDATE cpap_equipment_types SET active = FALSE, updated_at = NOW() "
+            "WHERE id = $1 AND is_system = FALSE",
+            id);
+        txn.commit();
+        return r.affected_rows() > 0;
+    } catch (const std::exception& e) {
+        std::cerr << "DB: deleteEquipmentType error: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+std::vector<IDatabase::EquipmentProfile>
+DatabaseService::listEquipmentProfiles(bool include_deleted) {
+    std::vector<IDatabase::EquipmentProfile> profiles;
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!ensureConnection()) return profiles;
+
+    try {
+        pqxx::work txn(*conn_);
+        std::string q = "SELECT" + profileCols() + "FROM cpap_equipment_profiles";
+        if (!include_deleted) q += " WHERE deleted = FALSE";
+        q += " ORDER BY id";
+        auto rows = txn.exec(q);
+        txn.commit();
+        for (const auto& r : rows) profiles.push_back(rowToProfile(r));
+    } catch (const std::exception& e) {
+        std::cerr << "DB: listEquipmentProfiles error: " << e.what() << std::endl;
+    }
+    return profiles;
+}
+
+std::optional<IDatabase::EquipmentProfile> DatabaseService::getEquipmentProfile(int id) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!ensureConnection()) return std::nullopt;
+
+    try {
+        pqxx::work txn(*conn_);
+        auto rows = txn.exec_params("SELECT" + profileCols() +
+                                    "FROM cpap_equipment_profiles "
+                                    "WHERE id = $1 AND deleted = FALSE",
+                                    id);
+        txn.commit();
+        if (rows.empty()) return std::nullopt;
+        return rowToProfile(rows[0]);
+    } catch (const std::exception& e) {
+        std::cerr << "DB: getEquipmentProfile error: " << e.what() << std::endl;
+        return std::nullopt;
+    }
+}
+
+int DatabaseService::upsertEquipmentProfile(const IDatabase::EquipmentProfile& p) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!ensureConnection()) return -1;
+
+    try {
+        pqxx::work txn(*conn_);
+
+        if (p.id <= 0) {
+            auto r = txn.exec_params(R"(
+                INSERT INTO cpap_equipment_profiles (client_uuid, name, active, deleted)
+                VALUES (NULLIF($1::text, ''), $2, $3, $4)
+                RETURNING id
+            )", p.client_uuid, p.name, p.active, p.deleted);
+            txn.commit();
+            if (r.empty()) return -1;
+            return r[0]["id"].as<int>(-1);
+        }
+
+        auto r = txn.exec_params(R"(
+            UPDATE cpap_equipment_profiles SET
+                client_uuid = NULLIF($2::text, ''),
+                name        = $3,
+                active      = $4,
+                deleted     = $5,
+                updated_at  = NOW()
+            WHERE id = $1
+        )", p.id, p.client_uuid, p.name, p.active, p.deleted);
+        txn.commit();
+        return r.affected_rows() > 0 ? p.id : -1;
+
+    } catch (const std::exception& e) {
+        std::cerr << "DB: upsertEquipmentProfile error: " << e.what() << std::endl;
+        return -1;
+    }
+}
+
+bool DatabaseService::tombstoneEquipmentProfile(int id) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!ensureConnection()) return false;
+
+    try {
+        pqxx::work txn(*conn_);
+        auto r = txn.exec_params(
+            "UPDATE cpap_equipment_profiles "
+            "SET deleted = TRUE, active = FALSE, updated_at = NOW() "
+            "WHERE id = $1 AND deleted = FALSE",
+            id);
+        // Soft cascade: the FK cascade only fires on a hard DELETE, and the items
+        // must disappear from the supply view with their profile. Clearing active
+        // as well frees the one-live-machine slot for the profile.
+        txn.exec_params(
+            "UPDATE cpap_equipment_items "
+            "SET deleted = TRUE, active = FALSE, updated_at = NOW() "
+            "WHERE profile_id = $1 AND deleted = FALSE",
+            id);
+        txn.commit();
+        return r.affected_rows() > 0;
+    } catch (const std::exception& e) {
+        std::cerr << "DB: tombstoneEquipmentProfile error: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+int DatabaseService::ensureDefaultEquipmentProfile() {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!ensureConnection()) return -1;
+
+    try {
+        pqxx::work txn(*conn_);
+        auto rows = txn.exec(
+            "SELECT id FROM cpap_equipment_profiles WHERE deleted = FALSE "
+            "ORDER BY active DESC, id LIMIT 1");
+        if (!rows.empty()) {
+            int id = rows[0]["id"].as<int>(-1);
+            txn.commit();
+            return id;
+        }
+
+        auto ins = txn.exec(
+            "INSERT INTO cpap_equipment_profiles (name) VALUES ('My CPAP') RETURNING id");
+        txn.commit();
+        if (ins.empty()) return -1;
+        int id = ins[0]["id"].as<int>(-1);
+        std::cout << "DB: Created default equipment profile 'My CPAP' (id " << id << ")" << std::endl;
+        return id;
+
+    } catch (const std::exception& e) {
+        std::cerr << "DB: ensureDefaultEquipmentProfile error: " << e.what() << std::endl;
+        return -1;
+    }
+}
+
+std::vector<IDatabase::EquipmentItem> DatabaseService::listEquipmentItems(bool include_history) {
+    std::vector<IDatabase::EquipmentItem> items;
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!ensureConnection()) return items;
+
+    try {
+        pqxx::work txn(*conn_);
+        std::string q = "SELECT" + itemCols() +
+                        "FROM cpap_equipment_items WHERE deleted = FALSE";
+        if (!include_history) q += " AND active = TRUE";
+        // Machines first, then id -- same sequence as the SQLite/MySQL backends.
+        q += " ORDER BY CASE WHEN category = 'machine' THEN 0 ELSE 1 END, id";
+        auto rows = txn.exec(q);
+        txn.commit();
+        for (const auto& r : rows) items.push_back(rowToItem(r));
+    } catch (const std::exception& e) {
+        std::cerr << "DB: listEquipmentItems error: " << e.what() << std::endl;
+    }
+    return items;
+}
+
+std::optional<IDatabase::EquipmentItem> DatabaseService::getEquipmentItem(int id) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!ensureConnection()) return std::nullopt;
+
+    try {
+        pqxx::work txn(*conn_);
+        auto rows = txn.exec_params("SELECT" + itemCols() +
+                                    "FROM cpap_equipment_items "
+                                    "WHERE id = $1 AND deleted = FALSE",
+                                    id);
+        txn.commit();
+        if (rows.empty()) return std::nullopt;
+        return rowToItem(rows[0]);
+    } catch (const std::exception& e) {
+        std::cerr << "DB: getEquipmentItem error: " << e.what() << std::endl;
+        return std::nullopt;
+    }
+}
+
+bool DatabaseService::profileHasMachine(int profile_id, int exclude_item_id) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!ensureConnection()) return false;
+
+    try {
+        pqxx::work txn(*conn_);
+        auto rows = txn.exec_params(
+            "SELECT 1 FROM cpap_equipment_items "
+            "WHERE profile_id = $1 AND category = 'machine' "
+            "AND active = TRUE AND deleted = FALSE AND id <> $2 LIMIT 1",
+            profile_id, exclude_item_id);
+        txn.commit();
+        return !rows.empty();
+    } catch (const std::exception& e) {
+        std::cerr << "DB: profileHasMachine error: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+int DatabaseService::upsertEquipmentItem(const IDatabase::EquipmentItem& item) {
+    // Resolve the category from the type before opening our own transaction
+    // (resolveEquipmentType runs its own txn; nesting one inside another throws).
+    std::string category = item.category;
+    if (category.empty()) {
+        if (auto t = resolveEquipmentType(item.type_key)) category = t->category;
+        if (category.empty()) category = "accessory";
+    }
+
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!ensureConnection()) return -1;
+
+    try {
+        pqxx::work txn(*conn_);
+
+        if (item.id <= 0) {
+            auto r = txn.exec_params(R"(
+                INSERT INTO cpap_equipment_items
+                    (profile_id, client_uuid, type_key, category, brand, model, variant,
+                     started_using_at, replace_after_days, notes, active, deleted)
+                VALUES ($1, NULLIF($2::text, ''), $3, $4, $5, $6, $7,
+                        NULLIF($8::text, '')::timestamp AT TIME ZONE 'UTC',
+                        NULLIF($9::int, -1), $10, $11, $12)
+                RETURNING id
+            )",
+                item.profile_id, item.client_uuid, item.type_key, category,
+                item.brand, item.model, item.variant,
+                item.started_using_at, item.replace_after_days, item.notes,
+                item.active, item.deleted);
+            txn.commit();
+            if (r.empty()) return -1;
+            return r[0]["id"].as<int>(-1);
+        }
+
+        auto r = txn.exec_params(R"(
+            UPDATE cpap_equipment_items SET
+                profile_id         = $2,
+                client_uuid        = NULLIF($3::text, ''),
+                type_key           = $4,
+                category           = $5,
+                brand              = $6,
+                model              = $7,
+                variant            = $8,
+                started_using_at   = NULLIF($9::text, '')::timestamp AT TIME ZONE 'UTC',
+                replace_after_days = NULLIF($10::int, -1),
+                notes              = $11,
+                active             = $12,
+                deleted            = $13,
+                updated_at         = NOW()
+            WHERE id = $1
+        )",
+            item.id, item.profile_id, item.client_uuid, item.type_key, category,
+            item.brand, item.model, item.variant,
+            item.started_using_at, item.replace_after_days, item.notes,
+            item.active, item.deleted);
+        txn.commit();
+        return r.affected_rows() > 0 ? item.id : -1;
+
+    } catch (const std::exception& e) {
+        // A unique_violation here is the one-machine-per-profile index doing its job.
+        std::cerr << "DB: upsertEquipmentItem error: " << e.what() << std::endl;
+        return -1;
+    }
+}
+
+bool DatabaseService::tombstoneEquipmentItem(int id) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!ensureConnection()) return false;
+
+    try {
+        pqxx::work txn(*conn_);
+        auto r = txn.exec_params(
+            "UPDATE cpap_equipment_items "
+            "SET deleted = TRUE, active = FALSE, updated_at = NOW() "
+            "WHERE id = $1 AND deleted = FALSE",
+            id);
+        txn.commit();
+        return r.affected_rows() > 0;
+    } catch (const std::exception& e) {
+        std::cerr << "DB: tombstoneEquipmentItem error: " << e.what() << std::endl;
+        return false;
+    }
 }
 
 } // namespace hms_cpap

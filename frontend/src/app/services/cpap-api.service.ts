@@ -3,6 +3,7 @@ import { HttpClient, HttpParams } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { DashboardData, SessionListItem, SessionDetail, SessionEvent, TrendPoint, SignalData, VitalsData, OximetryData } from '../models/session.model';
 import { AppConfig } from '../models/config.model';
+import { EquipmentType, EquipmentProfile, EquipmentItem, EquipmentItemPayload } from '../models/equipment.model';
 
 @Injectable({ providedIn: 'root' })
 export class CpapApiService {
@@ -170,5 +171,41 @@ export class CpapApiService {
 
   downloadReportUrl(id: number): string {
     return `/api/reports/${id}/download`;
+  }
+
+  getEquipmentTypes(): Observable<{ types: EquipmentType[] }> {
+    return this.http.get<{ types: EquipmentType[] }>('/api/equipment/types');
+  }
+
+  getEquipmentProfiles(): Observable<{ profiles: EquipmentProfile[] }> {
+    return this.http.get<{ profiles: EquipmentProfile[] }>('/api/equipment/profiles');
+  }
+
+  createEquipmentProfile(name: string): Observable<EquipmentProfile> {
+    return this.http.post<EquipmentProfile>('/api/equipment/profiles', { name });
+  }
+
+  renameEquipmentProfile(id: number, name: string): Observable<any> {
+    return this.http.put<any>(`/api/equipment/profiles/${id}`, { name });
+  }
+
+  deleteEquipmentProfile(id: number): Observable<any> {
+    return this.http.delete<any>(`/api/equipment/profiles/${id}`);
+  }
+
+  createEquipmentItem(payload: EquipmentItemPayload): Observable<EquipmentItem> {
+    return this.http.post<EquipmentItem>('/api/equipment', payload);
+  }
+
+  updateEquipmentItem(id: number, payload: EquipmentItemPayload): Observable<EquipmentItem> {
+    return this.http.put<EquipmentItem>(`/api/equipment/${id}`, payload);
+  }
+
+  deleteEquipmentItem(id: number): Observable<any> {
+    return this.http.delete<any>(`/api/equipment/${id}`);
+  }
+
+  getSupplies(): Observable<{ items: EquipmentItem[] }> {
+    return this.http.get<{ items: EquipmentItem[] }>('/api/supplies');
   }
 }

@@ -1,3 +1,4 @@
+#include "EquipmentStubs.h"
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
 #include "services/OximetryService.h"
@@ -488,6 +489,7 @@ public:
 
 class MockDatabase : public IDatabase {
 public:
+    HMS_CPAP_STUB_EQUIPMENT_METHODS
     DbType dbType() const override { return DbType::SQLITE; }
     MOCK_METHOD(bool, connect, (), (override));
     MOCK_METHOD(void, disconnect, (), (override));

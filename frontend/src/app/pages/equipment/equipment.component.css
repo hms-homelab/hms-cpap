@@ -1,0 +1,247 @@
+.equipment-page { padding: 1.5rem; }
+h2 { color: #e0e0e0; margin-bottom: 1.5rem; }
+h3 { color: #e0e0e0; font-size: 1rem; font-weight: 600; margin: 0; }
+
+.group-title {
+  color: #888;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  margin: 1.5rem 0 0.75rem;
+}
+
+.loading { color: #aaa; }
+.error-msg { color: #ef9a9a; font-size: 0.85rem; margin-bottom: 1rem; }
+.empty { color: #555; font-size: 0.9rem; padding: 0.5rem 0 0.25rem; }
+
+/* Empty state */
+.empty-state { padding: 3rem 0; text-align: center; }
+
+.primary-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.55rem 1.2rem;
+  background: #1976d2;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.primary-btn:hover { background: #1565c0; }
+
+/* Setup chips */
+.chip-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.5rem;
+}
+
+.chip {
+  position: relative;
+  padding: 0.35rem 0.9rem;
+  background: #1e1e2e;
+  border: 1px solid #2a2a3a;
+  color: #aaa;
+  border-radius: 16px;
+  font-size: 0.85rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.chip:hover { color: #fff; border-color: #3a3a4a; }
+
+.chip.active {
+  color: #64b5f6;
+  border-color: rgba(100, 181, 246, 0.5);
+  background: rgba(100, 181, 246, 0.12);
+}
+
+.chip-add { padding: 0.35rem 0.7rem; }
+
+.chip-badge {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-left: 0.4rem;
+  border-radius: 50%;
+  background: #ffb74d;
+  vertical-align: middle;
+}
+
+.inline-form { display: inline-flex; align-items: center; gap: 0.4rem; }
+
+/* Setup header */
+.profile-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px solid #2a2a3a;
+}
+
+/* The profile name takes the row; its actions are pushed to the right edge so the
+   header reads "what this is ......... what you can do to it" rather than a
+   cluster of controls competing with the name. */
+.profile-header h3 { margin-right: auto; }
+
+/* Item cards */
+.item-card {
+  background: #1e1e2e;
+  border: 1px solid #2a2a3a;
+  border-radius: 8px;
+  padding: 0.9rem 1.1rem;
+  margin-bottom: 0.75rem;
+}
+
+.machine-card { border-color: #33334a; }
+
+.item-head {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.item-type {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: #64b5f6;
+  background: rgba(100, 181, 246, 0.12);
+  padding: 0.15rem 0.55rem;
+  border-radius: 10px;
+}
+
+.item-name { color: #e0e0e0; font-size: 0.92rem; }
+
+.item-actions { margin-left: auto; display: flex; gap: 0.4rem; }
+
+.meta-row { display: flex; gap: 1.25rem; flex-wrap: wrap; margin-top: 0.6rem; }
+.meta { color: #777; font-size: 0.78rem; }
+
+/* Inline edit */
+.edit-row {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-top: 0.8rem;
+}
+
+.field { display: flex; flex-direction: column; gap: 0.3rem; }
+
+.field span {
+  font-size: 0.72rem;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.field input,
+.inline-form input,
+.profile-header input,
+.add-row select {
+  background: #13131f;
+  border: 1px solid #333;
+  color: #e0e0e0;
+  padding: 0.4rem 0.6rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  outline: none;
+}
+
+.field input:focus,
+.inline-form input:focus,
+.profile-header input:focus,
+.add-row select:focus { border-color: #64b5f6; }
+
+/* Wear */
+.wear { display: flex; align-items: center; gap: 0.75rem; margin-top: 0.75rem; }
+
+.wear-track {
+  flex: 1;
+  height: 6px;
+  background: #13131f;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.wear-fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
+.wear-fresh { background: #66bb6a; }
+.wear-due_soon { background: #ffb74d; }
+.wear-overdue { background: #ef5350; }
+.wear-untracked { background: #444; }
+
+.wear-text { font-size: 0.78rem; white-space: nowrap; }
+.text-fresh { color: #81c784; }
+.text-due_soon { color: #ffb74d; }
+.text-overdue { color: #ef9a9a; }
+.text-untracked { color: #666; }
+
+/* Add row */
+.add-row { display: flex; align-items: center; gap: 0.5rem; margin-top: 1rem; }
+
+/* Small buttons */
+.mini-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.75rem;
+  background: rgba(100, 181, 246, 0.12);
+  border: 1px solid rgba(100, 181, 246, 0.3);
+  color: #64b5f6;
+  border-radius: 5px;
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.mini-btn:hover:not(:disabled) { background: rgba(100, 181, 246, 0.2); border-color: #64b5f6; }
+.mini-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+.mini-btn.ghost {
+  background: transparent;
+  border-color: #333;
+  color: #aaa;
+}
+
+.mini-btn.ghost:hover:not(:disabled) { color: #fff; border-color: #555; background: rgba(255,255,255,0.05); }
+
+.mini-btn.danger {
+  background: transparent;
+  border-color: rgba(244, 67, 54, 0.3);
+  color: #ef9a9a;
+}
+
+.mini-btn.danger:hover:not(:disabled) { background: rgba(244, 67, 54, 0.15); border-color: #ef5350; }
+
+/* Setup header actions. Deliberately NOT .mini-btn: rename/delete sat beside the
+   profile chips at the same visual weight, so secondary actions read as loudly as
+   the chips you actually navigate with. Borderless square icons recede until
+   hovered, leaving the chips as the only prominent control in that row. */
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  color: #6b6b6b;
+  font-size: 0.78rem;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.icon-btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.07); color: #e0e0e0; }
+.icon-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+.icon-btn.danger:hover:not(:disabled) { background: rgba(239, 83, 80, 0.12); color: #ef5350; }

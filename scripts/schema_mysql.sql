@@ -211,3 +211,82 @@ CREATE TABLE IF NOT EXISTS cpap_sleep_stages (
 
 CREATE INDEX idx_cpap_sleep_stages_session
     ON cpap_sleep_stages(session_id);
+
+-- =============================================================================
+-- SDD-004: Equipment profiles + supplies
+-- =============================================================================
+-- Local-first mirror of the cloud model (hms-cpapdash-api SDD-035), minus
+-- user_id: hms-cpap is single-household. A profile ("setup") owns exactly one
+-- machine plus its accessories; supply wear is COMPUTED on read, never stored.
+-- client_uuid exists only so optional cloud sync is idempotent; it is unused
+-- offline. Keep this in lockstep with MySQLDatabase::createSchema().
+--
+-- started_using_at is VARCHAR, not DATETIME, on purpose: it is an ISO-8601
+-- string that must round-trip byte-for-byte with the SQLite/Postgres backends
+-- and the phone app so all three compute identical due dates.
+
+-- Catalog: seeded system defaults + user customs
+CREATE TABLE IF NOT EXISTS cpap_equipment_types (
+    id                          INT AUTO_INCREMENT PRIMARY KEY,
+    type_key                    VARCHAR(64) NOT NULL,
+    label                       VARCHAR(128) NOT NULL,
+    category                    VARCHAR(32) NOT NULL,
+    default_replace_after_days  INT,
+    is_system                   TINYINT(1) DEFAULT 0,
+    active                      TINYINT(1) DEFAULT 1,
+    created_at                  DATETIME DEFAULT NOW(),
+    updated_at                  DATETIME DEFAULT NOW() ON UPDATE NOW(),
+    UNIQUE KEY uq_eq_type_key (type_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Named setups. MySQL UNIQUE allows repeated NULLs, so uq_eq_profile_uuid is
+-- exactly the "UNIQUE WHERE client_uuid IS NOT NULL" the other backends express
+-- as a partial index.
+CREATE TABLE IF NOT EXISTS cpap_equipment_profiles (
+    id           INT AUTO_INCREMENT PRIMARY KEY,
+    client_uuid  VARCHAR(64),
+    name         VARCHAR(128) NOT NULL,
+    active       TINYINT(1) DEFAULT 1,
+    deleted      TINYINT(1) DEFAULT 0,
+    created_at   DATETIME DEFAULT NOW(),
+    updated_at   DATETIME DEFAULT NOW() ON UPDATE NOW(),
+    UNIQUE KEY uq_eq_profile_uuid (client_uuid)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- The gear; category is denormalized from the type.
+-- HARD RULE "at most one live machine per profile" CANNOT be an index here:
+-- MySQL has no partial/filtered indexes. IDatabase::profileHasMachine() is the
+-- portable application guard the controller calls before any machine write.
+CREATE TABLE IF NOT EXISTS cpap_equipment_items (
+    id                  INT AUTO_INCREMENT PRIMARY KEY,
+    profile_id          INT NOT NULL,
+    client_uuid         VARCHAR(64),
+    type_key            VARCHAR(64) NOT NULL,
+    category            VARCHAR(32) NOT NULL DEFAULT 'accessory',
+    brand               VARCHAR(128) DEFAULT '',
+    model               VARCHAR(128) DEFAULT '',
+    variant             VARCHAR(128),
+    started_using_at    VARCHAR(32),
+    replace_after_days  INT,
+    notes               VARCHAR(1000),
+    active              TINYINT(1) DEFAULT 1,
+    deleted             TINYINT(1) DEFAULT 0,
+    created_at          DATETIME DEFAULT NOW(),
+    updated_at          DATETIME DEFAULT NOW() ON UPDATE NOW(),
+    UNIQUE KEY uq_eq_item_uuid (client_uuid),
+    KEY idx_eq_item_profile (profile_id, active),
+    FOREIGN KEY (profile_id) REFERENCES cpap_equipment_profiles(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Seed the six system types verbatim from the app's supply_defaults.dart, so
+-- local, cloud and the phone app all compute the same due dates.
+-- INSERT IGNORE + UNIQUE(type_key) makes this idempotent.
+INSERT IGNORE INTO cpap_equipment_types
+    (type_key, label, category, default_replace_after_days, is_system)
+VALUES
+    ('machine',    'Machine',    'machine',   NULL, 1),
+    ('mask',       'Mask',       'accessory',   90, 1),
+    ('tubing',     'Tubing',     'accessory',   90, 1),
+    ('filter',     'Filter',     'accessory',   30, 1),
+    ('humidifier', 'Humidifier', 'accessory',  180, 1),
+    ('headgear',   'Headgear',   'accessory',  180, 1);

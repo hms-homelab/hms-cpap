@@ -1,3 +1,4 @@
+#include "EquipmentStubs.h"
 #include <gtest/gtest.h>
 
 #include "services/MLTrainingService.h"
@@ -31,6 +32,7 @@ using namespace hms_cpap;
 // ---------------------------------------------------------------------------
 class FakeDb : public IDatabase {
 public:
+    HMS_CPAP_STUB_EQUIPMENT_METHODS
     bool connected_ = true;
     Json::Value rows_{Json::arrayValue};
     int query_count_ = 0;
