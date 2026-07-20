@@ -13,6 +13,7 @@
 // that would require wall-clock equality; we assert on relative invariants
 // (cursor advances, provisional flag, SQL shape, summary aggregation).
 
+#include "EquipmentStubs.h"
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
 
@@ -46,6 +47,7 @@ using Clock = std::chrono::system_clock;
 // persistence branches and the early-return-when-disconnected guard.
 class RecordingDatabase : public IDatabase {
 public:
+    HMS_CPAP_STUB_EQUIPMENT_METHODS
     DbType type = DbType::POSTGRESQL;
     bool connected = true;
     std::vector<std::string> queries;

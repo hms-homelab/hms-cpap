@@ -4,6 +4,7 @@
  * Tests file archival, path construction, and file size comparison logic.
  */
 
+#include "EquipmentStubs.h"
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
 #include "services/BurstCollectorService.h"
@@ -1556,6 +1557,7 @@ namespace burst_orch {
 // ── Mock database (adapted from tests/services/test_BackfillService.cpp) ──────
 class MockDatabase : public IDatabase {
 public:
+    HMS_CPAP_STUB_EQUIPMENT_METHODS
     DbType dbType() const override { return DbType::SQLITE; }
 
     MOCK_METHOD(bool, connect, (), (override));

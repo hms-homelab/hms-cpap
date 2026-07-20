@@ -1420,9 +1420,50 @@ void BurstCollectorService::runLoop() {
             last_burst_time_ = std::chrono::system_clock::now();
         }
 
+        // SleepHQ: nights we could NOT parse must still reach SleepHQ.
+        //
+        // markDirty() only fires on a newly-completed SESSION, so a date folder
+        // whose EDFs are on disk but which our parser rejected was silently never
+        // exported — even though SleepHQ parses independently and handles it fine.
+        // hms-cpapdash-api hit exactly this (6bc1a2a) and fixed it with a storage
+        // disk-walk for sessionless dates; this is the same idea against our
+        // archive. Duplicate uploads are prevented by the exported_ snapshot guard
+        // inside markDirty(), so a night that later parses is not shipped twice.
+        if (app_config_ && app_config_->sleephq.auto_on_session)
+            markUnparsedNightsForExport();
+
         // SleepHQ debounced export — after the cycle so the archive is settled.
         if (app_config_ && app_config_->sleephq.auto_on_session) {
             SleepHqExportService::getInstance().sweep();
+        }
+
+        // SDD-004: republish supply wear to Home Assistant. hms-cpap is self-hosted
+        // and has no push infrastructure, so these HA entities ARE the reminder
+        // mechanism. Reusing the burst cycle means no extra scheduler; wear only
+        // changes on a day boundary, so once a cycle is far more often than needed.
+        if (db_service_ && mqtt_client_) {
+            SupplyPublisher publisher(
+                [this](const std::string& topic, const std::string& payload, bool retain) {
+                    return mqtt_client_->publish(topic, payload, 1, retain);
+                },
+                device_id_,
+                app_config_ ? app_config_->device_name : std::string("CPAP"));
+            // A fresh publisher is built every cycle, so the crossing ledger MUST
+            // be on disk — in-process state would make every cycle look like a
+            // first sighting and re-fire the same "overdue" event forever.
+            publisher.setLedger(
+                SupplyPublisher::fileLedger(AppConfig::dataDir() + "/supply_events.json"));
+            auto r = publisher.publishFromDatabase(
+                *db_service_, static_cast<long long>(std::time(nullptr)));
+            if (r.published && !r.all_ok)
+                std::cerr << "SupplyPublisher: some MQTT messages were rejected" << std::endl;
+        }
+
+        // SDD-004: opt-in cloud mirror. sweep() is a no-op unless auto_sync is on
+        // AND something was marked dirty, so a user who never enables it pays
+        // nothing here and local remains the source of truth either way.
+        if (cpapdash_sync_) {
+            cpapdash_sync_->sweep();
         }
 
         // Process any pending range summary requests (queued by MQTT callbacks).
@@ -2193,5 +2234,49 @@ void BurstCollectorService::stopFysetcServer() {
 }
 
 #endif // _WIN32
+
+void BurstCollectorService::markUnparsedNightsForExport() {
+    namespace fs = std::filesystem;
+    if (!db_service_) return;
+
+    const std::string archive_base = ConfigManager::get("CPAP_ARCHIVE_DIR", "");
+    if (archive_base.empty()) return;
+
+    const fs::path datalog = fs::path(archive_base) / "DATALOG";
+    std::error_code ec;
+    if (!fs::exists(datalog, ec)) return;
+
+    // Today's folder is still being written; leave it to the normal session path
+    // so we never ship a half-flushed night.
+    const std::time_t now_t = std::time(nullptr);
+    char today[16] = {0};
+    std::strftime(today, sizeof(today), "%Y%m%d", std::localtime(&now_t));
+
+    for (const auto& entry : fs::directory_iterator(datalog, ec)) {
+        if (ec) break;
+        if (!entry.is_directory()) continue;
+        const std::string folder = entry.path().filename().string();
+        if (folder.size() != 8 || folder == today) continue;
+
+        // Empty folders are the machine reserving a date before flushing EDFs —
+        // nothing to export yet.
+        bool has_files = false;
+        std::error_code fec;
+        for (const auto& f : fs::directory_iterator(entry.path(), fec)) {
+            if (f.is_regular_file()) { has_files = true; break; }
+        }
+        if (!has_files) continue;
+
+        // Checkpoint rows exist only for folders we actually ingested. Empty means
+        // our parser produced nothing for this night — exactly the case that used
+        // to be dropped. markDirty()'s exported_ guard makes this idempotent.
+        if (!db_service_->getCheckpointFilesByFolder(device_id_, folder).empty()) continue;
+
+        std::cout << "[sleephq] " << folder
+                  << " has files but no parsed session - queueing for export"
+                  << std::endl;
+        SleepHqExportService::getInstance().markDirtyIfNotExported(folder);
+    }
+}
 
 } // namespace hms_cpap

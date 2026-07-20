@@ -139,6 +139,71 @@ bool PostgresDatabase::saveSummary(const std::string& device_id,
                             compliance_pct, summary_text);
 }
 
+// -- Equipment profiles + supplies (SDD-004) ----------------------------------
+
+std::vector<IDatabase::EquipmentType> PostgresDatabase::listEquipmentTypes() {
+    return db_->listEquipmentTypes();
+}
+
+std::optional<IDatabase::EquipmentType>
+PostgresDatabase::resolveEquipmentType(const std::string& type_key) {
+    return db_->resolveEquipmentType(type_key);
+}
+
+int PostgresDatabase::addEquipmentType(const EquipmentType& t) {
+    return db_->addEquipmentType(t);
+}
+
+bool PostgresDatabase::updateEquipmentType(int id, const EquipmentType& t) {
+    return db_->updateEquipmentType(id, t);
+}
+
+bool PostgresDatabase::deleteEquipmentType(int id) {
+    return db_->deleteEquipmentType(id);
+}
+
+std::vector<IDatabase::EquipmentProfile>
+PostgresDatabase::listEquipmentProfiles(bool include_deleted) {
+    return db_->listEquipmentProfiles(include_deleted);
+}
+
+std::optional<IDatabase::EquipmentProfile> PostgresDatabase::getEquipmentProfile(int id) {
+    return db_->getEquipmentProfile(id);
+}
+
+int PostgresDatabase::upsertEquipmentProfile(const EquipmentProfile& p) {
+    return db_->upsertEquipmentProfile(p);
+}
+
+bool PostgresDatabase::tombstoneEquipmentProfile(int id) {
+    return db_->tombstoneEquipmentProfile(id);
+}
+
+int PostgresDatabase::ensureDefaultEquipmentProfile() {
+    return db_->ensureDefaultEquipmentProfile();
+}
+
+std::vector<IDatabase::EquipmentItem>
+PostgresDatabase::listEquipmentItems(bool include_history) {
+    return db_->listEquipmentItems(include_history);
+}
+
+std::optional<IDatabase::EquipmentItem> PostgresDatabase::getEquipmentItem(int id) {
+    return db_->getEquipmentItem(id);
+}
+
+bool PostgresDatabase::profileHasMachine(int profile_id, int exclude_item_id) {
+    return db_->profileHasMachine(profile_id, exclude_item_id);
+}
+
+int PostgresDatabase::upsertEquipmentItem(const EquipmentItem& item) {
+    return db_->upsertEquipmentItem(item);
+}
+
+bool PostgresDatabase::tombstoneEquipmentItem(int id) {
+    return db_->tombstoneEquipmentItem(id);
+}
+
 // -- Raw connection -----------------------------------------------------------
 
 void* PostgresDatabase::rawConnection() {

@@ -7,7 +7,24 @@
 
 **Lightweight C++ microservice for CPAP data collection with built-in web dashboard, PDF reports, and Home Assistant integration.**
 
-Automatically extracts sleep therapy data from ResMed and Lowenstein Prisma CPAP machines, parses EDF/WMEDF files with its own signal-analysis engine, and publishes 47+ metrics to Home Assistant via MQTT discovery. Includes a full Angular web UI with clinical-grade signal charting, PDF report generation, O2Ring pulse oximetry, automatic SleepHQ export, LLM-powered session summaries, and ML intelligence. Supports two data sources: ezShare WiFi SD with bridge, or local filesystem.
+> ### ⚠️ Not a medical device
+>
+> HMS-CPAP is a hobbyist data viewer. It is **not** a medical device, it is **not**
+> cleared or approved by any regulator, and it **cannot** diagnose anything or tell
+> you whether your therapy is working. It is not a monitoring or alarm system.
+>
+> **Never change your therapy settings based on this software.** Talk to the
+> clinician who manages your therapy. The numbers here can be wrong: the parsers
+> read undocumented, reverse-engineered formats, and data collection can fail
+> silently.
+>
+> Read **[DISCLAIMER.md](DISCLAIMER.md)** before using this. By using it you accept
+> the [Terms of Use](TERMS.md).
+>
+> This project is independent and is **not affiliated with or endorsed by** ResMed,
+> Philips, Löwenstein, SleepHQ, or any other company named here. See [NOTICE](NOTICE).
+
+Automatically extracts sleep therapy data from ResMed and Lowenstein Prisma CPAP machines, parses EDF/WMEDF files with its own signal-analysis engine, and publishes 47+ metrics to Home Assistant via MQTT discovery. Includes a full Angular web UI with detailed waveform charting, PDF report generation, O2Ring pulse oximetry, automatic SleepHQ export, LLM-powered session summaries, and ML intelligence. Supports two data sources: ezShare WiFi SD with bridge, or local filesystem.
 
 ## Screenshots
 
@@ -66,7 +83,7 @@ All data sources (ezShare WiFi SD, local filesystem) work with both manufacturer
 - **LLM Session Summary** - AI-generated therapy analysis via Ollama (daily, weekly, monthly)
 - **Windows + Linux** - Native builds for both platforms, Docker image for CI
 - **Ultra-Lightweight** - 6.5 MB native binary
-- **425 Unit Tests** - Comprehensive coverage across all services
+- **1,091 Unit Tests** - Comprehensive coverage across all services
 
 ## Table of Contents
 
@@ -578,18 +595,44 @@ Contributions welcome! Please:
 4. Ensure tests pass (`./tests/run_tests`)
 5. Open Pull Request
 
-## License
+## Legal
 
-This project is licensed under the **MIT License** - see [LICENSE](LICENSE) file.
+| Document | What it covers |
+|---|---|
+| **[DISCLAIMER.md](DISCLAIMER.md)** | **Not a medical device.** Read this first. |
+| [LICENSE](LICENSE) | MIT License -- the binding grant |
+| [TERMS.md](TERMS.md) | Terms of use, warranty, liability, contributions |
+| [PRIVACY.md](PRIVACY.md) | What is stored, and every way data can leave your machine |
+| [NOTICE](NOTICE) | Trademarks, independence, clean-room statement, dependencies |
+
+### License
+
+MIT -- see [LICENSE](LICENSE). Use it, modify it, sell it; keep the notice.
+
+### Independence
+
+Not affiliated with, endorsed by, or supported by ResMed, Philips, Lowenstein
+Medical, SleepHQ, or any other company named in this repository. All trademarks
+belong to their owners and are used descriptively. See [NOTICE](NOTICE).
+
+The parsers were written independently from public format documentation and
+inspection of files from physically owned devices. **No OSCAR source code was
+copied or derived from** -- OSCAR is GPLv3 and was consulted only to understand
+device data formats. See [NOTICE](NOTICE) section 2.
+
+### Privacy at a glance
+
+No telemetry, no analytics, no phone-home. Your data stays on your hardware. The
+only outbound integrations are SleepHQ export, CpapDash sync, and LLM summaries
+-- all **off by default** and each one you enable yourself. The service ships
+with **no authentication**; do not expose it to the internet. Details in
+[PRIVACY.md](PRIVACY.md).
 
 ### Third-Party Components
 
-- **libcurl** - MIT-style license
-- **PostgreSQL libpq** - PostgreSQL License
-- **Paho MQTT** - EPL 2.0
-- **miniz** - MIT License (ZIP extraction for Lowenstein therapy.pdat)
-- **Angular** - MIT License
-- **Chart.js** - MIT License
+Full list with licenses in [NOTICE](NOTICE). Direct dependencies include Drogon,
+libcurl, OpenSSL, SQLite, libpqxx/libpq, Paho MQTT (EPL 2.0), JsonCpp,
+nlohmann/json, spdlog, miniz, Angular, and Chart.js.
 
 ## Acknowledgments
 

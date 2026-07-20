@@ -118,6 +118,26 @@ public:
     std::vector<OxiNightlyPoint> getOximetryNightlySpo2(const std::string&, const std::string&,
                                                          const std::string&) override { return {}; }
 
+    // -- Equipment profiles + supplies (SDD-004) ------------------------------
+
+    std::vector<EquipmentType> listEquipmentTypes() override;
+    std::optional<EquipmentType> resolveEquipmentType(const std::string& type_key) override;
+    int  addEquipmentType(const EquipmentType& t) override;
+    bool updateEquipmentType(int id, const EquipmentType& t) override;
+    bool deleteEquipmentType(int id) override;
+
+    std::vector<EquipmentProfile> listEquipmentProfiles(bool include_deleted) override;
+    std::optional<EquipmentProfile> getEquipmentProfile(int id) override;
+    int  upsertEquipmentProfile(const EquipmentProfile& p) override;
+    bool tombstoneEquipmentProfile(int id) override;
+    int  ensureDefaultEquipmentProfile() override;
+
+    std::vector<EquipmentItem> listEquipmentItems(bool include_history) override;
+    std::optional<EquipmentItem> getEquipmentItem(int id) override;
+    bool profileHasMachine(int profile_id, int exclude_item_id) override;
+    int  upsertEquipmentItem(const EquipmentItem& item) override;
+    bool tombstoneEquipmentItem(int id) override;
+
     void* rawConnection() override;
 
     // -- Generic query --------------------------------------------------------
@@ -170,6 +190,11 @@ private:
 
     /// Parse a row from getNightlyMetrics / getMetricsForDateRange into SessionMetrics
     SessionMetrics parseMetricsRow(sqlite3_stmt* stmt, int col_offset = 0);
+
+    /// Parse equipment rows (column order matches the SELECT lists in the .cpp)
+    static EquipmentType    parseEquipmentTypeRow(sqlite3_stmt* stmt);
+    static EquipmentProfile parseEquipmentProfileRow(sqlite3_stmt* stmt);
+    static EquipmentItem    parseEquipmentItemRow(sqlite3_stmt* stmt);
 };
 
 } // namespace hms_cpap

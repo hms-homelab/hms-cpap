@@ -29,6 +29,12 @@ public:
     // Called by the live collector on session completion. No-op if disabled.
     void markDirty(const std::string& date_folder);
 
+    /// Queue a night ONLY if it has not already been exported unchanged. Used by
+    /// the sessionless disk-walk fallback, which re-offers the same folders every
+    /// burst cycle. Returns true if it was queued. markDirty() keeps its original
+    /// unconditional semantics.
+    bool markDirtyIfNotExported(const std::string& date_folder);
+
     // Scan dirty folders and export the first one that has been quiet long
     // enough. Called once per burst cycle. Real exports run on a detached
     // thread, one at a time; `now` is injectable for tests.
@@ -47,6 +53,23 @@ public:
     // Identification.* (uploaded at the import root).
     void exportFolderAsync(const std::string& date_folder,
                            const std::string& datalog_dir, const std::string& root_dir);
+    /// One file destined for a SleepHQ import.
+    /// import_path "" means the import ROOT (card root files); otherwise it is the
+    /// card-accurate relative path, e.g. "DATALOG/20260706".
+    struct ExportFile {
+        std::string name;
+        std::string import_path;
+        std::string local_path;
+    };
+
+    /// Enumerate exactly what exportFolder() would upload. Split out so the file
+    /// SET is testable without a network: a regression here (notably root_dir
+    /// pointing at DATALOG instead of the card root) silently drops STR.edf and
+    /// Identification.*, which SleepHQ accepts and then processes into nothing.
+    static std::vector<ExportFile> collectExportFiles(const std::string& date_folder,
+                                                     const std::string& datalog_dir,
+                                                     const std::string& root_dir);
+
     bool exportFolder(const std::string& date_folder,
                       const std::string& datalog_dir, const std::string& root_dir);
 
@@ -79,6 +102,11 @@ private:
     AppConfig* config_ = nullptr;
     std::mutex mu_;
     std::map<std::string, FolderState> dirty_;
+    /// folder -> the file snapshot at its last SUCCESSFUL export. Guards against
+    /// shipping the same unchanged night twice now that two independent triggers
+    /// (parsed session, and the sessionless disk-walk fallback) can queue it.
+    /// In-memory only: a restart forgets, which re-exports at worst once.
+    std::map<std::string, std::map<std::string, std::uintmax_t>> exported_;
     bool export_in_flight_ = false;  // guarded by mu_
     std::function<bool(const std::string&)> export_hook_;  // tests only
 };

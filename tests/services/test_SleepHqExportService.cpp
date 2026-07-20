@@ -193,3 +193,101 @@ TEST_F(SleepHqExportServiceTest, MissingArchiveDirBlocksWithoutCrashing) {
 }
 
 } // namespace
+
+// ── Card-root file inclusion (ported lesson from hms-cpapdash-api 4d1fb05) ───
+//
+// The cloud incident: "Exports from bridge devices never included STR.edf, and a
+// device without Identification.* on disk produced machine-less imports that
+// processed into nothing visible." hms-cpap had the same end result via a
+// different cause — BackfillService passed config_.local_dir (which IS the
+// DATALOG dir) as root_dir, so the probe looked for DATALOG/STR.edf, found
+// nothing, and silently shipped a night with no summary and no machine.
+//
+// SleepHQ accepts such an import and reports success, so nothing surfaces the
+// loss. These tests pin the file SET, which the folder-name hooks could not see.
+
+namespace {
+
+class ExportFileSet : public ::testing::Test {
+protected:
+    std::filesystem::path card_root_;
+    std::string folder_{"20260706"};
+
+    void SetUp() override {
+        namespace fs = std::filesystem;
+        card_root_ = fs::temp_directory_path() /
+                     ("hms_shq_" + std::to_string(::getpid()) +
+                      std::to_string(reinterpret_cast<uintptr_t>(this)));
+        fs::create_directories(card_root_ / "DATALOG" / folder_);
+        // A real card: root summary/identity files, plus the night's EDFs.
+        for (const char* n : {"STR.edf", "Identification.tgt", "Identification.crc"})
+            std::ofstream(card_root_ / n) << "x";
+        for (const char* n : {"20260706_195339_BRP.edf", "20260706_195339_PLD.edf"})
+            std::ofstream(card_root_ / "DATALOG" / folder_ / n) << "x";
+    }
+    void TearDown() override { std::error_code ec; std::filesystem::remove_all(card_root_, ec); }
+
+    std::string datalog() const { return (card_root_ / "DATALOG" / folder_).string(); }
+};
+
+bool hasFile(const std::vector<SleepHqExportService::ExportFile>& v,
+             const std::string& name, const std::string& import_path) {
+    for (const auto& f : v)
+        if (f.name == name && f.import_path == import_path) return true;
+    return false;
+}
+
+} // namespace
+
+TEST_F(ExportFileSet, CardRootYieldsStrAndIdentificationAtImportRoot) {
+    auto files = SleepHqExportService::collectExportFiles(
+        folder_, datalog(), card_root_.string());
+
+    // Root files must land at the import ROOT ("") so SleepHQ sees a real card.
+    EXPECT_TRUE(hasFile(files, "STR.edf", ""))
+        << "STR.edf missing: the import would have no therapy summary";
+    EXPECT_TRUE(hasFile(files, "Identification.tgt", ""))
+        << "Identification.* missing: SleepHQ would import with no machine";
+    EXPECT_TRUE(hasFile(files, "Identification.crc", ""));
+    // ...and the night's own files under their card-accurate path.
+    EXPECT_TRUE(hasFile(files, "20260706_195339_BRP.edf", "DATALOG/20260706"));
+    EXPECT_TRUE(hasFile(files, "20260706_195339_PLD.edf", "DATALOG/20260706"));
+    EXPECT_EQ(files.size(), 5u);
+}
+
+TEST_F(ExportFileSet, PassingTheDatalogDirAsRootDropsEveryRootFile) {
+    // This is the bug verbatim: root_dir = the DATALOG directory. It must be
+    // visibly lossy, so that if anyone reintroduces it a test fails instead of
+    // SleepHQ quietly accepting a machine-less import.
+    auto files = SleepHqExportService::collectExportFiles(
+        folder_, datalog(), datalog());
+
+    EXPECT_FALSE(hasFile(files, "STR.edf", ""));
+    EXPECT_FALSE(hasFile(files, "Identification.tgt", ""));
+    EXPECT_EQ(files.size(), 2u) << "only the night's EDFs survive - no summary, no machine";
+}
+
+TEST_F(ExportFileSet, CardRootIsTheParentOfLocalDir) {
+    // BackfillService derives root_dir from config_.local_dir, which points AT
+    // DATALOG. Pin the derivation the fix relies on.
+    const std::string local_dir = datalog();                 // .../DATALOG/20260706
+    const auto datalog_parent = std::filesystem::path(local_dir).parent_path(); // .../DATALOG
+    const auto derived_root   = datalog_parent.parent_path();                   // card root
+    EXPECT_EQ(derived_root.string(), card_root_.string());
+
+    auto files = SleepHqExportService::collectExportFiles(
+        folder_, datalog(), derived_root.string());
+    EXPECT_TRUE(hasFile(files, "STR.edf", ""));
+}
+
+TEST_F(ExportFileSet, MissingRootFilesAreSkippedNotFatal) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    fs::remove(card_root_ / "STR.edf", ec);
+    fs::remove(card_root_ / "Identification.tgt", ec);
+    fs::remove(card_root_ / "Identification.crc", ec);
+
+    auto files = SleepHqExportService::collectExportFiles(
+        folder_, datalog(), card_root_.string());
+    EXPECT_EQ(files.size(), 2u) << "a card with no root files still exports its night";
+}

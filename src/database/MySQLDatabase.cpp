@@ -2,10 +2,14 @@
 
 #include "database/MySQLDatabase.h"
 #include "database/SqlDialect.h"
+#include "utils/TimeCompat.h"  // timegm_utc() for started_epoch
 #include <iostream>
 #include <iomanip>
 #include <sstream>
 #include <cstring>
+#include <cstdlib>
+#include <ctime>
+#include <memory>
 #include <stdexcept>
 
 namespace hms_cpap {
@@ -108,6 +112,18 @@ struct ParamBinder {
         bindInt(idx, v.value_or(fallback));
     }
 
+    /// SDD-004: "" is stored as SQL NULL (client_uuid, started_using_at)
+    void bindTextOrNull(int idx, const std::string& v) {
+        if (v.empty()) bindNull(idx);
+        else           bindText(idx, v);
+    }
+
+    /// SDD-004: -1 is stored as SQL NULL (replace_after_days, default_replace_after_days)
+    void bindDaysOrNull(int idx, int days) {
+        if (days < 0) bindNull(idx);
+        else          bindInt(idx, days);
+    }
+
     MYSQL_BIND* data() { return binds.data(); }
 };
 
@@ -128,6 +144,8 @@ struct ResultBinder {
         my_bool     error = 0;
     };
     std::vector<Col> cols;
+    /// Backing storage for columns wider than Col::str_buf (see bindColStringN).
+    std::vector<std::unique_ptr<char[]>> wide_bufs;
 
     explicit ResultBinder(size_t n) : binds(n), cols(n) {
         std::memset(binds.data(), 0, sizeof(MYSQL_BIND) * n);
@@ -171,6 +189,20 @@ struct ResultBinder {
         b.error = &c.error;
     }
 
+    /// Like bindColString but for columns that do not fit in Col::str_buf
+    /// (e.g. free-text notes). Storage lives in wide_bufs and outlives the fetch.
+    void bindColStringN(int idx, size_t max_len) {
+        wide_bufs.emplace_back(new char[max_len]());
+        auto& c = cols[idx];
+        auto& b = binds[idx];
+        b.buffer_type = MYSQL_TYPE_STRING;
+        b.buffer = wide_bufs.back().get();
+        b.buffer_length = static_cast<unsigned long>(max_len);
+        b.length = &c.length;
+        b.is_null = &c.is_null;
+        b.error = &c.error;
+    }
+
     double colDouble(int idx) const {
         return cols[idx].is_null ? 0.0 : cols[idx].dbl_val;
     }
@@ -182,7 +214,11 @@ struct ResultBinder {
     }
     std::string colText(int idx) const {
         if (cols[idx].is_null) return "";
-        return std::string(cols[idx].str_buf, cols[idx].length);
+        // *length is the server-side length, which can exceed our buffer when the
+        // value was truncated -- clamp so we never read past the binding.
+        unsigned long len = cols[idx].length;
+        if (len > binds[idx].buffer_length) len = binds[idx].buffer_length;
+        return std::string(static_cast<const char*>(binds[idx].buffer), len);
     }
     bool colIsNull(int idx) const { return cols[idx].is_null != 0; }
 
@@ -258,6 +294,17 @@ bool MySQLDatabase::connect() {
 
     // Use UTF-8
     mysql_set_character_set(conn_, "utf8mb4");
+
+    // Pin the session to UTC. SDD-004 renders created_at/updated_at with a literal
+    // trailing 'Z', and those columns default to NOW() — on a server running local
+    // time that would stamp a local wall clock and label it UTC, so the same row
+    // would compare differently against the SQLite/Postgres backends and corrupt
+    // the sync layer's last-write-wins. Postgres converts explicitly and SQLite's
+    // datetime('now') is UTC by definition; this makes MySQL agree.
+    if (mysql_query(conn_, "SET time_zone = '+00:00'") != 0) {
+        std::cerr << "MySQL: WARNING - could not set session time_zone to UTC: "
+                  << mysql_error(conn_) << std::endl;
+    }
 
     createSchema();
 
@@ -498,6 +545,91 @@ void MySQLDatabase::createSchema() {
             summary_text    TEXT NOT NULL,
             created_at      DATETIME NOT NULL DEFAULT NOW()
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    )");
+
+    // -- SDD-004: equipment profiles + supplies -------------------------------
+    // Local-first mirror of the cloud model (hms-cpapdash-api SDD-035), minus
+    // user_id: hms-cpap is single-household. A profile ("setup") owns exactly one
+    // machine plus its accessories; supply wear is COMPUTED on read, never stored.
+    // client_uuid exists only so optional cloud sync is idempotent; it is unused
+    // offline. Keep this in lockstep with scripts/schema_mysql.sql.
+    //
+    // started_using_at is VARCHAR, not DATETIME, on purpose: it is an ISO-8601
+    // string that must round-trip byte-for-byte with the SQLite/Postgres backends
+    // and the phone app so all three compute identical due dates.
+
+    // cpap_equipment_types -- catalog: seeded system defaults + user customs
+    exec(R"(
+        CREATE TABLE IF NOT EXISTS cpap_equipment_types (
+            id                          INT AUTO_INCREMENT PRIMARY KEY,
+            type_key                    VARCHAR(64) NOT NULL,
+            label                       VARCHAR(128) NOT NULL,
+            category                    VARCHAR(32) NOT NULL,
+            default_replace_after_days  INT,
+            is_system                   TINYINT(1) DEFAULT 0,
+            active                      TINYINT(1) DEFAULT 1,
+            created_at                  DATETIME DEFAULT NOW(),
+            updated_at                  DATETIME DEFAULT NOW() ON UPDATE NOW(),
+            UNIQUE KEY uq_eq_type_key (type_key)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    )");
+
+    // cpap_equipment_profiles -- named setups.
+    // MySQL UNIQUE allows repeated NULLs, so uq_eq_profile_uuid is exactly the
+    // "UNIQUE WHERE client_uuid IS NOT NULL" the other backends express as a
+    // partial index.
+    exec(R"(
+        CREATE TABLE IF NOT EXISTS cpap_equipment_profiles (
+            id           INT AUTO_INCREMENT PRIMARY KEY,
+            client_uuid  VARCHAR(64),
+            name         VARCHAR(128) NOT NULL,
+            active       TINYINT(1) DEFAULT 1,
+            deleted      TINYINT(1) DEFAULT 0,
+            created_at   DATETIME DEFAULT NOW(),
+            updated_at   DATETIME DEFAULT NOW() ON UPDATE NOW(),
+            UNIQUE KEY uq_eq_profile_uuid (client_uuid)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    )");
+
+    // cpap_equipment_items -- the gear; category is denormalized from the type.
+    // HARD RULE "at most one live machine per profile" CANNOT be an index here:
+    // MySQL has no partial/filtered indexes. profileHasMachine() is the guard.
+    exec(R"(
+        CREATE TABLE IF NOT EXISTS cpap_equipment_items (
+            id                  INT AUTO_INCREMENT PRIMARY KEY,
+            profile_id          INT NOT NULL,
+            client_uuid         VARCHAR(64),
+            type_key            VARCHAR(64) NOT NULL,
+            category            VARCHAR(32) NOT NULL DEFAULT 'accessory',
+            brand               VARCHAR(128) DEFAULT '',
+            model               VARCHAR(128) DEFAULT '',
+            variant             VARCHAR(128),
+            started_using_at    VARCHAR(32),
+            replace_after_days  INT,
+            notes               VARCHAR(1000),
+            active              TINYINT(1) DEFAULT 1,
+            deleted             TINYINT(1) DEFAULT 0,
+            created_at          DATETIME DEFAULT NOW(),
+            updated_at          DATETIME DEFAULT NOW() ON UPDATE NOW(),
+            UNIQUE KEY uq_eq_item_uuid (client_uuid),
+            KEY idx_eq_item_profile (profile_id, active),
+            FOREIGN KEY (profile_id) REFERENCES cpap_equipment_profiles(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    )");
+
+    // Seed the six system types verbatim from the app's supply_defaults.dart, so
+    // local, cloud and the phone app all compute the same due dates.
+    // INSERT IGNORE + UNIQUE(type_key) makes this idempotent.
+    exec(R"(
+        INSERT IGNORE INTO cpap_equipment_types
+            (type_key, label, category, default_replace_after_days, is_system)
+        VALUES
+            ('machine',    'Machine',    'machine',   NULL, 1),
+            ('mask',       'Mask',       'accessory',   90, 1),
+            ('tubing',     'Tubing',     'accessory',   90, 1),
+            ('filter',     'Filter',     'accessory',   30, 1),
+            ('humidifier', 'Humidifier', 'accessory',  180, 1),
+            ('headgear',   'Headgear',   'accessory',  180, 1)
     )");
 
     // Indexes
@@ -2041,6 +2173,777 @@ bool MySQLDatabase::saveSummary(
     std::cout << "MySQL: Saved " << period << " summary (" << range_start
               << " to " << range_end << ", " << nights_count << " nights)" << std::endl;
     return true;
+}
+
+// ---------------------------------------------------------------------------
+// SDD-004: equipment profiles + supplies
+//
+// Conventions (shared by all three backends, see IDatabase.h):
+//   replace_after_days == -1  <-> SQL NULL ("use the type default")
+//   client_uuid == ""         <-> SQL NULL
+//   started_using_at == ""    <-> SQL NULL; started_epoch is derived on read
+// MySQL stores booleans as TINYINT(1) 0/1 and timestamps as DATETIME, which are
+// read back through DATE_FORMAT so the ISO-ish strings match the other backends.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// "YYYY-MM-DD", "YYYY-MM-DD HH:MM:SS" or "YYYY-MM-DDTHH:MM:SS[Z|+hh:mm]".
+// Returns unix seconds (UTC), or 0 when unset/unparseable.
+long long iso_to_epoch(const std::string& iso) {
+    if (iso.size() < 10) return 0;
+
+    std::tm tm{};
+    tm.tm_year = std::atoi(iso.substr(0, 4).c_str()) - 1900;
+    tm.tm_mon  = std::atoi(iso.substr(5, 2).c_str()) - 1;
+    tm.tm_mday = std::atoi(iso.substr(8, 2).c_str());
+    if (iso.size() >= 19) {
+        tm.tm_hour = std::atoi(iso.substr(11, 2).c_str());
+        tm.tm_min  = std::atoi(iso.substr(14, 2).c_str());
+        tm.tm_sec  = std::atoi(iso.substr(17, 2).c_str());
+    }
+    if (tm.tm_mon < 0 || tm.tm_mon > 11 || tm.tm_mday < 1 || tm.tm_mday > 31) return 0;
+
+    time_t t = timegm_utc(&tm);
+    return t < 0 ? 0 : static_cast<long long>(t);
+}
+
+/// started_using_at is user-supplied and stored VARCHAR, so it may arrive
+/// date-only ("2024-03-01"), space-separated, or already ISO-Z. Postgres
+/// re-renders it as full ISO-Z on read; normalise here so the column round-trips
+/// identically on every backend. "" stays "" (unset).
+std::string normalize_started(const std::string& ts) {
+    if (ts.empty()) return ts;
+    if (ts.size() == 10) return ts + "T00:00:00Z";   // date-only
+    if (ts.size() < 19) return ts;
+    std::string out = ts.substr(0, 19);
+    out[10] = 'T';
+    out += 'Z';
+    return out;
+}
+
+/// mysql_stmt_init + prepare with the file's usual error logging.
+bool eqPrepare(MYSQL* conn, MysqlStmtGuard& g, const std::string& sql, const char* who) {
+    g.stmt = mysql_stmt_init(conn);
+    if (!g.stmt) {
+        std::cerr << "MySQL: " << who << " stmt_init failed: " << mysql_error(conn) << std::endl;
+        return false;
+    }
+    if (mysql_stmt_prepare(g.stmt, sql.c_str(), sql.size()) != 0) {
+        std::cerr << "MySQL: " << who << " prepare error: " << mysql_stmt_error(g.stmt) << std::endl;
+        return false;
+    }
+    return true;
+}
+
+/// SELECT EXISTS(...) with a single int parameter.
+bool eqExistsById(MYSQL* conn, const char* sql, int id, const char* who) {
+    MysqlStmtGuard g;
+    if (!eqPrepare(conn, g, sql, who)) return false;
+
+    ParamBinder p(1);
+    p.bindInt(0, id);
+    mysql_stmt_bind_param(g.stmt, p.data());
+    if (mysql_stmt_execute(g.stmt) != 0) {
+        std::cerr << "MySQL: " << who << " error: " << mysql_stmt_error(g.stmt) << std::endl;
+        return false;
+    }
+
+    ResultBinder r(1);
+    r.bindColInt(0);
+    mysql_stmt_bind_result(g.stmt, r.data());
+    mysql_stmt_store_result(g.stmt);
+
+    bool exists = false;
+    if (mysql_stmt_fetch(g.stmt) == 0) exists = r.colInt(0) != 0;
+    return exists;
+}
+
+// MySQL reports 0 affected rows when an UPDATE writes identical values (and
+// updated_at = NOW() has only second resolution), whereas SQLite counts matched
+// rows. Treat "no change but the row is still there" as success so all three
+// backends agree.
+bool eqUpdateSucceeded(MYSQL* conn, MYSQL_STMT* stmt, const char* exists_sql,
+                       int id, const char* who) {
+    if (mysql_stmt_affected_rows(stmt) > 0) return true;
+    return eqExistsById(conn, exists_sql, id, who);
+}
+
+// ISO-8601 UTC with a trailing Z, byte-identical to what SQLite and Postgres
+// emit: the sync layer does last-write-wins by comparing these strings, so the
+// shape has to match exactly. 'T' and 'Z' are literals (no % prefix).
+const char* kEqTsFmt = "'%Y-%m-%dT%H:%i:%sZ'";
+
+const std::string kTypeCols =
+    "id, type_key, label, category, default_replace_after_days, is_system, active";
+
+const std::string kProfileCols =
+    std::string("id, client_uuid, name, active, deleted, ")
+    + "DATE_FORMAT(created_at, " + kEqTsFmt + "), "
+    + "DATE_FORMAT(updated_at, " + kEqTsFmt + ")";
+
+const std::string kItemCols =
+    std::string("id, profile_id, client_uuid, type_key, category, brand, model, variant, ")
+    + "started_using_at, replace_after_days, notes, active, deleted, "
+    + "DATE_FORMAT(created_at, " + kEqTsFmt + "), "
+    + "DATE_FORMAT(updated_at, " + kEqTsFmt + ")";
+
+// Column buffers are sized in BYTES, but the schema is utf8mb4 and the widths
+// are CHARACTERS -- a multi-byte value would be silently truncated on fetch, so
+// every text buffer below is 4 bytes per declared character.
+constexpr size_t kUtf8mb4 = 4;
+
+void bindTypeRow(ResultBinder& r) {
+    r.bindColInt(0);                          // id
+    r.bindColString(1, 64 * kUtf8mb4);        // type_key
+    r.bindColStringN(2, 128 * kUtf8mb4);      // label
+    r.bindColString(3, 32 * kUtf8mb4);        // category
+    r.bindColInt(4);              // default_replace_after_days (nullable)
+    r.bindColInt(5);              // is_system
+    r.bindColInt(6);              // active
+}
+
+IDatabase::EquipmentType parseTypeRow(const ResultBinder& r) {
+    IDatabase::EquipmentType t;
+    t.id                         = r.colInt(0);
+    t.type_key                   = r.colText(1);
+    t.label                      = r.colText(2);
+    t.category                   = r.colText(3);
+    t.default_replace_after_days = r.colIsNull(4) ? -1 : r.colInt(4);
+    t.is_system                  = r.colInt(5) != 0;
+    t.active                     = r.colInt(6) != 0;
+    return t;
+}
+
+void bindProfileRow(ResultBinder& r) {
+    r.bindColInt(0);                          // id
+    r.bindColString(1, 64 * kUtf8mb4);        // client_uuid
+    r.bindColStringN(2, 128 * kUtf8mb4);      // name
+    r.bindColInt(3);                          // active
+    r.bindColInt(4);                          // deleted
+    r.bindColString(5, 32);                   // created_at (ASCII ISO-8601)
+    r.bindColString(6, 32);                   // updated_at (ASCII ISO-8601)
+}
+
+IDatabase::EquipmentProfile parseProfileRow(const ResultBinder& r) {
+    IDatabase::EquipmentProfile p;
+    p.id          = r.colInt(0);
+    p.client_uuid = r.colText(1);
+    p.name        = r.colText(2);
+    p.active      = r.colInt(3) != 0;
+    p.deleted     = r.colInt(4) != 0;
+    p.created_at  = r.colText(5);
+    p.updated_at  = r.colText(6);
+    return p;
+}
+
+void bindItemRow(ResultBinder& r) {
+    r.bindColInt(0);                          // id
+    r.bindColInt(1);                          // profile_id
+    r.bindColString(2, 64 * kUtf8mb4);        // client_uuid
+    r.bindColString(3, 64 * kUtf8mb4);        // type_key
+    r.bindColString(4, 32 * kUtf8mb4);        // category
+    r.bindColStringN(5, 128 * kUtf8mb4);      // brand
+    r.bindColStringN(6, 128 * kUtf8mb4);      // model
+    r.bindColStringN(7, 128 * kUtf8mb4);      // variant
+    r.bindColString(8, 32);                   // started_using_at (ASCII ISO-8601)
+    r.bindColInt(9);                          // replace_after_days (nullable)
+    r.bindColStringN(10, 1000 * kUtf8mb4);    // notes (VARCHAR(1000) utf8mb4)
+    r.bindColInt(11);                         // active
+    r.bindColInt(12);                         // deleted
+    r.bindColString(13, 32);                  // created_at (ASCII ISO-8601)
+    r.bindColString(14, 32);                  // updated_at (ASCII ISO-8601)
+}
+
+IDatabase::EquipmentItem parseItemRow(const ResultBinder& r) {
+    IDatabase::EquipmentItem it;
+    it.id                 = r.colInt(0);
+    it.profile_id         = r.colInt(1);
+    it.client_uuid        = r.colText(2);
+    it.type_key           = r.colText(3);
+    it.category           = r.colText(4);
+    it.brand              = r.colText(5);
+    it.model              = r.colText(6);
+    it.variant            = r.colText(7);
+    it.started_using_at   = normalize_started(r.colText(8));
+    it.started_epoch      = iso_to_epoch(it.started_using_at);
+    it.replace_after_days = r.colIsNull(9) ? -1 : r.colInt(9);
+    it.notes              = r.colText(10);
+    it.active             = r.colInt(11) != 0;
+    it.deleted            = r.colInt(12) != 0;
+    it.created_at         = r.colText(13);
+    it.updated_at         = r.colText(14);
+    return it;
+}
+
+} // namespace
+
+// -- Types --------------------------------------------------------------------
+
+std::vector<IDatabase::EquipmentType> MySQLDatabase::listEquipmentTypes() {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::vector<EquipmentType> out;
+    if (!conn_) return out;
+
+    const std::string sql = "SELECT " + kTypeCols +
+        " FROM cpap_equipment_types WHERE active = 1"
+        " ORDER BY is_system DESC, id";
+
+    MysqlStmtGuard g;
+    if (!eqPrepare(conn_, g, sql, "listEquipmentTypes")) return out;
+
+    if (mysql_stmt_execute(g.stmt) != 0) {
+        std::cerr << "MySQL: listEquipmentTypes error: " << mysql_stmt_error(g.stmt) << std::endl;
+        return out;
+    }
+
+    ResultBinder r(7);
+    bindTypeRow(r);
+    mysql_stmt_bind_result(g.stmt, r.data());
+    mysql_stmt_store_result(g.stmt);
+
+    while (mysql_stmt_fetch(g.stmt) == 0) out.push_back(parseTypeRow(r));
+    return out;
+}
+
+std::optional<IDatabase::EquipmentType>
+MySQLDatabase::resolveEquipmentType(const std::string& type_key) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!conn_) return std::nullopt;
+
+    // Deliberately NOT filtered on active: an item may still reference a type
+    // the user has since retired, and SupplyStatus needs its default interval.
+    const std::string sql = "SELECT " + kTypeCols +
+        " FROM cpap_equipment_types WHERE type_key = ?";
+
+    MysqlStmtGuard g;
+    if (!eqPrepare(conn_, g, sql, "resolveEquipmentType")) return std::nullopt;
+
+    ParamBinder p(1);
+    p.bindText(0, type_key);
+    mysql_stmt_bind_param(g.stmt, p.data());
+    if (mysql_stmt_execute(g.stmt) != 0) {
+        std::cerr << "MySQL: resolveEquipmentType error: " << mysql_stmt_error(g.stmt) << std::endl;
+        return std::nullopt;
+    }
+
+    ResultBinder r(7);
+    bindTypeRow(r);
+    mysql_stmt_bind_result(g.stmt, r.data());
+    mysql_stmt_store_result(g.stmt);
+
+    if (mysql_stmt_fetch(g.stmt) == 0) return parseTypeRow(r);
+    return std::nullopt;
+}
+
+int MySQLDatabase::addEquipmentType(const EquipmentType& t) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!conn_) return -1;
+
+    const char* sql = R"(
+        INSERT INTO cpap_equipment_types
+            (type_key, label, category, default_replace_after_days, is_system, active)
+        VALUES (?, ?, ?, ?, ?, ?)
+    )";
+
+    MysqlStmtGuard g;
+    if (!eqPrepare(conn_, g, sql, "addEquipmentType")) return -1;
+
+    ParamBinder p(6);
+    p.bindText(0, t.type_key);
+    p.bindText(1, t.label);
+    p.bindText(2, t.category);
+    p.bindDaysOrNull(3, t.default_replace_after_days);
+    p.bindInt(4, t.is_system ? 1 : 0);
+    p.bindInt(5, t.active ? 1 : 0);
+    mysql_stmt_bind_param(g.stmt, p.data());
+
+    if (mysql_stmt_execute(g.stmt) != 0) {
+        // Duplicate type_key lands here (UNIQUE constraint)
+        std::cerr << "MySQL: addEquipmentType error: " << mysql_stmt_error(g.stmt) << std::endl;
+        return -1;
+    }
+    return static_cast<int>(mysql_stmt_insert_id(g.stmt));
+}
+
+bool MySQLDatabase::updateEquipmentType(int id, const EquipmentType& t) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!conn_) return false;
+
+    // is_system is never reassigned by an update, and on a seeded row type_key
+    // and category are pinned as well: renaming the 'machine' type would orphan
+    // every item referencing it.
+    const char* sql = R"(
+        UPDATE cpap_equipment_types SET
+            type_key = CASE WHEN is_system = 1 THEN type_key ELSE ? END,
+            label    = ?,
+            category = CASE WHEN is_system = 1 THEN category ELSE ? END,
+            default_replace_after_days = ?, active = ?,
+            updated_at = NOW()
+        WHERE id = ?
+    )";
+
+    MysqlStmtGuard g;
+    if (!eqPrepare(conn_, g, sql, "updateEquipmentType")) return false;
+
+    ParamBinder p(6);
+    p.bindText(0, t.type_key);
+    p.bindText(1, t.label);
+    p.bindText(2, t.category);
+    p.bindDaysOrNull(3, t.default_replace_after_days);
+    p.bindInt(4, t.active ? 1 : 0);
+    p.bindInt(5, id);
+    mysql_stmt_bind_param(g.stmt, p.data());
+
+    if (mysql_stmt_execute(g.stmt) != 0) {
+        std::cerr << "MySQL: updateEquipmentType error: " << mysql_stmt_error(g.stmt) << std::endl;
+        return false;
+    }
+    return eqUpdateSucceeded(conn_, g.stmt,
+        "SELECT EXISTS(SELECT 1 FROM cpap_equipment_types WHERE id = ?)",
+        id, "updateEquipmentType");
+}
+
+bool MySQLDatabase::deleteEquipmentType(int id) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!conn_) return false;
+
+    // Soft delete, and never a seeded system row.
+    const char* sql = R"(
+        UPDATE cpap_equipment_types
+           SET active = 0, updated_at = NOW()
+         WHERE id = ? AND is_system = 0
+    )";
+
+    MysqlStmtGuard g;
+    if (!eqPrepare(conn_, g, sql, "deleteEquipmentType")) return false;
+
+    ParamBinder p(1);
+    p.bindInt(0, id);
+    mysql_stmt_bind_param(g.stmt, p.data());
+
+    if (mysql_stmt_execute(g.stmt) != 0) {
+        std::cerr << "MySQL: deleteEquipmentType error: " << mysql_stmt_error(g.stmt) << std::endl;
+        return false;
+    }
+    return eqUpdateSucceeded(conn_, g.stmt,
+        "SELECT EXISTS(SELECT 1 FROM cpap_equipment_types WHERE id = ? AND is_system = 0)",
+        id, "deleteEquipmentType");
+}
+
+// -- Profiles -----------------------------------------------------------------
+
+std::vector<IDatabase::EquipmentProfile>
+MySQLDatabase::listEquipmentProfiles(bool include_deleted) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::vector<EquipmentProfile> out;
+    if (!conn_) return out;
+
+    const std::string sql = "SELECT " + kProfileCols +
+        " FROM cpap_equipment_profiles WHERE (deleted = 0 OR ? = 1) ORDER BY id";
+
+    MysqlStmtGuard g;
+    if (!eqPrepare(conn_, g, sql, "listEquipmentProfiles")) return out;
+
+    ParamBinder p(1);
+    p.bindInt(0, include_deleted ? 1 : 0);
+    mysql_stmt_bind_param(g.stmt, p.data());
+
+    if (mysql_stmt_execute(g.stmt) != 0) {
+        std::cerr << "MySQL: listEquipmentProfiles error: " << mysql_stmt_error(g.stmt) << std::endl;
+        return out;
+    }
+
+    ResultBinder r(7);
+    bindProfileRow(r);
+    mysql_stmt_bind_result(g.stmt, r.data());
+    mysql_stmt_store_result(g.stmt);
+
+    while (mysql_stmt_fetch(g.stmt) == 0) out.push_back(parseProfileRow(r));
+    return out;
+}
+
+std::optional<IDatabase::EquipmentProfile> MySQLDatabase::getEquipmentProfile(int id) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!conn_) return std::nullopt;
+
+    const std::string sql = "SELECT " + kProfileCols +
+        // A tombstoned profile must read as absent: this is the controller's
+        // existence check, not a sync accessor.
+        " FROM cpap_equipment_profiles WHERE id = ? AND deleted = 0";
+
+    MysqlStmtGuard g;
+    if (!eqPrepare(conn_, g, sql, "getEquipmentProfile")) return std::nullopt;
+
+    ParamBinder p(1);
+    p.bindInt(0, id);
+    mysql_stmt_bind_param(g.stmt, p.data());
+
+    if (mysql_stmt_execute(g.stmt) != 0) {
+        std::cerr << "MySQL: getEquipmentProfile error: " << mysql_stmt_error(g.stmt) << std::endl;
+        return std::nullopt;
+    }
+
+    ResultBinder r(7);
+    bindProfileRow(r);
+    mysql_stmt_bind_result(g.stmt, r.data());
+    mysql_stmt_store_result(g.stmt);
+
+    if (mysql_stmt_fetch(g.stmt) == 0) return parseProfileRow(r);
+    return std::nullopt;
+}
+
+int MySQLDatabase::upsertEquipmentProfile(const EquipmentProfile& p) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!conn_) return -1;
+
+    if (p.id > 0) {
+        const char* sql = R"(
+            UPDATE cpap_equipment_profiles SET
+                client_uuid = ?, name = ?, active = ?, deleted = ?,
+                updated_at = NOW()
+            WHERE id = ?
+        )";
+
+        MysqlStmtGuard g;
+        if (!eqPrepare(conn_, g, sql, "upsertEquipmentProfile")) return -1;
+
+        ParamBinder b(5);
+        b.bindTextOrNull(0, p.client_uuid);
+        b.bindText(1, p.name);
+        b.bindInt(2, p.active ? 1 : 0);
+        b.bindInt(3, p.deleted ? 1 : 0);
+        b.bindInt(4, p.id);
+        mysql_stmt_bind_param(g.stmt, b.data());
+
+        if (mysql_stmt_execute(g.stmt) != 0) {
+            std::cerr << "MySQL: upsertEquipmentProfile error: "
+                      << mysql_stmt_error(g.stmt) << std::endl;
+            return -1;
+        }
+        return eqUpdateSucceeded(conn_, g.stmt,
+            "SELECT EXISTS(SELECT 1 FROM cpap_equipment_profiles WHERE id = ?)",
+            p.id, "upsertEquipmentProfile") ? p.id : -1;
+    }
+
+    const char* sql = R"(
+        INSERT INTO cpap_equipment_profiles
+            (client_uuid, name, active, deleted)
+        VALUES (?, ?, ?, ?)
+    )";
+
+    MysqlStmtGuard g;
+    if (!eqPrepare(conn_, g, sql, "upsertEquipmentProfile")) return -1;
+
+    ParamBinder b(4);
+    b.bindTextOrNull(0, p.client_uuid);
+    b.bindText(1, p.name);
+    b.bindInt(2, p.active ? 1 : 0);
+    b.bindInt(3, p.deleted ? 1 : 0);
+    mysql_stmt_bind_param(g.stmt, b.data());
+
+    if (mysql_stmt_execute(g.stmt) != 0) {
+        std::cerr << "MySQL: upsertEquipmentProfile error: "
+                  << mysql_stmt_error(g.stmt) << std::endl;
+        return -1;
+    }
+    return static_cast<int>(mysql_stmt_insert_id(g.stmt));
+}
+
+bool MySQLDatabase::tombstoneEquipmentProfile(int id) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!conn_) return false;
+
+    // Soft cascade: the FK cascade only fires on a hard DELETE, so the items of a
+    // tombstoned profile are tombstoned explicitly. Clearing active as well frees
+    // the one-live-machine slot for the profile.
+    const char* sql_profile = R"(
+        UPDATE cpap_equipment_profiles
+           SET deleted = 1, active = 0, updated_at = NOW()
+         WHERE id = ? AND deleted = 0
+    )";
+    const char* sql_items = R"(
+        UPDATE cpap_equipment_items
+           SET deleted = 1, active = 0, updated_at = NOW()
+         WHERE profile_id = ? AND deleted = 0
+    )";
+
+    MysqlStmtGuard g;
+    if (!eqPrepare(conn_, g, sql_profile, "tombstoneEquipmentProfile")) return false;
+
+    ParamBinder p(1);
+    p.bindInt(0, id);
+    mysql_stmt_bind_param(g.stmt, p.data());
+
+    if (mysql_stmt_execute(g.stmt) != 0) {
+        std::cerr << "MySQL: tombstoneEquipmentProfile error: "
+                  << mysql_stmt_error(g.stmt) << std::endl;
+        return false;
+    }
+    // deleted flips 0 -> 1, so a matched row always reports as affected here.
+    if (mysql_stmt_affected_rows(g.stmt) == 0) return false;
+
+    MysqlStmtGuard gi;
+    if (eqPrepare(conn_, gi, sql_items, "tombstoneEquipmentProfile items")) {
+        ParamBinder pi(1);
+        pi.bindInt(0, id);
+        mysql_stmt_bind_param(gi.stmt, pi.data());
+        if (mysql_stmt_execute(gi.stmt) != 0) {
+            std::cerr << "MySQL: tombstoneEquipmentProfile items error: "
+                      << mysql_stmt_error(gi.stmt) << std::endl;
+        }
+    }
+    return true;
+}
+
+int MySQLDatabase::ensureDefaultEquipmentProfile() {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!conn_) return -1;
+
+    const char* sql = R"(
+        SELECT id FROM cpap_equipment_profiles WHERE deleted = 0
+        ORDER BY active DESC, id LIMIT 1
+    )";
+
+    MysqlStmtGuard g;
+    if (!eqPrepare(conn_, g, sql, "ensureDefaultEquipmentProfile")) return -1;
+
+    if (mysql_stmt_execute(g.stmt) != 0) {
+        std::cerr << "MySQL: ensureDefaultEquipmentProfile error: "
+                  << mysql_stmt_error(g.stmt) << std::endl;
+        return -1;
+    }
+
+    ResultBinder r(1);
+    r.bindColInt(0);
+    mysql_stmt_bind_result(g.stmt, r.data());
+    mysql_stmt_store_result(g.stmt);
+
+    if (mysql_stmt_fetch(g.stmt) == 0) return r.colInt(0);
+
+    EquipmentProfile p;
+    p.name = "My CPAP";
+    int id = upsertEquipmentProfile(p);
+    if (id > 0) {
+        std::cout << "MySQL: Created default equipment profile 'My CPAP' (id "
+                  << id << ")" << std::endl;
+    }
+    return id;
+}
+
+// -- Items --------------------------------------------------------------------
+
+std::vector<IDatabase::EquipmentItem> MySQLDatabase::listEquipmentItems(bool include_history) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::vector<EquipmentItem> out;
+    if (!conn_) return out;
+
+    // Tombstones stay hidden either way; include_history adds retired rows.
+    const std::string sql = "SELECT " + kItemCols +
+        " FROM cpap_equipment_items"
+        " WHERE deleted = 0 AND (active = 1 OR ? = 1)"
+        " ORDER BY CASE WHEN category = 'machine' THEN 0 ELSE 1 END, id";
+
+    MysqlStmtGuard g;
+    if (!eqPrepare(conn_, g, sql, "listEquipmentItems")) return out;
+
+    ParamBinder p(1);
+    p.bindInt(0, include_history ? 1 : 0);
+    mysql_stmt_bind_param(g.stmt, p.data());
+
+    if (mysql_stmt_execute(g.stmt) != 0) {
+        std::cerr << "MySQL: listEquipmentItems error: " << mysql_stmt_error(g.stmt) << std::endl;
+        return out;
+    }
+
+    ResultBinder r(15);
+    bindItemRow(r);
+    mysql_stmt_bind_result(g.stmt, r.data());
+    mysql_stmt_store_result(g.stmt);
+
+    while (mysql_stmt_fetch(g.stmt) == 0) out.push_back(parseItemRow(r));
+    return out;
+}
+
+std::optional<IDatabase::EquipmentItem> MySQLDatabase::getEquipmentItem(int id) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!conn_) return std::nullopt;
+
+    const std::string sql = "SELECT " + kItemCols +
+        // Tombstones read as absent (see getEquipmentProfile).
+        " FROM cpap_equipment_items WHERE id = ? AND deleted = 0";
+
+    MysqlStmtGuard g;
+    if (!eqPrepare(conn_, g, sql, "getEquipmentItem")) return std::nullopt;
+
+    ParamBinder p(1);
+    p.bindInt(0, id);
+    mysql_stmt_bind_param(g.stmt, p.data());
+
+    if (mysql_stmt_execute(g.stmt) != 0) {
+        std::cerr << "MySQL: getEquipmentItem error: " << mysql_stmt_error(g.stmt) << std::endl;
+        return std::nullopt;
+    }
+
+    ResultBinder r(15);
+    bindItemRow(r);
+    mysql_stmt_bind_result(g.stmt, r.data());
+    mysql_stmt_store_result(g.stmt);
+
+    if (mysql_stmt_fetch(g.stmt) == 0) return parseItemRow(r);
+    return std::nullopt;
+}
+
+bool MySQLDatabase::profileHasMachine(int profile_id, int exclude_item_id) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!conn_) return false;
+
+    // MySQL has no partial unique index, so this IS the enforcement of the
+    // one-live-machine-per-profile rule on this backend.
+    const char* sql = R"(
+        SELECT EXISTS(
+            SELECT 1 FROM cpap_equipment_items
+             WHERE profile_id = ? AND category = 'machine'
+               AND active = 1 AND deleted = 0
+               AND id <> ?
+        )
+    )";
+
+    MysqlStmtGuard g;
+    if (!eqPrepare(conn_, g, sql, "profileHasMachine")) return false;
+
+    ParamBinder p(2);
+    p.bindInt(0, profile_id);
+    p.bindInt(1, exclude_item_id);
+    mysql_stmt_bind_param(g.stmt, p.data());
+
+    if (mysql_stmt_execute(g.stmt) != 0) {
+        std::cerr << "MySQL: profileHasMachine error: " << mysql_stmt_error(g.stmt) << std::endl;
+        return false;
+    }
+
+    ResultBinder r(1);
+    r.bindColInt(0);
+    mysql_stmt_bind_result(g.stmt, r.data());
+    mysql_stmt_store_result(g.stmt);
+
+    bool has = false;
+    if (mysql_stmt_fetch(g.stmt) == 0) has = r.colInt(0) != 0;
+    return has;
+}
+
+int MySQLDatabase::upsertEquipmentItem(const EquipmentItem& item) {
+    // An empty category is resolved from the type before anything is written --
+    // storing '' would make category = 'machine' never match and silently disable
+    // the one-machine-per-profile rule. Unknown types fall back to 'accessory'.
+    std::string category = item.category;
+    if (category.empty()) {
+        if (auto t = resolveEquipmentType(item.type_key)) category = t->category;
+        if (category.empty()) category = "accessory";
+    }
+
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!conn_) return -1;
+
+    // NOTE: unlike SQLite/Postgres there is no DB-level backstop for the
+    // one-live-machine rule here -- MySQL cannot express a partial unique index.
+    // Callers must consult profileHasMachine() before writing a machine row.
+    if (item.id > 0) {
+        const char* sql = R"(
+            UPDATE cpap_equipment_items SET
+                profile_id = ?, client_uuid = ?, type_key = ?, category = ?,
+                brand = ?, model = ?, variant = ?, started_using_at = ?,
+                replace_after_days = ?, notes = ?, active = ?, deleted = ?,
+                updated_at = NOW()
+            WHERE id = ?
+        )";
+
+        MysqlStmtGuard g;
+        if (!eqPrepare(conn_, g, sql, "upsertEquipmentItem")) return -1;
+
+        ParamBinder p(13);
+        p.bindInt(0, item.profile_id);
+        p.bindTextOrNull(1, item.client_uuid);
+        p.bindText(2, item.type_key);
+        p.bindText(3, category);
+        p.bindText(4, item.brand);
+        p.bindText(5, item.model);
+        p.bindText(6, item.variant);
+        p.bindTextOrNull(7, item.started_using_at);
+        p.bindDaysOrNull(8, item.replace_after_days);
+        p.bindText(9, item.notes);
+        p.bindInt(10, item.active ? 1 : 0);
+        p.bindInt(11, item.deleted ? 1 : 0);
+        p.bindInt(12, item.id);
+        mysql_stmt_bind_param(g.stmt, p.data());
+
+        if (mysql_stmt_execute(g.stmt) != 0) {
+            std::cerr << "MySQL: upsertEquipmentItem error: "
+                      << mysql_stmt_error(g.stmt) << std::endl;
+            return -1;
+        }
+        return eqUpdateSucceeded(conn_, g.stmt,
+            "SELECT EXISTS(SELECT 1 FROM cpap_equipment_items WHERE id = ?)",
+            item.id, "upsertEquipmentItem") ? item.id : -1;
+    }
+
+    const char* sql = R"(
+        INSERT INTO cpap_equipment_items
+            (profile_id, client_uuid, type_key, category, brand, model, variant,
+             started_using_at, replace_after_days, notes, active, deleted)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    )";
+
+    MysqlStmtGuard g;
+    if (!eqPrepare(conn_, g, sql, "upsertEquipmentItem")) return -1;
+
+    ParamBinder p(12);
+    p.bindInt(0, item.profile_id);
+    p.bindTextOrNull(1, item.client_uuid);
+    p.bindText(2, item.type_key);
+    p.bindText(3, category);
+    p.bindText(4, item.brand);
+    p.bindText(5, item.model);
+    p.bindText(6, item.variant);
+    p.bindTextOrNull(7, item.started_using_at);
+    p.bindDaysOrNull(8, item.replace_after_days);
+    p.bindText(9, item.notes);
+    p.bindInt(10, item.active ? 1 : 0);
+    p.bindInt(11, item.deleted ? 1 : 0);
+    mysql_stmt_bind_param(g.stmt, p.data());
+
+    if (mysql_stmt_execute(g.stmt) != 0) {
+        std::cerr << "MySQL: upsertEquipmentItem error: "
+                  << mysql_stmt_error(g.stmt) << std::endl;
+        return -1;
+    }
+    return static_cast<int>(mysql_stmt_insert_id(g.stmt));
+}
+
+bool MySQLDatabase::tombstoneEquipmentItem(int id) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!conn_) return false;
+
+    const char* sql = R"(
+        UPDATE cpap_equipment_items
+           SET deleted = 1, active = 0, updated_at = NOW()
+         WHERE id = ? AND deleted = 0
+    )";
+
+    MysqlStmtGuard g;
+    if (!eqPrepare(conn_, g, sql, "tombstoneEquipmentItem")) return false;
+
+    ParamBinder p(1);
+    p.bindInt(0, id);
+    mysql_stmt_bind_param(g.stmt, p.data());
+
+    if (mysql_stmt_execute(g.stmt) != 0) {
+        std::cerr << "MySQL: tombstoneEquipmentItem error: "
+                  << mysql_stmt_error(g.stmt) << std::endl;
+        return false;
+    }
+    // deleted flips 0 -> 1, so a matched row always reports as affected here.
+    return mysql_stmt_affected_rows(g.stmt) > 0;
 }
 
 // -- Generic query ------------------------------------------------------------

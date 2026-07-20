@@ -1,0 +1,128 @@
+HMS-CPAP
+Copyright (c) 2026 aamat09
+
+Licensed under the MIT License. See LICENSE for the full text.
+
+This project is not a medical device. See DISCLAIMER.md.
+
+
+================================================================================
+1. INDEPENDENCE AND TRADEMARKS
+================================================================================
+
+HMS-CPAP is an independent, community-developed project. It is NOT affiliated
+with, endorsed by, sponsored by, certified by, or supported by any of the
+companies or projects named below. No relationship of any kind is claimed or
+implied.
+
+All trademarks, service marks, product names, and company names are the property
+of their respective owners. They are used in this project solely for
+identification and descriptive purposes -- to state truthfully which hardware and
+services this software interoperates with -- which is nominative fair use. Such
+use does not imply any endorsement or association.
+
+  ResMed, AirSense, AirCurve, AirMini, AirFit
+        trademarks of ResMed Inc.
+  Philips, Respironics, System One, DreamStation
+        trademarks of Koninklijke Philips N.V. / Philips RS North America LLC
+  Lowenstein Medical, Prisma
+        trademarks of Lowenstein Medical Technology GmbH + Co. KG
+  SleepHQ
+        trademark of its respective owner
+  ez Share
+        trademark of its respective owner
+  Fysetc
+        trademark of Shenzhen Fysetc Technology Co., Ltd.
+  Wellue, O2Ring
+        trademarks of Shenzhen Viatom Technology Co., Ltd.
+  Home Assistant
+        trademark of the Open Home Foundation
+  OSCAR
+        The Open Source CPAP Analysis Reporter project
+
+If you own a mark listed here and want its usage changed or removed, open an
+issue and it will be addressed.
+
+
+================================================================================
+2. FILE FORMAT INTEROPERABILITY AND CLEAN-ROOM STATEMENT
+================================================================================
+
+This software reads data files written by CPAP devices in order to display that
+data to the person who owns the device and generated the data.
+
+The parsers in this project were written independently from published standards,
+publicly available format documentation, community reverse-engineering notes, and
+inspection of data files produced by physically owned devices.
+
+Regarding OSCAR (Open Source CPAP Analysis Reporter), which is licensed under the
+GNU General Public License v3:
+
+  * OSCAR was consulted as a reference for UNDERSTANDING device data formats.
+  * NO OSCAR SOURCE CODE HAS BEEN COPIED, TRANSLATED, ADAPTED, OR DERIVED FROM
+    IN THIS REPOSITORY.
+  * No part of this project is a derivative work of OSCAR.
+  * File format facts -- field offsets, units, scaling factors, and record
+    layouts -- are factual descriptions of a third party's data format. Facts are
+    not copyrightable, and describing them does not make this project a
+    derivative work of any program that also describes them.
+
+This project is therefore distributed under the MIT License, not the GPL.
+
+If you believe any specific code in this repository was in fact derived from a
+GPL-licensed work, please open an issue identifying the file and lines. It will
+be investigated promptly and removed or relicensed if the claim is correct.
+
+Nothing here is a claim about the intellectual property of any manufacturer.
+Interoperating with a data format is not a claim to it.
+
+
+================================================================================
+3. THIRD-PARTY DEPENDENCIES
+================================================================================
+
+HMS-CPAP links against or builds with the following third-party components. Each
+remains under its own license and copyright. This list covers direct
+dependencies; consult each project for its own transitive dependencies and for
+authoritative license text.
+
+  Drogon                  MIT License
+                          https://github.com/drogonframework/drogon
+  JsonCpp                 MIT License (or Public Domain, dual)
+                          https://github.com/open-source-parsers/jsoncpp
+  nlohmann/json           MIT License
+                          https://github.com/nlohmann/json
+  libcurl                 curl License (MIT/X derivative)
+                          https://curl.se/
+  OpenSSL                 Apache License 2.0
+                          https://www.openssl.org/
+  SQLite                  Public Domain
+                          https://www.sqlite.org/
+  libpqxx                 BSD 3-Clause License
+                          https://github.com/jtv/libpqxx
+  PostgreSQL (libpq)      PostgreSQL License
+                          https://www.postgresql.org/
+  MySQL / MariaDB client  GPLv2 with FOSS License Exception / LGPL
+                          Optional. Built only when MySQL support is enabled.
+  Eclipse Paho MQTT C     Eclipse Public License 2.0 / Eclipse Distribution
+   and Paho MQTT C++      License 1.0 (dual)
+                          https://github.com/eclipse/paho.mqtt.cpp
+  spdlog                  MIT License
+                          https://github.com/gabime/spdlog
+  GoogleTest              BSD 3-Clause License
+                          Test builds only; not linked into the shipped binary.
+                          https://github.com/google/googletest
+  miniz                   MIT License
+                          ZIP extraction for Lowenstein therapy.pdat
+                          https://github.com/richgel999/miniz
+  Chart.js                MIT License
+                          Web frontend charting
+                          https://www.chartjs.org/
+  Angular                 MIT License
+                          Web frontend. See frontend/package.json and its
+                          lockfile for the full JavaScript dependency tree.
+
+MySQL note: the MySQL client library is GPL-licensed with a FOSS License
+Exception. MySQL support is optional and off by default. If you build with it
+enabled and then redistribute the resulting binary, review those terms yourself.
+Building with SQLite or PostgreSQL avoids the question entirely.

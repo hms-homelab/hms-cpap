@@ -248,3 +248,85 @@ CREATE TABLE IF NOT EXISTS cpap_sleep_stages (
 
 CREATE INDEX IF NOT EXISTS idx_cpap_sleep_stages_session
     ON cpap_sleep_stages(session_id);
+
+-- =============================================================================
+-- Equipment Profiles and Supplies (SDD-004)
+-- =============================================================================
+-- MUST stay identical to the migration in src/database/DatabaseService.cpp
+-- (DatabaseService::connect). Drift between the two is what forced v4.4.10.
+--
+-- Conventions: replace_after_days NULL = use the type default;
+--              client_uuid NULL offline (only used for optional cloud sync);
+--              deleted = TRUE is a tombstone (hidden from lists, kept for sync).
+
+-- Catalog of equipment types (6 seeded system rows + user-defined)
+CREATE TABLE IF NOT EXISTS cpap_equipment_types (
+    id                          SERIAL PRIMARY KEY,
+    type_key                    TEXT NOT NULL UNIQUE,
+    label                       TEXT NOT NULL,
+    category                    TEXT NOT NULL CHECK (category IN ('machine','accessory')),
+    default_replace_after_days  INT,
+    is_system                   BOOLEAN NOT NULL DEFAULT FALSE,
+    active                      BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at                  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- A profile ("setup") owns exactly one machine plus its accessories
+CREATE TABLE IF NOT EXISTS cpap_equipment_profiles (
+    id          SERIAL PRIMARY KEY,
+    client_uuid TEXT,
+    name        TEXT NOT NULL,
+    active      BOOLEAN NOT NULL DEFAULT TRUE,
+    deleted     BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Owned equipment; supply wear is COMPUTED on read, never stored
+CREATE TABLE IF NOT EXISTS cpap_equipment_items (
+    id                 SERIAL PRIMARY KEY,
+    profile_id         INTEGER NOT NULL
+                       REFERENCES cpap_equipment_profiles(id) ON DELETE CASCADE,
+    client_uuid        TEXT,
+    type_key           TEXT NOT NULL,
+    category           TEXT NOT NULL DEFAULT 'accessory',
+    brand              TEXT,
+    model              TEXT,
+    variant            TEXT,
+    started_using_at   TIMESTAMPTZ,
+    replace_after_days INT,
+    notes              TEXT,
+    active             BOOLEAN NOT NULL DEFAULT TRUE,
+    deleted            BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_cpap_equipment_profiles_uuid
+    ON cpap_equipment_profiles(client_uuid) WHERE client_uuid IS NOT NULL;
+
+-- Same for items: without this a replayed sync silently double-inserts
+CREATE UNIQUE INDEX IF NOT EXISTS uq_cpap_equipment_items_uuid
+    ON cpap_equipment_items(client_uuid) WHERE client_uuid IS NOT NULL;
+
+-- HARD RULE: at most one live machine per profile
+CREATE UNIQUE INDEX IF NOT EXISTS uq_cpap_equipment_one_machine
+    ON cpap_equipment_items(profile_id)
+    WHERE category = 'machine' AND active AND NOT deleted;
+
+CREATE INDEX IF NOT EXISTS idx_cpap_equipment_items_profile
+    ON cpap_equipment_items(profile_id);
+
+-- Seeded system types -- verbatim from the phone app's supply_defaults.dart so
+-- local, cloud and app all compute identical due dates. Idempotent.
+INSERT INTO cpap_equipment_types
+    (type_key, label, category, default_replace_after_days, is_system, active)
+VALUES
+    ('machine',    'Machine',    'machine',   NULL, TRUE, TRUE),
+    ('mask',       'Mask',       'accessory',   90, TRUE, TRUE),
+    ('tubing',     'Tubing',     'accessory',   90, TRUE, TRUE),
+    ('filter',     'Filter',     'accessory',   30, TRUE, TRUE),
+    ('humidifier', 'Humidifier', 'accessory',  180, TRUE, TRUE),
+    ('headgear',   'Headgear',   'accessory',  180, TRUE, TRUE)
+ON CONFLICT (type_key) DO NOTHING;

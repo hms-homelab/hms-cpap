@@ -5,6 +5,81 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.6.0] - 2026-07-19
+
+### Added
+- **SDD-004: equipment profiles and supply reminders.** A profile is a named
+  setup that owns exactly one machine plus its accessories; wear is COMPUTED
+  from the in-use date and the replacement interval, never stored. Ships across
+  all three database engines (PostgreSQL, SQLite, MySQL) with matching schema
+  scripts and a parameterised drift guard that fails the build when an engine
+  and its `scripts/schema*.sql` disagree. The one-machine-per-profile rule is a
+  partial unique index on PostgreSQL and SQLite; MySQL has no partial indexes,
+  so there it rests on the controller guard.
+- **Supply state in Home Assistant.** Each tracked accessory publishes retained
+  `days_left` and `wear_percent` sensors plus a household-wide `supplies_due`
+  binary sensor, via MQTT discovery, on the existing burst cycle. Machines and
+  undated accessories are deliberately skipped: a sensor pinned at 0 forever is
+  worse than no sensor.
+- **Supply transition events.** Retained state cannot express "this just went
+  overdue" — the value looks identical on the cycle it crossed and on every
+  cycle after. State changes now also emit a non-retained message on
+  `cpap/<device>/supplies/event` carrying `from`, `state`, `days_left` and
+  `replace_by`, so an automation fires once per crossing instead of once per
+  burst. Crossings back to `fresh` are emitted too, so an automation can clear
+  what it raised. A first sighting is silent when fresh but announced when
+  already overdue. The last state per entity persists to
+  `~/.hms-cpap/supply_events.json` (write-then-rename) because the publisher is
+  rebuilt every cycle; without it every cycle would look like a first sighting.
+  The ledger is kept out of the database on purpose: it is local notification
+  bookkeeping, and a column would sync it to the cloud and fight last-write-wins.
+- **Optional CpapDash cloud mirror.** Off by default. When enabled with a token,
+  equipment syncs against the CpapDash API with uuid-matched last-write-wins;
+  local stays the source of truth either way. `POST /api/equipment/cloud-sync`
+  triggers it on demand.
+- **Equipment page** in the web UI: profile chips, per-item wear bars, inline
+  editing, and a catalog-driven add row.
+
+### Fixed
+- **SleepHQ export shipped no machine.** `BackfillService` passed the DATALOG
+  directory as the card root, so `STR.edf` and `Identification.*` were never
+  uploaded. SleepHQ received a therapy folder with no summary and no machine and
+  processed it into nothing visible. It now passes the card root.
+- **Nights that never parsed were never exported.** Export was only triggered
+  from the parsed-session path, so a folder that failed to parse was never
+  offered to SleepHQ. The burst cycle now also walks the archive and queues
+  unparsed nights, skipping today and folders already checkpointed.
+- **EDFParser accepted negative durations,** yielding sessions that ended before
+  they started.
+
+### Changed
+- Equipment UI says "profile" throughout; "setup" is gone from all user-facing
+  copy. Rename and delete are compact icon buttons aligned right of the profile
+  header, so they no longer compete visually with the profile chips themselves.
+- README no longer describes the charts as "clinical-grade". The software is not
+  cleared as anything of the sort, and the phrase contradicted the disclaimer.
+- `AppConfig` example comment no longer carries a real private LAN address.
+- README test count corrected from 425 to the actual suite size.
+
+### Legal
+- **`DISCLAIMER.md`** — not a medical device, not regulator-cleared, not a
+  monitoring system; do not change therapy based on it, and the specific ways
+  parser output can be wrong. Summarised in a banner at the top of the README.
+- **`TERMS.md`** — terms of use covering permitted use, the not-a-medical-device
+  condition, third-party services, warranty, liability, and contribution terms
+  (including: do not contribute GPL-derived or manufacturer-proprietary code).
+- **`PRIVACY.md`** — no telemetry, no analytics, no phone-home; what is stored
+  and where; and an exhaustive list of every outbound path (MQTT broker, SleepHQ
+  export, CpapDash sync, LLM endpoint), all off by default. Notes that tokens are
+  stored in plaintext and that the service ships with no authentication and must
+  not be exposed to the internet.
+- **`NOTICE`** — trademark attribution and an explicit statement of independence
+  from ResMed, Philips, Lowenstein, SleepHQ and others; a clean-room statement
+  recording that OSCAR (GPLv3) was consulted for format understanding only and
+  that no OSCAR code was copied or derived from, which is why MIT applies; and a
+  full third-party dependency list with licenses, including the MySQL client's
+  GPL-with-FOSS-exception caveat.
+
 ## [4.5.1] - 2026-07-19
 
 > Version jumps past 4.4.11 on purpose. A stray `v4.5.0` tag already sits on an

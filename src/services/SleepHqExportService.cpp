@@ -50,6 +50,30 @@ void SleepHqExportService::markDirty(const std::string& date_folder) {
     st.last_change = std::chrono::steady_clock::now();
 }
 
+bool SleepHqExportService::markDirtyIfNotExported(const std::string& date_folder) {
+    if (!sleephqReady(config_) || date_folder.empty()) return false;
+
+    // Deliberately NOT folded into markDirty(): an explicit markDirty() means a
+    // caller decided this night must ship, and re-exporting on demand is
+    // established behaviour (SleepHqExportServiceTest.RedirtyAfterSuccessReexports
+    // pins it). This variant is for the sessionless disk-walk, which re-offers the
+    // same folders every burst cycle and would otherwise re-upload an unchanged
+    // night forever. Content that genuinely changed still queues.
+    const std::string archive_base = ConfigManager::get("CPAP_ARCHIVE_DIR", "");
+    if (!archive_base.empty()) {
+        auto current = scanFolder(archive_base, date_folder);
+        std::lock_guard<std::mutex> lock(mu_);
+        auto done = exported_.find(date_folder);
+        if (done != exported_.end() && done->second == current) return false;
+        if (dirty_.count(date_folder)) return false;   // already queued
+    }
+
+    std::lock_guard<std::mutex> lock(mu_);
+    auto& st = dirty_[date_folder];
+    st.last_change = std::chrono::steady_clock::now();
+    return true;
+}
+
 void SleepHqExportService::sweep(std::chrono::steady_clock::time_point now) {
     if (!sleephqReady(config_)) return;
 
@@ -118,6 +142,12 @@ void SleepHqExportService::finishExport(
 
     if (ok) {
         if (current == pre_snapshot) {
+            // Remember exactly what we shipped. markDirty() consults this so a
+            // night already uploaded is not uploaded again just because a second
+            // trigger fired for it — which is now possible, since a folder can be
+            // marked both by the parsed-session path and by the sessionless
+            // disk-walk fallback. Content that genuinely changes still re-exports.
+            exported_[folder] = current;
             dirty_.erase(it);
             return;
         }
@@ -184,6 +214,38 @@ void SleepHqExportService::exportFolderAsync(const std::string& date_folder,
     std::thread([this, d, dl, rd]() { exportFolder(d, dl, rd); }).detach();
 }
 
+std::vector<SleepHqExportService::ExportFile>
+SleepHqExportService::collectExportFiles(const std::string& date_folder,
+                                         const std::string& datalog_dir,
+                                         const std::string& root_dir) {
+    namespace fs = std::filesystem;
+    std::vector<ExportFile> out;
+    std::error_code ec;
+
+    // The night's own files, under their card-accurate DATALOG/<date> path.
+    if (fs::exists(datalog_dir, ec)) {
+        for (const auto& e : fs::directory_iterator(datalog_dir, ec)) {
+            if (!e.is_regular_file()) continue;
+            out.push_back({e.path().filename().string(),
+                           "DATALOG/" + date_folder,
+                           e.path().string()});
+        }
+    }
+
+    // Card root files, uploaded to the import ROOT (import_path ""), so SleepHQ
+    // sees the same layout a real SD card has. Without STR.edf the import has no
+    // therapy summary, and without Identification.* it has no machine — SleepHQ
+    // then processes it into nothing visible. root_dir MUST therefore be the card
+    // root, not the DATALOG directory.
+    for (const char* name : {"STR.edf", "Identification.tgt",
+                             "Identification.json", "Identification.crc"}) {
+        std::string p = root_dir + "/" + name;
+        if (!fs::exists(p, ec)) continue;
+        out.push_back({name, "", p});
+    }
+    return out;
+}
+
 bool SleepHqExportService::exportFolder(const std::string& date_folder,
                                         const std::string& datalog_dir,
                                         const std::string& root_dir) {
@@ -198,23 +260,8 @@ bool SleepHqExportService::exportFolder(const std::string& date_folder,
     if (import_id.empty()) { std::cerr << "[sleephq] createImport failed: " << err << std::endl; return false; }
 
     int count = 0;
-    std::error_code ec;
-    if (fs::exists(datalog_dir, ec)) {
-        for (const auto& e : fs::directory_iterator(datalog_dir, ec)) {
-            if (!e.is_regular_file()) continue;
-            std::string name = e.path().filename().string();
-            if (!client.uploadFile(import_id, name, "DATALOG/" + date_folder, e.path().string(), err)) {
-                std::cerr << "[sleephq] " << err << std::endl; return false;
-            }
-            ++count;
-        }
-    }
-    const char* rootFiles[] = {"STR.edf", "Identification.tgt",
-                               "Identification.json", "Identification.crc"};
-    for (const char* name : rootFiles) {
-        std::string p = root_dir + "/" + name;
-        if (!fs::exists(p, ec)) continue;
-        if (!client.uploadFile(import_id, name, "", p, err)) {
+    for (const auto& f : collectExportFiles(date_folder, datalog_dir, root_dir)) {
+        if (!client.uploadFile(import_id, f.name, f.import_path, f.local_path, err)) {
             std::cerr << "[sleephq] " << err << std::endl; return false;
         }
         ++count;
