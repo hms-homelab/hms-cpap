@@ -2408,15 +2408,18 @@ std::optional<IDatabase::EquipmentProfile> SQLiteDatabase::getEquipmentProfile(i
     return std::nullopt;
 }
 
-int SQLiteDatabase::upsertEquipmentProfile(const EquipmentProfile& p) {
+int SQLiteDatabase::upsertEquipmentProfile(const EquipmentProfile& p,
+                                           const std::string& updated_at_override) {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!db_) return -1;
+
+    const std::string ts = sanitizeUpdatedAtOverride(updated_at_override);
 
     if (p.id > 0) {
         const char* sql = R"(
             UPDATE cpap_equipment_profiles SET
                 client_uuid = ?, name = ?, active = ?, deleted = ?,
-                updated_at = datetime('now')
+                updated_at = COALESCE(NULLIF(?, ''), datetime('now'))
             WHERE id = ?
         )";
 
@@ -2429,7 +2432,8 @@ int SQLiteDatabase::upsertEquipmentProfile(const EquipmentProfile& p) {
         bind_text(g.stmt, 2, p.name);
         bind_int(g.stmt, 3, p.active ? 1 : 0);
         bind_int(g.stmt, 4, p.deleted ? 1 : 0);
-        bind_int(g.stmt, 5, p.id);
+        bind_text(g.stmt, 5, ts);
+        bind_int(g.stmt, 6, p.id);
 
         if (sqlite3_step(g.stmt) != SQLITE_DONE) {
             std::cerr << "SQLite: upsertEquipmentProfile error: " << sqlite3_errmsg(db_) << std::endl;
@@ -2440,8 +2444,8 @@ int SQLiteDatabase::upsertEquipmentProfile(const EquipmentProfile& p) {
 
     const char* sql = R"(
         INSERT INTO cpap_equipment_profiles
-            (client_uuid, name, active, deleted)
-        VALUES (?, ?, ?, ?)
+            (client_uuid, name, active, deleted, updated_at)
+        VALUES (?, ?, ?, ?, COALESCE(NULLIF(?, ''), datetime('now')))
     )";
 
     StmtGuard g;
@@ -2453,6 +2457,7 @@ int SQLiteDatabase::upsertEquipmentProfile(const EquipmentProfile& p) {
     bind_text(g.stmt, 2, p.name);
     bind_int(g.stmt, 3, p.active ? 1 : 0);
     bind_int(g.stmt, 4, p.deleted ? 1 : 0);
+    bind_text(g.stmt, 5, ts);
 
     if (sqlite3_step(g.stmt) != SQLITE_DONE) {
         std::cerr << "SQLite: upsertEquipmentProfile error: " << sqlite3_errmsg(db_) << std::endl;
@@ -2461,21 +2466,26 @@ int SQLiteDatabase::upsertEquipmentProfile(const EquipmentProfile& p) {
     return static_cast<int>(sqlite3_last_insert_rowid(db_));
 }
 
-bool SQLiteDatabase::tombstoneEquipmentProfile(int id) {
+bool SQLiteDatabase::tombstoneEquipmentProfile(int id,
+                                              const std::string& updated_at_override) {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!db_) return false;
+
+    const std::string ts = sanitizeUpdatedAtOverride(updated_at_override);
 
     // Soft cascade: the FK cascade only fires on a hard DELETE, so the items of a
     // tombstoned profile are tombstoned explicitly. Clearing active as well frees
     // the one-live-machine slot for the profile.
     const char* sql_profile = R"(
         UPDATE cpap_equipment_profiles
-           SET deleted = 1, active = 0, updated_at = datetime('now')
+           SET deleted = 1, active = 0,
+               updated_at = COALESCE(NULLIF(?, ''), datetime('now'))
          WHERE id = ? AND deleted = 0
     )";
     const char* sql_items = R"(
         UPDATE cpap_equipment_items
-           SET deleted = 1, active = 0, updated_at = datetime('now')
+           SET deleted = 1, active = 0,
+               updated_at = COALESCE(NULLIF(?, ''), datetime('now'))
          WHERE profile_id = ? AND deleted = 0
     )";
 
@@ -2484,7 +2494,8 @@ bool SQLiteDatabase::tombstoneEquipmentProfile(int id) {
         std::cerr << "SQLite: tombstoneEquipmentProfile error: " << sqlite3_errmsg(db_) << std::endl;
         return false;
     }
-    bind_int(g.stmt, 1, id);
+    bind_text(g.stmt, 1, ts);
+    bind_int(g.stmt, 2, id);
 
     if (sqlite3_step(g.stmt) != SQLITE_DONE) {
         std::cerr << "SQLite: tombstoneEquipmentProfile error: " << sqlite3_errmsg(db_) << std::endl;
@@ -2494,7 +2505,8 @@ bool SQLiteDatabase::tombstoneEquipmentProfile(int id) {
 
     StmtGuard gi;
     if (sqlite3_prepare_v2(db_, sql_items, -1, &gi.stmt, nullptr) == SQLITE_OK) {
-        bind_int(gi.stmt, 1, id);
+        bind_text(gi.stmt, 1, ts);
+        bind_int(gi.stmt, 2, id);
         if (sqlite3_step(gi.stmt) != SQLITE_DONE) {
             std::cerr << "SQLite: tombstoneEquipmentProfile items error: "
                       << sqlite3_errmsg(db_) << std::endl;
@@ -2520,7 +2532,7 @@ int SQLiteDatabase::ensureDefaultEquipmentProfile() {
 
     EquipmentProfile p;
     p.name = "My CPAP";
-    int id = upsertEquipmentProfile(p);
+    int id = upsertEquipmentProfile(p, "");
     if (id > 0) {
         std::cout << "SQLite: Created default equipment profile 'My CPAP' (id "
                   << id << ")" << std::endl;
@@ -2597,9 +2609,12 @@ bool SQLiteDatabase::profileHasMachine(int profile_id, int exclude_item_id) {
     return has;
 }
 
-int SQLiteDatabase::upsertEquipmentItem(const EquipmentItem& item) {
+int SQLiteDatabase::upsertEquipmentItem(const EquipmentItem& item,
+                                        const std::string& updated_at_override) {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!db_) return -1;
+
+    const std::string ts = sanitizeUpdatedAtOverride(updated_at_override);
 
     // HARD RULE: category is never stored empty. A caller that omits it gets the
     // category of its type from the catalog, falling back to 'accessory' for an
@@ -2619,7 +2634,7 @@ int SQLiteDatabase::upsertEquipmentItem(const EquipmentItem& item) {
                 profile_id = ?, client_uuid = ?, type_key = ?, category = ?,
                 brand = ?, model = ?, variant = ?, started_using_at = ?,
                 replace_after_days = ?, notes = ?, active = ?, deleted = ?,
-                updated_at = datetime('now')
+                updated_at = COALESCE(NULLIF(?, ''), datetime('now'))
             WHERE id = ?
         )";
 
@@ -2640,7 +2655,8 @@ int SQLiteDatabase::upsertEquipmentItem(const EquipmentItem& item) {
         bind_text(g.stmt, 10, item.notes);
         bind_int(g.stmt, 11, item.active ? 1 : 0);
         bind_int(g.stmt, 12, item.deleted ? 1 : 0);
-        bind_int(g.stmt, 13, item.id);
+        bind_text(g.stmt, 13, ts);
+        bind_int(g.stmt, 14, item.id);
 
         if (sqlite3_step(g.stmt) != SQLITE_DONE) {
             std::cerr << "SQLite: upsertEquipmentItem error: " << sqlite3_errmsg(db_) << std::endl;
@@ -2652,8 +2668,9 @@ int SQLiteDatabase::upsertEquipmentItem(const EquipmentItem& item) {
     const char* sql = R"(
         INSERT INTO cpap_equipment_items
             (profile_id, client_uuid, type_key, category, brand, model, variant,
-             started_using_at, replace_after_days, notes, active, deleted)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             started_using_at, replace_after_days, notes, active, deleted, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                COALESCE(NULLIF(?, ''), datetime('now')))
     )";
 
     StmtGuard g;
@@ -2673,6 +2690,7 @@ int SQLiteDatabase::upsertEquipmentItem(const EquipmentItem& item) {
     bind_text(g.stmt, 10, item.notes);
     bind_int(g.stmt, 11, item.active ? 1 : 0);
     bind_int(g.stmt, 12, item.deleted ? 1 : 0);
+    bind_text(g.stmt, 13, ts);
 
     if (sqlite3_step(g.stmt) != SQLITE_DONE) {
         std::cerr << "SQLite: upsertEquipmentItem error: " << sqlite3_errmsg(db_) << std::endl;
@@ -2681,13 +2699,17 @@ int SQLiteDatabase::upsertEquipmentItem(const EquipmentItem& item) {
     return static_cast<int>(sqlite3_last_insert_rowid(db_));
 }
 
-bool SQLiteDatabase::tombstoneEquipmentItem(int id) {
+bool SQLiteDatabase::tombstoneEquipmentItem(int id,
+                                           const std::string& updated_at_override) {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!db_) return false;
 
+    const std::string ts = sanitizeUpdatedAtOverride(updated_at_override);
+
     const char* sql = R"(
         UPDATE cpap_equipment_items
-           SET deleted = 1, active = 0, updated_at = datetime('now')
+           SET deleted = 1, active = 0,
+               updated_at = COALESCE(NULLIF(?, ''), datetime('now'))
          WHERE id = ? AND deleted = 0
     )";
 
@@ -2696,7 +2718,8 @@ bool SQLiteDatabase::tombstoneEquipmentItem(int id) {
         std::cerr << "SQLite: tombstoneEquipmentItem error: " << sqlite3_errmsg(db_) << std::endl;
         return false;
     }
-    bind_int(g.stmt, 1, id);
+    bind_text(g.stmt, 1, ts);
+    bind_int(g.stmt, 2, id);
 
     if (sqlite3_step(g.stmt) != SQLITE_DONE) {
         std::cerr << "SQLite: tombstoneEquipmentItem error: " << sqlite3_errmsg(db_) << std::endl;

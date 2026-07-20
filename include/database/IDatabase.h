@@ -5,6 +5,7 @@
 #include <chrono>
 #include <map>
 #include <memory>
+#include <cstdio>
 #include <optional>
 #include <string>
 #include <vector>
@@ -249,8 +250,42 @@ public:
     // Profiles. listEquipmentProfiles hides tombstones unless include_deleted.
     virtual std::vector<EquipmentProfile> listEquipmentProfiles(bool include_deleted) = 0;
     virtual std::optional<EquipmentProfile> getEquipmentProfile(int id) = 0;
-    virtual int  upsertEquipmentProfile(const EquipmentProfile& p) = 0;  // id<=0 inserts
-    virtual bool tombstoneEquipmentProfile(int id) = 0;                  // cascades to items
+    /// Canonicalise an `updated_at_override` before it reaches any engine: returns
+    /// "YYYY-MM-DDTHH:MM:SSZ", or "" for empty/malformed input, which every engine
+    /// treats as "stamp now()".
+    ///
+    /// EVERY backend must apply this, because the raw string meets three SQL
+    /// dialects that disagree about garbage. Given "not-a-timestamp": SQLite's
+    /// NULLIF(?,'') only catches the EMPTY string and stores it verbatim, Postgres
+    /// throws on the ::timestamptz cast and fails the entire write, and MySQL
+    /// silently falls back. One shared gate makes all three behave identically,
+    /// which is what the backend parity suite pins.
+    static std::string sanitizeUpdatedAtOverride(const std::string& ts) {
+        if (ts.size() < 19) return "";
+        int y = 0, mo = 0, d = 0, h = 0, mi = 0, sec = 0;
+        char sep = 0;
+        if (std::sscanf(ts.c_str(), "%4d-%2d-%2d%c%2d:%2d:%2d",
+                        &y, &mo, &d, &sep, &h, &mi, &sec) != 7) return "";
+        if (sep != 'T' && sep != ' ') return "";
+        if (y < 1970 || y > 9999) return "";
+        if (mo < 1 || mo > 12 || d < 1 || d > 31) return "";
+        if (h > 23 || mi > 59 || sec > 60) return "";
+        char buf[32];
+        std::snprintf(buf, sizeof(buf), "%04d-%02d-%02dT%02d:%02d:%02dZ", y, mo, d, h, mi, sec);
+        return buf;
+    }
+
+    // `updated_at_override`: pass "" for a normal local write, which stamps now().
+    // Pass the ORIGIN row's timestamp when mirroring a row from the cloud, so the
+    // stamp records when the user CHANGED it, not when we COPIED it. Restamping a
+    // mirror makes the copy outrank the original under last-write-wins, which
+    // silently discards genuine edits, and makes the row look locally-modified so
+    // it is pushed straight back. Deliberately has NO default: every call site
+    // must state which one it is.
+    virtual int  upsertEquipmentProfile(const EquipmentProfile& p,
+                                        const std::string& updated_at_override) = 0;  // id<=0 inserts
+    virtual bool tombstoneEquipmentProfile(int id,
+                                           const std::string& updated_at_override) = 0;  // cascades to items
     /// Returns an existing profile id, else creates "My CPAP" and returns it.
     virtual int  ensureDefaultEquipmentProfile() = 0;
 
@@ -259,8 +294,10 @@ public:
     virtual std::optional<EquipmentItem> getEquipmentItem(int id) = 0;
     /// True when the profile already holds a live machine, ignoring exclude_item_id.
     virtual bool profileHasMachine(int profile_id, int exclude_item_id) = 0;
-    virtual int  upsertEquipmentItem(const EquipmentItem& item) = 0;     // id<=0 inserts
-    virtual bool tombstoneEquipmentItem(int id) = 0;
+    virtual int  upsertEquipmentItem(const EquipmentItem& item,
+                                     const std::string& updated_at_override) = 0;     // id<=0 inserts
+    virtual bool tombstoneEquipmentItem(int id,
+                                        const std::string& updated_at_override) = 0;
 
     virtual void* rawConnection() = 0;
 

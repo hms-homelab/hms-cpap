@@ -41,6 +41,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   editing, and a catalog-driven add row.
 
 ### Fixed
+- **Cloud sync could silently discard a genuine edit.** Applying a row from the
+  CpapDash cloud stamped `updated_at = now()` — the moment we MIRRORED the row,
+  not the moment the user CHANGED it. That makes a copy outrank its own original
+  under last-write-wins: device A edits at T1, device B mirrors it at T2, then A
+  makes a real edit at T3 where T1 < T3 < T2, and B's untouched copy beats A's
+  genuine edit, which is dropped with no error. Mirrored rows now carry the
+  origin row's timestamp. The server already worked this way
+  (`COALESCE(NULLIF($7,'')::timestamptz, NOW())` guarded by `updated_at <= $7`),
+  so the two sides are now symmetric.
+- **Sync never settled.** The push watermark advanced only as far as the newest
+  row PUSHED, so rows APPLIED from the cloud stayed above it permanently and were
+  pushed straight back on every sweep — a standing loop with `auto_sync` on.
+  Applied rows now advance the watermark too. Preserving the timestamp alone did
+  not fix this; both changes are required.
+- **Malformed timestamps behaved differently on every engine.** Given a bad
+  override string, SQLite stored it verbatim (`NULLIF(?,'')` only catches the
+  EMPTY string), PostgreSQL threw on the `::timestamptz` cast and failed the whole
+  write, and MySQL silently fell back to `NOW()`. All three now gate through one
+  shared `IDatabase::sanitizeUpdatedAtOverride()`, so they accept and reject
+  exactly the same inputs.
 - **SleepHQ export shipped no machine.** `BackfillService` passed the DATALOG
   directory as the card root, so `STR.edf` and `Identification.*` were never
   uploaded. SleepHQ received a therapy folder with no summary and no machine and
@@ -52,6 +72,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **EDFParser accepted negative durations,** yielding sessions that ended before
   they started.
 
+- **Windows build.** libpqxx 7.10+ yields `pqxx::row_ref` when iterating a result
+  rather than `pqxx::row`, and the three equipment row-mapping helpers named
+  `pqxx::row` concretely. MSVC rejected the conversion (Linux accepted it), so
+  this failed only on the Windows runner. The helpers are templated on the row
+  type and work with either.
+
+### Tests
+- **The PostgreSQL equipment implementation had no tests at all.** The
+  `EquipmentBackend` fixture was hardcoded to SQLite, leaving roughly 450 lines of
+  PG equipment code unexecuted by any test — which is what put the coverage
+  ratchet under its 80% threshold. The fixture is now parameterized over SQLite
+  and PostgreSQL, so all 20 cases run against both (40 total) with no assertion
+  changed. PG runs against a uniquely-named throwaway schema whose `search_path`
+  has NO `public` fallback, so a failed migration errors instead of silently
+  pointing write-heavy tests at real user data, and skips cleanly when no server
+  is reachable. MySQL is excluded on purpose: it cannot express the partial unique
+  index behind the one-machine-per-profile rule.
+
 ### Changed
 - Equipment UI says "profile" throughout; "setup" is gone from all user-facing
   copy. Rename and delete are compact icon buttons aligned right of the profile
@@ -60,6 +98,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cleared as anything of the sort, and the phrase contradicted the disclaimer.
 - `AppConfig` example comment no longer carries a real private LAN address.
 - README test count corrected from 425 to the actual suite size.
+- README documents equipment profiles and supply reminders: a feature entry, a
+  table-of-contents link, and a section covering profiles, why wear is computed
+  rather than stored, the retained-sensor vs event distinction, and a worked
+  Home Assistant automation.
+- `upsertEquipmentProfile`, `upsertEquipmentItem`, `tombstoneEquipmentProfile`
+  and `tombstoneEquipmentItem` take an explicit `updated_at_override` with **no
+  default value**, so the compiler forces every call site to declare whether it
+  is a local write (`""`, stamps now) or a mirror of a remote row (the origin
+  timestamp). A defaulted argument would let a future apply-path silently
+  reintroduce the bug above.
 
 ### Legal
 - **`DISCLAIMER.md`** — not a medical device, not regulator-cleared, not a
