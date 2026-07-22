@@ -332,7 +332,10 @@ jobs:
       # build's find_library() calls resolve both libs.
       - name: Build and install paho.mqtt.cpp
         run: |
-          git clone --depth 1 --branch v1.5.2 https://github.com/eclipse/paho.mqtt.cpp.git
+          # --recurse-submodules: PAHO_WITH_MQTT_C=ON builds the bundled C lib from
+          # the externals/paho-mqtt-c submodule, which is empty without this.
+          git clone --depth 1 --branch v1.5.2 --recurse-submodules --shallow-submodules \
+            https://github.com/eclipse/paho.mqtt.cpp.git
           cmake -S paho.mqtt.cpp -B paho.mqtt.cpp/build -GNinja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX=/opt/homebrew \
