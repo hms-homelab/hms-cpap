@@ -281,19 +281,126 @@ jobs:
           name: hms-cpap-windows-x64
           path: release/
 
+  # ── macOS Build (Apple Silicon / arm64) ───────────────────────────
+  # GitHub-hosted arm64 runner (free for public repos). Produces the
+  # hms-cpap-macos-arm64.zip that used to be built and uploaded by hand.
+  # Dep list mirrors what satisfies the local macOS build (Homebrew), with
+  # the one exception that the paho MQTT C++ wrapper has no Homebrew formula
+  # and is built from source below.
+  macos-build:
+    runs-on: macos-14
+    continue-on-error: true    # optional, like windows-build: release still ships if this fails
+    permissions:
+      contents: read
+
+    env:
+      # find_package(OpenSSL) needs the keg-only openssl@3, not the system LibreSSL.
+      OPENSSL_ROOT_DIR: /opt/homebrew/opt/openssl@3
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── Angular UI ──────────────────────────────────────────────
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci --no-audit --no-fund
+
+      - name: Build Angular UI
+        working-directory: frontend
+        run: npx ng build --configuration production
+
+      # ── C++ dependencies (Homebrew) ─────────────────────────────
+      # Mirrors the local macOS build's resolved deps. CURL comes from the
+      # macOS SDK (system libcurl.tbd) so it is not installed here.
+      - name: Install C++ dependencies (Homebrew)
+        run: |
+          brew install cmake ninja drogon jsoncpp openssl@3 libpq libpqxx \
+            spdlog nlohmann-json libharu gnuplot hiredis brotli yaml-cpp sqlite
+
+      # ── Paho MQTT C++ (no Homebrew formula — build from source) ──
+      # hms-cpap links paho-mqttpp3 (C++) + paho-mqtt3as (async+SSL C). The C++
+      # wrapper is not packaged by Homebrew, so build it with its bundled C lib
+      # (PAHO_WITH_MQTT_C=ON) and install into the Homebrew prefix so the main
+      # build's find_library() calls resolve both libs.
+      - name: Build and install paho.mqtt.cpp
+        run: |
+          git clone --depth 1 --branch v1.5.2 https://github.com/eclipse/paho.mqtt.cpp.git
+          cmake -S paho.mqtt.cpp -B paho.mqtt.cpp/build -GNinja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/opt/homebrew \
+            -DPAHO_WITH_MQTT_C=ON \
+            -DPAHO_WITH_SSL=ON \
+            -DPAHO_BUILD_SHARED=ON \
+            -DPAHO_BUILD_STATIC=OFF \
+            -DPAHO_ENABLE_TESTING=OFF \
+            -DOPENSSL_ROOT_DIR="$OPENSSL_ROOT_DIR"
+          cmake --build paho.mqtt.cpp/build
+          sudo cmake --install paho.mqtt.cpp/build
+
+      # ── C++ Build (native arm64) ────────────────────────────────
+      # C++20 because Homebrew libpqxx is built for C++20 (see CLAUDE.md).
+      # CMAKE_PREFIX_PATH lists the keg-only kegs (openssl@3/libpq/sqlite) plus
+      # the Homebrew root so every find_package/find_library resolves.
+      - name: Build HMS-CPAP
+        run: |
+          export CMAKE_PREFIX_PATH="/opt/homebrew:$(brew --prefix openssl@3):$(brew --prefix libpq):$(brew --prefix sqlite):$(brew --prefix jsoncpp)"
+          mkdir build && cd build
+          cmake -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_STANDARD=20 \
+            -DBUILD_TESTS=OFF \
+            -DBUILD_WITH_WEB=ON \
+            -DBUILD_WITH_POSTGRESQL=ON \
+            ..
+          cmake --build . --parallel
+
+      # ── Package macOS release ───────────────────────────────────
+      - name: Bundle release
+        run: |
+          mkdir -p release/static/browser
+          cp build/hms_cpap release/
+          cp -R frontend/dist/frontend/browser/* release/static/browser/
+          cat > release/config.example.json <<'EOF'
+          {
+            "device_id": "cpap_resmed_SERIAL",
+            "device_name": "ResMed AirSense 10",
+            "source": "ezshare",
+            "ezshare_url": "http://192.168.4.1",
+            "burst_interval": 65,
+            "web_port": 8893,
+            "database": { "type": "sqlite" },
+            "mqtt": { "enabled": false }
+          }
+          EOF
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hms-cpap-macos-arm64
+          path: release/
+
   # ── GitHub Release (on tag push) ──────────────────────────────────
   release:
     # windows-build is in `needs` so this job WAITS for the Windows artifact to
     # finish uploading before it tries to download it -- otherwise release only
     # depended on build-and-test and raced ahead, downloading a not-yet-uploaded
     # artifact and publishing an empty release (v4.6.0 shipped with no assets).
-    # always() + the explicit build-and-test guard keeps Windows OPTIONAL: if the
-    # Windows build fails, release still proceeds (just without the zip).
+    # always() + the explicit build-and-test guard keeps the native builds
+    # OPTIONAL: if Windows or macOS fails, release still proceeds (just without
+    # that zip).
     if: >-
       always() &&
       needs.build-and-test.result == 'success' &&
       startsWith(github.ref, 'refs/tags/v')
-    needs: [build-and-test, windows-build]
+    needs: [build-and-test, windows-build, macos-build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -313,9 +420,24 @@ jobs:
           cd windows-release
           zip -r ../hms-cpap-windows-x64.zip .
 
+      - name: Download macOS artifact
+        id: download-macos
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: hms-cpap-macos-arm64
+          path: macos-release/
+
+      - name: Create macOS zip
+        if: steps.download-macos.outcome == 'success'
+        run: |
+          cd macos-release
+          zip -r ../hms-cpap-macos-arm64.zip .
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           files: |
             hms-cpap-windows-x64.zip
+            hms-cpap-macos-arm64.zip
