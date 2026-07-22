@@ -283,9 +283,17 @@ jobs:
 
   # ── GitHub Release (on tag push) ──────────────────────────────────
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build-and-test]
-    # windows-build is optional -- release proceeds even if Windows fails
+    # windows-build is in `needs` so this job WAITS for the Windows artifact to
+    # finish uploading before it tries to download it -- otherwise release only
+    # depended on build-and-test and raced ahead, downloading a not-yet-uploaded
+    # artifact and publishing an empty release (v4.6.0 shipped with no assets).
+    # always() + the explicit build-and-test guard keeps Windows OPTIONAL: if the
+    # Windows build fails, release still proceeds (just without the zip).
+    if: >-
+      always() &&
+      needs.build-and-test.result == 'success' &&
+      startsWith(github.ref, 'refs/tags/v')
+    needs: [build-and-test, windows-build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
