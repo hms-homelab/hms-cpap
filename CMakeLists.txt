@@ -64,6 +64,13 @@ endif()
 
 if(MSVC)
     find_package(jsoncpp CONFIG REQUIRED)
+elseif(APPLE)
+    # CONFIG mode so Homebrew's jsoncppConfig.cmake defines the jsoncpp_lib
+    # IMPORTED target we link below. In plain module mode, Drogon's bundled
+    # Findjsoncpp.cmake (on the module path after find_package(Drogon)) answers
+    # first and, depending on the Drogon version, does not create jsoncpp_lib --
+    # so CMake emits a bare -ljsoncpp_lib and the link fails on CI.
+    find_package(jsoncpp CONFIG REQUIRED)
 else()
     find_package(jsoncpp REQUIRED)
 endif()
