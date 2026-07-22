@@ -356,7 +356,12 @@ jobs:
         run: |
           export CMAKE_PREFIX_PATH="/opt/homebrew:$(brew --prefix openssl@3):$(brew --prefix libpq):$(brew --prefix sqlite):$(brew --prefix jsoncpp)"
           mkdir build && cd build
+          # Homebrew ships CMake 4.x, which rejects cmake_minimum_required < 3.5.
+          # The miniz 3.0.2 FetchContent dep still declares an old minimum, so
+          # allow it (CMake's own suggested fix). Windows sidesteps this by
+          # pinning CMake 3.31.
           cmake -G Ninja \
+            -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_CXX_STANDARD=20 \
             -DBUILD_TESTS=OFF \
