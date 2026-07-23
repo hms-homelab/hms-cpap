@@ -618,10 +618,13 @@ void BurstCollectorService::captureCardResidue(const std::string& archive_root) 
 
 void BurstCollectorService::processSessionSummary() {
     if (cpap_source_ == "lowenstein") {
-        // Lowenstein: statistics_year.bin parsing (not yet implemented)
-        // Per-session metrics are already computed by PrismaParser::calculateMetrics()
-        // so basic AHI/events/pressure stats are available without this.
-        // TODO: parse statistics_year.bin for daily aggregated stats + trend data
+        // TODO(#15): avg_mask_pressure/avg_spo2/avg_epr_pressure etc. are always 0 in
+        // cpap_session_metrics because PrismaParser never aggregates the per-minute
+        // WMEDF signal samples (pressure/leak/SpO2/HR) into those fields. Once that
+        // lands, aggregateDailySummaryFromSessions() below will pick up real values.
+        // TODO: parse statistics_year.bin for the device's own daily aggregated
+        // stats + trend data, instead of re-deriving cpap_daily_summary from sessions.
+        db_service_->aggregateDailySummaryFromSessions(device_id_);
         return;
     }
 
@@ -878,6 +881,10 @@ bool BurstCollectorService::executeBurstCycle() {
                 }
             }
         }
+
+        // cpap_daily_summary has no other writer for Lowenstein (no STR.edf) --
+        // re-aggregate from the sessions just saved above (issue #14).
+        processSessionSummary();
 
         if (data_publisher_) {
             data_publisher_->publishSessionCompleted();

@@ -110,6 +110,10 @@ std::optional<std::string> PostgresDatabase::getLastSTRDate(const std::string& d
     return db_->getLastSTRDate(device_id);
 }
 
+bool PostgresDatabase::aggregateDailySummaryFromSessions(const std::string& device_id) {
+    return db_->aggregateDailySummaryFromSessions(device_id);
+}
+
 // -- Nightly / range metrics --------------------------------------------------
 
 std::optional<SessionMetrics> PostgresDatabase::getNightlyMetrics(

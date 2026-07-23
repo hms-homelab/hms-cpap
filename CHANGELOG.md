@@ -5,6 +5,37 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.6.2] - 2026-07-23
+
+### Fixed
+- **Lowenstein dashboard trends (AHI, usage) were always empty (#14).**
+  `cpap_daily_summary` — the table `getDashboard`/`getTrend`/`getStatistics`
+  query exclusively, with no fallback — was only ever populated by
+  `processSTRFile()` (`STR.edf`, ResMed-only). Lowenstein has no `STR.edf`, so
+  the table was never written for that source: `ahi_trend`/`usage_trend` came
+  back `[]` and `compliance_pct` was always `0`, even though `cpap_sessions` /
+  `cpap_session_metrics` had full data all along (the session list worked
+  fine, since it reads those tables directly).
+  Added `IDatabase::aggregateDailySummaryFromSessions()` (SQLite, PostgreSQL,
+  MySQL) — an idempotent upsert that re-derives `cpap_daily_summary` from
+  `cpap_sessions` + `cpap_session_metrics`, grouped by sleep day
+  (`session_start - 12h`), same self-healing philosophy as
+  `saveSTRDailyRecords`. Wired into the Lowenstein burst cycle after sessions
+  are saved each pass.
+  `ahi` is a **duration-weighted average of each session's own stored `ahi`**,
+  not re-derived by summing the typed event columns: the shared parser counts
+  a further generic "unclassified apnea" event type that is folded into
+  `ahi` but never persisted to any typed column, so reconstructing it from
+  `obstructive_apneas + central_apneas + hypopneas + clear_airway_apneas`
+  alone silently undercounts it (confirmed against real production data — a
+  real session came back 15.31 vs. the true 25.25). `ai` is then `ahi - hi`
+  so `AHI = AI + HI` still holds for the row.
+  Pressure/leak/SpO2/EPR columns store `NULL` rather than `0` for now
+  (`avg_mask_pressure`/`avg_spo2`/`avg_epr_pressure` are always `0` in
+  `cpap_session_metrics` until #15 — WMEDF signal aggregation — lands).
+  6 new SQLite tests, including a direct regression test for the AHI
+  undercount above.
+
 ## [4.6.1] - 2026-07-23
 
 ### Fixed

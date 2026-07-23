@@ -99,6 +99,8 @@ public:
 
     std::optional<std::string> getLastSTRDate(const std::string& device_id) override;
 
+    bool aggregateDailySummaryFromSessions(const std::string& device_id) override;
+
     std::optional<SessionMetrics> getNightlyMetrics(
         const std::string& device_id,
         const std::chrono::system_clock::time_point& session_start) override;

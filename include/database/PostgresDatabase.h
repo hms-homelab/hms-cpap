@@ -89,6 +89,8 @@ public:
 
     std::optional<std::string> getLastSTRDate(const std::string& device_id) override;
 
+    bool aggregateDailySummaryFromSessions(const std::string& device_id) override;
+
     // -- Nightly / range metrics ----------------------------------------------
 
     std::optional<SessionMetrics> getNightlyMetrics(
