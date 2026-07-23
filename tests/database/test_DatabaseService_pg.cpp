@@ -928,11 +928,15 @@ TEST_F(PgDatabaseTest, SaveSTRDailyRecords_UpsertOnConflict) {
 // ============================================================================
 
 TEST_F(PgDatabaseTest, GetNightlyMetrics_AggregatesSession) {
+    // total_events (16) deliberately includes 8 non-AHI events (RERAs, flow
+    // limitation, etc. -- as Lowenstein Prisma SMART max sessions do) so this
+    // test fails loudly if AHI regresses to total_events/hours (issue #13).
     auto start = tpFromEpoch(kBaseEpoch);
     auto s = makeSession("DEVNM", start);
     SessionMetrics m;
     m.total_events = 16;
     m.obstructive_apneas = 5;
+    m.hypopneas = 3;
     s.metrics = m;
     ASSERT_TRUE(db_->saveSession(s));
 
@@ -940,8 +944,12 @@ TEST_F(PgDatabaseTest, GetNightlyMetrics_AggregatesSession) {
     ASSERT_TRUE(got.has_value());
     EXPECT_EQ(got->total_events, 16);
     EXPECT_EQ(got->obstructive_apneas, 5);
+    EXPECT_EQ(got->hypopneas, 3);
     ASSERT_TRUE(got->usage_hours.has_value());
     EXPECT_NEAR(got->usage_hours.value(), 4.0, 1e-3);
+    // AHI = (obstructive + central + hypopnea + clear_airway) / hours
+    //     = (5 + 0 + 3 + 0) / 4h = 2.0 -- NOT total_events(16) / 4h = 4.0
+    EXPECT_NEAR(got->ahi, 2.0, 1e-3);
 }
 
 TEST_F(PgDatabaseTest, GetNightlyMetrics_NulloptWhenNoSession) {

@@ -1543,7 +1543,9 @@ std::optional<SessionMetrics> SQLiteDatabase::getNightlyMetrics(
                  THEN ROUND(SUM(s.duration_seconds) / 3600.0 * 100.0 / 8.0, 4)
                  ELSE 0 END                                  AS usage_percent,
             CASE WHEN SUM(s.duration_seconds) > 0
-                 THEN ROUND(MAX(sm.total_events) * 3600.0 / SUM(s.duration_seconds), 4)
+                 THEN ROUND((COALESCE(MAX(sm.obstructive_apneas), 0) + COALESCE(MAX(sm.central_apneas), 0)
+                            + COALESCE(MAX(sm.hypopneas), 0) + COALESCE(MAX(sm.clear_airway_apneas), 0))
+                          * 3600.0 / SUM(s.duration_seconds), 4)
                  ELSE 0 END                                  AS ahi,
             CASE WHEN SUM(s.duration_seconds) > 0 AND MAX(sm.avg_event_duration) IS NOT NULL
                  THEN ROUND(MAX(sm.total_events) * MAX(sm.avg_event_duration)
@@ -1684,7 +1686,9 @@ std::vector<SessionMetrics> SQLiteDatabase::getMetricsForDateRange(
                  THEN ROUND(SUM(s.duration_seconds) / 3600.0 * 100.0 / 8.0, 4)
                  ELSE 0 END                                  AS usage_percent,
             CASE WHEN SUM(s.duration_seconds) > 0
-                 THEN ROUND(MAX(sm.total_events) * 3600.0 / SUM(s.duration_seconds), 4)
+                 THEN ROUND((COALESCE(MAX(sm.obstructive_apneas), 0) + COALESCE(MAX(sm.central_apneas), 0)
+                            + COALESCE(MAX(sm.hypopneas), 0) + COALESCE(MAX(sm.clear_airway_apneas), 0))
+                          * 3600.0 / SUM(s.duration_seconds), 4)
                  ELSE 0 END                                  AS ahi,
             AVG(c.avg_leak) AS avg_leak, MAX(c.max_leak)     AS max_leak,
             AVG(c.avg_rr)  AS avg_rr,   AVG(c.avg_tv)       AS avg_tv,

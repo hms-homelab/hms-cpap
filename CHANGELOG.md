@@ -5,6 +5,24 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.6.1] - 2026-07-23
+
+### Fixed
+- **AHI aggregation double-counted non-apnea events (#13).** The per-session
+  `ahi` computed by the shared `cpapdash-parser` library (apneas + hypopneas
+  only, fixed in parser v2026.1.3) was already correct, but every SQL
+  aggregation query that groups multiple mask-on/off segments into one
+  sleep-night row — `QueryService::getSessions` (`/api/sessions`) and the
+  nightly/trend queries in all three DB backends (PostgreSQL, MySQL, SQLite)
+  — recomputed AHI itself as `total_events * 3600 / duration`, reintroducing
+  the same bug one layer up. This inflated AHI badly on Löwenstein Prisma
+  SMART max sessions, which flag many non-apnea `RespEvent` types (snoring,
+  flow limitation, Cheyne-Stokes). Fixed to sum
+  `obstructive_apneas + central_apneas + hypopneas + clear_airway_apneas`
+  instead of `total_events` in all affected queries. Self-healing: the
+  affected event-type counters were always correct, so this corrects
+  historical sessions automatically on next query — no reparse needed.
+
 ## [4.6.0] - 2026-07-19
 
 ### Added
