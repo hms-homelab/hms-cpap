@@ -1809,6 +1809,93 @@ std::optional<std::string> MySQLDatabase::getLastSTRDate(const std::string& devi
 }
 
 // ---------------------------------------------------------------------------
+// aggregateDailySummaryFromSessions
+// ---------------------------------------------------------------------------
+
+bool MySQLDatabase::aggregateDailySummaryFromSessions(const std::string& device_id) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!conn_) return false;
+
+    // NULLIF(...,0) on pressure/spo2/epr: PrismaParser doesn't aggregate WMEDF
+    // signal samples yet (issue #15), so those columns are always 0 in
+    // cpap_session_metrics -- store NULL rather than a misleading zero.
+    //
+    // ahi is a duration-weighted average of the parser's own per-session m.ahi,
+    // NOT re-derived from summing obstructive/central/clear_airway/hypopneas: the
+    // parser counts a further generic "unclassified apnea" event type that is
+    // folded into m.ahi but never persisted to any typed column (see
+    // cpapdash-parser ParsedSession::calculateMetrics, `apnea_other`), so
+    // reconstructing ahi from the typed sums alone silently undercounts it. ai is
+    // then ahi - hi so the AHI = AI + HI identity holds for the row; ai absorbs
+    // that untracked bucket as a residual, same as it does inside m.ahi itself.
+    const char* sql = R"(
+        INSERT INTO cpap_daily_summary
+            (device_id, record_date, duration_minutes, patient_hours,
+             ahi, hi, ai, oai, cai, uai, rin, mask_events, mask_pairs,
+             mask_press_50, leak_50, leak_95, spo2_50, epr_level, mode, updated_at)
+        SELECT
+            s.device_id,
+            DATE(DATE_SUB(s.session_start, INTERVAL 12 HOUR)) AS record_date,
+            ROUND(SUM(s.duration_seconds) / 60.0, 1),
+            ROUND(SUM(s.duration_seconds) / 3600.0, 2),
+            ROUND(SUM(COALESCE(m.ahi,0) * s.duration_seconds / 3600.0)
+                / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS ahi,
+            ROUND(SUM(COALESCE(m.hypopneas,0)) / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS hi,
+            ROUND(SUM(COALESCE(m.ahi,0) * s.duration_seconds / 3600.0) / NULLIF(SUM(s.duration_seconds) / 3600.0, 0)
+                - SUM(COALESCE(m.hypopneas,0)) / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS ai,
+            ROUND(SUM(COALESCE(m.obstructive_apneas,0)) / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS oai,
+            ROUND(SUM(COALESCE(m.central_apneas,0)) / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS cai,
+            ROUND(SUM(COALESCE(m.clear_airway_apneas,0)) / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS uai,
+            ROUND(SUM(COALESCE(m.reras,0)) / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS rin,
+            SUM(COALESCE(m.total_events,0)) AS mask_events,
+            '[]' AS mask_pairs,
+            ROUND(AVG(NULLIF(m.avg_mask_pressure, 0)), 1),
+            ROUND(AVG(NULLIF(m.leak_p50, 0)), 2),
+            ROUND(AVG(NULLIF(m.leak_p95, 0)), 2),
+            ROUND(AVG(NULLIF(m.avg_spo2, 0)), 1),
+            ROUND(AVG(NULLIF(m.avg_epr_pressure, 0)), 2),
+            MAX(COALESCE(m.therapy_mode, 0)),
+            NOW()
+        FROM cpap_sessions s
+        JOIN cpap_session_metrics m ON m.session_id = s.id
+        WHERE s.device_id = ?
+        GROUP BY s.device_id, DATE(DATE_SUB(s.session_start, INTERVAL 12 HOUR))
+        ON DUPLICATE KEY UPDATE
+            duration_minutes = VALUES(duration_minutes),
+            patient_hours    = VALUES(patient_hours),
+            ahi = VALUES(ahi), hi = VALUES(hi), ai = VALUES(ai),
+            oai = VALUES(oai), cai = VALUES(cai), uai = VALUES(uai), rin = VALUES(rin),
+            mask_events      = VALUES(mask_events),
+            mask_pairs       = VALUES(mask_pairs),
+            mask_press_50    = VALUES(mask_press_50),
+            leak_50 = VALUES(leak_50), leak_95 = VALUES(leak_95),
+            spo2_50          = VALUES(spo2_50),
+            epr_level        = VALUES(epr_level),
+            mode             = VALUES(mode),
+            updated_at       = NOW()
+    )";
+
+    MysqlStmtGuard g;
+    g.stmt = mysql_stmt_init(conn_);
+    if (mysql_stmt_prepare(g.stmt, sql, std::strlen(sql)) != 0) {
+        std::cerr << "MySQL: aggregateDailySummaryFromSessions prepare error: "
+                  << mysql_stmt_error(g.stmt) << std::endl;
+        return false;
+    }
+
+    ParamBinder p(1);
+    p.bindText(0, device_id);
+    mysql_stmt_bind_param(g.stmt, p.data());
+
+    if (mysql_stmt_execute(g.stmt) != 0) {
+        std::cerr << "MySQL: aggregateDailySummaryFromSessions error: "
+                  << mysql_stmt_error(g.stmt) << std::endl;
+        return false;
+    }
+    return true;
+}
+
+// ---------------------------------------------------------------------------
 // getNightlyMetrics
 // ---------------------------------------------------------------------------
 

@@ -36,6 +36,13 @@ system_clock::time_point tpFromEpoch(long secs) {
     return system_clock::time_point{} + seconds(secs);
 }
 
+// executeQuery returns every non-null column as a JSON string (see
+// SQLiteDatabase::executeQuery), so Json::Value::asDouble() throws -- parse
+// through the string instead.
+double jsonAsDouble(const Json::Value& v) {
+    return std::stod(v.asString());
+}
+
 } // namespace
 
 class SQLiteDatabaseTest : public ::testing::Test {
@@ -590,6 +597,164 @@ TEST_F(SQLiteDatabaseTest, SaveSTRDailyRecords_UpsertOnConflict) {
     ASSERT_EQ(rows.size(), 1u);
     EXPECT_EQ(rows[0]["n"].asString(), "1");
     EXPECT_EQ(rows[0]["a"].asString(), "9.9");
+}
+
+// ============================================================================
+// aggregateDailySummaryFromSessions (issue #14: Lowenstein has no STR.edf, so
+// cpap_daily_summary otherwise never gets populated for that source)
+// ============================================================================
+
+// Regression test for a real production discrepancy found while validating
+// this fix against live Lowenstein data (cpapdash-api device 31, 2026-06-23):
+// the shared parser's per-session m.ahi includes a generic "unclassified
+// apnea" event type that is folded into ahi but never persisted to any typed
+// column (obstructive/central/hypopneas/clear_airway). Reconstructing ahi by
+// summing those typed columns silently undercounts it (15.31 vs the true
+// 25.25 on that real session) -- ahi must instead be a duration-weighted
+// average of the stored per-session m.ahi, with ai = ahi - hi so AHI = AI + HI
+// still holds for the row.
+TEST_F(SQLiteDatabaseTest, AggregateDailySummary_AhiUsesStoredPerSessionValue_NotTypedSums) {
+    auto start = tpFromEpoch(kBaseEpoch);
+    auto s = makeSession("LOWEN1", start);
+    s.duration_seconds = 30796;  // 8.554444h, matching the real session
+
+    SessionMetrics m;
+    m.total_events = 330;
+    m.ahi = 25.250032;             // parser's own value: ground truth
+    m.obstructive_apneas = 7;
+    m.central_apneas = 15;
+    m.hypopneas = 109;
+    m.reras = 1;
+    m.clear_airway_apneas = 0;      // oai+cai+hi+uai sums to 131, NOT 330's worth
+    s.metrics = m;
+
+    ASSERT_TRUE(db_->saveSession(s));
+    ASSERT_TRUE(db_->aggregateDailySummaryFromSessions("LOWEN1"));
+
+    auto rows = db_->executeQuery(
+        "SELECT ahi, hi, ai, oai, cai, uai, patient_hours, mask_events "
+        "FROM cpap_daily_summary WHERE device_id = ?", {"LOWEN1"});
+    ASSERT_EQ(rows.size(), 1u);
+    EXPECT_NEAR(jsonAsDouble(rows[0]["ahi"]), 25.25, 0.01);
+    EXPECT_NEAR(jsonAsDouble(rows[0]["hi"]), 12.74, 0.01);
+    // ai = ahi - hi (NOT oai+cai+uai, which would only be 2.57).
+    EXPECT_NEAR(jsonAsDouble(rows[0]["ai"]), 25.25 - 12.74, 0.02);
+    EXPECT_NEAR(jsonAsDouble(rows[0]["ahi"]),
+                jsonAsDouble(rows[0]["ai"]) + jsonAsDouble(rows[0]["hi"]), 0.02);
+    EXPECT_EQ(rows[0]["mask_events"].asString(), "330");
+}
+
+TEST_F(SQLiteDatabaseTest, AggregateDailySummary_WeightsMultipleSessionsSameNightByDuration) {
+    // Two mask-on/off segments the same sleep night: a long low-AHI stretch and
+    // a short high-AHI one. The combined ahi must be duration-weighted, not a
+    // plain average of the two session ahi values. Kept only 10 minutes apart
+    // (rather than hours) so the -12h sleep-day shift can't land the two on
+    // different calendar days depending on the test machine's local timezone.
+    auto night = tpFromEpoch(kBaseEpoch);
+
+    auto s1 = makeSession("LOWEN2", night);
+    s1.duration_seconds = 7 * 3600;  // 7h
+    SessionMetrics m1;
+    m1.ahi = 2.0;
+    m1.hypopneas = 14;  // 2.0/h over 7h
+    s1.metrics = m1;
+    ASSERT_TRUE(db_->saveSession(s1));
+
+    auto s2 = makeSession("LOWEN2", night + minutes(10));  // still same sleep day
+    s2.duration_seconds = 1 * 3600;  // 1h
+    SessionMetrics m2;
+    m2.ahi = 30.0;
+    m2.hypopneas = 30;  // 30.0/h over 1h
+    s2.metrics = m2;
+    ASSERT_TRUE(db_->saveSession(s2));
+
+    ASSERT_TRUE(db_->aggregateDailySummaryFromSessions("LOWEN2"));
+
+    auto rows = db_->executeQuery(
+        "SELECT ahi, patient_hours FROM cpap_daily_summary WHERE device_id = ?",
+        {"LOWEN2"});
+    ASSERT_EQ(rows.size(), 1u);
+    EXPECT_NEAR(jsonAsDouble(rows[0]["patient_hours"]), 8.0, 0.01);
+    // (2.0*7 + 30.0*1) / 8 = 5.5, not (2.0+30.0)/2 = 16.0.
+    EXPECT_NEAR(jsonAsDouble(rows[0]["ahi"]), 5.5, 0.05);
+}
+
+TEST_F(SQLiteDatabaseTest, AggregateDailySummary_ZeroPressureAndSpo2StoreAsNull) {
+    // Issue #15: PrismaParser doesn't aggregate WMEDF signals yet, so
+    // avg_mask_pressure/avg_spo2/avg_epr_pressure are always 0 in
+    // cpap_session_metrics for Lowenstein. A stored zero must not be treated
+    // as a real reading downstream, so it lands as NULL, not 0.
+    auto s = makeSession("LOWEN3", tpFromEpoch(kBaseEpoch));
+    s.duration_seconds = 3600;
+    SessionMetrics m;
+    m.ahi = 1.0;
+    m.avg_mask_pressure = 0;
+    m.avg_spo2 = 0;
+    m.avg_epr_pressure = 0;
+    s.metrics = m;
+    ASSERT_TRUE(db_->saveSession(s));
+
+    ASSERT_TRUE(db_->aggregateDailySummaryFromSessions("LOWEN3"));
+
+    auto rows = db_->executeQuery(
+        "SELECT mask_press_50, spo2_50, epr_level FROM cpap_daily_summary "
+        "WHERE device_id = ?", {"LOWEN3"});
+    ASSERT_EQ(rows.size(), 1u);
+    EXPECT_TRUE(rows[0]["mask_press_50"].isNull());
+    EXPECT_TRUE(rows[0]["spo2_50"].isNull());
+    EXPECT_TRUE(rows[0]["epr_level"].isNull());
+}
+
+TEST_F(SQLiteDatabaseTest, AggregateDailySummary_DifferentSleepDaysGetSeparateRows) {
+    auto s1 = makeSession("LOWEN4", tpFromEpoch(kBaseEpoch));
+    s1.duration_seconds = 3600;
+    SessionMetrics m1;
+    m1.ahi = 1.0;
+    s1.metrics = m1;
+    ASSERT_TRUE(db_->saveSession(s1));
+
+    auto s2 = makeSession("LOWEN4", tpFromEpoch(kBaseEpoch + 86400));
+    s2.duration_seconds = 3600;
+    SessionMetrics m2;
+    m2.ahi = 2.0;
+    s2.metrics = m2;
+    ASSERT_TRUE(db_->saveSession(s2));
+
+    ASSERT_TRUE(db_->aggregateDailySummaryFromSessions("LOWEN4"));
+
+    auto rows = db_->executeQuery(
+        "SELECT record_date, ahi FROM cpap_daily_summary WHERE device_id = ? "
+        "ORDER BY record_date", {"LOWEN4"});
+    ASSERT_EQ(rows.size(), 2u);
+    EXPECT_NEAR(jsonAsDouble(rows[0]["ahi"]), 1.0, 0.01);
+    EXPECT_NEAR(jsonAsDouble(rows[1]["ahi"]), 2.0, 0.01);
+}
+
+TEST_F(SQLiteDatabaseTest, AggregateDailySummary_IsIdempotentSelfHealingUpsert) {
+    auto s = makeSession("LOWEN5", tpFromEpoch(kBaseEpoch));
+    s.duration_seconds = 3600;
+    SessionMetrics m;
+    m.ahi = 4.0;
+    s.metrics = m;
+    ASSERT_TRUE(db_->saveSession(s));
+
+    ASSERT_TRUE(db_->aggregateDailySummaryFromSessions("LOWEN5"));
+    ASSERT_TRUE(db_->aggregateDailySummaryFromSessions("LOWEN5"));  // re-run, e.g. next burst cycle
+
+    auto rows = db_->executeQuery(
+        "SELECT COUNT(*) AS n FROM cpap_daily_summary WHERE device_id = ?",
+        {"LOWEN5"});
+    ASSERT_EQ(rows.size(), 1u);
+    EXPECT_EQ(rows[0]["n"].asString(), "1");
+}
+
+TEST_F(SQLiteDatabaseTest, AggregateDailySummary_NoSessionsIsNoOp) {
+    EXPECT_TRUE(db_->aggregateDailySummaryFromSessions("NOBODY_LOWENSTEIN"));
+    auto rows = db_->executeQuery(
+        "SELECT COUNT(*) AS n FROM cpap_daily_summary WHERE device_id = ?",
+        {"NOBODY_LOWENSTEIN"});
+    ASSERT_EQ(rows.size(), 1u);
+    EXPECT_EQ(rows[0]["n"].asString(), "0");
 }
 
 // ============================================================================

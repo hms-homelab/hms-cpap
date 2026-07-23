@@ -1950,6 +1950,80 @@ std::optional<std::string> DatabaseService::getLastSTRDate(const std::string& de
     }
 }
 
+bool DatabaseService::aggregateDailySummaryFromSessions(const std::string& device_id) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!ensureConnection()) return false;
+
+    // NULLIF(...,0) on pressure/spo2/epr: PrismaParser doesn't aggregate WMEDF
+    // signal samples yet (issue #15), so those columns are always 0 in
+    // cpap_session_metrics -- store NULL rather than a misleading zero.
+    //
+    // ahi is a duration-weighted average of the parser's own per-session m.ahi,
+    // NOT re-derived from summing obstructive/central/clear_airway/hypopneas: the
+    // parser counts a further generic "unclassified apnea" event type that is
+    // folded into m.ahi but never persisted to any typed column (see
+    // cpapdash-parser ParsedSession::calculateMetrics, `apnea_other`), so
+    // reconstructing ahi from the typed sums alone silently undercounts it. ai is
+    // then ahi - hi so the AHI = AI + HI identity holds for the row; ai absorbs
+    // that untracked bucket as a residual, same as it does inside m.ahi itself.
+    try {
+        pqxx::work txn(*conn_);
+        txn.exec_params(R"(
+            INSERT INTO cpap_daily_summary
+                (device_id, record_date, duration_minutes, patient_hours,
+                 ahi, hi, ai, oai, cai, uai, rin, mask_events, mask_pairs,
+                 mask_press_50, leak_50, leak_95, spo2_50, epr_level, mode, updated_at)
+            SELECT
+                s.device_id,
+                DATE(s.session_start - INTERVAL '12 hours') AS record_date,
+                ROUND((SUM(s.duration_seconds) / 60.0)::numeric, 1),
+                ROUND((SUM(s.duration_seconds) / 3600.0)::numeric, 2),
+                ROUND((SUM(COALESCE(m.ahi,0) * s.duration_seconds / 3600.0)
+                    / NULLIF(SUM(s.duration_seconds) / 3600.0, 0))::numeric, 2) AS ahi,
+                ROUND((SUM(COALESCE(m.hypopneas,0)) / NULLIF(SUM(s.duration_seconds) / 3600.0, 0))::numeric, 2) AS hi,
+                ROUND((SUM(COALESCE(m.ahi,0) * s.duration_seconds / 3600.0) / NULLIF(SUM(s.duration_seconds) / 3600.0, 0)
+                    - SUM(COALESCE(m.hypopneas,0)) / NULLIF(SUM(s.duration_seconds) / 3600.0, 0))::numeric, 2) AS ai,
+                ROUND((SUM(COALESCE(m.obstructive_apneas,0)) / NULLIF(SUM(s.duration_seconds) / 3600.0, 0))::numeric, 2) AS oai,
+                ROUND((SUM(COALESCE(m.central_apneas,0)) / NULLIF(SUM(s.duration_seconds) / 3600.0, 0))::numeric, 2) AS cai,
+                ROUND((SUM(COALESCE(m.clear_airway_apneas,0)) / NULLIF(SUM(s.duration_seconds) / 3600.0, 0))::numeric, 2) AS uai,
+                ROUND((SUM(COALESCE(m.reras,0)) / NULLIF(SUM(s.duration_seconds) / 3600.0, 0))::numeric, 2) AS rin,
+                SUM(COALESCE(m.total_events,0))::int AS mask_events,
+                '[]'::jsonb AS mask_pairs,
+                ROUND(AVG(NULLIF(m.avg_mask_pressure, 0))::numeric, 1),
+                ROUND(AVG(NULLIF(m.leak_p50, 0))::numeric, 2),
+                ROUND(AVG(NULLIF(m.leak_p95, 0))::numeric, 2),
+                ROUND(AVG(NULLIF(m.avg_spo2, 0))::numeric, 1),
+                ROUND(AVG(NULLIF(m.avg_epr_pressure, 0))::numeric, 2),
+                MAX(COALESCE(m.therapy_mode, 0)),
+                NOW()
+            FROM cpap_sessions s
+            JOIN cpap_session_metrics m ON m.session_id = s.id
+            WHERE s.device_id = $1
+            GROUP BY s.device_id, DATE(s.session_start - INTERVAL '12 hours')
+            ON CONFLICT (device_id, record_date) DO UPDATE SET
+                duration_minutes = EXCLUDED.duration_minutes,
+                patient_hours    = EXCLUDED.patient_hours,
+                ahi = EXCLUDED.ahi, hi = EXCLUDED.hi, ai = EXCLUDED.ai,
+                oai = EXCLUDED.oai, cai = EXCLUDED.cai, uai = EXCLUDED.uai, rin = EXCLUDED.rin,
+                mask_events      = EXCLUDED.mask_events,
+                mask_pairs       = EXCLUDED.mask_pairs,
+                mask_press_50    = EXCLUDED.mask_press_50,
+                leak_50 = EXCLUDED.leak_50, leak_95 = EXCLUDED.leak_95,
+                spo2_50          = EXCLUDED.spo2_50,
+                epr_level        = EXCLUDED.epr_level,
+                mode             = EXCLUDED.mode,
+                updated_at       = NOW()
+        )", device_id);
+
+        txn.commit();
+        return true;
+
+    } catch (const std::exception& e) {
+        std::cerr << "DB: aggregateDailySummaryFromSessions error: " << e.what() << std::endl;
+        return false;
+    }
+}
+
 bool DatabaseService::executeRaw(const std::string& sql) {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!ensureConnection()) return false;

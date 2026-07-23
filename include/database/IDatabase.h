@@ -98,6 +98,13 @@ public:
 
     virtual std::optional<std::string> getLastSTRDate(const std::string& device_id) = 0;
 
+    /// Lowenstein has no STR.edf, so cpap_daily_summary is otherwise never populated
+    /// for that source. Re-aggregates cpap_sessions + cpap_session_metrics into
+    /// cpap_daily_summary for this device, grouped by sleep day (session_start - 12h).
+    /// Idempotent upsert over the full history — cheap and self-healing, same
+    /// philosophy as saveSTRDailyRecords.
+    virtual bool aggregateDailySummaryFromSessions(const std::string& device_id) = 0;
+
     // -- Nightly / range metrics ----------------------------------------------
 
     virtual std::optional<SessionMetrics> getNightlyMetrics(

@@ -510,6 +510,7 @@ public:
     MOCK_METHOD(bool, updateDeviceLastSeen, (const std::string&), (override));
     MOCK_METHOD(bool, saveSTRDailyRecords, (const std::vector<STRDailyRecord>&), (override));
     MOCK_METHOD((std::optional<std::string>), getLastSTRDate, (const std::string&), (override));
+    MOCK_METHOD(bool, aggregateDailySummaryFromSessions, (const std::string&), (override));
     MOCK_METHOD((std::optional<SessionMetrics>), getNightlyMetrics, (const std::string&, const std::chrono::system_clock::time_point&), (override));
     MOCK_METHOD((std::vector<SessionMetrics>), getMetricsForDateRange, (const std::string&, int), (override));
     MOCK_METHOD(bool, saveSummary, (const std::string&, const std::string&, const std::string&, const std::string&, int, double, double, double, const std::string&), (override));
