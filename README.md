@@ -83,8 +83,7 @@ All data sources (ezShare WiFi SD, local filesystem) work with both manufacturer
 - **ML Intelligence** - AHI prediction, compliance forecasting, mask fit risk, anomaly detection
 - **LLM Session Summary** - AI-generated therapy analysis via Ollama (daily, weekly, monthly)
 - **Windows + Linux** - Native builds for both platforms, Docker image for CI
-- **Ultra-Lightweight** - 6.5 MB native binary
-- **1,091 Unit Tests** - Comprehensive coverage across all services
+
 
 ## Table of Contents
 
