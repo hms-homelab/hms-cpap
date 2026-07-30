@@ -103,6 +103,7 @@ set(TEST_SOURCES
     services/test_DeviceDiscoveryService.cpp
     services/test_SetupService.cpp
     services/test_CleaningStatus.cpp
+    services/test_CleaningPublisher.cpp
     services/test_SyncNow.cpp
     services/test_SupplyStatus.cpp
     services/test_SupplyPublisher.cpp
