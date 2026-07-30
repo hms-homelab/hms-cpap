@@ -44,6 +44,11 @@ WORKDIR /build
 COPY CMakeLists.txt VERSION ./
 COPY src/ ./src/
 COPY include/ ./include/
+# Vendored mjansson/mdns (Unlicense), on the include path via CMakeLists and
+# included by DeviceDiscoveryService.cpp. This COPY list is explicit rather than
+# "COPY . .", so a new top-level source directory has to be added here too or the
+# image build fails on a missing header while a full-checkout build succeeds.
+COPY third_party/ ./third_party/
 COPY llm_prompt.txt ./
 
 # Build HMS-CPAP with Web UI support
