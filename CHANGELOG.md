@@ -5,6 +5,82 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.7.0] - 2026-07-30
+
+### Added
+- **Cleaning schedules (SDD-007).** Supplies answer when to *replace* a mask;
+  nothing answered when to *wash* one, which is the daily and weekly half of
+  CPAP care and the part people actually skip. Replacement and cleaning stay
+  separate concepts on purpose: a mask is replaced every 90 days and wiped every
+  day, and one interval cannot mean both.
+  - Two tables and seven seeded presets on **all three backends**, with the
+    catalog and the task keys taken verbatim from the cloud's SDD-043 so a user
+    running both stacks sees one vocabulary.
+  - `computeCleaningStatus` is ported from `hms-cpapdash-api` unchanged apart
+    from the namespace, and its tests are that suite's vectors copied verbatim.
+    Three implementations of this function now exist (the cloud's, this one, the
+    Dart port in the phone app) and nothing but shared vectors stops them
+    drifting into disagreeing about when a mask is dirty.
+  - Seven local routes under `/api/cleaning`, mirroring the equipment surface.
+    `status` is computed on read and never stored, exactly like supply wear.
+    `/suggest` only offers what the setup actually holds, so a profile with no
+    humidifier gets no water-tub tasks, and is idempotent on
+    `(profile, task_key)`.
+  - **Home Assistant sensors.** There is no phone and no notification planner
+    here, so HA entities *are* the reminder mechanism: one retained sensor per
+    enabled task plus a household-wide "Cleaning Due" binary sensor. This
+    deliberately does less than the cloud spec, which fires notifications from
+    the app's scheduler. hms-cpap publishes state and stops; when to be nudged
+    is an automation the user owns.
+  - **Optional cloud mirror**, against the new `POST /v1/cleaning/sync`
+    (hms-cpapdash-api v2026.12.0). A second exchange with its own cursor, run
+    after the equipment one because a task references a profile and the only
+    shared handle is `client_uuid`, which the profile acquires during that pass.
+  - A **Cleaning section** on the equipment page, below Accessories inside the
+    selected setup's panel, reusing the existing wear colours so "due" reads in
+    the same red as an overdue supply.
+
+- **The first-run wizard is reachable (SDD-006 phase 1).** It had shipped a
+  while ago and almost nobody could get to it.
+  - `static_dir` defaulted to `./static/browser`, relative to the working
+    directory, so double-clicking the binary anywhere other than its own folder
+    served no UI at all. That one default made every other part of setup
+    unreachable. It now resolves beside the executable, with the old value kept
+    as a fallback and an explicit config value still winning.
+  - `setup_complete` had been written since the wizard landed and was never read
+    by anything, so a first-run user got an empty dashboard and no hint that
+    configuration existed. A route guard now sends them to `/setup`.
+  - On a genuine first run the binary opens the wizard rather than printing a
+    URL to a terminal nobody is reading. Suppressed by `--no-browser`, under a
+    supervising shell, and when not attached to a user session, so Docker and
+    systemd never try.
+  - `GET /api/capabilities` reports which storage backends the build actually
+    has. Since 4.6.3 a config naming an uncompiled backend refuses to boot,
+    which is correct and a miserable way to end a wizard.
+
+### Fixed
+- **`auto_sync` never fired, for anything.** `markDirty()` existed, was
+  documented, and was called by nothing, so the debounce could never trigger and
+  the only working path was the explicit `POST /api/equipment/cloud-sync`. Every
+  mutation that changes mirrored data now marks the mirror stale. This affected
+  equipment too, not only the tables this release adds.
+- **Cleaning tasks were pushed to the cloud without a `client_uuid`.** The
+  backfill covered profiles and items and silently skipped the new table, so a
+  task went up with an empty uuid, came back with one, and the apply loop had
+  nothing to match it to. Pushing looked perfectly healthy while nothing the
+  cloud changed could ever come back down. Found by running the two services
+  against each other over real HTTP, which no unit test could have done.
+- **MSVC could not compile `DeviceDiscoveryService`**: it cast a `select()`
+  timeout through `suseconds_t`, which Windows does not have.
+- **`requestSyncNow` and `syncNowOutcomeString` were stranded** inside the
+  `#ifndef _WIN32` block that exists for the Fysetc TCP server, so they vanished
+  on MSVC and the controller failed to link. Their own unit tests could not
+  catch it: they only ever ran where the guard was satisfied.
+- **The Docker image build missed `third_party/`**, so it failed on a missing
+  `mdns.h` while the native build, which has a full checkout, succeeded.
+- MySQL on MSVC now links through vcpkg's exported target rather than a bare
+  library path, which left ten `ZSTD_*` symbols unresolved.
+
 ## [4.6.3] - 2026-07-29
 
 ### Fixed
