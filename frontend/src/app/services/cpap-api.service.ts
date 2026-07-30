@@ -2,7 +2,7 @@ import { Injectable } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import { DashboardData, SessionListItem, SessionDetail, SessionEvent, TrendPoint, SignalData, VitalsData, OximetryData } from '../models/session.model';
-import { AppConfig } from '../models/config.model';
+import { AppConfig, DiscoveredDevice } from '../models/config.model';
 import { EquipmentType, EquipmentProfile, EquipmentItem, EquipmentItemPayload } from '../models/equipment.model';
 
 @Injectable({ providedIn: 'root' })
@@ -73,6 +73,22 @@ export class CpapApiService {
     return this.http.get<{ status: string; url: string }>(
       `/api/config/test-ezshare?url=${encodeURIComponent(url)}`
     );
+  }
+
+  /**
+   * SDD-005: browse the LAN for CpapDash Mule and Miner units over mDNS.
+   * Blocks server-side for ~2.5s. An empty list is a successful scan that
+   * found nothing, not an error.
+   */
+  discoverDevices(): Observable<{ devices: DiscoveredDevice[]; count: number }> {
+    return this.http.get<{ devices: DiscoveredDevice[]; count: number }>(
+      '/api/discover/devices'
+    );
+  }
+
+  /** SDD-005: force one burst cycle now. Not the same as /api/backfill. */
+  syncNow(): Observable<{ outcome: string; accepted: boolean }> {
+    return this.http.post<{ outcome: string; accepted: boolean }>('/api/sync/now', {});
   }
 
   triggerMlTraining(): Observable<any> {

@@ -40,6 +40,8 @@ public:
     ADD_METHOD_TO(CpapController::mlStatus,       "/api/ml/status",    drogon::Get);
     ADD_METHOD_TO(CpapController::getLlmPrompt,   "/api/llm-prompt",   drogon::Get);
     ADD_METHOD_TO(CpapController::updateLlmPrompt,"/api/llm-prompt",   drogon::Put);
+    ADD_METHOD_TO(CpapController::discoverDevices, "/api/discover/devices", drogon::Get);
+    ADD_METHOD_TO(CpapController::syncNow,         "/api/sync/now",         drogon::Post);
     ADD_METHOD_TO(CpapController::triggerBackfill, "/api/backfill",        drogon::Post);
     ADD_METHOD_TO(CpapController::backfillStatus,  "/api/backfill/status", drogon::Get);
     ADD_METHOD_TO(CpapController::backfillScan,    "/api/backfill/scan",   drogon::Get);
@@ -117,6 +119,16 @@ public:
                       std::function<void(const drogon::HttpResponsePtr&)>&& cb);
     void updateLlmPrompt(const drogon::HttpRequestPtr& req,
                          std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+
+    /// SDD-005: browse the LAN for CpapDash Mule and Miner units. Thin
+    /// passthrough to DeviceDiscoveryService; all the logic lives there
+    /// because the test binary excludes this file.
+    void discoverDevices(const drogon::HttpRequestPtr& req,
+                         std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+    /// SDD-005: force one burst cycle now. Deliberately NOT /api/backfill,
+    /// which means "go re-read historical data" in this codebase.
+    void syncNow(const drogon::HttpRequestPtr& req,
+                 std::function<void(const drogon::HttpResponsePtr&)>&& cb);
 
     void triggerBackfill(const drogon::HttpRequestPtr& req,
                          std::function<void(const drogon::HttpResponsePtr&)>&& cb);

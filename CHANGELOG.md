@@ -5,6 +5,119 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.6.3] - 2026-07-29
+
+### Fixed
+- **`database.type = "mysql"` wrote to MySQL and read from SQLite.** `main.cpp`
+  hand-rolled backend selection in five places (the collector's DB, plus the
+  separate connections for the web layer, reports, ML and backfill) and every
+  one had only a `postgresql` branch, so `mysql` fell through to the SQLite
+  default. Meanwhile `BurstCollectorService` used `makeDatabaseFromConfig()`,
+  which honours `DB_TYPE` correctly. The collector therefore filled MySQL while
+  every reader looked at a SQLite file it had just created, and the dashboard
+  stayed permanently empty. All five sites now go through the factory, and
+  startup refuses to continue when a requested non-SQLite backend silently
+  downgraded, rather than logging therapy data somewhere the user never looks.
+
+- **Saving any setting from the web UI destroyed the CpapDash sync token and
+  the whole Fysetc block.** `AppConfig::save()` emitted the `cpapdash` object
+  twice, the second time with the token masked to `"********"`, so the mask
+  landed on disk and the next load read it back as the literal token. The same
+  function never wrote the `fysetc` block that `load()` reads, so a UI save
+  silently discarded it. Redaction now happens only in `toJson()`, which
+  answers the API; `save()` persists secrets verbatim.
+
+- **`GET /api/config` hid the `cpapdash` and `fysetc` sections entirely**, and
+  `PUT /api/config` could not write `agent`, `sleep_stage`, `cpapdash`,
+  `fysetc` or `web_port`. Cloud sync and Fysetc TCP were unreachable from the
+  UI even though both were fully implemented.
+
+- **Oximetry timestamps were shifted by the host's UTC offset.** Every
+  timestamp column in this schema holds bare local wall clock, reached by a
+  matched parse/render pair: CPAP goes `mktime` → `localtime`, and the oximetry
+  parsers deliberately read the ring's printed time *as if* UTC (`timegm`), so
+  they need a `gmtime` render. They were being written with `localtime`
+  instead, so on an EDT host a ring row reading `23:00` was stored as `19:00`.
+  Aggregates, MQTT sensors, PDF reports and range summaries were unaffected
+  (delta-based, and oximetry is correlated to CPAP by date, not by timestamp),
+  but the session-detail view drew the SpO2 and heart-rate charts four hours
+  (five in winter) away from the flow and pressure charts for the same night.
+  On PostgreSQL the samples disagreed with their own session header inside one
+  table, because the header used `gmtime` and the sample loop used `localtime`.
+  SQLite's live path had the mirror-image bug: `datetime('now')` is UTC there,
+  so live samples were skewed the other way.
+  This never showed up in the cloud because `mktime` and `timegm` are identical
+  on a UTC host; it only affected local, non-UTC installs.
+  **Existing oximetry rows written before this release stay shifted.** The
+  offset in force at ingest was never recorded, so DST makes a blind arithmetic
+  correction unreliable. Re-upload the original Wellue CSV or `.vld` files via
+  `/upload`, which upserts on filename and so replaces rather than duplicates.
+
+- **MySQL never gained columns added by later releases.** The backend's only
+  schema management was `CREATE TABLE IF NOT EXISTS`, which is a no-op on a
+  table that already exists, and it had no `ALTER TABLE` anywhere. An install
+  created by an older build kept its original shape forever and every read of a
+  newer column failed at runtime — the same failure class as 4.4.10. Added a
+  `migrateSchema()` pass that runs on every connect, guarded by
+  `information_schema` rather than `ADD COLUMN IF NOT EXISTS` (MariaDB supports
+  that syntax, Oracle MySQL does not). Verified against a real four-column
+  `cpap_sessions`: eleven columns restored, existing rows preserved, and a
+  second start applies nothing.
+
+- **MySQL truncated `checkpoint_files` at 256 bytes.** The JSON column was
+  fetched with a binder capped to its inline buffer, so any night carrying more
+  than a handful of files came back cut mid-key and parsed into garbage.
+
+- **MySQL could not be built on macOS at all, and was silently disabled when
+  it could not be found.** `MySQLDatabase.h` probed only `<mysql/mysql.h>` and
+  `<mariadb/mysql.h>`, but pkg-config points `-I` straight at the directory
+  holding `mysql.h`, so neither resolved under Homebrew; Debian only worked
+  because `/usr/include` is always searched. Added a bare `<mysql.h>` probe, a
+  `my_bool` shim for Oracle MySQL 8+ (which removed the typedef), and replaced
+  a `std::vector<my_bool>` whose `vector<bool>` specialisation has no
+  addressable element for `MYSQL_BIND::is_null`. On the CMake side, a missing
+  client used to leave `BUILD_WITH_MYSQL=ON` in the cache while `WITH_MYSQL`
+  went undefined, producing a binary that accepted `database.type = "mysql"`
+  and then refused to start; that is now a hard configure error.
+
+- **The test binary linked a different MySQL client than the shipped binary.**
+  `run_tests` used bare `-l` names and resolved to MariaDB Connector/C while
+  `hms_cpap` linked `libmysqlclient`. The two have different TLS defaults, so
+  the suite validated a library that does not ship and failed against a server
+  the real binary connects to.
+
+### Added
+- **MySQL oximetry support.** `oximetry_sessions` and `oximetry_samples` were
+  missing from the MySQL schema entirely, and `saveOximetrySession`,
+  `oximetrySessionExists` and `saveLiveOximetrySample` were stubs that returned
+  failure. `POST /api/upload/oximetry` now works on MySQL.
+- **`getOximetrySummary`, `getOximetryRangeSummary`, `getOximetryNightlySpo2`
+  and `getCheckpointFilesByFolder` on SQLite and MySQL.** All four were
+  inline header stubs returning `{}` on both backends; only PostgreSQL
+  implemented them. On SQLite — the default backend — this meant O2 Ring data
+  was written and then never reached the oximetry MQTT sensors, the PDF
+  reports or the daily aggregation, and the SleepHQ export guard treated every
+  folder as unparsed and queued it. PostgreSQL's `DISTINCT ON` has no
+  equivalent elsewhere, so MySQL ranks with a window function and SQLite relies
+  on its bare-column-with-`MAX()` rule.
+- **MySQL enabled in the native macOS and Windows CI builds**, with a
+  find_path/find_library fallback for MSVC and vcpkg where pkg-config is absent.
+- 54 new tests (1233 total): oximetry and checkpoint parity across SQLite and
+  MySQL, a MySQL schema-drift guard, and `AppConfig` secret-redaction and
+  section round-trip regressions.
+- **LAN discovery of Mule and Miner units** (`GET /api/discover/devices`) plus
+  **`POST /api/sync/now`** to force a single burst cycle, wired into the setup
+  page so a new install can find its unit instead of being told to type in an
+  IP. First step of SDD-005 (docs/SDD-005-desktop-app.md); the installer and
+  menu-bar pieces of that spec are still to come.
+
+### Changed
+- MySQL no longer logs a deprecation warning and three duplicate-key errors on
+  every single connect. `MYSQL_OPT_RECONNECT` is version-guarded (Oracle removed
+  it in 8.4) and indexes are declared inline as `KEY`, since MySQL has no
+  `CREATE INDEX IF NOT EXISTS`. Two of those indexes were dropped outright as
+  redundant against `UNIQUE KEY uq_device_session`.
+
 ## [4.6.2] - 2026-07-23
 
 ### Fixed

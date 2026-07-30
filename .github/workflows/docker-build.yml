@@ -252,7 +252,10 @@ jobs:
         run: |
           mkdir build
           cd build
-          cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static-md -DBUILD_TESTS=OFF -DBUILD_WITH_WEB=ON -DBUILD_WITH_POSTGRESQL=ON ..
+          # MySQL comes from the vcpkg libmysql port. pkg-config is not present
+          # under MSVC, so CMakeLists falls back to its find_path/find_library
+          # route; the toolchain file puts the vcpkg tree on the search path.
+          cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static-md -DBUILD_TESTS=OFF -DBUILD_WITH_WEB=ON -DBUILD_WITH_POSTGRESQL=ON -DBUILD_WITH_MYSQL=ON ..
           cmake --build . --parallel
 
       # ── Package Windows release ─────────────────────────────────
@@ -327,7 +330,8 @@ jobs:
       - name: Install C++ dependencies (Homebrew)
         run: |
           brew install cmake ninja drogon jsoncpp openssl@3 libpq libpqxx \
-            spdlog nlohmann-json libharu gnuplot hiredis brotli yaml-cpp sqlite
+            spdlog nlohmann-json libharu gnuplot hiredis brotli yaml-cpp sqlite \
+            mysql-client
 
       # ── Paho MQTT C++ (no Homebrew formula — build from source) ──
       # hms-cpap links paho-mqttpp3 (C++) + paho-mqtt3as (async+SSL C). The C++
@@ -359,6 +363,11 @@ jobs:
       - name: Build HMS-CPAP
         run: |
           export CMAKE_PREFIX_PATH="/opt/homebrew:$(brew --prefix openssl@3):$(brew --prefix libpq):$(brew --prefix sqlite):$(brew --prefix jsoncpp)"
+          # mysql-client is keg-only, so its mysqlclient.pc is not on the default
+          # pkg-config path. Without this the MySQL probe misses and the build
+          # fails loudly (by design) rather than silently shipping a binary that
+          # accepts database.type="mysql" and then refuses to start.
+          export PKG_CONFIG_PATH="$(brew --prefix mysql-client)/lib/pkgconfig:${PKG_CONFIG_PATH}"
           mkdir build && cd build
           # Homebrew ships CMake 4.x, which rejects cmake_minimum_required < 3.5.
           # The miniz 3.0.2 FetchContent dep still declares an old minimum, so
@@ -371,6 +380,7 @@ jobs:
             -DBUILD_TESTS=OFF \
             -DBUILD_WITH_WEB=ON \
             -DBUILD_WITH_POSTGRESQL=ON \
+            -DBUILD_WITH_MYSQL=ON \
             ..
           cmake --build . --parallel
 

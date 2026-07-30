@@ -114,6 +114,31 @@ public:
         const std::string& new_source,
         bool server_exists);
 
+    // ── SDD-005: sync now ────────────────────────────────────────────────
+    /// What a "sync now" request did.
+    enum class SyncNowOutcome {
+        Requested,         ///< worker will cut its sleep short and cycle
+        AlreadyRunning,    ///< a cycle is mid-flight; not queued, not doubled
+        AlreadyRequested,  ///< a request is already pending; collapsed into it
+        NotRunning         ///< worker is stopped; nothing to wake
+    };
+
+    /// Pure decision, deliberately shaped like decideFysetcLifecycle above.
+    /// The test binary excludes controllers/ and web/ (tests/CMakeLists.txt),
+    /// so the only way sync-now is unit-testable at all is if the reasoning
+    /// lives here, in a function that touches no thread and no socket.
+    static SyncNowOutcome decideSyncNow(bool service_running,
+                                        bool cycle_in_flight,
+                                        bool request_pending);
+
+    /// Ask the worker to run a burst cycle now rather than waiting out the
+    /// rest of its interval. Never starts a second concurrent cycle, and
+    /// repeated calls collapse into the one pending request.
+    SyncNowOutcome requestSyncNow();
+
+    /// Stable string for the API response body.
+    static const char* syncNowOutcomeString(SyncNowOutcome outcome);
+
     // ── Test seam (unit tests only) ──────────────────────────────────────
     // Inject collaborators directly, bypassing initialize() (which opens real
     // DB/MQTT/network connections). Lets the burst cycle, completion, archive
@@ -185,6 +210,14 @@ private:
     std::thread worker_thread_;
     std::atomic<bool> running_;
     std::mutex mutex_;
+
+    /// SDD-005 sync-now. `cycle_in_flight_` brackets executeBurstCycle() so a
+    /// request landing mid-cycle is REPORTED as such instead of silently
+    /// starting a second one; `sync_now_requested_` is what cuts the
+    /// inter-cycle sleep short. Both atomic: requestSyncNow() is called from
+    /// the web thread, these are read and written by the worker.
+    std::atomic<bool> cycle_in_flight_{false};
+    std::atomic<bool> sync_now_requested_{false};
 
     // State
     std::chrono::system_clock::time_point last_burst_time_;

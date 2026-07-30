@@ -2107,12 +2107,12 @@ bool DatabaseService::saveOximetrySession(const std::string& device_id,
 
             for (size_t i = 0; i < session.samples.size(); i++) {
                 const auto& s = session.samples[i];
-                auto tt = std::chrono::system_clock::to_time_t(s.timestamp);
-                std::tm* tm = std::localtime(&tt);
-                std::ostringstream ts;
-                ts << std::put_time(tm, "%Y-%m-%d %H:%M:%S");
-
-                q << "(" << session_id << ", '" << ts.str() << "', "
+                // fmtTs (gmtime), matching the session header above. This loop
+                // used std::localtime, so on any non-UTC host the samples landed
+                // hours away from their own session's start_time in the same
+                // table. The oximetry parsers read the ring's printed time as if
+                // it were UTC, so gmtime is what gives that wall clock back.
+                q << "(" << session_id << ", '" << fmtTs(s.timestamp) << "', "
                   << (int)s.spo2 << ", " << (int)s.heart_rate << ", "
                   << (int)s.motion << ", " << (int)s.vibration << ", "
                   << (s.valid() ? "true" : "false") << ", 'vld')";

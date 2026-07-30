@@ -1425,6 +1425,14 @@ void BurstCollectorService::runLoop() {
         // takes the whole service down (incident 2026-07-17: an unreadable
         // DATALOG folder crash-looped the container this way). A failed
         // cycle logs and retries on the normal schedule.
+        // SDD-005: consume any pending sync-now BEFORE the cycle, and bracket
+        // the cycle with cycle_in_flight_. A request landing between these two
+        // lines is the one race worth naming: it clears, then sees the flag set
+        // and reports AlreadyRunning, so the caller is told a sync is happening
+        // rather than being promised a second one.
+        sync_now_requested_.store(false);
+        cycle_in_flight_.store(true);
+
         bool success = false;
         try {
             success = executeBurstCycle();
@@ -1435,6 +1443,7 @@ void BurstCollectorService::runLoop() {
             std::cerr << "CPAP: ❌ Burst cycle failed with unknown error"
                       << " — will retry next cycle" << std::endl;
         }
+        cycle_in_flight_.store(false);
 
         if (success) {
             last_burst_time_ = std::chrono::system_clock::now();
@@ -1511,6 +1520,15 @@ void BurstCollectorService::runLoop() {
             ).count();
 
             if (elapsed >= burst_interval_seconds_) {
+                break;
+            }
+
+            // SDD-005: the tray's "Sync Now" lands here. The existing 1s tick
+            // is what makes this cheap — no condition variable needed, worst
+            // case latency is one second.
+            if (sync_now_requested_.load()) {
+                std::cout << "⚡ CPAP: sync-now requested, cutting the wait short"
+                          << std::endl;
                 break;
             }
 
@@ -2221,6 +2239,42 @@ BurstCollectorService::decideFysetcLifecycle(const std::string& old_source,
     if (old_source == "fysetc" && new_source != "fysetc" && server_exists)
         return FysetcLifecycleAction::Stop;
     return FysetcLifecycleAction::None;
+}
+
+// ── SDD-005: sync now ────────────────────────────────────────────────────
+//
+// The ordering that makes this correct lives in runLoop(): the pending flag is
+// consumed at the TOP of a cycle, and cycle_in_flight_ brackets the cycle
+// itself. So a request arriving mid-cycle reports AlreadyRunning and is
+// deliberately dropped rather than queued: the caller asked for a sync, and a
+// sync is happening right now. Queueing it would run a second, pointless cycle
+// against an unchanged card the moment the first one finished.
+BurstCollectorService::SyncNowOutcome
+BurstCollectorService::decideSyncNow(bool service_running,
+                                     bool cycle_in_flight,
+                                     bool request_pending) {
+    if (!service_running)  return SyncNowOutcome::NotRunning;
+    if (cycle_in_flight)   return SyncNowOutcome::AlreadyRunning;
+    if (request_pending)   return SyncNowOutcome::AlreadyRequested;
+    return SyncNowOutcome::Requested;
+}
+
+BurstCollectorService::SyncNowOutcome BurstCollectorService::requestSyncNow() {
+    const auto outcome = decideSyncNow(running_.load(),
+                                       cycle_in_flight_.load(),
+                                       sync_now_requested_.load());
+    if (outcome == SyncNowOutcome::Requested) sync_now_requested_.store(true);
+    return outcome;
+}
+
+const char* BurstCollectorService::syncNowOutcomeString(SyncNowOutcome outcome) {
+    switch (outcome) {
+    case SyncNowOutcome::Requested:        return "requested";
+    case SyncNowOutcome::AlreadyRunning:   return "already_running";
+    case SyncNowOutcome::AlreadyRequested: return "already_requested";
+    case SyncNowOutcome::NotRunning:       return "not_running";
+    }
+    return "unknown";
 }
 
 void BurstCollectorService::startFysetcServer() {

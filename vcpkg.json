@@ -12,6 +12,7 @@
     "paho-mqtt",
     "paho-mqttpp3",
     "libpqxx",
+    "libmysql",
     "drogon",
     "gtest",
     "zlib"

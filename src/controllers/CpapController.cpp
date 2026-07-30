@@ -3,6 +3,7 @@
 #include "controllers/CpapController.h"
 #include "utils/AppConfig.h"
 #include "services/SleepHqExportService.h"
+#include "services/DeviceDiscoveryService.h"
 #include <drogon/MultiPart.h>
 #include <atomic>
 #include <filesystem>
@@ -270,6 +271,9 @@ void CpapController::updateConfig(const drogon::HttpRequestPtr& req,
     if (j.isMember("ezshare_range")) config_->ezshare_range = j["ezshare_range"].asBool();
     if (j.isMember("local_dir")) config_->local_dir = j["local_dir"].asString();
     if (j.isMember("burst_interval")) config_->burst_interval = j["burst_interval"].asInt();
+    // web_port only takes effect on the next start; Drogon's listener is already
+    // bound by the time any request reaches here.
+    if (j.isMember("web_port")) config_->web_port = j["web_port"].asInt();
 
     if (j.isMember("database")) {
         auto& d = j["database"];
@@ -317,6 +321,42 @@ void CpapController::updateConfig(const drogon::HttpRequestPtr& req,
         if (o.isMember("enabled")) config_->o2ring.enabled = o["enabled"].asBool();
         if (o.isMember("mode")) config_->o2ring.mode = o["mode"].asString();
         if (o.isMember("mule_url")) config_->o2ring.mule_url = o["mule_url"].asString();
+    }
+
+    if (j.isMember("agent")) {
+        auto& a = j["agent"];
+        if (a.isMember("enabled")) config_->agent.enabled = a["enabled"].asBool();
+        if (a.isMember("embed_model")) config_->agent.embed_model = a["embed_model"].asString();
+        if (a.isMember("temperature")) config_->agent.temperature = a["temperature"].asDouble();
+        if (a.isMember("max_iterations")) config_->agent.max_iterations = a["max_iterations"].asInt();
+    }
+
+    if (j.isMember("sleep_stage")) {
+        auto& ss = j["sleep_stage"];
+        if (ss.isMember("enabled")) config_->sleep_stage.enabled = ss["enabled"].asBool();
+        if (ss.isMember("live_inference")) config_->sleep_stage.live_inference = ss["live_inference"].asBool();
+        if (ss.isMember("model_dir")) config_->sleep_stage.model_dir = ss["model_dir"].asString();
+        if (ss.isMember("model_version")) config_->sleep_stage.model_version = ss["model_version"].asString();
+    }
+
+    if (j.isMember("cpapdash")) {
+        auto& cd = j["cpapdash"];
+        if (cd.isMember("enabled")) config_->cpapdash.enabled = cd["enabled"].asBool();
+        if (cd.isMember("api_url")) config_->cpapdash.api_url = cd["api_url"].asString();
+        if (cd.isMember("token") && cd["token"].asString() != "********")
+            config_->cpapdash.token = cd["token"].asString();
+        if (cd.isMember("auto_sync")) config_->cpapdash.auto_sync = cd["auto_sync"].asBool();
+    }
+
+    if (j.isMember("fysetc")) {
+        auto& f = j["fysetc"];
+        if (f.isMember("enabled")) config_->fysetc.enabled = f["enabled"].asBool();
+        if (f.isMember("listen_port")) config_->fysetc.listen_port = f["listen_port"].asInt();
+        if (f.isMember("listen_bind")) config_->fysetc.listen_bind = f["listen_bind"].asString();
+        if (f.isMember("connection_timeout_s"))
+            config_->fysetc.connection_timeout_s = f["connection_timeout_s"].asInt();
+        if (f.isMember("archive_dir")) config_->fysetc.archive_dir = f["archive_dir"].asString();
+        if (f.isMember("log_dir")) config_->fysetc.log_dir = f["log_dir"].asString();
     }
 
     if (j.isMember("sleephq")) {
@@ -518,6 +558,56 @@ void CpapController::triggerBackfill(const drogon::HttpRequestPtr& req,
 
     Json::Value result;
     result["status"] = "backfill_started";
+    cb(jsonResp(result));
+}
+
+// SDD-005: both handlers below are deliberately thin. tests/CMakeLists.txt
+// excludes src/controllers/ from the test binary, so anything with a decision
+// in it belongs in the service layer where it can actually be covered.
+void CpapController::discoverDevices(const drogon::HttpRequestPtr&,
+                                     std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    // 2.5s: long enough for a unit on the same LAN to answer, short enough
+    // that a user staring at a Scan button does not think it hung. This runs
+    // on a Drogon worker thread and blocks it for the duration.
+    auto svc = DeviceDiscoveryService::withMulticast();
+    const auto devices = svc.browse(std::chrono::milliseconds(2500));
+
+    Json::Value result;
+    result["devices"] = Json::arrayValue;
+    for (const auto& d : devices) {
+        Json::Value j;
+        j["instance"]       = d.instance;
+        j["host"]           = d.host;
+        j["port"]           = d.port;
+        j["serial"]         = d.serial;
+        j["fw"]             = d.fw;
+        j["mode"]           = d.mode;
+        j["local_capable"]  = d.isLocalCapable();
+        j["base_url"]       = d.baseUrl();
+        result["devices"].append(j);
+    }
+    // Nobody answering is a successful browse with nothing found, never an
+    // error: multicast is routinely blocked and that is not a fault worth
+    // showing a user a red box over.
+    result["count"] = static_cast<int>(devices.size());
+    cb(jsonResp(result));
+}
+
+void CpapController::syncNow(const drogon::HttpRequestPtr&,
+                             std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    if (!burst_service_) {
+        cb(jsonError("Collector not available", drogon::k503ServiceUnavailable));
+        return;
+    }
+
+    const auto outcome = burst_service_->requestSyncNow();
+
+    Json::Value result;
+    result["outcome"] = BurstCollectorService::syncNowOutcomeString(outcome);
+    result["accepted"] =
+        (outcome == BurstCollectorService::SyncNowOutcome::Requested ||
+         outcome == BurstCollectorService::SyncNowOutcome::AlreadyRequested ||
+         outcome == BurstCollectorService::SyncNowOutcome::AlreadyRunning);
     cb(jsonResp(result));
 }
 
