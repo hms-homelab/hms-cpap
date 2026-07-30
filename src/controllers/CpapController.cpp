@@ -4,6 +4,7 @@
 #include "utils/AppConfig.h"
 #include "services/SleepHqExportService.h"
 #include "services/DeviceDiscoveryService.h"
+#include "services/SetupService.h"
 #include <drogon/MultiPart.h>
 #include <atomic>
 #include <filesystem>
@@ -383,6 +384,27 @@ void CpapController::updateConfig(const drogon::HttpRequestPtr& req,
     std::string errs;
     std::istringstream stream(resp_json.dump());
     Json::parseFromStream(builder, stream, &result, &errs);
+
+    cb(jsonResp(result));
+}
+
+void CpapController::capabilities(const drogon::HttpRequestPtr&,
+                                   std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    const auto caps = SetupService::capabilities();
+
+    Json::Value result;
+    result["version"] = caps.version;
+    result["platform"] = caps.platform;
+    result["data_dir"] = caps.data_dir;
+
+    Json::Value backends(Json::arrayValue);
+    for (const auto& b : caps.backends) backends.append(b);
+    result["backends"] = backends;
+
+    Json::Value features;
+    features["pdf_reports"] = caps.pdf_reports;
+    features["mdns_discovery"] = caps.mdns_discovery;
+    result["features"] = features;
 
     cb(jsonResp(result));
 }

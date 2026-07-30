@@ -4,6 +4,7 @@
 #include "controllers/CpapController.h"
 #include "controllers/EquipmentController.h"
 #include "services/CpapDashSyncService.h"
+#include "services/SetupService.h"
 #include "services/SupplyPublisher.h"
 #include "web/QueryService.h"
 #ifndef _WIN32
@@ -390,6 +391,13 @@ int main(int argc, char** argv) {
         }
     }
 
+    // SDD-006: suppress the first-run browser. For scripted installs and for
+    // anyone who simply does not want a window appearing.
+    bool no_browser = false;
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--no-browser") == 0) { no_browser = true; break; }
+    }
+
     hms_cpap::AppConfig config;
     bool config_existed = hms_cpap::AppConfig::load(config_path, config);
 
@@ -679,7 +687,14 @@ int main(int argc, char** argv) {
         // Start web UI server (Drogon blocks until shutdown)
         {
             int web_port = config.web_port;
-            std::string static_dir = config.static_dir;
+            // SDD-006: the shipped layout puts the binary and static/browser
+            // side by side, but the historical default was CWD-relative, so
+            // double-clicking the binary from anywhere else served no UI.
+            std::string static_dir =
+                hms_cpap::SetupService::resolveStaticDir(config.static_dir);
+            if (static_dir != config.static_dir) {
+                std::cout << "Web UI: serving from " << static_dir << std::endl;
+            }
 
             // Separate DB connection for web queries (neither pqxx nor the
             // MySQL client is thread-safe). SQLite does its own locking, so it
@@ -748,7 +763,9 @@ int main(int argc, char** argv) {
                     rpt_mqtt->connect();
                 }
 
-                std::string logo_path = config.static_dir + "/logo.png";
+                // Resolved, not config.static_dir: the logo lives beside the
+                // Angular bundle, so it has to follow the same relocation.
+                std::string logo_path = static_dir + "/logo.png";
                 if (!std::filesystem::exists(logo_path)) logo_path = "";
 
                 auto report_svc = std::make_shared<hms_cpap::ReportGeneratorService>(
@@ -918,6 +935,38 @@ int main(int argc, char** argv) {
             std::cout << "  /api/dashboard  - Dashboard data" << std::endl;
             std::cout << "  /api/sessions   - Session list" << std::endl;
             std::cout << std::endl;
+
+            // SDD-006: on a genuine first run, put the wizard in front of the
+            // user instead of printing a URL to a terminal they may not be
+            // looking at. Registered as beginning advice rather than called
+            // before run(), because the listener is not accepting until the
+            // event loop is up and a browser that arrives first sees a refused
+            // connection.
+            {
+                hms_cpap::SetupService::LaunchContext lc;
+                lc.setup_complete  = config.setup_complete;
+                lc.no_browser_flag = no_browser;
+                lc.supervised      = std::getenv("HMS_CPAP_SUPERVISED") != nullptr;
+                lc.interactive     = hms_cpap::SetupService::isInteractiveSession();
+
+                if (hms_cpap::SetupService::shouldOpenBrowser(lc)) {
+                    const auto url = hms_cpap::SetupService::setupUrl(web_port);
+                    drogon::app().registerBeginningAdvice([url]() {
+                        std::cout << "Setup: opening " << url << std::endl;
+                        if (!hms_cpap::SetupService::openInBrowser(url)) {
+                            std::cout << "Setup: could not open a browser. "
+                                         "Visit " << url << " to finish setup."
+                                      << std::endl;
+                        }
+                    });
+                } else if (!config.setup_complete) {
+                    // Still tell them where to go: this is the path a headless
+                    // or supervised first run takes.
+                    std::cout << "Setup: not yet configured. Visit "
+                              << hms_cpap::SetupService::setupUrl(web_port)
+                              << " to finish setup." << std::endl;
+                }
+            }
 
             drogon::app().run();  // Blocks until quit()
         }

@@ -3,7 +3,8 @@ import { Router } from '@angular/router';
 import { FormsModule } from '@angular/forms';
 import { CpapApiService } from '../../services/cpap-api.service';
 import { DiscoveredDevice } from '../../models/config.model';
-import { switchMap } from 'rxjs';
+import { markSetupComplete } from '../../guards/setup.guard';
+import { switchMap, tap } from 'rxjs';
 
 @Component({
   selector: 'app-setup',
@@ -510,7 +511,11 @@ export class SetupComponent {
     // skip: no config update needed
 
     this.api.updateConfig(configUpdate).pipe(
-      switchMap(() => this.api.completeSetup())
+      switchMap(() => this.api.completeSetup()),
+      // SDD-006: the gate caches setup_complete for the app's lifetime, so tell
+      // it the answer changed. Without this the redirect to /dashboard below
+      // bounces straight back here on the cached "false".
+      tap(() => markSetupComplete())
     ).subscribe({
       next: () => {
         this.currentStep = 3;

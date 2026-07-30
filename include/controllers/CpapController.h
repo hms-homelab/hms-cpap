@@ -34,6 +34,7 @@ public:
     ADD_METHOD_TO(CpapController::getConfig,     "/api/config",              drogon::Get);
     ADD_METHOD_TO(CpapController::updateConfig,  "/api/config",              drogon::Put);
     ADD_METHOD_TO(CpapController::setupComplete, "/api/setup",               drogon::Post);
+    ADD_METHOD_TO(CpapController::capabilities,  "/api/capabilities",        drogon::Get);
     ADD_METHOD_TO(CpapController::testEzshare,   "/api/config/test-ezshare", drogon::Get);
     ADD_METHOD_TO(CpapController::testBle,       "/api/config/test-ble",     drogon::Get);
     ADD_METHOD_TO(CpapController::triggerMlTrain, "/api/ml/train",     drogon::Post);
@@ -106,6 +107,11 @@ public:
                       std::function<void(const drogon::HttpResponsePtr&)>&& cb);
     void setupComplete(const drogon::HttpRequestPtr& req,
                        std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+    /// SDD-006: what this build can actually do. Thin passthrough to
+    /// SetupService, where the logic is testable; the test binary excludes
+    /// this file.
+    void capabilities(const drogon::HttpRequestPtr& req,
+                      std::function<void(const drogon::HttpResponsePtr&)>&& cb);
     void testEzshare(const drogon::HttpRequestPtr& req,
                      std::function<void(const drogon::HttpResponsePtr&)>&& cb);
     void testBle(const drogon::HttpRequestPtr& req,
