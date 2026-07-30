@@ -583,6 +583,32 @@ void SQLiteDatabase::createSchema() {
     exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_cleaning_tasks_profile_key "
          "ON cleaning_tasks(profile_id, task_key) WHERE deleted = 0");
 
+    // SDD-008: one row per date folder on the card, recording whether the
+    // night's FILES all arrived. Derived state about a transfer, not user data:
+    // rebuildable from the card, never synced, safe to wipe.
+    //
+    // date_folder is the natural key, so the upsert can be idempotent without a
+    // surrogate id and a re-scan cannot duplicate a night.
+    exec(R"(
+        CREATE TABLE IF NOT EXISTS cpap_sync_folders (
+            date_folder     TEXT PRIMARY KEY,
+            files_listed    INTEGER DEFAULT 0,
+            complete        INTEGER DEFAULT 0,
+            stable          INTEGER DEFAULT 0,
+            last_total_size INTEGER DEFAULT -1,
+            last_file_count INTEGER DEFAULT -1,
+            str_due         INTEGER DEFAULT 0,
+            str_day         TEXT,
+            sidecars_due    INTEGER DEFAULT 0,
+            resync_size     INTEGER DEFAULT -1,
+            resync_count    INTEGER DEFAULT 0,
+            updated_at      TEXT DEFAULT (datetime('now','localtime'))
+        )
+    )");
+    // The sweep asks for outstanding debt every burst.
+    exec("CREATE INDEX IF NOT EXISTS idx_sync_folders_debt "
+         "ON cpap_sync_folders(str_due, sidecars_due)");
+
     exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_eq_profile_uuid "
          "ON cpap_equipment_profiles(client_uuid) WHERE client_uuid IS NOT NULL");
     exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_eq_item_uuid "
@@ -3322,6 +3348,104 @@ bool SQLiteDatabase::markCleaningTaskDone(int id, const std::string& done_at_ove
     bind_int(g.stmt, 3, id);
     if (sqlite3_step(g.stmt) != SQLITE_DONE) return false;
     return sqlite3_changes(db_) > 0;
+}
+
+// ---------------------------------------------------------------------------
+// Sync folder ledger (SDD-008)
+// ---------------------------------------------------------------------------
+
+namespace {
+constexpr const char* kSyncFolderCols =
+    "date_folder, files_listed, complete, stable, last_total_size, "
+    "last_file_count, str_due, str_day, sidecars_due, resync_size, resync_count";
+
+FolderLedger parseSyncFolderRow(sqlite3_stmt* s) {
+    FolderLedger f;
+    f.date_folder     = col_text(s, 0);
+    f.files_listed    = col_int(s, 1) != 0;
+    f.complete        = col_int(s, 2) != 0;
+    f.stable          = col_int(s, 3) != 0;
+    f.last_total_size = sqlite3_column_int64(s, 4);
+    f.last_file_count = col_int(s, 5);
+    f.str_due         = col_int(s, 6) != 0;
+    f.str_day         = col_is_null(s, 7) ? "" : col_text(s, 7);
+    f.sidecars_due    = col_int(s, 8) != 0;
+    f.resync_size     = sqlite3_column_int64(s, 9);
+    f.resync_count    = col_int(s, 10);
+    return f;
+}
+} // namespace
+
+std::vector<FolderLedger> SQLiteDatabase::listSyncFolders() {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::vector<FolderLedger> out;
+    if (!db_) return out;
+
+    const std::string sql = std::string("SELECT ") + kSyncFolderCols +
+                            " FROM cpap_sync_folders ORDER BY date_folder";
+    StmtGuard g;
+    if (sqlite3_prepare_v2(db_, sql.c_str(), -1, &g.stmt, nullptr) != SQLITE_OK) return out;
+    while (sqlite3_step(g.stmt) == SQLITE_ROW) out.push_back(parseSyncFolderRow(g.stmt));
+    return out;
+}
+
+std::optional<FolderLedger> SQLiteDatabase::getSyncFolder(const std::string& date_folder) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!db_) return std::nullopt;
+
+    const std::string sql = std::string("SELECT ") + kSyncFolderCols +
+                            " FROM cpap_sync_folders WHERE date_folder = ?";
+    StmtGuard g;
+    if (sqlite3_prepare_v2(db_, sql.c_str(), -1, &g.stmt, nullptr) != SQLITE_OK)
+        return std::nullopt;
+    bind_text(g.stmt, 1, date_folder);
+    if (sqlite3_step(g.stmt) != SQLITE_ROW) return std::nullopt;
+    return parseSyncFolderRow(g.stmt);
+}
+
+bool SQLiteDatabase::upsertSyncFolder(const FolderLedger& f) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!db_ || f.date_folder.empty()) return false;
+
+    // Upsert on the natural key: a re-scan of the same night updates in place
+    // rather than accumulating rows.
+    const char* sql = R"(
+        INSERT INTO cpap_sync_folders
+            (date_folder, files_listed, complete, stable, last_total_size,
+             last_file_count, str_due, str_day, sidecars_due, resync_size,
+             resync_count, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now','localtime'))
+        ON CONFLICT(date_folder) DO UPDATE SET
+            files_listed    = excluded.files_listed,
+            complete        = excluded.complete,
+            stable          = excluded.stable,
+            last_total_size = excluded.last_total_size,
+            last_file_count = excluded.last_file_count,
+            str_due         = excluded.str_due,
+            str_day         = excluded.str_day,
+            sidecars_due    = excluded.sidecars_due,
+            resync_size     = excluded.resync_size,
+            resync_count    = excluded.resync_count,
+            updated_at      = datetime('now','localtime')
+    )";
+    StmtGuard g;
+    if (sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr) != SQLITE_OK) return false;
+    bind_text(g.stmt, 1, f.date_folder);
+    bind_int(g.stmt, 2, f.files_listed ? 1 : 0);
+    bind_int(g.stmt, 3, f.complete ? 1 : 0);
+    bind_int(g.stmt, 4, f.stable ? 1 : 0);
+    sqlite3_bind_int64(g.stmt, 5, f.last_total_size);
+    bind_int(g.stmt, 6, f.last_file_count);
+    bind_int(g.stmt, 7, f.str_due ? 1 : 0);
+    bind_text_or_null(g.stmt, 8, f.str_day);
+    bind_int(g.stmt, 9, f.sidecars_due ? 1 : 0);
+    sqlite3_bind_int64(g.stmt, 10, f.resync_size);
+    bind_int(g.stmt, 11, f.resync_count);
+    if (sqlite3_step(g.stmt) != SQLITE_DONE) {
+        std::cerr << "SQLite: upsertSyncFolder error: " << sqlite3_errmsg(db_) << std::endl;
+        return false;
+    }
+    return true;
 }
 
 } // namespace hms_cpap

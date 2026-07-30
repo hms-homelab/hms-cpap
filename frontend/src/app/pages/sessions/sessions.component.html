@@ -34,7 +34,9 @@
         </td>
         <td>
           <span *ngIf="isLive(s)" class="live-badge">LIVE</span>
-          <span *ngIf="!isLive(s)" class="done-badge">Done</span>
+          <span *ngIf="!isLive(s) && isPartial(s)" class="partial-badge"
+                title="The file transfer settled without this night's summary record. Shown for completeness, but left out of compliance and trend averages.">Partial</span>
+          <span *ngIf="!isLive(s) && !isPartial(s)" class="done-badge">Done</span>
         </td>
         <td>{{ fmtDuration(s.duration_hours) }}</td>
         <td [class.elevated]="+s.ahi > 5">{{ (+s.ahi).toFixed(1) || '-' }}</td>

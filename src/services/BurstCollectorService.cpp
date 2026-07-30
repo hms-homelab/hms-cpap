@@ -694,6 +694,28 @@ void BurstCollectorService::processSTRFile() {
         // lagged and made the dashboard depend on a separate backfill — issue #8.)
         db_service_->saveSTRDailyRecords(all_records);
 
+        // SDD-008: an STR that parses is the ONLY thing that clears the STR
+        // debt. Doing it here means the retry happens ON RECOVERY rather than on
+        // a timer, so an unreachable card is never hammered and "not here yet"
+        // stays distinguishable from "never coming".
+        {
+            std::vector<std::string> parsed_days;
+            parsed_days.reserve(all_records.size());
+            for (const auto& r : all_records) {
+                std::time_t t = std::chrono::system_clock::to_time_t(r.record_date);
+                std::tm tm{};
+#ifdef _WIN32
+                localtime_s(&tm, &t);
+#else
+                localtime_r(&t, &tm);
+#endif
+                char buf[9];
+                std::strftime(buf, sizeof(buf), "%Y%m%d", &tm);
+                parsed_days.emplace_back(buf);
+            }
+            clearStrDebtForParsedDays(parsed_days);
+        }
+
         // Publish latest therapy day to MQTT
         const auto& latest = all_records.back();
         if (data_publisher_ && mqtt_client_ && mqtt_client_->isConnected()) {
@@ -720,6 +742,212 @@ void BurstCollectorService::processSTRFile() {
 
     } catch (const std::exception& e) {
         std::cerr << "STR: Processing failed (non-fatal): " << e.what() << std::endl;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SDD-008: per-folder transfer ledger
+// ---------------------------------------------------------------------------
+
+bool BurstCollectorService::refetchSidecars(
+    const std::vector<const SessionFileSet*>& sets,
+    const std::string& local_base_dir) {
+
+    if (!data_source_) return false;
+
+    bool all_ok = true;
+    int  fetched = 0;
+
+    for (const auto* s : sets) {
+        const std::string local_dir = local_base_dir + "/" + s->date_folder;
+        std::filesystem::create_directories(local_dir);
+
+        for (const auto& name : {s->csl_file, s->eve_file}) {
+            if (name.empty()) continue;
+            // downloadFile, deliberately, NEVER downloadFileRange: a ranged
+            // request at or past the card's real EOF hangs the ezShare, and a
+            // KB-rounded listing cannot prove where the real end is.
+            if (data_source_->downloadFile(s->date_folder, name, local_dir + "/" + name)) {
+                ++fetched;
+            } else {
+                std::cerr << "⚠️  CPAP: sidecar refetch failed: " << name << std::endl;
+                all_ok = false;
+            }
+        }
+    }
+
+    if (fetched > 0) {
+        std::cout << "CPAP: refetched " << fetched << " sidecar file(s) at close" << std::endl;
+    }
+    return all_ok;
+}
+
+void BurstCollectorService::updateFolderLedgers(
+    const std::vector<SessionFileSet>& sessions,
+    const std::string& local_base_dir) {
+
+    if (!db_service_) return;
+
+    // Group this burst's sessions by the folder they live in. A date folder
+    // holds every session of one night, and the transfer either finished for
+    // the whole folder or it did not.
+    std::map<std::string, std::vector<const SessionFileSet*>> by_folder;
+    for (const auto& s : sessions) {
+        if (!s.date_folder.empty()) by_folder[s.date_folder].push_back(&s);
+    }
+
+    for (const auto& [date_folder, sets] : by_folder) {
+        FolderObservation obs;
+        obs.all_files_stored = true;
+
+        const std::string local_dir = local_base_dir + "/" + date_folder;
+        for (const auto* s : sets) {
+            for (const auto& [filename, size_kb] : s->file_sizes_kb) {
+                ++obs.file_count;
+                obs.total_size += size_kb;
+                // Existence and non-emptiness, not a size match: the listing is
+                // KB-rounded, so comparing it against the byte size on disk
+                // would report a mismatch for every file that is actually fine.
+                std::error_code ec;
+                const auto p = std::filesystem::path(local_dir) / filename;
+                if (!std::filesystem::exists(p, ec) ||
+                    std::filesystem::file_size(p, ec) == 0) {
+                    obs.all_files_stored = false;
+                }
+            }
+        }
+
+        FolderLedger prev;
+        prev.date_folder = date_folder;
+        if (auto stored = db_service_->getSyncFolder(date_folder)) prev = *stored;
+
+        auto t = advanceFolder(prev, obs);
+
+        if (t.closed) {
+            std::cout << "CPAP: folder " << date_folder << " settled ("
+                      << obs.file_count << " files, " << obs.total_size << " KB)"
+                      << std::endl;
+        }
+
+        if (t.armed_debt) {
+            // Record WHICH STR day this folder is waiting for, using the earliest
+            // session in it. Derived once, at arm time, from the session's own
+            // start rather than from the folder name, because the two differ for
+            // any night that crosses midnight.
+            auto earliest = sets.front()->session_start;
+            for (const auto* s : sets) {
+                if (s->session_start < earliest) earliest = s->session_start;
+            }
+            t.next.str_day = strDayForSessionStart(earliest);
+
+            // The close edge is the one moment the regular path never
+            // re-downloads, so it is the only chance to catch a sidecar that
+            // grew inside a single KB bucket after the last checkpoint change.
+            if (refetchSidecars(sets, local_base_dir)) {
+                t.next = clearSidecarDebt(t.next);
+            }
+            // str_due stays armed. Only a parsed STR clears it, and that
+            // happens in processSTRFile, never on a timer.
+        }
+
+        if (t.resync_exhausted) {
+            // Reported rather than silent: a night that stops retrying with
+            // nobody able to say why is how one folder got re-pulled 339 times
+            // before anyone noticed the loop.
+            std::cerr << "CPAP: folder " << date_folder << " has re-armed "
+                      << kMaxResyncArms << " times at the same signature and is not "
+                      << "converging; leaving it as it stands" << std::endl;
+        }
+
+        db_service_->upsertSyncFolder(t.next);
+    }
+}
+
+bool BurstCollectorService::publishNightOutcome(
+    const std::chrono::system_clock::time_point& session_start) {
+
+    if (!data_publisher_ || !db_service_) return false;
+
+    std::time_t t = std::chrono::system_clock::to_time_t(session_start);
+    std::tm tm{};
+#ifdef _WIN32
+    localtime_s(&tm, &t);
+#else
+    localtime_r(&t, &tm);
+#endif
+    char buf[9];
+    std::strftime(buf, sizeof(buf), "%Y%m%d", &tm);
+    const std::string date_folder = buf;
+
+    const bool partial = isNightPartial(session_start);
+
+    // Published either way, so a night that recovers flips its sensor back
+    // rather than leaving a stale ON in Home Assistant forever.
+    data_publisher_->publishNightPartial(date_folder, partial);
+
+    if (partial) {
+        std::cout << "   Night " << date_folder << " is PARTIAL (transfer settled "
+                  << "without its STR); metrics and summary suppressed" << std::endl;
+        return false;
+    }
+
+    auto metrics = db_service_->getNightlyMetrics(device_id_, session_start);
+    if (!metrics.has_value()) return false;
+
+    data_publisher_->publishHistoricalState(metrics.value());
+    std::cout << "   Nightly metrics published ("
+              << metrics.value().usage_hours.value_or(0.0) << "h, AHI "
+              << metrics.value().ahi << ")" << std::endl;
+
+    if (llm_enabled_ && llm_client_) {
+        const STRDailyRecord* str_rec = !last_str_records_.empty()
+            ? &last_str_records_.back() : nullptr;
+        generateAndPublishSummary(metrics.value(), str_rec);
+    }
+    return true;
+}
+
+bool BurstCollectorService::isNightPartial(
+    const std::chrono::system_clock::time_point& session_start) const {
+
+    if (!db_service_) return false;
+
+    // The folder is named for the LOCAL calendar date the session started, which
+    // is the same derivation downloadSessionFiles and the archive path use.
+    std::time_t t = std::chrono::system_clock::to_time_t(session_start);
+    std::tm tm{};
+#ifdef _WIN32
+    localtime_s(&tm, &t);
+#else
+    localtime_r(&t, &tm);
+#endif
+    char buf[9];
+    std::strftime(buf, sizeof(buf), "%Y%m%d", &tm);
+
+    auto ledger = db_service_->getSyncFolder(buf);
+    // No row means no transfer was ever tracked for this night: the local
+    // directory and Prisma sources read from a filesystem, where there is no
+    // transfer that can stall. Reporting those partial would be a false alarm.
+    if (!ledger) return false;
+
+    return nightState(*ledger) == NightState::Partial;
+}
+
+void BurstCollectorService::clearStrDebtForParsedDays(
+    const std::vector<std::string>& record_dates) {
+
+    if (!db_service_ || record_dates.empty()) return;
+
+    std::set<std::string> parsed(record_dates.begin(), record_dates.end());
+    for (const auto& f : db_service_->listSyncFolders()) {
+        if (!f.str_due) continue;
+        // Match on the STR day recorded when the debt was armed, never on
+        // date_folder: for a night that crosses midnight the two differ by one.
+        if (f.str_day.empty() || parsed.count(f.str_day) == 0) continue;
+        db_service_->upsertSyncFolder(clearStrDebt(f));
+        std::cout << "CPAP: STR arrived for " << f.date_folder
+                  << " (therapy day " << f.str_day << "), night is no longer partial"
+                  << std::endl;
     }
 }
 
@@ -975,21 +1203,10 @@ bool BurstCollectorService::executeBurstCycle() {
                             SleepHqExportService::getInstance().markDirty(session.date_folder);
 
                         if (data_publisher_) {
-                            auto metrics = db_service_->getNightlyMetrics(device_id_, session.session_start);
-                            if (metrics.has_value()) {
-                                data_publisher_->publishHistoricalState(metrics.value());
-                                std::cout << "   Nightly metrics published ("
-                                          << metrics.value().usage_hours.value_or(0.0) << "h, AHI "
-                                          << metrics.value().ahi << ")" << std::endl;
-                            }
+                            // SDD-008: metrics + LLM only when the transfer
+                            // actually finished; otherwise just the partial fact.
+                            publishNightOutcome(session.session_start);
                             data_publisher_->publishSessionCompleted();
-
-                            // Generate LLM summary (non-fatal)
-                            if (llm_enabled_ && llm_client_ && metrics.has_value()) {
-                                const STRDailyRecord* str_rec = !last_str_records_.empty()
-                                    ? &last_str_records_.back() : nullptr;
-                                generateAndPublishSummary(metrics.value(), str_rec);
-                            }
                         }
 
                         // Pull any pending O2Ring VLD files at session end
@@ -1088,6 +1305,21 @@ bool BurstCollectorService::executeBurstCycle() {
 
         std::string local_base_dir = ConfigManager::get("CPAP_TEMP_DIR", (std::filesystem::temp_directory_path() / "cpap_data").string());
 
+        // SDD-008: fold this burst's view of the card into the per-folder ledger
+        // BEFORE the session loop below, not after.
+        //
+        // The loop is where a settling session publishes its completion, and
+        // that publish asks the ledger whether the night is partial. Updating
+        // the ledger afterwards means the answer is always one cycle stale, so
+        // the night that just went partial gets published as complete WITH its
+        // short metrics -- on exactly the cycle the suppression exists for.
+        //
+        // Observing before the downloads is not a compromise. all_files_stored
+        // reads as false on the cycle a file first lands, so the folder stays
+        // live and closes on the next burst instead; settling already requires
+        // two observations of the same signature, so nothing is lost.
+        updateFolderLedgers(new_sessions, local_base_dir);
+
         for (const auto& session : new_sessions) {
             // Skip sessions that were force-completed (manual override)
             if (db_service_->isForceCompleted(device_id_, session.session_start)) {
@@ -1177,22 +1409,16 @@ bool BurstCollectorService::executeBurstCycle() {
                     SleepHqExportService::getInstance().markDirty(session.date_folder);
 
                 if (newly_completed && is_most_recent && data_publisher_) {
-                    auto metrics = db_service_->getNightlyMetrics(device_id_, session.session_start);
-                    if (metrics.has_value()) {
-                        data_publisher_->publishHistoricalState(metrics.value());
-                        std::cout << "   Nightly metrics published ("
-                                  << metrics.value().usage_hours.value_or(0.0) << "h, AHI "
-                                  << metrics.value().ahi << ")" << std::endl;
-                    }
+                    // SDD-008: publishes metrics + the LLM summary when the
+                    // transfer finished, or ONLY the partial fact when it did
+                    // not. Returns false in the partial case, which also keeps
+                    // the range summaries below from being recomputed off a
+                    // night whose usage hours are known to be short.
+                    const bool full = publishNightOutcome(session.session_start);
                     data_publisher_->publishSessionCompleted();
                     processSessionSummary();
 
-                    // Generate LLM summary with STR data if available (non-fatal)
-                    if (llm_enabled_ && llm_client_ && metrics.has_value()) {
-                        const STRDailyRecord* str_rec = !last_str_records_.empty()
-                            ? &last_str_records_.back() : nullptr;
-                        generateAndPublishSummary(metrics.value(), str_rec);
-
+                    if (full && llm_enabled_ && llm_client_) {
                         // Auto-trigger weekly/monthly summaries based on config.
                         // WEEKLY_SUMMARY_DAY: 0=Sun..6=Sat (default 0=Sunday)
                         // MONTHLY_SUMMARY_DAY: day of month (default 1)
@@ -1373,8 +1599,18 @@ bool BurstCollectorService::executeBurstCycle() {
 
             data_publisher_->publishSession(*latest);
 
-            // Also publish nightly aggregated metrics
-            auto metrics = db_service_->getNightlyMetrics(device_id_, latest->session_start.value());
+            // Also publish nightly aggregated metrics.
+            //
+            // SDD-008: not for a night already known to be partial. This is the
+            // in-progress path, so it normally runs while a night is genuinely
+            // live and publishing running metrics is correct; the guard covers
+            // the case where a settled, STR-less night gets re-parsed later and
+            // would otherwise push its short usage hours into Home Assistant's
+            // retained history, which is the thing decision 2 exists to prevent.
+            auto metrics = isNightPartial(latest->session_start.value())
+                               ? std::nullopt
+                               : db_service_->getNightlyMetrics(device_id_,
+                                                                latest->session_start.value());
             if (metrics.has_value()) {
                 data_publisher_->publishHistoricalState(metrics.value());
                 std::cout << "   Nightly metrics updated ("
@@ -1588,6 +1824,37 @@ void BurstCollectorService::generateRangeSummary(SummaryPeriod period, int days_
     std::cout << "LLM: Calling getMetricsForDateRange..." << std::endl;
     auto nights = db_service_->getMetricsForDateRange(device_id_, days_back);
     std::cout << "LLM: Got " << nights.size() << " nights from DB" << std::endl;
+
+    // SDD-008 decision 5: a partial night's usage hours are SHORT, not unknown.
+    // Averaging one in can report someone below the 4-hour threshold on a night
+    // they actually met it, which for a product used to demonstrate compliance
+    // is the worst error available. The night stays visible and badged in the
+    // sessions list; it just does not get a vote in the aggregate.
+    //
+    // sleep_day here is date(session_start, '-12 hours'), which is the SAME noon
+    // rule the ledger's str_day uses, so these keys compare directly.
+    {
+        std::set<std::string> partial_days;
+        for (const auto& f : db_service_->listSyncFolders()) {
+            if (nightState(f) == NightState::Partial && !f.str_day.empty())
+                partial_days.insert(f.str_day);
+        }
+        if (!partial_days.empty()) {
+            const size_t before = nights.size();
+            nights.erase(std::remove_if(nights.begin(), nights.end(),
+                [&](const SessionMetrics& m) {
+                    std::string key = m.sleep_day;   // "YYYY-MM-DD" -> "YYYYMMDD"
+                    key.erase(std::remove(key.begin(), key.end(), '-'), key.end());
+                    return partial_days.count(key) > 0;
+                }), nights.end());
+            if (nights.size() != before) {
+                std::cout << "LLM: excluded " << (before - nights.size())
+                          << " partial night(s) from the " << period_str
+                          << " aggregate" << std::endl;
+            }
+        }
+    }
+
     if (nights.empty()) {
         std::cerr << "LLM: No data for " << period_str << " summary" << std::endl;
         return;

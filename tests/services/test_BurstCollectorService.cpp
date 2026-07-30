@@ -6,6 +6,8 @@
 
 #include "EquipmentStubs.h"
 #include <gtest/gtest.h>
+
+#include <algorithm>
 #include <gmock/gmock.h>
 #include "services/BurstCollectorService.h"
 #include "services/DataPublisherService.h"
@@ -1558,6 +1560,27 @@ namespace burst_orch {
 class MockDatabase : public IDatabase {
 public:
     HMS_CPAP_STUB_EQUIPMENT_METHODS
+
+    // SDD-008: a REAL in-memory ledger, not the stub macro. Settling requires
+    // comparing this burst's signature against a stored one, so a double that
+    // forgets every write can never close a folder and would silently make the
+    // close-edge tests below vacuous.
+    std::map<std::string, FolderLedger> sync_folders;
+    std::vector<FolderLedger> listSyncFolders() override {
+        std::vector<FolderLedger> out;
+        for (const auto& [k, v] : sync_folders) out.push_back(v);
+        return out;
+    }
+    std::optional<FolderLedger> getSyncFolder(const std::string& date_folder) override {
+        auto it = sync_folders.find(date_folder);
+        return it == sync_folders.end() ? std::nullopt
+                                        : std::optional<FolderLedger>{it->second};
+    }
+    bool upsertSyncFolder(const FolderLedger& f) override {
+        if (f.date_folder.empty()) return false;
+        sync_folders[f.date_folder] = f;
+        return true;
+    }
     DbType dbType() const override { return DbType::SQLITE; }
 
     MOCK_METHOD(bool, connect, (), (override));
@@ -1612,6 +1635,7 @@ public:
     // and records of what the residue paths actually fetched.
     std::map<std::string, std::vector<EzShareFileEntry>> dir_listings;
     std::vector<std::string> downloaded_files;     // filenames via downloadFile()
+    std::vector<std::string> ranged_files;         // filenames via downloadFileRange()
     std::vector<std::string> downloaded_by_path;   // card-rel paths via downloadByPath()
 
     std::vector<std::string> listDateFolders() override { return date_folders; }
@@ -1646,9 +1670,11 @@ public:
         ofs << "NOT_A_REAL_EDF_FILE";
         return true;
     }
-    bool downloadFileRange(const std::string&, const std::string&, const std::string& local_path,
+    bool downloadFileRange(const std::string&, const std::string& filename,
+                           const std::string& local_path,
                            size_t, size_t& bytes_downloaded) override {
         ++download_count;
+        ranged_files.push_back(filename);
         std::filesystem::create_directories(std::filesystem::path(local_path).parent_path());
         std::ofstream ofs(local_path, std::ios::binary);
         ofs << "NOT_A_REAL_EDF_FILE";
@@ -2101,8 +2127,23 @@ TEST_F(BurstOrchestrationTest, ConsecutiveCycles_NewThenUnchangedCompletes) {
     int after_first = src_raw->download_count;
     EXPECT_GT(after_first, 0);
 
-    svc->runBurstCycleForTest();   // cycle 2: unchanged -> complete (no new download)
-    EXPECT_EQ(src_raw->download_count, after_first) << "Unchanged cycle must not re-download";
+    src_raw->downloaded_files.clear();
+    src_raw->ranged_files.clear();
+    svc->runBurstCycleForTest();   // cycle 2: unchanged -> complete
+
+    // SDD-008 changed what "no new download" means here. The unchanged cycle
+    // still must not re-pull the CHECKPOINT files (the big growing ones -- that
+    // was always the point of this assertion), but closing the folder now
+    // deliberately refetches the two small sidecars, because the close edge is
+    // the only moment sub-KB EVE/CSL growth can still be caught.
+    for (const auto& f : src_raw->downloaded_files) {
+        EXPECT_EQ(f.find("_BRP.edf"), std::string::npos)
+            << "unchanged cycle re-downloaded a checkpoint file: " << f;
+        EXPECT_EQ(f.find("_PLD.edf"), std::string::npos)
+            << "unchanged cycle re-downloaded a checkpoint file: " << f;
+    }
+    EXPECT_TRUE(src_raw->ranged_files.empty())
+        << "unchanged cycle issued a ranged request";
 }
 
 // Consecutive cycles: GROWS (changed -> reopen + re-download) then UNCHANGED
@@ -2136,8 +2177,20 @@ TEST_F(BurstOrchestrationTest, ConsecutiveCycles_GrowsThenUnchangedReopensThenCo
     int after_first = src_raw->download_count;
     EXPECT_GT(after_first, 0);
 
+    src_raw->downloaded_files.clear();
+    src_raw->ranged_files.clear();
     svc->runBurstCycleForTest();   // unchanged -> completes
-    EXPECT_EQ(src_raw->download_count, after_first);
+
+    // Same SDD-008 adjustment as the previous test: the checkpoint files must
+    // not be re-pulled, but closing the folder now refetches the two sidecars.
+    for (const auto& f : src_raw->downloaded_files) {
+        EXPECT_EQ(f.find("_BRP.edf"), std::string::npos)
+            << "unchanged cycle re-downloaded a checkpoint file: " << f;
+        EXPECT_EQ(f.find("_PLD.edf"), std::string::npos)
+            << "unchanged cycle re-downloaded a checkpoint file: " << f;
+    }
+    EXPECT_TRUE(src_raw->ranged_files.empty())
+        << "unchanged cycle issued a ranged request";
 }
 
 // forceCompleteSession on the EARLIER of two sessions (mid-list): the day lookup
@@ -2366,6 +2419,209 @@ TEST_F(BurstOrchestrationTest, ForceCompleteSession_DrivesCompletionAndSummary) 
         .WillRepeatedly(Return(std::optional<SessionMetrics>(nm)));
 
     EXPECT_TRUE(svc->forceCompleteSession("2020-01-01"));
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SDD-008: partial nights
+// ─────────────────────────────────────────────────────────────────────────────
+
+// The close edge is the ONE cycle where the regular path downloads nothing, so
+// it is the only chance to catch a sidecar that grew inside a single KB bucket
+// after the last checkpoint change. Before SDD-008 that refetch never happened
+// and those event annotations were lost silently.
+//
+// The refetch MUST use downloadFile and never downloadFileRange: a ranged
+// request at or past the card's real EOF hangs the ezShare, and a KB-rounded
+// listing cannot prove where the real end is. That is a hung bridge, not a
+// wrong number, which is why it is asserted rather than left to a comment.
+TEST_F(BurstOrchestrationTest, ClosingAFolder_RefetchesSidecarsFromOffsetZero) {
+    auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
+
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    // Cycle 1 downloads the night (so the files exist locally); every later
+    // cycle sees it as already stored.
+    EXPECT_CALL(*db_raw, sessionExists(_, _))
+        .WillOnce(Return(false))
+        .WillRepeatedly(Return(true));
+
+    // Checkpoint sizes match the listing exactly -> nothing changed, so the
+    // ordinary path downloads nothing on cycle 2.
+    std::map<std::string, int> stored = {
+        {"20200101_220000_BRP.edf", 100},
+        {"20200101_220000_PLD.edf", 20},
+    };
+    EXPECT_CALL(*db_raw, getCheckpointFileSizes(_, _)).WillRepeatedly(Return(stored));
+
+    svc->runBurstCycleForTest();   // first sighting: records the signature
+    src_raw->downloaded_files.clear();
+    src_raw->ranged_files.clear();
+
+    svc->runBurstCycleForTest();   // same signature + all stored -> closes
+
+    auto contains = [](const std::vector<std::string>& v, const std::string& n) {
+        return std::find(v.begin(), v.end(), n) != v.end();
+    };
+    EXPECT_TRUE(contains(src_raw->downloaded_files, "20200101_220000_EVE.edf"))
+        << "the close edge did not refetch EVE; sub-KB growth is lost here";
+    EXPECT_TRUE(contains(src_raw->downloaded_files, "20200101_220000_CSL.edf"))
+        << "the close edge did not refetch CSL";
+
+    EXPECT_FALSE(contains(src_raw->ranged_files, "20200101_220000_EVE.edf"))
+        << "sidecar was fetched with a RANGE; at/past the card's real EOF this "
+           "hangs the ezShare";
+    EXPECT_FALSE(contains(src_raw->ranged_files, "20200101_220000_CSL.edf"))
+        << "sidecar was fetched with a RANGE";
+}
+
+// Closing arms the STR debt, which is what makes a night report as partial.
+TEST_F(BurstOrchestrationTest, ClosingAFolder_ArmsStrDebtForTheRightTherapyDay) {
+    auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
+
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, sessionExists(_, _))
+        .WillOnce(Return(false))
+        .WillRepeatedly(Return(true));
+    std::map<std::string, int> stored = {
+        {"20200101_220000_BRP.edf", 100},
+        {"20200101_220000_PLD.edf", 20},
+    };
+    EXPECT_CALL(*db_raw, getCheckpointFileSizes(_, _)).WillRepeatedly(Return(stored));
+
+    svc->runBurstCycleForTest();
+    svc->runBurstCycleForTest();
+
+    auto it = db_raw->sync_folders.find("20200101");
+    ASSERT_NE(it, db_raw->sync_folders.end()) << "no ledger row was written";
+    EXPECT_TRUE(it->second.complete) << "the folder never settled";
+    EXPECT_TRUE(it->second.str_due)  << "closing did not arm the STR debt";
+    EXPECT_EQ(nightState(it->second), NightState::Partial);
+
+    // A 22:00 session is before midnight, so its therapy day matches the folder.
+    // The interesting half of this rule is covered in test_SyncFolderState.cpp,
+    // where a post-midnight session lands on the PREVIOUS day.
+    EXPECT_EQ(it->second.str_day, "20200101")
+        << "the ledger recorded the wrong therapy day; the STR debt would never clear";
+}
+
+// The regression that matters most to a user: a night still being written must
+// never be reported as partial. Being mid-therapy is not a failed transfer.
+TEST_F(BurstOrchestrationTest, AGrowingNightIsLiveAndNeverPartial) {
+    auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
+
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, sessionExists(_, _))
+        .WillOnce(Return(false))
+        .WillRepeatedly(Return(true));
+
+    std::map<std::string, int> stored = {
+        {"20200101_220000_BRP.edf", 100},
+        {"20200101_220000_PLD.edf", 20},
+    };
+    EXPECT_CALL(*db_raw, getCheckpointFileSizes(_, _)).WillRepeatedly(Return(stored));
+
+    svc->runBurstCycleForTest();
+
+    // Grow the file ON THE CARD between bursts. This is the honest simulation:
+    // the ledger observes the card's listing, not the local checkpoint sizes, so
+    // a live night is one whose LISTING is still changing.
+    for (auto& e : src_raw->folder_files["20200101"]) {
+        if (e.name == "20200101_220000_BRP.edf") e.size_kb = 140;
+    }
+
+    svc->runBurstCycleForTest();
+
+    auto it = db_raw->sync_folders.find("20200101");
+    ASSERT_NE(it, db_raw->sync_folders.end());
+    EXPECT_FALSE(it->second.str_due)
+        << "a live night armed STR debt; mid-therapy is not a failed transfer";
+    EXPECT_EQ(nightState(it->second), NightState::Live)
+        << "a night still being written reported as " 
+        << nightStateString(nightState(it->second));
+}
+
+
+// SDD-008 decision 2: an incomplete night publishes ONLY the partial fact.
+//
+// Suppression is the point. A truncated night's AHI and usage hours are WRONG
+// rather than uncertain; MQTT values are retained, so Home Assistant keeps them
+// in history where they are hard to retract; and a stored LLM summary narrates
+// a night that did not happen that way.
+TEST_F(BurstOrchestrationTest, APartialNightSuppressesItsMetrics) {
+    auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
+
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, sessionExists(_, _))
+        .WillOnce(Return(false))
+        .WillRepeatedly(Return(true));
+    std::map<std::string, int> stored = {
+        {"20200101_220000_BRP.edf", 100},
+        {"20200101_220000_PLD.edf", 20},
+    };
+    EXPECT_CALL(*db_raw, getCheckpointFileSizes(_, _)).WillRepeatedly(Return(stored));
+    EXPECT_CALL(*db_raw, markSessionCompleted(_, _)).WillRepeatedly(Return(true));
+
+    // Cycle 1 is a LIVE night and publishing its running metrics is correct, so
+    // the assertion has to be scoped to cycle 2, when the folder settles without
+    // its STR. The metrics lookup is what publishing would need: if it is never
+    // asked for after the night goes partial, nothing could have been published.
+    ::testing::Sequence metrics_seq;
+    EXPECT_CALL(*db_raw, getNightlyMetrics(_, _))
+        .InSequence(metrics_seq).WillRepeatedly(Return(std::nullopt));
+
+    svc->runBurstCycleForTest();          // live: metrics may be published
+
+    ::testing::Mock::VerifyAndClearExpectations(db_raw);
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, sessionExists(_, _)).WillRepeatedly(Return(true));
+    EXPECT_CALL(*db_raw, getCheckpointFileSizes(_, _)).WillRepeatedly(Return(stored));
+    EXPECT_CALL(*db_raw, markSessionCompleted(_, _)).WillRepeatedly(Return(true));
+    // THE assertion: once the night is partial, its metrics are never fetched.
+    EXPECT_CALL(*db_raw, getNightlyMetrics(_, _)).Times(0);
+
+    svc->runBurstCycleForTest();          // closes without an STR -> partial
+
+    auto it = db_raw->sync_folders.find("20200101");
+    ASSERT_NE(it, db_raw->sync_folders.end());
+    ASSERT_EQ(nightState(it->second), NightState::Partial)
+        << "test setup did not actually produce a partial night";
+}
+
+// The other half: once the STR arrives the night is complete, and the metrics
+// it suppressed are published normally. Partial is never terminal.
+TEST_F(BurstOrchestrationTest, ARecoveredNightPublishesItsMetrics) {
+    auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
+
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, sessionExists(_, _))
+        .WillOnce(Return(false))
+        .WillRepeatedly(Return(true));
+    std::map<std::string, int> stored = {
+        {"20200101_220000_BRP.edf", 100},
+        {"20200101_220000_PLD.edf", 20},
+    };
+    EXPECT_CALL(*db_raw, getCheckpointFileSizes(_, _)).WillRepeatedly(Return(stored));
+    EXPECT_CALL(*db_raw, markSessionCompleted(_, _)).WillRepeatedly(Return(true));
+    EXPECT_CALL(*db_raw, getNightlyMetrics(_, _)).WillRepeatedly(Return(std::nullopt));
+
+    svc->runBurstCycleForTest();
+    svc->runBurstCycleForTest();          // closes -> partial
+
+    auto it = db_raw->sync_folders.find("20200101");
+    ASSERT_NE(it, db_raw->sync_folders.end());
+    ASSERT_TRUE(it->second.str_due);
+
+    // The STR turns up. Nothing else about the night changed.
+    db_raw->sync_folders["20200101"] = clearStrDebt(it->second);
+
+    EXPECT_EQ(nightState(db_raw->sync_folders["20200101"]), NightState::Complete)
+        << "a night that received its STR is still being reported as partial";
 }
 
 }  // namespace burst_orch

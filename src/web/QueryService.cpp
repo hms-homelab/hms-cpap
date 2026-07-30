@@ -1,4 +1,8 @@
 #include "web/QueryService.h"
+
+#include <algorithm>
+#include <cctype>
+#include <map>
 #include "services/InsightsEngine.h"
 #include <sstream>
 #include <algorithm>
@@ -108,7 +112,46 @@ Json::Value QueryService::getSessions(int limit, int offset) {
         " LIMIT " + std::to_string(limit) +
         " OFFSET " + std::to_string(offset);
 
-    return db_->executeQuery(q, {device_id_});
+    Json::Value rows = db_->executeQuery(q, {device_id_});
+
+    // SDD-008: attach the night's transfer state so the frontend does not
+    // re-derive it a third time (it already reimplements the live test in
+    // TypeScript). Enriched here in C++ rather than joined in SQL on purpose:
+    // the join key needs a string transform, and this query is built for three
+    // dialects, so one loop beats three subtly different expressions.
+    //
+    // sleep_day here and the ledger's str_day are both date(session_start,
+    // '-12 hours'), so they identify the same night; only the punctuation
+    // differs.
+    std::map<std::string, NightState> by_day;
+    for (const auto& f : db_->listSyncFolders()) {
+        if (!f.str_day.empty()) by_day[f.str_day] = nightState(f);
+    }
+    for (auto& row : rows) {
+        std::string key = row.isMember("sleep_day") && !row["sleep_day"].isNull()
+                              ? row["sleep_day"].asString() : std::string();
+        key.erase(std::remove_if(key.begin(), key.end(),
+                                 [](unsigned char c) { return !std::isdigit(c); }),
+                  key.end());
+        if (key.size() > 8) key.resize(8);
+
+        auto it = by_day.find(key);
+        // No ledger row means no transfer was tracked for this night (a local
+        // directory or a night predating the ledger). Fall back to the existing
+        // has_live signal rather than inventing a state.
+        if (it == by_day.end()) {
+            const bool live = row.isMember("has_live") &&
+                              !row["has_live"].isNull() &&
+                              row["has_live"].asString() != "0";
+            row["night_state"] = live ? "live" : "complete";
+            row["partial"] = false;
+            continue;
+        }
+        row["night_state"] = nightStateString(it->second);
+        row["partial"] = (it->second == NightState::Partial);
+    }
+
+    return rows;
 }
 
 Json::Value QueryService::getSessionDetail(const std::string& date) {

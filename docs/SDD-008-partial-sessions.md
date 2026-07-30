@@ -1,6 +1,6 @@
 # SDD-008: Partial sessions
 
-**Status:** Proposed
+**Status:** Implemented (phases 1-3)
 **Date:** 2026-07-30
 **Repo:** `hms-cpap`
 **Version target:** 4.7.0
@@ -113,6 +113,26 @@ while `sidecars_due` is set, EVE and CSL are re-downloaded **in full from offset
 where the real end is, so 0 is the only provably safe fetch. This is the kind of
 detail that looks like an inefficiency and is actually the whole point.
 
+**Verified against the current code, 2026-07-30.** Two corrections to the
+assumption above, both of which narrow the work:
+
+1. **The offset is already right.** `downloadSessionFiles` fetches CSL and EVE
+   with `downloadFile` (a plain full GET), not the `smartDownload` lambda that
+   BRP/PLD/SAD use for range-append (`BurstCollectorService.cpp:382-402`). The
+   comment there already says "always full download (small, doesn't grow)". So
+   offset 0 is today's behaviour and needs no change; what it needs is a **test
+   that pins it**, because the constraint reads like a missed optimization and
+   the failure it prevents is a hung bridge rather than a wrong number.
+
+2. **The actual gap is that the close path never re-fetches at all.** When every
+   checkpoint file is unchanged (`BurstCollectorService.cpp:1154`), the code
+   marks the session completed and returns without calling
+   `downloadSessionFiles`. So a sidecar that grew inside one KB bucket after the
+   last checkpoint change is never re-pulled, not because the fetch uses a bad
+   offset but because no fetch is issued. `sidecars_due` therefore has to force
+   a sidecar download **on the close edge specifically**, which is the one moment
+   the existing code is guaranteed to skip.
+
 ## Decisions
 
 | # | Question | Decision |
@@ -138,6 +158,7 @@ stable          BOOLEAN DEFAULT 0    -- signature unchanged since last burst
 last_total_size BIGINT  DEFAULT -1   -- -1 = never observed
 last_file_count INTEGER DEFAULT -1
 str_due         BOOLEAN DEFAULT 0    -- STR debt, set at close, cleared on parse
+str_day         VARCHAR(8)           -- WHICH therapy day it waits for (see below)
 sidecars_due    BOOLEAN DEFAULT 0    -- EVE/CSL refetch debt, same close transition
 resync_size     BIGINT  DEFAULT -1   -- signature at which debt was last armed
 resync_count    INTEGER DEFAULT 0    -- re-arms at that signature; cap 3
@@ -147,6 +168,16 @@ updated_at      TIMESTAMP
 `stable` is separate from `complete` on purpose, per ticket #25: a folder can be
 stable (stopped growing) while a file is still being stored, and reporting done
 only on the conjunction is what stopped progress showing stuck at a fraction.
+
+`str_day` is stored rather than derived, and that is not redundancy. A DATALOG
+folder is named for the **local calendar date the session started**, while
+ResMed keys a **therapy day from noon** (the rule the daily-summary aggregation
+already uses: `DATE(session_start - INTERVAL '12 hours')`). For any night that
+crosses midnight, which is most nights, the two differ by one. Matching the STR
+against `date_folder` would therefore leave nearly every night waiting forever
+for a record that had already arrived, and every one of them would report as
+partial. The value is computed once, when the debt is armed, from the earliest
+session in the folder.
 
 Three schema files stay in sync, and every column joins
 `MySQLDatabase::migrateSchema()`. Skipping that last part is how an existing
@@ -216,10 +247,17 @@ the files arrive, with no manual step.
 
 ### Storage
 
-One column on `cpap_sessions`, defaulting to false, added to all three schema
-files and to `MySQLDatabase::migrateSchema()`. That last part is not optional:
-4.6.3 exists partly because MySQL had no migration path, and an install that
-does not gain the column would read it as missing at runtime.
+**Nothing.** This section previously specified a `partial` column on
+`cpap_sessions`; that was a leftover from the draft written before decision 1,
+and it contradicts it. Session state is DERIVED, not flagged:
+
+    date_folder = localtime(session_start) as YYYYMMDD
+    nightState(ledger row for that folder)
+
+A stored flag would be a second source of truth that can disagree with the
+ledger, and every way it goes stale (a resumed night, a late STR, a re-scan)
+is a way a night reports partial after it has been fixed. The derivation is
+cheap and cannot drift. The only new storage is `cpap_sync_folders` above.
 
 ### Surfacing
 

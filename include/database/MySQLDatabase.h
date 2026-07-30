@@ -192,6 +192,11 @@ public:
                                const std::string& updated_at_override) override;
     bool markCleaningTaskDone(int id, const std::string& done_at_override) override;
 
+    // Sync folder ledger (SDD-008)
+    std::vector<FolderLedger> listSyncFolders() override;
+    std::optional<FolderLedger> getSyncFolder(const std::string& date_folder) override;
+    bool upsertSyncFolder(const FolderLedger& f) override;
+
 
     void* rawConnection() override;
 

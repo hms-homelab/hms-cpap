@@ -374,6 +374,29 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_cleaning_tasks_uuid
 CREATE UNIQUE INDEX IF NOT EXISTS idx_cleaning_tasks_profile_key
     ON cleaning_tasks(profile_id, task_key) WHERE NOT deleted;
 
+-- SDD-008: one row per date folder on the card, recording whether the night's
+-- FILES all arrived, which is a different question from whether the therapy
+-- ended. Derived state about a transfer, not user data: rebuildable from the
+-- card, never synced, safe to wipe. date_folder is the natural key, so a
+-- re-scan updates in place instead of duplicating a night.
+CREATE TABLE IF NOT EXISTS cpap_sync_folders (
+    date_folder     VARCHAR(8) PRIMARY KEY,
+    files_listed    BOOLEAN NOT NULL DEFAULT FALSE,
+    complete        BOOLEAN NOT NULL DEFAULT FALSE,
+    stable          BOOLEAN NOT NULL DEFAULT FALSE,
+    last_total_size BIGINT  NOT NULL DEFAULT -1,
+    last_file_count INTEGER NOT NULL DEFAULT -1,
+    str_due         BOOLEAN NOT NULL DEFAULT FALSE,
+    str_day         VARCHAR(8),
+    sidecars_due    BOOLEAN NOT NULL DEFAULT FALSE,
+    resync_size     BIGINT  NOT NULL DEFAULT -1,
+    resync_count    INTEGER NOT NULL DEFAULT 0,
+    updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+-- The sweep asks for outstanding debt every burst.
+CREATE INDEX IF NOT EXISTS idx_sync_folders_debt
+    ON cpap_sync_folders(str_due, sidecars_due);
+
 INSERT INTO cleaning_task_types
     (task_key, label, applies_to_type_key, default_interval_days, is_system)
 VALUES

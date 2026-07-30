@@ -17,6 +17,7 @@ using ::testing::Invoke;
 class MockDatabase : public IDatabase {
 public:
     HMS_CPAP_STUB_EQUIPMENT_METHODS
+    HMS_CPAP_STUB_SYNC_FOLDER_METHODS
     DbType dbType() const override { return DbType::SQLITE; }
 
     MOCK_METHOD(bool, connect, (), (override));

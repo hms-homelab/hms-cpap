@@ -290,6 +290,32 @@ bool DatabaseService::connect() {
                     CREATE UNIQUE INDEX IF NOT EXISTS idx_cleaning_tasks_profile_key
                     ON cleaning_tasks(profile_id, task_key) WHERE NOT deleted
                 )");
+                // SDD-008: one row per date folder on the card, recording
+                // whether the night's FILES all arrived. Derived state about a
+                // transfer, not user data: rebuildable from the card, never
+                // synced, safe to wipe. date_folder is the natural key, so a
+                // re-scan updates in place instead of duplicating a night.
+                txn.exec(R"(
+                    CREATE TABLE IF NOT EXISTS cpap_sync_folders (
+                        date_folder     VARCHAR(8) PRIMARY KEY,
+                        files_listed    BOOLEAN NOT NULL DEFAULT FALSE,
+                        complete        BOOLEAN NOT NULL DEFAULT FALSE,
+                        stable          BOOLEAN NOT NULL DEFAULT FALSE,
+                        last_total_size BIGINT  NOT NULL DEFAULT -1,
+                        last_file_count INTEGER NOT NULL DEFAULT -1,
+                        str_due         BOOLEAN NOT NULL DEFAULT FALSE,
+                        str_day         VARCHAR(8),
+                        sidecars_due    BOOLEAN NOT NULL DEFAULT FALSE,
+                        resync_size     BIGINT  NOT NULL DEFAULT -1,
+                        resync_count    INTEGER NOT NULL DEFAULT 0,
+                        updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                )");
+                // The sweep asks for outstanding debt every burst.
+                txn.exec(R"(
+                    CREATE INDEX IF NOT EXISTS idx_sync_folders_debt
+                    ON cpap_sync_folders(str_due, sidecars_due)
+                )");
                 // The seven presets from SDD-043, verbatim, so a user running
                 // both stacks sees one vocabulary.
                 txn.exec(R"(
@@ -3094,6 +3120,102 @@ bool DatabaseService::markCleaningTaskDone(int id, const std::string& done_at_ov
         return r.affected_rows() > 0;
     } catch (const std::exception& e) {
         std::cerr << "markCleaningTaskDone error: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+// -- SDD-008: sync folder ledger ---------------------------------------------
+
+namespace {
+constexpr const char* kSyncFolderCols =
+    "date_folder, files_listed, complete, stable, last_total_size, "
+    "last_file_count, str_due, str_day, sidecars_due, resync_size, resync_count";
+
+// Templated on the row type for the same reason as rowToCleaningTask above:
+// this pqxx hands back row_ref from a range-for and row from operator[].
+template <typename Row>
+FolderLedger rowToSyncFolder(const Row& r) {
+    FolderLedger f;
+    f.date_folder     = r["date_folder"].template as<std::string>("");
+    f.files_listed    = r["files_listed"].template as<bool>(false);
+    f.complete        = r["complete"].template as<bool>(false);
+    f.stable          = r["stable"].template as<bool>(false);
+    f.last_total_size = r["last_total_size"].template as<long long>(-1);
+    f.last_file_count = r["last_file_count"].template as<int>(-1);
+    f.str_due         = r["str_due"].template as<bool>(false);
+    f.str_day         = r["str_day"].is_null() ? "" : r["str_day"].template as<std::string>("");
+    f.sidecars_due    = r["sidecars_due"].template as<bool>(false);
+    f.resync_size     = r["resync_size"].template as<long long>(-1);
+    f.resync_count    = r["resync_count"].template as<int>(0);
+    return f;
+}
+} // namespace
+
+std::vector<FolderLedger> DatabaseService::listSyncFolders() {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::vector<FolderLedger> out;
+    if (!ensureConnection()) return out;
+    try {
+        pqxx::work txn(*conn_);
+        pqxx::result rows = txn.exec(std::string("SELECT ") + kSyncFolderCols +
+                                     " FROM cpap_sync_folders ORDER BY date_folder");
+        txn.commit();
+        for (const auto& r : rows) out.push_back(rowToSyncFolder(r));
+    } catch (const std::exception& e) {
+        std::cerr << "listSyncFolders error: " << e.what() << std::endl;
+    }
+    return out;
+}
+
+std::optional<FolderLedger> DatabaseService::getSyncFolder(const std::string& date_folder) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!ensureConnection()) return std::nullopt;
+    try {
+        pqxx::work txn(*conn_);
+        auto rows = txn.exec_params(std::string("SELECT ") + kSyncFolderCols +
+                                    " FROM cpap_sync_folders WHERE date_folder = $1",
+                                    date_folder);
+        txn.commit();
+        if (rows.empty()) return std::nullopt;
+        return rowToSyncFolder(rows[0]);
+    } catch (const std::exception& e) {
+        std::cerr << "getSyncFolder error: " << e.what() << std::endl;
+        return std::nullopt;
+    }
+}
+
+bool DatabaseService::upsertSyncFolder(const FolderLedger& f) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (f.date_folder.empty()) return false;
+    if (!ensureConnection()) return false;
+    try {
+        pqxx::work txn(*conn_);
+        txn.exec_params(R"(
+            INSERT INTO cpap_sync_folders
+                (date_folder, files_listed, complete, stable, last_total_size,
+                 last_file_count, str_due, str_day, sidecars_due, resync_size,
+                 resync_count, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, CURRENT_TIMESTAMP)
+            ON CONFLICT (date_folder) DO UPDATE SET
+                files_listed    = EXCLUDED.files_listed,
+                complete        = EXCLUDED.complete,
+                stable          = EXCLUDED.stable,
+                last_total_size = EXCLUDED.last_total_size,
+                last_file_count = EXCLUDED.last_file_count,
+                str_due         = EXCLUDED.str_due,
+                str_day         = EXCLUDED.str_day,
+                sidecars_due    = EXCLUDED.sidecars_due,
+                resync_size     = EXCLUDED.resync_size,
+                resync_count    = EXCLUDED.resync_count,
+                updated_at      = CURRENT_TIMESTAMP
+        )", f.date_folder, f.files_listed, f.complete, f.stable, f.last_total_size,
+            f.last_file_count, f.str_due, f.str_day.empty() ? std::optional<std::string>{}
+                                                           : std::optional<std::string>{f.str_day},
+            f.sidecars_due, f.resync_size, f.resync_count);
+        txn.commit();
+        return true;
+    } catch (const std::exception& e) {
+        std::cerr << "upsertSyncFolder error: " << e.what() << std::endl;
         return false;
     }
 }

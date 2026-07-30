@@ -320,6 +320,20 @@ bool PostgresDatabase::markCleaningTaskDone(int id, const std::string& done_at_o
     return db_->markCleaningTaskDone(id, done_at_override);
 }
 
+// -- SDD-008: sync folder ledger ---------------------------------------------
+
+std::vector<FolderLedger> PostgresDatabase::listSyncFolders() {
+    return db_->listSyncFolders();
+}
+
+std::optional<FolderLedger> PostgresDatabase::getSyncFolder(const std::string& date_folder) {
+    return db_->getSyncFolder(date_folder);
+}
+
+bool PostgresDatabase::upsertSyncFolder(const FolderLedger& f) {
+    return db_->upsertSyncFolder(f);
+}
+
 
 } // namespace hms_cpap
 

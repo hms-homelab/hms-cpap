@@ -48,6 +48,7 @@ using Clock = std::chrono::system_clock;
 class RecordingDatabase : public IDatabase {
 public:
     HMS_CPAP_STUB_EQUIPMENT_METHODS
+    HMS_CPAP_STUB_SYNC_FOLDER_METHODS
     DbType type = DbType::POSTGRESQL;
     bool connected = true;
     std::vector<std::string> queries;
