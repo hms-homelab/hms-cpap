@@ -40,7 +40,10 @@ protected:
     CpapDashSyncService svc_;
 
     // Fake cloud: records every request and replays a scripted response.
-    std::vector<json> requests_;
+    std::vector<json> requests_;            // equipment exchanges
+    std::vector<json> cleaning_requests_;   // SDD-007 cleaning exchanges
+    json cleaning_response_ = json{{"tasks", json::array()},
+                                   {"server_time", "2026-07-30T00:00:00Z"}};
     json              next_response_ = json::object();
     bool              transport_ok_  = true;
 
@@ -63,9 +66,23 @@ protected:
         svc_.setDatabase(db_);
         svc_.setSettings(s);
         svc_.setStatePath(state_path_);
-        svc_.setTransport([this](const std::string&, const std::string& body, std::string& out) {
+        // Split by endpoint. SDD-007 added a second feed (/v1/cleaning/sync) that
+        // runs on every syncNow, and folding both into one list would silently
+        // renumber every requests_.at(N) assertion below: those are all about the
+        // EQUIPMENT exchange and must keep meaning that.
+        svc_.setTransport([this](const std::string& url, const std::string& body,
+                                 std::string& out) {
             json req = json::parse(body, nullptr, false);
-            requests_.push_back(req.is_discarded() ? json::object() : req);
+            if (req.is_discarded()) req = json::object();
+
+            if (url.find("/v1/cleaning/sync") != std::string::npos) {
+                cleaning_requests_.push_back(req);
+                if (!transport_ok_) return false;
+                out = cleaning_response_.dump();
+                return true;
+            }
+
+            requests_.push_back(req);
             if (!transport_ok_) return false;
             out = next_response_.dump();
             return true;
@@ -95,6 +112,14 @@ protected:
     void setUpdatedAt(const char* table, int id, const std::string& ts) {
         db_->executeQuery(std::string("UPDATE ") + table + " SET updated_at = ? WHERE id = ?",
                           {ts, std::to_string(id)});
+    }
+
+    // SDD-007 cleaning tests need a profile that exists and an item in it; the
+    // default profile is created by the schema, so this just guarantees content.
+    int seedProfileAndItem() {
+        const int pid = db_->ensureDefaultEquipmentProfile();
+        addMask(pid);
+        return pid;
     }
 
     int addMask(int profile_id, const std::string& brand = "ResMed",
@@ -674,3 +699,186 @@ TEST_F(CpapDashSync, ApplyingARemoteTombstonePreservesItsUpdatedAt) {
     EXPECT_EQ(second.pushed_profiles, 0)
         << "an applied tombstone re-pushes itself every sweep";
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SDD-007: the cleaning feed
+//
+// A second exchange with its own cursor. The properties that matter are the
+// ones a naive implementation gets wrong: a task must never be pushed with a
+// profile reference the server cannot resolve, and the two feeds must not share
+// a cursor.
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_F(CpapDashSync, CleaningIsASeparateExchangeFromEquipment) {
+    seedProfileAndItem();
+    ASSERT_TRUE(svc_.syncNow().ok);
+
+    EXPECT_FALSE(requests_.empty())          << "equipment feed did not run";
+    EXPECT_EQ(cleaning_requests_.size(), 1u) << "cleaning feed did not run exactly once";
+}
+
+TEST_F(CpapDashSync, CleaningTaskCarriesItsProfileUuidNotItsLocalId) {
+    seedProfileAndItem();
+    // First sync so the profile gets a uuid backfilled.
+    ASSERT_TRUE(svc_.syncNow().ok);
+
+    auto profiles = db_->listEquipmentProfiles(false);
+    ASSERT_FALSE(profiles.empty());
+    const std::string puuid = profiles.front().client_uuid;
+    ASSERT_FALSE(puuid.empty());
+
+    IDatabase::CleaningTask t;
+    t.profile_id    = profiles.front().id;
+    t.task_key      = "mask_wash";
+    t.label         = "Wash the mask";
+    t.interval_days = 7;
+    t.start_date    = "2026-07-30";
+    t.client_uuid   = CpapDashSyncService::makeUuid();
+    ASSERT_GT(db_->upsertCleaningTask(t, ""), 0);
+
+    cleaning_requests_.clear();
+    ASSERT_TRUE(svc_.syncNow().ok);
+
+    ASSERT_EQ(cleaning_requests_.size(), 1u);
+    const auto& tasks = cleaning_requests_.at(0)["tasks"];
+    ASSERT_TRUE(tasks.is_array());
+    ASSERT_EQ(tasks.size(), 1u);
+    // Local ids are not cloud ids, so the join has to be the uuid.
+    EXPECT_EQ(tasks[0].value("profile_client_uuid", std::string{}), puuid);
+    EXPECT_EQ(tasks[0].value("task_key", std::string{}), "mask_wash");
+}
+
+TEST_F(CpapDashSync, ATaskWhoseProfileHasNoUuidIsHeldBackNotPushed) {
+    // A profile that has never synced has no uuid, so the server could not place
+    // its tasks. Pushing anyway would create a dangling reference; the task must
+    // wait for the profile instead.
+    IDatabase::EquipmentProfile p;
+    p.name = "Not yet mirrored";
+    const int pid = db_->upsertEquipmentProfile(p, "");
+    ASSERT_GT(pid, 0);
+
+    IDatabase::CleaningTask t;
+    t.profile_id    = pid;
+    t.task_key      = "tubing_wash";
+    t.label         = "Wash the tubing";
+    t.interval_days = 7;
+    t.start_date    = "2026-07-30";
+    ASSERT_GT(db_->upsertCleaningTask(t, ""), 0);
+
+    // Strip the uuid the backfill would add, to model the pre-sync state.
+    db_->executeQuery("UPDATE cpap_equipment_profiles SET client_uuid = NULL WHERE id = ?",
+                      {std::to_string(pid)});
+
+    cleaning_requests_.clear();
+    const auto r = svc_.syncNow();
+
+    // The sync as a whole still succeeds: holding a row back is normal, not an error.
+    EXPECT_TRUE(r.ok);
+    if (!cleaning_requests_.empty()) {
+        const auto& tasks = cleaning_requests_.at(0)["tasks"];
+        for (const auto& tj : tasks) {
+            EXPECT_FALSE(tj.value("profile_client_uuid", std::string{}).empty())
+                << "a task was pushed with an unresolvable profile reference";
+        }
+    }
+}
+
+TEST_F(CpapDashSync, CleaningCursorIsSeparateFromTheEquipmentCursor) {
+    seedProfileAndItem();
+    cleaning_response_ = json{{"tasks", json::array()},
+                              {"server_time", "2026-08-01T09:00:00Z"}};
+    ASSERT_TRUE(svc_.syncNow().ok);
+
+    cleaning_requests_.clear();
+    ASSERT_TRUE(svc_.syncNow().ok);
+    ASSERT_EQ(cleaning_requests_.size(), 1u);
+
+    // The second cleaning exchange resumes from the CLEANING server_time, not
+    // from the equipment one. Sharing a cursor would re-send every task whenever
+    // an equipment row moved, and drop cleaning changes when it did not.
+    EXPECT_EQ(cleaning_requests_.at(0).value("since", std::string{}),
+              "2026-08-01T09:00:00Z");
+}
+
+TEST_F(CpapDashSync, ARemoteCleaningTaskIsCreatedLocally) {
+    seedProfileAndItem();
+    ASSERT_TRUE(svc_.syncNow().ok);
+    auto profiles = db_->listEquipmentProfiles(false);
+    ASSERT_FALSE(profiles.empty());
+    const std::string puuid = profiles.front().client_uuid;
+
+    const std::string uuid = CpapDashSyncService::makeUuid();
+    cleaning_response_ = json{
+        {"server_time", "2026-08-02T09:00:00Z"},
+        {"tasks", json::array({json{
+            {"id", 77},
+            {"client_uuid", uuid},
+            {"profile_client_uuid", puuid},
+            {"task_key", "humidifier_wash"},
+            {"label", "Wash the water tub"},
+            {"interval_days", 7},
+            {"time_minutes", 510},
+            {"start_date", "2026-08-01"},
+            {"enabled", true},
+            {"deleted", false},
+            {"updated_at", "2026-08-02T08:00:00Z"}}})}};
+
+    const auto r = svc_.syncNow();
+    ASSERT_TRUE(r.ok);
+    EXPECT_GE(r.applied_tasks, 1);
+
+    bool found = false;
+    for (const auto& t : db_->listCleaningTasks(0)) {
+        if (t.client_uuid == uuid) {
+            found = true;
+            EXPECT_EQ(t.task_key, "humidifier_wash");
+            EXPECT_EQ(t.interval_days, 7);
+            EXPECT_TRUE(t.enabled);
+        }
+    }
+    EXPECT_TRUE(found) << "a remote-only cleaning task never landed locally";
+}
+
+TEST_F(CpapDashSync, AStaleRemoteCleaningEditLosesToTheLocalRow) {
+    seedProfileAndItem();
+    ASSERT_TRUE(svc_.syncNow().ok);
+    auto profiles = db_->listEquipmentProfiles(false);
+    const std::string puuid = profiles.front().client_uuid;
+
+    const std::string uuid = CpapDashSyncService::makeUuid();
+    IDatabase::CleaningTask t;
+    t.profile_id    = profiles.front().id;
+    t.task_key      = "mask_wipe";
+    t.label         = "Local wins";
+    t.interval_days = 1;
+    t.start_date    = "2026-07-30";
+    t.client_uuid   = uuid;
+    ASSERT_GT(db_->upsertCleaningTask(t, "2026-08-05T10:00:00Z"), 0);
+
+    // Remote claims an older stamp, so it must not overwrite.
+    cleaning_response_ = json{
+        {"server_time", "2026-08-06T00:00:00Z"},
+        {"tasks", json::array({json{
+            {"id", 91},
+            {"client_uuid", uuid},
+            {"profile_client_uuid", puuid},
+            {"task_key", "mask_wipe"},
+            {"label", "Remote should lose"},
+            {"interval_days", 99},
+            {"time_minutes", 510},
+            {"start_date", "2026-08-01"},
+            {"enabled", false},
+            {"deleted", false},
+            {"updated_at", "2026-08-01T10:00:00Z"}}})}};
+
+    ASSERT_TRUE(svc_.syncNow().ok);
+
+    for (const auto& got : db_->listCleaningTasks(0)) {
+        if (got.client_uuid == uuid) {
+            EXPECT_EQ(got.label, "Local wins")
+                << "an older cloud row overwrote a newer local edit";
+            EXPECT_EQ(got.interval_days, 1);
+        }
+    }
+}
+

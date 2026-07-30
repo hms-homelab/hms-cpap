@@ -20,6 +20,7 @@ using json = nlohmann::json;
 namespace {
 
 constexpr const char* kSyncPath = "/v1/equipment/sync";
+constexpr const char* kCleaningSyncPath = "/v1/cleaning/sync";
 constexpr int kMaxPasses = 2;
 
 std::string trimTrailingSlash(std::string s) {
@@ -185,10 +186,13 @@ CpapDashSyncService::State CpapDashSyncService::loadState() const {
     st.cursor             = jstr(j, "cursor");
     st.pushed_through     = jstr(j, "pushed_through");
     st.default_profile_id = jint(j, "default_profile_id", 0);
-    for (const char* key : {"profile_ids", "item_ids"}) {
+    st.cleaning_cursor = j.value("cleaning_cursor", std::string{});
+    for (const char* key : {"profile_ids", "item_ids", "task_ids"}) {
         auto it = j.find(key);
         if (it == j.end() || !it->is_object()) continue;
-        auto& into = (std::string(key) == "profile_ids") ? st.profile_ids : st.item_ids;
+        auto& into = (std::string(key) == "profile_ids") ? st.profile_ids
+                   : (std::string(key) == "item_ids")    ? st.item_ids
+                                                         : st.task_ids;
         for (auto e = it->begin(); e != it->end(); ++e)
             if (e.value().is_number_integer()) into[e.key()] = e.value().get<int>();
     }
@@ -202,8 +206,11 @@ bool CpapDashSyncService::saveState(const State& s) const {
     j["default_profile_id"] = s.default_profile_id;
     j["profile_ids"]        = json::object();
     j["item_ids"]           = json::object();
+    j["task_ids"]           = json::object();
+    j["cleaning_cursor"]    = s.cleaning_cursor;
     for (const auto& [uuid, id] : s.profile_ids) j["profile_ids"][uuid] = id;
     for (const auto& [uuid, id] : s.item_ids)    j["item_ids"][uuid]    = id;
+    for (const auto& [uuid, id] : s.task_ids)    j["task_ids"][uuid]    = id;
 
     const std::filesystem::path path = statePath();
     std::error_code ec;
@@ -267,8 +274,9 @@ int CpapDashSyncService::backfillUuids() {
 // Transport
 // ─────────────────────────────────────────────────────────────────────────────
 
-bool CpapDashSyncService::post(const std::string& body, std::string& out) const {
-    const std::string url = trimTrailingSlash(settings_.api_url) + kSyncPath;
+bool CpapDashSyncService::post(const std::string& path, const std::string& body,
+                               std::string& out) const {
+    const std::string url = trimTrailingSlash(settings_.api_url) + path;
 
     if (transport_) return transport_(url, body, out);
 
@@ -407,7 +415,7 @@ bool CpapDashSyncService::exchange(const std::string& watermark, State& state, R
     req["items"]    = push_items;
 
     std::string raw_response;
-    if (!post(req.dump(), raw_response)) {
+    if (!post(kSyncPath, req.dump(), raw_response)) {
         acc.error = "cpapdash sync failed: cloud unreachable or rejected the token";
         return false;
     }
@@ -588,6 +596,153 @@ bool CpapDashSyncService::exchange(const std::string& watermark, State& state, R
 // Public entry points
 // ─────────────────────────────────────────────────────────────────────────────
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SDD-007: the cleaning feed
+//
+// A second, independent exchange with its own cursor. Deliberately NOT folded
+// into the equipment payload: they are different tables with different change
+// rates, and one cursor covering both would re-send every cleaning task every
+// time an equipment row moved.
+//
+// Runs AFTER the equipment loop, which is not an optimisation but a
+// correctness requirement: a cleaning task references a profile, local profile
+// ids are not cloud profile ids, and the join is client_uuid. A task whose
+// profile has not been mirrored yet is HELD BACK rather than pushed with a
+// dangling reference; the profile syncs first and the task follows next sweep.
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool CpapDashSyncService::exchangeCleaning(State& state, Result& acc) {
+    if (!db_) return false;
+
+    // Build the push. Every task carries its profile's uuid so the server can
+    // resolve the reference in its own id space.
+    std::map<int, std::string> profile_uuid;   // local profile id -> uuid
+    for (const auto& p : db_->listEquipmentProfiles(/*include_deleted=*/true)) {
+        if (!p.client_uuid.empty()) profile_uuid[p.id] = p.client_uuid;
+    }
+
+    json tasks = json::array();
+    for (const auto& t : db_->listCleaningTasks(0)) {
+        const auto uu = profile_uuid.find(t.profile_id);
+        if (uu == profile_uuid.end() || uu->second.empty()) {
+            // Profile has no uuid yet, so the server cannot place this task.
+            ++acc.tasks_held_back;
+            continue;
+        }
+
+        json j;
+        const auto bound = state.task_ids.find(t.client_uuid);
+        if (!t.client_uuid.empty() && bound != state.task_ids.end())
+            j["remote_id"] = bound->second;
+        j["client_uuid"]         = t.client_uuid;
+        j["profile_client_uuid"] = uu->second;
+        j["task_key"]            = t.task_key;
+        j["label"]               = t.label;
+        j["interval_days"]       = t.interval_days;
+        j["time_minutes"]        = t.time_minutes;
+        j["start_date"]          = t.start_date;
+        j["enabled"]             = t.enabled;
+        j["deleted"]             = t.deleted;
+        j["updated_at"]          = t.updated_at;
+        tasks.push_back(std::move(j));
+    }
+
+    json payload;
+    payload["tasks"] = tasks;
+    payload["since"] = state.cleaning_cursor;
+
+    std::string raw;
+    if (!post(kCleaningSyncPath, payload.dump(), raw)) {
+        // Transport failure leaves local data exactly as it was, and the cursor
+        // unmoved, so the next sweep repeats this same work.
+        return false;
+    }
+    acc.pushed_tasks += static_cast<int>(tasks.size());
+
+    json resp;
+    try {
+        resp = json::parse(raw);
+    } catch (const std::exception&) {
+        return false;
+    }
+
+    // Apply what came back. Last-write-wins by EPOCH, never by string compare:
+    // local writes "...Z" while the cloud writes a Postgres offset stamp, and
+    // comparing those as text is wrong.
+    if (resp.contains("tasks") && resp["tasks"].is_array()) {
+        for (const auto& rj : resp["tasks"]) {
+            const std::string uuid = rj.value("client_uuid", std::string{});
+            if (uuid.empty()) continue;   // nothing to bind it to locally
+
+            const int server_id = rj.value("id", 0);
+            if (server_id > 0) state.task_ids[uuid] = server_id;
+
+            // Find the local row by uuid.
+            std::optional<IDatabase::CleaningTask> local;
+            for (const auto& t : db_->listCleaningTasks(0)) {
+                if (t.client_uuid == uuid) { local = t; break; }
+            }
+
+            const long long remote_epoch =
+                parseTimestampEpoch(rj.value("updated_at", std::string{}));
+
+            if (local) {
+                const long long local_epoch = parseTimestampEpoch(local->updated_at);
+                // A tie, or either side unparseable, resolves in favour of LOCAL:
+                // the cloud must never overwrite something changed more recently
+                // here, and "unknown" is not evidence that it should.
+                if (remote_epoch < 0 || local_epoch < 0 || remote_epoch <= local_epoch) {
+                    ++acc.kept_local;
+                    continue;
+                }
+                if (rj.value("deleted", false)) {
+                    if (db_->tombstoneCleaningTask(local->id, rj.value("updated_at", std::string{})))
+                        ++acc.deleted_locally;
+                    continue;
+                }
+                IDatabase::CleaningTask upd = *local;
+                upd.label         = rj.value("label", upd.label);
+                upd.interval_days = rj.value("interval_days", upd.interval_days);
+                upd.time_minutes  = rj.value("time_minutes", upd.time_minutes);
+                upd.start_date    = rj.value("start_date", upd.start_date);
+                upd.enabled       = rj.value("enabled", upd.enabled);
+                if (db_->upsertCleaningTask(upd, rj.value("updated_at", std::string{})) > 0)
+                    ++acc.applied_tasks;
+            } else {
+                // Remote-only row. A tombstone we have never seen is nothing to
+                // apply: creating a row just to mark it deleted would be noise.
+                if (rj.value("deleted", false)) continue;
+
+                IDatabase::CleaningTask nt;
+                // Place it in whichever local profile carries the uuid the server
+                // reported; skip when we cannot resolve one, rather than guessing.
+                const std::string puuid = rj.value("profile_client_uuid", std::string{});
+                for (const auto& [lid, u] : profile_uuid) {
+                    if (u == puuid) { nt.profile_id = lid; break; }
+                }
+                if (nt.profile_id <= 0) { ++acc.tasks_held_back; continue; }
+
+                nt.client_uuid   = uuid;
+                nt.task_key      = rj.value("task_key", std::string{});
+                nt.label         = rj.value("label", std::string{});
+                nt.interval_days = rj.value("interval_days", 0);
+                nt.time_minutes  = rj.value("time_minutes", 510);
+                nt.start_date    = rj.value("start_date", std::string{});
+                nt.enabled       = rj.value("enabled", false);
+                if (nt.task_key.empty() || nt.interval_days <= 0) continue;
+                if (db_->upsertCleaningTask(nt, rj.value("updated_at", std::string{})) > 0)
+                    ++acc.applied_tasks;
+            }
+        }
+    }
+
+    // Advance the cursor only on a successful exchange.
+    const std::string st = resp.value("server_time", std::string{});
+    if (!st.empty()) state.cleaning_cursor = st;
+    return true;
+}
+
 CpapDashSyncService::Result CpapDashSyncService::syncNow() {
     Result r;
     if (!enabled()) {
@@ -629,6 +784,15 @@ CpapDashSyncService::Result CpapDashSyncService::syncNow() {
         // Re-push from the SAME watermark: pass 1 sent items whose profile had no
         // server id, so the cloud filed them under its default setup. The binding
         // learned above lets pass 2 move them to the right one.
+    }
+
+    // SDD-007: the cleaning feed, after equipment so profile uuids are bound.
+    // A failure here does NOT fail the whole sync: equipment already reconciled
+    // and its state is worth keeping. The cleaning cursor simply does not move,
+    // so the next sweep retries exactly this.
+    if (!exchangeCleaning(state, r)) {
+        std::cerr << "[cpapdash] cleaning sync failed (equipment still synced)"
+                  << std::endl;
     }
 
     saveState(state);

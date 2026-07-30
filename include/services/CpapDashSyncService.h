@@ -67,6 +67,9 @@ public:
         int  pushed_items      = 0;
         int  applied_profiles  = 0;         // remote rows written locally
         int  applied_items     = 0;
+        int  pushed_tasks      = 0;         // SDD-007 cleaning
+        int  applied_tasks     = 0;
+        int  tasks_held_back   = 0;         // profile not mirrored yet
         int  deleted_locally   = 0;         // remote tombstones applied
         int  kept_local        = 0;         // remote rows rejected: local was newer
         int  passes            = 0;
@@ -117,6 +120,8 @@ private:
         std::string pushed_through;                // local ISO watermark
         std::map<std::string, int> profile_ids;    // client_uuid -> server id
         std::map<std::string, int> item_ids;       // client_uuid -> server id
+        std::map<std::string, int> task_ids;       // SDD-007 cleaning: uuid -> server id
+        std::string cleaning_cursor;               // separate feed, separate cursor
         int default_profile_id = 0;                // server-side default setup
     };
 
@@ -147,7 +152,13 @@ private:
     bool exchange(const std::string& watermark, State& state, Result& acc,
                   bool& needs_second_pass, std::string& new_watermark);
 
-    bool post(const std::string& body, std::string& out) const;
+    // `path` because there are two feeds now: equipment and cleaning each have
+    // their own bulk endpoint and their own cursor.
+    bool post(const std::string& path, const std::string& body, std::string& out) const;
+    // SDD-007: the cleaning round trip. Runs AFTER the equipment loop so profile
+    // server ids are already bound; a task whose profile has none yet is held
+    // back rather than pushed with a dangling reference.
+    bool exchangeCleaning(State& state, Result& acc);
 
     std::shared_ptr<IDatabase> db_;
     Settings    settings_;
