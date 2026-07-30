@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    CpapDash Desktop, the Windows tray shell (SDD-005 phase 3).
+
+    WinExe, not Exe: a console window flashing up on every login is the fastest
+    way to make someone uninstall this.
+
+    Self-contained with the runtime included, because the target user is a CPAP
+    patient on a laptop, not a developer, and "install .NET first" is where they
+    give up. PublishSingleFile keeps the install folder to one shell binary
+    beside hms_cpap.exe, matching the layout the release zip already has.
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>CpapDashDesktop</AssemblyName>
+    <RootNamespace>CpapDashDesktop</RootNamespace>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <!-- Trimming is deliberately OFF: WinForms reflects over its own types and
+         a trimmed build fails at runtime rather than at build time, which is
+         the worst place to find out. -->
+    <PublishTrimmed>false</PublishTrimmed>
+    <ApplicationIcon></ApplicationIcon>
+  </PropertyGroup>
+
+</Project>
