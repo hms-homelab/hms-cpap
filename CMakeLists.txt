@@ -68,8 +68,28 @@ if(BUILD_WITH_MYSQL)
         endif()
     endif()
 
-    # Route 2: direct search, for MSVC/vcpkg where pkg-config is normally absent
-    # and for any install that ships no .pc file.
+    # Route 2: vcpkg's exported config, which is how MSVC should find this.
+    #
+    # Preferred over a bare find_library because the port has transitive
+    # dependencies (zstd, openssl) that a raw library path does not carry:
+    # linking only mysqlclient.lib leaves ZSTD_* unresolved at link time, since
+    # its my_compress.cc references them. An imported target brings its own
+    # usage requirements, so the dependency chain stays vcpkg's problem.
+    if(NOT _hms_mysql_found)
+        find_package(unofficial-libmysql CONFIG QUIET)
+        foreach(_t unofficial::libmysql::libmysql unofficial::libmysql::libmysql_static)
+            if(TARGET ${_t})
+                set(MYSQLCLIENT_LINK_LIBRARIES "${_t}")
+                set(MYSQLCLIENT_INCLUDE_DIRS "")   # carried by the target
+                set(_hms_mysql_found TRUE)
+                message(STATUS "Found MySQL client via vcpkg target ${_t}")
+                break()
+            endif()
+        endforeach()
+    endif()
+
+    # Route 3: direct search, for any install shipping neither a .pc file nor a
+    # CMake config.
     #
     # Searches into HMS_MYSQL_* rather than straight into MYSQLCLIENT_*: a failed
     # pkg_check_modules still DEFINES MYSQLCLIENT_INCLUDE_DIRS as an empty cache
@@ -83,6 +103,20 @@ if(BUILD_WITH_MYSQL)
         if(HMS_MYSQL_INCLUDE_DIR AND HMS_MYSQL_LIBRARY)
             set(MYSQLCLIENT_INCLUDE_DIRS   "${HMS_MYSQL_INCLUDE_DIR}")
             set(MYSQLCLIENT_LINK_LIBRARIES "${HMS_MYSQL_LIBRARY}")
+            # Oracle's client compresses with zstd. Found by name here because
+            # this route has no dependency metadata to inherit; harmless when the
+            # client turns out not to need it.
+            find_package(zstd CONFIG QUIET)
+            if(TARGET zstd::libzstd)
+                list(APPEND MYSQLCLIENT_LINK_LIBRARIES zstd::libzstd)
+            elseif(TARGET zstd::libzstd_static)
+                list(APPEND MYSQLCLIENT_LINK_LIBRARIES zstd::libzstd_static)
+            else()
+                find_library(HMS_ZSTD_LIBRARY NAMES zstd zstd_static libzstd)
+                if(HMS_ZSTD_LIBRARY)
+                    list(APPEND MYSQLCLIENT_LINK_LIBRARIES "${HMS_ZSTD_LIBRARY}")
+                endif()
+            endif()
             set(_hms_mysql_found TRUE)
             message(STATUS "Found MySQL client: ${HMS_MYSQL_LIBRARY}")
         endif()
