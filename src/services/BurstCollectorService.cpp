@@ -2,6 +2,7 @@
 #include "services/BurstCollectorService.h"
 #include "services/InsightsEngine.h"
 #include "services/SleepHqExportService.h"
+#include "services/CleaningPublisher.h"
 #include "clients/O2RingClient.h"
 #ifdef WITH_BLE
 #include "clients/O2RingBleClient.h"
@@ -1486,6 +1487,28 @@ void BurstCollectorService::runLoop() {
                 *db_service_, static_cast<long long>(std::time(nullptr)));
             if (r.published && !r.all_ok)
                 std::cerr << "SupplyPublisher: some MQTT messages were rejected" << std::endl;
+        }
+
+        // SDD-007: republish cleaning schedules alongside supplies. Same cycle,
+        // same reasoning: no phone and no planner here, so HA entities ARE the
+        // reminder. This publishes STATE only; when to nudge is an automation
+        // the user owns, which is deliberately less than the cloud SDD does and
+        // strictly more flexible for a household that already runs HA.
+        //
+        // No ledger, unlike supplies. Cleaning has no edge-triggered events to
+        // de-duplicate across restarts: a task is due or it is not, and the
+        // retained level state answers that on its own.
+        if (db_service_ && mqtt_client_) {
+            CleaningPublisher cleaner(
+                [this](const std::string& topic, const std::string& payload, bool retain) {
+                    return mqtt_client_->publish(topic, payload, 1, retain);
+                },
+                device_id_,
+                app_config_ ? app_config_->device_name : std::string("CPAP"));
+            auto cr = cleaner.publishFromDatabase(
+                *db_service_, static_cast<long long>(std::time(nullptr)));
+            if (cr.published && !cr.all_ok)
+                std::cerr << "CleaningPublisher: some MQTT messages were rejected" << std::endl;
         }
 
         // SDD-004: opt-in cloud mirror. sweep() is a no-op unless auto_sync is on
