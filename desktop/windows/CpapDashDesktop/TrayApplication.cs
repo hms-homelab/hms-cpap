@@ -19,6 +19,7 @@ public sealed class TrayApplication : ApplicationContext
     private readonly string _shellExe;
     private readonly ToolStripMenuItem _statusItem;
     private readonly ToolStripMenuItem _autostartItem;
+    private readonly ToolStripMenuItem _retryItem;
 
     private bool _healthy;
     private string _version = "";
@@ -46,12 +47,21 @@ public sealed class TrayApplication : ApplicationContext
             Checked = Autostart.IsEnabled()
         };
 
+        _retryItem = new ToolStripMenuItem("Retry", null, (_, _) =>
+        {
+            _retryItem!.Visible = false;
+            _statusItem.Text = "Status: starting...";
+            _supervisor!.Retry();
+        }) { Visible = false };
+
         var menu = new ContextMenuStrip();
         menu.Items.Add(new ToolStripMenuItem("CpapDash Desktop") { Enabled = false });
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(_statusItem);
         menu.Items.Add(new ToolStripMenuItem("Open Dashboard", null, (_, _) => OpenDashboard()));
         menu.Items.Add(new ToolStripMenuItem("Sync Now", null, async (_, _) => await SyncNowAsync()));
+        menu.Items.Add(_retryItem);
+        menu.Items.Add(new ToolStripMenuItem("Open config folder", null, (_, _) => OpenConfigFolder()));
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(_autostartItem);
         menu.Items.Add(new ToolStripMenuItem("Quit", null, (_, _) => Quit()));
@@ -66,7 +76,8 @@ public sealed class TrayApplication : ApplicationContext
         _icon.DoubleClick += (_, _) => OpenDashboard();
 
         _supervisor = new Supervisor(childExe, Log);
-        _supervisor.GaveUp += OnChildGaveUp;
+        _supervisor.PreflightFailed += OnPreflightFailed;
+        _supervisor.Exited += OnChildExited;
         _supervisor.Start();
 
         _poll = new System.Windows.Forms.Timer { Interval = 5000 };
@@ -165,46 +176,76 @@ public sealed class TrayApplication : ApplicationContext
         }
     }
 
-    private void OnChildGaveUp(int exitCode)
+    /// <summary>The configuration is unusable. Show exactly which check failed.</summary>
+    ///
+    /// This is the whole point of preflighting: the dialog quotes the real
+    /// report, naming the failing item and its remedy, instead of guessing that
+    /// a port is "most likely" in use.
+    private void OnPreflightFailed(string report)
     {
-        // Marshalled onto the UI thread: the supervisor raises this from its own
-        // watcher thread, and touching a NotifyIcon from there throws.
-        if (_icon.ContextMenuStrip?.InvokeRequired == true)
-        {
-            _icon.ContextMenuStrip.BeginInvoke(() => OnChildGaveUp(exitCode));
-            return;
-        }
+        if (InvokeOnUi(() => OnPreflightFailed(report))) return;
 
         SetHealthy(false);
-        _statusItem.Text = "Status: stopped";
-
-        // Port conflict is a hard failure by decision (SDD-005), so the dialog
-        // has to be ACTIONABLE rather than merely truthful. Telling someone the
-        // port is busy without telling them where to change it just moves the
-        // problem.
-        var configDir = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".hms-cpap");
+        _statusItem.Text = "Status: configuration problem";
+        _retryItem.Visible = true;
 
         var result = MessageBox.Show(
-            "CpapDash Desktop could not start.\n\n" +
-            $"Port {DefaultPort} is most likely already in use by another program " +
-            "on this computer.\n\n" +
-            "To use a different port, edit \"web_port\" in config.json and start again.\n\n" +
+            "CpapDash Desktop cannot start yet.\n\n" +
+            report + "\n\n" +
+            "Fix the item marked FAIL in config.json, then choose Retry.\n\n" +
             "Open the config folder now?",
-            "CpapDash Desktop", MessageBoxButtons.YesNo, MessageBoxIcon.Error);
+            "CpapDash Desktop", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
 
-        if (result == DialogResult.Yes)
+        if (result == DialogResult.Yes) OpenConfigFolder();
+    }
+
+    /// <summary>The child stopped. Report it; do not silently restart.</summary>
+    private void OnChildExited(int exitCode, string lastOutput)
+    {
+        if (InvokeOnUi(() => OnChildExited(exitCode, lastOutput))) return;
+
+        SetHealthy(false);
+        _statusItem.Text = $"Status: stopped (exit {exitCode})";
+        _retryItem.Visible = true;
+
+        // A balloon rather than a modal box: unlike a preflight failure this can
+        // happen hours later while the user is doing something else, and
+        // stealing focus for it would be worse than the problem.
+        var lines = lastOutput.Split('\n');
+        _icon.ShowBalloonTip(10000, "CpapDash stopped",
+            string.IsNullOrWhiteSpace(lastOutput)
+                ? $"hms_cpap exited with code {exitCode}. Use Retry to start it again."
+                : lines[lines.Length - 1].Trim(),
+            ToolTipIcon.Error);
+
+        Log($"child exited {exitCode}; last output:\n{lastOutput}");
+    }
+
+    /// <summary>Marshal onto the UI thread. Returns true when it re-posted.</summary>
+    private bool InvokeOnUi(Action action)
+    {
+        var target = _icon.ContextMenuStrip;
+        if (target is { IsHandleCreated: true, InvokeRequired: true })
         {
-            try
-            {
-                Directory.CreateDirectory(configDir);
-                Process.Start(new ProcessStartInfo(configDir) { UseShellExecute = true });
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Could not open {configDir}:\n{ex.Message}",
-                    "CpapDash Desktop", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-            }
+            target.BeginInvoke(action);
+            return true;
+        }
+        return false;
+    }
+
+    private void OpenConfigFolder()
+    {
+        var dir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".hms-cpap");
+        try
+        {
+            Directory.CreateDirectory(dir);
+            Process.Start(new ProcessStartInfo(dir) { UseShellExecute = true });
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Could not open {dir}:\n{ex.Message}",
+                "CpapDash Desktop", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
     }
 

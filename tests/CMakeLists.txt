@@ -103,6 +103,7 @@ set(TEST_SOURCES
     services/test_CpapDashSyncService.cpp
     services/test_DeviceDiscoveryService.cpp
     services/test_SetupService.cpp
+    services/test_PreflightService.cpp
     services/test_CleaningStatus.cpp
     services/test_CleaningPublisher.cpp
     services/test_SyncFolderState.cpp
