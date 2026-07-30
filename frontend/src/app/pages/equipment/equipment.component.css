@@ -245,3 +245,41 @@ h3 { color: #e0e0e0; font-size: 1rem; font-weight: 600; margin: 0; }
 .icon-btn:hover:not(:disabled) { background: rgba(255, 255, 255, 0.07); color: #e0e0e0; }
 .icon-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 .icon-btn.danger:hover:not(:disabled) { background: rgba(239, 83, 80, 0.12); color: #ef5350; }
+
+/* ── SDD-007: cleaning ─────────────────────────────────────────────────────
+   Reuses .item-card, .item-head, .edit-row, .meta-row and the .text-* colours
+   above, so the section reads as part of this page rather than a bolted-on
+   feature. Only the toggle and the state colours are new. */
+
+.clean-card { border-left: 2px solid #2a2a3e; }
+
+.clean-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  user-select: none;
+}
+.clean-toggle input { cursor: pointer; }
+
+/* A switched-off task stays legible but visibly inactive: it is still a row the
+   user can turn on, not a disabled control. */
+.clean-toggle input:not(:checked) + .item-name { opacity: 0.55; }
+
+.clean-fields { gap: 0.75rem; }
+.clean-fields .field input[type="number"] { width: 5rem; }
+
+.clean-state { font-size: 0.78rem; white-space: nowrap; margin-left: auto; }
+
+/* Same palette as the wear bars: due is the red already used for overdue
+   supplies, upcoming the muted green used for fresh. A user reading this page
+   should not have to learn a second colour language. */
+.text-due { color: #ef9a9a; }
+.text-upcoming { color: #81c784; }
+.text-disabled { color: #6b6b7b; }
+
+.hint {
+  font-size: 0.75rem;
+  color: #8a8a9a;
+  margin-top: 0.4rem;
+}

@@ -10,6 +10,7 @@ import {
   EquipmentType,
   SupplyState
 } from '../../models/equipment.model';
+import { CleaningTask } from '../../models/cleaning.model';
 
 /** Inline edit buffer for one item. Strings so blank means "unset". */
 interface ItemDraft {
@@ -34,6 +35,12 @@ export class EquipmentComponent implements OnInit {
   profiles: EquipmentProfile[] = [];
   types: EquipmentType[] = [];
   selectedId = 0;
+
+  // SDD-007 cleaning. Kept per-profile because a task belongs to a setup: the
+  // travel kit has its own schedule.
+  cleaning: CleaningTask[] = [];
+  cleaningBusy = 0;        // id of the task mid-request, 0 = none
+  suggesting = false;
 
   // Inline editors
   editingItemId = 0;
@@ -65,6 +72,7 @@ export class EquipmentComponent implements OnInit {
           ? wanted
           : (this.profiles[0]?.id ?? 0);
         this.cancelEdit();
+        this.loadCleaning();
         this.loading = false;
       },
       error: () => {
@@ -86,6 +94,116 @@ export class EquipmentComponent implements OnInit {
     this.cancelEdit();
     this.renaming = false;
     this.addTypeKey = '';
+    // Each setup has its own schedule, so switching setups must refetch rather
+    // than show the previous one's tasks.
+    this.loadCleaning();
+  }
+
+  // ── SDD-007: cleaning ──────────────────────────────────────────────────────
+
+  loadCleaning() {
+    if (!this.selectedId) { this.cleaning = []; return; }
+    this.api.getCleaningTasks(this.selectedId).subscribe({
+      next: t => (this.cleaning = t ?? []),
+      // A cleaning failure must not blank the equipment page: the two are
+      // independent, and the rest of this screen still works.
+      error: () => (this.cleaning = [])
+    });
+  }
+
+  /** Seeds the suggested set, all disabled. Idempotent, so a second press is safe. */
+  addSuggested() {
+    if (!this.selectedId || this.suggesting) return;
+    this.suggesting = true;
+    this.api.suggestCleaningTasks(this.selectedId).subscribe({
+      next: () => { this.suggesting = false; this.loadCleaning(); },
+      error: () => { this.suggesting = false; this.error = 'Could not add suggested tasks.'; }
+    });
+  }
+
+  toggleCleaning(t: CleaningTask) {
+    this.patchCleaning(t, { enabled: !t.enabled });
+  }
+
+  /**
+   * Commits an edited field. Bound to (change) rather than (ngModelChange) so a
+   * half-typed interval like "1" on the way to "14" is not sent on every
+   * keystroke.
+   */
+  commitCleaning(t: CleaningTask, patch: Partial<CleaningTask>) {
+    this.patchCleaning(t, patch);
+  }
+
+  markCleaningDone(t: CleaningTask) {
+    if (this.cleaningBusy) return;
+    this.cleaningBusy = t.id;
+    this.api.markCleaningDone(t.id).subscribe({
+      next: updated => { this.cleaningBusy = 0; this.replaceCleaning(updated); },
+      error: () => { this.cleaningBusy = 0; this.error = 'Could not mark that done.'; }
+    });
+  }
+
+  removeCleaning(t: CleaningTask) {
+    if (this.cleaningBusy) return;
+    this.cleaningBusy = t.id;
+    this.api.deleteCleaningTask(t.id).subscribe({
+      next: () => { this.cleaningBusy = 0; this.loadCleaning(); },
+      error: () => { this.cleaningBusy = 0; this.error = 'Could not remove that task.'; }
+    });
+  }
+
+  private patchCleaning(t: CleaningTask, patch: Partial<CleaningTask>) {
+    if (this.cleaningBusy) return;
+    this.cleaningBusy = t.id;
+    this.api.updateCleaningTask(t.id, patch).subscribe({
+      next: updated => { this.cleaningBusy = 0; this.replaceCleaning(updated); },
+      error: () => {
+        this.cleaningBusy = 0;
+        this.error = 'Could not save that change.';
+        // Re-read rather than leaving the row showing an edit the server rejected.
+        this.loadCleaning();
+      }
+    });
+  }
+
+  /** Swap one row in place, so the list does not jump while the user works. */
+  private replaceCleaning(updated: CleaningTask) {
+    if (!updated?.id) { this.loadCleaning(); return; }
+    this.cleaning = this.cleaning.map(t => (t.id === updated.id ? updated : t));
+  }
+
+  /** '08:30' for an <input type="time">, from minutes since local midnight. */
+  timeValue(t: CleaningTask): string {
+    const m = Math.max(0, Math.min(1439, t.time_minutes ?? 510));
+    const hh = String(Math.floor(m / 60)).padStart(2, '0');
+    const mm = String(m % 60).padStart(2, '0');
+    return `${hh}:${mm}`;
+  }
+
+  onTimeChange(t: CleaningTask, value: string) {
+    const [h, m] = (value || '').split(':').map(Number);
+    if (Number.isNaN(h) || Number.isNaN(m)) return;
+    this.commitCleaning(t, { time_minutes: h * 60 + m });
+  }
+
+  /**
+   * The line under each row. Deliberately concrete: "Due 3 days ago" tells the
+   * user what to do, "due" only tells them a state.
+   */
+  cleaningLabel(t: CleaningTask): string {
+    if (!t.enabled) return 'Off';
+    const d = t.status?.days_until ?? 0;
+    if (t.status?.state === 'due') {
+      if (d === 0) return 'Due now';
+      return `Overdue by ${Math.abs(d)} day${Math.abs(d) === 1 ? '' : 's'}`;
+    }
+    if (d === 0) return 'Due later today';
+    return `Due in ${d} day${d === 1 ? '' : 's'}`;
+  }
+
+  cleaningStateClass(t: CleaningTask): string {
+    if (!t.enabled) return 'disabled';
+    return t.status?.state ?? 'upcoming';
   }
 
   /** A chip is badged when that profile has anything due soon or overdue. */

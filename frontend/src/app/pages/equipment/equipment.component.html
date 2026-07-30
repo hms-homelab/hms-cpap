@@ -68,6 +68,78 @@
         <ng-container [ngTemplateOutlet]="itemBody" [ngTemplateOutletContext]="{ item: it }"></ng-container>
       </div>
 
+      <!-- Cleaning (SDD-007) -->
+      <!--
+        Below Accessories and inside the selected setup's panel on purpose: this
+        is the same mental object, the upkeep of this setup, so it does not earn
+        a nav entry of its own.
+      -->
+      <h4 class="group-title">Cleaning</h4>
+
+      <div class="empty" *ngIf="cleaning.length === 0">
+        No cleaning schedule yet.
+        <button class="mini-btn" (click)="addSuggested()" [disabled]="suggesting">
+          <i class="fa-solid fa-wand-magic-sparkles"></i>
+          {{ suggesting ? 'Adding...' : 'Add suggested tasks' }}
+        </button>
+        <div class="hint">
+          Suggestions match the equipment in this setup, and all start switched off.
+        </div>
+      </div>
+
+      <div class="item-card clean-card" *ngFor="let t of cleaning">
+        <div class="item-head">
+          <label class="clean-toggle" [title]="t.enabled ? 'Switch off' : 'Switch on'">
+            <input type="checkbox" [checked]="t.enabled"
+                   (change)="toggleCleaning(t)" [disabled]="cleaningBusy === t.id" />
+            <span class="item-name">{{ t.label }}</span>
+          </label>
+          <span class="item-actions">
+            <button class="mini-btn" (click)="markCleaningDone(t)"
+                    [disabled]="cleaningBusy === t.id || !t.enabled">
+              <i class="fa-solid fa-check"></i> Mark done
+            </button>
+            <button class="mini-btn danger" (click)="removeCleaning(t)"
+                    [disabled]="cleaningBusy === t.id">Remove</button>
+          </span>
+        </div>
+
+        <div class="edit-row clean-fields">
+          <label class="field">
+            <span>Every (days)</span>
+            <input type="number" min="1" [ngModel]="t.interval_days"
+                   (change)="commitCleaning(t, { interval_days: +$any($event.target).value })"
+                   [disabled]="cleaningBusy === t.id" />
+          </label>
+          <label class="field">
+            <span>At</span>
+            <input type="time" [ngModel]="timeValue(t)"
+                   (change)="onTimeChange(t, $any($event.target).value)"
+                   [disabled]="cleaningBusy === t.id" />
+          </label>
+          <label class="field">
+            <span>Starting</span>
+            <input type="date" [ngModel]="t.start_date"
+                   (change)="commitCleaning(t, { start_date: $any($event.target).value })"
+                   [disabled]="cleaningBusy === t.id" />
+          </label>
+        </div>
+
+        <div class="meta-row">
+          <span class="meta" *ngIf="t.last_done_at">Last done {{ t.last_done_at }}</span>
+          <span class="clean-state" [class]="'text-' + cleaningStateClass(t)">
+            {{ cleaningLabel(t) }}
+          </span>
+        </div>
+      </div>
+
+      <div class="add-row" *ngIf="cleaning.length > 0">
+        <button class="mini-btn ghost" (click)="addSuggested()" [disabled]="suggesting">
+          <i class="fa-solid fa-wand-magic-sparkles"></i>
+          {{ suggesting ? 'Adding...' : 'Add suggested tasks' }}
+        </button>
+      </div>
+
       <!-- Add from the catalog -->
       <div class="add-row">
         <select [(ngModel)]="addTypeKey">

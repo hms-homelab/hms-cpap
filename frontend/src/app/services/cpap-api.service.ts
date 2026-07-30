@@ -4,6 +4,7 @@ import { Observable } from 'rxjs';
 import { DashboardData, SessionListItem, SessionDetail, SessionEvent, TrendPoint, SignalData, VitalsData, OximetryData } from '../models/session.model';
 import { AppConfig, DiscoveredDevice } from '../models/config.model';
 import { EquipmentType, EquipmentProfile, EquipmentItem, EquipmentItemPayload } from '../models/equipment.model';
+import { CleaningTask, CleaningTaskType, CleaningSuggestResult } from '../models/cleaning.model';
 
 @Injectable({ providedIn: 'root' })
 export class CpapApiService {
@@ -223,5 +224,39 @@ export class CpapApiService {
 
   getSupplies(): Observable<{ items: EquipmentItem[] }> {
     return this.http.get<{ items: EquipmentItem[] }>('/api/supplies');
+  }
+
+  // ── SDD-007: cleaning schedules ────────────────────────────────────────────
+  // The wash half of upkeep. `status` comes back computed on every read, so
+  // callers never cache it.
+
+  getCleaningTypes(): Observable<CleaningTaskType[]> {
+    return this.http.get<CleaningTaskType[]>('/api/cleaning/types');
+  }
+
+  getCleaningTasks(profileId: number): Observable<CleaningTask[]> {
+    return this.http.get<CleaningTask[]>(`/api/cleaning?profile_id=${profileId}`);
+  }
+
+  updateCleaningTask(id: number, patch: Partial<CleaningTask>): Observable<CleaningTask> {
+    return this.http.put<CleaningTask>(`/api/cleaning/${id}`, patch);
+  }
+
+  deleteCleaningTask(id: number): Observable<any> {
+    return this.http.delete<any>(`/api/cleaning/${id}`);
+  }
+
+  /** Stamps the completion, which is what advances the due clock. */
+  markCleaningDone(id: number): Observable<CleaningTask> {
+    return this.http.post<CleaningTask>(`/api/cleaning/${id}/done`, {});
+  }
+
+  /**
+   * Seeds the suggested set for a setup, all disabled. Idempotent on
+   * (profile, task_key), so pressing it twice is safe.
+   */
+  suggestCleaningTasks(profileId: number): Observable<CleaningSuggestResult> {
+    return this.http.post<CleaningSuggestResult>('/api/cleaning/suggest',
+                                                 { profile_id: profileId });
   }
 }
