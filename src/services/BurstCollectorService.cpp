@@ -2230,17 +2230,11 @@ void BurstCollectorService::setupMqttSubscriptions() {
         [](const std::string&, const std::string&) {}, 1);
 }
 
-#ifndef _WIN32
-BurstCollectorService::FysetcLifecycleAction
-BurstCollectorService::decideFysetcLifecycle(const std::string& old_source,
-                                             const std::string& new_source,
-                                             bool server_exists) {
-    if (new_source == "fysetc" && !server_exists) return FysetcLifecycleAction::Start;
-    if (old_source == "fysetc" && new_source != "fysetc" && server_exists)
-        return FysetcLifecycleAction::Stop;
-    return FysetcLifecycleAction::None;
-}
-
+// Deliberately OUTSIDE the #ifndef _WIN32 below. That guard exists for the
+// Fysetc TCP server, which is POSIX-only; sync-now has nothing to do with it.
+// Living inside it made requestSyncNow and syncNowOutcomeString vanish on
+// MSVC, and CpapController failed to link with LNK2019. The unit tests could
+// not catch it: they only ever ran where the guard was satisfied.
 // ── SDD-005: sync now ────────────────────────────────────────────────────
 //
 // The ordering that makes this correct lives in runLoop(): the pending flag is
@@ -2276,6 +2270,18 @@ const char* BurstCollectorService::syncNowOutcomeString(SyncNowOutcome outcome) 
     }
     return "unknown";
 }
+
+#ifndef _WIN32
+BurstCollectorService::FysetcLifecycleAction
+BurstCollectorService::decideFysetcLifecycle(const std::string& old_source,
+                                             const std::string& new_source,
+                                             bool server_exists) {
+    if (new_source == "fysetc" && !server_exists) return FysetcLifecycleAction::Start;
+    if (old_source == "fysetc" && new_source != "fysetc" && server_exists)
+        return FysetcLifecycleAction::Stop;
+    return FysetcLifecycleAction::None;
+}
+
 
 void BurstCollectorService::startFysetcServer() {
     if (fysetc_server_) return;  // idempotent
