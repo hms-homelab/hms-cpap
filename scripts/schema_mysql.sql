@@ -290,3 +290,53 @@ VALUES
     ('filter',     'Filter',     'accessory',   30, 1),
     ('humidifier', 'Humidifier', 'accessory',  180, 1),
     ('headgear',   'Headgear',   'accessory',  180, 1);
+
+-- ── SDD-007: cleaning schedules ──────────────────────────────────────────────
+-- The WASH half of equipment upkeep, deliberately separate from supplies: a mask
+-- is REPLACED every 90 days and WIPED every day, and one interval cannot mean
+-- both. Mirrors hms-cpapdash-api SDD-043 minus user_id (single household).
+-- The seven presets are seeded verbatim from that SDD so a user running both
+-- stacks sees one vocabulary.
+
+CREATE TABLE IF NOT EXISTS cleaning_task_types (
+    id                    INT AUTO_INCREMENT PRIMARY KEY,
+    task_key              VARCHAR(32) NOT NULL UNIQUE,
+    label                 VARCHAR(64) NOT NULL,
+    applies_to_type_key   VARCHAR(32),
+    default_interval_days INT NOT NULL,
+    is_system             TINYINT(1) DEFAULT 0,
+    active                TINYINT(1) DEFAULT 1,
+    created_at            DATETIME DEFAULT NOW()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS cleaning_tasks (
+    id             INT AUTO_INCREMENT PRIMARY KEY,
+    profile_id     INT NOT NULL,
+    item_id        INT,
+    client_uuid    VARCHAR(64),
+    task_key       VARCHAR(32) NOT NULL,
+    label          VARCHAR(64) NOT NULL,
+    interval_days  INT NOT NULL,
+    time_minutes   INT NOT NULL DEFAULT 510,
+    start_date     VARCHAR(10) NOT NULL,
+    enabled        TINYINT(1) DEFAULT 0,
+    last_done_at   DATETIME,
+    deleted        TINYINT(1) DEFAULT 0,
+    created_at     DATETIME DEFAULT NOW(),
+    updated_at     DATETIME DEFAULT NOW() ON UPDATE NOW(),
+    UNIQUE KEY uq_cleaning_task_uuid (client_uuid),
+    KEY idx_cleaning_tasks_profile (profile_id, deleted),
+    FOREIGN KEY (profile_id) REFERENCES cpap_equipment_profiles(id) ON DELETE CASCADE,
+    FOREIGN KEY (item_id) REFERENCES cpap_equipment_items(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+INSERT IGNORE INTO cleaning_task_types
+    (task_key, label, applies_to_type_key, default_interval_days, is_system)
+VALUES
+    ('mask_wipe',        'Wipe the mask cushion',         'mask',        1, 1),
+    ('mask_wash',        'Wash the mask and cushion',     'mask',        7, 1),
+    ('headgear_wash',    'Wash the headgear',             'headgear',    7, 1),
+    ('tubing_wash',      'Wash the tubing',               'tubing',      7, 1),
+    ('humidifier_empty', 'Empty and rinse the water tub', 'humidifier',  1, 1),
+    ('humidifier_wash',  'Wash the water tub',            'humidifier',  7, 1),
+    ('filter_check',     'Check the filter',              'filter',     30, 1);

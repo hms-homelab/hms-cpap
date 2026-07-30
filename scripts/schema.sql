@@ -330,3 +330,58 @@ VALUES
     ('humidifier', 'Humidifier', 'accessory',  180, TRUE, TRUE),
     ('headgear',   'Headgear',   'accessory',  180, TRUE, TRUE)
 ON CONFLICT (type_key) DO NOTHING;
+
+-- ── SDD-007: cleaning schedules ──────────────────────────────────────────────
+-- The WASH half of equipment upkeep, deliberately separate from supplies: a mask
+-- is REPLACED every 90 days and WIPED every day, and one interval cannot mean
+-- both. Mirrors hms-cpapdash-api SDD-043 minus user_id (single household).
+-- The seven presets are seeded verbatim from that SDD so a user running both
+-- stacks sees one vocabulary.
+
+CREATE TABLE IF NOT EXISTS cleaning_task_types (
+    id                    SERIAL PRIMARY KEY,
+    task_key              VARCHAR(32) NOT NULL UNIQUE,
+    label                 VARCHAR(64) NOT NULL,
+    applies_to_type_key   VARCHAR(32),
+    default_interval_days INTEGER NOT NULL,
+    is_system             BOOLEAN NOT NULL DEFAULT FALSE,
+    active                BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at            TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS cleaning_tasks (
+    id             SERIAL PRIMARY KEY,
+    profile_id     INTEGER NOT NULL REFERENCES cpap_equipment_profiles(id) ON DELETE CASCADE,
+    item_id        INTEGER REFERENCES cpap_equipment_items(id) ON DELETE SET NULL,
+    client_uuid    VARCHAR(64),
+    task_key       VARCHAR(32) NOT NULL,
+    label          VARCHAR(64) NOT NULL,
+    interval_days  INTEGER NOT NULL CHECK (interval_days > 0),
+    time_minutes   INTEGER NOT NULL DEFAULT 510 CHECK (time_minutes BETWEEN 0 AND 1439),
+    start_date     VARCHAR(10) NOT NULL,
+    enabled        BOOLEAN NOT NULL DEFAULT FALSE,
+    last_done_at   TIMESTAMP,
+    deleted        BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_cleaning_tasks_profile
+    ON cleaning_tasks(profile_id) WHERE NOT deleted;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cleaning_tasks_uuid
+    ON cleaning_tasks(client_uuid) WHERE client_uuid IS NOT NULL;
+-- Makes /suggest idempotent under a concurrent caller, not just a polite one.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cleaning_tasks_profile_key
+    ON cleaning_tasks(profile_id, task_key) WHERE NOT deleted;
+
+INSERT INTO cleaning_task_types
+    (task_key, label, applies_to_type_key, default_interval_days, is_system)
+VALUES
+    ('mask_wipe',        'Wipe the mask cushion',         'mask',        1, TRUE),
+    ('mask_wash',        'Wash the mask and cushion',     'mask',        7, TRUE),
+    ('headgear_wash',    'Wash the headgear',             'headgear',    7, TRUE),
+    ('tubing_wash',      'Wash the tubing',               'tubing',      7, TRUE),
+    ('humidifier_empty', 'Empty and rinse the water tub', 'humidifier',  1, TRUE),
+    ('humidifier_wash',  'Wash the water tub',            'humidifier',  7, TRUE),
+    ('filter_check',     'Check the filter',              'filter',     30, TRUE)
+ON CONFLICT (task_key) DO NOTHING;

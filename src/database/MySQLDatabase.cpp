@@ -758,6 +758,64 @@ void MySQLDatabase::createSchema() {
             ('headgear',   'Headgear',   'accessory',  180, 1)
     )");
 
+    // ── SDD-007: cleaning schedules ─────────────────────────────────────────
+    // The WASH half of upkeep, deliberately separate from supplies: a mask is
+    // REPLACED every 90 days and WIPED every day, and one interval cannot mean
+    // both. Mirrors the cloud's SDD-043 tables minus user_id, since this repo is
+    // single-household.
+    exec(R"(
+        CREATE TABLE IF NOT EXISTS cleaning_task_types (
+            id                    INT AUTO_INCREMENT PRIMARY KEY,
+            task_key              VARCHAR(32) NOT NULL UNIQUE,
+            label                 VARCHAR(64) NOT NULL,
+            applies_to_type_key   VARCHAR(32),
+            default_interval_days INT NOT NULL,
+            is_system             TINYINT(1) DEFAULT 0,
+            active                TINYINT(1) DEFAULT 1,
+            created_at            DATETIME DEFAULT NOW()
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    )");
+
+    exec(R"(
+        CREATE TABLE IF NOT EXISTS cleaning_tasks (
+            id             INT AUTO_INCREMENT PRIMARY KEY,
+            profile_id     INT NOT NULL,
+            item_id        INT,
+            client_uuid    VARCHAR(64),
+            task_key       VARCHAR(32) NOT NULL,
+            label          VARCHAR(64) NOT NULL,
+            interval_days  INT NOT NULL,
+            time_minutes   INT NOT NULL DEFAULT 510,
+            start_date     VARCHAR(10) NOT NULL,
+            enabled        TINYINT(1) DEFAULT 0,
+            last_done_at   DATETIME,
+            deleted        TINYINT(1) DEFAULT 0,
+            created_at     DATETIME DEFAULT NOW(),
+            updated_at     DATETIME DEFAULT NOW() ON UPDATE NOW(),
+            UNIQUE KEY uq_cleaning_task_uuid (client_uuid),
+            KEY idx_cleaning_tasks_profile (profile_id, deleted),
+            CONSTRAINT fk_cleaning_tasks_profile
+                FOREIGN KEY (profile_id) REFERENCES cpap_equipment_profiles(id) ON DELETE CASCADE,
+            CONSTRAINT fk_cleaning_tasks_item
+                FOREIGN KEY (item_id) REFERENCES cpap_equipment_items(id) ON DELETE SET NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    )");
+
+    // The seven presets from SDD-043, verbatim. INSERT IGNORE + UNIQUE(task_key)
+    // makes this idempotent, matching the equipment seed.
+    exec(R"(
+        INSERT IGNORE INTO cleaning_task_types
+            (task_key, label, applies_to_type_key, default_interval_days, is_system)
+        VALUES
+            ('mask_wipe',        'Wipe the mask cushion',         'mask',        1, 1),
+            ('mask_wash',        'Wash the mask and cushion',     'mask',        7, 1),
+            ('headgear_wash',    'Wash the headgear',             'headgear',    7, 1),
+            ('tubing_wash',      'Wash the tubing',               'tubing',      7, 1),
+            ('humidifier_empty', 'Empty and rinse the water tub', 'humidifier',  1, 1),
+            ('humidifier_wash',  'Wash the water tub',            'humidifier',  7, 1),
+            ('filter_check',     'Check the filter',              'filter',     30, 1)
+    )");
+
     // Indexes are declared inline as KEY in the CREATE TABLE statements above.
     // MySQL has no CREATE INDEX IF NOT EXISTS, so issuing them separately raised
     // "Duplicate key name" on every single connect, three lines of noise per
@@ -914,6 +972,27 @@ void MySQLDatabase::migrateSchema() {
         {"oximetry_samples",  "vibration",     "INT"},
         {"oximetry_samples",  "valid",         "TINYINT"},
         {"oximetry_samples",  "source",        "VARCHAR(16) DEFAULT 'vld'"},
+
+        // SDD-007 cleaning schedules. New tables, so CREATE TABLE covers a fresh
+        // install and addColumnIfMissing no-ops when the table is absent. Listed
+        // anyway because the next column added here must not repeat the mistake
+        // that made 4.6.3 necessary: an install that already has the table never
+        // gains anything CREATE TABLE declares later.
+        {"cleaning_task_types", "applies_to_type_key",   "VARCHAR(32)"},
+        {"cleaning_task_types", "default_interval_days", "INT NOT NULL DEFAULT 7"},
+        {"cleaning_task_types", "is_system",             "TINYINT(1) DEFAULT 0"},
+        {"cleaning_task_types", "active",                "TINYINT(1) DEFAULT 1"},
+        {"cleaning_tasks", "item_id",       "INT"},
+        {"cleaning_tasks", "client_uuid",   "VARCHAR(64)"},
+        {"cleaning_tasks", "label",         "VARCHAR(64) NOT NULL DEFAULT ''"},
+        {"cleaning_tasks", "interval_days", "INT NOT NULL DEFAULT 7"},
+        {"cleaning_tasks", "time_minutes",  "INT NOT NULL DEFAULT 510"},
+        {"cleaning_tasks", "start_date",    "VARCHAR(10) NOT NULL DEFAULT ''"},
+        {"cleaning_tasks", "enabled",       "TINYINT(1) DEFAULT 0"},
+        {"cleaning_tasks", "last_done_at",  "DATETIME"},
+        {"cleaning_tasks", "deleted",       "TINYINT(1) DEFAULT 0"},
+        {"cleaning_tasks", "created_at",    "DATETIME DEFAULT NOW()"},
+        {"cleaning_tasks", "updated_at",    "DATETIME DEFAULT NOW() ON UPDATE NOW()"},
 
         // SDD-004 equipment
         {"cpap_equipment_items", "variant",            "VARCHAR(128)"},
@@ -3960,6 +4039,294 @@ Json::Value MySQLDatabase::executeQuery(const std::string& sql,
     mysql_free_result(meta);
     return arr;
 }
+
+// ---------------------------------------------------------------------------
+// SDD-007: cleaning schedules
+//
+// Storage only. Due state is computed on read by computeCleaningStatus, never
+// persisted, so there is no cached column to go stale.
+// ---------------------------------------------------------------------------
+
+namespace {
+constexpr const char* kCleaningCols =
+    "id, profile_id, item_id, client_uuid, task_key, label, interval_days, "
+    "time_minutes, start_date, enabled, last_done_at, deleted, created_at, updated_at";
+
+// Binds the 14 columns above, in order, so list/get cannot drift apart.
+void bindCleaningCols(ResultBinder& r) {
+    r.bindColInt(0);            // id
+    r.bindColInt(1);            // profile_id
+    r.bindColInt(2);            // item_id
+    r.bindColString(3, 64);     // client_uuid
+    r.bindColString(4, 32);     // task_key
+    r.bindColString(5, 64);     // label
+    r.bindColInt(6);            // interval_days
+    r.bindColInt(7);            // time_minutes
+    r.bindColString(8, 16);     // start_date
+    r.bindColInt(9);            // enabled
+    r.bindColString(10, 32);    // last_done_at
+    r.bindColInt(11);           // deleted
+    r.bindColString(12, 32);    // created_at
+    r.bindColString(13, 32);    // updated_at
+}
+
+IDatabase::CleaningTask readCleaningRow(const ResultBinder& r) {
+    IDatabase::CleaningTask t;
+    t.id            = r.colInt(0);
+    t.profile_id    = r.colInt(1);
+    t.item_id       = r.colIsNull(2) ? 0 : r.colInt(2);
+    t.client_uuid   = r.colIsNull(3) ? "" : r.colText(3);
+    t.task_key      = r.colText(4);
+    t.label         = r.colText(5);
+    t.interval_days = r.colInt(6);
+    t.time_minutes  = r.colInt(7);
+    t.start_date    = r.colText(8);
+    t.enabled       = r.colInt(9) != 0;
+    t.last_done_at  = r.colIsNull(10) ? "" : r.colText(10);
+    t.deleted       = r.colInt(11) != 0;
+    t.created_at    = r.colIsNull(12) ? "" : r.colText(12);
+    t.updated_at    = r.colIsNull(13) ? "" : r.colText(13);
+    t.start_date_epoch = iso_to_epoch(t.start_date);
+    t.last_done_epoch  = t.last_done_at.empty() ? 0 : iso_to_epoch(t.last_done_at);
+    return t;
+}
+}  // namespace
+
+std::vector<IDatabase::CleaningTaskType> MySQLDatabase::listCleaningTaskTypes() {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::vector<CleaningTaskType> out;
+    if (!conn_) return out;
+
+    const char* sql =
+        "SELECT id, task_key, label, applies_to_type_key, default_interval_days, "
+        "is_system, active FROM cleaning_task_types WHERE active = 1 ORDER BY id";
+
+    MysqlStmtGuard g;
+    g.stmt = mysql_stmt_init(conn_);
+    if (mysql_stmt_prepare(g.stmt, sql, std::strlen(sql)) != 0) return out;
+    if (mysql_stmt_execute(g.stmt) != 0) return out;
+
+    ResultBinder r(7);
+    r.bindColInt(0);
+    r.bindColString(1, 32);
+    r.bindColString(2, 64);
+    r.bindColString(3, 32);
+    r.bindColInt(4);
+    r.bindColInt(5);
+    r.bindColInt(6);
+    mysql_stmt_bind_result(g.stmt, r.data());
+    mysql_stmt_store_result(g.stmt);
+
+    while (mysql_stmt_fetch(g.stmt) == 0) {
+        CleaningTaskType t;
+        t.id                    = r.colInt(0);
+        t.task_key              = r.colText(1);
+        t.label                 = r.colText(2);
+        t.applies_to_type_key   = r.colIsNull(3) ? "" : r.colText(3);
+        t.default_interval_days = r.colInt(4);
+        t.is_system             = r.colInt(5) != 0;
+        t.active                = r.colInt(6) != 0;
+        out.push_back(t);
+    }
+    return out;
+}
+
+std::vector<IDatabase::CleaningTask> MySQLDatabase::listCleaningTasks(int profile_id) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::vector<CleaningTask> out;
+    if (!conn_) return out;
+
+    // profile_id 0 means every profile; tombstones never surface.
+    std::string sql = std::string("SELECT ") + kCleaningCols +
+                      " FROM cleaning_tasks WHERE deleted = 0";
+    if (profile_id > 0) sql += " AND profile_id = ?";
+    sql += " ORDER BY id";
+
+    MysqlStmtGuard g;
+    g.stmt = mysql_stmt_init(conn_);
+    if (mysql_stmt_prepare(g.stmt, sql.c_str(), sql.size()) != 0) return out;
+
+    ParamBinder p(profile_id > 0 ? 1 : 0);
+    if (profile_id > 0) {
+        p.bindInt(0, profile_id);
+        mysql_stmt_bind_param(g.stmt, p.data());
+    }
+    if (mysql_stmt_execute(g.stmt) != 0) return out;
+
+    ResultBinder r(14);
+    bindCleaningCols(r);
+    mysql_stmt_bind_result(g.stmt, r.data());
+    mysql_stmt_store_result(g.stmt);
+    while (mysql_stmt_fetch(g.stmt) == 0) out.push_back(readCleaningRow(r));
+    return out;
+}
+
+std::optional<IDatabase::CleaningTask> MySQLDatabase::getCleaningTask(int id) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!conn_) return std::nullopt;
+
+    std::string sql = std::string("SELECT ") + kCleaningCols +
+                      " FROM cleaning_tasks WHERE id = ?";
+    MysqlStmtGuard g;
+    g.stmt = mysql_stmt_init(conn_);
+    if (mysql_stmt_prepare(g.stmt, sql.c_str(), sql.size()) != 0) return std::nullopt;
+
+    ParamBinder p(1);
+    p.bindInt(0, id);
+    mysql_stmt_bind_param(g.stmt, p.data());
+    if (mysql_stmt_execute(g.stmt) != 0) return std::nullopt;
+
+    ResultBinder r(14);
+    bindCleaningCols(r);
+    mysql_stmt_bind_result(g.stmt, r.data());
+    mysql_stmt_store_result(g.stmt);
+    if (mysql_stmt_fetch(g.stmt) != 0) return std::nullopt;
+    return readCleaningRow(r);
+}
+
+int MySQLDatabase::upsertCleaningTask(const CleaningTask& t,
+                                      const std::string& updated_at_override) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!conn_) return -1;
+
+    const std::string ts = updated_at_override;
+
+    if (t.id > 0) {
+        const char* sql = R"(
+            UPDATE cleaning_tasks
+               SET profile_id = ?, item_id = ?, client_uuid = NULLIF(?, ''),
+                   task_key = ?, label = ?, interval_days = ?, time_minutes = ?,
+                   start_date = ?, enabled = ?,
+                   updated_at = COALESCE(NULLIF(?, ''), NOW())
+             WHERE id = ? AND deleted = 0
+        )";
+        MysqlStmtGuard g;
+        g.stmt = mysql_stmt_init(conn_);
+        if (mysql_stmt_prepare(g.stmt, sql, std::strlen(sql)) != 0) return -1;
+
+        ParamBinder p(11);
+        p.bindInt(0, t.profile_id);
+        if (t.item_id > 0) p.bindInt(1, t.item_id); else p.bindNull(1);
+        p.bindText(2, t.client_uuid);
+        p.bindText(3, t.task_key);
+        p.bindText(4, t.label);
+        p.bindInt(5, t.interval_days);
+        p.bindInt(6, t.time_minutes);
+        p.bindText(7, t.start_date);
+        p.bindInt(8, t.enabled ? 1 : 0);
+        p.bindText(9, ts);
+        p.bindInt(10, t.id);
+        mysql_stmt_bind_param(g.stmt, p.data());
+        if (mysql_stmt_execute(g.stmt) != 0) return -1;
+        return mysql_stmt_affected_rows(g.stmt) > 0 ? t.id : -1;
+    }
+
+    // MySQL has NO partial indexes, so the "one live task per (profile, key)"
+    // rule that SQLite and PostgreSQL get from a UNIQUE ... WHERE NOT deleted
+    // index has to be enforced here instead. Same call this repo already makes
+    // for the one-machine-per-profile rule (see MySQLDatabase.h). A plain UNIQUE
+    // KEY would be wrong: it would also count tombstones, so deleting a task
+    // would permanently block its key from being used again.
+    {
+        const char* dup =
+            "SELECT 1 FROM cleaning_tasks "
+            "WHERE profile_id = ? AND task_key = ? AND deleted = 0 LIMIT 1";
+        MysqlStmtGuard dg;
+        dg.stmt = mysql_stmt_init(conn_);
+        if (mysql_stmt_prepare(dg.stmt, dup, std::strlen(dup)) == 0) {
+            ParamBinder dp(2);
+            dp.bindInt(0, t.profile_id);
+            dp.bindText(1, t.task_key);
+            mysql_stmt_bind_param(dg.stmt, dp.data());
+            if (mysql_stmt_execute(dg.stmt) == 0) {
+                ResultBinder dr(1);
+                dr.bindColInt(0);
+                mysql_stmt_bind_result(dg.stmt, dr.data());
+                mysql_stmt_store_result(dg.stmt);
+                if (mysql_stmt_fetch(dg.stmt) == 0) return -1;   // already exists
+            }
+        }
+    }
+
+    const char* sql = R"(
+        INSERT INTO cleaning_tasks
+            (profile_id, item_id, client_uuid, task_key, label, interval_days,
+             time_minutes, start_date, enabled, created_at, updated_at)
+        VALUES (?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?,
+                COALESCE(NULLIF(?, ''), NOW()), COALESCE(NULLIF(?, ''), NOW()))
+    )";
+    MysqlStmtGuard g;
+    g.stmt = mysql_stmt_init(conn_);
+    if (mysql_stmt_prepare(g.stmt, sql, std::strlen(sql)) != 0) return -1;
+
+    ParamBinder p(11);
+    p.bindInt(0, t.profile_id);
+    if (t.item_id > 0) p.bindInt(1, t.item_id); else p.bindNull(1);
+    p.bindText(2, t.client_uuid);
+    p.bindText(3, t.task_key);
+    p.bindText(4, t.label);
+    p.bindInt(5, t.interval_days);
+    p.bindInt(6, t.time_minutes);
+    p.bindText(7, t.start_date);
+    p.bindInt(8, t.enabled ? 1 : 0);
+    p.bindText(9, ts);
+    p.bindText(10, ts);
+    mysql_stmt_bind_param(g.stmt, p.data());
+
+    if (mysql_stmt_execute(g.stmt) != 0) {
+        // A duplicate (profile_id, task_key) lands here, which is what makes
+        // /suggest idempotent rather than duplicating the same task.
+        return -1;
+    }
+    return static_cast<int>(mysql_insert_id(conn_));
+}
+
+bool MySQLDatabase::tombstoneCleaningTask(int id,
+                                          const std::string& updated_at_override) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!conn_) return false;
+
+    const char* sql = R"(
+        UPDATE cleaning_tasks
+           SET deleted = 1, enabled = 0,
+               updated_at = COALESCE(NULLIF(?, ''), NOW())
+         WHERE id = ? AND deleted = 0
+    )";
+    MysqlStmtGuard g;
+    g.stmt = mysql_stmt_init(conn_);
+    if (mysql_stmt_prepare(g.stmt, sql, std::strlen(sql)) != 0) return false;
+
+    ParamBinder p(2);
+    p.bindText(0, updated_at_override);
+    p.bindInt(1, id);
+    mysql_stmt_bind_param(g.stmt, p.data());
+    if (mysql_stmt_execute(g.stmt) != 0) return false;
+    return mysql_stmt_affected_rows(g.stmt) > 0;
+}
+
+bool MySQLDatabase::markCleaningTaskDone(int id, const std::string& done_at_override) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!conn_) return false;
+
+    const char* sql = R"(
+        UPDATE cleaning_tasks
+           SET last_done_at = COALESCE(NULLIF(?, ''), NOW()),
+               updated_at   = COALESCE(NULLIF(?, ''), NOW())
+         WHERE id = ? AND deleted = 0
+    )";
+    MysqlStmtGuard g;
+    g.stmt = mysql_stmt_init(conn_);
+    if (mysql_stmt_prepare(g.stmt, sql, std::strlen(sql)) != 0) return false;
+
+    ParamBinder p(3);
+    p.bindText(0, done_at_override);
+    p.bindText(1, done_at_override);
+    p.bindInt(2, id);
+    mysql_stmt_bind_param(g.stmt, p.data());
+    if (mysql_stmt_execute(g.stmt) != 0) return false;
+    return mysql_stmt_affected_rows(g.stmt) > 0;
+}
+
 
 } // namespace hms_cpap
 

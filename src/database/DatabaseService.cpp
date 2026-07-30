@@ -236,6 +236,76 @@ bool DatabaseService::connect() {
                         ('headgear',   'Headgear',   'accessory',  180, TRUE, TRUE)
                     ON CONFLICT (type_key) DO NOTHING
                 )");
+
+                // ── SDD-007: cleaning schedules ─────────────────────────────
+                // The WASH half of upkeep, deliberately separate from supplies:
+                // a mask is REPLACED every 90 days and WIPED every day, and one
+                // interval cannot mean both. Mirrors the cloud's SDD-043 tables
+                // minus user_id, since this repo is single-household.
+                txn.exec(R"(
+                    CREATE TABLE IF NOT EXISTS cleaning_task_types (
+                        id                    SERIAL PRIMARY KEY,
+                        task_key              VARCHAR(32) NOT NULL UNIQUE,
+                        label                 VARCHAR(64) NOT NULL,
+                        applies_to_type_key   VARCHAR(32),
+                        default_interval_days INTEGER NOT NULL,
+                        is_system             BOOLEAN NOT NULL DEFAULT FALSE,
+                        active                BOOLEAN NOT NULL DEFAULT TRUE,
+                        created_at            TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                )");
+                txn.exec(R"(
+                    CREATE TABLE IF NOT EXISTS cleaning_tasks (
+                        id             SERIAL PRIMARY KEY,
+                        profile_id     INTEGER NOT NULL
+                            REFERENCES cpap_equipment_profiles(id) ON DELETE CASCADE,
+                        item_id        INTEGER
+                            REFERENCES cpap_equipment_items(id) ON DELETE SET NULL,
+                        client_uuid    VARCHAR(64),
+                        task_key       VARCHAR(32) NOT NULL,
+                        label          VARCHAR(64) NOT NULL,
+                        interval_days  INTEGER NOT NULL CHECK (interval_days > 0),
+                        time_minutes   INTEGER NOT NULL DEFAULT 510
+                            CHECK (time_minutes BETWEEN 0 AND 1439),
+                        start_date     VARCHAR(10) NOT NULL,
+                        enabled        BOOLEAN NOT NULL DEFAULT FALSE,
+                        last_done_at   TIMESTAMP,
+                        deleted        BOOLEAN NOT NULL DEFAULT FALSE,
+                        created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                )");
+                txn.exec(R"(
+                    CREATE INDEX IF NOT EXISTS idx_cleaning_tasks_profile
+                    ON cleaning_tasks(profile_id) WHERE NOT deleted
+                )");
+                txn.exec(R"(
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_cleaning_tasks_uuid
+                    ON cleaning_tasks(client_uuid) WHERE client_uuid IS NOT NULL
+                )");
+                // /suggest is idempotent on this pair, and the UNIQUE index is
+                // what makes that true under a concurrent caller rather than
+                // only under a well-behaved one.
+                txn.exec(R"(
+                    CREATE UNIQUE INDEX IF NOT EXISTS idx_cleaning_tasks_profile_key
+                    ON cleaning_tasks(profile_id, task_key) WHERE NOT deleted
+                )");
+                // The seven presets from SDD-043, verbatim, so a user running
+                // both stacks sees one vocabulary.
+                txn.exec(R"(
+                    INSERT INTO cleaning_task_types
+                        (task_key, label, applies_to_type_key, default_interval_days, is_system)
+                    VALUES
+                        ('mask_wipe',        'Wipe the mask cushion',         'mask',        1, TRUE),
+                        ('mask_wash',        'Wash the mask and cushion',     'mask',        7, TRUE),
+                        ('headgear_wash',    'Wash the headgear',             'headgear',    7, TRUE),
+                        ('tubing_wash',      'Wash the tubing',               'tubing',      7, TRUE),
+                        ('humidifier_empty', 'Empty and rinse the water tub', 'humidifier',  1, TRUE),
+                        ('humidifier_wash',  'Wash the water tub',            'humidifier',  7, TRUE),
+                        ('filter_check',     'Check the filter',              'filter',     30, TRUE)
+                    ON CONFLICT (task_key) DO NOTHING
+                )");
+
                 txn.commit();
                 std::cout << "  DB: SDD-004 migration (equipment tables) applied" << std::endl;
             } catch (const std::exception& e) {
@@ -2819,6 +2889,215 @@ bool DatabaseService::tombstoneEquipmentItem(int id,
         return false;
     }
 }
+
+// ---------------------------------------------------------------------------
+// SDD-007: cleaning schedules
+//
+// Storage only. Due state is computed on read by computeCleaningStatus, never
+// persisted, so there is no cached column to go stale.
+// ---------------------------------------------------------------------------
+
+namespace {
+// Postgres renders TIMESTAMP as "YYYY-MM-DD HH:MM:SS[.ffffff]"; the pure
+// function only needs whole seconds.
+long long cleaningEpoch(const std::string& ts) {
+    if (ts.size() < 10) return 0;
+    std::tm tm{};
+    tm.tm_year = std::atoi(ts.substr(0, 4).c_str()) - 1900;
+    tm.tm_mon  = std::atoi(ts.substr(5, 2).c_str()) - 1;
+    tm.tm_mday = std::atoi(ts.substr(8, 2).c_str());
+    if (ts.size() >= 19) {
+        tm.tm_hour = std::atoi(ts.substr(11, 2).c_str());
+        tm.tm_min  = std::atoi(ts.substr(14, 2).c_str());
+        tm.tm_sec  = std::atoi(ts.substr(17, 2).c_str());
+    }
+    if (tm.tm_mon < 0 || tm.tm_mon > 11 || tm.tm_mday < 1 || tm.tm_mday > 31) return 0;
+    const time_t t = timegm_utc(&tm);
+    return t < 0 ? 0 : static_cast<long long>(t);
+}
+
+constexpr const char* kCleaningCols =
+    "id, profile_id, item_id, client_uuid, task_key, label, interval_days, "
+    "time_minutes, start_date, enabled, last_done_at, deleted, created_at, updated_at";
+
+// Templated on the row type: this pqxx hands back row_ref from a range-for and
+// row from operator[], and pinning either one breaks on the other version.
+template <typename Row>
+IDatabase::CleaningTask rowToCleaningTask(const Row& r) {
+    IDatabase::CleaningTask t;
+    t.id            = r["id"].template as<int>(0);
+    t.profile_id    = r["profile_id"].template as<int>(0);
+    t.item_id       = r["item_id"].is_null() ? 0 : r["item_id"].template as<int>(0);
+    t.client_uuid   = r["client_uuid"].is_null() ? "" : r["client_uuid"].template as<std::string>("");
+    t.task_key      = r["task_key"].template as<std::string>("");
+    t.label         = r["label"].template as<std::string>("");
+    t.interval_days = r["interval_days"].template as<int>(0);
+    t.time_minutes  = r["time_minutes"].template as<int>(510);
+    t.start_date    = r["start_date"].template as<std::string>("");
+    t.enabled       = r["enabled"].template as<bool>(false);
+    t.last_done_at  = r["last_done_at"].is_null() ? "" : r["last_done_at"].template as<std::string>("");
+    t.deleted       = r["deleted"].template as<bool>(false);
+    t.created_at    = r["created_at"].is_null() ? "" : r["created_at"].template as<std::string>("");
+    t.updated_at    = r["updated_at"].is_null() ? "" : r["updated_at"].template as<std::string>("");
+    t.start_date_epoch = cleaningEpoch(t.start_date);
+    t.last_done_epoch  = t.last_done_at.empty() ? 0 : cleaningEpoch(t.last_done_at);
+    return t;
+}
+}  // namespace
+
+std::vector<IDatabase::CleaningTaskType> DatabaseService::listCleaningTaskTypes() {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::vector<CleaningTaskType> out;
+    if (!ensureConnection()) return out;
+    try {
+        pqxx::work txn(*conn_);
+        auto rows = txn.exec(
+            "SELECT id, task_key, label, applies_to_type_key, default_interval_days, "
+            "is_system, active FROM cleaning_task_types WHERE active ORDER BY id");
+        txn.commit();
+        for (const auto& r : rows) {
+            CleaningTaskType t;
+            t.id                    = r["id"].as<int>(0);
+            t.task_key              = r["task_key"].as<std::string>("");
+            t.label                 = r["label"].as<std::string>("");
+            t.applies_to_type_key   = r["applies_to_type_key"].is_null()
+                                          ? "" : r["applies_to_type_key"].as<std::string>("");
+            t.default_interval_days = r["default_interval_days"].as<int>(0);
+            t.is_system             = r["is_system"].as<bool>(false);
+            t.active                = r["active"].as<bool>(true);
+            out.push_back(t);
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "listCleaningTaskTypes error: " << e.what() << std::endl;
+    }
+    return out;
+}
+
+std::vector<IDatabase::CleaningTask> DatabaseService::listCleaningTasks(int profile_id) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::vector<CleaningTask> out;
+    if (!ensureConnection()) return out;
+    try {
+        pqxx::work txn(*conn_);
+        // profile_id 0 means every profile; tombstones never surface.
+        pqxx::result rows =
+            (profile_id > 0)
+                ? txn.exec_params(std::string("SELECT ") + kCleaningCols +
+                                  " FROM cleaning_tasks WHERE NOT deleted AND profile_id = $1"
+                                  " ORDER BY id", profile_id)
+                : txn.exec(std::string("SELECT ") + kCleaningCols +
+                           " FROM cleaning_tasks WHERE NOT deleted ORDER BY id");
+        txn.commit();
+        for (const auto& r : rows) out.push_back(rowToCleaningTask(r));
+    } catch (const std::exception& e) {
+        std::cerr << "listCleaningTasks error: " << e.what() << std::endl;
+    }
+    return out;
+}
+
+std::optional<IDatabase::CleaningTask> DatabaseService::getCleaningTask(int id) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!ensureConnection()) return std::nullopt;
+    try {
+        pqxx::work txn(*conn_);
+        auto rows = txn.exec_params(std::string("SELECT ") + kCleaningCols +
+                                    " FROM cleaning_tasks WHERE id = $1", id);
+        txn.commit();
+        if (rows.empty()) return std::nullopt;
+        return rowToCleaningTask(rows[0]);
+    } catch (const std::exception& e) {
+        std::cerr << "getCleaningTask error: " << e.what() << std::endl;
+        return std::nullopt;
+    }
+}
+
+int DatabaseService::upsertCleaningTask(const CleaningTask& t,
+                                        const std::string& updated_at_override) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!ensureConnection()) return -1;
+    try {
+        pqxx::work txn(*conn_);
+        const std::string ts = updated_at_override;
+
+        if (t.id > 0) {
+            auto r = txn.exec_params(R"(
+                UPDATE cleaning_tasks
+                   SET profile_id = $1, item_id = $2, client_uuid = NULLIF($3, ''),
+                       task_key = $4, label = $5, interval_days = $6,
+                       time_minutes = $7, start_date = $8, enabled = $9,
+                       updated_at = COALESCE(NULLIF($10, '')::timestamp, CURRENT_TIMESTAMP)
+                 WHERE id = $11 AND NOT deleted
+             RETURNING id
+            )", t.profile_id,
+                (t.item_id > 0 ? std::optional<int>(t.item_id) : std::nullopt),
+                t.client_uuid, t.task_key, t.label, t.interval_days,
+                t.time_minutes, t.start_date, t.enabled, ts, t.id);
+            txn.commit();
+            return r.empty() ? -1 : r[0][0].as<int>();
+        }
+
+        auto r = txn.exec_params(R"(
+            INSERT INTO cleaning_tasks
+                (profile_id, item_id, client_uuid, task_key, label, interval_days,
+                 time_minutes, start_date, enabled, created_at, updated_at)
+            VALUES ($1, $2, NULLIF($3, ''), $4, $5, $6, $7, $8, $9,
+                    COALESCE(NULLIF($10, '')::timestamp, CURRENT_TIMESTAMP),
+                    COALESCE(NULLIF($10, '')::timestamp, CURRENT_TIMESTAMP))
+            ON CONFLICT DO NOTHING
+            RETURNING id
+        )", t.profile_id,
+            (t.item_id > 0 ? std::optional<int>(t.item_id) : std::nullopt),
+            t.client_uuid, t.task_key, t.label, t.interval_days,
+            t.time_minutes, t.start_date, t.enabled, ts);
+        txn.commit();
+        // Empty means the unique (profile_id, task_key) index rejected it, which
+        // is exactly what makes /suggest idempotent.
+        return r.empty() ? -1 : r[0][0].as<int>();
+    } catch (const std::exception& e) {
+        std::cerr << "upsertCleaningTask error: " << e.what() << std::endl;
+        return -1;
+    }
+}
+
+bool DatabaseService::tombstoneCleaningTask(int id,
+                                            const std::string& updated_at_override) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!ensureConnection()) return false;
+    try {
+        pqxx::work txn(*conn_);
+        auto r = txn.exec_params(R"(
+            UPDATE cleaning_tasks
+               SET deleted = TRUE, enabled = FALSE,
+                   updated_at = COALESCE(NULLIF($1, '')::timestamp, CURRENT_TIMESTAMP)
+             WHERE id = $2 AND NOT deleted
+        )", updated_at_override, id);
+        txn.commit();
+        return r.affected_rows() > 0;
+    } catch (const std::exception& e) {
+        std::cerr << "tombstoneCleaningTask error: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+bool DatabaseService::markCleaningTaskDone(int id, const std::string& done_at_override) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!ensureConnection()) return false;
+    try {
+        pqxx::work txn(*conn_);
+        auto r = txn.exec_params(R"(
+            UPDATE cleaning_tasks
+               SET last_done_at = COALESCE(NULLIF($1, '')::timestamp, CURRENT_TIMESTAMP),
+                   updated_at   = COALESCE(NULLIF($1, '')::timestamp, CURRENT_TIMESTAMP)
+             WHERE id = $2 AND NOT deleted
+        )", done_at_override, id);
+        txn.commit();
+        return r.affected_rows() > 0;
+    } catch (const std::exception& e) {
+        std::cerr << "markCleaningTaskDone error: " << e.what() << std::endl;
+        return false;
+    }
+}
+
 
 } // namespace hms_cpap
 

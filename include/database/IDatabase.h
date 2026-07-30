@@ -306,6 +306,56 @@ public:
     virtual bool tombstoneEquipmentItem(int id,
                                         const std::string& updated_at_override) = 0;
 
+    // -- SDD-007: cleaning schedules ------------------------------------------
+    //
+    // The WASH half of upkeep, deliberately separate from the supply/replacement
+    // model above: a mask is REPLACED every 90 days and WIPED every day, and one
+    // interval cannot mean both.
+    //
+    // `status` is never stored. It is computed on read by computeCleaningStatus,
+    // exactly like supply wear, so there is no cached state to go stale.
+
+    struct CleaningTaskType {
+        int         id{0};
+        std::string task_key;
+        std::string label;
+        std::string applies_to_type_key;   // "" == setup-wide
+        int         default_interval_days{0};
+        bool        is_system{false};
+        bool        active{true};
+    };
+
+    struct CleaningTask {
+        int         id{0};
+        int         profile_id{0};
+        int         item_id{0};            // 0 == NULL, task is setup-wide
+        std::string client_uuid;
+        std::string task_key;
+        /// Snapshotted at creation on purpose: renaming a catalog entry later
+        /// must not silently rewrite what the user actually scheduled.
+        std::string label;
+        int         interval_days{0};
+        int         time_minutes{510};     // local wall clock, 0..1439
+        std::string start_date;            // YYYY-MM-DD
+        bool        enabled{false};
+        std::string last_done_at;          // ISO, "" == never
+        long long   last_done_epoch{0};    // 0 == never; feeds computeCleaningStatus
+        long long   start_date_epoch{0};   // derived on read
+        bool        deleted{false};
+        std::string created_at;
+        std::string updated_at;
+    };
+
+    virtual std::vector<CleaningTaskType> listCleaningTaskTypes() = 0;
+    virtual std::vector<CleaningTask> listCleaningTasks(int profile_id) = 0;  // 0 == all profiles
+    virtual std::optional<CleaningTask> getCleaningTask(int id) = 0;
+    virtual int  upsertCleaningTask(const CleaningTask& t,
+                                    const std::string& updated_at_override) = 0;  // id<=0 inserts
+    virtual bool tombstoneCleaningTask(int id,
+                                       const std::string& updated_at_override) = 0;
+    /// Stamps last_done_at. `done_at_override` is for tests; "" means now.
+    virtual bool markCleaningTaskDone(int id, const std::string& done_at_override) = 0;
+
     virtual void* rawConnection() = 0;
 
     // -- Generic query --------------------------------------------------------

@@ -289,3 +289,56 @@ CREATE INDEX IF NOT EXISTS idx_eq_item_profile
 CREATE UNIQUE INDEX IF NOT EXISTS idx_eq_one_machine_per_profile
     ON cpap_equipment_items(profile_id)
     WHERE category = 'machine' AND active = 1 AND deleted = 0;
+
+-- ── SDD-007: cleaning schedules ──────────────────────────────────────────────
+-- The WASH half of equipment upkeep, deliberately separate from supplies: a mask
+-- is REPLACED every 90 days and WIPED every day, and one interval cannot mean
+-- both. Mirrors hms-cpapdash-api SDD-043 minus user_id (single household).
+-- The seven presets are seeded verbatim from that SDD so a user running both
+-- stacks sees one vocabulary.
+
+CREATE TABLE IF NOT EXISTS cleaning_task_types (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_key              TEXT NOT NULL UNIQUE,
+    label                 TEXT NOT NULL,
+    applies_to_type_key   TEXT,
+    default_interval_days INTEGER NOT NULL,
+    is_system             INTEGER DEFAULT 0,
+    active                INTEGER DEFAULT 1,
+    created_at            TEXT DEFAULT (datetime('now','localtime'))
+);
+
+CREATE TABLE IF NOT EXISTS cleaning_tasks (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    profile_id     INTEGER NOT NULL REFERENCES cpap_equipment_profiles(id) ON DELETE CASCADE,
+    item_id        INTEGER REFERENCES cpap_equipment_items(id) ON DELETE SET NULL,
+    client_uuid    TEXT,
+    task_key       TEXT NOT NULL,
+    label          TEXT NOT NULL,
+    interval_days  INTEGER NOT NULL,
+    time_minutes   INTEGER NOT NULL DEFAULT 510,
+    start_date     TEXT NOT NULL,
+    enabled        INTEGER DEFAULT 0,
+    last_done_at   TEXT,
+    deleted        INTEGER DEFAULT 0,
+    created_at     TEXT DEFAULT (datetime('now','localtime')),
+    updated_at     TEXT DEFAULT (datetime('now','localtime'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_cleaning_tasks_profile
+    ON cleaning_tasks(profile_id, deleted);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cleaning_tasks_uuid
+    ON cleaning_tasks(client_uuid) WHERE client_uuid IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_cleaning_tasks_profile_key
+    ON cleaning_tasks(profile_id, task_key) WHERE deleted = 0;
+
+INSERT OR IGNORE INTO cleaning_task_types
+    (task_key, label, applies_to_type_key, default_interval_days, is_system)
+VALUES
+    ('mask_wipe',        'Wipe the mask cushion',         'mask',        1, 1),
+    ('mask_wash',        'Wash the mask and cushion',     'mask',        7, 1),
+    ('headgear_wash',    'Wash the headgear',             'headgear',    7, 1),
+    ('tubing_wash',      'Wash the tubing',               'tubing',      7, 1),
+    ('humidifier_empty', 'Empty and rinse the water tub', 'humidifier',  1, 1),
+    ('humidifier_wash',  'Wash the water tub',            'humidifier',  7, 1),
+    ('filter_check',     'Check the filter',              'filter',     30, 1);

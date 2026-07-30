@@ -290,6 +290,37 @@ Json::Value PostgresDatabase::executeQuery(const std::string& sql,
     return arr;
 }
 
+// -- SDD-007: cleaning schedules ---------------------------------------------
+// Thin forwarders, like everything else in this class: DatabaseService is the
+// implementation and this wrapper only exists to satisfy IDatabase.
+
+std::vector<IDatabase::CleaningTaskType> PostgresDatabase::listCleaningTaskTypes() {
+    return db_->listCleaningTaskTypes();
+}
+
+std::vector<IDatabase::CleaningTask> PostgresDatabase::listCleaningTasks(int profile_id) {
+    return db_->listCleaningTasks(profile_id);
+}
+
+std::optional<IDatabase::CleaningTask> PostgresDatabase::getCleaningTask(int id) {
+    return db_->getCleaningTask(id);
+}
+
+int PostgresDatabase::upsertCleaningTask(const CleaningTask& t,
+                                         const std::string& updated_at_override) {
+    return db_->upsertCleaningTask(t, updated_at_override);
+}
+
+bool PostgresDatabase::tombstoneCleaningTask(int id,
+                                             const std::string& updated_at_override) {
+    return db_->tombstoneCleaningTask(id, updated_at_override);
+}
+
+bool PostgresDatabase::markCleaningTaskDone(int id, const std::string& done_at_override) {
+    return db_->markCleaningTaskDone(id, done_at_override);
+}
+
+
 } // namespace hms_cpap
 
 #endif // WITH_POSTGRESQL

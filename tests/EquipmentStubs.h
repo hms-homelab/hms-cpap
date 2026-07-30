@@ -49,4 +49,22 @@
     bool profileHasMachine(int, int) override { return false; }                      \
     int upsertEquipmentItem(const IDatabase::EquipmentItem&,                          \
                             const std::string&) override { return -1; }               \
-    bool tombstoneEquipmentItem(int, const std::string&) override { return false; }
+    bool tombstoneEquipmentItem(int, const std::string&) override { return false; }  \
+    /* SDD-007 cleaning. Same rationale as the equipment stubs above: these      \
+       doubles exist to test collectors and ML, which never touch upkeep, and    \
+       IDatabase's methods are pure so that a REAL backend cannot quietly ship   \
+       a stub. That is the mistake 4.6.3 had to undo. Anything actually          \
+       exercising cleaning uses a real engine via test_CleaningBackends.cpp. */  \
+    std::vector<IDatabase::CleaningTaskType> listCleaningTaskTypes() override {   \
+        return {};                                                               \
+    }                                                                            \
+    std::vector<IDatabase::CleaningTask> listCleaningTasks(int) override {        \
+        return {};                                                               \
+    }                                                                            \
+    std::optional<IDatabase::CleaningTask> getCleaningTask(int) override {        \
+        return std::nullopt;                                                     \
+    }                                                                            \
+    int upsertCleaningTask(const IDatabase::CleaningTask&,                        \
+                           const std::string&) override { return -1; }            \
+    bool tombstoneCleaningTask(int, const std::string&) override { return false; }\
+    bool markCleaningTaskDone(int, const std::string&) override { return false; }

@@ -521,6 +521,68 @@ void SQLiteDatabase::createSchema() {
             ('headgear',   'Headgear',   'accessory',  180, 1)
     )");
 
+    // ── SDD-007: cleaning schedules ─────────────────────────────────────────
+    // The WASH half of upkeep, deliberately separate from supplies: a mask is
+    // REPLACED every 90 days and WIPED every day, and one interval cannot mean
+    // both. Mirrors the cloud's SDD-043 tables minus user_id, since this repo is
+    // single-household.
+    exec(R"(
+        CREATE TABLE IF NOT EXISTS cleaning_task_types (
+            id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_key              TEXT NOT NULL UNIQUE,
+            label                 TEXT NOT NULL,
+            applies_to_type_key   TEXT,
+            default_interval_days INTEGER NOT NULL,
+            is_system             INTEGER DEFAULT 0,
+            active                INTEGER DEFAULT 1,
+            created_at            TEXT DEFAULT (datetime('now','localtime'))
+        )
+    )");
+
+    exec(R"(
+        CREATE TABLE IF NOT EXISTS cleaning_tasks (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            profile_id     INTEGER NOT NULL REFERENCES cpap_equipment_profiles(id) ON DELETE CASCADE,
+            item_id        INTEGER REFERENCES cpap_equipment_items(id) ON DELETE SET NULL,
+            client_uuid    TEXT,
+            task_key       TEXT NOT NULL,
+            label          TEXT NOT NULL,
+            interval_days  INTEGER NOT NULL,
+            time_minutes   INTEGER NOT NULL DEFAULT 510,
+            start_date     TEXT NOT NULL,
+            enabled        INTEGER DEFAULT 0,
+            last_done_at   TEXT,
+            deleted        INTEGER DEFAULT 0,
+            created_at     TEXT DEFAULT (datetime('now','localtime')),
+            updated_at     TEXT DEFAULT (datetime('now','localtime'))
+        )
+    )");
+
+    // The seven presets from SDD-043, verbatim, so a user running both stacks
+    // sees one vocabulary. Idempotent on task_key like the equipment seed.
+    exec(R"(
+        INSERT OR IGNORE INTO cleaning_task_types
+            (task_key, label, applies_to_type_key, default_interval_days, is_system)
+        VALUES
+            ('mask_wipe',        'Wipe the mask cushion',        'mask',        1, 1),
+            ('mask_wash',        'Wash the mask and cushion',    'mask',        7, 1),
+            ('headgear_wash',    'Wash the headgear',            'headgear',    7, 1),
+            ('tubing_wash',      'Wash the tubing',              'tubing',      7, 1),
+            ('humidifier_empty', 'Empty and rinse the water tub','humidifier',  1, 1),
+            ('humidifier_wash',  'Wash the water tub',           'humidifier',  7, 1),
+            ('filter_check',     'Check the filter',             'filter',     30, 1)
+    )");
+
+    // Every read path filters on this pair.
+    exec("CREATE INDEX IF NOT EXISTS idx_cleaning_tasks_profile "
+         "ON cleaning_tasks(profile_id, deleted)");
+    exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_cleaning_tasks_uuid "
+         "ON cleaning_tasks(client_uuid) WHERE client_uuid IS NOT NULL");
+    // /suggest is idempotent on this pair, and a UNIQUE index is what makes that
+    // true under concurrent calls rather than only under a well-behaved caller.
+    exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_cleaning_tasks_profile_key "
+         "ON cleaning_tasks(profile_id, task_key) WHERE deleted = 0");
+
     exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_eq_profile_uuid "
          "ON cpap_equipment_profiles(client_uuid) WHERE client_uuid IS NOT NULL");
     exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_eq_item_uuid "
@@ -3057,6 +3119,208 @@ bool SQLiteDatabase::tombstoneEquipmentItem(int id,
         std::cerr << "SQLite: tombstoneEquipmentItem error: " << sqlite3_errmsg(db_) << std::endl;
         return false;
     }
+    return sqlite3_changes(db_) > 0;
+}
+
+// ---------------------------------------------------------------------------
+// SDD-007: cleaning schedules
+//
+// Storage only. The due state is never persisted; callers hand these rows to
+// computeCleaningStatus, which keeps state and storage from disagreeing the way
+// a cached column eventually would.
+// ---------------------------------------------------------------------------
+
+namespace {
+constexpr const char* kCleaningTaskCols =
+    "id, profile_id, item_id, client_uuid, task_key, label, interval_days, "
+    "time_minutes, start_date, enabled, last_done_at, deleted, created_at, updated_at";
+}  // namespace
+
+IDatabase::CleaningTask SQLiteDatabase::parseCleaningTaskRow(sqlite3_stmt* s) {
+    CleaningTask t;
+    t.id            = col_int(s, 0);
+    t.profile_id    = col_int(s, 1);
+    t.item_id       = col_is_null(s, 2) ? 0 : sqlite3_column_int(s, 2);
+    t.client_uuid   = col_text(s, 3);
+    t.task_key      = col_text(s, 4);
+    t.label         = col_text(s, 5);
+    t.interval_days = col_int(s, 6);
+    t.time_minutes  = col_int(s, 7);
+    t.start_date    = col_text(s, 8);
+    t.enabled       = col_int(s, 9) != 0;
+    t.last_done_at  = col_is_null(s, 10) ? "" : col_text(s, 10);
+    t.deleted       = col_int(s, 11) != 0;
+    t.created_at    = col_text(s, 12);
+    t.updated_at    = col_text(s, 13);
+    // Epochs are derived here so every backend hands the pure function the same
+    // shape and the conversion lives at exactly one boundary per engine.
+    t.start_date_epoch = iso_to_epoch(t.start_date);
+    t.last_done_epoch  = t.last_done_at.empty() ? 0 : iso_to_epoch(t.last_done_at);
+    return t;
+}
+
+std::vector<IDatabase::CleaningTaskType> SQLiteDatabase::listCleaningTaskTypes() {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::vector<CleaningTaskType> out;
+    if (!db_) return out;
+
+    const char* sql =
+        "SELECT id, task_key, label, applies_to_type_key, default_interval_days, "
+        "is_system, active FROM cleaning_task_types WHERE active = 1 ORDER BY id";
+
+    StmtGuard g;
+    if (sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr) != SQLITE_OK) return out;
+    while (sqlite3_step(g.stmt) == SQLITE_ROW) {
+        CleaningTaskType t;
+        t.id                    = col_int(g.stmt, 0);
+        t.task_key              = col_text(g.stmt, 1);
+        t.label                 = col_text(g.stmt, 2);
+        t.applies_to_type_key   = col_is_null(g.stmt, 3) ? "" : col_text(g.stmt, 3);
+        t.default_interval_days = col_int(g.stmt, 4);
+        t.is_system             = col_int(g.stmt, 5) != 0;
+        t.active                = col_int(g.stmt, 6) != 0;
+        out.push_back(t);
+    }
+    return out;
+}
+
+std::vector<IDatabase::CleaningTask> SQLiteDatabase::listCleaningTasks(int profile_id) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::vector<CleaningTask> out;
+    if (!db_) return out;
+
+    // profile_id 0 means "every profile"; tombstones never surface.
+    std::string sql = std::string("SELECT ") + kCleaningTaskCols +
+                      " FROM cleaning_tasks WHERE deleted = 0";
+    if (profile_id > 0) sql += " AND profile_id = ?";
+    sql += " ORDER BY id";
+
+    StmtGuard g;
+    if (sqlite3_prepare_v2(db_, sql.c_str(), -1, &g.stmt, nullptr) != SQLITE_OK) return out;
+    if (profile_id > 0) bind_int(g.stmt, 1, profile_id);
+    while (sqlite3_step(g.stmt) == SQLITE_ROW) out.push_back(parseCleaningTaskRow(g.stmt));
+    return out;
+}
+
+std::optional<IDatabase::CleaningTask> SQLiteDatabase::getCleaningTask(int id) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!db_) return std::nullopt;
+
+    std::string sql = std::string("SELECT ") + kCleaningTaskCols +
+                      " FROM cleaning_tasks WHERE id = ?";
+    StmtGuard g;
+    if (sqlite3_prepare_v2(db_, sql.c_str(), -1, &g.stmt, nullptr) != SQLITE_OK)
+        return std::nullopt;
+    bind_int(g.stmt, 1, id);
+    if (sqlite3_step(g.stmt) != SQLITE_ROW) return std::nullopt;
+    return parseCleaningTaskRow(g.stmt);
+}
+
+int SQLiteDatabase::upsertCleaningTask(const CleaningTask& t,
+                                       const std::string& updated_at_override) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!db_) return -1;
+
+    const std::string ts = sanitizeUpdatedAtOverride(updated_at_override);
+
+    if (t.id > 0) {
+        const char* sql = R"(
+            UPDATE cleaning_tasks
+               SET profile_id = ?, item_id = ?, client_uuid = ?, task_key = ?,
+                   label = ?, interval_days = ?, time_minutes = ?, start_date = ?,
+                   enabled = ?,
+                   updated_at = COALESCE(NULLIF(?, ''), datetime('now','localtime'))
+             WHERE id = ? AND deleted = 0
+        )";
+        StmtGuard g;
+        if (sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr) != SQLITE_OK) return -1;
+        bind_int(g.stmt, 1, t.profile_id);
+        if (t.item_id > 0) bind_int(g.stmt, 2, t.item_id); else bind_null(g.stmt, 2);
+        bind_text_or_null(g.stmt, 3, t.client_uuid);
+        bind_text(g.stmt, 4, t.task_key);
+        bind_text(g.stmt, 5, t.label);
+        bind_int(g.stmt, 6, t.interval_days);
+        bind_int(g.stmt, 7, t.time_minutes);
+        bind_text(g.stmt, 8, t.start_date);
+        bind_int(g.stmt, 9, t.enabled ? 1 : 0);
+        bind_text(g.stmt, 10, ts);
+        bind_int(g.stmt, 11, t.id);
+        if (sqlite3_step(g.stmt) != SQLITE_DONE) {
+            std::cerr << "SQLite: upsertCleaningTask update error: "
+                      << sqlite3_errmsg(db_) << std::endl;
+            return -1;
+        }
+        return sqlite3_changes(db_) > 0 ? t.id : -1;
+    }
+
+    const char* sql = R"(
+        INSERT INTO cleaning_tasks
+            (profile_id, item_id, client_uuid, task_key, label, interval_days,
+             time_minutes, start_date, enabled, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?,
+                COALESCE(NULLIF(?, ''), datetime('now','localtime')),
+                COALESCE(NULLIF(?, ''), datetime('now','localtime')))
+    )";
+    StmtGuard g;
+    if (sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr) != SQLITE_OK) return -1;
+    bind_int(g.stmt, 1, t.profile_id);
+    if (t.item_id > 0) bind_int(g.stmt, 2, t.item_id); else bind_null(g.stmt, 2);
+    bind_text_or_null(g.stmt, 3, t.client_uuid);
+    bind_text(g.stmt, 4, t.task_key);
+    bind_text(g.stmt, 5, t.label);
+    bind_int(g.stmt, 6, t.interval_days);
+    bind_int(g.stmt, 7, t.time_minutes);
+    bind_text(g.stmt, 8, t.start_date);
+    bind_int(g.stmt, 9, t.enabled ? 1 : 0);
+    bind_text(g.stmt, 10, ts);
+    bind_text(g.stmt, 11, ts);
+
+    if (sqlite3_step(g.stmt) != SQLITE_DONE) {
+        // A duplicate (profile_id, task_key) lands here, which is exactly what
+        // makes /suggest idempotent: the second call fails the unique index
+        // rather than creating a second copy of the same task.
+        return -1;
+    }
+    return static_cast<int>(sqlite3_last_insert_rowid(db_));
+}
+
+bool SQLiteDatabase::tombstoneCleaningTask(int id,
+                                           const std::string& updated_at_override) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!db_) return false;
+
+    const std::string ts = sanitizeUpdatedAtOverride(updated_at_override);
+    const char* sql = R"(
+        UPDATE cleaning_tasks
+           SET deleted = 1, enabled = 0,
+               updated_at = COALESCE(NULLIF(?, ''), datetime('now','localtime'))
+         WHERE id = ? AND deleted = 0
+    )";
+    StmtGuard g;
+    if (sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr) != SQLITE_OK) return false;
+    bind_text(g.stmt, 1, ts);
+    bind_int(g.stmt, 2, id);
+    if (sqlite3_step(g.stmt) != SQLITE_DONE) return false;
+    return sqlite3_changes(db_) > 0;
+}
+
+bool SQLiteDatabase::markCleaningTaskDone(int id, const std::string& done_at_override) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!db_) return false;
+
+    const std::string ts = sanitizeUpdatedAtOverride(done_at_override);
+    const char* sql = R"(
+        UPDATE cleaning_tasks
+           SET last_done_at = COALESCE(NULLIF(?, ''), datetime('now','localtime')),
+               updated_at   = COALESCE(NULLIF(?, ''), datetime('now','localtime'))
+         WHERE id = ? AND deleted = 0
+    )";
+    StmtGuard g;
+    if (sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr) != SQLITE_OK) return false;
+    bind_text(g.stmt, 1, ts);
+    bind_text(g.stmt, 2, ts);
+    bind_int(g.stmt, 3, id);
+    if (sqlite3_step(g.stmt) != SQLITE_DONE) return false;
     return sqlite3_changes(db_) > 0;
 }
 
