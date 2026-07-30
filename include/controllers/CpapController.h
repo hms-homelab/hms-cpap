@@ -244,9 +244,14 @@ public:
 private:
     static std::shared_ptr<QueryService>          qs_;
 #ifndef _WIN32
+    // The PDF report stack is POSIX-only (gnuplot + libharu), so this member is
+    // genuinely platform-gated.
     static std::shared_ptr<ReportGeneratorService> report_svc_;
-    static std::shared_ptr<CpapDashSyncService>   sync_;
 #endif
+    // NOT gated: the cloud mirror works on every platform. It briefly lived
+    // inside the guard above and broke the MSVC build with "sync_ undeclared",
+    // which no macOS or Linux build could have caught.
+    static std::shared_ptr<CpapDashSyncService>   sync_;
     static hms_cpap::AppConfig* config_;
     static std::string config_path_;
     static BurstCollectorService* burst_service_;

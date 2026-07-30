@@ -45,6 +45,12 @@ void CpapController::setConfig(hms_cpap::AppConfig* cfg, const std::string& path
 
 void CpapController::setBurstService(BurstCollectorService* svc) { burst_service_ = svc; }
 
+// Defined here rather than beside report_svc_: that one lives inside the
+// POSIX-only report block, and putting this there compiled everywhere except
+// MSVC, where it failed with "sync_ undeclared". The cloud mirror is not
+// platform-specific.
+std::shared_ptr<CpapDashSyncService> CpapController::sync_;
+
 void CpapController::setSyncService(std::shared_ptr<CpapDashSyncService> sync) {
     sync_ = std::move(sync);
 }
@@ -1350,7 +1356,6 @@ void CpapController::sleephqExport(const drogon::HttpRequestPtr&,
 #ifndef _WIN32
 
 std::shared_ptr<ReportGeneratorService> CpapController::report_svc_;
-std::shared_ptr<CpapDashSyncService>   CpapController::sync_;
 
 void CpapController::setReportService(std::shared_ptr<ReportGeneratorService> svc) {
     report_svc_ = svc;

@@ -81,3 +81,45 @@ Filename: "{cmd}"; Parameters: "/C taskkill /IM hms_cpap.exe /F /T"; Flags: runh
 ; holds the user's config and their entire therapy database. An uninstaller that
 ; removes it turns "I am reinstalling" into permanent data loss, and there is no
 ; way to undo that for someone whose CPAP history is their medical record.
+
+[Code]
+// Validate the configuration as the last step of installing, while the user is
+// still looking at the installer. Catching a busy port or an unreachable
+// database here is far better than letting them find out later from a tray icon
+// that never turns green.
+//
+// CurStepChanged(ssPostInstall) rather than a [Run] entry with a Check function:
+// [Run] cannot capture output, and doing the work inside a Check to get at it
+// would be a side effect hidden in a predicate.
+//
+// [Code] is LAST on purpose: Inno treats everything after this header as Pascal,
+// so any section placed below would never be parsed.
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  ResultCode: Integer;
+  Report: AnsiString;
+  ReportPath: String;
+begin
+  if CurStep <> ssPostInstall then Exit;
+
+  ReportPath := ExpandConstant('{tmp}\preflight.txt');
+
+  // cmd /C so stdout can be redirected to a file and read back; Exec on its own
+  // yields an exit code and nothing to show anyone.
+  if not Exec(ExpandConstant('{cmd}'),
+              '/C ""' + ExpandConstant('{app}\hms_cpap.exe') + '" --preflight > "'
+                 + ReportPath + '" 2>&1"',
+              '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    Exit;   // could not even run the check; the tray will report it on launch
+
+  if ResultCode = 0 then Exit;
+
+  if LoadStringFromFile(ReportPath, Report) then
+    MsgBox('CpapDash is installed, but its configuration needs attention:'#13#10#13#10
+           + String(Report) + #13#10
+           + 'Fix the item marked FAIL, then start CpapDash Desktop.',
+           mbInformation, MB_OK)
+  else
+    MsgBox('CpapDash is installed, but the configuration check did not pass.'#13#10
+           + 'Start CpapDash Desktop for details.', mbInformation, MB_OK);
+end;

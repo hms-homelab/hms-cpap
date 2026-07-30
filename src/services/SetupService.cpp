@@ -632,6 +632,11 @@ SetupService::AutostartEntry SetupService::bootEntry(const std::string& exe_path
         "[Service]\n"
         "Type=simple\n"
         "User=" + user + "\n"
+        // Validate first. systemd refuses to start the unit when this exits
+        // non-zero, and the report lands in the journal, so a busy port or a
+        // wrong password is named at the moment it matters instead of turning
+        // into a restart loop.
+        "ExecStartPre=" + exe_path + " --preflight\n"
         // Same reason as the macOS EnvironmentVariables block: a system unit has
         // no HOME, so the data directory would resolve somewhere else.
         "Environment=HOME=" + home_dir + "\n"

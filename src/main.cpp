@@ -19,6 +19,7 @@
 #include "database/IDatabase.h"
 #include "database/SQLiteDatabase.h"
 #include "database/DatabaseFactory.h"
+#include "services/PreflightService.h"
 #ifdef WITH_POSTGRESQL
 #include "database/DatabaseService.h"
 #include "database/PostgresDatabase.h"
@@ -395,8 +396,14 @@ int main(int argc, char** argv) {
     // SDD-006: suppress the first-run browser. For scripted installs and for
     // anyone who simply does not want a window appearing.
     bool no_browser = false;
+    bool preflight_only = false;
     for (int i = 1; i < argc; ++i) {
-        if (std::strcmp(argv[i], "--no-browser") == 0) { no_browser = true; break; }
+        if (std::strcmp(argv[i], "--no-browser") == 0) no_browser = true;
+        // SDD-005/006: validate the configuration and exit. Lets an installer
+        // check its own work, lets systemd use it as ExecStartPre, and lets the
+        // desktop shell find out WHY it cannot start instead of inferring it
+        // from how fast the child died.
+        if (std::strcmp(argv[i], "--preflight") == 0) preflight_only = true;
     }
 
     hms_cpap::AppConfig config;
@@ -404,6 +411,27 @@ int main(int argc, char** argv) {
 
     // Env vars fill any empty fields (fallback for systemd Environment= lines)
     config.applyEnvFallbacks();
+
+    // Checked BEFORE anything is opened or bound. Configuration errors are
+    // deterministic: a busy port, a wrong password and an unwritable folder do
+    // not become correct on a second attempt, so discovering them through a
+    // restart loop hides the cause and tells the user a guess. Fail here, name
+    // the problem, and say what to change.
+    {
+        const auto report = hms_cpap::PreflightService::run(config);
+        if (preflight_only) {
+            std::cout << "Preflight checks:\n" << report.render();
+            std::cout << (report.ok() ? "OK: configuration looks usable.\n"
+                                      : "FAILED: fix the items marked FAIL above.\n");
+            return report.ok() ? 0 : 1;
+        }
+        if (!report.ok()) {
+            std::cerr << "Refusing to start. Configuration problems found:\n"
+                      << report.render()
+                      << "Config file: " << config_path << "\n";
+            return 1;
+        }
+    }
 
     // Default sqlite_path if empty
     if (config.database.sqlite_path.empty()) {
