@@ -12,8 +12,20 @@
 namespace hms_cpap {
 
 std::shared_ptr<IDatabase> CleaningController::db_;
+std::shared_ptr<CpapDashSyncService> CleaningController::sync_;
 
 void CleaningController::setDatabase(std::shared_ptr<IDatabase> db) { db_ = std::move(db); }
+
+void CleaningController::setSyncService(std::shared_ptr<CpapDashSyncService> sync) {
+    sync_ = std::move(sync);
+}
+
+// A cleaning edit makes the cloud mirror stale just as an equipment edit does.
+// No-op unless the user enabled sync AND auto_sync, so it costs nothing for
+// anyone who never turns it on.
+void CleaningController::markMirrorDirty() {
+    if (sync_) sync_->markDirty();
+}
 
 namespace {
 
@@ -171,6 +183,7 @@ void CleaningController::create(const drogon::HttpRequestPtr& req,
         return;
     }
 
+    markMirrorDirty();
     auto created = db_->getCleaningTask(id);
     cb(jsonResp(created ? taskToJson(*created) : Json::Value(), drogon::k201Created));
 }
@@ -200,6 +213,7 @@ void CleaningController::update(const drogon::HttpRequestPtr& req,
         cb(jsonError("Could not update the task", drogon::k500InternalServerError));
         return;
     }
+    markMirrorDirty();
     auto updated = db_->getCleaningTask(task_id);
     cb(jsonResp(updated ? taskToJson(*updated) : Json::Value()));
 }
@@ -213,6 +227,7 @@ void CleaningController::remove(const drogon::HttpRequestPtr&,
         cb(jsonError("Task not found", drogon::k404NotFound));
         return;
     }
+    markMirrorDirty();
     Json::Value ok;
     ok["status"] = "deleted";
     cb(jsonResp(ok));
@@ -228,6 +243,7 @@ void CleaningController::markDone(const drogon::HttpRequestPtr&,
         cb(jsonError("Task not found", drogon::k404NotFound));
         return;
     }
+    markMirrorDirty();
     // Return the RECOMPUTED task: marking done is what advances the clock, and
     // the caller wants the new due date without a second round trip.
     auto t = db_->getCleaningTask(task_id);
@@ -287,6 +303,7 @@ void CleaningController::suggest(const drogon::HttpRequestPtr& req,
         }
     }
 
+    markMirrorDirty();
     Json::Value out;
     out["created"]         = created;
     out["already_present"] = skipped;

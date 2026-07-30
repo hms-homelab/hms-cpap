@@ -77,6 +77,10 @@ public:
     /// Injected from main.cpp, same pattern as CpapController::setQueryService.
     static void setDatabase(std::shared_ptr<IDatabase> db);
 
+    /// Marks the optional cloud mirror stale after a local edit. No-op unless
+    /// the user enabled sync and auto_sync.
+    static void markMirrorDirty();
+
     /// Optional. When unset (or cloud sync disabled in config), /cloud-sync 409s
     /// rather than pretending a sync happened.
     static void setSyncService(std::shared_ptr<CpapDashSyncService> sync);
