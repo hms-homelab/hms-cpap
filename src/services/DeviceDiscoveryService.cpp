@@ -463,9 +463,13 @@ DeviceDiscoveryService DeviceDiscoveryService::withMulticast() {
                 FD_SET(s, &fds);
                 if (s > maxfd) maxfd = s;
             }
+            // decltype, not time_t/suseconds_t: those are the POSIX field types
+            // and MSVC has neither (its timeval carries two longs), so naming
+            // them directly fails to compile on Windows. Deriving the cast from
+            // the field itself is correct on every platform.
             timeval tv{};
-            tv.tv_sec  = static_cast<time_t>(remain.count() / 1000);
-            tv.tv_usec = static_cast<suseconds_t>((remain.count() % 1000) * 1000);
+            tv.tv_sec  = static_cast<decltype(tv.tv_sec)>(remain.count() / 1000);
+            tv.tv_usec = static_cast<decltype(tv.tv_usec)>((remain.count() % 1000) * 1000);
 
             const int ready = ::select(maxfd + 1, &fds, nullptr, nullptr, &tv);
             if (ready <= 0) break;   // timeout or error: what we have is the answer
