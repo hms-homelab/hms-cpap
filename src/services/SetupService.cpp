@@ -7,7 +7,11 @@
   #include <pqxx/pqxx>
 #endif
 #ifdef WITH_MYSQL
-  #include <mysql.h>
+  // Via the backend header rather than a bare <mysql.h>: vcpkg, Homebrew and
+  // Debian each put the client headers somewhere different, and MySQLDatabase.h
+  // already resolves that with __has_include. A second, weaker include here
+  // broke the MSVC build with "cannot open include file: 'mysql.h'".
+  #include "database/MySQLDatabase.h"
 #endif
 
 #include <cctype>
