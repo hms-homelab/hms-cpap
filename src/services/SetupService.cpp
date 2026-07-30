@@ -645,8 +645,17 @@ SetupService::AutostartEntry SetupService::bootEntry(const std::string& exe_path
         // no HOME, so the data directory would resolve somewhere else.
         "Environment=HOME=" + home_dir + "\n"
         "ExecStart=" + exe_path + " --no-browser\n"
-        "Restart=on-failure\n"
-        "RestartSec=5\n"
+        // NO Restart=. Measured on Debian 13 / systemd 257: with
+        // Restart=on-failure and RestartSec=5, a failing ExecStartPre retried
+        // ELEVEN times in 27 seconds and kept going, because attempts spaced 5s
+        // apart never fill the default 10s StartLimitIntervalSec window, so the
+        // start limit never trips. That is an unbounded retry of a
+        // deterministic configuration error: the journal fills, nothing
+        // improves, and the real cause scrolls away.
+        //
+        // A unit that stops stays visible in `systemctl status` as failed, with
+        // the preflight report right there in the journal. If it exits, say why
+        // and stop.
         "\n"
         "[Install]\n"
         // multi-user.target here, unlike the user unit: this one genuinely is a
@@ -725,9 +734,13 @@ SetupService::AutostartEntry SetupService::autostartEntry(const std::string& exe
         "\n"
         "[Service]\n"
         "Type=simple\n"
+        // Validated here too. The boot unit checking its config while the login
+        // unit did not was an inconsistency with no justification: the same bad
+        // port or password fails either way, and only one of them would have
+        // said so.
+        "ExecStartPre=" + exe_path + " --preflight\n"
         "ExecStart=" + exe_path + " --no-browser\n"
-        "Restart=on-failure\n"
-        "RestartSec=5\n"
+        // No Restart=, for the same reason as the system unit above.
         "\n"
         "[Install]\n"
         // default.target, not multi-user.target: this is a USER unit and starts
