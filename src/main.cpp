@@ -733,6 +733,8 @@ int main(int argc, char** argv) {
                 s.auto_sync = config.cpapdash.auto_sync;
                 sync->setSettings(std::move(s));
                 hms_cpap::EquipmentController::setSyncService(sync);
+                // SDD-007: cleaning edits make the mirror stale too.
+                hms_cpap::CleaningController::setSyncService(sync);
                 // Same instance drives the burst-loop sweep, so a UI edit marked
                 // dirty and the periodic auto_sync share one cursor and one lock.
                 if (burst_service) burst_service->setCpapDashSync(sync);

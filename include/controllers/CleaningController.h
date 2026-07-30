@@ -18,6 +18,7 @@
 #include <drogon/HttpController.h>
 #include <memory>
 #include "database/IDatabase.h"
+#include "services/CpapDashSyncService.h"
 
 namespace hms_cpap {
 
@@ -55,9 +56,15 @@ public:
                  std::function<void(const drogon::HttpResponsePtr&)>&& cb);
 
     static void setDatabase(std::shared_ptr<IDatabase> db);
+    /// Optional cloud mirror. A cleaning edit makes it stale exactly as an
+    /// equipment edit does, so the same debounce applies.
+    static void setSyncService(std::shared_ptr<CpapDashSyncService> sync);
 
 private:
+    static void markMirrorDirty();
+
     static std::shared_ptr<IDatabase> db_;
+    static std::shared_ptr<CpapDashSyncService> sync_;
 };
 
 }  // namespace hms_cpap

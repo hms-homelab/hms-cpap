@@ -13,6 +13,15 @@ std::shared_ptr<IDatabase> EquipmentController::db_;
 std::shared_ptr<CpapDashSyncService> EquipmentController::sync_;
 
 void EquipmentController::setDatabase(std::shared_ptr<IDatabase> db) { db_ = std::move(db); }
+// A local edit makes the cloud mirror stale. markDirty() is a no-op unless the
+// user enabled sync AND auto_sync, so calling it after every mutation costs
+// nothing for the majority who never turn it on. Nothing called it before, which
+// meant auto_sync could never fire and the only working path was the explicit
+// cloud-sync endpoint.
+void EquipmentController::markMirrorDirty() {
+    if (sync_) sync_->markDirty();
+}
+
 void EquipmentController::setSyncService(std::shared_ptr<CpapDashSyncService> sync) {
     sync_ = std::move(sync);
 }
@@ -290,6 +299,7 @@ void EquipmentController::createProfile(const drogon::HttpRequestPtr& req,
             if (it.profile_id == pid) its.append(itemToJson(it, defaults.intervalFor(it), now));
         pj["items"] = its;
     }
+    markMirrorDirty();
     cb(jsonResp(pj, drogon::k201Created));
 }
 
@@ -318,6 +328,7 @@ void EquipmentController::updateProfile(const drogon::HttpRequestPtr& req,
         pj["active"]     = stored->active;
         pj["updated_at"] = stored->updated_at;
     }
+    markMirrorDirty();
     cb(jsonResp(pj));
 }
 
@@ -328,6 +339,7 @@ void EquipmentController::deleteProfile(const drogon::HttpRequestPtr&,
     if (!db_->tombstoneEquipmentProfile(id, "")) {
         cb(jsonError("Failed to remove profile", drogon::k500InternalServerError)); return;
     }
+    markMirrorDirty();
     Json::Value j; j["message"] = "Profile removed";
     cb(jsonResp(j));
 }
@@ -367,6 +379,7 @@ void EquipmentController::createItem(const drogon::HttpRequestPtr& req,
     int id = db_->upsertEquipmentItem(it, "");
     if (id < 0) { cb(jsonError("Failed to create equipment", drogon::k500InternalServerError)); return; }
 
+    markMirrorDirty();
     auto stored = db_->getEquipmentItem(id);
     TypeDefaults defaults(*db_);
     cb(jsonResp(stored ? itemToJson(*stored, defaults.intervalFor(*stored), nowEpoch())
@@ -405,6 +418,7 @@ void EquipmentController::updateItem(const drogon::HttpRequestPtr& req,
     if (db_->upsertEquipmentItem(it, "") < 0) {
         cb(jsonError("Failed to update equipment", drogon::k500InternalServerError)); return;
     }
+    markMirrorDirty();
     auto stored = db_->getEquipmentItem(id);
     TypeDefaults defaults(*db_);
     cb(jsonResp(stored ? itemToJson(*stored, defaults.intervalFor(*stored), nowEpoch())
@@ -418,6 +432,7 @@ void EquipmentController::deleteItem(const drogon::HttpRequestPtr&,
     if (!db_->tombstoneEquipmentItem(id, "")) {
         cb(jsonError("Failed to remove equipment", drogon::k500InternalServerError)); return;
     }
+    markMirrorDirty();
     Json::Value j; j["message"] = "Equipment removed";
     cb(jsonResp(j));
 }
@@ -482,6 +497,11 @@ void EquipmentController::cloudSync(const drogon::HttpRequestPtr&,
     j["applied_items"]     = r.applied_items;
     j["deleted_locally"]   = r.deleted_locally;
     j["kept_local"]        = r.kept_local;   // remote rows rejected: local was newer
+    // SDD-007 cleaning. Computed since phase 4 but never serialised, so the one
+    // surface that reports what a sync did was silently missing a whole feed.
+    j["pushed_tasks"]      = r.pushed_tasks;
+    j["applied_tasks"]     = r.applied_tasks;
+    j["tasks_held_back"]   = r.tasks_held_back;
     j["cursor"]            = r.cursor;
     if (!r.ok) j["error"] = r.error;
 
