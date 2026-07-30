@@ -3,6 +3,7 @@
 #include <fstream>
 #include "controllers/CpapController.h"
 #include "controllers/EquipmentController.h"
+#include "controllers/CleaningController.h"
 #include "services/CpapDashSyncService.h"
 #include "services/SetupService.h"
 #include "services/SupplyPublisher.h"
@@ -715,6 +716,9 @@ int main(int argc, char** argv) {
             // SDD-004 equipment profiles + supplies. Uses the same connection the
             // web layer uses (web_db when the backend needs a separate one).
             hms_cpap::EquipmentController::setDatabase(web_db ? web_db : db);
+            // SDD-007: cleaning schedules share the web connection for the same
+            // thread-safety reason the equipment controller does.
+            hms_cpap::CleaningController::setDatabase(web_db ? web_db : db);
 
             // Optional cloud mirror. Constructed even when disabled so the route can
             // answer 409 ("disabled") instead of 404 — a user pressing Sync deserves

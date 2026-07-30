@@ -167,6 +167,17 @@ public:
     bool tombstoneEquipmentItem(int id,
                                 const std::string& updated_at_override) override;
 
+    // -- SDD-007: cleaning schedules ------------------------------------------
+    std::vector<CleaningTaskType> listCleaningTaskTypes() override;
+    std::vector<CleaningTask> listCleaningTasks(int profile_id) override;
+    std::optional<CleaningTask> getCleaningTask(int id) override;
+    int  upsertCleaningTask(const CleaningTask& t,
+                            const std::string& updated_at_override) override;
+    bool tombstoneCleaningTask(int id,
+                               const std::string& updated_at_override) override;
+    bool markCleaningTaskDone(int id, const std::string& done_at_override) override;
+
+
     void* rawConnection() override {
         std::lock_guard<std::recursive_mutex> lock(mutex_);
         ensureConnection();
