@@ -882,3 +882,67 @@ TEST_F(CpapDashSync, AStaleRemoteCleaningEditLosesToTheLocalRow) {
     }
 }
 
+TEST_F(CpapDashSync, CleaningTasksGetAUuidBackfilledBeforeTheFirstPush) {
+    // Found by an end-to-end run against the real API, not by this suite.
+    // backfillUuids() covered profiles and items and silently skipped cleaning
+    // tasks, so a task was pushed with client_uuid "", came back with "", and the
+    // apply loop had nothing to match it to and dropped it. Push looked healthy
+    // and pull did nothing at all, which is the worst way for this to fail
+    // because the visible half works.
+    const int pid = db_->ensureDefaultEquipmentProfile();
+
+    IDatabase::CleaningTask t;
+    t.profile_id    = pid;
+    t.task_key      = "mask_wipe";
+    t.label         = "Wipe the mask cushion";
+    t.interval_days = 1;
+    t.start_date    = "2026-07-30";
+    const int id = db_->upsertCleaningTask(t, "");
+    ASSERT_GT(id, 0);
+    ASSERT_TRUE(db_->getCleaningTask(id)->client_uuid.empty())
+        << "precondition: the task starts with no uuid";
+
+    cleaning_requests_.clear();
+    ASSERT_TRUE(svc_.syncNow().ok);
+
+    // Persisted locally...
+    const auto after = db_->getCleaningTask(id);
+    ASSERT_TRUE(after.has_value());
+    EXPECT_FALSE(after->client_uuid.empty())
+        << "no uuid was backfilled, so the cloud can never write this row back";
+
+    // ...and actually sent, which is the part that was broken.
+    ASSERT_EQ(cleaning_requests_.size(), 1u);
+    const auto& tasks = cleaning_requests_.at(0)["tasks"];
+    ASSERT_TRUE(tasks.is_array());
+    ASSERT_EQ(tasks.size(), 1u);
+    EXPECT_FALSE(tasks[0].value("client_uuid", std::string{}).empty())
+        << "the task was pushed with an empty uuid";
+}
+
+TEST_F(CpapDashSync, TheUuidBackfillDoesNotRestampUpdatedAt) {
+    // A backfill is bookkeeping, not a user edit. Restamping updated_at would
+    // make every local task look newer than the cloud's copy and win a
+    // last-write-wins race it has no business winning, silently reverting
+    // whatever was changed on the other device.
+    const int pid = db_->ensureDefaultEquipmentProfile();
+
+    IDatabase::CleaningTask t;
+    t.profile_id    = pid;
+    t.task_key      = "tubing_wash";
+    t.label         = "Wash the tubing";
+    t.interval_days = 7;
+    t.start_date    = "2026-07-30";
+    const int id = db_->upsertCleaningTask(t, "2026-07-01T10:00:00Z");
+    ASSERT_GT(id, 0);
+    const std::string before = db_->getCleaningTask(id)->updated_at;
+
+    ASSERT_TRUE(svc_.syncNow().ok);
+
+    const auto after = db_->getCleaningTask(id);
+    ASSERT_TRUE(after.has_value());
+    EXPECT_FALSE(after->client_uuid.empty());
+    EXPECT_EQ(after->updated_at, before)
+        << "the backfill restamped updated_at and would now beat a newer cloud edit";
+}
+

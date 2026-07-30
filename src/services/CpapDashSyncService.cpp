@@ -267,6 +267,20 @@ int CpapDashSyncService::backfillUuids() {
         it.client_uuid = makeUuid();
         if (db_->upsertEquipmentItem(it, "") > 0) ++n;
     }
+    // SDD-007 cleaning tasks need this every bit as much as equipment does, and
+    // leaving them out was a real bug: a task pushed without a uuid comes back
+    // from the cloud without one, the apply loop below has nothing to match it
+    // to and skips it, so the cloud could never write anything down to local.
+    // Push worked and pull silently did nothing, which is the worst shape for
+    // this to fail in because the first half looks fine.
+    for (auto t : db_->listCleaningTasks(0)) {
+        if (!t.client_uuid.empty()) continue;
+        t.client_uuid = makeUuid();
+        // Preserve updated_at: a uuid backfill is bookkeeping, not a user edit,
+        // and restamping it would make every task look newer than the cloud's
+        // copy and win a last-write-wins race it has no business winning.
+        if (db_->upsertCleaningTask(t, t.updated_at) > 0) ++n;
+    }
     return n;
 }
 
