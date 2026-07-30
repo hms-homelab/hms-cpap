@@ -278,3 +278,136 @@ TEST_F(AppConfigTest, FirstRunWithEnvVarsCreatesCorrectConfig) {
     EXPECT_EQ(reloaded.database.type, "postgresql");
     EXPECT_TRUE(reloaded.mqtt.enabled);
 }
+
+// --- Secret-redaction boundary -------------------------------------------------
+//
+// save() persists to disk; toJson() answers the API. Redaction belongs only in
+// the latter. save() used to emit the cpapdash block twice, the second time with
+// the token masked, so the mask overwrote the real value on disk and the next
+// load() read "********" back as the token. Enabling cloud sync and then saving
+// anything at all from the UI silently destroyed the credential.
+
+TEST_F(AppConfigTest, SaveWritesCpapdashTokenVerbatim) {
+    AppConfig original;
+    original.cpapdash.enabled = true;
+    original.cpapdash.token = "tok_live_abc123";
+    original.cpapdash.auto_sync = true;
+    original.save(config_path_);
+
+    // Assert against the file itself, not just a reload, so a symmetric
+    // save/load bug cannot hide the mask.
+    std::ifstream f(config_path_);
+    nlohmann::json j;
+    f >> j;
+    EXPECT_EQ(j["cpapdash"]["token"], "tok_live_abc123");
+
+    AppConfig loaded;
+    ASSERT_TRUE(AppConfig::load(config_path_, loaded));
+    EXPECT_EQ(loaded.cpapdash.token, "tok_live_abc123");
+    EXPECT_TRUE(loaded.cpapdash.enabled);
+    EXPECT_TRUE(loaded.cpapdash.auto_sync);
+}
+
+TEST_F(AppConfigTest, SaveLoadSaveDoesNotDegradeSecrets) {
+    // The original failure needed two cycles to show: save, load, save again.
+    AppConfig a;
+    a.cpapdash.enabled = true;
+    a.cpapdash.token = "tok_live_abc123";
+    a.sleephq.enabled = true;
+    a.sleephq.client_secret = "shq_secret_xyz";
+    a.database.password = "pgpass";
+    a.mqtt.password = "mqttpass";
+    a.llm.api_key = "llm_key";
+    a.save(config_path_);
+
+    AppConfig b;
+    ASSERT_TRUE(AppConfig::load(config_path_, b));
+    b.save(config_path_);
+
+    AppConfig c;
+    ASSERT_TRUE(AppConfig::load(config_path_, c));
+    EXPECT_EQ(c.cpapdash.token, "tok_live_abc123");
+    EXPECT_EQ(c.sleephq.client_secret, "shq_secret_xyz");
+    EXPECT_EQ(c.database.password, "pgpass");
+    EXPECT_EQ(c.mqtt.password, "mqttpass");
+    EXPECT_EQ(c.llm.api_key, "llm_key");
+}
+
+TEST_F(AppConfigTest, ToJsonMasksSecretsButNeverEmptiesThem) {
+    AppConfig cfg;
+    cfg.cpapdash.token = "tok_live_abc123";
+    cfg.database.password = "pgpass";
+    cfg.mqtt.password = "mqttpass";
+    cfg.llm.api_key = "llm_key";
+    cfg.sleephq.client_secret = "shq_secret_xyz";
+
+    auto j = cfg.toJson();
+    EXPECT_EQ(j["cpapdash"]["token"], "********");
+    EXPECT_EQ(j["database"]["password"], "********");
+    EXPECT_EQ(j["mqtt"]["password"], "********");
+    EXPECT_EQ(j["llm"]["api_key"], "********");
+    EXPECT_EQ(j["sleephq"]["client_secret"], "********");
+
+    // An unset secret stays empty rather than masking into a fake value, which is
+    // what lets the UI tell "no token" from "token withheld".
+    AppConfig empty;
+    auto je = empty.toJson();
+    EXPECT_EQ(je["cpapdash"]["token"], "");
+    EXPECT_EQ(je["database"]["password"], "");
+}
+
+// --- Section round-trip completeness -------------------------------------------
+//
+// load() read fysetc but save() never wrote it, so any save silently discarded
+// the whole block. toJson() omitted both fysetc and cpapdash, so the UI could not
+// display them at all.
+
+TEST_F(AppConfigTest, SavePreservesFysetcBlock) {
+    AppConfig original;
+    original.fysetc.enabled = true;
+    original.fysetc.listen_port = 9100;
+    original.fysetc.listen_bind = "127.0.0.1";
+    original.fysetc.connection_timeout_s = 45;
+    original.fysetc.archive_dir = "/data/fysetc";
+    original.fysetc.log_dir = "/var/log/custom";
+    original.save(config_path_);
+
+    AppConfig loaded;
+    ASSERT_TRUE(AppConfig::load(config_path_, loaded));
+    EXPECT_TRUE(loaded.fysetc.enabled);
+    EXPECT_EQ(loaded.fysetc.listen_port, 9100);
+    EXPECT_EQ(loaded.fysetc.listen_bind, "127.0.0.1");
+    EXPECT_EQ(loaded.fysetc.connection_timeout_s, 45);
+    EXPECT_EQ(loaded.fysetc.archive_dir, "/data/fysetc");
+    EXPECT_EQ(loaded.fysetc.log_dir, "/var/log/custom");
+}
+
+TEST_F(AppConfigTest, EverySectionLoadReadsIsAlsoWrittenBySave) {
+    // Structural guard: anything load() understands must survive save(), or a UI
+    // write silently drops it. Adding a section to load() without adding it to
+    // save() now fails here.
+    AppConfig cfg;
+    cfg.save(config_path_);
+
+    std::ifstream f(config_path_);
+    nlohmann::json saved;
+    f >> saved;
+
+    for (const char* section : {"database", "mqtt", "llm", "agent", "ml_training",
+                                "o2ring", "sleep_stage", "sleephq", "cpapdash",
+                                "fysetc"}) {
+        EXPECT_TRUE(saved.contains(section))
+            << "save() drops the '" << section << "' section that load() reads";
+    }
+}
+
+TEST_F(AppConfigTest, ToJsonExposesEverySectionTheUiEdits) {
+    AppConfig cfg;
+    auto j = cfg.toJson();
+    for (const char* section : {"database", "mqtt", "llm", "agent", "ml_training",
+                                "o2ring", "sleep_stage", "sleephq", "cpapdash",
+                                "fysetc"}) {
+        EXPECT_TRUE(j.contains(section))
+            << "GET /api/config hides the '" << section << "' section";
+    }
+}

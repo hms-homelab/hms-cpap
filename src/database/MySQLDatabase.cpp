@@ -234,6 +234,42 @@ struct ResultBinder {
     MYSQL_BIND* data() { return binds.data(); }
 };
 
+/// Upper bound for a fetched checkpoint_files JSON object. A night tops out around
+/// a few dozen filename/size pairs, so this leaves generous headroom while staying
+/// a single allocation.
+constexpr size_t kCheckpointJsonMax = 65536;
+
+// checkpoint_files is stored as a flat {"name":size,...} object. Merges into out
+// so callers can accumulate across several rows.
+static void parseCheckpointJson(const std::string& json_str,
+                                std::map<std::string, int>& out) {
+    size_t pos = 0;
+    while ((pos = json_str.find("\"", pos)) != std::string::npos) {
+        size_t name_start = pos + 1;
+        size_t name_end = json_str.find("\"", name_start);
+        if (name_end == std::string::npos) break;
+        std::string filename = json_str.substr(name_start, name_end - name_start);
+
+        size_t colon_pos = json_str.find(":", name_end);
+        if (colon_pos == std::string::npos) break;
+        size_t value_start = colon_pos + 1;
+        size_t value_end = json_str.find_first_of(",}", value_start);
+        if (value_end == std::string::npos) break;
+
+        std::string value_str = json_str.substr(value_start, value_end - value_start);
+        value_str.erase(0, value_str.find_first_not_of(" \t"));
+        value_str.erase(value_str.find_last_not_of(" \t") + 1);
+
+        try {
+            out[filename] = std::stoi(value_str);
+        } catch (const std::exception&) {
+            // Non-numeric value: not a size entry, skip it rather than abort the
+            // whole object.
+        }
+        pos = value_end;
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Ctor / Dtor
 // ---------------------------------------------------------------------------
@@ -261,6 +297,35 @@ std::string MySQLDatabase::fmtTimestamp(const std::chrono::system_clock::time_po
     return oss.str();
 }
 
+// Renders an oximetry time_point back to the wall clock the ring displayed.
+//
+// gmtime, not localtime, and that is not a typo. Every timestamp column in this
+// schema holds bare local wall clock with no zone attached, which each source
+// reaches by a matched parse/render pair:
+//
+//   CPAP      EDF wall clock -> mktime (local) -> localtime  -> same wall clock
+//   Oximetry  ring wall clock -> timegm (UTC)  -> gmtime     -> same wall clock
+//
+// The oximetry parsers (VLDParser, O2RingCsvParser) deliberately read the ring's
+// printed time AS IF it were UTC, so gmtime is the only render that gives it back.
+// Pairing their timegm parse with localtime silently shifted every oximetry
+// timestamp by the host's UTC offset, putting the SpO2 charts hours away from the
+// CPAP charts for the same night. cpap_session_date never had this problem because
+// OximetrySession::date_str() already renders with gmtime.
+std::string MySQLDatabase::fmtOximetryTimestamp(
+    const std::chrono::system_clock::time_point& tp) {
+    auto t = std::chrono::system_clock::to_time_t(tp);
+    std::tm tm{};
+#ifdef _WIN32
+    gmtime_s(&tm, &t);
+#else
+    gmtime_r(&t, &tm);
+#endif
+    std::ostringstream oss;
+    oss << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");
+    return oss.str();
+}
+
 // ---------------------------------------------------------------------------
 // Connection management
 // ---------------------------------------------------------------------------
@@ -276,9 +341,14 @@ bool MySQLDatabase::connect() {
         return false;
     }
 
-    // Enable auto-reconnect
+    // Enable auto-reconnect. Deprecated in MySQL 8.0 and removed in 8.4, where
+    // merely setting it prints a warning on every connection; the client library
+    // reconnects on its own there. MariaDB still needs and honours it.
+#if defined(MARIADB_BASE_VERSION) || defined(MARIADB_VERSION_ID) || \
+    (defined(MYSQL_VERSION_ID) && MYSQL_VERSION_ID < 80000)
     my_bool reconnect = 1;
     mysql_options(conn_, MYSQL_OPT_RECONNECT, &reconnect);
+#endif
 
     // Set connection timeout
     unsigned int timeout = 10;
@@ -543,7 +613,63 @@ void MySQLDatabase::createSchema() {
             avg_usage_hours DOUBLE,
             compliance_pct  DOUBLE,
             summary_text    TEXT NOT NULL,
-            created_at      DATETIME NOT NULL DEFAULT NOW()
+            created_at      DATETIME NOT NULL DEFAULT NOW(),
+            KEY idx_cpap_summaries_device_period (device_id, period, range_end)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    )");
+
+    // -- Oximetry (O2 Ring) ---------------------------------------------------
+    // Mirrors SQLiteDatabase and scripts/schema_sqlite.sql. cpap_session_date is
+    // the YYYYMMDD night the ring session belongs to, which is what every read
+    // path filters on; it is deliberately not a DATE so it round-trips as the
+    // same string on all three backends. filename is UNIQUE because upsert
+    // identity is the source file, letting a re-upload replace rather than
+    // duplicate a night.
+    exec(R"(
+        CREATE TABLE IF NOT EXISTS oximetry_sessions (
+            id               INT AUTO_INCREMENT PRIMARY KEY,
+            device_id        VARCHAR(255) NOT NULL,
+            filename         VARCHAR(255) NOT NULL UNIQUE,
+            start_time       DATETIME NOT NULL,
+            end_time         DATETIME NOT NULL,
+            duration_seconds INT,
+            sample_interval  DOUBLE,
+            avg_spo2         DOUBLE,
+            min_spo2         DOUBLE,
+            spo2_baseline    DOUBLE,
+            time_below_90    DOUBLE,
+            time_below_88    DOUBLE,
+            odi_3pct         DOUBLE,
+            desat_count      INT,
+            avg_hr           DOUBLE,
+            min_hr           INT,
+            max_hr           INT,
+            valid_samples    INT,
+            total_samples    INT,
+            cpap_session_date VARCHAR(8),
+            created_at       DATETIME NOT NULL DEFAULT NOW(),
+            -- Every oximetry read path filters on exactly this pair. Declared
+            -- inline rather than as a separate CREATE INDEX so re-running the
+            -- schema stays silent (MySQL has no CREATE INDEX IF NOT EXISTS).
+            KEY idx_oximetry_device_date (device_id, cpap_session_date)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    )");
+
+    exec(R"(
+        CREATE TABLE IF NOT EXISTS oximetry_samples (
+            id                  INT AUTO_INCREMENT PRIMARY KEY,
+            oximetry_session_id INT,
+            timestamp           DATETIME NOT NULL,
+            spo2                INT,
+            heart_rate          INT,
+            motion              INT,
+            vibration           INT,
+            valid               TINYINT,
+            source              VARCHAR(16) DEFAULT 'vld',
+            KEY idx_oximetry_samples_session (oximetry_session_id),
+            CONSTRAINT fk_oximetry_samples_session
+                FOREIGN KEY (oximetry_session_id)
+                REFERENCES oximetry_sessions(id) ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     )");
 
@@ -632,12 +758,178 @@ void MySQLDatabase::createSchema() {
             ('headgear',   'Headgear',   'accessory',  180, 1)
     )");
 
-    // Indexes
-    exec("CREATE INDEX idx_cpap_sessions_device ON cpap_sessions(device_id)");
-    exec("CREATE INDEX idx_cpap_sessions_start ON cpap_sessions(device_id, session_start)");
-    exec("CREATE INDEX idx_cpap_summaries_device_period ON cpap_summaries(device_id, period, range_end DESC)");
+    // Indexes are declared inline as KEY in the CREATE TABLE statements above.
+    // MySQL has no CREATE INDEX IF NOT EXISTS, so issuing them separately raised
+    // "Duplicate key name" on every single connect, three lines of noise per
+    // connection with nothing wrong.
+    //
+    // The two former cpap_sessions indexes are gone rather than moved: they were
+    // redundant against UNIQUE KEY uq_device_session (device_id, session_start),
+    // which already serves device_id as its leftmost prefix and the exact pair.
+
+    // CREATE TABLE IF NOT EXISTS only helps a fresh database. An install created
+    // by an older build keeps its old table shape forever, so bring it forward.
+    migrateSchema();
 
     std::cout << "MySQL: Schema created/verified" << std::endl;
+}
+
+bool MySQLDatabase::columnExists(const std::string& table, const std::string& column) {
+    if (!conn_) return false;
+
+    const char* sql =
+        "SELECT COUNT(*) FROM information_schema.COLUMNS "
+        "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?";
+
+    MysqlStmtGuard g;
+    g.stmt = mysql_stmt_init(conn_);
+    if (mysql_stmt_prepare(g.stmt, sql, std::strlen(sql)) != 0) return false;
+
+    ParamBinder p(2);
+    p.bindText(0, table);
+    p.bindText(1, column);
+    mysql_stmt_bind_param(g.stmt, p.data());
+    if (mysql_stmt_execute(g.stmt) != 0) return false;
+
+    ResultBinder r(1);
+    r.bindColInt(0);
+    mysql_stmt_bind_result(g.stmt, r.data());
+    mysql_stmt_store_result(g.stmt);
+
+    bool found = false;
+    if (mysql_stmt_fetch(g.stmt) == 0) found = r.colInt(0) > 0;
+    return found;
+}
+
+bool MySQLDatabase::tableExists(const std::string& table) {
+    if (!conn_) return false;
+
+    const char* sql =
+        "SELECT COUNT(*) FROM information_schema.TABLES "
+        "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?";
+
+    MysqlStmtGuard g;
+    g.stmt = mysql_stmt_init(conn_);
+    if (mysql_stmt_prepare(g.stmt, sql, std::strlen(sql)) != 0) return false;
+
+    ParamBinder p(1);
+    p.bindText(0, table);
+    mysql_stmt_bind_param(g.stmt, p.data());
+    if (mysql_stmt_execute(g.stmt) != 0) return false;
+
+    ResultBinder r(1);
+    r.bindColInt(0);
+    mysql_stmt_bind_result(g.stmt, r.data());
+    mysql_stmt_store_result(g.stmt);
+
+    bool found = false;
+    if (mysql_stmt_fetch(g.stmt) == 0) found = r.colInt(0) > 0;
+    return found;
+}
+
+int MySQLDatabase::addColumnIfMissing(const std::string& table,
+                                      const std::string& column,
+                                      const std::string& definition) {
+    // Checked rather than fired-and-ignored. MariaDB understands ADD COLUMN IF NOT
+    // EXISTS but Oracle MySQL does not, and letting it fail on every connect is
+    // what produced the "Duplicate key name" style log spam this backend just shed.
+    if (!tableExists(table)) return 0;      // fresh CREATE TABLE will handle it
+    if (columnExists(table, column)) return 0;
+
+    if (!exec("ALTER TABLE " + table + " ADD COLUMN " + column + " " + definition)) {
+        std::cerr << "MySQL: migration failed to add " << table << "." << column
+                  << std::endl;
+        return 0;
+    }
+    std::cout << "MySQL: migration added " << table << "." << column << std::endl;
+    return 1;
+}
+
+void MySQLDatabase::migrateSchema() {
+    // Mirrors the version-gated migrations DatabaseService runs for PostgreSQL and
+    // the ALTER pass SQLiteDatabase runs, so all three engines converge on the same
+    // shape. Every column the current CREATE TABLE statements declare is listed
+    // here; adding a column above without adding it here leaves existing MySQL
+    // installs broken, which is what tests/database/test_MySQLMigration.cpp guards.
+    struct Missing { const char* table; const char* column; const char* ddl; };
+
+    static const Missing kColumns[] = {
+        // v2.0.0 — PLD / ASV metrics
+        {"cpap_session_metrics", "avg_mask_pressure",      "DOUBLE"},
+        {"cpap_session_metrics", "avg_epr_pressure",       "DOUBLE"},
+        {"cpap_session_metrics", "avg_snore",              "DOUBLE"},
+        {"cpap_session_metrics", "avg_leak_rate",          "DOUBLE"},
+        {"cpap_session_metrics", "max_leak_rate",          "DOUBLE"},
+        {"cpap_session_metrics", "avg_target_ventilation", "DOUBLE"},
+        {"cpap_session_metrics", "therapy_mode",           "INT"},
+        {"cpap_calculated_metrics", "mask_pressure",       "DOUBLE"},
+        {"cpap_calculated_metrics", "epr_pressure",        "DOUBLE"},
+        {"cpap_calculated_metrics", "snore_index",         "DOUBLE"},
+        {"cpap_calculated_metrics", "target_ventilation",  "DOUBLE"},
+
+        // v2.2.0 — desaturation metrics
+        {"cpap_session_metrics", "odi",                    "DOUBLE"},
+
+        // Session bookkeeping the collector and SleepHQ export both read.
+        {"cpap_sessions", "session_end",       "DATETIME"},
+        {"cpap_sessions", "data_records",      "INT DEFAULT 0"},
+        {"cpap_sessions", "brp_file_path",     "VARCHAR(512)"},
+        {"cpap_sessions", "eve_file_path",     "VARCHAR(512)"},
+        {"cpap_sessions", "sad_file_path",     "VARCHAR(512)"},
+        {"cpap_sessions", "pld_file_path",     "VARCHAR(512)"},
+        {"cpap_sessions", "csl_file_path",     "VARCHAR(512)"},
+        {"cpap_sessions", "checkpoint_files",  "JSON"},
+        {"cpap_sessions", "force_completed",   "TINYINT DEFAULT 0"},
+        {"cpap_sessions", "created_at",        "DATETIME DEFAULT NOW()"},
+        {"cpap_sessions", "updated_at",        "DATETIME DEFAULT NOW() ON UPDATE NOW()"},
+
+        // Daily summary grew the STR-derived columns.
+        {"cpap_daily_summary", "mask_pairs",       "JSON DEFAULT (JSON_ARRAY())"},
+        {"cpap_daily_summary", "mask_events",      "INT DEFAULT 0"},
+        {"cpap_daily_summary", "patient_hours",    "DOUBLE DEFAULT 0"},
+        {"cpap_daily_summary", "hi",               "DOUBLE"},
+        {"cpap_daily_summary", "ai",               "DOUBLE"},
+        {"cpap_daily_summary", "oai",              "DOUBLE"},
+        {"cpap_daily_summary", "cai",              "DOUBLE"},
+        {"cpap_daily_summary", "uai",              "DOUBLE"},
+        {"cpap_daily_summary", "rin",              "DOUBLE"},
+        {"cpap_daily_summary", "csr",              "DOUBLE"},
+        {"cpap_daily_summary", "mode",             "INT"},
+        {"cpap_daily_summary", "epr_level",        "DOUBLE"},
+        {"cpap_daily_summary", "pressure_setting", "DOUBLE"},
+        {"cpap_daily_summary", "fault_device",     "INT DEFAULT 0"},
+        {"cpap_daily_summary", "fault_alarm",      "INT DEFAULT 0"},
+
+        // Oximetry metrics, added with the tables themselves.
+        {"oximetry_sessions", "avg_spo2",      "DOUBLE"},
+        {"oximetry_sessions", "min_spo2",      "DOUBLE"},
+        {"oximetry_sessions", "spo2_baseline", "DOUBLE"},
+        {"oximetry_sessions", "time_below_90", "DOUBLE"},
+        {"oximetry_sessions", "time_below_88", "DOUBLE"},
+        {"oximetry_sessions", "odi_3pct",      "DOUBLE"},
+        {"oximetry_sessions", "desat_count",   "INT"},
+        {"oximetry_sessions", "cpap_session_date", "VARCHAR(8)"},
+        {"oximetry_samples",  "spo2",          "INT"},
+        {"oximetry_samples",  "motion",        "INT"},
+        {"oximetry_samples",  "vibration",     "INT"},
+        {"oximetry_samples",  "valid",         "TINYINT"},
+        {"oximetry_samples",  "source",        "VARCHAR(16) DEFAULT 'vld'"},
+
+        // SDD-004 equipment
+        {"cpap_equipment_items", "variant",            "VARCHAR(128)"},
+        {"cpap_equipment_items", "started_using_at",   "VARCHAR(32)"},
+        {"cpap_equipment_items", "replace_after_days", "INT"},
+        {"cpap_equipment_items", "notes",              "VARCHAR(1000)"},
+    };
+
+    int applied = 0;
+    for (const auto& c : kColumns) {
+        applied += addColumnIfMissing(c.table, c.column, c.ddl);
+    }
+    if (applied > 0) {
+        std::cout << "MySQL: schema migration applied " << applied << " column(s)"
+                  << std::endl;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1531,9 +1823,11 @@ std::map<std::string, int> MySQLDatabase::getCheckpointFileSizes(
     mysql_stmt_bind_param(g.stmt, p.data());
     mysql_stmt_execute(g.stmt);
 
-    // checkpoint_files is JSON, fetched as string
+    // checkpoint_files is JSON, fetched as string. bindColString caps at the
+    // 256-byte inline buffer, which silently truncates a night carrying more than
+    // a handful of files and corrupts the parse, so take the wide buffer.
     ResultBinder r(1);
-    r.bindColString(0);
+    r.bindColStringN(0, kCheckpointJsonMax);
     mysql_stmt_bind_result(g.stmt, r.data());
     mysql_stmt_store_result(g.stmt);
 
@@ -1541,32 +1835,68 @@ std::map<std::string, int> MySQLDatabase::getCheckpointFileSizes(
         return {};
     }
 
-    // Parse simple JSON {"file1":123,"file2":456}
-    std::string json_str = r.colText(0);
     std::map<std::string, int> file_sizes;
+    parseCheckpointJson(r.colText(0), file_sizes);
+    return file_sizes;
+}
 
-    size_t pos = 0;
-    while ((pos = json_str.find("\"", pos)) != std::string::npos) {
-        size_t name_start = pos + 1;
-        size_t name_end = json_str.find("\"", name_start);
-        if (name_end == std::string::npos) break;
-        std::string filename = json_str.substr(name_start, name_end - name_start);
+std::map<std::string, int> MySQLDatabase::getCheckpointFilesByFolder(
+    const std::string& device_id,
+    const std::string& date_folder) {
 
-        size_t colon_pos = json_str.find(":", name_end);
-        if (colon_pos == std::string::npos) break;
-        size_t value_start = colon_pos + 1;
-        size_t value_end = json_str.find_first_of(",}", value_start);
-        if (value_end == std::string::npos) break;
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!conn_) return {};
 
-        std::string value_str = json_str.substr(value_start, value_end - value_start);
-        value_str.erase(0, value_str.find_first_not_of(" \t"));
-        value_str.erase(value_str.find_last_not_of(" \t") + 1);
+    // A cross-midnight session lands in the previous day's folder, so folder
+    // 20260418 can hold files named 20260419_*. Match either stem, same as the
+    // PostgreSQL path in DatabaseService::getCheckpointFilesByFolder.
+    int year = 0, month = 0, day = 0;
+    if (sscanf(date_folder.c_str(), "%4d%2d%2d", &year, &month, &day) != 3) return {};
 
-        file_sizes[filename] = std::stoi(value_str);
-        pos = value_end;
+    std::tm tm = {};
+    tm.tm_year = year - 1900;
+    tm.tm_mon  = month - 1;
+    tm.tm_mday = day + 1;
+    tm.tm_isdst = -1;
+    std::mktime(&tm);
+    char next_day[9];
+    std::strftime(next_day, sizeof(next_day), "%Y%m%d", &tm);
+
+    std::string like1 = "%" + date_folder + "%";
+    std::string like2 = "%" + std::string(next_day) + "%";
+
+    // JSON needs an explicit CHAR cast before LIKE.
+    const char* sql = R"(
+        SELECT checkpoint_files FROM cpap_sessions
+        WHERE device_id = ?
+          AND checkpoint_files IS NOT NULL
+          AND (CAST(checkpoint_files AS CHAR) LIKE ?
+            OR CAST(checkpoint_files AS CHAR) LIKE ?)
+    )";
+
+    MysqlStmtGuard g;
+    g.stmt = mysql_stmt_init(conn_);
+    mysql_stmt_prepare(g.stmt, sql, std::strlen(sql));
+
+    ParamBinder p(3);
+    p.bindText(0, device_id);
+    p.bindText(1, like1);
+    p.bindText(2, like2);
+    mysql_stmt_bind_param(g.stmt, p.data());
+    mysql_stmt_execute(g.stmt);
+
+    ResultBinder r(1);
+    r.bindColStringN(0, kCheckpointJsonMax);
+    mysql_stmt_bind_result(g.stmt, r.data());
+    mysql_stmt_store_result(g.stmt);
+
+    std::map<std::string, int> all_files;
+    while (mysql_stmt_fetch(g.stmt) == 0) {
+        if (r.colIsNull(0)) continue;
+        parseCheckpointJson(r.colText(0), all_files);
     }
 
-    return file_sizes;
+    return all_files;
 }
 
 bool MySQLDatabase::updateCheckpointFileSizes(
@@ -2264,6 +2594,475 @@ bool MySQLDatabase::saveSummary(
     std::cout << "MySQL: Saved " << period << " summary (" << range_start
               << " to " << range_end << ", " << nights_count << " nights)" << std::endl;
     return true;
+}
+
+// ---------------------------------------------------------------------------
+// Oximetry (O2 Ring)
+//
+// Ported from SQLiteDatabase/DatabaseService so MQTT sensors, PDF reports and the
+// daily aggregation behave identically on every backend. The duration_seconds > 60
+// floor on reads drops the stub sessions the ring writes when it is picked up and
+// put down again.
+// ---------------------------------------------------------------------------
+
+bool MySQLDatabase::saveOximetrySession(const std::string& device_id,
+                                        const cpapdash::parser::OximetrySession& session) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!conn_) { std::cerr << "MySQL: Not connected" << std::endl; return false; }
+
+    exec("START TRANSACTION");
+
+    // Upsert on filename: re-uploading a night replaces it rather than duplicating.
+    const char* sql = R"(
+        INSERT INTO oximetry_sessions
+            (device_id, filename, start_time, end_time, duration_seconds,
+             sample_interval, avg_spo2, min_spo2, spo2_baseline,
+             time_below_90, time_below_88, odi_3pct, desat_count,
+             avg_hr, min_hr, max_hr, valid_samples, total_samples,
+             cpap_session_date)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+            start_time        = VALUES(start_time),
+            end_time          = VALUES(end_time),
+            duration_seconds  = VALUES(duration_seconds),
+            sample_interval   = VALUES(sample_interval),
+            avg_spo2          = VALUES(avg_spo2),
+            min_spo2          = VALUES(min_spo2),
+            spo2_baseline     = VALUES(spo2_baseline),
+            time_below_90     = VALUES(time_below_90),
+            time_below_88     = VALUES(time_below_88),
+            odi_3pct          = VALUES(odi_3pct),
+            desat_count       = VALUES(desat_count),
+            avg_hr            = VALUES(avg_hr),
+            min_hr            = VALUES(min_hr),
+            max_hr            = VALUES(max_hr),
+            valid_samples     = VALUES(valid_samples),
+            total_samples     = VALUES(total_samples),
+            cpap_session_date = VALUES(cpap_session_date)
+    )";
+
+    {
+        MysqlStmtGuard g;
+        g.stmt = mysql_stmt_init(conn_);
+        if (mysql_stmt_prepare(g.stmt, sql, std::strlen(sql)) != 0) {
+            std::cerr << "MySQL: saveOximetrySession prepare error: "
+                      << mysql_stmt_error(g.stmt) << std::endl;
+            exec("ROLLBACK");
+            return false;
+        }
+
+        std::string start_str = fmtOximetryTimestamp(session.start_time);
+        std::string end_str   = fmtOximetryTimestamp(session.end_time);
+        std::string date_str  = session.date_str();
+
+        ParamBinder p(19);
+        p.bindText(0, device_id);
+        p.bindText(1, session.filename);
+        p.bindText(2, start_str);
+        p.bindText(3, end_str);
+        p.bindInt(4, session.duration_seconds);
+        p.bindDouble(5, session.sample_interval);
+        p.bindDouble(6, session.metrics.avg_spo2);
+        p.bindDouble(7, session.metrics.min_spo2);
+        p.bindDouble(8, session.metrics.spo2_baseline);
+        p.bindDouble(9, session.metrics.time_below_90_pct);
+        p.bindDouble(10, session.metrics.time_below_88_pct);
+        p.bindDouble(11, session.metrics.odi_3pct);
+        p.bindInt(12, session.metrics.desat_count_3pct);
+        p.bindDouble(13, session.metrics.avg_hr);
+        p.bindInt(14, session.metrics.min_hr);
+        p.bindInt(15, session.metrics.max_hr);
+        p.bindInt(16, session.metrics.valid_samples);
+        p.bindInt(17, session.metrics.total_samples);
+        p.bindText(18, date_str);
+        mysql_stmt_bind_param(g.stmt, p.data());
+
+        if (mysql_stmt_execute(g.stmt) != 0) {
+            std::cerr << "MySQL: saveOximetrySession error: "
+                      << mysql_stmt_error(g.stmt) << std::endl;
+            exec("ROLLBACK");
+            return false;
+        }
+    }
+
+    // LAST_INSERT_ID() is unreliable after ON DUPLICATE KEY UPDATE, so resolve the
+    // row by its unique key, same as insertSession does.
+    int64_t session_id = 0;
+    {
+        const char* lookup = "SELECT id FROM oximetry_sessions WHERE filename = ?";
+        MysqlStmtGuard g;
+        g.stmt = mysql_stmt_init(conn_);
+        mysql_stmt_prepare(g.stmt, lookup, std::strlen(lookup));
+
+        ParamBinder p(1);
+        p.bindText(0, session.filename);
+        mysql_stmt_bind_param(g.stmt, p.data());
+        mysql_stmt_execute(g.stmt);
+
+        ResultBinder r(1);
+        r.bindColInt64(0);
+        mysql_stmt_bind_result(g.stmt, r.data());
+        mysql_stmt_store_result(g.stmt);
+        if (mysql_stmt_fetch(g.stmt) == 0) session_id = r.colInt64(0);
+    }
+
+    if (session_id == 0) {
+        std::cerr << "MySQL: saveOximetrySession could not resolve session id" << std::endl;
+        exec("ROLLBACK");
+        return false;
+    }
+
+    // Replace samples wholesale so an upsert cannot leave stale rows behind.
+    {
+        const char* del = "DELETE FROM oximetry_samples WHERE oximetry_session_id = ?";
+        MysqlStmtGuard g;
+        g.stmt = mysql_stmt_init(conn_);
+        mysql_stmt_prepare(g.stmt, del, std::strlen(del));
+        ParamBinder p(1);
+        p.bindInt64(0, session_id);
+        mysql_stmt_bind_param(g.stmt, p.data());
+        mysql_stmt_execute(g.stmt);
+    }
+
+    if (!session.samples.empty()) {
+        const char* ins = R"(
+            INSERT INTO oximetry_samples
+                (oximetry_session_id, timestamp, spo2, heart_rate,
+                 motion, vibration, valid, source)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'vld')
+        )";
+
+        MysqlStmtGuard g;
+        g.stmt = mysql_stmt_init(conn_);
+        if (mysql_stmt_prepare(g.stmt, ins, std::strlen(ins)) != 0) {
+            std::cerr << "MySQL: oximetry sample prepare error: "
+                      << mysql_stmt_error(g.stmt) << std::endl;
+            exec("ROLLBACK");
+            return false;
+        }
+
+        for (const auto& s : session.samples) {
+            std::string ts = fmtOximetryTimestamp(s.timestamp);
+            ParamBinder p(7);
+            p.bindInt64(0, session_id);
+            p.bindText(1, ts);
+            p.bindInt(2, static_cast<int>(s.spo2));
+            p.bindInt(3, static_cast<int>(s.heart_rate));
+            p.bindInt(4, static_cast<int>(s.motion));
+            p.bindInt(5, static_cast<int>(s.vibration));
+            p.bindInt(6, s.valid() ? 1 : 0);
+            mysql_stmt_bind_param(g.stmt, p.data());
+
+            if (mysql_stmt_execute(g.stmt) != 0) {
+                std::cerr << "MySQL: oximetry sample insert error: "
+                          << mysql_stmt_error(g.stmt) << std::endl;
+            }
+        }
+    }
+
+    exec("COMMIT");
+    std::cout << "MySQL: Oximetry session saved (" << session.filename
+              << ", " << session.samples.size() << " samples)" << std::endl;
+    return true;
+}
+
+bool MySQLDatabase::oximetrySessionExists(const std::string& device_id,
+                                           const std::string& filename) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!conn_) return false;
+
+    const char* sql =
+        "SELECT EXISTS(SELECT 1 FROM oximetry_sessions "
+        "WHERE device_id = ? AND filename = ?)";
+
+    MysqlStmtGuard g;
+    g.stmt = mysql_stmt_init(conn_);
+    if (mysql_stmt_prepare(g.stmt, sql, std::strlen(sql)) != 0) return false;
+
+    ParamBinder p(2);
+    p.bindText(0, device_id);
+    p.bindText(1, filename);
+    mysql_stmt_bind_param(g.stmt, p.data());
+    if (mysql_stmt_execute(g.stmt) != 0) return false;
+
+    ResultBinder r(1);
+    r.bindColInt(0);
+    mysql_stmt_bind_result(g.stmt, r.data());
+    mysql_stmt_store_result(g.stmt);
+
+    bool exists = false;
+    if (mysql_stmt_fetch(g.stmt) == 0) exists = r.colInt(0) != 0;
+    return exists;
+}
+
+bool MySQLDatabase::saveLiveOximetrySample(const std::string& device_id,
+                                            const std::string& date,
+                                            int spo2, int hr, int motion) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!conn_) return false;
+
+    // One synthetic session per day collects the live stream.
+    std::string live_filename = "live_" + date + ".vld";
+
+    int64_t session_id = 0;
+    {
+        const char* sel = "SELECT id FROM oximetry_sessions WHERE device_id = ? AND filename = ?";
+        MysqlStmtGuard g;
+        g.stmt = mysql_stmt_init(conn_);
+        mysql_stmt_prepare(g.stmt, sel, std::strlen(sel));
+        ParamBinder p(2);
+        p.bindText(0, device_id);
+        p.bindText(1, live_filename);
+        mysql_stmt_bind_param(g.stmt, p.data());
+        mysql_stmt_execute(g.stmt);
+
+        ResultBinder r(1);
+        r.bindColInt64(0);
+        mysql_stmt_bind_result(g.stmt, r.data());
+        mysql_stmt_store_result(g.stmt);
+        if (mysql_stmt_fetch(g.stmt) == 0) session_id = r.colInt64(0);
+    }
+
+    if (session_id == 0) {
+        const char* ins = R"(
+            INSERT INTO oximetry_sessions
+                (device_id, filename, start_time, end_time, duration_seconds,
+                 sample_interval, valid_samples, total_samples)
+            VALUES (?, ?, NOW(), NOW(), 0, 0, 0, 0)
+        )";
+        MysqlStmtGuard g;
+        g.stmt = mysql_stmt_init(conn_);
+        mysql_stmt_prepare(g.stmt, ins, std::strlen(ins));
+        ParamBinder p(2);
+        p.bindText(0, device_id);
+        p.bindText(1, live_filename);
+        mysql_stmt_bind_param(g.stmt, p.data());
+        if (mysql_stmt_execute(g.stmt) != 0) {
+            std::cerr << "MySQL: live oximetry session insert error: "
+                      << mysql_stmt_error(g.stmt) << std::endl;
+            return false;
+        }
+        session_id = static_cast<int64_t>(mysql_insert_id(conn_));
+    }
+
+    {
+        const char* ins = R"(
+            INSERT INTO oximetry_samples
+                (oximetry_session_id, timestamp, spo2, heart_rate,
+                 motion, vibration, valid, source)
+            VALUES (?, NOW(), ?, ?, ?, 0, 1, 'live')
+        )";
+        MysqlStmtGuard g;
+        g.stmt = mysql_stmt_init(conn_);
+        mysql_stmt_prepare(g.stmt, ins, std::strlen(ins));
+        ParamBinder p(4);
+        p.bindInt64(0, session_id);
+        p.bindInt(1, spo2);
+        p.bindInt(2, hr);
+        p.bindInt(3, motion);
+        mysql_stmt_bind_param(g.stmt, p.data());
+        if (mysql_stmt_execute(g.stmt) != 0) {
+            std::cerr << "MySQL: live sample insert error: "
+                      << mysql_stmt_error(g.stmt) << std::endl;
+            return false;
+        }
+    }
+
+    {
+        const char* upd = R"(
+            UPDATE oximetry_sessions SET
+                end_time = NOW(),
+                duration_seconds = TIMESTAMPDIFF(SECOND, start_time, NOW()),
+                total_samples = (SELECT COUNT(*) FROM (
+                    SELECT id FROM oximetry_samples WHERE oximetry_session_id = ?
+                ) AS t),
+                valid_samples = (SELECT COUNT(*) FROM (
+                    SELECT id FROM oximetry_samples WHERE oximetry_session_id = ? AND valid = 1
+                ) AS v)
+            WHERE id = ?
+        )";
+        MysqlStmtGuard g;
+        g.stmt = mysql_stmt_init(conn_);
+        mysql_stmt_prepare(g.stmt, upd, std::strlen(upd));
+        ParamBinder p(3);
+        p.bindInt64(0, session_id);
+        p.bindInt64(1, session_id);
+        p.bindInt64(2, session_id);
+        mysql_stmt_bind_param(g.stmt, p.data());
+        mysql_stmt_execute(g.stmt);
+    }
+
+    return true;
+}
+
+IDatabase::OxiSummary MySQLDatabase::getOximetrySummary(
+    const std::string& device_id, const std::string& date,
+    const std::string& next_day) {
+
+    OxiSummary s;
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!conn_) return s;
+
+    // Either date matches, because a night's ring session is filed under the
+    // CPAP session date and can cross midnight.
+    const char* sql = R"(
+        SELECT avg_spo2, min_spo2, spo2_baseline, odi_3pct,
+               time_below_90, time_below_88, avg_hr, min_hr, max_hr,
+               valid_samples, duration_seconds
+        FROM oximetry_sessions
+        WHERE device_id = ?
+          AND (cpap_session_date = ? OR cpap_session_date = ?)
+          AND duration_seconds > 60
+        ORDER BY duration_seconds DESC
+        LIMIT 1
+    )";
+
+    MysqlStmtGuard g;
+    g.stmt = mysql_stmt_init(conn_);
+    if (mysql_stmt_prepare(g.stmt, sql, std::strlen(sql)) != 0) return s;
+
+    ParamBinder p(3);
+    p.bindText(0, device_id);
+    p.bindText(1, date);
+    p.bindText(2, next_day);
+    mysql_stmt_bind_param(g.stmt, p.data());
+    if (mysql_stmt_execute(g.stmt) != 0) return s;
+
+    ResultBinder r(11);
+    for (int i = 0; i < 7; ++i) r.bindColDouble(i);
+    for (int i = 7; i < 11; ++i) r.bindColInt(i);
+    mysql_stmt_bind_result(g.stmt, r.data());
+    mysql_stmt_store_result(g.stmt);
+
+    if (mysql_stmt_fetch(g.stmt) == 0) {
+        s.found            = true;
+        s.avg_spo2         = r.colDouble(0);
+        s.min_spo2         = r.colDouble(1);
+        s.spo2_baseline    = r.colDouble(2);
+        s.odi_3pct         = r.colDouble(3);
+        s.time_below_90    = r.colDouble(4);
+        s.time_below_88    = r.colDouble(5);
+        s.avg_hr           = r.colDouble(6);
+        s.min_hr           = r.colInt(7);
+        s.max_hr           = r.colInt(8);
+        s.valid_samples    = r.colInt(9);
+        s.duration_seconds = r.colInt(10);
+    }
+
+    return s;
+}
+
+IDatabase::OxiRangeSummary MySQLDatabase::getOximetryRangeSummary(
+    const std::string& device_id, const std::string& start,
+    const std::string& end) {
+
+    OxiRangeSummary s;
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!conn_) return s;
+
+    const char* sql = R"(
+        SELECT COUNT(*)                     AS nights,
+               ROUND(AVG(avg_spo2), 1)      AS avg_spo2,
+               MIN(min_spo2)                AS min_spo2,
+               ROUND(AVG(odi_3pct), 1)      AS avg_odi,
+               ROUND(AVG(time_below_90), 1) AS avg_below_90,
+               ROUND(AVG(avg_hr), 0)        AS avg_hr
+        FROM oximetry_sessions
+        WHERE device_id = ?
+          AND cpap_session_date >= ? AND cpap_session_date <= ?
+          AND duration_seconds > 60
+    )";
+
+    MysqlStmtGuard g;
+    g.stmt = mysql_stmt_init(conn_);
+    if (mysql_stmt_prepare(g.stmt, sql, std::strlen(sql)) != 0) return s;
+
+    ParamBinder p(3);
+    p.bindText(0, device_id);
+    p.bindText(1, start);
+    p.bindText(2, end);
+    mysql_stmt_bind_param(g.stmt, p.data());
+    if (mysql_stmt_execute(g.stmt) != 0) return s;
+
+    ResultBinder r(6);
+    r.bindColInt(0);
+    for (int i = 1; i < 6; ++i) r.bindColDouble(i);
+    mysql_stmt_bind_result(g.stmt, r.data());
+    mysql_stmt_store_result(g.stmt);
+
+    if (mysql_stmt_fetch(g.stmt) == 0) {
+        s.nights = r.colInt(0);
+        // COUNT(*) is always a row, so nights==0 means "no data", not "no result".
+        if (s.nights > 0) {
+            s.found        = true;
+            s.avg_spo2     = r.colDouble(1);
+            s.min_spo2     = r.colDouble(2);
+            s.avg_odi      = r.colDouble(3);
+            s.avg_below_90 = r.colDouble(4);
+            s.avg_hr       = r.colDouble(5);
+        }
+    }
+
+    return s;
+}
+
+std::vector<IDatabase::OxiNightlyPoint> MySQLDatabase::getOximetryNightlySpo2(
+    const std::string& device_id, const std::string& start, const std::string& end) {
+
+    std::vector<OxiNightlyPoint> pts;
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!conn_) return pts;
+
+    // One row per night, longest session winning a tie. PostgreSQL expresses this
+    // as DISTINCT ON, which MySQL lacks, so rank inside each night and keep the
+    // first. A plain GROUP BY would not work here: ONLY_FULL_GROUP_BY (default
+    // since 5.7) rejects bare columns, and without it MySQL picks an arbitrary row
+    // rather than the longest.
+    const char* sql = R"(
+        SELECT cpap_session_date, avg_spo2, min_spo2 FROM (
+            SELECT cpap_session_date, avg_spo2, min_spo2,
+                   ROW_NUMBER() OVER (PARTITION BY cpap_session_date
+                                      ORDER BY duration_seconds DESC) AS rn
+            FROM oximetry_sessions
+            WHERE device_id = ?
+              AND cpap_session_date >= ? AND cpap_session_date <= ?
+              AND avg_spo2 IS NOT NULL AND duration_seconds > 60
+        ) ranked
+        WHERE rn = 1
+        ORDER BY cpap_session_date ASC
+    )";
+
+    MysqlStmtGuard g;
+    g.stmt = mysql_stmt_init(conn_);
+    if (mysql_stmt_prepare(g.stmt, sql, std::strlen(sql)) != 0) {
+        std::cerr << "MySQL: getOximetryNightlySpo2 prepare error: "
+                  << mysql_stmt_error(g.stmt) << std::endl;
+        return pts;
+    }
+
+    ParamBinder p(3);
+    p.bindText(0, device_id);
+    p.bindText(1, start);
+    p.bindText(2, end);
+    mysql_stmt_bind_param(g.stmt, p.data());
+    if (mysql_stmt_execute(g.stmt) != 0) return pts;
+
+    ResultBinder r(3);
+    r.bindColString(0, 16);
+    r.bindColDouble(1);
+    r.bindColDouble(2);
+    mysql_stmt_bind_result(g.stmt, r.data());
+    mysql_stmt_store_result(g.stmt);
+
+    while (mysql_stmt_fetch(g.stmt) == 0) {
+        OxiNightlyPoint pt;
+        pt.date     = r.colText(0);
+        pt.avg_spo2 = r.colIsNull(1) ? 0 : r.colDouble(1);
+        pt.min_spo2 = r.colIsNull(2) ? 0 : r.colDouble(2);
+        pts.push_back(pt);
+    }
+
+    return pts;
 }
 
 // ---------------------------------------------------------------------------
@@ -3131,7 +3930,10 @@ Json::Value MySQLDatabase::executeQuery(const std::string& sql,
     std::vector<MYSQL_BIND> out_binds(num_cols);
     std::vector<std::vector<char>> buffers(num_cols, std::vector<char>(4096));
     std::vector<unsigned long> lengths(num_cols);
-    std::vector<my_bool> nulls(num_cols);
+    // Not a vector: where my_bool aliases to bool (Oracle MySQL 8+),
+    // std::vector<bool> is the bitset specialisation and &nulls[c] would not
+    // yield an addressable my_bool* for MYSQL_BIND::is_null.
+    std::unique_ptr<my_bool[]> nulls(new my_bool[num_cols]());
     memset(out_binds.data(), 0, sizeof(MYSQL_BIND) * num_cols);
     for (unsigned int c = 0; c < num_cols; ++c) {
         out_binds[c].buffer_type = MYSQL_TYPE_STRING;

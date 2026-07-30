@@ -3,7 +3,15 @@
 #ifdef WITH_MYSQL
 
 #include "database/IDatabase.h"
-#if __has_include(<mysql/mysql.h>)
+// Header layout differs per client and per platform. pkg-config points -I
+// straight at the directory holding mysql.h (Homebrew mysql-client gives
+// include/mysql, mariadb-connector-c gives include/mariadb, Debian's
+// libmariadb-dev gives /usr/include/mariadb), so the bare name is what
+// resolves once MYSQLCLIENT_INCLUDE_DIRS is on the search path. The prefixed
+// forms stay as fallbacks for builds that only have /usr/include.
+#if __has_include(<mysql.h>)
+#include <mysql.h>
+#elif __has_include(<mysql/mysql.h>)
 #include <mysql/mysql.h>
 #else
 #include <mariadb/mysql.h>
@@ -11,6 +19,14 @@
 #include <mutex>
 #include <string>
 #include <iostream>
+
+// Oracle dropped the my_bool typedef in MySQL 8.0 in favour of plain bool.
+// MariaDB (what Linux CI and the Synology NAS both use) still defines it, so
+// restore it only for an Oracle client that lacks it.
+#if defined(MYSQL_VERSION_ID) && MYSQL_VERSION_ID >= 80000 && \
+    !defined(MARIADB_BASE_VERSION) && !defined(MARIADB_VERSION_ID)
+using my_bool = bool;
+#endif
 
 namespace hms_cpap {
 
@@ -86,7 +102,7 @@ public:
 
     std::map<std::string, int> getCheckpointFilesByFolder(
         const std::string& device_id,
-        const std::string& date_folder) override { return {}; }
+        const std::string& date_folder) override;
 
     bool updateCheckpointFileSizes(
         const std::string& device_id,
@@ -119,27 +135,24 @@ public:
                      const std::string& summary_text) override;
 
     bool saveOximetrySession(const std::string& device_id,
-                             const cpapdash::parser::OximetrySession& session) override {
-        (void)device_id; (void)session;
-        std::cerr << "MySQL: saveOximetrySession not yet implemented" << std::endl;
-        return false;
-    }
+                             const cpapdash::parser::OximetrySession& session) override;
 
     bool oximetrySessionExists(const std::string& device_id,
-                               const std::string& filename) override {
-        (void)device_id; (void)filename;
-        return false;
-    }
+                               const std::string& filename) override;
 
-    bool saveLiveOximetrySample(const std::string&, const std::string&,
-                                 int, int, int) override { return false; }
+    bool saveLiveOximetrySample(const std::string& device_id,
+                                 const std::string& date,
+                                 int spo2, int hr, int motion) override;
 
-    OxiSummary getOximetrySummary(const std::string&, const std::string&,
-                                   const std::string&) override { return {}; }
-    OxiRangeSummary getOximetryRangeSummary(const std::string&, const std::string&,
-                                              const std::string&) override { return {}; }
-    std::vector<OxiNightlyPoint> getOximetryNightlySpo2(const std::string&, const std::string&,
-                                                         const std::string&) override { return {}; }
+    OxiSummary getOximetrySummary(const std::string& device_id,
+                                   const std::string& date_yyyymmdd,
+                                   const std::string& next_day_yyyymmdd) override;
+    OxiRangeSummary getOximetryRangeSummary(const std::string& device_id,
+                                              const std::string& start_yyyymmdd,
+                                              const std::string& end_yyyymmdd) override;
+    std::vector<OxiNightlyPoint> getOximetryNightlySpo2(const std::string& device_id,
+                                                         const std::string& start_yyyymmdd,
+                                                         const std::string& end_yyyymmdd) override;
 
     // -- Equipment profiles + supplies (SDD-004) ------------------------------
     // Conventions (see IDatabase.h): replace_after_days == -1 <-> SQL NULL,
@@ -176,6 +189,26 @@ public:
     Json::Value executeQuery(const std::string& sql,
                              const std::vector<std::string>& params = {}) override;
 
+    // -- Schema introspection + migration -------------------------------------
+    //
+    // Public because MySQL, unlike the other two engines, has no declarative way
+    // to reach these: it has neither ADD COLUMN IF NOT EXISTS (Oracle) nor a
+    // migration story of its own, so the drift guard in
+    // tests/database/test_MySQLMigration.cpp has to drive them directly.
+
+    bool tableExists(const std::string& table);
+    bool columnExists(const std::string& table, const std::string& column);
+
+    /// Returns 1 if a column was added, 0 if it already existed or the table is
+    /// absent (in which case CREATE TABLE will build it with the column present).
+    int addColumnIfMissing(const std::string& table, const std::string& column,
+                           const std::string& definition);
+
+    /// Bring an existing database forward to the shape createSchema() declares.
+    /// CREATE TABLE IF NOT EXISTS is a no-op on a table that already exists, so
+    /// without this an install made by an older build never gains new columns.
+    void migrateSchema();
+
 private:
     std::string host_;
     unsigned int port_;
@@ -193,6 +226,12 @@ private:
 
     /// Format a time_point as "YYYY-MM-DD HH:MM:SS"
     static std::string fmtTimestamp(const std::chrono::system_clock::time_point& tp);
+
+    /// Oximetry-only renderer. The oximetry parsers read the ring's printed time
+    /// as if it were UTC, so only a gmtime render gives that wall clock back;
+    /// fmtTimestamp would shift it by the host's UTC offset. See the definition.
+    static std::string fmtOximetryTimestamp(
+        const std::chrono::system_clock::time_point& tp);
 
     /// Upsert device during saveSession
     void upsertDevice(const CPAPSession& session);

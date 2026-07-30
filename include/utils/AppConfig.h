@@ -447,17 +447,23 @@ struct AppConfig {
             j["sleep_stage"]["model_dir"] = sleep_stage.model_dir;
             j["sleep_stage"]["model_version"] = sleep_stage.model_version;
 
+            // Secrets are written verbatim here. save() persists to disk, so
+            // redaction belongs only in toJson(), which answers the API. A
+            // masked value written here comes back as the literal token on the
+            // next load().
             j["cpapdash"]["enabled"] = cpapdash.enabled;
             j["cpapdash"]["api_url"] = cpapdash.api_url;
             j["cpapdash"]["token"] = cpapdash.token;
             j["cpapdash"]["auto_sync"] = cpapdash.auto_sync;
 
-            j["cpapdash"]["enabled"] = cpapdash.enabled;
-        j["cpapdash"]["api_url"] = cpapdash.api_url;
-        j["cpapdash"]["token"] = cpapdash.token.empty() ? "" : "********";
-        j["cpapdash"]["auto_sync"] = cpapdash.auto_sync;
+            j["fysetc"]["enabled"] = fysetc.enabled;
+            j["fysetc"]["listen_port"] = fysetc.listen_port;
+            j["fysetc"]["listen_bind"] = fysetc.listen_bind;
+            j["fysetc"]["connection_timeout_s"] = fysetc.connection_timeout_s;
+            j["fysetc"]["archive_dir"] = fysetc.archive_dir;
+            j["fysetc"]["log_dir"] = fysetc.log_dir;
 
-        j["sleephq"]["enabled"] = sleephq.enabled;
+            j["sleephq"]["enabled"] = sleephq.enabled;
             j["sleephq"]["client_id"] = sleephq.client_id;
             j["sleephq"]["client_secret"] = sleephq.client_secret;
             j["sleephq"]["auto_on_session"] = sleephq.auto_on_session;
@@ -533,6 +539,18 @@ struct AppConfig {
         j["sleephq"]["auto_on_session"] = sleephq.auto_on_session;
         j["sleephq"]["auto_on_backfill"] = sleephq.auto_on_backfill;
         j["sleephq"]["quiet_minutes"] = sleephq.quiet_minutes;
+
+        j["cpapdash"]["enabled"] = cpapdash.enabled;
+        j["cpapdash"]["api_url"] = cpapdash.api_url;
+        j["cpapdash"]["token"] = cpapdash.token.empty() ? "" : "********";
+        j["cpapdash"]["auto_sync"] = cpapdash.auto_sync;
+
+        j["fysetc"]["enabled"] = fysetc.enabled;
+        j["fysetc"]["listen_port"] = fysetc.listen_port;
+        j["fysetc"]["listen_bind"] = fysetc.listen_bind;
+        j["fysetc"]["connection_timeout_s"] = fysetc.connection_timeout_s;
+        j["fysetc"]["archive_dir"] = fysetc.archive_dir;
+        j["fysetc"]["log_dir"] = fysetc.log_dir;
 
         return j;
     }

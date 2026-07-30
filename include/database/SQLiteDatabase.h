@@ -71,7 +71,7 @@ public:
 
     std::map<std::string, int> getCheckpointFilesByFolder(
         const std::string& device_id,
-        const std::string& date_folder) override { return {}; }
+        const std::string& date_folder) override;
 
     bool updateCheckpointFileSizes(
         const std::string& device_id,
@@ -113,12 +113,15 @@ public:
                                  const std::string& date,
                                  int spo2, int hr, int motion) override;
 
-    OxiSummary getOximetrySummary(const std::string&, const std::string&,
-                                   const std::string&) override { return {}; }
-    OxiRangeSummary getOximetryRangeSummary(const std::string&, const std::string&,
-                                              const std::string&) override { return {}; }
-    std::vector<OxiNightlyPoint> getOximetryNightlySpo2(const std::string&, const std::string&,
-                                                         const std::string&) override { return {}; }
+    OxiSummary getOximetrySummary(const std::string& device_id,
+                                   const std::string& date_yyyymmdd,
+                                   const std::string& next_day_yyyymmdd) override;
+    OxiRangeSummary getOximetryRangeSummary(const std::string& device_id,
+                                              const std::string& start_yyyymmdd,
+                                              const std::string& end_yyyymmdd) override;
+    std::vector<OxiNightlyPoint> getOximetryNightlySpo2(const std::string& device_id,
+                                                         const std::string& start_yyyymmdd,
+                                                         const std::string& end_yyyymmdd) override;
 
     // -- Equipment profiles + supplies (SDD-004) ------------------------------
 
@@ -164,6 +167,12 @@ private:
 
     /// Format a time_point as "YYYY-MM-DD HH:MM:SS"
     static std::string fmtTimestamp(const std::chrono::system_clock::time_point& tp);
+
+    /// Oximetry-only renderer. The oximetry parsers read the ring's printed time
+    /// as if it were UTC, so only a gmtime render gives that wall clock back;
+    /// fmtTimestamp would shift it by the host's UTC offset. See the definition.
+    static std::string fmtOximetryTimestamp(
+        const std::chrono::system_clock::time_point& tp);
 
     /// Upsert device during saveSession
     void upsertDevice(const CPAPSession& session);

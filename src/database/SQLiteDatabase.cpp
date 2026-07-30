@@ -66,6 +66,37 @@ static void bind_opt_int(sqlite3_stmt* s, int i, const std::optional<int>& v, in
     bind_int(s, i, v.value_or(fallback));
 }
 
+// checkpoint_files is stored as a flat {"name":size,...} object. Merges into out
+// so callers can accumulate across several rows.
+static void parseCheckpointJson(const std::string& json_str,
+                                std::map<std::string, int>& out) {
+    size_t pos = 0;
+    while ((pos = json_str.find("\"", pos)) != std::string::npos) {
+        size_t name_start = pos + 1;
+        size_t name_end = json_str.find("\"", name_start);
+        if (name_end == std::string::npos) break;
+        std::string filename = json_str.substr(name_start, name_end - name_start);
+
+        size_t colon_pos = json_str.find(":", name_end);
+        if (colon_pos == std::string::npos) break;
+        size_t value_start = colon_pos + 1;
+        size_t value_end = json_str.find_first_of(",}", value_start);
+        if (value_end == std::string::npos) break;
+
+        std::string value_str = json_str.substr(value_start, value_end - value_start);
+        value_str.erase(0, value_str.find_first_not_of(" \t"));
+        value_str.erase(value_str.find_last_not_of(" \t") + 1);
+
+        try {
+            out[filename] = std::stoi(value_str);
+        } catch (const std::exception&) {
+            // Non-numeric value: not a size entry, skip it rather than abort the
+            // whole object.
+        }
+        pos = value_end;
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Ctor / Dtor
 // ---------------------------------------------------------------------------
@@ -86,6 +117,35 @@ std::string SQLiteDatabase::fmtTimestamp(const std::chrono::system_clock::time_p
     std::tm* tm = std::localtime(&t);
     std::ostringstream oss;
     oss << std::put_time(tm, "%Y-%m-%d %H:%M:%S");
+    return oss.str();
+}
+
+// Renders an oximetry time_point back to the wall clock the ring displayed.
+//
+// gmtime, not localtime, and that is not a typo. Every timestamp column in this
+// schema holds bare local wall clock with no zone attached, which each source
+// reaches by a matched parse/render pair:
+//
+//   CPAP      EDF wall clock -> mktime (local) -> localtime  -> same wall clock
+//   Oximetry  ring wall clock -> timegm (UTC)  -> gmtime     -> same wall clock
+//
+// The oximetry parsers (VLDParser, O2RingCsvParser) deliberately read the ring's
+// printed time AS IF it were UTC, so gmtime is the only render that gives it back.
+// Pairing their timegm parse with localtime silently shifted every oximetry
+// timestamp by the host's UTC offset, putting the SpO2 charts hours away from the
+// CPAP charts for the same night. cpap_session_date never had this problem because
+// OximetrySession::date_str() already renders with gmtime.
+std::string SQLiteDatabase::fmtOximetryTimestamp(
+    const std::chrono::system_clock::time_point& tp) {
+    auto t = std::chrono::system_clock::to_time_t(tp);
+    std::tm tm{};
+#ifdef _WIN32
+    gmtime_s(&tm, &t);
+#else
+    gmtime_r(&t, &tm);
+#endif
+    std::ostringstream oss;
+    oss << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");
     return oss.str();
 }
 
@@ -1287,6 +1347,53 @@ std::map<std::string, int> SQLiteDatabase::getCheckpointFileSizes(
     return file_sizes;
 }
 
+std::map<std::string, int> SQLiteDatabase::getCheckpointFilesByFolder(
+    const std::string& device_id,
+    const std::string& date_folder) {
+
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!db_) return {};
+
+    // A cross-midnight session lands in the previous day's folder, so folder
+    // 20260418 can hold files named 20260419_*. Match either stem, same as the
+    // PostgreSQL path in DatabaseService::getCheckpointFilesByFolder.
+    int year = 0, month = 0, day = 0;
+    if (sscanf(date_folder.c_str(), "%4d%2d%2d", &year, &month, &day) != 3) return {};
+
+    std::tm tm = {};
+    tm.tm_year = year - 1900;
+    tm.tm_mon  = month - 1;
+    tm.tm_mday = day + 1;
+    tm.tm_isdst = -1;
+    std::mktime(&tm);
+    char next_day[9];
+    std::strftime(next_day, sizeof(next_day), "%Y%m%d", &tm);
+
+    std::string like1 = "%" + date_folder + "%";
+    std::string like2 = "%" + std::string(next_day) + "%";
+
+    const char* sql = R"(
+        SELECT checkpoint_files FROM cpap_sessions
+        WHERE device_id = ?
+          AND checkpoint_files IS NOT NULL
+          AND (checkpoint_files LIKE ? OR checkpoint_files LIKE ?)
+    )";
+
+    StmtGuard g;
+    sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr);
+    bind_text(g.stmt, 1, device_id);
+    bind_text(g.stmt, 2, like1);
+    bind_text(g.stmt, 3, like2);
+
+    std::map<std::string, int> all_files;
+    while (sqlite3_step(g.stmt) == SQLITE_ROW) {
+        if (col_is_null(g.stmt, 0)) continue;
+        parseCheckpointJson(col_text(g.stmt, 0), all_files);
+    }
+
+    return all_files;
+}
+
 bool SQLiteDatabase::updateCheckpointFileSizes(
     const std::string& device_id,
     const std::chrono::system_clock::time_point& session_start,
@@ -2004,8 +2111,8 @@ bool SQLiteDatabase::saveOximetrySession(const std::string& device_id,
 
         bind_text(g.stmt, 1, device_id);
         bind_text(g.stmt, 2, session.filename);
-        bind_text(g.stmt, 3, fmtTimestamp(session.start_time));
-        bind_text(g.stmt, 4, fmtTimestamp(session.end_time));
+        bind_text(g.stmt, 3, fmtOximetryTimestamp(session.start_time));
+        bind_text(g.stmt, 4, fmtOximetryTimestamp(session.end_time));
         bind_int(g.stmt, 5, session.duration_seconds);
         bind_double(g.stmt, 6, session.sample_interval);
         bind_double(g.stmt, 7, session.metrics.avg_spo2);
@@ -2063,7 +2170,7 @@ bool SQLiteDatabase::saveOximetrySession(const std::string& device_id,
                 sqlite3_clear_bindings(gs.stmt);
 
                 bind_int64(gs.stmt, 1, session_id);
-                bind_text(gs.stmt, 2, fmtTimestamp(s.timestamp));
+                bind_text(gs.stmt, 2, fmtOximetryTimestamp(s.timestamp));
                 bind_int(gs.stmt, 3, static_cast<int>(s.spo2));
                 bind_int(gs.stmt, 4, static_cast<int>(s.heart_rate));
                 bind_int(gs.stmt, 5, static_cast<int>(s.motion));
@@ -2139,13 +2246,17 @@ bool SQLiteDatabase::saveLiveOximetrySample(const std::string& device_id,
         if (sqlite3_step(g1.stmt) == SQLITE_ROW) {
             session_id = sqlite3_column_int64(g1.stmt, 0);
         } else {
-            // Create session for today
+            // Create session for today.
+            // 'localtime': SQLite's datetime('now') is UTC, but every timestamp
+            // column here holds bare local wall clock (see
+            // fmtOximetryTimestamp). Storing UTC put live samples hours away
+            // from the CPAP data for the same night on any non-UTC host.
             StmtGuard g2;
             sqlite3_prepare_v2(db_, R"(
                 INSERT INTO oximetry_sessions
                     (device_id, filename, start_time, end_time, duration_seconds,
                      sample_interval, valid_samples, total_samples)
-                VALUES (?, ?, datetime('now'), datetime('now'), 0, 0, 0, 0)
+                VALUES (?, ?, datetime('now','localtime'), datetime('now','localtime'), 0, 0, 0, 0)
             )", -1, &g2.stmt, nullptr);
             bind_text(g2.stmt, 1, device_id);
             bind_text(g2.stmt, 2, live_filename);
@@ -2159,7 +2270,7 @@ bool SQLiteDatabase::saveLiveOximetrySample(const std::string& device_id,
             INSERT INTO oximetry_samples
                 (oximetry_session_id, timestamp, spo2, heart_rate,
                  motion, vibration, valid, source)
-            VALUES (?, datetime('now'), ?, ?, ?, 0, 1, 'live')
+            VALUES (?, datetime('now','localtime'), ?, ?, ?, 0, 1, 'live')
         )", -1, &gs.stmt, nullptr);
         bind_int64(gs.stmt, 1, session_id);
         bind_int(gs.stmt, 2, spo2);
@@ -2175,8 +2286,8 @@ bool SQLiteDatabase::saveLiveOximetrySample(const std::string& device_id,
         StmtGuard gu;
         sqlite3_prepare_v2(db_, R"(
             UPDATE oximetry_sessions SET
-                end_time = datetime('now'),
-                duration_seconds = CAST((julianday(datetime('now')) - julianday(start_time)) * 86400 AS INTEGER),
+                end_time = datetime('now','localtime'),
+                duration_seconds = CAST((julianday(datetime('now','localtime')) - julianday(start_time)) * 86400 AS INTEGER),
                 total_samples = (SELECT COUNT(*) FROM oximetry_samples WHERE oximetry_session_id = ?),
                 valid_samples = (SELECT COUNT(*) FROM oximetry_samples WHERE oximetry_session_id = ? AND valid = 1)
             WHERE id = ?
@@ -2192,6 +2303,140 @@ bool SQLiteDatabase::saveLiveOximetrySample(const std::string& device_id,
         std::cerr << "SQLite: saveLiveOximetrySample error: " << e.what() << std::endl;
         return false;
     }
+}
+
+// ---------------------------------------------------------------------------
+// Oximetry read paths. Mirrors DatabaseService (PostgreSQL) so MQTT sensors,
+// PDF reports and the daily aggregation behave identically on every backend.
+// The duration_seconds > 60 floor drops the stub sessions the ring writes when
+// it is picked up and put down again.
+// ---------------------------------------------------------------------------
+
+IDatabase::OxiSummary SQLiteDatabase::getOximetrySummary(
+    const std::string& device_id, const std::string& date,
+    const std::string& next_day) {
+
+    OxiSummary s;
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!db_) return s;
+
+    // Either date matches, because a night's ring session is filed under the
+    // CPAP session date and can cross midnight.
+    const char* sql = R"(
+        SELECT avg_spo2, min_spo2, spo2_baseline, odi_3pct,
+               time_below_90, time_below_88, avg_hr, min_hr, max_hr,
+               valid_samples, duration_seconds
+        FROM oximetry_sessions
+        WHERE device_id = ?
+          AND (cpap_session_date = ? OR cpap_session_date = ?)
+          AND duration_seconds > 60
+        ORDER BY duration_seconds DESC
+        LIMIT 1
+    )";
+
+    StmtGuard g;
+    sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr);
+    bind_text(g.stmt, 1, device_id);
+    bind_text(g.stmt, 2, date);
+    bind_text(g.stmt, 3, next_day);
+
+    if (sqlite3_step(g.stmt) == SQLITE_ROW) {
+        s.found            = true;
+        s.avg_spo2         = col_double(g.stmt, 0);
+        s.min_spo2         = col_double(g.stmt, 1);
+        s.spo2_baseline    = col_double(g.stmt, 2);
+        s.odi_3pct         = col_double(g.stmt, 3);
+        s.time_below_90    = col_double(g.stmt, 4);
+        s.time_below_88    = col_double(g.stmt, 5);
+        s.avg_hr           = col_double(g.stmt, 6);
+        s.min_hr           = col_int(g.stmt, 7);
+        s.max_hr           = col_int(g.stmt, 8);
+        s.valid_samples    = col_int(g.stmt, 9);
+        s.duration_seconds = col_int(g.stmt, 10);
+    }
+
+    return s;
+}
+
+IDatabase::OxiRangeSummary SQLiteDatabase::getOximetryRangeSummary(
+    const std::string& device_id, const std::string& start,
+    const std::string& end) {
+
+    OxiRangeSummary s;
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!db_) return s;
+
+    const char* sql = R"(
+        SELECT COUNT(*)              AS nights,
+               ROUND(AVG(avg_spo2), 1)      AS avg_spo2,
+               MIN(min_spo2)                AS min_spo2,
+               ROUND(AVG(odi_3pct), 1)      AS avg_odi,
+               ROUND(AVG(time_below_90), 1) AS avg_below_90,
+               ROUND(AVG(avg_hr), 0)        AS avg_hr
+        FROM oximetry_sessions
+        WHERE device_id = ?
+          AND cpap_session_date >= ? AND cpap_session_date <= ?
+          AND duration_seconds > 60
+    )";
+
+    StmtGuard g;
+    sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr);
+    bind_text(g.stmt, 1, device_id);
+    bind_text(g.stmt, 2, start);
+    bind_text(g.stmt, 3, end);
+
+    if (sqlite3_step(g.stmt) == SQLITE_ROW) {
+        s.nights = col_int(g.stmt, 0);
+        // COUNT(*) is always a row, so nights==0 means "no data", not "no result".
+        if (s.nights > 0) {
+            s.found        = true;
+            s.avg_spo2     = col_double(g.stmt, 1);
+            s.min_spo2     = col_double(g.stmt, 2);
+            s.avg_odi      = col_double(g.stmt, 3);
+            s.avg_below_90 = col_double(g.stmt, 4);
+            s.avg_hr       = col_double(g.stmt, 5);
+        }
+    }
+
+    return s;
+}
+
+std::vector<IDatabase::OxiNightlyPoint> SQLiteDatabase::getOximetryNightlySpo2(
+    const std::string& device_id, const std::string& start, const std::string& end) {
+
+    std::vector<OxiNightlyPoint> pts;
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!db_) return pts;
+
+    // One row per night, longest session winning a tie. PostgreSQL expresses this
+    // as DISTINCT ON; SQLite has no equivalent, but its bare-column rule inside
+    // GROUP BY takes the values from the row that produced MAX(duration_seconds),
+    // which is the same selection.
+    const char* sql = R"(
+        SELECT cpap_session_date, avg_spo2, min_spo2, MAX(duration_seconds)
+        FROM oximetry_sessions
+        WHERE device_id = ?
+          AND cpap_session_date >= ? AND cpap_session_date <= ?
+          AND avg_spo2 IS NOT NULL AND duration_seconds > 60
+        GROUP BY cpap_session_date
+        ORDER BY cpap_session_date ASC
+    )";
+
+    StmtGuard g;
+    sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr);
+    bind_text(g.stmt, 1, device_id);
+    bind_text(g.stmt, 2, start);
+    bind_text(g.stmt, 3, end);
+
+    while (sqlite3_step(g.stmt) == SQLITE_ROW) {
+        OxiNightlyPoint p;
+        p.date     = col_text(g.stmt, 0);
+        p.avg_spo2 = col_is_null(g.stmt, 1) ? 0 : col_double(g.stmt, 1);
+        p.min_spo2 = col_is_null(g.stmt, 2) ? 0 : col_double(g.stmt, 2);
+        pts.push_back(p);
+    }
+
+    return pts;
 }
 
 // ---------------------------------------------------------------------------

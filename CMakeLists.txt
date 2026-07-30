@@ -49,16 +49,57 @@ endif()
 
 # MySQL — optional
 if(BUILD_WITH_MYSQL)
-    find_package(PkgConfig REQUIRED)
-    pkg_check_modules(MYSQLCLIENT mysqlclient)
-    if(NOT MYSQLCLIENT_FOUND)
-        pkg_check_modules(MYSQLCLIENT mariadb)
+    set(_hms_mysql_found FALSE)
+
+    # Route 1: pkg-config (Linux, macOS). Module name varies by vendor: Oracle
+    # ships mysqlclient, Debian's libmariadb-dev ships mariadb, Homebrew's
+    # mariadb-connector-c ships libmariadb.
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(MYSQLCLIENT mysqlclient)
+        if(NOT MYSQLCLIENT_FOUND)
+            pkg_check_modules(MYSQLCLIENT mariadb)
+        endif()
+        if(NOT MYSQLCLIENT_FOUND)
+            pkg_check_modules(MYSQLCLIENT libmariadb)
+        endif()
+        if(MYSQLCLIENT_FOUND)
+            set(_hms_mysql_found TRUE)
+        endif()
     endif()
-    if(MYSQLCLIENT_FOUND)
+
+    # Route 2: direct search, for MSVC/vcpkg where pkg-config is normally absent
+    # and for any install that ships no .pc file.
+    #
+    # Searches into HMS_MYSQL_* rather than straight into MYSQLCLIENT_*: a failed
+    # pkg_check_modules still DEFINES MYSQLCLIENT_INCLUDE_DIRS as an empty cache
+    # entry, and find_path treats an already-set variable as done and skips the
+    # search entirely. The results are copied across once found so the link step
+    # below sees one pair of variables whichever route won.
+    if(NOT _hms_mysql_found)
+        find_path(HMS_MYSQL_INCLUDE_DIR mysql.h PATH_SUFFIXES mysql mariadb)
+        find_library(HMS_MYSQL_LIBRARY
+                     NAMES libmysql mysqlclient libmariadb mariadbclient)
+        if(HMS_MYSQL_INCLUDE_DIR AND HMS_MYSQL_LIBRARY)
+            set(MYSQLCLIENT_INCLUDE_DIRS   "${HMS_MYSQL_INCLUDE_DIR}")
+            set(MYSQLCLIENT_LINK_LIBRARIES "${HMS_MYSQL_LIBRARY}")
+            set(_hms_mysql_found TRUE)
+            message(STATUS "Found MySQL client: ${HMS_MYSQL_LIBRARY}")
+        endif()
+    endif()
+
+    if(_hms_mysql_found)
         add_definitions(-DWITH_MYSQL)
     else()
-        message(WARNING "MySQL/MariaDB client not found — MySQL support disabled")
-        set(BUILD_WITH_MYSQL OFF)
+        # Downgrading to OFF here used to leave BUILD_WITH_MYSQL=ON in the cache
+        # while WITH_MYSQL went undefined, producing a binary that accepts
+        # database.type="mysql" in config.json and then refuses to start. If the
+        # backend was asked for explicitly, fail now instead.
+        message(FATAL_ERROR
+            "BUILD_WITH_MYSQL=ON but no MySQL/MariaDB client was found. Install one, "
+            "or point the build at it. macOS: brew install mysql-client and "
+            "PKG_CONFIG_PATH=/opt/homebrew/opt/mysql-client/lib/pkgconfig. "
+            "Debian: apt install libmariadb-dev. MSVC: vcpkg install libmysql.")
     endif()
 endif()
 
@@ -245,7 +286,16 @@ add_executable(${PROJECT_NAME} ${SOURCES})
 # Include directories
 target_include_directories(${PROJECT_NAME} PRIVATE
     include
+    # SDD-005: vendored mjansson/mdns (Unlicense / public domain). Single
+    # self-contained header, used by DeviceDiscoveryService for the mDNS
+    # socket layer and query encoding.
+    third_party/mdns
 )
+
+if(WIN32)
+    # mdns.h needs these for GetAdaptersAddresses and the Winsock calls.
+    target_link_libraries(${PROJECT_NAME} ws2_32 iphlpapi)
+endif()
 
 # Link libraries
 if(MSVC)
@@ -293,7 +343,14 @@ endif()
 
 # MySQL libraries (optional)
 if(BUILD_WITH_MYSQL)
-    target_link_libraries(${PROJECT_NAME} ${MYSQLCLIENT_LIBRARIES})
+    # LINK_LIBRARIES carries absolute paths; LIBRARIES is bare -l names that need
+    # LIBRARY_DIRS to resolve for keg-only installs (Homebrew mysql-client).
+    if(MYSQLCLIENT_LINK_LIBRARIES)
+        target_link_libraries(${PROJECT_NAME} ${MYSQLCLIENT_LINK_LIBRARIES})
+    else()
+        target_link_directories(${PROJECT_NAME} PRIVATE ${MYSQLCLIENT_LIBRARY_DIRS})
+        target_link_libraries(${PROJECT_NAME} ${MYSQLCLIENT_LIBRARIES})
+    endif()
     target_include_directories(${PROJECT_NAME} PRIVATE ${MYSQLCLIENT_INCLUDE_DIRS})
 endif()
 

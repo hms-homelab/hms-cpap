@@ -8,6 +8,7 @@ include(GoogleTest)
 # Include directories (same as main project)
 include_directories(
     ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/third_party/mdns   # SDD-005: vendored mjansson/mdns
     ${CMAKE_CURRENT_SOURCE_DIR}   # shared test headers, e.g. EquipmentStubs.h
     ${GTEST_INCLUDE_DIRS}
 )
@@ -51,6 +52,8 @@ set(TEST_SOURCES
     parsers/test_STRParser_ASV.cpp
     database/test_DatabaseService.cpp
     database/test_EquipmentBackends.cpp
+    database/test_OximetryBackends.cpp
+    database/test_MySQLMigration.cpp
     services/test_BurstCollectorService.cpp
     services/test_DataPublisherService.cpp
     models/test_CPAPModels.cpp
@@ -96,6 +99,8 @@ set(TEST_SOURCES
     services/test_LiveSleepStageRunner.cpp
     services/test_SleepHqExportService.cpp
     services/test_CpapDashSyncService.cpp
+    services/test_DeviceDiscoveryService.cpp
+    services/test_SyncNow.cpp
     services/test_SupplyStatus.cpp
     services/test_SupplyPublisher.cpp
     controllers/test_EquipmentController.cpp
@@ -172,7 +177,17 @@ if(BUILD_WITH_POSTGRESQL)
 endif()
 
 if(BUILD_WITH_MYSQL)
-    target_link_libraries(run_tests ${MYSQLCLIENT_LIBRARIES})
+    # Must resolve to the SAME client library the main target links. Bare -l names
+    # let the linker pick whichever client happens to sit in a default path, and a
+    # run_tests on MariaDB Connector/C while hms_cpap is on libmysqlclient tests
+    # different TLS defaults than the binary that ships. Mirrors the root
+    # CMakeLists so both agree.
+    if(MYSQLCLIENT_LINK_LIBRARIES)
+        target_link_libraries(run_tests ${MYSQLCLIENT_LINK_LIBRARIES})
+    else()
+        target_link_directories(run_tests PRIVATE ${MYSQLCLIENT_LIBRARY_DIRS})
+        target_link_libraries(run_tests ${MYSQLCLIENT_LIBRARIES})
+    endif()
     target_include_directories(run_tests PRIVATE ${MYSQLCLIENT_INCLUDE_DIRS})
 endif()
 

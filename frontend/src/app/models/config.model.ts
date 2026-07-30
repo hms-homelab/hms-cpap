@@ -51,3 +51,18 @@ export interface AppConfig {
     auto_on_backfill: boolean;  // upload when local-mode/backfill ingests a night
   };
 }
+
+/**
+ * SDD-005: a CpapDash Mule and Miner unit found on the LAN via mDNS
+ * (`_cpapdash._tcp`). Mirrors the JSON from GET /api/discover/devices.
+ */
+export interface DiscoveredDevice {
+  instance: string;       // mDNS instance label, which is the unit serial
+  host: string;           // dotted-quad when an A record was supplied
+  port: number;
+  serial: string;
+  fw: string;
+  mode: string;           // 'proxy' (serves /dir + /download) or 'cloud'
+  local_capable: boolean; // only a proxy-mode unit can feed a local install
+  base_url: string;       // what gets written into config.ezshare_url
+}

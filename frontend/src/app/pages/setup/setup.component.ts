@@ -2,6 +2,7 @@ import { Component } from '@angular/core';
 import { Router } from '@angular/router';
 import { FormsModule } from '@angular/forms';
 import { CpapApiService } from '../../services/cpap-api.service';
+import { DiscoveredDevice } from '../../models/config.model';
 import { switchMap } from 'rxjs';
 
 @Component({
@@ -36,12 +37,12 @@ import { switchMap } from 'rxjs';
             <p class="subtitle">How should HMS-CPAP access your CPAP data?</p>
 
             <div class="radio-group">
-              <label class="radio-option" [class.selected]="source === 'ezshare'">
-                <input type="radio" name="source" value="ezshare"
+              <label class="radio-option" [class.selected]="source === 'mm'">
+                <input type="radio" name="source" value="mm"
                        [(ngModel)]="source" />
                 <div class="radio-content">
-                  <strong>ezShare WiFi SD</strong>
-                  <span>Wirelessly pull data from an ezShare WiFi SD card in your CPAP machine.</span>
+                  <strong>CpapDash Mule and Miner</strong>
+                  <span>Find your CpapDash bridge on this network automatically.</span>
                 </div>
               </label>
 
@@ -54,6 +55,15 @@ import { switchMap } from 'rxjs';
                 </div>
               </label>
 
+              <label class="radio-option" [class.selected]="source === 'ezshare'">
+                <input type="radio" name="source" value="ezshare"
+                       [(ngModel)]="source" />
+                <div class="radio-content">
+                  <strong>ezShare WiFi SD (advanced)</strong>
+                  <span>Pull directly from an ezShare WiFi SD card in your CPAP machine.</span>
+                </div>
+              </label>
+
               <label class="radio-option" [class.selected]="source === 'skip'">
                 <input type="radio" name="source" value="skip"
                        [(ngModel)]="source" />
@@ -63,6 +73,47 @@ import { switchMap } from 'rxjs';
                 </div>
               </label>
             </div>
+
+            @if (source === 'mm') {
+              <div class="source-config">
+                <div class="input-row">
+                  <button class="btn-secondary" (click)="scan()" [disabled]="scanning">
+                    {{ scanning ? 'Scanning...' : 'Scan network' }}
+                  </button>
+                </div>
+
+                @if (devices.length > 0) {
+                  <div class="device-list">
+                    @for (d of devices; track d.instance) {
+                      <label class="device"
+                             [class.selected]="selectedDevice?.instance === d.instance"
+                             [class.disabled]="!d.local_capable">
+                        <input type="radio" name="device"
+                               [value]="d.instance"
+                               [checked]="selectedDevice?.instance === d.instance"
+                               [disabled]="!d.local_capable"
+                               (change)="selectDevice(d)" />
+                        <div class="device-info">
+                          <strong>{{ d.serial || d.instance }}</strong>
+                          <span>
+                            {{ d.host }}@if (d.fw) { &middot; fw {{ d.fw }} }@if (!d.local_capable) { &middot; cloud mode, cannot sync locally }
+                          </span>
+                        </div>
+                      </label>
+                    }
+                  </div>
+                }
+
+                @if (scanned && devices.length === 0) {
+                  <div class="test-result error">
+                    No CpapDash units answered. Check that the bridge is powered on and
+                    joined to this same network, then scan again. Some routers block the
+                    discovery traffic; you can enter the address by hand with the
+                    advanced option below.
+                  </div>
+                }
+              </div>
+            }
 
             @if (source === 'ezshare') {
               <div class="source-config">
@@ -207,6 +258,61 @@ import { switchMap } from 'rxjs';
       margin-bottom: 1.5rem;
     }
 
+    .device-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      margin-top: 0.75rem;
+    }
+
+    .device {
+      display: flex;
+      align-items: flex-start;
+      gap: 0.75rem;
+      padding: 0.75rem;
+      border: 1px solid #333;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .device:hover {
+      border-color: #555;
+    }
+
+    .device.selected {
+      border-color: #64b5f6;
+      background: rgba(100, 181, 246, 0.06);
+    }
+
+    /* A cloud-mode unit is shown rather than hidden: seeing it greyed out with
+       a reason beats "we found nothing" when the bridge is sitting right
+       there and simply configured the other way. */
+    .device.disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .device input[type="radio"] {
+      margin-top: 3px;
+      accent-color: #64b5f6;
+    }
+
+    .device-info {
+      display: flex;
+      flex-direction: column;
+      gap: 0.2rem;
+    }
+
+    .device-info strong {
+      color: #e0e0e0;
+    }
+
+    .device-info span {
+      color: #888;
+      font-size: 0.85rem;
+    }
+
     .source-config label {
       display: block;
       color: #aaa;
@@ -316,7 +422,11 @@ import { switchMap } from 'rxjs';
 })
 export class SetupComponent {
   currentStep = 1;
-  source = 'ezshare';
+  // SDD-005: the Mule and Miner is the default path now. It resolves to
+  // source=ezshare underneath, because a proxy-mode mule serves the same
+  // /dir and /download an ezShare card does; 'mm' only ever names the way the
+  // user got there.
+  source = 'mm';
   ezshareUrl = 'http://192.168.4.1';
   localDir = '';
   testing = false;
@@ -324,7 +434,40 @@ export class SetupComponent {
   testResult: string | null = null;
   error: string | null = null;
 
+  scanning = false;
+  scanned = false;
+  devices: DiscoveredDevice[] = [];
+  selectedDevice: DiscoveredDevice | null = null;
+
   constructor(private api: CpapApiService, private router: Router) {}
+
+  scan(): void {
+    this.scanning = true;
+    this.error = null;
+    this.api.discoverDevices().subscribe({
+      next: (res) => {
+        this.devices = res.devices ?? [];
+        // One unit is the expected case (SDD-005: one user, one machine, one
+        // M&M). Preselecting the only usable one saves a click; when several
+        // answer, the user picks rather than us guessing.
+        const usable = this.devices.filter(d => d.local_capable);
+        this.selectedDevice = usable.length === 1 ? usable[0] : null;
+        this.scanning = false;
+        this.scanned = true;
+      },
+      error: () => {
+        this.devices = [];
+        this.selectedDevice = null;
+        this.scanning = false;
+        this.scanned = true;
+      }
+    });
+  }
+
+  selectDevice(d: DiscoveredDevice): void {
+    if (!d.local_capable) return;
+    this.selectedDevice = d;
+  }
 
   testEzshare(): void {
     this.testing = true;
@@ -347,7 +490,17 @@ export class SetupComponent {
 
     const configUpdate: Record<string, string> = {};
 
-    if (this.source === 'ezshare') {
+    if (this.source === 'mm') {
+      if (!this.selectedDevice) {
+        this.error = 'Scan and choose your CpapDash unit first, or pick another option.';
+        this.saving = false;
+        return;
+      }
+      // The whole M&M integration is these two lines. A proxy-mode mule is an
+      // ezShare server on the LAN, and EzShareClient already speaks to it.
+      configUpdate['source'] = 'ezshare';
+      configUpdate['ezshare_url'] = this.selectedDevice.base_url;
+    } else if (this.source === 'ezshare') {
       configUpdate['source'] = 'ezshare';
       configUpdate['ezshare_url'] = this.ezshareUrl;
     } else if (this.source === 'local') {

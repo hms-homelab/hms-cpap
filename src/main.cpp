@@ -463,21 +463,21 @@ int main(int argc, char** argv) {
     }
 
     // ── Create IDatabase from config ────────────────────────────────
-    std::shared_ptr<hms_cpap::IDatabase> db;
-    std::string pg_conn_str;  // reused later for web/agent
-    if (config.database.type == "postgresql") {
-#ifdef WITH_POSTGRESQL
-        pg_conn_str = "host=" + config.database.host + " port=" + std::to_string(config.database.port) +
-                      " dbname=" + config.database.name + " user=" + config.database.user +
-                      " password=" + config.database.password;
-        db = std::make_shared<hms_cpap::PostgresDatabase>(pg_conn_str);
-#else
-        std::cerr << "PostgreSQL support not compiled in" << std::endl;
+    // Backend selection goes through makeDatabaseFromConfig() so the service
+    // path, BurstCollectorService and the --backfill/--reparse CLI tools can
+    // never disagree on which DB to use. Hand-rolling it here is what left
+    // database.type="mysql" writing to MySQL from the collector while every
+    // reader fell through to SQLite. The env bridge above already published
+    // DB_TYPE and the DB_*/SQLITE_PATH vars the factory reads.
+    std::shared_ptr<hms_cpap::IDatabase> db = hms_cpap::makeDatabaseFromConfig();
+
+    // The factory downgrades to SQLite when a requested backend was not
+    // compiled in. Refuse to start instead: silently logging therapy data to an
+    // unexpected SQLite file the user never opens is worse than not starting.
+    if (config.database.type != "sqlite" && db->dbType() == hms_cpap::DbType::SQLITE) {
+        std::cerr << "Database backend '" << config.database.type
+                  << "' is not compiled into this build" << std::endl;
         return 1;
-#endif
-    } else {
-        // Default: SQLite
-        db = std::make_shared<hms_cpap::SQLiteDatabase>(config.database.sqlite_path);
     }
     db->connect();
 
@@ -571,20 +571,13 @@ int main(int argc, char** argv) {
                 ml_cfg.model_dir = data_dir + "/models";
             }
 
-            // Separate DB connection for ML (pqxx is not thread-safe)
+            // Separate DB connection for ML (client libs are not thread-safe)
             std::shared_ptr<hms_cpap::IDatabase> ml_db;
-            if (config.database.type == "postgresql") {
-#ifdef WITH_POSTGRESQL
-                std::string ml_conn = "host=" + config.database.host +
-                    " port=" + std::to_string(config.database.port) +
-                    " dbname=" + config.database.name +
-                    " user=" + config.database.user +
-                    " password=" + config.database.password;
-                ml_db = std::make_shared<hms_cpap::PostgresDatabase>(ml_conn);
-                ml_db->connect();
-#endif
+            if (config.database.type == "sqlite") {
+                ml_db = db;
             } else {
-                ml_db = db; // SQLite has its own locking
+                ml_db = hms_cpap::makeDatabaseFromConfig();
+                ml_db->connect();
             }
 
             // Create ML MQTT client (separate from burst service)
@@ -688,15 +681,15 @@ int main(int argc, char** argv) {
             int web_port = config.web_port;
             std::string static_dir = config.static_dir;
 
-            // Separate DB connection for web queries (pqxx is not thread-safe)
+            // Separate DB connection for web queries (neither pqxx nor the
+            // MySQL client is thread-safe). SQLite does its own locking, so it
+            // shares the collector's handle.
             std::shared_ptr<hms_cpap::IDatabase> web_db;
-            if (config.database.type == "postgresql") {
-#ifdef WITH_POSTGRESQL
-                web_db = std::make_shared<hms_cpap::PostgresDatabase>(pg_conn_str);
-                web_db->connect();
-#endif
+            if (config.database.type == "sqlite") {
+                web_db = db;
             } else {
-                web_db = db; // SQLite has its own locking
+                web_db = hms_cpap::makeDatabaseFromConfig();
+                web_db->connect();
             }
             auto query_service = std::make_shared<hms_cpap::QueryService>(
                 web_db ? web_db : db, config.device_id);
@@ -734,14 +727,14 @@ int main(int argc, char** argv) {
             {
                 std::string archive_dir = hms_cpap::ConfigManager::get("CPAP_ARCHIVE_DIR",
                     hms_cpap::AppConfig::dataDir());
+                // Own connection for the same thread-safety reason as web_db.
                 std::shared_ptr<hms_cpap::IDatabase> rpt_db;
-#ifdef WITH_POSTGRESQL
-                if (config.database.type == "postgresql") {
-                    rpt_db = std::make_shared<hms_cpap::PostgresDatabase>(pg_conn_str);
+                if (config.database.type == "sqlite") {
+                    rpt_db = db;
+                } else {
+                    rpt_db = hms_cpap::makeDatabaseFromConfig();
                     rpt_db->connect();
                 }
-#endif
-                if (!rpt_db) rpt_db = db;
 
                 std::shared_ptr<hms::MqttClient> rpt_mqtt;
                 if (config.mqtt.enabled) {
@@ -812,19 +805,17 @@ int main(int argc, char** argv) {
                 bf_cfg.sleephq.enabled = config.sleephq.enabled;
                 bf_cfg.sleephq.auto_on_backfill = config.sleephq.auto_on_backfill;
 
-                // Separate DB connection (pqxx not thread-safe)
+                // Separate DB connection (client libs not thread-safe)
                 std::shared_ptr<hms_cpap::IDatabase> bf_db;
-                if (config.database.type == "postgresql") {
-#ifdef WITH_POSTGRESQL
-                    bf_db = std::make_shared<hms_cpap::PostgresDatabase>(pg_conn_str);
-                    bf_db->connect();
-#endif
+                if (config.database.type == "sqlite") {
+                    bf_db = db;
                 } else {
-                    bf_db = db;  // SQLite has its own locking
+                    bf_db = hms_cpap::makeDatabaseFromConfig();
+                    bf_db->connect();
                 }
 
                 backfill_service = std::make_unique<hms_cpap::BackfillService>(
-                    bf_cfg, bf_db ? bf_db : db);
+                    bf_cfg, bf_db);
                 backfill_service->start();
 
                 hms_cpap::CpapController::backfill_trigger_ =
