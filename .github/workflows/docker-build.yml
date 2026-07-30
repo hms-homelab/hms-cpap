@@ -207,6 +207,12 @@ jobs:
 
     env:
       VCPKG_DEFAULT_TRIPLET: x64-windows-static-md
+      # Lifted to JOB level on purpose. A step's own `env:` block is not visible
+      # to that same step's `if:` expression, so guarding the signing steps on a
+      # step-local variable would silently evaluate to empty and skip forever,
+      # which is indistinguishable from "no certificate configured".
+      WINDOWS_CERT_PFX: ${{ secrets.WINDOWS_CERT_PFX }}
+      WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
 
     steps:
       - name: Checkout repository
@@ -282,11 +288,72 @@ jobs:
           }
           '@ | Out-File -Encoding utf8 release\config.example.json
 
+      # ── SDD-005 phase 3: tray shell + installer ─────────────────
+      # Both steps are continue-on-error so a desktop-packaging problem
+      # degrades to "zip only" rather than taking down the whole Windows
+      # artifact, which is what the release job actually needs.
+      - name: Build tray shell
+        id: tray
+        continue-on-error: true
+        run: |
+          dotnet publish desktop\windows\CpapDashDesktop\CpapDashDesktop.csproj `
+            -c Release -o dist-tray
+          # Staging dir the installer script reads from, mirroring the install
+          # layout: shell and service side by side.
+          mkdir dist-windows -Force
+          Copy-Item dist-tray\CpapDashDesktop.exe dist-windows\
+          Copy-Item -Recurse -Force release\* dist-windows\
+
+      - name: Sign binaries
+        id: sign
+        continue-on-error: true
+        # Skipped entirely until the OV certificate exists. Guarding on the
+        # secret rather than failing keeps forks and PRs building, and means
+        # adding the cert later needs no workflow change.
+        if: steps.tray.outcome == 'success' && env.WINDOWS_CERT_PFX != ''
+        run: |
+          [IO.File]::WriteAllBytes("cert.pfx", [Convert]::FromBase64String($env:WINDOWS_CERT_PFX))
+          $signtool = (Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter signtool.exe |
+                       Where-Object { $_.FullName -like "*x64*" } | Select-Object -First 1).FullName
+          & $signtool sign /f cert.pfx /p $env:WINDOWS_CERT_PASSWORD `
+            /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 `
+            dist-windows\CpapDashDesktop.exe dist-windows\hms_cpap.exe
+          Remove-Item cert.pfx
+
+      - name: Build installer
+        id: installer
+        continue-on-error: true
+        if: steps.tray.outcome == 'success'
+        run: |
+          choco install innosetup --no-progress -y
+          $version = (Get-Content VERSION).Trim()
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" `
+            "/DAppVersion=$version" /O"$PWD\dist-installer" desktop\windows\installer.iss
+
+      - name: Sign installer
+        continue-on-error: true
+        if: steps.installer.outcome == 'success' && env.WINDOWS_CERT_PFX != ''
+        run: |
+          [IO.File]::WriteAllBytes("cert.pfx", [Convert]::FromBase64String($env:WINDOWS_CERT_PFX))
+          $signtool = (Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter signtool.exe |
+                       Where-Object { $_.FullName -like "*x64*" } | Select-Object -First 1).FullName
+          & $signtool sign /f cert.pfx /p $env:WINDOWS_CERT_PASSWORD `
+            /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 `
+            dist-installer\CpapDashDesktop-Setup.exe
+          Remove-Item cert.pfx
+
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
           name: hms-cpap-windows-x64
           path: release/
+
+      - name: Upload Windows installer
+        if: steps.installer.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpapdash-desktop-setup
+          path: dist-installer/
 
   # ── macOS Build (Apple Silicon / arm64) ───────────────────────────
   # GitHub-hosted arm64 runner (free for public repos). Produces the
@@ -442,6 +509,14 @@ jobs:
           cd windows-release
           zip -r ../hms-cpap-windows-x64.zip .
 
+      - name: Download Windows installer
+        id: download-installer
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: cpapdash-desktop-setup
+          path: ./
+
       - name: Download macOS artifact
         id: download-macos
         continue-on-error: true
@@ -463,3 +538,4 @@ jobs:
           files: |
             hms-cpap-windows-x64.zip
             hms-cpap-macos-arm64.zip
+            CpapDashDesktop-Setup.exe
