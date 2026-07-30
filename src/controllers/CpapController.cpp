@@ -11,6 +11,13 @@
 #include <fstream>
 #include <regex>
 #include <sstream>
+#include <thread>
+#include <chrono>
+#ifndef _WIN32
+  #include <unistd.h>
+#else
+  #include <process.h>
+#endif
 #ifdef WITH_BLE
 #include <sdbus-c++/sdbus-c++.h>
 #endif
@@ -37,6 +44,10 @@ void CpapController::setConfig(hms_cpap::AppConfig* cfg, const std::string& path
 }
 
 void CpapController::setBurstService(BurstCollectorService* svc) { burst_service_ = svc; }
+
+void CpapController::setSyncService(std::shared_ptr<CpapDashSyncService> sync) {
+    sync_ = std::move(sync);
+}
 
 static drogon::HttpResponsePtr jsonError(const std::string& msg, drogon::HttpStatusCode code) {
     auto resp = drogon::HttpResponse::newHttpResponse();
@@ -377,6 +388,17 @@ void CpapController::updateConfig(const drogon::HttpRequestPtr& req,
     // Signal hot-reload to BurstCollectorService
     if (burst_service_) burst_service_->markConfigDirty();
 
+    // SDD-006 section 5: the cloud mirror took its settings once, in main.cpp,
+    // and nothing re-applied them. A token pasted into the Settings page
+    // therefore reached the file and the in-memory config but never the running
+    // service, so the next sync still used the old one. The wizard's restart hid
+    // this; the Settings page does not restart.
+    if (sync_) {
+        sync_->setSettings(CpapDashSyncService::Settings::from(
+            config_->cpapdash.enabled, config_->cpapdash.api_url,
+            config_->cpapdash.token, config_->cpapdash.auto_sync));
+    }
+
     // Return redacted config
     auto resp_json = config_->toJson();
     Json::Value result;
@@ -386,6 +408,323 @@ void CpapController::updateConfig(const drogon::HttpRequestPtr& req,
     Json::parseFromStream(builder, stream, &result, &errs);
 
     cb(jsonResp(result));
+}
+
+// ---------------------------------------------------------------------------
+// SDD-006 phase 2: database provisioning and apply
+//
+// Thin passthroughs. Everything decidable lives in SetupService, because the
+// test binary excludes src/controllers entirely, so logic placed here cannot be
+// tested at all.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+/// All three endpoints refuse once setup is finished, so a completed install
+/// does not leave database provisioning exposed on the LAN forever.
+bool setupStillOpen(const hms_cpap::AppConfig* cfg) {
+    return cfg && !cfg->setup_complete;
+}
+
+}  // namespace
+
+void CpapController::setupTestDb(const drogon::HttpRequestPtr& req,
+                                 std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    if (!setupStillOpen(config_)) {
+        cb(jsonError("Setup is already complete", drogon::k403Forbidden));
+        return;
+    }
+    auto body = req->getJsonObject();
+    if (!body) { cb(jsonError("Invalid JSON body", drogon::k400BadRequest)); return; }
+    auto& d = *body;
+
+    const std::string type = d.get("type", "sqlite").asString();
+    if (!SetupService::supportsBackend(type)) {
+        cb(jsonError("This build cannot open '" + type + "'", drogon::k400BadRequest));
+        return;
+    }
+
+    const auto probe = SetupService::probeDatabase(
+        type, d.get("host", "").asString(), d.get("port", 0).asInt(),
+        d.get("name", "").asString(), d.get("user", "").asString(),
+        d.get("password", "").asString(), d.get("sqlite_path", "").asString());
+
+    Json::Value result;
+    result["ok"] = probe.ok;
+    result["error"] = probe.error;
+    result["schema_present"] = probe.schema_present;
+    result["session_count"] = static_cast<Json::Int64>(probe.session_count);
+    cb(drogon::HttpResponse::newHttpJsonResponse(result));
+}
+
+void CpapController::setupCreateDb(const drogon::HttpRequestPtr& req,
+                                   std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    if (!setupStillOpen(config_)) {
+        cb(jsonError("Setup is already complete", drogon::k403Forbidden));
+        return;
+    }
+    auto body = req->getJsonObject();
+    if (!body) { cb(jsonError("Invalid JSON body", drogon::k400BadRequest)); return; }
+    auto& d = *body;
+
+    const std::string type = d.get("type", "").asString();
+    if (!SetupService::supportsBackend(type)) {
+        cb(jsonError("This build cannot open '" + type + "'", drogon::k400BadRequest));
+        return;
+    }
+
+    // Admin credentials are read here and never leave this scope: not written to
+    // config.json, not echoed in the response, not logged.
+    const auto result_probe = SetupService::provisionDatabase(
+        type, d.get("host", "").asString(), d.get("port", 0).asInt(),
+        d.get("name", "").asString(), d.get("user", "").asString(),
+        d.get("password", "").asString(),
+        d.get("admin_user", "").asString(), d.get("admin_password", "").asString());
+
+    Json::Value result;
+    result["ok"] = result_probe.ok;
+    result["error"] = result_probe.error;
+    result["schema_present"] = result_probe.schema_present;
+    result["session_count"] = static_cast<Json::Int64>(result_probe.session_count);
+    cb(drogon::HttpResponse::newHttpJsonResponse(result));
+}
+
+void CpapController::setupApply(const drogon::HttpRequestPtr& req,
+                                std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    if (!config_) {
+        cb(jsonError("Config not initialized", drogon::k500InternalServerError));
+        return;
+    }
+    if (!setupStillOpen(config_)) {
+        cb(jsonError("Setup is already complete", drogon::k403Forbidden));
+        return;
+    }
+    auto body = req->getJsonObject();
+    if (!body) { cb(jsonError("Invalid JSON body", drogon::k400BadRequest)); return; }
+    auto& j = *body;
+
+    if (j.isMember("database")) {
+        auto& d = j["database"];
+        const std::string type = d.get("type", "sqlite").asString();
+        if (!SetupService::supportsBackend(type)) {
+            cb(jsonError("This build cannot open '" + type + "'; refusing to write "
+                         "a config that would stop the service from starting",
+                         drogon::k400BadRequest));
+            return;
+        }
+        config_->database.type = type;
+        if (d.isMember("sqlite_path")) config_->database.sqlite_path = d["sqlite_path"].asString();
+        if (d.isMember("host")) config_->database.host = d["host"].asString();
+        if (d.isMember("port")) config_->database.port = d["port"].asInt();
+        if (d.isMember("name")) config_->database.name = d["name"].asString();
+        if (d.isMember("user")) config_->database.user = d["user"].asString();
+        if (d.isMember("password")) config_->database.password = d["password"].asString();
+    }
+    if (j.isMember("source"))      config_->source = j["source"].asString();
+    if (j.isMember("ezshare_url")) config_->ezshare_url = j["ezshare_url"].asString();
+    if (j.isMember("local_dir"))   config_->local_dir = j["local_dir"].asString();
+    if (j.isMember("archive_dir")) config_->archive_dir = j["archive_dir"].asString();
+
+    // SDD-006 phase 3: the advanced groups. Each is applied ONLY when the wizard
+    // sent it, because an untouched section must not overwrite what an upgrading
+    // user already has in config.json.
+    if (j.isMember("mqtt")) {
+        auto& m = j["mqtt"];
+        if (m.isMember("enabled"))  config_->mqtt.enabled  = m["enabled"].asBool();
+        if (m.isMember("broker"))   config_->mqtt.broker   = m["broker"].asString();
+        if (m.isMember("port"))     config_->mqtt.port     = m["port"].asInt();
+        if (m.isMember("username")) config_->mqtt.username = m["username"].asString();
+        if (m.isMember("password")) config_->mqtt.password = m["password"].asString();
+    }
+    if (j.isMember("llm")) {
+        auto& l = j["llm"];
+        if (l.isMember("enabled"))  config_->llm.enabled  = l["enabled"].asBool();
+        if (l.isMember("provider")) config_->llm.provider = l["provider"].asString();
+        if (l.isMember("endpoint")) config_->llm.endpoint = l["endpoint"].asString();
+        if (l.isMember("model"))    config_->llm.model    = l["model"].asString();
+    }
+    if (j.isMember("ml_training") && j["ml_training"].isMember("enabled"))
+        config_->ml_training.enabled = j["ml_training"]["enabled"].asBool();
+    if (j.isMember("sleep_stage") && j["sleep_stage"].isMember("enabled"))
+        config_->sleep_stage.enabled = j["sleep_stage"]["enabled"].asBool();
+    if (j.isMember("cpapdash")) {
+        auto& c = j["cpapdash"];
+        if (c.isMember("enabled"))   config_->cpapdash.enabled   = c["enabled"].asBool();
+        if (c.isMember("api_url"))   config_->cpapdash.api_url   = c["api_url"].asString();
+        if (c.isMember("token"))     config_->cpapdash.token     = c["token"].asString();
+        if (c.isMember("auto_sync")) config_->cpapdash.auto_sync = c["auto_sync"].asBool();
+    }
+
+    config_->setup_complete = true;
+    config_->save(config_path_);
+
+    const auto mode = SetupService::restartMode(SetupService::isSupervised(),
+                                                SetupService::executablePath());
+
+    Json::Value result;
+    result["accepted"] = true;
+    result["restarting"] = (mode != SetupService::RestartMode::Unsupported);
+    result["restart_mode"] =
+        mode == SetupService::RestartMode::SupervisedExit ? "supervised"
+      : mode == SetupService::RestartMode::ReExec        ? "reexec"
+                                                         : "manual";
+    if (mode == SetupService::RestartMode::Unsupported) {
+        // Said plainly rather than pretended: a database change cannot take
+        // effect without a restart, and if we cannot perform one the user has to.
+        result["message"] = "Settings saved. Restart hms_cpap for them to take effect.";
+    }
+
+    auto resp = drogon::HttpResponse::newHttpJsonResponse(result);
+    resp->setStatusCode(drogon::k202Accepted);
+    cb(resp);
+
+    if (mode == SetupService::RestartMode::Unsupported) return;
+
+    // Only AFTER the response has been handed back, and on a detached thread, so
+    // the 202 is actually flushed to the browser rather than dying with us.
+    const std::string exe = SetupService::executablePath();
+    std::thread([mode, exe]() {
+        std::this_thread::sleep_for(std::chrono::milliseconds(750));
+        if (mode == SetupService::RestartMode::SupervisedExit) {
+            std::exit(0);            // the SDD-005 shell respawns us
+        }
+#ifdef _WIN32
+        const char* argv[] = {exe.c_str(), nullptr};
+        _execv(exe.c_str(), const_cast<char* const*>(argv));
+#else
+        char* const argv[] = {const_cast<char*>(exe.c_str()), nullptr};
+        ::execv(exe.c_str(), argv);
+#endif
+        // execv only returns on failure, and by now the old process is no longer
+        // serving usefully, so exiting lets a supervisor notice.
+        std::exit(1);
+    }).detach();
+}
+
+void CpapController::autostartState(const drogon::HttpRequestPtr&,
+                                    std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    const bool supervised = SetupService::isSupervised();
+    const auto entry = SetupService::autostartEntry(SetupService::executablePath(),
+                                                    hms_cpap::AppConfig::homeDir());
+
+    Json::Value result;
+    result["can_manage"] = SetupService::canManageAutostart(supervised);
+    result["supervised"] = supervised;
+    result["supported"] = entry.error.empty();
+    result["error"] = entry.error;
+
+    bool installed = false;
+#ifndef _WIN32
+    if (!entry.path.empty()) {
+        std::error_code ec;
+        installed = std::filesystem::exists(entry.path, ec) && !ec;
+    }
+#endif
+    result["installed"] = installed;
+    cb(drogon::HttpResponse::newHttpJsonResponse(result));
+}
+
+void CpapController::setupAutostart(const drogon::HttpRequestPtr& req,
+                                    std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    auto body = req->getJsonObject();
+    const bool enable = body && body->isMember("enabled")
+                        ? (*body)["enabled"].asBool() : true;
+
+    if (!SetupService::canManageAutostart(SetupService::isSupervised())) {
+        // Not an error, a division of labour: the desktop shell already owns it.
+        cb(jsonError("Autostart is managed by CpapDash Desktop", drogon::k409Conflict));
+        return;
+    }
+
+    const bool boot = body && body->isMember("scope") &&
+                      (*body)["scope"].asString() == "boot";
+    const auto scope = boot ? SetupService::AutostartScope::Boot
+                            : SetupService::AutostartScope::Login;
+
+    const auto entry = SetupService::autostartEntry(SetupService::executablePath(),
+                                                    hms_cpap::AppConfig::homeDir(),
+                                                    scope);
+    if (!entry.error.empty()) {
+        cb(jsonError(entry.error, drogon::k400BadRequest));
+        return;
+    }
+
+    Json::Value result;
+
+    if (boot) {
+        // A boot service lives somewhere only root can write, and this process
+        // never elevates itself. So stage the generated file where the user can
+        // reach it and hand back the exact command to run. Telling someone what
+        // to run beats silently failing to write /Library or /etc.
+        std::string staged;
+        if (!entry.content.empty()) {
+            staged = hms_cpap::AppConfig::dataDir() + "/" +
+                     std::filesystem::path(entry.path).filename().string();
+            try {
+                std::filesystem::create_directories(hms_cpap::AppConfig::dataDir());
+                std::ofstream out(staged);
+                if (!out) throw std::runtime_error("cannot write " + staged);
+                out << entry.content;
+            } catch (const std::exception& e) {
+                cb(jsonError(e.what(), drogon::k500InternalServerError));
+                return;
+            }
+        }
+        std::string cmd = enable ? entry.install_command : entry.uninstall_command;
+        if (!staged.empty()) {
+            const std::string ph = "<generated>";
+            const auto pos = cmd.find(ph);
+            if (pos != std::string::npos) cmd.replace(pos, ph.size(), staged);
+        }
+
+        result["ok"] = true;
+        result["scope"] = "boot";
+        result["needs_elevation"] = entry.needs_elevation;
+        result["staged_file"] = staged;
+        result["command"] = cmd;
+        result["target_path"] = entry.path;
+        result["requires_helper"] = entry.requires_helper;
+        result["alternative_command"] = entry.alternative_command;
+        result["note"] = "Starts at boot, before anyone logs in. Run the command "
+                         "above once; it needs administrator rights.";
+        cb(drogon::HttpResponse::newHttpJsonResponse(result));
+        return;
+    }
+#ifdef _WIN32
+    // Registry work is left to the installer rather than hand-rolled here; the
+    // zip user on Windows is told what to do instead of being lied to.
+    result["ok"] = false;
+    result["message"] = "On Windows, use the CpapDash Desktop installer to start "
+                        "at login.";
+    cb(drogon::HttpResponse::newHttpJsonResponse(result));
+    return;
+#else
+    try {
+        const auto path = std::filesystem::path(entry.path);
+        if (enable) {
+            std::filesystem::create_directories(path.parent_path());
+            std::ofstream out(path);
+            if (!out) throw std::runtime_error("cannot write " + entry.path);
+            out << entry.content;
+            out.close();
+        } else {
+            std::error_code ec;
+            std::filesystem::remove(path, ec);
+        }
+        result["ok"] = true;
+        result["installed"] = enable;
+        result["path"] = entry.path;
+        // Said explicitly, because "autostart" reads as "on boot" to most people
+        // and this is not that.
+        result["note"] = enable
+            ? "Starts when you log in, not when the machine boots."
+            : "";
+    } catch (const std::exception& e) {
+        cb(jsonError(e.what(), drogon::k500InternalServerError));
+        return;
+    }
+    cb(drogon::HttpResponse::newHttpJsonResponse(result));
+#endif
 }
 
 void CpapController::capabilities(const drogon::HttpRequestPtr&,
@@ -1011,6 +1350,7 @@ void CpapController::sleephqExport(const drogon::HttpRequestPtr&,
 #ifndef _WIN32
 
 std::shared_ptr<ReportGeneratorService> CpapController::report_svc_;
+std::shared_ptr<CpapDashSyncService>   CpapController::sync_;
 
 void CpapController::setReportService(std::shared_ptr<ReportGeneratorService> svc) {
     report_svc_ = svc;

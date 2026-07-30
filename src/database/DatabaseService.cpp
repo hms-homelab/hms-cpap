@@ -25,6 +25,208 @@ bool DatabaseService::connect() {
         if (conn_->is_open()) {
             std::cout << "✅ DB: Connected to PostgreSQL (" << conn_->dbname() << ")" << std::endl;
 
+            // ---------------------------------------------------------------
+            // Core schema.
+            //
+            // SQLite and MySQL both build their whole schema in connect(). This
+            // backend did not: it only ran the incremental migrations below, and
+            // the core tables lived in scripts/schema.sql, which nothing ships
+            // and nothing applies. Pointing at a FRESH PostgreSQL database
+            // therefore produced an install that connected happily and then had
+            // no cpap_sessions to write to.
+            //
+            // That was invisible for as long as every PostgreSQL user had run
+            // scripts/schema.sql by hand. SDD-006's "create it for me" removes
+            // that step, so the gap becomes the default experience.
+            //
+            // Idempotent (CREATE TABLE IF NOT EXISTS) and ordered so foreign keys
+            // resolve, so an existing install re-runs this as a no-op. Keep in
+            // lockstep with scripts/schema.sql.
+            // ---------------------------------------------------------------
+            try {
+                pqxx::work txn(*conn_);
+                txn.exec(R"(
+                    CREATE TABLE IF NOT EXISTS cpap_devices (
+                    device_id       TEXT PRIMARY KEY,
+                    device_name     TEXT,
+                    serial_number   TEXT,
+                    model_id        INT DEFAULT 0,
+                    version_id      INT DEFAULT 0,
+                    last_seen       TIMESTAMP DEFAULT NOW(),
+                    created_at      TIMESTAMP DEFAULT NOW()
+                    )
+                )");
+                txn.exec(R"(
+                    CREATE TABLE IF NOT EXISTS cpap_sessions (
+                    id                SERIAL PRIMARY KEY,
+                    device_id         TEXT NOT NULL,
+                    session_start     TIMESTAMP NOT NULL,
+                    session_end       TIMESTAMP,
+                    duration_seconds  INT DEFAULT 0,
+                    data_records      INT DEFAULT 0,
+                    brp_file_path     TEXT,
+                    eve_file_path     TEXT,
+                    sad_file_path     TEXT,
+                    pld_file_path     TEXT,
+                    csl_file_path     TEXT,
+                    checkpoint_files  JSONB DEFAULT '{}'::jsonb,
+                    force_completed   BOOLEAN DEFAULT FALSE,
+                    session_status    VARCHAR(50) DEFAULT 'in_progress',
+                    created_at        TIMESTAMP DEFAULT NOW(),
+                    updated_at        TIMESTAMP DEFAULT NOW(),
+                    UNIQUE (device_id, session_start)
+                    )
+                )");
+                txn.exec(R"(
+                    CREATE TABLE IF NOT EXISTS cpap_session_metrics (
+                    id                     SERIAL PRIMARY KEY,
+                    session_id             INT NOT NULL UNIQUE,
+                    total_events           INT DEFAULT 0,
+                    ahi                    FLOAT DEFAULT 0,
+                    obstructive_apneas     INT DEFAULT 0,
+                    central_apneas         INT DEFAULT 0,
+                    hypopneas              INT DEFAULT 0,
+                    reras                  INT DEFAULT 0,
+                    clear_airway_apneas    INT DEFAULT 0,
+                    avg_event_duration     FLOAT,
+                    max_event_duration     FLOAT,
+                    time_in_apnea_percent  FLOAT,
+                    avg_spo2               FLOAT,
+                    min_spo2               FLOAT,
+                    spo2_drops             INT,
+                    odi                    FLOAT,
+                    avg_heart_rate         INT,
+                    max_heart_rate         INT,
+                    min_heart_rate         INT,
+                    avg_mask_pressure      FLOAT,
+                    avg_epr_pressure       FLOAT,
+                    avg_snore              FLOAT,
+                    leak_p50               FLOAT,
+                    leak_p95               FLOAT,
+                    avg_leak_rate          FLOAT,
+                    max_leak_rate          FLOAT,
+                    avg_target_ventilation FLOAT,
+                    therapy_mode           INT,
+                    created_at             TIMESTAMP DEFAULT NOW(),
+                    FOREIGN KEY (session_id) REFERENCES cpap_sessions(id) ON DELETE CASCADE
+                    )
+                )");
+                txn.exec(R"(
+                    CREATE TABLE IF NOT EXISTS cpap_breathing_summary (
+                    id              SERIAL PRIMARY KEY,
+                    session_id      INT NOT NULL,
+                    timestamp       TIMESTAMP NOT NULL,
+                    avg_flow_rate   FLOAT,
+                    max_flow_rate   FLOAT,
+                    min_flow_rate   FLOAT,
+                    avg_pressure    FLOAT,
+                    max_pressure    FLOAT,
+                    min_pressure    FLOAT,
+                    UNIQUE (session_id, timestamp),
+                    FOREIGN KEY (session_id) REFERENCES cpap_sessions(id) ON DELETE CASCADE
+                    )
+                )");
+                txn.exec(R"(
+                    CREATE TABLE IF NOT EXISTS cpap_breaths (
+                    id                SERIAL PRIMARY KEY,
+                    session_id        INTEGER NOT NULL REFERENCES cpap_sessions(id) ON DELETE CASCADE,
+                    onset             TIMESTAMP NOT NULL,
+                    tidal_volume      REAL,
+                    inspiratory_time  REAL,
+                    expiratory_time   REAL,
+                    flow_limitation   REAL,
+                    UNIQUE (session_id, onset)
+                    )
+                )");
+                txn.exec(R"(
+                    CREATE TABLE IF NOT EXISTS cpap_events (
+                    id                SERIAL PRIMARY KEY,
+                    session_id        INT NOT NULL,
+                    event_type        TEXT,
+                    event_timestamp   TIMESTAMP NOT NULL,
+                    duration_seconds  FLOAT DEFAULT 0,
+                    details           TEXT,
+                    UNIQUE (session_id, event_timestamp),
+                    FOREIGN KEY (session_id) REFERENCES cpap_sessions(id) ON DELETE CASCADE
+                    )
+                )");
+                txn.exec(R"(
+                    CREATE TABLE IF NOT EXISTS cpap_vitals (
+                    id          SERIAL PRIMARY KEY,
+                    session_id  INT NOT NULL,
+                    timestamp   TIMESTAMP NOT NULL,
+                    spo2        FLOAT,
+                    heart_rate  INT,
+                    UNIQUE (session_id, timestamp),
+                    FOREIGN KEY (session_id) REFERENCES cpap_sessions(id) ON DELETE CASCADE
+                    )
+                )");
+                txn.exec(R"(
+                    CREATE TABLE IF NOT EXISTS cpap_calculated_metrics (
+                    id                   SERIAL PRIMARY KEY,
+                    session_id           INT NOT NULL,
+                    timestamp            TIMESTAMP NOT NULL,
+                    respiratory_rate     FLOAT,
+                    tidal_volume         FLOAT,
+                    minute_ventilation   FLOAT,
+                    inspiratory_time     FLOAT,
+                    expiratory_time      FLOAT,
+                    ie_ratio             FLOAT,
+                    flow_limitation      FLOAT,
+                    leak_rate            FLOAT,
+                    flow_p95             FLOAT,
+                    flow_p90             FLOAT,
+                    pressure_p95         FLOAT,
+                    pressure_p90         FLOAT,
+                    mask_pressure        FLOAT,
+                    epr_pressure         FLOAT,
+                    snore_index          FLOAT,
+                    target_ventilation   FLOAT,
+                    UNIQUE (session_id, timestamp),
+                    FOREIGN KEY (session_id) REFERENCES cpap_sessions(id) ON DELETE CASCADE
+                    )
+                )");
+                txn.exec(R"(
+                    CREATE TABLE IF NOT EXISTS cpap_daily_summary (
+                    id                SERIAL PRIMARY KEY,
+                    device_id         TEXT NOT NULL,
+                    record_date       DATE NOT NULL,
+                    mask_pairs        JSONB DEFAULT '[]',
+                    mask_events       INT DEFAULT 0,
+                    duration_minutes  FLOAT DEFAULT 0,
+                    patient_hours     FLOAT DEFAULT 0,
+                    ahi               FLOAT, hi FLOAT, ai FLOAT, oai FLOAT, cai FLOAT, uai FLOAT,
+                    rin               FLOAT, csr FLOAT,
+                    mask_press_50     FLOAT, mask_press_95 FLOAT, mask_press_max FLOAT,
+                    leak_50           FLOAT, leak_95 FLOAT, leak_max FLOAT,
+                    spo2_50           FLOAT, spo2_95 FLOAT,
+                    resp_rate_50      FLOAT, tid_vol_50 FLOAT, min_vent_50 FLOAT,
+                    mode              INT, epr_level FLOAT, pressure_setting FLOAT,
+                    fault_device      INT DEFAULT 0,
+                    fault_alarm       INT DEFAULT 0,
+                    created_at        TIMESTAMP DEFAULT NOW(),
+                    updated_at        TIMESTAMP DEFAULT NOW(),
+                    UNIQUE (device_id, record_date)
+                    )
+                )");
+                txn.exec(R"(
+                    CREATE TABLE IF NOT EXISTS cpap_sleep_stages (
+                    id              SERIAL PRIMARY KEY,
+                    session_id      INTEGER NOT NULL REFERENCES cpap_sessions(id) ON DELETE CASCADE,
+                    epoch_start_ts  TIMESTAMPTZ NOT NULL,
+                    epoch_duration_sec INTEGER NOT NULL DEFAULT 30,
+                    stage           SMALLINT NOT NULL,         -- 0=Wake 1=Light 2=Deep 3=REM
+                    confidence      REAL NOT NULL,
+                    provisional     BOOLEAN NOT NULL DEFAULT FALSE,
+                    model_version   TEXT NOT NULL,
+                    UNIQUE (session_id, epoch_start_ts)
+                    )
+                )");
+                txn.commit();
+            } catch (const std::exception& e) {
+                std::cerr << "  DB: core schema creation failed: " << e.what() << std::endl;
+            }
+
             // Auto-migrate: add force_completed column if missing
             try {
                 pqxx::work txn(*conn_);

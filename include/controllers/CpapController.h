@@ -5,6 +5,7 @@
 #include "web/QueryService.h"
 #include "utils/AppConfig.h"
 #include "services/BurstCollectorService.h"
+#include "services/CpapDashSyncService.h"
 #ifndef _WIN32
 #include "services/ReportGeneratorService.h"
 #endif
@@ -35,6 +36,13 @@ public:
     ADD_METHOD_TO(CpapController::updateConfig,  "/api/config",              drogon::Put);
     ADD_METHOD_TO(CpapController::setupComplete, "/api/setup",               drogon::Post);
     ADD_METHOD_TO(CpapController::capabilities,  "/api/capabilities",        drogon::Get);
+    // SDD-006 phase 2. All three refuse once setup_complete is true, so a
+    // finished install does not expose database provisioning on the LAN forever.
+    ADD_METHOD_TO(CpapController::setupTestDb,   "/api/setup/test-db",       drogon::Post);
+    ADD_METHOD_TO(CpapController::setupCreateDb, "/api/setup/create-db",     drogon::Post);
+    ADD_METHOD_TO(CpapController::setupApply,    "/api/setup/apply",         drogon::Post);
+    ADD_METHOD_TO(CpapController::setupAutostart,"/api/setup/autostart",     drogon::Post);
+    ADD_METHOD_TO(CpapController::autostartState,"/api/setup/autostart",     drogon::Get);
     ADD_METHOD_TO(CpapController::testEzshare,   "/api/config/test-ezshare", drogon::Get);
     ADD_METHOD_TO(CpapController::testBle,       "/api/config/test-ble",     drogon::Get);
     ADD_METHOD_TO(CpapController::triggerMlTrain, "/api/ml/train",     drogon::Post);
@@ -107,6 +115,37 @@ public:
                       std::function<void(const drogon::HttpResponsePtr&)>&& cb);
     void setupComplete(const drogon::HttpRequestPtr& req,
                        std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+
+    /// SDD-006 phase 2. Connect with the candidate credentials and report
+    /// whether the target already holds sessions, so the wizard can say "this
+    /// database already has 412 sessions, they will be reused" instead of
+    /// leaving the user to guess whether they are merging into someone's data.
+    void setupTestDb(const drogon::HttpRequestPtr& req,
+                     std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+
+    /// SDD-006 phase 2. Provision the database and its owner using
+    /// REQUEST-SCOPED admin credentials, then reconnect as the ordinary user to
+    /// prove the result is usable: a successful CREATE DATABASE followed by a
+    /// failed GRANT otherwise looks like success and fails at first boot.
+    /// Admin credentials are never written to config.json, never returned and
+    /// never logged.
+    void setupCreateDb(const drogon::HttpRequestPtr& req,
+                       std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+
+    /// SDD-006 phase 2. Write config.json, set setup_complete, answer 202, and
+    /// only THEN restart, so the response is not lost with the process.
+    void setupApply(const drogon::HttpRequestPtr& req,
+                    std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+
+    /// SDD-006 phase 4. Install or remove the start-at-login entry.
+    /// Starts at LOGIN, not at boot; the wizard's label says so.
+    void setupAutostart(const drogon::HttpRequestPtr& req,
+                        std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+
+    /// Whether autostart is installed, and whether we may manage it at all
+    /// (the SDD-005 shell owns it when there is an installer).
+    void autostartState(const drogon::HttpRequestPtr& req,
+                        std::function<void(const drogon::HttpResponsePtr&)>&& cb);
     /// SDD-006: what this build can actually do. Thin passthrough to
     /// SetupService, where the logic is testable; the test binary excludes
     /// this file.
@@ -188,6 +227,10 @@ public:
     static void setConfig(hms_cpap::AppConfig* cfg, const std::string& config_path);
     static void setBurstService(BurstCollectorService* svc);
 
+    /// SDD-006 section 5: the live cloud-mirror instance, so PUT /api/config can
+    /// re-apply changed sync settings instead of only writing them to disk.
+    static void setSyncService(std::shared_ptr<CpapDashSyncService> sync);
+
     static std::function<void()> ml_train_trigger_;
     static std::function<Json::Value()> ml_status_getter_;
     static std::function<void(const std::string&, const std::string&, const std::string&)> backfill_trigger_;
@@ -202,6 +245,7 @@ private:
     static std::shared_ptr<QueryService>          qs_;
 #ifndef _WIN32
     static std::shared_ptr<ReportGeneratorService> report_svc_;
+    static std::shared_ptr<CpapDashSyncService>   sync_;
 #endif
     static hms_cpap::AppConfig* config_;
     static std::string config_path_;

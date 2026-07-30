@@ -1,6 +1,6 @@
 # SDD-006: First-run configuration wizard
 
-**Status:** Proposed
+**Status:** Implemented (phases 1-4)
 **Date:** 2026-07-29
 **Repo:** `hms-cpap` (public, MIT)
 **Version target:** 4.7.0, alongside SDD-005

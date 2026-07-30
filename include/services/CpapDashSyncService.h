@@ -57,6 +57,23 @@ public:
         std::string api_url  = "https://api.cpapdash.com";
         std::string token;                  // long-lived, pasted; never a password
         bool        auto_sync = false;      // sync after local edits, on the burst sweep
+
+        /// Build from the four config fields, in ONE place.
+        ///
+        /// SDD-006 section 5: main.cpp did this inline at startup and nothing
+        /// re-applied it afterwards, so a token changed through PUT /api/config
+        /// updated the file and the in-memory AppConfig and never reached the
+        /// running service. The wizard's restart hid it; the Settings page does
+        /// not restart, so it did not. Both call sites now go through here.
+        static Settings from(bool enabled, const std::string& api_url,
+                             const std::string& token, bool auto_sync) {
+            Settings s;
+            s.enabled = enabled;
+            if (!api_url.empty()) s.api_url = api_url;
+            s.token = token;
+            s.auto_sync = auto_sync;
+            return s;
+        }
     };
 
     struct Result {
