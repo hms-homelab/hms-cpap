@@ -1187,4 +1187,91 @@ TEST_F(PgDatabaseTest, GetOximetryNightlySpo2_OneRowPerDate) {
     EXPECT_TRUE(db_->getOximetryNightlySpo2("o2ring", "19990101", "19990102").empty());
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SDD-008 sync folder ledger
+//
+// The parity suite in test_SyncFolderBackends.cpp covers SQLite and MySQL; this
+// is the third backend. Postgres is the one that goes untested most easily here
+// because it needs a server, which is exactly how the 4.6.3 stubs survived on
+// the other two.
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_F(PgDatabaseTest, SyncFolder_EveryFieldSurvivesARoundTrip) {
+    FolderLedger f;
+    f.date_folder     = "29990101";
+    f.files_listed    = true;
+    f.complete        = true;
+    f.stable          = true;
+    f.last_total_size = 987654321LL;   // > 2^31, so a 32-bit column fails here
+    f.last_file_count = 42;
+    f.str_due         = true;
+    f.sidecars_due    = true;
+    f.resync_size     = 987654321LL;
+    f.resync_count    = 2;
+    ASSERT_TRUE(db_->upsertSyncFolder(f));
+
+    auto out = db_->getSyncFolder("29990101");
+    ASSERT_TRUE(out.has_value());
+    EXPECT_EQ(out->files_listed,    f.files_listed);
+    EXPECT_EQ(out->complete,        f.complete);
+    EXPECT_EQ(out->stable,          f.stable);
+    EXPECT_EQ(out->last_total_size, f.last_total_size);
+    EXPECT_EQ(out->last_file_count, f.last_file_count);
+    EXPECT_EQ(out->str_due,         f.str_due);
+    EXPECT_EQ(out->sidecars_due,    f.sidecars_due);
+    EXPECT_EQ(out->resync_size,     f.resync_size);
+    EXPECT_EQ(out->resync_count,    f.resync_count);
+}
+
+TEST_F(PgDatabaseTest, SyncFolder_NeverObservedSentinelIsNotFlattenedToZero) {
+    // -1 means "never observed" and 0 means "an empty folder". The two lead to
+    // opposite decisions, so a column that defaults the sentinel away would make
+    // a fresh folder look like it had already been seen as empty.
+    FolderLedger f;
+    f.date_folder = "29990102";
+    ASSERT_TRUE(db_->upsertSyncFolder(f));
+
+    auto out = db_->getSyncFolder("29990102");
+    ASSERT_TRUE(out.has_value());
+    EXPECT_EQ(out->last_total_size, -1);
+    EXPECT_EQ(out->last_file_count, -1);
+    EXPECT_EQ(out->resync_size,     -1);
+}
+
+TEST_F(PgDatabaseTest, SyncFolder_ReObservingUpdatesInPlace) {
+    // date_folder is the natural key. If the upsert inserted instead, a night
+    // re-scanned every 65 seconds would accumulate a row per burst.
+    FolderLedger f;
+    f.date_folder     = "29990103";
+    f.last_total_size = 500;
+    f.str_due         = true;
+    ASSERT_TRUE(db_->upsertSyncFolder(f));
+
+    f.last_total_size = 900;
+    f.str_due         = false;
+    ASSERT_TRUE(db_->upsertSyncFolder(f));
+
+    int matching = 0;
+    for (const auto& row : db_->listSyncFolders())
+        if (row.date_folder == "29990103") ++matching;
+    EXPECT_EQ(matching, 1) << "the upsert duplicated the night";
+
+    auto out = db_->getSyncFolder("29990103");
+    ASSERT_TRUE(out.has_value());
+    EXPECT_EQ(out->last_total_size, 900);
+    EXPECT_FALSE(out->str_due) << "clearing debt did not persist";
+}
+
+TEST_F(PgDatabaseTest, SyncFolder_UnknownFolderIsAbsentRatherThanDefaulted) {
+    // Returning a default-constructed ledger would read as "observed, empty, not
+    // complete" and quietly restart a night's history.
+    EXPECT_FALSE(db_->getSyncFolder("29991231").has_value());
+}
+
+TEST_F(PgDatabaseTest, SyncFolder_EmptyDateFolderIsRefused) {
+    FolderLedger f;
+    f.date_folder = "";
+    EXPECT_FALSE(db_->upsertSyncFolder(f));
+}
+
 #endif // WITH_POSTGRESQL

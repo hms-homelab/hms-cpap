@@ -13,6 +13,16 @@ h2 { color: #e0e0e0; margin-bottom: 1rem; }
   animation: pulse-live 1.5s ease-in-out infinite;
 }
 .done-badge { color: #666; font-size: 0.7rem; }
+/* SDD-008: amber, not red. A partial night is incomplete data, not an error the
+   user did something wrong to cause, and it usually resolves on its own. */
+.partial-badge {
+  color: #ffb74d;
+  font-size: 0.7rem;
+  border: 1px solid rgba(255, 183, 77, 0.4);
+  border-radius: 3px;
+  padding: 0 0.3rem;
+  cursor: help;
+}
 @keyframes pulse-live {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.5; }

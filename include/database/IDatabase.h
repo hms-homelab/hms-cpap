@@ -1,6 +1,7 @@
 #pragma once
 
 #include "parsers/CpapdashBridge.h"
+#include "services/SyncFolderState.h"
 #include <json/json.h>
 #include <chrono>
 #include <map>
@@ -355,6 +356,21 @@ public:
                                        const std::string& updated_at_override) = 0;
     /// Stamps last_done_at. `done_at_override` is for tests; "" means now.
     virtual bool markCleaningTaskDone(int id, const std::string& done_at_override) = 0;
+
+    // -- Sync folder ledger (SDD-008) -----------------------------------------
+    //
+    // One row per date folder on the card, tracking whether the night's FILES
+    // all arrived, which is a different question from whether the therapy ended.
+    // The transition logic lives in SyncFolderState (pure, no DB); this is only
+    // load and store.
+    //
+    // The ledger is derived state about a transfer, not user data: it is
+    // rebuildable from the card, never synced to the cloud, and safe to wipe.
+
+    virtual std::vector<FolderLedger> listSyncFolders() = 0;
+    virtual std::optional<FolderLedger> getSyncFolder(const std::string& date_folder) = 0;
+    /// Insert or update by date_folder, which is the natural key.
+    virtual bool upsertSyncFolder(const FolderLedger& f) = 0;
 
     virtual void* rawConnection() = 0;
 

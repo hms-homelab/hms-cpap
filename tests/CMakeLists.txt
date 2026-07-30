@@ -55,6 +55,7 @@ set(TEST_SOURCES
     database/test_OximetryBackends.cpp
     database/test_MySQLMigration.cpp
     database/test_CleaningBackends.cpp
+    database/test_SyncFolderBackends.cpp
     services/test_BurstCollectorService.cpp
     services/test_DataPublisherService.cpp
     models/test_CPAPModels.cpp
@@ -104,6 +105,7 @@ set(TEST_SOURCES
     services/test_SetupService.cpp
     services/test_CleaningStatus.cpp
     services/test_CleaningPublisher.cpp
+    services/test_SyncFolderState.cpp
     services/test_SyncNow.cpp
     services/test_SupplyStatus.cpp
     services/test_SupplyPublisher.cpp

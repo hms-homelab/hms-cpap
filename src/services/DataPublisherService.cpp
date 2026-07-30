@@ -730,6 +730,22 @@ void DataPublisherService::publishSTRState(const STRDailyRecord& record, double 
               << ", delta=" << delta << ")" << std::endl;
 }
 
+void DataPublisherService::publishNightPartial(const std::string& date_folder,
+                                               bool partial) {
+    if (!mqtt_client_) return;
+
+    // Retained, like every other state topic here, so a restarting Home
+    // Assistant sees the current answer rather than nothing. Publishing "OFF"
+    // rather than an empty payload on recovery is deliberate: an empty retained
+    // payload REMOVES the entity, and a night that recovers should flip its
+    // sensor back, not make it disappear.
+    mqtt_client_->publish("cpap/" + device_id_ + "/night/" + date_folder + "/partial",
+                          partial ? "ON" : "OFF", 0, true);
+
+    std::cout << "📤 MQTT: night " << date_folder << " partial="
+              << (partial ? "ON" : "OFF") << std::endl;
+}
+
 bool DataPublisherService::publishSessionCompleted() {
     if (!mqtt_client_) return true;
     std::cout << "📤 MQTT: Publishing session completed status..." << std::endl;

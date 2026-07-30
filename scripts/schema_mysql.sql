@@ -330,6 +330,28 @@ CREATE TABLE IF NOT EXISTS cleaning_tasks (
     FOREIGN KEY (item_id) REFERENCES cpap_equipment_items(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- SDD-008: one row per date folder on the card, recording whether the night's
+-- FILES all arrived, which is a different question from whether the therapy
+-- ended. Derived state about a transfer, not user data: rebuildable from the
+-- card, never synced, safe to wipe. date_folder is the natural key, so a
+-- re-scan updates in place instead of duplicating a night.
+CREATE TABLE IF NOT EXISTS cpap_sync_folders (
+    date_folder     VARCHAR(8) PRIMARY KEY,
+    files_listed    TINYINT(1) DEFAULT 0,
+    complete        TINYINT(1) DEFAULT 0,
+    stable          TINYINT(1) DEFAULT 0,
+    last_total_size BIGINT NOT NULL DEFAULT -1,
+    last_file_count INT NOT NULL DEFAULT -1,
+    str_due         TINYINT(1) DEFAULT 0,
+    str_day         VARCHAR(8),
+    sidecars_due    TINYINT(1) DEFAULT 0,
+    resync_size     BIGINT NOT NULL DEFAULT -1,
+    resync_count    INT NOT NULL DEFAULT 0,
+    updated_at      DATETIME DEFAULT NOW() ON UPDATE NOW(),
+    -- The sweep asks for outstanding debt every burst.
+    KEY idx_sync_folders_debt (str_due, sidecars_due)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 INSERT IGNORE INTO cleaning_task_types
     (task_key, label, applies_to_type_key, default_interval_days, is_system)
 VALUES

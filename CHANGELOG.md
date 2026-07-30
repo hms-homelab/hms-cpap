@@ -5,6 +5,42 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Partial sessions (SDD-008).** A transfer from the Mule and Miner that starts
+  and does not finish used to leave the night showing as live forever:
+  `BurstCollectorService` closed a session exactly one way, when the checkpoint
+  files stopped changing, and had no branch for the TRANSFER failing rather than
+  the therapy continuing. The night is now reported honestly as **partial**.
+  - New `cpap_sync_folders` ledger on **all three backends**, one row per date
+    folder, plus every column in `MySQLDatabase::migrateSchema()`. The
+    transition logic is a pure state machine with no DB, no clock and no I/O.
+  - **No grace windows anywhere**, by decision. State advances only on observed
+    facts: a stable signature, files stored, an STR parsed. An unreachable card
+    simply does not advance the state, which is the honest answer.
+  - Re-arming the STR/sidecar debt is **bounded** at the same signature. Upstream
+    measured 339 re-pulls of one folder in three days without that bound.
+  - Metrics and the LLM summary are **suppressed** for an incomplete night, which
+    publishes only the partial fact. A truncated night's AHI and usage hours are
+    wrong rather than uncertain, MQTT values are retained so Home Assistant keeps
+    them in history, and both are hard to retract.
+  - Partial nights are **excluded from compliance and trend aggregates** and shown
+    with a badge instead. A stalled transfer undercounts usage hours, so
+    including one can report someone below the 4-hour threshold on a night they
+    actually met it.
+  - Partial is never terminal: the night clears itself when its STR arrives.
+
+### Fixed
+- **The close edge never refetched the sidecars.** When every checkpoint file was
+  unchanged the collector marked the session complete and returned without
+  downloading anything, so an EVE or CSL file that grew inside a single KB
+  bucket after the last checkpoint change was never pulled again and its events
+  were lost silently. ezShare listings are KB-rounded, so a size comparison
+  cannot see that growth. The sidecars are now refetched on close, in full from
+  offset 0 -- never a ranged request, because an offset at or past the card's
+  real EOF hangs the ezShare.
+
 ## [4.7.0] - 2026-07-30
 
 ### Added

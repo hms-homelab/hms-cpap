@@ -68,3 +68,18 @@
                            const std::string&) override { return -1; }            \
     bool tombstoneCleaningTask(int, const std::string&) override { return false; }\
     bool markCleaningTaskDone(int, const std::string&) override { return false; }
+
+// SDD-008 sync folder ledger, in its OWN macro rather than folded into the one
+// above. A double that returns nothing here reads as "no folder has ever been
+// observed", which is the correct starting state and cannot fake progress --
+// but it also means a folder can never settle, since settling requires
+// comparing against a stored signature. Doubles that need the ledger to behave
+// (the burst-orchestration mock) implement these three themselves instead of
+// taking this macro. Anything storage-shaped uses a real engine via
+// test_SyncFolderBackends.cpp.
+#define HMS_CPAP_STUB_SYNC_FOLDER_METHODS                                        \
+    std::vector<FolderLedger> listSyncFolders() override { return {}; }          \
+    std::optional<FolderLedger> getSyncFolder(const std::string&) override {     \
+        return std::nullopt;                                                     \
+    }                                                                            \
+    bool upsertSyncFolder(const FolderLedger&) override { return false; }

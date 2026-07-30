@@ -33,6 +33,7 @@ using namespace hms_cpap;
 class FakeDb : public IDatabase {
 public:
     HMS_CPAP_STUB_EQUIPMENT_METHODS
+    HMS_CPAP_STUB_SYNC_FOLDER_METHODS
     bool connected_ = true;
     Json::Value rows_{Json::arrayValue};
     int query_count_ = 0;

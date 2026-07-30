@@ -63,6 +63,9 @@ const std::vector<Expected> kCriticalColumns = {
     {"oximetry_sessions", "avg_spo2", "getOximetrySummary"},
     {"oximetry_sessions", "cpap_session_date", "every oximetry read path"},
     {"oximetry_samples", "spo2", "session detail oximetry chart"},
+    {"cpap_sync_folders", "str_due", "SDD-008 partial-night detection"},
+    {"cpap_sync_folders", "sidecars_due", "SDD-008 EVE/CSL refetch"},
+    {"cpap_sync_folders", "resync_count", "SDD-008 re-arm bound"},
 };
 
 class MySQLMigrationTest : public ::testing::Test {

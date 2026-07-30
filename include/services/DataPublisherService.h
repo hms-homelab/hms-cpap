@@ -101,6 +101,19 @@ public:
     void publishInsights(const std::vector<Insight>& insights);
 
     /**
+     * SDD-008: publish ONLY the fact that a night is partial.
+     *
+     * Deliberately not accompanied by metrics. A truncated night's AHI and usage
+     * hours are WRONG rather than uncertain, and MQTT values are retained, so
+     * Home Assistant keeps them in its history where they are hard to retract.
+     * Publishing the state and nothing else is the honest option.
+     *
+     * @param partial true while the night is short of its STR; false publishes
+     *                the recovery, because partial is never terminal.
+     */
+    void publishNightPartial(const std::string& date_folder, bool partial);
+
+    /**
      * Publish LLM-generated session summary to MQTT.
      *
      * @param summary Generated summary text

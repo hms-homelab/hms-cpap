@@ -166,7 +166,20 @@ export class SessionsComponent implements OnInit, OnDestroy {
   }
 
   isLive(s: any): boolean {
+    // SDD-008: prefer the state the API derived from the transfer ledger. A
+    // partial night has session_end set but is NOT done, and the old test below
+    // would have called it Done, which is the mislabel this exists to stop.
+    if (s.night_state) return s.night_state === 'live';
     return s.has_live === 't' || s.has_live === '1' || s.has_live === true || !s.session_end;
+  }
+
+  /**
+   * SDD-008: the transfer settled without the machine's own daily record. The
+   * night is shown, not hidden, but marked, and it is left out of compliance
+   * and trend aggregates because its usage hours are short rather than unknown.
+   */
+  isPartial(s: any): boolean {
+    return s.night_state === 'partial' || s.partial === true || s.partial === 't';
   }
 
   fmtDuration(val: string | number | undefined): string {

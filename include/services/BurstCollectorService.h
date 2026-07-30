@@ -294,6 +294,75 @@ private:
     void captureCardResidue(const std::string& archive_root);
 
     /**
+     * SDD-008: fold this burst's view of the card into the per-folder ledger.
+     *
+     * One observation per date folder (file count, total KB, whether every listed
+     * file is stored locally), fed through advanceFolder and persisted. Acts on
+     * the close edge: arms the STR and sidecar debts, and refetches the sidecars.
+     *
+     * Called with whatever the burst listed, so a folder the card did not report
+     * this cycle simply does not advance. That is the honest answer, and it is
+     * why there are no grace windows here.
+     */
+    void updateFolderLedgers(const std::vector<SessionFileSet>& sessions,
+                             const std::string& local_base_dir);
+
+    /**
+     * SDD-008: re-download a folder's EVE and CSL files in full.
+     *
+     * MUST fetch from offset 0. Not an optimization gap: ezShare listings are
+     * KB-rounded, so nothing can prove where the file really ends, and a ranged
+     * request at or past the card's real EOF HANGS the ezShare. The regular
+     * download path already does this (downloadFile, not the range-append
+     * smartDownload); this exists because the close path never re-downloads at
+     * all, which is how sub-KB sidecar growth was being lost.
+     *
+     * @return true when every sidecar present in the set was refetched.
+     */
+    bool refetchSidecars(const std::vector<const SessionFileSet*>& sets,
+                         const std::string& local_base_dir);
+
+    /**
+     * SDD-008: is this night short of its STR?
+     *
+     * DERIVED, never stored. The folder is the local calendar date the session
+     * started; its ledger row says whether the transfer settled and whether the
+     * machine's own daily record ever arrived. A stored flag would be a second
+     * source of truth that goes stale every time a night recovers.
+     *
+     * Returns false when there is no ledger row at all, which is the honest
+     * answer for the local-directory and Prisma sources: their files are on a
+     * filesystem, so there is no transfer that can stall.
+     */
+    bool isNightPartial(const std::chrono::system_clock::time_point& session_start) const;
+
+    /**
+     * SDD-008: publish a finished night's outcome.
+     *
+     * Full metrics plus the LLM summary when the transfer actually finished;
+     * ONLY the partial fact when it did not. Suppression is the point: a
+     * truncated night's AHI and usage hours are WRONG rather than uncertain,
+     * MQTT values are retained so Home Assistant keeps them in history, and a
+     * stored LLM summary narrates a night that did not happen that way. Both
+     * are hard to retract, which is why the decision lives in one place instead
+     * of being repeated at each publish site.
+     *
+     * @return true when the full metrics were published, false when the night
+     *         was partial and only the fact was. Callers use this to gate
+     *         follow-on aggregates, which must not be recomputed off a night
+     *         whose usage hours are known to be short.
+     */
+    bool publishNightOutcome(const std::chrono::system_clock::time_point& session_start);
+
+    /**
+     * SDD-008: clear the STR debt for every folder whose day now has a parsed
+     * STR record. Called after processSTRFile, so the debt clears ON RECOVERY
+     * and never on a timer: a dead card is not hammered, and "not here yet"
+     * stays distinguishable from "never coming".
+     */
+    void clearStrDebtForParsedDays(const std::vector<std::string>& record_dates);
+
+    /**
      * Process manufacturer-specific summary data on session completion.
      * ResMed: download + parse STR.edf, save to DB, publish to MQTT.
      * Lowenstein: parse statistics_year.bin (future).

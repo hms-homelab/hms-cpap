@@ -816,6 +816,28 @@ void MySQLDatabase::createSchema() {
             ('filter_check',     'Check the filter',              'filter',     30, 1)
     )");
 
+    // SDD-008: one row per date folder on the card, recording whether the
+    // night's FILES all arrived. Derived state about a transfer, not user data:
+    // rebuildable from the card, never synced, safe to wipe. date_folder is the
+    // natural key, so a re-scan updates in place instead of duplicating a night.
+    exec(R"(
+        CREATE TABLE IF NOT EXISTS cpap_sync_folders (
+            date_folder     VARCHAR(8) PRIMARY KEY,
+            files_listed    TINYINT(1) DEFAULT 0,
+            complete        TINYINT(1) DEFAULT 0,
+            stable          TINYINT(1) DEFAULT 0,
+            last_total_size BIGINT NOT NULL DEFAULT -1,
+            last_file_count INT NOT NULL DEFAULT -1,
+            str_due         TINYINT(1) DEFAULT 0,
+            str_day         VARCHAR(8),
+            sidecars_due    TINYINT(1) DEFAULT 0,
+            resync_size     BIGINT NOT NULL DEFAULT -1,
+            resync_count    INT NOT NULL DEFAULT 0,
+            updated_at      DATETIME DEFAULT NOW() ON UPDATE NOW(),
+            KEY idx_sync_folders_debt (str_due, sidecars_due)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    )");
+
     // Indexes are declared inline as KEY in the CREATE TABLE statements above.
     // MySQL has no CREATE INDEX IF NOT EXISTS, so issuing them separately raised
     // "Duplicate key name" on every single connect, three lines of noise per
@@ -993,6 +1015,21 @@ void MySQLDatabase::migrateSchema() {
         {"cleaning_tasks", "deleted",       "TINYINT(1) DEFAULT 0"},
         {"cleaning_tasks", "created_at",    "DATETIME DEFAULT NOW()"},
         {"cleaning_tasks", "updated_at",    "DATETIME DEFAULT NOW() ON UPDATE NOW()"},
+
+        // SDD-008 sync folder ledger. Same rule as above: an install that
+        // already has the table never gains anything CREATE TABLE declares
+        // later, so every column is listed here from the start.
+        {"cpap_sync_folders", "files_listed",    "TINYINT(1) DEFAULT 0"},
+        {"cpap_sync_folders", "complete",        "TINYINT(1) DEFAULT 0"},
+        {"cpap_sync_folders", "stable",          "TINYINT(1) DEFAULT 0"},
+        {"cpap_sync_folders", "last_total_size", "BIGINT NOT NULL DEFAULT -1"},
+        {"cpap_sync_folders", "last_file_count", "INT NOT NULL DEFAULT -1"},
+        {"cpap_sync_folders", "str_due",         "TINYINT(1) DEFAULT 0"},
+        {"cpap_sync_folders", "str_day",         "VARCHAR(8)"},
+        {"cpap_sync_folders", "sidecars_due",    "TINYINT(1) DEFAULT 0"},
+        {"cpap_sync_folders", "resync_size",     "BIGINT NOT NULL DEFAULT -1"},
+        {"cpap_sync_folders", "resync_count",    "INT NOT NULL DEFAULT 0"},
+        {"cpap_sync_folders", "updated_at",      "DATETIME DEFAULT NOW() ON UPDATE NOW()"},
 
         // SDD-004 equipment
         {"cpap_equipment_items", "variant",            "VARCHAR(128)"},
@@ -4325,6 +4362,137 @@ bool MySQLDatabase::markCleaningTaskDone(int id, const std::string& done_at_over
     mysql_stmt_bind_param(g.stmt, p.data());
     if (mysql_stmt_execute(g.stmt) != 0) return false;
     return mysql_stmt_affected_rows(g.stmt) > 0;
+}
+
+// ---------------------------------------------------------------------------
+// Sync folder ledger (SDD-008)
+// ---------------------------------------------------------------------------
+
+namespace {
+constexpr const char* kSyncFolderCols =
+    "date_folder, files_listed, complete, stable, last_total_size, "
+    "last_file_count, str_due, str_day, sidecars_due, resync_size, resync_count";
+
+// Binds the 10 columns above, in order, so list/get cannot drift apart.
+void bindSyncFolderCols(ResultBinder& r) {
+    r.bindColString(0, 16);   // date_folder
+    r.bindColInt(1);          // files_listed
+    r.bindColInt(2);          // complete
+    r.bindColInt(3);          // stable
+    r.bindColInt64(4);        // last_total_size
+    r.bindColInt(5);          // last_file_count
+    r.bindColInt(6);          // str_due
+    r.bindColString(7, 16);   // str_day
+    r.bindColInt(8);          // sidecars_due
+    r.bindColInt64(9);        // resync_size
+    r.bindColInt(10);         // resync_count
+}
+
+FolderLedger readSyncFolderRow(const ResultBinder& r) {
+    FolderLedger f;
+    f.date_folder     = r.colText(0);
+    f.files_listed    = r.colInt(1) != 0;
+    f.complete        = r.colInt(2) != 0;
+    f.stable          = r.colInt(3) != 0;
+    f.last_total_size = r.colInt64(4);
+    f.last_file_count = r.colInt(5);
+    f.str_due         = r.colInt(6) != 0;
+    f.str_day         = r.colIsNull(7) ? "" : r.colText(7);
+    f.sidecars_due    = r.colInt(8) != 0;
+    f.resync_size     = r.colInt64(9);
+    f.resync_count    = r.colInt(10);
+    return f;
+}
+} // namespace
+
+std::vector<FolderLedger> MySQLDatabase::listSyncFolders() {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::vector<FolderLedger> out;
+    if (!conn_) return out;
+
+    const std::string sql = std::string("SELECT ") + kSyncFolderCols +
+                            " FROM cpap_sync_folders ORDER BY date_folder";
+    MysqlStmtGuard g;
+    g.stmt = mysql_stmt_init(conn_);
+    if (mysql_stmt_prepare(g.stmt, sql.c_str(), sql.size()) != 0) return out;
+    if (mysql_stmt_execute(g.stmt) != 0) return out;
+
+    ResultBinder r(11);
+    bindSyncFolderCols(r);
+    mysql_stmt_bind_result(g.stmt, r.data());
+    mysql_stmt_store_result(g.stmt);
+    while (mysql_stmt_fetch(g.stmt) == 0) out.push_back(readSyncFolderRow(r));
+    return out;
+}
+
+std::optional<FolderLedger> MySQLDatabase::getSyncFolder(const std::string& date_folder) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!conn_) return std::nullopt;
+
+    const std::string sql = std::string("SELECT ") + kSyncFolderCols +
+                            " FROM cpap_sync_folders WHERE date_folder = ?";
+    MysqlStmtGuard g;
+    g.stmt = mysql_stmt_init(conn_);
+    if (mysql_stmt_prepare(g.stmt, sql.c_str(), sql.size()) != 0) return std::nullopt;
+
+    ParamBinder p(1);
+    p.bindText(0, date_folder);
+    mysql_stmt_bind_param(g.stmt, p.data());
+    if (mysql_stmt_execute(g.stmt) != 0) return std::nullopt;
+
+    ResultBinder r(11);
+    bindSyncFolderCols(r);
+    mysql_stmt_bind_result(g.stmt, r.data());
+    mysql_stmt_store_result(g.stmt);
+    if (mysql_stmt_fetch(g.stmt) != 0) return std::nullopt;
+    return readSyncFolderRow(r);
+}
+
+bool MySQLDatabase::upsertSyncFolder(const FolderLedger& f) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!conn_ || f.date_folder.empty()) return false;
+
+    // Upsert on the natural key: a re-scan of the same night updates in place
+    // rather than accumulating rows.
+    const char* sql = R"(
+        INSERT INTO cpap_sync_folders
+            (date_folder, files_listed, complete, stable, last_total_size,
+             last_file_count, str_due, str_day, sidecars_due, resync_size, resync_count)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+            files_listed    = VALUES(files_listed),
+            complete        = VALUES(complete),
+            stable          = VALUES(stable),
+            last_total_size = VALUES(last_total_size),
+            last_file_count = VALUES(last_file_count),
+            str_due         = VALUES(str_due),
+            str_day         = VALUES(str_day),
+            sidecars_due    = VALUES(sidecars_due),
+            resync_size     = VALUES(resync_size),
+            resync_count    = VALUES(resync_count)
+    )";
+    MysqlStmtGuard g;
+    g.stmt = mysql_stmt_init(conn_);
+    if (mysql_stmt_prepare(g.stmt, sql, strlen(sql)) != 0) return false;
+
+    ParamBinder p(11);
+    p.bindText(0, f.date_folder);
+    p.bindInt(1, f.files_listed ? 1 : 0);
+    p.bindInt(2, f.complete ? 1 : 0);
+    p.bindInt(3, f.stable ? 1 : 0);
+    p.bindInt64(4, f.last_total_size);
+    p.bindInt(5, f.last_file_count);
+    p.bindInt(6, f.str_due ? 1 : 0);
+    p.bindTextOrNull(7, f.str_day);
+    p.bindInt(8, f.sidecars_due ? 1 : 0);
+    p.bindInt64(9, f.resync_size);
+    p.bindInt(10, f.resync_count);
+    mysql_stmt_bind_param(g.stmt, p.data());
+    if (mysql_stmt_execute(g.stmt) != 0) {
+        std::cerr << "MySQL: upsertSyncFolder error: " << mysql_stmt_error(g.stmt) << std::endl;
+        return false;
+    }
+    return true;
 }
 
 
