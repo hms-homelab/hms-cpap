@@ -17,6 +17,14 @@ struct AppConfig {
     std::string ezshare_url = "http://192.168.4.1";
     bool ezshare_range = true;
     std::string local_dir;
+    /// Where reconstructed card files are archived.
+    ///
+    /// SDD-006 section 4: choosing the Mule and Miner REQUIRES this, because the
+    /// bridge hands over raw files that have to land somewhere before they can be
+    /// parsed. It was previously reachable only as the CPAP_ARCHIVE_DIR env var,
+    /// which the wizard cannot write, so a first-run user had no way to set the
+    /// one thing their chosen source needs.
+    std::string archive_dir;
     int burst_interval = 65;
 
     // Web server
@@ -143,6 +151,7 @@ struct AppConfig {
             if (v == "false" || v == "0") ezshare_range = false;
         }
         if (local_dir.empty())   local_dir   = env("CPAP_LOCAL_DIR");
+        if (archive_dir.empty()) archive_dir = env("CPAP_ARCHIVE_DIR");
         if (burst_interval == 65) {
             int v = envInt("BURST_INTERVAL", 0);
             if (v > 0) burst_interval = v;
@@ -212,6 +221,12 @@ struct AppConfig {
             if (v > 0) fysetc.listen_port = v;
         }
         if (fysetc.archive_dir.empty()) fysetc.archive_dir = env("FYSETC_ARCHIVE_DIR");
+
+        // SDD-006: bridges to the CPAP_ARCHIVE_DIR the burst collector already
+        // reads, so anyone currently setting that env var keeps working.
+        // Deliberately NOT merged with fysetc.archive_dir above: that one is the
+        // raw-sector staging directory for the Fysetc transport and answers a
+        // different question.
         if (fysetc.log_dir == "/var/log/maestro_hub") {
             auto v = env("FYSETC_LOG_DIR");
             if (!v.empty()) fysetc.log_dir = v;
@@ -259,6 +274,18 @@ struct AppConfig {
     }
 
     // Get default data directory (~/.hms-cpap/)
+    /// The user's home directory, resolved exactly as dataDir() does so the two
+    /// can never disagree about which user's machine this is.
+    static std::string homeDir() {
+        #ifdef _WIN32
+        const char* h = std::getenv("USERPROFILE");
+        return h ? std::string(h) : std::string("C:\\");
+        #else
+        const char* h = std::getenv("HOME");
+        return h ? std::string(h) : std::string("/tmp");
+        #endif
+    }
+
     static std::string dataDir() {
         std::string home;
         #ifdef _WIN32
@@ -284,6 +311,7 @@ struct AppConfig {
             if (j.contains("ezshare_url"))    config.ezshare_url = j["ezshare_url"];
             if (j.contains("ezshare_range")) config.ezshare_range = j["ezshare_range"];
             if (j.contains("local_dir"))     config.local_dir = j["local_dir"];
+            if (j.contains("archive_dir"))   config.archive_dir = j["archive_dir"];
             if (j.contains("burst_interval")) config.burst_interval = j["burst_interval"];
             if (j.contains("web_port"))     config.web_port = j["web_port"];
             if (j.contains("static_dir"))   config.static_dir = j["static_dir"];
@@ -399,6 +427,7 @@ struct AppConfig {
             j["ezshare_url"] = ezshare_url;
             j["ezshare_range"] = ezshare_range;
             j["local_dir"] = local_dir;
+            j["archive_dir"] = archive_dir;
             j["burst_interval"] = burst_interval;
             j["web_port"] = web_port;
             j["static_dir"] = static_dir;
@@ -488,6 +517,7 @@ struct AppConfig {
         j["ezshare_url"] = ezshare_url;
         j["ezshare_range"] = ezshare_range;
         j["local_dir"] = local_dir;
+        j["archive_dir"] = archive_dir;
         j["burst_interval"] = burst_interval;
         j["web_port"] = web_port;
         j["setup_complete"] = setup_complete;

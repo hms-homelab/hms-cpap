@@ -8,6 +8,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **First-run wizard: database step and apply/restart (SDD-006 phase 2).**
+  Setting up a private install no longer needs a text editor. The wizard now
+  asks where the data should live before asking where it comes from, defaulting
+  to the built in file and expanding to PostgreSQL or MySQL only if asked.
+  - `POST /api/setup/test-db` connects and reports whether the target already
+    holds sessions, so the wizard can say "this database already holds 412
+    sessions, they will be reused" instead of leaving someone to guess whether
+    they are merging into another person's data. It does NOT go through
+    `IDatabase::connect()`, which creates and migrates the schema as a side
+    effect: a typo in the database name would otherwise silently create twenty
+    tables in whatever the user actually pointed at.
+  - `POST /api/setup/create-db` provisions the database and its owner using
+    administrator credentials that are request-scoped, never written to
+    `config.json`, never returned and never logged. It then reconnects as the
+    ordinary user, because a successful `CREATE DATABASE` followed by a failed
+    `GRANT` otherwise looks like success and fails at first boot.
+  - Identifiers are whitelisted (`letters, digits, underscore, not starting with
+    a digit, at most 63 characters`) before interpolation, because neither
+    engine accepts a bound parameter for the target of `CREATE DATABASE`.
+    Passwords are always bound, never inlined. The MySQL grant is `@'%'` rather
+    than `@'localhost'`: the whole point of the step is pointing at a database on
+    another box, and a localhost grant authenticates during setup and then fails
+    from the app host.
+  - `POST /api/setup/apply` writes the config, marks setup complete, answers
+    `202` and only THEN restarts, so the response is not lost with the process.
+    A database change cannot be hot-reloaded, and pretending otherwise is the
+    single biggest source of "it says configured but shows nothing".
+  - All three refuse once `setup_complete` is true, so a finished install does
+    not leave database provisioning exposed on the LAN forever.
+  - The wizard only ever offers backends this build was actually compiled with.
+
+### Fixed
+- **PostgreSQL never created its own core schema.** SQLite and MySQL both build
+  their whole schema in `connect()`; this backend only ran incremental
+  migrations, and its core tables lived in `scripts/schema.sql`, which nothing
+  ships and nothing applies. Pointing at a FRESH PostgreSQL database therefore
+  produced an install that connected happily, answered every read endpoint, and
+  had no `cpap_sessions` to write to. That stayed invisible for as long as every
+  PostgreSQL user ran that file by hand; the wizard's "create it for me" removes
+  that step, so the gap would have become the default experience.
+
+- **Cloud sync settings never reached the running service.**
+  `CpapDashSyncService` took its settings once, in `main.cpp`, and nothing
+  re-applied them. A token pasted into the Settings page updated the file and
+  the in-memory config but not the live service, so the next sync still used the
+  old one. The first-run wizard's restart hid this; the Settings page does not
+  restart, so it did not.
+
+- **First-run wizard: advanced options and start at login (SDD-006 phases 3-4).**
+  The wizard is now the whole setup path, not just the database half.
+  - `archive_dir` is a real config field with a `CPAP_ARCHIVE_DIR` env fallback,
+    so anyone already exporting that keeps working. Choosing the Mule and Miner
+    REQUIRES it, because the bridge hands over raw files that have to land
+    somewhere before anything can parse them, and until now it was reachable
+    only as an env var the wizard could not write.
+  - An advanced step for MQTT, the LLM summaries, ML insights and the optional
+    CpapDash mirror. Every group defaults OFF and is sent only when switched on,
+    so an untouched section never overwrites what an upgrading user already has.
+  - **Start at login**, which is the piece that makes a local install survive a
+    reboot: a LaunchAgent on macOS, a systemd USER unit on Linux
+    (`WantedBy=default.target`, because a user unit wanted by
+    `multi-user.target` silently never runs). It starts at LOGIN, not at boot,
+    and the wizard says so rather than implying otherwise. Under the SDD-005
+    desktop shell the wizard reports "managed by CpapDash Desktop" and refuses,
+    instead of installing a second entry racing the first.
+
 - **Partial sessions (SDD-008).** A transfer from the Mule and Miner that starts
   and does not finish used to leave the night showing as live forever:
   `BurstCollectorService` closed a session exactly one way, when the checkpoint
@@ -31,7 +97,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     actually met it.
   - Partial is never terminal: the night clears itself when its STR arrives.
 
-### Fixed
 - **The close edge never refetched the sidecars.** When every checkpoint file was
   unchanged the collector marked the session complete and returned without
   downloading anything, so an EVE or CSL file that grew inside a single KB

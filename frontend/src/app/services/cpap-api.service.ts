@@ -44,8 +44,50 @@ export class CpapApiService {
     return this.http.put<AppConfig>('/api/config', partial);
   }
 
+  /// SDD-006: what this build can actually do. The wizard must not offer a
+  /// backend the binary was not compiled with, because since 4.6.3 that is a
+  /// refuse-to-boot condition rather than a silent SQLite fallback.
+  getCapabilities(): Observable<any> {
+    return this.http.get('/api/capabilities');
+  }
+
   completeSetup(): Observable<any> {
     return this.http.post('/api/setup', {});
+  }
+
+  // SDD-006 phase 2. All three refuse with 403 once setup is complete, so a
+  // finished install does not expose database provisioning on the LAN forever.
+
+  /// Connect with the candidate credentials and report whether the target
+  /// already holds sessions, WITHOUT creating anything.
+  testDatabase(db: any): Observable<DbTestResult> {
+    return this.http.post<DbTestResult>('/api/setup/test-db', db);
+  }
+
+  /// Provision the database and its owner. `admin_user`/`admin_password` are
+  /// request-scoped: the backend never persists, returns or logs them.
+  createDatabase(db: any): Observable<DbTestResult> {
+    return this.http.post<DbTestResult>('/api/setup/create-db', db);
+  }
+
+  /// Write the config, mark setup complete, and restart. Answers 202 BEFORE the
+  /// restart, so this response arrives; the caller then polls /health.
+  applySetup(payload: any): Observable<ApplyResult> {
+    return this.http.post<ApplyResult>('/api/setup/apply', payload);
+  }
+
+  /// SDD-006 phase 4. Whether start-at-login is installed and whether we may
+  /// manage it (the desktop installer owns it when there is one).
+  getAutostart(): Observable<any> {
+    return this.http.get('/api/setup/autostart');
+  }
+
+  setAutostart(enabled: boolean, scope: 'login' | 'boot' = 'login'): Observable<any> {
+    return this.http.post('/api/setup/autostart', { enabled, scope });
+  }
+
+  health(): Observable<any> {
+    return this.http.get('/health');
   }
 
   getSessionSignals(date: string): Observable<SignalData> {
@@ -259,4 +301,18 @@ export class CpapApiService {
     return this.http.post<CleaningSuggestResult>('/api/cleaning/suggest',
                                                  { profile_id: profileId });
   }
+}
+
+export interface DbTestResult {
+  ok: boolean;
+  error: string;
+  schema_present: boolean;
+  session_count: number;
+}
+
+export interface ApplyResult {
+  accepted: boolean;
+  restarting: boolean;
+  restart_mode: 'supervised' | 'reexec' | 'manual';
+  message?: string;
 }

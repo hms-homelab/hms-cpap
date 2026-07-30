@@ -13,7 +13,7 @@ import { switchMap, tap } from 'rxjs';
   template: `
     <div class="setup-container">
       <div class="setup-card">
-        <div class="step-indicator">Step {{ currentStep }} of 3</div>
+        <div class="step-indicator">Step {{ currentStep }} of 5</div>
 
         @if (currentStep === 1) {
           <div class="step">
@@ -33,6 +33,100 @@ import { switchMap, tap } from 'rxjs';
         }
 
         @if (currentStep === 2) {
+          <div class="step">
+            <h1>Where should your data live?</h1>
+            <p class="subtitle">
+              Everything stays on this machine either way. This only chooses what
+              stores it.
+            </p>
+
+            <div class="radio-group">
+              <label class="radio-option" [class.selected]="dbType === 'sqlite'">
+                <input type="radio" name="dbtype" value="sqlite" [(ngModel)]="dbType" />
+                <div class="radio-content">
+                  <strong>Built in (recommended)</strong>
+                  <span>A single file in your data folder. Nothing to install or run.</span>
+                </div>
+              </label>
+
+              <label class="radio-option" [class.selected]="dbType === 'advanced'">
+                <input type="radio" name="dbtype" value="advanced" [(ngModel)]="dbType" />
+                <div class="radio-content">
+                  <strong>Use my own database server</strong>
+                  <span>PostgreSQL or MySQL you already run.</span>
+                </div>
+              </label>
+            </div>
+
+            @if (dbType === 'advanced') {
+              <div class="advanced">
+                <label class="fld">
+                  <span>Engine</span>
+                  <select [(ngModel)]="dbEngine" name="engine">
+                    @for (b of serverBackends; track b) {
+                      <option [value]="b">{{ b === 'postgresql' ? 'PostgreSQL' : 'MySQL' }}</option>
+                    }
+                  </select>
+                </label>
+                @if (serverBackends.length === 0) {
+                  <!-- Capability honesty: this build genuinely cannot open either,
+                       and offering them would write a config that refuses to boot. -->
+                  <div class="test-result error">
+                    This build was compiled without PostgreSQL and MySQL support.
+                    Use the built in option.
+                  </div>
+                }
+                <div class="row">
+                  <label class="fld"><span>Host</span>
+                    <input [(ngModel)]="dbHost" name="dbhost" placeholder="localhost"></label>
+                  <label class="fld port"><span>Port</span>
+                    <input type="number" [(ngModel)]="dbPort" name="dbport"></label>
+                </div>
+                <label class="fld"><span>Database name</span>
+                  <input [(ngModel)]="dbName" name="dbname" placeholder="cpap"></label>
+                <label class="fld"><span>User</span>
+                  <input [(ngModel)]="dbUser" name="dbuser" placeholder="cpap_user"></label>
+                <label class="fld"><span>Password</span>
+                  <input type="password" [(ngModel)]="dbPassword" name="dbpass"></label>
+
+                <label class="radio-option check" [class.selected]="createIt">
+                  <input type="checkbox" [(ngModel)]="createIt" name="createit" />
+                  <div class="radio-content">
+                    <strong>It does not exist yet, create it for me</strong>
+                    <span>Needs an administrator login. It is used once, for this
+                          request only, and is never saved.</span>
+                  </div>
+                </label>
+
+                @if (createIt) {
+                  <div class="row">
+                    <label class="fld"><span>Admin user</span>
+                      <input [(ngModel)]="adminUser" name="adminuser"></label>
+                    <label class="fld"><span>Admin password</span>
+                      <input type="password" [(ngModel)]="adminPassword" name="adminpass"></label>
+                  </div>
+                }
+              </div>
+            }
+
+            <div class="actions">
+              <button class="btn-ghost" (click)="currentStep = 1">Back</button>
+              @if (dbType === 'advanced') {
+                <button class="btn-ghost" (click)="checkDb()" [disabled]="dbBusy">
+                  {{ dbBusy ? 'Checking...' : (createIt ? 'Create and check' : 'Check connection') }}
+                </button>
+              }
+              <button class="btn-primary" (click)="currentStep = 3"
+                      [disabled]="dbType === 'advanced' && !dbVerified">Next</button>
+            </div>
+
+            @if (dbMessage) {
+              <div class="test-result" [class.error]="!dbVerified">{{ dbMessage }}</div>
+            }
+          </div>
+        }
+
+        @if (currentStep === 3) {
           <div class="step">
             <h1>Data Source</h1>
             <p class="subtitle">How should HMS-CPAP access your CPAP data?</p>
@@ -146,10 +240,158 @@ import { switchMap, tap } from 'rxjs';
               </div>
             }
 
+            @if (source === 'mm') {
+              <div class="advanced">
+                <label class="fld">
+                  <span>Folder for reconstructed files (required)</span>
+                  <input [(ngModel)]="archiveDir" name="archivedir"
+                         placeholder="/Users/you/CpapDash" />
+                </label>
+                <p class="hint">
+                  The Mule and Miner hands over the raw card files. They have to
+                  land somewhere before anything can read them, so this folder is
+                  where your night-by-night data actually lives.
+                </p>
+              </div>
+            }
+
             <div class="actions">
-              <button class="btn-ghost" (click)="currentStep = 1">Back</button>
-              <button class="btn-primary" (click)="finish()"
-                      [disabled]="saving">
+              <button class="btn-ghost" (click)="currentStep = 2">Back</button>
+              <button class="btn-primary" (click)="currentStep = 4"
+                      [disabled]="source === 'mm' && !archiveDir">Next</button>
+            </div>
+
+            @if (error) {
+              <div class="test-result error">{{ error }}</div>
+            }
+          </div>
+        }
+
+        @if (currentStep === 4) {
+          <div class="step">
+            <h1>Anything else?</h1>
+            <p class="subtitle">
+              All optional, and all changeable later from Settings. Skip straight
+              to Finish if none of it applies.
+            </p>
+
+            <label class="radio-option check" [class.selected]="mqttEnabled">
+              <input type="checkbox" [(ngModel)]="mqttEnabled" name="mqtton" />
+              <div class="radio-content">
+                <strong>Publish to Home Assistant (MQTT)</strong>
+                <span>Sends nightly metrics to your broker as discovered sensors.</span>
+              </div>
+            </label>
+            @if (mqttEnabled) {
+              <div class="advanced">
+                <div class="row">
+                  <label class="fld"><span>Broker host</span>
+                    <input [(ngModel)]="mqttBroker" name="mqttbroker" placeholder="192.168.1.10"></label>
+                  <label class="fld port"><span>Port</span>
+                    <input type="number" [(ngModel)]="mqttPort" name="mqttport"></label>
+                </div>
+                <div class="row">
+                  <label class="fld"><span>Username</span>
+                    <input [(ngModel)]="mqttUser" name="mqttuser"></label>
+                  <label class="fld"><span>Password</span>
+                    <input type="password" [(ngModel)]="mqttPassword" name="mqttpw"></label>
+                </div>
+              </div>
+            }
+
+            <label class="radio-option check" [class.selected]="llmEnabled">
+              <input type="checkbox" [(ngModel)]="llmEnabled" name="llmon" />
+              <div class="radio-content">
+                <strong>Write plain-language night summaries (LLM)</strong>
+                <span>Uses a local Ollama by default, so nothing leaves the machine.</span>
+              </div>
+            </label>
+            @if (llmEnabled) {
+              <div class="advanced">
+                <label class="fld"><span>Endpoint</span>
+                  <input [(ngModel)]="llmEndpoint" name="llmep" placeholder="http://localhost:11434"></label>
+                <label class="fld"><span>Model</span>
+                  <input [(ngModel)]="llmModel" name="llmmodel" placeholder="llama3.1"></label>
+              </div>
+            }
+
+            <label class="radio-option check" [class.selected]="mlEnabled">
+              <input type="checkbox" [(ngModel)]="mlEnabled" name="mlon" />
+              <div class="radio-content">
+                <strong>Machine-learning insights</strong>
+                <span>Trains on your own history, on this machine. Needs about a
+                      month of nights before it says anything useful.</span>
+              </div>
+            </label>
+
+            <label class="radio-option check" [class.selected]="cloudEnabled">
+              <input type="checkbox" [(ngModel)]="cloudEnabled" name="cloudon" />
+              <div class="radio-content">
+                <strong>Mirror equipment and cleaning to CpapDash</strong>
+                <span>Off by default. Your therapy data stays here either way;
+                      this only mirrors the upkeep lists so the phone app can
+                      show them.</span>
+              </div>
+            </label>
+            @if (cloudEnabled) {
+              <div class="advanced">
+                <label class="fld"><span>API URL</span>
+                  <input [(ngModel)]="cloudApiUrl" name="cloudurl"></label>
+                <label class="fld"><span>Token</span>
+                  <input type="password" [(ngModel)]="cloudToken" name="cloudtoken"
+                         placeholder="pasted from your CpapDash account"></label>
+                <label class="radio-option check" [class.selected]="cloudAutoSync">
+                  <input type="checkbox" [(ngModel)]="cloudAutoSync" name="cloudauto" />
+                  <div class="radio-content">
+                    <strong>Keep it in sync automatically</strong>
+                    <span>Otherwise it mirrors only when you press Sync.</span>
+                  </div>
+                </label>
+              </div>
+            }
+
+            @if (autostartSupported && autostart && autostartCanManage) {
+              <div class="advanced">
+                <label class="fld">
+                  <span>When should it start?</span>
+                  <select [(ngModel)]="autostartScope" name="asscope">
+                    <option value="login">When I log in (no admin password)</option>
+                    <option value="boot">At boot, before anyone logs in (needs admin)</option>
+                  </select>
+                </label>
+                @if (autostartScope === 'boot') {
+                  <p class="hint">
+                    A boot service runs with no user session, so it is pinned to
+                    your account and your data folder explicitly. Finishing here
+                    writes the service file and shows you one command to run with
+                    administrator rights; nothing elevates itself behind your back.
+                  </p>
+                }
+              </div>
+            }
+
+            @if (autostartSupported) {
+              <label class="radio-option check" [class.selected]="autostart"
+                     [class.disabled]="!autostartCanManage">
+                <input type="checkbox" [(ngModel)]="autostart" name="autostart"
+                       [disabled]="!autostartCanManage" />
+                <div class="radio-content">
+                  <strong>Start when I log in</strong>
+                  <span>
+                    @if (autostartCanManage) {
+                      Keeps collecting after a reboot. Starts at login, not at
+                      boot, so it runs once you sign in.
+                    } @else {
+                      Managed by CpapDash Desktop.
+                    }
+                  </span>
+                </div>
+              </label>
+            }
+
+            <div class="actions">
+              <button class="btn-ghost" (click)="currentStep = 3">Back</button>
+              <button class="btn-primary" (click)="finish()" [disabled]="saving">
                 {{ saving ? 'Saving...' : 'Finish' }}
               </button>
             </div>
@@ -160,16 +402,43 @@ import { switchMap, tap } from 'rxjs';
           </div>
         }
 
-        @if (currentStep === 3) {
+        @if (currentStep === 5) {
           <div class="step">
             <h1>Setup Complete</h1>
-            <p class="subtitle">Redirecting to dashboard...</p>
+            <p class="subtitle">{{ applyMessage || 'Redirecting to dashboard...' }}</p>
+            @if (bootCommand) {
+              <div class="advanced">
+                <p class="hint">One last step, to start it before login. Run this
+                   once in a terminal:</p>
+                <pre class="cmd">{{ bootCommand }}</pre>
+              </div>
+            }
           </div>
         }
       </div>
     </div>
   `,
   styles: [`
+    .advanced { margin: 0.75rem 0 0.25rem; padding-left: 0.25rem; }
+    .fld { display: block; margin: 0.6rem 0; }
+    .fld > span { display: block; font-size: 0.78rem; color: #9e9e9e; margin-bottom: 0.2rem; }
+    .fld input, .fld select {
+      width: 100%; padding: 0.5rem; background: #121212; color: #e0e0e0;
+      border: 1px solid #333; border-radius: 6px;
+    }
+    .row { display: flex; gap: 0.75rem; }
+    .row .fld { flex: 1; }
+    .row .fld.port { max-width: 7rem; }
+    .radio-option.check { margin-top: 1rem; }
+    .radio-option.disabled { opacity: 0.6; }
+    .cmd {
+      background: #121212; border: 1px solid #333; border-radius: 6px;
+      padding: 0.6rem; font-size: 0.72rem; color: #a5d6a7;
+      white-space: pre-wrap; word-break: break-all; user-select: all;
+    }
+    .hint { font-size: 0.75rem; color: #9e9e9e; margin: 0.4rem 0 0; line-height: 1.45; }
+    .radio-option.check input[type="checkbox"] { margin-top: 3px; accent-color: #64b5f6; }
+
     .setup-container {
       display: flex;
       justify-content: center;
@@ -435,12 +704,138 @@ export class SetupComponent {
   testResult: string | null = null;
   error: string | null = null;
 
+  // SDD-006 phase 2: database step.
+  dbType = 'sqlite';          // 'sqlite' | 'advanced'
+  dbEngine = 'postgresql';
+  dbHost = 'localhost';
+  dbPort = 5432;
+  dbName = 'cpap';
+  dbUser = 'cpap_user';
+  dbPassword = '';
+  createIt = false;
+  adminUser = '';
+  adminPassword = '';
+  dbBusy = false;
+  dbVerified = false;
+  dbMessage: string | null = null;
+  /// Only the server backends this build actually has. Offering one it lacks
+  /// would write a config that stops the service from starting, which since
+  /// 4.6.3 is a refuse-to-boot condition rather than a silent SQLite fallback.
+  serverBackends: string[] = [];
+
+  // SDD-006 phase 3: the folder the Mule and Miner reconstructs files into.
+  // REQUIRED for that source, because the bridge hands over raw files that have
+  // to land somewhere before anything can parse them.
+  archiveDir = '';
+
+  // SDD-006 phase 3: advanced options. All default OFF, so the private local
+  // path stays the path of least resistance.
+  mqttEnabled = false;
+  mqttBroker = '';
+  mqttPort = 1883;
+  mqttUser = '';
+  mqttPassword = '';
+
+  llmEnabled = false;
+  llmEndpoint = 'http://localhost:11434';
+  llmModel = 'llama3.1';
+
+  mlEnabled = false;
+
+  cloudEnabled = false;
+  cloudApiUrl = 'https://api.cpapdash.com';
+  cloudToken = '';
+  cloudAutoSync = false;
+
+  autostart = false;
+  autostartScope: 'login' | 'boot' = 'login';
+  autostartSupported = false;
+  autostartCanManage = false;
+
+  bootCommand: string | null = null;
+  applyMessage: string | null = null;
+
   scanning = false;
   scanned = false;
   devices: DiscoveredDevice[] = [];
   selectedDevice: DiscoveredDevice | null = null;
 
-  constructor(private api: CpapApiService, private router: Router) {}
+  constructor(private api: CpapApiService, private router: Router) {
+    this.api.getCapabilities().subscribe({
+      next: (caps: any) => {
+        this.serverBackends = (caps?.backends || [])
+          .filter((b: string) => b === 'postgresql' || b === 'mysql');
+        if (this.serverBackends.length > 0 &&
+            !this.serverBackends.includes(this.dbEngine)) {
+          this.dbEngine = this.serverBackends[0];
+        }
+        this.syncDefaultPort();
+      },
+      // A build that cannot answer still gets a working wizard on the built in
+      // option, which is the path that needs no capabilities at all.
+      error: () => { this.serverBackends = []; }
+    });
+
+    this.api.getAutostart().subscribe({
+      next: (a: any) => {
+        this.autostartSupported = !!a?.supported;
+        this.autostartCanManage = !!a?.can_manage;
+        this.autostart = !!a?.installed;
+      },
+      error: () => { this.autostartSupported = false; }
+    });
+  }
+
+  syncDefaultPort(): void {
+    this.dbPort = this.dbEngine === 'mysql' ? 3306 : 5432;
+  }
+
+  private dbPayload(): any {
+    return {
+      type: this.dbEngine,
+      host: this.dbHost,
+      port: +this.dbPort,
+      name: this.dbName,
+      user: this.dbUser,
+      password: this.dbPassword,
+      ...(this.createIt
+        ? { admin_user: this.adminUser, admin_password: this.adminPassword }
+        : {})
+    };
+  }
+
+  checkDb(): void {
+    this.dbBusy = true;
+    this.dbVerified = false;
+    this.dbMessage = null;
+
+    const call = this.createIt
+      ? this.api.createDatabase(this.dbPayload())
+      : this.api.testDatabase(this.dbPayload());
+
+    call.subscribe({
+      next: (r) => {
+        this.dbBusy = false;
+        this.dbVerified = !!r.ok;
+        if (!r.ok) {
+          this.dbMessage = r.error || 'Could not connect.';
+          return;
+        }
+        // Saying how much is already there is the point: it lets someone tell
+        // "my database" from "someone else's data I am about to merge into".
+        this.dbMessage = r.schema_present
+          ? (r.session_count > 0
+              ? `Connected. This database already holds ${r.session_count} session(s); they will be reused.`
+              : 'Connected. Existing empty CpapDash schema found.')
+          : 'Connected. The schema will be created on first start.';
+      },
+      error: (err) => {
+        this.dbBusy = false;
+        this.dbVerified = false;
+        this.dbMessage = err?.error?.error || 'Could not reach the database.';
+      }
+    });
+  }
 
   scan(): void {
     this.scanning = true;
@@ -510,17 +905,73 @@ export class SetupComponent {
     }
     // skip: no config update needed
 
-    this.api.updateConfig(configUpdate).pipe(
-      switchMap(() => this.api.completeSetup()),
-      // SDD-006: the gate caches setup_complete for the app's lifetime, so tell
-      // it the answer changed. Without this the redirect to /dashboard below
-      // bounces straight back here on the cached "false".
+    // SDD-006 phase 2: one call that writes the config, marks setup complete
+    // and restarts. A database change CANNOT be hot-reloaded (main.cpp builds
+    // the IDatabase once and hands it to five consumers), so pretending
+    // otherwise is what produces "it says configured but shows nothing".
+    const payload: any = { ...configUpdate };
+    payload['database'] = this.dbType === 'sqlite'
+      ? { type: 'sqlite' }
+      : this.dbPayload();
+
+    if (this.archiveDir) payload['archive_dir'] = this.archiveDir;
+
+    // Sent only when switched on. An untouched section must not overwrite
+    // whatever an upgrading user already had in config.json.
+    if (this.mqttEnabled) {
+      payload['mqtt'] = {
+        enabled: true, broker: this.mqttBroker, port: +this.mqttPort,
+        username: this.mqttUser, password: this.mqttPassword
+      };
+    }
+    if (this.llmEnabled) {
+      payload['llm'] = {
+        enabled: true, provider: 'ollama',
+        endpoint: this.llmEndpoint, model: this.llmModel
+      };
+    }
+    if (this.mlEnabled) {
+      payload['ml_training'] = { enabled: true };
+      payload['sleep_stage'] = { enabled: true };
+    }
+    if (this.cloudEnabled) {
+      payload['cpapdash'] = {
+        enabled: true, api_url: this.cloudApiUrl,
+        token: this.cloudToken, auto_sync: this.cloudAutoSync
+      };
+    }
+
+    // Installed before apply, because apply restarts the process and anything
+    // queued after it would never run.
+    if (this.autostartCanManage && this.autostart) {
+      this.api.setAutostart(true, this.autostartScope).subscribe({
+        next: (r: any) => {
+          // A boot service cannot install itself, so surface the one command
+          // the user has to run rather than pretending it is done.
+          if (r?.needs_elevation && r?.command) this.bootCommand = r.command;
+        },
+        // Non-fatal: a failed autostart must not block a finished setup.
+        error: (e) => console.warn('autostart install failed', e)
+      });
+    }
+
+    this.api.applySetup(payload).pipe(
+      // The gate caches setup_complete for the app's lifetime, so tell it the
+      // answer changed; otherwise the redirect below bounces straight back here.
       tap(() => markSetupComplete())
     ).subscribe({
-      next: () => {
-        this.currentStep = 3;
+      next: (r) => {
+        this.currentStep = 4;
         this.saving = false;
-        setTimeout(() => this.router.navigate(['/dashboard']), 1500);
+        if (r && r.restarting === false) {
+          // Said plainly rather than spinning forever on a restart that is not
+          // coming.
+          this.applyMessage = r.message ||
+            'Settings saved. Restart hms_cpap for them to take effect.';
+          return;
+        }
+        this.applyMessage = 'Applying your settings...';
+        this.waitForRestart();
       },
       error: (err) => {
         this.error = 'Failed to save configuration. Please try again.';
@@ -528,5 +979,24 @@ export class SetupComponent {
         console.error('Setup error:', err);
       }
     });
+  }
+
+  /// Poll /health until the restarted process answers, then go to the dashboard.
+  ///
+  /// Same origin as the wizard, because the port is fixed, so there is nothing
+  /// to reconnect to elsewhere. Errors during the gap are EXPECTED and ignored:
+  /// the server is briefly gone by design.
+  private waitForRestart(attempt = 0): void {
+    if (attempt > 40) {           // ~20s, far beyond a two-second restart
+      this.applyMessage = 'Saved, but the service did not come back. ' +
+                          'Start hms_cpap again and reload this page.';
+      return;
+    }
+    setTimeout(() => {
+      this.api.health().subscribe({
+        next: () => this.router.navigate(['/dashboard']),
+        error: () => this.waitForRestart(attempt + 1)
+      });
+    }, 500);
   }
 }

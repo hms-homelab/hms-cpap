@@ -382,6 +382,65 @@ TEST_F(AppConfigTest, SavePreservesFysetcBlock) {
     EXPECT_EQ(loaded.fysetc.log_dir, "/var/log/custom");
 }
 
+// ---------------------------------------------------------------------------
+// SDD-006 phase 3: archive_dir
+//
+// Choosing the Mule and Miner REQUIRES an archive folder, because the bridge
+// hands over raw files that have to land somewhere before they can be parsed.
+// Until now it existed only as the CPAP_ARCHIVE_DIR env var, which the wizard
+// cannot write, so a first-run user had no way to set the one thing their
+// chosen source needs.
+// ---------------------------------------------------------------------------
+
+TEST_F(AppConfigTest, SavePreservesArchiveDir) {
+    // The 4.6.3 drift shape: load() reads a key that save() never writes, so the
+    // value silently disappears the next time anything touches the config.
+    AppConfig original;
+    original.archive_dir = "/data/cpap-archive";
+    original.save(config_path_);
+
+    AppConfig loaded;
+    ASSERT_TRUE(AppConfig::load(config_path_, loaded));
+    EXPECT_EQ(loaded.archive_dir, "/data/cpap-archive");
+}
+
+TEST_F(AppConfigTest, ArchiveDirFallsBackToTheExistingEnvVar) {
+    // Anyone already exporting CPAP_ARCHIVE_DIR keeps working, which is the
+    // whole reason the field bridges to that name rather than inventing one.
+    ::setenv("CPAP_ARCHIVE_DIR", "/env/archive", 1);
+    AppConfig c;
+    c.applyEnvFallbacks();
+    EXPECT_EQ(c.archive_dir, "/env/archive");
+    ::unsetenv("CPAP_ARCHIVE_DIR");
+}
+
+TEST_F(AppConfigTest, AConfiguredArchiveDirBeatsTheEnvVar) {
+    // File values take precedence over env everywhere else in this config
+    // (see AppConfig.h), and this field must not be the exception.
+    ::setenv("CPAP_ARCHIVE_DIR", "/env/archive", 1);
+    AppConfig c;
+    c.archive_dir = "/from/config";
+    c.applyEnvFallbacks();
+    EXPECT_EQ(c.archive_dir, "/from/config");
+    ::unsetenv("CPAP_ARCHIVE_DIR");
+}
+
+TEST_F(AppConfigTest, ArchiveDirIsNotTheFysetcStagingDir) {
+    // Two different questions: this one is where parsed card files are archived,
+    // fysetc.archive_dir is where raw sectors are staged by that transport.
+    // Collapsing them would make choosing the Mule and Miner quietly repoint the
+    // Fysetc listener.
+    AppConfig c;
+    c.archive_dir = "/data/archive";
+    c.fysetc.archive_dir = "/data/fysetc-staging";
+    c.save(config_path_);
+
+    AppConfig loaded;
+    ASSERT_TRUE(AppConfig::load(config_path_, loaded));
+    EXPECT_EQ(loaded.archive_dir, "/data/archive");
+    EXPECT_EQ(loaded.fysetc.archive_dir, "/data/fysetc-staging");
+}
+
 TEST_F(AppConfigTest, EverySectionLoadReadsIsAlsoWrittenBySave) {
     // Structural guard: anything load() understands must survive save(), or a UI
     // write silently drops it. Adding a section to load() without adding it to

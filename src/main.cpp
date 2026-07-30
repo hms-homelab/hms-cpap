@@ -428,6 +428,10 @@ int main(int argc, char** argv) {
     portableSetenv("BURST_INTERVAL", burst_str.c_str());
     portableSetenv("HEALTH_CHECK_PORT", port_str.c_str());
     if (!config.local_dir.empty()) portableSetenv("CPAP_LOCAL_DIR", config.local_dir.c_str());
+    // SDD-006: the burst collector and the archive path both read this through
+    // ConfigManager, so bridging it here is what makes a wizard-set archive
+    // folder actually take effect.
+    if (!config.archive_dir.empty()) portableSetenv("CPAP_ARCHIVE_DIR", config.archive_dir.c_str());
 
     // Database — always set DB_TYPE so BurstCollectorService picks the right backend
     portableSetenv("DB_TYPE", config.database.type.c_str());
@@ -726,13 +730,13 @@ int main(int argc, char** argv) {
             {
                 auto sync = std::make_shared<hms_cpap::CpapDashSyncService>();
                 sync->setDatabase(web_db ? web_db : db);
-                hms_cpap::CpapDashSyncService::Settings s;
-                s.enabled   = config.cpapdash.enabled;
-                s.api_url   = config.cpapdash.api_url;
-                s.token     = config.cpapdash.token;
-                s.auto_sync = config.cpapdash.auto_sync;
-                sync->setSettings(std::move(s));
+                sync->setSettings(hms_cpap::CpapDashSyncService::Settings::from(
+                    config.cpapdash.enabled, config.cpapdash.api_url,
+                    config.cpapdash.token, config.cpapdash.auto_sync));
                 hms_cpap::EquipmentController::setSyncService(sync);
+                // SDD-006 section 5: PUT /api/config must re-apply these to the
+                // LIVE service, not just to the file.
+                hms_cpap::CpapController::setSyncService(sync);
                 // SDD-007: cleaning edits make the mirror stale too.
                 hms_cpap::CleaningController::setSyncService(sync);
                 // Same instance drives the burst-loop sweep, so a UI edit marked
