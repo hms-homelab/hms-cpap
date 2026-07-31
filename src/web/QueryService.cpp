@@ -11,6 +11,23 @@
 
 namespace hms_cpap {
 
+namespace {
+
+// Route parameters reach us as either "2026-04-17" or "20260417". The date
+// dialect helpers all want the punctuated form, so settle on it here rather
+// than letting each caller guess. Anything that is not eight digits after
+// stripping punctuation is handed back untouched, so a malformed date fails
+// in the database as a bad date rather than silently matching a real night.
+std::string normalizeSleepDay(const std::string& date) {
+    std::string digits;
+    for (unsigned char c : date)
+        if (std::isdigit(c)) digits.push_back(static_cast<char>(c));
+    if (digits.size() != 8) return date;
+    return digits.substr(0, 4) + "-" + digits.substr(4, 2) + "-" + digits.substr(6, 2);
+}
+
+} // namespace
+
 QueryService::QueryService(std::shared_ptr<IDatabase> db, const std::string& device_id)
     : db_(db), device_id_(device_id), dt_(db->dbType()) {}
 
@@ -502,25 +519,19 @@ Json::Value QueryService::getSessionBreaths(const std::string& date) {
 Json::Value QueryService::getSessionOximetry(const std::string& date, int interval) {
     if (interval < 1) interval = 4;
 
-    // sleep_day is the evening date (e.g. 2026-04-17) but the ring records
-    // with the next morning date (20260418). Match both the sleep_day and
-    // the next day's YYYYMMDD in cpap_session_date and filename prefix.
-    // Strip dashes: "2026-04-17" → "20260417"
-    std::string date_nodash = date;
-    date_nodash.erase(std::remove(date_nodash.begin(), date_nodash.end(), '-'), date_nodash.end());
-
-    // Next day: parse YYYYMMDD, add 1 day
-    std::string next_day;
-    {
-        std::tm tm{};
-        tm.tm_year = std::stoi(date_nodash.substr(0, 4)) - 1900;
-        tm.tm_mon = std::stoi(date_nodash.substr(4, 2)) - 1;
-        tm.tm_mday = std::stoi(date_nodash.substr(6, 2)) + 1;
-        mktime(&tm);
-        char buf[9];
-        strftime(buf, sizeof(buf), "%Y%m%d", &tm);
-        next_day = buf;
-    }
+    // A recording belongs to exactly one night, and it is the same night the
+    // CPAP side would file it under: date(start - 12h). Everything else here
+    // already uses that rule (sql::sleepDay), so the oximetry chart lines up
+    // with the therapy chart for free.
+    //
+    // This used to match "this day OR the next day" against cpap_session_date
+    // AND against four filename LIKE patterns, on the theory that the ring
+    // labels a night with the morning's date. Nothing then narrowed it back
+    // down, so EVERY session was returned for two consecutive nights: one CSV
+    // import showed the identical trace on both, which is what an owner
+    // reported. The night is derivable from start_time, so derive it instead
+    // of guessing from a filename.
+    std::string sleep_day = normalizeSleepDay(date);
 
     std::string q =
         "SELECT s.timestamp" + std::string(dt_ == DbType::POSTGRESQL ? "::text" : "") + " AS ts,"
@@ -528,15 +539,11 @@ Json::Value QueryService::getSessionOximetry(const std::string& date, int interv
         " FROM oximetry_sessions os"
         " JOIN oximetry_samples s ON s.oximetry_session_id = os.id"
         " WHERE os.device_id = " + sql::param(1, dt_) +
-        " AND (os.cpap_session_date IN (" + sql::param(2, dt_) + ", " + sql::param(3, dt_) + ")" +
-        "  OR os.filename LIKE " + sql::param(2, dt_) + " || '%'" +
-        "  OR os.filename LIKE " + sql::param(3, dt_) + " || '%'" +
-        "  OR os.filename LIKE '%' || " + sql::param(2, dt_) + " || '%'" +
-        "  OR os.filename LIKE '%' || " + sql::param(3, dt_) + " || '%')" +
+        " AND " + sql::sleepDay("os.start_time", dt_) + " = " + sql::castDate(2, dt_) +
         " AND s." + std::string(dt_ == DbType::SQLITE ? "valid = 1" : "valid = true") +
         " ORDER BY s.timestamp";
 
-    auto rows = db_->executeQuery(q, {"o2ring", date_nodash, next_day});
+    auto rows = db_->executeQuery(q, {"o2ring", sleep_day});
 
     Json::Value result;
     Json::Value timestamps(Json::arrayValue);

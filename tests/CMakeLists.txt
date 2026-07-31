@@ -26,6 +26,12 @@ list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/controllers/.*")
 # is useless here — the SPA fallback answers 404s with index.html).
 list(APPEND PROJECT_SOURCES "${CMAKE_SOURCE_DIR}/src/controllers/EquipmentController.cpp")
 list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/web/.*")
+# ...but QueryService is testable in-process for the same reason: it pulls in no
+# Drogon, only IDatabase + SqlDialect + jsoncpp, so its read queries can run
+# against a temp SQLite file. It builds SQL for three dialects by hand, which is
+# exactly the kind of code that needs a test — an unnarrowed OR in the oximetry
+# query silently served every recording on two consecutive nights.
+list(APPEND PROJECT_SOURCES "${CMAKE_SOURCE_DIR}/src/web/QueryService.cpp")
 list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/WiFiSwitchClient\\.cpp$")
 list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/cli/.*\\.cpp$")
 if(MSVC)
@@ -111,6 +117,7 @@ set(TEST_SOURCES
     services/test_SupplyStatus.cpp
     services/test_SupplyPublisher.cpp
     controllers/test_EquipmentController.cpp
+    web/test_QueryService_oximetry.cpp
 )
 if(MSVC)
     list(FILTER TEST_SOURCES EXCLUDE REGEX ".*Fysetc.*")

@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.7.3] - 2026-07-30: cover the oximetry night assignment
+
+### Added
+- **`QueryService` is now in the test binary.** It was excluded along with the
+  rest of `src/web`, but it pulls in no Drogon, only `IDatabase`, `SqlDialect`
+  and jsoncpp, so its read queries run against a temp SQLite file exactly like
+  the database tests do. It hand-builds SQL for three dialects, which is
+  precisely the code that should not be uncovered: that is how an unnarrowed
+  `OR` shipped and served every recording on two consecutive nights.
+- **Seven tests for oximetry night assignment**
+  (`tests/web/test_QueryService_oximetry.cpp`), pinning the rule that a
+  recording belongs to exactly one night, `date(start_time - 12 hours)`:
+  an after-midnight recording files under the previous evening and is *not*
+  also served for its own calendar date; recordings either side of midnight
+  group into one night; noon is the boundary; the filename no longer
+  influences the night; and a night with no recordings stays empty instead of
+  borrowing from a neighbour.
+
+  Verified as real regression cover rather than assumed: rebuilt against the
+  pre-fix query, four of the seven fail, including the after-midnight case.
+
+## [4.7.2] - 2026-07-30: an oximetry recording belongs to one night, not two
+
+### Fixed
+- **Every SpO2 recording was shown on two consecutive nights.** Opening one
+  night and then the next showed the identical trace on both, so an imported
+  CSV looked like it had been imported twice. Reported by an owner against the
+  CSV upload, but it was never CSV-specific: BLE `.vld` sessions duplicated the
+  same way, and it affected every session rather than an edge case.
+
+  `getSessionOximetry` matched a session if *any* of six predicates held:
+  `cpap_session_date` equal to the requested night **or the next one**, plus
+  four `filename LIKE` patterns against both dates, one of which matched the
+  date anywhere in the name. The widening was there because the ring labels a
+  night with the morning's date, but nothing ever narrowed it back down, so a
+  session dated the 6th was returned for both the night of the 5th and the
+  night of the 6th.
+
+  It now derives the night the same way everything else does,
+  `date(start_time - 12 hours)` via `sql::sleepDay`, which yields exactly one
+  night per recording and the same one the therapy chart uses. A 04:56 AM
+  recording files under the previous evening, as it should. Verified against a
+  real database: the session that previously returned its 4,964 samples for
+  both the 5th and the 6th now returns them only for the 5th.
+
+  This also drops the filename matching entirely, which mattered because
+  `cpap_session_date` is empty on every `live_*.vld` row — those sessions were
+  relying on `LIKE` alone to be found.
+
 ## [4.7.1] - 2026-07-30: first-run wizard database step, and the BLE scan stops being O2Ring-only
 
 ### Added
