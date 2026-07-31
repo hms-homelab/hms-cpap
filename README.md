@@ -89,6 +89,7 @@ All data sources (ezShare WiFi SD, local filesystem) work with both manufacturer
 
 - [Supported Devices](#supported-devices)
 - [Quick Start](#quick-start)
+- [Docker](#docker)
 - [Data Sources](#data-sources)
 - [Configuration](#configuration)
 - [CLI Reference](#cli-reference)
@@ -102,25 +103,73 @@ All data sources (ezShare WiFi SD, local filesystem) work with both manufacturer
 
 ## Quick Start
 
+Download it, run it, and answer four screens in a browser. No config file, no
+terminal, no YAML.
+
+### Windows
+
+Download `CpapDashDesktop-Setup.exe` from
+[Releases](https://github.com/hms-homelab/hms-cpap/releases) and run it. It
+installs to your user profile, so it never asks for administrator rights. When
+it finishes, CpapDash Desktop appears in the notification area and your browser
+opens on the setup wizard.
+
+The tray icon gives you Open Dashboard, Sync Now, and a Start at Login
+checkbox. It keeps the service running and restarts it with you.
+
+### macOS and Linux
+
+Download `hms-cpap-macos-arm64.zip` (or build from source on Linux), unzip, and
+run the binary:
+
 ```bash
-# 1. Clone and build
+./hms_cpap
+```
+
+Your browser opens on http://localhost:8893/setup. If you are on a headless box
+or in a script, pass `--no-browser` and open that URL yourself.
+
+### What the wizard asks
+
+1. **Where the data lives.** The built in option is a single file in your data
+   folder and needs nothing installed. If you already run PostgreSQL or MySQL,
+   choose it and CpapDash will test the connection, tell you whether that
+   database already holds sessions, and offer to create it for you.
+2. **Where the data comes from.** Scan the network for a CpapDash Mule and
+   Miner, point at a folder of card files, or enter an ezShare address.
+3. **Anything else**, all optional and all off by default: Home Assistant over
+   MQTT, plain language night summaries from a local LLM, machine learning
+   insights, and mirroring your equipment and cleaning lists to a CpapDash
+   account.
+4. **Whether it starts by itself**, at login or at boot.
+
+Press Finish and it writes the config, restarts itself, and lands you on the
+dashboard.
+
+### Checking a configuration without starting
+
+```bash
+./hms_cpap --preflight
+```
+
+Validates the data folder, the web port, the database credentials and the
+source, then tells you what is wrong and what to change. Startup runs the same
+checks and refuses to boot rather than half starting, so a busy port or a wrong
+password is named once instead of turning into a restart loop.
+
+### Build from source
+
+```bash
 git clone https://github.com/hms-homelab/hms-cpap.git
 cd hms-cpap
 mkdir build && cd build
 cmake .. && make -j$(nproc)
-
-# 2. Configure
-cp ../.env.example ../.env
-nano ../.env  # Set MQTT, DB, and source settings
-
-# 3. Run (choose your data source)
-CPAP_SOURCE=ezshare    ./hms_cpap   # ezShare WiFi SD via bridge (recommended)
-CPAP_SOURCE=local      ./hms_cpap   # Local filesystem (ResMed DATALOG)
-CPAP_SOURCE=lowenstein ./hms_cpap   # Lowenstein Prisma (local dir or WiFi SD)
-
-# 4. Open the dashboard
-# http://localhost:8893
+./hms_cpap
 ```
+
+The wizard works the same way from a source build. Everything below this point
+is for people who would rather set things by hand, which is still fully
+supported: the wizard only writes the same `config.json` you can edit yourself.
 
 ## Data Sources
 
@@ -234,7 +283,20 @@ Configuration example:
 
 ## Configuration
 
-All configuration via environment variables (12-factor app). See [`.env.example`](.env.example) for complete reference.
+The setup wizard writes everything below for you, so this section is for people
+editing by hand or automating an install.
+
+`config.json` in your data folder is the source of truth. It lives at
+`~/.hms-cpap/config.json` (`%USERPROFILE%\.hms-cpap\config.json` on Windows),
+and the Settings page and the wizard both write to it. Environment variables
+still work as a fallback for anything the file does not set, which is what makes
+container and systemd deployments straightforward, but where both exist the file
+wins.
+
+Run `./hms_cpap --preflight` after editing to check the result before starting.
+
+See [`.env.example`](.env.example) for the complete list of variable names, and
+[`config.json.example`](config.json.example) for the file form.
 
 ### Required Variables
 
@@ -305,6 +367,26 @@ hms_cpap --backfill /path/to/STR.edf
 ```bash
 hms_cpap --config /etc/hms-cpap/config.json
 ```
+
+## Docker
+
+```bash
+docker compose up -d
+```
+
+Brings up CpapDash, PostgreSQL and a Mosquitto broker. Open
+http://localhost:8893/setup and answer the same wizard. The compose file waits
+for PostgreSQL to actually accept connections before starting CpapDash, so the
+first run does not race the database while it initialises.
+
+Docker owns the lifecycle here, so the wizard does not offer to install a
+startup entry. `restart: unless-stopped` in the compose file plus Docker itself
+starting at boot is what makes it survive a reboot, and the wizard says so
+rather than showing you a checkbox that would write a systemd unit into a
+container that has no systemd.
+
+Your data lives in the `cpap_data` volume and your config in `cpap_config`.
+Neither is touched by pulling a new image.
 
 ## Deployment
 
