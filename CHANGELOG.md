@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.7.3] - 2026-07-30: cover the oximetry night assignment
+
+### Added
+- **`QueryService` is now in the test binary.** It was excluded along with the
+  rest of `src/web`, but it pulls in no Drogon, only `IDatabase`, `SqlDialect`
+  and jsoncpp, so its read queries run against a temp SQLite file exactly like
+  the database tests do. It hand-builds SQL for three dialects, which is
+  precisely the code that should not be uncovered: that is how an unnarrowed
+  `OR` shipped and served every recording on two consecutive nights.
+- **Seven tests for oximetry night assignment**
+  (`tests/web/test_QueryService_oximetry.cpp`), pinning the rule that a
+  recording belongs to exactly one night, `date(start_time - 12 hours)`:
+  an after-midnight recording files under the previous evening and is *not*
+  also served for its own calendar date; recordings either side of midnight
+  group into one night; noon is the boundary; the filename no longer
+  influences the night; and a night with no recordings stays empty instead of
+  borrowing from a neighbour.
+
+  Verified as real regression cover rather than assumed: rebuilt against the
+  pre-fix query, four of the seven fail, including the after-midnight case.
+
 ## [4.7.2] - 2026-07-30: an oximetry recording belongs to one night, not two
 
 ### Fixed
