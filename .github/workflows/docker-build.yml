@@ -477,12 +477,30 @@ jobs:
           # And the ordinary path, which most people actually take: start again
           # and close the window politely. Covering only the violent case would
           # leave the common one untested.
-          $tray2 = Start-Process -FilePath "$app\CpapDashDesktop.exe" -PassThru
-          Start-Sleep -Seconds 15
-          if ($tray2.HasExited) { throw 'the tray did not start a second time' }
-          if (-not (Get-Process hms_cpap -ErrorAction SilentlyContinue)) {
-            throw 'the tray did not restart hms_cpap on a second run'
+          # Prove the port is actually free before blaming the tray. If the
+          # previous instance left 8893 unusable, preflight refuses and the tray
+          # sits on its dialog, which looks identical to "the tray is broken".
+          $pf = & "$app\hms_cpap.exe" --preflight 2>&1 | Out-String
+          $pfCode = $LASTEXITCODE
+          Write-Host "preflight after the forced kill (exit $pfCode):"
+          Write-Host $pf
+          if ($pfCode -ne 0) {
+            throw "the port did not come back after killing the previous instance"
           }
+
+          $tray2 = Start-Process -FilePath "$app\CpapDashDesktop.exe" -PassThru
+          # Polled, not a fixed sleep: the child now starts only after preflight
+          # runs, so a single guess at the delay is fragile.
+          $started = $false
+          foreach ($i in 1..30) {
+            Start-Sleep -Seconds 2
+            if ($tray2.HasExited) { throw "the tray exited on its second run (code $($tray2.ExitCode))" }
+            if (Get-Process hms_cpap -ErrorAction SilentlyContinue) { $started = $true; break }
+          }
+          if (-not $started) {
+            throw 'the tray did not restart hms_cpap on a second run within 60s'
+          }
+          Write-Host '  ok the tray restarted the service'
           $tray2.CloseMainWindow() | Out-Null
           Start-Sleep -Seconds 5
           if (-not $tray2.HasExited) { Stop-Process -Id $tray2.Id -Force }
