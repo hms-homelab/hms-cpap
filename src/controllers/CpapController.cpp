@@ -610,12 +610,26 @@ void CpapController::setupApply(const drogon::HttpRequestPtr& req,
 void CpapController::autostartState(const drogon::HttpRequestPtr&,
                                     std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
     const bool supervised = SetupService::isSupervised();
+    const bool containerised = SetupService::isContainerised();
+    const auto owner = SetupService::autostartOwner(supervised, containerised);
     const auto entry = SetupService::autostartEntry(SetupService::executablePath(),
                                                     hms_cpap::AppConfig::homeDir());
 
     Json::Value result;
-    result["can_manage"] = SetupService::canManageAutostart(supervised);
+    result["can_manage"] = (owner == SetupService::AutostartOwner::Us);
+    result["owner"] = SetupService::autostartOwnerString(owner);
     result["supervised"] = supervised;
+    result["containerised"] = containerised;
+    // Said rather than left blank: a user who cannot tick the box deserves to
+    // know what IS keeping the service running, and what to do if nothing is.
+    if (owner == SetupService::AutostartOwner::Container) {
+        result["message"] =
+            "Docker starts this service, so there is nothing to enable here. "
+            "To survive a reboot, make sure the container uses "
+            "restart: unless-stopped and that Docker itself starts at boot.";
+    } else if (owner == SetupService::AutostartOwner::DesktopShell) {
+        result["message"] = "Managed by CpapDash Desktop.";
+    }
     result["supported"] = entry.error.empty();
     result["error"] = entry.error;
 
@@ -636,9 +650,16 @@ void CpapController::setupAutostart(const drogon::HttpRequestPtr& req,
     const bool enable = body && body->isMember("enabled")
                         ? (*body)["enabled"].asBool() : true;
 
-    if (!SetupService::canManageAutostart(SetupService::isSupervised())) {
-        // Not an error, a division of labour: the desktop shell already owns it.
-        cb(jsonError("Autostart is managed by CpapDash Desktop", drogon::k409Conflict));
+    const auto owner = SetupService::autostartOwner(SetupService::isSupervised(),
+                                                    SetupService::isContainerised());
+    if (owner != SetupService::AutostartOwner::Us) {
+        // Not an error, a division of labour. Refusing with the reason beats
+        // writing a systemd unit into a container that has no systemd, which
+        // would silently look like it worked.
+        cb(jsonError(owner == SetupService::AutostartOwner::Container
+                         ? "Docker manages this service; use a restart policy instead"
+                         : "Autostart is managed by CpapDash Desktop",
+                     drogon::k409Conflict));
         return;
     }
 

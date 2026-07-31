@@ -382,7 +382,7 @@ import { switchMap, tap } from 'rxjs';
                       Keeps collecting after a reboot. Starts at login, not at
                       boot, so it runs once you sign in.
                     } @else {
-                      Managed by CpapDash Desktop.
+                      {{ autostartMessage || 'Managed for you already.' }}
                     }
                   </span>
                 </div>
@@ -749,6 +749,8 @@ export class SetupComponent {
 
   autostart = false;
   autostartScope: 'login' | 'boot' = 'login';
+  autostartMessage = '';
+  autostartOwner = 'self';
   autostartSupported = false;
   autostartCanManage = false;
 
@@ -781,6 +783,11 @@ export class SetupComponent {
         this.autostartSupported = !!a?.supported;
         this.autostartCanManage = !!a?.can_manage;
         this.autostart = !!a?.installed;
+        // Docker and the desktop shell each own the lifecycle themselves. Say
+        // WHICH one and what keeps the service alive, rather than greying out a
+        // checkbox with no explanation.
+        this.autostartMessage = a?.message || '';
+        this.autostartOwner = a?.owner || 'self';
       },
       error: () => { this.autostartSupported = false; }
     });

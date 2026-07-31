@@ -18,6 +18,8 @@
 #include <cstring>
 #include <cstdlib>
 #include <filesystem>
+#include <sstream>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -529,10 +531,66 @@ SetupService::DbProbe SetupService::provisionDatabase(const std::string& engine,
 // Start at login (SDD-006 phase 4)
 // ---------------------------------------------------------------------------
 
+bool SetupService::looksContainerised(const ContainerHints& hints) {
+    if (hints.dockerenv_exists) return true;
+    if (hints.containerenv_exists) return true;
+
+    // cgroup v1 inside a container names the runtime in every line. Checked as
+    // a fallback because the marker files are absent in some images and under
+    // some runtimes.
+    for (const char* needle : {"docker", "containerd", "kubepods", "libpod", "lxc"}) {
+        if (hints.pid1_cgroup.find(needle) != std::string::npos) return true;
+    }
+    return false;
+}
+
+bool SetupService::isContainerised() {
+#ifdef _WIN32
+    // Docker Desktop runs Linux containers in a VM. A Windows build of this
+    // binary is on the host, not inside one.
+    return false;
+#elif defined(__APPLE__)
+    return false;   // same reasoning
+#else
+    ContainerHints h;
+    std::error_code ec;
+    h.dockerenv_exists    = std::filesystem::exists("/.dockerenv", ec);
+    h.containerenv_exists = std::filesystem::exists("/run/.containerenv", ec);
+
+    std::ifstream cg("/proc/1/cgroup");
+    if (cg) {
+        std::stringstream ss;
+        ss << cg.rdbuf();
+        h.pid1_cgroup = ss.str();
+    }
+    return looksContainerised(h);
+#endif
+}
+
+SetupService::AutostartOwner SetupService::autostartOwner(bool supervised,
+                                                          bool containerised) {
+    // Container FIRST. A container can also carry HMS_CPAP_SUPERVISED if
+    // someone sets it, and the runtime still owns the lifecycle either way.
+    if (containerised) return AutostartOwner::Container;
+    if (supervised)    return AutostartOwner::DesktopShell;
+    return AutostartOwner::Us;
+}
+
+const char* SetupService::autostartOwnerString(AutostartOwner owner) {
+    switch (owner) {
+        case AutostartOwner::DesktopShell: return "desktop_shell";
+        case AutostartOwner::Container:    return "container";
+        case AutostartOwner::Us:
+        default:                           return "self";
+    }
+}
+
 bool SetupService::canManageAutostart(bool supervised) {
-    // The installer owns it when there is an installer. Writing our own entry
-    // under the shell would mean two things racing to start one service.
-    return !supervised;
+    // The installer owns it when there is an installer, and the runtime owns it
+    // inside a container. Writing our own entry in either case means two things
+    // racing to start one service, or a systemd unit in an image with no
+    // systemd, which is worse: it looks like it worked.
+    return autostartOwner(supervised, isContainerised()) == AutostartOwner::Us;
 }
 
 namespace {
