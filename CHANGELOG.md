@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.8.0] - 2026-07-31: a desktop app for Windows, and configuration that fails honestly
+
+### Added
+- **CpapDash Desktop for Windows (SDD-005 phase 3).** An installer and a tray
+  icon, so a private local install no longer means a zip and a terminal. The
+  shell supervises `hms_cpap`, opens the dashboard, triggers a sync, and offers
+  Start at Login. Per-user install, so nothing prompts for elevation.
+  - The child runs inside a Windows **Job Object**, so it cannot outlive the
+    tray even when the tray is force-killed. Without that, an orphan holds port
+    8893 and the NEXT launch fails blaming a conflict we caused ourselves.
+  - Uninstalling removes the program and the Run key and **never touches
+    `~/.hms-cpap`**, which is the user's entire therapy history.
+- **Start automatically, on every platform.** A LaunchAgent or LaunchDaemon on
+  macOS, systemd user and system units on Linux, and the Run key on Windows.
+  The boot services pin both the account and `HOME`: without that a daemon runs
+  as root, resolves `~/.hms-cpap` somewhere the user cannot see, and builds a
+  second empty database that looks exactly like data loss.
+- **`hms_cpap --preflight`.** Validates the data directory, the web port, the
+  database credentials and the source folder, and reports what is wrong AND what
+  to change. Startup refuses to boot on a fatal failure, systemd runs it as
+  `ExecStartPre`, and the installer runs it as its last step, so one
+  implementation answers for every launcher.
+
+### Changed
+- **Configuration errors are found up front, not through retries.** A busy port,
+  a wrong password and an unwritable folder do not become correct on a second
+  attempt, so nothing retries them. The tray and both systemd units now report
+  the cause and stop. The systemd units previously retried a failing
+  `ExecStartPre` ELEVEN times in 27 seconds and kept going, because attempts
+  spaced 5s apart never fill the default 10s start-limit window.
+
+### Fixed
+- **PostgreSQL could not open its own database from the wizard.** Utility
+  statements take no bind parameters, so `CREATE ROLE ... PASSWORD $1` was a
+  syntax error; the password is now escaped by the driver. `CREATEROLE` is also
+  checked before existence, so pointing at an existing user no longer fails.
+- **MSVC build breaks** that no macOS or Linux build could catch:
+  `CpapController::sync_` declared inside a POSIX-only block, and a bare
+  `<mysql.h>` where the client headers live in three different places.
+
+### Testing
+- The Windows installer is now **run**, not merely built: install, layout, Run
+  key, preflight passing and failing, the tray serving `/health`, no orphaned
+  child after either a force-kill or a normal close, and an uninstall that
+  leaves the data directory intact.
+- `QueryService` gained cover for all thirteen read paths, including every one
+  against an empty database, which is what a fresh install actually hits.
+  Coverage 78.0% to 80.3%.
+
 ## [4.7.3] - 2026-07-30: cover the oximetry night assignment
 
 ### Added
