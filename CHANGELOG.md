@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.7.1] - 2026-07-30: first-run wizard database step, and the BLE scan stops being O2Ring-only
+
 ### Added
 - **First-run wizard: database step and apply/restart (SDD-006 phase 2).**
   Setting up a private install no longer needs a text editor. The wizard now
