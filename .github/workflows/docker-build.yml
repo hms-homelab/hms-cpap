@@ -424,13 +424,19 @@ jobs:
           try {
             $app = "$env:LOCALAPPDATA\Programs\HMS-CPAP"
             $out = & "$app\hms_cpap.exe" --preflight 2>&1 | Out-String
+            $code = $LASTEXITCODE
             Write-Host $out
-            if ($LASTEXITCODE -eq 0) { throw 'preflight passed while 8893 was bound' }
+            if ($code -eq 0)               { throw 'preflight passed while 8893 was bound' }
             if ($out -notmatch '8893')     { throw 'the report never named the port' }
             if ($out -notmatch 'web_port') { throw 'the report never named the setting to change' }
+            Write-Host '  ok preflight refused, and named both the port and the setting'
           } finally {
             $listener.Stop()
           }
+          # A non-zero exit from hms_cpap is the EXPECTED result here, but GitHub
+          # fails a pwsh step whose $LASTEXITCODE is still non-zero at the end,
+          # so a passing test reported as red.
+          exit 0
 
       - name: The tray starts the service and it actually serves
         run: |
