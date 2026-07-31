@@ -118,6 +118,7 @@ set(TEST_SOURCES
     services/test_SupplyPublisher.cpp
     controllers/test_EquipmentController.cpp
     web/test_QueryService_oximetry.cpp
+    web/test_QueryService_reads.cpp
 )
 if(MSVC)
     list(FILTER TEST_SOURCES EXCLUDE REGEX ".*Fysetc.*")
