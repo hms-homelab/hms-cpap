@@ -22,6 +22,10 @@ public sealed class Supervisor : IDisposable
 {
     private readonly string _exePath;
     private readonly Action<string> _log;
+    /// Kernel-enforced cleanup. Stop() covers a clean quit; this covers every
+    /// other way this process can end, which is the case that actually orphaned
+    /// the child in CI.
+    private readonly ChildJob _job = new();
     private Process? _child;
     private volatile bool _stopping;
     private Thread? _runner;
@@ -130,6 +134,12 @@ public sealed class Supervisor : IDisposable
 
         _child = Process.Start(psi) ?? throw new InvalidOperationException("Process.Start returned null");
 
+        // Assigned immediately after start: from here on, the child cannot
+        // outlive this process even if we are terminated without warning.
+        if (!_job.Assign(_child.Handle))
+            _log("warning: could not put hms_cpap in a job object; "
+                 + "a forced kill of this shell could leave it running");
+
         // Keep only the tail. The interesting part of a crash is the last thing
         // it said, and buffering a long-running service's entire stderr would
         // grow without bound on a machine left on for weeks.
@@ -187,5 +197,8 @@ public sealed class Supervisor : IDisposable
     {
         Stop();
         _child?.Dispose();
+        // Closing the job handle terminates anything still in it, which is the
+        // backstop if Stop() did not manage a clean shutdown.
+        _job.Dispose();
     }
 }
