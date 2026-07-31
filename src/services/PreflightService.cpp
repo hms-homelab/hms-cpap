@@ -70,9 +70,25 @@ PreflightService::Check PreflightService::checkPort(const std::string& bind_addr
         return c;
     }
 
-    // NOTE: no SO_REUSEADDR on purpose. The question being asked is "will the
-    // real listener bind?", and enabling reuse answers a more optimistic
-    // question, which would let the check pass and the service still fail.
+    // SO_REUSEADDR on POSIX, deliberately NOT on Windows. The two platforms
+    // give the same flag different meanings, and this check has to model the
+    // REAL listener, which is trantor's TcpServer with reUseAddr = true.
+    //
+    // POSIX: reuse permits binding while OLD CONNECTIONS from a previous
+    // instance sit in TIME_WAIT, and still refuses while another process is
+    // actually listening. Without it, restarting hms_cpap shortly after it had
+    // served traffic reports "port in use" for a port the server would have
+    // taken without complaint, and preflight then refuses to start. That is the
+    // classic restart failure, and it would be self-inflicted.
+    //
+    // Windows: SO_REUSEADDR lets a bind steal a port from a LIVE listener, so
+    // setting it there would make this check pass while another program is
+    // genuinely serving on 8893. Left off, and Windows frees a closed
+    // listener's port immediately anyway, which the CI runtime test confirms.
+#ifndef _WIN32
+    const int reuse = 1;
+    ::setsockopt(static_cast<int>(sock), SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+#endif
 
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
