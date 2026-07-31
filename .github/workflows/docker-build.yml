@@ -355,6 +355,142 @@ jobs:
           name: cpapdash-desktop-setup
           path: dist-installer/
 
+  # ── Windows desktop: RUN it, do not just build it ────────────────
+  #
+  # Compiling proves the C# is syntactically valid and that Inno produced a file.
+  # It proves nothing about whether the installer installs, whether the tray can
+  # start the service, or whether uninstalling leaves a user's therapy database
+  # alone. This job exercises all of that on a real Windows machine.
+  #
+  # NOT continue-on-error: this is a test. If it fails, the honest signal is a
+  # red job, not a quietly skipped step.
+  windows-desktop-test:
+    runs-on: windows-latest
+    needs: windows-build
+    permissions:
+      contents: read
+
+    steps:
+      - name: Download installer
+        uses: actions/download-artifact@v4
+        with:
+          name: cpapdash-desktop-setup
+          path: installer/
+
+      - name: Install silently
+        run: |
+          $exe = (Get-ChildItem installer\*.exe | Select-Object -First 1).FullName
+          Write-Host "installing $exe"
+          # /TASKS selects the Start at Login task so the Run key is exercised too.
+          $p = Start-Process -FilePath $exe -Wait -PassThru `
+                 -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/TASKS=startatlogin'
+          if ($p.ExitCode -ne 0) { throw "installer exited $($p.ExitCode)" }
+
+      - name: The installed layout is what the shell expects
+        run: |
+          $app = "$env:LOCALAPPDATA\Programs\HMS-CPAP"
+          # The tray finds hms_cpap.exe by sitting next to it, so this layout IS
+          # the contract between the two.
+          foreach ($f in @('CpapDashDesktop.exe','hms_cpap.exe','static\browser\index.html')) {
+            if (-not (Test-Path "$app\$f")) { throw "missing after install: $f" }
+            Write-Host "  ok $f"
+          }
+
+      - name: Start at Login wrote a usable Run entry
+        run: |
+          $v = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' `
+                  -Name CpapDashDesktop -ErrorAction SilentlyContinue).CpapDashDesktop
+          if (-not $v) { throw 'Run value CpapDashDesktop was not created' }
+          # Quoted, or a path containing a space starts the wrong program.
+          if (-not $v.StartsWith('"')) { throw "Run value is not quoted: $v" }
+          Write-Host "  ok $v"
+
+      - name: Preflight passes on a clean machine
+        run: |
+          $app = "$env:LOCALAPPDATA\Programs\HMS-CPAP"
+          $out = & "$app\hms_cpap.exe" --preflight 2>&1 | Out-String
+          Write-Host $out
+          if ($LASTEXITCODE -ne 0) { throw "preflight failed on a clean machine: $out" }
+          foreach ($c in @('data_dir','web_port','database')) {
+            if ($out -notmatch $c) { throw "preflight report never mentioned $c" }
+          }
+
+      - name: Preflight FAILS when the port is genuinely taken
+        run: |
+          # The whole reason preflight exists. Bind 8893 for real and require
+          # that the check notices and names it.
+          $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Any, 8893)
+          $listener.Start()
+          try {
+            $app = "$env:LOCALAPPDATA\Programs\HMS-CPAP"
+            $out = & "$app\hms_cpap.exe" --preflight 2>&1 | Out-String
+            Write-Host $out
+            if ($LASTEXITCODE -eq 0) { throw 'preflight passed while 8893 was bound' }
+            if ($out -notmatch '8893')     { throw 'the report never named the port' }
+            if ($out -notmatch 'web_port') { throw 'the report never named the setting to change' }
+          } finally {
+            $listener.Stop()
+          }
+
+      - name: The tray starts the service and it actually serves
+        run: |
+          $app = "$env:LOCALAPPDATA\Programs\HMS-CPAP"
+          $tray = Start-Process -FilePath "$app\CpapDashDesktop.exe" -PassThru
+          Start-Sleep -Seconds 20
+
+          if ($tray.HasExited) { throw "the tray exited immediately (code $($tray.ExitCode))" }
+
+          # The point of the shell: it spawns the child.
+          $child = Get-Process hms_cpap -ErrorAction SilentlyContinue
+          if (-not $child) { throw 'the tray never started hms_cpap' }
+          Write-Host "  ok tray pid $($tray.Id), child pid $($child.Id)"
+
+          # And the child is really serving, not merely running.
+          $ok = $false
+          foreach ($i in 1..15) {
+            try {
+              $r = Invoke-WebRequest -Uri 'http://localhost:8893/health' -UseBasicParsing -TimeoutSec 3
+              if ($r.StatusCode -eq 200) { Write-Host "  ok /health: $($r.Content)"; $ok = $true; break }
+            } catch { Start-Sleep -Seconds 2 }
+          }
+          if (-not $ok) { throw '/health never answered' }
+
+          # Killing the shell must take the child with it. A survivor keeps 8893
+          # bound and makes the NEXT launch fail preflight for a reason we caused.
+          Stop-Process -Id $tray.Id -Force
+          Start-Sleep -Seconds 8
+          $orphan = Get-Process hms_cpap -ErrorAction SilentlyContinue
+          if ($orphan) {
+            Stop-Process -Name hms_cpap -Force -ErrorAction SilentlyContinue
+            throw 'hms_cpap outlived the tray; it would hold port 8893'
+          }
+          Write-Host '  ok no orphaned child'
+
+      - name: Uninstall removes the program and the Run key
+        run: |
+          $app = "$env:LOCALAPPDATA\Programs\HMS-CPAP"
+          # Prove the data directory survives: this is a therapy database, and an
+          # uninstaller that removes it turns a reinstall into permanent loss.
+          New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.hms-cpap" | Out-Null
+          Set-Content "$env:USERPROFILE\.hms-cpap\config.json" '{"marker":"keep me"}'
+
+          $unins = Get-ChildItem "$app\unins*.exe" | Select-Object -First 1
+          if (-not $unins) { throw 'no uninstaller was installed' }
+          $p = Start-Process -FilePath $unins.FullName -Wait -PassThru `
+                 -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART'
+          Start-Sleep -Seconds 5
+
+          if (Test-Path "$app\CpapDashDesktop.exe") { throw 'the shell survived uninstall' }
+
+          $v = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' `
+                  -Name CpapDashDesktop -ErrorAction SilentlyContinue).CpapDashDesktop
+          if ($v) { throw "uninstall left a Run entry pointing at a deleted file: $v" }
+
+          if (-not (Test-Path "$env:USERPROFILE\.hms-cpap\config.json")) {
+            throw 'THE UNINSTALLER DELETED THE USER DATA DIRECTORY'
+          }
+          Write-Host '  ok program gone, Run key gone, ~/.hms-cpap intact'
+
   # ── macOS Build (Apple Silicon / arm64) ───────────────────────────
   # GitHub-hosted arm64 runner (free for public repos). Produces the
   # hms-cpap-macos-arm64.zip that used to be built and uploaded by hand.
