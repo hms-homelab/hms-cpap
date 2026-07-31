@@ -711,4 +711,86 @@ TEST(SetupServiceTest, TheLoginAgentPlistIsAlsoAcceptedByPlutil) {
 }
 #endif
 
+
+// ---------------------------------------------------------------------------
+// Who owns starting the service
+//
+// Three owners, and only one is us. The costly mistake is offering the user a
+// "Start at Login" checkbox inside a container: it would write a systemd unit
+// into an image with no systemd and no login, and they would reasonably believe
+// their install now survives a reboot. It would not.
+// ---------------------------------------------------------------------------
+
+TEST(SetupServiceTest, APlainInstallOwnsItsOwnAutostart) {
+    EXPECT_EQ(SetupService::autostartOwner(/*supervised=*/false, /*containerised=*/false),
+              SetupService::AutostartOwner::Us);
+}
+
+TEST(SetupServiceTest, TheDesktopShellOwnsItWhenSupervising) {
+    EXPECT_EQ(SetupService::autostartOwner(true, false),
+              SetupService::AutostartOwner::DesktopShell);
+}
+
+TEST(SetupServiceTest, AContainerOwnsItsOwnLifecycle) {
+    EXPECT_EQ(SetupService::autostartOwner(false, true),
+              SetupService::AutostartOwner::Container);
+}
+
+TEST(SetupServiceTest, ContainerBeatsSupervisedWhenBothAreSet) {
+    // Someone can set HMS_CPAP_SUPERVISED inside a container. The runtime still
+    // owns the lifecycle, and telling them "CpapDash Desktop manages this"
+    // inside Docker would be actively misleading.
+    EXPECT_EQ(SetupService::autostartOwner(true, true),
+              SetupService::AutostartOwner::Container);
+}
+
+TEST(SetupServiceTest, DockerIsDetectedByItsMarkerFile) {
+    SetupService::ContainerHints h;
+    h.dockerenv_exists = true;
+    EXPECT_TRUE(SetupService::looksContainerised(h));
+}
+
+TEST(SetupServiceTest, PodmanIsDetectedToo) {
+    // /.dockerenv does not exist under Podman, which is exactly why the check
+    // is not a single file test.
+    SetupService::ContainerHints h;
+    h.containerenv_exists = true;
+    EXPECT_TRUE(SetupService::looksContainerised(h));
+}
+
+TEST(SetupServiceTest, TheCgroupFallbackCatchesRuntimesWithNoMarkerFile) {
+    for (const char* cg : {
+             "12:pids:/docker/9b2c1f",
+             "0::/system.slice/containerd.service",
+             "11:memory:/kubepods/besteffort/pod123",
+             "9:devices:/libpod-abc123",
+             "5:cpu:/lxc/mycontainer"}) {
+        SetupService::ContainerHints h;
+        h.pid1_cgroup = cg;
+        EXPECT_TRUE(SetupService::looksContainerised(h)) << cg;
+    }
+}
+
+TEST(SetupServiceTest, AnOrdinaryHostIsNotMistakenForAContainer) {
+    // The false positive matters as much as the false negative: it would REMOVE
+    // the checkbox from a user who genuinely needs it, and their install would
+    // then not survive a reboot at all.
+    SetupService::ContainerHints h;
+    h.pid1_cgroup = "0::/init.scope";
+    EXPECT_FALSE(SetupService::looksContainerised(h));
+
+    SetupService::ContainerHints empty;
+    EXPECT_FALSE(SetupService::looksContainerised(empty));
+}
+
+TEST(SetupServiceTest, OwnerStringsAreStable) {
+    // The frontend branches on these.
+    EXPECT_STREQ(SetupService::autostartOwnerString(SetupService::AutostartOwner::Us),
+                 "self");
+    EXPECT_STREQ(SetupService::autostartOwnerString(SetupService::AutostartOwner::DesktopShell),
+                 "desktop_shell");
+    EXPECT_STREQ(SetupService::autostartOwnerString(SetupService::AutostartOwner::Container),
+                 "container");
+}
+
 }  // namespace

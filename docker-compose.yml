@@ -49,8 +49,16 @@ services:
       - "8893:8893"  # Health check endpoint
 
     depends_on:
-      - postgres
-      - mosquitto
+      # service_healthy, not the bare list form. Plain depends_on waits for the
+      # container to START, not for PostgreSQL to accept connections, and a
+      # first run has to finish initdb. Since 4.8.0 hms_cpap validates its
+      # configuration before starting and REFUSES to boot on an unreachable
+      # database, so the bare form produced a crash loop on the very first
+      # `docker compose up` until Postgres caught up.
+      postgres:
+        condition: service_healthy
+      mosquitto:
+        condition: service_started
 
     networks:
       - cpap-network
@@ -77,6 +85,20 @@ services:
 
     volumes:
       - postgres_data:/var/lib/postgresql/data
+
+    # What `condition: service_healthy` above actually waits on. pg_isready is
+    # the only honest signal: the container being up says nothing about whether
+    # the server accepts connections, and on a first run it is still running
+    # initdb for several seconds.
+    #
+    # -U and -d are passed because pg_isready otherwise probes the default
+    # database as the default user, which need not exist here.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-cpap_user} -d ${DB_NAME:-cpap_data}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
 
     networks:
       - cpap-network

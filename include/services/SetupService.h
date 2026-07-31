@@ -285,11 +285,44 @@ public:
                                     const std::string& home_dir,
                                     const std::string& user_name);
 
-    /// Whether the wizard should offer to install autostart at all.
+    /// Who is responsible for starting this service.
     ///
-    /// False under the SDD-005 shell: the installer already owns autostart and
-    /// supervises the binary, so adding our own would mean two competing
-    /// entries racing to start the same service.
+    /// Three different owners, and only one of them is us. Getting this wrong is
+    /// not cosmetic: inside a container, "Start at Login" would write a systemd
+    /// unit into an image that has no systemd and no login, and the user would
+    /// reasonably believe their install now survives a reboot.
+    enum class AutostartOwner {
+        Us,            ///< a plain install; the wizard may install an entry
+        DesktopShell,  ///< the SDD-005 installer owns it and supervises us
+        Container      ///< Docker or Podman owns it; use a restart policy
+    };
+
+    static AutostartOwner autostartOwner(bool supervised, bool containerised);
+
+    /// Stable string for the API and the wizard's label.
+    static const char* autostartOwnerString(AutostartOwner owner);
+
+    /// The facts a container check reads, passed in so the decision is testable
+    /// without being inside a container.
+    struct ContainerHints {
+        bool dockerenv_exists = false;     ///< /.dockerenv, written by Docker
+        bool containerenv_exists = false;  ///< /run/.containerenv, written by Podman
+        std::string pid1_cgroup;           ///< contents of /proc/1/cgroup
+    };
+
+    /// Pure. Any ONE of these is enough: the checks are deliberately redundant
+    /// because each has a blind spot. /.dockerenv is absent under Podman,
+    /// cgroup v2 in a rootless container can look unremarkable, and a
+    /// distroless image may lack /proc conveniences. Guessing "not a container"
+    /// is the costly direction, since that is what offers a useless checkbox.
+    static bool looksContainerised(const ContainerHints& hints);
+
+    /// Reads the real system. Always false on Windows and macOS, where the
+    /// container runtime is a Linux VM and this binary is not inside it.
+    static bool isContainerised();
+
+    /// Whether the wizard should offer to install autostart at all.
+    /// Kept for callers that only need the yes/no.
     static bool canManageAutostart(bool supervised);
 
     static DbProbe provisionDatabase(const std::string& engine,
