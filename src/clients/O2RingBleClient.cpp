@@ -5,6 +5,7 @@
 #include <iostream>
 #include <chrono>
 #include <algorithm>
+#include <cctype>
 #include <thread>
 #include <sstream>
 
@@ -12,6 +13,60 @@ namespace hms_cpap {
 
 static const sdbus::ServiceName BLUEZ{"org.bluez"};
 static const sdbus::ObjectPath ROOT{"/"};
+
+// ── Device match ──────────────────────────────────────────────────────
+//
+// The Viatom/Wellue oximeter line (O2Ring, Checkme O2 / O2 Ultra, SleepU,
+// PO1-PO4, ...) shares one GATT profile, but every model advertises a
+// different name. Match any known name substring case-insensitively, then
+// fall back to the advertised service UUID for the models that drop their
+// name from adverts once they have been paired.
+//
+// "band-wu" is the Checkme O2 Ultra, which advertises neither "checkme" nor
+// the Viatom service — its advertisement carries only 16-bit Heart Rate
+// (180D), so the UUID fallback cannot see it and the name is the only hook
+// we get. Kept specific rather than a bare "band", which would match any
+// fitness tracker in range and have us connect to a stranger's device only
+// to fail GATT discovery against it.
+static const char* const KNOWN_NAME_SUBSTRINGS[] = {
+    "o2ring", "checkme", "checko2", "viatom", "wellue", "sleepu", "oxyring",
+    "band-wu",
+};
+
+bool O2RingBleClient::deviceMatches(const std::map<std::string, sdbus::Variant>& props) {
+    auto name_it = props.find("Name");
+    if (name_it != props.end()) {
+        try {
+            std::string lower = name_it->second.get<std::string>();
+            std::transform(lower.begin(), lower.end(), lower.begin(),
+                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+            for (const char* needle : KNOWN_NAME_SUBSTRINGS)
+                if (lower.find(needle) != std::string::npos) return true;
+        } catch (...) {}
+    }
+
+    // BlueZ publishes advertised service UUIDs on Device1.UUIDs, lowercased,
+    // which is the same form as SVC_UUID.
+    auto uuids_it = props.find("UUIDs");
+    if (uuids_it != props.end()) {
+        try {
+            for (const auto& uuid : uuids_it->second.get<std::vector<std::string>>())
+                if (uuid == SVC_UUID) return true;
+        } catch (...) {}
+    }
+    return false;
+}
+
+std::string O2RingBleClient::describeDevice(const std::map<std::string, sdbus::Variant>& props) {
+    auto it = props.find("Name");
+    if (it != props.end()) {
+        try {
+            std::string name = it->second.get<std::string>();
+            if (!name.empty()) return name;
+        } catch (...) {}
+    }
+    return "<unnamed, matched by service UUID>";
+}
 
 // ── Viatom CRC-8 ──────────────────────────────────────────────────────
 
@@ -115,13 +170,10 @@ bool O2RingBleClient::scan(int timeout_ms) {
         for (auto& [path, ifaces] : objects) {
             if (ifaces.count("org.bluez.Device1")) {
                 auto& props = ifaces.at("org.bluez.Device1");
-                if (props.count("Name")) {
-                    std::string name = props.at("Name").get<std::string>();
-                    if (name.find("O2Ring") != std::string::npos) {
-                        device_path_ = std::string(path);
-                        std::cout << "O2Ring BLE: Found cached " << name << std::endl;
-                        return true;
-                    }
+                if (deviceMatches(props)) {
+                    device_path_ = std::string(path);
+                    std::cout << "O2Ring BLE: Found cached " << describeDevice(props) << std::endl;
+                    return true;
                 }
             }
         }
@@ -151,13 +203,10 @@ bool O2RingBleClient::scan(int timeout_ms) {
             for (auto& [path, ifaces] : objects) {
                 if (ifaces.count("org.bluez.Device1")) {
                     auto& props = ifaces.at("org.bluez.Device1");
-                    if (props.count("Name")) {
-                        std::string name = props.at("Name").get<std::string>();
-                        if (name.find("O2Ring") != std::string::npos) {
-                            device_path_ = std::string(path);
-                            std::cout << "O2Ring BLE: Found " << name << std::endl;
-                            break;
-                        }
+                    if (deviceMatches(props)) {
+                        device_path_ = std::string(path);
+                        std::cout << "O2Ring BLE: Found " << describeDevice(props) << std::endl;
+                        break;
                     }
                 }
             }
