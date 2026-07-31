@@ -24,6 +24,7 @@
 #include "web/QueryService.h"
 
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <string>
 #include <unistd.h>
@@ -67,6 +68,19 @@ protected:
         return system_clock::time_point{} + seconds(secs);
     }
 
+    /// Noon, `days_ago` days back from today.
+    ///
+    /// RELATIVE, not a fixed calendar date. The dashboard trends look back a
+    /// fixed window from now, so hard-coded dates pass when written and quietly
+    /// fall out of range weeks later, which is a test that rots into a
+    /// false negative.
+    static long noonDaysAgo(int days_ago) {
+        const auto now = system_clock::now();
+        const long secs = duration_cast<seconds>(now.time_since_epoch()).count();
+        const long midnight = (secs / 86400) * 86400;
+        return midnight - static_cast<long>(days_ago) * 86400 + 12 * 3600;
+    }
+
     /// One finished night. Deliberately built through saveSession rather than
     /// raw SQL, so the tests exercise the same shape the collector writes.
     void addSession(long start_epoch, int duration_seconds) {
@@ -77,6 +91,19 @@ protected:
         s.session_end = tp(start_epoch + duration_seconds);
         s.duration_seconds = duration_seconds;
         ASSERT_TRUE(db_->saveSession(s));
+    }
+
+    /// A day in cpap_daily_summary, which is what the dashboard, trends and
+    /// statistics actually read. Sessions alone leave all of those empty, so
+    /// without this the row-mapping loops, where most of the code lives, never
+    /// execute.
+    void addDailySummary(long noon_epoch, double ahi, double duration_minutes) {
+        STRDailyRecord r;
+        r.device_id = kDevice;
+        r.record_date = tp(noon_epoch);
+        r.ahi = ahi;
+        r.duration_minutes = duration_minutes;
+        ASSERT_TRUE(db_->saveSTRDailyRecords({r}));
     }
 
     std::string db_path_;
@@ -235,6 +262,97 @@ TEST_F(QueryServiceReadTest, SignalReadsForAnAbsentNightAreEmptyNotBroken) {
         (void)qs_->getSessionEvents("19990101");
         (void)qs_->getSessionBreaths("19990101");
     });
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// With daily summaries, which is what the dashboard actually reads
+//
+// Sessions alone leave the dashboard, trends and statistics empty, so these
+// exercise the row-mapping loops rather than the early returns above.
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_F(QueryServiceReadTest, TheDashboardReportsTheLatestNight) {
+    addDailySummary(noonDaysAgo(2), 4.2, 430);
+    addDailySummary(noonDaysAgo(1), 2.1, 465);   // the newer night
+
+    const auto j = qs_->getDashboard();
+    ASSERT_TRUE(j.isObject());
+    ASSERT_TRUE(j.isMember("latest_night")) << "the dashboard lost its latest night";
+    // Newest wins: showing the night before last is the kind of wrong that
+    // looks right.
+    // executeQuery hands every column back as a STRING, so this goes through
+    // stod rather than asDouble, which throws.
+    EXPECT_NEAR(std::stod(j["latest_night"]["ahi"].asString()), 2.1, 0.01);
+}
+
+TEST_F(QueryServiceReadTest, TheDashboardCarriesItsTrends) {
+    for (int i = 0; i < 5; ++i)
+        addDailySummary(noonDaysAgo(5 - i), 3.0 + i, 400 + i);
+
+    const auto j = qs_->getDashboard();
+    ASSERT_TRUE(j.isObject());
+    for (const char* key : {"ahi_trend", "usage_trend"}) {
+        if (j.isMember(key)) {
+            EXPECT_TRUE(j[key].isArray()) << key << " must be an array";
+            EXPECT_GE(j[key].size(), 1u) << key << " was empty with five nights stored";
+        }
+    }
+}
+
+TEST_F(QueryServiceReadTest, TrendReturnsOneRowPerNight) {
+    for (int i = 0; i < 4; ++i)
+        addDailySummary(noonDaysAgo(4 - i), 3.0 + i, 400);
+
+    const auto t = qs_->getTrend("ahi", 3650);   // wide window, all four nights
+    ASSERT_TRUE(t.isArray());
+    EXPECT_GE(t.size(), 4u) << "the trend dropped nights";
+}
+
+TEST_F(QueryServiceReadTest, StatisticsAggregateTheStoredNights) {
+    addDailySummary(noonDaysAgo(2), 2.0, 400);
+    addDailySummary(noonDaysAgo(1), 6.0, 500);
+
+    const auto st = qs_->getStatistics("2000-01-01", "2099-12-31");
+    ASSERT_TRUE(st.isArray());
+    ASSERT_GE(st.size(), 1u) << "statistics returned nothing for two stored nights";
+    // Averaged, not summed or last-wins.
+    if (st[0].isMember("avg_ahi") && !st[0]["avg_ahi"].isNull()) {
+        EXPECT_NEAR(std::stod(st[0]["avg_ahi"].asString()), 4.0, 0.2);
+    }
+}
+
+TEST_F(QueryServiceReadTest, DailySummaryReturnsTheRangeAsked) {
+    for (int i = 0; i < 3; ++i)
+        addDailySummary(noonDaysAgo(3 - i), 3.0, 400);
+
+    const auto all = qs_->getDailySummary("2000-01-01", "2099-12-31");
+    ASSERT_TRUE(all.isArray());
+    EXPECT_GE(all.size(), 3u);
+
+    // A range with nothing in it must come back empty rather than unfiltered.
+    const auto none = qs_->getDailySummary("1990-01-01", "1990-12-31");
+    ASSERT_TRUE(none.isArray());
+    EXPECT_EQ(none.size(), 0u) << "the date range was not applied";
+}
+
+TEST_F(QueryServiceReadTest, ASavedSummaryComesBack) {
+    ASSERT_TRUE(db_->saveSummary(kDevice, "weekly", "2026-05-01", "2026-05-07",
+                                 7, 3.5, 7.2, 85.0, "A steady week."));
+    const auto s = qs_->getSummaries("weekly", 5);
+    ASSERT_TRUE(s.isArray());
+    ASSERT_GE(s.size(), 1u) << "a saved summary never came back";
+
+    // And the period filter is real, not decorative.
+    const auto monthly = qs_->getSummaries("monthly", 5);
+    ASSERT_TRUE(monthly.isArray());
+    EXPECT_EQ(monthly.size(), 0u) << "the period filter was ignored";
+}
+
+TEST_F(QueryServiceReadTest, InsightsRunOverStoredNights) {
+    for (int i = 0; i < 10; ++i)
+        addDailySummary(noonDaysAgo(10 - i), 2.0 + (i % 3), 400 + i * 5);
+    EXPECT_NO_THROW({ (void)qs_->getInsights(3650); });
 }
 
 }  // namespace
