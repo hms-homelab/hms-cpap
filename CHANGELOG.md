@@ -40,6 +40,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - The wizard only ever offers backends this build was actually compiled with.
 
 ### Fixed
+- **The BLE scan only ever recognised one oximeter model.** `O2RingBleClient`
+  matched a hardcoded `"O2Ring"` substring in two duplicated places, so every
+  other device in the same family was invisible even though they all speak the
+  identical GATT profile we already implement. It now matches the whole
+  Viatom/Wellue line (`o2ring`, `checkme`, `checko2`, `viatom`, `wellue`,
+  `sleepu`, `oxyring`, `band-wu`) case-insensitively, with a fallback to the
+  advertised service UUID from BlueZ's `Device1.UUIDs` for models that drop
+  their name from adverts once paired. Both call sites now share one
+  `deviceMatches()` helper instead of carrying the same predicate twice.
+
+  `band-wu` is the Checkme O2 Ultra. Confirmed from an owner's nRF Connect
+  dump that it advertises as `Band-WU NNNN`, matching neither "checkme" nor
+  anything else we looked for, and that its advertisement carries only 16-bit
+  Heart Rate (`180D`) — the Viatom 128-bit service is a *connected* service
+  and never appears in the advert, so the UUID fallback cannot see it either
+  and the name is the only hook. Kept specific rather than a bare `band`,
+  which would match any fitness tracker in range and have us connect to a
+  stranger's device only to fail GATT discovery against it.
+
+  Whether the Ultra's command set above that transport matches our block
+  reads is still unverified against real hardware.
+
 - **PostgreSQL never created its own core schema.** SQLite and MySQL both build
   their whole schema in `connect()`; this backend only ran incremental
   migrations, and its core tables lived in `scripts/schema.sql`, which nothing

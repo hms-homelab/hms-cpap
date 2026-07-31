@@ -98,6 +98,11 @@ private:
     void startDBusLoop();
     void stopDBusLoop();
 
+    // True if a scanned org.bluez.Device1 looks like a Viatom/Wellue oximeter.
+    static bool deviceMatches(const std::map<std::string, sdbus::Variant>& props);
+    // Human-readable label for logs; a UUID-matched device may carry no Name.
+    static std::string describeDevice(const std::map<std::string, sdbus::Variant>& props);
+
     static constexpr const char* SVC_UUID = "14839ac4-7d7e-415c-9a42-167340cf2339";
     static constexpr const char* WRITE_UUID = "8b00ace7-eb0b-49b0-bbe9-9aee0a26e1a3";
     static constexpr const char* NOTIFY_UUID = "0734594a-a8e7-4b1a-a6b1-cd5243059a57";
