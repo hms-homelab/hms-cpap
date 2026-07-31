@@ -461,16 +461,38 @@ jobs:
           }
           if (-not $ok) { throw '/health never answered' }
 
-          # Killing the shell must take the child with it. A survivor keeps 8893
-          # bound and makes the NEXT launch fail preflight for a reason we caused.
+          # FORCE kill: the case Supervisor.Stop() can never handle, because
+          # TerminateProcess skips every finally block in the runtime. Only the
+          # job object saves us here, and this assertion is what caught its
+          # absence.
           Stop-Process -Id $tray.Id -Force
           Start-Sleep -Seconds 8
           $orphan = Get-Process hms_cpap -ErrorAction SilentlyContinue
           if ($orphan) {
             Stop-Process -Name hms_cpap -Force -ErrorAction SilentlyContinue
-            throw 'hms_cpap outlived the tray; it would hold port 8893'
+            throw 'hms_cpap outlived a FORCE-KILLED tray; it would hold port 8893'
           }
-          Write-Host '  ok no orphaned child'
+          Write-Host '  ok no orphan after a forced kill'
+
+          # And the ordinary path, which most people actually take: start again
+          # and close the window politely. Covering only the violent case would
+          # leave the common one untested.
+          $tray2 = Start-Process -FilePath "$app\CpapDashDesktop.exe" -PassThru
+          Start-Sleep -Seconds 15
+          if ($tray2.HasExited) { throw 'the tray did not start a second time' }
+          if (-not (Get-Process hms_cpap -ErrorAction SilentlyContinue)) {
+            throw 'the tray did not restart hms_cpap on a second run'
+          }
+          $tray2.CloseMainWindow() | Out-Null
+          Start-Sleep -Seconds 5
+          if (-not $tray2.HasExited) { Stop-Process -Id $tray2.Id -Force }
+          Start-Sleep -Seconds 8
+          $orphan2 = Get-Process hms_cpap -ErrorAction SilentlyContinue
+          if ($orphan2) {
+            Stop-Process -Name hms_cpap -Force -ErrorAction SilentlyContinue
+            throw 'hms_cpap outlived a normally-closed tray'
+          }
+          Write-Host '  ok no orphan after a normal close'
 
       - name: Uninstall removes the program and the Run key
         run: |
