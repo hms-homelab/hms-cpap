@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.8.1] - 2026-08-02: your configuration survives a restart, and the dashboard stops going blank
+
+Both halves of [issue #16](https://github.com/hms-homelab/hms-cpap/issues/16),
+where Docker setup was completed, data imported, and then the next start came
+back to the setup wizard with an empty dashboard. They turned out to be two
+unrelated bugs that happened to land on the same user.
+
+### Fixed
+- **`config.json` no longer lives in the container's writable layer.** It
+  resolved under `$HOME`, which in an image is not a volume, so
+  `docker compose down` destroyed it, along with `setup_complete` and every
+  answer given to the setup wizard. The next start came up with defaults and
+  demanded setup again. The image now keeps it in `/config` and declares that a
+  volume, and `docker-compose.yml` mounts a named volume there.
+  - The location is `HMS_CPAP_DATA_DIR` if set, otherwise `~/.hms-cpap` as
+    before, so native installs are unaffected.
+  - An existing `~/.hms-cpap/config.json` is migrated into the new location
+    once, rather than being ignored in favour of a fresh one. Anyone who
+    bind-mounted the home directory to work around this keeps their setup.
+- **The dashboard is populated even when `STR.edf` is not reachable.**
+  `cpap_daily_summary` is the only table the dashboard reads, and for ResMed the
+  only thing that ever wrote it was `STR.edf`. Mount `DATALOG` instead of the SD
+  card root that holds `STR.edf` beside it, an easy and reasonable mistake,
+  and every session parsed, saved and listed correctly while the dashboard
+  stayed empty. That reads as "it imported my data and then lost it".
+  - When STR is unavailable the summary is now derived from the sessions
+    themselves, via the aggregation that Lowenstein devices (which have no STR
+    at all) already used.
+  - STR remains preferred and upserts over the derived rows the moment it
+    appears: it carries the machine's own nightly aggregates (mask on/off
+    pairs, leak percentiles, therapy mode) that sessions alone cannot supply.
+  - The same gap existed in the backfill, which logged "dashboard will be empty"
+    and finished reporting success.
+  - Both log lines now say what is being done about it, and name the SD card
+    root as the mount that gives full detail.
+
 ## [4.8.0] - 2026-07-31: a desktop app for Windows, and configuration that fails honestly
 
 ### Added
