@@ -629,11 +629,26 @@ void BurstCollectorService::processSessionSummary() {
         return;
     }
 
-    // ResMed (and default): process STR.edf
-    processSTRFile();
+    // ResMed (and default): STR.edf is the preferred source for
+    // cpap_daily_summary — it carries the machine's own nightly aggregates
+    // (mask pairs, leak percentiles, mode) that the per-session rows do not.
+    //
+    // But STR is not always reachable: the card may be mounted at DATALOG with
+    // no SD root above it, the ezShare fetch may fail, or the machine may not
+    // have written it yet. When that happens the sessions still parse and land
+    // in cpap_sessions, so the UI has data to show while getDashboard() — which
+    // reads cpap_daily_summary exclusively — renders an empty dashboard. That
+    // combination reads as "it imported my data and then lost it" (issue #16).
+    //
+    // Derive the summary from the sessions instead. It is strictly worse than
+    // STR (no mask pairs, leak from our own percentiles), and a later STR upserts
+    // over it on (device_id, record_date), so this only ever fills a gap.
+    str_summary_ok_ = processSTRFile();
+    if (!str_summary_ok_)
+        db_service_->aggregateDailySummaryFromSessions(device_id_);
 }
 
-void BurstCollectorService::processSTRFile() {
+bool BurstCollectorService::processSTRFile() {
     try {
         std::string str_local_path;
 
@@ -654,8 +669,12 @@ void BurstCollectorService::processSTRFile() {
             }
             if (str_local_path.empty()) {
                 std::cerr << "STR: Not found in " << parent.string()
-                          << " or " << local_source_dir_ << " (non-fatal)" << std::endl;
-                return;
+                          << " or " << local_source_dir_
+                          << " — deriving daily summary from sessions instead."
+                          << " Mount the SD card ROOT (the folder containing both"
+                          << " STR.edf and DATALOG) for full nightly detail."
+                          << std::endl;
+                return false;
             }
         } else {
             // ezShare/Fysetc mode: download from SD card root
@@ -667,7 +686,7 @@ void BurstCollectorService::processSTRFile() {
             if (!data_source_->downloadRootFile("STR.edf", str_local_path)) {
                 if (!data_source_->downloadRootFile("STR.EDF", str_local_path)) {
                     std::cerr << "STR: Download failed (non-fatal)" << std::endl;
-                    return;
+                    return false;
                 }
             }
             // Archive to permanent storage alongside DATALOG
@@ -683,7 +702,7 @@ void BurstCollectorService::processSTRFile() {
         auto all_records = EDFParser::parseSTRFile(str_local_path, device_id_);
         if (all_records.empty()) {
             std::cerr << "STR: No therapy days found" << std::endl;
-            return;
+            return false;
         }
 
         // Persist the FULL STR history. saveSTRDailyRecords is a single-transaction
@@ -739,9 +758,11 @@ void BurstCollectorService::processSTRFile() {
 
         std::cout << "STR: Processed and saved " << all_records.size()
                   << " therapy days to DB" << std::endl;
+        return true;
 
     } catch (const std::exception& e) {
         std::cerr << "STR: Processing failed (non-fatal): " << e.what() << std::endl;
+        return false;
     }
 }
 
@@ -1573,6 +1594,14 @@ bool BurstCollectorService::executeBurstCycle() {
 
     std::cout << "💾 CPAP: Saved " << saved_count << "/" << parsed_sessions.size()
               << " session(s) to database" << std::endl;
+
+    // STR is attempted earlier in this same cycle, before anything above has been
+    // parsed. When it is unavailable, the summary it fell back to was therefore
+    // derived from a session table that did not yet contain tonight's rows — on a
+    // first import, from an empty one. Re-derive now that they are persisted, or
+    // the UI shows a full session list behind a blank dashboard (issue #16).
+    if (!str_summary_ok_ && saved_count > 0)
+        db_service_->aggregateDailySummaryFromSessions(device_id_);
 
     // Step 8: Publish LATEST session to MQTT (most recent by session_start)
     if (!parsed_sessions.empty() && data_publisher_) {

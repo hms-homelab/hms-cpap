@@ -434,9 +434,21 @@ docker run -d \
   --name hms-cpap \
   --env-file .env \
   -p 8893:8893 \
+  -v cpap_config:/config \
   -v cpap_data:/data \
   ghcr.io/hms-homelab/hms-cpap:latest
 ```
+
+`/config` holds `config.json`, which is where `setup_complete` and everything the
+setup wizard writes lives. Keep it on a volume: without one it sits in the
+container's writable layer, so `docker compose down` (or any image update)
+discards your configuration and the next start returns to the setup wizard.
+
+Mounting your CPAP data read-only for `CPAP_SOURCE=local`? Point the mount at the
+**SD card root** -- the folder that contains both `STR.edf` and `DATALOG/` -- not at
+`DATALOG` itself. `STR.edf` is what carries the machine's own nightly aggregates
+(mask on/off pairs, leak percentiles, therapy mode). Without it the dashboard is
+still populated, but from the sessions alone, so those fields stay empty.
 
 ### Raspberry Pi
 

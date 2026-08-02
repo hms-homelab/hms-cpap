@@ -341,3 +341,61 @@ TEST(BackfillServiceTest, SingleDayReparseTouchesOnlyThatFolder) {
 
     std::filesystem::remove_all(tmp);
 }
+
+// ── Dashboard is fed even when STR.edf is missing (issue #16) ────────────
+// cpap_daily_summary is the ONLY table getDashboard() reads. STR.edf is its
+// preferred source, but a user who mounts DATALOG itself — rather than the SD
+// card root that holds STR.edf beside it — has no STR to parse. Before the fix
+// the backfill finished "complete" with sessions saved and the dashboard blank,
+// which reads as "it imported my data and then lost it".
+TEST(BackfillServiceTest, BackfillWithoutStrDerivesDailySummaryFromSessions) {
+    // local_dir is a DATALOG *below* tmp, so the parent we probe for STR.edf is
+    // a directory this test owns and is known not to contain one.
+    auto tmp = std::filesystem::temp_directory_path() / "cpap_test_backfill_nostr";
+    std::filesystem::remove_all(tmp);
+    auto datalog = tmp / "DATALOG";
+    auto folder = datalog / "20260208";
+    std::filesystem::create_directories(folder);
+
+    writeMinimalEDF(folder / "20260208_230000_BRP.edf", "20260208_230000", "BRP", 300);
+
+    ASSERT_FALSE(std::filesystem::exists(tmp / "STR.edf"));
+    ASSERT_FALSE(std::filesystem::exists(datalog / "STR.edf"));
+
+    auto mock_db = std::make_shared<MockDatabase>();
+
+    BackfillService::Config cfg;
+    cfg.local_dir = datalog.string();
+    cfg.device_id = "test_device";
+    cfg.device_name = "Test CPAP";
+
+    EXPECT_CALL(*mock_db, deleteSessionsByDateFolder("test_device", "20260208"))
+        .WillOnce(Return(0));
+    EXPECT_CALL(*mock_db, saveSession(_)).WillOnce(Return(true));
+    EXPECT_CALL(*mock_db, markSessionCompleted("test_device", _))
+        .Times(1).WillOnce(Return(true));
+    EXPECT_CALL(*mock_db, updateCheckpointFileSizesMock("test_device", _))
+        .WillOnce(Return(true));
+
+    // No STR to save...
+    EXPECT_CALL(*mock_db, saveSTRDailyRecords(_)).Times(0);
+    // ...so the summary MUST be derived from the sessions instead.
+    EXPECT_CALL(*mock_db, aggregateDailySummaryFromSessions("test_device"))
+        .Times(1).WillOnce(Return(true));
+
+    BackfillService svc(cfg, mock_db);
+    svc.start();
+    svc.trigger("2026-02-08", "2026-02-08");
+
+    for (int i = 0; i < 30; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        auto status = svc.getStatus();
+        if (status["status"].asString() != "running" &&
+            status["status"].asString() != "idle") break;
+    }
+    svc.stop();
+
+    EXPECT_EQ(svc.getStatus()["sessions_saved"].asInt(), 1);
+
+    std::filesystem::remove_all(tmp);
+}

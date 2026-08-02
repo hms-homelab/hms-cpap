@@ -230,6 +230,12 @@ private:
     // Cached STR records for on-demand insights regeneration
     std::vector<STRDailyRecord> last_str_records_;
 
+    /// Whether the most recent STR attempt actually populated cpap_daily_summary.
+    /// False means the dashboard is being fed by the session-derived fallback, so
+    /// it has to be recomputed after sessions are saved — STR is attempted early
+    /// in the cycle, before anything is parsed (issue #16).
+    bool str_summary_ok_ = false;
+
     // Pending range summary requests (set by MQTT callback, executed by worker thread)
     std::atomic<int> pending_weekly_days_{0};   // >0 = generate weekly with N days
     std::atomic<int> pending_monthly_days_{0};  // >0 = generate monthly with N days
@@ -370,7 +376,14 @@ private:
      */
     void processSessionSummary();
 
-    void processSTRFile();
+    /**
+     * @return true only if STR.edf was found, parsed, and its daily records were
+     *         written to cpap_daily_summary. False on every other path (card
+     *         unreachable, no STR on the card, unparseable, zero therapy days).
+     *         The caller uses this to decide whether the dashboard still needs a
+     *         summary derived from the sessions themselves — see issue #16.
+     */
+    bool processSTRFile();
 
     /**
      * Generate LLM summary of session metrics and publish to MQTT.

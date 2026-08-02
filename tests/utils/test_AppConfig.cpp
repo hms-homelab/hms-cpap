@@ -470,3 +470,59 @@ TEST_F(AppConfigTest, ToJsonExposesEverySectionTheUiEdits) {
             << "GET /api/config hides the '" << section << "' section";
     }
 }
+
+// ── HMS_CPAP_DATA_DIR override (issue #16) ──────────────────────────────
+// In a container $HOME is the writable layer, so config.json written there is
+// destroyed by `docker compose down` and the next boot demands the setup wizard
+// again. The image points HMS_CPAP_DATA_DIR at a declared volume instead.
+TEST(AppConfigDataDirTest, HmsCpapDataDirOverridesHome) {
+    setenv("HMS_CPAP_DATA_DIR", "/config", 1);
+    EXPECT_EQ(hms_cpap::AppConfig::dataDir(), "/config");
+    unsetenv("HMS_CPAP_DATA_DIR");
+}
+
+TEST(AppConfigDataDirTest, EmptyOverrideFallsBackToHome) {
+    // An unset-but-present env var (compose writes these) must not resolve the
+    // data dir to "", which would put config.json at the filesystem root.
+    setenv("HMS_CPAP_DATA_DIR", "", 1);
+    auto dir = hms_cpap::AppConfig::dataDir();
+    EXPECT_FALSE(dir.empty());
+    EXPECT_NE(dir.find(".hms-cpap"), std::string::npos);
+    unsetenv("HMS_CPAP_DATA_DIR");
+}
+
+TEST(AppConfigDataDirTest, UnsetOverrideUsesLegacyHomeLocation) {
+    unsetenv("HMS_CPAP_DATA_DIR");
+    EXPECT_EQ(hms_cpap::AppConfig::dataDir(), hms_cpap::AppConfig::legacyDataDir());
+}
+
+// A pre-existing config at the legacy path is migrated, once, rather than the
+// user silently getting a fresh one — this is what an install that bind-mounted
+// the home directory as a workaround relies on.
+TEST(AppConfigDataDirTest, LegacyConfigIsMigratedWhenTargetHasNone) {
+    auto root = std::filesystem::temp_directory_path() / "hms_cpap_migrate_test";
+    std::filesystem::remove_all(root);
+    auto fake_home = root / "home";
+    auto target = root / "config";
+    std::filesystem::create_directories(fake_home / ".hms-cpap");
+    std::filesystem::create_directories(target);
+
+    {
+        std::ofstream f(fake_home / ".hms-cpap" / "config.json");
+        f << R"({"device_id":"migrated","setup_complete":true})";
+    }
+
+    const char* prev_home = std::getenv("HOME");
+    std::string saved_home = prev_home ? prev_home : "";
+    setenv("HOME", fake_home.string().c_str(), 1);
+
+    EXPECT_TRUE(hms_cpap::AppConfig::migrateLegacyDataDir(target.string()));
+    EXPECT_TRUE(std::filesystem::exists(target / "config.json"));
+
+    // Idempotent: a second call must not re-copy over a config the user has
+    // since edited in the new location.
+    EXPECT_FALSE(hms_cpap::AppConfig::migrateLegacyDataDir(target.string()));
+
+    if (!saved_home.empty()) setenv("HOME", saved_home.c_str(), 1);
+    std::filesystem::remove_all(root);
+}

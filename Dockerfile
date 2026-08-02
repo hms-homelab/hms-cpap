@@ -93,8 +93,16 @@ RUN chmod +x /usr/local/bin/hms_cpap
 COPY --from=ui-builder /ui/dist/frontend/browser/ /home/cpap/static/browser/
 
 # Create data directories
-RUN mkdir -p /data/cpap_archive /tmp/hms-cpap && \
-    chown -R cpap:cpap /data /tmp/hms-cpap /home/cpap/static
+RUN mkdir -p /data/cpap_archive /tmp/hms-cpap /config && \
+    chown -R cpap:cpap /data /tmp/hms-cpap /config /home/cpap/static
+
+# config.json (and the SQLite DB, when used) live here rather than under
+# $HOME/.hms-cpap. The home directory is part of the container's writable layer,
+# so `docker compose down` destroyed the config and the next boot demanded the
+# setup wizard all over again — issue #16. /config is declared a volume so it
+# survives a recreate even when the operator mounts nothing.
+ENV HMS_CPAP_DATA_DIR=/config
+VOLUME ["/config"]
 
 # Switch to non-root user
 USER cpap
