@@ -273,8 +273,12 @@ void BackfillService::executeBackfill(const std::string& start_date,
             std::filesystem::temp_directory_path() / "cpap_backfill");
 
         // Process STR.edf to populate cpap_daily_summary (feeds the dashboard).
-        // STR.edf lives at the SD root, one level above DATALOG.
-        processSTRFile();
+        // STR.edf lives at the SD root, one level above DATALOG. When it is not
+        // reachable, derive the summary from the sessions we just parsed — a
+        // backfill that ends with an empty dashboard is indistinguishable from a
+        // backfill that did nothing at all (issue #16).
+        if (!processSTRFile())
+            db_->aggregateDailySummaryFromSessions(config_.device_id);
 
         {
             std::lock_guard<std::mutex> lock(progress_mutex_);
@@ -355,7 +359,7 @@ std::string BackfillService::currentTimestamp() {
     return oss.str();
 }
 
-void BackfillService::processSTRFile() {
+bool BackfillService::processSTRFile() {
     // STR.edf lives at the SD root, one level above DATALOG
     auto parent = std::filesystem::path(config_.local_dir).parent_path();
     std::string str_path;
@@ -372,19 +376,26 @@ void BackfillService::processSTRFile() {
         }
     }
     if (str_path.empty()) {
-        spdlog::warn("BackfillService: STR.edf not found — dashboard will be empty");
-        return;
+        spdlog::warn("BackfillService: STR.edf not found in {} or {} — deriving the "
+                     "daily summary from sessions instead. Point local_dir at the SD "
+                     "card ROOT (containing STR.edf and DATALOG) for full detail.",
+                     parent.string(), config_.local_dir);
+        return false;
     }
 
     try {
         auto records = EDFParser::parseSTRFile(str_path, config_.device_id);
-        if (!records.empty()) {
-            db_->saveSTRDailyRecords(records);
-            spdlog::info("BackfillService: STR.edf processed — {} daily record(s)",
-                         records.size());
+        if (records.empty()) {
+            spdlog::warn("BackfillService: STR.edf has no therapy days");
+            return false;
         }
+        db_->saveSTRDailyRecords(records);
+        spdlog::info("BackfillService: STR.edf processed — {} daily record(s)",
+                     records.size());
+        return true;
     } catch (const std::exception& e) {
         spdlog::warn("BackfillService: STR.edf parse error — {}", e.what());
+        return false;
     }
 }
 

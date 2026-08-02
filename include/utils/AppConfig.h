@@ -286,7 +286,18 @@ struct AppConfig {
         #endif
     }
 
+    /// Where config.json, the SQLite DB and reports live.
+    ///
+    /// HMS_CPAP_DATA_DIR wins when set. This exists for containers: the default
+    /// resolves under $HOME, which in an image is the container's WRITABLE LAYER,
+    /// so `docker compose down` silently destroys config.json and the next boot
+    /// comes back up demanding the setup wizard again (issue #16). The Dockerfile
+    /// points this at /config and declares it a volume; nothing else can be
+    /// mounted to cover the default without also capturing the home directory.
     static std::string dataDir() {
+        if (const char* override_dir = std::getenv("HMS_CPAP_DATA_DIR")) {
+            if (override_dir[0] != '\0') return std::string(override_dir);
+        }
         std::string home;
         #ifdef _WIN32
         home = std::getenv("USERPROFILE") ? std::getenv("USERPROFILE") : "C:\\";
@@ -295,6 +306,37 @@ struct AppConfig {
         home = std::getenv("HOME") ? std::getenv("HOME") : "/tmp";
         return home + "/.hms-cpap";
         #endif
+    }
+
+    /// The pre-HMS_CPAP_DATA_DIR location, kept only so an existing install that
+    /// bind-mounted the home directory as a workaround is migrated instead of
+    /// silently reset to a fresh config. See migrateLegacyDataDir().
+    static std::string legacyDataDir() {
+        std::string home;
+        #ifdef _WIN32
+        home = std::getenv("USERPROFILE") ? std::getenv("USERPROFILE") : "C:\\";
+        return home + "\\.hms-cpap";
+        #else
+        home = std::getenv("HOME") ? std::getenv("HOME") : "/tmp";
+        return home + "/.hms-cpap";
+        #endif
+    }
+
+    /// Copy a pre-existing config.json from the legacy location into the
+    /// configured data dir, once, when the latter has none. Returns true if a
+    /// config was migrated. Only copies config.json — the DB is addressed by an
+    /// absolute path inside it, so moving it is neither needed nor safe.
+    static bool migrateLegacyDataDir(const std::string& data_dir) {
+        std::string legacy = legacyDataDir();
+        if (legacy == data_dir) return false;
+        std::error_code ec;
+        auto target = std::filesystem::path(data_dir) / "config.json";
+        auto source = std::filesystem::path(legacy) / "config.json";
+        if (std::filesystem::exists(target, ec)) return false;
+        if (!std::filesystem::exists(source, ec)) return false;
+        std::filesystem::create_directories(data_dir, ec);
+        std::filesystem::copy_file(source, target, ec);
+        return !ec;
     }
 
     // Load from JSON file. Returns false if file doesn't exist (first run).

@@ -91,7 +91,11 @@ private:
     static std::string currentTimestamp();
 
     /// Parse STR.edf and save daily summaries to populate the dashboard.
-    void processSTRFile();
+    /// @return true only if STR.edf parsed and its daily records were saved.
+    ///         False leaves cpap_daily_summary unfilled, so the caller derives it
+    ///         from the sessions instead rather than finishing with a blank
+    ///         dashboard (issue #16).
+    bool processSTRFile();
 };
 
 }  // namespace hms_cpap

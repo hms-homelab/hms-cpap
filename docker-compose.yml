@@ -40,6 +40,10 @@ services:
       - HEALTH_CHECK_PORT=8893
 
     volumes:
+      # config.json — MUST be a volume. It holds setup_complete, so without this
+      # every `docker compose down && up` comes back to the setup wizard with the
+      # previous configuration gone (issue #16).
+      - cpap_config:/config
       # Permanent archive storage
       - cpap_archive:/data/cpap_archive
       # Temporary processing directory
@@ -131,6 +135,8 @@ services:
 # Volumes
 # =============================================================================
 volumes:
+  cpap_config:
+    driver: local
   cpap_archive:
     driver: local
   cpap_temp:

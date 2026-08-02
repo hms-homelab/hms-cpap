@@ -383,6 +383,10 @@ int runReparse(const std::string& archive_dir, const std::string& start_str, con
 int main(int argc, char** argv) {
     // ── Load AppConfig ──────────────────────────────────────────────
     std::string data_dir = hms_cpap::AppConfig::dataDir();
+    if (hms_cpap::AppConfig::migrateLegacyDataDir(data_dir)) {
+        std::cout << "Config: migrated from " << hms_cpap::AppConfig::legacyDataDir()
+                  << " to " << data_dir << std::endl;
+    }
     std::string config_path = data_dir + "/config.json";
 
     // Allow --config <path> override (scan before CLI modes)
