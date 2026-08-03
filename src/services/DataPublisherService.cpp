@@ -1,4 +1,5 @@
 #include "services/DataPublisherService.h"
+#include "utils/OximetryDevice.h"
 #include "utils/ConfigManager.h"
 #include <json/json.h>
 #include <iostream>
@@ -992,7 +993,7 @@ void DataPublisherService::publishOximetrySummary(const std::string& sleep_date_
     char next_buf[9];
     strftime(next_buf, sizeof(next_buf), "%Y%m%d", &next_tm);
 
-    auto oxi = db_service_->getOximetrySummary("o2ring", sleep_date_yyyymmdd, next_buf);
+    auto oxi = db_service_->getOximetrySummary(kOximetryDeviceId, sleep_date_yyyymmdd, next_buf);
     if (!oxi.found) return;
 
     std::string prefix = "cpap/" + device_id_ + "/oximetry/";

@@ -1,4 +1,5 @@
 #include "services/reports/RangeReportGenerator.h"
+#include "utils/OximetryDevice.h"
 #include <filesystem>
 
 namespace hms_cpap {
@@ -52,7 +53,7 @@ void RangeReportGenerator::buildCharts(const std::string& tmpDir,
         out.pressure, "Pressure 95th Percentile (cmH2O)",       "cmH2O",     "#8b5cf6", 4.0);
 
     // O2Ring nightly SpO2 (fetched from DB)
-    auto oxiNightly = db_->getOximetryNightlySpo2("o2ring",
+    auto oxiNightly = db_->getOximetryNightlySpo2(kOximetryDeviceId,
         toOxiDate(js(daily[0], "record_date")),
         toOxiDate(js(daily[static_cast<int>(daily.size())-1], "record_date")));
 

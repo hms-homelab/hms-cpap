@@ -29,6 +29,7 @@ static const sdbus::ObjectPath ROOT{"/"};
 // fitness tracker in range and have us connect to a stranger's device only
 // to fail GATT discovery against it.
 static const char* const KNOWN_NAME_SUBSTRINGS[] = {
+    // Advertised BLE names, NOT the storage device_id (see kOximetryDeviceId).
     "o2ring", "checkme", "checko2", "viatom", "wellue", "sleepu", "oxyring",
     "band-wu",
 };

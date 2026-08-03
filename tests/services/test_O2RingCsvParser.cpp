@@ -98,3 +98,73 @@ TEST(O2RingCsvParser, HeaderOnlyYieldsEmptySession) {
     auto s = O2RingCsvParser::parse("Time,SpO2(%),Pulse Rate(bpm),Motion\n", "h.csv");
     EXPECT_TRUE(s.samples.empty());
 }
+
+// ── Numeric date fields (issue #17) ─────────────────────────────────────
+// The Wellue app follows the phone's locale, so the same ring exports either
+// "06:53:07 Apr 12 2026" or "21:56:34 02/08/2026". Only the month-name form
+// parsed, so a numeric export produced zero samples and the UI said "no O2
+// data found" for a file that SleepHQ read without complaint.
+
+TEST(O2RingCsvParserNumericDate, DayFirstResolvedFromFilenameStamp) {
+    // 02/08 and 03/08 are both <= 12, so the rows alone cannot say which
+    // component is the day. The filename is named after the first sample.
+    std::string csv =
+        "Time,Oxygen Level,Pulse Rate,Motion\r\n"
+        "21:56:34 02/08/2026,94,73,13\r\n"
+        "21:56:38 02/08/2026,95,73,0\r\n"
+        "06:01:34 03/08/2026,96,70,1\r\n";
+
+    auto s = O2RingCsvParser::parse(csv, "O2Ring 0651_20260802215634.csv");
+    ASSERT_EQ(s.samples.size(), 3u);
+    EXPECT_EQ(s.start_time, utc(2026, 8, 2, 21, 56, 34));
+    EXPECT_EQ(s.end_time, utc(2026, 8, 3, 6, 1, 34));
+}
+
+TEST(O2RingCsvParserNumericDate, ComponentAboveTwelveSettlesItWithoutFilename) {
+    // 13 cannot be a month, so this is day-first no matter what the filename
+    // says (or whether there is one).
+    std::string csv =
+        "Time,Oxygen Level,Pulse Rate,Motion\r\n"
+        "22:10:00 13/08/2026,95,70,0\r\n"
+        "22:10:04 13/08/2026,96,71,0\r\n";
+
+    auto s = O2RingCsvParser::parse(csv, "export.csv");
+    ASSERT_EQ(s.samples.size(), 2u);
+    EXPECT_EQ(s.start_time, utc(2026, 8, 13, 22, 10, 0));
+}
+
+TEST(O2RingCsvParserNumericDate, MonthFirstDetectedWhenSecondComponentExceedsTwelve) {
+    std::string csv =
+        "Time,Oxygen Level,Pulse Rate,Motion\r\n"
+        "22:10:00 08/13/2026,95,70,0\r\n"
+        "22:10:04 08/13/2026,96,71,0\r\n";
+
+    auto s = O2RingCsvParser::parse(csv, "export.csv");
+    ASSERT_EQ(s.samples.size(), 2u);
+    EXPECT_EQ(s.start_time, utc(2026, 8, 13, 22, 10, 0));
+}
+
+TEST(O2RingCsvParserNumericDate, MissingReadingSentinelIsKeptButMarkedInvalid) {
+    // Wellue writes "- -" for a dropped reading. The row still carries a
+    // timestamp and motion, so it must not abort the import.
+    std::string csv =
+        "Time,Oxygen Level,Pulse Rate,Motion\r\n"
+        "21:56:34 02/08/2026,94,73,13\r\n"
+        "06:01:38 03/08/2026,- -,- -,2\r\n";
+
+    auto s = O2RingCsvParser::parse(csv, "O2Ring 0651_20260802215634.csv");
+    ASSERT_EQ(s.samples.size(), 2u);
+    EXPECT_EQ(s.samples[0].spo2, 94);
+    EXPECT_EQ(s.samples[1].invalid_flag, 1);
+}
+
+TEST(O2RingCsvParserNumericDate, MonthNameFormatStillParses) {
+    std::string csv =
+        "Time,Oxygen Level,Pulse Rate,Motion\n"
+        "06:53:07 Apr 12 2026,95,70,0\n"
+        "06:53:11 Apr 12 2026,96,71,0\n";
+
+    auto s = O2RingCsvParser::parse(csv, "whatever.csv");
+    ASSERT_EQ(s.samples.size(), 2u);
+    EXPECT_EQ(s.start_time, utc(2026, 4, 12, 6, 53, 7));
+}

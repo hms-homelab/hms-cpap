@@ -14,6 +14,58 @@ DatabaseService::DatabaseService(const std::string& connection_string)
 
 DatabaseService::~DatabaseService() {
     disconnect();
+    std::lock_guard<std::mutex> lock(query_mutex_);
+    if (query_conn_) { PQfinish(query_conn_); query_conn_ = nullptr; }
+}
+
+bool DatabaseService::ensureQueryConn() {
+    if (query_conn_ && PQstatus(query_conn_) == CONNECTION_OK) return true;
+    if (query_conn_) PQfinish(query_conn_);
+    query_conn_ = PQconnectdb(connection_string_.c_str());
+    if (PQstatus(query_conn_) != CONNECTION_OK) {
+        std::cerr << "executeQuery: PQ connect failed: "
+                  << PQerrorMessage(query_conn_) << std::endl;
+        PQfinish(query_conn_);
+        query_conn_ = nullptr;
+        return false;
+    }
+    return true;
+}
+
+Json::Value DatabaseService::executeQuery(const std::string& sql,
+                                          const std::vector<std::string>& params) {
+    Json::Value arr(Json::arrayValue);
+    std::lock_guard<std::mutex> lock(query_mutex_);
+    if (!ensureQueryConn()) return arr;
+
+    std::vector<const char*> pvals;
+    pvals.reserve(params.size());
+    for (const auto& p : params) pvals.push_back(p.c_str());
+
+    PGresult* res = PQexecParams(query_conn_, sql.c_str(),
+                                 static_cast<int>(params.size()),
+                                 nullptr, pvals.data(), nullptr, nullptr, 0);
+
+    if (!res || (PQresultStatus(res) != PGRES_TUPLES_OK &&
+                 PQresultStatus(res) != PGRES_COMMAND_OK)) {
+        std::cerr << "executeQuery error: " << PQerrorMessage(query_conn_) << std::endl;
+        if (res) PQclear(res);
+        return arr;
+    }
+
+    int nrows = PQntuples(res);
+    int ncols = PQnfields(res);
+    for (int r = 0; r < nrows; ++r) {
+        Json::Value obj;
+        for (int c = 0; c < ncols; ++c) {
+            const char* col = PQfname(res, c);
+            if (PQgetisnull(res, r, c)) obj[col] = Json::nullValue;
+            else                        obj[col] = PQgetvalue(res, r, c);
+        }
+        arr.append(obj);
+    }
+    PQclear(res);
+    return arr;
 }
 
 bool DatabaseService::connect() {
