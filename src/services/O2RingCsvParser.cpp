@@ -40,13 +40,56 @@ std::string trim(const std::string& s) {
     return s.substr(a, b - a + 1);
 }
 
-// Parse a Wellue time field into a UTC time_point. Handles both:
-//   "06:53:07 Apr 12 2026"     (24-hour)
+// Which way round a purely numeric date field is written. The Wellue app
+// follows the phone's locale, so the same ring exports "02/08/2026" as either
+// the 2nd of August or the 8th of February (issue #17).
+enum class DateOrder { DayFirst, MonthFirst };
+
+// Split "02/08/2026" (or 02-08-2026) into its three numbers. Returns false for
+// anything that is not exactly three numeric components, which is how a
+// month-name date ("Apr 12 2026") declines this path.
+bool splitNumericDate(const std::string& s, int& a, int& b, int& year) {
+    int n = 0;
+    char sep1 = 0, sep2 = 0, extra = 0;
+    n = std::sscanf(s.c_str(), "%d%c%d%c%d%c", &a, &sep1, &b, &sep2, &year, &extra);
+    if (n != 5) return false;                       // 6 means trailing junk
+    if ((sep1 != '/' && sep1 != '-') || sep1 != sep2) return false;
+    return true;
+}
+
+// Pull a YYYYMMDD out of the Wellue export filename, e.g.
+// "O2Ring 0651_20260802215634.csv" -> 2026, 8, 2. Returns false if there is no
+// digit run long enough to be a date stamp.
+bool filenameDateStamp(const std::string& filename, int& year, int& month, int& day) {
+    for (size_t i = 0; i < filename.size();) {
+        if (!std::isdigit((unsigned char)filename[i])) { ++i; continue; }
+        size_t j = i;
+        while (j < filename.size() && std::isdigit((unsigned char)filename[j])) ++j;
+        size_t len = j - i;
+        if (len == 8 || len == 14) {
+            std::string d = filename.substr(i, 8);
+            int y = std::atoi(d.substr(0, 4).c_str());
+            int m = std::atoi(d.substr(4, 2).c_str());
+            int dd = std::atoi(d.substr(6, 2).c_str());
+            if (y >= 2000 && m >= 1 && m <= 12 && dd >= 1 && dd <= 31) {
+                year = y; month = m; day = dd;
+                return true;
+            }
+        }
+        i = j;
+    }
+    return false;
+}
+
+// Parse a Wellue time field into a UTC time_point. Handles:
+//   "06:53:07 Apr 12 2026"     (24-hour, month name)
 //   "11:20:29PM Jun 19, 2026"  (12-hour AM/PM, comma after the day)
+//   "21:56:34 02/08/2026"      (numeric, order decided by the caller)
 // Returns false if it can't be parsed. We treat the wall clock as UTC; only
 // deltas matter for interval/duration, so the zone is irrelevant as long as
 // it's consistent.
-bool parseTimestamp(std::string t, std::chrono::system_clock::time_point& out) {
+bool parseTimestamp(std::string t, DateOrder order,
+                    std::chrono::system_clock::time_point& out) {
     static const char* months[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
                                     "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
     t = trim(t);
@@ -70,13 +113,24 @@ bool parseTimestamp(std::string t, std::chrono::system_clock::time_point& out) {
     if (ampm == 2 && hh < 12) hh += 12;   // PM
     if (ampm == 1 && hh == 12) hh = 0;    // 12 AM -> 00
 
-    char mon[16] = {};
-    int day = 0, year = 0;
-    if (sscanf(rest.c_str(), "%15s %d %d", mon, &day, &year) < 3) return false;
-    int month = 0;
-    for (int i = 0; i < 12; ++i)
-        if (strncmp(mon, months[i], 3) == 0) { month = i + 1; break; }
-    if (month == 0 || day < 1 || year < 2000) return false;
+    int day = 0, year = 0, month = 0;
+
+    int na = 0, nb = 0, nyear = 0;
+    if (splitNumericDate(rest, na, nb, nyear)) {
+        // A component above 12 can only be the day, whatever the locale says.
+        if (na > 12)      { day = na; month = nb; }
+        else if (nb > 12) { month = na; day = nb; }
+        else if (order == DateOrder::DayFirst) { day = na; month = nb; }
+        else                                   { month = na; day = nb; }
+        year = nyear;
+    } else {
+        char mon[16] = {};
+        if (sscanf(rest.c_str(), "%15s %d %d", mon, &day, &year) < 3) return false;
+        for (int i = 0; i < 12; ++i)
+            if (strncmp(mon, months[i], 3) == 0) { month = i + 1; break; }
+    }
+
+    if (month < 1 || month > 12 || day < 1 || day > 31 || year < 2000) return false;
 
     std::tm tm{};
     tm.tm_year = year - 1900;
@@ -89,12 +143,55 @@ bool parseTimestamp(std::string t, std::chrono::system_clock::time_point& out) {
     return true;
 }
 
+// Decide how to read ambiguous numeric dates, in order of confidence:
+//   1. Any row where a component exceeds 12 settles it for the whole file.
+//   2. Otherwise the export filename's own YYYYMMDD stamp, checked against the
+//      first row: Wellue names the file after the first sample, so whichever
+//      reading reproduces that date is the right one.
+//   3. Otherwise day-first, which is what every locale that writes dates
+//      numerically with slashes uses except the US.
+DateOrder detectDateOrder(const std::string& content, const std::string& filename) {
+    std::istringstream ss(content);
+    std::string line;
+    std::getline(ss, line);  // header
+
+    bool have_first = false;
+    int first_a = 0, first_b = 0, first_year = 0;
+
+    while (std::getline(ss, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (trim(line).empty()) continue;
+        auto cols = splitCsv(line);
+        if (cols.empty()) continue;
+
+        std::string t = trim(cols[0]);
+        size_t sp = t.find(' ');
+        if (sp == std::string::npos) continue;
+        std::string rest = trim(t.substr(sp + 1));
+
+        int a = 0, b = 0, y = 0;
+        if (!splitNumericDate(rest, a, b, y)) return DateOrder::DayFirst;  // month-name file, unused
+        if (a > 12) return DateOrder::DayFirst;
+        if (b > 12) return DateOrder::MonthFirst;
+        if (!have_first) { first_a = a; first_b = b; first_year = y; have_first = true; }
+    }
+
+    int fy = 0, fm = 0, fd = 0;
+    if (have_first && filenameDateStamp(filename, fy, fm, fd) && fy == first_year) {
+        if (fd == first_a && fm == first_b) return DateOrder::DayFirst;
+        if (fm == first_a && fd == first_b) return DateOrder::MonthFirst;
+    }
+    return DateOrder::DayFirst;
+}
+
 }  // namespace
 
 OximetrySession O2RingCsvParser::parse(const std::string& content,
                                        const std::string& filename) {
     OximetrySession session;
     session.filename = filename;
+
+    const DateOrder order = detectDateOrder(content, filename);
 
     std::istringstream ss(content);
     std::string line;
@@ -107,7 +204,7 @@ OximetrySession O2RingCsvParser::parse(const std::string& content,
         if (cols.size() < 3) continue;
 
         std::chrono::system_clock::time_point ts;
-        if (!parseTimestamp(cols[0], ts)) continue;
+        if (!parseTimestamp(cols[0], order, ts)) continue;
         int s = std::atoi(trim(cols[1]).c_str());
         int h = std::atoi(trim(cols[2]).c_str());
         int mo = cols.size() > 3 ? std::atoi(trim(cols[3]).c_str()) : 0;

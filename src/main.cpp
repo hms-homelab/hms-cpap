@@ -12,6 +12,7 @@
 #include "services/ReportGeneratorService.h"
 #endif
 #endif
+#include "utils/OximetryDevice.h"
 #include "services/BurstCollectorService.h"
 #include "services/SessionDiscoveryService.h"
 #include "services/DataPublisherService.h"
@@ -838,7 +839,7 @@ int main(int argc, char** argv) {
                             r["error"] = "No readable rows in CSV (expected a Wellue / O2 Ring export)";
                             return r;
                         }
-                        if (!oxi_db->saveOximetrySession("o2ring", session)) {
+                        if (!oxi_db->saveOximetrySession(hms_cpap::kOximetryDeviceId, session)) {
                             r["error"] = "Failed to save oximetry session";
                             return r;
                         }

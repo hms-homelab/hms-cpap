@@ -1274,4 +1274,44 @@ TEST_F(PgDatabaseTest, SyncFolder_EmptyDateFolderIsRefused) {
     EXPECT_FALSE(db_->upsertSyncFolder(f));
 }
 
+// ── executeQuery is the web/API read path (issue #18) ───────────────────
+// QueryService reads EVERYTHING through IDatabase::executeQuery. This class did
+// not override it between 4.6.3 and 4.8.1, so it inherited the IDatabase stub
+// that returns an empty array without logging, and every PostgreSQL install
+// served an empty dashboard and an empty session list while the collector wrote
+// happily to the same tables. Nothing detected it because nothing failed.
+
+TEST_F(PgDatabaseTest, ExecuteQuery_ReturnsRowsNotAnEmptyStub) {
+    ASSERT_TRUE(db_->saveSession(makeSession("DEV_EQ", tpFromEpoch(kBaseEpoch))));
+
+    auto rows = db_->executeQuery(
+        "SELECT device_id FROM cpap_sessions WHERE device_id = $1", {"DEV_EQ"});
+
+    ASSERT_TRUE(rows.isArray());
+    ASSERT_GE(rows.size(), 1u) << "executeQuery answered [] for a row that exists";
+    EXPECT_EQ(rows[0]["device_id"].asString(), "DEV_EQ");
+}
+
+TEST_F(PgDatabaseTest, ExecuteQuery_ColumnNamesAndNullsSurvive) {
+    // QueryService leans on both: it indexes results by column alias, and it
+    // distinguishes a NULL metric from a zero one.
+    auto rows = db_->executeQuery("SELECT 42 AS answer, NULL AS nothing");
+    ASSERT_EQ(rows.size(), 1u);
+    EXPECT_EQ(rows[0]["answer"].asString(), "42");
+    EXPECT_TRUE(rows[0]["nothing"].isNull());
+}
+
+TEST_F(PgDatabaseTest, ExecuteQuery_ParamsAreBoundNotInterpolated) {
+    auto rows = db_->executeQuery("SELECT $1::text AS echoed",
+                                  {"o'brien; DROP TABLE x--"});
+    ASSERT_EQ(rows.size(), 1u);
+    EXPECT_EQ(rows[0]["echoed"].asString(), "o'brien; DROP TABLE x--");
+}
+
+TEST_F(PgDatabaseTest, ExecuteQuery_BadSqlYieldsEmptyRatherThanThrowing) {
+    auto rows = db_->executeQuery("SELECT * FROM table_that_does_not_exist");
+    EXPECT_TRUE(rows.isArray());
+    EXPECT_EQ(rows.size(), 0u);
+}
+
 #endif // WITH_POSTGRESQL

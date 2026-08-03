@@ -1,4 +1,5 @@
 #include "services/OximetryService.h"
+#include "utils/OximetryDevice.h"
 #include <cpapdash/parser/VLDParser.h>
 #include <iostream>
 #include <iomanip>
@@ -34,7 +35,7 @@ bool OximetryService::collectAndPublish() {
 
         // Skip if already in DB
         // Use a fixed device_id for the O2 Ring
-        std::string device_id = "o2ring";
+        std::string device_id = kOximetryDeviceId;
         if (db_->oximetrySessionExists(device_id, filename)) {
             processed_files_.insert(filename);
             continue;

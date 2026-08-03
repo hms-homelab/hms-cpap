@@ -1,4 +1,5 @@
 #include "utils/TimeCompat.h"
+#include "utils/OximetryDevice.h"
 #include "services/BurstCollectorService.h"
 #include "services/InsightsEngine.h"
 #include "services/SleepHqExportService.h"
@@ -1032,7 +1033,7 @@ bool BurstCollectorService::executeBurstCycle() {
                 char date_buf[9];
                 std::strftime(date_buf, sizeof(date_buf), "%Y%m%d", &tm);
                 if (live.valid) {
-                    db_service_->saveLiveOximetrySample("o2ring", date_buf,
+                    db_service_->saveLiveOximetrySample(kOximetryDeviceId, date_buf,
                                                          live.spo2, live.hr, live.motion);
                 }
                 o2ring_was_active = true;
@@ -2032,7 +2033,7 @@ std::string BurstCollectorService::buildRangeMetricsString(
         start_nd.erase(std::remove(start_nd.begin(), start_nd.end(), '-'), start_nd.end());
         end_nd.erase(std::remove(end_nd.begin(), end_nd.end(), '-'), end_nd.end());
 
-        auto oxi = db_service_->getOximetryRangeSummary("o2ring", start_nd, end_nd);
+        auto oxi = db_service_->getOximetryRangeSummary(kOximetryDeviceId, start_nd, end_nd);
         if (oxi.found) {
             oss << "\nO2 Ring Oximetry (" << oxi.nights << " nights with data):\n";
             oss << "  Avg SpO2: " << oxi.avg_spo2 << "%\n";
@@ -2207,7 +2208,7 @@ std::string BurstCollectorService::buildMetricsString(const SessionMetrics& metr
         mktime(&next_tm);
         std::strftime(next_buf, sizeof(next_buf), "%Y%m%d", &next_tm);
 
-        auto oxi = db_service_->getOximetrySummary("o2ring", date_buf, next_buf);
+        auto oxi = db_service_->getOximetrySummary(kOximetryDeviceId, date_buf, next_buf);
         if (oxi.found) {
             oss << "\nO2 Ring Oximetry (overnight):\n";
             oss << "  Avg SpO2: " << oxi.avg_spo2 << "%\n";

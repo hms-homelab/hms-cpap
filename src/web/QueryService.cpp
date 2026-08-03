@@ -1,4 +1,5 @@
 #include "web/QueryService.h"
+#include "utils/OximetryDevice.h"
 
 #include <algorithm>
 #include <cctype>
@@ -543,7 +544,7 @@ Json::Value QueryService::getSessionOximetry(const std::string& date, int interv
         " AND s." + std::string(dt_ == DbType::SQLITE ? "valid = 1" : "valid = true") +
         " ORDER BY s.timestamp";
 
-    auto rows = db_->executeQuery(q, {"o2ring", sleep_day});
+    auto rows = db_->executeQuery(q, {kOximetryDeviceId, sleep_day});
 
     Json::Value result;
     Json::Value timestamps(Json::arrayValue);

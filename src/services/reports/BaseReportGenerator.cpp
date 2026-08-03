@@ -1,4 +1,5 @@
 #include "services/reports/BaseReportGenerator.h"
+#include "utils/OximetryDevice.h"
 #include "services/InsightsEngine.h"
 #include "parsers/CpapdashBridge.h"
 #include <filesystem>
@@ -198,7 +199,7 @@ void BaseReportGenerator::generate(int report_id,
 
     Json::Value daily = qs_->getDailySummary(start, end);
 
-    auto oxiRange   = db_->getOximetryRangeSummary("o2ring", toOxiDate(start), toOxiDate(end));
+    auto oxiRange   = db_->getOximetryRangeSummary(kOximetryDeviceId, toOxiDate(start), toOxiDate(end));
 
     // Build charts
     std::string tmpDir = "/tmp/cpap_report_" + std::to_string(report_id);

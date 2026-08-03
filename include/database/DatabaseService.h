@@ -3,9 +3,11 @@
 
 #include "database/IDatabase.h"
 #include <pqxx/pqxx>
+#include <libpq-fe.h>
 #include <memory>
 #include <string>
 #include <mutex>
+#include <vector>
 #include <iostream>
 
 namespace hms_cpap {
@@ -198,10 +200,35 @@ public:
         return static_cast<pqxx::connection*>(rawConnection());
     }
 
+    /**
+     * Run an arbitrary read query and return the rows as a JSON array.
+     *
+     * This is the ONLY thing the whole web/API layer reads through
+     * (QueryService), so a backend that does not override it serves an empty
+     * dashboard and empty session lists while the collector happily writes to
+     * the same database. That is exactly what happened between 4.6.3 and 4.8.1:
+     * the factory started building this class for PostgreSQL instead of
+     * PostgresDatabase, and the inherited IDatabase stub answered every query
+     * with `[]` and logged nothing (issue #18).
+     *
+     * Runs on its own libpq connection under its own mutex rather than the pqxx
+     * handle above: Drogon serves requests from several threads, pqxx is not
+     * thread-safe, and a web read must never join a transaction the collector
+     * is in the middle of.
+     */
+    Json::Value executeQuery(const std::string& sql,
+                             const std::vector<std::string>& params = {}) override;
+
 private:
     std::string connection_string_;
     std::unique_ptr<pqxx::connection> conn_;
     mutable std::recursive_mutex mutex_;
+
+    PGconn* query_conn_ = nullptr;      // separate libpq connection for web reads
+    mutable std::mutex query_mutex_;
+
+    /// Open (or reopen) query_conn_. Caller must hold query_mutex_.
+    bool ensureQueryConn();
 
     /**
      * Ensure connection is alive (reconnect if needed)
