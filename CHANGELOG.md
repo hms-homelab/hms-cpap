@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.8.2] - 2026-08-03: PostgreSQL can read its own data again
+
+### Fixed
+- **Every read the web layer makes was returning nothing on PostgreSQL, since
+  4.6.3** ([issue #18](https://github.com/hms-homelab/hms-cpap/issues/18)).
+  `IDatabase::executeQuery` is the one method on that interface with a default
+  body rather than being pure virtual, and its default returns an empty array.
+  4.6.3 switched every database handle in `main.cpp` from `PostgresDatabase`
+  (which implements it) to the shared factory, which builds `DatabaseService`
+  (which did not). So the collector kept writing correctly while every reader
+  got `[]`, and nothing logged an error because nothing failed.
+  - This was never a data problem. The rows were in PostgreSQL the whole time
+    and are visible again on upgrade. There is nothing to re-import and no
+    migration; if you deleted and re-added data trying to fix this, that was
+    not the cause.
+  - SQLite and MySQL were never affected. Both implement the method.
+  - It is wider than the dashboard. On PostgreSQL this also silently emptied
+    **PDF reports**, **CpapDash cloud sync**, **ML training data** and **live
+    sleep staging**, all of which read through the same call. Worth re-checking
+    anything you concluded from those between 4.6.3 and 4.8.1.
+- **Wellue O2 Ring exports with numeric dates imported as "no O2 data found"**
+  ([issue #17](https://github.com/hms-homelab/hms-cpap/issues/17)). The parser
+  accepted only month-name timestamps (`06:53:07 Apr 12 2026`), but the Wellue
+  app follows the phone's locale and also writes `21:56:34 02/08/2026`. Every
+  row failed to parse, the session came out empty, and the upload was rejected
+  as unreadable, for a file other tools accept.
+  - Day-first vs month-first is resolved in the only order that can be right:
+    a component above 12 settles it outright; otherwise the export filename's
+    own timestamp is checked against the first row, since Wellue names the file
+    after the first sample; failing both, day-first.
+
+### Changed
+- The oximetry `device_id` is now a single named constant instead of the same
+  string literal written out at nine call sites in eight files. A mismatch
+  between any writer and any reader would have produced an empty chart with
+  nothing logged, which is the same silent-empty failure as #18. Deliberately
+  NOT merged with the BLE name-match list (which matches what a ring
+  advertises) or the `o2ring` key in config.json (a file-format contract).
+
 ## [4.8.1] - 2026-08-02: your configuration survives a restart, and the dashboard stops going blank
 
 Both halves of [issue #16](https://github.com/hms-homelab/hms-cpap/issues/16),
