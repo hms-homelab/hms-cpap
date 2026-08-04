@@ -56,6 +56,11 @@ export interface SessionEvent {
   details: string | null;
 }
 
+/** SDD-009: one row from the cross-night /api/events search. */
+export interface EventRow extends SessionEvent {
+  sleep_day: string;
+}
+
 export interface TrendPoint {
   date: string;
   [key: string]: string;

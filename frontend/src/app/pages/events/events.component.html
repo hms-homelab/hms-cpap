@@ -1,0 +1,56 @@
+<div class="events-page">
+  <div class="events-head">
+    <h2>Events</h2>
+  </div>
+
+  <div class="filter-bar">
+    <div class="filter-group">
+      <label>From</label>
+      <input type="date" [(ngModel)]="startDate" (change)="onFilterChange()" />
+    </div>
+    <div class="filter-group">
+      <label>To</label>
+      <input type="date" [(ngModel)]="endDate" (change)="onFilterChange()" />
+    </div>
+    <div class="filter-group">
+      <label>Min duration (s)</label>
+      <input type="number" min="0" placeholder="any" [(ngModel)]="minDuration"
+             (change)="onFilterChange()" class="dur-input" />
+    </div>
+    <div class="type-chips">
+      <button *ngFor="let t of eventTypes" class="type-chip"
+              [class.on]="isChecked(t)"
+              [style.--chip-color]="typeColor(t)"
+              (click)="toggleType(t)">{{ t }}</button>
+    </div>
+  </div>
+
+  <table class="events-table" *ngIf="rows.length > 0">
+    <thead>
+      <tr><th>Night</th><th>Time</th><th>Type</th><th>Duration</th><th>Details</th></tr>
+    </thead>
+    <tbody>
+      <tr *ngFor="let r of rows" class="clickable" (click)="openNight(r)"
+          title="Open this night">
+        <td>{{ r.sleep_day }}</td>
+        <td class="mono">{{ clockTime(r.event_timestamp) }}</td>
+        <td><span class="type-badge" [style.background]="typeColor(r.event_type)">{{ r.event_type }}</span></td>
+        <td>{{ fmtDur(r.duration_seconds) }}</td>
+        <td class="details">{{ fmtDetails(r.details) }}</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="empty" *ngIf="!loading && !rows.length && !loadError">
+    No events match these filters.
+  </div>
+  <div class="empty" *ngIf="loadError">{{ loadError }}</div>
+
+  <div class="load-more-bar" *ngIf="rows.length > 0 && hasMore">
+    <button class="load-more" [disabled]="loadingMore" (click)="loadMore()">
+      <i class="fa-solid" [class.fa-chevron-down]="!loadingMore"
+         [class.fa-circle-notch]="loadingMore" [class.fa-spin]="loadingMore"></i>
+      {{ loadingMore ? 'Loading...' : 'Load more' }}
+    </button>
+  </div>
+</div>

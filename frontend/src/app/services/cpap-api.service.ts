@@ -1,7 +1,7 @@
 import { Injectable } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Observable } from 'rxjs';
-import { DashboardData, SessionListItem, SessionDetail, SessionEvent, TrendPoint, SignalData, VitalsData, OximetryData } from '../models/session.model';
+import { DashboardData, SessionListItem, SessionDetail, SessionEvent, EventRow, TrendPoint, SignalData, VitalsData, OximetryData } from '../models/session.model';
 import { AppConfig, DiscoveredDevice } from '../models/config.model';
 import { EquipmentType, EquipmentProfile, EquipmentItem, EquipmentItemPayload } from '../models/equipment.model';
 import { CleaningTask, CleaningTaskType, CleaningSuggestResult } from '../models/cleaning.model';
@@ -110,6 +110,20 @@ export class CpapApiService {
 
   getSessionEvents(date: string): Observable<SessionEvent[]> {
     return this.http.get<SessionEvent[]>(`/api/sessions/${date}/events`);
+  }
+
+  /** SDD-009: cross-night event search. Empty/zero filters are omitted. */
+  getEvents(filters: { start?: string; end?: string; types?: string[];
+                       minDuration?: number; limit?: number; offset?: number }):
+      Observable<EventRow[]> {
+    let params = new HttpParams()
+      .set('limit', filters.limit ?? 100)
+      .set('offset', filters.offset ?? 0);
+    if (filters.start) params = params.set('start', filters.start);
+    if (filters.end) params = params.set('end', filters.end);
+    if (filters.types?.length) params = params.set('types', filters.types.join(','));
+    if (filters.minDuration) params = params.set('min_duration', filters.minDuration);
+    return this.http.get<EventRow[]>('/api/events', { params });
   }
 
   testEzshare(url: string): Observable<{ status: string; url: string }> {

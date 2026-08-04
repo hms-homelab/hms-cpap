@@ -30,6 +30,7 @@ public:
     ADD_METHOD_TO(CpapController::sessionVitals,  "/api/sessions/{date}/vitals",  drogon::Get);
     ADD_METHOD_TO(CpapController::sessionEvents,  "/api/sessions/{date}/events",  drogon::Get);
     ADD_METHOD_TO(CpapController::sessionBreaths, "/api/sessions/{date}/breaths", drogon::Get);
+    ADD_METHOD_TO(CpapController::events,         "/api/events",                  drogon::Get);
     ADD_METHOD_TO(CpapController::sessionOximetry, "/api/sessions/{date}/oximetry", drogon::Get);
     ADD_METHOD_TO(CpapController::realtime,      "/api/realtime",            drogon::Get);
     ADD_METHOD_TO(CpapController::getConfig,     "/api/config",              drogon::Get);
@@ -103,6 +104,8 @@ public:
     void sessionBreaths(const drogon::HttpRequestPtr& req,
                         std::function<void(const drogon::HttpResponsePtr&)>&& cb,
                         const std::string& date);
+    void events(const drogon::HttpRequestPtr& req,
+                std::function<void(const drogon::HttpResponsePtr&)>&& cb);
     void sessionOximetry(const drogon::HttpRequestPtr& req,
                           std::function<void(const drogon::HttpResponsePtr&)>&& cb,
                           const std::string& date);

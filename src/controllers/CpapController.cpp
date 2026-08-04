@@ -211,6 +211,33 @@ void CpapController::sessionBreaths(const drogon::HttpRequestPtr&,
     }
 }
 
+void CpapController::events(const drogon::HttpRequestPtr& req,
+                            std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    // SDD-009: cross-night event search. All filters optional; see the SDD
+    // for the parameter contract.
+    std::string start = req->getParameter("start");
+    std::string end = req->getParameter("end");
+
+    std::vector<std::string> types;
+    std::istringstream ts(req->getParameter("types"));
+    std::string t;
+    while (std::getline(ts, t, ',')) {
+        if (!t.empty()) types.push_back(t);
+    }
+
+    int min_duration = req->getOptionalParameter<int>("min_duration").value_or(0);
+    int limit = req->getOptionalParameter<int>("limit").value_or(100);
+    int offset = req->getOptionalParameter<int>("offset").value_or(0);
+    limit = std::max(1, std::min(limit, 500));
+    offset = std::max(0, offset);
+
+    try {
+        cb(jsonResp(qs_->getEvents(start, end, types, min_duration, limit, offset)));
+    } catch (const std::exception& e) {
+        cb(jsonError(e.what(), drogon::k500InternalServerError));
+    }
+}
+
 void CpapController::sessionOximetry(const drogon::HttpRequestPtr& req,
                                       std::function<void(const drogon::HttpResponsePtr&)>&& cb,
                                       const std::string& date) {

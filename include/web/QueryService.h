@@ -4,6 +4,7 @@
 #include <json/json.h>
 #include <string>
 #include <memory>
+#include <vector>
 
 namespace hms_cpap {
 
@@ -22,6 +23,11 @@ public:
     Json::Value getSessionSignals(const std::string& date);
     Json::Value getSessionVitals(const std::string& date, int interval);
     Json::Value getSessionEvents(const std::string& date);
+    /// SDD-009: cross-night event search. Empty strings / empty vector / 0
+    /// mean "no filter" for their clause.
+    Json::Value getEvents(const std::string& start, const std::string& end,
+                          const std::vector<std::string>& types,
+                          int min_duration, int limit, int offset);
     Json::Value getSessionBreaths(const std::string& date);
     Json::Value getSessionOximetry(const std::string& date, int interval);
 

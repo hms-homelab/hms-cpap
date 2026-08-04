@@ -8,6 +8,7 @@ export const routes: Routes = [
   { path: 'sessions', loadComponent: () => import('./pages/sessions/sessions.component').then(m => m.SessionsComponent) , canActivate: [setupGuard] },
   { path: 'sessions/:date', loadComponent: () => import('./pages/session-detail/session-detail.component').then(m => m.SessionDetailComponent) , canActivate: [setupGuard] },
   { path: 'compare/:a/:b', loadComponent: () => import('./pages/compare/compare.component').then(m => m.CompareComponent) , canActivate: [setupGuard] },
+  { path: 'events', loadComponent: () => import('./pages/events/events.component').then(m => m.EventsComponent) , canActivate: [setupGuard] },
   { path: 'reports', loadComponent: () => import('./pages/reports/reports.component').then(m => m.ReportsComponent) , canActivate: [setupGuard] },
   { path: 'equipment', loadComponent: () => import('./pages/equipment/equipment.component').then(m => m.EquipmentComponent) , canActivate: [setupGuard] },
   { path: 'upload', loadComponent: () => import('./pages/upload/upload.component').then(m => m.UploadComponent) , canActivate: [setupGuard] },
