@@ -3,7 +3,7 @@
 **Status:** Approved (Albin, 2026-08-04)
 **Date:** 2026-08-04
 **Repo:** `hms-cpap`
-**Version target:** unassigned; Albin picks at release
+**Version target:** 4.9.1 (assigned by Albin, 2026-08-04)
 **Depends on:** nothing new; reads `cpap_events` as populated since v4.0
 
 ## Trigger

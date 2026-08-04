@@ -36,6 +36,10 @@ Automatically extracts sleep therapy data from ResMed and Lowenstein Prisma CPAP
 
 ![Sessions](docs/screenshots/sessions.png)
 
+**Events** -- Searchable table of every respiratory event across all nights. Filter by date range, event type, and minimum duration; every row links to its night.
+
+![Events](docs/screenshots/events.png)
+
 **Session Detail** -- Per-session metrics with O2Ring SpO2/HR overlay, 13 zoomable signal charts, event markers, and doughnut event distribution.
 
 ![Session Detail](docs/screenshots/session-detail.png)
@@ -79,6 +83,7 @@ All data sources (ezShare WiFi SD, local filesystem) work with both manufacturer
 - **SleepHQ Auto-Export** - Automatically forward each completed night's raw data to SleepHQ via their public API, toggleable on session complete and on local import, plus a manual per-night "Upload to SleepHQ" button
 - **Multi-Database** - PostgreSQL, MySQL/MariaDB, or SQLite (auto-created on first run)
 - **Signal Charts** - Per-minute resolution with event markers and oximetry overlay
+- **Events Explorer** - A searchable table of every respiratory event across all nights: filter by date range, event type, and minimum duration; every row links to its night. Reads the event store directly, so it never depends on the machine's daily summary being present
 - **Live Sessions** - Pulsing LIVE badge, 65s auto-refresh, growing charts during therapy
 - **ML Intelligence** - AHI prediction, compliance forecasting, mask fit risk, anomaly detection
 - **LLM Session Summary** - AI-generated therapy analysis via Ollama (daily, weekly, monthly)
