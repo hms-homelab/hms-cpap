@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.9.1] - 2026-08-04: the events table that cannot disappear
+
 ### Added
 - **Events page** (SDD-009, support ticket 67). A searchable table of every
   respiratory event across all nights, read straight from `cpap_events`:
