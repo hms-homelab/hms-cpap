@@ -145,18 +145,23 @@ bool parseTimestamp(std::string t, DateOrder order,
 
 // Decide how to read ambiguous numeric dates, in order of confidence:
 //   1. Any row where a component exceeds 12 settles it for the whole file.
-//   2. Otherwise the export filename's own YYYYMMDD stamp, checked against the
-//      first row: Wellue names the file after the first sample, so whichever
+//   2. A midnight crossing inside the file: the recording rolls to the next
+//      calendar day, so the component that ticked up by one is the day.
+//   3. The export filename's own YYYYMMDD stamp, checked against the first
+//      row: Wellue names the file after the first sample, so whichever
 //      reading reproduces that date is the right one.
-//   3. Otherwise day-first, which is what every locale that writes dates
+//   4. A 12-hour AM/PM clock: the phone is set to a US-style locale, and
+//      those are the locales that write month-first.
+//   5. Otherwise day-first, which is what every locale that writes dates
 //      numerically with slashes uses except the US.
 DateOrder detectDateOrder(const std::string& content, const std::string& filename) {
     std::istringstream ss(content);
     std::string line;
     std::getline(ss, line);  // header
 
-    bool have_first = false;
+    bool have_first = false, have_prev = false, ampm_clock = false;
     int first_a = 0, first_b = 0, first_year = 0;
+    int prev_a = 0, prev_b = 0;
 
     while (std::getline(ss, line)) {
         if (!line.empty() && line.back() == '\r') line.pop_back();
@@ -167,13 +172,26 @@ DateOrder detectDateOrder(const std::string& content, const std::string& filenam
         std::string t = trim(cols[0]);
         size_t sp = t.find(' ');
         if (sp == std::string::npos) continue;
+        std::string clock = t.substr(0, sp);
         std::string rest = trim(t.substr(sp + 1));
 
         int a = 0, b = 0, y = 0;
         if (!splitNumericDate(rest, a, b, y)) return DateOrder::DayFirst;  // month-name file, unused
         if (a > 12) return DateOrder::DayFirst;
         if (b > 12) return DateOrder::MonthFirst;
+
+        if (clock.size() >= 2) {
+            char c1 = (char)std::toupper((unsigned char)clock[clock.size() - 2]);
+            char c2 = (char)std::toupper((unsigned char)clock.back());
+            if (c2 == 'M' && (c1 == 'A' || c1 == 'P')) ampm_clock = true;
+        }
+
         if (!have_first) { first_a = a; first_b = b; first_year = y; have_first = true; }
+        if (have_prev && (a != prev_a || b != prev_b)) {
+            if (b == prev_b && a == prev_a + 1) return DateOrder::DayFirst;
+            if (a == prev_a && b == prev_b + 1) return DateOrder::MonthFirst;
+        }
+        prev_a = a; prev_b = b; have_prev = true;
     }
 
     int fy = 0, fm = 0, fd = 0;
@@ -181,6 +199,7 @@ DateOrder detectDateOrder(const std::string& content, const std::string& filenam
         if (fd == first_a && fm == first_b) return DateOrder::DayFirst;
         if (fm == first_a && fd == first_b) return DateOrder::MonthFirst;
     }
+    if (ampm_clock) return DateOrder::MonthFirst;
     return DateOrder::DayFirst;
 }
 
