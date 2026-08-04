@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.9.0] - 2026-08-04: O2-only nights are visible, and numeric dates land on the right month
+
 ### Added
 - **Nights that exist only as an O2 recording now appear in the sessions
   list** (support ticket 67). A CSV upload for a night with no CPAP session
