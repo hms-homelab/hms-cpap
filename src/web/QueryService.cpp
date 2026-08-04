@@ -103,7 +103,7 @@ Json::Value QueryService::getSessions(int limit, int offset) {
     // events in the same night appear as one row. Returns the most recent
     // nights first, paginated by limit/offset (no date window) so the UI
     // can "load more" back through the full history.
-    std::string q =
+    std::string cpap_arm =
         "SELECT " + sql::sleepDay("MIN(s.session_start)", dt_) + " as sleep_day,"
         " MIN(s.session_start) as session_start,"
         " MAX(s.session_end) as session_end,"
@@ -121,16 +121,48 @@ Json::Value QueryService::getSessions(int limit, int offset) {
         " SUM(COALESCE(m.reras, 0)) as reras,"
         " " + sql::round("AVG(NULLIF(m.avg_spo2, 0))", 1, dt_) + " as avg_spo2,"
         " " + sql::round("AVG(NULLIF(m.avg_heart_rate, 0))", 0, dt_) + " as avg_heart_rate,"
-        " SUM(CASE WHEN s.session_end IS NULL THEN 1 ELSE 0 END) as has_live"
+        " SUM(CASE WHEN s.session_end IS NULL THEN 1 ELSE 0 END) as has_live,"
+        " 0 as oximetry_only"
         " FROM cpap_sessions s"
         " LEFT JOIN cpap_session_metrics m ON m.session_id = s.id"
         " WHERE s.device_id = " + sql::param(1, dt_) +
-        " GROUP BY " + sql::sleepDay("s.session_start", dt_) +
+        " GROUP BY " + sql::sleepDay("s.session_start", dt_);
+
+    // A night that exists only as an O2 recording (CSV upload, or a BLE pull
+    // for a night the machine never synced) gets its own row. Without this
+    // arm the recording has no UI surface at all: the list is what links to
+    // the detail page (ticket 67, "won't take July dates").
+    std::string oxi_arm =
+        "SELECT " + sql::sleepDay("MIN(o.start_time)", dt_) + " as sleep_day,"
+        " MIN(o.start_time) as session_start,"
+        " MAX(o.end_time) as session_end,"
+        " SUM(o.duration_seconds) as duration_seconds,"
+        " " + sql::round("SUM(o.duration_seconds) / 3600.0", 2, dt_) + " as duration_hours,"
+        " NULL as ahi,"
+        " NULL as total_events,"
+        " NULL as obstructive_apneas,"
+        " NULL as central_apneas,"
+        " NULL as hypopneas,"
+        " NULL as reras,"
+        " " + sql::round("AVG(NULLIF(o.avg_spo2, 0))", 1, dt_) + " as avg_spo2,"
+        " " + sql::round("AVG(NULLIF(o.avg_hr, 0))", 0, dt_) + " as avg_heart_rate,"
+        " 0 as has_live,"
+        " 1 as oximetry_only"
+        " FROM oximetry_sessions o"
+        " WHERE " + sql::sleepDay("o.start_time", dt_) + " NOT IN ("
+        "SELECT DISTINCT " + sql::sleepDay("s2.session_start", dt_) +
+        " FROM cpap_sessions s2 WHERE s2.device_id = " + sql::param(2, dt_) + ")"
+        " GROUP BY " + sql::sleepDay("o.start_time", dt_);
+
+    // UNION ALL rather than a join: the arms are disjoint by construction, and
+    // pagination has to apply to the combined set or the frontend's
+    // offset-by-rows-loaded "load more" walks past nights.
+    std::string q = cpap_arm + " UNION ALL " + oxi_arm +
         " ORDER BY sleep_day DESC"
         " LIMIT " + std::to_string(limit) +
         " OFFSET " + std::to_string(offset);
 
-    Json::Value rows = db_->executeQuery(q, {device_id_});
+    Json::Value rows = db_->executeQuery(q, {device_id_, device_id_});
 
     // SDD-008: attach the night's transfer state so the frontend does not
     // re-derive it a third time (it already reimplements the live test in
@@ -209,6 +241,39 @@ Json::Value QueryService::getSessionDetail(const std::string& date) {
         }
         result.append(row);
     }
+
+    // SDD-008: carry the same night_state the sessions list shows, so the
+    // detail page's LIVE banner cannot disagree with the list. The ledger's
+    // str_day and the requested date name the same night; only punctuation
+    // differs.
+    std::string key = date;
+    key.erase(std::remove_if(key.begin(), key.end(),
+                             [](unsigned char c) { return !std::isdigit(c); }),
+              key.end());
+    if (key.size() > 8) key.resize(8);
+
+    const char* state = nullptr;
+    for (const auto& f : db_->listSyncFolders()) {
+        if (!f.str_day.empty() && f.str_day == key) {
+            state = nightStateString(nightState(f));
+            break;
+        }
+    }
+    if (!state) {
+        // No ledger row (local source, or a night predating the ledger): fall
+        // back to the open-session test, matching getSessions.
+        bool open = false;
+        for (const auto& row : result) {
+            if (!row.isMember("session_end") || row["session_end"].isNull() ||
+                row["session_end"].asString().empty()) {
+                open = true;
+                break;
+            }
+        }
+        state = open ? "live" : "complete";
+    }
+    for (auto& row : result) row["night_state"] = state;
+
     return result;
 }
 

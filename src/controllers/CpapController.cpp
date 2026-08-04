@@ -231,9 +231,17 @@ void CpapController::realtime(const drogon::HttpRequestPtr&,
     if (qs_) {
         try {
             auto sessions = qs_->getSessions(1, 0);
-            if (!sessions.empty() && sessions[0].isMember("has_live") &&
-                std::stoi(sessions[0]["has_live"].asString()) > 0) {
-                result["session"] = sessions[0];
+            if (!sessions.empty()) {
+                const auto& s0 = sessions[0];
+                // SDD-008: the ledger-backed night_state is the authority on
+                // liveness; has_live counts never-finalized segments, which is
+                // what kept this banner up after the night had settled.
+                const bool live =
+                    s0.isMember("night_state") && !s0["night_state"].isNull()
+                        ? s0["night_state"].asString() == "live"
+                        : s0.isMember("has_live") &&
+                              std::stoi(s0["has_live"].asString()) > 0;
+                if (live) result["session"] = s0;
             }
         } catch (...) {}
     }
