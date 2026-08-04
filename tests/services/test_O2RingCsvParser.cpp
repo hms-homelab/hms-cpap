@@ -158,6 +158,63 @@ TEST(O2RingCsvParserNumericDate, MissingReadingSentinelIsKeptButMarkedInvalid) {
     EXPECT_EQ(s.samples[1].invalid_flag, 1);
 }
 
+TEST(O2RingCsvParserNumericDate, MidnightCrossingResolvesMonthFirst) {
+    // US export where every component is <= 12 and the filename stamp is gone
+    // (user renamed the file). The date rolls 08/05 -> 08/06 at midnight, and
+    // only the day can tick up by one overnight, so the second component is
+    // the day: August 5th, not May 8th.
+    std::string csv =
+        "Time,Oxygen Level,Pulse Rate,Motion\r\n"
+        "23:59:58 08/05/2026,95,70,0\r\n"
+        "00:00:02 08/06/2026,96,71,0\r\n";
+
+    auto s = O2RingCsvParser::parse(csv, "renamed.csv");
+    ASSERT_EQ(s.samples.size(), 2u);
+    EXPECT_EQ(s.start_time, utc(2026, 8, 5, 23, 59, 58));
+    EXPECT_EQ(s.end_time, utc(2026, 8, 6, 0, 0, 2));
+}
+
+TEST(O2RingCsvParserNumericDate, MidnightCrossingResolvesDayFirst) {
+    // Same rollover in a day-first locale: 05/08 -> 06/08 means the FIRST
+    // component is the day.
+    std::string csv =
+        "Time,Oxygen Level,Pulse Rate,Motion\r\n"
+        "23:59:58 05/08/2026,95,70,0\r\n"
+        "00:00:02 06/08/2026,96,71,0\r\n";
+
+    auto s = O2RingCsvParser::parse(csv, "renamed.csv");
+    ASSERT_EQ(s.samples.size(), 2u);
+    EXPECT_EQ(s.start_time, utc(2026, 8, 5, 23, 59, 58));
+}
+
+TEST(O2RingCsvParserNumericDate, AmPmClockImpliesMonthFirstAsLastResort) {
+    // Single-day US nap recording (issue seen on ticket 67: "won't take July
+    // dates"): no component above 12, no midnight crossing, filename renamed.
+    // The 12-hour clock is the remaining tell that the phone locale is
+    // US-style, so 07/05 is July 5th, not May 7th.
+    std::string csv =
+        "Time,Oxygen Level,Pulse Rate,Motion\r\n"
+        "\"02:10:00PM 07/05/2026\",95,70,0\r\n"
+        "\"02:10:04PM 07/05/2026\",96,71,0\r\n";
+
+    auto s = O2RingCsvParser::parse(csv, "renamed.csv");
+    ASSERT_EQ(s.samples.size(), 2u);
+    EXPECT_EQ(s.start_time, utc(2026, 7, 5, 14, 10, 0));
+}
+
+TEST(O2RingCsvParserNumericDate, TwentyFourHourClockKeepsDayFirstDefault) {
+    // The mirror case: 24-hour clock, nothing else to go on. Stays day-first,
+    // the pre-existing default: 7 May.
+    std::string csv =
+        "Time,Oxygen Level,Pulse Rate,Motion\r\n"
+        "14:10:00 07/05/2026,95,70,0\r\n"
+        "14:10:04 07/05/2026,96,71,0\r\n";
+
+    auto s = O2RingCsvParser::parse(csv, "renamed.csv");
+    ASSERT_EQ(s.samples.size(), 2u);
+    EXPECT_EQ(s.start_time, utc(2026, 5, 7, 14, 10, 0));
+}
+
 TEST(O2RingCsvParserNumericDate, MonthNameFormatStillParses) {
     std::string csv =
         "Time,Oxygen Level,Pulse Rate,Motion\n"
