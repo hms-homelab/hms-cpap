@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Nights that exist only as an O2 recording now appear in the sessions
+  list** (support ticket 67). A CSV upload for a night with no CPAP session
+  used to import successfully and then have no UI surface at all: the
+  sessions list is built from CPAP sessions and is the only route to the
+  detail page, so the recording was invisible and the upload looked
+  rejected. Those nights now get their own row, marked "O2 only" with SpO2
+  and heart rate but no machine columns, and the detail page renders the
+  oximetry charts without a CPAP session behind them.
+- A golden-corpus convention for oximetry CSV exports
+  (`tests/fixtures/oximetry_csv/README.md`): the Wellue apps have no stable
+  export format, so real user files get pinned as fixtures instead of
+  re-deriving the contract from memory each time it breaks.
+
+### Fixed
+- **Two more signals for ambiguous numeric CSV dates.** A US export where
+  every date component is 12 or below and the filename stamp is gone parsed
+  day-first, so `07/05/2026` filed under the 7th of May and July uploads
+  looked like they were being refused (support ticket 67, follow-up to
+  [issue #17](https://github.com/hms-homelab/hms-cpap/issues/17)). A
+  midnight crossing inside the file now settles the order (only the day can
+  tick up by one overnight), and failing that, a 12-hour AM/PM clock implies
+  a US-style locale and therefore month-first. Files that resolve by the
+  existing rules are unaffected.
+- **Re-uploading a corrected O2 CSV now corrects the night on PostgreSQL.**
+  The upsert kept the originally stored `start_time` (and `sample_interval`,
+  `cpap_session_date`) on conflict, and 4.7.3 made `start_time` the source
+  of the night assignment, so a misfiled recording could never be fixed by
+  uploading again. SQLite and MySQL already updated those columns.
+- **The dashboard and session-detail LIVE banners now follow the same
+  night state as the sessions list.** SDD-008 tightened the list's live
+  test to the transfer ledger but left both banners on the old
+  open-session test, so they could keep blinking green after the list had
+  moved on to Partial or Done.
+
 ## [4.8.2] - 2026-08-03: PostgreSQL can read its own data again
 
 ### Fixed

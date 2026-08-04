@@ -33,13 +33,15 @@
           {{ s.sleep_day || sleepDay(s.session_start) }}
         </td>
         <td>
-          <span *ngIf="isLive(s)" class="live-badge">LIVE</span>
-          <span *ngIf="!isLive(s) && isPartial(s)" class="partial-badge"
+          <span *ngIf="isOximetryOnly(s)" class="o2-badge"
+                title="O2 ring recording only; no CPAP session was recorded for this night.">O2 only</span>
+          <span *ngIf="!isOximetryOnly(s) && isLive(s)" class="live-badge">LIVE</span>
+          <span *ngIf="!isOximetryOnly(s) && !isLive(s) && isPartial(s)" class="partial-badge"
                 title="The file transfer settled without this night's summary record. Shown for completeness, but left out of compliance and trend averages.">Partial</span>
-          <span *ngIf="!isLive(s) && !isPartial(s)" class="done-badge">Done</span>
+          <span *ngIf="!isOximetryOnly(s) && !isLive(s) && !isPartial(s)" class="done-badge">Done</span>
         </td>
         <td>{{ fmtDuration(s.duration_hours) }}</td>
-        <td [class.elevated]="+s.ahi > 5">{{ (+s.ahi).toFixed(1) || '-' }}</td>
+        <td [class.elevated]="+s.ahi > 5">{{ fmtAhi(s) }}</td>
         <td>{{ s.total_events || '-' }}</td>
         <td>{{ s.obstructive_apneas || '-' }}</td>
         <td>{{ s.central_apneas || '-' }}</td>
@@ -66,12 +68,14 @@
                 <i class="fa-solid fa-flag-checkered"></i>
                 {{ actionInProgress[s.sleep_day || sleepDay(s.session_start)] ? '...' : 'Force Done' }}
               </button>
-              <button [disabled]="actionInProgress[(s.sleep_day || sleepDay(s.session_start)) + '_sum']"
+              <button *ngIf="!isOximetryOnly(s)"
+                [disabled]="actionInProgress[(s.sleep_day || sleepDay(s.session_start)) + '_sum']"
                 (click)="generateSummary($event, s)">
                 <i class="fa-solid fa-brain"></i>
                 {{ actionInProgress[(s.sleep_day || sleepDay(s.session_start)) + '_sum'] ? '...' : 'AI Summary' }}
               </button>
-              <button [disabled]="actionInProgress[(s.sleep_day || sleepDay(s.session_start)) + '_rep']"
+              <button *ngIf="!isOximetryOnly(s)"
+                [disabled]="actionInProgress[(s.sleep_day || sleepDay(s.session_start)) + '_rep']"
                 (click)="reparse($event, s)">
                 <i class="fa-solid fa-rotate"></i>
                 {{ actionInProgress[(s.sleep_day || sleepDay(s.session_start)) + '_rep'] ? '...' : 'Reparse' }}
@@ -81,12 +85,13 @@
                 <i class="fa-solid fa-heart-pulse"></i>
                 {{ actionInProgress[(s.sleep_day || sleepDay(s.session_start)) + '_oxi'] ? '...' : 'Fetch O2 History' }}
               </button>
-              <button [disabled]="actionInProgress[(s.sleep_day || sleepDay(s.session_start)) + '_pdf']"
+              <button *ngIf="!isOximetryOnly(s)"
+                [disabled]="actionInProgress[(s.sleep_day || sleepDay(s.session_start)) + '_pdf']"
                 (click)="downloadDayPdf($event, s)">
                 <i class="fa-solid fa-file-pdf"></i>
                 {{ actionInProgress[(s.sleep_day || sleepDay(s.session_start)) + '_pdf'] ? 'Generating...' : 'Day PDF' }}
               </button>
-              <button *ngIf="sleephqEnabled"
+              <button *ngIf="sleephqEnabled && !isOximetryOnly(s)"
                 [disabled]="actionInProgress[(s.sleep_day || sleepDay(s.session_start)) + '_shq']"
                 (click)="uploadToSleepHq($event, s)">
                 <i class="fa-solid fa-cloud-arrow-up"></i>

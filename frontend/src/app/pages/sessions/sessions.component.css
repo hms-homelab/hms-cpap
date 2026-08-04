@@ -23,6 +23,16 @@ h2 { color: #e0e0e0; margin-bottom: 1rem; }
   padding: 0 0.3rem;
   cursor: help;
 }
+/* A night backed only by an O2 ring recording: real data, but no CPAP session,
+   so the machine columns are blank on purpose. */
+.o2-badge {
+  color: #93b4e0;
+  font-size: 0.7rem;
+  border: 1px solid rgba(147, 180, 224, 0.4);
+  border-radius: 3px;
+  padding: 0 0.3rem;
+  cursor: help;
+}
 @keyframes pulse-live {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.5; }

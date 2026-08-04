@@ -74,12 +74,17 @@ const SIGNAL_DEFS: SignalDef[] = [
         <span class="live-poll">Refreshing every 65s</span>
       </div>
 
+      <div class="o2-only-note" *ngIf="oximetryOnly">
+        <i class="fa-solid fa-heart-pulse"></i>
+        O2 ring recording only; no CPAP session was recorded for this night
+      </div>
+
       <div class="cards">
-        <app-metric-card label="AHI" [value]="session.ahi || '0'" unit="events/h"
+        <app-metric-card *ngIf="!oximetryOnly" label="AHI" [value]="session.ahi || '0'" unit="events/h"
           icon="fa-solid fa-heart-pulse" [iconColor]="ahiColor" />
         <app-metric-card label="Duration" [value]="isLive ? liveDuration : fmtDuration(session.duration_hours)" unit=""
           icon="fa-solid fa-clock-rotate-left" iconColor="#60a5fa" />
-        <app-metric-card label="Events" [value]="session.total_events || '0'" unit=""
+        <app-metric-card *ngIf="!oximetryOnly" label="Events" [value]="session.total_events || '0'" unit=""
           icon="fa-solid fa-triangle-exclamation" [iconColor]="eventsColor" />
         <app-metric-card *ngIf="hasSpo2"
           label="SpO2" [value]="displaySpo2.toFixed(1)" unit="%"
@@ -132,7 +137,7 @@ const SIGNAL_DEFS: SignalDef[] = [
       </div>
 
       <!-- OVERVIEW STRIP -->
-      <div class="overview-section" *ngIf="signalLabels.length">
+      <div class="overview-section" *ngIf="availableSignals.length">
         <h3>Overview <span class="hint">(click to expand)</span></h3>
         <div class="overview-grid">
           <div *ngFor="let sig of availableSignals; let i = index"
@@ -155,7 +160,7 @@ const SIGNAL_DEFS: SignalDef[] = [
         </div>
       </div>
 
-      <div class="loading" *ngIf="!signalLabels.length && !loadError">
+      <div class="loading" *ngIf="!hasChartData && !loadError">
         <p>Loading signal data...</p>
       </div>
       <div class="loading" *ngIf="loadError">
@@ -174,6 +179,9 @@ const SIGNAL_DEFS: SignalDef[] = [
     .nav-btn:hover { background: #3a3a4a; }
     .date-input { background: #1e1e2f; border: 1px solid #444; color: #e0e0e0; padding: 0.3rem 0.5rem; border-radius: 4px; font-size: 0.8rem; }
     .cards { display: flex; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 0.5rem; }
+    .o2-only-note { display: flex; align-items: center; gap: 0.5rem; background: #1e2430;
+      border: 1px solid #3a4a63; border-radius: 8px; padding: 0.5rem 0.75rem;
+      margin-bottom: 0.75rem; color: #93b4e0; font-size: 0.8rem; }
     .event-summary { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
     .event-badge { color: #fff; padding: 0.2rem 0.5rem; border-radius: 12px; font-size: 0.7rem; font-weight: 600; }
 
@@ -249,6 +257,7 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
   session: SessionDetail | null = null;
   loadError = '';
   hasEvents = false;
+  oximetryOnly = false;
 
   // Live session
   isLive = false;
@@ -384,6 +393,10 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
 
   get hasSpo2(): boolean { return this.displaySpo2 > 0; }
   get hasHr(): boolean { return this.displayHr > 0; }
+  get hasChartData(): boolean {
+    return !!(this.signalLabels.length || this.vitalsLabels.length ||
+              this.oximetryLabels.length);
+  }
 
   private loadSession() {
     this.destroyCharts();
@@ -393,6 +406,7 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
     this.loadError = '';
     this.session = null;
     this.isLive = false;
+    this.oximetryOnly = false;
 
     forkJoin({
       detail: this.api.getSessionDetail(this.date).pipe(catchError(() => of([]))),
@@ -404,10 +418,23 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
       // Merge all sessions for the night into one combined view
       if (detail.length > 0) {
         this.session = this.mergeSessions(detail);
+      } else if (oximetry?.timestamps?.length) {
+        // A night with only an O2 recording (CSV upload or BLE pull, no CPAP
+        // data): render the page from the oximetry charts alone.
+        this.oximetryOnly = true;
+        const first = new Date(oximetry.timestamps[0].replace(' ', 'T'));
+        const last = new Date(oximetry.timestamps[oximetry.timestamps.length - 1].replace(' ', 'T'));
+        const hours = (last.getTime() - first.getTime()) / 3600000;
+        this.session = { duration_hours: hours > 0 ? hours.toFixed(2) : '0' } as SessionDetail;
       }
 
-      // Detect live session (any session in the night still in-progress)
-      this.isLive = detail.some(s => !s.session_end);
+      // SDD-008: the ledger's night_state is the authority when present, so
+      // this banner agrees with the sessions list; the open-session test is
+      // the fallback for nights the ledger never tracked.
+      const nightState = detail.find(s => s.night_state)?.night_state;
+      this.isLive = nightState
+        ? nightState === 'live'
+        : detail.some(s => !s.session_end);
       if (this.isLive && this.session) {
         // Use earliest session start for live duration
         const earliest = detail.reduce((a, b) =>
@@ -453,7 +480,8 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
         return true;
       });
 
-      if (!this.signalLabels.length && !this.vitalsLabels.length) {
+      if (!this.signalLabels.length && !this.vitalsLabels.length &&
+          !this.oximetryLabels.length) {
         this.loadError = 'No signal data available for this session.';
         return;
       }

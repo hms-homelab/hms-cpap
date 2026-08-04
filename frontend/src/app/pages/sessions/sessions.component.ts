@@ -182,6 +182,19 @@ export class SessionsComponent implements OnInit, OnDestroy {
     return s.night_state === 'partial' || s.partial === true || s.partial === 't';
   }
 
+  /**
+   * A night that exists only as an O2 ring recording (CSV upload or BLE pull);
+   * there is no CPAP session behind the row, so the machine columns are blank.
+   */
+  isOximetryOnly(s: any): boolean {
+    return +s.oximetry_only > 0 || s.oximetry_only === true || s.oximetry_only === 't';
+  }
+
+  fmtAhi(s: any): string {
+    if (this.isOximetryOnly(s) || s.ahi == null || s.ahi === '') return '-';
+    return (+s.ahi).toFixed(1);
+  }
+
   fmtDuration(val: string | number | undefined): string {
     const hours = +(val || 0);
     if (hours <= 0) return '0m';

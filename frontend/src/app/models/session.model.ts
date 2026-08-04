@@ -32,6 +32,10 @@ export interface SessionListItem {
   reras: string;
   avg_spo2: string | null;
   avg_heart_rate: string | null;
+  /** SDD-008 transfer-ledger state: 'live' | 'partial' | 'complete'. */
+  night_state?: string;
+  /** '1' when the night exists only as an O2 ring recording (no CPAP session). */
+  oximetry_only?: string;
 }
 
 export interface SessionDetail extends SessionListItem {
