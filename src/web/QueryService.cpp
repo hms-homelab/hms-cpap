@@ -570,6 +570,53 @@ Json::Value QueryService::getSessionEvents(const std::string& date) {
     return db_->executeQuery(q, {device_id_, date});
 }
 
+Json::Value QueryService::getEvents(const std::string& start, const std::string& end,
+                                    const std::vector<std::string>& types,
+                                    int min_duration, int limit, int offset) {
+    // SDD-009: the cross-night event search behind /api/events. Clauses are
+    // appended in the same order their parameters are pushed, which is what
+    // keeps the '?' dialects aligned with the parameter vector.
+    std::vector<std::string> params;
+    int idx = 1;
+
+    std::string q =
+        "SELECT e.event_type, e.event_timestamp, e.duration_seconds, e.details,"
+        " " + sql::sleepDay("s.session_start", dt_) + " as sleep_day"
+        " FROM cpap_events e"
+        " JOIN cpap_sessions s ON s.id = e.session_id"
+        " WHERE s.device_id = " + sql::param(idx++, dt_);
+    params.push_back(device_id_);
+
+    if (!start.empty()) {
+        q += " AND " + sql::sleepDay("s.session_start", dt_) +
+             " >= " + sql::castDate(idx++, dt_);
+        params.push_back(start);
+    }
+    if (!end.empty()) {
+        q += " AND " + sql::sleepDay("s.session_start", dt_) +
+             " <= " + sql::castDate(idx++, dt_);
+        params.push_back(end);
+    }
+    if (!types.empty()) {
+        q += " AND e.event_type IN (";
+        for (size_t i = 0; i < types.size(); ++i) {
+            if (i) q += ", ";
+            q += sql::param(idx++, dt_);
+            params.push_back(types[i]);
+        }
+        q += ")";
+    }
+    if (min_duration > 0) {
+        q += " AND e.duration_seconds >= " + std::to_string(min_duration);
+    }
+
+    q += " ORDER BY e.event_timestamp DESC"
+         " LIMIT " + std::to_string(limit) +
+         " OFFSET " + std::to_string(offset);
+
+    return db_->executeQuery(q, params);
+}
+
 Json::Value QueryService::getSessionBreaths(const std::string& date) {
     std::string q =
         "SELECT b.onset, b.tidal_volume, b.inspiratory_time, b.expiratory_time, b.flow_limitation"

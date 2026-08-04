@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Events page** (SDD-009, support ticket 67). A searchable table of every
+  respiratory event across all nights, read straight from `cpap_events`:
+  filter by date range, event type, and minimum duration; rows link to the
+  night's detail page. Unlike the dashboard's breakdown card this does not
+  depend on `cpap_daily_summary`, so a missing STR cannot make it disappear.
+  New endpoint: `GET /api/events`.
+
 ## [4.9.0] - 2026-08-04: O2-only nights are visible, and numeric dates land on the right month
 
 ### Added
