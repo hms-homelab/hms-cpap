@@ -570,6 +570,12 @@ struct AppConfig {
         j["archive_dir"] = archive_dir;
         j["burst_interval"] = burst_interval;
         j["web_port"] = web_port;
+        // SDD-012: save() has always written static_dir, mqtt.client_id and
+        // llm.prompt_file, but toJson() did not emit them. That was harmless
+        // while nothing rendered them. Once the Settings page does, an omitted
+        // key reads back as empty, and saving the form writes that empty value
+        // over a real one. Every persisted key belongs in both serialisers.
+        j["static_dir"] = static_dir;
         j["setup_complete"] = setup_complete;
 
         j["database"]["type"] = database.type;
@@ -584,6 +590,7 @@ struct AppConfig {
         j["mqtt"]["broker"] = mqtt.broker;
         j["mqtt"]["port"] = mqtt.port;
         j["mqtt"]["username"] = mqtt.username;
+        j["mqtt"]["client_id"] = mqtt.client_id;
         j["mqtt"]["password"] = mqtt.password.empty() ? "" : "********";
 
         j["llm"]["enabled"] = llm.enabled;
@@ -592,6 +599,7 @@ struct AppConfig {
         j["llm"]["model"] = llm.model;
         j["llm"]["api_key"] = llm.api_key.empty() ? "" : "********";
         j["llm"]["max_tokens"] = llm.max_tokens;
+        j["llm"]["prompt_file"] = llm.prompt_file;
 
         j["agent"]["enabled"] = agent.enabled;
         j["agent"]["embed_model"] = agent.embed_model;

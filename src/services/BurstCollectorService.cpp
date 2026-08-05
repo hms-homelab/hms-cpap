@@ -2499,38 +2499,43 @@ void BurstCollectorService::reloadConfig() {
         std::cout << "Config reload: source -> " << nc.source << std::endl;
     }
 
-    // Database
+    // Database: deliberately NOT hot-reloaded. See SDD-012.
+    //
+    // This block used to swap db_service_ in place. It was the only handle that
+    // moved. main.cpp builds a separate connection per subsystem through
+    // makeDatabaseFromConfig() (`db`, `web_db`, `ml_db`, `rpt_db`, `bf_db`),
+    // each reading DB_* out of ConfigManager once at startup, and the web layer
+    // additionally hands its copy to controllers through static setDatabase()
+    // calls. Nothing rebuilt any of those.
+    //
+    // So changing the database in Settings put the collector on the NEW database
+    // while every reader stayed on the OLD one: nights were written where the
+    // dashboard could not see them, which presents to the user as data loss
+    // rather than as a configuration error. A partial swap is worse than none.
+    //
+    // Switching all five safely means re-invoking those static setters while
+    // requests may be in flight, which is a bigger change than this one and is
+    // not attempted here. Until then the honest behaviour is to keep every
+    // consumer on the same database until the process restarts, which is what
+    // the Settings page now tells the user.
     if (nc.db_type != last_config_.db_type || nc.db_host != last_config_.db_host ||
         nc.db_port != last_config_.db_port || nc.db_name != last_config_.db_name ||
         nc.db_user != last_config_.db_user || nc.db_password != last_config_.db_password ||
         nc.sqlite_path != last_config_.sqlite_path) {
-        if (db_service_) db_service_->disconnect();
-        if (nc.db_type == "sqlite") {
-            db_service_ = std::make_shared<SQLiteDatabase>(nc.sqlite_path);
-        }
-#ifdef WITH_POSTGRESQL
-        else if (nc.db_type == "postgresql") {
-            std::string cs = "host=" + nc.db_host + " port=" + std::to_string(nc.db_port) +
-                             " dbname=" + nc.db_name + " user=" + nc.db_user +
-                             " password=" + nc.db_password;
-            db_service_ = std::make_shared<DatabaseService>(cs);
-        }
-#endif
-#ifdef WITH_MYSQL
-        else if (nc.db_type == "mysql") {
-            db_service_ = std::make_shared<MySQLDatabase>(nc.db_host, nc.db_port, nc.db_user, nc.db_password, nc.db_name);
-        }
-#endif
-        if (db_service_ && db_service_->connect()) {
-            std::cout << "Config reload: DB -> " << nc.db_type << std::endl;
-        }
-        rebuild_publisher = true;
+        std::cout << "Config reload: database change saved, applies on restart "
+                     "(all consumers switch together)" << std::endl;
     }
 
     // MQTT
+    //
+    // client_id belongs in this comparison: it is copied into the rebuilt client
+    // below, so leaving it out meant changing ONLY the client ID rebuilt nothing
+    // and the broker kept seeing the old one until some other MQTT field also
+    // changed. A field that is applied must also be detected.
     if (nc.mqtt_enabled != last_config_.mqtt_enabled || nc.mqtt_broker != last_config_.mqtt_broker ||
         nc.mqtt_port != last_config_.mqtt_port || nc.mqtt_user != last_config_.mqtt_user ||
-        nc.mqtt_password != last_config_.mqtt_password) {
+        nc.mqtt_password != last_config_.mqtt_password ||
+        nc.mqtt_client_id != last_config_.mqtt_client_id) {
         if (mqtt_client_) mqtt_client_->disconnect();
         if (nc.mqtt_enabled) {
             hms::MqttConfig mc;

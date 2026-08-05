@@ -44,6 +44,21 @@ export class CpapApiService {
     return this.http.put<AppConfig>('/api/config', partial);
   }
 
+  /**
+   * SDD-012: restart the service so restart-required settings take effect.
+   *
+   * Answers 202 and then restarts, so the response arrives before the process
+   * goes away. `restarting: false` means this install cannot restart itself
+   * (no executable path) and the user has to do it, which the caller must say
+   * rather than spin on a process that is never coming back.
+   */
+  restartService(): Observable<{ accepted: boolean; restarting: boolean;
+                                 restart_mode: string; message?: string }> {
+    return this.http.post<{ accepted: boolean; restarting: boolean;
+                            restart_mode: string; message?: string }>(
+      '/api/config/restart', {});
+  }
+
   /// SDD-006: what this build can actually do. The wizard must not offer a
   /// backend the binary was not compiled with, because since 4.6.3 that is a
   /// refuse-to-boot condition rather than a silent SQLite fallback.

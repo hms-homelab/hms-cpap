@@ -333,6 +333,38 @@ TEST_F(AppConfigTest, SaveLoadSaveDoesNotDegradeSecrets) {
     EXPECT_EQ(c.llm.api_key, "llm_key");
 }
 
+// SDD-012: the five keys the Settings page gained. Each was previously
+// unreachable through PUT /api/config, so a value typed into Settings had to
+// survive save + load to be worth exposing at all. archive_dir is the one that
+// matters most: it is required by the Mule and Miner path and was settable only
+// in the first-run wizard, which left onboarded users editing config.json.
+TEST_F(AppConfigTest, NewlySettableKeysSurviveSaveAndLoad) {
+    AppConfig a;
+    a.archive_dir = "/tmp/CPAPData";
+    a.static_dir = "/opt/hms-cpap/static/browser";
+    a.llm.max_tokens = 4096;
+    a.llm.prompt_file = "/tmp/prompt.txt";
+    a.mqtt.client_id = "hms_cpap_kitchen";
+    a.save(config_path_);
+
+    AppConfig b;
+    ASSERT_TRUE(AppConfig::load(config_path_, b));
+    EXPECT_EQ(b.archive_dir, "/tmp/CPAPData");
+    EXPECT_EQ(b.static_dir, "/opt/hms-cpap/static/browser");
+    EXPECT_EQ(b.llm.max_tokens, 4096);
+    EXPECT_EQ(b.llm.prompt_file, "/tmp/prompt.txt");
+    EXPECT_EQ(b.mqtt.client_id, "hms_cpap_kitchen");
+
+    // And they are readable back out, since the Settings page renders from
+    // toJson() and a key missing there is a field that silently shows empty.
+    auto j = b.toJson();
+    EXPECT_EQ(j["archive_dir"], "/tmp/CPAPData");
+    EXPECT_EQ(j["static_dir"], "/opt/hms-cpap/static/browser");
+    EXPECT_EQ(j["llm"]["max_tokens"], 4096);
+    EXPECT_EQ(j["llm"]["prompt_file"], "/tmp/prompt.txt");
+    EXPECT_EQ(j["mqtt"]["client_id"], "hms_cpap_kitchen");
+}
+
 TEST_F(AppConfigTest, ToJsonMasksSecretsButNeverEmptiesThem) {
     AppConfig cfg;
     cfg.cpapdash.token = "tok_live_abc123";

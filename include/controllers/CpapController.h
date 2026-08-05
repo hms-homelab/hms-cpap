@@ -44,6 +44,7 @@ public:
     ADD_METHOD_TO(CpapController::setupApply,    "/api/setup/apply",         drogon::Post);
     ADD_METHOD_TO(CpapController::setupAutostart,"/api/setup/autostart",     drogon::Post);
     ADD_METHOD_TO(CpapController::autostartState,"/api/setup/autostart",     drogon::Get);
+    ADD_METHOD_TO(CpapController::configRestart, "/api/config/restart",      drogon::Post);
     ADD_METHOD_TO(CpapController::testEzshare,   "/api/config/test-ezshare", drogon::Get);
     ADD_METHOD_TO(CpapController::testBle,       "/api/config/test-ble",     drogon::Get);
     ADD_METHOD_TO(CpapController::triggerMlTrain, "/api/ml/train",     drogon::Post);
@@ -154,6 +155,11 @@ public:
     /// this file.
     void capabilities(const drogon::HttpRequestPtr& req,
                       std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+    /// SDD-012: restart the process so restart-required settings take effect.
+    /// The Settings-page counterpart to the wizard's setupApply, which refuses
+    /// once setup_complete. Restarts only; touches no config.
+    void configRestart(const drogon::HttpRequestPtr& req,
+                       std::function<void(const drogon::HttpResponsePtr&)>&& cb);
     void testEzshare(const drogon::HttpRequestPtr& req,
                      std::function<void(const drogon::HttpResponsePtr&)>&& cb);
     void testBle(const drogon::HttpRequestPtr& req,

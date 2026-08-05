@@ -326,9 +326,32 @@ void CpapController::updateConfig(const drogon::HttpRequestPtr& req,
     if (j.isMember("ezshare_range")) config_->ezshare_range = j["ezshare_range"].asBool();
     if (j.isMember("local_dir")) config_->local_dir = j["local_dir"].asString();
     if (j.isMember("burst_interval")) config_->burst_interval = j["burst_interval"].asInt();
+    // SDD-012: archive_dir was reachable only through setupApply, so it could be
+    // set during the wizard and never again. That is the one setting a Mule and
+    // Miner install REQUIRES (AppConfig.h), which left onboarded users editing
+    // config.json by hand to move where their nights land.
+    //
+    // It is NOT part of BurstCollectorService's ConfigSnapshot, so
+    // markConfigDirty() cannot carry it. Every consumer instead reads
+    // CPAP_ARCHIVE_DIR through ConfigManager at use time, and main.cpp writes
+    // that env var once at startup. Re-exporting it here is what makes a folder
+    // changed in Settings take effect on the next burst rather than at the next
+    // restart, which matters because this is the setting people change most.
+    if (j.isMember("archive_dir")) {
+        config_->archive_dir = j["archive_dir"].asString();
+        if (!config_->archive_dir.empty()) {
+#ifdef _WIN32
+            _putenv_s("CPAP_ARCHIVE_DIR", config_->archive_dir.c_str());
+#else
+            setenv("CPAP_ARCHIVE_DIR", config_->archive_dir.c_str(), 1);
+#endif
+        }
+    }
     // web_port only takes effect on the next start; Drogon's listener is already
     // bound by the time any request reaches here.
     if (j.isMember("web_port")) config_->web_port = j["web_port"].asInt();
+    // Likewise resolved once at startup by SetupService::resolveStaticDir().
+    if (j.isMember("static_dir")) config_->static_dir = j["static_dir"].asString();
 
     if (j.isMember("database")) {
         auto& d = j["database"];
@@ -348,6 +371,7 @@ void CpapController::updateConfig(const drogon::HttpRequestPtr& req,
         if (m.isMember("broker")) config_->mqtt.broker = m["broker"].asString();
         if (m.isMember("port")) config_->mqtt.port = m["port"].asInt();
         if (m.isMember("username")) config_->mqtt.username = m["username"].asString();
+        if (m.isMember("client_id")) config_->mqtt.client_id = m["client_id"].asString();
         if (m.isMember("password") && m["password"].asString() != "********")
             config_->mqtt.password = m["password"].asString();
     }
@@ -358,6 +382,8 @@ void CpapController::updateConfig(const drogon::HttpRequestPtr& req,
         if (l.isMember("provider")) config_->llm.provider = l["provider"].asString();
         if (l.isMember("endpoint")) config_->llm.endpoint = l["endpoint"].asString();
         if (l.isMember("model")) config_->llm.model = l["model"].asString();
+        if (l.isMember("max_tokens")) config_->llm.max_tokens = std::max(1, l["max_tokens"].asInt());
+        if (l.isMember("prompt_file")) config_->llm.prompt_file = l["prompt_file"].asString();
         if (l.isMember("api_key") && l["api_key"].asString() != "********")
             config_->llm.api_key = l["api_key"].asString();
     }
@@ -467,6 +493,58 @@ namespace {
 /// does not leave database provisioning exposed on the LAN forever.
 bool setupStillOpen(const hms_cpap::AppConfig* cfg) {
     return cfg && !cfg->setup_complete;
+}
+
+/// SDD-012: the restart half of setupApply, shared with POST /api/config/restart.
+///
+/// Extracted rather than duplicated because the two callers must agree on the
+/// answer. The Settings page needs the same restart the wizard already performs,
+/// and a second copy of the mode decision is a second thing to get wrong.
+///
+/// Answers the request FIRST and restarts on a detached thread afterwards, so
+/// the 202 is flushed to the browser rather than dying with the process. The
+/// caller supplies `result` so each endpoint can add its own fields.
+void respondAndRestart(std::function<void(const drogon::HttpResponsePtr&)>&& cb,
+                       Json::Value result) {
+    const auto mode = SetupService::restartMode(SetupService::isSupervised(),
+                                                SetupService::executablePath());
+
+    result["restarting"] = (mode != SetupService::RestartMode::Unsupported);
+    result["restart_mode"] =
+        mode == SetupService::RestartMode::SupervisedExit ? "supervised"
+      : mode == SetupService::RestartMode::ReExec        ? "reexec"
+                                                         : "manual";
+    if (mode == SetupService::RestartMode::Unsupported) {
+        // Said plainly rather than pretended: a database change cannot take
+        // effect without a restart, and if we cannot perform one the user has to.
+        result["message"] = "Settings saved. Restart hms_cpap for them to take effect.";
+    }
+
+    auto resp = drogon::HttpResponse::newHttpJsonResponse(result);
+    resp->setStatusCode(drogon::k202Accepted);
+    cb(resp);
+
+    if (mode == SetupService::RestartMode::Unsupported) return;
+
+    // Only AFTER the response has been handed back, and on a detached thread, so
+    // the 202 is actually flushed to the browser rather than dying with us.
+    const std::string exe = SetupService::executablePath();
+    std::thread([mode, exe]() {
+        std::this_thread::sleep_for(std::chrono::milliseconds(750));
+        if (mode == SetupService::RestartMode::SupervisedExit) {
+            std::exit(0);            // the SDD-005 shell respawns us
+        }
+#ifdef _WIN32
+        const char* argv[] = {exe.c_str(), nullptr};
+        _execv(exe.c_str(), const_cast<char* const*>(argv));
+#else
+        char* const argv[] = {const_cast<char*>(exe.c_str()), nullptr};
+        ::execv(exe.c_str(), argv);
+#endif
+        // execv only returns on failure, and by now the old process is no longer
+        // serving usefully, so exiting lets a supervisor notice.
+        std::exit(1);
+    }).detach();
 }
 
 }  // namespace
@@ -601,47 +679,28 @@ void CpapController::setupApply(const drogon::HttpRequestPtr& req,
     config_->setup_complete = true;
     config_->save(config_path_);
 
-    const auto mode = SetupService::restartMode(SetupService::isSupervised(),
-                                                SetupService::executablePath());
-
     Json::Value result;
     result["accepted"] = true;
-    result["restarting"] = (mode != SetupService::RestartMode::Unsupported);
-    result["restart_mode"] =
-        mode == SetupService::RestartMode::SupervisedExit ? "supervised"
-      : mode == SetupService::RestartMode::ReExec        ? "reexec"
-                                                         : "manual";
-    if (mode == SetupService::RestartMode::Unsupported) {
-        // Said plainly rather than pretended: a database change cannot take
-        // effect without a restart, and if we cannot perform one the user has to.
-        result["message"] = "Settings saved. Restart hms_cpap for them to take effect.";
-    }
+    respondAndRestart(std::move(cb), result);
+}
 
-    auto resp = drogon::HttpResponse::newHttpJsonResponse(result);
-    resp->setStatusCode(drogon::k202Accepted);
-    cb(resp);
-
-    if (mode == SetupService::RestartMode::Unsupported) return;
-
-    // Only AFTER the response has been handed back, and on a detached thread, so
-    // the 202 is actually flushed to the browser rather than dying with us.
-    const std::string exe = SetupService::executablePath();
-    std::thread([mode, exe]() {
-        std::this_thread::sleep_for(std::chrono::milliseconds(750));
-        if (mode == SetupService::RestartMode::SupervisedExit) {
-            std::exit(0);            // the SDD-005 shell respawns us
-        }
-#ifdef _WIN32
-        const char* argv[] = {exe.c_str(), nullptr};
-        _execv(exe.c_str(), const_cast<char* const*>(argv));
-#else
-        char* const argv[] = {const_cast<char*>(exe.c_str()), nullptr};
-        ::execv(exe.c_str(), argv);
-#endif
-        // execv only returns on failure, and by now the old process is no longer
-        // serving usefully, so exiting lets a supervisor notice.
-        std::exit(1);
-    }).detach();
+/// SDD-012: POST /api/config/restart
+///
+/// The Settings page counterpart to the wizard's restart. PUT /api/config
+/// re-applies only the burst collector and the cloud mirror; every other
+/// setting reaches the file and the in-memory config but never the running
+/// service, and until now the page had no way to say so or fix it. setupApply
+/// is gated by setupStillOpen(), so a completed install could not restart at
+/// all.
+///
+/// This restarts and nothing else. It does not touch config, does not set
+/// setup_complete, and does not reopen any of the SDD-006 provisioning surface
+/// to a finished install.
+void CpapController::configRestart(const drogon::HttpRequestPtr&,
+                                   std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    Json::Value result;
+    result["accepted"] = true;
+    respondAndRestart(std::move(cb), result);
 }
 
 void CpapController::autostartState(const drogon::HttpRequestPtr&,
