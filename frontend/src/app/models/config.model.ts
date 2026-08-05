@@ -5,8 +5,17 @@ export interface AppConfig {
   ezshare_url: string;
   ezshare_range: boolean;
   local_dir: string;
+  /**
+   * SDD-012: where collected card files are written. Required by the Mule and
+   * Miner path, and until now settable only in the first-run wizard, so an
+   * onboarded user had to edit config.json to move where their nights land.
+   * Applies to every source, unlike local_dir.
+   */
+  archive_dir: string;
   burst_interval: number;
   web_port: number;
+  /** Angular bundle location. A wrong value serves no UI at all. */
+  static_dir: string;
   setup_complete: boolean;
   database: {
     type: string;
@@ -23,6 +32,7 @@ export interface AppConfig {
     port: number;
     username: string;
     password: string;
+    client_id: string;
   };
   llm: {
     enabled: boolean;
@@ -30,6 +40,8 @@ export interface AppConfig {
     endpoint: string;
     model: string;
     api_key: string;
+    max_tokens: number;
+    prompt_file: string;
   };
   ml_training: {
     enabled: boolean;
@@ -49,6 +61,36 @@ export interface AppConfig {
     client_secret: string;
     auto_on_session: boolean;   // upload when a live session completes
     auto_on_backfill: boolean;  // upload when local-mode/backfill ingests a night
+    quiet_minutes: number;      // SDD-003: archive must be quiet this long first
+  };
+  /** SDD-012: requires LLM and PostgreSQL; shown disabled without them. */
+  agent: {
+    enabled: boolean;
+    embed_model: string;
+    temperature: number;
+    max_iterations: number;
+  };
+  sleep_stage: {
+    enabled: boolean;
+    live_inference: boolean;
+    model_dir: string;
+    model_version: string;
+  };
+  /** Raw SD sector push mode. Shown only when source === 'fysetc'. */
+  fysetc: {
+    enabled: boolean;
+    listen_port: number;
+    listen_bind: string;
+    connection_timeout_s: number;
+    archive_dir: string;
+    log_dir: string;
+  };
+  /** SDD-004 optional cloud mirror. Local stays the source of truth. */
+  cpapdash: {
+    enabled: boolean;
+    api_url: string;
+    token: string;      // redacted to '********' on read; resend it to keep
+    auto_sync: boolean;
   };
 }
 

@@ -42,10 +42,60 @@ import { AppConfig } from '../../models/config.model';
             <label class="toggle-row" *ngIf="config.source === 'ezshare'">
               <input type="checkbox" [(ngModel)]="config.ezshare_range" name="ezshare_range" />
               Range request downloads
+              <span class="restart-tag">restart</span>
             </label>
             <label *ngIf="config.source === 'local'">
               Local Directory
               <input type="text" [(ngModel)]="config.local_dir" name="local_dir" placeholder="/path/to/sd/DATALOG" />
+            </label>
+            <!-- SDD-012: applies to EVERY source, unlike local_dir. This is the
+                 folder OSCAR and other file-based tools read. -->
+            <label>
+              Archive Directory
+              <input type="text" [(ngModel)]="config.archive_dir" name="archive_dir"
+                     placeholder="/path/to/CPAPData" />
+              <small class="hint">
+                Where collected nights are written, as a card layout (STR.edf and
+                DATALOG/ side by side). Point OSCAR's card import here. Use forward
+                slashes on Windows, e.g. C:/Users/you/CPAPData
+              </small>
+            </label>
+          </div>
+        </div>
+
+        <!-- Section: Fysetc (raw SD sector push). Shown only for its own source,
+             which is also what makes that source configurable at all. -->
+        <div class="section" *ngIf="config.source === 'fysetc'">
+          <div class="section-header" (click)="toggle('fysetc')">
+            <span class="chevron" [class.open]="open['fysetc']">&#9654;</span>
+            Fysetc TCP
+            <span class="restart-tag">restart</span>
+          </div>
+          <div class="section-body" *ngIf="open['fysetc']">
+            <label class="toggle-row">
+              <input type="checkbox" [(ngModel)]="config.fysetc.enabled" name="fysetc_enabled" />
+              Enabled
+            </label>
+            <label>
+              Listen Port
+              <input type="number" [(ngModel)]="config.fysetc.listen_port" name="fysetc_listen_port" />
+            </label>
+            <label>
+              Listen Address
+              <input type="text" [(ngModel)]="config.fysetc.listen_bind" name="fysetc_listen_bind"
+                     placeholder="0.0.0.0" />
+            </label>
+            <label>
+              Connection Timeout (seconds)
+              <input type="number" [(ngModel)]="config.fysetc.connection_timeout_s" name="fysetc_timeout" />
+            </label>
+            <label>
+              Reconstructed Card Directory
+              <input type="text" [(ngModel)]="config.fysetc.archive_dir" name="fysetc_archive_dir" />
+            </label>
+            <label>
+              Log Directory
+              <input type="text" [(ngModel)]="config.fysetc.log_dir" name="fysetc_log_dir" />
             </label>
           </div>
         </div>
@@ -121,6 +171,126 @@ import { AppConfig } from '../../models/config.model';
               <label class="toggle-row">
                 <input type="checkbox" [(ngModel)]="config.sleephq.auto_on_backfill" name="sleephq_auto_backfill" />
                 Upload automatically when importing local data
+              </label>
+              <label>
+                Quiet Period (minutes)
+                <input type="number" [(ngModel)]="config.sleephq.quiet_minutes" name="sleephq_quiet_minutes" min="1" />
+                <span class="restart-tag">restart</span>
+                <small class="hint">
+                  How long the archive must stop changing before a night is
+                  exported, so a night still being written is not sent early.
+                </small>
+              </label>
+            </ng-container>
+          </div>
+        </div>
+
+        <!-- Section: CpapDash Cloud (SDD-004 mirror). Local stays authoritative. -->
+        <div class="section">
+          <div class="section-header" (click)="toggle('cpapdash')">
+            <span class="chevron" [class.open]="open['cpapdash']">&#9654;</span>
+            CpapDash Cloud
+            <span class="badge" *ngIf="!config.cpapdash.enabled">optional</span>
+          </div>
+          <div class="section-body" *ngIf="open['cpapdash']">
+            <p class="section-desc">
+              Mirror your equipment and supplies to your CpapDash account. Your
+              local install stays the source of truth, and turning this off leaves
+              the equipment feature working exactly as it does now.
+            </p>
+            <label class="toggle-row">
+              Enabled
+              <input type="checkbox" [(ngModel)]="config.cpapdash.enabled" name="cpapdash_enabled" />
+            </label>
+            <ng-container *ngIf="config.cpapdash.enabled">
+              <label>
+                API URL
+                <input type="text" [(ngModel)]="config.cpapdash.api_url" name="cpapdash_api_url"
+                       placeholder="https://api.cpapdash.com" />
+              </label>
+              <label>
+                Token
+                <input type="password" [(ngModel)]="config.cpapdash.token" name="cpapdash_token"
+                       placeholder="Paste a long-lived API token" />
+                <small class="hint">
+                  Stored redacted. Leave the masked value untouched to keep the
+                  current token. A token can be revoked without changing your
+                  account password.
+                </small>
+              </label>
+              <label class="toggle-row">
+                <input type="checkbox" [(ngModel)]="config.cpapdash.auto_sync" name="cpapdash_auto_sync" />
+                Also sync on the collection sweep after local edits
+              </label>
+            </ng-container>
+          </div>
+        </div>
+
+        <!-- Section: Sleep Stage Inference -->
+        <div class="section">
+          <div class="section-header" (click)="toggle('sleep_stage')">
+            <span class="chevron" [class.open]="open['sleep_stage']">&#9654;</span>
+            Sleep Stage Inference
+            <span class="badge" *ngIf="!config.sleep_stage.enabled">optional</span>
+            <span class="restart-tag">restart</span>
+          </div>
+          <div class="section-body" *ngIf="open['sleep_stage']">
+            <label class="toggle-row">
+              Enabled
+              <input type="checkbox" [(ngModel)]="config.sleep_stage.enabled" name="sleep_stage_enabled" />
+            </label>
+            <ng-container *ngIf="config.sleep_stage.enabled">
+              <label class="toggle-row">
+                <input type="checkbox" [(ngModel)]="config.sleep_stage.live_inference" name="sleep_stage_live" />
+                Infer during the night, not only once it ends
+              </label>
+              <label>
+                Model Directory
+                <input type="text" [(ngModel)]="config.sleep_stage.model_dir" name="sleep_stage_model_dir"
+                       placeholder="Leave empty to use the data directory" />
+              </label>
+              <label>
+                Model Version
+                <input type="text" [(ngModel)]="config.sleep_stage.model_version" name="sleep_stage_model_version"
+                       placeholder="shhs-rf-v1" />
+              </label>
+            </ng-container>
+          </div>
+        </div>
+
+        <!-- Section: Agent. Needs LLM and PostgreSQL, so it is shown disabled
+             with the reason rather than hidden, per SDD-012 decision 5. -->
+        <div class="section">
+          <div class="section-header" (click)="toggle('agent')">
+            <span class="chevron" [class.open]="open['agent']">&#9654;</span>
+            Agent
+            <span class="badge" *ngIf="!config.agent.enabled">optional</span>
+            <span class="restart-tag">restart</span>
+          </div>
+          <div class="section-body" *ngIf="open['agent']">
+            <p class="section-desc" *ngIf="!agentAvailable()">
+              Unavailable: the agent needs LLM Summaries enabled and a PostgreSQL
+              database. {{ agentBlockedReason() }}
+            </p>
+            <label class="toggle-row">
+              Enabled
+              <input type="checkbox" [(ngModel)]="config.agent.enabled" name="agent_enabled"
+                     [disabled]="!agentAvailable()" />
+            </label>
+            <ng-container *ngIf="config.agent.enabled && agentAvailable()">
+              <label>
+                Embedding Model
+                <input type="text" [(ngModel)]="config.agent.embed_model" name="agent_embed_model"
+                       placeholder="nomic-embed-text" />
+              </label>
+              <label>
+                Temperature
+                <input type="number" step="0.1" min="0" max="2"
+                       [(ngModel)]="config.agent.temperature" name="agent_temperature" />
+              </label>
+              <label>
+                Max Iterations
+                <input type="number" min="1" [(ngModel)]="config.agent.max_iterations" name="agent_max_iterations" />
               </label>
             </ng-container>
           </div>
@@ -283,6 +453,14 @@ import { AppConfig } from '../../models/config.model';
                 Password
                 <input type="password" [(ngModel)]="config.mqtt.password" name="mqtt_password" />
               </label>
+              <label>
+                Client ID
+                <input type="text" [(ngModel)]="config.mqtt.client_id" name="mqtt_client_id"
+                       placeholder="hms_cpap" />
+                <small class="hint">
+                  Changing only this does not take effect until the service restarts.
+                </small>
+              </label>
             </ng-container>
           </div>
         </div>
@@ -320,6 +498,17 @@ import { AppConfig } from '../../models/config.model';
               <label>
                 API Key
                 <input type="password" [(ngModel)]="config.llm.api_key" name="llm_api_key" placeholder="Optional for Ollama" />
+              </label>
+              <label>
+                Max Tokens
+                <input type="number" [(ngModel)]="config.llm.max_tokens" name="llm_max_tokens" min="1" />
+                <span class="restart-tag">restart</span>
+              </label>
+              <label>
+                Prompt File
+                <input type="text" [(ngModel)]="config.llm.prompt_file" name="llm_prompt_file"
+                       placeholder="Leave empty to use the built-in prompt" />
+                <span class="restart-tag">restart</span>
               </label>
             </ng-container>
           </div>
@@ -435,12 +624,72 @@ import { AppConfig } from '../../models/config.model';
           </div>
         </div>
 
+        <!-- Section: Advanced. Both of these are resolved once at startup and
+             both can make the app unreachable, so they sit last and warn. -->
+        <div class="section">
+          <div class="section-header" (click)="toggle('advanced')">
+            <span class="chevron" [class.open]="open['advanced']">&#9654;</span>
+            Advanced
+            <span class="restart-tag">restart</span>
+          </div>
+          <div class="section-body" *ngIf="open['advanced']">
+            <label>
+              Web Port
+              <input type="number" [(ngModel)]="config.web_port" name="web_port" min="1" max="65535" />
+              <small class="hint warn">
+                This is the port serving this page. After saving and restarting,
+                this tab moves itself to the new port. If the new port is blocked
+                or already in use, the app becomes unreachable in the browser and
+                you would have to fix it in config.json.
+              </small>
+            </label>
+            <label>
+              Static Directory
+              <input type="text" [(ngModel)]="config.static_dir" name="static_dir"
+                     (focus)="confirmStaticDir()" [readonly]="!staticDirUnlocked" />
+              <small class="hint warn" *ngIf="!staticDirUnlocked">
+                Locked. This is where the web interface itself is served from, and
+                a wrong value serves no interface at all. Click the field to unlock.
+              </small>
+              <small class="hint" *ngIf="staticDirUnlocked">
+                Leave empty to let the app find its own bundle.
+              </small>
+            </label>
+          </div>
+        </div>
+
         <div class="actions">
           <button type="submit" class="btn-save" [disabled]="saving">
             {{ saving ? 'Saving...' : 'Save' }}
           </button>
         </div>
       </form>
+
+      <!-- SDD-012: saved is not the same as in effect. Everything absent from
+           BurstCollectorService's ConfigSnapshot only lands on a restart, and
+           until now the page said "saved" and left it at that. -->
+      <div class="restart-banner" *ngIf="restartPending">
+        <div class="restart-text">
+          <strong>Saved, but not yet in effect.</strong>
+          {{ restartReason }}
+          <span *ngIf="portMoved"> This page will move to port {{ config?.web_port }}.</span>
+        </div>
+        <div class="restart-actions">
+          <button type="button" class="btn-save" (click)="restartNow()" [disabled]="restarting">
+            {{ restarting ? 'Restarting...' : 'Restart now' }}
+          </button>
+          <button type="button" class="btn-link" (click)="dismissRestart()" [disabled]="restarting">
+            Later
+          </button>
+        </div>
+      </div>
+      <div class="restart-banner manual" *ngIf="restartManual">
+        <div class="restart-text">
+          <strong>Restart hms-cpap for these settings to take effect.</strong>
+          This install cannot restart itself, so it has to be done the same way it
+          was started.
+        </div>
+      </div>
 
       <!-- Toast -->
       <div class="toast" *ngIf="toast" [class.toast-error]="toastError">{{ toast }}</div>
@@ -475,6 +724,32 @@ import { AppConfig } from '../../models/config.model';
       margin-left: auto; font-size: 0.7rem; font-weight: 400;
       color: #888; text-transform: uppercase; letter-spacing: 0.05em;
     }
+
+    /* SDD-012: marks a field that only takes effect after a restart. */
+    .restart-tag {
+      margin-left: 0.5rem; font-size: 0.62rem; font-weight: 600;
+      color: #ffb74d; text-transform: uppercase; letter-spacing: 0.06em;
+      border: 1px solid #ffb74d55; border-radius: 3px; padding: 0.05rem 0.3rem;
+      white-space: nowrap;
+    }
+    .section-header .restart-tag { margin-left: auto; }
+    .section-header .badge + .restart-tag { margin-left: 0.5rem; }
+
+    .restart-banner {
+      display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
+      margin-top: 1rem; padding: 0.85rem 1rem; border-radius: 6px;
+      background: #2a2416; border: 1px solid #ffb74d55; color: #f0e6d2;
+      font-size: 0.85rem;
+    }
+    .restart-banner.manual { background: #2a1c16; border-color: #ff8a6555; }
+    .restart-text { flex: 1; min-width: 260px; line-height: 1.45; }
+    .restart-actions { display: flex; align-items: center; gap: 0.5rem; }
+    .btn-link {
+      background: none; border: none; color: #90a4ae; cursor: pointer;
+      font-size: 0.8rem; text-decoration: underline; padding: 0.4rem;
+    }
+    .btn-link:disabled { opacity: 0.5; cursor: default; }
+    .hint.warn { color: #ffb74d; font-style: normal; }
 
     .section-body { padding: 0 1rem 1rem; }
 
@@ -615,8 +890,12 @@ export class SettingsComponent implements OnInit, OnDestroy {
 
   open: Record<string, boolean> = {
     source: true,
+    fysetc: false,
     o2ring: false,
     sleephq: false,
+    cpapdash: false,
+    sleep_stage: false,
+    agent: false,
     timing: false,
     backfill: false,
     database: true,
@@ -625,7 +904,46 @@ export class SettingsComponent implements OnInit, OnDestroy {
     ml_training: false,
     llm_prompt: false,
     device: true,
+    advanced: false,
   };
+
+  // SDD-012 restart state.
+  //
+  // `pristine` is the config as the server last confirmed it. Restart-required
+  // changes are detected by diffing against it AFTER a successful save, so the
+  // banner reflects what the server actually accepted rather than what is
+  // currently typed into the form.
+  private pristine: AppConfig | null = null;
+  restartPending = false;
+  restartManual = false;
+  restarting = false;
+  restartReason = '';
+  portMoved = false;
+  staticDirUnlocked = false;
+
+  /**
+   * Settings absent from BurstCollectorService::ConfigSnapshot, which is the
+   * entire hot-reload surface. Anything listed here reaches the config file and
+   * the in-memory config but never the running service until it restarts.
+   *
+   * `database` is listed despite reloadConfig() rebuilding db_service_, because
+   * main.cpp hands the original IDatabase to five consumers and only the burst
+   * collector's copy is swapped. A partial swap is not something to advertise
+   * as working.
+   */
+  private static readonly RESTART_KEYS: ReadonlyArray<[string, string]> = [
+    ['web_port', 'the web port'],
+    ['static_dir', 'the static directory'],
+    ['ezshare_range', 'the range-request setting'],
+    ['llm.max_tokens', 'the LLM token limit'],
+    ['llm.prompt_file', 'the LLM prompt file'],
+    ['mqtt.client_id', 'the MQTT client ID'],
+    ['sleephq', 'SleepHQ settings'],
+    ['agent', 'agent settings'],
+    ['sleep_stage', 'sleep stage settings'],
+    ['fysetc', 'Fysetc settings'],
+    ['database', 'database settings'],
+  ];
 
   constructor(private api: CpapApiService) {}
 
@@ -646,9 +964,33 @@ export class SettingsComponent implements OnInit, OnDestroy {
         }
         if (!cfg.sleephq) {
           cfg.sleephq = { enabled: false, client_id: '', client_secret: '',
-                          auto_on_session: true, auto_on_backfill: true };
+                          auto_on_session: true, auto_on_backfill: true,
+                          quiet_minutes: 15 };
         }
+        if (cfg.sleephq.quiet_minutes == null) cfg.sleephq.quiet_minutes = 15;
+        // SDD-012: an older config.json predates these blocks entirely, and an
+        // absent block would otherwise blow up the template's [(ngModel)] paths.
+        if (!cfg.agent) {
+          cfg.agent = { enabled: false, embed_model: 'nomic-embed-text',
+                        temperature: 0.3, max_iterations: 5 };
+        }
+        if (!cfg.sleep_stage) {
+          cfg.sleep_stage = { enabled: false, live_inference: true,
+                              model_dir: '', model_version: 'shhs-rf-v1' };
+        }
+        if (!cfg.fysetc) {
+          cfg.fysetc = { enabled: false, listen_port: 9000, listen_bind: '0.0.0.0',
+                         connection_timeout_s: 30, archive_dir: '',
+                         log_dir: '/var/log/maestro_hub' };
+        }
+        if (!cfg.cpapdash) {
+          cfg.cpapdash = { enabled: false, api_url: 'https://api.cpapdash.com',
+                           token: '', auto_sync: false };
+        }
+        if (cfg.archive_dir == null) cfg.archive_dir = '';
+        if (cfg.static_dir == null) cfg.static_dir = '';
         this.config = cfg;
+        this.pristine = JSON.parse(JSON.stringify(cfg));
         this.loading = false;
         // Load ML status if enabled
         if (cfg.ml_training?.enabled) this.loadMlStatus();
@@ -681,16 +1023,129 @@ export class SettingsComponent implements OnInit, OnDestroy {
   save(): void {
     if (!this.config || this.saving) return;
     this.saving = true;
+    const submitted: AppConfig = JSON.parse(JSON.stringify(this.config));
     this.api.updateConfig(this.config).subscribe({
       next: () => {
         this.saving = false;
         this.showToast('Configuration saved.', false);
+        this.evaluateRestart(submitted);
+        this.pristine = submitted;
       },
       error: () => {
         this.saving = false;
         this.showToast('Save failed.', true);
       },
     });
+  }
+
+  /** Read a dotted path off a config object, for the RESTART_KEYS comparison. */
+  private valueAt(cfg: any, path: string): any {
+    return path.split('.').reduce((o, k) => (o == null ? o : o[k]), cfg);
+  }
+
+  /**
+   * Decide whether the save that just succeeded needs a restart, and say which
+   * settings caused it. Compared against `pristine` so an untouched field never
+   * triggers the banner just because the user opened its section.
+   */
+  private evaluateRestart(saved: AppConfig): void {
+    if (!this.pristine) return;
+    const changed: string[] = [];
+    for (const [path, label] of SettingsComponent.RESTART_KEYS) {
+      const before = JSON.stringify(this.valueAt(this.pristine, path) ?? null);
+      const after = JSON.stringify(this.valueAt(saved, path) ?? null);
+      if (before !== after) changed.push(label);
+    }
+    this.portMoved = this.valueAt(this.pristine, 'web_port') !== this.valueAt(saved, 'web_port');
+    if (!changed.length) return;
+
+    const list = changed.length === 1
+      ? changed[0]
+      : changed.slice(0, -1).join(', ') + ' and ' + changed[changed.length - 1];
+    this.restartReason = `You changed ${list}, which the running service only picks up on a restart.`;
+    this.restartPending = true;
+    this.restartManual = false;
+  }
+
+  dismissRestart(): void {
+    this.restartPending = false;
+  }
+
+  /**
+   * SDD-012: POST /api/config/restart, then wait for the process to answer again.
+   *
+   * When the web port changed, the old origin is already dead, so /health is
+   * polled on the NEW port and the page moves itself there. Otherwise the
+   * current origin is polled and the page simply reloads.
+   */
+  restartNow(): void {
+    if (!this.config || this.restarting) return;
+    this.restarting = true;
+    const target = this.portMoved
+      ? `${window.location.protocol}//${window.location.hostname}:${this.config.web_port}`
+      : '';
+    this.api.restartService().subscribe({
+      next: (res: any) => {
+        if (res && res.restarting === false) {
+          // Cannot restart itself. Say so rather than spinning on a process
+          // that is never going to go away.
+          this.restarting = false;
+          this.restartPending = false;
+          this.restartManual = true;
+          return;
+        }
+        this.pollUntilBack(target, 1);
+      },
+      error: () => {
+        this.restarting = false;
+        this.showToast('Restart request failed.', true);
+      },
+    });
+  }
+
+  /** Poll /health until the restarted process answers, then land the user back. */
+  private pollUntilBack(origin: string, attempt: number): void {
+    // ~20s, matching the wizard's window and far beyond a normal restart.
+    if (attempt > 40) {
+      this.restarting = false;
+      this.showToast(
+        origin
+          ? `No answer on ${origin}. The port may be blocked or already in use.`
+          : 'The service did not come back. Check that it is running.',
+        true);
+      return;
+    }
+    const url = (origin || '') + '/health';
+    fetch(url, { cache: 'no-store' })
+      .then((r) => {
+        if (!r.ok) throw new Error('not ready');
+        if (origin) window.location.href = origin + '/settings';
+        else window.location.reload();
+      })
+      .catch(() => setTimeout(() => this.pollUntilBack(origin, attempt + 1), 500));
+  }
+
+  /** SDD-012 decision 3: static_dir is editable, but not by accident. */
+  confirmStaticDir(): void {
+    if (this.staticDirUnlocked) return;
+    this.staticDirUnlocked = window.confirm(
+      'Change the static directory?\n\n' +
+      'This is where the web interface itself is served from. A wrong value ' +
+      'serves no interface at all, and recovering means editing config.json by ' +
+      'hand.\n\nLeave it empty unless you know you need it.');
+  }
+
+  /** The agent needs LLM and PostgreSQL; shown disabled with the reason. */
+  agentAvailable(): boolean {
+    return !!this.config?.llm?.enabled && this.config?.database?.type === 'postgresql';
+  }
+
+  agentBlockedReason(): string {
+    if (!this.config) return '';
+    const missing: string[] = [];
+    if (!this.config.llm?.enabled) missing.push('LLM Summaries is off');
+    if (this.config.database?.type !== 'postgresql') missing.push('the database is not PostgreSQL');
+    return missing.length ? `Right now ${missing.join(' and ')}.` : '';
   }
 
   loadMlStatus(): void {

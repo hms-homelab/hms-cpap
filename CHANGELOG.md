@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.9.4] - 2026-08-05: every setting, for every mode, in the Settings page
+
+### Added
+- **The Settings page now covers the whole configuration** (SDD-012). 26 of the
+  63 settable keys had no field, so changing them meant editing
+  `~/.hms-cpap/config.json` by hand. The one that hurt most was `archive_dir`:
+  the Mule and Miner path requires it, and it was reachable only during the
+  first-run wizard, so an onboarded user could not move where their nights land.
+  It now appears for every source, alongside four sections that previously had
+  no UI at all (Fysetc, Agent, Sleep Stage, CpapDash Cloud) and the loose keys
+  `llm.max_tokens`, `llm.prompt_file`, `mqtt.client_id`, `sleephq.quiet_minutes`,
+  `web_port` and `static_dir`.
+- **Saved and "in effect" are now told apart.** `PUT /api/config` only ever
+  re-applied the burst collector and the cloud mirror; everything else reached
+  the file and never the running service, with no hint that a restart was owed.
+  Fields that require one are marked, and a save that touches one raises a
+  banner naming what changed, with a Restart now button. New endpoint
+  `POST /api/config/restart` performs it, reusing the wizard's existing
+  supervised/re-exec logic rather than a second copy. Where the process cannot
+  restart itself, it says so instead of spinning.
+- Changing the web port moves the open tab to the new port once the service
+  answers there, rather than leaving a dead page behind.
+
+### Fixed
+- **`archive_dir` changes now apply without a restart.** It is not part of the
+  burst collector's config snapshot, so `markConfigDirty()` could not carry it;
+  consumers read `CPAP_ARCHIVE_DIR` through ConfigManager, which `main.cpp` set
+  once at startup. It is now re-exported on change and applies on the next burst.
+- **`static_dir`, `mqtt.client_id` and `llm.prompt_file` are returned by
+  `GET /api/config`.** `save()` had always written them but `toJson()` never
+  emitted them. Harmless while nothing rendered them; once Settings did, they
+  would have read back empty and saving the form would have overwritten real
+  values.
+- **Changing only the MQTT client ID now takes effect.** It was copied into the
+  rebuilt client but left out of the comparison that decides whether to rebuild,
+  so it did nothing until some other MQTT field also changed.
+- **A database change no longer half-applies.** `reloadConfig()` swapped the
+  burst collector's handle while `main.cpp` hands a separate connection to each
+  other subsystem, none of which were rebuilt. Nights were written to the new
+  database while the dashboard still read the old one, which looks like data
+  loss rather than a misconfiguration. Every consumer now stays on the same
+  database until the process restarts, which is what the Settings page says.
+
 ## [4.9.3] - 2026-08-05: the night that finally reaches the disk
 
 ### Fixed
