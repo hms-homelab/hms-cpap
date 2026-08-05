@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.9.3] - 2026-08-05: the night that finally reaches the disk
+
 ### Fixed
 - **A settled night now reaches the archive** (SDD-011, ticket 67). Skipping the
   download for a session whose files had stopped changing also skipped the
