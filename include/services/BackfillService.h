@@ -20,7 +20,10 @@ namespace hms_cpap {
 class BackfillService {
 public:
     struct Config {
-        std::string local_dir;     // DATALOG directory path
+        /// SDD-010: the SD card ROOT, the folder holding BOTH STR.edf and
+        /// DATALOG. NOT the DATALOG folder itself. Date folders are read from
+        /// <local_dir>/DATALOG/<YYYYMMDD>/.
+        std::string local_dir;
         std::string device_id;
         std::string device_name;
         // SleepHQ auto-export gate for local-mode/backfill ingests. Creds and the

@@ -42,6 +42,9 @@ public:
         getLastSessionStart(const std::string& device_id) override;
 
     std::optional<std::chrono::system_clock::time_point>
+        getNthLatestSessionStart(const std::string& device_id, int n) override;
+
+    std::optional<std::chrono::system_clock::time_point>
         getSessionStartForSleepDay(const std::string& device_id,
                                    const std::string& sleep_day,
                                    bool open_only = false) override;

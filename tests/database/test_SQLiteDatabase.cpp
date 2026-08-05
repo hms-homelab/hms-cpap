@@ -156,6 +156,74 @@ TEST_F(SQLiteDatabaseTest, GetLastSessionStart_NulloptWhenEmpty) {
     EXPECT_FALSE(db_->getLastSessionStart("UNKNOWN").has_value());
 }
 
+// ── SDD-010: the retention anchor ────────────────────────────────────────
+// Everything else that decides whether to re-check a session is anchored on the
+// current date, so a card that stopped being written to is never observed a
+// second time and its nights never settle. This is the anchor that fixes it, so
+// it has to be exact about WHICH session it names.
+
+TEST_F(SQLiteDatabaseTest, GetNthLatestSessionStart_CountsBackFromTheNewest) {
+    auto first  = tpFromEpoch(kBaseEpoch);
+    auto second = tpFromEpoch(kBaseEpoch + 3600);
+    auto third  = tpFromEpoch(kBaseEpoch + 7200);
+    ASSERT_TRUE(db_->saveSession(makeSession("DEV1", first)));
+    ASSERT_TRUE(db_->saveSession(makeSession("DEV1", third)));   // out of order
+    ASSERT_TRUE(db_->saveSession(makeSession("DEV1", second)));  // on purpose
+
+    auto n1 = db_->getNthLatestSessionStart("DEV1", 1);
+    ASSERT_TRUE(n1.has_value());
+    EXPECT_LE(std::abs(duration_cast<seconds>(n1.value() - third).count()), 1);
+
+    // n=2 is the one the collector actually uses.
+    auto n2 = db_->getNthLatestSessionStart("DEV1", 2);
+    ASSERT_TRUE(n2.has_value());
+    EXPECT_LE(std::abs(duration_cast<seconds>(n2.value() - second).count()), 1);
+
+    auto n3 = db_->getNthLatestSessionStart("DEV1", 3);
+    ASSERT_TRUE(n3.has_value());
+    EXPECT_LE(std::abs(duration_cast<seconds>(n3.value() - first).count()), 1);
+}
+
+TEST_F(SQLiteDatabaseTest, GetNthLatestSessionStart_AgreesWithGetLastForN1) {
+    // Two ways of asking the same question must never disagree.
+    ASSERT_TRUE(db_->saveSession(makeSession("DEV1", tpFromEpoch(kBaseEpoch))));
+    ASSERT_TRUE(db_->saveSession(makeSession("DEV1", tpFromEpoch(kBaseEpoch + 60))));
+
+    auto last = db_->getLastSessionStart("DEV1");
+    auto n1   = db_->getNthLatestSessionStart("DEV1", 1);
+    ASSERT_TRUE(last.has_value());
+    ASSERT_TRUE(n1.has_value());
+    EXPECT_EQ(duration_cast<seconds>(last.value().time_since_epoch()).count(),
+              duration_cast<seconds>(n1.value().time_since_epoch()).count());
+}
+
+TEST_F(SQLiteDatabaseTest, GetNthLatestSessionStart_EmptyWhenFewerThanNExist) {
+    // A fresh install has one session, or none. Asking for the 2nd is normal
+    // and must answer "no anchor" rather than inventing one.
+    EXPECT_FALSE(db_->getNthLatestSessionStart("DEV1", 2).has_value());
+
+    ASSERT_TRUE(db_->saveSession(makeSession("DEV1", tpFromEpoch(kBaseEpoch))));
+    EXPECT_TRUE(db_->getNthLatestSessionStart("DEV1", 1).has_value());
+    EXPECT_FALSE(db_->getNthLatestSessionStart("DEV1", 2).has_value());
+}
+
+TEST_F(SQLiteDatabaseTest, GetNthLatestSessionStart_IsScopedToTheDevice) {
+    ASSERT_TRUE(db_->saveSession(makeSession("DEV1", tpFromEpoch(kBaseEpoch))));
+    ASSERT_TRUE(db_->saveSession(makeSession("DEV2", tpFromEpoch(kBaseEpoch + 60))));
+    ASSERT_TRUE(db_->saveSession(makeSession("DEV2", tpFromEpoch(kBaseEpoch + 120))));
+
+    // DEV1 has one session, so it has no 2nd — DEV2's must not leak into it.
+    EXPECT_FALSE(db_->getNthLatestSessionStart("DEV1", 2).has_value());
+    EXPECT_TRUE(db_->getNthLatestSessionStart("DEV2", 2).has_value());
+    EXPECT_FALSE(db_->getNthLatestSessionStart("UNKNOWN", 1).has_value());
+}
+
+TEST_F(SQLiteDatabaseTest, GetNthLatestSessionStart_RejectsNonPositiveN) {
+    ASSERT_TRUE(db_->saveSession(makeSession("DEV1", tpFromEpoch(kBaseEpoch))));
+    EXPECT_FALSE(db_->getNthLatestSessionStart("DEV1", 0).has_value());
+    EXPECT_FALSE(db_->getNthLatestSessionStart("DEV1", -1).has_value());
+}
+
 TEST_F(SQLiteDatabaseTest, SaveSession_UpsertUpdatesFilePathsNotDuplicate) {
     auto start = tpFromEpoch(kBaseEpoch);
     auto s = makeSession("DEV1", start);

@@ -16,6 +16,14 @@ struct AppConfig {
     std::string source = "ezshare";  // "ezshare" (HTTP), "local"
     std::string ezshare_url = "http://192.168.4.1";
     bool ezshare_range = true;
+    /// SDD-010: the SD card ROOT when source=="local", the folder holding BOTH
+    /// STR.edf and DATALOG, never DATALOG itself. Sessions are read from
+    /// <local_dir>/DATALOG/<YYYYMMDD>/ and STR.edf is resolved at <local_dir>
+    /// and nowhere else. Validated by classifyLocalDir() (utils/CardLayout.h);
+    /// a path pointed one level too deep is refused rather than repaired.
+    ///
+    /// For source=="lowenstein" this is a Prisma tree instead (a SERIAL folder,
+    /// no DATALOG), so the card classifier deliberately does not apply.
     std::string local_dir;
     /// Where reconstructed card files are archived.
     ///

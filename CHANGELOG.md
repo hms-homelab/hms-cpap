@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.9.2] - 2026-08-04: the card root, and local nights that can settle
+
+### Changed
+- **`local_dir` now means the SD card ROOT, not `DATALOG`** (SDD-010). `STR.edf`
+  and `DATALOG/` are siblings at the root of a ResMed card, so that is the one
+  layout the code depends on. STR is resolved at the root and nowhere else; the
+  old fallback that searched inside `DATALOG` is gone, because ResMed never
+  writes STR there and all it ever did was make a misconfigured path look like
+  missing data. Applies everywhere, including `--reparse`.
+
+  **This is a breaking configuration change.** A `local_dir` pointed at
+  `DATALOG` is now refused rather than silently repaired: hms-cpap imports
+  nothing, keeps serving the nights already in the database, and shows a red
+  banner naming the folder to switch to. `--backfill` takes a path to a file and
+  is unaffected. Lowenstein/Prisma trees are exempt, since they have no
+  `DATALOG` at all.
+
+### Added
+- **Partial nights in local mode** (SDD-010, extending SDD-008). Local and SMB
+  nights now join the folder ledger, so a night whose transfer settles without
+  its `STR.edf` reports **Partial** instead of Complete-with-short-metrics, and
+  its metrics and LLM summary are suppressed until the STR arrives. Previously
+  `isNightPartial()` opted local mode out entirely on the assumption that a
+  filesystem source cannot stall, which is untrue for amanuense: it streams from the
+  CPAP into the share long after therapy ends. Lowenstein stays out of the
+  ledger deliberately: it has no `STR.edf`, so an armed debt could never clear.
+- `GET /api/capabilities` reports `config_error` (layout, path, problem, remedy)
+  when the local folder is misconfigured, and the UI carries an app-wide banner.
+- **The two most recent stored sessions are always re-checked**, on every source.
+  Re-checking used to be anchored entirely on the current date: today's folder,
+  or a session started within 48 hours. On a card that stops being written to, or
+  an archive copied once off an old SD card, nothing matches either test, so no
+  folder is ever observed a second time. Settling needs two observations of the
+  same signature, so those nights sat at `Live` forever and could never resolve
+  to Complete or Partial. Anchoring on what is persisted rather than on the clock
+  is how hms-cpapdash keeps its dashboard populated regardless of data age. New
+  `IDatabase::getNthLatestSessionStart()`; the change is additive, so the
+  existing today/48h rules are untouched.
+
 ## [4.9.1] - 2026-08-04: the events table that cannot disappear
 
 ### Added

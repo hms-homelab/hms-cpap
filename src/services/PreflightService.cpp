@@ -2,6 +2,7 @@
 
 #include "services/SetupService.h"
 #include "utils/AppConfig.h"
+#include "utils/CardLayout.h"
 
 #include <filesystem>
 #include <fstream>
@@ -205,21 +206,28 @@ PreflightService::Check PreflightService::checkSource(const AppConfig& cfg) {
     c.name = "source";
 
     if (cfg.source == "local") {
-        if (cfg.local_dir.empty()) {
+        // SDD-010: local_dir names the card ROOT, the folder holding both
+        // STR.edf and DATALOG. Existence alone is not enough to establish that:
+        // a path pointed at DATALOG exists perfectly well, imports sessions, and
+        // then never finds an STR, which reads as missing data rather than as
+        // the configuration mistake it is. Classify instead of stat.
+        const auto layout = classifyLocalDir(cfg.local_dir);
+        if (layout != LocalDirLayout::Root) {
             c.ok = false;
-            c.detail = "source is 'local' but no folder is configured";
-            c.remedy = "Set \"local_dir\" in config.json to the DATALOG folder.";
-            return c;
-        }
-        std::error_code ec;
-        if (!std::filesystem::exists(cfg.local_dir, ec)) {
-            c.ok = false;
-            c.detail = "local_dir does not exist: " + cfg.local_dir;
-            c.remedy = "Point \"local_dir\" at a folder that exists, or insert the card.";
+            // NOT fatal, deliberately. Refusing to boot would take the dashboard
+            // down with it, and the dashboard is where the user is told what is
+            // wrong. A misconfigured folder must stop INGESTION, not the
+            // product: nights already in the database keep rendering, and the
+            // UI carries a banner naming the fix (SDD-010). This still honours
+            // the SDD-005 rule, because the error is found up front and
+            // reported with cause and remedy rather than discovered by a retry.
+            c.fatal = false;
+            c.detail = localDirProblem(layout, cfg.local_dir);
+            c.remedy = localDirRemedy(layout, cfg.local_dir);
             return c;
         }
         c.ok = true;
-        c.detail = "reading from " + cfg.local_dir;
+        c.detail = "reading from card root " + cfg.local_dir;
         return c;
     }
 

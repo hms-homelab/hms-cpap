@@ -306,9 +306,20 @@ SessionDiscoveryService::groupSessionsInFolder(const std::string& date_folder) {
 
 std::vector<SessionFileSet>
 SessionDiscoveryService::discoverNewSessions(
-    std::optional<std::chrono::system_clock::time_point> last_session_start) {
+    std::optional<std::chrono::system_clock::time_point> last_session_start,
+    std::optional<std::chrono::system_clock::time_point> retain_from) {
 
     std::cout << "CPAP: Discovering sessions on ez Share..." << std::endl;
+
+    // SDD-010: the folder-level cut must not exclude a night the per-session
+    // retention rule below is about to ask for, so it uses the EARLIER of the
+    // two anchors. last_session_start itself is left alone: it still means
+    // "the newest thing we have stored", which is what is_new is asking about.
+    const auto folder_anchor =
+        (retain_from.has_value() &&
+         (!last_session_start.has_value() || *retain_from < *last_session_start))
+            ? retain_from
+            : last_session_start;
 
     // List all date folders on card
     auto date_folders = data_source_.listDateFolders();
@@ -323,8 +334,8 @@ SessionDiscoveryService::discoverNewSessions(
     // Filter folders by date if we have a last session timestamp
     std::vector<std::string> relevant_folders;
 
-    if (last_session_start.has_value()) {
-        auto last_tp = last_session_start.value();
+    if (folder_anchor.has_value()) {
+        auto last_tp = folder_anchor.value();
         std::time_t last_time = std::chrono::system_clock::to_time_t(last_tp);
         std::tm* last_tm = std::localtime(&last_time);
 
@@ -333,7 +344,7 @@ SessionDiscoveryService::discoverNewSessions(
         std::strftime(last_date_str, sizeof(last_date_str), "%Y%m%d", last_tm);
         std::string last_date(last_date_str);
 
-        std::cout << "CPAP: Last stored session date: " << last_date << std::endl;
+        std::cout << "CPAP: Scanning folders from: " << last_date << std::endl;
 
         // Include folders >= last date (to catch sessions later on the same day)
         // ALSO include previous day's folder because ResMed stores early AM sessions there
@@ -401,14 +412,26 @@ SessionDiscoveryService::discoverNewSessions(
             bool is_new = (!last_session_start.has_value() ||
                           session.session_start > last_session_start.value());
             bool is_recent = (session.session_start > forty_eight_hours_ago);
+            // SDD-010: always re-check the newest stored nights, whatever the
+            // calendar says. is_today and is_recent are both anchored on the
+            // wall clock, so on a card that stopped being written to, or an
+            // archive copied once from an old SD card, NOTHING matches and a
+            // folder is never observed twice. Settling needs two observations
+            // of the same signature, so those nights sit at Live forever and
+            // never resolve to Complete or Partial. >= not >, so the anchor
+            // session itself is retained and not just the one after it.
+            bool is_retained = (retain_from.has_value() &&
+                                session.session_start >= retain_from.value());
 
-            // Re-download if: new session, today's session, OR within last 48h (catch late EVE files)
-            if (is_new || is_today || is_recent) {
+            // Re-download if: new session, today's session, within last 48h
+            // (catch late EVE files), or among the newest stored nights.
+            if (is_new || is_today || is_recent || is_retained) {
                 all_sessions.push_back(session);
 
                 std::string reason = is_new ? "New session" :
                                     is_today ? "Checking today's session" :
-                                    "Checking recent session (catch late EVE files)";
+                                    is_recent ? "Checking recent session (catch late EVE files)" :
+                                    "Re-checking newest stored session (settling)";
 
                 std::cout << "  - " << reason << ": " << session.session_prefix
                           << " (" << session.total_size_kb << " KB)"
@@ -429,9 +452,19 @@ SessionDiscoveryService::discoverNewSessions(
 std::vector<SessionFileSet>
 SessionDiscoveryService::discoverLocalSessions(
     const std::string& local_datalog_dir,
-    std::optional<std::chrono::system_clock::time_point> last_session_start) {
+    std::optional<std::chrono::system_clock::time_point> last_session_start,
+    std::optional<std::chrono::system_clock::time_point> retain_from) {
 
     std::cout << "CPAP: Discovering sessions from local directory: " << local_datalog_dir << std::endl;
+
+    // SDD-010: see discoverNewSessions. The folder-level cut uses the EARLIER
+    // anchor so a retained night cannot be filtered out before the per-session
+    // rule gets to ask for it.
+    const auto folder_anchor =
+        (retain_from.has_value() &&
+         (!last_session_start.has_value() || *retain_from < *last_session_start))
+            ? retain_from
+            : last_session_start;
 
     if (!std::filesystem::exists(local_datalog_dir)) {
         std::cerr << "CPAP: Local directory not found: " << local_datalog_dir << std::endl;
@@ -482,8 +515,8 @@ SessionDiscoveryService::discoverLocalSessions(
     // Filter folders by last session date (same logic as discoverNewSessions)
     std::vector<std::string> relevant_folders;
 
-    if (last_session_start.has_value()) {
-        auto last_tp = last_session_start.value();
+    if (folder_anchor.has_value()) {
+        auto last_tp = folder_anchor.value();
         std::time_t last_time = std::chrono::system_clock::to_time_t(last_tp);
         std::tm* last_tm = std::localtime(&last_time);
 
@@ -491,7 +524,7 @@ SessionDiscoveryService::discoverLocalSessions(
         std::strftime(last_date_str, sizeof(last_date_str), "%Y%m%d", last_tm);
         std::string last_date(last_date_str);
 
-        std::cout << "CPAP: Last stored session date: " << last_date << std::endl;
+        std::cout << "CPAP: Scanning folders from: " << last_date << std::endl;
 
         for (const auto& folder : date_folders) {
             if (folder >= last_date) {
@@ -562,8 +595,15 @@ SessionDiscoveryService::discoverLocalSessions(
             bool is_new = (!last_session_start.has_value() ||
                           session.session_start > last_session_start.value());
             bool is_recent = (session.session_start > forty_eight_hours_ago);
+            // SDD-010: the newest stored nights are re-checked whatever the
+            // calendar says, so a folder can always take the second observation
+            // that settling needs. Without this, an archive copied once from an
+            // old SD card never settles: every other test here is anchored on
+            // the current date, and none of them can ever match again.
+            bool is_retained = (retain_from.has_value() &&
+                                session.session_start >= retain_from.value());
 
-            if (is_new || is_today || is_recent) {
+            if (is_new || is_today || is_recent || is_retained) {
                 all_sessions.push_back(session);
             }
         }

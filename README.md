@@ -194,27 +194,45 @@ One wireless hardware path plus a local filesystem option. Both work with ResMed
 
 **Setup:**
 
-1. Copy your ResMed SD card's `DATALOG` folder to a local path (or mount the SD card directly):
+1. Copy the **whole** ResMed SD card to a local path (or mount the card directly).
+   Copy the card ROOT, not just `DATALOG`: `STR.edf` sits beside `DATALOG`, and
+   without it you lose the machine's own nightly summaries.
    ```bash
    # Example: mount SD card
    sudo mount /dev/sdb1 /mnt/cpap-sd
 
-   # Or copy to NAS/local disk
-   cp -r /mnt/cpap-sd/DATALOG /mnt/archive/cpap/DATALOG
+   # Or copy to NAS/local disk. Note the trailing /. copies the card CONTENTS
+   cp -r /mnt/cpap-sd/. /mnt/archive/cpap/
    ```
 
-2. Configure hms-cpap to use local mode:
+   The result must look like this:
+   ```
+   /mnt/archive/cpap/          <-- this is what you configure
+   ├── STR.edf                 <-- nightly summaries
+   ├── Identification.tgt
+   └── DATALOG/
+       ├── 20260206/
+       └── 20260207/
+   ```
+
+2. Configure hms-cpap to use local mode. **`local_dir` is the card ROOT, the
+   folder holding both `STR.edf` and `DATALOG`. Never `DATALOG` itself.**
    ```bash
    CPAP_SOURCE=local
-   CPAP_LOCAL_DIR=/mnt/archive/cpap/DATALOG
+   CPAP_LOCAL_DIR=/mnt/archive/cpap
    ```
    Or via `~/.hms-cpap/config.json`:
    ```json
    {
      "source": "local",
-     "local_dir": "/mnt/archive/cpap/DATALOG"
+     "local_dir": "/mnt/archive/cpap"
    }
    ```
+
+   If you point it at `DATALOG` by mistake, hms-cpap refuses to import and shows
+   a red banner naming the folder to use instead. It keeps serving nights you
+   have already imported, so nothing is lost, but nothing new is added until
+   the path is corrected.
 
 3. Start hms-cpap. It will poll the directory each burst interval for new sessions.
 
@@ -321,7 +339,8 @@ MQTT_PASSWORD=your_mqtt_password
 
 ```bash
 # Local directory (required when CPAP_SOURCE=local, config.json key: local_dir)
-CPAP_LOCAL_DIR=/path/to/DATALOG
+# The SD card ROOT: the folder holding BOTH STR.edf and DATALOG. Not DATALOG.
+CPAP_LOCAL_DIR=/path/to/card-root
 
 # Device identification
 CPAP_DEVICE_ID=resmed_airsense10

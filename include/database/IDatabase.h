@@ -46,6 +46,30 @@ public:
     virtual std::optional<std::chrono::system_clock::time_point>
         getLastSessionStart(const std::string& device_id) = 0;
 
+    /// The start of the Nth most recent stored session (n=1 is the latest, and
+    /// is equivalent to getLastSessionStart). Empty when fewer than n exist.
+    ///
+    /// WHY THIS EXISTS. Re-observation used to be anchored entirely on the wall
+    /// clock: a session was re-checked only if it was today's, or started within
+    /// the last 48 hours. On a card that stops being written to, or an archive
+    /// copied once from an old SD card, nothing satisfies either test, so no
+    /// folder is ever observed a SECOND time. Settling needs two observations of
+    /// the same signature, so those nights sit at Live forever and never resolve
+    /// to Complete or Partial.
+    ///
+    /// Anchoring on what is PERSISTED rather than on the current date is how
+    /// hms-cpapdash keeps its dashboard populated no matter how stale the data
+    /// is (QueryService.cc: `ORDER BY s.date DESC LIMIT 1`, no time window
+    /// anywhere). Same idea here: the two most recent stored sessions are always
+    /// re-checked, so a night can always take its second observation.
+    ///
+    /// Not pure: a backend that has no need for it inherits an empty answer,
+    /// which simply means "no retention anchor" and restores the old behaviour.
+    virtual std::optional<std::chrono::system_clock::time_point>
+        getNthLatestSessionStart(const std::string& /*device_id*/, int /*n*/) {
+        return std::nullopt;
+    }
+
     virtual std::optional<std::chrono::system_clock::time_point>
         getSessionStartForSleepDay(const std::string& device_id,
                                    const std::string& sleep_day,

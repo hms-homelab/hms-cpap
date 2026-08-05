@@ -125,23 +125,80 @@ TEST(PreflightServiceTest, AnUncompiledBackendIsRefusedWithTheBackendNamed) {
     EXPECT_FALSE(c.remedy.empty());
 }
 
-TEST(PreflightServiceTest, ALocalSourceWithNoFolderIsFatal) {
+TEST(PreflightServiceTest, ALocalSourceWithNoFolderFailsButDoesNotBlockStartup) {
+    // SDD-010 changed this from fatal to non-fatal ON PURPOSE. Refusing to boot
+    // would take down the web server, and the web server is the only thing that
+    // can show the user the banner explaining what to fix. Stop ingesting, keep
+    // serving, say why.
     AppConfig cfg;
     cfg.source = "local";
     cfg.local_dir = "";
     const auto c = PreflightService::checkSource(cfg);
     EXPECT_FALSE(c.ok);
-    EXPECT_TRUE(c.fatal);
-    EXPECT_NE(c.remedy.find("local_dir"), std::string::npos);
+    EXPECT_FALSE(c.fatal) << "a bad folder must not stop the dashboard from starting";
+    EXPECT_FALSE(c.remedy.empty());
 }
 
-TEST(PreflightServiceTest, ALocalSourcePointingNowhereIsFatalAndNamesThePath) {
+TEST(PreflightServiceTest, ALocalSourcePointingNowhereFailsAndNamesThePath) {
     AppConfig cfg;
     cfg.source = "local";
     cfg.local_dir = "/definitely/not/here/DATALOG";
     const auto c = PreflightService::checkSource(cfg);
     EXPECT_FALSE(c.ok);
+    EXPECT_FALSE(c.fatal);
     EXPECT_NE(c.detail.find("/definitely/not/here/DATALOG"), std::string::npos);
+}
+
+TEST(PreflightServiceTest, ACardRootIsAccepted) {
+    // SDD-010: the contract is that local_dir holds BOTH STR.edf and DATALOG.
+    namespace fs = std::filesystem;
+    const auto root = fs::temp_directory_path() / "hms_preflight_root";
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    fs::create_directories(root / "DATALOG", ec);
+
+    AppConfig cfg;
+    cfg.source = "local";
+    cfg.local_dir = root.string();
+    const auto c = PreflightService::checkSource(cfg);
+    EXPECT_TRUE(c.ok) << c.detail;
+
+    fs::remove_all(root, ec);
+}
+
+TEST(PreflightServiceTest, APathPointedAtDatalogIsRejectedWithTheFolderAboveNamed) {
+    // The exact misconfiguration SDD-010 exists to stop being silent: sessions
+    // would import and STR never would, so it looks like missing data rather
+    // than a wrong setting. The remedy must name the folder to switch to.
+    namespace fs = std::filesystem;
+    const auto root = fs::temp_directory_path() / "hms_preflight_isdatalog";
+    const auto datalog = root / "DATALOG";
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    fs::create_directories(datalog / "20260101", ec);
+
+    AppConfig cfg;
+    cfg.source = "local";
+    cfg.local_dir = datalog.string();          // pointed one level too deep
+    const auto c = PreflightService::checkSource(cfg);
+    EXPECT_FALSE(c.ok);
+    EXPECT_FALSE(c.fatal);
+    EXPECT_NE(c.remedy.find(root.string()), std::string::npos)
+        << "remedy must name the card root, got: " << c.remedy;
+
+    fs::remove_all(root, ec);
+}
+
+TEST(PreflightServiceTest, ALowensteinSourceIsNeverClassifiedAsACard) {
+    // Prisma points local_dir at a tree with a SERIAL folder and no DATALOG.
+    // Running the card classifier over it would hard-fail a working setup, so
+    // the classifier is scoped to source=="local" and nothing else.
+    AppConfig cfg;
+    cfg.source = "lowenstein";
+    cfg.local_dir = "/some/prisma/tree";
+    const auto c = PreflightService::checkSource(cfg);
+    EXPECT_TRUE(c.ok) << c.detail;
+    EXPECT_FALSE(c.fatal);
 }
 
 TEST(PreflightServiceTest, AnUnreachableNetworkSourceDoesNotBlockStartup) {

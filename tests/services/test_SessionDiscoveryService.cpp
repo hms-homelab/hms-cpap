@@ -494,6 +494,116 @@ TEST_F(DiscoverLocalSessionsTest, OlderSessionInRelevantFolderIsFilteredOut) {
     EXPECT_TRUE(sessions.empty());
 }
 
+// ── SDD-010: the retention anchor ────────────────────────────────────────────
+// The test directly above pins the problem: a stored session that is neither
+// today's nor within 48 hours is dropped, because every re-check rule is
+// anchored on the CURRENT DATE. That is correct for downloading (there is
+// nothing new to fetch) and fatal for SETTLING: the folder ledger needs a
+// SECOND observation of the same signature before a night can go Complete or
+// Partial, and a card that stopped being written to never gets one, so those
+// nights sit at Live forever.
+//
+// hms-cpapdash solves the same class of problem by anchoring on what is
+// PERSISTED rather than on the clock, which is why its dashboard stays
+// populated no matter how stale the data is. retain_from is that anchor here.
+
+TEST_F(DiscoverLocalSessionsTest, RetainedSessionSurvivesEvenWhenYearsOld) {
+    // Identical setup to OlderSessionInRelevantFolderIsFilteredOut, with the
+    // anchor supplied. The ONLY difference is retain_from, so this isolates it.
+    std::string f = makeDateFolder("20200615");
+    touchFile(f, "20200615_020000_BRP.edf");
+    touchFile(f, "20200615_020000_CSL.edf");
+
+    std::tm tm = {};
+    tm.tm_year = 2020 - 1900;
+    tm.tm_mon = 5;
+    tm.tm_mday = 15;
+    tm.tm_hour = 12;
+    tm.tm_isdst = -1;
+    auto last = std::chrono::system_clock::from_time_t(std::mktime(&tm));
+
+    std::tm at = tm;
+    at.tm_hour = 2;                 // the anchor names the 02:00 session itself
+    at.tm_isdst = -1;
+    auto retain = std::chrono::system_clock::from_time_t(std::mktime(&at));
+
+    auto sessions = SessionDiscoveryService::discoverLocalSessions(root, last, retain);
+    ASSERT_EQ(sessions.size(), 1u) << "a retained night must be re-observable";
+    EXPECT_EQ(sessions[0].session_prefix, "20200615_020000");
+}
+
+TEST_F(DiscoverLocalSessionsTest, RetentionIsInclusiveOfTheAnchorItself) {
+    // >= not >. The anchor IS the 2nd-latest stored session, so a strict
+    // comparison would retain only ONE night instead of the two the ledger
+    // needs when a night crosses midnight into a second folder.
+    std::string f1 = makeDateFolder("20200614");
+    touchFile(f1, "20200614_220000_BRP.edf");
+    touchFile(f1, "20200614_220000_CSL.edf");
+    std::string f2 = makeDateFolder("20200615");
+    touchFile(f2, "20200615_230000_BRP.edf");
+    touchFile(f2, "20200615_230000_CSL.edf");
+
+    std::tm lt = {};
+    lt.tm_year = 2020 - 1900; lt.tm_mon = 5; lt.tm_mday = 15; lt.tm_hour = 23;
+    lt.tm_isdst = -1;
+    auto last = std::chrono::system_clock::from_time_t(std::mktime(&lt));
+
+    std::tm rt = {};
+    rt.tm_year = 2020 - 1900; rt.tm_mon = 5; rt.tm_mday = 14; rt.tm_hour = 22;
+    rt.tm_isdst = -1;
+    auto retain = std::chrono::system_clock::from_time_t(std::mktime(&rt));
+
+    auto sessions = SessionDiscoveryService::discoverLocalSessions(root, last, retain);
+    ASSERT_EQ(sessions.size(), 2u)
+        << "both of the two newest stored nights must come back, not just one";
+}
+
+TEST_F(DiscoverLocalSessionsTest, RetentionAnchorWidensTheFolderLevelCutToo) {
+    // The folder filter runs BEFORE the per-session rule. If it still cut at
+    // last_session_start's date, a retained older folder would be discarded
+    // before the retention test ever saw it, and the mechanism would be
+    // silently dead for any night living in an earlier folder.
+    std::string older = makeDateFolder("20200610");
+    touchFile(older, "20200610_220000_BRP.edf");
+    touchFile(older, "20200610_220000_CSL.edf");
+    std::string newer = makeDateFolder("20200620");
+    touchFile(newer, "20200620_220000_BRP.edf");
+    touchFile(newer, "20200620_220000_CSL.edf");
+
+    std::tm lt = {};
+    lt.tm_year = 2020 - 1900; lt.tm_mon = 5; lt.tm_mday = 20; lt.tm_hour = 22;
+    lt.tm_isdst = -1;
+    auto last = std::chrono::system_clock::from_time_t(std::mktime(&lt));
+
+    std::tm rt = {};
+    rt.tm_year = 2020 - 1900; rt.tm_mon = 5; rt.tm_mday = 10; rt.tm_hour = 22;
+    rt.tm_isdst = -1;
+    auto retain = std::chrono::system_clock::from_time_t(std::mktime(&rt));
+
+    auto sessions = SessionDiscoveryService::discoverLocalSessions(root, last, retain);
+    ASSERT_EQ(sessions.size(), 2u)
+        << "the folder-level cut must move back to the retention anchor";
+}
+
+TEST_F(DiscoverLocalSessionsTest, NoAnchorKeepsTheOldBehaviourExactly) {
+    // The change is additive. Passing no anchor must behave precisely as it did
+    // before, which is what makes it safe for the ezShare and Fysetc paths.
+    std::string f = makeDateFolder("20200615");
+    touchFile(f, "20200615_020000_BRP.edf");
+    touchFile(f, "20200615_020000_CSL.edf");
+
+    std::tm tm = {};
+    tm.tm_year = 2020 - 1900; tm.tm_mon = 5; tm.tm_mday = 15; tm.tm_hour = 12;
+    tm.tm_isdst = -1;
+    auto last = std::chrono::system_clock::from_time_t(std::mktime(&tm));
+
+    auto without = SessionDiscoveryService::discoverLocalSessions(root, last);
+    auto explicit_none =
+        SessionDiscoveryService::discoverLocalSessions(root, last, std::nullopt);
+    EXPECT_TRUE(without.empty());
+    EXPECT_EQ(without.size(), explicit_none.size());
+}
+
 // ── Incident 2026-07-17: unreadable date folder crash-looped the service ─────
 // DATALOG date folders uploaded root-owned 0750 made the burst cycle throw an
 // uncaught std::filesystem_error from directory_iterator ("cannot open

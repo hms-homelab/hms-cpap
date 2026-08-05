@@ -181,9 +181,10 @@ static void writeMinimalEDF(const std::string& filepath,
 }
 
 TEST(BackfillServiceTest, BackfillMarksSessionsCompleted) {
-    // Create a temp DATALOG directory with one date folder and one session
+    // SDD-010: local_dir is the card ROOT, so the date folder lives under its
+    // DATALOG, not directly inside it.
     auto tmp = std::filesystem::temp_directory_path() / "cpap_test_backfill";
-    auto datalog = tmp / "20260206";
+    auto datalog = tmp / "DATALOG" / "20260206";
     std::filesystem::create_directories(datalog);
 
     // Write minimal BRP file (required for session discovery)
@@ -240,7 +241,7 @@ TEST(BackfillServiceTest, BackfillMarksSessionsCompleted) {
 TEST(BackfillServiceTest, BackfillWithoutSaveDoesNotMarkCompleted) {
     // If saveSession fails, markSessionCompleted should NOT be called
     auto tmp = std::filesystem::temp_directory_path() / "cpap_test_backfill2";
-    auto datalog = tmp / "20260207";
+    auto datalog = tmp / "DATALOG" / "20260207";   // SDD-010: root/DATALOG/<date>
     std::filesystem::create_directories(datalog);
 
     writeMinimalEDF(datalog / "20260207_230000_BRP.edf", "20260207_230000", "BRP", 120);
@@ -292,9 +293,10 @@ TEST(BackfillServiceTest, SingleDayReparseTouchesOnlyThatFolder) {
     auto tmp = std::filesystem::temp_directory_path() / "cpap_test_backfill_scope";
     // Previous night's folder (must be left alone): contains a file whose
     // *filename* is dated 20260522 but which belongs to the 20260521 night.
-    auto prev = tmp / "20260521";
+    // SDD-010: both live under the card root's DATALOG.
+    auto prev = tmp / "DATALOG" / "20260521";
     // Target folder for the reparse.
-    auto target = tmp / "20260522";
+    auto target = tmp / "DATALOG" / "20260522";
     std::filesystem::create_directories(prev);
     std::filesystem::create_directories(target);
 
@@ -344,13 +346,16 @@ TEST(BackfillServiceTest, SingleDayReparseTouchesOnlyThatFolder) {
 
 // ── Dashboard is fed even when STR.edf is missing (issue #16) ────────────
 // cpap_daily_summary is the ONLY table getDashboard() reads. STR.edf is its
-// preferred source, but a user who mounts DATALOG itself — rather than the SD
-// card root that holds STR.edf beside it — has no STR to parse. Before the fix
-// the backfill finished "complete" with sessions saved and the dashboard blank,
-// which reads as "it imported my data and then lost it".
+// preferred source, but a card whose machine has not written one yet has no STR
+// to parse. Before the fix the backfill finished "complete" with sessions saved
+// and the dashboard blank, which reads as "it imported my data and then lost it".
+//
+// SDD-010 note: this used to be framed as "the user mounted DATALOG itself".
+// That configuration is now REFUSED outright rather than tolerated (see
+// CardLayoutTest and PreflightServiceTest) because it silently costs the user
+// every root file. What remains, and what this test now covers, is the
+// legitimate case: a correct card ROOT that simply has no STR.edf in it yet.
 TEST(BackfillServiceTest, BackfillWithoutStrDerivesDailySummaryFromSessions) {
-    // local_dir is a DATALOG *below* tmp, so the parent we probe for STR.edf is
-    // a directory this test owns and is known not to contain one.
     auto tmp = std::filesystem::temp_directory_path() / "cpap_test_backfill_nostr";
     std::filesystem::remove_all(tmp);
     auto datalog = tmp / "DATALOG";
@@ -359,13 +364,14 @@ TEST(BackfillServiceTest, BackfillWithoutStrDerivesDailySummaryFromSessions) {
 
     writeMinimalEDF(folder / "20260208_230000_BRP.edf", "20260208_230000", "BRP", 300);
 
+    // A valid root: DATALOG present, no STR anywhere.
     ASSERT_FALSE(std::filesystem::exists(tmp / "STR.edf"));
     ASSERT_FALSE(std::filesystem::exists(datalog / "STR.edf"));
 
     auto mock_db = std::make_shared<MockDatabase>();
 
     BackfillService::Config cfg;
-    cfg.local_dir = datalog.string();
+    cfg.local_dir = tmp.string();          // SDD-010: the ROOT, not the DATALOG
     cfg.device_id = "test_device";
     cfg.device_name = "Test CPAP";
 
@@ -396,6 +402,115 @@ TEST(BackfillServiceTest, BackfillWithoutStrDerivesDailySummaryFromSessions) {
     svc.stop();
 
     EXPECT_EQ(svc.getStatus()["sessions_saved"].asInt(), 1);
+
+    std::filesystem::remove_all(tmp);
+}
+
+// ── SDD-010: STR is resolved at the ROOT and nowhere else ────────────────
+// There used to be a fallback that searched inside DATALOG when the root probe
+// missed. ResMed never writes STR there, so it could not succeed; all it did
+// was let a misconfigured path masquerade as a missing file. This test pins the
+// fallback as DELETED: an STR sitting in the wrong place must be ignored, not
+// rescued.
+TEST(BackfillServiceTest, AnStrInsideDatalogIsIgnoredBecauseThatIsNotWhereItLives) {
+    auto tmp = std::filesystem::temp_directory_path() / "cpap_test_backfill_strindatalog";
+    std::filesystem::remove_all(tmp);
+    auto datalog = tmp / "DATALOG";
+    auto folder = datalog / "20260209";
+    std::filesystem::create_directories(folder);
+
+    writeMinimalEDF(folder / "20260209_230000_BRP.edf", "20260209_230000", "BRP", 300);
+
+    // An STR in the WRONG place. If the old fallback were still here this would
+    // be picked up and parsed; it must be passed over entirely. Deliberately not
+    // a valid EDF: reaching the parser at all is itself the failure.
+    std::ofstream(datalog / "STR.edf") << "this must never be parsed";
+    ASSERT_TRUE(std::filesystem::exists(datalog / "STR.edf"));
+    ASSERT_FALSE(std::filesystem::exists(tmp / "STR.edf"));
+
+    auto mock_db = std::make_shared<MockDatabase>();
+
+    BackfillService::Config cfg;
+    cfg.local_dir = tmp.string();
+    cfg.device_id = "test_device";
+    cfg.device_name = "Test CPAP";
+
+    EXPECT_CALL(*mock_db, deleteSessionsByDateFolder("test_device", "20260209"))
+        .WillOnce(Return(0));
+    EXPECT_CALL(*mock_db, saveSession(_)).WillOnce(Return(true));
+    EXPECT_CALL(*mock_db, markSessionCompleted("test_device", _))
+        .Times(1).WillOnce(Return(true));
+    EXPECT_CALL(*mock_db, updateCheckpointFileSizesMock("test_device", _))
+        .WillOnce(Return(true));
+
+    // THE ASSERTION: the misplaced STR is never parsed or saved...
+    EXPECT_CALL(*mock_db, saveSTRDailyRecords(_)).Times(0);
+    // ...so the summary falls back to per-session aggregation, exactly as it
+    // would if no STR existed at all.
+    EXPECT_CALL(*mock_db, aggregateDailySummaryFromSessions("test_device"))
+        .Times(1).WillOnce(Return(true));
+
+    BackfillService svc(cfg, mock_db);
+    svc.start();
+    svc.trigger("2026-02-09", "2026-02-09");
+
+    for (int i = 0; i < 30; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        auto status = svc.getStatus();
+        if (status["status"].asString() != "running" &&
+            status["status"].asString() != "idle") break;
+    }
+    svc.stop();
+
+    std::filesystem::remove_all(tmp);
+}
+
+// ── SDD-010: a DATALOG-pointed root imports NOTHING ──────────────────────
+// The whole point of the hard fail. A path one level too deep would happily
+// discover sessions and silently lose every root file, so it must be refused
+// before any database work happens rather than half-imported.
+TEST(BackfillServiceTest, ALocalDirPointedAtDatalogRefusesAndImportsNothing) {
+    auto tmp = std::filesystem::temp_directory_path() / "cpap_test_backfill_isdatalog";
+    std::filesystem::remove_all(tmp);
+    auto datalog = tmp / "DATALOG";
+    auto folder = datalog / "20260210";
+    std::filesystem::create_directories(folder);
+
+    writeMinimalEDF(folder / "20260210_230000_BRP.edf", "20260210_230000", "BRP", 300);
+
+    auto mock_db = std::make_shared<MockDatabase>();
+
+    BackfillService::Config cfg;
+    cfg.local_dir = datalog.string();      // one level too deep, on purpose
+    cfg.device_id = "test_device";
+    cfg.device_name = "Test CPAP";
+
+    // Nothing may be deleted, saved, completed or summarised.
+    EXPECT_CALL(*mock_db, deleteSessionsByDateFolder(_, _)).Times(0);
+    EXPECT_CALL(*mock_db, saveSession(_)).Times(0);
+    EXPECT_CALL(*mock_db, markSessionCompleted(_, _)).Times(0);
+    EXPECT_CALL(*mock_db, saveSTRDailyRecords(_)).Times(0);
+    EXPECT_CALL(*mock_db, aggregateDailySummaryFromSessions(_)).Times(0);
+
+    BackfillService svc(cfg, mock_db);
+    svc.start();
+    svc.trigger("2026-02-10", "2026-02-10");
+
+    for (int i = 0; i < 30; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        auto status = svc.getStatus();
+        if (status["status"].asString() != "running" &&
+            status["status"].asString() != "idle") break;
+    }
+    svc.stop();
+
+    auto status = svc.getStatus();
+    EXPECT_EQ(status["status"].asString(), "error");
+    EXPECT_EQ(status["sessions_saved"].asInt(), 0);
+    // The message has to be actionable, not just "failed".
+    EXPECT_NE(status["error_message"].asString().find("DATALOG"), std::string::npos)
+        << "error should explain the layout problem, got: "
+        << status["error_message"].asString();
 
     std::filesystem::remove_all(tmp);
 }
