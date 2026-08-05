@@ -73,6 +73,113 @@ protected:
 // FILE ARCHIVAL TESTS
 // ============================================================================
 
+// ── SDD-011: a settled night must still reach the archive ────────────────────
+// Michael, ticket 67, 2026-08-04. His night of 20260803 was in SQLite and on the
+// dashboard, and the folder never appeared in ~/Desktop/CPAPData/DATALOG. His
+// log said it outright:
+//
+//   CPAP: Session 20260803_234806 stopped (all checkpoint files unchanged)
+//      No changes, skipping download
+//   CPAP: No sessions downloaded successfully
+//
+// Skipping the download also skipped the archive, because the archive block
+// sits BELOW the "nothing downloaded" early return. So a session that went
+// stable while still missing from disk could never be archived: the only code
+// that writes the archive was behind a branch that would never be taken for it
+// again. OSCAR, the zip export and SleepHQ all read files rather than the
+// database, so all three silently got nothing while the UI looked healthy.
+//
+// The predicate below is what closes that branch. It is the difference between
+// "the files stopped changing" and "there is nothing left to do".
+
+// Helper: a session file set naming two files in one date folder.
+static SessionFileSet makeArchiveSession(const std::string& date_folder,
+                                         const std::string& prefix) {
+    SessionFileSet s;
+    s.date_folder = date_folder;
+    s.session_prefix = prefix;
+    s.file_sizes_kb[prefix + "_BRP.edf"] = 2903;
+    s.file_sizes_kb[prefix + "_PLD.edf"] = 265;
+    return s;
+}
+
+TEST_F(BurstCollectorServiceTest, SessionFilesArchived_TrueWhenEveryFileIsOnDisk) {
+    auto s = makeArchiveSession("20260803", "20260803_234806");
+    auto dir = test_archive_dir / "DATALOG" / "20260803";
+    createTestFile(dir / "20260803_234806_BRP.edf", 2903 * 1024);
+    createTestFile(dir / "20260803_234806_PLD.edf", 265 * 1024);
+
+    EXPECT_TRUE(BurstCollectorService::sessionFilesArchived(s, test_archive_dir.string()));
+}
+
+TEST_F(BurstCollectorServiceTest, SessionFilesArchived_FalseWhenTheFolderIsMissing) {
+    // Michael's exact state: session complete, folder absent.
+    auto s = makeArchiveSession("20260803", "20260803_234806");
+    EXPECT_FALSE(BurstCollectorService::sessionFilesArchived(s, test_archive_dir.string()))
+        << "a missing date folder must NOT count as archived, or the night is "
+           "stranded forever";
+}
+
+TEST_F(BurstCollectorServiceTest, SessionFilesArchived_FalseWhenOneFileIsMissing) {
+    // A half-written archive is not an archive. Folder-existence alone would
+    // pass here and lose the second file permanently.
+    auto s = makeArchiveSession("20260803", "20260803_234806");
+    auto dir = test_archive_dir / "DATALOG" / "20260803";
+    createTestFile(dir / "20260803_234806_BRP.edf", 2903 * 1024);
+    // PLD deliberately absent
+
+    EXPECT_FALSE(BurstCollectorService::sessionFilesArchived(s, test_archive_dir.string()));
+}
+
+TEST_F(BurstCollectorServiceTest, SessionFilesArchived_FalseWhenAFileIsZeroLength) {
+    // An interrupted copy leaves a zero-byte file. Presence is not enough.
+    auto s = makeArchiveSession("20260803", "20260803_234806");
+    auto dir = test_archive_dir / "DATALOG" / "20260803";
+    createTestFile(dir / "20260803_234806_BRP.edf", 2903 * 1024);
+    createTestFile(dir / "20260803_234806_PLD.edf", 0);
+
+    EXPECT_FALSE(BurstCollectorService::sessionFilesArchived(s, test_archive_dir.string()));
+}
+
+TEST_F(BurstCollectorServiceTest, SessionFilesArchived_IgnoresSizeMismatch) {
+    // The ezShare listing is KB-rounded, so comparing it against the byte size
+    // on disk would report a mismatch for every file that is actually fine and
+    // re-download the whole card every burst. Presence and non-emptiness only.
+    auto s = makeArchiveSession("20260803", "20260803_234806");
+    auto dir = test_archive_dir / "DATALOG" / "20260803";
+    createTestFile(dir / "20260803_234806_BRP.edf", 17);   // nothing like 2903 KB
+    createTestFile(dir / "20260803_234806_PLD.edf", 23);
+
+    EXPECT_TRUE(BurstCollectorService::sessionFilesArchived(s, test_archive_dir.string()));
+}
+
+TEST_F(BurstCollectorServiceTest, SessionFilesArchived_TrueWhenNoArchiveConfigured) {
+    // Nothing to assert, so the predicate must not force an endless re-download
+    // loop for users who never set CPAP_ARCHIVE_DIR.
+    auto s = makeArchiveSession("20260803", "20260803_234806");
+    EXPECT_TRUE(BurstCollectorService::sessionFilesArchived(s, ""));
+}
+
+TEST_F(BurstCollectorServiceTest, SessionFilesArchived_LooksUnderDatalogNotTheRoot) {
+    // The archive layout is <root>/DATALOG/<date>/, mirroring the card. Files
+    // dropped straight in the root are NOT the archive.
+    auto s = makeArchiveSession("20260803", "20260803_234806");
+    createTestFile(test_archive_dir / "20260803_234806_BRP.edf", 1024);
+    createTestFile(test_archive_dir / "20260803_234806_PLD.edf", 1024);
+
+    EXPECT_FALSE(BurstCollectorService::sessionFilesArchived(s, test_archive_dir.string()));
+}
+
+TEST_F(BurstCollectorServiceTest, SessionFilesArchived_IsScopedToItsOwnDateFolder) {
+    // A neighbouring night being present says nothing about this one.
+    auto s = makeArchiveSession("20260803", "20260803_234806");
+    auto other = test_archive_dir / "DATALOG" / "20260802";
+    createTestFile(other / "20260803_234806_BRP.edf", 1024);
+    createTestFile(other / "20260803_234806_PLD.edf", 1024);
+
+    EXPECT_FALSE(BurstCollectorService::sessionFilesArchived(s, test_archive_dir.string()));
+}
+
 TEST_F(BurstCollectorServiceTest, ArchiveSessionFiles_NewFiles) {
     // Temp has: file1.edf (100 KB), file2.edf (200 KB)
     // Archive empty
@@ -1779,6 +1886,23 @@ protected:
             mkEntry("20200101_233000_PLD.edf", 15),
         };
     }
+
+    /// SDD-011: put the seeded night in the archive, as a night that has
+    /// already been collected normally would be.
+    ///
+    /// Needed because "unchanged" no longer implies "skip the download": a
+    /// settled session whose files are missing from disk is now fetched to
+    /// repair the archive, since skipping it used to strand those files
+    /// permanently (ticket 67). The tests below are about the COMPLETION path,
+    /// so they archive first to isolate it from the repair path.
+    void archiveSeededNight(const std::vector<std::string>& filenames,
+                            const std::string& date_folder = "20200101") {
+        auto dir = archive_dir / "DATALOG" / date_folder;
+        std::filesystem::create_directories(dir);
+        for (const auto& f : filenames) {
+            std::ofstream(dir / f) << "archived";
+        }
+    }
 };
 
 // Scenario 1: New session not in DB -> downloaded, checkpoints stored, last_seen
@@ -1826,6 +1950,10 @@ TEST_F(BurstOrchestrationTest, ForceCompletedSession_IsSkipped) {
 // (getNightlyMetrics + publishSessionCompleted via the null-MQTT publisher).
 TEST_F(BurstOrchestrationTest, ExistingSession_Unchanged_MarksCompleted) {
     auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
+    // SDD-011: already collected normally, so the unchanged path is a true skip
+    // rather than an archive repair.
+    archiveSeededNight({"20200101_220000_BRP.edf", "20200101_220000_PLD.edf",
+                        "20200101_220000_CSL.edf", "20200101_220000_EVE.edf"});
 
     EXPECT_CALL(*db_raw, getLastSessionStart(_))
         .WillRepeatedly(Return(std::nullopt));
@@ -1855,11 +1983,78 @@ TEST_F(BurstOrchestrationTest, ExistingSession_Unchanged_MarksCompleted) {
     EXPECT_EQ(src_raw->download_count, 0) << "Unchanged session must not re-download";
 }
 
+// SDD-011, the regression this whole change exists for. Same scenario as the
+// test above with ONE difference: the archive is empty. Michael's 20260803
+// (ticket 67) was exactly this state, and the old code skipped the download,
+// which skipped the archive, which meant the night could never reach disk on
+// any future burst. The dashboard showed it; OSCAR, the zip export and SleepHQ
+// all silently saw nothing.
+TEST_F(BurstOrchestrationTest, SettledSessionMissingFromArchiveIsDownloadedToRepairIt) {
+    auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
+    // Deliberately NOT archived.
+
+    EXPECT_CALL(*db_raw, getLastSessionStart(_))
+        .WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, sessionExists(_, _)).WillRepeatedly(Return(true));
+
+    // Identical to the DB, so all_unchanged == true: the ONLY thing that can
+    // make this download is the missing archive.
+    std::map<std::string, int> stored = {
+        {"20200101_220000_BRP.edf", 100},
+        {"20200101_220000_PLD.edf", 20},
+    };
+    EXPECT_CALL(*db_raw, getCheckpointFileSizes(_, _))
+        .WillRepeatedly(Return(stored));
+    EXPECT_CALL(*db_raw, getNightlyMetrics(_, _))
+        .WillRepeatedly(Return(std::nullopt));
+
+    svc->runBurstCycleForTest();
+
+    EXPECT_GT(src_raw->download_count, 0)
+        << "a settled night missing from the archive must be fetched, or its "
+           "files are stranded forever";
+    EXPECT_TRUE(std::filesystem::exists(archive_dir / "DATALOG" / "20200101"))
+        << "the repair pass must actually create the archive folder";
+}
+
+// The repair must be ONE-SHOT. If it re-downloaded every burst, a settled night
+// would hammer the card once a minute forever, which is the failure mode the
+// original skip was written to prevent.
+TEST_F(BurstOrchestrationTest, ArchiveRepairDoesNotRepeatOnTheNextBurst) {
+    auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
+    archiveSeededNight({"20200101_220000_BRP.edf", "20200101_220000_PLD.edf",
+                        "20200101_220000_CSL.edf", "20200101_220000_EVE.edf"});
+
+    EXPECT_CALL(*db_raw, getLastSessionStart(_))
+        .WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, sessionExists(_, _)).WillRepeatedly(Return(true));
+    std::map<std::string, int> stored = {
+        {"20200101_220000_BRP.edf", 100},
+        {"20200101_220000_PLD.edf", 20},
+    };
+    EXPECT_CALL(*db_raw, getCheckpointFileSizes(_, _))
+        .WillRepeatedly(Return(stored));
+    EXPECT_CALL(*db_raw, getNightlyMetrics(_, _))
+        .WillRepeatedly(Return(std::nullopt));
+
+    svc->runBurstCycleForTest();
+    svc->runBurstCycleForTest();
+
+    EXPECT_EQ(src_raw->download_count, 0)
+        << "an already-archived night must stay skipped on every burst";
+}
+
 // Scenario 2b: Existing session unchanged but already completed
 // (markSessionCompleted returns false) -> publishSessionCompleted still fires
 // to clear stale session_active, but no metrics fetch is required.
 TEST_F(BurstOrchestrationTest, ExistingSession_AlreadyCompleted_NoReMark) {
     auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
+    // SDD-011: already collected normally, so the unchanged path is a true skip
+    // rather than an archive repair.
+    archiveSeededNight({"20200101_220000_BRP.edf", "20200101_220000_PLD.edf",
+                        "20200101_220000_CSL.edf", "20200101_220000_EVE.edf"});
 
     EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
     EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
@@ -2008,6 +2203,9 @@ static std::chrono::system_clock::time_point sessionTime(const std::string& pref
 // most-recent one (23:30) — the earlier (22:00) is gated by is_most_recent.
 TEST_F(BurstOrchestrationTest, MultiSession_OnlyMostRecentTriggersMetrics) {
     auto svc = makeService(&BurstOrchestrationTest::seedTwoSessions);
+    // SDD-011: see above.
+    archiveSeededNight({"20200101_220000_BRP.edf", "20200101_220000_PLD.edf",
+                        "20200101_233000_BRP.edf", "20200101_233000_PLD.edf"});
 
     auto t_early = sessionTime("20200101_220000");
     auto t_late  = sessionTime("20200101_233000");
@@ -2042,6 +2240,9 @@ TEST_F(BurstOrchestrationTest, MultiSession_OnlyMostRecentTriggersMetrics) {
 // LATER session is unchanged (completes). Verifies per-session branch routing.
 TEST_F(BurstOrchestrationTest, MultiSession_EarlierChanged_LaterCompletes) {
     auto svc = makeService(&BurstOrchestrationTest::seedTwoSessions);
+    // SDD-011: see above.
+    archiveSeededNight({"20200101_220000_BRP.edf", "20200101_220000_PLD.edf",
+                        "20200101_233000_BRP.edf", "20200101_233000_PLD.edf"});
 
     auto t_early = sessionTime("20200101_220000");
     auto t_late  = sessionTime("20200101_233000");
