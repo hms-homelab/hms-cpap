@@ -1128,6 +1128,41 @@ SQLiteDatabase::getLastSessionStart(const std::string& device_id) {
 }
 
 std::optional<std::chrono::system_clock::time_point>
+SQLiteDatabase::getNthLatestSessionStart(const std::string& device_id, int n) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!db_ || n < 1) return std::nullopt;
+
+    // OFFSET n-1 rather than a date window: the anchor has to hold on a card
+    // that stopped being written to months ago, which is precisely where a
+    // wall-clock window returns nothing (SDD-010).
+    const char* sql = R"(
+        SELECT session_start FROM cpap_sessions
+        WHERE device_id = ?
+        ORDER BY session_start DESC
+        LIMIT 1 OFFSET ?
+    )";
+
+    StmtGuard g;
+    sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr);
+    bind_text(g.stmt, 1, device_id);
+    sqlite3_bind_int(g.stmt, 2, n - 1);
+
+    // Fewer than n stored sessions is normal on a fresh install, not an error.
+    if (sqlite3_step(g.stmt) != SQLITE_ROW) return std::nullopt;
+
+    std::string ts_str = col_text(g.stmt, 0);
+    std::tm tm = {};
+    std::istringstream ss(ts_str);
+    ss >> std::get_time(&tm, "%Y-%m-%d %H:%M:%S");
+    if (ss.fail()) {
+        std::cerr << "SQLite: Failed to parse timestamp: " << ts_str << std::endl;
+        return std::nullopt;
+    }
+    tm.tm_isdst = -1;
+    return std::chrono::system_clock::from_time_t(std::mktime(&tm));
+}
+
+std::optional<std::chrono::system_clock::time_point>
 SQLiteDatabase::getSessionStartForSleepDay(const std::string&, const std::string&, bool) {
     return std::nullopt;
 }

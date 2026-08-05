@@ -37,6 +37,7 @@
 #include "llm_client.h"
 #include "utils/ConfigManager.h"
 #include "utils/AppConfig.h"
+#include "utils/CardLayout.h"
 #include <iostream>
 #include <iomanip>
 #include <csignal>
@@ -208,12 +209,24 @@ int runBackfill(const std::string& filepath) {
 /**
  * Reparse sessions from local archive for a date range.
  *
- * Usage: hms_cpap --reparse /mnt/public/cpap_data/DATALOG 2025-08-18 [2025-09-09]
+ * Usage: hms_cpap --reparse /mnt/public/cpap_data 2025-08-18 [2025-09-09]
+ *
+ * SDD-010: card_root is the SD card ROOT, the folder holding both STR.edf and
+ * DATALOG, NOT the DATALOG folder itself. One meaning of "the local dir"
+ * across the whole binary.
  *
  * Scans date folders in the given range, groups files into sessions using
  * the same session gap logic (SESSION_GAP_MINUTES, default 60), deletes old DB records, and re-parses fresh.
  */
-int runReparse(const std::string& archive_dir, const std::string& start_str, const std::string& end_str) {
+int runReparse(const std::string& card_root, const std::string& start_str, const std::string& end_str) {
+    const auto layout = hms_cpap::classifyLocalDir(card_root);
+    if (layout != hms_cpap::LocalDirLayout::Root) {
+        std::cerr << "hms_cpap --reparse: "
+                  << hms_cpap::localDirProblem(layout, card_root) << "." << std::endl
+                  << "  " << hms_cpap::localDirRemedy(layout, card_root) << std::endl;
+        return 1;
+    }
+    const std::string archive_dir = hms_cpap::datalogDirFor(card_root);
     std::string device_id = hms_cpap::ConfigManager::get("CPAP_DEVICE_ID", "cpap_resmed_23243570851");
     std::string device_name = hms_cpap::ConfigManager::get("CPAP_DEVICE_NAME", "ResMed AirSense 10");
 
@@ -545,19 +558,20 @@ int main(int argc, char** argv) {
         }
         if (std::strcmp(argv[i], "--reparse") == 0) {
             if (i + 1 >= argc) {
-                std::cerr << "Usage: hms_cpap --reparse <archive_dir> <start_date> [end_date]" << std::endl;
-                std::cerr << "  archive_dir: e.g., /mnt/public/cpap_data/DATALOG" << std::endl;
+                std::cerr << "Usage: hms_cpap --reparse <card_root> <start_date> [end_date]" << std::endl;
+                std::cerr << "  card_root: the SD card ROOT, the folder holding BOTH"
+                          << " STR.edf and DATALOG, e.g. /mnt/public/cpap_data" << std::endl;
                 std::cerr << "  dates: YYYY-MM-DD format" << std::endl;
                 return 1;
             }
-            std::string archive_dir = argv[i + 1];
+            std::string card_root = argv[i + 1];
             if (i + 2 >= argc) {
-                std::cerr << "Usage: hms_cpap --reparse <archive_dir> <start_date> [end_date]" << std::endl;
+                std::cerr << "Usage: hms_cpap --reparse <card_root> <start_date> [end_date]" << std::endl;
                 return 1;
             }
             std::string start_date = argv[i + 2];
             std::string end_date = (i + 3 < argc) ? argv[i + 3] : start_date;
-            return runReparse(archive_dir, start_date, end_date);
+            return runReparse(card_root, start_date, end_date);
         }
     }
 
@@ -888,7 +902,9 @@ int main(int argc, char** argv) {
 
                 // Wire CPAP zip upload: extract the SD card's DATALOG date
                 // folders into the archive, then reparse them via backfill.
-                std::string archive_dir = config.local_dir;
+                // SDD-010: config.local_dir is the card ROOT, so extracted date
+                // folders belong under its DATALOG, not directly inside it.
+                std::string archive_dir = hms_cpap::datalogDirFor(config.local_dir);
                 hms_cpap::CpapController::cpap_zip_import_ =
                     [archive_dir](const std::string& zip_path) -> Json::Value {
                         namespace fs = std::filesystem;

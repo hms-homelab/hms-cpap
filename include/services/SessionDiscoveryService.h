@@ -40,8 +40,15 @@ public:
      * @param last_session_start Last stored session (nullopt = get all)
      * @return Vector of session file sets to download
      */
+    /// @param retain_from SDD-010: always re-check sessions starting at or after
+    ///        this point, whatever the calendar says. Callers pass the start of
+    ///        the 2nd most recent STORED session, so the two newest nights are
+    ///        observed every burst and can always take the second observation
+    ///        that settling requires. nullopt restores pure wall-clock
+    ///        behaviour. This is additive: it only ever widens the set.
     std::vector<SessionFileSet> discoverNewSessions(
-        std::optional<std::chrono::system_clock::time_point> last_session_start
+        std::optional<std::chrono::system_clock::time_point> last_session_start,
+        std::optional<std::chrono::system_clock::time_point> retain_from = std::nullopt
     );
 
     /**
@@ -70,13 +77,17 @@ public:
      * Same logic as discoverNewSessions() but reads date folders from filesystem.
      * Used by CPAP_SOURCE=local mode.
      *
-     * @param local_datalog_dir Path to DATALOG directory (contains YYYYMMDD folders)
+     * @param local_datalog_dir Path to the DATALOG directory itself (contains
+     *        YYYYMMDD folders). SDD-010: callers hold the card ROOT, so this is
+     *        datalogDirFor(root), not the root. This one function genuinely
+     *        does want DATALOG.
      * @param last_session_start Last stored session (nullopt = get all)
      * @return Vector of session file sets to process
      */
     static std::vector<SessionFileSet> discoverLocalSessions(
         const std::string& local_datalog_dir,
-        std::optional<std::chrono::system_clock::time_point> last_session_start);
+        std::optional<std::chrono::system_clock::time_point> last_session_start,
+        std::optional<std::chrono::system_clock::time_point> retain_from = std::nullopt);
 
 private:
     IDataSource& data_source_;

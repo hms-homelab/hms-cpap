@@ -66,11 +66,21 @@ void BurstCollectorService::initDataSource() {
     cpap_source_ = source;
     if (source == "local") {
         local_source_dir_ = ConfigManager::get("CPAP_LOCAL_DIR", "");
-        if (local_source_dir_.empty()) {
-            std::cerr << "CPAP_SOURCE=local but CPAP_LOCAL_DIR not set!" << std::endl;
-            throw std::runtime_error("CPAP_LOCAL_DIR required when CPAP_SOURCE=local");
+        // SDD-010: local_source_dir_ is the card ROOT. A wrong layout is NOT
+        // thrown on, deliberately: throwing here takes the web server down with
+        // it, and the web server is the only thing that can tell the user what
+        // to fix. Record the verdict, refuse to ingest, keep serving.
+        local_layout_ = classifyLocalDir(local_source_dir_);
+        if (local_layout_ != LocalDirLayout::Root) {
+            std::cerr << "CPAP: " << localDirProblem(local_layout_, local_source_dir_)
+                      << ". " << localDirRemedy(local_layout_, local_source_dir_)
+                      << " Nothing will be imported until this is corrected."
+                      << std::endl;
+        } else {
+            std::cout << "CPAP: Local source mode, card root " << local_source_dir_
+                      << ", sessions under " << datalogDirFor(local_source_dir_)
+                      << std::endl;
         }
-        std::cout << "CPAP: Local source mode — reading from " << local_source_dir_ << std::endl;
     } else if (source == "lowenstein") {
         std::string data_dir = ConfigManager::get("CPAP_LOCAL_DIR", "");
         if (data_dir.empty()) {
@@ -653,27 +663,28 @@ bool BurstCollectorService::processSTRFile() {
     try {
         std::string str_local_path;
 
-        if (!local_source_dir_.empty()) {
-            // Local mode: STR.edf lives at the SD root, one level above DATALOG
-            // local_source_dir_ points to .../DATALOG, so look in parent
-            auto parent = std::filesystem::path(local_source_dir_).parent_path();
+        if (cpap_source_ == "local") {
+            // SDD-010: STR.edf sits at the card ROOT, beside DATALOG, and
+            // local_source_dir_ IS that root. It is looked for there and
+            // nowhere else.
+            //
+            // There used to be a fallback that searched inside DATALOG. ResMed
+            // never writes STR there, so it could not succeed; all it did was
+            // turn a misconfigured path into a "missing file" message and send
+            // the reader looking for a data problem that did not exist. A
+            // wrong root is now caught by classifyLocalDir() before ingestion
+            // runs at all, so this function no longer has to guess.
             for (auto& name : {"STR.edf", "STR.EDF"}) {
-                auto p = parent / name;
+                auto p = std::filesystem::path(local_source_dir_) / name;
                 if (std::filesystem::exists(p)) { str_local_path = p.string(); break; }
             }
-            // Also check inside local_source_dir_ as fallback
             if (str_local_path.empty()) {
-                for (auto& name : {"STR.edf", "STR.EDF"}) {
-                    auto p = std::filesystem::path(local_source_dir_) / name;
-                    if (std::filesystem::exists(p)) { str_local_path = p.string(); break; }
-                }
-            }
-            if (str_local_path.empty()) {
-                std::cerr << "STR: Not found in " << parent.string()
-                          << " or " << local_source_dir_
-                          << " — deriving daily summary from sessions instead."
-                          << " Mount the SD card ROOT (the folder containing both"
-                          << " STR.edf and DATALOG) for full nightly detail."
+                // Not an error. A card root legitimately has no STR yet if the
+                // machine has not written one, and Lowenstein never writes one
+                // at all. The caller falls back to per-session CSL/EVE
+                // aggregation, which is the same path ezShare mode uses.
+                std::cerr << "STR: none at " << local_source_dir_
+                          << "; deriving the daily summary from sessions instead."
                           << std::endl;
                 return false;
             }
@@ -947,9 +958,21 @@ bool BurstCollectorService::isNightPartial(
     std::strftime(buf, sizeof(buf), "%Y%m%d", &tm);
 
     auto ledger = db_service_->getSyncFolder(buf);
-    // No row means no transfer was ever tracked for this night: the local
-    // directory and Prisma sources read from a filesystem, where there is no
-    // transfer that can stall. Reporting those partial would be a false alarm.
+    // No row means no transfer was ever tracked for this night, and the only
+    // source that now produces none is Lowenstein.
+    //
+    // This used to read "the local directory and Prisma sources read from a
+    // filesystem, where there is no transfer that can stall". That was wrong
+    // for local mode: amanuense streams from the CPAP into the share long after
+    // therapy ends, so a local folder absolutely can be a transfer in progress
+    // that happens to be reachable through a mount point. SDD-010 gives local
+    // nights ledger rows for exactly that reason.
+    //
+    // Lowenstein still gets none, deliberately. It has no STR.edf, and
+    // processSessionSummary() early-returns before processSTRFile(), the sole
+    // caller of clearStrDebtForParsedDays(). An armed debt there could never be
+    // cleared, so keeping Prisma out of the ledger is what stops every Prisma
+    // night latching Partial forever. False here is the correct answer for it.
     if (!ledger) return false;
 
     return nightState(*ledger) == NightState::Partial;
@@ -1053,6 +1076,21 @@ bool BurstCollectorService::executeBurstCycle() {
     // Step 1: Query DB for last stored session (delta collection)
     auto last_session_start = db_service_->getLastSessionStart(device_id_);
 
+    // SDD-010: the retention anchor. Everything else that decides whether to
+    // re-check a session is anchored on the CURRENT DATE (today's folder, or
+    // "started within 48 hours"), so once a night ages past that it is never
+    // looked at again. Settling requires two observations of the same
+    // signature, so on a card that stopped being written to, or an archive
+    // copied once off an old SD card, folders sit at Live forever and never
+    // resolve to Complete or Partial.
+    //
+    // Anchoring on what is PERSISTED instead of on the clock is what keeps
+    // hms-cpapdash's dashboard populated regardless of how stale the data is.
+    // The 2nd most recent stored session is the cutoff, so the two newest
+    // nights are always re-checked: the current night plus the one before it,
+    // which is also the pair a post-midnight session can be split across.
+    auto retain_from = db_service_->getNthLatestSessionStart(device_id_, 2);
+
     if (last_session_start.has_value()) {
         auto last_time = std::chrono::system_clock::to_time_t(last_session_start.value());
         std::cout << "📊 CPAP: Last stored session: "
@@ -1147,12 +1185,35 @@ bool BurstCollectorService::executeBurstCycle() {
         std::cout << "CPAP: Lowenstein burst cycle completed in " << cycle_ms << " ms" << std::endl;
         return true;
 
-    } else if (!local_source_dir_.empty()) {
+    } else if (cpap_source_ == "local") {
         // ===== LOCAL SOURCE MODE =====
-        std::cout << "CPAP: Scanning local directory " << local_source_dir_ << std::endl;
+        //
+        // Keyed on the SOURCE, not on local_source_dir_ being non-empty. An
+        // unset or wrong folder must land HERE and stop, not fall through into
+        // the ezShare branch and start talking to a card that is not there.
+
+        // SDD-010: re-classified every burst rather than trusted from startup,
+        // so a share that mounts late, or a folder corrected in Settings,
+        // recovers on its own without a restart.
+        local_layout_ = classifyLocalDir(local_source_dir_);
+        if (local_layout_ != LocalDirLayout::Root) {
+            const auto d = local_layout_log_.onFailure(
+                localDirProblem(local_layout_, local_source_dir_) + ". " +
+                localDirRemedy(local_layout_, local_source_dir_));
+            if (d.log) std::cerr << "CPAP: " << d.message << std::endl;
+            // Nothing is inserted while the configuration is wrong. Nights
+            // already in the database keep rendering; the UI carries the banner.
+            return true;
+        }
+        if (const auto rec = local_layout_log_.onSuccess(); rec.log)
+            std::cout << "CPAP: local folder " << rec.message << std::endl;
+
+        const std::string local_datalog_dir = datalogDirFor(local_source_dir_);
+        std::cout << "CPAP: Scanning local card root " << local_source_dir_
+                  << " (sessions under " << local_datalog_dir << ")" << std::endl;
 
         new_sessions = SessionDiscoveryService::discoverLocalSessions(
-            local_source_dir_, last_session_start);
+            local_datalog_dir, last_session_start, retain_from);
 
         // Local mode: STR.edf is static lifetime history on disk, and these
         // sessions never transition to "completed" the way growing ezShare files
@@ -1163,6 +1224,24 @@ bool BurstCollectorService::executeBurstCycle() {
         // idempotent single-transaction upsert of the FULL history — cheap, and
         // self-healing if the mounted directory gains new days.
         processSessionSummary();
+
+        // SDD-010: local nights join the SDD-008 folder ledger, BEFORE the
+        // session loop for the same reason spelled out in the ezShare branch:
+        // the loop is where a settling session publishes, and that publish asks
+        // the ledger whether the night is partial, so a ledger updated
+        // afterwards is always one cycle stale.
+        //
+        // This is what makes a local night that settles without its STR report
+        // Partial instead of Complete-with-short-metrics. The old assumption
+        // was that a filesystem source cannot stall; amanuense, which streams
+        // from the CPAP into the share after therapy ends, disproves it.
+        //
+        // ResMed only. See processSessionSummary(): it early-returns for
+        // Lowenstein and never reaches processSTRFile(), the sole caller of
+        // clearStrDebtForParsedDays(). Lowenstein has no STR.edf at all, so an
+        // armed str_due there could never be cleared by any path, and every
+        // Prisma night would latch Partial forever.
+        updateFolderLedgers(new_sessions, local_datalog_dir);
 
         if (new_sessions.empty()) {
             std::cout << "CPAP: No new sessions found locally" << std::endl;
@@ -1253,7 +1332,9 @@ bool BurstCollectorService::executeBurstCycle() {
                 std::filesystem::remove(entry.path());
             }
 
-            std::string src_dir = local_source_dir_ + "/" + session.date_folder;
+            // SDD-010: session folders live under the root's DATALOG, not under
+            // the root itself.
+            std::string src_dir = local_datalog_dir + "/" + session.date_folder;
             auto stageFile = [&](const std::string& filename) {
                 auto src = std::filesystem::path(src_dir) / filename;
                 auto dst = std::filesystem::path(temp_dir) / filename;
@@ -1292,7 +1373,7 @@ bool BurstCollectorService::executeBurstCycle() {
         std::cout << "CPAP: Accessing ez Share at " << ConfigManager::get("EZSHARE_BASE_URL", "http://192.168.4.1") << std::endl;
 
         try {
-            new_sessions = discovery_service_->discoverNewSessions(last_session_start);
+            new_sessions = discovery_service_->discoverNewSessions(last_session_start, retain_from);
             consecutive_failures_ = 0;
             recovery_logged_ = false;
         } catch (const std::exception& e) {
@@ -1659,7 +1740,7 @@ bool BurstCollectorService::executeBurstCycle() {
     db_service_->updateDeviceLastSeen(device_id_);
 
     // Cleanup temp symlink dirs (local mode only)
-    if (!local_source_dir_.empty()) {
+    if (cpap_source_ == "local") {
         std::filesystem::remove_all(std::filesystem::temp_directory_path() / "cpap_local");
     }
 
@@ -2327,6 +2408,9 @@ void BurstCollectorService::reloadConfig() {
             prisma_ingestion_ = std::make_unique<PrismaIngestion>(nc.local_dir);
         } else if (nc.source == "local") {
             local_source_dir_ = nc.local_dir;
+            // SDD-010: re-classify on reload so a folder corrected in Settings
+            // clears the banner on the next burst instead of needing a restart.
+            local_layout_ = classifyLocalDir(local_source_dir_);
             data_source_.reset();
             discovery_service_.reset();
             prisma_ingestion_.reset();

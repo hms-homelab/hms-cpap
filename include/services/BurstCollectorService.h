@@ -20,6 +20,8 @@
 #include "mqtt_client.h"
 #include "database/IDatabase.h"
 #include "utils/AppConfig.h"
+#include "utils/CardLayout.h"
+#include "utils/FailureLogThrottle.h"
 #include <memory>
 #include <thread>
 #include <atomic>
@@ -182,8 +184,24 @@ private:
     /// SDD-004 optional cloud mirror; null when the feature is off.
     std::shared_ptr<CpapDashSyncService> cpapdash_sync_;
     std::string device_name_;
-    std::string local_source_dir_;  // Empty = ezShare mode, set = local filesystem mode
+    /// SDD-010: the card ROOT when CPAP_SOURCE=local. STR.edf and DATALOG are
+    /// siblings INSIDE it. Never the DATALOG folder itself: that was the old
+    /// contract, and reaching up out of DATALOG to find STR is the bug SDD-010
+    /// removes. Use datalogDirFor() to get the session folders beneath it.
+    std::string local_source_dir_;
     std::string cpap_source_;       // "ezshare", "local", "fysetc", or "lowenstein"
+
+    /// SDD-010: what local_source_dir_ turned out to be. Anything but Root means
+    /// the configuration is wrong and NOTHING may be ingested: the dashboard
+    /// keeps serving what is already stored, and the UI carries a banner naming
+    /// the fix. Re-evaluated every burst so a share that mounts late recovers on
+    /// its own, without a restart.
+    LocalDirLayout local_layout_ = LocalDirLayout::Unusable;
+
+    /// One log line when the configuration goes wrong, one on recovery, and a
+    /// periodic reminder in between. A 65-second burst loop shouting the same
+    /// line forever is how real signal gets buried (see FailureLogThrottle).
+    FailureLogThrottle local_layout_log_;
 
     // Data source (ezShare HTTP or Fysetc TCP — both implement IDataSource)
     std::unique_ptr<IDataSource> data_source_;

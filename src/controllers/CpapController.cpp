@@ -5,6 +5,8 @@
 #include "services/SleepHqExportService.h"
 #include "services/DeviceDiscoveryService.h"
 #include "services/SetupService.h"
+#include "utils/CardLayout.h"
+#include "utils/ConfigManager.h"
 #include <drogon/MultiPart.h>
 #include <atomic>
 #include <filesystem>
@@ -806,6 +808,31 @@ void CpapController::capabilities(const drogon::HttpRequestPtr&,
     features["pdf_reports"] = caps.pdf_reports;
     features["mdns_discovery"] = caps.mdns_discovery;
     result["features"] = features;
+
+    // SDD-010: the local folder must be the card ROOT, the folder holding both
+    // STR.edf and DATALOG. When it is not, ingestion stops but the dashboard
+    // keeps serving whatever is already stored, so the ONLY way the user learns
+    // why nothing new is arriving is a banner. This is what feeds it.
+    //
+    // Computed here, on demand, rather than cached from the collector. It costs
+    // a couple of stat calls, it can never go stale, and a share that mounts
+    // late clears the banner on the next page load with no restart.
+    //
+    // ONLY for source=local. Lowenstein points local_dir at a Prisma tree that
+    // has no DATALOG at all, so classifying it would hard-fail a setup that is
+    // working perfectly well.
+    if (ConfigManager::get("CPAP_SOURCE", "ezshare") == "local") {
+        const std::string dir = ConfigManager::get("CPAP_LOCAL_DIR", "");
+        const auto layout = classifyLocalDir(dir);
+        if (layout != LocalDirLayout::Root) {
+            Json::Value err;
+            err["layout"]  = localDirLayoutString(layout);
+            err["path"]    = dir;
+            err["problem"] = localDirProblem(layout, dir);
+            err["remedy"]  = localDirRemedy(layout, dir);
+            result["config_error"] = err;
+        }
+    }
 
     cb(jsonResp(result));
 }

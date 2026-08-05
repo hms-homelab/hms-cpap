@@ -2,9 +2,11 @@
 #include "services/BackfillService.h"
 #include "services/SleepHqExportService.h"
 #include "parsers/CpapdashBridge.h"
+#include "utils/CardLayout.h"
 
 #include <spdlog/spdlog.h>
 #include <algorithm>
+#include <filesystem>
 #include <iomanip>
 #include <regex>
 #include <sstream>
@@ -120,13 +122,18 @@ void BackfillService::executeBackfill(const std::string& start_date,
             progress_.folders_total = static_cast<int>(date_folders.size());
         }
 
+        // SDD-010: local_dir is the card root; sessions live under its DATALOG.
+        // listDateFolders() has already rejected a root that is not one, so this
+        // is safe to derive here.
+        const std::string datalog_dir = datalogDirFor(config_.local_dir);
+
         spdlog::info("BackfillService: scanning {} date folder(s) in {}",
-                     date_folders.size(), config_.local_dir);
+                     date_folders.size(), datalog_dir);
 
         for (const auto& folder : date_folders) {
             if (!running_) break;
 
-            std::string folder_path = config_.local_dir + "/" + folder;
+            std::string folder_path = datalog_dir + "/" + folder;
 
             if (!std::filesystem::exists(folder_path)) {
                 std::lock_guard<std::mutex> lock(progress_mutex_);
@@ -248,18 +255,19 @@ void BackfillService::executeBackfill(const std::string& start_date,
             // SleepHQ export (best-effort, async) — one import per backfilled
             // folder, from the local source dir (not the archive).
             //
-            // root_dir must be the CARD ROOT, not local_dir: STR.edf and
-            // Identification.* live one level above DATALOG (see processSTRFile
-            // below, which already gets this right). Passing local_dir made
-            // exportFolder probe DATALOG/STR.edf, find nothing, and silently skip
-            // every root file — producing machine-less SleepHQ imports that
-            // process into nothing visible. Same failure hms-cpapdash-api hit in
-            // 4d1fb05; different cause (wrong directory, not wrong layout probe).
+            // root_dir must be the CARD ROOT: STR.edf and Identification.* are
+            // siblings of DATALOG, not children of it. Getting this wrong made
+            // exportFolder probe DATALOG/STR.edf, find nothing, and silently
+            // skip every root file, producing machine-less SleepHQ imports
+            // that process into nothing visible. Same failure hms-cpapdash-api
+            // hit in 4d1fb05.
+            //
+            // SDD-010: config_.local_dir IS the card root now, so this is just
+            // the value itself. It used to be parent_path() of it, back when
+            // local_dir meant DATALOG.
             if (config_.sleephq.enabled && config_.sleephq.auto_on_backfill) {
-                const std::string card_root =
-                    std::filesystem::path(config_.local_dir).parent_path().string();
                 SleepHqExportService::getInstance().exportFolderAsync(
-                    folder, folder_path, card_root);
+                    folder, folder_path, config_.local_dir);
             }
 
             {
@@ -305,11 +313,16 @@ std::vector<std::string> BackfillService::listDateFolders(
     std::vector<std::string> folders;
     std::regex date_re(R"(^\d{8}$)");
 
-    if (!std::filesystem::exists(config_.local_dir)) {
-        throw std::runtime_error("Local directory not found: " + config_.local_dir);
+    // SDD-010: config_.local_dir is the card ROOT, so the date folders are one
+    // level down, inside DATALOG.
+    const auto layout = classifyLocalDir(config_.local_dir);
+    if (layout != LocalDirLayout::Root) {
+        throw std::runtime_error(localDirProblem(layout, config_.local_dir) + ". " +
+                                 localDirRemedy(layout, config_.local_dir));
     }
+    const std::string datalog_dir = datalogDirFor(config_.local_dir);
 
-    for (const auto& entry : std::filesystem::directory_iterator(config_.local_dir)) {
+    for (const auto& entry : std::filesystem::directory_iterator(datalog_dir)) {
         if (!entry.is_directory()) continue;
         std::string name = entry.path().filename().string();
         if (!std::regex_match(name, date_re)) continue;
@@ -360,26 +373,23 @@ std::string BackfillService::currentTimestamp() {
 }
 
 bool BackfillService::processSTRFile() {
-    // STR.edf lives at the SD root, one level above DATALOG
-    auto parent = std::filesystem::path(config_.local_dir).parent_path();
+    // SDD-010: STR.edf sits at the card ROOT, beside DATALOG, and
+    // config_.local_dir IS that root. Looked for there and nowhere else.
+    //
+    // The old code reached up with parent_path() and then fell back to
+    // searching inside DATALOG. ResMed never writes STR there, so the fallback
+    // could not succeed; it only made a misconfigured path look like a missing
+    // file. A wrong root is caught by classifyLocalDir() before we get here.
     std::string str_path;
-
     for (auto& name : {"STR.edf", "STR.EDF"}) {
-        auto p = parent / name;
+        auto p = std::filesystem::path(config_.local_dir) / name;
         if (std::filesystem::exists(p)) { str_path = p.string(); break; }
     }
-    // Also check inside DATALOG as fallback
     if (str_path.empty()) {
-        for (auto& name : {"STR.edf", "STR.EDF"}) {
-            auto p = std::filesystem::path(config_.local_dir) / name;
-            if (std::filesystem::exists(p)) { str_path = p.string(); break; }
-        }
-    }
-    if (str_path.empty()) {
-        spdlog::warn("BackfillService: STR.edf not found in {} or {} — deriving the "
-                     "daily summary from sessions instead. Point local_dir at the SD "
-                     "card ROOT (containing STR.edf and DATALOG) for full detail.",
-                     parent.string(), config_.local_dir);
+        // Not an error: a card legitimately has no STR until the machine writes
+        // one. The caller derives the daily summary from sessions instead.
+        spdlog::warn("BackfillService: no STR.edf at {}; deriving the daily "
+                     "summary from sessions instead.", config_.local_dir);
         return false;
     }
 
