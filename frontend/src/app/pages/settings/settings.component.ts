@@ -52,8 +52,21 @@ import { AppConfig } from '../../models/config.model';
                  folder OSCAR and other file-based tools read. -->
             <label>
               Archive Directory
+              <span class="required-tag" *ngIf="sourceNeedsArchive()">required</span>
               <input type="text" [(ngModel)]="config.archive_dir" name="archive_dir"
-                     placeholder="/path/to/CPAPData" />
+                     placeholder="/path/to/CPAPData"
+                     [class.field-missing]="archiveDirMissing()" />
+              <!-- Ticket 67: an empty value here switches off OSCAR archiving and
+                   SleepHQ export silently, while the dashboard keeps filling in
+                   normally, so it reads as data loss rather than a missing
+                   setting. Mirrors PreflightService::checkArchiveDir. -->
+              <small class="hint warn" *ngIf="archiveDirMissing()">
+                Not set. Your {{ config.source === 'fysetc' ? 'Fysetc' : 'Mule and Miner' }}
+                downloads files that need somewhere to land, so nothing is being
+                written to disk: OSCAR has nothing to import and SleepHQ export
+                stays blocked. Nights already collected are safe in the database
+                and appear here as normal.
+              </small>
               <small class="hint">
                 Where collected nights are written, as a card layout (STR.edf and
                 DATALOG/ side by side). Point OSCAR's card import here. Use forward
@@ -751,6 +764,21 @@ import { AppConfig } from '../../models/config.model';
     .btn-link:disabled { opacity: 0.5; cursor: default; }
     .hint.warn { color: #ffb74d; font-style: normal; }
 
+    /* A field the current mode cannot work without. */
+    .required-tag {
+      margin-left: 0.5rem; font-size: 0.62rem; font-weight: 600;
+      color: #ff8a65; text-transform: uppercase; letter-spacing: 0.06em;
+      border: 1px solid #ff8a6555; border-radius: 3px; padding: 0.05rem 0.3rem;
+    }
+    /* A plain label is a flex COLUMN, so a bare tag span stretches to the full
+       width and reads as a banner rather than a marker. Both tags opt out. */
+    label > .required-tag,
+    label > .restart-tag { align-self: flex-start; margin-left: 0; }
+    input.field-missing {
+      border-color: #ff8a65 !important;
+      background: #2a1c16 !important;
+    }
+
     .section-body { padding: 0 1rem 1rem; }
 
     label {
@@ -1133,6 +1161,22 @@ export class SettingsComponent implements OnInit, OnDestroy {
       'This is where the web interface itself is served from. A wrong value ' +
       'serves no interface at all, and recovering means editing config.json by ' +
       'hand.\n\nLeave it empty unless you know you need it.');
+  }
+
+  /**
+   * Does the selected source download files that have to be written somewhere?
+   *
+   * Mirrors PreflightService::sourceNeedsArchive. local and lowenstein read
+   * files already on disk; ezShare and Fysetc receive them over the network.
+   */
+  sourceNeedsArchive(): boolean {
+    const s = this.config?.source;
+    return s === 'ezshare' || s === 'fysetc';
+  }
+
+  /** Required by the current source, and empty. Ticket 67's silent failure. */
+  archiveDirMissing(): boolean {
+    return this.sourceNeedsArchive() && !this.config?.archive_dir?.trim();
   }
 
   /** The agent needs LLM and PostgreSQL; shown disabled with the reason. */

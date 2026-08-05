@@ -92,6 +92,31 @@ public:
     /// knowable locally: a local directory must exist, and the Mule and Miner
     /// needs somewhere to write. Network reachability is explicitly not checked.
     static Check checkSource(const AppConfig& cfg);
+
+    /// Is there somewhere to put the files a downloading source produces?
+    ///
+    /// ezShare and Fysetc hand over raw files that have to land on disk before
+    /// anything can read them. `local` and `lowenstein` read in place and need
+    /// no archive at all, so this is a per-source question rather than a global
+    /// one.
+    ///
+    /// This exists because the empty case used to be the silent one. run() only
+    /// validated archive_dir when a value was already set, so a downloading
+    /// source with NO archive directory produced no check, no warning and no
+    /// log line. main.cpp then skips exporting CPAP_ARCHIVE_DIR for an empty
+    /// value, so OSCAR archiving and SleepHQ export both switch themselves off
+    /// while the dashboard keeps filling in normally. A user sees nights in
+    /// hms-cpap and nothing on disk, which reads as data loss rather than as
+    /// the missing setting it is. Reported as ticket 67.
+    ///
+    /// Not fatal, for the same reason the local_dir case is not: refusing to
+    /// boot would take down the dashboard that explains the problem.
+    static Check checkArchiveDir(const AppConfig& cfg);
+
+    /// True when this source downloads files that must be written somewhere,
+    /// i.e. ezShare or Fysetc. Shared so the check and its callers cannot
+    /// disagree about which sources need an archive.
+    static bool sourceNeedsArchive(const std::string& source);
 };
 
 }  // namespace hms_cpap

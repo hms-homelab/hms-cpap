@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **A downloading source with no archive directory now says so** (ticket 67).
+  `PreflightService::run()` only validated `archive_dir` when a value was
+  already set, so the empty case, which is the one that breaks things, produced
+  no check and no log line. `main.cpp` skips exporting `CPAP_ARCHIVE_DIR` for an
+  empty value, so OSCAR archiving and SleepHQ export both switched themselves
+  off while the dashboard kept filling in normally, which reads as data loss
+  rather than a missing setting. Startup, `--preflight`, the desktop shell and
+  the systemd `ExecStartPre` now all report it with the cause and the remedy,
+  and the Settings field is marked required and explains itself when empty.
+  Warning, not fatal: a bad path stops ingestion, never the dashboard that
+  explains it. `local` and `lowenstein` read files in place and are exempt.
+
 ## [4.9.4] - 2026-08-05: every setting, for every mode, in the Settings page
 
 ### Added
