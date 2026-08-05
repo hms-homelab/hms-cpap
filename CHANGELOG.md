@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **A settled night now reaches the archive** (SDD-011, ticket 67). Skipping the
+  download for a session whose files had stopped changing also skipped the
+  archive step, because that step sits below the "nothing downloaded" early
+  return. A session that went stable while still missing from disk could
+  therefore never be archived, on any future burst: the only code that writes
+  the archive was behind a branch that would never be taken for it again. The
+  night stayed visible in the dashboard, because it was in SQLite, while OSCAR,
+  the zip export and SleepHQ export all silently had nothing to read. The skip
+  now requires the files to be present and non-empty under
+  `<CPAP_ARCHIVE_DIR>/DATALOG/<date>`, and a settled night that is missing is
+  fetched once to repair it. `captureCardResidue` (Identification.*, SETTINGS/,
+  Journal.dat) was stranded by the same return and is fixed with it. Affects
+  ezShare and Fysetc; local mode reads from disk and never archived.
+
 ## [4.9.2] - 2026-08-04: the card root, and local nights that can settle
 
 ### Changed

@@ -52,6 +52,25 @@ public:
      */
     explicit BurstCollectorService(int burst_interval_seconds = 300);
 
+    /**
+     * SDD-011: is every one of this session's files already in the archive?
+     *
+     * Guards the "nothing changed, skip the download" shortcut. That shortcut
+     * used to fire on "the files stopped changing" alone, which skipped the
+     * download, which left downloaded_sessions empty, which returned before the
+     * archive block ever ran. A session that went stable without being archived
+     * could then NEVER be archived, because the only code that writes the
+     * archive sits behind a branch that will never be taken for it again. The
+     * night showed in the dashboard and the folder never appeared on disk
+     * (Michael, ticket 67).
+     *
+     * Static and side-effect free: it asks the filesystem a question and
+     * answers it. True when no archive is configured, because then there is
+     * nothing to assert.
+     */
+    static bool sessionFilesArchived(const SessionFileSet& session,
+                                     const std::string& archive_base_dir);
+
     /// Initialize all subsystems (call once after construction, before start())
     void initialize(AppConfig* cfg);
 

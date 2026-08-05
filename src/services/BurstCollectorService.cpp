@@ -458,6 +458,44 @@ bool BurstCollectorService::downloadSessionFiles(
     return success;
 }
 
+/*static*/ bool BurstCollectorService::sessionFilesArchived(
+    const SessionFileSet& session,
+    const std::string& archive_base_dir) {
+
+    // SDD-011. "The files stopped changing" is NOT the same question as "there
+    // is nothing left to do", and the gap between those two lost Michael his
+    // night of 2026-08-03 (ticket 67): the session was complete in SQLite, the
+    // dashboard rendered it, and the folder was never written to disk. Every
+    // consumer that reads FILES rather than the database (OSCAR, the zip
+    // export, SleepHQ) silently got nothing, while the product reported success.
+    //
+    // The archive block only runs on a burst that downloads something, so once
+    // a session goes stable an unarchived night can never be archived again.
+    // This is the question that has to be asked before skipping it.
+    //
+    // Derived from disk rather than tracked as a debt flag on purpose: the disk
+    // IS the fact being asserted, a flag can disagree with reality and a stat
+    // cannot, and there is nothing to migrate for existing installs. Same
+    // reasoning as all_files_stored in updateFolderLedgers.
+    if (archive_base_dir.empty()) return true;  // no archive configured, nothing to assert
+
+    const auto dir = std::filesystem::path(archive_base_dir) / "DATALOG" / session.date_folder;
+
+    std::error_code ec;
+    if (!std::filesystem::is_directory(dir, ec)) return false;
+
+    for (const auto& [filename, size_kb] : session.file_sizes_kb) {
+        (void)size_kb;  // presence and non-emptiness, not a size match: the
+                        // listing is KB-rounded, so comparing it against the
+                        // byte size on disk reports a mismatch for every file
+                        // that is actually fine.
+        const auto p = dir / filename;
+        if (!std::filesystem::exists(p, ec) || std::filesystem::file_size(p, ec) == 0)
+            return false;
+    }
+    return true;
+}
+
 bool BurstCollectorService::archiveSessionFiles(
     const std::string& date_folder,
     const std::string& temp_base_dir,
@@ -1408,6 +1446,14 @@ bool BurstCollectorService::executeBurstCycle() {
 
         std::string local_base_dir = ConfigManager::get("CPAP_TEMP_DIR", (std::filesystem::temp_directory_path() / "cpap_data").string());
 
+        // SDD-011: resolved BEFORE the session loop, because the loop now has to
+        // ask whether a night is already on disk before it is allowed to skip
+        // downloading it. Same value the archive step below uses.
+        const std::string default_archive =
+            (std::filesystem::path(hms_cpap::AppConfig::dataDir()) / "cpap_data").string();
+        const std::string permanent_archive =
+            ConfigManager::get("CPAP_ARCHIVE_DIR", default_archive);
+
         // SDD-008: fold this burst's view of the card into the per-folder ledger
         // BEFORE the session loop below, not after.
         //
@@ -1486,7 +1532,14 @@ bool BurstCollectorService::executeBurstCycle() {
                 all_unchanged = false;
             }
 
-            if (all_unchanged && !has_new_files) {
+            // SDD-011: unchanged is not the same as done. Skipping the download
+            // also skips the archive, so a session that goes stable while its
+            // files are still missing from disk would strand them there
+            // permanently. Ticket 67: the night showed in the dashboard, the
+            // folder never appeared, and OSCAR, the zip export and SleepHQ all
+            // silently had nothing to read.
+            const bool archived = sessionFilesArchived(session, permanent_archive);
+            if (all_unchanged && !has_new_files && archived) {
                 std::cout << "CPAP: Session " << session.session_prefix
                           << " stopped (all checkpoint files unchanged)" << std::endl;
 
@@ -1549,7 +1602,8 @@ bool BurstCollectorService::executeBurstCycle() {
             }
 
             std::cout << "CPAP: Session " << session.session_prefix
-                      << " files changed, downloading updates" << std::endl;
+                      << (archived ? " files changed, downloading updates"
+                                   : " downloading to repair the archive") << std::endl;
 
             if (downloadSessionFiles(session, local_base_dir)) {
                 std::map<std::string, int> checkpoint_sizes;
@@ -1583,9 +1637,9 @@ bool BurstCollectorService::executeBurstCycle() {
         std::cout << "CPAP: Downloaded " << downloaded_sessions.size()
                   << " session(s) in " << download_ms << " ms" << std::endl;
 
-        // Archive downloaded files to permanent storage
-        std::string default_archive = (std::filesystem::path(hms_cpap::AppConfig::dataDir()) / "cpap_data").string();
-        std::string permanent_archive = ConfigManager::get("CPAP_ARCHIVE_DIR", default_archive);
+        // Archive downloaded files to permanent storage. SDD-011: the path is
+        // resolved once above the session loop now, because the loop needs it
+        // to decide whether a settled night still has to be fetched.
         std::set<std::string> date_folders;
         for (const auto& session : new_sessions) {
             date_folders.insert(session.date_folder);
