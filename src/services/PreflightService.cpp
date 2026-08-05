@@ -240,7 +240,45 @@ PreflightService::Check PreflightService::checkSource(const AppConfig& cfg) {
     c.fatal = false;
     c.detail = "source is '" + cfg.source + "' (network); reachability is checked "
                "while running, not at startup";
+    // Where those files land IS knowable now, and this comment block used to
+    // claim it was covered here while nothing checked it. checkArchiveDir()
+    // answers it; this line only points at the answer so the two cannot drift.
+    if (sourceNeedsArchive(cfg.source) && cfg.archive_dir.empty())
+        c.detail += "; see archive_dir below";
     return c;
+}
+
+bool PreflightService::sourceNeedsArchive(const std::string& source) {
+    // local and lowenstein read files that are already on disk. ezShare and
+    // Fysetc receive them over the network and must write them somewhere first.
+    return source == "ezshare" || source == "fysetc";
+}
+
+PreflightService::Check PreflightService::checkArchiveDir(const AppConfig& cfg) {
+    Check c;
+    c.name = "archive_dir";
+    c.fatal = false;
+
+    if (!sourceNeedsArchive(cfg.source)) {
+        c.ok = true;
+        c.detail = "not required for source '" + cfg.source + "' (reads files in place)";
+        return c;
+    }
+
+    if (cfg.archive_dir.empty()) {
+        c.ok = false;
+        c.detail = "source '" + cfg.source + "' downloads files but no archive directory "
+                   "is set, so nothing is written to disk: OSCAR has nothing to import "
+                   "and SleepHQ export stays blocked";
+        c.remedy = "Set the Archive Directory in Settings under Data Source, or "
+                   "\"archive_dir\" in config.json, to a folder for the card layout "
+                   "(for example ~/CPAPData). Nights already collected stay in the "
+                   "database and are unaffected.";
+        return c;
+    }
+
+    // A configured directory still has to be usable.
+    return checkWritableDir("archive_dir", cfg.archive_dir);
 }
 
 PreflightService::Report PreflightService::run(const AppConfig& cfg) {
@@ -249,8 +287,9 @@ PreflightService::Report PreflightService::run(const AppConfig& cfg) {
     r.checks.push_back(checkPort("0.0.0.0", cfg.web_port));
     r.checks.push_back(checkDatabase(cfg));
     r.checks.push_back(checkSource(cfg));
-    if (!cfg.archive_dir.empty())
-        r.checks.push_back(checkWritableDir("archive_dir", cfg.archive_dir));
+    // Always pushed. Skipping this when archive_dir was empty made the ONE
+    // case that needs saying the only case that said nothing.
+    r.checks.push_back(checkArchiveDir(cfg));
     return r;
 }
 

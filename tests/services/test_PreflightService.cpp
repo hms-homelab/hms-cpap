@@ -239,6 +239,62 @@ TEST(PreflightServiceTest, TheRenderedReportShowsFailuresAndTheirRemedies) {
     EXPECT_NE(text.find("config.json"), std::string::npos);
 }
 
+// Ticket 67: a downloading source with nowhere to write produced no check at
+// all, because run() only validated archive_dir when one was already set. The
+// user saw nights in the dashboard and an empty folder on disk, with nothing
+// anywhere saying why.
+TEST(PreflightServiceTest, ADownloadingSourceWithNoArchiveDirectoryIsReported) {
+    AppConfig cfg;
+    cfg.source = "ezshare";
+    cfg.archive_dir = "";
+
+    const auto c = PreflightService::checkArchiveDir(cfg);
+    EXPECT_FALSE(c.ok);
+    EXPECT_FALSE(c.fatal) << "must not stop startup: the dashboard is where the "
+                             "user reads what is wrong";
+    // The two things that actually broke are named, so the report is actionable
+    // without reading the source.
+    EXPECT_NE(c.detail.find("OSCAR"), std::string::npos);
+    EXPECT_NE(c.detail.find("SleepHQ"), std::string::npos);
+    EXPECT_FALSE(c.remedy.empty()) << "a failure without a remedy is a support ticket";
+}
+
+TEST(PreflightServiceTest, FysetcAlsoNeedsSomewhereToWrite) {
+    AppConfig cfg;
+    cfg.source = "fysetc";
+    cfg.archive_dir = "";
+    EXPECT_TRUE(PreflightService::sourceNeedsArchive(cfg.source));
+    EXPECT_FALSE(PreflightService::checkArchiveDir(cfg).ok);
+}
+
+// local and lowenstein read files already on disk, so demanding an archive
+// folder from them would be a warning nobody can act on.
+TEST(PreflightServiceTest, AFileBasedSourceDoesNotNeedAnArchiveDirectory) {
+    for (const char* src : {"local", "lowenstein"}) {
+        AppConfig cfg;
+        cfg.source = src;
+        cfg.archive_dir = "";
+        EXPECT_FALSE(PreflightService::sourceNeedsArchive(src));
+        const auto c = PreflightService::checkArchiveDir(cfg);
+        EXPECT_TRUE(c.ok) << src << " should not require an archive directory";
+        EXPECT_NE(c.detail.find("not required"), std::string::npos);
+    }
+}
+
+// A configured folder still has to be usable, so the empty case must not have
+// replaced the writability check.
+TEST(PreflightServiceTest, AConfiguredArchiveDirectoryIsStillWriteTested) {
+    AppConfig cfg;
+    cfg.source = "ezshare";
+    cfg.archive_dir = (std::filesystem::temp_directory_path() /
+                       ("hms_pf_arch_" + std::to_string(::getpid()))).string();
+
+    const auto c = PreflightService::checkArchiveDir(cfg);
+    EXPECT_TRUE(c.ok) << c.detail;
+    EXPECT_EQ(c.name, "archive_dir");
+    std::filesystem::remove_all(cfg.archive_dir);
+}
+
 TEST(PreflightServiceTest, AFullRunCoversTheThingsThatCanBeKnownLocally) {
     AppConfig cfg;
     cfg.web_port = 47915;
@@ -253,7 +309,7 @@ TEST(PreflightServiceTest, AFullRunCoversTheThingsThatCanBeKnownLocally) {
 
     // Named rather than counted: a future check should extend this list, and a
     // count would pass while silently having dropped one of these.
-    for (const char* want : {"data_dir", "web_port", "database", "source"}) {
+    for (const char* want : {"data_dir", "web_port", "database", "source", "archive_dir"}) {
         bool found = false;
         for (const auto& c : r.checks) if (c.name == want) found = true;
         EXPECT_TRUE(found) << "the report is missing the " << want << " check";
