@@ -427,4 +427,32 @@ bool FysetcTcpServer::ping(uint32_t nonce) {
     return ok;
 }
 
+bool FysetcTcpServer::setConfig(fysetc::ConfigKey key, uint32_t value) {
+    if (client_fd_ < 0) return false;
+
+    stopDrainLoop();
+
+    uint16_t req_id = next_req_id_++;
+    auto msg = fysetc::encodeConfig(req_id, key, value);
+    if (!sendMessage(msg)) {
+        startDrainLoop();
+        return false;
+    }
+
+    fysetc::MsgHeader hdr;
+    std::vector<uint8_t> payload;
+    bool ok = false;
+    {
+        std::lock_guard<std::mutex> lock(recv_mutex_);
+        ok = recvMessageLocked(hdr, payload, 5000) &&
+             hdr.type == fysetc::MsgType::CONFIG_ACK &&
+             payload.size() >= 2 &&
+             payload[0] == static_cast<uint8_t>(key) &&
+             payload[1] == static_cast<uint8_t>(fysetc::ConfigResult::OK);
+    }
+
+    startDrainLoop();
+    return ok;
+}
+
 }  // namespace hms_cpap

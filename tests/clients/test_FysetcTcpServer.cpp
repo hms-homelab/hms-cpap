@@ -455,3 +455,21 @@ TEST(FysetcProtocolTest, ByeEncoding) {
     EXPECT_EQ(hdr.type, MsgType::BYE);
     EXPECT_EQ(encoded[MsgHeader::WIRE_SIZE], 0x01);
 }
+
+TEST(FysetcProtocolTest, ConfigEncoding) {
+    auto encoded = encodeConfig(7, ConfigKey::SD_FREQ_KHZ, 20000);
+
+    MsgHeader hdr;
+    ASSERT_TRUE(decodeHeader(encoded.data(), encoded.size(), hdr));
+    EXPECT_EQ(hdr.type, MsgType::CONFIG);
+    EXPECT_EQ(hdr.req_id, 7);
+
+    // Payload is [u8 key][u32 value] little-endian, matching the decoder in
+    // hms-cpap-fysetc tcp_protocol.h.
+    ASSERT_EQ(encoded.size(), MsgHeader::WIRE_SIZE + 5);
+    EXPECT_EQ(encoded[MsgHeader::WIRE_SIZE], 0x01);
+
+    uint32_t value = 0;
+    std::memcpy(&value, &encoded[MsgHeader::WIRE_SIZE + 1], 4);
+    EXPECT_EQ(value, 20000u);
+}
