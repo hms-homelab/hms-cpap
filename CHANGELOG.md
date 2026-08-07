@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **One FAT init that found no DATALOG silenced the Fysetc source permanently.**
+  `FysetcDataSource::ensureFat()` returned early whenever `fat_` was non-null,
+  without re-checking the connection, and `datalog_cluster_` was only ever set
+  during the first successful init. So a single init that resolved no DATALOG
+  left that cluster at 0 for the life of the process, and every subsequent
+  `listDateFolders()` short-circuited at `if (!ensureFat() || !datalog_cluster_)`
+  and returned nothing **without issuing a single sector read**, behind a log
+  line reading "No date folders found", which looks exactly like an empty card.
+
+  Observed in the field: the board was momentarily in a USB card reader, which
+  is itself an SD host competing for the bus, the init succeeded but resolved no
+  DATALOG, and the service then reported an empty card for 45 minutes with the
+  device sitting healthy and connected. Restarting the service was the only cure,
+  which is not a thing anyone remembers to do at 2am.
+
+  `ensureFat()` now drops the parser when the device is not connected, discards
+  it when the device reconnects under a new session id (the Fysetc has no USB,
+  so it is power-cycled by hand routinely and can come back describing a
+  different card), and retries the DATALOG lookup instead of treating a single
+  miss as permanent. A missing DATALOG is now also logged rather than silent.
+- **The device-reboot signal was computed and never consumed.** The protocol has
+  said since v1.0.0 that "if `boot_count` differs from the server's last-known
+  value, a full FAT re-sync follows", and `FysetcTcpServer` has always set
+  `needs_full_sync` on that condition. Nothing ever read the flag. That is why a
+  power cycle did not already invalidate the cached FAT: the mechanism was
+  specified, the detection was built, and the wire between them was missing.
+  New `takeFullSyncFlag()` reads and clears it, and `ensureFat()` consumes it.
+
+  Read-and-clear rather than a getter on purpose: the flag stays set for the life
+  of a connection, so a consumer that only peeked would discard a perfectly good
+  FAT on every burst cycle instead of once on reconnect.
+
+  Kept alongside the session check because they are different signals.
+  `boot_count` means the board rebooted or lost power. `session_id` means the
+  connection is new, which also covers a WiFi blip or a card swapped while the
+  board kept running. Re-reading costs milliseconds, so the safer superset is
+  effectively free.
+- `FAT32 initialized (@ sectors/cluster)` printed the sectors-per-cluster
+  `uint8_t` as a character rather than a number. 64 rendered as `@`.
+
 ## [4.9.6] - 2026-08-07: a log the user can actually send, and a card you can reconfigure without pulling it
 
 ### Added

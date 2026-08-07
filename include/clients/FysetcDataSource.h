@@ -42,8 +42,16 @@ private:
     uint32_t findClusterForFolder(const std::string& folder_name);
 
     FysetcTcpServer& tcp_;
+    /// Locate DATALOG under the card root and cache its cluster.
+    /// Sets datalog_cluster_ to 0 when it is not there.
+    void findDatalogCluster();
+
     std::unique_ptr<Fat32Parser> fat_;
     uint32_t datalog_cluster_ = 0;
+    /// Which device connection fat_ was built against. The Fysetc has no USB,
+    /// so it gets power-cycled by hand routinely and can reconnect underneath
+    /// us with a different card state; a parser cached across that is stale.
+    uint32_t fat_session_ = 0;
 };
 
 }  // namespace hms_cpap

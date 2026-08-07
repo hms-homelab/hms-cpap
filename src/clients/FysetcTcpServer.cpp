@@ -427,6 +427,13 @@ bool FysetcTcpServer::ping(uint32_t nonce) {
     return ok;
 }
 
+bool FysetcTcpServer::takeFullSyncFlag() {
+    std::lock_guard<std::mutex> lock(full_sync_mutex_);
+    const bool needed = device_state_.needs_full_sync;
+    device_state_.needs_full_sync = false;
+    return needed;
+}
+
 bool FysetcTcpServer::setConfig(fysetc::ConfigKey key, uint32_t value) {
     if (client_fd_ < 0) return false;
 

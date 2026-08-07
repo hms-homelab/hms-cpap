@@ -42,6 +42,23 @@ public:
 
     const FysetcDeviceState& deviceState() const { return device_state_; }
 
+    /**
+     * True once if the last HELLO reported a different boot_count than the
+     * previous connection, meaning the device rebooted or power-cycled and
+     * anything cached about its card is suspect. Clears the flag.
+     *
+     * Read-and-clear rather than a plain getter: the flag is recomputed on every
+     * HELLO and stays set for the life of that connection, so a consumer that
+     * only peeked would throw away a perfectly good FAT on every burst cycle
+     * instead of once on reconnect.
+     *
+     * The protocol has specified this since v1.0.0 ("If boot_count differs from
+     * the server's last-known value, a full FAT re-sync follows"), and the
+     * detection has always been implemented, but nothing consumed the flag,
+     * which is why a power cycle used to leave a stale FAT in place.
+     */
+    bool takeFullSyncFlag();
+
     bool readSectors(const std::vector<fysetc::SectorRange>& ranges,
                      std::vector<uint8_t>& out_data,
                      std::vector<std::pair<uint32_t, uint16_t>>& out_delivered);
@@ -89,6 +106,9 @@ private:
     std::mutex recv_mutex_;
     uint16_t next_req_id_ = 1;
     FysetcDeviceState device_state_;
+    /// Guards the read-and-clear of needs_full_sync, which is written on the
+    /// receive thread and consumed by the burst collector.
+    mutable std::mutex full_sync_mutex_;
     LogCallback log_callback_;
 };
 

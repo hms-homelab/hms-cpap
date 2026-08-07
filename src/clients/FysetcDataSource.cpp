@@ -20,13 +20,63 @@ Fat32Parser::SectorReader FysetcDataSource::makeSectorReader() {
     };
 }
 
+void FysetcDataSource::findDatalogCluster() {
+    datalog_cluster_ = 0;
+    auto root = fat_->listDir(fat_->bpb().root_cluster);
+    for (auto& e : root) {
+        std::string name_lower = e.name;
+        std::transform(name_lower.begin(), name_lower.end(), name_lower.begin(), ::tolower);
+        if (name_lower == "datalog" && e.is_directory) {
+            datalog_cluster_ = e.first_cluster;
+            return;
+        }
+    }
+}
+
 bool FysetcDataSource::ensureFat() {
-    if (fat_) {
-        fat_->clearFatCache();
-        return true;
+    // No device, no parser. Dropping it here is what lets a later reconnect
+    // start clean instead of reusing a description of a card that may have been
+    // pulled, swapped or rewritten in the meantime.
+    if (!tcp_.isConnected()) {
+        fat_.reset();
+        datalog_cluster_ = 0;
+        return false;
     }
 
-    if (!tcp_.isConnected()) return false;
+    // Two independent reasons to throw the cached parser away, and they are not
+    // the same signal.
+    //
+    // boot_count changing means the DEVICE rebooted or power-cycled. That is the
+    // condition the protocol has specified since v1.0.0 ("If boot_count differs
+    // from the server's last-known value, a full FAT re-sync follows"). The
+    // server has always computed it; nothing ever consumed it, which is why a
+    // power cycle used to leave a stale FAT in place.
+    //
+    // session_id changing means the CONNECTION is new, which also covers a WiFi
+    // blip or a dropped socket with no reboot. It is the safer superset: the
+    // card can be swapped while the board keeps running, and re-reading costs
+    // milliseconds.
+    const uint32_t session = tcp_.deviceState().session_id;
+    const bool rebooted = tcp_.takeFullSyncFlag();
+    if (fat_ && (rebooted || session != fat_session_)) {
+        if (rebooted) {
+            std::cout << "FysetcDataSource: device rebooted (boot_count changed)"
+                         " — re-reading the card" << std::endl;
+        }
+        fat_.reset();
+        datalog_cluster_ = 0;
+    }
+
+    if (fat_) {
+        fat_->clearFatCache();
+        // A first init that resolved no DATALOG used to poison every later call
+        // for the lifetime of the process: datalog_cluster_ stayed 0, so
+        // listDateFolders() returned nothing forever without issuing a single
+        // sector read, behind a "no date folders found" message that read like
+        // an empty card. Retry the lookup rather than give up permanently.
+        if (!datalog_cluster_) findDatalogCluster();
+        return true;
+    }
 
     fat_ = std::make_unique<Fat32Parser>(makeSectorReader());
     if (!fat_->init()) {
@@ -34,20 +84,19 @@ bool FysetcDataSource::ensureFat() {
         fat_.reset();
         return false;
     }
+    fat_session_ = session;
 
-    // Find DATALOG cluster
-    auto root = fat_->listDir(fat_->bpb().root_cluster);
-    for (auto& e : root) {
-        std::string name_lower = e.name;
-        std::transform(name_lower.begin(), name_lower.end(), name_lower.begin(), ::tolower);
-        if (name_lower == "datalog" && e.is_directory) {
-            datalog_cluster_ = e.first_cluster;
-            break;
-        }
-    }
+    findDatalogCluster();
 
     std::cout << "FysetcDataSource: FAT32 initialized ("
-              << fat_->bpb().sectors_per_cluster << " sectors/cluster)" << std::endl;
+              // Cast: sectors_per_cluster is a uint8_t, so streaming it printed
+              // the character with that code point ("@" for 64) instead of a number.
+              << static_cast<unsigned>(fat_->bpb().sectors_per_cluster)
+              << " sectors/cluster)" << std::endl;
+    if (!datalog_cluster_) {
+        std::cerr << "FysetcDataSource: no DATALOG directory at the card root"
+                  << std::endl;
+    }
     return true;
 }
 
