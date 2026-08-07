@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.9.5] - 2026-08-06: a setting written outside the braces is an error, not a silence
+
+### Fixed
+- **A key written past the closing brace was accepted and discarded.** Reported
+  by a customer who was told to add `archive_dir` "inside the outer { }" and put
+  it one line too low, just after the root object ended. `AppConfig::loadFile()`
+  read the file with `f >> j`, and nlohmann's `operator>>` parses ONE value and
+  leaves the rest of the stream alone, so the file loaded cleanly, the setting
+  simply did not exist, and nothing logged a word about it. He restarted into
+  the same empty archive folder and reasonably concluded the program was
+  broken. Now parsed with `nlohmann::json::parse()`, which requires the whole
+  file to be the object and reports the offending line and column. Worth stating
+  plainly because the failure was invisible from the inside: the config looked
+  valid, because it was valid, and the user's edit was not in it.
+- **An unreadable config is no longer mistaken for a first run.** `load()`
+  returned the same `false` for "no file" and "file I cannot parse", and
+  `main.cpp` then ran `if (!config_existed) config.save(config_path)` beneath a
+  comment reading "don't overwrite user's config". One stray character was
+  therefore enough to replace a working configuration with defaults, taking
+  `device_id` and the entire wizard result with it. New
+  `AppConfig::LoadStatus { Ok, Missing, Invalid }` and
+  `loadFile(path, config, &error)` separate them; `load()` remains as a wrapper
+  for callers that only ask whether they got a config. Startup refuses on
+  `Invalid`, naming the path, the parser's message and the fact that the file
+  was left untouched, and returns before reaching the save. The Windows tray
+  runs `--preflight` before every launch and shows its report, so this arrives
+  as a dialog naming the line rather than as a program that will not start.
+
 ## [4.9.4] - 2026-08-05: every setting, for every mode, in the Settings page
 
 ### Added

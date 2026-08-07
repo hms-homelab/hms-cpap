@@ -558,3 +558,80 @@ TEST(AppConfigDataDirTest, LegacyConfigIsMigratedWhenTargetHasNone) {
     if (!saved_home.empty()) setenv("HOME", saved_home.c_str(), 1);
     std::filesystem::remove_all(root);
 }
+
+// --- Absent vs unreadable -----------------------------------------------------
+//
+// These were one `false` for most of the project's life, and the collapse had
+// teeth: main.cpp treated "load failed" as "first run" and wrote defaults over
+// the file, so one stray brace cost a user their device_id and their whole
+// wizard result. A real config.json from a user who pasted archive_dir past the
+// closing brace is the fixture below.
+
+TEST_F(AppConfigTest, MissingFileReportsMissing) {
+    AppConfig config;
+    EXPECT_EQ(AppConfig::loadFile(config_path_, config),
+              AppConfig::LoadStatus::Missing);
+}
+
+TEST_F(AppConfigTest, ValidFileReportsOk) {
+    {
+        std::ofstream out(config_path_);
+        out << R"({"device_id":"cpap_resmed_1","web_port":8893})";
+    }
+    AppConfig config;
+    EXPECT_EQ(AppConfig::loadFile(config_path_, config),
+              AppConfig::LoadStatus::Ok);
+    EXPECT_EQ(config.device_id, "cpap_resmed_1");
+}
+
+TEST_F(AppConfigTest, KeyWrittenPastTheClosingBraceIsRejectedNotIgnored) {
+    // Verbatim shape of the field report: the key sits AFTER the root object's
+    // closing brace, followed by a second brace. Under `f >> j` this parsed
+    // cleanly and archive_dir simply did not exist, which is the worst of both
+    // outcomes: the user's edit is gone and the program reports success.
+    {
+        std::ofstream out(config_path_);
+        out << "{\n"
+               "  \"device_id\": \"cpap_resmed_23243570851\",\n"
+               "  \"web_port\": 8893\n"
+               "},\n"
+               "  \"archive_dir\": \"C:/Users/kendn/CPAPData\",\n"
+               "\n"
+               "}\n";
+    }
+    AppConfig config;
+    std::string error;
+    EXPECT_EQ(AppConfig::loadFile(config_path_, config, &error),
+              AppConfig::LoadStatus::Invalid);
+    EXPECT_FALSE(error.empty()) << "the parser's message is what tells the user where to look";
+}
+
+TEST_F(AppConfigTest, MalformedFileIsNeverMistakenForFirstRun) {
+    // The precise regression: Invalid must not read as Missing, because that is
+    // the branch that overwrites the user's file.
+    {
+        std::ofstream out(config_path_);
+        out << "{ \"device_id\": \"cpap_resmed_1\" ";  // never closed
+    }
+    AppConfig config;
+    const auto status = AppConfig::loadFile(config_path_, config);
+    EXPECT_EQ(status, AppConfig::LoadStatus::Invalid);
+    EXPECT_NE(status, AppConfig::LoadStatus::Missing);
+
+    // And the file on disk is still the user's, byte for byte.
+    std::ifstream check(config_path_);
+    std::string contents((std::istreambuf_iterator<char>(check)),
+                         std::istreambuf_iterator<char>());
+    EXPECT_EQ(contents, "{ \"device_id\": \"cpap_resmed_1\" ");
+}
+
+TEST_F(AppConfigTest, LoadWrapperStillReportsFalseForBothFailures) {
+    AppConfig config;
+    EXPECT_FALSE(AppConfig::load(config_path_, config));  // missing
+
+    {
+        std::ofstream out(config_path_);
+        out << "{ not json";
+    }
+    EXPECT_FALSE(AppConfig::load(config_path_, config));  // invalid
+}
