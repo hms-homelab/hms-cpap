@@ -347,13 +347,37 @@ struct AppConfig {
         return !ec;
     }
 
-    // Load from JSON file. Returns false if file doesn't exist (first run).
-    static bool load(const std::string& path, AppConfig& config) {
-        if (!std::filesystem::exists(path)) return false;
+    /// Why a load did not produce a config.
+    ///
+    /// These two used to be one `false`. They call for opposite responses: a
+    /// missing file is first run and should be written, an unreadable one is a
+    /// typo in a file the user owns and must never be written over. Collapsing
+    /// them meant a single stray brace silently replaced a working config with
+    /// defaults, losing device_id and everything else the wizard had set.
+    enum class LoadStatus {
+        Ok,       ///< parsed; `config` is populated
+        Missing,  ///< no file at `path`; first run
+        Invalid   ///< a file exists but could not be parsed; `config` is untrustworthy
+    };
+
+    /// Load from JSON file, distinguishing "absent" from "unreadable".
+    ///
+    /// On Invalid, `error` (when non-null) receives the parser's message, which
+    /// carries the byte offset of the offending character. `config` is left in
+    /// whatever state partial assignment reached and must not be used or saved.
+    static LoadStatus loadFile(const std::string& path, AppConfig& config,
+                               std::string* error = nullptr) {
+        if (!std::filesystem::exists(path)) return LoadStatus::Missing;
         try {
             std::ifstream f(path);
-            nlohmann::json j;
-            f >> j;
+            // json::parse, NOT `f >> j`. operator>> reads one value and leaves
+            // the rest of the stream alone, so anything written past the root
+            // object's closing brace was accepted and silently discarded. That
+            // is not a theoretical case: a user told to add a key "inside the
+            // outer { }" put it one line too low, the file parsed, the setting
+            // vanished, and nothing anywhere said so. parse() requires the whole
+            // file to be the object and reports the offending line.
+            nlohmann::json j = nlohmann::json::parse(f);
 
             if (j.contains("device_id"))    config.device_id = j["device_id"];
             if (j.contains("device_name"))  config.device_name = j["device_name"];
@@ -459,11 +483,21 @@ struct AppConfig {
                 if (sh.contains("quiet_minutes"))     config.sleephq.quiet_minutes = sh["quiet_minutes"];
             }
 
-            return true;
+            return LoadStatus::Ok;
         } catch (const std::exception& e) {
+            if (error) *error = e.what();
             std::cerr << "Config load error: " << e.what() << std::endl;
-            return false;
+            return LoadStatus::Invalid;
         }
+    }
+
+    /// Load from JSON file. Returns false if the file is absent OR unreadable.
+    ///
+    /// Retained for callers that only ask "did I get a config". Anything that
+    /// decides whether to WRITE the file must use loadFile() instead, because
+    /// the two false cases need opposite handling.
+    static bool load(const std::string& path, AppConfig& config) {
+        return loadFile(path, config) == LoadStatus::Ok;
     }
 
     // Save to JSON file

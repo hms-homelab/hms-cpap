@@ -425,7 +425,25 @@ int main(int argc, char** argv) {
     }
 
     hms_cpap::AppConfig config;
-    bool config_existed = hms_cpap::AppConfig::load(config_path, config);
+    std::string config_error;
+    const auto load_status =
+        hms_cpap::AppConfig::loadFile(config_path, config, &config_error);
+
+    // An unreadable config is NOT a first run, and treating it as one is how a
+    // single mistyped character used to destroy a working setup: load() failed,
+    // config_existed went false, and the "only create on first run" save below
+    // wrote defaults straight over the user's file. Stop here instead, name the
+    // parser's complaint, and leave the file exactly as they left it.
+    if (load_status == hms_cpap::AppConfig::LoadStatus::Invalid) {
+        std::cerr << "Refusing to start. The configuration file is not valid JSON:\n"
+                  << "  " << config_path << "\n"
+                  << "  " << config_error << "\n"
+                  << "Your file has NOT been changed. Fix the character at the offset "
+                     "above, or delete the file to start over from the setup wizard.\n";
+        return 1;
+    }
+
+    const bool config_existed = (load_status == hms_cpap::AppConfig::LoadStatus::Ok);
 
     // Env vars fill any empty fields (fallback for systemd Environment= lines)
     config.applyEnvFallbacks();
