@@ -367,6 +367,13 @@ jobs:
   windows-desktop-test:
     runs-on: windows-latest
     needs: windows-build
+    # This job installs and uninstalls a real program, so every step either
+    # finishes in seconds or is stuck. Without a bound it hangs until the 6 hour
+    # run cap, and GitHub refuses to serve step logs until the whole run
+    # finishes, so a hang costs an afternoon AND tells you nothing. Observed on
+    # the v4.9.6 tag: "Install silently" sat for 4h54m while every other job had
+    # long since passed.
+    timeout-minutes: 15
     permissions:
       contents: read
 
@@ -378,6 +385,10 @@ jobs:
           path: installer/
 
       - name: Install silently
+        # Bounded separately from the job so a hang here is named rather than
+        # inferred: Start-Process -Wait blocks forever if Setup puts up any
+        # interactive surface, and this step is the only one that can.
+        timeout-minutes: 5
         run: |
           $exe = (Get-ChildItem installer\*.exe | Select-Object -First 1).FullName
           Write-Host "installing $exe"
