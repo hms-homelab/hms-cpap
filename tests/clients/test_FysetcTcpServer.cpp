@@ -473,3 +473,44 @@ TEST(FysetcProtocolTest, ConfigEncoding) {
     std::memcpy(&value, &encoded[MsgHeader::WIRE_SIZE + 1], 4);
     EXPECT_EQ(value, 20000u);
 }
+
+// The full-sync flag is how a device reboot invalidates hms-cpap's cached FAT.
+// The protocol has specified it since v1.0.0 ("If boot_count differs from the
+// server's last-known value, a full FAT re-sync follows") and the server has
+// always computed it, but nothing consumed it, so a power cycle silently left a
+// stale FAT in place and the source reported an empty card until the service
+// was restarted.
+TEST_F(FysetcTcpServerTest, FullSyncFlagIsTakenOncePerReboot) {
+    int fd1 = connectAndHandshake(1);
+    ASSERT_GE(fd1, 0);
+
+    // First sighting of a device counts: nothing cached about its card is
+    // trustworthy yet.
+    EXPECT_TRUE(server->takeFullSyncFlag());
+
+    // Read-and-clear. A plain getter would keep reporting true for the life of
+    // the connection, so the cached FAT would be discarded on every burst cycle
+    // instead of once on reconnect.
+    EXPECT_FALSE(server->takeFullSyncFlag());
+    EXPECT_FALSE(server->deviceState().needs_full_sync);
+    close(fd1);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    // Same boot_count: the socket dropped but the board never rebooted, so
+    // there is nothing to invalidate on this account.
+    int fd2 = connectAndHandshake(1);
+    ASSERT_GE(fd2, 0);
+    EXPECT_FALSE(server->takeFullSyncFlag());
+    close(fd2);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+    // boot_count moved: the board power-cycled, which is exactly the case that
+    // used to leave hms-cpap describing a card that was no longer there.
+    int fd3 = connectAndHandshake(2);
+    ASSERT_GE(fd3, 0);
+    EXPECT_TRUE(server->takeFullSyncFlag());
+    EXPECT_FALSE(server->takeFullSyncFlag());
+    close(fd3);
+}
