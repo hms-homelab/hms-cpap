@@ -20,6 +20,21 @@ enum class MsgType : uint8_t {
     PING             = 0x40,
     PONG             = 0x41,
     BYE              = 0x50,
+    CONFIG           = 0x60,
+    CONFIG_ACK       = 0x61,
+};
+
+// One setting per CONFIG message, so the device never applies a half-understood
+// batch. Must match tcp_protocol.h in hms-cpap-fysetc.
+enum class ConfigKey : uint8_t {
+    SD_FREQ_KHZ = 0x01,
+};
+
+enum class ConfigResult : uint8_t {
+    OK         = 0x00,  // stored; the device reboots to apply it
+    BAD_KEY    = 0x01,
+    BAD_VALUE  = 0x02,
+    STORE_FAIL = 0x03,
 };
 
 enum class SectorReadStatus : uint8_t {
@@ -197,6 +212,14 @@ inline std::vector<uint8_t> encodePing(uint16_t req_id, uint32_t nonce) {
     auto buf = encodeHeader(MsgType::PING, 0, req_id, 4);
     buf.resize(MsgHeader::WIRE_SIZE + 4);
     std::memcpy(&buf[8], &nonce, 4);
+    return buf;
+}
+
+inline std::vector<uint8_t> encodeConfig(uint16_t req_id, ConfigKey key, uint32_t value) {
+    auto buf = encodeHeader(MsgType::CONFIG, 0, req_id, 5);
+    buf.resize(MsgHeader::WIRE_SIZE + 5);
+    buf[8] = static_cast<uint8_t>(key);
+    std::memcpy(&buf[9], &value, 4);
     return buf;
 }
 

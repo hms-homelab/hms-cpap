@@ -48,6 +48,18 @@ public:
 
     bool ping(uint32_t nonce);
 
+    /**
+     * Push a single setting to the device and wait for its CONFIG_ACK.
+     *
+     * The device stores the value and reboots to apply it, so the connection
+     * drops immediately after a successful call and re-establishes a few
+     * seconds later. Returns true only when the device acked with OK.
+     *
+     * Used to sweep the SD clock (ConfigKey::SD_FREQ_KHZ) without pulling the
+     * card out of the machine to reflash it.
+     */
+    bool setConfig(fysetc::ConfigKey key, uint32_t value);
+
     void disconnect();
 
 private:
