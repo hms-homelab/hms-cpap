@@ -113,6 +113,16 @@ struct AppConfig {
         std::string log_dir = "/var/log/maestro_hub";
     } fysetc;
 
+    // Support log. A copy of everything the process prints, kept on disk so a
+    // user can send it. On by default: a log that has to be switched on is
+    // never on when the thing you needed it for happened.
+    struct Logging {
+        bool enabled = true;
+        std::string file;        // empty = FileLogger::defaultPath()
+        int max_mb = 5;          // rotate past this size
+        int keep = 3;            // rotated files retained
+    } logging;
+
     // SleepHQ export (optional) — push completed sessions' raw SD files to SleepHQ.
     struct SleepHQ {
         bool enabled = false;
@@ -450,6 +460,14 @@ struct AppConfig {
                 if (f.contains("log_dir"))            config.fysetc.log_dir = f["log_dir"];
             }
 
+            if (j.contains("logging")) {
+                auto& l = j["logging"];
+                if (l.contains("enabled")) config.logging.enabled = l["enabled"];
+                if (l.contains("file"))    config.logging.file    = l["file"];
+                if (l.contains("max_mb"))  config.logging.max_mb  = l["max_mb"];
+                if (l.contains("keep"))    config.logging.keep    = l["keep"];
+            }
+
             if (j.contains("o2ring")) {
                 auto& o = j["o2ring"];
                 if (o.contains("enabled"))              config.o2ring.enabled = o["enabled"];
@@ -575,6 +593,10 @@ struct AppConfig {
             j["fysetc"]["connection_timeout_s"] = fysetc.connection_timeout_s;
             j["fysetc"]["archive_dir"] = fysetc.archive_dir;
             j["fysetc"]["log_dir"] = fysetc.log_dir;
+            j["logging"]["enabled"] = logging.enabled;
+            j["logging"]["file"]    = logging.file;
+            j["logging"]["max_mb"]  = logging.max_mb;
+            j["logging"]["keep"]    = logging.keep;
 
             j["sleephq"]["enabled"] = sleephq.enabled;
             j["sleephq"]["client_id"] = sleephq.client_id;
@@ -673,6 +695,10 @@ struct AppConfig {
         j["fysetc"]["connection_timeout_s"] = fysetc.connection_timeout_s;
         j["fysetc"]["archive_dir"] = fysetc.archive_dir;
         j["fysetc"]["log_dir"] = fysetc.log_dir;
+        j["logging"]["enabled"] = logging.enabled;
+        j["logging"]["file"]    = logging.file;
+        j["logging"]["max_mb"]  = logging.max_mb;
+        j["logging"]["keep"]    = logging.keep;
 
         return j;
     }

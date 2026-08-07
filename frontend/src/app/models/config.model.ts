@@ -85,6 +85,17 @@ export interface AppConfig {
     archive_dir: string;
     log_dir: string;
   };
+  /**
+   * Support log. A copy of everything the service prints, kept on disk so a
+   * user can send it. `file` empty means the default: next to the program if
+   * that folder is writable, otherwise beside config.json.
+   */
+  logging: {
+    enabled: boolean;
+    file: string;
+    max_mb: number;
+    keep: number;
+  };
   /** SDD-004 optional cloud mirror. Local stays the source of truth. */
   cpapdash: {
     enabled: boolean;

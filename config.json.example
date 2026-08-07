@@ -50,5 +50,11 @@
     "client_secret": "",
     "auto_on_session": true,
     "auto_on_backfill": true
+  },
+  "logging": {
+    "enabled": true,
+    "file": "",
+    "max_mb": 5,
+    "keep": 3
   }
 }

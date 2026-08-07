@@ -440,6 +440,17 @@ void CpapController::updateConfig(const drogon::HttpRequestPtr& req,
         if (f.isMember("log_dir")) config_->fysetc.log_dir = f["log_dir"].asString();
     }
 
+    // Support log. Saved here but applied on restart: the tee owns fd 1 and 2
+    // for the whole process, and swapping those under a running service to
+    // satisfy a settings save is not worth the risk of losing output mid-write.
+    if (j.isMember("logging")) {
+        auto& l = j["logging"];
+        if (l.isMember("enabled")) config_->logging.enabled = l["enabled"].asBool();
+        if (l.isMember("file"))    config_->logging.file    = l["file"].asString();
+        if (l.isMember("max_mb"))  config_->logging.max_mb  = std::max(1, l["max_mb"].asInt());
+        if (l.isMember("keep"))    config_->logging.keep    = std::max(0, l["keep"].asInt());
+    }
+
     if (j.isMember("sleephq")) {
         auto& sh = j["sleephq"];
         if (sh.isMember("enabled")) config_->sleephq.enabled = sh["enabled"].asBool();

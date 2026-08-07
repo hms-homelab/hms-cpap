@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.9.6] - 2026-08-07: a log the user can actually send, and a card you can reconfigure without pulling it
+
+### Added
+- **A support log the user can actually send.** Until now there was no log file
+  anywhere. `hms_cpap` wrote to stdout and stderr, and on Windows the tray
+  starts it with `CreateNoWindow`, redirects stderr only, and keeps the last 40
+  lines in memory purely to fill the crash dialog. So a user asked for "the log"
+  had nothing to send: the output had already been discarded by the time anyone
+  thought to ask. Everything printed is now also written to `hms-cpap.log`,
+  rotated at 5 MB with 3 kept, next to the program when that folder is writable
+  (which is the normal Windows per-user install, `%LOCALAPPDATA%\Programs\HMS-CPAP`)
+  and otherwise beside `config.json`. New `logging` config block
+  (`enabled`, `file`, `max_mb`, `keep`) with a Settings section, and the path is
+  printed at startup so it never has to be guessed.
+
+  Implemented as a file descriptor tee rather than by swapping the `std::cout`
+  streambuf, because this program logs three different ways: most of it through
+  `std::cout`/`std::cerr`, the MQTT module through spdlog, and the web server
+  through trantor, and the latter two write to the stdout `FILE*` directly. A
+  streambuf swap would have captured one of the three and produced a log that
+  looks complete while missing the web server's complaints, which is worse than
+  having none. Console output is left untouched, so running in a terminal still
+  shows output and journald still receives it on a systemd install.
+
+- **Device settings can be pushed to a Fysetc over TCP** (`MSG_CONFIG` 0x60 /
+  `MSG_CONFIG_ACK` 0x61, `FysetcTcpServer::setConfig`). The SD WiFi Pro has no
+  USB, so once the card is in the machine there was no way to change a setting
+  without pulling it out, putting it in a reader and reflashing, which costs a
+  night per value tried. One setting per message, so the device never applies a
+  half-understood batch. The first key is `SD_FREQ_KHZ`: the firmware hardcoded
+  40 MHz, which is aggressive across an analog MUX and a glued-on SD adapter,
+  and there was no evidence about where it stops being reliable under
+  contention with the CPAP. The device stores the value and reboots to apply
+  it, because during a session the SDMMC host is initialised and the card handle
+  is live, so re-clocking in place would mean tearing that down while the CPAP
+  may be mid-write. Purely additive: the device only ever sends `CONFIG_ACK` in
+  reply to a `CONFIG` it received, so an install that never calls `setConfig()`
+  sees exactly the traffic it saw before.
+
 ## [4.9.5] - 2026-08-06: a setting written outside the braces is an error, not a silence
 
 ### Fixed

@@ -37,6 +37,7 @@
 #include "llm_client.h"
 #include "utils/ConfigManager.h"
 #include "utils/AppConfig.h"
+#include "utils/FileLogger.h"
 #include "utils/CardLayout.h"
 #include <iostream>
 #include <iomanip>
@@ -395,6 +396,16 @@ int runReparse(const std::string& card_root, const std::string& start_str, const
  * Main entry point
  */
 int main(int argc, char** argv) {
+    // ── Support log ─────────────────────────────────────────────────
+    // Started before anything else can fail, and before the config is read.
+    // A user asked to "send the log" has to be able to produce one even when
+    // the failure was in loading the config, which is exactly the case where
+    // it is most often needed. Config can move it, resize it or switch it off
+    // further down, once we know what config says.
+    hms_cpap::FileLogger::start(hms_cpap::FileLogger::defaultPath(),
+                                5 * 1024 * 1024, 3);
+    std::atexit([] { hms_cpap::FileLogger::stop(); });
+
     // ── Load AppConfig ──────────────────────────────────────────────
     std::string data_dir = hms_cpap::AppConfig::dataDir();
     if (hms_cpap::AppConfig::migrateLegacyDataDir(data_dir)) {
@@ -447,6 +458,26 @@ int main(int argc, char** argv) {
 
     // Env vars fill any empty fields (fallback for systemd Environment= lines)
     config.applyEnvFallbacks();
+
+    // Now that config is known, honour what it says about the support log.
+    // Anything logged before this point is already in the default file.
+    {
+        const std::string want = config.logging.file.empty()
+                                     ? hms_cpap::FileLogger::defaultPath()
+                                     : config.logging.file;
+        if (!config.logging.enabled) {
+            hms_cpap::FileLogger::stop();
+        } else if (want != hms_cpap::FileLogger::activePath()) {
+            hms_cpap::FileLogger::stop();
+            hms_cpap::FileLogger::start(
+                want,
+                static_cast<std::size_t>(config.logging.max_mb) * 1024 * 1024,
+                config.logging.keep);
+        }
+        if (const auto p = hms_cpap::FileLogger::activePath(); !p.empty()) {
+            std::cout << "Log: " << p << std::endl;
+        }
+    }
 
     // Checked BEFORE anything is opened or bound. Configuration errors are
     // deterministic: a busy port, a wrong password and an unwritable folder do
