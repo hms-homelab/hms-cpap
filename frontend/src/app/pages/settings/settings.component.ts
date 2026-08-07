@@ -113,6 +113,41 @@ import { AppConfig } from '../../models/config.model';
           </div>
         </div>
 
+        <!-- Section: Support log. Not gated on source: every install can be
+             asked for its log, which is the whole reason it exists. -->
+        <div class="section">
+          <div class="section-header" (click)="toggle('logging')">
+            <span class="chevron" [class.open]="open['logging']">&#9654;</span>
+            Support Log
+            <span class="restart-tag">restart</span>
+          </div>
+          <div class="section-body" *ngIf="open['logging']">
+            <p class="hint">
+              Keeps a copy of everything the service prints, so it can be sent
+              when something goes wrong. Leave the file blank to use the default:
+              next to the program if that folder is writable, otherwise beside
+              config.json.
+            </p>
+            <label class="toggle-row">
+              <input type="checkbox" [(ngModel)]="config.logging.enabled" name="logging_enabled" />
+              Enabled
+            </label>
+            <label>
+              Log File
+              <input type="text" [(ngModel)]="config.logging.file" name="logging_file"
+                     placeholder="(default)" />
+            </label>
+            <label>
+              Rotate After (MB)
+              <input type="number" [(ngModel)]="config.logging.max_mb" name="logging_max_mb" />
+            </label>
+            <label>
+              Old Logs Kept
+              <input type="number" [(ngModel)]="config.logging.keep" name="logging_keep" />
+            </label>
+          </div>
+        </div>
+
         <!-- Section: O2 Ring Oximetry -->
         <div class="section">
           <div class="section-header" (click)="toggle('o2ring')">
@@ -919,6 +954,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
   open: Record<string, boolean> = {
     source: true,
     fysetc: false,
+    logging: false,
     o2ring: false,
     sleephq: false,
     cpapdash: false,
@@ -970,6 +1006,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
     ['agent', 'agent settings'],
     ['sleep_stage', 'sleep stage settings'],
     ['fysetc', 'Fysetc settings'],
+    ['logging', 'support log settings'],
     ['database', 'database settings'],
   ];
 
@@ -1010,6 +1047,9 @@ export class SettingsComponent implements OnInit, OnDestroy {
           cfg.fysetc = { enabled: false, listen_port: 9000, listen_bind: '0.0.0.0',
                          connection_timeout_s: 30, archive_dir: '',
                          log_dir: '/var/log/maestro_hub' };
+        }
+        if (!cfg.logging) {
+          cfg.logging = { enabled: true, file: '', max_mb: 5, keep: 3 };
         }
         if (!cfg.cpapdash) {
           cfg.cpapdash = { enabled: false, api_url: 'https://api.cpapdash.com',
