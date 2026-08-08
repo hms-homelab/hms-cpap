@@ -402,9 +402,23 @@ int main(int argc, char** argv) {
     // the failure was in loading the config, which is exactly the case where
     // it is most often needed. Config can move it, resize it or switch it off
     // further down, once we know what config says.
-    hms_cpap::FileLogger::start(hms_cpap::FileLogger::defaultPath(),
-                                5 * 1024 * 1024, 3);
-    std::atexit([] { hms_cpap::FileLogger::stop(); });
+    //
+    // EXCEPT for --preflight, which must stay a plain short-lived process.
+    // The Windows installer runs it as its last step and BLOCKS on it
+    // (installer.iss [Code], Exec(..., ewWaitUntilTerminated)), so anything that
+    // can delay our exit hangs Setup instead of failing it. Teeing buys nothing
+    // there either: the caller already redirects our output to a file it reads
+    // back. Scanned before start() rather than after, because by the time the
+    // normal argument loop runs the pipe and its thread already exist.
+    bool preflight_only = false;
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--preflight") == 0) preflight_only = true;
+    }
+    if (!preflight_only) {
+        hms_cpap::FileLogger::start(hms_cpap::FileLogger::defaultPath(),
+                                    5 * 1024 * 1024, 3);
+        std::atexit([] { hms_cpap::FileLogger::stop(); });
+    }
 
     // ── Load AppConfig ──────────────────────────────────────────────
     std::string data_dir = hms_cpap::AppConfig::dataDir();
@@ -424,15 +438,14 @@ int main(int argc, char** argv) {
 
     // SDD-006: suppress the first-run browser. For scripted installs and for
     // anyone who simply does not want a window appearing.
+    // preflight_only is already resolved above, because the support log has to
+    // know before it starts. SDD-005/006: --preflight validates the
+    // configuration and exits. Lets an installer check its own work, lets
+    // systemd use it as ExecStartPre, and lets the desktop shell find out WHY
+    // it cannot start instead of inferring it from how fast the child died.
     bool no_browser = false;
-    bool preflight_only = false;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--no-browser") == 0) no_browser = true;
-        // SDD-005/006: validate the configuration and exit. Lets an installer
-        // check its own work, lets systemd use it as ExecStartPre, and lets the
-        // desktop shell find out WHY it cannot start instead of inferring it
-        // from how fast the child died.
-        if (std::strcmp(argv[i], "--preflight") == 0) preflight_only = true;
     }
 
     hms_cpap::AppConfig config;
@@ -461,7 +474,13 @@ int main(int argc, char** argv) {
 
     // Now that config is known, honour what it says about the support log.
     // Anything logged before this point is already in the default file.
-    {
+    //
+    // Skipped entirely for --preflight, for the same reason start() was: that
+    // path must stay a plain process the installer can block on. Guarding only
+    // the first start() was not enough, because this block would happily start
+    // one anyway, and with no atexit handler registered the still-joinable pump
+    // thread then hit ~thread() and aborted the process.
+    if (!preflight_only) {
         const std::string want = config.logging.file.empty()
                                      ? hms_cpap::FileLogger::defaultPath()
                                      : config.logging.file;

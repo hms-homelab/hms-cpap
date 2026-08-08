@@ -16,7 +16,12 @@
 #ifdef _WIN32
 #include <io.h>
 #include <fcntl.h>
-#define HMS_PIPE(fds)      ::_pipe((fds), 65536, _O_BINARY)
+// _O_NOINHERIT matters: without it the pipe handles are inheritable, so any
+// child process keeps the WRITE end open, the pump thread never sees EOF, and
+// stop() blocks forever on the join. A process that cannot exit is worse than
+// one that logs nothing, especially since the Windows installer blocks on
+// hms_cpap.exe --preflight terminating.
+#define HMS_PIPE(fds)      ::_pipe((fds), 65536, _O_BINARY | _O_NOINHERIT)
 #define HMS_DUP(fd)        ::_dup(fd)
 #define HMS_DUP2(a, b)     ::_dup2((a), (b))
 #define HMS_READ(f, b, n)  ::_read((f), (b), static_cast<unsigned>(n))
