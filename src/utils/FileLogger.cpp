@@ -3,138 +3,43 @@
 #include "utils/AppConfig.h"
 #include "services/SetupService.h"
 
-#include <atomic>
-#include <chrono>
 #include <cstdio>
-#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
-#include <thread>
-#include <vector>
-
-#ifdef _WIN32
-#include <io.h>
-#include <fcntl.h>
-// _O_NOINHERIT matters: without it the pipe handles are inheritable, so any
-// child process keeps the WRITE end open, the pump thread never sees EOF, and
-// stop() blocks forever on the join. A process that cannot exit is worse than
-// one that logs nothing, especially since the Windows installer blocks on
-// hms_cpap.exe --preflight terminating.
-#define HMS_PIPE(fds)      ::_pipe((fds), 65536, _O_BINARY | _O_NOINHERIT)
-#define HMS_DUP(fd)        ::_dup(fd)
-#define HMS_DUP2(a, b)     ::_dup2((a), (b))
-#define HMS_READ(f, b, n)  ::_read((f), (b), static_cast<unsigned>(n))
-#define HMS_WRITE(f, b, n) ::_write((f), (b), static_cast<unsigned>(n))
-#define HMS_CLOSE(fd)      ::_close(fd)
-#else
-#include <unistd.h>
-#define HMS_PIPE(fds)      ::pipe(fds)
-#define HMS_DUP(fd)        ::dup(fd)
-#define HMS_DUP2(a, b)     ::dup2((a), (b))
-#define HMS_READ(f, b, n)  ::read((f), (b), (n))
-#define HMS_WRITE(f, b, n) ::write((f), (b), (n))
-#define HMS_CLOSE(fd)      ::close(fd)
-#endif
+#include <string>
 
 namespace fs = std::filesystem;
 
 namespace hms_cpap {
 namespace {
 
-std::mutex g_mutex;
+std::mutex  g_mutex;
 bool        g_active = false;
 std::string g_path;
-int         g_saved_stdout = -1;
-int         g_saved_stderr = -1;
-int         g_pipe_read    = -1;
-int         g_pipe_write   = -1;
-std::thread g_pump;
 
-// Written and read only by the pump thread.
-std::FILE*  g_file       = nullptr;
-std::size_t g_written    = 0;
-std::size_t g_max_bytes  = 0;
-int         g_keep       = 0;
-bool        g_line_start = true;
-
-std::string stamp() {
-    const auto now = std::chrono::system_clock::now();
-    const auto t = std::chrono::system_clock::to_time_t(now);
-    const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                        now.time_since_epoch()) % 1000;
-    std::tm tm{};
-#ifdef _WIN32
-    ::localtime_s(&tm, &t);
-#else
-    ::localtime_r(&t, &tm);
-#endif
-    char buf[32];
-    std::snprintf(buf, sizeof(buf), "[%04d-%02d-%02d %02d:%02d:%02d.%03d] ",
-                  tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
-                  tm.tm_hour, tm.tm_min, tm.tm_sec,
-                  static_cast<int>(ms.count()));
-    return buf;
-}
-
-void rotate() {
-    if (g_file) { std::fclose(g_file); g_file = nullptr; }
+// Rotate on the way in rather than while running.
+//
+// Checking the size once, before anything is open, keeps this to plain file
+// renames. Rotating a live stream would mean reopening it underneath whatever
+// is writing, and this class has already caused enough trouble by being clever.
+void rotateIfNeeded(const std::string& path, std::size_t max_bytes, int keep) {
+    if (max_bytes == 0) return;
 
     std::error_code ec;
-    // Drop the oldest, then shift each one down: .2 -> .3, .1 -> .2, log -> .1
-    if (g_keep > 0) {
-        fs::remove(g_path + "." + std::to_string(g_keep), ec);
-        for (int i = g_keep - 1; i >= 1; --i) {
-            fs::rename(g_path + "." + std::to_string(i),
-                       g_path + "." + std::to_string(i + 1), ec);
-        }
-        fs::rename(g_path, g_path + ".1", ec);
-    } else {
-        fs::remove(g_path, ec);
+    const auto size = fs::file_size(path, ec);
+    if (ec || size < max_bytes) return;
+
+    if (keep <= 0) {
+        fs::remove(path, ec);
+        return;
     }
-
-    g_file = std::fopen(g_path.c_str(), "ab");
-    g_written = 0;
-    g_line_start = true;
-}
-
-// Copy one chunk to the log file, prefixing a timestamp at each line start.
-// The console copy is left untouched: it already looks the way it always has.
-void writeToFile(const char* data, std::size_t n) {
-    if (!g_file) return;
-
-    std::size_t i = 0;
-    while (i < n) {
-        if (g_line_start) {
-            const std::string s = stamp();
-            std::fwrite(s.data(), 1, s.size(), g_file);
-            g_written += s.size();
-            g_line_start = false;
-        }
-        std::size_t j = i;
-        while (j < n && data[j] != '\n') ++j;
-        if (j < n) { ++j; g_line_start = true; }  // include the newline
-        std::fwrite(data + i, 1, j - i, g_file);
-        g_written += (j - i);
-        i = j;
+    fs::remove(path + "." + std::to_string(keep), ec);
+    for (int i = keep - 1; i >= 1; --i) {
+        fs::rename(path + "." + std::to_string(i),
+                   path + "." + std::to_string(i + 1), ec);
     }
-    std::fflush(g_file);
-
-    if (g_max_bytes > 0 && g_written >= g_max_bytes) rotate();
-}
-
-void pump() {
-    std::vector<char> buf(8192);
-    for (;;) {
-        const auto n = HMS_READ(g_pipe_read, buf.data(), buf.size());
-        if (n <= 0) break;  // write end closed, or error
-
-        // Console first: if the file write ever misbehaves, the terminal and
-        // journald have already seen the line.
-        if (g_saved_stdout >= 0) HMS_WRITE(g_saved_stdout, buf.data(), n);
-        writeToFile(buf.data(), static_cast<std::size_t>(n));
-    }
-    if (g_file) { std::fflush(g_file); std::fclose(g_file); g_file = nullptr; }
+    fs::rename(path, path + ".1", ec);
 }
 
 bool directoryIsWritable(const fs::path& dir) {
@@ -160,77 +65,58 @@ std::string FileLogger::defaultPath() {
 }
 
 bool FileLogger::start(const std::string& path, std::size_t max_bytes, int keep) {
+#ifndef _WIN32
+    // WINDOWS ONLY, on purpose.
+    //
+    // Everywhere else the output already lands somewhere a user can reach:
+    // journald under systemd, the terminal when run by hand. Redirecting there
+    // would take that away to solve a problem those platforms do not have.
+    // Windows is the gap: the desktop tray starts the service with no console,
+    // so its output goes nowhere at all and a user asked for "the log" has
+    // nothing to send.
+    (void)path; (void)max_bytes; (void)keep;
+    return false;
+#else
     std::lock_guard<std::mutex> lock(g_mutex);
     if (g_active) return true;
     if (path.empty()) return false;
 
     std::error_code ec;
     fs::create_directories(fs::path(path).parent_path(), ec);
+    rotateIfNeeded(path, max_bytes, keep);
 
-    std::FILE* f = std::fopen(path.c_str(), "ab");
-    if (!f) return false;
+    // Reopening the standard streams onto the file is the whole mechanism, and
+    // deliberately the whole mechanism.
+    //
+    // It catches everything this program logs through, because all of it reaches
+    // the stdout/stderr FILE*: std::cout and std::cerr, the MQTT module's
+    // spdlog, and the web server's trantor. No pipe, no reader thread, no
+    // descriptor juggling, so there is nothing that can deadlock, fail to exit,
+    // or take the process down with it.
+    //
+    // The version this replaces preserved a console by teeing through a pipe and
+    // a pump thread. That hung the Windows installer for five hours, aborted
+    // --preflight, and stopped the tray from starting the service. There is no
+    // console to preserve in the case this exists for.
+    if (!std::freopen(path.c_str(), "a", stdout)) return false;
+    if (!std::freopen(path.c_str(), "a", stderr)) return false;
 
-    int fds[2];
-    if (HMS_PIPE(fds) != 0) { std::fclose(f); return false; }
-
-    g_saved_stdout = HMS_DUP(1);
-    g_saved_stderr = HMS_DUP(2);
-    if (g_saved_stdout < 0 || g_saved_stderr < 0) {
-        HMS_CLOSE(fds[0]); HMS_CLOSE(fds[1]); std::fclose(f);
-        return false;
-    }
-
-    g_pipe_read  = fds[0];
-    g_pipe_write = fds[1];
-    g_file       = f;
-    g_path       = path;
-    g_max_bytes  = max_bytes;
-    g_keep       = keep;
-    g_written    = static_cast<std::size_t>(fs::file_size(path, ec));
-    if (ec) g_written = 0;
-    g_line_start = true;
-
-    // Line buffering so a crash does not swallow the last thing said, which is
+    // Line buffered so a crash does not swallow the last thing said, which is
     // the part a support log exists for.
     std::setvbuf(stdout, nullptr, _IOLBF, 0);
     std::setvbuf(stderr, nullptr, _IONBF, 0);
 
-    HMS_DUP2(g_pipe_write, 1);
-    HMS_DUP2(g_pipe_write, 2);
-
+    g_path = path;
     g_active = true;
-    g_pump = std::thread(pump);
     return true;
+#endif
 }
 
 void FileLogger::stop() {
     std::lock_guard<std::mutex> lock(g_mutex);
     if (!g_active) return;
-
     std::fflush(stdout);
     std::fflush(stderr);
-
-    // Order matters here, in two ways that are easy to get wrong.
-    //
-    // First, fd 1 and 2 are themselves copies of the pipe's write end, so the
-    // pump only sees EOF once THOSE are closed too. Restoring them onto the
-    // saved descriptors is what closes them, so it has to happen before the
-    // explicit close below or the join never returns.
-    //
-    // Second, the pump writes the console copy to g_saved_stdout as it drains.
-    // Closing that descriptor before the join throws away whatever was still in
-    // flight, which is exactly the tail of the log a crash makes interesting.
-    // So the saved descriptors stay open until the thread has finished.
-    if (g_saved_stdout >= 0) HMS_DUP2(g_saved_stdout, 1);
-    if (g_saved_stderr >= 0) HMS_DUP2(g_saved_stderr, 2);
-
-    if (g_pipe_write >= 0) { HMS_CLOSE(g_pipe_write); g_pipe_write = -1; }
-    if (g_pump.joinable()) g_pump.join();
-    if (g_pipe_read >= 0) { HMS_CLOSE(g_pipe_read); g_pipe_read = -1; }
-
-    if (g_saved_stdout >= 0) HMS_CLOSE(g_saved_stdout);
-    if (g_saved_stderr >= 0) HMS_CLOSE(g_saved_stderr);
-    g_saved_stdout = g_saved_stderr = -1;
     g_active = false;
     g_path.clear();
 }
