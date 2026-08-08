@@ -271,6 +271,44 @@ jobs:
           Copy-Item build\hms_cpap.exe release\
           # Copy any DLLs
           Get-ChildItem -Path build\*.dll -ErrorAction SilentlyContinue | Copy-Item -Destination release\
+
+          # The MSVC C++ runtime, shipped next to the exe.
+          #
+          # The vcpkg triplet is x64-windows-static-md: static libraries but the
+          # DYNAMIC CRT, so hms_cpap.exe imports VCRUNTIME140.dll and MSVCP140.dll
+          # and cannot start without them. This runner has them because Visual
+          # Studio is installed. A CPAP patient's laptop very often does not.
+          #
+          # What that looked like: hms_cpap.exe put up a modal "VCRUNTIME140.dll
+          # was not found" box, and because the installer runs it during setup and
+          # waits, Setup hung forever on a dialog no silent install can click.
+          # Confirmed on a clean Windows 11 machine.
+          #
+          # App-local deployment rather than bundling vc_redist.exe, because the
+          # redistributable installs machine-wide and needs elevation, and this
+          # installer is per-user with PrivilegesRequired=lowest on purpose. The
+          # loader checks the executable's own directory first, so copying the
+          # DLLs beside it is enough and costs no UAC prompt. The installer already
+          # ships dist-windows\*.dll, so landing them here is all that is needed.
+          $redist = $env:VCToolsRedistDir
+          if (-not $redist) {
+            $redist = (Get-ChildItem 'C:\Program Files*\Microsoft Visual Studio\*\*\VC\Redist\MSVC\*' `
+                         -Directory -ErrorAction SilentlyContinue |
+                       Sort-Object Name -Descending | Select-Object -First 1).FullName
+          }
+          $crt = $null
+          if ($redist) {
+            $crt = Get-ChildItem (Join-Path $redist 'x64') -Filter 'Microsoft.VC*.CRT' `
+                     -Directory -ErrorAction SilentlyContinue |
+                   Sort-Object Name -Descending | Select-Object -First 1
+          }
+          # Fail the build rather than publish an installer that hangs on a clean
+          # machine. A silently missing runtime is the exact failure this exists
+          # to prevent, so it must not degrade quietly.
+          if (-not $crt) { throw "MSVC CRT redistributable DLLs not found (VCToolsRedistDir='$redist')" }
+          Write-Host "bundling CRT from $($crt.FullName)"
+          Copy-Item "$($crt.FullName)\*.dll" release\
+          Get-ChildItem release\*.dll | ForEach-Object { Write-Host "  $($_.Name)" }
           # Bundle Angular UI
           mkdir release\static\browser -Force
           Copy-Item -Recurse frontend\dist\frontend\browser\* release\static\browser\

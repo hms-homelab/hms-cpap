@@ -24,10 +24,15 @@ using hms_cpap::FileLogger;
 // nowhere while looking like coverage.
 //
 // So what is left pins the PLATFORM DECISION, which is the part that can be
-// checked here and the part that broke: an earlier version ran on every
-// platform, hung the Windows installer, aborted --preflight, and stopped the
-// tray from starting the service. Verifying the capture itself needs a Windows
-// machine, not this suite.
+// checked here: an earlier version ran on every platform and would redirect
+// journald and terminal output out from under a user who never asked for it.
+//
+// It does NOT pin the Windows behaviour, and the difference matters. The
+// Windows failures this class is known for — a setvbuf call the UCRT treats as
+// fatal, and a missing MSVC runtime that made the installer hang — were both
+// invisible to every test here and stayed invisible across a full rewrite of
+// the mechanism. What caught them was running the shipped installer on a clean
+// Windows 11 machine. Assume that is still the only thing that will.
 
 namespace {
 

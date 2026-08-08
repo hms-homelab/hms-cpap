@@ -114,12 +114,17 @@ begin
 
   if ResultCode = 0 then Exit;
 
+  // SuppressibleMsgBox, not MsgBox. Plain MsgBox ignores /SUPPRESSMSGBOXES and
+  // shows the dialog anyway, so on a silent install this line waits for a click
+  // that is never coming: Setup and Setup.tmp stay alive, producing no output,
+  // until something kills them. That is a hang with no message, triggered by
+  // the ordinary case of preflight reporting a problem.
   if LoadStringFromFile(ReportPath, Report) then
-    MsgBox('CpapDash is installed, but its configuration needs attention:'#13#10#13#10
+    SuppressibleMsgBox('CpapDash is installed, but its configuration needs attention:'#13#10#13#10
            + String(Report) + #13#10
            + 'Fix the item marked FAIL, then start CpapDash Desktop.',
-           mbInformation, MB_OK)
+           mbInformation, MB_OK, IDOK)
   else
-    MsgBox('CpapDash is installed, but the configuration check did not pass.'#13#10
-           + 'Start CpapDash Desktop for details.', mbInformation, MB_OK);
+    SuppressibleMsgBox('CpapDash is installed, but the configuration check did not pass.'#13#10
+           + 'Start CpapDash Desktop for details.', mbInformation, MB_OK, IDOK);
 end;

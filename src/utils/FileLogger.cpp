@@ -95,15 +95,42 @@ bool FileLogger::start(const std::string& path, std::size_t max_bytes, int keep)
     // or take the process down with it.
     //
     // The version this replaces preserved a console by teeing through a pipe and
-    // a pump thread. That hung the Windows installer for five hours, aborted
-    // --preflight, and stopped the tray from starting the service. There is no
-    // console to preserve in the case this exists for.
+    // a pump thread. It is gone because there is no console to preserve in the
+    // case this exists for, and because a pipe plus a reader thread has failure
+    // modes — deadlock, a thread that will not join — that a freopen does not.
+    //
+    // It is NOT gone because it caused the Windows failures, which is what an
+    // earlier version of this comment claimed. Measuring them on a real machine
+    // put the blame elsewhere: the installer hang was hms_cpap.exe missing the
+    // MSVC runtime and putting up a modal box no silent install could click, and
+    // the dead service was the setvbuf call below. Both survived the rewrite,
+    // which is exactly why the rewrite alone fixed nothing.
     if (!std::freopen(path.c_str(), "a", stdout)) return false;
     if (!std::freopen(path.c_str(), "a", stderr)) return false;
 
-    // Line buffered so a crash does not swallow the last thing said, which is
-    // the part a support log exists for.
-    std::setvbuf(stdout, nullptr, _IOLBF, 0);
+    // UNBUFFERED, and _IONBF specifically, because the obvious alternative is
+    // fatal here.
+    //
+    // The previous line read `setvbuf(stdout, nullptr, _IOLBF, 0)`. On glibc a
+    // size of 0 means "pick a size yourself" and that is fine. The UCRT instead
+    // requires size >= 2 whenever the mode is _IOFBF or _IOLBF, and a violation
+    // does not return an error: it calls the invalid parameter handler, which
+    // ends the process through __fastfail(FAST_FAIL_INVALID_ARG). No return
+    // value to check, no exception to catch, no output, exit code 0xC0000409.
+    //
+    // That killed hms_cpap.exe on Windows every time this function ran, which is
+    // every start except --preflight. The tray spawned the service, the service
+    // died in milliseconds, and CI reported "the tray never started hms_cpap" —
+    // a message that points at the shell, which was innocent. Reproduced on a
+    // clean Windows 11 machine; WER named it exactly (ucrtbase +0x1cba8,
+    // 0xC0000409, fail code 5 = FAST_FAIL_INVALID_ARG).
+    //
+    // Nothing is lost by dropping line buffering: MSVC treats _IOLBF as _IOFBF,
+    // so stdout was never line buffered on Windows anyway. _IONBF ignores size,
+    // which removes the trap, and unbuffered is a stronger version of what the
+    // old comment was reaching for — a crash cannot swallow the last thing said
+    // if there was never anything held back to swallow.
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
     std::setvbuf(stderr, nullptr, _IONBF, 0);
 
     g_path = path;
