@@ -8,6 +8,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **`--preflight` no longer starts the support log, because the Windows
+  installer blocks on it.** `installer.iss` runs `hms_cpap.exe --preflight` as
+  its last step with `Exec(..., ewWaitUntilTerminated)`, so anything that can
+  delay our exit hangs Setup rather than failing it. 4.9.6 started a pipe and a
+  pump thread at the top of `main()`, before `--preflight` was even parsed, and
+  `windows-desktop-test` went from passing on v4.9.5 to hanging on v4.9.6 with
+  no change to the installer or the workflow: Setup and Setup.tmp alive, no
+  output, killed as orphans after five minutes.
+
+  Teeing gained nothing on that path anyway, since the caller already redirects
+  our output to a file it reads back. Also `_O_NOINHERIT` on the pipe, as
+  defence: without it the handles are inheritable, so a child keeps the write
+  end open, the pump never sees EOF, and `stop()` blocks forever on the join.
+
+  Guarding only the first `start()` was not sufficient, and the half-fix was
+  worse than the bug: the config-apply block started a logger anyway, and with
+  no `atexit` handler registered the still-joinable pump thread reached
+  `~thread()` and aborted the process (SIGABRT) instead of merely hanging.
 - **One FAT init that found no DATALOG silenced the Fysetc source permanently.**
   `FysetcDataSource::ensureFat()` returned early whenever `fat_` was non-null,
   without re-checking the connection, and `datalog_cluster_` was only ever set
