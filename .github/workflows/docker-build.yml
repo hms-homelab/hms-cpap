@@ -393,8 +393,17 @@ jobs:
           $exe = (Get-ChildItem installer\*.exe | Select-Object -First 1).FullName
           Write-Host "installing $exe"
           # /TASKS selects the Start at Login task so the Run key is exercised too.
+          #
+          # /CURRENTUSER is not optional here. installer.iss sets
+          # PrivilegesRequiredOverridesAllowed=dialog, so Setup wants to be told
+          # which install mode to use, and the only non-interactive way to answer
+          # is /ALLUSERS or /CURRENTUSER. Without one it can sit waiting on a
+          # dialog that nobody will ever click: observed twice on the v4.9.6 tag,
+          # where Setup and Setup.tmp stayed alive producing no output until the
+          # job was killed. /CURRENTUSER matches the installer's own stated design,
+          # which is a per-user install with PrivilegesRequired=lowest.
           $p = Start-Process -FilePath $exe -Wait -PassThru `
-                 -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/TASKS=startatlogin'
+                 -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/CURRENTUSER','/TASKS=startatlogin'
           if ($p.ExitCode -ne 0) { throw "installer exited $($p.ExitCode)" }
 
       - name: The installed layout is what the shell expects
