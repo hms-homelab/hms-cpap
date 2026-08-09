@@ -7,7 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.9.7] - 2026-08-09: a pool that heals itself, and a Fysetc source that stops going quiet
+
 ### Fixed
+- **The connection pool leaked a slot on every failed reconnect (hms-shared
+  v1.6.7 → v1.6.9).** In v1.6.7 `DbPool::acquire()` popped a connection whose
+  `SELECT 1` health check failed and then threw without returning the slot, so
+  each failed reconnect permanently shrank the pool. A database outage drained
+  it completely: once every slot was gone the queue stayed empty and all queries
+  blocked the full 10s before reporting `DB pool exhausted — no connection
+  available after 10s`, **even after PostgreSQL came back**. Only a restart
+  recovered it.
+
+  For a service that writes therapy sessions this is the bad failure: during
+  the 2026-08-06 outage the logs carry 4,536 × `Failed to save session to DB`.
+  hms-firetv and hms-portal hit the equivalent bug in the same outage, and
+  hms-portal stayed degraded for nine days because nothing restarted it.
+
+  The single-line fix returns the slot before rethrowing, so the pool refills
+  itself once the database returns. It runs only when a health check *and* the
+  reconnect both fail — on a healthy database the path is never reached.
 - **`--preflight` no longer starts the support log, because the Windows
   installer blocks on it.** `installer.iss` runs `hms_cpap.exe --preflight` as
   its last step with `Exec(..., ewWaitUntilTerminated)`, so anything that can
