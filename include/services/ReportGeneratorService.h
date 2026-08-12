@@ -45,6 +45,7 @@ public:
 
 private:
     std::shared_ptr<IDatabase>          db_;
+    DbType                              dt_;  // cached for the dialect helpers
     std::shared_ptr<QueryService>       qs_;
     std::shared_ptr<hms::MqttClient>    mqtt_;
     std::string                         device_id_;

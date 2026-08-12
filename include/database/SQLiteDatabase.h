@@ -173,6 +173,9 @@ public:
     Json::Value executeQuery(const std::string& sql,
                              const std::vector<std::string>& params = {}) override;
 
+    int insertReturningId(const std::string& sql,
+                          const std::vector<std::string>& params = {}) override;
+
 private:
     std::string db_path_;
     sqlite3* db_ = nullptr;

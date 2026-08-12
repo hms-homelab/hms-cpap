@@ -205,6 +205,9 @@ public:
     Json::Value executeQuery(const std::string& sql,
                              const std::vector<std::string>& params = {}) override;
 
+    int insertReturningId(const std::string& sql,
+                          const std::vector<std::string>& params = {}) override;
+
     // -- Schema introspection + migration -------------------------------------
     //
     // Public because MySQL, unlike the other two engines, has no declarative way

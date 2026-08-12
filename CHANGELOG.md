@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **PDF reports work on SQLite and MySQL, not just PostgreSQL.** 4.9.8 declared
+  the `cpap_reports` table, which was the reason every report request died, but
+  the statements around it were PostgreSQL-only three separate ways: `::text`,
+  which SQLite and MySQL both reject; `NOW()`, which SQLite does not have; and
+  `$1` placeholders with `RETURNING id`, neither of which MySQL accepts. A
+  report request on either of those engines still had nowhere to go.
+
+  The queries now build through the `sql::` dialect helpers, with a new
+  `sql::tsText()` for rendering a timestamp as text, and a new
+  `IDatabase::insertReturningId()` so an insert can hand back its new id on a
+  backend that has no `RETURNING` at all. PostgreSQL appends its own clause,
+  SQLite reads `last_insert_rowid` and MySQL reads `mysql_insert_id`; both of
+  those are per-connection, so the insert and the read are held in one critical
+  section rather than left open to a concurrent insert returning the wrong id.
+
+  The table is also created at runtime by the SQLite and MySQL backends now.
+  The schema files added in 4.9.8 only help an install built from script; an
+  existing database gets its tables from the backend creators.
+
+### Added
+- **`tests/database/test_ReportBackends.cpp`** — the report job table across all
+  three engines, 7 tests each. Every PostgreSQL-only construct listed above is
+  exercised on every backend, because compiling says nothing about whether the
+  statement parses on the engine actually in use. This is the same gap that hid
+  four oximetry stubs on SQLite and MySQL for months in 4.6.3.
+
 ## [4.9.8] - 2026-08-12: a night with a break in it, and reports that were never going to work
 
 ### Fixed

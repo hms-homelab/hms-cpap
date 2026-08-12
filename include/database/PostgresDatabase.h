@@ -197,6 +197,9 @@ public:
     Json::Value executeQuery(const std::string& sql,
                              const std::vector<std::string>& params = {}) override;
 
+    int insertReturningId(const std::string& sql,
+                          const std::vector<std::string>& params = {}) override;
+
 private:
     std::unique_ptr<DatabaseService> db_;
     std::string conn_str_;
