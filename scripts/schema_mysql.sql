@@ -362,3 +362,21 @@ VALUES
     ('humidifier_empty', 'Empty and rinse the water tub', 'humidifier',  1, 1),
     ('humidifier_wash',  'Wash the water tub',            'humidifier',  7, 1),
     ('filter_check',     'Check the filter',              'filter',     30, 1);
+
+-- Report jobs. Declared for parity with the PostgreSQL schema; note the report
+-- queries cast with created_at::text, which MySQL does not accept, so reports
+-- are not usable on this backend until those are made portable.
+CREATE TABLE IF NOT EXISTS cpap_reports (
+    id            INT AUTO_INCREMENT PRIMARY KEY,
+    device_id     VARCHAR(191) NOT NULL,
+    range_start   DATE,
+    range_end     DATE,
+    nights_count  INT,
+    filename      TEXT,
+    filepath      TEXT,
+    status        VARCHAR(16) NOT NULL DEFAULT 'pending',
+    error_msg     TEXT,
+    created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    completed_at  TIMESTAMP NULL,
+    INDEX idx_cpap_reports_device_created (device_id, created_at)
+);

@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.9.8] - 2026-08-12: a night with a break in it, and reports that were never going to work
+
+### Fixed
+- **A night with a mask-off break in it now looks like one.** The machine opens
+  a fresh flow checkpoint every few minutes and again after any break, so a
+  session routinely arrives as several files separated by real gaps. Every one
+  of them was being placed on the clock at the session's start rather than its
+  own, which stacked them from the same instant: the break disappeared because
+  each segment restarted at the beginning, and the flow chart finished early by
+  the total of the gaps it had swallowed.
+
+  Reported as issue #21 by todd3835, who saw a 2:20am bathroom break that OSCAR
+  drew and this did not, and a flow rate that stopped around 4am while every
+  other metric covered the whole night. Reproduced on a real card whose night
+  carried six checkpoints, four of them empty: 70 minutes of genuine flow were
+  written at the *empty* first checkpoint's timestamp, 2m21s early and a minute
+  short. They now land where they belong.
+
+  The fix is in the shared parser (cpapdash-parser 2026.1.8), so the cloud gets
+  it too. A checkpoint's filename is now trusted ahead of its header, because an
+  AirSense 10 was observed writing a header a full week behind the name on the
+  same file.
+
+- **PDF reports could never have worked.** `cpap_reports` was read and written
+  in six places and created in none, so every report request died on
+  `ERROR: relation "cpap_reports" does not exist` — a failure that only ever
+  appeared in the database log, never to the user who asked for the report.
+  Found in the logs todd3835 attached to #21. The table and its per-device index
+  are now created with the rest of the schema.
+
+  Note this fixes the PostgreSQL backend only. The report queries cast with
+  `created_at::text`, which SQLite does not accept, so reports remain
+  unavailable there whether or not the table exists.
+
 ## [4.9.7] - 2026-08-09: a pool that heals itself, and a Fysetc source that stops going quiet
 
 ### Fixed

@@ -408,3 +408,24 @@ VALUES
     ('humidifier_wash',  'Wash the water tub',            'humidifier',  7, TRUE),
     ('filter_check',     'Check the filter',              'filter',     30, TRUE)
 ON CONFLICT (task_key) DO NOTHING;
+
+-- Report jobs. ReportGeneratorService and BaseReportGenerator have always read
+-- and written this table, but nothing declared it, so every PDF request died on
+-- `relation "cpap_reports" does not exist` in the database log and never in
+-- front of the user who asked. Reported by todd3835 alongside issue #21.
+CREATE TABLE IF NOT EXISTS cpap_reports (
+    id            SERIAL PRIMARY KEY,
+    device_id     TEXT NOT NULL,
+    range_start   DATE,
+    range_end     DATE,
+    nights_count  INTEGER,
+    filename      TEXT,
+    filepath      TEXT,
+    status        TEXT NOT NULL DEFAULT 'pending',
+    error_msg     TEXT,
+    created_at    TIMESTAMP DEFAULT NOW(),
+    completed_at  TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_cpap_reports_device_created
+    ON cpap_reports(device_id, created_at DESC);
