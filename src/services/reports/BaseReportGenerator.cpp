@@ -2,6 +2,7 @@
 #include "utils/OximetryDevice.h"
 #include "services/InsightsEngine.h"
 #include "parsers/CpapdashBridge.h"
+#include "database/SqlDialect.h"
 #include <filesystem>
 #include <iostream>
 #include <iomanip>
@@ -68,15 +69,21 @@ BaseReportGenerator::BaseReportGenerator(
 
 void BaseReportGenerator::updateStatus(int id, const std::string& status,
                                         const std::string& err) {
-    std::string ts = (status == "ready" || status == "error") ? "NOW()" : "NULL";
+    // NOW() is PostgreSQL and MySQL; SQLite has no such function and would fail
+    // the statement outright.
+    const DbType dt = db_->dbType();
+    std::string ts = (status == "ready" || status == "error") ? sql::now(dt) : "NULL";
     db_->executeQuery(
-        "UPDATE cpap_reports SET status=$1, error_msg=$2, completed_at=" + ts +
+        "UPDATE cpap_reports SET status=" + sql::param(1, dt) +
+        ", error_msg=" + sql::param(2, dt) + ", completed_at=" + ts +
         " WHERE id=" + std::to_string(id),
         {status, err});
 }
 
 void BaseReportGenerator::updateNightsCount(int id, int n) {
-    db_->executeQuery("UPDATE cpap_reports SET nights_count=$1 WHERE id=$2",
+    const DbType dt = db_->dbType();
+    db_->executeQuery("UPDATE cpap_reports SET nights_count=" + sql::param(1, dt) +
+                      " WHERE id=" + sql::param(2, dt),
                       {std::to_string(n), std::to_string(id)});
 }
 

@@ -838,6 +838,30 @@ void MySQLDatabase::createSchema() {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     )");
 
+    // Report jobs. ReportGeneratorService and BaseReportGenerator have always read
+    // and written this table and nothing ever declared it, so every PDF request
+    // died on a missing table in the database log and never in front of the user
+    // who asked. Reported by todd3835 alongside issue #21.
+    //
+    // status is pending -> ready | error; completed_at is set on either end state.
+    // The index is inline as KEY for the same reason as the tables above.
+    exec(R"(
+        CREATE TABLE IF NOT EXISTS cpap_reports (
+            id            INT AUTO_INCREMENT PRIMARY KEY,
+            device_id     VARCHAR(191) NOT NULL,
+            range_start   DATE,
+            range_end     DATE,
+            nights_count  INT,
+            filename      TEXT,
+            filepath      TEXT,
+            status        VARCHAR(16) NOT NULL DEFAULT 'pending',
+            error_msg     TEXT,
+            created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+            completed_at  DATETIME NULL,
+            KEY idx_cpap_reports_device_created (device_id, created_at)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    )");
+
     // Indexes are declared inline as KEY in the CREATE TABLE statements above.
     // MySQL has no CREATE INDEX IF NOT EXISTS, so issuing them separately raised
     // "Duplicate key name" on every single connect, three lines of noise per
@@ -3991,6 +4015,20 @@ bool MySQLDatabase::tombstoneEquipmentItem(int id,
 }
 
 // -- Generic query ------------------------------------------------------------
+
+int MySQLDatabase::insertReturningId(const std::string& sql,
+                                    const std::vector<std::string>& params) {
+    // MySQL has no RETURNING at all, so the id comes from the connection.
+    // mysql_insert_id is per-CONNECTION, so the insert and the read have to be
+    // one critical section or a concurrent insert lands between them and this
+    // returns the other row's id. mutex_ is recursive, so holding it across
+    // executeQuery is safe and is what makes the pair atomic.
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!conn_) return -1;
+    executeQuery(sql, params);
+    const my_ulonglong id = mysql_insert_id(conn_);
+    return id > 0 ? static_cast<int>(id) : -1;
+}
 
 Json::Value MySQLDatabase::executeQuery(const std::string& sql,
                                         const std::vector<std::string>& params) {

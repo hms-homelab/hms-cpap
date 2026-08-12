@@ -1,6 +1,7 @@
 #include "services/ReportGeneratorService.h"
 #include "services/reports/RangeReportGenerator.h"
 #include "services/reports/DailyReportGenerator.h"
+#include "database/SqlDialect.h"
 #include <filesystem>
 #include <iostream>
 #include <sstream>
@@ -16,7 +17,8 @@ ReportGeneratorService::ReportGeneratorService(
     const std::string& device_id,
     const std::string& archive_dir,
     const std::string& logo_path)
-    : db_(db), qs_(qs), mqtt_(mqtt), device_id_(device_id), logo_path_(logo_path)
+    : db_(db), qs_(qs), mqtt_(mqtt), device_id_(device_id), logo_path_(logo_path),
+      dt_(db->dbType())
 {
     report_dir_ = archive_dir + "/reports";
     fs::create_directories(report_dir_);
@@ -33,13 +35,15 @@ int ReportGeneratorService::triggerReport(const std::string& start, const std::s
     std::string filename = buildFilename(start, end);
     std::string filepath = report_dir_ + "/" + filename;
 
-    auto rows = db_->executeQuery(
+    // No RETURNING here: MySQL has none and SQLite only gained it in 3.35, so
+    // the backend hands the id back its own way.
+    const int id = db_->insertReturningId(
         "INSERT INTO cpap_reports (device_id, range_start, range_end, filename, filepath, status)"
-        " VALUES ($1,$2,$3,$4,$5,'pending') RETURNING id",
+        " VALUES (" + sql::param(1, dt_) + "," + sql::param(2, dt_) + "," + sql::param(3, dt_) +
+        "," + sql::param(4, dt_) + "," + sql::param(5, dt_) + ",'pending')",
         {device_id_, start, end, filename, filepath});
 
-    if (rows.empty()) return -1;
-    int id = std::stoi(rows[0]["id"].asString());
+    if (id < 0) return -1;
 
     std::thread([this, id, start, end, filepath]() {
         try {
@@ -47,7 +51,8 @@ int ReportGeneratorService::triggerReport(const std::string& start, const std::s
         } catch (const std::exception& ex) {
             std::cerr << "[ReportGeneratorService] exception: " << ex.what() << "\n";
             db_->executeQuery(
-                "UPDATE cpap_reports SET status='error', error_msg=$1 WHERE id=$2",
+                "UPDATE cpap_reports SET status='error', error_msg=" + sql::param(1, dt_) +
+                " WHERE id=" + sql::param(2, dt_),
                 {ex.what(), std::to_string(id)});
         }
     }).detach();
@@ -58,8 +63,9 @@ int ReportGeneratorService::triggerReport(const std::string& start, const std::s
 std::vector<ReportJob> ReportGeneratorService::listReports(int limit) {
     auto rows = db_->executeQuery(
         "SELECT id, device_id, range_start, range_end, nights_count, filename, filepath,"
-        " status, error_msg, created_at::text, completed_at::text"
-        " FROM cpap_reports WHERE device_id=$1"
+        " status, error_msg, " + sql::tsText("created_at", dt_) + " AS created_at, "
+        + sql::tsText("completed_at", dt_) + " AS completed_at"
+        " FROM cpap_reports WHERE device_id=" + sql::param(1, dt_) +
         " ORDER BY created_at DESC LIMIT " + std::to_string(limit),
         {device_id_});
 
@@ -95,8 +101,9 @@ std::vector<ReportJob> ReportGeneratorService::listReports(int limit) {
 std::optional<ReportJob> ReportGeneratorService::getReport(int id) {
     auto rows = db_->executeQuery(
         "SELECT id, device_id, range_start, range_end, nights_count, filename, filepath,"
-        " status, error_msg, created_at::text, completed_at::text"
-        " FROM cpap_reports WHERE id=$1",
+        " status, error_msg, " + sql::tsText("created_at", dt_) + " AS created_at, "
+        + sql::tsText("completed_at", dt_) + " AS completed_at"
+        " FROM cpap_reports WHERE id=" + sql::param(1, dt_),
         {std::to_string(id)});
 
     if (rows.empty()) return std::nullopt;

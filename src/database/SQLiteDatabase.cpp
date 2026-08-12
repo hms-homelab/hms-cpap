@@ -609,6 +609,31 @@ void SQLiteDatabase::createSchema() {
     exec("CREATE INDEX IF NOT EXISTS idx_sync_folders_debt "
          "ON cpap_sync_folders(str_due, sidecars_due)");
 
+    // Report jobs. ReportGeneratorService and BaseReportGenerator have always
+    // read and written this table and nothing ever declared it, so every PDF
+    // request died on a missing relation in the database log and never in front
+    // of the user who asked. Reported by todd3835 alongside issue #21.
+    //
+    // status is pending -> ready | error; completed_at is set on either end state.
+    exec(R"(
+        CREATE TABLE IF NOT EXISTS cpap_reports (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            device_id     TEXT NOT NULL,
+            range_start   TEXT,
+            range_end     TEXT,
+            nights_count  INTEGER,
+            filename      TEXT,
+            filepath      TEXT,
+            status        TEXT NOT NULL DEFAULT 'pending',
+            error_msg     TEXT,
+            created_at    TEXT DEFAULT (datetime('now','localtime')),
+            completed_at  TEXT
+        )
+    )");
+    // listReports() is per device, newest first.
+    exec("CREATE INDEX IF NOT EXISTS idx_cpap_reports_device_created "
+         "ON cpap_reports(device_id, created_at DESC)");
+
     exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_eq_profile_uuid "
          "ON cpap_equipment_profiles(client_uuid) WHERE client_uuid IS NOT NULL");
     exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_eq_item_uuid "
@@ -2151,6 +2176,21 @@ bool SQLiteDatabase::saveSummary(
 }
 
 // -- Generic query ------------------------------------------------------------
+
+int SQLiteDatabase::insertReturningId(const std::string& sql,
+                                     const std::vector<std::string>& params) {
+    // SQLite only learned RETURNING in 3.35 and the shipped builds cannot be
+    // assumed to have it, so the id comes from the connection afterwards.
+    // last_insert_rowid is per-CONNECTION, so the insert and the read have to be
+    // one critical section or a concurrent insert lands between them and this
+    // returns the other row's id. mutex_ is recursive, so holding it across
+    // executeQuery is safe and is what makes the pair atomic.
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!db_) return -1;
+    executeQuery(sql, params);
+    const sqlite3_int64 id = sqlite3_last_insert_rowid(db_);
+    return id > 0 ? static_cast<int>(id) : -1;
+}
 
 Json::Value SQLiteDatabase::executeQuery(const std::string& sql,
                                          const std::vector<std::string>& params) {

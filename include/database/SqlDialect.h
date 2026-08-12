@@ -118,6 +118,21 @@ inline std::string stddev(const std::string& expr, DbType type) {
     return "NULL";
 }
 
+// Render a timestamp column as text, e.g. "2026-08-12 07:24:26".
+//
+// PostgreSQL took `col::text`, which is why the report queries were readable on
+// that backend and a syntax error on the other two — the reports table existed
+// nowhere else and the SELECTs would not have run there anyway. SQLite already
+// stores timestamps as text, so the column is returned as-is.
+inline std::string tsText(const std::string& col, DbType type) {
+    switch (type) {
+        case DbType::POSTGRESQL: return col + "::text";
+        case DbType::MYSQL:      return "DATE_FORMAT(" + col + ", '%Y-%m-%d %H:%i:%s')";
+        case DbType::SQLITE:     return col;
+    }
+    return col;
+}
+
 // Auto-increment primary key for CREATE TABLE
 inline std::string autoId(DbType type) {
     switch (type) {

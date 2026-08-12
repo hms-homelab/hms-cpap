@@ -62,6 +62,7 @@ set(TEST_SOURCES
     database/test_MySQLMigration.cpp
     database/test_CleaningBackends.cpp
     database/test_SyncFolderBackends.cpp
+    database/test_ReportBackends.cpp
     services/test_BurstCollectorService.cpp
     services/test_DataPublisherService.cpp
     models/test_CPAPModels.cpp

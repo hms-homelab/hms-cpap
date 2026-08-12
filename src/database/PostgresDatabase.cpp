@@ -233,6 +233,19 @@ bool PostgresDatabase::ensureQueryConn() {
     return true;
 }
 
+int PostgresDatabase::insertReturningId(const std::string& sql,
+                                       const std::vector<std::string>& params) {
+    // PostgreSQL is the one backend that can hand the id back in the same
+    // statement, so it appends its own RETURNING rather than trusting callers to
+    // write one that the other two cannot run.
+    Json::Value rows = executeQuery(sql + " RETURNING id", params);
+    if (!rows.isArray() || rows.empty()) return -1;
+    const Json::Value& id = rows[0]["id"];
+    if (id.isNull()) return -1;
+    if (id.isInt()) return id.asInt();
+    try { return std::stoi(id.asString()); } catch (...) { return -1; }
+}
+
 Json::Value PostgresDatabase::executeQuery(const std::string& sql,
                                            const std::vector<std::string>& params) {
     Json::Value arr(Json::arrayValue);

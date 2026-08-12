@@ -413,6 +413,25 @@ public:
         (void)sql; (void)params;
         return Json::Value(Json::arrayValue);
     }
+
+    /**
+     * Run an INSERT and return the new row's id, or -1 on failure.
+     *
+     * `sql` must NOT carry a RETURNING clause. PostgreSQL appends its own;
+     * MySQL has no RETURNING at all and SQLite only gained it in 3.35, so a
+     * caller that writes one is a caller that only works on one backend. That
+     * is exactly how the report stack ended up PostgreSQL-only.
+     *
+     * Placeholders follow the backend, so build them with sql::param().
+     *
+     * Default returns -1 so a backend that has not implemented it fails loudly
+     * rather than silently reporting success with a bogus id.
+     */
+    virtual int insertReturningId(const std::string& sql,
+                                  const std::vector<std::string>& params = {}) {
+        (void)sql; (void)params;
+        return -1;
+    }
 };
 
 } // namespace hms_cpap
