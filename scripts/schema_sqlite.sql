@@ -365,3 +365,23 @@ VALUES
     ('humidifier_empty', 'Empty and rinse the water tub', 'humidifier',  1, 1),
     ('humidifier_wash',  'Wash the water tub',            'humidifier',  7, 1),
     ('filter_check',     'Check the filter',              'filter',     30, 1);
+
+-- Report jobs. Declared for parity with the PostgreSQL schema; note the report
+-- queries cast with created_at::text, which SQLite does not accept, so reports
+-- are not usable on this backend until those are made portable.
+CREATE TABLE IF NOT EXISTS cpap_reports (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    device_id     TEXT NOT NULL,
+    range_start   TEXT,
+    range_end     TEXT,
+    nights_count  INTEGER,
+    filename      TEXT,
+    filepath      TEXT,
+    status        TEXT NOT NULL DEFAULT 'pending',
+    error_msg     TEXT,
+    created_at    TEXT DEFAULT CURRENT_TIMESTAMP,
+    completed_at  TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_cpap_reports_device_created
+    ON cpap_reports(device_id, created_at DESC);

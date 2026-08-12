@@ -570,6 +570,35 @@ bool DatabaseService::connect() {
                     CREATE INDEX IF NOT EXISTS idx_sync_folders_debt
                     ON cpap_sync_folders(str_due, sidecars_due)
                 )");
+                // Report jobs. ReportGeneratorService and BaseReportGenerator have
+                // always read and written this table, but nothing ever created it,
+                // so every PDF request died on
+                //   ERROR: relation "cpap_reports" does not exist
+                // and the failure only surfaced in the database log. Reported by
+                // todd3835 alongside hms-cpap issue #21.
+                //
+                // status is pending -> ready | error; completed_at is set when it
+                // reaches either of the latter two.
+                txn.exec(R"(
+                    CREATE TABLE IF NOT EXISTS cpap_reports (
+                        id            SERIAL PRIMARY KEY,
+                        device_id     TEXT NOT NULL,
+                        range_start   DATE,
+                        range_end     DATE,
+                        nights_count  INTEGER,
+                        filename      TEXT,
+                        filepath      TEXT,
+                        status        TEXT NOT NULL DEFAULT 'pending',
+                        error_msg     TEXT,
+                        created_at    TIMESTAMP DEFAULT NOW(),
+                        completed_at  TIMESTAMP
+                    )
+                )");
+                // listReports() is per device, newest first.
+                txn.exec(R"(
+                    CREATE INDEX IF NOT EXISTS idx_cpap_reports_device_created
+                    ON cpap_reports(device_id, created_at DESC)
+                )");
                 // The seven presets from SDD-043, verbatim, so a user running
                 // both stacks sees one vocabulary.
                 txn.exec(R"(
