@@ -1501,10 +1501,16 @@ void MySQLDatabase::insertCalculatedMetrics(int64_t session_id,
     }
 
     for (const auto& s : summaries) {
-        // Only insert if has any calculated metric
+        // Only insert if the row carries any of the values this table holds.
+        // leak_rate, ie_ratio, epr_pressure and therapy_pressure were missing
+        // from this list, so a minute that had only those was dropped. That is
+        // every minute a Löwenstein records: those machines report no
+        // respiratory rate and no tidal volume, so their per-minute leak and
+        // EPR were computed and then discarded (issue 15).
         if (!s.respiratory_rate && !s.tidal_volume && !s.minute_ventilation &&
             !s.flow_limitation && !s.mask_pressure && !s.snore_index &&
-            !s.target_ventilation) continue;
+            !s.target_ventilation && !s.leak_rate && !s.ie_ratio &&
+            !s.epr_pressure && !s.therapy_pressure) continue;
 
         ParamBinder p(18);
         p.bindInt64(0, session_id);

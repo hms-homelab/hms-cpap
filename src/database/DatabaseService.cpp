@@ -924,10 +924,15 @@ void DatabaseService::insertCalculatedMetrics(pqxx::work& work, int session_id,
     // Only insert summaries that have calculated metrics (BRP or PLD derived)
     std::vector<const BreathingSummary*> with_metrics;
     for (const auto& s : summaries) {
+        // leak_rate, ie_ratio, epr_pressure and therapy_pressure belong here
+        // too: a Löwenstein reports no respiratory rate and no tidal volume, so
+        // without them every one of its minutes was dropped (issue 15).
         if (s.respiratory_rate.has_value() || s.tidal_volume.has_value() ||
             s.minute_ventilation.has_value() || s.flow_limitation.has_value() ||
             s.mask_pressure.has_value() || s.snore_index.has_value() ||
-            s.target_ventilation.has_value()) {
+            s.target_ventilation.has_value() || s.leak_rate.has_value() ||
+            s.ie_ratio.has_value() || s.epr_pressure.has_value() ||
+            s.therapy_pressure.has_value()) {
             with_metrics.push_back(&s);
         }
     }
