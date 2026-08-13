@@ -5,6 +5,29 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.9.9] - 2026-08-13
+
+### Fixed
+- **A per-minute row is kept for any value it carries** (issue 15). All three
+  backends gated `cpap_calculated_metrics` on respiratory rate, tidal volume,
+  minute ventilation, flow limitation, mask pressure, snore index or target
+  ventilation. Leak rate, I:E ratio, EPR pressure and therapy pressure were
+  missing from that list, so a minute holding only those was dropped.
+
+  That is every minute a Löwenstein records. Those machines report no
+  respiratory rate and no tidal volume — a Prisma declares the channels and
+  writes zero to every sample — so their per-minute leak and EPR were computed
+  and then discarded. Measured on real nights: a Prisma lost 191 EPR values out
+  of 191, a SMART max 631 leak and 808 flow-limitation values out of 814.
+
+  Carries parser v2026.1.10, which reads the SMART max's `PressureMeasured` as
+  mask pressure and its unsuffixed `EPAP` as EPR, and which stops a substring
+  match from binding minute ventilation to the unrelated `rRMV` channel.
+
+  What these machines do not record, and this release does not invent: SpO2,
+  heart rate, snore, respiratory rate and tidal volume. A Prisma declares those
+  channels and fills them with zeros; a SMART max omits them.
+
 ## [Unreleased]
 
 ### Fixed
