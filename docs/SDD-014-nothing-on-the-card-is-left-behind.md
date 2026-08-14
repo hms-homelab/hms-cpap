@@ -1,6 +1,6 @@
 # SDD-014: Nothing on the card is left behind
 
-**Status:** Proposed
+**Status:** Implemented, e2e green on macOS, Linux, Docker (SQLite + MySQL + PostgreSQL); Windows pending
 **Date:** 2026-08-13
 **Repo:** `hms-cpap`, with a companion change in `hms-cpapdash-parser`
 **Version:** target TBD (Albin's call)
@@ -290,12 +290,37 @@ web-upload user's card root held nothing to walk.
 | `include/models/CPAPModels.h`, `include/parsers/CpapdashBridge.h` | `eve_file`/`csl_file` become vectors |
 | `src/services/SessionDiscoveryService.cpp` | both matchers collect all, not first; summary prints counts |
 | `src/main.cpp` (staging) | loop the EVE/CSL vectors |
-| `src/main.cpp` (`cpap_zip_import_`) | mirror the whole card root, denylist, counts in the response |
+| `src/main.cpp` (`cpap_zip_import_`) | calls `mirrorCardInto`, reports counts |
+| `include/utils/CardImport.h`, `src/utils/CardImport.cpp` | **NEW.** The card mirror, lifted out of the lambda so it is testable |
+| `src/utils/CardResidue.cpp` | `residualSkip` brought up to SDD-049: `.pdat`/`.pcfg` exempt from the cap, `.zip`/`.bin` no longer denied |
 | `scripts/schema.sql`, `schema_mysql.sql`, `schema_sqlite.sql` | `cpap_session_files` + version-gated migration and backfill |
 | `src/database/{DatabaseService,SQLiteDatabase,MySQLDatabase,PostgresDatabase}.cpp` | write and read the child table |
 | `src/services/SleepHqExportService.cpp` | session files from the table, root files from a denylist-filtered walk |
 | `hms-cpapdash-parser/src/EDFParser.cpp` | EVE/CSL vectors, sorted, parsed in a loop |
 | `docs/UPLOAD.md` | STR is no longer out of scope |
+
+### Three things the implementation changed
+
+**A duplicate denylist was avoided.** This spec said to copy the live
+`residualSkip` from the API. hms-cpap already had one, in
+`utils/CardResidue.h`, and it was stale against SDD-049: it denied `.zip` and
+`.bin` outright and had no container exemption, so an **ezShare** sweep of a
+Löwenstein card would drop `therapy.pdat` once it passed 20 MB. The fix landed
+there instead of in a new file, which fixes the SD path as well as the upload.
+One existing test pinned `backup.zip` as junk and was updated deliberately.
+
+**The card mirror moved out of `main.cpp`.** It was a lambda, which is why #23
+shipped wrong in the first place: nothing could test it. It is now
+`mirrorCardInto` in `utils/CardImport.h`, with seven tests covering the wrapped
+zip, deep date folders, the credential refusal, the container exemption and
+re-upload idempotence.
+
+**The SleepHQ export keeps the date folder's other files.** Making the table
+authoritative dropped the `.crc` sidecars that live inside `DATALOG/<date>` --
+`downloadDatalogResidue` puts them there on purpose and the table only records
+the five analytical kinds. The table now decides the session files and anything
+else in the folder that passes the denylist rides along. Without this a night
+would have shipped to SleepHQ without its checksums.
 
 `UPLOAD.md` currently tells users STR is "out of scope (sessions only); use
 `hms_cpap --backfill <STR.edf>`". A web-upload user has no shell, and the data was
