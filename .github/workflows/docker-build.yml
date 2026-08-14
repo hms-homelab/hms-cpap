@@ -254,10 +254,13 @@ jobs:
         run: |
           vcpkg install --triplet x64-windows-static-md
 
-      # SDD-016: the supervisor is a Qt application and ships in the same
-      # installer as the service, so the same job builds both. Cached by the
-      # action, which matters: this is ~600MB cold.
-      - name: Install Qt
+      # SDD-016: Qt on the BUILD MACHINE ONLY, to compile the supervisor -- the
+      # same reason the step above installs Drogon and libpqxx, which no user
+      # has ever installed either. What ships is self-contained: windeployqt
+      # puts the Qt libraries inside the installer, windows-desktop-test runs on
+      # a fresh runner that never sees this step, and a later step asserts the
+      # running application loads every library it needs from its own folder.
+      - name: Install Qt (build toolchain only, never shipped to users)
         uses: jurplel/install-qt-action@v4
         with:
           version: '6.8.*'
