@@ -251,6 +251,24 @@ void SQLiteDatabase::createSchema() {
         )
     )");
 
+    // cpap_session_files (SDD-014): which files actually make up a session.
+    // The cpap_sessions.*_file_path columns hold one path per kind and cannot
+    // describe a night of several mask-on blocks.
+    exec(R"(
+        CREATE TABLE IF NOT EXISTS cpap_session_files (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id  INTEGER NOT NULL,
+            kind        TEXT NOT NULL,
+            rel_path    TEXT NOT NULL,
+            UNIQUE (session_id, rel_path)
+        )
+    )");
+    exec("CREATE INDEX IF NOT EXISTS idx_session_files_session "
+         "ON cpap_session_files(session_id)");
+    exec("CREATE INDEX IF NOT EXISTS idx_session_files_path "
+         "ON cpap_session_files(rel_path)");
+    backfillSessionFiles();
+
     // cpap_session_metrics
     exec(R"(
         CREATE TABLE IF NOT EXISTS cpap_session_metrics (
@@ -1367,6 +1385,25 @@ int SQLiteDatabase::deleteSessionsByDateFolder(const std::string& device_id,
 
     std::string pattern = "%DATALOG/" + date_folder + "/%";
 
+    // Child rows first. The FK is not declared ON DELETE CASCADE because SQLite
+    // only enforces foreign keys when the pragma is on, and this must not depend
+    // on that being true.
+    {
+        const char* child_sql = R"(
+            DELETE FROM cpap_session_files
+            WHERE session_id IN (
+                SELECT id FROM cpap_sessions
+                WHERE device_id = ? AND brp_file_path LIKE ?
+            )
+        )";
+        StmtGuard cg;
+        if (sqlite3_prepare_v2(db_, child_sql, -1, &cg.stmt, nullptr) == SQLITE_OK) {
+            bind_text(cg.stmt, 1, device_id);
+            bind_text(cg.stmt, 2, pattern);
+            sqlite3_step(cg.stmt);
+        }
+    }
+
     const char* sql = R"(
         DELETE FROM cpap_sessions
         WHERE device_id = ? AND brp_file_path LIKE ?
@@ -1382,6 +1419,112 @@ int SQLiteDatabase::deleteSessionsByDateFolder(const std::string& device_id,
         return -1;
     }
     return sqlite3_changes(db_);
+}
+
+// ---------------------------------------------------------------------------
+// cpap_session_files (SDD-014)
+// ---------------------------------------------------------------------------
+
+bool SQLiteDatabase::replaceSessionFiles(
+    const std::string& device_id,
+    const std::chrono::system_clock::time_point& session_start,
+    const std::vector<SessionFileRef>& files) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!db_) return false;
+
+    const std::string start_str = fmtTimestamp(session_start);
+
+    int session_id = -1;
+    {
+        // Same +/-5s tolerance sessionExists uses: the stored start can differ
+        // from the in-memory one by a rounding, and an exact match would then
+        // silently record nothing.
+        StmtGuard g;
+        const char* sql = "SELECT id FROM cpap_sessions WHERE device_id = ? "
+                          "AND session_start BETWEEN datetime(?, '-5 seconds') "
+                          "AND datetime(?, '+5 seconds')";
+        if (sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr) != SQLITE_OK) return false;
+        bind_text(g.stmt, 1, device_id);
+        bind_text(g.stmt, 2, start_str);
+        bind_text(g.stmt, 3, start_str);
+        if (sqlite3_step(g.stmt) == SQLITE_ROW) session_id = sqlite3_column_int(g.stmt, 0);
+    }
+    // No session row yet is not an error: the caller records files right after
+    // saving, and a save that failed has already been reported.
+    if (session_id < 0) return false;
+
+    // Delete-then-insert, so a reparse replaces the set instead of doubling it.
+    {
+        StmtGuard g;
+        const char* sql = "DELETE FROM cpap_session_files WHERE session_id = ?";
+        if (sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr) != SQLITE_OK) return false;
+        sqlite3_bind_int(g.stmt, 1, session_id);
+        if (sqlite3_step(g.stmt) != SQLITE_DONE) return false;
+    }
+
+    for (const auto& f : files) {
+        StmtGuard g;
+        const char* sql = "INSERT OR IGNORE INTO cpap_session_files "
+                          "(session_id, kind, rel_path) VALUES (?, ?, ?)";
+        if (sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr) != SQLITE_OK) return false;
+        sqlite3_bind_int(g.stmt, 1, session_id);
+        bind_text(g.stmt, 2, f.kind);
+        bind_text(g.stmt, 3, f.rel_path);
+        if (sqlite3_step(g.stmt) != SQLITE_DONE) {
+            std::cerr << "SQLite: replaceSessionFiles insert error: "
+                      << sqlite3_errmsg(db_) << std::endl;
+            return false;
+        }
+    }
+    return true;
+}
+
+std::vector<SessionFileRef> SQLiteDatabase::getSessionFilesForDateFolder(
+    const std::string& device_id, const std::string& date_folder) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::vector<SessionFileRef> out;
+    if (!db_) return out;
+
+    const std::string pattern = "%DATALOG/" + date_folder + "/%";
+    const char* sql = R"(
+        SELECT f.kind, f.rel_path
+        FROM cpap_session_files f
+        JOIN cpap_sessions s ON s.id = f.session_id
+        WHERE s.device_id = ? AND f.rel_path LIKE ?
+        ORDER BY f.rel_path
+    )";
+    StmtGuard g;
+    if (sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr) != SQLITE_OK) return out;
+    bind_text(g.stmt, 1, device_id);
+    bind_text(g.stmt, 2, pattern);
+    while (sqlite3_step(g.stmt) == SQLITE_ROW) {
+        out.push_back({col_text(g.stmt, 0), col_text(g.stmt, 1)});
+    }
+    return out;
+}
+
+// One-shot backfill so nights parsed before this table existed keep the
+// provenance they already had in the *_file_path columns. Guarded on the table
+// being empty, which is the only state in which it can be wrong to skip.
+void SQLiteDatabase::backfillSessionFiles() {
+    if (!db_) return;
+
+    bool empty = true;
+    {
+        StmtGuard g;
+        if (sqlite3_prepare_v2(db_, "SELECT 1 FROM cpap_session_files LIMIT 1",
+                               -1, &g.stmt, nullptr) != SQLITE_OK) return;
+        empty = (sqlite3_step(g.stmt) != SQLITE_ROW);
+    }
+    if (!empty) return;
+
+    for (const char* kind : {"brp", "eve", "sad", "pld", "csl"}) {
+        std::string col = std::string(kind) + "_file_path";
+        std::string sql = "INSERT OR IGNORE INTO cpap_session_files (session_id, kind, rel_path) "
+                          "SELECT id, '" + std::string(kind) + "', " + col +
+                          " FROM cpap_sessions WHERE " + col + " IS NOT NULL AND " + col + " != ''";
+        exec(sql.c_str());
+    }
 }
 
 // ---------------------------------------------------------------------------

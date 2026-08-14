@@ -222,7 +222,7 @@ elseif(EXISTS ${CPAPDASH_PARSER_LOCAL_DIR2}/CMakeLists.txt)
 else()
     FetchContent_Declare(cpapdash_parser
         GIT_REPOSITORY https://github.com/hms-homelab/hms-cpapdash-parser.git
-        GIT_TAG        v2026.1.3
+        GIT_TAG        v2026.1.10
     )
 endif()
 FetchContent_MakeAvailable(cpapdash_parser)

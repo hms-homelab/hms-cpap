@@ -43,6 +43,17 @@ CREATE INDEX IF NOT EXISTS idx_cpap_sessions_start
     ON cpap_sessions(device_id, session_start);
 
 -- Session metrics (one row per session)
+-- cpap_session_files (SDD-014): which files actually make up a session.
+CREATE TABLE IF NOT EXISTS cpap_session_files (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id  INTEGER NOT NULL,
+    kind        TEXT NOT NULL,
+    rel_path    TEXT NOT NULL,
+    UNIQUE (session_id, rel_path)
+);
+CREATE INDEX IF NOT EXISTS idx_session_files_session ON cpap_session_files(session_id);
+CREATE INDEX IF NOT EXISTS idx_session_files_path ON cpap_session_files(rel_path);
+
 CREATE TABLE IF NOT EXISTS cpap_session_metrics (
     id                     INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id             INTEGER NOT NULL UNIQUE,

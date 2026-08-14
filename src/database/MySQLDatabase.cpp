@@ -453,6 +453,22 @@ void MySQLDatabase::createSchema() {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     )");
 
+    // cpap_session_files (SDD-014): which files actually make up a session.
+    // rel_path is indexed with a length prefix because a 512-char VARCHAR
+    // exceeds InnoDB's key limit on utf8mb4.
+    exec(R"(
+        CREATE TABLE IF NOT EXISTS cpap_session_files (
+            id          INT AUTO_INCREMENT PRIMARY KEY,
+            session_id  INT NOT NULL,
+            kind        VARCHAR(8) NOT NULL,
+            rel_path    VARCHAR(512) NOT NULL,
+            UNIQUE KEY uq_session_file (session_id, rel_path(255)),
+            KEY idx_session_files_session (session_id),
+            KEY idx_session_files_path (rel_path(255))
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    )");
+    backfillSessionFiles();
+
     // cpap_session_metrics
     exec(R"(
         CREATE TABLE IF NOT EXISTS cpap_session_metrics (
@@ -1860,6 +1876,132 @@ int MySQLDatabase::deleteSessionsByDateFolder(const std::string& device_id,
         return -1;
     }
     return static_cast<int>(mysql_stmt_affected_rows(g.stmt));
+}
+
+// ---------------------------------------------------------------------------
+// cpap_session_files (SDD-014)
+// ---------------------------------------------------------------------------
+
+// One-shot fill from the older *_file_path columns, so nights parsed before this
+// table existed keep the provenance they already had.
+void MySQLDatabase::backfillSessionFiles() {
+    if (!conn_) return;
+
+    bool empty = true;
+    {
+        const char* sql = "SELECT 1 FROM cpap_session_files LIMIT 1";
+        MysqlStmtGuard g;
+        g.stmt = mysql_stmt_init(conn_);
+        if (mysql_stmt_prepare(g.stmt, sql, std::strlen(sql)) != 0) return;
+        if (mysql_stmt_execute(g.stmt) != 0) return;
+        ResultBinder r(1);
+        r.bindColInt(0);
+        mysql_stmt_bind_result(g.stmt, r.data());
+        if (mysql_stmt_store_result(g.stmt) != 0) return;
+        empty = (mysql_stmt_fetch(g.stmt) != 0);
+    }
+    if (!empty) return;
+
+    for (const char* kind : {"brp", "eve", "sad", "pld", "csl"}) {
+        const std::string col = std::string(kind) + "_file_path";
+        exec("INSERT IGNORE INTO cpap_session_files (session_id, kind, rel_path) "
+             "SELECT id, '" + std::string(kind) + "', " + col +
+             " FROM cpap_sessions WHERE " + col + " IS NOT NULL AND " + col + " != ''");
+    }
+}
+
+bool MySQLDatabase::replaceSessionFiles(
+    const std::string& device_id,
+    const std::chrono::system_clock::time_point& session_start,
+    const std::vector<SessionFileRef>& files) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!conn_) return false;
+
+    const std::string ts = fmtTimestamp(session_start);
+
+    int session_id = -1;
+    {
+        const char* sql = "SELECT id FROM cpap_sessions WHERE device_id = ? "
+                          "AND ABS(TIMESTAMPDIFF(SECOND, session_start, ?)) <= 5 LIMIT 1";
+        MysqlStmtGuard g;
+        g.stmt = mysql_stmt_init(conn_);
+        if (mysql_stmt_prepare(g.stmt, sql, std::strlen(sql)) != 0) return false;
+        ParamBinder p(2);
+        p.bindText(0, device_id);
+        p.bindText(1, ts);
+        mysql_stmt_bind_param(g.stmt, p.data());
+        if (mysql_stmt_execute(g.stmt) != 0) return false;
+        ResultBinder r(1);
+        r.bindColInt(0);
+        mysql_stmt_bind_result(g.stmt, r.data());
+        if (mysql_stmt_store_result(g.stmt) != 0) return false;
+        if (mysql_stmt_fetch(g.stmt) == 0) session_id = r.colInt(0);
+    }
+    if (session_id < 0) return false;
+
+    {
+        const char* sql = "DELETE FROM cpap_session_files WHERE session_id = ?";
+        MysqlStmtGuard g;
+        g.stmt = mysql_stmt_init(conn_);
+        if (mysql_stmt_prepare(g.stmt, sql, std::strlen(sql)) != 0) return false;
+        ParamBinder p(1);
+        p.bindInt(0, session_id);
+        mysql_stmt_bind_param(g.stmt, p.data());
+        if (mysql_stmt_execute(g.stmt) != 0) return false;
+    }
+
+    for (const auto& f : files) {
+        const char* sql = "INSERT IGNORE INTO cpap_session_files "
+                          "(session_id, kind, rel_path) VALUES (?, ?, ?)";
+        MysqlStmtGuard g;
+        g.stmt = mysql_stmt_init(conn_);
+        if (mysql_stmt_prepare(g.stmt, sql, std::strlen(sql)) != 0) return false;
+        ParamBinder p(3);
+        p.bindInt(0, session_id);
+        p.bindText(1, f.kind);
+        p.bindText(2, f.rel_path);
+        mysql_stmt_bind_param(g.stmt, p.data());
+        if (mysql_stmt_execute(g.stmt) != 0) {
+            std::cerr << "MySQL: replaceSessionFiles insert error: "
+                      << mysql_stmt_error(g.stmt) << std::endl;
+            return false;
+        }
+    }
+    return true;
+}
+
+std::vector<SessionFileRef> MySQLDatabase::getSessionFilesForDateFolder(
+    const std::string& device_id, const std::string& date_folder) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::vector<SessionFileRef> out;
+    if (!conn_) return out;
+
+    const std::string pattern = "%DATALOG/" + date_folder + "/%";
+    const char* sql = R"(
+        SELECT f.kind, f.rel_path
+        FROM cpap_session_files f
+        JOIN cpap_sessions s ON s.id = f.session_id
+        WHERE s.device_id = ? AND f.rel_path LIKE ?
+        ORDER BY f.rel_path
+    )";
+    MysqlStmtGuard g;
+    g.stmt = mysql_stmt_init(conn_);
+    if (mysql_stmt_prepare(g.stmt, sql, std::strlen(sql)) != 0) return out;
+    ParamBinder p(2);
+    p.bindText(0, device_id);
+    p.bindText(1, pattern);
+    mysql_stmt_bind_param(g.stmt, p.data());
+    if (mysql_stmt_execute(g.stmt) != 0) return out;
+
+    ResultBinder r(2);
+    r.bindColString(0, 16);
+    r.bindColStringN(1, 512);
+    mysql_stmt_bind_result(g.stmt, r.data());
+    if (mysql_stmt_store_result(g.stmt) != 0) return out;
+    while (mysql_stmt_fetch(g.stmt) == 0) {
+        out.push_back({r.colText(0), r.colText(1)});
+    }
+    return out;
 }
 
 // ---------------------------------------------------------------------------
