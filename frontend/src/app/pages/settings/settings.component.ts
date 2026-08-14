@@ -529,15 +529,20 @@ import { AppConfig } from '../../models/config.model';
               <label>
                 Provider
                 <select [(ngModel)]="config.llm.provider" name="llm_provider">
-                  <option value="ollama">Ollama</option>
-                  <option value="openai">OpenAI</option>
+                  <option value="ollama">Ollama (native API)</option>
+                  <option value="openai">OpenAI-compatible</option>
                   <option value="gemini">Gemini</option>
                   <option value="anthropic">Anthropic</option>
                 </select>
+                <span class="hint" *ngIf="config.llm.provider === 'openai'">
+                  Any server speaking the OpenAI chat API: OpenAI itself,
+                  OpenRouter, LM Studio, vLLM, llama.cpp, or Ollama's own
+                  /v1 surface. Put its base URL in Endpoint.
+                </span>
               </label>
               <label>
                 Endpoint
-                <input type="text" [(ngModel)]="config.llm.endpoint" name="llm_endpoint" placeholder="http://127.0.0.1:11434" />
+                <input type="text" [(ngModel)]="config.llm.endpoint" name="llm_endpoint" placeholder="http://127.0.0.1:11434 (base URL, no path)" />
               </label>
               <label>
                 Model
@@ -545,7 +550,7 @@ import { AppConfig } from '../../models/config.model';
               </label>
               <label>
                 API Key
-                <input type="password" [(ngModel)]="config.llm.api_key" name="llm_api_key" placeholder="Optional for Ollama" />
+                <input type="password" [(ngModel)]="config.llm.api_key" name="llm_api_key" placeholder="Optional for Ollama and most local servers" />
               </label>
               <label>
                 Max Tokens
