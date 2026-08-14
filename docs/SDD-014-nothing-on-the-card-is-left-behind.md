@@ -1,9 +1,9 @@
 # SDD-014: Nothing on the card is left behind
 
-**Status:** Implemented, e2e green on macOS, Linux, Docker (SQLite + MySQL + PostgreSQL); Windows pending
+**Status:** Shipped in 4.9.10. E2E green on macOS, Linux, Windows and Docker (SQLite + MySQL + PostgreSQL).
 **Date:** 2026-08-13
 **Repo:** `hms-cpap`, with a companion change in `hms-cpapdash-parser`
-**Version:** target TBD (Albin's call)
+**Version:** 4.9.10 (parser v2026.1.11)
 **Depends on:** SDD-008 (partial sessions), SDD-010 (local card root)
 **Mirrors:** `hms-cpapdash-api` SDD-016 (full-card raw backup) and SDD-049 (container exemption)
 **Closes:** issues #22, #23

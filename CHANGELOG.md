@@ -28,7 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   heart rate, snore, respiratory rate and tidal volume. A Prisma declares those
   channels and fills them with zeros; a SMART max omits them.
 
-## [Unreleased]
+## [4.9.10] - 2026-08-14
 
 ### Fixed
 - **A night keeps every EVE it has, so its events are counted** (issue 22). A
