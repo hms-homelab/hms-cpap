@@ -160,6 +160,22 @@ public:
     /// Stable string for the API response body.
     static const char* syncNowOutcomeString(SyncNowOutcome outcome);
 
+    /// Which sleep day a generated summary is filed under.
+    ///
+    /// `requested` wins whenever the caller named a night. Empty means the
+    /// automatic end-of-night path, where "the night that just ended" is
+    /// `now - 12h`: a session that ended this morning started last night.
+    ///
+    /// Pure and static for the same reason decideSyncNow above is: the test
+    /// binary cannot reach the LLM path (llm_enabled_ has no setter), so the
+    /// only way this decision is testable at all is if it lives somewhere that
+    /// touches no LLM and no database. It was wrong for as long as it was
+    /// because it was buried mid-function: a summary generated for 2026-08-12
+    /// on the 13th was stamped with the 13th, overwriting that day's row and
+    /// leaving the requested night with none. Issue 24.
+    static std::string resolveSleepDay(const std::string& requested,
+                                       std::chrono::system_clock::time_point now);
+
     // ── Test seam (unit tests only) ──────────────────────────────────────
     // Inject collaborators directly, bypassing initialize() (which opens real
     // DB/MQTT/network connections). Lets the burst cycle, completion, archive
@@ -428,9 +444,18 @@ private:
      *
      * @param metrics Aggregated session metrics
      * @param str_record Optional STR daily record for additional context
+     * @param sleep_day  The night this summary is FOR, "YYYY-MM-DD". Empty
+     *        means "the night that just ended", which is the automatic
+     *        end-of-night case and keeps the now()-12h fallback.
+     *
+     * The parameter exists because the row used to be stamped with now()-12h
+     * unconditionally, so generating a summary for 2026-08-12 on the 13th
+     * wrote range_start=range_end=2026-08-13 and the night's own summary was
+     * filed under the wrong day. Issue 24.
      */
     void generateAndPublishSummary(const SessionMetrics& metrics,
-                                   const STRDailyRecord* str_record = nullptr);
+                                   const STRDailyRecord* str_record = nullptr,
+                                   const std::string& sleep_day = "");
 
     /**
      * Build metrics string from session data for LLM prompt substitution.

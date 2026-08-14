@@ -216,3 +216,63 @@ INSTANTIATE_TEST_SUITE_P(
     Engines, SessionFilesBackendTest,
     ::testing::Values(Engine::SQLite, Engine::MySQL),
     [](const ::testing::TestParamInfo<Engine>& i) { return engineName(i.param); });
+
+// ── Issue 24: the sleep-day lookup is a stub off PostgreSQL ─────────────────
+//
+// SQLiteDatabase::getSessionStartForSleepDay and the MySQL one returned
+// std::nullopt unconditionally, so on the DEFAULT backend:
+//   - POST /api/sessions/<date>/generate-summary always answered "failed"
+//     ("generateSummaryForDate: no session found"), and
+//   - forceCompleteSession could never find a night to close.
+// PostgreSQL had the real implementation, which is why it was invisible to
+// anyone running the backend this project does not default to.
+//
+// The rule is noon-to-noon, matching PostgreSQL:
+//     DATE(session_start - 12 hours) = sleep_day
+// A night that starts at 22:00 on the 12th and one that starts at 02:00 on the
+// 13th are the SAME sleep day, and that is the whole point of the offset.
+
+TEST_P(SessionFilesBackendTest, TheSleepDayLookupFindsAnEveningSession) {
+    const char* eng = engineName(GetParam());
+    // start_ is 2030-01-01 22:00 local, so its sleep day is 2030-01-01.
+    auto got = db_->getSessionStartForSleepDay(device_, "2030-01-01", false);
+    ASSERT_TRUE(got.has_value())
+        << eng << ": the lookup is a stub, so the AI summary can never find a night";
+    EXPECT_EQ(*got, start_) << eng;
+}
+
+TEST_P(SessionFilesBackendTest, AnAfterMidnightSessionBelongsToTheNightBefore) {
+    const char* eng = engineName(GetParam());
+    // 02:00 on the 2nd is still the night of the 1st under the noon-to-noon rule.
+    auto after_midnight = start_ + std::chrono::hours(4);   // 2030-01-02 02:00
+    CPAPSession s = makeSession();
+    s.session_start = after_midnight;
+    ASSERT_TRUE(db_->saveSession(s)) << eng;
+
+    auto got = db_->getSessionStartForSleepDay(device_, "2030-01-01", false);
+    ASSERT_TRUE(got.has_value()) << eng;
+    // Two sessions share the night; the EARLIEST is the one returned.
+    EXPECT_EQ(*got, start_) << eng << ": expected the first session of the night";
+
+    // ...and the following day owns neither of them.
+    EXPECT_FALSE(db_->getSessionStartForSleepDay(device_, "2030-01-02", false).has_value())
+        << eng << ": an after-midnight session was attributed to the wrong night";
+}
+
+TEST_P(SessionFilesBackendTest, OpenOnlySkipsAClosedSession) {
+    const char* eng = engineName(GetParam());
+    // The session seeded in SetUp has no session_end, so it is open.
+    EXPECT_TRUE(db_->getSessionStartForSleepDay(device_, "2030-01-01", true).has_value())
+        << eng << ": forceCompleteSession could not find the open night";
+
+    ASSERT_TRUE(db_->markSessionCompleted(device_, start_)) << eng;
+    EXPECT_FALSE(db_->getSessionStartForSleepDay(device_, "2030-01-01", true).has_value())
+        << eng << ": a closed session must not answer an open_only lookup";
+    EXPECT_TRUE(db_->getSessionStartForSleepDay(device_, "2030-01-01", false).has_value())
+        << eng << ": it is still findable without open_only";
+}
+
+TEST_P(SessionFilesBackendTest, AnUnknownSleepDayFindsNothing) {
+    EXPECT_FALSE(db_->getSessionStartForSleepDay(device_, "2030-06-15", false).has_value())
+        << engineName(GetParam());
+}

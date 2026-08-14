@@ -3108,3 +3108,53 @@ TEST_F(BurstInitTest, Initialize_UnknownDbType_FallsBackToSqlite) {
 
 }  // namespace burst_init
 
+
+// ── Issue 24: a summary is filed under the night it is FOR ──────────────────
+//
+// generateAndPublishSummary stamped every row with now()-12h, ignoring the date
+// generateSummaryForDate was asked for. Generating 2026-08-12 on the 13th wrote
+// range_start=range_end=2026-08-13: it overwrote that day's row and the night
+// the user actually asked about ended up with none.
+//
+// Pure and static for the same reason decideSyncNow is: the LLM path is not
+// reachable through the test seam (llm_enabled_ has no setter), so the decision
+// has to live somewhere that touches neither an LLM nor a database.
+
+namespace {
+std::chrono::system_clock::time_point atLocal(int y, int mon, int d, int h, int mi) {
+    std::tm tm{};
+    tm.tm_year = y - 1900; tm.tm_mon = mon - 1; tm.tm_mday = d;
+    tm.tm_hour = h; tm.tm_min = mi; tm.tm_isdst = -1;
+    return std::chrono::system_clock::from_time_t(std::mktime(&tm));
+}
+}  // namespace
+
+TEST(ResolveSleepDay, ARequestedNightWinsOverTodayEvenDaysLater) {
+    // The reported case: asking for the 12th while it is the 13th.
+    EXPECT_EQ(BurstCollectorService::resolveSleepDay("2026-08-12",
+                                                     atLocal(2026, 8, 13, 14, 0)),
+              "2026-08-12");
+    // Still true for a night from months ago, which is the point of a backfill.
+    EXPECT_EQ(BurstCollectorService::resolveSleepDay("2026-05-30",
+                                                     atLocal(2026, 8, 13, 14, 0)),
+              "2026-05-30");
+}
+
+// The automatic end-of-night path passes nothing and must keep working: a
+// session that ended this morning started last night.
+TEST(ResolveSleepDay, EmptyMeansTheNightThatJustEnded) {
+    // 08:00 on the 13th, twelve hours back is 20:00 on the 12th.
+    EXPECT_EQ(BurstCollectorService::resolveSleepDay("", atLocal(2026, 8, 13, 8, 0)),
+              "2026-08-12");
+    // 23:00 on the 13th is already the 13th's night.
+    EXPECT_EQ(BurstCollectorService::resolveSleepDay("", atLocal(2026, 8, 13, 23, 0)),
+              "2026-08-13");
+}
+
+// Noon is the boundary the offset exists to place.
+TEST(ResolveSleepDay, TheFallbackTurnsOverAtNoon) {
+    EXPECT_EQ(BurstCollectorService::resolveSleepDay("", atLocal(2026, 8, 13, 11, 59)),
+              "2026-08-12");
+    EXPECT_EQ(BurstCollectorService::resolveSleepDay("", atLocal(2026, 8, 13, 12, 1)),
+              "2026-08-13");
+}
