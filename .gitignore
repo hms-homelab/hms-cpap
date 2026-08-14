@@ -95,5 +95,10 @@ coverage/
 .playwright-mcp/
 **/.playwright-mcp/
 
+# UI screenshots taken while working. Never tracked -- frontend/public/ is
+# where real, shipped image assets live.
+frontend/hmscpap-*.png
+frontend/*-screenshot*.png
+
 # Local Claude Code guidance (kept out of the public repo)
 CLAUDE.md
