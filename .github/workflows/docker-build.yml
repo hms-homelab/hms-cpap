@@ -653,14 +653,24 @@ jobs:
           $ours = $mods | Where-Object { $_ -match 'Qt6|msvcp|vcruntime|concrt' }
           if (-not $ours) { throw "no Qt modules loaded at all - is this the right binary?" }
 
-          $borrowed = $ours | Where-Object { $_ -notlike "$app*" }
+          # Two legitimate sources: our own folder, and Windows itself. The
+          # Universal CRT lives in System32 and IS the operating system --
+          # msvcp_win.dll is shipped by Windows on every 10 and 11 machine, so a
+          # user has it whether or not they have ever installed anything.
+          #
+          # What this is looking for is a library loaded from a DEVELOPER
+          # location: a Qt install, a Visual Studio directory, somebody's build
+          # tree. Those are the ones a user would not have.
+          $borrowed = $ours | Where-Object {
+            $_ -notlike "$app*" -and $_ -notlike "$env:SystemRoot*"
+          }
           if ($borrowed) {
             Write-Host "  borrowed from outside the installation:"
             $borrowed | ForEach-Object { Write-Host "    $_" }
             throw "the application is loading libraries it does not ship; a user without them would get a broken install"
           }
 
-          Write-Host "  ok every shipped library loaded from $app"
+          Write-Host "  ok nothing loaded from a developer location"
           $ours | ForEach-Object { Write-Host "    $(Split-Path $_ -Leaf)" }
 
           Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
