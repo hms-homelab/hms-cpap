@@ -69,7 +69,19 @@ std::chrono::system_clock::time_point tpUtc(int y, int mo, int d, int h, int mi)
     tm.tm_mday = d;
     tm.tm_hour = h;
     tm.tm_min  = mi;
-    return std::chrono::system_clock::from_time_t(timegm_utc(&tm));
+    const time_t t = timegm_utc(&tm);
+    const auto tp  = std::chrono::system_clock::from_time_t(t);
+
+    // libstdc++ counts NANOSECONDS, so a time_point past 2262 overflows int64.
+    // to_time_t round-trips the overflowed value unchanged, which is why a bad
+    // fixture looks healthy right up until something adds to it -- and then a
+    // year-2999 night gets stored as 1829 and no sleep-day query finds it.
+    // Adding a second is exactly that arithmetic, so it catches the fixture
+    // here instead of three layers down in a database assertion.
+    EXPECT_EQ(std::chrono::system_clock::to_time_t(tp + std::chrono::seconds(1)), t + 1)
+        << "tpUtc(" << y << ", ...) is outside this platform's system_clock range; "
+           "pick a year under 2262";
+    return tp;
 }
 
 // Builds a session whose metrics are set explicitly rather than computed, so the
@@ -535,16 +547,26 @@ INSTANTIATE_TEST_SUITE_P(
 // finger for twenty minutes comes back shorter than it was.
 //
 // Seeded under the real kOximetryDeviceId, because that is what the export
-// queries, and dated 2999 so it cannot collide with anything real in a shared
+// queries, and far-dated so it cannot collide with anything real in a shared
 // test database. Removed again in the test itself.
+//
+// The year is 2099 and NOT 2999 like the date-folder strings elsewhere in these
+// suites, because this is the one place that builds a real time_point. On
+// libstdc++ system_clock::duration is NANOSECONDS, so the representable range
+// ends in 2262; year 2999 overflows int64 silently. to_time_t happens to
+// round-trip the overflowed value, so the fixture looks fine until you do
+// arithmetic on it -- and every sample below is start_time + seconds(off).
+// That produced a stored start_time of 1829-11-23 and a night that no sleep-day
+// query could find. macOS libc++ uses microseconds and never saw it.
+// Keep any tpUtc() year under 2262.
 
 TEST_P(OximetryBackendTest, TheExportReadKeepsTheSamplesTheChartHides) {
     const char* eng = engineName(GetParam());
-    const std::string folder = "29990101";
+    const std::string folder = "20990101";
 
     OximetrySession s;
     s.filename = "export_read_test.vld";
-    s.start_time = tpUtc(2999, 1, 1, 23, 0);
+    s.start_time = tpUtc(2099, 1, 1, 23, 0);
     s.sample_interval = 2.0;
     auto add = [&](int off, uint8_t spo2, uint8_t hr, uint8_t motion) {
         OximetrySample smp{};

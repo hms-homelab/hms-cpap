@@ -380,3 +380,74 @@ TEST_F(ExportFileSet, ALowensteinContainerIsExportedEvenWhenLarge) {
     EXPECT_TRUE(hasFile(files, "therapy.pdat", ""))
         << "the only file on a Prisma card was dropped by the size cap";
 }
+
+// ── The export must not be decided by what parsed ───────────────────────────
+//
+// cpap_session_files is written INSIDE `if (saveSession(...))`, so a session
+// that fails to parse records no rows at all. If the table were the only source
+// of session files, that night's EDFs would never reach SleepHQ or an OSCAR
+// download -- the card would be on disk and the export would quietly omit half
+// of it.
+//
+// These pin the two nets that prevent it: an unrecorded night falls back to the
+// directory walk, and a PARTIALLY recorded folder still ships the files the
+// table does not know about.
+
+TEST_F(ExportFileSet, FilesFromAnUnPARSEDSessionStillShip) {
+    namespace fs = std::filesystem;
+    // Session A parsed and was recorded. Session B never parsed, so it has no
+    // rows -- a corrupt EDF, a crash mid-backfill, anything.
+    for (const char* n : {"20260706_195339_EVE.edf",
+                          "20260706_233000_BRP.edf",   // session B, unrecorded
+                          "20260706_233000_EVE.edf",
+                          "20260706_233000_PLD.edf"})
+        std::ofstream(card_root_ / "DATALOG" / folder_ / n) << "x";
+
+    std::vector<SessionFileRef> recorded = {
+        {"brp", "DATALOG/20260706/20260706_195339_BRP.edf"},
+        {"eve", "DATALOG/20260706/20260706_195339_EVE.edf"},
+    };
+
+    auto files = SleepHqExportService::collectExportFiles(
+        folder_, datalog(), card_root_.string(), recorded);
+
+    // The recorded session, obviously.
+    EXPECT_TRUE(hasFile(files, "20260706_195339_BRP.edf", "DATALOG/20260706"));
+    EXPECT_TRUE(hasFile(files, "20260706_195339_EVE.edf", "DATALOG/20260706"));
+    // ...and everything the table never heard of.
+    EXPECT_TRUE(hasFile(files, "20260706_233000_BRP.edf", "DATALOG/20260706"))
+        << "an unparsed session's flow never reached SleepHQ";
+    EXPECT_TRUE(hasFile(files, "20260706_233000_EVE.edf", "DATALOG/20260706"))
+        << "an unparsed session's events never reached SleepHQ";
+    EXPECT_TRUE(hasFile(files, "20260706_233000_PLD.edf", "DATALOG/20260706"));
+}
+
+// A night where NOTHING parsed has an empty table and must still export in full.
+TEST_F(ExportFileSet, ANightThatParsedNothingAtAllStillExportsEveryFile) {
+    std::ofstream(card_root_ / "DATALOG" / folder_ / "20260706_195339_EVE.edf") << "x";
+
+    auto files = SleepHqExportService::collectExportFiles(
+        folder_, datalog(), card_root_.string(), /* recorded */ {});
+
+    EXPECT_TRUE(hasFile(files, "20260706_195339_BRP.edf", "DATALOG/20260706"));
+    EXPECT_TRUE(hasFile(files, "20260706_195339_PLD.edf", "DATALOG/20260706"));
+    EXPECT_TRUE(hasFile(files, "20260706_195339_EVE.edf", "DATALOG/20260706"));
+    EXPECT_TRUE(hasFile(files, "STR.edf", ""));
+}
+
+// Whatever else the card carries in the night's folder goes too, even when the
+// name means nothing to us. The card is the record, not our understanding of it.
+TEST_F(ExportFileSet, UnrecognisedFilesInTheNightFolderAreNotDropped) {
+    for (const char* n : {"20260706_195339_BRP.crc", "SOMETHING.UNKNOWN", "Journal.dat"})
+        std::ofstream(card_root_ / "DATALOG" / folder_ / n) << "x";
+
+    std::vector<SessionFileRef> recorded = {
+        {"brp", "DATALOG/20260706/20260706_195339_BRP.edf"}};
+
+    auto files = SleepHqExportService::collectExportFiles(
+        folder_, datalog(), card_root_.string(), recorded);
+
+    EXPECT_TRUE(hasFile(files, "20260706_195339_BRP.crc", "DATALOG/20260706"));
+    EXPECT_TRUE(hasFile(files, "SOMETHING.UNKNOWN", "DATALOG/20260706"));
+    EXPECT_TRUE(hasFile(files, "Journal.dat", "DATALOG/20260706"));
+}
