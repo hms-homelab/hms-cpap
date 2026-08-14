@@ -22,6 +22,8 @@
 
 #include "database/IDatabase.h"
 #include "database/SQLiteDatabase.h"
+#include "services/SleepHqExportService.h"
+#include "utils/OximetryDevice.h"
 #include "utils/TimeCompat.h"
 #ifdef WITH_MYSQL
 #include "database/MySQLDatabase.h"
@@ -524,3 +526,74 @@ INSTANTIATE_TEST_SUITE_P(
     });
 
 }  // namespace
+
+// ── SDD-015: the export's own read of a night's samples ─────────────────────
+//
+// The chart query filters `valid` and is right to. The EXPORT must not: a
+// dropped row heals the timeline over, and the interval detector then measures
+// the wrong cadence off the healed timestamps, so a night with the ring off the
+// finger for twenty minutes comes back shorter than it was.
+//
+// Seeded under the real kOximetryDeviceId, because that is what the export
+// queries, and dated 2999 so it cannot collide with anything real in a shared
+// test database. Removed again in the test itself.
+
+TEST_P(OximetryBackendTest, TheExportReadKeepsTheSamplesTheChartHides) {
+    const char* eng = engineName(GetParam());
+    const std::string folder = "29990101";
+
+    OximetrySession s;
+    s.filename = "export_read_test.vld";
+    s.start_time = tpUtc(2999, 1, 1, 23, 0);
+    s.sample_interval = 2.0;
+    auto add = [&](int off, uint8_t spo2, uint8_t hr, uint8_t motion) {
+        OximetrySample smp{};
+        smp.timestamp    = s.start_time + std::chrono::seconds(off);
+        smp.spo2         = spo2;
+        smp.heart_rate   = hr;
+        smp.invalid_flag = (spo2 == 0xFF) ? 1 : 0;
+        smp.motion       = motion;
+        s.samples.push_back(smp);
+    };
+    add(0, 97, 60, 0);
+    add(2, 0xFF, 0xFF, 0);      // ring off the finger
+    add(4, 0xFF, 0xFF, 0);
+    add(6, 96, 61, 29);         // motion is data, not a flag
+    s.end_time = s.samples.back().timestamp;
+    s.duration_seconds = 8;
+    s.metrics.total_samples = 4;
+    s.metrics.valid_samples = 2;
+
+    ASSERT_TRUE(db().saveOximetrySession(kOximetryDeviceId, s)) << eng;
+
+    auto& svc = SleepHqExportService::getInstance();
+    svc.initialize(nullptr, db_.get());
+    const auto out = svc.oximetrySessionFor(folder);
+    svc.initialize(nullptr, nullptr);   // do not leave the singleton holding this db
+
+    // Clean up before asserting, so a failure still leaves the table tidy.
+    db().executeQuery(
+        "DELETE FROM oximetry_samples WHERE oximetry_session_id IN "
+        "(SELECT id FROM oximetry_sessions WHERE device_id = ? AND filename = ?)",
+        {kOximetryDeviceId, s.filename});
+    db().executeQuery("DELETE FROM oximetry_sessions WHERE device_id = ? AND filename = ?",
+                      {kOximetryDeviceId, s.filename});
+
+    ASSERT_EQ(out.samples.size(), 4u)
+        << eng << ": the unreadable samples were dropped, the night got shorter";
+    EXPECT_EQ(out.samples[0].spo2, 97) << eng;
+    EXPECT_FALSE(out.samples[1].valid()) << eng;
+    EXPECT_FALSE(out.samples[2].valid()) << eng;
+    EXPECT_TRUE(out.samples[3].valid()) << eng;
+    EXPECT_EQ(out.samples[3].motion, 29) << eng;
+    EXPECT_EQ(out.start_time, s.samples.front().timestamp) << eng;
+}
+
+// A night with no ring produces nothing to upload, rather than an empty file.
+TEST_P(OximetryBackendTest, ANightWithNoRingYieldsNoSession) {
+    auto& svc = SleepHqExportService::getInstance();
+    svc.initialize(nullptr, db_.get());
+    const auto out = svc.oximetrySessionFor("29990202");
+    svc.initialize(nullptr, nullptr);
+    EXPECT_TRUE(out.samples.empty()) << engineName(GetParam());
+}

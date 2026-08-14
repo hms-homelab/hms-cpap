@@ -53,6 +53,12 @@ only file there is. Real card files nothing would think to allowlist
 
 ### O2 Ring CSV — `/api/upload/oximetry`
 
+The round trip goes both ways now. `O2RingCsvWriter` renders a stored session
+back into the same CSV, and the SleepHQ export ships it as its own import,
+separate from the night's therapy files (SDD-015). The reader stays permissive
+about dialects; the writer emits one.
+
+
 `O2RingCsvParser::parse(content, filename)` → `saveOximetrySession("o2ring", …)`,
 synchronous. Returns `{samples, valid_samples, avg_spo2, min_spo2,
 sample_interval, duration_seconds}`.
