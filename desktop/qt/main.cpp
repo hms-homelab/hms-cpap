@@ -109,12 +109,6 @@ int main(int argc, char** argv) {
                          else                    tray.announcePresence();
                      });
 
-    if (!tray.available()) {
-        QMessageBox::warning(nullptr, "CpapDash",
-            "This desktop has no system tray, so CpapDash cannot show its "
-            "status icon.\n\nThe service will still run.");
-    }
-
     // ── The gate ───────────────────────────────────────────────────────────
     bool parse_failed = false;
     const auto config = readConfig(&parse_failed);
@@ -142,5 +136,20 @@ int main(int argc, char** argv) {
 
     // Configured, so run it.
     child.start();
+
+    // The tray warning comes AFTER the service is running, and never blocks.
+    //
+    // It used to be a modal QMessageBox before the gate, which deadlocked the
+    // one case it was written for: a desktop with no status area shows the
+    // dialog, modal waits for a click, and the service is never started at all.
+    // Headless Linux and GNOME without a StatusNotifier extension both land
+    // there -- and on a headless box nobody can even see the dialog to dismiss
+    // it. Supervising without an icon is degraded; refusing to supervise is
+    // broken.
+    if (!tray.available()) {
+        qWarning("CpapDash: this desktop has no system tray, so there is no "
+                 "status icon. The service is running regardless.");
+    }
+
     return app.exec();
 }
