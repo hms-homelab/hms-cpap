@@ -77,12 +77,47 @@ static drogon::HttpResponsePtr jsonResp(const Json::Value& val) {
     return resp;
 }
 
+// SDD-016: /health answers "can this be used", not just "is a process alive".
+//
+// It used to report three constants, which meant anything asking it could only
+// learn that something was listening. That is not the question a supervisor or
+// a monitor is really asking, and the gap showed: a service whose Angular
+// bundle is missing answers /health perfectly and 404s every page, so a client
+// gating "Open Dashboard" on health alone sends people to an error and teaches
+// them the app is broken.
+//
+// So the fields below are the ones a caller has to branch on. Each reports a
+// fact checked at the moment of the call, never a cached assumption.
 void CpapController::health(const drogon::HttpRequestPtr&,
                              std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
     Json::Value j;
     j["status"] = "ok";
     j["version"] = HMS_CPAP_VERSION;
     j["service"] = "hms-cpap";
+
+    // Is the dashboard actually servable? The API exists whether or not the
+    // static bundle was ever installed, so this is a separate question and the
+    // only way a client can tell without a second request.
+    bool ui_ready = false;
+    std::string static_dir;
+    if (config_) {
+        static_dir = SetupService::resolveStaticDir(config_->static_dir);
+        std::error_code ec;
+        ui_ready = !static_dir.empty() &&
+                   std::filesystem::exists(std::filesystem::path(static_dir) / "index.html", ec);
+    }
+    j["ui"] = ui_ready;
+
+    // Has anyone finished setup? A caller that finds this false knows the
+    // service is running but has nothing to collect, which is a different
+    // state from broken and deserves different words.
+    j["setup_complete"] = config_ ? config_->setup_complete : false;
+
+    if (config_) {
+        j["source"] = config_->source;
+        j["database"] = config_->database.type;
+    }
+
     cb(jsonResp(j));
 }
 

@@ -75,6 +75,15 @@ set(TEST_SOURCES
     utils/test_CardLayout.cpp
     utils/test_DbProbeCli.cpp
     utils/test_FileLogger.cpp
+    utils/test_ParentWatch.cpp
+
+    # SDD-016: the supervisor's Qt-free core. Listed by explicit path, and the
+    # sources it tests are added the same way below -- desktop/qt/ is outside
+    # src/ precisely so neither GLOB_RECURSE sweeps a GUI into the service or
+    # the test binary.
+    desktop/test_PreflightReport.cpp
+    desktop/test_ConfigGate.cpp
+
     utils/test_FailureLogThrottle.cpp
     clients/test_EzShareClient.cpp
     clients/test_FysetcTcpServer.cpp
@@ -131,11 +140,24 @@ if(MSVC)
     list(FILTER TEST_SOURCES EXCLUDE REGEX ".*Fysetc.*")
 endif()
 
+# The supervisor's Qt-free core, compiled straight into run_tests. These files
+# depend on nothing but the standard library, which is the point: the parsing
+# and validation the desktop app relies on is testable on every platform with
+# no display, no offscreen plugin and no Qt in the test build at all.
+set(SUPERVISOR_PURE_SOURCES
+    ${CMAKE_SOURCE_DIR}/desktop/qt/core/pure/PreflightReport.cpp
+    ${CMAKE_SOURCE_DIR}/desktop/qt/core/pure/ConfigModel.cpp
+    ${CMAKE_SOURCE_DIR}/desktop/qt/core/pure/FieldSpec.cpp
+    ${CMAKE_SOURCE_DIR}/desktop/qt/core/pure/ConfigGate.cpp
+)
+
 # Create test executable
 add_executable(run_tests
     ${TEST_SOURCES}
     ${PROJECT_SOURCES}
+    ${SUPERVISOR_PURE_SOURCES}
 )
+target_include_directories(run_tests PRIVATE ${CMAKE_SOURCE_DIR}/desktop/qt/core/pure)
 
 # Opt-in code coverage (gcov/lcov). OFF by default; enable with
 # -DENABLE_COVERAGE=ON (see scripts/coverage.sh). Not supported on MSVC.

@@ -42,6 +42,7 @@
 #include "utils/FileLogger.h"
 #include "utils/CardLayout.h"
 #include "utils/DbProbeCli.h"
+#include "utils/ParentWatch.h"
 #include <iostream>
 #include <iomanip>
 #include <csignal>
@@ -427,6 +428,29 @@ int main(int argc, char** argv) {
         hms_cpap::FileLogger::start(hms_cpap::FileLogger::defaultPath(),
                                     5 * 1024 * 1024, 3);
         std::atexit([] { hms_cpap::FileLogger::stop(); });
+    }
+
+    // SDD-016: exit when the supervisor that started us dies.
+    //
+    // Opt-in, and it has to be: under systemd and Docker stdin is /dev/null and
+    // reads EOF immediately, so watching it unconditionally would exit the
+    // instant the service started. Only a parent that deliberately holds the
+    // write end passes this flag.
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--exit-with-parent") == 0) {
+            hms_cpap::watchParentPipe(0, [] {
+                std::cerr << "Supervisor exited; shutting down." << std::endl;
+                // _exit, not exit: the supervisor is already gone, nobody is
+                // reading our output, and running static destructors here races
+                // the very threads we are trying to stop. The service is
+                // crash-safe by design -- it re-reads the card on the next
+                // start -- so a fast exit costs nothing and hangs nothing.
+                std::cout.flush();
+                std::cerr.flush();
+                std::_Exit(0);
+            });
+            break;
+        }
     }
 
     // SDD-016: answer "can I open this database?" without an HTTP server.

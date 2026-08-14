@@ -254,6 +254,18 @@ jobs:
         run: |
           vcpkg install --triplet x64-windows-static-md
 
+      # SDD-016: the supervisor is a Qt application and ships in the same
+      # installer as the service, so the same job builds both. Cached by the
+      # action, which matters: this is ~600MB cold.
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.*'
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          cache: true
+
       - name: Build HMS-CPAP (MSVC)
         run: |
           mkdir build
@@ -261,7 +273,8 @@ jobs:
           # MySQL comes from the vcpkg libmysql port. pkg-config is not present
           # under MSVC, so CMakeLists falls back to its find_path/find_library
           # route; the toolchain file puts the vcpkg tree on the search path.
-          cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static-md -DBUILD_TESTS=OFF -DBUILD_WITH_WEB=ON -DBUILD_WITH_POSTGRESQL=ON -DBUILD_WITH_MYSQL=ON ..
+          cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static-md -DBUILD_TESTS=OFF -DBUILD_WITH_WEB=ON -DBUILD_WITH_POSTGRESQL=ON -DBUILD_WITH_MYSQL=ON `
+            -DBUILD_SUPERVISOR=ON -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR" ..
           cmake --build . --parallel
 
       # ── Package Windows release ─────────────────────────────────
@@ -330,17 +343,33 @@ jobs:
       # Both steps are continue-on-error so a desktop-packaging problem
       # degrades to "zip only" rather than taking down the whole Windows
       # artifact, which is what the release job actually needs.
-      - name: Build tray shell
+      - name: Stage the supervisor and service
         id: tray
         continue-on-error: true
         run: |
-          dotnet publish desktop\windows\CpapDashDesktop\CpapDashDesktop.csproj `
-            -c Release -o dist-tray
           # Staging dir the installer script reads from, mirroring the install
           # layout: shell and service side by side.
           mkdir dist-windows -Force
-          Copy-Item dist-tray\CpapDashDesktop.exe dist-windows\
+          Copy-Item build\desktop\qt\CpapDashDesktop.exe dist-windows\
           Copy-Item -Recurse -Force release\* dist-windows\
+
+          # Everything Qt needs, next to the exe. The requirement is that a user
+          # installs NOTHING of their own -- no Qt runtime, no redistributable --
+          # so the DLLs and the platform plugins travel inside the installer the
+          # same way the MSVC CRT already does.
+          #
+          # --no-translations and --no-system-d3d-compiler keep out ~10MB the
+          # supervisor never loads.
+          & "$env:QT_ROOT_DIR\bin\windeployqt.exe" `
+            --release --no-translations --no-system-d3d-compiler `
+            --no-opengl-sw dist-windows\CpapDashDesktop.exe
+
+          # A missing platform plugin is silent at build time and fatal at run
+          # time ("no Qt platform plugin could be initialized"), so it is checked
+          # here rather than discovered by whoever installs it.
+          if (-not (Test-Path dist-windows\platforms\qwindows.dll)) {
+            throw "windeployqt did not produce platforms\qwindows.dll"
+          }
 
       - name: Sign binaries
         id: sign
@@ -353,9 +382,13 @@ jobs:
           [IO.File]::WriteAllBytes("cert.pfx", [Convert]::FromBase64String($env:WINDOWS_CERT_PFX))
           $signtool = (Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter signtool.exe |
                        Where-Object { $_.FullName -like "*x64*" } | Select-Object -First 1).FullName
+          # Every binary that ships, not just the two executables. SmartScreen
+          # reputation is per-publisher across a bundle, and an unsigned Qt DLL
+          # beside a signed exe is a support ticket.
+          $targets = @('dist-windows\CpapDashDesktop.exe','dist-windows\hms_cpap.exe') +
+                     (Get-ChildItem dist-windows -Recurse -Include *.dll | ForEach-Object FullName)
           & $signtool sign /f cert.pfx /p $env:WINDOWS_CERT_PASSWORD `
-            /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 `
-            dist-windows\CpapDashDesktop.exe dist-windows\hms_cpap.exe
+            /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 @targets
           Remove-Item cert.pfx
 
       - name: Build installer
@@ -449,7 +482,7 @@ jobs:
           $app = "$env:LOCALAPPDATA\Programs\HMS-CPAP"
           # The tray finds hms_cpap.exe by sitting next to it, so this layout IS
           # the contract between the two.
-          foreach ($f in @('CpapDashDesktop.exe','hms_cpap.exe','static\browser\index.html')) {
+          foreach ($f in @('CpapDashDesktop.exe','hms_cpap.exe','static\browser\index.html','platforms\qwindows.dll')) {
             if (-not (Test-Path "$app\$f")) { throw "missing after install: $f" }
             Write-Host "  ok $f"
           }
