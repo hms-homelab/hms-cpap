@@ -5,6 +5,75 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.0.0] - 2026-08-14
+
+### Added
+- **CpapDash Desktop is now one application, on every platform.** The Windows
+  tray was 673 lines of C#; macOS and Linux had nothing at all, so the only way
+  to configure the service there was to hand-write config.json. SDD-005
+  specified the macOS half a year ago and it was never built, because each
+  native shell was a separate project in a separate language. There is now one
+  Qt application: a Windows tray icon, a macOS menu bar item, a Linux status
+  icon.
+
+  It OWNS hms_cpap. The operating system starts the supervisor at login and
+  knows nothing else, so what used to be three service backends is one
+  implementation, and "is it running?" is answered by the process handle rather
+  than guessed from a service manager or a port probe -- which answer wrong on a
+  machine with a stale process.
+
+- **It checks before it launches.** On startup the supervisor reads config.json
+  itself and decides whether the service can usefully run. Missing settings,
+  unfinished setup or a folder that no longer exists open a setup window instead
+  of starting a service that cannot work.
+
+  The previous behaviour was to start it and report the exit code, which tells
+  someone their software is broken when the real answer is "you have not chosen
+  where your data comes from yet".
+
+- **Setup and settings are native windows, not web pages.** The web wizard needs
+  the service running to serve it, which is exactly what is not happening when
+  nothing has been configured -- a first-time user was being sent to a URL that
+  could not answer. The new setup window runs before anything starts, and the
+  settings window covers everything the web page does, so nobody has to open
+  config.json to change a setting.
+
+  Folders are chosen with a picker rather than typed, and the folder you pick is
+  checked immediately: choosing DATALOG instead of the card root is caught then
+  and there, with what to do about it, instead of importing nothing and leaving
+  you to work out why.
+
+- **Start, Stop and Restart, from the menu.** The supervisor owns the process, so
+  it is the one thing that can honestly offer to control it.
+
+- **Start Over**, which clears your settings and runs setup again. It asks first
+  whether to keep your therapy history, and deleting it takes a second, separate
+  confirmation. Clearing settings and erasing years of recorded nights are very
+  different things and were never going to share a button.
+
+- **/health now reports whether the dashboard is actually available**, not just
+  whether the service is alive. The two are different: a service whose interface
+  files are missing answers perfectly and shows a 404 on every page.
+
+### Fixed
+- **The service no longer outlives the application that started it.** Ending
+  CpapDash Desktop from Task Manager used to leave hms_cpap running and holding
+  port 8893, so the next launch failed with a port conflict the application had
+  caused itself. Now the service goes down with it, on all three platforms.
+
+- **A second launch no longer starts a second service.** Two copies would each
+  own a service, both would want the same port, and one would fail for no reason
+  the user could see. Launching again now brings the running copy to your
+  attention instead.
+
+- **Pointing setup at a file that is not a database is reported as such.**
+  It previously answered "the schema will be created on first start" and the
+  service then refused to boot.
+
+### Changed
+- The Windows installer carries everything the desktop application needs. There
+  is nothing extra to download or install.
+
 ## [4.10.0] - 2026-08-14
 
 ### Added
