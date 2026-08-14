@@ -97,6 +97,15 @@ public:
     void resetForTest();
     bool isDirtyForTest(const std::string& date_folder);
 
+    /// The night's ring samples as a session, INCLUDING the unreadable ones.
+    ///
+    /// Split out for the same reason collectExportFiles was: it is the part
+    /// that can be tested without a network, and it is the part that is easy to
+    /// get wrong. The chart query filters `valid` and is right to; dropping
+    /// those rows here would heal the timeline over and hand the interval
+    /// detector the wrong cadence. Empty when the night had no ring.
+    cpapdash::parser::OximetrySession oximetrySessionFor(const std::string& date_folder);
+
 private:
     SleepHqExportService() = default;
 
@@ -116,6 +125,17 @@ private:
     void finishExport(const std::string& folder, bool ok,
                       std::map<std::string, std::uintmax_t> pre_snapshot,
                       std::chrono::steady_clock::time_point now);
+
+    /// Ship the night's ring session, if there is one, as its own SleepHQ
+    /// import containing exactly one CSV (SDD-015).
+    ///
+    /// Deliberately NOT part of the night's file set. The two uploads settle on
+    /// different clocks -- a night's EDFs when the machine stops writing, a ring
+    /// session when the ring finishes syncing -- so bundling them would put one
+    /// retry policy over both and let a failed CSV hold good therapy data
+    /// hostage. Returns false only when there WAS oximetry and it failed to
+    /// ship; a night with no ring session is a quiet true.
+    bool exportOximetry(const std::string& date_folder);
 
     AppConfig* config_ = nullptr;
     IDatabase* db_ = nullptr;

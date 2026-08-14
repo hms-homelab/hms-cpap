@@ -4,10 +4,17 @@
 #include "utils/ConfigManager.h"
 #include "utils/CardResidue.h"
 #include "database/IDatabase.h"
+#include "database/SqlDialect.h"
+#include "services/O2RingCsvWriter.h"
+#include "services/O2RingCsvParser.h"
+#include "utils/OximetryDevice.h"
+#include "utils/TimeCompat.h"
 
 #include <algorithm>
 #include <regex>
 #include <set>
+#include <cstdio>
+#include <fstream>
 #include <filesystem>
 #include <thread>
 #include <iostream>
@@ -319,6 +326,138 @@ SleepHqExportService::collectExportFiles(const std::string& date_folder,
     return out;
 }
 
+namespace {
+
+// "2026-06-19 23:20:29" as the engines return it, back to an instant.
+//
+// UTC, matching O2RingCsvParser: what is in the table was put there by that
+// parser or by the ring intake, both of which work in UTC. Getting this wrong
+// moves the whole night, which is exactly the bug the writer's round-trip test
+// caught during development.
+// executeQuery hands back whatever the engine gave it, and the engines do not
+// agree: SQLite returns numeric columns as strings, Postgres and MySQL vary by
+// column and cast. Reading them with asInt() throws "Value is not convertible
+// to Int" on the string form, which is a runtime surprise rather than a compile
+// one -- so every numeric read here goes through this.
+int looseInt(const Json::Value& v, int fallback = 0) {
+    if (v.isNull()) return fallback;
+    if (v.isIntegral()) return v.asInt();
+    if (v.isDouble()) return static_cast<int>(v.asDouble());
+    if (v.isString()) {
+        try { return std::stoi(v.asString()); } catch (...) { return fallback; }
+    }
+    return fallback;
+}
+
+// "20260619" -> "2026-06-19", which is what the sleep-day comparison wants.
+std::string dashDate(const std::string& folder) {
+    if (folder.size() != 8) return folder;
+    return folder.substr(0, 4) + "-" + folder.substr(4, 2) + "-" + folder.substr(6, 2);
+}
+
+bool parseDbTimestamp(const std::string& s, std::chrono::system_clock::time_point& out) {
+    int y = 0, mo = 0, d = 0, h = 0, mi = 0, sec = 0;
+    if (std::sscanf(s.c_str(), "%d-%d-%d %d:%d:%d", &y, &mo, &d, &h, &mi, &sec) < 6) {
+        // Postgres hands back an ISO 'T' separator depending on the cast.
+        if (std::sscanf(s.c_str(), "%d-%d-%dT%d:%d:%d", &y, &mo, &d, &h, &mi, &sec) < 6)
+            return false;
+    }
+    std::tm tm{};
+    tm.tm_year = y - 1900; tm.tm_mon = mo - 1; tm.tm_mday = d;
+    tm.tm_hour = h; tm.tm_min = mi; tm.tm_sec = sec;
+    out = std::chrono::system_clock::from_time_t(timegm_utc(&tm));
+    return true;
+}
+
+}  // namespace
+
+cpapdash::parser::OximetrySession
+SleepHqExportService::oximetrySessionFor(const std::string& date_folder) {
+    cpapdash::parser::OximetrySession session;
+    if (!db_) return session;
+
+    // Every sample for the night, INCLUDING the unreadable ones. The chart
+    // query filters `valid` and is right to; here a dropped row would heal the
+    // timeline over and hand the interval detector the wrong cadence (SDD-015).
+    const DbType dt = db_->dbType();
+    const std::string q =
+        "SELECT s.timestamp" + std::string(dt == DbType::POSTGRESQL ? "::text" : "") + " AS ts,"
+        " s.spo2, s.heart_rate, s.motion"
+        " FROM oximetry_sessions os"
+        " JOIN oximetry_samples s ON s.oximetry_session_id = os.id"
+        " WHERE os.device_id = " + sql::param(1, dt) +
+        " AND " + sql::sleepDay("os.start_time", dt) + " = " + sql::castDate(2, dt) +
+        " ORDER BY s.timestamp";
+
+    Json::Value rows;
+    try {
+        rows = db_->executeQuery(q, {kOximetryDeviceId, dashDate(date_folder)});
+    } catch (const std::exception& e) {
+        std::cerr << "[sleephq] oximetry query failed for " << date_folder
+                  << ": " << e.what() << std::endl;
+        return session;
+    }
+    if (!rows.isArray() || rows.empty()) return session;   // no ring that night
+
+    for (const auto& r : rows) {
+        cpapdash::parser::OximetrySample smp{};
+        if (!parseDbTimestamp(r.get("ts", "").asString(), smp.timestamp)) continue;
+        const int sp = looseInt(r["spo2"]);
+        const int hr = looseInt(r["heart_rate"]);
+        smp.spo2         = (sp > 0 && sp <= 100) ? (uint8_t)sp : 0xFF;
+        smp.heart_rate   = (hr > 0 && hr < 255)  ? (uint8_t)hr : 0xFF;
+        smp.invalid_flag = (smp.spo2 == 0xFF) ? 1 : 0;
+        smp.motion       = (uint8_t)std::min(255, std::max(0, looseInt(r["motion"])));
+        session.samples.push_back(smp);
+    }
+    if (session.samples.empty()) return session;
+    session.start_time = session.samples.front().timestamp;
+    session.end_time   = session.samples.back().timestamp;
+    return session;
+}
+
+bool SleepHqExportService::exportOximetry(const std::string& date_folder) {
+    namespace fs = std::filesystem;
+
+    const auto session = oximetrySessionFor(date_folder);
+    if (session.samples.empty()) return true;    // no ring that night
+
+    const std::string name = O2RingCsvWriter::filenameFor(session);
+    const fs::path tmp = fs::temp_directory_path() / ("hms_oxi_" + date_folder + "_" + name);
+    {
+        // Derived data, so it lives in temp. Writing it into the card archive
+        // would put a file on the card that was never on the card.
+        std::ofstream f(tmp, std::ios::binary);
+        if (!f) { std::cerr << "[sleephq] cannot write " << tmp << std::endl; return false; }
+        f << O2RingCsvWriter::write(session);
+    }
+
+    std::string err;
+    SleepHqClient client(config_->sleephq.client_id, config_->sleephq.client_secret);
+    bool ok = false;
+    if (!client.connect(err)) {
+        std::cerr << "[sleephq] oximetry connect failed: " << err << std::endl;
+    } else {
+        const std::string import_id = client.createImport(err);
+        if (import_id.empty()) {
+            std::cerr << "[sleephq] oximetry createImport failed: " << err << std::endl;
+        } else if (!client.uploadFile(import_id, name, "", tmp.string(), err)) {
+            std::cerr << "[sleephq] oximetry upload failed: " << err << std::endl;
+        } else if (!client.processFiles(import_id, err)) {
+            std::cerr << "[sleephq] oximetry process failed: " << err << std::endl;
+        } else {
+            std::cout << "[sleephq] exported " << session.samples.size()
+                      << " oximetry samples for " << date_folder
+                      << " as " << name << " (import " << import_id << ")" << std::endl;
+            ok = true;
+        }
+    }
+
+    std::error_code ec;
+    fs::remove(tmp, ec);
+    return ok;
+}
+
 bool SleepHqExportService::exportFolder(const std::string& date_folder,
                                         const std::string& datalog_dir,
                                         const std::string& root_dir) {
@@ -349,6 +488,12 @@ bool SleepHqExportService::exportFolder(const std::string& date_folder,
 
     if (count == 0) { std::cerr << "[sleephq] no files to export for " << date_folder << std::endl; return false; }
     if (!client.processFiles(import_id, err)) { std::cerr << "[sleephq] " << err << std::endl; return false; }
+
+    // The ring's night, if there is one, goes up as its own import (SDD-015).
+    // Its result deliberately does NOT decide this function's: the therapy data
+    // is already in SleepHQ by this point, and reporting the night as failed
+    // would re-upload all of it on the next sweep to retry one CSV.
+    exportOximetry(date_folder);
     std::cout << "[sleephq] exported " << count << " files for " << date_folder
               << " (import " << import_id << ")" << std::endl;
     return true;
