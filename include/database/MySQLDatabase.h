@@ -90,6 +90,15 @@ public:
     int deleteSessionsByDateFolder(const std::string& device_id,
                                    const std::string& date_folder) override;
 
+    bool replaceSessionFiles(
+        const std::string& device_id,
+        const std::chrono::system_clock::time_point& session_start,
+        const std::vector<SessionFileRef>& files) override;
+
+    std::vector<SessionFileRef> getSessionFilesForDateFolder(
+        const std::string& device_id,
+        const std::string& date_folder) override;
+
     bool isForceCompleted(const std::string& device_id,
                           const std::chrono::system_clock::time_point& session_start) override;
 
@@ -242,6 +251,9 @@ private:
 
     /// Execute SQL with no result rows
     bool exec(const std::string& sql);
+
+    /// One-shot fill of cpap_session_files from the older *_file_path columns.
+    void backfillSessionFiles();
 
     /// Format a time_point as "YYYY-MM-DD HH:MM:SS"
     static std::string fmtTimestamp(const std::chrono::system_clock::time_point& tp);

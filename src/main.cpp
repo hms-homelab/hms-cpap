@@ -37,6 +37,8 @@
 #include "llm_client.h"
 #include "utils/ConfigManager.h"
 #include "utils/AppConfig.h"
+#include "utils/CardResidue.h"
+#include "utils/CardImport.h"
 #include "utils/FileLogger.h"
 #include "utils/CardLayout.h"
 #include <iostream>
@@ -327,8 +329,8 @@ int runReparse(const std::string& card_root, const std::string& start_str, const
             for (const auto& f : session.brp_files) stageFile(f);
             for (const auto& f : session.pld_files) stageFile(f);
             for (const auto& f : session.sad_files) stageFile(f);
-            if (!session.csl_file.empty()) stageFile(session.csl_file);
-            if (!session.eve_file.empty()) stageFile(session.eve_file);
+            for (const auto& f : session.csl_files) stageFile(f);
+            for (const auto& f : session.eve_files) stageFile(f);
 
             // Parse
             total_parsed++;
@@ -341,12 +343,7 @@ int runReparse(const std::string& card_root, const std::string& start_str, const
             }
 
             // Set relative file paths (same format as normal pipeline)
-            std::string relative_base = "DATALOG/" + folder + "/";
-            if (!session.brp_files.empty()) parsed->brp_file_path = relative_base + session.brp_files[0];
-            if (!session.eve_file.empty()) parsed->eve_file_path = relative_base + session.eve_file;
-            if (!session.sad_files.empty()) parsed->sad_file_path = relative_base + session.sad_files[0];
-            if (!session.pld_files.empty()) parsed->pld_file_path = relative_base + session.pld_files[0];
-            if (!session.csl_file.empty()) parsed->csl_file_path = relative_base + session.csl_file;
+            hms_cpap::applySessionFilePaths(*parsed, session, folder);
 
             // Save to DB
             if (db->saveSession(*parsed)) {
@@ -354,6 +351,10 @@ int runReparse(const std::string& card_root, const std::string& start_str, const
 
                 // Reparsed sessions are complete — set session_end
                 db->markSessionCompleted(device_id, session.session_start);
+
+                // Record which files the night is actually made of (SDD-014)
+                db->replaceSessionFiles(device_id, session.session_start,
+                                        hms_cpap::sessionFileRefs(session, folder));
 
                 // Store checkpoint file sizes (same as burst cycle)
                 std::map<std::string, int> checkpoint_sizes;
@@ -973,8 +974,9 @@ int main(int argc, char** argv) {
                 // SDD-010: config.local_dir is the card ROOT, so extracted date
                 // folders belong under its DATALOG, not directly inside it.
                 std::string archive_dir = hms_cpap::datalogDirFor(config.local_dir);
+                std::string card_dir = config.local_dir;   // the card ROOT (SDD-010)
                 hms_cpap::CpapController::cpap_zip_import_ =
-                    [archive_dir](const std::string& zip_path) -> Json::Value {
+                    [archive_dir, card_dir](const std::string& zip_path) -> Json::Value {
                         namespace fs = std::filesystem;
                         Json::Value r;
                         std::error_code ec;
@@ -988,25 +990,14 @@ int main(int argc, char** argv) {
                             r["error"] = "Could not read zip archive";
                             return r;
                         }
-                        // Merge every YYYYMMDD folder found in the extraction
-                        // into the DATALOG archive.
-                        std::set<std::string> dates;
-                        std::regex datedir("^[0-9]{8}$");
-                        for (auto it = fs::recursive_directory_iterator(staging, ec);
-                             it != fs::recursive_directory_iterator(); it.increment(ec)) {
-                            if (ec) break;
-                            if (!it->is_directory(ec)) continue;
-                            std::string name = it->path().filename().string();
-                            if (!std::regex_match(name, datedir)) continue;
-                            fs::path dest = fs::path(archive_dir) / name;
-                            fs::create_directories(dest, ec);
-                            for (auto& fentry : fs::directory_iterator(it->path(), ec)) {
-                                if (!fentry.is_regular_file(ec)) continue;
-                                fs::copy_file(fentry.path(), dest / fentry.path().filename(),
-                                              fs::copy_options::overwrite_existing, ec);
-                            }
-                            dates.insert(name);
-                        }
+                        // Mirror the card into the archive: date folders under
+                        // DATALOG, everything else at its own path from the card
+                        // root, filtered only by residualSkip. See SDD-014 and
+                        // utils/CardImport.h for why this is not a slice.
+                        auto imported = hms_cpap::mirrorCardInto(
+                            staging.string(), card_dir, archive_dir);
+                        const auto& dates = imported.dates;
+
                         fs::remove_all(staging, ec);
                         if (dates.empty()) {
                             r["error"] = "No DATALOG date folders (YYYYMMDD) found in zip";
@@ -1021,6 +1012,11 @@ int main(int argc, char** argv) {
                         r["status"]          = "queued";
                         r["sessions_found"]  = (int)dates.size();
                         r["dates"]           = arr;
+                        // What actually landed. A silent success that dropped the
+                        // payload is how this shipped in the first place.
+                        r["files_copied"]    = imported.copied;
+                        r["files_skipped"]   = imported.skipped;
+                        r["str_found"]       = imported.saw_str;
                         r["message"]         = "Files added to archive; parsing. Poll /api/backfill/status";
                         return r;
                     };

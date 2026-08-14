@@ -10,6 +10,11 @@ import { CleaningTask, CleaningTaskType, CleaningSuggestResult } from '../models
 export class CpapApiService {
   constructor(private http: HttpClient) {}
 
+  /** Tail of the support log for the Logs page. */
+  getLogs(lines = 2000): Observable<LogTail> {
+    return this.http.get<LogTail>('/api/logs', { params: { lines } as any });
+  }
+
   getHealth(): Observable<{ service: string; status: string; version: string }> {
     return this.http.get<{ service: string; status: string; version: string }>('/health');
   }
@@ -344,4 +349,14 @@ export interface ApplyResult {
   restarting: boolean;
   restart_mode: 'supervised' | 'reexec' | 'manual';
   message?: string;
+}
+
+export interface LogTail {
+  path: string;
+  active: boolean;
+  size_bytes: number;
+  lines: string[];
+  total_lines?: number;
+  truncated: boolean;
+  error?: string;
 }

@@ -291,3 +291,92 @@ TEST_F(ExportFileSet, MissingRootFilesAreSkippedNotFatal) {
         folder_, datalog(), card_root_.string());
     EXPECT_EQ(files.size(), 2u) << "a card with no root files still exports its night";
 }
+
+// ── SDD-014: the recorded file set drives the export ────────────────────────
+//
+// cpap_session_files knows which files a night is actually made of, which a
+// directory listing cannot: a merged night is several mask-on blocks, each with
+// its own EVE. These pin that the table decides, and that nothing the table does
+// not track gets dropped on the way.
+
+TEST_F(ExportFileSet, EveryRecordedEveIsExported) {
+    namespace fs = std::filesystem;
+    // Three blocks of one night, the shape of issue #22.
+    for (const char* n : {"20260706_195339_EVE.edf", "20260706_211200_EVE.edf",
+                          "20260706_034500_EVE.edf"})
+        std::ofstream(card_root_ / "DATALOG" / folder_ / n) << "x";
+
+    std::vector<SessionFileRef> recorded = {
+        {"brp", "DATALOG/20260706/20260706_195339_BRP.edf"},
+        {"eve", "DATALOG/20260706/20260706_195339_EVE.edf"},
+        {"eve", "DATALOG/20260706/20260706_211200_EVE.edf"},
+        {"eve", "DATALOG/20260706/20260706_034500_EVE.edf"},
+    };
+
+    auto files = SleepHqExportService::collectExportFiles(
+        folder_, datalog(), card_root_.string(), recorded);
+
+    EXPECT_TRUE(hasFile(files, "20260706_195339_EVE.edf", "DATALOG/20260706"));
+    EXPECT_TRUE(hasFile(files, "20260706_211200_EVE.edf", "DATALOG/20260706"));
+    EXPECT_TRUE(hasFile(files, "20260706_034500_EVE.edf", "DATALOG/20260706"));
+    EXPECT_TRUE(hasFile(files, "STR.edf", ""));
+}
+
+// The table records the five analytical kinds. A night's .crc sidecar has no
+// other source, and SleepHQ is supposed to receive the card as it is.
+TEST_F(ExportFileSet, SidecarsInTheDateFolderStillShipWhenTheTableDrives) {
+    std::ofstream(card_root_ / "DATALOG" / folder_ / "20260706_195339_BRP.crc") << "x";
+    std::ofstream(card_root_ / "DATALOG" / folder_ / "Journal.dat") << "x";
+
+    std::vector<SessionFileRef> recorded = {
+        {"brp", "DATALOG/20260706/20260706_195339_BRP.edf"},
+    };
+    auto files = SleepHqExportService::collectExportFiles(
+        folder_, datalog(), card_root_.string(), recorded);
+
+    EXPECT_TRUE(hasFile(files, "20260706_195339_BRP.crc", "DATALOG/20260706"))
+        << "the night's checksum was dropped";
+    EXPECT_TRUE(hasFile(files, "Journal.dat", "DATALOG/20260706"));
+}
+
+// Root files stop being four hardcoded names: the whole card root ships.
+TEST_F(ExportFileSet, TheWholeCardRootIsExportedNotFourHardcodedNames) {
+    namespace fs = std::filesystem;
+    fs::create_directories(card_root_ / "SETTINGS");
+    std::ofstream(card_root_ / "SETTINGS" / "SET1.tgt") << "x";
+    std::ofstream(card_root_ / "Journal.dat") << "x";
+    std::ofstream(card_root_ / "AGL.crc") << "x";
+
+    auto files = SleepHqExportService::collectExportFiles(
+        folder_, datalog(), card_root_.string());
+
+    EXPECT_TRUE(hasFile(files, "SET1.tgt", "SETTINGS"));
+    EXPECT_TRUE(hasFile(files, "Journal.dat", ""));
+    EXPECT_TRUE(hasFile(files, "AGL.crc", ""));
+}
+
+// This is the one code path that sends card contents to a third party.
+TEST_F(ExportFileSet, EzshareCfgIsNeverExported) {
+    std::ofstream(card_root_ / "ezshare.cfg") << "ssid=home\npassword=hunter2\n";
+    std::ofstream(card_root_ / "holiday.jpg") << "x";
+
+    auto files = SleepHqExportService::collectExportFiles(
+        folder_, datalog(), card_root_.string());
+
+    EXPECT_FALSE(hasFile(files, "ezshare.cfg", ""))
+        << "ezshare.cfg can hold WiFi credentials and must never leave the machine";
+    EXPECT_FALSE(hasFile(files, "holiday.jpg", ""));
+}
+
+// A Lowenstein card is one container. The 20 MB cap must not drop it.
+TEST_F(ExportFileSet, ALowensteinContainerIsExportedEvenWhenLarge) {
+    {
+        std::ofstream f(card_root_ / "therapy.pdat", std::ios::binary);
+        std::string chunk(1024 * 1024, 'x');
+        for (int i = 0; i < 22; ++i) f.write(chunk.data(), chunk.size());  // 22 MB
+    }
+    auto files = SleepHqExportService::collectExportFiles(
+        folder_, datalog(), card_root_.string());
+    EXPECT_TRUE(hasFile(files, "therapy.pdat", ""))
+        << "the only file on a Prisma card was dropped by the size cap";
+}

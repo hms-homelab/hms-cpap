@@ -61,6 +61,18 @@ int PostgresDatabase::deleteSessionsByDateFolder(const std::string& device_id,
     return db_->deleteSessionsByDateFolder(device_id, date_folder);
 }
 
+bool PostgresDatabase::replaceSessionFiles(
+    const std::string& device_id,
+    const std::chrono::system_clock::time_point& session_start,
+    const std::vector<SessionFileRef>& files) {
+    return db_->replaceSessionFiles(device_id, session_start, files);
+}
+
+std::vector<SessionFileRef> PostgresDatabase::getSessionFilesForDateFolder(
+    const std::string& device_id, const std::string& date_folder) {
+    return db_->getSessionFilesForDateFolder(device_id, date_folder);
+}
+
 // -- Force-complete -----------------------------------------------------------
 
 bool PostgresDatabase::isForceCompleted(const std::string& device_id,

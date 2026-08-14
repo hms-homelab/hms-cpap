@@ -7,8 +7,10 @@
 #include "services/SetupService.h"
 #include "utils/CardLayout.h"
 #include "utils/ConfigManager.h"
+#include "utils/FileLogger.h"
 #include <drogon/MultiPart.h>
 #include <atomic>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <regex>
@@ -859,6 +861,60 @@ void CpapController::setupAutostart(const drogon::HttpRequestPtr& req,
     }
     cb(drogon::HttpResponse::newHttpJsonResponse(result));
 #endif
+}
+
+void CpapController::logs(const drogon::HttpRequestPtr& req,
+                          std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    namespace fs = std::filesystem;
+
+    // The active path when logging is on; otherwise where it WOULD be written,
+    // so the page can say "logging is off" and still name the file.
+    std::string path = FileLogger::activePath();
+    const bool active = !path.empty();
+    if (path.empty()) path = FileLogger::defaultPath();
+
+    int want = 2000;
+    if (auto p = req->getParameter("lines"); !p.empty()) {
+        try { want = std::max(1, std::min(50000, std::stoi(p))); } catch (...) {}
+    }
+
+    Json::Value result;
+    result["path"]    = path;
+    result["active"]  = active;
+
+    std::error_code ec;
+    const auto size = fs::file_size(path, ec);
+    result["size_bytes"] = ec ? 0 : static_cast<Json::UInt64>(size);
+
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        result["lines"]     = Json::Value(Json::arrayValue);
+        result["truncated"] = false;
+        result["error"]     = active ? "log file is not readable yet"
+                                     : "logging is disabled";
+        cb(jsonResp(result));
+        return;
+    }
+
+    // Keep only the last `want` lines. A ring buffer rather than reading the
+    // whole file into memory: the cap is what stops a 5 MB log becoming a 5 MB
+    // JSON response, so it has to bound the read too, not just the output.
+    std::deque<std::string> tail;
+    std::string line;
+    std::uintmax_t total = 0;
+    while (std::getline(in, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        tail.push_back(line);
+        ++total;
+        if (tail.size() > static_cast<std::size_t>(want)) tail.pop_front();
+    }
+
+    Json::Value arr(Json::arrayValue);
+    for (const auto& l : tail) arr.append(l);
+    result["lines"]      = arr;
+    result["total_lines"] = static_cast<Json::UInt64>(total);
+    result["truncated"]  = total > tail.size();
+    cb(jsonResp(result));
 }
 
 void CpapController::capabilities(const drogon::HttpRequestPtr&,

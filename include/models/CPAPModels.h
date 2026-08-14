@@ -198,9 +198,10 @@ struct SessionFileSet {
     std::string date_folder;      // e.g., "20260205"
     std::string session_prefix;   // e.g., "20260206_021037" (from CSL/EVE)
 
-    // Session identifier files (ONE per session)
-    std::string csl_file;         // Clinical summary
-    std::string eve_file;         // Events
+    // Session identifier files (one per mask-on block, so MULTIPLE per session --
+    // see docs/SDD-014 and the note on the copy in parsers/CpapdashBridge.h)
+    std::vector<std::string> csl_files;  // Clinical summaries
+    std::vector<std::string> eve_files;  // Events
 
     // Checkpoint files (MULTIPLE per session - collect ALL)
     std::vector<std::string> brp_files;  // Breathing pattern checkpoints
@@ -221,7 +222,7 @@ struct SessionFileSet {
 
     /** Check if session is complete (has summary and events) */
     bool isComplete() const {
-        return !csl_file.empty() && !eve_file.empty() && hasData();
+        return !csl_files.empty() && !eve_files.empty() && hasData();
     }
 };
 

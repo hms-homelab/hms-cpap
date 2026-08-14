@@ -2,8 +2,12 @@
 #include "services/SleepHqClient.h"
 #include "utils/AppConfig.h"
 #include "utils/ConfigManager.h"
+#include "utils/CardResidue.h"
+#include "database/IDatabase.h"
 
 #include <algorithm>
+#include <regex>
+#include <set>
 #include <filesystem>
 #include <thread>
 #include <iostream>
@@ -217,13 +221,50 @@ void SleepHqExportService::exportFolderAsync(const std::string& date_folder,
 std::vector<SleepHqExportService::ExportFile>
 SleepHqExportService::collectExportFiles(const std::string& date_folder,
                                          const std::string& datalog_dir,
-                                         const std::string& root_dir) {
+                                         const std::string& root_dir,
+                                         const std::vector<SessionFileRef>& recorded) {
     namespace fs = std::filesystem;
     std::vector<ExportFile> out;
     std::error_code ec;
 
     // The night's own files, under their card-accurate DATALOG/<date> path.
-    if (fs::exists(datalog_dir, ec)) {
+    //
+    // cpap_session_files decides this when it has anything to say: a merged
+    // night is several mask-on blocks and the database is what knows which
+    // files belong to it. The directory walk stays as the fallback for nights
+    // that were never recorded (see the header).
+    if (!recorded.empty()) {
+        std::set<std::string> taken;
+        for (const auto& r : recorded) {
+            fs::path rel(r.rel_path);
+            fs::path local = fs::path(root_dir) / rel;
+            if (!fs::exists(local, ec)) continue;
+            // rel_path is card-accurate ("DATALOG/<date>/<name>"), so its parent
+            // IS the import path and nothing has to be reconstructed.
+            out.push_back({rel.filename().string(),
+                           rel.parent_path().generic_string(),
+                           local.string()});
+            taken.insert(rel.filename().string());
+        }
+
+        // ...plus whatever else is in the date folder that the table does not
+        // track. cpap_session_files records the five analytical kinds; the
+        // night's .crc sidecars and anything else downloadDatalogResidue()
+        // pulled in have NO other source, and SleepHQ wants the card as it is.
+        // Without this the table branch would ship a night missing its
+        // checksums, which the old directory walk always included.
+        if (fs::exists(datalog_dir, ec)) {
+            for (const auto& e : fs::directory_iterator(datalog_dir, ec)) {
+                if (!e.is_regular_file(ec)) continue;
+                const std::string name = e.path().filename().string();
+                if (taken.count(name)) continue;
+                auto sz = fs::file_size(e.path(), ec);
+                if (ec) { ec.clear(); continue; }
+                if (residualSkip(name, static_cast<uint64_t>(sz))) continue;
+                out.push_back({name, "DATALOG/" + date_folder, e.path().string()});
+            }
+        }
+    } else if (fs::exists(datalog_dir, ec)) {
         for (const auto& e : fs::directory_iterator(datalog_dir, ec)) {
             if (!e.is_regular_file()) continue;
             out.push_back({e.path().filename().string(),
@@ -232,16 +273,48 @@ SleepHqExportService::collectExportFiles(const std::string& date_folder,
         }
     }
 
-    // Card root files, uploaded to the import ROOT (import_path ""), so SleepHQ
-    // sees the same layout a real SD card has. Without STR.edf the import has no
-    // therapy summary, and without Identification.* it has no machine — SleepHQ
-    // then processes it into nothing visible. root_dir MUST therefore be the card
+    // Everything else on the card, at its own relative path, so SleepHQ sees the
+    // layout a real SD card has. Without STR.edf the import has no therapy
+    // summary, and without Identification.* it has no machine — SleepHQ then
+    // processes it into nothing visible. root_dir MUST therefore be the card
     // root, not the DATALOG directory.
-    for (const char* name : {"STR.edf", "Identification.tgt",
-                             "Identification.json", "Identification.crc"}) {
-        std::string p = root_dir + "/" + name;
-        if (!fs::exists(p, ec)) continue;
-        out.push_back({name, "", p});
+    //
+    // This used to be four hardcoded names, which dropped Journal.dat, SETTINGS/
+    // and the .crc sidecars. It is now a walk under the same denylist the card
+    // mirror uses -- and this is the one path that sends card contents to a third
+    // party, so ezshare.cfg being on that denylist is load-bearing.
+    if (fs::exists(root_dir, ec)) {
+        for (auto it = fs::recursive_directory_iterator(root_dir, ec);
+             it != fs::recursive_directory_iterator(); it.increment(ec)) {
+            if (ec) break;
+            if (it->is_directory(ec)) {
+                // DATALOG is the session files' business, handled above.
+                if (it->path().filename() == "DATALOG") it.disable_recursion_pending();
+                continue;
+            }
+            if (!it->is_regular_file(ec)) continue;
+
+            const std::string name = it->path().filename().string();
+
+            // Session EDFs belong to the DATALOG branch above, and are named
+            // YYYYMMDD_HHMMSS_XXX.edf. Skipping them by name rather than by
+            // location is what keeps the misconfiguration visible: when root_dir
+            // is wrongly pointed at DATALOG (or at a date folder inside it) the
+            // walk finds no root files at all, which is the loud, testable
+            // failure. Matching on location would silently re-export them as
+            // root files and SleepHQ would accept a machine-less import.
+            static const std::regex session_edf(
+                R"(^\d{8}_\d{6}_[A-Za-z0-9]+\.edf$)", std::regex::icase);
+            if (std::regex_match(name, session_edf)) continue;
+
+            auto size = fs::file_size(it->path(), ec);
+            if (ec) { ec.clear(); continue; }
+            if (residualSkip(name, static_cast<uint64_t>(size))) continue;
+
+            const fs::path rel = fs::relative(it->path(), root_dir, ec);
+            if (ec) { ec.clear(); continue; }
+            out.push_back({name, rel.parent_path().generic_string(), it->path().string()});
+        }
     }
     return out;
 }
@@ -259,8 +332,15 @@ bool SleepHqExportService::exportFolder(const std::string& date_folder,
     std::string import_id = client.createImport(err);
     if (import_id.empty()) { std::cerr << "[sleephq] createImport failed: " << err << std::endl; return false; }
 
+    // What the database says this night is made of. Empty is fine and means the
+    // walk decides instead (see collectExportFiles).
+    std::vector<SessionFileRef> recorded;
+    if (db_ && config_ && !config_->device_id.empty()) {
+        recorded = db_->getSessionFilesForDateFolder(config_->device_id, date_folder);
+    }
+
     int count = 0;
-    for (const auto& f : collectExportFiles(date_folder, datalog_dir, root_dir)) {
+    for (const auto& f : collectExportFiles(date_folder, datalog_dir, root_dir, recorded)) {
         if (!client.uploadFile(import_id, f.name, f.import_path, f.local_path, err)) {
             std::cerr << "[sleephq] " << err << std::endl; return false;
         }

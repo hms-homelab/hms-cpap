@@ -8,22 +8,31 @@
 // folder dirty and sweep() exports it only once the archive has been quiet
 // for sleephq.quiet_minutes, with retry/backoff on failure.
 //
+#include "parsers/CpapdashBridge.h"
+
 #include <chrono>
 #include <cstdint>
 #include <functional>
 #include <map>
 #include <mutex>
 #include <string>
+#include <vector>
 
 namespace hms_cpap {
 
 class AppConfig;
+class IDatabase;
 
 class SleepHqExportService {
 public:
     static SleepHqExportService& getInstance();
 
-    void initialize(AppConfig* cfg) { config_ = cfg; }
+    /// `db` is optional: without it the export falls back to walking DATALOG,
+    /// which is what every caller did before cpap_session_files existed.
+    void initialize(AppConfig* cfg, IDatabase* db = nullptr) {
+        config_ = cfg;
+        db_ = db;
+    }
 
     // Mark a date folder (YYYYMMDD) as needing export once the night settles.
     // Called by the live collector on session completion. No-op if disabled.
@@ -66,9 +75,18 @@ public:
     /// SET is testable without a network: a regression here (notably root_dir
     /// pointing at DATALOG instead of the card root) silently drops STR.edf and
     /// Identification.*, which SleepHQ accepts and then processes into nothing.
-    static std::vector<ExportFile> collectExportFiles(const std::string& date_folder,
-                                                     const std::string& datalog_dir,
-                                                     const std::string& root_dir);
+    ///
+    /// `recorded` is the night's file set from cpap_session_files (SDD-014).
+    /// When it has rows they decide which session files are uploaded, because
+    /// the database knows which files belong to the night and a directory listing
+    /// does not. When it is EMPTY the DATALOG directory is walked instead: a
+    /// night that predates the table, or one sitting on disk that was never
+    /// parsed, must still export rather than export nothing.
+    static std::vector<ExportFile> collectExportFiles(
+        const std::string& date_folder,
+        const std::string& datalog_dir,
+        const std::string& root_dir,
+        const std::vector<SessionFileRef>& recorded = {});
 
     bool exportFolder(const std::string& date_folder,
                       const std::string& datalog_dir, const std::string& root_dir);
@@ -100,6 +118,7 @@ private:
                       std::chrono::steady_clock::time_point now);
 
     AppConfig* config_ = nullptr;
+    IDatabase* db_ = nullptr;
     std::mutex mu_;
     std::map<std::string, FolderState> dirty_;
     /// folder -> the file snapshot at its last SUCCESSFUL export. Guards against

@@ -32,6 +32,11 @@ public:
     MOCK_METHOD(bool, markSessionCompleted, (const std::string&, const std::chrono::system_clock::time_point&), (override));
     MOCK_METHOD(bool, reopenSession, (const std::string&, const std::chrono::system_clock::time_point&), (override));
     MOCK_METHOD(int, deleteSessionsByDateFolder, (const std::string&, const std::string&), (override));
+    MOCK_METHOD(bool, replaceSessionFiles,
+                (const std::string&, const std::chrono::system_clock::time_point&,
+                 (const std::vector<SessionFileRef>&)), (override));
+    MOCK_METHOD((std::vector<SessionFileRef>), getSessionFilesForDateFolder,
+                (const std::string&, const std::string&), (override));
     MOCK_METHOD(bool, isForceCompleted, (const std::string&, const std::chrono::system_clock::time_point&), (override));
     MOCK_METHOD(bool, setForceCompleted, (const std::string&, const std::chrono::system_clock::time_point&), (override));
     MOCK_METHOD((std::map<std::string, int>), getCheckpointFileSizes, (const std::string&, const std::chrono::system_clock::time_point&), (override));

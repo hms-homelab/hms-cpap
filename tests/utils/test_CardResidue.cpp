@@ -53,7 +53,28 @@ TEST(ResidualSkip, DropsMultimediaAndOfficeAndArchives) {
     EXPECT_TRUE(residualSkip("movie.mp4", 5 * MB));
     EXPECT_TRUE(residualSkip("taxes.xlsx", 100 * KB));
     EXPECT_TRUE(residualSkip("resume.docx", 100 * KB));
-    EXPECT_TRUE(residualSkip("backup.zip", 1 * MB));
+    EXPECT_TRUE(residualSkip("archive.rar", 1 * MB));
+}
+
+// SDD-049: .zip and .bin are deliberately NOT denied, and the size cap is the
+// honest gate instead. This used to assert backup.zip was dropped. It changed
+// because a vendor's whole-card container can arrive as either, and denying the
+// extension would throw away the only file on such a card.
+TEST(ResidualSkip, ZipAndBinAreNotDeniedOnExtensionAlone) {
+    EXPECT_FALSE(residualSkip("backup.zip", 1 * MB));
+    EXPECT_FALSE(residualSkip("firmware.bin", 1 * MB));
+    // The cap still applies to them, because that is the real guard.
+    EXPECT_TRUE(residualSkip("backup.zip", 25 * MB));
+}
+
+// A Lowenstein Prisma card carries ONE compressed container holding the whole
+// therapy history. It was 8.8 MB in a real client upload and only grows, so the
+// cap must not be what decides whether the card's only file is collected.
+TEST(ResidualSkip, LowensteinContainersAreExemptFromTheSizeCap) {
+    EXPECT_FALSE(residualSkip("therapy.pdat", 8 * MB));
+    EXPECT_FALSE(residualSkip("therapy.pdat", 45 * MB));   // over the cap, still kept
+    EXPECT_FALSE(residualSkip("config.pcfg", 30 * MB));
+    EXPECT_FALSE(residualSkip("THERAPY.PDAT", 45 * MB));   // case-insensitive
 }
 
 TEST(ResidualSkip, DropsOsJunkAndSidecars) {

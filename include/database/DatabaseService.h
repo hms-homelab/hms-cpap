@@ -106,6 +106,15 @@ public:
     int deleteSessionsByDateFolder(const std::string& device_id,
                                    const std::string& date_folder) override;
 
+    bool replaceSessionFiles(
+        const std::string& device_id,
+        const std::chrono::system_clock::time_point& session_start,
+        const std::vector<SessionFileRef>& files) override;
+
+    std::vector<SessionFileRef> getSessionFilesForDateFolder(
+        const std::string& device_id,
+        const std::string& date_folder) override;
+
     bool saveSTRDailyRecords(const std::vector<STRDailyRecord>& records) override;
     std::optional<std::string> getLastSTRDate(const std::string& device_id) override;
     bool aggregateDailySummaryFromSessions(const std::string& device_id) override;

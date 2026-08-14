@@ -1,0 +1,63 @@
+<div class="logs-page">
+  <div class="logs-header">
+    <div class="logs-title">
+      <h1><i class="fa-solid fa-file-lines"></i> Logs</h1>
+      <p class="logs-sub" *ngIf="data">
+        <span class="log-path" [title]="data.path">{{ data.path }}</span>
+        <span class="dot">·</span>{{ sizeLabel }}
+        <span class="dot">·</span>
+        <span *ngIf="data.total_lines">{{ data.total_lines }} lines</span>
+        <span class="badge off" *ngIf="!data.active">logging disabled</span>
+      </p>
+    </div>
+
+    <div class="logs-actions">
+      <select [(ngModel)]="lines" (change)="refresh()" title="How many lines to show">
+        <option *ngFor="let n of lineOptions" [ngValue]="n">last {{ n }}</option>
+      </select>
+
+      <button (click)="refresh()" [disabled]="loading" title="Reload">
+        <i class="fa-solid fa-rotate-right"></i> Refresh
+      </button>
+
+      <button (click)="toggleAutoRefresh()" [class.on]="autoRefresh"
+              title="Reload every 5 seconds">
+        <i class="fa-solid fa-clock-rotate-left"></i>
+        {{ autoRefresh ? 'Auto: on' : 'Auto: off' }}
+      </button>
+
+      <button (click)="download()" [disabled]="!text" title="Save as a file">
+        <i class="fa-solid fa-download"></i> Download
+      </button>
+
+      <button class="primary" (click)="copy()" [disabled]="!text">
+        <i class="fa-solid" [ngClass]="copied ? 'fa-check' : 'fa-copy'"></i>
+        {{ copied ? 'Copied' : 'Copy to clipboard' }}
+      </button>
+    </div>
+  </div>
+
+  <div class="notice error" *ngIf="error">{{ error }}</div>
+
+  <div class="notice" *ngIf="data?.error && !error">
+    {{ data?.error }}
+    <span *ngIf="!data?.active">
+      Turn logging on in Settings, then restart, and the file appears at
+      <code>{{ data?.path }}</code>.
+    </span>
+  </div>
+
+  <div class="notice" *ngIf="data?.truncated">
+    Showing the last {{ data?.lines?.length }} of {{ data?.total_lines }} lines.
+    Pick a larger count above to see more.
+  </div>
+
+  <div class="log-view" *ngIf="!loading || data">
+    <pre *ngIf="text; else empty">{{ text }}</pre>
+    <ng-template #empty>
+      <p class="empty">Nothing logged yet.</p>
+    </ng-template>
+  </div>
+
+  <p class="loading" *ngIf="loading && !data">Reading the log…</p>
+</div>
