@@ -28,8 +28,24 @@ bool isCpapEdf(const std::string& name) {
 }
 
 bool residualSkip(const std::string& name, uint64_t size_bytes) {
-    if (size_bytes > 20ull * 1024 * 1024) return true;  // >20 MB, not a card file
     const std::string lower = toLower(name);
+    {
+        auto d = lower.find_last_of('.');
+        const std::string e = (d == std::string::npos) ? "" : lower.substr(d);
+
+        // WHOLE-CARD CONTAINERS ARE EXEMPT FROM THE SIZE CAP, checked before it.
+        //
+        // A Lowenstein Prisma card is not a browsable tree: it carries one
+        // compressed blob, therapy.pdat, holding the entire therapy history
+        // (8.8 MB in a real 2026-07 client upload, and it only grows), with
+        // config.pcfg beside it. The cap exists to stop somebody's holiday video
+        // riding along; applied to a container it would drop the ONLY file on
+        // the card and the sweep would report a clean, complete, empty pass.
+        // Same rule as the cloud's Tier 4 sweep (hms-cpapdash-api SDD-049).
+        if (e == ".pdat" || e == ".pcfg") return false;
+    }
+
+    if (size_bytes > 20ull * 1024 * 1024) return true;  // >20 MB, not a card file
     if (lower.rfind("._", 0) == 0) return true;  // AppleDouble sidecars
     if (lower == ".ds_store" || lower == "thumbs.db" ||
         lower == "desktop.ini" || lower == "ezshare.cfg") return true;
@@ -42,7 +58,11 @@ bool residualSkip(const std::string& name, uint64_t size_bytes) {
         ".mp3",".wav",".aac",".flac",".ogg",".m4a",".wma",
         ".docx",".doc",".xlsx",".xls",".pptx",".ppt",".pdf",".pages",".numbers",
         ".key",".rtf",".odt",".ods",
-        ".zip",".rar",".7z",".gz",".tar",".dmg",".iso",".exe",".app",".pkg",".bin",
+        ".rar",".7z",".gz",".tar",".dmg",".iso",".exe",".app",".pkg",
+        // *** .zip and .bin are deliberately NOT denied (SDD-049). ***
+        // Extension is a bad proxy for junk on a CPAP card, and size is the
+        // honest gate. A vendor's whole-card container may well arrive as
+        // either, and denying the extension would drop the only file there is.
     };
     return deny.count(ext) > 0;
 }

@@ -222,7 +222,12 @@ elseif(EXISTS ${CPAPDASH_PARSER_LOCAL_DIR2}/CMakeLists.txt)
 else()
     FetchContent_Declare(cpapdash_parser
         GIT_REPOSITORY https://github.com/hms-homelab/hms-cpapdash-parser.git
-        GIT_TAG        v2026.1.3
+        # KEEP THIS IN STEP WITH THE PARSER. A local build never exercises
+        # this line -- CMake prefers the sibling checkout above -- so a stale
+        # pin is something ONLY CI can catch. That is exactly how the v4.9.9
+        # release build failed: the pin was left on v2026.1.3 while the code
+        # had moved on to a field that tag did not have.
+        GIT_TAG        v2026.1.11
     )
 endif()
 FetchContent_MakeAvailable(cpapdash_parser)

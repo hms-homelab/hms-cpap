@@ -41,6 +41,19 @@ CREATE INDEX idx_cpap_sessions_device ON cpap_sessions(device_id);
 CREATE INDEX idx_cpap_sessions_start ON cpap_sessions(device_id, session_start);
 
 -- Session metrics (one row per session)
+-- cpap_session_files (SDD-014): which files actually make up a session.
+-- rel_path is indexed with a length prefix: a 512-char VARCHAR exceeds InnoDB's
+-- key limit on utf8mb4.
+CREATE TABLE IF NOT EXISTS cpap_session_files (
+    id          INT AUTO_INCREMENT PRIMARY KEY,
+    session_id  INT NOT NULL,
+    kind        VARCHAR(8) NOT NULL,
+    rel_path    VARCHAR(512) NOT NULL,
+    UNIQUE KEY uq_session_file (session_id, rel_path(255)),
+    KEY idx_session_files_session (session_id),
+    KEY idx_session_files_path (rel_path(255))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS cpap_session_metrics (
     id                     INT AUTO_INCREMENT PRIMARY KEY,
     session_id             INT NOT NULL UNIQUE,

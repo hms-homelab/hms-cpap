@@ -139,7 +139,7 @@ TEST_F(SessionGapTest, LongBlockThenShortMaskOffBreak_StaysOneSession) {
     ASSERT_EQ(sessions.size(), 1) << "long block + short breaks must stay one night";
     EXPECT_EQ(sessions[0].brp_files.size(), 3);
     EXPECT_EQ(sessions[0].session_prefix, "20260301_230200");
-    EXPECT_FALSE(sessions[0].eve_file.empty()) << "the night keeps its EVE";
+    EXPECT_FALSE(sessions[0].eve_files.empty()) << "the night keeps its EVE";
 }
 
 TEST_F(SessionGapTest, RealGapAfterLongBlock_StillSplits) {
@@ -192,12 +192,12 @@ TEST_F(CSLEVEMapTest, MultipleSessionsGetCorrectCSLFiles) {
     ASSERT_EQ(sessions.size(), 2);
 
     // Session 1 should have its own CSL/EVE
-    EXPECT_EQ(sessions[0].csl_file, "20260301_220000_CSL.edf");
-    EXPECT_EQ(sessions[0].eve_file, "20260301_220000_EVE.edf");
+    EXPECT_EQ(sessions[0].csl_files.at(0), "20260301_220000_CSL.edf");
+    EXPECT_EQ(sessions[0].eve_files.at(0), "20260301_220000_EVE.edf");
 
     // Session 2 should have its own CSL/EVE — NOT session 1's
-    EXPECT_EQ(sessions[1].csl_file, "20260302_003000_CSL.edf");
-    EXPECT_EQ(sessions[1].eve_file, "20260302_003000_EVE.edf");
+    EXPECT_EQ(sessions[1].csl_files.at(0), "20260302_003000_CSL.edf");
+    EXPECT_EQ(sessions[1].eve_files.at(0), "20260302_003000_EVE.edf");
 }
 
 TEST_F(CSLEVEMapTest, ThreeSessionsEachGetOwnCSL) {
@@ -214,9 +214,9 @@ TEST_F(CSLEVEMapTest, ThreeSessionsEachGetOwnCSL) {
     auto sessions = SessionDiscoveryService::groupLocalFolder(tmp_dir, "20260301");
 
     ASSERT_EQ(sessions.size(), 3);
-    EXPECT_EQ(sessions[0].csl_file, "20260301_210000_CSL.edf");
-    EXPECT_EQ(sessions[1].csl_file, "20260301_233000_CSL.edf");
-    EXPECT_EQ(sessions[2].csl_file, "20260302_020000_CSL.edf");
+    EXPECT_EQ(sessions[0].csl_files.at(0), "20260301_210000_CSL.edf");
+    EXPECT_EQ(sessions[1].csl_files.at(0), "20260301_233000_CSL.edf");
+    EXPECT_EQ(sessions[2].csl_files.at(0), "20260302_020000_CSL.edf");
 }
 
 TEST_F(CSLEVEMapTest, LastSessionGetsUnmatchedCSL) {
@@ -229,7 +229,7 @@ TEST_F(CSLEVEMapTest, LastSessionGetsUnmatchedCSL) {
     auto sessions = SessionDiscoveryService::groupLocalFolder(tmp_dir, "20260301");
 
     ASSERT_EQ(sessions.size(), 1);
-    EXPECT_EQ(sessions[0].csl_file, "20260302_060000_CSL.edf");
+    EXPECT_EQ(sessions[0].csl_files.at(0), "20260302_060000_CSL.edf");
 }
 
 // ── groupLocalFolder: file-type collection, sizing, and edge cases ───────────
@@ -298,8 +298,8 @@ TEST_F(GroupLocalFolderTest, BrpPldSadAllCollectedInOneSession) {
     EXPECT_EQ(s.brp_files.size(), 1);
     EXPECT_EQ(s.pld_files.size(), 1);
     EXPECT_EQ(s.sad_files.size(), 1);
-    EXPECT_EQ(s.csl_file, "20260301_220000_CSL.edf");
-    EXPECT_EQ(s.eve_file, "20260301_220000_EVE.edf");
+    EXPECT_EQ(s.csl_files.at(0), "20260301_220000_CSL.edf");
+    EXPECT_EQ(s.eve_files.at(0), "20260301_220000_EVE.edf");
     EXPECT_TRUE(s.hasData());
     EXPECT_TRUE(s.isComplete());
     EXPECT_EQ(s.date_folder, "20260301");
@@ -352,8 +352,8 @@ TEST_F(GroupLocalFolderTest, EveMatchedByTimeNotOnlyLastSession) {
     auto sessions = SessionDiscoveryService::groupLocalFolder(tmp_dir, "20260301");
 
     ASSERT_EQ(sessions.size(), 2);
-    EXPECT_EQ(sessions[0].eve_file, "20260301_200000_EVE.edf");
-    EXPECT_EQ(sessions[1].eve_file, "20260301_230000_EVE.edf");
+    EXPECT_EQ(sessions[0].eve_files.at(0), "20260301_200000_EVE.edf");
+    EXPECT_EQ(sessions[1].eve_files.at(0), "20260301_230000_EVE.edf");
 }
 
 TEST_F(GroupLocalFolderTest, LowercaseSuffixesAreRecognized) {
@@ -367,7 +367,7 @@ TEST_F(GroupLocalFolderTest, LowercaseSuffixesAreRecognized) {
     ASSERT_EQ(sessions.size(), 1);
     EXPECT_EQ(sessions[0].brp_files.size(), 1);
     EXPECT_EQ(sessions[0].pld_files.size(), 1);
-    EXPECT_EQ(sessions[0].csl_file, "20260301_220000_csl.edf");
+    EXPECT_EQ(sessions[0].csl_files.at(0), "20260301_220000_csl.edf");
 }
 
 // ── discoverLocalSessions: folder enumeration & date filtering ───────────────
@@ -752,8 +752,8 @@ TEST(DiscoverNewSessionsTest, FirstRunGroupsCheckpointsAndPicksLargest) {
     EXPECT_EQ(s.session_prefix, "20200101_220000");
     EXPECT_EQ(s.brp_files.size(), 2);
     EXPECT_EQ(s.pld_files.size(), 1);
-    EXPECT_EQ(s.csl_file, "20200101_220000_CSL.edf");
-    EXPECT_EQ(s.eve_file, "20200101_220000_EVE.edf");
+    EXPECT_EQ(s.csl_files.at(0), "20200101_220000_CSL.edf");
+    EXPECT_EQ(s.eve_files.at(0), "20200101_220000_EVE.edf");
     // 10 + 40 + 5 + 1 + 2 = 58
     EXPECT_EQ(s.total_size_kb, 58);
 }
@@ -833,4 +833,86 @@ TEST(DiscoverNewSessionsTest, AlreadyStoredOldSessionIsSkipped) {
     SessionDiscoveryService svc(ds);
     auto sessions = svc.discoverNewSessions(last);
     EXPECT_TRUE(sessions.empty());
+}
+
+// ── SDD-014 / issue #22: a merged session keeps EVERY EVE ───────────────────
+//
+// A ResMed night is several mask-on blocks and each writes its own EVE. The
+// matcher used to take the FIRST in prefix order and break, which is the
+// earliest block -- routinely a seconds-long mask-fit check whose EVE is the
+// empty 832-byte stub. The night's real annotations were never staged, never
+// parsed, and the session read AHI 0.0 while OSCAR read 2.84 off the same card.
+
+class MergedSessionSidecars : public ::testing::Test {
+protected:
+    std::string tmp_dir;
+    void SetUp() override {
+        tmp_dir = "/tmp/cpap_test_merged_" + std::to_string(getpid());
+        fs::remove_all(tmp_dir);
+        fs::create_directories(tmp_dir);
+        setenv("SESSION_GAP_MINUTES", "60", 1);
+    }
+    void TearDown() override { fs::remove_all(tmp_dir); unsetenv("SESSION_GAP_MINUTES"); }
+};
+
+// The reporter's card: four blocks that merge into one session.
+// Dates are deliberately >24h in the past so estimateCheckpointEnd's mtime
+// plausibility gate discards the file mtimes and merging is driven purely by
+// BRP size (end = start + minutes(size_kb / 6)).
+TEST_F(MergedSessionSidecars, EveryBlocksEveSurvivesTheMerge) {
+    touchFileSized(tmp_dir, "20250812_233427_BRP.edf", 24);     // mask-fit check
+    touchFile(tmp_dir,      "20250812_233427_EVE.edf");         // the empty stub
+    touchFileSized(tmp_dir, "20250812_233829_BRP.edf", 24);
+    touchFile(tmp_dir,      "20250812_233829_EVE.edf");
+    touchFileSized(tmp_dir, "20250812_235319_BRP.edf", 1200);   // the real night
+    touchFile(tmp_dir,      "20250812_235319_EVE.edf");
+    touchFileSized(tmp_dir, "20250813_034616_BRP.edf", 300);    // after a break
+    touchFile(tmp_dir,      "20250813_034616_EVE.edf");
+
+    auto sessions = SessionDiscoveryService::groupLocalFolder(tmp_dir, "20250812");
+
+    ASSERT_EQ(sessions.size(), 1u) << "the four blocks are one night";
+    EXPECT_EQ(sessions[0].brp_files.size(), 4u);
+    EXPECT_EQ(sessions[0].eve_files.size(), 4u)
+        << "three EVEs were dropped: the night would read AHI 0.0";
+}
+
+// The counterpart risk of taking every match: a date folder with two genuinely
+// separate sessions must not have the first one swallow the second's sidecars.
+// This is why matching is scoped to the session's own span rather than a flat
+// 12-hour window.
+TEST_F(MergedSessionSidecars, SeparateSessionsKeepTheirOwnSidecars) {
+    setenv("SESSION_GAP_MINUTES", "30", 1);
+    touchFileSized(tmp_dir, "20250301_200000_BRP.edf", 24);
+    touchFile(tmp_dir,      "20250301_200000_EVE.edf");
+    touchFile(tmp_dir,      "20250301_200000_CSL.edf");
+    // Four hours later: a separate session by any threshold.
+    touchFileSized(tmp_dir, "20250302_000000_BRP.edf", 24);
+    touchFile(tmp_dir,      "20250302_000000_EVE.edf");
+    touchFile(tmp_dir,      "20250302_000000_CSL.edf");
+
+    auto sessions = SessionDiscoveryService::groupLocalFolder(tmp_dir, "20250301");
+
+    ASSERT_EQ(sessions.size(), 2u);
+    ASSERT_EQ(sessions[0].eve_files.size(), 1u)
+        << "the first session took the second session's EVE as well";
+    EXPECT_EQ(sessions[0].eve_files[0], "20250301_200000_EVE.edf");
+    EXPECT_EQ(sessions[0].csl_files[0], "20250301_200000_CSL.edf");
+    ASSERT_EQ(sessions[1].eve_files.size(), 1u) << "the later session got nothing";
+    EXPECT_EQ(sessions[1].eve_files[0], "20250302_000000_EVE.edf");
+    EXPECT_EQ(sessions[1].csl_files[0], "20250302_000000_CSL.edf");
+}
+
+// A leftover sidecar with no session of its own still has to land somewhere:
+// the last group sweeps it, which is the pre-existing catch-all.
+TEST_F(MergedSessionSidecars, AnOrphanSidecarIsSweptByTheLastSession) {
+    touchFileSized(tmp_dir, "20250301_220000_BRP.edf", 24);
+    touchFile(tmp_dir,      "20250301_220000_EVE.edf");
+    // Written a day later than anything on the card: inside no session's span.
+    touchFile(tmp_dir,      "20250302_235959_EVE.edf");
+
+    auto sessions = SessionDiscoveryService::groupLocalFolder(tmp_dir, "20250301");
+
+    ASSERT_EQ(sessions.size(), 1u);
+    EXPECT_EQ(sessions[0].eve_files.size(), 2u) << "an EVE was orphaned entirely";
 }

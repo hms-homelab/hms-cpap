@@ -184,8 +184,8 @@ void BackfillService::executeBackfill(const std::string& start_date,
                 for (const auto& f : session.brp_files) stageFile(f);
                 for (const auto& f : session.pld_files) stageFile(f);
                 for (const auto& f : session.sad_files) stageFile(f);
-                if (!session.csl_file.empty()) stageFile(session.csl_file);
-                if (!session.eve_file.empty()) stageFile(session.eve_file);
+                for (const auto& f : session.csl_files) stageFile(f);
+                for (const auto& f : session.eve_files) stageFile(f);
 
                 {
                     std::lock_guard<std::mutex> lock(progress_mutex_);
@@ -207,17 +207,7 @@ void BackfillService::executeBackfill(const std::string& start_date,
                 }
 
                 // Set relative file paths (same format as normal pipeline)
-                std::string relative_base = "DATALOG/" + folder + "/";
-                if (!session.brp_files.empty())
-                    parsed->brp_file_path = relative_base + session.brp_files[0];
-                if (!session.eve_file.empty())
-                    parsed->eve_file_path = relative_base + session.eve_file;
-                if (!session.sad_files.empty())
-                    parsed->sad_file_path = relative_base + session.sad_files[0];
-                if (!session.pld_files.empty())
-                    parsed->pld_file_path = relative_base + session.pld_files[0];
-                if (!session.csl_file.empty())
-                    parsed->csl_file_path = relative_base + session.csl_file;
+                applySessionFilePaths(*parsed, session, folder);
 
                 // Save to DB
                 if (db_->saveSession(*parsed)) {
@@ -228,6 +218,10 @@ void BackfillService::executeBackfill(const std::string& start_date,
                     // markSessionCompleted() sets session_end so they show as
                     // "Done" instead of "LIVE" in the sessions list.
                     db_->markSessionCompleted(config_.device_id, session.session_start);
+
+                    // Record which files the night is actually made of (SDD-014)
+                    db_->replaceSessionFiles(config_.device_id, session.session_start,
+                                             sessionFileRefs(session, folder));
 
                     // Store checkpoint file sizes
                     std::map<std::string, int> checkpoint_sizes;

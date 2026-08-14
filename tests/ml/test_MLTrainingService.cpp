@@ -69,6 +69,11 @@ public:
     bool reopenSession(const std::string&,
                        const std::chrono::system_clock::time_point&) override { return true; }
     int deleteSessionsByDateFolder(const std::string&, const std::string&) override { return 0; }
+    bool replaceSessionFiles(const std::string&,
+                             const std::chrono::system_clock::time_point&,
+                             const std::vector<SessionFileRef>&) override { return true; }
+    std::vector<SessionFileRef> getSessionFilesForDateFolder(
+        const std::string&, const std::string&) override { return {}; }
     bool isForceCompleted(const std::string&,
                           const std::chrono::system_clock::time_point&) override { return false; }
     bool setForceCompleted(const std::string&,

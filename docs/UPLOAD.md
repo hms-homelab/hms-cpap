@@ -23,14 +23,33 @@ Wired only when an archive (`config.local_dir`) is configured. The handler:
 
 1. Writes the upload to a temp file, then `PrismaIngestion::extractZip` into a
    staging dir.
-2. Finds every `YYYYMMDD` folder in the extraction and **merges** its files into
-   the DATALOG archive (`config.local_dir/<date>/`), so uploads are permanent.
+2. **Mirrors the card** into the archive (`mirrorCardInto`, `utils/CardImport.h`):
+   eight-digit date folders land under `DATALOG/`, and everything else keeps its
+   path relative to the card root, so uploads are permanent and the archive looks
+   like the card did. The card root is found inside the extraction, so a zip that
+   wraps its contents in a folder works the same as one that does not.
 3. Triggers `BackfillService::trigger(minDate, maxDate, "")` to reparse those
    nights from the archive — **async**. The page polls `/api/backfill/status`.
-4. Returns `{status: "queued", sessions_found, dates[]}`.
+4. Returns `{status: "queued", sessions_found, dates[], files_copied,
+   files_skipped, str_found}`.
 
-STR.edf-level daily summaries are out of scope here (sessions only); use
-`hms_cpap --backfill <STR.edf>` for those.
+**Upload the card ROOT**, the folder holding both `STR.edf` and `DATALOG`. That
+is the layout SDD-010 pins and the one this handler expects.
+
+`STR.edf` is no longer out of scope: if it is in the zip it is archived at the
+card root and backfill picks it up, so the daily summary comes from the machine's
+own record instead of being derived from sessions. It used to be dropped silently
+while the endpoint still answered `queued`, which is issue #23 — a night then
+reported AHI 0.0 against an STR that said otherwise. `hms_cpap --backfill
+<STR.edf>` still works and is no longer the only way, which matters because a
+web-upload user has no shell.
+
+The only filter is `residualSkip` (`utils/CardResidue.h`): OS junk, media, office
+documents, anything over 20 MB, and `ezshare.cfg`, which can hold WiFi
+credentials. Whole-card containers (`.pdat`, `.pcfg`) are exempt from the size
+cap — a Löwenstein card is one compressed blob, and capping it would drop the
+only file there is. Real card files nothing would think to allowlist
+(`Identification.tgt`, `*.crc`, `Journal.dat`) are kept.
 
 ### O2 Ring CSV — `/api/upload/oximetry`
 

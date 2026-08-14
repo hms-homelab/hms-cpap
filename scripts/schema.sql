@@ -54,6 +54,18 @@ CREATE INDEX IF NOT EXISTS idx_cpap_sessions_checkpoint_files
     ON cpap_sessions USING GIN(checkpoint_files);
 
 -- Session metrics (one row per session)
+-- cpap_session_files (SDD-014): which files actually make up a session.
+-- The cpap_sessions.*_file_path columns hold one path per kind and cannot
+-- describe a night made of several mask-on blocks.
+CREATE TABLE IF NOT EXISTS cpap_session_files (
+    id          SERIAL PRIMARY KEY,
+    session_id  INT NOT NULL,
+    kind        VARCHAR(8) NOT NULL,
+    rel_path    TEXT NOT NULL,
+    UNIQUE (session_id, rel_path)
+);
+CREATE INDEX IF NOT EXISTS idx_session_files_session ON cpap_session_files(session_id);
+
 CREATE TABLE IF NOT EXISTS cpap_session_metrics (
     id                     SERIAL PRIMARY KEY,
     session_id             INT NOT NULL UNIQUE,

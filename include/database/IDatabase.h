@@ -88,6 +88,27 @@ public:
     virtual int deleteSessionsByDateFolder(const std::string& device_id,
                                            const std::string& date_folder) = 0;
 
+    // -- Session file set (SDD-014) -------------------------------------------
+
+    /// Replace the recorded file set for one session. Delete-then-insert, so a
+    /// reparse does not double the rows. An empty vector clears the set.
+    ///
+    /// This is the record of which files make up a night. The
+    /// `cpap_sessions.*_file_path` columns hold only the first of each kind and
+    /// cannot describe the several mask-on blocks a real night is made of.
+    virtual bool replaceSessionFiles(
+        const std::string& device_id,
+        const std::chrono::system_clock::time_point& session_start,
+        const std::vector<SessionFileRef>& files) = 0;
+
+    /// Every recorded file for a date folder, across all of its sessions.
+    /// Keyed by the same `%DATALOG/<folder>/%` convention
+    /// deleteSessionsByDateFolder uses, because that is how a night is addressed
+    /// everywhere else in this interface.
+    virtual std::vector<SessionFileRef> getSessionFilesForDateFolder(
+        const std::string& device_id,
+        const std::string& date_folder) = 0;
+
     // -- Force-complete -------------------------------------------------------
 
     virtual bool isForceCompleted(const std::string& device_id,

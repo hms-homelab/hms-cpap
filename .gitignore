@@ -49,6 +49,11 @@ cpap_archive/
 # Logs
 *.log
 logs/
+# ...but the Logs PAGE is source, not a log directory. The bare `logs/` rule
+# above matches any directory of that name at any depth, so it silently
+# swallowed the whole Angular page and the route would have imported a
+# component that was never committed.
+!frontend/src/app/pages/logs/
 
 # Testing
 Testing/
