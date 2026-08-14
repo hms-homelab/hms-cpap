@@ -86,7 +86,11 @@ All data sources (ezShare WiFi SD, local filesystem) work with both manufacturer
 - **Events Explorer** - A searchable table of every respiratory event across all nights: filter by date range, event type, and minimum duration; every row links to its night. Reads the event store directly, so it never depends on the machine's daily summary being present
 - **Live Sessions** - Pulsing LIVE badge, 65s auto-refresh, growing charts during therapy
 - **ML Intelligence** - AHI prediction, compliance forecasting, mask fit risk, anomaly detection
-- **LLM Session Summary** - AI-generated therapy analysis via Ollama (daily, weekly, monthly)
+- **LLM Session Summary** - AI-generated therapy analysis (daily, weekly, monthly). Runs
+  against Ollama, or any server speaking the OpenAI chat API: OpenAI itself, OpenRouter,
+  LM Studio, vLLM, llama.cpp, or Ollama's own `/v1` surface. Set `llm.provider` to
+  `openai` and put that server's BASE URL in `llm.endpoint`; the path is appended for
+  you. `gemini` and `anthropic` are also supported.
 - **Windows + Linux** - Native builds for both platforms, Docker image for CI
 
 

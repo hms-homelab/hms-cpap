@@ -5,28 +5,44 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [4.9.9] - 2026-08-13
+## [4.10.0] - 2026-08-14
+
+### Added
+- **The ring's night goes to SleepHQ too.** SpO2 and heart rate from a Wellue or
+  Viatom ring were collected, parsed, stored and charted, and then lost the
+  moment the night was exported: the export ships what is on the card, and
+  oximetry never was on the card. It now goes up as its own import, one CSV in
+  the format the ring's own app writes.
+
+  It is uploaded ALONE rather than bundled with the therapy files. The two
+  settle on different clocks, a night's EDFs when the machine stops writing and
+  a ring session when the ring finishes syncing, so bundling them would put one
+  retry policy over both and let a failed CSV hold good therapy data hostage. A
+  failed oximetry upload does not fail the night.
+
+  Samples the ring could not read are written back as the sentinel rather than
+  skipped, so a stretch with the ring off the finger stays a gap. Dropping those
+  rows would heal the timeline over and make the night look shorter than it was.
 
 ### Fixed
-- **A per-minute row is kept for any value it carries** (issue 15). All three
-  backends gated `cpap_calculated_metrics` on respiratory rate, tidal volume,
-  minute ventilation, flow limitation, mask pressure, snore index or target
-  ventilation. Leak rate, I:E ratio, EPR pressure and therapy pressure were
-  missing from that list, so a minute holding only those was dropped.
+- **AI summaries work on SQLite and MySQL** (issue 24). The lookup that finds a
+  night for a given date was implemented only for PostgreSQL and returned
+  nothing at all on the other two, so on the backend this project defaults to,
+  every `generate-summary` request answered "failed" and force-completing a
+  session could never find the night to close.
 
-  That is every minute a Löwenstein records. Those machines report no
-  respiratory rate and no tidal volume — a Prisma declares the channels and
-  writes zero to every sample — so their per-minute leak and EPR were computed
-  and then discarded. Measured on real nights: a Prisma lost 191 EPR values out
-  of 191, a SMART max 631 leak and 808 flow-limitation values out of 814.
+- **A summary generated for an old night is filed under that night.** The row
+  was stamped with today's date regardless of which night was asked for, so
+  generating a summary for the 12th on the 13th overwrote the 13th's row and
+  left the 12th with none. Automatic end-of-night generation is unchanged.
 
-  Carries parser v2026.1.10, which reads the SMART max's `PressureMeasured` as
-  mask pressure and its unsuffixed `EPAP` as EPR, and which stops a substring
-  match from binding minute ventilation to the unrelated `rRMV` channel.
-
-  What these machines do not record, and this release does not invent: SpO2,
-  heart rate, snore, respiratory rate and tidal volume. A Prisma declares those
-  channels and fills them with zeros; a SMART max omits them.
+### Changed
+- **The LLM provider list says what it accepts.** `openai` has always meant any
+  server speaking the OpenAI chat API, because the endpoint is used as a base
+  URL, but the dropdown said "OpenAI" and left users with OpenRouter, LM Studio,
+  vLLM, llama.cpp or Ollama's own `/v1` surface assuming it was not for them.
+  Documented in the settings page, `config.json.example`, the README, and in
+  hms-shared itself (v1.6.10), which is where the behaviour actually lives.
 
 ## [4.9.10] - 2026-08-14
 
@@ -106,6 +122,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exercised on every backend, because compiling says nothing about whether the
   statement parses on the engine actually in use. This is the same gap that hid
   four oximetry stubs on SQLite and MySQL for months in 4.6.3.
+
+## [4.9.9] - 2026-08-13
+
+### Fixed
+- **A per-minute row is kept for any value it carries** (issue 15). All three
+  backends gated `cpap_calculated_metrics` on respiratory rate, tidal volume,
+  minute ventilation, flow limitation, mask pressure, snore index or target
+  ventilation. Leak rate, I:E ratio, EPR pressure and therapy pressure were
+  missing from that list, so a minute holding only those was dropped.
+
+  That is every minute a Löwenstein records. Those machines report no
+  respiratory rate and no tidal volume — a Prisma declares the channels and
+  writes zero to every sample — so their per-minute leak and EPR were computed
+  and then discarded. Measured on real nights: a Prisma lost 191 EPR values out
+  of 191, a SMART max 631 leak and 808 flow-limitation values out of 814.
+
+  Carries parser v2026.1.10, which reads the SMART max's `PressureMeasured` as
+  mask pressure and its unsuffixed `EPAP` as EPR, and which stops a substring
+  match from binding minute ventilation to the unrelated `rRMV` channel.
+
+  What these machines do not record, and this release does not invent: SpO2,
+  heart rate, snore, respiratory rate and tidal volume. A Prisma declares those
+  channels and fills them with zeros; a SMART max omits them.
 
 ## [4.9.8] - 2026-08-12: a night with a break in it, and reports that were never going to work
 
