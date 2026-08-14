@@ -222,7 +222,13 @@ elseif(EXISTS ${CPAPDASH_PARSER_LOCAL_DIR2}/CMakeLists.txt)
 else()
     FetchContent_Declare(cpapdash_parser
         GIT_REPOSITORY https://github.com/hms-homelab/hms-cpapdash-parser.git
-        GIT_TAG        v2026.1.10
+        # TEMPORARY, MUST BECOME A TAG BEFORE RELEASE (SDD-014, task 9).
+        # A branch is a moving target and CI would silently follow it. It is
+        # here only so Docker and CI build the multi-EVE parser fix, which is
+        # invisible to any local build: CMake prefers the sibling checkout
+        # above, so a stale pin is something ONLY CI can catch. See the v4.9.9
+        # release failure, which was exactly this pin left behind.
+        GIT_TAG        fix/sdd-014-multi-eve
     )
 endif()
 FetchContent_MakeAvailable(cpapdash_parser)
