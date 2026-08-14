@@ -28,9 +28,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   heart rate, snore, respiratory rate and tidal volume. A Prisma declares those
   channels and fills them with zeros; a SMART max omits them.
 
-## [Unreleased]
+## [4.9.10] - 2026-08-14
 
 ### Fixed
+- **A night keeps every EVE it has, so its events are counted** (issue 22). A
+  ResMed night is several mask-on blocks and each one writes its own EVE, but a
+  merged session kept only the first in filename order. First means earliest,
+  which is routinely a seconds-long mask-fit check whose EVE is the empty
+  832-byte stub, so every annotation the night actually recorded was left on the
+  card. A reported night read **AHI 0.0** where OSCAR read 2.84 off the same
+  bytes.
+
+  Fixed in both matchers, the ezShare one as well as the local folder, and in
+  the shared parser, which had the same defect and decided the winner by
+  directory iteration order — unspecified, so it was not even the same file
+  twice. Sidecars are now matched against the session's own time span rather
+  than a flat 12-hour window, so a date folder holding several sessions still
+  gives each one its own.
+
+- **An uploaded card keeps everything that was on it** (issue 23).
+  `/api/upload/cpap` kept only `YYYYMMDD` directories, so a zip of the card
+  root — the natural thing to upload — lost `STR.edf`, `Identification.*` and
+  `SETTINGS/` on the way in while the endpoint still answered "queued".
+  Backfill then derived the daily summary from sessions, and with the EVE loss
+  above the dashboard reported 0.0 against an STR record that said otherwise.
+
+  The upload now mirrors the card: date folders under `DATALOG/`, everything
+  else at its own path. `ezshare.cfg` is still refused, because it can hold WiFi
+  credentials. The response reports what landed and what was skipped.
+
+- **A Löwenstein card is no longer dropped for being one big file.** The
+  residual sweep denied `.zip`/`.bin` outright and capped every file at 20 MB,
+  which would have discarded `therapy.pdat` — the single container holding a
+  Prisma's entire therapy history — once it outgrew the cap. Containers are now
+  exempt from the cap, and extension is no longer treated as proof of junk. This
+  affects the ezShare path as well as uploads.
+
 - **PDF reports work on SQLite and MySQL, not just PostgreSQL.** 4.9.8 declared
   the `cpap_reports` table, which was the reason every report request died, but
   the statements around it were PostgreSQL-only three separate ways: `::text`,
@@ -51,6 +84,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   existing database gets its tables from the backend creators.
 
 ### Added
+- **A support log on every platform, not just Windows.** A macOS or Raspberry Pi
+  user asked to send their log had no more access to `journalctl` than a Windows
+  user has to a console. The log is now written to a file everywhere. Windows
+  keeps redirecting its streams, since there is no console to preserve;
+  everywhere else it tees, so a terminal, `journalctl` and `docker logs` all
+  keep working exactly as before.
+
+- **A Logs page in the web UI**, with a copy button, so sending a log needs
+  neither a shell nor a file manager. It shows where the file lives, how big it
+  is, and lets you pick how much to read.
+
+- **`cpap_session_files`**, recording which files a night is actually made of.
+  The `cpap_sessions.*_file_path` columns hold one path per kind and cannot
+  describe a night of several blocks. Existing rows are backfilled from those
+  columns. The SleepHQ export reads the table, and still ships the sidecars in
+  the date folder that the table does not track.
+
 - **`tests/database/test_ReportBackends.cpp`** — the report job table across all
   three engines, 7 tests each. Every PostgreSQL-only construct listed above is
   exercised on every backend, because compiling says nothing about whether the

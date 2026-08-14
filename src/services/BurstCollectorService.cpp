@@ -39,10 +39,12 @@ BurstCollectorService::BurstCollectorService(int burst_interval_seconds)
 
 void BurstCollectorService::initialize(AppConfig* cfg) {
     app_config_ = cfg;
-    SleepHqExportService::getInstance().initialize(cfg);
 
     initDataSource();
     initDatabase();
+    // After initDatabase: the export reads cpap_session_files to decide which
+    // files a night is made of (SDD-014), so it needs the connection.
+    SleepHqExportService::getInstance().initialize(cfg, db_service_.get());
     initMqtt();
     initDataPublisher();
     initLlm();
@@ -339,8 +341,8 @@ bool BurstCollectorService::downloadSessionFiles(
 
     std::cout << "📥 CPAP: Downloading session " << session.session_prefix
               << " (" << session.total_size_kb << " KB)" << std::endl;
-    std::cout << "    Files: CSL=" << (session.csl_file.empty() ? "N" : "Y")
-              << ", EVE=" << (session.eve_file.empty() ? "N" : "Y")
+    std::cout << "    Files: CSL=" << session.csl_files.size()
+              << ", EVE=" << session.eve_files.size()
               << ", BRP=" << session.brp_files.size()
               << ", PLD=" << session.pld_files.size()
               << ", SAD=" << session.sad_files.size() << std::endl;
@@ -390,27 +392,23 @@ bool BurstCollectorService::downloadSessionFiles(
         return false;
     };
 
-    // Download CSL (session summary) - always full download (small, doesn't grow)
-    if (!session.csl_file.empty()) {
-        std::string local_path = local_dir + "/" + session.csl_file;
-        if (data_source_->downloadFile(session.date_folder, session.csl_file, local_path)) {
-            downloaded++;
-            full_downloads++;
-        } else {
-            std::cerr << "⚠️  CPAP: Failed to download CSL: " << session.csl_file << std::endl;
+    // Download EVERY CSL and EVE the session covers - always full downloads
+    // (small, don't grow). One per mask-on block, so a merged night has several
+    // and the later ones are the ones carrying its annotations. See SDD-014.
+    auto downloadSmall = [&](const char* label, const std::vector<std::string>& names) {
+        for (const auto& name : names) {
+            std::string local_path = local_dir + "/" + name;
+            if (data_source_->downloadFile(session.date_folder, name, local_path)) {
+                downloaded++;
+                full_downloads++;
+            } else {
+                std::cerr << "⚠️  CPAP: Failed to download " << label << ": "
+                          << name << std::endl;
+            }
         }
-    }
-
-    // Download EVE (events) - always full download (small, doesn't grow)
-    if (!session.eve_file.empty()) {
-        std::string local_path = local_dir + "/" + session.eve_file;
-        if (data_source_->downloadFile(session.date_folder, session.eve_file, local_path)) {
-            downloaded++;
-            full_downloads++;
-        } else {
-            std::cerr << "⚠️  CPAP: Failed to download EVE: " << session.eve_file << std::endl;
-        }
-    }
+    };
+    downloadSmall("CSL", session.csl_files);
+    downloadSmall("EVE", session.eve_files);
 
     // Download ALL BRP checkpoint files (use Range for growing files)
     for (const auto& filename : session.brp_files) {
@@ -833,7 +831,9 @@ bool BurstCollectorService::refetchSidecars(
         const std::string local_dir = local_base_dir + "/" + s->date_folder;
         std::filesystem::create_directories(local_dir);
 
-        for (const auto& name : {s->csl_file, s->eve_file}) {
+        std::vector<std::string> sidecars = s->csl_files;
+        sidecars.insert(sidecars.end(), s->eve_files.begin(), s->eve_files.end());
+        for (const auto& name : sidecars) {
             if (name.empty()) continue;
             // downloadFile, deliberately, NEVER downloadFileRange: a ranged
             // request at or past the card's real EOF hangs the ezShare, and a
@@ -1384,8 +1384,8 @@ bool BurstCollectorService::executeBurstCycle() {
             for (const auto& f : session.brp_files) stageFile(f);
             for (const auto& f : session.pld_files) stageFile(f);
             for (const auto& f : session.sad_files) stageFile(f);
-            if (!session.csl_file.empty()) stageFile(session.csl_file);
-            if (!session.eve_file.empty()) stageFile(session.eve_file);
+            for (const auto& f : session.csl_files) stageFile(f);
+            for (const auto& f : session.eve_files) stageFile(f);
 
             // Store checkpoint sizes for change detection on next cycle
             std::map<std::string, int> checkpoint_sizes;
@@ -1659,6 +1659,10 @@ bool BurstCollectorService::executeBurstCycle() {
     // Step 6: Parse all sessions (same for both modes)
     auto parse_start = std::chrono::steady_clock::now();
     std::vector<CPAPSession> parsed_sessions;
+    // Kept in lockstep with parsed_sessions: the full file set for each, with
+    // the session start it belongs to.
+    std::vector<std::pair<std::chrono::system_clock::time_point,
+                          std::vector<SessionFileRef>>> parsed_session_files;
 
     for (const auto& [session_dir, session_start] : downloaded_sessions) {
         std::cout << "📊 CPAP: Parsing session from " << session_dir << "..." << std::endl;
@@ -1682,25 +1686,42 @@ bool BurstCollectorService::executeBurstCycle() {
             // This makes paths portable between different storage locations
             std::string relative_path_base = "DATALOG/" + date_folder + "/";
 
-            // Set file paths (use first file of each type found in directory)
+            // Set file paths (first file of each type) AND record the full set.
+            // The columns hold one path per kind; cpap_session_files holds every
+            // file the night is made of, which is what a merged session needs
+            // and what the SleepHQ export reads. See SDD-014.
+            std::vector<SessionFileRef> file_refs;
             if (std::filesystem::exists(session_dir)) {
+                std::vector<std::string> names;
                 for (const auto& entry : std::filesystem::directory_iterator(session_dir)) {
-                    std::string filename = entry.path().filename().string();
+                    names.push_back(entry.path().filename().string());
+                }
+                // directory_iterator order is unspecified, so "first of each
+                // kind" would otherwise not be the same file twice.
+                std::sort(names.begin(), names.end());
 
-                    if (filename.find("_BRP.edf") != std::string::npos && !parsed->brp_file_path.has_value()) {
-                        parsed->brp_file_path = relative_path_base + filename;
-                    } else if (filename.find("_EVE.edf") != std::string::npos && !parsed->eve_file_path.has_value()) {
-                        parsed->eve_file_path = relative_path_base + filename;
-                    } else if (isOximetryFile(filename) && !parsed->sad_file_path.has_value()) {
-                        parsed->sad_file_path = relative_path_base + filename;
-                    } else if (filename.find("_PLD.edf") != std::string::npos && !parsed->pld_file_path.has_value()) {
-                        parsed->pld_file_path = relative_path_base + filename;
-                    } else if (filename.find("_CSL.edf") != std::string::npos && !parsed->csl_file_path.has_value()) {
-                        parsed->csl_file_path = relative_path_base + filename;
-                    }
+                for (const auto& filename : names) {
+                    const char* kind = nullptr;
+                    if (filename.find("_BRP.edf") != std::string::npos)      kind = "brp";
+                    else if (filename.find("_EVE.edf") != std::string::npos) kind = "eve";
+                    else if (isOximetryFile(filename))                        kind = "sad";
+                    else if (filename.find("_PLD.edf") != std::string::npos) kind = "pld";
+                    else if (filename.find("_CSL.edf") != std::string::npos) kind = "csl";
+                    if (!kind) continue;
+
+                    const std::string rel = relative_path_base + filename;
+                    file_refs.push_back({kind, rel});
+
+                    std::string k(kind);
+                    if (k == "brp" && !parsed->brp_file_path.has_value()) parsed->brp_file_path = rel;
+                    else if (k == "eve" && !parsed->eve_file_path.has_value()) parsed->eve_file_path = rel;
+                    else if (k == "sad" && !parsed->sad_file_path.has_value()) parsed->sad_file_path = rel;
+                    else if (k == "pld" && !parsed->pld_file_path.has_value()) parsed->pld_file_path = rel;
+                    else if (k == "csl" && !parsed->csl_file_path.has_value()) parsed->csl_file_path = rel;
                 }
             }
 
+            parsed_session_files.push_back({session_start, file_refs});
             parsed_sessions.push_back(*parsed);  // Dereference unique_ptr and copy
             std::cout << "✅ CPAP: Parsed session successfully" << std::endl;
         } else {
@@ -1720,9 +1741,14 @@ bool BurstCollectorService::executeBurstCycle() {
 
     // Step 7: Save ALL sessions to database
     int saved_count = 0;
-    for (const auto& session : parsed_sessions) {
-        if (db_service_->saveSession(session)) {
+    for (size_t i = 0; i < parsed_sessions.size(); ++i) {
+        if (db_service_->saveSession(parsed_sessions[i])) {
             saved_count++;
+            if (i < parsed_session_files.size()) {
+                db_service_->replaceSessionFiles(device_id_,
+                                                 parsed_session_files[i].first,
+                                                 parsed_session_files[i].second);
+            }
         } else {
             std::cerr << "⚠️  CPAP: Failed to save session to DB" << std::endl;
         }

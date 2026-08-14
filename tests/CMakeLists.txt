@@ -62,6 +62,7 @@ set(TEST_SOURCES
     database/test_MySQLMigration.cpp
     database/test_CleaningBackends.cpp
     database/test_SyncFolderBackends.cpp
+    database/test_SessionFilesBackends.cpp
     database/test_ReportBackends.cpp
     services/test_BurstCollectorService.cpp
     services/test_DataPublisherService.cpp
@@ -70,6 +71,7 @@ set(TEST_SOURCES
     utils/test_AppConfig.cpp
     utils/test_FileUtils.cpp
     utils/test_CardResidue.cpp
+    utils/test_CardImport.cpp
     utils/test_CardLayout.cpp
     utils/test_FileLogger.cpp
     utils/test_FailureLogThrottle.cpp

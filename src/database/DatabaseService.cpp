@@ -129,6 +129,34 @@ bool DatabaseService::connect() {
                     UNIQUE (device_id, session_start)
                     )
                 )");
+                // cpap_session_files (SDD-014): which files actually make up a
+                // session. The cpap_sessions.*_file_path columns hold one path
+                // per kind and cannot describe a night of several blocks.
+                txn.exec(R"(
+                    CREATE TABLE IF NOT EXISTS cpap_session_files (
+                    id          SERIAL PRIMARY KEY,
+                    session_id  INT NOT NULL,
+                    kind        VARCHAR(8) NOT NULL,
+                    rel_path    TEXT NOT NULL,
+                    UNIQUE (session_id, rel_path)
+                    )
+                )");
+                txn.exec("CREATE INDEX IF NOT EXISTS idx_session_files_session "
+                         "ON cpap_session_files(session_id)");
+                // One-shot backfill from the older columns, so nights parsed
+                // before this table existed keep the provenance they had.
+                txn.exec(R"(
+                    INSERT INTO cpap_session_files (session_id, kind, rel_path)
+                    SELECT s.id, k.kind, k.path FROM cpap_sessions s
+                    CROSS JOIN LATERAL (VALUES
+                        ('brp', s.brp_file_path), ('eve', s.eve_file_path),
+                        ('sad', s.sad_file_path), ('pld', s.pld_file_path),
+                        ('csl', s.csl_file_path)) AS k(kind, path)
+                    WHERE k.path IS NOT NULL AND k.path <> ''
+                      AND NOT EXISTS (SELECT 1 FROM cpap_session_files)
+                    ON CONFLICT (session_id, rel_path) DO NOTHING
+                )");
+
                 txn.exec(R"(
                     CREATE TABLE IF NOT EXISTS cpap_session_metrics (
                     id                     SERIAL PRIMARY KEY,
@@ -2172,6 +2200,15 @@ int DatabaseService::deleteSessionsByDateFolder(const std::string& device_id,
 
         // Match sessions whose brp_file_path contains the date folder
         std::string pattern = "%DATALOG/" + date_folder + "/%";
+
+        // Child rows first, explicitly, so this does not depend on the FK having
+        // been declared ON DELETE CASCADE on an already-created table.
+        work.exec_params(
+            "DELETE FROM cpap_session_files WHERE session_id IN ("
+            "  SELECT id FROM cpap_sessions "
+            "  WHERE device_id = $1 AND brp_file_path::text LIKE $2)",
+            device_id, pattern);
+
         auto result = work.exec_params(
             "DELETE FROM cpap_sessions "
             "WHERE device_id = $1 AND brp_file_path::text LIKE $2",
@@ -2186,6 +2223,76 @@ int DatabaseService::deleteSessionsByDateFolder(const std::string& device_id,
                   << ": " << e.what() << std::endl;
         return -1;
     }
+}
+
+// ---------------------------------------------------------------------------
+// cpap_session_files (SDD-014)
+// ---------------------------------------------------------------------------
+
+bool DatabaseService::replaceSessionFiles(
+    const std::string& device_id,
+    const std::chrono::system_clock::time_point& session_start,
+    const std::vector<SessionFileRef>& files) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!ensureConnection()) return false;
+
+    auto start_time_t = std::chrono::system_clock::to_time_t(session_start);
+    std::tm* start_tm = std::localtime(&start_time_t);
+    std::ostringstream start_oss;
+    start_oss << std::put_time(start_tm, "%Y-%m-%d %H:%M:%S");
+
+    try {
+        pqxx::work work(*conn_);
+
+        // +/-5s, matching sessionExists: the stored start can differ from the
+        // in-memory one by a rounding, and an exact match would record nothing.
+        auto found = work.exec_params(
+            "SELECT id FROM cpap_sessions WHERE device_id = $1 "
+            "AND session_start BETWEEN $2::timestamp - interval '5 seconds' "
+            "                      AND $2::timestamp + interval '5 seconds' LIMIT 1",
+            device_id, start_oss.str());
+        if (found.empty()) return false;
+        int session_id = found[0][0].as<int>();
+
+        // Delete-then-insert, so a reparse replaces the set instead of doubling it.
+        work.exec_params("DELETE FROM cpap_session_files WHERE session_id = $1", session_id);
+        for (const auto& f : files) {
+            work.exec_params(
+                "INSERT INTO cpap_session_files (session_id, kind, rel_path) "
+                "VALUES ($1, $2, $3) ON CONFLICT (session_id, rel_path) DO NOTHING",
+                session_id, f.kind, f.rel_path);
+        }
+        work.commit();
+        return true;
+
+    } catch (const std::exception& e) {
+        std::cerr << "DB: replaceSessionFiles failed: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+std::vector<SessionFileRef> DatabaseService::getSessionFilesForDateFolder(
+    const std::string& device_id, const std::string& date_folder) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::vector<SessionFileRef> out;
+    if (!ensureConnection()) return out;
+
+    try {
+        pqxx::work work(*conn_);
+        std::string pattern = "%DATALOG/" + date_folder + "/%";
+        auto rows = work.exec_params(
+            "SELECT f.kind, f.rel_path FROM cpap_session_files f "
+            "JOIN cpap_sessions s ON s.id = f.session_id "
+            "WHERE s.device_id = $1 AND f.rel_path::text LIKE $2 "
+            "ORDER BY f.rel_path",
+            device_id, pattern);
+        for (const auto& r : rows) {
+            out.push_back({r[0].as<std::string>(), r[1].as<std::string>()});
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "DB: getSessionFilesForDateFolder failed: " << e.what() << std::endl;
+    }
+    return out;
 }
 
 bool DatabaseService::saveSTRDailyRecords(const std::vector<STRDailyRecord>& records) {

@@ -37,6 +37,7 @@ public:
     ADD_METHOD_TO(CpapController::updateConfig,  "/api/config",              drogon::Put);
     ADD_METHOD_TO(CpapController::setupComplete, "/api/setup",               drogon::Post);
     ADD_METHOD_TO(CpapController::capabilities,  "/api/capabilities",        drogon::Get);
+    ADD_METHOD_TO(CpapController::logs,          "/api/logs",                drogon::Get);
     // SDD-006 phase 2. All three refuse once setup_complete is true, so a
     // finished install does not expose database provisioning on the LAN forever.
     ADD_METHOD_TO(CpapController::setupTestDb,   "/api/setup/test-db",       drogon::Post);
@@ -155,6 +156,15 @@ public:
     /// this file.
     void capabilities(const drogon::HttpRequestPtr& req,
                       std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+
+    /// The tail of the support log, for the Logs page.
+    ///
+    /// It exists so that "send me your log" needs neither a shell nor a file
+    /// manager: the user opens a tab and presses Copy. ?lines=N caps how much
+    /// is returned (default 2000) so a rotated-but-large file cannot be turned
+    /// into an unbounded response.
+    void logs(const drogon::HttpRequestPtr& req,
+              std::function<void(const drogon::HttpResponsePtr&)>&& cb);
     /// SDD-012: restart the process so restart-required settings take effect.
     /// The Settings-page counterpart to the wizard's setupApply, which refuses
     /// once setup_complete. Restarts only; touches no config.

@@ -13,6 +13,7 @@ export const routes: Routes = [
   { path: 'equipment', loadComponent: () => import('./pages/equipment/equipment.component').then(m => m.EquipmentComponent) , canActivate: [setupGuard] },
   { path: 'upload', loadComponent: () => import('./pages/upload/upload.component').then(m => m.UploadComponent) , canActivate: [setupGuard] },
   { path: 'setup', loadComponent: () => import('./pages/setup/setup.component').then(m => m.SetupComponent) },
+  { path: 'logs', loadComponent: () => import('./pages/logs/logs.component').then(m => m.LogsComponent) , canActivate: [setupGuard] },
   { path: 'settings', loadComponent: () => import('./pages/settings/settings.component').then(m => m.SettingsComponent) , canActivate: [setupGuard] },
   { path: '**', redirectTo: 'dashboard' },
 ];
