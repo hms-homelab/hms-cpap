@@ -27,6 +27,7 @@
   },
   "llm": {
     "enabled": false,
+    "_provider_note": "ollama | openai | gemini | anthropic. Use 'openai' for ANY server speaking the OpenAI chat API (OpenAI, OpenRouter, LM Studio, vLLM, llama.cpp, or Ollama's own /v1 surface) and put its BASE URL in endpoint - the path is appended for you.",
     "provider": "ollama",
     "endpoint": "",
     "model": "",
