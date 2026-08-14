@@ -73,6 +73,7 @@ set(TEST_SOURCES
     utils/test_CardResidue.cpp
     utils/test_CardImport.cpp
     utils/test_CardLayout.cpp
+    utils/test_DbProbeCli.cpp
     utils/test_FileLogger.cpp
     utils/test_FailureLogThrottle.cpp
     clients/test_EzShareClient.cpp

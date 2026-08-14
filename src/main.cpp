@@ -41,6 +41,7 @@
 #include "utils/CardImport.h"
 #include "utils/FileLogger.h"
 #include "utils/CardLayout.h"
+#include "utils/DbProbeCli.h"
 #include <iostream>
 #include <iomanip>
 #include <csignal>
@@ -411,14 +412,36 @@ int main(int argc, char** argv) {
     // there either: the caller already redirects our output to a file it reads
     // back. Scanned before start() rather than after, because by the time the
     // normal argument loop runs the pipe and its thread already exist.
+    // --test-db and --create-db join --preflight here for the same reason: they
+    // are short-lived probes a GUI blocks on, so nothing may hold their exit
+    // open, and their whole output is the report the caller reads back.
     bool preflight_only = false;
+    bool db_probe_mode  = false;
+    bool db_provision   = false;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--preflight") == 0) preflight_only = true;
+        if (std::strcmp(argv[i], "--test-db") == 0)   db_probe_mode  = true;
+        if (std::strcmp(argv[i], "--create-db") == 0) { db_probe_mode = true; db_provision = true; }
     }
-    if (!preflight_only) {
+    if (!preflight_only && !db_probe_mode) {
         hms_cpap::FileLogger::start(hms_cpap::FileLogger::defaultPath(),
                                     5 * 1024 * 1024, 3);
         std::atexit([] { hms_cpap::FileLogger::stop(); });
+    }
+
+    // SDD-016: answer "can I open this database?" without an HTTP server.
+    //
+    // Deliberately BEFORE the config is loaded. The caller is asking about a
+    // candidate database it is still deciding on, so the answer must not depend
+    // on -- or disturb -- whatever is currently in config.json. It also means a
+    // machine with no config at all can still be asked, which is exactly the
+    // first-run case the supervisor's configurator has to handle.
+    if (db_probe_mode) {
+        std::string request((std::istreambuf_iterator<char>(std::cin)),
+                            std::istreambuf_iterator<char>());
+        const auto result = hms_cpap::runDbProbeCli(request, db_provision);
+        std::cout << result.json;
+        return result.exit_code;
     }
 
     // ── Load AppConfig ──────────────────────────────────────────────
