@@ -1212,8 +1212,42 @@ SQLiteDatabase::getNthLatestSessionStart(const std::string& device_id, int n) {
 }
 
 std::optional<std::chrono::system_clock::time_point>
-SQLiteDatabase::getSessionStartForSleepDay(const std::string&, const std::string&, bool) {
-    return std::nullopt;
+SQLiteDatabase::getSessionStartForSleepDay(const std::string& device_id,
+                                            const std::string& sleep_day,
+                                            bool open_only) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!db_) return std::nullopt;
+
+    // Noon to noon, the same rule PostgreSQL uses: a night that starts at 22:00
+    // and one that starts at 02:00 the next morning are the SAME sleep day.
+    //
+    // This used to return std::nullopt unconditionally, which made the AI
+    // summary endpoint answer "failed" for every date on the DEFAULT backend
+    // and left forceCompleteSession unable to find a night to close. It was
+    // invisible for as long as it was because PostgreSQL had the real one.
+    // Issue 24.
+    std::string sql =
+        "SELECT session_start FROM cpap_sessions"
+        " WHERE device_id = ?"
+        "   AND date(session_start, '-12 hours') = date(?)";
+    if (open_only) sql += " AND session_end IS NULL";
+    sql += " ORDER BY session_start LIMIT 1";
+
+    StmtGuard g;
+    if (sqlite3_prepare_v2(db_, sql.c_str(), -1, &g.stmt, nullptr) != SQLITE_OK)
+        return std::nullopt;
+    bind_text(g.stmt, 1, device_id);
+    bind_text(g.stmt, 2, sleep_day);
+    if (sqlite3_step(g.stmt) != SQLITE_ROW) return std::nullopt;
+
+    // Same local-time parse the other readers here use, so a timestamp written
+    // by fmtTimestamp comes back as the instant it went in as.
+    std::tm tm = {};
+    std::istringstream ss(col_text(g.stmt, 0));
+    ss >> std::get_time(&tm, "%Y-%m-%d %H:%M:%S");
+    if (ss.fail()) return std::nullopt;
+    tm.tm_isdst = -1;
+    return std::chrono::system_clock::from_time_t(std::mktime(&tm));
 }
 
 // ---------------------------------------------------------------------------

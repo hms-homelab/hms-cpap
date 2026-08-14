@@ -327,7 +327,7 @@ bool BurstCollectorService::generateSummaryForDate(const std::string& sleep_day)
     }
     const STRDailyRecord* str_rec = !last_str_records_.empty()
         ? &last_str_records_.back() : nullptr;
-    generateAndPublishSummary(metrics.value(), str_rec);
+    generateAndPublishSummary(metrics.value(), str_rec, sleep_day);
     return true;
 }
 
@@ -2210,8 +2210,19 @@ std::string BurstCollectorService::buildRangeMetricsString(
 
 // --- Daily summary (single night) ---
 
+std::string BurstCollectorService::resolveSleepDay(
+    const std::string& requested, std::chrono::system_clock::time_point now) {
+    if (!requested.empty()) return requested;
+    auto t = std::chrono::system_clock::to_time_t(now - std::chrono::hours(12));
+    std::tm* tm = std::localtime(&t);
+    std::ostringstream oss;
+    oss << std::put_time(tm, "%Y-%m-%d");
+    return oss.str();
+}
+
 void BurstCollectorService::generateAndPublishSummary(const SessionMetrics& metrics,
-                                                       const STRDailyRecord* str_record) {
+                                                       const STRDailyRecord* str_record,
+                                                       const std::string& requested_sleep_day) {
     std::cout << "LLM: Generating session summary..." << std::endl;
 
     std::string metrics_str = buildMetricsString(metrics, str_record);
@@ -2232,13 +2243,16 @@ void BurstCollectorService::generateAndPublishSummary(const SessionMetrics& metr
 
     // Save to DB for future UI
     if (db_service_) {
-        // Sleep day = today - 12h (session that ended this morning started last night)
-        auto now_t = std::chrono::system_clock::to_time_t(
-            std::chrono::system_clock::now() - std::chrono::hours(12));
-        std::tm* day_tm = std::localtime(&now_t);
-        std::ostringstream day_oss;
-        day_oss << std::put_time(day_tm, "%Y-%m-%d");
-        std::string sleep_day = day_oss.str();
+        // The night this summary is FOR.
+        //
+        // When the caller named a date, that is the answer. Only fall back to
+        // now()-12h for the automatic end-of-night path, where "the night that
+        // just ended" IS today minus twelve hours. Without the parameter, asking
+        // for 2026-08-12 on the 13th filed the result under the 13th, so a
+        // historical summary overwrote today's row and could never be found
+        // under its own date. Issue 24.
+        const std::string sleep_day = resolveSleepDay(
+            requested_sleep_day, std::chrono::system_clock::now());
 
         double hours = metrics.usage_hours.value_or(0.0);
         double compliance = (hours >= 4.0) ? 100.0 : 0.0;
