@@ -336,6 +336,24 @@ SetupService::DbProbe SetupService::probeDatabase(const std::string& type,
             if (raw) sqlite3_close(raw);
             return out;
         }
+        // sqlite3_open_v2 does NOT read the file: it succeeds on anything the
+        // filesystem hands back, and only the first real query discovers that
+        // the header is not SQLite's. Without this, pointing the wizard at
+        // notes.txt answers "the schema will be created on first start" and the
+        // service then refuses to boot with "file is not a database" -- a
+        // promise the probe had no business making.
+        sqlite3_stmt* hdr = nullptr;
+        const int hdr_rc = sqlite3_prepare_v2(
+            raw, "SELECT COUNT(*) FROM sqlite_master", -1, &hdr, nullptr);
+        const bool readable = (hdr_rc == SQLITE_OK) && (sqlite3_step(hdr) == SQLITE_ROW);
+        if (hdr) sqlite3_finalize(hdr);
+        if (!readable) {
+            out.error = sqlite3_errmsg(raw);
+            if (out.error.empty()) out.error = "file is not a database";
+            sqlite3_close(raw);
+            return out;
+        }
+
         out.ok = true;
         sqlite3_stmt* st = nullptr;
         if (sqlite3_prepare_v2(raw, "SELECT COUNT(*) FROM cpap_sessions", -1, &st, nullptr)
