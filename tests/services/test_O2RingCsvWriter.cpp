@@ -14,6 +14,7 @@
 #include "services/O2RingCsvParser.h"
 #include "utils/TimeCompat.h"
 
+#include <algorithm>   // std::count -- GCC 14 dropped the transitive include
 #include <chrono>
 #include <string>
 
