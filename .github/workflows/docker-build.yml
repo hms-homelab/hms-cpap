@@ -603,6 +603,57 @@ jobs:
           }
           Write-Host '  ok no orphan after a normal close'
 
+      # The promise is that a user installs nothing of their own -- no Qt, no
+      # runtime, no separate download. Two things make that testable rather than
+      # hoped for.
+      #
+      # First, THIS JOB IS THE CLEAN ROOM: it runs on a fresh windows-latest
+      # runner that only downloads the installer artifact. Qt is installed in
+      # windows-build, a different job on a different machine, so nothing here
+      # can be borrowed from a developer toolchain.
+      #
+      # Second, and more precisely: ask the LIVE process where its modules came
+      # from. "It ran on a machine we believe was clean" is only as strong as the
+      # belief; enumerating loaded DLLs is direct evidence, and it stays valid on
+      # a machine that DOES have Qt -- which is exactly where a borrowed library
+      # would hide.
+      #
+      # Shell extensions (OneDrive, ink/tablet input) are injected into every GUI
+      # process by Windows itself. They are not dependencies and their absence
+      # changes nothing, so the assertion is scoped to the libraries we ship.
+      - name: The application borrows nothing from outside its own folder
+        shell: pwsh
+        run: |
+          $app = "$env:LOCALAPPDATA\Programs\HMS-CPAP"
+
+          $p = Start-Process "$app\CpapDashDesktop.exe" -PassThru
+          Start-Sleep -Seconds 18
+          if ($p.HasExited) { throw "the supervisor exited during the dependency check" }
+
+          $p.Refresh()
+          $mods = $p.Modules | ForEach-Object { $_.FileName }
+          Write-Host "  $($mods.Count) modules loaded"
+
+          # Everything we ship, wherever it was loaded from.
+          $ours = $mods | Where-Object { $_ -match 'Qt6|msvcp|vcruntime|concrt' }
+          if (-not $ours) { throw "no Qt modules loaded at all - is this the right binary?" }
+
+          $borrowed = $ours | Where-Object { $_ -notlike "$app*" }
+          if ($borrowed) {
+            Write-Host "  borrowed from outside the installation:"
+            $borrowed | ForEach-Object { Write-Host "    $_" }
+            throw "the application is loading libraries it does not ship; a user without them would get a broken install"
+          }
+
+          Write-Host "  ok every shipped library loaded from $app"
+          $ours | ForEach-Object { Write-Host "    $(Split-Path $_ -Leaf)" }
+
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 5
+          if (Get-Process hms_cpap -ErrorAction SilentlyContinue) {
+            throw "the service outlived the supervisor during the dependency check"
+          }
+
       - name: Uninstall removes the program and the Run key
         run: |
           $app = "$env:LOCALAPPDATA\Programs\HMS-CPAP"
