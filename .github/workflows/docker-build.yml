@@ -532,79 +532,91 @@ jobs:
           # so a passing test reported as red.
           exit 0
 
-      - name: The tray starts the service and it actually serves
+      # SDD-016 changed what a fresh install does, and this asserts BOTH halves
+      # of it. The supervisor reads config.json and decides whether the service
+      # can usefully run, so on a machine that has never been configured it opens
+      # setup instead of starting a service with no data source -- which used to
+      # produce "hms_cpap exited with code 1" and tell the user their software
+      # was broken.
+      #
+      # The previous version of this step asserted the old contract (a shell that
+      # always spawned the child) and so would have passed a supervisor that
+      # ignored its configuration entirely.
+      - name: An unconfigured machine gets setup, not a doomed service
+        shell: pwsh
         run: |
           $app = "$env:LOCALAPPDATA\Programs\HMS-CPAP"
-          $tray = Start-Process -FilePath "$app\CpapDashDesktop.exe" -PassThru
+          if (Test-Path "$env:USERPROFILE\.hms-cpap\config.json") {
+            Remove-Item "$env:USERPROFILE\.hms-cpap\config.json" -Force
+          }
+
+          $sup = Start-Process -FilePath "$app\CpapDashDesktop.exe" -PassThru
           Start-Sleep -Seconds 20
 
-          if ($tray.HasExited) { throw "the tray exited immediately (code $($tray.ExitCode))" }
-
-          # The point of the shell: it spawns the child.
+          if ($sup.HasExited) {
+            throw "the supervisor exited on an unconfigured machine (code $($sup.ExitCode)) instead of offering setup"
+          }
           $child = Get-Process hms_cpap -ErrorAction SilentlyContinue
-          if (-not $child) { throw 'the tray never started hms_cpap' }
-          Write-Host "  ok tray pid $($tray.Id), child pid $($child.Id)"
+          if ($child) {
+            throw "the supervisor started the service with no configuration; it should have opened setup"
+          }
+          Write-Host "  ok supervisor is up and did not start an unconfigurable service"
 
-          # And the child is really serving, not merely running.
+          Stop-Process -Id $sup.Id -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 5
+
+      - name: A configured machine starts the service, and it serves
+        shell: pwsh
+        run: |
+          $app  = "$env:LOCALAPPDATA\Programs\HMS-CPAP"
+          $data = "$env:USERPROFILE\.hms-cpap"
+          New-Item -ItemType Directory -Force $data | Out-Null
+          New-Item -ItemType Directory -Force "C:\cpd_card\DATALOG" | Out-Null
+
+          @{
+            device_id = "CI"; device_name = "CI"; source = "local"
+            local_dir = "C:\cpd_card"; archive_dir = ""
+            web_port = 8893; burst_interval = 65; setup_complete = $true
+            database = @{ type = "sqlite"; sqlite_path = "$data\cpap.db" }
+            logging = @{ enabled = $false }; mqtt = @{ enabled = $false }
+          } | ConvertTo-Json -Depth 5 | Set-Content "$data\config.json" -Encoding utf8
+
+          $sup = Start-Process -FilePath "$app\CpapDashDesktop.exe" -PassThru
+          Start-Sleep -Seconds 20
+          if ($sup.HasExited) { throw "the supervisor exited (code $($sup.ExitCode))" }
+
+          $child = Get-Process hms_cpap -ErrorAction SilentlyContinue
+          if (-not $child) { throw 'the supervisor never started hms_cpap on a configured machine' }
+          Write-Host "  ok supervisor pid $($sup.Id), service pid $($child.Id)"
+
+          # Running is not serving.
           $ok = $false
           foreach ($i in 1..15) {
             try {
-              $r = Invoke-WebRequest -Uri 'http://localhost:8893/health' -UseBasicParsing -TimeoutSec 3
+              $r = Invoke-WebRequest http://localhost:8893/health -UseBasicParsing -TimeoutSec 4
               if ($r.StatusCode -eq 200) { Write-Host "  ok /health: $($r.Content)"; $ok = $true; break }
             } catch { Start-Sleep -Seconds 2 }
           }
           if (-not $ok) { throw '/health never answered' }
 
-          # FORCE kill: the case Supervisor.Stop() can never handle, because
-          # TerminateProcess skips every finally block in the runtime. Only the
+          # FORCE kill: the case a clean shutdown path can never cover, because
+          # TerminateProcess skips every destructor and finally block. Only the
           # job object saves us here, and this assertion is what caught its
-          # absence.
-          Stop-Process -Id $tray.Id -Force
+          # absence in the C# shell -- and its absence again in the Qt one, which
+          # shipped with no job object at all until it was tested on Windows.
+          Stop-Process -Id $sup.Id -Force
           Start-Sleep -Seconds 8
           $orphan = Get-Process hms_cpap -ErrorAction SilentlyContinue
           if ($orphan) {
             Stop-Process -Name hms_cpap -Force -ErrorAction SilentlyContinue
-            throw 'hms_cpap outlived a FORCE-KILLED tray; it would hold port 8893'
+            throw 'hms_cpap outlived a force-killed supervisor and would hold the port'
           }
           Write-Host '  ok no orphan after a forced kill'
 
-          # And the ordinary path, which most people actually take: start again
-          # and close the window politely. Covering only the violent case would
-          # leave the common one untested.
-          # Prove the port is actually free before blaming the tray. If the
-          # previous instance left 8893 unusable, preflight refuses and the tray
-          # sits on its dialog, which looks identical to "the tray is broken".
-          $pf = & "$app\hms_cpap.exe" --preflight 2>&1 | Out-String
-          $pfCode = $LASTEXITCODE
-          Write-Host "preflight after the forced kill (exit $pfCode):"
-          Write-Host $pf
-          if ($pfCode -ne 0) {
-            throw "the port did not come back after killing the previous instance"
-          }
-
-          $tray2 = Start-Process -FilePath "$app\CpapDashDesktop.exe" -PassThru
-          # Polled, not a fixed sleep: the child now starts only after preflight
-          # runs, so a single guess at the delay is fragile.
-          $started = $false
-          foreach ($i in 1..30) {
-            Start-Sleep -Seconds 2
-            if ($tray2.HasExited) { throw "the tray exited on its second run (code $($tray2.ExitCode))" }
-            if (Get-Process hms_cpap -ErrorAction SilentlyContinue) { $started = $true; break }
-          }
-          if (-not $started) {
-            throw 'the tray did not restart hms_cpap on a second run within 60s'
-          }
-          Write-Host '  ok the tray restarted the service'
-          $tray2.CloseMainWindow() | Out-Null
-          Start-Sleep -Seconds 5
-          if (-not $tray2.HasExited) { Stop-Process -Id $tray2.Id -Force }
-          Start-Sleep -Seconds 8
-          $orphan2 = Get-Process hms_cpap -ErrorAction SilentlyContinue
-          if ($orphan2) {
-            Stop-Process -Name hms_cpap -Force -ErrorAction SilentlyContinue
-            throw 'hms_cpap outlived a normally-closed tray'
-          }
-          Write-Host '  ok no orphan after a normal close'
+          # ...and the port really came back, so the next start is not fighting us.
+          & "$app\hms_cpap.exe" --preflight | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'preflight fails after the kill; the port did not come back' }
+          Write-Host '  ok the port was released'
 
       # The promise is that a user installs nothing of their own -- no Qt, no
       # runtime, no separate download. Two things make that testable rather than
