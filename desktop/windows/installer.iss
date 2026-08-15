@@ -36,6 +36,10 @@ ArchitecturesInstallIn64BitMode=x64compatible
 ArchitecturesAllowed=x64compatible
 UninstallDisplayName={#AppName}
 UninstallDisplayIcon={app}\{#AppExe}
+; The installer had no icon of any kind, so Setup and the Add/Remove Programs
+; entry both showed a generic box. Derived from the same logo.png as the tray
+; and the app icon (scripts/make-icons.sh).
+SetupIconFile=..\qt\resources\cpapdash.ico
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -53,6 +57,26 @@ Source: "..\..\dist-windows\hms_cpap.exe";        DestDir: "{app}"; Flags: ignor
 Source: "..\..\dist-windows\*.dll";               DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "..\..\dist-windows\config.example.json";  DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "..\..\dist-windows\static\*";            DestDir: "{app}\static"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+; ---------------------------------------------------------------------------
+; Qt runtime, shipped WITH the application.
+;
+; The requirement is that a user installs nothing of their own: no Qt runtime,
+; no redistributable, no separate download. windeployqt puts the DLLs beside the
+; exe and the plugins into subdirectories, and every one of those directories
+; has to be listed here -- the *.dll rule above does NOT recurse.
+;
+; platforms\qwindows.dll matters most: without it Qt aborts at startup with
+; "no Qt platform plugin could be initialized", which is silent at build time
+; and fatal on the user's machine. CI asserts windeployqt produced it, and
+; windows-desktop-test asserts it survived into the install.
+Source: "..\..\dist-windows\platforms\*";          DestDir: "{app}\platforms";          Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+Source: "..\..\dist-windows\styles\*";             DestDir: "{app}\styles";             Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+Source: "..\..\dist-windows\imageformats\*";       DestDir: "{app}\imageformats";       Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+Source: "..\..\dist-windows\iconengines\*";        DestDir: "{app}\iconengines";        Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+Source: "..\..\dist-windows\tls\*";                DestDir: "{app}\tls";                Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+Source: "..\..\dist-windows\networkinformation\*"; DestDir: "{app}\networkinformation"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+Source: "..\..\dist-windows\generic\*";            DestDir: "{app}\generic";            Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"

@@ -466,3 +466,17 @@ endif()
 message(STATUS "  LLM: hms_llm (from hms-shared)")
 message(STATUS "  DB Pool: hms_db (from hms-shared)")
 message(STATUS "  Build Tests: ${BUILD_TESTS}")
+
+# ── SDD-016: the Qt desktop supervisor ──────────────────────────────────────
+#
+# OFF by default, and it stays that way on every existing build path: Docker,
+# the ARM cross-compile, build_and_deploy.sh and the Linux/macOS CI jobs never
+# see Qt and are byte-for-byte unaffected.
+#
+# There is deliberately no QUIET-and-degrade fallback. A release build that
+# silently produces no supervisor is how an installer ships without its main
+# executable, so asking for it without Qt present is a loud configure error.
+option(BUILD_SUPERVISOR "Build the Qt desktop supervisor (SDD-016)" OFF)
+if(BUILD_SUPERVISOR)
+    add_subdirectory(desktop/qt)
+endif()

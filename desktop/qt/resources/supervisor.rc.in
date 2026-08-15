@@ -1,0 +1,46 @@
+// Windows resource script for the CpapDash supervisor.
+//
+// Embedding the icon in the EXE is what gives it a face everywhere Windows
+// shows it without asking us: the taskbar, Explorer, Alt-Tab, and the
+// Add/Remove Programs entry (installer.iss points UninstallDisplayIcon at this
+// executable). The C# shell it replaces shipped with <ApplicationIcon> empty,
+// so all of those showed a generic box.
+//
+// IDI_ICON1 is the lowest-numbered icon resource, and Windows uses the
+// lowest-numbered one as the application icon. The name matters for that reason
+// alone.
+
+IDI_ICON1 ICON "@CMAKE_CURRENT_SOURCE_DIR@/resources/cpapdash.ico"
+
+// Version information, so right-click -> Properties -> Details is populated and
+// the file can be identified from a support request without running it.
+// The version is substituted by CMake from the VERSION file, the single source
+// of truth for the whole project. Generated rather than passed as a define,
+// because rc.exe wants a quoted literal and getting that through CMake's
+// escaping is more trouble than a template.
+
+1 VERSIONINFO
+FILEFLAGSMASK 0x3fL
+FILEFLAGS     0x0L
+FILEOS        0x40004L      // VOS_NT_WINDOWS32
+FILETYPE      0x1L          // VFT_APP
+FILESUBTYPE   0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"    // US English, Unicode
+        BEGIN
+            VALUE "CompanyName",      "HMS"
+            VALUE "FileDescription",  "CpapDash Desktop"
+            VALUE "FileVersion",      "@HMS_CPAP_VERSION@"
+            VALUE "InternalName",     "CpapDashDesktop"
+            VALUE "OriginalFilename", "CpapDashDesktop.exe"
+            VALUE "ProductName",      "CpapDash"
+            VALUE "ProductVersion",   "@HMS_CPAP_VERSION@"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

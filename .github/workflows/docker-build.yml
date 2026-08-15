@@ -254,6 +254,21 @@ jobs:
         run: |
           vcpkg install --triplet x64-windows-static-md
 
+      # SDD-016: Qt on the BUILD MACHINE ONLY, to compile the supervisor -- the
+      # same reason the step above installs Drogon and libpqxx, which no user
+      # has ever installed either. What ships is self-contained: windeployqt
+      # puts the Qt libraries inside the installer, windows-desktop-test runs on
+      # a fresh runner that never sees this step, and a later step asserts the
+      # running application loads every library it needs from its own folder.
+      - name: Install Qt (build toolchain only, never shipped to users)
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.*'
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          cache: true
+
       - name: Build HMS-CPAP (MSVC)
         run: |
           mkdir build
@@ -261,7 +276,8 @@ jobs:
           # MySQL comes from the vcpkg libmysql port. pkg-config is not present
           # under MSVC, so CMakeLists falls back to its find_path/find_library
           # route; the toolchain file puts the vcpkg tree on the search path.
-          cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static-md -DBUILD_TESTS=OFF -DBUILD_WITH_WEB=ON -DBUILD_WITH_POSTGRESQL=ON -DBUILD_WITH_MYSQL=ON ..
+          cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static-md -DBUILD_TESTS=OFF -DBUILD_WITH_WEB=ON -DBUILD_WITH_POSTGRESQL=ON -DBUILD_WITH_MYSQL=ON `
+            -DBUILD_SUPERVISOR=ON -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR" ..
           cmake --build . --parallel
 
       # ── Package Windows release ─────────────────────────────────
@@ -330,17 +346,33 @@ jobs:
       # Both steps are continue-on-error so a desktop-packaging problem
       # degrades to "zip only" rather than taking down the whole Windows
       # artifact, which is what the release job actually needs.
-      - name: Build tray shell
+      - name: Stage the supervisor and service
         id: tray
         continue-on-error: true
         run: |
-          dotnet publish desktop\windows\CpapDashDesktop\CpapDashDesktop.csproj `
-            -c Release -o dist-tray
           # Staging dir the installer script reads from, mirroring the install
           # layout: shell and service side by side.
           mkdir dist-windows -Force
-          Copy-Item dist-tray\CpapDashDesktop.exe dist-windows\
+          Copy-Item build\desktop\qt\CpapDashDesktop.exe dist-windows\
           Copy-Item -Recurse -Force release\* dist-windows\
+
+          # Everything Qt needs, next to the exe. The requirement is that a user
+          # installs NOTHING of their own -- no Qt runtime, no redistributable --
+          # so the DLLs and the platform plugins travel inside the installer the
+          # same way the MSVC CRT already does.
+          #
+          # --no-translations and --no-system-d3d-compiler keep out ~10MB the
+          # supervisor never loads.
+          & "$env:QT_ROOT_DIR\bin\windeployqt.exe" `
+            --release --no-translations --no-system-d3d-compiler `
+            --no-opengl-sw dist-windows\CpapDashDesktop.exe
+
+          # A missing platform plugin is silent at build time and fatal at run
+          # time ("no Qt platform plugin could be initialized"), so it is checked
+          # here rather than discovered by whoever installs it.
+          if (-not (Test-Path dist-windows\platforms\qwindows.dll)) {
+            throw "windeployqt did not produce platforms\qwindows.dll"
+          }
 
       - name: Sign binaries
         id: sign
@@ -353,9 +385,13 @@ jobs:
           [IO.File]::WriteAllBytes("cert.pfx", [Convert]::FromBase64String($env:WINDOWS_CERT_PFX))
           $signtool = (Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter signtool.exe |
                        Where-Object { $_.FullName -like "*x64*" } | Select-Object -First 1).FullName
+          # Every binary that ships, not just the two executables. SmartScreen
+          # reputation is per-publisher across a bundle, and an unsigned Qt DLL
+          # beside a signed exe is a support ticket.
+          $targets = @('dist-windows\CpapDashDesktop.exe','dist-windows\hms_cpap.exe') +
+                     (Get-ChildItem dist-windows -Recurse -Include *.dll | ForEach-Object FullName)
           & $signtool sign /f cert.pfx /p $env:WINDOWS_CERT_PASSWORD `
-            /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 `
-            dist-windows\CpapDashDesktop.exe dist-windows\hms_cpap.exe
+            /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 @targets
           Remove-Item cert.pfx
 
       - name: Build installer
@@ -449,7 +485,7 @@ jobs:
           $app = "$env:LOCALAPPDATA\Programs\HMS-CPAP"
           # The tray finds hms_cpap.exe by sitting next to it, so this layout IS
           # the contract between the two.
-          foreach ($f in @('CpapDashDesktop.exe','hms_cpap.exe','static\browser\index.html')) {
+          foreach ($f in @('CpapDashDesktop.exe','hms_cpap.exe','static\browser\index.html','platforms\qwindows.dll')) {
             if (-not (Test-Path "$app\$f")) { throw "missing after install: $f" }
             Write-Host "  ok $f"
           }
@@ -496,79 +532,152 @@ jobs:
           # so a passing test reported as red.
           exit 0
 
-      - name: The tray starts the service and it actually serves
+      # SDD-016 changed what a fresh install does, and this asserts BOTH halves
+      # of it. The supervisor reads config.json and decides whether the service
+      # can usefully run, so on a machine that has never been configured it opens
+      # setup instead of starting a service with no data source -- which used to
+      # produce "hms_cpap exited with code 1" and tell the user their software
+      # was broken.
+      #
+      # The previous version of this step asserted the old contract (a shell that
+      # always spawned the child) and so would have passed a supervisor that
+      # ignored its configuration entirely.
+      - name: An unconfigured machine gets setup, not a doomed service
+        shell: pwsh
         run: |
           $app = "$env:LOCALAPPDATA\Programs\HMS-CPAP"
-          $tray = Start-Process -FilePath "$app\CpapDashDesktop.exe" -PassThru
+          if (Test-Path "$env:USERPROFILE\.hms-cpap\config.json") {
+            Remove-Item "$env:USERPROFILE\.hms-cpap\config.json" -Force
+          }
+
+          $sup = Start-Process -FilePath "$app\CpapDashDesktop.exe" -PassThru
           Start-Sleep -Seconds 20
 
-          if ($tray.HasExited) { throw "the tray exited immediately (code $($tray.ExitCode))" }
-
-          # The point of the shell: it spawns the child.
+          if ($sup.HasExited) {
+            throw "the supervisor exited on an unconfigured machine (code $($sup.ExitCode)) instead of offering setup"
+          }
           $child = Get-Process hms_cpap -ErrorAction SilentlyContinue
-          if (-not $child) { throw 'the tray never started hms_cpap' }
-          Write-Host "  ok tray pid $($tray.Id), child pid $($child.Id)"
+          if ($child) {
+            throw "the supervisor started the service with no configuration; it should have opened setup"
+          }
+          Write-Host "  ok supervisor is up and did not start an unconfigurable service"
 
-          # And the child is really serving, not merely running.
+          Stop-Process -Id $sup.Id -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 5
+
+      - name: A configured machine starts the service, and it serves
+        shell: pwsh
+        run: |
+          $app  = "$env:LOCALAPPDATA\Programs\HMS-CPAP"
+          $data = "$env:USERPROFILE\.hms-cpap"
+          New-Item -ItemType Directory -Force $data | Out-Null
+          New-Item -ItemType Directory -Force "C:\cpd_card\DATALOG" | Out-Null
+
+          @{
+            device_id = "CI"; device_name = "CI"; source = "local"
+            local_dir = "C:\cpd_card"; archive_dir = ""
+            web_port = 8893; burst_interval = 65; setup_complete = $true
+            database = @{ type = "sqlite"; sqlite_path = "$data\cpap.db" }
+            logging = @{ enabled = $false }; mqtt = @{ enabled = $false }
+          } | ConvertTo-Json -Depth 5 | Set-Content "$data\config.json" -Encoding utf8
+
+          $sup = Start-Process -FilePath "$app\CpapDashDesktop.exe" -PassThru
+          Start-Sleep -Seconds 20
+          if ($sup.HasExited) { throw "the supervisor exited (code $($sup.ExitCode))" }
+
+          $child = Get-Process hms_cpap -ErrorAction SilentlyContinue
+          if (-not $child) { throw 'the supervisor never started hms_cpap on a configured machine' }
+          Write-Host "  ok supervisor pid $($sup.Id), service pid $($child.Id)"
+
+          # Running is not serving.
           $ok = $false
           foreach ($i in 1..15) {
             try {
-              $r = Invoke-WebRequest -Uri 'http://localhost:8893/health' -UseBasicParsing -TimeoutSec 3
+              $r = Invoke-WebRequest http://localhost:8893/health -UseBasicParsing -TimeoutSec 4
               if ($r.StatusCode -eq 200) { Write-Host "  ok /health: $($r.Content)"; $ok = $true; break }
             } catch { Start-Sleep -Seconds 2 }
           }
           if (-not $ok) { throw '/health never answered' }
 
-          # FORCE kill: the case Supervisor.Stop() can never handle, because
-          # TerminateProcess skips every finally block in the runtime. Only the
+          # FORCE kill: the case a clean shutdown path can never cover, because
+          # TerminateProcess skips every destructor and finally block. Only the
           # job object saves us here, and this assertion is what caught its
-          # absence.
-          Stop-Process -Id $tray.Id -Force
+          # absence in the C# shell -- and its absence again in the Qt one, which
+          # shipped with no job object at all until it was tested on Windows.
+          Stop-Process -Id $sup.Id -Force
           Start-Sleep -Seconds 8
           $orphan = Get-Process hms_cpap -ErrorAction SilentlyContinue
           if ($orphan) {
             Stop-Process -Name hms_cpap -Force -ErrorAction SilentlyContinue
-            throw 'hms_cpap outlived a FORCE-KILLED tray; it would hold port 8893'
+            throw 'hms_cpap outlived a force-killed supervisor and would hold the port'
           }
           Write-Host '  ok no orphan after a forced kill'
 
-          # And the ordinary path, which most people actually take: start again
-          # and close the window politely. Covering only the violent case would
-          # leave the common one untested.
-          # Prove the port is actually free before blaming the tray. If the
-          # previous instance left 8893 unusable, preflight refuses and the tray
-          # sits on its dialog, which looks identical to "the tray is broken".
-          $pf = & "$app\hms_cpap.exe" --preflight 2>&1 | Out-String
-          $pfCode = $LASTEXITCODE
-          Write-Host "preflight after the forced kill (exit $pfCode):"
-          Write-Host $pf
-          if ($pfCode -ne 0) {
-            throw "the port did not come back after killing the previous instance"
+          # ...and the port really came back, so the next start is not fighting us.
+          & "$app\hms_cpap.exe" --preflight | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw 'preflight fails after the kill; the port did not come back' }
+          Write-Host '  ok the port was released'
+
+      # The promise is that a user installs nothing of their own -- no Qt, no
+      # runtime, no separate download. Two things make that testable rather than
+      # hoped for.
+      #
+      # First, THIS JOB IS THE CLEAN ROOM: it runs on a fresh windows-latest
+      # runner that only downloads the installer artifact. Qt is installed in
+      # windows-build, a different job on a different machine, so nothing here
+      # can be borrowed from a developer toolchain.
+      #
+      # Second, and more precisely: ask the LIVE process where its modules came
+      # from. "It ran on a machine we believe was clean" is only as strong as the
+      # belief; enumerating loaded DLLs is direct evidence, and it stays valid on
+      # a machine that DOES have Qt -- which is exactly where a borrowed library
+      # would hide.
+      #
+      # Shell extensions (OneDrive, ink/tablet input) are injected into every GUI
+      # process by Windows itself. They are not dependencies and their absence
+      # changes nothing, so the assertion is scoped to the libraries we ship.
+      - name: The application borrows nothing from outside its own folder
+        shell: pwsh
+        run: |
+          $app = "$env:LOCALAPPDATA\Programs\HMS-CPAP"
+
+          $p = Start-Process "$app\CpapDashDesktop.exe" -PassThru
+          Start-Sleep -Seconds 18
+          if ($p.HasExited) { throw "the supervisor exited during the dependency check" }
+
+          $p.Refresh()
+          $mods = $p.Modules | ForEach-Object { $_.FileName }
+          Write-Host "  $($mods.Count) modules loaded"
+
+          # Everything we ship, wherever it was loaded from.
+          $ours = $mods | Where-Object { $_ -match 'Qt6|msvcp|vcruntime|concrt' }
+          if (-not $ours) { throw "no Qt modules loaded at all - is this the right binary?" }
+
+          # Two legitimate sources: our own folder, and Windows itself. The
+          # Universal CRT lives in System32 and IS the operating system --
+          # msvcp_win.dll is shipped by Windows on every 10 and 11 machine, so a
+          # user has it whether or not they have ever installed anything.
+          #
+          # What this is looking for is a library loaded from a DEVELOPER
+          # location: a Qt install, a Visual Studio directory, somebody's build
+          # tree. Those are the ones a user would not have.
+          $borrowed = $ours | Where-Object {
+            $_ -notlike "$app*" -and $_ -notlike "$env:SystemRoot*"
+          }
+          if ($borrowed) {
+            Write-Host "  borrowed from outside the installation:"
+            $borrowed | ForEach-Object { Write-Host "    $_" }
+            throw "the application is loading libraries it does not ship; a user without them would get a broken install"
           }
 
-          $tray2 = Start-Process -FilePath "$app\CpapDashDesktop.exe" -PassThru
-          # Polled, not a fixed sleep: the child now starts only after preflight
-          # runs, so a single guess at the delay is fragile.
-          $started = $false
-          foreach ($i in 1..30) {
-            Start-Sleep -Seconds 2
-            if ($tray2.HasExited) { throw "the tray exited on its second run (code $($tray2.ExitCode))" }
-            if (Get-Process hms_cpap -ErrorAction SilentlyContinue) { $started = $true; break }
-          }
-          if (-not $started) {
-            throw 'the tray did not restart hms_cpap on a second run within 60s'
-          }
-          Write-Host '  ok the tray restarted the service'
-          $tray2.CloseMainWindow() | Out-Null
+          Write-Host "  ok nothing loaded from a developer location"
+          $ours | ForEach-Object { Write-Host "    $(Split-Path $_ -Leaf)" }
+
+          Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
           Start-Sleep -Seconds 5
-          if (-not $tray2.HasExited) { Stop-Process -Id $tray2.Id -Force }
-          Start-Sleep -Seconds 8
-          $orphan2 = Get-Process hms_cpap -ErrorAction SilentlyContinue
-          if ($orphan2) {
-            Stop-Process -Name hms_cpap -Force -ErrorAction SilentlyContinue
-            throw 'hms_cpap outlived a normally-closed tray'
+          if (Get-Process hms_cpap -ErrorAction SilentlyContinue) {
+            throw "the service outlived the supervisor during the dependency check"
           }
-          Write-Host '  ok no orphan after a normal close'
 
       - name: Uninstall removes the program and the Run key
         run: |
