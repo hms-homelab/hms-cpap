@@ -103,14 +103,43 @@ QString ChildProcess::resolveServiceExecutable() {
     QFileInfo beside(QDir(dir).filePath(name));
     if (beside.exists() && beside.isExecutable()) return beside.absoluteFilePath();
 
+    // Everything below is for DEVELOPMENT trees only. A shipped install always
+    // has the service beside the supervisor -- that layout is asserted by the
+    // Windows CI job and produced by scripts/package-macos.sh -- so a miss here
+    // means a broken install and the caller says so.
+    //
+    // But the two binaries are NOT beside each other while being worked on:
+    // the supervisor builds under desktop/qt/ inside its own .app, and the
+    // service builds at the root of whichever build directory was configured
+    // with BUILD_SUPERVISOR off. Without these fallbacks the supervisor is
+    // unrunnable on the machine where it is being written, which is the worst
+    // possible place for it to be unrunnable.
+    QStringList candidates;
+
 #ifdef Q_OS_MACOS
-    // Development layout: the supervisor is inside CpapDashDesktop.app/Contents/
-    // MacOS/ and the service is in the build directory three levels up. Without
-    // this, running from a build tree on a Mac finds nothing and the supervisor
-    // is untestable exactly where it is being written.
-    QFileInfo up(QDir(dir).filePath("../../../" + name));
-    if (up.exists() && up.isExecutable()) return up.absoluteFilePath();
+    // Out of CpapDashDesktop.app/Contents/MacOS to the build tree that made it.
+    candidates << QDir(dir).filePath("../../../" + name)
+               << QDir(dir).filePath("../../../../" + name);
 #endif
+
+    // A sibling build directory. `build-qt` for the supervisor alongside
+    // `build` for the service is the arrangement this project actually uses,
+    // because configuring the service pulls in Drogon and vcpkg and nobody
+    // wants that in the loop while editing a dialog.
+    QDir root(dir);
+    for (int up = 0; up < 5 && root.cdUp(); ++up) {
+        const QString base = root.absolutePath();
+        for (const QString& sibling : {QStringLiteral("build"),
+                                       QStringLiteral("build-qt"),
+                                       QStringLiteral("build-mac")}) {
+            candidates << base + "/" + sibling + "/" + name;
+        }
+    }
+
+    for (const QString& candidate : candidates) {
+        QFileInfo fi(candidate);
+        if (fi.exists() && fi.isExecutable()) return fi.absoluteFilePath();
+    }
 
     return {};
 }
