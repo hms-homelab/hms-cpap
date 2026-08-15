@@ -5,6 +5,22 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.0.1] - 2026-08-15
+
+### Fixed
+- **CpapDash now runs on a Mac without installing anything else.** The macOS
+  download was a bare program that quietly depended on twelve libraries a
+  normal Mac does not have, so it could not start at all. It is now a single
+  CpapDash.app containing everything it needs, signed and notarised by Apple,
+  so it opens with a double-click like any other application.
+
+  This has been true of every previous macOS release. Nobody reported it,
+  which is its own answer about how far people got.
+
+### Added
+- **Start at Login**, in the menu. CpapDash starts the service, so the system
+  only ever starts CpapDash.
+
 ## [5.0.0] - 2026-08-14
 
 ### Added

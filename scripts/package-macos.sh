@@ -182,6 +182,32 @@ while IFS= read -r dep; do
 done < "$WORK/seen"
 
 # ---------------------------------------------------------------------------
+# Drop Qt plugins that cannot load.
+#
+# macdeployqt copies whole plugin directories, including ones this application
+# never uses -- a virtual keyboard, a PDF image format, an SVG icon engine --
+# and it does NOT bring the frameworks those plugins depend on, because nothing
+# links them. The result is a plugin with a dangling @rpath reference: dead
+# weight that fails the moment anything tries to load it.
+#
+# Deleting them is the honest fix. Excluding them from the check below would
+# hide exactly the class of problem the check exists to catch, and shipping a
+# plugin that cannot load claims a capability the bundle does not have.
+echo "==> removing Qt plugins whose dependencies are not bundled"
+find "$APP/Contents/PlugIns" -name '*.dylib' -type f 2>/dev/null | while IFS= read -r plugin; do
+    missing=""
+    for ref in $(otool -L "$plugin" 2>/dev/null | tail -n +2 | awk '{print $1}' \
+                 | grep '^@rpath/.*\.framework/' 2>/dev/null || true); do
+        fw=$(echo "$ref" | sed 's|^@rpath/||; s|/Versions/.*||')
+        [ -d "$FRAMEWORKS/$fw" ] || missing="$fw"
+    done
+    if [ -n "$missing" ]; then
+        echo "   dropping $(basename "$plugin") (needs $missing)"
+        rm -f "$plugin"
+    fi
+done
+
+# ---------------------------------------------------------------------------
 # Prove it. A bundle that still points at /opt/homebrew is the bug, not a
 # warning, so this fails the build rather than printing advice nobody reads.
 echo "==> checking nothing points outside the bundle"
