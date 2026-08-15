@@ -58,6 +58,13 @@ jobs:
             libyaml-cpp-dev zlib1g-dev \
             libhpdf-dev gnuplot
 
+      # Build machine only, to compile the supervisor -- exactly like the
+      # Homebrew step above. Nothing here reaches a user: the packaging step
+      # copies what is needed INTO the bundle and then fails the build if
+      # anything still points outside it.
+      - name: Install Qt (build toolchain only, never shipped to users)
+        run: brew install qt
+
       - name: Build HMS-CPAP
         run: |
           mkdir build && cd build
@@ -797,6 +804,8 @@ jobs:
             -DBUILD_WITH_WEB=ON \
             -DBUILD_WITH_POSTGRESQL=ON \
             -DBUILD_WITH_MYSQL=ON \
+            -DBUILD_SUPERVISOR=ON \
+            -DCMAKE_PREFIX_PATH=$(brew --prefix qt) \
             ..
           cmake --build . --parallel
 
@@ -818,6 +827,91 @@ jobs:
             "mqtt": { "enabled": false }
           }
           EOF
+
+      # ---------------------------------------------------------------------
+      # One CpapDash.app holding the supervisor, the service, the dashboard and
+      # every library either needs.
+      #
+      # Until v5.0.0 the macOS download was a bare hms_cpap binary linking
+      # twelve Homebrew dylibs, so it could not start on a machine that did not
+      # already have Homebrew and nine brew installs. The script fails the build
+      # if anything still resolves outside the bundle.
+      - name: Package CpapDash.app
+        run: |
+          ./scripts/package-macos.sh build
+
+      # Signing and notarisation are skipped when the secrets are absent -- a
+      # fork builds and packages, it just cannot sign. Same shape as the Windows
+      # certificate steps.
+      - name: Sign, notarise and staple
+        if: env.APPLE_DEVID_P12 != ''
+        env:
+          APPLE_DEVID_P12: ${{ secrets.APPLE_DEVID_P12 }}
+          APPLE_DEVID_P12_PASSWORD: ${{ secrets.APPLE_DEVID_P12_PASSWORD }}
+          APPLE_DEVID_IDENTITY: ${{ secrets.APPLE_DEVID_IDENTITY }}
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          APP=build/package/CpapDash.app
+
+          echo "$APPLE_DEVID_P12" | base64 --decode > /tmp/devid.p12
+          echo "$ASC_KEY_P8"      | base64 --decode > /tmp/asc.p8
+
+          # A throwaway keychain, unlocked for this job only. Importing into the
+          # login keychain on a shared runner would be careless even though the
+          # runner is ephemeral.
+          security create-keychain -p runner build.keychain
+          security unlock-keychain -p runner build.keychain
+          security set-keychain-settings -t 3600 -u build.keychain
+          security import /tmp/devid.p12 -k build.keychain \
+            -P "$APPLE_DEVID_P12_PASSWORD" -T /usr/bin/codesign -A
+          security list-keychains -d user -s build.keychain \
+            $(security list-keychains -d user | tr -d '"')
+          # Without this, codesign blocks on a GUI prompt nobody can answer and
+          # the job hangs until it times out.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k runner build.keychain >/dev/null
+
+          # INSIDE-OUT. Nested code must be signed before the bundle containing
+          # it, and rewriting load commands invalidated every signature the
+          # libraries arrived with -- on Apple Silicon an invalid signature is
+          # SIGKILL, not a warning.
+          find "$APP/Contents/Frameworks" -name '*.dylib' -type f | while read -r lib; do
+            codesign --force --options runtime --timestamp \
+              --sign "$APPLE_DEVID_IDENTITY" --keychain build.keychain "$lib"
+          done
+          codesign --force --options runtime --timestamp \
+            --sign "$APPLE_DEVID_IDENTITY" --keychain build.keychain "$APP/Contents/MacOS/hms_cpap"
+          codesign --force --deep --options runtime --timestamp \
+            --sign "$APPLE_DEVID_IDENTITY" --keychain build.keychain "$APP"
+          codesign --verify --deep --strict "$APP"
+
+          # ditto, not zip: it preserves the bundle layout and symlinks that the
+          # notary service expects.
+          /usr/bin/ditto -c -k --keepParent "$APP" /tmp/CpapDash-notarize.zip
+          xcrun notarytool submit /tmp/CpapDash-notarize.zip \
+            --key /tmp/asc.p8 --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID" \
+            --wait --timeout 30m
+          xcrun stapler staple "$APP"
+
+          # Gatekeeper's own verdict, which is the one a user's Mac reaches.
+          spctl --assess --type execute --verbose=4 "$APP"
+
+          rm -f /tmp/devid.p12 /tmp/asc.p8
+
+      - name: Build the disk image
+        run: |
+          mkdir -p dist-macos
+          hdiutil create -volname "CpapDash" -srcfolder build/package/CpapDash.app \
+            -ov -format ULFO dist-macos/CpapDash.dmg
+          ls -lh dist-macos/CpapDash.dmg
+
+      - name: Upload macOS app
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpapdash-macos-app
+          path: dist-macos/CpapDash.dmg
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
@@ -866,6 +960,17 @@ jobs:
           name: cpapdash-desktop-setup
           path: ./
 
+      # The signed, notarised bundle. hms-cpap-macos-arm64.zip stays for now --
+      # it is what anyone scripting against the release already expects -- but
+      # the DMG is the one a person should download: the zip holds a bare binary
+      # that needs Homebrew, the DMG needs nothing.
+      - name: Download macOS app
+        id: download-macos-app
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: cpapdash-macos-app
+
       - name: Download macOS artifact
         id: download-macos
         continue-on-error: true
@@ -888,3 +993,4 @@ jobs:
             hms-cpap-windows-x64.zip
             hms-cpap-macos-arm64.zip
             CpapDashDesktop-Setup.exe
+            CpapDash.dmg
