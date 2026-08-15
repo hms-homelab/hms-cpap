@@ -149,6 +149,15 @@ qt_add_resources(${SUPERVISOR_TARGET} "icons"
 )
 
 if(APPLE)
+    # The icon has to be COPIED INTO the bundle, not merely named in the plist.
+    # Info.plist declares CFBundleIconFile, but a bundle with no Resources
+    # directory just shows the generic application icon, which is what shipped
+    # until this was noticed.
+    set(SUPERVISOR_ICNS "${CMAKE_CURRENT_SOURCE_DIR}/resources/cpapdash.icns")
+    target_sources(${SUPERVISOR_TARGET} PRIVATE "${SUPERVISOR_ICNS}")
+    set_source_files_properties("${SUPERVISOR_ICNS}" PROPERTIES
+        MACOSX_PACKAGE_LOCATION "Resources")
+
     # LSUIElement: a menu bar app with no Dock icon and no menu bar of its own.
     # Without it the supervisor shows up in the Dock and in Cmd-Tab like a
     # document app, which is wrong for something whose whole job is to sit in
