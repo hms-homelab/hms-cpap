@@ -58,13 +58,6 @@ jobs:
             libyaml-cpp-dev zlib1g-dev \
             libhpdf-dev gnuplot
 
-      # Build machine only, to compile the supervisor -- exactly like the
-      # Homebrew step above. Nothing here reaches a user: the packaging step
-      # copies what is needed INTO the bundle and then fails the build if
-      # anything still points outside it.
-      - name: Install Qt (build toolchain only, never shipped to users)
-        run: brew install qt
-
       - name: Build HMS-CPAP
         run: |
           mkdir build && cd build
@@ -761,6 +754,14 @@ jobs:
       # wrapper is not packaged by Homebrew, so build it with its bundled C lib
       # (PAHO_WITH_MQTT_C=ON) and install into the Homebrew prefix so the main
       # build's find_library() calls resolve both libs.
+      # Qt on the BUILD MACHINE ONLY, to compile the supervisor -- the same
+      # reason this job already installs Drogon and libpqxx, which no user has
+      # ever installed either. Nothing here reaches anyone: package-macos.sh
+      # copies what is needed INTO CpapDash.app and then fails the build if
+      # anything still resolves outside it.
+      - name: Install Qt (build toolchain only, never shipped to users)
+        run: brew install qt
+
       - name: Build and install paho.mqtt.cpp
         run: |
           # --recurse-submodules: PAHO_WITH_MQTT_C=ON builds the bundled C lib from
