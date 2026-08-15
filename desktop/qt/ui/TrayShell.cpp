@@ -22,6 +22,7 @@
 #include "ConfiguratorWindow.h"
 #include "StartupWindow.h"
 #include "ConfigGate.h"
+#include "Autostart.h"
 
 #include <nlohmann/json.hpp>
 #include <optional>
@@ -172,6 +173,27 @@ void TrayShell::buildMenu() {
     // hidden -- Qt moves ResetRole buttons around per platform, and on macOS it
     // landed somewhere nobody would look.
     menu_->addAction("Start Over...", this, &TrayShell::startOver);
+
+    // Checkable, reflecting what is actually on disk rather than what we last
+    // set -- the installer writes the same Windows Run key, so the two must
+    // agree or the tick lies about the state of the machine.
+    if (autostart::isSupported()) {
+        autostart_action_ = menu_->addAction("Start at Login");
+        autostart_action_->setCheckable(true);
+        autostart_action_->setChecked(autostart::isEnabled());
+        connect(autostart_action_, &QAction::toggled, this, [this](bool on) {
+            QString err;
+            if (!autostart::setEnabled(on, &err)) {
+                // Put the tick back: it must show what IS, not what was asked
+                // for. A checkbox that stays ticked after a failed write is a
+                // user believing CpapDash starts at login when it does not.
+                QSignalBlocker block(autostart_action_);
+                autostart_action_->setChecked(!on);
+                QMessageBox::warning(nullptr, "CpapDash",
+                    err.isEmpty() ? QStringLiteral("Could not change your startup items.") : err);
+            }
+        });
+    }
 
     menu_->addSeparator();
     menu_->addAction("Open Installation Folder", this, &TrayShell::openInstallFolder);

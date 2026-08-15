@@ -80,6 +80,7 @@ private:
     QAction* stop_action_      = nullptr;
     QAction* restart_action_   = nullptr;
     QAction* retry_action_     = nullptr;
+    QAction* autostart_action_ = nullptr;
     QTimer   health_timer_;
     std::unique_ptr<QNetworkAccessManager> net_;
 

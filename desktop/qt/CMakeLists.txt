@@ -61,6 +61,7 @@ qt_add_executable(${SUPERVISOR_TARGET}
     core/qt/ChildProcess.cpp
 
     app/SingleInstance.cpp
+    app/Autostart.cpp
 
     ui/TrayShell.cpp
     ui/SettingsDialog.cpp
