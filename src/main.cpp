@@ -30,7 +30,7 @@
 #endif
 #include "services/MLTrainingService.h"
 #include "services/BackfillService.h"
-#include "services/O2RingCsvParser.h"
+#include <cpapdash/parser/OximetryCsv.h>
 #include "services/PrismaIngestion.h"
 #include "agent/IAgentLLM.h"
 #include "mqtt_client.h"
@@ -964,7 +964,8 @@ int main(int argc, char** argv) {
                 hms_cpap::CpapController::oxi_csv_import_ =
                     [oxi_db](const std::string& content, const std::string& filename) -> Json::Value {
                         Json::Value r;
-                        auto session = hms_cpap::O2RingCsvParser::parse(content, filename);
+                        auto session =
+                            cpapdash::parser::readO2RingCsv(content, filename).session;
                         if (session.samples.empty()) {
                             r["error"] = "No readable rows in CSV (expected a Wellue / O2 Ring export)";
                             return r;

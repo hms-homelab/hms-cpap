@@ -10,19 +10,28 @@
 // support ticket and do not belong in this repo.
 #include <gtest/gtest.h>
 
-#include "services/O2RingCsvWriter.h"
-#include "services/O2RingCsvParser.h"
+// Both halves now live in the shared parser, so the round trip below is a check
+// on ONE library rather than on two of this repo's files agreeing with each
+// other. These cases stay here as hms-cpap's own regression cover.
+#include <cpapdash/parser/OximetryCsv.h>
 #include "utils/TimeCompat.h"
 
 #include <algorithm>   // std::count -- GCC 14 dropped the transitive include
 #include <chrono>
 #include <string>
 
-using namespace hms_cpap;
 using cpapdash::parser::OximetrySample;
 using cpapdash::parser::OximetrySession;
+using cpapdash::parser::o2RingCsvFilename;
+using cpapdash::parser::writeO2RingCsv;
 
 namespace {
+
+// The shape the old hms_cpap::O2RingCsvParser::parse had; assertions unchanged.
+OximetrySession parseCsv(const std::string& content, const std::string& filename) {
+    return cpapdash::parser::readO2RingCsv(content, filename).session;
+}
+
 
 // UTC, because that is the clock O2RingCsvParser reads these strings in
 // (timegm), and therefore the clock the writer has to render them in.
@@ -63,13 +72,13 @@ OximetrySession night() {
 }  // namespace
 
 TEST(O2RingCsvWriter, HeaderMatchesARealExport) {
-    const std::string csv = O2RingCsvWriter::write(night());
+    const std::string csv = writeO2RingCsv(night());
     EXPECT_EQ(csv.substr(0, csv.find("\r\n")),
               "Time,Oxygen Level,Pulse Rate,Motion,O2 Reminder,PR Reminder");
 }
 
 TEST(O2RingCsvWriter, RowsHaveSixColumnsAndNoTrailingComma) {
-    const std::string csv = O2RingCsvWriter::write(night());
+    const std::string csv = writeO2RingCsv(night());
     const size_t first = csv.find("\r\n") + 2;
     const std::string row = csv.substr(first, csv.find("\r\n", first) - first);
 
@@ -82,7 +91,7 @@ TEST(O2RingCsvWriter, RowsHaveSixColumnsAndNoTrailingComma) {
 // The test this file exists for.
 TEST(O2RingCsvWriter, RoundTripsThroughTheParser) {
     const OximetrySession in = night();
-    const auto out = O2RingCsvParser::parse(O2RingCsvWriter::write(in), "x.csv");
+    const auto out = parseCsv(writeO2RingCsv(in), "x.csv");
 
     ASSERT_EQ(out.samples.size(), in.samples.size());
     for (size_t i = 0; i < in.samples.size(); ++i) {
@@ -108,11 +117,11 @@ TEST(O2RingCsvWriter, OffFingerSamplesSurviveAsGapsNotAsMissingRows) {
     in.start_time = t0;
     in.end_time   = t0 + std::chrono::seconds(6);
 
-    const std::string csv = O2RingCsvWriter::write(in);
+    const std::string csv = writeO2RingCsv(in);
     EXPECT_NE(csv.find(",255,255,"), std::string::npos)
         << "an unreadable sample must be written as the sentinel, not skipped";
 
-    const auto out = O2RingCsvParser::parse(csv, "x.csv");
+    const auto out = parseCsv(csv, "x.csv");
     ASSERT_EQ(out.samples.size(), 4u) << "rows were dropped, the night got shorter";
     EXPECT_EQ(out.samples[1].spo2,       0xFF);
     EXPECT_EQ(out.samples[1].heart_rate, 0xFF);
@@ -135,7 +144,7 @@ TEST(O2RingCsvWriter, PerSecondSessionsKeepTheirInterval) {
     in.start_time = t0;
     in.end_time   = t0 + std::chrono::seconds(9);
 
-    const auto out = O2RingCsvParser::parse(O2RingCsvWriter::write(in), "x.csv");
+    const auto out = parseCsv(writeO2RingCsv(in), "x.csv");
     EXPECT_DOUBLE_EQ(out.sample_interval, 1.0);
     EXPECT_EQ(out.duration_seconds, 10);   // samples * interval, see above
     EXPECT_EQ(out.samples.front().motion, 29) << "motion is data, not a flag";
@@ -143,21 +152,21 @@ TEST(O2RingCsvWriter, PerSecondSessionsKeepTheirInterval) {
 
 TEST(O2RingCsvWriter, AnEmptySessionWritesAHeaderAndNothingElse) {
     OximetrySession empty;
-    const std::string csv = O2RingCsvWriter::write(empty);
+    const std::string csv = writeO2RingCsv(empty);
     EXPECT_EQ(csv, "Time,Oxygen Level,Pulse Rate,Motion,O2 Reminder,PR Reminder\r\n");
 }
 
 TEST(O2RingCsvWriter, FilenameFollowsTheRingsOwnConvention) {
     OximetrySession s = night();   // starts 2026-06-19 23:20:29 UTC
-    EXPECT_EQ(O2RingCsvWriter::filenameFor(s, "O2Ring S"),
+    EXPECT_EQ(o2RingCsvFilename(s, "O2Ring S"),
               "O2Ring S_20260619232029.csv");
-    EXPECT_EQ(O2RingCsvWriter::filenameFor(s), "O2Ring_20260619232029.csv");
+    EXPECT_EQ(o2RingCsvFilename(s), "O2Ring_20260619232029.csv");
 }
 
 // The device name can come from the database, so it is not trusted to be tame.
 TEST(O2RingCsvWriter, ADeviceNameCannotEscapeTheFilename) {
     OximetrySession s = night();
-    const std::string name = O2RingCsvWriter::filenameFor(s, "evil/../\"name");
+    const std::string name = o2RingCsvFilename(s, "evil/../\"name");
     EXPECT_EQ(name.find('/'),  std::string::npos);
     EXPECT_EQ(name.find('\\'), std::string::npos);
     EXPECT_EQ(name.find('"'),  std::string::npos);
@@ -171,7 +180,7 @@ TEST(O2RingCsvWriter, TheReaderStillAcceptsTheOtherDialect) {
         "Time,SpO2(%),Pulse Rate(bpm),Motion,SpO2 Reminder,PR Reminder,\r\n"
         "\"11:20:29PM Jun 19, 2026\",89,60,0,0,0,\r\n"
         "\"11:20:30PM Jun 19, 2026\",90,61,0,0,0,\r\n";
-    const auto s = O2RingCsvParser::parse(real_shape, "O2Ring S_20260619232029.csv");
+    const auto s = parseCsv(real_shape, "O2Ring S_20260619232029.csv");
     ASSERT_EQ(s.samples.size(), 2u);
     EXPECT_EQ(s.samples[0].spo2, 89);
     EXPECT_EQ(s.samples[1].heart_rate, 61);
