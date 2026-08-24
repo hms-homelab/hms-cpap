@@ -5,6 +5,19 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.0.2] - 2026-08-23
+
+### Changed
+- O2 Ring CSV reading and writing now come from the shared cpapdash-parser
+  (v2026.2.0) instead of this repo's own copies. Both this project and the cloud
+  API had grown their own reader for the same Wellue export and the two had
+  drifted apart, so a file that imported correctly in one could be filed on the
+  wrong day by the other. There is one implementation now, and it carries the
+  numeric-date handling both sides had learned separately.
+- `O2RingCsvParser` and `O2RingCsvWriter` are gone, replaced by
+  `cpapdash::parser::readO2RingCsv` / `writeO2RingCsv` / `o2RingCsvFilename`.
+  Their test suites stayed, retargeted, as this repo's regression cover.
+
 ## [5.0.1] - 2026-08-15
 
 ### Fixed

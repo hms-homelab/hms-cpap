@@ -5,8 +5,7 @@
 #include "utils/CardResidue.h"
 #include "database/IDatabase.h"
 #include "database/SqlDialect.h"
-#include "services/O2RingCsvWriter.h"
-#include "services/O2RingCsvParser.h"
+#include <cpapdash/parser/OximetryCsv.h>
 #include "utils/OximetryDevice.h"
 #include "utils/TimeCompat.h"
 
@@ -422,14 +421,14 @@ bool SleepHqExportService::exportOximetry(const std::string& date_folder) {
     const auto session = oximetrySessionFor(date_folder);
     if (session.samples.empty()) return true;    // no ring that night
 
-    const std::string name = O2RingCsvWriter::filenameFor(session);
+    const std::string name = cpapdash::parser::o2RingCsvFilename(session);
     const fs::path tmp = fs::temp_directory_path() / ("hms_oxi_" + date_folder + "_" + name);
     {
         // Derived data, so it lives in temp. Writing it into the card archive
         // would put a file on the card that was never on the card.
         std::ofstream f(tmp, std::ios::binary);
         if (!f) { std::cerr << "[sleephq] cannot write " << tmp << std::endl; return false; }
-        f << O2RingCsvWriter::write(session);
+        f << cpapdash::parser::writeO2RingCsv(session);
     }
 
     std::string err;
