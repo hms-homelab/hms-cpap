@@ -5,6 +5,18 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.0.3] - 2026-08-24
+
+### Fixed
+- The `hist_*` discovery configs now declare `state_class: measurement`, so Home
+  Assistant builds long-term statistics for the trend sensors (AHI, usage hours
+  and percent, leak, pressure percentiles, event counts). Without it HA kept the
+  raw history but never the statistics, so any `statistics-graph` card or
+  `apexcharts-card` statistics series sat on "No statistics found" no matter how
+  many nights had been recorded. These are per-night snapshots, not counters, so
+  `measurement` is the right class; textual `hist_therapy_mode` stays without one,
+  as HA rejects a state_class there. (#25)
+
 ## [5.0.2] - 2026-08-23
 
 ### Changed
