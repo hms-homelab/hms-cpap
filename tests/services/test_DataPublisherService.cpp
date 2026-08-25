@@ -13,6 +13,8 @@
 #include <thread>
 #include <chrono>
 #include <atomic>
+#include <sstream>
+#include <json/json.h>
 
 using namespace hms_cpap;
 
@@ -782,4 +784,50 @@ TEST_F(PayloadTest, PublishSessionCompleted_PublishesCompletedAndOff) {
     };
     EXPECT_EQ(get("/realtime/session_status"), "completed");
     EXPECT_EQ(get("/realtime/session_active"), "OFF");
+}
+
+/**
+ * Historical (hist_*) discovery configs must carry state_class so Home
+ * Assistant builds long-term statistics for them — without it, statistics
+ * graph cards render "No statistics found" forever (GitHub issue #25).
+ *
+ * therapy_mode is a textual sensor and must stay without a state_class.
+ */
+TEST_F(PayloadTest, HistoricalDiscovery_SetsStateClassMeasurement) {
+    if (!connected) GTEST_SKIP() << "MQTT broker not available";
+
+    // Discovery publishes at QoS 1, so it fails outright while the client is
+    // mid-reconnect. Retry until the broker takes it (or we give up).
+    // "+" has to span a whole topic level, so filter the hist_* ones ourselves.
+    auto received = capture("homeassistant/sensor/+/+/config",
+        [&] { EXPECT_TRUE(publisher->publishDiscovery()); });
+
+    ASSERT_FALSE(received.empty()) << "no hist_* discovery configs captured";
+
+    auto configFor = [&](const std::string& sensor) -> Json::Value {
+        for (const auto& [topic, payload] : received) {
+            if (topic.find("/hist_" + sensor + "/config") == std::string::npos) continue;
+            Json::Value cfg;
+            Json::CharReaderBuilder rb;
+            std::istringstream in(payload);
+            std::string errs;
+            EXPECT_TRUE(Json::parseFromStream(rb, in, &cfg, &errs)) << errs;
+            return cfg;
+        }
+        return Json::Value(Json::nullValue);
+    };
+
+    for (const std::string& sensor : {"ahi", "usage_hours", "usage_percent",
+                                      "avg_leak_rate", "leak_p50", "pressure_p50",
+                                      "pressure_p95", "total_events"}) {
+        Json::Value cfg = configFor(sensor);
+        ASSERT_FALSE(cfg.isNull()) << "hist_" << sensor << " discovery not published";
+        EXPECT_EQ(cfg["state_class"].asString(), "measurement")
+            << "hist_" << sensor << " missing state_class";
+    }
+
+    Json::Value mode = configFor("therapy_mode");
+    ASSERT_FALSE(mode.isNull()) << "hist_therapy_mode discovery not published";
+    EXPECT_FALSE(mode.isMember("state_class"))
+        << "textual hist_therapy_mode must not declare a state_class";
 }

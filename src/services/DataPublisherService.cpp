@@ -193,6 +193,9 @@ bool DataPublisherService::publishHistoricalDiscovery() {
         std::string unit;
         std::string device_class;
         std::string icon;
+        // Per-night snapshot values, so "measurement" (not total/total_increasing).
+        // Empty for textual sensors, which HA rejects with a state_class.
+        std::string state_class = "measurement";
     };
 
     // 31 HISTORICAL METRICS (calculated after session completes)
@@ -239,7 +242,7 @@ bool DataPublisherService::publishHistoricalDiscovery() {
         {"leak_p50", "L/min", "", "mdi:leak"},
         // ASV-specific
         {"avg_target_ventilation", "L/min", "", "mdi:lungs"},
-        {"therapy_mode", "", "", "mdi:cog"}
+        {"therapy_mode", "", "", "mdi:cog", ""}
     };
 
     for (const auto& sensor : historical_sensors) {
@@ -263,6 +266,9 @@ bool DataPublisherService::publishHistoricalDiscovery() {
         }
         if (!sensor.icon.empty()) {
             config["icon"] = sensor.icon;
+        }
+        if (!sensor.state_class.empty()) {
+            config["state_class"] = sensor.state_class;
         }
 
         std::string discovery_topic = "homeassistant/sensor/" + device_id_ + "/hist_" + sensor.name + "/config";
