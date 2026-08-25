@@ -62,7 +62,12 @@ private:
     std::string base_url_;
     int cached_battery_ = -1;
 
-    static constexpr long DOWNLOAD_TIMEOUT  = 60L;
+    // A full night does not fit in 60s. Measured on the bench 2026-08-25 against
+    // a real O2Ring through the mule: ~620 B/s of streaming once connected, plus
+    // ~15s of connect + service discovery + FILE_OPEN before the first byte. A
+    // 3885-byte file took 22s end to end; Lee's real overnight .vld is 37,995
+    // bytes, which lands around 75-80s and would have been abandoned mid-transfer.
+    static constexpr long DOWNLOAD_TIMEOUT  = 300L;
     static constexpr long CONNECTION_TIMEOUT = 5L;
 
     static size_t WriteCallback(void* contents, size_t size, size_t nmemb, void* userp);
