@@ -452,6 +452,36 @@ bool DatabaseService::connect() {
             // counter into. That also makes it idempotent: after it runs the
             // rows no longer match. duration_minutes is the honest per-day
             // source and is what the session writer already used.
+            // SDD-020: what ResMed's own servers say about the same nights.
+            // Kept strictly apart from cpap_daily_summary, which is what OUR
+            // parser read off the card. Joining them for display is the point;
+            // mixing them in one table would destroy the provenance that makes
+            // the comparison mean anything.
+            try {
+                pqxx::work txn(*conn_);
+                txn.exec(R"(
+                    CREATE TABLE IF NOT EXISTS cpap_myair_records (
+                        record_date      DATE PRIMARY KEY,
+                        total_usage_min  FLOAT DEFAULT 0,
+                        sleep_score      INT DEFAULT 0,
+                        usage_score      INT DEFAULT 0,
+                        ahi_score        INT DEFAULT 0,
+                        mask_score       INT DEFAULT 0,
+                        leak_score       INT DEFAULT 0,
+                        ahi              FLOAT DEFAULT 0,
+                        mask_pair_count  INT DEFAULT 0,
+                        leak_percentile  FLOAT DEFAULT 0,
+                        -- 0 when ResMed returned an all-zero night, which means
+                        -- THEY HAVE NO DATA for that date rather than that the
+                        -- patient did not sleep. Averaging the two together
+                        -- would report a wall of zeroes as bad therapy.
+                        has_data         INT DEFAULT 0,
+                        fetched_at       TIMESTAMP DEFAULT NOW()
+                    )
+                )");
+                txn.commit();
+            } catch (...) {}
+
             try {
                 pqxx::work txn(*conn_);
                 txn.exec("ALTER TABLE cpap_daily_summary ADD COLUMN IF NOT EXISTS machine_hours FLOAT");

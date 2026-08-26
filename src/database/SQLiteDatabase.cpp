@@ -422,6 +422,29 @@ void SQLiteDatabase::createSchema() {
         )
     )");
 
+    // SDD-020: what ResMed's own servers say about the same nights. Kept apart
+    // from cpap_daily_summary, which is what OUR parser read off the card;
+    // joining them for display is the point, mixing them would destroy the
+    // provenance that makes the comparison mean anything.
+    exec(R"(
+        CREATE TABLE IF NOT EXISTS cpap_myair_records (
+            record_date      TEXT PRIMARY KEY,
+            total_usage_min  REAL DEFAULT 0,
+            sleep_score      INTEGER DEFAULT 0,
+            usage_score      INTEGER DEFAULT 0,
+            ahi_score        INTEGER DEFAULT 0,
+            mask_score       INTEGER DEFAULT 0,
+            leak_score       INTEGER DEFAULT 0,
+            ahi              REAL DEFAULT 0,
+            mask_pair_count  INTEGER DEFAULT 0,
+            leak_percentile  REAL DEFAULT 0,
+            -- 0 when ResMed returned an all-zero night: they have NO DATA for
+            -- that date, which is not the same as a night with no therapy.
+            has_data         INTEGER DEFAULT 0,
+            fetched_at       TEXT DEFAULT (datetime('now'))
+        )
+    )");
+
     // Split ResMed's lifetime PatientHours counter out of patient_hours, which
     // two writers had been filling with two different quantities. Placed after
     // the CREATE above on purpose: an ALTER of a table that does not exist yet
