@@ -619,6 +619,29 @@ void MySQLDatabase::createSchema() {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     )");
 
+    // SDD-020: what ResMed's own servers say about the same nights. Kept apart
+    // from cpap_daily_summary, which is what OUR parser read off the card;
+    // joining them for display is the point, mixing them would destroy the
+    // provenance that makes the comparison mean anything.
+    exec(R"(
+        CREATE TABLE IF NOT EXISTS cpap_myair_records (
+            record_date      DATE PRIMARY KEY,
+            total_usage_min  DOUBLE DEFAULT 0,
+            sleep_score      INT DEFAULT 0,
+            usage_score      INT DEFAULT 0,
+            ahi_score        INT DEFAULT 0,
+            mask_score       INT DEFAULT 0,
+            leak_score       INT DEFAULT 0,
+            ahi              DOUBLE DEFAULT 0,
+            mask_pair_count  INT DEFAULT 0,
+            leak_percentile  DOUBLE DEFAULT 0,
+            -- 0 when ResMed returned an all-zero night: they have NO DATA for
+            -- that date, which is not the same as a night with no therapy.
+            has_data         INT DEFAULT 0,
+            fetched_at       DATETIME DEFAULT NOW()
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    )");
+
     // cpap_summaries (AI-generated)
     exec(R"(
         CREATE TABLE IF NOT EXISTS cpap_summaries (

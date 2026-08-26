@@ -190,6 +190,27 @@ CREATE TABLE IF NOT EXISTS cpap_daily_summary (
 );
 
 -- AI-generated summaries
+-- SDD-020: what ResMed's own servers say about the same nights. Deliberately a
+-- separate table from cpap_daily_summary, which is what OUR parser read off the
+-- card; joining the two for display is the point, mixing them would destroy the
+-- provenance that makes the comparison mean anything.
+CREATE TABLE IF NOT EXISTS cpap_myair_records (
+    record_date      TEXT PRIMARY KEY,
+    total_usage_min  REAL DEFAULT 0,
+    sleep_score      INTEGER DEFAULT 0,
+    usage_score      INTEGER DEFAULT 0,
+    ahi_score        INTEGER DEFAULT 0,
+    mask_score       INTEGER DEFAULT 0,
+    leak_score       INTEGER DEFAULT 0,
+    ahi              REAL DEFAULT 0,
+    mask_pair_count  INTEGER DEFAULT 0,
+    leak_percentile  REAL DEFAULT 0,
+    -- 0 when ResMed returned an all-zero night: they have NO DATA for that
+    -- date, which is not the same as a night with no therapy.
+    has_data         INTEGER DEFAULT 0,
+    fetched_at       TEXT DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS cpap_summaries (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
     device_id       TEXT NOT NULL,
