@@ -1,9 +1,11 @@
 #include "services/DataPublisherService.h"
 #include "utils/OximetryDevice.h"
 #include "utils/ConfigManager.h"
+#include "cpapdash/parser/SleepIndex.h"
 #include <json/json.h>
 #include <iostream>
 #include <iomanip>
+#include <optional>
 #include <sstream>
 #include <cmath>
 
@@ -607,8 +609,6 @@ void DataPublisherService::publishHistoricalState(const SessionMetrics& m) {
 }
 
 bool DataPublisherService::publishSTRDiscovery() {
-    std::cout << "  📊 STR daily sensors (13)..." << std::endl;
-
     std::string device_json = createDeviceJson();
 
     struct SensorDef {
@@ -633,7 +633,15 @@ bool DataPublisherService::publishSTRDiscovery() {
         {"str_patient_hours", "h",        "duration", "mdi:counter"},
         {"ahi_delta",         "events/h", "", "mdi:delta"},
         {"session_summary",   "",         "", "mdi:text-box-outline"},
+        // SDD-019. No device_class: it is a 0-100 composite of usage, AHI and
+        // leak, not a measurement of anything Home Assistant has a class for.
+        {"sleep_index",       "",         "", "mdi:sleep"},
+        {"sleep_index_band",  "",         "", "mdi:gauge"},
     };
+
+    // Counted off the list rather than written in, because the two hardcoded
+    // counts this replaces had already drifted from it and from each other.
+    std::cout << "  📊 STR daily sensors (" << str_sensors.size() << ")..." << std::endl;
 
     for (const auto& sensor : str_sensors) {
         std::string object_id = device_id_ + "_daily_" + sensor.name;
@@ -674,7 +682,7 @@ bool DataPublisherService::publishSTRDiscovery() {
         }
     }
 
-    std::cout << "    14 STR daily sensors" << std::endl;
+    std::cout << "    " << str_sensors.size() << " STR daily sensors" << std::endl;
 
     // Weekly and monthly summary sensors (same JSON pattern as daily session_summary)
     for (const auto& [period, icon] : std::vector<std::pair<std::string, std::string>>{
@@ -731,6 +739,26 @@ void DataPublisherService::publishSTRState(const STRDailyRecord& record, double 
     // AHI delta: str_ahi - our calculated ahi
     double delta = (nightly_ahi > 0) ? record.ahi - nightly_ahi : 0;
     pub("ahi_delta", delta);
+
+    // SDD-019. STRDailyRecord holds plain doubles with no way to say "absent",
+    // so a machine that reports no leak arrives here as 0.0, which the shared
+    // definition would read as a perfect seal and award full credit. Treating
+    // a non-positive leak as absent instead costs nothing on real data: of the
+    // 230 daily rows on the hub, 22 have no leak at all and NOT ONE has a
+    // leak_95 of exactly zero. The 95th percentile of a channel that exists is
+    // never 0. This translation lives here rather than in the parser because
+    // the parser is shared with consumers whose zero is a real measurement.
+    const auto index = cpapdash::parser::nightlyIndex(
+        record.duration_minutes > 0 ? std::optional<double>(record.duration_minutes / 60.0)
+                                    : std::nullopt,
+        record.ahi,
+        record.leak_95 > 0 ? std::optional<double>(record.leak_95) : std::nullopt);
+    if (index) {
+        mqtt_client_->publish(prefix + "sleep_index", std::to_string(*index), 0, true);
+        mqtt_client_->publish(prefix + "sleep_index_band",
+                              cpapdash::parser::bandKey(cpapdash::parser::bandFor(*index)),
+                              0, true);
+    }
 
     std::cout << "  STR daily state published (AHI=" << record.ahi
               << ", usage=" << record.duration_minutes / 60.0 << "h"

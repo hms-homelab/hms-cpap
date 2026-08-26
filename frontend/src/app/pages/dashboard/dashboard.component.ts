@@ -11,7 +11,7 @@ import { PressureSectionComponent, PressureSectionData } from '../../components/
 import { RespiratoryMetricsComponent, RespiratoryMetricsData } from '../../components/dashboard/respiratory-metrics.component';
 import { RealtimeStatusComponent, RealtimeStatusData } from '../../components/dashboard/realtime-status.component';
 import { MlIntelligenceComponent } from '../../components/dashboard/ml-intelligence.component';
-import { DashboardData, TrendPoint, OximetryData, SessionListItem } from '../../models/session.model';
+import { DashboardData, TrendPoint, OximetryData, SessionListItem, SleepIndexBand } from '../../models/session.model';
 import { detectDesaturations, odiPerHour, inferSampleSec } from '../../utils/signal-analysis';
 import Chart from 'chart.js/auto';
 
@@ -30,6 +30,27 @@ const MODE_LABELS: Record<string, string> = {
     <div class="dashboard">
       <h2>{{ deviceName }} Sleep Therapy</h2>
       <div class="dash-subtitle" *ngIf="data">Last Session - {{ formatDate(data.latest_night.date) }}</div>
+
+      <!-- SDD-019: the index. Hidden entirely when there is nothing to score,
+           rather than shown as a zero, which would read as the worst possible
+           week to anyone who has not read the spec. -->
+      <div class="index-card" *ngIf="data?.sleep_index_7night !== null && data?.sleep_index_7night !== undefined">
+        <div class="index-headline">
+          <div class="index-value" [class]="'band-' + data!.sleep_index_7night_band">
+            {{ data!.sleep_index_7night }}
+          </div>
+          <div class="index-caption">
+            <div class="index-title">CpapDash index</div>
+            <div class="index-sub">7-night average &middot; {{ bandLabel(data!.sleep_index_7night_band) }}</div>
+          </div>
+        </div>
+        <div class="index-last" *ngIf="data!.latest_night.sleep_index !== null">
+          <span class="index-last-label">Last night</span>
+          <span class="index-last-value" [class]="'band-' + data!.latest_night.sleep_index_band">
+            {{ data!.latest_night.sleep_index }}
+          </span>
+        </div>
+      </div>
 
       <!-- Live Session Banner -->
       <div class="live-banner" *ngIf="liveSession">
@@ -162,6 +183,23 @@ const MODE_LABELS: Record<string, string> = {
     .refresh-summary-btn:hover:not(:disabled) { background: #1976d2; color: #fff; }
     .refresh-summary-btn:disabled { opacity: 0.5; cursor: not-allowed; }
     .refresh-msg { color: #888; font-size: 0.7rem; font-style: italic; }
+    .index-card {
+      display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+      background: #1e1e2f; border: 1px solid #333; border-radius: 8px;
+      padding: 0.9rem 1.25rem; margin-bottom: 1.25rem;
+    }
+    .index-headline { display: flex; align-items: center; gap: 0.9rem; }
+    .index-value { font-size: 2.1rem; font-weight: 700; line-height: 1; }
+    .index-title { color: #e0e0e0; font-size: 0.9rem; font-weight: 600; }
+    .index-sub { color: #888; font-size: 0.75rem; margin-top: 2px; }
+    .index-last { display: flex; align-items: baseline; gap: 0.5rem; }
+    .index-last-label { color: #888; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }
+    .index-last-value { font-size: 1.25rem; font-weight: 700; }
+    .band-excellent { color: #4ade80; }
+    .band-good { color: #64b5f6; }
+    .band-fair { color: #fbbf24; }
+    .band-needs_attention { color: #f87171; }
+    @media (max-width: 600px) { .index-card { flex-direction: column; align-items: flex-start; } }
   `]
 })
 export class DashboardComponent implements OnInit, AfterViewInit {
@@ -225,6 +263,18 @@ export class DashboardComponent implements OnInit, AfterViewInit {
     if (!dateStr) return '';
     const d = new Date(dateStr + 'T12:00:00');
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  }
+
+  /// SDD-019. The band arrives as a stable key so the API stays language-free;
+  /// the words belong here.
+  bandLabel(band: SleepIndexBand | null): string {
+    switch (band) {
+      case 'excellent': return 'Excellent';
+      case 'good': return 'Good';
+      case 'fair': return 'Fair';
+      case 'needs_attention': return 'Needs attention';
+      default: return '';
+    }
   }
 
   ngOnInit() {

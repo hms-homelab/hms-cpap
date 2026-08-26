@@ -1,9 +1,12 @@
 #include "web/QueryService.h"
 #include "utils/OximetryDevice.h"
+#include "cpapdash/parser/SleepIndex.h"
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <map>
+#include <optional>
 #include "services/InsightsEngine.h"
 #include <sstream>
 #include <algorithm>
@@ -27,6 +30,57 @@ std::string normalizeSleepDay(const std::string& date) {
     return digits.substr(0, 4) + "-" + digits.substr(4, 2) + "-" + digits.substr(6, 2);
 }
 
+// A numeric column, keeping the difference between "absent" and zero. The index
+// needs that difference: a night with no leak channel drops the leak component
+// and renormalises, where a leak of 0 earns full credit for it. The database
+// layers hand numbers back as strings on some engines and as numbers on others,
+// so both are accepted.
+std::optional<double> jopt(const Json::Value& obj, const char* key) {
+    auto v = obj.get(key, Json::nullValue);
+    if (v.isNull()) return std::nullopt;
+    if (v.isDouble() || v.isInt()) return v.asDouble();
+    if (v.isString()) {
+        const std::string s = v.asString();
+        if (s.empty()) return std::nullopt;
+        try { return std::stod(s); } catch (...) {}
+    }
+    return std::nullopt;
+}
+
+// SDD-019: the index for one row of cpap_daily_summary.
+//
+// Computed on read and never stored. The weights are tunable, and a stored
+// index would be wrong the moment one of them moved, leaving two answers in the
+// same database with one of them silently stale.
+//
+// Usage comes from duration_minutes, NOT from patient_hours. The two agree on
+// almost every row, because the session-derived writer fills both from the same
+// SUM(duration_seconds), but not on all of them: of the 230 rows on the hub,
+// two hold a patient_hours near 1050 against nights of 80 and 89 minutes, which
+// is a counter rather than a day. duration_minutes is consistent across all of
+// them and is already what getStatistics trusts for the compliance percentage.
+std::optional<int> rowIndex(const Json::Value& row) {
+    const auto minutes = jopt(row, "duration_minutes");
+    return cpapdash::parser::nightlyIndex(
+        minutes ? std::optional<double>(*minutes / 60.0) : std::nullopt,
+        jopt(row, "ahi"),
+        jopt(row, "leak_95"));
+}
+
+// Attach the index to a row in place. A night that cannot be scored gets null
+// rather than 0, which is a real distinction: 0 is the worst night there is,
+// null is a night we know nothing about.
+void annotateIndex(Json::Value& row) {
+    const auto index = rowIndex(row);
+    if (index) {
+        row["sleep_index"] = *index;
+        row["sleep_index_band"] = cpapdash::parser::bandKey(cpapdash::parser::bandFor(*index));
+    } else {
+        row["sleep_index"] = Json::nullValue;
+        row["sleep_index_band"] = Json::nullValue;
+    }
+}
+
 } // namespace
 
 QueryService::QueryService(std::shared_ptr<IDatabase> db, const std::string& device_id)
@@ -39,10 +93,23 @@ Json::Value QueryService::getDashboard() {
         " " + sql::round("duration_minutes / 60.0", 2, dt_) + " as usage_hours,"
         " " + sql::round("ahi", 2, dt_) + " as ahi,"
         " " + sql::round("COALESCE(leak_50, 0)", 1, dt_) + " as leak_avg,"
+        // SDD-019 inputs. duration_minutes and leak_95 are carried raw rather
+        // than reusing usage_hours/leak_avg above: leak_avg is the median and
+        // COALESCEs a missing channel to 0, which would earn the night full
+        // leak credit for a measurement it never made.
+        " duration_minutes,"
+        " leak_95,"
         " COALESCE(mode, 0) as therapy_mode"
         " FROM cpap_daily_summary"
         " WHERE device_id = " + sql::param(1, dt_) +
         " ORDER BY record_date DESC LIMIT 1";
+
+    // --- The index over the trailing week (SDD-019) ---
+    std::string q_index_week =
+        "SELECT duration_minutes, ahi, leak_95"
+        " FROM cpap_daily_summary"
+        " WHERE device_id = " + sql::param(1, dt_) +
+        " ORDER BY record_date DESC LIMIT 7";
 
     // --- AHI trend (30 days) ---
     std::string q_ahi =
@@ -75,6 +142,7 @@ Json::Value QueryService::getDashboard() {
     auto ahi_trend = db_->executeQuery(q_ahi, p1);
     auto usage_trend = db_->executeQuery(q_usage, p1);
     auto compliance  = db_->executeQuery(q_compliance, p1);
+    auto index_week  = db_->executeQuery(q_index_week, p1);
 
     // --- Build result ---
     Json::Value result;
@@ -85,6 +153,34 @@ Json::Value QueryService::getDashboard() {
         ln["usage_hours"] = latest[0].get("usage_hours", "0");
         ln["leak_avg"]    = latest[0].get("leak_avg", "0");
         ln["therapy_mode"] = latest[0].get("therapy_mode", "0");
+
+        // SDD-019. Read off the raw columns in latest[0], written onto ln.
+        if (const auto index = rowIndex(latest[0])) {
+            ln["sleep_index"] = *index;
+            ln["sleep_index_band"] =
+                cpapdash::parser::bandKey(cpapdash::parser::bandFor(*index));
+        } else {
+            ln["sleep_index"] = Json::nullValue;
+            ln["sleep_index_band"] = Json::nullValue;
+        }
+    }
+
+    // The headline number: the index averaged over the trailing week. Nights
+    // that cannot be scored still consume one of the seven, so a week with two
+    // blank nights averages the other five rather than reaching further back.
+    {
+        std::vector<std::optional<int>> week;
+        week.reserve(index_week.size());
+        for (const auto& row : index_week) week.push_back(rowIndex(row));
+
+        if (const auto avg = cpapdash::parser::trailingAverage(week, 7)) {
+            result["sleep_index_7night"] = std::round(*avg * 10.0) / 10.0;
+            result["sleep_index_7night_band"] = cpapdash::parser::bandKey(
+                cpapdash::parser::bandFor(static_cast<int>(std::lround(*avg))));
+        } else {
+            result["sleep_index_7night"] = Json::nullValue;
+            result["sleep_index_7night_band"] = Json::nullValue;
+        }
     }
     if (compliance.size() > 0 && !compliance[0]["compliance_pct"].isNull()) {
         ln["compliance_pct"] = compliance[0]["compliance_pct"];
@@ -291,7 +387,9 @@ Json::Value QueryService::getDailySummary(const std::string& start, const std::s
         " AND record_date <= " + sql::castDate(3, dt_) +
         " ORDER BY record_date";
 
-    return db_->executeQuery(q, {device_id_, start, end});
+    auto rows = db_->executeQuery(q, {device_id_, start, end});
+    for (auto& row : rows) annotateIndex(row);  // SDD-019
+    return rows;
 }
 
 Json::Value QueryService::getTrend(const std::string& metric, int days) {
