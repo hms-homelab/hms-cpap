@@ -1945,6 +1945,14 @@ void BurstCollectorService::runLoop() {
             cpapdash_sync_->sweep();
         }
 
+        // SDD-020: opt-in myAir pull. sweep() returns immediately unless myAir is
+        // configured AND poll_minutes has elapsed, so a user who never enables it
+        // pays nothing here, and an enabled one talks to ResMed once an hour
+        // rather than once a burst.
+        if (myair_) {
+            myair_->sweep();
+        }
+
         // Process any pending range summary requests (queued by MQTT callbacks).
         // Must run on the worker thread because pqxx is not thread-safe.
         if (int days = pending_weekly_days_.exchange(0); days > 0) {

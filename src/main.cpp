@@ -7,6 +7,7 @@
 #include "services/CpapDashSyncService.h"
 #include "services/SetupService.h"
 #include "services/SupplyPublisher.h"
+#include "services/MyAirService.h"
 #include "web/IngressBase.h"
 #include "web/QueryService.h"
 #ifndef _WIN32
@@ -909,6 +910,30 @@ int main(int argc, char** argv) {
                 if (config.cpapdash.enabled && config.cpapdash.token.empty())
                     std::cout << "CpapDash sync: enabled but no token set - staying local-only"
                               << std::endl;
+            }
+
+            // SDD-020: opt-in read-only pull of the same nights from ResMed's
+            // myAir, so their score can sit next to ours on the dashboard.
+            //
+            // Constructed only when it is actually configured. Unlike the cloud
+            // mirror above there is no route that needs to answer "disabled",
+            // because the dashboard asks /api/capabilities first and simply does
+            // not draw the panel.
+            //
+            // config_path is passed so the remembered-device token survives a
+            // restart; without it a region with an email factor would ask for a
+            // fresh code every start and a headless service cannot answer one.
+            if (config.myair.enabled && !config.myair.username.empty() &&
+                !config.myair.password.empty()) {
+                auto myair = std::make_shared<hms_cpap::MyAirService>(
+                    web_db ? web_db : db, config, config_path);
+                if (burst_service) burst_service->setMyAirService(myair);
+                std::cout << "myAir: enabled (" << config.myair.region
+                          << "), polling every " << config.myair.poll_minutes
+                          << " minutes" << std::endl;
+            } else if (config.myair.enabled) {
+                std::cout << "myAir: enabled but the username or password is empty "
+                             "- staying off" << std::endl;
             }
 
             // Wire report generator (PDF/gnuplot not available on Windows)
