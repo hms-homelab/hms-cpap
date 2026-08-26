@@ -49,12 +49,30 @@ is a change in hms-cpap.
 ### The fix, both halves
 
 **Base href, server side.** Home Assistant sends `X-Ingress-Path` on every proxied
-request. The SPA fallback in `src/main.cpp` already reads `index.html` off disk on each
-404 and returns it as a body, so it is already the right place: read the header, rewrite
-`<base href="/">` to `<base href="{ingress_path}/">`, leave it untouched when the header
-is absent. The same rewrite has to happen for `GET /` itself, which today is served by
-Drogon's static document root and never reaches the fallback, so that path needs a
-handler or a pre-routing advice.
+request. `include/web/IngressBase.h` rewrites `<base href="/">` to
+`<base href="{ingress_path}/">`, and `src/main.cpp` calls it from the two places that
+serve `index.html`: a registered handler for `/`, and the 404 SPA fallback via the
+`setCustomErrorHandler` overload that takes the request.
+
+**Post-handling advice does not work here, and this was measured rather than assumed.**
+A `registerPostHandlingAdvice` hook looked like the tidy answer, since one hook after
+everything would catch both. With a debug line inside it, a request to
+`/api/capabilities` logged and requests to `/` and to `/sessions` did not: Drogon's
+static file router and its custom error handler both sit outside the controller pipeline
+that advice hangs off. Two explicit hooks it is.
+
+Two smaller traps found the same way. `resp->getHeader("content-type")` returns EMPTY in
+Drogon, because the content type lives in its own member and is only serialised on the
+way out; `contentTypeString()` is the one that answers. And a base href must end in a
+slash, or the browser treats the last segment as a file name and drops it, resolving
+every relative URL one level too high.
+
+**The header is untrusted input.** hms-cpap is routinely reachable on a LAN with nothing
+in front of it, so anyone who can reach the port can send `X-Ingress-Path`, and
+reflecting it into an HTML attribute unchecked is an injection. `isSafePath` accepts only
+a non-empty absolute path of at most 512 unreserved-URL characters and `/`, refusing
+quotes, angle brackets, whitespace, backslashes, control characters, non-ASCII, `..` and
+`//`. A rejected value leaves the page exactly as shipped.
 
 **API calls, client side.** One `HttpInterceptor` that prefixes any request starting
 with `/api` with `document.baseURI`. One file, and the 40 call sites stay as they are.
