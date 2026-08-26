@@ -79,6 +79,24 @@ export class CpapApiService {
       { params: { start, end } });
   }
 
+  /// SDD-020 settings page. Nothing here ever returns a credential: connect
+  /// takes the password once and answers with a status.
+  getMyAirStatus(): Observable<any> {
+    return this.http.get('/api/myair/status');
+  }
+
+  myairConnect(username: string, password: string, region: string): Observable<any> {
+    return this.http.post('/api/myair/connect', { username, password, region });
+  }
+
+  myairVerify(code: string): Observable<any> {
+    return this.http.post('/api/myair/verify', { code });
+  }
+
+  myairDisconnect(): Observable<any> {
+    return this.http.post('/api/myair/disconnect', {});
+  }
+
   completeSetup(): Observable<any> {
     return this.http.post('/api/setup', {});
   }

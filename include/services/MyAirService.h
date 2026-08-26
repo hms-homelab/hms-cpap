@@ -20,6 +20,7 @@
 //
 #include <ctime>
 #include <functional>
+#include <json/json.h>
 #include <memory>
 #include <string>
 #include <vector>
@@ -69,6 +70,25 @@ public:
     /// than something to keep retrying.
     bool needsReauth() const { return needs_reauth_; }
 
+    /// Sign in interactively from the settings page and keep what comes back.
+    ///
+    /// On success the refresh token is stored, the password is NOT, and myAir is
+    /// enabled. Returns MfaRequired when ResMed emails a code, in which case the
+    /// half-finished client is held so verifyMfa() can complete it; that is the
+    /// only reason this class carries any session state at all.
+    MyAirAuthState signIn(const std::string& username, const std::string& password,
+                          const std::string& region, std::string& err);
+
+    /// Finish a sign-in that returned MfaRequired.
+    MyAirAuthState verifyMfa(const std::string& code, std::string& err);
+
+    /// Forget the tokens and turn myAir off. Does not touch stored nights: the
+    /// user asked to disconnect, not to delete their history.
+    void disconnect();
+
+    /// What the settings page shows. Never includes a credential.
+    Json::Value status() const;
+
     /// Write `records` into cpap_myair_records, replacing whatever was there for
     /// the dates they cover.
     ///
@@ -86,6 +106,13 @@ private:
     std::string last_error_;
     std::time_t last_sync_at_ = 0;
     bool needs_reauth_ = false;
+
+    /// Held only between a sign-in that needs an emailed code and the code
+    /// arriving. Discarded either way once that resolves.
+    std::unique_ptr<MyAirClient> pending_;
+
+    /// Store what a successful sign-in produced, and drop what it replaced.
+    void adoptTokens(const MyAirClient& client);
 };
 
 }  // namespace hms_cpap

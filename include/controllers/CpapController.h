@@ -6,6 +6,7 @@
 #include "utils/AppConfig.h"
 #include "services/BurstCollectorService.h"
 #include "services/CpapDashSyncService.h"
+#include "services/MyAirService.h"
 #ifndef _WIN32
 #include "services/ReportGeneratorService.h"
 #endif
@@ -38,6 +39,10 @@ public:
     ADD_METHOD_TO(CpapController::setupComplete, "/api/setup",               drogon::Post);
     ADD_METHOD_TO(CpapController::capabilities,  "/api/capabilities",        drogon::Get);
     ADD_METHOD_TO(CpapController::myairCompare,  "/api/myair/compare",       drogon::Get);
+    ADD_METHOD_TO(CpapController::myairStatus,   "/api/myair/status",        drogon::Get);
+    ADD_METHOD_TO(CpapController::myairConnect,  "/api/myair/connect",       drogon::Post);
+    ADD_METHOD_TO(CpapController::myairVerify,   "/api/myair/verify",        drogon::Post);
+    ADD_METHOD_TO(CpapController::myairDisconnect, "/api/myair/disconnect",  drogon::Post);
     ADD_METHOD_TO(CpapController::logs,          "/api/logs",                drogon::Get);
     // SDD-006 phase 2. All three refuse once setup_complete is true, so a
     // finished install does not expose database provisioning on the LAN forever.
@@ -161,6 +166,21 @@ public:
     void myairCompare(const drogon::HttpRequestPtr& req,
                       std::function<void(const drogon::HttpResponsePtr&)>&& cb);
 
+    /// SDD-020 settings page. connect takes the password ONCE and exchanges it
+    /// for a refresh token; nothing here ever returns a credential back.
+    void myairStatus(const drogon::HttpRequestPtr& req,
+                     std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+    void myairConnect(const drogon::HttpRequestPtr& req,
+                      std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+    void myairVerify(const drogon::HttpRequestPtr& req,
+                     std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+    void myairDisconnect(const drogon::HttpRequestPtr& req,
+                         std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+
+    /// The live service, so the settings page acts on the running instance
+    /// rather than only on the file (SDD-006 section 5).
+    static void setMyAirService(std::shared_ptr<hms_cpap::MyAirService> svc);
+
     void capabilities(const drogon::HttpRequestPtr& req,
                       std::function<void(const drogon::HttpResponsePtr&)>&& cb);
 
@@ -278,6 +298,7 @@ private:
     // inside the guard above and broke the MSVC build with "sync_ undeclared",
     // which no macOS or Linux build could have caught.
     static std::shared_ptr<CpapDashSyncService>   sync_;
+    static std::shared_ptr<hms_cpap::MyAirService> myair_;
     static hms_cpap::AppConfig* config_;
     static std::string config_path_;
     static BurstCollectorService* burst_service_;

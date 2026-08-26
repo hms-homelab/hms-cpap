@@ -923,17 +923,25 @@ int main(int argc, char** argv) {
             // config_path is passed so the remembered-device token survives a
             // restart; without it a region with an email factor would ask for a
             // fresh code every start and a headless service cannot answer one.
-            if (config.myair.enabled && !config.myair.username.empty() &&
-                (!config.myair.password.empty() || !config.myair.refresh_token.empty())) {
+            // Constructed even when disabled, for the same reason the cloud
+            // mirror above is: the settings page has to be able to CONNECT an
+            // account that is not configured yet, and a route that 404s cannot.
+            // sweep() self-gates on enabled(), so an unconfigured instance costs
+            // one null check per burst.
+            {
                 auto myair = std::make_shared<hms_cpap::MyAirService>(
                     web_db ? web_db : db, config, config_path);
+                hms_cpap::CpapController::setMyAirService(myair);
                 if (burst_service) burst_service->setMyAirService(myair);
-                std::cout << "myAir: enabled (" << config.myair.region
-                          << "), polling every " << config.myair.poll_minutes
-                          << " minutes" << std::endl;
-            } else if (config.myair.enabled) {
-                std::cout << "myAir: enabled but the username or password is empty "
-                             "- staying off" << std::endl;
+
+                if (myair->enabled()) {
+                    std::cout << "myAir: enabled (" << config.myair.region
+                              << "), polling every " << config.myair.poll_minutes
+                              << " minutes" << std::endl;
+                } else if (config.myair.enabled) {
+                    std::cout << "myAir: enabled but not connected - sign in from "
+                                 "the settings page" << std::endl;
+                }
             }
 
             // Wire report generator (PDF/gnuplot not available on Windows)

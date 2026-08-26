@@ -152,6 +152,94 @@ int MyAirService::syncNow(std::string& err) {
     return stored;
 }
 
+void MyAirService::adoptTokens(const MyAirClient& client) {
+    if (!client.refreshToken().empty()) config_.myair.refresh_token = client.refreshToken();
+    if (!client.deviceToken().empty()) config_.myair.device_token = client.deviceToken();
+    // The password did its one job. Holding it after this point buys nothing and
+    // is the only credential here that is reusable on ResMed's own website.
+    config_.myair.password.clear();
+    config_.myair.enabled = true;
+    needs_reauth_ = false;
+    if (!config_path_.empty()) config_.save(config_path_);
+}
+
+MyAirAuthState MyAirService::signIn(const std::string& username, const std::string& password,
+                                    const std::string& region, std::string& err) {
+    err.clear();
+    pending_.reset();
+
+    if (username.empty() || password.empty()) {
+        err = "A myAir email address and password are both required";
+        return MyAirAuthState::Failed;
+    }
+
+    auto client = std::make_unique<MyAirClient>(username, password, region);
+    // Offer the remembered device, so a region with an email factor stops asking
+    // for a code after the first time.
+    client->setDeviceToken(config_.myair.device_token);
+
+    const auto state = client->connect(err);
+    if (state == MyAirAuthState::MfaRequired) {
+        // Keep the half-finished client: the state token that ties the emailed
+        // code to this attempt lives inside it.
+        config_.myair.username = username;
+        config_.myair.region = region;
+        pending_ = std::move(client);
+        return state;
+    }
+    if (state != MyAirAuthState::Ok) return state;
+
+    config_.myair.username = username;
+    config_.myair.region = region;
+    adoptTokens(*client);
+    return MyAirAuthState::Ok;
+}
+
+MyAirAuthState MyAirService::verifyMfa(const std::string& code, std::string& err) {
+    err.clear();
+    if (!pending_) {
+        err = "No myAir sign-in is waiting for a code";
+        return MyAirAuthState::Failed;
+    }
+    const auto state = pending_->verifyMfa(code, err);
+    if (state != MyAirAuthState::Ok) return state;
+
+    adoptTokens(*pending_);
+    pending_.reset();
+    return MyAirAuthState::Ok;
+}
+
+void MyAirService::disconnect() {
+    pending_.reset();
+    config_.myair.enabled = false;
+    config_.myair.password.clear();
+    config_.myair.refresh_token.clear();
+    // The remembered device goes too: "disconnect" should not leave ResMed
+    // holding a trust decision this box made.
+    config_.myair.device_token.clear();
+    needs_reauth_ = false;
+    last_error_.clear();
+    if (!config_path_.empty()) config_.save(config_path_);
+    // Stored nights are deliberately left alone. The user asked to disconnect,
+    // not to delete the history they already have.
+}
+
+Json::Value MyAirService::status() const {
+    Json::Value j;
+    j["enabled"] = config_.myair.enabled;
+    j["connected"] = !config_.myair.refresh_token.empty();
+    j["username"] = config_.myair.username;
+    j["region"] = config_.myair.region;
+    j["needs_reauth"] = needs_reauth_;
+    j["awaiting_code"] = pending_ != nullptr;
+    j["poll_minutes"] = config_.myair.poll_minutes;
+    j["last_sync_at"] = static_cast<Json::Int64>(last_sync_at_);
+    j["last_error"] = last_error_;
+    // Deliberately no credential of any kind, not even masked: this is a plain
+    // GET that anything on the LAN can call.
+    return j;
+}
+
 int MyAirService::store(const std::vector<MyAirSleepRecord>& records, std::string& err) {
     if (!db_) { err = "no database"; return -1; }
     if (records.empty()) return 0;

@@ -233,6 +233,90 @@ import { AppConfig } from '../../models/config.model';
           </div>
         </div>
 
+        <!-- Section: myAir (SDD-020). Read-only, and deliberately NOT part of
+             the config form: the password is exchanged for a token by a
+             dedicated endpoint and is never saved, so binding it to the config
+             object would be exactly the wrong shape. -->
+        <div class="section">
+          <div class="section-header" (click)="toggle('myair')">
+            <span class="chevron" [class.open]="open['myair']">&#9654;</span>
+            ResMed myAir
+            <span class="badge" *ngIf="!myair.connected">optional</span>
+            <span class="badge connected" *ngIf="myair.connected">connected</span>
+          </div>
+          <div class="section-body" *ngIf="open['myair']">
+            <p class="section-desc">
+              Read your own nights back from ResMed and show their score next to
+              CpapDash's, per night and per component. Read only: nothing is ever
+              written back to ResMed.
+            </p>
+
+            <div class="myair-note">
+              Your password is used once to sign in and is <strong>not stored</strong>.
+              ResMed issues a revocable token that replaces it, which can only read
+              this account's sleep data and cannot sign in as you anywhere.
+            </div>
+
+            <div class="myair-state" *ngIf="myair.needs_reauth">
+              The saved token is no longer valid, so myAir has been disconnected.
+              Sign in again to reconnect.
+            </div>
+
+            <ng-container *ngIf="!myair.connected && !myair.awaiting_code">
+              <label>
+                myAir email
+                <input type="email" [(ngModel)]="myairForm.username" name="myair_username"
+                       [ngModelOptions]="{standalone: true}" placeholder="you@example.com" />
+              </label>
+              <label>
+                Password
+                <input type="password" [(ngModel)]="myairForm.password" name="myair_password"
+                       [ngModelOptions]="{standalone: true}" placeholder="Used once, never saved" />
+              </label>
+              <label>
+                Region
+                <select [(ngModel)]="myairForm.region" name="myair_region"
+                        [ngModelOptions]="{standalone: true}">
+                  <option value="NA">North America</option>
+                  <option value="EU">Europe</option>
+                </select>
+              </label>
+              <button type="button" class="myair-btn" (click)="myairConnect()"
+                      [disabled]="myairBusy || !myairForm.username || !myairForm.password">
+                {{ myairBusy ? 'Signing in...' : 'Connect' }}
+              </button>
+            </ng-container>
+
+            <!-- Europe emails a code the first time. After that the remembered
+                 device stops it asking. -->
+            <ng-container *ngIf="myair.awaiting_code">
+              <label>
+                Verification code
+                <input type="text" [(ngModel)]="myairForm.code" name="myair_code"
+                       [ngModelOptions]="{standalone: true}" placeholder="Emailed by ResMed" />
+              </label>
+              <button type="button" class="myair-btn" (click)="myairVerify()"
+                      [disabled]="myairBusy || !myairForm.code">
+                {{ myairBusy ? 'Checking...' : 'Verify' }}
+              </button>
+            </ng-container>
+
+            <ng-container *ngIf="myair.connected">
+              <div class="myair-connected">
+                Connected as <strong>{{ myair.username }}</strong> ({{ myair.region }}),
+                checking every {{ myair.poll_minutes }} minutes.
+              </div>
+              <button type="button" class="myair-btn danger" (click)="myairDisconnect()"
+                      [disabled]="myairBusy">Disconnect</button>
+              <small class="hint">
+                Disconnecting forgets the token. Nights already fetched are kept.
+              </small>
+            </ng-container>
+
+            <div class="myair-msg" *ngIf="myairMessage">{{ myairMessage }}</div>
+          </div>
+        </div>
+
         <!-- Section: CpapDash Cloud (SDD-004 mirror). Local stays authoritative. -->
         <div class="section">
           <div class="section-header" (click)="toggle('cpapdash')">
@@ -785,6 +869,22 @@ import { AppConfig } from '../../models/config.model';
       border: 1px solid #ffb74d55; border-radius: 3px; padding: 0.05rem 0.3rem;
       white-space: nowrap;
     }
+    /* SDD-020 myAir */
+    .badge.connected { background: #14532d; color: #4ade80; }
+    .myair-note { background: rgba(100, 181, 246, 0.08); border: 1px solid rgba(100, 181, 246, 0.35);
+                  border-radius: 6px; padding: 0.6rem 0.8rem; color: #cfe6fb; font-size: 0.8rem;
+                  line-height: 1.5; margin-bottom: 0.75rem; }
+    .myair-state { background: rgba(251, 191, 36, 0.08); border: 1px solid rgba(251, 191, 36, 0.4);
+                   border-radius: 6px; padding: 0.6rem 0.8rem; color: #fde68a; font-size: 0.8rem;
+                   margin-bottom: 0.75rem; }
+    .myair-connected { color: #ddd; font-size: 0.85rem; margin-bottom: 0.6rem; }
+    .myair-msg { color: #9ad0a0; font-size: 0.8rem; margin-top: 0.6rem; }
+    .myair-btn { padding: 0.45rem 1rem; border-radius: 5px; border: 1px solid #1976d2;
+                 background: #1976d2; color: #fff; font-weight: 600; cursor: pointer;
+                 font-size: 0.8rem; }
+    .myair-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .myair-btn.danger { background: transparent; border-color: #f87171; color: #f87171; }
+
     .section-header .restart-tag { margin-left: auto; }
     .section-header .badge + .restart-tag { margin-left: 0.5rem; }
 
@@ -947,6 +1047,14 @@ export class SettingsComponent implements OnInit, OnDestroy {
 
   private destroy$ = new Subject<void>();
 
+  // SDD-020 myAir. Held apart from `config` on purpose: the password is
+  // exchanged for a token by its own endpoint and is never saved, so binding it
+  // into the config form would invite it to be written to disk.
+  myair: any = { available: false, enabled: false, connected: false };
+  myairForm = { username: '', password: '', region: 'NA', code: '' };
+  myairBusy = false;
+  myairMessage = '';
+
   // BLE adapter status
   bleStatus = '';
 
@@ -956,12 +1064,88 @@ export class SettingsComponent implements OnInit, OnDestroy {
   savingPrompt = false;
   defaultPrompt = '';
 
+  // ── SDD-020 myAir ────────────────────────────────────────────────────────
+  //
+  // Deliberately not part of save(): the password goes to /api/myair/connect,
+  // which exchanges it for a token and discards it. It is cleared from the form
+  // the moment the request is sent, so it does not linger in the page either.
+
+  loadMyAirStatus(): void {
+    this.api.getMyAirStatus().subscribe({
+      next: (s) => {
+        this.myair = s || { available: false, connected: false };
+        if (this.myair.username && !this.myairForm.username) {
+          this.myairForm.username = this.myair.username;
+        }
+        if (this.myair.region) this.myairForm.region = this.myair.region;
+      },
+      error: () => { this.myair = { available: false, connected: false }; },
+    });
+  }
+
+  myairConnect(): void {
+    this.myairBusy = true;
+    this.myairMessage = '';
+    const password = this.myairForm.password;
+    this.myairForm.password = '';  // out of the page as soon as it is sent
+
+    this.api.myairConnect(this.myairForm.username, password, this.myairForm.region)
+      .subscribe({
+        next: (r: any) => {
+          this.myairBusy = false;
+          this.myairMessage = r?.message || '';
+          this.loadMyAirStatus();
+        },
+        error: (e) => {
+          this.myairBusy = false;
+          this.myairMessage = e?.error?.error || 'Could not reach myAir.';
+        },
+      });
+  }
+
+  myairVerify(): void {
+    this.myairBusy = true;
+    this.myairMessage = '';
+    const code = this.myairForm.code;
+    this.myairForm.code = '';
+
+    this.api.myairVerify(code).subscribe({
+      next: (r: any) => {
+        this.myairBusy = false;
+        this.myairMessage = r?.message || '';
+        this.loadMyAirStatus();
+      },
+      error: (e) => {
+        this.myairBusy = false;
+        this.myairMessage = e?.error?.error || 'Could not verify the code.';
+      },
+    });
+  }
+
+  myairDisconnect(): void {
+    this.myairBusy = true;
+    this.myairMessage = '';
+    this.api.myairDisconnect().subscribe({
+      next: (r: any) => {
+        this.myairBusy = false;
+        this.myairMessage = r?.message || '';
+        this.myairForm.password = '';
+        this.loadMyAirStatus();
+      },
+      error: () => {
+        this.myairBusy = false;
+        this.myairMessage = 'Could not disconnect.';
+      },
+    });
+  }
+
   open: Record<string, boolean> = {
     source: true,
     fysetc: false,
     logging: false,
     o2ring: false,
     sleephq: false,
+    myair: false,
     cpapdash: false,
     sleep_stage: false,
     agent: false,
@@ -1023,6 +1207,8 @@ export class SettingsComponent implements OnInit, OnDestroy {
   }
 
   ngOnInit(): void {
+    this.loadMyAirStatus();
+
     this.api.getConfig().subscribe({
       next: (cfg) => {
         // Ensure ml_training exists with defaults
