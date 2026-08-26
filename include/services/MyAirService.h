@@ -64,6 +64,11 @@ public:
     const std::string& lastError() const { return last_error_; }
     std::time_t lastSyncAt() const { return last_sync_at_; }
 
+    /// True once the stored token has been rejected and discarded. The only cure
+    /// is an interactive sign-in, so this is a state to show the user rather
+    /// than something to keep retrying.
+    bool needsReauth() const { return needs_reauth_; }
+
     /// Write `records` into cpap_myair_records, replacing whatever was there for
     /// the dates they cover.
     ///
@@ -80,6 +85,7 @@ private:
     Fetch fetch_;
     std::string last_error_;
     std::time_t last_sync_at_ = 0;
+    bool needs_reauth_ = false;
 };
 
 }  // namespace hms_cpap

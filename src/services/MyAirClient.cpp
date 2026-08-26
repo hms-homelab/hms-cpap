@@ -486,7 +486,11 @@ bool MyAirClient::exchangeSessionForTokens(std::string& err) {
         << "&response_mode=fragment"
         << "&response_type=code"
         << "&sessionToken=" << urlEncode(session_token_)
-        << "&scope=" << urlEncode("openid profile email")
+        // offline_access is what makes the refresh token appear, and therefore
+        // what lets us stop storing the user's password. Verified granted
+        // against the real service: the response comes back with
+        // "offline_access openid email profile".
+        << "&scope=" << urlEncode("openid profile email offline_access")
         << "&state=hmscpap";
 
     std::string cookies;
@@ -534,9 +538,57 @@ bool MyAirClient::exchangeSessionForTokens(std::string& err) {
         err = "myAir token exchange returned no tokens";
         return false;
     }
+    // The whole point of asking for offline_access. Absent means the caller has
+    // to keep the password; present means it can be forgotten.
+    const std::string refresh = stringOf(j, "refresh_token");
+    if (!refresh.empty()) refresh_token_ = refresh;
+
     session_token_.clear();
     country_code_.clear();
     return true;
+}
+
+MyAirAuthState MyAirClient::connectWithRefreshToken(std::string& err) {
+    err.clear();
+    if (refresh_token_.empty()) {
+        err = "no myAir refresh token stored";
+        return MyAirAuthState::Failed;
+    }
+
+    std::ostringstream form;
+    form << "client_id=" << urlEncode(region_->client_id)
+         << "&grant_type=refresh_token"
+         << "&refresh_token=" << urlEncode(refresh_token_)
+         << "&scope=" << urlEncode("openid profile email offline_access");
+
+    const auto res = httpRequest(region_->tokenUrl(),
+                                 {"Accept: application/json",
+                                  "Content-Type: application/x-www-form-urlencoded"},
+                                 form.str(), "", false);
+    json j;
+    if (res.status != 200 || !parseJson(res.body, j)) {
+        // Revoked, expired, or the account signed out everywhere. Worth saying
+        // clearly, because the only cure is an interactive sign-in and silently
+        // retrying an hour later forever would hide that.
+        err = "myAir refused the stored token (HTTP " + std::to_string(res.status) +
+              "). Sign in again to reconnect.";
+        return MyAirAuthState::Failed;
+    }
+
+    access_token_ = stringOf(j, "access_token");
+    id_token_ = stringOf(j, "id_token");
+    if (access_token_.empty() || id_token_.empty()) {
+        err = "myAir refresh returned no tokens";
+        return MyAirAuthState::Failed;
+    }
+    // Okta does NOT rotate this one, measured against the real service, but a
+    // replacement is honoured if it ever starts: keeping a stale token after a
+    // rotation would fail days later, which is the worst shape this can take.
+    const std::string rotated = stringOf(j, "refresh_token");
+    if (!rotated.empty()) refresh_token_ = rotated;
+
+    country_code_.clear();
+    return MyAirAuthState::Ok;
 }
 
 std::string MyAirClient::countryCode() {

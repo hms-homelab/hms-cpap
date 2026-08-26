@@ -136,11 +136,18 @@ struct AppConfig {
     /// SDD-020 optional read-only pull of the patient's own nights from ResMed's
     /// myAir, so their score and its four sub-scores can sit next to ours.
     ///
-    /// UNLIKE EVERY OTHER CREDENTIAL HERE, THIS IS AN ACCOUNT PASSWORD. SleepHQ
-    /// takes a client secret and the cloud mirror takes a revocable token;
-    /// ResMed offers neither, so enabling this puts the user's real myAir
-    /// password at rest in config.json. That is why it is off by default and why
-    /// the settings page says so out loud rather than burying it.
+    /// THE PASSWORD IS NOT KEPT. It is used once, to sign in, and is erased from
+    /// this structure and from the file the moment a refresh token comes back.
+    /// ResMed's Okta application grants `offline_access`, so one sign-in yields a
+    /// token that can be exchanged for access tokens from then on; there is no
+    /// reason to hold the account password as well, and holding it would be the
+    /// worst credential in this file by some distance since it is reusable on
+    /// ResMed's own website.
+    ///
+    /// The refresh token is still a bearer credential: whoever holds it can read
+    /// this account's myAir data. It is a strictly smaller blast radius, it can
+    /// be revoked from the myAir account without a password change, and it is
+    /// useless for signing in as the user anywhere.
     ///
     /// Nothing downstream may depend on this. The API is undocumented and ResMed
     /// can change it without notice, so a failure here degrades to "myAir
@@ -149,7 +156,11 @@ struct AppConfig {
         bool enabled = false;
         std::string region = "NA";   // "NA" or "EU"; anything else falls back to NA
         std::string username;
+        /// Write-once. Supply it to sign in the first time; it is erased as soon
+        /// as a refresh token replaces it and is never written back to the file.
         std::string password;
+        /// What is actually kept, and what every subsequent sign-in uses.
+        std::string refresh_token;
         /// Okta's remembered-device cookie, written back after a successful
         /// sign-in. Without it a region with an email factor asks for a code on
         /// every start, which a headless service cannot answer.
@@ -546,6 +557,7 @@ struct AppConfig {
                 if (ma.contains("region"))       config.myair.region = ma["region"];
                 if (ma.contains("username"))     config.myair.username = ma["username"];
                 if (ma.contains("password"))     config.myair.password = ma["password"];
+                if (ma.contains("refresh_token")) config.myair.refresh_token = ma["refresh_token"];
                 if (ma.contains("device_token")) config.myair.device_token = ma["device_token"];
                 if (ma.contains("poll_minutes")) config.myair.poll_minutes = ma["poll_minutes"];
             }
@@ -657,12 +669,33 @@ struct AppConfig {
             j["myair"]["enabled"] = myair.enabled;
             j["myair"]["region"] = myair.region;
             j["myair"]["username"] = myair.username;
-            j["myair"]["password"] = myair.password;
+            // The password is written back ONLY while there is no refresh token
+            // to replace it, i.e. between the user typing it and the first
+            // successful sign-in. After that it is gone from the file for good.
+            j["myair"]["password"] = myair.refresh_token.empty() ? myair.password : "";
+            j["myair"]["refresh_token"] = myair.refresh_token;
             j["myair"]["device_token"] = myair.device_token;
             j["myair"]["poll_minutes"] = myair.poll_minutes;
 
             std::ofstream f(path);
             f << j.dump(2);
+            f.close();
+
+            // This file holds every secret the service has: database password,
+            // SleepHQ client secret, the cloud token, and now a myAir refresh
+            // token. It was being written world-readable (644), which on a
+            // multi-user box means every one of those is readable by anyone with
+            // an account. Owner-only costs nothing.
+            //
+            // Best effort: a container bind-mount or an exotic filesystem may
+            // refuse, and failing to save the configuration over a permission
+            // bit would be a far worse outcome than the permission itself.
+            std::error_code perm_ec;
+            std::filesystem::permissions(
+                path,
+                std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
+                std::filesystem::perm_options::replace, perm_ec);
+
             return true;
         } catch (const std::exception& e) {
             std::cerr << "Config save error: " << e.what() << std::endl;
@@ -748,7 +781,10 @@ struct AppConfig {
         // read, and the device_token is a live session credential in its own
         // right rather than a setting.
         j["myair"]["password"] = myair.password.empty() ? "" : "********";
+        j["myair"]["refresh_token"] = myair.refresh_token.empty() ? "" : "********";
         j["myair"]["device_token"] = myair.device_token.empty() ? "" : "********";
+        // So the settings page can say "connected" without ever seeing either.
+        j["myair"]["connected"] = !myair.refresh_token.empty();
         j["myair"]["poll_minutes"] = myair.poll_minutes;
 
         j["cpapdash"]["enabled"] = cpapdash.enabled;
