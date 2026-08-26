@@ -274,7 +274,14 @@ bool DatabaseService::connect() {
                     mask_pairs        JSONB DEFAULT '[]',
                     mask_events       INT DEFAULT 0,
                     duration_minutes  FLOAT DEFAULT 0,
+                    -- Hours of therapy ON THIS DAY. Both writers agree on that.
                     patient_hours     FLOAT DEFAULT 0,
+                    -- ResMed's lifetime PatientHours counter as of this day, in
+                    -- hours. STR-only, so NULL on a session-derived row. It used
+                    -- to be written into patient_hours above, which put two
+                    -- different quantities in one column depending on which
+                    -- writer got there first.
+                    machine_hours     FLOAT,
                     ahi               FLOAT, hi FLOAT, ai FLOAT, oai FLOAT, cai FLOAT, uai FLOAT,
                     rin               FLOAT, csr FLOAT,
                     mask_press_50     FLOAT, mask_press_95 FLOAT, mask_press_max FLOAT,
@@ -435,6 +442,33 @@ bool DatabaseService::connect() {
                 txn.commit();
                 std::cout << "  DB: v2.2.0 migration (oximetry tables) applied" << std::endl;
             } catch (...) {}
+
+            // Auto-migrate: split ResMed's lifetime PatientHours counter out of
+            // patient_hours, which two writers had been filling with two
+            // different quantities.
+            //
+            // The repair is guarded on patient_hours > 24, which no day's usage
+            // can reach, so it can only ever touch a row the STR path wrote the
+            // counter into. That also makes it idempotent: after it runs the
+            // rows no longer match. duration_minutes is the honest per-day
+            // source and is what the session writer already used.
+            try {
+                pqxx::work txn(*conn_);
+                txn.exec("ALTER TABLE cpap_daily_summary ADD COLUMN IF NOT EXISTS machine_hours FLOAT");
+                const auto res = txn.exec(
+                    "UPDATE cpap_daily_summary"
+                    "   SET machine_hours = patient_hours,"
+                    "       patient_hours = duration_minutes / 60.0"
+                    " WHERE patient_hours > 24");
+                txn.commit();
+                if (res.affected_rows() > 0) {
+                    std::cout << "  DB: repaired " << res.affected_rows()
+                              << " daily row(s) holding the machine counter in patient_hours"
+                              << std::endl;
+                }
+            } catch (const std::exception& e) {
+                std::cerr << "  DB: machine_hours migration skipped: " << e.what() << std::endl;
+            }
 
             // Auto-migrate SDD-004: equipment profiles, items and supply types.
             // Keep in lockstep with scripts/schema.sql — drift here is what forced v4.4.10.
@@ -2318,6 +2352,7 @@ bool DatabaseService::saveSTRDailyRecords(const std::vector<STRDailyRecord>& rec
                 mask_events INT DEFAULT 0,
                 duration_minutes FLOAT DEFAULT 0,
                 patient_hours FLOAT DEFAULT 0,
+                machine_hours FLOAT,
                 ahi FLOAT, hi FLOAT, ai FLOAT, oai FLOAT, cai FLOAT, uai FLOAT,
                 rin FLOAT, csr FLOAT,
                 mask_press_50 FLOAT, mask_press_95 FLOAT, mask_press_max FLOAT,
@@ -2363,7 +2398,12 @@ bool DatabaseService::saveSTRDailyRecords(const std::vector<STRDailyRecord>& rec
                      spo2_50, spo2_95,
                      resp_rate_50, tid_vol_50, min_vent_50,
                      mode, epr_level, pressure_setting,
-                     fault_device, fault_alarm, updated_at)
+                     fault_device, fault_alarm,
+                     -- Appended, not slotted next to patient_hours: the VALUES
+                     -- list below is explicitly numbered $1..$N, so a column
+                     -- inserted mid-list silently shifts every placeholder
+                     -- after it.
+                     machine_hours, updated_at)
                 VALUES ($1, $2, $3::jsonb, $4, $5, $6,
                         $7, $8, $9, $10, $11, $12, $13, $14,
                         $15, $16, $17,
@@ -2371,12 +2411,14 @@ bool DatabaseService::saveSTRDailyRecords(const std::vector<STRDailyRecord>& rec
                         $21, $22,
                         $23, $24, $25,
                         $26, $27, $28,
-                        $29, $30, NOW())
+                        $29, $30,
+                        $31, NOW())
                 ON CONFLICT (device_id, record_date) DO UPDATE SET
                     mask_pairs = EXCLUDED.mask_pairs,
                     mask_events = EXCLUDED.mask_events,
                     duration_minutes = EXCLUDED.duration_minutes,
                     patient_hours = EXCLUDED.patient_hours,
+                    machine_hours = EXCLUDED.machine_hours,
                     ahi = EXCLUDED.ahi, hi = EXCLUDED.hi, ai = EXCLUDED.ai,
                     oai = EXCLUDED.oai, cai = EXCLUDED.cai, uai = EXCLUDED.uai,
                     rin = EXCLUDED.rin, csr = EXCLUDED.csr,
@@ -2396,16 +2438,24 @@ bool DatabaseService::saveSTRDailyRecords(const std::vector<STRDailyRecord>& rec
                     updated_at = NOW()
             )";
 
+            // STRDailyRecord::patient_hours is the RAW ResMed PatientHours
+            // signal, which is a lifetime counter, not this day's usage. The
+            // parser is right to name its field after the signal; the column it
+            // used to land in was the thing that was wrong. So the day's hours
+            // are derived from Duration here, and the counter goes to its own
+            // column. See SDD-019's note on why duration_minutes is the honest
+            // source for anything per-day.
             txn.exec_params(query,
                 r.device_id, date_oss.str(), pairs_json.str(),
-                r.mask_events, r.duration_minutes, r.patient_hours,
+                r.mask_events, r.duration_minutes, r.duration_minutes / 60.0,
                 r.ahi, r.hi, r.ai, r.oai, r.cai, r.uai, r.rin, r.csr,
                 r.mask_press_50, r.mask_press_95, r.mask_press_max,
                 r.leak_50, r.leak_95, r.leak_max,
                 r.spo2_50, r.spo2_95,
                 r.resp_rate_50, r.tid_vol_50, r.min_vent_50,
                 r.mode, r.epr_level, r.pressure_setting,
-                r.fault_device, r.fault_alarm
+                r.fault_device, r.fault_alarm,
+                r.patient_hours  // $31, the lifetime counter
             );
         }
 

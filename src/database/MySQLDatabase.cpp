@@ -600,7 +600,10 @@ void MySQLDatabase::createSchema() {
             mask_pairs        JSON DEFAULT (JSON_ARRAY()),
             mask_events       INT DEFAULT 0,
             duration_minutes  DOUBLE DEFAULT 0,
+            -- Hours of therapy ON THIS DAY, from either writer.
             patient_hours     DOUBLE DEFAULT 0,
+            -- ResMed's lifetime PatientHours counter. STR-only, NULL otherwise.
+            machine_hours     DOUBLE,
             ahi               DOUBLE, hi DOUBLE, ai DOUBLE, oai DOUBLE, cai DOUBLE, uai DOUBLE,
             rin               DOUBLE, csr DOUBLE,
             mask_press_50     DOUBLE, mask_press_95 DOUBLE, mask_press_max DOUBLE,
@@ -1007,6 +1010,7 @@ void MySQLDatabase::migrateSchema() {
         {"cpap_daily_summary", "mask_pairs",       "JSON DEFAULT (JSON_ARRAY())"},
         {"cpap_daily_summary", "mask_events",      "INT DEFAULT 0"},
         {"cpap_daily_summary", "patient_hours",    "DOUBLE DEFAULT 0"},
+        {"cpap_daily_summary", "machine_hours",    "DOUBLE"},
         {"cpap_daily_summary", "hi",               "DOUBLE"},
         {"cpap_daily_summary", "ai",               "DOUBLE"},
         {"cpap_daily_summary", "oai",              "DOUBLE"},
@@ -1085,6 +1089,26 @@ void MySQLDatabase::migrateSchema() {
     if (applied > 0) {
         std::cout << "MySQL: schema migration applied " << applied << " column(s)"
                   << std::endl;
+    }
+
+    // Split ResMed's lifetime PatientHours counter out of patient_hours, which
+    // two writers had been filling with two different quantities. Runs after the
+    // loop above, so machine_hours is guaranteed to exist by now.
+    //
+    // Guarded on patient_hours > 24, which no day's usage can reach, so it can
+    // only touch a row the STR path wrote the counter into. That guard also
+    // makes it idempotent, since after it runs those rows no longer match.
+    if (mysql_query(conn_,
+                    "UPDATE cpap_daily_summary"
+                    "   SET machine_hours = patient_hours,"
+                    "       patient_hours = duration_minutes / 60.0"
+                    " WHERE patient_hours > 24") == 0) {
+        const auto rows = mysql_affected_rows(conn_);
+        if (rows > 0) {
+            std::cout << "MySQL: repaired " << rows
+                      << " daily row(s) holding the machine counter in patient_hours"
+                      << std::endl;
+        }
     }
 }
 
@@ -2321,7 +2345,10 @@ bool MySQLDatabase::saveSTRDailyRecords(const std::vector<STRDailyRecord>& recor
                  spo2_50, spo2_95,
                  resp_rate_50, tid_vol_50, min_vent_50,
                  mode, epr_level, pressure_setting,
-                 fault_device, fault_alarm, updated_at)
+                 fault_device, fault_alarm,
+                 -- Appended, not slotted in: the binds below are positional
+                 -- with hardcoded indices and ParamBinder is sized by count.
+                 machine_hours, updated_at)
             VALUES (?, ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, ?, ?, ?, ?,
                     ?, ?, ?,
@@ -2329,12 +2356,14 @@ bool MySQLDatabase::saveSTRDailyRecords(const std::vector<STRDailyRecord>& recor
                     ?, ?,
                     ?, ?, ?,
                     ?, ?, ?,
-                    ?, ?, NOW())
+                    ?, ?,
+                    ?, NOW())
             ON DUPLICATE KEY UPDATE
                 mask_pairs       = VALUES(mask_pairs),
                 mask_events      = VALUES(mask_events),
                 duration_minutes = VALUES(duration_minutes),
                 patient_hours    = VALUES(patient_hours),
+                machine_hours    = VALUES(machine_hours),
                 ahi = VALUES(ahi), hi = VALUES(hi), ai = VALUES(ai),
                 oai = VALUES(oai), cai = VALUES(cai), uai = VALUES(uai),
                 rin = VALUES(rin), csr = VALUES(csr),
@@ -2385,13 +2414,15 @@ bool MySQLDatabase::saveSTRDailyRecords(const std::vector<STRDailyRecord>& recor
             }
             pairs_json << "]";
 
-            ParamBinder p(30);
+            ParamBinder p(31);
             p.bindText(0, rec.device_id);
             p.bindText(1, date_oss.str());
             p.bindText(2, pairs_json.str());
             p.bindInt(3, rec.mask_events);
             p.bindDouble(4, rec.duration_minutes);
-            p.bindDouble(5, rec.patient_hours);
+            // The day's hours. rec.patient_hours is the raw ResMed lifetime
+            // counter and is bound to machine_hours at the end instead.
+            p.bindDouble(5, rec.duration_minutes / 60.0);
             p.bindDouble(6, rec.ahi);
             p.bindDouble(7, rec.hi);
             p.bindDouble(8, rec.ai);
@@ -2416,6 +2447,7 @@ bool MySQLDatabase::saveSTRDailyRecords(const std::vector<STRDailyRecord>& recor
             p.bindDouble(27, rec.pressure_setting);
             p.bindInt(28, rec.fault_device);
             p.bindInt(29, rec.fault_alarm);
+            p.bindDouble(30, rec.patient_hours);  // the lifetime counter
 
             mysql_stmt_bind_param(g.stmt, p.data());
             if (mysql_stmt_execute(g.stmt) != 0) {

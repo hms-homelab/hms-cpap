@@ -171,7 +171,10 @@ CREATE TABLE IF NOT EXISTS cpap_daily_summary (
     mask_pairs        TEXT DEFAULT '[]',
     mask_events       INTEGER DEFAULT 0,
     duration_minutes  REAL DEFAULT 0,
+    -- Hours of therapy ON THIS DAY, from either writer.
     patient_hours     REAL DEFAULT 0,
+    -- ResMed's lifetime PatientHours counter. STR-only, NULL otherwise.
+    machine_hours     REAL,
     ahi               REAL, hi REAL, ai REAL, oai REAL, cai REAL, uai REAL,
     rin               REAL, csr REAL,
     mask_press_50     REAL, mask_press_95 REAL, mask_press_max REAL,

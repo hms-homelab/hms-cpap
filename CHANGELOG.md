@@ -5,6 +5,79 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.0.5] - 2026-08-26
+
+### Added
+- **The CpapDash index** (SDD-019), a nightly therapy-quality number from usage,
+  AHI and leak. It is defined once, in `hms-cpapdash-parser` (v2026.4.1), so the
+  app, the cloud and this project cannot drift apart; the CSV tables in that
+  repo are the contract, and the app runs its own implementation against the
+  same two files.
+
+  It is computed on read and never stored. The weights are tunable, and a stored
+  index would be wrong the moment one of them moved, leaving two answers in the
+  same database with one silently stale. `/api/daily-summary` gains
+  `sleep_index` and `sleep_index_band` per night, `/api/dashboard` gains them for
+  the latest night plus a 7-night average, MQTT gains a `sleep_index` sensor and
+  its band, and the dashboard shows the headline.
+
+  A night with none of the three inputs scores null rather than zero: zero is the
+  worst night there is, null is a night we know nothing about.
+
+- **`machine_hours`**, so `patient_hours` finally means one thing.
+
+  `cpap_daily_summary.patient_hours` held two different quantities depending on
+  which writer got there first. The session-derived path wrote the day's usage;
+  the STR path wrote ResMed's `PatientHours` signal, which the machine's own
+  STR.edf shows to be a LIFETIME COUNTER in hours whose per-day delta is the
+  day's usage. On a real 230-row install the two disagreed twice, holding ~1050
+  against nights of 80 and 89 minutes, and anything reading the column got a
+  number four hundred times too large on those nights.
+
+  `patient_hours` is now the day's usage from both writers, and the counter has
+  its own column rather than being thrown away. A migration adds the column and
+  repairs existing rows, guarded on `patient_hours > 24`, which no day's usage
+  can reach; that guard also makes it idempotent, since after it runs the rows no
+  longer match. The `str_patient_hours` MQTT sensor still publishes the counter
+  it always published, so no dashboard changes meaning.
+
+### Fixed
+- **The web UI works underneath a Home Assistant Ingress prefix** (SDD-021).
+  Home Assistant serves an add-on at `/api/hassio_ingress/<token>/` and rewrites
+  nothing in the payload, so a page that assumes it lives at the root loads and
+  then 404s every asset and every API call against Home Assistant's own root.
+  The server now points `<base href>` at the prefix when `X-Ingress-Path` says
+  there is one, and an Angular interceptor makes the root-absolute `/api` calls
+  relative to it.
+
+  With no such header nothing changes, byte for byte, so plain Docker, the
+  desktop app and the native service are unaffected. The header is untrusted
+  input and is refused unless it is an absolute path of unreserved URL
+  characters, since reflecting it into an HTML attribute would otherwise be an
+  injection.
+
+- An unknown `/api` path now answers with the JSON error rather than the SPA
+  page. The old 404 handler returned `index.html` for every 404 including API
+  ones, which gave a caller a parse error instead of something it could act on.
+
+## [5.0.4] - 2026-08-25
+
+### Fixed
+- **A full night's oximetry download no longer gives up at 60 seconds.** Measured
+  on the bench against a real O2 Ring through the mule: about 620 B/s once
+  streaming, plus ~15s of connect, service discovery and FILE_OPEN before the
+  first byte. A real 37,995-byte overnight recording lands around 75-80s, so it
+  was abandoned mid-transfer every time. The ceiling is now 300s.
+  `CONNECTION_TIMEOUT` stays at 5s, since that only covers reaching the mule on
+  the LAN and should still fail fast when the device is off.
+
+### Changed
+- Takes cpapdash-parser v2026.3.0, where a session's duration is the therapy time
+  its checkpoints actually hold rather than the span from the first to the last.
+  A night is not one file: ResMed opens a fresh checkpoint after every mask-off
+  break, so the old span counted every break as therapy and deflated AHI by the
+  same factor (support ticket 87).
+
 ## [5.0.3] - 2026-08-24
 
 ### Fixed
