@@ -14,6 +14,7 @@
 #include "services/DataPublisherService.h"
 #include "services/SupplyPublisher.h"
 #include "services/CpapDashSyncService.h"
+#include "services/MyAirService.h"
 #include "services/OximetryService.h"
 #include "services/PrismaIngestion.h"
 #include "services/SessionDiscoveryService.h"
@@ -106,6 +107,16 @@ public:
      */
     void setCpapDashSync(std::shared_ptr<CpapDashSyncService> sync) {
         cpapdash_sync_ = std::move(sync);
+    }
+
+    /**
+     * SDD-020: inject the optional myAir pull. Left unset, the burst cycle never
+     * calls sweep() and nothing about myAir runs, which is the default. The
+     * service throttles itself to myair.poll_minutes, so calling it every cycle
+     * is deliberate and cheap.
+     */
+    void setMyAirService(std::shared_ptr<MyAirService> myair) {
+        myair_ = std::move(myair);
     }
 
     /**
@@ -218,6 +229,7 @@ private:
     std::string device_id_;
     /// SDD-004 optional cloud mirror; null when the feature is off.
     std::shared_ptr<CpapDashSyncService> cpapdash_sync_;
+    std::shared_ptr<MyAirService> myair_;
     std::string device_name_;
     /// SDD-010: the card ROOT when CPAP_SOURCE=local. STR.edf and DATALOG are
     /// siblings INSIDE it. Never the DATALOG folder itself: that was the old
