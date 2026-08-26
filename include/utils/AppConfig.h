@@ -133,6 +133,30 @@ struct AppConfig {
         int quiet_minutes = 15;        // archive must be quiet this long before export (SDD-003)
     } sleephq;
 
+    /// SDD-020 optional read-only pull of the patient's own nights from ResMed's
+    /// myAir, so their score and its four sub-scores can sit next to ours.
+    ///
+    /// UNLIKE EVERY OTHER CREDENTIAL HERE, THIS IS AN ACCOUNT PASSWORD. SleepHQ
+    /// takes a client secret and the cloud mirror takes a revocable token;
+    /// ResMed offers neither, so enabling this puts the user's real myAir
+    /// password at rest in config.json. That is why it is off by default and why
+    /// the settings page says so out loud rather than burying it.
+    ///
+    /// Nothing downstream may depend on this. The API is undocumented and ResMed
+    /// can change it without notice, so a failure here degrades to "myAir
+    /// unavailable" and never blocks a sweep, a parse or a report.
+    struct MyAir {
+        bool enabled = false;
+        std::string region = "NA";   // "NA" or "EU"; anything else falls back to NA
+        std::string username;
+        std::string password;
+        /// Okta's remembered-device cookie, written back after a successful
+        /// sign-in. Without it a region with an email factor asks for a code on
+        /// every start, which a headless service cannot answer.
+        std::string device_token;
+        int poll_minutes = 60;       // myAir updates once a day; hourly is generous
+    } myair;
+
     /// SDD-004 optional cloud mirror of equipment/supplies to hms-cpapdash-api.
     /// Local is always the source of truth; with enabled=false the whole equipment
     /// feature works untouched. Auth is a pasted long-lived TOKEN rather than an
@@ -258,6 +282,21 @@ struct AppConfig {
         if (sleephq.quiet_minutes == 15) {
             auto v = env("SLEEPHQ_QUIET_MINUTES");
             if (!v.empty()) sleephq.quiet_minutes = std::stoi(v);
+        }
+
+        // myAir (SDD-020). The env path exists mainly so a container can be
+        // handed credentials without them being written into config.json.
+        if (!myair.enabled && env("MYAIR_ENABLED") == "true")
+            myair.enabled = true;
+        if (myair.username.empty()) myair.username = env("MYAIR_USERNAME");
+        if (myair.password.empty()) myair.password = env("MYAIR_PASSWORD");
+        if (myair.region == "NA") {
+            auto v = env("MYAIR_REGION");
+            if (!v.empty()) myair.region = v;
+        }
+        if (myair.poll_minutes == 60) {
+            auto v = env("MYAIR_POLL_MINUTES");
+            if (!v.empty()) myair.poll_minutes = std::stoi(v);
         }
 
         // ML Training
@@ -501,6 +540,16 @@ struct AppConfig {
                 if (sh.contains("quiet_minutes"))     config.sleephq.quiet_minutes = sh["quiet_minutes"];
             }
 
+            if (j.contains("myair")) {
+                auto& ma = j["myair"];
+                if (ma.contains("enabled"))      config.myair.enabled = ma["enabled"];
+                if (ma.contains("region"))       config.myair.region = ma["region"];
+                if (ma.contains("username"))     config.myair.username = ma["username"];
+                if (ma.contains("password"))     config.myair.password = ma["password"];
+                if (ma.contains("device_token")) config.myair.device_token = ma["device_token"];
+                if (ma.contains("poll_minutes")) config.myair.poll_minutes = ma["poll_minutes"];
+            }
+
             return LoadStatus::Ok;
         } catch (const std::exception& e) {
             if (error) *error = e.what();
@@ -605,6 +654,13 @@ struct AppConfig {
             j["sleephq"]["auto_on_backfill"] = sleephq.auto_on_backfill;
             j["sleephq"]["quiet_minutes"] = sleephq.quiet_minutes;
 
+            j["myair"]["enabled"] = myair.enabled;
+            j["myair"]["region"] = myair.region;
+            j["myair"]["username"] = myair.username;
+            j["myair"]["password"] = myair.password;
+            j["myair"]["device_token"] = myair.device_token;
+            j["myair"]["poll_minutes"] = myair.poll_minutes;
+
             std::ofstream f(path);
             f << j.dump(2);
             return true;
@@ -683,6 +739,17 @@ struct AppConfig {
         j["sleephq"]["auto_on_session"] = sleephq.auto_on_session;
         j["sleephq"]["auto_on_backfill"] = sleephq.auto_on_backfill;
         j["sleephq"]["quiet_minutes"] = sleephq.quiet_minutes;
+
+        j["myair"]["enabled"] = myair.enabled;
+        j["myair"]["region"] = myair.region;
+        j["myair"]["username"] = myair.username;
+        // Masked like every other secret here. This one is the user's actual
+        // ResMed account password, so it must never leave the box in a config
+        // read, and the device_token is a live session credential in its own
+        // right rather than a setting.
+        j["myair"]["password"] = myair.password.empty() ? "" : "********";
+        j["myair"]["device_token"] = myair.device_token.empty() ? "" : "********";
+        j["myair"]["poll_minutes"] = myair.poll_minutes;
 
         j["cpapdash"]["enabled"] = cpapdash.enabled;
         j["cpapdash"]["api_url"] = cpapdash.api_url;

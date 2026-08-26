@@ -583,9 +583,13 @@ bool MyAirClient::graphql(const std::string& operation_name, const std::string& 
 }
 
 bool MyAirClient::fetchSleepRecords(std::vector<MyAirSleepRecord>& out, std::string& err) {
-    // The window is fixed at 30 days by the API; there is no history endpoint.
-    // Dates are formatted by the caller's clock, which is the same clock the
-    // nights are filed under locally.
+    // Thirty days back, but note what actually comes out: the parameters are
+    // startMonth/endMonth and ResMed serves from the FIRST OF THE MONTH the
+    // start date falls in. Asking from 27 July on 26 August returned 56 records
+    // beginning 1 July. That is more than we asked for rather than less, so it
+    // is harmless, but a caller sizing a buffer or trusting the count would be
+    // wrong. Dates use the caller's clock, which is the same clock the nights
+    // are filed under locally.
     const std::time_t now = std::time(nullptr);
     std::tm today{};
 #ifdef _WIN32

@@ -107,8 +107,19 @@ public:
 
     bool isAuthenticated() const { return !access_token_.empty(); }
 
-    /// The last 30 days. There is no history endpoint; whatever we want to keep,
-    /// we keep ourselves.
+    /// Recent nights. There is no history endpoint; whatever we want to keep, we
+    /// keep ourselves.
+    ///
+    /// THE WINDOW IS WHOLE MONTHS, NOT 30 DAYS. The parameters are named
+    /// startMonth and endMonth and they mean it: asking for the last 30 days
+    /// from 26 August returned 56 records starting at 1 July, because ResMed
+    /// serves from the beginning of the month the start date falls in. Measured
+    /// against a real account, not assumed.
+    ///
+    /// A returned night can be entirely zero. That means ResMed HAS NO DATA for
+    /// that date, which is not the same as a night with no therapy, and a caller
+    /// must not average the two together. On a machine whose modem reports
+    /// intermittently most dates come back this way.
     bool fetchSleepRecords(std::vector<MyAirSleepRecord>& out, std::string& err);
     bool fetchDevice(MyAirDevice& out, std::string& err);
 
