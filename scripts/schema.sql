@@ -182,7 +182,10 @@ CREATE TABLE IF NOT EXISTS cpap_daily_summary (
     mask_pairs        JSONB DEFAULT '[]',
     mask_events       INT DEFAULT 0,
     duration_minutes  FLOAT DEFAULT 0,
+    -- Hours of therapy ON THIS DAY, from either writer.
     patient_hours     FLOAT DEFAULT 0,
+    -- ResMed's lifetime PatientHours counter. STR-only, NULL otherwise.
+    machine_hours     FLOAT,
     ahi               FLOAT, hi FLOAT, ai FLOAT, oai FLOAT, cai FLOAT, uai FLOAT,
     rin               FLOAT, csr FLOAT,
     mask_press_50     FLOAT, mask_press_95 FLOAT, mask_press_max FLOAT,

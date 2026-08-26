@@ -403,7 +403,10 @@ void SQLiteDatabase::createSchema() {
             mask_pairs        TEXT DEFAULT '[]',
             mask_events       INTEGER DEFAULT 0,
             duration_minutes  REAL DEFAULT 0,
+            -- Hours of therapy ON THIS DAY, from either writer.
             patient_hours     REAL DEFAULT 0,
+            -- ResMed's lifetime PatientHours counter. STR-only, NULL otherwise.
+            machine_hours     REAL,
             ahi               REAL, hi REAL, ai REAL, oai REAL, cai REAL, uai REAL,
             rin               REAL, csr REAL,
             mask_press_50     REAL, mask_press_95 REAL, mask_press_max REAL,
@@ -418,6 +421,24 @@ void SQLiteDatabase::createSchema() {
             UNIQUE (device_id, record_date)
         )
     )");
+
+    // Split ResMed's lifetime PatientHours counter out of patient_hours, which
+    // two writers had been filling with two different quantities. Placed after
+    // the CREATE above on purpose: an ALTER of a table that does not exist yet
+    // fails silently here, and on a fresh database there would be nothing to
+    // repair anyway.
+    //
+    // Guarded on patient_hours > 24, which no day's usage can reach, so it can
+    // only touch a row the STR path wrote the counter into. That guard also
+    // makes it idempotent, since after it runs those rows no longer match.
+    sqlite3_exec(db_, "ALTER TABLE cpap_daily_summary ADD COLUMN machine_hours REAL",
+                 nullptr, nullptr, nullptr);
+    sqlite3_exec(db_,
+                 "UPDATE cpap_daily_summary"
+                 "   SET machine_hours = patient_hours,"
+                 "       patient_hours = duration_minutes / 60.0"
+                 " WHERE patient_hours > 24",
+                 nullptr, nullptr, nullptr);
 
     // cpap_summaries (AI-generated)
     exec(R"(
@@ -1812,7 +1833,11 @@ bool SQLiteDatabase::saveSTRDailyRecords(const std::vector<STRDailyRecord>& reco
                  spo2_50, spo2_95,
                  resp_rate_50, tid_vol_50, min_vent_50,
                  mode, epr_level, pressure_setting,
-                 fault_device, fault_alarm, updated_at)
+                 fault_device, fault_alarm,
+                 -- Appended rather than slotted next to patient_hours: the
+                 -- binds below are positional with hardcoded indices, so a
+                 -- column inserted mid-list would silently shift thirty of them.
+                 machine_hours, updated_at)
             VALUES (?, ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, ?, ?, ?, ?,
                     ?, ?, ?,
@@ -1820,12 +1845,14 @@ bool SQLiteDatabase::saveSTRDailyRecords(const std::vector<STRDailyRecord>& reco
                     ?, ?,
                     ?, ?, ?,
                     ?, ?, ?,
-                    ?, ?, datetime('now'))
+                    ?, ?,
+                    ?, datetime('now'))
             ON CONFLICT (device_id, record_date) DO UPDATE SET
                 mask_pairs       = excluded.mask_pairs,
                 mask_events      = excluded.mask_events,
                 duration_minutes = excluded.duration_minutes,
                 patient_hours    = excluded.patient_hours,
+                machine_hours    = excluded.machine_hours,
                 ahi = excluded.ahi, hi = excluded.hi, ai = excluded.ai,
                 oai = excluded.oai, cai = excluded.cai, uai = excluded.uai,
                 rin = excluded.rin, csr = excluded.csr,
@@ -1879,7 +1906,10 @@ bool SQLiteDatabase::saveSTRDailyRecords(const std::vector<STRDailyRecord>& reco
             bind_text(g.stmt, 3, pairs_json.str());
             bind_int(g.stmt, 4, r.mask_events);
             bind_double(g.stmt, 5, r.duration_minutes);
-            bind_double(g.stmt, 6, r.patient_hours);
+            // The day's hours, derived from Duration. STRDailyRecord's
+            // patient_hours field carries the raw ResMed PatientHours signal,
+            // which is a lifetime counter and goes to machine_hours below.
+            bind_double(g.stmt, 6, r.duration_minutes / 60.0);
             bind_double(g.stmt, 7, r.ahi);
             bind_double(g.stmt, 8, r.hi);
             bind_double(g.stmt, 9, r.ai);
@@ -1904,6 +1934,7 @@ bool SQLiteDatabase::saveSTRDailyRecords(const std::vector<STRDailyRecord>& reco
             bind_double(g.stmt, 28, r.pressure_setting);
             bind_int(g.stmt, 29, r.fault_device);
             bind_int(g.stmt, 30, r.fault_alarm);
+            bind_double(g.stmt, 31, r.patient_hours);  // the lifetime counter
 
             if (sqlite3_step(g.stmt) != SQLITE_DONE) {
                 std::cerr << "SQLite: saveSTRDailyRecords error: " << sqlite3_errmsg(db_) << std::endl;

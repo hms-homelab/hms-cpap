@@ -171,7 +171,10 @@ CREATE TABLE IF NOT EXISTS cpap_daily_summary (
     mask_pairs        JSON DEFAULT (JSON_ARRAY()),
     mask_events       INT DEFAULT 0,
     duration_minutes  DOUBLE DEFAULT 0,
+    -- Hours of therapy ON THIS DAY, from either writer.
     patient_hours     DOUBLE DEFAULT 0,
+    -- ResMed's lifetime PatientHours counter. STR-only, NULL otherwise.
+    machine_hours     DOUBLE,
     ahi               DOUBLE, hi DOUBLE, ai DOUBLE, oai DOUBLE, cai DOUBLE, uai DOUBLE,
     rin               DOUBLE, csr DOUBLE,
     mask_press_50     DOUBLE, mask_press_95 DOUBLE, mask_press_max DOUBLE,
