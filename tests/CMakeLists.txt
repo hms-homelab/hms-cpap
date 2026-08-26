@@ -125,6 +125,7 @@ set(TEST_SOURCES
     clients/test_FysetcDataSource.cpp
     services/test_LiveSleepStageRunner.cpp
     services/test_MyAirClient.cpp
+    services/test_MyAirService.cpp
     services/test_SleepHqExportService.cpp
     services/test_CpapDashSyncService.cpp
     services/test_DeviceDiscoveryService.cpp

@@ -26,6 +26,34 @@ export interface DashboardData {
   usage_trend: { date: string; value: string }[];
 }
 
+/// SDD-020: one night as we recorded it and as ResMed did.
+///
+/// `myair_present` is false when ResMed has NO DATA for that date, which is not
+/// the same as a night with no therapy, and the deltas are null in that case
+/// rather than measured against zero.
+export interface MyAirComparisonRow {
+  record_date: string;
+  duration_minutes: string | number | null;
+  ahi: string | number | null;
+  leak_95: string | number | null;
+  sleep_index: number | null;
+  sleep_index_band: SleepIndexBand | null;
+
+  myair_present: boolean;
+  total_usage_min: string | number | null;
+  sleep_score: string | number | null;
+  usage_score: string | number | null;
+  ahi_score: string | number | null;
+  mask_score: string | number | null;
+  leak_score: string | number | null;
+  myair_ahi: string | number | null;
+  leak_percentile: string | number | null;
+
+  usage_delta_min: number | null;
+  ahi_delta: number | null;
+  leak_delta: number | null;
+}
+
 export interface SessionListItem {
   sleep_day?: string;
   session_start: string;

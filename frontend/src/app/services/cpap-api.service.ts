@@ -1,7 +1,7 @@
 import { Injectable } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Observable } from 'rxjs';
-import { DashboardData, SessionListItem, SessionDetail, SessionEvent, EventRow, TrendPoint, SignalData, VitalsData, OximetryData } from '../models/session.model';
+import { DashboardData, SessionListItem, SessionDetail, SessionEvent, EventRow, TrendPoint, SignalData, VitalsData, OximetryData, MyAirComparisonRow } from '../models/session.model';
 import { AppConfig, DiscoveredDevice } from '../models/config.model';
 import { EquipmentType, EquipmentProfile, EquipmentItem, EquipmentItemPayload } from '../models/equipment.model';
 import { CleaningTask, CleaningTaskType, CleaningSuggestResult } from '../models/cleaning.model';
@@ -69,6 +69,14 @@ export class CpapApiService {
   /// refuse-to-boot condition rather than a silent SQLite fallback.
   getCapabilities(): Observable<any> {
     return this.http.get('/api/capabilities');
+  }
+
+  /// SDD-020: our nights beside ResMed's, per component. Returns an empty array
+  /// rather than an error when myAir is not configured, so a caller that asks
+  /// anyway gets one shape back.
+  getMyAirComparison(start: string, end: string): Observable<MyAirComparisonRow[]> {
+    return this.http.get<MyAirComparisonRow[]>('/api/myair/compare',
+      { params: { start, end } });
   }
 
   completeSetup(): Observable<any> {

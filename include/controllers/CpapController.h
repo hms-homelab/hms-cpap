@@ -37,6 +37,7 @@ public:
     ADD_METHOD_TO(CpapController::updateConfig,  "/api/config",              drogon::Put);
     ADD_METHOD_TO(CpapController::setupComplete, "/api/setup",               drogon::Post);
     ADD_METHOD_TO(CpapController::capabilities,  "/api/capabilities",        drogon::Get);
+    ADD_METHOD_TO(CpapController::myairCompare,  "/api/myair/compare",       drogon::Get);
     ADD_METHOD_TO(CpapController::logs,          "/api/logs",                drogon::Get);
     // SDD-006 phase 2. All three refuse once setup_complete is true, so a
     // finished install does not expose database provisioning on the LAN forever.
@@ -154,6 +155,12 @@ public:
     /// SDD-006: what this build can actually do. Thin passthrough to
     /// SetupService, where the logic is testable; the test binary excludes
     /// this file.
+    /// SDD-020: our nights beside ResMed's, per component. 200 with an empty
+    /// array when myAir is not configured, so the frontend has one shape to
+    /// handle rather than a special case.
+    void myairCompare(const drogon::HttpRequestPtr& req,
+                      std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+
     void capabilities(const drogon::HttpRequestPtr& req,
                       std::function<void(const drogon::HttpResponsePtr&)>&& cb);
 

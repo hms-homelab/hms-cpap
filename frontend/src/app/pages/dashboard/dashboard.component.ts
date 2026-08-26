@@ -11,7 +11,8 @@ import { PressureSectionComponent, PressureSectionData } from '../../components/
 import { RespiratoryMetricsComponent, RespiratoryMetricsData } from '../../components/dashboard/respiratory-metrics.component';
 import { RealtimeStatusComponent, RealtimeStatusData } from '../../components/dashboard/realtime-status.component';
 import { MlIntelligenceComponent } from '../../components/dashboard/ml-intelligence.component';
-import { DashboardData, TrendPoint, OximetryData, SessionListItem, SleepIndexBand } from '../../models/session.model';
+import { DashboardData, TrendPoint, OximetryData, SessionListItem, SleepIndexBand, MyAirComparisonRow } from '../../models/session.model';
+import { MyAirCompareComponent } from '../../components/dashboard/myair-compare.component';
 import { detectDesaturations, odiPerHour, inferSampleSec } from '../../utils/signal-analysis';
 import Chart from 'chart.js/auto';
 
@@ -25,7 +26,7 @@ const MODE_LABELS: Record<string, string> = {
   imports: [CommonModule, KeyMetricsComponent, OximetryRowComponent, AiSummaryComponent,
             TherapyInsightsComponent, StrMetricsComponent, EventsBreakdownComponent,
             PressureSectionComponent, RespiratoryMetricsComponent, RealtimeStatusComponent,
-            MlIntelligenceComponent],
+            MlIntelligenceComponent, MyAirCompareComponent],
   template: `
     <div class="dashboard">
       <h2>{{ deviceName }} Sleep Therapy</h2>
@@ -84,6 +85,10 @@ const MODE_LABELS: Record<string, string> = {
 
       <!-- 2. O2 Ring Oximetry -->
       <app-oximetry-row [data]="oximetryData" *ngIf="oximetryData" />
+
+      <!-- SDD-020: myAir users only. Gated on the capability rather than on the
+           data, so a configured user with nothing fetched yet still sees why. -->
+      <app-myair-compare [rows]="myairRows" *ngIf="hasMyAir" />
 
       <!-- Two-column layout for Summary + Insights -->
       <div class="two-col" *ngIf="aiSummaryText || insights.length || true">
@@ -220,6 +225,12 @@ export class DashboardComponent implements OnInit, AfterViewInit {
 
   data: DashboardData | null = null;
   deviceName = 'CPAP'; // overridden from /api/config in ngOnInit
+
+  // SDD-020. hasMyAir comes from /api/capabilities, not from whether any rows
+  // arrived: a configured user whose first poll has not run yet should see the
+  // panel explain itself rather than see nothing and wonder.
+  hasMyAir = false;
+  myairRows: MyAirComparisonRow[] = [];
   liveSession: SessionListItem | null = null;
   liveSpO2 = '';
   liveHR = '';
@@ -278,6 +289,25 @@ export class DashboardComponent implements OnInit, AfterViewInit {
   }
 
   ngOnInit() {
+    // SDD-020: only ask for the myAir comparison if this install has myAir at
+    // all. Someone with no ResMed account never sees the panel and never makes
+    // the request.
+    this.api.getCapabilities().subscribe({
+      next: (caps: any) => {
+        this.hasMyAir = !!caps?.features?.myair;
+        if (!this.hasMyAir) return;
+
+        const end = new Date();
+        const start = new Date(end.getTime() - 30 * 24 * 60 * 60 * 1000);
+        const ymd = (d: Date) => d.toISOString().substring(0, 10);
+        this.api.getMyAirComparison(ymd(start), ymd(end)).subscribe({
+          next: (rows) => { this.myairRows = rows || []; },
+          error: () => { this.myairRows = []; },
+        });
+      },
+      error: () => { this.hasMyAir = false; },
+    });
+
     // Load device name from config so the title reflects the actual machine
     // (e.g. "ResMed AirSense 11 AutoSet Sleep Therapy" instead of hardcoded model).
     this.api.getConfig().subscribe({

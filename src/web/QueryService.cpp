@@ -392,6 +392,64 @@ Json::Value QueryService::getDailySummary(const std::string& start, const std::s
     return rows;
 }
 
+Json::Value QueryService::getMyAirComparison(const std::string& start, const std::string& end) {
+    // LEFT JOIN from our side. A night we have and myAir does not is the single
+    // most useful thing this can show (the card holds a night ResMed never got,
+    // or the other way round), and an inner join would hide precisely that.
+    //
+    // No JOIN on device_id: cpap_myair_records is account-level, because myAir
+    // has one patient and one machine per account.
+    const std::string q =
+        "SELECT d.record_date,"
+        " d.duration_minutes, d.ahi, d.leak_95, d.mask_events,"
+        " m.total_usage_min, m.sleep_score, m.usage_score, m.ahi_score,"
+        " m.mask_score, m.leak_score, m.ahi AS myair_ahi, m.mask_pair_count,"
+        " m.leak_percentile, m.has_data"
+        " FROM cpap_daily_summary d"
+        " LEFT JOIN cpap_myair_records m ON m.record_date = d.record_date"
+        " WHERE d.device_id = " + sql::param(1, dt_) +
+        " AND d.record_date >= " + sql::castDate(2, dt_) +
+        " AND d.record_date <= " + sql::castDate(3, dt_) +
+        " ORDER BY d.record_date DESC";
+
+    auto rows = db_->executeQuery(q, {device_id_, start, end});
+
+    for (auto& row : rows) {
+        annotateIndex(row);  // our own index, so both sides are on the row
+
+        // has_data is the difference between "ResMed scored this night badly"
+        // and "ResMed has never heard of this night". Reporting the second as
+        // zeroes would invent a run of terrible nights that did not happen.
+        const auto has = jopt(row, "has_data");
+        const bool myair_present = has.has_value() && *has > 0.5;
+        row["myair_present"] = myair_present;
+
+        if (!myair_present) {
+            row["usage_delta_min"] = Json::nullValue;
+            row["ahi_delta"] = Json::nullValue;
+            row["leak_delta"] = Json::nullValue;
+            continue;
+        }
+
+        // Ours minus theirs, so a positive number always means we report more.
+        const auto our_min = jopt(row, "duration_minutes");
+        const auto their_min = jopt(row, "total_usage_min");
+        if (our_min && their_min) row["usage_delta_min"] = *our_min - *their_min;
+        else row["usage_delta_min"] = Json::nullValue;
+
+        const auto our_ahi = jopt(row, "ahi");
+        const auto their_ahi = jopt(row, "myair_ahi");
+        if (our_ahi && their_ahi) row["ahi_delta"] = *our_ahi - *their_ahi;
+        else row["ahi_delta"] = Json::nullValue;
+
+        const auto our_leak = jopt(row, "leak_95");
+        const auto their_leak = jopt(row, "leak_percentile");
+        if (our_leak && their_leak) row["leak_delta"] = *our_leak - *their_leak;
+        else row["leak_delta"] = Json::nullValue;
+    }
+    return rows;
+}
+
 Json::Value QueryService::getTrend(const std::string& metric, int days) {
     std::string columns;
     if (metric == "ahi")           columns = "record_date, ahi, hi, ai, oai, cai";
