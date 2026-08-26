@@ -1119,29 +1119,51 @@ int main(int argc, char** argv) {
                     return resp;
                 };
 
-                // "/" is served by Drogon's static file router, which never
-                // reaches the 404 handler below, so it needs its own route.
-                drogon::app().registerHandler(
-                    "/",
+                // Pre-routing, because it is the only hook that has the request
+                // AND exists everywhere we build. The obvious alternatives both
+                // failed on the way here:
+                //
+                //   post-handling advice never runs for either path that serves
+                //   this file (Drogon's static file router and its custom error
+                //   handler sit outside the controller pipeline), measured with
+                //   a debug line: /api/capabilities logged, "/" did not;
+                //
+                //   setCustomErrorHandler has an overload taking the request in
+                //   Drogon 1.9.13, which is what Homebrew ships, and NOT in
+                //   1.9.0, which is what Debian trixie ships and therefore what
+                //   the Docker image builds against. That one only showed up in
+                //   the container build.
+                //
+                // The rule is the ordinary SPA one: a path with no file
+                // extension that is not an API route is a client-side route, so
+                // serve the shell and let Angular route it. Anything with an
+                // extension falls through to the static file handler, so assets
+                // are untouched.
+                drogon::app().registerPreRoutingAdvice(
                     [serve_index](const drogon::HttpRequestPtr& req,
-                                  std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
-                        auto resp = serve_index(req);
-                        if (!resp) {
-                            resp = drogon::HttpResponse::newHttpResponse();
-                            resp->setStatusCode(drogon::k404NotFound);
+                                  drogon::AdviceCallback&& stop,
+                                  drogon::AdviceChainCallback&& carry_on) {
+                        const std::string path = req->path();
+                        const bool is_api =
+                            path.rfind("/api/", 0) == 0 || path == "/health";
+                        const size_t slash = path.find_last_of('/');
+                        const bool has_extension =
+                            path.find_last_of('.') != std::string::npos &&
+                            path.find_last_of('.') > slash;
+
+                        if (is_api || has_extension) {
+                            carry_on();
+                            return;
                         }
-                        cb(resp);
-                    },
-                    {drogon::Get});
+                        if (auto resp = serve_index(req)) {
+                            stop(resp);
+                            return;
+                        }
+                        carry_on();
+                    });
 
                 drogon::app().setCustomErrorHandler(
-                    [serve_index](drogon::HttpStatusCode code,
-                                  const drogon::HttpRequestPtr& req) -> drogon::HttpResponsePtr {
-                        if (code == drogon::k404NotFound) {
-                            // The (code, req) overload, so a deep link gets the
-                            // same Ingress-aware page the root does.
-                            if (auto resp = serve_index(req)) return resp;
-                        }
+                    [](drogon::HttpStatusCode code) -> drogon::HttpResponsePtr {
                         Json::Value err;
                         err["error"] = static_cast<int>(code);
                         return drogon::HttpResponse::newHttpJsonResponse(err);
