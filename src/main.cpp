@@ -7,6 +7,7 @@
 #include "services/CpapDashSyncService.h"
 #include "services/SetupService.h"
 #include "services/SupplyPublisher.h"
+#include "web/IngressBase.h"
 #include "web/QueryService.h"
 #ifndef _WIN32
 #include "services/ReportGeneratorService.h"
@@ -1083,17 +1084,63 @@ int main(int argc, char** argv) {
             // frontend rebuilds take effect without restarting the service
             std::string spa_index_path = static_dir + "/index.html";
             if (std::filesystem::exists(spa_index_path)) {
+                // SDD-021: one place that turns index.html into a response,
+                // pointing <base href> at the Home Assistant Ingress prefix
+                // when the proxy tells us there is one. Home Assistant serves
+                // an add-on underneath /api/hassio_ingress/<token>/ and rewrites
+                // nothing in the payload, so a page that assumes it lives at the
+                // root loads and then 404s every asset and every API call.
+                //
+                // This is a function rather than post-handling advice because
+                // advice DOES NOT RUN for either path that serves this file.
+                // Measured, not assumed: with a debug line inside an advice,
+                // a request to /api/capabilities logged and requests to / and
+                // to /sessions did not. Drogon's static file router and its
+                // custom error handler both sit outside the controller
+                // pipeline that advice hangs off.
+                //
+                // No header means no rewrite, which is every other deployment:
+                // plain Docker, the desktop app, the native service.
+                auto serve_index =
+                    [spa_index_path](const drogon::HttpRequestPtr& req)
+                    -> drogon::HttpResponsePtr {
+                    std::ifstream ifs(spa_index_path);
+                    if (!ifs) return nullptr;
+                    std::string html(std::istreambuf_iterator<char>(ifs), {});
+
+                    const std::string& prefix = req->getHeader("x-ingress-path");
+                    if (!prefix.empty()) {
+                        hms_cpap::ingress::rewriteBaseHref(html, prefix);
+                    }
+
+                    auto resp = drogon::HttpResponse::newHttpResponse();
+                    resp->setContentTypeCode(drogon::CT_TEXT_HTML);
+                    resp->setBody(std::move(html));
+                    return resp;
+                };
+
+                // "/" is served by Drogon's static file router, which never
+                // reaches the 404 handler below, so it needs its own route.
+                drogon::app().registerHandler(
+                    "/",
+                    [serve_index](const drogon::HttpRequestPtr& req,
+                                  std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+                        auto resp = serve_index(req);
+                        if (!resp) {
+                            resp = drogon::HttpResponse::newHttpResponse();
+                            resp->setStatusCode(drogon::k404NotFound);
+                        }
+                        cb(resp);
+                    },
+                    {drogon::Get});
+
                 drogon::app().setCustomErrorHandler(
-                    [spa_index_path](drogon::HttpStatusCode code) -> drogon::HttpResponsePtr {
+                    [serve_index](drogon::HttpStatusCode code,
+                                  const drogon::HttpRequestPtr& req) -> drogon::HttpResponsePtr {
                         if (code == drogon::k404NotFound) {
-                            std::ifstream ifs(spa_index_path);
-                            if (ifs) {
-                                std::string html(std::istreambuf_iterator<char>(ifs), {});
-                                auto resp = drogon::HttpResponse::newHttpResponse();
-                                resp->setContentTypeCode(drogon::CT_TEXT_HTML);
-                                resp->setBody(std::move(html));
-                                return resp;
-                            }
+                            // The (code, req) overload, so a deep link gets the
+                            // same Ingress-aware page the root does.
+                            if (auto resp = serve_index(req)) return resp;
                         }
                         Json::Value err;
                         err["error"] = static_cast<int>(code);

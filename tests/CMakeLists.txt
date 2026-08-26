@@ -31,6 +31,7 @@ list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/web/.*")
 # against a temp SQLite file. It builds SQL for three dialects by hand, which is
 # exactly the kind of code that needs a test — an unnarrowed OR in the oximetry
 # query silently served every recording on two consecutive nights.
+list(APPEND PROJECT_SOURCES "${CMAKE_SOURCE_DIR}/src/web/IngressBase.cpp")
 list(APPEND PROJECT_SOURCES "${CMAKE_SOURCE_DIR}/src/web/QueryService.cpp")
 list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/WiFiSwitchClient\\.cpp$")
 list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/cli/.*\\.cpp$")
@@ -133,6 +134,7 @@ set(TEST_SOURCES
     services/test_SupplyStatus.cpp
     services/test_SupplyPublisher.cpp
     controllers/test_EquipmentController.cpp
+    web/test_IngressBase.cpp
     web/test_QueryService_index.cpp
     web/test_QueryService_oximetry.cpp
     web/test_QueryService_reads.cpp

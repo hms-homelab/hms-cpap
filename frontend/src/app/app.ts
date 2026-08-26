@@ -1,5 +1,5 @@
 import { Component, OnInit } from '@angular/core';
-import { Router, RouterOutlet, NavigationEnd } from '@angular/router';
+import { Router, RouterOutlet, RouterLink, NavigationEnd } from '@angular/router';
 import { filter } from 'rxjs';
 import { NavBarComponent } from './components/nav-bar/nav-bar.component';
 import { CpapApiService } from './services/cpap-api.service';
@@ -15,7 +15,7 @@ interface ConfigError {
 @Component({
   selector: 'app-root',
   standalone: true,
-  imports: [RouterOutlet, NavBarComponent],
+  imports: [RouterOutlet, RouterLink, NavBarComponent],
   template: `
     @if (!isSetup) {
       <app-nav-bar />
@@ -35,7 +35,9 @@ interface ConfigError {
           <span class="problem">{{ configError.problem }}.</span>
           <span class="remedy">{{ configError.remedy }}</span>
         </div>
-        <a class="action" href="/settings">Open Settings</a>
+        <!-- routerLink, not href: a raw href ignores <base href> handling and
+             would leave the Ingress prefix (SDD-021) behind. -->
+        <a class="action" routerLink="/settings">Open Settings</a>
       </div>
     }
     <main>
