@@ -952,6 +952,29 @@ void CpapController::logs(const drogon::HttpRequestPtr& req,
     cb(jsonResp(result));
 }
 
+void CpapController::myairCompare(const drogon::HttpRequestPtr& req,
+                                   std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    std::string start = req->getParameter("start");
+    std::string end = req->getParameter("end");
+    if (start.empty() || end.empty()) {
+        cb(jsonError("start and end params required", drogon::k400BadRequest));
+        return;
+    }
+    // Not configured is not an error. The dashboard already knows from
+    // /api/capabilities whether to ask, and anything else that calls this gets
+    // one shape back rather than having to tell 404 from empty.
+    if (!config_ || !config_->myair.enabled) {
+        Json::Value empty(Json::arrayValue);
+        cb(jsonResp(empty));
+        return;
+    }
+    try {
+        cb(jsonResp(qs_->getMyAirComparison(start, end)));
+    } catch (const std::exception& e) {
+        cb(jsonError(e.what(), drogon::k500InternalServerError));
+    }
+}
+
 void CpapController::capabilities(const drogon::HttpRequestPtr&,
                                    std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
     const auto caps = SetupService::capabilities();
@@ -968,6 +991,16 @@ void CpapController::capabilities(const drogon::HttpRequestPtr&,
     Json::Value features;
     features["pdf_reports"] = caps.pdf_reports;
     features["mdns_discovery"] = caps.mdns_discovery;
+    // SDD-020. The dashboard gates its myAir card on this, so a user with no
+    // myAir account never sees a panel about a service they do not use.
+    //
+    // Read from the live AppConfig rather than the environment, because that is
+    // where config.json lands and where the settings page writes. Reported as
+    // CONFIGURED rather than merely enabled: a toggle switched on with an empty
+    // password is not a working integration and must not promise one.
+    features["myair"] = config_ && config_->myair.enabled &&
+                        !config_->myair.username.empty() &&
+                        !config_->myair.password.empty();
     result["features"] = features;
 
     // SDD-010: the local folder must be the card ROOT, the folder holding both

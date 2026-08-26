@@ -16,6 +16,13 @@ public:
     Json::Value getSessions(int limit, int offset);
     Json::Value getSessionDetail(const std::string& date);
     Json::Value getDailySummary(const std::string& start, const std::string& end);
+
+    /// SDD-020: our night beside ResMed's, per component, for a date range.
+    ///
+    /// A LEFT JOIN from our side, so a night we have and myAir does not still
+    /// appears; the reverse would hide exactly the case worth seeing. Nights
+    /// where ResMed has no data are marked rather than reported as zeroes.
+    Json::Value getMyAirComparison(const std::string& start, const std::string& end);
     Json::Value getTrend(const std::string& metric, int days);
     Json::Value getStatistics(const std::string& start, const std::string& end);
     Json::Value getSummaries(const std::string& period, int limit);
