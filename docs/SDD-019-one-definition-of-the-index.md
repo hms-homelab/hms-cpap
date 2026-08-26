@@ -93,8 +93,28 @@ own tests until it follows. That is the entire point of this SDD.
 
 ## What hms-cpap does with it
 
-The inputs are already in the database. `cpap_daily_summary` holds `patient_hours`,
+The inputs are already in the database. `cpap_daily_summary` holds `duration_minutes`,
 `ahi` and `leak_95` per `record_date`, on all three engines. One row in, one number out.
+
+**Usage comes from `duration_minutes`, not `patient_hours`** (corrected during
+implementation, 2026-08-26). This spec originally named `patient_hours`, which was
+wrong. The two agree on almost every row because the session-derived writer fills both
+from the same `SUM(duration_seconds)`, but of the 230 rows on the hub, two hold a
+`patient_hours` near 1050 against nights of 80 and 89 minutes. That is a counter, not a
+day, and feeding it to the index would award a full usage score to an 80 minute night.
+`duration_minutes` is consistent on all 230 and is already what `getStatistics` trusts
+for the compliance percentage.
+
+The mixed meaning in that column is a real defect and is **not** fixed here. It has two
+writers with two meanings and deserves its own change.
+
+**The index is on the daily summary and the dashboard, and not on `/api/sessions`**
+(decided during implementation). The sessions list is a session-derived aggregation with
+`duration_hours` and `ahi` but no leak at all, so an index computed there would be
+renormalised over 80 and would disagree with the daily summary's number for the same
+night. One night, one index, computed from the row that holds all three inputs. Putting
+it on the sessions list means joining the daily summary for leak, which is a change
+worth making deliberately rather than in passing.
 
 **Computed on read, not stored.** A stored index is wrong the moment a weight moves,
 and then there are two answers in the same database, one of them silently stale.

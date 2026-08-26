@@ -5,6 +5,10 @@ export interface MetricCard {
   trend?: 'up' | 'down' | 'stable';
 }
 
+/// SDD-019. Null on a night with none of usage, AHI or leak: that is a night we
+/// know nothing about, which is not the same as a night that scored zero.
+export type SleepIndexBand = 'excellent' | 'good' | 'fair' | 'needs_attention';
+
 export interface DashboardData {
   latest_night: {
     date: string;
@@ -13,7 +17,11 @@ export interface DashboardData {
     leak_avg: string;
     compliance_pct: string;
     therapy_mode: string;  // 0=CPAP, 1=APAP, 7=ASV, 8=ASVAuto
+    sleep_index: number | null;
+    sleep_index_band: SleepIndexBand | null;
   };
+  sleep_index_7night: number | null;
+  sleep_index_7night_band: SleepIndexBand | null;
   ahi_trend: { date: string; value: string }[];
   usage_trend: { date: string; value: string }[];
 }
