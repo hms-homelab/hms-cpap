@@ -105,6 +105,30 @@ public:
     const std::string& deviceToken() const { return device_token_; }
     void setDeviceToken(std::string token) { device_token_ = std::move(token); }
 
+    /// The OAuth refresh token, and the reason hms-cpap need not keep the user's
+    /// myAir PASSWORD at rest.
+    ///
+    /// ResMed's Okta application grants `offline_access`, so one interactive
+    /// sign-in yields a refresh token that can be exchanged for access tokens
+    /// from then on. Measured against the real service, not assumed: the access
+    /// token expires in 3600s and the refresh token is NOT rotated, so the same
+    /// one keeps working.
+    ///
+    /// This is still a bearer credential and anyone holding it can read the
+    /// user's myAir data. It is a strictly smaller blast radius than the
+    /// password, which is reusable on ResMed's website and quite possibly
+    /// elsewhere, and it can be revoked from the myAir account without a
+    /// password change.
+    const std::string& refreshToken() const { return refresh_token_; }
+    void setRefreshToken(std::string token) { refresh_token_ = std::move(token); }
+
+    /// Sign in using a stored refresh token, with no password involved.
+    ///
+    /// Returns Failed when the token is missing, expired or revoked, in which
+    /// case the caller needs a fresh interactive sign-in; that is a state worth
+    /// surfacing rather than retrying forever.
+    MyAirAuthState connectWithRefreshToken(std::string& err);
+
     bool isAuthenticated() const { return !access_token_.empty(); }
 
     /// Recent nights. There is no history endpoint; whatever we want to keep, we
@@ -154,6 +178,7 @@ private:
     std::string session_token_;  // between authn/MFA and the code exchange
     std::string access_token_;
     std::string id_token_;
+    std::string refresh_token_;
     std::string device_token_;   // the DT cookie, so MFA is asked once
     std::string session_cookie_; // the sid cookie
     std::string mfa_factor_id_;

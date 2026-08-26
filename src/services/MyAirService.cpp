@@ -36,29 +36,81 @@ MyAirService::MyAirService(std::shared_ptr<IDatabase> db, AppConfig& config,
         MyAirClient client(config_.myair.username, config_.myair.password,
                            config_.myair.region);
         client.setDeviceToken(config_.myair.device_token);
+        client.setRefreshToken(config_.myair.refresh_token);
 
-        const auto state = client.connect(err);
-        if (state == MyAirAuthState::MfaRequired) {
-            err = "myAir emailed a verification code, which this service cannot answer. "
-                  "Sign in once from the settings page to remember this device.";
-            return false;
+        // The stored token first, so the ordinary path never touches a password
+        // and works whether or not one was ever kept.
+        MyAirAuthState state = MyAirAuthState::Failed;
+        if (!config_.myair.refresh_token.empty()) {
+            state = client.connectWithRefreshToken(err);
+            if (state != MyAirAuthState::Ok && config_.myair.password.empty()) {
+                // Revoked, expired, or signed out everywhere, and nothing to
+                // fall back on. The only cure is an interactive sign-in, so the
+                // dead token is DISCARDED and the state is recorded rather than
+                // retried hourly forever against a credential that will never
+                // work again. Keeping it would also make the service look
+                // connected when it is not.
+                config_.myair.refresh_token.clear();
+                needs_reauth_ = true;
+                if (!config_path_.empty()) config_.save(config_path_);
+                err = "myAir disconnected: the stored token is no longer valid. "
+                      "Enter the password once to reconnect.";
+                return false;
+            }
         }
-        if (state != MyAirAuthState::Ok) return false;
 
-        // Keep the remembered-device cookie, or a region with an email factor
-        // asks for a code on every single start.
+        if (state != MyAirAuthState::Ok) {
+            if (config_.myair.password.empty()) {
+                err = "myAir is not connected. Enter the password once to sign in.";
+                return false;
+            }
+            state = client.connect(err);
+            if (state == MyAirAuthState::MfaRequired) {
+                err = "myAir emailed a verification code, which this service cannot "
+                      "answer. Sign in once from the settings page to remember this device.";
+                return false;
+            }
+            if (state != MyAirAuthState::Ok) return false;
+        }
+
+        // Persist what replaces the password, and then get rid of the password.
+        //
+        // This is the whole point of asking for offline_access: after one
+        // successful sign-in the account password is no longer needed, so it is
+        // erased from memory and from the file rather than sitting there being a
+        // liability. The refresh token that replaces it is revocable from the
+        // myAir account and is useless for signing in as the user anywhere.
+        bool dirty = false;
+        if (!client.refreshToken().empty() &&
+            client.refreshToken() != config_.myair.refresh_token) {
+            config_.myair.refresh_token = client.refreshToken();
+            dirty = true;
+        }
+        if (!config_.myair.refresh_token.empty() && !config_.myair.password.empty()) {
+            config_.myair.password.clear();
+            dirty = true;
+            std::cout << "myAir: connected. The password has been replaced by a "
+                         "revocable token and erased." << std::endl;
+        }
+        // The remembered-device cookie, or a region with an email factor asks
+        // for a code on every single start.
         if (!client.deviceToken().empty() &&
             client.deviceToken() != config_.myair.device_token) {
             config_.myair.device_token = client.deviceToken();
-            if (!config_path_.empty()) config_.save(config_path_);
+            dirty = true;
         }
+        if (dirty && !config_path_.empty()) config_.save(config_path_);
+
         return client.fetchSleepRecords(out, err);
     };
 }
 
 bool MyAirService::enabled() const {
+    // A password OR a refresh token is enough, and after the first sign-in it is
+    // always the token: requiring the password here would switch myAir off the
+    // moment we succeeded in no longer needing it.
     return config_.myair.enabled && !config_.myair.username.empty() &&
-           !config_.myair.password.empty();
+           (!config_.myair.password.empty() || !config_.myair.refresh_token.empty());
 }
 
 void MyAirService::sweep() {

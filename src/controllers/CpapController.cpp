@@ -998,9 +998,13 @@ void CpapController::capabilities(const drogon::HttpRequestPtr&,
     // where config.json lands and where the settings page writes. Reported as
     // CONFIGURED rather than merely enabled: a toggle switched on with an empty
     // password is not a working integration and must not promise one.
+    // A password OR a refresh token counts: after the first sign-in the password
+    // is erased on purpose, and requiring it would hide the panel from exactly
+    // the users for whom it is working.
     features["myair"] = config_ && config_->myair.enabled &&
                         !config_->myair.username.empty() &&
-                        !config_->myair.password.empty();
+                        (!config_->myair.password.empty() ||
+                         !config_->myair.refresh_token.empty());
     result["features"] = features;
 
     // SDD-010: the local folder must be the card ROOT, the folder holding both

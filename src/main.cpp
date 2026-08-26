@@ -924,7 +924,7 @@ int main(int argc, char** argv) {
             // restart; without it a region with an email factor would ask for a
             // fresh code every start and a headless service cannot answer one.
             if (config.myair.enabled && !config.myair.username.empty() &&
-                !config.myair.password.empty()) {
+                (!config.myair.password.empty() || !config.myair.refresh_token.empty())) {
                 auto myair = std::make_shared<hms_cpap::MyAirService>(
                     web_db ? web_db : db, config, config_path);
                 if (burst_service) burst_service->setMyAirService(myair);
