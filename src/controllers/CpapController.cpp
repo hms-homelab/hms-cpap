@@ -54,6 +54,7 @@ void CpapController::setBurstService(BurstCollectorService* svc) { burst_service
 // MSVC, where it failed with "sync_ undeclared". The cloud mirror is not
 // platform-specific.
 std::shared_ptr<CpapDashSyncService> CpapController::sync_;
+std::shared_ptr<hms_cpap::MyAirService> CpapController::myair_;
 
 void CpapController::setSyncService(std::shared_ptr<CpapDashSyncService> sync) {
     sync_ = std::move(sync);
@@ -950,6 +951,104 @@ void CpapController::logs(const drogon::HttpRequestPtr& req,
     result["total_lines"] = static_cast<Json::UInt64>(total);
     result["truncated"]  = total > tail.size();
     cb(jsonResp(result));
+}
+
+void CpapController::setMyAirService(std::shared_ptr<hms_cpap::MyAirService> svc) {
+    myair_ = std::move(svc);
+}
+
+void CpapController::myairStatus(const drogon::HttpRequestPtr&,
+                                  std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    if (!myair_) {
+        // Not constructed, which is the ordinary state for the many installs
+        // with no myAir account. Answer the shape rather than an error.
+        Json::Value j;
+        j["enabled"] = false;
+        j["connected"] = false;
+        j["available"] = false;
+        cb(jsonResp(j));
+        return;
+    }
+    auto j = myair_->status();
+    j["available"] = true;
+    cb(jsonResp(j));
+}
+
+void CpapController::myairConnect(const drogon::HttpRequestPtr& req,
+                                   std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    if (!myair_) {
+        cb(jsonError("myAir support is not available on this instance",
+                     drogon::k503ServiceUnavailable));
+        return;
+    }
+    auto body = req->getJsonObject();
+    if (!body) {
+        cb(jsonError("JSON body required", drogon::k400BadRequest));
+        return;
+    }
+    const std::string username = (*body)["username"].asString();
+    const std::string password = (*body)["password"].asString();
+    const std::string region = (*body).isMember("region") ? (*body)["region"].asString() : "NA";
+
+    std::string err;
+    const auto state = myair_->signIn(username, password, region, err);
+
+    Json::Value j;
+    if (state == hms_cpap::MyAirAuthState::Ok) {
+        j["status"] = "connected";
+        // Said back to the user because it is the reassuring half of handing
+        // over a password: it is already gone.
+        j["message"] = "Connected. The password has been replaced by a revocable "
+                       "token and was not stored.";
+    } else if (state == hms_cpap::MyAirAuthState::MfaRequired) {
+        j["status"] = "code_required";
+        j["message"] = "ResMed emailed a verification code. Enter it to finish.";
+    } else {
+        j["status"] = "failed";
+        j["message"] = err;
+    }
+    cb(jsonResp(j));
+}
+
+void CpapController::myairVerify(const drogon::HttpRequestPtr& req,
+                                  std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    if (!myair_) {
+        cb(jsonError("myAir support is not available on this instance",
+                     drogon::k503ServiceUnavailable));
+        return;
+    }
+    auto body = req->getJsonObject();
+    if (!body) {
+        cb(jsonError("JSON body required", drogon::k400BadRequest));
+        return;
+    }
+    std::string err;
+    const auto state = myair_->verifyMfa((*body)["code"].asString(), err);
+
+    Json::Value j;
+    if (state == hms_cpap::MyAirAuthState::Ok) {
+        j["status"] = "connected";
+        j["message"] = "Connected. The password has been replaced by a revocable "
+                       "token and was not stored.";
+    } else {
+        j["status"] = "failed";
+        j["message"] = err;
+    }
+    cb(jsonResp(j));
+}
+
+void CpapController::myairDisconnect(const drogon::HttpRequestPtr&,
+                                      std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    if (!myair_) {
+        cb(jsonError("myAir support is not available on this instance",
+                     drogon::k503ServiceUnavailable));
+        return;
+    }
+    myair_->disconnect();
+    Json::Value j;
+    j["status"] = "disconnected";
+    j["message"] = "Disconnected. Nights already fetched are kept.";
+    cb(jsonResp(j));
 }
 
 void CpapController::myairCompare(const drogon::HttpRequestPtr& req,
