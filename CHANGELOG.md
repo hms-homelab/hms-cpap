@@ -5,6 +5,53 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.1.0] - 2026-08-26
+
+### Added
+- **ResMed myAir, read only** (SDD-020). ResMed already scores every night on
+  their own servers, from data their own machine uploaded over its own modem,
+  and shows the patient a number. CpapDash now reads that number back, with the
+  four sub-scores behind it, so it can sit next to ours per night and per
+  component instead of neither side seeing the other. Nothing is ever written
+  back to ResMed.
+
+  Sign-in is Okta: authorization code with PKCE against a per-region tenant,
+  with MFA as Okta's email factor. Two steps in an otherwise textbook flow are
+  worth knowing, because both cost an afternoon: the authorization code comes
+  back in the FRAGMENT of the redirect, not the query string, and the country
+  header is a claim read unverified out of the id_token.
+
+  **The account password is not stored.** ResMed's Okta application grants
+  `offline_access`, so one sign-in yields a refresh token that is exchanged for
+  access tokens from then on; the password is used once and erased from memory
+  and from the file. That token reads one account's sleep data, is revocable
+  from the myAir account without a password change, and cannot sign in as the
+  user anywhere. If it is ever rejected it is discarded rather than retried
+  forever, and the settings page says to sign in again.
+
+  The dashboard panel is gated on `/api/capabilities` `features.myair`, so a
+  user with no myAir account never sees it and never makes the request. It has
+  two shapes: a comparison when there is card data to compare against, and a
+  plain board of ResMed's summaries when there is not, which says what the SD
+  card would add rather than showing a table with one side permanently blank.
+
+  Region is `NA` or `EU`, and `NA` covers Australia: ResMed serves Australian
+  accounts from the North American endpoints. `EU` is the region that emails a
+  verification code, and the picker says so.
+
+  Two things about the API that were measured against a real account rather
+  than assumed. The window is whole months, not 30 days, because the parameters
+  are `startMonth`/`endMonth` and ResMed serves from the first of the month.
+  And a night returned entirely zero means ResMed HAS NO DATA for that date,
+  not that the patient did not sleep; it is stored as such, and the comparison
+  reports it as absent rather than as a night of zero usage.
+
+### Changed
+- **`config.json` is written owner-only (0600) instead of world-readable.** It
+  holds the database password, the SleepHQ client secret, the cloud token and
+  now a myAir refresh token, and on a multi-user machine every one of those was
+  readable by anyone with an account.
+
 ## [5.0.5] - 2026-08-26
 
 ### Added

@@ -393,29 +393,50 @@ Json::Value QueryService::getDailySummary(const std::string& start, const std::s
 }
 
 Json::Value QueryService::getMyAirComparison(const std::string& start, const std::string& end) {
-    // LEFT JOIN from our side. A night we have and myAir does not is the single
-    // most useful thing this can show (the card holds a night ResMed never got,
-    // or the other way round), and an inner join would hide precisely that.
+    // Every night EITHER side knows about, not just ours.
     //
-    // No JOIN on device_id: cpap_myair_records is account-level, because myAir
-    // has one patient and one machine per account.
+    // This was a LEFT JOIN from our side, which quietly produced nothing at all
+    // for a user whose only data is myAir: 56 nights stored, and an empty table.
+    // The reverse case matters just as much and was already handled, so the
+    // honest shape is the union of both.
+    //
+    // Built as a UNION subquery rather than a FULL OUTER JOIN because MySQL has
+    // no FULL OUTER JOIN and SQLite only gained one in 3.39, while UNION works
+    // everywhere. Same reason the rest of this file hand-writes dialect-safe SQL.
+    //
+    // No device_id on the myAir side: cpap_myair_records is account-level,
+    // because myAir has one patient and one machine per account.
     const std::string q =
-        "SELECT d.record_date,"
+        "SELECT x.record_date,"
         " d.duration_minutes, d.ahi, d.leak_95, d.mask_events,"
         " m.total_usage_min, m.sleep_score, m.usage_score, m.ahi_score,"
         " m.mask_score, m.leak_score, m.ahi AS myair_ahi, m.mask_pair_count,"
         " m.leak_percentile, m.has_data"
-        " FROM cpap_daily_summary d"
-        " LEFT JOIN cpap_myair_records m ON m.record_date = d.record_date"
-        " WHERE d.device_id = " + sql::param(1, dt_) +
-        " AND d.record_date >= " + sql::castDate(2, dt_) +
-        " AND d.record_date <= " + sql::castDate(3, dt_) +
-        " ORDER BY d.record_date DESC";
+        " FROM ("
+        "   SELECT record_date FROM cpap_daily_summary"
+        "    WHERE device_id = " + sql::param(1, dt_) +
+        "      AND record_date >= " + sql::castDate(2, dt_) +
+        "      AND record_date <= " + sql::castDate(3, dt_) +
+        "   UNION"
+        "   SELECT record_date FROM cpap_myair_records"
+        "    WHERE record_date >= " + sql::castDate(4, dt_) +
+        "      AND record_date <= " + sql::castDate(5, dt_) +
+        " ) x"
+        " LEFT JOIN cpap_daily_summary d"
+        "   ON d.record_date = x.record_date AND d.device_id = " + sql::param(6, dt_) +
+        " LEFT JOIN cpap_myair_records m ON m.record_date = x.record_date"
+        " ORDER BY x.record_date DESC";
 
-    auto rows = db_->executeQuery(q, {device_id_, start, end});
+    auto rows = db_->executeQuery(q, {device_id_, start, end, start, end, device_id_});
 
+    Json::Value out(Json::arrayValue);
     for (auto& row : rows) {
         annotateIndex(row);  // our own index, so both sides are on the row
+
+        // Whether WE have this night at all. A myAir-only user has none of them,
+        // and the row still belongs in the table: it is their data.
+        const bool ours_present = jopt(row, "duration_minutes").has_value();
+        row["ours_present"] = ours_present;
 
         // has_data is the difference between "ResMed scored this night badly"
         // and "ResMed has never heard of this night". Reporting the second as
@@ -424,30 +445,40 @@ Json::Value QueryService::getMyAirComparison(const std::string& start, const std
         const bool myair_present = has.has_value() && *has > 0.5;
         row["myair_present"] = myair_present;
 
+        // A date NEITHER side knows anything about is not a night. ResMed returns
+        // a zero row for every date in the months it serves, so on a machine
+        // whose modem reports rarely that is most of them; without this the table
+        // is dozens of rows saying nothing happened, and the handful of real
+        // nights are lost in it.
+        if (!ours_present && !myair_present) continue;
+
         if (!myair_present) {
+            // Nothing to subtract from. Null, never zero: zero would read as
+            // "the two agree exactly", which is the opposite of the truth.
             row["usage_delta_min"] = Json::nullValue;
             row["ahi_delta"] = Json::nullValue;
             row["leak_delta"] = Json::nullValue;
-            continue;
+        } else {
+            // Ours minus theirs, so a positive number always means we report
+            // more. Each delta needs BOTH sides, which a myAir-only night lacks.
+            const auto our_min = jopt(row, "duration_minutes");
+            const auto their_min = jopt(row, "total_usage_min");
+            if (our_min && their_min) row["usage_delta_min"] = *our_min - *their_min;
+            else row["usage_delta_min"] = Json::nullValue;
+
+            const auto our_ahi = jopt(row, "ahi");
+            const auto their_ahi = jopt(row, "myair_ahi");
+            if (our_ahi && their_ahi) row["ahi_delta"] = *our_ahi - *their_ahi;
+            else row["ahi_delta"] = Json::nullValue;
+
+            const auto our_leak = jopt(row, "leak_95");
+            const auto their_leak = jopt(row, "leak_percentile");
+            if (our_leak && their_leak) row["leak_delta"] = *our_leak - *their_leak;
+            else row["leak_delta"] = Json::nullValue;
         }
-
-        // Ours minus theirs, so a positive number always means we report more.
-        const auto our_min = jopt(row, "duration_minutes");
-        const auto their_min = jopt(row, "total_usage_min");
-        if (our_min && their_min) row["usage_delta_min"] = *our_min - *their_min;
-        else row["usage_delta_min"] = Json::nullValue;
-
-        const auto our_ahi = jopt(row, "ahi");
-        const auto their_ahi = jopt(row, "myair_ahi");
-        if (our_ahi && their_ahi) row["ahi_delta"] = *our_ahi - *their_ahi;
-        else row["ahi_delta"] = Json::nullValue;
-
-        const auto our_leak = jopt(row, "leak_95");
-        const auto their_leak = jopt(row, "leak_percentile");
-        if (our_leak && their_leak) row["leak_delta"] = *our_leak - *their_leak;
-        else row["leak_delta"] = Json::nullValue;
+        out.append(row);
     }
-    return rows;
+    return out;
 }
 
 Json::Value QueryService::getTrend(const std::string& metric, int days) {

@@ -10,25 +10,49 @@ import { MyAirComparisonRow } from '../../models/session.model';
  * /api/capabilities features.myair, so someone with no myAir account never sees
  * a panel about a service they do not use.
  *
- * The point is not that the two agree. The composite scores are built from
- * different weights and will not match, and a stable offset between two formulas
- * is noise. What is worth looking at is a night where they DISAGREE about a
- * measurement they should both have read the same: that usually means the card
- * is missing a session ResMed's modem already uploaded, or the two disagree
- * about where the night ends.
+ * TWO MODES, because a comparison needs two sides:
+ *
+ *   compare  - we have card data, so both columns are real and the deltas mean
+ *              something. The point is not that the two agree: the composite
+ *              scores use different weights and a stable offset between two
+ *              formulas is noise. What is worth seeing is a night where they
+ *              disagree about a measurement they should both have read the
+ *              same, which usually means the card is missing a session ResMed's
+ *              modem already uploaded, or the two disagree about where the
+ *              night ends.
+ *
+ *   myair    - no card data at all. Showing a comparison table with one side
+ *              permanently blank would be a worse version of nothing, so this
+ *              becomes a plain board of ResMed's own summaries, and says what
+ *              the SD card would add.
  */
 @Component({
   selector: 'app-myair-compare',
   standalone: true,
   imports: [CommonModule],
   template: `
-    <div class="myair" *ngIf="rows?.length">
+    <div class="myair">
       <div class="head">
-        <span class="title">CpapDash vs myAir</span>
-        <span class="sub">{{ comparedCount }} of {{ rows.length }} nights have data on both sides</span>
+        <span class="title">{{ mode === 'compare' ? 'CpapDash vs myAir' : 'ResMed myAir' }}</span>
+        <span class="sub" *ngIf="mode === 'compare' && rows?.length">
+          {{ comparedCount }} of {{ rows.length }} nights have data on both sides
+        </span>
+        <span class="sub" *ngIf="mode === 'myair' && rows?.length">
+          {{ rows.length }} nights reported by ResMed
+        </span>
       </div>
 
-      <div class="scroll">
+      <!-- Rendered rather than hidden. The panel is gated on having a myAir
+           account, so reaching here with nothing means the first poll has not
+           run yet or ResMed holds no nights, and silence would leave the user
+           to guess which. -->
+      <div class="empty" *ngIf="!rows?.length">
+        Nothing to show yet. CpapDash checks myAir once an hour; if you have only
+        just connected, give it a few minutes.
+      </div>
+
+      <!-- ── Comparison: both sides exist ─────────────────────────────────── -->
+      <div class="scroll" *ngIf="rows?.length && mode === 'compare'">
         <table>
           <thead>
             <tr>
@@ -48,23 +72,33 @@ import { MyAirComparisonRow } from '../../models/session.model';
             <tr *ngFor="let r of rows" [class.no-data]="!r.myair_present">
               <td class="date">{{ shortDate(r.record_date) }}</td>
 
-              <td>{{ hours(r.duration_minutes) }}</td>
-              <td>{{ num(r.ahi, 2) }}</td>
-              <td>{{ num(r.leak_95, 1) }}</td>
+              <ng-container *ngIf="r.ours_present !== false; else noOurs">
+                <td>{{ hours(r.duration_minutes) }}</td>
+                <td>{{ num(r.ahi, 2) }}</td>
+                <td>{{ num(r.leak_95, 1) }}</td>
+              </ng-container>
+              <ng-template #noOurs>
+                <td colspan="3" class="absent">No CpapDash data for this night</td>
+              </ng-template>
 
-              <ng-container *ngIf="r.myair_present; else noData">
+              <ng-container *ngIf="r.myair_present; else noTheirs">
                 <td>{{ hours(r.total_usage_min) }}</td>
                 <td>{{ num(r.myair_ahi, 2) }}</td>
                 <td>{{ num(r.leak_percentile, 1) }}</td>
 
-                <td [class]="deltaClass(r.usage_delta_min, 15)">{{ delta(r.usage_delta_min, 0) }}m</td>
-                <td [class]="deltaClass(r.ahi_delta, 1)">{{ delta(r.ahi_delta, 2) }}</td>
-                <td [class]="deltaClass(r.leak_delta, 5)">{{ delta(r.leak_delta, 1) }}</td>
+                <!-- A delta needs both sides. With one missing these are null,
+                     never zero: zero would read as "they agree exactly", which
+                     is the opposite of the truth. -->
+                <ng-container *ngIf="r.ours_present !== false; else noDelta">
+                  <td [class]="deltaClass(r.usage_delta_min, 15)">{{ delta(r.usage_delta_min, 0) }}m</td>
+                  <td [class]="deltaClass(r.ahi_delta, 1)">{{ delta(r.ahi_delta, 2) }}</td>
+                  <td [class]="deltaClass(r.leak_delta, 5)">{{ delta(r.leak_delta, 1) }}</td>
+                </ng-container>
+                <ng-template #noDelta>
+                  <td colspan="3" class="absent">-</td>
+                </ng-template>
               </ng-container>
-              <ng-template #noData>
-                <!-- ResMed has no record of this night. That is a real and
-                     interesting state, not a zero, so it is said rather than
-                     drawn as a row of dashes that look like measurements. -->
+              <ng-template #noTheirs>
                 <td colspan="6" class="absent">ResMed has no data for this night</td>
               </ng-template>
             </tr>
@@ -72,11 +106,44 @@ import { MyAirComparisonRow } from '../../models/session.model';
         </table>
       </div>
 
-      <div class="foot">
+      <!-- ── myAir alone: no card data to compare against ─────────────────── -->
+      <div class="scroll" *ngIf="rows?.length && mode === 'myair'">
+        <table>
+          <thead>
+            <tr>
+              <th class="date">Night</th>
+              <th>Usage</th>
+              <th>AHI</th>
+              <th>Leak</th>
+              <th>Mask on/off</th>
+              <th>myAir score</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr *ngFor="let r of rows">
+              <td class="date">{{ shortDate(r.record_date) }}</td>
+              <td>{{ hours(r.total_usage_min) }}</td>
+              <td>{{ num(r.myair_ahi, 2) }}</td>
+              <td>{{ num(r.leak_percentile, 1) }}</td>
+              <td>{{ num(r.mask_pair_count, 0) }}</td>
+              <td class="score">{{ num(r.sleep_score, 0) }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="foot" *ngIf="rows?.length && mode === 'compare'">
         Differences are CpapDash minus myAir. The two score nights with different
         weights, so the composite numbers are not expected to match; a large gap
         in usage or AHI on a single night usually means one side saw a session the
         other did not.
+      </div>
+
+      <div class="foot sd-note" *ngIf="rows?.length && mode === 'myair'">
+        This is ResMed's own summary of each night, which is all myAir reports.
+        For a detailed night, with flow and pressure charts, individual events,
+        leak over time and PDF reports, CpapDash needs the SD card contents.
+        Set that up under <strong>Data Source</strong> in Settings.
       </div>
     </div>
   `,
@@ -99,16 +166,29 @@ import { MyAirComparisonRow } from '../../models/session.model';
     tbody td { color: #ddd; }
     tr.no-data td { color: #777; }
     td.absent { text-align: center; font-style: italic; color: #777; }
+    td.score { color: #b39ddb; font-weight: 600; }
     .close { color: #4ade80; }
     .apart { color: #fbbf24; }
+    .empty { color: #888; font-size: 0.8rem; line-height: 1.5; padding: 0.25rem 0; }
     .foot { color: #888; font-size: 0.72rem; margin-top: 0.75rem; line-height: 1.5; }
+    .sd-note { color: #cfe6fb; background: rgba(100, 181, 246, 0.08);
+               border: 1px solid rgba(100, 181, 246, 0.3); border-radius: 6px;
+               padding: 0.6rem 0.8rem; }
   `]
 })
 export class MyAirCompareComponent {
   @Input() rows: MyAirComparisonRow[] = [];
 
+  /// 'compare' once ANY night has our data too. A single night with both sides
+  /// is enough: the comparison is the more useful view, and the myAir-only board
+  /// exists for the install that has no card data at all rather than for a run
+  /// of nights the card happens to be missing.
+  get mode(): 'compare' | 'myair' {
+    return (this.rows || []).some(r => r.ours_present !== false) ? 'compare' : 'myair';
+  }
+
   get comparedCount(): number {
-    return (this.rows || []).filter(r => r.myair_present).length;
+    return (this.rows || []).filter(r => r.myair_present && r.ours_present !== false).length;
   }
 
   shortDate(d: string): string {
