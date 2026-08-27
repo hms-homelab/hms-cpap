@@ -67,11 +67,25 @@ lcov --remove "$OUT_DIR/coverage.info" \
      "*/services/SleepHqClient.cpp" \
      "*/services/SleepHqExportService.cpp" \
      "*/clients/EzShareClient.cpp" \
+     "*/services/MyAirClient.cpp" \
      --output-file "$OUT_DIR/coverage.info" $LCOV_FLAGS >/dev/null
 # SleepHqClient/SleepHqExportService are pure SleepHQ network I/O (OAuth +
 # multipart upload of a night's files); EzShareClient is the libcurl HTTP client
 # for the ezShare WiFi SD card. Same exclusion rationale as the Fysetc transport
 # above — exercised by integration/live paths, not unit tests.
+#
+# MyAirClient is the same shape again and is listed for the same reason: an
+# OAuth client against ResMed's Okta tenant, where the only way to cover the
+# flow is to stand up a fake Okta, which would prove that our fake matches our
+# code and nothing else.
+#
+# NOTE WHAT IS *NOT* EXCLUDED. MyAirService stays in the denominator: its fetch
+# is injected precisely so the storing, the window replace, the poll throttle,
+# the sign-in bookkeeping and the disconnect are all unit-tested without a
+# network. The pure halves of the client are tested too, in
+# tests/services/test_MyAirClient.cpp, including PKCE against RFC 7636's own
+# published vector; excluding the file removes those covered lines from the
+# numerator as well, so this is not a way of buying coverage.
 
 # genhtml is only the human-readable artifact; the gate uses lcov --summary
 # below. genhtml's valid --ignore-errors categories differ from geninfo's
