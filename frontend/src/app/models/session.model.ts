@@ -39,6 +39,9 @@ export interface MyAirComparisonRow {
   sleep_index: number | null;
   sleep_index_band: SleepIndexBand | null;
 
+  /// False when CpapDash has no night for this date, which is every night for
+  /// someone whose only data source is myAir.
+  ours_present: boolean;
   myair_present: boolean;
   total_usage_min: string | number | null;
   sleep_score: string | number | null;
@@ -47,6 +50,7 @@ export interface MyAirComparisonRow {
   mask_score: string | number | null;
   leak_score: string | number | null;
   myair_ahi: string | number | null;
+  mask_pair_count: string | number | null;
   leak_percentile: string | number | null;
 
   usage_delta_min: number | null;
