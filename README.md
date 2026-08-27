@@ -88,17 +88,10 @@ Download `hms-cpap-macos-arm64.zip` from
 
 Your browser opens on http://localhost:8893/setup.
 
-### Docker
+### Raspberry Pi and Linux (Docker)
 
-```bash
-docker compose up -d
-```
-
-Brings up CpapDash, PostgreSQL, and a Mosquitto broker. Open
-http://localhost:8893/setup. Config lives in the `cpap_config` volume and data
-in `cpap_data`; neither is touched by image updates.
-
-Or a single container:
+The image on GHCR is built for `arm64` and `amd64`, so it runs as-is on a
+64-bit Pi 3/4/5 or any x86 Linux box. Nothing to compile.
 
 ```bash
 docker run -d --name hms-cpap -p 8893:8893 \
@@ -106,7 +99,17 @@ docker run -d --name hms-cpap -p 8893:8893 \
   ghcr.io/hms-homelab/hms-cpap:latest
 ```
 
-### Linux / Raspberry Pi (build from source)
+Open http://localhost:8893/setup. Config lives in the `cpap_config` volume and
+data in `cpap_data`; neither is touched by image updates.
+
+If you'd rather have PostgreSQL and an MQTT broker alongside it, clone the repo
+and run `docker compose up -d` instead; it brings up all three and waits for
+the database before starting CpapDash.
+
+A Pi that already runs Home Assistant can skip Docker entirely and use the
+add-on above.
+
+### Linux (build from source)
 
 ```bash
 git clone https://github.com/hms-homelab/hms-cpap.git
