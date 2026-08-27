@@ -72,6 +72,9 @@ All data sources (ezShare WiFi SD, local filesystem) work with both manufacturer
 ## Features
 
 - **HA-Style Web Dashboard** - 10 section components with pressure gauges, AI summary, therapy insights, ML predictions
+- **Home Assistant Add-on** - Install CpapDash from the Apps store and run it through Ingress: no port to open, no second password, and the MQTT broker's credentials are discovered rather than typed. Add `https://github.com/hms-homelab/hms-cpap-ha-addon` under Settings -> Apps -> Repositories
+- **CpapDash Index** - One number per night from usage, AHI and leak, with a 7-night average on the dashboard. Defined once in the shared parser so this project, the app and the cloud cannot drift apart, and computed on read so it is never a stale stored value
+- **ResMed myAir Comparison** - Optional and read only. Pulls ResMed's own nightly summaries and shows their score, and the four sub-scores behind it, next to CpapDash's, per night and per component. Your myAir password is used once and erased; a revocable token replaces it. Useful for exactly one thing: spotting a night where the two disagree about something they should have read the same
 - **2 Data Sources** - ezShare WiFi SD + bridge, or local files
 - **47+ Metrics** - AHI, leak rate, pressure, usage hours, events, daily summary, LLM AI summary
 - **Home Assistant Auto-Discovery** - Instant MQTT integration with 47 sensor entities
@@ -105,6 +108,7 @@ All data sources (ezShare WiFi SD, local filesystem) work with both manufacturer
 - [Deployment](#deployment)
 - [Equipment & Supplies](#equipment--supplies)
 - [Home Assistant Integration](#home-assistant-integration)
+- [ResMed myAir](#resmed-myair)
 - [Architecture](#architecture)
 - [Development](#development)
 - [FAQ](#faq)
@@ -604,7 +608,32 @@ loss. Only equipment data syncs; therapy and session data never leave. See
 
 ## Home Assistant Integration
 
-HMS-CPAP uses **MQTT Discovery** for automatic Home Assistant integration.
+There are two ways in, and they are not alternatives: the add-on runs the whole
+service inside Home Assistant, and MQTT discovery is how the sensors appear
+either way.
+
+### Install as an add-on (easiest)
+
+Settings -> Apps -> the three dots -> Repositories, and add:
+
+```
+https://github.com/hms-homelab/hms-cpap-ha-addon
+```
+
+Then install **CpapDash** and start it. The first start opens CpapDash's own
+setup wizard through Ingress, so there is no port to open, no second password,
+and no configuration file to write. If Home Assistant has an MQTT broker, the
+add-on is handed its credentials and you never type them.
+
+`amd64` and `aarch64`, which covers 64-bit Raspberry Pi 3/4/5, x86 boxes, VMs,
+Green and Yellow.
+
+There is no custom integration and there does not need to be one: CpapDash
+publishes MQTT discovery itself, so Home Assistant creates the entities. That is
+also why this is not on HACS, which distributes integrations, cards and themes
+but not add-ons.
+
+### Or run it anywhere and point it at your broker
 
 ### 1. Configure MQTT in Home Assistant
 
@@ -626,7 +655,41 @@ Sensors auto-appear as a device with 47+ entities:
 - `sensor.cpap_pressure_current` - Current pressure (cmH2O)
 - `sensor.cpap_usage_hours` - Total usage hours
 - `binary_sensor.cpap_session_active` - Live session indicator
+- `sensor.cpap_sleep_index` - The CpapDash index for the night, plus its band
 - ... and 42 more metrics
+
+## ResMed myAir
+
+Optional, off by default, and **read only**: nothing is ever written back to
+ResMed.
+
+ResMed already scores every night on their own servers, from data your machine
+uploaded over its own modem. Connect a myAir account under Settings and CpapDash
+fetches those summaries and puts them beside its own, per night and per
+component.
+
+The point is not that the two agree. They score nights with different weights,
+so the composite numbers will differ and a steady offset means nothing. What is
+worth seeing is a night where they disagree about a measurement they should both
+have read the same, which usually means the card is missing a session ResMed's
+modem already received, or the two disagree about where the night ended.
+
+**Your password is not stored.** It signs in once and is erased; ResMed issues a
+revocable token that replaces it, which can only read that account's sleep data
+and cannot sign in as you anywhere. Disconnecting forgets the token and keeps the
+nights already fetched.
+
+Region is `NA` or `EU`. `NA` covers Australia, because ResMed serves Australian
+accounts from the North American endpoints. `EU` emails a verification code the
+first time and then stops asking.
+
+myAir is not a data source and cannot replace the SD card: it reports one summary
+row per night, with no waveforms, no event timestamps, no sessions and no
+oximetry. With no card data at all the dashboard shows ResMed's summaries on
+their own and says as much.
+
+This uses an undocumented API that ResMed can change without notice, so treat it
+as a second opinion on the card and never as something to depend on.
 
 ## Architecture
 
