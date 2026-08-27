@@ -128,8 +128,10 @@ TEST(MyAirClient, RegionLookupIsForgivingAndDefaultsToNorthAmerica) {
     EXPECT_EQ(&myAirRegion("eu"), &myAirRegionEU());
     EXPECT_EQ(&myAirRegion("NA"), &myAirRegionNA());
     // Anything unrecognised falls back rather than failing to build a client at
-    // all. AU accounts are believed to ride the NA configuration, which is an
-    // open question in SDD-020 and needs a real account to settle.
+    // all, and for AU that fallback is the RIGHT answer rather than a lucky one:
+    // ResMed serves Australia from the North America endpoints. The long-running
+    // Home Assistant integration labels its own picker "North America and
+    // Australia", and offers no third region.
     EXPECT_EQ(&myAirRegion("AU"), &myAirRegionNA());
     EXPECT_EQ(&myAirRegion(""), &myAirRegionNA());
 }
