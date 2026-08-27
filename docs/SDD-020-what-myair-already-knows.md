@@ -184,9 +184,15 @@ product; this is a second opinion on it.
    Hourly, plus a manual refresh button, is probably right, but it should be a setting.
 3. **Multi-device accounts.** `fgDevices` is a list. hms-cpap is single-machine today.
    Take the first, or make the user pick during setup?
-4. **AU accounts.** The README claims North America, Europe and Australia; `regions.py`
-   defines only NA and EU. Which config AU accounts actually use needs confirming with a
-   real account before we claim support.
+4. ~~**AU accounts.**~~ **Settled.** ResMed serves Australia from the North America
+   endpoints. prestomation's own region picker is labelled "North America and
+   Australia" against `REGION_NA`, and offers no third option, which is why their README
+   can claim three regions from two configs. Our picker now says the same thing, because
+   a user in Sydney has no way to guess that "North America" is the right answer.
+
+   Their second label is worth copying too: "Europe (Email MFA)". Europe is the region
+   with an email verification step, and saying so in the picker stops the code prompt
+   being a surprise.
 
 ## Out of scope
 

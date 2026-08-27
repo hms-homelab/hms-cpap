@@ -34,6 +34,18 @@ import { AppConfig } from '../../models/config.model';
                 <option value="fysetc">Fysetc</option>
               </select>
             </label>
+            <!-- Asked for by the first person to look here for myAir, which will
+                 not be the last. myAir cannot BE a source: it returns daily
+                 summaries only, with no waveforms, events, sessions or
+                 oximetry, so an install pointed at it would have no charts, no
+                 events explorer, no reports and no sleep staging. -->
+            <small class="hint source-note">
+              These are the ways CpapDash reads your SD card. ResMed myAir is not
+              one of them: it only reports a summary of each night, not the
+              recordings the charts and reports are built from. You can still
+              connect it, under <strong>ResMed myAir</strong> below, to compare
+              ResMed's numbers against CpapDash's.
+            </small>
             <label *ngIf="config.source === 'ezshare'">
               ezShare URL
               <input type="text" [(ngModel)]="config.ezshare_url" name="ezshare_url"
@@ -275,10 +287,15 @@ import { AppConfig } from '../../models/config.model';
               </label>
               <label>
                 Region
+                <!-- Australia is served by the North America endpoints, which is
+                     not guessable and is why it is named here rather than left
+                     to a user in Sydney to work out. Europe is the region with
+                     an email verification step, so saying that up front stops
+                     the code prompt being a surprise. -->
                 <select [(ngModel)]="myairForm.region" name="myair_region"
                         [ngModelOptions]="{standalone: true}">
-                  <option value="NA">North America</option>
-                  <option value="EU">Europe</option>
+                  <option value="NA">North America and Australia</option>
+                  <option value="EU">Europe (emails a verification code)</option>
                 </select>
               </label>
               <button type="button" class="myair-btn" (click)="myairConnect()"
@@ -870,6 +887,7 @@ import { AppConfig } from '../../models/config.model';
       white-space: nowrap;
     }
     /* SDD-020 myAir */
+    .source-note { display: block; margin-top: 0.5rem; line-height: 1.5; }
     .badge.connected { background: #14532d; color: #4ade80; }
     .myair-note { background: rgba(100, 181, 246, 0.08); border: 1px solid rgba(100, 181, 246, 0.35);
                   border-radius: 6px; padding: 0.6rem 0.8rem; color: #cfe6fb; font-size: 0.8rem;
