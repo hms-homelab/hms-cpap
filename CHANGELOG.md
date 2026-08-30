@@ -5,6 +5,37 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.1.1] - 2026-08-29
+
+### Changed
+- **AHI is shown to two decimal places instead of one**, everywhere it appears:
+  the dashboard AHI card and its events/hour subtitle, the STR AHI card, and the
+  AHI column in the sessions list. All four moved together, so no view shows one
+  decimal beside another showing two.
+
+### Fixed
+- **The I:E ratio was missing from two thirds of every night.** The shared
+  parser's breath detector paired its zero-crossings half a breath out whenever
+  a flow series opened mid-expiration, and the per-minute path re-ran detection
+  on a slice starting at an arbitrary phase, so roughly half of all minutes hit
+  it. The failure was silent: the tidal-volume sanity filter discarded the
+  mispaired cycles, so the minute ended up with no breaths rather than wrong
+  ones, and `inspiratory_time`, `expiratory_time` and `ie_ratio` were left NULL.
+
+  Nothing else on the page moved, because PLD.edf overwrites respiratory rate,
+  tidal volume, minute ventilation, leak and flow limitation with the machine's
+  own values. Those three are the only per-minute columns the detector owns,
+  which is why a broken detector left a dashboard that still looked full.
+
+  Measured on this database before the fix: of 90,032 rows in
+  `cpap_calculated_metrics`, `respiratory_rate` was present on all 90,032 and
+  `inspiratory_time` on 30,367, or 33.73%. Re-parsing the same card with the
+  fixed parser takes that to 99.98%.
+
+  Fixed in `hms-cpapdash-parser` v2026.4.2, pinned here. Nights already stored
+  keep their NULLs until they are re-parsed; the raw files in the archive are
+  enough to backfill roughly 60,000 minutes.
+
 ## [5.1.0] - 2026-08-26
 
 ### Added

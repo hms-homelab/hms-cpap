@@ -192,7 +192,7 @@ export class SessionsComponent implements OnInit, OnDestroy {
 
   fmtAhi(s: any): string {
     if (this.isOximetryOnly(s) || s.ahi == null || s.ahi === '') return '-';
-    return (+s.ahi).toFixed(1);
+    return (+s.ahi).toFixed(2);
   }
 
   fmtDuration(val: string | number | undefined): string {

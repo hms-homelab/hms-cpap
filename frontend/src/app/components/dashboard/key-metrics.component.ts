@@ -29,7 +29,7 @@ export interface KeyMetricsData {
           <div class="mu-content">
             <div class="mu-primary">AHI Score</div>
             <div class="mu-secondary">
-              <span class="mu-value">{{ data.ahi.toFixed(1) }}</span>
+              <span class="mu-value">{{ data.ahi.toFixed(2) }}</span>
               <span class="mu-assess">{{ ahiLabel }}</span>
             </div>
           </div>
@@ -69,7 +69,7 @@ export interface KeyMetricsData {
             <div class="mu-primary">Total Events</div>
             <div class="mu-secondary">
               <span class="mu-value">{{ data.totalEvents }}</span>
-              <span class="mu-assess">{{ data.ahi.toFixed(1) }} events/hr</span>
+              <span class="mu-assess">{{ data.ahi.toFixed(2) }} events/hr</span>
             </div>
           </div>
         </div>
