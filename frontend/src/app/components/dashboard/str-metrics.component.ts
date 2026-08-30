@@ -27,7 +27,7 @@ export interface StrMetricsData {
             <i class="fa-solid fa-heart-pulse"></i>
           </div>
           <div class="mu-label">STR AHI</div>
-          <div class="mu-value">{{ data.ahi.toFixed(1) }}</div>
+          <div class="mu-value">{{ data.ahi.toFixed(2) }}</div>
         </div>
         <div class="mu-card-vert">
           <div class="mu-icon" [style.background]="usageColor + '22'" [style.color]="usageColor">
