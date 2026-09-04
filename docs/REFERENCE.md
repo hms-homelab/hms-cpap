@@ -196,6 +196,8 @@ One wireless hardware path plus a local filesystem option. Both work with ResMed
 
 **Hardware (optional):** ezShare WiFi SD adapter + a bridge device running [hms-mm](https://github.com/hms-homelab/hms-mm) firmware.
 
+**Setting the bridge up:** the [hms-mm web flasher](https://hms-homelab.github.io/hms-mm/) flashes both ESP32-C3 boards from Chrome or Edge with nothing installed, then writes your home WiFi and the card's WiFi to the mule over the same USB cable. Once it is on your network, point HMS-CPAP at it with `"source": "ezshare"` and `"ezshare_url": "http://cpapdash.local"`.
+
 ### Local Filesystem
 
 **How it works:** Reads EDF files directly from a local directory (USB drive, NAS share, or mounted storage).
