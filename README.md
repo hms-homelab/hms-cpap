@@ -124,7 +124,10 @@ Or without the script: `mkdir build && cd build && cmake .. && make -j$(nproc) &
 - **ezShare WiFi SD** (recommended): the card sits in the CPAP's SD slot and
   serves files over WiFi. It makes its own network, so you need a bridge such as
   [hms-mm](https://github.com/hms-homelab/hms-mm) (Mule & Miner) to put it on
-  your LAN. The wizard can scan for one.
+  your LAN. The wizard can scan for one. To set a bridge up, the
+  [hms-mm web flasher](https://hms-homelab.github.io/hms-mm/) flashes both of its
+  boards from Chrome and takes your WiFi details on the same page -- nothing to
+  install.
 - **Local folder**: point the wizard at the SD card root (the folder that holds
   both `STR.edf` and `DATALOG/`), on a USB reader, NAS share, or any mount.
 - **Upload page**: zip the card and drop it in the browser.
