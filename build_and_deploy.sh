@@ -50,7 +50,18 @@ if [ "$SKIP_FE" = false ]; then
         npm ci --silent
     fi
 
-    npx ng build --configuration production 2>&1 | tail -3
+    # SDD-080: `npm run build`, NOT `npx ng build`.
+    #
+    # The translation dictionaries under src/app/i18n/<lang>.json are assembled
+    # by scripts/build-i18n.mjs from the committed fragments and are gitignored.
+    # That generator runs from package.json's `prebuild` hook, and npx bypasses
+    # npm lifecycle hooks entirely. Calling ng directly here would build against
+    # whatever stale dictionaries happened to be on disk, or fail outright on a
+    # clean checkout where they do not exist at all.
+    #
+    # The sibling frontend in hms-cpapdash-api has the same rule for the same
+    # reason. Keep them in step.
+    npm run build -- --configuration production 2>&1 | tail -3
 
     if [ ! -f "$FE_DIST/index.html" ]; then
         echo "ERROR: Frontend build failed (no index.html in $FE_DIST)"

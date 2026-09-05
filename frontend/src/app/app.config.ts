@@ -1,9 +1,18 @@
-import { ApplicationConfig, provideBrowserGlobalErrorListeners, provideZoneChangeDetection } from '@angular/core';
+import {
+  ApplicationConfig,
+  inject,
+  provideAppInitializer,
+  provideBrowserGlobalErrorListeners,
+  provideZoneChangeDetection,
+} from '@angular/core';
 import { provideRouter } from '@angular/router';
 import { provideHttpClient, withInterceptors } from '@angular/common/http';
+import { provideTranslateService } from '@ngx-translate/core';
 
 import { routes } from './app.routes';
 import { apiBaseInterceptor } from './interceptors/api-base.interceptor';
+import { BundledTranslateLoader } from './i18n/bundled-loader';
+import { LanguageService } from './services/language.service';
 
 export const appConfig: ApplicationConfig = {
   providers: [
@@ -14,5 +23,15 @@ export const appConfig: ApplicationConfig = {
     // the same build works at the root and underneath a Home Assistant Ingress
     // prefix. A no-op outside Ingress.
     provideHttpClient(withInterceptors([apiBaseInterceptor])),
+    // SDD-080. The loader is bundled rather than HTTP-backed for the same
+    // reason the interceptor above exists: under an Ingress prefix a
+    // root-absolute asset fetch resolves somewhere else. See bundled-loader.ts.
+    provideTranslateService({
+      fallbackLang: 'en',
+      loader: { provide: BundledTranslateLoader, useClass: BundledTranslateLoader },
+    }),
+    // Resolve and apply the language BEFORE the first view renders, so nobody
+    // sees a frame of raw translation keys.
+    provideAppInitializer(() => inject(LanguageService).init()),
   ]
 };

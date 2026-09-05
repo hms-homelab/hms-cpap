@@ -1,0 +1,29 @@
+{
+  "common": {
+    "language": "Language",
+    "loading": "Loading...",
+    "save": "Save",
+    "cancel": "Cancel",
+    "close": "Close",
+    "retry": "Retry",
+    "back": "Back",
+    "next": "Next",
+    "noData": "No data"
+  },
+  "nav": {
+    "dashboard": "Dashboard",
+    "sessions": "Sessions",
+    "events": "Events",
+    "reports": "Reports",
+    "equipment": "Equipment",
+    "upload": "Upload",
+    "logs": "Logs",
+    "settings": "Settings"
+  },
+  "shell": {
+    "configError": {
+      "title": "Nothing is being imported.",
+      "action": "Open Settings"
+    }
+  }
+}
