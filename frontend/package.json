@@ -8,6 +8,7 @@
     "watch": "ng build --watch --configuration development",
     "test": "ng test",
     "i18n:gen": "node scripts/build-i18n.mjs",
+    "check:narrow": "node scripts/check-narrow.mjs",
     "prebuild": "node scripts/build-i18n.mjs",
     "prestart": "node scripts/build-i18n.mjs",
     "prewatch": "node scripts/build-i18n.mjs",
