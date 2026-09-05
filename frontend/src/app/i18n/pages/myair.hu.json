@@ -1,0 +1,22 @@
+{
+  "myairCompare": {
+    "titleCompare": "CpapDash a myAir ellenében",
+    "titleMyair": "ResMed myAir",
+    "subCompare": "{{total}} éjszakából {{compared}} esetében mindkét oldalon van adat",
+    "subMyair": "{{count}} éjszakát jelentett a ResMed",
+    "empty": "Egyelőre nincs mit megmutatni. A CpapDash óránként egyszer kérdezi le a myAirt; ha épp most csatlakoztatta, adjon neki pár percet.",
+    "night": "Éjszaka",
+    "ours": "CpapDash",
+    "theirs": "myAir",
+    "difference": "Eltérés",
+    "usage": "Használat",
+    "leak": "Szivárgás",
+    "maskOnOff": "Maszk fel/le",
+    "score": "myAir-pontszám",
+    "noOurs": "Ehhez az éjszakához nincs CpapDash-adat",
+    "noTheirs": "A ResMednek nincs adata erről az éjszakáról",
+    "footCompare": "Az eltérések a CpapDash mínusz a myAir értékei. A kettő eltérő súlyokkal pontozza az éjszakákat, így az összesített számoktól nem várható egyezés; ha egyetlen éjszakán nagy a különbség a használatban vagy az AHI-ban, az általában azt jelenti, hogy az egyik oldal látott egy olyan munkamenetet, amelyet a másik nem.",
+    "footMyairPre": "Ez a ResMed saját összegzése az egyes éjszakákról, és a myAir csak ennyit jelent. Egy részletes éjszakához — áramlás- és nyomásdiagramokkal, egyedi eseményekkel, időbeli szivárgással és PDF-jelentésekkel — a CpapDashnak az SD-kártya tartalmára van szüksége. Ezt itt állíthatja be:",
+    "footMyairPost": "a Beállításokon belül."
+  }
+}

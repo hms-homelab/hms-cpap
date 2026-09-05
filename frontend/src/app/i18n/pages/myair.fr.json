@@ -1,0 +1,22 @@
+{
+  "myairCompare": {
+    "titleCompare": "CpapDash face à myAir",
+    "titleMyair": "ResMed myAir",
+    "subCompare": "{{compared}} nuits sur {{total}} ont des données des deux côtés",
+    "subMyair": "{{count}} nuits rapportées par ResMed",
+    "empty": "Rien à afficher pour l'instant. CpapDash interroge myAir une fois par heure ; si vous venez de le connecter, laissez-lui quelques minutes.",
+    "night": "Nuit",
+    "ours": "CpapDash",
+    "theirs": "myAir",
+    "difference": "Écart",
+    "usage": "Utilisation",
+    "leak": "Fuite",
+    "maskOnOff": "Masque mis/retiré",
+    "score": "Score myAir",
+    "noOurs": "Aucune donnée CpapDash pour cette nuit",
+    "noTheirs": "ResMed n'a pas de données pour cette nuit",
+    "footCompare": "Les écarts sont CpapDash moins myAir. Les deux notent les nuits avec des pondérations différentes, les scores composites ne sont donc pas censés coïncider ; un écart important d'utilisation ou d'IAH sur une seule nuit signifie généralement qu'un côté a vu une session que l'autre n'a pas vue.",
+    "footMyairPre": "Voici le résumé que ResMed fait elle-même de chaque nuit, et c'est tout ce que myAir rapporte. Pour une nuit détaillée, avec les courbes de débit et de pression, les événements individuels, la fuite dans le temps et les rapports PDF, CpapDash a besoin du contenu de la carte SD. Configurez cela dans",
+    "footMyairPost": "au sein des Paramètres."
+  }
+}
