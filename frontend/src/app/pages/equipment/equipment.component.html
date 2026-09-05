@@ -1,7 +1,7 @@
 <div class="equipment-page">
-  <h2>Equipment</h2>
+  <h2>{{ 'equipment.title' | translate }}</h2>
 
-  <div class="loading" *ngIf="loading">Loading equipment...</div>
+  <div class="loading" *ngIf="loading">{{ 'equipment.loading' | translate }}</div>
   <div class="error-msg" *ngIf="error">{{ error }}</div>
 
   <ng-container *ngIf="!loading">
@@ -9,7 +9,7 @@
     <!-- Empty state: one button, nothing else -->
     <div class="empty-state" *ngIf="profiles.length === 0 && !creatingProfile">
       <button class="primary-btn" (click)="startCreateProfile()">
-        <i class="fa-solid fa-plus"></i> New profile
+        <i class="fa-solid fa-plus"></i> {{ 'equipment.profile.new' | translate }}
       </button>
     </div>
 
@@ -22,14 +22,15 @@
         <span class="chip-badge" *ngIf="hasAlert(p)"></span>
       </button>
       <button class="chip chip-add" *ngIf="!creatingProfile" (click)="startCreateProfile()"
-              title="New profile">
+              [title]="'equipment.profile.new' | translate">
         <i class="fa-solid fa-plus"></i>
       </button>
       <span class="inline-form" *ngIf="creatingProfile">
-        <input type="text" [(ngModel)]="newProfileName" placeholder="Profile name"
+        <input type="text" [(ngModel)]="newProfileName"
+               [placeholder]="'equipment.profile.namePlaceholder' | translate"
                (keyup.enter)="createProfile()" />
-        <button class="mini-btn" (click)="createProfile()" [disabled]="busy || !newProfileName.trim()">Create</button>
-        <button class="mini-btn ghost" (click)="cancelCreateProfile()">Cancel</button>
+        <button class="mini-btn" (click)="createProfile()" [disabled]="busy || !newProfileName.trim()">{{ 'equipment.profile.create' | translate }}</button>
+        <button class="mini-btn ghost" (click)="cancelCreateProfile()">{{ 'common.cancel' | translate }}</button>
       </span>
     </div>
 
@@ -39,31 +40,33 @@
         <ng-container *ngIf="!renaming">
           <h3>{{ p.name }}</h3>
           <button class="icon-btn" (click)="startRename()"
-                  title="Rename profile" aria-label="Rename profile">
+                  [title]="'equipment.profile.rename' | translate"
+                  [attr.aria-label]="'equipment.profile.rename' | translate">
             <i class="fa-solid fa-pen"></i>
           </button>
           <button class="icon-btn danger" (click)="deleteProfile()" [disabled]="busy"
-                  title="Delete profile" aria-label="Delete profile">
+                  [title]="'equipment.profile.delete' | translate"
+                  [attr.aria-label]="'equipment.profile.delete' | translate">
             <i class="fa-solid fa-trash"></i>
           </button>
         </ng-container>
         <ng-container *ngIf="renaming">
           <input type="text" [(ngModel)]="renameValue" (keyup.enter)="saveRename()" />
-          <button class="mini-btn" (click)="saveRename()" [disabled]="busy || !renameValue.trim()">Save</button>
-          <button class="mini-btn ghost" (click)="cancelRename()">Cancel</button>
+          <button class="mini-btn" (click)="saveRename()" [disabled]="busy || !renameValue.trim()">{{ 'common.save' | translate }}</button>
+          <button class="mini-btn ghost" (click)="cancelRename()">{{ 'common.cancel' | translate }}</button>
         </ng-container>
       </div>
 
       <!-- Machine -->
-      <h4 class="group-title">Machine</h4>
-      <div class="empty" *ngIf="!machine">No machine in this profile yet.</div>
+      <h4 class="group-title">{{ 'equipment.group.machine' | translate }}</h4>
+      <div class="empty" *ngIf="!machine">{{ 'equipment.empty.machine' | translate }}</div>
       <div class="item-card machine-card" *ngIf="machine as m">
         <ng-container [ngTemplateOutlet]="itemBody" [ngTemplateOutletContext]="{ item: m }"></ng-container>
       </div>
 
       <!-- Accessories -->
-      <h4 class="group-title">Accessories</h4>
-      <div class="empty" *ngIf="accessories.length === 0">No accessories in this profile yet.</div>
+      <h4 class="group-title">{{ 'equipment.group.accessories' | translate }}</h4>
+      <div class="empty" *ngIf="accessories.length === 0">{{ 'equipment.empty.accessories' | translate }}</div>
       <div class="item-card" *ngFor="let it of accessories">
         <ng-container [ngTemplateOutlet]="itemBody" [ngTemplateOutletContext]="{ item: it }"></ng-container>
       </div>
@@ -74,51 +77,53 @@
         is the same mental object, the upkeep of this setup, so it does not earn
         a nav entry of its own.
       -->
-      <h4 class="group-title">Cleaning</h4>
+      <h4 class="group-title">{{ 'equipment.group.cleaning' | translate }}</h4>
 
       <div class="empty" *ngIf="cleaning.length === 0">
-        No cleaning schedule yet.
+        {{ 'equipment.empty.cleaning' | translate }}
         <button class="mini-btn" (click)="addSuggested()" [disabled]="suggesting">
           <i class="fa-solid fa-wand-magic-sparkles"></i>
-          {{ suggesting ? 'Adding...' : 'Add suggested tasks' }}
+          {{ (suggesting ? 'equipment.cleaning.adding' : 'equipment.cleaning.addSuggested') | translate }}
         </button>
         <div class="hint">
-          Suggestions match the equipment in this setup, and all start switched off.
+          {{ 'equipment.cleaning.suggestHint' | translate }}
         </div>
       </div>
 
       <div class="item-card clean-card" *ngFor="let t of cleaning">
         <div class="item-head">
-          <label class="clean-toggle" [title]="t.enabled ? 'Switch off' : 'Switch on'">
+          <label class="clean-toggle"
+                 [title]="(t.enabled ? 'equipment.cleaning.switchOff' : 'equipment.cleaning.switchOn') | translate">
             <input type="checkbox" [checked]="t.enabled"
                    (change)="toggleCleaning(t)" [disabled]="cleaningBusy === t.id" />
+            <!-- t.label is the server's cleaning-task name. -->
             <span class="item-name">{{ t.label }}</span>
           </label>
           <span class="item-actions">
             <button class="mini-btn" (click)="markCleaningDone(t)"
                     [disabled]="cleaningBusy === t.id || !t.enabled">
-              <i class="fa-solid fa-check"></i> Mark done
+              <i class="fa-solid fa-check"></i> {{ 'equipment.cleaning.markDone' | translate }}
             </button>
             <button class="mini-btn danger" (click)="removeCleaning(t)"
-                    [disabled]="cleaningBusy === t.id">Remove</button>
+                    [disabled]="cleaningBusy === t.id">{{ 'equipment.cleaning.remove' | translate }}</button>
           </span>
         </div>
 
         <div class="edit-row clean-fields">
           <label class="field">
-            <span>Every (days)</span>
+            <span>{{ 'equipment.cleaning.every' | translate }}</span>
             <input type="number" min="1" [ngModel]="t.interval_days"
                    (change)="commitCleaning(t, { interval_days: +$any($event.target).value })"
                    [disabled]="cleaningBusy === t.id" />
           </label>
           <label class="field">
-            <span>At</span>
+            <span>{{ 'equipment.cleaning.at' | translate }}</span>
             <input type="time" [ngModel]="timeValue(t)"
                    (change)="onTimeChange(t, $any($event.target).value)"
                    [disabled]="cleaningBusy === t.id" />
           </label>
           <label class="field">
-            <span>Starting</span>
+            <span>{{ 'equipment.cleaning.starting' | translate }}</span>
             <input type="date" [ngModel]="t.start_date"
                    (change)="commitCleaning(t, { start_date: $any($event.target).value })"
                    [disabled]="cleaningBusy === t.id" />
@@ -126,7 +131,7 @@
         </div>
 
         <div class="meta-row">
-          <span class="meta" *ngIf="t.last_done_at">Last done {{ t.last_done_at }}</span>
+          <span class="meta" *ngIf="t.last_done_at">{{ 'equipment.cleaning.lastDone' | translate:{ date: t.last_done_at } }}</span>
           <span class="clean-state" [class]="'text-' + cleaningStateClass(t)">
             {{ cleaningLabel(t) }}
           </span>
@@ -136,18 +141,19 @@
       <div class="add-row" *ngIf="cleaning.length > 0">
         <button class="mini-btn ghost" (click)="addSuggested()" [disabled]="suggesting">
           <i class="fa-solid fa-wand-magic-sparkles"></i>
-          {{ suggesting ? 'Adding...' : 'Add suggested tasks' }}
+          {{ (suggesting ? 'equipment.cleaning.adding' : 'equipment.cleaning.addSuggested') | translate }}
         </button>
       </div>
 
       <!-- Add from the catalog -->
       <div class="add-row">
         <select [(ngModel)]="addTypeKey">
-          <option value="">Add equipment...</option>
+          <option value="">{{ 'equipment.add.placeholder' | translate }}</option>
+          <!-- t.label is the server's equipment-type catalog label. -->
           <option *ngFor="let t of addableTypes" [value]="t.type_key">{{ t.label }}</option>
         </select>
         <button class="mini-btn" (click)="addItem()" [disabled]="busy || !addTypeKey">
-          <i class="fa-solid fa-plus"></i> Add
+          <i class="fa-solid fa-plus"></i> {{ 'equipment.add.button' | translate }}
         </button>
       </div>
     </div>
@@ -159,42 +165,44 @@
   <div class="item-head">
     <span class="item-type">{{ typeLabel(item.type_key) }}</span>
     <span class="item-name" *ngIf="!isEditing(item)">
-      {{ item.brand || item.model ? (item.brand + ' ' + item.model).trim() : 'Unnamed' }}
+      {{ item.brand || item.model ? (item.brand + ' ' + item.model).trim() : ('equipment.item.unnamed' | translate) }}
     </span>
     <span class="item-actions">
-      <button class="mini-btn ghost" *ngIf="!isEditing(item)" (click)="startEdit(item)">Edit</button>
-      <button class="mini-btn" *ngIf="isEditing(item)" (click)="saveEdit(item)" [disabled]="busy">Save</button>
-      <button class="mini-btn ghost" *ngIf="isEditing(item)" (click)="cancelEdit()">Cancel</button>
-      <button class="mini-btn danger" (click)="removeItem(item)" [disabled]="busy">Remove</button>
+      <button class="mini-btn ghost" *ngIf="!isEditing(item)" (click)="startEdit(item)">{{ 'equipment.item.edit' | translate }}</button>
+      <button class="mini-btn" *ngIf="isEditing(item)" (click)="saveEdit(item)" [disabled]="busy">{{ 'common.save' | translate }}</button>
+      <button class="mini-btn ghost" *ngIf="isEditing(item)" (click)="cancelEdit()">{{ 'common.cancel' | translate }}</button>
+      <button class="mini-btn danger" (click)="removeItem(item)" [disabled]="busy">{{ 'equipment.item.remove' | translate }}</button>
     </span>
   </div>
 
   <!-- Inline edit fields -->
   <div class="edit-row" *ngIf="isEditing(item)">
     <label class="field">
-      <span>Brand</span>
+      <span>{{ 'equipment.item.brand' | translate }}</span>
       <input type="text" [(ngModel)]="draft.brand" placeholder="ResMed" />
     </label>
     <label class="field">
-      <span>Model</span>
+      <span>{{ 'equipment.item.model' | translate }}</span>
       <input type="text" [(ngModel)]="draft.model" placeholder="AirSense 11" />
     </label>
     <label class="field">
-      <span>In use since</span>
+      <span>{{ 'equipment.item.inUseSince' | translate }}</span>
       <input type="date" [(ngModel)]="draft.since" />
     </label>
     <label class="field" *ngIf="item.category !== 'machine'">
-      <span>Replace every (days)</span>
+      <span>{{ 'equipment.item.replaceEvery' | translate }}</span>
       <input type="number" min="0" [(ngModel)]="draft.replaceEvery"
-             [placeholder]="defaultDays(item) !== null ? 'Default ' + defaultDays(item) : 'Not tracked'" />
+             [placeholder]="defaultDays(item) !== null
+               ? ('equipment.item.defaultDays' | translate:{ days: defaultDays(item) })
+               : ('equipment.item.notTracked' | translate)" />
     </label>
   </div>
 
   <!-- Read-only summary -->
   <div class="meta-row" *ngIf="!isEditing(item)">
-    <span class="meta">In use since {{ toDateInput(item.started_using_at) || '—' }}</span>
+    <span class="meta">{{ 'equipment.item.inUseSinceLabel' | translate:{ date: toDateInput(item.started_using_at) || '—' } }}</span>
     <span class="meta" *ngIf="item.category !== 'machine' && replaceByLabel(item)">
-      Replace by {{ replaceByLabel(item) }}
+      {{ 'equipment.item.replaceBy' | translate:{ date: replaceByLabel(item) } }}
     </span>
   </div>
 

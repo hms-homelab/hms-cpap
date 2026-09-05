@@ -1,0 +1,85 @@
+{
+  "equipment": {
+    "title": "Equipment",
+    "loading": "Loading equipment...",
+    "profile": {
+      "new": "New profile",
+      "namePlaceholder": "Profile name",
+      "create": "Create",
+      "rename": "Rename profile",
+      "delete": "Delete profile"
+    },
+    "group": {
+      "machine": "Machine",
+      "accessories": "Accessories",
+      "cleaning": "Cleaning"
+    },
+    "empty": {
+      "machine": "No machine in this profile yet.",
+      "accessories": "No accessories in this profile yet.",
+      "cleaning": "No cleaning schedule yet."
+    },
+    "cleaning": {
+      "addSuggested": "Add suggested tasks",
+      "adding": "Adding...",
+      "suggestHint": "Suggestions match the equipment in this setup, and all start switched off.",
+      "switchOn": "Switch on",
+      "switchOff": "Switch off",
+      "markDone": "Mark done",
+      "remove": "Remove",
+      "every": "Every (days)",
+      "at": "At",
+      "starting": "Starting",
+      "lastDone": "Last done {{date}}"
+    },
+    "state": {
+      "off": "Off",
+      "dueNow": "Due now",
+      "dueLaterToday": "Due later today",
+      "overdueOne": "Overdue by 1 day",
+      "overdueMany": "Overdue by {{days}} days",
+      "dueInOne": "Due in 1 day",
+      "dueInMany": "Due in {{days}} days",
+      "untracked": "Not tracked",
+      "supplyOverdueOne": "1 day overdue",
+      "supplyOverdueMany": "{{days}} days overdue",
+      "supplyLeftOne": "1 day left",
+      "supplyLeftMany": "{{days}} days left"
+    },
+    "add": {
+      "placeholder": "Add equipment...",
+      "button": "Add"
+    },
+    "item": {
+      "unnamed": "Unnamed",
+      "edit": "Edit",
+      "save": "Save",
+      "cancel": "Cancel",
+      "remove": "Remove",
+      "brand": "Brand",
+      "model": "Model",
+      "inUseSince": "In use since",
+      "replaceEvery": "Replace every (days)",
+      "defaultDays": "Default {{days}}",
+      "notTracked": "Not tracked",
+      "inUseSinceLabel": "In use since {{date}}",
+      "replaceBy": "Replace by {{date}}"
+    },
+    "confirm": {
+      "removeItem": "Remove this {{type}}?",
+      "removeProfile": "Remove the profile \"{{name}}\" and everything in it?"
+    },
+    "errors": {
+      "removeFailed": "Failed to remove the item.",
+      "loadFailed": "Failed to load equipment.",
+      "suggestFailed": "Could not add suggested tasks.",
+      "markDoneFailed": "Could not mark that done.",
+      "removeTaskFailed": "Could not remove that task.",
+      "saveFailed": "Could not save that change.",
+      "createProfileFailed": "Failed to create the profile.",
+      "renameProfileFailed": "Failed to rename the profile.",
+      "removeProfileFailed": "Failed to remove the profile.",
+      "replaceEveryNotNumber": "Replace every must be a number of days."
+    }
+  }
+}
