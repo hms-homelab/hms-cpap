@@ -10,6 +10,11 @@
     "next": "Siguiente",
     "noData": "Sin datos"
   },
+  "metric": {
+    "ahi": "IAH",
+    "spo2": "SpO2",
+    "hr": "FC"
+  },
   "nav": {
     "dashboard": "Panel",
     "sessions": "Sesiones",

@@ -10,6 +10,11 @@
     "next": "Tovább",
     "noData": "Nincs adat"
   },
+  "metric": {
+    "ahi": "AHI",
+    "spo2": "SpO2",
+    "hr": "Pulzus"
+  },
   "nav": {
     "dashboard": "Irányítópult",
     "sessions": "Alvásidőszakok",

@@ -1,27 +1,39 @@
 <div class="sessions-page">
   <div class="sessions-head">
-    <h2>Sessions ({{ sessions.length }})</h2>
+    <h2>{{ 'sessions.title' | translate:{ count: sessions.length } }}</h2>
     <button class="cmp-toggle" [class.active]="compareMode" (click)="toggleCompareMode()">
       <i class="fa-solid" [class.fa-code-compare]="!compareMode" [class.fa-xmark]="compareMode"></i>
-      {{ compareMode ? 'Cancel' : 'Compare nights' }}
+      {{ (compareMode ? 'sessions.compare.cancel' : 'sessions.compare.start') | translate }}
     </button>
   </div>
 
   <!-- Expanding compare bar -->
   <div class="cmp-bar" *ngIf="compareMode">
     <i class="fa-solid fa-hand-pointer"></i>
-    <span *ngIf="selectedDays.length < 2">Pick two nights to compare ({{ selectedDays.length }}/2)</span>
+    <span *ngIf="selectedDays.length < 2">{{ 'sessions.compare.pick' | translate:{ n: selectedDays.length } }}</span>
     <span *ngIf="selectedDays.length === 2">{{ selectedDays[0] }} vs {{ selectedDays[1] }}</span>
     <button class="cmp-go" [disabled]="selectedDays.length !== 2" (click)="openCompare()">
-      <i class="fa-solid fa-chart-line"></i> Compare
+      <i class="fa-solid fa-chart-line"></i> {{ 'sessions.compare.go' | translate }}
     </button>
   </div>
 
   <table class="session-table" *ngIf="sessions.length > 0">
     <thead>
+      <!-- OA / CA / H / RERA are the parser's own event abbreviations and stay
+           untranslated for the same reason the Events page chips do: they match
+           OSCAR and the device. AHI, SpO2 and HR come from core.metric, which
+           localizes AHI to IAH in es/fr/pt and deliberately leaves it as AHI in
+           Hungarian (docs/i18n-medical-terms-hu.md). -->
       <tr>
-        <th>Date</th><th>Status</th><th>Duration</th><th>AHI</th><th>Events</th>
-        <th>OA</th><th>CA</th><th>H</th><th>RERA</th><th>SpO2</th><th>HR</th><th>Actions</th>
+        <th>{{ 'sessions.table.date' | translate }}</th>
+        <th>{{ 'sessions.table.status' | translate }}</th>
+        <th>{{ 'sessions.table.duration' | translate }}</th>
+        <th>{{ 'metric.ahi' | translate }}</th>
+        <th>{{ 'sessions.table.events' | translate }}</th>
+        <th>OA</th><th>CA</th><th>H</th><th>RERA</th>
+        <th>{{ 'metric.spo2' | translate }}</th>
+        <th>{{ 'metric.hr' | translate }}</th>
+        <th>{{ 'sessions.table.actions' | translate }}</th>
       </tr>
     </thead>
     <tbody>
@@ -34,11 +46,11 @@
         </td>
         <td>
           <span *ngIf="isOximetryOnly(s)" class="o2-badge"
-                title="O2 ring recording only; no CPAP session was recorded for this night.">O2 only</span>
-          <span *ngIf="!isOximetryOnly(s) && isLive(s)" class="live-badge">LIVE</span>
+                [title]="'sessions.badge.oxiOnlyTitle' | translate">{{ 'sessions.badge.oxiOnly' | translate }}</span>
+          <span *ngIf="!isOximetryOnly(s) && isLive(s)" class="live-badge">{{ 'sessions.badge.live' | translate }}</span>
           <span *ngIf="!isOximetryOnly(s) && !isLive(s) && isPartial(s)" class="partial-badge"
-                title="The file transfer settled without this night's summary record. Shown for completeness, but left out of compliance and trend averages.">Partial</span>
-          <span *ngIf="!isOximetryOnly(s) && !isLive(s) && !isPartial(s)" class="done-badge">Done</span>
+                [title]="'sessions.badge.partialTitle' | translate">{{ 'sessions.badge.partial' | translate }}</span>
+          <span *ngIf="!isOximetryOnly(s) && !isLive(s) && !isPartial(s)" class="done-badge">{{ 'sessions.badge.done' | translate }}</span>
         </td>
         <td>{{ fmtDuration(s.duration_hours) }}</td>
         <td [class.elevated]="+s.ahi > 5">{{ fmtAhi(s) }}</td>
@@ -66,39 +78,40 @@
                 [disabled]="actionInProgress[s.sleep_day || sleepDay(s.session_start)]"
                 (click)="forceComplete($event, s)">
                 <i class="fa-solid fa-flag-checkered"></i>
-                {{ actionInProgress[s.sleep_day || sleepDay(s.session_start)] ? '...' : 'Force Done' }}
+                {{ actionInProgress[s.sleep_day || sleepDay(s.session_start)] ? '...' : ('sessions.actions.forceDone' | translate) }}
               </button>
               <button *ngIf="!isOximetryOnly(s)"
                 [disabled]="actionInProgress[(s.sleep_day || sleepDay(s.session_start)) + '_sum']"
                 (click)="generateSummary($event, s)">
                 <i class="fa-solid fa-brain"></i>
-                {{ actionInProgress[(s.sleep_day || sleepDay(s.session_start)) + '_sum'] ? '...' : 'AI Summary' }}
+                {{ actionInProgress[(s.sleep_day || sleepDay(s.session_start)) + '_sum'] ? '...' : ('sessions.actions.aiSummary' | translate) }}
               </button>
               <button *ngIf="!isOximetryOnly(s)"
                 [disabled]="actionInProgress[(s.sleep_day || sleepDay(s.session_start)) + '_rep']"
                 (click)="reparse($event, s)">
                 <i class="fa-solid fa-rotate"></i>
-                {{ actionInProgress[(s.sleep_day || sleepDay(s.session_start)) + '_rep'] ? '...' : 'Reparse' }}
+                {{ actionInProgress[(s.sleep_day || sleepDay(s.session_start)) + '_rep'] ? '...' : ('sessions.actions.reparse' | translate) }}
               </button>
               <button [disabled]="actionInProgress[(s.sleep_day || sleepDay(s.session_start)) + '_oxi']"
                 (click)="fetchOximetry($event, s)">
                 <i class="fa-solid fa-heart-pulse"></i>
-                {{ actionInProgress[(s.sleep_day || sleepDay(s.session_start)) + '_oxi'] ? '...' : 'Fetch O2 History' }}
+                {{ actionInProgress[(s.sleep_day || sleepDay(s.session_start)) + '_oxi'] ? '...' : ('sessions.actions.fetchOxi' | translate) }}
               </button>
               <button *ngIf="!isOximetryOnly(s)"
                 [disabled]="actionInProgress[(s.sleep_day || sleepDay(s.session_start)) + '_pdf']"
                 (click)="downloadDayPdf($event, s)">
                 <i class="fa-solid fa-file-pdf"></i>
-                {{ actionInProgress[(s.sleep_day || sleepDay(s.session_start)) + '_pdf'] ? 'Generating...' : 'Day PDF' }}
+                {{ (actionInProgress[(s.sleep_day || sleepDay(s.session_start)) + '_pdf'] ? 'sessions.actions.generating' : 'sessions.actions.dayPdf') | translate }}
               </button>
               <button *ngIf="sleephqEnabled && !isOximetryOnly(s)"
                 [disabled]="actionInProgress[(s.sleep_day || sleepDay(s.session_start)) + '_shq']"
                 (click)="uploadToSleepHq($event, s)">
                 <i class="fa-solid fa-cloud-arrow-up"></i>
-                {{ actionInProgress[(s.sleep_day || sleepDay(s.session_start)) + '_shq'] ? '...' : 'Upload to SleepHQ' }}
+                {{ actionInProgress[(s.sleep_day || sleepDay(s.session_start)) + '_shq'] ? '...' : ('sessions.actions.uploadSleepHq' | translate) }}
               </button>
             </div>
             </div>
+            <!-- rowMessage() is server response text, English-only. -->
             <div class="action-status" *ngIf="isRowBusy(s) || rowMessage(s)">
               <i class="fa-solid fa-circle-notch fa-spin" *ngIf="isRowBusy(s)"></i>
               <span class="msg" *ngIf="rowMessage(s)">{{ rowMessage(s) }}</span>
@@ -112,7 +125,7 @@
   <div class="load-more-bar" *ngIf="sessions.length > 0 && hasMore">
     <button class="load-more" [disabled]="loadingMore" (click)="loadMore()">
       <i class="fa-solid" [class.fa-chevron-down]="!loadingMore" [class.fa-circle-notch]="loadingMore" [class.fa-spin]="loadingMore"></i>
-      {{ loadingMore ? 'Loading...' : 'Load more' }}
+      {{ (loadingMore ? 'common.loading' : 'sessions.loadMore') | translate }}
     </button>
   </div>
 </div>

@@ -1,0 +1,36 @@
+{
+  "sessions": {
+    "title": "Sessions ({{count}})",
+    "compare": {
+      "start": "Compare nights",
+      "cancel": "Cancel",
+      "pick": "Pick two nights to compare ({{n}}/2)",
+      "go": "Compare"
+    },
+    "table": {
+      "date": "Date",
+      "status": "Status",
+      "duration": "Duration",
+      "events": "Events",
+      "actions": "Actions"
+    },
+    "badge": {
+      "oxiOnly": "O2 only",
+      "oxiOnlyTitle": "O2 ring recording only; no CPAP session was recorded for this night.",
+      "live": "LIVE",
+      "partial": "Partial",
+      "partialTitle": "The file transfer settled without this night's summary record. Shown for completeness, but left out of compliance and trend averages.",
+      "done": "Done"
+    },
+    "actions": {
+      "forceDone": "Force Done",
+      "aiSummary": "AI Summary",
+      "reparse": "Reparse",
+      "fetchOxi": "Fetch O2 History",
+      "dayPdf": "Day PDF",
+      "generating": "Generating...",
+      "uploadSleepHq": "Upload to SleepHQ"
+    },
+    "loadMore": "Load more"
+  }
+}
