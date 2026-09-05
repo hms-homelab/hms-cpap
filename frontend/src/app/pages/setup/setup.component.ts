@@ -4,56 +4,62 @@ import { FormsModule } from '@angular/forms';
 import { CpapApiService } from '../../services/cpap-api.service';
 import { DiscoveredDevice } from '../../models/config.model';
 import { markSetupComplete } from '../../guards/setup.guard';
+import { TranslatePipe, TranslateService } from '@ngx-translate/core';
+import { LanguageSwitcherComponent } from '../../components/language-switcher/language-switcher.component';
 import { switchMap, tap } from 'rxjs';
 
 @Component({
   selector: 'app-setup',
   standalone: true,
-  imports: [FormsModule],
+  imports: [FormsModule, TranslatePipe, LanguageSwitcherComponent],
   template: `
     <div class="setup-container">
       <div class="setup-card">
-        <div class="step-indicator">Step {{ currentStep }} of 5</div>
+        <!-- The wizard runs outside the shell, so the nav bar's switcher is not
+             on screen. Without one here, a first-run user whose browser is set
+             to a language we do not ship has no way out of English on the one
+             screen they cannot skip. -->
+        <div class="card-top">
+          <div class="step-indicator">{{ 'setup.step' | translate:{ current: currentStep, total: 5 } }}</div>
+          <app-language-switcher />
+        </div>
 
         @if (currentStep === 1) {
           <div class="step">
-            <h1>Welcome to HMS-CPAP</h1>
+            <h1>{{ 'setup.welcome.title' | translate }}</h1>
             <p class="subtitle">
-              This wizard will help you configure your CPAP data source.
-              HMS-CPAP collects sleep therapy data from your ResMed device
-              and presents it in a clear, actionable dashboard.
+              {{ 'setup.welcome.body' | translate }}
             </p>
             <p class="subtitle">
-              You can change these settings later from the configuration page.
+              {{ 'setup.welcome.later' | translate }}
             </p>
             <div class="actions">
-              <button class="btn-primary" (click)="currentStep = 2">Next</button>
+              <button class="btn-primary" (click)="currentStep = 2">{{ 'setup.next' | translate }}</button>
             </div>
           </div>
         }
 
         @if (currentStep === 2) {
           <div class="step">
-            <h1>Where should your data live?</h1>
+            <h1>{{ 'setup.db.title' | translate }}</h1>
             <p class="subtitle">
-              Everything stays on this machine either way. This only chooses what
-              stores it.
+              {{ 'setup.db.subtitle' | translate }}
             </p>
 
             <div class="radio-group">
               <label class="radio-option" [class.selected]="dbType === 'sqlite'">
                 <input type="radio" name="dbtype" value="sqlite" [(ngModel)]="dbType" />
                 <div class="radio-content">
-                  <strong>Built in (recommended)</strong>
-                  <span>A single file in your data folder. Nothing to install or run.</span>
+                  <strong>{{ 'setup.db.builtinTitle' | translate }}</strong>
+                  <span>{{ 'setup.db.builtinDesc' | translate }}</span>
                 </div>
               </label>
 
               <label class="radio-option" [class.selected]="dbType === 'advanced'">
                 <input type="radio" name="dbtype" value="advanced" [(ngModel)]="dbType" />
                 <div class="radio-content">
-                  <strong>Use my own database server</strong>
-                  <span>PostgreSQL or MySQL you already run.</span>
+                  <strong>{{ 'setup.db.ownTitle' | translate }}</strong>
+                  <span>{{ 'setup.db.ownDesc' | translate }}</span>
                 </div>
               </label>
             </div>
@@ -61,7 +67,7 @@ import { switchMap, tap } from 'rxjs';
             @if (dbType === 'advanced') {
               <div class="advanced">
                 <label class="fld">
-                  <span>Engine</span>
+                  <span>{{ 'setup.db.engine' | translate }}</span>
                   <select [(ngModel)]="dbEngine" name="engine">
                     @for (b of serverBackends; track b) {
                       <option [value]="b">{{ b === 'postgresql' ? 'PostgreSQL' : 'MySQL' }}</option>
@@ -72,37 +78,35 @@ import { switchMap, tap } from 'rxjs';
                   <!-- Capability honesty: this build genuinely cannot open either,
                        and offering them would write a config that refuses to boot. -->
                   <div class="test-result error">
-                    This build was compiled without PostgreSQL and MySQL support.
-                    Use the built in option.
+                    {{ 'setup.db.noBackends' | translate }}
                   </div>
                 }
                 <div class="row">
-                  <label class="fld"><span>Host</span>
+                  <label class="fld"><span>{{ 'setup.db.host' | translate }}</span>
                     <input [(ngModel)]="dbHost" name="dbhost" placeholder="localhost"></label>
-                  <label class="fld port"><span>Port</span>
+                  <label class="fld port"><span>{{ 'setup.db.port' | translate }}</span>
                     <input type="number" [(ngModel)]="dbPort" name="dbport"></label>
                 </div>
-                <label class="fld"><span>Database name</span>
+                <label class="fld"><span>{{ 'setup.db.name' | translate }}</span>
                   <input [(ngModel)]="dbName" name="dbname" placeholder="cpap"></label>
-                <label class="fld"><span>User</span>
+                <label class="fld"><span>{{ 'setup.db.user' | translate }}</span>
                   <input [(ngModel)]="dbUser" name="dbuser" placeholder="cpap_user"></label>
-                <label class="fld"><span>Password</span>
+                <label class="fld"><span>{{ 'setup.db.password' | translate }}</span>
                   <input type="password" [(ngModel)]="dbPassword" name="dbpass"></label>
 
                 <label class="radio-option check" [class.selected]="createIt">
                   <input type="checkbox" [(ngModel)]="createIt" name="createit" />
                   <div class="radio-content">
-                    <strong>It does not exist yet, create it for me</strong>
-                    <span>Needs an administrator login. It is used once, for this
-                          request only, and is never saved.</span>
+                    <strong>{{ 'setup.db.createTitle' | translate }}</strong>
+                    <span>{{ 'setup.db.createDesc' | translate }}</span>
                   </div>
                 </label>
 
                 @if (createIt) {
                   <div class="row">
-                    <label class="fld"><span>Admin user</span>
+                    <label class="fld"><span>{{ 'setup.db.adminUser' | translate }}</span>
                       <input [(ngModel)]="adminUser" name="adminuser"></label>
-                    <label class="fld"><span>Admin password</span>
+                    <label class="fld"><span>{{ 'setup.db.adminPassword' | translate }}</span>
                       <input type="password" [(ngModel)]="adminPassword" name="adminpass"></label>
                   </div>
                 }
@@ -110,14 +114,15 @@ import { switchMap, tap } from 'rxjs';
             }
 
             <div class="actions">
-              <button class="btn-ghost" (click)="currentStep = 1">Back</button>
+              <button class="btn-ghost" (click)="currentStep = 1">{{ 'setup.back' | translate }}</button>
               @if (dbType === 'advanced') {
                 <button class="btn-ghost" (click)="checkDb()" [disabled]="dbBusy">
-                  {{ dbBusy ? 'Checking...' : (createIt ? 'Create and check' : 'Check connection') }}
+                  {{ (dbBusy ? 'setup.db.checking'
+                       : (createIt ? 'setup.db.createAndCheck' : 'setup.db.checkConnection')) | translate }}
                 </button>
               }
               <button class="btn-primary" (click)="currentStep = 3"
-                      [disabled]="dbType === 'advanced' && !dbVerified">Next</button>
+                      [disabled]="dbType === 'advanced' && !dbVerified">{{ 'setup.next' | translate }}</button>
             </div>
 
             @if (dbMessage) {
@@ -128,16 +133,16 @@ import { switchMap, tap } from 'rxjs';
 
         @if (currentStep === 3) {
           <div class="step">
-            <h1>Data Source</h1>
-            <p class="subtitle">How should HMS-CPAP access your CPAP data?</p>
+            <h1>{{ 'setup.source.title' | translate }}</h1>
+            <p class="subtitle">{{ 'setup.source.subtitle' | translate }}</p>
 
             <div class="radio-group">
               <label class="radio-option" [class.selected]="source === 'mm'">
                 <input type="radio" name="source" value="mm"
                        [(ngModel)]="source" />
                 <div class="radio-content">
-                  <strong>CpapDash Mule and Miner</strong>
-                  <span>Find your CpapDash bridge on this network automatically.</span>
+                  <strong>{{ 'setup.source.mmTitle' | translate }}</strong>
+                  <span>{{ 'setup.source.mmDesc' | translate }}</span>
                 </div>
               </label>
 
@@ -145,8 +150,8 @@ import { switchMap, tap } from 'rxjs';
                 <input type="radio" name="source" value="local"
                        [(ngModel)]="source" />
                 <div class="radio-content">
-                  <strong>Local SD Card Path</strong>
-                  <span>Read data from a mounted SD card or local directory.</span>
+                  <strong>{{ 'setup.source.localTitle' | translate }}</strong>
+                  <span>{{ 'setup.source.localDesc' | translate }}</span>
                 </div>
               </label>
 
@@ -154,8 +159,8 @@ import { switchMap, tap } from 'rxjs';
                 <input type="radio" name="source" value="ezshare"
                        [(ngModel)]="source" />
                 <div class="radio-content">
-                  <strong>ezShare WiFi SD (advanced)</strong>
-                  <span>Pull directly from an ezShare WiFi SD card in your CPAP machine.</span>
+                  <strong>{{ 'setup.source.ezshareTitle' | translate }}</strong>
+                  <span>{{ 'setup.source.ezshareDesc' | translate }}</span>
                 </div>
               </label>
 
@@ -163,8 +168,8 @@ import { switchMap, tap } from 'rxjs';
                 <input type="radio" name="source" value="skip"
                        [(ngModel)]="source" />
                 <div class="radio-content">
-                  <strong>Skip (configure later)</strong>
-                  <span>Skip data source setup and configure it manually later.</span>
+                  <strong>{{ 'setup.source.skipTitle' | translate }}</strong>
+                  <span>{{ 'setup.source.skipDesc' | translate }}</span>
                 </div>
               </label>
             </div>
@@ -173,7 +178,7 @@ import { switchMap, tap } from 'rxjs';
               <div class="source-config">
                 <div class="input-row">
                   <button class="btn-secondary" (click)="scan()" [disabled]="scanning">
-                    {{ scanning ? 'Scanning...' : 'Scan network' }}
+                    {{ (scanning ? 'setup.source.scanning' : 'setup.source.scan') | translate }}
                   </button>
                 </div>
 
@@ -191,7 +196,7 @@ import { switchMap, tap } from 'rxjs';
                         <div class="device-info">
                           <strong>{{ d.serial || d.instance }}</strong>
                           <span>
-                            {{ d.host }}@if (d.fw) { &middot; fw {{ d.fw }} }@if (!d.local_capable) { &middot; cloud mode, cannot sync locally }
+                            {{ d.host }}@if (d.fw) { &middot; fw {{ d.fw }} }@if (!d.local_capable) { &middot; {{ 'setup.source.cloudOnly' | translate }} }
                           </span>
                         </div>
                       </label>
@@ -201,10 +206,7 @@ import { switchMap, tap } from 'rxjs';
 
                 @if (scanned && devices.length === 0) {
                   <div class="test-result error">
-                    No CpapDash units answered. Check that the bridge is powered on and
-                    joined to this same network, then scan again. Some routers block the
-                    discovery traffic; you can enter the address by hand with the
-                    advanced option below.
+                    {{ 'setup.source.noneFound' | translate }}
                   </div>
                 }
               </div>
@@ -212,20 +214,24 @@ import { switchMap, tap } from 'rxjs';
 
             @if (source === 'ezshare') {
               <div class="source-config">
-                <label for="ezshare-url">ezShare URL</label>
+                <label for="ezshare-url">{{ 'setup.source.ezshareUrl' | translate }}</label>
                 <div class="input-row">
                   <input id="ezshare-url" type="text"
                          [(ngModel)]="ezshareUrl"
                          placeholder="http://192.168.4.1" />
                   <button class="btn-secondary" (click)="testEzshare()"
                           [disabled]="testing">
-                    {{ testing ? 'Testing...' : 'Test' }}
+                    {{ (testing ? 'setup.source.testing' : 'setup.source.test') | translate }}
                   </button>
                 </div>
                 @if (testResult) {
+                  <!-- The failure reason itself is whatever the fetch reported,
+                       so only the frame around it is translated. -->
                   <div class="test-result" [class.success]="testResult === 'ok'"
                        [class.error]="testResult !== 'ok'">
-                    {{ testResult === 'ok' ? 'Connection successful' : 'Connection failed: ' + testResult }}
+                    {{ testResult === 'ok'
+                        ? ('setup.source.testOk' | translate)
+                        : ('setup.source.testFailed' | translate:{ reason: testResult }) }}
                   </div>
                 }
               </div>
@@ -233,7 +239,7 @@ import { switchMap, tap } from 'rxjs';
 
             @if (source === 'local') {
               <div class="source-config">
-                <label for="local-dir">Directory Path</label>
+                <label for="local-dir">{{ 'setup.source.localDir' | translate }}</label>
                 <input id="local-dir" type="text"
                        [(ngModel)]="localDir"
                        placeholder="/media/sdcard/DATALOG" />
@@ -243,22 +249,20 @@ import { switchMap, tap } from 'rxjs';
             @if (source === 'mm') {
               <div class="advanced">
                 <label class="fld">
-                  <span>Folder for reconstructed files (required)</span>
+                  <span>{{ 'setup.source.archiveDir' | translate }}</span>
                   <input [(ngModel)]="archiveDir" name="archivedir"
                          placeholder="/Users/you/CpapDash" />
                 </label>
                 <p class="hint">
-                  The Mule and Miner hands over the raw card files. They have to
-                  land somewhere before anything can read them, so this folder is
-                  where your night-by-night data actually lives.
+                  {{ 'setup.source.archiveHint' | translate }}
                 </p>
               </div>
             }
 
             <div class="actions">
-              <button class="btn-ghost" (click)="currentStep = 2">Back</button>
+              <button class="btn-ghost" (click)="currentStep = 2">{{ 'setup.back' | translate }}</button>
               <button class="btn-primary" (click)="currentStep = 4"
-                      [disabled]="source === 'mm' && !archiveDir">Next</button>
+                      [disabled]="source === 'mm' && !archiveDir">{{ 'setup.next' | translate }}</button>
             </div>
 
             @if (error) {
@@ -269,31 +273,30 @@ import { switchMap, tap } from 'rxjs';
 
         @if (currentStep === 4) {
           <div class="step">
-            <h1>Anything else?</h1>
+            <h1>{{ 'setup.extras.title' | translate }}</h1>
             <p class="subtitle">
-              All optional, and all changeable later from Settings. Skip straight
-              to Finish if none of it applies.
+              {{ 'setup.extras.subtitle' | translate }}
             </p>
 
             <label class="radio-option check" [class.selected]="mqttEnabled">
               <input type="checkbox" [(ngModel)]="mqttEnabled" name="mqtton" />
               <div class="radio-content">
-                <strong>Publish to Home Assistant (MQTT)</strong>
-                <span>Sends nightly metrics to your broker as discovered sensors.</span>
+                <strong>{{ 'setup.extras.mqttTitle' | translate }}</strong>
+                <span>{{ 'setup.extras.mqttDesc' | translate }}</span>
               </div>
             </label>
             @if (mqttEnabled) {
               <div class="advanced">
                 <div class="row">
-                  <label class="fld"><span>Broker host</span>
+                  <label class="fld"><span>{{ 'setup.extras.mqttBroker' | translate }}</span>
                     <input [(ngModel)]="mqttBroker" name="mqttbroker" placeholder="192.168.1.10"></label>
-                  <label class="fld port"><span>Port</span>
+                  <label class="fld port"><span>{{ 'setup.extras.mqttPort' | translate }}</span>
                     <input type="number" [(ngModel)]="mqttPort" name="mqttport"></label>
                 </div>
                 <div class="row">
-                  <label class="fld"><span>Username</span>
+                  <label class="fld"><span>{{ 'setup.extras.mqttUser' | translate }}</span>
                     <input [(ngModel)]="mqttUser" name="mqttuser"></label>
-                  <label class="fld"><span>Password</span>
+                  <label class="fld"><span>{{ 'setup.extras.mqttPassword' | translate }}</span>
                     <input type="password" [(ngModel)]="mqttPassword" name="mqttpw"></label>
                 </div>
               </div>
@@ -302,15 +305,15 @@ import { switchMap, tap } from 'rxjs';
             <label class="radio-option check" [class.selected]="llmEnabled">
               <input type="checkbox" [(ngModel)]="llmEnabled" name="llmon" />
               <div class="radio-content">
-                <strong>Write plain-language night summaries (LLM)</strong>
-                <span>Uses a local Ollama by default, so nothing leaves the machine.</span>
+                <strong>{{ 'setup.extras.llmTitle' | translate }}</strong>
+                <span>{{ 'setup.extras.llmDesc' | translate }}</span>
               </div>
             </label>
             @if (llmEnabled) {
               <div class="advanced">
-                <label class="fld"><span>Endpoint</span>
+                <label class="fld"><span>{{ 'setup.extras.llmEndpoint' | translate }}</span>
                   <input [(ngModel)]="llmEndpoint" name="llmep" placeholder="http://localhost:11434"></label>
-                <label class="fld"><span>Model</span>
+                <label class="fld"><span>{{ 'setup.extras.llmModel' | translate }}</span>
                   <input [(ngModel)]="llmModel" name="llmmodel" placeholder="llama3.1"></label>
               </div>
             }
@@ -318,33 +321,30 @@ import { switchMap, tap } from 'rxjs';
             <label class="radio-option check" [class.selected]="mlEnabled">
               <input type="checkbox" [(ngModel)]="mlEnabled" name="mlon" />
               <div class="radio-content">
-                <strong>Machine-learning insights</strong>
-                <span>Trains on your own history, on this machine. Needs about a
-                      month of nights before it says anything useful.</span>
+                <strong>{{ 'setup.extras.mlTitle' | translate }}</strong>
+                <span>{{ 'setup.extras.mlDesc' | translate }}</span>
               </div>
             </label>
 
             <label class="radio-option check" [class.selected]="cloudEnabled">
               <input type="checkbox" [(ngModel)]="cloudEnabled" name="cloudon" />
               <div class="radio-content">
-                <strong>Mirror equipment and cleaning to CpapDash</strong>
-                <span>Off by default. Your therapy data stays here either way;
-                      this only mirrors the upkeep lists so the phone app can
-                      show them.</span>
+                <strong>{{ 'setup.extras.cloudTitle' | translate }}</strong>
+                <span>{{ 'setup.extras.cloudDesc' | translate }}</span>
               </div>
             </label>
             @if (cloudEnabled) {
               <div class="advanced">
-                <label class="fld"><span>API URL</span>
+                <label class="fld"><span>{{ 'setup.extras.cloudApiUrl' | translate }}</span>
                   <input [(ngModel)]="cloudApiUrl" name="cloudurl"></label>
-                <label class="fld"><span>Token</span>
+                <label class="fld"><span>{{ 'setup.extras.cloudToken' | translate }}</span>
                   <input type="password" [(ngModel)]="cloudToken" name="cloudtoken"
-                         placeholder="pasted from your CpapDash account"></label>
+                         [placeholder]="'setup.extras.cloudTokenPlaceholder' | translate"></label>
                 <label class="radio-option check" [class.selected]="cloudAutoSync">
                   <input type="checkbox" [(ngModel)]="cloudAutoSync" name="cloudauto" />
                   <div class="radio-content">
-                    <strong>Keep it in sync automatically</strong>
-                    <span>Otherwise it mirrors only when you press Sync.</span>
+                    <strong>{{ 'setup.extras.cloudAutoTitle' | translate }}</strong>
+                    <span>{{ 'setup.extras.cloudAutoDesc' | translate }}</span>
                   </div>
                 </label>
               </div>
@@ -353,18 +353,15 @@ import { switchMap, tap } from 'rxjs';
             @if (autostartSupported && autostart && autostartCanManage) {
               <div class="advanced">
                 <label class="fld">
-                  <span>When should it start?</span>
+                  <span>{{ 'setup.extras.whenStart' | translate }}</span>
                   <select [(ngModel)]="autostartScope" name="asscope">
-                    <option value="login">When I log in (no admin password)</option>
-                    <option value="boot">At boot, before anyone logs in (needs admin)</option>
+                    <option value="login">{{ 'setup.extras.startLogin' | translate }}</option>
+                    <option value="boot">{{ 'setup.extras.startBoot' | translate }}</option>
                   </select>
                 </label>
                 @if (autostartScope === 'boot') {
                   <p class="hint">
-                    A boot service runs with no user session, so it is pinned to
-                    your account and your data folder explicitly. Finishing here
-                    writes the service file and shows you one command to run with
-                    administrator rights; nothing elevates itself behind your back.
+                    {{ 'setup.extras.bootHint' | translate }}
                   </p>
                 }
               </div>
@@ -376,13 +373,14 @@ import { switchMap, tap } from 'rxjs';
                 <input type="checkbox" [(ngModel)]="autostart" name="autostart"
                        [disabled]="!autostartCanManage" />
                 <div class="radio-content">
-                  <strong>Start when I log in</strong>
+                  <strong>{{ 'setup.extras.autostartTitle' | translate }}</strong>
                   <span>
                     @if (autostartCanManage) {
-                      Keeps collecting after a reboot. Starts at login, not at
-                      boot, so it runs once you sign in.
+                      {{ 'setup.extras.autostartDesc' | translate }}
                     } @else {
-                      {{ autostartMessage || 'Managed for you already.' }}
+                      <!-- autostartMessage is the server explaining why it will
+                           not manage this install; it arrives already worded. -->
+                      {{ autostartMessage || ('setup.extras.autostartManaged' | translate) }}
                     }
                   </span>
                 </div>
@@ -390,9 +388,9 @@ import { switchMap, tap } from 'rxjs';
             }
 
             <div class="actions">
-              <button class="btn-ghost" (click)="currentStep = 3">Back</button>
+              <button class="btn-ghost" (click)="currentStep = 3">{{ 'setup.back' | translate }}</button>
               <button class="btn-primary" (click)="finish()" [disabled]="saving">
-                {{ saving ? 'Saving...' : 'Finish' }}
+                {{ (saving ? 'setup.extras.saving' : 'setup.extras.finish') | translate }}
               </button>
             </div>
 
@@ -404,12 +402,11 @@ import { switchMap, tap } from 'rxjs';
 
         @if (currentStep === 5) {
           <div class="step">
-            <h1>Setup Complete</h1>
-            <p class="subtitle">{{ applyMessage || 'Redirecting to dashboard...' }}</p>
+            <h1>{{ 'setup.done.title' | translate }}</h1>
+            <p class="subtitle">{{ applyMessage || ('setup.done.redirecting' | translate) }}</p>
             @if (bootCommand) {
               <div class="advanced">
-                <p class="hint">One last step, to start it before login. Run this
-                   once in a terminal:</p>
+                <p class="hint">{{ 'setup.done.bootHint' | translate }}</p>
                 <pre class="cmd">{{ bootCommand }}</pre>
               </div>
             }
@@ -457,12 +454,17 @@ import { switchMap, tap } from 'rxjs';
       width: 100%;
     }
 
+    .card-top {
+      display: flex; align-items: center; gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+
     .step-indicator {
       font-size: 0.8rem;
       color: #888;
       text-transform: uppercase;
       letter-spacing: 0.05em;
-      margin-bottom: 1.5rem;
+      margin-right: auto;
     }
 
     h1 {
@@ -762,7 +764,8 @@ export class SetupComponent {
   devices: DiscoveredDevice[] = [];
   selectedDevice: DiscoveredDevice | null = null;
 
-  constructor(private api: CpapApiService, private router: Router) {
+  constructor(private api: CpapApiService, private router: Router,
+              private t: TranslateService) {
     this.api.getCapabilities().subscribe({
       next: (caps: any) => {
         this.serverBackends = (caps?.backends || [])
@@ -825,21 +828,21 @@ export class SetupComponent {
         this.dbBusy = false;
         this.dbVerified = !!r.ok;
         if (!r.ok) {
-          this.dbMessage = r.error || 'Could not connect.';
+          this.dbMessage = r.error || this.t.instant('setup.db.errConnect');
           return;
         }
         // Saying how much is already there is the point: it lets someone tell
         // "my database" from "someone else's data I am about to merge into".
         this.dbMessage = r.schema_present
           ? (r.session_count > 0
-              ? `Connected. This database already holds ${r.session_count} session(s); they will be reused.`
-              : 'Connected. Existing empty CpapDash schema found.')
-          : 'Connected. The schema will be created on first start.';
+              ? this.t.instant('setup.db.okReuse', { count: r.session_count })
+              : this.t.instant('setup.db.okEmpty'))
+          : this.t.instant('setup.db.okFresh');
       },
       error: (err) => {
         this.dbBusy = false;
         this.dbVerified = false;
-        this.dbMessage = err?.error?.error || 'Could not reach the database.';
+        this.dbMessage = err?.error?.error || this.t.instant('setup.db.errReach');
       }
     });
   }
@@ -895,7 +898,7 @@ export class SetupComponent {
 
     if (this.source === 'mm') {
       if (!this.selectedDevice) {
-        this.error = 'Scan and choose your CpapDash unit first, or pick another option.';
+        this.error = this.t.instant('setup.source.pickDeviceFirst');
         this.saving = false;
         return;
       }
@@ -973,15 +976,14 @@ export class SetupComponent {
         if (r && r.restarting === false) {
           // Said plainly rather than spinning forever on a restart that is not
           // coming.
-          this.applyMessage = r.message ||
-            'Settings saved. Restart hms_cpap for them to take effect.';
+          this.applyMessage = r.message || this.t.instant('setup.done.restartNeeded');
           return;
         }
-        this.applyMessage = 'Applying your settings...';
+        this.applyMessage = this.t.instant('setup.done.applying');
         this.waitForRestart();
       },
       error: (err) => {
-        this.error = 'Failed to save configuration. Please try again.';
+        this.error = this.t.instant('setup.extras.saveFailed');
         this.saving = false;
         console.error('Setup error:', err);
       }
@@ -995,8 +997,7 @@ export class SetupComponent {
   /// the server is briefly gone by design.
   private waitForRestart(attempt = 0): void {
     if (attempt > 40) {           // ~20s, far beyond a two-second restart
-      this.applyMessage = 'Saved, but the service did not come back. ' +
-                          'Start hms_cpap again and reload this page.';
+      this.applyMessage = this.t.instant('setup.done.noComeback');
       return;
     }
     setTimeout(() => {
