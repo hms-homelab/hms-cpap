@@ -1,5 +1,6 @@
 import { Component, Input } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { formatIndex } from '../../utils/format';
 
 export interface StrMetricsData {
   ahi: number;
@@ -27,7 +28,7 @@ export interface StrMetricsData {
             <i class="fa-solid fa-heart-pulse"></i>
           </div>
           <div class="mu-label">STR AHI</div>
-          <div class="mu-value">{{ data.ahi.toFixed(2) }}</div>
+          <div class="mu-value">{{ fmtIndex(data.ahi) }}</div>
         </div>
         <div class="mu-card-vert">
           <div class="mu-icon" [style.background]="usageColor + '22'" [style.color]="usageColor">
@@ -48,22 +49,22 @@ export interface StrMetricsData {
         <div class="idx-card">
           <i class="fa-solid fa-octagon-xmark idx-icon" style="color: #f87171;"></i>
           <div class="idx-label">OAI</div>
-          <div class="idx-value">{{ data.oai.toFixed(1) }}</div>
+          <div class="idx-value">{{ fmtIndex(data.oai) }}</div>
         </div>
         <div class="idx-card">
           <i class="fa-solid fa-circle-exclamation idx-icon" style="color: #fb923c;"></i>
           <div class="idx-label">CAI</div>
-          <div class="idx-value">{{ data.cai.toFixed(1) }}</div>
+          <div class="idx-value">{{ fmtIndex(data.cai) }}</div>
         </div>
         <div class="idx-card">
           <i class="fa-solid fa-gauge idx-icon" style="color: #fbbf24;"></i>
           <div class="idx-label">HI</div>
-          <div class="idx-value">{{ data.hi.toFixed(1) }}</div>
+          <div class="idx-value">{{ fmtIndex(data.hi) }}</div>
         </div>
         <div class="idx-card">
           <i class="fa-solid fa-water idx-icon" style="color: #60a5fa;"></i>
           <div class="idx-label">RERA</div>
-          <div class="idx-value">{{ data.rin.toFixed(1) }}</div>
+          <div class="idx-value">{{ fmtIndex(data.rin) }}</div>
         </div>
       </div>
     </div>
@@ -99,6 +100,9 @@ export interface StrMetricsData {
 })
 export class StrMetricsComponent {
   @Input() data: StrMetricsData | null = null;
+
+  /** SDD-079: index group (AHI, OAI, CAI, HI, RIN) renders at two decimals. */
+  readonly fmtIndex = formatIndex;
 
   get ahiColor(): string {
     if (!this.data) return '#888';

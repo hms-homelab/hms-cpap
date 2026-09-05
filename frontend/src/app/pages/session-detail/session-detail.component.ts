@@ -9,6 +9,7 @@ import { MetricCardComponent } from '../../components/metric-card/metric-card.co
 import { SessionDetail, SessionEvent, SignalData, VitalsData, OximetryData } from '../../models/session.model';
 import { formatTimestamps, eventAnnotations, makeDataset, makeFillBand, EVENT_COLORS } from '../../utils/chart-helpers';
 import { detectDesaturations, desatAnnotations, odiPerHour, inferSampleSec } from '../../utils/signal-analysis';
+import { formatIndex } from '../../utils/format';
 import { Chart, ChartDataset, registerables } from 'chart.js';
 import annotationPlugin from 'chartjs-plugin-annotation';
 import zoomPlugin from 'chartjs-plugin-zoom';
@@ -80,7 +81,7 @@ const SIGNAL_DEFS: SignalDef[] = [
       </div>
 
       <div class="cards">
-        <app-metric-card *ngIf="!oximetryOnly" label="AHI" [value]="session.ahi || '0'" unit="events/h"
+        <app-metric-card *ngIf="!oximetryOnly" label="AHI" [value]="fmtIndex(session.ahi, '0.00')" unit="events/h"
           icon="fa-solid fa-heart-pulse" [iconColor]="ahiColor" />
         <app-metric-card label="Duration" [value]="isLive ? liveDuration : fmtDuration(session.duration_hours)" unit=""
           icon="fa-solid fa-clock-rotate-left" iconColor="#60a5fa" />
@@ -252,6 +253,9 @@ const SIGNAL_DEFS: SignalDef[] = [
 export class SessionDetailComponent implements OnInit, OnDestroy {
   @ViewChild('detailCanvas') detailCanvasRef!: ElementRef<HTMLCanvasElement>;
   @ViewChild('doughnutCanvas') doughnutRef!: ElementRef<HTMLCanvasElement>;
+
+  /** SDD-079: index group renders at two decimals. */
+  readonly fmtIndex = formatIndex;
 
   date = '';
   session: SessionDetail | null = null;
@@ -612,7 +616,7 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
     return {
       ...first,
       duration_hours: totalHours.toFixed(2),
-      ahi: totalHours > 0 ? (totalEvents / totalHours).toFixed(2) : '0',
+      ahi: totalHours > 0 ? formatIndex(totalEvents / totalHours, '0') : '0',
       total_events: totalEvents.toString(),
       obstructive_apneas: sessions.reduce((sum, s) => sum + +(s.obstructive_apneas || 0), 0).toString(),
       central_apneas: sessions.reduce((sum, s) => sum + +(s.central_apneas || 0), 0).toString(),
