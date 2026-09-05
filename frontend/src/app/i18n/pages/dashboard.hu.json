@@ -1,5 +1,41 @@
 {
   "dashboard": {
+    "page": {
+      "heading": "Alvásterápia: {{device}}",
+      "lastNight": "Tegnap éjszaka",
+      "duration": "Időtartam",
+      "cpapdashIndex": "CpapDash index",
+      "refreshSummary": "Összefoglaló frissítése",
+      "regenerateTitle": "A legutóbbi alvásidőszak MI-összefoglalójának újragenerálása",
+      "generating": "Készítés...",
+      "queueFailed": "Az összefoglalót nem sikerült sorba állítani",
+      "unknown": "Ismeretlen"
+    },
+    "chart": {
+      "ahiTrend": "AHI-trend (30 nap)",
+      "usageHours": "Használati órák (30 nap)",
+      "pressureTrend": "Nyomástrend (30 nap)",
+      "leakTrend": "Szivárgási trend (30 nap)",
+      "eventBreakdown": "Események megoszlása (30 nap)",
+      "respiratoryTrends": "Légzési trendek (30 nap)",
+      "csr": "Cheyne-Stokes légzés (30 nap)",
+      "eprLevel": "EPR-szint (30 nap)",
+      "usageAxis": "Használat (óra)",
+      "respRate": "Légzésszám (légvétel/perc)",
+      "tidalVol": "Légzési térf. (mL)",
+      "minVent": "Percvent. (L/perc)",
+      "rateVentAxis": "Szám / ventilláció",
+      "csrLabel": "CSR (perc)",
+      "eprLabel": "EPR-szint",
+      "level": "Szint",
+      "minutes": "Perc"
+    },
+    "band": {
+      "excellent": "Kiváló",
+      "good": "Jó",
+      "fair": "Közepes",
+      "needsAttention": "Figyelmet igényel"
+    },
     "title": {
       "aiSummary": "MI-összefoglaló az alvásidőszakról",
       "ml": "ML-intelligencia",

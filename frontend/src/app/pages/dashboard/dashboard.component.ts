@@ -1,5 +1,6 @@
 import { Component, OnInit, ViewChild, ElementRef, AfterViewInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { TranslatePipe, TranslateService } from '@ngx-translate/core';
 import { CpapApiService } from '../../services/cpap-api.service';
 import { formatIndex } from '../../utils/format';
 import { KeyMetricsComponent, KeyMetricsData } from '../../components/dashboard/key-metrics.component';
@@ -27,10 +28,10 @@ const MODE_LABELS: Record<string, string> = {
   imports: [CommonModule, KeyMetricsComponent, OximetryRowComponent, AiSummaryComponent,
             TherapyInsightsComponent, StrMetricsComponent, EventsBreakdownComponent,
             PressureSectionComponent, RespiratoryMetricsComponent, RealtimeStatusComponent,
-            MlIntelligenceComponent, MyAirCompareComponent],
+            MlIntelligenceComponent, MyAirCompareComponent, TranslatePipe],
   template: `
     <div class="dashboard">
-      <h2>{{ deviceName }} Sleep Therapy</h2>
+      <h2>{{ 'dashboard.page.heading' | translate:{ device: deviceName } }}</h2>
       <div class="dash-subtitle" *ngIf="data">Last Session - {{ formatDate(data.latest_night.date) }}</div>
 
       <!-- SDD-019: the index. Hidden entirely when there is nothing to score,
@@ -42,12 +43,12 @@ const MODE_LABELS: Record<string, string> = {
             {{ data!.sleep_index_7night }}
           </div>
           <div class="index-caption">
-            <div class="index-title">CpapDash index</div>
+            <div class="index-title">{{ 'dashboard.page.cpapdashIndex' | translate }}</div>
             <div class="index-sub">7-night average &middot; {{ bandLabel(data!.sleep_index_7night_band) }}</div>
           </div>
         </div>
         <div class="index-last" *ngIf="data!.latest_night.sleep_index !== null">
-          <span class="index-last-label">Last night</span>
+          <span class="index-last-label">{{ 'dashboard.page.lastNight' | translate }}</span>
           <span class="index-last-value" [class]="'band-' + data!.latest_night.sleep_index_band">
             {{ data!.latest_night.sleep_index }}
           </span>
@@ -64,7 +65,7 @@ const MODE_LABELS: Record<string, string> = {
           </div>
           <div class="gauge-container">
             <canvas #durationGauge width="140" height="140"></canvas>
-            <div class="gauge-label">Duration</div>
+            <div class="gauge-label">{{ 'dashboard.page.duration' | translate }}</div>
           </div>
           <div class="gauge-container" *ngIf="liveSpO2">
             <canvas #spo2Gauge width="140" height="140"></canvas>
@@ -96,12 +97,12 @@ const MODE_LABELS: Record<string, string> = {
         <!-- 3. AI Session Summary -->
         <div class="ai-summary-wrapper">
           <div class="ai-summary-header">
-            <span class="ai-summary-label" *ngIf="aiSummaryText">AI Session Summary</span>
+            <span class="ai-summary-label" *ngIf="aiSummaryText">{{ 'dashboard.title.aiSummary' | translate }}</span>
             <button class="refresh-summary-btn"
               [disabled]="summaryRefreshing || !data?.latest_night?.date"
               (click)="refreshAiSummary()"
-              title="Regenerate AI summary for latest session">
-              {{ summaryRefreshing ? 'Generating...' : 'Refresh Summary' }}
+              [title]="'dashboard.page.regenerateTitle' | translate">
+              {{ (summaryRefreshing ? 'dashboard.page.generating' : 'dashboard.page.refreshSummary') | translate }}
             </button>
             <span class="refresh-msg" *ngIf="summaryRefreshMsg">{{ summaryRefreshMsg }}</span>
           </div>
@@ -260,7 +261,7 @@ export class DashboardComponent implements OnInit, AfterViewInit {
   summaryRefreshing = false;
   summaryRefreshMsg = '';
 
-  constructor(private api: CpapApiService) {}
+  constructor(private api: CpapApiService, private t: TranslateService) {}
 
   fmtDuration(val: string | number | undefined): string {
     const hours = +(val || 0);
@@ -281,10 +282,10 @@ export class DashboardComponent implements OnInit, AfterViewInit {
   /// the words belong here.
   bandLabel(band: SleepIndexBand | null): string {
     switch (band) {
-      case 'excellent': return 'Excellent';
-      case 'good': return 'Good';
-      case 'fair': return 'Fair';
-      case 'needs_attention': return 'Needs attention';
+      case 'excellent': return this.t.instant('dashboard.band.excellent');
+      case 'good': return this.t.instant('dashboard.band.good');
+      case 'fair': return this.t.instant('dashboard.band.fair');
+      case 'needs_attention': return this.t.instant('dashboard.band.needsAttention');
       default: return '';
     }
   }
@@ -347,7 +348,9 @@ export class DashboardComponent implements OnInit, AfterViewInit {
     this.api.getDashboard().subscribe(d => {
       this.data = d;
       const mode = d.latest_night.therapy_mode || '0';
-      this.modeName = MODE_LABELS[mode] || 'Unknown';
+      // MODE_LABELS holds device modes (CPAP, APAP, ASVAuto) which are ResMed's
+      // own names and stay untranslated; only the fallback is copy.
+      this.modeName = MODE_LABELS[mode] || this.t.instant('dashboard.page.unknown');
       this.isCpapMode = mode === '0';
 
       // Populate key metrics (initial from STR, overridden by sessions below)
@@ -503,7 +506,7 @@ export class DashboardComponent implements OnInit, AfterViewInit {
         }, 35000);
       },
       error: () => {
-        this.summaryRefreshMsg = 'Failed to queue summary';
+        this.summaryRefreshMsg = this.t.instant('dashboard.page.queueFailed');
         this.summaryRefreshing = false;
       }
     });
@@ -694,7 +697,7 @@ export class DashboardComponent implements OnInit, AfterViewInit {
       },
       options: {
         responsive: true,
-        plugins: { legend: { display: false }, title: { display: true, text: 'AHI Trend (30 days)', color: '#e0e0e0' } },
+        plugins: { legend: { display: false }, title: { display: true, text: this.t.instant('dashboard.chart.ahiTrend'), color: '#e0e0e0' } },
         scales: darkScales(),
       }
     }));
@@ -705,25 +708,25 @@ export class DashboardComponent implements OnInit, AfterViewInit {
       data: {
         labels,
         datasets: [{
-          label: 'Usage (hours)', data: this.data.usage_trend.map(p => +p.value),
+          label: this.t.instant('dashboard.chart.usageAxis'), data: this.data.usage_trend.map(p => +p.value),
           backgroundColor: this.data.usage_trend.map(p => +p.value >= 4 ? 'rgba(76,175,80,0.7)' : 'rgba(255,152,0,0.7)'),
           borderRadius: 4,
         }]
       },
       options: {
         responsive: true,
-        plugins: { legend: { display: false }, title: { display: true, text: 'Usage Hours (30 days)', color: '#e0e0e0' } },
+        plugins: { legend: { display: false }, title: { display: true, text: this.t.instant('dashboard.chart.usageHours'), color: '#e0e0e0' } },
         scales: darkScales(),
       }
     }));
 
     // Fetch additional trends
-    this.api.getTrend('pressure', 30).subscribe(d => this.renderTrendChart(d, this.pressureChartRef, 'Pressure Trend (30 days)', [
+    this.api.getTrend('pressure', 30).subscribe(d => this.renderTrendChart(d, this.pressureChartRef, this.t.instant('dashboard.chart.pressureTrend'), [
       { key: 'mask_press_50', label: 'P50', color: '#ce93d8' },
       { key: 'mask_press_95', label: 'P95', color: '#ba68c8', fill: '-1' },
     ]));
 
-    this.api.getTrend('leak', 30).subscribe(d => this.renderTrendChart(d, this.leakChartRef, 'Leak Trend (30 days)', [
+    this.api.getTrend('leak', 30).subscribe(d => this.renderTrendChart(d, this.leakChartRef, this.t.instant('dashboard.chart.leakTrend'), [
       { key: 'leak_50', label: 'L50', color: '#ffb74d' },
       { key: 'leak_95', label: 'L95', color: '#ff9800', fill: '-1' },
     ]));
@@ -783,7 +786,7 @@ export class DashboardComponent implements OnInit, AfterViewInit {
         responsive: true,
         plugins: {
           legend: { labels: { color: '#ccc', font: { size: 10 } } },
-          title: { display: true, text: 'Event Breakdown (30 days)', color: '#e0e0e0' },
+          title: { display: true, text: this.t.instant('dashboard.chart.eventBreakdown'), color: '#e0e0e0' },
         },
         scales: {
           x: { stacked: true, ticks: { color: '#888' }, grid: { color: '#333' } },
@@ -802,15 +805,15 @@ export class DashboardComponent implements OnInit, AfterViewInit {
         labels,
         datasets: [
           {
-            label: 'Resp Rate (br/min)', data: data.map(p => +(p['resp_rate_50'] || 0)),
+            label: this.t.instant('dashboard.chart.respRate'), data: data.map(p => +(p['resp_rate_50'] || 0)),
             borderColor: '#81c784', tension: 0.3, pointRadius: 2, borderWidth: 1.5, yAxisID: 'y',
           },
           {
-            label: 'Tidal Vol (mL)', data: data.map(p => +(p['tid_vol_50'] || 0) * 1000),
+            label: this.t.instant('dashboard.chart.tidalVol'), data: data.map(p => +(p['tid_vol_50'] || 0) * 1000),
             borderColor: '#4dd0e1', tension: 0.3, pointRadius: 2, borderWidth: 1.5, yAxisID: 'y1',
           },
           {
-            label: 'Min Vent (L/min)', data: data.map(p => +(p['min_vent_50'] || 0)),
+            label: this.t.instant('dashboard.chart.minVent'), data: data.map(p => +(p['min_vent_50'] || 0)),
             borderColor: '#aed581', tension: 0.3, pointRadius: 2, borderWidth: 1.5, yAxisID: 'y',
           },
         ],
@@ -819,11 +822,11 @@ export class DashboardComponent implements OnInit, AfterViewInit {
         responsive: true,
         plugins: {
           legend: { labels: { color: '#ccc', font: { size: 10 } } },
-          title: { display: true, text: 'Respiratory Trends (30 days)', color: '#e0e0e0' },
+          title: { display: true, text: this.t.instant('dashboard.chart.respiratoryTrends'), color: '#e0e0e0' },
         },
         scales: {
           x: { ticks: { color: '#888' }, grid: { color: '#333' } },
-          y: { position: 'left', ticks: { color: '#888' }, grid: { color: '#333' }, title: { display: true, text: 'Rate / Vent', color: '#888' } },
+          y: { position: 'left', ticks: { color: '#888' }, grid: { color: '#333' }, title: { display: true, text: this.t.instant('dashboard.chart.rateVentAxis'), color: '#888' } },
           y1: { position: 'right', ticks: { color: '#4dd0e1' }, grid: { drawOnChartArea: false }, title: { display: true, text: 'Tidal Vol (mL)', color: '#4dd0e1' } },
         },
       },
@@ -838,7 +841,7 @@ export class DashboardComponent implements OnInit, AfterViewInit {
       data: {
         labels,
         datasets: [{
-          label: 'CSR (min)', data: data.map(p => +(p['csr'] || 0)),
+          label: this.t.instant('dashboard.chart.csrLabel'), data: data.map(p => +(p['csr'] || 0)),
           backgroundColor: 'rgba(239,83,80,0.6)', borderRadius: 3,
         }],
       },
@@ -846,11 +849,11 @@ export class DashboardComponent implements OnInit, AfterViewInit {
         responsive: true,
         plugins: {
           legend: { display: false },
-          title: { display: true, text: 'Cheyne-Stokes Respiration (30 days)', color: '#e0e0e0' },
+          title: { display: true, text: this.t.instant('dashboard.chart.csr'), color: '#e0e0e0' },
         },
         scales: {
           x: { ticks: { color: '#888' }, grid: { color: '#333' } },
-          y: { ticks: { color: '#888' }, grid: { color: '#333' }, beginAtZero: true, title: { display: true, text: 'Minutes', color: '#888' } },
+          y: { ticks: { color: '#888' }, grid: { color: '#333' }, beginAtZero: true, title: { display: true, text: this.t.instant('dashboard.chart.minutes'), color: '#888' } },
         },
       },
     }));
@@ -864,7 +867,7 @@ export class DashboardComponent implements OnInit, AfterViewInit {
       data: {
         labels,
         datasets: [{
-          label: 'EPR Level', data: data.map(p => +(p['epr_level'] || 0)),
+          label: this.t.instant('dashboard.chart.eprLabel'), data: data.map(p => +(p['epr_level'] || 0)),
           borderColor: '#9575cd', backgroundColor: 'rgba(149,117,205,0.15)',
           fill: true, tension: 0, pointRadius: 3, borderWidth: 2, stepped: true,
         }],
@@ -873,11 +876,11 @@ export class DashboardComponent implements OnInit, AfterViewInit {
         responsive: true,
         plugins: {
           legend: { display: false },
-          title: { display: true, text: 'EPR Level (30 days)', color: '#e0e0e0' },
+          title: { display: true, text: this.t.instant('dashboard.chart.eprLevel'), color: '#e0e0e0' },
         },
         scales: {
           x: { ticks: { color: '#888' }, grid: { color: '#333' } },
-          y: { ticks: { color: '#888', stepSize: 1 }, grid: { color: '#333' }, min: 0, max: 3, title: { display: true, text: 'Level', color: '#888' } },
+          y: { ticks: { color: '#888', stepSize: 1 }, grid: { color: '#333' }, min: 0, max: 3, title: { display: true, text: this.t.instant('dashboard.chart.level'), color: '#888' } },
         },
       },
     }));

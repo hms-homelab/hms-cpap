@@ -1,5 +1,41 @@
 {
   "dashboard": {
+    "page": {
+      "heading": "{{device}} Sleep Therapy",
+      "lastNight": "Last night",
+      "duration": "Duration",
+      "cpapdashIndex": "CpapDash index",
+      "refreshSummary": "Refresh Summary",
+      "regenerateTitle": "Regenerate AI summary for latest session",
+      "generating": "Generating...",
+      "queueFailed": "Failed to queue summary",
+      "unknown": "Unknown"
+    },
+    "chart": {
+      "ahiTrend": "AHI Trend (30 days)",
+      "usageHours": "Usage Hours (30 days)",
+      "pressureTrend": "Pressure Trend (30 days)",
+      "leakTrend": "Leak Trend (30 days)",
+      "eventBreakdown": "Event Breakdown (30 days)",
+      "respiratoryTrends": "Respiratory Trends (30 days)",
+      "csr": "Cheyne-Stokes Respiration (30 days)",
+      "eprLevel": "EPR Level (30 days)",
+      "usageAxis": "Usage (hours)",
+      "respRate": "Resp Rate (br/min)",
+      "tidalVol": "Tidal Vol (mL)",
+      "minVent": "Min Vent (L/min)",
+      "rateVentAxis": "Rate / Vent",
+      "csrLabel": "CSR (min)",
+      "eprLabel": "EPR Level",
+      "level": "Level",
+      "minutes": "Minutes"
+    },
+    "band": {
+      "excellent": "Excellent",
+      "good": "Good",
+      "fair": "Fair",
+      "needsAttention": "Needs attention"
+    },
     "title": {
       "aiSummary": "AI Session Summary",
       "ml": "ML Intelligence",

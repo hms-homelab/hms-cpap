@@ -1,5 +1,41 @@
 {
   "dashboard": {
+    "page": {
+      "heading": "Terapia do sono: {{device}}",
+      "lastNight": "Noite passada",
+      "duration": "Duração",
+      "cpapdashIndex": "Índice do CpapDash",
+      "refreshSummary": "Atualizar resumo",
+      "regenerateTitle": "Gerar de novo o resumo com IA da última sessão",
+      "generating": "Gerando...",
+      "queueFailed": "Não foi possível colocar o resumo na fila",
+      "unknown": "Desconhecido"
+    },
+    "chart": {
+      "ahiTrend": "Tendência do IAH (30 dias)",
+      "usageHours": "Horas de uso (30 dias)",
+      "pressureTrend": "Tendência da pressão (30 dias)",
+      "leakTrend": "Tendência da fuga (30 dias)",
+      "eventBreakdown": "Divisão dos eventos (30 dias)",
+      "respiratoryTrends": "Tendências respiratórias (30 dias)",
+      "csr": "Respiração de Cheyne-Stokes (30 dias)",
+      "eprLevel": "Nível do EPR (30 dias)",
+      "usageAxis": "Uso (horas)",
+      "respRate": "Freq. resp. (resp/min)",
+      "tidalVol": "Vol. corrente (mL)",
+      "minVent": "Vent. minuto (L/min)",
+      "rateVentAxis": "Frequência / ventilação",
+      "csrLabel": "CSR (min)",
+      "eprLabel": "Nível do EPR",
+      "level": "Nível",
+      "minutes": "Minutos"
+    },
+    "band": {
+      "excellent": "Excelente",
+      "good": "Bom",
+      "fair": "Regular",
+      "needsAttention": "Precisa de atenção"
+    },
     "title": {
       "aiSummary": "Resumo da sessão com IA",
       "ml": "Inteligência de ML",
