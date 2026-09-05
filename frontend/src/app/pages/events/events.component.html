@@ -31,7 +31,9 @@
     </div>
   </div>
 
-  <table class="events-table" *ngIf="rows.length > 0">
+  <!-- Same reason as the sessions table: scroll the strip, not the page. -->
+  <div class="table-scroll" *ngIf="rows.length > 0">
+  <table class="events-table">
     <thead>
       <tr>
         <th>{{ 'events.table.night' | translate }}</th>
@@ -52,6 +54,7 @@
       </tr>
     </tbody>
   </table>
+  </div>
 
   <div class="empty" *ngIf="!loading && !rows.length && !loadError">
     {{ 'events.empty' | translate }}

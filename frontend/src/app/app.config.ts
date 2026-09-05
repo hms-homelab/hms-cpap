@@ -7,7 +7,7 @@ import {
 } from '@angular/core';
 import { provideRouter } from '@angular/router';
 import { provideHttpClient, withInterceptors } from '@angular/common/http';
-import { provideTranslateService } from '@ngx-translate/core';
+import { TranslateLoader, provideTranslateService } from '@ngx-translate/core';
 
 import { routes } from './app.routes';
 import { apiBaseInterceptor } from './interceptors/api-base.interceptor';
@@ -28,7 +28,11 @@ export const appConfig: ApplicationConfig = {
     // root-absolute asset fetch resolves somewhere else. See bundled-loader.ts.
     provideTranslateService({
       fallbackLang: 'en',
-      loader: { provide: BundledTranslateLoader, useClass: BundledTranslateLoader },
+      // The token MUST be TranslateLoader, the abstract class TranslateService
+      // injects. Providing the concrete class under its own name satisfies
+      // nobody: TranslateService then fails to construct, and because every
+      // component pulls in TranslatePipe the whole app stops bootstrapping.
+      loader: { provide: TranslateLoader, useClass: BundledTranslateLoader },
     }),
     // Resolve and apply the language BEFORE the first view renders, so nobody
     // sees a frame of raw translation keys.

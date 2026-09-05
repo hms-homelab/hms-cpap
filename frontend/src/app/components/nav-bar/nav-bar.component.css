@@ -34,3 +34,41 @@
 
 .nav-links a:hover { color: #fff; background: rgba(255,255,255,0.08); }
 .nav-links a.active { color: #64b5f6; background: rgba(100,181,246,0.12); }
+
+/*
+ * Phones. Brand and eight destinations plus the language switcher cannot fit
+ * 375px in ANY language -- English already needed 1007px and Hungarian 1148px,
+ * so every page scrolled sideways on a phone. The bar becomes two rows and the
+ * link strip scrolls horizontally.
+ *
+ * Scrolled rather than collapsed into a hamburger: a tab strip keeps every
+ * destination visible and one tap away, and this is a dashboard people check
+ * quickly rather than navigate deeply. The fixed 56px height has to go with it
+ * or the second row is clipped.
+ */
+@media (max-width: 768px) {
+  .nav-bar {
+    height: auto;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+    padding: 0.5rem 0 0;
+  }
+
+  .nav-brand { padding: 0 1rem 0.5rem; font-size: 1.05rem; }
+
+  .nav-links {
+    gap: 0.25rem;
+    padding: 0 1rem 0.5rem;
+    overflow-x: auto;
+    /* Momentum scrolling on iOS, and no scrollbar eating 15px of a 375px bar. */
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+
+  .nav-links::-webkit-scrollbar { display: none; }
+
+  /* Without this the flex children shrink to fit and the labels wrap to two
+     lines instead of the strip scrolling. */
+  .nav-links a { flex: 0 0 auto; padding: 0.35rem 0.6rem; font-size: 0.9rem; }
+}

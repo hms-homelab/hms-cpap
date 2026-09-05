@@ -20,7 +20,8 @@ h2 { color: #e0e0e0; margin-bottom: 1rem; }
 }
 .type-chip.on { border-color: var(--chip-color); color: var(--chip-color); }
 
-.events-table { width: 100%; border-collapse: collapse; }
+.table-scroll { overflow-x: auto; }
+.events-table { width: 100%; min-width: 460px; border-collapse: collapse; }
 .events-table th {
   text-align: left; padding: 0.6rem; color: #888; border-bottom: 2px solid #333;
   font-size: 0.8rem; text-transform: uppercase;

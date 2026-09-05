@@ -1,6 +1,9 @@
 .sessions-page { padding: 1.5rem; }
 h2 { color: #e0e0e0; margin-bottom: 1rem; }
-.session-table { width: 100%; border-collapse: collapse; }
+/* min-width keeps the columns legible instead of letting twelve of them
+   squeeze into 375px; the wrapper scrolls once they no longer fit. */
+.table-scroll { overflow-x: auto; }
+.session-table { width: 100%; min-width: 680px; border-collapse: collapse; }
 .session-table th { text-align: left; padding: 0.6rem; color: #888; border-bottom: 2px solid #333; font-size: 0.8rem; text-transform: uppercase; }
 .session-table td { padding: 0.6rem; color: #e0e0e0; border-bottom: 1px solid #2a2a3a; }
 .clickable { cursor: pointer; }

@@ -17,7 +17,11 @@
     </button>
   </div>
 
-  <table class="session-table" *ngIf="sessions.length > 0">
+  <!-- Twelve columns cannot fit a phone, and squeezing them would make the
+       numbers unreadable, so the table scrolls inside its own strip rather than
+       dragging the whole page sideways. -->
+  <div class="table-scroll" *ngIf="sessions.length > 0">
+  <table class="session-table">
     <thead>
       <!-- OA / CA / H / RERA are the parser's own event abbreviations and stay
            untranslated for the same reason the Events page chips do: they match
@@ -121,6 +125,7 @@
       </tr>
     </tbody>
   </table>
+  </div>
 
   <div class="load-more-bar" *ngIf="sessions.length > 0 && hasMore">
     <button class="load-more" [disabled]="loadingMore" (click)="loadMore()">

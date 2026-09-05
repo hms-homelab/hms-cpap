@@ -54,3 +54,4 @@ node_modules/
 dist/
 .angular/
 proxy.dev.json
+.narrow-shots/
