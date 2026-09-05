@@ -1,5 +1,6 @@
 import { Component, Input } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { TranslatePipe } from '@ngx-translate/core';
 
 export interface EventsBreakdownData {
   obstructive: number;
@@ -14,12 +15,12 @@ export interface EventsBreakdownData {
 @Component({
   selector: 'app-events-breakdown',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, TranslatePipe],
   template: `
     <div class="section" *ngIf="data">
       <div class="section-header">
-        <div class="section-title"><i class="fa-solid fa-chart-pie"></i> Sleep Events Breakdown</div>
-        <div class="section-subtitle">Apnea &amp; Hypopnea Analysis</div>
+        <div class="section-title"><i class="fa-solid fa-chart-pie"></i> {{ 'dashboard.title.events' | translate }}</div>
+        <div class="section-subtitle">{{ 'dashboard.subtitle.events' | translate }}</div>
       </div>
       <div class="metrics-row">
         <div class="evt-card">
@@ -27,7 +28,7 @@ export interface EventsBreakdownData {
             <i class="fa-solid fa-ban"></i>
           </div>
           <div class="evt-content">
-            <div class="evt-label">Obstructive</div>
+            <div class="evt-label">{{ 'dashboard.events.obstructive' | translate }}</div>
             <div class="evt-value">{{ data.obstructive }}</div>
           </div>
         </div>
@@ -36,7 +37,7 @@ export interface EventsBreakdownData {
             <i class="fa-solid fa-circle-exclamation"></i>
           </div>
           <div class="evt-content">
-            <div class="evt-label">Central</div>
+            <div class="evt-label">{{ 'dashboard.events.central' | translate }}</div>
             <div class="evt-value">{{ data.central }}</div>
           </div>
         </div>
@@ -45,7 +46,7 @@ export interface EventsBreakdownData {
             <i class="fa-solid fa-gauge-simple"></i>
           </div>
           <div class="evt-content">
-            <div class="evt-label">Hypopneas</div>
+            <div class="evt-label">{{ 'dashboard.events.hypopneas' | translate }}</div>
             <div class="evt-value">{{ data.hypopneas }}</div>
           </div>
         </div>
@@ -56,7 +57,7 @@ export interface EventsBreakdownData {
             <i class="fa-solid fa-water"></i>
           </div>
           <div class="evt-content">
-            <div class="evt-label">RERAs</div>
+            <div class="evt-label">{{ 'dashboard.events.reras' | translate }}</div>
             <div class="evt-value">{{ data.reras }}</div>
             <div class="evt-sub">Respiratory Effort</div>
           </div>
@@ -66,7 +67,7 @@ export interface EventsBreakdownData {
             <i class="fa-solid fa-stopwatch"></i>
           </div>
           <div class="evt-content">
-            <div class="evt-label">Max Event</div>
+            <div class="evt-label">{{ 'dashboard.events.maxEvent' | translate }}</div>
             <div class="evt-value">{{ data.maxEventDuration.toFixed(1) }}s</div>
           </div>
         </div>
@@ -75,7 +76,7 @@ export interface EventsBreakdownData {
             <i class="fa-regular fa-stopwatch"></i>
           </div>
           <div class="evt-content">
-            <div class="evt-label">Avg Event</div>
+            <div class="evt-label">{{ 'dashboard.events.avgEvent' | translate }}</div>
             <div class="evt-value">{{ data.avgEventDuration.toFixed(1) }}s</div>
           </div>
         </div>

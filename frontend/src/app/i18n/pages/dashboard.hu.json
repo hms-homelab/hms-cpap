@@ -1,0 +1,103 @@
+{
+  "dashboard": {
+    "title": {
+      "aiSummary": "MI-összefoglaló az alvásidőszakról",
+      "ml": "ML-intelligencia",
+      "oximetry": "O2 Ring oximetria",
+      "realtime": "Valós idejű állapot",
+      "events": "Alvási események megoszlása",
+      "str": "STR napi mérőszámok",
+      "insights": "Terápiás elemzések",
+      "pressure": "Terápiás nyomás",
+      "respiratory": "Légzési mérőszámok"
+    },
+    "subtitle": {
+      "events": "Apnoe- és hypopnoe-elemzés",
+      "respiratory": "Légzésminták és ventilláció",
+      "oximetry": "Wellue O2Ring -- SpO2 és pulzusszám"
+    },
+    "keyMetrics": {
+      "title": "Fő mérőszámok",
+      "subtitle": "Az utolsó alvásidőszak teljesítménye",
+      "ahiScore": "AHI-pontszám",
+      "usage": "Használat",
+      "targetMet": "4h+ cél teljesítve",
+      "maskLeak": "Maszkszivárgás",
+      "totalEvents": "Összes esemény",
+      "eventsPerHr": "{{v}} esemény/óra",
+      "session": "Alvásidőszak",
+      "running": "Folyamatban",
+      "completed": "Befejezve",
+      "ahiExcellent": "Kiváló",
+      "ahiMild": "Enyhe apnoe",
+      "ahiModerate": "Közepes",
+      "ahiSevere": "Súlyos",
+      "leakExcellent": "Kiváló",
+      "leakAcceptable": "Elfogadható",
+      "leakHigh": "Magas szivárgás"
+    },
+    "str": {
+      "subtitle": "Hivatalos ResMed indexek az STR.edf fájlból",
+      "ahi": "STR AHI",
+      "usage": "STR használat",
+      "leakP95": "STR szivárgás P95"
+    },
+    "events": {
+      "obstructive": "Obstruktív",
+      "central": "Centrális",
+      "hypopneas": "Hypopnoék",
+      "reras": "RERA-k",
+      "respiratoryEffort": "Légzési erőfeszítés",
+      "maxEvent": "Leghosszabb esemény",
+      "avgEvent": "Átlagos esemény"
+    },
+    "pressure": {
+      "subtitle": "Az önbeálló CPAP mérőszámai",
+      "average": "Átlagos nyomás",
+      "current": "Jelenlegi nyomás",
+      "median": "Medián (P50)",
+      "leakRate": "Szivárgási arány (P95)"
+    },
+    "respiratory": {
+      "title": "Légzési mérőszámok",
+      "avgFlowRate": "Átlagos áramlás",
+      "currentFlow": "Jelenlegi áramlás"
+    },
+    "realtime": {
+      "subtitle": "A jelenlegi alvásidőszak adatai",
+      "sessionStatus": "Az alvásidőszak állapota",
+      "sessionDuration": "Az alvásidőszak hossza",
+      "lastSession": "Utolsó alvásidőszak",
+      "minPressure": "Min. nyomás",
+      "currentPressure": "Jelenlegi nyomás",
+      "maxPressure": "Max. nyomás"
+    },
+    "oximetry": {
+      "odi": "ODI (3%)",
+      "ringStatus": "A gyűrű állapota",
+      "heartRate": "Pulzusszám"
+    },
+    "aiSummary": {
+      "subtitle": "Az utolsó alvásidőszak LLM által készített elemzése",
+      "empty": "Még nincs elérhető összefoglaló."
+    },
+    "ml": {
+      "predictedAhi": "Előre jelzett AHI",
+      "ahiTrend": "AHI-trend",
+      "stable": "Stabil",
+      "predictedHours": "Előre jelzett órák",
+      "maskFitRisk": "Maszkillesztési kockázat",
+      "anomalyStatus": "Anomália állapota"
+    },
+    "myair": {
+      "dataSource": "Adatforrás",
+      "night": "Éjszaka",
+      "usage": "Használat",
+      "leak": "Szivárgás",
+      "maskOnOff": "Maszk fel/le",
+      "difference": "Eltérés",
+      "noCpapDash": "Erre az éjszakára nincs CpapDash-adat",
+      "noResMed": "A ResMednek nincs adata erre az éjszakára"
+    }
+  }
+}

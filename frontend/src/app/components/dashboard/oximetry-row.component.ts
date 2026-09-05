@@ -1,5 +1,6 @@
 import { Component, Input } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { TranslatePipe } from '@ngx-translate/core';
 
 export interface OximetryRowData {
   spo2: number;
@@ -11,12 +12,12 @@ export interface OximetryRowData {
 @Component({
   selector: 'app-oximetry-row',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, TranslatePipe],
   template: `
     <div class="section" *ngIf="data">
       <div class="section-header">
-        <div class="section-title"><i class="fa-solid fa-droplet"></i> O2 Ring Oximetry</div>
-        <div class="section-subtitle">Wellue O2Ring -- SpO2 &amp; Heart Rate</div>
+        <div class="section-title"><i class="fa-solid fa-droplet"></i> {{ 'dashboard.title.oximetry' | translate }}</div>
+        <div class="section-subtitle">{{ 'dashboard.subtitle.oximetry' | translate }}</div>
       </div>
       <div class="metrics-row">
         <div class="mu-card">
@@ -24,7 +25,7 @@ export interface OximetryRowData {
             <i class="fa-solid fa-droplet"></i>
           </div>
           <div class="mu-content">
-            <div class="mu-primary">SpO2</div>
+            <div class="mu-primary">{{ 'metric.spo2' | translate }}</div>
             <div class="mu-value">{{ data.spo2.toFixed(1) }}%</div>
           </div>
         </div>
@@ -34,7 +35,7 @@ export interface OximetryRowData {
             <i class="fa-solid fa-heart-pulse"></i>
           </div>
           <div class="mu-content">
-            <div class="mu-primary">Heart Rate</div>
+            <div class="mu-primary">{{ 'dashboard.oximetry.heartRate' | translate }}</div>
             <div class="mu-value">{{ data.heartRate }} bpm</div>
           </div>
         </div>
@@ -44,7 +45,7 @@ export interface OximetryRowData {
             <i class="fa-solid fa-chart-line"></i>
           </div>
           <div class="mu-content">
-            <div class="mu-primary">ODI (3%)</div>
+            <div class="mu-primary">{{ 'dashboard.oximetry.odi' | translate }}</div>
             <div class="mu-value">{{ data.odi.toFixed(1) }} /hr</div>
           </div>
         </div>
@@ -55,7 +56,7 @@ export interface OximetryRowData {
             <i class="fa-regular fa-circle-dot"></i>
           </div>
           <div class="mu-content">
-            <div class="mu-primary">Ring Status</div>
+            <div class="mu-primary">{{ 'dashboard.oximetry.ringStatus' | translate }}</div>
             <div class="mu-value">{{ data.active ? 'Active' : 'Inactive' }}</div>
           </div>
         </div>

@@ -1,0 +1,17 @@
+{
+  "compare": {
+    "title": "Comparer des nuits",
+    "backToSessions": "Sessions",
+    "aligned": "Les deux nuits alignées sur le temps écoulé",
+    "loading": "Chargement des deux nuits…",
+    "zoomIn": "Zoom avant",
+    "zoomOut": "Zoom arrière",
+    "resetZoom": "Réinitialiser le zoom",
+    "fullScreen": "Plein écran",
+    "closeFullScreen": "Fermer",
+    "panHint": "Faites défiler ou pincez pour zoomer, glissez pour déplacer",
+    "signalsTitle": "Signaux",
+    "signalsHint": "(cliquez pour agrandir)",
+    "loadFailed": "Impossible de charger l'une des sessions."
+  }
+}

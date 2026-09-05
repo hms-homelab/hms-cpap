@@ -1,14 +1,15 @@
 import { Component, Input, Output, EventEmitter } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { TranslatePipe } from '@ngx-translate/core';
 
 @Component({
   selector: 'app-ml-intelligence',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, TranslatePipe],
   template: `
     <div class="section-card">
       <div class="section-header">
-        <div class="section-title"><i class="fa-solid fa-brain"></i> ML Intelligence</div>
+        <div class="section-title"><i class="fa-solid fa-brain"></i> {{ 'dashboard.title.ml' | translate }}</div>
         <div class="section-subtitle">
           Predictions from {{ mlStatus?.models?.[0]?.samples_used || 0 }} therapy days
           - Last run {{ mlStatus?.last_trained || 'never' }}
@@ -17,18 +18,18 @@ import { CommonModule } from '@angular/common';
       <div class="metrics-row">
         <div class="ml-card-vert">
           <div class="ml-icon" [style.color]="ahiPredColor"><i class="fa-solid fa-bed"></i></div>
-          <div class="ml-label">Predicted AHI</div>
+          <div class="ml-label">{{ 'dashboard.ml.predictedAhi' | translate }}</div>
           <div class="ml-value">{{ mlPredictions?.predicted_ahi?.toFixed(2) || '--' }}</div>
           <div class="ml-unit">events/hr</div>
         </div>
         <div class="ml-card-vert">
           <div class="ml-icon" style="color: #60a5fa;"><i class="fa-solid fa-chart-line"></i></div>
-          <div class="ml-label">AHI Trend</div>
+          <div class="ml-label">{{ 'dashboard.ml.ahiTrend' | translate }}</div>
           <div class="ml-value">Stable</div>
         </div>
         <div class="ml-card-vert">
           <div class="ml-icon" [style.color]="hoursPredColor"><i class="fa-regular fa-clock"></i></div>
-          <div class="ml-label">Predicted Hours</div>
+          <div class="ml-label">{{ 'dashboard.ml.predictedHours' | translate }}</div>
           <div class="ml-value">{{ mlPredictions?.predicted_hours?.toFixed(1) || '--' }}h</div>
           <div class="ml-unit">tonight</div>
         </div>
@@ -36,14 +37,14 @@ import { CommonModule } from '@angular/common';
       <div class="metrics-row" style="margin-top: 0.5rem;">
         <div class="ml-card-vert">
           <div class="ml-icon" [style.color]="maskFitColor"><i class="fa-solid fa-head-side-mask"></i></div>
-          <div class="ml-label">Mask Fit Risk</div>
+          <div class="ml-label">{{ 'dashboard.ml.maskFitRisk' | translate }}</div>
           <div class="ml-value">{{ mlPredictions?.leak_risk_pct?.toFixed(0) || '--' }}%</div>
         </div>
         <div class="ml-card-vert">
           <div class="ml-icon" [style.color]="anomalyColor">
             <i [class]="mlPredictions?.anomaly_class === 'NORMAL' ? 'fa-solid fa-circle-check' : 'fa-solid fa-circle-xmark'"></i>
           </div>
-          <div class="ml-label">Anomaly Status</div>
+          <div class="ml-label">{{ 'dashboard.ml.anomalyStatus' | translate }}</div>
           <div class="ml-value">{{ mlPredictions?.anomaly_class || '--' }}</div>
         </div>
       </div>

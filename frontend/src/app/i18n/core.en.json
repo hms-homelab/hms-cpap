@@ -15,6 +15,16 @@
     "spo2": "SpO2",
     "hr": "HR"
   },
+  "signal": {
+    "flow": "Flow Rate",
+    "pressure": "Pressure",
+    "leak": "Leak Rate",
+    "respRate": "Respiratory Rate",
+    "tidalVolume": "Tidal Volume",
+    "minuteVentilation": "Minute Ventilation",
+    "flowLimitation": "Flow Limitation",
+    "snore": "Snore"
+  },
   "nav": {
     "dashboard": "Dashboard",
     "sessions": "Sessions",

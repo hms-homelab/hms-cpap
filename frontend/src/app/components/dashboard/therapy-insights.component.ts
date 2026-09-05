@@ -1,14 +1,15 @@
 import { Component, Input } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { TranslatePipe } from '@ngx-translate/core';
 
 @Component({
   selector: 'app-therapy-insights',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, TranslatePipe],
   template: `
     <div class="section-card">
       <div class="section-header">
-        <div class="section-title"><i class="fa-solid fa-lightbulb"></i> Therapy Insights</div>
+        <div class="section-title"><i class="fa-solid fa-lightbulb"></i> {{ 'dashboard.title.insights' | translate }}</div>
         <div class="section-subtitle">{{ insights.length }} automated observations</div>
       </div>
       <div class="insights-list">

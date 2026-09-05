@@ -1,15 +1,16 @@
 import { Component, Input } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { TranslatePipe } from '@ngx-translate/core';
 
 @Component({
   selector: 'app-ai-summary',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, TranslatePipe],
   template: `
     <div class="section-card">
       <div class="section-header">
-        <div class="section-title"><i class="fa-solid fa-wand-magic-sparkles"></i> AI Session Summary</div>
-        <div class="section-subtitle">LLM-generated analysis of last session</div>
+        <div class="section-title"><i class="fa-solid fa-wand-magic-sparkles"></i> {{ 'dashboard.title.aiSummary' | translate }}</div>
+        <div class="section-subtitle">{{ 'dashboard.aiSummary.subtitle' | translate }}</div>
       </div>
       <div class="summary-body" [innerHTML]="renderedHtml"></div>
     </div>

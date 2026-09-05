@@ -1,0 +1,17 @@
+{
+  "compare": {
+    "title": "Compare Nights",
+    "backToSessions": "Sessions",
+    "aligned": "Both nights aligned to elapsed time",
+    "loading": "Loading both nights…",
+    "zoomIn": "Zoom in",
+    "zoomOut": "Zoom out",
+    "resetZoom": "Reset Zoom",
+    "fullScreen": "Full screen",
+    "closeFullScreen": "Close",
+    "panHint": "Scroll / pinch to zoom, drag to pan",
+    "signalsTitle": "Signals",
+    "signalsHint": "(click to maximize)",
+    "loadFailed": "Could not load one of the sessions."
+  }
+}

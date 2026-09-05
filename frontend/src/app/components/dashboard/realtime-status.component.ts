@@ -1,5 +1,6 @@
 import { Component, Input } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { TranslatePipe } from '@ngx-translate/core';
 
 export interface RealtimeStatusData {
   sessionStatus: string;
@@ -13,12 +14,12 @@ export interface RealtimeStatusData {
 @Component({
   selector: 'app-realtime-status',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, TranslatePipe],
   template: `
     <div class="section" *ngIf="data">
       <div class="section-header">
-        <div class="section-title"><i class="fa-solid fa-tower-broadcast"></i> Real-Time Status</div>
-        <div class="section-subtitle">Current Session Information</div>
+        <div class="section-title"><i class="fa-solid fa-tower-broadcast"></i> {{ 'dashboard.title.realtime' | translate }}</div>
+        <div class="section-subtitle">{{ 'dashboard.realtime.subtitle' | translate }}</div>
       </div>
       <div class="metrics-row">
         <div class="rt-card">
@@ -26,7 +27,7 @@ export interface RealtimeStatusData {
             <i class="fa-solid fa-circle-info"></i>
           </div>
           <div class="rt-content">
-            <div class="rt-label">Session Status</div>
+            <div class="rt-label">{{ 'dashboard.realtime.sessionStatus' | translate }}</div>
             <div class="rt-value">{{ data.sessionStatus | titlecase }}</div>
           </div>
         </div>
@@ -35,7 +36,7 @@ export interface RealtimeStatusData {
             <i class="fa-solid fa-hourglass-half"></i>
           </div>
           <div class="rt-content">
-            <div class="rt-label">Session Duration</div>
+            <div class="rt-label">{{ 'dashboard.realtime.sessionDuration' | translate }}</div>
             <div class="rt-value">{{ data.sessionDuration }}</div>
           </div>
         </div>
@@ -44,7 +45,7 @@ export interface RealtimeStatusData {
             <i class="fa-regular fa-calendar"></i>
           </div>
           <div class="rt-content">
-            <div class="rt-label">Last Session</div>
+            <div class="rt-label">{{ 'dashboard.realtime.lastSession' | translate }}</div>
             <div class="rt-value">{{ data.lastSessionTime }}</div>
           </div>
         </div>
@@ -55,7 +56,7 @@ export interface RealtimeStatusData {
             <i class="fa-solid fa-arrow-down"></i>
           </div>
           <div class="rt-content">
-            <div class="rt-label">Min Pressure</div>
+            <div class="rt-label">{{ 'dashboard.realtime.minPressure' | translate }}</div>
             <div class="rt-value">{{ data.minPressure.toFixed(1) }} cmH2O</div>
           </div>
         </div>
@@ -64,7 +65,7 @@ export interface RealtimeStatusData {
             <i class="fa-solid fa-gauge"></i>
           </div>
           <div class="rt-content">
-            <div class="rt-label">Current Pressure</div>
+            <div class="rt-label">{{ 'dashboard.realtime.currentPressure' | translate }}</div>
             <div class="rt-value">{{ data.currentPressure.toFixed(1) }} cmH2O</div>
           </div>
         </div>
@@ -73,7 +74,7 @@ export interface RealtimeStatusData {
             <i class="fa-solid fa-arrow-up"></i>
           </div>
           <div class="rt-content">
-            <div class="rt-label">Max Pressure</div>
+            <div class="rt-label">{{ 'dashboard.realtime.maxPressure' | translate }}</div>
             <div class="rt-value">{{ data.maxPressure.toFixed(1) }} cmH2O</div>
           </div>
         </div>

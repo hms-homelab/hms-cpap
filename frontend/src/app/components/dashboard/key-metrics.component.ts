@@ -1,5 +1,6 @@
 import { Component, Input } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { TranslatePipe, TranslateService } from '@ngx-translate/core';
 import { formatIndex } from '../../utils/format';
 
 export interface KeyMetricsData {
@@ -15,12 +16,12 @@ export interface KeyMetricsData {
 @Component({
   selector: 'app-key-metrics',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, TranslatePipe],
   template: `
     <div class="section">
       <div class="section-header">
-        <div class="section-title">Key Metrics</div>
-        <div class="section-subtitle">Last Session Performance</div>
+        <div class="section-title">{{ 'dashboard.keyMetrics.title' | translate }}</div>
+        <div class="section-subtitle">{{ 'dashboard.keyMetrics.subtitle' | translate }}</div>
       </div>
       <div class="metrics-row">
         <div class="mu-card" *ngIf="data">
@@ -28,7 +29,7 @@ export interface KeyMetricsData {
             <i class="fa-solid fa-heart-pulse"></i>
           </div>
           <div class="mu-content">
-            <div class="mu-primary">AHI Score</div>
+            <div class="mu-primary">{{ 'dashboard.keyMetrics.ahiScore' | translate }}</div>
             <div class="mu-secondary">
               <span class="mu-value">{{ fmtIndex(data.ahi) }}</span>
               <span class="mu-assess">{{ ahiLabel }}</span>
@@ -41,10 +42,10 @@ export interface KeyMetricsData {
             <i class="fa-solid fa-clock-rotate-left"></i>
           </div>
           <div class="mu-content">
-            <div class="mu-primary">Usage</div>
+            <div class="mu-primary">{{ 'dashboard.keyMetrics.usage' | translate }}</div>
             <div class="mu-secondary">
               <span class="mu-value">{{ fmtDuration(data.usageHours) }}</span>
-              <span class="mu-assess" *ngIf="data.usageHours >= 4">4h+ target met</span>
+              <span class="mu-assess" *ngIf="data.usageHours >= 4">{{ 'dashboard.keyMetrics.targetMet' | translate }}</span>
             </div>
           </div>
         </div>
@@ -54,7 +55,7 @@ export interface KeyMetricsData {
             <i class="fa-solid fa-wind"></i>
           </div>
           <div class="mu-content">
-            <div class="mu-primary">Mask Leak</div>
+            <div class="mu-primary">{{ 'dashboard.keyMetrics.maskLeak' | translate }}</div>
             <div class="mu-secondary">
               <span class="mu-value">{{ data.leakP95.toFixed(1) }} L/min</span>
               <span class="mu-assess">{{ leakLabel }}</span>
@@ -67,10 +68,13 @@ export interface KeyMetricsData {
             <i class="fa-solid fa-triangle-exclamation"></i>
           </div>
           <div class="mu-content">
-            <div class="mu-primary">Total Events</div>
+            <div class="mu-primary">{{ 'dashboard.keyMetrics.totalEvents' | translate }}</div>
             <div class="mu-secondary">
               <span class="mu-value">{{ data.totalEvents }}</span>
-              <span class="mu-assess">{{ fmtIndex(data.ahi) }} events/hr</span>
+              <!-- "events/hr" is copy, not a unit, so it comes from the
+                   dictionary with the value interpolated. The sibling frontend
+                   keys this identically. -->
+              <span class="mu-assess">{{ 'dashboard.keyMetrics.eventsPerHr' | translate:{ v: fmtIndex(data.ahi) } }}</span>
             </div>
           </div>
         </div>
@@ -80,9 +84,9 @@ export interface KeyMetricsData {
             <i class="fa-solid fa-moon"></i>
           </div>
           <div class="mu-content">
-            <div class="mu-primary">Session</div>
+            <div class="mu-primary">{{ 'dashboard.keyMetrics.session' | translate }}</div>
             <div class="mu-secondary">
-              <span class="mu-value">{{ data.sessionActive ? 'Running' : 'Completed' }}</span>
+              <span class="mu-value">{{ (data.sessionActive ? 'dashboard.keyMetrics.running' : 'dashboard.keyMetrics.completed') | translate }}</span>
             </div>
           </div>
         </div>
@@ -119,6 +123,8 @@ export interface KeyMetricsData {
 export class KeyMetricsComponent {
   @Input() data: KeyMetricsData | null = null;
 
+  constructor(private t: TranslateService) {}
+
   /** SDD-079: index group renders at two decimals. */
   readonly fmtIndex = formatIndex;
 
@@ -126,12 +132,15 @@ export class KeyMetricsComponent {
     if (!this.data) return '#888';
     return this.data.ahi < 5 ? '#4ade80' : this.data.ahi < 15 ? '#fb923c' : '#ef4444';
   }
+  // SDD-080: the band thresholds are clinical and stay here; only the words
+  // move to the catalog. Note "Severe" is "grave" in es/pt and NOT "severo",
+  // which is a false friend meaning strict rather than clinically severe.
   get ahiLabel(): string {
     if (!this.data) return '';
-    if (this.data.ahi < 5) return 'Excellent';
-    if (this.data.ahi < 15) return 'Mild Apnea';
-    if (this.data.ahi < 30) return 'Moderate';
-    return 'Severe';
+    if (this.data.ahi < 5) return this.t.instant('dashboard.keyMetrics.ahiExcellent');
+    if (this.data.ahi < 15) return this.t.instant('dashboard.keyMetrics.ahiMild');
+    if (this.data.ahi < 30) return this.t.instant('dashboard.keyMetrics.ahiModerate');
+    return this.t.instant('dashboard.keyMetrics.ahiSevere');
   }
   get usageColor(): string {
     if (!this.data) return '#888';
@@ -143,9 +152,9 @@ export class KeyMetricsComponent {
   }
   get leakLabel(): string {
     if (!this.data) return '';
-    if (this.data.leakP95 < 10) return 'Excellent';
-    if (this.data.leakP95 < 24) return 'Acceptable';
-    return 'High Leak';
+    if (this.data.leakP95 < 10) return this.t.instant('dashboard.keyMetrics.leakExcellent');
+    if (this.data.leakP95 < 24) return this.t.instant('dashboard.keyMetrics.leakAcceptable');
+    return this.t.instant('dashboard.keyMetrics.leakHigh');
   }
   get eventsColor(): string {
     if (!this.data) return '#888';
