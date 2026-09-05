@@ -41,9 +41,15 @@ jobs:
         working-directory: frontend
         run: npm ci --no-audit --no-fund
 
+      # SDD-080: `npm run build`, NOT `npx ng build`. The dictionaries at
+      # src/app/i18n/<lang>.json are assembled by scripts/build-i18n.mjs from
+      # the committed fragments and are gitignored, so a clean checkout (which
+      # is all CI ever has) does not contain them. The generator runs from
+      # package.json's `prebuild` hook and npx bypasses npm lifecycle hooks,
+      # which fails the build outright on "Could not resolve ./fr.json".
       - name: Build Angular UI
         working-directory: frontend
-        run: npx ng build --configuration production
+        run: npm run build -- --configuration production
 
       # ── C++ Build + Tests ───────────────────────────────────────
       - name: Install C++ dependencies
@@ -238,9 +244,15 @@ jobs:
         working-directory: frontend
         run: npm ci --no-audit --no-fund
 
+      # SDD-080: `npm run build`, NOT `npx ng build`. The dictionaries at
+      # src/app/i18n/<lang>.json are assembled by scripts/build-i18n.mjs from
+      # the committed fragments and are gitignored, so a clean checkout (which
+      # is all CI ever has) does not contain them. The generator runs from
+      # package.json's `prebuild` hook and npx bypasses npm lifecycle hooks,
+      # which fails the build outright on "Could not resolve ./fr.json".
       - name: Build Angular UI
         working-directory: frontend
-        run: npx ng build --configuration production
+        run: npm run build -- --configuration production
 
       # ── vcpkg + C++ Build ───────────────────────────────────────
       - name: Cache vcpkg packages
@@ -736,9 +748,15 @@ jobs:
         working-directory: frontend
         run: npm ci --no-audit --no-fund
 
+      # SDD-080: `npm run build`, NOT `npx ng build`. The dictionaries at
+      # src/app/i18n/<lang>.json are assembled by scripts/build-i18n.mjs from
+      # the committed fragments and are gitignored, so a clean checkout (which
+      # is all CI ever has) does not contain them. The generator runs from
+      # package.json's `prebuild` hook and npx bypasses npm lifecycle hooks,
+      # which fails the build outright on "Could not resolve ./fr.json".
       - name: Build Angular UI
         working-directory: frontend
-        run: npx ng build --configuration production
+        run: npm run build -- --configuration production
 
       # ── C++ dependencies (Homebrew) ─────────────────────────────
       # Mirrors the local macOS build's resolved deps. CURL comes from the

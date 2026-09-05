@@ -433,7 +433,7 @@ Neither is touched by pulling a new image.
 ./build_and_deploy.sh --deploy
 
 # Or manually:
-cd frontend && npm ci && npx ng build --configuration production && cd ..
+cd frontend && npm ci && npm run build -- --configuration production && cd ..
 mkdir build && cd build && cmake -DBUILD_WITH_WEB=ON .. && make -j$(nproc)
 sudo cp hms_cpap /usr/local/bin/
 sudo cp ../.env /etc/hms-cpap/.env  # Edit with your settings
@@ -788,7 +788,7 @@ Or manually:
 
 ```bash
 # Build frontend
-cd frontend && npm ci && npx ng build --configuration production && cd ..
+cd frontend && npm ci && npm run build -- --configuration production && cd ..
 
 # Build backend
 mkdir build && cd build
