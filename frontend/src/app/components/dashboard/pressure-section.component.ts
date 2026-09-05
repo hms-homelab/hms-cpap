@@ -1,5 +1,6 @@
 import { Component, Input, ViewChild, ElementRef, AfterViewInit, OnChanges } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { TranslatePipe } from '@ngx-translate/core';
 import Chart from 'chart.js/auto';
 
 export interface PressureSectionData {
@@ -14,12 +15,12 @@ export interface PressureSectionData {
 @Component({
   selector: 'app-pressure-section',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, TranslatePipe],
   template: `
     <div class="section" *ngIf="data">
       <div class="section-header">
-        <div class="section-title"><i class="fa-solid fa-gauge-high"></i> Therapy Pressure</div>
-        <div class="section-subtitle">Auto-Adjusting CPAP Metrics</div>
+        <div class="section-title"><i class="fa-solid fa-gauge-high"></i> {{ 'dashboard.title.pressure' | translate }}</div>
+        <div class="section-subtitle">{{ 'dashboard.pressure.subtitle' | translate }}</div>
       </div>
       <div class="gauge-row">
         <div class="gauge-wrap">
@@ -33,15 +34,15 @@ export interface PressureSectionData {
       </div>
       <div class="metrics-row">
         <div class="press-card">
-          <div class="press-label">Median (P50)</div>
+          <div class="press-label">{{ 'dashboard.pressure.median' | translate }}</div>
           <div class="press-value">{{ data.p50Pressure.toFixed(1) }} cmH2O</div>
         </div>
         <div class="press-card" *ngIf="data.currentPressure">
-          <div class="press-label">Current Pressure</div>
+          <div class="press-label">{{ 'dashboard.pressure.current' | translate }}</div>
           <div class="press-value">{{ data.currentPressure.toFixed(1) }} cmH2O</div>
         </div>
         <div class="press-card">
-          <div class="press-label">Leak Rate (P95)</div>
+          <div class="press-label">{{ 'dashboard.pressure.leakRate' | translate }}</div>
           <div class="press-value" [style.color]="leakColor">{{ data.leakP95.toFixed(1) }} L/min</div>
         </div>
       </div>

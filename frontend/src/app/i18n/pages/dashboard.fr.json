@@ -1,0 +1,103 @@
+{
+  "dashboard": {
+    "title": {
+      "aiSummary": "Résumé de la session par IA",
+      "ml": "Intelligence ML",
+      "oximetry": "Oxymétrie O2 Ring",
+      "realtime": "État en temps réel",
+      "events": "Détail des événements de sommeil",
+      "str": "Indicateurs quotidiens STR",
+      "insights": "Analyses de la thérapie",
+      "pressure": "Pression de la thérapie",
+      "respiratory": "Indicateurs respiratoires"
+    },
+    "subtitle": {
+      "events": "Analyse des apnées et hypopnées",
+      "respiratory": "Schémas respiratoires et ventilation",
+      "oximetry": "Wellue O2Ring -- SpO2 et fréquence cardiaque"
+    },
+    "keyMetrics": {
+      "title": "Indicateurs clés",
+      "subtitle": "Performance de la dernière session",
+      "ahiScore": "Score IAH",
+      "usage": "Utilisation",
+      "targetMet": "objectif de 4h+ atteint",
+      "maskLeak": "Fuite au masque",
+      "totalEvents": "Total des événements",
+      "eventsPerHr": "{{v}} événements/h",
+      "session": "Session",
+      "running": "En cours",
+      "completed": "Terminée",
+      "ahiExcellent": "Excellent",
+      "ahiMild": "Apnée légère",
+      "ahiModerate": "Modérée",
+      "ahiSevere": "Sévère",
+      "leakExcellent": "Excellente",
+      "leakAcceptable": "Acceptable",
+      "leakHigh": "Fuite élevée"
+    },
+    "str": {
+      "subtitle": "Indices officiels ResMed, issus du STR.edf",
+      "ahi": "IAH du STR",
+      "usage": "Utilisation du STR",
+      "leakP95": "Fuite P95 du STR"
+    },
+    "events": {
+      "obstructive": "Obstructives",
+      "central": "Centrales",
+      "hypopneas": "Hypopnées",
+      "reras": "RERA",
+      "respiratoryEffort": "Effort respiratoire",
+      "maxEvent": "Événement max.",
+      "avgEvent": "Événement moyen"
+    },
+    "pressure": {
+      "subtitle": "Indicateurs de la PPC auto-pilotée",
+      "average": "Pression moyenne",
+      "current": "Pression actuelle",
+      "median": "Médiane (P50)",
+      "leakRate": "Débit de fuite (P95)"
+    },
+    "respiratory": {
+      "title": "Indicateurs respiratoires",
+      "avgFlowRate": "Débit moyen",
+      "currentFlow": "Débit actuel"
+    },
+    "realtime": {
+      "subtitle": "Informations sur la session en cours",
+      "sessionStatus": "État de la session",
+      "sessionDuration": "Durée de la session",
+      "lastSession": "Dernière session",
+      "minPressure": "Pression min.",
+      "currentPressure": "Pression actuelle",
+      "maxPressure": "Pression max."
+    },
+    "oximetry": {
+      "odi": "ODI (3 %)",
+      "ringStatus": "État de l'anneau",
+      "heartRate": "Fréquence cardiaque"
+    },
+    "aiSummary": {
+      "subtitle": "Analyse de la dernière session générée par LLM",
+      "empty": "Aucun résumé disponible pour l'instant."
+    },
+    "ml": {
+      "predictedAhi": "IAH prévu",
+      "ahiTrend": "Tendance de l'IAH",
+      "stable": "Stable",
+      "predictedHours": "Heures prévues",
+      "maskFitRisk": "Risque d'ajustement du masque",
+      "anomalyStatus": "État des anomalies"
+    },
+    "myair": {
+      "dataSource": "Source des données",
+      "night": "Nuit",
+      "usage": "Utilisation",
+      "leak": "Fuite",
+      "maskOnOff": "Masque mis/retiré",
+      "difference": "Différence",
+      "noCpapDash": "Aucune donnée CpapDash pour cette nuit",
+      "noResMed": "ResMed n'a aucune donnée pour cette nuit"
+    }
+  }
+}

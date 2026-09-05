@@ -1,5 +1,6 @@
 import { Component, Input } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { TranslatePipe } from '@ngx-translate/core';
 
 export interface RespiratoryMetricsData {
   respRate: number;
@@ -16,12 +17,12 @@ export interface RespiratoryMetricsData {
 @Component({
   selector: 'app-respiratory-metrics',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, TranslatePipe],
   template: `
     <div class="section" *ngIf="data">
       <div class="section-header">
-        <div class="section-title">Respiratory Metrics</div>
-        <div class="section-subtitle">Breathing Patterns &amp; Ventilation</div>
+        <div class="section-title">{{ 'dashboard.title.respiratory' | translate }}</div>
+        <div class="section-subtitle">{{ 'dashboard.subtitle.respiratory' | translate }}</div>
       </div>
       <div class="metrics-row">
         <div class="resp-card">
@@ -29,7 +30,7 @@ export interface RespiratoryMetricsData {
             <i class="fa-solid fa-lungs"></i>
           </div>
           <div class="resp-content">
-            <div class="resp-label">Respiratory Rate</div>
+            <div class="resp-label">{{ 'signal.respRate' | translate }}</div>
             <div class="resp-value">{{ data.respRate.toFixed(1) }} br/min</div>
             <div class="resp-assess">{{ data.respRate >= 12 && data.respRate <= 20 ? 'Normal' : 'Check' }}</div>
           </div>
@@ -39,7 +40,7 @@ export interface RespiratoryMetricsData {
             <i class="fa-solid fa-wind"></i>
           </div>
           <div class="resp-content">
-            <div class="resp-label">Tidal Volume</div>
+            <div class="resp-label">{{ 'signal.tidalVolume' | translate }}</div>
             <div class="resp-value">{{ data.tidalVolume.toFixed(0) }} mL</div>
           </div>
         </div>
@@ -48,7 +49,7 @@ export interface RespiratoryMetricsData {
             <i class="fa-solid fa-chart-line"></i>
           </div>
           <div class="resp-content">
-            <div class="resp-label">Minute Ventilation</div>
+            <div class="resp-label">{{ 'signal.minuteVentilation' | translate }}</div>
             <div class="resp-value">{{ data.minuteVent.toFixed(1) }} L/min</div>
           </div>
         </div>
@@ -59,7 +60,7 @@ export interface RespiratoryMetricsData {
             <i class="fa-solid fa-road-barrier"></i>
           </div>
           <div class="resp-content">
-            <div class="resp-label">Flow Limitation</div>
+            <div class="resp-label">{{ 'signal.flowLimitation' | translate }}</div>
             <div class="resp-value">{{ data.flowLimitation.toFixed(2) }}</div>
           </div>
         </div>
@@ -68,7 +69,7 @@ export interface RespiratoryMetricsData {
             <i class="fa-solid fa-gauge-high"></i>
           </div>
           <div class="resp-content">
-            <div class="resp-label">Avg Flow Rate</div>
+            <div class="resp-label">{{ 'dashboard.respiratory.avgFlowRate' | translate }}</div>
             <div class="resp-value">{{ data.avgFlowRate.toFixed(1) }} L/min</div>
           </div>
         </div>
@@ -77,7 +78,7 @@ export interface RespiratoryMetricsData {
             <i class="fa-solid fa-gauge"></i>
           </div>
           <div class="resp-content">
-            <div class="resp-label">Current Flow</div>
+            <div class="resp-label">{{ 'dashboard.respiratory.currentFlow' | translate }}</div>
             <div class="resp-value">{{ data.currentFlowRate.toFixed(1) }} L/min</div>
           </div>
         </div>

@@ -1,5 +1,6 @@
 import { Component, Input } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { TranslatePipe } from '@ngx-translate/core';
 import { formatIndex } from '../../utils/format';
 
 export interface StrMetricsData {
@@ -15,33 +16,33 @@ export interface StrMetricsData {
 @Component({
   selector: 'app-str-metrics',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, TranslatePipe],
   template: `
     <div class="section" *ngIf="data">
       <div class="section-header">
-        <div class="section-title"><i class="fa-solid fa-calendar-day"></i> STR Daily Metrics</div>
-        <div class="section-subtitle">Official ResMed indices from STR.edf</div>
+        <div class="section-title"><i class="fa-solid fa-calendar-day"></i> {{ 'dashboard.title.str' | translate }}</div>
+        <div class="section-subtitle">{{ 'dashboard.str.subtitle' | translate }}</div>
       </div>
       <div class="metrics-row">
         <div class="mu-card-vert">
           <div class="mu-icon" [style.background]="ahiColor + '22'" [style.color]="ahiColor">
             <i class="fa-solid fa-heart-pulse"></i>
           </div>
-          <div class="mu-label">STR AHI</div>
+          <div class="mu-label">{{ 'dashboard.str.ahi' | translate }}</div>
           <div class="mu-value">{{ fmtIndex(data.ahi) }}</div>
         </div>
         <div class="mu-card-vert">
           <div class="mu-icon" [style.background]="usageColor + '22'" [style.color]="usageColor">
             <i class="fa-regular fa-clock"></i>
           </div>
-          <div class="mu-label">STR Usage</div>
+          <div class="mu-label">{{ 'dashboard.str.usage' | translate }}</div>
           <div class="mu-value">{{ data.usageHours.toFixed(1) }}h</div>
         </div>
         <div class="mu-card-vert">
           <div class="mu-icon" [style.background]="leakColor + '22'" [style.color]="leakColor">
             <i class="fa-solid fa-droplet-slash"></i>
           </div>
-          <div class="mu-label">STR Leak P95</div>
+          <div class="mu-label">{{ 'dashboard.str.leakP95' | translate }}</div>
           <div class="mu-value">{{ data.leakP95.toFixed(1) }} L/min</div>
         </div>
       </div>

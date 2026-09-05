@@ -1,0 +1,17 @@
+{
+  "compare": {
+    "title": "Éjszakák összehasonlítása",
+    "backToSessions": "Alvásidőszakok",
+    "aligned": "Mindkét éjszaka az eltelt időhöz igazítva",
+    "loading": "Mindkét éjszaka betöltése…",
+    "zoomIn": "Nagyítás",
+    "zoomOut": "Kicsinyítés",
+    "resetZoom": "Nagyítás visszaállítása",
+    "fullScreen": "Teljes képernyő",
+    "closeFullScreen": "Bezárás",
+    "panHint": "Görgessen vagy csippentsen a nagyításhoz, húzza a mozgatáshoz",
+    "signalsTitle": "Jelek",
+    "signalsHint": "(kattintson a nagyításhoz)",
+    "loadFailed": "Az egyik alvásidőszakot nem sikerült betölteni."
+  }
+}

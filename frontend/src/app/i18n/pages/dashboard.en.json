@@ -1,0 +1,103 @@
+{
+  "dashboard": {
+    "title": {
+      "aiSummary": "AI Session Summary",
+      "ml": "ML Intelligence",
+      "oximetry": "O2 Ring Oximetry",
+      "realtime": "Real-Time Status",
+      "events": "Sleep Events Breakdown",
+      "str": "STR Daily Metrics",
+      "insights": "Therapy Insights",
+      "pressure": "Therapy Pressure",
+      "respiratory": "Respiratory Metrics"
+    },
+    "subtitle": {
+      "events": "Apnea & Hypopnea Analysis",
+      "respiratory": "Breathing Patterns & Ventilation",
+      "oximetry": "Wellue O2Ring -- SpO2 & Heart Rate"
+    },
+    "keyMetrics": {
+      "title": "Key Metrics",
+      "subtitle": "Last Session Performance",
+      "ahiScore": "AHI Score",
+      "usage": "Usage",
+      "targetMet": "4h+ target met",
+      "maskLeak": "Mask Leak",
+      "totalEvents": "Total Events",
+      "eventsPerHr": "{{v}} events/hr",
+      "session": "Session",
+      "running": "Running",
+      "completed": "Completed",
+      "ahiExcellent": "Excellent",
+      "ahiMild": "Mild Apnea",
+      "ahiModerate": "Moderate",
+      "ahiSevere": "Severe",
+      "leakExcellent": "Excellent",
+      "leakAcceptable": "Acceptable",
+      "leakHigh": "High Leak"
+    },
+    "str": {
+      "subtitle": "Official ResMed indices from STR.edf",
+      "ahi": "STR AHI",
+      "usage": "STR Usage",
+      "leakP95": "STR Leak P95"
+    },
+    "events": {
+      "obstructive": "Obstructive",
+      "central": "Central",
+      "hypopneas": "Hypopneas",
+      "reras": "RERAs",
+      "respiratoryEffort": "Respiratory Effort",
+      "maxEvent": "Max Event",
+      "avgEvent": "Avg Event"
+    },
+    "pressure": {
+      "subtitle": "Auto-Adjusting CPAP Metrics",
+      "average": "Average Pressure",
+      "current": "Current Pressure",
+      "median": "Median (P50)",
+      "leakRate": "Leak Rate (P95)"
+    },
+    "respiratory": {
+      "title": "Respiratory Metrics",
+      "avgFlowRate": "Avg Flow Rate",
+      "currentFlow": "Current Flow"
+    },
+    "realtime": {
+      "subtitle": "Current Session Information",
+      "sessionStatus": "Session Status",
+      "sessionDuration": "Session Duration",
+      "lastSession": "Last Session",
+      "minPressure": "Min Pressure",
+      "currentPressure": "Current Pressure",
+      "maxPressure": "Max Pressure"
+    },
+    "oximetry": {
+      "odi": "ODI (3%)",
+      "ringStatus": "Ring Status",
+      "heartRate": "Heart Rate"
+    },
+    "aiSummary": {
+      "subtitle": "LLM-generated analysis of last session",
+      "empty": "No summary available yet."
+    },
+    "ml": {
+      "predictedAhi": "Predicted AHI",
+      "ahiTrend": "AHI Trend",
+      "stable": "Stable",
+      "predictedHours": "Predicted Hours",
+      "maskFitRisk": "Mask Fit Risk",
+      "anomalyStatus": "Anomaly Status"
+    },
+    "myair": {
+      "dataSource": "Data Source",
+      "night": "Night",
+      "usage": "Usage",
+      "leak": "Leak",
+      "maskOnOff": "Mask on/off",
+      "difference": "Difference",
+      "noCpapDash": "No CpapDash data for this night",
+      "noResMed": "ResMed has no data for this night"
+    }
+  }
+}

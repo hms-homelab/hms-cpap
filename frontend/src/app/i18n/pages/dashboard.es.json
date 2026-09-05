@@ -1,0 +1,103 @@
+{
+  "dashboard": {
+    "title": {
+      "aiSummary": "Resumen de la sesión con IA",
+      "ml": "Inteligencia de ML",
+      "oximetry": "Oximetría del O2 Ring",
+      "realtime": "Estado en tiempo real",
+      "events": "Desglose de eventos de sueño",
+      "str": "Métricas diarias del STR",
+      "insights": "Análisis de la terapia",
+      "pressure": "Presión de la terapia",
+      "respiratory": "Métricas respiratorias"
+    },
+    "subtitle": {
+      "events": "Análisis de apneas e hipopneas",
+      "respiratory": "Patrones de respiración y ventilación",
+      "oximetry": "Wellue O2Ring -- SpO2 y frecuencia cardiaca"
+    },
+    "keyMetrics": {
+      "title": "Métricas principales",
+      "subtitle": "Rendimiento de la última sesión",
+      "ahiScore": "Puntuación del IAH",
+      "usage": "Uso",
+      "targetMet": "objetivo de 4h+ cumplido",
+      "maskLeak": "Fuga de mascarilla",
+      "totalEvents": "Eventos totales",
+      "eventsPerHr": "{{v}} eventos/h",
+      "session": "Sesión",
+      "running": "En curso",
+      "completed": "Completada",
+      "ahiExcellent": "Excelente",
+      "ahiMild": "Apnea leve",
+      "ahiModerate": "Moderada",
+      "ahiSevere": "Grave",
+      "leakExcellent": "Excelente",
+      "leakAcceptable": "Aceptable",
+      "leakHigh": "Fuga alta"
+    },
+    "str": {
+      "subtitle": "Índices oficiales de ResMed, del STR.edf",
+      "ahi": "IAH del STR",
+      "usage": "Uso del STR",
+      "leakP95": "Fuga P95 del STR"
+    },
+    "events": {
+      "obstructive": "Obstructivas",
+      "central": "Centrales",
+      "hypopneas": "Hipopneas",
+      "reras": "RERAs",
+      "respiratoryEffort": "Esfuerzo respiratorio",
+      "maxEvent": "Evento máximo",
+      "avgEvent": "Evento medio"
+    },
+    "pressure": {
+      "subtitle": "Métricas del CPAP autoajustable",
+      "average": "Presión media",
+      "current": "Presión actual",
+      "median": "Mediana (P50)",
+      "leakRate": "Tasa de fuga (P95)"
+    },
+    "respiratory": {
+      "title": "Métricas respiratorias",
+      "avgFlowRate": "Flujo medio",
+      "currentFlow": "Flujo actual"
+    },
+    "realtime": {
+      "subtitle": "Información de la sesión actual",
+      "sessionStatus": "Estado de la sesión",
+      "sessionDuration": "Duración de la sesión",
+      "lastSession": "Última sesión",
+      "minPressure": "Presión mínima",
+      "currentPressure": "Presión actual",
+      "maxPressure": "Presión máxima"
+    },
+    "oximetry": {
+      "odi": "ODI (3%)",
+      "ringStatus": "Estado del anillo",
+      "heartRate": "Frecuencia cardiaca"
+    },
+    "aiSummary": {
+      "subtitle": "Análisis de la última sesión generado por LLM",
+      "empty": "Todavía no hay ningún resumen."
+    },
+    "ml": {
+      "predictedAhi": "IAH previsto",
+      "ahiTrend": "Tendencia del IAH",
+      "stable": "Estable",
+      "predictedHours": "Horas previstas",
+      "maskFitRisk": "Riesgo de ajuste de la mascarilla",
+      "anomalyStatus": "Estado de anomalías"
+    },
+    "myair": {
+      "dataSource": "Fuente de datos",
+      "night": "Noche",
+      "usage": "Uso",
+      "leak": "Fuga",
+      "maskOnOff": "Mascarilla puesta/quitada",
+      "difference": "Diferencia",
+      "noCpapDash": "No hay datos de CpapDash para esta noche",
+      "noResMed": "ResMed no tiene datos para esta noche"
+    }
+  }
+}

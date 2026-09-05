@@ -1,6 +1,7 @@
 import { Component, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, RouterLink } from '@angular/router';
+import { TranslatePipe, TranslateService } from '@ngx-translate/core';
 import { Chart, registerables } from 'chart.js';
 import zoomPlugin from 'chartjs-plugin-zoom';
 import { forkJoin } from 'rxjs';
@@ -10,17 +11,24 @@ import { makeDataset } from '../../utils/chart-helpers';
 
 Chart.register(...registerables, zoomPlugin);
 
-interface CmpSig { key: keyof SignalData; title: string; unit: string; }
+// SDD-080: `titleKey` rather than `title`. The names live in core.signal so the
+// compare page, the session detail page and the dashboard cannot drift apart on
+// what a signal is called.
+//
+// UNITS ARE NOT KEYED, and that is deliberate: L/min, cmH2O and mL are SI and
+// device notation, identical in every language this product ships. Routing them
+// through the catalog would invite someone to "translate" cmH2O.
+interface CmpSig { key: keyof SignalData; titleKey: string; unit: string; }
 
 const COMPARE_SIGNALS: CmpSig[] = [
-  { key: 'flow_avg', title: 'Flow Rate', unit: 'L/min' },
-  { key: 'pressure_avg', title: 'Pressure', unit: 'cmH2O' },
-  { key: 'leak_rate', title: 'Leak Rate', unit: 'L/min' },
-  { key: 'respiratory_rate', title: 'Respiratory Rate', unit: '/min' },
-  { key: 'tidal_volume', title: 'Tidal Volume', unit: 'mL' },
-  { key: 'minute_ventilation', title: 'Minute Ventilation', unit: 'L/min' },
-  { key: 'flow_limitation', title: 'Flow Limitation', unit: '' },
-  { key: 'snore_index', title: 'Snore', unit: '' },
+  { key: 'flow_avg', titleKey: 'signal.flow', unit: 'L/min' },
+  { key: 'pressure_avg', titleKey: 'signal.pressure', unit: 'cmH2O' },
+  { key: 'leak_rate', titleKey: 'signal.leak', unit: 'L/min' },
+  { key: 'respiratory_rate', titleKey: 'signal.respRate', unit: '/min' },
+  { key: 'tidal_volume', titleKey: 'signal.tidalVolume', unit: 'mL' },
+  { key: 'minute_ventilation', titleKey: 'signal.minuteVentilation', unit: 'L/min' },
+  { key: 'flow_limitation', titleKey: 'signal.flowLimitation', unit: '' },
+  { key: 'snore_index', titleKey: 'signal.snore', unit: '' },
 ];
 
 const COLOR_A = '#60a5fa';
@@ -29,48 +37,48 @@ const COLOR_B = '#fb923c';
 @Component({
   selector: 'app-compare',
   standalone: true,
-  imports: [CommonModule, RouterLink],
+  imports: [CommonModule, RouterLink, TranslatePipe],
   template: `
     <div class="cmp-page">
       <div class="top-bar">
-        <h2><i class="fa-solid fa-code-compare"></i> Compare Nights</h2>
-        <a routerLink="/sessions" class="back-link"><i class="fa-solid fa-arrow-left"></i> Sessions</a>
+        <h2><i class="fa-solid fa-code-compare"></i> {{ 'compare.title' | translate }}</h2>
+        <a routerLink="/sessions" class="back-link"><i class="fa-solid fa-arrow-left"></i> {{ 'compare.backToSessions' | translate }}</a>
       </div>
 
       <div class="legend">
         <span class="key"><span class="swatch" [style.background]="colorA"></span>{{ dateA }}</span>
         <span class="key"><span class="swatch" [style.background]="colorB"></span>{{ dateB }}</span>
-        <span class="hint">Both nights aligned to elapsed time</span>
+        <span class="hint">{{ 'compare.aligned' | translate }}</span>
       </div>
 
-      <div class="loading" *ngIf="loading"><p>Loading both nights…</p></div>
+      <div class="loading" *ngIf="loading"><p>{{ 'compare.loading' | translate }}</p></div>
       <div class="loading" *ngIf="error"><p>{{ error }}</p></div>
 
       <!-- Maximized detail view of the selected signal (zoom like session detail) -->
       <div class="detail-section" *ngIf="!loading && !error && selected" [class.expanded]="isExpanded">
         <div class="detail-header">
-          <h3>{{ selected.title }} <span class="unit">({{ selected.unit }})</span></h3>
+          <h3>{{ selected.titleKey | translate }} <span class="unit">({{ selected.unit }})</span></h3>
           <div class="controls">
-            <button (click)="zoom(0.5)" title="Zoom in"><i class="fa-solid fa-magnifying-glass-plus"></i></button>
-            <button (click)="zoom(2)" title="Zoom out"><i class="fa-solid fa-magnifying-glass-minus"></i></button>
-            <button (click)="resetZoom()">Reset Zoom</button>
+            <button (click)="zoom(0.5)" [title]="'compare.zoomIn' | translate"><i class="fa-solid fa-magnifying-glass-plus"></i></button>
+            <button (click)="zoom(2)" [title]="'compare.zoomOut' | translate"><i class="fa-solid fa-magnifying-glass-minus"></i></button>
+            <button (click)="resetZoom()">{{ 'compare.resetZoom' | translate }}</button>
             <button (click)="toggleExpand()">
               <i class="fa-solid" [class.fa-expand]="!isExpanded" [class.fa-compress]="isExpanded"></i>
-              {{ isExpanded ? 'Close' : 'Full screen' }}
+              {{ (isExpanded ? 'compare.closeFullScreen' : 'compare.fullScreen') | translate }}
             </button>
           </div>
         </div>
         <div class="detail-chart"><canvas id="cmp-detail"></canvas></div>
-        <div class="detail-hint">Scroll / pinch to zoom, drag to pan</div>
+        <div class="detail-hint">{{ 'compare.panHint' | translate }}</div>
       </div>
 
       <!-- Overview grid: click a chart to maximize it -->
       <div *ngIf="!loading && !error">
-        <h3 class="ov-title">Signals <span class="hint">(click to maximize)</span></h3>
+        <h3 class="ov-title">{{ 'compare.signalsTitle' | translate }} <span class="hint">{{ 'compare.signalsHint' | translate }}</span></h3>
         <div class="cmp-grid">
           <div class="cmp-card" *ngFor="let sig of signals"
                [class.active]="selected?.key === sig.key" (click)="select(sig)">
-            <div class="cmp-header"><span class="t">{{ sig.title }}</span><span class="u">{{ sig.unit }}</span></div>
+            <div class="cmp-header"><span class="t">{{ sig.titleKey | translate }}</span><span class="u">{{ sig.unit }}</span></div>
             <div class="cmp-chart"><canvas [id]="'cmp-' + sig.key"></canvas></div>
           </div>
         </div>
@@ -134,7 +142,8 @@ export class CompareComponent implements OnInit, OnDestroy {
   private dataA?: SignalData;
   private dataB?: SignalData;
 
-  constructor(private route: ActivatedRoute, private api: CpapApiService) {}
+  constructor(private route: ActivatedRoute, private api: CpapApiService,
+              private t: TranslateService) {}
 
   ngOnInit(): void {
     this.dateA = this.route.snapshot.paramMap.get('a') || '';
@@ -150,7 +159,7 @@ export class CompareComponent implements OnInit, OnDestroy {
         this.selected = this.signals[0];
         setTimeout(() => { this.renderOverview(); this.renderDetail(); }, 50);
       },
-      error: () => { this.error = 'Could not load one of the sessions.'; this.loading = false; },
+      error: () => { this.error = this.t.instant('compare.loadFailed'); this.loading = false; },
     });
   }
 

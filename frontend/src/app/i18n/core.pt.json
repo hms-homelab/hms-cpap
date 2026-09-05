@@ -15,6 +15,16 @@
     "spo2": "SpO2",
     "hr": "FC"
   },
+  "signal": {
+    "flow": "Fluxo",
+    "pressure": "Pressão",
+    "leak": "Taxa de fuga",
+    "respRate": "Frequência respiratória",
+    "tidalVolume": "Volume corrente",
+    "minuteVentilation": "Ventilação minuto",
+    "flowLimitation": "Limitação de fluxo",
+    "snore": "Ronco"
+  },
   "nav": {
     "dashboard": "Painel",
     "sessions": "Sessões",

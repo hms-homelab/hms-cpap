@@ -1,0 +1,17 @@
+{
+  "compare": {
+    "title": "Comparar noites",
+    "backToSessions": "Sessões",
+    "aligned": "As duas noites alinhadas pelo tempo decorrido",
+    "loading": "Carregando as duas noites…",
+    "zoomIn": "Aproximar",
+    "zoomOut": "Afastar",
+    "resetZoom": "Redefinir o zoom",
+    "fullScreen": "Tela cheia",
+    "closeFullScreen": "Fechar",
+    "panHint": "Role ou pince para aproximar, arraste para mover",
+    "signalsTitle": "Sinais",
+    "signalsHint": "(clique para maximizar)",
+    "loadFailed": "Não foi possível carregar uma das sessões."
+  }
+}
