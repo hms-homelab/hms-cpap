@@ -1,0 +1,16 @@
+{
+  "sessionDetail": {
+    "overview": "Áttekintés",
+    "expandHint": "(kattintson a kibontáshoz)",
+    "eventDistribution": "Események megoszlása",
+    "live": "ÉLŐ",
+    "refreshing": "Frissítés 65 másodpercenként",
+    "loadingSignals": "Jeladatok betöltése...",
+    "noSignalData": "Ehhez az alvásidőszakhoz nincs elérhető jeladat.",
+    "resetZoom": "Nagyítás visszaállítása",
+    "fullScreen": "Teljes képernyő",
+    "closeFullScreen": "Kilépés a teljes képernyőből",
+    "close": "Bezárás",
+    "odiTitle": "Oxigén-deszaturációs index — óránkénti ≥3%-os deszaturációk"
+  }
+}

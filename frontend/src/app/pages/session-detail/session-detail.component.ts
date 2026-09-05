@@ -4,6 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { ActivatedRoute } from '@angular/router';
 import { forkJoin, of } from 'rxjs';
 import { catchError } from 'rxjs/operators';
+import { TranslatePipe, TranslateService } from '@ngx-translate/core';
 import { CpapApiService } from '../../services/cpap-api.service';
 import { MetricCardComponent } from '../../components/metric-card/metric-card.component';
 import { SessionDetail, SessionEvent, SignalData, VitalsData, OximetryData } from '../../models/session.model';
@@ -18,7 +19,7 @@ Chart.register(...registerables, annotationPlugin, zoomPlugin);
 
 interface SignalDef {
   key: string;
-  title: string;
+  titleKey: string;
   unit: string;
   color: string;
   yMin?: number;
@@ -33,29 +34,36 @@ interface SignalDef {
   minMode?: number;        // only show if therapy_mode >= this (e.g., 1=not CPAP, 7=ASV only)
 }
 
+// SDD-080: `titleKey` rather than `title`. The names come from core.signal so
+// this page, the compare page and the dashboard cards cannot drift apart on
+// what a signal is called.
+//
+// The `unit` field stays a literal on purpose. L/min, cmH2O, mL, bpm, br/min,
+// %, ratio and the 0-1 / 0-5 scale hints are notation, not copy -- identical in
+// every language this product ships.
 const SIGNAL_DEFS: SignalDef[] = [
-  { key: 'flow_avg', title: 'Flow Rate', unit: 'L/min', color: '#64b5f6', hasBand: true, bandMinKey: 'flow_min', bandMaxKey: 'flow_max', showEvents: true, source: 'signals' },
-  { key: 'pressure_avg', title: 'Pressure', unit: 'cmH2O', color: '#ce93d8', hasBand: true, bandMinKey: 'pressure_min', bandMaxKey: 'pressure_max', showEvents: true, source: 'signals' },
-  { key: 'mask_pressure', title: 'Mask Pressure', unit: 'cmH2O', color: '#ba68c8', source: 'signals' },
-  { key: 'leak_rate', title: 'Leak Rate', unit: 'L/min', color: '#ffb74d', showEvents: true, source: 'signals', fill: true },
-  { key: 'flow_limitation', title: 'Flow Limitation', unit: '0-1', color: '#ef5350', yMin: 0, yMax: 1, source: 'signals', fill: true },
-  { key: 'snore_index', title: 'Snore Index', unit: '0-5', color: '#ff8a65', yMin: 0, source: 'signals', fill: true },
-  { key: 'respiratory_rate', title: 'Respiratory Rate', unit: 'br/min', color: '#81c784', source: 'signals' },
-  { key: 'tidal_volume', title: 'Tidal Volume', unit: 'mL', color: '#4dd0e1', source: 'signals' },
-  { key: 'minute_ventilation', title: 'Minute Ventilation', unit: 'L/min', color: '#aed581', source: 'signals' },
-  { key: 'ie_ratio', title: 'I:E Ratio', unit: 'ratio', color: '#fff176', source: 'signals' },
-  { key: 'epr_pressure', title: 'EPR Pressure', unit: 'cmH2O', color: '#9575cd', source: 'signals', minMode: 1 },
-  { key: 'target_ventilation', title: 'Target Ventilation', unit: 'L/min', color: '#4fc3f7', source: 'signals', minMode: 7 },
-  { key: 'spo2', title: 'SpO2', unit: '%', color: '#e57373', yMin: 85, yMax: 100, hasBand: true, bandMinKey: 'spo2_min', bandMaxKey: 'spo2', source: 'vitals', desat: true },
-  { key: 'heart_rate', title: 'Heart Rate', unit: 'bpm', color: '#f06292', hasBand: true, bandMinKey: 'hr_min', bandMaxKey: 'hr_max', source: 'vitals' },
-  { key: 'spo2', title: 'O2Ring SpO2', unit: '%', color: '#ef5350', yMin: 85, yMax: 100, source: 'oximetry', desat: true },
-  { key: 'heart_rate', title: 'O2Ring Heart Rate', unit: 'bpm', color: '#ec407a', source: 'oximetry' },
+  { key: 'flow_avg', titleKey: 'signal.flow', unit: 'L/min', color: '#64b5f6', hasBand: true, bandMinKey: 'flow_min', bandMaxKey: 'flow_max', showEvents: true, source: 'signals' },
+  { key: 'pressure_avg', titleKey: 'signal.pressure', unit: 'cmH2O', color: '#ce93d8', hasBand: true, bandMinKey: 'pressure_min', bandMaxKey: 'pressure_max', showEvents: true, source: 'signals' },
+  { key: 'mask_pressure', titleKey: 'signal.maskPressure', unit: 'cmH2O', color: '#ba68c8', source: 'signals' },
+  { key: 'leak_rate', titleKey: 'signal.leak', unit: 'L/min', color: '#ffb74d', showEvents: true, source: 'signals', fill: true },
+  { key: 'flow_limitation', titleKey: 'signal.flowLimitation', unit: '0-1', color: '#ef5350', yMin: 0, yMax: 1, source: 'signals', fill: true },
+  { key: 'snore_index', titleKey: 'signal.snoreIndex', unit: '0-5', color: '#ff8a65', yMin: 0, source: 'signals', fill: true },
+  { key: 'respiratory_rate', titleKey: 'signal.respRate', unit: 'br/min', color: '#81c784', source: 'signals' },
+  { key: 'tidal_volume', titleKey: 'signal.tidalVolume', unit: 'mL', color: '#4dd0e1', source: 'signals' },
+  { key: 'minute_ventilation', titleKey: 'signal.minuteVentilation', unit: 'L/min', color: '#aed581', source: 'signals' },
+  { key: 'ie_ratio', titleKey: 'signal.ieRatio', unit: 'ratio', color: '#fff176', source: 'signals' },
+  { key: 'epr_pressure', titleKey: 'signal.eprPressure', unit: 'cmH2O', color: '#9575cd', source: 'signals', minMode: 1 },
+  { key: 'target_ventilation', titleKey: 'signal.targetVentilation', unit: 'L/min', color: '#4fc3f7', source: 'signals', minMode: 7 },
+  { key: 'spo2', titleKey: 'signal.spo2', unit: '%', color: '#e57373', yMin: 85, yMax: 100, hasBand: true, bandMinKey: 'spo2_min', bandMaxKey: 'spo2', source: 'vitals', desat: true },
+  { key: 'heart_rate', titleKey: 'signal.heartRate', unit: 'bpm', color: '#f06292', hasBand: true, bandMinKey: 'hr_min', bandMaxKey: 'hr_max', source: 'vitals' },
+  { key: 'spo2', titleKey: 'signal.o2ringSpo2', unit: '%', color: '#ef5350', yMin: 85, yMax: 100, source: 'oximetry', desat: true },
+  { key: 'heart_rate', titleKey: 'signal.o2ringHeartRate', unit: 'bpm', color: '#ec407a', source: 'oximetry' },
 ];
 
 @Component({
   selector: 'app-session-detail',
   standalone: true,
-  imports: [CommonModule, MetricCardComponent, FormsModule],
+  imports: [CommonModule, MetricCardComponent, FormsModule, TranslatePipe],
   template: `
     <div class="detail-page" *ngIf="session">
       <div class="top-bar">
@@ -70,9 +78,9 @@ const SIGNAL_DEFS: SignalDef[] = [
       <!-- LIVE BANNER -->
       <div class="live-banner" *ngIf="isLive">
         <span class="live-dot"></span>
-        <span class="live-text">LIVE</span>
+        <span class="live-text">{{ 'sessionDetail.live' | translate }}</span>
         <span class="live-info">Started {{ liveStartTime }} &mdash; {{ liveDuration }}</span>
-        <span class="live-poll">Refreshing every 65s</span>
+        <span class="live-poll">{{ 'sessionDetail.refreshing' | translate }}</span>
       </div>
 
       <div class="o2-only-note" *ngIf="oximetryOnly">
@@ -106,9 +114,9 @@ const SIGNAL_DEFS: SignalDef[] = [
       <div class="detail-section" *ngIf="selectedSignal" [class.expanded]="isExpanded">
         <div class="detail-header">
           <h3>
-            {{ selectedSignal.title }} <span class="detail-unit">({{ selectedSignal.unit }})</span>
+            {{ selectedSignal.titleKey | translate }} <span class="detail-unit">({{ selectedSignal.unit }})</span>
             <span class="odi-badge" *ngIf="detailOdi !== null" [style.color]="odiColor"
-              title="Oxygen Desaturation Index — desaturations ≥3% per hour">
+              [title]="'sessionDetail.odiTitle' | translate">
               <i class="fa-solid fa-arrow-trend-down"></i> ODI {{ detailOdi.toFixed(1) }}/hr
             </span>
           </h3>
@@ -117,10 +125,10 @@ const SIGNAL_DEFS: SignalDef[] = [
               <button *ngFor="let r of rangeOptions" [class.active]="activeRange === r.value"
                 (click)="setRange(r.value)">{{ r.label }}</button>
             </div>
-            <button class="reset-btn" (click)="resetZoom()">Reset Zoom</button>
-            <button class="reset-btn" (click)="toggleExpand()" [title]="isExpanded ? 'Close full screen' : 'Full screen'">
+            <button class="reset-btn" (click)="resetZoom()">{{ 'sessionDetail.resetZoom' | translate }}</button>
+            <button class="reset-btn" (click)="toggleExpand()" [title]="(isExpanded ? 'sessionDetail.closeFullScreen' : 'sessionDetail.fullScreen') | translate">
               <i class="fa-solid" [class.fa-expand]="!isExpanded" [class.fa-compress]="isExpanded"></i>
-              {{ isExpanded ? 'Close' : 'Full screen' }}
+              {{ (isExpanded ? 'sessionDetail.close' : 'sessionDetail.fullScreen') | translate }}
             </button>
           </div>
         </div>
@@ -139,13 +147,13 @@ const SIGNAL_DEFS: SignalDef[] = [
 
       <!-- OVERVIEW STRIP -->
       <div class="overview-section" *ngIf="availableSignals.length">
-        <h3>Overview <span class="hint">(click to expand)</span></h3>
+        <h3>{{ 'sessionDetail.overview' | translate }} <span class="hint">{{ 'sessionDetail.expandHint' | translate }}</span></h3>
         <div class="overview-grid">
           <div *ngFor="let sig of availableSignals; let i = index"
             class="overview-card" [class.selected]="selectedSignal?.key === sig.key"
             (click)="selectSignal(sig)">
             <div class="overview-header">
-              <span class="ov-title">{{ sig.title }}</span>
+              <span class="ov-title">{{ sig.titleKey | translate }}</span>
               <span class="ov-unit">{{ sig.unit }}</span>
             </div>
             <canvas [id]="'ov-' + sig.key"></canvas>
@@ -155,14 +163,14 @@ const SIGNAL_DEFS: SignalDef[] = [
 
       <!-- Event Distribution -->
       <div class="doughnut-section" *ngIf="hasEvents">
-        <h3>Event Distribution</h3>
+        <h3>{{ 'sessionDetail.eventDistribution' | translate }}</h3>
         <div class="doughnut-container">
           <canvas #doughnutCanvas></canvas>
         </div>
       </div>
 
       <div class="loading" *ngIf="!hasChartData && !loadError">
-        <p>Loading signal data...</p>
+        <p>{{ 'sessionDetail.loadingSignals' | translate }}</p>
       </div>
       <div class="loading" *ngIf="loadError">
         <p>{{ loadError }}</p>
@@ -323,7 +331,8 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
   private viewStart = 0;
   private viewEnd = 0;
 
-  constructor(private route: ActivatedRoute, private api: CpapApiService) {}
+  constructor(private route: ActivatedRoute, private api: CpapApiService,
+              private t: TranslateService) {}
 
   ngOnInit() {
     this.date = this.route.snapshot.paramMap.get('date') || '';
@@ -486,7 +495,7 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
 
       if (!this.signalLabels.length && !this.vitalsLabels.length &&
           !this.oximetryLabels.length) {
-        this.loadError = 'No signal data available for this session.';
+        this.loadError = this.t.instant('sessionDetail.noSignalData');
         return;
       }
 
@@ -676,7 +685,8 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
     }
 
     // Build datasets
-    const datasets: ChartDataset<'line'>[] = [makeDataset(sig.title, mainData, sig.color, { fill: sig.fill })];
+    const sigTitle = this.t.instant(sig.titleKey);
+    const datasets: ChartDataset<'line'>[] = [makeDataset(sigTitle, mainData, sig.color, { fill: sig.fill })];
 
     if (sig.hasBand && sig.bandMinKey && sig.bandMaxKey) {
       let minD = this.getData(sig.bandMinKey);
@@ -685,7 +695,7 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
         minD = minD.slice(this.viewStart, this.viewEnd);
         maxD = maxD.slice(this.viewStart, this.viewEnd);
       }
-      datasets.push(...makeFillBand(sig.title, minD, maxD, sig.color));
+      datasets.push(...makeFillBand(sigTitle, minD, maxD, sig.color));
     }
 
     // Event annotations

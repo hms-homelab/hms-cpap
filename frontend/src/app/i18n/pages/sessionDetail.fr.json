@@ -1,0 +1,16 @@
+{
+  "sessionDetail": {
+    "overview": "Aperçu",
+    "expandHint": "(cliquez pour développer)",
+    "eventDistribution": "Répartition des événements",
+    "live": "EN DIRECT",
+    "refreshing": "Actualisation toutes les 65 s",
+    "loadingSignals": "Chargement des données de signal...",
+    "noSignalData": "Aucune donnée de signal pour cette session.",
+    "resetZoom": "Réinitialiser le zoom",
+    "fullScreen": "Plein écran",
+    "closeFullScreen": "Quitter le plein écran",
+    "close": "Fermer",
+    "odiTitle": "Indice de désaturation en oxygène — désaturations ≥3 % par heure"
+  }
+}
