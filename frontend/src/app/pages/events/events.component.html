@@ -1,22 +1,28 @@
 <div class="events-page">
   <div class="events-head">
-    <h2>Events</h2>
+    <h2>{{ 'events.title' | translate }}</h2>
   </div>
 
   <div class="filter-bar">
     <div class="filter-group">
-      <label>From</label>
+      <label>{{ 'events.filters.from' | translate }}</label>
       <input type="date" [(ngModel)]="startDate" (change)="onFilterChange()" />
     </div>
     <div class="filter-group">
-      <label>To</label>
+      <label>{{ 'events.filters.to' | translate }}</label>
       <input type="date" [(ngModel)]="endDate" (change)="onFilterChange()" />
     </div>
     <div class="filter-group">
-      <label>Min duration (s)</label>
-      <input type="number" min="0" placeholder="any" [(ngModel)]="minDuration"
+      <label>{{ 'events.filters.minDuration' | translate }}</label>
+      <input type="number" min="0" [placeholder]="'events.filters.any' | translate"
+             [(ngModel)]="minDuration"
              (change)="onFilterChange()" class="dur-input" />
     </div>
+    <!-- Event type names come from the parser as ResMed's own labels
+         (Obstructive, Hypopnea, ClearAirway...). SDD-080 leaves them
+         untranslated on purpose: they are the machine's vocabulary and appear
+         identically in OSCAR and on the device, so translating them here would
+         make the two disagree. -->
     <div class="type-chips">
       <button *ngFor="let t of eventTypes" class="type-chip"
               [class.on]="isChecked(t)"
@@ -27,11 +33,17 @@
 
   <table class="events-table" *ngIf="rows.length > 0">
     <thead>
-      <tr><th>Night</th><th>Time</th><th>Type</th><th>Duration</th><th>Details</th></tr>
+      <tr>
+        <th>{{ 'events.table.night' | translate }}</th>
+        <th>{{ 'events.table.time' | translate }}</th>
+        <th>{{ 'events.table.type' | translate }}</th>
+        <th>{{ 'events.table.duration' | translate }}</th>
+        <th>{{ 'events.table.details' | translate }}</th>
+      </tr>
     </thead>
     <tbody>
       <tr *ngFor="let r of rows" class="clickable" (click)="openNight(r)"
-          title="Open this night">
+          [title]="'events.table.openNight' | translate">
         <td>{{ r.sleep_day }}</td>
         <td class="mono">{{ clockTime(r.event_timestamp) }}</td>
         <td><span class="type-badge" [style.background]="typeColor(r.event_type)">{{ r.event_type }}</span></td>
@@ -42,7 +54,7 @@
   </table>
 
   <div class="empty" *ngIf="!loading && !rows.length && !loadError">
-    No events match these filters.
+    {{ 'events.empty' | translate }}
   </div>
   <div class="empty" *ngIf="loadError">{{ loadError }}</div>
 
@@ -50,7 +62,7 @@
     <button class="load-more" [disabled]="loadingMore" (click)="loadMore()">
       <i class="fa-solid" [class.fa-chevron-down]="!loadingMore"
          [class.fa-circle-notch]="loadingMore" [class.fa-spin]="loadingMore"></i>
-      {{ loadingMore ? 'Loading...' : 'Load more' }}
+      {{ (loadingMore ? 'common.loading' : 'events.loadMore') | translate }}
     </button>
   </div>
 </div>

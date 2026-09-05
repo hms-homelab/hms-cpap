@@ -1,0 +1,28 @@
+{
+  "reports": {
+    "title": "PDF-jelentések",
+    "generate": {
+      "heading": "Jelentés készítése",
+      "startDate": "Kezdő dátum",
+      "endDate": "Záró dátum",
+      "button": "PDF készítése",
+      "generating": "Készítés..."
+    },
+    "table": {
+      "heading": "Elkészült jelentések",
+      "empty": "Még nincs jelentés.",
+      "period": "Időszak",
+      "nights": "Éjszakák",
+      "created": "Létrehozva",
+      "status": "Állapot",
+      "actions": "Műveletek",
+      "download": "Letöltés"
+    },
+    "status": {
+      "pending": "Sorban",
+      "generating": "Készítés...",
+      "ready": "Kész",
+      "error": "Hiba"
+    }
+  }
+}

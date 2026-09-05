@@ -2,6 +2,7 @@ import { Component, OnInit, ChangeDetectorRef } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
+import { TranslatePipe } from '@ngx-translate/core';
 import { CpapApiService } from '../../services/cpap-api.service';
 import { EventRow } from '../../models/session.model';
 
@@ -26,7 +27,7 @@ const TYPE_COLORS: Record<string, string> = {
 @Component({
   selector: 'app-events',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, TranslatePipe],
   templateUrl: './events.component.html',
   styleUrls: ['./events.component.css'],
 })

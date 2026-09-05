@@ -1,0 +1,28 @@
+{
+  "reports": {
+    "title": "Rapports PDF",
+    "generate": {
+      "heading": "Générer un rapport",
+      "startDate": "Date de début",
+      "endDate": "Date de fin",
+      "button": "Générer le PDF",
+      "generating": "Génération..."
+    },
+    "table": {
+      "heading": "Rapports générés",
+      "empty": "Aucun rapport pour l'instant.",
+      "period": "Période",
+      "nights": "Nuits",
+      "created": "Créé",
+      "status": "État",
+      "actions": "Actions",
+      "download": "Télécharger"
+    },
+    "status": {
+      "pending": "En file",
+      "generating": "Génération...",
+      "ready": "Prêt",
+      "error": "Erreur"
+    }
+  }
+}

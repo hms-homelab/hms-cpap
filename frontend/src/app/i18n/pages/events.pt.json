@@ -1,0 +1,21 @@
+{
+  "events": {
+    "title": "Eventos",
+    "filters": {
+      "from": "De",
+      "to": "Até",
+      "minDuration": "Duração mín. (s)",
+      "any": "qualquer"
+    },
+    "table": {
+      "night": "Noite",
+      "time": "Hora",
+      "type": "Tipo",
+      "duration": "Duração",
+      "details": "Detalhes",
+      "openNight": "Abrir esta noite"
+    },
+    "empty": "Nenhum evento corresponde a estes filtros.",
+    "loadMore": "Carregar mais"
+  }
+}

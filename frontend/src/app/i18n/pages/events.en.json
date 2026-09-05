@@ -1,0 +1,21 @@
+{
+  "events": {
+    "title": "Events",
+    "filters": {
+      "from": "From",
+      "to": "To",
+      "minDuration": "Min duration (s)",
+      "any": "any"
+    },
+    "table": {
+      "night": "Night",
+      "time": "Time",
+      "type": "Type",
+      "duration": "Duration",
+      "details": "Details",
+      "openNight": "Open this night"
+    },
+    "empty": "No events match these filters.",
+    "loadMore": "Load more"
+  }
+}

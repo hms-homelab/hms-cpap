@@ -1,0 +1,28 @@
+{
+  "reports": {
+    "title": "Informes PDF",
+    "generate": {
+      "heading": "Generar informe",
+      "startDate": "Fecha de inicio",
+      "endDate": "Fecha de fin",
+      "button": "Generar PDF",
+      "generating": "Generando..."
+    },
+    "table": {
+      "heading": "Informes generados",
+      "empty": "Todavía no hay informes.",
+      "period": "Periodo",
+      "nights": "Noches",
+      "created": "Creado",
+      "status": "Estado",
+      "actions": "Acciones",
+      "download": "Descargar"
+    },
+    "status": {
+      "pending": "En cola",
+      "generating": "Generando...",
+      "ready": "Listo",
+      "error": "Error"
+    }
+  }
+}

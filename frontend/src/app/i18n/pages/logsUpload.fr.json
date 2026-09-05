@@ -1,0 +1,40 @@
+{
+  "logs": {
+    "title": "Journaux",
+    "lineCount": "{{n}} lignes",
+    "disabled": "journalisation désactivée",
+    "lineSelectTitle": "Combien de lignes afficher",
+    "lastN": "{{n}} dernières",
+    "refresh": "Actualiser",
+    "refreshTitle": "Recharger",
+    "autoTitle": "Recharger toutes les 5 secondes",
+    "autoOn": "Auto : activé",
+    "autoOff": "Auto : désactivé",
+    "download": "Télécharger",
+    "downloadTitle": "Enregistrer dans un fichier",
+    "copy": "Copier dans le presse-papiers",
+    "copied": "Copié",
+    "enableHint": "Activez la journalisation dans les Paramètres, redémarrez, et le fichier apparaîtra dans",
+    "truncated": "Affichage des {{shown}} dernières lignes sur {{total}}. Choisissez un nombre plus grand ci-dessus pour en voir davantage.",
+    "empty": "Rien n'a encore été journalisé.",
+    "reading": "Lecture du journal…"
+  },
+  "upload": {
+    "title": "Importer des données",
+    "zip": {
+      "heading": "Données CPAP (.zip)",
+      "hint": "Importez un zip des dossiers DATALOG de votre carte SD (ResMed AirSense 10/11). Les nuits sont ajoutées à l'archive et analysées automatiquement.",
+      "idle": "Glissez un .zip ici ou cliquez pour choisir",
+      "uploading": "Envoi en cours...",
+      "imported": "{{count}} nuit(s) importée(s)"
+    },
+    "oxi": {
+      "heading": "Données d'oxymétrie O2Ring (.csv)",
+      "hintPre": "Importez un CSV exporté de l'« O2 Ring » Wellue / Viatom (Partager",
+      "hintPost": "CSV dans l'application Viatom). La SpO₂ et le pouls sont ajoutés comme session d'oxymétrie.",
+      "idle": "Glissez un .csv ici ou cliquez pour choisir",
+      "importing": "Importation...",
+      "result": "{{samples}} échantillons, SpO₂ moyenne {{avg}}%"
+    }
+  }
+}

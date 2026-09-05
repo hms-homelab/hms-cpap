@@ -1,5 +1,6 @@
 import { Component, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { TranslatePipe } from '@ngx-translate/core';
 import { CpapApiService } from '../../services/cpap-api.service';
 
 type ZoneState = 'idle' | 'uploading' | 'processing' | 'complete' | 'error';
@@ -7,7 +8,7 @@ type ZoneState = 'idle' | 'uploading' | 'processing' | 'complete' | 'error';
 @Component({
   selector: 'app-upload',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, TranslatePipe],
   templateUrl: './upload.component.html',
   styleUrls: ['./upload.component.css']
 })
