@@ -2,6 +2,7 @@ import { Component, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { forkJoin } from 'rxjs';
+import { TranslatePipe, TranslateService } from '@ngx-translate/core';
 import { CpapApiService } from '../../services/cpap-api.service';
 import {
   EquipmentItem,
@@ -23,7 +24,7 @@ interface ItemDraft {
 @Component({
   selector: 'app-equipment',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, TranslatePipe],
   templateUrl: './equipment.component.html',
   styleUrls: ['./equipment.component.css']
 })
@@ -51,7 +52,7 @@ export class EquipmentComponent implements OnInit {
   newProfileName = '';
   addTypeKey = '';
 
-  constructor(private api: CpapApiService) {}
+  constructor(private api: CpapApiService, private t: TranslateService) {}
 
   ngOnInit() {
     this.load();
@@ -76,7 +77,7 @@ export class EquipmentComponent implements OnInit {
         this.loading = false;
       },
       error: () => {
-        this.error = 'Failed to load equipment.';
+        this.error = this.t.instant('equipment.errors.loadFailed');
         this.loading = false;
       }
     });
@@ -117,7 +118,7 @@ export class EquipmentComponent implements OnInit {
     this.suggesting = true;
     this.api.suggestCleaningTasks(this.selectedId).subscribe({
       next: () => { this.suggesting = false; this.loadCleaning(); },
-      error: () => { this.suggesting = false; this.error = 'Could not add suggested tasks.'; }
+      error: () => { this.suggesting = false; this.error = this.t.instant('equipment.errors.suggestFailed'); }
     });
   }
 
@@ -139,7 +140,7 @@ export class EquipmentComponent implements OnInit {
     this.cleaningBusy = t.id;
     this.api.markCleaningDone(t.id).subscribe({
       next: updated => { this.cleaningBusy = 0; this.replaceCleaning(updated); },
-      error: () => { this.cleaningBusy = 0; this.error = 'Could not mark that done.'; }
+      error: () => { this.cleaningBusy = 0; this.error = this.t.instant('equipment.errors.markDoneFailed'); }
     });
   }
 
@@ -148,7 +149,7 @@ export class EquipmentComponent implements OnInit {
     this.cleaningBusy = t.id;
     this.api.deleteCleaningTask(t.id).subscribe({
       next: () => { this.cleaningBusy = 0; this.loadCleaning(); },
-      error: () => { this.cleaningBusy = 0; this.error = 'Could not remove that task.'; }
+      error: () => { this.cleaningBusy = 0; this.error = this.t.instant('equipment.errors.removeTaskFailed'); }
     });
   }
 
@@ -159,7 +160,7 @@ export class EquipmentComponent implements OnInit {
       next: updated => { this.cleaningBusy = 0; this.replaceCleaning(updated); },
       error: () => {
         this.cleaningBusy = 0;
-        this.error = 'Could not save that change.';
+        this.error = this.t.instant('equipment.errors.saveFailed');
         // Re-read rather than leaving the row showing an edit the server rejected.
         this.loadCleaning();
       }
@@ -190,15 +191,29 @@ export class EquipmentComponent implements OnInit {
    * The line under each row. Deliberately concrete: "Due 3 days ago" tells the
    * user what to do, "due" only tells them a state.
    */
+  /**
+   * SDD-080. Built through the catalog rather than by concatenating English.
+   *
+   * The singular and plural forms are SEPARATE KEYS rather than one key with a
+   * suffix rule, because the languages disagree about whether a plural exists
+   * here at all: English needs "1 day" vs "2 days", and Hungarian does not
+   * pluralise a noun after a numeral ("1 nap", "2 nap"). Two keys let each
+   * dictionary answer for itself; a shared `day/days` suffix could not.
+   */
   cleaningLabel(t: CleaningTask): string {
-    if (!t.enabled) return 'Off';
+    if (!t.enabled) return this.t.instant('equipment.state.off');
     const d = t.status?.days_until ?? 0;
     if (t.status?.state === 'due') {
-      if (d === 0) return 'Due now';
-      return `Overdue by ${Math.abs(d)} day${Math.abs(d) === 1 ? '' : 's'}`;
+      if (d === 0) return this.t.instant('equipment.state.dueNow');
+      const n = Math.abs(d);
+      return this.t.instant(
+        n === 1 ? 'equipment.state.overdueOne' : 'equipment.state.overdueMany',
+        { days: n });
     }
-    if (d === 0) return 'Due later today';
-    return `Due in ${d} day${d === 1 ? '' : 's'}`;
+    if (d === 0) return this.t.instant('equipment.state.dueLaterToday');
+    return this.t.instant(
+      d === 1 ? 'equipment.state.dueInOne' : 'equipment.state.dueInMany',
+      { days: d });
   }
 
   cleaningStateClass(t: CleaningTask): string {
@@ -234,7 +249,7 @@ export class EquipmentComponent implements OnInit {
       },
       error: () => {
         this.busy = false;
-        this.error = 'Failed to create the profile.';
+        this.error = this.t.instant('equipment.errors.createProfileFailed');
       }
     });
   }
@@ -262,7 +277,7 @@ export class EquipmentComponent implements OnInit {
       },
       error: () => {
         this.busy = false;
-        this.error = 'Failed to rename the profile.';
+        this.error = this.t.instant('equipment.errors.renameProfileFailed');
       }
     });
   }
@@ -270,7 +285,7 @@ export class EquipmentComponent implements OnInit {
   deleteProfile() {
     const p = this.selected;
     if (!p || this.busy) return;
-    if (!confirm(`Remove the profile "${p.name}" and everything in it?`)) return;
+    if (!confirm(this.t.instant('equipment.confirm.removeProfile', { name: p.name }))) return;
     this.busy = true;
     this.api.deleteEquipmentProfile(p.id).subscribe({
       next: () => {
@@ -280,7 +295,7 @@ export class EquipmentComponent implements OnInit {
       },
       error: () => {
         this.busy = false;
-        this.error = 'Failed to remove the profile.';
+        this.error = this.t.instant('equipment.errors.removeProfileFailed');
       }
     });
   }
@@ -362,7 +377,7 @@ export class EquipmentComponent implements OnInit {
     const days = raw === null || raw === undefined ? '' : String(raw).trim();
     const parsed = days === '' ? null : Number(days);
     if (parsed !== null && (!Number.isFinite(parsed) || parsed < 0)) {
-      this.error = 'Replace every must be a number of days.';
+      this.error = this.t.instant('equipment.errors.replaceEveryNotNumber');
       return;
     }
     this.busy = true;
@@ -395,7 +410,12 @@ export class EquipmentComponent implements OnInit {
 
   removeItem(item: EquipmentItem) {
     if (this.busy) return;
-    if (!confirm(`Remove this ${this.typeLabel(item.type_key).toLowerCase()}?`)) return;
+    // typeLabel() is the server's own catalog label, so it is not lowercased
+    // here any more: `toLowerCase()` is wrong in German and meaningless in
+    // Hungarian, and the server string was never guaranteed to be a noun that
+    // reads well mid-sentence anyway.
+    if (!confirm(this.t.instant('equipment.confirm.removeItem',
+                                { type: this.typeLabel(item.type_key) }))) return;
     this.busy = true;
     this.api.deleteEquipmentItem(item.id).subscribe({
       next: () => {
@@ -404,7 +424,7 @@ export class EquipmentComponent implements OnInit {
       },
       error: () => {
         this.busy = false;
-        this.error = 'Failed to remove the item.';
+        this.error = this.t.instant('equipment.errors.removeFailed');
       }
     });
   }
@@ -420,9 +440,16 @@ export class EquipmentComponent implements OnInit {
   stateLabel(item: EquipmentItem): string {
     const s = item.supply?.state as SupplyState;
     const d = item.supply?.days_left ?? 0;
-    if (s === 'untracked') return 'Not tracked';
-    if (s === 'overdue') return `${Math.abs(d)} ${this.plural(Math.abs(d))} overdue`;
-    return `${d} ${this.plural(d)} left`;
+    if (s === 'untracked') return this.t.instant('equipment.state.untracked');
+    if (s === 'overdue') {
+      const n = Math.abs(d);
+      return this.t.instant(
+        n === 1 ? 'equipment.state.supplyOverdueOne' : 'equipment.state.supplyOverdueMany',
+        { days: n });
+    }
+    return this.t.instant(
+      d === 1 ? 'equipment.state.supplyLeftOne' : 'equipment.state.supplyLeftMany',
+      { days: d });
   }
 
   replaceByLabel(item: EquipmentItem): string {
@@ -430,9 +457,10 @@ export class EquipmentComponent implements OnInit {
     return new Date(item.supply.replace_by * 1000).toISOString().slice(0, 10);
   }
 
-  private plural(n: number): string {
-    return n === 1 ? 'day' : 'days';
-  }
+  // `plural()` is gone: it returned the English words "day"/"days" for string
+  // concatenation, which is exactly the shape SDD-080 replaced. Singular and
+  // plural are now separate catalog keys so each language decides for itself
+  // whether the distinction exists.
 
   // ── Date helpers (API is ISO-8601 UTC; the input wants yyyy-mm-dd) ─────────
 

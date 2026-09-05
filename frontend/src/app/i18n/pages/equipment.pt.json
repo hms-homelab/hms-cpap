@@ -1,0 +1,85 @@
+{
+  "equipment": {
+    "title": "Equipamentos",
+    "loading": "Carregando os equipamentos...",
+    "profile": {
+      "new": "Novo perfil",
+      "namePlaceholder": "Nome do perfil",
+      "create": "Criar",
+      "rename": "Renomear perfil",
+      "delete": "Excluir perfil"
+    },
+    "group": {
+      "machine": "Aparelho",
+      "accessories": "Acessórios",
+      "cleaning": "Limpeza"
+    },
+    "empty": {
+      "machine": "Ainda não há aparelho neste perfil.",
+      "accessories": "Ainda não há acessórios neste perfil.",
+      "cleaning": "Ainda não há calendário de limpeza."
+    },
+    "cleaning": {
+      "addSuggested": "Adicionar tarefas sugeridas",
+      "adding": "Adicionando...",
+      "suggestHint": "As sugestões correspondem aos equipamentos desta configuração, e todas começam desligadas.",
+      "switchOn": "Ligar",
+      "switchOff": "Desligar",
+      "markDone": "Marcar como feita",
+      "remove": "Remover",
+      "every": "A cada (dias)",
+      "at": "Às",
+      "starting": "A partir de",
+      "lastDone": "Feita pela última vez em {{date}}"
+    },
+    "state": {
+      "off": "Desligada",
+      "dueNow": "Vence agora",
+      "dueLaterToday": "Vence mais tarde hoje",
+      "overdueOne": "1 dia de atraso",
+      "overdueMany": "{{days}} dias de atraso",
+      "dueInOne": "Vence em 1 dia",
+      "dueInMany": "Vence em {{days}} dias",
+      "untracked": "Não acompanhado",
+      "supplyOverdueOne": "1 dia de atraso",
+      "supplyOverdueMany": "{{days}} dias de atraso",
+      "supplyLeftOne": "resta 1 dia",
+      "supplyLeftMany": "restam {{days}} dias"
+    },
+    "add": {
+      "placeholder": "Adicionar equipamento...",
+      "button": "Adicionar"
+    },
+    "item": {
+      "unnamed": "Sem nome",
+      "edit": "Editar",
+      "save": "Salvar",
+      "cancel": "Cancelar",
+      "remove": "Remover",
+      "brand": "Marca",
+      "model": "Modelo",
+      "inUseSince": "Em uso desde",
+      "replaceEvery": "Trocar a cada (dias)",
+      "defaultDays": "Padrão {{days}}",
+      "notTracked": "Não acompanhado",
+      "inUseSinceLabel": "Em uso desde {{date}}",
+      "replaceBy": "Trocar até {{date}}"
+    },
+    "confirm": {
+      "removeItem": "Remover este item: {{type}}?",
+      "removeProfile": "Remover o perfil \"{{name}}\" e tudo o que há nele?"
+    },
+    "errors": {
+      "removeFailed": "Não foi possível remover o item.",
+      "loadFailed": "Não foi possível carregar os equipamentos.",
+      "suggestFailed": "Não foi possível adicionar as tarefas sugeridas.",
+      "markDoneFailed": "Não foi possível marcar como feita.",
+      "removeTaskFailed": "Não foi possível remover essa tarefa.",
+      "saveFailed": "Não foi possível salvar essa alteração.",
+      "createProfileFailed": "Não foi possível criar o perfil.",
+      "renameProfileFailed": "Não foi possível renomear o perfil.",
+      "removeProfileFailed": "Não foi possível remover o perfil.",
+      "replaceEveryNotNumber": "\"Trocar a cada\" precisa ser um número de dias."
+    }
+  }
+}

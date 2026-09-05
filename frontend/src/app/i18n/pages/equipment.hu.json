@@ -1,0 +1,85 @@
+{
+  "equipment": {
+    "title": "Eszközök",
+    "loading": "Eszközök betöltése...",
+    "profile": {
+      "new": "Új profil",
+      "namePlaceholder": "Profil neve",
+      "create": "Létrehozás",
+      "rename": "Profil átnevezése",
+      "delete": "Profil törlése"
+    },
+    "group": {
+      "machine": "Készülék",
+      "accessories": "Tartozékok",
+      "cleaning": "Tisztítás"
+    },
+    "empty": {
+      "machine": "Ebben a profilban még nincs készülék.",
+      "accessories": "Ebben a profilban még nincsenek tartozékok.",
+      "cleaning": "Még nincs tisztítási ütemterv."
+    },
+    "cleaning": {
+      "addSuggested": "Javasolt feladatok hozzáadása",
+      "adding": "Hozzáadás...",
+      "suggestHint": "A javaslatok az ebben az összeállításban lévő eszközökhöz igazodnak, és mind kikapcsolva indulnak.",
+      "switchOn": "Bekapcsolás",
+      "switchOff": "Kikapcsolás",
+      "markDone": "Kész jelölés",
+      "remove": "Eltávolítás",
+      "every": "Ennyi naponta",
+      "at": "Ekkor",
+      "starting": "Kezdés",
+      "lastDone": "Utoljára elvégezve: {{date}}"
+    },
+    "state": {
+      "off": "Kikapcsolva",
+      "dueNow": "Most esedékes",
+      "dueLaterToday": "Ma később esedékes",
+      "overdueOne": "1 nap késés",
+      "overdueMany": "{{days}} nap késés",
+      "dueInOne": "1 nap múlva esedékes",
+      "dueInMany": "{{days}} nap múlva esedékes",
+      "untracked": "Nem követett",
+      "supplyOverdueOne": "1 nap késés",
+      "supplyOverdueMany": "{{days}} nap késés",
+      "supplyLeftOne": "1 nap van hátra",
+      "supplyLeftMany": "{{days}} nap van hátra"
+    },
+    "add": {
+      "placeholder": "Eszköz hozzáadása...",
+      "button": "Hozzáadás"
+    },
+    "item": {
+      "unnamed": "Névtelen",
+      "edit": "Szerkesztés",
+      "save": "Mentés",
+      "cancel": "Mégse",
+      "remove": "Eltávolítás",
+      "brand": "Márka",
+      "model": "Modell",
+      "inUseSince": "Használatban ettől",
+      "replaceEvery": "Csere ennyi naponta",
+      "defaultDays": "Alapértelmezett: {{days}}",
+      "notTracked": "Nem követett",
+      "inUseSinceLabel": "Használatban ettől: {{date}}",
+      "replaceBy": "Cserélje eddig: {{date}}"
+    },
+    "confirm": {
+      "removeItem": "Eltávolítja ezt: {{type}}?",
+      "removeProfile": "Eltávolítja a(z) „{{name}}” profilt és mindent, ami benne van?"
+    },
+    "errors": {
+      "removeFailed": "Az elemet nem sikerült eltávolítani.",
+      "loadFailed": "Az eszközöket nem sikerült betölteni.",
+      "suggestFailed": "A javasolt feladatokat nem sikerült hozzáadni.",
+      "markDoneFailed": "Nem sikerült késznek jelölni.",
+      "removeTaskFailed": "A feladatot nem sikerült eltávolítani.",
+      "saveFailed": "A módosítást nem sikerült menteni.",
+      "createProfileFailed": "A profilt nem sikerült létrehozni.",
+      "renameProfileFailed": "A profilt nem sikerült átnevezni.",
+      "removeProfileFailed": "A profilt nem sikerült eltávolítani.",
+      "replaceEveryNotNumber": "A „Csere ennyi naponta” mezőbe napok számát kell írni."
+    }
+  }
+}
