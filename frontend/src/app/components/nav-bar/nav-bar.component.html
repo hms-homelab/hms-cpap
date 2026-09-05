@@ -5,13 +5,14 @@
     <span class="nav-version" *ngIf="version">v{{version}}</span>
   </div>
   <div class="nav-links">
-    <a routerLink="/dashboard" routerLinkActive="active"><i class="fa-solid fa-gauge-high"></i> Dashboard</a>
-    <a routerLink="/sessions" routerLinkActive="active"><i class="fa-solid fa-moon"></i> Sessions</a>
-    <a routerLink="/events" routerLinkActive="active"><i class="fa-solid fa-wave-square"></i> Events</a>
-    <a routerLink="/reports" routerLinkActive="active"><i class="fa-solid fa-file-waveform"></i> Reports</a>
-    <a routerLink="/equipment" routerLinkActive="active"><i class="fa-solid fa-mask-face"></i> Equipment</a>
-    <a routerLink="/upload" routerLinkActive="active"><i class="fa-solid fa-cloud-arrow-up"></i> Upload</a>
-    <a routerLink="/logs" routerLinkActive="active"><i class="fa-solid fa-file-lines"></i> Logs</a>
-    <a routerLink="/settings" routerLinkActive="active"><i class="fa-solid fa-gear"></i> Settings</a>
+    <a routerLink="/dashboard" routerLinkActive="active"><i class="fa-solid fa-gauge-high"></i> {{ 'nav.dashboard' | translate }}</a>
+    <a routerLink="/sessions" routerLinkActive="active"><i class="fa-solid fa-moon"></i> {{ 'nav.sessions' | translate }}</a>
+    <a routerLink="/events" routerLinkActive="active"><i class="fa-solid fa-wave-square"></i> {{ 'nav.events' | translate }}</a>
+    <a routerLink="/reports" routerLinkActive="active"><i class="fa-solid fa-file-waveform"></i> {{ 'nav.reports' | translate }}</a>
+    <a routerLink="/equipment" routerLinkActive="active"><i class="fa-solid fa-mask-face"></i> {{ 'nav.equipment' | translate }}</a>
+    <a routerLink="/upload" routerLinkActive="active"><i class="fa-solid fa-cloud-arrow-up"></i> {{ 'nav.upload' | translate }}</a>
+    <a routerLink="/logs" routerLinkActive="active"><i class="fa-solid fa-file-lines"></i> {{ 'nav.logs' | translate }}</a>
+    <a routerLink="/settings" routerLinkActive="active"><i class="fa-solid fa-gear"></i> {{ 'nav.settings' | translate }}</a>
+    <app-language-switcher />
   </div>
 </nav>

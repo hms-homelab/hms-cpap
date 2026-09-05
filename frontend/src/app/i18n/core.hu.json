@@ -1,0 +1,29 @@
+{
+  "common": {
+    "language": "Nyelv",
+    "loading": "Betöltés...",
+    "save": "Mentés",
+    "cancel": "Mégse",
+    "close": "Bezárás",
+    "retry": "Újra",
+    "back": "Vissza",
+    "next": "Tovább",
+    "noData": "Nincs adat"
+  },
+  "nav": {
+    "dashboard": "Irányítópult",
+    "sessions": "Alvásidőszakok",
+    "events": "Események",
+    "reports": "Jelentések",
+    "equipment": "Eszközök",
+    "upload": "Feltöltés",
+    "logs": "Naplók",
+    "settings": "Beállítások"
+  },
+  "shell": {
+    "configError": {
+      "title": "Semmilyen adat nem kerül be.",
+      "action": "Beállítások megnyitása"
+    }
+  }
+}

@@ -1,6 +1,7 @@
 import { Component, OnInit } from '@angular/core';
 import { Router, RouterOutlet, RouterLink, NavigationEnd } from '@angular/router';
 import { filter } from 'rxjs';
+import { TranslatePipe } from '@ngx-translate/core';
 import { NavBarComponent } from './components/nav-bar/nav-bar.component';
 import { CpapApiService } from './services/cpap-api.service';
 
@@ -15,7 +16,7 @@ interface ConfigError {
 @Component({
   selector: 'app-root',
   standalone: true,
-  imports: [RouterOutlet, RouterLink, NavBarComponent],
+  imports: [RouterOutlet, RouterLink, NavBarComponent, TranslatePipe],
   template: `
     @if (!isSetup) {
       <app-nav-bar />
@@ -31,13 +32,16 @@ interface ConfigError {
       <div class="config-error" role="alert">
         <span class="icon" aria-hidden="true">&#9888;</span>
         <div class="body">
-          <strong>Nothing is being imported.</strong>
+          <strong>{{ 'shell.configError.title' | translate }}</strong>
+          <!-- problem and remedy come from /api/capabilities, which is
+               English-only server text. SDD-080 leaves them as-is rather than
+               inventing a translation the backend cannot actually produce. -->
           <span class="problem">{{ configError.problem }}.</span>
           <span class="remedy">{{ configError.remedy }}</span>
         </div>
         <!-- routerLink, not href: a raw href ignores <base href> handling and
              would leave the Ingress prefix (SDD-021) behind. -->
-        <a class="action" routerLink="/settings">Open Settings</a>
+        <a class="action" routerLink="/settings">{{ 'shell.configError.action' | translate }}</a>
       </div>
     }
     <main>

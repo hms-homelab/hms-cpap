@@ -1,0 +1,29 @@
+{
+  "common": {
+    "language": "Idioma",
+    "loading": "Carregando...",
+    "save": "Salvar",
+    "cancel": "Cancelar",
+    "close": "Fechar",
+    "retry": "Tentar de novo",
+    "back": "Voltar",
+    "next": "Avançar",
+    "noData": "Sem dados"
+  },
+  "nav": {
+    "dashboard": "Painel",
+    "sessions": "Sessões",
+    "events": "Eventos",
+    "reports": "Relatórios",
+    "equipment": "Equipamentos",
+    "upload": "Enviar",
+    "logs": "Registros",
+    "settings": "Configurações"
+  },
+  "shell": {
+    "configError": {
+      "title": "Nada está sendo importado.",
+      "action": "Abrir as Configurações"
+    }
+  }
+}

@@ -8,6 +8,14 @@
 
 # Node
 /node_modules
+
+# SDD-080: assembled by scripts/build-i18n.mjs from the committed
+# core.<lang>.json + pages/*.<lang>.json fragments. Generated, never edited.
+/src/app/i18n/en.json
+/src/app/i18n/es.json
+/src/app/i18n/fr.json
+/src/app/i18n/pt.json
+/src/app/i18n/hu.json
 npm-debug.log
 yarn-error.log
 

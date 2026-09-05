@@ -1,0 +1,29 @@
+{
+  "common": {
+    "language": "Langue",
+    "loading": "Chargement...",
+    "save": "Enregistrer",
+    "cancel": "Annuler",
+    "close": "Fermer",
+    "retry": "Réessayer",
+    "back": "Retour",
+    "next": "Suivant",
+    "noData": "Aucune donnée"
+  },
+  "nav": {
+    "dashboard": "Tableau de bord",
+    "sessions": "Sessions",
+    "events": "Événements",
+    "reports": "Rapports",
+    "equipment": "Équipement",
+    "upload": "Importer",
+    "logs": "Journaux",
+    "settings": "Paramètres"
+  },
+  "shell": {
+    "configError": {
+      "title": "Aucune donnée n'est importée.",
+      "action": "Ouvrir les paramètres"
+    }
+  }
+}

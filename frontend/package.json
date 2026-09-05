@@ -6,7 +6,12 @@
     "start": "ng serve",
     "build": "ng build",
     "watch": "ng build --watch --configuration development",
-    "test": "ng test"
+    "test": "ng test",
+    "i18n:gen": "node scripts/build-i18n.mjs",
+    "prebuild": "node scripts/build-i18n.mjs",
+    "prestart": "node scripts/build-i18n.mjs",
+    "prewatch": "node scripts/build-i18n.mjs",
+    "pretest": "node scripts/build-i18n.mjs"
   },
   "private": true,
   "packageManager": "npm@10.9.4",
@@ -17,6 +22,7 @@
     "@angular/forms": "^21.2.0",
     "@angular/platform-browser": "^21.2.0",
     "@angular/router": "^21.2.0",
+    "@ngx-translate/core": "^18.0.0",
     "chart.js": "^4.5.1",
     "chartjs-plugin-annotation": "^3.1.0",
     "chartjs-plugin-zoom": "^2.2.0",
