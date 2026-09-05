@@ -1,0 +1,21 @@
+{
+  "events": {
+    "title": "Événements",
+    "filters": {
+      "from": "Du",
+      "to": "Au",
+      "minDuration": "Durée min. (s)",
+      "any": "toutes"
+    },
+    "table": {
+      "night": "Nuit",
+      "time": "Heure",
+      "type": "Type",
+      "duration": "Durée",
+      "details": "Détails",
+      "openNight": "Ouvrir cette nuit"
+    },
+    "empty": "Aucun événement ne correspond à ces filtres.",
+    "loadMore": "Charger plus"
+  }
+}

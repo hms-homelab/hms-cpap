@@ -1,37 +1,38 @@
 <div class="reports-page">
-  <h2>PDF Reports</h2>
+  <h2>{{ 'reports.title' | translate }}</h2>
 
   <div class="generate-card">
-    <h3>Generate Report</h3>
+    <h3>{{ 'reports.generate.heading' | translate }}</h3>
     <div class="form-row">
       <div class="field">
-        <label>Start Date</label>
+        <label>{{ 'reports.generate.startDate' | translate }}</label>
         <input type="date" [(ngModel)]="startDate" />
       </div>
       <div class="field">
-        <label>End Date</label>
+        <label>{{ 'reports.generate.endDate' | translate }}</label>
         <input type="date" [(ngModel)]="endDate" />
       </div>
       <button class="generate-btn" (click)="generate()" [disabled]="generating || !startDate || !endDate">
         <i class="fa-solid fa-file-pdf" *ngIf="!generating"></i>
         <i class="fa-solid fa-circle-notch fa-spin" *ngIf="generating"></i>
-        {{ generating ? 'Generating...' : 'Generate PDF' }}
+        {{ (generating ? 'reports.generate.generating' : 'reports.generate.button') | translate }}
       </button>
     </div>
+    <!-- Server error text from /api/reports; the backend has no i18n. -->
     <div class="error-msg" *ngIf="generateError">{{ generateError }}</div>
   </div>
 
   <div class="table-section">
-    <h3>Generated Reports</h3>
-    <div class="empty" *ngIf="reports.length === 0">No reports yet.</div>
+    <h3>{{ 'reports.table.heading' | translate }}</h3>
+    <div class="empty" *ngIf="reports.length === 0">{{ 'reports.table.empty' | translate }}</div>
     <table class="reports-table" *ngIf="reports.length > 0">
       <thead>
         <tr>
-          <th>Period</th>
-          <th>Nights</th>
-          <th>Created</th>
-          <th>Status</th>
-          <th>Actions</th>
+          <th>{{ 'reports.table.period' | translate }}</th>
+          <th>{{ 'reports.table.nights' | translate }}</th>
+          <th>{{ 'reports.table.created' | translate }}</th>
+          <th>{{ 'reports.table.status' | translate }}</th>
+          <th>{{ 'reports.table.actions' | translate }}</th>
         </tr>
       </thead>
       <tbody>
@@ -44,7 +45,7 @@
           <td>
             <span class="status-badge" [class]="'status-' + r.status">
               <i class="fa-solid fa-circle-notch fa-spin" *ngIf="isGenerating(r)"></i>
-              {{ statusLabel(r.status) }}
+              {{ statusKey(r.status) | translate }}
             </span>
           </td>
           <td>
@@ -52,7 +53,7 @@
               [disabled]="r.status !== 'ready' || downloading[r.id]"
               (click)="download(r)">
               <i class="fa-solid fa-download"></i>
-              {{ downloading[r.id] ? '...' : 'Download' }}
+              {{ downloading[r.id] ? '...' : ('reports.table.download' | translate) }}
             </button>
           </td>
         </tr>

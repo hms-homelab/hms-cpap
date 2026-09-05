@@ -1,0 +1,40 @@
+{
+  "logs": {
+    "title": "Naplók",
+    "lineCount": "{{n}} sor",
+    "disabled": "a naplózás ki van kapcsolva",
+    "lineSelectTitle": "Hány sort mutasson",
+    "lastN": "utolsó {{n}}",
+    "refresh": "Frissítés",
+    "refreshTitle": "Újratöltés",
+    "autoTitle": "Újratöltés 5 másodpercenként",
+    "autoOn": "Auto: be",
+    "autoOff": "Auto: ki",
+    "download": "Letöltés",
+    "downloadTitle": "Mentés fájlba",
+    "copy": "Másolás a vágólapra",
+    "copied": "Másolva",
+    "enableHint": "Kapcsolja be a naplózást a Beállításokban, indítsa újra, és a fájl itt jelenik meg:",
+    "truncated": "Az utolsó {{shown}} sor látszik a(z) {{total}} sorból. Válasszon nagyobb számot fent, ha többet szeretne látni.",
+    "empty": "Még nincs naplóbejegyzés.",
+    "reading": "A napló olvasása…"
+  },
+  "upload": {
+    "title": "Adatok feltöltése",
+    "zip": {
+      "heading": "CPAP-adatok (.zip)",
+      "hint": "Töltsön fel egy zipet az SD-kártyája DATALOG mappáiról (ResMed AirSense 10/11). Az éjszakák bekerülnek az archívumba, és automatikusan feldolgozzuk őket.",
+      "idle": "Húzzon ide egy .zip fájlt, vagy kattintson a kiválasztáshoz",
+      "uploading": "Feltöltés...",
+      "imported": "{{count}} éjszaka importálva"
+    },
+    "oxi": {
+      "heading": "O2Ring oximetriai adatok (.csv)",
+      "hintPre": "Töltsön fel egy Wellue / Viatom „O2 Ring” CSV-exportot (Megosztás",
+      "hintPost": "CSV a Viatom alkalmazásban). Az SpO₂ és a pulzus oximetriai alvásidőszakként kerül be.",
+      "idle": "Húzzon ide egy .csv fájlt, vagy kattintson a kiválasztáshoz",
+      "importing": "Importálás...",
+      "result": "{{samples}} minta, átlagos SpO₂ {{avg}}%"
+    }
+  }
+}

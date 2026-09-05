@@ -1,0 +1,28 @@
+{
+  "reports": {
+    "title": "PDF Reports",
+    "generate": {
+      "heading": "Generate Report",
+      "startDate": "Start Date",
+      "endDate": "End Date",
+      "button": "Generate PDF",
+      "generating": "Generating..."
+    },
+    "table": {
+      "heading": "Generated Reports",
+      "empty": "No reports yet.",
+      "period": "Period",
+      "nights": "Nights",
+      "created": "Created",
+      "status": "Status",
+      "actions": "Actions",
+      "download": "Download"
+    },
+    "status": {
+      "pending": "Queued",
+      "generating": "Generating...",
+      "ready": "Ready",
+      "error": "Error"
+    }
+  }
+}

@@ -1,13 +1,10 @@
 <div class="upload-page">
-  <h1><i class="fa-solid fa-cloud-arrow-up"></i> Upload Data</h1>
+  <h1><i class="fa-solid fa-cloud-arrow-up"></i> {{ 'upload.title' | translate }}</h1>
 
   <!-- CPAP compressed files -->
   <section class="card">
-    <h2>CPAP Data (.zip)</h2>
-    <p class="hint">
-      Upload a zip of your SD card's DATALOG folders (ResMed AirSense 10/11).
-      Nights are added to the archive and parsed automatically.
-    </p>
+    <h2>{{ 'upload.zip.heading' | translate }}</h2>
+    <p class="hint">{{ 'upload.zip.hint' | translate }}</p>
 
     <label class="drop-zone"
            [class.dragover]="zipDrag"
@@ -16,10 +13,11 @@
            (drop)="onZipDrop($event)">
       <input type="file" accept=".zip" hidden (change)="onZipPick($event)" />
       <ng-container [ngSwitch]="zipState">
-        <span *ngSwitchCase="'idle'"><i class="fa-solid fa-folder-zip"></i> Drag a .zip here or click to choose</span>
-        <span *ngSwitchCase="'uploading'"><i class="fa-solid fa-spinner fa-spin"></i> Uploading...</span>
+        <span *ngSwitchCase="'idle'"><i class="fa-solid fa-folder-zip"></i> {{ 'upload.zip.idle' | translate }}</span>
+        <span *ngSwitchCase="'uploading'"><i class="fa-solid fa-spinner fa-spin"></i> {{ 'upload.zip.uploading' | translate }}</span>
+        <!-- zipStatusText is progress text from the server, English-only. -->
         <span *ngSwitchCase="'processing'"><i class="fa-solid fa-spinner fa-spin"></i> {{ zipStatusText }}</span>
-        <span *ngSwitchCase="'complete'" class="ok"><i class="fa-solid fa-check"></i> Imported {{ zipDates.length }} night(s)</span>
+        <span *ngSwitchCase="'complete'" class="ok"><i class="fa-solid fa-check"></i> {{ 'upload.zip.imported' | translate:{ count: zipDates.length } }}</span>
         <span *ngSwitchCase="'error'" class="err"><i class="fa-solid fa-triangle-exclamation"></i> {{ zipError }}</span>
       </ng-container>
     </label>
@@ -31,10 +29,9 @@
 
   <!-- O2Ring oximetry -->
   <section class="card">
-    <h2>O2Ring Oximetry Data (.csv)</h2>
+    <h2>{{ 'upload.oxi.heading' | translate }}</h2>
     <p class="hint">
-      Upload a Wellue / Viatom "O2 Ring" CSV export (Share &rarr; CSV in the
-      Viatom app). SpO&#8322; and pulse are added as an oximetry session.
+      {{ 'upload.oxi.hintPre' | translate }} &rarr; {{ 'upload.oxi.hintPost' | translate }}
     </p>
 
     <label class="drop-zone"
@@ -44,9 +41,9 @@
            (drop)="onOxiDrop($event)">
       <input type="file" accept=".csv" hidden (change)="onOxiPick($event)" />
       <ng-container [ngSwitch]="oxiState">
-        <span *ngSwitchCase="'idle'"><i class="fa-solid fa-heart-pulse"></i> Drag a .csv here or click to choose</span>
-        <span *ngSwitchCase="'uploading'"><i class="fa-solid fa-spinner fa-spin"></i> Importing...</span>
-        <span *ngSwitchCase="'complete'" class="ok"><i class="fa-solid fa-check"></i> {{ oxiSamples }} samples, avg SpO&#8322; {{ oxiAvgSpo2 | number:'1.1-1' }}%</span>
+        <span *ngSwitchCase="'idle'"><i class="fa-solid fa-heart-pulse"></i> {{ 'upload.oxi.idle' | translate }}</span>
+        <span *ngSwitchCase="'uploading'"><i class="fa-solid fa-spinner fa-spin"></i> {{ 'upload.oxi.importing' | translate }}</span>
+        <span *ngSwitchCase="'complete'" class="ok"><i class="fa-solid fa-check"></i> {{ 'upload.oxi.result' | translate:{ samples: oxiSamples, avg: (oxiAvgSpo2 | number:'1.1-1') } }}</span>
         <span *ngSwitchCase="'error'" class="err"><i class="fa-solid fa-triangle-exclamation"></i> {{ oxiError }}</span>
       </ng-container>
     </label>

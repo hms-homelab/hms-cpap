@@ -1,0 +1,40 @@
+{
+  "logs": {
+    "title": "Registros",
+    "lineCount": "{{n}} líneas",
+    "disabled": "registro desactivado",
+    "lineSelectTitle": "Cuántas líneas mostrar",
+    "lastN": "últimas {{n}}",
+    "refresh": "Actualizar",
+    "refreshTitle": "Recargar",
+    "autoTitle": "Recargar cada 5 segundos",
+    "autoOn": "Auto: sí",
+    "autoOff": "Auto: no",
+    "download": "Descargar",
+    "downloadTitle": "Guardar como archivo",
+    "copy": "Copiar al portapapeles",
+    "copied": "Copiado",
+    "enableHint": "Activa el registro en Ajustes, reinicia, y el archivo aparecerá en",
+    "truncated": "Mostrando las últimas {{shown}} de {{total}} líneas. Elige un número mayor arriba para ver más.",
+    "empty": "Todavía no hay nada registrado.",
+    "reading": "Leyendo el registro…"
+  },
+  "upload": {
+    "title": "Subir datos",
+    "zip": {
+      "heading": "Datos del CPAP (.zip)",
+      "hint": "Sube un zip con las carpetas DATALOG de tu tarjeta SD (ResMed AirSense 10/11). Las noches se añaden al archivo y se procesan automáticamente.",
+      "idle": "Arrastra un .zip aquí o haz clic para elegir",
+      "uploading": "Subiendo...",
+      "imported": "{{count}} noche(s) importada(s)"
+    },
+    "oxi": {
+      "heading": "Datos de oximetría del O2Ring (.csv)",
+      "hintPre": "Sube un CSV exportado del \"O2 Ring\" de Wellue / Viatom (Compartir",
+      "hintPost": "CSV en la app de Viatom). La SpO₂ y el pulso se añaden como una sesión de oximetría.",
+      "idle": "Arrastra un .csv aquí o haz clic para elegir",
+      "importing": "Importando...",
+      "result": "{{samples}} muestras, SpO₂ media {{avg}}%"
+    }
+  }
+}

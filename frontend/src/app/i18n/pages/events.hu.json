@@ -1,0 +1,21 @@
+{
+  "events": {
+    "title": "Események",
+    "filters": {
+      "from": "Ettől",
+      "to": "Eddig",
+      "minDuration": "Min. időtartam (mp)",
+      "any": "bármennyi"
+    },
+    "table": {
+      "night": "Éjszaka",
+      "time": "Időpont",
+      "type": "Típus",
+      "duration": "Időtartam",
+      "details": "Részletek",
+      "openNight": "Éjszaka megnyitása"
+    },
+    "empty": "Egyetlen esemény sem felel meg ezeknek a szűrőknek.",
+    "loadMore": "Továbbiak betöltése"
+  }
+}

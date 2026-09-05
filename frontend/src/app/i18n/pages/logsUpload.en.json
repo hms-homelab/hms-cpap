@@ -1,0 +1,40 @@
+{
+  "logs": {
+    "title": "Logs",
+    "lineCount": "{{n}} lines",
+    "disabled": "logging disabled",
+    "lineSelectTitle": "How many lines to show",
+    "lastN": "last {{n}}",
+    "refresh": "Refresh",
+    "refreshTitle": "Reload",
+    "autoTitle": "Reload every 5 seconds",
+    "autoOn": "Auto: on",
+    "autoOff": "Auto: off",
+    "download": "Download",
+    "downloadTitle": "Save as a file",
+    "copy": "Copy to clipboard",
+    "copied": "Copied",
+    "enableHint": "Turn logging on in Settings, then restart, and the file appears at",
+    "truncated": "Showing the last {{shown}} of {{total}} lines. Pick a larger count above to see more.",
+    "empty": "Nothing logged yet.",
+    "reading": "Reading the log…"
+  },
+  "upload": {
+    "title": "Upload Data",
+    "zip": {
+      "heading": "CPAP Data (.zip)",
+      "hint": "Upload a zip of your SD card's DATALOG folders (ResMed AirSense 10/11). Nights are added to the archive and parsed automatically.",
+      "idle": "Drag a .zip here or click to choose",
+      "uploading": "Uploading...",
+      "imported": "Imported {{count}} night(s)"
+    },
+    "oxi": {
+      "heading": "O2Ring Oximetry Data (.csv)",
+      "hintPre": "Upload a Wellue / Viatom \"O2 Ring\" CSV export (Share",
+      "hintPost": "CSV in the Viatom app). SpO₂ and pulse are added as an oximetry session.",
+      "idle": "Drag a .csv here or click to choose",
+      "importing": "Importing...",
+      "result": "{{samples}} samples, avg SpO₂ {{avg}}%"
+    }
+  }
+}

@@ -1,63 +1,65 @@
 <div class="logs-page">
   <div class="logs-header">
     <div class="logs-title">
-      <h1><i class="fa-solid fa-file-lines"></i> Logs</h1>
+      <h1><i class="fa-solid fa-file-lines"></i> {{ 'logs.title' | translate }}</h1>
       <p class="logs-sub" *ngIf="data">
         <span class="log-path" [title]="data.path">{{ data.path }}</span>
         <span class="dot">·</span>{{ sizeLabel }}
         <span class="dot">·</span>
-        <span *ngIf="data.total_lines">{{ data.total_lines }} lines</span>
-        <span class="badge off" *ngIf="!data.active">logging disabled</span>
+        <span *ngIf="data.total_lines">{{ 'logs.lineCount' | translate:{ n: data.total_lines } }}</span>
+        <span class="badge off" *ngIf="!data.active">{{ 'logs.disabled' | translate }}</span>
       </p>
     </div>
 
     <div class="logs-actions">
-      <select [(ngModel)]="lines" (change)="refresh()" title="How many lines to show">
-        <option *ngFor="let n of lineOptions" [ngValue]="n">last {{ n }}</option>
+      <select [(ngModel)]="lines" (change)="refresh()" [title]="'logs.lineSelectTitle' | translate">
+        <option *ngFor="let n of lineOptions" [ngValue]="n">{{ 'logs.lastN' | translate:{ n: n } }}</option>
       </select>
 
-      <button (click)="refresh()" [disabled]="loading" title="Reload">
-        <i class="fa-solid fa-rotate-right"></i> Refresh
+      <button (click)="refresh()" [disabled]="loading" [title]="'logs.refreshTitle' | translate">
+        <i class="fa-solid fa-rotate-right"></i> {{ 'logs.refresh' | translate }}
       </button>
 
       <button (click)="toggleAutoRefresh()" [class.on]="autoRefresh"
-              title="Reload every 5 seconds">
+              [title]="'logs.autoTitle' | translate">
         <i class="fa-solid fa-clock-rotate-left"></i>
-        {{ autoRefresh ? 'Auto: on' : 'Auto: off' }}
+        {{ (autoRefresh ? 'logs.autoOn' : 'logs.autoOff') | translate }}
       </button>
 
-      <button (click)="download()" [disabled]="!text" title="Save as a file">
-        <i class="fa-solid fa-download"></i> Download
+      <button (click)="download()" [disabled]="!text" [title]="'logs.downloadTitle' | translate">
+        <i class="fa-solid fa-download"></i> {{ 'logs.download' | translate }}
       </button>
 
       <button class="primary" (click)="copy()" [disabled]="!text">
         <i class="fa-solid" [ngClass]="copied ? 'fa-check' : 'fa-copy'"></i>
-        {{ copied ? 'Copied' : 'Copy to clipboard' }}
+        {{ (copied ? 'logs.copied' : 'logs.copy') | translate }}
       </button>
     </div>
   </div>
 
+  <!-- `error` and `data.error` are server strings from /api/logs. Left as-is:
+       the backend has no i18n, so translating the label around them and not
+       the message would read worse than leaving both in English. -->
   <div class="notice error" *ngIf="error">{{ error }}</div>
 
   <div class="notice" *ngIf="data?.error && !error">
     {{ data?.error }}
     <span *ngIf="!data?.active">
-      Turn logging on in Settings, then restart, and the file appears at
+      {{ 'logs.enableHint' | translate }}
       <code>{{ data?.path }}</code>.
     </span>
   </div>
 
   <div class="notice" *ngIf="data?.truncated">
-    Showing the last {{ data?.lines?.length }} of {{ data?.total_lines }} lines.
-    Pick a larger count above to see more.
+    {{ 'logs.truncated' | translate:{ shown: data?.lines?.length, total: data?.total_lines } }}
   </div>
 
   <div class="log-view" *ngIf="!loading || data">
     <pre *ngIf="text; else empty">{{ text }}</pre>
     <ng-template #empty>
-      <p class="empty">Nothing logged yet.</p>
+      <p class="empty">{{ 'logs.empty' | translate }}</p>
     </ng-template>
   </div>
 
-  <p class="loading" *ngIf="loading && !data">Reading the log…</p>
+  <p class="loading" *ngIf="loading && !data">{{ 'logs.reading' | translate }}</p>
 </div>

@@ -1,12 +1,13 @@
 import { Component, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { TranslatePipe } from '@ngx-translate/core';
 import { CpapApiService } from '../../services/cpap-api.service';
 
 @Component({
   selector: 'app-reports',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, TranslatePipe],
   templateUrl: './reports.component.html',
   styleUrls: ['./reports.component.css']
 })
@@ -73,8 +74,18 @@ export class ReportsComponent implements OnInit, OnDestroy {
     setTimeout(() => delete this.downloading[report.id], 2000);
   }
 
-  statusLabel(s: string): string {
-    return { pending: 'Queued', generating: 'Generating...', ready: 'Ready', error: 'Error' }[s] ?? s;
+  /**
+   * SDD-080: returns a translation KEY, not a label. The template pipes it
+   * through `| translate`.
+   *
+   * An unknown status falls back to the raw server string rather than to a key
+   * that does not exist, so a status the frontend has not been taught yet still
+   * renders as itself instead of as "reports.status.whatever".
+   */
+  private static readonly KNOWN_STATUSES = ['pending', 'generating', 'ready', 'error'];
+
+  statusKey(s: string): string {
+    return ReportsComponent.KNOWN_STATUSES.includes(s) ? `reports.status.${s}` : s;
   }
 
   fmtDate(dt: string): string {
