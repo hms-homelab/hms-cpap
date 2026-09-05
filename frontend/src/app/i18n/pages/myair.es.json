@@ -1,0 +1,22 @@
+{
+  "myairCompare": {
+    "titleCompare": "CpapDash frente a myAir",
+    "titleMyair": "ResMed myAir",
+    "subCompare": "{{compared}} de {{total}} noches tienen datos por ambos lados",
+    "subMyair": "{{count}} noches informadas por ResMed",
+    "empty": "Todavía no hay nada que mostrar. CpapDash consulta myAir una vez por hora; si acabas de conectarlo, dale unos minutos.",
+    "night": "Noche",
+    "ours": "CpapDash",
+    "theirs": "myAir",
+    "difference": "Diferencia",
+    "usage": "Uso",
+    "leak": "Fuga",
+    "maskOnOff": "Mascarilla puesta/quitada",
+    "score": "Puntuación myAir",
+    "noOurs": "No hay datos de CpapDash para esta noche",
+    "noTheirs": "ResMed no tiene datos de esta noche",
+    "footCompare": "Las diferencias son CpapDash menos myAir. Los dos puntúan las noches con pesos distintos, así que no se espera que los números compuestos coincidan; una diferencia grande de uso o de IAH en una sola noche suele significar que un lado vio una sesión que el otro no.",
+    "footMyairPre": "Este es el resumen que la propia ResMed hace de cada noche, que es todo lo que informa myAir. Para una noche en detalle, con gráficos de flujo y presión, eventos individuales, fuga a lo largo del tiempo e informes en PDF, CpapDash necesita el contenido de la tarjeta SD. Configúralo en",
+    "footMyairPost": "dentro de Ajustes."
+  }
+}

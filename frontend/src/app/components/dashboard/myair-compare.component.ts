@@ -1,5 +1,6 @@
 import { Component, Input } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { TranslatePipe } from '@ngx-translate/core';
 import { MyAirComparisonRow } from '../../models/session.model';
 
 /**
@@ -29,16 +30,16 @@ import { MyAirComparisonRow } from '../../models/session.model';
 @Component({
   selector: 'app-myair-compare',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, TranslatePipe],
   template: `
     <div class="myair">
       <div class="head">
-        <span class="title">{{ mode === 'compare' ? 'CpapDash vs myAir' : 'ResMed myAir' }}</span>
+        <span class="title">{{ (mode === 'compare' ? 'myairCompare.titleCompare' : 'myairCompare.titleMyair') | translate }}</span>
         <span class="sub" *ngIf="mode === 'compare' && rows?.length">
-          {{ comparedCount }} of {{ rows.length }} nights have data on both sides
+          {{ 'myairCompare.subCompare' | translate:{ compared: comparedCount, total: rows.length } }}
         </span>
         <span class="sub" *ngIf="mode === 'myair' && rows?.length">
-          {{ rows.length }} nights reported by ResMed
+          {{ 'myairCompare.subMyair' | translate:{ count: rows.length } }}
         </span>
       </div>
 
@@ -47,8 +48,7 @@ import { MyAirComparisonRow } from '../../models/session.model';
            run yet or ResMed holds no nights, and silence would leave the user
            to guess which. -->
       <div class="empty" *ngIf="!rows?.length">
-        Nothing to show yet. CpapDash checks myAir once an hour; if you have only
-        just connected, give it a few minutes.
+        {{ 'myairCompare.empty' | translate }}
       </div>
 
       <!-- ── Comparison: both sides exist ─────────────────────────────────── -->
@@ -56,16 +56,16 @@ import { MyAirComparisonRow } from '../../models/session.model';
         <table>
           <thead>
             <tr>
-              <th class="date">Night</th>
-              <th colspan="3" class="group ours">CpapDash</th>
-              <th colspan="3" class="group theirs">myAir</th>
-              <th colspan="3" class="group delta">Difference</th>
+              <th class="date">{{ 'myairCompare.night' | translate }}</th>
+              <th colspan="3" class="group ours">{{ 'myairCompare.ours' | translate }}</th>
+              <th colspan="3" class="group theirs">{{ 'myairCompare.theirs' | translate }}</th>
+              <th colspan="3" class="group delta">{{ 'myairCompare.difference' | translate }}</th>
             </tr>
             <tr class="sub-head">
               <th></th>
-              <th>Usage</th><th>AHI</th><th>Leak</th>
-              <th>Usage</th><th>AHI</th><th>Leak</th>
-              <th>Usage</th><th>AHI</th><th>Leak</th>
+              <th>{{ 'myairCompare.usage' | translate }}</th><th>{{ 'metric.ahi' | translate }}</th><th>{{ 'myairCompare.leak' | translate }}</th>
+              <th>{{ 'myairCompare.usage' | translate }}</th><th>{{ 'metric.ahi' | translate }}</th><th>{{ 'myairCompare.leak' | translate }}</th>
+              <th>{{ 'myairCompare.usage' | translate }}</th><th>{{ 'metric.ahi' | translate }}</th><th>{{ 'myairCompare.leak' | translate }}</th>
             </tr>
           </thead>
           <tbody>
@@ -78,7 +78,7 @@ import { MyAirComparisonRow } from '../../models/session.model';
                 <td>{{ num(r.leak_95, 1) }}</td>
               </ng-container>
               <ng-template #noOurs>
-                <td colspan="3" class="absent">No CpapDash data for this night</td>
+                <td colspan="3" class="absent">{{ 'myairCompare.noOurs' | translate }}</td>
               </ng-template>
 
               <ng-container *ngIf="r.myair_present; else noTheirs">
@@ -99,7 +99,7 @@ import { MyAirComparisonRow } from '../../models/session.model';
                 </ng-template>
               </ng-container>
               <ng-template #noTheirs>
-                <td colspan="6" class="absent">ResMed has no data for this night</td>
+                <td colspan="6" class="absent">{{ 'myairCompare.noTheirs' | translate }}</td>
               </ng-template>
             </tr>
           </tbody>
@@ -111,12 +111,12 @@ import { MyAirComparisonRow } from '../../models/session.model';
         <table>
           <thead>
             <tr>
-              <th class="date">Night</th>
-              <th>Usage</th>
-              <th>AHI</th>
-              <th>Leak</th>
-              <th>Mask on/off</th>
-              <th>myAir score</th>
+              <th class="date">{{ 'myairCompare.night' | translate }}</th>
+              <th>{{ 'myairCompare.usage' | translate }}</th>
+              <th>{{ 'metric.ahi' | translate }}</th>
+              <th>{{ 'myairCompare.leak' | translate }}</th>
+              <th>{{ 'myairCompare.maskOnOff' | translate }}</th>
+              <th>{{ 'myairCompare.score' | translate }}</th>
             </tr>
           </thead>
           <tbody>
@@ -133,17 +133,13 @@ import { MyAirComparisonRow } from '../../models/session.model';
       </div>
 
       <div class="foot" *ngIf="rows?.length && mode === 'compare'">
-        Differences are CpapDash minus myAir. The two score nights with different
-        weights, so the composite numbers are not expected to match; a large gap
-        in usage or AHI on a single night usually means one side saw a session the
-        other did not.
+        {{ 'myairCompare.footCompare' | translate }}
       </div>
 
       <div class="foot sd-note" *ngIf="rows?.length && mode === 'myair'">
-        This is ResMed's own summary of each night, which is all myAir reports.
-        For a detailed night, with flow and pressure charts, individual events,
-        leak over time and PDF reports, CpapDash needs the SD card contents.
-        Set that up under <strong>Data Source</strong> in Settings.
+        {{ 'myairCompare.footMyairPre' | translate }}
+        <strong>{{ 'settings.source.heading' | translate }}</strong>
+        {{ 'myairCompare.footMyairPost' | translate }}
       </div>
     </div>
   `,
