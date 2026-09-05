@@ -1,6 +1,7 @@
 import { Component, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { TranslatePipe, TranslateService } from '@ngx-translate/core';
 import { Subject, Subscription, timer } from 'rxjs';
 import { switchMap, takeUntil, takeWhile, tap } from 'rxjs/operators';
 import { CpapApiService } from '../../services/cpap-api.service';
@@ -9,12 +10,12 @@ import { AppConfig } from '../../models/config.model';
 @Component({
   selector: 'app-settings',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, TranslatePipe],
   template: `
     <div class="settings">
-      <h2>Settings</h2>
+      <h2>{{ 'settings.title' | translate }}</h2>
 
-      <div *ngIf="loading" class="loading">Loading configuration...</div>
+      <div *ngIf="loading" class="loading">{{ 'settings.loading' | translate }}</div>
       <div *ngIf="error" class="error">{{ error }}</div>
 
       <form *ngIf="config" (ngSubmit)="save()">
@@ -23,15 +24,15 @@ import { AppConfig } from '../../models/config.model';
         <div class="section">
           <div class="section-header" (click)="toggle('source')">
             <span class="chevron" [class.open]="open['source']">&#9654;</span>
-            Data Source
+            {{ 'settings.source.heading' | translate }}
           </div>
           <div class="section-body" *ngIf="open['source']">
             <label>
-              Source Type
+              {{ 'settings.source.type' | translate }}
               <select [(ngModel)]="config.source" name="source">
-                <option value="ezshare">ezShare WiFi SD</option>
-                <option value="local">Local Directory</option>
-                <option value="fysetc">Fysetc</option>
+                <option value="ezshare">{{ 'settings.source.ezshare' | translate }}</option>
+                <option value="local">{{ 'settings.source.local' | translate }}</option>
+                <option value="fysetc">{{ 'settings.source.fysetc' | translate }}</option>
               </select>
             </label>
             <!-- Asked for by the first person to look here for myAir, which will
@@ -40,31 +41,29 @@ import { AppConfig } from '../../models/config.model';
                  oximetry, so an install pointed at it would have no charts, no
                  events explorer, no reports and no sleep staging. -->
             <small class="hint source-note">
-              These are the ways CpapDash reads your SD card. ResMed myAir is not
-              one of them: it only reports a summary of each night, not the
-              recordings the charts and reports are built from. You can still
-              connect it, under <strong>ResMed myAir</strong> below, to compare
-              ResMed's numbers against CpapDash's.
+              {{ 'settings.source.notePre' | translate }}
+              <strong>{{ 'settings.myair.heading' | translate }}</strong>
+              {{ 'settings.source.notePost' | translate }}
             </small>
             <label *ngIf="config.source === 'ezshare'">
-              ezShare URL
+              {{ 'settings.source.ezshareUrl' | translate }}
               <input type="text" [(ngModel)]="config.ezshare_url" name="ezshare_url"
                      placeholder="http://192.168.4.1" />
             </label>
             <label class="toggle-row" *ngIf="config.source === 'ezshare'">
               <input type="checkbox" [(ngModel)]="config.ezshare_range" name="ezshare_range" />
-              Range request downloads
-              <span class="restart-tag">restart</span>
+              {{ 'settings.source.rangeDownloads' | translate }}
+              <span class="restart-tag">{{ 'settings.tag.restart' | translate }}</span>
             </label>
             <label *ngIf="config.source === 'local'">
-              Local Directory
+              {{ 'settings.source.localDir' | translate }}
               <input type="text" [(ngModel)]="config.local_dir" name="local_dir" placeholder="/path/to/sd/DATALOG" />
             </label>
             <!-- SDD-012: applies to EVERY source, unlike local_dir. This is the
                  folder OSCAR and other file-based tools read. -->
             <label>
-              Archive Directory
-              <span class="required-tag" *ngIf="sourceNeedsArchive()">required</span>
+              {{ 'settings.source.archiveDir' | translate }}
+              <span class="required-tag" *ngIf="sourceNeedsArchive()">{{ 'settings.tag.required' | translate }}</span>
               <input type="text" [(ngModel)]="config.archive_dir" name="archive_dir"
                      placeholder="/path/to/CPAPData"
                      [class.field-missing]="archiveDirMissing()" />
@@ -72,17 +71,13 @@ import { AppConfig } from '../../models/config.model';
                    SleepHQ export silently, while the dashboard keeps filling in
                    normally, so it reads as data loss rather than a missing
                    setting. Mirrors PreflightService::checkArchiveDir. -->
+              <!-- The device name is interpolated rather than concatenated, so
+                   a language can put it anywhere in the sentence. -->
               <small class="hint warn" *ngIf="archiveDirMissing()">
-                Not set. Your {{ config.source === 'fysetc' ? 'Fysetc' : 'Mule and Miner' }}
-                downloads files that need somewhere to land, so nothing is being
-                written to disk: OSCAR has nothing to import and SleepHQ export
-                stays blocked. Nights already collected are safe in the database
-                and appear here as normal.
+                {{ 'settings.source.archiveMissing' | translate:{ device: config.source === 'fysetc' ? 'Fysetc' : 'Mule and Miner' } }}
               </small>
               <small class="hint">
-                Where collected nights are written, as a card layout (STR.edf and
-                DATALOG/ side by side). Point OSCAR's card import here. Use forward
-                slashes on Windows, e.g. C:/Users/you/CPAPData
+                {{ 'settings.source.archiveHint' | translate }}
               </small>
             </label>
           </div>
@@ -93,33 +88,33 @@ import { AppConfig } from '../../models/config.model';
         <div class="section" *ngIf="config.source === 'fysetc'">
           <div class="section-header" (click)="toggle('fysetc')">
             <span class="chevron" [class.open]="open['fysetc']">&#9654;</span>
-            Fysetc TCP
-            <span class="restart-tag">restart</span>
+            {{ 'settings.fysetc.heading' | translate }}
+            <span class="restart-tag">{{ 'settings.tag.restart' | translate }}</span>
           </div>
           <div class="section-body" *ngIf="open['fysetc']">
             <label class="toggle-row">
               <input type="checkbox" [(ngModel)]="config.fysetc.enabled" name="fysetc_enabled" />
-              Enabled
+              {{ 'settings.fysetc.enabled' | translate }}
             </label>
             <label>
-              Listen Port
+              {{ 'settings.fysetc.listenPort' | translate }}
               <input type="number" [(ngModel)]="config.fysetc.listen_port" name="fysetc_listen_port" />
             </label>
             <label>
-              Listen Address
+              {{ 'settings.fysetc.listenAddress' | translate }}
               <input type="text" [(ngModel)]="config.fysetc.listen_bind" name="fysetc_listen_bind"
                      placeholder="0.0.0.0" />
             </label>
             <label>
-              Connection Timeout (seconds)
+              {{ 'settings.fysetc.timeout' | translate }}
               <input type="number" [(ngModel)]="config.fysetc.connection_timeout_s" name="fysetc_timeout" />
             </label>
             <label>
-              Reconstructed Card Directory
+              {{ 'settings.fysetc.archiveDir' | translate }}
               <input type="text" [(ngModel)]="config.fysetc.archive_dir" name="fysetc_archive_dir" />
             </label>
             <label>
-              Log Directory
+              {{ 'settings.fysetc.logDir' | translate }}
               <input type="text" [(ngModel)]="config.fysetc.log_dir" name="fysetc_log_dir" />
             </label>
           </div>
@@ -130,31 +125,28 @@ import { AppConfig } from '../../models/config.model';
         <div class="section">
           <div class="section-header" (click)="toggle('logging')">
             <span class="chevron" [class.open]="open['logging']">&#9654;</span>
-            Support Log
-            <span class="restart-tag">restart</span>
+            {{ 'settings.logging.heading' | translate }}
+            <span class="restart-tag">{{ 'settings.tag.restart' | translate }}</span>
           </div>
           <div class="section-body" *ngIf="open['logging']">
             <p class="hint">
-              Keeps a copy of everything the service prints, so it can be sent
-              when something goes wrong. Leave the file blank to use the default:
-              next to the program if that folder is writable, otherwise beside
-              config.json.
+              {{ 'settings.logging.hint' | translate }}
             </p>
             <label class="toggle-row">
               <input type="checkbox" [(ngModel)]="config.logging.enabled" name="logging_enabled" />
-              Enabled
+              {{ 'settings.logging.enabled' | translate }}
             </label>
             <label>
-              Log File
+              {{ 'settings.logging.file' | translate }}
               <input type="text" [(ngModel)]="config.logging.file" name="logging_file"
-                     placeholder="(default)" />
+                     [placeholder]="'settings.logging.filePlaceholder' | translate" />
             </label>
             <label>
-              Rotate After (MB)
+              {{ 'settings.logging.rotateMb' | translate }}
               <input type="number" [(ngModel)]="config.logging.max_mb" name="logging_max_mb" />
             </label>
             <label>
-              Old Logs Kept
+              {{ 'settings.logging.keep' | translate }}
               <input type="number" [(ngModel)]="config.logging.keep" name="logging_keep" />
             </label>
           </div>
@@ -164,34 +156,34 @@ import { AppConfig } from '../../models/config.model';
         <div class="section">
           <div class="section-header" (click)="toggle('o2ring')">
             <span class="chevron" [class.open]="open['o2ring']">&#9654;</span>
-            O2 Ring Oximetry
-            <span class="badge" *ngIf="!config.o2ring?.enabled">optional</span>
+            {{ 'settings.o2ring.heading' | translate }}
+            <span class="badge" *ngIf="!config.o2ring?.enabled">{{ 'settings.tag.optional' | translate }}</span>
           </div>
           <div class="section-body" *ngIf="open['o2ring']">
             <label class="toggle-row">
-              Enabled
+              {{ 'settings.o2ring.enabled' | translate }}
               <input type="checkbox" [(ngModel)]="config.o2ring.enabled" name="o2ring_enabled" />
             </label>
             <ng-container *ngIf="config.o2ring.enabled">
               <label>
-                Mode
+                {{ 'settings.o2ring.mode' | translate }}
                 <select [(ngModel)]="config.o2ring.mode" name="o2ring_mode">
-                  <option value="http">HTTP (via Mule C3)</option>
-                  <option value="ble">BLE Direct</option>
+                  <option value="http">{{ 'settings.o2ring.modeHttp' | translate }}</option>
+                  <option value="ble">{{ 'settings.o2ring.modeBle' | translate }}</option>
                 </select>
               </label>
               <label *ngIf="config.o2ring.mode === 'http'">
-                Mule URL
+                {{ 'settings.o2ring.muleUrl' | translate }}
                 <input type="text" [(ngModel)]="config.o2ring.mule_url" name="o2ring_mule_url"
                        placeholder="http://192.168.2.74" />
-                <span class="hint">IP of the mule C3 bridging the O2 Ring via BLE</span>
+                <span class="hint">{{ 'settings.o2ring.muleHint' | translate }}</span>
               </label>
               <label *ngIf="config.o2ring.mode === 'ble'">
-                <span class="hint" *ngIf="bleStatus === 'checking'">Checking Bluetooth adapter...</span>
-                <span class="hint" *ngIf="bleStatus === 'ok'" style="color: #4ade80;">Bluetooth adapter detected. BLE direct mode ready.</span>
-                <span class="hint" *ngIf="bleStatus === 'no_adapter'" style="color: #ef4444;">No Bluetooth adapter detected. Plug in a USB BLE adapter.</span>
-                <span class="hint" *ngIf="bleStatus === 'not_compiled'" style="color: #fb923c;">BLE support not compiled. Rebuild with -DBUILD_WITH_BLE=ON.</span>
-                <span class="hint" *ngIf="bleStatus === 'error'" style="color: #ef4444;">BlueZ error — check Bluetooth service.</span>
+                <span class="hint" *ngIf="bleStatus === 'checking'">{{ 'settings.o2ring.bleChecking' | translate }}</span>
+                <span class="hint" *ngIf="bleStatus === 'ok'" style="color: #4ade80;">{{ 'settings.o2ring.bleOk' | translate }}</span>
+                <span class="hint" *ngIf="bleStatus === 'no_adapter'" style="color: #ef4444;">{{ 'settings.o2ring.bleNoAdapter' | translate }}</span>
+                <span class="hint" *ngIf="bleStatus === 'not_compiled'" style="color: #fb923c;">{{ 'settings.o2ring.bleNotCompiled' | translate }}</span>
+                <span class="hint" *ngIf="bleStatus === 'error'" style="color: #ef4444;">{{ 'settings.o2ring.bleError' | translate }}</span>
               </label>
             </ng-container>
           </div>
@@ -201,44 +193,42 @@ import { AppConfig } from '../../models/config.model';
         <div class="section">
           <div class="section-header" (click)="toggle('sleephq')">
             <span class="chevron" [class.open]="open['sleephq']">&#9654;</span>
-            SleepHQ Sync
-            <span class="badge" *ngIf="!config.sleephq.enabled">optional</span>
+            {{ 'settings.sleephq.heading' | translate }}
+            <span class="badge" *ngIf="!config.sleephq.enabled">{{ 'settings.tag.optional' | translate }}</span>
           </div>
           <div class="section-body" *ngIf="open['sleephq']">
             <p class="section-desc">
-              Forward your therapy nights to SleepHQ via their public API. Create
-              API credentials in SleepHQ under Account &rarr; API.
+              {{ 'settings.sleephq.desc' | translate }}
             </p>
             <label class="toggle-row">
-              Enabled
+              {{ 'settings.sleephq.enabled' | translate }}
               <input type="checkbox" [(ngModel)]="config.sleephq.enabled" name="sleephq_enabled" />
             </label>
             <ng-container *ngIf="config.sleephq.enabled">
               <label>
-                Client ID
+                {{ 'settings.sleephq.clientId' | translate }}
                 <input type="text" [(ngModel)]="config.sleephq.client_id" name="sleephq_client_id"
-                       placeholder="SleepHQ API client ID" />
+                       [placeholder]="'settings.sleephq.clientIdPlaceholder' | translate" />
               </label>
               <label>
-                Client Secret
+                {{ 'settings.sleephq.clientSecret' | translate }}
                 <input type="password" [(ngModel)]="config.sleephq.client_secret" name="sleephq_client_secret"
-                       placeholder="SleepHQ API client secret" />
+                       [placeholder]="'settings.sleephq.clientSecretPlaceholder' | translate" />
               </label>
               <label class="toggle-row">
                 <input type="checkbox" [(ngModel)]="config.sleephq.auto_on_session" name="sleephq_auto_session" />
-                Upload automatically when a session completes
+                {{ 'settings.sleephq.autoSession' | translate }}
               </label>
               <label class="toggle-row">
                 <input type="checkbox" [(ngModel)]="config.sleephq.auto_on_backfill" name="sleephq_auto_backfill" />
-                Upload automatically when importing local data
+                {{ 'settings.sleephq.autoBackfill' | translate }}
               </label>
               <label>
-                Quiet Period (minutes)
+                {{ 'settings.sleephq.quietMinutes' | translate }}
                 <input type="number" [(ngModel)]="config.sleephq.quiet_minutes" name="sleephq_quiet_minutes" min="1" />
-                <span class="restart-tag">restart</span>
+                <span class="restart-tag">{{ 'settings.tag.restart' | translate }}</span>
                 <small class="hint">
-                  How long the archive must stop changing before a night is
-                  exported, so a night still being written is not sent early.
+                  {{ 'settings.sleephq.quietHint' | translate }}
                 </small>
               </label>
             </ng-container>
@@ -252,41 +242,38 @@ import { AppConfig } from '../../models/config.model';
         <div class="section">
           <div class="section-header" (click)="toggle('myair')">
             <span class="chevron" [class.open]="open['myair']">&#9654;</span>
-            ResMed myAir
-            <span class="badge" *ngIf="!myair.connected">optional</span>
-            <span class="badge connected" *ngIf="myair.connected">connected</span>
+            {{ 'settings.myair.heading' | translate }}
+            <span class="badge" *ngIf="!myair.connected">{{ 'settings.tag.optional' | translate }}</span>
+            <span class="badge connected" *ngIf="myair.connected">{{ 'settings.tag.connected' | translate }}</span>
           </div>
           <div class="section-body" *ngIf="open['myair']">
             <p class="section-desc">
-              Read your own nights back from ResMed and show their score next to
-              CpapDash's, per night and per component. Read only: nothing is ever
-              written back to ResMed.
+              {{ 'settings.myair.desc' | translate }}
             </p>
 
             <div class="myair-note">
-              Your password is used once to sign in and is <strong>not stored</strong>.
-              ResMed issues a revocable token that replaces it, which can only read
-              this account's sleep data and cannot sign in as you anywhere.
+              {{ 'settings.myair.notePre' | translate }}
+              <strong>{{ 'settings.myair.noteBold' | translate }}</strong>{{ 'settings.myair.notePost' | translate }}
             </div>
 
             <div class="myair-state" *ngIf="myair.needs_reauth">
-              The saved token is no longer valid, so myAir has been disconnected.
-              Sign in again to reconnect.
+              {{ 'settings.myair.needsReauth' | translate }}
             </div>
 
             <ng-container *ngIf="!myair.connected && !myair.awaiting_code">
               <label>
-                myAir email
+                {{ 'settings.myair.email' | translate }}
                 <input type="email" [(ngModel)]="myairForm.username" name="myair_username"
                        [ngModelOptions]="{standalone: true}" placeholder="you@example.com" />
               </label>
               <label>
-                Password
+                {{ 'settings.myair.password' | translate }}
                 <input type="password" [(ngModel)]="myairForm.password" name="myair_password"
-                       [ngModelOptions]="{standalone: true}" placeholder="Used once, never saved" />
+                       [ngModelOptions]="{standalone: true}"
+                       [placeholder]="'settings.myair.passwordPlaceholder' | translate" />
               </label>
               <label>
-                Region
+                {{ 'settings.myair.region' | translate }}
                 <!-- Australia is served by the North America endpoints, which is
                      not guessable and is why it is named here rather than left
                      to a user in Sydney to work out. Europe is the region with
@@ -294,13 +281,13 @@ import { AppConfig } from '../../models/config.model';
                      the code prompt being a surprise. -->
                 <select [(ngModel)]="myairForm.region" name="myair_region"
                         [ngModelOptions]="{standalone: true}">
-                  <option value="NA">North America and Australia</option>
-                  <option value="EU">Europe (emails a verification code)</option>
+                  <option value="NA">{{ 'settings.myair.regionNa' | translate }}</option>
+                  <option value="EU">{{ 'settings.myair.regionEu' | translate }}</option>
                 </select>
               </label>
               <button type="button" class="myair-btn" (click)="myairConnect()"
                       [disabled]="myairBusy || !myairForm.username || !myairForm.password">
-                {{ myairBusy ? 'Signing in...' : 'Connect' }}
+                {{ (myairBusy ? 'settings.myair.signingIn' : 'settings.myair.connect') | translate }}
               </button>
             </ng-container>
 
@@ -308,25 +295,26 @@ import { AppConfig } from '../../models/config.model';
                  device stops it asking. -->
             <ng-container *ngIf="myair.awaiting_code">
               <label>
-                Verification code
+                {{ 'settings.myair.code' | translate }}
                 <input type="text" [(ngModel)]="myairForm.code" name="myair_code"
-                       [ngModelOptions]="{standalone: true}" placeholder="Emailed by ResMed" />
+                       [ngModelOptions]="{standalone: true}"
+                       [placeholder]="'settings.myair.codePlaceholder' | translate" />
               </label>
               <button type="button" class="myair-btn" (click)="myairVerify()"
                       [disabled]="myairBusy || !myairForm.code">
-                {{ myairBusy ? 'Checking...' : 'Verify' }}
+                {{ (myairBusy ? 'settings.myair.checking' : 'settings.myair.verify') | translate }}
               </button>
             </ng-container>
 
             <ng-container *ngIf="myair.connected">
               <div class="myair-connected">
-                Connected as <strong>{{ myair.username }}</strong> ({{ myair.region }}),
-                checking every {{ myair.poll_minutes }} minutes.
+                {{ 'settings.myair.connectedPre' | translate }} <strong>{{ myair.username }}</strong>
+                {{ 'settings.myair.connectedPost' | translate:{ region: myair.region, minutes: myair.poll_minutes } }}
               </div>
               <button type="button" class="myair-btn danger" (click)="myairDisconnect()"
-                      [disabled]="myairBusy">Disconnect</button>
+                      [disabled]="myairBusy">{{ 'settings.myair.disconnect' | translate }}</button>
               <small class="hint">
-                Disconnecting forgets the token. Nights already fetched are kept.
+                {{ 'settings.myair.disconnectHint' | translate }}
               </small>
             </ng-container>
 
@@ -338,38 +326,34 @@ import { AppConfig } from '../../models/config.model';
         <div class="section">
           <div class="section-header" (click)="toggle('cpapdash')">
             <span class="chevron" [class.open]="open['cpapdash']">&#9654;</span>
-            CpapDash Cloud
-            <span class="badge" *ngIf="!config.cpapdash.enabled">optional</span>
+            {{ 'settings.cloud.heading' | translate }}
+            <span class="badge" *ngIf="!config.cpapdash.enabled">{{ 'settings.tag.optional' | translate }}</span>
           </div>
           <div class="section-body" *ngIf="open['cpapdash']">
             <p class="section-desc">
-              Mirror your equipment and supplies to your CpapDash account. Your
-              local install stays the source of truth, and turning this off leaves
-              the equipment feature working exactly as it does now.
+              {{ 'settings.cloud.desc' | translate }}
             </p>
             <label class="toggle-row">
-              Enabled
+              {{ 'settings.cloud.enabled' | translate }}
               <input type="checkbox" [(ngModel)]="config.cpapdash.enabled" name="cpapdash_enabled" />
             </label>
             <ng-container *ngIf="config.cpapdash.enabled">
               <label>
-                API URL
+                {{ 'settings.cloud.apiUrl' | translate }}
                 <input type="text" [(ngModel)]="config.cpapdash.api_url" name="cpapdash_api_url"
                        placeholder="https://api.cpapdash.com" />
               </label>
               <label>
-                Token
+                {{ 'settings.cloud.token' | translate }}
                 <input type="password" [(ngModel)]="config.cpapdash.token" name="cpapdash_token"
-                       placeholder="Paste a long-lived API token" />
+                       [placeholder]="'settings.cloud.tokenPlaceholder' | translate" />
                 <small class="hint">
-                  Stored redacted. Leave the masked value untouched to keep the
-                  current token. A token can be revoked without changing your
-                  account password.
+                  {{ 'settings.cloud.tokenHint' | translate }}
                 </small>
               </label>
               <label class="toggle-row">
                 <input type="checkbox" [(ngModel)]="config.cpapdash.auto_sync" name="cpapdash_auto_sync" />
-                Also sync on the collection sweep after local edits
+                {{ 'settings.cloud.autoSync' | translate }}
               </label>
             </ng-container>
           </div>
@@ -379,27 +363,27 @@ import { AppConfig } from '../../models/config.model';
         <div class="section">
           <div class="section-header" (click)="toggle('sleep_stage')">
             <span class="chevron" [class.open]="open['sleep_stage']">&#9654;</span>
-            Sleep Stage Inference
-            <span class="badge" *ngIf="!config.sleep_stage.enabled">optional</span>
-            <span class="restart-tag">restart</span>
+            {{ 'settings.sleepStage.heading' | translate }}
+            <span class="badge" *ngIf="!config.sleep_stage.enabled">{{ 'settings.tag.optional' | translate }}</span>
+            <span class="restart-tag">{{ 'settings.tag.restart' | translate }}</span>
           </div>
           <div class="section-body" *ngIf="open['sleep_stage']">
             <label class="toggle-row">
-              Enabled
+              {{ 'settings.sleepStage.enabled' | translate }}
               <input type="checkbox" [(ngModel)]="config.sleep_stage.enabled" name="sleep_stage_enabled" />
             </label>
             <ng-container *ngIf="config.sleep_stage.enabled">
               <label class="toggle-row">
                 <input type="checkbox" [(ngModel)]="config.sleep_stage.live_inference" name="sleep_stage_live" />
-                Infer during the night, not only once it ends
+                {{ 'settings.sleepStage.live' | translate }}
               </label>
               <label>
-                Model Directory
+                {{ 'settings.sleepStage.modelDir' | translate }}
                 <input type="text" [(ngModel)]="config.sleep_stage.model_dir" name="sleep_stage_model_dir"
-                       placeholder="Leave empty to use the data directory" />
+                       [placeholder]="'settings.sleepStage.modelDirPlaceholder' | translate" />
               </label>
               <label>
-                Model Version
+                {{ 'settings.sleepStage.modelVersion' | translate }}
                 <input type="text" [(ngModel)]="config.sleep_stage.model_version" name="sleep_stage_model_version"
                        placeholder="shhs-rf-v1" />
               </label>
@@ -412,33 +396,32 @@ import { AppConfig } from '../../models/config.model';
         <div class="section">
           <div class="section-header" (click)="toggle('agent')">
             <span class="chevron" [class.open]="open['agent']">&#9654;</span>
-            Agent
-            <span class="badge" *ngIf="!config.agent.enabled">optional</span>
-            <span class="restart-tag">restart</span>
+            {{ 'settings.agent.heading' | translate }}
+            <span class="badge" *ngIf="!config.agent.enabled">{{ 'settings.tag.optional' | translate }}</span>
+            <span class="restart-tag">{{ 'settings.tag.restart' | translate }}</span>
           </div>
           <div class="section-body" *ngIf="open['agent']">
             <p class="section-desc" *ngIf="!agentAvailable()">
-              Unavailable: the agent needs LLM Summaries enabled and a PostgreSQL
-              database. {{ agentBlockedReason() }}
+              {{ 'settings.agent.unavailable' | translate }} {{ agentBlockedReason() }}
             </p>
             <label class="toggle-row">
-              Enabled
+              {{ 'settings.agent.enabled' | translate }}
               <input type="checkbox" [(ngModel)]="config.agent.enabled" name="agent_enabled"
                      [disabled]="!agentAvailable()" />
             </label>
             <ng-container *ngIf="config.agent.enabled && agentAvailable()">
               <label>
-                Embedding Model
+                {{ 'settings.agent.embedModel' | translate }}
                 <input type="text" [(ngModel)]="config.agent.embed_model" name="agent_embed_model"
                        placeholder="nomic-embed-text" />
               </label>
               <label>
-                Temperature
+                {{ 'settings.agent.temperature' | translate }}
                 <input type="number" step="0.1" min="0" max="2"
                        [(ngModel)]="config.agent.temperature" name="agent_temperature" />
               </label>
               <label>
-                Max Iterations
+                {{ 'settings.agent.maxIterations' | translate }}
                 <input type="number" min="1" [(ngModel)]="config.agent.max_iterations" name="agent_max_iterations" />
               </label>
             </ng-container>
@@ -449,11 +432,11 @@ import { AppConfig } from '../../models/config.model';
         <div class="section">
           <div class="section-header" (click)="toggle('timing')">
             <span class="chevron" [class.open]="open['timing']">&#9654;</span>
-            Collection Timing
+            {{ 'settings.timing.heading' | translate }}
           </div>
           <div class="section-body" *ngIf="open['timing']">
             <label>
-              Burst Interval (seconds)
+              {{ 'settings.timing.burstInterval' | translate }}
               <input type="number" [(ngModel)]="config.burst_interval" name="burst_interval" min="1" />
             </label>
           </div>
@@ -463,53 +446,54 @@ import { AppConfig } from '../../models/config.model';
         <div class="section" *ngIf="config.local_dir">
           <div class="section-header" (click)="toggle('backfill')">
             <span class="chevron" [class.open]="open['backfill']">&#9654;</span>
-            Import History
+            {{ 'settings.backfill.heading' | translate }}
           </div>
           <div class="section-body" *ngIf="open['backfill']">
             <p class="section-desc">
-              Import therapy sessions from your DATALOG directory into the database.
-              Existing sessions in the date range will be re-parsed.
+              {{ 'settings.backfill.desc' | translate }}
             </p>
             <div class="backfill-dates">
               <label>
-                Start Date
+                {{ 'settings.backfill.startDate' | translate }}
                 <input type="date" [(ngModel)]="backfillStart" name="backfill_start" />
               </label>
               <label>
-                End Date
+                {{ 'settings.backfill.endDate' | translate }}
                 <input type="date" [(ngModel)]="backfillEnd" name="backfill_end" />
               </label>
             </div>
             <span class="hint" *ngIf="backfillStart && backfillEnd">
-              Leave empty to import all available data.
+              {{ 'settings.backfill.emptyHint' | translate }}
             </span>
 
             <!-- Backfill Status -->
             <div class="ml-status" *ngIf="backfillProgress">
               <div class="status-row">
-                <span class="status-label">Status</span>
+                <span class="status-label">{{ 'settings.status.label' | translate }}</span>
+                <!-- The state word itself comes from /api/backfill/status and is
+                     the server's own vocabulary, so it stays as sent. -->
                 <span class="status-value" [class.status-active]="backfillProgress.status === 'running'">
                   {{ backfillProgress.status }}
                 </span>
               </div>
               <div class="status-row" *ngIf="backfillProgress.folders_total > 0">
-                <span class="status-label">Folders</span>
+                <span class="status-label">{{ 'settings.backfill.folders' | translate }}</span>
                 <span class="status-value">{{ backfillProgress.folders_done }} / {{ backfillProgress.folders_total }}</span>
               </div>
               <div class="status-row" *ngIf="backfillProgress.sessions_saved > 0 || backfillProgress.sessions_parsed > 0">
-                <span class="status-label">Sessions</span>
-                <span class="status-value">{{ backfillProgress.sessions_saved }} saved ({{ backfillProgress.sessions_parsed }} parsed)</span>
+                <span class="status-label">{{ 'settings.backfill.sessions' | translate }}</span>
+                <span class="status-value">{{ 'settings.backfill.sessionsValue' | translate:{ saved: backfillProgress.sessions_saved, parsed: backfillProgress.sessions_parsed } }}</span>
               </div>
               <div class="status-row" *ngIf="backfillProgress.sessions_deleted > 0">
-                <span class="status-label">Replaced</span>
-                <span class="status-value">{{ backfillProgress.sessions_deleted }} old session(s)</span>
+                <span class="status-label">{{ 'settings.backfill.replaced' | translate }}</span>
+                <span class="status-value">{{ 'settings.backfill.replacedValue' | translate:{ count: backfillProgress.sessions_deleted } }}</span>
               </div>
               <div class="status-row" *ngIf="backfillProgress.errors > 0">
-                <span class="status-label">Errors</span>
+                <span class="status-label">{{ 'settings.backfill.errors' | translate }}</span>
                 <span class="status-value" style="color: #ef5350;">{{ backfillProgress.errors }}</span>
               </div>
               <div class="status-row" *ngIf="backfillProgress.completed_at">
-                <span class="status-label">Completed</span>
+                <span class="status-label">{{ 'settings.backfill.completed' | translate }}</span>
                 <span class="status-value">{{ backfillProgress.completed_at }}</span>
               </div>
             </div>
@@ -523,7 +507,7 @@ import { AppConfig } from '../../models/config.model';
 
             <div class="ml-actions">
               <button type="button" class="btn-train" (click)="startBackfill()" [disabled]="backfillRunning">
-                {{ backfillRunning ? 'Importing...' : 'Import History' }}
+                {{ (backfillRunning ? 'settings.backfill.importing' : 'settings.backfill.start') | translate }}
               </button>
             </div>
           </div>
@@ -533,11 +517,12 @@ import { AppConfig } from '../../models/config.model';
         <div class="section">
           <div class="section-header" (click)="toggle('database')">
             <span class="chevron" [class.open]="open['database']">&#9654;</span>
-            Database
+            {{ 'settings.database.heading' | translate }}
           </div>
           <div class="section-body" *ngIf="open['database']">
             <label>
-              Type
+              {{ 'settings.database.type' | translate }}
+              <!-- Engine names are product names, not copy. -->
               <select [(ngModel)]="config.database.type" name="db_type">
                 <option value="sqlite">SQLite</option>
                 <option value="mysql">MySQL</option>
@@ -545,28 +530,28 @@ import { AppConfig } from '../../models/config.model';
               </select>
             </label>
             <label *ngIf="config.database.type === 'sqlite'">
-              SQLite Path
+              {{ 'settings.database.sqlitePath' | translate }}
               <input type="text" [(ngModel)]="config.database.sqlite_path" name="db_sqlite_path" placeholder="/var/lib/hms-cpap/cpap.db" />
             </label>
             <ng-container *ngIf="config.database.type !== 'sqlite'">
               <label>
-                Host
+                {{ 'settings.database.host' | translate }}
                 <input type="text" [(ngModel)]="config.database.host" name="db_host" placeholder="localhost" />
               </label>
               <label>
-                Port
+                {{ 'settings.database.port' | translate }}
                 <input type="number" [(ngModel)]="config.database.port" name="db_port" />
               </label>
               <label>
-                Database Name
+                {{ 'settings.database.name' | translate }}
                 <input type="text" [(ngModel)]="config.database.name" name="db_name" />
               </label>
               <label>
-                User
+                {{ 'settings.database.user' | translate }}
                 <input type="text" [(ngModel)]="config.database.user" name="db_user" />
               </label>
               <label>
-                Password
+                {{ 'settings.database.password' | translate }}
                 <input type="password" [(ngModel)]="config.database.password" name="db_password" />
               </label>
             </ng-container>
@@ -577,37 +562,37 @@ import { AppConfig } from '../../models/config.model';
         <div class="section">
           <div class="section-header" (click)="toggle('mqtt')">
             <span class="chevron" [class.open]="open['mqtt']">&#9654;</span>
-            MQTT
-            <span class="badge" *ngIf="!config.mqtt.enabled">optional</span>
+            {{ 'settings.mqtt.heading' | translate }}
+            <span class="badge" *ngIf="!config.mqtt.enabled">{{ 'settings.tag.optional' | translate }}</span>
           </div>
           <div class="section-body" *ngIf="open['mqtt']">
             <label class="toggle-row">
-              Enabled
+              {{ 'settings.mqtt.enabled' | translate }}
               <input type="checkbox" [(ngModel)]="config.mqtt.enabled" name="mqtt_enabled" />
             </label>
             <ng-container *ngIf="config.mqtt.enabled">
               <label>
-                Broker
+                {{ 'settings.mqtt.broker' | translate }}
                 <input type="text" [(ngModel)]="config.mqtt.broker" name="mqtt_broker" placeholder="127.0.0.1" />
               </label>
               <label>
-                Port
+                {{ 'settings.mqtt.port' | translate }}
                 <input type="number" [(ngModel)]="config.mqtt.port" name="mqtt_port" />
               </label>
               <label>
-                Username
+                {{ 'settings.mqtt.username' | translate }}
                 <input type="text" [(ngModel)]="config.mqtt.username" name="mqtt_username" />
               </label>
               <label>
-                Password
+                {{ 'settings.mqtt.password' | translate }}
                 <input type="password" [(ngModel)]="config.mqtt.password" name="mqtt_password" />
               </label>
               <label>
-                Client ID
+                {{ 'settings.mqtt.clientId' | translate }}
                 <input type="text" [(ngModel)]="config.mqtt.client_id" name="mqtt_client_id"
                        placeholder="hms_cpap" />
                 <small class="hint">
-                  Changing only this does not take effect until the service restarts.
+                  {{ 'settings.mqtt.clientIdHint' | translate }}
                 </small>
               </label>
             </ng-container>
@@ -618,51 +603,53 @@ import { AppConfig } from '../../models/config.model';
         <div class="section">
           <div class="section-header" (click)="toggle('llm')">
             <span class="chevron" [class.open]="open['llm']">&#9654;</span>
-            LLM Summaries
-            <span class="badge" *ngIf="!config.llm.enabled">optional</span>
+            {{ 'settings.llm.heading' | translate }}
+            <span class="badge" *ngIf="!config.llm.enabled">{{ 'settings.tag.optional' | translate }}</span>
           </div>
           <div class="section-body" *ngIf="open['llm']">
             <label class="toggle-row">
-              Enabled
+              {{ 'settings.llm.enabled' | translate }}
               <input type="checkbox" [(ngModel)]="config.llm.enabled" name="llm_enabled" />
             </label>
             <ng-container *ngIf="config.llm.enabled">
               <label>
-                Provider
+                {{ 'settings.llm.provider' | translate }}
+                <!-- Gemini and Anthropic are bare vendor names; the other two
+                     carry a descriptor that does need translating. -->
                 <select [(ngModel)]="config.llm.provider" name="llm_provider">
-                  <option value="ollama">Ollama (native API)</option>
-                  <option value="openai">OpenAI-compatible</option>
+                  <option value="ollama">{{ 'settings.llm.providerOllama' | translate }}</option>
+                  <option value="openai">{{ 'settings.llm.providerOpenai' | translate }}</option>
                   <option value="gemini">Gemini</option>
                   <option value="anthropic">Anthropic</option>
                 </select>
                 <span class="hint" *ngIf="config.llm.provider === 'openai'">
-                  Any server speaking the OpenAI chat API: OpenAI itself,
-                  OpenRouter, LM Studio, vLLM, llama.cpp, or Ollama's own
-                  /v1 surface. Put its base URL in Endpoint.
+                  {{ 'settings.llm.openaiHint' | translate }}
                 </span>
               </label>
               <label>
-                Endpoint
-                <input type="text" [(ngModel)]="config.llm.endpoint" name="llm_endpoint" placeholder="http://127.0.0.1:11434 (base URL, no path)" />
+                {{ 'settings.llm.endpoint' | translate }}
+                <input type="text" [(ngModel)]="config.llm.endpoint" name="llm_endpoint"
+                       [placeholder]="'settings.llm.endpointPlaceholder' | translate" />
               </label>
               <label>
-                Model
+                {{ 'settings.llm.model' | translate }}
                 <input type="text" [(ngModel)]="config.llm.model" name="llm_model" placeholder="llama3.1:8b" />
               </label>
               <label>
-                API Key
-                <input type="password" [(ngModel)]="config.llm.api_key" name="llm_api_key" placeholder="Optional for Ollama and most local servers" />
+                {{ 'settings.llm.apiKey' | translate }}
+                <input type="password" [(ngModel)]="config.llm.api_key" name="llm_api_key"
+                       [placeholder]="'settings.llm.apiKeyPlaceholder' | translate" />
               </label>
               <label>
-                Max Tokens
+                {{ 'settings.llm.maxTokens' | translate }}
                 <input type="number" [(ngModel)]="config.llm.max_tokens" name="llm_max_tokens" min="1" />
-                <span class="restart-tag">restart</span>
+                <span class="restart-tag">{{ 'settings.tag.restart' | translate }}</span>
               </label>
               <label>
-                Prompt File
+                {{ 'settings.llm.promptFile' | translate }}
                 <input type="text" [(ngModel)]="config.llm.prompt_file" name="llm_prompt_file"
-                       placeholder="Leave empty to use the built-in prompt" />
-                <span class="restart-tag">restart</span>
+                       [placeholder]="'settings.llm.promptFilePlaceholder' | translate" />
+                <span class="restart-tag">{{ 'settings.tag.restart' | translate }}</span>
               </label>
             </ng-container>
           </div>
@@ -672,35 +659,35 @@ import { AppConfig } from '../../models/config.model';
         <div class="section">
           <div class="section-header" (click)="toggle('ml_training')">
             <span class="chevron" [class.open]="open['ml_training']">&#9654;</span>
-            ML Training
-            <span class="badge" *ngIf="!config.ml_training.enabled">optional</span>
+            {{ 'settings.ml.heading' | translate }}
+            <span class="badge" *ngIf="!config.ml_training.enabled">{{ 'settings.tag.optional' | translate }}</span>
           </div>
           <div class="section-body" *ngIf="open['ml_training']">
             <label class="toggle-row">
-              Enabled
+              {{ 'settings.ml.enabled' | translate }}
               <input type="checkbox" [(ngModel)]="config.ml_training.enabled" name="ml_enabled" />
             </label>
             <ng-container *ngIf="config.ml_training.enabled">
               <label>
-                Retrain Schedule
+                {{ 'settings.ml.schedule' | translate }}
                 <select [(ngModel)]="config.ml_training.schedule" name="ml_schedule">
-                  <option value="daily">Daily</option>
-                  <option value="weekly">Weekly</option>
-                  <option value="monthly">Monthly</option>
+                  <option value="daily">{{ 'settings.ml.daily' | translate }}</option>
+                  <option value="weekly">{{ 'settings.ml.weekly' | translate }}</option>
+                  <option value="monthly">{{ 'settings.ml.monthly' | translate }}</option>
                 </select>
               </label>
               <label>
-                Minimum Therapy Days
+                {{ 'settings.ml.minDays' | translate }}
                 <input type="number" [(ngModel)]="config.ml_training.min_days" name="ml_min_days" min="7" />
               </label>
               <label>
-                Max Training Lookback (days)
+                {{ 'settings.ml.maxLookback' | translate }}
                 <input type="number" [(ngModel)]="config.ml_training.max_training_days" name="ml_max_days" min="0"
-                       placeholder="0 = use all data" />
-                <span class="hint">0 = train on all available data</span>
+                       [placeholder]="'settings.ml.maxLookbackPlaceholder' | translate" />
+                <span class="hint">{{ 'settings.ml.maxLookbackHint' | translate }}</span>
               </label>
               <label>
-                Model Directory
+                {{ 'settings.ml.modelDir' | translate }}
                 <input type="text" [(ngModel)]="config.ml_training.model_dir" name="ml_model_dir"
                        placeholder="~/.hms-cpap/models" />
               </label>
@@ -708,18 +695,19 @@ import { AppConfig } from '../../models/config.model';
               <!-- ML Status -->
               <div class="ml-status" *ngIf="mlStatus">
                 <div class="status-row">
-                  <span class="status-label">Status</span>
+                  <span class="status-label">{{ 'settings.status.label' | translate }}</span>
+                  <!-- Server's own state word, same as the backfill status above. -->
                   <span class="status-value" [class.status-active]="mlStatus.status === 'training'">
                     {{ mlStatus.status }}
                   </span>
                 </div>
                 <div class="status-row">
-                  <span class="status-label">Last Trained</span>
-                  <span class="status-value">{{ mlStatus.last_trained || 'Never' }}</span>
+                  <span class="status-label">{{ 'settings.ml.lastTrained' | translate }}</span>
+                  <span class="status-value">{{ mlStatus.last_trained || ('settings.status.never' | translate) }}</span>
                 </div>
                 <div class="status-row" *ngIf="mlStatus.models_loaded">
-                  <span class="status-label">Models</span>
-                  <span class="status-value">{{ mlStatus.model_count }} loaded</span>
+                  <span class="status-label">{{ 'settings.ml.models' | translate }}</span>
+                  <span class="status-value">{{ 'settings.ml.modelsLoaded' | translate:{ count: mlStatus.model_count } }}</span>
                 </div>
                 <div class="model-metrics" *ngIf="mlStatus.models?.length">
                   <div class="metric-row" *ngFor="let m of mlStatus.models">
@@ -731,7 +719,7 @@ import { AppConfig } from '../../models/config.model';
 
               <div class="ml-actions">
                 <button type="button" class="btn-train" (click)="trainNow()" [disabled]="mlTraining">
-                  {{ mlTraining ? 'Training...' : 'Train Now' }}
+                  {{ (mlTraining ? 'settings.ml.training' : 'settings.ml.train') | translate }}
                 </button>
               </div>
             </ng-container>
@@ -742,20 +730,20 @@ import { AppConfig } from '../../models/config.model';
         <div class="section">
           <div class="section-header" (click)="toggle('llm_prompt')">
             <span class="chevron" [class.open]="open['llm_prompt']">&#9654;</span>
-            LLM Prompt Template
+            {{ 'settings.prompt.heading' | translate }}
           </div>
           <div class="section-body" *ngIf="open['llm_prompt']">
             <label>
-              Prompt Text
+              {{ 'settings.prompt.text' | translate }}
               <textarea [(ngModel)]="llmPrompt" name="llm_prompt_text" rows="10"
-                        placeholder="Loading..."></textarea>
+                        [placeholder]="'common.loading' | translate"></textarea>
             </label>
-            <div class="prompt-path" *ngIf="llmPromptPath">File: {{ llmPromptPath }}</div>
+            <div class="prompt-path" *ngIf="llmPromptPath">{{ 'settings.prompt.file' | translate:{ path: llmPromptPath } }}</div>
             <div class="prompt-actions">
               <button type="button" class="btn-save-prompt" (click)="saveLlmPrompt()" [disabled]="savingPrompt">
-                {{ savingPrompt ? 'Saving...' : 'Save Prompt' }}
+                {{ (savingPrompt ? 'settings.prompt.saving' : 'settings.prompt.save') | translate }}
               </button>
-              <button type="button" class="btn-reset" (click)="resetLlmPrompt()">Reset to Default</button>
+              <button type="button" class="btn-reset" (click)="resetLlmPrompt()">{{ 'settings.prompt.reset' | translate }}</button>
             </div>
           </div>
         </div>
@@ -764,15 +752,15 @@ import { AppConfig } from '../../models/config.model';
         <div class="section">
           <div class="section-header" (click)="toggle('device')">
             <span class="chevron" [class.open]="open['device']">&#9654;</span>
-            Device
+            {{ 'settings.device.heading' | translate }}
           </div>
           <div class="section-body" *ngIf="open['device']">
             <label>
-              Device ID
+              {{ 'settings.device.id' | translate }}
               <input type="text" [(ngModel)]="config.device_id" name="device_id" placeholder="23243570851" />
             </label>
             <label>
-              Device Name
+              {{ 'settings.device.name' | translate }}
               <input type="text" [(ngModel)]="config.device_name" name="device_name" placeholder="ResMed AirSense 11" />
             </label>
           </div>
@@ -783,30 +771,26 @@ import { AppConfig } from '../../models/config.model';
         <div class="section">
           <div class="section-header" (click)="toggle('advanced')">
             <span class="chevron" [class.open]="open['advanced']">&#9654;</span>
-            Advanced
-            <span class="restart-tag">restart</span>
+            {{ 'settings.advanced.heading' | translate }}
+            <span class="restart-tag">{{ 'settings.tag.restart' | translate }}</span>
           </div>
           <div class="section-body" *ngIf="open['advanced']">
             <label>
-              Web Port
+              {{ 'settings.advanced.webPort' | translate }}
               <input type="number" [(ngModel)]="config.web_port" name="web_port" min="1" max="65535" />
               <small class="hint warn">
-                This is the port serving this page. After saving and restarting,
-                this tab moves itself to the new port. If the new port is blocked
-                or already in use, the app becomes unreachable in the browser and
-                you would have to fix it in config.json.
+                {{ 'settings.advanced.webPortHint' | translate }}
               </small>
             </label>
             <label>
-              Static Directory
+              {{ 'settings.advanced.staticDir' | translate }}
               <input type="text" [(ngModel)]="config.static_dir" name="static_dir"
                      (focus)="confirmStaticDir()" [readonly]="!staticDirUnlocked" />
               <small class="hint warn" *ngIf="!staticDirUnlocked">
-                Locked. This is where the web interface itself is served from, and
-                a wrong value serves no interface at all. Click the field to unlock.
+                {{ 'settings.advanced.staticLocked' | translate }}
               </small>
               <small class="hint" *ngIf="staticDirUnlocked">
-                Leave empty to let the app find its own bundle.
+                {{ 'settings.advanced.staticHint' | translate }}
               </small>
             </label>
           </div>
@@ -814,7 +798,7 @@ import { AppConfig } from '../../models/config.model';
 
         <div class="actions">
           <button type="submit" class="btn-save" [disabled]="saving">
-            {{ saving ? 'Saving...' : 'Save' }}
+            {{ (saving ? 'settings.actions.saving' : 'settings.actions.save') | translate }}
           </button>
         </div>
       </form>
@@ -824,24 +808,23 @@ import { AppConfig } from '../../models/config.model';
            until now the page said "saved" and left it at that. -->
       <div class="restart-banner" *ngIf="restartPending">
         <div class="restart-text">
-          <strong>Saved, but not yet in effect.</strong>
+          <strong>{{ 'settings.restart.banner' | translate }}</strong>
           {{ restartReason }}
-          <span *ngIf="portMoved"> This page will move to port {{ config?.web_port }}.</span>
+          <span *ngIf="portMoved"> {{ 'settings.restart.portMove' | translate:{ port: config?.web_port } }}</span>
         </div>
         <div class="restart-actions">
           <button type="button" class="btn-save" (click)="restartNow()" [disabled]="restarting">
-            {{ restarting ? 'Restarting...' : 'Restart now' }}
+            {{ (restarting ? 'settings.restart.restarting' : 'settings.restart.now') | translate }}
           </button>
           <button type="button" class="btn-link" (click)="dismissRestart()" [disabled]="restarting">
-            Later
+            {{ 'settings.restart.later' | translate }}
           </button>
         </div>
       </div>
       <div class="restart-banner manual" *ngIf="restartManual">
         <div class="restart-text">
-          <strong>Restart hms-cpap for these settings to take effect.</strong>
-          This install cannot restart itself, so it has to be done the same way it
-          was started.
+          <strong>{{ 'settings.restart.manual' | translate }}</strong>
+          {{ 'settings.restart.manualBody' | translate }}
         </div>
       </div>
 
@@ -1116,7 +1099,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
         },
         error: (e) => {
           this.myairBusy = false;
-          this.myairMessage = e?.error?.error || 'Could not reach myAir.';
+          this.myairMessage = e?.error?.error || this.t.instant('settings.myair.errConnect');
         },
       });
   }
@@ -1135,7 +1118,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
       },
       error: (e) => {
         this.myairBusy = false;
-        this.myairMessage = e?.error?.error || 'Could not verify the code.';
+        this.myairMessage = e?.error?.error || this.t.instant('settings.myair.errVerify');
       },
     });
   }
@@ -1152,7 +1135,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
       },
       error: () => {
         this.myairBusy = false;
-        this.myairMessage = 'Could not disconnect.';
+        this.myairMessage = this.t.instant('settings.myair.errDisconnect');
       },
     });
   }
@@ -1201,23 +1184,26 @@ export class SettingsComponent implements OnInit, OnDestroy {
    * main.cpp hands the original IDatabase to five consumers and only the burst
    * collector's copy is swapped. A partial swap is not something to advertise
    * as working.
+   *
+   * The second element is a translation key, not a label: the reason sentence
+   * is assembled at render time so a language can name its own settings.
    */
   private static readonly RESTART_KEYS: ReadonlyArray<[string, string]> = [
-    ['web_port', 'the web port'],
-    ['static_dir', 'the static directory'],
-    ['ezshare_range', 'the range-request setting'],
-    ['llm.max_tokens', 'the LLM token limit'],
-    ['llm.prompt_file', 'the LLM prompt file'],
-    ['mqtt.client_id', 'the MQTT client ID'],
-    ['sleephq', 'SleepHQ settings'],
-    ['agent', 'agent settings'],
-    ['sleep_stage', 'sleep stage settings'],
-    ['fysetc', 'Fysetc settings'],
-    ['logging', 'support log settings'],
-    ['database', 'database settings'],
+    ['web_port', 'settings.restart.key.webPort'],
+    ['static_dir', 'settings.restart.key.staticDir'],
+    ['ezshare_range', 'settings.restart.key.ezshareRange'],
+    ['llm.max_tokens', 'settings.restart.key.llmMaxTokens'],
+    ['llm.prompt_file', 'settings.restart.key.llmPromptFile'],
+    ['mqtt.client_id', 'settings.restart.key.mqttClientId'],
+    ['sleephq', 'settings.restart.key.sleephq'],
+    ['agent', 'settings.restart.key.agent'],
+    ['sleep_stage', 'settings.restart.key.sleepStage'],
+    ['fysetc', 'settings.restart.key.fysetc'],
+    ['logging', 'settings.restart.key.logging'],
+    ['database', 'settings.restart.key.database'],
   ];
 
-  constructor(private api: CpapApiService) {}
+  constructor(private api: CpapApiService, private t: TranslateService) {}
 
   ngOnDestroy(): void {
     this.destroy$.next();
@@ -1277,7 +1263,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
         if (cfg.o2ring?.mode === 'ble') this.checkBleAdapter();
       },
       error: (err) => {
-        this.error = 'Failed to load configuration.';
+        this.error = this.t.instant('settings.loadError');
         this.loading = false;
       },
     });
@@ -1304,13 +1290,13 @@ export class SettingsComponent implements OnInit, OnDestroy {
     this.api.updateConfig(this.config).subscribe({
       next: () => {
         this.saving = false;
-        this.showToast('Configuration saved.', false);
+        this.showToast(this.t.instant('settings.actions.saved'), false);
         this.evaluateRestart(submitted);
         this.pristine = submitted;
       },
       error: () => {
         this.saving = false;
-        this.showToast('Save failed.', true);
+        this.showToast(this.t.instant('settings.actions.saveFailed'), true);
       },
     });
   }
@@ -1336,10 +1322,12 @@ export class SettingsComponent implements OnInit, OnDestroy {
     this.portMoved = this.valueAt(this.pristine, 'web_port') !== this.valueAt(saved, 'web_port');
     if (!changed.length) return;
 
-    const list = changed.length === 1
-      ? changed[0]
-      : changed.slice(0, -1).join(', ') + ' and ' + changed[changed.length - 1];
-    this.restartReason = `You changed ${list}, which the running service only picks up on a restart.`;
+    const labels = changed.map((k) => this.t.instant(k));
+    const list = labels.length === 1
+      ? labels[0]
+      : labels.slice(0, -1).join(', ') + ' ' + this.t.instant('settings.restart.and') +
+        ' ' + labels[labels.length - 1];
+    this.restartReason = this.t.instant('settings.restart.reason', { list });
     this.restartPending = true;
     this.restartManual = false;
   }
@@ -1375,7 +1363,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
       },
       error: () => {
         this.restarting = false;
-        this.showToast('Restart request failed.', true);
+        this.showToast(this.t.instant('settings.restart.requestFailed'), true);
       },
     });
   }
@@ -1387,8 +1375,8 @@ export class SettingsComponent implements OnInit, OnDestroy {
       this.restarting = false;
       this.showToast(
         origin
-          ? `No answer on ${origin}. The port may be blocked or already in use.`
-          : 'The service did not come back. Check that it is running.',
+          ? this.t.instant('settings.restart.noAnswer', { origin })
+          : this.t.instant('settings.restart.noComeback'),
         true);
       return;
     }
@@ -1405,11 +1393,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
   /** SDD-012 decision 3: static_dir is editable, but not by accident. */
   confirmStaticDir(): void {
     if (this.staticDirUnlocked) return;
-    this.staticDirUnlocked = window.confirm(
-      'Change the static directory?\n\n' +
-      'This is where the web interface itself is served from. A wrong value ' +
-      'serves no interface at all, and recovering means editing config.json by ' +
-      'hand.\n\nLeave it empty unless you know you need it.');
+    this.staticDirUnlocked = window.confirm(this.t.instant('settings.advanced.confirm'));
   }
 
   /**
@@ -1436,9 +1420,11 @@ export class SettingsComponent implements OnInit, OnDestroy {
   agentBlockedReason(): string {
     if (!this.config) return '';
     const missing: string[] = [];
-    if (!this.config.llm?.enabled) missing.push('LLM Summaries is off');
-    if (this.config.database?.type !== 'postgresql') missing.push('the database is not PostgreSQL');
-    return missing.length ? `Right now ${missing.join(' and ')}.` : '';
+    if (!this.config.llm?.enabled) missing.push(this.t.instant('settings.agent.blockedLlm'));
+    if (this.config.database?.type !== 'postgresql') missing.push(this.t.instant('settings.agent.blockedDb'));
+    if (!missing.length) return '';
+    const list = missing.join(` ${this.t.instant('settings.restart.and')} `);
+    return this.t.instant('settings.agent.blocked', { list });
   }
 
   loadMlStatus(): void {
@@ -1452,7 +1438,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
     this.mlTraining = true;
     this.api.triggerMlTraining().subscribe({
       next: () => {
-        this.showToast('Training started.', false);
+        this.showToast(this.t.instant('settings.ml.started'), false);
         // Poll status every 5s for up to 2 minutes using switchMap to prevent overlapping requests
         let polls = 0;
         timer(0, 5000).pipe(
@@ -1467,14 +1453,14 @@ export class SettingsComponent implements OnInit, OnDestroy {
           complete: () => {
             this.mlTraining = false;
             if (this.mlStatus?.status !== 'training') {
-              this.showToast('Training complete.', false);
+              this.showToast(this.t.instant('settings.ml.complete'), false);
             }
           },
         });
       },
       error: () => {
         this.mlTraining = false;
-        this.showToast('Failed to start training.', true);
+        this.showToast(this.t.instant('settings.ml.failed'), true);
       },
     });
   }
@@ -1509,12 +1495,12 @@ export class SettingsComponent implements OnInit, OnDestroy {
     const end = this.backfillEnd || undefined;
     this.api.triggerBackfill(start, end).subscribe({
       next: () => {
-        this.showToast('Import started.', false);
+        this.showToast(this.t.instant('settings.backfill.started'), false);
         this.pollBackfillStatus();
       },
       error: () => {
         this.backfillRunning = false;
-        this.showToast('Failed to start import.', true);
+        this.showToast(this.t.instant('settings.backfill.startFailed'), true);
       },
     });
   }
@@ -1535,9 +1521,11 @@ export class SettingsComponent implements OnInit, OnDestroy {
         const status = this.backfillProgress;
         if (status?.status === 'complete') {
           this.showToast(
-            `Import complete: ${status.sessions_saved} session(s) saved.`, false);
+            this.t.instant('settings.backfill.complete', { count: status.sessions_saved }), false);
         } else if (status?.status === 'error') {
-          this.showToast('Import failed: ' + (status.error_message || 'unknown error'), true);
+          this.showToast(this.t.instant('settings.backfill.failed', {
+            error: status.error_message || this.t.instant('settings.backfill.unknownError'),
+          }), true);
         }
       },
     });
@@ -1548,11 +1536,11 @@ export class SettingsComponent implements OnInit, OnDestroy {
     this.api.updateLlmPrompt(this.llmPrompt).subscribe({
       next: () => {
         this.savingPrompt = false;
-        this.showToast('Prompt saved.', false);
+        this.showToast(this.t.instant('settings.prompt.saved'), false);
       },
       error: () => {
         this.savingPrompt = false;
-        this.showToast('Failed to save prompt.', true);
+        this.showToast(this.t.instant('settings.prompt.saveFailed'), true);
       },
     });
   }
