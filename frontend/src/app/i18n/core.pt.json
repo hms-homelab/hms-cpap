@@ -23,7 +23,16 @@
     "tidalVolume": "Volume corrente",
     "minuteVentilation": "Ventilação minuto",
     "flowLimitation": "Limitação de fluxo",
-    "snore": "Ronco"
+    "snore": "Ronco",
+    "maskPressure": "Pressão na máscara",
+    "snoreIndex": "Índice de ronco",
+    "ieRatio": "Relação I:E",
+    "eprPressure": "Pressão do EPR",
+    "targetVentilation": "Ventilação alvo",
+    "spo2": "SpO2",
+    "heartRate": "Frequência cardíaca",
+    "o2ringSpo2": "SpO2 do O2Ring",
+    "o2ringHeartRate": "Frequência cardíaca do O2Ring"
   },
   "nav": {
     "dashboard": "Painel",

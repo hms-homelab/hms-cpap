@@ -23,7 +23,16 @@
     "tidalVolume": "Légzési térfogat",
     "minuteVentilation": "Percventilláció",
     "flowLimitation": "Áramláskorlátozás",
-    "snore": "Horkolás"
+    "snore": "Horkolás",
+    "maskPressure": "Maszknyomás",
+    "snoreIndex": "Horkolási index",
+    "ieRatio": "I:E arány",
+    "eprPressure": "EPR-nyomás",
+    "targetVentilation": "Célventilláció",
+    "spo2": "SpO2",
+    "heartRate": "Pulzusszám",
+    "o2ringSpo2": "O2Ring SpO2",
+    "o2ringHeartRate": "O2Ring pulzusszám"
   },
   "nav": {
     "dashboard": "Irányítópult",

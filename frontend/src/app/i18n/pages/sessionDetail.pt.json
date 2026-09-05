@@ -1,0 +1,16 @@
+{
+  "sessionDetail": {
+    "overview": "Visão geral",
+    "expandHint": "(clique para expandir)",
+    "eventDistribution": "Distribuição dos eventos",
+    "live": "AO VIVO",
+    "refreshing": "Atualizando a cada 65 s",
+    "loadingSignals": "Carregando os dados de sinal...",
+    "noSignalData": "Nenhum dado de sinal disponível para esta sessão.",
+    "resetZoom": "Redefinir o zoom",
+    "fullScreen": "Tela cheia",
+    "closeFullScreen": "Sair da tela cheia",
+    "close": "Fechar",
+    "odiTitle": "Índice de dessaturação de oxigênio — dessaturações ≥3% por hora"
+  }
+}

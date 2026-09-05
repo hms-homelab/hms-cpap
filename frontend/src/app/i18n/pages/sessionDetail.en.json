@@ -1,0 +1,16 @@
+{
+  "sessionDetail": {
+    "overview": "Overview",
+    "expandHint": "(click to expand)",
+    "eventDistribution": "Event Distribution",
+    "live": "LIVE",
+    "refreshing": "Refreshing every 65s",
+    "loadingSignals": "Loading signal data...",
+    "noSignalData": "No signal data available for this session.",
+    "resetZoom": "Reset Zoom",
+    "fullScreen": "Full screen",
+    "closeFullScreen": "Close full screen",
+    "close": "Close",
+    "odiTitle": "Oxygen Desaturation Index — desaturations ≥3% per hour"
+  }
+}
