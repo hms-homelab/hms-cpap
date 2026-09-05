@@ -17,6 +17,7 @@
 #include "services/MyAirService.h"
 #include "services/OximetryService.h"
 #include "services/PrismaIngestion.h"
+#include "services/SefamIngestion.h"
 #include "services/SessionDiscoveryService.h"
 #include "mqtt_client.h"
 #include "database/IDatabase.h"
@@ -253,6 +254,7 @@ private:
     // Data source (ezShare HTTP or Fysetc TCP — both implement IDataSource)
     std::unique_ptr<IDataSource> data_source_;
     std::unique_ptr<PrismaIngestion> prisma_ingestion_;
+    std::unique_ptr<SefamIngestion> sefam_ingestion_;
     #ifndef _WIN32
     std::unique_ptr<FysetcTcpServer> fysetc_server_;
 #endif

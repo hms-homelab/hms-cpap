@@ -91,6 +91,14 @@ void BurstCollectorService::initDataSource() {
         }
         prisma_ingestion_ = std::make_unique<PrismaIngestion>(data_dir);
         std::cout << "CPAP: Lowenstein Prisma mode — reading from " << data_dir << std::endl;
+    } else if (source == "sefam") {
+        std::string data_dir = ConfigManager::get("CPAP_LOCAL_DIR", "");
+        if (data_dir.empty()) {
+            std::cerr << "CPAP_SOURCE=sefam but CPAP_LOCAL_DIR not set!" << std::endl;
+            throw std::runtime_error("CPAP_LOCAL_DIR required when CPAP_SOURCE=sefam");
+        }
+        sefam_ingestion_ = std::make_unique<SefamIngestion>(data_dir);
+        std::cout << "CPAP: Sefam S.Box mode — reading from " << data_dir << std::endl;
     } else if (source == "fysetc") {
 #ifndef _WIN32
         startFysetcServer();
@@ -1221,6 +1229,98 @@ bool BurstCollectorService::executeBurstCycle() {
         auto cycle_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             cycle_end - cycle_start).count();
         std::cout << "CPAP: Lowenstein burst cycle completed in " << cycle_ms << " ms" << std::endl;
+        return true;
+
+    } else if (sefam_ingestion_) {
+        // ===== SEFAM S.BOX MODE =====
+        //
+        // No staging step, unlike Prisma: the parser reads a session in place.
+        // A session is a folder AND a manifest name, because the older 1200R
+        // layout puts every recording that started on one day in one folder.
+        if (!sefam_ingestion_->initialize()) {
+            std::cerr << "CPAP: Sefam data initialization failed" << std::endl;
+            return false;
+        }
+
+        auto sefam_sessions = sefam_ingestion_->discoverSessions(last_session_start);
+        if (sefam_sessions.empty()) {
+            std::cout << "CPAP: No new Sefam sessions found" << std::endl;
+            return true;
+        }
+
+        std::cout << "CPAP: Found " << sefam_sessions.size()
+                  << " Sefam session(s) to process" << std::endl;
+
+        auto base = createParser(DeviceManufacturer::SEFAM);
+        if (!base) {
+            std::cerr << "CPAP: Sefam parser not available (not compiled in?)" << std::endl;
+            return false;
+        }
+        auto* parser = dynamic_cast<cpapdash::parser::SefamParser*>(base.get());
+        if (!parser) {
+            std::cerr << "CPAP: Sefam parser is not a SefamParser" << std::endl;
+            return false;
+        }
+
+        int parsed_count = 0, refused_count = 0;
+
+        for (const auto& ss : sefam_sessions) {
+            if (db_service_->sessionExists(device_id_, ss.session_start)) {
+                continue;
+            }
+
+            auto parsed = parser->parseSessionNamed(ss.dir, ss.stem,
+                                                    device_id_, device_name_);
+            if (!parsed) {
+                // Already explained on stderr by the parser, and a refusal is a
+                // deliberate outcome here rather than a failure: a session it
+                // cannot verify is one it will not report.
+                ++refused_count;
+                continue;
+            }
+            ++parsed_count;
+
+            const auto& notes = parser->lastNotes();
+            std::cout << "CPAP: Parsed Sefam session " << ss.stem;
+            if (parsed->duration_seconds)
+                std::cout << " (" << (*parsed->duration_seconds / 60) << " min)";
+            std::cout << " framing=" << notes.layout.seconds << "s/"
+                      << notes.layout.trailer_bytes << "B";
+            std::cout << std::endl;
+
+            if (db_service_) {
+                db_service_->saveSession(*parsed);
+                db_service_->markSessionCompleted(device_id_, ss.session_start);
+            }
+
+            if (data_publisher_) {
+                data_publisher_->publishSession(*parsed);
+                auto metrics = db_service_->getNightlyMetrics(device_id_, ss.session_start);
+                if (metrics) {
+                    data_publisher_->publishHistoricalState(*metrics);
+                    if (llm_enabled_ && llm_client_) {
+                        const STRDailyRecord* str_rec = !last_str_records_.empty()
+                            ? &last_str_records_.back() : nullptr;
+                        generateAndPublishSummary(*metrics, str_rec);
+                    }
+                }
+            }
+        }
+
+        // Same reason as Lowenstein: a Sefam card has no STR.edf equivalent, so
+        // nothing else writes cpap_daily_summary.
+        processSessionSummary();
+
+        if (data_publisher_) {
+            data_publisher_->publishSessionCompleted();
+        }
+
+        auto cycle_end = std::chrono::steady_clock::now();
+        auto cycle_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            cycle_end - cycle_start).count();
+        std::cout << "CPAP: Sefam burst cycle completed in " << cycle_ms << " ms ("
+                  << parsed_count << " parsed, " << refused_count << " refused)"
+                  << std::endl;
         return true;
 
     } else if (cpap_source_ == "local") {
@@ -2507,7 +2607,14 @@ void BurstCollectorService::reloadConfig() {
             local_source_dir_.clear();
             data_source_.reset();
             discovery_service_.reset();
+            sefam_ingestion_.reset();
             prisma_ingestion_ = std::make_unique<PrismaIngestion>(nc.local_dir);
+        } else if (nc.source == "sefam") {
+            local_source_dir_.clear();
+            data_source_.reset();
+            discovery_service_.reset();
+            prisma_ingestion_.reset();
+            sefam_ingestion_ = std::make_unique<SefamIngestion>(nc.local_dir);
         } else if (nc.source == "local") {
             local_source_dir_ = nc.local_dir;
             // SDD-010: re-classify on reload so a folder corrected in Settings
@@ -2516,9 +2623,11 @@ void BurstCollectorService::reloadConfig() {
             data_source_.reset();
             discovery_service_.reset();
             prisma_ingestion_.reset();
+            sefam_ingestion_.reset();
         } else if (nc.source == "fysetc") {
             local_source_dir_.clear();
             prisma_ingestion_.reset();
+            sefam_ingestion_.reset();
 #ifndef _WIN32
             if (action == FysetcLifecycleAction::Start) {
                 startFysetcServer();
@@ -2531,6 +2640,7 @@ void BurstCollectorService::reloadConfig() {
         } else {
             local_source_dir_.clear();
             prisma_ingestion_.reset();
+            sefam_ingestion_.reset();
 #ifdef _WIN32
             _putenv_s("EZSHARE_BASE_URL", nc.ezshare_url.c_str());
 #else

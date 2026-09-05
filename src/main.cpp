@@ -160,6 +160,12 @@ void printConfiguration() {
         std::cout << "  Source:             Fysetc" << std::endl;
         std::cout << "  Listen:             " << hms_cpap::ConfigManager::get("FYSETC_LISTEN_BIND", "0.0.0.0")
                   << ":" << hms_cpap::ConfigManager::getInt("FYSETC_LISTEN_PORT", 9000) << std::endl;
+    } else if (source == "lowenstein") {
+        std::cout << "  Source:             Löwenstein Prisma" << std::endl;
+        std::cout << "  Data Dir:           " << hms_cpap::ConfigManager::get("CPAP_LOCAL_DIR", "(not set)") << std::endl;
+    } else if (source == "sefam") {
+        std::cout << "  Source:             Sefam S.Box" << std::endl;
+        std::cout << "  Card Dir:           " << hms_cpap::ConfigManager::get("CPAP_LOCAL_DIR", "(not set)") << std::endl;
     } else {
         std::cout << "  Source:             ez Share" << std::endl;
         std::cout << "  ez Share URL:       " << hms_cpap::ConfigManager::get("EZSHARE_BASE_URL", "http://192.168.4.1") << std::endl;
