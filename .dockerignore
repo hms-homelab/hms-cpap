@@ -3,6 +3,27 @@ build/
 build-arm/
 cmake-build-*/
 
+# Frontend build inputs and outputs. The ui-builder stage runs its own
+# `npm ci` and its own `npm run build`, so everything here is either
+# rebuilt in the image or platform-wrong for it:
+#   node_modules      Dockerfile does `COPY frontend/ ./` AFTER npm ci, so a
+#                     host copy silently overwrites the container's own --
+#                     a build run from a Mac puts darwin binaries (esbuild,
+#                     rollup) into a linux image.
+#   dist/, .angular/  stale output and cache, always rebuilt.
+#   <lang>.json       SDD-080 generated dictionaries; the prebuild hook
+#                     writes them. Copying them in means the image builds
+#                     against whatever was last on the host, and a broken
+#                     hook passes for the wrong reason.
+frontend/node_modules/
+frontend/dist/
+frontend/.angular/
+frontend/src/app/i18n/en.json
+frontend/src/app/i18n/es.json
+frontend/src/app/i18n/fr.json
+frontend/src/app/i18n/pt.json
+frontend/src/app/i18n/hu.json
+
 # ARM cross-compilation sysroot (220 MB, not needed in container)
 sysroot/
 
