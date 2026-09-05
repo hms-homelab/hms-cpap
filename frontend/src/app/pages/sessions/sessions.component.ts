@@ -3,6 +3,7 @@ import { CommonModule } from '@angular/common';
 import { Router, RouterLink } from '@angular/router';
 import { CpapApiService } from '../../services/cpap-api.service';
 import { SessionListItem } from '../../models/session.model';
+import { formatIndex } from '../../utils/format';
 
 @Component({
   selector: 'app-sessions',
@@ -190,9 +191,10 @@ export class SessionsComponent implements OnInit, OnDestroy {
     return +s.oximetry_only > 0 || s.oximetry_only === true || s.oximetry_only === 't';
   }
 
+  /** SDD-079: AHI, like the rest of the index group, renders at two decimals. */
   fmtAhi(s: any): string {
-    if (this.isOximetryOnly(s) || s.ahi == null || s.ahi === '') return '-';
-    return (+s.ahi).toFixed(2);
+    if (this.isOximetryOnly(s)) return '-';
+    return formatIndex(s.ahi);
   }
 
   fmtDuration(val: string | number | undefined): string {

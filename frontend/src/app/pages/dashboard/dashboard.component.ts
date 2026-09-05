@@ -1,6 +1,7 @@
 import { Component, OnInit, ViewChild, ElementRef, AfterViewInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { CpapApiService } from '../../services/cpap-api.service';
+import { formatIndex } from '../../utils/format';
 import { KeyMetricsComponent, KeyMetricsData } from '../../components/dashboard/key-metrics.component';
 import { OximetryRowComponent, OximetryRowData } from '../../components/dashboard/oximetry-row.component';
 import { AiSummaryComponent } from '../../components/dashboard/ai-summary.component';
@@ -539,7 +540,9 @@ export class DashboardComponent implements OnInit, AfterViewInit {
     this.liveCharts.forEach(c => c.destroy());
     this.liveCharts = [];
 
-    const makeGauge = (ref: ElementRef<HTMLCanvasElement> | undefined, value: number, max: number, color: string, unit: string) => {
+    // SDD-079: `format` overrides the centre readout. Only the index group (AHI here) gets
+    // two decimals; duration, SpO2 and heart rate keep the default one-decimal rendering.
+    const makeGauge = (ref: ElementRef<HTMLCanvasElement> | undefined, value: number, max: number, color: string, unit: string, format?: (v: number) => string) => {
       if (!ref) return;
       const pct = Math.min(value / max, 1);
       const chart = new Chart(ref.nativeElement, {
@@ -566,7 +569,7 @@ export class DashboardComponent implements OnInit, AfterViewInit {
             ctx.font = 'bold 22px system-ui';
             ctx.fillStyle = color;
             ctx.textAlign = 'center';
-            ctx.fillText(value % 1 === 0 ? String(value) : value.toFixed(1), chart.width / 2, chart.height - 30);
+            ctx.fillText(format ? format(value) : (value % 1 === 0 ? String(value) : value.toFixed(1)), chart.width / 2, chart.height - 30);
             ctx.font = '11px system-ui';
             ctx.fillStyle = '#888';
             ctx.fillText(unit, chart.width / 2, chart.height - 15);
@@ -583,7 +586,7 @@ export class DashboardComponent implements OnInit, AfterViewInit {
     // Duration thresholds: <4h red (below insurance compliance min),
     // 4–6h yellow (compliant but short), >=6h green.
     const durationColor = hours < 4 ? '#ef4444' : hours < 6 ? '#fbbf24' : '#4ade80';
-    makeGauge(this.ahiGaugeRef, ahi, 10, ahiColor, 'events/h');
+    makeGauge(this.ahiGaugeRef, ahi, 10, ahiColor, 'events/h', (v) => formatIndex(v));
     makeGauge(this.durationGaugeRef, hours, 10, durationColor, this.fmtDuration(hours));
 
     if (this.liveSpO2) {
