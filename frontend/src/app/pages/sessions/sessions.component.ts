@@ -1,6 +1,7 @@
 import { Component, OnInit, OnDestroy, ChangeDetectorRef, HostListener } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Router, RouterLink } from '@angular/router';
+import { TranslatePipe } from '@ngx-translate/core';
 import { CpapApiService } from '../../services/cpap-api.service';
 import { SessionListItem } from '../../models/session.model';
 import { formatIndex } from '../../utils/format';
@@ -8,7 +9,7 @@ import { formatIndex } from '../../utils/format';
 @Component({
   selector: 'app-sessions',
   standalone: true,
-  imports: [CommonModule, RouterLink],
+  imports: [CommonModule, RouterLink, TranslatePipe],
   templateUrl: './sessions.component.html',
   styleUrls: ['./sessions.component.css']
 })

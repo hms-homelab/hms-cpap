@@ -1,0 +1,36 @@
+{
+  "sessions": {
+    "title": "Alvásidőszakok ({{count}})",
+    "compare": {
+      "start": "Éjszakák összehasonlítása",
+      "cancel": "Mégse",
+      "pick": "Válasszon két éjszakát az összehasonlításhoz ({{n}}/2)",
+      "go": "Összehasonlítás"
+    },
+    "table": {
+      "date": "Dátum",
+      "status": "Állapot",
+      "duration": "Időtartam",
+      "events": "Események",
+      "actions": "Műveletek"
+    },
+    "badge": {
+      "oxiOnly": "Csak O2",
+      "oxiOnlyTitle": "Csak az oxigéngyűrű felvétele van meg; ezen az éjszakán nem rögzült CPAP-alvásidőszak.",
+      "live": "ÉLŐ",
+      "partial": "Részleges",
+      "partialTitle": "A fájlátvitel az éjszaka összefoglaló rekordja nélkül zárult. A teljesség kedvéért látszik, de kimarad a terápiahűségi és trendátlagokból.",
+      "done": "Kész"
+    },
+    "actions": {
+      "forceDone": "Lezárás kikényszerítése",
+      "aiSummary": "MI-összefoglaló",
+      "reparse": "Újrafeldolgozás",
+      "fetchOxi": "O2-előzmények letöltése",
+      "dayPdf": "A nap PDF-je",
+      "generating": "Készítés...",
+      "uploadSleepHq": "Feltöltés a SleepHQ-ba"
+    },
+    "loadMore": "Továbbiak betöltése"
+  }
+}

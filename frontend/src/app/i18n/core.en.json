@@ -10,6 +10,11 @@
     "next": "Next",
     "noData": "No data"
   },
+  "metric": {
+    "ahi": "AHI",
+    "spo2": "SpO2",
+    "hr": "HR"
+  },
   "nav": {
     "dashboard": "Dashboard",
     "sessions": "Sessions",

@@ -1,0 +1,36 @@
+{
+  "sessions": {
+    "title": "Sesiones ({{count}})",
+    "compare": {
+      "start": "Comparar noches",
+      "cancel": "Cancelar",
+      "pick": "Elige dos noches para comparar ({{n}}/2)",
+      "go": "Comparar"
+    },
+    "table": {
+      "date": "Fecha",
+      "status": "Estado",
+      "duration": "Duración",
+      "events": "Eventos",
+      "actions": "Acciones"
+    },
+    "badge": {
+      "oxiOnly": "Solo O2",
+      "oxiOnlyTitle": "Solo hay registro del anillo de O2; no se registró ninguna sesión de CPAP esta noche.",
+      "live": "EN VIVO",
+      "partial": "Parcial",
+      "partialTitle": "La transferencia terminó sin el registro resumen de esta noche. Se muestra para que conste, pero queda fuera de los promedios de cumplimiento y tendencias.",
+      "done": "Completa"
+    },
+    "actions": {
+      "forceDone": "Forzar cierre",
+      "aiSummary": "Resumen con IA",
+      "reparse": "Reprocesar",
+      "fetchOxi": "Traer historial de O2",
+      "dayPdf": "PDF del día",
+      "generating": "Generando...",
+      "uploadSleepHq": "Subir a SleepHQ"
+    },
+    "loadMore": "Cargar más"
+  }
+}
