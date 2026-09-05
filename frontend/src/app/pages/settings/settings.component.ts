@@ -501,7 +501,7 @@ import { AppConfig } from '../../models/config.model';
             <!-- Progress bar -->
             <div class="progress-bar" *ngIf="backfillRunning && backfillProgress?.folders_total > 0">
               <div class="progress-fill"
-                   [style.width.%]="(backfillProgress.folders_done / backfillProgress.folders_total) * 100">
+                   [style.transform]="'scaleX(' + backfillFraction() + ')'">
               </div>
             </div>
 
@@ -1022,9 +1022,13 @@ import { AppConfig } from '../../models/config.model';
       margin-top: 0.75rem; height: 6px; background: #2a2a3d;
       border-radius: 3px; overflow: hidden;
     }
+    /* Scaled rather than resized: animating width relayouts the bar on every
+       poll tick, and transform stays on the compositor. The origin has to be
+       explicit or the fill grows from its centre in both directions. */
     .progress-fill {
-      height: 100%; background: #64b5f6; border-radius: 3px;
-      transition: width 0.3s ease;
+      width: 100%; height: 100%; background: #64b5f6; border-radius: 3px;
+      transform-origin: left center;
+      transition: transform 0.3s ease;
     }
   `]
 })
@@ -1486,6 +1490,20 @@ export class SettingsComponent implements OnInit, OnDestroy {
       },
       error: () => {},
     });
+  }
+
+  /**
+   * Progress as a 0..1 scale factor for the bar's transform.
+   *
+   * Guards its own divisor rather than leaning on the template's *ngIf: a
+   * scaleX(NaN) silently renders nothing, which would read as "no progress"
+   * instead of as the bug it is.
+   */
+  backfillFraction(): number {
+    const total = this.backfillProgress?.folders_total ?? 0;
+    if (total <= 0) return 0;
+    const done = this.backfillProgress?.folders_done ?? 0;
+    return Math.min(1, Math.max(0, done / total));
   }
 
   startBackfill(): void {
