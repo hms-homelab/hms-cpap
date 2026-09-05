@@ -5,6 +5,34 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.1.2] - 2026-09-05
+
+### Added
+- **Five languages across the whole interface.** English, Spanish, French,
+  Portuguese and Hungarian, 649 keys each behind a build-time parity gate that
+  fails the build if any language drifts from English.
+
+### Fixed
+- **5.1.1's frontend could not start.** `app.config.ts` registered the translate
+  loader under the concrete class instead of the `TranslateLoader` token, so
+  `TranslateService` never constructed and every route rendered a blank page.
+  `npm run build` was green throughout.
+- **Nothing fit a phone**, in any language including English. The nav bar needed
+  1007px in English and 1148px in Hungarian, and the sessions and events tables
+  dragged the page sideways. The bar is now two rows with a scrolling link strip
+  below 768px; both tables scroll inside their own wrapper.
+- **The release build itself was red.** Every job that builds the Angular UI ran
+  `npx ng build`, which skips the npm `prebuild` hook that assembles the
+  generated i18n dictionaries, so a clean checkout could not resolve them. The
+  workflow, the Dockerfile and REFERENCE.md now use `npm run build`, and
+  `.dockerignore` keeps the host's `node_modules` and dictionaries out of the
+  image so the hook cannot be bypassed there either.
+
+### Changed
+- **`npm run check:narrow` walks 9 routes x 5 languages at 375px** and now fails
+  a page that renders blank as well as one that overflows, because the first
+  version of that check passed 45/45 against blank pages.
+
 ## [5.1.1] - 2026-08-29
 
 ### Changed
