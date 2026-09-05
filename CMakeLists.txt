@@ -207,8 +207,10 @@ endif()
 # ── External libraries (via FetchContent) ────────────────────────────────────
 include(FetchContent)
 
-# cpapdash-parser: shared CPAP parsing library (ResMed EDF + Lowenstein Prisma)
+# cpapdash-parser: shared CPAP parsing library (ResMed EDF + Lowenstein Prisma
+# + Sefam S.Box)
 set(CPAPDASH_PARSER_WITH_LOWENSTEIN ON CACHE BOOL "Enable Lowenstein Prisma parser" FORCE)
+set(CPAPDASH_PARSER_WITH_SEFAM ON CACHE BOOL "Enable Sefam S.Box parser" FORCE)
 set(CPAPDASH_PARSER_LOCAL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../hms-cpapdash-parser)
 set(CPAPDASH_PARSER_LOCAL_DIR2 ${CMAKE_CURRENT_SOURCE_DIR}/../hms-cpapdash/hms-cpapdash-parser)
 if(EXISTS ${CPAPDASH_PARSER_LOCAL_DIR}/CMakeLists.txt)
@@ -227,7 +229,7 @@ else()
         # pin is something ONLY CI can catch. That is exactly how the v4.9.9
         # release build failed: the pin was left on v2026.1.3 while the code
         # had moved on to a field that tag did not have.
-        GIT_TAG        v2026.4.2
+        GIT_TAG        v2026.8.0
     )
 endif()
 FetchContent_MakeAvailable(cpapdash_parser)

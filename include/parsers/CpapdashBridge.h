@@ -16,6 +16,9 @@
 #ifdef CPAPDASH_WITH_LOWENSTEIN
 #include <cpapdash/parser/PrismaParser.h>
 #endif
+#ifdef CPAPDASH_WITH_SEFAM
+#include <cpapdash/parser/SefamParser.h>
+#endif
 
 namespace hms_cpap {
 
