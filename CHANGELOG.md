@@ -5,6 +5,44 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.1.6] - 2026-09-06
+
+### Fixed
+- **The dashboard now says which night it is showing, and says so when it is
+  old.** The subtitle rendered `Sep 6` — no year, hardcoded `en-US` at both call
+  sites, and an untranslated `Last Session - ` label in a five-language app. It
+  reads `Latest night: Sep 6, 2026` in the reader's own language, with the parts
+  ordered the way that language orders them.
+
+  The staleness is the substantive half. The headline query has **no date bound
+  at all**, unlike the 30-day trend beside it, so a machine that stopped syncing
+  three weeks ago showed a three-week-old AHI that looked exactly like last
+  night's. The age is now called out once the night is no longer current.
+
+  Two days, not one: a sleep day is a date *label* for a night that mostly runs
+  past midnight, so this morning's therapy files under yesterday's date and an
+  age of 1 is the healthy steady state. Flagging at 1 would mark a perfectly
+  current dashboard stale every morning.
+
+### Security
+- **Angular 21.2.6 → 21.2.22**, clearing all 31 `npm audit` advisories. Patch
+  level inside the existing `^21.2.0` range. Raised as issue #29, whose reported
+  flaw does **not** apply — it needs SSR, and this is a client-only SPA with no
+  hydration and no transfer cache — but one advisory does land
+  (`GHSA-jj27-h5hq-8x99`, Angular i18n XSS via event-handler attributes), and 25
+  of the 31 were build-time only.
+
+### Added
+- **SDD-022**, specifying the split of `config.source` into `transport` and
+  `format` with a migration for existing installs. `local`, `lowenstein` and
+  `sefam` are not three sources; they are one source read by three parsers.
+
+### Internal
+- **The agent test suites were skipping in CI, not missing.** 1742 lines of
+  tests left `AgentMemory.cpp` at 1.9% and `AgentService.cpp` at 13.1% because
+  the pgvector extension was never created in the test database and no MQTT
+  broker was running. Neither needed new tests.
+
 ## [5.1.5] - 2026-09-06
 
 5.1.4 was tagged but its build failed, so it never produced an image. This is
