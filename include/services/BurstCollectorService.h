@@ -188,6 +188,60 @@ public:
     static std::string resolveSleepDay(const std::string& requested,
                                        std::chrono::system_clock::time_point now);
 
+    // ── Card-stamp change detection ──────────────────────────────────────
+    // Shared by the two paths that pull a CSL or EVE: the per-burst download
+    // and the close-time refetch. They MUST agree -- one stamps what it stores
+    // and the other reads that stamp back -- so the test lives in one place.
+
+    /**
+     * The card's stamp for one file of a set, or 0 when the listing did not
+     * carry one. 0 always means "fetch": an unknown stamp can never be shown
+     * to match.
+     */
+    static std::time_t cardStampFor(const SessionFileSet& session,
+                                    const std::string& filename);
+
+    /**
+     * Do we already hold the exact copy the card is currently offering?
+     *
+     * The listing's size is KB-ROUNDED, so a file under a kilobyte cannot show
+     * that it grew. CSL and EVE are under a kilobyte and DO grow -- they are
+     * appended all night -- so size can never answer the question for exactly
+     * the files that need it asked. The card's own per-file stamp can, and it
+     * has been parsed out of the listing all along and thrown away.
+     *
+     * The stamp of the copy we hold is the LOCAL FILE'S OWN MTIME, written by
+     * stampLocalCopy() after each successful download. That means the store
+     * needs no table, no map and no cache: it survives a restart because it is
+     * the filesystem, and a file deleted underneath us reads as absent and is
+     * fetched again, which is correct.
+     *
+     * EQUALITY, never ordering. We never compare the card's clock against
+     * ours -- we compare the card's stamp against the card stamp we ourselves
+     * recorded, so a wrong or jumped card clock costs a redundant fetch
+     * instead of a missed append. An ordering test would, on a card whose
+     * clock ran backwards, decide our copy was newer than a write that had
+     * actually happened and skip it forever.
+     *
+     * Absent, empty or unstamped copy, or card_stamp 0: false, i.e. fetch.
+     */
+    static bool holdCurrentCopy(std::time_t card_stamp,
+                                const std::string& local_path);
+
+    /**
+     * Record the card's stamp on a copy we just stored, so the next burst --
+     * and the close pass -- can recognise it.
+     *
+     * Best effort: a filesystem that refuses is a filesystem that makes us
+     * re-download, which is the old behaviour and not a failure.
+     *
+     * Only ever called for bytes ACTUALLY FETCHED. Stamping a file we merely
+     * decided looked big enough would adopt the card's new timestamp for
+     * growth we never pulled, and lose it silently.
+     */
+    static void stampLocalCopy(std::time_t card_stamp,
+                               const std::string& local_path);
+
     // ── Test seam (unit tests only) ──────────────────────────────────────
     // Inject collaborators directly, bypassing initialize() (which opens real
     // DB/MQTT/network connections). Lets the burst cycle, completion, archive
@@ -390,7 +444,12 @@ private:
      * smartDownload); this exists because the close path never re-downloads at
      * all, which is how sub-KB sidecar growth was being lost.
      *
-     * @return true when every sidecar present in the set was refetched.
+     * A sidecar whose local copy already carries the card's current stamp is
+     * NOT refetched. The close pass runs on the same folder every burst until
+     * the ledger retires it, so without that test it re-pulls every CSL and
+     * EVE of the night, forever, for files the card has finished writing.
+     *
+     * @return true when every sidecar that needed refetching was refetched.
      */
     bool refetchSidecars(const std::vector<const SessionFileSet*>& sets,
                          const std::string& local_base_dir);

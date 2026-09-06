@@ -1,3 +1,4 @@
+#include "utils/TimeCompat.h"          // timegm_utc
 #include "services/SessionDiscoveryService.h"
 #include "utils/ConfigManager.h"
 #include "utils/FileUtils.h"
@@ -54,6 +55,29 @@ SessionDiscoveryService::parseSessionTime(const std::string& prefix) {
 // only when it falls within (start, start+24h] — a copied or freshly-touched
 // file whose mtime has nothing to do with therapy fails the gate and falls
 // back to the size estimate.
+// The card's listing stamp as a time_t in a FIXED UTC frame.
+//
+// timegm, never mktime. mktime resolves a LOCAL wall-clock time, and twice a
+// year an hour repeats -- so two stamps genuinely an hour apart would compare
+// equal. This value decides whether a file is re-downloaded, by equality, so a
+// DST fold would silently skip a real append. The card's stamp is a label
+// rather than a local time, and reading it in a fixed frame is what makes the
+// comparison mean the same thing every day of the year.
+//
+// 0 when the listing gave us nothing usable, which always means fetch.
+static std::time_t cardStampUtc(const EzShareFileEntry& f) {
+    if (f.year < 1980 || f.month < 1 || f.month > 12 || f.day < 1 || f.day > 31)
+        return 0;
+    std::tm tm{};
+    tm.tm_year = f.year - 1900;
+    tm.tm_mon  = f.month - 1;
+    tm.tm_mday = f.day;
+    tm.tm_hour = f.hour;
+    tm.tm_min  = f.minute;
+    tm.tm_sec  = f.second;
+    return timegm_utc(&tm);
+}
+
 static std::chrono::system_clock::time_point estimateCheckpointEnd(
     std::chrono::system_clock::time_point start, bool is_brp, int size_kb,
     std::chrono::system_clock::time_point mtime) {
@@ -117,6 +141,7 @@ SessionDiscoveryService::groupSessionsInFolder(const std::string& date_folder) {
         std::string prefix;
         std::chrono::system_clock::time_point timestamp;
         std::chrono::system_clock::time_point end;   // estimated write-close time
+        std::time_t card_stamp{0};   // the card's own stamp, UTC frame
         int size_kb;
         bool is_brp;
         bool is_pld;
@@ -154,6 +179,7 @@ SessionDiscoveryService::groupSessionsInFolder(const std::string& date_folder) {
             cp.name = file.name;
             cp.prefix = prefix;
             cp.timestamp = parseSessionTime(prefix);
+            cp.card_stamp = cardStampUtc(file);
             cp.end = estimateCheckpointEnd(cp.timestamp, is_brp, file.size_kb,
                                            file.getModTime());
             cp.size_kb = file.size_kb;
@@ -232,6 +258,7 @@ SessionDiscoveryService::groupSessionsInFolder(const std::string& date_folder) {
         for (const auto& cp : group) {
             session.total_size_kb += cp.size_kb;
             session.file_sizes_kb[cp.name] = cp.size_kb;  // Store individual size
+            session.card_stamps[cp.name] = cp.card_stamp;
 
             if (cp.is_brp) {
                 session.brp_files.push_back(cp.name);
@@ -276,6 +303,7 @@ SessionDiscoveryService::groupSessionsInFolder(const std::string& date_folder) {
                     into.push_back(it->second.name);
                     session.total_size_kb += it->second.size_kb;
                     session.file_sizes_kb[it->second.name] = it->second.size_kb;
+                    session.card_stamps[it->second.name] = cardStampUtc(it->second);
                     std::cout << "    " << label << ": " << it->second.name << std::endl;
                     it = pool.erase(it);
                 } else {
@@ -635,6 +663,7 @@ SessionDiscoveryService::groupLocalFolder(
         std::string prefix;
         std::chrono::system_clock::time_point timestamp;
         std::chrono::system_clock::time_point end;   // estimated write-close time
+        std::time_t card_stamp{0};   // the card's own stamp, UTC frame
         int size_kb;
         bool is_brp;
         bool is_pld;

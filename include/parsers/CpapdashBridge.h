@@ -100,6 +100,25 @@ struct SessionFileSet {
 
     std::map<std::string, int> file_sizes_kb;
 
+    /// The card's own last-modified stamp per file, as a time_t in a FIXED UTC
+    /// frame, straight from the listing.
+    ///
+    /// The listing's SIZE is KB-rounded, so a file under a kilobyte cannot show
+    /// that it grew -- and CSL and EVE are under a kilobyte and DO grow, being
+    /// appended all night. That is why they were re-downloaded unconditionally
+    /// every burst: size could not answer the question, so nobody asked it.
+    ///
+    /// UTC via timegm, deliberately, and NOT EzShareFileEntry::getModTime():
+    /// that one builds its time_point with mktime(), which resolves a local
+    /// wall-clock time. Twice a year an hour repeats, so two stamps genuinely an
+    /// hour apart compare EQUAL -- and this value is compared for equality to
+    /// decide whether to skip a download. A DST fold would silently skip a real
+    /// append. The card's stamp is a label, not a local time, and is treated as
+    /// one.
+    ///
+    /// 0 means absent or unparsable, which always means fetch.
+    std::map<std::string, std::time_t> card_stamps;
+
     int total_size_kb = 0;
     std::chrono::system_clock::time_point session_start;
 
