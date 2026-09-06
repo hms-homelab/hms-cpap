@@ -41,7 +41,21 @@ lcov --directory "$BUILD_DIR" --zerocounters $LCOV_FLAGS >/dev/null 2>&1 || true
 # Non-fatal: coverage is still meaningful if a test fails, and CI gates test
 # pass/fail in its own step. Remember the status to surface at the end.
 TEST_RC=0
-( cd "$BUILD_DIR/tests" && ./run_tests --gtest_filter="$GTEST_FILTER_ARG" ) || TEST_RC=$?
+# HARD TIMEOUT. The instrumented suite takes ~10 minutes; 25 is generous. A
+# hung test used to sit here until the CI job's own limit killed it an hour
+# later, with no log published (GitHub does not expose logs for an in-progress
+# job), so the only symptom was a run that never finished and no way to see
+# which test caused it. On a timeout the runner is killed and the partial gcov
+# data is still captured below, which at least names how far it got.
+#
+# 124 is timeout(1)'s exit code for "the command timed out".
+TEST_TIMEOUT="${COVERAGE_TEST_TIMEOUT:-1500}"
+( cd "$BUILD_DIR/tests" && timeout --kill-after=30 "$TEST_TIMEOUT" \
+    ./run_tests --gtest_filter="$GTEST_FILTER_ARG" ) || TEST_RC=$?
+if [ "$TEST_RC" = "124" ]; then
+    echo "!! The test run TIMED OUT after ${TEST_TIMEOUT}s. A test is hanging."
+    echo "!! Coverage below is from a partial run and must not be trusted as a gate."
+fi
 
 mkdir -p "$OUT_DIR"
 echo "== Capturing coverage =="

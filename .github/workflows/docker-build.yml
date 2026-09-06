@@ -182,7 +182,7 @@ jobs:
             uuid-dev libmariadb-dev libhiredis-dev libbrotli-dev \
             libyaml-cpp-dev zlib1g-dev \
             libhpdf-dev gnuplot lcov \
-            postgresql-client mosquitto
+            postgresql-client
 
       # The pgvector IMAGE ships the extension; it does not install it into a
       # database. AgentMemoryPgTest gates on `SELECT 1 FROM pg_type WHERE
@@ -192,20 +192,6 @@ jobs:
       # has claimed this worked since the image was switched.
       - name: Enable pgvector in the test database
         run: psql -c 'CREATE EXTENSION IF NOT EXISTS vector'
-
-      # AgentServiceE2ETest needs a broker at localhost:1883 and returns early
-      # from SetUp without one, which skipped every test and left
-      # AgentService.cpp at 13.1% behind 1142 lines of tests. Run in the job
-      # rather than as a service container: mosquitto 2.x with no config file
-      # listens on 1883 and allows anonymous, which a container image will not
-      # do without a mounted config.
-      - name: Start an MQTT broker for the agent E2E tests
-        run: |
-          mosquitto -d -p 1883
-          for i in $(seq 1 10); do
-            (echo > /dev/tcp/127.0.0.1/1883) >/dev/null 2>&1 && break
-            sleep 1
-          done
 
       - name: Run coverage (build instrumented, run tests, enforce ratchet)
         run: bash scripts/coverage.sh "$COVERAGE_MIN"
