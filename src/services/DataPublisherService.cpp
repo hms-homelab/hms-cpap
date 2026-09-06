@@ -433,20 +433,8 @@ void DataPublisherService::publishHistoricalState(const SessionMetrics& m) {
     }
 
     // EVENTS
-    //
-    // The index only goes out when it IS an AHI. A machine whose detector cannot
-    // produce hypopneas produces an apnea count per hour, and publishing that on
-    // a topic called "ahi" would put it in front of a Home Assistant sensor, a
-    // dashboard and an alert threshold, all of which would read it as the real
-    // thing. There is no severity banding for an apnea-only index, so it is not
-    // republished under another name either -- it is withheld (SDD-081).
-    //
-    // The event COUNTS below still go out. Those are the machine's own
-    // detections and are not in dispute; it is the index that cannot be graded.
-    if (m.index_kind == SessionMetrics::IndexKind::AHI) {
-        mqtt_client_->publish("cpap/" + device_id_ + "/historical/ahi",
-                             std::to_string(m.ahi), 0, true);
-    }
+    mqtt_client_->publish("cpap/" + device_id_ + "/historical/ahi",
+                         std::to_string(m.ahi), 0, true);
     mqtt_client_->publish("cpap/" + device_id_ + "/historical/total_events",
                          std::to_string(m.total_events), 0, true);
     mqtt_client_->publish("cpap/" + device_id_ + "/historical/obstructive_apneas",

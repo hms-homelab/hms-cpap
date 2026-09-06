@@ -2388,8 +2388,28 @@ std::string BurstCollectorService::buildMetricsString(const SessionMetrics& metr
     oss << "Usage: " << metrics.usage_hours.value_or(0.0) << " hours"
         << " (" << metrics.usage_percent.value_or(0.0) << "% of 8h target)\n";
 
-    // AHI and events
-    oss << "AHI: " << metrics.ahi << " events/hour\n";
+    // AHI and events.
+    //
+    // The index only goes into the prompt when it IS an AHI. A machine with no
+    // hypopnea detection produces an apnea count per hour, and handing that to
+    // an LLM under the label "AHI" is how a number with no severity meaning
+    // comes back out as "your AHI is excellent". The model has no way to know
+    // the difference and every reason to characterise what it is given.
+    //
+    // The event counts below still go, because they are counts and not an
+    // index -- the model can report them without grading anything.
+    //
+    // This is a suppression and not a deletion: the index is still computed and
+    // still stored, so when there is eventually something to compare it against
+    // it is already there (SDD-081).
+    if (metrics.index_kind == SessionMetrics::IndexKind::AHI) {
+        oss << "AHI: " << metrics.ahi << " events/hour\n";
+    } else {
+        oss << "AHI: not available for this machine -- it does not detect "
+               "hypopneas, so no apnea-hypopnea index can be formed. Do not "
+               "estimate one, and do not describe the events below as mild, "
+               "normal or severe.\n";
+    }
     oss << "Total events: " << metrics.total_events
         << " (obstructive=" << metrics.obstructive_apneas
         << ", central=" << metrics.central_apneas
