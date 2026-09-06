@@ -114,6 +114,7 @@ set(TEST_SOURCES
     clients/test_O2RingBleProtocol.cpp
     services/test_sleep_stage_classifier.cpp
     services/test_PrismaIngestion.cpp
+    services/test_SefamIngestion.cpp
     integration/test_PrismaE2E.cpp
     services/test_InsightsEngine.cpp
     database/test_SQLiteDatabase.cpp
