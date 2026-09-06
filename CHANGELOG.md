@@ -5,6 +5,35 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.1.3] - 2026-09-06
+
+### Fixed
+- **Every CSL and EVE was re-downloaded from the card on every beat, forever.**
+  The ezShare listing rounds every size to a kilobyte and those files are under
+  one, so size could never answer "has this changed?" for exactly the files that
+  needed it asked — and both download paths gave up and re-pulled them
+  unconditionally. Back-to-back full downloads is the shape that wedges an
+  ezShare. They are now fetched only when the card's own per-file timestamp,
+  which the listing has carried all along and we discarded, differs from the one
+  on the copy we already hold.
+
+  This is correctness, not thrift. Measured across 125 nights: an EVE is exactly
+  808 + 40n bytes, one 40-byte record per scored event, and **46% of them sit
+  inside the first kilobyte** — invisible to a size check from first byte to
+  last. On a night with apneas the timestamp is the only signal that the events
+  arrived. Two event-bearing EVEs were seen restamped 2h56m and 1h07m after
+  creation while their CSL siblings, same session and same second, stayed at +2s.
+
+  The comparison is equality, never ordering, and never against our own clock —
+  only the card's stamp against the card stamp we recorded. The bench card's
+  clock runs an hour behind local, so an ordering test would already be wrong
+  before daylight saving is involved.
+
+- **A faulty zero-byte file could have been adopted permanently.** A valid EDF
+  always has a header, so zero bytes means the write was lost; one such file
+  exists on the real card. It is now never stamped, because a stamped empty file
+  would match forever and the good copy, written later, would never be fetched.
+
 ## [5.1.2] - 2026-09-05
 
 ### Added
