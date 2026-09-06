@@ -5,6 +5,39 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.2.0] - 2026-09-06
+
+### Added
+- **You can now pick your machine in the interface.** Löwenstein Prisma and
+  Sefam S.Box have both been supported for a while and neither could be selected
+  anywhere: not in Settings, not in the first-run wizard, not in the desktop
+  configurator. Owners of both had to hand-edit `config.json`. Philips
+  Respironics is offered too, marked experimental.
+
+- **The data source is now two questions instead of one.** Where the files come
+  from, and what wrote them:
+
+  ```
+  transport   ezshare | local | fysetc
+  format      resmed | lowenstein | sefam | philips
+  ```
+
+  `local`, `lowenstein` and `sefam` were never three sources. They are one
+  source, a folder on disk, read by three different parsers. Splitting them is
+  what lets a question about *where* be answered by asking about where: the
+  check for "did this arrive over a network, so must we write it down first?"
+  used to work by listing machine brands, and was right about Sefam only because
+  nobody had got round to breaking it.
+
+  **Your existing configuration is migrated automatically** and keeps working
+  untouched. The old `source` setting is still written for one release, so
+  downgrading is safe. `CPAP_SOURCE` still works everywhere it did.
+
+### Fixed
+- **The folder picker was unreachable for Prisma and S.Box owners** in the
+  desktop configurator. It appeared only for ResMed, so users of the two
+  machines that *only* read from a folder could not choose the folder.
+
 ## [5.1.6] - 2026-09-06
 
 ### Fixed
