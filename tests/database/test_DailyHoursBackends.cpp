@@ -261,6 +261,73 @@ TEST_P(DailyHoursBackendTest, TheMigrationLeavesACorrectRowAlone) {
     }
 }
 
+// ── SDD-024: index_kind must survive the database ───────────────────────────
+//
+// This is the test whose ABSENCE let SDD-023 look finished. That change branches
+// on SessionMetrics::index_kind at the MQTT publisher and its unit tests passed,
+// but the Sefam path calls the publisher with metrics READ BACK FROM THE
+// DATABASE -- and there was no column, so the value was always the struct
+// default (AHI) and an apnea-only number went out under the name "AHI".
+//
+// A test that never crosses the database proves nothing about a path that does.
+
+TEST_P(DailyHoursBackendTest, IndexKindSurvivesTheRoundTrip) {
+    const auto start = std::chrono::system_clock::now() - std::chrono::hours(8);
+
+    CPAPSession s;
+    s.device_id = device_;
+    s.session_start = start;
+    s.session_end = start + std::chrono::hours(7);
+    s.duration_seconds = 7 * 3600;
+    s.status = CPAPSession::Status::COMPLETED;
+
+    SessionMetrics m;
+    m.ahi = 4.2;
+    m.obstructive_apneas = 20;
+    m.total_events = 20;
+    // The Sefam case: apneas scored, hypopneas not marked at all.
+    m.index_kind = SessionMetrics::IndexKind::Ungraded;
+    s.metrics = m;
+
+    ASSERT_TRUE(db_->saveSession(s)) << engineName(GetParam());
+
+    auto back = db_->getNightlyMetrics(device_, start);
+    ASSERT_TRUE(back.has_value()) << engineName(GetParam());
+    EXPECT_EQ(back->index_kind, SessionMetrics::IndexKind::Ungraded)
+        << engineName(GetParam())
+        << ": an apnea-only index came back claiming to be an AHI. Every "
+           "consumer downstream -- MQTT, the dashboard, the reports, the LLM "
+           "summary -- believes this field.";
+}
+
+// The upgrade path. Every row already on disk was written before the column
+// existed, and every one of them is ResMed, so the absence must read as `ahi`
+// rather than as unknown or as ungraded.
+TEST_P(DailyHoursBackendTest, AResMedNightStillReadsAsAnAhi) {
+    const auto start = std::chrono::system_clock::now() - std::chrono::hours(20);
+
+    CPAPSession s;
+    s.device_id = device_;
+    s.session_start = start;
+    s.session_end = start + std::chrono::hours(6);
+    s.duration_seconds = 6 * 3600;
+    s.status = CPAPSession::Status::COMPLETED;
+
+    SessionMetrics m;
+    m.ahi = 3.1;
+    m.hypopneas = 9;
+    m.total_events = 9;
+    // Left at the default, exactly as a ResMed session arrives.
+    s.metrics = m;
+
+    ASSERT_TRUE(db_->saveSession(s)) << engineName(GetParam());
+
+    auto back = db_->getNightlyMetrics(device_, start);
+    ASSERT_TRUE(back.has_value()) << engineName(GetParam());
+    EXPECT_EQ(back->index_kind, SessionMetrics::IndexKind::AHI)
+        << engineName(GetParam()) << ": a ResMed night must stay gradable";
+}
+
 INSTANTIATE_TEST_SUITE_P(
     Engines, DailyHoursBackendTest,
     ::testing::Values(Engine::SQLite, Engine::MySQL, Engine::Postgres),

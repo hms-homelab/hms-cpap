@@ -476,6 +476,7 @@ void MySQLDatabase::createSchema() {
             session_id             INT NOT NULL UNIQUE,
             total_events           INT DEFAULT 0,
             ahi                    DOUBLE DEFAULT 0,
+            index_kind             VARCHAR(16) DEFAULT 'ahi',   -- SDD-024
             obstructive_apneas     INT DEFAULT 0,
             central_apneas         INT DEFAULT 0,
             hypopneas              INT DEFAULT 0,
@@ -604,7 +605,9 @@ void MySQLDatabase::createSchema() {
             patient_hours     DOUBLE DEFAULT 0,
             -- ResMed's lifetime PatientHours counter. STR-only, NULL otherwise.
             machine_hours     DOUBLE,
-            ahi               DOUBLE, hi DOUBLE, ai DOUBLE, oai DOUBLE, cai DOUBLE, uai DOUBLE,
+            ahi               DOUBLE,
+            hi DOUBLE, ai DOUBLE, oai DOUBLE, cai DOUBLE, uai DOUBLE,
+            index_kind        VARCHAR(16) DEFAULT 'ahi',   -- SDD-024
             rin               DOUBLE, csr DOUBLE,
             mask_press_50     DOUBLE, mask_press_95 DOUBLE, mask_press_max DOUBLE,
             leak_50           DOUBLE, leak_95 DOUBLE, leak_max DOUBLE,
@@ -1001,6 +1004,10 @@ void MySQLDatabase::migrateSchema() {
 
     static const Missing kColumns[] = {
         // v2.0.0 — PLD / ASV metrics
+        // SDD-024: is the `ahi` beside it an apnea-HYPOPNEA index, or apneas
+        // only? DEFAULT 'ahi' so existing rows keep reading as ResMed.
+        {"cpap_session_metrics", "index_kind",             "VARCHAR(16) DEFAULT 'ahi'"},
+        {"cpap_daily_summary",   "index_kind",             "VARCHAR(16) DEFAULT 'ahi'"},
         {"cpap_session_metrics", "avg_mask_pressure",      "DOUBLE"},
         {"cpap_session_metrics", "avg_epr_pressure",       "DOUBLE"},
         {"cpap_session_metrics", "avg_snore",              "DOUBLE"},

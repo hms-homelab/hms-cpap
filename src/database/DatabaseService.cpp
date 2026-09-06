@@ -328,6 +328,9 @@ bool DatabaseService::connect() {
                 pqxx::work txn(*conn_);
                 // PLD-derived columns on cpap_session_metrics
                 txn.exec("ALTER TABLE cpap_session_metrics ADD COLUMN IF NOT EXISTS avg_mask_pressure FLOAT");
+                // SDD-024: is `ahi` an apnea-HYPOPNEA index, or apneas only?
+                txn.exec("ALTER TABLE cpap_session_metrics ADD COLUMN IF NOT EXISTS index_kind TEXT DEFAULT 'ahi'");
+                txn.exec("ALTER TABLE cpap_daily_summary ADD COLUMN IF NOT EXISTS index_kind TEXT DEFAULT 'ahi'");
                 txn.exec("ALTER TABLE cpap_session_metrics ADD COLUMN IF NOT EXISTS avg_epr_pressure FLOAT");
                 txn.exec("ALTER TABLE cpap_session_metrics ADD COLUMN IF NOT EXISTS avg_snore FLOAT");
                 txn.exec("ALTER TABLE cpap_session_metrics ADD COLUMN IF NOT EXISTS leak_p50 FLOAT");

@@ -59,6 +59,8 @@ CREATE TABLE IF NOT EXISTS cpap_session_metrics (
     session_id             INT NOT NULL UNIQUE,
     total_events           INT DEFAULT 0,
     ahi                    DOUBLE DEFAULT 0,
+    -- SDD-024: see schema_sqlite.sql. 'ahi' | 'ungraded', defaulting to 'ahi'.
+    index_kind             VARCHAR(16) DEFAULT 'ahi',
     obstructive_apneas     INT DEFAULT 0,
     central_apneas         INT DEFAULT 0,
     hypopneas              INT DEFAULT 0,
@@ -176,6 +178,8 @@ CREATE TABLE IF NOT EXISTS cpap_daily_summary (
     -- ResMed's lifetime PatientHours counter. STR-only, NULL otherwise.
     machine_hours     DOUBLE,
     ahi               DOUBLE, hi DOUBLE, ai DOUBLE, oai DOUBLE, cai DOUBLE, uai DOUBLE,
+    -- SDD-024: see schema_sqlite.sql.
+    index_kind        VARCHAR(16) DEFAULT 'ahi',
     rin               DOUBLE, csr DOUBLE,
     mask_press_50     DOUBLE, mask_press_95 DOUBLE, mask_press_max DOUBLE,
     leak_50           DOUBLE, leak_95 DOUBLE, leak_max DOUBLE,

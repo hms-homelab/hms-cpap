@@ -59,6 +59,12 @@ CREATE TABLE IF NOT EXISTS cpap_session_metrics (
     session_id             INTEGER NOT NULL UNIQUE,
     total_events           INTEGER DEFAULT 0,
     ahi                    REAL DEFAULT 0,
+    -- SDD-024: is `ahi` above actually an apnea-HYPOPNEA index? A Sefam S.Box
+    -- scores apneas and does not mark hypopneas, so its number is a different
+    -- measurement and must never be graded against AHI thresholds. Stored, not
+    -- withheld: 'ahi' | 'ungraded'. Defaults to 'ahi' so every existing row
+    -- keeps reading as ResMed with no backfill.
+    index_kind             TEXT DEFAULT 'ahi',
     obstructive_apneas     INTEGER DEFAULT 0,
     central_apneas         INTEGER DEFAULT 0,
     hypopneas              INTEGER DEFAULT 0,
@@ -176,6 +182,9 @@ CREATE TABLE IF NOT EXISTS cpap_daily_summary (
     -- ResMed's lifetime PatientHours counter. STR-only, NULL otherwise.
     machine_hours     REAL,
     ahi               REAL, hi REAL, ai REAL, oai REAL, cai REAL, uai REAL,
+    -- SDD-024. The dashboard and the 30-day trend read THIS table, so the kind
+    -- has to travel with the number here too, not only per session.
+    index_kind        TEXT DEFAULT 'ahi',
     rin               REAL, csr REAL,
     mask_press_50     REAL, mask_press_95 REAL, mask_press_max REAL,
     leak_50           REAL, leak_95 REAL, leak_max REAL,

@@ -307,6 +307,12 @@ void SQLiteDatabase::createSchema() {
     // Migrations for pre-existing DBs (ignore "duplicate column" errors).
     sqlite3_exec(db_, "ALTER TABLE cpap_session_metrics ADD COLUMN spo2_drops INTEGER", nullptr, nullptr, nullptr);
     sqlite3_exec(db_, "ALTER TABLE cpap_session_metrics ADD COLUMN odi REAL", nullptr, nullptr, nullptr);
+    // SDD-024. Is the `ahi` beside it actually an apnea-HYPOPNEA index? An
+    // S.Box scores apneas only, so its number must never be graded against AHI
+    // thresholds. DEFAULT 'ahi' means every existing row keeps reading as
+    // ResMed with no backfill, which is correct: they all are.
+    sqlite3_exec(db_, "ALTER TABLE cpap_session_metrics ADD COLUMN index_kind TEXT DEFAULT 'ahi'",
+                 nullptr, nullptr, nullptr);
 
     // cpap_breathing_summary
     exec(R"(
@@ -454,6 +460,8 @@ void SQLiteDatabase::createSchema() {
     // Guarded on patient_hours > 24, which no day's usage can reach, so it can
     // only touch a row the STR path wrote the counter into. That guard also
     // makes it idempotent, since after it runs those rows no longer match.
+    sqlite3_exec(db_, "ALTER TABLE cpap_daily_summary ADD COLUMN index_kind TEXT DEFAULT 'ahi'",
+                 nullptr, nullptr, nullptr);   // SDD-024, see above
     sqlite3_exec(db_, "ALTER TABLE cpap_daily_summary ADD COLUMN machine_hours REAL",
                  nullptr, nullptr, nullptr);
     sqlite3_exec(db_,
@@ -1018,11 +1026,12 @@ void SQLiteDatabase::insertSessionMetrics(int64_t session_id, const SessionMetri
              avg_spo2, min_spo2, avg_heart_rate, max_heart_rate, min_heart_rate,
              avg_mask_pressure, avg_epr_pressure, avg_snore,
              leak_p50, leak_p95, avg_leak_rate, max_leak_rate,
-             avg_target_ventilation, therapy_mode, spo2_drops, odi)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             avg_target_ventilation, therapy_mode, spo2_drops, odi, index_kind)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (session_id) DO UPDATE SET
             total_events           = excluded.total_events,
             ahi                    = excluded.ahi,
+            index_kind             = excluded.index_kind,
             obstructive_apneas     = excluded.obstructive_apneas,
             central_apneas         = excluded.central_apneas,
             hypopneas              = excluded.hypopneas,
@@ -1073,6 +1082,12 @@ void SQLiteDatabase::insertSessionMetrics(int64_t session_id, const SessionMetri
     bind_opt_int(g.stmt, 22, m.therapy_mode);
     bind_opt_int(g.stmt, 23, m.spo2_drops);
     bind_opt_double(g.stmt, 24, m.odi);
+    // SDD-024. Written as text so the column reads the same in a sqlite3 shell
+    // as it does in Postgres and MySQL, and so a value this build does not know
+    // survives a downgrade instead of becoming a meaningless integer.
+    const std::string index_kind =
+        (m.index_kind == SessionMetrics::IndexKind::AHI) ? "ahi" : "ungraded";
+    sqlite3_bind_text(g.stmt, 25, index_kind.c_str(), -1, SQLITE_TRANSIENT);
 
     if (sqlite3_step(g.stmt) != SQLITE_DONE) {
         std::cerr << "SQLite: insertSessionMetrics error: " << sqlite3_errmsg(db_) << std::endl;
@@ -2141,7 +2156,12 @@ std::optional<SessionMetrics> SQLiteDatabase::getNightlyMetrics(
             MIN(b.min_press) AS min_pressure,
             MAX(sm.leak_p50) AS leak_p50,
             MAX(sm.leak_p95) AS leak_p95_sess,
-            MAX(sm.therapy_mode) AS therapy_mode
+            MAX(sm.therapy_mode) AS therapy_mode,
+            -- SDD-024. MAX over text, deliberately: 'ungraded' sorts after
+            -- 'ahi', so a night containing ANY ungraded session reads as
+            -- ungraded. That is the safe direction -- a night is only
+            -- gradable if every session in it was.
+            MAX(COALESCE(sm.index_kind, 'ahi')) AS index_kind
         FROM cpap_sessions s
         JOIN cpap_session_metrics sm ON sm.session_id = s.id
         LEFT JOIN (
@@ -2186,7 +2206,7 @@ std::optional<SessionMetrics> SQLiteDatabase::getNightlyMetrics(
     // 17=avg_mv  18=avg_it  19=avg_et  20=avg_ie  21=avg_fl  22=fp95  23=pp95
     // 24=avg_mask_pressure  25=avg_epr_pressure  26=avg_snore  27=avg_target_ventilation
     // 28=avg_pressure  29=max_pressure  30=min_pressure
-    // 31=leak_p50  32=leak_p95_sess  33=therapy_mode
+    // 31=leak_p50  32=leak_p95_sess  33=therapy_mode  34=index_kind
     SessionMetrics m;
     m.total_events        = col_int(g.stmt, 1);
     m.ahi                 = col_double(g.stmt, 11);
@@ -2223,6 +2243,13 @@ std::optional<SessionMetrics> SQLiteDatabase::getNightlyMetrics(
     m.leak_p50              = col_opt_double(g.stmt, 31);
     m.leak_p95              = col_opt_double(g.stmt, 32);
     m.therapy_mode          = col_opt_int(g.stmt, 33);
+    // SDD-024: the whole point of the column. Without this the Sefam path gets
+    // the struct default (AHI) back out of the database and every consumer --
+    // MQTT, the UI, the reports, the summary -- believes an apnea-only number
+    // is an apnea-hypopnea index.
+    m.index_kind = (col_text(g.stmt, 34) == "ungraded")
+                       ? SessionMetrics::IndexKind::Ungraded
+                       : SessionMetrics::IndexKind::AHI;
 
     return m;
 }
