@@ -1,6 +1,5 @@
+// TimeCompat brings fileStat/setFileMtime; <utime.h> does not exist on MSVC.
 #include "utils/TimeCompat.h"
-#include <sys/stat.h>
-#include <utime.h>
 #include "utils/OximetryDevice.h"
 #include "services/BurstCollectorService.h"
 #include "services/InsightsEngine.h"
@@ -42,8 +41,9 @@ namespace {
 /// matches forever, so if the machine later writes it properly we skip it and
 /// the night's data never arrives.
 void warnIfEmpty(const std::string& local_path, const std::string& name) {
-    struct stat st{};
-    if (::stat(local_path.c_str(), &st) == 0 && st.st_size == 0) {
+    std::time_t mtime = 0;
+    long long size = 0;
+    if (fileStat(local_path.c_str(), mtime, size) && size == 0) {
         std::cerr << "⚠️  CPAP: " << name << " came back EMPTY (0 bytes). A valid EDF "
                   << "always has a header, so the card's copy is faulty. Left unstamped "
                   << "and will be retried." << std::endl;
@@ -882,11 +882,12 @@ bool BurstCollectorService::processSTRFile() {
     std::time_t card_stamp, const std::string& local_path) {
     if (card_stamp == 0) return false;          // unknown stamp: fetch
 
-    struct stat st{};
-    if (::stat(local_path.c_str(), &st) != 0) return false;   // absent: fetch
-    if (st.st_size == 0) return false;                        // empty: fetch
+    std::time_t mtime = 0;
+    long long size = 0;
+    if (!fileStat(local_path.c_str(), mtime, size)) return false;   // absent: fetch
+    if (size == 0) return false;                                    // empty: fetch
 
-    return st.st_mtime == card_stamp;
+    return mtime == card_stamp;
 }
 
 /*static*/ void BurstCollectorService::stampLocalCopy(
@@ -906,13 +907,11 @@ bool BurstCollectorService::processSTRFile() {
     // would skip it forever and the night's data would never arrive. Refusing
     // the stamp costs a redundant fetch per burst on a file that is already
     // broken, and keeps the door open for the good copy.
-    struct stat st{};
-    if (::stat(local_path.c_str(), &st) != 0 || st.st_size == 0) return;
+    std::time_t mtime = 0;
+    long long size = 0;
+    if (!fileStat(local_path.c_str(), mtime, size) || size == 0) return;
 
-    struct ::utimbuf times{};
-    times.actime = card_stamp;
-    times.modtime = card_stamp;
-    ::utime(local_path.c_str(), &times);   // best effort
+    setFileMtime(local_path.c_str(), card_stamp);   // best effort
 }
 
 // ---------------------------------------------------------------------------

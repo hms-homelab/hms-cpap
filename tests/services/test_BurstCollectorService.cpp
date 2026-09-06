@@ -19,6 +19,7 @@
 #include "mqtt_client.h"
 #include "utils/ConfigManager.h"
 #include "utils/AppConfig.h"
+#include "utils/TimeCompat.h"   // fileStat: <sys/stat.h> is not portable to MSVC
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -3246,10 +3247,11 @@ TEST(CardStampDetection, AnEmptyFileIsNeverStamped) {
     auto p = stampedFile("faulty_CSL.edf", "", 0);   // zero bytes, unstamped
     BurstCollectorService::stampLocalCopy(kStamp, p.string());
 
-    struct stat st{};
-    ASSERT_EQ(::stat(p.string().c_str(), &st), 0);
-    EXPECT_EQ(st.st_size, 0);
-    EXPECT_NE(st.st_mtime, kStamp) << "an empty file must not carry the card's stamp";
+    std::time_t mtime = 0;
+    long long size = 0;
+    ASSERT_TRUE(fileStat(p.string().c_str(), mtime, size));
+    EXPECT_EQ(size, 0);
+    EXPECT_NE(mtime, kStamp) << "an empty file must not carry the card's stamp";
 
     // And so it can never be mistaken for a copy we already hold.
     EXPECT_FALSE(BurstCollectorService::holdCurrentCopy(kStamp, p.string()));
