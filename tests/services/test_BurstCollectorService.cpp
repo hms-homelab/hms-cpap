@@ -2581,9 +2581,9 @@ TEST_F(BurstOrchestrationTest, GetLastBurstTime_NotUpdatedByDirectCycle) {
 TEST_F(BurstOrchestrationTest, PrismaMode_DiscoversParsesAndStores) {
     namespace fs = std::filesystem;
     std::string wmedf;
-    for (const char* p : {"tests/fixtures/prisma/signal_real.wmedf",
-                          "../tests/fixtures/prisma/signal_real.wmedf",
-                          "../../tests/fixtures/prisma/signal_real.wmedf"}) {
+    for (const char* p : {"tests/fixtures/prisma/signal_synthetic.wmedf",
+                          "../tests/fixtures/prisma/signal_synthetic.wmedf",
+                          "../../tests/fixtures/prisma/signal_synthetic.wmedf"}) {
         if (fs::exists(p)) { wmedf = p; break; }
     }
     if (wmedf.empty()) GTEST_SKIP() << "prisma wmedf fixture not found";
