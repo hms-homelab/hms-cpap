@@ -13,6 +13,8 @@ export interface DashboardData {
   latest_night: {
     date: string;
     ahi: string;
+    /** SDD-024: 'ahi' | 'ungraded'. Absent means a real AHI. */
+    index_kind?: string;
     usage_hours: string;
     leak_avg: string;
     compliance_pct: string;
@@ -22,7 +24,12 @@ export interface DashboardData {
   };
   sleep_index_7night: number | null;
   sleep_index_7night_band: SleepIndexBand | null;
-  ahi_trend: { date: string; value: string }[];
+  /**
+   * SDD-024: each point carries its own kind, so a window spanning a machine
+   * change can be recognised rather than assumed. The chart titles itself for
+   * the weaker of the kinds present.
+   */
+  ahi_trend: { date: string; value: string; index_kind?: string }[];
   usage_trend: { date: string; value: string }[];
 }
 
@@ -35,6 +42,8 @@ export interface MyAirComparisonRow {
   record_date: string;
   duration_minutes: string | number | null;
   ahi: string | number | null;
+  /** SDD-024: 'ahi' | 'ungraded'. Absent means a real AHI. */
+  index_kind?: string | null;
   leak_95: string | number | null;
   sleep_index: number | null;
   sleep_index_band: SleepIndexBand | null;
@@ -65,6 +74,9 @@ export interface SessionListItem {
   has_live?: string;
   duration_hours: string;
   ahi: string;
+  /** SDD-024: 'ahi' | 'ungraded'. Absent means a real AHI. Per ROW, because a
+   *  user who changed machines has both kinds in one list. */
+  index_kind?: string;
   total_events: string;
   obstructive_apneas: string;
   central_apneas: string;
@@ -103,7 +115,19 @@ export interface EventRow extends SessionEvent {
 
 export interface TrendPoint {
   date: string;
-  [key: string]: string;
+  /**
+   * SDD-024. The index trend carries the kind on every point, so the chart can
+   * be titled for the index it actually plots.
+   *
+   * Declared even though the index signature would already admit it: the shared
+   * isGradableAhi() helper takes a HasIndexKind, and a type whose only named
+   * member is `date` has "no properties in common" with that interface. Naming
+   * it is what lets a trend point be asked the same question a night or a
+   * session is asked, through the one helper rather than a second copy of the
+   * rule.
+   */
+  index_kind?: string;
+  [key: string]: string | undefined;
 }
 
 export interface SignalData {

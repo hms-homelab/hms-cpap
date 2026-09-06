@@ -76,3 +76,13 @@ h2 { color: #e0e0e0; margin-bottom: 1rem; }
 .load-more:hover:not(:disabled) { background: #34344a; }
 .load-more:disabled { opacity: 0.5; cursor: not-allowed; }
 .load-more i { margin-right: 0.4rem; }
+
+/* SDD-024. The apnea-only index and the columns a machine never filled.
+   Both are deliberately quiet: they mark the absence of a measurement, and
+   should not compete with the numbers that ARE measurements. */
+.index-kind-mark { color: #60a5fa; font-weight: 700; margin-left: 0.15rem; }
+.not-measured { color: #555; }
+.index-kind-note {
+  color: #888; font-size: 0.78rem; line-height: 1.5;
+  padding: 0.6rem 0.1rem 0; max-width: 72ch;
+}

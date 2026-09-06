@@ -10,6 +10,18 @@ export interface EventsBreakdownData {
   totalEvents: number;
   maxEventDuration: number;
   avgEventDuration: number;
+
+  /**
+   * SDD-024. False when the machine counts events but does not say what they
+   * were, which is the Sefam S.Box: it flags apneas and never marks a hypopnea
+   * or splits obstructive from central.
+   *
+   * The four cards below cannot be drawn for such a night. Drawing them from
+   * the zeros the machine left is not a neutral fallback, it is an assertion:
+   * "Hypopneas 0", painted GREEN by the same rule that rewards a real zero,
+   * tells the user their night was clean on the one axis nobody measured.
+   */
+  classified: boolean;
 }
 
 @Component({
@@ -20,9 +32,25 @@ export interface EventsBreakdownData {
     <div class="section" *ngIf="data">
       <div class="section-header">
         <div class="section-title"><i class="fa-solid fa-chart-pie"></i> {{ 'dashboard.title.events' | translate }}</div>
-        <div class="section-subtitle">{{ 'dashboard.subtitle.events' | translate }}</div>
+        <div class="section-subtitle">{{ (data.classified ? 'dashboard.subtitle.events' : 'dashboard.subtitle.eventsUnclassified') | translate }}</div>
       </div>
-      <div class="metrics-row">
+
+      <!-- Machines that count apneas without classifying them. One honest card
+           and the reason, instead of four cards of zeros. -->
+      <div class="metrics-row" *ngIf="!data.classified">
+        <div class="evt-card">
+          <div class="evt-icon" style="color: #60a5fa;">
+            <i class="fa-solid fa-ban"></i>
+          </div>
+          <div class="evt-content">
+            <div class="evt-label">{{ 'dashboard.events.apneas' | translate }}</div>
+            <div class="evt-value">{{ data.totalEvents }}</div>
+          </div>
+        </div>
+      </div>
+      <div class="evt-note" *ngIf="!data.classified">{{ 'dashboard.events.unclassifiedNote' | translate }}</div>
+
+      <div class="metrics-row" *ngIf="data.classified">
         <div class="evt-card">
           <div class="evt-icon" [style.color]="data.obstructive === 0 ? '#4ade80' : data.obstructive < 10 ? '#fb923c' : '#ef4444'">
             <i class="fa-solid fa-ban"></i>
@@ -51,7 +79,7 @@ export interface EventsBreakdownData {
           </div>
         </div>
       </div>
-      <div class="metrics-row" style="margin-top: 0.5rem;">
+      <div class="metrics-row" style="margin-top: 0.5rem;" *ngIf="data.classified">
         <div class="evt-card">
           <div class="evt-icon" style="color: #60a5fa;">
             <i class="fa-solid fa-water"></i>
@@ -99,6 +127,10 @@ export interface EventsBreakdownData {
     .evt-label { color: #888; font-size: 0.8rem; }
     .evt-value { color: #e0e0e0; font-size: 1.2rem; font-weight: 700; }
     .evt-sub { color: #666; font-size: 0.7rem; }
+    .evt-note {
+      color: #888; font-size: 0.78rem; line-height: 1.45;
+      margin-top: 0.6rem; max-width: 60ch;
+    }
     @media (max-width: 768px) { .metrics-row { flex-direction: column; } }
   `]
 })

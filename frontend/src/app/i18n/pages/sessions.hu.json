@@ -11,7 +11,10 @@
       "date": "Dátum",
       "status": "Állapot",
       "duration": "Időtartam",
+      "indexCol": "Index",
       "events": "Események",
+      "notClassified": "Ez a készülék nem osztályozza az eseményeit.",
+      "indexNote": "Apnoék óránként. Ez a készülék nem jelöl hypopnoékat, így ez nem AHI, és nem is hasonlítható össze azzal.",
       "actions": "Műveletek"
     },
     "badge": {

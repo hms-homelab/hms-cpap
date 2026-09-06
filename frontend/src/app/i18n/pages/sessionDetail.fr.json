@@ -3,6 +3,7 @@
     "overview": "Aperçu",
     "expandHint": "(cliquez pour développer)",
     "eventDistribution": "Répartition des événements",
+    "notClassified": "Cet appareil signale les apnées sans indiquer si elles étaient obstructives ou centrales, et ne marque pas les hypopnées. Il n'y a aucune répartition à afficher pour cette nuit.",
     "live": "EN DIRECT",
     "refreshing": "Actualisation toutes les 65 s",
     "loadingSignals": "Chargement des données de signal...",

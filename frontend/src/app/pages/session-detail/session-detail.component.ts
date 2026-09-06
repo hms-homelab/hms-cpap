@@ -11,6 +11,7 @@ import { SessionDetail, SessionEvent, SignalData, VitalsData, OximetryData } fro
 import { formatTimestamps, eventAnnotations, makeDataset, makeFillBand, EVENT_COLORS } from '../../utils/chart-helpers';
 import { detectDesaturations, desatAnnotations, odiPerHour, inferSampleSec } from '../../utils/signal-analysis';
 import { formatIndex } from '../../utils/format';
+import { isGradable, indexLabelKey } from '../../utils/index-kind';
 import { Chart, ChartDataset, registerables } from 'chart.js';
 import annotationPlugin from 'chartjs-plugin-annotation';
 import zoomPlugin from 'chartjs-plugin-zoom';
@@ -89,7 +90,10 @@ const SIGNAL_DEFS: SignalDef[] = [
       </div>
 
       <div class="cards">
-        <app-metric-card *ngIf="!oximetryOnly" label="AHI" [value]="fmtIndex(session.ahi, '0.00')" unit="events/h"
+        <!-- SDD-024: the card is named by the index it is showing, and an
+             apnea-only index gets no severity colour -- see ahiColor. -->
+        <app-metric-card *ngIf="!oximetryOnly" [label]="indexLabelKey(session) | translate"
+          [value]="fmtIndex(session.ahi, '0.00')" unit="events/h"
           icon="fa-solid fa-heart-pulse" [iconColor]="ahiColor" />
         <app-metric-card label="Duration" [value]="isLive ? liveDuration : fmtDuration(session.duration_hours)" unit=""
           icon="fa-solid fa-clock-rotate-left" iconColor="#60a5fa" />
@@ -103,11 +107,20 @@ const SIGNAL_DEFS: SignalDef[] = [
           icon="fa-solid fa-heart-pulse" iconColor="#f06292" />
       </div>
 
-      <div class="event-summary" *ngIf="session.total_events && +session.total_events > 0">
+      <!-- SDD-024: four coloured badges reading OA 0 / CA 0 / H 0 / RERA 0 is
+           what a machine that does not classify its events produces here, and
+           it reads as a clean night rather than as an unanswered question. The
+           night's own count is already on the Events card above, so there is
+           nothing to replace them with; the sentence says why they are gone. -->
+      <div class="event-summary" *ngIf="session.total_events && +session.total_events > 0 && isGradable(session)">
         <span class="event-badge" style="background: #f87171">OA: {{ session.obstructive_apneas || 0 }}</span>
         <span class="event-badge" style="background: #fb923c">CA: {{ session.central_apneas || 0 }}</span>
         <span class="event-badge" style="background: #fbbf24; color: #000">H: {{ session.hypopneas || 0 }}</span>
         <span class="event-badge" style="background: #4ade80; color: #000">RERA: {{ session.reras || 0 }}</span>
+      </div>
+      <div class="event-unclassified"
+           *ngIf="session.total_events && +session.total_events > 0 && !isGradable(session)">
+        {{ 'sessionDetail.notClassified' | translate }}
       </div>
 
       <!-- DETAIL VIEW -->
@@ -161,8 +174,12 @@ const SIGNAL_DEFS: SignalDef[] = [
         </div>
       </div>
 
-      <!-- Event Distribution -->
-      <div class="doughnut-section" *ngIf="hasEvents">
+      <!-- Event Distribution.
+           SDD-024: a doughnut of four zeros draws no ring at all, leaving a
+           heading and a legend of four event types the machine never scored.
+           The sentence above the charts already says there is no breakdown, so
+           there is nothing for this section to add. -->
+      <div class="doughnut-section" *ngIf="hasEvents && isGradable(session)">
         <h3>{{ 'sessionDetail.eventDistribution' | translate }}</h3>
         <div class="doughnut-container">
           <canvas #doughnutCanvas></canvas>
@@ -193,6 +210,7 @@ const SIGNAL_DEFS: SignalDef[] = [
       margin-bottom: 0.75rem; color: #93b4e0; font-size: 0.8rem; }
     .event-summary { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
     .event-badge { color: #fff; padding: 0.2rem 0.5rem; border-radius: 12px; font-size: 0.7rem; font-weight: 600; }
+    .event-unclassified { color: #888; font-size: 0.78rem; line-height: 1.5; max-width: 68ch; }
 
     /* Detail view */
     .detail-section { background: #1e1e2f; border-radius: 8px; padding: 0.75rem; margin-bottom: 0.5rem; }
@@ -373,7 +391,23 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
     return h > 0 ? `${h}h ${String(m).padStart(2, '0')}m` : `${m}m`;
   }
 
+  /**
+   * SDD-024: the severity colour, withheld for an apnea-only index.
+   *
+   * The 5/15 cutoffs are the AHI severity bands. Painting an apnea index green
+   * below 5 asserts the comparison those bands stand for, and it is the one
+   * comparison that is invalid here: the same night on a ResMed would score
+   * higher, because a third of a real AHI's numerator is hypopneas this machine
+   * never marks. Neutral blue, the same as Duration, says the number is shown
+   * and not judged.
+   */
+  /// SDD-024: exposed to the template. This page shows ONE night, but it is
+  /// reached from a list that may hold both kinds.
+  isGradable = isGradable;
+  indexLabelKey = indexLabelKey;
+
   get ahiColor(): string {
+    if (!isGradable(this.session)) return '#60a5fa';
     const ahi = +(this.session?.ahi || 0);
     return ahi < 5 ? '#4ade80' : ahi < 15 ? '#fb923c' : '#ef4444';
   }
@@ -624,6 +658,11 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
 
     return {
       ...first,
+      // SDD-024: ungraded wins, the same rule the night aggregate uses in SQL.
+      // ...first would otherwise take the kind from whichever session started
+      // earliest, and a night spanning a machine swap would be labelled by the
+      // wrong half.
+      index_kind: sessions.some(s => !isGradable(s)) ? 'ungraded' : 'ahi',
       duration_hours: totalHours.toFixed(2),
       ahi: totalHours > 0 ? formatIndex(totalEvents / totalHours, '0') : '0',
       total_events: totalEvents.toString(),

@@ -3,6 +3,7 @@
     "overview": "Overview",
     "expandHint": "(click to expand)",
     "eventDistribution": "Event Distribution",
+    "notClassified": "This machine reports apneas without saying whether they were obstructive or central, and does not mark hypopneas at all. There is no breakdown to show for this night.",
     "live": "LIVE",
     "refreshing": "Refreshing every 65s",
     "loadingSignals": "Loading signal data...",

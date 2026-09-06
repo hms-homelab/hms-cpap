@@ -15,6 +15,7 @@
     },
     "chart": {
       "ahiTrend": "Tendência do IAH (30 dias)",
+      "apneaIndexTrend": "Tendência do índice de apneias (30 dias)",
       "usageHours": "Horas de uso (30 dias)",
       "pressureTrend": "Tendência da pressão (30 dias)",
       "leakTrend": "Tendência da fuga (30 dias)",
@@ -51,6 +52,7 @@
     },
     "subtitle": {
       "events": "Análise de apneias e hipopneias",
+      "eventsUnclassified": "Apenas apneias. Este aparelho não as classifica.",
       "respiratory": "Padrões de respiração e ventilação",
       "oximetry": "Wellue O2Ring -- SpO2 e frequência cardíaca"
     },
@@ -81,6 +83,8 @@
       "leakP95": "Fuga P95 do STR"
     },
     "events": {
+      "apneas": "Apneias",
+      "unclassifiedNote": "Este aparelho deteta apneias, mas não marca hipopneias nem distingue as obstrutivas das centrais. Os tipos não são mostrados porque nunca foram medidos, não porque estivessem ausentes.",
       "obstructive": "Obstrutivas",
       "central": "Centrais",
       "hypopneas": "Hipopneias",

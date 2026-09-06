@@ -3,6 +3,7 @@
     "overview": "Áttekintés",
     "expandHint": "(kattintson a kibontáshoz)",
     "eventDistribution": "Események megoszlása",
+    "notClassified": "Ez a készülék úgy jelenti az apnoékat, hogy nem közli, obstruktívak vagy centrálisak voltak-e, és hypopnoékat egyáltalán nem jelöl. Ehhez az éjszakához nincs megjeleníthető megoszlás.",
     "live": "ÉLŐ",
     "refreshing": "Frissítés 65 másodpercenként",
     "loadingSignals": "Jeladatok betöltése...",

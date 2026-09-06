@@ -3,6 +3,7 @@
     "overview": "Visão geral",
     "expandHint": "(clique para expandir)",
     "eventDistribution": "Distribuição dos eventos",
+    "notClassified": "Este aparelho comunica as apneias sem indicar se foram obstrutivas ou centrais, e não marca hipopneias. Não há discriminação para mostrar nesta noite.",
     "live": "AO VIVO",
     "refreshing": "Atualizando a cada 65 s",
     "loadingSignals": "Carregando os dados de sinal...",

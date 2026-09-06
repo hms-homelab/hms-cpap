@@ -1,3 +1,4 @@
+import { isGradable, indexLabelKey } from '../../utils/index-kind';
 import { Component, OnInit, OnDestroy, ChangeDetectorRef, HostListener } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Router, RouterLink } from '@angular/router';
@@ -193,6 +194,22 @@ export class SessionsComponent implements OnInit, OnDestroy {
   }
 
   /** SDD-079: AHI, like the rest of the index group, renders at two decimals. */
+  /// SDD-024: exposed to the template so each ROW answers for itself. A user
+  /// who changed machines has both kinds in one list.
+  isGradable = isGradable;
+  indexLabelKey = indexLabelKey;
+
+  /**
+   * SDD-024: does any loaded row carry an apnea-only index?
+   *
+   * Gates the footnote that explains the asterisk. A getter over the loaded
+   * rows rather than a flag set at load time, because "load more" appends and
+   * the first ungraded night may arrive several pages in.
+   */
+  get hasUngraded(): boolean {
+    return this.sessions.some(s => !isGradable(s));
+  }
+
   fmtAhi(s: any): string {
     if (this.isOximetryOnly(s)) return '-';
     return formatIndex(s.ahi);

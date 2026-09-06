@@ -15,6 +15,7 @@
     },
     "chart": {
       "ahiTrend": "AHI Trend (30 days)",
+      "apneaIndexTrend": "Apnea Index Trend (30 days)",
       "usageHours": "Usage Hours (30 days)",
       "pressureTrend": "Pressure Trend (30 days)",
       "leakTrend": "Leak Trend (30 days)",
@@ -51,6 +52,7 @@
     },
     "subtitle": {
       "events": "Apnea & Hypopnea Analysis",
+      "eventsUnclassified": "Apneas only. This machine does not classify them.",
       "respiratory": "Breathing Patterns & Ventilation",
       "oximetry": "Wellue O2Ring -- SpO2 & Heart Rate"
     },
@@ -81,6 +83,8 @@
       "leakP95": "STR Leak P95"
     },
     "events": {
+      "apneas": "Apneas",
+      "unclassifiedNote": "This machine scores apneas but does not mark hypopneas, and does not separate obstructive from central. The types are not shown because they were never measured, not because they were absent.",
       "obstructive": "Obstructive",
       "central": "Central",
       "hypopneas": "Hypopneas",

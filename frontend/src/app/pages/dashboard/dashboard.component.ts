@@ -17,6 +17,7 @@ import { MlIntelligenceComponent } from '../../components/dashboard/ml-intellige
 import { DashboardData, TrendPoint, OximetryData, SessionListItem, SleepIndexBand, MyAirComparisonRow } from '../../models/session.model';
 import { MyAirCompareComponent } from '../../components/dashboard/myair-compare.component';
 import { detectDesaturations, odiPerHour, inferSampleSec } from '../../utils/signal-analysis';
+import { isGradableAhi } from '../../utils/index-kind';
 import Chart from 'chart.js/auto';
 
 const MODE_LABELS: Record<string, string> = {
@@ -147,16 +148,21 @@ const MODE_LABELS: Record<string, string> = {
         <div class="chart-container">
           <canvas #usageChart></canvas>
         </div>
-        <div class="chart-container">
+        <!-- SDD-024: [hidden] rather than *ngIf. The canvas has to stay in the
+             DOM for its ViewChild ref to resolve when the trend data arrives;
+             what these flags remove is the empty bordered box, not the element.
+             A chart whose every value is zero is not an empty chart, it is a
+             flat line at zero, and that reads as a measurement of nothing. -->
+        <div class="chart-container" [hidden]="!showPressureTrend">
           <canvas #pressureChart></canvas>
         </div>
         <div class="chart-container">
           <canvas #leakChart></canvas>
         </div>
-        <div class="chart-container wide">
+        <div class="chart-container wide" [hidden]="!showEventsTrend">
           <canvas #eventsChart></canvas>
         </div>
-        <div class="chart-container wide">
+        <div class="chart-container wide" [hidden]="!showRespiratoryTrend">
           <canvas #respiratoryChart></canvas>
         </div>
         <!-- CSR: hidden in CPAP mode (mode 0) -->
@@ -385,6 +391,7 @@ export class DashboardComponent implements OnInit, AfterViewInit {
       // Populate key metrics (initial from STR, overridden by sessions below)
       this.keyMetrics = {
         ahi: parseFloat(d.latest_night.ahi) || 0,
+        indexKind: d.latest_night.index_kind,   // SDD-024
         usageHours: parseFloat(d.latest_night.usage_hours) || 0,
         leakP95: parseFloat(d.latest_night.leak_avg) || 0,
         totalEvents: 0,
@@ -401,6 +408,15 @@ export class DashboardComponent implements OnInit, AfterViewInit {
             this.keyMetrics.ahi = parseFloat(s.ahi) || this.keyMetrics.ahi;
             this.keyMetrics.usageHours = parseFloat(s.duration_hours) || this.keyMetrics.usageHours;
             this.keyMetrics.totalEvents = parseInt(s.total_events) || 0;
+
+            // SDD-024. This request and the daily-summary one below race, and
+            // on an unclassified night the breakdown's count comes from HERE
+            // (the type sums it would otherwise use are all zero). Whichever
+            // lands second has to complete the other, or the answer depends on
+            // the network.
+            if (this.eventsData && !this.eventsData.classified) {
+              this.eventsData.totalEvents = this.keyMetrics.totalEvents;
+            }
           }
         },
         error: () => {},
@@ -412,7 +428,20 @@ export class DashboardComponent implements OnInit, AfterViewInit {
           next: (rows) => {
             if (rows?.length) {
               const r = rows[0];
-              this.strMetrics = {
+
+              // SDD-024. Everything below this line reads the per-TYPE indices
+              // (oai/cai/hi/rin), and a machine that does not classify its
+              // events leaves all four at zero. Deriving from them anyway is
+              // what put "Total Events 0" directly above "4.73 events/hr" on a
+              // Sefam night, and painted a green "Hypopneas 0" for a channel
+              // the machine has never had.
+              const classified = isGradableAhi(r);
+
+              // The panel is titled "Official ResMed indices from STR.edf".
+              // A Sefam card has no STR.edf and no ResMed index, so there is
+              // nothing here to relabel -- the panel simply does not apply and
+              // is left unbuilt. *ngIf on strMetrics hides it.
+              this.strMetrics = classified ? {
                 ahi: parseFloat(r.ahi) || 0,
                 usageHours: (parseFloat(r.duration_minutes) || 0) / 60,
                 leakP95: parseFloat(r.leak_95) || 0,
@@ -420,35 +449,54 @@ export class DashboardComponent implements OnInit, AfterViewInit {
                 cai: parseFloat(r.cai) || 0,
                 hi: parseFloat(r.hi) || 0,
                 rin: parseFloat(r.rin) || 0,
-              };
+              } : null;
+
               const oa = Math.round((parseFloat(r.oai) || 0) * (parseFloat(r.duration_minutes) || 0) / 60);
               const ca = Math.round((parseFloat(r.cai) || 0) * (parseFloat(r.duration_minutes) || 0) / 60);
               const hy = Math.round((parseFloat(r.hi) || 0) * (parseFloat(r.duration_minutes) || 0) / 60);
               const re = Math.round((parseFloat(r.rin) || 0) * (parseFloat(r.duration_minutes) || 0) / 60);
               this.eventsData = {
+                classified,
                 obstructive: oa, central: ca, hypopneas: hy, reras: re,
-                totalEvents: oa + ca + hy + re,
+                // Unclassified: the real count is the one the sessions request
+                // already put on keyMetrics. The type sums are zero and would
+                // erase it.
+                totalEvents: classified ? oa + ca + hy + re
+                                        : (this.keyMetrics?.totalEvents ?? 0),
                 maxEventDuration: 0, avgEventDuration: 0,
               };
               if (this.keyMetrics) {
-                this.keyMetrics.totalEvents = oa + ca + hy + re;
+                if (classified) this.keyMetrics.totalEvents = oa + ca + hy + re;
                 this.keyMetrics.leakP95 = parseFloat(r.leak_95) || 0;
               }
-              this.pressureData = {
-                avgPressure: parseFloat(r.mask_press_50) || 0,
-                p95Pressure: parseFloat(r.mask_press_95) || 0,
-                p50Pressure: parseFloat(r.mask_press_50) || 0,
-                maxPressure: parseFloat(r.mask_press_max) || 0,
+              // Both panels below are built from columns a machine may never
+              // fill. Rendering them from the zeros left behind prints
+              // "0.0 cmH2O" and "0.0 br/min", which read as measurements of
+              // nothing rather than as the absence of a measurement -- a Sefam
+              // and a Löwenstein have no mask-pressure or respiratory-rate
+              // column at all (issue 15). No values, no panel.
+              const pressP50 = parseFloat(r.mask_press_50) || 0;
+              const pressP95 = parseFloat(r.mask_press_95) || 0;
+              const pressMax = parseFloat(r.mask_press_max) || 0;
+              this.pressureData = (pressP50 || pressP95 || pressMax) ? {
+                avgPressure: pressP50,
+                p95Pressure: pressP95,
+                p50Pressure: pressP50,
+                maxPressure: pressMax,
                 leakP95: parseFloat(r.leak_95) || 0,
                 currentPressure: 0,
-              };
-              this.respiratoryData = {
-                respRate: parseFloat(r.resp_rate_50) || 0,
-                tidalVolume: (parseFloat(r.tid_vol_50) || 0) * 1000,
-                minuteVent: parseFloat(r.min_vent_50) || 0,
+              } : null;
+
+              const respRate = parseFloat(r.resp_rate_50) || 0;
+              const tidalVol = parseFloat(r.tid_vol_50) || 0;
+              const minuteVent = parseFloat(r.min_vent_50) || 0;
+              this.respiratoryData = (respRate || tidalVol || minuteVent) ? {
+                respRate,
+                tidalVolume: tidalVol * 1000,
+                minuteVent,
                 inspiratoryTime: 0, expiratoryTime: 0, ieRatio: 0,
                 flowLimitation: 0, avgFlowRate: 0, currentFlowRate: 0,
-              };
+              } : null;
               if (this.realtimeData) {
                 this.realtimeData.lastSessionTime = d.latest_night.date;
               }
@@ -713,20 +761,31 @@ export class DashboardComponent implements OnInit, AfterViewInit {
       y: { ticks: { color: '#888' }, grid: { color: '#333' }, beginAtZero },
     });
 
-    // AHI Trend
+    // The event-index trend.
+    //
+    // SDD-024: named for what it plots. Every point carries its own kind, and
+    // any ungraded night in the window makes the whole SERIES ungraded -- one
+    // line cannot be an AHI for part of its length and an apnea index for the
+    // rest, and the weaker claim is the true one.
+    const trendGradable = this.data.ahi_trend.every(p => isGradableAhi(p));
+    const trendTitleKey = trendGradable
+      ? 'dashboard.chart.ahiTrend'
+      : 'dashboard.chart.apneaIndexTrend';
+
     this.charts.push(new Chart(this.ahiChartRef.nativeElement, {
       type: 'line',
       data: {
         labels,
         datasets: [{
-          label: 'AHI', data: this.data.ahi_trend.map(p => +p.value),
+          label: this.t.instant(trendGradable ? 'metric.ahi' : 'metric.apneaIndex'),
+          data: this.data.ahi_trend.map(p => +p.value),
           borderColor: '#64b5f6', backgroundColor: 'rgba(100,181,246,0.1)',
           fill: true, tension: 0.3, pointRadius: 3,
         }]
       },
       options: {
         responsive: true,
-        plugins: { legend: { display: false }, title: { display: true, text: this.t.instant('dashboard.chart.ahiTrend'), color: '#e0e0e0' } },
+        plugins: { legend: { display: false }, title: { display: true, text: this.t.instant(trendTitleKey), color: '#e0e0e0' } },
         scales: darkScales(),
       }
     }));
@@ -750,10 +809,17 @@ export class DashboardComponent implements OnInit, AfterViewInit {
     }));
 
     // Fetch additional trends
-    this.api.getTrend('pressure', 30).subscribe(d => this.renderTrendChart(d, this.pressureChartRef, this.t.instant('dashboard.chart.pressureTrend'), [
-      { key: 'mask_press_50', label: 'P50', color: '#ce93d8' },
-      { key: 'mask_press_95', label: 'P95', color: '#ba68c8', fill: '-1' },
-    ]));
+    this.api.getTrend('pressure', 30).subscribe(d => {
+      // A Sefam or a Löwenstein has no mask-pressure column (issue 15), so
+      // every night here is 0 and the chart drew a flat purple line along the
+      // axis for the whole month.
+      this.showPressureTrend = this.anyNonZero(d, ['mask_press_50', 'mask_press_95']);
+      if (!this.showPressureTrend) return;
+      this.renderTrendChart(d, this.pressureChartRef, this.t.instant('dashboard.chart.pressureTrend'), [
+        { key: 'mask_press_50', label: 'P50', color: '#ce93d8' },
+        { key: 'mask_press_95', label: 'P95', color: '#ba68c8', fill: '-1' },
+      ]);
+    });
 
     this.api.getTrend('leak', 30).subscribe(d => this.renderTrendChart(d, this.leakChartRef, this.t.instant('dashboard.chart.leakTrend'), [
       { key: 'leak_50', label: 'L50', color: '#ffb74d' },
@@ -769,6 +835,22 @@ export class DashboardComponent implements OnInit, AfterViewInit {
       this.api.getTrend('epr', 30).subscribe(d => this.renderEprChart(d));
     }
   }
+
+  /**
+   * SDD-024: does any night in this trend carry a value for any of these keys?
+   *
+   * A machine without a channel writes zeros, not nulls, so "there is data" and
+   * "the data is all zero" have to be told apart before a chart is drawn. A
+   * flat line along the axis is not an empty state: it is a plotted claim that
+   * the pressure was zero all month.
+   */
+  private anyNonZero(data: TrendPoint[], keys: string[]): boolean {
+    return data.some(p => keys.some(k => +(p[k] || 0) !== 0));
+  }
+
+  showPressureTrend = true;
+  showEventsTrend = true;
+  showRespiratoryTrend = true;
 
   private renderTrendChart(data: TrendPoint[], ref: ElementRef<HTMLCanvasElement>, title: string, series: { key: string; label: string; color: string; fill?: string }[]) {
     if (!data?.length || !ref?.nativeElement) return;
@@ -799,6 +881,13 @@ export class DashboardComponent implements OnInit, AfterViewInit {
 
   private renderEventsChart(data: TrendPoint[]) {
     if (!data?.length || !this.eventsChartRef?.nativeElement) return;
+    // SDD-024. This is a stacked bar of OA/CA/H/RERA, and a machine that does
+    // not classify its events leaves all four at zero for every night: an empty
+    // plot area under a legend naming four event types, which reads as a month
+    // without a single event. The Sleep Events Breakdown panel above already
+    // carries the real count and says why there is no split.
+    this.showEventsTrend = this.anyNonZero(data, ['oai', 'cai', 'hi', 'rin']);
+    if (!this.showEventsTrend) return;
     const labels = data.map(p => (p['record_date'] || '').slice(5));
     this.charts.push(new Chart(this.eventsChartRef.nativeElement, {
       type: 'bar',
@@ -827,6 +916,11 @@ export class DashboardComponent implements OnInit, AfterViewInit {
 
   private renderRespiratoryChart(data: TrendPoint[]) {
     if (!data?.length || !this.respiratoryChartRef?.nativeElement) return;
+    // Same as the pressure trend: no respiratory-rate, tidal-volume or
+    // minute-ventilation channel means three flat lines at zero on two axes.
+    this.showRespiratoryTrend =
+      this.anyNonZero(data, ['resp_rate_50', 'tid_vol_50', 'min_vent_50']);
+    if (!this.showRespiratoryTrend) return;
     const labels = data.map(p => (p['record_date'] || '').slice(5));
     this.charts.push(new Chart(this.respiratoryChartRef.nativeElement, {
       type: 'line',

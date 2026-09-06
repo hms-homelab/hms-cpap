@@ -3,6 +3,7 @@
     "overview": "Resumen",
     "expandHint": "(haz clic para expandir)",
     "eventDistribution": "Distribución de eventos",
+    "notClassified": "Este equipo informa de las apneas sin indicar si fueron obstructivas o centrales, y no marca hipopneas. No hay desglose que mostrar para esta noche.",
     "live": "EN VIVO",
     "refreshing": "Actualizando cada 65 s",
     "loadingSignals": "Cargando los datos de señal...",

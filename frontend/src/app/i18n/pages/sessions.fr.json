@@ -11,7 +11,10 @@
       "date": "Date",
       "status": "État",
       "duration": "Durée",
+      "indexCol": "Indice",
       "events": "Événements",
+      "notClassified": "Cet appareil ne classe pas ses événements.",
+      "indexNote": "Apnées par heure. Cet appareil ne marque pas les hypopnées : ce n'est donc pas un IAH et cela ne peut pas être comparé à un IAH.",
       "actions": "Actions"
     },
     "badge": {

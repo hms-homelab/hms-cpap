@@ -32,7 +32,7 @@
         <th>{{ 'sessions.table.date' | translate }}</th>
         <th>{{ 'sessions.table.status' | translate }}</th>
         <th>{{ 'sessions.table.duration' | translate }}</th>
-        <th>{{ 'metric.ahi' | translate }}</th>
+        <th>{{ 'sessions.table.indexCol' | translate }}</th>
         <th>{{ 'sessions.table.events' | translate }}</th>
         <th>OA</th><th>CA</th><th>H</th><th>RERA</th>
         <th>{{ 'metric.spo2' | translate }}</th>
@@ -57,12 +57,32 @@
           <span *ngIf="!isOximetryOnly(s) && !isLive(s) && !isPartial(s)" class="done-badge">{{ 'sessions.badge.done' | translate }}</span>
         </td>
         <td>{{ fmtDuration(s.duration_hours) }}</td>
-        <td [class.elevated]="+s.ahi > 5">{{ fmtAhi(s) }}</td>
+        <!-- SDD-024: the severity colour is withheld for an apnea-only index.
+             It cannot be graded against AHI thresholds, so painting it red at
+             >5 would assert exactly the comparison that is invalid. The cell
+             says which index it is instead. -->
+        <td [class.elevated]="isGradable(s) && +s.ahi > 5"
+            [title]="(indexLabelKey(s) | translate)">
+          {{ fmtAhi(s) }}<span class="index-kind-mark" *ngIf="!isGradable(s)">*</span>
+        </td>
         <td>{{ s.total_events || '-' }}</td>
-        <td>{{ s.obstructive_apneas || '-' }}</td>
-        <td>{{ s.central_apneas || '-' }}</td>
-        <td>{{ s.hypopneas || '-' }}</td>
-        <td>{{ s.reras || '-' }}</td>
+        <!-- SDD-024: the per-TYPE columns, for a machine that does not type its
+             events. The counts really are zero in the database, and a zero here
+             is indistinguishable from a night that genuinely had none -- on a
+             Sefam that reads as "no hypopneas" for a channel the machine has
+             never had. Not measured is a dash, and the tooltip says so. -->
+        <ng-container *ngIf="isGradable(s); else unclassifiedCells">
+          <td>{{ s.obstructive_apneas || '-' }}</td>
+          <td>{{ s.central_apneas || '-' }}</td>
+          <td>{{ s.hypopneas || '-' }}</td>
+          <td>{{ s.reras || '-' }}</td>
+        </ng-container>
+        <ng-template #unclassifiedCells>
+          <td class="not-measured" [title]="'sessions.table.notClassified' | translate">-</td>
+          <td class="not-measured" [title]="'sessions.table.notClassified' | translate">-</td>
+          <td class="not-measured" [title]="'sessions.table.notClassified' | translate">-</td>
+          <td class="not-measured" [title]="'sessions.table.notClassified' | translate">-</td>
+        </ng-template>
         <td>
           <span *ngIf="s.avg_spo2 && +s.avg_spo2 > 0">{{ s.avg_spo2 }}%</span>
           <span *ngIf="!(s.avg_spo2 && +s.avg_spo2 > 0) && oxiMap[s.sleep_day || sleepDay(s.session_start)]">{{ oxiMap[s.sleep_day || sleepDay(s.session_start)] }}%</span>
@@ -125,6 +145,13 @@
       </tr>
     </tbody>
   </table>
+  </div>
+
+  <!-- SDD-024: the asterisk on an index cell means nothing on its own. Shown
+       only when a row actually carries one, so a ResMed-only user never sees a
+       footnote about a machine they do not own. -->
+  <div class="index-kind-note" *ngIf="hasUngraded">
+    <span class="index-kind-mark">*</span> {{ 'sessions.table.indexNote' | translate }}
   </div>
 
   <div class="load-more-bar" *ngIf="sessions.length > 0 && hasMore">

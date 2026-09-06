@@ -11,7 +11,10 @@
       "date": "Date",
       "status": "Status",
       "duration": "Duration",
+      "indexCol": "Index",
       "events": "Events",
+      "notClassified": "This machine does not classify its events.",
+      "indexNote": "Apneas per hour. This machine does not mark hypopneas, so this is not an AHI and cannot be compared to one.",
       "actions": "Actions"
     },
     "badge": {

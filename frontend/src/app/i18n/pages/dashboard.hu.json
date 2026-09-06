@@ -15,6 +15,7 @@
     },
     "chart": {
       "ahiTrend": "AHI-trend (30 nap)",
+      "apneaIndexTrend": "Apnoé index trend (30 nap)",
       "usageHours": "Használati órák (30 nap)",
       "pressureTrend": "Nyomástrend (30 nap)",
       "leakTrend": "Szivárgási trend (30 nap)",
@@ -51,6 +52,7 @@
     },
     "subtitle": {
       "events": "Apnoe- és hypopnoe-elemzés",
+      "eventsUnclassified": "Csak apnoék. Ez a készülék nem osztályozza őket.",
       "respiratory": "Légzésminták és ventilláció",
       "oximetry": "Wellue O2Ring -- SpO2 és pulzusszám"
     },
@@ -81,6 +83,8 @@
       "leakP95": "STR szivárgás P95"
     },
     "events": {
+      "apneas": "Apnoék",
+      "unclassifiedNote": "Ez a készülék rögzíti az apnoékat, de nem jelöl hypopnoékat, és nem különíti el az obstruktívakat a centrálisaktól. A típusok azért nem jelennek meg, mert soha nem mérték őket, nem azért, mert nem fordultak elő.",
       "obstructive": "Obstruktív",
       "central": "Centrális",
       "hypopneas": "Hypopnoék",

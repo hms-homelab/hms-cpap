@@ -12,6 +12,7 @@
   },
   "metric": {
     "ahi": "IAH",
+    "apneaIndex": "Indice d'apnées",
     "spo2": "SpO2",
     "hr": "FC"
   },

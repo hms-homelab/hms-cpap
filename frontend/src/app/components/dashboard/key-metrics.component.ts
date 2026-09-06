@@ -5,6 +5,8 @@ import { formatIndex } from '../../utils/format';
 
 export interface KeyMetricsData {
   ahi: number;
+  /** SDD-024: 'ahi' | 'ungraded'. Absent means a real AHI. */
+  indexKind?: string;
   usageHours: number;
   leakP95: number;
   totalEvents: number;
@@ -29,7 +31,7 @@ export interface KeyMetricsData {
             <i class="fa-solid fa-heart-pulse"></i>
           </div>
           <div class="mu-content">
-            <div class="mu-primary">{{ 'dashboard.keyMetrics.ahiScore' | translate }}</div>
+            <div class="mu-primary">{{ indexTitleKey | translate }}</div>
             <div class="mu-secondary">
               <span class="mu-value">{{ fmtIndex(data.ahi) }}</span>
               <span class="mu-assess">{{ ahiLabel }}</span>
@@ -128,8 +130,23 @@ export class KeyMetricsComponent {
   /** SDD-079: index group renders at two decimals. */
   readonly fmtIndex = formatIndex;
 
+  /// SDD-024: may this number be called an AHI and graded like one?
+  get gradable(): boolean {
+    return !this.data || this.data.indexKind !== 'ungraded';
+  }
+
+  /// The label above the number. An apnea-only index is not an AHI and must not
+  /// be presented as one.
+  get indexTitleKey(): string {
+    return this.gradable ? 'dashboard.keyMetrics.ahiScore' : 'metric.apneaIndex';
+  }
+
   get ahiColor(): string {
     if (!this.data) return '#888';
+    // Neutral for an ungraded index. The colour IS the clinical claim: green
+    // at <5 says "this is a good AHI", which cannot be said of a number that
+    // counts apneas and ignores hypopneas.
+    if (!this.gradable) return '#888';
     return this.data.ahi < 5 ? '#4ade80' : this.data.ahi < 15 ? '#fb923c' : '#ef4444';
   }
   // SDD-080: the band thresholds are clinical and stay here; only the words
@@ -137,6 +154,9 @@ export class KeyMetricsComponent {
   // which is a false friend meaning strict rather than clinically severe.
   get ahiLabel(): string {
     if (!this.data) return '';
+    // No band words for an ungraded index. "Excellent" on two thirds of a
+    // measurement is the exact misreading this whole change exists to stop.
+    if (!this.gradable) return '';
     if (this.data.ahi < 5) return this.t.instant('dashboard.keyMetrics.ahiExcellent');
     if (this.data.ahi < 15) return this.t.instant('dashboard.keyMetrics.ahiMild');
     if (this.data.ahi < 30) return this.t.instant('dashboard.keyMetrics.ahiModerate');

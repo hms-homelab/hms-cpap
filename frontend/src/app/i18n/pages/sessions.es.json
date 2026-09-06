@@ -11,7 +11,10 @@
       "date": "Fecha",
       "status": "Estado",
       "duration": "Duración",
+      "indexCol": "Índice",
       "events": "Eventos",
+      "notClassified": "Este equipo no clasifica sus eventos.",
+      "indexNote": "Apneas por hora. Este equipo no marca hipopneas, así que no es un IAH y no puede compararse con uno.",
       "actions": "Acciones"
     },
     "badge": {
