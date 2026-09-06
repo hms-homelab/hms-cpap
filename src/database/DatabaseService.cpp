@@ -981,10 +981,19 @@ void DatabaseService::insertSessionMetrics(pqxx::work& work, int session_id,
     auto opt_dbl = [](const std::optional<double>& v) -> std::optional<double> { return v; };
     auto opt_int = [](const std::optional<int>& v) -> std::optional<int> { return v; };
 
+    // NULL rather than a number when the index is not an AHI. Writing the
+    // apnea-only figure into a column called `ahi` would be the same claim as
+    // publishing it, just somewhere quieter, and writing 0 would be worse still
+    // -- indistinguishable from a genuinely event-free night (SDD-081).
+    const std::optional<double> ahi_value =
+        metrics.index_kind == SessionMetrics::IndexKind::AHI
+            ? std::optional<double>(metrics.ahi)
+            : std::nullopt;
+
     work.exec_params(query,
         session_id,
         metrics.total_events,
-        metrics.ahi,
+        ahi_value,
         metrics.obstructive_apneas,
         metrics.central_apneas,
         metrics.hypopneas,

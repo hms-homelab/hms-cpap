@@ -1510,7 +1510,13 @@ void MySQLDatabase::insertSessionMetrics(int64_t session_id, const SessionMetric
     ParamBinder p(24);
     p.bindInt64(0, session_id);
     p.bindInt(1, m.total_events);
-    p.bindDouble(2, m.ahi);
+    // NULL when the index is not an AHI -- see the SQLite backend for why, and
+    // SDD-081. All three backends have to agree or the same card means different
+    // things depending on which database it landed in.
+    if (m.index_kind == SessionMetrics::IndexKind::AHI)
+        p.bindDouble(2, m.ahi);
+    else
+        p.bindNull(2);
     p.bindInt(3, m.obstructive_apneas);
     p.bindInt(4, m.central_apneas);
     p.bindInt(5, m.hypopneas);
