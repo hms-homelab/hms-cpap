@@ -153,6 +153,18 @@ protected:
             db_->executeQuery("DELETE FROM cpap_daily_summary WHERE device_id = " +
                                   sql::param(1, db_->dbType()),
                               {device_});
+            // SDD-024: the sessions-list test writes a real session, so the
+            // metrics rows hanging off it go first (they reference the session
+            // by id) and then the sessions themselves. Still only ever this
+            // process's own synthetic device.
+            db_->executeQuery(
+                "DELETE FROM cpap_session_metrics WHERE session_id IN ("
+                "SELECT id FROM cpap_sessions WHERE device_id = " +
+                    sql::param(1, db_->dbType()) + ")",
+                {device_});
+            db_->executeQuery("DELETE FROM cpap_sessions WHERE device_id = " +
+                                  sql::param(1, db_->dbType()),
+                              {device_});
         }
         qs_.reset();
         db_.reset();
@@ -194,6 +206,15 @@ protected:
                               " WHERE device_id = " + sql::param(1, db_->dbType()),
                               {device_});
         }
+    }
+
+    /// SDD-024: mark every night of this device as an apnea-only index, the
+    /// way a Sefam S.Box lands. saveSTRDailyRecords has no field for it, so it
+    /// goes in the same way the NULL leak above does.
+    void markAllUngraded() {
+        db_->executeQuery("UPDATE cpap_daily_summary SET index_kind = 'ungraded'"
+                          " WHERE device_id = " + sql::param(1, db_->dbType()),
+                          {device_});
     }
 
     Json::Value allDays() {
@@ -301,6 +322,135 @@ TEST_P(QueryServiceIndexTest, TheWeeklyAverageStopsAtSevenNights) {
     const auto dash = qs_->getDashboard();
     EXPECT_NEAR(asNumber(dash["sleep_index_7night"]), 100.0, 0.05)
         << engineName(GetParam()) << ": the trailing week reached past seven nights";
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SDD-024: an index that is not an AHI
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_P(QueryServiceIndexTest, TheSessionsListSurvivesItsOwnSql) {
+    // The sessions list is a UNION ALL of a CPAP arm and an oximetry arm.
+    // Adding a column to one arm and not the other is a column-count mismatch,
+    // and it fails when the statement is PREPARED, before a single row is read.
+    //
+    // It has to be caught by asserting on ROWS, not by expecting a throw:
+    // executeQuery logs the prepare failure to stderr and returns an empty
+    // array. That is exactly how this shipped -- no exception, no 500, just
+    // every user's session list silently empty next to a dashboard still full
+    // of data. A test that only checked "did not throw" would have passed.
+    const auto start = system_clock::now() - hours(30);
+
+    CPAPSession s;
+    s.device_id = device_;
+    s.session_start = start;
+    s.session_end = start + hours(7);
+    s.duration_seconds = 7 * 3600;
+    s.status = CPAPSession::Status::COMPLETED;
+
+    SessionMetrics m;
+    m.ahi = 4.5;
+    m.total_events = 31;
+    m.index_kind = SessionMetrics::IndexKind::Ungraded;
+    s.metrics = m;
+    ASSERT_TRUE(db_->saveSession(s)) << engineName(GetParam());
+
+    const auto rows = qs_->getSessions(50, 0);
+    ASSERT_TRUE(rows.isArray()) << engineName(GetParam());
+    ASSERT_EQ(rows.size(), 1u)
+        << engineName(GetParam())
+        << ": the sessions list came back empty for a night that exists. If the "
+           "two UNION arms disagree on their column count this is what it looks "
+           "like -- a silent empty result, not an error.";
+
+    EXPECT_EQ(rows[0]["index_kind"].asString(), "ungraded") << engineName(GetParam());
+    EXPECT_EQ(static_cast<int>(asNumber(rows[0]["total_events"])), 31)
+        << engineName(GetParam());
+
+    // The night index is the duration-weighted mean of the sessions', which for
+    // one session is that session's own. Rebuilt from the per-TYPE columns it
+    // would read 0.00 here: this machine's apneas are all unclassified, so
+    // every one of those columns is zero while the index is 4.5.
+    EXPECT_NEAR(asNumber(rows[0]["ahi"]), 4.5, 0.01)
+        << engineName(GetParam())
+        << ": the night index was rebuilt from event types the machine never "
+           "filled, so the list disagreed with the dashboard about the same night";
+
+    // The detail endpoint reads the same night and must carry the kind too, or
+    // the page labels an apnea index "AHI".
+    const auto detail = qs_->getSessionDetail(rows[0]["sleep_day"].asString());
+    ASSERT_EQ(detail.size(), 1u) << engineName(GetParam());
+    EXPECT_EQ(detail[0]["index_kind"].asString(), "ungraded") << engineName(GetParam());
+}
+
+TEST_P(QueryServiceIndexTest, AnUngradedNightIsNotGivenACompositeIndex) {
+    // A night that would score 100 on every component if its index counted.
+    addDay(1, /*ahi=*/2.0, /*minutes=*/480, /*leak_95=*/10.0);
+    markAllUngraded();
+
+    const auto rows = allDays();
+    ASSERT_EQ(rows.size(), 1u) << engineName(GetParam());
+
+    // The kind travels with the number.
+    EXPECT_EQ(rows[0]["index_kind"].asString(), "ungraded") << engineName(GetParam());
+
+    // And the composite is withheld rather than computed from what is left.
+    // Not zero: null. Zero is the worst night there is, null is the night we
+    // decline to score. Scoring it on usage and leak alone would have returned
+    // 100 here, and "excellent" is precisely the claim we cannot make about a
+    // machine whose event burden we cannot compare to anything.
+    EXPECT_TRUE(rows[0]["sleep_index"].isNull())
+        << engineName(GetParam()) << ": an apnea-only night was given a therapy score";
+    EXPECT_TRUE(rows[0]["sleep_index_band"].isNull()) << engineName(GetParam());
+}
+
+TEST_P(QueryServiceIndexTest, TheDashboardWithholdsBothTheNightAndTheWeek) {
+    for (int i = 1; i <= 5; ++i) addDay(i, 2.0, 480, 10.0);
+    markAllUngraded();
+
+    const auto dash = qs_->getDashboard();
+    EXPECT_EQ(dash["latest_night"]["index_kind"].asString(), "ungraded")
+        << engineName(GetParam());
+    EXPECT_TRUE(dash["latest_night"]["sleep_index"].isNull())
+        << engineName(GetParam()) << ": the headline night was scored";
+
+    // The trailing week reads its own query, which needs index_kind of its own.
+    // Without that column every night looks gradable and the headline averages
+    // scores no night earned.
+    EXPECT_TRUE(dash["sleep_index_7night"].isNull())
+        << engineName(GetParam()) << ": the weekly average scored ungraded nights";
+}
+
+TEST_P(QueryServiceIndexTest, AGradedNightIsStillScoredWhenTheColumnIsAbsent) {
+    // The default. Every row written before the column existed is ResMed, and
+    // COALESCE(index_kind, 'ahi') is what keeps them scoring as they always
+    // did. Being wrong in this direction shows a real AHI as one; being wrong
+    // the other way would silently stop scoring every existing user.
+    addDay(1, /*ahi=*/2.0, /*minutes=*/480, /*leak_95=*/10.0);
+    db_->executeQuery("UPDATE cpap_daily_summary SET index_kind = NULL"
+                      " WHERE device_id = " + sql::param(1, db_->dbType()),
+                      {device_});
+
+    const auto rows = allDays();
+    ASSERT_EQ(rows.size(), 1u) << engineName(GetParam());
+    EXPECT_EQ(rows[0]["index_kind"].asString(), "ahi") << engineName(GetParam());
+    EXPECT_EQ(asNumber(rows[0]["sleep_index"]), 100) << engineName(GetParam());
+}
+
+TEST_P(QueryServiceIndexTest, AMixedRangeReportsTheWeakerKind) {
+    // A user who changed machines. The range statistics carry ONE kind, and it
+    // has to be the one that cannot be graded: an average over both is not an
+    // AHI, and labelling it one in a PDF a clinician reads is the failure this
+    // is here to prevent.
+    addDay(1, 2.0, 480, 10.0);
+    addDay(2, 4.0, 480, 10.0);
+    markAllUngraded();
+    // Now make the older night a real AHI again, leaving one of each.
+    addDay(2, 4.0, 480, 10.0);  // upsert on (device_id, record_date) resets it
+
+    const auto st = qs_->getStatistics("2000-01-01", "2099-12-31");
+    ASSERT_GT(st.size(), 0u) << engineName(GetParam());
+    EXPECT_EQ(st[0]["index_kind"].asString(), "ungraded")
+        << engineName(GetParam()) << ": a mixed range claimed to be an AHI";
 }
 
 INSTANTIATE_TEST_SUITE_P(

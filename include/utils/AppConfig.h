@@ -535,7 +535,16 @@ struct AppConfig {
             // rather than silently reverting to the legacy one.
             if (j.contains("transport"))    config.transport = j["transport"];
             if (j.contains("format"))       config.format    = j["format"];
-            if (!j.contains("transport"))   config.migrateSource();
+            if (!j.contains("transport")) {
+                config.migrateSource();
+            } else {
+                // The reverse. A config written with the new pair and no legacy
+                // key left `source` at its DEFAULT, so anything still reading it
+                // -- the preflight report, the collector's env bridge -- saw
+                // "ezshare" for a machine configured as a local Sefam card. Kept
+                // derived rather than stored so the two can never disagree.
+                config.source = config.legacySource();
+            }
             if (j.contains("ezshare_url"))    config.ezshare_url = j["ezshare_url"];
             if (j.contains("ezshare_range")) config.ezshare_range = j["ezshare_range"];
             if (j.contains("local_dir"))     config.local_dir = j["local_dir"];

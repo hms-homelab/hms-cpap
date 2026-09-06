@@ -59,7 +59,41 @@ std::optional<double> jopt(const Json::Value& obj, const char* key) {
 // two hold a patient_hours near 1050 against nights of 80 and 89 minutes, which
 // is a counter rather than a day. duration_minutes is consistent across all of
 // them and is already what getStatistics trusts for the compliance percentage.
+//
+// SDD-024: a night whose index is not an AHI gets NO composite at all.
+//
+// A Sefam S.Box scores apneas but never hypopneas, so its number is an apnea
+// index on a different scale, while kAhiFloor/kAhiCeiling are calibrated for
+// the apnea-hypopnea one. Neither way of using it survives contact:
+//
+//   - Passed through as if it were an AHI, it is compared against the wrong
+//     scale. AHI >= AI always, so every Sefam night scores at least as well as
+//     the truth and usually better.
+//   - Passed as absent, nightlyIndex renormalises onto usage and leak, which
+//     is right for a channel a machine does not HAVE but wrong here: the event
+//     burden is measured, it just is not this scale. On the demo card that
+//     turns a 17/h night into "good" and makes the score stop responding to
+//     events entirely.
+//
+// Captioning the result "partial" is not a third option. It leaves the number
+// on screen next to every other user's number and asks the reader to discount
+// it, which is the same claim in smaller type.
+//
+// So the composite is withheld. It is 40% event burden by definition and that
+// 40% cannot be supplied, and nullopt is already the established way to say a
+// night is unscorable -- annotateIndex() writes null rather than 0 for exactly
+// this distinction. Usage, leak and the apnea index are all still shown on
+// their own; it is only the single blended score that is not claimed.
+//
+// A row with no index_kind at all (the myAir comparison, any older caller) is
+// treated as 'ahi', which is what every such row was before this change, so
+// ResMed is untouched.
 std::optional<int> rowIndex(const Json::Value& row) {
+    const bool gradable = !row.isMember("index_kind")
+                          || row["index_kind"].isNull()
+                          || row["index_kind"].asString() != "ungraded";
+    if (!gradable) return std::nullopt;
+
     const auto minutes = jopt(row, "duration_minutes");
     return cpapdash::parser::nightlyIndex(
         minutes ? std::optional<double>(*minutes / 60.0) : std::nullopt,
@@ -92,6 +126,10 @@ Json::Value QueryService::getDashboard() {
         "SELECT record_date as sleep_day,"
         " " + sql::round("duration_minutes / 60.0", 2, dt_) + " as usage_hours,"
         " " + sql::round("ahi", 2, dt_) + " as ahi,"
+        // SDD-024: the kind travels with the number. Without it the dashboard
+        // cannot tell an apnea-hypopnea index from an apnea-only one and
+        // renders both under the same label.
+        " COALESCE(index_kind, 'ahi') as index_kind,"
         " " + sql::round("COALESCE(leak_50, 0)", 1, dt_) + " as leak_avg,"
         // SDD-019 inputs. duration_minutes and leak_95 are carried raw rather
         // than reusing usage_hours/leak_avg above: leak_avg is the median and
@@ -106,14 +144,20 @@ Json::Value QueryService::getDashboard() {
 
     // --- The index over the trailing week (SDD-019) ---
     std::string q_index_week =
-        "SELECT duration_minutes, ahi, leak_95"
+        // index_kind is an INPUT here, not decoration: rowIndex() withholds the
+        // composite for an ungraded night, and without this column every night
+        // would look gradable and the headline would average scores that were
+        // never earned.
+        "SELECT duration_minutes, ahi, leak_95,"
+        " COALESCE(index_kind, 'ahi') as index_kind"
         " FROM cpap_daily_summary"
         " WHERE device_id = " + sql::param(1, dt_) +
         " ORDER BY record_date DESC LIMIT 7";
 
     // --- AHI trend (30 days) ---
     std::string q_ahi =
-        "SELECT record_date as date, ahi as value"
+        "SELECT record_date as date, ahi as value,"
+        " COALESCE(index_kind, 'ahi') as index_kind"
         " FROM cpap_daily_summary"
         " WHERE device_id = " + sql::param(1, dt_) +
         " AND record_date >= " + sql::currentDateMinus(30, dt_) +
@@ -150,6 +194,7 @@ Json::Value QueryService::getDashboard() {
     if (latest.size() > 0) {
         ln["date"]        = latest[0].get("sleep_day", Json::nullValue);
         ln["ahi"]         = latest[0].get("ahi", "0");
+        ln["index_kind"]  = latest[0].get("index_kind", "ahi");
         ln["usage_hours"] = latest[0].get("usage_hours", "0");
         ln["leak_avg"]    = latest[0].get("leak_avg", "0");
         ln["therapy_mode"] = latest[0].get("therapy_mode", "0");
@@ -205,11 +250,32 @@ Json::Value QueryService::getSessions(int limit, int offset) {
         " MAX(s.session_end) as session_end,"
         " SUM(s.duration_seconds) as duration_seconds,"
         " " + sql::round("SUM(s.duration_seconds) / 3600.0", 2, dt_) + " as duration_hours,"
+        // The night's index is the duration-weighted mean of the sessions'.
+        //
+        // That is the same number as (events / hours) whenever each session's
+        // own index was events/hours, which is how calculateMetrics() builds
+        // it -- but it reads the index the parser already computed instead of
+        // rebuilding it from the category columns, and rebuilding it here was
+        // wrong twice over. calculateMetrics() counts unclassified apneas
+        // (ResMed's bare 'Apnea') toward the index and this sum never did, so
+        // a night carrying them read lower here than on the dashboard; and
+        // hms-cpap does not persist that count at all, so the sum COULD not be
+        // made to agree. A Sefam night was the visible case -- every one of its
+        // apneas is unclassified, so the list showed 0.0 against a dashboard
+        // showing 60.0 for the same night.
+        //
+        // Weighted by duration, not a plain AVG: indices over unequal sessions
+        // do not average. A metrics row that is missing entirely contributes 0
+        // while its duration still counts, which is what the category sum did
+        // too.
         " " + sql::round("CASE WHEN SUM(s.duration_seconds) > 0"
-        "   THEN SUM(COALESCE(m.obstructive_apneas, 0) + COALESCE(m.central_apneas, 0)"
-        "   + COALESCE(m.hypopneas, 0) + COALESCE(m.clear_airway_apneas, 0))"
-        "   / (SUM(s.duration_seconds) / 3600.0)"
+        "   THEN SUM(COALESCE(m.ahi, 0) * s.duration_seconds)"
+        "   / SUM(s.duration_seconds)"
         "   ELSE 0 END", 2, dt_) + " as ahi,"
+        // SDD-024. Same MAX-over-text as the night aggregate: 'ungraded' sorts
+        // after 'ahi', so a row grouping ANY ungraded session reads as
+        // ungraded. Per row, because a user who changed machines has both.
+        " MAX(COALESCE(m.index_kind, 'ahi')) as index_kind,"
         " SUM(COALESCE(m.total_events, 0)) as total_events,"
         " SUM(COALESCE(m.obstructive_apneas, 0)) as obstructive_apneas,"
         " SUM(COALESCE(m.central_apneas, 0)) as central_apneas,"
@@ -235,6 +301,12 @@ Json::Value QueryService::getSessions(int limit, int offset) {
         " SUM(o.duration_seconds) as duration_seconds,"
         " " + sql::round("SUM(o.duration_seconds) / 3600.0", 2, dt_) + " as duration_hours,"
         " NULL as ahi,"
+        // SDD-024. NULL, not 'ahi': an oximetry-only night has no CPAP index of
+        // either kind, so naming one would be a claim we cannot make. Position
+        // matters more than the value — UNION ALL matches arms by column ORDER,
+        // so this has to sit exactly where the CPAP arm puts index_kind or the
+        // whole statement fails to prepare and the sessions list goes empty.
+        " NULL as index_kind,"
         " NULL as total_events,"
         " NULL as obstructive_apneas,"
         " NULL as central_apneas,"
@@ -305,7 +377,12 @@ Json::Value QueryService::getSessionDetail(const std::string& date) {
     std::string q_sessions =
         "SELECT s.id, s.session_start, s.session_end, s.duration_seconds,"
         " " + sql::round("s.duration_seconds / 3600.0", 2, dt_) + " as duration_hours,"
-        " " + sql::round("m.ahi", 2, dt_) + " as ahi, m.total_events, m.obstructive_apneas, m.central_apneas,"
+        " " + sql::round("m.ahi", 2, dt_) + " as ahi,"
+        // SDD-024. Per SESSION here, not per night: this endpoint returns each
+        // session of the sleep day and the detail page merges them, so the kind
+        // has to arrive on the same rows the numbers do.
+        " COALESCE(m.index_kind, 'ahi') as index_kind,"
+        " m.total_events, m.obstructive_apneas, m.central_apneas,"
         " m.hypopneas, m.reras, m.clear_airway_apneas,"
         " m.avg_event_duration, m.max_event_duration, m.time_in_apnea_percent,"
         " m.avg_spo2, m.min_spo2, m.spo2_drops, m.odi,"
@@ -376,6 +453,11 @@ Json::Value QueryService::getSessionDetail(const std::string& date) {
 Json::Value QueryService::getDailySummary(const std::string& start, const std::string& end) {
     std::string q =
         "SELECT record_date, duration_minutes, ahi, hi, ai, oai, cai, uai, rin,"
+        // SDD-024. This endpoint feeds the charts, the summaries and the PDF
+        // report, so the kind has to travel with the number here too — and
+        // annotateIndex() below reads it off the row to decide whether the AHI
+        // term is scorable at all.
+        " COALESCE(index_kind, 'ahi') as index_kind,"
         " leak_50, leak_95, leak_max,"
         " mask_press_50, mask_press_95, mask_press_max,"
         " spo2_50, spo2_95,"
@@ -409,6 +491,9 @@ Json::Value QueryService::getMyAirComparison(const std::string& start, const std
     const std::string q =
         "SELECT x.record_date,"
         " d.duration_minutes, d.ahi, d.leak_95, d.mask_events,"
+        // SDD-024. Ours only: the myAir column beside it is always a true AHI,
+        // because myAir exists only for ResMed machines.
+        " COALESCE(d.index_kind, 'ahi') as index_kind,"
         " m.total_usage_min, m.sleep_score, m.usage_score, m.ahi_score,"
         " m.mask_score, m.leak_score, m.ahi AS myair_ahi, m.mask_pair_count,"
         " m.leak_percentile, m.has_data"
@@ -514,6 +599,12 @@ Json::Value QueryService::getStatistics(const std::string& start, const std::str
         " " + sql::round("MIN(ahi)", 2, dt_) + " as min_ahi,"
         " " + sql::round("MAX(ahi)", 2, dt_) + " as max_ahi,"
         " " + sql::round(sql::stddev("ahi", dt_), 2, dt_) + " as stddev_ahi,"
+        // SDD-024. One kind for the whole reporting period, by the same
+        // MAX-over-text rule the night and session aggregates use: 'ungraded'
+        // sorts after 'ahi', so a range containing ANY ungraded night reports
+        // as ungraded. A range that mixes machines cannot honestly average the
+        // two into one "Average AHI", and the weaker claim is the true one.
+        " MAX(COALESCE(index_kind, 'ahi')) as index_kind,"
         " " + sql::round("AVG(duration_minutes)", 1, dt_) + " as avg_duration_min,"
         " " + sql::round("AVG(leak_95)", 1, dt_) + " as avg_leak_95,"
         " " + sql::round("AVG(mask_press_95)", 1, dt_) + " as avg_pressure_95,"

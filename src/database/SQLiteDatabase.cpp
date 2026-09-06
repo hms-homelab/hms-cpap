@@ -1891,7 +1891,8 @@ bool SQLiteDatabase::saveSTRDailyRecords(const std::vector<STRDailyRecord>& reco
                 duration_minutes = excluded.duration_minutes,
                 patient_hours    = excluded.patient_hours,
                 machine_hours    = excluded.machine_hours,
-                ahi = excluded.ahi, hi = excluded.hi, ai = excluded.ai,
+                ahi = excluded.ahi, index_kind = excluded.index_kind,
+            hi = excluded.hi, ai = excluded.ai,
                 oai = excluded.oai, cai = excluded.cai, uai = excluded.uai,
                 rin = excluded.rin, csr = excluded.csr,
                 mask_press_50    = excluded.mask_press_50,
@@ -2034,7 +2035,7 @@ bool SQLiteDatabase::aggregateDailySummaryFromSessions(const std::string& device
         INSERT INTO cpap_daily_summary
             (device_id, record_date, duration_minutes, patient_hours,
              ahi, hi, ai, oai, cai, uai, rin, mask_events, mask_pairs,
-             mask_press_50, leak_50, leak_95, spo2_50, epr_level, mode, updated_at)
+             mask_press_50, leak_50, leak_95, spo2_50, epr_level, mode, index_kind, updated_at)
         SELECT
             s.device_id,
             date(s.session_start, '-12 hours') AS record_date,
@@ -2057,6 +2058,8 @@ bool SQLiteDatabase::aggregateDailySummaryFromSessions(const std::string& device
             ROUND(AVG(NULLIF(m.avg_spo2, 0)), 1),
             ROUND(AVG(NULLIF(m.avg_epr_pressure, 0)), 2),
             MAX(COALESCE(m.therapy_mode, 0)),
+            -- SDD-024: carry the kind into the night, same MAX-over-text rule.
+            MAX(COALESCE(m.index_kind, 'ahi')),
             datetime('now')
         FROM cpap_sessions s
         JOIN cpap_session_metrics m ON m.session_id = s.id

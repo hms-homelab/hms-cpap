@@ -951,12 +951,13 @@ void DatabaseService::insertSessionMetrics(pqxx::work& work, int session_id,
         (session_id, total_events, ahi, obstructive_apneas, central_apneas, hypopneas, reras, clear_airway_apneas,
          avg_spo2, min_spo2, avg_heart_rate, max_heart_rate, min_heart_rate,
          avg_mask_pressure, avg_epr_pressure, avg_snore, leak_p50, leak_p95, avg_leak_rate, max_leak_rate,
-         avg_target_ventilation, therapy_mode, spo2_drops, odi)
+         avg_target_ventilation, therapy_mode, spo2_drops, odi, index_kind)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13,
-                $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
+                $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
         ON CONFLICT (session_id) DO UPDATE
         SET total_events = EXCLUDED.total_events,
             ahi = EXCLUDED.ahi,
+            index_kind = EXCLUDED.index_kind,
             obstructive_apneas = EXCLUDED.obstructive_apneas,
             central_apneas = EXCLUDED.central_apneas,
             hypopneas = EXCLUDED.hypopneas,
@@ -1008,7 +1009,11 @@ void DatabaseService::insertSessionMetrics(pqxx::work& work, int session_id,
         metrics.avg_target_ventilation.value_or(0),
         metrics.therapy_mode.value_or(0),
         metrics.spo2_drops.value_or(0),
-        metrics.odi.value_or(0)
+        metrics.odi.value_or(0),
+        // SDD-024. Text, matching the other two backends, so the column reads
+        // the same wherever you look at it.
+        std::string(metrics.index_kind == SessionMetrics::IndexKind::AHI
+                        ? "ahi" : "ungraded")
     );
 }
 
@@ -1784,7 +1789,9 @@ std::optional<SessionMetrics> DatabaseService::getSessionMetrics(
         start_oss << std::put_time(start_tm, "%Y-%m-%d %H:%M:%S");
 
         std::string query = R"(
-            SELECT sm.total_events, sm.ahi, sm.obstructive_apneas, sm.central_apneas,
+            SELECT sm.total_events, sm.ahi,
+                   COALESCE(sm.index_kind, 'ahi') AS index_kind,   -- SDD-024
+                   sm.obstructive_apneas, sm.central_apneas,
                    sm.hypopneas, sm.reras, sm.clear_airway_apneas,
                    sm.avg_event_duration, sm.max_event_duration, sm.time_in_apnea_percent,
                    sm.avg_spo2, sm.min_spo2, sm.avg_heart_rate, sm.max_heart_rate, sm.min_heart_rate,
@@ -1818,6 +1825,11 @@ std::optional<SessionMetrics> DatabaseService::getSessionMetrics(
         SessionMetrics m;
         m.total_events        = row["total_events"].as<int>(0);
         m.ahi                 = row["ahi"].as<double>(0.0);
+        // SDD-024: without this the Postgres backend hands back the struct
+        // default and an apnea-only index claims to be an AHI.
+        m.index_kind          = (row["index_kind"].as<std::string>("ahi") == "ungraded")
+                                    ? SessionMetrics::IndexKind::Ungraded
+                                    : SessionMetrics::IndexKind::AHI;
         m.obstructive_apneas  = row["obstructive_apneas"].as<int>(0);
         m.central_apneas      = row["central_apneas"].as<int>(0);
         m.hypopneas           = row["hypopneas"].as<int>(0);
@@ -1941,7 +1953,10 @@ std::optional<SessionMetrics> DatabaseService::getNightlyMetrics(
                 MIN(b.min_press) AS min_pressure,
                 MAX(sm.leak_p50) AS leak_p50,
                 MAX(sm.leak_p95) AS leak_p95_sess,
-                MAX(sm.therapy_mode) AS therapy_mode
+                MAX(sm.therapy_mode) AS therapy_mode,
+                -- SDD-024: 'ungraded' sorts after 'ahi', so a night holding ANY
+                -- ungraded session reads as ungraded. Mirrors SQLiteDatabase.
+                MAX(COALESCE(sm.index_kind, 'ahi')) AS index_kind
             FROM cpap_sessions s
             JOIN cpap_session_metrics sm ON sm.session_id = s.id
             LEFT JOIN (
@@ -1980,6 +1995,11 @@ std::optional<SessionMetrics> DatabaseService::getNightlyMetrics(
         SessionMetrics m;
         m.total_events        = row["total_events"].as<int>(0);
         m.ahi                 = row["ahi"].as<double>(0.0);
+        // SDD-024: without this the Postgres backend hands back the struct
+        // default and an apnea-only index claims to be an AHI.
+        m.index_kind          = (row["index_kind"].as<std::string>("ahi") == "ungraded")
+                                    ? SessionMetrics::IndexKind::Ungraded
+                                    : SessionMetrics::IndexKind::AHI;
         m.obstructive_apneas  = row["obstructive_apneas"].as<int>(0);
         m.central_apneas      = row["central_apneas"].as<int>(0);
         m.hypopneas           = row["hypopneas"].as<int>(0);

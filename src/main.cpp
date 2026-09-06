@@ -173,10 +173,15 @@ void printConfiguration() {
         std::cout << "  Source:             ez Share" << std::endl;
         std::cout << "  ez Share URL:       " << hms_cpap::ConfigManager::get("EZSHARE_BASE_URL", "http://192.168.4.1") << std::endl;
     }
+    // SDD-024: report what actually runs. CPAP_TRANSPORT/CPAP_FORMAT are set
+    // from config.json by main(), so reading them here shows the resolved pair
+    // rather than re-deriving it from a legacy string that may be a fallback.
     std::cout << "  Transport:          "
-              << hms_cpap::AppConfig::transportForSource(source) << std::endl;
+              << hms_cpap::ConfigManager::get("CPAP_TRANSPORT",
+                     hms_cpap::AppConfig::transportForSource(source)) << std::endl;
     std::cout << "  Format:             "
-              << hms_cpap::AppConfig::formatForSource(source) << std::endl;
+              << hms_cpap::ConfigManager::get("CPAP_FORMAT",
+                     hms_cpap::AppConfig::formatForSource(source)) << std::endl;
     std::cout << "  Burst Interval:     " << hms_cpap::ConfigManager::getInt("BURST_INTERVAL", 120) << " seconds" << std::endl;
     std::cout << "  Session Gap:        " << hms_cpap::ConfigManager::getInt("SESSION_GAP_MINUTES", 60) << " minutes" << std::endl;
     std::cout << "  Health Check Port:  " << hms_cpap::ConfigManager::getInt("HEALTH_CHECK_PORT", 8893) << std::endl;
@@ -597,7 +602,14 @@ int main(int argc, char** argv) {
     // legacy code that reads them via ConfigManager.
     portableSetenv("CPAP_DEVICE_ID", config.device_id.c_str());
     portableSetenv("CPAP_DEVICE_NAME", config.device_name.c_str());
-    portableSetenv("CPAP_SOURCE", config.source.c_str());
+    // SDD-022/024. config.json is read by AppConfig, but BurstCollectorService
+    // and the controllers read ConfigManager, which is env-backed. This is the
+    // bridge between the two. Exporting `source` alone left transport and
+    // format at their defaults, so a config.json saying format=sefam ran the
+    // ResMed collector -- the setting appeared to take and silently did not.
+    portableSetenv("CPAP_SOURCE", config.legacySource().c_str());
+    portableSetenv("CPAP_TRANSPORT", config.transport.c_str());
+    portableSetenv("CPAP_FORMAT", config.format.c_str());
     portableSetenv("EZSHARE_BASE_URL", config.ezshare_url.c_str());
     // Store numeric conversions in locals to avoid dangling pointer from temporary
     std::string burst_str = std::to_string(config.burst_interval);
