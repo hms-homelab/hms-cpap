@@ -5,6 +5,22 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.1.4] - 2026-09-06
+
+### Fixed
+- **The Sefam S.Box produced no events, and the release build could not have
+  compiled at all.** The parser pin was left on `v2026.8.0`, which was cut
+  before DET-bit apnea detection and before `SessionMetrics::index_kind`
+  existed. A local build never exercises that line — CMake prefers the sibling
+  checkout — so an S.Box card ingested correctly on a developer's machine and
+  would have arrived at a tagged build with channel decoding, respiratory
+  mechanics, and nothing else. `index_kind` appears zero times in `v2026.8.0`
+  and this repo references it, so the tag build would have failed outright.
+  Pinned to `v2026.8.1`.
+
+  This is the second time a stale pin has bitten a release build (see v4.9.9).
+  The pin is the only thing CI can catch and the only thing local work cannot.
+
 ## [5.1.3] - 2026-09-06
 
 ### Fixed
