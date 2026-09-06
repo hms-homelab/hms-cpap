@@ -2,6 +2,8 @@
   "dashboard": {
     "page": {
       "heading": "Alvásterápia: {{device}}",
+      "latestNight": "Legutóbbi éjszaka: {{date}}",
+      "latestNightAge": "({{count}} napja)",
       "lastNight": "Tegnap éjszaka",
       "duration": "Időtartam",
       "cpapdashIndex": "CpapDash index",
