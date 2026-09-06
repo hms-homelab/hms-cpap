@@ -316,6 +316,55 @@ Configuration example:
 }
 ```
 
+### Sefam S.Box
+
+Set `CPAP_SOURCE=sefam` and point `CPAP_LOCAL_DIR` at the card contents or a
+copy. There is no ezShare path: the S.Box has no WiFi card option, so the card
+is read after the night rather than during it.
+
+Two device families are supported, and they disagree about what a folder holds,
+so point at any level from the card root down and hms-cpap finds the sessions:
+
+**S.Box AUTO (1263R)** writes one session per folder:
+```
+1263R24337476/
+  DATA_1/
+    DATA_1.INI            # manifest: channels, start time, device identity
+    DATA_1.001            # channel data
+  DATA_2/
+    ...
+```
+
+**SleepBox AUTO (1200R)** writes one folder per DAY, holding every recording
+that started that day:
+```
+1200R99001122/
+  251110/
+    222516.ini            # one session
+    010203.ini            # another, same folder
+```
+
+Configuration example:
+```json
+{
+  "source": "sefam",
+  "local_dir": "/mnt/archive/sbox",
+  "device_name": "Sefam S.Box"
+}
+```
+
+**What you get, and what you do not.** The signals, breath-by-breath respiratory
+mechanics, and apneas. Not an AHI. The machine flags apneas in its own event
+bitfield but does not mark hypopneas in any form readable outside Sefam's
+software, so hms-cpap computes an apnea-only index and labels it as one rather
+than calling it an AHI. Expect it to read lower than a ResMed AHI for the same
+night. Nothing is being hidden and nothing is broken: it is a different
+measurement.
+
+The format was decoded from a donated card without reference to any GPL or
+vendor source. See `docs/SEFAM_FORMAT.md` in the parser repository for what is
+confirmed, what is supported, and what is still unknown.
+
 ## Configuration
 
 The setup wizard writes everything below for you, so this section is for people
@@ -337,7 +386,7 @@ See [`.env.example`](.env.example) for the complete list of variable names, and
 
 ```bash
 # Data source
-CPAP_SOURCE=ezshare          # ezshare or local
+CPAP_SOURCE=ezshare          # ezshare | local | lowenstein | sefam | fysetc
 EZSHARE_BASE_URL=http://192.168.4.1  # ezShare bridge IP
 
 # MQTT broker (required for Home Assistant)

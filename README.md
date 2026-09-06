@@ -17,7 +17,7 @@
 >
 > Read [DISCLAIMER.md](DISCLAIMER.md) before using this. By using it you accept
 > the [Terms of Use](TERMS.md). Not affiliated with ResMed, Philips, Löwenstein,
-> SleepHQ, or anyone else named here. See [NOTICE](NOTICE).
+> Sefam, SleepHQ, or anyone else named here. See [NOTICE](NOTICE).
 
 ![Dashboard](docs/screenshots/dashboard.png)
 
@@ -34,6 +34,14 @@ It is a fully local-first experience.
 |---|---|---|
 | ResMed | AirSense 10, AirSense 11 | Yes, charts update every 65s during therapy |
 | Lowenstein | Prisma Line (20A, 20C, 25S, 25ST), Prisma Smart (Max, Plus, Soft) | No, files are written after each session |
+| Sefam | S.Box AUTO (1263R), SleepBox AUTO (1200R) | No, the card is read after the night |
+
+On a Sefam card you get the recorded signals, breath-by-breath respiratory
+mechanics, and apneas. **You do not get an AHI.** The machine records apneas but
+does not mark hypopneas in a form anyone outside Sefam can read, so CpapDash
+shows an apnea-only index and labels it as one. It will read lower than the AHI
+a ResMed reports for the same night. That is a different measurement, not a
+better night.
 
 ## Features
 
@@ -150,7 +158,7 @@ architecture, development, cross-compiling) is in
   SleepHQ, CpapDash sync, myAir, and LLM summaries, all off by default and each
   one you enable yourself. [PRIVACY.md](PRIVACY.md)
 - **Independence.** Not affiliated with or endorsed by ResMed, Philips,
-  Lowenstein Medical, SleepHQ, or any other company named here. Trademarks
+  Lowenstein Medical, Sefam, SleepHQ, or any other company named here. Trademarks
   belong to their owners. No OSCAR source was copied or derived from; it was
   consulted only to understand file formats. [NOTICE](NOTICE)
 - **License.** MIT. Use it, modify it, sell it; keep the notice.
