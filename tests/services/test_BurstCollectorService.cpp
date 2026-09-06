@@ -1809,6 +1809,35 @@ EzShareFileEntry mkEntry(const std::string& name, int size_kb, bool is_dir = fal
     return e;
 }
 
+/// An entry carrying the card's own timestamp, as a real listing does.
+///
+/// mkEntry leaves the date fields at zero, which the collector reads as "the
+/// listing carried no stamp" and therefore always fetches. The change detector
+/// cannot be exercised through an entry like that, so these tests need one that
+/// is stamped.
+EzShareFileEntry mkStampedEntry(const std::string& name, int size_kb,
+                                int y, int mo, int d, int h, int mi, int s) {
+    EzShareFileEntry e = mkEntry(name, size_kb);
+    e.year = y; e.month = mo; e.day = d;
+    e.hour = h; e.minute = mi; e.second = s;
+    return e;
+}
+
+/// The same UTC conversion the collector uses, so a test's expectation and the
+/// code under test cannot disagree about the timezone. Deliberately NOT
+/// EzShareFileEntry::getModTime(), which resolves through mktime and is
+/// ambiguous across a DST fold.
+std::time_t cardStampOf(int y, int mo, int d, int h, int mi, int s) {
+    std::tm tm{};
+    tm.tm_year = y - 1900;
+    tm.tm_mon  = mo - 1;
+    tm.tm_mday = d;
+    tm.tm_hour = h;
+    tm.tm_min  = mi;
+    tm.tm_sec  = s;
+    return timegm_utc(&tm);
+}
+
 // Fixture: unique temp/archive dirs per pid; wires the service via the seam.
 class BurstOrchestrationTest : public ::testing::Test {
 protected:
@@ -1878,6 +1907,33 @@ protected:
         };
     }
 
+    /// One session whose CSL and EVE carry the card's own timestamp, as a real
+    /// listing does. The checkpoints are stamped too so nothing in the folder
+    /// is accidentally the only stamped file.
+    static void seedStampedSession(FakeDataSource& ds) {
+        ds.date_folders = {"20200101"};
+        ds.folder_files["20200101"] = {
+            mkStampedEntry("20200101_220000_BRP.edf", 100, 2020, 1, 1, 22, 5, 0),
+            mkStampedEntry("20200101_220000_PLD.edf",  20, 2020, 1, 1, 22, 5, 0),
+            mkStampedEntry("20200101_220000_CSL.edf",   1, 2020, 1, 1, 22, 0, 2),
+            mkStampedEntry("20200101_220000_EVE.edf",   2, 2020, 1, 1, 22, 0, 2),
+        };
+    }
+
+    /// Put a copy of a sidecar on disk carrying a chosen mtime, i.e. exactly
+    /// what a previous burst would have left behind.
+    void placeLocalCopy(const std::string& date_folder, const std::string& name,
+                        std::time_t stamp) {
+        const auto dir = temp_dir / date_folder;
+        std::filesystem::create_directories(dir);
+        { std::ofstream f(dir / name, std::ios::binary); f << "PREVIOUSLY_FETCHED"; }
+        BurstCollectorService::stampLocalCopy(stamp, (dir / name).string());
+    }
+
+    static bool fetched(const std::vector<std::string>& names, const std::string& n) {
+        return std::find(names.begin(), names.end(), n) != names.end();
+    }
+
     // TWO sessions in one date folder. The default SESSION_GAP_MINUTES is 60;
     // 22:00:00 and 23:30:00 are 90 minutes apart -> two distinct sessions.
     // The 23:30:00 group is the most-recent (highest session_start timestamp).
@@ -1930,6 +1986,87 @@ TEST_F(BurstOrchestrationTest, NewSession_DownloadsAndStoresCheckpoints) {
 
     // The fake source must have been asked to download the session's files.
     EXPECT_GT(src_raw->download_count, 0) << "New session should be downloaded";
+}
+
+// ── The sidecar change detector, through the real download path ─────────────
+//
+// CardStampDetection tests the comparison in isolation. These test the thing
+// that actually matters: that downloadSessionFiles() CONSULTS it. The two are
+// different failures -- a correct comparator wired to nothing still re-downloads
+// every CSL and EVE on every beat, which is the bug being fixed, and a helper
+// test cannot see that.
+//
+// This is also the assertion that protects clinical data rather than bandwidth.
+// An EVE grows by one 40-byte annotation per scored event and the listing's size
+// is KB-rounded, so on a real card the stamp is the ONLY signal that an apnea
+// was recorded. If the skip is wrong in either direction we either re-pull all
+// night or lose the night's events.
+
+// The common case, by a distance: nothing happened, so nothing is fetched.
+TEST_F(BurstOrchestrationTest, Sidecar_CardStampUnchanged_IsNotRedownloaded) {
+    auto svc = makeService(&BurstOrchestrationTest::seedStampedSession);
+
+    const std::time_t stamp = cardStampOf(2020, 1, 1, 22, 0, 2);
+    placeLocalCopy("20200101", "20200101_220000_CSL.edf", stamp);
+    placeLocalCopy("20200101", "20200101_220000_EVE.edf", stamp);
+
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, sessionExists(_, _)).WillRepeatedly(Return(false));
+
+    svc->runBurstCycleForTest();
+
+    // Guard against a vacuous pass. "The sidecars were not fetched" is also
+    // true of a session that was never processed at all, so prove the burst
+    // really did work this folder before believing the skip means anything.
+    EXPECT_GT(src_raw->download_count, 0)
+        << "the session must actually have been collected for this test to mean anything";
+    EXPECT_TRUE(fetched(src_raw->ranged_files, "20200101_220000_BRP.edf") ||
+                fetched(src_raw->downloaded_files, "20200101_220000_BRP.edf"))
+        << "the checkpoints are still fetched; only the unchanged sidecars are skipped";
+
+    EXPECT_FALSE(fetched(src_raw->downloaded_files, "20200101_220000_CSL.edf"))
+        << "a sidecar the card has not rewritten must not be fetched again";
+    EXPECT_FALSE(fetched(src_raw->downloaded_files, "20200101_220000_EVE.edf"))
+        << "a sidecar the card has not rewritten must not be fetched again";
+}
+
+// The rare case that carries every event: the card wrote it, so we take it.
+// Note the size does NOT change -- 1KB before and after -- which is precisely
+// why size cannot be the signal.
+TEST_F(BurstOrchestrationTest, Sidecar_CardStampMoved_IsFetchedAgain) {
+    auto svc = makeService(&BurstOrchestrationTest::seedStampedSession);
+
+    // Our copy carries an EARLIER stamp than the one the listing now reports.
+    const std::time_t ours = cardStampOf(2020, 1, 1, 21, 0, 0);
+    placeLocalCopy("20200101", "20200101_220000_CSL.edf", ours);
+    placeLocalCopy("20200101", "20200101_220000_EVE.edf", ours);
+
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, sessionExists(_, _)).WillRepeatedly(Return(false));
+
+    svc->runBurstCycleForTest();
+
+    EXPECT_TRUE(fetched(src_raw->downloaded_files, "20200101_220000_CSL.edf"))
+        << "a restamped sidecar carries new events and MUST be fetched";
+    EXPECT_TRUE(fetched(src_raw->downloaded_files, "20200101_220000_EVE.edf"))
+        << "a restamped sidecar carries new events and MUST be fetched";
+}
+
+// A sidecar we have never stored has no stamp to match, so it is fetched. This
+// is the one-time cost of adopting the detector on an existing install.
+TEST_F(BurstOrchestrationTest, Sidecar_NeverStored_IsFetched) {
+    auto svc = makeService(&BurstOrchestrationTest::seedStampedSession);
+
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, sessionExists(_, _)).WillRepeatedly(Return(false));
+
+    svc->runBurstCycleForTest();
+
+    EXPECT_TRUE(fetched(src_raw->downloaded_files, "20200101_220000_CSL.edf"));
+    EXPECT_TRUE(fetched(src_raw->downloaded_files, "20200101_220000_EVE.edf"));
 }
 
 // Scenario 4: A discovered session flagged force-completed must be skipped:
