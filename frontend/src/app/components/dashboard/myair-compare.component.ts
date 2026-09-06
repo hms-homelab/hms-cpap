@@ -1,7 +1,9 @@
-import { Component, Input } from '@angular/core';
+import { Component, Input, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { TranslatePipe } from '@ngx-translate/core';
 import { MyAirComparisonRow } from '../../models/session.model';
+import { formatShortNightDate } from '../../utils/format';
+import { LanguageService } from '../../services/language.service';
 
 /**
  * SDD-020: what we read off the card, beside what ResMed's own servers say about
@@ -175,6 +177,8 @@ import { MyAirComparisonRow } from '../../models/session.model';
 export class MyAirCompareComponent {
   @Input() rows: MyAirComparisonRow[] = [];
 
+  private lang = inject(LanguageService);
+
   /// 'compare' once ANY night has our data too. A single night with both sides
   /// is enough: the comparison is the more useful view, and the myAir-only board
   /// exists for the install that has no card data at all rather than for a run
@@ -188,9 +192,7 @@ export class MyAirCompareComponent {
   }
 
   shortDate(d: string): string {
-    if (!d) return '';
-    const parsed = new Date(d.substring(0, 10) + 'T12:00:00');
-    return parsed.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    return formatShortNightDate(d, this.lang.current());
   }
 
   private toNumber(v: string | number | null): number | null {

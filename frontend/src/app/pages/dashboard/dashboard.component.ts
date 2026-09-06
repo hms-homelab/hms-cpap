@@ -2,7 +2,8 @@ import { Component, OnInit, ViewChild, ElementRef, AfterViewInit } from '@angula
 import { CommonModule } from '@angular/common';
 import { TranslatePipe, TranslateService } from '@ngx-translate/core';
 import { CpapApiService } from '../../services/cpap-api.service';
-import { formatIndex } from '../../utils/format';
+import { formatIndex, formatNightDate, nightAgeInDays } from '../../utils/format';
+import { LanguageService } from '../../services/language.service';
 import { KeyMetricsComponent, KeyMetricsData } from '../../components/dashboard/key-metrics.component';
 import { OximetryRowComponent, OximetryRowData } from '../../components/dashboard/oximetry-row.component';
 import { AiSummaryComponent } from '../../components/dashboard/ai-summary.component';
@@ -32,7 +33,14 @@ const MODE_LABELS: Record<string, string> = {
   template: `
     <div class="dashboard">
       <h2>{{ 'dashboard.page.heading' | translate:{ device: deviceName } }}</h2>
-      <div class="dash-subtitle" *ngIf="data">Last Session - {{ formatDate(data.latest_night.date) }}</div>
+      <!-- The headline night is the NEWEST row, with no date bound on the query
+           (unlike the 30-day trend below). A machine that stopped syncing three
+           weeks ago shows a three-week-old AHI that looks identical to last
+           night's, so the age is called out once it is no longer current. -->
+      <div class="dash-subtitle" *ngIf="data">
+        {{ 'dashboard.page.latestNight' | translate:{ date: formatDate(data.latest_night.date) } }}
+        <span class="night-age" *ngIf="isStale">{{ 'dashboard.page.latestNightAge' | translate:{ count: nightAgeDays } }}</span>
+      </div>
 
       <!-- SDD-019: the index. Hidden entirely when there is nothing to score,
            rather than shown as a zero, which would read as the worst possible
@@ -166,6 +174,9 @@ const MODE_LABELS: Record<string, string> = {
     .dashboard { padding: 1.5rem; max-width: 1200px; margin: 0 auto; }
     h2 { color: #e0e0e0; margin-bottom: 0.25rem; font-size: 1.3rem; }
     .dash-subtitle { color: #888; font-size: 0.85rem; margin-bottom: 1.25rem; }
+    /* Amber, not red: stale data is a "look at this" and not a fault. The
+       numbers below it are still true, they are just not about last night. */
+    .night-age { color: #f59e0b; font-weight: 600; }
     .live-banner { background: #1a2a1a; border: 1px solid #2d5a2d; border-radius: 10px; padding: 1rem 1.5rem; margin-bottom: 1.5rem; }
     .live-indicator { display: flex; align-items: center; gap: 0.5rem; color: #4ade80; font-weight: 700; font-size: 0.85rem; letter-spacing: 0.1em; margin-bottom: 0.75rem; }
     .live-dot { width: 10px; height: 10px; border-radius: 50%; background: #4ade80; animation: pulse-live 1.5s ease-in-out infinite; }
@@ -261,7 +272,8 @@ export class DashboardComponent implements OnInit, AfterViewInit {
   summaryRefreshing = false;
   summaryRefreshMsg = '';
 
-  constructor(private api: CpapApiService, private t: TranslateService) {}
+  constructor(private api: CpapApiService, private t: TranslateService,
+              private lang: LanguageService) {}
 
   fmtDuration(val: string | number | undefined): string {
     const hours = +(val || 0);
@@ -273,9 +285,26 @@ export class DashboardComponent implements OnInit, AfterViewInit {
   }
 
   formatDate(dateStr: string): string {
-    if (!dateStr) return '';
-    const d = new Date(dateStr + 'T12:00:00');
-    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    return formatNightDate(dateStr, this.lang.current());
+  }
+
+  /** Whole days between the headline night and today; null when unknown. */
+  get nightAgeDays(): number | null {
+    return nightAgeInDays(this.data?.latest_night?.date ?? '');
+  }
+
+  /**
+   * Is the headline night old enough to say so?
+   *
+   * TWO DAYS, not one. A sleep day is a date LABEL for a night that mostly runs
+   * after midnight, so this morning's therapy is normally filed under
+   * yesterday's date and an age of 1 is the healthy steady state. Flagging at 1
+   * would mark a perfectly current dashboard stale every single morning, and a
+   * warning that fires every day is one nobody reads.
+   */
+  get isStale(): boolean {
+    const age = this.nightAgeDays;
+    return age !== null && age >= 2;
   }
 
   /// SDD-019. The band arrives as a stable key so the API stays language-free;

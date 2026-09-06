@@ -2,6 +2,8 @@
   "dashboard": {
     "page": {
       "heading": "Terapia del sueño: {{device}}",
+      "latestNight": "Última noche: {{date}}",
+      "latestNightAge": "(hace {{count}} día(s))",
       "lastNight": "Anoche",
       "duration": "Duración",
       "cpapdashIndex": "Índice de CpapDash",
