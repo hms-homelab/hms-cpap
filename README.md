@@ -38,7 +38,7 @@ It is a fully local-first experience.
 
 On a Sefam card you get the recorded signals, breath-by-breath respiratory
 mechanics, and apneas. **You do not get an AHI.** The machine records apneas but
-does not mark hypopneas in a form anyone outside Sefam can read, so CpapDash
+does not mark hypopneas in a form anyone outside Sefam can read, so HMS-CPAP
 shows an apnea-only index and labels it as one. It will read lower than the AHI
 a ResMed reports for the same night. That is a different measurement, not a
 better night.
