@@ -3158,3 +3158,120 @@ TEST(ResolveSleepDay, TheFallbackTurnsOverAtNoon) {
     EXPECT_EQ(BurstCollectorService::resolveSleepDay("", atLocal(2026, 8, 13, 12, 1)),
               "2026-08-13");
 }
+
+// ---------------------------------------------------------------------------
+// Card-stamp change detection
+//
+// One test shared by the per-burst download and the close-time refetch. The
+// close pass re-runs on the same folder every burst until the ledger retires
+// it, so a sidecar the card has finished writing was being pulled again and
+// again for bytes that could not have changed.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+// A file on disk carrying a chosen card stamp as its mtime.
+std::filesystem::path stampedFile(const std::string& name,
+                                  const std::string& contents,
+                                  std::time_t stamp) {
+    auto dir = std::filesystem::temp_directory_path() / "hms_cpap_card_stamp_test";
+    std::filesystem::create_directories(dir);
+    auto path = dir / name;
+    { std::ofstream f(path); f << contents; }
+    if (stamp != 0) BurstCollectorService::stampLocalCopy(stamp, path.string());
+    return path;
+}
+
+constexpr std::time_t kStamp = 1757000000;   // 2025-09-04 in UTC, arbitrary
+
+} // namespace
+
+// The copy we hold is the one the card is offering. Nothing to fetch.
+TEST(CardStampDetection, MatchingStampMeansWeAlreadyHoldIt) {
+    auto p = stampedFile("match_CSL.edf", "bytes", kStamp);
+    EXPECT_TRUE(BurstCollectorService::holdCurrentCopy(kStamp, p.string()));
+}
+
+// The card wrote it again. A sub-KB append is invisible to the listing's
+// KB-rounded size and this is the only signal that catches it.
+TEST(CardStampDetection, ADifferentStampMeansTheCardWroteAgain) {
+    auto p = stampedFile("appended_CSL.edf", "bytes", kStamp);
+    EXPECT_FALSE(BurstCollectorService::holdCurrentCopy(kStamp + 1, p.string()));
+}
+
+// Equality, never ordering. A card whose clock ran BACKWARDS still wrote the
+// file, and an ordering test would call our copy newer and skip it forever.
+TEST(CardStampDetection, AnOlderCardStampStillCountsAsAWrite) {
+    auto p = stampedFile("backwards_CSL.edf", "bytes", kStamp);
+    EXPECT_FALSE(BurstCollectorService::holdCurrentCopy(kStamp - 3600, p.string()));
+}
+
+// Every way of not knowing resolves to fetch.
+TEST(CardStampDetection, UnknownAbsentOrEmptyAllMeanFetch) {
+    auto p = stampedFile("known_CSL.edf", "bytes", kStamp);
+
+    // Listing carried no stamp for this file.
+    EXPECT_FALSE(BurstCollectorService::holdCurrentCopy(0, p.string()));
+
+    // Never downloaded, or deleted underneath us.
+    auto missing = p.parent_path() / "not_here_CSL.edf";
+    std::filesystem::remove(missing);
+    EXPECT_FALSE(BurstCollectorService::holdCurrentCopy(kStamp, missing.string()));
+
+    // A zero-byte file is a failed download wearing a good stamp.
+    auto empty = stampedFile("empty_CSL.edf", "", kStamp);
+    EXPECT_FALSE(BurstCollectorService::holdCurrentCopy(kStamp, empty.string()));
+}
+
+// An unstamped copy from before this change: pulled once, then stamped. The
+// fleet-wide one-time refetch is bounded and self-healing by construction.
+TEST(CardStampDetection, ALegacyCopyIsFetchedOnceThenRecognised) {
+    auto p = stampedFile("legacy_EVE.edf", "bytes", 0);   // whatever mtime now is
+    ASSERT_FALSE(BurstCollectorService::holdCurrentCopy(kStamp, p.string()));
+
+    BurstCollectorService::stampLocalCopy(kStamp, p.string());
+    EXPECT_TRUE(BurstCollectorService::holdCurrentCopy(kStamp, p.string()));
+}
+
+// A zero-byte .edf is a BROKEN file, not a small one -- a valid EDF always has
+// a header. One exists on the real card (20260321_042955_CSL.edf, 1 in 253
+// sidecars), so this is not hypothetical.
+//
+// Stamping it is the worst outcome available: from the next burst on its stamp
+// would match, holdCurrentCopy would report we already hold the current copy,
+// and if the machine later wrote the file properly we would skip it forever and
+// the night's data would never arrive. Refusing the stamp costs one redundant
+// fetch per burst on an already-broken file and keeps the door open.
+TEST(CardStampDetection, AnEmptyFileIsNeverStamped) {
+    auto p = stampedFile("faulty_CSL.edf", "", 0);   // zero bytes, unstamped
+    BurstCollectorService::stampLocalCopy(kStamp, p.string());
+
+    struct stat st{};
+    ASSERT_EQ(::stat(p.string().c_str(), &st), 0);
+    EXPECT_EQ(st.st_size, 0);
+    EXPECT_NE(st.st_mtime, kStamp) << "an empty file must not carry the card's stamp";
+
+    // And so it can never be mistaken for a copy we already hold.
+    EXPECT_FALSE(BurstCollectorService::holdCurrentCopy(kStamp, p.string()));
+}
+
+// The guard must not cost us the good copy: once the machine writes the file
+// properly, the very next fetch stamps it and it settles like any other.
+TEST(CardStampDetection, TheGoodCopyStampsNormallyAfterwards) {
+    auto p = stampedFile("recovered_CSL.edf", "", 0);
+    BurstCollectorService::stampLocalCopy(kStamp, p.string());
+    ASSERT_FALSE(BurstCollectorService::holdCurrentCopy(kStamp, p.string()));
+
+    { std::ofstream f(p); f << "a real EDF header would go here"; }
+    BurstCollectorService::stampLocalCopy(kStamp, p.string());
+    EXPECT_TRUE(BurstCollectorService::holdCurrentCopy(kStamp, p.string()));
+}
+
+// The lookup both paths use to reach the listing's stamps.
+TEST(CardStampDetection, AFileMissingFromTheListingHasNoStamp) {
+    SessionFileSet s;
+    s.card_stamps["20260812_233427_CSL.edf"] = kStamp;
+
+    EXPECT_EQ(BurstCollectorService::cardStampFor(s, "20260812_233427_CSL.edf"), kStamp);
+    EXPECT_EQ(BurstCollectorService::cardStampFor(s, "20260812_233427_EVE.edf"), 0);
+}

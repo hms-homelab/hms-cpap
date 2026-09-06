@@ -1,4 +1,6 @@
 #include "utils/TimeCompat.h"
+#include <sys/stat.h>
+#include <utime.h>
 #include "utils/OximetryDevice.h"
 #include "services/BurstCollectorService.h"
 #include "services/InsightsEngine.h"
@@ -29,6 +31,26 @@
 #include <set>
 
 namespace hms_cpap {
+
+namespace {
+
+/// Say so when a download lands empty. A zero-byte .edf is a faulty file, not a
+/// small one, and it is deliberately left unstamped -- which means we re-fetch
+/// it every burst. Without a line in the log that looks exactly like the
+/// sidecar treadmill we just removed, and someone will "fix" it by stamping the
+/// file, which is the one thing that must not happen: a stamped empty file
+/// matches forever, so if the machine later writes it properly we skip it and
+/// the night's data never arrives.
+void warnIfEmpty(const std::string& local_path, const std::string& name) {
+    struct stat st{};
+    if (::stat(local_path.c_str(), &st) == 0 && st.st_size == 0) {
+        std::cerr << "⚠️  CPAP: " << name << " came back EMPTY (0 bytes). A valid EDF "
+                  << "always has a header, so the card's copy is faulty. Left unstamped "
+                  << "and will be retried." << std::endl;
+    }
+}
+
+} // namespace
 
 BurstCollectorService::BurstCollectorService(int burst_interval_seconds)
     : burst_interval_seconds_(burst_interval_seconds),
@@ -400,13 +422,29 @@ bool BurstCollectorService::downloadSessionFiles(
         return false;
     };
 
-    // Download EVERY CSL and EVE the session covers - always full downloads
-    // (small, don't grow). One per mask-on block, so a merged night has several
-    // and the later ones are the ones carrying its annotations. See SDD-014.
+    // Download the CSL and EVE files the session covers, but only the ones the
+    // card has written since we last stored them. One per mask-on block, so a
+    // merged night has several and the later ones carry its annotations
+    // (SDD-014).
+    //
+    // These used to be re-downloaded unconditionally every burst, on a comment
+    // asserting they "don't grow". They do grow, all night, and the reason
+    // nobody noticed is that the only test available -- size -- rounds them to
+    // the same 0 KB whatever they do.
+    int skipped_unchanged = 0;
     auto downloadSmall = [&](const char* label, const std::vector<std::string>& names) {
         for (const auto& name : names) {
             std::string local_path = local_dir + "/" + name;
+            const std::time_t card_stamp = cardStampFor(session, name);
+
+            if (holdCurrentCopy(card_stamp, local_path)) {
+                skipped_unchanged++;
+                continue;
+            }
+
             if (data_source_->downloadFile(session.date_folder, name, local_path)) {
+                stampLocalCopy(card_stamp, local_path);
+                warnIfEmpty(local_path, name);
                 downloaded++;
                 full_downloads++;
             } else {
@@ -454,8 +492,11 @@ bool BurstCollectorService::downloadSessionFiles(
     if (success) {
         std::cout << "✅ CPAP: Session " << session.session_prefix
                   << " downloaded (" << downloaded << " file(s)"
-                  << " - " << range_downloads << " Range, " << full_downloads << " Full)"
-                  << std::endl;
+                  << " - " << range_downloads << " Range, " << full_downloads << " Full";
+        if (skipped_unchanged > 0) {
+            std::cout << ", " << skipped_unchanged << " unchanged";
+        }
+        std::cout << ")" << std::endl;
     } else {
         std::cerr << "❌ CPAP: Session " << session.session_prefix
                   << " - no files downloaded" << std::endl;
@@ -823,6 +864,58 @@ bool BurstCollectorService::processSTRFile() {
 }
 
 // ---------------------------------------------------------------------------
+// Card-stamp change detection
+//
+// One test, used by both paths that pull a sidecar: the per-burst download and
+// the close-time refetch below. They MUST agree -- the burst path stamps what
+// it stores and the close path reads that stamp back -- and they only stayed
+// in step for as long as one of them was the only one that looked.
+// ---------------------------------------------------------------------------
+
+/*static*/ std::time_t BurstCollectorService::cardStampFor(
+    const SessionFileSet& session, const std::string& filename) {
+    auto it = session.card_stamps.find(filename);
+    return it == session.card_stamps.end() ? 0 : it->second;
+}
+
+/*static*/ bool BurstCollectorService::holdCurrentCopy(
+    std::time_t card_stamp, const std::string& local_path) {
+    if (card_stamp == 0) return false;          // unknown stamp: fetch
+
+    struct stat st{};
+    if (::stat(local_path.c_str(), &st) != 0) return false;   // absent: fetch
+    if (st.st_size == 0) return false;                        // empty: fetch
+
+    return st.st_mtime == card_stamp;
+}
+
+/*static*/ void BurstCollectorService::stampLocalCopy(
+    std::time_t card_stamp, const std::string& local_path) {
+    if (card_stamp == 0) return;
+
+    // Never stamp an empty file.
+    //
+    // A zero-byte .edf is not a small file, it is a BROKEN one: every valid EDF
+    // carries a header even when it holds no data, so zero bytes means the
+    // write never happened or was lost. One exists on the real card
+    // (20260321_042955_CSL.edf, 1 in 253 sidecars), so this is not theoretical.
+    //
+    // Stamping it would be the worst outcome available. From the next burst on,
+    // its stamp would match and holdCurrentCopy would say we already hold the
+    // current copy -- so if the machine later WROTE that file properly, we
+    // would skip it forever and the night's data would never arrive. Refusing
+    // the stamp costs a redundant fetch per burst on a file that is already
+    // broken, and keeps the door open for the good copy.
+    struct stat st{};
+    if (::stat(local_path.c_str(), &st) != 0 || st.st_size == 0) return;
+
+    struct ::utimbuf times{};
+    times.actime = card_stamp;
+    times.modtime = card_stamp;
+    ::utime(local_path.c_str(), &times);   // best effort
+}
+
+// ---------------------------------------------------------------------------
 // SDD-008: per-folder transfer ledger
 // ---------------------------------------------------------------------------
 
@@ -834,6 +927,7 @@ bool BurstCollectorService::refetchSidecars(
 
     bool all_ok = true;
     int  fetched = 0;
+    int  unchanged = 0;
 
     for (const auto* s : sets) {
         const std::string local_dir = local_base_dir + "/" + s->date_folder;
@@ -843,10 +937,30 @@ bool BurstCollectorService::refetchSidecars(
         sidecars.insert(sidecars.end(), s->eve_files.begin(), s->eve_files.end());
         for (const auto& name : sidecars) {
             if (name.empty()) continue;
+
+            const std::string local_path = local_dir + "/" + name;
+            const std::time_t card_stamp = cardStampFor(*s, name);
+
+            // The session is over and the card has stopped writing this file.
+            // If the copy on disk carries the card's current stamp it IS the
+            // final copy, and pulling it again returns the same bytes.
+            //
+            // Not a saving worth a comment on its own: this runs on the same
+            // folder every burst until the ledger retires it, so the refetch
+            // it replaces was every CSL and EVE of the night, over and over,
+            // back-to-back full downloads at the card. That is the shape that
+            // wedged the ezShare on the bench.
+            if (holdCurrentCopy(card_stamp, local_path)) {
+                ++unchanged;
+                continue;
+            }
+
             // downloadFile, deliberately, NEVER downloadFileRange: a ranged
             // request at or past the card's real EOF hangs the ezShare, and a
             // KB-rounded listing cannot prove where the real end is.
-            if (data_source_->downloadFile(s->date_folder, name, local_dir + "/" + name)) {
+            if (data_source_->downloadFile(s->date_folder, name, local_path)) {
+                stampLocalCopy(card_stamp, local_path);
+                warnIfEmpty(local_path, name);
                 ++fetched;
             } else {
                 std::cerr << "⚠️  CPAP: sidecar refetch failed: " << name << std::endl;
@@ -855,8 +969,10 @@ bool BurstCollectorService::refetchSidecars(
         }
     }
 
-    if (fetched > 0) {
-        std::cout << "CPAP: refetched " << fetched << " sidecar file(s) at close" << std::endl;
+    if (fetched > 0 || unchanged > 0) {
+        std::cout << "CPAP: refetched " << fetched << " sidecar file(s) at close";
+        if (unchanged > 0) std::cout << " (" << unchanged << " already current)";
+        std::cout << std::endl;
     }
     return all_ok;
 }
@@ -919,9 +1035,14 @@ void BurstCollectorService::updateFolderLedgers(
             }
             t.next.str_day = strDayForSessionStart(earliest);
 
-            // The close edge is the one moment the regular path never
-            // re-downloads, so it is the only chance to catch a sidecar that
-            // grew inside a single KB bucket after the last checkpoint change.
+            // Belt and braces at the close edge. It used to be the only chance
+            // to catch a sidecar that grew inside a single KB bucket, because
+            // the regular path could not see sub-KB growth at all; now that
+            // path pulls on the card's stamp and has usually already stored the
+            // final copy. What is left here is the retry: a folder this burst
+            // never walked, or a download that failed. Both paths read the same
+            // stamps from the same listing, so when there is nothing new this
+            // is a no-op that still clears the debt.
             if (refetchSidecars(sets, local_base_dir)) {
                 t.next = clearSidecarDebt(t.next);
             }
