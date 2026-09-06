@@ -20,7 +20,18 @@ OUT_DIR="$PROJECT_DIR/coverage"
 MIN_PCT="${1:-}"
 
 # lcov 2.x is stricter; tolerate benign gcov/source mismatches without failing.
-LCOV_FLAGS="--ignore-errors mismatch,unused,gcov,source,negative,empty,inconsistent"
+#
+# 'format' and 'count' were added for lcov 2.4, which promotes to a hard ERROR
+# what earlier versions warned about: clang's gcov emits __cxx_global_var_init
+# at line 0, and lcov 2.4 aborts the capture on the first one. That killed the
+# gate outright -- the script exited before computing any total, so there was no
+# number at all rather than a low one. A static initialiser reported at line 0
+# is a gcov artefact, not a coverage fact, and it is the same class of benign
+# mismatch every other flag on this line already tolerates.
+#
+# These suppress DIAGNOSTICS, never measurement: no flag here changes which
+# lines are counted or the threshold they are judged against.
+LCOV_FLAGS="--ignore-errors mismatch,unused,gcov,source,negative,empty,inconsistent,format,count"
 
 echo "== Configuring instrumented build =="
 cmake -S "$PROJECT_DIR" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Debug -DENABLE_COVERAGE=ON >/dev/null
@@ -117,7 +128,14 @@ echo "$SUMMARY"
 echo "Report: $OUT_DIR/html/index.html"
 
 # Extract total line coverage percentage (e.g. "lines......: 42.3% (...)").
-LINE_PCT="$(echo "$SUMMARY" | grep -oP 'lines\.+:\s*\K[0-9.]+' | head -1)"
+#
+# sed, not `grep -oP`: -P is a GNU extension and BSD grep rejects it outright,
+# so on macOS this line failed and took the whole script's exit status with it
+# AFTER the summary had already printed. The number was on screen and the gate
+# still reported failure, which is the worst shape a gate can have -- the
+# STANDING RULE is that nothing is pushed before local coverage passes, and the
+# local gate could not pass on the machine the rule is applied from.
+LINE_PCT="$(echo "$SUMMARY" | sed -n 's/^ *lines\.*: *\([0-9.]*\)%.*/\1/p' | head -1)"
 echo "TOTAL_LINE_COVERAGE=${LINE_PCT:-0}"
 [[ "$TEST_RC" -ne 0 ]] && echo "WARNING: run_tests exited $TEST_RC (some tests failed; coverage still captured)"
 

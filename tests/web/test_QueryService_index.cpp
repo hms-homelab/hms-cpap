@@ -162,6 +162,11 @@ protected:
                 "SELECT id FROM cpap_sessions WHERE device_id = " +
                     sql::param(1, db_->dbType()) + ")",
                 {device_});
+            db_->executeQuery(
+                "DELETE FROM cpap_events WHERE session_id IN ("
+                "SELECT id FROM cpap_sessions WHERE device_id = " +
+                    sql::param(1, db_->dbType()) + ")",
+                {device_});
             db_->executeQuery("DELETE FROM cpap_sessions WHERE device_id = " +
                                   sql::param(1, db_->dbType()),
                               {device_});
@@ -451,6 +456,78 @@ TEST_P(QueryServiceIndexTest, AMixedRangeReportsTheWeakerKind) {
     ASSERT_GT(st.size(), 0u) << engineName(GetParam());
     EXPECT_EQ(st[0]["index_kind"].asString(), "ungraded")
         << engineName(GetParam()) << ": a mixed range claimed to be an AHI";
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The events page (SDD-009), which SDD-024 named as a surface and which had no
+// test on any engine
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_P(QueryServiceIndexTest, TheEventsSearchFiltersByTypeAndDuration) {
+    // A Sefam night: every event is a bare Apnea, because this machine says an
+    // apnea happened and never says which kind. That is the case the events
+    // page has to render, and the one the type filter has to be able to ask
+    // for -- the UI offers Obstructive/Central/Hypopnea/... as checkboxes, and
+    // a machine that emits none of them must still be searchable.
+    const auto start = system_clock::now() - hours(30);
+
+    CPAPSession s;
+    s.device_id = device_;
+    s.session_start = start;
+    s.session_end = start + hours(7);
+    s.duration_seconds = 7 * 3600;
+    s.has_events = true;
+    s.events = {
+        {EventType::APNEA,     start + minutes(30),  14.0},
+        {EventType::APNEA,     start + minutes(90),  22.0},
+        {EventType::APNEA,     start + minutes(150), 11.0},
+        {EventType::HYPOPNEA,  start + minutes(200), 18.0},
+    };
+
+    SessionMetrics m;
+    m.ahi = 4.5;
+    m.total_events = 4;
+    m.index_kind = SessionMetrics::IndexKind::Ungraded;
+    s.metrics = m;
+    ASSERT_TRUE(db_->saveSession(s)) << engineName(GetParam());
+
+    const std::string eng = engineName(GetParam());
+
+    // Everything, no filters. Newest first.
+    auto all = qs_->getEvents("", "", {}, 0, 100, 0);
+    ASSERT_TRUE(all.isArray()) << eng;
+    ASSERT_EQ(all.size(), 4u) << eng << ": the events search lost rows";
+    EXPECT_EQ(all[0]["event_type"].asString(), "Hypopnea")
+        << eng << ": not ordered newest first";
+
+    // By type. The clauses are appended in the same order their parameters are
+    // pushed, and an IN list is the one place that can drift between the three
+    // dialects, so a multi-value filter is the case worth asserting.
+    auto apneas = qs_->getEvents("", "", {"Apnea"}, 0, 100, 0);
+    ASSERT_EQ(apneas.size(), 3u) << eng << ": the type filter did not match";
+    for (const auto& e : apneas)
+        EXPECT_EQ(e["event_type"].asString(), "Apnea") << eng;
+
+    // By minimum duration, which is inlined rather than parameterised.
+    auto longOnes = qs_->getEvents("", "", {}, 15, 100, 0);
+    ASSERT_EQ(longOnes.size(), 2u) << eng << ": the duration floor did not apply";
+
+    // Type and duration together, so the parameter index keeps counting past
+    // the IN list. Getting this wrong binds the duration to the wrong slot on
+    // PostgreSQL and silently returns the unfiltered set.
+    auto both = qs_->getEvents("", "", {"Apnea"}, 15, 100, 0);
+    ASSERT_EQ(both.size(), 1u) << eng << ": type + duration disagreed";
+    EXPECT_NEAR(asNumber(both[0]["duration_seconds"]), 22.0, 0.01) << eng;
+
+    // Paging.
+    auto page = qs_->getEvents("", "", {}, 0, 2, 1);
+    EXPECT_EQ(page.size(), 2u) << eng << ": limit/offset did not apply";
+
+    // A date window that excludes the night returns nothing rather than
+    // everything, which is the failure mode when an empty bound is treated as
+    // "no clause" on one dialect only.
+    auto none = qs_->getEvents("1999-01-01", "1999-12-31", {}, 0, 100, 0);
+    EXPECT_EQ(none.size(), 0u) << eng << ": the date window was ignored";
 }
 
 INSTANTIATE_TEST_SUITE_P(
