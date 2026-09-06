@@ -1051,14 +1051,7 @@ void SQLiteDatabase::insertSessionMetrics(int64_t session_id, const SessionMetri
 
     bind_int64(g.stmt, 1, session_id);
     bind_int(g.stmt, 2, m.total_events);
-    // NULL when the index is not an AHI: a machine with no hypopnea detection
-    // produces an apnea count per hour, and storing that in a column called
-    // `ahi` is the same claim as displaying it. 0 would be worse -- it reads as
-    // a genuinely event-free night (SDD-081).
-    if (m.index_kind == SessionMetrics::IndexKind::AHI)
-        bind_double(g.stmt, 3, m.ahi);
-    else
-        bind_null(g.stmt, 3);
+    bind_double(g.stmt, 3, m.ahi);
     bind_int(g.stmt, 4, m.obstructive_apneas);
     bind_int(g.stmt, 5, m.central_apneas);
     bind_int(g.stmt, 6, m.hypopneas);
