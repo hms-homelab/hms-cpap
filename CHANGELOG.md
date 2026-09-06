@@ -5,6 +5,49 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.2.1] - 2026-09-06
+
+### Fixed
+- **A Sefam S.Box card crashed the collector.** The card parsed correctly and
+  the sessions were saved, then the worker thread dereferenced a null pointer
+  looking for an `STR.edf` that Sefam machines do not write. The dashboard was
+  empty for data the service had just read.
+
+- **The sessions list was empty for everyone.** A column added to one half of
+  the query and not the other made it fail when the statement was prepared.
+  Nothing surfaced an error: the endpoint answered normally with an empty list
+  while the dashboard beside it stayed full. Anyone on 5.2.0 was affected,
+  whatever their machine.
+
+- **A night's index no longer disagrees with itself.** The sessions list rebuilt
+  it from the per-type event columns, which leaves out the apneas a machine
+  reports without classifying. The same night read 0.00 in the list and 60.0 on
+  the dashboard. ResMed nights carrying unclassified apneas were undercounted by
+  the same route.
+
+- **Reports named the wrong machine.** Every PDF cover said "ResMed AirSense 10"
+  regardless of what recorded the data.
+
+### Changed
+- **An apnea index is no longer shown as an AHI.** The Sefam S.Box scores apneas
+  and never marks hypopneas, so its events-per-hour is a different measurement
+  on a different scale, and roughly a third of a real AHI is missing from it.
+  Every surface that showed it now says which index it is, and none of them
+  grade it against AHI severity bands: the dashboard, the sessions list, the
+  session detail, the 30-day trend, and the PDF, in all five languages.
+
+- **Counts a machine never measured are no longer shown as zero.** Obstructive,
+  central, hypopnea and RERA are all zero on a machine that does not classify
+  its events, and every one of these read that as a clean night. The hypopnea
+  tile was even coloured green. Where there is no breakdown, there is now a
+  sentence saying why, and the charts and panels that would have plotted flat
+  lines along zero are gone. The event count itself is still shown.
+
+- **The therapy score is withheld for a machine whose events cannot be graded**,
+  rather than computed from the parts that remain. Scoring usage and leak alone
+  rated a 17 apneas/hour night as good. Usage, leak and the apnea index are all
+  still reported on their own.
+
 ## [5.2.0] - 2026-09-06
 
 ### Added
