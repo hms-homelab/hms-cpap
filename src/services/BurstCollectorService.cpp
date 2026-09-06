@@ -221,11 +221,19 @@ void BurstCollectorService::initLlm() {
             "You are a CPAP therapy analyst. Summarize this CPAP session using "
             "this exact markdown structure:\n\n"
             "**Overall**\n"
-            "* AHI assessment (good/moderate/elevated) with value\n"
+            // SDD-024: the session data says whether an AHI exists, and for a
+            // machine that detects no hypopneas it says explicitly that one
+            // cannot be formed. This bullet used to read "AHI assessment
+            // (good/moderate/elevated) with value", which INSTRUCTS the grading
+            // the data block refuses -- and an instruction to assess beats a
+            // note saying the number is missing. Ask for the index that is
+            // there, and let the data decide whether it may be characterised.
+            "* The event index reported below, with its value, and an "
+            "assessment ONLY if the data gives an AHI\n"
             "* Usage hours and compliance vs 8h target\n"
             "* Leak control assessment\n\n"
             "**Events**\n"
-            "* Breakdown of event types (obstructive, central, hypopnea, RERA)\n"
+            "* Breakdown of event types, using only the types the data reports\n"
             "* Any concerning patterns\n\n"
             "**Recommendations**\n"
             "* 1-2 actionable suggestions based on the data\n\n"
@@ -728,7 +736,10 @@ void BurstCollectorService::captureCardResidue(const std::string& archive_root) 
 }
 
 void BurstCollectorService::processSessionSummary() {
-    if (cpap_source_ == "lowenstein") {
+    // STR.edf is a ResMed artefact. A Lowenstein or Sefam card has no equivalent,
+    // so there is nothing for processSTRFile() to read and cpap_daily_summary can
+    // only come from the sessions we just parsed.
+    if (cpap_source_ == "lowenstein" || cpap_source_ == "sefam") {
         // TODO(#15): avg_mask_pressure/avg_spo2/avg_epr_pressure etc. are always 0 in
         // cpap_session_metrics because PrismaParser never aggregates the per-minute
         // WMEDF signal samples (pressure/leak/SpO2/HR) into those fields. Once that
@@ -788,7 +799,20 @@ bool BurstCollectorService::processSTRFile() {
                 return false;
             }
         } else {
-            // ezShare/Fysetc mode: download from SD card root
+            // ezShare/Fysetc mode: download from SD card root.
+            //
+            // Only those two build a data_source_. A format that ingests off a
+            // directory (lowenstein, sefam) leaves it null, and reaching here
+            // with it null used to segfault the collector thread mid-cycle —
+            // taking the whole service down on a card that had just parsed
+            // perfectly well. The caller is expected to have returned before
+            // this point; refuse rather than trust that it did.
+            if (!data_source_) {
+                std::cerr << "STR: no network source for '" << cpap_source_
+                          << "'; deriving the daily summary from sessions instead."
+                          << std::endl;
+                return false;
+            }
             std::string local_base = ConfigManager::get("CPAP_TEMP_DIR",
                 (std::filesystem::temp_directory_path() / "cpap_data").string());
             std::filesystem::create_directories(local_base);
@@ -1148,11 +1172,12 @@ bool BurstCollectorService::isNightPartial(
     // that happens to be reachable through a mount point. SDD-010 gives local
     // nights ledger rows for exactly that reason.
     //
-    // Lowenstein still gets none, deliberately. It has no STR.edf, and
-    // processSessionSummary() early-returns before processSTRFile(), the sole
-    // caller of clearStrDebtForParsedDays(). An armed debt there could never be
-    // cleared, so keeping Prisma out of the ledger is what stops every Prisma
-    // night latching Partial forever. False here is the correct answer for it.
+    // Lowenstein and Sefam still get none, deliberately. Neither writes an
+    // STR.edf, and processSessionSummary() early-returns for both before
+    // processSTRFile(), the sole caller of clearStrDebtForParsedDays(). An
+    // armed debt there could never be cleared, so keeping those cards out of
+    // the ledger is what stops every one of their nights latching Partial
+    // forever. False here is the correct answer for them.
     if (!ledger) return false;
 
     return nightState(*ledger) == NightState::Partial;
@@ -1509,10 +1534,10 @@ bool BurstCollectorService::executeBurstCycle() {
         // from the CPAP into the share after therapy ends, disproves it.
         //
         // ResMed only. See processSessionSummary(): it early-returns for
-        // Lowenstein and never reaches processSTRFile(), the sole caller of
-        // clearStrDebtForParsedDays(). Lowenstein has no STR.edf at all, so an
-        // armed str_due there could never be cleared by any path, and every
-        // Prisma night would latch Partial forever.
+        // Lowenstein and Sefam and never reaches processSTRFile(), the sole
+        // caller of clearStrDebtForParsedDays(). Neither card has an STR.edf at
+        // all, so an armed str_due there could never be cleared by any path,
+        // and every one of their nights would latch Partial forever.
         updateFolderLedgers(new_sessions, local_datalog_dir);
 
         if (new_sessions.empty()) {
@@ -2544,11 +2569,23 @@ std::string BurstCollectorService::buildMetricsString(const SessionMetrics& metr
                "estimate one, and do not describe the events below as mild, "
                "normal or severe.\n";
     }
-    oss << "Total events: " << metrics.total_events
-        << " (obstructive=" << metrics.obstructive_apneas
-        << ", central=" << metrics.central_apneas
-        << ", hypopnea=" << metrics.hypopneas
-        << ", RERA=" << metrics.reras << ")\n";
+    // The per-type breakdown goes only when the machine produced one. On a
+    // machine that does not classify, every one of these is 0, and "hypopnea=0"
+    // is a fact the model will faithfully report as "no hypopneas were
+    // recorded" -- which is the same false reassurance the UI was giving before
+    // SDD-024, laundered through a sentence.
+    oss << "Total events: " << metrics.total_events;
+    if (metrics.index_kind == SessionMetrics::IndexKind::AHI) {
+        oss << " (obstructive=" << metrics.obstructive_apneas
+            << ", central=" << metrics.central_apneas
+            << ", hypopnea=" << metrics.hypopneas
+            << ", RERA=" << metrics.reras << ")";
+    } else {
+        oss << " (all apneas; this machine does not classify them as "
+               "obstructive or central and does not mark hypopneas, so no "
+               "per-type breakdown exists. Do not report any type as zero.)";
+    }
+    oss << "\n";
 
     if (metrics.avg_event_duration.has_value()) {
         oss << "Avg event duration: " << metrics.avg_event_duration.value() << "s";
