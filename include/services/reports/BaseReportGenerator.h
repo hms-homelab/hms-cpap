@@ -73,6 +73,25 @@ protected:
     static std::string nowStr();
     static std::string toOxiDate(const std::string& yyyymmdd);
 
+    /**
+     * SDD-024: is the index on this row an apnea-HYPOPNEA index?
+     *
+     * A row with no index_kind is treated as one, which is what every row was
+     * before the column existed.
+     */
+    static bool gradableIndex(const Json::Value& row);
+
+    /**
+     * What to CALL the index on this row: "AHI", or "Apnea Index" for a machine
+     * that scores apneas and never marks a hypopnea.
+     *
+     * A PDF is the artefact a user takes to a clinician, so a number labelled
+     * AHI there will be read against AHI severity bands by someone who cannot
+     * ask what produced it. This is the one surface where the label has to be
+     * right without a tooltip to fall back on.
+     */
+    static std::string indexLabel(const Json::Value& row);
+
     // Shared PDF section builders
     void addSummarySection (PdfRenderer& pdf, const Json::Value& st,
                             const std::string& start, const std::string& end, int nights);

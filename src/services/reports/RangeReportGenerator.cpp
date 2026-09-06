@@ -43,8 +43,18 @@ void RangeReportGenerator::buildCharts(const std::string& tmpDir,
         usagePts.push_back({d, jd(r, "duration_minutes") / 60.0});
     }
 
+    // SDD-024: the chart is titled by the index it plots. Any ungraded night in
+    // the range makes the whole series ungraded -- a line that is an AHI for
+    // half its length and an apnea index for the other half cannot be titled
+    // either one, and the weaker claim is the true one.
+    const bool graded = [&] {
+        for (const auto& r : daily) if (!gradableIndex(r)) return false;
+        return true;
+    }();
+    const std::string idx = graded ? "AHI" : "Apnea Index";
+
     GnuplotService::renderLineChart(makePoints("ahi"),
-        out.slot_a,   "AHI (Events/Hour)",                      "Events/hr", "#ef4444", 0.0);
+        out.slot_a,   idx + " (Events/Hour)",                    "Events/hr", "#ef4444", 0.0);
     GnuplotService::renderLineChart(usagePts,
         out.slot_b,   "Therapy Duration (Hours)",               "Hours",     "#3b82f6", 0.0, 10.0);
     GnuplotService::renderLineChart(makePoints("leak_95"),
@@ -72,7 +82,7 @@ void RangeReportGenerator::buildCharts(const std::string& tmpDir,
 void RangeReportGenerator::addChartSection(PdfRenderer& pdf, const ChartPaths& charts) {
     pdf.addSectionHeading("Trend Charts");
     if (fs::exists(charts.slot_a))
-        pdf.addChart(charts.slot_a,   "AHI trend — events per hour over the reporting period");
+        pdf.addChart(charts.slot_a,   "Event index trend — events per hour over the reporting period");
     if (fs::exists(charts.slot_b))
         pdf.addChart(charts.slot_b,   "Therapy duration — hours per night");
     if (fs::exists(charts.leak))
@@ -89,8 +99,15 @@ void RangeReportGenerator::addDataSection(PdfRenderer& pdf,
                                            const Json::Value& daily) {
     pdf.addPageBreak();
     pdf.addSectionHeading("Per-Night Data");
+    // SDD-024: same range-level rule as the chart above.
+    const bool graded = [&] {
+        for (const auto& r : daily) if (!gradableIndex(r)) return false;
+        return true;
+    }();
+
     std::vector<std::string> headers = {
-        "Date", "Hours", "AHI", "OAI", "CAI", "HI", "Leak95", "Press95", "SpO2 50th"
+        "Date", "Hours", graded ? "AHI" : "Apnea Index",
+        "OAI", "CAI", "HI", "Leak95", "Press95", "SpO2 50th"
     };
     std::vector<PdfRow> rows;
     for (const auto& r : daily) {
@@ -98,11 +115,28 @@ void RangeReportGenerator::addDataSection(PdfRenderer& pdf,
         if (d.size() >= 10) d = d.substr(0, 10);
         double hrs  = jd(r, "duration_minutes") / 60.0;
         double spo2 = jd(r, "spo2_50");
+        // Per ROW, not per range: the type columns are zero on a night whose
+        // machine did not classify, and a printed 0.0 in an OAI column is read
+        // by a clinician as "no obstructive apneas". Nothing was measured, so
+        // nothing is printed.
+        //
+        // "n/a" rather than an em dash: the PDF's base font has no glyph for
+        // one, so the existing "—" in the SpO2 column below prints as an EMPTY
+        // cell. Empty reads as a rendering gap; the reader cannot tell it from
+        // a column that failed to populate. ASCII prints.
+        const bool typed = gradableIndex(r);
+        const double press95 = jd(r, "mask_press_95");
         rows.push_back({{
             d, fmtHM(hrs),
-            fmt1(jd(r, "ahi")), fmt1(jd(r, "oai")), fmt1(jd(r, "cai")), fmt1(jd(r, "hi")),
-            fmt1(jd(r, "leak_95")), fmt1(jd(r, "mask_press_95")),
-            spo2 > 0 ? fmt1(spo2) + "%" : "—"
+            fmt1(jd(r, "ahi")),
+            typed ? fmt1(jd(r, "oai")) : "n/a",
+            typed ? fmt1(jd(r, "cai")) : "n/a",
+            typed ? fmt1(jd(r, "hi"))  : "n/a",
+            fmt1(jd(r, "leak_95")),
+            // A machine with no mask-pressure channel leaves this 0, and a
+            // printed 0.0 cmH2O is a reading, not a blank (issue 15).
+            press95 > 0 ? fmt1(press95) : "n/a",
+            spo2 > 0 ? fmt1(spo2) + "%" : "n/a"
         }});
     }
     pdf.addDataTable(headers, rows);

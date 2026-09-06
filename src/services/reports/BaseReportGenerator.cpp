@@ -3,6 +3,7 @@
 #include "services/InsightsEngine.h"
 #include "parsers/CpapdashBridge.h"
 #include "database/SqlDialect.h"
+#include "utils/ConfigManager.h"
 #include <filesystem>
 #include <iostream>
 #include <iomanip>
@@ -27,6 +28,14 @@ std::string BaseReportGenerator::js(const Json::Value& o, const char* k) {
     auto v = o.get(k, Json::nullValue);
     if (v.isNull()) return "";
     return v.asString();
+}
+
+bool BaseReportGenerator::gradableIndex(const Json::Value& row) {
+    return js(row, "index_kind") != "ungraded";
+}
+
+std::string BaseReportGenerator::indexLabel(const Json::Value& row) {
+    return gradableIndex(row) ? "AHI" : "Apnea Index";
 }
 
 std::string BaseReportGenerator::fmt1(double v) {
@@ -112,12 +121,16 @@ void BaseReportGenerator::addSummarySection(PdfRenderer& pdf, const Json::Value&
         {"Total Therapy Time",         fmtHM(totalHours)},
         {"Avg Usage / Night",          fmtHM(avgHours)},
         {"Compliance (>= 4 hrs)",      fmt1(compliance) + "%"},
-        {"Average AHI",                fmt1(jd(st, "avg_ahi")) + " events/hr"},
-        {"Best AHI",                   fmt1(jd(st, "min_ahi")) + " events/hr"},
-        {"Worst AHI",                  fmt1(jd(st, "max_ahi")) + " events/hr"},
-        {"AHI Std Dev",                fmt1(jd(st, "stddev_ahi"))},
+        {"Average " + indexLabel(st),  fmt1(jd(st, "avg_ahi")) + " events/hr"},
+        {"Best " + indexLabel(st),     fmt1(jd(st, "min_ahi")) + " events/hr"},
+        {"Worst " + indexLabel(st),    fmt1(jd(st, "max_ahi")) + " events/hr"},
+        {indexLabel(st) + " Std Dev",  fmt1(jd(st, "stddev_ahi"))},
         {"Avg Leak 95th (L/min)",      fmt1(jd(st, "avg_leak_95"))},
-        {"Avg Pressure 95th (cmH2O)",  fmt1(jd(st, "avg_pressure_95"))},
+        // Same reason as the per-night table: a machine with no mask-pressure
+        // channel averages to 0, and "0.0 cmH2O" is a reading rather than a
+        // blank (issue 15).
+        {"Avg Pressure 95th (cmH2O)",  jd(st, "avg_pressure_95") > 0
+                                           ? fmt1(jd(st, "avg_pressure_95")) : "N/A"},
         {"Avg SpO2",                   jd(st, "avg_spo2") > 0
                                            ? fmt1(jd(st, "avg_spo2")) + "%" : "N/A"},
     });
@@ -217,7 +230,14 @@ void BaseReportGenerator::generate(int report_id,
     // Build PDF
     std::string period = (start == end) ? start : (start + " to " + end);
     PdfRenderer pdf;
-    pdf.addCoverPage(title(), subtitle(period), "ResMed AirSense 10", period, nowStr(), logo_path_);
+    // The configured machine, not a hardcoded one. This is the cover of a
+    // document a user hands to a clinician, and it named every report "ResMed
+    // AirSense 10" regardless of what produced the data -- so a Sefam S.Box
+    // report was attributed to a machine the patient does not own. The default
+    // is the same string the rest of the service falls back to.
+    pdf.addCoverPage(title(), subtitle(period),
+                     ConfigManager::get("CPAP_DEVICE_NAME", "ResMed AirSense 10"),
+                     period, nowStr(), logo_path_);
 
     addSummarySection (pdf, st, start, end, nights);
     addOximetrySection(pdf, oxiRange);
