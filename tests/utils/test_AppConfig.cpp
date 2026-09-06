@@ -635,3 +635,105 @@ TEST_F(AppConfigTest, LoadWrapperStillReportsFalseForBothFailures) {
     }
     EXPECT_FALSE(AppConfig::load(config_path_, config));  // invalid
 }
+
+// ── SDD-022: transport and format are two questions ─────────────────────────
+//
+// `source` answered two at once. local, lowenstein and sefam were never three
+// sources; they were one source -- a folder on disk -- read by three parsers,
+// all three reading CPAP_LOCAL_DIR. These pin the migration, because every
+// existing install on disk has only `source` and must keep working untouched.
+
+TEST(TransportFormatMigration, EveryLegacySourceMapsToAPair) {
+    struct Case { const char* source; const char* transport; const char* format; };
+    const Case cases[] = {
+        {"ezshare",    "ezshare", "resmed"},
+        {"fysetc",     "fysetc",  "resmed"},
+        {"local",      "local",   "resmed"},
+        {"lowenstein", "local",   "lowenstein"},
+        {"sefam",      "local",   "sefam"},
+        {"philips",    "local",   "philips"},
+    };
+    for (const auto& c : cases) {
+        AppConfig cfg;
+        cfg.source = c.source;
+        cfg.migrateSource();
+        EXPECT_EQ(cfg.transport, c.transport) << "source=" << c.source;
+        EXPECT_EQ(cfg.format,    c.format)    << "source=" << c.source;
+    }
+}
+
+// A value this build does not know is a user who downgraded, not a crash. It
+// lands on today's default rather than throwing or leaving the pair empty.
+TEST(TransportFormatMigration, AnUnknownSourceFallsBackToTheDefault) {
+    AppConfig cfg;
+    cfg.source = "nosuchsource";
+    cfg.migrateSource();
+    EXPECT_EQ(cfg.transport, "ezshare");
+    EXPECT_EQ(cfg.format,    "resmed");
+}
+
+// Runs on every load, so running it twice must not drift.
+TEST(TransportFormatMigration, MigrationIsIdempotent) {
+    AppConfig cfg;
+    cfg.source = "sefam";
+    cfg.migrateSource();
+    const auto t = cfg.transport, f = cfg.format;
+    cfg.migrateSource();
+    cfg.migrateSource();
+    EXPECT_EQ(cfg.transport, t);
+    EXPECT_EQ(cfg.format,    f);
+}
+
+// The compatibility write (rule 3): one release of writing `source` back, so an
+// upgrade that gets rolled back does not strand the user with a config the old
+// build cannot read. Derived from the pair, so it can never go stale.
+TEST(TransportFormatMigration, TheLegacyValueRoundTrips) {
+    for (const char* s : {"ezshare", "fysetc", "local", "lowenstein", "sefam", "philips"}) {
+        AppConfig cfg;
+        cfg.source = s;
+        cfg.migrateSource();
+        EXPECT_EQ(cfg.legacySource(), s) << "round trip broke for " << s;
+    }
+}
+
+// The whole point of the split: a transport question answered by asking about
+// transport. Every FORMAT on a local folder is exempt, whatever the vendor,
+// including one that does not exist yet.
+TEST(TransportFormatMigration, ArchiveIsNeededByTransportNotByVendor) {
+    AppConfig cfg;
+    cfg.transport = "ezshare"; EXPECT_TRUE(cfg.needsArchive());
+    cfg.transport = "fysetc";  EXPECT_TRUE(cfg.needsArchive());
+
+    cfg.transport = "local";
+    for (const char* f : {"resmed", "lowenstein", "sefam", "philips", "notyetinvented"}) {
+        cfg.format = f;
+        EXPECT_FALSE(cfg.needsArchive())
+            << "a folder on disk never needs an archive, whatever the format: " << f;
+    }
+}
+
+// Rule 2. A config carrying BOTH -- written by an older build after a newer one
+// has run -- must resolve to the new fields rather than silently reverting.
+TEST_F(AppConfigTest, ExplicitTransportWinsOverALegacySource) {
+    {
+        std::ofstream out(config_path_);
+        out << R"({"source":"ezshare","transport":"local","format":"sefam"})";
+    }
+    AppConfig config;
+    ASSERT_TRUE(AppConfig::load(config_path_, config));
+    EXPECT_EQ(config.transport, "local");
+    EXPECT_EQ(config.format,    "sefam");
+}
+
+// The upgrade path every existing install takes: only `source` on disk.
+TEST_F(AppConfigTest, ALegacyOnlyConfigMigratesOnLoad) {
+    {
+        std::ofstream out(config_path_);
+        out << R"({"source":"lowenstein","local_dir":"/mnt/prisma"})";
+    }
+    AppConfig config;
+    ASSERT_TRUE(AppConfig::load(config_path_, config));
+    EXPECT_EQ(config.transport, "local");
+    EXPECT_EQ(config.format,    "lowenstein");
+    EXPECT_EQ(config.local_dir, "/mnt/prisma") << "migration must not disturb the rest";
+}

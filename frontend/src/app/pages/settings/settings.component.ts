@@ -27,12 +27,27 @@ import { AppConfig } from '../../models/config.model';
             {{ 'settings.source.heading' | translate }}
           </div>
           <div class="section-body" *ngIf="open['source']">
+            <!-- SDD-022: two questions. Where the files come from, and what
+                 wrote them. One field answering both is why a Prisma or Sefam
+                 owner had to hand-edit config.json to select their machine. -->
             <label>
-              {{ 'settings.source.type' | translate }}
-              <select [(ngModel)]="config.source" name="source">
+              {{ 'settings.source.transport' | translate }}
+              <select [(ngModel)]="config.transport" name="transport">
                 <option value="ezshare">{{ 'settings.source.ezshare' | translate }}</option>
                 <option value="local">{{ 'settings.source.local' | translate }}</option>
                 <option value="fysetc">{{ 'settings.source.fysetc' | translate }}</option>
+              </select>
+            </label>
+            <!-- Offered only for a folder: ezShare and Fysetc are ResMed-only
+                 in fact, so the choice would be a lie there. The field still
+                 exists and still says resmed for them. -->
+            <label *ngIf="config.transport === 'local'">
+              {{ 'settings.source.format' | translate }}
+              <select [(ngModel)]="config.format" name="format">
+                <option value="resmed">ResMed</option>
+                <option value="lowenstein">Löwenstein Prisma</option>
+                <option value="sefam">Sefam S.Box</option>
+                <option value="philips">{{ 'settings.source.philips' | translate }}</option>
               </select>
             </label>
             <!-- Asked for by the first person to look here for myAir, which will
@@ -45,17 +60,17 @@ import { AppConfig } from '../../models/config.model';
               <strong>{{ 'settings.myair.heading' | translate }}</strong>
               {{ 'settings.source.notePost' | translate }}
             </small>
-            <label *ngIf="config.source === 'ezshare'">
+            <label *ngIf="config.transport === 'ezshare'">
               {{ 'settings.source.ezshareUrl' | translate }}
               <input type="text" [(ngModel)]="config.ezshare_url" name="ezshare_url"
                      placeholder="http://192.168.4.1" />
             </label>
-            <label class="toggle-row" *ngIf="config.source === 'ezshare'">
+            <label class="toggle-row" *ngIf="config.transport === 'ezshare'">
               <input type="checkbox" [(ngModel)]="config.ezshare_range" name="ezshare_range" />
               {{ 'settings.source.rangeDownloads' | translate }}
               <span class="restart-tag">{{ 'settings.tag.restart' | translate }}</span>
             </label>
-            <label *ngIf="config.source === 'local'">
+            <label *ngIf="config.transport === 'local'">
               {{ 'settings.source.localDir' | translate }}
               <input type="text" [(ngModel)]="config.local_dir" name="local_dir" placeholder="/path/to/sd/DATALOG" />
             </label>
@@ -74,7 +89,7 @@ import { AppConfig } from '../../models/config.model';
               <!-- The device name is interpolated rather than concatenated, so
                    a language can put it anywhere in the sentence. -->
               <small class="hint warn" *ngIf="archiveDirMissing()">
-                {{ 'settings.source.archiveMissing' | translate:{ device: config.source === 'fysetc' ? 'Fysetc' : 'Mule and Miner' } }}
+                {{ 'settings.source.archiveMissing' | translate:{ device: config.transport === 'fysetc' ? 'Fysetc' : 'Mule and Miner' } }}
               </small>
               <small class="hint">
                 {{ 'settings.source.archiveHint' | translate }}
@@ -85,7 +100,7 @@ import { AppConfig } from '../../models/config.model';
 
         <!-- Section: Fysetc (raw SD sector push). Shown only for its own source,
              which is also what makes that source configurable at all. -->
-        <div class="section" *ngIf="config.source === 'fysetc'">
+        <div class="section" *ngIf="config.transport === 'fysetc'">
           <div class="section-header" (click)="toggle('fysetc')">
             <span class="chevron" [class.open]="open['fysetc']">&#9654;</span>
             {{ 'settings.fysetc.heading' | translate }}

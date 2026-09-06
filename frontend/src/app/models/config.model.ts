@@ -1,6 +1,15 @@
 export interface AppConfig {
   device_id: string;
   device_name: string;
+  /** SDD-022: WHERE files come from. ezshare | local | fysetc */
+  transport: string;
+  /** SDD-022: WHAT wrote them. resmed | lowenstein | sefam | philips */
+  format: string;
+  /**
+   * LEGACY. The backend still writes it for one release so a rollback is not
+   * stranded, and still reads it when `transport` is absent. Do not branch on
+   * it in new code.
+   */
   source: string;
   ezshare_url: string;
   ezshare_range: boolean;

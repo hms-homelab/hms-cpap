@@ -80,9 +80,17 @@ Two fields:
 ```jsonc
 {
   "transport": "local",     // ezshare | local | fysetc   — WHERE files come from
-  "format":    "sefam"      // resmed | lowenstein | sefam — WHAT they are
+  "format":    "sefam"      // resmed | lowenstein | sefam | philips — WHAT they are
 }
 ```
+
+**Philips is in the enum from day one.** Albin's call, 2026-09-06: the
+experimental DS2 support in `hms-cpapdash-parser-philips` gets the same
+treatment as Sefam. It is also the clearest argument for the split. Under the
+old scheme Philips would have been a FIFTH value welded onto `source`, and a
+fifth entry in every place that enumerates a vendor list. Under this one it is
+a value in an axis that already exists, and `sourceNeedsArchive` does not
+change at all, because the TRANSPORT did not change.
 
 `format` is meaningful for every transport, not only `local`. It is constrained
 rather than free: `ezshare` and `fysetc` are ResMed-only today, so the UI offers
@@ -112,6 +120,7 @@ source=fysetc      -> transport=fysetc   format=resmed
 source=local       -> transport=local    format=resmed
 source=lowenstein  -> transport=local    format=lowenstein
 source=sefam       -> transport=local    format=sefam
+(no legacy value)  -> transport=local    format=philips   (new, never had a `source`)
 absent/unknown     -> transport=ezshare  format=resmed   (today's default)
 ```
 

@@ -116,7 +116,12 @@ public:
     /// True when this source downloads files that must be written somewhere,
     /// i.e. ezShare or Fysetc. Shared so the check and its callers cannot
     /// disagree about which sources need an archive.
-    static bool sourceNeedsArchive(const std::string& source);
+    /// SDD-022: takes a TRANSPORT, not a vendor. Kept as one function with one
+    /// hand-written duplicate in desktop/qt/core/pure/FieldSpec.cpp, which the
+    /// supervisor needs so its pure core stays free of this service's headers.
+    /// SourceNeedsArchive_MatchesTheSupervisorCopy fails if the two ever
+    /// disagree.
+    static bool sourceNeedsArchive(const std::string& transport);
 };
 
 }  // namespace hms_cpap

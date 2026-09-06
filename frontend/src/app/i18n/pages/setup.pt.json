@@ -37,6 +37,8 @@
     },
     "source": {
       "title": "Fonte de dados",
+      "formatLabel": "Qual aparelho gravou este cartão?",
+      "philips": "Philips Respironics (experimental)",
       "subtitle": "Como o HMS-CPAP deve acessar seus dados de CPAP?",
       "mmTitle": "CpapDash Mule and Miner",
       "mmDesc": "Encontra automaticamente a sua ponte CpapDash nesta rede.",

@@ -16,6 +16,9 @@
     "source": {
       "heading": "Adatforrás",
       "type": "Forrás típusa",
+      "transport": "Honnan érkeznek az adatok",
+      "format": "Melyik gép írta",
+      "philips": "Philips Respironics (kísérleti)",
       "ezshare": "ezShare WiFi SD-kártya",
       "local": "Helyi könyvtár",
       "fysetc": "Fysetc",

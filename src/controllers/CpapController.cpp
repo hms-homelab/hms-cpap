@@ -1118,7 +1118,12 @@ void CpapController::capabilities(const drogon::HttpRequestPtr&,
     // ONLY for source=local. Lowenstein points local_dir at a Prisma tree that
     // has no DATALOG at all, so classifying it would hard-fail a setup that is
     // working perfectly well.
-    if (ConfigManager::get("CPAP_SOURCE", "ezshare") == "local") {
+    // SDD-022: this classifier is FORMAT-specific, not transport-specific. It
+    // looks for a ResMed DATALOG tree, and a Prisma or S.Box card has none, so
+    // running it on those would hard-fail a setup that is working perfectly
+    // well. The old comment said exactly that in prose; now the code says it.
+    if (AppConfig::transportForSource(ConfigManager::get("CPAP_SOURCE", "ezshare")) == "local"
+        && AppConfig::formatForSource(ConfigManager::get("CPAP_SOURCE", "ezshare")) == "resmed") {
         const std::string dir = ConfigManager::get("CPAP_LOCAL_DIR", "");
         const auto layout = classifyLocalDir(dir);
         if (layout != LocalDirLayout::Root) {

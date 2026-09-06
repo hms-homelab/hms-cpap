@@ -238,6 +238,15 @@ import { switchMap, tap } from 'rxjs';
             }
 
             @if (source === 'local') {
+              <label class="field">
+                {{ 'setup.source.formatLabel' | translate }}
+                <select [(ngModel)]="localFormat" name="localFormat">
+                  <option value="resmed">ResMed</option>
+                  <option value="lowenstein">Löwenstein Prisma</option>
+                  <option value="sefam">Sefam S.Box</option>
+                  <option value="philips">{{ 'setup.source.philips' | translate }}</option>
+                </select>
+              </label>
               <div class="source-config">
                 <label for="local-dir">{{ 'setup.source.localDir' | translate }}</label>
                 <input id="local-dir" type="text"
@@ -699,6 +708,8 @@ export class SetupComponent {
   // /dir and /download an ezShare card does; 'mm' only ever names the way the
   // user got there.
   source = 'mm';
+  /** SDD-022: which machine wrote the folder. Only meaningful for source==='local'. */
+  localFormat = 'resmed';
   ezshareUrl = 'http://192.168.4.1';
   localDir = '';
   testing = false;
@@ -905,12 +916,22 @@ export class SetupComponent {
       // The whole M&M integration is these two lines. A proxy-mode mule is an
       // ezShare server on the LAN, and EzShareClient already speaks to it.
       configUpdate['source'] = 'ezshare';
+      configUpdate['transport'] = 'ezshare';
+      configUpdate['format'] = 'resmed';
       configUpdate['ezshare_url'] = this.selectedDevice.base_url;
     } else if (this.source === 'ezshare') {
       configUpdate['source'] = 'ezshare';
+      configUpdate['transport'] = 'ezshare';
+      configUpdate['format'] = 'resmed';
       configUpdate['ezshare_url'] = this.ezshareUrl;
     } else if (this.source === 'local') {
-      configUpdate['source'] = 'local';
+      // SDD-022: a folder is ONE transport read by several parsers. The wizard
+      // asks which machine wrote the card rather than assuming ResMed, which is
+      // what made a Prisma or S.Box owner hand-edit config.json after setup.
+      configUpdate['transport'] = 'local';
+      configUpdate['format'] = this.localFormat;
+      configUpdate['source'] =
+        this.localFormat === 'resmed' ? 'local' : this.localFormat;
       configUpdate['local_dir'] = this.localDir;
     }
     // skip: no config update needed

@@ -15,6 +15,21 @@ std::function<bool(const ConfigModel&)> sourceIs(const std::string& value) {
     return [value](const ConfigModel& m) { return m.getString("source") == value; };
 }
 
+/// SDD-022. Falls back to the legacy `source` so a config written by an older
+/// build still reveals the right fields on the first run after an upgrade,
+/// before anything has been saved back.
+std::function<bool(const ConfigModel&)> transportIs(const std::string& value) {
+    return [value](const ConfigModel& m) {
+        const auto t = m.getString("transport");
+        if (!t.empty()) return t == value;
+        const auto s = m.getString("source");
+        // local, lowenstein and sefam were all one transport: a folder on disk.
+        if (value == "local")
+            return s == "local" || s == "lowenstein" || s == "sefam" || s == "philips";
+        return s == value;
+    };
+}
+
 std::function<bool(const ConfigModel&)> allOf(
         std::function<bool(const ConfigModel&)> a,
         std::function<bool(const ConfigModel&)> b) {
@@ -22,9 +37,31 @@ std::function<bool(const ConfigModel&)> allOf(
 }
 
 /// Mirrors PreflightService::sourceNeedsArchive.
+///
+/// DELIBERATELY A SECOND COPY, kept rather than removed (Albin, 2026-09-06:
+/// "drift dont remove it", "until we know is good"). It exists so the
+/// supervisor's pure core depends on nothing but the standard library, which is
+/// what makes it testable on every platform with no Qt and no display
+/// (SDD-016). Collapsing the two would trade that independence for tidiness.
+///
+/// The price is a rule written twice, and the guard against that is a test, not
+/// a dependency: SourceNeedsArchive_MatchesTheSupervisorCopy in
+/// tests/services/test_PreflightService.cpp fails the moment these two disagree
+/// on any transport.
+///
+/// SDD-022: reads `transport`, falling back to the legacy `source` for a config
+/// an older build wrote. Never a vendor name.
 bool sourceNeedsArchive(const ConfigModel& m) {
-    const auto s = m.getString("source");
-    return s == "ezshare" || s == "fysetc";
+    auto t = m.getString("transport");
+    if (t.empty()) {
+        // Pre-SDD-022 config. `local`, `lowenstein` and `sefam` were all the
+        // same transport -- a folder on disk -- so only the two network values
+        // matter here and the vendor names fall through to false, which is the
+        // right answer for every one of them.
+        const auto s = m.getString("source");
+        return s == "ezshare" || s == "fysetc";
+    }
+    return t == "ezshare" || t == "fysetc";
 }
 
 std::string trim(const std::string& s) {
@@ -62,21 +99,37 @@ const std::vector<FieldSpec>& settingsFields() {
         std::vector<FieldSpec> f;
 
         // ── Data Source ────────────────────────────────────────────────────
-        f.push_back({"source", "source", "Source Type", "", FieldKind::Choice, "",
+        // SDD-022: TWO questions. Where the files come from, and what wrote
+        // them. They used to be one field whose values answered both, which is
+        // why a Prisma or Sefam owner could not pick their machine here at all.
+        f.push_back({"transport", "source", "Where the data comes from", "",
+            FieldKind::Choice, "",
             {{"ezshare", "ezShare WiFi SD card"},
              {"local",   "A folder on this computer"},
              {"fysetc",  "Fysetc TCP"}},
             {}, {}, false, nullptr});
 
+        // Offered only for a local folder: ezShare and Fysetc are ResMed-only in
+        // fact, so the choice would be a lie there. The field still EXISTS and
+        // still says resmed for them, so nothing downstream special-cases its
+        // absence.
+        f.push_back({"format", "source", "What machine wrote it", "",
+            FieldKind::Choice, "resmed",
+            {{"resmed",     "ResMed"},
+             {"lowenstein", "Löwenstein Prisma"},
+             {"sefam",      "Sefam S.Box"},
+             {"philips",    "Philips Respironics (experimental)"}},
+            {}, {}, false, transportIs("local")});
+
         f.push_back({"ezshare_url", "source", "ezShare URL", "", FieldKind::Text,
-            "http://192.168.4.1", {}, {}, {}, false, sourceIs("ezshare")});
+            "http://192.168.4.1", {}, {}, {}, false, transportIs("ezshare")});
 
         f.push_back({"ezshare_range", "source", "Use range requests", "", FieldKind::Bool,
-            "", {}, {}, {}, true, sourceIs("ezshare")});
+            "", {}, {}, {}, true, transportIs("ezshare")});
 
         f.push_back({"local_dir", "source", "SD Card Folder",
             "The card ROOT, holding both STR.edf and DATALOG. Not the DATALOG folder itself.",
-            FieldKind::Directory, "", {}, {}, {}, false, sourceIs("local")});
+            FieldKind::Directory, "", {}, {}, {}, false, transportIs("local")});
 
         f.push_back({"archive_dir", "source", "Archive Folder",
             "Where the card is copied to. OSCAR imports from here and SleepHQ export reads it.",

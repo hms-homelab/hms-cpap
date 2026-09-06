@@ -16,6 +16,9 @@
     "source": {
       "heading": "Source de données",
       "type": "Type de source",
+      "transport": "D'où viennent les données",
+      "format": "Quelle machine les a écrites",
+      "philips": "Philips Respironics (expérimental)",
       "ezshare": "Carte SD WiFi ezShare",
       "local": "Répertoire local",
       "fysetc": "Fysetc",

@@ -262,22 +262,68 @@ TEST(PreflightServiceTest, ADownloadingSourceWithNoArchiveDirectoryIsReported) {
 TEST(PreflightServiceTest, FysetcAlsoNeedsSomewhereToWrite) {
     AppConfig cfg;
     cfg.source = "fysetc";
+    cfg.migrateSource();
     cfg.archive_dir = "";
-    EXPECT_TRUE(PreflightService::sourceNeedsArchive(cfg.source));
+    EXPECT_TRUE(PreflightService::sourceNeedsArchive(cfg.transport));
     EXPECT_FALSE(PreflightService::checkArchiveDir(cfg).ok);
 }
 
-// local and lowenstein read files already on disk, so demanding an archive
-// folder from them would be a warning nobody can act on.
+// A folder on disk never needs an archive, whatever wrote the card. SDD-022
+// made this a question about TRANSPORT, so every vendor is covered by one
+// answer -- including philips, which had no `source` value at all before.
 TEST(PreflightServiceTest, AFileBasedSourceDoesNotNeedAnArchiveDirectory) {
-    for (const char* src : {"local", "lowenstein"}) {
+    for (const char* src : {"local", "lowenstein", "sefam", "philips"}) {
         AppConfig cfg;
         cfg.source = src;
+        cfg.migrateSource();
         cfg.archive_dir = "";
-        EXPECT_FALSE(PreflightService::sourceNeedsArchive(src));
+        EXPECT_EQ(cfg.transport, "local") << src << " is a folder on disk";
+        EXPECT_FALSE(PreflightService::sourceNeedsArchive(cfg.transport));
         const auto c = PreflightService::checkArchiveDir(cfg);
         EXPECT_TRUE(c.ok) << src << " should not require an archive directory";
         EXPECT_NE(c.detail.find("not required"), std::string::npos);
+    }
+}
+
+// ── The drift test (SDD-022) ────────────────────────────────────────────────
+//
+// desktop/qt/core/pure/FieldSpec.cpp carries a SECOND, hand-written copy of
+// sourceNeedsArchive, kept on purpose so the supervisor's pure core depends on
+// nothing but the standard library and stays testable with no Qt and no display
+// (SDD-016). Albin's call, 2026-09-06: "drift dont remove it".
+//
+// A duplicated rule is only safe while something notices when the copies
+// disagree. This is that something. It reimplements the supervisor's copy
+// EXACTLY as written there -- if you change one and not the other, this fails.
+namespace {
+bool supervisorCopyOfSourceNeedsArchive(const std::string& transport,
+                                        const std::string& legacy_source) {
+    if (transport.empty())
+        return legacy_source == "ezshare" || legacy_source == "fysetc";
+    return transport == "ezshare" || transport == "fysetc";
+}
+}  // namespace
+
+TEST(PreflightServiceTest, SourceNeedsArchive_MatchesTheSupervisorCopy) {
+    for (const char* t : {"ezshare", "local", "fysetc", "", "notyetinvented"}) {
+        EXPECT_EQ(PreflightService::sourceNeedsArchive(t),
+                  supervisorCopyOfSourceNeedsArchive(t, ""))
+            << "the service and the supervisor disagree about transport '" << t << "'";
+    }
+}
+
+// And the supervisor's legacy fallback must agree with the migration table:
+// a pre-SDD-022 config naming a vendor is a LOCAL transport, which needs no
+// archive. Getting this wrong would demand an archive folder from a Prisma
+// owner upgrading, for files already sitting on their own disk.
+TEST(PreflightServiceTest, TheSupervisorLegacyFallbackAgreesWithMigration) {
+    for (const char* src : {"ezshare", "fysetc", "local", "lowenstein", "sefam", "philips"}) {
+        AppConfig cfg;
+        cfg.source = src;
+        cfg.migrateSource();
+        EXPECT_EQ(supervisorCopyOfSourceNeedsArchive("", src),
+                  PreflightService::sourceNeedsArchive(cfg.transport))
+            << "legacy fallback disagrees with the migration for source=" << src;
     }
 }
 

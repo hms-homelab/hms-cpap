@@ -166,10 +166,17 @@ void printConfiguration() {
     } else if (source == "sefam") {
         std::cout << "  Source:             Sefam S.Box" << std::endl;
         std::cout << "  Card Dir:           " << hms_cpap::ConfigManager::get("CPAP_LOCAL_DIR", "(not set)") << std::endl;
+    } else if (source == "philips") {
+        std::cout << "  Source:             Philips Respironics (experimental)" << std::endl;
+        std::cout << "  Card Dir:           " << hms_cpap::ConfigManager::get("CPAP_LOCAL_DIR", "(not set)") << std::endl;
     } else {
         std::cout << "  Source:             ez Share" << std::endl;
         std::cout << "  ez Share URL:       " << hms_cpap::ConfigManager::get("EZSHARE_BASE_URL", "http://192.168.4.1") << std::endl;
     }
+    std::cout << "  Transport:          "
+              << hms_cpap::AppConfig::transportForSource(source) << std::endl;
+    std::cout << "  Format:             "
+              << hms_cpap::AppConfig::formatForSource(source) << std::endl;
     std::cout << "  Burst Interval:     " << hms_cpap::ConfigManager::getInt("BURST_INTERVAL", 120) << " seconds" << std::endl;
     std::cout << "  Session Gap:        " << hms_cpap::ConfigManager::getInt("SESSION_GAP_MINUTES", 60) << " minutes" << std::endl;
     std::cout << "  Health Check Port:  " << hms_cpap::ConfigManager::getInt("HEALTH_CHECK_PORT", 8893) << std::endl;

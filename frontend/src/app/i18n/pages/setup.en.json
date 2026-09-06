@@ -37,6 +37,8 @@
     },
     "source": {
       "title": "Data Source",
+      "formatLabel": "Which machine wrote this card?",
+      "philips": "Philips Respironics (experimental)",
       "subtitle": "How should HMS-CPAP access your CPAP data?",
       "mmTitle": "CpapDash Mule and Miner",
       "mmDesc": "Find your CpapDash bridge on this network automatically.",

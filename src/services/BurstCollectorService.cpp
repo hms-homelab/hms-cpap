@@ -86,7 +86,21 @@ void BurstCollectorService::initialize(AppConfig* cfg) {
 }
 
 void BurstCollectorService::initDataSource() {
-    std::string source = ConfigManager::get("CPAP_SOURCE", "ezshare");
+    // SDD-022: two questions. CPAP_TRANSPORT/CPAP_FORMAT win when set; a config
+    // or environment carrying only CPAP_SOURCE maps through the SAME table
+    // AppConfig uses, never a copy of it.
+    const std::string legacy   = ConfigManager::get("CPAP_SOURCE", "ezshare");
+    const std::string transport = ConfigManager::get(
+        "CPAP_TRANSPORT", AppConfig::transportForSource(legacy));
+    const std::string format = ConfigManager::get(
+        "CPAP_FORMAT", AppConfig::formatForSource(legacy));
+
+    // cpap_source_ stays the legacy string: it is what the rest of this class,
+    // the reconfigure path and the tests still compare against. Derived from the
+    // pair so it cannot contradict them.
+    std::string source = (transport == "local")
+        ? (format == "resmed" ? "local" : format)
+        : transport;
     cpap_source_ = source;
     if (source == "local") {
         local_source_dir_ = ConfigManager::get("CPAP_LOCAL_DIR", "");
@@ -108,16 +122,16 @@ void BurstCollectorService::initDataSource() {
     } else if (source == "lowenstein") {
         std::string data_dir = ConfigManager::get("CPAP_LOCAL_DIR", "");
         if (data_dir.empty()) {
-            std::cerr << "CPAP_SOURCE=lowenstein but CPAP_LOCAL_DIR not set!" << std::endl;
-            throw std::runtime_error("CPAP_LOCAL_DIR required when CPAP_SOURCE=lowenstein");
+            std::cerr << "format=lowenstein but CPAP_LOCAL_DIR not set!" << std::endl;
+            throw std::runtime_error("CPAP_LOCAL_DIR required when format=lowenstein");
         }
         prisma_ingestion_ = std::make_unique<PrismaIngestion>(data_dir);
         std::cout << "CPAP: Lowenstein Prisma mode — reading from " << data_dir << std::endl;
     } else if (source == "sefam") {
         std::string data_dir = ConfigManager::get("CPAP_LOCAL_DIR", "");
         if (data_dir.empty()) {
-            std::cerr << "CPAP_SOURCE=sefam but CPAP_LOCAL_DIR not set!" << std::endl;
-            throw std::runtime_error("CPAP_LOCAL_DIR required when CPAP_SOURCE=sefam");
+            std::cerr << "format=sefam but CPAP_LOCAL_DIR not set!" << std::endl;
+            throw std::runtime_error("CPAP_LOCAL_DIR required when format=sefam");
         }
         sefam_ingestion_ = std::make_unique<SefamIngestion>(data_dir);
         std::cout << "CPAP: Sefam S.Box mode — reading from " << data_dir << std::endl;

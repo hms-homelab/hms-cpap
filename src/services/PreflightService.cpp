@@ -243,15 +243,20 @@ PreflightService::Check PreflightService::checkSource(const AppConfig& cfg) {
     // Where those files land IS knowable now, and this comment block used to
     // claim it was covered here while nothing checked it. checkArchiveDir()
     // answers it; this line only points at the answer so the two cannot drift.
-    if (sourceNeedsArchive(cfg.source) && cfg.archive_dir.empty())
+    if (sourceNeedsArchive(cfg.transport) && cfg.archive_dir.empty())
         c.detail += "; see archive_dir below";
     return c;
 }
 
-bool PreflightService::sourceNeedsArchive(const std::string& source) {
-    // local and lowenstein read files that are already on disk. ezShare and
-    // Fysetc receive them over the network and must write them somewhere first.
-    return source == "ezshare" || source == "fysetc";
+bool PreflightService::sourceNeedsArchive(const std::string& transport) {
+    // SDD-022. A TRANSPORT question, asked about transport: did these files
+    // arrive over a network, and therefore need writing down before anything
+    // can read them? A folder on disk never does, whatever vendor wrote it.
+    //
+    // This used to enumerate VENDOR values -- and was correct for sefam only
+    // because nobody had updated it. Every new machine was a chance to get it
+    // wrong; now a new machine is a new `format` and this line does not move.
+    return transport == "ezshare" || transport == "fysetc";
 }
 
 PreflightService::Check PreflightService::checkArchiveDir(const AppConfig& cfg) {
@@ -259,7 +264,7 @@ PreflightService::Check PreflightService::checkArchiveDir(const AppConfig& cfg) 
     c.name = "archive_dir";
     c.fatal = false;
 
-    if (!sourceNeedsArchive(cfg.source)) {
+    if (!sourceNeedsArchive(cfg.transport)) {
         c.ok = true;
         c.detail = "not required for source '" + cfg.source + "' (reads files in place)";
         return c;

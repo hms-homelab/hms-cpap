@@ -12,8 +12,85 @@ struct AppConfig {
     std::string device_id = "cpap_resmed_23243570851";
     std::string device_name = "ResMed AirSense 10";
 
-    // Data source
+    // ── Data source: TWO questions, not one (SDD-022) ───────────────────────
+    //
+    // `transport` is WHERE files come from. `format` is WHAT they are. These
+    // used to be one field, `source`, whose five values answered both at once:
+    // local, lowenstein and sefam were never three sources, they were one
+    // source -- a folder on disk -- read by three different parsers, all three
+    // reading CPAP_LOCAL_DIR.
+    //
+    // Splitting them is what lets a question about transport be answered by
+    // asking about transport. PreflightService::sourceNeedsArchive used to mean
+    // "did this arrive over a network, so must we write it down first?" and
+    // answered it by enumerating vendor names, which was correct for sefam only
+    // because nobody had updated it yet.
+    //
+    // `source` is still READ for migration and still WRITTEN for one release,
+    // so an upgrade that gets rolled back does not strand the user. See
+    // migrateSource() below, which is the ONLY place the mapping lives.
+    std::string transport = "ezshare";  // ezshare | local | fysetc
+    std::string format    = "resmed";   // resmed | lowenstein | sefam | philips
+
+    /// LEGACY. Kept so a config written by an older build still loads, and so
+    /// this build keeps writing something an older build can read. Do not branch
+    /// on it in new code -- branch on transport and format.
     std::string source = "ezshare";  // "ezshare" (HTTP), "local"
+
+    /// Derive transport+format from the legacy `source`. THE ONLY PLACE THIS
+    /// MAPPING EXISTS -- if you find yourself writing `== "lowenstein"` anywhere
+    /// else, that is the bug this SDD was written to prevent.
+    ///
+    /// Idempotent by construction: it reads `source` and writes the pair, so
+    /// running it twice produces the same answer. An unknown value falls back to
+    /// today's default rather than throwing; a config naming a source this build
+    /// does not have is a user who downgraded, not a crash.
+    void migrateSource() {
+        transport = transportForSource(source);
+        format    = formatForSource(source);
+    }
+
+    /// The mapping itself, callable without an AppConfig.
+    ///
+    /// BurstCollectorService reads CPAP_SOURCE straight from ConfigManager
+    /// rather than through an AppConfig, and it must not carry its own copy of
+    /// this table -- a second copy is exactly the defect SDD-022 exists to
+    /// remove. These are that table; migrateSource() above is a thin caller.
+    static std::string transportForSource(const std::string& src) {
+        if (src == "lowenstein" || src == "sefam" || src == "philips" || src == "local")
+            return "local";
+        if (src == "fysetc")  return "fysetc";
+        return "ezshare";   // ezshare, and anything unknown
+    }
+    static std::string formatForSource(const std::string& src) {
+        if (src == "lowenstein") return "lowenstein";
+        if (src == "sefam")      return "sefam";
+        if (src == "philips")    return "philips";
+        return "resmed";    // local, ezshare, fysetc, and anything unknown
+    }
+
+    /// The reverse, for the compatibility write (migration rule 3) and for
+    /// anything still asking the old question. One release from now the write
+    /// goes away and this becomes read-only history.
+    std::string legacySource() const {
+        if (transport == "local") {
+            if (format == "lowenstein") return "lowenstein";
+            if (format == "sefam")      return "sefam";
+            if (format == "philips")    return "philips";
+            return "local";
+        }
+        return transport;   // ezshare, fysetc
+    }
+
+    /// Did these files arrive over a NETWORK, and therefore need writing down
+    /// before anything can read them?
+    ///
+    /// A transport question, answered by asking about transport. It used to
+    /// enumerate vendor names, which meant every new machine was a chance to get
+    /// it wrong -- and it was already only accidentally right for Sefam.
+    bool needsArchive() const {
+        return transport == "ezshare" || transport == "fysetc";
+    }
     std::string ezshare_url = "http://192.168.4.1";
     bool ezshare_range = true;
     /// SDD-010: the SD card ROOT when source=="local", the folder holding BOTH
@@ -198,6 +275,16 @@ struct AppConfig {
         if (device_id.empty())   device_id   = env("CPAP_DEVICE_ID");
         if (device_name.empty()) device_name = env("CPAP_DEVICE_NAME");
         if (source.empty())      source      = env("CPAP_SOURCE");
+
+        // SDD-022. CPAP_SOURCE keeps working: docs/REFERENCE.md, quickstart.sh,
+        // every Docker invocation in the changelog and the HA add-on all pass
+        // it. The new pair takes precedence when explicitly set.
+        {
+            const auto t = env("CPAP_TRANSPORT");
+            const auto f = env("CPAP_FORMAT");
+            if (!t.empty()) transport = t;
+            if (!f.empty()) format    = f;
+        }
         if (ezshare_url.empty()) ezshare_url = env("EZSHARE_BASE_URL");
         {
             auto v = env("EZSHARE_SUPPORTS_RANGE");
@@ -442,6 +529,13 @@ struct AppConfig {
             if (j.contains("device_id"))    config.device_id = j["device_id"];
             if (j.contains("device_name"))  config.device_name = j["device_name"];
             if (j.contains("source"))       config.source = j["source"];
+            // SDD-022. Read the new pair when present; migrate from `source`
+            // when not. Rule 2: a config carrying BOTH -- written by an older
+            // build after a newer one has run -- resolves to the new fields
+            // rather than silently reverting to the legacy one.
+            if (j.contains("transport"))    config.transport = j["transport"];
+            if (j.contains("format"))       config.format    = j["format"];
+            if (!j.contains("transport"))   config.migrateSource();
             if (j.contains("ezshare_url"))    config.ezshare_url = j["ezshare_url"];
             if (j.contains("ezshare_range")) config.ezshare_range = j["ezshare_range"];
             if (j.contains("local_dir"))     config.local_dir = j["local_dir"];
@@ -586,7 +680,12 @@ struct AppConfig {
             nlohmann::json j;
             j["device_id"] = device_id;
             j["device_name"] = device_name;
-            j["source"] = source;
+            j["transport"] = transport;
+            j["format"]    = format;
+            // SDD-022 migration rule 3: keep writing `source` for ONE release,
+            // so a user who upgrades, dislikes it and rolls back does not find a
+            // config the old build cannot read. Derived, never stale.
+            j["source"] = legacySource();
             j["ezshare_url"] = ezshare_url;
             j["ezshare_range"] = ezshare_range;
             j["local_dir"] = local_dir;
@@ -708,7 +807,9 @@ struct AppConfig {
         nlohmann::json j;
         j["device_id"] = device_id;
         j["device_name"] = device_name;
-        j["source"] = source;
+        j["transport"] = transport;
+        j["format"]    = format;
+        j["source"] = legacySource();   // SDD-022 rule 3, one release only
         j["ezshare_url"] = ezshare_url;
         j["ezshare_range"] = ezshare_range;
         j["local_dir"] = local_dir;

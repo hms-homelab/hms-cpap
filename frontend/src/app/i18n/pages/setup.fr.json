@@ -37,6 +37,8 @@
     },
     "source": {
       "title": "Source de données",
+      "formatLabel": "Quelle machine a écrit cette carte ?",
+      "philips": "Philips Respironics (expérimental)",
       "subtitle": "Comment HMS-CPAP doit-il accéder à vos données CPAP ?",
       "mmTitle": "CpapDash Mule and Miner",
       "mmDesc": "Trouve automatiquement votre passerelle CpapDash sur ce réseau.",

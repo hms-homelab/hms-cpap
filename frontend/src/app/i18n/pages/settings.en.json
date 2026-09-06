@@ -16,6 +16,9 @@
     "source": {
       "heading": "Data Source",
       "type": "Source Type",
+      "transport": "Where the data comes from",
+      "format": "What machine wrote it",
+      "philips": "Philips Respironics (experimental)",
       "ezshare": "ezShare WiFi SD",
       "local": "Local Directory",
       "fysetc": "Fysetc",
