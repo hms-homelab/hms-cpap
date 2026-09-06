@@ -1037,3 +1037,87 @@ jobs:
             hms-cpap-macos-arm64.zip
             CpapDashDesktop-Setup.exe
             CpapDash.dmg
+
+  # ── Keep the Home Assistant add-on in step ──────────────────────────────
+  #
+  # The add-on lives in a SEPARATE repo (hms-homelab/hms-cpap-ha-addon, as
+  # SDD-021 specified — a HA add-on repository has a shape of its own and cannot
+  # live inside this one). The only link between them is one hardcoded tag:
+  #
+  #     cpapdash/Dockerfile:  FROM ghcr.io/hms-homelab/hms-cpap:<version>
+  #
+  # Nothing compared the two, so it sat on 5.1.0 through five releases while the
+  # add-on kept building perfectly — just from an old image. Add-on users were
+  # four releases behind with no error anywhere to say so.
+  #
+  # BOTH values have to move. The Dockerfile tag decides which image is built;
+  # the config.yaml version is what makes the Supervisor OFFER an update. There
+  # is no `image:` key (deliberately — see that file), so the Supervisor builds
+  # locally and only rebuilds when the add-on version changes. Bumping the
+  # Dockerfile alone would ship nothing to anyone.
+  addon-bump:
+    name: Bump the HA add-on to this release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build-and-test]
+    runs-on: ubuntu-latest
+    steps:
+      # GITHUB_TOKEN is scoped to THIS repo and cannot push to the add-on repo.
+      # This needs a fine-grained PAT with Contents:write on hms-cpap-ha-addon,
+      # stored as ADDON_REPO_TOKEN. Without it the job skips loudly rather than
+      # failing the release: a missing bump is a stale add-on, which is the
+      # status quo, and is not worth failing a good release over.
+      - name: Check for the cross-repo token
+        id: gate
+        env:
+          TOKEN: ${{ secrets.ADDON_REPO_TOKEN }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "have=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::ADDON_REPO_TOKEN is not set — the HA add-on was NOT bumped and now lags this release. Create a fine-grained PAT with Contents:write on hms-homelab/hms-cpap-ha-addon."
+          else
+            echo "have=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout the add-on repository
+        if: steps.gate.outputs.have == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: hms-homelab/hms-cpap-ha-addon
+          token: ${{ secrets.ADDON_REPO_TOKEN }}
+          path: addon
+
+      - name: Point the add-on at this release
+        if: steps.gate.outputs.have == 'true'
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          cd addon
+          CFG=cpapdash/config.yaml
+          DOCKERFILE=cpapdash/Dockerfile
+
+          OLD_IMAGE=$(grep -oE 'ghcr\.io/hms-homelab/hms-cpap:[0-9][^ ]*' "$DOCKERFILE" | head -1 | cut -d: -f3)
+          OLD_VER=$(grep -oE '^version: *"[^"]+"' "$CFG" | head -1 | cut -d'"' -f2)
+          echo "add-on image $OLD_IMAGE -> $VERSION   add-on version $OLD_VER -> $VERSION"
+
+          if [ "$OLD_IMAGE" = "$VERSION" ] && [ "$OLD_VER" = "$VERSION" ]; then
+            echo "Already at $VERSION; nothing to do."
+            exit 0
+          fi
+
+          # Rewrite in place. Anchored so a version string elsewhere in either
+          # file cannot be hit by accident.
+          sed -i -E "s|(FROM ghcr\.io/hms-homelab/hms-cpap:).*|\1${VERSION}|" "$DOCKERFILE"
+          sed -i -E "s|^(version: *\").*(\")|\1${VERSION}\2|" "$CFG"
+
+          # Prove the edits landed rather than trusting sed's exit code, which is
+          # 0 for a pattern that matched nothing.
+          grep -q "hms-cpap:${VERSION}$" "$DOCKERFILE" || { echo "Dockerfile FROM not updated"; exit 1; }
+          grep -q "^version: \"${VERSION}\"" "$CFG"   || { echo "config.yaml version not updated"; exit 1; }
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$DOCKERFILE" "$CFG"
+          git commit \
+            -m "Track CpapDash ${VERSION}" \
+            -m "Automated by the hms-cpap release workflow on tag ${GITHUB_REF_NAME}. Both values move together: the Dockerfile tag decides which image is built, and the config.yaml version is what makes the Supervisor offer the update."
+          git push
