@@ -208,6 +208,14 @@ bool DataPublisherService::publishHistoricalDiscovery() {
 
         // Events (10)
         {"ahi", "events/h", "", "mdi:alert-circle-outline"},
+        // SDD-023. A machine that scores apneas but not hypopneas cannot form
+        // an AHI, so its number gets its own entity rather than borrowing the
+        // AHI's name. Exactly one of these two is ever live; the other is
+        // cleared. Named for the property of the DATA -- apneas only -- not for
+        // a vendor, so the next machine with the same shape already fits.
+        // Not "ai": that means the LLM summaries in this product, and
+        // sensor.cpap_ai in an autocomplete list is a trap.
+        {"apnea_index", "events/h", "", "mdi:alert-circle-check-outline"},
         {"total_events", "", "", "mdi:counter"},
         {"obstructive_apneas", "", "", "mdi:alert"},
         {"central_apneas", "", "", "mdi:alert-octagon"},
@@ -285,7 +293,7 @@ bool DataPublisherService::publishHistoricalDiscovery() {
         }
     }
 
-    std::cout << "    ✓ 31 historical sensors" << std::endl;
+    std::cout << "    ✓ 32 historical sensors" << std::endl;
     return true;
 }
 
@@ -419,6 +427,43 @@ void DataPublisherService::publishHistoricalState(const CPAPSession& session) {
     publishHistoricalState(session.metrics.value());
 }
 
+/// SDD-023. The rule, on its own, so it can be tested without a broker.
+///
+/// The value itself is the same number either way -- what changes is what it is
+/// ALLOWED TO BE CALLED. An S.Box scores apneas and not hypopneas, so its
+/// events-per-hour is not an apnea-hypopnea index and must not arrive in Home
+/// Assistant wearing that name, where it would be graded against ResMed
+/// thresholds by every dashboard card and automation built on it.
+std::pair<std::string, std::string> DataPublisherService::indexSensorsFor(
+    SessionMetrics::IndexKind kind) {
+    if (kind == SessionMetrics::IndexKind::AHI)
+        return {"ahi", "apnea_index"};
+    return {"apnea_index", "ahi"};
+}
+
+/// Remove a historical sensor from Home Assistant, retained-message and all.
+///
+/// SDD-023. NOT the same as not publishing. Discovery configs go out retained
+/// (QoS 1) and states go out retained, so a topic that has ever been written
+/// keeps its last value on the broker until something replaces or clears it.
+/// An entity nobody publishes to any more does not disappear; it sits on the
+/// dashboard showing a stale number and looking current.
+///
+/// An empty retained payload is how MQTT deletes a retained message. The
+/// DISCOVERY clear is what actually removes the entity from Home Assistant; the
+/// STATE clear is for anything subscribed directly to the topic.
+///
+/// One helper rather than four hand-written publishes, because doing this in
+/// two branches by hand is how one of them ends up forgotten.
+void DataPublisherService::clearHistoricalSensor(const std::string& name) {
+    if (!mqtt_client_) return;
+    mqtt_client_->publish(
+        "homeassistant/sensor/" + device_id_ + "/hist_" + name + "/config",
+        "", 1, true);
+    mqtt_client_->publish("cpap/" + device_id_ + "/historical/" + name,
+                          "", 0, true);
+}
+
 void DataPublisherService::publishHistoricalState(const SessionMetrics& m) {
     if (!mqtt_client_) return;
 
@@ -433,8 +478,19 @@ void DataPublisherService::publishHistoricalState(const SessionMetrics& m) {
     }
 
     // EVENTS
-    mqtt_client_->publish("cpap/" + device_id_ + "/historical/ahi",
+    //
+    // SDD-023: the index goes to ONE of two entities depending on whether it is
+    // an AHI at all, and the other is CLEARED rather than merely skipped.
+    //
+    // Skipping is not enough because discovery and state are both retained: an
+    // install that has ever published `ahi` keeps that entity in Home Assistant
+    // showing its last value forever. The person that hurts most is a ResMed
+    // user who moves to an S.Box -- they would keep a familiar AHI card, frozen
+    // on an old number, next to a machine that cannot produce one.
+    const auto [live, cleared] = indexSensorsFor(m.index_kind);
+    mqtt_client_->publish("cpap/" + device_id_ + "/historical/" + live,
                          std::to_string(m.ahi), 0, true);
+    clearHistoricalSensor(cleared);
     mqtt_client_->publish("cpap/" + device_id_ + "/historical/total_events",
                          std::to_string(m.total_events), 0, true);
     mqtt_client_->publish("cpap/" + device_id_ + "/historical/obstructive_apneas",

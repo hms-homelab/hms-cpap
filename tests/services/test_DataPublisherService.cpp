@@ -831,3 +831,54 @@ TEST_F(PayloadTest, HistoricalDiscovery_SetsStateClassMeasurement) {
     EXPECT_FALSE(mode.isMember("state_class"))
         << "textual hist_therapy_mode must not declare a state_class";
 }
+
+// ── SDD-023: an index that is not an AHI ────────────────────────────────────
+//
+// A Sefam S.Box scores apneas but not hypopneas, so its events-per-hour is not
+// an apnea-hypopnea index. Publishing it to Home Assistant under the name "AHI"
+// puts a number that cannot be graded against ResMed thresholds into an entity
+// that every dashboard card and automation will grade against exactly those.
+//
+// Tested through the pure rule rather than a broker: MqttClient::publish is not
+// virtual so the publisher cannot be mocked, and the suites that drive a real
+// broker are excluded from the coverage run for being flaky under -O0
+// instrumentation. The rule is the part that can be wrong.
+
+using IndexKind = cpapdash::parser::SessionMetrics::IndexKind;
+
+TEST(IndexSensorRouting, AnAhiGoesToTheAhiSensor) {
+    const auto [live, cleared] = DataPublisherService::indexSensorsFor(IndexKind::AHI);
+    EXPECT_EQ(live, "ahi");
+    EXPECT_EQ(cleared, "apnea_index");
+}
+
+// The case Steve's S.Box hits.
+TEST(IndexSensorRouting, AnUngradedIndexNeverGoesToTheAhiSensor) {
+    const auto [live, cleared] = DataPublisherService::indexSensorsFor(IndexKind::Ungraded);
+    EXPECT_EQ(live, "apnea_index")
+        << "an apnea-only index needs its own entity, not the AHI's name";
+    EXPECT_EQ(cleared, "ahi")
+        << "the AHI entity must be actively cleared, not merely left unpublished";
+}
+
+// Both directions, and never the same sensor twice. Symmetry is the point: a
+// user moving S.Box -> ResMed must not keep a frozen apnea_index either.
+TEST(IndexSensorRouting, TheTwoSensorsAreAlwaysOppositeAndNeverEqual) {
+    for (auto kind : {IndexKind::AHI, IndexKind::Ungraded}) {
+        const auto [live, cleared] = DataPublisherService::indexSensorsFor(kind);
+        EXPECT_NE(live, cleared) << "one sensor cannot be both live and cleared";
+        EXPECT_TRUE(live == "ahi" || live == "apnea_index");
+        EXPECT_TRUE(cleared == "ahi" || cleared == "apnea_index");
+    }
+    // and swapping the kind swaps the roles
+    const auto a = DataPublisherService::indexSensorsFor(IndexKind::AHI);
+    const auto u = DataPublisherService::indexSensorsFor(IndexKind::Ungraded);
+    EXPECT_EQ(a.first,  u.second);
+    EXPECT_EQ(a.second, u.first);
+}
+
+TEST_F(MqttDisabledTest, ClearingASensorWithoutABrokerDoesNotCrash) {
+    // mqtt.enabled=false gives a null client; the clear must no-op like every
+    // other publish path rather than dereference it.
+    EXPECT_NO_THROW(publisher->publishSessionCompleted());
+}

@@ -83,6 +83,28 @@ public:
      * Called after session completion to republish event/AHI data
      * that was not yet published when the session was still IN_PROGRESS.
      */
+    /// SDD-023: clear a historical sensor's retained discovery config and
+    /// state, which is what actually removes it from Home Assistant. Not
+    /// publishing is not the same as clearing.
+    void clearHistoricalSensor(const std::string& name);
+
+    /// Which of the two index sensors carries the value for this kind, and
+    /// which one must be cleared. Returns {live, cleared}.
+    ///
+    /// PURE AND STATIC so the rule can be tested without a broker.
+    /// MqttClient::publish is not virtual, so the publisher cannot be mocked,
+    /// and the suites that drive a real broker are excluded from the coverage
+    /// run for being flaky under instrumentation. Putting the decision here
+    /// means the part that can be wrong is the part that is tested; the
+    /// publisher below is then just two publishes and a clear.
+    ///
+    /// The pair is always BOTH sensors, never one. A user switching machines in
+    /// either direction must not be left with the other entity frozen on a
+    /// stale value.
+    static std::pair<std::string, std::string> indexSensorsFor(
+        cpapdash::parser::SessionMetrics::IndexKind kind);
+
+
     void publishHistoricalState(const SessionMetrics& m);
 
     /**
