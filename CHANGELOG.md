@@ -5,6 +5,32 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.1.5] - 2026-09-06
+
+5.1.4 was tagged but its build failed, so it never produced an image. This is
+that release, with the two faults fixed. Everything in the 5.1.4 notes below
+ships here.
+
+### Fixed
+- **The Windows build could not compile.** `<utime.h>` is POSIX; MSVC keeps its
+  equivalent in `<sys/utime.h>` and spells both the struct and the call with a
+  leading underscore. The card-stamp detector included it straight from a
+  `.cpp`, so macOS and Linux built clean and only the Windows jobs failed — on
+  a target this project supports. It now goes through `utils/TimeCompat.h`,
+  which already absorbs the same split for `gmtime_r`, `localtime_r` and
+  `timegm`, and no service names a platform header.
+
+### Added
+- **Tests for `SefamIngestion`, which had none** — 102 lines that took line
+  coverage under its gate. Twelve cases; the one that matters is the 1200R
+  day-folder layout, where one folder holds *every* recording of a day, so a
+  walk assuming one session per directory would keep one night and silently
+  drop the rest.
+- **Tests that the sidecar skip is actually consulted.** The comparison was
+  covered in isolation, but nothing asserted that the download path asks it —
+  a different failure, and the one that matters: a correct comparator wired to
+  nothing still re-downloads every CSL and EVE on every beat.
+
 ## [5.1.4] - 2026-09-06
 
 ### Fixed
