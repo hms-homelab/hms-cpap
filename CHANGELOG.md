@@ -5,6 +5,26 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.2.4] - 2026-09-08
+
+### Changed
+- **Our numbers win, the STR stays official (SDD-026).** The dashboard, the
+  30-day trends, the week index, compliance, the sessions list and the
+  session cards all read the same night the same way: our exact event count
+  over the machine's own therapy hours, the STR's `Duration`, or over our
+  recorded span until the STR has been read. The STR's own index and
+  duration are kept in their own columns and shown in the STR panel as the
+  machine's report, which reads differently because the STR floors its
+  index to one decimal. Nights with no session files keep the STR's figures,
+  so history stays on the charts. The machine's leak and pressure percentiles
+  are never replaced by session means once an STR has written the night.
+  This is the same arithmetic cpapdash.com uses, so the two agree on a night.
+- **The headline leak is the 95th percentile**, as on cpapdash.com. It was
+  the median under a field named p95.
+- **The STR is read first on a fresh run**, before any session file, so the
+  first rows on the dashboard already carry the machine's hours. It used to
+  wait behind every download on the card.
+
 ## [5.2.3] - 2026-09-08
 
 ### Fixed
