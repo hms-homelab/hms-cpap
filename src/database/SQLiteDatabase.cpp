@@ -1102,13 +1102,36 @@ void SQLiteDatabase::insertCalculatedMetrics(int64_t session_id,
                                               const std::vector<BreathingSummary>& summaries) {
     if (summaries.empty()) return;
 
+    // An upsert that fills in, never erases. A session is saved after every
+    // checkpoint file it downloads (SDD-025 era collector), so the first save
+    // of a minute can come from a BRP alone, before the PLD that carries its
+    // mask pressure, EPR and snore has landed. INSERT OR IGNORE kept that
+    // first, half-empty row forever; COALESCE lets the later parse complete it
+    // and keeps whatever an earlier parse knew that this one does not.
     const char* sql = R"(
-        INSERT OR IGNORE INTO cpap_calculated_metrics
+        INSERT INTO cpap_calculated_metrics
             (session_id, timestamp, respiratory_rate, tidal_volume, minute_ventilation,
              inspiratory_time, expiratory_time, ie_ratio, flow_limitation, leak_rate,
              flow_p95, flow_p90, pressure_p95, pressure_p90,
              mask_pressure, epr_pressure, snore_index, target_ventilation)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (session_id, timestamp) DO UPDATE SET
+            respiratory_rate   = COALESCE(excluded.respiratory_rate,   respiratory_rate),
+            tidal_volume       = COALESCE(excluded.tidal_volume,       tidal_volume),
+            minute_ventilation = COALESCE(excluded.minute_ventilation, minute_ventilation),
+            inspiratory_time   = COALESCE(excluded.inspiratory_time,   inspiratory_time),
+            expiratory_time    = COALESCE(excluded.expiratory_time,    expiratory_time),
+            ie_ratio           = COALESCE(excluded.ie_ratio,           ie_ratio),
+            flow_limitation    = COALESCE(excluded.flow_limitation,    flow_limitation),
+            leak_rate          = COALESCE(excluded.leak_rate,          leak_rate),
+            flow_p95           = COALESCE(excluded.flow_p95,           flow_p95),
+            flow_p90           = COALESCE(excluded.flow_p90,           flow_p90),
+            pressure_p95       = COALESCE(excluded.pressure_p95,       pressure_p95),
+            pressure_p90       = COALESCE(excluded.pressure_p90,       pressure_p90),
+            mask_pressure      = COALESCE(excluded.mask_pressure,      mask_pressure),
+            epr_pressure       = COALESCE(excluded.epr_pressure,       epr_pressure),
+            snore_index        = COALESCE(excluded.snore_index,        snore_index),
+            target_ventilation = COALESCE(excluded.target_ventilation, target_ventilation)
     )";
 
     StmtGuard g;

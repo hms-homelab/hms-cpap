@@ -355,6 +355,54 @@ TEST_F(SQLiteDatabaseTest, SaveSession_BreathingSummaryAndCalculatedMetrics) {
     EXPECT_EQ(cm[0]["n"].asString(), "1");
 }
 
+// A session is saved after every checkpoint file it downloads, so the first
+// save of a minute can come from the BRP alone and the PLD that carries its
+// mask pressure, EPR and snore arrives on a later save. That later save has to
+// complete the row, and it must not erase what the first one knew.
+TEST_F(SQLiteDatabaseTest, SaveSession_ALaterSaveFillsInWhatThePldBrings) {
+    auto start = tpFromEpoch(kBaseEpoch);
+    auto s = makeSession("DEVP", start);
+
+    BreathingSummary from_brp(start + seconds(60));
+    from_brp.avg_flow_rate = 20.0;
+    from_brp.respiratory_rate = 14.0;      // BRP-derived, present on the first save
+    s.breathing_summary = {from_brp};
+    ASSERT_TRUE(db_->saveSession(s));
+
+    // executeQuery hands every column back as text; NULL comes back as null
+    // or as an empty string depending on the column's declared type.
+    const auto isNullish = [](const Json::Value& v) {
+        return v.isNull() || (v.isString() && v.asString().empty());
+    };
+    const auto num = [](const Json::Value& v) { return std::stod(v.asString()); };
+
+    auto before = db_->executeQuery(
+        "SELECT mask_pressure, snore_index, respiratory_rate FROM cpap_calculated_metrics");
+    ASSERT_EQ(before.size(), 1u);
+    EXPECT_TRUE(isNullish(before[0]["mask_pressure"])) << "no PLD yet, so no mask pressure yet";
+
+    BreathingSummary with_pld = from_brp;
+    with_pld.respiratory_rate.reset();     // this parse says nothing about it
+    with_pld.mask_pressure = 9.4;          // PLD-derived, arrives on the second save
+    with_pld.epr_pressure = 7.4;
+    with_pld.snore_index = 0.2;
+    s.breathing_summary = {with_pld};
+    ASSERT_TRUE(db_->saveSession(s));
+
+    auto after = db_->executeQuery(
+        "SELECT mask_pressure, epr_pressure, snore_index, respiratory_rate "
+        "FROM cpap_calculated_metrics");
+    ASSERT_EQ(after.size(), 1u) << "the second save must update the minute, not add one";
+    ASSERT_FALSE(isNullish(after[0]["mask_pressure"]))
+        << "the PLD's mask pressure never reached the row (the old INSERT OR IGNORE)";
+    EXPECT_NEAR(num(after[0]["mask_pressure"]), 9.4, 1e-6);
+    EXPECT_NEAR(num(after[0]["epr_pressure"]), 7.4, 1e-6);
+    EXPECT_NEAR(num(after[0]["snore_index"]), 0.2, 1e-6);
+    ASSERT_FALSE(isNullish(after[0]["respiratory_rate"]))
+        << "a value the first save knew was erased by a save that did not carry it";
+    EXPECT_NEAR(num(after[0]["respiratory_rate"]), 14.0, 1e-6);
+}
+
 // A breathing summary with no calculated metrics must NOT create a
 // calculated_metrics row (the early-continue branch).
 TEST_F(SQLiteDatabaseTest, SaveSession_BreathingSummaryWithoutCalcMetrics) {

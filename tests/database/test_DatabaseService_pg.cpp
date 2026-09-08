@@ -660,6 +660,33 @@ TEST_F(PgDatabaseTest, SaveSession_BreathingSummaryAndCalculatedMetrics) {
     EXPECT_EQ(count("cpap_calculated_metrics"), 1);
 }
 
+// Same contract as the SQLite test of the same name: a later save completes a
+// minute's PLD columns and does not erase what the first save knew.
+TEST_F(PgDatabaseTest, SaveSession_ALaterSaveFillsInWhatThePldBrings) {
+    auto start = tpFromEpoch(kBaseEpoch);
+    auto s = makeSession("DEVP", start);
+
+    BreathingSummary from_brp(start + seconds(60));
+    from_brp.avg_flow_rate = 20.0;
+    from_brp.respiratory_rate = 14.0;
+    s.breathing_summary = {from_brp};
+    ASSERT_TRUE(db_->saveSession(s));
+    EXPECT_EQ(scalar("SELECT mask_pressure IS NULL FROM cpap_calculated_metrics"), "t");
+
+    BreathingSummary with_pld = from_brp;
+    with_pld.respiratory_rate.reset();
+    with_pld.mask_pressure = 9.4;
+    with_pld.epr_pressure = 7.4;
+    with_pld.snore_index = 0.2;
+    s.breathing_summary = {with_pld};
+    ASSERT_TRUE(db_->saveSession(s));
+
+    EXPECT_EQ(count("cpap_calculated_metrics"), 1);
+    EXPECT_EQ(scalar("SELECT ROUND(mask_pressure::numeric, 1) FROM cpap_calculated_metrics"), "9.4");
+    EXPECT_EQ(scalar("SELECT ROUND(snore_index::numeric, 1) FROM cpap_calculated_metrics"), "0.2");
+    EXPECT_EQ(scalar("SELECT ROUND(respiratory_rate::numeric, 1) FROM cpap_calculated_metrics"), "14.0");
+}
+
 TEST_F(PgDatabaseTest, SaveSession_BreathingSummaryWithoutCalcMetrics) {
     auto start = tpFromEpoch(kBaseEpoch);
     auto s = makeSession("DEVB2", start);

@@ -1554,13 +1554,35 @@ void MySQLDatabase::insertCalculatedMetrics(int64_t session_id,
                                              const std::vector<BreathingSummary>& summaries) {
     if (summaries.empty()) return;
 
+    // Fills in, never erases: the first save of a minute can come from a BRP
+    // alone, before the PLD with its mask pressure, EPR and snore has landed,
+    // and INSERT IGNORE kept that half-empty row forever. Same shape as the
+    // SQLite and PostgreSQL upserts. VALUES() is what MariaDB and every MySQL
+    // in the field understand; the row alias form is 8.0.19+ only.
     const char* sql = R"(
-        INSERT IGNORE INTO cpap_calculated_metrics
+        INSERT INTO cpap_calculated_metrics
             (session_id, timestamp, respiratory_rate, tidal_volume, minute_ventilation,
              inspiratory_time, expiratory_time, ie_ratio, flow_limitation, leak_rate,
              flow_p95, flow_p90, pressure_p95, pressure_p90,
              mask_pressure, epr_pressure, snore_index, target_ventilation)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+            respiratory_rate   = COALESCE(VALUES(respiratory_rate),   respiratory_rate),
+            tidal_volume       = COALESCE(VALUES(tidal_volume),       tidal_volume),
+            minute_ventilation = COALESCE(VALUES(minute_ventilation), minute_ventilation),
+            inspiratory_time   = COALESCE(VALUES(inspiratory_time),   inspiratory_time),
+            expiratory_time    = COALESCE(VALUES(expiratory_time),    expiratory_time),
+            ie_ratio           = COALESCE(VALUES(ie_ratio),           ie_ratio),
+            flow_limitation    = COALESCE(VALUES(flow_limitation),    flow_limitation),
+            leak_rate          = COALESCE(VALUES(leak_rate),          leak_rate),
+            flow_p95           = COALESCE(VALUES(flow_p95),           flow_p95),
+            flow_p90           = COALESCE(VALUES(flow_p90),           flow_p90),
+            pressure_p95       = COALESCE(VALUES(pressure_p95),       pressure_p95),
+            pressure_p90       = COALESCE(VALUES(pressure_p90),       pressure_p90),
+            mask_pressure      = COALESCE(VALUES(mask_pressure),      mask_pressure),
+            epr_pressure       = COALESCE(VALUES(epr_pressure),       epr_pressure),
+            snore_index        = COALESCE(VALUES(snore_index),        snore_index),
+            target_ventilation = COALESCE(VALUES(target_ventilation), target_ventilation)
     )";
 
     MysqlStmtGuard g;

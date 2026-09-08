@@ -1181,7 +1181,24 @@ void DatabaseService::insertCalculatedMetrics(pqxx::work& work, int session_id,
         }
     }
 
-    query << " ON CONFLICT (session_id, timestamp) DO NOTHING";
+    // Fills in, never erases. A session is saved after every checkpoint file
+    // it downloads, so the first save of a minute can come from a BRP alone,
+    // before the PLD with its mask pressure, EPR and snore has landed. DO
+    // NOTHING kept that half-empty row forever; COALESCE lets the later parse
+    // complete it and keeps whatever an earlier parse knew that this one does
+    // not. Same shape as the SQLite and MySQL upserts.
+    query << " ON CONFLICT (session_id, timestamp) DO UPDATE SET";
+    const char* cols[] = {"respiratory_rate", "tidal_volume", "minute_ventilation",
+                          "inspiratory_time", "expiratory_time", "ie_ratio",
+                          "flow_limitation", "leak_rate", "flow_p95", "flow_p90",
+                          "pressure_p95", "pressure_p90", "mask_pressure",
+                          "epr_pressure", "snore_index", "target_ventilation"};
+    bool first = true;
+    for (const char* c : cols) {
+        query << (first ? " " : ", ") << c << " = COALESCE(EXCLUDED." << c
+              << ", cpap_calculated_metrics." << c << ")";
+        first = false;
+    }
     work.exec(query.str());
 }
 
