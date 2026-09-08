@@ -5,6 +5,22 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.2.2] - 2026-09-08
+
+### Fixed
+- **A first run stored nothing until the whole card was in.** The burst
+  collector downloaded every session the card listed, then every sidecar,
+  then archived the folders, and only then parsed and saved. Against a card
+  holding ten nights over an ez Share, which serves about one file per
+  second, the dashboard stayed empty for close to forty minutes and every
+  night sat at Live. A session is now parsed and saved after every checkpoint
+  file it downloads, the way a later burst already re-parses a growing night,
+  so the first rows appear within seconds of the service starting.
+
+- **The newest night comes first.** Sessions are now fetched from the latest
+  night backwards, so the night worth looking at is the first one on the
+  dashboard instead of the last.
+
 ## [5.2.1] - 2026-09-06
 
 ### Fixed
