@@ -5,6 +5,24 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.2.3] - 2026-09-08
+
+### Fixed
+- **Mask pressure, EPR and snore were missing from a night stored file by
+  file.** 5.2.2 saves a session after every checkpoint file, so the first save
+  of a minute can come from the BRP alone, before the PLD that carries those
+  values has been downloaded. The per-minute insert ignored the later save and
+  kept the half-empty row forever, and closing the session does not reparse.
+  All three databases now complete the row on a later save and never erase
+  what an earlier one knew.
+
+### Added
+- **A zip for the Raspberry Pi.** `hms-cpap-linux-armhf.zip` on the release
+  page holds the service built for 32-bit Raspberry Pi OS (trixie), the web
+  UI, a systemd unit and an install script. Unzip, `sudo ./install.sh`, open
+  the address it prints. Running it again on a newer zip is the upgrade. See
+  SDD-025.
+
 ## [5.2.2] - 2026-09-08
 
 ### Fixed
