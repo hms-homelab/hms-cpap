@@ -22,7 +22,10 @@
 #include "utils/TimeCompat.h"   // fileStat: <sys/stat.h> is not portable to MSVC
 #include <filesystem>
 #include <fstream>
+#include <functional>
+#include <iostream>
 #include <map>
+#include <sstream>
 
 using namespace hms_cpap;
 
@@ -1750,6 +1753,9 @@ public:
     std::vector<std::string> downloaded_files;     // filenames via downloadFile()
     std::vector<std::string> ranged_files;         // filenames via downloadFileRange()
     std::vector<std::string> downloaded_by_path;   // card-rel paths via downloadByPath()
+    // Observed at the moment each file is requested, so a test can ask what
+    // the collector had already done by the time it came back for more.
+    std::function<void(const std::string& date_folder, const std::string& filename)> on_download;
 
     std::vector<std::string> listDateFolders() override { return date_folders; }
 
@@ -1774,10 +1780,11 @@ public:
 
     // Write deterministic bytes so downloadSessionFiles() succeeds. Content is
     // garbage EDF — parse fails later, which is fine: we assert pre-parse DB calls.
-    bool downloadFile(const std::string& /*date_folder*/, const std::string& filename,
+    bool downloadFile(const std::string& date_folder, const std::string& filename,
                       const std::string& local_path) override {
         ++download_count;
         downloaded_files.push_back(filename);
+        if (on_download) on_download(date_folder, filename);
         std::filesystem::create_directories(std::filesystem::path(local_path).parent_path());
         std::ofstream ofs(local_path, std::ios::binary);
         ofs << "NOT_A_REAL_EDF_FILE";
@@ -2966,6 +2973,64 @@ TEST_F(BurstOrchestrationTest, ARecoveredNightPublishesItsMetrics) {
 
     EXPECT_EQ(nightState(db_raw->sync_folders["20200101"]), NightState::Complete)
         << "a night that received its STR is still being reported as partial";
+}
+
+// A first run against a card holding many nights used to download every one
+// of them, then the sidecars, then archive, and only then parse, so nothing
+// reached the database until the last folder was in. A session is now parsed
+// and stored after EVERY checkpoint file it downloads, and the NEWEST night
+// goes first: by the time the second checkpoint of the latest night is
+// requested, the night has already been saved once from its first checkpoint,
+// and by the time the older night's first file is requested it has been saved
+// again from both.
+TEST_F(BurstOrchestrationTest, ASessionIsStoredAfterEveryCheckpointFileNewestFirst) {
+    int saves = 0;
+    std::vector<std::pair<std::string, int>> saves_seen_at_download;  // (filename, saves so far)
+
+    auto svc = makeService([&](FakeDataSource& ds) {
+        ds.date_folders = {"20200101", "20200102"};
+        ds.folder_files["20200101"] = {
+            mkEntry("20200101_220000_BRP.edf", 100),
+            mkEntry("20200101_220000_PLD.edf", 20),
+        };
+        ds.folder_files["20200102"] = {
+            mkEntry("20200102_220000_BRP.edf", 100),
+            mkEntry("20200102_220000_PLD.edf", 20),
+        };
+        ds.on_download = [&](const std::string&, const std::string& filename) {
+            saves_seen_at_download.push_back({filename, saves});
+        };
+    });
+
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, sessionExists(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, saveSession(_))
+        .WillRepeatedly(::testing::Invoke([&](const CPAPSession&) { ++saves; return true; }));
+
+    svc->runBurstCycleForTest();
+
+    auto savesBefore = [&](const std::string& filename) -> int {
+        for (const auto& [name, n] : saves_seen_at_download)
+            if (name == filename) return n;
+        ADD_FAILURE() << filename << " was never downloaded";
+        return -1;
+    };
+
+    ASSERT_FALSE(saves_seen_at_download.empty()) << "nothing was downloaded";
+    EXPECT_EQ(saves_seen_at_download.front().first, "20200102_220000_BRP.edf")
+        << "the latest night on the card was not the first one fetched";
+
+    // The latest night's second checkpoint was requested only after its first
+    // checkpoint had been parsed and saved; the older night only after the
+    // latest one had been saved again from both.
+    EXPECT_EQ(savesBefore("20200102_220000_BRP.edf"), 0);
+    EXPECT_EQ(savesBefore("20200102_220000_PLD.edf"), 1)
+        << "the night was not stored after its first checkpoint";
+    EXPECT_EQ(savesBefore("20200101_220000_BRP.edf"), 2)
+        << "the latest night was not stored again after its second checkpoint, "
+           "before the older night was fetched";
+    EXPECT_EQ(saves, 4) << "two nights, two checkpoints each, one save per checkpoint";
 }
 
 }  // namespace burst_orch

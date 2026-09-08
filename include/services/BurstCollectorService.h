@@ -28,6 +28,7 @@
 #include <thread>
 #include <atomic>
 #include <chrono>
+#include <functional>
 #include <mutex>
 
 namespace hms_cpap {
@@ -383,10 +384,16 @@ private:
      *
      * @param session Session file set to download
      * @param local_base_dir Local base directory (/tmp/cpap_data)
+     * @param on_checkpoint_stored Called after each BRP/PLD/SAD file lands, so
+     *        the caller can parse and store the session as it grows on disk
+     *        rather than after the last file. Sidecars (CSL/EVE) do not fire
+     *        it: they are fetched first and carry nothing the parser can
+     *        build a session from on their own.
      * @return true if at least required files downloaded
      */
     bool downloadSessionFiles(const SessionFileSet& session,
-                             const std::string& local_base_dir);
+                             const std::string& local_base_dir,
+                             const std::function<void()>& on_checkpoint_stored = {});
 
     /**
      * Archive downloaded files to permanent storage
@@ -402,6 +409,28 @@ private:
     bool archiveSessionFiles(const std::string& date_folder,
                             const std::string& temp_base_dir,
                             const std::string& archive_base_dir);
+
+    /**
+     * Parse a session from what is on disk right now, and store it.
+     *
+     * Called after every checkpoint file the ezShare download loop lands, so
+     * a first run against a card with many nights fills the dashboard file by
+     * file as it walks the card rather than after the last folder. saveSession
+     * is an upsert, so re-storing the same session as it grows is the same
+     * thing a later burst does with a Range download. Records the session's
+     * file set (cpap_session_files) alongside the row, and re-derives the
+     * daily summary from sessions when the STR was not available this cycle,
+     * for the same reason.
+     *
+     * @param session_dir    Directory holding this session's files
+     * @param session_start  Session start (DB lookup key)
+     * @param parsed_sessions One entry per session, replaced on each re-parse,
+     *                       so the caller can still publish the latest at the end
+     * @return true if the session was parsed AND saved
+     */
+    bool parseAndStoreSession(const std::string& session_dir,
+                              std::chrono::system_clock::time_point session_start,
+                              std::vector<CPAPSession>& parsed_sessions);
 
     /**
      * SDD-002: download the non-EDF / non-junk residue (the per-night .crc and any

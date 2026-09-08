@@ -389,7 +389,8 @@ std::chrono::system_clock::time_point BurstCollectorService::getLastBurstTime() 
 
 bool BurstCollectorService::downloadSessionFiles(
     const SessionFileSet& session,
-    const std::string& local_base_dir) {
+    const std::string& local_base_dir,
+    const std::function<void()>& on_checkpoint_stored) {
 
     std::cout << "📥 CPAP: Downloading session " << session.session_prefix
               << " (" << session.total_size_kb << " KB)" << std::endl;
@@ -478,35 +479,23 @@ bool BurstCollectorService::downloadSessionFiles(
     downloadSmall("CSL", session.csl_files);
     downloadSmall("EVE", session.eve_files);
 
-    // Download ALL BRP checkpoint files (use Range for growing files)
-    for (const auto& filename : session.brp_files) {
-        std::string local_path = local_dir + "/" + filename;
-        if (smartDownload(filename, local_path)) {
-            downloaded++;
-        } else {
-            std::cerr << "⚠️  CPAP: Failed to download BRP: " << filename << std::endl;
+    // Download ALL checkpoint files (use Range for growing files). Every file
+    // that lands is handed to the caller straight away, so the session is
+    // parsed and stored as it grows on disk instead of after its last file.
+    auto downloadCheckpoints = [&](const char* label, const std::vector<std::string>& names) {
+        for (const auto& filename : names) {
+            std::string local_path = local_dir + "/" + filename;
+            if (smartDownload(filename, local_path)) {
+                downloaded++;
+                if (on_checkpoint_stored) on_checkpoint_stored();
+            } else {
+                std::cerr << "⚠️  CPAP: Failed to download " << label << ": " << filename << std::endl;
+            }
         }
-    }
-
-    // Download ALL PLD checkpoint files (use Range for growing files)
-    for (const auto& filename : session.pld_files) {
-        std::string local_path = local_dir + "/" + filename;
-        if (smartDownload(filename, local_path)) {
-            downloaded++;
-        } else {
-            std::cerr << "⚠️  CPAP: Failed to download PLD: " << filename << std::endl;
-        }
-    }
-
-    // Download ALL SAD checkpoint files (use Range for growing files)
-    for (const auto& filename : session.sad_files) {
-        std::string local_path = local_dir + "/" + filename;
-        if (smartDownload(filename, local_path)) {
-            downloaded++;
-        } else {
-            std::cerr << "⚠️  CPAP: Failed to download SAD: " << filename << std::endl;
-        }
-    }
+    };
+    downloadCheckpoints("BRP", session.brp_files);
+    downloadCheckpoints("PLD", session.pld_files);
+    downloadCheckpoints("SAD", session.sad_files);
 
     // Accept ANY downloaded files (even partial/in-progress sessions)
     bool success = downloaded > 0;
@@ -1311,6 +1300,21 @@ bool BurstCollectorService::executeBurstCycle() {
     std::vector<std::pair<std::string, std::chrono::system_clock::time_point>> downloaded_sessions;
     auto download_start = std::chrono::steady_clock::now();
 
+    // An ezShare session is parsed and stored after EVERY checkpoint file it
+    // downloads (parseAndStoreSession, from the loop below), the way a later
+    // burst re-parses a night after a Range download. A first run against a
+    // card holding many nights used to download every one of them, then the
+    // sidecars, then archive, and only then parse, so the dashboard stayed
+    // empty until the last folder was in; over a real ez Share, which serves
+    // about one file per second, that was half an hour. Slower in total,
+    // but there are results from the first file on.
+    // Local mode stages its sessions first and parses them at Step 6;
+    // stored_inline is what Step 6 skips, saved_inline what it counts.
+    std::vector<CPAPSession> parsed_sessions;
+    std::set<std::chrono::system_clock::time_point> stored_inline;
+    std::set<std::chrono::system_clock::time_point> saved_inline;
+    int saved_count = 0;
+
     if (prisma_ingestion_) {
         // ===== LOWENSTEIN PRISMA MODE =====
         if (!prisma_ingestion_->initialize()) {
@@ -1552,6 +1556,12 @@ bool BurstCollectorService::executeBurstCycle() {
         std::string temp_base = (std::filesystem::temp_directory_path() / "cpap_local").string();
         std::filesystem::create_directories(temp_base);
 
+        // Newest first, same as the ezShare loop below.
+        std::stable_sort(new_sessions.begin(), new_sessions.end(),
+            [](const SessionFileSet& a, const SessionFileSet& b) {
+                return a.session_start > b.session_start;
+            });
+
         for (const auto& session : new_sessions) {
             // Skip sessions that were force-completed (manual override)
             if (db_service_->isForceCompleted(device_id_, session.session_start)) {
@@ -1728,6 +1738,16 @@ bool BurstCollectorService::executeBurstCycle() {
         // two observations of the same signature, so nothing is lost.
         updateFolderLedgers(new_sessions, local_base_dir);
 
+        // Newest first. On a first run the latest night is the one worth
+        // seeing, and with sessions stored file by file it reaches the
+        // dashboard within seconds instead of after every older night on the
+        // card. Nothing below depends on the order: the most-recent check is
+        // a max over the whole list, and the ledgers were folded in above.
+        std::stable_sort(new_sessions.begin(), new_sessions.end(),
+            [](const SessionFileSet& a, const SessionFileSet& b) {
+                return a.session_start > b.session_start;
+            });
+
         for (const auto& session : new_sessions) {
             // Skip sessions that were force-completed (manual override)
             if (db_service_->isForceCompleted(device_id_, session.session_start)) {
@@ -1742,7 +1762,13 @@ bool BurstCollectorService::executeBurstCycle() {
                 std::cout << "CPAP: New session " << session.session_prefix
                           << " (not in DB, " << session.total_size_kb << " KB)" << std::endl;
 
-                if (downloadSessionFiles(session, local_base_dir)) {
+                const std::string session_dir = local_base_dir + "/" + session.date_folder;
+                auto storeWhatIsOnDisk = [&]() {
+                    if (parseAndStoreSession(session_dir, session.session_start, parsed_sessions))
+                        saved_inline.insert(session.session_start);
+                };
+
+                if (downloadSessionFiles(session, local_base_dir, storeWhatIsOnDisk)) {
                     std::map<std::string, int> checkpoint_sizes;
                     for (const auto& [filename, size_kb] : session.file_sizes_kb) {
                         if (filename.find("_BRP.edf") != std::string::npos ||
@@ -1752,8 +1778,8 @@ bool BurstCollectorService::executeBurstCycle() {
                         }
                     }
                     db_service_->updateCheckpointFileSizes(device_id_, session.session_start, checkpoint_sizes);
-                    std::string session_dir = local_base_dir + "/" + session.date_folder;
                     downloaded_sessions.push_back({session_dir, session.session_start});
+                    stored_inline.insert(session.session_start);
                 } else {
                     std::cerr << "CPAP: Failed to download session " << session.session_prefix << std::endl;
                 }
@@ -1864,7 +1890,13 @@ bool BurstCollectorService::executeBurstCycle() {
                       << (archived ? " files changed, downloading updates"
                                    : " downloading to repair the archive") << std::endl;
 
-            if (downloadSessionFiles(session, local_base_dir)) {
+            const std::string session_dir = local_base_dir + "/" + session.date_folder;
+            auto storeWhatIsOnDisk = [&]() {
+                if (parseAndStoreSession(session_dir, session.session_start, parsed_sessions))
+                    saved_inline.insert(session.session_start);
+            };
+
+            if (downloadSessionFiles(session, local_base_dir, storeWhatIsOnDisk)) {
                 std::map<std::string, int> checkpoint_sizes;
                 for (const auto& [filename, size_kb] : session.file_sizes_kb) {
                     if (filename.find("_BRP.edf") != std::string::npos ||
@@ -1879,8 +1911,8 @@ bool BurstCollectorService::executeBurstCycle() {
                 // markSessionCompleted() can fire again when it truly stops.
                 db_service_->reopenSession(device_id_, session.session_start);
 
-                std::string session_dir = local_base_dir + "/" + session.date_folder;
                 downloaded_sessions.push_back({session_dir, session.session_start});
+                stored_inline.insert(session.session_start);
             } else {
                 std::cerr << "CPAP: Failed to download session " << session.session_prefix << std::endl;
             }
@@ -1915,77 +1947,16 @@ bool BurstCollectorService::executeBurstCycle() {
         captureCardResidue(permanent_archive);
     }
 
-    // Step 6: Parse all sessions (same for both modes)
+    // Step 6: Parse and store whatever the loops above staged but did not
+    // store inline (local mode). ezShare sessions were handled file by file as
+    // they downloaded, so this is a no-op for them.
     auto parse_start = std::chrono::steady_clock::now();
-    std::vector<CPAPSession> parsed_sessions;
-    // Kept in lockstep with parsed_sessions: the full file set for each, with
-    // the session start it belongs to.
-    std::vector<std::pair<std::chrono::system_clock::time_point,
-                          std::vector<SessionFileRef>>> parsed_session_files;
+    saved_count += static_cast<int>(saved_inline.size());
 
     for (const auto& [session_dir, session_start] : downloaded_sessions) {
-        std::cout << "📊 CPAP: Parsing session from " << session_dir << "..." << std::endl;
-
-        // Pass filename timestamp to parser (DB lookup key)
-        auto parsed = EDFParser::parseSession(session_dir, device_id_, device_name_, session_start);
-
-        if (parsed) {
-            // Set file path references (pointing to permanent archive)
-            auto start_time_t = std::chrono::system_clock::to_time_t(session_start);
-            std::tm* start_tm = std::localtime(&start_time_t);
-            std::ostringstream date_oss;
-            date_oss << std::put_time(start_tm, "%Y%m%d");
-            std::string date_folder = date_oss.str();
-
-            std::ostringstream prefix_oss;
-            prefix_oss << std::put_time(start_tm, "%Y%m%d_%H%M%S");
-            std::string session_prefix = prefix_oss.str();
-
-            // Store RELATIVE paths in database (DATALOG/20250721/filename.edf)
-            // This makes paths portable between different storage locations
-            std::string relative_path_base = "DATALOG/" + date_folder + "/";
-
-            // Set file paths (first file of each type) AND record the full set.
-            // The columns hold one path per kind; cpap_session_files holds every
-            // file the night is made of, which is what a merged session needs
-            // and what the SleepHQ export reads. See SDD-014.
-            std::vector<SessionFileRef> file_refs;
-            if (std::filesystem::exists(session_dir)) {
-                std::vector<std::string> names;
-                for (const auto& entry : std::filesystem::directory_iterator(session_dir)) {
-                    names.push_back(entry.path().filename().string());
-                }
-                // directory_iterator order is unspecified, so "first of each
-                // kind" would otherwise not be the same file twice.
-                std::sort(names.begin(), names.end());
-
-                for (const auto& filename : names) {
-                    const char* kind = nullptr;
-                    if (filename.find("_BRP.edf") != std::string::npos)      kind = "brp";
-                    else if (filename.find("_EVE.edf") != std::string::npos) kind = "eve";
-                    else if (isOximetryFile(filename))                        kind = "sad";
-                    else if (filename.find("_PLD.edf") != std::string::npos) kind = "pld";
-                    else if (filename.find("_CSL.edf") != std::string::npos) kind = "csl";
-                    if (!kind) continue;
-
-                    const std::string rel = relative_path_base + filename;
-                    file_refs.push_back({kind, rel});
-
-                    std::string k(kind);
-                    if (k == "brp" && !parsed->brp_file_path.has_value()) parsed->brp_file_path = rel;
-                    else if (k == "eve" && !parsed->eve_file_path.has_value()) parsed->eve_file_path = rel;
-                    else if (k == "sad" && !parsed->sad_file_path.has_value()) parsed->sad_file_path = rel;
-                    else if (k == "pld" && !parsed->pld_file_path.has_value()) parsed->pld_file_path = rel;
-                    else if (k == "csl" && !parsed->csl_file_path.has_value()) parsed->csl_file_path = rel;
-                }
-            }
-
-            parsed_session_files.push_back({session_start, file_refs});
-            parsed_sessions.push_back(*parsed);  // Dereference unique_ptr and copy
-            std::cout << "✅ CPAP: Parsed session successfully" << std::endl;
-        } else {
-            std::cerr << "⚠️  CPAP: Failed to parse session from " << session_dir << std::endl;
-        }
+        if (stored_inline.count(session_start)) continue;
+        if (parseAndStoreSession(session_dir, session_start, parsed_sessions))
+            saved_count++;
     }
 
     if (parsed_sessions.empty()) {
@@ -1996,33 +1967,8 @@ bool BurstCollectorService::executeBurstCycle() {
     auto parse_end = std::chrono::steady_clock::now();
     auto parse_ms = std::chrono::duration_cast<std::chrono::milliseconds>(parse_end - parse_start).count();
 
-    std::cout << "✅ CPAP: Parsed " << parsed_sessions.size() << " session(s) in " << parse_ms << " ms" << std::endl;
-
-    // Step 7: Save ALL sessions to database
-    int saved_count = 0;
-    for (size_t i = 0; i < parsed_sessions.size(); ++i) {
-        if (db_service_->saveSession(parsed_sessions[i])) {
-            saved_count++;
-            if (i < parsed_session_files.size()) {
-                db_service_->replaceSessionFiles(device_id_,
-                                                 parsed_session_files[i].first,
-                                                 parsed_session_files[i].second);
-            }
-        } else {
-            std::cerr << "⚠️  CPAP: Failed to save session to DB" << std::endl;
-        }
-    }
-
     std::cout << "💾 CPAP: Saved " << saved_count << "/" << parsed_sessions.size()
               << " session(s) to database" << std::endl;
-
-    // STR is attempted earlier in this same cycle, before anything above has been
-    // parsed. When it is unavailable, the summary it fell back to was therefore
-    // derived from a session table that did not yet contain tonight's rows — on a
-    // first import, from an empty one. Re-derive now that they are persisted, or
-    // the UI shows a full session list behind a blank dashboard (issue #16).
-    if (!str_summary_ok_ && saved_count > 0)
-        db_service_->aggregateDailySummaryFromSessions(device_id_);
 
     // Step 8: Publish LATEST session to MQTT (most recent by session_start)
     if (!parsed_sessions.empty() && data_publisher_) {
@@ -2096,6 +2042,97 @@ bool BurstCollectorService::executeBurstCycle() {
         std::cout << "   WARNING: Cycle took >" << (cycle_ms/1000) << "s! Consider increasing BURST_INTERVAL" << std::endl;
     }
     std::cout << std::string(60, '=') << std::endl << std::endl;
+
+    return true;
+}
+
+bool BurstCollectorService::parseAndStoreSession(
+    const std::string& session_dir,
+    std::chrono::system_clock::time_point session_start,
+    std::vector<CPAPSession>& parsed_sessions) {
+
+    std::cout << "📊 CPAP: Parsing session from " << session_dir << "..." << std::endl;
+
+    // Pass filename timestamp to parser (DB lookup key)
+    auto parsed = EDFParser::parseSession(session_dir, device_id_, device_name_, session_start);
+    if (!parsed) {
+        std::cerr << "⚠️  CPAP: Failed to parse session from " << session_dir << std::endl;
+        return false;
+    }
+
+    // Set file path references (pointing to permanent archive)
+    auto start_time_t = std::chrono::system_clock::to_time_t(session_start);
+    std::tm* start_tm = std::localtime(&start_time_t);
+    std::ostringstream date_oss;
+    date_oss << std::put_time(start_tm, "%Y%m%d");
+    std::string date_folder = date_oss.str();
+
+    // Store RELATIVE paths in database (DATALOG/20250721/filename.edf)
+    // This makes paths portable between different storage locations
+    std::string relative_path_base = "DATALOG/" + date_folder + "/";
+
+    // Set file paths (first file of each type) AND record the full set.
+    // The columns hold one path per kind; cpap_session_files holds every
+    // file the night is made of, which is what a merged session needs
+    // and what the SleepHQ export reads. See SDD-014.
+    std::vector<SessionFileRef> file_refs;
+    if (std::filesystem::exists(session_dir)) {
+        std::vector<std::string> names;
+        for (const auto& entry : std::filesystem::directory_iterator(session_dir)) {
+            names.push_back(entry.path().filename().string());
+        }
+        // directory_iterator order is unspecified, so "first of each
+        // kind" would otherwise not be the same file twice.
+        std::sort(names.begin(), names.end());
+
+        for (const auto& filename : names) {
+            const char* kind = nullptr;
+            if (filename.find("_BRP.edf") != std::string::npos)      kind = "brp";
+            else if (filename.find("_EVE.edf") != std::string::npos) kind = "eve";
+            else if (isOximetryFile(filename))                        kind = "sad";
+            else if (filename.find("_PLD.edf") != std::string::npos) kind = "pld";
+            else if (filename.find("_CSL.edf") != std::string::npos) kind = "csl";
+            if (!kind) continue;
+
+            const std::string rel = relative_path_base + filename;
+            file_refs.push_back({kind, rel});
+
+            std::string k(kind);
+            if (k == "brp" && !parsed->brp_file_path.has_value()) parsed->brp_file_path = rel;
+            else if (k == "eve" && !parsed->eve_file_path.has_value()) parsed->eve_file_path = rel;
+            else if (k == "sad" && !parsed->sad_file_path.has_value()) parsed->sad_file_path = rel;
+            else if (k == "pld" && !parsed->pld_file_path.has_value()) parsed->pld_file_path = rel;
+            else if (k == "csl" && !parsed->csl_file_path.has_value()) parsed->csl_file_path = rel;
+        }
+    }
+
+    // One entry per session: a re-parse after the next file replaces the
+    // earlier picture of the same night rather than sitting beside it.
+    auto same_session = std::find_if(parsed_sessions.begin(), parsed_sessions.end(),
+        [&](const CPAPSession& s) {
+            return s.session_start.has_value() && *s.session_start == session_start;
+        });
+    if (same_session != parsed_sessions.end()) {
+        *same_session = *parsed;
+    } else {
+        parsed_sessions.push_back(*parsed);  // Dereference unique_ptr and copy
+    }
+    std::cout << "✅ CPAP: Parsed session successfully" << std::endl;
+
+    if (!db_service_->saveSession(*parsed)) {
+        std::cerr << "⚠️  CPAP: Failed to save session to DB" << std::endl;
+        return false;
+    }
+    db_service_->replaceSessionFiles(device_id_, session_start, file_refs);
+    std::cout << "💾 CPAP: Saved session " << date_folder << " to database" << std::endl;
+
+    // STR is attempted earlier in the cycle, before anything is parsed. When it
+    // was unavailable, the summary it fell back to was derived from a session
+    // table that did not yet contain this row -- on a first import, from an
+    // empty one. Re-derive now that it is persisted, per session, or the UI
+    // shows a growing session list behind a blank dashboard (issue #16).
+    if (!str_summary_ok_)
+        db_service_->aggregateDailySummaryFromSessions(device_id_);
 
     return true;
 }
