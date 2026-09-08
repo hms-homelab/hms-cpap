@@ -1,0 +1,17 @@
+[Unit]
+Description=CpapDash (hms-cpap) data collection service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+Environment=HOME=__HOME__
+Environment=HMS_CPAP_SUPERVISED=1
+WorkingDirectory=__HOME__
+ExecStart=/usr/local/bin/hms_cpap
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

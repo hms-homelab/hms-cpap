@@ -143,6 +143,7 @@ set(TEST_SOURCES
     web/test_QueryService_index.cpp
     web/test_QueryService_oximetry.cpp
     web/test_QueryService_reads.cpp
+    scripts/test_PiInstallRuntimeList.cpp
 )
 if(MSVC)
     list(FILTER TEST_SOURCES EXCLUDE REGEX ".*Fysetc.*")
@@ -166,6 +167,9 @@ add_executable(run_tests
     ${SUPERVISOR_PURE_SOURCES}
 )
 target_include_directories(run_tests PRIVATE ${CMAKE_SOURCE_DIR}/desktop/qt/core/pure)
+# SDD-025: tests that read files from the source tree itself (the Dockerfile,
+# packaging/pi/) rather than a fixture copied beside the binary.
+target_compile_definitions(run_tests PRIVATE HMS_CPAP_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
 
 # Opt-in code coverage (gcov/lcov). OFF by default; enable with
 # -DENABLE_COVERAGE=ON (see scripts/coverage.sh). Not supported on MSVC.

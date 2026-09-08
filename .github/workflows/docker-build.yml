@@ -949,6 +949,86 @@ jobs:
           path: release/
 
   # ── GitHub Release (on tag push) ──────────────────────────────────
+  # ── Linux armhf (32-bit Raspberry Pi) ──────────────────────────────
+  # SDD-025. The Dockerfile is the build recipe; this job adds a platform and
+  # keeps the binary and the UI instead of an image. Drogon is packaged on
+  # trixie only, so the result is a trixie binary, dynamic like the Docker
+  # image, and install.sh installs the same runtime packages. Emulated under
+  # QEMU, so it is the slowest job here; it only runs for a tag or by hand, and
+  # release waits for it the same way it waits for the macOS zip.
+  linux-armhf:
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # The full Dockerfile, so the UI comes out of the same build as the
+      # binary. type=local writes the final stage's filesystem to a directory
+      # instead of an image; the two paths below are where that stage puts
+      # the binary and the UI.
+      - name: Build for linux/arm/v7
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/arm/v7
+          push: false
+          outputs: type=local,dest=armhf-rootfs
+          cache-from: type=gha,scope=armhf
+          cache-to: type=gha,mode=max,scope=armhf
+
+      - name: Stage the zip
+        run: |
+          set -e
+          mkdir -p release/static/browser
+          cp armhf-rootfs/usr/local/bin/hms_cpap release/
+          cp -R armhf-rootfs/home/cpap/static/browser/. release/static/browser/
+          cp packaging/pi/install.sh packaging/pi/hms-cpap.service packaging/pi/README.txt release/
+          chmod +x release/install.sh release/hms_cpap
+          file release/hms_cpap
+          file release/hms_cpap | grep -q 'ELF 32-bit LSB.*ARM, EABI5' \
+            || { echo "hms_cpap is not a 32-bit ARM executable"; exit 1; }
+          test -f release/static/browser/index.html
+
+      # Load the same build as an image (cache hit, seconds) and run the
+      # binary's own preflight under emulation. It exits 0 or 1 by design
+      # depending on whether the empty config is usable; anything else, a
+      # missing library or a signal, is a broken artefact and fails here
+      # rather than on someone's Pi.
+      - name: Preflight the binary under emulation
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/arm/v7
+          push: false
+          load: true
+          tags: hms-cpap:armhf-preflight
+          cache-from: type=gha,scope=armhf
+
+      - name: Run --preflight
+        run: |
+          set +e
+          docker run --rm --platform linux/arm/v7 hms-cpap:armhf-preflight --preflight
+          rc=$?
+          set -e
+          echo "preflight exit code: $rc"
+          if [ "$rc" -ne 0 ] && [ "$rc" -ne 1 ]; then
+            echo "hms_cpap --preflight did not run to completion under emulation"
+            exit 1
+          fi
+
+      - name: Upload Linux armhf artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: hms-cpap-linux-armhf
+          path: release/
+
   release:
     # windows-build is in `needs` so this job WAITS for the Windows artifact to
     # finish uploading before it tries to download it -- otherwise release only
@@ -961,12 +1041,28 @@ jobs:
       always() &&
       needs.build-and-test.result == 'success' &&
       startsWith(github.ref, 'refs/tags/v')
-    needs: [build-and-test, windows-build, macos-build]
+    needs: [build-and-test, windows-build, macos-build, linux-armhf]
     runs-on: ubuntu-latest
     permissions:
       contents: write
 
     steps:
+      # SDD-025: the Pi zip. Optional like the other native builds: if the
+      # emulated build fails, the release still goes out without it.
+      - name: Download Linux armhf artifact
+        id: download-armhf
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: hms-cpap-linux-armhf
+          path: hms-cpap-linux-armhf/
+
+      - name: Create Linux armhf zip
+        if: steps.download-armhf.outcome == 'success'
+        run: |
+          chmod +x hms-cpap-linux-armhf/install.sh hms-cpap-linux-armhf/hms_cpap
+          zip -r hms-cpap-linux-armhf.zip hms-cpap-linux-armhf
+
       - name: Download Windows artifact
         id: download-windows
         continue-on-error: true
@@ -1021,5 +1117,6 @@ jobs:
           files: |
             hms-cpap-windows-x64.zip
             hms-cpap-macos-arm64.zip
+            hms-cpap-linux-armhf.zip
             CpapDashDesktop-Setup.exe
             CpapDash.dmg

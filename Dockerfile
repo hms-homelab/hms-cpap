@@ -71,7 +71,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libcurl4t64 \
     libpq5 \
     libpqxx-7.10 \
-    libssl3 \
+    libssl3t64 \
     libjsoncpp26 \
     libpaho-mqtt1.3 \
     libpaho-mqttpp3-1 \
