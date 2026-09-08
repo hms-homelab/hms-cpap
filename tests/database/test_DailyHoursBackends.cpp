@@ -171,15 +171,26 @@ protected:
     }
 
     // ── SDD-026 helpers: the same night from both writers ─────────────────
+    //
+    // Both writers key the night by a LOCAL date: the STR writer formats
+    // record_date with localtime, the session writer takes date(session_start
+    // - 12 hours) on the timestamp it stored, also in local time. So the two
+    // dates are derived from ONE instant: the session starts ten hours after
+    // the anchor, and the STR's record_date is that start minus twelve hours,
+    // which is exactly the shift the session writer applies. Anything else
+    // depends on the machine's timezone: an anchor-based record_date matched
+    // at UTC-4 and split the night into two rows on the UTC runner.
     static system_clock::time_point strDay() {
         return system_clock::time_point{} + seconds(1756000000);
     }
+    static system_clock::time_point ourSessionStart() { return strDay() + hours(10); }
+    static system_clock::time_point strRecordDate()   { return ourSessionStart() - hours(12); }
 
     /// The STR's view of the night: its own duration, index and leak.
     void saveStrNight(double duration_minutes, double ahi, double leak_95) {
         STRDailyRecord r;
         r.device_id = device_;
-        r.record_date = strDay();
+        r.record_date = strRecordDate();
         r.duration_minutes = duration_minutes;
         r.patient_hours = 1050.0;
         r.ahi = ahi;
@@ -192,19 +203,14 @@ protected:
 
     /// Our view of the same night: one mask-on session with its own
     /// duration and event counts, folded into the daily summary the way the
-    /// collector does after every save.
-    ///
-    /// Ten hours after the STR's noon anchor, so that date(start - 12h) lands
-    /// on the STR's day whatever the machine's timezone: in UTC the anchor is
-    /// 02:26 on the 24th and the session 12:26, which minus 12h is 00:26 on
-    /// the 24th; at UTC-4 the anchor is 22:26 on the 23rd and the session
-    /// 08:26 on the 24th, which minus 12h is 20:26 on the 23rd.
+    /// collector does after every save. See strRecordDate() for why its start
+    /// and the STR's date are tied to each other.
     void saveOurNight(int duration_seconds, double ahi, int obstructive, int hypopneas) {
         CPAPSession s;
         s.device_id = device_;
         s.device_name = "AirSense 11";
         s.serial_number = "SDD026";
-        s.session_start = strDay() + hours(10);
+        s.session_start = ourSessionStart();
         s.duration_seconds = duration_seconds;
         s.data_records = 10;
         SessionMetrics m;

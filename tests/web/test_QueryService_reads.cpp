@@ -188,13 +188,17 @@ TEST_F(QueryServiceReadTest, ASavedSessionAppearsInTheList) {
 // recording that the machine counts as 184 minutes of therapy lists as
 // 3.07 h and 4.24, not 3.22 h and 4.04.
 TEST_F(QueryServiceReadTest, TheSessionsListUsesTheStrHoursLikeTheDashboard) {
-    const long noon = noonDaysAgo(1);
-    addDailySummary(noon, 4.2, 184);                    // the STR's view of the night
+    // Both writers key the night by a LOCAL date: the STR row by its
+    // record_date, the session by date(start - 12h). Deriving the STR's date
+    // from the session's own start minus twelve hours keeps them on one row
+    // in every timezone; an independent "noon" split them on a UTC+12 clock.
+    const long start_epoch = noonDaysAgo(1) + 10 * 3600;
+    addDailySummary(start_epoch - 12 * 3600, 4.2, 184); // the STR's view of the night
 
     CPAPSession s;                                       // ours: 13 events over 193 min
     s.device_id = kDevice;
     s.device_name = "Test Machine";
-    const auto start = tp(noon) + hours(10);             // 22:00, the same sleep day
+    const auto start = tp(start_epoch);
     s.session_start = start;
     s.session_end = start + seconds(193 * 60);
     s.duration_seconds = 193 * 60;
@@ -228,14 +232,17 @@ TEST_F(QueryServiceReadTest, TheSessionsListUsesTheStrHoursLikeTheDashboard) {
 // Two sessions in one night share the STR's hours in proportion to what each
 // recorded, so the cards still add up to the night.
 TEST_F(QueryServiceReadTest, SeveralSessionsShareTheStrHoursInProportion) {
-    const long noon = noonDaysAgo(1);
-    addDailySummary(noon, 4.2, 300);                    // the machine counted 300 min
+    // The STR's date derives from the first session's start, as above, and the
+    // second session starts half an hour later so it cannot cross a local
+    // midnight that the first did not.
+    const long first_start = noonDaysAgo(1) + 10 * 3600;
+    addDailySummary(first_start - 12 * 3600, 4.2, 300); // the machine counted 300 min
 
-    auto session = [&](int start_offset_h, int minutes, double events) {
+    auto session = [&](int start_offset_min, int minutes, double events) {
         CPAPSession s;
         s.device_id = kDevice;
         s.device_name = "Test Machine";
-        const auto start = tp(noon) + hours(start_offset_h);
+        const auto start = tp(first_start) + std::chrono::minutes(start_offset_min);
         s.session_start = start;
         s.session_end = start + seconds(minutes * 60);
         s.duration_seconds = minutes * 60;
@@ -245,8 +252,8 @@ TEST_F(QueryServiceReadTest, SeveralSessionsShareTheStrHoursInProportion) {
         s.metrics = m;
         ASSERT_TRUE(db_->saveSession(s));
     };
-    session(9, 240, 8.0);                                // 21:00, 240 min recorded, 8 events
-    session(15, 80, 4.0);                                // 03:00, 80 min recorded, 4 events
+    session(0, 240, 8.0);                                // 240 min recorded, 8 events
+    session(30, 80, 4.0);                                // 80 min recorded, 4 events
 
     const auto sessions = qs_->getSessions(10, 0);
     ASSERT_GE(sessions.size(), 1u);
