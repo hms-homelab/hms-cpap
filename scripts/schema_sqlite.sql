@@ -186,6 +186,15 @@ CREATE TABLE IF NOT EXISTS cpap_daily_summary (
     -- has to travel with the number here too, not only per session.
     index_kind        TEXT DEFAULT 'ahi',
     rin               REAL, csr REAL,
+    -- SDD-026: the machine's own copy of the index family and of the night's
+    -- duration. The shared columns above are OURS wherever the night has
+    -- sessions; these keep what the STR said, so the official figure stays on
+    -- the page. index_source says which writer filled the shared columns:
+    -- 'computed' (sessions) or 'str' (STR only, no sessions for that night).
+    ahi_str           REAL, hi_str REAL, ai_str REAL, oai_str REAL, cai_str REAL, uai_str REAL,
+    rin_str           REAL,
+    duration_minutes_str REAL,
+    index_source      TEXT,
     mask_press_50     REAL, mask_press_95 REAL, mask_press_max REAL,
     leak_50           REAL, leak_95 REAL, leak_max REAL,
     spo2_50           REAL, spo2_95 REAL,

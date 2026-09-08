@@ -130,14 +130,22 @@ Json::Value QueryService::getDashboard() {
         // cannot tell an apnea-hypopnea index from an apnea-only one and
         // renders both under the same label.
         " COALESCE(index_kind, 'ahi') as index_kind,"
-        " " + sql::round("COALESCE(leak_50, 0)", 1, dt_) + " as leak_avg,"
+        // SDD-026: the headline leak is the 95th percentile, the same figure
+        // cpapdash.com's dashboard reads, not the median this used to carry
+        // under a name that said neither. The key stays leak_avg for the page.
+        " " + sql::round("COALESCE(leak_95, 0)", 1, dt_) + " as leak_avg,"
         // SDD-019 inputs. duration_minutes and leak_95 are carried raw rather
         // than reusing usage_hours/leak_avg above: leak_avg is the median and
         // COALESCEs a missing channel to 0, which would earn the night full
         // leak credit for a measurement it never made.
         " duration_minutes,"
         " leak_95,"
-        " COALESCE(mode, 0) as therapy_mode"
+        " COALESCE(mode, 0) as therapy_mode,"
+        // SDD-026: the machine's own figures ride along so the page can show
+        // the official number beside ours, and say which one filled the row.
+        " ahi_str,"
+        " duration_minutes_str,"
+        " index_source"
         " FROM cpap_daily_summary"
         " WHERE device_id = " + sql::param(1, dt_) +
         " ORDER BY record_date DESC LIMIT 1";
@@ -198,6 +206,10 @@ Json::Value QueryService::getDashboard() {
         ln["usage_hours"] = latest[0].get("usage_hours", "0");
         ln["leak_avg"]    = latest[0].get("leak_avg", "0");
         ln["therapy_mode"] = latest[0].get("therapy_mode", "0");
+        // SDD-026. Null when no STR has been read for the night.
+        ln["ahi_str"]              = latest[0].get("ahi_str", Json::nullValue);
+        ln["duration_minutes_str"] = latest[0].get("duration_minutes_str", Json::nullValue);
+        ln["index_source"]         = latest[0].get("index_source", Json::nullValue);
 
         // SDD-019. Read off the raw columns in latest[0], written onto ln.
         if (const auto index = rowIndex(latest[0])) {
@@ -244,12 +256,20 @@ Json::Value QueryService::getSessions(int limit, int offset) {
     // events in the same night appear as one row. Returns the most recent
     // nights first, paginated by limit/offset (no date window) so the UI
     // can "load more" back through the full history.
+    // SDD-026: the night's hours are the STR's Duration when the night has
+    // one, our summed session span until then, and the index divides by those
+    // hours. The same rule the daily summary follows, so the sessions list and
+    // the dashboard read the same number for the same night (Albin: "latest
+    // night and first row are the same, so sessions are wrong").
+    const std::string night_minutes =
+        "COALESCE(NULLIF(MAX(d.duration_minutes_str), 0), SUM(s.duration_seconds) / 60.0)";
+
     std::string cpap_arm =
         "SELECT " + sql::sleepDay("MIN(s.session_start)", dt_) + " as sleep_day,"
         " MIN(s.session_start) as session_start,"
         " MAX(s.session_end) as session_end,"
-        " SUM(s.duration_seconds) as duration_seconds,"
-        " " + sql::round("SUM(s.duration_seconds) / 3600.0", 2, dt_) + " as duration_hours,"
+        " " + sql::round(night_minutes + " * 60.0", 0, dt_) + " as duration_seconds,"
+        " " + sql::round(night_minutes + " / 60.0", 2, dt_) + " as duration_hours,"
         // The night's index is the duration-weighted mean of the sessions'.
         //
         // That is the same number as (events / hours) whenever each session's
@@ -268,9 +288,12 @@ Json::Value QueryService::getSessions(int limit, int offset) {
         // do not average. A metrics row that is missing entirely contributes 0
         // while its duration still counts, which is what the category sum did
         // too.
-        " " + sql::round("CASE WHEN SUM(s.duration_seconds) > 0"
-        "   THEN SUM(COALESCE(m.ahi, 0) * s.duration_seconds)"
-        "   / SUM(s.duration_seconds)"
+        // SDD-026: events over the night's hours. The numerator is the
+        // duration-weighted sum above (m.ahi * seconds / 3600 = events), the
+        // denominator the STR's hours when there are any.
+        " " + sql::round("CASE WHEN " + night_minutes + " > 0"
+        "   THEN SUM(COALESCE(m.ahi, 0) * s.duration_seconds / 3600.0)"
+        "   / (" + night_minutes + " / 60.0)"
         "   ELSE 0 END", 2, dt_) + " as ahi,"
         // SDD-024. Same MAX-over-text as the night aggregate: 'ungraded' sorts
         // after 'ahi', so a row grouping ANY ungraded session reads as
@@ -287,6 +310,8 @@ Json::Value QueryService::getSessions(int limit, int offset) {
         " 0 as oximetry_only"
         " FROM cpap_sessions s"
         " LEFT JOIN cpap_session_metrics m ON m.session_id = s.id"
+        " LEFT JOIN cpap_daily_summary d ON d.device_id = s.device_id"
+        "   AND d.record_date = " + sql::sleepDay("s.session_start", dt_) +
         " WHERE s.device_id = " + sql::param(1, dt_) +
         " GROUP BY " + sql::sleepDay("s.session_start", dt_);
 
@@ -373,11 +398,29 @@ Json::Value QueryService::getSessions(int limit, int offset) {
 }
 
 Json::Value QueryService::getSessionDetail(const std::string& date) {
+    // SDD-026: a session card shows its share of the NIGHT's hours, which are
+    // the STR's Duration when the night has one. Each session takes the STR's
+    // minutes in proportion to its recorded span, so one session gets all of
+    // them and several still add up to the night, and its index is its own
+    // events over that share. Without an STR the recorded span stands, as in
+    // the sessions list and the daily row. The alternative, cards over the raw
+    // recording beside a night over the STR, put 4.04 / 3h13m on the same
+    // screen as 4.24 / 3h04m for the same single-session night.
+    const std::string night_share =
+        "s.duration_seconds * 1.0 / NULLIF((SELECT SUM(s2.duration_seconds) FROM cpap_sessions s2"
+        " WHERE s2.device_id = s.device_id"
+        " AND " + sql::sleepDay("s2.session_start", dt_) + " = " + sql::sleepDay("s.session_start", dt_) + "), 0)";
+    const std::string session_minutes =
+        "COALESCE(NULLIF(d.duration_minutes_str, 0) * (" + night_share + "), s.duration_seconds / 60.0)";
+
     // Get sessions for a given sleep day
     std::string q_sessions =
-        "SELECT s.id, s.session_start, s.session_end, s.duration_seconds,"
-        " " + sql::round("s.duration_seconds / 3600.0", 2, dt_) + " as duration_hours,"
-        " " + sql::round("m.ahi", 2, dt_) + " as ahi,"
+        "SELECT s.id, s.session_start, s.session_end,"
+        " " + sql::round(session_minutes + " * 60.0", 0, dt_) + " as duration_seconds,"
+        " " + sql::round(session_minutes + " / 60.0", 2, dt_) + " as duration_hours,"
+        " " + sql::round("CASE WHEN " + session_minutes + " > 0"
+        "   THEN COALESCE(m.ahi, 0) * s.duration_seconds / 3600.0 / (" + session_minutes + " / 60.0)"
+        "   ELSE m.ahi END", 2, dt_) + " as ahi,"
         // SDD-024. Per SESSION here, not per night: this endpoint returns each
         // session of the sleep day and the detail page merges them, so the kind
         // has to arrive on the same rows the numbers do.
@@ -462,7 +505,10 @@ Json::Value QueryService::getDailySummary(const std::string& start, const std::s
         " mask_press_50, mask_press_95, mask_press_max,"
         " spo2_50, spo2_95,"
         " resp_rate_50, tid_vol_50, min_vent_50,"
-        " mode, epr_level, pressure_setting"
+        " mode, epr_level, pressure_setting,"
+        // SDD-026: the machine's own copy rides along for the STR panel.
+        " ahi_str, hi_str, ai_str, oai_str, cai_str, uai_str, rin_str,"
+        " duration_minutes_str, index_source"
         " FROM cpap_daily_summary"
         " WHERE device_id = " + sql::param(1, dt_) +
         " AND record_date >= " + sql::castDate(2, dt_) +

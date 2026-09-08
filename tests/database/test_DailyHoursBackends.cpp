@@ -138,6 +138,10 @@ protected:
             db_->executeQuery("DELETE FROM cpap_daily_summary WHERE device_id = " +
                                   sql::param(1, db_->dbType()),
                               {device_});
+            // SDD-026 cases save a session too; its metrics cascade.
+            db_->executeQuery("DELETE FROM cpap_sessions WHERE device_id = " +
+                                  sql::param(1, db_->dbType()),
+                              {device_});
         }
         db_.reset();
         if (!path_.empty()) {
@@ -164,6 +168,65 @@ protected:
             "SELECT duration_minutes, patient_hours, machine_hours"
             " FROM cpap_daily_summary WHERE device_id = " + sql::param(1, db_->dbType()),
             {device_});
+    }
+
+    // ── SDD-026 helpers: the same night from both writers ─────────────────
+    static system_clock::time_point strDay() {
+        return system_clock::time_point{} + seconds(1756000000);
+    }
+
+    /// The STR's view of the night: its own duration, index and leak.
+    void saveStrNight(double duration_minutes, double ahi, double leak_95) {
+        STRDailyRecord r;
+        r.device_id = device_;
+        r.record_date = strDay();
+        r.duration_minutes = duration_minutes;
+        r.patient_hours = 1050.0;
+        r.ahi = ahi;
+        r.hi = ahi / 2;
+        r.ai = ahi / 2;
+        r.oai = ahi / 4;
+        r.leak_95 = leak_95;
+        ASSERT_TRUE(db_->saveSTRDailyRecords({r}));
+    }
+
+    /// Our view of the same night: one mask-on session with its own
+    /// duration and event counts, folded into the daily summary the way the
+    /// collector does after every save.
+    ///
+    /// Ten hours after the STR's noon anchor, so that date(start - 12h) lands
+    /// on the STR's day whatever the machine's timezone: in UTC the anchor is
+    /// 02:26 on the 24th and the session 12:26, which minus 12h is 00:26 on
+    /// the 24th; at UTC-4 the anchor is 22:26 on the 23rd and the session
+    /// 08:26 on the 24th, which minus 12h is 20:26 on the 23rd.
+    void saveOurNight(int duration_seconds, double ahi, int obstructive, int hypopneas) {
+        CPAPSession s;
+        s.device_id = device_;
+        s.device_name = "AirSense 11";
+        s.serial_number = "SDD026";
+        s.session_start = strDay() + hours(10);
+        s.duration_seconds = duration_seconds;
+        s.data_records = 10;
+        SessionMetrics m;
+        m.ahi = ahi;
+        m.obstructive_apneas = obstructive;
+        m.hypopneas = hypopneas;
+        m.total_events = obstructive + hypopneas;
+        m.leak_p95 = 99.0;   // a session mean that must NOT replace the STR's
+        s.metrics = m;
+        ASSERT_TRUE(db_->saveSession(s));
+        ASSERT_TRUE(db_->aggregateDailySummaryFromSessions(device_));
+    }
+
+    Json::Value readNight() {
+        return db_->executeQuery(
+            "SELECT duration_minutes, ahi, leak_95, index_source,"
+            " ahi_str, duration_minutes_str"
+            " FROM cpap_daily_summary WHERE device_id = " + sql::param(1, db_->dbType()),
+            {device_});
+    }
+    static std::string asText(const Json::Value& v) {
+        return v.isNull() ? std::string("<null>") : v.asString();
     }
 
     std::string path_;
@@ -208,6 +271,96 @@ TEST_P(DailyHoursBackendTest, AZeroUsageDayIsZeroHoursNotACounter) {
     ASSERT_EQ(rows.size(), 1u);
     EXPECT_NEAR(asNumber(rows[0]["patient_hours"]), 0.0, 0.001) << engineName(GetParam());
     EXPECT_NEAR(asNumber(rows[0]["machine_hours"]), 1050.0, 0.001) << engineName(GetParam());
+}
+
+// ── SDD-026: our numbers win, the STR stays official ─────────────────────
+//
+// The night as the STR reports it: 184 minutes, AHI 4.2 (floored to one
+// decimal by the file format), leak p95 20. The night as our sessions add
+// up: 13 index events over a 193-minute recording span. The rule Albin set on
+// 2026-09-08, "match the cloud, divide vs STR duration when it has one": the
+// night's hours are the STR's 184 minutes, our 13 events divide by them, so
+// the headline reads 13 / 3.067 h = 4.24, the same figure cpapdash.com shows.
+// The _str columns keep the STR's own 4.2, and the STR's leak, a kind A
+// field, must survive our session mean.
+//
+// saveOurNight stores m.ahi = 13 events / 3.217 h = 4.041 over 193 minutes,
+// which the writer turns back into the count before dividing again.
+
+TEST_P(DailyHoursBackendTest, OurEventsOverTheStrHoursWhenTheStrCameFirst) {
+    saveStrNight(184.0, 4.2, 20.0);
+    saveOurNight(193 * 60, 13.0 / (193.0 / 60.0), 10, 3);
+
+    const auto rows = readNight();
+    ASSERT_EQ(rows.size(), 1u) << engineName(GetParam()) << ": one row per night";
+    const auto& r = rows[0];
+    EXPECT_NEAR(asNumber(r["ahi"]), 4.24, 0.01)
+        << engineName(GetParam()) << ": 13 of our events over the STR's 184 minutes";
+    EXPECT_NEAR(asNumber(r["duration_minutes"]), 184.0, 0.1)
+        << engineName(GetParam()) << ": the hours are the STR's Duration when the night has one";
+    EXPECT_NEAR(asNumber(r["ahi_str"]), 4.2, 0.01) << engineName(GetParam()) << ": the STR's AHI is kept beside it";
+    EXPECT_NEAR(asNumber(r["duration_minutes_str"]), 184.0, 0.1) << engineName(GetParam());
+    EXPECT_NEAR(asNumber(r["leak_95"]), 20.0, 0.01)
+        << engineName(GetParam()) << ": leak is the machine's own and a session mean must not replace it";
+    EXPECT_EQ(asText(r["index_source"]), "computed") << engineName(GetParam());
+}
+
+TEST_P(DailyHoursBackendTest, OurEventsOverTheStrHoursWhenTheStrCameLast) {
+    saveOurNight(193 * 60, 13.0 / (193.0 / 60.0), 10, 3);
+    {
+        // No STR yet: our span is all there is.
+        const auto rows = readNight();
+        ASSERT_EQ(rows.size(), 1u) << engineName(GetParam());
+        EXPECT_NEAR(asNumber(rows[0]["ahi"]), 4.04, 0.01) << engineName(GetParam());
+        EXPECT_NEAR(asNumber(rows[0]["duration_minutes"]), 193.0, 0.1) << engineName(GetParam());
+    }
+    saveStrNight(184.0, 4.2, 20.0);
+    // The collector re-derives after every STR read (processSessionSummary),
+    // which is what moves the night onto the STR's hours.
+    ASSERT_TRUE(db_->aggregateDailySummaryFromSessions(device_));
+
+    const auto rows = readNight();
+    ASSERT_EQ(rows.size(), 1u) << engineName(GetParam());
+    const auto& r = rows[0];
+    EXPECT_NEAR(asNumber(r["ahi"]), 4.24, 0.01)
+        << engineName(GetParam()) << ": once the STR is in, our events divide by its hours";
+    EXPECT_NEAR(asNumber(r["duration_minutes"]), 184.0, 0.1) << engineName(GetParam());
+    EXPECT_NEAR(asNumber(r["ahi_str"]), 4.2, 0.01) << engineName(GetParam());
+    EXPECT_NEAR(asNumber(r["duration_minutes_str"]), 184.0, 0.1) << engineName(GetParam());
+    EXPECT_NEAR(asNumber(r["leak_95"]), 20.0, 0.01) << engineName(GetParam());
+    EXPECT_EQ(asText(r["index_source"]), "computed") << engineName(GetParam());
+}
+
+TEST_P(DailyHoursBackendTest, WithoutAnStrALaterSessionSaveUpdatesTheSessionMeans) {
+    // A session is saved after every checkpoint file, so the leak of the
+    // first ten minutes must not be frozen into the night by the first save.
+    saveOurNight(60 * 60, 4.0, 2, 1);        // first parse, leak p95 99
+    {
+        auto rows = db_->executeQuery(
+            "UPDATE cpap_session_metrics SET leak_p95 = 7.5 WHERE session_id IN"
+            " (SELECT id FROM cpap_sessions WHERE device_id = " + sql::param(1, db_->dbType()) + ")",
+            {device_});
+    }
+    ASSERT_TRUE(db_->aggregateDailySummaryFromSessions(device_));   // later parse, leak p95 7.5
+
+    const auto rows = readNight();
+    ASSERT_EQ(rows.size(), 1u) << engineName(GetParam());
+    EXPECT_NEAR(asNumber(rows[0]["leak_95"]), 7.5, 0.01)
+        << engineName(GetParam()) << ": the first parse's session mean was frozen into the night";
+}
+
+TEST_P(DailyHoursBackendTest, AnStrOnlyNightKeepsTheStrFiguresAndSaysSo) {
+    // History the card no longer holds: the STR is all there is, and the
+    // trends must not go blank for it.
+    saveStrNight(184.0, 4.2, 20.0);
+
+    const auto rows = readNight();
+    ASSERT_EQ(rows.size(), 1u) << engineName(GetParam());
+    const auto& r = rows[0];
+    EXPECT_NEAR(asNumber(r["ahi"]), 4.2, 0.01) << engineName(GetParam());
+    EXPECT_NEAR(asNumber(r["duration_minutes"]), 184.0, 0.1) << engineName(GetParam());
+    EXPECT_NEAR(asNumber(r["ahi_str"]), 4.2, 0.01) << engineName(GetParam());
+    EXPECT_EQ(asText(r["index_source"]), "str") << engineName(GetParam());
 }
 
 TEST_P(DailyHoursBackendTest, TheMigrationRepairsARowWrittenTheOldWay) {

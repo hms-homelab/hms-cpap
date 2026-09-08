@@ -122,6 +122,28 @@ TEST_F(QueryServiceReadTest, DashboardOnAFreshInstallIsWellFormed) {
     EXPECT_TRUE(j.isObject()) << "the dashboard must be an object on day one";
 }
 
+// SDD-026: the latest night carries the machine's own figures beside ours and
+// says which writer filled the row, so the page can show the official number
+// without it ever being the headline.
+TEST_F(QueryServiceReadTest, TheLatestNightCarriesTheStrCopyAndItsSource) {
+    STRDailyRecord r;
+    r.device_id = kDevice;
+    r.record_date = system_clock::time_point{} + seconds(1756000000);
+    r.duration_minutes = 184.0;
+    r.ahi = 4.2;
+    ASSERT_TRUE(db_->saveSTRDailyRecords({r}));
+
+    const auto j = qs_->getDashboard();
+    ASSERT_TRUE(j.isMember("latest_night"));
+    const auto& ln = j["latest_night"];
+    ASSERT_TRUE(ln.isMember("ahi_str"));
+    ASSERT_TRUE(ln.isMember("duration_minutes_str"));
+    ASSERT_TRUE(ln.isMember("index_source"));
+    EXPECT_NEAR(std::stod(ln["ahi_str"].asString()), 4.2, 0.01);
+    EXPECT_NEAR(std::stod(ln["duration_minutes_str"].asString()), 184.0, 0.1);
+    EXPECT_EQ(ln["index_source"].asString(), "str") << "no sessions, so the STR filled the row";
+}
+
 TEST_F(QueryServiceReadTest, EveryReadPathSurvivesAnEmptyDatabase) {
     // A read that throws on a fresh install breaks the dashboard for every new
     // user, and seeding data first would hide it completely.
@@ -158,6 +180,86 @@ TEST_F(QueryServiceReadTest, ASavedSessionAppearsInTheList) {
     ASSERT_TRUE(sessions.isArray());
     ASSERT_GE(sessions.size(), 1u) << "a saved session never came back";
     EXPECT_TRUE(sessions[0].isMember("sleep_day"));
+}
+
+// SDD-026: the sessions list reads the same number as the dashboard for the
+// same night. Its hours are the STR's Duration when the night has one and
+// its index divides by them, so a night of 13 events over a 193-minute
+// recording that the machine counts as 184 minutes of therapy lists as
+// 3.07 h and 4.24, not 3.22 h and 4.04.
+TEST_F(QueryServiceReadTest, TheSessionsListUsesTheStrHoursLikeTheDashboard) {
+    const long noon = noonDaysAgo(1);
+    addDailySummary(noon, 4.2, 184);                    // the STR's view of the night
+
+    CPAPSession s;                                       // ours: 13 events over 193 min
+    s.device_id = kDevice;
+    s.device_name = "Test Machine";
+    const auto start = tp(noon) + hours(10);             // 22:00, the same sleep day
+    s.session_start = start;
+    s.session_end = start + seconds(193 * 60);
+    s.duration_seconds = 193 * 60;
+    SessionMetrics m;
+    m.ahi = 13.0 / (193.0 / 60.0);
+    m.obstructive_apneas = 10;
+    m.central_apneas = 1;
+    m.hypopneas = 2;
+    m.total_events = 13;
+    s.metrics = m;
+    ASSERT_TRUE(db_->saveSession(s));
+
+    const auto sessions = qs_->getSessions(10, 0);
+    ASSERT_GE(sessions.size(), 1u);
+    EXPECT_NEAR(std::stod(sessions[0]["duration_hours"].asString()), 184.0 / 60.0, 0.01)
+        << "the list still shows our recording span instead of the STR's hours";
+    EXPECT_NEAR(std::stod(sessions[0]["ahi"].asString()), 4.24, 0.01)
+        << "the list's index is not our events over the STR's hours";
+
+    // The session card on the detail page, the same night: one session, so it
+    // gets the whole of the STR's hours and the same index.
+    const auto detail = qs_->getSessionDetail(sessions[0]["sleep_day"].asString());
+    ASSERT_EQ(detail.size(), 1u) << "one session was saved for the night";
+    EXPECT_NEAR(std::stod(detail[0]["duration_hours"].asString()), 184.0 / 60.0, 0.01)
+        << "the session card still shows the recording span";
+    EXPECT_NEAR(std::stod(detail[0]["ahi"].asString()), 4.24, 0.01)
+        << "the session card's index is not its events over its share of the STR's hours";
+    EXPECT_NEAR(std::stod(detail[0]["duration_seconds"].asString()), 184.0 * 60.0, 1.0);
+}
+
+// Two sessions in one night share the STR's hours in proportion to what each
+// recorded, so the cards still add up to the night.
+TEST_F(QueryServiceReadTest, SeveralSessionsShareTheStrHoursInProportion) {
+    const long noon = noonDaysAgo(1);
+    addDailySummary(noon, 4.2, 300);                    // the machine counted 300 min
+
+    auto session = [&](int start_offset_h, int minutes, double events) {
+        CPAPSession s;
+        s.device_id = kDevice;
+        s.device_name = "Test Machine";
+        const auto start = tp(noon) + hours(start_offset_h);
+        s.session_start = start;
+        s.session_end = start + seconds(minutes * 60);
+        s.duration_seconds = minutes * 60;
+        SessionMetrics m;
+        m.ahi = events / (minutes / 60.0);
+        m.total_events = static_cast<int>(events);
+        s.metrics = m;
+        ASSERT_TRUE(db_->saveSession(s));
+    };
+    session(9, 240, 8.0);                                // 21:00, 240 min recorded, 8 events
+    session(15, 80, 4.0);                                // 03:00, 80 min recorded, 4 events
+
+    const auto sessions = qs_->getSessions(10, 0);
+    ASSERT_GE(sessions.size(), 1u);
+    const auto detail = qs_->getSessionDetail(sessions[0]["sleep_day"].asString());
+    ASSERT_EQ(detail.size(), 2u);
+    // 320 recorded minutes share 300: 240 -> 225, 80 -> 75.
+    EXPECT_NEAR(std::stod(detail[0]["duration_hours"].asString()), 225.0 / 60.0, 0.01);
+    EXPECT_NEAR(std::stod(detail[1]["duration_hours"].asString()), 75.0 / 60.0, 0.01);
+    EXPECT_NEAR(std::stod(detail[0]["ahi"].asString()), 8.0 / (225.0 / 60.0), 0.01);
+    EXPECT_NEAR(std::stod(detail[1]["ahi"].asString()), 4.0 / (75.0 / 60.0), 0.01);
+    // And the night reads 12 events over 300 minutes on the list.
+    EXPECT_NEAR(std::stod(sessions[0]["ahi"].asString()), 12.0 / 5.0, 0.01);
+    EXPECT_NEAR(std::stod(sessions[0]["duration_hours"].asString()), 5.0, 0.01);
 }
 
 TEST_F(QueryServiceReadTest, SessionsCarryTheSDD008NightState) {

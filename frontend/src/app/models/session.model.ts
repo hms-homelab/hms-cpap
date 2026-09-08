@@ -17,6 +17,11 @@ export interface DashboardData {
     index_kind?: string;
     usage_hours: string;
     leak_avg: string;
+    /** SDD-026: the machine's own figures for the night, null without an STR. */
+    ahi_str?: string | null;
+    duration_minutes_str?: string | null;
+    /** SDD-026: 'computed' when our sessions filled the row, 'str' when only the STR did. */
+    index_source?: string | null;
     compliance_pct: string;
     therapy_mode: string;  // 0=CPAP, 1=APAP, 7=ASV, 8=ASVAuto
     sleep_index: number | null;

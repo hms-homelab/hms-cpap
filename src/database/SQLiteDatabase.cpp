@@ -464,6 +464,16 @@ void SQLiteDatabase::createSchema() {
                  nullptr, nullptr, nullptr);   // SDD-024, see above
     sqlite3_exec(db_, "ALTER TABLE cpap_daily_summary ADD COLUMN machine_hours REAL",
                  nullptr, nullptr, nullptr);
+    // SDD-026: the STR's own copy of the index family and the night's
+    // duration, beside the shared columns that are ours once a night has
+    // sessions. Existing rows get their _str copy on the next STR read and
+    // their computed copy on the next session save.
+    for (const char* col : {"ahi_str REAL", "hi_str REAL", "ai_str REAL", "oai_str REAL",
+                            "cai_str REAL", "uai_str REAL", "rin_str REAL",
+                            "duration_minutes_str REAL", "index_source TEXT"}) {
+        sqlite3_exec(db_, (std::string("ALTER TABLE cpap_daily_summary ADD COLUMN ") + col).c_str(),
+                     nullptr, nullptr, nullptr);
+    }
     sqlite3_exec(db_,
                  "UPDATE cpap_daily_summary"
                  "   SET machine_hours = patient_hours,"
@@ -1898,7 +1908,10 @@ bool SQLiteDatabase::saveSTRDailyRecords(const std::vector<STRDailyRecord>& reco
                  -- Appended rather than slotted next to patient_hours: the
                  -- binds below are positional with hardcoded indices, so a
                  -- column inserted mid-list would silently shift thirty of them.
-                 machine_hours, updated_at)
+                 machine_hours,
+                 -- SDD-026: the machine's own copy, in its own columns.
+                 ahi_str, hi_str, ai_str, oai_str, cai_str, uai_str, rin_str,
+                 duration_minutes_str, index_source, updated_at)
             VALUES (?, ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, ?, ?, ?, ?,
                     ?, ?, ?,
@@ -1907,17 +1920,34 @@ bool SQLiteDatabase::saveSTRDailyRecords(const std::vector<STRDailyRecord>& reco
                     ?, ?, ?,
                     ?, ?, ?,
                     ?, ?,
-                    ?, datetime('now'))
+                    ?,
+                    ?, ?, ?, ?, ?, ?, ?,
+                    ?, 'str', datetime('now'))
             ON CONFLICT (device_id, record_date) DO UPDATE SET
                 mask_pairs       = excluded.mask_pairs,
                 mask_events      = excluded.mask_events,
-                duration_minutes = excluded.duration_minutes,
-                patient_hours    = excluded.patient_hours,
                 machine_hours    = excluded.machine_hours,
-                ahi = excluded.ahi, index_kind = excluded.index_kind,
-            hi = excluded.hi, ai = excluded.ai,
-                oai = excluded.oai, cai = excluded.cai, uai = excluded.uai,
-                rin = excluded.rin, csr = excluded.csr,
+                -- SDD-026: the STR's copy always lands in its own columns.
+                ahi_str = excluded.ahi_str, hi_str = excluded.hi_str, ai_str = excluded.ai_str,
+                oai_str = excluded.oai_str, cai_str = excluded.cai_str, uai_str = excluded.uai_str,
+                rin_str = excluded.rin_str,
+                duration_minutes_str = excluded.duration_minutes_str,
+                -- The shared columns are OURS once the night has sessions
+                -- (index_source = 'computed'). The STR only fills them for a
+                -- night we have no sessions for, and says so. An unqualified
+                -- name on the right refers to the row as it is now.
+                duration_minutes = CASE WHEN index_source = 'computed' THEN duration_minutes ELSE excluded.duration_minutes END,
+                patient_hours    = CASE WHEN index_source = 'computed' THEN patient_hours    ELSE excluded.patient_hours END,
+                ahi = CASE WHEN index_source = 'computed' THEN ahi ELSE excluded.ahi END,
+                hi  = CASE WHEN index_source = 'computed' THEN hi  ELSE excluded.hi  END,
+                ai  = CASE WHEN index_source = 'computed' THEN ai  ELSE excluded.ai  END,
+                oai = CASE WHEN index_source = 'computed' THEN oai ELSE excluded.oai END,
+                cai = CASE WHEN index_source = 'computed' THEN cai ELSE excluded.cai END,
+                uai = CASE WHEN index_source = 'computed' THEN uai ELSE excluded.uai END,
+                rin = CASE WHEN index_source = 'computed' THEN rin ELSE excluded.rin END,
+                index_kind   = CASE WHEN index_source = 'computed' THEN index_kind ELSE excluded.index_kind END,
+                index_source = CASE WHEN index_source = 'computed' THEN 'computed' ELSE 'str' END,
+                csr = excluded.csr,
                 mask_press_50    = excluded.mask_press_50,
                 mask_press_95    = excluded.mask_press_95,
                 mask_press_max   = excluded.mask_press_max,
@@ -1997,6 +2027,16 @@ bool SQLiteDatabase::saveSTRDailyRecords(const std::vector<STRDailyRecord>& reco
             bind_int(g.stmt, 29, r.fault_device);
             bind_int(g.stmt, 30, r.fault_alarm);
             bind_double(g.stmt, 31, r.patient_hours);  // the lifetime counter
+            // SDD-026: the same seven indexes and the duration again, into
+            // the columns that are the STR's own.
+            bind_double(g.stmt, 32, r.ahi);
+            bind_double(g.stmt, 33, r.hi);
+            bind_double(g.stmt, 34, r.ai);
+            bind_double(g.stmt, 35, r.oai);
+            bind_double(g.stmt, 36, r.cai);
+            bind_double(g.stmt, 37, r.uai);
+            bind_double(g.stmt, 38, r.rin);
+            bind_double(g.stmt, 39, r.duration_minutes);
 
             if (sqlite3_step(g.stmt) != SQLITE_DONE) {
                 std::cerr << "SQLite: saveSTRDailyRecords error: " << sqlite3_errmsg(db_) << std::endl;
@@ -2058,21 +2098,32 @@ bool SQLiteDatabase::aggregateDailySummaryFromSessions(const std::string& device
         INSERT INTO cpap_daily_summary
             (device_id, record_date, duration_minutes, patient_hours,
              ahi, hi, ai, oai, cai, uai, rin, mask_events, mask_pairs,
-             mask_press_50, leak_50, leak_95, spo2_50, epr_level, mode, index_kind, updated_at)
+             mask_press_50, leak_50, leak_95, spo2_50, epr_level, mode, index_kind,
+             index_source, updated_at)
         SELECT
             s.device_id,
             date(s.session_start, '-12 hours') AS record_date,
-            ROUND(SUM(s.duration_seconds) / 60.0, 1),
-            ROUND(SUM(s.duration_seconds) / 3600.0, 2),
+            -- SDD-026, Albin 2026-09-08 "lets match the cloud ... divide vs
+            -- STR duration when it has one": the night's hours are the STR's
+            -- Duration (the machine's own mask-on time) when the row has one,
+            -- and our summed session span otherwise. Every index below divides
+            -- by those same hours, the same arithmetic cpapdash.com does.
+            ROUND(COALESCE(NULLIF(MAX(d.duration_minutes_str), 0), SUM(s.duration_seconds) / 60.0), 1),
+            ROUND(COALESCE(NULLIF(MAX(d.duration_minutes_str), 0), SUM(s.duration_seconds) / 60.0) / 60.0, 2),
             ROUND(SUM(COALESCE(m.ahi,0) * s.duration_seconds / 3600.0)
-                / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS ahi,
-            ROUND(SUM(COALESCE(m.hypopneas,0)) / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS hi,
-            ROUND(SUM(COALESCE(m.ahi,0) * s.duration_seconds / 3600.0) / NULLIF(SUM(s.duration_seconds) / 3600.0, 0)
-                - SUM(COALESCE(m.hypopneas,0)) / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS ai,
-            ROUND(SUM(COALESCE(m.obstructive_apneas,0)) / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS oai,
-            ROUND(SUM(COALESCE(m.central_apneas,0)) / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS cai,
-            ROUND(SUM(COALESCE(m.clear_airway_apneas,0)) / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS uai,
-            ROUND(SUM(COALESCE(m.reras,0)) / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS rin,
+                / NULLIF(COALESCE(NULLIF(MAX(d.duration_minutes_str), 0), SUM(s.duration_seconds) / 60.0) / 60.0, 0), 2) AS ahi,
+            ROUND(SUM(COALESCE(m.hypopneas,0))
+                / NULLIF(COALESCE(NULLIF(MAX(d.duration_minutes_str), 0), SUM(s.duration_seconds) / 60.0) / 60.0, 0), 2) AS hi,
+            ROUND((SUM(COALESCE(m.ahi,0) * s.duration_seconds / 3600.0) - SUM(COALESCE(m.hypopneas,0)))
+                / NULLIF(COALESCE(NULLIF(MAX(d.duration_minutes_str), 0), SUM(s.duration_seconds) / 60.0) / 60.0, 0), 2) AS ai,
+            ROUND(SUM(COALESCE(m.obstructive_apneas,0))
+                / NULLIF(COALESCE(NULLIF(MAX(d.duration_minutes_str), 0), SUM(s.duration_seconds) / 60.0) / 60.0, 0), 2) AS oai,
+            ROUND(SUM(COALESCE(m.central_apneas,0))
+                / NULLIF(COALESCE(NULLIF(MAX(d.duration_minutes_str), 0), SUM(s.duration_seconds) / 60.0) / 60.0, 0), 2) AS cai,
+            ROUND(SUM(COALESCE(m.clear_airway_apneas,0))
+                / NULLIF(COALESCE(NULLIF(MAX(d.duration_minutes_str), 0), SUM(s.duration_seconds) / 60.0) / 60.0, 0), 2) AS uai,
+            ROUND(SUM(COALESCE(m.reras,0))
+                / NULLIF(COALESCE(NULLIF(MAX(d.duration_minutes_str), 0), SUM(s.duration_seconds) / 60.0) / 60.0, 0), 2) AS rin,
             SUM(COALESCE(m.total_events,0)) AS mask_events,
             '[]' AS mask_pairs,
             ROUND(AVG(NULLIF(m.avg_mask_pressure, 0)), 1),
@@ -2083,23 +2134,39 @@ bool SQLiteDatabase::aggregateDailySummaryFromSessions(const std::string& device
             MAX(COALESCE(m.therapy_mode, 0)),
             -- SDD-024: carry the kind into the night, same MAX-over-text rule.
             MAX(COALESCE(m.index_kind, 'ahi')),
+            'computed',
             datetime('now')
         FROM cpap_sessions s
         JOIN cpap_session_metrics m ON m.session_id = s.id
+        LEFT JOIN cpap_daily_summary d
+               ON d.device_id = s.device_id
+              AND d.record_date = date(s.session_start, '-12 hours')
         WHERE s.device_id = ?
         GROUP BY s.device_id, date(s.session_start, '-12 hours')
         ON CONFLICT (device_id, record_date) DO UPDATE SET
+            -- SDD-026: ours wins for the index family and the night's
+            -- duration, and says so. The STR's copy sits in the _str columns
+            -- untouched.
             duration_minutes = excluded.duration_minutes,
             patient_hours    = excluded.patient_hours,
             ahi = excluded.ahi, hi = excluded.hi, ai = excluded.ai,
             oai = excluded.oai, cai = excluded.cai, uai = excluded.uai, rin = excluded.rin,
+            index_source     = 'computed',
             mask_events      = excluded.mask_events,
-            mask_pairs       = excluded.mask_pairs,
-            mask_press_50    = excluded.mask_press_50,
-            leak_50 = excluded.leak_50, leak_95 = excluded.leak_95,
-            spo2_50          = excluded.spo2_50,
-            epr_level        = excluded.epr_level,
-            mode             = excluded.mode,
+            -- Kind A fields (RESMED_CALCULATION_RULES section 1): the machine
+            -- took these over its own therapy window, so once an STR has
+            -- written the row (ahi_str is set) they stay. Until then the
+            -- session means are the best we have and every re-parse updates
+            -- them: a session is saved after every checkpoint file, and
+            -- freezing the first parse's mean would show the leak of the
+            -- first ten minutes all night.
+            mask_pairs       = CASE WHEN ahi_str IS NOT NULL THEN mask_pairs    ELSE excluded.mask_pairs    END,
+            mask_press_50    = CASE WHEN ahi_str IS NOT NULL THEN mask_press_50 ELSE excluded.mask_press_50 END,
+            leak_50          = CASE WHEN ahi_str IS NOT NULL THEN leak_50       ELSE excluded.leak_50       END,
+            leak_95          = CASE WHEN ahi_str IS NOT NULL THEN leak_95       ELSE excluded.leak_95       END,
+            spo2_50          = CASE WHEN ahi_str IS NOT NULL THEN spo2_50       ELSE excluded.spo2_50       END,
+            epr_level        = CASE WHEN ahi_str IS NOT NULL THEN epr_level     ELSE excluded.epr_level     END,
+            mode             = CASE WHEN ahi_str IS NOT NULL THEN mode          ELSE excluded.mode          END,
             updated_at       = datetime('now')
     )";
 

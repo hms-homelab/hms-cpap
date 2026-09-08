@@ -294,6 +294,14 @@ void BurstCollectorService::start() {
         return;
     }
 
+    // SDD-026: re-derive the daily summary from the sessions once at start,
+    // so an install upgraded from a version where the STR owned those
+    // columns reads OUR index and duration on first boot rather than after
+    // its next night. Local database only, idempotent, and a no-op on a
+    // fresh install.
+    if (db_service_ && !device_id_.empty())
+        db_service_->aggregateDailySummaryFromSessions(device_id_);
+
     running_ = true;
     worker_thread_ = std::thread(&BurstCollectorService::runLoop, this);
     std::cout << "✅ BurstCollectorService started" << std::endl;
@@ -754,8 +762,11 @@ void BurstCollectorService::processSessionSummary() {
     // STR (no mask pairs, leak from our own percentiles), and a later STR upserts
     // over it on (device_id, record_date), so this only ever fills a gap.
     str_summary_ok_ = processSTRFile();
-    if (!str_summary_ok_)
-        db_service_->aggregateDailySummaryFromSessions(device_id_);
+    // SDD-026: always, not only when the STR is missing. The STR fills the
+    // _str columns and the nights we have no sessions for; the session
+    // writer then re-asserts our index and duration on every night that has
+    // them, so ours wins whichever of the two arrived last.
+    db_service_->aggregateDailySummaryFromSessions(device_id_);
 }
 
 bool BurstCollectorService::processSTRFile() {
@@ -1713,6 +1724,15 @@ bool BurstCollectorService::executeBurstCycle() {
 
         std::cout << "CPAP: Found " << new_sessions.size() << " new session(s)" << std::endl;
 
+        // SDD-026: the STR comes FIRST on a run that has not read one yet. It
+        // is one 96 KB file, it carries the machine's own hours for every
+        // night, and the session writer divides by those hours. Until this
+        // landed the STR was read at session close, which on a first run sat
+        // behind every session download and every sidecar on the card, so the
+        // dashboard showed our span and our index for half an hour and then
+        // changed. Once an STR has parsed, the read stays at session close.
+        if (!str_summary_ok_) processSessionSummary();
+
         std::string local_base_dir = ConfigManager::get("CPAP_TEMP_DIR", (std::filesystem::temp_directory_path() / "cpap_data").string());
 
         // SDD-011: resolved BEFORE the session loop, because the loop now has to
@@ -2126,13 +2146,11 @@ bool BurstCollectorService::parseAndStoreSession(
     db_service_->replaceSessionFiles(device_id_, session_start, file_refs);
     std::cout << "💾 CPAP: Saved session " << date_folder << " to database" << std::endl;
 
-    // STR is attempted earlier in the cycle, before anything is parsed. When it
-    // was unavailable, the summary it fell back to was derived from a session
-    // table that did not yet contain this row -- on a first import, from an
-    // empty one. Re-derive now that it is persisted, per session, or the UI
-    // shows a growing session list behind a blank dashboard (issue #16).
-    if (!str_summary_ok_)
-        db_service_->aggregateDailySummaryFromSessions(device_id_);
+    // SDD-026: the night's row in cpap_daily_summary is ours wherever the
+    // night has sessions, so every save re-derives it. Per session, so the
+    // dashboard follows the sessions list as it fills (issue #16 was a full
+    // session list behind a blank dashboard).
+    db_service_->aggregateDailySummaryFromSessions(device_id_);
 
     return true;
 }

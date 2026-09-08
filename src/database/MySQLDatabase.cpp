@@ -1053,6 +1053,16 @@ void MySQLDatabase::migrateSchema() {
         {"cpap_daily_summary", "pressure_setting", "DOUBLE"},
         {"cpap_daily_summary", "fault_device",     "INT DEFAULT 0"},
         {"cpap_daily_summary", "fault_alarm",      "INT DEFAULT 0"},
+        // SDD-026: the STR's own copy beside the shared, computed columns.
+        {"cpap_daily_summary", "ahi_str",              "DOUBLE"},
+        {"cpap_daily_summary", "hi_str",               "DOUBLE"},
+        {"cpap_daily_summary", "ai_str",               "DOUBLE"},
+        {"cpap_daily_summary", "oai_str",              "DOUBLE"},
+        {"cpap_daily_summary", "cai_str",              "DOUBLE"},
+        {"cpap_daily_summary", "uai_str",              "DOUBLE"},
+        {"cpap_daily_summary", "rin_str",              "DOUBLE"},
+        {"cpap_daily_summary", "duration_minutes_str", "DOUBLE"},
+        {"cpap_daily_summary", "index_source",         "VARCHAR(16)"},
 
         // Oximetry metrics, added with the tables themselves.
         {"oximetry_sessions", "avg_spo2",      "DOUBLE"},
@@ -2400,7 +2410,10 @@ bool MySQLDatabase::saveSTRDailyRecords(const std::vector<STRDailyRecord>& recor
                  fault_device, fault_alarm,
                  -- Appended, not slotted in: the binds below are positional
                  -- with hardcoded indices and ParamBinder is sized by count.
-                 machine_hours, updated_at)
+                 machine_hours,
+                 -- SDD-026: the machine's own copy, in its own columns.
+                 ahi_str, hi_str, ai_str, oai_str, cai_str, uai_str, rin_str,
+                 duration_minutes_str, index_source, updated_at)
             VALUES (?, ?, ?, ?, ?, ?,
                     ?, ?, ?, ?, ?, ?, ?, ?,
                     ?, ?, ?,
@@ -2409,16 +2422,31 @@ bool MySQLDatabase::saveSTRDailyRecords(const std::vector<STRDailyRecord>& recor
                     ?, ?, ?,
                     ?, ?, ?,
                     ?, ?,
-                    ?, NOW())
+                    ?,
+                    ?, ?, ?, ?, ?, ?, ?,
+                    ?, 'str', NOW())
             ON DUPLICATE KEY UPDATE
                 mask_pairs       = VALUES(mask_pairs),
                 mask_events      = VALUES(mask_events),
-                duration_minutes = VALUES(duration_minutes),
-                patient_hours    = VALUES(patient_hours),
                 machine_hours    = VALUES(machine_hours),
-                ahi = VALUES(ahi), hi = VALUES(hi), ai = VALUES(ai),
-                oai = VALUES(oai), cai = VALUES(cai), uai = VALUES(uai),
-                rin = VALUES(rin), csr = VALUES(csr),
+                -- SDD-026: the STR's copy always lands in its own columns.
+                ahi_str = VALUES(ahi_str), hi_str = VALUES(hi_str), ai_str = VALUES(ai_str),
+                oai_str = VALUES(oai_str), cai_str = VALUES(cai_str), uai_str = VALUES(uai_str),
+                rin_str = VALUES(rin_str),
+                duration_minutes_str = VALUES(duration_minutes_str),
+                -- The shared columns are OURS once the night has sessions.
+                -- MySQL applies these assignments left to right and a later
+                -- one sees the earlier result, so index_source is set LAST.
+                duration_minutes = IF(index_source = 'computed', duration_minutes, VALUES(duration_minutes)),
+                patient_hours    = IF(index_source = 'computed', patient_hours,    VALUES(patient_hours)),
+                ahi = IF(index_source = 'computed', ahi, VALUES(ahi)),
+                hi  = IF(index_source = 'computed', hi,  VALUES(hi)),
+                ai  = IF(index_source = 'computed', ai,  VALUES(ai)),
+                oai = IF(index_source = 'computed', oai, VALUES(oai)),
+                cai = IF(index_source = 'computed', cai, VALUES(cai)),
+                uai = IF(index_source = 'computed', uai, VALUES(uai)),
+                rin = IF(index_source = 'computed', rin, VALUES(rin)),
+                csr = VALUES(csr),
                 mask_press_50    = VALUES(mask_press_50),
                 mask_press_95    = VALUES(mask_press_95),
                 mask_press_max   = VALUES(mask_press_max),
@@ -2432,7 +2460,8 @@ bool MySQLDatabase::saveSTRDailyRecords(const std::vector<STRDailyRecord>& recor
                 pressure_setting = VALUES(pressure_setting),
                 fault_device     = VALUES(fault_device),
                 fault_alarm      = VALUES(fault_alarm),
-                updated_at       = NOW()
+                updated_at       = NOW(),
+                index_source     = IF(index_source = 'computed', 'computed', 'str')
         )";
 
         MysqlStmtGuard g;
@@ -2466,7 +2495,7 @@ bool MySQLDatabase::saveSTRDailyRecords(const std::vector<STRDailyRecord>& recor
             }
             pairs_json << "]";
 
-            ParamBinder p(31);
+            ParamBinder p(39);
             p.bindText(0, rec.device_id);
             p.bindText(1, date_oss.str());
             p.bindText(2, pairs_json.str());
@@ -2500,6 +2529,16 @@ bool MySQLDatabase::saveSTRDailyRecords(const std::vector<STRDailyRecord>& recor
             p.bindInt(28, rec.fault_device);
             p.bindInt(29, rec.fault_alarm);
             p.bindDouble(30, rec.patient_hours);  // the lifetime counter
+            // SDD-026: the same seven indexes and the duration again, into
+            // the columns that are the STR's own.
+            p.bindDouble(31, rec.ahi);
+            p.bindDouble(32, rec.hi);
+            p.bindDouble(33, rec.ai);
+            p.bindDouble(34, rec.oai);
+            p.bindDouble(35, rec.cai);
+            p.bindDouble(36, rec.uai);
+            p.bindDouble(37, rec.rin);
+            p.bindDouble(38, rec.duration_minutes);
 
             mysql_stmt_bind_param(g.stmt, p.data());
             if (mysql_stmt_execute(g.stmt) != 0) {
@@ -2572,21 +2611,29 @@ bool MySQLDatabase::aggregateDailySummaryFromSessions(const std::string& device_
         INSERT INTO cpap_daily_summary
             (device_id, record_date, duration_minutes, patient_hours,
              ahi, hi, ai, oai, cai, uai, rin, mask_events, mask_pairs,
-             mask_press_50, leak_50, leak_95, spo2_50, epr_level, mode, updated_at)
+             mask_press_50, leak_50, leak_95, spo2_50, epr_level, mode,
+             index_source, updated_at)
         SELECT
             s.device_id,
             DATE(DATE_SUB(s.session_start, INTERVAL 12 HOUR)) AS record_date,
-            ROUND(SUM(s.duration_seconds) / 60.0, 1),
-            ROUND(SUM(s.duration_seconds) / 3600.0, 2),
+            -- SDD-026: hours are the STR's Duration when the row has one, our
+            -- summed session span otherwise; every index divides by them.
+            ROUND(COALESCE(NULLIF(MAX(d.duration_minutes_str), 0), SUM(s.duration_seconds) / 60.0), 1),
+            ROUND(COALESCE(NULLIF(MAX(d.duration_minutes_str), 0), SUM(s.duration_seconds) / 60.0) / 60.0, 2),
             ROUND(SUM(COALESCE(m.ahi,0) * s.duration_seconds / 3600.0)
-                / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS ahi,
-            ROUND(SUM(COALESCE(m.hypopneas,0)) / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS hi,
-            ROUND(SUM(COALESCE(m.ahi,0) * s.duration_seconds / 3600.0) / NULLIF(SUM(s.duration_seconds) / 3600.0, 0)
-                - SUM(COALESCE(m.hypopneas,0)) / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS ai,
-            ROUND(SUM(COALESCE(m.obstructive_apneas,0)) / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS oai,
-            ROUND(SUM(COALESCE(m.central_apneas,0)) / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS cai,
-            ROUND(SUM(COALESCE(m.clear_airway_apneas,0)) / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS uai,
-            ROUND(SUM(COALESCE(m.reras,0)) / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS rin,
+                / NULLIF(COALESCE(NULLIF(MAX(d.duration_minutes_str), 0), SUM(s.duration_seconds) / 60.0) / 60.0, 0), 2) AS ahi,
+            ROUND(SUM(COALESCE(m.hypopneas,0))
+                / NULLIF(COALESCE(NULLIF(MAX(d.duration_minutes_str), 0), SUM(s.duration_seconds) / 60.0) / 60.0, 0), 2) AS hi,
+            ROUND((SUM(COALESCE(m.ahi,0) * s.duration_seconds / 3600.0) - SUM(COALESCE(m.hypopneas,0)))
+                / NULLIF(COALESCE(NULLIF(MAX(d.duration_minutes_str), 0), SUM(s.duration_seconds) / 60.0) / 60.0, 0), 2) AS ai,
+            ROUND(SUM(COALESCE(m.obstructive_apneas,0))
+                / NULLIF(COALESCE(NULLIF(MAX(d.duration_minutes_str), 0), SUM(s.duration_seconds) / 60.0) / 60.0, 0), 2) AS oai,
+            ROUND(SUM(COALESCE(m.central_apneas,0))
+                / NULLIF(COALESCE(NULLIF(MAX(d.duration_minutes_str), 0), SUM(s.duration_seconds) / 60.0) / 60.0, 0), 2) AS cai,
+            ROUND(SUM(COALESCE(m.clear_airway_apneas,0))
+                / NULLIF(COALESCE(NULLIF(MAX(d.duration_minutes_str), 0), SUM(s.duration_seconds) / 60.0) / 60.0, 0), 2) AS uai,
+            ROUND(SUM(COALESCE(m.reras,0))
+                / NULLIF(COALESCE(NULLIF(MAX(d.duration_minutes_str), 0), SUM(s.duration_seconds) / 60.0) / 60.0, 0), 2) AS rin,
             SUM(COALESCE(m.total_events,0)) AS mask_events,
             '[]' AS mask_pairs,
             ROUND(AVG(NULLIF(m.avg_mask_pressure, 0)), 1),
@@ -2595,23 +2642,35 @@ bool MySQLDatabase::aggregateDailySummaryFromSessions(const std::string& device_
             ROUND(AVG(NULLIF(m.avg_spo2, 0)), 1),
             ROUND(AVG(NULLIF(m.avg_epr_pressure, 0)), 2),
             MAX(COALESCE(m.therapy_mode, 0)),
+            'computed',
             NOW()
         FROM cpap_sessions s
         JOIN cpap_session_metrics m ON m.session_id = s.id
+        LEFT JOIN cpap_daily_summary d
+               ON d.device_id = s.device_id
+              AND d.record_date = DATE(DATE_SUB(s.session_start, INTERVAL 12 HOUR))
         WHERE s.device_id = ?
         GROUP BY s.device_id, DATE(DATE_SUB(s.session_start, INTERVAL 12 HOUR))
         ON DUPLICATE KEY UPDATE
+            -- SDD-026: ours wins for the index family and the night's
+            -- duration, and says so. The STR's copy sits in the _str columns
+            -- untouched. Kind A fields keep an STR value and only fill a gap;
+            -- our empty mask_pairs placeholder never replaces the machine's.
             duration_minutes = VALUES(duration_minutes),
             patient_hours    = VALUES(patient_hours),
             ahi = VALUES(ahi), hi = VALUES(hi), ai = VALUES(ai),
             oai = VALUES(oai), cai = VALUES(cai), uai = VALUES(uai), rin = VALUES(rin),
+            index_source     = 'computed',
             mask_events      = VALUES(mask_events),
-            mask_pairs       = VALUES(mask_pairs),
-            mask_press_50    = VALUES(mask_press_50),
-            leak_50 = VALUES(leak_50), leak_95 = VALUES(leak_95),
-            spo2_50          = VALUES(spo2_50),
-            epr_level        = VALUES(epr_level),
-            mode             = VALUES(mode),
+            -- Kind A fields stay once an STR has written the row (ahi_str is
+            -- set); until then every re-parse updates the session means.
+            mask_pairs       = IF(ahi_str IS NOT NULL, mask_pairs,    VALUES(mask_pairs)),
+            mask_press_50    = IF(ahi_str IS NOT NULL, mask_press_50, VALUES(mask_press_50)),
+            leak_50          = IF(ahi_str IS NOT NULL, leak_50,       VALUES(leak_50)),
+            leak_95          = IF(ahi_str IS NOT NULL, leak_95,       VALUES(leak_95)),
+            spo2_50          = IF(ahi_str IS NOT NULL, spo2_50,       VALUES(spo2_50)),
+            epr_level        = IF(ahi_str IS NOT NULL, epr_level,     VALUES(epr_level)),
+            mode             = IF(ahi_str IS NOT NULL, mode,          VALUES(mode)),
             updated_at       = NOW()
     )";
 

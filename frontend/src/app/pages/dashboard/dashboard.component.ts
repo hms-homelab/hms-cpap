@@ -400,13 +400,15 @@ export class DashboardComponent implements OnInit, AfterViewInit {
         mode: this.modeName,
       };
 
-      // Fetch session-aggregated data to match sessions table values
+      // The newest session, for its event count. SDD-026: the AHI and the
+      // hours above already come from our sessions (the daily summary row is
+      // ours wherever a night has sessions), so they are no longer patched
+      // over from here. That patch was a second source for the same two
+      // numbers and raced the daily-summary request below.
       this.api.getSessions(1, 0).subscribe({
         next: (sessions) => {
           if (sessions?.length && this.keyMetrics) {
             const s = sessions[0];
-            this.keyMetrics.ahi = parseFloat(s.ahi) || this.keyMetrics.ahi;
-            this.keyMetrics.usageHours = parseFloat(s.duration_hours) || this.keyMetrics.usageHours;
             this.keyMetrics.totalEvents = parseInt(s.total_events) || 0;
 
             // SDD-024. This request and the daily-summary one below race, and
@@ -441,14 +443,19 @@ export class DashboardComponent implements OnInit, AfterViewInit {
               // A Sefam card has no STR.edf and no ResMed index, so there is
               // nothing here to relabel -- the panel simply does not apply and
               // is left unbuilt. *ngIf on strMetrics hides it.
-              this.strMetrics = classified ? {
-                ahi: parseFloat(r.ahi) || 0,
-                usageHours: (parseFloat(r.duration_minutes) || 0) / 60,
+              // SDD-026: the panel shows the MACHINE's figures, which now live
+              // in their own columns. The shared ahi/duration_minutes are ours
+              // and drive the headline. No STR read yet for this night means
+              // no official figure to show, so the panel stays unbuilt.
+              const hasStr = r.ahi_str !== null && r.ahi_str !== undefined && r.ahi_str !== '';
+              this.strMetrics = classified && hasStr ? {
+                ahi: parseFloat(r.ahi_str) || 0,
+                usageHours: (parseFloat(r.duration_minutes_str) || 0) / 60,
                 leakP95: parseFloat(r.leak_95) || 0,
-                oai: parseFloat(r.oai) || 0,
-                cai: parseFloat(r.cai) || 0,
-                hi: parseFloat(r.hi) || 0,
-                rin: parseFloat(r.rin) || 0,
+                oai: parseFloat(r.oai_str) || 0,
+                cai: parseFloat(r.cai_str) || 0,
+                hi: parseFloat(r.hi_str) || 0,
+                rin: parseFloat(r.rin_str) || 0,
               } : null;
 
               const oa = Math.round((parseFloat(r.oai) || 0) * (parseFloat(r.duration_minutes) || 0) / 60);

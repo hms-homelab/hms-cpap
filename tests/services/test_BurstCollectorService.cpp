@@ -1801,7 +1801,9 @@ public:
         bytes_downloaded = 19;
         return true;
     }
+    int root_downloads = 0;   // STR.edf and friends, via downloadRootFile()
     bool downloadRootFile(const std::string&, const std::string& local_path) override {
+        ++root_downloads;
         std::ofstream ofs(local_path, std::ios::binary);
         ofs << "ROOT";
         return true;
@@ -2983,6 +2985,33 @@ TEST_F(BurstOrchestrationTest, ARecoveredNightPublishesItsMetrics) {
 // requested, the night has already been saved once from its first checkpoint,
 // and by the time the older night's first file is requested it has been saved
 // again from both.
+// SDD-026: on a run that has not parsed an STR yet, the STR is fetched BEFORE
+// the first session file. It carries the machine's own hours for every night
+// and the session writer divides by them, so reading it after every download
+// and every sidecar meant a dashboard that showed one set of numbers for half
+// an hour and then another.
+TEST_F(BurstOrchestrationTest, TheStrIsFetchedBeforeTheFirstSessionFile) {
+    int root_downloads_at_first_session_file = -1;
+
+    auto svc = makeService([&](FakeDataSource& ds) {
+        seedOneSession(ds);
+        ds.on_download = [&](const std::string&, const std::string&) {
+            if (root_downloads_at_first_session_file < 0)
+                root_downloads_at_first_session_file = ds.root_downloads;
+        };
+    });
+
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, sessionExists(_, _)).WillRepeatedly(Return(false));
+
+    svc->runBurstCycleForTest();
+
+    ASSERT_GE(root_downloads_at_first_session_file, 0) << "no session file was downloaded";
+    EXPECT_GE(root_downloads_at_first_session_file, 1)
+        << "the STR was not asked for before the first session file";
+}
+
 TEST_F(BurstOrchestrationTest, ASessionIsStoredAfterEveryCheckpointFileNewestFirst) {
     int saves = 0;
     std::vector<std::pair<std::string, int>> saves_seen_at_download;  // (filename, saves so far)

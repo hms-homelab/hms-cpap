@@ -191,6 +191,13 @@ CREATE TABLE IF NOT EXISTS cpap_daily_summary (
     ahi               FLOAT, hi FLOAT, ai FLOAT, oai FLOAT, cai FLOAT, uai FLOAT,
     -- SDD-024: see schema_sqlite.sql.
     index_kind        TEXT DEFAULT 'ahi',
+    -- SDD-026: the STR's own copy of the indexes and duration; the shared
+    -- columns are ours wherever the night has sessions. index_source is
+    -- 'computed' or 'str'.
+    ahi_str           FLOAT, hi_str FLOAT, ai_str FLOAT, oai_str FLOAT, cai_str FLOAT, uai_str FLOAT,
+    rin_str           FLOAT,
+    duration_minutes_str FLOAT,
+    index_source      TEXT,
     rin               FLOAT, csr FLOAT,
     mask_press_50     FLOAT, mask_press_95 FLOAT, mask_press_max FLOAT,
     leak_50           FLOAT, leak_95 FLOAT, leak_max FLOAT,

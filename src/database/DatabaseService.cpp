@@ -331,6 +331,12 @@ bool DatabaseService::connect() {
                 // SDD-024: is `ahi` an apnea-HYPOPNEA index, or apneas only?
                 txn.exec("ALTER TABLE cpap_session_metrics ADD COLUMN IF NOT EXISTS index_kind TEXT DEFAULT 'ahi'");
                 txn.exec("ALTER TABLE cpap_daily_summary ADD COLUMN IF NOT EXISTS index_kind TEXT DEFAULT 'ahi'");
+                // SDD-026: the STR's own copy beside the shared, computed columns.
+                for (const char* col : {"ahi_str FLOAT", "hi_str FLOAT", "ai_str FLOAT", "oai_str FLOAT",
+                                        "cai_str FLOAT", "uai_str FLOAT", "rin_str FLOAT",
+                                        "duration_minutes_str FLOAT", "index_source TEXT"}) {
+                    txn.exec(std::string("ALTER TABLE cpap_daily_summary ADD COLUMN IF NOT EXISTS ") + col);
+                }
                 txn.exec("ALTER TABLE cpap_session_metrics ADD COLUMN IF NOT EXISTS avg_epr_pressure FLOAT");
                 txn.exec("ALTER TABLE cpap_session_metrics ADD COLUMN IF NOT EXISTS avg_snore FLOAT");
                 txn.exec("ALTER TABLE cpap_session_metrics ADD COLUMN IF NOT EXISTS leak_p50 FLOAT");
@@ -2431,6 +2437,8 @@ bool DatabaseService::saveSTRDailyRecords(const std::vector<STRDailyRecord>& rec
                 resp_rate_50 FLOAT, tid_vol_50 FLOAT, min_vent_50 FLOAT,
                 mode INT, epr_level FLOAT, pressure_setting FLOAT,
                 fault_device INT DEFAULT 0, fault_alarm INT DEFAULT 0,
+                ahi_str FLOAT, hi_str FLOAT, ai_str FLOAT, oai_str FLOAT, cai_str FLOAT, uai_str FLOAT,
+                rin_str FLOAT, duration_minutes_str FLOAT, index_source TEXT,
                 created_at TIMESTAMP DEFAULT NOW(),
                 updated_at TIMESTAMP DEFAULT NOW(),
                 UNIQUE (device_id, record_date)
@@ -2473,7 +2481,10 @@ bool DatabaseService::saveSTRDailyRecords(const std::vector<STRDailyRecord>& rec
                      -- list below is explicitly numbered $1..$N, so a column
                      -- inserted mid-list silently shifts every placeholder
                      -- after it.
-                     machine_hours, updated_at)
+                     machine_hours,
+                     -- SDD-026: the machine's own copy, in its own columns.
+                     ahi_str, hi_str, ai_str, oai_str, cai_str, uai_str, rin_str,
+                     duration_minutes_str, index_source, updated_at)
                 VALUES ($1, $2, $3::jsonb, $4, $5, $6,
                         $7, $8, $9, $10, $11, $12, $13, $14,
                         $15, $16, $17,
@@ -2482,16 +2493,34 @@ bool DatabaseService::saveSTRDailyRecords(const std::vector<STRDailyRecord>& rec
                         $23, $24, $25,
                         $26, $27, $28,
                         $29, $30,
-                        $31, NOW())
+                        $31,
+                        $7, $8, $9, $10, $11, $12, $13,
+                        $5, 'str', NOW())
                 ON CONFLICT (device_id, record_date) DO UPDATE SET
                     mask_pairs = EXCLUDED.mask_pairs,
                     mask_events = EXCLUDED.mask_events,
-                    duration_minutes = EXCLUDED.duration_minutes,
-                    patient_hours = EXCLUDED.patient_hours,
                     machine_hours = EXCLUDED.machine_hours,
-                    ahi = EXCLUDED.ahi, hi = EXCLUDED.hi, ai = EXCLUDED.ai,
-                    oai = EXCLUDED.oai, cai = EXCLUDED.cai, uai = EXCLUDED.uai,
-                    rin = EXCLUDED.rin, csr = EXCLUDED.csr,
+                    -- SDD-026: the STR's copy always lands in its own columns.
+                    ahi_str = EXCLUDED.ahi_str, hi_str = EXCLUDED.hi_str, ai_str = EXCLUDED.ai_str,
+                    oai_str = EXCLUDED.oai_str, cai_str = EXCLUDED.cai_str, uai_str = EXCLUDED.uai_str,
+                    rin_str = EXCLUDED.rin_str,
+                    duration_minutes_str = EXCLUDED.duration_minutes_str,
+                    -- The shared columns are OURS once the night has sessions.
+                    -- The STR only fills them for a night we have no sessions
+                    -- for, and index_source says so.
+                    duration_minutes = CASE WHEN cpap_daily_summary.index_source = 'computed'
+                                            THEN cpap_daily_summary.duration_minutes ELSE EXCLUDED.duration_minutes END,
+                    patient_hours    = CASE WHEN cpap_daily_summary.index_source = 'computed'
+                                            THEN cpap_daily_summary.patient_hours ELSE EXCLUDED.patient_hours END,
+                    ahi = CASE WHEN cpap_daily_summary.index_source = 'computed' THEN cpap_daily_summary.ahi ELSE EXCLUDED.ahi END,
+                    hi  = CASE WHEN cpap_daily_summary.index_source = 'computed' THEN cpap_daily_summary.hi  ELSE EXCLUDED.hi  END,
+                    ai  = CASE WHEN cpap_daily_summary.index_source = 'computed' THEN cpap_daily_summary.ai  ELSE EXCLUDED.ai  END,
+                    oai = CASE WHEN cpap_daily_summary.index_source = 'computed' THEN cpap_daily_summary.oai ELSE EXCLUDED.oai END,
+                    cai = CASE WHEN cpap_daily_summary.index_source = 'computed' THEN cpap_daily_summary.cai ELSE EXCLUDED.cai END,
+                    uai = CASE WHEN cpap_daily_summary.index_source = 'computed' THEN cpap_daily_summary.uai ELSE EXCLUDED.uai END,
+                    rin = CASE WHEN cpap_daily_summary.index_source = 'computed' THEN cpap_daily_summary.rin ELSE EXCLUDED.rin END,
+                    index_source = CASE WHEN cpap_daily_summary.index_source = 'computed' THEN 'computed' ELSE 'str' END,
+                    csr = EXCLUDED.csr,
                     mask_press_50 = EXCLUDED.mask_press_50,
                     mask_press_95 = EXCLUDED.mask_press_95,
                     mask_press_max = EXCLUDED.mask_press_max,
@@ -2583,21 +2612,30 @@ bool DatabaseService::aggregateDailySummaryFromSessions(const std::string& devic
             INSERT INTO cpap_daily_summary
                 (device_id, record_date, duration_minutes, patient_hours,
                  ahi, hi, ai, oai, cai, uai, rin, mask_events, mask_pairs,
-                 mask_press_50, leak_50, leak_95, spo2_50, epr_level, mode, updated_at)
+                 mask_press_50, leak_50, leak_95, spo2_50, epr_level, mode,
+                 index_source, updated_at)
             SELECT
                 s.device_id,
                 DATE(s.session_start - INTERVAL '12 hours') AS record_date,
-                ROUND((SUM(s.duration_seconds) / 60.0)::numeric, 1),
-                ROUND((SUM(s.duration_seconds) / 3600.0)::numeric, 2),
+                -- SDD-026: hours are the STR's Duration when the row has one,
+                -- our summed session span otherwise; every index divides by
+                -- them, the same arithmetic cpapdash.com does.
+                ROUND((COALESCE(NULLIF(MAX(d.duration_minutes_str), 0), SUM(s.duration_seconds) / 60.0))::numeric, 1),
+                ROUND((COALESCE(NULLIF(MAX(d.duration_minutes_str), 0), SUM(s.duration_seconds) / 60.0) / 60.0)::numeric, 2),
                 ROUND((SUM(COALESCE(m.ahi,0) * s.duration_seconds / 3600.0)
-                    / NULLIF(SUM(s.duration_seconds) / 3600.0, 0))::numeric, 2) AS ahi,
-                ROUND((SUM(COALESCE(m.hypopneas,0)) / NULLIF(SUM(s.duration_seconds) / 3600.0, 0))::numeric, 2) AS hi,
-                ROUND((SUM(COALESCE(m.ahi,0) * s.duration_seconds / 3600.0) / NULLIF(SUM(s.duration_seconds) / 3600.0, 0)
-                    - SUM(COALESCE(m.hypopneas,0)) / NULLIF(SUM(s.duration_seconds) / 3600.0, 0))::numeric, 2) AS ai,
-                ROUND((SUM(COALESCE(m.obstructive_apneas,0)) / NULLIF(SUM(s.duration_seconds) / 3600.0, 0))::numeric, 2) AS oai,
-                ROUND((SUM(COALESCE(m.central_apneas,0)) / NULLIF(SUM(s.duration_seconds) / 3600.0, 0))::numeric, 2) AS cai,
-                ROUND((SUM(COALESCE(m.clear_airway_apneas,0)) / NULLIF(SUM(s.duration_seconds) / 3600.0, 0))::numeric, 2) AS uai,
-                ROUND((SUM(COALESCE(m.reras,0)) / NULLIF(SUM(s.duration_seconds) / 3600.0, 0))::numeric, 2) AS rin,
+                    / NULLIF(COALESCE(NULLIF(MAX(d.duration_minutes_str), 0), SUM(s.duration_seconds) / 60.0) / 60.0, 0))::numeric, 2) AS ahi,
+                ROUND((SUM(COALESCE(m.hypopneas,0))
+                    / NULLIF(COALESCE(NULLIF(MAX(d.duration_minutes_str), 0), SUM(s.duration_seconds) / 60.0) / 60.0, 0))::numeric, 2) AS hi,
+                ROUND(((SUM(COALESCE(m.ahi,0) * s.duration_seconds / 3600.0) - SUM(COALESCE(m.hypopneas,0)))
+                    / NULLIF(COALESCE(NULLIF(MAX(d.duration_minutes_str), 0), SUM(s.duration_seconds) / 60.0) / 60.0, 0))::numeric, 2) AS ai,
+                ROUND((SUM(COALESCE(m.obstructive_apneas,0))
+                    / NULLIF(COALESCE(NULLIF(MAX(d.duration_minutes_str), 0), SUM(s.duration_seconds) / 60.0) / 60.0, 0))::numeric, 2) AS oai,
+                ROUND((SUM(COALESCE(m.central_apneas,0))
+                    / NULLIF(COALESCE(NULLIF(MAX(d.duration_minutes_str), 0), SUM(s.duration_seconds) / 60.0) / 60.0, 0))::numeric, 2) AS cai,
+                ROUND((SUM(COALESCE(m.clear_airway_apneas,0))
+                    / NULLIF(COALESCE(NULLIF(MAX(d.duration_minutes_str), 0), SUM(s.duration_seconds) / 60.0) / 60.0, 0))::numeric, 2) AS uai,
+                ROUND((SUM(COALESCE(m.reras,0))
+                    / NULLIF(COALESCE(NULLIF(MAX(d.duration_minutes_str), 0), SUM(s.duration_seconds) / 60.0) / 60.0, 0))::numeric, 2) AS rin,
                 SUM(COALESCE(m.total_events,0))::int AS mask_events,
                 '[]'::jsonb AS mask_pairs,
                 ROUND(AVG(NULLIF(m.avg_mask_pressure, 0))::numeric, 1),
@@ -2606,23 +2644,36 @@ bool DatabaseService::aggregateDailySummaryFromSessions(const std::string& devic
                 ROUND(AVG(NULLIF(m.avg_spo2, 0))::numeric, 1),
                 ROUND(AVG(NULLIF(m.avg_epr_pressure, 0))::numeric, 2),
                 MAX(COALESCE(m.therapy_mode, 0)),
+                'computed',
                 NOW()
             FROM cpap_sessions s
             JOIN cpap_session_metrics m ON m.session_id = s.id
+            LEFT JOIN cpap_daily_summary d
+                   ON d.device_id = s.device_id
+                  AND d.record_date = DATE(s.session_start - INTERVAL '12 hours')
             WHERE s.device_id = $1
             GROUP BY s.device_id, DATE(s.session_start - INTERVAL '12 hours')
             ON CONFLICT (device_id, record_date) DO UPDATE SET
+                -- SDD-026: ours wins for the index family and the night's
+                -- duration, and says so. The STR's copy sits in the _str
+                -- columns untouched.
                 duration_minutes = EXCLUDED.duration_minutes,
                 patient_hours    = EXCLUDED.patient_hours,
                 ahi = EXCLUDED.ahi, hi = EXCLUDED.hi, ai = EXCLUDED.ai,
                 oai = EXCLUDED.oai, cai = EXCLUDED.cai, uai = EXCLUDED.uai, rin = EXCLUDED.rin,
+                index_source     = 'computed',
                 mask_events      = EXCLUDED.mask_events,
-                mask_pairs       = EXCLUDED.mask_pairs,
-                mask_press_50    = EXCLUDED.mask_press_50,
-                leak_50 = EXCLUDED.leak_50, leak_95 = EXCLUDED.leak_95,
-                spo2_50          = EXCLUDED.spo2_50,
-                epr_level        = EXCLUDED.epr_level,
-                mode             = EXCLUDED.mode,
+                -- Kind A fields (RESMED_CALCULATION_RULES section 1): the
+                -- machine took these over its own therapy window, so once an
+                -- STR has written the row (ahi_str is set) they stay. Until
+                -- then every re-parse updates the session means.
+                mask_pairs       = CASE WHEN cpap_daily_summary.ahi_str IS NOT NULL THEN cpap_daily_summary.mask_pairs    ELSE EXCLUDED.mask_pairs    END,
+                mask_press_50    = CASE WHEN cpap_daily_summary.ahi_str IS NOT NULL THEN cpap_daily_summary.mask_press_50 ELSE EXCLUDED.mask_press_50 END,
+                leak_50          = CASE WHEN cpap_daily_summary.ahi_str IS NOT NULL THEN cpap_daily_summary.leak_50       ELSE EXCLUDED.leak_50       END,
+                leak_95          = CASE WHEN cpap_daily_summary.ahi_str IS NOT NULL THEN cpap_daily_summary.leak_95       ELSE EXCLUDED.leak_95       END,
+                spo2_50          = CASE WHEN cpap_daily_summary.ahi_str IS NOT NULL THEN cpap_daily_summary.spo2_50       ELSE EXCLUDED.spo2_50       END,
+                epr_level        = CASE WHEN cpap_daily_summary.ahi_str IS NOT NULL THEN cpap_daily_summary.epr_level     ELSE EXCLUDED.epr_level     END,
+                mode             = CASE WHEN cpap_daily_summary.ahi_str IS NOT NULL THEN cpap_daily_summary.mode          ELSE EXCLUDED.mode          END,
                 updated_at       = NOW()
         )", device_id);
 
