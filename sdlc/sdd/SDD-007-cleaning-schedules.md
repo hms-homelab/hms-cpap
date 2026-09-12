@@ -352,7 +352,7 @@ Each is independently shippable.
 
 - `hms-cpapdash-api` `sdd/043-cleaning-reminders-and-supply-push.md`
 - `hms-cpapdash-api` `include/services/CleaningStatus.h`, `src/services/CleaningStatus.cc`
-- `docs/SDD-004-equipment-profiles-and-supplies.md`
+- `sdlc/sdd/SDD-004-equipment-profiles-and-supplies.md`
 - `include/services/SupplyStatus.h`, `include/services/SupplyPublisher.h`
 - `include/services/CpapDashSyncService.h` (reconcile contract)
 - `include/database/MySQLDatabase.h` `migrateSchema()` (4.6.3)

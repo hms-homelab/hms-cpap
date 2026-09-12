@@ -2,7 +2,7 @@
 
 **Status:** Draft
 **Date:** 2026-06-14
-**Companion:** `hms-cpapdash-parser/sdd/001-advanced-signal-analysis.md` (shared parser — data layer)
+**Companion:** `hms-cpapdash-parser/sdlc/sdd/001-advanced-signal-analysis.md` (shared parser — data layer)
 
 ## Problem
 

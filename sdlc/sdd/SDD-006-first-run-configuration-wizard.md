@@ -455,7 +455,7 @@ this, and should not pretend to.
 
 ## References
 
-- `docs/SDD-005-desktop-app.md` (installer, tray, signing, autostart ownership)
+- `sdlc/sdd/SDD-005-desktop-app.md` (installer, tray, signing, autostart ownership)
 - `include/utils/AppConfig.h` (config schema, `applyEnvFallbacks`, `toJson`)
 - `src/main.cpp` (startup env bridge, `makeDatabaseFromConfig`, the five DB
   consumers, backend guard)
