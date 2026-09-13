@@ -746,6 +746,11 @@ as a second opinion on the card and never as something to depend on.
 
 ## Architecture
 
+The detailed maps are in [`architecture/db.md`](../architecture/db.md) (every
+table, key and writer) and [`architecture/layers.md`](../architecture/layers.md)
+(the code's layers and how a request and a burst flow). This section is the
+overview.
+
 ```
 ┌─────────────────┐     ┌──────────────────┐
 │  ResMed CPAP    │     │ Lowenstein Prisma │

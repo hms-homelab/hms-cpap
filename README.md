@@ -144,6 +144,20 @@ Everything else (config keys, CLI flags, MQTT sensor list, myAir setup,
 architecture, development, cross-compiling) is in
 **[docs/REFERENCE.md](docs/REFERENCE.md)**.
 
+### How it is built
+
+The [`architecture/`](architecture/) folder maps the code:
+
+- **[architecture/db.md](architecture/db.md)**: every table on SQLite, MySQL
+  and PostgreSQL, how they are keyed and related, who writes and reads each
+  one, and the time rules every date follows.
+- **[architecture/layers.md](architecture/layers.md)**: the layers of the app
+  (entities, the database layer, services, the web query layer, controllers,
+  the frontend) and how a web request and a collection burst travel through
+  them.
+
+Design decisions, one per change, are in [`sdlc/sdd/`](sdlc/sdd/).
+
 ## Disclaimers
 
 - **Not a medical device.** It does not diagnose anything and it is not a
