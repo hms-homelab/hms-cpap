@@ -78,7 +78,11 @@ void MLTrainingService::start() {
 
 void MLTrainingService::stop() {
     if (!running_) return;
-    running_ = false;
+    {
+        std::lock_guard<std::mutex> lock(wake_mutex_);
+        running_ = false;
+    }
+    wake_cv_.notify_all();
     if (worker_thread_.joinable()) {
         worker_thread_.join();
     }
@@ -86,8 +90,18 @@ void MLTrainingService::stop() {
 }
 
 void MLTrainingService::triggerTraining() {
-    train_requested_ = true;
+    requestTraining();
     spdlog::info("MLTrainingService: manual training triggered");
+}
+
+// The flag is set under wake_mutex_ so the worker cannot test it, miss it, and
+// then go to sleep for a full minute: a request always ends the current wait.
+void MLTrainingService::requestTraining() {
+    {
+        std::lock_guard<std::mutex> lock(wake_mutex_);
+        train_requested_ = true;
+    }
+    wake_cv_.notify_one();
 }
 
 // ---------------------------------------------------------------------------
@@ -164,9 +178,14 @@ void MLTrainingService::runLoop() {
     spdlog::info("MLTrainingService: worker thread running");
 
     while (running_) {
-        // Sleep in 1-second increments so we can react to stop quickly
-        for (int i = 0; i < 60 && running_; ++i) {
-            std::this_thread::sleep_for(std::chrono::seconds(1));
+        // Check the schedule once a minute, but wake at once for a training
+        // request or a stop. It used to sleep the minute out in 1-second steps
+        // regardless, so a manual "train" sat idle for up to 60 s before
+        // anything started.
+        {
+            std::unique_lock<std::mutex> lock(wake_mutex_);
+            wake_cv_.wait_for(lock, std::chrono::seconds(60),
+                              [this] { return !running_ || train_requested_; });
         }
         if (!running_) break;
 
@@ -677,7 +696,7 @@ void MLTrainingService::subscribeToCommands() {
     mqtt_->subscribe(train_topic,
         [this](const std::string& /*topic*/, const std::string& /*payload*/) {
             spdlog::info("MLTrainingService: train command received via MQTT");
-            train_requested_ = true;
+            requestTraining();
         });
 
     // Predict on session completion

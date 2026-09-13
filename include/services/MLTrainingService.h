@@ -10,6 +10,7 @@
 #include <nlohmann/json.hpp>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -77,6 +78,12 @@ private:
     std::thread worker_thread_;
     std::atomic<bool> running_{false};
     std::atomic<bool> train_requested_{false};
+    // Wakes the worker the moment training is requested or the service stops,
+    // instead of leaving it asleep until its next 60-second check.
+    std::mutex wake_mutex_;
+    std::condition_variable wake_cv_;
+
+    void requestTraining();
 
     // Models
     ml::RandomForest ahi_model_, mask_model_, compliance_model_, anomaly_model_;

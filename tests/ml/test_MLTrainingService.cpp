@@ -715,16 +715,71 @@ TEST(MLTrainingServiceExtTest, MalformedAndNullColumnsTreatedAsZero) {
 }
 
 // ---------------------------------------------------------------------------
+// triggerTraining() wakes the worker at once.
+//
+// The worker used to sleep out a full 60-second poll before it looked at a
+// request, so a manual "train" sat idle for up to a minute, and the end-to-end
+// test below spent most of its 90-second window waiting for that poll. With too
+// little data the pipeline returns a timestamped failure immediately, so the
+// only thing between the trigger and a result is the wake-up itself.
+// ---------------------------------------------------------------------------
+
+TEST(MLTrainingServiceExtTest, TriggerTrainingWakesTheWorkerImmediately) {
+    TempDir td("wake");
+    auto cfg = baseConfig(td.str());
+    cfg.min_days = 1000;          // guarantees the fast "insufficient data" exit
+    auto db = std::make_shared<FakeDb>();
+    db->rows_ = makeDataset(5);
+    MLTrainingService svc(cfg, db, nullptr);
+
+    svc.start();
+    const auto t0 = std::chrono::steady_clock::now();
+    svc.triggerTraining();
+
+    MLTrainingService::TrainingResult res;
+    const auto deadline = t0 + std::chrono::seconds(5);
+    while (std::chrono::steady_clock::now() < deadline) {
+        res = svc.getLastResult();
+        if (!res.timestamp.empty()) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    svc.stop();
+
+    ASSERT_FALSE(res.timestamp.empty())
+        << "triggerTraining() did not wake the worker; it waited for the 60 s poll";
+    EXPECT_FALSE(res.success);
+    EXPECT_NE(res.error.find("Insufficient data"), std::string::npos) << res.error;
+}
+
+// stop() must not wait out the poll either. The old loop slept in 1-second
+// steps, so stop() took up to a second; a woken worker joins in milliseconds.
+TEST(MLTrainingServiceExtTest, StopReturnsWithoutWaitingForThePoll) {
+    TempDir td("stop");
+    auto cfg = baseConfig(td.str());
+    auto db = std::make_shared<FakeDb>();
+    MLTrainingService svc(cfg, db, nullptr);
+
+    svc.start();
+    const auto t0 = std::chrono::steady_clock::now();
+    svc.stop();
+    const auto took = std::chrono::steady_clock::now() - t0;
+
+    EXPECT_LT(std::chrono::duration_cast<std::chrono::milliseconds>(took).count(), 250)
+        << "stop() waited on the worker's sleep";
+}
+
+// ---------------------------------------------------------------------------
 // Full deterministic end-to-end training run.
 //
-// Drives the real worker loop: triggerTraining() flags a request, the worker
-// (after its fixed-interval poll) runs runTrainingPipeline() over a synthetic
-// 30-day dataset, persists 4 model files via saveModels(), then runs
-// predictLatest(). We then assert on getStatus()'s populated-result rendering
-// (status "idle"/success branch, models[] array, predictions block) and that
-// the four model JSON files were written and reload cleanly in a fresh service.
+// Drives the real worker loop: triggerTraining() wakes the worker, which runs
+// runTrainingPipeline() over a synthetic 28-day dataset, persists 4 model files
+// via saveModels(), then runs predictLatest(). We then assert on getStatus()'s
+// populated-result rendering (status "idle"/success branch, models[] array,
+// predictions block) and that the four model JSON files were written and reload
+// cleanly in a fresh service.
 //
-// The worker sleeps in 1-second steps up to 60s between polls, so allow ~75s.
+// The window is training time alone now that the trigger wakes the worker; 90 s
+// leaves room for a loaded machine running the whole suite.
 // ---------------------------------------------------------------------------
 
 TEST(MLTrainingServiceExtTest, EndToEndTrainPersistsModelsAndPopulatesStatus) {
