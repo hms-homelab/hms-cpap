@@ -1725,12 +1725,12 @@ bool BurstCollectorService::executeBurstCycle() {
         std::cout << "CPAP: Found " << new_sessions.size() << " new session(s)" << std::endl;
 
         // SDD-026: the STR comes FIRST on a run that has not read one yet. It
-        // is one 96 KB file, it carries the machine's own hours for every
-        // night, and the session writer divides by those hours. Until this
-        // landed the STR was read at session close, which on a first run sat
-        // behind every session download and every sidecar on the card, so the
-        // dashboard showed our span and our index for half an hour and then
-        // changed. Once an STR has parsed, the read stays at session close.
+        // is one 96 KB file and it carries every therapy day the machine
+        // remembers, so the trends fill with the card's whole history before
+        // the first session downloads. It no longer moves our numbers: since
+        // 2026-09-13 the session writer divides by our own spans, and the
+        // STR only fills nights we have no sessions for and the figures we do
+        // not compute. Once an STR has parsed, the read stays at session close.
         if (!str_summary_ok_) processSessionSummary();
 
         std::string local_base_dir = ConfigManager::get("CPAP_TEMP_DIR", (std::filesystem::temp_directory_path() / "cpap_data").string());

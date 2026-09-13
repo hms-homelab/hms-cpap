@@ -1948,12 +1948,17 @@ bool SQLiteDatabase::saveSTRDailyRecords(const std::vector<STRDailyRecord>& reco
                 index_kind   = CASE WHEN index_source = 'computed' THEN index_kind ELSE excluded.index_kind END,
                 index_source = CASE WHEN index_source = 'computed' THEN 'computed' ELSE 'str' END,
                 csr = excluded.csr,
-                mask_press_50    = excluded.mask_press_50,
+                -- Measured by our sessions too, so on a night we have
+                -- sessions for the STR fills these only where ours is NULL
+                -- (calculated metrics supersede the STR, 2026-09-13).
+                mask_press_50    = CASE WHEN index_source = 'computed' THEN COALESCE(mask_press_50, excluded.mask_press_50) ELSE excluded.mask_press_50 END,
+                leak_50          = CASE WHEN index_source = 'computed' THEN COALESCE(leak_50, excluded.leak_50) ELSE excluded.leak_50 END,
+                leak_95          = CASE WHEN index_source = 'computed' THEN COALESCE(leak_95, excluded.leak_95) ELSE excluded.leak_95 END,
+                spo2_50          = CASE WHEN index_source = 'computed' THEN COALESCE(spo2_50, excluded.spo2_50) ELSE excluded.spo2_50 END,
                 mask_press_95    = excluded.mask_press_95,
                 mask_press_max   = excluded.mask_press_max,
-                leak_50 = excluded.leak_50, leak_95 = excluded.leak_95,
                 leak_max = excluded.leak_max,
-                spo2_50 = excluded.spo2_50, spo2_95 = excluded.spo2_95,
+                spo2_95 = excluded.spo2_95,
                 resp_rate_50     = excluded.resp_rate_50,
                 tid_vol_50       = excluded.tid_vol_50,
                 min_vent_50      = excluded.min_vent_50,
@@ -2103,27 +2108,28 @@ bool SQLiteDatabase::aggregateDailySummaryFromSessions(const std::string& device
         SELECT
             s.device_id,
             date(s.session_start, '-12 hours') AS record_date,
-            -- SDD-026, Albin 2026-09-08 "lets match the cloud ... divide vs
-            -- STR duration when it has one": the night's hours are the STR's
-            -- Duration (the machine's own mask-on time) when the row has one,
-            -- and our summed session span otherwise. Every index below divides
-            -- by those same hours, the same arithmetic cpapdash.com does.
-            ROUND(COALESCE(NULLIF(MAX(d.duration_minutes_str), 0), SUM(s.duration_seconds) / 60.0), 1),
-            ROUND(COALESCE(NULLIF(MAX(d.duration_minutes_str), 0), SUM(s.duration_seconds) / 60.0) / 60.0, 2),
+            -- SDD-026 as amended 2026-09-13, Albin: "the parsed sessions and
+            -- calculated metrics wins, with the STR fallback". The night's
+            -- hours are the sum of OUR session spans and every index divides
+            -- by them. Not the STR's Duration: the STR counts a mask-on only
+            -- once it ends, so on a live night it froze the hours at the
+            -- first mask-off (47 minutes shown, 71 recorded).
+            ROUND(SUM(s.duration_seconds) / 60.0, 1),
+            ROUND(SUM(s.duration_seconds) / 3600.0, 2),
             ROUND(SUM(COALESCE(m.ahi,0) * s.duration_seconds / 3600.0)
-                / NULLIF(COALESCE(NULLIF(MAX(d.duration_minutes_str), 0), SUM(s.duration_seconds) / 60.0) / 60.0, 0), 2) AS ahi,
+                / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS ahi,
             ROUND(SUM(COALESCE(m.hypopneas,0))
-                / NULLIF(COALESCE(NULLIF(MAX(d.duration_minutes_str), 0), SUM(s.duration_seconds) / 60.0) / 60.0, 0), 2) AS hi,
+                / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS hi,
             ROUND((SUM(COALESCE(m.ahi,0) * s.duration_seconds / 3600.0) - SUM(COALESCE(m.hypopneas,0)))
-                / NULLIF(COALESCE(NULLIF(MAX(d.duration_minutes_str), 0), SUM(s.duration_seconds) / 60.0) / 60.0, 0), 2) AS ai,
+                / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS ai,
             ROUND(SUM(COALESCE(m.obstructive_apneas,0))
-                / NULLIF(COALESCE(NULLIF(MAX(d.duration_minutes_str), 0), SUM(s.duration_seconds) / 60.0) / 60.0, 0), 2) AS oai,
+                / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS oai,
             ROUND(SUM(COALESCE(m.central_apneas,0))
-                / NULLIF(COALESCE(NULLIF(MAX(d.duration_minutes_str), 0), SUM(s.duration_seconds) / 60.0) / 60.0, 0), 2) AS cai,
+                / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS cai,
             ROUND(SUM(COALESCE(m.clear_airway_apneas,0))
-                / NULLIF(COALESCE(NULLIF(MAX(d.duration_minutes_str), 0), SUM(s.duration_seconds) / 60.0) / 60.0, 0), 2) AS uai,
+                / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS uai,
             ROUND(SUM(COALESCE(m.reras,0))
-                / NULLIF(COALESCE(NULLIF(MAX(d.duration_minutes_str), 0), SUM(s.duration_seconds) / 60.0) / 60.0, 0), 2) AS rin,
+                / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS rin,
             SUM(COALESCE(m.total_events,0)) AS mask_events,
             '[]' AS mask_pairs,
             ROUND(AVG(NULLIF(m.avg_mask_pressure, 0)), 1),
@@ -2138,9 +2144,6 @@ bool SQLiteDatabase::aggregateDailySummaryFromSessions(const std::string& device
             datetime('now')
         FROM cpap_sessions s
         JOIN cpap_session_metrics m ON m.session_id = s.id
-        LEFT JOIN cpap_daily_summary d
-               ON d.device_id = s.device_id
-              AND d.record_date = date(s.session_start, '-12 hours')
         WHERE s.device_id = ?
         GROUP BY s.device_id, date(s.session_start, '-12 hours')
         ON CONFLICT (device_id, record_date) DO UPDATE SET
@@ -2153,18 +2156,20 @@ bool SQLiteDatabase::aggregateDailySummaryFromSessions(const std::string& device
             oai = excluded.oai, cai = excluded.cai, uai = excluded.uai, rin = excluded.rin,
             index_source     = 'computed',
             mask_events      = excluded.mask_events,
-            -- Kind A fields (RESMED_CALCULATION_RULES section 1): the machine
-            -- took these over its own therapy window, so once an STR has
-            -- written the row (ahi_str is set) they stay. Until then the
-            -- session means are the best we have and every re-parse updates
-            -- them: a session is saved after every checkpoint file, and
-            -- freezing the first parse's mean would show the leak of the
-            -- first ten minutes all night.
+            -- Leak, pressure and SpO2 are measured by our sessions, so ours
+            -- win wherever we have them (2026-09-13) and every re-parse
+            -- updates them: a session is saved after every checkpoint file,
+            -- and freezing the first parse's mean would show the leak of the
+            -- first ten minutes all night. Where ours is NULL the row keeps
+            -- what it has, which is the STR's when one was read.
+            mask_press_50    = COALESCE(excluded.mask_press_50, mask_press_50),
+            leak_50          = COALESCE(excluded.leak_50, leak_50),
+            leak_95          = COALESCE(excluded.leak_95, leak_95),
+            spo2_50          = COALESCE(excluded.spo2_50, spo2_50),
+            -- We do not compute these: mask pairs and mode are placeholders
+            -- here and our EPR figure is a pressure, not the machine's level.
+            -- So once an STR has written the row (ahi_str is set) they stay.
             mask_pairs       = CASE WHEN ahi_str IS NOT NULL THEN mask_pairs    ELSE excluded.mask_pairs    END,
-            mask_press_50    = CASE WHEN ahi_str IS NOT NULL THEN mask_press_50 ELSE excluded.mask_press_50 END,
-            leak_50          = CASE WHEN ahi_str IS NOT NULL THEN leak_50       ELSE excluded.leak_50       END,
-            leak_95          = CASE WHEN ahi_str IS NOT NULL THEN leak_95       ELSE excluded.leak_95       END,
-            spo2_50          = CASE WHEN ahi_str IS NOT NULL THEN spo2_50       ELSE excluded.spo2_50       END,
             epr_level        = CASE WHEN ahi_str IS NOT NULL THEN epr_level     ELSE excluded.epr_level     END,
             mode             = CASE WHEN ahi_str IS NOT NULL THEN mode          ELSE excluded.mode          END,
             updated_at       = datetime('now')

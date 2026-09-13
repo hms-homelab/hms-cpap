@@ -204,8 +204,11 @@ protected:
     /// Our view of the same night: one mask-on session with its own
     /// duration and event counts, folded into the daily summary the way the
     /// collector does after every save. See strRecordDate() for why its start
-    /// and the STR's date are tied to each other.
-    void saveOurNight(int duration_seconds, double ahi, int obstructive, int hypopneas) {
+    /// and the STR's date are tied to each other. Saving it again with a
+    /// longer duration is the same session growing, as on a live night:
+    /// saveSession upserts on the start.
+    void saveOurNight(int duration_seconds, double ahi, int obstructive, int hypopneas,
+                      std::optional<double> leak_p95 = 99.0) {
         CPAPSession s;
         s.device_id = device_;
         s.device_name = "AirSense 11";
@@ -218,7 +221,7 @@ protected:
         m.obstructive_apneas = obstructive;
         m.hypopneas = hypopneas;
         m.total_events = obstructive + hypopneas;
-        m.leak_p95 = 99.0;   // a session mean that must NOT replace the STR's
+        m.leak_p95 = leak_p95;   // ours, and since 2026-09-13 it beats the STR's
         s.metrics = m;
         ASSERT_TRUE(db_->saveSession(s));
         ASSERT_TRUE(db_->aggregateDailySummaryFromSessions(device_));
@@ -283,58 +286,102 @@ TEST_P(DailyHoursBackendTest, AZeroUsageDayIsZeroHoursNotACounter) {
 //
 // The night as the STR reports it: 184 minutes, AHI 4.2 (floored to one
 // decimal by the file format), leak p95 20. The night as our sessions add
-// up: 13 index events over a 193-minute recording span. The rule Albin set on
-// 2026-09-08, "match the cloud, divide vs STR duration when it has one": the
-// night's hours are the STR's 184 minutes, our 13 events divide by them, so
-// the headline reads 13 / 3.067 h = 4.24, the same figure cpapdash.com shows.
-// The _str columns keep the STR's own 4.2, and the STR's leak, a kind A
-// field, must survive our session mean.
+// up: 13 index events over a 193-minute recording span, leak p95 99.
+//
+// The rule as amended 2026-09-13, Albin: "the parsed sessions and calculated
+// metrics wins, with the STR fallback". The night's hours are OUR 193
+// minutes, our 13 events divide by them (4.04), and our leak stands. The _str
+// columns keep the STR's 4.2 and 184 beside them. The 09-08 rule, the STR's
+// hours whenever the row had one, froze a live night at its first mask-off.
 //
 // saveOurNight stores m.ahi = 13 events / 3.217 h = 4.041 over 193 minutes,
 // which the writer turns back into the count before dividing again.
 
-TEST_P(DailyHoursBackendTest, OurEventsOverTheStrHoursWhenTheStrCameFirst) {
+TEST_P(DailyHoursBackendTest, OurHoursAndLeakWinWhenTheStrCameFirst) {
     saveStrNight(184.0, 4.2, 20.0);
     saveOurNight(193 * 60, 13.0 / (193.0 / 60.0), 10, 3);
 
     const auto rows = readNight();
     ASSERT_EQ(rows.size(), 1u) << engineName(GetParam()) << ": one row per night";
     const auto& r = rows[0];
-    EXPECT_NEAR(asNumber(r["ahi"]), 4.24, 0.01)
-        << engineName(GetParam()) << ": 13 of our events over the STR's 184 minutes";
-    EXPECT_NEAR(asNumber(r["duration_minutes"]), 184.0, 0.1)
-        << engineName(GetParam()) << ": the hours are the STR's Duration when the night has one";
+    EXPECT_NEAR(asNumber(r["ahi"]), 4.04, 0.01)
+        << engineName(GetParam()) << ": 13 of our events over OUR 193 minutes";
+    EXPECT_NEAR(asNumber(r["duration_minutes"]), 193.0, 0.1)
+        << engineName(GetParam()) << ": the hours are our session spans, not the STR's Duration";
     EXPECT_NEAR(asNumber(r["ahi_str"]), 4.2, 0.01) << engineName(GetParam()) << ": the STR's AHI is kept beside it";
-    EXPECT_NEAR(asNumber(r["duration_minutes_str"]), 184.0, 0.1) << engineName(GetParam());
-    EXPECT_NEAR(asNumber(r["leak_95"]), 20.0, 0.01)
-        << engineName(GetParam()) << ": leak is the machine's own and a session mean must not replace it";
+    EXPECT_NEAR(asNumber(r["duration_minutes_str"]), 184.0, 0.1)
+        << engineName(GetParam()) << ": the STR's Duration is kept beside ours";
+    EXPECT_NEAR(asNumber(r["leak_95"]), 99.0, 0.01)
+        << engineName(GetParam()) << ": our measured leak supersedes the STR's";
     EXPECT_EQ(asText(r["index_source"]), "computed") << engineName(GetParam());
 }
 
-TEST_P(DailyHoursBackendTest, OurEventsOverTheStrHoursWhenTheStrCameLast) {
+TEST_P(DailyHoursBackendTest, AnStrAfterOurSessionsChangesNothingOfOurs) {
     saveOurNight(193 * 60, 13.0 / (193.0 / 60.0), 10, 3);
-    {
-        // No STR yet: our span is all there is.
-        const auto rows = readNight();
-        ASSERT_EQ(rows.size(), 1u) << engineName(GetParam());
-        EXPECT_NEAR(asNumber(rows[0]["ahi"]), 4.04, 0.01) << engineName(GetParam());
-        EXPECT_NEAR(asNumber(rows[0]["duration_minutes"]), 193.0, 0.1) << engineName(GetParam());
-    }
     saveStrNight(184.0, 4.2, 20.0);
-    // The collector re-derives after every STR read (processSessionSummary),
-    // which is what moves the night onto the STR's hours.
+
+    // No re-derive in between: the STR writer alone must leave our figures
+    // standing, so the order the two writers run in does not matter.
+    const auto rows = readNight();
+    ASSERT_EQ(rows.size(), 1u) << engineName(GetParam());
+    const auto& r = rows[0];
+    EXPECT_NEAR(asNumber(r["ahi"]), 4.04, 0.01)
+        << engineName(GetParam()) << ": the STR replaced our index";
+    EXPECT_NEAR(asNumber(r["duration_minutes"]), 193.0, 0.1)
+        << engineName(GetParam()) << ": the STR replaced our hours";
+    EXPECT_NEAR(asNumber(r["ahi_str"]), 4.2, 0.01) << engineName(GetParam());
+    EXPECT_NEAR(asNumber(r["duration_minutes_str"]), 184.0, 0.1) << engineName(GetParam());
+    EXPECT_NEAR(asNumber(r["leak_95"]), 99.0, 0.01)
+        << engineName(GetParam()) << ": the STR replaced our leak";
+    EXPECT_EQ(asText(r["index_source"]), "computed") << engineName(GetParam());
+
+    // And the re-derive the collector runs after an STR read agrees.
     ASSERT_TRUE(db_->aggregateDailySummaryFromSessions(device_));
+    const auto again = readNight();
+    ASSERT_EQ(again.size(), 1u) << engineName(GetParam());
+    EXPECT_NEAR(asNumber(again[0]["ahi"]), 4.04, 0.01) << engineName(GetParam());
+    EXPECT_NEAR(asNumber(again[0]["duration_minutes"]), 193.0, 0.1) << engineName(GetParam());
+    EXPECT_NEAR(asNumber(again[0]["leak_95"]), 99.0, 0.01) << engineName(GetParam());
+}
+
+// picpapdash2, 2026-09-12: the STR was read once, after the first mask-off at
+// 47 minutes, and the dashboard stayed at 47 with 71 recorded and the mask on.
+// One event over 47 minutes also read as AHI 1.28 instead of 0.85.
+TEST_P(DailyHoursBackendTest, ALiveNightGrowsPastTheStrSnapshot) {
+    saveOurNight(47 * 60, 1.0 / (47.0 / 60.0), 0, 0);   // first mask-off
+    saveStrNight(47.0, 1.2, 0.0);                        // the STR written then
+    saveOurNight(71 * 60, 1.0 / (71.0 / 60.0), 0, 0);   // the files kept growing
 
     const auto rows = readNight();
     ASSERT_EQ(rows.size(), 1u) << engineName(GetParam());
     const auto& r = rows[0];
-    EXPECT_NEAR(asNumber(r["ahi"]), 4.24, 0.01)
-        << engineName(GetParam()) << ": once the STR is in, our events divide by its hours";
-    EXPECT_NEAR(asNumber(r["duration_minutes"]), 184.0, 0.1) << engineName(GetParam());
-    EXPECT_NEAR(asNumber(r["ahi_str"]), 4.2, 0.01) << engineName(GetParam());
-    EXPECT_NEAR(asNumber(r["duration_minutes_str"]), 184.0, 0.1) << engineName(GetParam());
-    EXPECT_NEAR(asNumber(r["leak_95"]), 20.0, 0.01) << engineName(GetParam());
-    EXPECT_EQ(asText(r["index_source"]), "computed") << engineName(GetParam());
+    EXPECT_NEAR(asNumber(r["duration_minutes"]), 71.0, 0.1)
+        << engineName(GetParam()) << ": the night froze at the STR's first mask-off";
+    EXPECT_NEAR(asNumber(r["ahi"]), 0.85, 0.01)
+        << engineName(GetParam()) << ": one event over 71 minutes, not over the STR's 47";
+    EXPECT_NEAR(asNumber(r["duration_minutes_str"]), 47.0, 0.1) << engineName(GetParam());
+}
+
+// The fallback half of the rule: where our sessions measured no leak, the
+// STR's fills the gap, whichever writer ran first.
+TEST_P(DailyHoursBackendTest, TheStrFillsALeakWeDidNotMeasureWhenItCameFirst) {
+    saveStrNight(184.0, 4.2, 20.0);
+    saveOurNight(193 * 60, 13.0 / (193.0 / 60.0), 10, 3, std::nullopt);
+
+    const auto rows = readNight();
+    ASSERT_EQ(rows.size(), 1u) << engineName(GetParam());
+    EXPECT_NEAR(asNumber(rows[0]["leak_95"]), 20.0, 0.01)
+        << engineName(GetParam()) << ": our missing leak wiped the STR's";
+}
+
+TEST_P(DailyHoursBackendTest, TheStrFillsALeakWeDidNotMeasureWhenItCameLast) {
+    saveOurNight(193 * 60, 13.0 / (193.0 / 60.0), 10, 3, std::nullopt);
+    saveStrNight(184.0, 4.2, 20.0);
+
+    const auto rows = readNight();
+    ASSERT_EQ(rows.size(), 1u) << engineName(GetParam());
+    EXPECT_NEAR(asNumber(rows[0]["leak_95"]), 20.0, 0.01)
+        << engineName(GetParam()) << ": the STR did not fill a leak we had no value for";
 }
 
 TEST_P(DailyHoursBackendTest, WithoutAnStrALaterSessionSaveUpdatesTheSessionMeans) {

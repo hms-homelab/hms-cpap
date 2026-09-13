@@ -2447,12 +2447,18 @@ bool MySQLDatabase::saveSTRDailyRecords(const std::vector<STRDailyRecord>& recor
                 uai = IF(index_source = 'computed', uai, VALUES(uai)),
                 rin = IF(index_source = 'computed', rin, VALUES(rin)),
                 csr = VALUES(csr),
-                mask_press_50    = VALUES(mask_press_50),
+                -- Measured by our sessions too, so on a night we have
+                -- sessions for the STR fills these only where ours is NULL
+                -- (calculated metrics supersede the STR, 2026-09-13). These
+                -- read index_source before it is reassigned at the end.
+                mask_press_50    = IF(index_source = 'computed', COALESCE(mask_press_50, VALUES(mask_press_50)), VALUES(mask_press_50)),
+                leak_50          = IF(index_source = 'computed', COALESCE(leak_50, VALUES(leak_50)), VALUES(leak_50)),
+                leak_95          = IF(index_source = 'computed', COALESCE(leak_95, VALUES(leak_95)), VALUES(leak_95)),
+                spo2_50          = IF(index_source = 'computed', COALESCE(spo2_50, VALUES(spo2_50)), VALUES(spo2_50)),
                 mask_press_95    = VALUES(mask_press_95),
                 mask_press_max   = VALUES(mask_press_max),
-                leak_50 = VALUES(leak_50), leak_95 = VALUES(leak_95),
                 leak_max = VALUES(leak_max),
-                spo2_50 = VALUES(spo2_50), spo2_95 = VALUES(spo2_95),
+                spo2_95 = VALUES(spo2_95),
                 resp_rate_50     = VALUES(resp_rate_50),
                 tid_vol_50       = VALUES(tid_vol_50),
                 min_vent_50      = VALUES(min_vent_50),
@@ -2616,24 +2622,26 @@ bool MySQLDatabase::aggregateDailySummaryFromSessions(const std::string& device_
         SELECT
             s.device_id,
             DATE(DATE_SUB(s.session_start, INTERVAL 12 HOUR)) AS record_date,
-            -- SDD-026: hours are the STR's Duration when the row has one, our
-            -- summed session span otherwise; every index divides by them.
-            ROUND(COALESCE(NULLIF(MAX(d.duration_minutes_str), 0), SUM(s.duration_seconds) / 60.0), 1),
-            ROUND(COALESCE(NULLIF(MAX(d.duration_minutes_str), 0), SUM(s.duration_seconds) / 60.0) / 60.0, 2),
+            -- SDD-026 as amended 2026-09-13: the night's hours are the sum of
+            -- OUR session spans and every index divides by them. Never the
+            -- STR's Duration, which counts a mask-on only once it ends and so
+            -- froze a live night at its first mask-off.
+            ROUND(SUM(s.duration_seconds) / 60.0, 1),
+            ROUND(SUM(s.duration_seconds) / 3600.0, 2),
             ROUND(SUM(COALESCE(m.ahi,0) * s.duration_seconds / 3600.0)
-                / NULLIF(COALESCE(NULLIF(MAX(d.duration_minutes_str), 0), SUM(s.duration_seconds) / 60.0) / 60.0, 0), 2) AS ahi,
+                / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS ahi,
             ROUND(SUM(COALESCE(m.hypopneas,0))
-                / NULLIF(COALESCE(NULLIF(MAX(d.duration_minutes_str), 0), SUM(s.duration_seconds) / 60.0) / 60.0, 0), 2) AS hi,
+                / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS hi,
             ROUND((SUM(COALESCE(m.ahi,0) * s.duration_seconds / 3600.0) - SUM(COALESCE(m.hypopneas,0)))
-                / NULLIF(COALESCE(NULLIF(MAX(d.duration_minutes_str), 0), SUM(s.duration_seconds) / 60.0) / 60.0, 0), 2) AS ai,
+                / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS ai,
             ROUND(SUM(COALESCE(m.obstructive_apneas,0))
-                / NULLIF(COALESCE(NULLIF(MAX(d.duration_minutes_str), 0), SUM(s.duration_seconds) / 60.0) / 60.0, 0), 2) AS oai,
+                / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS oai,
             ROUND(SUM(COALESCE(m.central_apneas,0))
-                / NULLIF(COALESCE(NULLIF(MAX(d.duration_minutes_str), 0), SUM(s.duration_seconds) / 60.0) / 60.0, 0), 2) AS cai,
+                / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS cai,
             ROUND(SUM(COALESCE(m.clear_airway_apneas,0))
-                / NULLIF(COALESCE(NULLIF(MAX(d.duration_minutes_str), 0), SUM(s.duration_seconds) / 60.0) / 60.0, 0), 2) AS uai,
+                / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS uai,
             ROUND(SUM(COALESCE(m.reras,0))
-                / NULLIF(COALESCE(NULLIF(MAX(d.duration_minutes_str), 0), SUM(s.duration_seconds) / 60.0) / 60.0, 0), 2) AS rin,
+                / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS rin,
             SUM(COALESCE(m.total_events,0)) AS mask_events,
             '[]' AS mask_pairs,
             ROUND(AVG(NULLIF(m.avg_mask_pressure, 0)), 1),
@@ -2646,29 +2654,30 @@ bool MySQLDatabase::aggregateDailySummaryFromSessions(const std::string& device_
             NOW()
         FROM cpap_sessions s
         JOIN cpap_session_metrics m ON m.session_id = s.id
-        LEFT JOIN cpap_daily_summary d
-               ON d.device_id = s.device_id
-              AND d.record_date = DATE(DATE_SUB(s.session_start, INTERVAL 12 HOUR))
         WHERE s.device_id = ?
         GROUP BY s.device_id, DATE(DATE_SUB(s.session_start, INTERVAL 12 HOUR))
         ON DUPLICATE KEY UPDATE
             -- SDD-026: ours wins for the index family and the night's
             -- duration, and says so. The STR's copy sits in the _str columns
-            -- untouched. Kind A fields keep an STR value and only fill a gap;
-            -- our empty mask_pairs placeholder never replaces the machine's.
+            -- untouched.
             duration_minutes = VALUES(duration_minutes),
             patient_hours    = VALUES(patient_hours),
             ahi = VALUES(ahi), hi = VALUES(hi), ai = VALUES(ai),
             oai = VALUES(oai), cai = VALUES(cai), uai = VALUES(uai), rin = VALUES(rin),
             index_source     = 'computed',
             mask_events      = VALUES(mask_events),
-            -- Kind A fields stay once an STR has written the row (ahi_str is
-            -- set); until then every re-parse updates the session means.
+            -- Leak, pressure and SpO2 are measured by our sessions, so ours
+            -- win wherever we have them (2026-09-13) and every re-parse
+            -- updates them. Where ours is NULL the row keeps what it has,
+            -- which is the STR's when one was read.
+            mask_press_50    = COALESCE(VALUES(mask_press_50), mask_press_50),
+            leak_50          = COALESCE(VALUES(leak_50), leak_50),
+            leak_95          = COALESCE(VALUES(leak_95), leak_95),
+            spo2_50          = COALESCE(VALUES(spo2_50), spo2_50),
+            -- We do not compute these: mask pairs and mode are placeholders
+            -- here and our EPR figure is a pressure, not the machine's level.
+            -- Once an STR has written the row (ahi_str is set) they stay.
             mask_pairs       = IF(ahi_str IS NOT NULL, mask_pairs,    VALUES(mask_pairs)),
-            mask_press_50    = IF(ahi_str IS NOT NULL, mask_press_50, VALUES(mask_press_50)),
-            leak_50          = IF(ahi_str IS NOT NULL, leak_50,       VALUES(leak_50)),
-            leak_95          = IF(ahi_str IS NOT NULL, leak_95,       VALUES(leak_95)),
-            spo2_50          = IF(ahi_str IS NOT NULL, spo2_50,       VALUES(spo2_50)),
             epr_level        = IF(ahi_str IS NOT NULL, epr_level,     VALUES(epr_level)),
             mode             = IF(ahi_str IS NOT NULL, mode,          VALUES(mode)),
             updated_at       = NOW()

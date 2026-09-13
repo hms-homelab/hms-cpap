@@ -2986,10 +2986,9 @@ TEST_F(BurstOrchestrationTest, ARecoveredNightPublishesItsMetrics) {
 // and by the time the older night's first file is requested it has been saved
 // again from both.
 // SDD-026: on a run that has not parsed an STR yet, the STR is fetched BEFORE
-// the first session file. It carries the machine's own hours for every night
-// and the session writer divides by them, so reading it after every download
-// and every sidecar meant a dashboard that showed one set of numbers for half
-// an hour and then another.
+// the first session file, so the card's history reaches the trends before the
+// first session download. It no longer changes our numbers (amended
+// 2026-09-13), so this pins the order, not the arithmetic.
 TEST_F(BurstOrchestrationTest, TheStrIsFetchedBeforeTheFirstSessionFile) {
     int root_downloads_at_first_session_file = -1;
 

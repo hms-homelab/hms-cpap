@@ -256,13 +256,14 @@ Json::Value QueryService::getSessions(int limit, int offset) {
     // events in the same night appear as one row. Returns the most recent
     // nights first, paginated by limit/offset (no date window) so the UI
     // can "load more" back through the full history.
-    // SDD-026: the night's hours are the STR's Duration when the night has
-    // one, our summed session span until then, and the index divides by those
-    // hours. The same rule the daily summary follows, so the sessions list and
-    // the dashboard read the same number for the same night (Albin: "latest
-    // night and first row are the same, so sessions are wrong").
-    const std::string night_minutes =
-        "COALESCE(NULLIF(MAX(d.duration_minutes_str), 0), SUM(s.duration_seconds) / 60.0)";
+    // SDD-026 as amended 2026-09-13: the night's hours are the sum of our
+    // session spans and the index divides by them, never the STR's Duration
+    // (it counts a mask-on only once it ends, so a live night froze at its
+    // first mask-off). The same rule the daily summary follows, so the
+    // sessions list and the dashboard read the same number for the same night
+    // (Albin: "latest night and first row are the same, so sessions are
+    // wrong").
+    const std::string night_minutes = "SUM(s.duration_seconds) / 60.0";
 
     std::string cpap_arm =
         "SELECT " + sql::sleepDay("MIN(s.session_start)", dt_) + " as sleep_day,"
@@ -290,7 +291,7 @@ Json::Value QueryService::getSessions(int limit, int offset) {
         // too.
         // SDD-026: events over the night's hours. The numerator is the
         // duration-weighted sum above (m.ahi * seconds / 3600 = events), the
-        // denominator the STR's hours when there are any.
+        // denominator our summed span.
         " " + sql::round("CASE WHEN " + night_minutes + " > 0"
         "   THEN SUM(COALESCE(m.ahi, 0) * s.duration_seconds / 3600.0)"
         "   / (" + night_minutes + " / 60.0)"
@@ -310,8 +311,6 @@ Json::Value QueryService::getSessions(int limit, int offset) {
         " 0 as oximetry_only"
         " FROM cpap_sessions s"
         " LEFT JOIN cpap_session_metrics m ON m.session_id = s.id"
-        " LEFT JOIN cpap_daily_summary d ON d.device_id = s.device_id"
-        "   AND d.record_date = " + sql::sleepDay("s.session_start", dt_) +
         " WHERE s.device_id = " + sql::param(1, dt_) +
         " GROUP BY " + sql::sleepDay("s.session_start", dt_);
 
@@ -398,29 +397,16 @@ Json::Value QueryService::getSessions(int limit, int offset) {
 }
 
 Json::Value QueryService::getSessionDetail(const std::string& date) {
-    // SDD-026: a session card shows its share of the NIGHT's hours, which are
-    // the STR's Duration when the night has one. Each session takes the STR's
-    // minutes in proportion to its recorded span, so one session gets all of
-    // them and several still add up to the night, and its index is its own
-    // events over that share. Without an STR the recorded span stands, as in
-    // the sessions list and the daily row. The alternative, cards over the raw
-    // recording beside a night over the STR, put 4.04 / 3h13m on the same
-    // screen as 4.24 / 3h04m for the same single-session night.
-    const std::string night_share =
-        "s.duration_seconds * 1.0 / NULLIF((SELECT SUM(s2.duration_seconds) FROM cpap_sessions s2"
-        " WHERE s2.device_id = s.device_id"
-        " AND " + sql::sleepDay("s2.session_start", dt_) + " = " + sql::sleepDay("s.session_start", dt_) + "), 0)";
-    const std::string session_minutes =
-        "COALESCE(NULLIF(d.duration_minutes_str, 0) * (" + night_share + "), s.duration_seconds / 60.0)";
-
-    // Get sessions for a given sleep day
+    // SDD-026 as amended 2026-09-13: a session card shows its own recorded
+    // span and its own index, the parser's events over that span. The cards
+    // add up to the night the list and the dashboard show, which is the sum
+    // of the same spans. The STR's Duration is not shared out over them any
+    // more: it lags a live night by everything since the last mask-off.
     std::string q_sessions =
         "SELECT s.id, s.session_start, s.session_end,"
-        " " + sql::round(session_minutes + " * 60.0", 0, dt_) + " as duration_seconds,"
-        " " + sql::round(session_minutes + " / 60.0", 2, dt_) + " as duration_hours,"
-        " " + sql::round("CASE WHEN " + session_minutes + " > 0"
-        "   THEN COALESCE(m.ahi, 0) * s.duration_seconds / 3600.0 / (" + session_minutes + " / 60.0)"
-        "   ELSE m.ahi END", 2, dt_) + " as ahi,"
+        " s.duration_seconds,"
+        " " + sql::round("s.duration_seconds / 3600.0", 2, dt_) + " as duration_hours,"
+        " " + sql::round("m.ahi", 2, dt_) + " as ahi,"
         // SDD-024. Per SESSION here, not per night: this endpoint returns each
         // session of the sleep day and the detail page merges them, so the kind
         // has to arrive on the same rows the numbers do.

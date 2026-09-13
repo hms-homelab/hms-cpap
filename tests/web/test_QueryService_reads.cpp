@@ -182,12 +182,13 @@ TEST_F(QueryServiceReadTest, ASavedSessionAppearsInTheList) {
     EXPECT_TRUE(sessions[0].isMember("sleep_day"));
 }
 
-// SDD-026: the sessions list reads the same number as the dashboard for the
-// same night. Its hours are the STR's Duration when the night has one and
-// its index divides by them, so a night of 13 events over a 193-minute
-// recording that the machine counts as 184 minutes of therapy lists as
-// 3.07 h and 4.24, not 3.22 h and 4.04.
-TEST_F(QueryServiceReadTest, TheSessionsListUsesTheStrHoursLikeTheDashboard) {
+// SDD-026 as amended 2026-09-13: the sessions list, the session card and the
+// dashboard read the same number for the same night, and it is OURS. A night
+// of 13 events over a 193-minute recording that the machine counts as 184
+// minutes reads 3.22 h and 4.04 everywhere, with the STR's 184 and 4.2 kept
+// beside it on the dashboard. The STR's hours lag a live night by everything
+// since its last mask-off, so they no longer set any of these.
+TEST_F(QueryServiceReadTest, TheListTheCardAndTheDashboardReadOurHours) {
     // Both writers key the night by a LOCAL date: the STR row by its
     // record_date, the session by date(start - 12h). Deriving the STR's date
     // from the session's own start minus twelve hours keeps them on one row
@@ -210,28 +211,41 @@ TEST_F(QueryServiceReadTest, TheSessionsListUsesTheStrHoursLikeTheDashboard) {
     m.total_events = 13;
     s.metrics = m;
     ASSERT_TRUE(db_->saveSession(s));
+    // What the collector runs after every session save.
+    ASSERT_TRUE(db_->aggregateDailySummaryFromSessions(kDevice));
 
     const auto sessions = qs_->getSessions(10, 0);
     ASSERT_GE(sessions.size(), 1u);
-    EXPECT_NEAR(std::stod(sessions[0]["duration_hours"].asString()), 184.0 / 60.0, 0.01)
-        << "the list still shows our recording span instead of the STR's hours";
-    EXPECT_NEAR(std::stod(sessions[0]["ahi"].asString()), 4.24, 0.01)
-        << "the list's index is not our events over the STR's hours";
+    EXPECT_NEAR(std::stod(sessions[0]["duration_hours"].asString()), 193.0 / 60.0, 0.01)
+        << "the list shows the STR's hours instead of our recording span";
+    EXPECT_NEAR(std::stod(sessions[0]["ahi"].asString()), 4.04, 0.01)
+        << "the list's index is not our events over our hours";
 
-    // The session card on the detail page, the same night: one session, so it
-    // gets the whole of the STR's hours and the same index.
+    // The session card on the detail page, the same night: its own span and
+    // its own index.
     const auto detail = qs_->getSessionDetail(sessions[0]["sleep_day"].asString());
     ASSERT_EQ(detail.size(), 1u) << "one session was saved for the night";
-    EXPECT_NEAR(std::stod(detail[0]["duration_hours"].asString()), 184.0 / 60.0, 0.01)
-        << "the session card still shows the recording span";
-    EXPECT_NEAR(std::stod(detail[0]["ahi"].asString()), 4.24, 0.01)
-        << "the session card's index is not its events over its share of the STR's hours";
-    EXPECT_NEAR(std::stod(detail[0]["duration_seconds"].asString()), 184.0 * 60.0, 1.0);
+    EXPECT_NEAR(std::stod(detail[0]["duration_hours"].asString()), 193.0 / 60.0, 0.01)
+        << "the session card shows a share of the STR's hours";
+    EXPECT_NEAR(std::stod(detail[0]["ahi"].asString()), 4.04, 0.01)
+        << "the session card's index is not its events over its own span";
+    EXPECT_NEAR(std::stod(detail[0]["duration_seconds"].asString()), 193.0 * 60.0, 1.0);
+
+    // And the dashboard's latest night reads the same, with the machine's own
+    // figures beside it.
+    const auto ln = qs_->getDashboard()["latest_night"];
+    EXPECT_NEAR(std::stod(ln["usage_hours"].asString()), 193.0 / 60.0, 0.01)
+        << "the dashboard shows the STR's hours";
+    EXPECT_NEAR(std::stod(ln["ahi"].asString()), 4.04, 0.01)
+        << "the dashboard's index is not our events over our hours";
+    EXPECT_NEAR(std::stod(ln["ahi_str"].asString()), 4.2, 0.01);
+    EXPECT_NEAR(std::stod(ln["duration_minutes_str"].asString()), 184.0, 0.1);
+    EXPECT_EQ(ln["index_source"].asString(), "computed");
 }
 
-// Two sessions in one night share the STR's hours in proportion to what each
-// recorded, so the cards still add up to the night.
-TEST_F(QueryServiceReadTest, SeveralSessionsShareTheStrHoursInProportion) {
+// Two sessions in one night: each card shows its own span and index, and the
+// cards add up to the night on the list. The STR's 300 minutes do not enter.
+TEST_F(QueryServiceReadTest, SeveralSessionsShowTheirOwnSpansAndAddUpToTheNight) {
     // The STR's date derives from the first session's start, as above, and the
     // second session starts half an hour later so it cannot cross a local
     // midnight that the first did not.
@@ -259,14 +273,14 @@ TEST_F(QueryServiceReadTest, SeveralSessionsShareTheStrHoursInProportion) {
     ASSERT_GE(sessions.size(), 1u);
     const auto detail = qs_->getSessionDetail(sessions[0]["sleep_day"].asString());
     ASSERT_EQ(detail.size(), 2u);
-    // 320 recorded minutes share 300: 240 -> 225, 80 -> 75.
-    EXPECT_NEAR(std::stod(detail[0]["duration_hours"].asString()), 225.0 / 60.0, 0.01);
-    EXPECT_NEAR(std::stod(detail[1]["duration_hours"].asString()), 75.0 / 60.0, 0.01);
-    EXPECT_NEAR(std::stod(detail[0]["ahi"].asString()), 8.0 / (225.0 / 60.0), 0.01);
-    EXPECT_NEAR(std::stod(detail[1]["ahi"].asString()), 4.0 / (75.0 / 60.0), 0.01);
-    // And the night reads 12 events over 300 minutes on the list.
-    EXPECT_NEAR(std::stod(sessions[0]["ahi"].asString()), 12.0 / 5.0, 0.01);
-    EXPECT_NEAR(std::stod(sessions[0]["duration_hours"].asString()), 5.0, 0.01);
+    // Each card is what it recorded: 240 and 80 minutes, 8 and 4 events.
+    EXPECT_NEAR(std::stod(detail[0]["duration_hours"].asString()), 240.0 / 60.0, 0.01);
+    EXPECT_NEAR(std::stod(detail[1]["duration_hours"].asString()), 80.0 / 60.0, 0.01);
+    EXPECT_NEAR(std::stod(detail[0]["ahi"].asString()), 8.0 / (240.0 / 60.0), 0.01);
+    EXPECT_NEAR(std::stod(detail[1]["ahi"].asString()), 4.0 / (80.0 / 60.0), 0.01);
+    // And the night reads 12 events over the 320 minutes we recorded.
+    EXPECT_NEAR(std::stod(sessions[0]["ahi"].asString()), 12.0 / (320.0 / 60.0), 0.01);
+    EXPECT_NEAR(std::stod(sessions[0]["duration_hours"].asString()), 320.0 / 60.0, 0.01);
 }
 
 TEST_F(QueryServiceReadTest, SessionsCarryTheSDD008NightState) {
