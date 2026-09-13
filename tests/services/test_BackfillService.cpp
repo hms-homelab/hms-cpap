@@ -411,6 +411,89 @@ TEST(BackfillServiceTest, BackfillWithoutStrDerivesDailySummaryFromSessions) {
     std::filesystem::remove_all(tmp);
 }
 
+// A one-day STR.edf: what EDFParser::parseSTRFile needs to return a record,
+// which is a 86400 s record and a Duration signal (minutes, one sample a day).
+static void writeMinimalSTR(const std::string& filepath, const std::string& ddmmyy,
+                            int duration_minutes) {
+    std::ofstream ofs(filepath, std::ios::binary);
+    char header[256];
+    memset(header, ' ', sizeof(header));
+    auto put = [&](int off, const std::string& s) { memcpy(header + off, s.data(), s.size()); };
+    put(0, "0");
+    put(8, "X X X X");
+    put(88, "Startdate X");
+    put(168, ddmmyy);
+    put(176, "12.00.00");
+    put(184, "512");
+    put(236, "1");        // one record, one day
+    put(244, "86400");    // the STR record duration
+    put(252, "1");        // one signal
+    ofs.write(header, 256);
+
+    char sig[256];
+    memset(sig, ' ', sizeof(sig));
+    auto sput = [&](int off, const std::string& s) { memcpy(sig + off, s.data(), s.size()); };
+    sput(0, "Duration");
+    sput(96, "min");
+    sput(104, "0");
+    sput(112, "1440");
+    sput(120, "0");
+    sput(128, "1440");    // digital == physical, so the sample is the minutes
+    sput(216, "1");
+    ofs.write(sig, 256);
+
+    const int16_t minutes = static_cast<int16_t>(duration_minutes);
+    ofs.write(reinterpret_cast<const char*>(&minutes), sizeof(minutes));
+}
+
+// ── SDD-026: an STR does not stop our numbers from winning ───────────────
+// The burst re-derives the daily summary from the sessions after every STR
+// write. The backfill used to do that only when the STR was MISSING, so a
+// history imported from a card that has one kept the STR's numbers on every
+// night (on the Pi, 196 of 233 imported nights read index_source='str').
+TEST(BackfillServiceTest, WithAnStrTheDailySummaryIsStillDerivedFromTheSessions) {
+    auto tmp = std::filesystem::temp_directory_path() / "cpap_test_backfill_withstr";
+    std::filesystem::remove_all(tmp);
+    auto folder = tmp / "DATALOG" / "20260211";
+    std::filesystem::create_directories(folder);
+    writeMinimalEDF(folder / "20260211_230000_BRP.edf", "20260211_230000", "BRP", 300);
+    writeMinimalSTR((tmp / "STR.edf").string(), "11.02.26", 300);
+
+    auto mock_db = std::make_shared<MockDatabase>();
+    BackfillService::Config cfg;
+    cfg.local_dir = tmp.string();
+    cfg.device_id = "test_device";
+    cfg.device_name = "Test CPAP";
+
+    EXPECT_CALL(*mock_db, deleteSessionsByDateFolder("test_device", "20260211"))
+        .WillOnce(Return(0));
+    EXPECT_CALL(*mock_db, saveSession(_)).WillOnce(Return(true));
+    EXPECT_CALL(*mock_db, markSessionCompleted("test_device", _)).WillOnce(Return(true));
+    EXPECT_CALL(*mock_db, updateCheckpointFileSizesMock("test_device", _))
+        .WillOnce(Return(true));
+
+    // The STR is written (it keeps the machine's own figures)...
+    EXPECT_CALL(*mock_db, saveSTRDailyRecords(::testing::SizeIs(1)))
+        .Times(1).WillOnce(Return(true));
+    // ...and then ours are re-asserted over the nights that have sessions.
+    EXPECT_CALL(*mock_db, aggregateDailySummaryFromSessions("test_device"))
+        .Times(1).WillOnce(Return(true));
+
+    BackfillService svc(cfg, mock_db);
+    svc.start();
+    svc.trigger("2026-02-11", "2026-02-11");
+    for (int i = 0; i < 30; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        auto status = svc.getStatus();
+        if (status["status"].asString() != "running" &&
+            status["status"].asString() != "idle") break;
+    }
+    svc.stop();
+    EXPECT_EQ(svc.getStatus()["sessions_saved"].asInt(), 1);
+
+    std::filesystem::remove_all(tmp);
+}
+
 // ── SDD-010: STR is resolved at the ROOT and nowhere else ────────────────
 // There used to be a fallback that searched inside DATALOG when the root probe
 // missed. ResMed never writes STR there, so it could not succeed; all it did

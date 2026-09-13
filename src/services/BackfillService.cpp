@@ -287,12 +287,16 @@ void BackfillService::executeBackfill(const std::string& start_date,
             std::filesystem::temp_directory_path() / "cpap_backfill");
 
         // Process STR.edf to populate cpap_daily_summary (feeds the dashboard).
-        // STR.edf lives at the SD root, one level above DATALOG. When it is not
-        // reachable, derive the summary from the sessions we just parsed — a
-        // backfill that ends with an empty dashboard is indistinguishable from a
-        // backfill that did nothing at all (issue #16).
-        if (!processSTRFile())
-            db_->aggregateDailySummaryFromSessions(config_.device_id);
+        // STR.edf lives at the SD root, one level above DATALOG. Then derive
+        // the summary from the sessions, ALWAYS, as the burst does (SDD-026):
+        // the STR fills the _str columns and the nights we have no sessions
+        // for, and the session writer re-asserts our numbers on every night
+        // that has them. This used to run only when the STR was missing, which
+        // left a backfilled history on the STR's numbers (the Pi, 2026-09-13:
+        // 196 of 233 imported nights) and, with no STR, a blank dashboard
+        // (issue #16).
+        processSTRFile();
+        db_->aggregateDailySummaryFromSessions(config_.device_id);
 
         {
             std::lock_guard<std::mutex> lock(progress_mutex_);
