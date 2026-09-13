@@ -174,3 +174,25 @@ write logged 180 records instead of 181, and each store loop logged "on a
 removed night, skipping". Reparse of 2026-08-23 restored it: the record
 cleared, the backfill re-stored the session, the next burst re-derived the
 daily row (477 min, as before) and re-imported the ring night.
+
+**On the Pi** (picpapdash2, the live ezShare install, 2026-09-13, branch build
+cross-compiled on the hub): Albin's history copied from the NAS card copy into
+the archive (287 nights before 2026-08-27, read-only mount, nothing the card
+delivered overwritten) and backfilled: 256 sessions, 0 errors. Night
+2026-08-23 (two sessions, one starting 02:27 on the 24th; 60 file rows;
+daily 234 min computed, STR 261) removed through the route: `{sessions:2,
+daily:1, ledger:1}`, the nights either side untouched. A backfill of
+08-22..08-24 logged "20260823 is a removed night, skipped", re-parsed the
+neighbours and rewrote the archive's STR (which covers 08-23) without the
+day's row coming back. Reparse restored it to the baseline, row for row. The
+ezShare burst path could not be exercised there: the card's AP had been gone
+since 12:59 (NetworkManager `ssid-not-found` on wlan1), hours before the test.
+
+Two fixes the Pi run needed, both outside §3:
+- **Reparse answered 503 on every ezShare install**: the backfill service was
+  wired only when `local_dir` was set. It is now wired from `local_dir`, else
+  `archive_dir` (a1c1695). Without it D3 cannot hold on the Pi.
+- **The backfill left the STR's numbers on the nights it imported**: it derived
+  the daily summary from sessions only when the card had no STR, where the
+  burst always does (SDD-026). 196 of the 233 imported nights read
+  `index_source='str'`; after the fix all 233 read `computed` (6da1b44).
