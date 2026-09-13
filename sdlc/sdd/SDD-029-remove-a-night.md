@@ -1,6 +1,6 @@
 # SDD-029: remove a night
 
-**Status:** Built 2026-09-13, not released (see §7). Accepted 2026-09-13:
+**Status:** Released in 5.2.6 (2026-09-13, see §7). Accepted 2026-09-13:
 D1 it stays removed (the record in 3.1); D2 the database only; D3 Reparse
 restores it.
 **Date:** 2026-09-13

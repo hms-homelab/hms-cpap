@@ -1,6 +1,6 @@
 # SDD-028: the ring's files next to the card
 
-**Status:** Accepted 2026-09-13. Scope: both ways in; D1 root plus every
+**Status:** Released in 5.2.6 (2026-09-13). Accepted 2026-09-13. Scope: both ways in; D1 root plus every
 top-level folder; D2 the ring's clock stored as-is.
 **Date:** 2026-09-13
 **Repo:** `hms-cpap`. One shared importer, the local-mode burst, the O2 upload
