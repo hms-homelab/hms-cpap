@@ -5,6 +5,24 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.2.5] - 2026-09-13
+
+### Fixed
+- **A live night no longer freezes at its first mask-off.** 5.2.4 took the
+  night's hours from the STR whenever one had been read, and the STR counts a
+  mask-on period only once it ends. On a night with a break, the dashboard,
+  the sessions list and the session cards stopped at the first mask-off (47
+  minutes shown with 71 recorded and the mask on) and divided the night's
+  events by those minutes, so the AHI read high as well. The night's hours
+  are now the sum of our own sessions, they grow with the files, and every
+  index divides by them. SDD-026 is amended accordingly.
+- **Leak, mask pressure and SpO2 are ours.** The STR no longer overwrites
+  the values our sessions measured. It fills one only where our sessions have
+  none, and still supplies what we do not compute: mode, EPR level, mask pairs
+  and the nights we have no session files for.
+- The machine's own duration and index stay beside ours in the STR panel.
+  Every night is recalculated on the first start after the upgrade.
+
 ## [5.2.4] - 2026-09-08
 
 ### Changed
