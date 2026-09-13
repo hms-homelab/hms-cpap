@@ -689,6 +689,19 @@ void SQLiteDatabase::createSchema() {
     exec("CREATE INDEX IF NOT EXISTS idx_sync_folders_debt "
          "ON cpap_sync_folders(str_due, sidecars_due)");
 
+    // SDD-029: nights an operator removed. Every path that re-reads the card
+    // (the STR the local burst re-writes, discovery, the .vld scan, SleepHQ,
+    // backfill) consults this, or the night is back within one burst. night is
+    // YYYYMMDD, strDayForSessionStart()'s rule. Reparse clears the row.
+    exec(R"(
+        CREATE TABLE IF NOT EXISTS cpap_removed_nights (
+            device_id   TEXT NOT NULL,
+            night       TEXT NOT NULL,
+            removed_at  TEXT DEFAULT (datetime('now','localtime')),
+            PRIMARY KEY (device_id, night)
+        )
+    )");
+
     // Report jobs. ReportGeneratorService and BaseReportGenerator have always
     // read and written this table and nothing ever declared it, so every PDF
     // request died on a missing relation in the database log and never in front
@@ -1545,6 +1558,101 @@ int SQLiteDatabase::deleteSessionsByDateFolder(const std::string& device_id,
         return -1;
     }
     return sqlite3_changes(db_);
+}
+
+// ---------------------------------------------------------------------------
+// SDD-029: removing a night
+// ---------------------------------------------------------------------------
+
+namespace {
+/// "20260823" -> "2026-08-23", the form record_date and the range columns hold.
+std::string isoDateOf(const std::string& night) {
+    if (night.size() != 8) return night;
+    return night.substr(0, 4) + "-" + night.substr(4, 2) + "-" + night.substr(6, 2);
+}
+}  // namespace
+
+IDatabase::RemoveNightResult SQLiteDatabase::removeNight(const std::string& device_id,
+                                                         const std::string& night) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    RemoveNightResult r;
+    if (!db_ || night.size() != 8) return r;
+    const std::string day = isoDateOf(night);
+
+    // One statement, its bound values, and the rows it changed (-1 on error).
+    auto run = [&](const char* sql, const std::vector<std::string>& args) -> int {
+        StmtGuard g;
+        if (sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr) != SQLITE_OK) return -1;
+        for (size_t i = 0; i < args.size(); ++i) bind_text(g.stmt, static_cast<int>(i + 1), args[i]);
+        if (sqlite3_step(g.stmt) != SQLITE_DONE) return -1;
+        return sqlite3_changes(db_);
+    };
+
+    exec("BEGIN TRANSACTION");
+    // The record first: every re-ingest path consults it (SDD-029 §3.1).
+    const int rec = run("INSERT OR IGNORE INTO cpap_removed_nights (device_id, night) VALUES (?, ?)",
+                        {device_id, night});
+    // The night's file rows, then its sessions; the seven child tables cascade.
+    // The file rows by hand, because cpap_session_files is not ON DELETE CASCADE.
+    const int files = run(
+        "DELETE FROM cpap_session_files WHERE session_id IN ("
+        "  SELECT id FROM cpap_sessions WHERE device_id = ?"
+        "    AND date(session_start, '-12 hours') = date(?))",
+        {device_id, day});
+    r.sessions = run(
+        "DELETE FROM cpap_sessions WHERE device_id = ?"
+        "  AND date(session_start, '-12 hours') = date(?)",
+        {device_id, day});
+    r.daily = run("DELETE FROM cpap_daily_summary WHERE device_id = ? AND record_date = ?",
+                  {device_id, day});
+    // The ring's nights are stored under its own device (o2ring), so the night
+    // is matched by date, not by the CPAP's device id. Samples cascade.
+    r.oximetry = run("DELETE FROM oximetry_sessions WHERE date(start_time, '-12 hours') = date(?)",
+                     {day});
+    r.ledger = run("DELETE FROM cpap_sync_folders WHERE date_folder = ?", {night});
+    r.summaries = run(
+        "DELETE FROM cpap_summaries WHERE device_id = ? AND period = 'daily'"
+        "  AND range_start = ? AND range_end = ?",
+        {device_id, day, day});
+
+    if (rec < 0 || files < 0 || r.sessions < 0 || r.daily < 0 || r.oximetry < 0 ||
+        r.ledger < 0 || r.summaries < 0) {
+        std::cerr << "SQLite: removeNight " << night << " failed: " << sqlite3_errmsg(db_)
+                  << ", rolled back" << std::endl;
+        exec("ROLLBACK");
+        return RemoveNightResult{};
+    }
+    exec("COMMIT");
+    r.ok = true;
+    return r;
+}
+
+std::vector<std::string> SQLiteDatabase::removedNights(const std::string& device_id) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::vector<std::string> out;
+    if (!db_) return out;
+    StmtGuard g;
+    if (sqlite3_prepare_v2(db_, "SELECT night FROM cpap_removed_nights WHERE device_id = ? ORDER BY night",
+                           -1, &g.stmt, nullptr) != SQLITE_OK)
+        return out;
+    bind_text(g.stmt, 1, device_id);
+    while (sqlite3_step(g.stmt) == SQLITE_ROW) {
+        const auto* t = sqlite3_column_text(g.stmt, 0);
+        if (t) out.emplace_back(reinterpret_cast<const char*>(t));
+    }
+    return out;
+}
+
+bool SQLiteDatabase::restoreNight(const std::string& device_id, const std::string& night) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!db_) return false;
+    StmtGuard g;
+    if (sqlite3_prepare_v2(db_, "DELETE FROM cpap_removed_nights WHERE device_id = ? AND night = ?",
+                           -1, &g.stmt, nullptr) != SQLITE_OK)
+        return false;
+    bind_text(g.stmt, 1, device_id);
+    bind_text(g.stmt, 2, night);
+    return sqlite3_step(g.stmt) == SQLITE_DONE;
 }
 
 // ---------------------------------------------------------------------------

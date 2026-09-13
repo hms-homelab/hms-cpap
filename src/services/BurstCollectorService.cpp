@@ -14,6 +14,7 @@
 #include "utils/FileUtils.h"
 #include "utils/CardResidue.h"
 #include "services/OximetryImport.h"
+#include "services/RemovedNights.h"
 #include "database/SQLiteDatabase.h"
 #include "database/DatabaseFactory.h"
 #ifdef WITH_POSTGRESQL
@@ -282,7 +283,7 @@ void BurstCollectorService::initO2Ring() {
                   << std::endl;
     }
     if (client)
-        oximetry_service_ = std::make_unique<OximetryService>(client, db_service_);
+        oximetry_service_ = std::make_unique<OximetryService>(client, db_service_, device_id_);
 }
 
 BurstCollectorService::~BurstCollectorService() {
@@ -847,7 +848,11 @@ bool BurstCollectorService::processSTRFile() {
         // and never freezes the dashboard. (Previously this saved only a trailing
         // 7-day window, which left cpap_daily_summary stuck whenever STR processing
         // lagged and made the dashboard depend on a separate backfill — issue #8.)
-        db_service_->saveSTRDailyRecords(all_records);
+        // SDD-029: minus the nights an operator removed. This write re-asserts
+        // the WHOLE history every local burst, so without the filter a removed
+        // day's summary row is back on the next one (#31).
+        db_service_->saveSTRDailyRecords(
+            withoutRemovedNights(all_records, removedNightSet(*db_service_, device_id_)));
 
         // SDD-008: an STR that parses is the ONLY thing that clears the STR
         // debt. Doing it here means the retry happens ON RECOVERY rather than on
@@ -1030,6 +1035,10 @@ void BurstCollectorService::updateFolderLedgers(
     }
 
     for (const auto& [date_folder, sets] : by_folder) {
+        // SDD-029: a removed night keeps no ledger row either, and gets no
+        // sidecar refetch at close; the collector leaves it alone entirely.
+        if (removed_nights_.count(date_folder)) continue;
+
         FolderObservation obs;
         obs.all_files_stored = true;
 
@@ -1282,6 +1291,9 @@ bool BurstCollectorService::executeBurstCycle() {
     // Step 1: Query DB for last stored session (delta collection)
     auto last_session_start = db_service_->getLastSessionStart(device_id_);
 
+    // SDD-029: what the operator removed, for every branch of this burst.
+    removed_nights_ = removedNightSet(*db_service_, device_id_);
+
     // SDD-010: the retention anchor. Everything else that decides whether to
     // re-check a session is anchored on the CURRENT DATE (today's folder, or
     // "started within 48 hours"), so once a night ages past that it is never
@@ -1350,6 +1362,9 @@ bool BurstCollectorService::executeBurstCycle() {
         }
 
         for (const auto& ps : prisma_sessions) {
+            if (isRemovedNight(removed_nights_, ps.session_start)) {
+                continue;  // SDD-029: an operator removed this night
+            }
             if (db_service_->sessionExists(device_id_, ps.session_start)) {
                 continue;
             }
@@ -1440,6 +1455,9 @@ bool BurstCollectorService::executeBurstCycle() {
         int parsed_count = 0, refused_count = 0;
 
         for (const auto& ss : sefam_sessions) {
+            if (isRemovedNight(removed_nights_, ss.session_start)) {
+                continue;  // SDD-029: an operator removed this night
+            }
             if (db_service_->sessionExists(device_id_, ss.session_start)) {
                 continue;
             }
@@ -1543,7 +1561,8 @@ bool BurstCollectorService::executeBurstCycle() {
         // picked up on a burst with no new CPAP file too; a name already stored
         // is skipped, so a steady-state pass is a listing and a lookup per file.
         if (db_service_) {
-            const auto scan = importVldFolder(*db_service_, local_source_dir_, vld_refused_);
+            const auto scan = importVldFolder(*db_service_, local_source_dir_, vld_refused_,
+                                              removed_nights_);
             if (scan.imported > 0 || scan.refused > 0) {
                 std::cout << "O2Ring: card folder " << scan.imported << " imported, "
                           << scan.skipped << " already stored, " << scan.refused
@@ -1588,6 +1607,13 @@ bool BurstCollectorService::executeBurstCycle() {
             });
 
         for (const auto& session : new_sessions) {
+            // SDD-029: an operator removed this night; discovery must not store it again.
+            if (isRemovedNight(removed_nights_, session.session_start)) {
+                std::cout << "CPAP: Session " << session.session_prefix
+                          << " is on a removed night, skipping" << std::endl;
+                continue;
+            }
+
             // Skip sessions that were force-completed (manual override)
             if (db_service_->isForceCompleted(device_id_, session.session_start)) {
                 std::cout << "CPAP: Session " << session.session_prefix
@@ -1783,6 +1809,13 @@ bool BurstCollectorService::executeBurstCycle() {
             });
 
         for (const auto& session : new_sessions) {
+            // SDD-029: an operator removed this night; discovery must not store it again.
+            if (isRemovedNight(removed_nights_, session.session_start)) {
+                std::cout << "CPAP: Session " << session.session_prefix
+                          << " is on a removed night, skipping" << std::endl;
+                continue;
+            }
+
             // Skip sessions that were force-completed (manual override)
             if (db_service_->isForceCompleted(device_id_, session.session_start)) {
                 std::cout << "CPAP: Session " << session.session_prefix
@@ -3028,7 +3061,7 @@ void BurstCollectorService::reloadConfig() {
                           << std::endl;
             }
             if (client) {
-                oximetry_service_ = std::make_unique<OximetryService>(client, db_service_);
+                oximetry_service_ = std::make_unique<OximetryService>(client, db_service_, device_id_);
             }
         } else {
             oximetry_service_.reset();
@@ -3213,11 +3246,16 @@ void BurstCollectorService::markUnparsedNightsForExport() {
     char today[16] = {0};
     std::strftime(today, sizeof(today), "%Y%m%d", std::localtime(&now_t));
 
+    // SDD-029: a removed night has no checkpoint rows either, and would read
+    // as "files but nothing parsed" below.
+    const auto removed = removedNightSet(*db_service_, device_id_);
+
     for (const auto& entry : fs::directory_iterator(datalog, ec)) {
         if (ec) break;
         if (!entry.is_directory()) continue;
         const std::string folder = entry.path().filename().string();
         if (folder.size() != 8 || folder == today) continue;
+        if (removed.count(folder)) continue;
 
         // Empty folders are the machine reserving a date before flushing EDFs —
         // nothing to export yet.

@@ -1,6 +1,7 @@
 #include "services/OximetryImport.h"
 
 #include "database/IDatabase.h"
+#include "services/RemovedNights.h"
 #include "utils/OximetryDevice.h"
 
 #include <cpapdash/parser/VLDParser.h>
@@ -55,12 +56,18 @@ bool isVldFilename(const std::string& name) {
 }
 
 VldImportResult importVldFile(IDatabase& db, const std::string& bytes,
-                              const std::string& filename) {
+                              const std::string& filename,
+                              const std::set<std::string>& removed_nights) {
     VldImportResult r;
     auto session = cpapdash::parser::VLDParser::parse(
         reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size(), filename);
     if (!session || session->samples.empty()) {
         r.error = "Not a readable O2 Ring .vld file: " + filename;
+        return r;
+    }
+    if (isRemovedOximetryNight(removed_nights, session->start_time)) {
+        r.removed_night = true;
+        r.error = "On a removed night: " + filename;
         return r;
     }
     // The name the live path would have stored it under, so the same file
@@ -81,7 +88,8 @@ VldImportResult importVldFile(IDatabase& db, const std::string& bytes,
 }
 
 VldFolderScan importVldFolder(IDatabase& db, const std::string& card_root,
-                              std::set<std::string>& refused) {
+                              std::set<std::string>& refused,
+                              const std::set<std::string>& removed_nights) {
     VldFolderScan scan;
     if (card_root.empty()) return scan;
     const fs::path root(card_root);
@@ -111,11 +119,13 @@ VldFolderScan importVldFolder(IDatabase& db, const std::string& card_root,
         std::ifstream in(p, std::ios::binary);
         const std::string bytes((std::istreambuf_iterator<char>(in)),
                                 std::istreambuf_iterator<char>());
-        const auto r = importVldFile(db, bytes, name);
+        const auto r = importVldFile(db, bytes, name, removed_nights);
         if (r.ok) {
             ++scan.imported;
             std::cout << "O2Ring: imported " << p.string() << " (" << r.samples
                       << " samples, avg SpO2 " << r.avg_spo2 << "%)" << std::endl;
+        } else if (r.removed_night) {
+            ++scan.skipped;  // quiet, and not remembered: a Reparse may restore it
         } else {
             ++scan.refused;
             refused.insert(p.string());

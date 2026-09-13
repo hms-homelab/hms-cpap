@@ -1,4 +1,5 @@
 #include "services/OximetryService.h"
+#include "services/RemovedNights.h"
 #include "utils/OximetryDevice.h"
 #include <cpapdash/parser/VLDParser.h>
 #include <iostream>
@@ -10,9 +11,11 @@ namespace hms_cpap {
 using VLDParser = cpapdash::parser::VLDParser;
 
 OximetryService::OximetryService(std::shared_ptr<IO2RingClient> client,
-                                 std::shared_ptr<IDatabase> db)
+                                 std::shared_ptr<IDatabase> db,
+                                 std::string cpap_device_id)
     : client_(std::move(client)),
-      db_(std::move(db)) {}
+      db_(std::move(db)),
+      cpap_device_id_(std::move(cpap_device_id)) {}
 
 bool OximetryService::collectAndPublish() {
     // Step 1: List available files
@@ -25,12 +28,23 @@ bool OximetryService::collectAndPublish() {
     std::cout << "O2Ring: " << files.size() << " file(s) on device"
               << " (battery: " << client_->getBattery() << "%)" << std::endl;
 
+    // SDD-029: the nights an operator removed, once per poll.
+    const auto removed = cpap_device_id_.empty()
+        ? std::set<std::string>{}
+        : removedNightSet(*db_, cpap_device_id_);
+
     // Step 2: Filter out already-processed files
     bool any_new = false;
     for (const auto& filename : files) {
         // Skip if already processed in this session
         if (processed_files_.count(filename)) {
             continue;
+        }
+
+        // Known to be on a removed night: no download while it stays removed.
+        if (auto it = removed_files_.find(filename); it != removed_files_.end()) {
+            if (removed.count(it->second)) continue;
+            removed_files_.erase(it);  // restored since; fetch it again
         }
 
         // Skip if already in DB
@@ -53,6 +67,14 @@ bool OximetryService::collectAndPublish() {
         auto session = VLDParser::parse(data.data(), data.size(), filename);
         if (!session) {
             std::cerr << "O2Ring: Failed to parse " << filename << std::endl;
+            continue;
+        }
+
+        if (isRemovedOximetryNight(removed, session->start_time)) {
+            const auto night = oximetryNightOf(session->start_time);
+            removed_files_[filename] = night;
+            std::cout << "O2Ring: " << filename << " is on removed night " << night
+                      << ", not stored" << std::endl;
             continue;
         }
 

@@ -32,7 +32,9 @@
       "fetchOxi": "Fetch O2 History",
       "dayPdf": "Day PDF",
       "generating": "Generating...",
-      "uploadSleepHq": "Upload to SleepHQ"
+      "uploadSleepHq": "Upload to SleepHQ",
+      "removeNight": "Remove night",
+      "removeConfirm": "Remove the night of {{date}} from the database? Its sessions, daily summary and O2 ring data are deleted, and the night is not imported again. Reparse this date to bring it back."
     },
     "loadMore": "Load more"
   }

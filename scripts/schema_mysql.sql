@@ -400,6 +400,15 @@ CREATE TABLE IF NOT EXISTS cpap_sync_folders (
     KEY idx_sync_folders_debt (str_due, sidecars_due)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- SDD-029: nights an operator removed; every re-ingest path consults it.
+-- night is YYYYMMDD (strDayForSessionStart). Reparse clears the row.
+CREATE TABLE IF NOT EXISTS cpap_removed_nights (
+    device_id   VARCHAR(64) NOT NULL,
+    night       CHAR(8) NOT NULL,
+    removed_at  DATETIME DEFAULT NOW(),
+    PRIMARY KEY (device_id, night)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 INSERT IGNORE INTO cleaning_task_types
     (task_key, label, applies_to_type_key, default_interval_days, is_system)
 VALUES

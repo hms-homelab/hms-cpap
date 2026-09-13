@@ -268,6 +268,11 @@ export class CpapApiService {
     return this.http.post<any>(`/api/sessions/${date}/reparse`, {});
   }
 
+  /** SDD-029: remove the night from the database; a Reparse of it restores it. */
+  removeNight(date: string): Observable<any> {
+    return this.http.delete<any>(`/api/sessions/${date}`);
+  }
+
   collectOximetry(): Observable<any> {
     return this.http.post<any>('/api/oximetry/collect', {});
   }

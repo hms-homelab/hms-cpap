@@ -23,6 +23,7 @@ public:
     ADD_METHOD_TO(CpapController::dashboard,     "/api/dashboard",          drogon::Get);
     ADD_METHOD_TO(CpapController::sessions,      "/api/sessions",           drogon::Get);
     ADD_METHOD_TO(CpapController::sessionDetail, "/api/sessions/{date}",    drogon::Get);
+    ADD_METHOD_TO(CpapController::sessionRemove, "/api/sessions/{date}",    drogon::Delete);
     ADD_METHOD_TO(CpapController::dailySummary,  "/api/daily-summary",      drogon::Get);
     ADD_METHOD_TO(CpapController::trend,         "/api/trends/{metric}",    drogon::Get);
     ADD_METHOD_TO(CpapController::statistics,    "/api/statistics",         drogon::Get);
@@ -244,6 +245,11 @@ public:
     void sessionReparse(const drogon::HttpRequestPtr& req,
                         std::function<void(const drogon::HttpResponsePtr&)>&& cb,
                         const std::string& date);
+    /// SDD-029 (#31): remove the night from the database, and keep it removed
+    /// (every re-ingest path skips it) until a Reparse of it restores it.
+    void sessionRemove(const drogon::HttpRequestPtr& req,
+                       std::function<void(const drogon::HttpResponsePtr&)>&& cb,
+                       const std::string& date);
     void oximetryCollect(const drogon::HttpRequestPtr& req,
                          std::function<void(const drogon::HttpResponsePtr&)>&& cb);
     void uploadOximetryCsv(const drogon::HttpRequestPtr& req,
@@ -286,6 +292,10 @@ public:
     static std::function<Json::Value(const std::string&, const std::string&)> oxi_csv_import_;
     // Path to an uploaded zip on disk -> result Json ("error" key on failure).
     static std::function<Json::Value(const std::string&)> cpap_zip_import_;
+    // SDD-029: "YYYY-MM-DD" -> {"removed": counts} ("error" key on failure).
+    static std::function<Json::Value(const std::string&)> night_remove_;
+    // SDD-029 D3: "YYYY-MM-DD" -> the removed-night record cleared, before a reparse.
+    static std::function<void(const std::string&)> night_restore_;
 
 private:
     static std::shared_ptr<QueryService>          qs_;

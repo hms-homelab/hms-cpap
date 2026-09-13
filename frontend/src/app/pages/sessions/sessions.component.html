@@ -133,6 +133,12 @@
                 <i class="fa-solid fa-cloud-arrow-up"></i>
                 {{ actionInProgress[(s.sleep_day || sleepDay(s.session_start)) + '_shq'] ? '...' : ('sessions.actions.uploadSleepHq' | translate) }}
               </button>
+              <button class="danger"
+                [disabled]="actionInProgress[(s.sleep_day || sleepDay(s.session_start)) + '_del']"
+                (click)="removeNight($event, s)">
+                <i class="fa-solid fa-trash-can"></i>
+                {{ actionInProgress[(s.sleep_day || sleepDay(s.session_start)) + '_del'] ? '...' : ('sessions.actions.removeNight' | translate) }}
+              </button>
             </div>
             </div>
             <!-- rowMessage() is server response text, English-only. -->

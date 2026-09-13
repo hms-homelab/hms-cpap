@@ -671,6 +671,17 @@ bool DatabaseService::connect() {
                     CREATE INDEX IF NOT EXISTS idx_sync_folders_debt
                     ON cpap_sync_folders(str_due, sidecars_due)
                 )");
+                // SDD-029: nights an operator removed; every re-ingest path
+                // consults it. night is YYYYMMDD (strDayForSessionStart).
+                // Reparse clears the row.
+                txn.exec(R"(
+                    CREATE TABLE IF NOT EXISTS cpap_removed_nights (
+                        device_id   VARCHAR(64) NOT NULL,
+                        night       VARCHAR(8)  NOT NULL,
+                        removed_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        PRIMARY KEY (device_id, night)
+                    )
+                )");
                 // Report jobs. ReportGeneratorService and BaseReportGenerator have
                 // always read and written this table, but nothing ever created it,
                 // so every PDF request died on
@@ -2332,6 +2343,87 @@ int DatabaseService::deleteSessionsByDateFolder(const std::string& device_id,
         std::cerr << "DB: Failed to delete sessions for " << date_folder
                   << ": " << e.what() << std::endl;
         return -1;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SDD-029: removing a night
+// ---------------------------------------------------------------------------
+
+IDatabase::RemoveNightResult DatabaseService::removeNight(const std::string& device_id,
+                                                          const std::string& night) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    RemoveNightResult r;
+    if (night.size() != 8 || !ensureConnection()) return r;
+    const std::string day = night.substr(0, 4) + "-" + night.substr(4, 2) + "-" + night.substr(6, 2);
+
+    try {
+        // One transaction: a throw rolls every step back (pqxx::work's destructor).
+        pqxx::work work(*conn_);
+        work.exec_params(
+            "INSERT INTO cpap_removed_nights (device_id, night) VALUES ($1, $2)"
+            " ON CONFLICT (device_id, night) DO NOTHING",
+            device_id, night);
+        // The night rule is getSessionStartForSleepDay's.
+        work.exec_params(
+            "DELETE FROM cpap_session_files WHERE session_id IN ("
+            "  SELECT id FROM cpap_sessions WHERE device_id = $1"
+            "    AND DATE(session_start - INTERVAL '12 hours') = $2::date)",
+            device_id, day);
+        r.sessions = static_cast<int>(work.exec_params(
+            "DELETE FROM cpap_sessions WHERE device_id = $1"
+            "  AND DATE(session_start - INTERVAL '12 hours') = $2::date",
+            device_id, day).affected_rows());
+        r.daily = static_cast<int>(work.exec_params(
+            "DELETE FROM cpap_daily_summary WHERE device_id = $1 AND record_date = $2::date",
+            device_id, day).affected_rows());
+        // The ring's nights are under its own device (o2ring): by date only.
+        r.oximetry = static_cast<int>(work.exec_params(
+            "DELETE FROM oximetry_sessions WHERE DATE(start_time - INTERVAL '12 hours') = $1::date",
+            day).affected_rows());
+        r.ledger = static_cast<int>(work.exec_params(
+            "DELETE FROM cpap_sync_folders WHERE date_folder = $1", night).affected_rows());
+        r.summaries = static_cast<int>(work.exec_params(
+            "DELETE FROM cpap_summaries WHERE device_id = $1 AND period = 'daily'"
+            "  AND range_start = $2::date AND range_end = $2::date",
+            device_id, day).affected_rows());
+        work.commit();
+        r.ok = true;
+    } catch (const std::exception& e) {
+        std::cerr << "DB: removeNight " << night << " rolled back: " << e.what() << std::endl;
+        return RemoveNightResult{};
+    }
+    return r;
+}
+
+std::vector<std::string> DatabaseService::removedNights(const std::string& device_id) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::vector<std::string> out;
+    if (!ensureConnection()) return out;
+    try {
+        pqxx::work work(*conn_);
+        auto rows = work.exec_params(
+            "SELECT night FROM cpap_removed_nights WHERE device_id = $1 ORDER BY night", device_id);
+        for (const auto& row : rows) out.push_back(row[0].as<std::string>());
+        work.commit();
+    } catch (const std::exception& e) {
+        std::cerr << "DB: removedNights: " << e.what() << std::endl;
+    }
+    return out;
+}
+
+bool DatabaseService::restoreNight(const std::string& device_id, const std::string& night) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!ensureConnection()) return false;
+    try {
+        pqxx::work work(*conn_);
+        work.exec_params("DELETE FROM cpap_removed_nights WHERE device_id = $1 AND night = $2",
+                         device_id, night);
+        work.commit();
+        return true;
+    } catch (const std::exception& e) {
+        std::cerr << "DB: restoreNight: " << e.what() << std::endl;
+        return false;
     }
 }
 

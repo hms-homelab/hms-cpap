@@ -141,6 +141,45 @@ TEST_F(OximetryImportTest, AnUnreadableFileIsReportedOnceAndNotReReadEveryBurst)
     EXPECT_EQ(sessions(), 0);
 }
 
+// SDD-029: a night the operator removed is not brought back by the scan, and
+// is not remembered as refused either, so a Reparse that restores it gets its
+// ring data back on the next pass.
+TEST_F(OximetryImportTest, ARemovedNightsFileIsSkippedUntilTheNightIsRestored) {
+    put("Oxymetry/a.vld", vld(3, 22));   // 2026-09-12 22:30, night 20260912
+    std::set<std::string> refused;
+    std::set<std::string> removed{"20260912"};
+
+    const auto scan = importVldFolder(*db_, root_.string(), refused, removed);
+    EXPECT_EQ(scan.imported, 0);
+    EXPECT_EQ(scan.skipped, 1);
+    EXPECT_EQ(scan.refused, 0) << "a removed night is not a bad file";
+    EXPECT_TRUE(refused.empty()) << "must not be remembered past a restore";
+    EXPECT_EQ(sessions(), 0);
+
+    removed.clear();   // Reparse restored it
+    EXPECT_EQ(importVldFolder(*db_, root_.string(), refused, removed).imported, 1);
+    EXPECT_EQ(sessions(), 1);
+}
+
+TEST_F(OximetryImportTest, ARemovedNightLeavesTheOtherNightsAlone) {
+    put("Oxymetry/a.vld", vld(3, 22));   // night 20260912
+    put("Oxymetry/b.vld", vld(3, 10));   // 2026-09-12 10:30, night 20260911
+    std::set<std::string> refused;
+    const auto scan = importVldFolder(*db_, root_.string(), refused, {"20260912"});
+    EXPECT_EQ(scan.imported, 1);
+    EXPECT_EQ(scan.skipped, 1);
+}
+
+TEST_F(OximetryImportTest, TheUploadNamesNoRemovedNightsSoItStores) {
+    // The upload passes none: an operator uploading a night is asking for it.
+    const auto r = importVldFile(*db_, vld(), "20260912223000.vld");
+    EXPECT_TRUE(r.ok);
+    const auto skipped = importVldFile(*db_, vld(3, 21), "other.vld", {"20260912"});
+    EXPECT_FALSE(skipped.ok);
+    EXPECT_TRUE(skipped.removed_night);
+    EXPECT_EQ(sessions(), 1);
+}
+
 TEST_F(OximetryImportTest, AMissingOrEmptyRootIsANoOpNotAThrow) {
     std::set<std::string> refused;
     EXPECT_EQ(importVldFolder(*db_, "", refused).imported, 0);

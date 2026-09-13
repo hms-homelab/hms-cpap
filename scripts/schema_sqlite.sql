@@ -408,6 +408,15 @@ CREATE TABLE IF NOT EXISTS cpap_sync_folders (
 CREATE INDEX IF NOT EXISTS idx_sync_folders_debt
     ON cpap_sync_folders(str_due, sidecars_due);
 
+-- SDD-029: nights an operator removed; every re-ingest path consults it.
+-- night is YYYYMMDD (strDayForSessionStart). Reparse clears the row.
+CREATE TABLE IF NOT EXISTS cpap_removed_nights (
+    device_id   TEXT NOT NULL,
+    night       TEXT NOT NULL,
+    removed_at  TEXT DEFAULT (datetime('now','localtime')),
+    PRIMARY KEY (device_id, night)
+);
+
 INSERT OR IGNORE INTO cleaning_task_types
     (task_key, label, applies_to_type_key, default_interval_days, is_system)
 VALUES

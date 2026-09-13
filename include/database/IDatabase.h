@@ -88,6 +88,45 @@ public:
     virtual int deleteSessionsByDateFolder(const std::string& device_id,
                                            const std::string& date_folder) = 0;
 
+    // -- SDD-029: removing a night -------------------------------------------
+    //
+    // A night is `strDayForSessionStart(session_start)` (YYYYMMDD, the start
+    // shifted back 12 h), the rule the sessions list and the folder ledger use.
+    // Removing one deletes every row of it AND records it in
+    // cpap_removed_nights, which every path that re-reads the card consults:
+    // without the record the STR history the local burst re-writes every cycle
+    // would put the day back within one burst (#31).
+    //
+    // Not pure: a backend or a test double without them removes nothing and
+    // reports no removed nights, i.e. the behaviour before SDD-029.
+
+    /// What one removal deleted, per table.
+    struct RemoveNightResult {
+        bool ok = false;
+        int  sessions = 0;     ///< cpap_sessions (their children cascade)
+        int  daily = 0;        ///< cpap_daily_summary
+        int  oximetry = 0;     ///< oximetry_sessions (their samples cascade)
+        int  ledger = 0;       ///< cpap_sync_folders
+        int  summaries = 0;    ///< single-day cpap_summaries
+    };
+
+    /// Remove [night] (YYYYMMDD) for [device_id], one transaction.
+    virtual RemoveNightResult removeNight(const std::string& /*device_id*/,
+                                          const std::string& /*night*/) {
+        return {};
+    }
+
+    /// Every removed night of [device_id], YYYYMMDD.
+    virtual std::vector<std::string> removedNights(const std::string& /*device_id*/) {
+        return {};
+    }
+
+    /// Clear the record, so re-ingest may bring the night back (Reparse, D3).
+    virtual bool restoreNight(const std::string& /*device_id*/,
+                              const std::string& /*night*/) {
+        return false;
+    }
+
     // -- Session file set (SDD-014) -------------------------------------------
 
     /// Replace the recorded file set for one session. Delete-then-insert, so a

@@ -3,6 +3,7 @@
 #include "clients/IO2RingClient.h"
 #include "database/IDatabase.h"
 #include "parsers/CpapdashBridge.h"
+#include <map>
 #include <memory>
 #include <set>
 #include <string>
@@ -17,8 +18,11 @@ namespace hms_cpap {
  */
 class OximetryService {
 public:
+    /// [cpap_device_id] is whose removed nights (SDD-029) the ring's files
+    /// are checked against; empty checks none.
     OximetryService(std::shared_ptr<IO2RingClient> client,
-                    std::shared_ptr<IDatabase> db);
+                    std::shared_ptr<IDatabase> db,
+                    std::string cpap_device_id = "");
 
     /**
      * Poll for new files, parse, and store.
@@ -38,7 +42,12 @@ public:
 private:
     std::shared_ptr<IO2RingClient> client_;
     std::shared_ptr<IDatabase> db_;
+    std::string cpap_device_id_;
     std::set<std::string> processed_files_;
+    /// SDD-029: ring files parsed once and found on a removed night, by
+    /// filename -> night. Not downloaded again while that night stays removed;
+    /// fetched again once a Reparse restores it.
+    std::map<std::string, std::string> removed_files_;
     IO2RingClient::LiveReading last_live_;
 };
 

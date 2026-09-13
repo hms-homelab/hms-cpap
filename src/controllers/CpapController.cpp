@@ -39,6 +39,8 @@ std::function<Json::Value()> CpapController::backfill_status_getter_;
 std::function<Json::Value()> CpapController::sleep_stage_status_getter_;
 std::function<Json::Value(const std::string&, const std::string&)> CpapController::oxi_csv_import_;
 std::function<Json::Value(const std::string&)> CpapController::cpap_zip_import_;
+std::function<Json::Value(const std::string&)> CpapController::night_remove_;
+std::function<void(const std::string&)> CpapController::night_restore_;
 
 void CpapController::setQueryService(std::shared_ptr<QueryService> qs) { qs_ = qs; }
 
@@ -1624,12 +1626,35 @@ void CpapController::sessionReparse(const drogon::HttpRequestPtr&,
                      drogon::k503ServiceUnavailable));
         return;
     }
+    // SDD-029 D3: reparsing a removed night is asking for it back, so the
+    // record goes first or the backfill would skip the folder.
+    if (night_restore_) night_restore_(date);
     // Empty local_dir → BackfillService uses its configured archive path.
     backfill_trigger_(date, date, "");
     Json::Value result;
     result["status"] = "queued";
     result["date"] = date;
     result["message"] = "Reparsing from archive; poll /api/backfill/status";
+    cb(jsonResp(result));
+}
+
+void CpapController::sessionRemove(const drogon::HttpRequestPtr&,
+                                    std::function<void(const drogon::HttpResponsePtr&)>&& cb,
+                                    const std::string& date) {
+    if (!night_remove_) {
+        cb(jsonError("Remove night not available", drogon::k503ServiceUnavailable));
+        return;
+    }
+    if (!std::regex_match(date, std::regex(R"(\d{4}-\d{2}-\d{2})"))) {
+        cb(jsonError("Expected a date as YYYY-MM-DD", drogon::k400BadRequest));
+        return;
+    }
+    Json::Value result = night_remove_(date);
+    if (result.isMember("error")) {
+        cb(jsonError(result["error"].asString(), drogon::k500InternalServerError));
+        return;
+    }
+    result["date"] = date;
     cb(jsonResp(result));
 }
 

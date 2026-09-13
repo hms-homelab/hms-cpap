@@ -6,6 +6,7 @@
 #include "controllers/CleaningController.h"
 #include "services/CpapDashSyncService.h"
 #include "services/OximetryImport.h"
+#include "services/RemovedNights.h"
 #include "services/SetupService.h"
 #include "services/SupplyPublisher.h"
 #include "services/MyAirService.h"
@@ -214,7 +215,9 @@ int runBackfill(const std::string& filepath) {
         return 1;
     }
 
-    if (!db->saveSTRDailyRecords(records)) {
+    // SDD-029: never the nights an operator removed.
+    if (!db->saveSTRDailyRecords(hms_cpap::withoutRemovedNights(
+            records, hms_cpap::removedNightSet(*db, device_id)))) {
         std::cerr << "STR Backfill: Failed to save records" << std::endl;
         return 1;
     }
@@ -304,6 +307,7 @@ int runReparse(const std::string& card_root, const std::string& start_str, const
     int total_deleted = 0;
     int total_parsed = 0;
     int total_saved = 0;
+    const auto removed = hms_cpap::removedNightSet(*db, device_id);
 
     for (const auto& folder : date_folders) {
         std::string folder_path = archive_dir + "/" + folder;
@@ -313,6 +317,11 @@ int runReparse(const std::string& card_root, const std::string& start_str, const
         }
 
         std::cout << "\n--- Folder: " << folder << " ---" << std::endl;
+
+        // SDD-029 D3: reparsing a night is asking for it back.
+        if (removed.count(folder) && db->restoreNight(device_id, folder)) {
+            std::cout << "  Restored removed night " << folder << std::endl;
+        }
 
         // Group files into sessions
         auto sessions = hms_cpap::SessionDiscoveryService::groupLocalFolder(folder_path, folder);
@@ -1058,6 +1067,38 @@ int main(int argc, char** argv) {
                         r["sample_interval"]  = session.sample_interval;
                         r["duration_seconds"] = session.duration_seconds;
                         return r;
+                    };
+            }
+
+            // SDD-029 (#31): Remove night on the sessions page, and the Reparse
+            // that restores it. The record they share is what every re-ingest
+            // path consults, so a removed night stays removed.
+            {
+                std::shared_ptr<hms_cpap::IDatabase> night_db = web_db ? web_db : db;
+                const std::string night_device = config.device_id;
+                hms_cpap::CpapController::night_remove_ =
+                    [night_db, night_device](const std::string& date) -> Json::Value {
+                        Json::Value r;
+                        const auto res = hms_cpap::removeNightByDate(*night_db, night_device, date);
+                        if (!res.ok) {
+                            r["error"] = "Failed to remove the night of " + date;
+                            return r;
+                        }
+                        std::cout << "Sessions: removed night " << date << " (" << res.sessions
+                                  << " session(s), " << res.oximetry << " oximetry)" << std::endl;
+                        Json::Value& n = r["removed"];
+                        n["sessions"]  = res.sessions;
+                        n["daily"]     = res.daily;
+                        n["oximetry"]  = res.oximetry;
+                        n["ledger"]    = res.ledger;
+                        n["summaries"] = res.summaries;
+                        return r;
+                    };
+                hms_cpap::CpapController::night_restore_ =
+                    [night_db, night_device](const std::string& date) {
+                        if (hms_cpap::restoreNightByDate(*night_db, night_device, date))
+                            std::cout << "Sessions: restored removed night " << date
+                                      << " for reparse" << std::endl;
                     };
             }
 

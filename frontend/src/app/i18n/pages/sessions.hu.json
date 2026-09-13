@@ -32,7 +32,9 @@
       "fetchOxi": "O2-előzmények letöltése",
       "dayPdf": "A nap PDF-je",
       "generating": "Készítés...",
-      "uploadSleepHq": "Feltöltés a SleepHQ-ba"
+      "uploadSleepHq": "Feltöltés a SleepHQ-ba",
+      "removeNight": "Éjszaka törlése",
+      "removeConfirm": "Törli a(z) {{date}} éjszakát az adatbázisból? A munkamenetei, a napi összesítője és az O2-gyűrű adatai törlődnek, és az éjszaka nem kerül újra importálásra. A visszaállításhoz dolgozza fel újra ezt a dátumot."
     },
     "loadMore": "Továbbiak betöltése"
   }

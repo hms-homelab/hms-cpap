@@ -299,6 +299,11 @@ private:
     /// bad file is reported once and not re-read every burst until a restart.
     std::set<std::string> vld_refused_;
 
+    /// SDD-029: the nights an operator removed, re-read at the start of every
+    /// burst. The STR write, every store loop, the .vld scan and the SleepHQ
+    /// queue skip them, or a removed night is back within one burst.
+    std::set<std::string> removed_nights_;
+
     /// SDD-010: what local_source_dir_ turned out to be. Anything but Root means
     /// the configuration is wrong and NOTHING may be ingested: the dashboard
     /// keeps serving what is already stored, and the UI carries a banner naming

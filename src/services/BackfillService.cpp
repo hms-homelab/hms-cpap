@@ -1,5 +1,6 @@
 #include "utils/TimeCompat.h"
 #include "services/BackfillService.h"
+#include "services/RemovedNights.h"
 #include "services/SleepHqExportService.h"
 #include "parsers/CpapdashBridge.h"
 #include "utils/CardLayout.h"
@@ -130,10 +131,21 @@ void BackfillService::executeBackfill(const std::string& start_date,
         spdlog::info("BackfillService: scanning {} date folder(s) in {}",
                      date_folders.size(), datalog_dir);
 
+        // SDD-029: a removed night stays out of a range backfill. A Reparse of
+        // that one night clears the record before it gets here.
+        const auto removed = removedNightSet(*db_, config_.device_id);
+
         for (const auto& folder : date_folders) {
             if (!running_) break;
 
             std::string folder_path = datalog_dir + "/" + folder;
+
+            if (removed.count(folder)) {
+                spdlog::info("BackfillService: {} is a removed night, skipped", folder);
+                std::lock_guard<std::mutex> lock(progress_mutex_);
+                progress_.folders_done++;
+                continue;
+            }
 
             if (!std::filesystem::exists(folder_path)) {
                 std::lock_guard<std::mutex> lock(progress_mutex_);
@@ -393,7 +405,9 @@ bool BackfillService::processSTRFile() {
             spdlog::warn("BackfillService: STR.edf has no therapy days");
             return false;
         }
-        db_->saveSTRDailyRecords(records);
+        // SDD-029: never the removed nights' summary rows.
+        db_->saveSTRDailyRecords(
+            withoutRemovedNights(records, removedNightSet(*db_, config_.device_id)));
         spdlog::info("BackfillService: STR.edf processed — {} daily record(s)",
                      records.size());
         return true;

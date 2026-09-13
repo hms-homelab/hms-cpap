@@ -2,7 +2,7 @@ import { isGradable, indexLabelKey } from '../../utils/index-kind';
 import { Component, OnInit, OnDestroy, ChangeDetectorRef, HostListener } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Router, RouterLink } from '@angular/router';
-import { TranslatePipe } from '@ngx-translate/core';
+import { TranslatePipe, TranslateService } from '@ngx-translate/core';
 import { CpapApiService } from '../../services/cpap-api.service';
 import { SessionListItem } from '../../models/session.model';
 import { formatIndex } from '../../utils/format';
@@ -34,7 +34,8 @@ export class SessionsComponent implements OnInit, OnDestroy {
   compareMode = false;
   selectedDays: string[] = [];
 
-  constructor(private api: CpapApiService, private cdr: ChangeDetectorRef, private router: Router) {}
+  constructor(private api: CpapApiService, private cdr: ChangeDetectorRef, private router: Router,
+              private t: TranslateService) {}
 
   dayOf(s: SessionListItem): string {
     return s.sleep_day || this.sleepDay(s.session_start);
@@ -158,14 +159,16 @@ export class SessionsComponent implements OnInit, OnDestroy {
     const day = s.sleep_day || this.sleepDay(s.session_start);
     return !!(this.actionInProgress[day] || this.actionInProgress[day + '_sum'] ||
               this.actionInProgress[day + '_rep'] || this.actionInProgress[day + '_oxi'] ||
-              this.actionInProgress[day + '_pdf'] || this.actionInProgress[day + '_shq']);
+              this.actionInProgress[day + '_pdf'] || this.actionInProgress[day + '_shq'] ||
+              this.actionInProgress[day + '_del']);
   }
 
   rowMessage(s: any): string {
     const day = s.sleep_day || this.sleepDay(s.session_start);
     return this.actionMessage[day] || this.actionMessage[day + '_sum'] ||
            this.actionMessage[day + '_rep'] || this.actionMessage[day + '_oxi'] ||
-           this.actionMessage[day + '_pdf'] || this.actionMessage[day + '_shq'] || '';
+           this.actionMessage[day + '_pdf'] || this.actionMessage[day + '_shq'] ||
+           this.actionMessage[day + '_del'] || '';
   }
 
   isLive(s: any): boolean {
@@ -279,6 +282,34 @@ export class SessionsComponent implements OnInit, OnDestroy {
       },
       error: () => {
         this.actionInProgress[day + '_rep'] = false;
+      }
+    });
+  }
+
+  /**
+   * SDD-029 (#31): remove the whole night from the database. It stays removed
+   * (the collector, backfill and ring pulls skip it) until a Reparse of the
+   * same date brings it back from the archive.
+   */
+  removeNight(event: Event, s: any): void {
+    event.stopPropagation();
+    const day = s.sleep_day || this.sleepDay(s.session_start);
+    this.openMenu = null;
+    if (!window.confirm(this.t.instant('sessions.actions.removeConfirm', { date: day }))) return;
+    const key = day + '_del';
+    this.actionInProgress[key] = true;
+    this.api.removeNight(day).subscribe({
+      next: () => {
+        this.actionInProgress[key] = false;
+        this.sessions = this.sessions.filter(r => this.dayOf(r) !== day);
+        delete this.oxiMap[day];
+        delete this.hrMap[day];
+        this.selectedDays = this.selectedDays.filter(d => d !== day);
+        this.cdr.detectChanges();
+      },
+      error: () => {
+        this.actionMessage[key] = 'Failed';
+        this.actionInProgress[key] = false;
       }
     });
   }

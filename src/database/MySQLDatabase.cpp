@@ -883,6 +883,17 @@ void MySQLDatabase::createSchema() {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     )");
 
+    // SDD-029: nights an operator removed; every re-ingest path consults it.
+    // night is YYYYMMDD (strDayForSessionStart). Reparse clears the row.
+    exec(R"(
+        CREATE TABLE IF NOT EXISTS cpap_removed_nights (
+            device_id   VARCHAR(64) NOT NULL,
+            night       CHAR(8) NOT NULL,
+            removed_at  DATETIME DEFAULT NOW(),
+            PRIMARY KEY (device_id, night)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    )");
+
     // Report jobs. ReportGeneratorService and BaseReportGenerator have always read
     // and written this table and nothing ever declared it, so every PDF request
     // died on a missing table in the database log and never in front of the user
@@ -1981,6 +1992,30 @@ int MySQLDatabase::deleteSessionsByDateFolder(const std::string& device_id,
 
     std::string pattern = "%DATALOG/" + date_folder + "/%";
 
+    // SDD-029: child rows first, as the SQLite and Postgres versions always
+    // did. cpap_session_files is not ON DELETE CASCADE, so deleting only the
+    // sessions here left every one of the night's file rows orphaned.
+    {
+        const char* child_sql = R"(
+            DELETE FROM cpap_session_files
+            WHERE session_id IN (
+                SELECT id FROM (
+                    SELECT id FROM cpap_sessions
+                    WHERE device_id = ? AND brp_file_path LIKE ?
+                ) AS doomed
+            )
+        )";
+        MysqlStmtGuard cg;
+        cg.stmt = mysql_stmt_init(conn_);
+        if (mysql_stmt_prepare(cg.stmt, child_sql, std::strlen(child_sql)) == 0) {
+            ParamBinder cp(2);
+            cp.bindText(0, device_id);
+            cp.bindText(1, pattern);
+            mysql_stmt_bind_param(cg.stmt, cp.data());
+            mysql_stmt_execute(cg.stmt);
+        }
+    }
+
     const char* sql = R"(
         DELETE FROM cpap_sessions
         WHERE device_id = ? AND brp_file_path LIKE ?
@@ -2000,6 +2035,98 @@ int MySQLDatabase::deleteSessionsByDateFolder(const std::string& device_id,
         return -1;
     }
     return static_cast<int>(mysql_stmt_affected_rows(g.stmt));
+}
+
+// ---------------------------------------------------------------------------
+// SDD-029: removing a night
+// ---------------------------------------------------------------------------
+
+namespace {
+std::string mysqlIsoDateOf(const std::string& night) {
+    if (night.size() != 8) return night;
+    return night.substr(0, 4) + "-" + night.substr(4, 2) + "-" + night.substr(6, 2);
+}
+}  // namespace
+
+IDatabase::RemoveNightResult MySQLDatabase::removeNight(const std::string& device_id,
+                                                        const std::string& night) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    RemoveNightResult r;
+    if (!conn_ || night.size() != 8) return r;
+    const std::string day = mysqlIsoDateOf(night);
+
+    // One statement with text parameters; the rows it changed, -1 on error.
+    auto run = [&](const char* sql, const std::vector<std::string>& args) -> int {
+        MysqlStmtGuard g;
+        g.stmt = mysql_stmt_init(conn_);
+        if (mysql_stmt_prepare(g.stmt, sql, std::strlen(sql)) != 0) return -1;
+        ParamBinder p(static_cast<int>(args.size()));
+        for (size_t i = 0; i < args.size(); ++i) p.bindText(static_cast<int>(i), args[i]);
+        if (!args.empty()) mysql_stmt_bind_param(g.stmt, p.data());
+        if (mysql_stmt_execute(g.stmt) != 0) {
+            std::cerr << "MySQL: removeNight: " << mysql_stmt_error(g.stmt) << std::endl;
+            return -1;
+        }
+        return static_cast<int>(mysql_stmt_affected_rows(g.stmt));
+    };
+
+    // The night rule, DATE(session_start - 12 h), is the one getSessionStartForSleepDay uses.
+    exec("START TRANSACTION");
+    const int rec = run("INSERT IGNORE INTO cpap_removed_nights (device_id, night) VALUES (?, ?)",
+                        {device_id, night});
+    const int files = run(
+        "DELETE FROM cpap_session_files WHERE session_id IN ("
+        "  SELECT id FROM (SELECT id FROM cpap_sessions WHERE device_id = ?"
+        "    AND DATE(session_start - INTERVAL 12 HOUR) = ?) AS doomed)",
+        {device_id, day});
+    r.sessions = run(
+        "DELETE FROM cpap_sessions WHERE device_id = ?"
+        "  AND DATE(session_start - INTERVAL 12 HOUR) = ?",
+        {device_id, day});
+    r.daily = run("DELETE FROM cpap_daily_summary WHERE device_id = ? AND record_date = ?",
+                  {device_id, day});
+    r.oximetry = run("DELETE FROM oximetry_sessions WHERE DATE(start_time - INTERVAL 12 HOUR) = ?",
+                     {day});
+    r.ledger = run("DELETE FROM cpap_sync_folders WHERE date_folder = ?", {night});
+    r.summaries = run(
+        "DELETE FROM cpap_summaries WHERE device_id = ? AND period = 'daily'"
+        "  AND range_start = ? AND range_end = ?",
+        {device_id, day, day});
+
+    if (rec < 0 || files < 0 || r.sessions < 0 || r.daily < 0 || r.oximetry < 0 ||
+        r.ledger < 0 || r.summaries < 0) {
+        exec("ROLLBACK");
+        std::cerr << "MySQL: removeNight " << night << " rolled back" << std::endl;
+        return RemoveNightResult{};
+    }
+    exec("COMMIT");
+    r.ok = true;
+    return r;
+}
+
+std::vector<std::string> MySQLDatabase::removedNights(const std::string& device_id) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::vector<std::string> out;
+    if (!conn_) return out;
+    auto rows = executeQuery(
+        "SELECT night FROM cpap_removed_nights WHERE device_id = ? ORDER BY night", {device_id});
+    if (!rows.isArray()) return out;
+    for (const auto& row : rows) out.push_back(row["night"].asString());
+    return out;
+}
+
+bool MySQLDatabase::restoreNight(const std::string& device_id, const std::string& night) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!conn_) return false;
+    const char* sql = "DELETE FROM cpap_removed_nights WHERE device_id = ? AND night = ?";
+    MysqlStmtGuard g;
+    g.stmt = mysql_stmt_init(conn_);
+    if (mysql_stmt_prepare(g.stmt, sql, std::strlen(sql)) != 0) return false;
+    ParamBinder p(2);
+    p.bindText(0, device_id);
+    p.bindText(1, night);
+    mysql_stmt_bind_param(g.stmt, p.data());
+    return mysql_stmt_execute(g.stmt) == 0;
 }
 
 // ---------------------------------------------------------------------------

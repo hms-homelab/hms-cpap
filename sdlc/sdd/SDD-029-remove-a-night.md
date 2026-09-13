@@ -1,7 +1,8 @@
 # SDD-029: remove a night
 
-**Status:** Accepted 2026-09-13. D1 it stays removed (the record in 3.1);
-D2 the database only; D3 Reparse restores it.
+**Status:** Built 2026-09-13, not released (see §7). Accepted 2026-09-13:
+D1 it stays removed (the record in 3.1); D2 the database only; D3 Reparse
+restores it.
 **Date:** 2026-09-13
 **Repo:** `hms-cpap`. Three database backends, one route, the burst's re-ingest
 paths, the sessions page menu.
@@ -123,3 +124,53 @@ success the row leaves the list. i18n keys in all five languages
 ## 6. Release
 
 A minor on top of SDD-028 (Albin's number). The reply on #31 is Albin's.
+
+## 7. As built (2026-09-13)
+
+Where the build differs from §3, and what the throwaway run showed.
+
+- **The key is `night`, `YYYYMMDD`**, not a `sleep_day DATE`: the same string
+  `strDayForSessionStart()` returns and the DATALOG folders are named with
+  (checked on a real card: folder `20260329` holds `20260330_041405_BRP.edf`),
+  so the folder-level skips compare strings with no conversion. One helper
+  header, `include/services/RemovedNights.h`, holds every check.
+- **The ring's night is on the ring's clock.** The oximetry parsers read the
+  ring's display time as UTC (`timegm`), so `oximetryNightOf()` shifts back
+  12 h on the UTC clock. The CPAP rule (local clock) would put a ring start
+  between noon and noon-plus-the-UTC-offset on the night before.
+- **Where the skips are:** the STR write at all three callers (burst, backfill,
+  `--backfill` CLI); the four burst store loops (local, ezShare, Lowenstein,
+  Sefam), beside `isForceCompleted`; the folder ledger (`updateFolderLedgers`,
+  no row and no sidecar refetch for a removed folder, found in the E2E, where
+  the ledger row came back every burst); the `.vld` card scan; the **live ring
+  pull** (`OximetryService`, not in §3.1: it remembers the file→night pair so a
+  removed night is not re-downloaded every poll, and fetches it again once
+  restored); `markUnparsedNightsForExport`; the backfill folder loop.
+- **Not touched:** `aggregateDailySummaryFromSessions` and session discovery.
+  The first derives rows only from stored sessions, which a removed night no
+  longer has; the second only proposes, and the store loops refuse.
+- **The `.vld` upload is not filtered**: an operator uploading a night is
+  asking for it. The card scan skips a removed night's file without adding it
+  to the refused set, so a restore brings it back on the next pass.
+- **Route:** `DELETE /api/sessions/{date}`; a date that is not `YYYY-MM-DD` is
+  400; any valid date is 200 with the counts (zero when nothing was there).
+- **Reparse** (`POST /api/sessions/{date}/reparse` and `--reparse`) clears the
+  record first. The backfill derives the daily row from sessions only when the
+  card has no STR, so a night the STR does not cover gets its daily row back
+  on the next burst (seconds later), not from the reparse itself.
+
+**Tests:** `tests/database/test_RemoveNightBackends.cpp`, six cases on each
+engine, run on SQLite, PostgreSQL 16 (a throwaway local database) and MySQL
+(the NAS test database), plus the key rules; three `.vld` cases in
+`test_OximetryImport.cpp`. Full suite 1850 tests, 1572 passed, 278 skipped
+(engine-gated), 0 failed, under the local zone and `TZ=UTC`.
+
+**E2E** (throwaway instance, port 18993, pre-written config, card with
+20260330 and 20260406 from a card backup plus todd3835's 20260823 and a
+`.vld`): removing 2026-04-06 (STR-covered) and 2026-08-23 (newest, with the
+ring night) returned `{sessions:1, daily:1, ledger:1, oximetry:0|1}`; two
+bursts later neither night had sessions, a daily row or ring data, the STR
+write logged 180 records instead of 181, and each store loop logged "on a
+removed night, skipping". Reparse of 2026-08-23 restored it: the record
+cleared, the backfill re-stored the session, the next burst re-derived the
+daily row (477 min, as before) and re-imported the ring night.

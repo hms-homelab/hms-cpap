@@ -32,7 +32,9 @@
       "fetchOxi": "Récupérer l'historique O2",
       "dayPdf": "PDF du jour",
       "generating": "Génération...",
-      "uploadSleepHq": "Envoyer vers SleepHQ"
+      "uploadSleepHq": "Envoyer vers SleepHQ",
+      "removeNight": "Supprimer la nuit",
+      "removeConfirm": "Supprimer la nuit du {{date}} de la base de données ? Ses sessions, son résumé quotidien et les données de la bague O2 sont effacés, et la nuit n'est plus importée. Réanalysez cette date pour la récupérer."
     },
     "loadMore": "Charger plus"
   }

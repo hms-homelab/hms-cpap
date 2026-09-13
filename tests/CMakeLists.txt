@@ -61,6 +61,7 @@ set(TEST_SOURCES
     database/test_DatabaseService.cpp
     database/test_EquipmentBackends.cpp
     database/test_OximetryBackends.cpp
+    database/test_RemoveNightBackends.cpp
     database/test_MySQLMigration.cpp
     database/test_CleaningBackends.cpp
     database/test_SyncFolderBackends.cpp

@@ -32,7 +32,9 @@
       "fetchOxi": "Buscar histórico de O2",
       "dayPdf": "PDF do dia",
       "generating": "Gerando...",
-      "uploadSleepHq": "Enviar para o SleepHQ"
+      "uploadSleepHq": "Enviar para o SleepHQ",
+      "removeNight": "Remover noite",
+      "removeConfirm": "Remover a noite de {{date}} do banco de dados? As sessões, o resumo diário e os dados do anel de O2 são apagados, e a noite não é importada novamente. Reprocesse esta data para recuperá-la."
     },
     "loadMore": "Carregar mais"
   }
