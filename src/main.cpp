@@ -1105,12 +1105,17 @@ int main(int argc, char** argv) {
             // Wire BackfillService whenever an archive/local DATALOG path is
             // known. It reparses from the permanent archive, so it must be
             // available in every source mode (ezshare/fysetc/local) — the
-            // per-session UI reparse delegates to it.
-            if (!config.local_dir.empty()) {
+            // per-session UI reparse delegates to it. The card root is the
+            // local folder in local mode and the archive the collector fills
+            // in the others: keying this on local_dir alone left Reparse (and
+            // SDD-029's restore) answering 503 on every ezShare install.
+            const std::string card_root =
+                !config.local_dir.empty() ? config.local_dir : config.archive_dir;
+            if (!card_root.empty()) {
                 hms_cpap::BackfillService::Config bf_cfg;
                 bf_cfg.device_id = config.device_id;
                 bf_cfg.device_name = config.device_name;
-                bf_cfg.local_dir = config.local_dir;
+                bf_cfg.local_dir = card_root;
                 bf_cfg.sleephq.enabled = config.sleephq.enabled;
                 bf_cfg.sleephq.auto_on_backfill = config.sleephq.auto_on_backfill;
 
@@ -1139,8 +1144,8 @@ int main(int argc, char** argv) {
                 // folders into the archive, then reparse them via backfill.
                 // SDD-010: config.local_dir is the card ROOT, so extracted date
                 // folders belong under its DATALOG, not directly inside it.
-                std::string archive_dir = hms_cpap::datalogDirFor(config.local_dir);
-                std::string card_dir = config.local_dir;   // the card ROOT (SDD-010)
+                std::string archive_dir = hms_cpap::datalogDirFor(card_root);
+                std::string card_dir = card_root;   // the card ROOT (SDD-010)
                 hms_cpap::CpapController::cpap_zip_import_ =
                     [archive_dir, card_dir](const std::string& zip_path) -> Json::Value {
                         namespace fs = std::filesystem;
