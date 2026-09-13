@@ -29,10 +29,10 @@
       "imported": "{{count}} nuit(s) importée(s)"
     },
     "oxi": {
-      "heading": "Données d'oxymétrie O2Ring (.csv)",
+      "heading": "Données d'oxymétrie O2Ring (.csv ou .vld)",
       "hintPre": "Importez un CSV exporté de l'« O2 Ring » Wellue / Viatom (Partager",
-      "hintPost": "CSV dans l'application Viatom). La SpO₂ et le pouls sont ajoutés comme session d'oxymétrie.",
-      "idle": "Glissez un .csv ici ou cliquez pour choisir",
+      "hintPost": "CSV dans l'application Viatom). La SpO₂ et le pouls sont ajoutés comme session d'oxymétrie. Un fichier .vld de la bague elle-même fonctionne aussi.",
+      "idle": "Glissez un .csv ou un .vld ici ou cliquez pour choisir",
       "importing": "Importation...",
       "result": "{{samples}} échantillons, SpO₂ moyenne {{avg}}%"
     }

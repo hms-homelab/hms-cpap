@@ -39,7 +39,7 @@
            (dragover)="$event.preventDefault(); oxiDrag = true"
            (dragleave)="oxiDrag = false"
            (drop)="onOxiDrop($event)">
-      <input type="file" accept=".csv" hidden (change)="onOxiPick($event)" />
+      <input type="file" accept=".csv,.vld" hidden (change)="onOxiPick($event)" />
       <ng-container [ngSwitch]="oxiState">
         <span *ngSwitchCase="'idle'"><i class="fa-solid fa-heart-pulse"></i> {{ 'upload.oxi.idle' | translate }}</span>
         <span *ngSwitchCase="'uploading'"><i class="fa-solid fa-spinner fa-spin"></i> {{ 'upload.oxi.importing' | translate }}</span>

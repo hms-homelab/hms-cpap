@@ -29,10 +29,10 @@
       "imported": "{{count}} éjszaka importálva"
     },
     "oxi": {
-      "heading": "O2Ring oximetriai adatok (.csv)",
+      "heading": "O2Ring oximetriai adatok (.csv vagy .vld)",
       "hintPre": "Töltsön fel egy Wellue / Viatom „O2 Ring” CSV-exportot (Megosztás",
-      "hintPost": "CSV a Viatom alkalmazásban). Az SpO₂ és a pulzus oximetriai alvásidőszakként kerül be.",
-      "idle": "Húzzon ide egy .csv fájlt, vagy kattintson a kiválasztáshoz",
+      "hintPost": "CSV a Viatom alkalmazásban). Az SpO₂ és a pulzus oximetriai alvásidőszakként kerül be. A gyűrű saját .vld fájlja is megfelel.",
+      "idle": "Húzzon ide egy .csv vagy .vld fájlt, vagy kattintson a kiválasztáshoz",
       "importing": "Importálás...",
       "result": "{{samples}} minta, átlagos SpO₂ {{avg}}%"
     }

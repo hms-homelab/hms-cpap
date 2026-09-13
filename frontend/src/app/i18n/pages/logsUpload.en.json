@@ -29,10 +29,10 @@
       "imported": "Imported {{count}} night(s)"
     },
     "oxi": {
-      "heading": "O2Ring Oximetry Data (.csv)",
+      "heading": "O2Ring Oximetry Data (.csv or .vld)",
       "hintPre": "Upload a Wellue / Viatom \"O2 Ring\" CSV export (Share",
-      "hintPost": "CSV in the Viatom app). SpO₂ and pulse are added as an oximetry session.",
-      "idle": "Drag a .csv here or click to choose",
+      "hintPost": "CSV in the Viatom app). SpO₂ and pulse are added as an oximetry session. A .vld file from the ring itself works too.",
+      "idle": "Drag a .csv or .vld here or click to choose",
       "importing": "Importing...",
       "result": "{{samples}} samples, avg SpO₂ {{avg}}%"
     }

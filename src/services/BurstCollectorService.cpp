@@ -13,6 +13,7 @@
 #include "utils/AppConfig.h"
 #include "utils/FileUtils.h"
 #include "utils/CardResidue.h"
+#include "services/OximetryImport.h"
 #include "database/SQLiteDatabase.h"
 #include "database/DatabaseFactory.h"
 #ifdef WITH_POSTGRESQL
@@ -1536,6 +1537,19 @@ bool BurstCollectorService::executeBurstCycle() {
         // idempotent single-transaction upsert of the FULL history — cheap, and
         // self-healing if the mounted directory gains new days.
         processSessionSummary();
+
+        // SDD-028 (#32): the ring's .vld files beside DATALOG, written there by
+        // another tool. Before the "no new sessions" return below, so they are
+        // picked up on a burst with no new CPAP file too; a name already stored
+        // is skipped, so a steady-state pass is a listing and a lookup per file.
+        if (db_service_) {
+            const auto scan = importVldFolder(*db_service_, local_source_dir_, vld_refused_);
+            if (scan.imported > 0 || scan.refused > 0) {
+                std::cout << "O2Ring: card folder " << scan.imported << " imported, "
+                          << scan.skipped << " already stored, " << scan.refused
+                          << " unreadable" << std::endl;
+            }
+        }
 
         // SDD-010: local nights join the SDD-008 folder ledger, BEFORE the
         // session loop for the same reason spelled out in the ezShare branch:

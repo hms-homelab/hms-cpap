@@ -30,6 +30,7 @@
 #include <chrono>
 #include <functional>
 #include <mutex>
+#include <set>
 
 namespace hms_cpap {
 
@@ -293,6 +294,10 @@ private:
     /// removes. Use datalogDirFor() to get the session folders beneath it.
     std::string local_source_dir_;
     std::string cpap_source_;       // "ezshare", "local", "fysetc", or "lowenstein"
+
+    /// SDD-028: .vld files beside the card that would not parse, by path, so a
+    /// bad file is reported once and not re-read every burst until a restart.
+    std::set<std::string> vld_refused_;
 
     /// SDD-010: what local_source_dir_ turned out to be. Anything but Root means
     /// the configuration is wrong and NOTHING may be ingested: the dashboard

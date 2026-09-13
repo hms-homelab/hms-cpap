@@ -107,6 +107,7 @@ set(TEST_SOURCES
     services/test_BackfillService.cpp
     services/test_SessionDiscoveryService.cpp
     services/test_OximetryService.cpp
+    services/test_OximetryImport.cpp
     services/test_O2RingCsvParser.cpp
     services/test_O2RingCsvWriter.cpp
     services/test_FysetcSectorCollectorService.cpp
