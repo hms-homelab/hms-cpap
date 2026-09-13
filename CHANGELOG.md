@@ -5,6 +5,35 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.2.6] - 2026-09-13
+
+### Added
+- **Remove night** (#31, SDD-029). The sessions menu can remove a whole night
+  from the database: its sessions, daily summary, O2 ring data and transfer
+  record, in one step, after a confirmation. It stays removed: the collector,
+  the STR, the ring's files, SleepHQ auto-export and backfills all skip it.
+  Reparse of the same date brings it back from the archive. Files on disk are
+  never touched. `DELETE /api/sessions/{date}`.
+- **The O2 ring's `.vld` files next to the card** (#32, SDD-028). A `.vld` in
+  the card's root or in any folder beside `DATALOG` (another tool's
+  `Oxymetry/`, say) is imported on the next pass, and the O2 upload page takes
+  `.vld` as well as CSV. The same file from the ring, the card or the upload is
+  one night, not three.
+- `architecture/db.md` and `architecture/layers.md`: every table on the three
+  databases and the code's layers, linked from the README.
+
+### Fixed
+- **Reparse works on ezShare installs.** It answered "Reparse not available"
+  whenever no local folder was configured; it now reparses from the archive
+  the collector fills. The Backfill page and the CPAP zip upload use the same
+  root.
+- **A backfilled history shows our numbers.** The backfill kept the STR's
+  hours and index on every night it imported when the card had an STR; it now
+  re-derives each night from its sessions, as the collector does (5.2.5).
+- MySQL: reparsing a night no longer leaves orphaned session-file rows.
+- A manual model training request starts at once instead of after up to a
+  minute.
+
 ## [5.2.5] - 2026-09-13
 
 ### Fixed
