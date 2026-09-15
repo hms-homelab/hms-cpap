@@ -59,17 +59,16 @@ VldFileSig sigOf(const fs::path& p) {
     return s;
 }
 
-/// Folders directly inside [dir]. The scan does not descend into them, and its
-/// summary says so, since a tool that files nights per ring or per month would
-/// otherwise look like a scan that found nothing.
-int subfoldersIn(const fs::path& dir) {
-    int n = 0;
+/// Folders directly inside [dir], sorted.
+std::vector<fs::path> subfoldersIn(const fs::path& dir) {
+    std::vector<fs::path> out;
     std::error_code ec;
     for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
         std::error_code de;
-        if (it->is_directory(de)) ++n;
+        if (it->is_directory(de)) out.push_back(it->path());
     }
-    return n;
+    std::sort(out.begin(), out.end());
+    return out;
 }
 
 }  // namespace
@@ -123,7 +122,9 @@ VldFolderScan importVldFolder(IDatabase& db, const std::string& card_root,
     if (!fs::is_directory(root, ec)) {
         scan.summary = where + "not a folder, nothing scanned";
     } else {
-        // D1: the root, then each folder directly under it except the card's own.
+        // D1 (amended, SDD-028 §7): the root, each folder directly under it
+        // except the card's own, and each folder inside those (a tool that
+        // files every night in its own folder, OXYMETRY/20260913/). No deeper.
         std::vector<fs::path> files = vldFilesIn(root);
         std::vector<fs::path> dirs;
         std::error_code le;
@@ -133,9 +134,18 @@ VldFolderScan importVldFolder(IDatabase& db, const std::string& card_root,
                 dirs.push_back(it->path());
         }
         std::sort(dirs.begin(), dirs.end());
-        for (const auto& d : dirs) {
-            auto more = vldFilesIn(d);
+        std::vector<int> inner_count(dirs.size(), 0);   // folders searched inside each
+        std::vector<int> deeper_count(dirs.size(), 0);  // folders below those, not searched
+        for (size_t i = 0; i < dirs.size(); ++i) {
+            auto more = vldFilesIn(dirs[i]);
             files.insert(files.end(), more.begin(), more.end());
+            const auto inner = subfoldersIn(dirs[i]);
+            inner_count[i] = static_cast<int>(inner.size());
+            for (const auto& sub : inner) {
+                auto deeper = vldFilesIn(sub);
+                files.insert(files.end(), deeper.begin(), deeper.end());
+                deeper_count[i] += static_cast<int>(subfoldersIn(sub).size());
+            }
         }
 
         int unreadable = 0;
@@ -196,8 +206,14 @@ VldFolderScan importVldFolder(IDatabase& db, const std::string& card_root,
                 it = seen.count(it->first) ? std::next(it) : m->erase(it);
 
         // The one line that answers "did it look where my files are?".
+        // A folder's own sub-folders are counted, not listed, so a tool that
+        // adds one every night keeps this one short line.
         std::string places = "the root";
-        for (const auto& d : dirs) places += ", " + d.filename().string() + "/";
+        for (size_t i = 0; i < dirs.size(); ++i) {
+            places += ", " + dirs[i].filename().string() + "/";
+            if (inner_count[i] > 0)
+                places += " and its " + std::to_string(inner_count[i]) + " folder(s)";
+        }
         scan.summary = where;
         if (le) scan.summary += "could not list it fully (" + le.message() + "); ";
         if (scan.found == 0)
@@ -205,10 +221,10 @@ VldFolderScan importVldFolder(IDatabase& db, const std::string& card_root,
         else
             scan.summary += std::to_string(scan.found) + " .vld file(s) in " + places;
         scan.summary += " (DATALOG and SETTINGS are not searched)";
-        for (const auto& d : dirs)
-            if (const int n = subfoldersIn(d); n > 0)
-                scan.summary += "; " + d.filename().string() + "/ holds " + std::to_string(n) +
-                                " folder(s), which are not searched";
+        for (size_t i = 0; i < dirs.size(); ++i)
+            if (deeper_count[i] > 0)
+                scan.summary += "; " + std::to_string(deeper_count[i]) + " folder(s) further down in " +
+                                dirs[i].filename().string() + "/ are not searched";
         if (unreadable > 0)
             scan.summary += "; " + std::to_string(unreadable) +
                             " unreadable, read again when they change";

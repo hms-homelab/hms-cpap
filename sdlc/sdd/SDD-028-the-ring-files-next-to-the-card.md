@@ -1,6 +1,7 @@
 # SDD-028: the ring's files next to the card
 
-**Status:** Released in 5.2.6 (2026-09-13); amended in 5.2.7 (§6, 2026-09-14). Accepted 2026-09-13. Scope: both ways in; D1 root plus every
+**Status:** Released in 5.2.6 (2026-09-13); amended in 5.2.7 (§6, 2026-09-14);
+D1 amended to one level deeper (§7, 2026-09-15, not released). Accepted 2026-09-13. Scope: both ways in; D1 root plus every
 top-level folder; D2 the ring's clock stored as-is.
 **Date:** 2026-09-13
 **Repo:** `hms-cpap`. One shared importer, the local-mode burst, the O2 upload
@@ -154,3 +155,57 @@ PostgreSQL case (runs when `PGHOST` is set) checks the re-read replaces the
 samples. End to end on a throwaway instance: a nested folder only, then a
 half-written file (60 samples), then the whole file (updated, 120 samples),
 then two quiet bursts with no log lines.
+
+## 7. Amendment, 2026-09-15: one level deeper, always
+
+**Trigger.** On 5.2.9 todd3835 still gets no automatic import. His card
+listing (#32, 2026-09-15) shows `/CPAP/OXYMETRY/20260913/` and
+`/CPAP/OXYMETRY/20260914/`: one folder per night inside `OXYMETRY`, the way
+DATALOG is laid out. The files are one level below where D1 looks, which is
+the case §2.6's line names ("OXYMETRY/ holds 2 folder(s), which are not
+searched"). The layout may be his own, but a tool that files each night in its
+own folder is a reasonable thing to support.
+
+**D1 amended (Albin, 2026-09-15: "always on is fine by me").** The scan
+reads the root, each folder directly under it except `DATALOG` and
+`SETTINGS`, and each folder inside those. It does not go deeper. There is no
+setting: the files there are either ring files the user wants, or there are
+none, and then the extra depth costs only the listings. The rest of §2.2 and
+§6 is unchanged: the size and modified time rule, the retry of an unreadable
+file when it changes, and a name already stored is the same night.
+
+**Cost.** One more directory listing per folder in a searched folder, per
+burst. A tool that adds a folder every night adds one listing per night;
+after a year that is about 365 small listings every burst, on todd's SMB share
+perhaps a second or two. The stat per file was already paid for a flat folder
+of the same files.
+
+**The summary line (§2.6)** names a searched folder with its sub-folders as
+`OXYMETRY/ and its 2 folder(s)`. Folders a further level down are counted per
+top folder, not listed one by one, so a year of nights stays one short line:
+
+```
+O2Ring: card folder /CPAP: 2 .vld file(s) in the root, OXYMETRY/ and its 2
+folder(s) (DATALOG and SETTINGS are not searched)
+```
+
+**Tests.** `test_OximetryImport.cpp`: todd's layout
+(`OXYMETRY/20260913/*.vld`, `OXYMETRY/20260914/*.vld`) is imported, and the
+second pass imports nothing; a file three levels down is not read, and the
+summary counts its folder as not searched; `DATALOG` and `SETTINGS` stay out.
+End to end on a throwaway instance with a card root laid out like todd's.
+
+**As built, 2026-09-15.** `OximetryImport.cpp` as above. Full suite 1638
+passed, 0 failed, local zone and TZ=UTC. End to end: a card root laid out
+like todd's (STR.edf and a night from a real card, `System Volume
+Information/`, `LOST.DIR/`, and synthetic VLD v3 files in
+`OXYMETRY/20260913/` and `OXYMETRY/20260914/`, since no real `.vld` is on
+hand). Burst 1 imported both, with every sample (120 and 150). A folder
+`OXYMETRY/20260915/` added later was imported on the next burst (90 samples).
+The burst after that logged nothing. The line it logged:
+
+```
+O2Ring: card folder <card>: 3 .vld file(s) in the root, LOST.DIR/, OXYMETRY/
+and its 3 folder(s), System Volume Information/ (DATALOG and SETTINGS are not
+searched)
+```

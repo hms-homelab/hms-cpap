@@ -208,20 +208,54 @@ TEST_F(OximetryImportTest, AFileStoredBeforeThisRunIsTrustedAsItIs) {
 
 // #32: the scan used to say nothing when it found nothing, so a log could not
 // tell "no files where it looked" from "files already stored". It now says
-// where it looked, and names the folders it does not descend into.
+// where it looked, and counts the folders it does not descend into.
 TEST_F(OximetryImportTest, WhenItFindsNothingItSaysWhereItLooked) {
-    put("Oxymetry/O2Ring 1234/20260912223000.vld", vld(3, 22));   // one level too deep
+    put("Oxymetry/O2Ring 1234/2026/20260912223000.vld", vld(3, 22));   // one level too deep
     VldScanState state;
     const auto scan = importVldFolder(*db_, root_.string(), state);
     EXPECT_EQ(scan.found, 0);
     EXPECT_EQ(sessions(), 0);
     EXPECT_TRUE(scan.summary_logged);
-    EXPECT_NE(scan.summary.find("no .vld files in the root, Oxymetry/"), std::string::npos)
-        << scan.summary;
-    EXPECT_NE(scan.summary.find("Oxymetry/ holds 1 folder(s), which are not searched"),
+    EXPECT_NE(scan.summary.find("no .vld files in the root, Oxymetry/ and its 1 folder(s)"),
+              std::string::npos) << scan.summary;
+    EXPECT_NE(scan.summary.find("1 folder(s) further down in Oxymetry/ are not searched"),
               std::string::npos) << scan.summary;
     // Logged once, not every burst.
     EXPECT_FALSE(importVldFolder(*db_, root_.string(), state).summary_logged);
+}
+
+// #32, SDD-028 §7: todd3835's card files each night in its own folder inside
+// OXYMETRY, as DATALOG does. One level deeper is read; the card's own folders
+// still are not, however deep.
+TEST_F(OximetryImportTest, ANightPerFolderInsideTheToolsFolderIsRead) {
+    put("OXYMETRY/20260913/20260913223000.vld", vld(3, 21));
+    put("OXYMETRY/20260914/20260914224500.vld", vld(3, 22));
+    put("OXYMETRY/20260914/notes.txt", "not a ring file");
+    put("DATALOG/20260912/x.vld", vld(3, 1));
+    put("SETTINGS/sub/y.vld", vld(3, 2));
+
+    VldScanState state;
+    const auto scan = importVldFolder(*db_, root_.string(), state);
+    EXPECT_EQ(scan.found, 2);
+    EXPECT_EQ(scan.imported, 2);
+    EXPECT_EQ(sessions(), 2);
+    EXPECT_TRUE(db_->oximetrySessionExists(kOximetryDeviceId, "20260913223000.vld"));
+    EXPECT_TRUE(db_->oximetrySessionExists(kOximetryDeviceId, "20260914224500.vld"));
+    EXPECT_FALSE(db_->oximetrySessionExists(kOximetryDeviceId, "x.vld"));
+    EXPECT_FALSE(db_->oximetrySessionExists(kOximetryDeviceId, "y.vld"));
+    EXPECT_NE(scan.summary.find("2 .vld file(s) in the root, OXYMETRY/ and its 2 folder(s)"),
+              std::string::npos) << scan.summary;
+    EXPECT_EQ(scan.summary.find("not searched;"), std::string::npos) << scan.summary;
+    EXPECT_EQ(scan.summary.find("further down"), std::string::npos) << scan.summary;
+
+    // The next burst imports nothing; the next night's folder is picked up.
+    const auto again = importVldFolder(*db_, root_.string(), state);
+    EXPECT_EQ(again.imported, 0);
+    EXPECT_EQ(again.skipped, 2);
+    put("OXYMETRY/20260915/20260915221000.vld", vld(3, 23));
+    const auto next = importVldFolder(*db_, root_.string(), state);
+    EXPECT_EQ(next.imported, 1);
+    EXPECT_EQ(sessions(), 3);
 }
 
 // SDD-029: a night the operator removed is not brought back by the scan, and
