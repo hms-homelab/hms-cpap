@@ -5,6 +5,23 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.2.7] - 2026-09-14
+
+### Fixed
+- **A `.vld` next to the card that changes is read again** (#32). 5.2.6 read
+  each file once, by name. A file caught while the other tool was still
+  writing it was stored short and never completed; it is now stored again
+  whenever its size or modified time changes, as the collector does for the
+  card's own files.
+- **A `.vld` that would not read is retried when it changes**, instead of
+  only after a restart.
+
+### Changed
+- **The folder scan says what it saw.** One log line with the card folder,
+  how many `.vld` files it found, the folders it looked in, and any folder it
+  does not search into, so "no files where it looked" no longer looks like
+  "nothing new". Logged when it changes, not every burst.
+
 ## [5.2.6] - 2026-09-13
 
 ### Added
