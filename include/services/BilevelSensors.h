@@ -13,6 +13,7 @@
 //
 #include "parsers/CpapdashBridge.h"
 
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -52,12 +53,15 @@ inline NamedValues bilevelStrSensors(const STRDailyRecord& r) {
     return out;
 }
 
-/// A mode number, read through the family: on a bi-level 8 is VAuto, where on
-/// an ASV it is ASV with variable EPAP. A bi-level number this build has not
-/// seen is named by its number rather than guessed.
+/// A mode number, read through the family. On a bi-level VAuto is 8 on an
+/// AirCurve 11 and 6 on an AirCurve 10 (two real cards, 2026-09-15: both with
+/// only VAuto settings in their STR), where 8 on an ASV is ASV with variable
+/// EPAP. A bi-level number no card has shown yet is named by its number
+/// rather than guessed.
 inline std::string therapyModeName(int mode, MachineFamily family) {
     if (family == MachineFamily::BiLevel)
-        return mode == 8 ? "VAuto" : "Bi-level (mode " + std::to_string(mode) + ")";
+        return (mode == 6 || mode == 8) ? "VAuto"
+                                        : "Bi-level (mode " + std::to_string(mode) + ")";
     switch (mode) {
         case 0: return "CPAP";
         case 1: return "APAP";
@@ -65,6 +69,16 @@ inline std::string therapyModeName(int mode, MachineFamily family) {
         case 8: return "ASV (Variable EPAP)";
         default: return "Unknown";
     }
+}
+
+/// The standing rule applied to the mode: the session's value first, the STR's
+/// when the session has none or 0. No parser fills a ResMed session's mode and
+/// every engine stores "none" as 0, so on a ResMed this is the STR's mode (8 on
+/// the AirCurve 11 VAuto, 6 on the AirCurve 10 VAuto, where 0 was published).
+inline std::optional<int> therapyModeFor(std::optional<int> session_mode,
+                                         std::optional<int> str_mode) {
+    if (session_mode && *session_mode != 0) return session_mode;
+    return str_mode ? str_mode : session_mode;
 }
 
 /// SDD-019's rule applied to the STR's SpO2 median: a card without an oximeter

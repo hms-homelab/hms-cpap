@@ -2746,13 +2746,15 @@ std::string BurstCollectorService::buildMetricsString(const SessionMetrics& metr
     if (metrics.avg_target_ventilation.has_value() && metrics.avg_target_ventilation.value() > 0) {
         oss << "Target ventilation (ASV): " << metrics.avg_target_ventilation.value() << " L/min\n";
     }
-    // SDD-030: a ResMed session carries no mode (the parser sets it for
-    // Löwenstein), so the STR day's is used, and the number is named through
-    // the machine family: 8 is VAuto on an AirCurve, ASV on an AirCurve ASV.
+    // SDD-030, the standing rule: the session's mode first, the STR's when
+    // the session's is 0. No parser fills a ResMed session's mode and every
+    // engine stores "none" as 0, so there it is the STR's (seen on two
+    // AirCurves, which read "CPAP" before). Named through the machine family.
     {
         const auto family = str_record ? str_record->family : MachineFamily::Unknown;
-        std::optional<int> mode = metrics.therapy_mode;
-        if (!mode && str_record) mode = str_record->mode;
+        const auto mode = therapyModeFor(
+            metrics.therapy_mode,
+            str_record ? std::optional<int>(str_record->mode) : std::nullopt);
         if (mode) oss << "Therapy mode: " << therapyModeName(*mode, family) << "\n";
     }
 

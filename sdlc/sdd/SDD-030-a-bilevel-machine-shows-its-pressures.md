@@ -83,11 +83,21 @@ entities removed: an empty retained payload on each state topic and on each
 discovery config, SDD-023's rule that a switch must not leave an entity frozen
 on its last value.
 
-### 2.4 Name the mode through the family
+### 2.4 The mode: the session's first, the STR's when it is 0, named through the family
 
-A mode number is read with the family: on a bi-level, 8 is "VAuto"; any other
-bi-level number is "Bi-level (mode N)" rather than a guessed name. On the other
-families the existing names stand. Used by the AI night summary.
+The standing rule (Albin, 2026-09-15: "prio is always the session data, with a
+fallback to the STR if session values are 0") applied to the mode. No parser
+fills a ResMed session's mode, and every engine stores "none" as 0 (SQLite and
+MySQL bind a missing int as 0, PostgreSQL uses `value_or(0)`), so the per-night
+`therapy_mode` sensor read 0 on every machine: the reporter's 0, reproduced on
+two AirCurves. `therapyModeFor(session, str)` returns the session's mode unless
+it is 0, else the STR's; the publisher applies it whichever of the historical
+and STR publishes arrives last, and the AI night summary uses it too.
+
+A mode number is named with the family: on a bi-level VAuto is 8 on an
+AirCurve 11 and 6 on an AirCurve 10 (two real cards, both with only VAuto
+settings in their STR); any other bi-level number is "Bi-level (mode N)"
+rather than a guessed name. On the other families the existing names stand.
 
 ### 2.5 Absent SpO2 is absent
 
@@ -108,10 +118,15 @@ oximeter is attached.
   arrives the tests are synthetic, and the source of the reported 0 mode stays
   open.
 
-Not changed: the parser. It fills its ASV fields whenever the mode is 7 or 8,
-without the family, but on an AirCurve the `S.AV.*`/`S.AA.*` signals do not
-exist, so those fields stay empty; the targets it reads under that branch are
-the ones a VAuto needs. Gating it by family is a parser release of its own.
+**Parser change (corrected 2026-09-15).** This section first said the parser
+needed no change. Real data proved otherwise: the parser read the daily
+targets (`TgtIPAP.*`, `TgtEPAP.*`, `TgtVent.*`) only inside its ASV branch
+(mode 7 or 8). An AirCurve 11 VAuto is mode 8 and got them by accident; an
+AirCurve 10 VAuto is mode 6 and lost them. `hms-cpapdash-parser`
+`EDFParser_STR.cpp` now reads them whenever the card wrote them, like the
+bi-level settings; `test_str_family.cpp` pins it (mode 6 keeps its targets, a
+machine without the signals has none). hms-cpap's release then needs a parser
+tag and its `GIT_TAG` pin moved to it.
 
 ## 4. Tests
 
@@ -142,5 +157,26 @@ A patch (Albin's number). The reply on #33 is Albin's.
   SpO2, and a bi-level night publishes IPAP 9.02, EPAP 5.02, PS 4.00 after the
   sensors are announced, while leaving bi-level removes them. Full suite 1614
   passed, 0 failed, local zone and `TZ=UTC`, with the broker up.
-- Not exercised end to end: an AirCurve's own files. No such card is here; the
-  reporter offered one (D3).
+- **On real cards (2026-09-15)**, with Albin's go and the owners' consent: one
+  night each of an AirCurve 11 VAuto (Ken Narod, unit 12, product 39494) and
+  an AirCurve 10 VAuto (device 77, product 37289), copied read-only from the
+  cloud to a throwaway instance with a local broker, and deleted afterwards.
+  Both label the PLD channels `Press.2s`/`EprPress.2s`; on both
+  Press − EprPress equals the prescribed `S.VA.PS` (3.00). Checked against an
+  independent reader of the EDF files:
+
+  | | AirCurve 11 VAuto | AirCurve 10 VAuto |
+  |---|---|---|
+  | ipap / epap (night) | 8.786 / 5.786 (file 8.79 / 5.79) | 11.709 / 8.709 (file 11.71 / 8.71) |
+  | pressure_support | 3.00 | 3.00 |
+  | therapy_mode | 8 (was 0) | 6 (was 0) |
+  | str_max_ipap / min_epap / PS | 14 / 5 / 3 | 15 / 8 / 3 |
+  | str_tgt_ipap_95 / epap_95 | 9.00 / 6.00 | 12.84 / 9.84 = file (was absent) |
+  | str_spo2_50 | None | None |
+
+  Two findings from them: the stored-0 mode (§2.4) and the parser's ASV-gated
+  targets (§3). An Air11 file copied mid-write keeps a stale record count in
+  its header (3, 0 against 442 minutes on disk); the parser sizes from the
+  data, as it should.
+- Full suite after both: hms-cpap 1616 passed, 0 failed (local zone and
+  `TZ=UTC`, broker up); parser 171 passed.

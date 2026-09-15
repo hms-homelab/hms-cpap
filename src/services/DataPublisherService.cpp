@@ -680,10 +680,15 @@ void DataPublisherService::publishHistoricalState(const SessionMetrics& m) {
         mqtt_client_->publish("cpap/" + device_id_ + "/historical/avg_target_ventilation",
                              std::to_string(m.avg_target_ventilation.value()), 0, true);
     }
-    if (m.therapy_mode.has_value()) {
+    // #33, the standing rule: the session's mode first, the STR's when the
+    // session's is 0. Every engine stores "none" as 0 and no parser fills a
+    // ResMed session's mode, so this sensor read 0 on every machine.
+    last_session_mode_ = m.therapy_mode;
+    if (const auto mode = therapyModeFor(m.therapy_mode, str_mode_)) {
         mqtt_client_->publish("cpap/" + device_id_ + "/historical/therapy_mode",
-                             std::to_string(m.therapy_mode.value()), 0, true);
+                             std::to_string(*mode), 0, true);
     }
+
     // SDD-030: IPAP, EPAP and their difference, on a bi-level only.
     for (const auto& [name, value] : bilevelNightSensors(machine_family_, m)) {
         mqtt_client_->publish("cpap/" + device_id_ + "/historical/" + name,
@@ -879,6 +884,14 @@ void DataPublisherService::publishSTRState(const STRDailyRecord& record, double 
     pub("str_patient_hours", record.patient_hours);
     // SDD-030: a bi-level's prescribed pressures and daily targets.
     for (const auto& [name, value] : bilevelStrSensors(record)) pub(name, value);
+    // #33: the STR's mode is the fallback for the historical therapy_mode
+    // sensor (the session's wins when it is not 0), whichever of the two
+    // publishes arrives last.
+    str_mode_ = record.mode;
+    if (const auto mode = therapyModeFor(last_session_mode_, str_mode_)) {
+        mqtt_client_->publish("cpap/" + device_id_ + "/historical/therapy_mode",
+                              std::to_string(*mode), 0, true);
+    }
 
     // AHI delta: str_ahi - our calculated ahi
     double delta = (nightly_ahi > 0) ? record.ahi - nightly_ahi : 0;

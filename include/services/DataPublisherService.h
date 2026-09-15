@@ -187,6 +187,11 @@ private:
 
     MachineFamily machine_family_ = MachineFamily::Unknown;   // SDD-030
 
+    /// #33: the two inputs of therapyModeFor, kept so whichever of the
+    /// historical and STR publishes runs last applies the same rule.
+    std::optional<int> last_session_mode_;
+    std::optional<int> str_mode_;
+
     /// SDD-030: discovery for ipap/epap/pressure_support and the STR bi-level
     /// settings. Only ever published for a bi-level, so an AirSense's Home
     /// Assistant gains no entities that could never have a value.

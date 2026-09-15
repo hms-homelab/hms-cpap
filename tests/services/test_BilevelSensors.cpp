@@ -3,6 +3,7 @@
 #include <gtest/gtest.h>
 
 #include "services/BilevelSensors.h"
+#include "services/BurstCollectorService.h"
 
 #include <map>
 
@@ -83,7 +84,8 @@ TEST(BilevelStrSensors, NotABilevelNothing) {
 }
 
 TEST(TherapyModeName, EightIsVautoOnABilevelAndAsvOtherwise) {
-    EXPECT_EQ(therapyModeName(8, MachineFamily::BiLevel), "VAuto");
+    EXPECT_EQ(therapyModeName(8, MachineFamily::BiLevel), "VAuto");   // AirCurve 11 VAuto
+    EXPECT_EQ(therapyModeName(6, MachineFamily::BiLevel), "VAuto");   // AirCurve 10 VAuto
     EXPECT_EQ(therapyModeName(8, MachineFamily::Asv), "ASV (Variable EPAP)");
     EXPECT_EQ(therapyModeName(8, MachineFamily::Unknown), "ASV (Variable EPAP)");
     EXPECT_EQ(therapyModeName(1, MachineFamily::AutoSet), "APAP");
@@ -91,6 +93,28 @@ TEST(TherapyModeName, EightIsVautoOnABilevelAndAsvOtherwise) {
 
 TEST(TherapyModeName, AnUnseenBilevelModeIsNamedByNumberNotGuessed) {
     EXPECT_EQ(therapyModeName(3, MachineFamily::BiLevel), "Bi-level (mode 3)");
+}
+
+TEST(TherapyModeFor, TheSessionWinsUnlessItIsZero) {
+    EXPECT_EQ(therapyModeFor(1, 8), 1);                          // session has one
+    EXPECT_EQ(therapyModeFor(0, 8), 8);                          // stored "none" -> STR
+    EXPECT_EQ(therapyModeFor(std::nullopt, 6), 6);               // no session value
+    EXPECT_EQ(therapyModeFor(0, std::nullopt), 0);               // nothing better
+    EXPECT_EQ(therapyModeFor(std::nullopt, std::nullopt), std::nullopt);
+}
+
+TEST(TherapyModeName, TheMetricsStringTakesTheStrModeOverTheStoredZero) {
+    // What a stored ResMed session really carries: therapy_mode 0, the value
+    // every engine writes for "none". The AirCurve 10's STR says 6.
+    BurstCollectorService svc(60);
+    SessionMetrics m;
+    m.therapy_mode = 0;
+    STRDailyRecord r;
+    r.family = MachineFamily::BiLevel;
+    r.mode = 6;
+    const auto out = svc.buildMetricsStringForTest(m, &r);
+    EXPECT_NE(out.find("Therapy mode: VAuto"), std::string::npos) << out;
+    EXPECT_EQ(out.find("Therapy mode: CPAP"), std::string::npos) << out;
 }
 
 TEST(StrSpo2, NoOximeterIsAbsentNotZero) {

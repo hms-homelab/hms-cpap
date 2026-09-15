@@ -569,8 +569,9 @@ TEST_F(PayloadTest, PublishSTRState_ABilevelDayCarriesItsPressuresAndNoFakeSpo2)
     rec.bl_ps = 4;
     rec.tgt_ipap_95 = 11.2;
     rec.tgt_epap_95 = 7.3;
+    rec.mode = 8;   // AirCurve 11 VAuto
 
-    auto received = capture("cpap/+/daily/#", [&] { publisher->publishSTRState(rec); });
+    auto received = capture("cpap/+/#", [&] { publisher->publishSTRState(rec); });
     auto get = [&](const std::string& suffix) -> std::string {
         for (const auto& [t, v] : received)
             if (t.size() >= suffix.size() &&
@@ -586,6 +587,9 @@ TEST_F(PayloadTest, PublishSTRState_ABilevelDayCarriesItsPressuresAndNoFakeSpo2)
     // Not merely skipped: "None" (HA's unknown) replaces whatever an earlier
     // version left retained, here the 95.00 an earlier test in this suite did.
     EXPECT_EQ(get("/str_spo2_50"), "None") << "no oximeter is not 0 %";
+    // #33: no session mode has been published by this publisher yet, so the
+    // STR's is the mode sensor's value, not the 0 every engine stores.
+    EXPECT_EQ(get("/historical/therapy_mode"), "8");
 }
 
 /// The first bi-level report announces the sensors, and the night then carries
