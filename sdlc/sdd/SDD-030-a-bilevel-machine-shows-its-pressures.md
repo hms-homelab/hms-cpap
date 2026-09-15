@@ -1,7 +1,7 @@
 # SDD-030: a bi-level machine shows its pressures
 
-**Status:** Accepted 2026-09-15 ("go" on the triage). D1-D3 taken as proposed;
-Albin can overrule any.
+**Status:** Released in 5.2.8 (2026-09-15), with cpapdash-parser 2026.8.2.
+Accepted 2026-09-15 ("go" on the triage); D1-D3 taken as proposed.
 **Date:** 2026-09-15
 **Repo:** `hms-cpap` (the database layer on three engines, the MQTT publisher,
 the collector). No parser change.
