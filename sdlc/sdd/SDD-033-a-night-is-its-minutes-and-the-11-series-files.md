@@ -1,6 +1,7 @@
 # SDD-033: a night is its minutes, and the 11 series' other signal files
 
-**Status:** Draft 2026-09-15, for Albin's decisions (§4).
+**Status:** Accepted 2026-09-15 (§4): D1 a multi-session night's percentiles
+are the STR's; D2 events are summed; D3 a patch for both repos.
 **Date:** 2026-09-15
 **Repo:** `hms-cpap` (the night queries on three engines, the sessions list,
 discovery, the archive), with `hms-cpapdash-parser` (the record-count rule).
@@ -74,16 +75,64 @@ gives each session its own EVE files (SDD-014), so a sum counts nothing twice.
   `SUM(c.sum_leak) / NULLIF(SUM(c.n_leak), 0)`. That is the mean over the
   night's minutes, exactly what one long session gives today. `MAX`/`MIN`
   stay as they are.
-- **Session figures** (percentiles, SpO2, heart rate, the daily summary's
-  pressures and leak): weighted by the session's duration,
+- **Session means** (SpO2 and heart rate in the sessions list and the night,
+  the daily summary's EPR/EPAP pressure): weighted by the session's duration,
   `SUM(x * s.duration_seconds) / SUM(s.duration_seconds)` over the sessions
   that have the value (a NULL or a zero where the query already treats zero as
   absent does not dilute it).
+- **Percentiles (D1)**: see §1.1.
 - **Events**: `SUM` per type, like the daily summary and the sessions list.
   The AHI is then the same one the daily summary computes.
 
 Nights already stored are corrected on read, and the daily summary on its next
 re-derive (every burst re-aggregates the device). No reparse.
+
+### 1.1 A multi-session night's percentiles are the STR's (D1)
+
+A percentile does not combine. A night's p95 is the value 5% of the night's
+samples exceed, and a session's p95 keeps one point of its samples, not where
+the rest sit. On 2026-09-12, from the card's 2 s leak samples:
+
+| | leak p95, L/min |
+|---|---|
+| session 1 (161 min) | 8.4 |
+| session 2 (103 min) | 16.8 |
+| **the night, from all samples** | **15.6** |
+| **the STR's `Leak.95` for the day** | **15.6** |
+| duration-weighted mean of the two | 11.7 |
+| plain mean (stored today) | 12.6 |
+
+The top 5% of the night is almost all the leakier second session; no
+weighting of the two session values finds that. The machine computes its STR
+day over every sample, which is why it matches exactly. A single-session night
+is exact already: the parser takes its percentiles from the samples
+(`hms-cpapdash-parser` `Models.cpp`), and a night whose mask-on blocks merged
+into one session (his 2026-09-10) is a single session.
+
+So, the standing rule's one exception (Albin, 2026-09-15: "for multisession
+nights str wins"):
+
+- The daily summary's percentile columns that our sessions fill, `leak_50`,
+  `leak_95`, `mask_press_50` and `spo2_50`, take the STR's value on a night
+  of more than one session, and ours on a single-session night (as today).
+  Where the card has no STR day (Löwenstein, Sefam, a ResMed night the STR
+  has not reached yet) ours stays, an estimate. The columns only ours never
+  touch (`mask_press_95`, `mask_press_max`, `leak_max`, `spo2_95`) are the
+  STR's already.
+- **Storage**: today the STR's value is lost once ours is written. The STR
+  save keeps ours (`COALESCE(leak_95, excluded.leak_95)` once
+  `index_source = 'computed'`). So these four get the STR copy the index family
+  got in SDD-026: `leak_50_str`, `leak_95_str`, `mask_press_50_str`,
+  `spo2_50_str` on the three engines, their migrations and the three schema
+  mirrors, written by every STR save. The re-derive picks:
+  `CASE WHEN COUNT(sessions) > 1 THEN COALESCE(<_str>, ours) ELSE
+  COALESCE(ours, <_str>) END`.
+- The published Home Assistant daily sensors (`str_leak_95` and the rest)
+  are the STR's already and do not change.
+- Not a percentile with an STR twin: the historical `pressure_p95` sensor is
+  the mean of per-minute p95s of the 25 Hz pressure. It is not a night
+  percentile on any night and has no STR counterpart. It is weighted by
+  minutes like the other minute figures, and otherwise stays what it is.
 
 ## 2. The 11 series' other signal files
 
@@ -131,27 +180,32 @@ The parser's reading of the night, the grouping of sessions, the STR path, the
 sensors published (the same names, the right values), and every single-session
 night's figures (a sum over one session's minutes is its average).
 
-## 4. Decisions (Albin's)
+## 4. Decisions (Albin's, 2026-09-15)
 
-- **D1 percentiles.** A night's leak p50/p95 and pressure p95 cannot be
-  rebuilt exactly from its sessions' percentiles. Proposed: the
-  duration-weighted mean of the sessions' values, the same rule as the other
-  session figures. (Alternative: a true night percentile from the per-minute
-  rows, which is a percentile of minute means, not of samples, and three
-  engines' percentile SQL.)
-- **D2 events.** Proposed: `SUM`, as above, so the published AHI is the daily
-  summary's.
-- **D3 scope and release.** Proposed: §1 and §2 in one patch for hms-cpap and
-  a parser patch for the rule (2026.8.4, pinned). The cloud's copy of the rule
-  is a VPS change, not in this SDD.
+- **D1 percentiles**: "for multisession nights str wins" (§1.1). The first
+  proposal, a duration-weighted mean of the session percentiles, was
+  withdrawn: on his card it lands further from the truth (11.7) than today's
+  plain mean (12.6). The rejected alternatives were per-session histograms
+  merged per night (exact on every machine, but a parser output and a new table
+  on three engines) and leaving percentiles approximate.
+- **D2 events**: "yes to sum". The published AHI is the daily summary's.
+- **D3 release**: "yes to both patches bumps". §1 and §2 in one patch for
+  hms-cpap and a parser patch for the rule, pinned. The cloud's copy of the
+  rule is a VPS change, not in this SDD.
 
 ## 5. Tests
 
 - The three engines, parameterized like `test_BilevelPressureBackends.cpp`: a
   night of two sessions of unequal length (161 and 103 minutes of per-minute
-  rows): each minute figure is the minute-weighted mean, each session figure
+  rows): each minute figure is the minute-weighted mean, each session mean
   the duration-weighted one, the events their sum and the AHI the daily
   summary's; a single-session night reads as before.
+- The same three engines for D1: an STR day saved before and after the
+  re-derive, on a two-session night and on a one-session night: the four
+  percentile columns are the STR's on the first and ours on the second,
+  whichever write lands last; with no STR day they are ours; the `_str`
+  columns exist after the migration on a database created by the last
+  release.
 - Discovery: a TCV file joins its session's `tcv_files` and not the grouping
   (the split is the same with and without it); the residue pass skips it; a
   second burst resumes it with Range.
@@ -159,7 +213,8 @@ night's figures (a sum over one session's minutes is its average).
 - Archive: an SA2 and a TCV with a stale count are repaired by the archive
   step and the sweep.
 - End to end on TLaren's card: the local path publishes IPAP 9.313 and EPAP
-  5.313 for 2026-09-12, and an AHI equal to the daily summary's; an ez Share
+  5.313 for 2026-09-12, and an AHI equal to the daily summary's; the daily
+  summary's `leak_95` for 2026-09-12 is 15.6 (the STR's); an ez Share
   stand-in serving his card with Range fetches each TCV once and then resumes
   it, and the archived night is byte-identical to the card.
 
