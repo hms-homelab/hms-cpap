@@ -322,6 +322,13 @@ private:
     std::unique_ptr<IDataSource> data_source_;
     std::unique_ptr<PrismaIngestion> prisma_ingestion_;
     std::unique_ptr<SefamIngestion> sefam_ingestion_;
+
+    /// SDD-031: a Sefam card behind an ez Share. data_source_ is the ez Share
+    /// client; each burst copies the card into sefam_archive_dir_ and the
+    /// Sefam ingestion reads it there.
+    bool sefam_over_ezshare_ = false;
+    std::string sefam_archive_dir_;
+    void startSefamOverEzShare(const std::string& archive_dir);
     #ifndef _WIN32
     std::unique_ptr<FysetcTcpServer> fysetc_server_;
 #endif
@@ -617,7 +624,7 @@ private:
     std::atomic<bool> config_dirty_{false};
 
     struct ConfigSnapshot {
-        std::string source, ezshare_url, local_dir;
+        std::string source, ezshare_url, local_dir, archive_dir;
         std::string db_type, db_host, db_name, db_user, db_password, sqlite_path;
         int db_port = 0;
         bool mqtt_enabled = false;

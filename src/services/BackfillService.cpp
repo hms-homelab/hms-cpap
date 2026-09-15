@@ -50,6 +50,59 @@ void BackfillService::trigger(const std::string& start_date,
                  end_date.empty() ? "all" : end_date);
 }
 
+void BackfillService::triggerCardImport(UploadedCard kind, const std::string& root) {
+    {
+        std::lock_guard<std::mutex> lock(pending_mutex_);
+        pending_card_kind_ = kind;
+        pending_card_root_ = root;
+    }
+    card_import_requested_ = true;
+    spdlog::info("BackfillService: {} card import triggered ({})", uploadedCardName(kind), root);
+}
+
+void BackfillService::executeCardImport(UploadedCard kind, const std::string& root) {
+    {
+        std::lock_guard<std::mutex> lock(progress_mutex_);
+        progress_ = Progress{};
+        progress_.status = "running";
+        progress_.started_at = currentTimestamp();
+    }
+    try {
+        // "folders" are sessions here: it is the unit the upload page counts.
+        const auto counts = importCardSessions(
+            *db_, kind, root, config_.device_id, config_.device_name,
+            [this](int done, int total) {
+                std::lock_guard<std::mutex> lock(progress_mutex_);
+                progress_.folders_total = total;
+                progress_.folders_done = done;
+            });
+        std::lock_guard<std::mutex> lock(progress_mutex_);
+        progress_.folders_total = counts.found;
+        progress_.folders_done = counts.found;
+        progress_.sessions_parsed = counts.imported + counts.refused;
+        progress_.sessions_saved = counts.imported;
+        progress_.errors = counts.refused;
+        if (!counts.nights.empty()) {
+            progress_.start_date = *counts.nights.begin();
+            progress_.end_date = *counts.nights.rbegin();
+        }
+        if (counts.found == 0) {
+            progress_.status = "error";
+            progress_.error_message = std::string("no ") + uploadedCardName(kind) +
+                                      " sessions found in the uploaded card";
+        } else {
+            progress_.status = "complete";
+        }
+        progress_.completed_at = currentTimestamp();
+    } catch (const std::exception& e) {
+        std::lock_guard<std::mutex> lock(progress_mutex_);
+        progress_.status = "error";
+        progress_.error_message = e.what();
+        progress_.completed_at = currentTimestamp();
+        spdlog::error("BackfillService: card import failed: {}", e.what());
+    }
+}
+
 Json::Value BackfillService::getStatus() const {
     std::lock_guard<std::mutex> lock(progress_mutex_);
     Json::Value j;
@@ -80,6 +133,20 @@ void BackfillService::runLoop() {
             std::this_thread::sleep_for(std::chrono::seconds(1));
         }
         if (!running_) break;
+
+        // SDD-031: an uploaded Sefam or Löwenstein card, on this same worker so
+        // a card and a ResMed backfill never write at once.
+        if (card_import_requested_.exchange(false)) {
+            UploadedCard kind;
+            std::string root;
+            {
+                std::lock_guard<std::mutex> lock(pending_mutex_);
+                kind = pending_card_kind_;
+                root = pending_card_root_;
+            }
+            executeCardImport(kind, root);
+            continue;
+        }
 
         if (!backfill_requested_.exchange(false)) continue;
 

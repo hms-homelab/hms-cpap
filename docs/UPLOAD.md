@@ -23,14 +23,25 @@ Wired only when an archive (`config.local_dir`) is configured. The handler:
 
 1. Writes the upload to a temp file, then `PrismaIngestion::extractZip` into a
    staging dir.
-2. **Mirrors the card** into the archive (`mirrorCardInto`, `utils/CardImport.h`):
+2. **Reads what the card is** (`classifyUploadedCard`, `services/CardUpload.h`,
+   SDD-031), by its files, not by the install's configured format. A **Sefam**
+   S.Box/SleepBox card is merged into `<data_dir>/uploads/sefam/`. A
+   **Löwenstein** card has each `.pdat` opened into
+   `<data_dir>/uploads/lowenstein/<file stem>/`, and a Prisma Smart tree is
+   copied. The backfill worker then imports every session on the card the
+   database does not hold yet, older nights included, and re-derives the daily
+   summary. There is no MQTT and no AI summary for uploaded history. The reply
+   is `{status: "queued", format, sessions_found, dates[], message}`, and the
+   counts come through `/api/backfill/status`. Steps 3 to 5 are the ResMed
+   path.
+3. **Mirrors the card** into the archive (`mirrorCardInto`, `utils/CardImport.h`):
    eight-digit date folders land under `DATALOG/`, and everything else keeps its
    path relative to the card root, so uploads are permanent and the archive looks
    like the card did. The card root is found inside the extraction, so a zip that
    wraps its contents in a folder works the same as one that does not.
-3. Triggers `BackfillService::trigger(minDate, maxDate, "")` to reparse those
+4. Triggers `BackfillService::trigger(minDate, maxDate, "")` to reparse those
    nights from the archive — **async**. The page polls `/api/backfill/status`.
-4. Returns `{status: "queued", sessions_found, dates[], files_copied,
+5. Returns `{status: "queued", sessions_found, dates[], files_copied,
    files_skipped, str_found}`.
 
 **Upload the card ROOT**, the folder holding both `STR.edf` and `DATALOG`. That

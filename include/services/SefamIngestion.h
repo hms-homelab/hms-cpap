@@ -37,6 +37,13 @@ public:
     // the honest answer for a folder that is not a Sefam card.
     bool initialize();
 
+    // SDD-031: walk again. initialize() walks once and keeps the answer, so a
+    // collector that reuses one instance never saw a night added to the folder
+    // after it started (the local folder, and every night the ez Share mirror
+    // brings in). The collector calls this every burst; a walk reads only the
+    // small manifests, never the channel data.
+    bool rescan();
+
     // Sessions newer than last_session_start, oldest first.
     //
     // Reading a session's INI is cheap -- a couple of kilobytes of text -- so

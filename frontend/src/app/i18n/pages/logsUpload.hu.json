@@ -23,7 +23,7 @@
     "title": "Adatok feltöltése",
     "zip": {
       "heading": "CPAP-adatok (.zip)",
-      "hint": "Töltsön fel egy zipet az SD-kártyája DATALOG mappáiról (ResMed AirSense 10/11). Az éjszakák bekerülnek az archívumba, és automatikusan feldolgozzuk őket.",
+      "hint": "Töltsön fel egy zipet az SD-kártyájáról: ResMed (a DATALOG mappái), Sefam S.Box vagy Löwenstein Prisma. A kártyát a fájljai alapján ismerjük fel, és minden még nem tárolt éjszakát automatikusan hozzáadunk és feldolgozunk.",
       "idle": "Húzzon ide egy .zip fájlt, vagy kattintson a kiválasztáshoz",
       "uploading": "Feltöltés...",
       "imported": "{{count}} éjszaka importálva"

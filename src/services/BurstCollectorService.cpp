@@ -15,6 +15,7 @@
 #include "utils/CardResidue.h"
 #include "services/OximetryImport.h"
 #include "services/RemovedNights.h"
+#include "services/SefamCardMirror.h"
 #include "database/SQLiteDatabase.h"
 #include "database/DatabaseFactory.h"
 #ifdef WITH_POSTGRESQL
@@ -100,10 +101,10 @@ void BurstCollectorService::initDataSource() {
     // cpap_source_ stays the legacy string: it is what the rest of this class,
     // the reconfigure path and the tests still compare against. Derived from the
     // pair so it cannot contradict them.
-    std::string source = (transport == "local")
-        ? (format == "resmed" ? "local" : format)
-        : transport;
-    cpap_source_ = source;
+    std::string source = AppConfig::collectorSource(transport, format);
+    // SDD-031: a Sefam card behind an ez Share is still a Sefam source to
+    // everything downstream (no STR, sessions as the daily summary's writer).
+    cpap_source_ = (source == "sefam_ezshare") ? "sefam" : source;
     if (source == "local") {
         local_source_dir_ = ConfigManager::get("CPAP_LOCAL_DIR", "");
         // SDD-010: local_source_dir_ is the card ROOT. A wrong layout is NOT
@@ -137,6 +138,8 @@ void BurstCollectorService::initDataSource() {
         }
         sefam_ingestion_ = std::make_unique<SefamIngestion>(data_dir);
         std::cout << "CPAP: Sefam S.Box mode — reading from " << data_dir << std::endl;
+    } else if (source == "sefam_ezshare") {
+        startSefamOverEzShare(ConfigManager::get("CPAP_ARCHIVE_DIR", ""));
     } else if (source == "fysetc") {
 #ifndef _WIN32
         startFysetcServer();
@@ -150,6 +153,28 @@ void BurstCollectorService::initDataSource() {
         }
         data_source_ = std::move(ez);
         discovery_service_ = std::make_unique<SessionDiscoveryService>(*data_source_);
+    }
+}
+
+void BurstCollectorService::startSefamOverEzShare(const std::string& archive_dir) {
+    // SDD-031: the ez Share client lists and fetches the S.Box card into the
+    // archive; the Sefam ingestion reads the archive like a local folder.
+    local_source_dir_.clear();
+    prisma_ingestion_.reset();
+    discovery_service_.reset();   // the ResMed DATALOG discovery is not used
+    auto ez = std::make_unique<EzShareClient>();
+    if (app_config_ && !app_config_->ezshare_range) ez->setSupportsRange(false);
+    data_source_ = std::move(ez);
+    sefam_archive_dir_ = archive_dir;
+    sefam_over_ezshare_ = true;
+    sefam_ingestion_ = std::make_unique<SefamIngestion>(archive_dir);
+    if (archive_dir.empty()) {
+        std::cerr << "CPAP: Sefam S.Box over ez Share needs an archive folder (archive_dir) "
+                     "to copy the card into; nothing will be imported until one is set"
+                  << std::endl;
+    } else {
+        std::cout << "CPAP: Sefam S.Box over ez Share — copying the card into "
+                  << archive_dir << std::endl;
     }
 }
 
@@ -1431,7 +1456,27 @@ bool BurstCollectorService::executeBurstCycle() {
         // No staging step, unlike Prisma: the parser reads a session in place.
         // A session is a folder AND a manifest name, because the older 1200R
         // layout puts every recording that started on one day in one folder.
-        if (!sefam_ingestion_->initialize()) {
+
+        // SDD-031: behind an ez Share, copy the card into the archive first.
+        // D4 (Albin): the whole card while the device has no history, then
+        // only the card's last two nights.
+        if (sefam_over_ezshare_) {
+            if (!data_source_ || sefam_archive_dir_.empty()) {
+                std::cerr << "CPAP: Sefam over ez Share is not ready (no archive folder)"
+                          << std::endl;
+                return false;
+            }
+            const auto m = mirrorSefamCard(*data_source_, sefam_archive_dir_,
+                                           !last_session_start.has_value());
+            if (!m.ok) {
+                std::cerr << "CPAP: Sefam card copy failed: " << m.error << std::endl;
+                return false;
+            }
+        }
+
+        // SDD-031: walked every burst. The walk used to be kept from the first
+        // one, so a night added to the folder after startup was never seen.
+        if (!sefam_ingestion_->rescan()) {
             std::cerr << "CPAP: Sefam data initialization failed" << std::endl;
             return false;
         }
@@ -2831,9 +2876,12 @@ std::string BurstCollectorService::loadPromptFile(const std::string& filepath) {
 
 void BurstCollectorService::snapshotConfig(ConfigSnapshot& snap) {
     if (!app_config_) return;
-    snap.source = app_config_->source;
+    // SDD-031: what the collector builds, not the legacy `source`, which reads
+    // "ezshare" for a ResMed card and for a Sefam card behind the same ez Share.
+    snap.source = AppConfig::collectorSource(app_config_->transport, app_config_->format);
     snap.ezshare_url = app_config_->ezshare_url;
     snap.local_dir = app_config_->local_dir;
+    snap.archive_dir = app_config_->archive_dir;
     snap.db_type = app_config_->database.type;
     snap.db_host = app_config_->database.host;
     snap.db_port = app_config_->database.port;
@@ -2883,7 +2931,8 @@ void BurstCollectorService::reloadConfig() {
 
     // Source / discovery
     if (nc.source != last_config_.source || nc.ezshare_url != last_config_.ezshare_url ||
-        nc.local_dir != last_config_.local_dir) {
+        nc.local_dir != last_config_.local_dir ||
+        (nc.source == "sefam_ezshare" && nc.archive_dir != last_config_.archive_dir)) {
 #ifndef _WIN32
         auto action = decideFysetcLifecycle(last_config_.source, nc.source,
                                             fysetc_server_ != nullptr);
@@ -2896,7 +2945,15 @@ void BurstCollectorService::reloadConfig() {
         }
 
 #endif
-        if (nc.source == "lowenstein") {
+        sefam_over_ezshare_ = false;
+        if (nc.source == "sefam_ezshare") {
+#ifdef _WIN32
+            _putenv_s("EZSHARE_BASE_URL", nc.ezshare_url.c_str());
+#else
+            setenv("EZSHARE_BASE_URL", nc.ezshare_url.c_str(), 1);
+#endif
+            startSefamOverEzShare(nc.archive_dir);
+        } else if (nc.source == "lowenstein") {
             local_source_dir_.clear();
             data_source_.reset();
             discovery_service_.reset();
@@ -2946,7 +3003,7 @@ void BurstCollectorService::reloadConfig() {
             data_source_ = std::move(ez);
             discovery_service_ = std::make_unique<SessionDiscoveryService>(*data_source_);
         }
-        cpap_source_ = nc.source;
+        cpap_source_ = (nc.source == "sefam_ezshare") ? "sefam" : nc.source;
         std::cout << "Config reload: source -> " << nc.source << std::endl;
     }
 

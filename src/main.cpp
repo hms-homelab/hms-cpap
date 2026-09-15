@@ -5,6 +5,7 @@
 #include "controllers/EquipmentController.h"
 #include "controllers/CleaningController.h"
 #include "services/CpapDashSyncService.h"
+#include "services/CardUpload.h"
 #include "services/OximetryImport.h"
 #include "services/RemovedNights.h"
 #include "services/SetupService.h"
@@ -1161,6 +1162,57 @@ int main(int argc, char** argv) {
                             r["error"] = "Could not read zip archive";
                             return r;
                         }
+                        // SDD-031 (#28): read the card it was given. A Sefam or
+                        // Löwenstein card is kept under uploads/<format>/ (D2) and
+                        // every session the database lacks is imported on the
+                        // backfill worker (D3), which the upload page already polls.
+                        const auto kind = hms_cpap::classifyUploadedCard(staging.string());
+                        if (kind == hms_cpap::UploadedCard::Sefam ||
+                            kind == hms_cpap::UploadedCard::Lowenstein) {
+                            const std::string fmt = hms_cpap::uploadedCardName(kind);
+                            const std::string store =
+                                hms_cpap::AppConfig::dataDir() + "/uploads/" + fmt;
+                            std::set<std::string> nights;
+                            std::string merge_error;
+                            bool merged = false;
+                            if (kind == hms_cpap::UploadedCard::Sefam) {
+                                nights = hms_cpap::cardNights(kind, staging.string());
+                                merged = hms_cpap::mergeCardInto(staging.string(), store,
+                                                                 merge_error);
+                            } else {
+                                // A .pdat is opened into its own folder, never kept
+                                // as one (CardUpload.h says why); the nights are
+                                // this upload's, not the whole store's.
+                                const auto roots = hms_cpap::prepareLowensteinUpload(
+                                    staging.string(), store, merge_error);
+                                merged = !roots.empty();
+                                for (const auto& root : roots)
+                                    for (const auto& n : hms_cpap::cardNights(kind, root))
+                                        nights.insert(n);
+                                if (!merged && merge_error.empty())
+                                    merge_error = "No Löwenstein sessions found in zip";
+                            }
+                            fs::remove_all(staging, ec);
+                            if (!merged) {
+                                r["error"] = merge_error;
+                                return r;
+                            }
+                            if (nights.empty()) {
+                                r["error"] = "The zip looks like a " + fmt +
+                                             " card but holds no session this build can read";
+                                return r;
+                            }
+                            backfill_service->triggerCardImport(kind, store);
+                            Json::Value arr(Json::arrayValue);
+                            for (const auto& d : nights) arr.append(d);
+                            r["status"]         = "queued";
+                            r["format"]         = fmt;
+                            r["sessions_found"] = (int)nights.size();
+                            r["dates"]          = arr;
+                            r["message"]        = "Card kept; importing the nights not yet "
+                                                  "stored. Poll /api/backfill/status";
+                            return r;
+                        }
                         // Mirror the card into the archive: date folders under
                         // DATALOG, everything else at its own path from the card
                         // root, filtered only by residualSkip. See SDD-014 and
@@ -1171,7 +1223,9 @@ int main(int argc, char** argv) {
 
                         fs::remove_all(staging, ec);
                         if (dates.empty()) {
-                            r["error"] = "No DATALOG date folders (YYYYMMDD) found in zip";
+                            r["error"] = "Not a card this build reads: no ResMed DATALOG "
+                                         "date folders (YYYYMMDD), no Sefam S.Box sessions "
+                                         "and no Löwenstein Prisma data in the zip";
                             return r;
                         }
                         auto dash = [](const std::string& d) {

@@ -86,6 +86,11 @@ bool SefamIngestion::initialize() {
     return true;
 }
 
+bool SefamIngestion::rescan() {
+    initialized_ = false;
+    return initialize();
+}
+
 std::vector<SefamSessionFile> SefamIngestion::discoverSessions(
     std::optional<std::chrono::system_clock::time_point> last_session_start)
 {

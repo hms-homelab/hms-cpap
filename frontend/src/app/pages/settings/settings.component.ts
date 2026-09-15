@@ -32,15 +32,16 @@ import { AppConfig } from '../../models/config.model';
                  owner had to hand-edit config.json to select their machine. -->
             <label>
               {{ 'settings.source.transport' | translate }}
-              <select [(ngModel)]="config.transport" name="transport">
+              <select [(ngModel)]="config.transport" name="transport"
+                      (ngModelChange)="onTransportChange($event)">
                 <option value="ezshare">{{ 'settings.source.ezshare' | translate }}</option>
                 <option value="local">{{ 'settings.source.local' | translate }}</option>
                 <option value="fysetc">{{ 'settings.source.fysetc' | translate }}</option>
               </select>
             </label>
-            <!-- Offered only for a folder: ezShare and Fysetc are ResMed-only
-                 in fact, so the choice would be a lie there. The field still
-                 exists and still says resmed for them. -->
+            <!-- A folder takes every format. An ez Share takes ResMed and, since
+                 SDD-031, a Sefam S.Box card in its slot; not a Löwenstein, which
+                 answers the ez Share with error 601. Fysetc is ResMed-only. -->
             <label *ngIf="config.transport === 'local'">
               {{ 'settings.source.format' | translate }}
               <select [(ngModel)]="config.format" name="format">
@@ -48,6 +49,13 @@ import { AppConfig } from '../../models/config.model';
                 <option value="lowenstein">Löwenstein Prisma</option>
                 <option value="sefam">Sefam S.Box</option>
                 <option value="philips">{{ 'settings.source.philips' | translate }}</option>
+              </select>
+            </label>
+            <label *ngIf="config.transport === 'ezshare'">
+              {{ 'settings.source.format' | translate }}
+              <select [(ngModel)]="config.format" name="format_ezshare">
+                <option value="resmed">ResMed</option>
+                <option value="sefam">Sefam S.Box</option>
               </select>
             </label>
             <!-- Asked for by the first person to look here for myAir, which will
@@ -1422,8 +1430,19 @@ export class SettingsComponent implements OnInit, OnDestroy {
    * files already on disk; ezShare and Fysetc receive them over the network.
    */
   sourceNeedsArchive(): boolean {
-    const s = this.config?.source;
-    return s === 'ezshare' || s === 'fysetc';
+    // The transport, which the picker above edits; the legacy `source` only
+    // catches up on save. SDD-031: a Sefam card behind an ez Share is copied
+    // into this folder, so it needs one exactly as a ResMed card does.
+    const t = this.config?.transport ?? this.config?.source;
+    return t === 'ezshare' || t === 'fysetc';
+  }
+
+  /** SDD-031: an ez Share reads ResMed or Sefam; any other format goes back to ResMed. */
+  onTransportChange(transport: string): void {
+    if (!this.config) return;
+    if (transport === 'ezshare' && !['resmed', 'sefam'].includes(this.config.format)) {
+      this.config.format = 'resmed';
+    }
   }
 
   /** Required by the current source, and empty. Ticket 67's silent failure. */

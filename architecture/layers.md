@@ -106,10 +106,16 @@ The behaviour lives here. Grouped by what they do:
   here (`advanceFolder`) and the night key (`strDayForSessionStart`).
 - `RemovedNights.h`: the SDD-029 checks every re-ingest path uses.
 - `PrismaIngestion`, `SefamIngestion`: Lowenstein and Sefam card formats.
+- `SefamCardMirror`: copies a Sefam card from the ez Share into the archive
+  (the whole card first, then the last two nights), for `SefamIngestion` to
+  read (SDD-031).
+- `CardUpload`: an uploaded zip read by its files (ResMed, Sefam, Löwenstein).
+  A Sefam or Löwenstein card is kept under `<data_dir>/uploads/<format>/` and
+  every session not yet stored is imported, on the backfill worker (SDD-031).
 - `FysetcSectorCollectorService`: rebuilds files from raw SD sectors streamed
   by the Fysetc bridge.
 - `BackfillService`: re-reads a date range from the archive (the per-session
-  Reparse and the Backfill page use it).
+  Reparse and the Backfill page use it), and runs an uploaded card's import.
 - `OximetryService` (the ring's live pull through the mule), `OximetryImport`
   (a `.vld` from the card folder or the upload).
 
@@ -174,7 +180,8 @@ service, a second database connection, the importer), `main.cpp` hands it a
 static `std::function` hook: `backfill_trigger_`, `oxi_csv_import_`,
 `cpap_zip_import_`, `night_remove_`, `night_restore_`, `ml_train_trigger_`.
 The hook's body calls a tested function (for example `removeNightByDate` in
-`RemovedNights.h`); the hook itself is wiring.
+`RemovedNights.h`, or `classifyUploadedCard` in `CardUpload.h`); the hook
+itself is wiring.
 
 ## 6. Parsers and clients
 

@@ -23,7 +23,7 @@
     "title": "Enviar dados",
     "zip": {
       "heading": "Dados do CPAP (.zip)",
-      "hint": "Envie um zip com as pastas DATALOG do seu cartão SD (ResMed AirSense 10/11). As noites são adicionadas ao arquivo e processadas automaticamente.",
+      "hint": "Envie um zip do seu cartão SD: ResMed (as pastas DATALOG), Sefam S.Box ou Löwenstein Prisma. O cartão é reconhecido pelos arquivos, e cada noite ainda não guardada é adicionada e processada automaticamente.",
       "idle": "Arraste um .zip aqui ou clique para escolher",
       "uploading": "Enviando...",
       "imported": "{{count}} noite(s) importada(s)"

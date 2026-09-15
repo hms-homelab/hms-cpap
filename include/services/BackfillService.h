@@ -1,6 +1,7 @@
 #pragma once
 
 #include "database/IDatabase.h"
+#include "services/CardUpload.h"
 #include "services/SessionDiscoveryService.h"
 #include "parsers/CpapdashBridge.h"
 #include "utils/ConfigManager.h"
@@ -63,10 +64,19 @@ public:
                  const std::string& end_date = "",
                  const std::string& local_dir = "");
 
+    /// SDD-031: import an uploaded Sefam or Löwenstein card kept at [root], on
+    /// this worker, reporting through the same status the upload page polls.
+    void triggerCardImport(UploadedCard kind, const std::string& root);
+
     /// Thread-safe status for API polling.
     Json::Value getStatus() const;
 
 private:
+    std::atomic<bool> card_import_requested_{false};
+    UploadedCard pending_card_kind_ = UploadedCard::Unknown;
+    std::string pending_card_root_;
+    void executeCardImport(UploadedCard kind, const std::string& root);
+
     Config config_;
     std::shared_ptr<IDatabase> db_;
 

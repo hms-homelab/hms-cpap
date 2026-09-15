@@ -23,7 +23,7 @@
     "title": "Upload Data",
     "zip": {
       "heading": "CPAP Data (.zip)",
-      "hint": "Upload a zip of your SD card's DATALOG folders (ResMed AirSense 10/11). Nights are added to the archive and parsed automatically.",
+      "hint": "Upload a zip of your SD card: ResMed (its DATALOG folders), Sefam S.Box or Löwenstein Prisma. The card is recognised by its files, and every night not yet stored is added and parsed automatically.",
       "idle": "Drag a .zip here or click to choose",
       "uploading": "Uploading...",
       "imported": "Imported {{count}} night(s)"

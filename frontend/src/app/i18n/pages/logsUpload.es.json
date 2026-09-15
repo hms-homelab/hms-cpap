@@ -23,7 +23,7 @@
     "title": "Subir datos",
     "zip": {
       "heading": "Datos del CPAP (.zip)",
-      "hint": "Sube un zip con las carpetas DATALOG de tu tarjeta SD (ResMed AirSense 10/11). Las noches se añaden al archivo y se procesan automáticamente.",
+      "hint": "Sube un zip de tu tarjeta SD: ResMed (sus carpetas DATALOG), Sefam S.Box o Löwenstein Prisma. La tarjeta se reconoce por sus archivos, y cada noche que aún no está guardada se añade y se procesa automáticamente.",
       "idle": "Arrastra un .zip aquí o haz clic para elegir",
       "uploading": "Subiendo...",
       "imported": "{{count}} noche(s) importada(s)"

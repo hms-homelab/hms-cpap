@@ -260,3 +260,21 @@ TEST_F(SefamIngestionTest, InitialiseTwiceDoesNotDoubleTheSessions) {
     ASSERT_TRUE(ing.initialize());
     EXPECT_EQ(ing.sessionCount(), 1u);
 }
+
+// SDD-031: the collector keeps one SefamIngestion for its lifetime. A night
+// added to the folder after the first walk was never seen until a restart;
+// rescan() walks again, and is what the collector now calls every burst.
+TEST_F(SefamIngestionTest, ANightAddedAfterTheFirstWalkIsFoundByRescan) {
+    write("1263R24337476/DATA_1", "DATA_1.INI",
+          manifest("S.Box_AUTO", "1263R24337476", 2025, 11, 10, 22, 25, 16));
+    SefamIngestion ing(root_.string());
+    ASSERT_TRUE(ing.initialize());
+    ASSERT_EQ(ing.discoverSessions(std::nullopt).size(), 1u);
+
+    write("1263R24337476/DATA_2", "DATA_2.INI",
+          manifest("S.Box_AUTO", "1263R24337476", 2025, 11, 11, 22, 30, 0));
+    EXPECT_EQ(ing.discoverSessions(std::nullopt).size(), 1u) << "the cached walk";
+    ASSERT_TRUE(ing.rescan());
+    EXPECT_EQ(ing.discoverSessions(std::nullopt).size(), 2u);
+    EXPECT_EQ(ing.sessionCount(), 2u) << "a rescan replaces the list, it does not add to it";
+}

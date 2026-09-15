@@ -82,6 +82,18 @@ struct AppConfig {
         return transport;   // ezshare, fysetc
     }
 
+    /// What the collector builds for a transport/format pair, the same answer
+    /// at start and on a Settings reload. "local" for a ResMed folder, the
+    /// format for any other folder, "sefam_ezshare" for a Sefam card behind an
+    /// ez Share (SDD-031), else the transport. A Löwenstein behind an ez Share
+    /// is not a pair: the Prisma answers the ez Share with error 601.
+    static std::string collectorSource(const std::string& transport,
+                                       const std::string& format) {
+        if (transport == "local") return format == "resmed" ? "local" : format;
+        if (transport == "ezshare" && format == "sefam") return "sefam_ezshare";
+        return transport;
+    }
+
     /// Did these files arrive over a NETWORK, and therefore need writing down
     /// before anything can read them?
     ///

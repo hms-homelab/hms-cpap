@@ -135,10 +135,14 @@ Or without the script: `mkdir build && cd build && cmake .. && make -j$(nproc) &
   your LAN. The wizard can scan for one. To set a bridge up, the
   [hms-mm web flasher](https://hms-homelab.github.io/hms-mm/) flashes both of its
   boards from Chrome and takes your WiFi details on the same page -- nothing to
-  install.
+  install. Works with a ResMed card and a Sefam S.Box card. For a Sefam card,
+  set an archive folder: the card is copied there, all of it on the first run
+  and then its last two nights.
 - **Local folder**: point the wizard at the SD card root (the folder that holds
   both `STR.edf` and `DATALOG/`), on a USB reader, NAS share, or any mount.
-- **Upload page**: zip the card and drop it in the browser.
+- **Upload page**: zip the card and drop it in the browser. A ResMed, Sefam or
+  Löwenstein card is recognised by its files, and every night not yet stored is
+  imported.
 
 Everything else (config keys, CLI flags, MQTT sensor list, myAir setup,
 architecture, development, cross-compiling) is in
