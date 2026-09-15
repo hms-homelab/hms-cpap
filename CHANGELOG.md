@@ -5,6 +5,28 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.2.9] - 2026-09-15
+
+### Added
+- **A Sefam or Löwenstein card by upload** (#28, SDD-031). The upload page
+  now works out what card it was given from its files, not the install's
+  format. A Sefam S.Box/SleepBox or Löwenstein Prisma zip was refused with
+  "No DATALOG date folders". Such a card is kept under
+  `<data_dir>/uploads/<format>/`, and every session the database does not
+  hold yet is imported, older nights included, then the daily summary is
+  re-derived. Uploaded history is not published to MQTT and gets no AI
+  summary. Checked on a real S.Box card zipped inside a wrapper folder (241
+  sessions on 173 nights) and a real Prisma `therapy.pdat` (20 of 20,
+  identical to the local-folder path).
+- **A Sefam card through an ez Share** (#28, SDD-031). Settings offers the
+  Sefam format for ez Share. The card is copied into the archive folder:
+  all of it on the first burst, then only the card's last two nights, and a
+  file is fetched only when it is new or has changed.
+
+### Fixed
+- **A Sefam night added after startup was never read.** The local-folder
+  S.Box path scanned the folder once, at startup; it now rescans every burst.
+
 ## [5.2.8] - 2026-09-15
 
 ### Added
