@@ -5,6 +5,30 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.2.8] - 2026-09-15
+
+### Added
+- **A bi-level machine shows its pressures** (#33, SDD-030). On an AirCurve
+  (VAuto or S), Home Assistant gets `ipap`, `epap` and `pressure_support` per
+  night, and the STR day's prescribed `str_max_ipap`, `str_min_epap`,
+  `str_pressure_support` with the daily targets `str_tgt_ipap_95` and
+  `str_tgt_epap_95`. The machine's pressure channels were read all along; the
+  delivered one (IPAP on a bi-level) was never stored. Nights stored before
+  the upgrade gain it on their next reparse. An AirSense gets no new entities,
+  and a machine that stops being a bi-level has them removed. Checked on a real
+  AirCurve 11 VAuto and a real AirCurve 10 VAuto: IPAP and EPAP match the
+  files, and their difference is the prescribed pressure support.
+
+### Fixed
+- **The therapy mode sensor read 0 on every machine.** It now follows the
+  standing rule, the session's value first and the STR's when that is 0, so a
+  ResMed shows the mode its card reports. On a bi-level, 6 (AirCurve 10) and
+  8 (AirCurve 11) are named VAuto, not ASV.
+- **No oximeter no longer reads 0 % SpO2.** `str_spo2_50` is published as
+  unknown instead, replacing a stale retained 0.00.
+- An AirCurve 10's daily targets were dropped by the parser (cpapdash-parser
+  2026.8.2).
+
 ## [5.2.7] - 2026-09-14
 
 ### Fixed
