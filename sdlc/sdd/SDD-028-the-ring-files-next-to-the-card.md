@@ -2,7 +2,7 @@
 
 **Status:** Released in 5.2.6 (2026-09-13); amended in 5.2.7 (§6, 2026-09-14);
 D1 amended to one level deeper, and a ring file without the extension read
-by its header (§7, 2026-09-15, not released). Accepted 2026-09-13. Scope: both ways in; D1 root plus every
+by its header (§7, released in 5.2.10, 2026-09-15, installed on the Pi). Accepted 2026-09-13. Scope: both ways in; D1 root plus every
 top-level folder; D2 the ring's clock stored as-is.
 **Date:** 2026-09-13
 **Repo:** `hms-cpap`. One shared importer, the local-mode burst, the O2 upload
