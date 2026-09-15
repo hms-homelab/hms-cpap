@@ -1,5 +1,6 @@
 #include "utils/CardImport.h"
 
+#include "utils/ArchiveRecordCount.h"
 #include "utils/CardResidue.h"
 
 #include <algorithm>
@@ -64,6 +65,9 @@ CardImportResult mirrorCardInto(const std::string& extracted_root,
 
         out.copied++;
         if (!date_dir.empty()) out.dates.insert(date_dir);
+        // SDD-032: a signal file copied mid-recording carries ResMed's stale
+        // record count, which OSCAR trusts. No-op for anything else.
+        repairSignalEdfFile(dest.string());
 
         std::string lower = fname;
         std::transform(lower.begin(), lower.end(), lower.begin(),

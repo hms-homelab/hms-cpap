@@ -99,7 +99,10 @@ The behaviour lives here. Grouped by what they do:
   (ezShare over WiFi, a local card root, Fysetc sectors, Lowenstein, Sefam),
   downloads what changed, parses, stores, updates the folder ledger, writes the
   STR history, derives the daily summary, publishes to MQTT, and imports the
-  ring's `.vld` files beside the card. Owns `OximetryService`.
+  ring's `.vld` files beside the card. Owns `OximetryService`. Its archive
+  step, and a sweep before the first burst, set each ResMed signal file's EDF
+  record count to the real one (`utils/ArchiveRecordCount`, SDD-032), since
+  OSCAR trusts that field and a Range-resumed copy carries the stale one.
 - `SessionDiscoveryService`: groups card files into sessions. The one place
   session splitting is done; do not reimplement it.
 - `SyncFolderState`: the pure SDD-008 rules for whether a night's files are all

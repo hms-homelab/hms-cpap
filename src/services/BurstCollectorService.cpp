@@ -13,6 +13,7 @@
 #include "utils/AppConfig.h"
 #include "utils/FileUtils.h"
 #include "utils/CardResidue.h"
+#include "utils/ArchiveRecordCount.h"
 #include "services/OximetryImport.h"
 #include "services/RemovedNights.h"
 #include "services/SefamCardMirror.h"
@@ -642,12 +643,21 @@ bool BurstCollectorService::archiveSessionFiles(
             copied_count++;
         }
 
+        // SDD-032 (ticket 127): the copy just made, or skipped as the same size,
+        // carries the header the Range download read mid-recording, whose
+        // record count OSCAR trusts. Repaired here, same size or not: the
+        // machine's own finalize changes bytes, never the size.
+        const auto repair = repairSignalEdfsIn(archive_dir);
+
         if (copied_count > 0 || skipped_count > 0) {
             size_t total_kb = total_bytes / 1024;
             std::cout << "📦 Archive: " << date_folder
                       << " - Copied: " << copied_count
                       << ", Skipped: " << skipped_count
-                      << " (" << total_kb << " KB)" << std::endl;
+                      << " (" << total_kb << " KB)";
+            if (repair.repaired > 0)
+                std::cout << ", record count repaired in " << repair.repaired << " file(s)";
+            std::cout << std::endl;
         }
 
         return true;
@@ -2247,6 +2257,28 @@ bool BurstCollectorService::parseAndStoreSession(
 
 void BurstCollectorService::runLoop() {
     std::cout << "🔁 BurstCollectorService worker thread started" << std::endl;
+
+    // SDD-032 D2 (ticket 127): once, before the first burst, repair the record
+    // count of every ResMed signal file already in the archive the burst
+    // writes, so a history pulled with stale headers reads whole in OSCAR
+    // without downloading anything again. Never a card read in place (local
+    // mode, a Löwenstein or Sefam folder): that is the user's, not ours.
+    try {
+        const bool reads_card_in_place = !local_source_dir_.empty() || prisma_ingestion_ ||
+                                         (sefam_ingestion_ && !sefam_over_ezshare_);
+        if (!reads_card_in_place) {
+            const std::string archive = ConfigManager::get(
+                "CPAP_ARCHIVE_DIR",
+                (std::filesystem::path(hms_cpap::AppConfig::dataDir()) / "cpap_data").string());
+            const auto r = sweepArchiveSignalEdfs(archive);
+            if (r.checked > 0)
+                std::cout << "CPAP: EDF record counts: " << r.checked
+                          << " ResMed signal file(s) in " << archive << ", " << r.repaired
+                          << " repaired (SDD-032)" << std::endl;
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "CPAP: EDF record-count sweep failed: " << e.what() << std::endl;
+    }
 
     while (running_) {
         // Hot-reload config if changed via web UI

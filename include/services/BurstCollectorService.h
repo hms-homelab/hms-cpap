@@ -276,6 +276,13 @@ public:
         return buildRangeMetricsString(nights, period);
     }
 
+    /// Test-only: the burst's archive step (SDD-032 repairs its signal files).
+    bool archiveSessionFilesForTest(const std::string& date_folder,
+                                    const std::string& temp_base_dir,
+                                    const std::string& archive_base_dir) {
+        return archiveSessionFiles(date_folder, temp_base_dir, archive_base_dir);
+    }
+
 private:
     // Configuration
     int burst_interval_seconds_;
