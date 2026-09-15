@@ -5,6 +5,24 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.2.10] - 2026-09-15
+
+### Fixed
+- **Ring files kept in a folder per night were never imported** (#32,
+  SDD-028 §7). The `.vld` scan read the card root and each folder beside
+  DATALOG. A tool that files every night in its own folder
+  (`OXYMETRY/20260913/`) was one level too deep, and the scan's line said
+  "OXYMETRY/ holds 2 folder(s), which are not searched". It now also reads
+  each folder inside those, always, and still skips DATALOG and SETTINGS.
+
+### Added
+- **A ring file without the `.vld` extension is recognised by its header**
+  (#32). Not every export keeps the extension. A file with no extension in
+  those folders is imported when its header is a Wellue ring file's: version
+  3, a real date, and its own size at offset 9. Any other file is left alone
+  and not read again until it changes. A ring file still being written is
+  imported once it is complete.
+
 ## [5.2.9] - 2026-09-15
 
 ### Added
