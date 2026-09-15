@@ -4,7 +4,8 @@
 `uploads/` store; D3 an upload walks the whole history and fills what is
 missing; D4 ez Share copies the whole card on its first burst and, once there
 is history, looks only at the last two nights. Built and verified end to end
-2026-09-15 (§5), not released.
+2026-09-15 (§5). Released in 5.2.9 (tag v5.2.9, 2026-09-15), installed on the
+Pi.
 **Date:** 2026-09-15
 **Repo:** `hms-cpap` (the upload importer, the collector's ez Share path, the
 Settings page). No parser change.
