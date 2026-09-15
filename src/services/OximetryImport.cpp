@@ -48,6 +48,30 @@ std::vector<fs::path> vldFilesIn(const fs::path& dir) {
     return out;
 }
 
+/// Size and modified time, as the listing shows them.
+VldFileSig sigOf(const fs::path& p) {
+    VldFileSig s;
+    std::error_code ec;
+    const auto size = fs::file_size(p, ec);
+    if (!ec) s.size = size;
+    const auto t = fs::last_write_time(p, ec);
+    if (!ec) s.mtime = static_cast<long long>(t.time_since_epoch().count());
+    return s;
+}
+
+/// Folders directly inside [dir]. The scan does not descend into them, and its
+/// summary says so, since a tool that files nights per ring or per month would
+/// otherwise look like a scan that found nothing.
+int subfoldersIn(const fs::path& dir) {
+    int n = 0;
+    std::error_code ec;
+    for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
+        std::error_code de;
+        if (it->is_directory(de)) ++n;
+    }
+    return n;
+}
+
 }  // namespace
 
 bool isVldFilename(const std::string& name) {
@@ -88,50 +112,112 @@ VldImportResult importVldFile(IDatabase& db, const std::string& bytes,
 }
 
 VldFolderScan importVldFolder(IDatabase& db, const std::string& card_root,
-                              std::set<std::string>& refused,
+                              VldScanState& state,
                               const std::set<std::string>& removed_nights) {
     VldFolderScan scan;
     if (card_root.empty()) return scan;
     const fs::path root(card_root);
+    const std::string where = "O2Ring: card folder " + card_root + ": ";
     std::error_code ec;
-    if (!fs::is_directory(root, ec)) return scan;
 
-    // D1: the root, then each folder directly under it except the card's own.
-    std::vector<fs::path> files = vldFilesIn(root);
-    std::vector<fs::path> dirs;
-    for (fs::directory_iterator it(root, ec), end; !ec && it != end; it.increment(ec)) {
-        std::error_code de;
-        if (it->is_directory(de) && !isCardFolder(it->path().filename().string()))
-            dirs.push_back(it->path());
-    }
-    std::sort(dirs.begin(), dirs.end());
-    for (const auto& d : dirs) {
-        auto more = vldFilesIn(d);
-        files.insert(files.end(), more.begin(), more.end());
+    if (!fs::is_directory(root, ec)) {
+        scan.summary = where + "not a folder, nothing scanned";
+    } else {
+        // D1: the root, then each folder directly under it except the card's own.
+        std::vector<fs::path> files = vldFilesIn(root);
+        std::vector<fs::path> dirs;
+        std::error_code le;
+        for (fs::directory_iterator it(root, le), end; !le && it != end; it.increment(le)) {
+            std::error_code de;
+            if (it->is_directory(de) && !isCardFolder(it->path().filename().string()))
+                dirs.push_back(it->path());
+        }
+        std::sort(dirs.begin(), dirs.end());
+        for (const auto& d : dirs) {
+            auto more = vldFilesIn(d);
+            files.insert(files.end(), more.begin(), more.end());
+        }
+
+        int unreadable = 0;
+        std::set<std::string> seen;
+        for (const auto& p : files) {
+            ++scan.found;
+            const std::string key  = p.string();
+            const std::string name = p.filename().string();
+            const VldFileSig sig = sigOf(p);
+            seen.insert(key);
+
+            // Refused before: read it again only once it has changed.
+            if (auto r = state.refused.find(key); r != state.refused.end()) {
+                if (r->second == sig) { ++scan.skipped; ++unreadable; continue; }
+                state.refused.erase(r);
+            }
+
+            // Stored already. Seen for the first time in this run: trusted as
+            // it is. Seen before: read again if it changed since, which is the
+            // file the other tool was still writing when a pass stored it.
+            bool update = false;
+            if (db.oximetrySessionExists(kOximetryDeviceId, name)) {
+                auto known = state.stored.find(key);
+                if (known == state.stored.end()) {
+                    state.stored[key] = sig;
+                    ++scan.skipped;
+                    continue;
+                }
+                if (known->second == sig) { ++scan.skipped; continue; }
+                update = true;
+            }
+
+            std::ifstream in(p, std::ios::binary);
+            const std::string bytes((std::istreambuf_iterator<char>(in)),
+                                    std::istreambuf_iterator<char>());
+            const auto r = importVldFile(db, bytes, name, removed_nights);
+            if (r.ok) {
+                state.stored[key] = sig;
+                if (update) ++scan.reimported; else ++scan.imported;
+                std::cout << "O2Ring: " << (update ? "updated " : "imported ") << key
+                          << (update ? " (it changed since it was stored, " : " (")
+                          << r.samples << " samples, avg SpO2 " << r.avg_spo2 << "%)"
+                          << std::endl;
+            } else if (r.removed_night) {
+                ++scan.skipped;  // quiet, and not remembered: a Reparse may restore it
+            } else {
+                state.refused[key] = sig;
+                ++scan.refused;
+                ++unreadable;
+                std::cerr << "O2Ring: " << r.error << " (" << key
+                          << "), read again when the file changes" << std::endl;
+            }
+        }
+
+        // Forget files that are gone, so the maps do not grow without bound.
+        for (auto* m : {&state.stored, &state.refused})
+            for (auto it = m->begin(); it != m->end();)
+                it = seen.count(it->first) ? std::next(it) : m->erase(it);
+
+        // The one line that answers "did it look where my files are?".
+        std::string places = "the root";
+        for (const auto& d : dirs) places += ", " + d.filename().string() + "/";
+        scan.summary = where;
+        if (le) scan.summary += "could not list it fully (" + le.message() + "); ";
+        if (scan.found == 0)
+            scan.summary += "no .vld files in " + places;
+        else
+            scan.summary += std::to_string(scan.found) + " .vld file(s) in " + places;
+        scan.summary += " (DATALOG and SETTINGS are not searched)";
+        for (const auto& d : dirs)
+            if (const int n = subfoldersIn(d); n > 0)
+                scan.summary += "; " + d.filename().string() + "/ holds " + std::to_string(n) +
+                                " folder(s), which are not searched";
+        if (unreadable > 0)
+            scan.summary += "; " + std::to_string(unreadable) +
+                            " unreadable, read again when they change";
     }
 
-    for (const auto& p : files) {
-        const std::string name = p.filename().string();
-        if (refused.count(p.string()) || db.oximetrySessionExists(kOximetryDeviceId, name)) {
-            ++scan.skipped;
-            continue;
-        }
-        std::ifstream in(p, std::ios::binary);
-        const std::string bytes((std::istreambuf_iterator<char>(in)),
-                                std::istreambuf_iterator<char>());
-        const auto r = importVldFile(db, bytes, name, removed_nights);
-        if (r.ok) {
-            ++scan.imported;
-            std::cout << "O2Ring: imported " << p.string() << " (" << r.samples
-                      << " samples, avg SpO2 " << r.avg_spo2 << "%)" << std::endl;
-        } else if (r.removed_night) {
-            ++scan.skipped;  // quiet, and not remembered: a Reparse may restore it
-        } else {
-            ++scan.refused;
-            refused.insert(p.string());
-            std::cerr << "O2Ring: " << r.error << " (" << p.string()
-                      << "), not retried until restart" << std::endl;
-        }
+    if (scan.summary != state.last_summary) {
+        std::cout << scan.summary << std::endl;
+        state.last_summary = scan.summary;
+        scan.summary_logged = true;
     }
     return scan;
 }

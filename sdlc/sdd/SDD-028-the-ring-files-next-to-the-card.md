@@ -1,6 +1,6 @@
 # SDD-028: the ring's files next to the card
 
-**Status:** Released in 5.2.6 (2026-09-13). Accepted 2026-09-13. Scope: both ways in; D1 root plus every
+**Status:** Released in 5.2.6 (2026-09-13); amended in 5.2.7 (§6, 2026-09-14). Accepted 2026-09-13. Scope: both ways in; D1 root plus every
 top-level folder; D2 the ring's clock stored as-is.
 **Date:** 2026-09-13
 **Repo:** `hms-cpap`. One shared importer, the local-mode burst, the O2 upload
@@ -102,3 +102,55 @@ Re-uploading a file already stored updates it in place (the UNIQUE filename).
 
 A patch on 5.2.5 (Albin's number), the normal tag flow. The reply on #32 is
 Albin's.
+
+## 6. Amendment, 2026-09-14 (5.2.7): a file that changes, and a scan that says what it saw
+
+**Trigger.** On 5.2.6 todd3835 (PostgreSQL, local card root `/CPAP`) reported
+that the upload imports his `.vld` but the `Oxymetry/` folder does not. His
+burst log shows the scan runs (it sits between the STR save and "Found 2
+session(s) to process") and logs nothing: the 5.2.6 scan printed a line only
+when it imported or refused something, so "no files where it looked" and
+"files already stored" looked the same. The cause is not yet known; his folder
+listing is asked for. Two defects of §2.2 surfaced either way.
+
+**2.4 A file is known by its name AND its size and modified time.** 5.2.6
+skipped any filename already stored. A pass that caught the file while the
+other tool was still writing it stored a short night (reproduced: a 640-byte
+file cut at 340 bytes stored 60 of its 120 samples) and never read it again.
+The scan now remembers, per path, the size and modified time the file had
+when it was stored, the card files' own rule. A stored file whose signature
+changed is stored again (same row, samples replaced; checked on SQLite and
+PostgreSQL). The memory is per process: after a restart a file already stored
+is trusted as it is, so a file stored short and completed exactly across a
+restart stays short. Persisting the signature would need a column on
+`oximetry_sessions` on three engines; not done for that window.
+
+**2.5 A file that will not parse is retried when it changes.** 5.2.6 kept it
+refused until a restart. It is now refused at the signature it had, and read
+again once that changes.
+
+**2.6 The scan says what it saw.** One line: the card root, how many `.vld`
+files, where it looked (the root and each folder it searched), that DATALOG
+and SETTINGS are not searched, which searched folders hold sub-folders it does
+not descend into, and how many files are unreadable. Logged on the first pass
+and again only when it changes, so a steady card costs no log lines:
+
+```
+O2Ring: card folder /CPAP: no .vld files in the root, Oxymetry/ (DATALOG and
+SETTINGS are not searched); Oxymetry/ holds 1 folder(s), which are not searched
+```
+
+Imports and updates keep their own lines (`O2Ring: imported …`,
+`O2Ring: updated … (it changed since it was stored, …)`).
+
+Not changed: the depth (one level below the root, D1). If todd's listing shows
+his tool nests files per ring or per month, that is a separate decision.
+
+**Tests.** `test_OximetryImport.cpp`: a stored file that changes is stored
+again and then left alone; an unreadable file is read again when it changes;
+a file stored before this run is trusted; nothing found names the folders it
+looked in and the nested one it did not; the summary is logged once. A
+PostgreSQL case (runs when `PGHOST` is set) checks the re-read replaces the
+samples. End to end on a throwaway instance: a nested folder only, then a
+half-written file (60 samples), then the whole file (updated, 120 samples),
+then two quiet bursts with no log lines.

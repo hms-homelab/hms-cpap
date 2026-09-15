@@ -1558,17 +1558,11 @@ bool BurstCollectorService::executeBurstCycle() {
 
         // SDD-028 (#32): the ring's .vld files beside DATALOG, written there by
         // another tool. Before the "no new sessions" return below, so they are
-        // picked up on a burst with no new CPAP file too; a name already stored
-        // is skipped, so a steady-state pass is a listing and a lookup per file.
-        if (db_service_) {
-            const auto scan = importVldFolder(*db_service_, local_source_dir_, vld_refused_,
-                                              removed_nights_);
-            if (scan.imported > 0 || scan.refused > 0) {
-                std::cout << "O2Ring: card folder " << scan.imported << " imported, "
-                          << scan.skipped << " already stored, " << scan.refused
-                          << " unreadable" << std::endl;
-            }
-        }
+        // picked up on a burst with no new CPAP file too. An unchanged stored
+        // file is skipped, so a steady-state pass is a listing and a lookup per
+        // file; the scan logs its own summary whenever what it sees changes.
+        if (db_service_)
+            importVldFolder(*db_service_, local_source_dir_, vld_scan_, removed_nights_);
 
         // SDD-010: local nights join the SDD-008 folder ledger, BEFORE the
         // session loop for the same reason spelled out in the ezShare branch:

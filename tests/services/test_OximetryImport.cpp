@@ -9,6 +9,9 @@
 #include "database/SQLiteDatabase.h"
 #include "services/OximetryImport.h"
 #include "utils/OximetryDevice.h"
+#ifdef WITH_POSTGRESQL
+#include "database/PostgresDatabase.h"
+#endif
 
 #include <cstdlib>
 #include <filesystem>
@@ -113,32 +116,112 @@ TEST_F(OximetryImportTest, TheScanReadsTheRootAndEveryFolderButTheCardsOwn) {
     put("SETTINGS/y.vld", vld(3, 2));           // nor this one
     put("Oxymetry/notes.txt", "not a ring file");
 
-    std::set<std::string> refused;
-    const auto scan = importVldFolder(*db_, root_.string(), refused);
+    VldScanState state;
+    const auto scan = importVldFolder(*db_, root_.string(), state);
+    EXPECT_EQ(scan.found, 3);
     EXPECT_EQ(scan.imported, 3);
     EXPECT_EQ(scan.refused, 0);
     EXPECT_EQ(sessions(), 3);
+    // It says where it looked and what it saw.
+    EXPECT_TRUE(scan.summary_logged);
+    EXPECT_NE(scan.summary.find("3 .vld file(s)"), std::string::npos) << scan.summary;
+    EXPECT_NE(scan.summary.find("Oxymetry/"), std::string::npos) << scan.summary;
+    EXPECT_NE(scan.summary.find("Oximetry/"), std::string::npos) << scan.summary;
+    EXPECT_EQ(scan.summary.find("DATALOG/"), std::string::npos) << scan.summary;
     EXPECT_TRUE(db_->oximetrySessionExists(kOximetryDeviceId, "a.vld"));
     EXPECT_TRUE(db_->oximetrySessionExists(kOximetryDeviceId, "b.VLD"));
     EXPECT_TRUE(db_->oximetrySessionExists(kOximetryDeviceId, "root.vld"));
     EXPECT_FALSE(db_->oximetrySessionExists(kOximetryDeviceId, "x.vld"));
     EXPECT_FALSE(db_->oximetrySessionExists(kOximetryDeviceId, "y.vld"));
 
-    // The next burst: everything is already stored, nothing is re-imported.
-    const auto again = importVldFolder(*db_, root_.string(), refused);
+    // The next burst: everything is already stored, nothing is re-imported,
+    // and the same summary is not logged again.
+    const auto again = importVldFolder(*db_, root_.string(), state);
     EXPECT_EQ(again.imported, 0);
+    EXPECT_EQ(again.reimported, 0);
     EXPECT_EQ(again.skipped, 3);
+    EXPECT_FALSE(again.summary_logged);
     EXPECT_EQ(sessions(), 3);
 }
 
-TEST_F(OximetryImportTest, AnUnreadableFileIsReportedOnceAndNotReReadEveryBurst) {
+TEST_F(OximetryImportTest, AnUnreadableFileIsNotReReadEveryBurst) {
     put("Oxymetry/broken.vld", "garbage");
-    std::set<std::string> refused;
-    EXPECT_EQ(importVldFolder(*db_, root_.string(), refused).refused, 1);
-    const auto again = importVldFolder(*db_, root_.string(), refused);
-    EXPECT_EQ(again.refused, 0) << "not retried every burst";
+    VldScanState state;
+    const auto first = importVldFolder(*db_, root_.string(), state);
+    EXPECT_EQ(first.refused, 1);
+    EXPECT_NE(first.summary.find("1 unreadable"), std::string::npos) << first.summary;
+    const auto again = importVldFolder(*db_, root_.string(), state);
+    EXPECT_EQ(again.refused, 0) << "not retried while it is unchanged";
     EXPECT_EQ(again.skipped, 1);
     EXPECT_EQ(sessions(), 0);
+}
+
+// #32, amended 2026-09-14: a file the scan could not read is read again once
+// it changes (the other tool finished writing it), not only after a restart.
+TEST_F(OximetryImportTest, AnUnreadableFileIsReadAgainWhenItChanges) {
+    put("Oxymetry/a.vld", "garbage");
+    VldScanState state;
+    EXPECT_EQ(importVldFolder(*db_, root_.string(), state).refused, 1);
+
+    put("Oxymetry/a.vld", vld(3, 22));   // now the whole file
+    const auto scan = importVldFolder(*db_, root_.string(), state);
+    EXPECT_EQ(scan.imported, 1);
+    EXPECT_EQ(scan.refused, 0);
+    EXPECT_TRUE(state.refused.empty());
+    EXPECT_EQ(sessions(), 1);
+}
+
+// #32: a file stored while the other tool was still writing it is stored again
+// when it grows, so the night is not left short. Same name, same row.
+TEST_F(OximetryImportTest, AStoredFileThatChangesIsStoredAgain) {
+    put("Oxymetry/a.vld", vld(3, 22));
+    VldScanState state;
+    EXPECT_EQ(importVldFolder(*db_, root_.string(), state).imported, 1);
+    EXPECT_EQ(count(*db_, "SELECT COUNT(*) AS n FROM oximetry_samples"), 3);
+
+    put("Oxymetry/a.vld", vld(8, 22));   // the rest of the night arrived
+    const auto scan = importVldFolder(*db_, root_.string(), state);
+    EXPECT_EQ(scan.imported, 0);
+    EXPECT_EQ(scan.reimported, 1);
+    EXPECT_EQ(sessions(), 1) << "the same night, not a second one";
+    EXPECT_EQ(count(*db_, "SELECT COUNT(*) AS n FROM oximetry_samples"), 8);
+
+    // And once it stops changing, it is left alone.
+    const auto settled = importVldFolder(*db_, root_.string(), state);
+    EXPECT_EQ(settled.reimported, 0);
+    EXPECT_EQ(settled.skipped, 1);
+}
+
+// After a restart the scan has no memory of sizes: a file already stored (by an
+// earlier run or by the upload) is trusted as it is rather than re-read.
+TEST_F(OximetryImportTest, AFileStoredBeforeThisRunIsTrustedAsItIs) {
+    put("Oxymetry/a.vld", vld(3, 22));
+    ASSERT_TRUE(importVldFile(*db_, vld(3, 22), "a.vld").ok);   // the upload, say
+    VldScanState state;
+    const auto scan = importVldFolder(*db_, root_.string(), state);
+    EXPECT_EQ(scan.found, 1);
+    EXPECT_EQ(scan.imported, 0);
+    EXPECT_EQ(scan.reimported, 0);
+    EXPECT_EQ(scan.skipped, 1);
+    EXPECT_EQ(sessions(), 1);
+}
+
+// #32: the scan used to say nothing when it found nothing, so a log could not
+// tell "no files where it looked" from "files already stored". It now says
+// where it looked, and names the folders it does not descend into.
+TEST_F(OximetryImportTest, WhenItFindsNothingItSaysWhereItLooked) {
+    put("Oxymetry/O2Ring 1234/20260912223000.vld", vld(3, 22));   // one level too deep
+    VldScanState state;
+    const auto scan = importVldFolder(*db_, root_.string(), state);
+    EXPECT_EQ(scan.found, 0);
+    EXPECT_EQ(sessions(), 0);
+    EXPECT_TRUE(scan.summary_logged);
+    EXPECT_NE(scan.summary.find("no .vld files in the root, Oxymetry/"), std::string::npos)
+        << scan.summary;
+    EXPECT_NE(scan.summary.find("Oxymetry/ holds 1 folder(s), which are not searched"),
+              std::string::npos) << scan.summary;
+    // Logged once, not every burst.
+    EXPECT_FALSE(importVldFolder(*db_, root_.string(), state).summary_logged);
 }
 
 // SDD-029: a night the operator removed is not brought back by the scan, and
@@ -146,26 +229,27 @@ TEST_F(OximetryImportTest, AnUnreadableFileIsReportedOnceAndNotReReadEveryBurst)
 // ring data back on the next pass.
 TEST_F(OximetryImportTest, ARemovedNightsFileIsSkippedUntilTheNightIsRestored) {
     put("Oxymetry/a.vld", vld(3, 22));   // 2026-09-12 22:30, night 20260912
-    std::set<std::string> refused;
+    VldScanState state;
     std::set<std::string> removed{"20260912"};
 
-    const auto scan = importVldFolder(*db_, root_.string(), refused, removed);
+    const auto scan = importVldFolder(*db_, root_.string(), state, removed);
     EXPECT_EQ(scan.imported, 0);
     EXPECT_EQ(scan.skipped, 1);
     EXPECT_EQ(scan.refused, 0) << "a removed night is not a bad file";
-    EXPECT_TRUE(refused.empty()) << "must not be remembered past a restore";
+    EXPECT_TRUE(state.refused.empty()) << "must not be remembered past a restore";
+    EXPECT_TRUE(state.stored.empty()) << "must not be remembered past a restore";
     EXPECT_EQ(sessions(), 0);
 
     removed.clear();   // Reparse restored it
-    EXPECT_EQ(importVldFolder(*db_, root_.string(), refused, removed).imported, 1);
+    EXPECT_EQ(importVldFolder(*db_, root_.string(), state, removed).imported, 1);
     EXPECT_EQ(sessions(), 1);
 }
 
 TEST_F(OximetryImportTest, ARemovedNightLeavesTheOtherNightsAlone) {
     put("Oxymetry/a.vld", vld(3, 22));   // night 20260912
     put("Oxymetry/b.vld", vld(3, 10));   // 2026-09-12 10:30, night 20260911
-    std::set<std::string> refused;
-    const auto scan = importVldFolder(*db_, root_.string(), refused, {"20260912"});
+    VldScanState state;
+    const auto scan = importVldFolder(*db_, root_.string(), state, {"20260912"});
     EXPECT_EQ(scan.imported, 1);
     EXPECT_EQ(scan.skipped, 1);
 }
@@ -181,10 +265,57 @@ TEST_F(OximetryImportTest, TheUploadNamesNoRemovedNightsSoItStores) {
 }
 
 TEST_F(OximetryImportTest, AMissingOrEmptyRootIsANoOpNotAThrow) {
-    std::set<std::string> refused;
-    EXPECT_EQ(importVldFolder(*db_, "", refused).imported, 0);
-    EXPECT_EQ(importVldFolder(*db_, (root_ / "nope").string(), refused).imported, 0);
+    VldScanState state;
+    EXPECT_EQ(importVldFolder(*db_, "", state).imported, 0);
+    const auto missing = importVldFolder(*db_, (root_ / "nope").string(), state);
+    EXPECT_EQ(missing.imported, 0);
+    EXPECT_NE(missing.summary.find("not a folder"), std::string::npos) << missing.summary;
     EXPECT_EQ(sessions(), 0);
+}
+
+// #32 runs PostgreSQL. The re-read of a changed file is an upsert on the
+// filename, and the night's samples must be replaced, not added to. Runs when
+// PGHOST is set; the rows are namespaced to this process and deleted.
+TEST(OximetryImportPostgres, AStoredFileThatChangesReplacesItsSamples) {
+#ifndef WITH_POSTGRESQL
+    GTEST_SKIP() << "built without PostgreSQL";
+#else
+    const char* host = std::getenv("PGHOST");
+    if (!host || !*host) GTEST_SKIP() << "PGHOST unset, skipping PostgreSQL.";
+    auto env = [](const char* k, const char* d) {
+        const char* v = std::getenv(k);
+        return std::string(v && *v ? v : d);
+    };
+    PostgresDatabase db("host=" + std::string(host) + " port=" + env("PGPORT", "5432") +
+                        " user=" + env("PGUSER", "maestro") + " password=" +
+                        env("PGPASSWORD", "") + " dbname=" + env("PGDATABASE", "cpap_monitoring") +
+                        " connect_timeout=3");
+    if (!db.connect()) GTEST_SKIP() << "No usable PostgreSQL at " << host;
+
+    const auto tag = std::to_string(::getpid());
+    const fs::path root = fs::temp_directory_path() / ("hms_vld_pg_" + tag);
+    fs::remove_all(root);
+    fs::create_directories(root / "Oxymetry");
+    const std::string name = "pg" + tag + ".vld";
+    auto write = [&](int records) {
+        std::ofstream(root / "Oxymetry" / name, std::ios::binary) << vld(records, 22);
+    };
+    auto samples = [&] {
+        return count(db, "SELECT COUNT(*) AS n FROM oximetry_samples WHERE oximetry_session_id IN "
+                         "(SELECT id FROM oximetry_sessions WHERE filename = '" + name + "')");
+    };
+
+    VldScanState state;
+    write(3);
+    EXPECT_EQ(importVldFolder(db, root.string(), state).imported, 1);
+    EXPECT_EQ(samples(), 3);
+    write(8);
+    EXPECT_EQ(importVldFolder(db, root.string(), state).reimported, 1);
+    EXPECT_EQ(samples(), 8) << "replaced, not 11";
+
+    db.executeQuery("DELETE FROM oximetry_sessions WHERE filename = $1", {name});
+    fs::remove_all(root);
+#endif
 }
 
 TEST(OximetryImportName, OnlyAVldEndingCounts) {

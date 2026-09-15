@@ -15,6 +15,7 @@
 #include "services/SupplyPublisher.h"
 #include "services/CpapDashSyncService.h"
 #include "services/MyAirService.h"
+#include "services/OximetryImport.h"
 #include "services/OximetryService.h"
 #include "services/PrismaIngestion.h"
 #include "services/SefamIngestion.h"
@@ -295,9 +296,10 @@ private:
     std::string local_source_dir_;
     std::string cpap_source_;       // "ezshare", "local", "fysetc", or "lowenstein"
 
-    /// SDD-028: .vld files beside the card that would not parse, by path, so a
-    /// bad file is reported once and not re-read every burst until a restart.
-    std::set<std::string> vld_refused_;
+    /// SDD-028: what the card-folder .vld scan remembers between bursts: each
+    /// file's size and modified time when stored or refused, so a changed file
+    /// is read again and an unchanged one is not, and the summary last logged.
+    VldScanState vld_scan_;
 
     /// SDD-029: the nights an operator removed, re-read at the start of every
     /// burst. The STR write, every store loop, the .vld scan and the SleepHQ
