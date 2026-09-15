@@ -172,6 +172,7 @@ CREATE TABLE IF NOT EXISTS cpap_calculated_metrics (
     epr_pressure         FLOAT,
     snore_index          FLOAT,
     target_ventilation   FLOAT,
+    therapy_pressure     FLOAT,   -- SDD-030: PLD Press (IPAP on a bi-level)
     UNIQUE (session_id, timestamp),
     FOREIGN KEY (session_id) REFERENCES cpap_sessions(id) ON DELETE CASCADE
 );

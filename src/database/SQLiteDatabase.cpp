@@ -395,6 +395,7 @@ void SQLiteDatabase::createSchema() {
             epr_pressure         REAL,
             snore_index          REAL,
             target_ventilation   REAL,
+            therapy_pressure     REAL,
             UNIQUE (session_id, timestamp),
             FOREIGN KEY (session_id) REFERENCES cpap_sessions(id) ON DELETE CASCADE
         )
@@ -463,6 +464,9 @@ void SQLiteDatabase::createSchema() {
     sqlite3_exec(db_, "ALTER TABLE cpap_daily_summary ADD COLUMN index_kind TEXT DEFAULT 'ahi'",
                  nullptr, nullptr, nullptr);   // SDD-024, see above
     sqlite3_exec(db_, "ALTER TABLE cpap_daily_summary ADD COLUMN machine_hours REAL",
+                 nullptr, nullptr, nullptr);
+    // SDD-030: PLD Press per minute, the delivered pressure (IPAP on a bi-level).
+    sqlite3_exec(db_, "ALTER TABLE cpap_calculated_metrics ADD COLUMN therapy_pressure REAL",
                  nullptr, nullptr, nullptr);
     // SDD-026: the STR's own copy of the index family and the night's
     // duration, beside the shared columns that are ours once a night has
@@ -1136,8 +1140,9 @@ void SQLiteDatabase::insertCalculatedMetrics(int64_t session_id,
             (session_id, timestamp, respiratory_rate, tidal_volume, minute_ventilation,
              inspiratory_time, expiratory_time, ie_ratio, flow_limitation, leak_rate,
              flow_p95, flow_p90, pressure_p95, pressure_p90,
-             mask_pressure, epr_pressure, snore_index, target_ventilation)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             mask_pressure, epr_pressure, snore_index, target_ventilation,
+             therapy_pressure)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (session_id, timestamp) DO UPDATE SET
             respiratory_rate   = COALESCE(excluded.respiratory_rate,   respiratory_rate),
             tidal_volume       = COALESCE(excluded.tidal_volume,       tidal_volume),
@@ -1154,7 +1159,8 @@ void SQLiteDatabase::insertCalculatedMetrics(int64_t session_id,
             mask_pressure      = COALESCE(excluded.mask_pressure,      mask_pressure),
             epr_pressure       = COALESCE(excluded.epr_pressure,       epr_pressure),
             snore_index        = COALESCE(excluded.snore_index,        snore_index),
-            target_ventilation = COALESCE(excluded.target_ventilation, target_ventilation)
+            target_ventilation = COALESCE(excluded.target_ventilation, target_ventilation),
+            therapy_pressure   = COALESCE(excluded.therapy_pressure,   therapy_pressure)
     )";
 
     StmtGuard g;
@@ -1199,6 +1205,7 @@ void SQLiteDatabase::insertCalculatedMetrics(int64_t session_id,
         bind_opt(16, s.epr_pressure);
         bind_opt(17, s.snore_index);
         bind_opt(18, s.target_ventilation);
+        bind_opt(19, s.therapy_pressure);   // SDD-030
 
         if (sqlite3_step(g.stmt) != SQLITE_DONE) {
             std::cerr << "SQLite: insertCalculatedMetrics error: " << sqlite3_errmsg(db_) << std::endl;
@@ -2367,7 +2374,9 @@ std::optional<SessionMetrics> SQLiteDatabase::getNightlyMetrics(
             -- 'ahi', so a night containing ANY ungraded session reads as
             -- ungraded. That is the safe direction -- a night is only
             -- gradable if every session in it was.
-            MAX(COALESCE(sm.index_kind, 'ahi')) AS index_kind
+            MAX(COALESCE(sm.index_kind, 'ahi')) AS index_kind,
+            -- SDD-030: PLD Press, averaged like the EPR pressure beside it.
+            AVG(c.avg_therapy_press) AS avg_therapy_pressure
         FROM cpap_sessions s
         JOIN cpap_session_metrics sm ON sm.session_id = s.id
         LEFT JOIN (
@@ -2381,7 +2390,8 @@ std::optional<SessionMetrics> SQLiteDatabase::getNightlyMetrics(
                    AVG(mask_pressure) AS avg_mask_press,
                    AVG(epr_pressure) AS avg_epr_press,
                    AVG(snore_index) AS avg_snore_idx,
-                   AVG(target_ventilation) AS avg_tgt_vent
+                   AVG(target_ventilation) AS avg_tgt_vent,
+                   AVG(therapy_pressure) AS avg_therapy_press
             FROM cpap_calculated_metrics GROUP BY session_id
         ) c ON c.session_id = sm.session_id
         LEFT JOIN (
@@ -2413,6 +2423,7 @@ std::optional<SessionMetrics> SQLiteDatabase::getNightlyMetrics(
     // 24=avg_mask_pressure  25=avg_epr_pressure  26=avg_snore  27=avg_target_ventilation
     // 28=avg_pressure  29=max_pressure  30=min_pressure
     // 31=leak_p50  32=leak_p95_sess  33=therapy_mode  34=index_kind
+    // 35=avg_therapy_pressure
     SessionMetrics m;
     m.total_events        = col_int(g.stmt, 1);
     m.ahi                 = col_double(g.stmt, 11);
@@ -2456,6 +2467,7 @@ std::optional<SessionMetrics> SQLiteDatabase::getNightlyMetrics(
     m.index_kind = (col_text(g.stmt, 34) == "ungraded")
                        ? SessionMetrics::IndexKind::Ungraded
                        : SessionMetrics::IndexKind::AHI;
+    m.avg_therapy_pressure = col_opt_double(g.stmt, 35);   // SDD-030
 
     return m;
 }

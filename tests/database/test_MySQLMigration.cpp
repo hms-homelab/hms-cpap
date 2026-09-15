@@ -58,6 +58,7 @@ const std::vector<Expected> kCriticalColumns = {
     {"cpap_session_metrics", "avg_mask_pressure", "PLD metrics"},
     {"cpap_session_metrics", "therapy_mode", "ASV support"},
     {"cpap_calculated_metrics", "target_ventilation", "ASV per-minute data"},
+    {"cpap_calculated_metrics", "therapy_pressure", "SDD-030 IPAP on a bi-level"},
     {"cpap_daily_summary", "patient_hours", "STR compliance"},
     {"cpap_daily_summary", "mask_pairs", "STR mask on/off pairs"},
     {"oximetry_sessions", "avg_spo2", "getOximetrySummary"},

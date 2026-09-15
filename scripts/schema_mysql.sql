@@ -161,6 +161,7 @@ CREATE TABLE IF NOT EXISTS cpap_calculated_metrics (
     epr_pressure         DOUBLE,
     snore_index          DOUBLE,
     target_ventilation   DOUBLE,
+    therapy_pressure     DOUBLE,  -- SDD-030: PLD Press (IPAP on a bi-level)
     UNIQUE KEY uq_session_calc_ts (session_id, timestamp),
     FOREIGN KEY (session_id) REFERENCES cpap_sessions(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

@@ -551,6 +551,97 @@ TEST_F(PayloadTest, PublishSTRState_NoNightlyAhi_DeltaIsZero) {
     EXPECT_EQ(delta, "0.00");
 }
 
+// ── SDD-030 (#33): a bi-level machine ────────────────────────────────────────
+
+/// The STR day of an AirCurve 11 VAuto without an oximeter, as the reporter's
+/// card has it: its prescribed pressures and targets go out, and its SpO2
+/// median (-1) does not go out as a reading.
+TEST_F(PayloadTest, PublishSTRState_ABilevelDayCarriesItsPressuresAndNoFakeSpo2) {
+    if (!connected) GTEST_SKIP() << "MQTT broker not available";
+
+    STRDailyRecord rec;
+    rec.family = STRDailyRecord::Family::BiLevel;
+    rec.ahi = 1.3;
+    rec.duration_minutes = 265.0;
+    rec.spo2_50 = -1;
+    rec.bl_max_ipap = 20;
+    rec.bl_min_epap = 5;
+    rec.bl_ps = 4;
+    rec.tgt_ipap_95 = 11.2;
+    rec.tgt_epap_95 = 7.3;
+
+    auto received = capture("cpap/+/daily/#", [&] { publisher->publishSTRState(rec); });
+    auto get = [&](const std::string& suffix) -> std::string {
+        for (const auto& [t, v] : received)
+            if (t.size() >= suffix.size() &&
+                t.compare(t.size() - suffix.size(), suffix.size(), suffix) == 0)
+                return v;
+        return "<missing>";
+    };
+    EXPECT_EQ(get("/str_max_ipap"), "20.00");
+    EXPECT_EQ(get("/str_min_epap"), "5.00");
+    EXPECT_EQ(get("/str_pressure_support"), "4.00");
+    EXPECT_EQ(get("/str_tgt_ipap_95"), "11.20");
+    EXPECT_EQ(get("/str_tgt_epap_95"), "7.30");
+    // Not merely skipped: "None" (HA's unknown) replaces whatever an earlier
+    // version left retained, here the 95.00 an earlier test in this suite did.
+    EXPECT_EQ(get("/str_spo2_50"), "None") << "no oximeter is not 0 %";
+}
+
+/// The first bi-level report announces the sensors, and the night then carries
+/// IPAP, EPAP and their difference. An AirSense night gets none of them.
+TEST_F(PayloadTest, ABilevelNightPublishesIpapEpapAndPressureSupport) {
+    if (!connected) GTEST_SKIP() << "MQTT broker not available";
+
+    SessionMetrics m;
+    m.avg_therapy_pressure = 9.02;
+    m.avg_epr_pressure = 5.02;
+
+    // A machine that stops being a bi-level (a user who changed machines, or
+    // an earlier run of this test) has its bi-level entities removed: the
+    // retained state and the discovery config both go.
+    publisher->setMachineFamily(STRDailyRecord::Family::BiLevel);
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    auto removal = capture("homeassistant/sensor/+/+/config", [&] {
+        publisher->setMachineFamily(STRDailyRecord::Family::AutoSet);
+    });
+    bool config_cleared = false;
+    for (const auto& [t, v] : removal)
+        if (t.find("/hist_ipap/config") != std::string::npos && v.empty()) config_cleared = true;
+    EXPECT_TRUE(config_cleared) << "hist_ipap discovery not removed on leaving bi-level";
+
+    // An AirSense night: the same channels mean something else there.
+    auto airsense = capture("cpap/+/historical/#", [&] { publisher->publishHistoricalState(m); });
+    for (const auto& [t, v] : airsense)
+        if (t.find("/historical/ipap") != std::string::npos)
+            EXPECT_TRUE(v.empty()) << "an AirSense night published IPAP: " << v;
+
+    auto discovery = capture("homeassistant/sensor/+/+/config", [&] {
+        publisher->setMachineFamily(STRDailyRecord::Family::BiLevel);
+    });
+    auto announced = [&](const std::string& id) {
+        for (const auto& [t, v] : discovery)
+            if (t.find("/" + id + "/config") != std::string::npos) return true;
+        return false;
+    };
+    EXPECT_TRUE(announced("hist_ipap"));
+    EXPECT_TRUE(announced("hist_epap"));
+    EXPECT_TRUE(announced("hist_pressure_support"));
+    EXPECT_TRUE(announced("daily_str_max_ipap"));
+
+    auto night = capture("cpap/+/historical/#", [&] { publisher->publishHistoricalState(m); });
+    auto get = [&](const std::string& suffix) -> std::string {
+        for (const auto& [t, v] : night)
+            if (t.size() >= suffix.size() &&
+                t.compare(t.size() - suffix.size(), suffix.size(), suffix) == 0)
+                return v;
+        return "<missing>";
+    };
+    EXPECT_NEAR(std::stod(get("/historical/ipap")), 9.02, 1e-6);
+    EXPECT_NEAR(std::stod(get("/historical/epap")), 5.02, 1e-6);
+    EXPECT_NEAR(std::stod(get("/historical/pressure_support")), 4.0, 1e-6);
+}
+
 /**
  * publishSessionSummary wraps the text in {"summary": "..."} JSON and
  * publishes to the daily/session_summary topic.

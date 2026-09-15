@@ -878,6 +878,10 @@ bool BurstCollectorService::processSTRFile() {
 
         // Publish latest therapy day to MQTT
         const auto& latest = all_records.back();
+        // SDD-030: the machine family comes from the STR's signal set; the
+        // publisher needs it before this day's state to add a bi-level's
+        // pressures, and to announce them the first time.
+        if (data_publisher_) data_publisher_->setMachineFamily(latest.family);
         if (data_publisher_ && mqtt_client_ && mqtt_client_->isConnected()) {
             // Get our calculated nightly AHI for delta comparison
             double nightly_ahi = 0;
@@ -2742,14 +2746,14 @@ std::string BurstCollectorService::buildMetricsString(const SessionMetrics& metr
     if (metrics.avg_target_ventilation.has_value() && metrics.avg_target_ventilation.value() > 0) {
         oss << "Target ventilation (ASV): " << metrics.avg_target_ventilation.value() << " L/min\n";
     }
-    if (metrics.therapy_mode.has_value()) {
-        int mode = metrics.therapy_mode.value();
-        std::string mode_name = "Unknown";
-        if (mode == 0) mode_name = "CPAP";
-        else if (mode == 1) mode_name = "APAP";
-        else if (mode == 7) mode_name = "ASV (Fixed EPAP)";
-        else if (mode == 8) mode_name = "ASV (Variable EPAP)";
-        oss << "Therapy mode: " << mode_name << "\n";
+    // SDD-030: a ResMed session carries no mode (the parser sets it for
+    // Löwenstein), so the STR day's is used, and the number is named through
+    // the machine family: 8 is VAuto on an AirCurve, ASV on an AirCurve ASV.
+    {
+        const auto family = str_record ? str_record->family : MachineFamily::Unknown;
+        std::optional<int> mode = metrics.therapy_mode;
+        if (!mode && str_record) mode = str_record->mode;
+        if (mode) oss << "Therapy mode: " << therapyModeName(*mode, family) << "\n";
     }
 
     // Respiratory

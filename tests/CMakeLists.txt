@@ -62,6 +62,7 @@ set(TEST_SOURCES
     database/test_EquipmentBackends.cpp
     database/test_OximetryBackends.cpp
     database/test_RemoveNightBackends.cpp
+    database/test_BilevelPressureBackends.cpp
     database/test_MySQLMigration.cpp
     database/test_CleaningBackends.cpp
     database/test_SyncFolderBackends.cpp
@@ -109,6 +110,7 @@ set(TEST_SOURCES
     services/test_SessionDiscoveryService.cpp
     services/test_OximetryService.cpp
     services/test_OximetryImport.cpp
+    services/test_BilevelSensors.cpp
     services/test_O2RingCsvParser.cpp
     services/test_O2RingCsvWriter.cpp
     services/test_FysetcSectorCollectorService.cpp

@@ -587,6 +587,7 @@ void MySQLDatabase::createSchema() {
             epr_pressure         DOUBLE,
             snore_index          DOUBLE,
             target_ventilation   DOUBLE,
+            therapy_pressure     DOUBLE,
             UNIQUE KEY uq_session_calc_ts (session_id, timestamp),
             FOREIGN KEY (session_id) REFERENCES cpap_sessions(id) ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
@@ -1030,6 +1031,7 @@ void MySQLDatabase::migrateSchema() {
         {"cpap_calculated_metrics", "epr_pressure",        "DOUBLE"},
         {"cpap_calculated_metrics", "snore_index",         "DOUBLE"},
         {"cpap_calculated_metrics", "target_ventilation",  "DOUBLE"},
+        {"cpap_calculated_metrics", "therapy_pressure",    "DOUBLE"},   // SDD-030
 
         // v2.2.0 — desaturation metrics
         {"cpap_session_metrics", "odi",                    "DOUBLE"},
@@ -1585,8 +1587,9 @@ void MySQLDatabase::insertCalculatedMetrics(int64_t session_id,
             (session_id, timestamp, respiratory_rate, tidal_volume, minute_ventilation,
              inspiratory_time, expiratory_time, ie_ratio, flow_limitation, leak_rate,
              flow_p95, flow_p90, pressure_p95, pressure_p90,
-             mask_pressure, epr_pressure, snore_index, target_ventilation)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             mask_pressure, epr_pressure, snore_index, target_ventilation,
+             therapy_pressure)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
             respiratory_rate   = COALESCE(VALUES(respiratory_rate),   respiratory_rate),
             tidal_volume       = COALESCE(VALUES(tidal_volume),       tidal_volume),
@@ -1603,7 +1606,8 @@ void MySQLDatabase::insertCalculatedMetrics(int64_t session_id,
             mask_pressure      = COALESCE(VALUES(mask_pressure),      mask_pressure),
             epr_pressure       = COALESCE(VALUES(epr_pressure),       epr_pressure),
             snore_index        = COALESCE(VALUES(snore_index),        snore_index),
-            target_ventilation = COALESCE(VALUES(target_ventilation), target_ventilation)
+            target_ventilation = COALESCE(VALUES(target_ventilation), target_ventilation),
+            therapy_pressure   = COALESCE(VALUES(therapy_pressure),   therapy_pressure)
     )";
 
     MysqlStmtGuard g;
@@ -1625,7 +1629,7 @@ void MySQLDatabase::insertCalculatedMetrics(int64_t session_id,
             !s.target_ventilation && !s.leak_rate && !s.ie_ratio &&
             !s.epr_pressure && !s.therapy_pressure) continue;
 
-        ParamBinder p(18);
+        ParamBinder p(19);
         p.bindInt64(0, session_id);
         p.bindText(1, fmtTimestamp(s.timestamp));
 
@@ -1634,6 +1638,7 @@ void MySQLDatabase::insertCalculatedMetrics(int64_t session_id,
             else p.bindNull(idx);
         };
 
+        bind_opt(18, s.therapy_pressure);   // SDD-030
         bind_opt(2, s.respiratory_rate);
         bind_opt(3, s.tidal_volume);
         bind_opt(4, s.minute_ventilation);
@@ -2886,7 +2891,8 @@ std::optional<SessionMetrics> MySQLDatabase::getNightlyMetrics(
             MIN(b.min_press) AS min_pressure,
             MAX(sm.leak_p50) AS leak_p50,
             MAX(sm.leak_p95) AS leak_p95_sess,
-            MAX(sm.therapy_mode) AS therapy_mode
+            MAX(sm.therapy_mode) AS therapy_mode,
+            AVG(c.avg_therapy_press) AS avg_therapy_pressure
         FROM cpap_sessions s
         JOIN cpap_session_metrics sm ON sm.session_id = s.id
         LEFT JOIN (
@@ -2900,7 +2906,8 @@ std::optional<SessionMetrics> MySQLDatabase::getNightlyMetrics(
                    AVG(mask_pressure) AS avg_mask_press,
                    AVG(epr_pressure) AS avg_epr_press,
                    AVG(snore_index) AS avg_snore_idx,
-                   AVG(target_ventilation) AS avg_tgt_vent
+                   AVG(target_ventilation) AS avg_tgt_vent,
+                   AVG(therapy_pressure) AS avg_therapy_press
             FROM cpap_calculated_metrics GROUP BY session_id
         ) c ON c.session_id = sm.session_id
         LEFT JOIN (
@@ -2933,9 +2940,9 @@ std::optional<SessionMetrics> MySQLDatabase::getNightlyMetrics(
     mysql_stmt_bind_param(g.stmt, p.data());
     mysql_stmt_execute(g.stmt);
 
-    // 34 output columns (indices 0-33)
-    ResultBinder r(34);
-    for (int i = 0; i < 34; ++i) r.bindColDouble(i);
+    // 35 output columns (indices 0-34)
+    ResultBinder r(35);
+    for (int i = 0; i < 35; ++i) r.bindColDouble(i);
     // Override int columns
     r.bindColInt(1);   // total_events
     r.bindColInt(2);   // OA
@@ -2958,7 +2965,7 @@ std::optional<SessionMetrics> MySQLDatabase::getNightlyMetrics(
     // 17=avg_mv  18=avg_it  19=avg_et  20=avg_ie  21=avg_fl  22=fp95  23=pp95
     // 24=avg_mask_pressure  25=avg_epr_pressure  26=avg_snore  27=avg_target_ventilation
     // 28=avg_pressure  29=max_pressure  30=min_pressure
-    // 31=leak_p50  32=leak_p95_sess  33=therapy_mode
+    // 31=leak_p50  32=leak_p95_sess  33=therapy_mode  34=avg_therapy_pressure
     SessionMetrics m;
     m.total_events        = r.colInt(1);
     m.ahi                 = r.colDouble(11);
@@ -2995,6 +3002,7 @@ std::optional<SessionMetrics> MySQLDatabase::getNightlyMetrics(
     m.leak_p50              = r.colOptDouble(31);
     m.leak_p95              = r.colOptDouble(32);
     m.therapy_mode          = r.colOptInt(33);
+    m.avg_therapy_pressure  = r.colOptDouble(34);   // SDD-030
 
     return m;
 }

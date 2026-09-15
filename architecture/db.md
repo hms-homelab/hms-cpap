@@ -104,7 +104,7 @@ deletes its file rows first (`deleteSessionsByDateFolder`, `removeNight`).
 | `cpap_vitals` | UNIQUE `(session_id, timestamp)` | SpO2 and heart rate samples from the machine's own oximetry input. | `saveSession` | `QueryService`, agent tools |
 | `cpap_breathing_summary` | UNIQUE `(session_id, timestamp)` | Per-interval flow and pressure min/avg/max. | `saveSession` | `QueryService` (session signals) |
 | `cpap_breaths` | UNIQUE `(session_id, onset)` | Breath-by-breath: tidal volume, inspiratory/expiratory time, flow limitation. | `saveSession` | `QueryService` |
-| `cpap_calculated_metrics` | UNIQUE `(session_id, timestamp)` | Per-minute derived signals: respiratory rate, minute ventilation, I:E, leak, flow and pressure percentiles, snore, target ventilation. | `saveSession` | `QueryService` (session signals, trends) |
+| `cpap_calculated_metrics` | UNIQUE `(session_id, timestamp)` | Per-minute derived signals: respiratory rate, minute ventilation, I:E, leak, flow and pressure percentiles, snore, target ventilation, and the PLD pressures: `mask_pressure`, `epr_pressure` and `therapy_pressure` (SDD-030; on a bi-level the last two are EPAP and IPAP). | `saveSession` | `QueryService` (session signals, trends), `getNightlyMetrics` (the night's averages, MQTT) |
 | `cpap_sleep_stages` | UNIQUE `(session_id, epoch_start_ts)` | Inferred sleep stage per 30 s epoch (0 wake, 1 light, 2 deep, 3 REM), confidence, `provisional`, model version. Runtime-created on PostgreSQL only. | `LiveSleepStageRunner` (raw SQL through `executeQuery`) | `CpapController::sessionSleepStages` |
 
 ### Therapy: per night and per range

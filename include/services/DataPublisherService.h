@@ -1,6 +1,7 @@
 #pragma once
 
 #include "parsers/CpapdashBridge.h"
+#include "services/BilevelSensors.h"
 #include "services/InsightsEngine.h"
 #include "mqtt_client.h"
 #include "mqtt/DiscoveryPublisher.h"
@@ -107,6 +108,14 @@ public:
 
     void publishHistoricalState(const SessionMetrics& m);
 
+    /// SDD-030: the machine's family, from the STR the collector just parsed.
+    /// On the first report of a bi-level the bi-level sensors are announced
+    /// to Home Assistant; from then on the historical and STR publishes carry
+    /// them. Unknown until an STR has been read, which leaves the publisher as
+    /// it was.
+    void setMachineFamily(MachineFamily family);
+    MachineFamily machineFamily() const { return machine_family_; }
+
     /**
      * Publish STR daily summary to MQTT (daily/ namespace).
      *
@@ -175,6 +184,13 @@ private:
     std::string device_id_;
     std::string device_name_;
     std::string serial_number_;
+
+    MachineFamily machine_family_ = MachineFamily::Unknown;   // SDD-030
+
+    /// SDD-030: discovery for ipap/epap/pressure_support and the STR bi-level
+    /// settings. Only ever published for a bi-level, so an AirSense's Home
+    /// Assistant gains no entities that could never have a value.
+    bool publishBilevelDiscovery();
 
     /**
      * MQTT connection callback

@@ -262,6 +262,7 @@ bool DatabaseService::connect() {
                     epr_pressure         FLOAT,
                     snore_index          FLOAT,
                     target_ventilation   FLOAT,
+                    therapy_pressure     FLOAT,
                     UNIQUE (session_id, timestamp),
                     FOREIGN KEY (session_id) REFERENCES cpap_sessions(id) ON DELETE CASCADE
                     )
@@ -351,6 +352,8 @@ bool DatabaseService::connect() {
                 txn.exec("ALTER TABLE cpap_calculated_metrics ADD COLUMN IF NOT EXISTS epr_pressure FLOAT");
                 txn.exec("ALTER TABLE cpap_calculated_metrics ADD COLUMN IF NOT EXISTS snore_index FLOAT");
                 txn.exec("ALTER TABLE cpap_calculated_metrics ADD COLUMN IF NOT EXISTS target_ventilation FLOAT");
+                // SDD-030: PLD Press, the delivered pressure (IPAP on a bi-level)
+                txn.exec("ALTER TABLE cpap_calculated_metrics ADD COLUMN IF NOT EXISTS therapy_pressure FLOAT");
                 txn.commit();
                 std::cout << "  DB: v2.0.0 migration (PLD/ASV columns) applied" << std::endl;
             } catch (...) {
@@ -1062,7 +1065,8 @@ void DatabaseService::insertCalculatedMetrics(pqxx::work& work, int session_id,
           << "(session_id, timestamp, respiratory_rate, tidal_volume, minute_ventilation, "
           << "inspiratory_time, expiratory_time, ie_ratio, flow_limitation, leak_rate, "
           << "flow_p95, flow_p90, pressure_p95, pressure_p90, "
-          << "mask_pressure, epr_pressure, snore_index, target_ventilation) VALUES ";
+          << "mask_pressure, epr_pressure, snore_index, target_ventilation, "
+          << "therapy_pressure) VALUES ";
 
     for (size_t i = 0; i < with_metrics.size(); ++i) {
         const auto& s = *with_metrics[i];
@@ -1190,6 +1194,14 @@ void DatabaseService::insertCalculatedMetrics(pqxx::work& work, int session_id,
         } else {
             query << "NULL";
         }
+        query << ", ";
+
+        // SDD-030: PLD Press, the delivered pressure (IPAP on a bi-level)
+        if (s.therapy_pressure.has_value()) {
+            query << s.therapy_pressure.value();
+        } else {
+            query << "NULL";
+        }
 
         query << ")";
 
@@ -1209,7 +1221,8 @@ void DatabaseService::insertCalculatedMetrics(pqxx::work& work, int session_id,
                           "inspiratory_time", "expiratory_time", "ie_ratio",
                           "flow_limitation", "leak_rate", "flow_p95", "flow_p90",
                           "pressure_p95", "pressure_p90", "mask_pressure",
-                          "epr_pressure", "snore_index", "target_ventilation"};
+                          "epr_pressure", "snore_index", "target_ventilation",
+                          "therapy_pressure"};
     bool first = true;
     for (const char* c : cols) {
         query << (first ? " " : ", ") << c << " = COALESCE(EXCLUDED." << c
@@ -1990,7 +2003,9 @@ std::optional<SessionMetrics> DatabaseService::getNightlyMetrics(
                 MAX(sm.therapy_mode) AS therapy_mode,
                 -- SDD-024: 'ungraded' sorts after 'ahi', so a night holding ANY
                 -- ungraded session reads as ungraded. Mirrors SQLiteDatabase.
-                MAX(COALESCE(sm.index_kind, 'ahi')) AS index_kind
+                MAX(COALESCE(sm.index_kind, 'ahi')) AS index_kind,
+                -- SDD-030: PLD Press, averaged like the EPR pressure beside it.
+                AVG(c.avg_therapy_press) AS avg_therapy_pressure
             FROM cpap_sessions s
             JOIN cpap_session_metrics sm ON sm.session_id = s.id
             LEFT JOIN (
@@ -2004,7 +2019,8 @@ std::optional<SessionMetrics> DatabaseService::getNightlyMetrics(
                        AVG(mask_pressure) AS avg_mask_press,
                        AVG(epr_pressure) AS avg_epr_press,
                        AVG(snore_index) AS avg_snore_idx,
-                       AVG(target_ventilation) AS avg_tgt_vent
+                       AVG(target_ventilation) AS avg_tgt_vent,
+                       AVG(therapy_pressure) AS avg_therapy_press
                 FROM cpap_calculated_metrics GROUP BY session_id
             ) c ON c.session_id = sm.session_id
             LEFT JOIN (
@@ -2029,6 +2045,8 @@ std::optional<SessionMetrics> DatabaseService::getNightlyMetrics(
         SessionMetrics m;
         m.total_events        = row["total_events"].as<int>(0);
         m.ahi                 = row["ahi"].as<double>(0.0);
+        if (!row["avg_therapy_pressure"].is_null())   // SDD-030
+            m.avg_therapy_pressure = row["avg_therapy_pressure"].as<double>();
         // SDD-024: without this the Postgres backend hands back the struct
         // default and an apnea-only index claims to be an AHI.
         m.index_kind          = (row["index_kind"].as<std::string>("ahi") == "ungraded")

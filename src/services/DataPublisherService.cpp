@@ -78,6 +78,9 @@ bool DataPublisherService::publishDiscovery() {
     bool str_success = publishSTRDiscovery();
     bool insights_success = publishInsightsDiscovery();
     bool oxi_success = publishOximetryDiscovery();
+    // SDD-030: re-announced with the rest (broker reconnect, HA restart) once
+    // the machine is known to be a bi-level.
+    if (machine_family_ == MachineFamily::BiLevel) publishBilevelDiscovery();
 
     if (rt_success && hist_success && str_success && insights_success && oxi_success) {
         std::cout << "MQTT: Discovery published (11 realtime + 31 historical + 14 daily + 1 insights + 8 oximetry = 65 sensors)" << std::endl;
@@ -295,6 +298,76 @@ bool DataPublisherService::publishHistoricalDiscovery() {
 
     std::cout << "    ✓ 32 historical sensors" << std::endl;
     return true;
+}
+
+namespace {
+struct BilevelDef { std::string name, unit, icon, prefix, label, ns; };
+
+/// Per night, from the stored minutes (hist_*), and per STR day (daily_*).
+const std::vector<BilevelDef>& bilevelDefs() {
+    static const std::vector<BilevelDef> defs = {
+        {"ipap",                 "cmH2O", "mdi:gauge-full",  "hist_",  "HIST ", "historical"},
+        {"epap",                 "cmH2O", "mdi:gauge-low",   "hist_",  "HIST ", "historical"},
+        {"pressure_support",     "cmH2O", "mdi:arrow-expand-vertical", "hist_", "HIST ", "historical"},
+        {"str_max_ipap",         "cmH2O", "mdi:gauge-full",  "daily_", "STR ",  "daily"},
+        {"str_min_epap",         "cmH2O", "mdi:gauge-low",   "daily_", "STR ",  "daily"},
+        {"str_pressure_support", "cmH2O", "mdi:arrow-expand-vertical", "daily_", "STR ", "daily"},
+        {"str_tgt_ipap_95",      "cmH2O", "mdi:chart-bell-curve", "daily_", "STR ", "daily"},
+        {"str_tgt_epap_95",      "cmH2O", "mdi:chart-bell-curve", "daily_", "STR ", "daily"},
+    };
+    return defs;
+}
+}  // namespace
+
+void DataPublisherService::setMachineFamily(MachineFamily family) {
+    if (family == machine_family_) return;
+    const bool was_bilevel = machine_family_ == MachineFamily::BiLevel;
+    machine_family_ = family;
+    if (!mqtt_client_) return;
+    if (family == MachineFamily::BiLevel) {
+        std::cout << "MQTT: bi-level machine, announcing IPAP/EPAP sensors" << std::endl;
+        publishBilevelDiscovery();
+    } else if (was_bilevel) {
+        // SDD-023's rule: a user who changes machines must not be left with an
+        // entity frozen on the last bi-level night. An empty retained payload
+        // is how MQTT deletes a retained message; the discovery clear removes
+        // the entity from Home Assistant.
+        std::cout << "MQTT: no longer a bi-level machine, removing IPAP/EPAP sensors" << std::endl;
+        for (const auto& d : bilevelDefs()) {
+            mqtt_client_->publish("homeassistant/sensor/" + device_id_ + "/" + d.prefix + d.name +
+                                      "/config", "", 1, true);
+            mqtt_client_->publish("cpap/" + device_id_ + "/" + d.ns + "/" + d.name, "", 0, true);
+        }
+    }
+}
+
+bool DataPublisherService::publishBilevelDiscovery() {
+    if (!mqtt_client_) return true;
+    const std::string device_json = createDeviceJson();
+
+    bool ok = true;
+    for (const auto& d : bilevelDefs()) {
+        Json::Value config;
+        config["name"] = d.label + d.name;
+        config["unique_id"] = device_id_ + "_" + d.prefix + d.name;
+        config["state_topic"] = "cpap/" + device_id_ + "/" + d.ns + "/" + d.name;
+        config["unit_of_measurement"] = d.unit;
+        config["icon"] = d.icon;
+        config["state_class"] = "measurement";
+        Json::CharReaderBuilder rb;
+        std::istringstream device_stream(device_json);
+        Json::parseFromStream(rb, device_stream, &config["device"], nullptr);
+
+        Json::StreamWriterBuilder wb;
+        wb["indentation"] = "";
+        const std::string topic =
+            "homeassistant/sensor/" + device_id_ + "/" + d.prefix + d.name + "/config";
+        if (!mqtt_client_->publish(topic, Json::writeString(wb, config), 1, true)) {
+            std::cerr << "❌ MQTT: Failed to publish bi-level discovery for " << d.name << std::endl;
+            ok = false;
+        }
+    }
+    return ok;
 }
 
 void DataPublisherService::publishMqttState(const CPAPSession& session) {
@@ -611,6 +684,11 @@ void DataPublisherService::publishHistoricalState(const SessionMetrics& m) {
         mqtt_client_->publish("cpap/" + device_id_ + "/historical/therapy_mode",
                              std::to_string(m.therapy_mode.value()), 0, true);
     }
+    // SDD-030: IPAP, EPAP and their difference, on a bi-level only.
+    for (const auto& [name, value] : bilevelNightSensors(machine_family_, m)) {
+        mqtt_client_->publish("cpap/" + device_id_ + "/historical/" + name,
+                             std::to_string(value), 0, true);
+    }
 
     // SPO2
     if (m.avg_spo2.has_value()) {
@@ -789,8 +867,18 @@ void DataPublisherService::publishSTRState(const STRDailyRecord& record, double 
     pub("str_mask_events", static_cast<double>(record.mask_events / 2));  // pairs
     pub("str_leak_95", record.leak_95);
     pub("str_press_95", record.mask_press_95);
-    pub("str_spo2_50", record.spo2_50);
+    // SDD-030 (SDD-019's rule): no oximeter writes 0 or -1 here. Not publishing
+    // is not enough: an earlier version's retained 0.00 would stay on the
+    // broker and on the dashboard. "None" is Home Assistant's MQTT payload for
+    // unknown, and retained it replaces the stale reading; the entity stays for
+    // the night an oximeter is attached.
+    if (strSpo2Present(record.spo2_50))
+        pub("str_spo2_50", record.spo2_50);
+    else
+        mqtt_client_->publish(prefix + "str_spo2_50", "None", 0, true);
     pub("str_patient_hours", record.patient_hours);
+    // SDD-030: a bi-level's prescribed pressures and daily targets.
+    for (const auto& [name, value] : bilevelStrSensors(record)) pub(name, value);
 
     // AHI delta: str_ahi - our calculated ahi
     double delta = (nightly_ahi > 0) ? record.ahi - nightly_ahi : 0;
