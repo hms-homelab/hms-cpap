@@ -1,7 +1,10 @@
 # SDD-032: the archive carries the real record count
 
-**Status:** Accepted 2026-09-15. D1 the repair moves into the public parser;
-D2 a sweep of the existing archive at startup. A patch for both repos.
+**Status:** Released 2026-09-15: parser v2026.8.3, hms-cpap v5.2.11. On the
+Pi the first start's sweep checked 1471 signal files and repaired 302, which
+left none of its archive's files with data carrying a stale count. Accepted
+2026-09-15: D1 the repair moves into the public parser; D2 a sweep of the
+existing archive at startup.
 **Date:** 2026-09-15
 **Repo:** `hms-cpap` (the archive writers, the startup sweep), with
 `hms-cpapdash-parser` (the repair itself).
