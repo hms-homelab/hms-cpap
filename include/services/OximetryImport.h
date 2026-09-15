@@ -55,12 +55,14 @@ struct VldFileSig {
 struct VldScanState {
     std::map<std::string, VldFileSig> stored;    ///< as the file was when stored (or first seen stored)
     std::map<std::string, VldFileSig> refused;   ///< as the file was when it would not parse
+    std::map<std::string, VldFileSig> not_ring;  ///< extensionless, header did not match (§7)
     std::string last_summary;                    ///< the summary last logged
 };
 
 /// What one pass over a card root did.
 struct VldFolderScan {
-    int found      = 0;   ///< .vld files the pass saw
+    int found      = 0;   ///< .vld files the pass saw, extensionless ring files included
+    int bare       = 0;   ///< of those, files with no extension recognised by their header
     int imported   = 0;   ///< new nights stored
     int reimported = 0;   ///< stored before, changed since, stored again
     int skipped    = 0;   ///< unchanged and stored, unchanged and refused, or on a removed night
@@ -69,9 +71,11 @@ struct VldFolderScan {
     bool summary_logged = false;  ///< the summary differed from the last pass's and was logged
 };
 
-/// SDD-028 §2.2: every `*.vld` (any case) in [card_root] and in each folder
+/// SDD-028 §2.2: every `*.vld` (any case) in [card_root], in each folder
 /// directly under it except DATALOG and SETTINGS (D1: whatever the other tool
-/// names its folder). Amended 2026-09-14 (#32, 5.2.7):
+/// names its folder), and in each folder inside those (§7). A file with no
+/// extension there is a ring file too when its header says so (isVldHeader).
+/// Amended 2026-09-14 (#32, 5.2.7):
 /// - a stored file is read again when its size or modified time changes, so a
 ///   file the scan caught while the other tool was still writing it is
 ///   completed, not left short;
@@ -89,5 +93,11 @@ VldFolderScan importVldFolder(IDatabase& db, const std::string& card_root,
 
 /// True for a filename ending in `.vld`, any case.
 bool isVldFilename(const std::string& name);
+
+/// SDD-028 §7: whether the first bytes of a file with no extension are a
+/// Wellue ring file's header, in the layout of the one real export we have had:
+/// version 3 (u16 at 0), a real date and time (2-8), and the file's own size
+/// (u32 at 9) equal to [file_size]. [head] needs at least 13 bytes.
+bool isVldHeader(const std::string& head, std::uintmax_t file_size);
 
 }  // namespace hms_cpap

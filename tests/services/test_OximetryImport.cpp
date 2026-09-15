@@ -27,14 +27,20 @@ namespace fs = std::filesystem;
 
 namespace {
 
-/// A minimal valid VLD v3: header + [records] 5-byte records, starting at
+/// A minimal valid VLD v3 in the real Wellue layout (the parser's
+/// test_vld_parser.cpp): header + [records] 5-byte records, starting at
 /// 2026-09-12 [hour]:30:00, so two files differ by their start.
 std::string vld(int records = 3, int hour = 22) {
     std::vector<uint8_t> d(40 + 5 * records, 0);
+    auto u32 = [&](size_t off, uint32_t v) {
+        for (int i = 0; i < 4; ++i) d[off + i] = static_cast<uint8_t>(v >> (8 * i));
+    };
     d[0] = 3;                                  // version 3
     d[2] = 0xEA; d[3] = 0x07;                  // 2026
     d[4] = 9; d[5] = 12; d[6] = static_cast<uint8_t>(hour); d[7] = 30; d[8] = 0;
-    d[18] = static_cast<uint8_t>(records * 4); // duration, 4 s a record
+    u32(9, static_cast<uint32_t>(d.size()));   // the file's own size
+    u32(13, static_cast<uint32_t>(records * 4)); // duration, 4 s a record
+    d[22] = 4;                                 // sample interval, seconds
     for (int i = 0; i < records; ++i) {
         d[40 + 5 * i]     = static_cast<uint8_t>(95 - i);   // SpO2
         d[40 + 5 * i + 1] = 70;                              // HR
@@ -256,6 +262,67 @@ TEST_F(OximetryImportTest, ANightPerFolderInsideTheToolsFolderIsRead) {
     const auto next = importVldFolder(*db_, root_.string(), state);
     EXPECT_EQ(next.imported, 1);
     EXPECT_EQ(sessions(), 3);
+}
+
+// SDD-028 §7: an export that dropped the extension (the one real Wellue file we
+// have had was a bare binary) is a ring file when its header says so.
+TEST_F(OximetryImportTest, ARingFileWithoutTheExtensionIsReadByItsHeader) {
+    put("OXYMETRY/20260912/20260912223000", vld(3, 22));
+    std::string wrong_size = vld(3, 23);
+    wrong_size[9] = static_cast<char>(wrong_size[9] + 1);   // offset 9 is not its size
+    put("OXYMETRY/20260912/20260912233000", wrong_size);
+    put("OXYMETRY/README", "not a ring file, and no extension either");
+    put("System Volume Information/IndexerVolumeGuid", "{guid}");
+    put("Oximetry/notes.txt", std::string(vld(3, 21)));      // another extension: not looked at
+
+    VldScanState state;
+    const auto scan = importVldFolder(*db_, root_.string(), state);
+    EXPECT_EQ(scan.found, 1);
+    EXPECT_EQ(scan.bare, 1);
+    EXPECT_EQ(scan.imported, 1);
+    EXPECT_EQ(scan.refused, 0);
+    EXPECT_EQ(sessions(), 1);
+    // Under its bare name, the name the ring itself uses.
+    EXPECT_TRUE(db_->oximetrySessionExists(kOximetryDeviceId, "20260912223000"));
+    EXPECT_FALSE(db_->oximetrySessionExists(kOximetryDeviceId, "20260912233000"));
+    EXPECT_NE(scan.summary.find("1 .vld file(s) (1 without the extension) in"),
+              std::string::npos) << scan.summary;
+    EXPECT_EQ(state.not_ring.size(), 3u) << "the three that did not match are remembered";
+
+    // The next pass reads none of their headers again and imports nothing.
+    const auto again = importVldFolder(*db_, root_.string(), state);
+    EXPECT_EQ(again.found, 1);
+    EXPECT_EQ(again.imported, 0);
+    EXPECT_EQ(again.skipped, 1);
+    EXPECT_FALSE(again.summary_logged);
+
+    // The mismatched one is fixed (the other tool finished writing it): it
+    // changed, so its header is read again, and now it matches.
+    put("OXYMETRY/20260912/20260912233000", vld(3, 23));
+    const auto fixed = importVldFolder(*db_, root_.string(), state);
+    EXPECT_EQ(fixed.imported, 1);
+    EXPECT_EQ(sessions(), 2);
+    EXPECT_EQ(state.not_ring.size(), 2u);
+}
+
+TEST(OximetryImportHeader, VersionDateAndSizeMustAllMatch) {
+    const std::string good = vld(3, 22);
+    const auto size = good.size();
+    EXPECT_TRUE(isVldHeader(good, size));
+    EXPECT_FALSE(isVldHeader(good, size + 1)) << "offset 9 must be the size on disk";
+    EXPECT_FALSE(isVldHeader(good.substr(0, 12), size)) << "needs 13 bytes";
+    auto with = [&](size_t off, uint8_t v) { std::string s = good; s[off] = static_cast<char>(v); return s; };
+    EXPECT_FALSE(isVldHeader(with(0, 2), size));    // version
+    EXPECT_FALSE(isVldHeader(with(1, 1), size));    // version's high byte
+    EXPECT_FALSE(isVldHeader(with(3, 0x06), size)); // year 1770
+    EXPECT_FALSE(isVldHeader(with(4, 0), size));    // month
+    EXPECT_FALSE(isVldHeader(with(4, 13), size));
+    EXPECT_FALSE(isVldHeader(with(5, 0), size));    // day
+    EXPECT_FALSE(isVldHeader(with(5, 32), size));
+    EXPECT_FALSE(isVldHeader(with(6, 24), size));   // hour
+    EXPECT_FALSE(isVldHeader(with(7, 60), size));   // minute
+    EXPECT_FALSE(isVldHeader(with(8, 60), size));   // second
+    EXPECT_FALSE(isVldHeader("a text file, long enough", 24));
 }
 
 // SDD-029: a night the operator removed is not brought back by the scan, and

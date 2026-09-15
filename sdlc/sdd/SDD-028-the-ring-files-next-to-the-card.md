@@ -1,7 +1,8 @@
 # SDD-028: the ring's files next to the card
 
 **Status:** Released in 5.2.6 (2026-09-13); amended in 5.2.7 (§6, 2026-09-14);
-D1 amended to one level deeper (§7, 2026-09-15, not released). Accepted 2026-09-13. Scope: both ways in; D1 root plus every
+D1 amended to one level deeper, and a ring file without the extension read
+by its header (§7, 2026-09-15, not released). Accepted 2026-09-13. Scope: both ways in; D1 root plus every
 top-level folder; D2 the ring's clock stored as-is.
 **Date:** 2026-09-13
 **Repo:** `hms-cpap`. One shared importer, the local-mode burst, the O2 upload
@@ -189,23 +190,65 @@ O2Ring: card folder /CPAP: 2 .vld file(s) in the root, OXYMETRY/ and its 2
 folder(s) (DATALOG and SETTINGS are not searched)
 ```
 
+**A ring file without the `.vld` extension (Albin, 2026-09-15: "yes lets do
+it").** Not every export keeps the extension: the one real Wellue export we
+have had (Lee Hardin's ring, 2026-08-18, the file the parser's header layout
+was recovered from) was a bare binary. So in the folders the scan searches, a
+file with no extension at all is read for its first 13 bytes. It is a ring
+file when:
+- the `u16` at offset 0 is 3 (the version, which the parser already requires);
+- offsets 2-8 are a real date and time (year 2000-2099, month 1-12, day 1-31,
+  hour, minute and second in range);
+- the `u32` at offset 9 equals the file's size on disk (the real layout's own
+  size field).
+
+A random file matching all three is not a practical risk. A match goes
+through the same importer as a `.vld`: the same parser, the same row by
+filename, and the same re-read on change. A file that does not match is
+remembered by its size and modified time, as an unreadable file is, and its
+header is read again only when it changes. A file with any other extension is
+not looked at. The summary names the extensionless ones: `3 .vld file(s) (1
+without the extension) in ...`.
+
+Only a file shaped like that export is recognised. A different Viatom export
+would not match; it is left alone, never imported as something it is not.
+
 **Tests.** `test_OximetryImport.cpp`: todd's layout
 (`OXYMETRY/20260913/*.vld`, `OXYMETRY/20260914/*.vld`) is imported, and the
 second pass imports nothing; a file three levels down is not read, and the
 summary counts its folder as not searched; `DATALOG` and `SETTINGS` stay out.
-End to end on a throwaway instance with a card root laid out like todd's.
+An extensionless ring file is imported under its bare name. An extensionless
+file whose offset 9 is not its size, and a text file with no extension, are
+not, and their headers are not read again until they change. The header check
+on its own covers the version, each date field and the size. The test helper
+writes the real layout: the size at offset 9, the duration at 13, the
+interval at 22. End to end on a throwaway instance with a card root laid out
+like todd's.
 
-**As built, 2026-09-15.** `OximetryImport.cpp` as above. Full suite 1638
-passed, 0 failed, local zone and TZ=UTC. End to end: a card root laid out
-like todd's (STR.edf and a night from a real card, `System Volume
-Information/`, `LOST.DIR/`, and synthetic VLD v3 files in
-`OXYMETRY/20260913/` and `OXYMETRY/20260914/`, since no real `.vld` is on
-hand). Burst 1 imported both, with every sample (120 and 150). A folder
-`OXYMETRY/20260915/` added later was imported on the next burst (90 samples).
-The burst after that logged nothing. The line it logged:
+**As built, 2026-09-15.** `OximetryImport.{h,cpp}` as above. An extensionless
+ring file still being written fails the size check (offset 9 holds its final
+size), so it is imported once complete, never short. One already stored and
+unchanged is not re-read. Full suite 1640 passed, 0 failed, local zone and
+TZ=UTC.
+
+End to end: a card root laid out like todd's. It held STR.edf and a night from
+a real card, `System Volume Information/` (with an extensionless
+`IndexerVolumeGuid`) and `LOST.DIR/`. The ring files were synthetic VLD v3 in
+the real layout, since no real `.vld` is on hand.
+- Depth, run 1. Burst 1 imported `OXYMETRY/20260913/…vld` and
+  `OXYMETRY/20260914/…vld` with every sample (120 and 150). A folder
+  `OXYMETRY/20260915/` added later was imported on the next burst (90), and
+  the burst after that logged nothing.
+- Extensionless, run 2. `OXYMETRY/20260914/20260914224500` started half
+  written (400 of 790 bytes), and burst 1 left it alone. Once it was complete
+  it was imported under its bare name with all 150 samples. The Windows
+  `IndexerVolumeGuid` was never taken for one. The following burst logged
+  nothing.
+
+The line it logged:
 
 ```
-O2Ring: card folder <card>: 3 .vld file(s) in the root, LOST.DIR/, OXYMETRY/
-and its 3 folder(s), System Volume Information/ (DATALOG and SETTINGS are not
-searched)
+O2Ring: card folder <card>: 2 .vld file(s) (1 without the extension) in the
+root, LOST.DIR/, OXYMETRY/ and its 2 folder(s), System Volume Information/
+(DATALOG and SETTINGS are not searched)
 ```
