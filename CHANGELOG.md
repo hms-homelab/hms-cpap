@@ -5,6 +5,23 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.2.11] - 2026-09-15
+
+### Fixed
+- **OSCAR showed only a minute or two of flow from the archive** (CpapDash
+  support ticket 127, SDD-032). ResMed writes a signal file's EDF record count
+  as `-1`, or too low, while it records, and the true count when it finalizes
+  the file. hms-cpap resumes BRP/PLD/SAD with Range requests, so the header
+  it held was always the mid-recording one, and a header-only change never
+  reached the archive. The dashboard and SleepHQ compute the count from the
+  file size; OSCAR trusts the field. The archive's BRP/PLD/SAD files now carry
+  the real count: repaired as each night is archived and as a zip upload is
+  copied, and once at startup for the archive already on disk. A repaired
+  file is byte-identical to the card's finalized copy. Only ResMed signal
+  files in hms-cpap's own archive are touched, never a card read in place.
+  OSCAR keeps a night it already imported: purge it there to re-import it.
+- Parser pinned to 2026.8.3 (the record-count repair).
+
 ## [5.2.10] - 2026-09-15
 
 ### Fixed
