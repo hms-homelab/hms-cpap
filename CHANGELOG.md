@@ -5,6 +5,19 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.2.16] - 2026-09-16
+
+No change to CpapDash itself; 5.2.14, 5.2.15 and this one are the same
+application. This release carries a working check on the add-on images.
+
+### Fixed
+- **The add-on image check failed against images that were correct** (SDD-035).
+  It read the architecture through a Go template, and named the field wrongly
+  twice: `.Manifest` on 5.2.14, which is only a descriptor, and `.Image.Os` on
+  5.2.15, where the field is `OS`. It now dumps the image config as JSON and
+  reads it with jq, verified against both published 5.2.15 images before this
+  release rather than on the next one.
+
 ## [5.2.15] - 2026-09-16
 
 No change to CpapDash itself; 5.2.14's application code and this one's are the
