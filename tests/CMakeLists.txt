@@ -69,6 +69,7 @@ set(TEST_SOURCES
     database/test_SessionFilesBackends.cpp
     database/test_DailyHoursBackends.cpp
     database/test_NightAggregationBackends.cpp
+    database/test_SessionKeyReport.cpp
     database/test_ReportBackends.cpp
     services/test_BurstCollectorService.cpp
     services/test_DataPublisherService.cpp

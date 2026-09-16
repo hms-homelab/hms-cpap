@@ -1668,6 +1668,54 @@ bool SQLiteDatabase::restoreNight(const std::string& device_id, const std::strin
 }
 
 // ---------------------------------------------------------------------------
+// SDD-034: the session key on an old database. Read-only.
+// ---------------------------------------------------------------------------
+
+IDatabase::SessionKeyReport SQLiteDatabase::inspectSessionKey() {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    SessionKeyReport report;
+    if (!db_) return report;
+
+    // A unique index over exactly (device_id, session_start), whether it came
+    // from the table's UNIQUE clause (sqlite_autoindex_*) or a CREATE UNIQUE
+    // INDEX. index_list gives the unique ones; index_info gives their columns.
+    report.key_present = false;
+    StmtGuard list;
+    if (sqlite3_prepare_v2(db_, "PRAGMA index_list(cpap_sessions)", -1, &list.stmt, nullptr) !=
+        SQLITE_OK)
+        return report;
+    std::vector<std::string> unique_indexes;
+    while (sqlite3_step(list.stmt) == SQLITE_ROW) {
+        if (sqlite3_column_int(list.stmt, 2) == 1)   // "unique"
+            unique_indexes.push_back(col_text(list.stmt, 1));
+    }
+    for (const auto& name : unique_indexes) {
+        StmtGuard info;
+        const std::string sql = "PRAGMA index_info(" + name + ")";
+        if (sqlite3_prepare_v2(db_, sql.c_str(), -1, &info.stmt, nullptr) != SQLITE_OK) continue;
+        std::vector<std::string> cols;
+        while (sqlite3_step(info.stmt) == SQLITE_ROW) cols.push_back(col_text(info.stmt, 2));
+        if (cols.size() == 2 && cols[0] == "device_id" && cols[1] == "session_start") {
+            report.key_present = true;
+            break;
+        }
+    }
+    if (report.key_present) return report;
+
+    StmtGuard dup;
+    if (sqlite3_prepare_v2(db_,
+                           "SELECT COUNT(*), COALESCE(SUM(n), 0) FROM ("
+                           "  SELECT COUNT(*) AS n FROM cpap_sessions"
+                           "   GROUP BY device_id, session_start HAVING COUNT(*) > 1)",
+                           -1, &dup.stmt, nullptr) == SQLITE_OK &&
+        sqlite3_step(dup.stmt) == SQLITE_ROW) {
+        report.duplicate_groups = sqlite3_column_int(dup.stmt, 0);
+        report.duplicate_rows = sqlite3_column_int(dup.stmt, 1);
+    }
+    return report;
+}
+
+// ---------------------------------------------------------------------------
 // cpap_session_files (SDD-014)
 // ---------------------------------------------------------------------------
 

@@ -61,6 +61,7 @@ public:
                                   const std::string& night) override;
     std::vector<std::string> removedNights(const std::string& device_id) override;
     bool restoreNight(const std::string& device_id, const std::string& night) override;
+    SessionKeyReport inspectSessionKey() override;   // SDD-034
 
     bool replaceSessionFiles(
         const std::string& device_id,

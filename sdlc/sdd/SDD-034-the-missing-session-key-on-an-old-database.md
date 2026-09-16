@@ -1,7 +1,10 @@
 # SDD-034: the missing session key on an old database
 
-**Status:** Draft 2026-09-15, for Albin's decisions (§4). He asked for it on
-the update path: "yes to the mysql migration sdd needs to go when update".
+**Status:** Accepted 2026-09-15 (§4). It runs on the update path, as Albin
+asked ("yes to the mysql migration sdd needs to go when update"), and the
+FIRST release only looks: it reports what it would collapse and changes
+nothing. The repair itself follows in the next patch, once the reports from
+real installs have been read.
 **Date:** 2026-09-15
 **Repo:** `hms-cpap` (the three database backends' migrations).
 **Found in:** SDD-033 §6, chasing three MySQL-only test failures before
@@ -53,7 +56,27 @@ At migration time, each backend asks whether a unique index over
 Nothing else runs when it is there, which is every current install and every
 run after the first repaired one.
 
-### 2.2 Repair, then add the key
+### 2.2 The first release only looks (D3)
+
+`IDatabase` gains `inspectSessionKey()`, answering three things: is the unique
+key there, how many `(device_id, session_start)` groups have more than one
+row, and how many rows those groups hold. It reads; it never writes. The
+default implementation says "key present", so a backend that does not
+implement it reports nothing.
+
+The startup migration calls it and logs one line, only when something is
+wrong:
+
+```
+cpap_sessions has no unique key on (device_id, session_start): 12 night(s)
+stored twice or more, 27 row(s) in them. This build only reports it
+(SDD-034); the next one collapses them.
+```
+
+Nothing else happens in this release. That line is what says whether any real
+install has the gap at all, and how big it is where it does.
+
+### 2.3 Repair, then add the key (the next release)
 
 When it is missing:
 
@@ -91,30 +114,38 @@ and only the shorter copies of them. A dry-run switch is cheap to keep (log
 what it would delete, change nothing) and is worth having for the first
 release that carries this.
 
-## 4. Decisions (Albin's)
+## 4. Decisions (Albin's, 2026-09-15)
 
-- **D1 which row survives.** Proposed: the longest `duration_seconds`, then
-  the largest `id`. (Alternative: the newest `id` outright, which is wrong for
-  a night whose last burst wrote a short row after a restart.)
-- **D2 the rows hanging off the losers.** Proposed: delete them. (Alternative:
-  re-point them at the keeper, which risks colliding with the keeper's own
-  rows on `(session_id, timestamp)` and would need a merge rule per table.)
-- **D3 when it runs.** Proposed: at startup with the other migrations, so an
-  add-on user gets it by updating, with a dry-run option for one release.
-- **D4 telling the user.** Proposed: the log line only. (Alternative: a line
-  in the Settings page's health block.)
+- **D1 which row survives**: the longest `duration_seconds`, ties broken by
+  the largest `id`. A session row only ever grows, so that is the most
+  complete copy; the newest id alone would shrink a night to the few minutes a
+  restart wrote after the full block.
+- **D2 the rows hanging off the losers**: deleted with them. They are a
+  shorter copy of what the keeper holds and every one is derived from card
+  files still on disk, so a Reparse rebuilds any night. Re-pointing them would
+  need a merge rule per table, since the loser's minutes collide with the
+  keeper's on `(session_id, timestamp)`.
+- **D3 how careful the first release is**: it only looks. The release carrying
+  this reports what it WOULD collapse and changes nothing, so the logs from
+  real installs are read before a single row is deleted. The repair lands in
+  the next patch.
+- **D4 telling the user**: the log line, for now.
 
 ## 5. Tests
 
-- Each engine, in its own suite: take a database with the key, drop it, write
-  two rows for one start with metrics on each, run the migration, then assert
-  one row survives (the longer one), its metrics and minutes are intact, the
-  loser's rows are gone, the index is there, and a second run changes nothing.
-- The upsert works again afterwards: saving the same session twice leaves one
-  row and updates its duration.
-- A database that already has the key: the migration reads and writes nothing
-  (no log line, no deletions).
+**This release (the report):** each engine, given a `cpap_sessions` created
+the old way (no unique key) holding two rows for one start:
+`inspectSessionKey()` says the key is missing and counts one group of two
+rows; the rows are still there afterwards, untouched; on a database with the
+key it reports present and zero, and reads nothing else.
+
+**The next release (the repair):** same starting point, and after the
+migration one row survives (the longer one), its metrics and minutes are
+intact, the loser's rows are gone, the index is there, a second run changes
+nothing, and saving the same session twice then leaves one row with the
+updated duration.
 
 ## 6. Release
 
-A patch (Albin's number), with the dry-run default decided in D3.
+The report goes in the next patch (Albin's number). The repair follows in the
+one after, once the reports say who has the gap.

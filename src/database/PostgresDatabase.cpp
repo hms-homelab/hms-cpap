@@ -74,6 +74,10 @@ bool PostgresDatabase::restoreNight(const std::string& device_id, const std::str
     return db_->restoreNight(device_id, night);
 }
 
+IDatabase::SessionKeyReport PostgresDatabase::inspectSessionKey() {   // SDD-034
+    return db_->inspectSessionKey();
+}
+
 bool PostgresDatabase::replaceSessionFiles(
     const std::string& device_id,
     const std::chrono::system_clock::time_point& session_start,

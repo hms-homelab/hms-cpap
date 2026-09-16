@@ -694,6 +694,18 @@ int main(int argc, char** argv) {
     }
     db->connect();
 
+    // SDD-034: a cpap_sessions created before the backends declared
+    // UNIQUE (device_id, session_start) has no such key, and saveSession's
+    // upsert needs it: without it a growing night is inserted again every
+    // burst instead of being updated. This build only says so; the next one
+    // collapses the duplicates and adds the key.
+    if (const auto key = db->inspectSessionKey(); !key.key_present) {
+        std::cerr << "cpap_sessions has no unique key on (device_id, session_start): "
+                  << key.duplicate_groups << " night(s) stored twice or more, "
+                  << key.duplicate_rows << " row(s) in them. This build only reports it "
+                     "(SDD-034); the next one collapses them." << std::endl;
+    }
+
     // Print config source
     std::cout << "Config: " << config_path << (config_existed ? "" : " (created)") << std::endl;
     std::cout << "Database: " << config.database.type;

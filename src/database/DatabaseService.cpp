@@ -2483,6 +2483,50 @@ bool DatabaseService::restoreNight(const std::string& device_id, const std::stri
 }
 
 // ---------------------------------------------------------------------------
+// SDD-034: the session key on an old database. Read-only.
+// ---------------------------------------------------------------------------
+
+IDatabase::SessionKeyReport DatabaseService::inspectSessionKey() {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    SessionKeyReport report;
+    if (!ensureConnection()) return report;
+    try {
+        pqxx::work txn(*conn_);
+        // A unique index over exactly (device_id, session_start), whether it
+        // came from the table's UNIQUE clause or a CREATE UNIQUE INDEX.
+        const auto key = txn.exec_params(R"(
+            SELECT COUNT(*) FROM pg_index i
+              JOIN pg_class t ON t.oid = i.indrelid
+             WHERE t.relname = 'cpap_sessions'
+               AND i.indisunique
+               AND i.indnatts = 2
+               AND (SELECT array_agg(a.attname::text ORDER BY k.ord)
+                      FROM unnest(i.indkey) WITH ORDINALITY AS k(attnum, ord)
+                      JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum)
+                   = ARRAY['device_id', 'session_start']
+        )");
+        report.key_present = !key.empty() && key[0][0].as<long>() > 0;
+        if (report.key_present) {
+            txn.commit();
+            return report;
+        }
+        const auto dup = txn.exec_params(R"(
+            SELECT COUNT(*), COALESCE(SUM(n), 0) FROM (
+              SELECT COUNT(*) AS n FROM cpap_sessions
+               GROUP BY device_id, session_start HAVING COUNT(*) > 1) d
+        )");
+        txn.commit();
+        if (!dup.empty()) {
+            report.duplicate_groups = dup[0][0].as<int>();
+            report.duplicate_rows = static_cast<int>(dup[0][1].as<long>());
+        }
+    } catch (const std::exception& e) {
+        std::cerr << "DB: inspectSessionKey: " << e.what() << std::endl;
+    }
+    return report;
+}
+
+// ---------------------------------------------------------------------------
 // cpap_session_files (SDD-014)
 // ---------------------------------------------------------------------------
 

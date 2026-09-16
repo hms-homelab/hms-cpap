@@ -2150,6 +2150,46 @@ bool MySQLDatabase::restoreNight(const std::string& device_id, const std::string
 }
 
 // ---------------------------------------------------------------------------
+// SDD-034: the session key on an old database. Read-only.
+// ---------------------------------------------------------------------------
+
+IDatabase::SessionKeyReport MySQLDatabase::inspectSessionKey() {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    SessionKeyReport report;
+    if (!conn_) return report;
+
+    // executeQuery hands back whatever the column was, text included.
+    auto asInt = [](const Json::Value& v) {
+        return v.isNull() ? 0 : (v.isString() ? std::atoi(v.asCString()) : v.asInt());
+    };
+
+    // A unique index whose two columns are device_id and session_start, in
+    // that order. information_schema answers it in one statement, whatever the
+    // index is called (uq_device_session on a table this build created).
+    auto rows = executeQuery(
+        "SELECT COUNT(*) AS n FROM ("
+        "  SELECT index_name FROM information_schema.statistics"
+        "   WHERE table_schema = DATABASE() AND table_name = 'cpap_sessions'"
+        "     AND non_unique = 0 AND column_name IN ('device_id', 'session_start')"
+        "   GROUP BY index_name HAVING COUNT(DISTINCT column_name) = 2"
+        "      AND MAX(seq_in_index) = 2) k",
+        {});
+    report.key_present = rows.isArray() && !rows.empty() && asInt(rows[0u]["n"]) > 0;
+    if (report.key_present) return report;
+
+    auto dup = executeQuery(
+        "SELECT COUNT(*) AS groups_n, COALESCE(SUM(n), 0) AS rows_n FROM ("
+        "  SELECT COUNT(*) AS n FROM cpap_sessions"
+        "   GROUP BY device_id, session_start HAVING COUNT(*) > 1) d",
+        {});
+    if (dup.isArray() && !dup.empty()) {
+        report.duplicate_groups = asInt(dup[0u]["groups_n"]);
+        report.duplicate_rows = asInt(dup[0u]["rows_n"]);
+    }
+    return report;
+}
+
+// ---------------------------------------------------------------------------
 // cpap_session_files (SDD-014)
 // ---------------------------------------------------------------------------
 

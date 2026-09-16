@@ -127,6 +127,25 @@ public:
         return false;
     }
 
+    // -- The session key on an old database (SDD-034) --------------------------
+    //
+    // Every backend declares UNIQUE (device_id, session_start) on cpap_sessions
+    // today, and saveSession's upsert needs it: without it a growing night is
+    // INSERTED again every burst instead of being updated. A table created
+    // before the declaration has no such key and nothing adds one. This release
+    // only reports it; the repair follows.
+
+    /// What one look at cpap_sessions found.
+    struct SessionKeyReport {
+        bool key_present = true;   ///< a unique index over (device_id, session_start)
+        int  duplicate_groups = 0; ///< starts stored more than once
+        int  duplicate_rows = 0;   ///< rows in those groups
+    };
+
+    /// Read-only. The default says the key is there, so a backend or a test
+    /// double without the check reports nothing to repair.
+    virtual SessionKeyReport inspectSessionKey() { return {}; }
+
     // -- Session file set (SDD-014) -------------------------------------------
 
     /// Replace the recorded file set for one session. Delete-then-insert, so a
