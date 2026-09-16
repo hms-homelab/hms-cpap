@@ -1105,14 +1105,20 @@ jobs:
       - name: Prove the published image is the architecture it claims
         run: |
           set -euo pipefail
-          # `.Manifest` is the DESCRIPTOR -- mediaType, digest, size, and nothing
-          # else. The architecture lives in the image CONFIG, which is `.Image`.
-          # Asking .Manifest for it failed every time on 5.2.14, against an image
-          # that was in fact correct.
-          GOT=$(docker buildx imagetools inspect \
-                  "${REGISTRY}/hms-homelab/${{ matrix.arch }}-cpapdash:${VERSION}" \
-                  --format '{{.Image.Os}}/{{.Image.Architecture}}')
-          echo "published: ${GOT}"
+          # Dump the image CONFIG as JSON and read it with jq, rather than
+          # naming fields in a Go template. Two releases were burned getting
+          # that template wrong against images that were correct: `.Manifest`
+          # is only the descriptor (mediaType, digest, size) on 5.2.14, and
+          # `.Image.Os` is not a field -- the Go struct spells it `OS` -- on
+          # 5.2.15. The JSON keys are stable, lowercase, and are what the
+          # registry itself serves.
+          docker buildx imagetools inspect \
+            "${REGISTRY}/hms-homelab/${{ matrix.arch }}-cpapdash:${VERSION}" \
+            --format '{{json .Image}}' > image.json
+          GOT=$(jq -r '"\(.os)/\(.architecture)"' image.json)
+          CMD=$(jq -c '.config.Cmd' image.json)
+          echo "published: ${GOT}  cmd: ${CMD}"
+
           # An add-on image installed on the wrong architecture fails at run
           # time on a user's box, which is the one place it must not.
           case "${{ matrix.arch }}" in
@@ -1125,11 +1131,7 @@ jobs:
           # wrong context would be the plain service, whose own ENTRYPOINT
           # ignores /data/options.json and leaves every add-on option unread --
           # the exact failure the `image:` key was long avoided for.
-          CMD=$(docker buildx imagetools inspect \
-                  "${REGISTRY}/hms-homelab/${{ matrix.arch }}-cpapdash:${VERSION}" \
-                  --format '{{json .Image.Config.Cmd}}')
-          echo "cmd: ${CMD}"
-          echo "$CMD" | grep -q '/run.sh'
+          echo "$CMD" | grep -q '/run.sh' || { echo "not the add-on image"; exit 1; }
 
   release:
     # windows-build is in `needs` so this job WAITS for the Windows artifact to
