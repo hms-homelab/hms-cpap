@@ -289,6 +289,35 @@ Over a local ez Share stand-in serving the same card: burst 1 attached each
 (294 KB)`, …), and they are in the archive. Burst 2 asked for no TCV at all,
 where the residue sweep used to re-download every one of them in full.
 
+### Regression check: the same cards through both binaries
+
+Albin, 2026-09-15: "we need to make sure we did not introduce any regression
+using this new calculations". The 5.2.11 binary was built from the commit
+before this one and each card was run through both, from an empty database,
+and every stored night compared.
+
+| card | nights | sessions | per-session metrics | nights changed |
+|---|---|---|---|---|
+| AirSense (Albin's own, 40 folders) | 181 | identical | identical | 26 |
+| AirCurve 11 (TLaren's) | 9 | identical | identical | 1 |
+| Löwenstein Prisma | 18 | identical | identical | 2 |
+| Sefam S.Box | 173 (241 sessions) | identical | identical | 0 |
+
+- Every changed night is a multi-session night, and every multi-session night
+  changed: 26 of 181, 1 of 9, 2 of 18, 0 of 173. No single-session night moved
+  anywhere.
+- Only the intended columns moved: `mask_press_50` (26), `leak_95` (22),
+  `leak_50` (6) on the ResMed cards, `epr_level` (2) on the Löwenstein one.
+  The AHI, the event count, the duration, the mode and the index kind are
+  untouched on every card.
+- The API agrees: `/api/sessions` (400 nights), `/api/statistics`,
+  `/api/insights` and `/api/dashboard` are byte-identical between the two
+  binaries on the AirSense card.
+- The summed events change only a night whose sessions each carry events. On
+  the AirSense card one session of each pair holds them all, so its published
+  AHI is unchanged on all 26; on TLaren's card the two sessions hold 1 and 5,
+  which is the 1.14 that became 1.36.
+
 ## 7. Release
 
 Parser 2026.8.4, hms-cpap 5.2.12 pinned to it (Albin's numbers), tagged once
