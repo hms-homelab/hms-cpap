@@ -1051,6 +1051,11 @@ jobs:
       contents: read
       packages: write
     strategy:
+      # One architecture failing must not cancel the other. On 5.2.14 it did:
+      # the amd64 check below was wrong, and fail-fast killed the aarch64 job
+      # after it had already been told to build, so only half the pair existed
+      # and the add-on could not be switched to prebuilt images at all.
+      fail-fast: false
       matrix:
         include:
           - arch: amd64
@@ -1100,16 +1105,31 @@ jobs:
       - name: Prove the published image is the architecture it claims
         run: |
           set -euo pipefail
-          docker buildx imagetools inspect \
-            "${REGISTRY}/hms-homelab/${{ matrix.arch }}-cpapdash:${VERSION}" \
-            --format '{{json .Manifest}}' > manifest.json
-          cat manifest.json
+          # `.Manifest` is the DESCRIPTOR -- mediaType, digest, size, and nothing
+          # else. The architecture lives in the image CONFIG, which is `.Image`.
+          # Asking .Manifest for it failed every time on 5.2.14, against an image
+          # that was in fact correct.
+          GOT=$(docker buildx imagetools inspect \
+                  "${REGISTRY}/hms-homelab/${{ matrix.arch }}-cpapdash:${VERSION}" \
+                  --format '{{.Image.Os}}/{{.Image.Architecture}}')
+          echo "published: ${GOT}"
           # An add-on image installed on the wrong architecture fails at run
           # time on a user's box, which is the one place it must not.
           case "${{ matrix.arch }}" in
-            amd64)   grep -q '"architecture":"amd64"' manifest.json ;;
-            aarch64) grep -q '"architecture":"arm64"' manifest.json ;;
+            amd64)   WANT=linux/amd64 ;;
+            aarch64) WANT=linux/arm64 ;;
           esac
+          [ "$GOT" = "$WANT" ] || { echo "expected ${WANT}, got ${GOT}"; exit 1; }
+
+          # It must also carry the add-on entrypoint. An image built from the
+          # wrong context would be the plain service, whose own ENTRYPOINT
+          # ignores /data/options.json and leaves every add-on option unread --
+          # the exact failure the `image:` key was long avoided for.
+          CMD=$(docker buildx imagetools inspect \
+                  "${REGISTRY}/hms-homelab/${{ matrix.arch }}-cpapdash:${VERSION}" \
+                  --format '{{json .Image.Config.Cmd}}')
+          echo "cmd: ${CMD}"
+          echo "$CMD" | grep -q '/run.sh'
 
   release:
     # windows-build is in `needs` so this job WAITS for the Windows artifact to

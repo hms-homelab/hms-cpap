@@ -5,6 +5,21 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.2.15] - 2026-09-16
+
+No change to CpapDash itself; 5.2.14's application code and this one's are the
+same. The release exists to publish a correct pair of add-on images.
+
+### Fixed
+- **The add-on image job published only one architecture** (SDD-035). Its
+  check read the architecture from the manifest DESCRIPTOR, which carries only
+  a media type, a digest and a size, so it failed against an image that was
+  correct; the matrix then cancelled the other architecture before it
+  finished. The check now reads the image config, states the platform it
+  expects, and additionally proves the published image runs the add-on
+  entrypoint rather than the plain service, and one architecture failing no
+  longer cancels the other.
+
 ## [5.2.14] - 2026-09-15
 
 ### Fixed
