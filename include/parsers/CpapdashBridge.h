@@ -97,6 +97,11 @@ struct SessionFileSet {
     std::vector<std::string> brp_files;
     std::vector<std::string> pld_files;
     std::vector<std::string> sad_files;
+    /// SDD-033: the 11 series' trigger/cycle file, one per checkpoint prefix.
+    /// Nothing here parses it, but it is the machine's and it grows all night,
+    /// so it is fetched like a checkpoint (resumed, stamped) rather than
+    /// re-downloaded whole every burst as a card leftover.
+    std::vector<std::string> tcv_files;
 
     std::map<std::string, int> file_sizes_kb;
 

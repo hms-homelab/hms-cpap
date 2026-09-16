@@ -532,6 +532,11 @@ bool BurstCollectorService::downloadSessionFiles(
     downloadCheckpoints("BRP", session.brp_files);
     downloadCheckpoints("PLD", session.pld_files);
     downloadCheckpoints("SAD", session.sad_files);
+    // SDD-033: the 11 series' TCV grows all night like the rest. It used to be
+    // swept up as a card leftover, which re-downloaded every one of them whole
+    // on every burst; nothing here parses it, but OSCAR and SleepHQ get the
+    // card's files, so it is fetched and resumed like a checkpoint.
+    downloadCheckpoints("TCV", session.tcv_files);
 
     // Accept ANY downloaded files (even partial/in-progress sessions)
     bool success = downloaded > 0;

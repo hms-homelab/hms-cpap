@@ -61,6 +61,8 @@ const std::vector<Expected> kCriticalColumns = {
     {"cpap_calculated_metrics", "therapy_pressure", "SDD-030 IPAP on a bi-level"},
     {"cpap_daily_summary", "patient_hours", "STR compliance"},
     {"cpap_daily_summary", "mask_pairs", "STR mask on/off pairs"},
+    {"cpap_daily_summary", "leak_95_str", "SDD-033 D1 a multi-session night's leak"},
+    {"cpap_daily_summary", "spo2_50_str", "SDD-033 D1 a multi-session night's SpO2"},
     {"oximetry_sessions", "avg_spo2", "getOximetrySummary"},
     {"oximetry_sessions", "cpap_session_date", "every oximetry read path"},
     {"oximetry_samples", "spo2", "session detail oximetry chart"},

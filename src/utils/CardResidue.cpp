@@ -20,8 +20,12 @@ bool endsWith(const std::string& s, const std::string& suffix) {
 
 bool isCpapEdf(const std::string& name) {
     const std::string n = toLower(name);
+    // SDD-033: _tcv.edf joins them. The 11 series writes it per checkpoint and
+    // it grows all night, so the burst fetches it (resumed, stamped) and the
+    // residue sweep must not pull it whole on every pass.
     static const char* kTypes[] = {"_brp.edf", "_eve.edf", "_sad.edf",
-                                   "_sa2.edf", "_pld.edf", "_csl.edf"};
+                                   "_sa2.edf", "_pld.edf", "_csl.edf",
+                                   "_tcv.edf"};
     for (const char* t : kTypes)
         if (endsWith(n, t)) return true;
     return false;

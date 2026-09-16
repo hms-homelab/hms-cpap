@@ -188,6 +188,12 @@ CREATE TABLE IF NOT EXISTS cpap_daily_summary (
     rin_str           DOUBLE,
     duration_minutes_str DOUBLE,
     index_source      VARCHAR(16),
+    -- SDD-033 D1: the STR's copy of the percentiles our sessions also fill;
+    -- on a night of more than one session they are the night's.
+    leak_50_str       DOUBLE,
+    leak_95_str       DOUBLE,
+    mask_press_50_str DOUBLE,
+    spo2_50_str       DOUBLE,
     rin               DOUBLE, csr DOUBLE,
     mask_press_50     DOUBLE, mask_press_95 DOUBLE, mask_press_max DOUBLE,
     leak_50           DOUBLE, leak_95 DOUBLE, leak_max DOUBLE,

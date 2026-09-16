@@ -333,9 +333,12 @@ bool DatabaseService::connect() {
                 txn.exec("ALTER TABLE cpap_session_metrics ADD COLUMN IF NOT EXISTS index_kind TEXT DEFAULT 'ahi'");
                 txn.exec("ALTER TABLE cpap_daily_summary ADD COLUMN IF NOT EXISTS index_kind TEXT DEFAULT 'ahi'");
                 // SDD-026: the STR's own copy beside the shared, computed columns.
+                // SDD-033 D1: the STR's copy of the percentiles ours also fill.
                 for (const char* col : {"ahi_str FLOAT", "hi_str FLOAT", "ai_str FLOAT", "oai_str FLOAT",
                                         "cai_str FLOAT", "uai_str FLOAT", "rin_str FLOAT",
-                                        "duration_minutes_str FLOAT", "index_source TEXT"}) {
+                                        "duration_minutes_str FLOAT", "index_source TEXT",
+                                        "leak_50_str FLOAT", "leak_95_str FLOAT",
+                                        "mask_press_50_str FLOAT", "spo2_50_str FLOAT"}) {
                     txn.exec(std::string("ALTER TABLE cpap_daily_summary ADD COLUMN IF NOT EXISTS ") + col);
                 }
                 txn.exec("ALTER TABLE cpap_session_metrics ADD COLUMN IF NOT EXISTS avg_epr_pressure FLOAT");
@@ -1948,9 +1951,13 @@ std::optional<SessionMetrics> DatabaseService::getNightlyMetrics(
         start_oss << std::put_time(start_tm, "%Y-%m-%d %H:%M:%S");
 
         // Sleep day = DATE(session_start - 12h), groups evening→morning of one night.
-        // Events use MAX because all BRP sessions share the same nightly EVE file.
         // Duration is summed across all therapy periods in the night.
-        // AHI recomputed from MAX(total_events) / SUM(duration).
+        // SDD-033: events are SUMMED. They used MAX when every BRP checkpoint
+        // was its own session sharing one nightly EVE; since SDD-014 discovery
+        // gives each EVE to exactly one session, and MAX counted only the
+        // busiest one. Minute figures are the mean over the night's minutes
+        // (each session hands up a sum and a count), and a multi-session
+        // night's leak percentiles are the STR's copy (D1). As on SQLite.
         std::string query = R"(
             WITH night AS (
                 SELECT DATE(session_start - INTERVAL '12 hours') AS sleep_day
@@ -1962,13 +1969,16 @@ std::optional<SessionMetrics> DatabaseService::getNightlyMetrics(
             )
             SELECT
                 SUM(s.duration_seconds)                         AS total_seconds,
-                MAX(sm.total_events)                            AS total_events,
-                MAX(sm.obstructive_apneas)                      AS obstructive_apneas,
-                MAX(sm.central_apneas)                          AS central_apneas,
-                MAX(sm.hypopneas)                               AS hypopneas,
-                MAX(sm.reras)                                   AS reras,
-                MAX(sm.clear_airway_apneas)                     AS clear_airway_apneas,
-                MAX(sm.avg_event_duration)                      AS avg_event_duration,
+                SUM(sm.total_events)                            AS total_events,
+                SUM(sm.obstructive_apneas)                      AS obstructive_apneas,
+                SUM(sm.central_apneas)                          AS central_apneas,
+                SUM(sm.hypopneas)                               AS hypopneas,
+                SUM(sm.reras)                                   AS reras,
+                SUM(sm.clear_airway_apneas)                     AS clear_airway_apneas,
+                SUM(sm.avg_event_duration * sm.total_events)
+                    / NULLIF(SUM(CASE WHEN sm.avg_event_duration IS NOT NULL
+                                      THEN sm.total_events END), 0)
+                                                                AS avg_event_duration,
                 MAX(sm.max_event_duration)                      AS max_event_duration,
                 CASE WHEN SUM(s.duration_seconds) > 0
                      THEN round((SUM(s.duration_seconds) / 3600.0)::numeric, 4)
@@ -1977,59 +1987,73 @@ std::optional<SessionMetrics> DatabaseService::getNightlyMetrics(
                      THEN round((SUM(s.duration_seconds) / 3600.0 * 100.0 / 8.0)::numeric, 4)
                      ELSE 0 END                                 AS usage_percent,
                 CASE WHEN SUM(s.duration_seconds) > 0
-                     THEN round(((COALESCE(MAX(sm.obstructive_apneas), 0) + COALESCE(MAX(sm.central_apneas), 0)
-                                + COALESCE(MAX(sm.hypopneas), 0) + COALESCE(MAX(sm.clear_airway_apneas), 0))
+                     THEN round(((COALESCE(SUM(sm.obstructive_apneas), 0) + COALESCE(SUM(sm.central_apneas), 0)
+                                + COALESCE(SUM(sm.hypopneas), 0) + COALESCE(SUM(sm.clear_airway_apneas), 0))
                               * 3600.0 / SUM(s.duration_seconds))::numeric, 4)
                      ELSE 0 END                                 AS ahi,
-                CASE WHEN SUM(s.duration_seconds) > 0 AND MAX(sm.avg_event_duration) IS NOT NULL
-                     THEN round((MAX(sm.total_events) * MAX(sm.avg_event_duration)
+                CASE WHEN SUM(s.duration_seconds) > 0
+                          AND SUM(sm.avg_event_duration * sm.total_events) IS NOT NULL
+                     THEN round((SUM(sm.avg_event_duration * sm.total_events)
                               / SUM(s.duration_seconds) * 100.0)::numeric, 4)
                      ELSE 0 END                                 AS time_in_apnea_pct,
-                AVG(c.avg_leak)  AS avg_leak,  MAX(c.max_leak) AS max_leak,
-                AVG(c.avg_rr)    AS avg_rr,    AVG(c.avg_tv)   AS avg_tv,
-                AVG(c.avg_mv)    AS avg_mv,    AVG(c.avg_it)   AS avg_it,
-                AVG(c.avg_et)    AS avg_et,    AVG(c.avg_ie)   AS avg_ie,
-                AVG(c.avg_fl)    AS avg_fl,    AVG(c.fp95)     AS fp95,
-                AVG(c.pp95)      AS pp95,
-                AVG(c.avg_mask_press) AS avg_mask_pressure,
-                AVG(c.avg_epr_press)  AS avg_epr_pressure,
-                AVG(c.avg_snore_idx)  AS avg_snore,
-                AVG(c.avg_tgt_vent)   AS avg_target_ventilation,
-                AVG(b.avg_press) AS avg_pressure,
+                SUM(c.s_leak) / NULLIF(SUM(c.n_leak), 0)   AS avg_leak,  MAX(c.max_leak) AS max_leak,
+                SUM(c.s_rr)   / NULLIF(SUM(c.n_rr), 0)     AS avg_rr,
+                SUM(c.s_tv)   / NULLIF(SUM(c.n_tv), 0)     AS avg_tv,
+                SUM(c.s_mv)   / NULLIF(SUM(c.n_mv), 0)     AS avg_mv,
+                SUM(c.s_it)   / NULLIF(SUM(c.n_it), 0)     AS avg_it,
+                SUM(c.s_et)   / NULLIF(SUM(c.n_et), 0)     AS avg_et,
+                SUM(c.s_ie)   / NULLIF(SUM(c.n_ie), 0)     AS avg_ie,
+                SUM(c.s_fl)   / NULLIF(SUM(c.n_fl), 0)     AS avg_fl,
+                SUM(c.s_fp95) / NULLIF(SUM(c.n_fp95), 0)   AS fp95,
+                SUM(c.s_pp95) / NULLIF(SUM(c.n_pp95), 0)   AS pp95,
+                SUM(c.s_mask) / NULLIF(SUM(c.n_mask), 0)   AS avg_mask_pressure,
+                SUM(c.s_epr)  / NULLIF(SUM(c.n_epr), 0)    AS avg_epr_pressure,
+                SUM(c.s_snore) / NULLIF(SUM(c.n_snore), 0) AS avg_snore,
+                SUM(c.s_tgt)  / NULLIF(SUM(c.n_tgt), 0)    AS avg_target_ventilation,
+                SUM(b.s_press) / NULLIF(SUM(b.n_press), 0) AS avg_pressure,
                 MAX(b.max_press) AS max_pressure,
                 MIN(b.min_press) AS min_pressure,
-                MAX(sm.leak_p50) AS leak_p50,
-                MAX(sm.leak_p95) AS leak_p95_sess,
+                CASE WHEN COUNT(*) > 1 AND MAX(d.leak_50_str) IS NOT NULL
+                     THEN MAX(d.leak_50_str) ELSE MAX(sm.leak_p50) END AS leak_p50,
+                CASE WHEN COUNT(*) > 1 AND MAX(d.leak_95_str) IS NOT NULL
+                     THEN MAX(d.leak_95_str) ELSE MAX(sm.leak_p95) END AS leak_p95_sess,
                 MAX(sm.therapy_mode) AS therapy_mode,
                 -- SDD-024: 'ungraded' sorts after 'ahi', so a night holding ANY
                 -- ungraded session reads as ungraded. Mirrors SQLiteDatabase.
                 MAX(COALESCE(sm.index_kind, 'ahi')) AS index_kind,
                 -- SDD-030: PLD Press, averaged like the EPR pressure beside it.
-                AVG(c.avg_therapy_press) AS avg_therapy_pressure
+                SUM(c.s_therapy) / NULLIF(SUM(c.n_therapy), 0) AS avg_therapy_pressure
             FROM cpap_sessions s
             JOIN cpap_session_metrics sm ON sm.session_id = s.id
             LEFT JOIN (
                 SELECT session_id,
-                       AVG(leak_rate) AS avg_leak, MAX(leak_rate) AS max_leak,
-                       AVG(respiratory_rate) AS avg_rr, AVG(tidal_volume) AS avg_tv,
-                       AVG(minute_ventilation) AS avg_mv, AVG(inspiratory_time) AS avg_it,
-                       AVG(expiratory_time) AS avg_et, AVG(ie_ratio) AS avg_ie,
-                       AVG(flow_limitation) AS avg_fl, AVG(flow_p95) AS fp95,
-                       AVG(pressure_p95) AS pp95,
-                       AVG(mask_pressure) AS avg_mask_press,
-                       AVG(epr_pressure) AS avg_epr_press,
-                       AVG(snore_index) AS avg_snore_idx,
-                       AVG(target_ventilation) AS avg_tgt_vent,
-                       AVG(therapy_pressure) AS avg_therapy_press
+                       SUM(leak_rate) AS s_leak, COUNT(leak_rate) AS n_leak, MAX(leak_rate) AS max_leak,
+                       SUM(respiratory_rate) AS s_rr, COUNT(respiratory_rate) AS n_rr,
+                       SUM(tidal_volume) AS s_tv, COUNT(tidal_volume) AS n_tv,
+                       SUM(minute_ventilation) AS s_mv, COUNT(minute_ventilation) AS n_mv,
+                       SUM(inspiratory_time) AS s_it, COUNT(inspiratory_time) AS n_it,
+                       SUM(expiratory_time) AS s_et, COUNT(expiratory_time) AS n_et,
+                       SUM(ie_ratio) AS s_ie, COUNT(ie_ratio) AS n_ie,
+                       SUM(flow_limitation) AS s_fl, COUNT(flow_limitation) AS n_fl,
+                       SUM(flow_p95) AS s_fp95, COUNT(flow_p95) AS n_fp95,
+                       SUM(pressure_p95) AS s_pp95, COUNT(pressure_p95) AS n_pp95,
+                       SUM(mask_pressure) AS s_mask, COUNT(mask_pressure) AS n_mask,
+                       SUM(epr_pressure) AS s_epr, COUNT(epr_pressure) AS n_epr,
+                       SUM(snore_index) AS s_snore, COUNT(snore_index) AS n_snore,
+                       SUM(target_ventilation) AS s_tgt, COUNT(target_ventilation) AS n_tgt,
+                       SUM(therapy_pressure) AS s_therapy, COUNT(therapy_pressure) AS n_therapy
                 FROM cpap_calculated_metrics GROUP BY session_id
             ) c ON c.session_id = sm.session_id
             LEFT JOIN (
                 SELECT session_id,
-                       AVG(avg_pressure) AS avg_press,
+                       SUM(avg_pressure) AS s_press, COUNT(avg_pressure) AS n_press,
                        MAX(max_pressure) AS max_press,
                        MIN(min_pressure) AS min_press
                 FROM cpap_breathing_summary GROUP BY session_id
             ) b ON b.session_id = sm.session_id
+            LEFT JOIN cpap_daily_summary d
+                   ON d.device_id = s.device_id
+                  AND d.record_date = (SELECT sleep_day FROM night)
             WHERE s.device_id = $1
               AND DATE(s.session_start - INTERVAL '12 hours') = (SELECT sleep_day FROM night)
         )";
@@ -2145,13 +2169,17 @@ std::vector<SessionMetrics> DatabaseService::getMetricsForDateRange(
             SELECT
                 DATE(s.session_start - INTERVAL '12 hours')     AS sleep_day,
                 SUM(s.duration_seconds)                         AS total_seconds,
-                MAX(sm.total_events)                            AS total_events,
-                MAX(sm.obstructive_apneas)                      AS obstructive_apneas,
-                MAX(sm.central_apneas)                          AS central_apneas,
-                MAX(sm.hypopneas)                               AS hypopneas,
-                MAX(sm.reras)                                   AS reras,
-                MAX(sm.clear_airway_apneas)                     AS clear_airway_apneas,
-                MAX(sm.avg_event_duration)                      AS avg_event_duration,
+                -- SDD-033: the same rules as getNightlyMetrics.
+                SUM(sm.total_events)                            AS total_events,
+                SUM(sm.obstructive_apneas)                      AS obstructive_apneas,
+                SUM(sm.central_apneas)                          AS central_apneas,
+                SUM(sm.hypopneas)                               AS hypopneas,
+                SUM(sm.reras)                                   AS reras,
+                SUM(sm.clear_airway_apneas)                     AS clear_airway_apneas,
+                SUM(sm.avg_event_duration * sm.total_events)
+                    / NULLIF(SUM(CASE WHEN sm.avg_event_duration IS NOT NULL
+                                      THEN sm.total_events END), 0)
+                                                                AS avg_event_duration,
                 MAX(sm.max_event_duration)                      AS max_event_duration,
                 CASE WHEN SUM(s.duration_seconds) > 0
                      THEN round((SUM(s.duration_seconds) / 3600.0)::numeric, 4)
@@ -2160,45 +2188,54 @@ std::vector<SessionMetrics> DatabaseService::getMetricsForDateRange(
                      THEN round((SUM(s.duration_seconds) / 3600.0 * 100.0 / 8.0)::numeric, 4)
                      ELSE 0 END                                 AS usage_percent,
                 CASE WHEN SUM(s.duration_seconds) > 0
-                     THEN round(((COALESCE(MAX(sm.obstructive_apneas), 0) + COALESCE(MAX(sm.central_apneas), 0)
-                                + COALESCE(MAX(sm.hypopneas), 0) + COALESCE(MAX(sm.clear_airway_apneas), 0))
+                     THEN round(((COALESCE(SUM(sm.obstructive_apneas), 0) + COALESCE(SUM(sm.central_apneas), 0)
+                                + COALESCE(SUM(sm.hypopneas), 0) + COALESCE(SUM(sm.clear_airway_apneas), 0))
                               * 3600.0 / SUM(s.duration_seconds))::numeric, 4)
                      ELSE 0 END                                 AS ahi,
-                AVG(c.avg_leak) AS avg_leak, MAX(c.max_leak)    AS max_leak,
-                AVG(c.avg_rr)  AS avg_rr,   AVG(c.avg_tv)      AS avg_tv,
-                AVG(c.avg_mv)  AS avg_mv,   AVG(c.avg_fl)      AS avg_fl,
-                AVG(c.pp95)    AS pp95,
-                AVG(c.avg_mask_press) AS avg_mask_pressure,
-                AVG(c.avg_epr_press)  AS avg_epr_pressure,
-                AVG(c.avg_snore_idx)  AS avg_snore,
-                AVG(c.avg_tgt_vent)   AS avg_target_ventilation,
-                AVG(b.avg_press) AS avg_pressure,
+                SUM(c.s_leak) / NULLIF(SUM(c.n_leak), 0)   AS avg_leak, MAX(c.max_leak) AS max_leak,
+                SUM(c.s_rr)   / NULLIF(SUM(c.n_rr), 0)     AS avg_rr,
+                SUM(c.s_tv)   / NULLIF(SUM(c.n_tv), 0)     AS avg_tv,
+                SUM(c.s_mv)   / NULLIF(SUM(c.n_mv), 0)     AS avg_mv,
+                SUM(c.s_fl)   / NULLIF(SUM(c.n_fl), 0)     AS avg_fl,
+                SUM(c.s_pp95) / NULLIF(SUM(c.n_pp95), 0)   AS pp95,
+                SUM(c.s_mask) / NULLIF(SUM(c.n_mask), 0)   AS avg_mask_pressure,
+                SUM(c.s_epr)  / NULLIF(SUM(c.n_epr), 0)    AS avg_epr_pressure,
+                SUM(c.s_snore) / NULLIF(SUM(c.n_snore), 0) AS avg_snore,
+                SUM(c.s_tgt)  / NULLIF(SUM(c.n_tgt), 0)    AS avg_target_ventilation,
+                SUM(b.s_press) / NULLIF(SUM(b.n_press), 0) AS avg_pressure,
                 MAX(b.max_press) AS max_pressure,
                 MIN(b.min_press) AS min_pressure,
-                MAX(sm.leak_p50) AS leak_p50,
-                MAX(sm.leak_p95) AS leak_p95_sess,
+                CASE WHEN COUNT(*) > 1 AND MAX(d.leak_50_str) IS NOT NULL
+                     THEN MAX(d.leak_50_str) ELSE MAX(sm.leak_p50) END AS leak_p50,
+                CASE WHEN COUNT(*) > 1 AND MAX(d.leak_95_str) IS NOT NULL
+                     THEN MAX(d.leak_95_str) ELSE MAX(sm.leak_p95) END AS leak_p95_sess,
                 MAX(sm.therapy_mode) AS therapy_mode
             FROM cpap_sessions s
             JOIN cpap_session_metrics sm ON sm.session_id = s.id
             LEFT JOIN (
                 SELECT session_id,
-                       AVG(leak_rate) AS avg_leak, MAX(leak_rate) AS max_leak,
-                       AVG(respiratory_rate) AS avg_rr, AVG(tidal_volume) AS avg_tv,
-                       AVG(minute_ventilation) AS avg_mv, AVG(flow_limitation) AS avg_fl,
-                       AVG(pressure_p95) AS pp95,
-                       AVG(mask_pressure) AS avg_mask_press,
-                       AVG(epr_pressure) AS avg_epr_press,
-                       AVG(snore_index) AS avg_snore_idx,
-                       AVG(target_ventilation) AS avg_tgt_vent
+                       SUM(leak_rate) AS s_leak, COUNT(leak_rate) AS n_leak, MAX(leak_rate) AS max_leak,
+                       SUM(respiratory_rate) AS s_rr, COUNT(respiratory_rate) AS n_rr,
+                       SUM(tidal_volume) AS s_tv, COUNT(tidal_volume) AS n_tv,
+                       SUM(minute_ventilation) AS s_mv, COUNT(minute_ventilation) AS n_mv,
+                       SUM(flow_limitation) AS s_fl, COUNT(flow_limitation) AS n_fl,
+                       SUM(pressure_p95) AS s_pp95, COUNT(pressure_p95) AS n_pp95,
+                       SUM(mask_pressure) AS s_mask, COUNT(mask_pressure) AS n_mask,
+                       SUM(epr_pressure) AS s_epr, COUNT(epr_pressure) AS n_epr,
+                       SUM(snore_index) AS s_snore, COUNT(snore_index) AS n_snore,
+                       SUM(target_ventilation) AS s_tgt, COUNT(target_ventilation) AS n_tgt
                 FROM cpap_calculated_metrics GROUP BY session_id
             ) c ON c.session_id = sm.session_id
             LEFT JOIN (
                 SELECT session_id,
-                       AVG(avg_pressure) AS avg_press,
+                       SUM(avg_pressure) AS s_press, COUNT(avg_pressure) AS n_press,
                        MAX(max_pressure) AS max_press,
                        MIN(min_pressure) AS min_press
                 FROM cpap_breathing_summary GROUP BY session_id
             ) b ON b.session_id = sm.session_id
+            LEFT JOIN cpap_daily_summary d
+                   ON d.device_id = s.device_id
+                  AND d.record_date = DATE(s.session_start - INTERVAL '12 hours')
             WHERE s.device_id = ')" + device_id + R"('
               AND s.session_start >= ')" + cutoff_oss.str() + R"('::timestamp
               AND s.session_end IS NOT NULL
@@ -2549,6 +2586,7 @@ bool DatabaseService::saveSTRDailyRecords(const std::vector<STRDailyRecord>& rec
                 fault_device INT DEFAULT 0, fault_alarm INT DEFAULT 0,
                 ahi_str FLOAT, hi_str FLOAT, ai_str FLOAT, oai_str FLOAT, cai_str FLOAT, uai_str FLOAT,
                 rin_str FLOAT, duration_minutes_str FLOAT, index_source TEXT,
+                leak_50_str FLOAT, leak_95_str FLOAT, mask_press_50_str FLOAT, spo2_50_str FLOAT,
                 created_at TIMESTAMP DEFAULT NOW(),
                 updated_at TIMESTAMP DEFAULT NOW(),
                 UNIQUE (device_id, record_date)
@@ -2594,7 +2632,9 @@ bool DatabaseService::saveSTRDailyRecords(const std::vector<STRDailyRecord>& rec
                      machine_hours,
                      -- SDD-026: the machine's own copy, in its own columns.
                      ahi_str, hi_str, ai_str, oai_str, cai_str, uai_str, rin_str,
-                     duration_minutes_str, index_source, updated_at)
+                     duration_minutes_str, index_source, updated_at,
+                     -- SDD-033 D1: appended, for the same reason.
+                     leak_50_str, leak_95_str, mask_press_50_str, spo2_50_str)
                 VALUES ($1, $2, $3::jsonb, $4, $5, $6,
                         $7, $8, $9, $10, $11, $12, $13, $14,
                         $15, $16, $17,
@@ -2605,7 +2645,13 @@ bool DatabaseService::saveSTRDailyRecords(const std::vector<STRDailyRecord>& rec
                         $29, $30,
                         $31,
                         $7, $8, $9, $10, $11, $12, $13,
-                        $5, 'str', NOW())
+                        $5, 'str', NOW(),
+                        -- NULL where the STR has none (StrPercentile.h's rule:
+                        -- a leak of 0 is a reading, a pressure or SpO2 of 0 is not).
+                        CASE WHEN $18::float >= 0 THEN $18::float END,
+                        CASE WHEN $19::float >= 0 THEN $19::float END,
+                        CASE WHEN $15::float > 0 THEN $15::float END,
+                        CASE WHEN $21::float > 0 THEN $21::float END)
                 ON CONFLICT (device_id, record_date) DO UPDATE SET
                     mask_pairs = EXCLUDED.mask_pairs,
                     mask_events = EXCLUDED.mask_events,
@@ -2615,6 +2661,9 @@ bool DatabaseService::saveSTRDailyRecords(const std::vector<STRDailyRecord>& rec
                     oai_str = EXCLUDED.oai_str, cai_str = EXCLUDED.cai_str, uai_str = EXCLUDED.uai_str,
                     rin_str = EXCLUDED.rin_str,
                     duration_minutes_str = EXCLUDED.duration_minutes_str,
+                    leak_50_str = EXCLUDED.leak_50_str, leak_95_str = EXCLUDED.leak_95_str,
+                    mask_press_50_str = EXCLUDED.mask_press_50_str,
+                    spo2_50_str = EXCLUDED.spo2_50_str,
                     -- The shared columns are OURS once the night has sessions.
                     -- The STR only fills them for a night we have no sessions
                     -- for, and index_source says so.
@@ -2758,11 +2807,24 @@ bool DatabaseService::aggregateDailySummaryFromSessions(const std::string& devic
                     / NULLIF(SUM(s.duration_seconds) / 3600.0, 0))::numeric, 2) AS rin,
                 SUM(COALESCE(m.total_events,0))::int AS mask_events,
                 '[]'::jsonb AS mask_pairs,
-                ROUND(AVG(NULLIF(m.avg_mask_pressure, 0))::numeric, 1),
+                -- SDD-033: session means by duration. The percentiles are ours
+                -- here; D1 (the STR's on a multi-session night) is applied by
+                -- the statement after this one, so that no engine's re-derive
+                -- reads the table it writes (MySQL leaves that undefined).
+                ROUND(COALESCE(
+                    SUM(CASE WHEN m.avg_mask_pressure > 0 THEN m.avg_mask_pressure * s.duration_seconds END)
+                        / NULLIF(SUM(CASE WHEN m.avg_mask_pressure > 0 THEN s.duration_seconds END), 0),
+                    AVG(NULLIF(m.avg_mask_pressure, 0)))::numeric, 1),
                 ROUND(AVG(NULLIF(m.leak_p50, 0))::numeric, 2),
                 ROUND(AVG(NULLIF(m.leak_p95, 0))::numeric, 2),
-                ROUND(AVG(NULLIF(m.avg_spo2, 0))::numeric, 1),
-                ROUND(AVG(NULLIF(m.avg_epr_pressure, 0))::numeric, 2),
+                ROUND(COALESCE(
+                    SUM(CASE WHEN m.avg_spo2 > 0 THEN m.avg_spo2 * s.duration_seconds END)
+                        / NULLIF(SUM(CASE WHEN m.avg_spo2 > 0 THEN s.duration_seconds END), 0),
+                    AVG(NULLIF(m.avg_spo2, 0)))::numeric, 1),
+                ROUND(COALESCE(
+                    SUM(CASE WHEN m.avg_epr_pressure > 0 THEN m.avg_epr_pressure * s.duration_seconds END)
+                        / NULLIF(SUM(CASE WHEN m.avg_epr_pressure > 0 THEN s.duration_seconds END), 0),
+                    AVG(NULLIF(m.avg_epr_pressure, 0)))::numeric, 2),
                 MAX(COALESCE(m.therapy_mode, 0)),
                 'computed',
                 NOW()
@@ -2795,6 +2857,20 @@ bool DatabaseService::aggregateDailySummaryFromSessions(const std::string& devic
                 epr_level        = CASE WHEN cpap_daily_summary.ahi_str IS NOT NULL THEN cpap_daily_summary.epr_level     ELSE EXCLUDED.epr_level     END,
                 mode             = CASE WHEN cpap_daily_summary.ahi_str IS NOT NULL THEN cpap_daily_summary.mode          ELSE EXCLUDED.mode          END,
                 updated_at       = NOW()
+        )", device_id);
+
+        // SDD-033 D1: on a night of more than one session the percentiles are
+        // the STR's. Its own statement, counting sessions in cpap_sessions.
+        txn.exec_params(R"(
+            UPDATE cpap_daily_summary d
+               SET leak_50       = COALESCE(d.leak_50_str, d.leak_50),
+                   leak_95       = COALESCE(d.leak_95_str, d.leak_95),
+                   mask_press_50 = COALESCE(d.mask_press_50_str, d.mask_press_50),
+                   spo2_50       = COALESCE(d.spo2_50_str, d.spo2_50)
+             WHERE d.device_id = $1
+               AND (SELECT COUNT(*) FROM cpap_sessions s
+                     WHERE s.device_id = d.device_id
+                       AND DATE(s.session_start - INTERVAL '12 hours') = d.record_date) > 1
         )", device_id);
 
         txn.commit();

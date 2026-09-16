@@ -1,7 +1,8 @@
 # SDD-033: a night is its minutes, and the 11 series' other signal files
 
 **Status:** Accepted 2026-09-15 (§4): D1 a multi-session night's percentiles
-are the STR's; D2 events are summed; D3 a patch for both repos.
+are the STR's; D2 events are summed; D3 a patch for both repos. Built and
+verified 2026-09-15 (§6), not released.
 **Date:** 2026-09-15
 **Repo:** `hms-cpap` (the night queries on three engines, the sessions list,
 discovery, the archive), with `hms-cpapdash-parser` (the record-count rule).
@@ -127,6 +128,10 @@ nights str wins"):
   mirrors, written by every STR save. The re-derive picks:
   `CASE WHEN COUNT(sessions) > 1 THEN COALESCE(<_str>, ours) ELSE
   COALESCE(ours, <_str>) END`.
+- The night's `leak_p50` and `leak_p95` (the `historical/leak_p50` and
+  `historical/leak_p95` sensors and the AI night summary, today the `MAX`
+  of the sessions') follow the same rule: the STR's copy on a multi-session
+  night, the session's own on a single-session night.
 - The published Home Assistant daily sensors (`str_leak_95` and the rest)
   are the STR's already and do not change.
 - Not a percentile with an STR twin: the historical `pressure_p95` sensor is
@@ -218,7 +223,73 @@ night's figures (a sum over one session's minutes is its average).
   stand-in serving his card with Range fetches each TCV once and then resumes
   it, and the archived night is byte-identical to the card.
 
-## 6. Release
+## 6. As built (2026-09-15)
+
+### Code
+
+- The night queries on the three engines (`getNightlyMetrics`,
+  `getMetricsForDateRange`): each session's minute subquery returns a SUM and
+  a COUNT per figure, and the night divides the summed sums by the summed
+  counts. Events are summed; the mean event duration is weighted by events;
+  the AHI follows from the summed counts.
+- The daily summary re-derive: session means weighted by duration, and D1
+  applied by a SECOND statement, not by joining the row being written. MySQL
+  leaves an `INSERT ... SELECT` that reads its own target undefined: joined
+  there, the re-derive silently stopped updating the night (its DailyHours
+  cases caught it). The follow-up `UPDATE` counts the night's sessions in
+  `cpap_sessions` and takes `COALESCE(<x>_str, <x>)` when there is more than
+  one.
+- `leak_50_str`, `leak_95_str`, `mask_press_50_str`, `spo2_50_str` on the
+  three engines, their migrations and the three schema mirrors, written by
+  every STR save; `include/database/StrPercentile.h` holds the one rule for
+  what counts as "the STR has none" (a leak of 0 is a reading, a pressure or
+  SpO2 of 0 is not, a negative never is).
+- `QueryService`'s sessions list: SpO2 and heart rate weighted by duration.
+- TCV: `SessionFileSet::tcv_files`, filled by both discovery paths from the
+  checkpoint prefix (outside the grouping), fetched by
+  `downloadSessionFiles` like a checkpoint, and named by `isCpapEdf` so the
+  residue sweep skips it. Parser v2026.8.4 names `_SA2.edf` and `_TCV.edf` in
+  `isResmedSignalEdf`, so SDD-032's repair covers them.
+
+### Tests
+
+- `tests/database/test_NightAggregationBackends.cpp`, 6 cases on each engine:
+  the minute-weighted means, the summed events and the AHI, D1 on a
+  multi-session night, a single-session night keeping its own percentile, a
+  card with no STR day, and the STR's sentinels not being copied.
+- TCV in `test_SessionDiscoveryService.cpp` (three cases) and `_TCV.edf` in
+  `test_CardResidue.cpp`; the new columns in the MySQL migration list.
+- Full suite 1654 passed, 0 failed, local zone and TZ=UTC. Postgres: the
+  engine suites pass locally. MySQL (the NAS box over the LAN): 23 pass,
+  including the new suite on MySQL and the migration.
+- **Pre-existing MySQL failures, not this work**:
+  `DailyHoursBackendTest.ALiveNightGrowsPastTheStrSnapshot`,
+  `DailyHoursBackendTest.IndexKindSurvivesTheRoundTrip` and
+  `QueryServiceIndexTest.TheSessionsListSurvivesItsOwnSql` fail on MySQL with
+  this branch stashed as well, so they predate SDD-033. Reported to Albin,
+  not fixed here.
+
+### End to end, on TLaren's card (#33)
+
+Local mode, MQTT on. Night 2026-09-12, two sessions of 161 and 103 minutes:
+
+| | before | now | the card |
+|---|---|---|---|
+| `ipap` | 9.395 | **9.3133** | 9.313 |
+| `epap` | 5.395 | **5.3133** | 5.313 |
+| `historical/ahi` | 1.14 | **1.3636** | STR 1.30, daily summary 1.36 |
+| `total_events` | 5 | **6** | 1 + 5 in the two EVE files |
+| `leak_p95` | 16.8 | **15.60** | 15.6 from every leak sample, and the STR's day |
+
+`pressure_support` stays 4.00, and `avg_pressure` still reads 6.44, the
+waveform mean SDD-030 D2 kept.
+
+Over a local ez Share stand-in serving the same card: burst 1 attached each
+`_TCV.edf` to its session and fetched all six once (`TCV: 20260910_220005_TCV.edf
+(294 KB)`, …), and they are in the archive. Burst 2 asked for no TCV at all,
+where the residue sweep used to re-download every one of them in full.
+
+## 7. Release
 
 Parser 2026.8.4, hms-cpap 5.2.12 pinned to it (Albin's numbers), tagged once
 validated. The reply on #33 is Albin's.

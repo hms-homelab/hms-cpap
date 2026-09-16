@@ -151,6 +151,9 @@ SessionDiscoveryService::groupSessionsInFolder(const std::string& date_folder) {
     std::vector<CheckpointFile> checkpoints;
     std::map<std::string, EzShareFileEntry> csl_files;
     std::map<std::string, EzShareFileEntry> eve_files;
+    // SDD-033: the 11 series' TCV rides with the checkpoint of the same
+    // prefix. Kept out of the grouping, which is the BRP/PLD/SAD story.
+    std::map<std::string, EzShareFileEntry> tcv_files;
 
     for (const auto& file : files) {
         std::string name_lower = file.name;
@@ -166,6 +169,9 @@ SessionDiscoveryService::groupSessionsInFolder(const std::string& date_folder) {
             continue;
         } else if (name_lower.find("_eve.edf") != std::string::npos) {
             eve_files[prefix] = file;
+            continue;
+        } else if (name_lower.find("_tcv.edf") != std::string::npos) {
+            tcv_files[prefix] = file;
             continue;
         }
 
@@ -268,6 +274,18 @@ SessionDiscoveryService::groupSessionsInFolder(const std::string& date_folder) {
                 std::cout << "    PLD: " << cp.name << " (" << cp.size_kb << " KB)" << std::endl;
             } else if (cp.is_sad) {
                 session.sad_files.push_back(cp.name);
+            }
+
+            // SDD-033: the TCV written with this checkpoint, if the machine
+            // writes one (the 11 series does).
+            if (auto tcv = tcv_files.find(cp.prefix); tcv != tcv_files.end()) {
+                session.tcv_files.push_back(tcv->second.name);
+                session.total_size_kb += tcv->second.size_kb;
+                session.file_sizes_kb[tcv->second.name] = tcv->second.size_kb;
+                session.card_stamps[tcv->second.name] = cardStampUtc(tcv->second);
+                std::cout << "    TCV: " << tcv->second.name
+                          << " (" << tcv->second.size_kb << " KB)" << std::endl;
+                tcv_files.erase(tcv);
                 std::cout << "    SAD: " << cp.name << " (" << cp.size_kb << " KB)" << std::endl;
             }
         }
@@ -673,6 +691,7 @@ SessionDiscoveryService::groupLocalFolder(
     std::vector<CheckpointFile> checkpoints;
     std::map<std::string, std::pair<std::string, int>> csl_files;  // prefix -> {name, size_kb}
     std::map<std::string, std::pair<std::string, int>> eve_files;
+    std::map<std::string, std::pair<std::string, int>> tcv_files;  // SDD-033
 
     // Helper to extract prefix (same regex as instance method)
     auto extractPrefix = [](const std::string& filename) -> std::string {
@@ -734,6 +753,9 @@ SessionDiscoveryService::groupLocalFolder(
             continue;
         } else if (name_lower.find("_eve.edf") != std::string::npos) {
             eve_files[prefix] = {filename, size_kb};
+            continue;
+        } else if (name_lower.find("_tcv.edf") != std::string::npos) {
+            tcv_files[prefix] = {filename, size_kb};   // SDD-033
             continue;
         }
 
@@ -820,6 +842,14 @@ SessionDiscoveryService::groupLocalFolder(
             if (cp.is_brp) session.brp_files.push_back(cp.name);
             else if (cp.is_pld) session.pld_files.push_back(cp.name);
             else if (cp.is_sad) session.sad_files.push_back(cp.name);
+
+            // SDD-033: the TCV written with this checkpoint (the 11 series).
+            if (auto tcv = tcv_files.find(cp.prefix); tcv != tcv_files.end()) {
+                session.tcv_files.push_back(tcv->second.first);
+                session.total_size_kb += tcv->second.second;
+                session.file_sizes_kb[tcv->second.first] = tcv->second.second;
+                tcv_files.erase(tcv);
+            }
         }
 
         // Match CSL/EVE to this session. EVERY sidecar inside the session's own

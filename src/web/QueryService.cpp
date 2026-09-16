@@ -305,8 +305,16 @@ Json::Value QueryService::getSessions(int limit, int offset) {
         " SUM(COALESCE(m.central_apneas, 0)) as central_apneas,"
         " SUM(COALESCE(m.hypopneas, 0)) as hypopneas,"
         " SUM(COALESCE(m.reras, 0)) as reras,"
-        " " + sql::round("AVG(NULLIF(m.avg_spo2, 0))", 1, dt_) + " as avg_spo2,"
-        " " + sql::round("AVG(NULLIF(m.avg_heart_rate, 0))", 0, dt_) + " as avg_heart_rate,"
+        // SDD-033: weighted by duration, like the index above. A plain mean
+        // let a three-minute session count as much as a seven-hour one.
+        " " + sql::round(
+            "COALESCE(SUM(CASE WHEN m.avg_spo2 > 0 THEN m.avg_spo2 * s.duration_seconds END)"
+            " / NULLIF(SUM(CASE WHEN m.avg_spo2 > 0 THEN s.duration_seconds END), 0),"
+            " AVG(NULLIF(m.avg_spo2, 0)))", 1, dt_) + " as avg_spo2,"
+        " " + sql::round(
+            "COALESCE(SUM(CASE WHEN m.avg_heart_rate > 0 THEN m.avg_heart_rate * s.duration_seconds END)"
+            " / NULLIF(SUM(CASE WHEN m.avg_heart_rate > 0 THEN s.duration_seconds END), 0),"
+            " AVG(NULLIF(m.avg_heart_rate, 0)))", 0, dt_) + " as avg_heart_rate,"
         " SUM(CASE WHEN s.session_end IS NULL THEN 1 ELSE 0 END) as has_live,"
         " 0 as oximetry_only"
         " FROM cpap_sessions s"

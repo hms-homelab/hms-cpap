@@ -916,3 +916,61 @@ TEST_F(MergedSessionSidecars, AnOrphanSidecarIsSweptByTheLastSession) {
     ASSERT_EQ(sessions.size(), 1u);
     EXPECT_EQ(sessions[0].eve_files.size(), 2u) << "an EVE was orphaned entirely";
 }
+
+// ── SDD-033: the 11 series' TCV rides with its checkpoint ───────────────────
+//
+// An AirCurve 11 writes a *_TCV.edf beside each BRP/PLD/SA2. It is not
+// parsed, but it grows all night and the archive is what OSCAR and SleepHQ
+// read, so it belongs to the session rather than to the residue sweep that
+// re-downloaded every one of them whole on every burst.
+
+class TcvFiles : public ::testing::Test {
+protected:
+    std::string tmp_dir;
+    void SetUp() override {
+        tmp_dir = "/tmp/cpap_test_tcv_" + std::to_string(getpid());
+        fs::remove_all(tmp_dir);
+        fs::create_directories(tmp_dir);
+        setenv("SESSION_GAP_MINUTES", "60", 1);
+    }
+    void TearDown() override { fs::remove_all(tmp_dir); unsetenv("SESSION_GAP_MINUTES"); }
+};
+
+TEST_F(TcvFiles, EachSessionTakesTheTcvOfItsOwnCheckpoints) {
+    // Two blocks, five hours apart: two sessions, each with its own TCV.
+    touchFileSized(tmp_dir, "20260911_225616_BRP.edf", 1712);
+    touchFileSized(tmp_dir, "20260911_225616_PLD.edf", 192);
+    touchFileSized(tmp_dir, "20260911_225616_TCV.edf", 856);
+    touchFile(tmp_dir,      "20260911_225604_EVE.edf");
+    touchFileSized(tmp_dir, "20260912_045142_BRP.edf", 604);
+    touchFileSized(tmp_dir, "20260912_045142_TCV.edf", 302);
+
+    auto sessions = SessionDiscoveryService::groupLocalFolder(tmp_dir, "20260911");
+
+    ASSERT_EQ(sessions.size(), 2u);
+    ASSERT_EQ(sessions[0].tcv_files.size(), 1u);
+    EXPECT_EQ(sessions[0].tcv_files[0], "20260911_225616_TCV.edf");
+    ASSERT_EQ(sessions[1].tcv_files.size(), 1u);
+    EXPECT_EQ(sessions[1].tcv_files[0], "20260912_045142_TCV.edf");
+    // Counted like any other file of the session, so the ledger and the
+    // archive check know it has to be there.
+    EXPECT_EQ(sessions[0].file_sizes_kb.count("20260911_225616_TCV.edf"), 1u);
+}
+
+TEST_F(TcvFiles, ATcvNeverMakesASessionOfItsOwn) {
+    // A TCV with no checkpoint beside it is not therapy data; grouping is the
+    // BRP/PLD/SAD story and must not change because a machine writes one.
+    touchFileSized(tmp_dir, "20260911_225616_TCV.edf", 856);
+
+    auto sessions = SessionDiscoveryService::groupLocalFolder(tmp_dir, "20260911");
+    EXPECT_TRUE(sessions.empty());
+}
+
+TEST_F(TcvFiles, AnAirSenseNightHasNoTcvAndIsUnchanged) {
+    touchFileSized(tmp_dir, "20260911_225616_BRP.edf", 1712);
+    touchFileSized(tmp_dir, "20260911_225616_PLD.edf", 192);
+
+    auto sessions = SessionDiscoveryService::groupLocalFolder(tmp_dir, "20260911");
+    ASSERT_EQ(sessions.size(), 1u);
+    EXPECT_TRUE(sessions[0].tcv_files.empty());
+}

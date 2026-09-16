@@ -21,6 +21,10 @@ TEST(IsCpapEdf, MatchesTheSessionTypes) {
     EXPECT_TRUE(isCpapEdf("20260617_120000_SA2.edf"));  // local includes SA2 oximetry
     EXPECT_TRUE(isCpapEdf("20260617_120000_PLD.edf"));
     EXPECT_TRUE(isCpapEdf("20260617_120000_CSL.edf"));
+    // SDD-033: the 11 series' trigger/cycle file. The burst fetches it with
+    // the other checkpoints, so the residue sweep must leave it alone rather
+    // than re-downloading every one of them whole on every pass.
+    EXPECT_TRUE(isCpapEdf("20260617_120000_TCV.edf"));
 }
 
 TEST(IsCpapEdf, IsCaseInsensitive) {
