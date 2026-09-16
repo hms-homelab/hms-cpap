@@ -359,8 +359,15 @@ TEST_P(QueryServiceIndexTest, TheSessionsListSurvivesItsOwnSql) {
     s.metrics = m;
     ASSERT_TRUE(db_->saveSession(s)) << engineName(GetParam());
 
-    const auto rows = qs_->getSessions(50, 0);
-    ASSERT_TRUE(rows.isArray()) << engineName(GetParam());
+    const auto all = qs_->getSessions(50, 0);
+    ASSERT_TRUE(all.isArray()) << engineName(GetParam());
+    // The CPAP arm's rows only. The oximetry arm is keyed on the ring's own
+    // device, not this one, so on a shared test database another test's ring
+    // recording rides along in every device's list -- which is not what this
+    // test is about.
+    Json::Value rows(Json::arrayValue);
+    for (const auto& r : all)
+        if (r["oximetry_only"].asString() != "1") rows.append(r);
     ASSERT_EQ(rows.size(), 1u)
         << engineName(GetParam())
         << ": the sessions list came back empty for a night that exists. If the "

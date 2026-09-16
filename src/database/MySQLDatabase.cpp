@@ -1508,8 +1508,12 @@ void MySQLDatabase::insertSessionMetrics(int64_t session_id, const SessionMetric
              avg_spo2, min_spo2, avg_heart_rate, max_heart_rate, min_heart_rate,
              avg_mask_pressure, avg_epr_pressure, avg_snore,
              leak_p50, leak_p95, avg_leak_rate, max_leak_rate,
-             avg_target_ventilation, therapy_mode, spo2_drops, odi)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             avg_target_ventilation, therapy_mode, spo2_drops, odi,
+             -- SDD-024, missed here when the column landed (2026-09-06): every
+             -- session on MySQL took the column default and an apnea-only
+             -- index went out named AHI, the exact thing SDD-024 prevents.
+             index_kind)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
             total_events           = VALUES(total_events),
             ahi                    = VALUES(ahi),
@@ -1533,7 +1537,8 @@ void MySQLDatabase::insertSessionMetrics(int64_t session_id, const SessionMetric
             avg_target_ventilation = VALUES(avg_target_ventilation),
             therapy_mode           = VALUES(therapy_mode),
             spo2_drops             = VALUES(spo2_drops),
-            odi                    = VALUES(odi)
+            odi                    = VALUES(odi),
+            index_kind             = VALUES(index_kind)
     )";
 
     MysqlStmtGuard g;
@@ -1543,7 +1548,7 @@ void MySQLDatabase::insertSessionMetrics(int64_t session_id, const SessionMetric
         return;
     }
 
-    ParamBinder p(24);
+    ParamBinder p(25);   // SDD-024: index_kind is the 25th
     p.bindInt64(0, session_id);
     p.bindInt(1, m.total_events);
     p.bindDouble(2, m.ahi);
@@ -1568,6 +1573,10 @@ void MySQLDatabase::insertSessionMetrics(int64_t session_id, const SessionMetric
     p.bindOptInt(21, m.therapy_mode);
     p.bindOptInt(22, m.spo2_drops);
     p.bindOptDouble(23, m.odi);
+    // SDD-024: text, as the other two backends store it.
+    const std::string index_kind =
+        m.index_kind == SessionMetrics::IndexKind::AHI ? "ahi" : "ungraded";
+    p.bindText(24, index_kind);
 
     mysql_stmt_bind_param(g.stmt, p.data());
     if (mysql_stmt_execute(g.stmt) != 0) {
@@ -2970,7 +2979,13 @@ std::optional<SessionMetrics> MySQLDatabase::getNightlyMetrics(
             CASE WHEN COUNT(*) > 1 AND MAX(d.leak_95_str) IS NOT NULL
                  THEN MAX(d.leak_95_str) ELSE MAX(sm.leak_p95) END AS leak_p95_sess,
             MAX(sm.therapy_mode) AS therapy_mode,
-            SUM(c.s_therapy) / NULLIF(SUM(c.n_therapy), 0) AS avg_therapy_pressure
+            SUM(c.s_therapy) / NULLIF(SUM(c.n_therapy), 0) AS avg_therapy_pressure,
+            -- SDD-024, missed on this engine: without it every night read back
+            -- as an AHI, so a Sefam night's apnea-only index was published
+            -- under that name. MAX over text, as on the other two backends:
+            -- 'ungraded' sorts after 'ahi', so a night holding ANY ungraded
+            -- session reads as ungraded.
+            MAX(COALESCE(sm.index_kind, 'ahi')) AS index_kind
         FROM cpap_sessions s
         JOIN cpap_session_metrics sm ON sm.session_id = s.id
         LEFT JOIN (
@@ -3025,9 +3040,10 @@ std::optional<SessionMetrics> MySQLDatabase::getNightlyMetrics(
     mysql_stmt_bind_param(g.stmt, p.data());
     mysql_stmt_execute(g.stmt);
 
-    // 35 output columns (indices 0-34)
-    ResultBinder r(35);
+    // 36 output columns (indices 0-35; 35 is index_kind, text)
+    ResultBinder r(36);
     for (int i = 0; i < 35; ++i) r.bindColDouble(i);
+    r.bindColString(35);   // SDD-024 index_kind
     // Override int columns
     r.bindColInt(1);   // total_events
     r.bindColInt(2);   // OA
@@ -3051,6 +3067,7 @@ std::optional<SessionMetrics> MySQLDatabase::getNightlyMetrics(
     // 24=avg_mask_pressure  25=avg_epr_pressure  26=avg_snore  27=avg_target_ventilation
     // 28=avg_pressure  29=max_pressure  30=min_pressure
     // 31=leak_p50  32=leak_p95_sess  33=therapy_mode  34=avg_therapy_pressure
+    // 35=index_kind (text)
     SessionMetrics m;
     m.total_events        = r.colInt(1);
     m.ahi                 = r.colDouble(11);
@@ -3088,6 +3105,9 @@ std::optional<SessionMetrics> MySQLDatabase::getNightlyMetrics(
     m.leak_p95              = r.colOptDouble(32);
     m.therapy_mode          = r.colOptInt(33);
     m.avg_therapy_pressure  = r.colOptDouble(34);   // SDD-030
+    // SDD-024: an apnea-only index must not come back named AHI.
+    m.index_kind = (r.colText(35) == "ungraded") ? SessionMetrics::IndexKind::Ungraded
+                                                 : SessionMetrics::IndexKind::AHI;
 
     return m;
 }
