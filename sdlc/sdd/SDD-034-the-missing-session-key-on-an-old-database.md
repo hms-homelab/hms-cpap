@@ -1,10 +1,9 @@
 # SDD-034: the missing session key on an old database
 
 **Status:** Accepted 2026-09-15 (§4). It runs on the update path, as Albin
-asked ("yes to the mysql migration sdd needs to go when update"), and the
-FIRST release only looks: it reports what it would collapse and changes
-nothing. The repair itself follows in the next patch, once the reports from
-real installs have been read.
+asked ("yes to the mysql migration sdd needs to go when update"). The report
+shipped in 5.2.13 (D3: look first, change nothing). The repair is built on all
+three engines and is §7 below; it lands in the next patch.
 **Date:** 2026-09-15
 **Repo:** `hms-cpap` (the three database backends' migrations).
 **Found in:** SDD-033 §6, chasing three MySQL-only test failures before
@@ -147,5 +146,59 @@ updated duration.
 
 ## 6. Release
 
-The report goes in the next patch (Albin's number). The repair follows in the
-one after, once the reports say who has the gap.
+The report went out in 5.2.13. The repair follows in the next patch (Albin's
+number).
+
+## 7. As built: the repair
+
+`IDatabase::repairSessionKey()` returns `SessionKeyRepair { ok, key_added,
+groups, rows_deleted }`, defaulting to a no-op so every `MockDatabase` in the
+tests still compiles. Implemented on `SQLiteDatabase`, `MySQLDatabase` and
+`DatabaseService` (PostgreSQL), with `PostgresDatabase` forwarding.
+
+**It runs itself.** `src/main.cpp` calls `inspectSessionKey()` right after
+`db->connect()`, as 5.2.13 did, and now calls the repair when the key is
+missing. So an add-on or a systemd install gains the key by being updated and
+restarted, with nothing for the user to run. It is a one-off in practice: every
+later start finds the key and returns without reading a row.
+
+**Picking the survivor** (D1) is one predicate on all three engines:
+
+```sql
+WHERE EXISTS (SELECT 1 FROM cpap_sessions o
+               WHERE o.device_id = s.device_id
+                 AND o.session_start = s.session_start
+                 AND (COALESCE(o.duration_seconds, 0) > COALESCE(s.duration_seconds, 0)
+                   OR (COALESCE(o.duration_seconds, 0) = COALESCE(s.duration_seconds, 0)
+                       AND o.id > s.id)))
+```
+
+Every row some other row beats is a loser, so exactly one row per start
+survives whatever the group size.
+
+**The loser ids go to a temporary table first**, on all three, because MySQL
+refuses a DELETE whose subquery reads the table being deleted from (error 1093).
+The same shape everywhere is worth more than saving a statement on two of them.
+
+**A missing child table is skipped, not an error.** `cpap_sleep_stages` is
+PostgreSQL's alone — neither `SQLiteDatabase::createSchema` nor MySQL's creates
+it — so the first build aborted the entire repair on SQLite over a table that
+was never supposed to be there. Each of the eight is now checked first
+(`sqlite_master`, `tableExists()`, `to_regclass`). An install missing a table is
+the normal case, not a reason to leave duplicates in place.
+
+**Deviation from §2.3 step 5, MySQL only.** `ALTER TABLE` commits by itself on
+MySQL, so the deletes and the key cannot share one transaction there: the
+deletes commit, then the `ALTER` runs. SQLite and PostgreSQL both keep the whole
+thing in one transaction, index included. The MySQL failure mode is therefore
+"duplicates collapsed, key not added", which the next start retries and which
+the log line names; it is not a half-collapsed table.
+
+**Tests** (`tests/database/test_SessionKeyReport.cpp`, five new cases):
+SQLite keeps the longest copy, deletes the loser's `cpap_events` and
+`cpap_session_files` rows and nobody else's, adds the key, and a second call
+deletes nothing; a three-way tie keeps the largest id; a database that already
+has the key is untouched. MySQL and PostgreSQL each drop their real key on the
+test database, insert the duplicates an old install would have, repair, and
+check the key is back and the longer copy survived — the only way to exercise
+MySQL's 1093 and its DDL commit at all.

@@ -2526,6 +2526,75 @@ IDatabase::SessionKeyReport DatabaseService::inspectSessionKey() {
     return report;
 }
 
+// The tables that hang off a session row. Deleted explicitly rather than left
+// to ON DELETE CASCADE: cpap_session_files declares no cascade, and the others
+// only cascade where the install actually kept the foreign keys.
+//
+// Not every one is on every install, so each is skipped when it is not there.
+// An install missing one table is not a reason to leave the duplicates in place.
+static const char* const kSessionChildTables[] = {
+    "cpap_session_files",  "cpap_session_metrics",   "cpap_breathing_summary",
+    "cpap_breaths",        "cpap_events",            "cpap_vitals",
+    "cpap_calculated_metrics", "cpap_sleep_stages",
+};
+
+IDatabase::SessionKeyRepair DatabaseService::repairSessionKey() {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    SessionKeyRepair out;
+    if (!ensureConnection()) return out;
+
+    const auto before = inspectSessionKey();
+    if (before.key_present) {           // nothing to do, and nothing to delete
+        out.ok = true;
+        out.key_added = true;
+        return out;
+    }
+    out.groups = before.duplicate_groups;
+
+    try {
+        // PostgreSQL rolls DDL back with everything else, so the deletes and
+        // the index go in one transaction: either the key is there and the
+        // duplicates are gone, or nothing moved.
+        pqxx::work txn(*conn_);
+
+        // Longer duration wins; on a tie the larger id does, so exactly one row
+        // per start survives.
+        txn.exec_params(R"(
+            CREATE TEMP TABLE sdd034_losers ON COMMIT DROP AS
+            SELECT s.id FROM cpap_sessions s
+             WHERE EXISTS (SELECT 1 FROM cpap_sessions o
+                            WHERE o.device_id = s.device_id
+                              AND o.session_start = s.session_start
+                              AND (COALESCE(o.duration_seconds, 0) > COALESCE(s.duration_seconds, 0)
+                                OR (COALESCE(o.duration_seconds, 0) = COALESCE(s.duration_seconds, 0)
+                                    AND o.id > s.id)))
+        )");
+
+        for (const char* table : kSessionChildTables) {
+            const auto here = txn.exec_params(
+                "SELECT to_regclass($1) IS NOT NULL", std::string(table));
+            if (here.empty() || !here[0][0].as<bool>()) continue;
+            txn.exec_params(std::string("DELETE FROM ") + table +
+                            " WHERE session_id IN (SELECT id FROM sdd034_losers)");
+        }
+        const auto del = txn.exec_params(
+            "DELETE FROM cpap_sessions WHERE id IN (SELECT id FROM sdd034_losers)");
+        const int deleted = static_cast<int>(del.affected_rows());
+
+        txn.exec_params("CREATE UNIQUE INDEX IF NOT EXISTS uq_device_session "
+                        "ON cpap_sessions(device_id, session_start)");
+        txn.commit();
+
+        out.rows_deleted = deleted;
+        out.ok = true;
+        out.key_added = inspectSessionKey().key_present;
+    } catch (const std::exception& e) {
+        std::cerr << "DB: repairSessionKey: " << e.what() << std::endl;
+        return {};
+    }
+    return out;
+}
+
 // ---------------------------------------------------------------------------
 // cpap_session_files (SDD-014)
 // ---------------------------------------------------------------------------

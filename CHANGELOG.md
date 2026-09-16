@@ -5,6 +5,21 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.2.14] - 2026-09-15
+
+### Fixed
+- **A database whose sessions table has no unique key now repairs itself**
+  (SDD-034). 5.2.13 only reported the gap; this release closes it. On the
+  first start after updating, an install missing
+  `UNIQUE (device_id, session_start)` on `cpap_sessions` keeps one row per
+  night, adds the key, and logs what it did. The copy kept is the longest one,
+  because a session row only ever grows, so that is the most complete record
+  of the night; the shorter copies go, and the metrics, events, breaths,
+  vitals and file rows hanging off them go with them. All of that is derived
+  from card files still on disk, so a Reparse rebuilds any of it. Nothing runs
+  on a database that already has the key, which is every install created by a
+  recent build, and nothing runs twice.
+
 ## [5.2.13] - 2026-09-15
 
 ### Added

@@ -78,6 +78,10 @@ IDatabase::SessionKeyReport PostgresDatabase::inspectSessionKey() {   // SDD-034
     return db_->inspectSessionKey();
 }
 
+IDatabase::SessionKeyRepair PostgresDatabase::repairSessionKey() {   // SDD-034
+    return db_->repairSessionKey();
+}
+
 bool PostgresDatabase::replaceSessionFiles(
     const std::string& device_id,
     const std::chrono::system_clock::time_point& session_start,

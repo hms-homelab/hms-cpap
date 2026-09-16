@@ -146,6 +146,22 @@ public:
     /// double without the check reports nothing to repair.
     virtual SessionKeyReport inspectSessionKey() { return {}; }
 
+    /// What the repair did.
+    struct SessionKeyRepair {
+        bool ok = false;           ///< it ran and finished
+        bool key_added = false;    ///< the unique index is there now
+        int  groups = 0;           ///< starts that held more than one row
+        int  rows_deleted = 0;     ///< the shorter copies, and their own rows
+    };
+
+    /// Collapse duplicate sessions and add the key (SDD-034). The row kept per
+    /// (device_id, session_start) is the longest `duration_seconds`, ties
+    /// broken by the largest id: a session row only ever grows, so that is the
+    /// most complete copy of the night. The rows hanging off the others go
+    /// with them; every one is derived from card files still on disk, so a
+    /// Reparse rebuilds any of it. A no-op when the key is already there.
+    virtual SessionKeyRepair repairSessionKey() { return {}; }
+
     // -- Session file set (SDD-014) -------------------------------------------
 
     /// Replace the recorded file set for one session. Delete-then-insert, so a

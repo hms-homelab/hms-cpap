@@ -697,13 +697,27 @@ int main(int argc, char** argv) {
     // SDD-034: a cpap_sessions created before the backends declared
     // UNIQUE (device_id, session_start) has no such key, and saveSession's
     // upsert needs it: without it a growing night is inserted again every
-    // burst instead of being updated. This build only says so; the next one
-    // collapses the duplicates and adds the key.
+    // burst instead of being updated. Repair it here, beside the migrations,
+    // so an install gains the key by being updated and restarted. It runs once:
+    // every later start finds the key and returns without touching a row.
     if (const auto key = db->inspectSessionKey(); !key.key_present) {
         std::cerr << "cpap_sessions has no unique key on (device_id, session_start): "
                   << key.duplicate_groups << " night(s) stored twice or more, "
-                  << key.duplicate_rows << " row(s) in them. This build only reports it "
-                     "(SDD-034); the next one collapses them." << std::endl;
+                  << key.duplicate_rows << " row(s) in them. Repairing (SDD-034)..."
+                  << std::endl;
+        const auto fixed = db->repairSessionKey();
+        if (fixed.ok && fixed.key_added) {
+            std::cerr << "cpap_sessions: collapsed " << fixed.groups << " night(s), removed "
+                      << fixed.rows_deleted
+                      << " duplicate row(s), unique key added. The removed copies were the "
+                         "shorter ones; a Reparse rebuilds anything from the card files."
+                      << std::endl;
+        } else {
+            std::cerr << "cpap_sessions: SDD-034 repair did not finish (removed "
+                      << fixed.rows_deleted
+                      << " row(s)); the duplicates stay and so does the missing key."
+                      << std::endl;
+        }
     }
 
     // Print config source

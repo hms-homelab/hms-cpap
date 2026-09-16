@@ -2189,6 +2189,90 @@ IDatabase::SessionKeyReport MySQLDatabase::inspectSessionKey() {
     return report;
 }
 
+// The tables that hang off a session row. Deleted explicitly rather than left
+// to ON DELETE CASCADE: cpap_session_files declares no cascade, and the others
+// only cascade where the install actually kept the foreign keys.
+//
+// Not every one is on every engine or every install -- cpap_sleep_stages is
+// PostgreSQL's alone -- so each is skipped when it is not there. An install
+// missing one table is the normal case here, not a reason to leave the
+// duplicates in place.
+static const char* const kSessionChildTables[] = {
+    "cpap_session_files",  "cpap_session_metrics",   "cpap_breathing_summary",
+    "cpap_breaths",        "cpap_events",            "cpap_vitals",
+    "cpap_calculated_metrics", "cpap_sleep_stages",
+};
+
+IDatabase::SessionKeyRepair MySQLDatabase::repairSessionKey() {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    SessionKeyRepair out;
+    if (!conn_) return out;
+
+    const auto before = inspectSessionKey();
+    if (before.key_present) {           // nothing to do, and nothing to delete
+        out.ok = true;
+        out.key_added = true;
+        return out;
+    }
+    out.groups = before.duplicate_groups;
+
+    // The loser ids go in a temporary table first. MySQL refuses a DELETE whose
+    // subquery reads the table being deleted from (error 1093), so the pick and
+    // the delete have to be two statements over two tables. CREATE/DROP
+    // TEMPORARY TABLE is the one DDL that does not implicitly commit, so this
+    // still sits inside the transaction below.
+    exec("DROP TEMPORARY TABLE IF EXISTS sdd034_losers");
+    if (!exec("CREATE TEMPORARY TABLE sdd034_losers (id BIGINT PRIMARY KEY) ENGINE=InnoDB"))
+        return out;
+
+    auto give_up = [&]() {
+        exec("ROLLBACK");
+        exec("DROP TEMPORARY TABLE IF EXISTS sdd034_losers");
+        out.rows_deleted = 0;
+        return out;
+    };
+
+    if (!exec("START TRANSACTION")) {
+        exec("DROP TEMPORARY TABLE IF EXISTS sdd034_losers");
+        return out;
+    }
+
+    // Longer duration wins; on a tie the larger id does, so exactly one row per
+    // start survives.
+    if (!exec("INSERT INTO sdd034_losers (id) SELECT s.id FROM cpap_sessions s "
+              "WHERE EXISTS (SELECT 1 FROM cpap_sessions o "
+              "  WHERE o.device_id = s.device_id AND o.session_start = s.session_start "
+              "    AND (COALESCE(o.duration_seconds, 0) > COALESCE(s.duration_seconds, 0) "
+              "      OR (COALESCE(o.duration_seconds, 0) = COALESCE(s.duration_seconds, 0) "
+              "          AND o.id > s.id)))"))
+        return give_up();
+
+    for (const char* table : kSessionChildTables) {
+        if (!tableExists(table)) continue;
+        if (!exec(std::string("DELETE FROM ") + table +
+                  " WHERE session_id IN (SELECT id FROM sdd034_losers)"))
+            return give_up();
+    }
+    if (!exec("DELETE FROM cpap_sessions WHERE id IN (SELECT id FROM sdd034_losers)"))
+        return give_up();
+    const int deleted = static_cast<int>(mysql_affected_rows(conn_));
+
+    if (!exec("COMMIT")) return give_up();
+    exec("DROP TEMPORARY TABLE IF EXISTS sdd034_losers");
+    out.rows_deleted = deleted;
+
+    // ALTER TABLE commits by itself, which is why it comes after the deletes
+    // rather than inside them. It fails if a duplicate we did not account for
+    // is still there, and the table is then left exactly as the deletes made it.
+    if (!exec("ALTER TABLE cpap_sessions "
+              "ADD UNIQUE KEY uq_device_session (device_id, session_start)"))
+        return out;
+
+    out.ok = true;
+    out.key_added = inspectSessionKey().key_present;
+    return out;
+}
+
 // ---------------------------------------------------------------------------
 // cpap_session_files (SDD-014)
 // ---------------------------------------------------------------------------

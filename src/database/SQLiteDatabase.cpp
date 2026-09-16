@@ -1715,6 +1715,93 @@ IDatabase::SessionKeyReport SQLiteDatabase::inspectSessionKey() {
     return report;
 }
 
+// The tables that hang off a session row. They are deleted explicitly rather
+// than left to ON DELETE CASCADE: cpap_session_files declares no cascade on any
+// engine, and MySQL only honours the rest when the foreign keys actually
+// survived the install (an older build created some of these without them).
+//
+// Not every one is on every engine or every install -- cpap_sleep_stages is
+// PostgreSQL's alone -- so each is skipped when it is not there. An install
+// missing one table is the normal case here, not a reason to leave the
+// duplicates in place.
+static const char* const kSessionChildTables[] = {
+    "cpap_session_files",  "cpap_session_metrics",   "cpap_breathing_summary",
+    "cpap_breaths",        "cpap_events",            "cpap_vitals",
+    "cpap_calculated_metrics", "cpap_sleep_stages",
+};
+
+IDatabase::SessionKeyRepair SQLiteDatabase::repairSessionKey() {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    SessionKeyRepair out;
+    if (!db_) return out;
+
+    const auto before = inspectSessionKey();
+    if (before.key_present) {           // nothing to do, and nothing to delete
+        out.ok = true;
+        out.key_added = true;
+        return out;
+    }
+    out.groups = before.duplicate_groups;
+
+    if (!exec("BEGIN IMMEDIATE")) return out;
+
+    // The losers: every row that another row with the same (device_id,
+    // session_start) beats. Longer duration wins; on a tie the larger id does,
+    // which leaves exactly one survivor per start.
+    const bool picked =
+        exec("CREATE TEMP TABLE IF NOT EXISTS sdd034_losers (id INTEGER PRIMARY KEY)") &&
+        exec("DELETE FROM sdd034_losers") &&
+        exec("INSERT INTO sdd034_losers (id) SELECT s.id FROM cpap_sessions s "
+             "WHERE EXISTS (SELECT 1 FROM cpap_sessions o "
+             "  WHERE o.device_id = s.device_id AND o.session_start = s.session_start "
+             "    AND (COALESCE(o.duration_seconds, 0) > COALESCE(s.duration_seconds, 0) "
+             "      OR (COALESCE(o.duration_seconds, 0) = COALESCE(s.duration_seconds, 0) "
+             "          AND o.id > s.id)))");
+    if (!picked) {
+        exec("ROLLBACK");
+        return out;
+    }
+
+    for (const char* table : kSessionChildTables) {
+        StmtGuard g;
+        bool present = false;
+        if (sqlite3_prepare_v2(db_,
+                               "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+                               -1, &g.stmt, nullptr) == SQLITE_OK) {
+            bind_text(g.stmt, 1, table);
+            present = sqlite3_step(g.stmt) == SQLITE_ROW;
+        }
+        if (!present) continue;
+        if (!exec(std::string("DELETE FROM ") + table +
+                  " WHERE session_id IN (SELECT id FROM sdd034_losers)")) {
+            exec("ROLLBACK");
+            return out;
+        }
+    }
+    if (!exec("DELETE FROM cpap_sessions WHERE id IN (SELECT id FROM sdd034_losers)")) {
+        exec("ROLLBACK");
+        return out;
+    }
+    out.rows_deleted = sqlite3_changes(db_);
+
+    if (!exec("CREATE UNIQUE INDEX IF NOT EXISTS uq_device_session "
+              "ON cpap_sessions(device_id, session_start)")) {
+        exec("ROLLBACK");                // a duplicate we did not account for
+        out.rows_deleted = 0;
+        return out;
+    }
+    exec("DROP TABLE IF EXISTS sdd034_losers");
+    if (!exec("COMMIT")) {
+        exec("ROLLBACK");
+        out.rows_deleted = 0;
+        return out;
+    }
+
+    out.ok = true;
+    out.key_added = inspectSessionKey().key_present;
+    return out;
+}
+
 // ---------------------------------------------------------------------------
 // cpap_session_files (SDD-014)
 // ---------------------------------------------------------------------------
