@@ -116,3 +116,42 @@ UI changes.
 ## 6. Release
 
 The add-on repo's bump is its own release, on the tag after this lands.
+
+## 7. As built
+
+**The job.** `addon-image` in `hms-cpap`'s `docker-build.yml`, tag-gated, a
+matrix of amd64/aarch64. It checks out `hms-homelab/hms-cpap-ha-addon`, points
+that repo's Dockerfile `FROM` at the release being built, and pushes
+`ghcr.io/hms-homelab/{arch}-cpapdash:<version>` (the exact version only, D2).
+The published image is therefore the ADD-ON's Dockerfile, not the plain
+service: it carries `CMD ["/run.sh"]` and the jq layer already.
+
+**The first real run, v5.2.14, got it wrong twice.** Both were in the job, not
+the image, and both are fixed in 5.2.15:
+
+1. The architecture check read `--format '{{json .Manifest}}'`, which is the
+   manifest DESCRIPTOR: mediaType, digest, size. The architecture is in the
+   image config, `.Image`. So it failed against an `amd64-cpapdash:5.2.14`
+   that was in fact correct (verified by hand off the registry: `linux/amd64`,
+   `Cmd ["/run.sh"]`, `Entrypoint null`).
+2. The matrix had no `fail-fast: false`, so that failure CANCELLED the aarch64
+   job. Half a pair is unusable: the add-on declares both architectures, and
+   most of its installs are Pis.
+
+The check now reads `.Image.Os`/`.Image.Architecture`, states the platform it
+expects, prints both values when they differ, and additionally asserts the
+image's `Cmd` contains `/run.sh` — the one thing that would silently turn the
+`image:` key into the failure §2.2 avoided it for.
+
+**Two ordering constraints found while switching the add-on over**, neither of
+them obvious from §2:
+
+- **`version:` must move to a release that HAS the images, in the same commit
+  as `image:`.** The key names `{arch}-cpapdash:<version>`, and those images
+  begin at the first release whose `addon-image` job succeeded. Setting the key
+  while `version:` still said 5.2.11 would have pointed every Supervisor at a
+  tag that does not exist. The bump guard does not cover this: it stops future
+  bumps, not the value already in the file.
+- **The guard has to be on `main`.** It was first pushed to `master` in a repo
+  whose default branch is `main`, so the workflow that actually runs never had
+  it. Fast-forwarded before the switch.
