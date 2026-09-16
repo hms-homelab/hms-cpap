@@ -1,7 +1,9 @@
 # SDD-035: the add-on installs by pulling
 
-**Status:** Draft 2026-09-15, for Albin's decisions (§4). He asked for it:
-"lets create a image in ghrc and waays to count installs".
+**Status:** Accepted 2026-09-15 (§4): D1 built in `hms-cpap`'s existing
+`docker-build.yml`, D2 the add-on pulls the exact version, D3 no Docker Hub
+mirror. He asked for it: "lets create a image in ghrc and waays to count
+installs".
 **Date:** 2026-09-15
 **Repos:** `hms-cpap` (the workflow that publishes images),
 `hms-cpap-ha-addon` (the add-on's `config.yaml` and `Dockerfile`).
@@ -93,13 +95,12 @@ UI changes.
   build on the currect docker yaml".** `hms-cpap`'s existing
   `docker-build.yml`, beside the service image, so one tag produces
   everything and the bump can verify both.
-- **D2 the tag the add-on pulls.** Proposed: the exact version
-  (`:5.2.13`), never `latest`, so a user's update is a decision and not a
-  surprise.
-- **D3 Docker Hub as well.** Proposed: no. It buys a public pull counter
-  whose number is inflated by every CI and mirror pull, and HA analytics
-  already answers the question honestly. (Alternative: mirror, and treat the
-  counter as a second signal.)
+- **D2 the tag the add-on pulls. Answered: the exact version**, never
+  `latest`. `version: 5.2.14` pulls `{arch}-cpapdash:5.2.14`, so what the user
+  sees is what they get and a rollback is pointing at the older tag.
+- **D3 Docker Hub as well. Answered: no.** Its counter counts every CI job,
+  mirror and retry, which is a different question from how many people run
+  this. Home Assistant's analytics answers that one and costs nothing.
 
 ## 5. Tests
 
