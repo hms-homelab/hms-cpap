@@ -89,10 +89,10 @@ UI changes.
 
 ## 4. Decisions (Albin's)
 
-- **D1 where the add-on image is built.** Proposed: in `hms-cpap`'s existing
-  `docker-build.yml`, beside the service image, so one tag produces everything
-  and the bump can verify both. (Alternative: a workflow in the add-on repo,
-  triggered by the bump, which splits the release across two repos.)
+- **D1 where the add-on image is built. Answered 2026-09-15: "yes to the
+  build on the currect docker yaml".** `hms-cpap`'s existing
+  `docker-build.yml`, beside the service image, so one tag produces
+  everything and the bump can verify both.
 - **D2 the tag the add-on pulls.** Proposed: the exact version
   (`:5.2.13`), never `latest`, so a user's update is a decision and not a
   surprise.
