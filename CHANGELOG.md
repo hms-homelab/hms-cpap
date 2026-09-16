@@ -5,6 +5,19 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.2.13] - 2026-09-15
+
+### Added
+- **A database whose sessions table has no unique key now says so** (SDD-034).
+  Every backend declares `UNIQUE (device_id, session_start)` on
+  `cpap_sessions`, and saving a session relies on it: without it a night that
+  is still growing is stored again on every burst instead of being updated, so
+  the night appears twice and its hours and events inflate. A table created
+  before that declaration has no such key, and nothing added one. Startup now
+  checks and logs one line naming how many nights are stored more than once.
+  This release only reports it and changes nothing; the repair follows once
+  the reports show who has the gap.
+
 ## [5.2.12] - 2026-09-15
 
 ### Fixed
