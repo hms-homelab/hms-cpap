@@ -229,7 +229,7 @@ else()
         # pin is something ONLY CI can catch. That is exactly how the v4.9.9
         # release build failed: the pin was left on v2026.1.3 while the code
         # had moved on to a field that tag did not have.
-        GIT_TAG        v2026.8.3
+        GIT_TAG        v2026.8.4
     )
 endif()
 FetchContent_MakeAvailable(cpapdash_parser)

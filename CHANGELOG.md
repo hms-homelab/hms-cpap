@@ -5,6 +5,40 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.2.12] - 2026-09-15
+
+### Fixed
+- **A night of more than one session read as the average of its sessions**
+  (#33, SDD-033). A three-minute mask-fit counted as much as a five-hour
+  night: on an AirCurve 11 card the published IPAP read 9.40 where the night's
+  minutes give 9.31. Every minute-averaged figure of such a night is now the
+  mean over its minutes: pressures, leak, breathing rate, tidal volume, minute
+  ventilation, timing, flow limitation and snore. A night of one session,
+  which is most nights, does not change at all.
+- **Such a night's events were the busiest session's, not the night's.** The
+  night counted the highest single session per event type, so Home Assistant
+  showed an AHI of 1.14 where the dashboard showed 1.36 for the same night.
+  They are summed now, and the two agree.
+- **A night of more than one session takes the machine's own percentiles.** A
+  session's leak percentile cannot be combined with another's: on that card
+  the night's true leak 95th is 15.6 L/min, its sessions' are 8.4 and 16.8,
+  and no averaging of those finds it. Where the card's STR has the day, its
+  leak 50/95, mask pressure and SpO2 are the night's. Löwenstein and Sefam
+  cards have no STR and keep ours.
+- **On MySQL a Sefam night was published as an AHI** (SDD-024). `index_kind`
+  was neither written nor read on that engine, so an apnea-only index went out
+  under the name AHI since 2026-09-06. SQLite and PostgreSQL were unaffected.
+
+### Added
+- **The 11 series' `TCV` files belong to their session** (#33). An AirCurve 11
+  writes `*_TCV.edf` beside each BRP; hms-cpap treated them as loose card
+  files and re-downloaded every one of them in full on every burst, about 1 MB
+  a night over the ez Share. They are now fetched and resumed like the other
+  session files, and reach the archive for OSCAR and SleepHQ.
+- **`SA2` and `TCV` join the EDF record-count repair** (parser 2026.8.4): the
+  11 series writes them like BRP/PLD/SAD, so a copy pulled mid-recording
+  carried the same stale count that 5.2.11 fixed for the others.
+
 ## [5.2.11] - 2026-09-15
 
 ### Fixed
