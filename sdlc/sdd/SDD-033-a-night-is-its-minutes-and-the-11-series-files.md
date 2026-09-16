@@ -262,12 +262,27 @@ night's figures (a sum over one session's minutes is its average).
 - Full suite 1654 passed, 0 failed, local zone and TZ=UTC. Postgres: the
   engine suites pass locally. MySQL (the NAS box over the LAN): 23 pass,
   including the new suite on MySQL and the migration.
-- **Pre-existing MySQL failures, not this work**:
-  `DailyHoursBackendTest.ALiveNightGrowsPastTheStrSnapshot`,
-  `DailyHoursBackendTest.IndexKindSurvivesTheRoundTrip` and
-  `QueryServiceIndexTest.TheSessionsListSurvivesItsOwnSql` fail on MySQL with
-  this branch stashed as well, so they predate SDD-033. Reported to Albin,
-  not fixed here.
+- **Three MySQL failures that predate this work** (they fail with the branch
+  stashed too). Albin, 2026-09-15: "can we check those tests in mySQl before
+  we tag this version". Chased to three separate causes, and MySQL is now
+  116 of 116:
+  - `IndexKindSurvivesTheRoundTrip`: a real bug, MySQL only.
+    `insertSessionMetrics` never wrote `index_kind` and `getNightlyMetrics`
+    never read it, so every night on MySQL came back as an AHI since the
+    column landed (2026-09-06, SDD-024). A Sefam night's apnea-only index was
+    published under the name AHI, which is the one thing SDD-024 exists to
+    prevent. Fixed in its own commit.
+  - `ALiveNightGrowsPastTheStrSnapshot`: the NAS test database was created
+    before `UNIQUE KEY uq_device_session (device_id, session_start)` existed
+    (in the table definition since 2026-03), so the session upsert never
+    matched and a growing night inserted a duplicate row instead of updating.
+    The key was added to that database. **An install whose tables predate
+    that key has the same gap, and no migration adds it**: open for Albin,
+    since de-duplicating a user's sessions is a data change.
+  - `TheSessionsListSurvivesItsOwnSql`: another test's ring recording, left
+    in the shared test database. The oximetry arm is keyed on the ring's own
+    device, so it rides along in every device's list. The test now asserts on
+    the CPAP arm's rows.
 
 ### End to end, on TLaren's card (#33)
 
