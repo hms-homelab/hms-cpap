@@ -388,6 +388,49 @@ TEST_P(RemoveNightBackendTest, TheStrRewriteDoesNotBringTheDayBack) {
     EXPECT_EQ(dailyRows(), 2) << engineName(GetParam());
 }
 
+// SDD-036: the sessions page lists what was removed, so it can be restored.
+TEST_P(RemoveNightBackendTest, TheListNamesTheRemovedNightsNewestFirst) {
+    populate();
+    EXPECT_TRUE(removedNightDates(*db_, device_).empty()) << engineName(GetParam());
+
+    ASSERT_TRUE(db_->removeNight(device_, kBefore).ok);
+    ASSERT_TRUE(db_->removeNight(device_, kAfter).ok);
+    const auto dates = removedNightDates(*db_, device_);
+    ASSERT_EQ(dates.size(), 2u) << engineName(GetParam());
+    EXPECT_EQ(dates[0], "2099-06-11");
+    EXPECT_EQ(dates[1], "2099-06-09");
+
+    // Restoring one takes it off the list.
+    ASSERT_TRUE(restoreNightByDate(*db_, device_, dates[0]));
+    const auto left = removedNightDates(*db_, device_);
+    ASSERT_EQ(left.size(), 1u) << engineName(GetParam());
+    EXPECT_EQ(left[0], "2099-06-09");
+}
+
+// SDD-036 D2: an uploaded card restores the removed nights it holds, and only those.
+TEST_P(RemoveNightBackendTest, AnUploadRestoresTheRemovedNightsItHoldsAndNoOther) {
+    populate();
+    ASSERT_TRUE(db_->removeNight(device_, kBefore).ok);
+    ASSERT_TRUE(db_->removeNight(device_, kNight).ok);
+
+    // A ResMed card names its folders YYYYMMDD, a Sefam or Löwenstein card its
+    // nights YYYY-MM-DD; kAfter was never removed, and garbage is ignored.
+    const std::set<std::string> resmed{kNight, kAfter, "DATALOG"};
+    const auto restored = restoreUploadedNights(*db_, device_, resmed);
+    ASSERT_EQ(restored.size(), 1u) << engineName(GetParam());
+    EXPECT_EQ(restored[0], "2099-06-10");
+
+    const auto left = db_->removedNights(device_);
+    ASSERT_EQ(left.size(), 1u) << engineName(GetParam());
+    EXPECT_EQ(left[0], kBefore);
+
+    const std::set<std::string> sefam{"2099-06-09"};
+    EXPECT_EQ(restoreUploadedNights(*db_, device_, sefam).size(), 1u) << engineName(GetParam());
+    EXPECT_TRUE(db_->removedNights(device_).empty()) << engineName(GetParam());
+    // Nothing removed, nothing to restore.
+    EXPECT_TRUE(restoreUploadedNights(*db_, device_, sefam).empty());
+}
+
 TEST_P(RemoveNightBackendTest, NotADateRemovesNothing) {
     populate();
     EXPECT_FALSE(removeNightByDate(*db_, device_, "yesterday").ok);

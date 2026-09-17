@@ -34,8 +34,12 @@
       "generating": "Készítés...",
       "uploadSleepHq": "Feltöltés a SleepHQ-ba",
       "removeNight": "Éjszaka törlése",
-      "removeConfirm": "Törli a(z) {{date}} éjszakát az adatbázisból? A munkamenetei, a napi összesítője és az O2-gyűrű adatai törlődnek, és az éjszaka nem kerül újra importálásra. A visszaállításhoz dolgozza fel újra ezt a dátumot."
+      "removeConfirm": "Törli a(z) {{date}} éjszakát az adatbázisból? A munkamenetei, a napi összesítője és az O2-gyűrű adatai törlődnek, és az éjszaka nem kerül újra importálásra. Visszaállítható a lista alatti Törölt éjszakák részből, vagy egy azt tartalmazó kártya feltöltésével."
     },
-    "loadMore": "Továbbiak betöltése"
+    "loadMore": "Továbbiak betöltése",
+    "removed": {
+      "title": "Törölt éjszakák ({{count}})",
+      "restore": "Visszaállítás"
+    }
   }
 }

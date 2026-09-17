@@ -34,6 +34,11 @@ export class SessionsComponent implements OnInit, OnDestroy {
   compareMode = false;
   selectedDays: string[] = [];
 
+  // SDD-036: removed nights, restorable from below the table. Removing a night
+  // deletes its row, and with it the only Reparse that could bring it back.
+  removedNights: string[] = [];
+  showRemoved = false;
+
   constructor(private api: CpapApiService, private cdr: ChangeDetectorRef, private router: Router,
               private t: TranslateService) {}
 
@@ -104,6 +109,37 @@ export class SessionsComponent implements OnInit, OnDestroy {
         this.cdr.detectChanges();
       },
       error: e => console.error('Sessions error:', e)
+    });
+    this.loadRemovedNights();
+  }
+
+  private loadRemovedNights() {
+    this.api.removedNights().subscribe({
+      next: r => {
+        this.removedNights = r?.nights ?? [];
+        this.cdr.detectChanges();
+      },
+      error: () => {},
+    });
+  }
+
+  /** SDD-036: Restore is the Reparse of that date, which clears the record first. */
+  restoreNight(day: string): void {
+    const key = day + '_restore';
+    this.actionInProgress[key] = true;
+    this.actionMessage[key] = '';
+    this.api.reparseSession(day).subscribe({
+      next: () => {
+        this.actionInProgress[key] = false;
+        this.removedNights = this.removedNights.filter(d => d !== day);
+        this.cdr.detectChanges();
+        setTimeout(() => this.loadSessions(), 2000);
+      },
+      error: () => {
+        this.actionInProgress[key] = false;
+        this.actionMessage[key] = 'Failed';
+        this.cdr.detectChanges();
+      }
     });
   }
 
@@ -305,6 +341,7 @@ export class SessionsComponent implements OnInit, OnDestroy {
         delete this.oxiMap[day];
         delete this.hrMap[day];
         this.selectedDays = this.selectedDays.filter(d => d !== day);
+        this.loadRemovedNights();
         this.cdr.detectChanges();
       },
       error: () => {

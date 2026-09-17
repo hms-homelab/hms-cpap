@@ -41,6 +41,7 @@ std::function<Json::Value(const std::string&, const std::string&)> CpapControlle
 std::function<Json::Value(const std::string&)> CpapController::cpap_zip_import_;
 std::function<Json::Value(const std::string&)> CpapController::night_remove_;
 std::function<void(const std::string&)> CpapController::night_restore_;
+std::function<std::vector<std::string>()> CpapController::removed_nights_;
 
 void CpapController::setQueryService(std::shared_ptr<QueryService> qs) { qs_ = qs; }
 
@@ -1655,6 +1656,18 @@ void CpapController::sessionRemove(const drogon::HttpRequestPtr&,
         return;
     }
     result["date"] = date;
+    cb(jsonResp(result));
+}
+
+void CpapController::removedNights(const drogon::HttpRequestPtr&,
+                                    std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    // SDD-036: the Reparse that restores a removed night lived only on its
+    // session row, which removing the night deletes. This is the list the
+    // sessions page offers Restore from instead.
+    Json::Value result;
+    result["nights"] = Json::Value(Json::arrayValue);
+    if (removed_nights_)
+        for (const auto& d : removed_nights_()) result["nights"].append(d);
     cb(jsonResp(result));
 }
 

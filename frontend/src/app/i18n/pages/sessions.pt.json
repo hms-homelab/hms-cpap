@@ -34,8 +34,12 @@
       "generating": "Gerando...",
       "uploadSleepHq": "Enviar para o SleepHQ",
       "removeNight": "Remover noite",
-      "removeConfirm": "Remover a noite de {{date}} do banco de dados? As sessões, o resumo diário e os dados do anel de O2 são apagados, e a noite não é importada novamente. Reprocesse esta data para recuperá-la."
+      "removeConfirm": "Remover a noite de {{date}} do banco de dados? As sessões, o resumo diário e os dados do anel de O2 são apagados, e a noite não é importada novamente. Restaure-a em Noites removidas, abaixo da lista, ou envie um cartão que a contenha."
     },
-    "loadMore": "Carregar mais"
+    "loadMore": "Carregar mais",
+    "removed": {
+      "title": "Noites removidas ({{count}})",
+      "restore": "Restaurar"
+    }
   }
 }

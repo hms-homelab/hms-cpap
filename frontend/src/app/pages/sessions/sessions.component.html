@@ -166,4 +166,23 @@
       {{ (loadingMore ? 'common.loading' : 'sessions.loadMore') | translate }}
     </button>
   </div>
+
+  <!-- SDD-036: a removed night has no row, so its Restore lives here. Shown
+       only when something was removed. -->
+  <div class="removed-nights" *ngIf="removedNights.length > 0">
+    <button class="removed-toggle" (click)="showRemoved = !showRemoved">
+      <i class="fa-solid" [class.fa-chevron-right]="!showRemoved" [class.fa-chevron-down]="showRemoved"></i>
+      {{ 'sessions.removed.title' | translate:{ count: removedNights.length } }}
+    </button>
+    <ul class="removed-list" *ngIf="showRemoved">
+      <li *ngFor="let day of removedNights">
+        <span class="removed-day">{{ day }}</span>
+        <button class="load-more" [disabled]="actionInProgress[day + '_restore']" (click)="restoreNight(day)">
+          <i class="fa-solid fa-rotate-left"></i>
+          {{ (actionInProgress[day + '_restore'] ? 'common.loading' : 'sessions.removed.restore') | translate }}
+        </button>
+        <span class="removed-msg" *ngIf="actionMessage[day + '_restore']">{{ actionMessage[day + '_restore'] }}</span>
+      </li>
+    </ul>
+  </div>
 </div>

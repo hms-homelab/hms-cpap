@@ -1127,6 +1127,10 @@ int main(int argc, char** argv) {
                             std::cout << "Sessions: restored removed night " << date
                                       << " for reparse" << std::endl;
                     };
+                // SDD-036: what the sessions page offers to restore.
+                hms_cpap::CpapController::removed_nights_ = [night_db, night_device]() {
+                    return hms_cpap::removedNightDates(*night_db, night_device);
+                };
             }
 
             // Wire BackfillService whenever an archive/local DATALOG path is
@@ -1173,8 +1177,20 @@ int main(int argc, char** argv) {
                 // folders belong under its DATALOG, not directly inside it.
                 std::string archive_dir = hms_cpap::datalogDirFor(card_root);
                 std::string card_dir = card_root;   // the card ROOT (SDD-010)
+                // SDD-036 D2: an uploaded card restores the removed nights it holds.
+                std::shared_ptr<hms_cpap::IDatabase> upload_db = web_db ? web_db : db;
+                const std::string upload_device = config.device_id;
+                auto restoreUploaded = [upload_db, upload_device](const std::set<std::string>& nights,
+                                                                  Json::Value& r) {
+                    Json::Value arr(Json::arrayValue);
+                    for (const auto& d : hms_cpap::restoreUploadedNights(*upload_db, upload_device, nights)) {
+                        std::cout << "Upload: restored removed night " << d << std::endl;
+                        arr.append(d);
+                    }
+                    r["restored_nights"] = arr;
+                };
                 hms_cpap::CpapController::cpap_zip_import_ =
-                    [archive_dir, card_dir](const std::string& zip_path) -> Json::Value {
+                    [archive_dir, card_dir, restoreUploaded](const std::string& zip_path) -> Json::Value {
                         namespace fs = std::filesystem;
                         Json::Value r;
                         std::error_code ec;
@@ -1228,6 +1244,7 @@ int main(int argc, char** argv) {
                                              " card but holds no session this build can read";
                                 return r;
                             }
+                            restoreUploaded(nights, r);
                             backfill_service->triggerCardImport(kind, store);
                             Json::Value arr(Json::arrayValue);
                             for (const auto& d : nights) arr.append(d);
@@ -1257,6 +1274,8 @@ int main(int argc, char** argv) {
                         auto dash = [](const std::string& d) {
                             return d.substr(0, 4) + "-" + d.substr(4, 2) + "-" + d.substr(6, 2);
                         };
+                        // Before the backfill, or it skips the folder (ticket 128).
+                        restoreUploaded(dates, r);
                         backfill_service->trigger(dash(*dates.begin()), dash(*dates.rbegin()), "");
                         Json::Value arr(Json::arrayValue);
                         for (auto& d : dates) arr.append(d);

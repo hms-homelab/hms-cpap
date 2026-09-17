@@ -5,6 +5,20 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **A removed night could not be brought back from the app** (SDD-036, CpapDash
+  ticket 128). Remove night said "Reparse this date to bring it back", but
+  Reparse lived on the night's row, which removing it deletes. The sessions
+  page now lists removed nights below the table, each with a Restore button
+  (the same reparse from the archive), backed by `GET /api/removed-nights`.
+- **Uploading a card did nothing for a removed night it held** (SDD-036 D2).
+  The ResMed zip copied the files and the backfill then skipped the folder
+  without a word; a Sefam or Löwenstein zip counted it as removed. An uploaded
+  card now restores the removed nights it holds, and only those, before the
+  import, and the upload reply names them in `restored_nights`.
+
 ## [5.2.16] - 2026-09-16
 
 No change to CpapDash itself; 5.2.14, 5.2.15 and this one are the same

@@ -273,6 +273,11 @@ export class CpapApiService {
     return this.http.delete<any>(`/api/sessions/${date}`);
   }
 
+  /** SDD-036: the removed nights (YYYY-MM-DD, newest first), to restore from the sessions page. */
+  removedNights(): Observable<{ nights: string[] }> {
+    return this.http.get<{ nights: string[] }>('/api/removed-nights');
+  }
+
   collectOximetry(): Observable<any> {
     return this.http.post<any>('/api/oximetry/collect', {});
   }

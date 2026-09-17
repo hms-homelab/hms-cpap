@@ -77,6 +77,17 @@ h2 { color: #e0e0e0; margin-bottom: 1rem; }
 .load-more:disabled { opacity: 0.5; cursor: not-allowed; }
 .load-more i { margin-right: 0.4rem; }
 
+/* SDD-036. Quiet on purpose: most installs never remove a night. */
+.removed-nights { padding: 1rem 0.1rem 0.5rem; }
+.removed-toggle { background: none; border: none; color: #888; font-size: 0.85rem; cursor: pointer; padding: 0; }
+.removed-toggle:hover { color: #cbd5e1; }
+.removed-toggle i { margin-right: 0.4rem; width: 0.8rem; }
+.removed-list { list-style: none; margin: 0.6rem 0 0; padding: 0; }
+.removed-list li { display: flex; align-items: center; gap: 0.8rem; flex-wrap: wrap; padding: 0.35rem 0; }
+.removed-day { color: #cbd5e1; font-variant-numeric: tabular-nums; min-width: 6.5rem; }
+.removed-list .load-more { padding: 0.3rem 0.9rem; font-size: 0.8rem; }
+.removed-msg { color: #ef9a9a; font-size: 0.8rem; }
+
 /* SDD-024. The apnea-only index and the columns a machine never filled.
    Both are deliberately quiet: they mark the absence of a measurement, and
    should not compete with the numbers that ARE measurements. */

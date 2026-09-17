@@ -24,6 +24,7 @@ public:
     ADD_METHOD_TO(CpapController::sessions,      "/api/sessions",           drogon::Get);
     ADD_METHOD_TO(CpapController::sessionDetail, "/api/sessions/{date}",    drogon::Get);
     ADD_METHOD_TO(CpapController::sessionRemove, "/api/sessions/{date}",    drogon::Delete);
+    ADD_METHOD_TO(CpapController::removedNights, "/api/removed-nights",     drogon::Get);
     ADD_METHOD_TO(CpapController::dailySummary,  "/api/daily-summary",      drogon::Get);
     ADD_METHOD_TO(CpapController::trend,         "/api/trends/{metric}",    drogon::Get);
     ADD_METHOD_TO(CpapController::statistics,    "/api/statistics",         drogon::Get);
@@ -250,6 +251,9 @@ public:
     void sessionRemove(const drogon::HttpRequestPtr& req,
                        std::function<void(const drogon::HttpResponsePtr&)>&& cb,
                        const std::string& date);
+    /// SDD-036: the removed nights, newest first, for the sessions page to restore.
+    void removedNights(const drogon::HttpRequestPtr& req,
+                       std::function<void(const drogon::HttpResponsePtr&)>&& cb);
     void oximetryCollect(const drogon::HttpRequestPtr& req,
                          std::function<void(const drogon::HttpResponsePtr&)>&& cb);
     void uploadOximetryCsv(const drogon::HttpRequestPtr& req,
@@ -296,6 +300,8 @@ public:
     static std::function<Json::Value(const std::string&)> night_remove_;
     // SDD-029 D3: "YYYY-MM-DD" -> the removed-night record cleared, before a reparse.
     static std::function<void(const std::string&)> night_restore_;
+    // SDD-036: the removed nights as YYYY-MM-DD, newest first.
+    static std::function<std::vector<std::string>()> removed_nights_;
 
 private:
     static std::shared_ptr<QueryService>          qs_;

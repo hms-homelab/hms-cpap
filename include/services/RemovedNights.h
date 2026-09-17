@@ -90,4 +90,36 @@ inline bool restoreNightByDate(IDatabase& db, const std::string& device_id,
     return db.restoreNight(device_id, night);
 }
 
+/// SDD-036: GET /api/removed-nights, the removed nights as the sessions page
+/// names them (YYYY-MM-DD), newest first, so they can be restored from there.
+inline std::vector<std::string> removedNightDates(IDatabase& db, const std::string& device_id) {
+    std::vector<std::string> dates;
+    for (const auto& n : removedNightSet(db, device_id)) {
+        if (nightKeyOf(n) != n) continue;
+        dates.push_back(n.substr(0, 4) + "-" + n.substr(4, 2) + "-" + n.substr(6, 2));
+    }
+    std::reverse(dates.begin(), dates.end());
+    return dates;
+}
+
+/// SDD-036 D2: an uploaded card is asking for its nights back, as the .vld
+/// upload already was (SDD-029 section 7). Clears the record of each night in
+/// [dates] (either form) that had been removed, and nothing else, so the import
+/// that follows stores them. Returns the nights restored, YYYY-MM-DD.
+template <class Dates>
+std::vector<std::string> restoreUploadedNights(IDatabase& db, const std::string& device_id,
+                                               const Dates& dates) {
+    std::vector<std::string> restored;
+    const auto removed = removedNightSet(db, device_id);
+    if (removed.empty()) return restored;
+    for (const auto& d : dates) {
+        const auto night = nightKeyOf(d);
+        if (night.empty() || !removed.count(night)) continue;
+        if (db.restoreNight(device_id, night))
+            restored.push_back(night.substr(0, 4) + "-" + night.substr(4, 2) + "-" +
+                               night.substr(6, 2));
+    }
+    return restored;
+}
+
 }  // namespace hms_cpap
