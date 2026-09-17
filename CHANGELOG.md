@@ -5,6 +5,34 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.2.18] - 2026-09-17
+
+Everything here is the Local Directory source, from one report of a first import
+against a folder of nights (CpapDash ticket 129, SDD-037).
+
+### Fixed
+- **A local import left every night but the newest two reading LIVE, forever.**
+  The local source stored a night open and closed it on a later cycle, once its
+  files stopped changing, but only the newest night and the one before it are
+  ever looked at again, so the rest could never be closed. A local session older
+  than 5 days is now closed when it is stored, the way the backfill and the card
+  upload already did; newer ones keep the old behaviour, because a local folder
+  can be a card still being written.
+- **`session_end` said when the import ran, not when the night ended.** It was
+  the wall clock, so every night closed in one pass carried one timestamp. An
+  imported night now takes the end its own data carries (the parser's, else
+  start plus duration) on all three databases. A live ez Share night still uses
+  the clock, which is the right answer there: that is when its files stopped.
+- **The Data Source picker could not change the source.** Settings edits the
+  transport and the format, and the save handler read neither, so the source
+  stayed whatever it was and only editing config.json by hand worked. It now
+  reads both, derives the source, and applies it on the next cycle without a
+  restart.
+- **Settings promised an archive a local source never writes.** The Archive
+  Directory hint described nights being written there as a card layout, which
+  only the ez Share and Fysetc sources do. With a local folder it now says the
+  folder is already the card and OSCAR should read it directly. Five languages.
+
 ## [5.2.17] - 2026-09-17
 
 ### Fixed

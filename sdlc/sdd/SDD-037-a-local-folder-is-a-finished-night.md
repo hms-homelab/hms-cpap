@@ -188,3 +188,61 @@ Each environment runs a local-source import of a multi-night card copy, and the
 three checks this SDD is about: the older nights close, each with its own
 `session_end`, and the Settings picker moves the source and survives a restart.
 The reply on ticket 129 is Albin's.
+
+## 10. As built (2026-09-17, 5.2.18)
+
+Where the build differs from section 6, and what the runs showed.
+
+- **`markSessionCompletedAt()` is a NEW virtual, not a defaulted argument** on
+  `markSessionCompleted()`. The suite's gmock doubles override the two-argument
+  form; adding a parameter would have broken every one of them. The base
+  implementation falls back to the old call, so a backend that has not
+  overridden it behaves exactly as before.
+- **One helper header, `include/utils/SessionEnd.h`**: `dataEndOf()` (the
+  parser's end, else start + duration, else nothing), `closeWithDataEnd()` and
+  `localNightHasSettled()`. It includes `parsers/CpapdashBridge.h`, NOT
+  `models/CPAPModels.h`, whose definitions collide with the shared parser's
+  aliases.
+- **The end the data knows is the parser's `session_end` when it has one**, and
+  that is usually LATER than `session_start + duration_seconds`, because
+  duration counts therapy time and the span includes the gaps within a night.
+  The precedence is deliberate: the span is the night, the duration is the
+  therapy.
+- **The local close also marks the night dirty for SleepHQ**, as the checkpoint
+  close does, so a settled import still queues its export.
+
+**Tests:** `tests/database/test_SessionEndBackends.cpp`, 13 cases (4 per engine
+plus the helper's own), green on SQLite, MySQL (the NAS) and PostgreSQL (native
+on the Mac). Full suite 1959 tests, 1851 passed, 108 skipped, 0 failed, under
+the local zone AND `TZ=UTC`, with all three engines live. CI run 35272399183 on
+the branch: build-and-test, macos-build, windows-build, windows-desktop-test,
+coverage (Linux against a real PostgreSQL) and linux-armhf all green.
+
+**E2E, four environments, same card copy** (five DATALOG folders from the
+2026-08-27 backup, four of them holding sessions). In every one: the instance
+started as ezShare, `PUT /api/config {transport: local, format: resmed}` moved
+the source and persisted it, the import stored every night and closed all five
+sessions on the first pass, and the five `session_end` values were identical
+across environments and all distinct, e.g. `2026-03-28 21:55:29 ->
+2026-03-29 02:06:56`.
+
+| Environment | Result |
+|---|---|
+| macOS native (this Mac) | as above, plus the Settings hint and picker checked in a browser |
+| Linux native (hub, 192.168.2.15) | identical |
+| Docker (hub, card read-only at `/data/cpap_source`, SQLite in `/config`) | identical; this is the shape ticket 129 runs |
+| Windows native (CpapDash-Win, 192.168.2.72, the CI binary) | identical |
+
+Two things the runs taught, neither a defect in this work:
+
+- **A night reads `partial` until its STR day record lands.** Windows showed
+  `partial` for two nights where the Mac showed `complete`, purely because it
+  was sampled earlier: `partial` is the ledger's `str_due` flag (SDD-008), and
+  the next burst logged "STR arrived for 20260330 (therapy day 20260330), night
+  is no longer partial" and cleared it. Sample after the STR pass, or the state
+  is read mid-flight.
+- **In Docker the card must be somewhere the container user can read.** A copy
+  under `/home/<user>` gave "Skipping unreadable folder … (Permission denied)"
+  for every folder and an empty import; `/tmp` with `chmod a+rX` works. The
+  message is clear and per folder, which is what made it a one-minute
+  diagnosis.
