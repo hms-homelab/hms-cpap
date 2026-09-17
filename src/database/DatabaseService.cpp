@@ -1712,6 +1712,59 @@ bool DatabaseService::markSessionCompleted(
     }
 }
 
+// SDD-037 D2: the same close, with the end the parse computed. Both timestamps
+// are formatted on the local clock, as markSessionCompleted formats its start.
+bool DatabaseService::markSessionCompletedAt(
+    const std::string& device_id,
+    const std::chrono::system_clock::time_point& session_start,
+    const std::chrono::system_clock::time_point& session_end) {
+
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+
+    if (!ensureConnection()) {
+        std::cerr << "DB: markSessionCompletedAt failed - no connection" << std::endl;
+        return false;
+    }
+
+    try {
+        pqxx::work txn(*conn_);
+
+        auto fmt = [](const std::chrono::system_clock::time_point& tp) {
+            auto t = std::chrono::system_clock::to_time_t(tp);
+            std::tm* tm = std::localtime(&t);
+            std::ostringstream oss;
+            oss << std::put_time(tm, "%Y-%m-%d %H:%M:%S");
+            return oss.str();
+        };
+        const std::string start_s = fmt(session_start);
+        const std::string end_s   = fmt(session_end);
+
+        std::string query = R"(
+            UPDATE cpap_sessions
+            SET session_end = $3::timestamp, updated_at = CURRENT_TIMESTAMP
+            WHERE device_id = $1
+              AND session_start BETWEEN $2::timestamp - INTERVAL '5 seconds'
+                                    AND $2::timestamp + INTERVAL '5 seconds'
+              AND session_end IS NULL
+        )";
+
+        auto result = txn.exec_params(query, device_id, start_s, end_s);
+        txn.commit();
+
+        if (result.affected_rows() > 0) {
+            std::cout << "✅ DB: Marked session " << start_s << " as COMPLETED at "
+                      << end_s << std::endl;
+            return true;
+        }
+        std::cout << "ℹ️  DB: Session already has session_end set" << std::endl;
+        return false;
+
+    } catch (const std::exception& e) {
+        std::cerr << "DB: markSessionCompletedAt error: " << e.what() << std::endl;
+        return false;
+    }
+}
+
 bool DatabaseService::reopenSession(
     const std::string& device_id,
     const std::chrono::system_clock::time_point& session_start) {

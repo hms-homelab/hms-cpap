@@ -29,6 +29,7 @@
       "localDir": "Helyi könyvtár",
       "archiveDir": "Archívumkönyvtár",
       "archiveMissing": "Nincs beállítva. A {{device}} olyan fájlokat tölt le, amelyeknek kell egy hely, ahová leérkezzenek, így semmi sem kerül lemezre: az OSCAR-nak nincs mit importálnia, a SleepHQ-exportálás pedig blokkolva marad. A már összegyűjtött éjszakák biztonságban vannak az adatbázisban, és itt a megszokott módon jelennek meg.",
+      "archiveHintLocal": "Helyi mappa esetén ide semmi sem másolódik: a mappája már maga a kártya, ezért az OSCAR kártyaimportját arra állítsa. Ez a mappa a jelentésekhez és a SleepHQ-exporthoz kell, és üresen hagyható.",
       "archiveHint": "Ide íródnak az összegyűjtött éjszakák, kártyaelrendezésben (az STR.edf és a DATALOG/ egymás mellett). Az OSCAR kártyaimportját erre a mappára irányítsa. Windowson használjon perjelet, például C:/Users/on/CPAPData"
     },
     "fysetc": {

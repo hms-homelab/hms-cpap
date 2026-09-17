@@ -1961,6 +1961,46 @@ bool MySQLDatabase::markSessionCompleted(const std::string& device_id,
     return false;
 }
 
+// SDD-037 D2: the same close, with the end the parse computed.
+bool MySQLDatabase::markSessionCompletedAt(
+    const std::string& device_id,
+    const std::chrono::system_clock::time_point& session_start,
+    const std::chrono::system_clock::time_point& session_end) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!conn_) return false;
+
+    std::string ts  = fmtTimestamp(session_start);
+    std::string end = fmtTimestamp(session_end);
+
+    const char* sql = R"(
+        UPDATE cpap_sessions
+        SET session_end = CAST(? AS DATETIME), updated_at = NOW()
+        WHERE device_id = ?
+          AND session_start BETWEEN DATE_SUB(CAST(? AS DATETIME), INTERVAL 5 SECOND)
+                                AND DATE_ADD(CAST(? AS DATETIME), INTERVAL 5 SECOND)
+          AND session_end IS NULL
+    )";
+
+    MysqlStmtGuard g;
+    g.stmt = mysql_stmt_init(conn_);
+    mysql_stmt_prepare(g.stmt, sql, std::strlen(sql));
+
+    ParamBinder p(4);
+    p.bindText(0, end);
+    p.bindText(1, device_id);
+    p.bindText(2, ts);
+    p.bindText(3, ts);
+    mysql_stmt_bind_param(g.stmt, p.data());
+    mysql_stmt_execute(g.stmt);
+
+    if (mysql_stmt_affected_rows(g.stmt) > 0) {
+        std::cout << "MySQL: Marked session " << ts << " as COMPLETED at " << end << std::endl;
+        return true;
+    }
+    std::cout << "MySQL: Session already has session_end set" << std::endl;
+    return false;
+}
+
 // ---------------------------------------------------------------------------
 // reopenSession
 // ---------------------------------------------------------------------------

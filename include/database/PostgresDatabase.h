@@ -50,6 +50,10 @@ public:
     bool markSessionCompleted(const std::string& device_id,
                               const std::chrono::system_clock::time_point& session_start) override;
 
+    bool markSessionCompletedAt(const std::string& device_id,
+                                const std::chrono::system_clock::time_point& session_start,
+                                const std::chrono::system_clock::time_point& session_end) override;
+
     bool reopenSession(const std::string& device_id,
                        const std::chrono::system_clock::time_point& session_start) override;
 

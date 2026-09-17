@@ -29,7 +29,8 @@
       "localDir": "Local Directory",
       "archiveDir": "Archive Directory",
       "archiveMissing": "Not set. Your {{device}} downloads files that need somewhere to land, so nothing is being written to disk: OSCAR has nothing to import and SleepHQ export stays blocked. Nights already collected are safe in the database and appear here as normal.",
-      "archiveHint": "Where collected nights are written, as a card layout (STR.edf and DATALOG/ side by side). Point OSCAR's card import here. Use forward slashes on Windows, e.g. C:/Users/you/CPAPData"
+      "archiveHint": "Where collected nights are written, as a card layout (STR.edf and DATALOG/ side by side). Point OSCAR's card import here. Use forward slashes on Windows, e.g. C:/Users/you/CPAPData",
+      "archiveHintLocal": "With a local folder nothing is copied here: your folder is already the card, so point OSCAR's card import at it. This folder is used for reports and the SleepHQ export, and may be left empty."
     },
     "fysetc": {
       "heading": "Fysetc TCP",

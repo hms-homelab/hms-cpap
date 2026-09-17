@@ -1490,6 +1490,42 @@ bool SQLiteDatabase::markSessionCompleted(const std::string& device_id,
     return false;
 }
 
+// SDD-037 D2: the same close, with the end the parse computed. Same IS NULL
+// guard, so a night that was already closed keeps the end it was given.
+bool SQLiteDatabase::markSessionCompletedAt(
+    const std::string& device_id,
+    const std::chrono::system_clock::time_point& session_start,
+    const std::chrono::system_clock::time_point& session_end) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!db_) return false;
+
+    std::string ts  = fmtTimestamp(session_start);
+    std::string end = fmtTimestamp(session_end);
+
+    const char* sql = R"(
+        UPDATE cpap_sessions
+        SET session_end = ?, updated_at = datetime('now')
+        WHERE device_id = ?
+          AND session_start BETWEEN datetime(?, '-5 seconds') AND datetime(?, '+5 seconds')
+          AND session_end IS NULL
+    )";
+
+    StmtGuard g;
+    sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr);
+    bind_text(g.stmt, 1, end);
+    bind_text(g.stmt, 2, device_id);
+    bind_text(g.stmt, 3, ts);
+    bind_text(g.stmt, 4, ts);
+
+    sqlite3_step(g.stmt);
+    if (sqlite3_changes(db_) > 0) {
+        std::cout << "SQLite: Marked session " << ts << " as COMPLETED at " << end << std::endl;
+        return true;
+    }
+    std::cout << "SQLite: Session already has session_end set" << std::endl;
+    return false;
+}
+
 // ---------------------------------------------------------------------------
 // reopenSession
 // ---------------------------------------------------------------------------

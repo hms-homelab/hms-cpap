@@ -6,6 +6,7 @@
 #include "services/RemovedNights.h"
 #include "services/SefamIngestion.h"
 #include "services/SyncFolderState.h"
+#include "utils/SessionEnd.h"
 
 #include <cpapdash/parser/SefamParser.h>
 
@@ -238,7 +239,7 @@ CardImportCounts importCardSessions(IDatabase& db, UploadedCard kind, const std:
     // two calls the burst makes, without its MQTT and AI summary.
     auto save = [&](const CPAPSession& s, const std::chrono::system_clock::time_point& start) {
         if (!db.saveSession(s)) return false;
-        db.markSessionCompleted(device_id, start);
+        closeWithDataEnd(db, device_id, start, s);   // SDD-037 D2
         ++c.imported;
         c.nights.insert(nightOf(start));
         return true;

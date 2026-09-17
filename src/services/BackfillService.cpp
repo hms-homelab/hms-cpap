@@ -4,6 +4,7 @@
 #include "services/SleepHqExportService.h"
 #include "parsers/CpapdashBridge.h"
 #include "utils/CardLayout.h"
+#include "utils/SessionEnd.h"
 
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -293,10 +294,12 @@ void BackfillService::executeBackfill(const std::string& start_date,
                     std::lock_guard<std::mutex> lock(progress_mutex_);
                     progress_.sessions_saved++;
 
-                    // Backfilled sessions are complete (files aren't growing).
-                    // markSessionCompleted() sets session_end so they show as
-                    // "Done" instead of "LIVE" in the sessions list.
-                    db_->markSessionCompleted(config_.device_id, session.session_start);
+                    // Backfilled sessions are complete (files aren't growing),
+                    // so session_end is set here and they show as "Done"
+                    // instead of "LIVE". SDD-037 D2: with the end the parse
+                    // measured, not the clock, or a whole history imported in
+                    // one pass would carry the timestamp of the pass.
+                    closeWithDataEnd(*db_, config_.device_id, session.session_start, *parsed);
 
                     // Record which files the night is actually made of (SDD-014)
                     db_->replaceSessionFiles(config_.device_id, session.session_start,

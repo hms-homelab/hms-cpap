@@ -82,6 +82,23 @@ public:
     virtual bool markSessionCompleted(const std::string& device_id,
                                       const std::chrono::system_clock::time_point& session_start) = 0;
 
+    /// SDD-037 D2: close a session with the end the DATA knows, not the clock.
+    /// markSessionCompleted() stamps now(), which is the right answer for a live
+    /// night (the moment its files stopped growing IS the estimate of mask-off)
+    /// and a meaningless one for an import, where every night closed in one pass
+    /// gets the timestamp of the pass (ticket 129). Every path that parses a
+    /// FINISHED night passes `session_start + duration` here instead.
+    ///
+    /// Not a defaulted argument on the above: the mocks in the suite override
+    /// the two-argument form, and a backend that has not overridden this still
+    /// behaves as it did.
+    virtual bool markSessionCompletedAt(const std::string& device_id,
+                                        const std::chrono::system_clock::time_point& session_start,
+                                        const std::chrono::system_clock::time_point& session_end) {
+        (void)session_end;
+        return markSessionCompleted(device_id, session_start);
+    }
+
     virtual bool reopenSession(const std::string& device_id,
                                const std::chrono::system_clock::time_point& session_start) = 0;
 

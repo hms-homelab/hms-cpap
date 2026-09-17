@@ -12,6 +12,7 @@
 #include "utils/ConfigManager.h"
 #include "utils/AppConfig.h"
 #include "utils/FileUtils.h"
+#include "utils/SessionEnd.h"
 #include "utils/CardResidue.h"
 #include "utils/ArchiveRecordCount.h"
 #include "services/OximetryImport.h"
@@ -2080,8 +2081,10 @@ bool BurstCollectorService::executeBurstCycle() {
 
     for (const auto& [session_dir, session_start] : downloaded_sessions) {
         if (stored_inline.count(session_start)) continue;
-        if (parseAndStoreSession(session_dir, session_start, parsed_sessions))
+        if (parseAndStoreSession(session_dir, session_start, parsed_sessions)) {
             saved_count++;
+            closeIfSettledLocalNight(session_start, parsed_sessions);
+        }
     }
 
     if (parsed_sessions.empty()) {
@@ -2169,6 +2172,60 @@ bool BurstCollectorService::executeBurstCycle() {
     std::cout << std::string(60, '=') << std::endl << std::endl;
 
     return true;
+}
+
+/*
+ * SDD-037 D1 (ticket 129): a local folder that is days old is a finished night,
+ * and nothing was ever going to close it.
+ *
+ * The local branch inherited the ezShare contract -- store it open, close it on
+ * a LATER cycle once its files stop changing -- without inheriting a way to look
+ * at an old night twice: discovery only returns the newest night and the one
+ * before it (SessionDiscoveryService, the last_session_start/retain_from
+ * anchor), so a first import of 20 nights left 18 of them at night_state "live"
+ * forever. Every other bulk path (backfill, the reparse CLI, the card upload)
+ * already closes what it saves.
+ *
+ * The window is 5 days (Albin): inside it the checkpoint path still owns the
+ * night, because a local folder can be a mounted card or the target of a sync
+ * that writes on a lag, and calling that Done mid-night is the worse error.
+ * The end comes from the data (D2), never the clock, so 18 nights imported in
+ * one pass do not all get the timestamp of the pass.
+ */
+void BurstCollectorService::closeIfSettledLocalNight(
+    const std::chrono::system_clock::time_point& session_start,
+    const std::vector<CPAPSession>& parsed_sessions) {
+
+    if (cpap_source_ != "local") return;
+    if (!localNightHasSettled(session_start, std::chrono::system_clock::now(),
+                              kLocalSettledAfter))
+        return;
+
+    auto it = std::find_if(parsed_sessions.begin(), parsed_sessions.end(),
+                           [&](const CPAPSession& s) {
+                               return s.session_start.has_value() &&
+                                      s.session_start.value() == session_start;
+                           });
+    if (it == parsed_sessions.end()) return;
+
+    const auto end = dataEndOf(*it);
+    if (!end.has_value()) return;   // nothing the data knows: leave it open
+
+    if (db_service_->markSessionCompletedAt(device_id_, session_start, end.value())) {
+        std::cout << "CPAP: Local night settled, closed on its own data" << std::endl;
+        if (app_config_ && app_config_->sleephq.auto_on_session) {
+            std::ostringstream folder;
+            const std::time_t t = std::chrono::system_clock::to_time_t(session_start);
+            std::tm tm{};
+#ifdef _WIN32
+            localtime_s(&tm, &t);
+#else
+            localtime_r(&t, &tm);
+#endif
+            folder << std::put_time(&tm, "%Y%m%d");
+            SleepHqExportService::getInstance().markDirty(folder.str());
+        }
+    }
 }
 
 bool BurstCollectorService::parseAndStoreSession(

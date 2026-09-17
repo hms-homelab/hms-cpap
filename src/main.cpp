@@ -44,6 +44,7 @@
 #include "utils/AppConfig.h"
 #include "utils/CardResidue.h"
 #include "utils/CardImport.h"
+#include "utils/SessionEnd.h"
 #include "utils/FileLogger.h"
 #include "utils/CardLayout.h"
 #include "utils/DbProbeCli.h"
@@ -382,8 +383,9 @@ int runReparse(const std::string& card_root, const std::string& start_str, const
             if (db->saveSession(*parsed)) {
                 total_saved++;
 
-                // Reparsed sessions are complete — set session_end
-                db->markSessionCompleted(device_id, session.session_start);
+                // Reparsed sessions are complete: set session_end, from the
+                // data the reparse just read (SDD-037 D2).
+                hms_cpap::closeWithDataEnd(*db, device_id, session.session_start, *parsed);
 
                 // Record which files the night is actually made of (SDD-014)
                 db->replaceSessionFiles(device_id, session.session_start,

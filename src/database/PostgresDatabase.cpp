@@ -51,6 +51,13 @@ bool PostgresDatabase::markSessionCompleted(const std::string& device_id,
     return db_->markSessionCompleted(device_id, session_start);
 }
 
+bool PostgresDatabase::markSessionCompletedAt(
+    const std::string& device_id,
+    const std::chrono::system_clock::time_point& session_start,
+    const std::chrono::system_clock::time_point& session_end) {
+    return db_->markSessionCompletedAt(device_id, session_start, session_end);
+}
+
 bool PostgresDatabase::reopenSession(const std::string& device_id,
                                      const std::chrono::system_clock::time_point& session_start) {
     return db_->reopenSession(device_id, session_start);

@@ -29,6 +29,7 @@
       "localDir": "Directorio local",
       "archiveDir": "Directorio de archivo",
       "archiveMissing": "Sin definir. Tu {{device}} descarga archivos que necesitan un lugar donde aterrizar, así que no se está escribiendo nada en el disco: OSCAR no tiene nada que importar y la exportación a SleepHQ queda bloqueada. Las noches ya recogidas están a salvo en la base de datos y aparecen aquí con normalidad.",
+      "archiveHintLocal": "Con una carpeta local aquí no se copia nada: tu carpeta ya es la tarjeta, así que apunta la importación de OSCAR a ella. Esta carpeta se usa para los informes y para el envío a SleepHQ, y puede quedar vacía.",
       "archiveHint": "Dónde se escriben las noches recogidas, con la disposición de una tarjeta (STR.edf y DATALOG/ uno junto al otro). Apunta aquí la importación de tarjeta de OSCAR. En Windows usa barras normales, por ejemplo C:/Users/tu/CPAPData"
     },
     "fysetc": {

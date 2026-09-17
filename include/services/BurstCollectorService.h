@@ -459,6 +459,22 @@ private:
                               std::vector<CPAPSession>& parsed_sessions);
 
     /**
+     * SDD-037 D1: how old a local night must be before storing it also closes
+     * it. Inside this window the checkpoint path still owns the night, because
+     * a local folder can be a mounted card still being written.
+     */
+    static constexpr std::chrono::hours kLocalSettledAfter{24 * 5};
+
+    /**
+     * SDD-037 (ticket 129): close a local night that is older than
+     * kLocalSettledAfter, with the end its own data carries. A no-op for every
+     * other source, for a night inside the window, and for a session the parse
+     * gave no end and no duration.
+     */
+    void closeIfSettledLocalNight(const std::chrono::system_clock::time_point& session_start,
+                                  const std::vector<CPAPSession>& parsed_sessions);
+
+    /**
      * SDD-002: download the non-EDF / non-junk residue (the per-night .crc and any
      * brand-agnostic metadata) for a DATALOG date folder into the temp dir, so
      * archiveSessionFiles() copies it into the OSCAR layout. EDFs are pulled by

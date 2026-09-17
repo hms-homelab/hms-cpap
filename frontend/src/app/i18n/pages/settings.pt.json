@@ -29,6 +29,7 @@
       "localDir": "Diretório local",
       "archiveDir": "Diretório de arquivo",
       "archiveMissing": "Não definido. Seu {{device}} baixa arquivos que precisam de um lugar para chegar, então nada está sendo gravado em disco: o OSCAR não tem o que importar e a exportação para o SleepHQ fica bloqueada. As noites já coletadas estão a salvo no banco de dados e aparecem aqui normalmente.",
+      "archiveHintLocal": "Com uma pasta local nada é copiado para cá: a sua pasta já é o cartão, então aponte a importação de cartão do OSCAR para ela. Esta pasta serve para os relatórios e para a exportação SleepHQ, e pode ficar vazia.",
       "archiveHint": "Onde as noites coletadas são gravadas, no formato de um cartão (STR.edf e DATALOG/ lado a lado). Aponte a importação de cartão do OSCAR para cá. No Windows use barras normais, por exemplo C:/Users/voce/CPAPData"
     },
     "fysetc": {

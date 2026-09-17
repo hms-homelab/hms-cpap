@@ -363,6 +363,33 @@ void CpapController::updateConfig(const drogon::HttpRequestPtr& req,
     if (j.isMember("device_id")) config_->device_id = j["device_id"].asString();
     if (j.isMember("device_name")) config_->device_name = j["device_name"].asString();
     if (j.isMember("source")) config_->source = j["source"].asString();
+    // SDD-037 D4 (ticket 129): the Settings page edits `transport` and `format`
+    // (SDD-022 split the one question into two) and this handler read neither,
+    // so the picker could not move the source on ANY install: the page sends
+    // back the `source` it was given, and nothing else here touched it. The
+    // collector's source is derived from the pair, the same rule AppConfig uses.
+    {
+        const bool has_t = j.isMember("transport");
+        const bool has_f = j.isMember("format");
+        if (has_t) config_->transport = j["transport"].asString();
+        if (has_f) config_->format    = j["format"].asString();
+        if (has_t || has_f) {
+            config_->source = AppConfig::collectorSource(config_->transport, config_->format);
+            // Same reason archive_dir is re-exported below: the burst reads
+            // CPAP_SOURCE through ConfigManager at use time, so exporting it
+            // here is what makes a changed source take effect on the next
+            // cycle instead of at the next restart.
+#ifdef _WIN32
+            _putenv_s("CPAP_SOURCE", config_->source.c_str());
+            _putenv_s("CPAP_TRANSPORT", config_->transport.c_str());
+            _putenv_s("CPAP_FORMAT", config_->format.c_str());
+#else
+            setenv("CPAP_SOURCE", config_->source.c_str(), 1);
+            setenv("CPAP_TRANSPORT", config_->transport.c_str(), 1);
+            setenv("CPAP_FORMAT", config_->format.c_str(), 1);
+#endif
+        }
+    }
     if (j.isMember("ezshare_url")) config_->ezshare_url = j["ezshare_url"].asString();
     if (j.isMember("ezshare_range")) config_->ezshare_range = j["ezshare_range"].asBool();
     if (j.isMember("local_dir")) config_->local_dir = j["local_dir"].asString();
@@ -694,6 +721,15 @@ void CpapController::setupApply(const drogon::HttpRequestPtr& req,
         if (d.isMember("password")) config_->database.password = d["password"].asString();
     }
     if (j.isMember("source"))      config_->source = j["source"].asString();
+    // SDD-037 D4: the wizard sends the same pair the Settings page does.
+    {
+        const bool has_t = j.isMember("transport");
+        const bool has_f = j.isMember("format");
+        if (has_t) config_->transport = j["transport"].asString();
+        if (has_f) config_->format    = j["format"].asString();
+        if (has_t || has_f)
+            config_->source = AppConfig::collectorSource(config_->transport, config_->format);
+    }
     if (j.isMember("ezshare_url")) config_->ezshare_url = j["ezshare_url"].asString();
     if (j.isMember("local_dir"))   config_->local_dir = j["local_dir"].asString();
     if (j.isMember("archive_dir")) config_->archive_dir = j["archive_dir"].asString();

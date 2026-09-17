@@ -99,8 +99,14 @@ import { AppConfig } from '../../models/config.model';
               <small class="hint warn" *ngIf="archiveDirMissing()">
                 {{ 'settings.source.archiveMissing' | translate:{ device: config.transport === 'fysetc' ? 'Fysetc' : 'Mule and Miner' } }}
               </small>
+              <!-- SDD-037 D3 (ticket 129): a local source reads the folder it
+                   was given and copies nothing, so the "nights are written
+                   here" sentence was wrong for it and sent people looking for
+                   a DATALOG that was never going to appear. Their own folder
+                   already IS the card copy. -->
               <small class="hint">
-                {{ 'settings.source.archiveHint' | translate }}
+                {{ (config.transport === 'local' ? 'settings.source.archiveHintLocal'
+                                                 : 'settings.source.archiveHint') | translate }}
               </small>
             </label>
           </div>

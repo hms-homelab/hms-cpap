@@ -29,6 +29,7 @@
       "localDir": "Répertoire local",
       "archiveDir": "Répertoire d'archive",
       "archiveMissing": "Non défini. Votre {{device}} télécharge des fichiers qui doivent atterrir quelque part, donc rien n'est écrit sur le disque : OSCAR n'a rien à importer et l'export SleepHQ reste bloqué. Les nuits déjà collectées sont à l'abri dans la base de données et s'affichent ici normalement.",
+      "archiveHintLocal": "Avec un dossier local, rien n'est copié ici : votre dossier est déjà la carte, pointez donc l'import de carte d'OSCAR dessus. Ce dossier sert aux rapports et à l'export SleepHQ, et peut rester vide.",
       "archiveHint": "Où sont écrites les nuits collectées, sous la forme d'une carte (STR.edf et DATALOG/ côte à côte). Pointez l'import de carte d'OSCAR ici. Sous Windows, utilisez des barres obliques, par exemple C:/Users/vous/CPAPData"
     },
     "fysetc": {
