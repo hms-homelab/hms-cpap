@@ -5,7 +5,7 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [5.2.17] - 2026-09-17
 
 ### Fixed
 - **A removed night could not be brought back from the app** (SDD-036, CpapDash

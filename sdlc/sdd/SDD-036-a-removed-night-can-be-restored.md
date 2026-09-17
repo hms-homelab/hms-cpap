@@ -133,7 +133,7 @@ nights, so the user is not left reading logs as Michael was.
 
 ## 6. Release
 
-A patch on 5.2.16 (Albin's number). The reply on ticket 128 is Albin's.
+5.2.17 (Albin, 2026-09-17: "bump the patch"). The reply on ticket 128 is Albin's.
 
 ## 7. As built (2026-09-17)
 
