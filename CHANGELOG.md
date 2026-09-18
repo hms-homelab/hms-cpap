@@ -5,6 +5,53 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.4.0] - 2026-09-18
+
+The app updates itself (SDD-041). It checks GitHub for a newer release once a
+day, says so in one line on the dashboard, and installs it in one click. If the
+new version does not come up, the old one is put back.
+
+**This is the last version you install by hand.** Versions up to 5.3.0 have no
+updater, so install this one the usual way; every release after it shows up in
+the dashboard.
+
+### Added
+- **Update now, on the dashboard.** When a newer stable release exists, the
+  dashboard says which one and offers to install it. Settings, Updates shows the
+  version you run, the release notes, Check now, and the outcome of the last
+  update.
+- **Every download is checked before anything changes.** Each release now
+  publishes a manifest with the size and SHA-256 of every file, and the file
+  must match it. On macOS the new app must also carry CpapDash's own
+  signature. On Windows the check is the checksum; the installer is not
+  code-signed yet.
+- **A failed update puts the old version back.** The whole install is replaced
+  (the app on macOS, the installer on Windows), the new version must start and
+  answer as itself within two minutes, and otherwise the previous one is
+  restored and Settings says at which step it stopped.
+- **Your database is copied before an update.** A SQLite database is backed up
+  first. For PostgreSQL and MySQL, Settings says that rolling back any change to
+  the data is yours.
+- **Install updates automatically**, off by default. When on, an update waits
+  until no night is being collected.
+- **On a Raspberry Pi**, `install.sh` adds a small root service that applies an
+  update from Settings. It downloads and checks the release itself rather than
+  trusting a file from your home folder.
+- Docker and the Home Assistant add-on update through their image, as before,
+  and Settings says so.
+
+### Fixed
+- **Changing the Device ID in Settings emptied the sessions list** until a
+  restart: nights were stored under the new ID while every page asked for the
+  old one (CpapDash ticket 129). The Device ID now takes effect at the restart
+  Settings offers, when every part of the app picks it up at once (SDD-042).
+- **Some nights from a local folder stayed "live" for good.** A night first
+  imported when it was two to five days old was never closed. Every cycle now
+  closes a local night once it is five days old, at the end its own data gives
+  (SDD-043, ticket 129).
+- **"Restart now" under the desktop app stopped the service** instead of
+  restarting it. The service now shuts down cleanly and the app brings it back.
+
 ## [5.3.0] - 2026-09-18
 
 One collection cycle for every source (SDD-040). A local folder used to have its

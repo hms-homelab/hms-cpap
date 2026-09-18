@@ -1,6 +1,7 @@
 # SDD-041: the app updates itself, from GitHub, through the supervisor
 
-**Status:** Accepted 2026-09-18, all seven decisions (§4). D1 and D5 in Albin's
+**Status:** Shipped in 5.4.0 (2026-09-18), with D8 to D10 and the as-built
+notes in §7. Accepted 2026-09-18, all seven decisions (§4). D1 and D5 in Albin's
 words ("yes to the automatic check with one click apply on the dashboard banner.
 fully automatic as opt in as well with opt in off[.] docker and add on [does]nt
 need update they have their own"); D2, D3, D4, D6 and D7 as proposed, chosen the

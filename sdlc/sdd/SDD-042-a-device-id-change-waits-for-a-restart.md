@@ -1,6 +1,6 @@
 # SDD-042: a Device ID change waits for a restart
 
-**Status:** Accepted 2026-09-18. Albin: "yes to the restart now" (option B).
+**Status:** Shipped in 5.4.0. Accepted 2026-09-18. Albin: "yes to the restart now" (option B).
 **Date:** 2026-09-18
 **Repo:** `hms-cpap`. The collector's config reload and the Settings page.
 **Related:** SDD-012 (settings and restart), SDD-039 (an empty list is not an

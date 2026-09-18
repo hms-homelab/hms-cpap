@@ -1,6 +1,6 @@
 # SDD-043: a local night closes when it settles, whenever it was stored
 
-**Status:** Accepted 2026-09-18 ("yes on 041"), to ship with the SDD-041 release.
+**Status:** Shipped in 5.4.0. Accepted 2026-09-18 ("yes on 041").
 **Date:** 2026-09-18
 **Repo:** `hms-cpap`. The burst collector's local close, one query helper.
 **Related:** SDD-037 (a local folder is a finished night; D1, the 5-day window),
