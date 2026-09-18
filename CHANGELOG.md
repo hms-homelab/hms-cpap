@@ -5,6 +5,34 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.3.0] - 2026-09-18
+
+One collection cycle for every source (SDD-040). A local folder used to have its
+own copy of the collector, and every local defect this month came from the two
+copies drifting apart: nights that never closed (5.2.18) and history that was
+never read (5.2.19). There is now one.
+
+### Changed
+- **A local folder is collected by the same cycle as an ez Share card.** It is
+  read through the same interface, so a fix to one is a fix to both. Anything
+  that only makes sense across a network is skipped for a folder, because the
+  folder is already the copy: nothing is downloaded, nothing is mirrored into
+  the Archive Directory, and the card's other files are not walked.
+- **A night is parsed as a whole night.** A folder that holds one night is read
+  where it lies, with no temporary copy, where the local path used to copy every
+  night's files on every cycle.
+
+### Fixed
+- **A night split across two blocks in one folder could be stored twice.** On
+  an ez Share, each block was parsed from the whole folder, so both came back as
+  the same merged night and were saved under two start times. Each block is now
+  read on its own. It needed a rare shape to happen, but it would have doubled
+  that night's events.
+- **Switching the source to Local Directory in Settings could stop the app.**
+  Found while testing this release in Docker and fixed before it shipped: after
+  a switch made while running, the next collection cycle had nothing to read
+  from and the process exited. It now picks up the new source straight away.
+
 ## [5.2.19] - 2026-09-18
 
 Two users, one card each, and the same sentence in both logs: "Scanning folders

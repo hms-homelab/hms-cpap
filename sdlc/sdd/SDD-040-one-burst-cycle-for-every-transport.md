@@ -1,8 +1,10 @@
 # SDD-040: one burst cycle for every transport
 
-**Status:** Proposed, 2026-09-18. Albin has already settled three of it (§4):
-the local folder gets an `IDataSource`, staging and archiving are no-ops when
-the source IS the archive, and this ships as its own release.
+**Status:** Released in 5.3.0 (Albin: "i would actually this as 5.3.0"), see §6.
+Settled 2026-09-18: the local folder gets an `IDataSource`; staging, archiving
+and the residual walk are no-ops when the source IS the archive; one parse per
+night (D7); its own release. D4 (the ledger for a local source) was proposed and
+then REVERSED by measurement, §6.
 **Date:** 2026-09-18
 **Repo:** `hms-cpap`. `BurstCollectorService::executeBurstCycle()`, a new
 `LocalDataSource`, `SessionDiscoveryService`.
@@ -189,3 +191,54 @@ parser can be told which block it is looking at.
 Albin's number, after SDD-038 and SDD-039. This is a refactor of the most
 load-bearing function in the app; it ships on its own so a regression has one
 obvious suspect.
+
+## 6. As built (2026-09-18, 5.3.0)
+
+- **The local branch is deleted**, not ported. What was local-only and had to
+  survive became a short prologue in the shared block: the layout guard
+  (`localSourceIsReady()`, SDD-010), the STR read every cycle (issue #8) and the
+  ring `.vld` folder scan (SDD-028). Everything else a local night needs is the
+  shared path's.
+- **`in_place = data_source_->filesAreInPlace()`** is the one switch. When true:
+  the staging directory is the card's own DATALOG; `fetchNight()` stores without
+  downloading; the archive mirror and the per-folder residue are skipped; the
+  card-wide residue sweep is skipped; a night counts as archived for the SDD-011
+  settle test, since its files are on disk by definition.
+- **D4 REVERSED, by measurement.** Writing the folder ledger for a local source
+  left 13 of 15 imported nights at Live through repeated cycles: a ledger row
+  settles on a second observation of an unchanged folder, and a folder read in
+  place is read once (after that the night is stored, not missing, and the
+  anchor never returns). The ledger records a transfer, and a folder has none,
+  so it is skipped in place and `night_state` falls back to the open-session
+  test that SDD-037 already answers.
+- **The SDD-037 close moved into `fetchNight()`** for a source read in place.
+  It lived in step 6, which only sees sessions NOT stored inline, and everything
+  a folder yields is stored inline because there is no download to wait for.
+  Without the move the unified cycle parsed every night and closed none.
+- **The live switch builds the source.** Changing the source to local while
+  running reset `data_source_` and `discovery_service_` (the old branch needed
+  neither), and the next cycle dereferenced a null discovery service. The
+  reconfigure path now builds the `LocalDataSource` and its discovery service,
+  and a cycle that has neither logs and skips instead of crashing.
+- **`LocalDataSource::listFiles()` carries the file's modification time**, pinned
+  by a parity test: `estimateCheckpointEnd()` widens a checkpoint to it, so
+  without it the same folder grouped differently through the interface than
+  through the filesystem.
+
+**Tests.** `test_LocalDataSource.cpp` (9, including the grouping parity case and
+the EzShareClient contract), `BurstCollectorParseDir` (3, one parse per night).
+Full suite 1977 tests, 1869 passed, 108 skipped, 0 failed, local zone and
+`TZ=UTC`, SQLite + MySQL (NAS) + PostgreSQL (native). CI run 35346314118 on the
+branch: every job green including `windows-build` and `windows-desktop-test`.
+
+**E2E, four environments, the 15-night card from #34:**
+
+| Environment | Result |
+|---|---|
+| macOS native | 15 nights complete first pass, 16 closes, 0 ledger rows, no archive or residue activity, the user's 186 files untouched |
+| Linux native (hub) | identical |
+| Docker (hub), started as ez Share, source switched at runtime | exited 139 on the first run (the live-switch bug above); after the fix, healthy and 15 nights complete |
+| Windows native (.72, the CI binary), started as ez Share, switched at runtime | alive after the switch, 15 nights complete |
+
+Three defects in the refactor were caught by those runs and none by the suite,
+which is the argument for running all four every time this function changes.
