@@ -13,6 +13,7 @@
 #include "utils/AppConfig.h"
 #include "utils/FileUtils.h"
 #include "utils/SessionEnd.h"
+#include "database/SqlDialect.h"
 #include "utils/CardResidue.h"
 #include "utils/ArchiveRecordCount.h"
 #include "services/OximetryImport.h"
@@ -1608,8 +1609,27 @@ bool BurstCollectorService::executeBurstCycle() {
         std::cout << "CPAP: Scanning local card root " << local_source_dir_
                   << " (sessions under " << local_datalog_dir << ")" << std::endl;
 
+        // SDD-038 D2: a local source takes ALL of its missing history in one
+        // pass. The cost is a directory read per folder, and the case this
+        // exists for is a folder of nights that were never imported at all.
+        std::vector<std::string> local_folders;
+        {
+            std::error_code ec;
+            for (std::filesystem::directory_iterator it(local_datalog_dir, ec), end;
+                 !ec && it != end; it.increment(ec)) {
+                std::error_code de;
+                if (!it->is_directory(de)) continue;
+                const std::string name = it->path().filename().string();
+                if (name.size() == 8 &&
+                    std::all_of(name.begin(), name.end(),
+                                [](unsigned char c) { return std::isdigit(c); }))
+                    local_folders.push_back(name);
+            }
+        }
+        const auto catch_up = historyCatchUpFolders(local_folders, 0);
+
         new_sessions = SessionDiscoveryService::discoverLocalSessions(
-            local_datalog_dir, last_session_start, retain_from);
+            local_datalog_dir, last_session_start, retain_from, catch_up);
 
         // Local mode: STR.edf is static lifetime history on disk, and these
         // sessions never transition to "completed" the way growing ezShare files
@@ -1790,7 +1810,15 @@ bool BurstCollectorService::executeBurstCycle() {
         std::cout << "CPAP: Accessing ez Share at " << ConfigManager::get("EZSHARE_BASE_URL", "http://192.168.4.1") << std::endl;
 
         try {
-            new_sessions = discovery_service_->discoverNewSessions(last_session_start, retain_from);
+            // SDD-038 D2: bounded here. Every extra folder is a listing plus
+            // its downloads over the card's WiFi, and the live night is what
+            // this cycle is for; the rest of the backlog follows on later
+            // cycles. One listing pays for the question.
+            const auto catch_up = historyCatchUpFolders(
+                discovery_service_->listDateFolders(), kEzShareCatchUpPerCycle);
+
+            new_sessions = discovery_service_->discoverNewSessions(
+                last_session_start, retain_from, catch_up);
             consecutive_failures_ = 0;
             recovery_logged_ = false;
         } catch (const std::exception& e) {
@@ -2172,6 +2200,74 @@ bool BurstCollectorService::executeBurstCycle() {
     std::cout << std::string(60, '=') << std::endl << std::endl;
 
     return true;
+}
+
+/*
+ * SDD-038 (#34, support 129): the nights the anchor cannot reach.
+ *
+ * "Which folders has this database no night for" is one question the burst
+ * never asked. It asks for what is NEWER than the newest stored session, so a
+ * card holding history the database does not have is invisible: todd3835 kept
+ * his database, rebuilt his container, and watched 13 of 16 folders go unread
+ * on every cycle for ever.
+ *
+ * The night key and the folder name are the same string (SDD-029 section 7,
+ * checked against a real card), so the comparison is a set difference and no
+ * date arithmetic is needed here.
+ */
+std::set<std::string> BurstCollectorService::historyCatchUpFolders(
+    const std::vector<std::string>& card_folders, size_t cap) {
+
+    if (card_folders.empty() || !db_service_) return {};
+
+    // What the last cycle asked for and did not get. Marked before computing
+    // this cycle's set, so a folder that yields nothing is asked for exactly
+    // once (D4).
+    std::set<std::string> stored;
+    {
+        const auto p = sql::param(1, db_service_->dbType());
+        const std::string q =
+            "SELECT DISTINCT " + sql::sleepDay("session_start", db_service_->dbType()) +
+            " AS night FROM cpap_sessions WHERE device_id = " + p;
+        for (const auto& row : db_service_->executeQuery(q, {device_id_})) {
+            std::string night = row["night"].isNull() ? std::string() : row["night"].asString();
+            night.erase(std::remove_if(night.begin(), night.end(),
+                                       [](unsigned char c) { return !std::isdigit(c); }),
+                        night.end());
+            if (night.size() >= 8) stored.insert(night.substr(0, 8));
+        }
+    }
+
+    for (const auto& asked : history_requested_) {
+        if (!stored.count(asked)) {
+            history_tried_.insert(asked);
+            std::cout << "CPAP: " << asked
+                      << " yielded no night, not asking for it again this run" << std::endl;
+        }
+    }
+    history_requested_.clear();
+
+    const auto removed = removedNightSet(*db_service_, device_id_);
+
+    std::vector<std::string> missing;
+    for (const auto& folder : card_folders) {
+        if (stored.count(folder) || removed.count(folder) || history_tried_.count(folder))
+            continue;
+        missing.push_back(folder);
+    }
+    std::sort(missing.begin(), missing.end());     // oldest first: the folder name IS the date
+
+    if (missing.empty()) return {};
+
+    const size_t take = (cap == 0) ? missing.size() : std::min(cap, missing.size());
+    std::set<std::string> picked(missing.begin(), missing.begin() + static_cast<long>(take));
+
+    std::cout << "CPAP: " << missing.size() << " night(s) on the card are not in the database; "
+              << "importing " << picked.size() << " this cycle (" << *picked.begin()
+              << " first)" << std::endl;
+
+    history_requested_ = picked;
+    return picked;
 }
 
 /*

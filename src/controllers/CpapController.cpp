@@ -42,6 +42,7 @@ std::function<Json::Value(const std::string&)> CpapController::cpap_zip_import_;
 std::function<Json::Value(const std::string&)> CpapController::night_remove_;
 std::function<void(const std::string&)> CpapController::night_restore_;
 std::function<std::vector<std::string>()> CpapController::removed_nights_;
+std::function<void(const std::string&)> CpapController::cpap_zip_queue_;
 
 void CpapController::setQueryService(std::shared_ptr<QueryService> qs) { qs_ = qs; }
 
@@ -1772,6 +1773,22 @@ void CpapController::uploadCpapZip(const drogon::HttpRequestPtr& req,
         std::ofstream o(tmp, std::ios::binary);
         o.write(content.data(), static_cast<std::streamsize>(content.size()));
     }
+    // SDD-039 D2 (CpapDash support 129): the import used to run right here, on
+    // a web thread. Extracting and mirroring a card is filesystem work that can
+    // block for as long as the destination takes -- on a network share, minutes
+    // -- and with the server's small thread pool that is the whole app not
+    // answering while the user watches a spinner. Queued on the backfill
+    // worker, which already owns long ingest and already reports through
+    // /api/backfill/status, which this page polls.
+    if (cpap_zip_queue_) {
+        cpap_zip_queue_(tmp.string());
+        Json::Value queued;
+        queued["status"] = "queued";
+        queued["message"] = "Card uploaded; importing. Poll /api/backfill/status";
+        cb(jsonResp(queued));
+        return;
+    }
+
     try {
         Json::Value result = cpap_zip_import_(tmp.string());
         std::error_code ec;

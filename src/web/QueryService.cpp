@@ -120,6 +120,17 @@ void annotateIndex(Json::Value& row) {
 QueryService::QueryService(std::shared_ptr<IDatabase> db, const std::string& device_id)
     : db_(db), device_id_(device_id), dt_(db->dbType()) {}
 
+// SDD-039 D1 (CpapDash support 129): every read below goes through here, so a
+// statement that did not run raises instead of returning the same empty array
+// an install with no nights returns. The controllers turn it into a 500 whose
+// body names what the engine objected to.
+Json::Value QueryService::query(const std::string& sql,
+                                const std::vector<std::string>& params) {
+    auto outcome = db_->executeQueryChecked(sql, params);
+    if (!outcome.ok) throw QueryFailed(outcome.error);
+    return outcome.rows;
+}
+
 Json::Value QueryService::getDashboard() {
     // --- Latest night (from daily summary — whole night, not single session) ---
     std::string q_latest =
@@ -190,11 +201,11 @@ Json::Value QueryService::getDashboard() {
 
     std::vector<std::string> p1 = {device_id_};
 
-    auto latest    = db_->executeQuery(q_latest, p1);
-    auto ahi_trend = db_->executeQuery(q_ahi, p1);
-    auto usage_trend = db_->executeQuery(q_usage, p1);
-    auto compliance  = db_->executeQuery(q_compliance, p1);
-    auto index_week  = db_->executeQuery(q_index_week, p1);
+    auto latest    = query(q_latest, p1);
+    auto ahi_trend = query(q_ahi, p1);
+    auto usage_trend = query(q_usage, p1);
+    auto compliance  = query(q_compliance, p1);
+    auto index_week  = query(q_index_week, p1);
 
     // --- Build result ---
     Json::Value result;
@@ -362,7 +373,7 @@ Json::Value QueryService::getSessions(int limit, int offset) {
         " LIMIT " + std::to_string(limit) +
         " OFFSET " + std::to_string(offset);
 
-    Json::Value rows = db_->executeQuery(q, {device_id_, device_id_});
+    Json::Value rows = query(q, {device_id_, device_id_});
 
     // SDD-008: attach the night's transfer state so the frontend does not
     // re-derive it a third time (it already reimplements the live test in
@@ -433,7 +444,7 @@ Json::Value QueryService::getSessionDetail(const std::string& date) {
         " AND " + sql::sleepDay("s.session_start", dt_) + " = " + sql::castDate(2, dt_) +
         " ORDER BY s.session_start";
 
-    auto sessions = db_->executeQuery(q_sessions, {device_id_, date});
+    auto sessions = query(q_sessions, {device_id_, date});
 
     // For each session, fetch its events
     Json::Value result(Json::arrayValue);
@@ -445,7 +456,7 @@ Json::Value QueryService::getSessionDetail(const std::string& date) {
                 "SELECT event_type, event_timestamp, duration_seconds, details"
                 " FROM cpap_events WHERE session_id = " + sql::param(1, dt_) +
                 " ORDER BY event_timestamp";
-            row["events"] = db_->executeQuery(q_events, {session_id});
+            row["events"] = query(q_events, {session_id});
         } else {
             row["events"] = Json::Value(Json::arrayValue);
         }
@@ -509,7 +520,7 @@ Json::Value QueryService::getDailySummary(const std::string& start, const std::s
         " AND record_date <= " + sql::castDate(3, dt_) +
         " ORDER BY record_date";
 
-    auto rows = db_->executeQuery(q, {device_id_, start, end});
+    auto rows = query(q, {device_id_, start, end});
     for (auto& row : rows) annotateIndex(row);  // SDD-019
     return rows;
 }
@@ -552,7 +563,7 @@ Json::Value QueryService::getMyAirComparison(const std::string& start, const std
         " LEFT JOIN cpap_myair_records m ON m.record_date = x.record_date"
         " ORDER BY x.record_date DESC";
 
-    auto rows = db_->executeQuery(q, {device_id_, start, end, start, end, device_id_});
+    auto rows = query(q, {device_id_, start, end, start, end, device_id_});
 
     Json::Value out(Json::arrayValue);
     for (auto& row : rows) {
@@ -629,7 +640,7 @@ Json::Value QueryService::getTrend(const std::string& metric, int days) {
         " AND record_date >= " + sql::currentDateMinus(days, dt_) +
         " ORDER BY record_date";
 
-    return db_->executeQuery(q, {device_id_});
+    return query(q, {device_id_});
 }
 
 Json::Value QueryService::getStatistics(const std::string& start, const std::string& end) {
@@ -658,7 +669,7 @@ Json::Value QueryService::getStatistics(const std::string& start, const std::str
         " AND record_date >= " + sql::castDate(2, dt_) +
         " AND record_date <= " + sql::castDate(3, dt_);
 
-    return db_->executeQuery(q, {device_id_, start, end});
+    return query(q, {device_id_, start, end});
 }
 
 Json::Value QueryService::getSummaries(const std::string& period, int limit) {
@@ -675,7 +686,7 @@ Json::Value QueryService::getSummaries(const std::string& period, int limit) {
     }
     q += " ORDER BY created_at DESC LIMIT " + std::to_string(limit);
 
-    return db_->executeQuery(q, params);
+    return query(q, params);
 }
 
 static double jdouble(const Json::Value& obj, const char* key) {
@@ -700,7 +711,7 @@ Json::Value QueryService::getInsights(int days) {
         " AND record_date >= " + sql::currentDateMinus(days, dt_) +
         " ORDER BY record_date";
 
-    auto rows = db_->executeQuery(q, {device_id_});
+    auto rows = query(q, {device_id_});
 
     std::vector<STRDailyRecord> records;
     for (const auto& r : rows) {
@@ -761,7 +772,7 @@ Json::Value QueryService::getSessionSignals(const std::string& date) {
         " AND " + sql::sleepDay("s.session_start", dt_) + " = " + sql::castDate(2, dt_) +
         " ORDER BY b.timestamp";
 
-    auto rows = db_->executeQuery(q, {device_id_, date});
+    auto rows = query(q, {device_id_, date});
 
     // Convert row-oriented to column-oriented for Chart.js
     Json::Value result;
@@ -850,7 +861,7 @@ Json::Value QueryService::getSessionVitals(const std::string& date, int interval
         " AND v.spo2 > 0"
         " GROUP BY bucket ORDER BY bucket";
 
-    auto rows = db_->executeQuery(q, {device_id_, date});
+    auto rows = query(q, {device_id_, date});
 
     // Column-oriented
     Json::Value result;
@@ -885,7 +896,7 @@ Json::Value QueryService::getSessionEvents(const std::string& date) {
         " AND " + sql::sleepDay("s.session_start", dt_) + " = " + sql::castDate(2, dt_) +
         " ORDER BY e.event_timestamp";
 
-    return db_->executeQuery(q, {device_id_, date});
+    return query(q, {device_id_, date});
 }
 
 Json::Value QueryService::getEvents(const std::string& start, const std::string& end,
@@ -932,7 +943,7 @@ Json::Value QueryService::getEvents(const std::string& start, const std::string&
          " LIMIT " + std::to_string(limit) +
          " OFFSET " + std::to_string(offset);
 
-    return db_->executeQuery(q, params);
+    return query(q, params);
 }
 
 Json::Value QueryService::getSessionBreaths(const std::string& date) {
@@ -944,7 +955,7 @@ Json::Value QueryService::getSessionBreaths(const std::string& date) {
         " AND " + sql::sleepDay("s.session_start", dt_) + " = " + sql::castDate(2, dt_) +
         " ORDER BY b.onset";
 
-    return db_->executeQuery(q, {device_id_, date});
+    return query(q, {device_id_, date});
 }
 
 Json::Value QueryService::getSessionOximetry(const std::string& date, int interval) {
@@ -974,7 +985,7 @@ Json::Value QueryService::getSessionOximetry(const std::string& date, int interv
         " AND s." + std::string(dt_ == DbType::SQLITE ? "valid = 1" : "valid = true") +
         " ORDER BY s.timestamp";
 
-    auto rows = db_->executeQuery(q, {kOximetryDeviceId, sleep_day});
+    auto rows = query(q, {kOximetryDeviceId, sleep_day});
 
     Json::Value result;
     Json::Value timestamps(Json::arrayValue);

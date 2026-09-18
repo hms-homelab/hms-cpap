@@ -7,6 +7,7 @@
 #include <string>
 #include <chrono>
 #include <optional>
+#include <set>
 #include <filesystem>
 
 namespace hms_cpap {
@@ -46,9 +47,17 @@ public:
     ///        observed every burst and can always take the second observation
     ///        that settling requires. nullopt restores pure wall-clock
     ///        behaviour. This is additive: it only ever widens the set.
+    /// @param catch_up_folders SDD-038: date folders to scan WHATEVER the
+    ///        anchor says, and whose sessions bypass the new/today/recent
+    ///        tests. This is how a night older than everything in the database
+    ///        is ever looked at: the anchor is right for a card that grows
+    ///        forward and blind to history that was already there (#34, and
+    ///        support 129). Empty on a cycle with nothing to catch up, which is
+    ///        every cycle on a healthy install.
     std::vector<SessionFileSet> discoverNewSessions(
         std::optional<std::chrono::system_clock::time_point> last_session_start,
-        std::optional<std::chrono::system_clock::time_point> retain_from = std::nullopt
+        std::optional<std::chrono::system_clock::time_point> retain_from = std::nullopt,
+        const std::set<std::string>& catch_up_folders = {}
     );
 
     /**
@@ -84,10 +93,17 @@ public:
      * @param last_session_start Last stored session (nullopt = get all)
      * @return Vector of session file sets to process
      */
+    /// @param catch_up_folders SDD-038, as in discoverNewSessions().
     static std::vector<SessionFileSet> discoverLocalSessions(
         const std::string& local_datalog_dir,
         std::optional<std::chrono::system_clock::time_point> last_session_start,
-        std::optional<std::chrono::system_clock::time_point> retain_from = std::nullopt);
+        std::optional<std::chrono::system_clock::time_point> retain_from = std::nullopt,
+        const std::set<std::string>& catch_up_folders = {});
+
+    /// SDD-038: the date folders on the card, for the caller to compare against
+    /// what the database already holds. One listing, so the catch-up costs a
+    /// single request on an ez Share rather than one per folder.
+    std::vector<std::string> listDateFolders();
 
 private:
     IDataSource& data_source_;

@@ -353,10 +353,16 @@ SessionDiscoveryService::groupSessionsInFolder(const std::string& date_folder) {
     return sessions;
 }
 
+// SDD-038: one listing for the caller's "which nights am I missing" question.
+std::vector<std::string> SessionDiscoveryService::listDateFolders() {
+    return data_source_.listDateFolders();
+}
+
 std::vector<SessionFileSet>
 SessionDiscoveryService::discoverNewSessions(
     std::optional<std::chrono::system_clock::time_point> last_session_start,
-    std::optional<std::chrono::system_clock::time_point> retain_from) {
+    std::optional<std::chrono::system_clock::time_point> retain_from,
+    const std::set<std::string>& catch_up_folders) {
 
     std::cout << "CPAP: Discovering sessions on ez Share..." << std::endl;
 
@@ -426,6 +432,19 @@ SessionDiscoveryService::discoverNewSessions(
         relevant_folders = date_folders;
     }
 
+    // SDD-038: the nights the anchor cannot reach. Added AFTER the cut above,
+    // because the whole point is that they are older than everything stored.
+    for (const auto& folder : catch_up_folders) {
+        if (std::find(date_folders.begin(), date_folders.end(), folder) == date_folders.end())
+            continue;   // not on the card any more
+        if (std::find(relevant_folders.begin(), relevant_folders.end(), folder)
+            == relevant_folders.end())
+            relevant_folders.push_back(folder);
+    }
+    if (!catch_up_folders.empty())
+        std::cout << "CPAP: catching up on " << catch_up_folders.size()
+                  << " folder(s) the database has no night for" << std::endl;
+
     if (relevant_folders.empty()) {
         std::cout << "CPAP: No relevant folders to scan" << std::endl;
         return {};
@@ -456,6 +475,11 @@ SessionDiscoveryService::discoverNewSessions(
         // Calculate 48 hours ago (to catch late EVE files that can be written hours later)
         auto forty_eight_hours_ago = now - std::chrono::hours(48);
 
+        // SDD-038: a folder we are catching up on is here BECAUSE its nights
+        // are older than everything stored, so every wall-clock test below
+        // would refuse them. This is the one flag that says "take them".
+        const bool is_catch_up = catch_up_folders.count(folder) > 0;
+
         for (const auto& session : folder_sessions) {
             bool is_today = (folder == today_local || folder == today_utc);
             bool is_new = (!last_session_start.has_value() ||
@@ -473,11 +497,13 @@ SessionDiscoveryService::discoverNewSessions(
                                 session.session_start >= retain_from.value());
 
             // Re-download if: new session, today's session, within last 48h
-            // (catch late EVE files), or among the newest stored nights.
-            if (is_new || is_today || is_recent || is_retained) {
+            // (catch late EVE files), among the newest stored nights, or a
+            // night this database has never held at all (SDD-038).
+            if (is_new || is_today || is_recent || is_retained || is_catch_up) {
                 all_sessions.push_back(session);
 
-                std::string reason = is_new ? "New session" :
+                std::string reason = is_catch_up ? "Night never imported" :
+                                    is_new ? "New session" :
                                     is_today ? "Checking today's session" :
                                     is_recent ? "Checking recent session (catch late EVE files)" :
                                     "Re-checking newest stored session (settling)";
@@ -502,7 +528,8 @@ std::vector<SessionFileSet>
 SessionDiscoveryService::discoverLocalSessions(
     const std::string& local_datalog_dir,
     std::optional<std::chrono::system_clock::time_point> last_session_start,
-    std::optional<std::chrono::system_clock::time_point> retain_from) {
+    std::optional<std::chrono::system_clock::time_point> retain_from,
+    const std::set<std::string>& catch_up_folders) {
 
     std::cout << "CPAP: Discovering sessions from local directory: " << local_datalog_dir << std::endl;
 
@@ -601,6 +628,21 @@ SessionDiscoveryService::discoverLocalSessions(
         relevant_folders = date_folders;
     }
 
+    // SDD-038: the nights the anchor cannot reach, added after the cut. On a
+    // local source this is every folder the database has no night for, which is
+    // the whole history when a container is rebuilt against an existing
+    // database (#34).
+    for (const auto& folder : catch_up_folders) {
+        if (std::find(date_folders.begin(), date_folders.end(), folder) == date_folders.end())
+            continue;
+        if (std::find(relevant_folders.begin(), relevant_folders.end(), folder)
+            == relevant_folders.end())
+            relevant_folders.push_back(folder);
+    }
+    if (!catch_up_folders.empty())
+        std::cout << "CPAP: catching up on " << catch_up_folders.size()
+                  << " folder(s) the database has no night for" << std::endl;
+
     if (relevant_folders.empty()) {
         return {};
     }
@@ -639,6 +681,10 @@ SessionDiscoveryService::discoverLocalSessions(
         std::tm* utc_tm = std::gmtime(&now_time);
         std::strftime(today_utc, sizeof(today_utc), "%Y%m%d", utc_tm);
 
+        // SDD-038: see discoverNewSessions. A caught-up folder's nights are
+        // older than everything stored, so no wall-clock test can admit them.
+        const bool is_catch_up = catch_up_folders.count(folder) > 0;
+
         for (const auto& session : folder_sessions) {
             bool is_today = (folder == today_local || folder == today_utc);
             bool is_new = (!last_session_start.has_value() ||
@@ -652,7 +698,7 @@ SessionDiscoveryService::discoverLocalSessions(
             bool is_retained = (retain_from.has_value() &&
                                 session.session_start >= retain_from.value());
 
-            if (is_new || is_today || is_recent || is_retained) {
+            if (is_new || is_today || is_recent || is_retained || is_catch_up) {
                 all_sessions.push_back(session);
             }
         }

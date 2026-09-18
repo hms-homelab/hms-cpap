@@ -51,6 +51,11 @@ bool PostgresDatabase::markSessionCompleted(const std::string& device_id,
     return db_->markSessionCompleted(device_id, session_start);
 }
 
+IDatabase::QueryOutcome PostgresDatabase::executeQueryChecked(
+    const std::string& sql, const std::vector<std::string>& params) {
+    return db_->executeQueryChecked(sql, params);
+}
+
 bool PostgresDatabase::markSessionCompletedAt(
     const std::string& device_id,
     const std::chrono::system_clock::time_point& session_start,

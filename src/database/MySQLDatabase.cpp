@@ -4785,20 +4785,45 @@ int MySQLDatabase::insertReturningId(const std::string& sql,
     return id > 0 ? static_cast<int>(id) : -1;
 }
 
+// SDD-039 D1: the checked door. Runs the same query and reports whether it ran,
+// reading the error executeQuery() records below.
+IDatabase::QueryOutcome MySQLDatabase::executeQueryChecked(
+    const std::string& sql, const std::vector<std::string>& params) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);   // recursive: executeQuery locks too
+    last_query_error_.clear();
+    QueryOutcome out;
+    out.rows = executeQuery(sql, params);
+    if (!last_query_error_.empty()) {
+        out.ok = false;
+        out.error = last_query_error_;
+    }
+    return out;
+}
+
 Json::Value MySQLDatabase::executeQuery(const std::string& sql,
                                         const std::vector<std::string>& params) {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     Json::Value arr(Json::arrayValue);
-    if (!conn_) return arr;
+    if (!conn_) {
+        last_query_error_ = "no database connection";
+        return arr;
+    }
 
     MYSQL_STMT* stmt = mysql_stmt_init(conn_);
-    if (!stmt) return arr;
+    if (!stmt) {
+        last_query_error_ = "mysql_stmt_init failed";
+        return arr;
+    }
 
     // RAII cleanup
     struct StmtClose { MYSQL_STMT* s; ~StmtClose() { mysql_stmt_close(s); } } guard{stmt};
 
     if (mysql_stmt_prepare(stmt, sql.c_str(), sql.size()) != 0) {
-        std::cerr << "MySQL::executeQuery prepare error: " << mysql_stmt_error(stmt) << std::endl;
+        // SDD-039 D1: remembered so executeQueryChecked() can tell a caller that
+        // this query did not run, instead of handing back an empty result that
+        // reads as "no data".
+        last_query_error_ = mysql_stmt_error(stmt) ? mysql_stmt_error(stmt) : "prepare failed";
+        std::cerr << "MySQL::executeQuery prepare error: " << last_query_error_ << std::endl;
         return arr;
     }
 

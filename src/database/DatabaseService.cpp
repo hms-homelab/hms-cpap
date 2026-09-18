@@ -32,11 +32,36 @@ bool DatabaseService::ensureQueryConn() {
     return true;
 }
 
+// SDD-039 D1: the checked door. Same query, and whether it ran, so a read path
+// can answer "the database refused this" instead of an empty list that reads as
+// lost data. query_mutex_ is NOT recursive, so the error is read after the call
+// rather than around it.
+IDatabase::QueryOutcome DatabaseService::executeQueryChecked(
+    const std::string& sql, const std::vector<std::string>& params) {
+    {
+        std::lock_guard<std::mutex> lock(query_mutex_);
+        last_query_error_.clear();
+    }
+    QueryOutcome out;
+    out.rows = executeQuery(sql, params);
+    {
+        std::lock_guard<std::mutex> lock(query_mutex_);
+        if (!last_query_error_.empty()) {
+            out.ok = false;
+            out.error = last_query_error_;
+        }
+    }
+    return out;
+}
+
 Json::Value DatabaseService::executeQuery(const std::string& sql,
                                           const std::vector<std::string>& params) {
     Json::Value arr(Json::arrayValue);
     std::lock_guard<std::mutex> lock(query_mutex_);
-    if (!ensureQueryConn()) return arr;
+    if (!ensureQueryConn()) {
+        last_query_error_ = "no database connection";
+        return arr;
+    }
 
     std::vector<const char*> pvals;
     pvals.reserve(params.size());
@@ -48,7 +73,9 @@ Json::Value DatabaseService::executeQuery(const std::string& sql,
 
     if (!res || (PQresultStatus(res) != PGRES_TUPLES_OK &&
                  PQresultStatus(res) != PGRES_COMMAND_OK)) {
-        std::cerr << "executeQuery error: " << PQerrorMessage(query_conn_) << std::endl;
+        last_query_error_ = PQerrorMessage(query_conn_) ? PQerrorMessage(query_conn_)
+                                                        : "query failed";
+        std::cerr << "executeQuery error: " << last_query_error_ << std::endl;
         if (res) PQclear(res);
         return arr;
     }

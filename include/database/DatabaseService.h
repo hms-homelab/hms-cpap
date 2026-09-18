@@ -97,6 +97,10 @@ public:
     bool markSessionCompleted(const std::string& device_id,
                               const std::chrono::system_clock::time_point& session_start) override;
 
+    /// SDD-039 D1: executeQuery(), plus whether the statement actually ran.
+    QueryOutcome executeQueryChecked(const std::string& sql,
+                                     const std::vector<std::string>& params = {}) override;
+
     bool markSessionCompletedAt(const std::string& device_id,
                                 const std::chrono::system_clock::time_point& session_start,
                                 const std::chrono::system_clock::time_point& session_end) override;
@@ -247,6 +251,9 @@ private:
 
     PGconn* query_conn_ = nullptr;      // separate libpq connection for web reads
     mutable std::mutex query_mutex_;
+    /// SDD-039 D1: why the last executeQuery() returned nothing, empty when it
+    /// ran. Guarded by query_mutex_, read by executeQueryChecked().
+    std::string last_query_error_;
 
     /// Open (or reopen) query_conn_. Caller must hold query_mutex_.
     bool ensureQueryConn();

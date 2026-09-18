@@ -466,6 +466,39 @@ private:
     static constexpr std::chrono::hours kLocalSettledAfter{24 * 5};
 
     /**
+     * SDD-038 D2: how many never-imported folders one cycle takes on an ez
+     * Share, where each costs a listing and its downloads on the card's WiFi.
+     * A local source takes all of them: there the cost is a directory read.
+     */
+    static constexpr size_t kEzShareCatchUpPerCycle = 3;
+
+    /**
+     * SDD-038: the date folders on the card that this database has no night
+     * for, oldest first, at most [cap] of them (0 means all).
+     *
+     * The burst asks discovery for nights AFTER the newest one stored, which is
+     * right for a card that grows forward and blind to history that was already
+     * there: a container rebuilt against an existing database imported exactly
+     * one night and left thirteen on the card (#34), and a restart left 41 of
+     * 61 folders unread (support 129). This is the question the anchor cannot
+     * ask.
+     *
+     * Removed nights (SDD-029) are not missing, they were removed on purpose.
+     * A folder that the previous cycle asked for and that still has no night is
+     * remembered in history_tried_ and not asked for again (D4), so one junk
+     * folder cannot be re-read on every burst forever.
+     */
+    std::set<std::string> historyCatchUpFolders(const std::vector<std::string>& card_folders,
+                                                size_t cap);
+
+    /// SDD-038 D4: folders asked for that yielded no night. In memory, as the
+    /// SDD-028 ring scan state is: no migration, and a restart retries each of
+    /// them once, which is what you want when a mount was the reason.
+    std::set<std::string> history_tried_;
+    /// What the last cycle asked for, so this one can see what came of it.
+    std::set<std::string> history_requested_;
+
+    /**
      * SDD-037 (ticket 129): close a local night that is older than
      * kLocalSettledAfter, with the end its own data carries. A no-op for every
      * other source, for a night inside the window, and for a session the parse

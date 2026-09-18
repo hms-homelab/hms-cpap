@@ -426,6 +426,67 @@ TEST_F(DiscoverLocalSessionsTest, FirstRunScansAllFoldersAndGroups) {
     EXPECT_EQ(sessions[1].session_prefix, "20200102_213000");
 }
 
+// ── SDD-038: the nights the anchor cannot reach ──────────────────────────────
+//
+// hms-homelab/hms-cpap#34 exactly: a database whose newest session is the last
+// night on the card, and thirteen older folders the burst would never look at
+// again. The catch-up names those folders and their sessions come back despite
+// every wall-clock test refusing them.
+
+TEST_F(DiscoverLocalSessionsTest, ACaughtUpFolderIsScannedBehindTheAnchor) {
+    std::string old_folder = makeDateFolder("20200101");
+    touchFile(old_folder, "20200101_220000_BRP.edf");
+    touchFile(old_folder, "20200101_220000_CSL.edf");
+
+    // The anchor sits in 2200: without the catch-up this folder is invisible.
+    std::tm tm = {};
+    tm.tm_year = 2200 - 1900;
+    tm.tm_mon = 5;
+    tm.tm_mday = 15;
+    tm.tm_hour = 12;
+    tm.tm_isdst = -1;
+    auto last = std::chrono::system_clock::from_time_t(std::mktime(&tm));
+
+    EXPECT_TRUE(SessionDiscoveryService::discoverLocalSessions(root, last).empty())
+        << "precondition: the anchor hides this folder";
+
+    auto caught = SessionDiscoveryService::discoverLocalSessions(
+        root, last, std::nullopt, {"20200101"});
+    ASSERT_EQ(caught.size(), 1u);
+    EXPECT_EQ(caught[0].session_prefix, "20200101_220000");
+}
+
+TEST_F(DiscoverLocalSessionsTest, OnlyTheNamedFoldersAreCaughtUp) {
+    // The bound in the collector (3 per cycle on an ez Share) only means
+    // anything if naming one folder does not drag its neighbours in.
+    for (const auto* d : {"20200101", "20200102", "20200103"}) {
+        std::string f = makeDateFolder(d);
+        touchFile(f, std::string(d) + "_220000_BRP.edf");
+    }
+
+    std::tm tm = {};
+    tm.tm_year = 2200 - 1900;
+    tm.tm_mon = 5;
+    tm.tm_mday = 15;
+    tm.tm_isdst = -1;
+    auto last = std::chrono::system_clock::from_time_t(std::mktime(&tm));
+
+    auto caught = SessionDiscoveryService::discoverLocalSessions(
+        root, last, std::nullopt, {"20200102"});
+    ASSERT_EQ(caught.size(), 1u);
+    EXPECT_EQ(caught[0].session_prefix, "20200102_220000");
+}
+
+TEST_F(DiscoverLocalSessionsTest, ACaughtUpFolderThatIsNotThereChangesNothing) {
+    std::string f = makeDateFolder("20200101");
+    touchFile(f, "20200101_220000_BRP.edf");
+
+    auto sessions = SessionDiscoveryService::discoverLocalSessions(
+        root, std::nullopt, std::nullopt, {"20190101"});   // never existed
+    ASSERT_EQ(sessions.size(), 1u);
+    EXPECT_EQ(sessions[0].session_prefix, "20200101_220000");
+}
+
 TEST_F(DiscoverLocalSessionsTest, OldFoldersBeforeLastDateAreFilteredOut) {
     // last_session_start in the year 2200 -> all old folders are < last_date and
     // not the prev-day folder, so nothing should be scanned/returned.

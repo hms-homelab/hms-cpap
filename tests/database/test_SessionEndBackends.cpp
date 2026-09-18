@@ -196,6 +196,38 @@ TEST_P(SessionEndBackendTest, AnAlreadyClosedSessionKeepsTheEndItHas) {
     EXPECT_EQ(storedEnd(), after_first) << engineName(GetParam());
 }
 
+// SDD-039 D1: a query that did not run must not look like a night list with
+// nothing in it. A user watched /api/sessions answer [] with 63 rows in the
+// table and there was no error anywhere to explain it (support 129).
+TEST_P(SessionEndBackendTest, AQueryThatCannotRunReportsInsteadOfReturningEmpty) {
+    const auto start = local(2099, 3, 14, 23, 0);
+    ASSERT_TRUE(db_->saveSession(makeSession(start, 3600)));
+
+    // A healthy query: rows, and ok.
+    const auto p = sql::param(1, db_->dbType());
+    auto good = db_->executeQueryChecked(
+        "SELECT session_start FROM cpap_sessions WHERE device_id = " + p, {device_});
+    EXPECT_TRUE(good.ok) << engineName(GetParam()) << ": " << good.error;
+    EXPECT_EQ(good.rows.size(), 1u);
+
+    // A column that does not exist: not ok, and the engine says why.
+    auto bad = db_->executeQueryChecked(
+        "SELECT no_such_column FROM cpap_sessions WHERE device_id = " + p, {device_});
+    EXPECT_FALSE(bad.ok) << engineName(GetParam()) << ": a broken query reported success";
+    EXPECT_FALSE(bad.error.empty()) << engineName(GetParam()) << ": no message to report";
+    EXPECT_TRUE(bad.rows.empty());
+
+    // The old door still behaves as every other caller expects.
+    EXPECT_TRUE(db_->executeQuery(
+        "SELECT no_such_column FROM cpap_sessions WHERE device_id = " + p, {device_}).empty());
+
+    // And a healthy query still works after a failed one (no latched error).
+    auto after = db_->executeQueryChecked(
+        "SELECT session_start FROM cpap_sessions WHERE device_id = " + p, {device_});
+    EXPECT_TRUE(after.ok) << engineName(GetParam()) << ": " << after.error;
+    EXPECT_EQ(after.rows.size(), 1u);
+}
+
 TEST_P(SessionEndBackendTest, NoSuchSessionIsFalse) {
     EXPECT_FALSE(db_->markSessionCompletedAt(device_, local(2099, 3, 14, 23, 0),
                                              local(2099, 3, 15, 6, 0)))

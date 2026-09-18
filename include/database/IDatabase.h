@@ -526,6 +526,32 @@ public:
         return Json::Value(Json::arrayValue);
     }
 
+    /// SDD-039 D1: the same query, with the difference between "no rows" and
+    /// "this query did not run" preserved.
+    struct QueryOutcome {
+        Json::Value rows{Json::Value(Json::arrayValue)};
+        bool ok = true;
+        std::string error;   ///< the engine's message when ok is false
+    };
+
+    /**
+     * Run [sql] and say whether it ran. executeQuery() returns an empty array
+     * for a statement that failed to prepare, so a broken query and an empty
+     * history reach the UI as the same 200 with []: a user reads it as lost
+     * data and we get a ticket with no error in it (CpapDash support 129).
+     * The read paths use this and turn a failure into a 500 carrying the
+     * engine's own message.
+     *
+     * A backend that has not overridden this reports success, which is what
+     * executeQuery() already implied.
+     */
+    virtual QueryOutcome executeQueryChecked(const std::string& sql,
+                                             const std::vector<std::string>& params = {}) {
+        QueryOutcome out;
+        out.rows = executeQuery(sql, params);
+        return out;
+    }
+
     /**
      * Run an INSERT and return the new row's id, or -1 on failure.
      *

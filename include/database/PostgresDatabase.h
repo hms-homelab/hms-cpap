@@ -50,6 +50,10 @@ public:
     bool markSessionCompleted(const std::string& device_id,
                               const std::chrono::system_clock::time_point& session_start) override;
 
+    /// SDD-039 D1: executeQuery(), plus whether the statement actually ran.
+    QueryOutcome executeQueryChecked(const std::string& sql,
+                                     const std::vector<std::string>& params = {}) override;
+
     bool markSessionCompletedAt(const std::string& device_id,
                                 const std::chrono::system_clock::time_point& session_start,
                                 const std::chrono::system_clock::time_point& session_end) override;

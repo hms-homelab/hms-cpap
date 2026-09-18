@@ -61,6 +61,19 @@ void BackfillService::triggerCardImport(UploadedCard kind, const std::string& ro
     spdlog::info("BackfillService: {} card import triggered ({})", uploadedCardName(kind), root);
 }
 
+// SDD-039 D2: the upload's work, queued for this worker instead of held on a
+// web thread.
+void BackfillService::triggerZipImport(const std::string& zip_path,
+                                       std::function<void(const std::string&)> job) {
+    {
+        std::lock_guard<std::mutex> lock(pending_mutex_);
+        pending_zip_path_ = zip_path;
+        pending_zip_job_ = std::move(job);
+    }
+    zip_import_requested_ = true;
+    spdlog::info("BackfillService: zip import queued ({})", zip_path);
+}
+
 void BackfillService::executeCardImport(UploadedCard kind, const std::string& root) {
     {
         std::lock_guard<std::mutex> lock(progress_mutex_);
@@ -146,6 +159,29 @@ void BackfillService::runLoop() {
                 root = pending_card_root_;
             }
             executeCardImport(kind, root);
+            continue;
+        }
+
+        // SDD-039 D2: an uploaded ResMed zip. Same worker, same reason: the
+        // mirror is filesystem work that can block for as long as the
+        // destination takes, and a web thread is the wrong place for it.
+        if (zip_import_requested_.exchange(false)) {
+            std::string path;
+            std::function<void(const std::string&)> job;
+            {
+                std::lock_guard<std::mutex> lock(pending_mutex_);
+                path = pending_zip_path_;
+                job = pending_zip_job_;
+                pending_zip_path_.clear();
+                pending_zip_job_ = nullptr;
+            }
+            if (job) {
+                try {
+                    job(path);
+                } catch (const std::exception& e) {
+                    spdlog::error("BackfillService: zip import failed: {}", e.what());
+                }
+            }
             continue;
         }
 

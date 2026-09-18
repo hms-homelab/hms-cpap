@@ -10,6 +10,7 @@
 #include <atomic>
 #include <chrono>
 #include <filesystem>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -68,6 +69,23 @@ public:
     /// this worker, reporting through the same status the upload page polls.
     void triggerCardImport(UploadedCard kind, const std::string& root);
 
+    /**
+     * SDD-039 D2: run an uploaded zip's import HERE rather than on the request
+     * thread.
+     *
+     * The handler used to extract, classify and mirror the whole card inline.
+     * On a local disk that is a second; on a stalled network share it holds one
+     * of the web server's threads for as long as the mount takes, and the app
+     * stops answering while the user watches a spinner (CpapDash support 129).
+     * The work is the same, the thread is the one that already owns long ingest
+     * and already reports through /api/backfill/status.
+     *
+     * [job] is the existing importer, given the zip's path on disk; it is
+     * responsible for its own cleanup, as it was when it ran inline.
+     */
+    void triggerZipImport(const std::string& zip_path,
+                          std::function<void(const std::string&)> job);
+
     /// Thread-safe status for API polling.
     Json::Value getStatus() const;
 
@@ -76,6 +94,11 @@ private:
     UploadedCard pending_card_kind_ = UploadedCard::Unknown;
     std::string pending_card_root_;
     void executeCardImport(UploadedCard kind, const std::string& root);
+
+    /// SDD-039 D2: a queued zip import, run on this worker.
+    std::atomic<bool> zip_import_requested_{false};
+    std::string pending_zip_path_;
+    std::function<void(const std::string&)> pending_zip_job_;
 
     Config config_;
     std::shared_ptr<IDatabase> db_;

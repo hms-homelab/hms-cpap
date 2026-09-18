@@ -1191,6 +1191,22 @@ int main(int argc, char** argv) {
                     }
                     r["restored_nights"] = arr;
                 };
+                // SDD-039 D2: the handler hands the zip here, and the worker
+                // runs the importer wired just below.
+                hms_cpap::CpapController::cpap_zip_queue_ =
+                    [](const std::string& zip_path) {
+                        if (!backfill_service) return;
+                        backfill_service->triggerZipImport(
+                            zip_path, [](const std::string& path) {
+                                Json::Value r = hms_cpap::CpapController::cpap_zip_import_
+                                                    ? hms_cpap::CpapController::cpap_zip_import_(path)
+                                                    : Json::Value();
+                                if (r.isMember("error"))
+                                    std::cerr << "Upload: " << r["error"].asString() << std::endl;
+                                std::error_code ec;
+                                std::filesystem::remove(path, ec);
+                            });
+                    };
                 hms_cpap::CpapController::cpap_zip_import_ =
                     [archive_dir, card_dir, restoreUploaded](const std::string& zip_path) -> Json::Value {
                         namespace fs = std::filesystem;
@@ -1297,7 +1313,12 @@ int main(int argc, char** argv) {
             drogon::app()
                 .setLogLevel(trantor::Logger::kWarn)
                 .addListener("0.0.0.0", web_port)
-                .setThreadNum(2)
+                // SDD-039 D3: two threads was never a decision, and two means
+                // any two slow requests are an outage (support 129: a stalled
+                // mount held one and the dashboard never answered). Follow the
+                // cores, clamped: a Pi stays modest, a laptop is not one
+                // blocked read away from an unresponsive app.
+                .setThreadNum(std::min(8u, std::max(4u, std::thread::hardware_concurrency())))
                 .setDocumentRoot(static_dir)
                 .setIdleConnectionTimeout(120)
                 // Allow large CPAP zip / oximetry CSV uploads (default is 1 MB).

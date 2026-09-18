@@ -2950,16 +2950,31 @@ int SQLiteDatabase::insertReturningId(const std::string& sql,
     return id > 0 ? static_cast<int>(id) : -1;
 }
 
+// SDD-039 D1: one implementation, two doors. The checked one carries whether
+// the statement ran; executeQuery() keeps its old shape (empty on failure) for
+// the 180-odd call sites that only ever ask for rows.
 Json::Value SQLiteDatabase::executeQuery(const std::string& sql,
                                          const std::vector<std::string>& params) {
+    return executeQueryChecked(sql, params).rows;
+}
+
+IDatabase::QueryOutcome SQLiteDatabase::executeQueryChecked(
+    const std::string& sql, const std::vector<std::string>& params) {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
-    Json::Value arr(Json::arrayValue);
-    if (!db_) return arr;
+    QueryOutcome out;
+    Json::Value& arr = out.rows;
+    if (!db_) {
+        out.ok = false;
+        out.error = "no database connection";
+        return out;
+    }
 
     StmtGuard g;
     if (sqlite3_prepare_v2(db_, sql.c_str(), -1, &g.stmt, nullptr) != SQLITE_OK) {
-        std::cerr << "SQLite::executeQuery prepare error: " << sqlite3_errmsg(db_) << std::endl;
-        return arr;
+        out.ok = false;
+        out.error = sqlite3_errmsg(db_) ? sqlite3_errmsg(db_) : "prepare failed";
+        std::cerr << "SQLite::executeQuery prepare error: " << out.error << std::endl;
+        return out;
     }
 
     // Bind string params (1-based)
@@ -2983,7 +2998,7 @@ Json::Value SQLiteDatabase::executeQuery(const std::string& sql,
         arr.append(obj);
     }
 
-    return arr;
+    return out;
 }
 
 // ---------------------------------------------------------------------------
