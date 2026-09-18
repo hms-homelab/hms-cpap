@@ -149,6 +149,7 @@ set(TEST_SOURCES
     services/test_SyncNow.cpp
     services/test_SupplyStatus.cpp
     services/test_SupplyPublisher.cpp
+    services/test_UpdateService.cpp
     controllers/test_EquipmentController.cpp
     web/test_IngressBase.cpp
     web/test_QueryService_index.cpp

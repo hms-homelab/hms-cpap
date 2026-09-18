@@ -7,6 +7,7 @@
 #include "services/BurstCollectorService.h"
 #include "services/CpapDashSyncService.h"
 #include "services/MyAirService.h"
+#include "services/UpdateService.h"
 #ifndef _WIN32
 #include "services/ReportGeneratorService.h"
 #endif
@@ -25,6 +26,8 @@ public:
     ADD_METHOD_TO(CpapController::sessionDetail, "/api/sessions/{date}",    drogon::Get);
     ADD_METHOD_TO(CpapController::sessionRemove, "/api/sessions/{date}",    drogon::Delete);
     ADD_METHOD_TO(CpapController::removedNights, "/api/removed-nights",     drogon::Get);
+    ADD_METHOD_TO(CpapController::updateStatus,  "/api/update",             drogon::Get);
+    ADD_METHOD_TO(CpapController::updateCheck,   "/api/update/check",       drogon::Post);
     ADD_METHOD_TO(CpapController::dailySummary,  "/api/daily-summary",      drogon::Get);
     ADD_METHOD_TO(CpapController::trend,         "/api/trends/{metric}",    drogon::Get);
     ADD_METHOD_TO(CpapController::statistics,    "/api/statistics",         drogon::Get);
@@ -254,6 +257,13 @@ public:
     /// SDD-036: the removed nights, newest first, for the sessions page to restore.
     void removedNights(const drogon::HttpRequestPtr& req,
                        std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+    /// SDD-041: what the last update check found, for the dashboard banner and
+    /// Settings. Never touches the network; the daily check does that.
+    void updateStatus(const drogon::HttpRequestPtr& req,
+                      std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+    /// SDD-041 D2: "check now". Asks GitHub and answers with the result.
+    void updateCheck(const drogon::HttpRequestPtr& req,
+                     std::function<void(const drogon::HttpResponsePtr&)>&& cb);
     void oximetryCollect(const drogon::HttpRequestPtr& req,
                          std::function<void(const drogon::HttpResponsePtr&)>&& cb);
     void uploadOximetryCsv(const drogon::HttpRequestPtr& req,
@@ -287,6 +297,10 @@ public:
     /// re-apply changed sync settings instead of only writing them to disk.
     static void setSyncService(std::shared_ptr<CpapDashSyncService> sync);
 
+    /// SDD-041: the updater's check. Absent in a build or test that has none,
+    /// which the routes answer as "no updater" rather than an error.
+    static void setUpdateService(std::shared_ptr<UpdateService> svc);
+
     static std::function<void()> ml_train_trigger_;
     static std::function<Json::Value()> ml_status_getter_;
     static std::function<void(const std::string&, const std::string&, const std::string&)> backfill_trigger_;
@@ -318,6 +332,7 @@ private:
     // which no macOS or Linux build could have caught.
     static std::shared_ptr<CpapDashSyncService>   sync_;
     static std::shared_ptr<hms_cpap::MyAirService> myair_;
+    static std::shared_ptr<UpdateService>         update_;
     static hms_cpap::AppConfig* config_;
     static std::string config_path_;
     static BurstCollectorService* burst_service_;

@@ -976,6 +976,13 @@ int main(int argc, char** argv) {
                               << std::endl;
             }
 
+            // SDD-041: check GitHub for a newer stable release, daily and on
+            // demand. It only reports; the supervisor applies. Off by itself in a
+            // container (D5), where the image is what updates.
+            auto update_service = std::make_shared<hms_cpap::UpdateService>(HMS_CPAP_VERSION);
+            hms_cpap::CpapController::setUpdateService(update_service);
+            update_service->start();
+
             // SDD-020: opt-in read-only pull of the same nights from ResMed's
             // myAir, so their score can sit next to ours on the dashboard.
             //
@@ -1453,6 +1460,8 @@ int main(int argc, char** argv) {
             }
 
             drogon::app().run();  // Blocks until quit()
+            update_service->stop();
+            hms_cpap::CpapController::setUpdateService(nullptr);
         }
 #else
         // No web UI — simple sleep loop

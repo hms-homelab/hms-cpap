@@ -64,6 +64,12 @@ void CpapController::setSyncService(std::shared_ptr<CpapDashSyncService> sync) {
     sync_ = std::move(sync);
 }
 
+std::shared_ptr<UpdateService> CpapController::update_;
+
+void CpapController::setUpdateService(std::shared_ptr<UpdateService> svc) {
+    update_ = std::move(svc);
+}
+
 static drogon::HttpResponsePtr jsonError(const std::string& msg, drogon::HttpStatusCode code) {
     auto resp = drogon::HttpResponse::newHttpResponse();
     resp->setContentTypeCode(drogon::CT_APPLICATION_JSON);
@@ -1706,6 +1712,55 @@ void CpapController::removedNights(const drogon::HttpRequestPtr&,
     if (removed_nights_)
         for (const auto& d : removed_nights_()) result["nights"].append(d);
     cb(jsonResp(result));
+}
+
+// SDD-041: one shape for the banner and Settings, whatever the updater knows.
+static Json::Value updateJson(const UpdateStatus& s) {
+    Json::Value j;
+    j["current"] = s.current;
+    j["latest"] = s.latest;
+    j["available"] = s.available;
+    j["containerised"] = s.containerised;
+    j["checked"] = s.checked;
+    j["checked_at"] = s.checked_at;
+    j["notes"] = s.notes;
+    j["release_url"] = s.release_url;
+    j["error"] = s.error;
+    Json::Value assets(Json::arrayValue);
+    for (const auto& a : s.assets) {
+        Json::Value aj;
+        aj["platform"] = a.platform;
+        aj["kind"] = a.kind;
+        aj["name"] = a.name;
+        aj["size"] = static_cast<Json::Int64>(a.size);
+        assets.append(aj);
+    }
+    j["assets"] = assets;
+    return j;
+}
+
+void CpapController::updateStatus(const drogon::HttpRequestPtr&,
+                                  std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    if (!update_) {
+        UpdateStatus none;
+        none.current = HMS_CPAP_VERSION;
+        cb(jsonResp(updateJson(none)));
+        return;
+    }
+    cb(jsonResp(updateJson(update_->status())));
+}
+
+void CpapController::updateCheck(const drogon::HttpRequestPtr&,
+                                 std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    if (!update_) {
+        cb(jsonError("Updater not available", drogon::k503ServiceUnavailable));
+        return;
+    }
+    // One GitHub request, at most two with the manifest, each capped at 30 s.
+    // Off the event loop so a slow answer does not stall every other route.
+    auto svc = update_;
+    std::thread([svc, cb = std::move(cb)]() { cb(jsonResp(updateJson(svc->checkNow()))); })
+        .detach();
 }
 
 void CpapController::oximetryCollect(const drogon::HttpRequestPtr&,

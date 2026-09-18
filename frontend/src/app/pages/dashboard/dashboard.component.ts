@@ -16,6 +16,7 @@ import { RealtimeStatusComponent, RealtimeStatusData } from '../../components/da
 import { MlIntelligenceComponent } from '../../components/dashboard/ml-intelligence.component';
 import { DashboardData, TrendPoint, OximetryData, SessionListItem, SleepIndexBand, MyAirComparisonRow } from '../../models/session.model';
 import { MyAirCompareComponent } from '../../components/dashboard/myair-compare.component';
+import { UpdateBannerComponent } from '../../components/dashboard/update-banner.component';
 import { detectDesaturations, odiPerHour, inferSampleSec } from '../../utils/signal-analysis';
 import { isGradableAhi } from '../../utils/index-kind';
 import Chart from 'chart.js/auto';
@@ -30,9 +31,10 @@ const MODE_LABELS: Record<string, string> = {
   imports: [CommonModule, KeyMetricsComponent, OximetryRowComponent, AiSummaryComponent,
             TherapyInsightsComponent, StrMetricsComponent, EventsBreakdownComponent,
             PressureSectionComponent, RespiratoryMetricsComponent, RealtimeStatusComponent,
-            MlIntelligenceComponent, MyAirCompareComponent, TranslatePipe],
+            MlIntelligenceComponent, MyAirCompareComponent, UpdateBannerComponent, TranslatePipe],
   template: `
     <div class="dashboard">
+      <app-update-banner></app-update-banner>
       <h2>{{ 'dashboard.page.heading' | translate:{ device: deviceName } }}</h2>
       <!-- The headline night is the NEWEST row, with no date bound on the query
            (unlike the 30-day trend below). A machine that stopped syncing three

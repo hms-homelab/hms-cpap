@@ -1,0 +1,23 @@
+{
+  "updateBanner": {
+    "available": "A versão {{latest}} está disponível (você usa a {{current}}).",
+    "whatsNew": "Novidades",
+    "dismiss": "Fechar"
+  },
+  "settings": {
+    "updates": {
+      "heading": "Atualizações",
+      "newBadge": "Nova",
+      "containerised": "Esta instalação roda em um contêiner, que é atualizado junto com a sua imagem (Docker, ou as atualizações de complementos do Home Assistant). Não há nada para atualizar por aqui.",
+      "running": "Versão instalada: {{current}}",
+      "latest": "última publicada: {{latest}}",
+      "current": "Você está na versão mais recente.",
+      "available": "A versão {{latest}} está disponível.",
+      "releasePage": "Página da versão",
+      "lastError": "A última verificação não terminou: {{error}}",
+      "checkedAt": "Última verificação: {{when}}",
+      "checkNow": "Verificar agora",
+      "checking": "Verificando..."
+    }
+  }
+}

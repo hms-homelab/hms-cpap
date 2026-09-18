@@ -1,0 +1,23 @@
+{
+  "updateBanner": {
+    "available": "Elérhető a(z) {{latest}} verzió (a telepített: {{current}}).",
+    "whatsNew": "Újdonságok",
+    "dismiss": "Bezárás"
+  },
+  "settings": {
+    "updates": {
+      "heading": "Frissítések",
+      "newBadge": "Új",
+      "containerised": "Ez a telepítés konténerben fut, amely a képével együtt frissül (Docker, vagy a Home Assistant saját bővítményfrissítései). Innen nincs mit frissíteni.",
+      "running": "Telepített verzió: {{current}}",
+      "latest": "legújabb kiadás: {{latest}}",
+      "current": "A legújabb verziót használja.",
+      "available": "Elérhető a(z) {{latest}} verzió.",
+      "releasePage": "Kiadási oldal",
+      "lastError": "Az utolsó ellenőrzés nem fejeződött be: {{error}}",
+      "checkedAt": "Utolsó ellenőrzés: {{when}}",
+      "checkNow": "Ellenőrzés most",
+      "checking": "Ellenőrzés..."
+    }
+  }
+}

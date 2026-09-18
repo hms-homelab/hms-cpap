@@ -278,6 +278,16 @@ export class CpapApiService {
     return this.http.get<{ nights: string[] }>('/api/removed-nights');
   }
 
+  /** SDD-041: what the last update check found. Never touches the network. */
+  getUpdateStatus(): Observable<UpdateStatus> {
+    return this.http.get<UpdateStatus>('/api/update');
+  }
+
+  /** SDD-041: "check now", which asks GitHub and answers with the result. */
+  checkForUpdate(): Observable<UpdateStatus> {
+    return this.http.post<UpdateStatus>('/api/update/check', {});
+  }
+
   collectOximetry(): Observable<any> {
     return this.http.post<any>('/api/oximetry/collect', {});
   }
@@ -385,6 +395,20 @@ export interface ApplyResult {
   restarting: boolean;
   restart_mode: 'supervised' | 'reexec' | 'manual';
   message?: string;
+}
+
+/** SDD-041: GET /api/update and POST /api/update/check. */
+export interface UpdateStatus {
+  current: string;
+  latest: string;
+  available: boolean;
+  containerised: boolean;
+  checked: boolean;
+  checked_at: string;
+  notes: string;
+  release_url: string;
+  error: string;
+  assets: { platform: string; kind: string; name: string; size: number }[];
 }
 
 export interface LogTail {

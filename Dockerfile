@@ -106,6 +106,10 @@ RUN mkdir -p /data/cpap_archive /tmp/hms-cpap /config && \
 ENV HMS_CPAP_DATA_DIR=/config
 VOLUME ["/config"]
 
+# A container updates by pulling its image, never by swapping its own binary,
+# so the updater stays off here (SDD-041 D5).
+ENV HMS_CPAP_CONTAINER=1
+
 # Switch to non-root user
 USER cpap
 WORKDIR /home/cpap

@@ -4,7 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { TranslatePipe, TranslateService } from '@ngx-translate/core';
 import { Subject, Subscription, timer } from 'rxjs';
 import { switchMap, takeUntil, takeWhile, tap } from 'rxjs/operators';
-import { CpapApiService } from '../../services/cpap-api.service';
+import { CpapApiService, UpdateStatus } from '../../services/cpap-api.service';
 import { AppConfig } from '../../models/config.model';
 
 @Component({
@@ -777,6 +777,47 @@ import { AppConfig } from '../../models/config.model';
           </div>
         </div>
 
+        <!-- SDD-041: the detail behind the dashboard's update banner. Not part
+             of save(): nothing here is written to config.json. -->
+        <div class="section">
+          <div class="section-header" (click)="toggle('updates')">
+            <span class="chevron" [class.open]="open['updates']">&#9654;</span>
+            {{ 'settings.updates.heading' | translate }}
+            <span class="badge" *ngIf="update?.available">{{ 'settings.updates.newBadge' | translate }}</span>
+          </div>
+          <div class="section-body" *ngIf="open['updates']">
+            <p class="section-desc" *ngIf="update?.containerised">
+              {{ 'settings.updates.containerised' | translate }}
+            </p>
+            <ng-container *ngIf="update && !update.containerised">
+              <p class="section-desc">
+                {{ 'settings.updates.running' | translate:{ current: update.current } }}
+                <ng-container *ngIf="update.latest">
+                  &middot; {{ 'settings.updates.latest' | translate:{ latest: update.latest } }}
+                </ng-container>
+              </p>
+              <p class="section-desc" *ngIf="update.checked && !update.available && !update.error">
+                {{ 'settings.updates.current' | translate }}
+              </p>
+              <p class="section-desc" *ngIf="update.available">
+                {{ 'settings.updates.available' | translate:{ latest: update.latest } }}
+                <a *ngIf="update.release_url" [href]="update.release_url" target="_blank" rel="noopener">
+                  {{ 'settings.updates.releasePage' | translate }}</a>
+              </p>
+              <pre class="update-notes" *ngIf="update.available && update.notes">{{ update.notes }}</pre>
+              <p class="hint" *ngIf="update.error">
+                {{ 'settings.updates.lastError' | translate:{ error: update.error } }}
+              </p>
+              <p class="hint" *ngIf="update.checked_at">
+                {{ 'settings.updates.checkedAt' | translate:{ when: (update.checked_at | date:'medium') } }}
+              </p>
+              <button type="button" class="btn-train" (click)="checkForUpdate()" [disabled]="updateChecking">
+                {{ (updateChecking ? 'settings.updates.checking' : 'settings.updates.checkNow') | translate }}
+              </button>
+            </ng-container>
+          </div>
+        </div>
+
         <!-- Section 7: Device -->
         <div class="section">
           <div class="section-header" (click)="toggle('device')">
@@ -1059,6 +1100,11 @@ import { AppConfig } from '../../models/config.model';
       transform-origin: left center;
       transition: transform 0.3s ease;
     }
+    .update-notes {
+      white-space: pre-wrap; font-family: inherit; color: #bbb; font-size: 0.8rem; background: #16161f;
+      border: 1px solid #333; border-radius: 6px; padding: 0.6rem 0.75rem;
+      max-height: 14rem; overflow: auto; margin: 0 0 0.75rem;
+    }
   `]
 })
 export class SettingsComponent implements OnInit, OnDestroy {
@@ -1092,6 +1138,10 @@ export class SettingsComponent implements OnInit, OnDestroy {
   // BLE adapter status
   bleStatus = '';
 
+  // SDD-041: the last update check, and whether "check now" is in flight.
+  update: UpdateStatus | null = null;
+  updateChecking = false;
+
   // LLM Prompt state
   llmPrompt = '';
   llmPromptPath = '';
@@ -1103,6 +1153,23 @@ export class SettingsComponent implements OnInit, OnDestroy {
   // Deliberately not part of save(): the password goes to /api/myair/connect,
   // which exchanges it for a token and discards it. It is cleared from the form
   // the moment the request is sent, so it does not linger in the page either.
+
+  // ── SDD-041 updates ──────────────────────────────────────────────────────
+
+  loadUpdateStatus(): void {
+    this.api.getUpdateStatus().subscribe({
+      next: (s) => { this.update = s; },
+      error: () => { this.update = null; },
+    });
+  }
+
+  checkForUpdate(): void {
+    this.updateChecking = true;
+    this.api.checkForUpdate().subscribe({
+      next: (s) => { this.update = s; this.updateChecking = false; },
+      error: () => { this.updateChecking = false; },
+    });
+  }
 
   loadMyAirStatus(): void {
     this.api.getMyAirStatus().subscribe({
@@ -1190,6 +1257,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
     llm: false,
     ml_training: false,
     llm_prompt: false,
+    updates: false,
     device: true,
     advanced: false,
   };
@@ -1245,6 +1313,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
 
   ngOnInit(): void {
     this.loadMyAirStatus();
+    this.loadUpdateStatus();
 
     this.api.getConfig().subscribe({
       next: (cfg) => {

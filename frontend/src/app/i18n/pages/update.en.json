@@ -1,0 +1,23 @@
+{
+  "updateBanner": {
+    "available": "Version {{latest}} is available (you are running {{current}}).",
+    "whatsNew": "What's new",
+    "dismiss": "Dismiss"
+  },
+  "settings": {
+    "updates": {
+      "heading": "Updates",
+      "newBadge": "New",
+      "containerised": "This install runs in a container, which updates when its image does (Docker, or Home Assistant's own add-on updates). There is nothing to update from here.",
+      "running": "Running {{current}}",
+      "latest": "latest release {{latest}}",
+      "current": "You are on the latest release.",
+      "available": "Version {{latest}} is available.",
+      "releasePage": "Release page",
+      "lastError": "The last check did not complete: {{error}}",
+      "checkedAt": "Last checked {{when}}",
+      "checkNow": "Check now",
+      "checking": "Checking..."
+    }
+  }
+}
