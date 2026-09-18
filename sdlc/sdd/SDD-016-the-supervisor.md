@@ -1,9 +1,16 @@
 # SDD-016: The supervisor
 
-**Status:** Proposed
+**Status:** Shipped in 5.2.0 on macOS and Windows (commit `e84d246`, 2026-08-14).
+The Qt supervisor in `desktop/qt` is `CpapDash.dmg` on macOS and
+`CpapDashDesktop.exe` inside `CpapDashDesktop-Setup.exe` on Windows, where it
+replaced the C# tray in the same commit; `desktop/windows/CpapDashDesktop` is
+retired and nothing builds it. There is no packaged Linux desktop build: the Pi
+and headless Linux run under systemd (SDD-025). This line said "Proposed" until
+2026-09-18, long after the code shipped, and was misread as "only the Windows
+tray exists" while SDD-041 was being written.
 **Date:** 2026-08-14
 **Repo:** `hms-cpap`, as its own project inside it
-**Version:** target TBD (Albin's call)
+**Version:** 5.2.0
 **Supersedes parts of:** SDD-005 (desktop app) — see "What this reverses"
 **Depends on:** SDD-006 (first-run wizard), SDD-012 (settings + restart)
 
