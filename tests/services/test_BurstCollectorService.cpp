@@ -16,6 +16,9 @@
 #include "clients/IDataSource.h"
 #include "clients/EzShareClient.h"
 #include "database/IDatabase.h"
+#include "database/SQLiteDatabase.h"
+#include "database/SqlDialect.h"
+#include "utils/SessionEnd.h"
 #include "mqtt_client.h"
 #include "utils/ConfigManager.h"
 #include "utils/AppConfig.h"
@@ -3206,6 +3209,72 @@ TEST(BurstConfigReloadTest, ReloadConfig_AppliesAllSubsystemChanges) {
     svc.reloadConfigForTest();
 
     SUCCEED();
+}
+
+// SDD-043 (ticket 129): a local night stored while two to five days old was
+// too young for the store-time close and too old to be rediscovered, so it
+// stayed Live for good. The per-cycle sweep closes it once it settles, on the
+// span stored for it, whatever path stored it.
+TEST(BurstLocalSweep, ASettledOpenLocalNightClosesOnItsOwnData) {
+    namespace fs = std::filesystem;
+    using namespace std::chrono;
+    setenv("CPAP_DEVICE_ID", "sweep_dev", 1);
+    BurstCollectorService svc(300);
+    unsetenv("CPAP_DEVICE_ID");
+
+    const auto path = (fs::temp_directory_path() /
+                       ("hms_sweep_" + std::to_string(::getpid()) + ".db")).string();
+    fs::remove(path);
+    auto db = std::make_shared<SQLiteDatabase>(path);
+    ASSERT_TRUE(db->connect());
+    svc.injectDependenciesForTest(db, nullptr, nullptr);
+    svc.setSourceForTest("local");
+
+    // Whole seconds, because that is what the database keeps.
+    const auto now = time_point_cast<seconds>(system_clock::now());
+    auto save = [&](system_clock::time_point start, int secs) {
+        CPAPSession s;
+        s.device_id = "sweep_dev";
+        s.device_name = "AirSense 10";
+        s.session_start = start;
+        s.duration_seconds = secs;
+        ASSERT_TRUE(db->saveSession(s));
+    };
+    const auto settled = now - hours(24 * 6);      // past the 5-day window
+    const auto young   = now - hours(24 * 3);      // inside it: still the checkpoint path's
+    const auto no_span = now - hours(24 * 7);      // settled, but nothing the data knows
+    save(settled, 7 * 3600);
+    save(young, 6 * 3600);
+    save(no_span, 0);
+
+    // Any other source is left alone.
+    svc.setSourceForTest("ezshare");
+    EXPECT_EQ(svc.closeSettledOpenLocalNightsForTest(now), 0);
+    svc.setSourceForTest("local");
+
+    EXPECT_EQ(svc.closeSettledOpenLocalNightsForTest(now), 1);
+    EXPECT_EQ(svc.closeSettledOpenLocalNightsForTest(now), 0) << "a closed night stays as it was";
+
+    const auto open = openSessionsStartedBefore(*db, "sweep_dev", now);
+    ASSERT_EQ(open.size(), 2u) << "the young night and the one with no span stay open";
+    EXPECT_EQ(open[0].start, no_span);
+    EXPECT_EQ(open[1].start, young);
+
+    // Closed at start + duration, not at the moment of the sweep.
+    const auto p = sql::param(1, db->dbType());
+    auto rows = db->executeQuery(
+        "SELECT session_start, session_end FROM cpap_sessions WHERE device_id = " + p +
+        " AND session_end IS NOT NULL", {"sweep_dev"});
+    ASSERT_EQ(rows.size(), 1u);
+    const std::time_t want_t = system_clock::to_time_t(settled + seconds(7 * 3600));
+    std::tm want{};
+    localtime_r(&want_t, &want);
+    char buf[32];
+    std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &want);
+    EXPECT_EQ(rows[0]["session_end"].asString().substr(0, 19), std::string(buf));
+
+    db.reset();
+    fs::remove(path);
 }
 
 // SDD-042 (ticket 129): a Settings save of the device id must not move the

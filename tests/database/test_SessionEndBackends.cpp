@@ -256,6 +256,30 @@ TEST_P(SessionEndBackendTest, TwoNightsImportedTogetherGetTheirOwnEnds) {
     EXPECT_NE(end_b.find("2099-03-14 07:45"), std::string::npos) << end_b;
 }
 
+// SDD-043: the one query the local sweep stands on, on every engine. It must
+// return exactly the open sessions started by the cutoff, with the span stored
+// for each, and nothing closed or later.
+TEST_P(SessionEndBackendTest, OpenSessionsBeforeACutoffComeBackWithTheirSpans) {
+    const auto old_open   = local(2099, 3, 10, 22, 0);
+    const auto old_closed = local(2099, 3, 11, 22, 0);
+    const auto cutoff_eve = local(2099, 3, 12, 22, 0);   // exactly at the cutoff
+    const auto young_open = local(2099, 3, 14, 22, 0);
+    ASSERT_TRUE(db_->saveSession(makeSession(old_open, 7 * 3600)));
+    ASSERT_TRUE(db_->saveSession(makeSession(old_closed, 6 * 3600)));
+    ASSERT_TRUE(db_->saveSession(makeSession(cutoff_eve, 5 * 3600)));
+    ASSERT_TRUE(db_->saveSession(makeSession(young_open, 8 * 3600)));
+    ASSERT_TRUE(db_->markSessionCompletedAt(device_, old_closed, old_closed + seconds(6 * 3600)));
+
+    const auto open = openSessionsStartedBefore(*db_, device_, cutoff_eve);
+    ASSERT_EQ(open.size(), 2u) << engineName(GetParam());
+    EXPECT_EQ(open[0].start, old_open) << engineName(GetParam()) << ": oldest first, as local time";
+    EXPECT_EQ(open[0].duration_seconds, 7 * 3600) << engineName(GetParam());
+    EXPECT_EQ(open[1].start, cutoff_eve) << engineName(GetParam()) << ": the cutoff is inclusive";
+    EXPECT_EQ(open[1].duration_seconds, 5 * 3600) << engineName(GetParam());
+
+    EXPECT_TRUE(openSessionsStartedBefore(*db_, "nobody_" + device_, cutoff_eve).empty());
+}
+
 INSTANTIATE_TEST_SUITE_P(
     Engines, SessionEndBackendTest,
     ::testing::Values(Engine::SQLite, Engine::MySQL, Engine::Postgres),

@@ -554,6 +554,29 @@ private:
      * other source, for a night inside the window, and for a session the parse
      * gave no end and no duration.
      */
+    /**
+     * SDD-043: close every local night that is still open and older than
+     * kLocalSettledAfter, at its stored start plus duration. The store-time close
+     * above only sees a night once; a night first stored between two and five
+     * days old was too young then and too old to be rediscovered, so it stayed
+     * Live for good (ticket 129, after a restart re-imported 9/13 to 9/15).
+     * Returns how many it closed. A no-op for every other source.
+     */
+    int closeSettledOpenLocalNights(std::chrono::system_clock::time_point now);
+
+    /// SDD-043: close one open session at start plus its STORED duration, the
+    /// data's end rather than the clock's. Falls back to the clock only when no
+    /// duration is stored, which is what the caller did before.
+    bool closeOnStoredSpan(const std::chrono::system_clock::time_point& session_start);
+
+public:
+    /// Test-only seam for the SDD-043 sweep.
+    int closeSettledOpenLocalNightsForTest(std::chrono::system_clock::time_point now) {
+        return closeSettledOpenLocalNights(now);
+    }
+    void setSourceForTest(const std::string& source) { cpap_source_ = source; }
+private:
+
     void closeIfSettledLocalNight(const std::chrono::system_clock::time_point& session_start,
                                   const std::vector<CPAPSession>& parsed_sessions);
 

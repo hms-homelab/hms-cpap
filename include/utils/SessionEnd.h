@@ -12,11 +12,16 @@
 // shared parser library and the local header's definitions collide with its
 // aliases (every other consumer includes the bridge for the same reason).
 #include "database/IDatabase.h"
+#include "database/SqlDialect.h"
 #include "parsers/CpapdashBridge.h"
 
 #include <chrono>
+#include <ctime>
+#include <iomanip>
 #include <optional>
+#include <sstream>
 #include <string>
+#include <vector>
 
 namespace hms_cpap {
 
@@ -40,6 +45,55 @@ inline bool localNightHasSettled(const std::chrono::system_clock::time_point& se
                                  const std::chrono::system_clock::time_point& now,
                                  const std::chrono::seconds& window) {
     return session_start <= now - window;
+}
+
+/// SDD-043: a session still open, with the span stored for it.
+struct OpenSession {
+    std::chrono::system_clock::time_point start;
+    long long duration_seconds = 0;
+};
+
+/// SDD-043: every session of [device_id] that is still open (no session_end)
+/// and started at or before [cutoff], oldest first, with its stored duration.
+/// One implementation for all three engines, through executeQuery and the
+/// sql:: helpers. Timestamps go in and come out as local wall time, the way
+/// every backend stores session_start.
+inline std::vector<OpenSession> openSessionsStartedBefore(
+        IDatabase& db, const std::string& device_id,
+        const std::chrono::system_clock::time_point& cutoff) {
+    const DbType dt = db.dbType();
+    const std::string sql =
+        "SELECT " + sql::tsText("session_start", dt) + " AS start, duration_seconds"
+        " FROM cpap_sessions"
+        " WHERE device_id = " + sql::param(1, dt) +
+        "   AND session_end IS NULL"
+        "   AND session_start <= " + sql::castTimestamp(2, dt) +
+        " ORDER BY session_start";
+
+    const std::time_t t = std::chrono::system_clock::to_time_t(cutoff);
+    std::tm tm{};
+#ifdef _WIN32
+    localtime_s(&tm, &t);
+#else
+    localtime_r(&t, &tm);
+#endif
+    std::ostringstream cut;
+    cut << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");
+
+    std::vector<OpenSession> out;
+    for (const auto& row : db.executeQuery(sql, {device_id, cut.str()})) {
+        std::tm st{};
+        std::istringstream in(row["start"].asString().substr(0, 19));
+        in >> std::get_time(&st, "%Y-%m-%d %H:%M:%S");
+        if (in.fail()) continue;
+        st.tm_isdst = -1;
+        OpenSession s;
+        s.start = std::chrono::system_clock::from_time_t(std::mktime(&st));
+        const Json::Value& d = row["duration_seconds"];
+        s.duration_seconds = d.isNull() ? 0 : std::atoll(d.asString().c_str());
+        out.push_back(s);
+    }
+    return out;
 }
 
 /// Close [start] with the end [parsed] carries, falling back to the clock when

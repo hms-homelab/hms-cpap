@@ -1347,6 +1347,10 @@ bool BurstCollectorService::executeBurstCycle() {
     // SDD-029: what the operator removed, for every branch of this burst.
     removed_nights_ = removedNightSet(*db_service_, device_id_);
 
+    // SDD-043: before anything can return early, close the local nights that
+    // have settled, whichever path stored them and whenever.
+    closeSettledOpenLocalNights(std::chrono::system_clock::now());
+
     // SDD-010: the retention anchor. Everything else that decides whether to
     // re-check a session is anchored on the CURRENT DATE (today's folder, or
     // "started within 48 hours"), so once a night ages past that it is never
@@ -1863,7 +1867,11 @@ bool BurstCollectorService::executeBurstCycle() {
 
                 // markSessionCompleted returns true only the FIRST time
                 // (when session_end was not yet set). Returns false if already completed.
-                bool newly_completed = db_service_->markSessionCompleted(device_id_, session.session_start);
+                // SDD-043: a local folder's night ends where its data ends
+                // (SDD-037 D2), not at the moment this pass noticed it.
+                bool newly_completed = (in_place && cpap_source_ == "local")
+                    ? closeOnStoredSpan(session.session_start)
+                    : db_service_->markSessionCompleted(device_id_, session.session_start);
 
                 // Only trigger completion actions once, and only for the most recent
                 // session by timestamp (not list position, which depends on scan order).
@@ -2297,6 +2305,36 @@ void BurstCollectorService::closeIfSettledLocalNight(
             SleepHqExportService::getInstance().markDirty(folder.str());
         }
     }
+}
+
+int BurstCollectorService::closeSettledOpenLocalNights(std::chrono::system_clock::time_point now) {
+    if (cpap_source_ != "local" || !db_service_) return 0;
+    int closed = 0;
+    for (const auto& s : openSessionsStartedBefore(*db_service_, device_id_, now - kLocalSettledAfter)) {
+        // Nothing the data knows, no invented end (SDD-037).
+        if (s.duration_seconds <= 0) continue;
+        if (db_service_->markSessionCompletedAt(device_id_, s.start,
+                                                s.start + std::chrono::seconds(s.duration_seconds))) {
+            ++closed;
+        }
+    }
+    if (closed > 0) {
+        std::cout << "CPAP: closed " << closed << " settled local night(s) on their own data" << std::endl;
+    }
+    return closed;
+}
+
+bool BurstCollectorService::closeOnStoredSpan(const std::chrono::system_clock::time_point& session_start) {
+    // The 5 s either side matches the tolerance every backend's close uses.
+    for (const auto& s : openSessionsStartedBefore(*db_service_, device_id_,
+                                                   session_start + std::chrono::seconds(5))) {
+        const auto gap = s.start > session_start ? s.start - session_start : session_start - s.start;
+        if (gap <= std::chrono::seconds(5) && s.duration_seconds > 0) {
+            return db_service_->markSessionCompletedAt(
+                device_id_, session_start, s.start + std::chrono::seconds(s.duration_seconds));
+        }
+    }
+    return db_service_->markSessionCompleted(device_id_, session_start);
 }
 
 bool BurstCollectorService::parseAndStoreSession(
