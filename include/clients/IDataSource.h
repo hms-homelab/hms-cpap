@@ -13,6 +13,21 @@ public:
 
     virtual bool supportsRange() const { return true; }
 
+    /**
+     * SDD-040: are this source's files ALREADY where the archive would put
+     * them?
+     *
+     * True only for a local card root. It is what lets one cycle serve every
+     * transport without copying a user's own folder onto itself: staging, the
+     * archive mirror and the residual walk all exist to bring a card's bytes
+     * ACROSS a transport, and there is no across here (Albin, SDD-040 D1).
+     * A source that answers true must also answer rootPath().
+     */
+    virtual bool filesAreInPlace() const { return false; }
+
+    /// The card root on disk when filesAreInPlace(), else empty.
+    virtual std::string rootPath() const { return {}; }
+
     virtual std::vector<std::string> listDateFolders() = 0;
 
     virtual std::vector<EzShareFileEntry> listFiles(const std::string& date_folder) = 0;

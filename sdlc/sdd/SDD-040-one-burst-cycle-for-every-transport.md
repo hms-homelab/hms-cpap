@@ -49,6 +49,35 @@ request.
 
 The cycle then has one path. The local branch is deleted, not ported.
 
+**Every behaviour is pinned against what `EzShareClient` ACTUALLY does**, read
+from its source, not inferred from the interface. Albin, 2026-09-18: "i want to
+make sure we are not buildin onn top of user evironmental quircks like we did
+with oximetry and deep folders check". The first draft of the range read assumed
+"always append"; the real client truncates at offset 0 and appends otherwise,
+and always appending would have doubled a file on the first full read.
+
+| Behaviour | `EzShareClient` | `LocalDataSource` |
+|---|---|---|
+| `listFiles` | files only, directories dropped | same, and sorted by name (a superset guarantee: a directory read has no inherent order) |
+| `listDir` | files AND directories, empty on failure | same |
+| sizes | the integer KB in the card's HTML | `bytes / 1024`, truncating |
+| `downloadFileRange` at offset 0 | truncates the local copy | same |
+| `downloadFileRange` resuming | appends | same |
+| parent directories | created | same |
+
+Two divergences, deliberate and commented where they live:
+
+- **A range at or past EOF answers true with nothing appended.** An ez Share
+  cannot: the response falls outside 200/206, so the client returns false and
+  the caller re-reads the whole file, and per the collector's sidecar rule
+  asking at all can wedge the card. A file on disk has a knowable end, and
+  "nothing new" is exactly the signal a night settles on.
+- **A 0-byte file is a file, not a failure.** `EzShareClient` deletes the
+  destination and returns false for an empty result, because over HTTP an empty
+  body means the fetch failed. On disk it means the card holds an empty file,
+  and refusing it would turn a real card file into an error that repeats every
+  cycle.
+
 ### 2.2 When the source IS the archive, staging, archiving and the residual walk
 are all no-ops (D1, Albin: "yes to the rule that staging and archiving need no
 ops", "in the case of the local mode would not need to walk on residual since is
@@ -70,7 +99,43 @@ the tiers reduce to the live night, new folders, then history.
 
 That keeps today's local behaviour exactly, while the code path is shared.
 
-### 2.3 What local gains by being on the shared path
+### 2.3 One parse per night (D7)
+
+The two branches also parse differently, and only one of them can survive.
+
+- The ez Share path hands the parser the whole date folder, once per group:
+  `session_dir = local_base_dir + "/" + session.date_folder` (`:1926`, `:2054`).
+- The local path copies one group's files into a temp dir first (`:1771`),
+  because "parseSession reads ALL files in a dir".
+
+Measured rather than reasoned about (a harness over the real parser and two real
+nights, 2026-09-18):
+
+| | block A alone | block B alone | both in one directory |
+|---|---|---|---|
+| duration | 27,300 s | 2,460 s | 29,760 s, the sum |
+| events | 7 | 0 | 7, the union |
+| breaths | 7,245 | 704 | 7,949, the sum |
+
+`parseSession()` MERGES a directory into one session, with therapy time summed
+rather than the envelope. That is the night, which is what Albin says parsing is
+always about: "Parsing should be ALWAYS about the entire night, not the a
+checkpoint file."
+
+It also exposes a latent defect on the EZ SHARE side. If a folder ever resolves
+to two groups, that path parses the whole folder twice and stores the same
+merged night under two `session_start` values, double-counting its events and
+breaths. It stays hidden because discovery merges a night's checkpoints into one
+group in practice ("Split 9 checkpoint files into 1 session(s)" in both users'
+logs), but the unified cycle must not inherit it.
+
+**The rule: one parse per night.** A date folder that resolves to a single group
+is parsed IN PLACE, with no copy at all, which is the common case and is what
+makes the no-op rule above real for a local source. A folder that genuinely
+splits has each group's files isolated first, because that is the only way the
+parser can be told which block it is looking at.
+
+### 2.4 What local gains by being on the shared path
 
 - the folder ledger (SDD-008), so `night_state` stops falling back to the
   open-session test and a local night can read `partial` for the right reason;
@@ -95,6 +160,11 @@ That keeps today's local behaviour exactly, while the code path is shared.
   `nextCommand` does (live night, new folders, history, residual last) is a
   small change on one path instead of a duplicated one. Alternative: unify
   first, plan later, which is two releases through the same risky function.
+- **D7, how a night is parsed. SETTLED 2026-09-18** (Albin: "Parsing should be
+  ALWAYS about the entire night, not the a checkpoint file", then "yes go"): one
+  parse per night, in place when the folder resolves to one group, with the
+  groups isolated only when a folder genuinely splits (2.3). This also closes
+  the ez Share double-store that the measurement turned up.
 - **D6, Fysetc.** Proposed: leave it where it is. It already implements
   `IDataSource`, so it joins the shared path for free, but its own staging rules
   (raw sectors) deserve their own reading before anything is deleted.

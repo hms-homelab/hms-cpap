@@ -1557,6 +1557,94 @@ TEST(FysetcLifecycle, DecisionIsDeterministicAndPure) {
 // no DB/MQTT/network is touched). They cover the constructor, the running-flag
 // accessor, the burst-time accessor, idempotent stop(), and destruction.
 
+// ── SDD-040 D7: one parse per night ─────────────────────────────────────────
+//
+// EDFParser::parseSession() merges every EDF in the directory it is given into
+// one session (measured: two real nights in one directory came back with their
+// therapy time summed and their events unioned). That merge IS the night, so a
+// folder holding one group is parsed where it lies and nothing is copied.
+//
+// A folder that split into several blocks is the case that must NOT be handed
+// over whole: each group would parse the same merged night and store it once
+// per group, double-counting its events. That is the defect this rule closes.
+
+namespace {
+
+SessionFileSet makeGroup(const std::string& folder, const std::string& prefix,
+                         const std::vector<std::string>& files) {
+    SessionFileSet s;
+    s.date_folder = folder;
+    s.session_prefix = prefix;
+    for (const auto& f : files) {
+        if (f.find("_BRP") != std::string::npos)      s.brp_files.push_back(f);
+        else if (f.find("_PLD") != std::string::npos) s.pld_files.push_back(f);
+        else if (f.find("_SAD") != std::string::npos) s.sad_files.push_back(f);
+        else if (f.find("_CSL") != std::string::npos) s.csl_files.push_back(f);
+        else if (f.find("_EVE") != std::string::npos) s.eve_files.push_back(f);
+    }
+    return s;
+}
+
+}  // namespace
+
+TEST(BurstCollectorParseDir, AFolderWithOneGroupIsTheNightAndIsParsedInPlace) {
+    BurstCollectorService svc(300);
+    const auto one = makeGroup("20260328", "20260328_220000",
+                               {"20260328_220000_BRP.edf", "20260328_220000_EVE.edf"});
+    const std::vector<SessionFileSet> sessions{one};
+
+    EXPECT_TRUE(BurstCollectorService::folderHasOneGroupForTest(sessions, "20260328"));
+    // The folder itself, so nothing is copied: on a local source that is the
+    // user's own directory (SDD-040's no-op rule).
+    EXPECT_EQ(svc.parseDirForNightForTest(one, "/cards/DATALOG/20260328", true),
+              "/cards/DATALOG/20260328");
+}
+
+TEST(BurstCollectorParseDir, ASplitFolderGetsEachBlockOnItsOwn) {
+    namespace fs = std::filesystem;
+    const fs::path folder = fs::temp_directory_path() /
+                            ("hms_d7_" + std::to_string(::getpid())) / "20260328";
+    fs::create_directories(folder);
+    for (const auto* n : {"20260328_220000_BRP.edf", "20260328_220000_EVE.edf",
+                          "20260329_040000_BRP.edf", "20260329_040000_EVE.edf"}) {
+        std::ofstream(folder / n) << "x";
+    }
+
+    const auto early = makeGroup("20260328", "20260328_220000",
+                                 {"20260328_220000_BRP.edf", "20260328_220000_EVE.edf"});
+    const auto late  = makeGroup("20260328", "20260329_040000",
+                                 {"20260329_040000_BRP.edf", "20260329_040000_EVE.edf"});
+    const std::vector<SessionFileSet> sessions{early, late};
+
+    EXPECT_FALSE(BurstCollectorService::folderHasOneGroupForTest(sessions, "20260328"));
+
+    BurstCollectorService svc(300);
+    const std::string dir = svc.parseDirForNightForTest(late, folder.string(), false);
+    EXPECT_NE(dir, folder.string()) << "a split folder must not be handed over whole";
+
+    // Only the late block's files, or the parser would merge both and the same
+    // night would be stored twice.
+    std::vector<std::string> staged;
+    for (const auto& e : fs::directory_iterator(dir)) staged.push_back(e.path().filename().string());
+    std::sort(staged.begin(), staged.end());
+    ASSERT_EQ(staged.size(), 2u);
+    EXPECT_EQ(staged[0], "20260329_040000_BRP.edf");
+    EXPECT_EQ(staged[1], "20260329_040000_EVE.edf");
+
+    fs::remove_all(folder.parent_path());
+    fs::remove_all(dir);
+}
+
+TEST(BurstCollectorParseDir, OtherFoldersDoNotCountTowardsThisOnesGroups) {
+    const std::vector<SessionFileSet> sessions{
+        makeGroup("20260328", "20260328_220000", {"20260328_220000_BRP.edf"}),
+        makeGroup("20260329", "20260329_213000", {"20260329_213000_BRP.edf"}),
+    };
+    EXPECT_TRUE(BurstCollectorService::folderHasOneGroupForTest(sessions, "20260328"));
+    EXPECT_TRUE(BurstCollectorService::folderHasOneGroupForTest(sessions, "20260329"));
+    EXPECT_TRUE(BurstCollectorService::folderHasOneGroupForTest(sessions, "20260330"));
+}
+
 TEST(BurstCollectorLifecycle, NewServiceIsNotRunning) {
     BurstCollectorService svc(300);
     EXPECT_FALSE(svc.isRunning());

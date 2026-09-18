@@ -5,6 +5,7 @@
 #include "services/InsightsEngine.h"
 #include "services/SleepHqExportService.h"
 #include "services/CleaningPublisher.h"
+#include "clients/LocalDataSource.h"
 #include "clients/O2RingClient.h"
 #ifdef WITH_BLE
 #include "clients/O2RingBleClient.h"
@@ -125,6 +126,12 @@ void BurstCollectorService::initDataSource() {
                       << ", sessions under " << datalogDirFor(local_source_dir_)
                       << std::endl;
         }
+        // SDD-040: the folder answers the same interface every other transport
+        // does, so one cycle can serve it. Built even when the layout is wrong,
+        // because a listing of a bad root is empty rather than fatal, and the
+        // refusal above is what the user is told about.
+        data_source_ = std::make_unique<LocalDataSource>(local_source_dir_);
+        discovery_service_ = std::make_unique<SessionDiscoveryService>(*data_source_);
     } else if (source == "lowenstein") {
         std::string data_dir = ConfigManager::get("CPAP_LOCAL_DIR", "");
         if (data_dir.empty()) {
@@ -1582,240 +1589,55 @@ bool BurstCollectorService::executeBurstCycle() {
                   << std::endl;
         return true;
 
-    } else if (cpap_source_ == "local") {
-        // ===== LOCAL SOURCE MODE =====
-        //
-        // Keyed on the SOURCE, not on local_source_dir_ being non-empty. An
-        // unset or wrong folder must land HERE and stop, not fall through into
-        // the ezShare branch and start talking to a card that is not there.
-
-        // SDD-010: re-classified every burst rather than trusted from startup,
-        // so a share that mounts late, or a folder corrected in Settings,
-        // recovers on its own without a restart.
-        local_layout_ = classifyLocalDir(local_source_dir_);
-        if (local_layout_ != LocalDirLayout::Root) {
-            const auto d = local_layout_log_.onFailure(
-                localDirProblem(local_layout_, local_source_dir_) + ". " +
-                localDirRemedy(local_layout_, local_source_dir_));
-            if (d.log) std::cerr << "CPAP: " << d.message << std::endl;
-            // Nothing is inserted while the configuration is wrong. Nights
-            // already in the database keep rendering; the UI carries the banner.
-            return true;
-        }
-        if (const auto rec = local_layout_log_.onSuccess(); rec.log)
-            std::cout << "CPAP: local folder " << rec.message << std::endl;
-
-        const std::string local_datalog_dir = datalogDirFor(local_source_dir_);
-        std::cout << "CPAP: Scanning local card root " << local_source_dir_
-                  << " (sessions under " << local_datalog_dir << ")" << std::endl;
-
-        // SDD-038 D2: a local source takes ALL of its missing history in one
-        // pass. The cost is a directory read per folder, and the case this
-        // exists for is a folder of nights that were never imported at all.
-        std::vector<std::string> local_folders;
-        {
-            std::error_code ec;
-            for (std::filesystem::directory_iterator it(local_datalog_dir, ec), end;
-                 !ec && it != end; it.increment(ec)) {
-                std::error_code de;
-                if (!it->is_directory(de)) continue;
-                const std::string name = it->path().filename().string();
-                if (name.size() == 8 &&
-                    std::all_of(name.begin(), name.end(),
-                                [](unsigned char c) { return std::isdigit(c); }))
-                    local_folders.push_back(name);
-            }
-        }
-        const auto catch_up = historyCatchUpFolders(local_folders, 0);
-
-        new_sessions = SessionDiscoveryService::discoverLocalSessions(
-            local_datalog_dir, last_session_start, retain_from, catch_up);
-
-        // Local mode: STR.edf is static lifetime history on disk, and these
-        // sessions never transition to "completed" the way growing ezShare files
-        // do — discoverLocalSessions filters out already-seen sessions, so the
-        // completion-gated STR path below is never reached. That left
-        // cpap_daily_summary (the dashboard's source) frozen after the first run
-        // (issue #8). Process STR every cycle here instead: parseSTRFile + an
-        // idempotent single-transaction upsert of the FULL history — cheap, and
-        // self-healing if the mounted directory gains new days.
-        processSessionSummary();
-
-        // SDD-028 (#32): the ring's .vld files beside DATALOG, written there by
-        // another tool. Before the "no new sessions" return below, so they are
-        // picked up on a burst with no new CPAP file too. An unchanged stored
-        // file is skipped, so a steady-state pass is a listing and a lookup per
-        // file; the scan logs its own summary whenever what it sees changes.
-        if (db_service_)
-            importVldFolder(*db_service_, local_source_dir_, vld_scan_, removed_nights_);
-
-        // SDD-010: local nights join the SDD-008 folder ledger, BEFORE the
-        // session loop for the same reason spelled out in the ezShare branch:
-        // the loop is where a settling session publishes, and that publish asks
-        // the ledger whether the night is partial, so a ledger updated
-        // afterwards is always one cycle stale.
-        //
-        // This is what makes a local night that settles without its STR report
-        // Partial instead of Complete-with-short-metrics. The old assumption
-        // was that a filesystem source cannot stall; amanuense, which streams
-        // from the CPAP into the share after therapy ends, disproves it.
-        //
-        // ResMed only. See processSessionSummary(): it early-returns for
-        // Lowenstein and Sefam and never reaches processSTRFile(), the sole
-        // caller of clearStrDebtForParsedDays(). Neither card has an STR.edf at
-        // all, so an armed str_due there could never be cleared by any path,
-        // and every one of their nights would latch Partial forever.
-        updateFolderLedgers(new_sessions, local_datalog_dir);
-
-        if (new_sessions.empty()) {
-            std::cout << "CPAP: No new sessions found locally" << std::endl;
-            return true;
-        }
-
-        std::cout << "CPAP: Found " << new_sessions.size() << " session(s) to process" << std::endl;
-
-        // For each session, create a temp directory with symlinks for session isolation
-        // (parseSession reads ALL files in a dir, so we isolate each session's files)
-        std::string temp_base = (std::filesystem::temp_directory_path() / "cpap_local").string();
-        std::filesystem::create_directories(temp_base);
-
-        // Newest first, same as the ezShare loop below.
-        std::stable_sort(new_sessions.begin(), new_sessions.end(),
-            [](const SessionFileSet& a, const SessionFileSet& b) {
-                return a.session_start > b.session_start;
-            });
-
-        for (const auto& session : new_sessions) {
-            // SDD-029: an operator removed this night; discovery must not store it again.
-            if (isRemovedNight(removed_nights_, session.session_start)) {
-                std::cout << "CPAP: Session " << session.session_prefix
-                          << " is on a removed night, skipping" << std::endl;
-                continue;
-            }
-
-            // Skip sessions that were force-completed (manual override)
-            if (db_service_->isForceCompleted(device_id_, session.session_start)) {
-                std::cout << "CPAP: Session " << session.session_prefix
-                          << " force_completed, skipping" << std::endl;
-                continue;
-            }
-
-            bool exists_in_db = db_service_->sessionExists(device_id_, session.session_start);
-
-            if (exists_in_db) {
-                // Check if checkpoint files changed (using file sizes from filesystem)
-                auto db_checkpoint_sizes = db_service_->getCheckpointFileSizes(device_id_, session.session_start);
-
-                std::map<std::string, int> current_checkpoint_sizes;
-                for (const auto& [filename, size_kb] : session.file_sizes_kb) {
-                    if (filename.find("_BRP.edf") != std::string::npos ||
-                        filename.find("_PLD.edf") != std::string::npos ||
-                        isOximetryFile(filename)) {
-                        current_checkpoint_sizes[filename] = size_kb;
-                    }
-                }
-
-                bool all_unchanged = true;
-                for (const auto& [filename, db_size] : db_checkpoint_sizes) {
-                    auto it = current_checkpoint_sizes.find(filename);
-                    if (it == current_checkpoint_sizes.end() || it->second != db_size) {
-                        all_unchanged = false;
-                        break;
-                    }
-                }
-                if (current_checkpoint_sizes.size() > db_checkpoint_sizes.size()) {
-                    all_unchanged = false;
-                }
-
-                if (all_unchanged) {
-                    std::cout << "CPAP: Session " << session.session_prefix
-                              << " stopped (all checkpoint files unchanged)" << std::endl;
-
-                    bool newly_completed = db_service_->markSessionCompleted(device_id_, session.session_start);
-
-                    if (newly_completed) {
-                        processSessionSummary();
-                        // SleepHQ: mark night dirty; the debounced sweep in
-                        // runLoop() exports once the folder settles (SDD-003).
-                        if (app_config_ && app_config_->sleephq.auto_on_session)
-                            SleepHqExportService::getInstance().markDirty(session.date_folder);
-
-                        if (data_publisher_) {
-                            // SDD-008: metrics + LLM only when the transfer
-                            // actually finished; otherwise just the partial fact.
-                            publishNightOutcome(session.session_start);
-                            data_publisher_->publishSessionCompleted();
-                        }
-
-                        // Pull any pending O2Ring VLD files at session end
-                        if (oximetry_service_) oximetry_service_->collectAndPublish();
-                    }
-                    continue;
-                }
-
-                std::cout << "CPAP: Session " << session.session_prefix
-                          << " files changed, re-parsing" << std::endl;
-            } else {
-                std::cout << "CPAP: New session " << session.session_prefix
-                          << " (" << session.total_size_kb << " KB)" << std::endl;
-            }
-
-            // Create temp dir with symlinks for this session's files only
-            std::string temp_dir = temp_base + "/" + session.date_folder + "_" + session.session_prefix;
-            std::filesystem::create_directories(temp_dir);
-
-            // Clear previous symlinks
-            for (const auto& entry : std::filesystem::directory_iterator(temp_dir)) {
-                std::filesystem::remove(entry.path());
-            }
-
-            // SDD-010: session folders live under the root's DATALOG, not under
-            // the root itself.
-            std::string src_dir = local_datalog_dir + "/" + session.date_folder;
-            auto stageFile = [&](const std::string& filename) {
-                auto src = std::filesystem::path(src_dir) / filename;
-                auto dst = std::filesystem::path(temp_dir) / filename;
-                if (std::filesystem::exists(src)) {
-                    std::filesystem::copy_file(src, dst, std::filesystem::copy_options::overwrite_existing);
-                }
-            };
-
-            for (const auto& f : session.brp_files) stageFile(f);
-            for (const auto& f : session.pld_files) stageFile(f);
-            for (const auto& f : session.sad_files) stageFile(f);
-            for (const auto& f : session.csl_files) stageFile(f);
-            for (const auto& f : session.eve_files) stageFile(f);
-
-            // Store checkpoint sizes for change detection on next cycle
-            std::map<std::string, int> checkpoint_sizes;
-            for (const auto& [filename, size_kb] : session.file_sizes_kb) {
-                if (filename.find("_BRP.edf") != std::string::npos ||
-                    filename.find("_PLD.edf") != std::string::npos ||
-                    isOximetryFile(filename)) {
-                    checkpoint_sizes[filename] = size_kb;
-                }
-            }
-            db_service_->updateCheckpointFileSizes(device_id_, session.session_start, checkpoint_sizes);
-
-            downloaded_sessions.push_back({temp_dir, session.session_start});
-        }
-
-        if (downloaded_sessions.empty()) {
-            std::cout << "CPAP: No sessions need processing" << std::endl;
-            return true;
-        }
+    } else if (cpap_source_ == "local" && !localSourceIsReady()) {
+        // SDD-010: the folder is unset or wrong. Nothing is inserted while the
+        // configuration is broken, and nights already in the database keep
+        // rendering; the UI carries the banner. Keyed on the SOURCE, not on
+        // local_source_dir_ being non-empty, so a wrong folder stops HERE
+        // rather than falling into a card path and talking to hardware that is
+        // not there.
+        return true;
 
     } else {
-        // ===== EZSHARE MODE (original) =====
-        std::cout << "CPAP: Accessing ez Share at " << ConfigManager::get("EZSHARE_BASE_URL", "http://192.168.4.1") << std::endl;
+        // ===== ONE CYCLE, EVERY TRANSPORT (SDD-040) =====
+        //
+        // This block used to be the ez Share path, with a second copy of it for
+        // a local folder. The copy is gone: a folder answers IDataSource like
+        // any card (LocalDataSource), and the three steps that only make sense
+        // across a transport -- fetching, mirroring into the archive, and the
+        // residual walk -- are skipped when the source's files are already
+        // where the archive would put them.
+        const bool local = (cpap_source_ == "local");
+        if (local) {
+            std::cout << "CPAP: Scanning local card root " << local_source_dir_
+                      << " (sessions under " << datalogDirFor(local_source_dir_) << ")"
+                      << std::endl;
+
+            // STR.edf is lifetime history sitting on disk, and a local night
+            // reaches the completion-gated STR read only once it settles, which
+            // left cpap_daily_summary frozen after the first run (issue #8).
+            // Read every cycle: parseSTRFile plus an idempotent upsert of the
+            // full history, cheap and self-healing when the folder gains days.
+            processSessionSummary();
+
+            // SDD-028 (#32): the ring's .vld files beside DATALOG, written by
+            // another tool. Before anything can return early, so they are seen
+            // on a burst with no new CPAP file too.
+            if (db_service_)
+                importVldFolder(*db_service_, local_source_dir_, vld_scan_, removed_nights_);
+        } else {
+            std::cout << "CPAP: Accessing ez Share at " << ConfigManager::get("EZSHARE_BASE_URL", "http://192.168.4.1") << std::endl;
+        }
 
         try {
-            // SDD-038 D2: bounded here. Every extra folder is a listing plus
-            // its downloads over the card's WiFi, and the live night is what
-            // this cycle is for; the rest of the backlog follows on later
-            // cycles. One listing pays for the question.
+            // SDD-038 D2: a folder takes ALL of its missing history in one
+            // pass, where the cost is a directory read. A card takes the oldest
+            // three per cycle, because there every extra folder is a listing
+            // plus its downloads over its own WiFi and the live night is what
+            // this cycle is for. One listing pays for the question either way.
             const auto catch_up = historyCatchUpFolders(
-                discovery_service_->listDateFolders(), kEzShareCatchUpPerCycle);
+                discovery_service_->listDateFolders(),
+                local ? 0 : kEzShareCatchUpPerCycle);
 
             new_sessions = discovery_service_->discoverNewSessions(
                 last_session_start, retain_from, catch_up);
@@ -1862,6 +1684,31 @@ bool BurstCollectorService::executeBurstCycle() {
 
         std::string local_base_dir = ConfigManager::get("CPAP_TEMP_DIR", (std::filesystem::temp_directory_path() / "cpap_data").string());
 
+        // SDD-040 D1: a source whose files are ALREADY where the archive would
+        // put them is read where it lies. The staging directory IS its DATALOG,
+        // nothing is fetched, nothing is mirrored, and the residual walk has
+        // nothing to walk: those three steps exist to bring a card's bytes
+        // ACROSS a transport, and there is no across here.
+        const bool in_place = data_source_ && data_source_->filesAreInPlace();
+        if (in_place) local_base_dir = datalogDirFor(data_source_->rootPath());
+
+        // The night's files, ready to parse. A fetch for a card, a no-op for a
+        // folder: either way the caller is told once, in the same place it was
+        // told before, so the store path below does not care which it is.
+        auto fetchNight = [&](const SessionFileSet& session,
+                              const std::function<void()>& store) -> bool {
+            if (!in_place) return downloadSessionFiles(session, local_base_dir, store);
+            store();
+            // SDD-037 lives in step 6, which only sees sessions that were NOT
+            // stored inline -- and everything a folder yields is stored inline,
+            // because there is no download to wait for. Without this a local
+            // import parses every night and closes none of them, which is the
+            // exact defect SDD-037 shipped to fix (13 of 15 nights sat at Live
+            // when this was missed here).
+            closeIfSettledLocalNight(session.session_start, parsed_sessions);
+            return true;
+        };
+
         // SDD-011: resolved BEFORE the session loop, because the loop now has to
         // ask whether a night is already on disk before it is allowed to skip
         // downloading it. Same value the archive step below uses.
@@ -1883,7 +1730,20 @@ bool BurstCollectorService::executeBurstCycle() {
         // reads as false on the cycle a file first lands, so the folder stays
         // live and closes on the next burst instead; settling already requires
         // two observations of the same signature, so nothing is lost.
-        updateFolderLedgers(new_sessions, local_base_dir);
+        // SDD-040, and NOT what D4 first proposed. The ledger is a record of a
+        // TRANSFER: a folder settles only when two cycles see the same
+        // signature, which is how a card that is still being written is told
+        // from one that has finished. A folder read in place has no transfer to
+        // record, and the catch-up reads such a folder ONCE (after that the
+        // night is stored, so it is no longer missing and the anchor never
+        // returns to it) -- so its ledger row would never get a second
+        // observation and every night would sit at Live for ever.
+        //
+        // Measured, not reasoned: with ledgers written for a local source, 13
+        // of 15 imported nights stayed Live through repeated cycles. Without
+        // them night_state falls back to the open-session test, which SDD-037
+        // already answers correctly the moment the night is stored.
+        if (!in_place) updateFolderLedgers(new_sessions, local_base_dir);
 
         // Newest first. On a first run the latest night is the one worth
         // seeing, and with sessions stored file by file it reaches the
@@ -1916,13 +1776,18 @@ bool BurstCollectorService::executeBurstCycle() {
                 std::cout << "CPAP: New session " << session.session_prefix
                           << " (not in DB, " << session.total_size_kb << " KB)" << std::endl;
 
-                const std::string session_dir = local_base_dir + "/" + session.date_folder;
+                // SDD-040 D7: the folder is the night when it holds one group;
+                // a split folder gets this group staged, or every group would
+                // parse the whole folder and store the same night twice.
+                const std::string session_dir = parseDirForNight(
+                    session, local_base_dir + "/" + session.date_folder,
+                    folderHasOneGroup(new_sessions, session.date_folder));
                 auto storeWhatIsOnDisk = [&]() {
                     if (parseAndStoreSession(session_dir, session.session_start, parsed_sessions))
                         saved_inline.insert(session.session_start);
                 };
 
-                if (downloadSessionFiles(session, local_base_dir, storeWhatIsOnDisk)) {
+                if (fetchNight(session, storeWhatIsOnDisk)) {
                     std::map<std::string, int> checkpoint_sizes;
                     for (const auto& [filename, size_kb] : session.file_sizes_kb) {
                         if (filename.find("_BRP.edf") != std::string::npos ||
@@ -1977,7 +1842,13 @@ bool BurstCollectorService::executeBurstCycle() {
             // permanently. Ticket 67: the night showed in the dashboard, the
             // folder never appeared, and OSCAR, the zip export and SleepHQ all
             // silently had nothing to read.
-            const bool archived = sessionFilesArchived(session, permanent_archive);
+            // SDD-040: a source read in place has nowhere to be archived TO,
+            // and its files are on disk by definition, which is the question
+            // this asks (SDD-011). Without this a local night could never
+            // satisfy the settle test and would sit at Live for ever, the
+            // defect SDD-037 exists for.
+            const bool archived =
+                in_place || sessionFilesArchived(session, permanent_archive);
             if (all_unchanged && !has_new_files && archived) {
                 std::cout << "CPAP: Session " << session.session_prefix
                           << " stopped (all checkpoint files unchanged)" << std::endl;
@@ -2044,13 +1915,16 @@ bool BurstCollectorService::executeBurstCycle() {
                       << (archived ? " files changed, downloading updates"
                                    : " downloading to repair the archive") << std::endl;
 
-            const std::string session_dir = local_base_dir + "/" + session.date_folder;
+            // SDD-040 D7, as above.
+            const std::string session_dir = parseDirForNight(
+                session, local_base_dir + "/" + session.date_folder,
+                folderHasOneGroup(new_sessions, session.date_folder));
             auto storeWhatIsOnDisk = [&]() {
                 if (parseAndStoreSession(session_dir, session.session_start, parsed_sessions))
                     saved_inline.insert(session.session_start);
             };
 
-            if (downloadSessionFiles(session, local_base_dir, storeWhatIsOnDisk)) {
+            if (fetchNight(session, storeWhatIsOnDisk)) {
                 std::map<std::string, int> checkpoint_sizes;
                 for (const auto& [filename, size_kb] : session.file_sizes_kb) {
                     if (filename.find("_BRP.edf") != std::string::npos ||
@@ -2085,11 +1959,18 @@ bool BurstCollectorService::executeBurstCycle() {
         // Archive downloaded files to permanent storage. SDD-011: the path is
         // resolved once above the session loop now, because the loop needs it
         // to decide whether a settled night still has to be fetched.
+        //
+        // SDD-040 D1: skipped entirely for a source read in place. Its folder
+        // IS the card layout OSCAR reads, so mirroring would copy the user's
+        // own files onto themselves, and the residual walk would read them to
+        // write them back unchanged. Albin: "local is already a copy", "would
+        // not need to walk on residual since is there already".
         std::set<std::string> date_folders;
         for (const auto& session : new_sessions) {
             date_folders.insert(session.date_folder);
         }
         for (const auto& date_folder : date_folders) {
+            if (in_place) break;
             // SDD-002: pull the per-night .crc (and any non-junk metadata) into the
             // temp folder first, so archiveSessionFiles() lands it in the OSCAR layout.
             downloadDatalogResidue(date_folder, local_base_dir + "/" + date_folder);
@@ -2097,8 +1978,9 @@ bool BurstCollectorService::executeBurstCycle() {
         }
 
         // SDD-002: full-card residue sweep (Identification.*, SETTINGS/, JOURNAL, …)
-        // straight into the archive root. ezShare only; no-ops on other transports.
-        captureCardResidue(permanent_archive);
+        // straight into the archive root. ezShare only; no-ops on other
+        // transports, and SDD-040 D1 skips it for a source read in place.
+        if (!in_place) captureCardResidue(permanent_archive);
     }
 
     // Step 6: Parse and store whatever the loops above staged but did not
@@ -2203,6 +2085,66 @@ bool BurstCollectorService::executeBurstCycle() {
 }
 
 /*
+ * SDD-040 D7: the directory to parse for one night.
+ *
+ * EDFParser::parseSession() reads EVERY EDF in the directory it is given and
+ * merges them into one session: measured on two real nights, the duration is
+ * the sum of their therapy time, the events are the union, the breaths add up.
+ * That merge IS the night, which is the unit parsing is about.
+ *
+ * So a date folder that discovery resolved to ONE group is parsed where it
+ * lies, with no copy: on a local source that means the user's own folder is
+ * read in place, and on an ez Share the staging directory the download already
+ * filled.
+ *
+ * A folder that genuinely split into several groups is the only case that needs
+ * isolation, and it needs it badly: handing the whole folder to each group in
+ * turn returns the SAME merged night every time and stores it once per group,
+ * double-counting its events. That is live today on the ez Share path and is
+ * the thing this rule closes before one cycle inherits it.
+ */
+std::string BurstCollectorService::parseDirForNight(const SessionFileSet& session,
+                                                    const std::string& folder_dir,
+                                                    bool folder_has_one_group) {
+    if (folder_has_one_group) return folder_dir;
+
+    const std::string staged = (std::filesystem::temp_directory_path() /
+                                "cpap_group" /
+                                (session.date_folder + "_" + session.session_prefix)).string();
+    std::error_code ec;
+    std::filesystem::create_directories(staged, ec);
+    for (std::filesystem::directory_iterator it(staged, ec), end; !ec && it != end; it.increment(ec))
+        std::filesystem::remove(it->path(), ec);
+
+    auto stage = [&](const std::string& filename) {
+        const auto src = std::filesystem::path(folder_dir) / filename;
+        std::error_code fe;
+        if (std::filesystem::exists(src, fe))
+            std::filesystem::copy_file(src, std::filesystem::path(staged) / filename,
+                                       std::filesystem::copy_options::overwrite_existing, fe);
+    };
+    for (const auto& f : session.brp_files) stage(f);
+    for (const auto& f : session.pld_files) stage(f);
+    for (const auto& f : session.sad_files) stage(f);
+    for (const auto& f : session.csl_files) stage(f);
+    for (const auto& f : session.eve_files) stage(f);
+
+    std::cout << "CPAP: " << session.date_folder << " holds more than one block; parsing "
+              << session.session_prefix << " on its own" << std::endl;
+    return staged;
+}
+
+/// SDD-040 D7: how many groups discovery resolved [date_folder] into, so the
+/// caller knows whether the folder IS the night or only part of it.
+/*static*/ bool BurstCollectorService::folderHasOneGroup(
+    const std::vector<SessionFileSet>& sessions, const std::string& date_folder) {
+    int n = 0;
+    for (const auto& s : sessions)
+        if (s.date_folder == date_folder && ++n > 1) return false;
+    return true;
+}
+
+/*
  * SDD-038 (#34, support 129): the nights the anchor cannot reach.
  *
  * "Which folders has this database no night for" is one question the burst
@@ -2215,6 +2157,29 @@ bool BurstCollectorService::executeBurstCycle() {
  * checked against a real card), so the comparison is a set difference and no
  * date arithmetic is needed here.
  */
+/*
+ * SDD-040: is the local folder usable this cycle?
+ *
+ * SDD-010: re-classified every burst rather than trusted from startup, so a
+ * share that mounts late, or a folder corrected in Settings, recovers on its
+ * own without a restart. False means nothing is ingested while the setting is
+ * wrong; the nights already stored keep rendering and the UI carries the
+ * banner.
+ */
+bool BurstCollectorService::localSourceIsReady() {
+    local_layout_ = classifyLocalDir(local_source_dir_);
+    if (local_layout_ != LocalDirLayout::Root) {
+        const auto d = local_layout_log_.onFailure(
+            localDirProblem(local_layout_, local_source_dir_) + ". " +
+            localDirRemedy(local_layout_, local_source_dir_));
+        if (d.log) std::cerr << "CPAP: " << d.message << std::endl;
+        return false;
+    }
+    if (const auto rec = local_layout_log_.onSuccess(); rec.log)
+        std::cout << "CPAP: local folder " << rec.message << std::endl;
+    return true;
+}
+
 std::set<std::string> BurstCollectorService::historyCatchUpFolders(
     const std::vector<std::string>& card_folders, size_t cap) {
 

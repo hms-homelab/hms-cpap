@@ -276,6 +276,19 @@ public:
         return buildRangeMetricsString(nights, period);
     }
 
+    /// Test-only: SDD-040 D7, which directory a night is parsed from.
+    std::string parseDirForNightForTest(const SessionFileSet& session,
+                                        const std::string& folder_dir,
+                                        bool folder_has_one_group) {
+        return parseDirForNight(session, folder_dir, folder_has_one_group);
+    }
+
+    /// Test-only: SDD-040 D7, did a folder resolve to one group?
+    static bool folderHasOneGroupForTest(const std::vector<SessionFileSet>& sessions,
+                                         const std::string& date_folder) {
+        return folderHasOneGroup(sessions, date_folder);
+    }
+
     /// Test-only: the burst's archive step (SDD-032 repairs its signal files).
     bool archiveSessionFilesForTest(const std::string& date_folder,
                                     const std::string& temp_base_dir,
@@ -471,6 +484,28 @@ private:
      * A local source takes all of them: there the cost is a directory read.
      */
     static constexpr size_t kEzShareCatchUpPerCycle = 3;
+
+    /**
+     * SDD-040 D7: the directory to hand the parser for one night.
+     *
+     * The folder itself when it holds a single group, because the parser merges
+     * a directory into one session and that merge is the night. A staged copy
+     * of just this group's files when the folder split, because otherwise every
+     * group parses the whole folder and the same night is stored once per
+     * group.
+     */
+    std::string parseDirForNight(const SessionFileSet& session,
+                                 const std::string& folder_dir,
+                                 bool folder_has_one_group);
+
+    /// SDD-040: is the local card root usable this cycle? Re-checked every
+    /// burst (SDD-010), so a late mount or a corrected setting recovers without
+    /// a restart.
+    bool localSourceIsReady();
+
+    /// SDD-040 D7: did discovery resolve [date_folder] to exactly one group?
+    static bool folderHasOneGroup(const std::vector<SessionFileSet>& sessions,
+                                  const std::string& date_folder);
 
     /**
      * SDD-038: the date folders on the card that this database has no night

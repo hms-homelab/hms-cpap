@@ -95,6 +95,7 @@ set(TEST_SOURCES
 
     utils/test_FailureLogThrottle.cpp
     clients/test_EzShareClient.cpp
+    clients/test_LocalDataSource.cpp
     clients/test_FysetcTcpServer.cpp
     mqtt/test_MqttClient.cpp
     integration/test_STRIntegration.cpp
