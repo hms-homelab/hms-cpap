@@ -1629,6 +1629,14 @@ bool BurstCollectorService::executeBurstCycle() {
             std::cout << "CPAP: Accessing ez Share at " << ConfigManager::get("EZSHARE_BASE_URL", "http://192.168.4.1") << std::endl;
         }
 
+        // Belt and braces after the SIGSEGV above: a cycle with no data source
+        // is a configuration that has not finished being applied, not a crash.
+        if (!discovery_service_ || !data_source_) {
+            std::cerr << "CPAP: no data source for " << cpap_source_
+                      << " yet; skipping this cycle" << std::endl;
+            return true;
+        }
+
         try {
             // SDD-038 D2: a folder takes ALL of its missing history in one
             // pass, where the cost is a directory read. A card takes the oldest
@@ -3125,8 +3133,14 @@ void BurstCollectorService::reloadConfig() {
             // SDD-010: re-classify on reload so a folder corrected in Settings
             // clears the banner on the next burst instead of needing a restart.
             local_layout_ = classifyLocalDir(local_source_dir_);
-            data_source_.reset();
-            discovery_service_.reset();
+            // SDD-040: a local source now HAS a data source, and the cycle asks
+            // it for the card's folders. This used to clear both and the old
+            // local branch read the filesystem directly; leaving them cleared
+            // crashed the next burst on a null discovery service, which is what
+            // switching the source in Settings does (caught in the Docker leg:
+            // the container died with SIGSEGV one cycle after the switch).
+            data_source_ = std::make_unique<LocalDataSource>(local_source_dir_);
+            discovery_service_ = std::make_unique<SessionDiscoveryService>(*data_source_);
             prisma_ingestion_.reset();
             sefam_ingestion_.reset();
         } else if (nc.source == "fysetc") {
