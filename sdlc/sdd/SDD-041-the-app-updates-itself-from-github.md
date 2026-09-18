@@ -39,13 +39,15 @@ Verified in the tree rather than remembered:
   not lost with the process (SDD-012). The same trick an update needs.
 - **The Pi installer already keeps `<binary>.previous`** (`packaging/pi/install.sh`),
   which is the rollback primitive, and restarts through systemd.
-- **The supervisor owns the child's lifecycle, and it ships on two platforms
-  today.** Windows has the C# tray (`desktop/windows/CpapDashDesktop`, with a Job
-  Object holding `KILL_ON_JOB_CLOSE` so a kill cannot leave an orphan on port
-  8893). macOS has the Qt tray (`desktop/qt`: `TrayShell`, `Supervisor`,
-  `ChildProcess`, `Autostart`), built into `CpapDash.dmg` on every release.
-  SDD-016's header still says Proposed; the code shipped, the status line did
-  not follow it. The Pi has systemd.
+- **The supervisor owns the child's lifecycle, and it is ONE app on both
+  desktops.** The Qt tray in `desktop/qt` (`TrayShell`, `Supervisor`,
+  `ChildProcess`, `Autostart`) ships as `CpapDash.dmg` on macOS and as
+  `CpapDashDesktop.exe` inside `CpapDashDesktop-Setup.exe` on Windows. On Windows
+  its `ChildProcess` holds a Job Object with `KILL_ON_JOB_CLOSE`, so a killed tray
+  cannot leave an orphan on port 8893. The C# tray under
+  `desktop/windows/CpapDashDesktop` is retired and nothing builds it. SDD-016's
+  header still says Proposed; the code shipped, the status line did not follow
+  it. The Pi has systemd.
 - **Schema changes are idempotent `ALTER TABLE ... ADD COLUMN` at connect**, not
   gated on a stored schema version, so an older binary can usually open a newer
   database. The exceptions are the migrations that rewrite DATA (SDD-032's
@@ -203,8 +205,9 @@ names.
 Albin's number, and its own release: the updater changes what every future
 release does to an install, so a regression in it must have one obvious suspect.
 
-Every platform in scope already has the thing that does the swap: the C# tray
-on Windows, the Qt tray on macOS, systemd on the Pi (D4). So nothing waits on a
-new supervisor. The order is the manifest in the release workflow, then the
-service's check and the dashboard banner (which already tell a user an update
-exists), then the swap in each of the three supervisors.
+Every platform in scope already has the thing that does the swap: the Qt tray on
+macOS and Windows, systemd on the Pi (D4). So nothing waits on a new supervisor,
+and the desktop swap is written ONCE, in `desktop/qt`, with the per-platform
+file handling behind it. The order is the manifest in the release workflow, then
+the service's check and the dashboard banner (which already tell a user an
+update exists), then the swap in the Qt supervisor and in `install.sh`.
