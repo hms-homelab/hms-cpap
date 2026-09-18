@@ -1214,6 +1214,42 @@ jobs:
           cd macos-release
           zip -r ../hms-cpap-macos-arm64.zip .
 
+      # SDD-041 §3.7: the one file the updater trusts. The release API gives
+      # names, sizes and URLs but no checksum, so this records, per asset that
+      # ACTUALLY made it into this release, its platform, size and SHA-256.
+      # Built from the files on disk rather than a fixed list, because the
+      # native builds are optional above: a release without the macOS DMG gets
+      # a manifest without it, and a macOS install is simply offered nothing.
+      - name: Write the update manifest
+        run: |
+          python3 - <<'PY'
+          import hashlib, json, os
+          version = os.environ["GITHUB_REF_NAME"].lstrip("v")
+          candidates = [
+              ("windows-x64", "installer", "CpapDashDesktop-Setup.exe"),
+              ("windows-x64", "zip",       "hms-cpap-windows-x64.zip"),
+              ("macos-arm64", "dmg",       "CpapDash.dmg"),
+              ("macos-arm64", "zip",       "hms-cpap-macos-arm64.zip"),
+              ("linux-armhf", "zip",       "hms-cpap-linux-armhf.zip"),
+          ]
+          assets = []
+          for platform, kind, name in candidates:
+              if not os.path.isfile(name):
+                  print(f"manifest: {name} not in this release, left out")
+                  continue
+              h = hashlib.sha256()
+              with open(name, "rb") as f:
+                  for chunk in iter(lambda: f.read(1 << 20), b""):
+                      h.update(chunk)
+              assets.append({"platform": platform, "kind": kind, "name": name,
+                             "size": os.path.getsize(name), "sha256": h.hexdigest()})
+          if not assets:
+              raise SystemExit("manifest: no assets at all, refusing to publish an empty manifest")
+          with open("manifest.json", "w") as f:
+              json.dump({"version": version, "assets": assets}, f, indent=2)
+          print(open("manifest.json").read())
+          PY
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -1224,3 +1260,4 @@ jobs:
             hms-cpap-linux-armhf.zip
             CpapDashDesktop-Setup.exe
             CpapDash.dmg
+            manifest.json
