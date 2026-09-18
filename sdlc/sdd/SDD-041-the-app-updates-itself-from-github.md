@@ -104,23 +104,51 @@ The platform's asset, to a temp file beside the install, then:
 A failure at any step leaves the running install untouched and logs which step
 refused.
 
-### 3.4 Who swaps the binary: the supervisor, never the service
+### 3.4 Who swaps the install: never the service
 
 The service cannot replace the file it is executing (on Windows it cannot even
-be renamed while running), and it must not try. The sequence, owned by the
-supervisor:
+be renamed while running), and it must not try.
 
-1. the service downloads and verifies (3.3), then asks the supervisor to apply;
-2. the supervisor stops the child, the way it already knows how;
-3. it moves the current binary to `<binary>.previous` and puts the new one in
-   place, the shape `install.sh` already uses on the Pi;
-4. it runs `hms_cpap --preflight`;
-5. it starts the child and waits for `/health` to answer with the NEW version;
-6. if any of 4, 5 or the health check fails, it restores `.previous`, starts it
-   again, and reports the failure with the step that failed.
+**What is replaced is the whole install, not one binary (D8).** Corrected
+2026-09-18 while building it: on both desktops an install is the supervisor, the
+service, the web UI and the Qt libraries together. On macOS they are one signed
+`CpapDash.app`, and editing a file inside a signed bundle breaks its seal. On
+Windows they are one Inno Setup install. So the unit of an update is the unit of
+a release: the DMG on macOS, `CpapDashDesktop-Setup.exe` on Windows, and the zip
+on the Pi. Supervisor, service and UI therefore always match.
 
-On a Pi with no supervisor running, step 2 to 5 is systemd's, driven by the same
-code path in `install.sh` (D4).
+**The update replaces the supervisor too, so a helper that outlives it runs the
+swap (D9).** The sequence on a desktop:
+
+1. the service downloads the platform's file into `<data_dir>/update/`,
+   checks its size and SHA-256 against the manifest (3.3), writes
+   `pending.json`, answers the request, and exits with the dedicated code
+   **42**;
+2. the supervisor sees 42, not a failure. It re-checks the SHA-256 itself,
+   copies the helper script out of the install (the install is about to be
+   replaced), starts it detached, and quits;
+3. the helper waits for the supervisor and the service to be gone. It moves the
+   current install to `<install>.previous` and installs the new one: on macOS
+   the verified `CpapDash.app` from the DMG, whose signature is checked
+   against team `9JYJU98VQ3`; on Windows `Setup.exe /VERYSILENT` into the same
+   folder, which needs no UAC because the install is per-user;
+4. it runs the new `hms_cpap --preflight`;
+5. it launches the new supervisor and waits for `/health` to report the NEW
+   version;
+6. if 3, 4 or 5 fails, it restores `.previous`, launches that, and writes
+   `<data_dir>/update/result.json` naming the step that failed. Settings shows
+   that result on the next start.
+
+**On the Pi, systemd is the supervisor and root is needed (D10).**
+`install.sh` also installs `hms-cpap-update.path` and a root oneshot
+`hms-cpap-update.service`. The service writes a request naming the version it
+wants into `~/.hms-cpap/update/`. That folder is writable by the service user,
+so the root unit trusts nothing in it except the version: it downloads that
+release's `manifest.json` and zip itself, from GitHub over HTTPS, and checks the
+zip against the manifest. It never executes anything from the zip as root. Then
+it runs the same steps: stop the service, keep `hms_cpap.previous` and the old UI,
+install, preflight as the service user, start, verify `/health`, and roll back on
+failure.
 
 ### 3.5 What an update must never do silently
 
@@ -182,6 +210,18 @@ names.
 - **D7, what "latest" means. ACCEPTED**: the newest non-prerelease on GitHub,
   stable only. No channel switch, so a pre-release tag never reaches someone who
   did not ask for it.
+- **D8, what an update replaces. ACCEPTED 2026-09-18**: the whole install on
+  macOS and Windows (the app bundle and the installer), never one binary
+  inside it, so the signature stays whole and supervisor, service and UI match
+  (3.4).
+- **D9, who runs the swap. ACCEPTED 2026-09-18**: a detached helper script
+  (bash on macOS, PowerShell on Windows), started by the supervisor when the
+  service exits with code 42. The helper replaces, preflights, launches,
+  verifies, and restores `.previous` on failure.
+- **D10, root on the Pi. ACCEPTED 2026-09-18**: a systemd path unit and a root
+  oneshot installed by `install.sh`. No sudo rights for the service user. The
+  root unit fetches and verifies the release itself rather than trusting a file
+  the service user could have written.
 
 ## 5. Tests
 
