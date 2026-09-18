@@ -73,6 +73,9 @@ function Roll-Back([string]$step, [string]$message) {
         # version added. Exit codes below 8 are success for robocopy.
         robocopy $Prev $InstallDir /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
         if ($LASTEXITCODE -ge 8) { Log "robocopy restore returned $LASTEXITCODE" }
+        # Restored: the copy has done its job. Kept only when the restore
+        # failed, because then it is the one good copy left.
+        else { Remove-Item -Recurse -Force $Prev -ErrorAction SilentlyContinue }
     }
     Write-Result $false $step $message
     Remove-Item -Force $Pending -ErrorAction SilentlyContinue
