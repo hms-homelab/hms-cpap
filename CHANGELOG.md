@@ -5,6 +5,36 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.2.19] - 2026-09-18
+
+Two users, one card each, and the same sentence in both logs: "Scanning folders
+from: …", followed by nothing (hms-homelab/hms-cpap#34, CpapDash ticket 129).
+
+### Fixed
+- **Nights older than the newest one already stored were never imported**
+  (SDD-038). Collection asks for what is NEWER than the last session it has,
+  which is right for a card that grows forward and blind to history that was
+  already there: a rebuilt container kept its database and imported exactly one
+  night, leaving thirteen on the card, on every cycle, for ever. Each cycle now
+  also asks which nights on the card are missing from the database and imports
+  them. A local folder catches up in one pass; an ez Share takes the three
+  oldest per cycle, because there every folder is a request over the card's
+  WiFi and tonight's data comes first. A night that has been removed on purpose
+  stays removed, and a folder that holds nothing readable is tried once.
+- **A failed query looked exactly like an empty history** (SDD-039). When a
+  statement could not run, the page received the same empty answer it gets for
+  an install with no nights: a 200 and an empty list. One user watched the
+  sessions page go blank with 63 nights sitting in the database and nothing
+  anywhere said why. A query that does not run now answers with the database's
+  own message instead of silence.
+- **Uploading a card could make the whole app stop answering** (SDD-039). The
+  import ran on a web thread, so copying a card onto a slow or stalled network
+  share held one of only two of them, and the dashboard never replied while a
+  spinner turned. The upload is now handed to the worker that already does long
+  imports and answers straight away; the page follows it through the progress it
+  already polls. The server also takes its thread count from the machine (four
+  to eight) rather than the two it had since the web UI was added.
+
 ## [5.2.18] - 2026-09-17
 
 Everything here is the Local Directory source, from one report of a first import
