@@ -39,10 +39,13 @@ Verified in the tree rather than remembered:
   not lost with the process (SDD-012). The same trick an update needs.
 - **The Pi installer already keeps `<binary>.previous`** (`packaging/pi/install.sh`),
   which is the rollback primitive, and restarts through systemd.
-- **The supervisor owns the child's lifecycle** and, on Windows, a Job Object
-  with `KILL_ON_JOB_CLOSE` so a kill cannot leave an orphan holding port 8893.
-  SDD-016 is still Proposed: today that supervisor exists only as the Windows
-  C# tray.
+- **The supervisor owns the child's lifecycle, and it ships on two platforms
+  today.** Windows has the C# tray (`desktop/windows/CpapDashDesktop`, with a Job
+  Object holding `KILL_ON_JOB_CLOSE` so a kill cannot leave an orphan on port
+  8893). macOS has the Qt tray (`desktop/qt`: `TrayShell`, `Supervisor`,
+  `ChildProcess`, `Autostart`), built into `CpapDash.dmg` on every release.
+  SDD-016's header still says Proposed; the code shipped, the status line did
+  not follow it. The Pi has systemd.
 - **Schema changes are idempotent `ALTER TABLE ... ADD COLUMN` at connect**, not
   gated on a stored schema version, so an older binary can usually open a newer
   database. The exceptions are the migrations that rewrite DATA (SDD-032's
@@ -199,6 +202,9 @@ names.
 
 Albin's number, and its own release: the updater changes what every future
 release does to an install, so a regression in it must have one obvious suspect.
-SDD-016 (the supervisor) is still Proposed on macOS and Linux; the Windows tray
-is the only supervisor that exists, so either this lands Windows-first or the
-supervisor lands first (D4 decides how much of it this needs).
+
+Every platform in scope already has the thing that does the swap: the C# tray
+on Windows, the Qt tray on macOS, systemd on the Pi (D4). So nothing waits on a
+new supervisor. The order is the manifest in the release workflow, then the
+service's check and the dashboard banner (which already tell a user an update
+exists), then the swap in each of the three supervisors.
