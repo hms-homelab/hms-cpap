@@ -1,9 +1,10 @@
 # SDD-041: the app updates itself, from GitHub, through the supervisor
 
-**Status:** Proposed, 2026-09-18. D1 and D5 accepted the same day (Albin: "yes to
-the automatic check with one click apply on the dashboard banner. fully
-automatic as opt in as well with opt in off[.] docker and add on [does]nt need
-update they have their own"). D2, D3, D4, D6 and D7 are still open.
+**Status:** Accepted 2026-09-18, all seven decisions (§4). D1 and D5 in Albin's
+words ("yes to the automatic check with one click apply on the dashboard banner.
+fully automatic as opt in as well with opt in off[.] docker and add on [does]nt
+need update they have their own"); D2, D3, D4, D6 and D7 as proposed, chosen the
+same day.
 **Date:** 2026-09-18
 **Repo:** `hms-cpap`. A new updater in the service, the swap in the supervisor,
 one Settings section, one release-side manifest.
@@ -155,28 +156,27 @@ names.
   applying is one click, and the click is **on the dashboard banner** (3.6), not
   buried in Settings. Fully automatic stays available as an opt-in, off by
   default.
-- **D2, what cadence?** Proposed: daily, plus on demand. Alternatives: on start
-  only (a machine that never reboots never learns), or weekly.
-- **D3, Windows signing.** The installer is unsigned today, so an updater can
-  verify a checksum but not an identity, and SmartScreen already warns on a
-  fresh download. Proposed: ship the updater with checksum verification, and
-  treat code signing as its own piece of work. Alternative: block the Windows
-  updater until the installer is signed.
-- **D4, the Pi and systemd.** Proposed: the same flow, with systemd as the
+- **D2, what cadence? ACCEPTED**: daily, plus a "check now" on demand. One
+  request a day with an ETag, so an unchanged answer is a 304.
+- **D3, Windows signing. ACCEPTED**: ship the Windows updater with checksum
+  verification (size and SHA-256 from the manifest, over HTTPS), and treat
+  Authenticode signing of the installer as its own piece of work. The installer
+  is unsigned today, so this verifies integrity, not identity, and the SDD says
+  so rather than implying more.
+- **D4, the Pi and systemd. ACCEPTED**: the same flow, with systemd as the
   supervisor and `install.sh` as the step that swaps and restarts, so there is
   one implementation of "replace, preflight, restart, verify, roll back".
-  Alternative: no self-update on Linux, where a package manager or the zip is
-  the normal route.
 - **D5, Docker and the add-on. ACCEPTED 2026-09-18**: out of scope, detected and
   said so (2). Albin: "docker and add on [does]nt need update they have their
   own."
-- **D6, databases that are not SQLite.** Proposed: back up SQLite automatically
-  before a data migration; for Postgres and MySQL, tell the user which database
-  will be migrated and that rollback is theirs. Alternative: refuse to
-  auto-update at all when a data migration is pending on a server database.
-- **D7, what "latest" means.** Proposed: the newest non-prerelease. Alternative:
-  a channel switch in Settings (stable / pre-release) for people who want to
-  test, which is one more thing to support.
+- **D6, databases that are not SQLite. ACCEPTED**: SQLite is backed up
+  automatically before an update that runs a data migration. For PostgreSQL and
+  MySQL the banner names the database that will be migrated and says the
+  rollback of that data is the user's; the binary rollback still works either
+  way.
+- **D7, what "latest" means. ACCEPTED**: the newest non-prerelease on GitHub,
+  stable only. No channel switch, so a pre-release tag never reaches someone who
+  did not ask for it.
 
 ## 5. Tests
 
