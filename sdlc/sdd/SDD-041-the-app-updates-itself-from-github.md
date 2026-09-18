@@ -251,3 +251,42 @@ and the desktop swap is written ONCE, in `desktop/qt`, with the per-platform
 file handling behind it. The order is the manifest in the release workflow, then
 the service's check and the dashboard banner (which already tell a user an
 update exists), then the swap in the Qt supervisor and in `install.sh`.
+
+## 7. As built (2026-09-18)
+
+Where the build differs from, or adds to, the text above:
+
+- **Idle, concretely (3.5).** "A night is being collected" is: the collector
+  stored session data within the last 20 minutes
+  (`BurstCollectorService::dataArrivedWithin`). That covers a live night and a
+  first import. The banner then offers "Update anyway", the user's "now".
+- **The service leaves through the orderly shutdown, never `std::exit` from a
+  thread.** The first macOS run found `std::exit(42)` from the apply thread
+  tearing Drogon down under its own loop. trantor aborted and the supervisor
+  saw exit 1, not 42. `main` now returns the requested code after the normal
+  shutdown. The same fault was already in the supervised "Restart now"
+  (SDD-012): it died with 139, so the supervisor never restarted it. That path
+  now uses the same shutdown and exits 0.
+- **Three checks of the file.** The service checks size and SHA-256 against the
+  manifest; the supervisor hashes it again before acting (the folder is
+  user-writable); the helper checks it a third time. On macOS the helper
+  also requires `codesign --verify --deep --strict` and team `9JYJU98VQ3`. No
+  stapler check: `xcrun` is not on users' Macs.
+- **`.previous` on success.** The desktop helpers delete it once the new version
+  answers `/health`, so /Applications does not keep a second CpapDash. It is
+  named `CpapDash.app.previous`, not `*.app`, so it is never launchable. The Pi
+  keeps `hms_cpap.previous` and `static/browser.previous`, as `install.sh`
+  always has. The SQLite backup (`update/backup-<from>.db`) is kept everywhere.
+- **The Pi unit also sets `HMS_CPAP_SUPERVISED=1`**, so `HMS_CPAP_UPDATER=systemd`
+  is checked first. Read the other way, a Pi would exit 42 for a helper it
+  does not have, and systemd would restart it into the same download for ever.
+- **The Pi's root script does every file operation in the user's home as that
+  user**, so a symlink planted there cannot become a root write or delete. It
+  runs nothing from the zip as root, and it does not run the new zip's
+  `install.sh`, so a release that adds a runtime library fails preflight and
+  rolls back rather than installing it. Such a release needs the manual
+  `install.sh`.
+- **Auto-update** is `auto_update` in config.json (off). When the collector is
+  busy it retries every 30 minutes instead of the next day.
+- **Settings shows the helper's `result.json`**: "updated to X", or "rolled back
+  at step S: why".

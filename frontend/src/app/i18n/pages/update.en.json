@@ -2,7 +2,17 @@
   "updateBanner": {
     "available": "Version {{latest}} is available (you are running {{current}}).",
     "whatsNew": "What's new",
-    "dismiss": "Dismiss"
+    "dismiss": "Dismiss",
+    "apply": "Update now",
+    "applyNow": "Update anyway",
+    "busy": "A night is still being collected, so the update waits for it to finish.",
+    "restarting": "Installing {{latest}}. CpapDash will be back in a moment.",
+    "failed": "The update did not complete: {{error}}",
+    "step": {
+      "downloading": "Downloading {{latest}}...",
+      "verifying": "Checking the download...",
+      "handing_off": "Installing {{latest}}. CpapDash will be back in a moment."
+    }
   },
   "settings": {
     "updates": {
@@ -17,7 +27,15 @@
       "lastError": "The last check did not complete: {{error}}",
       "checkedAt": "Last checked {{when}}",
       "checkNow": "Check now",
-      "checking": "Checking..."
+      "checking": "Checking...",
+      "apply": "Update to {{latest}}",
+      "lastOk": "Updated to {{version}} on {{when}}.",
+      "lastFailed": "The update to {{version}} was rolled back at the {{step}} step: {{message}}",
+      "backupSqlite": "Your database is backed up before the update is installed.",
+      "backupServer": "Your {{database}} database is not backed up by the update. If a new version changes it, rolling that back is up to you.",
+      "manual": "This install cannot apply updates by itself. Download the new version from the release page.",
+      "auto": "Install updates automatically",
+      "autoHint": "Only when no night is being collected. Off by default."
     }
   }
 }

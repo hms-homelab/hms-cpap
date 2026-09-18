@@ -1960,6 +1960,8 @@ bool BurstCollectorService::executeBurstCycle() {
         }
 
         auto download_end = std::chrono::steady_clock::now();
+        // SDD-041 §3.5: the updater waits while data is still arriving.
+        last_data_at_ = download_end.time_since_epoch().count();
         auto download_ms = std::chrono::duration_cast<std::chrono::milliseconds>(download_end - download_start).count();
         std::cout << "CPAP: Downloaded " << downloaded_sessions.size()
                   << " session(s) in " << download_ms << " ms" << std::endl;

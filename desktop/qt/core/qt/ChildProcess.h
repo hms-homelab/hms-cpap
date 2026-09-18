@@ -76,6 +76,7 @@ signals:
     void stateChanged(State state);
     void exited(int exit_code, const QString& stderr_tail);
     void restarting();   ///< a supervised restart was detected and honoured
+    void updateRequested();  ///< SDD-041: exited kExitPendingUpdate; pending.json is staged
 
 private:
     void onFinished(int exit_code, QProcess::ExitStatus status);

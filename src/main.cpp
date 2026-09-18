@@ -66,6 +66,12 @@
 #endif
 
 std::atomic<bool> shutdown_requested(false);
+/// What main returns once the shutdown finishes. SDD-041: 42 hands a staged
+/// update to the supervisor. It has to be RETURNED, after an orderly shutdown:
+/// std::exit from a worker thread ran static destructors under a live Drogon
+/// loop, trantor aborted ("forbidden to run loop on threads other than
+/// event-loop thread"), and the supervisor saw exit 1 instead of 42.
+std::atomic<int> requested_exit_code(0);
 std::unique_ptr<hms_cpap::BurstCollectorService> burst_service;
 #ifdef WITH_POSTGRESQL
 std::unique_ptr<hms_cpap::AgentService> agent_service;
@@ -980,8 +986,37 @@ int main(int argc, char** argv) {
             // demand. It only reports; the supervisor applies. Off by itself in a
             // container (D5), where the image is what updates.
             auto update_service = std::make_shared<hms_cpap::UpdateService>(HMS_CPAP_VERSION);
+            update_service->setDataDir(hms_cpap::AppConfig::dataDir());
+            {
+                hms_cpap::UpdateService::Hooks hooks;
+                // §3.5: a night still arriving means not now. Twenty minutes
+                // covers a burst interval with room to spare.
+                hooks.busy = [svc = burst_service.get()]() {
+                    return svc && svc->dataArrivedWithin(std::chrono::minutes(20));
+                };
+                // D6: SQLite is copied before any update; a server database is
+                // named in Settings instead and its rollback stays the user's.
+                hooks.backup = [&config](const std::string& dir) -> std::string {
+                    if (config.database.type != "sqlite") return "";
+                    return hms_cpap::update::backupSqlite(
+                        config.database.sqlite_path, dir + "/backup-" HMS_CPAP_VERSION ".db");
+                };
+                hooks.auto_update = [&config]() { return config.auto_update; };
+                hooks.database = [&config]() { return config.database.type; };
+                // Leave the way a signal does, and let main return the code.
+                hooks.exit = [](int code) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(750));
+                    requested_exit_code = code;
+                    requestShutdown();
+                };
+                update_service->setHooks(std::move(hooks));
+            }
             hms_cpap::CpapController::setUpdateService(update_service);
             update_service->start();
+            hms_cpap::CpapController::shutdown_with_code_ = [](int code) {
+                requested_exit_code = code;
+                requestShutdown();
+            };
 
             // SDD-020: opt-in read-only pull of the same nights from ResMed's
             // myAir, so their score can sit next to ours on the dashboard.
@@ -1487,7 +1522,7 @@ int main(int argc, char** argv) {
         }
 
         std::cout << "HMS-CPAP service stopped cleanly" << std::endl;
-        return 0;
+        return requested_exit_code.load();
 
     } catch (const std::exception& e) {
         std::cerr << "Fatal error: " << e.what() << std::endl;

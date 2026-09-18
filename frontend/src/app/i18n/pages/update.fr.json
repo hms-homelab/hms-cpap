@@ -2,7 +2,17 @@
   "updateBanner": {
     "available": "La version {{latest}} est disponible (vous utilisez la {{current}}).",
     "whatsNew": "Nouveautés",
-    "dismiss": "Masquer"
+    "dismiss": "Masquer",
+    "apply": "Mettre à jour",
+    "applyNow": "Mettre à jour quand même",
+    "busy": "Une nuit est encore en cours de collecte, la mise à jour attend donc qu'elle se termine.",
+    "restarting": "Installation de la {{latest}}. CpapDash revient dans un instant.",
+    "failed": "La mise à jour n'a pas abouti : {{error}}",
+    "step": {
+      "downloading": "Téléchargement de la {{latest}}...",
+      "verifying": "Vérification du téléchargement...",
+      "handing_off": "Installation de la {{latest}}. CpapDash revient dans un instant."
+    }
   },
   "settings": {
     "updates": {
@@ -17,7 +27,15 @@
       "lastError": "La dernière vérification n'a pas abouti : {{error}}",
       "checkedAt": "Dernière vérification : {{when}}",
       "checkNow": "Vérifier maintenant",
-      "checking": "Vérification..."
+      "checking": "Vérification...",
+      "apply": "Passer à la {{latest}}",
+      "lastOk": "Mis à jour vers la {{version}} le {{when}}.",
+      "lastFailed": "La mise à jour vers la {{version}} a été annulée à l'étape {{step}} : {{message}}",
+      "backupSqlite": "Votre base de données est sauvegardée avant l'installation de la mise à jour.",
+      "backupServer": "La mise à jour ne sauvegarde pas votre base de données {{database}}. Si une nouvelle version la modifie, l'annulation de ce changement vous revient.",
+      "manual": "Cette installation ne peut pas appliquer de mise à jour elle-même. Téléchargez la nouvelle version depuis la page de la version.",
+      "auto": "Installer les mises à jour automatiquement",
+      "autoHint": "Seulement quand aucune nuit n'est en cours de collecte. Désactivé par défaut."
     }
   }
 }

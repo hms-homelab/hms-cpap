@@ -17,12 +17,15 @@
 #include <QProcess>
 #include <QAbstractButton>
 #include <QPushButton>
+#include <QCryptographicHash>
+#include <QDateTime>
 
 #include "SettingsDialog.h"
 #include "ConfiguratorWindow.h"
 #include "StartupWindow.h"
 #include "ConfigGate.h"
 #include "Autostart.h"
+#include "PendingUpdate.h"
 
 #include <nlohmann/json.hpp>
 #include <optional>
@@ -92,6 +95,7 @@ TrayShell::TrayShell(ChildProcess* child, QString service_exe, QObject* parent)
     connect(child_, &ChildProcess::restarting,   this, [this] {
         setStatusText("Status: restarting to apply settings");
     });
+    connect(child_, &ChildProcess::updateRequested, this, &TrayShell::onUpdateRequested);
 
     connect(tray_.get(), &QSystemTrayIcon::activated, this,
             [this](QSystemTrayIcon::ActivationReason reason) {
@@ -244,6 +248,83 @@ int TrayShell::configuredPort() const {
     if (!doc.isObject()) return kDefaultPort;
     const int port = doc.object().value("web_port").toInt(kDefaultPort);
     return (port > 0 && port < 65536) ? port : kDefaultPort;
+}
+
+void TrayShell::onUpdateRequested() {
+    // Any refusal below leaves the install exactly as it was and brings the
+    // service straight back, so a bad download costs a restart, never the app.
+    auto refuse = [this](const QString& why) {
+        qWarning("CpapDash: update not started: %s", qPrintable(why));
+        tray_->showMessage("CpapDash update not started", why,
+                           QSystemTrayIcon::Warning, 8000);
+        child_->start();
+    };
+
+    const QString pending_path = dataDir() + "/update/pending.json";
+    QFile pf(pending_path);
+    if (!pf.open(QIODevice::ReadOnly)) return refuse("There is no staged update.");
+    std::string why;
+    const auto pending = parsePendingUpdate(pf.readAll().toStdString(), &why);
+    pf.close();
+    if (!pending) return refuse(QString::fromStdString(why));
+
+    // Hashed again here, not trusted from the service's word: the file sits in
+    // a user-writable folder between the two, and this is the last look before
+    // it replaces the application.
+    QFile file(QString::fromStdString(pending->file));
+    if (!file.open(QIODevice::ReadOnly)) return refuse("The downloaded update is missing.");
+    if (file.size() != pending->size) return refuse("The downloaded update is the wrong size.");
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    if (!hash.addData(&file)) return refuse("The downloaded update could not be read.");
+    file.close();
+    if (hash.result().toHex().toStdString() != pending->sha256) {
+        return refuse("The downloaded update does not match its checksum.");
+    }
+
+    // The helper ships inside the install, which is exactly what it replaces,
+    // so it runs from a copy.
+    const QString app_dir = QCoreApplication::applicationDirPath();
+#ifdef Q_OS_MACOS
+    const QString helper_src = QDir(app_dir).filePath("../Resources/cpapdash-update.sh");
+    const QString install = QDir(app_dir + "/../..").absolutePath();   // CpapDash.app
+    const QString suffix = ".sh";
+#else
+    const QString helper_src = QDir(app_dir).filePath("cpapdash-update.ps1");
+    const QString install = QDir(app_dir).absolutePath();
+    const QString suffix = ".ps1";
+#endif
+    const QString helper = QDir::temp().filePath(
+        QStringLiteral("cpapdash-update-%1%2").arg(QDateTime::currentSecsSinceEpoch()).arg(suffix));
+    QFile::remove(helper);
+    if (!QFile::copy(helper_src, helper)) {
+        return refuse("The update helper is missing from this installation.");
+    }
+
+    HelperParams params;
+    params.platform = pending->platform;
+    params.helper = QDir::toNativeSeparators(helper).toStdString();
+    params.pending = QDir::toNativeSeparators(pending_path).toStdString();
+    params.install = QDir::toNativeSeparators(install).toStdString();
+    params.data_dir = QDir::toNativeSeparators(dataDir()).toStdString();
+    params.supervisor_pid = QCoreApplication::applicationPid();
+    params.port = configuredPort();
+    const auto launch = helperLaunch(params);
+    if (launch.program.empty()) return refuse("This platform has no update helper.");
+
+    QStringList args;
+    for (const auto& a : launch.args) args << QString::fromStdString(a);
+    if (!QProcess::startDetached(QString::fromStdString(launch.program), args)) {
+        return refuse("The update helper could not be started.");
+    }
+
+    setStatusText(QStringLiteral("Status: updating to %1").arg(QString::fromStdString(pending->version)));
+    tray_->showMessage("Updating CpapDash",
+                       QStringLiteral("Installing %1. CpapDash will be back in a moment.")
+                           .arg(QString::fromStdString(pending->version)),
+                       QSystemTrayIcon::Information, 5000);
+    // Give the message a moment on screen, then leave: the helper waits for
+    // this process to be gone before it touches anything.
+    QTimer::singleShot(1500, qApp, &QCoreApplication::quit);
 }
 
 QString TrayShell::baseUrl() const {

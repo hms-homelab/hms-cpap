@@ -28,6 +28,7 @@ public:
     ADD_METHOD_TO(CpapController::removedNights, "/api/removed-nights",     drogon::Get);
     ADD_METHOD_TO(CpapController::updateStatus,  "/api/update",             drogon::Get);
     ADD_METHOD_TO(CpapController::updateCheck,   "/api/update/check",       drogon::Post);
+    ADD_METHOD_TO(CpapController::updateApply,   "/api/update/apply",       drogon::Post);
     ADD_METHOD_TO(CpapController::dailySummary,  "/api/daily-summary",      drogon::Get);
     ADD_METHOD_TO(CpapController::trend,         "/api/trends/{metric}",    drogon::Get);
     ADD_METHOD_TO(CpapController::statistics,    "/api/statistics",         drogon::Get);
@@ -264,6 +265,11 @@ public:
     /// SDD-041 D2: "check now". Asks GitHub and answers with the result.
     void updateCheck(const drogon::HttpRequestPtr& req,
                      std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+    /// SDD-041 D1: the one click. {"now": true} skips the wait for an idle
+    /// collector. 202 once started (follow it on GET /api/update), 409 with the
+    /// reason when refused.
+    void updateApply(const drogon::HttpRequestPtr& req,
+                     std::function<void(const drogon::HttpResponsePtr&)>&& cb);
     void oximetryCollect(const drogon::HttpRequestPtr& req,
                          std::function<void(const drogon::HttpResponsePtr&)>&& cb);
     void uploadOximetryCsv(const drogon::HttpRequestPtr& req,
@@ -319,6 +325,10 @@ public:
     static std::function<void(const std::string&)> night_restore_;
     // SDD-036: the removed nights as YYYY-MM-DD, newest first.
     static std::function<std::vector<std::string>()> removed_nights_;
+    // Shut down in order and make main return this code. A supervised restart
+    // (0) must not std::exit from a worker thread: that tore Drogon down under
+    // its own loop and died with 139, so the supervisor never restarted it.
+    static std::function<void(int)> shutdown_with_code_;
 
 private:
     static std::shared_ptr<QueryService>          qs_;

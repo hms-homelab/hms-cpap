@@ -288,6 +288,11 @@ export class CpapApiService {
     return this.http.post<UpdateStatus>('/api/update/check', {});
   }
 
+  /** SDD-041 D1: the one click. 202 once started; 409 with the reason when refused. */
+  applyUpdate(now: boolean): Observable<UpdateStatus> {
+    return this.http.post<UpdateStatus>('/api/update/apply', { now });
+  }
+
   collectOximetry(): Observable<any> {
     return this.http.post<any>('/api/oximetry/collect', {});
   }
@@ -409,6 +414,17 @@ export interface UpdateStatus {
   release_url: string;
   error: string;
   assets: { platform: string; kind: string; name: string; size: number }[];
+  /** An update is available AND this install can apply it. */
+  can_apply: boolean;
+  /** supervisor, systemd, or '' when nothing here installs updates. */
+  installer: string;
+  applying: boolean;
+  /** downloading, verifying, handing_off; '' when idle. */
+  apply_step: string;
+  auto_update: boolean;
+  /** sqlite, postgresql, mysql: D6 says who owns a data rollback. */
+  database: string;
+  last_result: { present: boolean; ok: boolean; version: string; step: string; message: string; at: string };
 }
 
 export interface LogTail {

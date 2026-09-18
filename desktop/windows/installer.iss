@@ -54,6 +54,8 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription:
 ; itself with no configuration.
 Source: "..\..\dist-windows\CpapDashDesktop.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\dist-windows\hms_cpap.exe";        DestDir: "{app}"; Flags: ignoreversion
+; SDD-041 D9: the helper the tray copies to %TEMP% and runs to install an update.
+Source: "..\..\packaging\update\cpapdash-update.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\dist-windows\*.dll";               DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "..\..\dist-windows\config.example.json";  DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "..\..\dist-windows\static\*";            DestDir: "{app}\static"; Flags: ignoreversion recursesubdirs createallsubdirs

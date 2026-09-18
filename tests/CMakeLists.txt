@@ -92,6 +92,7 @@ set(TEST_SOURCES
     # the test binary.
     desktop/test_PreflightReport.cpp
     desktop/test_ConfigGate.cpp
+    desktop/test_PendingUpdate.cpp
 
     utils/test_FailureLogThrottle.cpp
     clients/test_EzShareClient.cpp
@@ -170,6 +171,7 @@ set(SUPERVISOR_PURE_SOURCES
     ${CMAKE_SOURCE_DIR}/desktop/qt/core/pure/ConfigModel.cpp
     ${CMAKE_SOURCE_DIR}/desktop/qt/core/pure/FieldSpec.cpp
     ${CMAKE_SOURCE_DIR}/desktop/qt/core/pure/ConfigGate.cpp
+    ${CMAKE_SOURCE_DIR}/desktop/qt/core/pure/PendingUpdate.cpp
 )
 
 # Create test executable

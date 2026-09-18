@@ -990,7 +990,10 @@ jobs:
           cp armhf-rootfs/usr/local/bin/hms_cpap release/
           cp -R armhf-rootfs/home/cpap/static/browser/. release/static/browser/
           cp packaging/pi/install.sh packaging/pi/hms-cpap.service packaging/pi/README.txt release/
-          chmod +x release/install.sh release/hms_cpap
+          # SDD-041 D10: the root side of Apply in the web UI.
+          cp packaging/pi/apply-update.sh packaging/pi/hms-cpap-update.path \
+             packaging/pi/hms-cpap-update.service release/
+          chmod +x release/install.sh release/hms_cpap release/apply-update.sh
           file release/hms_cpap
           file release/hms_cpap | grep -q 'ELF 32-bit LSB.*ARM, EABI5' \
             || { echo "hms_cpap is not a 32-bit ARM executable"; exit 1; }

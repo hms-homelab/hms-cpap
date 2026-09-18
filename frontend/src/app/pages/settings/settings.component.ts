@@ -5,6 +5,7 @@ import { TranslatePipe, TranslateService } from '@ngx-translate/core';
 import { Subject, Subscription, timer } from 'rxjs';
 import { switchMap, takeUntil, takeWhile, tap } from 'rxjs/operators';
 import { CpapApiService, UpdateStatus } from '../../services/cpap-api.service';
+import { UpdateFlowService } from '../../services/update-flow.service';
 import { AppConfig } from '../../models/config.model';
 
 @Component({
@@ -811,9 +812,57 @@ import { AppConfig } from '../../models/config.model';
               <p class="hint" *ngIf="update.checked_at">
                 {{ 'settings.updates.checkedAt' | translate:{ when: (update.checked_at | date:'medium') } }}
               </p>
-              <button type="button" class="btn-train" (click)="checkForUpdate()" [disabled]="updateChecking">
-                {{ (updateChecking ? 'settings.updates.checking' : 'settings.updates.checkNow') | translate }}
-              </button>
+
+              <!-- The last install attempt, as its helper reported it. -->
+              <p class="section-desc" *ngIf="update.last_result?.present && update.last_result.ok">
+                {{ 'settings.updates.lastOk' | translate:{ version: update.last_result.version,
+                   when: (update.last_result.at | date:'medium') } }}
+              </p>
+              <p class="hint warn" *ngIf="update.last_result?.present && !update.last_result.ok">
+                {{ 'settings.updates.lastFailed' | translate:{ version: update.last_result.version,
+                   step: update.last_result.step, message: update.last_result.message } }}
+              </p>
+
+              <!-- D6: who owns a rollback of the data. -->
+              <p class="hint" *ngIf="update.can_apply">
+                {{ (update.database === 'sqlite' ? 'settings.updates.backupSqlite'
+                                                 : 'settings.updates.backupServer')
+                   | translate:{ database: update.database } }}
+              </p>
+              <p class="hint" *ngIf="update.available && !update.installer">
+                {{ 'settings.updates.manual' | translate }}
+              </p>
+
+              <p class="section-desc" *ngIf="updateFlow.phase !== 'idle'">
+                <ng-container [ngSwitch]="updateFlow.phase">
+                  <span *ngSwitchCase="'applying'">{{ ('updateBanner.step.' + (updateFlow.step || 'downloading')) | translate:{ latest: update.latest } }}</span>
+                  <span *ngSwitchCase="'restarting'">{{ 'updateBanner.restarting' | translate:{ latest: update.latest } }}</span>
+                  <span *ngSwitchCase="'busy'">{{ 'updateBanner.busy' | translate }}</span>
+                  <span *ngSwitchCase="'failed'">{{ 'updateBanner.failed' | translate:{ error: updateFlow.error } }}</span>
+                </ng-container>
+              </p>
+
+              <div class="update-actions">
+                <button type="button" class="btn-train" (click)="checkForUpdate()"
+                        [disabled]="updateChecking || updateFlow.phase === 'applying' || updateFlow.phase === 'restarting'">
+                  {{ (updateChecking ? 'settings.updates.checking' : 'settings.updates.checkNow') | translate }}
+                </button>
+                <button type="button" class="btn-train" *ngIf="update.can_apply && updateFlow.phase === 'idle'"
+                        (click)="updateFlow.apply(update)">
+                  {{ 'settings.updates.apply' | translate:{ latest: update.latest } }}
+                </button>
+                <button type="button" class="btn-train" *ngIf="updateFlow.phase === 'busy'"
+                        (click)="updateFlow.apply(update, true)">
+                  {{ 'updateBanner.applyNow' | translate }}
+                </button>
+              </div>
+
+              <!-- D1 opt-in. Saved with the form; off by default. -->
+              <label class="toggle-row" *ngIf="update.installer">
+                <input type="checkbox" [(ngModel)]="config.auto_update" name="auto_update" />
+                {{ 'settings.updates.auto' | translate }}
+              </label>
+              <p class="hint" *ngIf="update.installer">{{ 'settings.updates.autoHint' | translate }}</p>
             </ng-container>
           </div>
         </div>
@@ -1101,6 +1150,7 @@ import { AppConfig } from '../../models/config.model';
       transform-origin: left center;
       transition: transform 0.3s ease;
     }
+    .update-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; margin: 0.25rem 0 0.75rem; }
     .update-notes {
       white-space: pre-wrap; font-family: inherit; color: #bbb; font-size: 0.8rem; background: #16161f;
       border: 1px solid #333; border-radius: 6px; padding: 0.6rem 0.75rem;
@@ -1308,7 +1358,8 @@ export class SettingsComponent implements OnInit, OnDestroy {
     ['device_id', 'settings.restart.key.deviceId'],
   ];
 
-  constructor(private api: CpapApiService, private t: TranslateService) {}
+  constructor(private api: CpapApiService, private t: TranslateService,
+              public updateFlow: UpdateFlowService) {}
 
   ngOnDestroy(): void {
     this.destroy$.next();

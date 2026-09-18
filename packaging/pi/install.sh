@@ -93,7 +93,25 @@ chown -R "$SERVICE_USER:" "$SERVICE_HOME/static"
 sed -e "s|__USER__|$SERVICE_USER|g" -e "s|__HOME__|$SERVICE_HOME|g" \
     "$HERE/hms-cpap.service" > "$UNIT_DST"
 chmod 644 "$UNIT_DST"
+
+# SDD-041 D10: Apply in the web UI drops a request file; this path unit hands it
+# to a root oneshot that fetches and verifies the release itself. Optional in an
+# older zip, so an upgrade from one still installs.
+if [ -f "$HERE/apply-update.sh" ] && [ -f "$HERE/hms-cpap-update.path" ]; then
+    install -d -m 755 /usr/local/lib/hms-cpap
+    install -m 755 -o root -g root "$HERE/apply-update.sh" /usr/local/lib/hms-cpap/apply-update.sh
+    for unit in hms-cpap-update.path hms-cpap-update.service; do
+        sed -e "s|__USER__|$SERVICE_USER|g" -e "s|__HOME__|$SERVICE_HOME|g" \
+            "$HERE/$unit" > "/etc/systemd/system/$unit"
+        chmod 644 "/etc/systemd/system/$unit"
+    done
+    UPDATE_UNITS=1
+fi
 systemctl daemon-reload
+if [ "${UPDATE_UNITS:-0}" = 1 ]; then
+    systemctl enable --now hms-cpap-update.path
+    echo "Enabled updates from the web UI"
+fi
 
 # ── 5. Start, or restart if it was already running ───────────────────────────
 if systemctl is-enabled --quiet hms-cpap 2>/dev/null; then

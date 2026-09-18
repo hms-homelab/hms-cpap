@@ -82,6 +82,17 @@ public:
     /// Set live config pointer for hot-reload only (does NOT reinit subsystems)
     void setAppConfig(AppConfig* cfg) { app_config_ = cfg; }
 
+    /// SDD-041 §3.5: did any session data arrive within [window]? True through
+    /// a night being recorded and through a first import, which is exactly when
+    /// an update must not swap the program out.
+    bool dataArrivedWithin(std::chrono::steady_clock::duration window) const {
+        const auto at = last_data_at_.load();
+        if (at == 0) return false;
+        const auto last = std::chrono::steady_clock::time_point(
+            std::chrono::steady_clock::duration(at));
+        return std::chrono::steady_clock::now() - last < window;
+    }
+
     /// Signal that config changed (called from controller thread, safe)
     void markConfigDirty() { config_dirty_ = true; }
 
@@ -717,6 +728,8 @@ private:
     // ── Hot-reload ──────────────────────────────────────────────────────
     AppConfig* app_config_ = nullptr;
     std::atomic<bool> config_dirty_{false};
+    /// steady_clock ticks of the last cycle that stored session data; 0 = none yet.
+    std::atomic<std::chrono::steady_clock::rep> last_data_at_{0};
 
     struct ConfigSnapshot {
         std::string source, ezshare_url, local_dir, archive_dir;

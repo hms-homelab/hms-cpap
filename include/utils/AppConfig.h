@@ -105,6 +105,10 @@ struct AppConfig {
     }
     std::string ezshare_url = "http://192.168.4.1";
     bool ezshare_range = true;
+    /// SDD-041 D1: apply a newer release without asking, once the collector is
+    /// idle. Off by default: a therapy data collector should not change under
+    /// its owner unasked. The check itself always runs.
+    bool auto_update = false;
     /// SDD-010: the SD card ROOT when source=="local", the folder holding BOTH
     /// STR.edf and DATALOG, never DATALOG itself. Sessions are read from
     /// <local_dir>/DATALOG/<YYYYMMDD>/ and STR.edf is resolved at <local_dir>
@@ -559,6 +563,7 @@ struct AppConfig {
             }
             if (j.contains("ezshare_url"))    config.ezshare_url = j["ezshare_url"];
             if (j.contains("ezshare_range")) config.ezshare_range = j["ezshare_range"];
+            if (j.contains("auto_update"))   config.auto_update = j["auto_update"];
             if (j.contains("local_dir"))     config.local_dir = j["local_dir"];
             if (j.contains("archive_dir"))   config.archive_dir = j["archive_dir"];
             if (j.contains("burst_interval")) config.burst_interval = j["burst_interval"];
@@ -709,6 +714,7 @@ struct AppConfig {
             j["source"] = legacySource();
             j["ezshare_url"] = ezshare_url;
             j["ezshare_range"] = ezshare_range;
+            j["auto_update"] = auto_update;
             j["local_dir"] = local_dir;
             j["archive_dir"] = archive_dir;
             j["burst_interval"] = burst_interval;
@@ -833,6 +839,7 @@ struct AppConfig {
         j["source"] = legacySource();   // SDD-022 rule 3, one release only
         j["ezshare_url"] = ezshare_url;
         j["ezshare_range"] = ezshare_range;
+        j["auto_update"] = auto_update;
         j["local_dir"] = local_dir;
         j["archive_dir"] = archive_dir;
         j["burst_interval"] = burst_interval;

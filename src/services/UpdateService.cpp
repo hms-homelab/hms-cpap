@@ -2,12 +2,15 @@
 
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
+#include <openssl/evp.h>
 #include <spdlog/spdlog.h>
+#include <sqlite3.h>
 
 #include <cctype>
 #include <cstdlib>
 #include <ctime>
 #include <filesystem>
+#include <fstream>
 #include <sstream>
 
 using json = nlohmann::json;
@@ -122,6 +125,98 @@ std::vector<UpdateAsset> assetsForPlatform(const std::string& manifest_json,
     return out;
 }
 
+Handoff handoffMode() {
+    // The Pi's unit sets this; install.sh is what installs the root side. It
+    // is checked FIRST because that unit also sets HMS_CPAP_SUPERVISED=1 (so
+    // systemd brings the service back after a settings restart). Read the
+    // other way round, a Pi would exit 42 for a helper that does not exist,
+    // systemd would restart it, and it would download again, for ever.
+    if (const char* u = std::getenv("HMS_CPAP_UPDATER"); u && std::string(u) == "systemd") {
+        return Handoff::Systemd;
+    }
+    // The desktop supervisor sets this for its child (desktop/qt ChildProcess),
+    // and only it can run the helper that outlives it.
+    if (const char* s = std::getenv("HMS_CPAP_SUPERVISED"); s && std::string(s) == "1") {
+        return Handoff::Supervisor;
+    }
+    return Handoff::None;
+}
+
+std::string assetKindFor(Handoff handoff, const std::string& platform) {
+    if (handoff == Handoff::Supervisor) {
+        if (platform == "macos-arm64") return "dmg";
+        if (platform == "windows-x64") return "installer";
+    }
+    if (handoff == Handoff::Systemd && platform == "linux-armhf") return "zip";
+    return "";
+}
+
+std::string sha256File(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return "";
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    if (!ctx) return "";
+    EVP_DigestInit_ex(ctx, EVP_sha256(), nullptr);
+    std::vector<char> buf(1 << 16);
+    while (in) {
+        in.read(buf.data(), static_cast<std::streamsize>(buf.size()));
+        if (in.gcount() > 0) EVP_DigestUpdate(ctx, buf.data(), static_cast<size_t>(in.gcount()));
+    }
+    unsigned char digest[EVP_MAX_MD_SIZE];
+    unsigned int len = 0;
+    EVP_DigestFinal_ex(ctx, digest, &len);
+    EVP_MD_CTX_free(ctx);
+    static const char* hex = "0123456789abcdef";
+    std::string out;
+    out.reserve(len * 2);
+    for (unsigned int i = 0; i < len; ++i) {
+        out += hex[digest[i] >> 4];
+        out += hex[digest[i] & 0xf];
+    }
+    return out;
+}
+
+UpdateResult readResult(const std::string& path) {
+    UpdateResult r;
+    std::ifstream in(path);
+    if (!in) return r;
+    std::stringstream ss;
+    ss << in.rdbuf();
+    json j = json::parse(ss.str(), nullptr, false);
+    if (j.is_discarded() || !j.is_object()) return r;
+    r.present = true;
+    r.ok = j.value("ok", false);
+    r.version = j.value("version", "");
+    r.step = j.value("step", "");
+    r.message = j.value("message", "");
+    r.at = j.value("at", "");
+    return r;
+}
+
+std::string backupSqlite(const std::string& src, const std::string& dest) {
+    std::error_code ec;
+    if (!std::filesystem::exists(src, ec)) return "no database at " + src;
+    std::filesystem::remove(dest, ec);   // VACUUM INTO refuses an existing file
+    sqlite3* db = nullptr;
+    if (sqlite3_open_v2(src.c_str(), &db, SQLITE_OPEN_READONLY, nullptr) != SQLITE_OK) {
+        std::string why = db ? sqlite3_errmsg(db) : "cannot open";
+        sqlite3_close(db);
+        return why;
+    }
+    sqlite3_busy_timeout(db, 10000);
+    sqlite3_stmt* stmt = nullptr;
+    std::string why;
+    if (sqlite3_prepare_v2(db, "VACUUM INTO ?", -1, &stmt, nullptr) != SQLITE_OK) {
+        why = sqlite3_errmsg(db);
+    } else {
+        sqlite3_bind_text(stmt, 1, dest.c_str(), -1, SQLITE_TRANSIENT);
+        if (sqlite3_step(stmt) != SQLITE_DONE) why = sqlite3_errmsg(db);
+    }
+    sqlite3_finalize(stmt);
+    sqlite3_close(db);
+    return why;
+}
+
 }  // namespace update
 
 namespace {
@@ -171,6 +266,36 @@ UpdateService::HttpResult curlGet(const std::string& url, const std::string& if_
     return r;
 }
 
+size_t writeFile(char* ptr, size_t size, size_t nmemb, void* userdata) {
+    auto* out = static_cast<std::ofstream*>(userdata);
+    out->write(ptr, static_cast<std::streamsize>(size * nmemb));
+    return out->good() ? size * nmemb : 0;
+}
+
+bool curlDownload(const std::string& url, const std::string& path) {
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (!out) return false;
+    CURL* c = curl_easy_init();
+    if (!c) return false;
+    struct curl_slist* h = curl_slist_append(nullptr, "User-Agent: hms-cpap-updater");
+    curl_easy_setopt(c, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(c, CURLOPT_HTTPHEADER, h);
+    curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1L);   // GitHub hands assets to a CDN
+    curl_easy_setopt(c, CURLOPT_FAILONERROR, 1L);      // a 404 page is not the file
+    curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, writeFile);
+    curl_easy_setopt(c, CURLOPT_WRITEDATA, &out);
+    curl_easy_setopt(c, CURLOPT_CONNECTTIMEOUT, 30L);
+    // No total timeout: a slow line may take minutes for the DMG. Abort only
+    // when it stalls, below 1 KB/s for a minute.
+    curl_easy_setopt(c, CURLOPT_LOW_SPEED_LIMIT, 1024L);
+    curl_easy_setopt(c, CURLOPT_LOW_SPEED_TIME, 60L);
+    const bool ok = curl_easy_perform(c) == CURLE_OK;
+    curl_slist_free_all(h);
+    curl_easy_cleanup(c);
+    out.close();
+    return ok && out.good();
+}
+
 std::string nowIsoUtc() {
     std::time_t t = std::time(nullptr);
     std::tm tm{};
@@ -188,12 +313,54 @@ std::string nowIsoUtc() {
 
 UpdateService::UpdateService(std::string current_version, std::string repo, HttpGet http)
     : current_(std::move(current_version)), repo_(std::move(repo)),
-      http_(http ? std::move(http) : HttpGet(curlGet)) {
+      http_(http ? std::move(http) : HttpGet(curlGet)),
+      handoff_(update::handoffMode()), platform_(update::platformKey()) {
     status_.current = current_;
     status_.containerised = update::isContainerised();
+    hooks_.download = curlDownload;
+    hooks_.exit = [](int code) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(750));
+        std::exit(code);
+    };
 }
 
-UpdateService::~UpdateService() { stop(); }
+UpdateService::~UpdateService() {
+    stop();
+    waitForApply();
+}
+
+void UpdateService::setDataDir(const std::string& dir) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    data_dir_ = dir;
+    status_.last_result = update::readResult(updateDir() + "/result.json");
+    const auto& r = status_.last_result;
+    if (r.present && !r.ok) {
+        spdlog::warn("Updates: the last update to {} failed at {}: {}", r.version, r.step, r.message);
+    } else if (r.present && r.ok && r.version == current_) {
+        spdlog::info("Updates: now running {}, installed by the updater", current_);
+    }
+}
+
+void UpdateService::setHooks(Hooks hooks) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!hooks.download) hooks.download = hooks_.download;
+    if (!hooks.exit) hooks.exit = hooks_.exit;
+    hooks_ = std::move(hooks);
+}
+
+void UpdateService::setHandoff(update::Handoff h) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    handoff_ = h;
+}
+
+void UpdateService::setPlatform(const std::string& platform) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    platform_ = platform;
+}
+
+std::string UpdateService::updateDir() const {
+    return (std::filesystem::path(data_dir_) / "update").string();
+}
 
 void UpdateService::start() {
     if (running_.exchange(true)) return;
@@ -214,14 +381,148 @@ void UpdateService::stop() {
 
 UpdateStatus UpdateService::status() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    return status_;
+    UpdateStatus s = status_;
+    // Derived on every read so a Settings change or a finished check shows at once.
+    s.auto_update = hooks_.auto_update ? hooks_.auto_update() : false;
+    s.database = hooks_.database ? hooks_.database() : "";
+    const std::string kind = update::assetKindFor(handoff_, platform_);
+    bool has_kind = false;
+    for (const auto& a : s.assets) has_kind = has_kind || a.kind == kind;
+    s.can_apply = s.available && !s.containerised && !kind.empty() && has_kind;
+    s.installer = (s.containerised || kind.empty()) ? ""
+                : handoff_ == update::Handoff::Systemd ? "systemd" : "supervisor";
+    return s;
 }
 
-UpdateStatus UpdateService::checkNow() {
+UpdateService::ApplyRefusal UpdateService::apply(bool now) {
+    UpdateStatus snapshot = status();
+    if (!snapshot.available) return ApplyRefusal::NotAvailable;
+    if (!snapshot.can_apply) return ApplyRefusal::NoInstaller;
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        if (status_.containerised) return status_;
+        if (status_.applying) return ApplyRefusal::AlreadyApplying;
+        // §3.5: not while a night is still arriving, unless the user said now.
+        if (!now && hooks_.busy && hooks_.busy()) return ApplyRefusal::Busy;
+        status_.applying = true;
+        status_.apply_step = "downloading";
+        status_.error.clear();
     }
+    if (apply_thread_.joinable()) apply_thread_.join();
+    apply_thread_ = std::thread([this, snapshot] { runApply(snapshot); });
+    return ApplyRefusal::None;
+}
+
+void UpdateService::waitForApply() {
+    if (apply_thread_.joinable()) apply_thread_.join();
+}
+
+void UpdateService::failApply(const std::string& why) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    spdlog::warn("Updates: not applied: {}", why);
+    status_.applying = false;
+    status_.apply_step.clear();
+    status_.error = why;
+}
+
+void UpdateService::runApply(UpdateStatus snapshot) {
+    namespace fs = std::filesystem;
+    Hooks hooks;
+    update::Handoff handoff;
+    std::string dir, platform;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        hooks = hooks_;
+        handoff = handoff_;
+        platform = platform_;
+        dir = updateDir();
+    }
+    std::error_code ec;
+    fs::create_directories(dir, ec);
+    if (ec) return failApply("cannot create " + dir + ": " + ec.message());
+
+    const std::string kind = update::assetKindFor(handoff, platform);
+    const UpdateAsset* asset = nullptr;
+    for (const auto& a : snapshot.assets) if (a.kind == kind) asset = &a;
+    if (!asset) return failApply("the release has no " + kind + " for this platform");
+
+    if (handoff == update::Handoff::Systemd) {
+        // D10: root fetches and verifies the release itself; all this side
+        // says is which version. The backup still happens here, as the user
+        // who owns the database.
+        if (hooks.backup) {
+            const std::string why = hooks.backup(dir);
+            if (!why.empty()) return failApply("database backup failed: " + why);
+        }
+        std::ofstream req(dir + "/request", std::ios::trunc);
+        req << snapshot.latest << "\n";
+        req.close();
+        if (!req) return failApply("cannot write " + dir + "/request");
+        std::lock_guard<std::mutex> lock(mutex_);
+        status_.apply_step = "handing_off";
+        spdlog::info("Updates: asked systemd to install {}", snapshot.latest);
+        return;   // the root unit stops this service; nothing more to do here
+    }
+
+    // Supervisor: download, prove it, stage it, leave.
+    const std::string final_path = dir + "/" + asset->name;
+    const std::string part = final_path + ".part";
+    fs::remove(part, ec);
+    spdlog::info("Updates: downloading {} for {}", asset->name, snapshot.latest);
+    if (!hooks.download(asset->url, part)) {
+        fs::remove(part, ec);
+        return failApply("download of " + asset->name + " failed");
+    }
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        status_.apply_step = "verifying";
+    }
+    const auto size = static_cast<long long>(fs::file_size(part, ec));
+    if (ec || size != asset->size) {
+        fs::remove(part, ec);
+        return failApply(asset->name + " is " + std::to_string(size) + " bytes, the manifest says " +
+                         std::to_string(asset->size));
+    }
+    const std::string sha = update::sha256File(part);
+    if (sha != asset->sha256) {
+        fs::remove(part, ec);
+        return failApply(asset->name + " does not match the manifest's SHA-256");
+    }
+    fs::rename(part, final_path, ec);
+    if (ec) return failApply("cannot stage " + final_path + ": " + ec.message());
+
+    if (hooks.backup) {
+        const std::string why = hooks.backup(dir);
+        if (!why.empty()) return failApply("database backup failed: " + why);
+    }
+
+    json pending = {
+        {"version", snapshot.latest},
+        {"from", current_},
+        {"file", fs::absolute(final_path).string()},
+        {"name", asset->name},
+        {"kind", asset->kind},
+        {"platform", asset->platform},
+        {"sha256", asset->sha256},
+        {"size", asset->size},
+    };
+    std::ofstream out(dir + "/pending.json", std::ios::trunc);
+    out << pending.dump(2);
+    out.close();
+    if (!out) return failApply("cannot write " + dir + "/pending.json");
+
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        status_.apply_step = "handing_off";
+    }
+    spdlog::info("Updates: {} verified and staged; handing over to the supervisor", snapshot.latest);
+    hooks.exit(kExitApplyUpdate);
+}
+
+// Every return goes through status(), so "check now" answers with the same
+// derived fields (can_apply, installer, database) as GET /api/update. The raw
+// status_ lacks them, and returning it hid the Apply button until a reload.
+UpdateStatus UpdateService::checkNow() {
+    if (const auto s = status(); s.containerised) return s;
 
     std::string etag;
     {
@@ -247,13 +548,15 @@ UpdateStatus UpdateService::checkNow() {
     }
 
     auto fail = [&](const std::string& why) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        // One quiet line, and the last good answer stands: a network blip is
-        // not a reason to take a banner away or to put one up.
-        if (status_.error != why) spdlog::warn("Updates: check failed: {}", why);
-        status_.error = why;
-        status_.checked_at = nowIsoUtc();
-        return status_;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            // One quiet line, and the last good answer stands: a network blip
+            // is not a reason to take a banner away or to put one up.
+            if (status_.error != why) spdlog::warn("Updates: check failed: {}", why);
+            status_.error = why;
+            status_.checked_at = nowIsoUtc();
+        }
+        return status();
     };
 
     if (release_body.empty()) {
@@ -285,20 +588,34 @@ UpdateStatus UpdateService::checkNow() {
             if (man.status != 200) {
                 return fail("manifest.json answered " + std::to_string(man.status));
             }
-            next.assets = update::assetsForPlatform(man.body, update::platformKey(),
+            std::string platform;
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                platform = platform_;
+            }
+            next.assets = update::assetsForPlatform(man.body, platform,
                                                     info.download_urls);
             next.available = !next.assets.empty();
         }
     }
 
-    std::lock_guard<std::mutex> lock(mutex_);
-    if (next.available && (!status_.available || status_.latest != next.latest)) {
-        spdlog::info("Updates: {} is available (running {})", next.latest, current_);
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (next.available && (!status_.available || status_.latest != next.latest)) {
+            spdlog::info("Updates: {} is available (running {})", next.latest, current_);
+        }
+        etag_ = new_etag;
+        last_release_body_ = release_body;
+        // A check does not undo what it did not do: an apply in flight, the
+        // last install's result and the container verdict all carry over.
+        next.containerised = status_.containerised;
+        next.applying = status_.applying;
+        next.apply_step = status_.apply_step;
+        next.last_result = status_.last_result;
+        if (status_.applying && next.error.empty()) next.error = status_.error;
+        status_ = next;
     }
-    etag_ = new_etag;
-    last_release_body_ = release_body;
-    status_ = next;
-    return status_;
+    return status();
 }
 
 void UpdateService::runLoop() {
@@ -311,7 +628,17 @@ void UpdateService::runLoop() {
         }
         if (!running_) break;
         try {
-            checkNow();
+            const auto s = checkNow();
+            // D1 opt-in: apply by itself, but only when idle (§3.5). A busy
+            // collector means try again in half an hour, not tomorrow.
+            if (s.available && hooks_.auto_update && hooks_.auto_update()) {
+                const auto refusal = apply(false);
+                if (refusal == ApplyRefusal::Busy) {
+                    spdlog::info("Updates: {} waits for the collector to go idle", s.latest);
+                    next = std::chrono::steady_clock::now() + std::chrono::minutes(30);
+                    continue;
+                }
+            }
         } catch (const std::exception& e) {
             spdlog::warn("Updates: check threw: {}", e.what());
         }

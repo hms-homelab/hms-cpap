@@ -1,0 +1,12 @@
+[Unit]
+Description=CpapDash update requests (SDD-041)
+
+# The service writes this file, as its own user, when Apply is pressed. Only its
+# EXISTENCE and the version inside are used: hms-cpap-update.service fetches and
+# verifies the release itself.
+[Path]
+PathExists=__HOME__/.hms-cpap/update/request
+Unit=hms-cpap-update.service
+
+[Install]
+WantedBy=multi-user.target

@@ -8,6 +8,8 @@ Type=simple
 User=__USER__
 Environment=HOME=__HOME__
 Environment=HMS_CPAP_SUPERVISED=1
+# SDD-041 D10: updates go through hms-cpap-update.path, not a desktop helper.
+Environment=HMS_CPAP_UPDATER=systemd
 WorkingDirectory=__HOME__
 ExecStart=/usr/local/bin/hms_cpap
 Restart=always

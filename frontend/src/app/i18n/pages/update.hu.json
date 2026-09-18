@@ -2,7 +2,17 @@
   "updateBanner": {
     "available": "Elérhető a(z) {{latest}} verzió (a telepített: {{current}}).",
     "whatsNew": "Újdonságok",
-    "dismiss": "Bezárás"
+    "dismiss": "Bezárás",
+    "apply": "Frissítés most",
+    "applyNow": "Frissítés mindenképp",
+    "busy": "Egy éjszaka gyűjtése még folyamatban van, ezért a frissítés megvárja, amíg befejeződik.",
+    "restarting": "A(z) {{latest}} telepítése folyamatban. A CpapDash hamarosan újra elérhető.",
+    "failed": "A frissítés nem fejeződött be: {{error}}",
+    "step": {
+      "downloading": "A(z) {{latest}} letöltése...",
+      "verifying": "A letöltés ellenőrzése...",
+      "handing_off": "A(z) {{latest}} telepítése folyamatban. A CpapDash hamarosan újra elérhető."
+    }
   },
   "settings": {
     "updates": {
@@ -17,7 +27,15 @@
       "lastError": "Az utolsó ellenőrzés nem fejeződött be: {{error}}",
       "checkedAt": "Utolsó ellenőrzés: {{when}}",
       "checkNow": "Ellenőrzés most",
-      "checking": "Ellenőrzés..."
+      "checking": "Ellenőrzés...",
+      "apply": "Frissítés erre: {{latest}}",
+      "lastOk": "Frissítve erre: {{version}}, {{when}}.",
+      "lastFailed": "A(z) {{version}} frissítés visszaállítva a(z) {{step}} lépésnél: {{message}}",
+      "backupSqlite": "Az adatbázisáról a frissítés telepítése előtt biztonsági másolat készül.",
+      "backupServer": "A frissítés nem készít másolatot a(z) {{database}} adatbázisáról. Ha egy új verzió módosítja, a változás visszaállítása az Ön feladata.",
+      "manual": "Ez a telepítés nem tudja magától alkalmazni a frissítéseket. Töltse le az új verziót a kiadási oldalról.",
+      "auto": "Frissítések automatikus telepítése",
+      "autoHint": "Csak akkor, ha éppen nem folyik éjszakai adatgyűjtés. Alapból kikapcsolva."
     }
   }
 }

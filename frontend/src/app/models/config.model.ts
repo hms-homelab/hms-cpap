@@ -13,6 +13,8 @@ export interface AppConfig {
   source: string;
   ezshare_url: string;
   ezshare_range: boolean;
+  /** SDD-041 D1: apply a newer release without asking, once idle. Off by default. */
+  auto_update?: boolean;
   local_dir: string;
   /**
    * SDD-012: where collected card files are written. Required by the Mule and

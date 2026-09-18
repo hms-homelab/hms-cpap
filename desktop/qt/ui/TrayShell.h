@@ -51,6 +51,9 @@ private slots:
     void onChildState(ChildProcess::State state);
     void onChildExited(int exit_code, const QString& stderr_tail);
     void pollHealth();
+    /// SDD-041 D9: the service staged a verified update. Check it again, start
+    /// the helper that swaps the install, and quit so it can.
+    void onUpdateRequested();
 
 private:
     void buildMenu();

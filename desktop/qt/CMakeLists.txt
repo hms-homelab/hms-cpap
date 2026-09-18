@@ -56,6 +56,7 @@ qt_add_executable(${SUPERVISOR_TARGET}
     core/pure/ConfigModel.cpp
     core/pure/FieldSpec.cpp
     core/pure/ConfigGate.cpp
+    core/pure/PendingUpdate.cpp
 
     core/qt/PreflightRunner.cpp
     core/qt/ChildProcess.cpp
@@ -157,6 +158,14 @@ if(APPLE)
     set(SUPERVISOR_ICNS "${CMAKE_CURRENT_SOURCE_DIR}/resources/cpapdash.icns")
     target_sources(${SUPERVISOR_TARGET} PRIVATE "${SUPERVISOR_ICNS}")
     set_source_files_properties("${SUPERVISOR_ICNS}" PROPERTIES
+        MACOSX_PACKAGE_LOCATION "Resources")
+
+    # SDD-041 D9: the helper that swaps the whole bundle. It ships INSIDE the
+    # bundle so it is signed and notarised with it, and the supervisor copies it
+    # out to a temp file before running it, since the bundle is what it replaces.
+    set(UPDATE_HELPER "${HMS_CPAP_ROOT}/packaging/update/cpapdash-update.sh")
+    target_sources(${SUPERVISOR_TARGET} PRIVATE "${UPDATE_HELPER}")
+    set_source_files_properties("${UPDATE_HELPER}" PROPERTIES
         MACOSX_PACKAGE_LOCATION "Resources")
 
     # LSUIElement: a menu bar app with no Dock icon and no menu bar of its own.

@@ -1,0 +1,6 @@
+[Unit]
+Description=Install a CpapDash update (SDD-041)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/lib/hms-cpap/apply-update.sh __USER__ __HOME__

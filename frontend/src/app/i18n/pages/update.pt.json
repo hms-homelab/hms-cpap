@@ -2,7 +2,17 @@
   "updateBanner": {
     "available": "A versão {{latest}} está disponível (você usa a {{current}}).",
     "whatsNew": "Novidades",
-    "dismiss": "Fechar"
+    "dismiss": "Fechar",
+    "apply": "Atualizar agora",
+    "applyNow": "Atualizar mesmo assim",
+    "busy": "Uma noite ainda está sendo coletada, então a atualização espera ela terminar.",
+    "restarting": "Instalando a {{latest}}. O CpapDash volta em instantes.",
+    "failed": "A atualização não foi concluída: {{error}}",
+    "step": {
+      "downloading": "Baixando a {{latest}}...",
+      "verifying": "Verificando o download...",
+      "handing_off": "Instalando a {{latest}}. O CpapDash volta em instantes."
+    }
   },
   "settings": {
     "updates": {
@@ -17,7 +27,15 @@
       "lastError": "A última verificação não terminou: {{error}}",
       "checkedAt": "Última verificação: {{when}}",
       "checkNow": "Verificar agora",
-      "checking": "Verificando..."
+      "checking": "Verificando...",
+      "apply": "Atualizar para a {{latest}}",
+      "lastOk": "Atualizado para a {{version}} em {{when}}.",
+      "lastFailed": "A atualização para a {{version}} foi desfeita na etapa {{step}}: {{message}}",
+      "backupSqlite": "O seu banco de dados é copiado antes de a atualização ser instalada.",
+      "backupServer": "A atualização não faz cópia do seu banco de dados {{database}}. Se uma nova versão o alterar, desfazer essa mudança fica por sua conta.",
+      "manual": "Esta instalação não consegue aplicar atualizações sozinha. Baixe a nova versão na página da versão.",
+      "auto": "Instalar atualizações automaticamente",
+      "autoHint": "Só quando nenhuma noite está sendo coletada. Desativado por padrão."
     }
   }
 }

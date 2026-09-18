@@ -42,6 +42,7 @@ std::function<Json::Value(const std::string&)> CpapController::cpap_zip_import_;
 std::function<Json::Value(const std::string&)> CpapController::night_remove_;
 std::function<void(const std::string&)> CpapController::night_restore_;
 std::function<std::vector<std::string>()> CpapController::removed_nights_;
+std::function<void(int)> CpapController::shutdown_with_code_;
 std::function<void(const std::string&)> CpapController::cpap_zip_queue_;
 
 void CpapController::setQueryService(std::shared_ptr<QueryService> qs) { qs_ = qs; }
@@ -399,6 +400,7 @@ void CpapController::updateConfig(const drogon::HttpRequestPtr& req,
     }
     if (j.isMember("ezshare_url")) config_->ezshare_url = j["ezshare_url"].asString();
     if (j.isMember("ezshare_range")) config_->ezshare_range = j["ezshare_range"].asBool();
+    if (j.isMember("auto_update"))   config_->auto_update = j["auto_update"].asBool();
     if (j.isMember("local_dir")) config_->local_dir = j["local_dir"].asString();
     if (j.isMember("burst_interval")) config_->burst_interval = j["burst_interval"].asInt();
     // SDD-012: archive_dir was reachable only through setupApply, so it could be
@@ -615,10 +617,16 @@ void respondAndRestart(std::function<void(const drogon::HttpResponsePtr&)>&& cb,
     // Only AFTER the response has been handed back, and on a detached thread, so
     // the 202 is actually flushed to the browser rather than dying with us.
     const std::string exe = SetupService::executablePath();
-    std::thread([mode, exe]() {
+    auto shutdown = CpapController::shutdown_with_code_;
+    std::thread([mode, exe, shutdown]() {
         std::this_thread::sleep_for(std::chrono::milliseconds(750));
         if (mode == SetupService::RestartMode::SupervisedExit) {
-            std::exit(0);            // the SDD-005 shell respawns us
+            // The supervisor respawns us on a CLEAN exit 0. std::exit from this
+            // thread was not clean: it ran destructors under the live Drogon
+            // loop and died with 139, which the supervisor reads as a crash.
+            if (shutdown) shutdown(0);
+            else std::exit(0);
+            return;
         }
 #ifdef _WIN32
         const char* argv[] = {exe.c_str(), nullptr};
@@ -1726,6 +1734,20 @@ static Json::Value updateJson(const UpdateStatus& s) {
     j["notes"] = s.notes;
     j["release_url"] = s.release_url;
     j["error"] = s.error;
+    j["can_apply"] = s.can_apply;
+    j["installer"] = s.installer;
+    j["applying"] = s.applying;
+    j["apply_step"] = s.apply_step;
+    j["auto_update"] = s.auto_update;
+    j["database"] = s.database;
+    Json::Value last;
+    last["present"] = s.last_result.present;
+    last["ok"] = s.last_result.ok;
+    last["version"] = s.last_result.version;
+    last["step"] = s.last_result.step;
+    last["message"] = s.last_result.message;
+    last["at"] = s.last_result.at;
+    j["last_result"] = last;
     Json::Value assets(Json::arrayValue);
     for (const auto& a : s.assets) {
         Json::Value aj;
@@ -1761,6 +1783,41 @@ void CpapController::updateCheck(const drogon::HttpRequestPtr&,
     auto svc = update_;
     std::thread([svc, cb = std::move(cb)]() { cb(jsonResp(updateJson(svc->checkNow()))); })
         .detach();
+}
+
+void CpapController::updateApply(const drogon::HttpRequestPtr& req,
+                                 std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    if (!update_) {
+        cb(jsonError("Updater not available", drogon::k503ServiceUnavailable));
+        return;
+    }
+    bool now = false;
+    if (auto body = req->getJsonObject(); body && body->isMember("now")) {
+        now = (*body)["now"].asBool();
+    }
+    using R = UpdateService::ApplyRefusal;
+    switch (update_->apply(now)) {
+        case R::None: {
+            auto resp = jsonResp(updateJson(update_->status()));
+            resp->setStatusCode(drogon::k202Accepted);
+            cb(resp);
+            return;
+        }
+        case R::NotAvailable:
+            cb(jsonError("No update is available", drogon::k409Conflict));
+            return;
+        case R::NoInstaller:
+            cb(jsonError("Nothing on this install can apply an update; download it from the release page",
+                         drogon::k409Conflict));
+            return;
+        case R::Busy:
+            cb(jsonError("A night is still being collected. Try again later, or apply now anyway",
+                         drogon::k409Conflict));
+            return;
+        case R::AlreadyApplying:
+            cb(jsonError("An update is already being applied", drogon::k409Conflict));
+            return;
+    }
 }
 
 void CpapController::oximetryCollect(const drogon::HttpRequestPtr&,

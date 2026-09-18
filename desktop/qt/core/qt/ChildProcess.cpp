@@ -1,4 +1,5 @@
 #include "ChildProcess.h"
+#include "PendingUpdate.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -270,6 +271,14 @@ void ChildProcess::onFinished(int exit_code, QProcess::ExitStatus status) {
     if (status == QProcess::NormalExit && exit_code == 0) {
         emit restarting();
         start();
+        return;
+    }
+
+    // SDD-041: the service staged a verified update and stepped aside for it.
+    // Not a failure, and not a restart: whoever listens starts the helper.
+    if (status == QProcess::NormalExit && exit_code == kExitPendingUpdate) {
+        setState(State::Stopped);
+        emit updateRequested();
         return;
     }
 
