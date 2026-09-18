@@ -823,6 +823,7 @@ import { AppConfig } from '../../models/config.model';
           <div class="section-header" (click)="toggle('device')">
             <span class="chevron" [class.open]="open['device']">&#9654;</span>
             {{ 'settings.device.heading' | translate }}
+            <span class="restart-tag">{{ 'settings.tag.restart' | translate }}</span>
           </div>
           <div class="section-body" *ngIf="open['device']">
             <label>
@@ -1302,6 +1303,9 @@ export class SettingsComponent implements OnInit, OnDestroy {
     ['fysetc', 'settings.restart.key.fysetc'],
     ['logging', 'settings.restart.key.logging'],
     ['database', 'settings.restart.key.database'],
+    // SDD-042: the id every night is stored and read under. A live switch moved
+    // the collector alone and left the pages reading the old one (ticket 129).
+    ['device_id', 'settings.restart.key.deviceId'],
   ];
 
   constructor(private api: CpapApiService, private t: TranslateService) {}

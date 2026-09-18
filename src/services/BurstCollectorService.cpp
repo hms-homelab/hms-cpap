@@ -3085,11 +3085,20 @@ void BurstCollectorService::reloadConfig() {
         std::cout << "Config reload: burst_interval -> " << burst_interval_seconds_ << "s" << std::endl;
     }
 
-    // Device identity
-    if (nc.device_id != last_config_.device_id || nc.device_name != last_config_.device_name) {
-        device_id_ = nc.device_id;
+    // Device identity. SDD-042: the id is a KEY, not a label. The web layer,
+    // MQTT discovery, backfill and ML all hold the id they read at startup, so
+    // applying a new one here alone stored nights under an id no page asked for
+    // (ticket 129: 63 nights in the database, an empty sessions list). It waits
+    // for the restart, which gives every holder the new id at once. The name is
+    // only a label and still applies live.
+    if (nc.device_id != last_config_.device_id) {
+        std::cout << "Config reload: device ID " << nc.device_id
+                  << " takes effect after a restart; still collecting as "
+                  << device_id_ << std::endl;
+    }
+    if (nc.device_name != last_config_.device_name) {
         device_name_ = nc.device_name;
-        std::cout << "Config reload: device -> " << device_name_ << " (" << device_id_ << ")" << std::endl;
+        std::cout << "Config reload: device name -> " << device_name_ << std::endl;
     }
 
     // Source / discovery

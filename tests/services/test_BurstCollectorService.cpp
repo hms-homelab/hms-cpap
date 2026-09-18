@@ -3208,6 +3208,30 @@ TEST(BurstConfigReloadTest, ReloadConfig_AppliesAllSubsystemChanges) {
     SUCCEED();
 }
 
+// SDD-042 (ticket 129): a Settings save of the device id must not move the
+// collector alone. The web layer keeps the startup id, so a live switch stored
+// nights under an id no page asked for.
+TEST(BurstConfigReloadTest, ADeviceIdChangeWaitsForARestart) {
+    setenv("CPAP_DEVICE_ID", "cpap_resmed_23243570851", 1);
+    BurstCollectorService svc(300);
+    unsetenv("CPAP_DEVICE_ID");
+
+    AppConfig cfg;
+    cfg.device_id = "cpap_resmed_23243570851";
+    cfg.device_name = "ResMed AirSense 10";
+    svc.setAppConfig(&cfg);   // snapshots the running config
+
+    cfg.device_id = "23203544870";
+    cfg.device_name = "Bedroom AirSense";
+    svc.markConfigDirty();
+    svc.reloadConfigForTest();
+
+    EXPECT_EQ(svc.deviceIdForTest(), "cpap_resmed_23243570851")
+        << "the id changes only when every component reads it again, at restart";
+    EXPECT_EQ(svc.deviceNameForTest(), "Bedroom AirSense")
+        << "the name is a label and still applies live";
+}
+
 // ============================================================================
 // LLM PROMPT FORMATTER TESTS (SDD-002 coverage backfill)
 // buildMetricsString / buildRangeMetricsString are pure string builders over the

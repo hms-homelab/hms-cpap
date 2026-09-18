@@ -270,7 +270,8 @@
         "sleepStage": "los ajustes de fases del sueño",
         "fysetc": "los ajustes de Fysetc",
         "logging": "los ajustes del registro de soporte",
-        "database": "los ajustes de la base de datos"
+        "database": "los ajustes de la base de datos",
+        "deviceId": "el ID del dispositivo"
       }
     }
   }

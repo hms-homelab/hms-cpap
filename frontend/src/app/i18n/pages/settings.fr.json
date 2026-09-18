@@ -270,7 +270,8 @@
         "sleepStage": "les paramètres des stades du sommeil",
         "fysetc": "les paramètres Fysetc",
         "logging": "les paramètres du journal de support",
-        "database": "les paramètres de la base de données"
+        "database": "les paramètres de la base de données",
+        "deviceId": "l'ID de l'appareil"
       }
     }
   }

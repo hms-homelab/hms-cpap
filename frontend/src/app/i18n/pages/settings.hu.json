@@ -270,7 +270,8 @@
         "sleepStage": "az alvásfázis beállításai",
         "fysetc": "a Fysetc beállításai",
         "logging": "a támogatási napló beállításai",
-        "database": "az adatbázis beállításai"
+        "database": "az adatbázis beállításai",
+        "deviceId": "az eszközazonosító"
       }
     }
   }

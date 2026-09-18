@@ -270,7 +270,8 @@
         "sleepStage": "sleep stage settings",
         "fysetc": "Fysetc settings",
         "logging": "support log settings",
-        "database": "database settings"
+        "database": "database settings",
+        "deviceId": "the device ID"
       }
     }
   }
