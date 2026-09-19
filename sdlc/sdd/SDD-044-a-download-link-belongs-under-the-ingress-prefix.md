@@ -1,6 +1,6 @@
 # SDD-044: a download link belongs under the Ingress prefix
 
-**Status:** Accepted 2026-09-19 ("yes please go"). Not yet released.
+**Status:** Shipped in 5.4.1. Accepted 2026-09-19 ("yes please go").
 **Date:** 2026-09-19
 **Repo:** `hms-cpap`. One frontend URL, one SQL helper.
 **Related:** SDD-021 (serving the UI under Home Assistant Ingress), issue #35

@@ -5,6 +5,19 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.4.1] - 2026-09-19
+
+### Fixed
+- **The Download button on a PDF report failed for Home Assistant add-on
+  users** (hms-homelab/hms-cpap#35). The report itself was fine; the link
+  pointed at Home Assistant's own root rather than at CpapDash, so it answered
+  404. It now points where the app is actually served from, and works the same
+  as before for every other install.
+- **A report's two timestamps disagreed by your time zone.** The time a report
+  was requested was written in local time and the time it finished in UTC, so
+  the same instant appeared twice, hours apart. Both are now the machine's own
+  clock, on every database.
+
 ## [5.4.0] - 2026-09-18
 
 The app updates itself (SDD-041). It checks GitHub for a newer release once a
