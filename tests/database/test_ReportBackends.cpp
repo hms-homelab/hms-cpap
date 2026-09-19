@@ -219,6 +219,34 @@ TEST_P(ReportBackend, StatusTransitionToReadySetsCompletedAt) {
         << "completed_at must be set on " << engineName(GetParam());
 }
 
+// Issue #35: the two timestamps on one report row came from different clocks on
+// SQLite, created_at from datetime('now','localtime') and completed_at from
+// datetime('now'), so one instant read twice with the machine's UTC offset
+// between them (22:11 local beside 05:11 UTC). They must agree on every engine.
+TEST_P(ReportBackend, BothTimestampsComeFromTheSameClock) {
+    const int id = insertJob("2026-08-01", "2026-08-07", "r1.pdf");
+    ASSERT_GT(id, 0);
+
+    db().executeQuery(
+        "UPDATE cpap_reports SET status=" + sql::param(1, dt()) +
+        ", error_msg=" + sql::param(2, dt()) + ", completed_at=" + sql::now(dt()) +
+        " WHERE id=" + std::to_string(id),
+        {"ready", ""});
+
+    Json::Value rows = listJobs();
+    ASSERT_EQ(rows.size(), 1u);
+    const std::string created   = rows[0]["created_at"].asString();
+    const std::string completed = rows[0]["completed_at"].asString();
+    ASSERT_GE(created.size(), 16u) << engineName(GetParam()) << ": " << created;
+    ASSERT_GE(completed.size(), 16u) << engineName(GetParam()) << ": " << completed;
+
+    // Same instant, written seconds apart: the date and the hour must match.
+    // Comparing to the minute would flake on a run that straddles one.
+    EXPECT_EQ(created.substr(0, 13), completed.substr(0, 13))
+        << engineName(GetParam()) << ": created_at " << created
+        << " and completed_at " << completed << " are on different clocks";
+}
+
 // The error path writes through the same placeholders.
 TEST_P(ReportBackend, ErrorStatusRoundTrips) {
     const int id = insertJob("2026-08-01", "2026-08-07", "r1.pdf");

@@ -99,11 +99,18 @@ inline std::string currentDateMinus(int days, DbType type) {
 }
 
 // CURRENT_TIMESTAMP
+// The server's own wall clock, the same reading on every engine.
+//
+// CURRENT_TIMESTAMP and NOW() are local to the server; SQLite's datetime('now')
+// is UTC, which made the two timestamps on one report row disagree by the
+// machine's offset (issue #35: created_at 22:11 local beside completed_at 05:11
+// UTC, seven hours apart for the same instant). 'localtime' puts SQLite on the
+// same clock as the other two.
 inline std::string now(DbType type) {
     switch (type) {
         case DbType::POSTGRESQL: return "CURRENT_TIMESTAMP";
         case DbType::MYSQL:      return "NOW()";
-        case DbType::SQLITE:     return "datetime('now')";
+        case DbType::SQLITE:     return "datetime('now','localtime')";
     }
     return "";
 }

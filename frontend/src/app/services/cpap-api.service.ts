@@ -313,8 +313,18 @@ export class CpapApiService {
     return this.http.get<any>(`/api/reports/${id}/status`);
   }
 
+  /**
+   * SDD-021, issue #35: resolved against <base href>, not against the site root.
+   *
+   * This one is used as an <a href>, so it never passes through
+   * apiBaseInterceptor, which only sees Angular HttpClient calls. Under Home
+   * Assistant Ingress the UI is served at /api/hassio_ingress/<token>/, so a
+   * root-absolute '/api/reports/1/download' asked Home Assistant itself and
+   * came back 404 for every add-on user. Outside Ingress document.baseURI is
+   * '<origin>/', so this is the same URL it always was.
+   */
   downloadReportUrl(id: number): string {
-    return `/api/reports/${id}/download`;
+    return new URL(`api/reports/${id}/download`, document.baseURI).toString();
   }
 
   getEquipmentTypes(): Observable<{ types: EquipmentType[] }> {
