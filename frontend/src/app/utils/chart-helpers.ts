@@ -21,7 +21,7 @@ export const EVENT_COLORS: Record<string, string> = {
 };
 
 /** Case-insensitive color lookup ("Obstructive" -> OBSTRUCTIVE). */
-export function eventColor(type: string): string {
+function eventColor(type: string): string {
   if (!type) return '#888';
   return EVENT_COLORS[type]
     || EVENT_COLORS[type.toUpperCase()]

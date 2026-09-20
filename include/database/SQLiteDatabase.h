@@ -253,9 +253,6 @@ private:
     void insertCalculatedMetrics(int64_t session_id,
                                   const std::vector<BreathingSummary>& summaries);
 
-    /// Parse a row from getNightlyMetrics / getMetricsForDateRange into SessionMetrics
-    SessionMetrics parseMetricsRow(sqlite3_stmt* stmt, int col_offset = 0);
-
     /// Parse equipment rows (column order matches the SELECT lists in the .cpp)
     static EquipmentType    parseEquipmentTypeRow(sqlite3_stmt* stmt);
     static EquipmentProfile parseEquipmentProfileRow(sqlite3_stmt* stmt);

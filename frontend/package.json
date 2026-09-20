@@ -6,13 +6,11 @@
     "start": "ng serve",
     "build": "ng build",
     "watch": "ng build --watch --configuration development",
-    "test": "ng test",
     "i18n:gen": "node scripts/build-i18n.mjs",
     "check:narrow": "node scripts/check-narrow.mjs",
     "prebuild": "node scripts/build-i18n.mjs",
     "prestart": "node scripts/build-i18n.mjs",
-    "prewatch": "node scripts/build-i18n.mjs",
-    "pretest": "node scripts/build-i18n.mjs"
+    "prewatch": "node scripts/build-i18n.mjs"
   },
   "private": true,
   "packageManager": "npm@10.9.4",

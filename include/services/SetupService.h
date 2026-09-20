@@ -321,10 +321,6 @@ public:
     /// container runtime is a Linux VM and this binary is not inside it.
     static bool isContainerised();
 
-    /// Whether the wizard should offer to install autostart at all.
-    /// Kept for callers that only need the yes/no.
-    static bool canManageAutostart(bool supervised);
-
     static DbProbe provisionDatabase(const std::string& engine,
                                      const std::string& host, int port,
                                      const std::string& db_name,

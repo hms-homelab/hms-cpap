@@ -1,10 +1,3 @@
-export interface MetricCard {
-  label: string;
-  value: string;
-  unit: string;
-  trend?: 'up' | 'down' | 'stable';
-}
-
 /// SDD-019. Null on a night with none of usage, AHI or leak: that is a night we
 /// know nothing about, which is not the same as a night that scored zero.
 export type SleepIndexBand = 'excellent' | 'good' | 'fair' | 'needs_attention';

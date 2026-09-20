@@ -1,7 +1,7 @@
 import { isGradable, indexLabelKey } from '../../utils/index-kind';
 import { Component, OnInit, OnDestroy, ChangeDetectorRef, HostListener } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { Router, RouterLink } from '@angular/router';
+import { Router } from '@angular/router';
 import { TranslatePipe, TranslateService } from '@ngx-translate/core';
 import { CpapApiService } from '../../services/cpap-api.service';
 import { SessionListItem } from '../../models/session.model';
@@ -10,7 +10,7 @@ import { formatIndex } from '../../utils/format';
 @Component({
   selector: 'app-sessions',
   standalone: true,
-  imports: [CommonModule, RouterLink, TranslatePipe],
+  imports: [CommonModule, TranslatePipe],
   templateUrl: './sessions.component.html',
   styleUrls: ['./sessions.component.css']
 })

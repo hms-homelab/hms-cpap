@@ -9,9 +9,9 @@
  */
 
 /** Matches the backend's canonical lowercase strings. */
-export type CleaningState = 'due' | 'upcoming' | 'disabled';
+type CleaningState = 'due' | 'upcoming' | 'disabled';
 
-export interface CleaningStatus {
+interface CleaningStatus {
   state: CleaningState;
   /** Unix seconds. 0 when the task is disabled. */
   next_due_epoch: number;

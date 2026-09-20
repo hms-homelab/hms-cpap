@@ -16,10 +16,6 @@ static std::array<double, 4> strongObs(int cls) {
     return obs;
 }
 
-static std::array<double, 4> uniformObs() {
-    return {0.25, 0.25, 0.25, 0.25};
-}
-
 TEST(HmmSmootherTest, DefaultTransitionsSumToOne) {
     auto trans = HmmSmoother::defaultTransitions();
 

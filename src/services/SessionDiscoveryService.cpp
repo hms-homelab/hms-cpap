@@ -89,37 +89,6 @@ static std::chrono::system_clock::time_point estimateCheckpointEnd(
     return end;
 }
 
-std::string SessionDiscoveryService::findLargestFile(
-    const std::vector<EzShareFileEntry>& files,
-    const std::string& prefix,
-    const std::string& suffix) {
-
-    std::string largest_filename;
-    int largest_size = 0;
-
-    for (const auto& file : files) {
-        std::string file_prefix = extractSessionPrefix(file.name);
-        if (file_prefix != prefix) continue;
-
-        // Case-insensitive suffix match
-        std::string name_lower = file.name;
-        std::transform(name_lower.begin(), name_lower.end(),
-                      name_lower.begin(), ::tolower);
-        std::string suffix_lower = suffix;
-        std::transform(suffix_lower.begin(), suffix_lower.end(),
-                      suffix_lower.begin(), ::tolower);
-
-        if (name_lower.find(suffix_lower) != std::string::npos) {
-            if (file.size_kb > largest_size) {
-                largest_size = file.size_kb;
-                largest_filename = file.name;
-            }
-        }
-    }
-
-    return largest_filename;
-}
-
 std::vector<SessionFileSet>
 SessionDiscoveryService::groupSessionsInFolder(const std::string& date_folder) {
     auto files = data_source_.listFiles(date_folder);
@@ -364,7 +333,12 @@ SessionDiscoveryService::discoverNewSessions(
     std::optional<std::chrono::system_clock::time_point> retain_from,
     const std::set<std::string>& catch_up_folders) {
 
-    std::cout << "CPAP: Discovering sessions on ez Share..." << std::endl;
+    // The source names itself: since SDD-040 every transport comes through
+    // here, and a hardcoded "on ez Share" had a local folder announcing a card
+    // it never touched, which sent a user looking for HTTP calls that were
+    // never made (ticket 129).
+    std::cout << "CPAP: Discovering sessions from " << data_source_.sourceName()
+              << "..." << std::endl;
 
     // SDD-010: the folder-level cut must not exclude a night the per-session
     // retention rule below is about to ask for, so it uses the EARLIER of the
@@ -380,11 +354,11 @@ SessionDiscoveryService::discoverNewSessions(
     auto date_folders = data_source_.listDateFolders();
 
     if (date_folders.empty()) {
-        std::cout << "CPAP: No date folders found on ez Share" << std::endl;
+        std::cout << "CPAP: No date folders found on the card" << std::endl;
         return {};
     }
 
-    std::cout << "CPAP: Found " << date_folders.size() << " date folders on ez Share" << std::endl;
+    std::cout << "CPAP: Found " << date_folders.size() << " date folders" << std::endl;
 
     // Filter folders by date if we have a last session timestamp
     std::vector<std::string> relevant_folders;
@@ -520,192 +494,6 @@ SessionDiscoveryService::discoverNewSessions(
 
     std::cout << "CPAP: Discovered " << all_sessions.size()
               << " new sessions to download" << std::endl;
-
-    return all_sessions;
-}
-
-std::vector<SessionFileSet>
-SessionDiscoveryService::discoverLocalSessions(
-    const std::string& local_datalog_dir,
-    std::optional<std::chrono::system_clock::time_point> last_session_start,
-    std::optional<std::chrono::system_clock::time_point> retain_from,
-    const std::set<std::string>& catch_up_folders) {
-
-    std::cout << "CPAP: Discovering sessions from local directory: " << local_datalog_dir << std::endl;
-
-    // SDD-010: see discoverNewSessions. The folder-level cut uses the EARLIER
-    // anchor so a retained night cannot be filtered out before the per-session
-    // rule gets to ask for it.
-    const auto folder_anchor =
-        (retain_from.has_value() &&
-         (!last_session_start.has_value() || *retain_from < *last_session_start))
-            ? retain_from
-            : last_session_start;
-
-    if (!std::filesystem::exists(local_datalog_dir)) {
-        std::cerr << "CPAP: Local directory not found: " << local_datalog_dir << std::endl;
-        return {};
-    }
-
-    // List all YYYYMMDD date folders
-    std::vector<std::string> date_folders;
-    std::regex date_regex(R"(^\d{8}$)");
-
-    // Iterate with error_code: an unreadable DATALOG dir must degrade to an
-    // empty scan, not an uncaught filesystem_error that kills the burst
-    // worker (incident 2026-07-17: root-owned 0750 upload crash-looped the
-    // service).
-    std::error_code dir_ec;
-    std::filesystem::directory_iterator root_it(local_datalog_dir, dir_ec);
-    if (dir_ec) {
-        std::cerr << "CPAP: ⚠️  Cannot read local directory " << local_datalog_dir
-                  << " (" << dir_ec.message()
-                  << ") — fix ownership/permissions so the service user can read it"
-                  << std::endl;
-        return {};
-    }
-    for (; root_it != std::filesystem::directory_iterator();
-         root_it.increment(dir_ec)) {
-        const auto& entry = *root_it;
-        std::error_code entry_ec;
-        if (!entry.is_directory(entry_ec) || entry_ec) continue;
-        std::string name = entry.path().filename().string();
-        if (std::regex_match(name, date_regex)) {
-            date_folders.push_back(name);
-        }
-    }
-    if (dir_ec) {
-        std::cerr << "CPAP: ⚠️  Listing of " << local_datalog_dir
-                  << " ended early (" << dir_ec.message() << ")" << std::endl;
-    }
-
-    std::sort(date_folders.begin(), date_folders.end());
-
-    if (date_folders.empty()) {
-        std::cout << "CPAP: No date folders found in " << local_datalog_dir << std::endl;
-        return {};
-    }
-
-    std::cout << "CPAP: Found " << date_folders.size() << " date folders" << std::endl;
-
-    // Filter folders by last session date (same logic as discoverNewSessions)
-    std::vector<std::string> relevant_folders;
-
-    if (folder_anchor.has_value()) {
-        auto last_tp = folder_anchor.value();
-        std::time_t last_time = std::chrono::system_clock::to_time_t(last_tp);
-        std::tm* last_tm = std::localtime(&last_time);
-
-        char last_date_str[9];
-        std::strftime(last_date_str, sizeof(last_date_str), "%Y%m%d", last_tm);
-        std::string last_date(last_date_str);
-
-        std::cout << "CPAP: Scanning folders from: " << last_date << std::endl;
-
-        for (const auto& folder : date_folders) {
-            if (folder >= last_date) {
-                relevant_folders.push_back(folder);
-            }
-        }
-
-        // Add previous day folder (for early AM sessions)
-        std::tm prev_tm = *last_tm;
-        prev_tm.tm_mday -= 1;
-        std::mktime(&prev_tm);
-        char prev_date_str[9];
-        std::strftime(prev_date_str, sizeof(prev_date_str), "%Y%m%d", &prev_tm);
-        std::string prev_date(prev_date_str);
-
-        if (std::find(date_folders.begin(), date_folders.end(), prev_date) != date_folders.end() &&
-            std::find(relevant_folders.begin(), relevant_folders.end(), prev_date) == relevant_folders.end()) {
-            relevant_folders.push_back(prev_date);
-        }
-
-        std::cout << "CPAP: " << relevant_folders.size()
-                  << " folders with potentially new data" << std::endl;
-    } else {
-        std::cout << "CPAP: No previous sessions in DB, will scan all folders" << std::endl;
-        relevant_folders = date_folders;
-    }
-
-    // SDD-038: the nights the anchor cannot reach, added after the cut. On a
-    // local source this is every folder the database has no night for, which is
-    // the whole history when a container is rebuilt against an existing
-    // database (#34).
-    for (const auto& folder : catch_up_folders) {
-        if (std::find(date_folders.begin(), date_folders.end(), folder) == date_folders.end())
-            continue;
-        if (std::find(relevant_folders.begin(), relevant_folders.end(), folder)
-            == relevant_folders.end())
-            relevant_folders.push_back(folder);
-    }
-    if (!catch_up_folders.empty())
-        std::cout << "CPAP: catching up on " << catch_up_folders.size()
-                  << " folder(s) the database has no night for" << std::endl;
-
-    if (relevant_folders.empty()) {
-        return {};
-    }
-
-    // Discover sessions in each folder
-    std::vector<SessionFileSet> all_sessions;
-
-    for (const auto& folder : relevant_folders) {
-        std::string folder_path = local_datalog_dir + "/" + folder;
-        std::cout << "CPAP: Scanning local folder " << folder << "..." << std::endl;
-
-        // Belt-and-braces: groupLocalFolder degrades gracefully itself, but a
-        // scan surprise in one folder must never abort discovery of the rest
-        // (an escape here reaches the burst worker thread and terminates the
-        // whole process).
-        std::vector<SessionFileSet> folder_sessions;
-        try {
-            folder_sessions = groupLocalFolder(folder_path, folder);
-        } catch (const std::exception& e) {
-            std::cerr << "CPAP: ⚠️  Skipping folder " << folder
-                      << " after scan error: " << e.what() << std::endl;
-            continue;
-        }
-        std::cout << "CPAP: Found " << folder_sessions.size()
-                  << " sessions in " << folder << std::endl;
-
-        // Same filtering as discoverNewSessions: new or recent sessions
-        // Use both localtime and UTC to handle Docker containers that default to UTC
-        auto now = std::chrono::system_clock::now();
-        auto forty_eight_hours_ago = now - std::chrono::hours(48);
-
-        std::time_t now_time = std::chrono::system_clock::to_time_t(now);
-        char today_local[9], today_utc[9];
-        std::tm* local_tm = std::localtime(&now_time);
-        std::strftime(today_local, sizeof(today_local), "%Y%m%d", local_tm);
-        std::tm* utc_tm = std::gmtime(&now_time);
-        std::strftime(today_utc, sizeof(today_utc), "%Y%m%d", utc_tm);
-
-        // SDD-038: see discoverNewSessions. A caught-up folder's nights are
-        // older than everything stored, so no wall-clock test can admit them.
-        const bool is_catch_up = catch_up_folders.count(folder) > 0;
-
-        for (const auto& session : folder_sessions) {
-            bool is_today = (folder == today_local || folder == today_utc);
-            bool is_new = (!last_session_start.has_value() ||
-                          session.session_start > last_session_start.value());
-            bool is_recent = (session.session_start > forty_eight_hours_ago);
-            // SDD-010: the newest stored nights are re-checked whatever the
-            // calendar says, so a folder can always take the second observation
-            // that settling needs. Without this, an archive copied once from an
-            // old SD card never settles: every other test here is anchored on
-            // the current date, and none of them can ever match again.
-            bool is_retained = (retain_from.has_value() &&
-                                session.session_start >= retain_from.value());
-
-            if (is_new || is_today || is_recent || is_retained || is_catch_up) {
-                all_sessions.push_back(session);
-            }
-        }
-    }
-
-    std::cout << "CPAP: Discovered " << all_sessions.size()
-              << " session(s) to process" << std::endl;
 
     return all_sessions;
 }

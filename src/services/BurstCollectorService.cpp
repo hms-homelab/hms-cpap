@@ -428,10 +428,6 @@ bool BurstCollectorService::generateSummaryForDate(const std::string& sleep_day)
     return true;
 }
 
-std::chrono::system_clock::time_point BurstCollectorService::getLastBurstTime() const {
-    return last_burst_time_;
-}
-
 bool BurstCollectorService::downloadSessionFiles(
     const SessionFileSet& session,
     const std::string& local_base_dir,
@@ -1264,16 +1260,6 @@ void BurstCollectorService::clearStrDebtForParsedDays(
     }
 }
 
-std::string BurstCollectorService::getCurrentDateString() const {
-    auto now = std::chrono::system_clock::now();
-    std::time_t now_time = std::chrono::system_clock::to_time_t(now);
-    std::tm* now_tm = std::localtime(&now_time);
-
-    std::ostringstream oss;
-    oss << std::put_time(now_tm, "%Y%m%d");
-    return oss.str();
-}
-
 bool BurstCollectorService::executeBurstCycle() {
     auto cycle_start = std::chrono::steady_clock::now();
 
@@ -1629,8 +1615,13 @@ bool BurstCollectorService::executeBurstCycle() {
             // on a burst with no new CPAP file too.
             if (db_service_)
                 importVldFolder(*db_service_, local_source_dir_, vld_scan_, removed_nights_);
+        } else if (cpap_source_ == "ezshare" || cpap_source_ == "sefam") {
+            std::cout << "CPAP: Accessing ez Share at "
+                      << ConfigManager::get("EZSHARE_BASE_URL", "http://192.168.4.1") << std::endl;
         } else {
-            std::cout << "CPAP: Accessing ez Share at " << ConfigManager::get("EZSHARE_BASE_URL", "http://192.168.4.1") << std::endl;
+            // Fysetc streams sectors over TCP; it is not an ez Share, and saying
+            // so sent a user looking for HTTP calls that were never made.
+            std::cout << "CPAP: Reading from " << cpap_source_ << std::endl;
         }
 
         // Belt and braces after the SIGSEGV above: a cycle with no data source
@@ -2468,9 +2459,8 @@ void BurstCollectorService::runLoop() {
         sync_now_requested_.store(false);
         cycle_in_flight_.store(true);
 
-        bool success = false;
         try {
-            success = executeBurstCycle();
+            executeBurstCycle();
         } catch (const std::exception& e) {
             std::cerr << "CPAP: ❌ Burst cycle failed: " << e.what()
                       << " — will retry next cycle" << std::endl;
@@ -2479,10 +2469,6 @@ void BurstCollectorService::runLoop() {
                       << " — will retry next cycle" << std::endl;
         }
         cycle_in_flight_.store(false);
-
-        if (success) {
-            last_burst_time_ = std::chrono::system_clock::now();
-        }
 
         // SleepHQ: nights we could NOT parse must still reach SleepHQ.
         //

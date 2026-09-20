@@ -1659,14 +1659,6 @@ TEST(BurstCollectorLifecycle, DefaultConstructedIntervalIsNotRunning) {
     EXPECT_FALSE(svc.isRunning());
 }
 
-TEST(BurstCollectorLifecycle, LastBurstTimeDefaultsToEpoch) {
-    BurstCollectorService svc(60);
-    // Never ran a cycle, so last_burst_time_ is the default-constructed
-    // time_point, which equals the clock epoch.
-    EXPECT_EQ(svc.getLastBurstTime(),
-              std::chrono::system_clock::time_point{});
-}
-
 TEST(BurstCollectorLifecycle, StopOnNeverStartedIsNoOp) {
     // stop() must be safe to call when the worker was never started.
     BurstCollectorService svc(60);
@@ -2652,26 +2644,6 @@ TEST_F(BurstOrchestrationTest, ForceCompleteSession_MidList_TargetsLookupResult)
     EXPECT_CALL(*db_raw, getNightlyMetrics(_, t_early)).WillOnce(Return(std::nullopt));
 
     EXPECT_TRUE(svc->forceCompleteSession("2020-01-01"));
-}
-
-// getLastBurstTime() is updated by the WORKER LOOP, not executeBurstCycle().
-// Driving the cycle directly via the seam must therefore leave it at the epoch.
-// This documents/locks the accessor's behavior under the test seam.
-TEST_F(BurstOrchestrationTest, GetLastBurstTime_NotUpdatedByDirectCycle) {
-    auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
-    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
-    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
-    EXPECT_CALL(*db_raw, sessionExists(_, _)).WillRepeatedly(Return(false));
-
-    auto before = svc->getLastBurstTime();
-    EXPECT_EQ(before, std::chrono::system_clock::time_point{})
-        << "Fresh service -> epoch";
-
-    svc->runBurstCycleForTest();
-
-    // executeBurstCycle does not touch last_burst_time_ (set only in the loop).
-    EXPECT_EQ(svc->getLastBurstTime(), std::chrono::system_clock::time_point{})
-        << "Direct cycle must NOT advance last_burst_time_";
 }
 
 // Lowenstein Prisma branch of executeBurstCycle: inject a PrismaIngestion over a

@@ -14,32 +14,6 @@ double safeMean(const std::vector<T>& v) {
     return std::accumulate(v.begin(), v.end(), 0.0) / static_cast<double>(v.size());
 }
 
-template <typename T>
-double safeStd(const std::vector<T>& v) {
-    if (v.size() < 2) return 0.0;
-    double m = safeMean(v);
-    double sq = 0.0;
-    for (auto x : v) {
-        double d = static_cast<double>(x) - m;
-        sq += d * d;
-    }
-    return std::sqrt(sq / static_cast<double>(v.size()));
-}
-
-double linearSlope(const std::vector<double>& y) {
-    int n = static_cast<int>(y.size());
-    if (n < 2) return 0.0;
-    double x_mean = (n - 1) / 2.0;
-    double y_mean = safeMean(y);
-    double num = 0.0, den = 0.0;
-    for (int i = 0; i < n; ++i) {
-        double dx = i - x_mean;
-        num += dx * (y[i] - y_mean);
-        den += dx * dx;
-    }
-    return den > 1e-12 ? num / den : 0.0;
-}
-
 }  // namespace
 
 SleepStageFeatureExtractor::CardiacFeatures

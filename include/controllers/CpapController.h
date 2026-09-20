@@ -31,7 +31,6 @@ public:
     ADD_METHOD_TO(CpapController::updateApply,   "/api/update/apply",       drogon::Post);
     ADD_METHOD_TO(CpapController::dailySummary,  "/api/daily-summary",      drogon::Get);
     ADD_METHOD_TO(CpapController::trend,         "/api/trends/{metric}",    drogon::Get);
-    ADD_METHOD_TO(CpapController::statistics,    "/api/statistics",         drogon::Get);
     ADD_METHOD_TO(CpapController::summaries,     "/api/summaries",          drogon::Get);
     ADD_METHOD_TO(CpapController::sessionSignals, "/api/sessions/{date}/signals", drogon::Get);
     ADD_METHOD_TO(CpapController::sessionVitals,  "/api/sessions/{date}/vitals",  drogon::Get);
@@ -101,8 +100,6 @@ public:
     void trend(const drogon::HttpRequestPtr& req,
                std::function<void(const drogon::HttpResponsePtr&)>&& cb,
                const std::string& metric);
-    void statistics(const drogon::HttpRequestPtr& req,
-                    std::function<void(const drogon::HttpResponsePtr&)>&& cb);
     void summaries(const drogon::HttpRequestPtr& req,
                    std::function<void(const drogon::HttpResponsePtr&)>&& cb);
 

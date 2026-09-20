@@ -114,7 +114,6 @@ public:
     /// them. Unknown until an STR has been read, which leaves the publisher as
     /// it was.
     void setMachineFamily(MachineFamily family);
-    MachineFamily machineFamily() const { return machine_family_; }
 
     /**
      * Publish STR daily summary to MQTT (daily/ namespace).
@@ -197,12 +196,6 @@ private:
     /// Assistant gains no entities that could never have a value.
     bool publishBilevelDiscovery();
 
-    /**
-     * MQTT connection callback
-     *
-     * Called when MQTT reconnects - republishes discovery
-     */
-    void onMqttConnected();
 
     /**
      * Publish realtime discovery (15 sensors)

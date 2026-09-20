@@ -193,21 +193,6 @@ void CpapController::trend(const drogon::HttpRequestPtr& req,
     }
 }
 
-void CpapController::statistics(const drogon::HttpRequestPtr& req,
-                                 std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
-    std::string start = req->getParameter("start");
-    std::string end = req->getParameter("end");
-    if (start.empty() || end.empty()) {
-        cb(jsonError("start and end params required", drogon::k400BadRequest));
-        return;
-    }
-    try {
-        cb(jsonResp(qs_->getStatistics(start, end)));
-    } catch (const std::exception& e) {
-        cb(jsonError(e.what(), drogon::k500InternalServerError));
-    }
-}
-
 void CpapController::summaries(const drogon::HttpRequestPtr& req,
                                 std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
     std::string period = req->getParameter("period");

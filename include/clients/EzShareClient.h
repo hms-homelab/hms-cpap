@@ -45,6 +45,8 @@ public:
     EzShareClient(const EzShareClient&) = delete;
     EzShareClient& operator=(const EzShareClient&) = delete;
 
+    std::string sourceName() const override { return "ez Share"; }
+
     /**
      * List available date folders in DATALOG (e.g., ["20260203", "20260204"])
      */
@@ -95,15 +97,6 @@ public:
                           const std::string& local_path,
                           size_t start_byte,
                           size_t& bytes_downloaded) override;
-
-    /**
-     * Download complete CPAP session (BRP, EVE, SAD, PLD, CSL EDF files)
-     * @param date_folder e.g., "20260203"
-     * @param local_dir Local directory to save files
-     * @return true if at least EVE + one data file downloaded
-     */
-    bool downloadSession(const std::string& date_folder,
-                         const std::string& local_dir);
 
     /**
      * Download a file from the SD card root (not inside a date folder)

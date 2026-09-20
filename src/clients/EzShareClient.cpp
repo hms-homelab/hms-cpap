@@ -380,65 +380,6 @@ bool EzShareClient::downloadFileRange(const std::string& date_folder,
     return true;
 }
 
-bool EzShareClient::downloadSession(const std::string& date_folder,
-                                     const std::string& local_dir) {
-    std::cout << "EzShare: downloading session " << date_folder << std::endl;
-
-    auto files = listFiles(date_folder);
-    if (files.empty()) {
-        std::cerr << "EzShare: no files in " << date_folder << std::endl;
-        return false;
-    }
-
-    // Filter for EDF files (BRP, EVE, SAD, PLD, CSL)
-    std::vector<std::string> edf_suffixes = {"_BRP.edf", "_EVE.edf", "_SAD.edf",
-                                              "_SA2.edf", "_PLD.edf", "_CSL.edf"};
-    std::vector<std::string> edf_files;
-
-    for (const auto& f : files) {
-        for (const auto& suffix : edf_suffixes) {
-            // Case-insensitive suffix match
-            if (f.name.size() >= suffix.size()) {
-                std::string file_end = f.name.substr(f.name.size() - suffix.size());
-                std::transform(file_end.begin(), file_end.end(), file_end.begin(), ::tolower);
-                std::string suffix_lower = suffix;
-                std::transform(suffix_lower.begin(), suffix_lower.end(), suffix_lower.begin(), ::tolower);
-                if (file_end == suffix_lower) {
-                    edf_files.push_back(f.name);
-                    break;
-                }
-            }
-        }
-    }
-
-    if (edf_files.empty()) {
-        std::cerr << "EzShare: no EDF files in " << date_folder << std::endl;
-        return false;
-    }
-
-    std::cout << "EzShare: downloading " << edf_files.size() << " EDF files" << std::endl;
-
-    // Create local directory
-    std::filesystem::create_directories(local_dir);
-
-    int downloaded = 0;
-
-    for (const auto& filename : edf_files) {
-        std::string local_path = local_dir + "/" + filename;
-
-        if (downloadFile(date_folder, filename, local_path)) {
-            ++downloaded;
-        } else {
-            std::cerr << "EzShare: failed to download " << filename << std::endl;
-        }
-    }
-
-    std::cout << "EzShare: session " << date_folder << " complete ("
-              << downloaded << "/" << edf_files.size() << " files)" << std::endl;
-
-    return downloaded > 0;
-}
-
 std::string EzShareClient::encodeCardPath(const std::string& path) {
     // ez Share requires backslash separators URL-encoded as %5C; forward slashes 404.
     std::string out;

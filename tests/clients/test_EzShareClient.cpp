@@ -33,12 +33,6 @@ protected:
         }
     }
 
-    // Helper: Verify file content
-    bool verifyFileContent(const std::string& path, size_t expected_size) {
-        if (!std::filesystem::exists(path)) return false;
-        return std::filesystem::file_size(path) == expected_size;
-    }
-
     // Helper: Read file content
     std::string readFile(const std::string& path) {
         std::ifstream f(path, std::ios::binary);

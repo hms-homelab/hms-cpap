@@ -603,14 +603,6 @@ const char* SetupService::autostartOwnerString(AutostartOwner owner) {
     }
 }
 
-bool SetupService::canManageAutostart(bool supervised) {
-    // The installer owns it when there is an installer, and the runtime owns it
-    // inside a container. Writing our own entry in either case means two things
-    // racing to start one service, or a systemd unit in an image with no
-    // systemd, which is worse: it looks like it worked.
-    return autostartOwner(supervised, isContainerised()) == AutostartOwner::Us;
-}
-
 namespace {
 
 /// The account a boot service runs as.

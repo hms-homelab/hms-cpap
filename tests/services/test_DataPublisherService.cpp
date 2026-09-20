@@ -356,7 +356,7 @@ TEST_F(DataPublisherServiceTest, MQTTReconnection_RepublishesDiscovery) {
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
     // Publish session (should trigger discovery republish due to was_disconnected flag)
-    bool publish_success = data_publisher->publishSession(dummy_session);
+    data_publisher->publishSession(dummy_session);
 
     std::this_thread::sleep_for(std::chrono::seconds(1));
 

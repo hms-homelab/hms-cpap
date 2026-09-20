@@ -140,8 +140,6 @@ protected:
     std::string path_;       // SQLite temp file
     std::string device_;     // synthetic, per-process
 
-    bool isMySQL() const { return GetParam() == Engine::MySQL; }
-
     void SetUp() override {
         device_ = "oxi_test_" + std::to_string(::getpid());
 

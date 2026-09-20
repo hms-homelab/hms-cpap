@@ -190,9 +190,6 @@ public:
         partition_lba_offset_ = partition_lba;
     }
 
-    // After relocateBehindMbr, expose the offset so tests can compute absolute LBAs.
-    uint32_t partitionLbaOffset() const { return partition_lba_offset_; }
-
     // Corrupt a single byte in a stored sector (used to invalidate signatures, etc.)
     void pokeSector(uint32_t lba, uint32_t offset, uint8_t value) {
         ensureSector(lba);

@@ -245,42 +245,6 @@ TEST(MyAirClient, RubbishIsRejectedWithAnExplanation) {
     EXPECT_FALSE(err.empty());
 }
 
-TEST(MyAirClient, ParsesTheDeviceAndItsMask) {
-    const char* body = R"({"data":{"getPatientWrapper":{
-        "masks":[{"maskCode":"63801"}],
-        "fgDevices":[{"serialNumber":"23243570851","localizedName":"AirSense 10 AutoSet",
-                      "deviceSeries":"AirSense 10","deviceFamily":"Series10",
-                      "lastSleepDataReportTime":"2026-08-25T11:02:03Z",
-                      "fgDeviceManufacturerName":"ResMed"}]}}})";
-    MyAirDevice device;
-    std::string err;
-    ASSERT_TRUE(MyAirClient::parseDevice(body, device, err)) << err;
-    EXPECT_EQ(device.serial_number, "23243570851");
-    EXPECT_EQ(device.localized_name, "AirSense 10 AutoSet");
-    EXPECT_EQ(device.device_series, "AirSense 10");
-    EXPECT_EQ(device.manufacturer_name, "ResMed");
-    EXPECT_EQ(device.mask_code, "63801");
-}
-
-TEST(MyAirClient, ADeviceWithNoMaskIsStillADevice) {
-    const char* body = R"({"data":{"getPatientWrapper":{
-        "masks":[],
-        "fgDevices":[{"serialNumber":"123","localizedName":"AirCurve 10"}]}}})";
-    MyAirDevice device;
-    std::string err;
-    ASSERT_TRUE(MyAirClient::parseDevice(body, device, err)) << err;
-    EXPECT_EQ(device.serial_number, "123");
-    EXPECT_TRUE(device.mask_code.empty());
-}
-
-TEST(MyAirClient, AnAccountWithNoMachineIsAnError) {
-    const char* body = R"({"data":{"getPatientWrapper":{"masks":[],"fgDevices":[]}}})";
-    MyAirDevice device;
-    std::string err;
-    EXPECT_FALSE(MyAirClient::parseDevice(body, device, err));
-    EXPECT_FALSE(err.empty());
-}
-
 TEST(MyAirClient, RefusesToSignInWithoutCredentials) {
     // Cheap, but it is the difference between a clear message and a pointless
     // round trip to Okta on a misconfigured install.

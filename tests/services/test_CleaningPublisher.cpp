@@ -25,7 +25,6 @@ using namespace hms_cpap;
 
 namespace {
 
-constexpr long long kDay = 24LL * 60 * 60;
 // 2026-07-30 00:00:00 UTC, an exact day boundary so slot maths stays readable.
 constexpr long long kJul30 = 1785369600LL;
 constexpr int k0830 = 8 * 60 + 30;
@@ -54,11 +53,6 @@ public:
         std::optional<std::string> out;
         for (const auto& s : sent) if (s.topic == topic) out = s.payload;
         return out;
-    }
-
-    bool sentTo(const std::string& topic) const {
-        for (const auto& s : sent) if (s.topic == topic) return true;
-        return false;
     }
 
     std::vector<Sent> sent;

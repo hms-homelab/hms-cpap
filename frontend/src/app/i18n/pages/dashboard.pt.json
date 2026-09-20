@@ -89,19 +89,16 @@
       "central": "Centrais",
       "hypopneas": "Hipopneias",
       "reras": "RERAs",
-      "respiratoryEffort": "Esforço respiratório",
       "maxEvent": "Evento máximo",
       "avgEvent": "Evento médio"
     },
     "pressure": {
       "subtitle": "Métricas do CPAP autoajustável",
-      "average": "Pressão média",
       "current": "Pressão atual",
       "median": "Mediana (P50)",
       "leakRate": "Taxa de fuga (P95)"
     },
     "respiratory": {
-      "title": "Métricas respiratórias",
       "avgFlowRate": "Fluxo médio",
       "currentFlow": "Fluxo atual"
     },
@@ -120,26 +117,14 @@
       "heartRate": "Frequência cardíaca"
     },
     "aiSummary": {
-      "subtitle": "Análise da última sessão gerada por LLM",
-      "empty": "Nenhum resumo disponível ainda."
+      "subtitle": "Análise da última sessão gerada por LLM"
     },
     "ml": {
       "predictedAhi": "IAH previsto",
       "ahiTrend": "Tendência do IAH",
-      "stable": "Estável",
       "predictedHours": "Horas previstas",
       "maskFitRisk": "Risco no ajuste da máscara",
       "anomalyStatus": "Situação de anomalias"
-    },
-    "myair": {
-      "dataSource": "Fonte de dados",
-      "night": "Noite",
-      "usage": "Uso",
-      "leak": "Fuga",
-      "maskOnOff": "Máscara colocada/retirada",
-      "difference": "Diferença",
-      "noCpapDash": "Não há dados do CpapDash para esta noite",
-      "noResMed": "A ResMed não tem dados para esta noite"
     }
   }
 }

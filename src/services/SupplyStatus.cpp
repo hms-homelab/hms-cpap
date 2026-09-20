@@ -25,17 +25,6 @@ const char* supplyStateString(SupplyState s) {
     }
 }
 
-SupplyStatus computeSupplyStatus(const std::string& slot,
-                                 long long started_epoch,
-                                 int replace_after_days,
-                                 long long now_epoch) {
-    // Per-item override (>= 0) beats the slot default; a negative value means
-    // "no override" (client NULL) -> fall back to the slot default.
-    const int intervalDays =
-        (replace_after_days >= 0) ? replace_after_days : supplyDefaultDays(slot);
-    return computeSupplyStatusForInterval(started_epoch, intervalDays, now_epoch);
-}
-
 SupplyStatus computeSupplyStatusForInterval(long long started_epoch,
                                             int intervalDays,
                                             long long now_epoch) {

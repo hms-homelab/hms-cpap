@@ -46,10 +46,6 @@ protected:
         o << std::string(bytes, fill);
     }
 
-    static std::string read(const fs::path& p) {
-        std::ifstream in(p, std::ios::binary);
-        return std::string(std::istreambuf_iterator<char>(in), {});
-    }
 };
 
 }  // namespace
@@ -62,6 +58,15 @@ TEST_F(LocalDataSourceTest, ItSaysItsFilesAreAlreadyWhereTheArchiveWouldPutThem)
     EXPECT_TRUE(src.filesAreInPlace());
     EXPECT_EQ(src.rootPath(), root.string());
     EXPECT_TRUE(src.supportsRange());
+}
+
+// Ticket 129: one cycle serves every transport (SDD-040), so the shared
+// discovery line asks the source what to call it. Hardcoded, it told a local
+// user it was reading an ez Share and sent them looking for HTTP calls.
+TEST_F(LocalDataSourceTest, ItNamesItselfForTheLog) {
+    LocalDataSource src(root.string());
+    EXPECT_EQ(src.sourceName(), "the local folder");
+    EXPECT_EQ(EzShareClient().sourceName(), "ez Share");
 }
 
 TEST_F(LocalDataSourceTest, DateFoldersComeFromDatalogSortedAndNothingElseDoes) {

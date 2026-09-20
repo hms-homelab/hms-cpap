@@ -1,4 +1,4 @@
-export type EquipmentCategory = 'machine' | 'accessory';
+type EquipmentCategory = 'machine' | 'accessory';
 export type SupplyState = 'fresh' | 'due_soon' | 'overdue' | 'untracked';
 
 export interface EquipmentType {
@@ -12,7 +12,7 @@ export interface EquipmentType {
   active: boolean;
 }
 
-export interface SupplyInfo {
+interface SupplyInfo {
   state: SupplyState;
   days_left: number;
   wear_fraction: number;

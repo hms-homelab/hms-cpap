@@ -86,13 +86,6 @@ private:
     void processReassembly();
     void dispatchFrame(const uint8_t* frame, size_t len);
 
-    // D-Bus signal handlers
-    void onInterfacesAdded(const sdbus::ObjectPath& path,
-                            const std::map<std::string, std::map<std::string, sdbus::Variant>>& interfaces);
-    void onPropertiesChanged(const std::string& interface,
-                              const std::map<std::string, sdbus::Variant>& changed,
-                              const std::vector<std::string>& invalidated);
-
     // Helpers
     std::string findAdapter();
     void startDBusLoop();

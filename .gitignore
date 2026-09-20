@@ -59,6 +59,7 @@ logs/
 Testing/
 tests/output/
 coverage/
+.cache/
 
 # Docker (keep .dockerignore tracked - needed for CI builds)
 

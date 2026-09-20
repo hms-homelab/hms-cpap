@@ -283,9 +283,16 @@ protected:
         return count("SELECT COUNT(*) AS n FROM oximetry_sessions WHERE filename = " + p(1),
                      {oxi_prefix_ + tag + ".vld"});
     }
+    // Scoped to THIS process's device through the session it belongs to.
+    // cpap_session_files carries no device id of its own, so counting by
+    // rel_path alone also counts rows another run left in the shared MySQL or
+    // PostgreSQL test database -- which SQLite never shows, because each run
+    // gets its own temp file.
     long long fileRows() {
-        return count("SELECT COUNT(*) AS n FROM cpap_session_files WHERE rel_path LIKE " + p(1),
-                     {std::string("DATALOG/2099%")});
+        return count("SELECT COUNT(*) AS n FROM cpap_session_files f "
+                     "JOIN cpap_sessions s ON s.id = f.session_id "
+                     "WHERE s.device_id = " + p(1) + " AND f.rel_path LIKE " + p(2),
+                     {device_, std::string("DATALOG/2099%")});
     }
     long long summaryRows(const std::string& period) {
         return count("SELECT COUNT(*) AS n FROM cpap_summaries WHERE device_id = " + p(1) +

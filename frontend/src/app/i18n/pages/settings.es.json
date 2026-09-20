@@ -15,7 +15,6 @@
     },
     "source": {
       "heading": "Fuente de datos",
-      "type": "Tipo de fuente",
       "transport": "De dónde vienen los datos",
       "format": "Qué máquina los escribió",
       "philips": "Philips Respironics (experimental)",

@@ -2,7 +2,6 @@
 
 #include <string>
 #include <cstdlib>
-#include <stdexcept>
 
 namespace hms_cpap {
 
@@ -29,16 +28,6 @@ public:
         return value ? std::stoi(value) : default_value;
     }
 
-    /**
-     * Get required string config (throws if missing)
-     */
-    static std::string getRequired(const std::string& key) {
-        const char* value = std::getenv(key.c_str());
-        if (!value) {
-            throw std::runtime_error("Missing required config: " + key);
-        }
-        return std::string(value);
-    }
 };
 
 } // namespace hms_cpap

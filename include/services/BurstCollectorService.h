@@ -1,6 +1,5 @@
 #pragma once
 
-// WiFiSwitchClient no longer needed - ez Share accessed via dedicated interface
 #include "clients/IDataSource.h"
 #include "clients/EzShareClient.h"
 #ifndef _WIN32
@@ -142,13 +141,6 @@ public:
     bool isRunning() const;
     bool forceCompleteSession(const std::string& sleep_day);
     bool generateSummaryForDate(const std::string& sleep_day);
-
-    /**
-     * Get last burst execution time
-     *
-     * @return Timestamp of last burst cycle
-     */
-    std::chrono::system_clock::time_point getLastBurstTime() const;
 
     /// Lifecycle decision for the Fysetc TCP listener on a source change.
     enum class FysetcLifecycleAction { None, Start, Stop };
@@ -394,9 +386,6 @@ private:
     /// the web thread, these are read and written by the worker.
     std::atomic<bool> cycle_in_flight_{false};
     std::atomic<bool> sync_now_requested_{false};
-
-    // State
-    std::chrono::system_clock::time_point last_burst_time_;
 
     // LLM summary
     std::unique_ptr<hms::LLMClient> llm_client_;
@@ -740,13 +729,6 @@ private:
      * @return Prompt template string, or empty on failure
      */
     static std::string loadPromptFile(const std::string& filepath);
-
-    /**
-     * Get current date string (YYYYMMDD format)
-     *
-     * @return Date string for today
-     */
-    std::string getCurrentDateString() const;
 
     // ── Hot-reload ──────────────────────────────────────────────────────
     AppConfig* app_config_ = nullptr;

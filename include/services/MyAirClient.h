@@ -69,18 +69,6 @@ struct MyAirSleepRecord {
     double leak_percentile = 0;
 };
 
-/// The machine as ResMed knows it. Identity, not measurement: useful to prefill
-/// an equipment profile, never to overwrite something the user typed.
-struct MyAirDevice {
-    std::string serial_number;
-    std::string localized_name;
-    std::string device_series;
-    std::string device_family;
-    std::string last_sleep_data_report_time;
-    std::string manufacturer_name;
-    std::string mask_code;
-};
-
 /// What a login attempt needs next.
 enum class MyAirAuthState {
     Ok,             // signed in, tokens held
@@ -145,7 +133,6 @@ public:
     /// must not average the two together. On a machine whose modem reports
     /// intermittently most dates come back this way.
     bool fetchSleepRecords(std::vector<MyAirSleepRecord>& out, std::string& err);
-    bool fetchDevice(MyAirDevice& out, std::string& err);
 
     // -- Pure helpers, exposed so they can be tested without a network ------
 
@@ -168,7 +155,6 @@ public:
     /// ResMed's response shape is a test failure rather than a field of zeroes.
     static bool parseSleepRecords(const std::string& body,
                                   std::vector<MyAirSleepRecord>& out, std::string& err);
-    static bool parseDevice(const std::string& body, MyAirDevice& out, std::string& err);
 
 private:
     std::string username_, password_;

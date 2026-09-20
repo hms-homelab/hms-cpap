@@ -15,6 +15,8 @@ class FysetcDataSource : public IDataSource {
 public:
     FysetcDataSource(FysetcTcpServer& tcp);
 
+    std::string sourceName() const override { return "the Fysetc bridge"; }
+
     std::vector<std::string> listDateFolders() override;
     std::vector<EzShareFileEntry> listFiles(const std::string& date_folder) override;
 

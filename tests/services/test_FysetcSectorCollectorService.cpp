@@ -359,7 +359,6 @@ TEST_F(FysetcCollectorTest, DISABLED_IncrementalGrowth) {
     // For this test we need to update the dir entry in the image
     // Re-add with larger size (overwrites the same slot since we only have 1 entry)
     // Simpler: just modify the size in the sector directly
-    uint32_t dir_lba = image.DATA_START + (4 - 2) * image.SECTORS_PER_CLUSTER;
     // The entry is at slot 0 of cluster 4's first sector
     // But we can't easily access sectors_ from outside. Skip incremental test for now.
     // The CollectNewFile test validates the core flow.

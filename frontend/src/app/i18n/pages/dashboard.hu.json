@@ -89,19 +89,16 @@
       "central": "Centrális",
       "hypopneas": "Hypopnoék",
       "reras": "RERA-k",
-      "respiratoryEffort": "Légzési erőfeszítés",
       "maxEvent": "Leghosszabb esemény",
       "avgEvent": "Átlagos esemény"
     },
     "pressure": {
       "subtitle": "Az önbeálló CPAP mérőszámai",
-      "average": "Átlagos nyomás",
       "current": "Jelenlegi nyomás",
       "median": "Medián (P50)",
       "leakRate": "Szivárgási arány (P95)"
     },
     "respiratory": {
-      "title": "Légzési mérőszámok",
       "avgFlowRate": "Átlagos áramlás",
       "currentFlow": "Jelenlegi áramlás"
     },
@@ -120,26 +117,14 @@
       "heartRate": "Pulzusszám"
     },
     "aiSummary": {
-      "subtitle": "Az utolsó alvásidőszak LLM által készített elemzése",
-      "empty": "Még nincs elérhető összefoglaló."
+      "subtitle": "Az utolsó alvásidőszak LLM által készített elemzése"
     },
     "ml": {
       "predictedAhi": "Előre jelzett AHI",
       "ahiTrend": "AHI-trend",
-      "stable": "Stabil",
       "predictedHours": "Előre jelzett órák",
       "maskFitRisk": "Maszkillesztési kockázat",
       "anomalyStatus": "Anomália állapota"
-    },
-    "myair": {
-      "dataSource": "Adatforrás",
-      "night": "Éjszaka",
-      "usage": "Használat",
-      "leak": "Szivárgás",
-      "maskOnOff": "Maszk fel/le",
-      "difference": "Eltérés",
-      "noCpapDash": "Erre az éjszakára nincs CpapDash-adat",
-      "noResMed": "A ResMednek nincs adata erre az éjszakára"
     }
   }
 }

@@ -490,12 +490,6 @@ TEST(SetupServiceTest, ProbingAnUncompiledBackendSaysSoRatherThanFallingBack) {
 // possible place to find out.
 // ---------------------------------------------------------------------------
 
-TEST(SetupServiceTest, TheShellOwnsAutostartWhenThereIsOne) {
-    // Two entries racing to start one service is worse than none.
-    EXPECT_FALSE(SetupService::canManageAutostart(/*supervised=*/true));
-    EXPECT_TRUE(SetupService::canManageAutostart(/*supervised=*/false));
-}
-
 TEST(SetupServiceTest, AutostartNeedsToKnowWhereTheProgramIs) {
     const auto e = SetupService::autostartEntry("", "/Users/someone");
     EXPECT_FALSE(e.error.empty());

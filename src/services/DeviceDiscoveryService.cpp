@@ -48,8 +48,9 @@ constexpr uint16_t kTypePTR  = 12;
 constexpr uint16_t kTypeTXT  = 16;
 constexpr uint16_t kTypeSRV  = 33;
 
-constexpr const char* kMdnsGroup = "224.0.0.251";
-constexpr uint16_t    kMdnsPort  = 5353;
+// The multicast group (224.0.0.251) is joined by mdns_socket_open_ipv4 itself;
+// only the port is ours to choose.
+constexpr uint16_t kMdnsPort = 5353;
 
 bool readU16(const uint8_t* d, size_t len, size_t& off, uint16_t& v) {
     if (off + 2 > len) return false;

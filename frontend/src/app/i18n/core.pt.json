@@ -3,12 +3,7 @@
     "language": "Idioma",
     "loading": "Carregando...",
     "save": "Salvar",
-    "cancel": "Cancelar",
-    "close": "Fechar",
-    "retry": "Tentar de novo",
-    "back": "Voltar",
-    "next": "Avançar",
-    "noData": "Sem dados"
+    "cancel": "Cancelar"
   },
   "metric": {
     "ahi": "IAH",

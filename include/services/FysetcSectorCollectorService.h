@@ -33,7 +33,6 @@ public:
 
     CollectResult collect();
 
-    void setArchiveCallback(ArchiveCallback cb) { archive_callback_ = std::move(cb); }
 
 private:
     bool refreshFatLayout();

@@ -41,6 +41,8 @@ public:
     /// The card root, so the cycle can parse in place rather than from a copy.
     std::string rootPath() const override { return card_root_; }
 
+    std::string sourceName() const override { return "the local folder"; }
+
     std::vector<std::string> listDateFolders() override;
     std::vector<EzShareFileEntry> listFiles(const std::string& date_folder) override;
     std::vector<EzShareFileEntry> listDir(const std::string& card_path) override;

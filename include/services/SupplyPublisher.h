@@ -102,8 +102,6 @@ public:
     /// never worth failing a publish over.
     static LedgerIO fileLedger(std::string path);
 
-    /// Events emitted by the most recent publishSnapshot, in entity order.
-    const std::vector<Event>& lastEvents() const { return last_events_; }
 
     /// @param publish     message sink (never null in practice; a null sink no-ops)
     /// @param device_id   MQTT device id — MUST match DataPublisherService's

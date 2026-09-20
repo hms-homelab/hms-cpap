@@ -48,8 +48,6 @@ struct PreflightCheck {
     std::string name;     ///< "web_port", "database", ...
     std::string detail;   ///< the sentence after the name
     std::string remedy;   ///< the "-> ..." line, empty when there is none
-
-    bool blocking() const { return status == CheckStatus::Fail; }
 };
 
 enum class Verdict {

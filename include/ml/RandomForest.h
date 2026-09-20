@@ -47,7 +47,6 @@ public:
 
     // -- Shared --
     std::vector<double> featureImportances() const;
-    TaskType taskType() const { return task_; }
     int numClasses() const { return n_classes_; }
     int numFeatures() const { return n_features_; }
     bool isTrained() const { return !trees_.empty(); }

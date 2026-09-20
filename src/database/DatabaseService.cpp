@@ -1031,10 +1031,6 @@ void DatabaseService::insertSessionMetrics(pqxx::work& work, int session_id,
             odi = EXCLUDED.odi
     )";
 
-    // Helper for optional<double> -> NULL or value
-    auto opt_dbl = [](const std::optional<double>& v) -> std::optional<double> { return v; };
-    auto opt_int = [](const std::optional<int>& v) -> std::optional<int> { return v; };
-
     work.exec_params(query,
         session_id,
         metrics.total_events,
@@ -2340,7 +2336,6 @@ std::vector<SessionMetrics> DatabaseService::getMetricsForDateRange(
         }
 
         int nrows = PQntuples(pgr);
-        int ncols = PQnfields(pgr);
 
 
         auto pgStr = [&](int row, int col) -> std::string {

@@ -30,21 +30,15 @@ struct SupplyStatus {
 };
 
 // Pure wear computation, mirroring supplyStatus(item, now) in the client.
-//   started_epoch:      unix seconds of started_using_at; <= 0 == untracked (no date)
-//   replace_after_days: per-item override; <= 0 (or negative sentinel) -> use slot default
-//   now_epoch:          unix seconds "now"
-// The per-item override beats the slot default; machines and undated items are
-// untracked.
-SupplyStatus computeSupplyStatus(const std::string& slot,
-                                 long long started_epoch,
-                                 int replace_after_days,
-                                 long long now_epoch);
-
-// Interval-based variant for the SDD-035 catalog model: the effective interval
-// is resolved by the caller (per-item override else the type's default from
-// equipment_types), so this needs no slot lookup. interval_days <= 0 or an
-// undated item -> Untracked. This is the path used for custom types (e.g.
-// "battery") whose default lives only in the DB, not in supplyDefaultDays().
+//
+// The effective interval is resolved by the caller (per-item override, else the
+// type's default from equipment_types, else supplyDefaultDays) the way
+// EquipmentController::intervalFor and SupplyPublisher do, so this needs no
+// slot lookup and works for custom types like "battery" whose default lives
+// only in the DB.
+//   started_epoch: unix seconds of started_using_at; <= 0 == untracked (no date)
+//   interval_days: the resolved replacement interval; <= 0 == untracked
+//   now_epoch:     unix seconds "now"
 SupplyStatus computeSupplyStatusForInterval(long long started_epoch,
                                             int interval_days,
                                             long long now_epoch);

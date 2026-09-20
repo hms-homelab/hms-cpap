@@ -80,25 +80,11 @@ public:
         const std::string& dir_path,
         const std::string& date_folder);
 
-    /**
-     * Discover sessions from a local DATALOG directory (no ezShare needed).
-     *
-     * Same logic as discoverNewSessions() but reads date folders from filesystem.
-     * Used by CPAP_SOURCE=local mode.
-     *
-     * @param local_datalog_dir Path to the DATALOG directory itself (contains
-     *        YYYYMMDD folders). SDD-010: callers hold the card ROOT, so this is
-     *        datalogDirFor(root), not the root. This one function genuinely
-     *        does want DATALOG.
-     * @param last_session_start Last stored session (nullopt = get all)
-     * @return Vector of session file sets to process
-     */
-    /// @param catch_up_folders SDD-038, as in discoverNewSessions().
-    static std::vector<SessionFileSet> discoverLocalSessions(
-        const std::string& local_datalog_dir,
-        std::optional<std::chrono::system_clock::time_point> last_session_start,
-        std::optional<std::chrono::system_clock::time_point> retain_from = std::nullopt,
-        const std::set<std::string>& catch_up_folders = {});
+    // discoverLocalSessions() lived here: a second copy of discoverNewSessions'
+    // rules that read the filesystem directly. SDD-040 gave a local folder an
+    // IDataSource (LocalDataSource) and pointed the one cycle at it, which left
+    // this with no caller. Removed 2026-09-19; its tests moved onto
+    // discoverNewSessions, which is what runs.
 
     /// SDD-038: the date folders on the card, for the caller to compare against
     /// what the database already holds. One listing, so the catch-up costs a
@@ -111,17 +97,6 @@ private:
     std::string extractSessionPrefix(const std::string& filename);
     std::chrono::system_clock::time_point parseSessionTime(const std::string& prefix);
 
-    /**
-     * Find largest file of a given type in a file list
-     *
-     * @param files Files from ez Share listing
-     * @param prefix Session prefix to match
-     * @param suffix File type suffix (e.g., "_BRP.edf")
-     * @return Filename of largest matching file, or empty if none found
-     */
-    std::string findLargestFile(const std::vector<EzShareFileEntry>& files,
-                                 const std::string& prefix,
-                                 const std::string& suffix);
 };
 
 } // namespace hms_cpap

@@ -24,7 +24,7 @@
  */
 
 /** Decimal places for every member of the index group. One edit changes them all. */
-export const INDEX_DECIMALS = 2;
+const INDEX_DECIMALS = 2;
 
 /**
  * Format an index-group value (AHI, AI, HI, OAI, CAI, UAI, RIN).

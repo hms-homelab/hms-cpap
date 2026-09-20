@@ -303,11 +303,10 @@ endif()
 
 # Source files — exclude platform-specific code and duplicates now in cpapdash-parser
 file(GLOB_RECURSE SOURCES "src/*.cpp")
-# WiFiSwitchClient is Linux-only (wpa_supplicant, dhcpcd); exclude on all platforms (dead code)
-list(FILTER SOURCES EXCLUDE REGEX ".*/WiFiSwitchClient\\.cpp$")
-# EDFParser + CPAPModels are now provided by cpapdash-parser library
-list(FILTER SOURCES EXCLUDE REGEX ".*/parsers/EDFParser\\.cpp$")
-list(FILTER SOURCES EXCLUDE REGEX ".*/models/CPAPModels\\.cpp$")
+# EDFParser, CPAPModels and WiFiSwitchClient were excluded here for years while
+# their files stayed in the tree. The parser and models come from the
+# cpapdash-parser library (see include/parsers/CpapdashBridge.h) and the WiFi
+# switching went with the dedicated ez Share interface; all three are deleted.
 # CLI binaries have their own main() — exclude from main executable
 list(FILTER SOURCES EXCLUDE REGEX ".*/cli/.*\\.cpp$")
 if(MSVC)

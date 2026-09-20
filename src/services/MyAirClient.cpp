@@ -327,38 +327,6 @@ bool MyAirClient::parseSleepRecords(const std::string& body,
     return true;
 }
 
-bool MyAirClient::parseDevice(const std::string& body, MyAirDevice& out, std::string& err) {
-    json j;
-    if (!parseJson(body, j)) { err = "myAir returned something that is not JSON"; return false; }
-    if (j.contains("errors") && !j["errors"].empty()) {
-        err = "myAir GraphQL error: " + j["errors"].dump().substr(0, 300);
-        return false;
-    }
-    if (!j.contains("data") || !j["data"].contains("getPatientWrapper")) {
-        err = "myAir response has no getPatientWrapper";
-        return false;
-    }
-    const auto& wrapper = j["data"]["getPatientWrapper"];
-    if (!wrapper.contains("fgDevices") || !wrapper["fgDevices"].is_array() ||
-        wrapper["fgDevices"].empty()) {
-        err = "myAir reports no flow generator on this account";
-        return false;
-    }
-    const auto& d = wrapper["fgDevices"][0];
-    out.serial_number  = stringOf(d, "serialNumber");
-    out.localized_name = stringOf(d, "localizedName");
-    out.device_series  = stringOf(d, "deviceSeries");
-    out.device_family  = stringOf(d, "deviceFamily");
-    out.last_sleep_data_report_time = stringOf(d, "lastSleepDataReportTime");
-    out.manufacturer_name = stringOf(d, "fgDeviceManufacturerName");
-
-    // The mask is a separate list, and an account can legitimately have none.
-    if (wrapper.contains("masks") && wrapper["masks"].is_array() && !wrapper["masks"].empty()) {
-        out.mask_code = stringOf(wrapper["masks"][0], "maskCode");
-    }
-    return true;
-}
-
 // ---------------------------------------------------------------------------
 // The login flow
 // ---------------------------------------------------------------------------
@@ -671,17 +639,6 @@ bool MyAirClient::fetchSleepRecords(std::vector<MyAirSleepRecord>& out, std::str
     std::string body;
     if (!graphql("GetPatientSleepRecords", query, body, err)) return false;
     return parseSleepRecords(body, out, err);
-}
-
-bool MyAirClient::fetchDevice(MyAirDevice& out, std::string& err) {
-    const std::string query =
-        "query getPatientWrapper { getPatientWrapper { masks { maskCode } fgDevices { "
-        "serialNumber localizedName deviceSeries deviceFamily lastSleepDataReportTime "
-        "fgDeviceManufacturerName fgDevicePatientId } } }";
-
-    std::string body;
-    if (!graphql("getPatientWrapper", query, body, err)) return false;
-    return parseDevice(body, out, err);
 }
 
 }  // namespace hms_cpap

@@ -3,12 +3,7 @@
     "language": "Nyelv",
     "loading": "Betöltés...",
     "save": "Mentés",
-    "cancel": "Mégse",
-    "close": "Bezárás",
-    "retry": "Újra",
-    "back": "Vissza",
-    "next": "Tovább",
-    "noData": "Nincs adat"
+    "cancel": "Mégse"
   },
   "metric": {
     "ahi": "AHI",

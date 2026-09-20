@@ -28,6 +28,13 @@ public:
     /// The card root on disk when filesAreInPlace(), else empty.
     virtual std::string rootPath() const { return {}; }
 
+    /// What to call this source in a log line, e.g. "ez Share", "the local
+    /// folder". One cycle now serves every transport (SDD-040), so a shared
+    /// line that named one of them was wrong for the others: a local folder
+    /// announced "Discovering sessions on ez Share..." and sent a user looking
+    /// for HTTP calls that were never made (ticket 129).
+    virtual std::string sourceName() const { return "the card"; }
+
     virtual std::vector<std::string> listDateFolders() = 0;
 
     virtual std::vector<EzShareFileEntry> listFiles(const std::string& date_folder) = 0;

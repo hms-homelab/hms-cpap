@@ -63,12 +63,7 @@ public:
     int syncNow(std::string& err);
 
     const std::string& lastError() const { return last_error_; }
-    std::time_t lastSyncAt() const { return last_sync_at_; }
 
-    /// True once the stored token has been rejected and discarded. The only cure
-    /// is an interactive sign-in, so this is a state to show the user rather
-    /// than something to keep retrying.
-    bool needsReauth() const { return needs_reauth_; }
 
     /// Sign in interactively from the settings page and keep what comes back.
     ///

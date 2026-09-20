@@ -15,7 +15,6 @@ public:
 
     // Fetch access token + current team id. false on failure (err set).
     bool connect(std::string& err);
-    const std::string& teamId() const { return team_id_; }
 
     // Create a programmatic import; returns the import id ("" on failure).
     std::string createImport(std::string& err);
@@ -33,7 +32,6 @@ public:
     static std::string contentHash(const std::string& filename,
                                    const std::string& abs_file_path);
 
-    void setBaseUrl(const std::string& base) { base_url_ = base; }
 
 private:
     std::string client_id_, client_secret_;

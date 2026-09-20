@@ -3,12 +3,7 @@
     "language": "Language",
     "loading": "Loading...",
     "save": "Save",
-    "cancel": "Cancel",
-    "close": "Close",
-    "retry": "Retry",
-    "back": "Back",
-    "next": "Next",
-    "noData": "No data"
+    "cancel": "Cancel"
   },
   "metric": {
     "ahi": "AHI",

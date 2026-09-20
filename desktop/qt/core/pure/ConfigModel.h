@@ -108,7 +108,6 @@ public:
     std::vector<std::string> changedPaths() const;
 
     const nlohmann::json& current()  const { return current_; }
-    const nlohmann::json& pristine() const { return pristine_; }
 
 private:
     void reset(const nlohmann::json& doc, bool from_api);

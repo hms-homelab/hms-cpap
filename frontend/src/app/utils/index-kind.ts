@@ -15,10 +15,11 @@
  * out per component. The label and the decision to grade are the same decision.
  */
 
-/** What the API sends. Anything unrecognised is treated as a real AHI. */
-export type IndexKind = 'ahi' | 'ungraded';
-
-/** A row, night or session that may carry a kind. */
+/**
+ * A row, night or session that may carry a kind. The field is typed as a plain
+ * string rather than a union: the API sends 'ahi' or 'ungraded' today, and
+ * anything unrecognised is deliberately treated as a real AHI (see isGradable).
+ */
 export interface HasIndexKind {
   index_kind?: string | null;
 }
