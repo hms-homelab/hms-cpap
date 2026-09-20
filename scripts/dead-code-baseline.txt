@@ -1,12 +1,16 @@
 # SDD-045 D6 baseline: every symbol the tools currently raise as
-# uncalled. Most are NOT dead -- see scripts/dead-code-gate.sh for why
-# the gate does not try to tell the difference.
+# uncalled, on ANY platform. Most are NOT dead -- see
+# scripts/dead-code-gate.sh for why the gate does not try to tell
+# the difference.
 #
 # A new entry appearing means nobody has classified it yet. Delete the
 # code, or add it here with a note saying what reaches it.
 #
-# Regenerate:  scripts/dead-code-gate.sh --update
-# Generated 2026-09-20 from 548b5d7
+# --update MERGES: it adds what this machine sees and keeps what it
+# does not, because the list differs between macOS and Linux. To
+# remove an entry, delete the line by hand.
+#
+# Last touched 2026-09-20 on Darwin from af55d12
 
 buildRangeMetricsStringForTest       # include/services/BurstCollectorService.h
 closeSettledOpenLocalNightsForTest   # include/services/BurstCollectorService.h
@@ -16,7 +20,9 @@ deviceIdForTest                      # include/services/BurstCollectorService.h
 deviceNameForTest                    # include/services/BurstCollectorService.h
 folderHasOneGroupForTest             # include/services/BurstCollectorService.h
 helperLaunch                         # desktop/qt/core/pure/PendingUpdate.cpp
+initializePage                       # desktop/qt/ui/ConfiguratorWindow.cpp -- Linux only; QWizardPage virtual, Qt calls it
 injectDependenciesForTest            # src/services/BurstCollectorService.cpp
+isComplete                           # desktop/qt/ui/ConfiguratorWindow.cpp -- Linux only; QWizardPage virtual, Qt calls it
 isDirtyForTest                       # include/services/CpapDashSyncService.h
 isEnabled                            # desktop/qt/app/Autostart.cpp
 isSupported                          # desktop/qt/app/Autostart.cpp
@@ -30,6 +36,7 @@ resetForTest                         # src/services/SleepHqExportService.cpp
 restart                              # desktop/qt/core/qt/ChildProcess.cpp
 restartReasons                       # desktop/qt/core/pure/FieldSpec.cpp
 runBurstCycleForTest                 # include/services/BurstCollectorService.h
+set                                  # desktop/qt/core/pure/ConfigModel.cpp -- Linux only; SettingsDialog calls it
 setAppConfig                         # include/services/BurstCollectorService.h
 setExportHookForTest                 # src/services/SleepHqExportService.cpp
 setHealthy                           # desktop/qt/core/qt/ChildProcess.cpp
@@ -38,7 +45,10 @@ setStatePath                         # include/services/CpapDashSyncService.h
 settings                             # include/services/CpapDashSyncService.h
 settingsGroups                       # desktop/qt/core/pure/FieldSpec.cpp
 setTransport                         # include/services/CpapDashSyncService.h
+SetUp                                # tests/parsers/test_EDFParser.cpp -- Linux only; gtest calls the fixture override
 succeeded                            # desktop/qt/ui/StartupWindow.h
+TearDown                             # tests/parsers/test_EDFParser.cpp -- Linux only; gtest calls the fixture override
 toDiskJson                           # desktop/qt/core/pure/ConfigModel.cpp
 toPatch                              # desktop/qt/core/pure/ConfigModel.cpp
 valid                                # desktop/qt/core/qt/ChildProcess.cpp
+validatePage                         # desktop/qt/ui/ConfiguratorWindow.cpp -- Linux only; QWizardPage virtual, Qt calls it

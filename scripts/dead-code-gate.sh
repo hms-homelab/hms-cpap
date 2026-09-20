@@ -71,22 +71,42 @@ cat "$WORK/cc-main.txt" "$WORK/cc-qt.txt" \
 cut -f1 "$WORK/candidates.tsv" | sort -u > "$WORK/candidates.txt"
 
 if [ "$UPDATE" = "1" ]; then
+    # MERGE, never replace. The candidate list is platform-dependent: a Linux
+    # cppcheck raises gtest SetUp/TearDown and the QWizardPage virtuals that a
+    # macOS run does not, and vice versa. A replacing --update run on one
+    # machine would silently drop the other machine's entries and turn CI red
+    # for something nobody changed -- which is exactly what happened on the
+    # v5.4.2 run. Dropping an entry is therefore a deliberate edit of this file.
     {
         echo "# SDD-045 D6 baseline: every symbol the tools currently raise as"
-        echo "# uncalled. Most are NOT dead -- see scripts/dead-code-gate.sh for why"
-        echo "# the gate does not try to tell the difference."
+        echo "# uncalled, on ANY platform. Most are NOT dead -- see"
+        echo "# scripts/dead-code-gate.sh for why the gate does not try to tell"
+        echo "# the difference."
         echo "#"
         echo "# A new entry appearing means nobody has classified it yet. Delete the"
         echo "# code, or add it here with a note saying what reaches it."
         echo "#"
-        echo "# Regenerate:  scripts/dead-code-gate.sh --update"
-        echo "# Generated $(date -u +%Y-%m-%d) from $(git rev-parse --short HEAD 2>/dev/null || echo 'a dirty tree')"
+        echo "# --update MERGES: it adds what this machine sees and keeps what it"
+        echo "# does not, because the list differs between macOS and Linux. To"
+        echo "# remove an entry, delete the line by hand."
+        echo "#"
+        echo "# Last touched $(date -u +%Y-%m-%d) on $(uname -s) from $(git rev-parse --short HEAD 2>/dev/null || echo 'a dirty tree')"
         echo
-        while IFS=$'\t' read -r name file; do
-            printf '%-36s # %s\n' "$name" "$file"
-        done < "$WORK/candidates.tsv"
-    } > "$BASELINE"
-    echo "dead-code-gate: baseline rewritten, $(wc -l < "$WORK/candidates.txt" | tr -d ' ') symbols"
+        {
+            # Existing lines keep their note; new ones get the file they came from.
+            sed 's/#.*//' "$BASELINE" 2>/dev/null | tr -d ' \t' | grep -v '^$' \
+              | while read -r n; do
+                    old=$(grep -E "^$n[[:space:]]" "$BASELINE" 2>/dev/null | head -1)
+                    if [ -n "$old" ]; then echo "$old"; else printf '%-36s\n' "$n"; fi
+                done
+            while IFS=$'\t' read -r name file; do
+                grep -qE "^$name[[:space:]]" "$BASELINE" 2>/dev/null || \
+                    printf '%-36s # %s\n' "$name" "$file"
+            done < "$WORK/candidates.tsv"
+        } | sort -u
+    } > "$WORK/baseline.new"
+    mv "$WORK/baseline.new" "$BASELINE"
+    echo "dead-code-gate: baseline merged, $(sed 's/#.*//' "$BASELINE" | tr -d ' \t' | grep -cv '^$') symbols"
     exit 0
 fi
 
@@ -97,9 +117,13 @@ NEW=$(comm -23 "$WORK/candidates.txt" "$WORK/known.txt")
 GONE=$(comm -13 "$WORK/candidates.txt" "$WORK/known.txt")
 
 if [ -n "$GONE" ]; then
-    echo "dead-code-gate: these baseline entries no longer come up (deleted, or now called):"
+    # Informational only, and never a failure: on macOS this lists the entries
+    # only a Linux cppcheck raises (and the reverse on Linux). It is worth
+    # printing because it also catches an entry whose code was deleted, but you
+    # have to look at which before removing a line.
+    echo "dead-code-gate: baseline entries this platform ($(uname -s)) does not raise."
+    echo "Either another platform raises them, or the code is gone; check before removing:"
     echo "$GONE" | sed 's/^/    /'
-    echo "    -> scripts/dead-code-gate.sh --update to drop them"
     echo
 fi
 
