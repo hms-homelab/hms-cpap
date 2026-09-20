@@ -371,3 +371,31 @@ went with the code they covered: 3 myAir `parseDevice`, 1 `canManageAutostart`,
 (`AgreesWithTheSlotVariant`, which compared two variants where one now remains,
 and `ExplicitZeroIntervalIsUntracked`, already covered by
 `NonPositiveIntervalIsUntracked`).
+
+## 12. The gate (D6)
+
+`scripts/dead-code-gate.sh`, run by a `dead-code` job in `docker-build.yml`
+(configure only, no build: the compile database is all cppcheck needs).
+
+**It does not decide what is dead, on purpose.** That is the lesson of this
+whole exercise: of 111 cppcheck hits, 8 were real, and every wrong one came from
+a caller cppcheck could not see. An automated verdict would either delete a test
+seam or rubber-stamp everything. So the baseline
+(`scripts/dead-code-baseline.txt`) lists **every** symbol the tools currently
+raise, 34 of them, and the gate fails only when a symbol appears that nobody has
+classified. The person who added it decides: delete it, or baseline it with a
+note saying what reaches it.
+
+Two details it encodes so they are not rediscovered:
+
+- **Both build trees.** It runs cppcheck over `build/compile_commands.json` and
+  again over `desktop/qt`, because the Qt layer builds elsewhere and is absent
+  from the main database. Without the second run the gate reports the entire
+  supervisor as dead on every run.
+- **No `-j`.** cppcheck silently disables `unusedFunction` when threaded. The
+  first run of this analysis during Phase 0 returned zero findings and looked
+  like good news.
+
+Proven by watching it fail: a throwaway `gateProbeNobodyCallsThis` added to
+`SupplyStatus.cpp` was caught by name and file with exit 1, and the gate went
+green again when it was removed.

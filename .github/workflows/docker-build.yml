@@ -214,6 +214,33 @@ jobs:
           path: coverage/html
           if-no-files-found: ignore
 
+  # ── Dead code (SDD-045 D6) ────────────────────────────────────────
+  # Fails only on symbols nobody has classified yet, against a checked-in
+  # baseline. Configure-only: the compile database is all cppcheck needs, so
+  # this costs a cmake configure rather than a build.
+  dead-code:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install cppcheck and headers
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends \
+            build-essential cmake cppcheck \
+            libcurl4-openssl-dev libpq-dev libpqxx-dev libssl-dev \
+            libjsoncpp-dev libpaho-mqtt-dev libpaho-mqttpp-dev \
+            nlohmann-json3-dev libspdlog-dev libsqlite3-dev \
+            libdrogon-dev libgtest-dev libgmock-dev \
+            uuid-dev libmariadb-dev libhiredis-dev libbrotli-dev \
+            libyaml-cpp-dev zlib1g-dev libhpdf-dev
+
+      - name: Configure (compile database only)
+        run: cmake -S . -B build -DBUILD_TESTS=ON -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+
+      - name: Check for unclassified dead code
+        run: bash scripts/dead-code-gate.sh
+
   # ── Windows Build ─────────────────────────────────────────────────
   windows-build:
     runs-on: windows-latest

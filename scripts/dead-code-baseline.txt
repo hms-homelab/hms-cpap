@@ -1,0 +1,44 @@
+# SDD-045 D6 baseline: every symbol the tools currently raise as
+# uncalled. Most are NOT dead -- see scripts/dead-code-gate.sh for why
+# the gate does not try to tell the difference.
+#
+# A new entry appearing means nobody has classified it yet. Delete the
+# code, or add it here with a note saying what reaches it.
+#
+# Regenerate:  scripts/dead-code-gate.sh --update
+# Generated 2026-09-20 from 548b5d7
+
+buildRangeMetricsStringForTest       # include/services/BurstCollectorService.h
+closeSettledOpenLocalNightsForTest   # include/services/BurstCollectorService.h
+current                              # desktop/qt/core/pure/ConfigModel.h
+cursor                               # src/services/CpapDashSyncService.cpp
+deviceIdForTest                      # include/services/BurstCollectorService.h
+deviceNameForTest                    # include/services/BurstCollectorService.h
+folderHasOneGroupForTest             # include/services/BurstCollectorService.h
+helperLaunch                         # desktop/qt/core/pure/PendingUpdate.cpp
+injectDependenciesForTest            # src/services/BurstCollectorService.cpp
+isDirtyForTest                       # include/services/CpapDashSyncService.h
+isEnabled                            # desktop/qt/app/Autostart.cpp
+isSupported                          # desktop/qt/app/Autostart.cpp
+keepSecret                           # desktop/qt/core/pure/ConfigModel.cpp
+loadFromApi                          # desktop/qt/core/pure/ConfigModel.cpp
+parseDirForNightForTest              # include/services/BurstCollectorService.h
+parsePendingUpdate                   # desktop/qt/core/pure/PendingUpdate.cpp
+pid                                  # desktop/qt/core/qt/ChildProcess.cpp
+reloadConfigForTest                  # include/services/BurstCollectorService.h
+resetForTest                         # src/services/SleepHqExportService.cpp
+restart                              # desktop/qt/core/qt/ChildProcess.cpp
+restartReasons                       # desktop/qt/core/pure/FieldSpec.cpp
+runBurstCycleForTest                 # include/services/BurstCollectorService.h
+setAppConfig                         # include/services/BurstCollectorService.h
+setExportHookForTest                 # src/services/SleepHqExportService.cpp
+setHealthy                           # desktop/qt/core/qt/ChildProcess.cpp
+setSourceForTest                     # include/services/BurstCollectorService.h
+setStatePath                         # include/services/CpapDashSyncService.h
+settings                             # include/services/CpapDashSyncService.h
+settingsGroups                       # desktop/qt/core/pure/FieldSpec.cpp
+setTransport                         # include/services/CpapDashSyncService.h
+succeeded                            # desktop/qt/ui/StartupWindow.h
+toDiskJson                           # desktop/qt/core/pure/ConfigModel.cpp
+toPatch                              # desktop/qt/core/pure/ConfigModel.cpp
+valid                                # desktop/qt/core/qt/ChildProcess.cpp
