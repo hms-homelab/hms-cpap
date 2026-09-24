@@ -407,6 +407,18 @@ CREATE TABLE IF NOT EXISTS cpap_sync_folders (
     KEY idx_sync_folders_debt (str_due, sidecars_due)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- SDD-046: a night is over after an hour with no growth. Times are epoch
+-- seconds. Created at runtime by utils/NightQuiet.h; listed here for reference.
+CREATE TABLE IF NOT EXISTS cpap_night_quiet (
+    device_id    VARCHAR(128) NOT NULL,
+    date_folder  VARCHAR(8)   NOT NULL,
+    last_growth  BIGINT NOT NULL DEFAULT 0,
+    newest_start BIGINT NOT NULL DEFAULT 0,
+    announced    BIGINT NOT NULL DEFAULT 0,
+    str_sig      VARCHAR(255) NOT NULL DEFAULT '',
+    PRIMARY KEY (device_id, date_folder)
+);
+
 -- SDD-029: nights an operator removed; every re-ingest path consults it.
 -- night is YYYYMMDD (strDayForSessionStart). Reparse clears the row.
 CREATE TABLE IF NOT EXISTS cpap_removed_nights (
