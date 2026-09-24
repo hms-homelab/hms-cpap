@@ -160,8 +160,6 @@ The [`architecture/`](architecture/) folder maps the code:
   the frontend) and how a web request and a collection burst travel through
   them.
 
-Design decisions, one per change, are in [`sdlc/sdd/`](sdlc/sdd/).
-
 ## Disclaimers
 
 - **Not a medical device.** It does not diagnose anything and it is not a
