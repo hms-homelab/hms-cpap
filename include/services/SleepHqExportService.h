@@ -44,6 +44,12 @@ public:
     /// unconditional semantics.
     bool markDirtyIfNotExported(const std::string& date_folder);
 
+    /// SDD-046 D5: the night is over (an hour with no growth), so it exports on
+    /// the next sweep that finds its folder as it is now, with no second quiet
+    /// window after the hour. A folder that still changes restarts the window
+    /// exactly as markDirty's does.
+    void markSettled(const std::string& date_folder);
+
     // Scan dirty folders and export the first one that has been quiet long
     // enough. Called once per burst cycle. Real exports run on a detached
     // thread, one at a time; `now` is injectable for tests.

@@ -229,7 +229,7 @@ TEST_P(SyncFolderBackendTest, AStoredLedgerDrivesTheStateMachineUnchanged) {
 
     auto out = db().getSyncFolder(base_);
     ASSERT_TRUE(out.has_value());
-    EXPECT_EQ(nightState(f), nightState(*out)) << engineName(GetParam());
+    EXPECT_EQ(nightState(f, true), nightState(*out, true)) << engineName(GetParam());
 
     FolderObservation obs;
     obs.file_count       = f.last_file_count;

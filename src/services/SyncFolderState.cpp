@@ -93,13 +93,14 @@ FolderLedger clearSidecarDebt(const FolderLedger& in) {
     return out;
 }
 
-NightState nightState(const FolderLedger& l) {
-    // Still moving, or never settled: the night is live and nothing is wrong.
-    if (!l.complete) return NightState::Live;
-    // Settled, but the machine's own daily record never arrived. The transfer
-    // finished as far as it is going to and the night is short of its STR.
-    if (l.str_due) return NightState::Partial;
-    return NightState::Complete;
+NightState nightState(const FolderLedger& l, bool hour_passed) {
+    // Inside the night's hour it is still being slept or written, whatever is
+    // stored: a pause with every file downloaded is not the night being over.
+    if (!hour_passed) return NightState::Live;
+    // Over, and every file the card listed is here: whole, with or without its
+    // STR record (SDD-046 D2, D3: the STR is not a requirement). Over with a
+    // file still missing: the transfer never finished.
+    return l.complete ? NightState::Complete : NightState::Partial;
 }
 
 const char* nightStateString(NightState s) {

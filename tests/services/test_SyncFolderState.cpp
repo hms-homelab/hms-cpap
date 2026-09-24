@@ -214,45 +214,41 @@ TEST(SyncFolderState, RealProgressResetsTheReArmBudget) {
 // What the night reports
 // ─────────────────────────────────────────────────────────────────────────────
 
-TEST(SyncFolderState, AnIncompleteFolderReadsLive) {
+TEST(SyncFolderState, InsideItsHourANightIsLiveWhateverIsStored) {
+    // SDD-046: a pause with every file downloaded is not the night being over.
     FolderLedger l;
     l.complete = false;
-    EXPECT_EQ(nightState(l), NightState::Live);
+    EXPECT_EQ(nightState(l, false), NightState::Live);
+    l.complete = true;
+    EXPECT_EQ(nightState(l, false), NightState::Live);
 }
 
-TEST(SyncFolderState, CompleteWithOutstandingStrDebtReadsPartial) {
-    // The whole point: the transfer settled and the machine's own daily record
-    // never arrived.
+TEST(SyncFolderState, AfterItsHourAStoredNightIsCompleteWithOrWithoutItsStr) {
+    // SDD-046 D2/D3: the STR is not a requirement. An outstanding STR debt no
+    // longer makes a night partial.
     FolderLedger l;
     l.complete = true;
     l.str_due  = true;
-    EXPECT_EQ(nightState(l), NightState::Partial);
-}
-
-TEST(SyncFolderState, CompleteWithTheDebtClearedReadsComplete) {
-    FolderLedger l;
-    l.complete = true;
+    EXPECT_EQ(nightState(l, true), NightState::Complete);
     l.str_due  = false;
-    EXPECT_EQ(nightState(l), NightState::Complete);
+    EXPECT_EQ(nightState(l, true), NightState::Complete);
 }
 
-TEST(SyncFolderState, AnIncompleteFolderIsLiveEvenWithDebtOutstanding) {
-    // Debt on a folder still receiving files is not a partial night, it is a
-    // night in progress. Calling it partial would flag a healthy transfer.
+TEST(SyncFolderState, AfterItsHourANightMissingAFileIsPartial) {
+    // SDD-046 D3: partial means the transfer never finished.
     FolderLedger l;
     l.complete = false;
-    l.str_due  = true;
-    EXPECT_EQ(nightState(l), NightState::Live);
+    EXPECT_EQ(nightState(l, true), NightState::Partial);
 }
 
 TEST(SyncFolderState, SidecarDebtAloneDoesNotMakeANightPartial) {
     // Missing event annotations are a data-completeness problem, not a stuck
-    // night. Only the absent STR means the night never finished arriving.
+    // night.
     FolderLedger l;
     l.complete      = true;
     l.str_due       = false;
     l.sidecars_due  = true;
-    EXPECT_EQ(nightState(l), NightState::Complete);
+    EXPECT_EQ(nightState(l, true), NightState::Complete);
 }
 
 TEST(SyncFolderState, StateStringsAreCanonical) {

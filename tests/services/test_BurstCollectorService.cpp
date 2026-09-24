@@ -2181,8 +2181,7 @@ TEST_F(BurstOrchestrationTest, ForceCompletedSession_IsSkipped) {
 }
 
 // Scenario 2: Existing session, checkpoints UNCHANGED -> markSessionCompleted
-// fires and (newly_completed + most_recent) drives the completion path
-// (getNightlyMetrics + publishSessionCompleted via the null-MQTT publisher).
+// fires. The night's completion actions wait for its hour of quiet (SDD-046).
 TEST_F(BurstOrchestrationTest, ExistingSession_Unchanged_MarksCompleted) {
     auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
     // SDD-011: already collected normally, so the unchanged path is a true skip
@@ -2206,7 +2205,6 @@ TEST_F(BurstOrchestrationTest, ExistingSession_Unchanged_MarksCompleted) {
 
     // Completion path: first time marking returns true (was NULL).
     EXPECT_CALL(*db_raw, markSessionCompleted(_, _)).Times(1).WillOnce(Return(true));
-    // newly_completed && is_most_recent -> getNightlyMetrics is consulted.
     EXPECT_CALL(*db_raw, getNightlyMetrics(_, _))
         .WillRepeatedly(Return(std::nullopt));
 
@@ -2282,8 +2280,7 @@ TEST_F(BurstOrchestrationTest, ArchiveRepairDoesNotRepeatOnTheNextBurst) {
 }
 
 // Scenario 2b: Existing session unchanged but already completed
-// (markSessionCompleted returns false) -> publishSessionCompleted still fires
-// to clear stale session_active, but no metrics fetch is required.
+// (markSessionCompleted returns false) -> nothing is fetched or published.
 TEST_F(BurstOrchestrationTest, ExistingSession_AlreadyCompleted_NoReMark) {
     auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
     // SDD-011: already collected normally, so the unchanged path is a true skip
@@ -2303,8 +2300,6 @@ TEST_F(BurstOrchestrationTest, ExistingSession_AlreadyCompleted_NoReMark) {
 
     // Already completed: markSessionCompleted returns false.
     EXPECT_CALL(*db_raw, markSessionCompleted(_, _)).Times(1).WillOnce(Return(false));
-    // The !newly_completed branch only calls publishSessionCompleted(); it does
-    // NOT fetch metrics for this session.
     EXPECT_CALL(*db_raw, getNightlyMetrics(_, _)).Times(0);
 
     svc->runBurstCycleForTest();
@@ -2434,9 +2429,9 @@ static std::chrono::system_clock::time_point sessionTime(const std::string& pref
 }
 
 // Two unchanged sessions in one cycle: BOTH get markSessionCompleted (newly
-// completed), but completion ACTIONS (getNightlyMetrics) fire only for the
-// most-recent one (23:30) — the earlier (22:00) is gated by is_most_recent.
-TEST_F(BurstOrchestrationTest, MultiSession_OnlyMostRecentTriggersMetrics) {
+// completed), and NEITHER publishes: the night's completion actions wait for
+// its hour of quiet (SDD-046), where only the newest night publishes.
+TEST_F(BurstOrchestrationTest, MultiSession_ClosingPublishesNothing) {
     auto svc = makeService(&BurstOrchestrationTest::seedTwoSessions);
     // SDD-011: see above.
     archiveSeededNight({"20200101_220000_BRP.edf", "20200101_220000_PLD.edf",
@@ -2461,8 +2456,7 @@ TEST_F(BurstOrchestrationTest, MultiSession_OnlyMostRecentTriggersMetrics) {
     EXPECT_CALL(*db_raw, markSessionCompleted(_, t_early)).Times(1).WillOnce(Return(true));
     EXPECT_CALL(*db_raw, markSessionCompleted(_, t_late)).Times(1).WillOnce(Return(true));
 
-    // Completion actions (metrics) fire ONLY for the most-recent (late) session.
-    EXPECT_CALL(*db_raw, getNightlyMetrics(_, t_late)).Times(1).WillOnce(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, getNightlyMetrics(_, t_late)).Times(0);
     EXPECT_CALL(*db_raw, getNightlyMetrics(_, t_early)).Times(0);
 
     EXPECT_CALL(*db_raw, updateCheckpointFileSizesMock(_, _)).Times(0);
@@ -2891,7 +2885,8 @@ TEST_F(BurstOrchestrationTest, ClosingAFolder_RefetchesSidecarsFromOffsetZero) {
         << "sidecar was fetched with a RANGE";
 }
 
-// Closing arms the STR debt, which is what makes a night report as partial.
+// Closing arms the STR debt for the right therapy day. Since SDD-046 the debt no
+// longer makes a night partial: the STR is not a requirement.
 TEST_F(BurstOrchestrationTest, ClosingAFolder_ArmsStrDebtForTheRightTherapyDay) {
     auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
 
@@ -2913,7 +2908,8 @@ TEST_F(BurstOrchestrationTest, ClosingAFolder_ArmsStrDebtForTheRightTherapyDay) 
     ASSERT_NE(it, db_raw->sync_folders.end()) << "no ledger row was written";
     EXPECT_TRUE(it->second.complete) << "the folder never settled";
     EXPECT_TRUE(it->second.str_due)  << "closing did not arm the STR debt";
-    EXPECT_EQ(nightState(it->second), NightState::Partial);
+    EXPECT_EQ(nightState(it->second, /*hour_passed=*/true), NightState::Complete)
+        << "an outstanding STR debt made a stored night partial";
 
     // A 22:00 session is before midnight, so its therapy day matches the folder.
     // The interesting half of this rule is covered in test_SyncFolderState.cpp,
@@ -2954,19 +2950,16 @@ TEST_F(BurstOrchestrationTest, AGrowingNightIsLiveAndNeverPartial) {
     ASSERT_NE(it, db_raw->sync_folders.end());
     EXPECT_FALSE(it->second.str_due)
         << "a live night armed STR debt; mid-therapy is not a failed transfer";
-    EXPECT_EQ(nightState(it->second), NightState::Live)
-        << "a night still being written reported as " 
-        << nightStateString(nightState(it->second));
+    EXPECT_EQ(nightState(it->second, /*hour_passed=*/false), NightState::Live)
+        << "a night still being written reported as "
+        << nightStateString(nightState(it->second, false));
 }
 
 
-// SDD-008 decision 2: an incomplete night publishes ONLY the partial fact.
-//
-// Suppression is the point. A truncated night's AHI and usage hours are WRONG
-// rather than uncertain; MQTT values are retained, so Home Assistant keeps them
-// in history where they are hard to retract; and a stored LLM summary narrates
-// a night that did not happen that way.
-TEST_F(BurstOrchestrationTest, APartialNightSuppressesItsMetrics) {
+// SDD-046: a session that closes on an unchanged burst publishes nothing. On a
+// 65 s cycle that burst can be a one-minute pause in the middle of the night;
+// the night's outcome waits for its hour of quiet (announceQuietNights).
+TEST_F(BurstOrchestrationTest, AClosedSessionPublishesNothingBeforeItsHour) {
     auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
 
     EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
@@ -2982,9 +2975,9 @@ TEST_F(BurstOrchestrationTest, APartialNightSuppressesItsMetrics) {
     EXPECT_CALL(*db_raw, markSessionCompleted(_, _)).WillRepeatedly(Return(true));
 
     // Cycle 1 is a LIVE night and publishing its running metrics is correct, so
-    // the assertion has to be scoped to cycle 2, when the folder settles without
-    // its STR. The metrics lookup is what publishing would need: if it is never
-    // asked for after the night goes partial, nothing could have been published.
+    // the assertion has to be scoped to cycle 2, when the session closes. The
+    // metrics lookup is what publishing would need: if it is never asked for,
+    // nothing could have been published.
     ::testing::Sequence metrics_seq;
     EXPECT_CALL(*db_raw, getNightlyMetrics(_, _))
         .InSequence(metrics_seq).WillRepeatedly(Return(std::nullopt));
@@ -2997,47 +2990,14 @@ TEST_F(BurstOrchestrationTest, APartialNightSuppressesItsMetrics) {
     EXPECT_CALL(*db_raw, sessionExists(_, _)).WillRepeatedly(Return(true));
     EXPECT_CALL(*db_raw, getCheckpointFileSizes(_, _)).WillRepeatedly(Return(stored));
     EXPECT_CALL(*db_raw, markSessionCompleted(_, _)).WillRepeatedly(Return(true));
-    // THE assertion: once the night is partial, its metrics are never fetched.
+    // THE assertion: the close publishes nothing; the hour does.
     EXPECT_CALL(*db_raw, getNightlyMetrics(_, _)).Times(0);
 
-    svc->runBurstCycleForTest();          // closes without an STR -> partial
+    svc->runBurstCycleForTest();          // the session closes
 
     auto it = db_raw->sync_folders.find("20200101");
     ASSERT_NE(it, db_raw->sync_folders.end());
-    ASSERT_EQ(nightState(it->second), NightState::Partial)
-        << "test setup did not actually produce a partial night";
-}
-
-// The other half: once the STR arrives the night is complete, and the metrics
-// it suppressed are published normally. Partial is never terminal.
-TEST_F(BurstOrchestrationTest, ARecoveredNightPublishesItsMetrics) {
-    auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
-
-    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
-    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
-    EXPECT_CALL(*db_raw, sessionExists(_, _))
-        .WillOnce(Return(false))
-        .WillRepeatedly(Return(true));
-    std::map<std::string, int> stored = {
-        {"20200101_220000_BRP.edf", 100},
-        {"20200101_220000_PLD.edf", 20},
-    };
-    EXPECT_CALL(*db_raw, getCheckpointFileSizes(_, _)).WillRepeatedly(Return(stored));
-    EXPECT_CALL(*db_raw, markSessionCompleted(_, _)).WillRepeatedly(Return(true));
-    EXPECT_CALL(*db_raw, getNightlyMetrics(_, _)).WillRepeatedly(Return(std::nullopt));
-
-    svc->runBurstCycleForTest();
-    svc->runBurstCycleForTest();          // closes -> partial
-
-    auto it = db_raw->sync_folders.find("20200101");
-    ASSERT_NE(it, db_raw->sync_folders.end());
-    ASSERT_TRUE(it->second.str_due);
-
-    // The STR turns up. Nothing else about the night changed.
-    db_raw->sync_folders["20200101"] = clearStrDebt(it->second);
-
-    EXPECT_EQ(nightState(db_raw->sync_folders["20200101"]), NightState::Complete)
-        << "a night that received its STR is still being reported as partial";
+    ASSERT_TRUE(it->second.complete) << "test setup did not actually close the night";
 }
 
 // A first run against a card holding many nights used to download every one

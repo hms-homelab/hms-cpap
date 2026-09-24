@@ -114,11 +114,15 @@ FolderLedger clearSidecarDebt(const FolderLedger& in);
 
 /// What the night should report.
 ///
-/// Partial means the transfer settled and the machine's own daily record never
-/// arrived. That is a fact about state, not an inference from elapsed time.
+/// SDD-046 (Albin, 2026-09-24): a night is Live until its hour of quiet has
+/// passed ([hour_passed], utils/NightQuiet.h). Then it is Complete when every
+/// file the card listed is here, and Partial when one is not: the transfer
+/// never finished (D3). Partial no longer means "no STR": the STR is not a
+/// requirement, and an STR that already holds the day's record from the first
+/// mask-on proves arrival, not completion.
 enum class NightState { Live, Complete, Partial };
 
-NightState nightState(const FolderLedger& l);
+NightState nightState(const FolderLedger& l, bool hour_passed);
 const char* nightStateString(NightState s);
 
 }  // namespace hms_cpap

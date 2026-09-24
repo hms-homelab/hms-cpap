@@ -1,4 +1,5 @@
 #include "web/QueryService.h"
+#include "utils/NightQuiet.h"
 #include "utils/OximetryDevice.h"
 #include "cpapdash/parser/SleepIndex.h"
 
@@ -385,8 +386,10 @@ Json::Value QueryService::getSessions(int limit, int offset) {
     // '-12 hours'), so they identify the same night; only the punctuation
     // differs.
     std::map<std::string, NightState> by_day;
+    const auto hours = nightHourStates(*db_, device_id_);
     for (const auto& f : db_->listSyncFolders()) {
-        if (!f.str_day.empty()) by_day[f.str_day] = nightState(f);
+        if (!f.str_day.empty())
+            by_day[f.str_day] = nightState(f, nightHourPassed(hours, f.date_folder));
     }
     for (auto& row : rows) {
         std::string key = row.isMember("sleep_day") && !row["sleep_day"].isNull()
@@ -476,7 +479,8 @@ Json::Value QueryService::getSessionDetail(const std::string& date) {
     const char* state = nullptr;
     for (const auto& f : db_->listSyncFolders()) {
         if (!f.str_day.empty() && f.str_day == key) {
-            state = nightStateString(nightState(f));
+            state = nightStateString(
+                nightState(f, nightHourPassed(nightHourStates(*db_, device_id_), f.date_folder)));
             break;
         }
     }

@@ -558,12 +558,44 @@ private:
     /// duration is stored, which is what the caller did before.
     bool closeOnStoredSpan(const std::chrono::system_clock::time_point& session_start);
 
+    /**
+     * SDD-046: announce every night whose folder has had no growth for
+     * kNightQuiet (utils/NightQuiet.h). The STR is read once first and is not
+     * a requirement; each night is recorded as announced before anything is
+     * published, so a restart never announces it twice and the partial verdict
+     * sees its hour. Every such night goes to SleepHQ; only the newest
+     * publishes its outcome, because its figures are the dashboard's "last
+     * night" and an older night's would overwrite them. Returns how many it
+     * announced.
+     */
+    int announceQuietNights(std::chrono::system_clock::time_point now);
+
+    /// SDD-046 D4: a parsed STR that changed the newest announced night's
+    /// record publishes that night again.
+    void republishRevisedNight();
+
+    /// The cached STR record for the therapy day [session_start] belongs to,
+    /// or null when the STR has none for it.
+    const STRDailyRecord* strRecordForNight(
+        const std::chrono::system_clock::time_point& session_start) const;
+
+    /// Weekly/monthly LLM summaries, on their configured days.
+    void runRangeSummariesIfDue();
+
+    /// Set while announceQuietNights reads the STR, so the read does not
+    /// republish the previous night on the way to announcing the next one.
+    bool announcing_ = false;
+
 public:
     /// Test-only seam for the SDD-043 sweep.
     int closeSettledOpenLocalNightsForTest(std::chrono::system_clock::time_point now) {
         return closeSettledOpenLocalNights(now);
     }
     void setSourceForTest(const std::string& source) { cpap_source_ = source; }
+    /// Test-only seam for SDD-046.
+    int announceQuietNightsForTest(std::chrono::system_clock::time_point now) {
+        return announceQuietNights(now);
+    }
 private:
 
     void closeIfSettledLocalNight(const std::chrono::system_clock::time_point& session_start,

@@ -60,6 +60,18 @@ void SleepHqExportService::markDirty(const std::string& date_folder) {
     st.last_change = std::chrono::steady_clock::now();
 }
 
+void SleepHqExportService::markSettled(const std::string& date_folder) {
+    if (!sleephqReady(config_) || date_folder.empty()) return;
+    const std::string archive_base = ConfigManager::get("CPAP_ARCHIVE_DIR", "");
+    auto snap = archive_base.empty() ? std::map<std::string, std::uintmax_t>{}
+                                     : scanFolder(archive_base, date_folder);
+    std::lock_guard<std::mutex> lock(mu_);
+    auto& st = dirty_[date_folder];
+    st.snapshot = std::move(snap);
+    // The quiet window is already behind it: the hour was the window.
+    st.last_change = std::chrono::steady_clock::time_point{};
+}
+
 bool SleepHqExportService::markDirtyIfNotExported(const std::string& date_folder) {
     if (!sleephqReady(config_) || date_folder.empty()) return false;
 

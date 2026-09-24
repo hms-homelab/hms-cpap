@@ -13,6 +13,7 @@
 #include "utils/ConfigManager.h"
 #include "utils/AppConfig.h"
 #include "utils/FileUtils.h"
+#include "utils/NightQuiet.h"
 #include "utils/SessionEnd.h"
 #include "database/SqlDialect.h"
 #include "utils/CardResidue.h"
@@ -398,11 +399,28 @@ bool BurstCollectorService::forceCompleteSession(const std::string& sleep_day) {
         if (metrics) {
             data_publisher_->publishHistoricalState(metrics.value());
             if (llm_enabled_ && llm_client_) {
-                const STRDailyRecord* str_rec = !last_str_records_.empty()
-                    ? &last_str_records_.back() : nullptr;
-                generateAndPublishSummary(metrics.value(), str_rec);
+                generateAndPublishSummary(metrics.value(),
+                                          strRecordForNight(session_start.value()));
             }
         }
+    }
+    // SDD-046: a forced night is announced, so its hour does not announce it
+    // a second time.
+    {
+        const std::time_t t = std::chrono::system_clock::to_time_t(session_start.value());
+        std::tm tm{};
+#ifdef _WIN32
+        localtime_s(&tm, &t);
+#else
+        localtime_r(&t, &tm);
+#endif
+        char folder[9];
+        std::strftime(folder, sizeof(folder), "%Y%m%d", &tm);
+        const auto now = std::chrono::system_clock::now();
+        noteNightSeen(*db_service_, device_id_, folder, session_start.value(), now,
+                      /*already_closed=*/true);
+        const STRDailyRecord* rec = strRecordForNight(session_start.value());
+        markNightAnnounced(*db_service_, device_id_, folder, now, rec ? strSignature(*rec) : "");
     }
     return true;
 }
@@ -940,6 +958,9 @@ bool BurstCollectorService::processSTRFile() {
         // Cache for on-demand regeneration via MQTT command
         last_str_records_ = all_records;
 
+        // SDD-046 D4: the STR moved the newest announced night: publish it again.
+        republishRevisedNight();
+
         // Run insights engine on full STR history
         if (data_publisher_ && mqtt_client_ && mqtt_client_->isConnected()) {
             auto insights = InsightsEngine::analyze(all_records);
@@ -1196,9 +1217,9 @@ bool BurstCollectorService::publishNightOutcome(
               << metrics.value().ahi << ")" << std::endl;
 
     if (llm_enabled_ && llm_client_) {
-        const STRDailyRecord* str_rec = !last_str_records_.empty()
-            ? &last_str_records_.back() : nullptr;
-        generateAndPublishSummary(metrics.value(), str_rec);
+        // The record for THIS night's therapy day, not the newest the STR
+        // holds, which is another day's whenever the night is not the last.
+        generateAndPublishSummary(metrics.value(), strRecordForNight(session_start));
     }
     return true;
 }
@@ -1239,7 +1260,11 @@ bool BurstCollectorService::isNightPartial(
     // forever. False here is the correct answer for them.
     if (!ledger) return false;
 
-    return nightState(*ledger) == NightState::Partial;
+    // SDD-046 D3: partial is the transfer never finishing, which only the
+    // night's hour of quiet can say. announceQuietNights records the hour
+    // before it publishes, so the outcome it publishes reads it here.
+    return nightState(*ledger, nightHourPassed(nightHourStates(*db_service_, device_id_),
+                                               buf)) == NightState::Partial;
 }
 
 void BurstCollectorService::clearStrDebtForParsedDays(
@@ -1671,6 +1696,8 @@ bool BurstCollectorService::executeBurstCycle() {
 
         if (new_sessions.empty()) {
             std::cout << "CPAP: No new sessions to download" << std::endl;
+            // SDD-046: a night can reach its hour on a burst that finds nothing.
+            announceQuietNights(std::chrono::system_clock::now());
             return true;
         }
 
@@ -1800,6 +1827,9 @@ bool BurstCollectorService::executeBurstCycle() {
                         }
                     }
                     db_service_->updateCheckpointFileSizes(device_id_, session.session_start, checkpoint_sizes);
+                    // SDD-046: a new session is the night growing.
+                    noteNightGrowth(*db_service_, device_id_, session.date_folder,
+                                    session.session_start, std::chrono::system_clock::now());
                     downloaded_sessions.push_back({session_dir, session.session_start});
                     stored_inline.insert(session.session_start);
                 } else {
@@ -1864,55 +1894,17 @@ bool BurstCollectorService::executeBurstCycle() {
                     ? closeOnStoredSpan(session.session_start)
                     : db_service_->markSessionCompleted(device_id_, session.session_start);
 
-                // Only trigger completion actions once, and only for the most recent
-                // session by timestamp (not list position, which depends on scan order).
-                // newly_completed ensures this fires exactly once (DB dedup).
-                auto most_recent_start = std::max_element(
-                    new_sessions.begin(), new_sessions.end(),
-                    [](const SessionFileSet& a, const SessionFileSet& b) {
-                        return a.session_start < b.session_start;
-                    })->session_start;
-                bool is_most_recent = (session.session_start == most_recent_start);
-
-                // SleepHQ: mark night dirty; the debounced sweep in runLoop()
-                // exports once the folder settles (SDD-003). Fires regardless
-                // of whether MQTT/data_publisher_ is configured.
-                if (newly_completed && is_most_recent &&
-                    app_config_ && app_config_->sleephq.auto_on_session)
-                    SleepHqExportService::getInstance().markDirty(session.date_folder);
-
-                if (newly_completed && is_most_recent && data_publisher_) {
-                    // SDD-008: publishes metrics + the LLM summary when the
-                    // transfer finished, or ONLY the partial fact when it did
-                    // not. Returns false in the partial case, which also keeps
-                    // the range summaries below from being recomputed off a
-                    // night whose usage hours are known to be short.
-                    const bool full = publishNightOutcome(session.session_start);
-                    data_publisher_->publishSessionCompleted();
-                    processSessionSummary();
-
-                    if (full && llm_enabled_ && llm_client_) {
-                        // Auto-trigger weekly/monthly summaries based on config.
-                        // WEEKLY_SUMMARY_DAY: 0=Sun..6=Sat (default 0=Sunday)
-                        // MONTHLY_SUMMARY_DAY: day of month (default 1)
-                        auto now = std::chrono::system_clock::now();
-                        auto now_t = std::chrono::system_clock::to_time_t(now);
-                        std::tm* tm = std::localtime(&now_t);
-                        int weekly_day = ConfigManager::getInt("WEEKLY_SUMMARY_DAY", 0);
-                        int monthly_day = ConfigManager::getInt("MONTHLY_SUMMARY_DAY", 1);
-                        if (tm->tm_wday == weekly_day) {
-                            generateRangeSummary(SummaryPeriod::WEEKLY);
-                        }
-                        if (tm->tm_mday == monthly_day) {
-                            generateRangeSummary(SummaryPeriod::MONTHLY);
-                        }
-                    }
-                } else if (!newly_completed && is_most_recent && data_publisher_) {
-                    // Session was already completed (session_end set by prior cycle),
-                    // but session_active may still be ON if publishSessionCompleted()
-                    // never fired. Ensure it's cleared.
-                    data_publisher_->publishSessionCompleted();
-                }
+                // SDD-046: the SESSION is closed; the NIGHT is not over until its
+                // folder has been quiet for an hour, and announceQuietNights does
+                // what used to happen here (SleepHQ, the outcome, the STR, the
+                // range summaries). One unchanged burst is a minute on a 65 s
+                // cycle, so this used to announce a night at every pause in it.
+                // A night this collector had already closed before the rule
+                // existed is recorded as announced, so an upgrade does not
+                // announce it a second time.
+                noteNightSeen(*db_service_, device_id_, session.date_folder,
+                              session.session_start, std::chrono::system_clock::now(),
+                              /*already_closed=*/!newly_completed);
 
                 std::cout << "   No changes, skipping download" << std::endl;
                 continue;
@@ -1945,6 +1937,9 @@ bool BurstCollectorService::executeBurstCycle() {
                 // Session resumed (mask put back on) — clear session_end so
                 // markSessionCompleted() can fire again when it truly stops.
                 db_service_->reopenSession(device_id_, session.session_start);
+                // SDD-046: and the night's hour starts again.
+                noteNightGrowth(*db_service_, device_id_, session.date_folder,
+                                session.session_start, std::chrono::system_clock::now());
 
                 downloaded_sessions.push_back({session_dir, session.session_start});
                 stored_inline.insert(session.session_start);
@@ -1952,6 +1947,10 @@ bool BurstCollectorService::executeBurstCycle() {
                 std::cerr << "CPAP: Failed to download session " << session.session_prefix << std::endl;
             }
         }
+
+        // SDD-046: after this burst's growth is recorded, and before the return
+        // below, which every burst whose sessions were all unchanged takes.
+        announceQuietNights(std::chrono::system_clock::now());
 
         if (downloaded_sessions.empty()) {
             std::cerr << "CPAP: No sessions downloaded successfully" << std::endl;
@@ -2328,6 +2327,94 @@ bool BurstCollectorService::closeOnStoredSpan(const std::chrono::system_clock::t
     return db_service_->markSessionCompleted(device_id_, session_start);
 }
 
+int BurstCollectorService::announceQuietNights(std::chrono::system_clock::time_point now) {
+    if (!db_service_) return 0;
+    const auto nights = quietUnannouncedNights(*db_service_, device_id_, now);
+    if (nights.empty()) return 0;
+
+    // D2: the STR once, before anything is published, so the outcome and the
+    // SleepHQ upload carry what it holds. Not a requirement: a night whose
+    // record the STR does not have yet is announced all the same, and a later
+    // STR that brings it republishes the night (D4).
+    announcing_ = true;
+    processSessionSummary();
+    announcing_ = false;
+
+    int announced = 0;
+    for (std::size_t i = 0; i < nights.size(); ++i) {
+        const auto& n = nights[i];
+        const std::chrono::system_clock::time_point start{std::chrono::seconds(n.newest_start)};
+        // A night removed since its growth was recorded (SDD-029) has nothing
+        // to announce; it is still marked, so it is not asked about again.
+        const bool exists = db_service_->sessionExists(device_id_, start);
+        const STRDailyRecord* rec = exists ? strRecordForNight(start) : nullptr;
+        markNightAnnounced(*db_service_, device_id_, n.date_folder, now,
+                           rec ? strSignature(*rec) : "");
+        if (!exists) continue;
+        ++announced;
+        std::cout << "CPAP: night " << n.date_folder << " had no growth for "
+                  << kNightQuiet.count() << " min, it is over"
+                  << (rec ? "" : " (the STR has no record for it yet)") << std::endl;
+
+        // D5: SleepHQ gets it now, with no second quiet window.
+        if (app_config_ && app_config_->sleephq.auto_on_session)
+            SleepHqExportService::getInstance().markSettled(n.date_folder);
+
+        if (i == 0 && data_publisher_) {
+            const bool full = publishNightOutcome(start);
+            data_publisher_->publishSessionCompleted();
+            if (full) runRangeSummariesIfDue();
+        }
+    }
+    return announced;
+}
+
+void BurstCollectorService::republishRevisedNight() {
+    if (!db_service_ || announcing_) return;
+    const auto newest = newestAnnouncedNight(*db_service_, device_id_);
+    if (newest.empty()) return;
+    const std::chrono::system_clock::time_point start{std::chrono::seconds(newest[0].newest_start)};
+    const STRDailyRecord* rec = strRecordForNight(start);
+    if (!rec) return;
+    const std::string sig = strSignature(*rec);
+    if (sig == newest[0].str_sig) return;
+    markNightAnnounced(*db_service_, device_id_, newest[0].date_folder,
+                       std::chrono::system_clock::now(), sig);
+    std::cout << "CPAP: the STR changed night " << newest[0].date_folder
+              << ", publishing it again" << std::endl;
+    if (data_publisher_) publishNightOutcome(start);
+}
+
+const STRDailyRecord* BurstCollectorService::strRecordForNight(
+    const std::chrono::system_clock::time_point& session_start) const {
+    const std::string day = strDayForSessionStart(session_start);
+    for (auto it = last_str_records_.rbegin(); it != last_str_records_.rend(); ++it) {
+        std::time_t t = std::chrono::system_clock::to_time_t(it->record_date);
+        std::tm tm{};
+#ifdef _WIN32
+        localtime_s(&tm, &t);
+#else
+        localtime_r(&t, &tm);
+#endif
+        char buf[9];
+        std::strftime(buf, sizeof(buf), "%Y%m%d", &tm);
+        if (day == buf) return &*it;
+    }
+    return nullptr;
+}
+
+void BurstCollectorService::runRangeSummariesIfDue() {
+    if (!llm_enabled_ || !llm_client_) return;
+    // WEEKLY_SUMMARY_DAY: 0=Sun..6=Sat (default 0=Sunday)
+    // MONTHLY_SUMMARY_DAY: day of month (default 1)
+    auto now_t = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+    std::tm* tm = std::localtime(&now_t);
+    int weekly_day = ConfigManager::getInt("WEEKLY_SUMMARY_DAY", 0);
+    int monthly_day = ConfigManager::getInt("MONTHLY_SUMMARY_DAY", 1);
+    if (tm->tm_wday == weekly_day) generateRangeSummary(SummaryPeriod::WEEKLY);
+    if (tm->tm_mday == monthly_day) generateRangeSummary(SummaryPeriod::MONTHLY);
+}
+
 bool BurstCollectorService::parseAndStoreSession(
     const std::string& session_dir,
     std::chrono::system_clock::time_point session_start,
@@ -2627,8 +2714,10 @@ void BurstCollectorService::generateRangeSummary(SummaryPeriod period, int days_
     // rule the ledger's str_day uses, so these keys compare directly.
     {
         std::set<std::string> partial_days;
+        const auto hours = nightHourStates(*db_service_, device_id_);
         for (const auto& f : db_service_->listSyncFolders()) {
-            if (nightState(f) == NightState::Partial && !f.str_day.empty())
+            if (nightState(f, nightHourPassed(hours, f.date_folder)) == NightState::Partial &&
+                !f.str_day.empty())
                 partial_days.insert(f.str_day);
         }
         if (!partial_days.empty()) {

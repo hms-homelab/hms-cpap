@@ -78,6 +78,7 @@ set(TEST_SOURCES
     utils/test_CardImport.cpp
     utils/test_ArchiveRecordCount.cpp
     utils/test_CardLayout.cpp
+    utils/test_NightQuiet.cpp
     utils/test_DbProbeCli.cpp
     utils/test_FileLogger.cpp
     utils/test_ParentWatch.cpp
