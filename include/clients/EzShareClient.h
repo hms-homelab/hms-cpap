@@ -125,6 +125,10 @@ private:
     bool supports_range_ = true;
 
     static constexpr long DOWNLOAD_TIMEOUT  = 300L;  // large BRP files over slow Fysetc WiFi link
+    /// A ranged transfer slower than LOW_SPEED_LIMIT bytes/s for
+    /// LOW_SPEED_TIME seconds has stalled: fail it and resume next burst.
+    static constexpr long LOW_SPEED_LIMIT = 1024L;
+    static constexpr long LOW_SPEED_TIME  = 30L;
     static constexpr long CONNECTION_TIMEOUT = 10L;
 
     static size_t WriteCallback(void* contents, size_t size, size_t nmemb, void* userp);

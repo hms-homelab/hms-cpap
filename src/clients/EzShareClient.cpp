@@ -345,13 +345,20 @@ bool EzShareClient::downloadFileRange(const std::string& date_folder,
     curl_easy_setopt(curl_, CURLOPT_TIMEOUT, DOWNLOAD_TIMEOUT);
     curl_easy_setopt(curl_, CURLOPT_CONNECTTIMEOUT, CONNECTION_TIMEOUT);
     curl_easy_setopt(curl_, CURLOPT_FOLLOWLOCATION, 0L);
+    // A transfer that has stalled fails in LOW_SPEED_TIME rather than holding
+    // the burst for the whole DOWNLOAD_TIMEOUT; what landed is kept and the
+    // next burst resumes from it.
+    curl_easy_setopt(curl_, CURLOPT_LOW_SPEED_LIMIT, LOW_SPEED_LIMIT);
+    curl_easy_setopt(curl_, CURLOPT_LOW_SPEED_TIME, LOW_SPEED_TIME);
 
     CURLcode res = curl_easy_perform(curl_);
     output.close();
 
-    // Clean up headers
+    // Clean up headers, and the stall limit, which no other request wants.
     curl_slist_free_all(headers);
     curl_easy_setopt(curl_, CURLOPT_HTTPHEADER, nullptr);
+    curl_easy_setopt(curl_, CURLOPT_LOW_SPEED_LIMIT, 0L);
+    curl_easy_setopt(curl_, CURLOPT_LOW_SPEED_TIME, 0L);
 
     // Accept CURLE_OK or CURLE_PARTIAL_FILE (growing file)
     if (res != CURLE_OK && res != CURLE_PARTIAL_FILE) {
@@ -363,6 +370,17 @@ bool EzShareClient::downloadFileRange(const std::string& date_folder,
     // Check HTTP status
     long http_code = 0;
     curl_easy_getinfo(curl_, CURLINFO_RESPONSE_CODE, &http_code);
+    // A 200 to a range past byte 0 is the whole file, just appended after the
+    // bytes we already had. Cut it back to where it was and stop asking for
+    // ranges, so the caller's full download is what replaces it.
+    if (http_code == 200 && start_byte > 0) {
+        std::error_code ec;
+        std::filesystem::resize_file(local_path, start_byte, ec);
+        supports_range_ = false;
+        std::cerr << "EzShare: range ignored for " << filename
+                  << " (HTTP 200); no more ranged requests" << std::endl;
+        return false;
+    }
     if (http_code != 200 && http_code != 206) {
         std::cerr << "EzShare: HTTP " << http_code << " for " << filename << std::endl;
         return false;

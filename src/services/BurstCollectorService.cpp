@@ -467,13 +467,27 @@ bool BurstCollectorService::downloadSessionFiles(
     int range_downloads = 0;
     int full_downloads = 0;
 
-    // Helper lambda for smart download (Range if supported + file exists, full otherwise)
+    // Helper lambda for smart download (Range if supported, full otherwise).
+    //
+    // *** WHAT LANDED IS KEPT. *** A weak link can cut a transfer part way, and
+    // this used to delete the partial file and start the next burst from byte
+    // 0, so a big BRP on such a link might never finish. A ranged transfer that
+    // fails now keeps its bytes and the next burst resumes from them. Only a
+    // server that does not honour Range (the client turns supportsRange off)
+    // falls back to a full download, and only then is the copy discarded.
     auto smartDownload = [&](const std::string& filename, const std::string& local_path) -> bool {
         bool file_exists = std::filesystem::exists(local_path);
         size_t existing_size = file_exists ? std::filesystem::file_size(local_path) : 0;
 
-        if (file_exists && existing_size > 0 && data_source_->supportsRange()) {
-            // Server supports Range — use incremental download
+        // A file we hold none of is asked as a range from byte 0 too, so its
+        // first transfer is also resumable, but only when the card lists it
+        // at 1 KB or more: a range at or past a file's end can wedge the card,
+        // and a 0 KB listing may be an empty file.
+        const auto listed = session.file_sizes_kb.find(filename);
+        const bool listed_nonempty = listed != session.file_sizes_kb.end() && listed->second > 0;
+
+        if (data_source_->supportsRange() &&
+            ((file_exists && existing_size > 0) || listed_nonempty)) {
             size_t bytes_downloaded = 0;
             bool success = data_source_->downloadFileRange(
                 session.date_folder, filename, local_path, existing_size, bytes_downloaded
@@ -490,8 +504,15 @@ bool BurstCollectorService::downloadSessionFiles(
                 return true;
             }
 
-            // Range failed, fallback to full download
-            std::cerr << "⚠️  Range download failed for " << filename << ", trying full download..." << std::endl;
+            if (data_source_->supportsRange()) {
+                std::error_code ec;
+                const auto now_size = std::filesystem::file_size(local_path, ec);
+                std::cerr << "⚠️  " << filename << " stopped at byte " << (ec ? 0 : now_size)
+                          << "; keeping it, the next burst resumes from there" << std::endl;
+                return false;
+            }
+
+            std::cerr << "⚠️  Range not honoured for " << filename << ", trying full download..." << std::endl;
             std::filesystem::remove(local_path);
         }
 
@@ -2356,8 +2377,11 @@ int BurstCollectorService::announceQuietNights(std::chrono::system_clock::time_p
                   << kNightQuiet.count() << " min, it is over"
                   << (rec ? "" : " (the STR has no record for it yet)") << std::endl;
 
-        // D5: SleepHQ gets it now, with no second quiet window.
-        if (app_config_ && app_config_->sleephq.auto_on_session)
+        // D5: SleepHQ gets it now, with no second quiet window. Not a night
+        // whose transfer never finished (D3): its files are still arriving,
+        // and the landing that completes them is growth, which announces the
+        // night again an hour later, whole.
+        if (app_config_ && app_config_->sleephq.auto_on_session && !isNightPartial(start))
             SleepHqExportService::getInstance().markSettled(n.date_folder);
 
         if (i == 0 && data_publisher_) {

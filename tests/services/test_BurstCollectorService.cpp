@@ -1873,13 +1873,37 @@ public:
         ofs << "NOT_A_REAL_EDF_FILE";
         return true;
     }
-    bool downloadFileRange(const std::string&, const std::string& filename,
+    // Where each ranged request started, in order, by filename.
+    std::vector<std::pair<std::string, size_t>> ranged_from;
+    // Cut this file's next ranged transfers part way: each writes `cut_bytes`
+    // and fails, like a link that drops mid-transfer. Counts down per cut.
+    std::map<std::string, int> cut_transfers;
+    size_t cut_bytes = 10;
+    // The source stops honouring Range on the next ranged request.
+    bool refuse_range = false;
+    bool range_supported = true;
+    bool supportsRange() const override { return range_supported; }
+
+    bool downloadFileRange(const std::string& date_folder, const std::string& filename,
                            const std::string& local_path,
-                           size_t, size_t& bytes_downloaded) override {
+                           size_t start_byte, size_t& bytes_downloaded) override {
         ++download_count;
         ranged_files.push_back(filename);
+        ranged_from.emplace_back(filename, start_byte);
+        if (on_download) on_download(date_folder, filename);
         std::filesystem::create_directories(std::filesystem::path(local_path).parent_path());
-        std::ofstream ofs(local_path, std::ios::binary);
+        if (refuse_range) {
+            range_supported = false;
+            return false;
+        }
+        const auto mode = std::ios::binary | (start_byte == 0 ? std::ios::trunc : std::ios::app);
+        std::ofstream ofs(local_path, mode);
+        if (auto it = cut_transfers.find(filename); it != cut_transfers.end() && it->second > 0) {
+            --it->second;
+            ofs << std::string(cut_bytes, 'x');
+            bytes_downloaded = cut_bytes;
+            return false;
+        }
         ofs << "NOT_A_REAL_EDF_FILE";
         bytes_downloaded = 19;
         return true;
@@ -2078,6 +2102,52 @@ TEST_F(BurstOrchestrationTest, NewSession_DownloadsAndStoresCheckpoints) {
 
     // The fake source must have been asked to download the session's files.
     EXPECT_GT(src_raw->download_count, 0) << "New session should be downloaded";
+}
+
+// ── a transfer cut part way keeps what landed ───────────────────────────────
+//
+// A weak link drops a big transfer part way. The partial file used to be
+// deleted, so the next burst started the BRP again from byte 0 and, on a link
+// that always drops, never finished it.
+
+TEST_F(BurstOrchestrationTest, ACutTransferKeepsItsBytesAndTheNextBurstResumesFromThem) {
+    auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, sessionExists(_, _)).WillRepeatedly(Return(false));
+    src_raw->cut_transfers["20200101_220000_BRP.edf"] = 1;
+
+    svc->runBurstCycleForTest();
+
+    const auto brp = temp_dir / "20200101" / "20200101_220000_BRP.edf";
+    ASSERT_TRUE(std::filesystem::exists(brp)) << "the bytes that landed were thrown away";
+    EXPECT_EQ(std::filesystem::file_size(brp), src_raw->cut_bytes);
+    const auto& d = src_raw->downloaded_files;
+    EXPECT_EQ(std::count(d.begin(), d.end(), "20200101_220000_BRP.edf"), 0)
+        << "a cut transfer must not fall back to a whole-file download";
+
+    svc->runBurstCycleForTest();
+
+    std::vector<size_t> brp_starts;
+    for (const auto& [name, from] : src_raw->ranged_from)
+        if (name == "20200101_220000_BRP.edf") brp_starts.push_back(from);
+    ASSERT_GE(brp_starts.size(), 2u);
+    EXPECT_EQ(brp_starts[0], 0u) << "a file listed at 1 KB or more is asked as a range from 0";
+    EXPECT_EQ(brp_starts[1], src_raw->cut_bytes) << "the next burst resumes where the cut left it";
+}
+
+TEST_F(BurstOrchestrationTest, ASourceThatStopsHonouringRangeFallsBackToAFullDownload) {
+    auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, sessionExists(_, _)).WillRepeatedly(Return(false));
+    src_raw->refuse_range = true;
+
+    svc->runBurstCycleForTest();
+
+    const auto& d = src_raw->downloaded_files;
+    EXPECT_GE(std::count(d.begin(), d.end(), "20200101_220000_BRP.edf"), 1)
+        << "no ranges: the whole file, as before";
 }
 
 // ── The sidecar change detector, through the real download path ─────────────
