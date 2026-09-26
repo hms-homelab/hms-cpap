@@ -30,6 +30,7 @@
 #include "database/MySQLDatabase.h"
 #endif
 #ifdef WITH_POSTGRESQL
+#include "database/DatabaseService.h"
 #include "database/PostgresDatabase.h"
 #include <pqxx/pqxx>
 #endif
@@ -49,12 +50,18 @@ std::string envOr(const char* key, const std::string& fallback) {
     return (v && *v) ? std::string(v) : fallback;
 }
 
-enum class Engine { SQLite, MySQL, Postgres };
+// PostgresService is a bare DatabaseService: what makeDatabaseFromConfig()
+// hands the running service for PostgreSQL, the report generator included.
+// Postgres alone is the PostgresDatabase wrapper, which implemented
+// insertReturningId when DatabaseService did not, so every case here passed
+// while every PDF report on a PostgreSQL install failed.
+enum class Engine { SQLite, MySQL, Postgres, PostgresService };
 const char* engineName(Engine e) {
     switch (e) {
-        case Engine::SQLite:   return "SQLite";
-        case Engine::MySQL:    return "MySQL";
-        case Engine::Postgres: return "Postgres";
+        case Engine::SQLite:          return "SQLite";
+        case Engine::MySQL:           return "MySQL";
+        case Engine::Postgres:        return "Postgres";
+        case Engine::PostgresService: return "PostgresService";
     }
     return "?";
 }
@@ -105,7 +112,8 @@ protected:
 #endif
                 break;
             }
-            case Engine::Postgres: {
+            case Engine::Postgres:
+            case Engine::PostgresService: {
 #ifndef WITH_POSTGRESQL
                 GTEST_SKIP() << "built without PostgreSQL";
 #else
@@ -115,9 +123,15 @@ protected:
                 } catch (const std::exception& e) {
                     GTEST_SKIP() << "No usable PostgreSQL (" << e.what() << ")";
                 }
-                auto pg = std::make_unique<PostgresDatabase>(pgConnInfo());
-                if (!pg->connect()) GTEST_SKIP() << "PostgresDatabase connect failed";
-                db_ = std::move(pg);
+                if (GetParam() == Engine::Postgres) {
+                    auto pg = std::make_unique<PostgresDatabase>(pgConnInfo());
+                    if (!pg->connect()) GTEST_SKIP() << "PostgresDatabase connect failed";
+                    db_ = std::move(pg);
+                } else {
+                    auto svc = std::make_unique<DatabaseService>(pgConnInfo());
+                    if (!svc->connect()) GTEST_SKIP() << "DatabaseService connect failed";
+                    db_ = std::move(svc);
+                }
 #endif
                 break;
             }
@@ -296,7 +310,7 @@ TEST_P(ReportBackend, ListingIsScopedToTheDevice) {
 
 INSTANTIATE_TEST_SUITE_P(
     Engines, ReportBackend,
-    ::testing::Values(Engine::SQLite, Engine::MySQL, Engine::Postgres),
+    ::testing::Values(Engine::SQLite, Engine::MySQL, Engine::Postgres, Engine::PostgresService),
     [](const ::testing::TestParamInfo<Engine>& info) {
         return std::string(engineName(info.param));
     });

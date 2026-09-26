@@ -244,6 +244,17 @@ public:
     Json::Value executeQuery(const std::string& sql,
                              const std::vector<std::string>& params = {}) override;
 
+    /**
+     * The id of the row [sql] inserts, by appending RETURNING id.
+     *
+     * Same trap as executeQuery above: the factory hands the service a bare
+     * DatabaseService, not the PostgresDatabase wrapper that implemented this,
+     * so the inherited IDatabase stub answered -1 and every PDF report on
+     * PostgreSQL failed with "Failed to create report job".
+     */
+    int insertReturningId(const std::string& sql,
+                          const std::vector<std::string>& params = {}) override;
+
 private:
     std::string connection_string_;
     std::unique_ptr<pqxx::connection> conn_;

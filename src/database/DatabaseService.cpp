@@ -95,6 +95,15 @@ Json::Value DatabaseService::executeQuery(const std::string& sql,
     return arr;
 }
 
+int DatabaseService::insertReturningId(const std::string& sql,
+                                       const std::vector<std::string>& params) {
+    Json::Value rows = executeQuery(sql + " RETURNING id", params);
+    if (!rows.isArray() || rows.empty()) return -1;
+    const Json::Value& id = rows[0]["id"];
+    if (id.isNull()) return -1;
+    try { return std::stoi(id.asString()); } catch (...) { return -1; }
+}
+
 bool DatabaseService::connect() {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
 
