@@ -2879,13 +2879,20 @@ bool DatabaseService::saveSTRDailyRecords(const std::vector<STRDailyRecord>& rec
                                          THEN COALESCE(cpap_daily_summary.leak_95, EXCLUDED.leak_95) ELSE EXCLUDED.leak_95 END,
                     spo2_50       = CASE WHEN cpap_daily_summary.index_source = 'computed'
                                          THEN COALESCE(cpap_daily_summary.spo2_50, EXCLUDED.spo2_50) ELSE EXCLUDED.spo2_50 END,
-                    mask_press_95 = EXCLUDED.mask_press_95,
-                    mask_press_max = EXCLUDED.mask_press_max,
                     leak_max = EXCLUDED.leak_max,
                     spo2_95 = EXCLUDED.spo2_95,
-                    resp_rate_50 = EXCLUDED.resp_rate_50,
-                    tid_vol_50 = EXCLUDED.tid_vol_50,
-                    min_vent_50 = EXCLUDED.min_vent_50,
+                    -- Issue #38: ours as well (the session aggregate's
+                    -- percentiles), so the same rule as leak and pressure.
+                    mask_press_95  = CASE WHEN cpap_daily_summary.index_source = 'computed'
+                                          THEN COALESCE(cpap_daily_summary.mask_press_95, EXCLUDED.mask_press_95) ELSE EXCLUDED.mask_press_95 END,
+                    mask_press_max = CASE WHEN cpap_daily_summary.index_source = 'computed'
+                                          THEN COALESCE(cpap_daily_summary.mask_press_max, EXCLUDED.mask_press_max) ELSE EXCLUDED.mask_press_max END,
+                    resp_rate_50  = CASE WHEN cpap_daily_summary.index_source = 'computed'
+                                         THEN COALESCE(cpap_daily_summary.resp_rate_50, EXCLUDED.resp_rate_50) ELSE EXCLUDED.resp_rate_50 END,
+                    tid_vol_50    = CASE WHEN cpap_daily_summary.index_source = 'computed'
+                                         THEN COALESCE(cpap_daily_summary.tid_vol_50, EXCLUDED.tid_vol_50) ELSE EXCLUDED.tid_vol_50 END,
+                    min_vent_50   = CASE WHEN cpap_daily_summary.index_source = 'computed'
+                                         THEN COALESCE(cpap_daily_summary.min_vent_50, EXCLUDED.min_vent_50) ELSE EXCLUDED.min_vent_50 END,
                     mode = EXCLUDED.mode, epr_level = EXCLUDED.epr_level,
                     pressure_setting = EXCLUDED.pressure_setting,
                     fault_device = EXCLUDED.fault_device,
@@ -3003,8 +3010,18 @@ bool DatabaseService::aggregateDailySummaryFromSessions(const std::string& devic
                     SUM(CASE WHEN m.avg_mask_pressure > 0 THEN m.avg_mask_pressure * s.duration_seconds END)
                         / NULLIF(SUM(CASE WHEN m.avg_mask_pressure > 0 THEN s.duration_seconds END), 0),
                     AVG(NULLIF(m.avg_mask_pressure, 0)))::numeric, 1),
-                ROUND(AVG(NULLIF(m.leak_p50, 0))::numeric, 2),
-                ROUND(AVG(NULLIF(m.leak_p95, 0))::numeric, 2),
+                -- Issue #38: a leak of 0 is a reading when the session has
+                -- leak minutes (an AirSense 11 mostly reads 0). Only a
+                -- session without any is "none"; this engine stores its
+                -- missing percentile as 0, so the 0 alone cannot say which.
+                ROUND(AVG(CASE WHEN m.leak_p50 > 0 OR EXISTS (
+                        SELECT 1 FROM cpap_calculated_metrics c
+                         WHERE c.session_id = s.id AND c.leak_rate IS NOT NULL)
+                    THEN m.leak_p50 END)::numeric, 2),
+                ROUND(AVG(CASE WHEN m.leak_p95 > 0 OR EXISTS (
+                        SELECT 1 FROM cpap_calculated_metrics c
+                         WHERE c.session_id = s.id AND c.leak_rate IS NOT NULL)
+                    THEN m.leak_p95 END)::numeric, 2),
                 ROUND(COALESCE(
                     SUM(CASE WHEN m.avg_spo2 > 0 THEN m.avg_spo2 * s.duration_seconds END)
                         / NULLIF(SUM(CASE WHEN m.avg_spo2 > 0 THEN s.duration_seconds END), 0),
@@ -3059,6 +3076,34 @@ bool DatabaseService::aggregateDailySummaryFromSessions(const std::string& devic
                AND (SELECT COUNT(*) FROM cpap_sessions s
                      WHERE s.device_id = d.device_id
                        AND DATE(s.session_start - INTERVAL '12 hours') = d.record_date) > 1
+        )", device_id);
+
+        // Issue #38: respiratory rate, tidal volume and minute ventilation
+        // (the night's median), and mask pressure's 95th percentile and
+        // maximum, are ours too, from the per-minute calculated metrics.
+        // Without this only an STR ever wrote them, so every night newer
+        // than the STR charted as zero. tidal_volume is mL, the column is
+        // litres like the STR's. The STR fills a night we have no
+        // calculated metrics for.
+        txn.exec_params(R"(
+            UPDATE cpap_daily_summary d
+               SET resp_rate_50   = COALESCE(ROUND(x.rr::numeric, 1), d.resp_rate_50),
+                   tid_vol_50     = COALESCE(ROUND((x.tv / 1000.0)::numeric, 3), d.tid_vol_50),
+                   min_vent_50    = COALESCE(ROUND(x.mv::numeric, 2), d.min_vent_50),
+                   mask_press_95  = COALESCE(ROUND(x.mp95::numeric, 2), d.mask_press_95),
+                   mask_press_max = COALESCE(ROUND(x.mpmax::numeric, 2), d.mask_press_max)
+              FROM (SELECT DATE(s.session_start - INTERVAL '12 hours') AS night,
+                           percentile_cont(0.5) WITHIN GROUP (ORDER BY NULLIF(c.respiratory_rate, 0))   AS rr,
+                           percentile_cont(0.5) WITHIN GROUP (ORDER BY NULLIF(c.tidal_volume, 0))       AS tv,
+                           percentile_cont(0.5) WITHIN GROUP (ORDER BY NULLIF(c.minute_ventilation, 0)) AS mv,
+                           percentile_cont(0.95) WITHIN GROUP (ORDER BY NULLIF(c.mask_pressure, 0))     AS mp95,
+                           MAX(NULLIF(c.mask_pressure, 0))                                              AS mpmax
+                      FROM cpap_calculated_metrics c
+                      JOIN cpap_sessions s ON s.id = c.session_id
+                     WHERE s.device_id = $1
+                     GROUP BY 1) x
+             WHERE d.device_id = $1
+               AND d.record_date = x.night
         )", device_id);
 
         txn.commit();

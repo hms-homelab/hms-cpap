@@ -25,6 +25,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unistd.h>
 #include <vector>
@@ -185,9 +186,71 @@ protected:
         ASSERT_TRUE(db_->saveSTRDailyRecords({r})) << engineName(GetParam());
     }
 
+    /// Issue #38: a session whose minutes carry respiratory rate, tidal volume
+    /// (mL), minute ventilation and mask pressure, one entry per minute, and
+    /// every minute the leak [leak] (none when unset). Empty vectors save
+    /// minutes with a leak and nothing else. [leak_pct] is the session's own
+    /// leak median and 95th percentile, as the parser computes them.
+    void saveRespiratorySession(system_clock::time_point start, int mins,
+                                const std::vector<double>& rr,
+                                const std::vector<double>& tv_ml,
+                                const std::vector<double>& mv,
+                                const std::vector<double>& mask = {},
+                                std::optional<double> leak = 5.0,
+                                std::optional<double> leak_pct = std::nullopt) {
+        CPAPSession s;
+        s.device_id = device_;
+        s.device_name = "AirSense 11";
+        s.serial_number = "ISSUE38";
+        s.session_start = start;
+        s.duration_seconds = mins * 60;
+        s.data_records = mins;
+        for (int i = 0; i < mins; ++i) {
+            BreathingSummary b;
+            b.timestamp = start + minutes(i);
+            b.leak_rate = leak;
+            if (i < static_cast<int>(rr.size())) b.respiratory_rate = rr[i];
+            if (i < static_cast<int>(tv_ml.size())) b.tidal_volume = tv_ml[i];
+            if (i < static_cast<int>(mv.size())) b.minute_ventilation = mv[i];
+            if (i < static_cast<int>(mask.size())) b.mask_pressure = mask[i];
+            s.breathing_summary.push_back(b);
+        }
+        SessionMetrics m;
+        m.leak_p50 = leak_pct;
+        m.leak_p95 = leak_pct;
+        s.metrics = m;
+        ASSERT_TRUE(db_->saveSession(s)) << engineName(GetParam());
+        db_->markSessionCompleted(device_, start);
+    }
+
+    /// The machine's own respiratory figures for the night. Tidal volume in
+    /// litres, as the STR records it.
+    void saveStrRespiratory(double rr, double tv_l, double mv) {
+        STRDailyRecord r;
+        r.device_id = device_;
+        r.record_date = strRecordDate();
+        r.duration_minutes = 264;
+        r.resp_rate_50 = rr;
+        r.tid_vol_50 = tv_l;
+        r.min_vent_50 = mv;
+        ASSERT_TRUE(db_->saveSTRDailyRecords({r})) << engineName(GetParam());
+    }
+
+    /// The machine's own mask pressure for the night.
+    void saveStrPressure(double p95, double max) {
+        STRDailyRecord r;
+        r.device_id = device_;
+        r.record_date = strRecordDate();
+        r.duration_minutes = 264;
+        r.mask_press_95 = p95;
+        r.mask_press_max = max;
+        ASSERT_TRUE(db_->saveSTRDailyRecords({r})) << engineName(GetParam());
+    }
+
     Json::Value dailyRow() {
         return db_->executeQuery(
-            "SELECT leak_95, leak_50, spo2_50, leak_95_str, spo2_50_str, mask_events"
+            "SELECT leak_95, leak_50, spo2_50, leak_95_str, spo2_50_str, mask_events,"
+            " resp_rate_50, tid_vol_50, min_vent_50, mask_press_95, mask_press_max"
             " FROM cpap_daily_summary WHERE device_id = " + sql::param(1, db_->dbType()),
             {device_});
     }
@@ -315,6 +378,119 @@ TEST_P(NightAggregationBackendTest, TheStrsSentinelsAreNotCopied) {
     // Two sessions' SpO2, weighted by their minutes.
     EXPECT_NEAR(num(rows[0u]["spo2_50"]), (94.0 * 161 + 96.0 * 103) / 264.0, 0.05)
         << engineName(GetParam());
+}
+
+// Issue #38: an AirSense 11 night the STR had not reached charted respiratory
+// rate, tidal volume and minute ventilation as zero, because only the STR ever
+// wrote them. They are the median of the night's minutes, across sessions: the
+// four minutes below give 15 / 475 mL / 7.5, where a mean would be pulled to
+// 20.5 / 837.5 mL / 12.75 by the one leaky minute.
+TEST_P(NightAggregationBackendTest, ANightWithNoStrGetsItsRespiratoryMediansFromItsMinutes) {
+    saveRespiratorySession(nightStart(), 3, {12.0, 40.0, 14.0}, {400.0, 2000.0, 450.0},
+                           {6.0, 30.0, 7.0});
+    saveRespiratorySession(nightStart() + minutes(300), 1, {16.0}, {500.0}, {8.0});
+    ASSERT_TRUE(db_->aggregateDailySummaryFromSessions(device_)) << engineName(GetParam());
+
+    auto rows = dailyRow();
+    ASSERT_TRUE(rows.isArray() && !rows.empty()) << engineName(GetParam());
+    EXPECT_NEAR(num(rows[0u]["resp_rate_50"]), 15.0, 1e-6)
+        << engineName(GetParam()) << ": -1 is NULL, which the dashboard drew as 0";
+    EXPECT_NEAR(num(rows[0u]["tid_vol_50"]), 0.475, 1e-6)
+        << engineName(GetParam()) << ": litres, like the STR's";
+    EXPECT_NEAR(num(rows[0u]["min_vent_50"]), 7.5, 1e-6) << engineName(GetParam());
+}
+
+// Calculated metrics supersede the STR: an STR read after our aggregate (the
+// next burst) does not put the machine's figures over ours, and a re-aggregate
+// after it keeps ours too.
+TEST_P(NightAggregationBackendTest, OurRespiratoryMediansWinOverTheStrs) {
+    saveRespiratorySession(nightStart(), 3, {12.0, 40.0, 14.0}, {400.0, 2000.0, 450.0},
+                           {6.0, 30.0, 7.0});
+    saveRespiratorySession(nightStart() + minutes(300), 1, {16.0}, {500.0}, {8.0});
+    ASSERT_TRUE(db_->aggregateDailySummaryFromSessions(device_)) << engineName(GetParam());
+    saveStrRespiratory(/*rr=*/13.0, /*tv_l=*/0.41, /*mv=*/5.9);
+
+    auto rows = dailyRow();
+    ASSERT_TRUE(rows.isArray() && !rows.empty()) << engineName(GetParam());
+    EXPECT_NEAR(num(rows[0u]["resp_rate_50"]), 15.0, 1e-6)
+        << engineName(GetParam()) << ": the STR read must not overwrite ours";
+    EXPECT_NEAR(num(rows[0u]["tid_vol_50"]), 0.475, 1e-6) << engineName(GetParam());
+    EXPECT_NEAR(num(rows[0u]["min_vent_50"]), 7.5, 1e-6) << engineName(GetParam());
+
+    ASSERT_TRUE(db_->aggregateDailySummaryFromSessions(device_)) << engineName(GetParam());
+    rows = dailyRow();
+    ASSERT_TRUE(rows.isArray() && !rows.empty()) << engineName(GetParam());
+    EXPECT_NEAR(num(rows[0u]["resp_rate_50"]), 15.0, 1e-6) << engineName(GetParam());
+}
+
+// A night whose minutes carry no respiratory figure (a Löwenstein, or a
+// session with no BRP yet) keeps the STR's, the fallback.
+TEST_P(NightAggregationBackendTest, TheStrFillsRespiratoryFiguresWeDidNotCompute) {
+    saveRespiratorySession(nightStart(), 4, {}, {}, {});
+    saveStrRespiratory(/*rr=*/13.0, /*tv_l=*/0.41, /*mv=*/5.9);
+    ASSERT_TRUE(db_->aggregateDailySummaryFromSessions(device_)) << engineName(GetParam());
+
+    auto rows = dailyRow();
+    ASSERT_TRUE(rows.isArray() && !rows.empty()) << engineName(GetParam());
+    EXPECT_NEAR(num(rows[0u]["resp_rate_50"]), 13.0, 1e-6) << engineName(GetParam());
+    EXPECT_NEAR(num(rows[0u]["tid_vol_50"]), 0.41, 1e-6) << engineName(GetParam());
+    EXPECT_NEAR(num(rows[0u]["min_vent_50"]), 5.9, 1e-6) << engineName(GetParam());
+}
+
+// Issue #38: the pressure trend's P95 came only from the STR too. It is the
+// 95th percentile of the night's minutes, interpolated the way Postgres's
+// percentile_cont does: minutes 1..20 put it at 19 + 0.05 * (20 - 19). The
+// maximum is the highest minute. An STR read after it does not replace ours.
+TEST_P(NightAggregationBackendTest, ANightsPressureP95AndMaxComeFromItsMinutes) {
+    std::vector<double> mask;
+    for (int i = 20; i >= 1; --i) mask.push_back(static_cast<double>(i));
+    saveRespiratorySession(nightStart(), 20, {}, {}, {}, mask);
+    ASSERT_TRUE(db_->aggregateDailySummaryFromSessions(device_)) << engineName(GetParam());
+    saveStrPressure(/*p95=*/12.0, /*max=*/13.0);
+
+    auto rows = dailyRow();
+    ASSERT_TRUE(rows.isArray() && !rows.empty()) << engineName(GetParam());
+    EXPECT_NEAR(num(rows[0u]["mask_press_95"]), 19.05, 1e-6)
+        << engineName(GetParam()) << ": -1 is NULL, which the dashboard drew as 0";
+    EXPECT_NEAR(num(rows[0u]["mask_press_max"]), 20.0, 1e-6) << engineName(GetParam());
+}
+
+TEST_P(NightAggregationBackendTest, TheStrFillsPressureP95WeDidNotCompute) {
+    saveRespiratorySession(nightStart(), 4, {}, {}, {});
+    saveStrPressure(/*p95=*/12.0, /*max=*/13.0);
+    ASSERT_TRUE(db_->aggregateDailySummaryFromSessions(device_)) << engineName(GetParam());
+
+    auto rows = dailyRow();
+    ASSERT_TRUE(rows.isArray() && !rows.empty()) << engineName(GetParam());
+    EXPECT_NEAR(num(rows[0u]["mask_press_95"]), 12.0, 1e-6) << engineName(GetParam());
+    EXPECT_NEAR(num(rows[0u]["mask_press_max"]), 13.0, 1e-6) << engineName(GetParam());
+}
+
+// Issue #38: an AirSense 11 reads a leak of 0 most of the night, so the
+// session's median and 95th percentile are 0. That is a reading, and the
+// night keeps it; it used to be thrown away as "no data".
+TEST_P(NightAggregationBackendTest, ALeakOfZeroIsAReading) {
+    saveRespiratorySession(nightStart(), 4, {}, {}, {}, {}, /*leak=*/0.0, /*leak_pct=*/0.0);
+    ASSERT_TRUE(db_->aggregateDailySummaryFromSessions(device_)) << engineName(GetParam());
+
+    auto rows = dailyRow();
+    ASSERT_TRUE(rows.isArray() && !rows.empty()) << engineName(GetParam());
+    EXPECT_NEAR(num(rows[0u]["leak_50"]), 0.0, 1e-6)
+        << engineName(GetParam()) << ": -1 is NULL, which the dashboard drew as 0";
+    EXPECT_NEAR(num(rows[0u]["leak_95"]), 0.0, 1e-6) << engineName(GetParam());
+}
+
+// ...but a session with no leak minutes at all has no leak, even on the
+// engine that stores its missing percentile as 0.
+TEST_P(NightAggregationBackendTest, ASessionWithNoLeakMinutesHasNoLeak) {
+    saveRespiratorySession(nightStart(), 4, {14.0, 14.0, 14.0, 14.0}, {}, {}, {},
+                           /*leak=*/std::nullopt);
+    ASSERT_TRUE(db_->aggregateDailySummaryFromSessions(device_)) << engineName(GetParam());
+
+    auto rows = dailyRow();
+    ASSERT_TRUE(rows.isArray() && !rows.empty()) << engineName(GetParam());
+    EXPECT_TRUE(rows[0u]["leak_50"].isNull()) << engineName(GetParam());
+    EXPECT_TRUE(rows[0u]["leak_95"].isNull()) << engineName(GetParam());
 }
 
 INSTANTIATE_TEST_SUITE_P(Engines, NightAggregationBackendTest,

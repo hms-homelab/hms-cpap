@@ -857,6 +857,15 @@ export class DashboardComponent implements OnInit, AfterViewInit {
     return data.some(p => keys.some(k => +(p[k] || 0) !== 0));
   }
 
+  /**
+   * A night with no value is a gap in the line, not a point at zero (issue
+   * #38: three nights with no respiratory figures plotted as a drop to 0).
+   */
+  private orGap(p: TrendPoint, key: string, scale = 1): number | null {
+    const v = p[key];
+    return v === null || v === undefined || v === '' ? null : +v * scale;
+  }
+
   showPressureTrend = true;
   showEventsTrend = true;
   showRespiratoryTrend = true;
@@ -869,7 +878,7 @@ export class DashboardComponent implements OnInit, AfterViewInit {
       data: {
         labels,
         datasets: series.map(s => ({
-          label: s.label, data: data.map(p => +(p[s.key] || 0)),
+          label: s.label, data: data.map(p => this.orGap(p, s.key)),
           borderColor: s.color, backgroundColor: s.color + '1a',
           fill: s.fill || false, tension: 0.3, pointRadius: 2, borderWidth: 1.5,
         })),
@@ -937,15 +946,15 @@ export class DashboardComponent implements OnInit, AfterViewInit {
         labels,
         datasets: [
           {
-            label: this.t.instant('dashboard.chart.respRate'), data: data.map(p => +(p['resp_rate_50'] || 0)),
+            label: this.t.instant('dashboard.chart.respRate'), data: data.map(p => this.orGap(p, 'resp_rate_50')),
             borderColor: '#81c784', tension: 0.3, pointRadius: 2, borderWidth: 1.5, yAxisID: 'y',
           },
           {
-            label: this.t.instant('dashboard.chart.tidalVol'), data: data.map(p => +(p['tid_vol_50'] || 0) * 1000),
+            label: this.t.instant('dashboard.chart.tidalVol'), data: data.map(p => this.orGap(p, 'tid_vol_50', 1000)),
             borderColor: '#4dd0e1', tension: 0.3, pointRadius: 2, borderWidth: 1.5, yAxisID: 'y1',
           },
           {
-            label: this.t.instant('dashboard.chart.minVent'), data: data.map(p => +(p['min_vent_50'] || 0)),
+            label: this.t.instant('dashboard.chart.minVent'), data: data.map(p => this.orGap(p, 'min_vent_50')),
             borderColor: '#aed581', tension: 0.3, pointRadius: 2, borderWidth: 1.5, yAxisID: 'y',
           },
         ],

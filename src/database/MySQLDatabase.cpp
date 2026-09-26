@@ -2772,13 +2772,15 @@ bool MySQLDatabase::saveSTRDailyRecords(const std::vector<STRDailyRecord>& recor
                 leak_50          = IF(index_source = 'computed', COALESCE(leak_50, VALUES(leak_50)), VALUES(leak_50)),
                 leak_95          = IF(index_source = 'computed', COALESCE(leak_95, VALUES(leak_95)), VALUES(leak_95)),
                 spo2_50          = IF(index_source = 'computed', COALESCE(spo2_50, VALUES(spo2_50)), VALUES(spo2_50)),
-                mask_press_95    = VALUES(mask_press_95),
-                mask_press_max   = VALUES(mask_press_max),
                 leak_max = VALUES(leak_max),
                 spo2_95 = VALUES(spo2_95),
-                resp_rate_50     = VALUES(resp_rate_50),
-                tid_vol_50       = VALUES(tid_vol_50),
-                min_vent_50      = VALUES(min_vent_50),
+                -- Issue #38: ours as well (the session aggregate's
+                -- percentiles), so the same rule as leak and pressure.
+                mask_press_95    = IF(index_source = 'computed', COALESCE(mask_press_95, VALUES(mask_press_95)), VALUES(mask_press_95)),
+                mask_press_max   = IF(index_source = 'computed', COALESCE(mask_press_max, VALUES(mask_press_max)), VALUES(mask_press_max)),
+                resp_rate_50     = IF(index_source = 'computed', COALESCE(resp_rate_50, VALUES(resp_rate_50)), VALUES(resp_rate_50)),
+                tid_vol_50       = IF(index_source = 'computed', COALESCE(tid_vol_50, VALUES(tid_vol_50)), VALUES(tid_vol_50)),
+                min_vent_50      = IF(index_source = 'computed', COALESCE(min_vent_50, VALUES(min_vent_50)), VALUES(min_vent_50)),
                 mode = VALUES(mode), epr_level = VALUES(epr_level),
                 pressure_setting = VALUES(pressure_setting),
                 fault_device     = VALUES(fault_device),
@@ -2977,8 +2979,17 @@ bool MySQLDatabase::aggregateDailySummaryFromSessions(const std::string& device_
                 SUM(CASE WHEN m.avg_mask_pressure > 0 THEN m.avg_mask_pressure * s.duration_seconds END)
                     / NULLIF(SUM(CASE WHEN m.avg_mask_pressure > 0 THEN s.duration_seconds END), 0),
                 AVG(NULLIF(m.avg_mask_pressure, 0))), 1),
-            ROUND(AVG(NULLIF(m.leak_p50, 0)), 2),
-            ROUND(AVG(NULLIF(m.leak_p95, 0)), 2),
+            -- Issue #38: a leak of 0 is a reading when the session has leak
+            -- minutes (an AirSense 11 mostly reads 0). Only a session without
+            -- any is "none", which Postgres stores as 0.
+            ROUND(AVG(CASE WHEN m.leak_p50 > 0 OR EXISTS (
+                    SELECT 1 FROM cpap_calculated_metrics c
+                     WHERE c.session_id = s.id AND c.leak_rate IS NOT NULL)
+                THEN m.leak_p50 END), 2),
+            ROUND(AVG(CASE WHEN m.leak_p95 > 0 OR EXISTS (
+                    SELECT 1 FROM cpap_calculated_metrics c
+                     WHERE c.session_id = s.id AND c.leak_rate IS NOT NULL)
+                THEN m.leak_p95 END), 2),
             ROUND(COALESCE(
                 SUM(CASE WHEN m.avg_spo2 > 0 THEN m.avg_spo2 * s.duration_seconds END)
                     / NULLIF(SUM(CASE WHEN m.avg_spo2 > 0 THEN s.duration_seconds END), 0),
@@ -3068,6 +3079,76 @@ bool MySQLDatabase::aggregateDailySummaryFromSessions(const std::string& device_
     if (mysql_stmt_execute(u.stmt) != 0) {
         std::cerr << "MySQL: aggregateDailySummaryFromSessions (STR percentiles) error: "
                   << mysql_stmt_error(u.stmt) << std::endl;
+        return false;
+    }
+
+    // Issue #38: respiratory rate, tidal volume and minute ventilation (the
+    // night's median), and mask pressure's 95th percentile and maximum, are
+    // ours too, from the per-minute calculated metrics. Without this only an
+    // STR ever wrote them, so every night newer than the STR charted as zero.
+    // No percentile_cont here, so this is its formula: position p * (n - 1)
+    // in the sorted minutes, interpolated between the rows either side, the
+    // same number Postgres returns. A joined derived table, not WITH ...
+    // UPDATE, which MariaDB does not take. tidal_volume is mL, the column is
+    // litres like the STR's. The STR fills a night we have no calculated
+    // metrics for.
+    const char* resp = R"(
+        UPDATE cpap_daily_summary d
+          JOIN (SELECT night,
+                       MAX(CASE WHEN k = 'rr'   THEN val END) AS rr,
+                       MAX(CASE WHEN k = 'tv'   THEN val END) AS tv,
+                       MAX(CASE WHEN k = 'mv'   THEN val END) AS mv,
+                       MAX(CASE WHEN k = 'mp95' THEN val END) AS mp95,
+                       MAX(CASE WHEN k = 'mp95' THEN mx  END) AS mpmax
+                  FROM (SELECT night, k, lo + COALESCE(frac * (hi - lo), 0) AS val, mx
+                          FROM (SELECT night, k,
+                                       MAX(CASE WHEN rn = FLOOR(pos) + 1 THEN x END) AS lo,
+                                       MAX(CASE WHEN rn = FLOOR(pos) + 2 THEN x END) AS hi,
+                                       MAX(pos - FLOOR(pos))                         AS frac,
+                                       MAX(x)                                        AS mx
+                                  FROM (SELECT night, k, x,
+                                               ROW_NUMBER() OVER (PARTITION BY night, k ORDER BY x) AS rn,
+                                               p * (COUNT(*) OVER (PARTITION BY night, k) - 1)      AS pos
+                                          FROM (SELECT DATE(DATE_SUB(s.session_start, INTERVAL 12 HOUR)) AS night,
+                                                       'rr' AS k, 0.5 AS p, c.respiratory_rate AS x
+                                                  FROM cpap_calculated_metrics c JOIN cpap_sessions s ON s.id = c.session_id
+                                                 WHERE s.device_id = ? AND c.respiratory_rate > 0
+                                                UNION ALL
+                                                SELECT DATE(DATE_SUB(s.session_start, INTERVAL 12 HOUR)), 'tv', 0.5, c.tidal_volume
+                                                  FROM cpap_calculated_metrics c JOIN cpap_sessions s ON s.id = c.session_id
+                                                 WHERE s.device_id = ? AND c.tidal_volume > 0
+                                                UNION ALL
+                                                SELECT DATE(DATE_SUB(s.session_start, INTERVAL 12 HOUR)), 'mv', 0.5, c.minute_ventilation
+                                                  FROM cpap_calculated_metrics c JOIN cpap_sessions s ON s.id = c.session_id
+                                                 WHERE s.device_id = ? AND c.minute_ventilation > 0
+                                                UNION ALL
+                                                SELECT DATE(DATE_SUB(s.session_start, INTERVAL 12 HOUR)), 'mp95', 0.95, c.mask_pressure
+                                                  FROM cpap_calculated_metrics c JOIN cpap_sessions s ON s.id = c.session_id
+                                                 WHERE s.device_id = ? AND c.mask_pressure > 0) v) r
+                                 GROUP BY night, k) q) pct
+                 GROUP BY night) x
+            ON x.night = d.record_date
+           SET d.resp_rate_50   = COALESCE(ROUND(x.rr, 1), d.resp_rate_50),
+               d.tid_vol_50     = COALESCE(ROUND(x.tv / 1000.0, 3), d.tid_vol_50),
+               d.min_vent_50    = COALESCE(ROUND(x.mv, 2), d.min_vent_50),
+               d.mask_press_95  = COALESCE(ROUND(x.mp95, 2), d.mask_press_95),
+               d.mask_press_max = COALESCE(ROUND(x.mpmax, 2), d.mask_press_max)
+         WHERE d.device_id = ?
+    )";
+
+    MysqlStmtGuard rs;
+    rs.stmt = mysql_stmt_init(conn_);
+    if (mysql_stmt_prepare(rs.stmt, resp, std::strlen(resp)) != 0) {
+        std::cerr << "MySQL: aggregateDailySummaryFromSessions (respiratory) prepare error: "
+                  << mysql_stmt_error(rs.stmt) << std::endl;
+        return false;
+    }
+    ParamBinder rp(5);
+    for (int i = 0; i < 5; ++i) rp.bindText(i, device_id);
+    mysql_stmt_bind_param(rs.stmt, rp.data());
+    if (mysql_stmt_execute(rs.stmt) != 0) {
+        std::cerr << "MySQL: aggregateDailySummaryFromSessions (respiratory) error: "
+                  << mysql_stmt_error(rs.stmt) << std::endl;
         return false;
     }
     return true;

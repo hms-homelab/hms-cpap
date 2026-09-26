@@ -2252,13 +2252,15 @@ bool SQLiteDatabase::saveSTRDailyRecords(const std::vector<STRDailyRecord>& reco
                 leak_50          = CASE WHEN index_source = 'computed' THEN COALESCE(leak_50, excluded.leak_50) ELSE excluded.leak_50 END,
                 leak_95          = CASE WHEN index_source = 'computed' THEN COALESCE(leak_95, excluded.leak_95) ELSE excluded.leak_95 END,
                 spo2_50          = CASE WHEN index_source = 'computed' THEN COALESCE(spo2_50, excluded.spo2_50) ELSE excluded.spo2_50 END,
-                mask_press_95    = excluded.mask_press_95,
-                mask_press_max   = excluded.mask_press_max,
                 leak_max = excluded.leak_max,
                 spo2_95 = excluded.spo2_95,
-                resp_rate_50     = excluded.resp_rate_50,
-                tid_vol_50       = excluded.tid_vol_50,
-                min_vent_50      = excluded.min_vent_50,
+                -- Issue #38: ours as well (the session aggregate's
+                -- percentiles), so the same rule as leak and pressure.
+                mask_press_95    = CASE WHEN index_source = 'computed' THEN COALESCE(mask_press_95, excluded.mask_press_95) ELSE excluded.mask_press_95 END,
+                mask_press_max   = CASE WHEN index_source = 'computed' THEN COALESCE(mask_press_max, excluded.mask_press_max) ELSE excluded.mask_press_max END,
+                resp_rate_50     = CASE WHEN index_source = 'computed' THEN COALESCE(resp_rate_50, excluded.resp_rate_50) ELSE excluded.resp_rate_50 END,
+                tid_vol_50       = CASE WHEN index_source = 'computed' THEN COALESCE(tid_vol_50, excluded.tid_vol_50) ELSE excluded.tid_vol_50 END,
+                min_vent_50      = CASE WHEN index_source = 'computed' THEN COALESCE(min_vent_50, excluded.min_vent_50) ELSE excluded.min_vent_50 END,
                 mode = excluded.mode, epr_level = excluded.epr_level,
                 pressure_setting = excluded.pressure_setting,
                 fault_device     = excluded.fault_device,
@@ -2449,8 +2451,17 @@ bool SQLiteDatabase::aggregateDailySummaryFromSessions(const std::string& device
                 SUM(CASE WHEN m.avg_mask_pressure > 0 THEN m.avg_mask_pressure * s.duration_seconds END)
                     / NULLIF(SUM(CASE WHEN m.avg_mask_pressure > 0 THEN s.duration_seconds END), 0),
                 AVG(NULLIF(m.avg_mask_pressure, 0))), 1),
-            ROUND(AVG(NULLIF(m.leak_p50, 0)), 2),
-            ROUND(AVG(NULLIF(m.leak_p95, 0)), 2),
+            -- Issue #38: a leak of 0 is a reading when the session has leak
+            -- minutes (an AirSense 11 mostly reads 0). Only a session without
+            -- any is "none", which the other engines store as 0.
+            ROUND(AVG(CASE WHEN m.leak_p50 > 0 OR EXISTS (
+                    SELECT 1 FROM cpap_calculated_metrics c
+                     WHERE c.session_id = s.id AND c.leak_rate IS NOT NULL)
+                THEN m.leak_p50 END), 2),
+            ROUND(AVG(CASE WHEN m.leak_p95 > 0 OR EXISTS (
+                    SELECT 1 FROM cpap_calculated_metrics c
+                     WHERE c.session_id = s.id AND c.leak_rate IS NOT NULL)
+                THEN m.leak_p95 END), 2),
             ROUND(COALESCE(
                 SUM(CASE WHEN m.avg_spo2 > 0 THEN m.avg_spo2 * s.duration_seconds END)
                     / NULLIF(SUM(CASE WHEN m.avg_spo2 > 0 THEN s.duration_seconds END), 0),
@@ -2536,6 +2547,75 @@ bool SQLiteDatabase::aggregateDailySummaryFromSessions(const std::string& device
     bind_text(u.stmt, 1, device_id);
     if (sqlite3_step(u.stmt) != SQLITE_DONE) {
         std::cerr << "SQLite: aggregateDailySummaryFromSessions (STR percentiles) error: "
+                  << sqlite3_errmsg(db_) << std::endl;
+        return false;
+    }
+
+    // Issue #38: respiratory rate, tidal volume and minute ventilation (the
+    // night's median), and mask pressure's 95th percentile and maximum, are
+    // ours too, from the per-minute calculated metrics. Without this only an
+    // STR ever wrote them, so every night newer than the STR charted as zero.
+    // SQLite has no percentile_cont, so this is its formula: position
+    // p * (n - 1) in the sorted minutes, interpolated between the rows either
+    // side, the same number Postgres returns. tidal_volume is mL, the column
+    // is litres like the STR's. The STR fills a night we have no calculated
+    // metrics for.
+    const char* resp = R"(
+        WITH v AS (
+            SELECT date(s.session_start, '-12 hours') AS night, 'rr' AS k, 0.5 AS p, c.respiratory_rate AS x
+              FROM cpap_calculated_metrics c JOIN cpap_sessions s ON s.id = c.session_id
+             WHERE s.device_id = ?1 AND c.respiratory_rate > 0
+            UNION ALL
+            SELECT date(s.session_start, '-12 hours'), 'tv', 0.5, c.tidal_volume
+              FROM cpap_calculated_metrics c JOIN cpap_sessions s ON s.id = c.session_id
+             WHERE s.device_id = ?1 AND c.tidal_volume > 0
+            UNION ALL
+            SELECT date(s.session_start, '-12 hours'), 'mv', 0.5, c.minute_ventilation
+              FROM cpap_calculated_metrics c JOIN cpap_sessions s ON s.id = c.session_id
+             WHERE s.device_id = ?1 AND c.minute_ventilation > 0
+            UNION ALL
+            SELECT date(s.session_start, '-12 hours'), 'mp95', 0.95, c.mask_pressure
+              FROM cpap_calculated_metrics c JOIN cpap_sessions s ON s.id = c.session_id
+             WHERE s.device_id = ?1 AND c.mask_pressure > 0
+        ), r AS (
+            SELECT night, k, x,
+                   ROW_NUMBER() OVER (PARTITION BY night, k ORDER BY x) AS rn,
+                   p * (COUNT(*) OVER (PARTITION BY night, k) - 1)      AS pos
+              FROM v
+        ), q AS (
+            SELECT night, k,
+                   MAX(CASE WHEN rn = CAST(pos AS INTEGER) + 1 THEN x END) AS lo,
+                   MAX(CASE WHEN rn = CAST(pos AS INTEGER) + 2 THEN x END) AS hi,
+                   MAX(pos - CAST(pos AS INTEGER))                         AS frac
+              FROM r GROUP BY night, k
+        ), pct AS (
+            SELECT night, k, lo + COALESCE(frac * (hi - lo), 0) AS x FROM q
+            UNION ALL
+            SELECT night, 'mpmax', MAX(x) FROM v WHERE k = 'mp95' GROUP BY night
+        )
+        UPDATE cpap_daily_summary
+           SET resp_rate_50   = COALESCE((SELECT ROUND(x, 1) FROM pct
+                                           WHERE pct.night = cpap_daily_summary.record_date AND k = 'rr'), resp_rate_50),
+               tid_vol_50     = COALESCE((SELECT ROUND(x / 1000.0, 3) FROM pct
+                                           WHERE pct.night = cpap_daily_summary.record_date AND k = 'tv'), tid_vol_50),
+               min_vent_50    = COALESCE((SELECT ROUND(x, 2) FROM pct
+                                           WHERE pct.night = cpap_daily_summary.record_date AND k = 'mv'), min_vent_50),
+               mask_press_95  = COALESCE((SELECT ROUND(x, 2) FROM pct
+                                           WHERE pct.night = cpap_daily_summary.record_date AND k = 'mp95'), mask_press_95),
+               mask_press_max = COALESCE((SELECT ROUND(x, 2) FROM pct
+                                           WHERE pct.night = cpap_daily_summary.record_date AND k = 'mpmax'), mask_press_max)
+         WHERE device_id = ?1
+    )";
+
+    StmtGuard rs;
+    if (sqlite3_prepare_v2(db_, resp, -1, &rs.stmt, nullptr) != SQLITE_OK) {
+        std::cerr << "SQLite: aggregateDailySummaryFromSessions (respiratory) prepare error: "
+                  << sqlite3_errmsg(db_) << std::endl;
+        return false;
+    }
+    bind_text(rs.stmt, 1, device_id);
+    if (sqlite3_step(rs.stmt) != SQLITE_DONE) {
+        std::cerr << "SQLite: aggregateDailySummaryFromSessions (respiratory) error: "
                   << sqlite3_errmsg(db_) << std::endl;
         return false;
     }
