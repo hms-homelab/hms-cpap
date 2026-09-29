@@ -1198,10 +1198,19 @@ void CpapController::testEzshare(const drogon::HttpRequestPtr& req,
     std::string url = req->getParameter("url");
     if (url.empty() && config_) url = config_->ezshare_url;
 
+    // Blocks this Drogon worker for up to the client's 10 s connect timeout,
+    // the same trade discoverDevices makes for its scan.
+    const auto probe = SetupService::probeEzshare(url);
+
     Json::Value result;
-    result["url"] = url;
+    result["url"] = probe.url.empty() ? url : probe.url;
     result["configured"] = !url.empty();
-    result["status"] = url.empty() ? "not_configured" : "configured";
+    result["status"] = probe.ok ? "ok" : "failed";
+    if (!probe.ok) result["error"] = probe.error;
+    if (!probe.bridge_serial.empty()) {
+        result["bridge_serial"] = probe.bridge_serial;
+        result["bridge_fw"] = probe.bridge_fw;
+    }
     cb(jsonResp(result));
 }
 
@@ -1372,7 +1381,7 @@ void CpapController::discoverDevices(const drogon::HttpRequestPtr&,
         j["port"]           = d.port;
         j["serial"]         = d.serial;
         j["fw"]             = d.fw;
-        j["mode"]           = d.mode;
+        j["mode"]           = d.effectiveMode();
         j["local_capable"]  = d.isLocalCapable();
         j["base_url"]       = d.baseUrl();
         result["devices"].append(j);

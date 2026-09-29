@@ -14,6 +14,9 @@
   #include "database/MySQLDatabase.h"
 #endif
 
+#include <curl/curl.h>
+#include <json/json.h>
+
 #include <cctype>
 #include <cstring>
 #include <cstdlib>
@@ -425,6 +428,97 @@ SetupService::DbProbe SetupService::probeDatabase(const std::string& type,
 
     out.error = "backend '" + type + "' is not available in this build";
     return out;
+}
+
+SetupService::EzShareProbe SetupService::probeEzshare(const std::string& url,
+                                                      const EzShareLister& list_root,
+                                                      const StatusFetcher& fetch_status) {
+    EzShareProbe out;
+
+    // Trim, and drop trailing slashes: every request is built as base + "/dir",
+    // and "http://10.1.1.140/" would otherwise ask for "//dir".
+    std::string base = url;
+    while (!base.empty() && std::isspace(static_cast<unsigned char>(base.front()))) base.erase(0, 1);
+    while (!base.empty() && (std::isspace(static_cast<unsigned char>(base.back())) || base.back() == '/'))
+        base.pop_back();
+    if (base.empty()) {
+        out.error = "no address entered";
+        return out;
+    }
+    // "10.1.1.140" is how an address gets typed; the collector needs a scheme.
+    if (base.find("://") == std::string::npos) base = "http://" + base;
+    out.url = base;
+
+    // A Mule and Miner, CpapDash or hms-mm, answers /api/status with its serial
+    // and fw. That proves the address is the bridge, whether or not the card
+    // behind it is reachable right now. Anything else, a bare ezShare card
+    // included, falls through to the listing.
+    try {
+        Json::Value st;
+        Json::CharReaderBuilder rb;
+        std::string errs;
+        const std::string body = fetch_status(base);
+        std::istringstream in(body);
+        if (Json::parseFromStream(rb, in, &st, &errs) && st.isObject() &&
+            st["serial"].isString() && st["fw"].isString()) {
+            out.ok = true;
+            out.bridge_serial = st["serial"].asString();
+            out.bridge_fw = st["fw"].asString();
+            return out;
+        }
+    } catch (const std::exception&) {
+        // Not a bridge, or not answering; the listing decides.
+    }
+
+    std::vector<EzShareFileEntry> entries;
+    try {
+        entries = list_root(base);
+    } catch (const std::exception& e) {
+        out.error = e.what();
+        return out;
+    }
+    // Something answered, but not with a card listing: a router page, a
+    // printer, the wrong port.
+    if (entries.empty()) {
+        out.error = "the address answered, but not with an ezShare card listing";
+        return out;
+    }
+    out.ok = true;
+    return out;
+}
+
+namespace {
+size_t appendBody(char* ptr, size_t size, size_t nmemb, void* userdata) {
+    static_cast<std::string*>(userdata)->append(ptr, size * nmemb);
+    return size * nmemb;
+}
+} // namespace
+
+SetupService::EzShareProbe SetupService::probeEzshare(const std::string& url) {
+    return probeEzshare(url,
+        [](const std::string& base_url) {
+            EzShareClient client;
+            client.setBaseURL(base_url);
+            return client.listDir("");
+        },
+        [](const std::string& base_url) {
+            // Short on purpose: a bridge answers this at once, and a bare
+            // card still has the listing's own 10 s after it.
+            CURL* c = curl_easy_init();
+            if (!c) throw std::runtime_error("curl init failed");
+            std::string body;
+            const std::string u = base_url + "/api/status";
+            curl_easy_setopt(c, CURLOPT_URL, u.c_str());
+            curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, appendBody);
+            curl_easy_setopt(c, CURLOPT_WRITEDATA, &body);
+            curl_easy_setopt(c, CURLOPT_TIMEOUT, 4L);
+            curl_easy_setopt(c, CURLOPT_CONNECTTIMEOUT, 4L);
+            curl_easy_setopt(c, CURLOPT_FAILONERROR, 1L);
+            const CURLcode rc = curl_easy_perform(c);
+            curl_easy_cleanup(c);
+            if (rc != CURLE_OK) throw std::runtime_error(curl_easy_strerror(rc));
+            return body;
+        });
 }
 
 SetupService::DbProbe SetupService::provisionDatabase(const std::string& engine,

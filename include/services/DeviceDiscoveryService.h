@@ -12,6 +12,11 @@
 // multicast response into a host string that can be written to
 // `config.ezshare_url`. There is no new ingest path behind this.
 //
+// The open-source hms-mm mule is browsed too. It advertises `_hms-mm._tcp`
+// with TXT `serial` and `fw` but no `mode`, because it has only one: it always
+// serves the card on the LAN. Browsing only `_cpapdash._tcp` meant a unit
+// someone built from hms-mm never showed up in the setup scan at all.
+//
 // WHY THE PARSER IS HAND-ROLLED. The obvious dependency (mjansson/mdns,
 // Unlicense) does its record parsing inside `mdns_query_recv()`, which calls
 // recvfrom() itself. That makes it impossible to drive with captured packets,
@@ -47,11 +52,17 @@ public:
         std::string serial;          ///< TXT "serial"
         std::string fw;              ///< TXT "fw"
         std::string mode;            ///< TXT "mode": "proxy" or "cloud"
+        std::string service;         ///< which browsed service it answered under
+
+        /// The advertised mode, or "proxy" for an hms-mm unit, which has no
+        /// other mode and so does not advertise one.
+        std::string effectiveMode() const;
 
         /// Only a unit in proxy mode serves /dir and /download, so only a
-        /// proxy-mode unit can feed a local install. A unit that advertised no
-        /// `mode` at all is treated as not usable rather than assumed good.
-        bool isLocalCapable() const { return mode == "proxy"; }
+        /// proxy-mode unit can feed a local install. A CpapDash unit that
+        /// advertised no `mode` at all is treated as not usable rather than
+        /// assumed good.
+        bool isLocalCapable() const { return effectiveMode() == "proxy"; }
 
         /// What gets written into config.ezshare_url.
         std::string baseUrl() const;
@@ -69,14 +80,20 @@ public:
     /// Real transport: IPv4 multicast query to 224.0.0.251:5353.
     static DeviceDiscoveryService withMulticast();
 
-    /// Browse for `_cpapdash._tcp.local`. Returns an empty vector when nothing
-    /// answers; that is a success, not a failure.
+    /// Browse for every name in serviceNames(). Returns an empty vector when
+    /// nothing answers; that is a success, not a failure.
     std::vector<Device> browse(std::chrono::milliseconds timeout);
 
     // ---- exposed for tests -------------------------------------------------
 
-    /// The DNS-SD service this browses for.
+    /// The CpapDash mule's DNS-SD service.
     static const char* serviceName();
+
+    /// The open-source hms-mm mule's DNS-SD service.
+    static const char* hmsMmServiceName();
+
+    /// Every service browsed, in the order the questions are sent.
+    static std::vector<std::string> serviceNames();
 
     /// Build the PTR query datagram. Deterministic apart from `query_id`.
     /// `unicast_response` sets the mDNS QU bit (RFC 6762 5.4), which is only

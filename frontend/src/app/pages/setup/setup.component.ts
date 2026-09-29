@@ -891,7 +891,7 @@ export class SetupComponent {
     this.testResult = null;
     this.api.testEzshare(this.ezshareUrl).subscribe({
       next: (res) => {
-        this.testResult = res.status;
+        this.testResult = res.status === 'ok' ? 'ok' : (res.error || res.status);
         this.testing = false;
       },
       error: () => {

@@ -172,8 +172,8 @@ export class CpapApiService {
     return this.http.get<EventRow[]>('/api/events', { params });
   }
 
-  testEzshare(url: string): Observable<{ status: string; url: string }> {
-    return this.http.get<{ status: string; url: string }>(
+  testEzshare(url: string): Observable<{ status: string; url: string; error?: string }> {
+    return this.http.get<{ status: string; url: string; error?: string }>(
       `/api/config/test-ezshare?url=${encodeURIComponent(url)}`
     );
   }

@@ -425,6 +425,70 @@ TEST(DeviceDiscoveryParse, SrvAndAArriveInSeparateDatagrams) {
     EXPECT_EQ(devices.at(kInstance).host, "192.168.2.91");
 }
 
+// ── the open-source hms-mm mule ──────────────────────────────────────────
+//
+// Stock hms-mm (mule/main/wifi_manager.c) advertises "hms-mm <serial>" under
+// _hms-mm._tcp with TXT serial and fw, and no mode: it only ever serves the
+// card on the LAN. Before hms-cpap browsed this type, a unit built from
+// hms-mm never appeared in the setup scan (ticket 139).
+
+std::vector<uint8_t> hmsMmResponse() {
+    const std::string svc  = "_hms-mm._tcp.local";
+    const std::string fqdn = "hms-mm MM-53D2._hms-mm._tcp.local";
+    auto b = header(4);
+    addRecord(b, svc,       12, nameRdata(fqdn));
+    addRecord(b, fqdn,      33, srvRdata(80, kHostname));
+    addRecord(b, fqdn,      16, txtRdata({"serial=MM-53D2", "fw=1.0.2"}));
+    addRecord(b, kHostname,  1, aRdata(192, 168, 2, 76));
+    return b;
+}
+
+TEST(DeviceDiscoveryParse, HmsMmUnitIsFoundAndLocalCapableWithoutAMode) {
+    const auto pkt = hmsMmResponse();
+    DevMap devices;
+    AddrMap addresses;
+    ASSERT_TRUE(DeviceDiscoveryService::parseResponse(pkt.data(), pkt.size(), devices, addresses));
+    DeviceDiscoveryService::applyAddresses(devices, addresses);
+
+    ASSERT_EQ(devices.size(), 1u);
+    const auto& d = devices.at("hms-mm MM-53D2");
+    EXPECT_EQ(d.serial, "MM-53D2");
+    EXPECT_EQ(d.fw, "1.0.2");
+    EXPECT_TRUE(d.mode.empty());
+    EXPECT_EQ(d.effectiveMode(), "proxy");
+    EXPECT_TRUE(d.isLocalCapable());
+    EXPECT_EQ(d.baseUrl(), "http://192.168.2.76");
+}
+
+TEST(DeviceDiscoveryParse, CpapDashAndHmsMmUnitsAreBothListed) {
+    // Both kinds on one LAN, answering in separate datagrams.
+    DevMap devices;
+    AddrMap addresses;
+    const auto a = goodResponse();
+    const auto b = hmsMmResponse();
+    ASSERT_TRUE(DeviceDiscoveryService::parseResponse(a.data(), a.size(), devices, addresses));
+    ASSERT_TRUE(DeviceDiscoveryService::parseResponse(b.data(), b.size(), devices, addresses));
+    EXPECT_EQ(devices.size(), 2u);
+    EXPECT_EQ(devices.at(kInstance).service, kSvc);
+    EXPECT_EQ(devices.at("hms-mm MM-53D2").service, "_hms-mm._tcp.local");
+}
+
+TEST(DeviceDiscoveryParse, ACpapDashUnitWithoutAModeIsStillNotAssumedProxy) {
+    // The implied mode is hms-mm's alone. A CpapDash unit may be in cloud
+    // mode, so its silence must not be read as proxy.
+    DeviceDiscoveryService::Device d;
+    d.service = kSvc;
+    EXPECT_EQ(d.effectiveMode(), "");
+    EXPECT_FALSE(d.isLocalCapable());
+}
+
+TEST(DeviceDiscoveryParse, BrowsesBothServiceTypes) {
+    const auto names = DeviceDiscoveryService::serviceNames();
+    ASSERT_EQ(names.size(), 2u);
+    EXPECT_EQ(names[0], kSvc);
+    EXPECT_EQ(names[1], "_hms-mm._tcp.local");
+}
+
 // ── query construction ───────────────────────────────────────────────────
 
 TEST(DeviceDiscoveryQuery, AsksForThePtrRecordAsAMulticastQuestionByDefault) {

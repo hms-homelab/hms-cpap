@@ -787,4 +787,107 @@ TEST(SetupServiceTest, OwnerStringsAreStable) {
                  "container");
 }
 
+// -- probeEzshare -------------------------------------------------------------
+//
+// The wizard's Test button used to report "configured" for any non-empty URL
+// without contacting it, and the wizard only calls "ok" a success, so every
+// working address read "Connection failed: configured". These pin that ok
+// means the address really answered: a Mule and Miner with its status, or a
+// card with its listing.
+
+std::vector<EzShareFileEntry> cardRoot() {
+    EzShareFileEntry datalog;
+    datalog.name = "DATALOG";
+    datalog.is_dir = true;
+    EzShareFileEntry str;
+    str.name = "STR.EDF";
+    str.size_kb = 99;
+    return {datalog, str};
+}
+
+// A bare ezShare card has no /api/status; the request fails.
+std::string notABridge(const std::string&) {
+    throw std::runtime_error("HTTP 404");
+}
+
+// What an hms-mm mule's /api/status carries (mule/main/control_server.c).
+std::string hmsMmStatus(const std::string&) {
+    return R"({"serial":"MM-53D2","fw":"1.0.2","miner_fw":"unknown","state":"proxy","wifi":true})";
+}
+
+TEST(SetupServiceTest, EzshareProbeSucceedsWhenTheCardListsItsRoot) {
+    std::string asked;
+    const auto probe = SetupService::probeEzshare("http://10.1.1.140",
+        [&](const std::string& base) { asked = base; return cardRoot(); }, notABridge);
+    EXPECT_TRUE(probe.ok) << probe.error;
+    EXPECT_EQ(asked, "http://10.1.1.140");
+    EXPECT_EQ(probe.url, "http://10.1.1.140");
+    EXPECT_TRUE(probe.bridge_serial.empty());
+}
+
+TEST(SetupServiceTest, EzshareProbeSucceedsOnAMuleWhoseCardIsNotAnswering) {
+    // Ticket 139's case: the bridge is on the LAN and healthy, but its card
+    // listing does not come back (the CPAP is off, or the miner is busy). The
+    // test must pass on the bridge's own answer and never wait on the card.
+    bool listed = false;
+    const auto probe = SetupService::probeEzshare("http://10.1.1.140",
+        [&](const std::string&) -> std::vector<EzShareFileEntry> {
+            listed = true;
+            throw std::runtime_error("HTTP GET failed: Timeout was reached");
+        },
+        hmsMmStatus);
+    EXPECT_TRUE(probe.ok) << probe.error;
+    EXPECT_EQ(probe.bridge_serial, "MM-53D2");
+    EXPECT_EQ(probe.bridge_fw, "1.0.2");
+    EXPECT_FALSE(listed);
+}
+
+TEST(SetupServiceTest, EzshareProbeDoesNotTakeAnyJsonStatusForABridge) {
+    // Some other device's /api/status: without serial and fw it is not a
+    // Mule and Miner, so the card listing still decides.
+    const auto probe = SetupService::probeEzshare("http://192.168.1.1",
+        [](const std::string&) { return std::vector<EzShareFileEntry>{}; },
+        [](const std::string&) { return std::string(R"({"status":"ok"})"); });
+    EXPECT_FALSE(probe.ok);
+    EXPECT_TRUE(probe.bridge_serial.empty());
+}
+
+TEST(SetupServiceTest, EzshareProbeFailsWithTheTransportErrorWhenNothingAnswers) {
+    const auto probe = SetupService::probeEzshare("http://10.1.1.140",
+        [](const std::string&) -> std::vector<EzShareFileEntry> {
+            throw std::runtime_error("HTTP GET failed: Couldn't connect to server");
+        },
+        notABridge);
+    EXPECT_FALSE(probe.ok);
+    EXPECT_NE(probe.error.find("Couldn't connect"), std::string::npos);
+}
+
+TEST(SetupServiceTest, EzshareProbeFailsWhenTheAddressAnswersWithoutAListing) {
+    // A router admin page parses to no entries; that is not a card.
+    const auto probe = SetupService::probeEzshare("http://192.168.1.1",
+        [](const std::string&) { return std::vector<EzShareFileEntry>{}; }, notABridge);
+    EXPECT_FALSE(probe.ok);
+    EXPECT_FALSE(probe.error.empty());
+}
+
+TEST(SetupServiceTest, EzshareProbeRefusesAnEmptyAddressWithoutCallingOut) {
+    bool called = false;
+    const auto probe = SetupService::probeEzshare("   ",
+        [&](const std::string&) { called = true; return cardRoot(); },
+        [&](const std::string&) { called = true; return std::string(); });
+    EXPECT_FALSE(probe.ok);
+    EXPECT_FALSE(called);
+}
+
+TEST(SetupServiceTest, EzshareProbeNormalisesATypedAddress) {
+    // How people type it: no scheme, a trailing slash, stray spaces. The
+    // collector builds base + "/dir", so the slash must go and a scheme is needed.
+    std::string asked;
+    const auto probe = SetupService::probeEzshare(" 10.1.1.140/ ",
+        [&](const std::string& base) { asked = base; return cardRoot(); }, notABridge);
+    EXPECT_TRUE(probe.ok) << probe.error;
+    EXPECT_EQ(asked, "http://10.1.1.140");
+    EXPECT_EQ(probe.url, "http://10.1.1.140");
+}
+
 }  // namespace

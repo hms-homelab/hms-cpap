@@ -17,6 +17,9 @@
 // first-run experience. So the wizard has to ask what this build can actually
 // do rather than offering all three and hoping.
 //
+#include "clients/EzShareClient.h"
+
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -213,6 +216,41 @@ public:
                                  const std::string& user,
                                  const std::string& password,
                                  const std::string& sqlite_path);
+
+    // -- Live ezShare / Mule and Miner check -----------------------------------
+
+    /// Result of asking an ezShare card, or a Mule and Miner serving one on
+    /// the LAN, for its root directory.
+    struct EzShareProbe {
+        bool ok = false;
+        std::string url;           ///< the normalised address that was tried
+        std::string error;         ///< why it failed, safe to show the user
+        std::string bridge_serial; ///< set when a Mule and Miner answered
+        std::string bridge_fw;
+    };
+
+    /// Lists the card root at a base URL. Throws on a transport failure.
+    using EzShareLister =
+        std::function<std::vector<EzShareFileEntry>(const std::string& base_url)>;
+
+    /// Body of GET <base_url>/api/status. Throws on a transport failure.
+    using StatusFetcher = std::function<std::string(const std::string& base_url)>;
+
+    /// ok when a Mule and Miner (CpapDash or hms-mm) answers /api/status with
+    /// its serial and fw, or when the address answers with a card listing.
+    ///
+    /// The bridge is asked first because it can be healthy while the card is
+    /// not reachable: the card only has power while the CPAP does, so a setup
+    /// done in the afternoon would otherwise fail a bridge that works every
+    /// night. Before this the Test button never contacted the address at all:
+    /// any non-empty URL came back "configured", which the wizard renders as a
+    /// failure, so every working address read "Connection failed".
+    static EzShareProbe probeEzshare(const std::string& url,
+                                     const EzShareLister& list_root,
+                                     const StatusFetcher& fetch_status);
+
+    /// Same, over HTTP: libcurl for the status, EzShareClient for the listing.
+    static EzShareProbe probeEzshare(const std::string& url);
 
     /// Run provisionPlan() against the maintenance database as the admin, then
     /// reconnect as the ORDINARY user to prove the result is usable. A

@@ -162,6 +162,20 @@ const char* DeviceDiscoveryService::serviceName() {
     return "_cpapdash._tcp.local";
 }
 
+const char* DeviceDiscoveryService::hmsMmServiceName() {
+    return "_hms-mm._tcp.local";
+}
+
+std::vector<std::string> DeviceDiscoveryService::serviceNames() {
+    return {serviceName(), hmsMmServiceName()};
+}
+
+std::string DeviceDiscoveryService::Device::effectiveMode() const {
+    if (!mode.empty()) return mode;
+    if (iequals(service, hmsMmServiceName())) return "proxy";
+    return "";
+}
+
 std::string DeviceDiscoveryService::Device::baseUrl() const {
     if (host.empty()) return "";
     std::string url = "http://" + host;
@@ -245,7 +259,15 @@ bool DeviceDiscoveryService::parseResponse(const uint8_t* data,
         off += 4;   // QTYPE + QCLASS
     }
 
-    const std::string svc = serviceName();
+    const auto services = serviceNames();
+    // The browsed service `name` is an instance of, and the instance label.
+    auto instanceOfAny = [&services](const std::string& name, std::string& svc,
+                                     std::string& instance) {
+        for (const auto& s : services) {
+            if (instanceOf(name, s, instance)) { svc = s; return true; }
+        }
+        return false;
+    };
     const size_t total = static_cast<size_t>(an) + static_cast<size_t>(ns) + static_cast<size_t>(ar);
 
     for (size_t i = 0; i < total; i++) {
@@ -265,20 +287,21 @@ bool DeviceDiscoveryService::parseResponse(const uint8_t* data,
 
         switch (type) {
         case kTypePTR: {
-            // Only a PTR whose owner IS the service enumerates instances.
-            if (!iequals(owner, svc)) break;
+            // Only a PTR whose owner IS a browsed service enumerates instances.
             size_t p = rd;
             std::string target;
             if (!readName(data, len, p, target)) break;
-            std::string instance;
-            if (!instanceOf(target, svc, instance)) break;
+            std::string svc, instance;
+            if (!instanceOfAny(target, svc, instance)) break;
+            if (!iequals(owner, svc)) break;
             auto& dev = devices[instance];
             dev.instance = instance;
+            dev.service  = svc;
             break;
         }
         case kTypeSRV: {
-            std::string instance;
-            if (!instanceOf(owner, svc, instance)) break;
+            std::string svc, instance;
+            if (!instanceOfAny(owner, svc, instance)) break;
             if (rdlen < 7) break;                  // prio + weight + port + >=1 name byte
             size_t p = rd + 6;                     // skip priority and weight
             uint16_t port = static_cast<uint16_t>(
@@ -287,15 +310,17 @@ bool DeviceDiscoveryService::parseResponse(const uint8_t* data,
             if (!readName(data, len, p, target)) break;
             auto& dev = devices[instance];
             dev.instance   = instance;
+            dev.service    = svc;
             dev.port       = port;
             dev.srv_target = target;
             break;
         }
         case kTypeTXT: {
-            std::string instance;
-            if (!instanceOf(owner, svc, instance)) break;
+            std::string svc, instance;
+            if (!instanceOfAny(owner, svc, instance)) break;
             auto& dev = devices[instance];
             dev.instance = instance;
+            dev.service  = svc;
             parseTxt(data, rd, rdlen, dev);
             break;
         }
@@ -440,10 +465,12 @@ DeviceDiscoveryService DeviceDiscoveryService::withMulticast() {
         // mdns_query_send builds the PTR question and picks QM over QU based
         // on the bound port (5353 here, so a normal multicast question).
         std::vector<uint8_t> sendbuf(2048);
-        const std::string svc = std::string(DeviceDiscoveryService::serviceName()) + ".";
-        for (int s : socks) {
-            mdns_query_send(s, MDNS_RECORDTYPE_PTR, svc.c_str(), svc.size(),
-                            sendbuf.data(), sendbuf.size(), 0);
+        for (const auto& name : DeviceDiscoveryService::serviceNames()) {
+            const std::string svc = name + ".";
+            for (int s : socks) {
+                mdns_query_send(s, MDNS_RECORDTYPE_PTR, svc.c_str(), svc.size(),
+                                sendbuf.data(), sendbuf.size(), 0);
+            }
         }
 
         // Read raw datagrams off the same sockets rather than calling
