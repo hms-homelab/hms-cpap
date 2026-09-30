@@ -263,6 +263,7 @@ TEST_F(QueryServiceReadTest, SeveralSessionsShowTheirOwnSpansAndAddUpToTheNight)
         SessionMetrics m;
         m.ahi = events / (minutes / 60.0);
         m.total_events = static_cast<int>(events);
+        m.hypopneas = static_cast<int>(events);   // the night's index counts typed events
         s.metrics = m;
         ASSERT_TRUE(db_->saveSession(s));
     };

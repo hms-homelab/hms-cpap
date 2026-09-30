@@ -355,6 +355,7 @@ TEST_P(QueryServiceIndexTest, TheSessionsListSurvivesItsOwnSql) {
     SessionMetrics m;
     m.ahi = 4.5;
     m.total_events = 31;
+    m.unclassified_apneas = 31;   // 31 over 7 h = 4.43; every apnea unclassified
     m.index_kind = SessionMetrics::IndexKind::Ungraded;
     s.metrics = m;
     ASSERT_TRUE(db_->saveSession(s)) << engineName(GetParam());
@@ -378,20 +379,80 @@ TEST_P(QueryServiceIndexTest, TheSessionsListSurvivesItsOwnSql) {
     EXPECT_EQ(static_cast<int>(asNumber(rows[0]["total_events"])), 31)
         << engineName(GetParam());
 
-    // The night index is the duration-weighted mean of the sessions', which for
-    // one session is that session's own. Rebuilt from the per-TYPE columns it
-    // would read 0.00 here: this machine's apneas are all unclassified, so
-    // every one of those columns is zero while the index is 4.5.
-    EXPECT_NEAR(asNumber(rows[0]["ahi"]), 4.5, 0.01)
+    // SDD-047 D2: the night's typed events over its hours, the unclassified
+    // apneas included. Without them it would read 0.00 here: this machine's
+    // apneas are all unclassified, so every classified column is zero.
+    EXPECT_NEAR(asNumber(rows[0]["ahi"]), 31 / 7.0, 0.01)
         << engineName(GetParam())
-        << ": the night index was rebuilt from event types the machine never "
-           "filled, so the list disagreed with the dashboard about the same night";
+        << ": the night index left out the unclassified apneas, so the list "
+           "disagreed with the dashboard about the same night";
 
     // The detail endpoint reads the same night and must carry the kind too, or
     // the page labels an apnea index "AHI".
     const auto detail = qs_->getSessionDetail(rows[0]["sleep_day"].asString());
     ASSERT_EQ(detail.size(), 1u) << engineName(GetParam());
     EXPECT_EQ(detail[0]["index_kind"].asString(), "ungraded") << engineName(GetParam());
+}
+
+// SDD-047 D2: one night, one AHI, wherever it is read. A day of three stretches
+// with unclassified apneas among its events: the sessions list, the daily
+// summary and getNightlyMetrics all compute the night's index with the one
+// formula (sql::nightAhi), so they agree. The list used to take a
+// duration-weighted mean of each session's own index.
+TEST_P(QueryServiceIndexTest, TheListTheDailySummaryAndTheNightlyMetricsGiveOneAhi) {
+    std::tm tm{};
+    const std::time_t base_t = system_clock::to_time_t(noonDaysAgo(20));
+    localtime_r(&base_t, &tm);
+    tm.tm_hour = 21;
+    tm.tm_min = 0;
+    tm.tm_sec = 0;
+    tm.tm_isdst = -1;
+    const auto evening = system_clock::from_time_t(std::mktime(&tm));
+
+    struct Stretch { int start_min, mins, obstructive, unclassified, hypopneas; };
+    const Stretch stretches[] = {
+        {0,   25,  0, 1, 0},    // a short evening stretch
+        {150, 300, 4, 5, 6},    // the night, after a long break
+        {510, 45,  1, 2, 0},    // back on before the alarm
+    };
+    for (const auto& st : stretches) {
+        CPAPSession s;
+        s.device_id = device_;
+        s.session_start = evening + minutes(st.start_min);
+        s.session_end = *s.session_start + minutes(st.mins);
+        s.duration_seconds = st.mins * 60;
+        s.status = CPAPSession::Status::COMPLETED;
+        SessionMetrics m;
+        m.obstructive_apneas = st.obstructive;
+        m.unclassified_apneas = st.unclassified;
+        m.hypopneas = st.hypopneas;
+        m.total_events = st.obstructive + st.unclassified + st.hypopneas;
+        // Deliberately NOT events/hours: the night's index must come from the
+        // counts, not from averaging what each session says about itself.
+        m.ahi = 99.0;
+        s.metrics = m;
+        ASSERT_TRUE(db_->saveSession(s)) << engineName(GetParam());
+    }
+    ASSERT_TRUE(db_->aggregateDailySummaryFromSessions(device_)) << engineName(GetParam());
+
+    const double expected = 19 / ((25 + 300 + 45) / 60.0);   // 19 events over 6h10m
+
+    Json::Value night;
+    for (const auto& r : qs_->getSessions(50, 0))
+        if (r["oximetry_only"].asString() != "1") night = r;
+    ASSERT_FALSE(night.isNull()) << engineName(GetParam());
+    const double list_ahi = asNumber(night["ahi"]);
+
+    const auto days = allDays();
+    ASSERT_EQ(days.size(), 1u) << engineName(GetParam()) << ": the three stretches are one night";
+    const double summary_ahi = asNumber(days[0]["ahi"]);
+
+    const auto nightly = db_->getNightlyMetrics(device_, evening);
+    ASSERT_TRUE(nightly.has_value()) << engineName(GetParam());
+
+    EXPECT_NEAR(list_ahi, expected, 0.005) << engineName(GetParam()) << ": the sessions list";
+    EXPECT_NEAR(summary_ahi, expected, 0.005) << engineName(GetParam()) << ": the daily summary";
+    EXPECT_NEAR(nightly->ahi, expected, 0.001) << engineName(GetParam()) << ": getNightlyMetrics";
 }
 
 TEST_P(QueryServiceIndexTest, AnUngradedNightIsNotGivenACompositeIndex) {

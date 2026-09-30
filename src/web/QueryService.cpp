@@ -283,31 +283,16 @@ Json::Value QueryService::getSessions(int limit, int offset) {
         " MAX(s.session_end) as session_end,"
         " " + sql::round(night_minutes + " * 60.0", 0, dt_) + " as duration_seconds,"
         " " + sql::round(night_minutes + " / 60.0", 2, dt_) + " as duration_hours,"
-        // The night's index is the duration-weighted mean of the sessions'.
-        //
-        // That is the same number as (events / hours) whenever each session's
-        // own index was events/hours, which is how calculateMetrics() builds
-        // it -- but it reads the index the parser already computed instead of
-        // rebuilding it from the category columns, and rebuilding it here was
-        // wrong twice over. calculateMetrics() counts unclassified apneas
-        // (ResMed's bare 'Apnea') toward the index and this sum never did, so
-        // a night carrying them read lower here than on the dashboard; and
-        // hms-cpap does not persist that count at all, so the sum COULD not be
-        // made to agree. A Sefam night was the visible case -- every one of its
-        // apneas is unclassified, so the list showed 0.0 against a dashboard
-        // showing 60.0 for the same night.
-        //
-        // Weighted by duration, not a plain AVG: indices over unequal sessions
-        // do not average. A metrics row that is missing entirely contributes 0
-        // while its duration still counts, which is what the category sum did
-        // too.
-        // SDD-026: events over the night's hours. The numerator is the
-        // duration-weighted sum above (m.ahi * seconds / 3600 = events), the
-        // denominator our summed span.
-        " " + sql::round("CASE WHEN " + night_minutes + " > 0"
-        "   THEN SUM(COALESCE(m.ahi, 0) * s.duration_seconds / 3600.0)"
-        "   / (" + night_minutes + " / 60.0)"
-        "   ELSE 0 END", 2, dt_) + " as ahi,"
+        // SDD-047 D2: the night's index is the one formula the daily summary
+        // and getNightlyMetrics use (sql::nightAhi): the night's typed events,
+        // the unclassified apneas (ResMed's bare 'Apnea') included, over its
+        // summed session hours. It used to be the duration-weighted mean of
+        // each session's own index, because the unclassified count was not
+        // stored and the typed columns alone read a Sefam night, whose apneas
+        // are all unclassified, as 0.0. It is stored now. A metrics row that
+        // is missing entirely contributes no events while its duration still
+        // counts; a night with no hours reads 0.
+        " COALESCE(" + sql::round(sql::nightAhi("m", "s"), 2, dt_) + ", 0) as ahi,"
         // SDD-024. Same MAX-over-text as the night aggregate: 'ungraded' sorts
         // after 'ahi', so a row grouping ANY ungraded session reads as
         // ungraded. Per row, because a user who changed machines has both.
