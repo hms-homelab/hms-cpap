@@ -5,7 +5,7 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [5.4.8] - 2026-09-30
 
 An event belongs to the stretch of the night it happened in (SDD-047).
 
@@ -55,6 +55,11 @@ An event belongs to the stretch of the night it happened in (SDD-047).
   `hms_cpap --reparse <card_root> <start_date> [end_date]`, or, on a local
   source, `POST /api/backfill` with `{"start_date": "YYYY-MM-DD",
   "end_date": "YYYY-MM-DD"}`. Nothing is re-parsed automatically on upgrade.
+
+### Tests
+- The tests that need an MQTT broker use only one named by `HMS_TEST_MQTT`
+  and skip without it, so a run can no longer write retained Home Assistant
+  topics to a real home broker. `scripts/coverage.sh` starts a throwaway one.
 
 ## [5.4.1] - 2026-09-19
 
