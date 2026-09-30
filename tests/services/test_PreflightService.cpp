@@ -325,7 +325,7 @@ namespace {
 bool supervisorCopyOfSourceNeedsArchive(const std::string& transport,
                                         const std::string& legacy_source) {
     if (transport.empty())
-        return legacy_source == "ezshare" || legacy_source == "fysetc";
+        return legacy_source == "ezshare";
     return transport == "ezshare";
 }
 }  // namespace
@@ -343,7 +343,7 @@ TEST(PreflightServiceTest, SourceNeedsArchive_MatchesTheSupervisorCopy) {
 // archive. Getting this wrong would demand an archive folder from a Prisma
 // owner upgrading, for files already sitting on their own disk.
 TEST(PreflightServiceTest, TheSupervisorLegacyFallbackAgreesWithMigration) {
-    for (const char* src : {"ezshare", "fysetc", "local", "lowenstein", "sefam", "philips"}) {
+    for (const char* src : {"ezshare", "local", "lowenstein", "sefam", "philips"}) {
         AppConfig cfg;
         cfg.source = src;
         cfg.migrateSource();

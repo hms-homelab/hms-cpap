@@ -53,10 +53,9 @@ bool sourceNeedsArchive(const ConfigModel& m) {
         // Pre-SDD-022 config. `local`, `lowenstein` and `sefam` were all the
         // same transport -- a folder on disk -- so only the network value
         // matters here and the vendor names fall through to false, which is the
-        // right answer for every one of them. The removed Fysetc source reads
-        // as ez Share, as the service's migration reads it.
+        // right answer for every one of them.
         const auto s = m.getString("source");
-        return s == "ezshare" || s == "fysetc";
+        return s == "ezshare";
     }
     return t == "ezshare";
 }
