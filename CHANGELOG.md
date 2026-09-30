@@ -5,6 +5,47 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+An event belongs to the stretch of the night it happened in (SDD-047).
+
+### Fixed
+- **A night's events could sit on the wrong session.** A ResMed machine does
+  not write an EVE/CSL pair per mask-on. It opens a new pair at the first
+  mask-on after the SD card is opened or put back, and every later mask-on
+  appends to that same pair, however long the break. So on a day with an
+  afternoon nap and a night, the one EVE can be named at the nap and hold
+  every event of the night. Sessions were matched to EVE files by the file's
+  name, which could give a short nap the night's apneas (a high AHI) and the
+  night itself none (AHI 0). Each event now goes to the session whose time
+  holds it; one in a gap between sessions stays with the session before it.
+  The night's totals were already right, because they add the sessions up.
+  The session list, per-session charts and anything built on a single
+  session were not.
+- **One AHI for a night.** The daily summary took a duration-weighted mean of
+  each session's index, and the nightly figures published over MQTT added up
+  the typed events but left out the machine's unclassified apneas. Both are
+  now the night's apneas and hypopneas, unclassified included, over the
+  night's hours, on SQLite, PostgreSQL and MySQL. The unclassified count is
+  now stored per session; sessions stored before this upgrade are counted
+  from their saved events at the first start. `uai` is now the unclassified
+  apnea index, as on the machine's own summary.
+- **The per-night SpO2 chart shows the whole night.** A night recorded in two
+  parts charted only the longer one. It is now every recording of the night,
+  the average weighted by duration and the low the lowest.
+- **A session no longer counts as finished because its EVE file appeared.**
+  The EVE is created near the start of the night, so the sleep-stage final
+  pass waits for the night to be over: an hour with nothing new on the card.
+- The Fysetc sector collector groups a folder exactly as every other source
+  does, instead of with an older copy of the rule.
+
+### Upgrading
+- Nights already stored keep their old per-session events until they are
+  parsed again. To fix past nights, re-parse them from the card or archive:
+  `hms_cpap --reparse <card_root> <start_date> [end_date]`, or, on a local
+  source, `POST /api/backfill` with `{"start_date": "YYYY-MM-DD",
+  "end_date": "YYYY-MM-DD"}`. Nothing is re-parsed automatically on upgrade.
+
 ## [5.4.1] - 2026-09-19
 
 ### Fixed

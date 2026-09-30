@@ -3,6 +3,7 @@
 #include "clients/FysetcTcpServer.h"
 #include "parsers/Fat32Parser.h"
 #include "database/IDatabase.h"
+#include <chrono>
 #include <string>
 #include <vector>
 #include <map>
@@ -33,6 +34,20 @@ public:
 
     CollectResult collect();
 
+    /// One session of a date folder, as the files the collector syncs for it.
+    struct FatSession {
+        std::chrono::system_clock::time_point session_start;
+        std::vector<const Fat32DirEntry*> all_files;
+        std::map<std::string, int> checkpoint_sizes_kb;  // BRP/PLD/SAD only
+    };
+
+    /// A date folder's FAT entries in sessions, by THE grouping
+    /// (SessionDiscoveryService::groupFiles), never a copy of it. Each
+    /// session's files are the ones discovery lists for it; an .edf with no
+    /// session prefix (a short 8.3 name) rides with the last session. The
+    /// pointers are into [files].
+    static std::vector<FatSession> groupIntoSessions(const std::vector<Fat32DirEntry>& files,
+                                                     const std::string& date_folder);
 
 private:
     bool refreshFatLayout();

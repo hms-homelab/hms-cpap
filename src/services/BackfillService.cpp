@@ -322,6 +322,9 @@ void BackfillService::executeBackfill(const std::string& start_date,
                     continue;
                 }
 
+                // SDD-047: the day's EVEs were staged; keep this stretch's events.
+                keepOwnEvents(*parsed, session);
+
                 // Set relative file paths (same format as normal pipeline)
                 applySessionFilePaths(*parsed, session, folder);
 

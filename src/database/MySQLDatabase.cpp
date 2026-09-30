@@ -483,6 +483,7 @@ void MySQLDatabase::createSchema() {
             hypopneas              INT DEFAULT 0,
             reras                  INT DEFAULT 0,
             clear_airway_apneas    INT DEFAULT 0,
+            unclassified_apneas    INT,                         -- SDD-047 D2
             avg_event_duration     DOUBLE,
             max_event_duration     DOUBLE,
             time_in_apnea_percent  DOUBLE,
@@ -1037,6 +1038,10 @@ void MySQLDatabase::migrateSchema() {
         // v2.2.0 — desaturation metrics
         {"cpap_session_metrics", "odi",                    "DOUBLE"},
 
+        // SDD-047 D2: the unclassified apnea, counted toward the AHI and never
+        // stored before. No default: NULL is "not counted yet" (see below).
+        {"cpap_session_metrics", "unclassified_apneas",    "INT"},
+
         // Session bookkeeping the collector and SleepHQ export both read.
         {"cpap_sessions", "session_end",       "DATETIME"},
         {"cpap_sessions", "data_records",      "INT DEFAULT 0"},
@@ -1149,6 +1154,15 @@ void MySQLDatabase::migrateSchema() {
         std::cout << "MySQL: schema migration applied " << applied << " column(s)"
                   << std::endl;
     }
+
+    // SDD-047 D2: a metrics row that predates unclassified_apneas is counted
+    // from its own stored events, once; every save after this writes the
+    // parser's count. Idempotent: a counted row is never NULL again.
+    exec("UPDATE cpap_session_metrics m"
+         "   SET m.unclassified_apneas = (SELECT COUNT(*) FROM cpap_events e"
+         "                                 WHERE e.session_id = m.session_id"
+         "                                   AND e.event_type = 'Apnea')"
+         " WHERE m.unclassified_apneas IS NULL");
 
     // Split ResMed's lifetime PatientHours counter out of patient_hours, which
     // two writers had been filling with two different quantities. Runs after the
@@ -1512,8 +1526,9 @@ void MySQLDatabase::insertSessionMetrics(int64_t session_id, const SessionMetric
              -- SDD-024, missed here when the column landed (2026-09-06): every
              -- session on MySQL took the column default and an apnea-only
              -- index went out named AHI, the exact thing SDD-024 prevents.
-             index_kind)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             index_kind,
+             unclassified_apneas)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
             total_events           = VALUES(total_events),
             ahi                    = VALUES(ahi),
@@ -1522,6 +1537,7 @@ void MySQLDatabase::insertSessionMetrics(int64_t session_id, const SessionMetric
             hypopneas              = VALUES(hypopneas),
             reras                  = VALUES(reras),
             clear_airway_apneas    = VALUES(clear_airway_apneas),
+            unclassified_apneas    = VALUES(unclassified_apneas),
             avg_spo2               = VALUES(avg_spo2),
             min_spo2               = VALUES(min_spo2),
             avg_heart_rate         = VALUES(avg_heart_rate),
@@ -1548,7 +1564,7 @@ void MySQLDatabase::insertSessionMetrics(int64_t session_id, const SessionMetric
         return;
     }
 
-    ParamBinder p(25);   // SDD-024: index_kind is the 25th
+    ParamBinder p(26);   // SDD-024: index_kind is the 25th; SDD-047: unclassified the 26th
     p.bindInt64(0, session_id);
     p.bindInt(1, m.total_events);
     p.bindDouble(2, m.ahi);
@@ -1577,6 +1593,7 @@ void MySQLDatabase::insertSessionMetrics(int64_t session_id, const SessionMetric
     const std::string index_kind =
         m.index_kind == SessionMetrics::IndexKind::AHI ? "ahi" : "ungraded";
     p.bindText(24, index_kind);
+    p.bindInt(25, m.unclassified_apneas);
 
     mysql_stmt_bind_param(g.stmt, p.data());
     if (mysql_stmt_execute(g.stmt) != 0) {
@@ -2932,15 +2949,9 @@ bool MySQLDatabase::aggregateDailySummaryFromSessions(const std::string& device_
     // signal samples yet (issue #15), so those columns are always 0 in
     // cpap_session_metrics -- store NULL rather than a misleading zero.
     //
-    // ahi is a duration-weighted average of the parser's own per-session m.ahi,
-    // NOT re-derived from summing obstructive/central/clear_airway/hypopneas: the
-    // parser counts a further generic "unclassified apnea" event type that is
-    // folded into m.ahi but never persisted to any typed column (see
-    // cpapdash-parser ParsedSession::calculateMetrics, `apnea_other`), so
-    // reconstructing ahi from the typed sums alone silently undercounts it. ai is
-    // then ahi - hi so the AHI = AI + HI identity holds for the row; ai absorbs
-    // that untracked bucket as a residual, same as it does inside m.ahi itself.
-    const char* sql = R"(
+    // SDD-047 D2: the indexes are the night's typed events over its summed
+    // hours, the one formula getNightlyMetrics uses too (sql::nightIndexColumns).
+    const std::string sql = R"(
         INSERT INTO cpap_daily_summary
             (device_id, record_date, duration_minutes, patient_hours,
              ahi, hi, ai, oai, cai, uai, rin, mask_events, mask_pairs,
@@ -2955,20 +2966,7 @@ bool MySQLDatabase::aggregateDailySummaryFromSessions(const std::string& device_
             -- froze a live night at its first mask-off.
             ROUND(SUM(s.duration_seconds) / 60.0, 1),
             ROUND(SUM(s.duration_seconds) / 3600.0, 2),
-            ROUND(SUM(COALESCE(m.ahi,0) * s.duration_seconds / 3600.0)
-                / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS ahi,
-            ROUND(SUM(COALESCE(m.hypopneas,0))
-                / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS hi,
-            ROUND((SUM(COALESCE(m.ahi,0) * s.duration_seconds / 3600.0) - SUM(COALESCE(m.hypopneas,0)))
-                / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS ai,
-            ROUND(SUM(COALESCE(m.obstructive_apneas,0))
-                / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS oai,
-            ROUND(SUM(COALESCE(m.central_apneas,0))
-                / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS cai,
-            ROUND(SUM(COALESCE(m.clear_airway_apneas,0))
-                / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS uai,
-            ROUND(SUM(COALESCE(m.reras,0))
-                / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS rin,
+)" + sql::nightIndexColumns("m", "s", DbType::MYSQL) + R"(,
             SUM(COALESCE(m.total_events,0)) AS mask_events,
             '[]' AS mask_pairs,
             -- SDD-033: session means by duration. The percentiles are ours
@@ -3034,7 +3032,7 @@ bool MySQLDatabase::aggregateDailySummaryFromSessions(const std::string& device_
 
     MysqlStmtGuard g;
     g.stmt = mysql_stmt_init(conn_);
-    if (mysql_stmt_prepare(g.stmt, sql, std::strlen(sql)) != 0) {
+    if (mysql_stmt_prepare(g.stmt, sql.c_str(), sql.size()) != 0) {
         std::cerr << "MySQL: aggregateDailySummaryFromSessions prepare error: "
                   << mysql_stmt_error(g.stmt) << std::endl;
         return false;
@@ -3171,8 +3169,9 @@ std::optional<SessionMetrics> MySQLDatabase::getNightlyMetrics(
     // sleep_day = DATE(DATE_SUB(session_start, INTERVAL 12 HOUR))
     // SDD-033: events summed (D2), minute figures over the night's minutes
     // (each session hands up a sum and a count), and a multi-session night's
-    // leak percentiles from the STR's copy (D1). As on SQLite.
-    const char* sql = R"(
+    // leak percentiles from the STR's copy (D1). The AHI is the daily
+    // summary's formula (SDD-047 D2). As on SQLite.
+    const std::string sql = R"(
         SELECT
             SUM(s.duration_seconds)                          AS total_seconds,
             SUM(sm.total_events)                             AS total_events,
@@ -3192,11 +3191,7 @@ std::optional<SessionMetrics> MySQLDatabase::getNightlyMetrics(
             CASE WHEN SUM(s.duration_seconds) > 0
                  THEN ROUND(SUM(s.duration_seconds) / 3600.0 * 100.0 / 8.0, 4)
                  ELSE 0 END                                  AS usage_percent,
-            CASE WHEN SUM(s.duration_seconds) > 0
-                 THEN ROUND((COALESCE(SUM(sm.obstructive_apneas), 0) + COALESCE(SUM(sm.central_apneas), 0)
-                            + COALESCE(SUM(sm.hypopneas), 0) + COALESCE(SUM(sm.clear_airway_apneas), 0))
-                          * 3600.0 / SUM(s.duration_seconds), 4)
-                 ELSE 0 END                                  AS ahi,
+            COALESCE(ROUND()" + sql::nightAhi("sm", "s") + R"(, 4), 0) AS ahi,
             CASE WHEN SUM(s.duration_seconds) > 0
                       AND SUM(sm.avg_event_duration * sm.total_events) IS NOT NULL
                  THEN ROUND(SUM(sm.avg_event_duration * sm.total_events)
@@ -3230,7 +3225,8 @@ std::optional<SessionMetrics> MySQLDatabase::getNightlyMetrics(
             -- under that name. MAX over text, as on the other two backends:
             -- 'ungraded' sorts after 'ahi', so a night holding ANY ungraded
             -- session reads as ungraded.
-            MAX(COALESCE(sm.index_kind, 'ahi')) AS index_kind
+            MAX(COALESCE(sm.index_kind, 'ahi')) AS index_kind,
+            SUM(sm.unclassified_apneas)          AS unclassified_apneas
         FROM cpap_sessions s
         JOIN cpap_session_metrics sm ON sm.session_id = s.id
         LEFT JOIN (
@@ -3275,7 +3271,7 @@ std::optional<SessionMetrics> MySQLDatabase::getNightlyMetrics(
 
     MysqlStmtGuard g;
     g.stmt = mysql_stmt_init(conn_);
-    mysql_stmt_prepare(g.stmt, sql, std::strlen(sql));
+    mysql_stmt_prepare(g.stmt, sql.c_str(), sql.size());
 
     ParamBinder p(4);
     p.bindText(0, device_id);
@@ -3285,8 +3281,8 @@ std::optional<SessionMetrics> MySQLDatabase::getNightlyMetrics(
     mysql_stmt_bind_param(g.stmt, p.data());
     mysql_stmt_execute(g.stmt);
 
-    // 36 output columns (indices 0-35; 35 is index_kind, text)
-    ResultBinder r(36);
+    // 37 output columns (indices 0-36; 35 is index_kind, text)
+    ResultBinder r(37);
     for (int i = 0; i < 35; ++i) r.bindColDouble(i);
     r.bindColString(35);   // SDD-024 index_kind
     // Override int columns
@@ -3297,6 +3293,7 @@ std::optional<SessionMetrics> MySQLDatabase::getNightlyMetrics(
     r.bindColInt(5);   // reras
     r.bindColInt(6);   // CA_clear
     r.bindColInt(33);  // therapy_mode
+    r.bindColInt(36);  // SDD-047 D2 unclassified apneas
 
     mysql_stmt_bind_result(g.stmt, r.data());
     mysql_stmt_store_result(g.stmt);
@@ -3312,7 +3309,7 @@ std::optional<SessionMetrics> MySQLDatabase::getNightlyMetrics(
     // 24=avg_mask_pressure  25=avg_epr_pressure  26=avg_snore  27=avg_target_ventilation
     // 28=avg_pressure  29=max_pressure  30=min_pressure
     // 31=leak_p50  32=leak_p95_sess  33=therapy_mode  34=avg_therapy_pressure
-    // 35=index_kind (text)
+    // 35=index_kind (text)  36=unclassified_apneas
     SessionMetrics m;
     m.total_events        = r.colInt(1);
     m.ahi                 = r.colDouble(11);
@@ -3321,6 +3318,7 @@ std::optional<SessionMetrics> MySQLDatabase::getNightlyMetrics(
     m.hypopneas           = r.colInt(4);
     m.reras               = r.colInt(5);
     m.clear_airway_apneas = r.colInt(6);
+    m.unclassified_apneas = r.colIsNull(36) ? 0 : r.colInt(36);
 
     m.avg_event_duration    = r.colOptDouble(7);
     m.max_event_duration    = r.colOptDouble(8);
@@ -3372,7 +3370,7 @@ std::vector<SessionMetrics> MySQLDatabase::getMetricsForDateRange(
     std::string cutoff_str = fmtTimestamp(cutoff);
 
     // One row per sleep-night, same aggregation as getNightlyMetrics
-    const char* sql = R"(
+    const std::string sql = R"(
         SELECT
             DATE_FORMAT(DATE(DATE_SUB(s.session_start, INTERVAL 12 HOUR)), '%Y-%m-%d') AS sleep_day,
             SUM(s.duration_seconds)                          AS total_seconds,
@@ -3394,11 +3392,7 @@ std::vector<SessionMetrics> MySQLDatabase::getMetricsForDateRange(
             CASE WHEN SUM(s.duration_seconds) > 0
                  THEN ROUND(SUM(s.duration_seconds) / 3600.0 * 100.0 / 8.0, 4)
                  ELSE 0 END                                  AS usage_percent,
-            CASE WHEN SUM(s.duration_seconds) > 0
-                 THEN ROUND((COALESCE(SUM(sm.obstructive_apneas), 0) + COALESCE(SUM(sm.central_apneas), 0)
-                            + COALESCE(SUM(sm.hypopneas), 0) + COALESCE(SUM(sm.clear_airway_apneas), 0))
-                          * 3600.0 / SUM(s.duration_seconds), 4)
-                 ELSE 0 END                                  AS ahi,
+            COALESCE(ROUND()" + sql::nightAhi("sm", "s") + R"(, 4), 0) AS ahi,
             SUM(c.s_leak) / NULLIF(SUM(c.n_leak), 0)   AS avg_leak, MAX(c.max_leak) AS max_leak,
             SUM(c.s_rr)   / NULLIF(SUM(c.n_rr), 0)     AS avg_rr,
             SUM(c.s_tv)   / NULLIF(SUM(c.n_tv), 0)     AS avg_tv,
@@ -3452,7 +3446,7 @@ std::vector<SessionMetrics> MySQLDatabase::getMetricsForDateRange(
 
     MysqlStmtGuard g;
     g.stmt = mysql_stmt_init(conn_);
-    mysql_stmt_prepare(g.stmt, sql, std::strlen(sql));
+    mysql_stmt_prepare(g.stmt, sql.c_str(), sql.size());
 
     ParamBinder p(2);
     p.bindText(0, device_id);
@@ -3989,22 +3983,19 @@ std::vector<IDatabase::OxiNightlyPoint> MySQLDatabase::getOximetryNightlySpo2(
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!conn_) return pts;
 
-    // One row per night, longest session winning a tie. PostgreSQL expresses this
-    // as DISTINCT ON, which MySQL lacks, so rank inside each night and keep the
-    // first. A plain GROUP BY would not work here: ONLY_FULL_GROUP_BY (default
-    // since 5.7) rejects bare columns, and without it MySQL picks an arbitrary row
-    // rather than the longest.
+    // SDD-047: one row per night covering every recording of it, the mean
+    // weighted by duration and the low the night's lowest. As on SQLite. Every
+    // selected column is an aggregate, so ONLY_FULL_GROUP_BY has nothing to
+    // reject.
     const char* sql = R"(
-        SELECT cpap_session_date, avg_spo2, min_spo2 FROM (
-            SELECT cpap_session_date, avg_spo2, min_spo2,
-                   ROW_NUMBER() OVER (PARTITION BY cpap_session_date
-                                      ORDER BY duration_seconds DESC) AS rn
-            FROM oximetry_sessions
-            WHERE device_id = ?
-              AND cpap_session_date >= ? AND cpap_session_date <= ?
-              AND avg_spo2 IS NOT NULL AND duration_seconds > 60
-        ) ranked
-        WHERE rn = 1
+        SELECT cpap_session_date,
+               SUM(avg_spo2 * duration_seconds) / SUM(duration_seconds) AS avg_spo2,
+               MIN(min_spo2) AS min_spo2
+        FROM oximetry_sessions
+        WHERE device_id = ?
+          AND cpap_session_date >= ? AND cpap_session_date <= ?
+          AND avg_spo2 IS NOT NULL AND duration_seconds > 60
+        GROUP BY cpap_session_date
         ORDER BY cpap_session_date ASC
     )";
 

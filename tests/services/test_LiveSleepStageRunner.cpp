@@ -24,7 +24,9 @@
 #include "ml/RandomForest.h"
 #include "ml/StandardScaler.h"
 #include "database/IDatabase.h"
+#include "database/SQLiteDatabase.h"
 #include "parsers/CpapdashBridge.h"
+#include "utils/NightQuiet.h"
 
 #include <chrono>
 #include <filesystem>
@@ -619,4 +621,64 @@ TEST(OximetryParseAggregation, OffWristMarkerCountsAsInvalid) {
     EXPECT_TRUE(session->samples[0].valid());
     EXPECT_FALSE(session->samples[1].valid());
     EXPECT_EQ(session->metrics.valid_samples, 1);
+}
+
+// ── SDD-047: the night ends by the settle rule, never by an EVE arriving ─────
+//
+// The machine creates the EVE/CSL pair at the first mask-on after the card is
+// opened and appends to it all night, so an EVE on the card says nothing about
+// the night being over. The runner's final pass waits for an hour with no
+// growth in the night's folder (SDD-046), whatever files the folder holds.
+
+class LiveRunnerNightEnd : public ::testing::Test {
+protected:
+    std::string path_;
+    std::shared_ptr<SQLiteDatabase> db_;
+    void SetUp() override {
+        path_ = (std::filesystem::temp_directory_path() /
+                 ("hms_sdd047_live_" + std::to_string(::getpid()) + ".db")).string();
+        std::filesystem::remove(path_);
+        db_ = std::make_shared<SQLiteDatabase>(path_);
+        ASSERT_TRUE(db_->connect());
+    }
+    void TearDown() override {
+        db_.reset();
+        for (const auto* suffix : {"", "-wal", "-shm"}) {
+            std::error_code ec;
+            std::filesystem::remove(path_ + suffix, ec);
+        }
+    }
+};
+
+TEST_F(LiveRunnerNightEnd, AnEveAppearingDoesNotCompleteTheSession) {
+    LiveSleepStageRunner runner(nullptr, db_, nullptr, "sdd047_live");
+    const auto start = Clock::now() - std::chrono::minutes(20);
+    const auto now = Clock::now();
+
+    // Twenty minutes into the night the burst finds the day's EVE and CSL on
+    // the card: by its files, the session looks complete.
+    SessionFileSet files;
+    files.date_folder = "20250928";
+    files.brp_files = {"20250928_231000_BRP.edf"};
+    files.eve_files = {"20250928_231000_EVE.edf"};
+    files.csl_files = {"20250928_231000_CSL.edf"};
+    ASSERT_TRUE(files.isComplete());
+    ASSERT_TRUE(noteNightGrowth(*db_, "sdd047_live", files.date_folder, start, now));
+
+    CPAPSession session;
+    session.session_start = start;
+    EXPECT_FALSE(runner.finishIfNightOver(session, {}, 1, files.date_folder, now))
+        << "an EVE arriving ended the night";
+    EXPECT_FALSE(runner.finishIfNightOver(session, {}, 1, files.date_folder,
+                                          now + std::chrono::minutes(59)))
+        << "a mask back on within the hour is the same night";
+    EXPECT_TRUE(runner.finishIfNightOver(session, {}, 1, files.date_folder,
+                                         now + std::chrono::minutes(60)))
+        << "an hour with no growth is the end of the night";
+}
+
+TEST_F(LiveRunnerNightEnd, ANightTheCollectorHasNotSeenIsNotOver) {
+    LiveSleepStageRunner runner(nullptr, db_, nullptr, "sdd047_live");
+    CPAPSession session;
+    EXPECT_FALSE(runner.finishIfNightOver(session, {}, 1, "20250928", Clock::now()));
 }

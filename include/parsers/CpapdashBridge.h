@@ -20,6 +20,10 @@
 #include <cpapdash/parser/SefamParser.h>
 #endif
 
+#include <algorithm>
+#include <chrono>
+#include <optional>
+
 namespace hms_cpap {
 
 // ── Core types ──────────────────────────────────────────────────────────────
@@ -62,17 +66,26 @@ enum class SummaryPeriod { DAILY, WEEKLY, MONTHLY };
 /**
  * SessionFileSet - Grouped EDF files for a single CPAP session.
  *
- * ONE session (identified by CSL/EVE timestamp) has:
- * - CSL: Summary files, one per mask-on block
- * - EVE: Events files, one per mask-on block (written hours later)
- * - Multiple BRP/PLD/SAD checkpoint files (written during session)
+ * ONE session is one mask-on stretch of a day folder (the checkpoints split
+ * wherever the mask was off for SESSION_GAP_MINUTES). It has:
+ * - Multiple BRP/PLD/SAD checkpoint files, written during the stretch
+ * - EVE/CSL: every pair in the day folder, with the window of time whose
+ *   events are this stretch's (events_from, events_until)
  *
- * EVE and CSL are vectors for the same reason the checkpoints are. A night is
- * several mask-on blocks and each writes its own pair. They used to be single
- * strings, and the matcher kept the FIRST one in prefix order, which is the
- * earliest block -- routinely a seconds-long mask-fit check whose EVE is the
- * empty 832-byte stub. Every real annotation of the night was dropped and the
- * session read AHI 0.0. See docs/SDD-014 and issue #22.
+ * An EVE/CSL pair belongs to the CARD session, not to a mask-on (SDD-047).
+ * The machine opens a new pair at the first mask-on after the card is opened
+ * or re-inserted, and every later mask-on appends to that same pair, however
+ * long the break. So one EVE named at an afternoon stretch can carry every
+ * event of the night that follows it, and a day on which the card was pulled
+ * several times has several pairs. The file's NAME therefore says nothing
+ * about which stretch an event belongs to; the event's own time does. Each
+ * stretch lists the day's pairs, and keepOwnEvents() keeps the events that
+ * fall in its window, so each event is counted once, on the stretch it
+ * happened in.
+ *
+ * EVE and CSL are vectors because a day can hold several pairs. They used to
+ * be single strings, and the matcher kept the FIRST one in prefix order, which
+ * dropped every other pair's annotations and read AHI 0.0. See issue #22.
  */
 /**
  * SessionFileRef - one file belonging to a session, in card-relative form.
@@ -127,6 +140,20 @@ struct SessionFileSet {
     int total_size_kb = 0;
     std::chrono::system_clock::time_point session_start;
 
+    /// SDD-047: the events that are this stretch's, by their onset:
+    /// [events_from, events_until). events_from is this stretch's start and
+    /// events_until the next stretch's start, so an event in the gap after a
+    /// stretch stays with it (the stretch before it). The day's first stretch
+    /// has no events_from, and takes anything before it; the day's last has
+    /// no events_until. Together the windows cover the day once, so no event
+    /// is counted on two stretches. Both unset means every event is this one's.
+    std::optional<std::chrono::system_clock::time_point> events_from;
+    std::optional<std::chrono::system_clock::time_point> events_until;
+
+    bool holdsEventAt(std::chrono::system_clock::time_point t) const {
+        return (!events_from || t >= *events_from) && (!events_until || t < *events_until);
+    }
+
     bool hasData() const {
         return !brp_files.empty() || !pld_files.empty() || !sad_files.empty();
     }
@@ -172,6 +199,28 @@ inline void applySessionFilePaths(ParsedSessionT& parsed, const SessionFileSet& 
     if (!s.sad_files.empty()) parsed.sad_file_path = base + s.sad_files.front();
     if (!s.eve_files.empty()) parsed.eve_file_path = base + s.eve_files.front();
     if (!s.csl_files.empty()) parsed.csl_file_path = base + s.csl_files.front();
+}
+
+/**
+ * SDD-047: keep only the events that happened in this stretch, and recount.
+ *
+ * The parser reads every EVE it is given and keeps all of their annotations,
+ * which is right for a day of one stretch and wrong for a day of several: each
+ * stretch is handed the day's EVE/CSL (an EVE belongs to the card session, not
+ * to a mask-on; see SessionFileSet), so without this every stretch would carry
+ * the whole day's events. An event is kept where the set's window holds its
+ * onset (SessionFileSet::holdsEventAt), and the session's metrics are computed
+ * again from what is left. Every parse of a discovered set calls this, on
+ * every path (burst, reparse, backfill), so the three cannot disagree.
+ */
+template <typename ParsedSessionT>
+inline void keepOwnEvents(ParsedSessionT& parsed, const SessionFileSet& s) {
+    auto& ev = parsed.events;
+    const auto before = ev.size();
+    ev.erase(std::remove_if(ev.begin(), ev.end(),
+                            [&](const auto& e) { return !s.holdsEventAt(e.timestamp); }),
+             ev.end());
+    if (ev.size() != before) parsed.calculateMetrics();
 }
 
 } // namespace hms_cpap

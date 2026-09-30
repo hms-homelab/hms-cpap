@@ -66,6 +66,8 @@ CREATE TABLE IF NOT EXISTS cpap_session_metrics (
     hypopneas              INT DEFAULT 0,
     reras                  INT DEFAULT 0,
     clear_airway_apneas    INT DEFAULT 0,
+    -- SDD-047 D2: see schema_sqlite.sql. NULL until counted.
+    unclassified_apneas    INT,
     avg_event_duration     DOUBLE,
     max_event_duration     DOUBLE,
     time_in_apnea_percent  DOUBLE,

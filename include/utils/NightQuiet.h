@@ -188,6 +188,27 @@ inline bool nightHourPassed(const std::map<std::string, bool>& states,
     return it == states.end() || it->second;
 }
 
+/// Is the night in [date_folder] over at [now]: announced, or nothing in its
+/// folder has grown for kNightQuiet. A folder the collector has not seen yet
+/// has no row and is not over: there is nothing to say it has ended. This is
+/// the only test for "the night is over" on a live path. No file arriving
+/// answers it, an EVE least of all (SDD-047: the machine creates the EVE at
+/// the first mask-on after the card is opened, and appends to it all night).
+inline bool nightIsOver(IDatabase& db, const std::string& device_id,
+                        const std::string& date_folder,
+                        std::chrono::system_clock::time_point now) {
+    night_quiet::ensureTable(db);
+    const DbType dt = db.dbType();
+    const auto rows = night_quiet::rowsOf(db.executeQuery(
+        "SELECT date_folder, last_growth, newest_start, announced, str_sig "
+        "FROM cpap_night_quiet WHERE device_id = " + sql::param(1, dt) +
+            " AND date_folder = " + sql::param(2, dt),
+        {device_id, date_folder}));
+    if (rows.empty()) return false;
+    const auto& n = rows.front();
+    return n.announced > 0 || n.last_growth <= night_quiet::epochOf(now - kNightQuiet);
+}
+
 /// Record the announcement, with the STR signature it was made on.
 inline bool markNightAnnounced(IDatabase& db, const std::string& device_id,
                                const std::string& date_folder,

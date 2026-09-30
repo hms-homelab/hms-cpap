@@ -104,7 +104,11 @@ The behaviour lives here. Grouped by what they do:
   record count to the real one (`utils/ArchiveRecordCount`, SDD-032), since
   OSCAR trusts that field and a Range-resumed copy carries the stale one.
 - `SessionDiscoveryService`: groups card files into sessions. The one place
-  session splitting is done; do not reimplement it.
+  session splitting is done (`groupFiles`, whatever read the listing); do not
+  reimplement it. A session is one mask-on stretch; every stretch lists the
+  day's EVE/CSL pairs, which belong to the card session rather than to a
+  mask-on, and carries the window of time whose events are its own
+  (SDD-047). `keepOwnEvents` applies that window after each parse.
 - `SyncFolderState`: the pure SDD-008 rules for whether a night's files are all
   here (`advanceFolder`) and the night key (`strDayForSessionStart`).
 - `RemovedNights.h`: the SDD-029 checks every re-ingest path uses.
@@ -116,7 +120,7 @@ The behaviour lives here. Grouped by what they do:
   A Sefam or Löwenstein card is kept under `<data_dir>/uploads/<format>/` and
   every session not yet stored is imported, on the backfill worker (SDD-031).
 - `FysetcSectorCollectorService`: rebuilds files from raw SD sectors streamed
-  by the Fysetc bridge.
+  by the Fysetc bridge, grouped by `SessionDiscoveryService::groupFiles`.
 - `BackfillService`: re-reads a date range from the archive (the per-session
   Reparse and the Backfill page use it), and runs an uploaded card's import.
 - `OximetryService` (the ring's live pull through the mule), `OximetryImport`

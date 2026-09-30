@@ -283,9 +283,9 @@ TEST_P(NightAggregationBackendTest, ANightsAveragesAreOverItsMinutes) {
     EXPECT_NEAR(*m->avg_leak_rate, weighted_leak, 1e-3) << engineName(GetParam());
 }
 
-// Each session's EVE is its own since SDD-014, so the night's events are their
-// sum. MAX gave 5 where the card holds 6, and an AHI of 1.14 against the daily
-// summary's 1.36.
+// Each session holds the events that happened in it (SDD-047), so the night's
+// events are their sum. MAX gave 5 where the card holds 6, and an AHI of 1.14
+// against the daily summary's 1.36.
 TEST_P(NightAggregationBackendTest, ANightsEventsAreTheSumOfItsSessions) {
     saveSession(nightStart(), 161, 10.0, 9.0, /*OA=*/0, /*H=*/1, 8.4);
     saveSession(nightStart() + minutes(300), 103, 20.0, 9.7, /*OA=*/2, /*H=*/3, 16.8);
@@ -491,6 +491,105 @@ TEST_P(NightAggregationBackendTest, ASessionWithNoLeakMinutesHasNoLeak) {
     ASSERT_TRUE(rows.isArray() && !rows.empty()) << engineName(GetParam());
     EXPECT_TRUE(rows[0u]["leak_50"].isNull()) << engineName(GetParam());
     EXPECT_TRUE(rows[0u]["leak_95"].isNull()) << engineName(GetParam());
+}
+
+// SDD-047 D2: one night, one AHI. A day of three stretches, one of them
+// carrying unclassified apneas (ResMed's bare "Apnea"). The daily summary and
+// getNightlyMetrics compute the index with the same formula, the day's typed
+// events, the unclassified ones included, over the day's summed hours, so they
+// agree; the daily summary used to take a duration-weighted mean of each
+// session's own index instead, and getNightlyMetrics left the unclassified
+// apneas out altogether.
+TEST_P(NightAggregationBackendTest, TheDailySummaryAndTheNightlyMetricsGiveOneAhi) {
+    struct Stretch { int start_min, mins, obstructive, central, unclassified, hypopneas; };
+    const Stretch stretches[] = {
+        {0,   23,  0, 0, 0, 0},    // an evening stretch with nothing in it
+        {300, 240, 3, 1, 4, 5},    // the night
+        {660, 37,  0, 0, 2, 1},    // back on before the alarm
+    };
+    for (const auto& st : stretches) {
+        CPAPSession s;
+        s.device_id = device_;
+        s.device_name = "AirSense 10";
+        s.serial_number = "SDD047";
+        s.session_start = nightStart() + minutes(st.start_min);
+        s.duration_seconds = st.mins * 60;
+        s.data_records = st.mins;
+        SessionMetrics m;
+        m.obstructive_apneas = st.obstructive;
+        m.central_apneas = st.central;
+        m.unclassified_apneas = st.unclassified;
+        m.hypopneas = st.hypopneas;
+        m.total_events = st.obstructive + st.central + st.unclassified + st.hypopneas;
+        m.ahi = m.total_events * 3600.0 / (st.mins * 60.0);
+        s.metrics = m;
+        ASSERT_TRUE(db_->saveSession(s)) << engineName(GetParam());
+        db_->markSessionCompleted(device_, *s.session_start);
+    }
+    ASSERT_TRUE(db_->aggregateDailySummaryFromSessions(device_)) << engineName(GetParam());
+
+    const double hours = (23 + 240 + 37) / 60.0;
+    const double expected_ahi = (3 + 1 + 6 + 6) / hours;   // 16 events over 5 h = 3.2
+
+    const auto m = db_->getNightlyMetrics(device_, nightStart());
+    ASSERT_TRUE(m.has_value()) << engineName(GetParam());
+    EXPECT_NEAR(m->ahi, expected_ahi, 1e-3)
+        << engineName(GetParam()) << ": the six unclassified apneas were left out";
+    EXPECT_EQ(m->unclassified_apneas, 6) << engineName(GetParam());
+
+    const auto rows = db_->executeQuery(
+        "SELECT ahi, ai, uai FROM cpap_daily_summary WHERE device_id = " +
+            sql::param(1, db_->dbType()),
+        {device_});
+    ASSERT_TRUE(rows.isArray() && rows.size() == 1u) << engineName(GetParam());
+    EXPECT_NEAR(num(rows[0u]["ahi"]), m->ahi, 0.005)
+        << engineName(GetParam()) << ": two AHIs for one night";
+    EXPECT_NEAR(num(rows[0u]["ai"]), (3 + 1 + 6) / hours, 0.005) << engineName(GetParam());
+    EXPECT_NEAR(num(rows[0u]["uai"]), 6 / hours, 0.005) << engineName(GetParam());
+
+    // The range query is the same aggregation again.
+    const auto range = db_->getMetricsForDateRange(device_, 36500);
+    ASSERT_FALSE(range.empty()) << engineName(GetParam());
+    EXPECT_NEAR(range.back().ahi, m->ahi, 1e-3) << engineName(GetParam());
+}
+
+// A metrics row written before the unclassified count was stored has none, so
+// at startup it is counted from the session's own stored events, once.
+TEST_P(NightAggregationBackendTest, AnOlderRowCountsItsUnclassifiedApneasFromItsEvents) {
+    CPAPSession s;
+    s.device_id = device_;
+    s.device_name = "AirSense 10";
+    s.serial_number = "SDD047";
+    s.session_start = nightStart();
+    s.duration_seconds = 120 * 60;
+    s.data_records = 120;
+    for (int i = 0; i < 3; ++i)
+        s.events.emplace_back(EventType::APNEA, nightStart() + minutes(10 + i), 12.0);
+    s.events.emplace_back(EventType::HYPOPNEA, nightStart() + minutes(40), 15.0);
+    SessionMetrics m;
+    m.hypopneas = 1;
+    m.unclassified_apneas = 3;
+    m.total_events = 4;
+    s.metrics = m;
+    ASSERT_TRUE(db_->saveSession(s)) << engineName(GetParam());
+
+    // As a build before the column left it.
+    const auto p = sql::param(1, db_->dbType());
+    db_->executeQuery(
+        "UPDATE cpap_session_metrics SET unclassified_apneas = NULL WHERE session_id IN"
+        " (SELECT id FROM cpap_sessions WHERE device_id = " + p + ")",
+        {device_});
+
+    db_->disconnect();
+    ASSERT_TRUE(db_->connect()) << engineName(GetParam());
+
+    const auto rows = db_->executeQuery(
+        "SELECT m.unclassified_apneas AS n FROM cpap_session_metrics m"
+        " JOIN cpap_sessions s ON s.id = m.session_id WHERE s.device_id = " + p,
+        {device_});
+    ASSERT_TRUE(rows.isArray() && rows.size() == 1u) << engineName(GetParam());
+    EXPECT_EQ(static_cast<int>(num(rows[0u]["n"])), 3)
+        << engineName(GetParam()) << ": the stored 'Apnea' events were not counted";
 }
 
 INSTANTIATE_TEST_SUITE_P(Engines, NightAggregationBackendTest,

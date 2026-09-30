@@ -118,9 +118,14 @@ std::vector<std::string> LocalDataSource::listDateFolders() {
 }
 
 std::vector<EzShareFileEntry> LocalDataSource::listFiles(const std::string& date_folder) {
-    std::vector<EzShareFileEntry> files;
     std::error_code ec;
-    const fs::path dir = fs::path(datalogDir()) / date_folder;
+    return listFolder((fs::path(datalogDir()) / date_folder).string(), ec);
+}
+
+std::vector<EzShareFileEntry> LocalDataSource::listFolder(const std::string& dir,
+                                                          std::error_code& ec) {
+    std::vector<EzShareFileEntry> files;
+    ec.clear();
     for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
         std::error_code fe;
         if (!it->is_regular_file(fe)) continue;

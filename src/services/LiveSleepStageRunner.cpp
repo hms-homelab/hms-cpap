@@ -3,6 +3,7 @@
 #include "services/SleepStageClassifier.h"
 #include "database/IDatabase.h"
 #include "parsers/CpapdashBridge.h"
+#include "utils/NightQuiet.h"
 #include "mqtt_client.h"
 
 #include <spdlog/spdlog.h>
@@ -109,6 +110,22 @@ void LiveSleepStageRunner::onSessionComplete(
                  final_epochs.size(), summary.sleep_efficiency_pct,
                  summary.wake_minutes, summary.light_minutes,
                  summary.deep_minutes, summary.rem_minutes);
+}
+
+// ---------------------------------------------------------------------------
+// The night's end: the settle rule, never a file's arrival (SDD-047)
+// ---------------------------------------------------------------------------
+
+bool LiveSleepStageRunner::finishIfNightOver(
+        const CPAPSession& session,
+        const std::vector<OximetrySample>& oximetry,
+        int session_id,
+        const std::string& date_folder,
+        std::chrono::system_clock::time_point now) {
+
+    if (!db_ || !nightIsOver(*db_, device_id_, date_folder, now)) return false;
+    onSessionComplete(session, oximetry, session_id);
+    return true;
 }
 
 // ---------------------------------------------------------------------------

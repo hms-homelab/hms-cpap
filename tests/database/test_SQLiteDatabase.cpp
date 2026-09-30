@@ -720,16 +720,13 @@ TEST_F(SQLiteDatabaseTest, SaveSTRDailyRecords_UpsertOnConflict) {
 // cpap_daily_summary otherwise never gets populated for that source)
 // ============================================================================
 
-// Regression test for a real production discrepancy found while validating
-// this fix against live Lowenstein data (cpapdash-api device 31, 2026-06-23):
-// the shared parser's per-session m.ahi includes a generic "unclassified
-// apnea" event type that is folded into ahi but never persisted to any typed
-// column (obstructive/central/hypopneas/clear_airway). Reconstructing ahi by
-// summing those typed columns silently undercounts it (15.31 vs the true
-// 25.25 on that real session) -- ahi must instead be a duration-weighted
-// average of the stored per-session m.ahi, with ai = ahi - hi so AHI = AI + HI
-// still holds for the row.
-TEST_F(SQLiteDatabaseTest, AggregateDailySummary_AhiUsesStoredPerSessionValue_NotTypedSums) {
+// A real session's shape (Lowenstein, 2026-06-23): the parser's per-session
+// m.ahi counts the unclassified apnea, and the typed columns without it sum to
+// 131 of the 216 events behind that index, which read 15.31 against the true
+// 25.25. The weighted mean of m.ahi was the workaround while that count was
+// not stored. SDD-047 D2: it is stored now, and the index is the typed counts,
+// unclassified included, over the hours, the same formula as getNightlyMetrics.
+TEST_F(SQLiteDatabaseTest, AggregateDailySummary_AhiCountsTheUnclassifiedApneas) {
     auto start = tpFromEpoch(kBaseEpoch);
     auto s = makeSession("LOWEN1", start);
     s.duration_seconds = 30796;  // 8.554444h, matching the real session
@@ -741,7 +738,8 @@ TEST_F(SQLiteDatabaseTest, AggregateDailySummary_AhiUsesStoredPerSessionValue_No
     m.central_apneas = 15;
     m.hypopneas = 109;
     m.reras = 1;
-    m.clear_airway_apneas = 0;      // oai+cai+hi+uai sums to 131, NOT 330's worth
+    m.clear_airway_apneas = 0;
+    m.unclassified_apneas = 85;     // 7 + 15 + 109 + 85 = 216 = 25.25 * 8.5544 h
     s.metrics = m;
 
     ASSERT_TRUE(db_->saveSession(s));
@@ -751,13 +749,22 @@ TEST_F(SQLiteDatabaseTest, AggregateDailySummary_AhiUsesStoredPerSessionValue_No
         "SELECT ahi, hi, ai, oai, cai, uai, patient_hours, mask_events "
         "FROM cpap_daily_summary WHERE device_id = ?", {"LOWEN1"});
     ASSERT_EQ(rows.size(), 1u);
+    const double hours = 30796 / 3600.0;
     EXPECT_NEAR(jsonAsDouble(rows[0]["ahi"]), 25.25, 0.01);
-    EXPECT_NEAR(jsonAsDouble(rows[0]["hi"]), 12.74, 0.01);
-    // ai = ahi - hi (NOT oai+cai+uai, which would only be 2.57).
-    EXPECT_NEAR(jsonAsDouble(rows[0]["ai"]), 25.25 - 12.74, 0.02);
+    EXPECT_NEAR(jsonAsDouble(rows[0]["hi"]), 109 / hours, 0.01);
+    EXPECT_NEAR(jsonAsDouble(rows[0]["ai"]), (7 + 15 + 85) / hours, 0.01)
+        << "every apnea, the unclassified ones included";
+    EXPECT_NEAR(jsonAsDouble(rows[0]["uai"]), 85 / hours, 0.01)
+        << "uai is the unclassified apneas, as the STR's own UAI";
     EXPECT_NEAR(jsonAsDouble(rows[0]["ahi"]),
                 jsonAsDouble(rows[0]["ai"]) + jsonAsDouble(rows[0]["hi"]), 0.02);
     EXPECT_EQ(rows[0]["mask_events"].asString(), "330");
+
+    // The same number getNightlyMetrics gives for the night.
+    auto nightly = db_->getNightlyMetrics("LOWEN1", start);
+    ASSERT_TRUE(nightly.has_value());
+    EXPECT_NEAR(nightly->ahi, jsonAsDouble(rows[0]["ahi"]), 0.005);
+    EXPECT_EQ(nightly->unclassified_apneas, 85);
 }
 
 TEST_F(SQLiteDatabaseTest, AggregateDailySummary_WeightsMultipleSessionsSameNightByDuration) {
@@ -826,6 +833,7 @@ TEST_F(SQLiteDatabaseTest, AggregateDailySummary_DifferentSleepDaysGetSeparateRo
     s1.duration_seconds = 3600;
     SessionMetrics m1;
     m1.ahi = 1.0;
+    m1.hypopneas = 1;   // 1.0/h over 1h
     s1.metrics = m1;
     ASSERT_TRUE(db_->saveSession(s1));
 
@@ -833,6 +841,7 @@ TEST_F(SQLiteDatabaseTest, AggregateDailySummary_DifferentSleepDaysGetSeparateRo
     s2.duration_seconds = 3600;
     SessionMetrics m2;
     m2.ahi = 2.0;
+    m2.hypopneas = 2;   // 2.0/h over 1h
     s2.metrics = m2;
     ASSERT_TRUE(db_->saveSession(s2));
 

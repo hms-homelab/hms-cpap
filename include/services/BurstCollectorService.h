@@ -466,13 +466,15 @@ private:
      * for the same reason.
      *
      * @param session_dir    Directory holding this session's files
-     * @param session_start  Session start (DB lookup key)
+     * @param session        The discovered set: its start is the DB lookup key,
+     *                       and its event window says which of the parsed
+     *                       events are this stretch's (SDD-047)
      * @param parsed_sessions One entry per session, replaced on each re-parse,
      *                       so the caller can still publish the latest at the end
      * @return true if the session was parsed AND saved
      */
     bool parseAndStoreSession(const std::string& session_dir,
-                              std::chrono::system_clock::time_point session_start,
+                              const SessionFileSet& session,
                               std::vector<CPAPSession>& parsed_sessions);
 
     /**

@@ -143,24 +143,26 @@ std::vector<EzShareFileEntry> FysetcDataSource::listFiles(const std::string& dat
 
     for (auto& e : entries) {
         if (e.is_directory) continue;
-
-        EzShareFileEntry fe;
-        fe.name = e.name;
-        fe.size_kb = static_cast<int>((e.size + 1023) / 1024);
-        fe.is_dir = false;
-
-        // Parse FAT modify date/time into EzShareFileEntry fields
-        fe.year  = ((e.modify_date >> 9) & 0x7F) + 1980;
-        fe.month = (e.modify_date >> 5) & 0x0F;
-        fe.day   = e.modify_date & 0x1F;
-        fe.hour  = (e.modify_time >> 11) & 0x1F;
-        fe.minute = (e.modify_time >> 5) & 0x3F;
-        fe.second = (e.modify_time & 0x1F) * 2;
-
-        result.push_back(std::move(fe));
+        result.push_back(listingEntry(e));
     }
 
     return result;
+}
+
+EzShareFileEntry FysetcDataSource::listingEntry(const Fat32DirEntry& e) {
+    EzShareFileEntry fe;
+    fe.name = e.name;
+    fe.size_kb = static_cast<int>((e.size + 1023) / 1024);
+    fe.is_dir = e.is_directory;
+
+    // Parse FAT modify date/time into EzShareFileEntry fields
+    fe.year  = ((e.modify_date >> 9) & 0x7F) + 1980;
+    fe.month = (e.modify_date >> 5) & 0x0F;
+    fe.day   = e.modify_date & 0x1F;
+    fe.hour  = (e.modify_time >> 11) & 0x1F;
+    fe.minute = (e.modify_time >> 5) & 0x3F;
+    fe.second = (e.modify_time & 0x1F) * 2;
+    return fe;
 }
 
 bool FysetcDataSource::readFileToLocal(uint32_t first_cluster, uint32_t file_size,

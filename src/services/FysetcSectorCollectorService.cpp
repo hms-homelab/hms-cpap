@@ -1,4 +1,6 @@
 #include "services/FysetcSectorCollectorService.h"
+#include "clients/FysetcDataSource.h"
+#include "services/SessionDiscoveryService.h"
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -80,20 +82,6 @@ bool FysetcSectorCollectorService::scanDatalogDir() {
     return true;
 }
 
-// Parse "YYYYMMDD_HHMMSS" from filename into time_point
-static std::chrono::system_clock::time_point parseTimestamp(const std::string& name) {
-    std::tm tm = {};
-    if (name.size() >= 15) {
-        sscanf(name.c_str(), "%4d%2d%2d_%2d%2d%2d",
-               &tm.tm_year, &tm.tm_mon, &tm.tm_mday,
-               &tm.tm_hour, &tm.tm_min, &tm.tm_sec);
-        tm.tm_year -= 1900;
-        tm.tm_mon -= 1;
-        tm.tm_isdst = -1;
-    }
-    return std::chrono::system_clock::from_time_t(std::mktime(&tm));
-}
-
 // Check if a file is a checkpoint type (BRP/PLD/SAD/SA2)
 static bool isCheckpointFile(const std::string& name_lower) {
     return name_lower.find("_brp.edf") != std::string::npos ||
@@ -102,126 +90,62 @@ static bool isCheckpointFile(const std::string& name_lower) {
            name_lower.find("_sa2.edf") != std::string::npos;
 }
 
-// Group files into sessions using the same gap logic as SessionDiscoveryService:
-// Sort checkpoint files by creation timestamp. Gap between file N's mtime and
-// file N+1's creation timestamp > 1 hour = new session.
-struct FatSession {
-    std::chrono::system_clock::time_point session_start;
-    std::vector<Fat32DirEntry*> all_files;
-    std::map<std::string, int> checkpoint_sizes_kb;  // BRP/PLD/SAD only
-};
+static std::string lowered(const std::string& s) {
+    std::string out = s;
+    std::transform(out.begin(), out.end(), out.begin(), ::tolower);
+    return out;
+}
 
-static std::vector<FatSession> groupIntoSessions(std::vector<Fat32DirEntry>& files) {
-    // Separate checkpoint files (BRP/PLD/SAD) from summary files (CSL/EVE)
-    struct CheckpointFile {
-        Fat32DirEntry* entry;
-        std::chrono::system_clock::time_point created;  // from filename
-        std::chrono::system_clock::time_point modified;  // from FAT mtime
-    };
-
-    std::vector<CheckpointFile> checkpoints;
-    std::vector<Fat32DirEntry*> summary_files;  // CSL/EVE
-    std::vector<Fat32DirEntry*> ungrouped;       // short names, non-standard
-
-    for (auto& file : files) {
-        if (file.is_directory) continue;
-
-        if (file.name.size() < 15) {
-            std::string nl = file.name;
-            std::transform(nl.begin(), nl.end(), nl.begin(), ::tolower);
-            if (nl.size() >= 4 && nl.substr(nl.size() - 4) == ".edf")
-                ungrouped.push_back(&file);
-            continue;
-        }
-
-        std::string name_lower = file.name;
-        std::transform(name_lower.begin(), name_lower.end(),
-                      name_lower.begin(), ::tolower);
-
-        if (name_lower.size() < 4 ||
-            name_lower.substr(name_lower.size() - 4) != ".edf") continue;
-
-        if (isCheckpointFile(name_lower)) {
-            checkpoints.push_back({
-                &file,
-                parseTimestamp(file.name),
-                file.modTime()
-            });
-        } else {
-            summary_files.push_back(&file);
-        }
+// SDD-047: this used to be a grouping of its own, with an older rule (a flat
+// "> 60 minutes" from one file's modified time to the next file's name) and
+// its own EVE/CSL matching (the last session within 12 hours of the file's
+// name, which assumes a pair per mask-on). The collector now asks the one
+// grouping and syncs the files discovery lists for each session, so a folder
+// streamed over sectors groups exactly as it would from any other source.
+std::vector<FysetcSectorCollectorService::FatSession>
+FysetcSectorCollectorService::groupIntoSessions(const std::vector<Fat32DirEntry>& files,
+                                                const std::string& date_folder) {
+    std::vector<EzShareFileEntry> listing;
+    std::map<std::string, const Fat32DirEntry*> by_name;
+    for (const auto& f : files) {
+        if (f.is_directory) continue;
+        by_name[f.name] = &f;
+        listing.push_back(FysetcDataSource::listingEntry(f));
     }
 
-    if (checkpoints.empty()) {
-        // No checkpoint files but may have ungrouped files
-        if (!ungrouped.empty()) {
-            FatSession s;
-            s.session_start = std::chrono::system_clock::time_point{};
-            s.all_files = ungrouped;
-            return {s};
-        }
-        return {};
-    }
-
-    // Sort by creation time
-    std::sort(checkpoints.begin(), checkpoints.end(),
-              [](const CheckpointFile& a, const CheckpointFile& b) {
-                  return a.created < b.created;
-              });
-
-    // Group by time gaps: gap between prev file's mtime and next file's created time
     std::vector<FatSession> sessions;
-    FatSession current;
-    current.session_start = checkpoints[0].created;
-    current.all_files.push_back(checkpoints[0].entry);
-    int size_kb = static_cast<int>((checkpoints[0].entry->size + 1023) / 1024);
-    current.checkpoint_sizes_kb[checkpoints[0].entry->name] = size_kb;
-
-    for (size_t i = 1; i < checkpoints.size(); ++i) {
-        auto gap = checkpoints[i].created - checkpoints[i-1].modified;
-        auto gap_minutes = std::chrono::duration_cast<std::chrono::minutes>(gap).count();
-
-        if (gap_minutes > 60) {
-            // New session — push previous
-            sessions.push_back(std::move(current));
-            current = FatSession{};
-            current.session_start = checkpoints[i].created;
-        }
-
-        current.all_files.push_back(checkpoints[i].entry);
-        int kb = static_cast<int>((checkpoints[i].entry->size + 1023) / 1024);
-        current.checkpoint_sizes_kb[checkpoints[i].entry->name] = kb;
-    }
-    // Add ungrouped files to last session
-    for (auto* uf : ungrouped) {
-        current.all_files.push_back(uf);
-    }
-
-    sessions.push_back(std::move(current));
-
-    // Match CSL/EVE to sessions (same logic as SessionDiscoveryService:
-    // match to last session, or by timestamp within 12 hours)
-    for (auto* sf : summary_files) {
-        auto sf_time = parseTimestamp(sf->name);
-
-        // Try last session first
-        if (!sessions.empty()) {
-            auto& last = sessions.back();
-            auto diff = std::chrono::abs(sf_time - last.session_start);
-            if (diff < std::chrono::hours(12)) {
-                last.all_files.push_back(sf);
-                continue;
+    std::set<std::string> placed;
+    for (const auto& set : SessionDiscoveryService::groupFiles(listing, date_folder)) {
+        FatSession s;
+        s.session_start = set.session_start;
+        for (const auto* names : {&set.brp_files, &set.pld_files, &set.sad_files,
+                                  &set.tcv_files, &set.csl_files, &set.eve_files}) {
+            for (const auto& name : *names) {
+                const auto it = by_name.find(name);
+                if (it == by_name.end()) continue;
+                s.all_files.push_back(it->second);
+                placed.insert(name);
+                if (isCheckpointFile(lowered(name)))
+                    s.checkpoint_sizes_kb[name] =
+                        static_cast<int>((it->second->size + 1023) / 1024);
             }
         }
+        sessions.push_back(std::move(s));
+    }
 
-        // Try each session by time proximity
-        for (auto& sess : sessions) {
-            auto diff = std::chrono::abs(sf_time - sess.session_start);
-            if (diff < std::chrono::hours(12)) {
-                sess.all_files.push_back(sf);
-                break;
-            }
-        }
+    // An .edf under a short 8.3 name carries no session prefix, so no grouping
+    // can place it. It is still the card's, so it rides with the last session,
+    // or on its own when the folder has no session at all.
+    std::vector<const Fat32DirEntry*> unnamed;
+    for (const auto& f : files) {
+        if (f.is_directory || placed.count(f.name) || f.name.size() >= 15) continue;
+        const std::string nl = lowered(f.name);
+        if (nl.size() >= 4 && nl.substr(nl.size() - 4) == ".edf") unnamed.push_back(&f);
+    }
+    if (!unnamed.empty()) {
+        if (sessions.empty()) sessions.push_back(FatSession{});
+        auto& last = sessions.back().all_files;
+        last.insert(last.end(), unnamed.begin(), unnamed.end());
     }
 
     return sessions;
@@ -340,8 +264,8 @@ FysetcSectorCollectorService::collect() {
 
         auto files = fat_->listDir(date_entry.first_cluster);
 
-        // Group files into sessions using mtime-based gap detection
-        auto sessions = groupIntoSessions(files);
+        // The one grouping (SessionDiscoveryService::groupFiles).
+        auto sessions = groupIntoSessions(files, date_entry.name);
 
         for (auto& session : sessions) {
             // Step 1: Check if session exists in DB

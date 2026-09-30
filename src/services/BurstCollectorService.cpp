@@ -526,9 +526,10 @@ bool BurstCollectorService::downloadSessionFiles(
     };
 
     // Download the CSL and EVE files the session covers, but only the ones the
-    // card has written since we last stored them. One per mask-on block, so a
-    // merged night has several and the later ones carry its annotations
-    // (SDD-014).
+    // card has written since we last stored them. A pair belongs to the card
+    // session, not to a mask-on, so every stretch of the day lists the day's
+    // pairs (SDD-047); a pair another stretch already fetched is unchanged
+    // here and skipped.
     //
     // These used to be re-downloaded unconditionally every burst, on a comment
     // asserting they "don't grow". They do grow, all night, and the reason
@@ -1410,7 +1411,7 @@ bool BurstCollectorService::executeBurstCycle() {
     // Step 2-5: Discover sessions and prepare for parsing
     // Four modes: ezShare (HTTP), fysetc (TCP raw sectors), local filesystem, or Lowenstein Prisma
     std::vector<SessionFileSet> new_sessions;
-    std::vector<std::pair<std::string, std::chrono::system_clock::time_point>> downloaded_sessions;
+    std::vector<std::pair<std::string, SessionFileSet>> downloaded_sessions;
     auto download_start = std::chrono::steady_clock::now();
 
     // An ezShare session is parsed and stored after EVERY checkpoint file it
@@ -1834,7 +1835,7 @@ bool BurstCollectorService::executeBurstCycle() {
                     session, local_base_dir + "/" + session.date_folder,
                     folderHasOneGroup(new_sessions, session.date_folder));
                 auto storeWhatIsOnDisk = [&]() {
-                    if (parseAndStoreSession(session_dir, session.session_start, parsed_sessions))
+                    if (parseAndStoreSession(session_dir, session, parsed_sessions))
                         saved_inline.insert(session.session_start);
                 };
 
@@ -1851,7 +1852,7 @@ bool BurstCollectorService::executeBurstCycle() {
                     // SDD-046: a new session is the night growing.
                     noteNightGrowth(*db_service_, device_id_, session.date_folder,
                                     session.session_start, std::chrono::system_clock::now());
-                    downloaded_sessions.push_back({session_dir, session.session_start});
+                    downloaded_sessions.push_back({session_dir, session});
                     stored_inline.insert(session.session_start);
                 } else {
                     std::cerr << "CPAP: Failed to download session " << session.session_prefix << std::endl;
@@ -1940,7 +1941,7 @@ bool BurstCollectorService::executeBurstCycle() {
                 session, local_base_dir + "/" + session.date_folder,
                 folderHasOneGroup(new_sessions, session.date_folder));
             auto storeWhatIsOnDisk = [&]() {
-                if (parseAndStoreSession(session_dir, session.session_start, parsed_sessions))
+                if (parseAndStoreSession(session_dir, session, parsed_sessions))
                     saved_inline.insert(session.session_start);
             };
 
@@ -1962,7 +1963,7 @@ bool BurstCollectorService::executeBurstCycle() {
                 noteNightGrowth(*db_service_, device_id_, session.date_folder,
                                 session.session_start, std::chrono::system_clock::now());
 
-                downloaded_sessions.push_back({session_dir, session.session_start});
+                downloaded_sessions.push_back({session_dir, session});
                 stored_inline.insert(session.session_start);
             } else {
                 std::cerr << "CPAP: Failed to download session " << session.session_prefix << std::endl;
@@ -2018,11 +2019,11 @@ bool BurstCollectorService::executeBurstCycle() {
     auto parse_start = std::chrono::steady_clock::now();
     saved_count += static_cast<int>(saved_inline.size());
 
-    for (const auto& [session_dir, session_start] : downloaded_sessions) {
-        if (stored_inline.count(session_start)) continue;
-        if (parseAndStoreSession(session_dir, session_start, parsed_sessions)) {
+    for (const auto& [session_dir, session] : downloaded_sessions) {
+        if (stored_inline.count(session.session_start)) continue;
+        if (parseAndStoreSession(session_dir, session, parsed_sessions)) {
             saved_count++;
-            closeIfSettledLocalNight(session_start, parsed_sessions);
+            closeIfSettledLocalNight(session.session_start, parsed_sessions);
         }
     }
 
@@ -2441,9 +2442,10 @@ void BurstCollectorService::runRangeSummariesIfDue() {
 
 bool BurstCollectorService::parseAndStoreSession(
     const std::string& session_dir,
-    std::chrono::system_clock::time_point session_start,
+    const SessionFileSet& session,
     std::vector<CPAPSession>& parsed_sessions) {
 
+    const auto session_start = session.session_start;
     std::cout << "📊 CPAP: Parsing session from " << session_dir << "..." << std::endl;
 
     // Pass filename timestamp to parser (DB lookup key)
@@ -2452,6 +2454,9 @@ bool BurstCollectorService::parseAndStoreSession(
         std::cerr << "⚠️  CPAP: Failed to parse session from " << session_dir << std::endl;
         return false;
     }
+
+    // SDD-047: the directory holds the day's EVEs; keep this stretch's events.
+    keepOwnEvents(*parsed, session);
 
     // Set file path references (pointing to permanent archive)
     auto start_time_t = std::chrono::system_clock::to_time_t(session_start);

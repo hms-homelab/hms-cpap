@@ -20,6 +20,11 @@ public:
     std::vector<std::string> listDateFolders() override;
     std::vector<EzShareFileEntry> listFiles(const std::string& date_folder) override;
 
+    /// One FAT directory entry as a listing entry: size in KB (rounded up),
+    /// the FAT modify stamp as the card's stamp. What listFiles returns, and
+    /// what the sector collector groups through, so both see one listing.
+    static EzShareFileEntry listingEntry(const Fat32DirEntry& e);
+
     bool downloadFile(const std::string& date_folder,
                       const std::string& filename,
                       const std::string& local_path) override;

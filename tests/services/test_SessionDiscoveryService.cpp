@@ -156,7 +156,7 @@ TEST_F(SessionGapTest, RealGapAfterLongBlock_StillSplits) {
     EXPECT_EQ(sessions[1].brp_files.size(), 1);
 }
 
-// ── Bug #2: CSL/EVE map entries must be erased after matching ────────────────
+// ── CSL/EVE: the day's pairs, and each stretch's window (SDD-047) ───────────
 
 class CSLEVEMapTest : public ::testing::Test {
 protected:
@@ -172,17 +172,16 @@ protected:
     }
 };
 
-TEST_F(CSLEVEMapTest, MultipleSessionsGetCorrectCSLFiles) {
-    // Two sessions 2 hours apart, each with their own CSL and EVE files.
-    // Old bug: last session would steal the first session's CSL because matched
-    // entries were never erased from the map.
-
-    // Session 1: 22:00
+// SDD-047: a pair belongs to the card session, not to a mask-on, so every
+// stretch lists the day's pairs once each, and the stretches' event windows
+// cover the day without overlapping.
+TEST_F(CSLEVEMapTest, EveryStretchListsTheDaysPairsOnce) {
+    // Stretch 1: 22:00
     touchFile(tmp_dir, "20260301_220000_BRP.edf");
     touchFile(tmp_dir, "20260301_220000_CSL.edf");
     touchFile(tmp_dir, "20260301_220000_EVE.edf");
 
-    // Session 2: 00:30 (2.5 hours later)
+    // Stretch 2: 00:30 (2.5 hours later), after the card was re-inserted
     touchFile(tmp_dir, "20260302_003000_BRP.edf");
     touchFile(tmp_dir, "20260302_003000_CSL.edf");
     touchFile(tmp_dir, "20260302_003000_EVE.edf");
@@ -190,18 +189,22 @@ TEST_F(CSLEVEMapTest, MultipleSessionsGetCorrectCSLFiles) {
     auto sessions = SessionDiscoveryService::groupLocalFolder(tmp_dir, "20260301");
 
     ASSERT_EQ(sessions.size(), 2);
+    const std::vector<std::string> csl = {"20260301_220000_CSL.edf", "20260302_003000_CSL.edf"};
+    const std::vector<std::string> eve = {"20260301_220000_EVE.edf", "20260302_003000_EVE.edf"};
+    for (const auto& s : sessions) {
+        EXPECT_EQ(s.csl_files, csl) << s.session_prefix;
+        EXPECT_EQ(s.eve_files, eve) << s.session_prefix;
+    }
 
-    // Session 1 should have its own CSL/EVE
-    EXPECT_EQ(sessions[0].csl_files.at(0), "20260301_220000_CSL.edf");
-    EXPECT_EQ(sessions[0].eve_files.at(0), "20260301_220000_EVE.edf");
-
-    // Session 2 should have its own CSL/EVE — NOT session 1's
-    EXPECT_EQ(sessions[1].csl_files.at(0), "20260302_003000_CSL.edf");
-    EXPECT_EQ(sessions[1].eve_files.at(0), "20260302_003000_EVE.edf");
+    EXPECT_FALSE(sessions[0].events_from.has_value()) << "the first stretch takes what precedes it";
+    ASSERT_TRUE(sessions[0].events_until.has_value());
+    EXPECT_EQ(*sessions[0].events_until, sessions[1].session_start);
+    ASSERT_TRUE(sessions[1].events_from.has_value());
+    EXPECT_EQ(*sessions[1].events_from, sessions[1].session_start);
+    EXPECT_FALSE(sessions[1].events_until.has_value()) << "the last stretch takes what follows it";
 }
 
-TEST_F(CSLEVEMapTest, ThreeSessionsEachGetOwnCSL) {
-    // Three sessions in one night — stress test the erase logic
+TEST_F(CSLEVEMapTest, ThreeStretchesSplitTheDayWithoutOverlap) {
     touchFile(tmp_dir, "20260301_210000_BRP.edf");
     touchFile(tmp_dir, "20260301_210000_CSL.edf");
 
@@ -214,15 +217,20 @@ TEST_F(CSLEVEMapTest, ThreeSessionsEachGetOwnCSL) {
     auto sessions = SessionDiscoveryService::groupLocalFolder(tmp_dir, "20260301");
 
     ASSERT_EQ(sessions.size(), 3);
-    EXPECT_EQ(sessions[0].csl_files.at(0), "20260301_210000_CSL.edf");
-    EXPECT_EQ(sessions[1].csl_files.at(0), "20260301_233000_CSL.edf");
-    EXPECT_EQ(sessions[2].csl_files.at(0), "20260302_020000_CSL.edf");
+    for (const auto& s : sessions) EXPECT_EQ(s.csl_files.size(), 3u) << s.session_prefix;
+
+    // Any instant of the day belongs to exactly one stretch.
+    for (int m = -120; m < 24 * 60; m += 7) {
+        const auto t = sessions[0].session_start + std::chrono::minutes(m);
+        int holders = 0;
+        for (const auto& s : sessions) holders += s.holdsEventAt(t) ? 1 : 0;
+        EXPECT_EQ(holders, 1) << "minute " << m;
+    }
 }
 
 TEST_F(CSLEVEMapTest, LastSessionGetsUnmatchedCSL) {
-    // One session at 22:00, CSL written at 06:00 the next morning (user slept through).
-    // CSL time doesn't match session start within 12 hours, but it should still
-    // be assigned to the last (only) session via is_last_session fallback.
+    // One session at 22:00, CSL named 06:00 the next morning. A pair's name
+    // says nothing about which stretch it serves; the only stretch lists it.
     touchFile(tmp_dir, "20260301_220000_BRP.edf");
     touchFile(tmp_dir, "20260302_060000_CSL.edf");
 
@@ -341,19 +349,19 @@ TEST_F(GroupLocalFolderTest, MultipleCheckpointsAccumulateSizesAndCount) {
     EXPECT_EQ(s.total_size_kb, 11);
 }
 
-TEST_F(GroupLocalFolderTest, EveMatchedByTimeNotOnlyLastSession) {
-    // Two sessions; first session's EVE should match by 12-hour time proximity
-    // (not just the is_last_session fallback) and be assigned to session 0.
+TEST_F(GroupLocalFolderTest, AnEveNamedAtOneStretchIsListedOnEvery) {
+    // SDD-047: the one EVE of the day is named at the first stretch, and the
+    // later stretch's events are in it too, so both list it.
     touchFile(tmp_dir, "20260301_200000_BRP.edf");
     touchFile(tmp_dir, "20260301_200000_EVE.edf");
     touchFile(tmp_dir, "20260301_230000_BRP.edf"); // 3h later -> new session
-    touchFile(tmp_dir, "20260301_230000_EVE.edf");
 
     auto sessions = SessionDiscoveryService::groupLocalFolder(tmp_dir, "20260301");
 
     ASSERT_EQ(sessions.size(), 2);
-    EXPECT_EQ(sessions[0].eve_files.at(0), "20260301_200000_EVE.edf");
-    EXPECT_EQ(sessions[1].eve_files.at(0), "20260301_230000_EVE.edf");
+    ASSERT_EQ(sessions[0].eve_files.size(), 1u);
+    ASSERT_EQ(sessions[1].eve_files.size(), 1u) << "the later stretch had no EVE to parse";
+    EXPECT_EQ(sessions[1].eve_files[0], "20260301_200000_EVE.edf");
 }
 
 TEST_F(GroupLocalFolderTest, LowercaseSuffixesAreRecognized) {
@@ -758,11 +766,11 @@ TEST(DiscoverNewSessionsTest, RetentionAnchorWidensTheFolderLevelCutToo) {
 
 // ── SDD-014 / issue #22: a merged session keeps EVERY EVE ───────────────────
 //
-// A ResMed night is several mask-on blocks and each writes its own EVE. The
-// matcher used to take the FIRST in prefix order and break, which is the
-// earliest block -- routinely a seconds-long mask-fit check whose EVE is the
-// empty 832-byte stub. The night's real annotations were never staged, never
-// parsed, and the session read AHI 0.0 while OSCAR read 2.84 off the same card.
+// A day folder can hold several EVE/CSL pairs, one per time the card was
+// opened (SDD-047). The matcher used to take the FIRST in prefix order and
+// break, which on this card was an empty 832-byte stub. The night's real
+// annotations were never staged, never parsed, and the session read AHI 0.0
+// while OSCAR read 2.84 off the same card.
 
 class MergedSessionSidecars : public ::testing::Test {
 protected:
@@ -798,11 +806,10 @@ TEST_F(MergedSessionSidecars, EveryBlocksEveSurvivesTheMerge) {
         << "three EVEs were dropped: the night would read AHI 0.0";
 }
 
-// The counterpart risk of taking every match: a date folder with two genuinely
-// separate sessions must not have the first one swallow the second's sidecars.
-// This is why matching is scoped to the session's own span rather than a flat
-// 12-hour window.
-TEST_F(MergedSessionSidecars, SeparateSessionsKeepTheirOwnSidecars) {
+// The counterpart risk of taking every pair: two genuinely separate stretches
+// both list the day's pairs, so what keeps one from counting the other's
+// events is the window, which ends where the next stretch starts (SDD-047).
+TEST_F(MergedSessionSidecars, SeparateStretchesSplitTheDaysEventsAtTheNextStart) {
     setenv("SESSION_GAP_MINUTES", "30", 1);
     touchFileSized(tmp_dir, "20250301_200000_BRP.edf", 24);
     touchFile(tmp_dir,      "20250301_200000_EVE.edf");
@@ -815,17 +822,17 @@ TEST_F(MergedSessionSidecars, SeparateSessionsKeepTheirOwnSidecars) {
     auto sessions = SessionDiscoveryService::groupLocalFolder(tmp_dir, "20250301");
 
     ASSERT_EQ(sessions.size(), 2u);
-    ASSERT_EQ(sessions[0].eve_files.size(), 1u)
-        << "the first session took the second session's EVE as well";
-    EXPECT_EQ(sessions[0].eve_files[0], "20250301_200000_EVE.edf");
-    EXPECT_EQ(sessions[0].csl_files[0], "20250301_200000_CSL.edf");
-    ASSERT_EQ(sessions[1].eve_files.size(), 1u) << "the later session got nothing";
-    EXPECT_EQ(sessions[1].eve_files[0], "20250302_000000_EVE.edf");
-    EXPECT_EQ(sessions[1].csl_files[0], "20250302_000000_CSL.edf");
+    EXPECT_EQ(sessions[0].eve_files.size(), 2u);
+    EXPECT_EQ(sessions[1].eve_files.size(), 2u);
+    const auto second = sessions[1].session_start;
+    EXPECT_TRUE(sessions[0].holdsEventAt(second - std::chrono::seconds(1)));
+    EXPECT_FALSE(sessions[0].holdsEventAt(second)) << "the first stretch counted the second's events";
+    EXPECT_TRUE(sessions[1].holdsEventAt(second));
+    EXPECT_FALSE(sessions[1].holdsEventAt(second - std::chrono::seconds(1)));
 }
 
-// A leftover sidecar with no session of its own still has to land somewhere:
-// the last group sweeps it, which is the pre-existing catch-all.
+// A sidecar named outside every stretch's span is still the day's: its name
+// decides nothing, so the stretch lists it and its events go by their time.
 TEST_F(MergedSessionSidecars, AnOrphanSidecarIsSweptByTheLastSession) {
     touchFileSized(tmp_dir, "20250301_220000_BRP.edf", 24);
     touchFile(tmp_dir,      "20250301_220000_EVE.edf");
@@ -894,4 +901,191 @@ TEST_F(TcvFiles, AnAirSenseNightHasNoTcvAndIsUnchanged) {
     auto sessions = SessionDiscoveryService::groupLocalFolder(tmp_dir, "20260911");
     ASSERT_EQ(sessions.size(), 1u);
     EXPECT_TRUE(sessions[0].tcv_files.empty());
+}
+
+// ── SDD-047: an event belongs to the stretch it happened in ─────────────────
+//
+// The machine opens a new EVE/CSL pair at the first mask-on after the card is
+// opened or re-inserted, and every later mask-on appends to that pair however
+// long the break. These build synthetic day folders of that shape (EDF files
+// written here, no card data), group them, then stage and parse each stretch
+// exactly as the reparse does, and count where the events land.
+
+namespace {
+
+// One EDF field: left-aligned, space-padded to its width.
+void putField(std::string& out, const std::string& value, size_t width) {
+    std::string v = value.substr(0, width);
+    v.resize(width, ' ');
+    out += v;
+}
+
+// A one-signal EDF (or EDF+) named for [stamp] ("YYYYMMDD_HHMMSS"), whose
+// header starts at that wall-clock time: [records] one-second records of
+// [samples] 16-bit samples each, the data [payload] (zero-filled to size).
+void writeEdf(const std::string& path, const std::string& stamp, const std::string& label,
+              bool edf_plus, int records, int samples, const std::string& payload = {}) {
+    std::string h;
+    putField(h, "0", 8);
+    putField(h, "X X X X", 80);
+    putField(h, "Startdate 28-SEP-2025 X X SRN=00000000000 MID=36 VID=39", 80);
+    putField(h, stamp.substr(6, 2) + "." + stamp.substr(4, 2) + "." + stamp.substr(2, 2), 8);
+    putField(h, stamp.substr(9, 2) + "." + stamp.substr(11, 2) + "." + stamp.substr(13, 2), 8);
+    putField(h, "512", 8);
+    putField(h, edf_plus ? "EDF+D" : "EDF+C", 44);
+    putField(h, std::to_string(records), 8);
+    putField(h, "1", 8);
+    putField(h, "1", 4);
+    putField(h, label, 16);
+    putField(h, "", 80);
+    putField(h, edf_plus ? "" : "L/min", 8);
+    putField(h, "-100", 8);
+    putField(h, "100", 8);
+    putField(h, "-32768", 8);
+    putField(h, "32767", 8);
+    putField(h, "", 80);
+    putField(h, std::to_string(samples), 8);
+    putField(h, "", 32);
+
+    std::string data = payload;
+    data.resize(static_cast<size_t>(records) * samples * 2, '\0');
+    std::ofstream(path, std::ios::binary) << h << data;
+}
+
+struct Annotation { double onset_s; const char* what; };
+
+// An EVE named for [stamp], its events [onset] seconds after that time.
+void writeEve(const std::string& dir, const std::string& stamp,
+              const std::vector<Annotation>& events) {
+    std::string tal = std::string("+0\x14\x14", 4) + '\0';   // the record's time-keeping TAL
+    for (const auto& e : events) {
+        tal += "+" + std::to_string(static_cast<long long>(e.onset_s)) + "\x15" "10\x14" +
+               e.what + "\x14" + '\0';
+    }
+    if (tal.size() % 2) tal += '\0';
+    writeEdf(dir + "/" + stamp + "_EVE.edf", stamp, "EDF Annotations", true, 1,
+             static_cast<int>(tal.size() / 2), tal);
+    writeEdf(dir + "/" + stamp + "_CSL.edf", stamp, "EDF Annotations", true, 1, 2,
+             std::string("+0\x14\x14", 4));
+}
+
+// A mask-on stretch's flow file: [minutes] of one-second records at 25 Hz.
+void writeBrp(const std::string& dir, const std::string& stamp, int minutes) {
+    writeEdf(dir + "/" + stamp + "_BRP.edf", stamp, "Flow.40ms", false, minutes * 60, 25);
+}
+
+// Each stretch of [folder], staged and parsed as the reparse does it.
+std::vector<std::unique_ptr<CPAPSession>> parseEachStretch(const std::string& dir,
+                                                           const std::string& folder) {
+    std::vector<std::unique_ptr<CPAPSession>> out;
+    for (const auto& s : SessionDiscoveryService::groupLocalFolder(dir, folder)) {
+        const fs::path stage = fs::path(dir).parent_path() /
+                               ("stage_" + std::to_string(getpid()) + "_" + s.session_prefix);
+        fs::remove_all(stage);
+        fs::create_directories(stage);
+        for (const auto* names : {&s.brp_files, &s.pld_files, &s.sad_files,
+                                  &s.csl_files, &s.eve_files})
+            for (const auto& n : *names) fs::copy_file(fs::path(dir) / n, stage / n);
+        auto parsed = EDFParser::parseSession(stage.string(), "sdd047", "AirSense 10",
+                                              s.session_start);
+        if (parsed) keepOwnEvents(*parsed, s);
+        out.push_back(std::move(parsed));
+        fs::remove_all(stage);
+    }
+    return out;
+}
+
+size_t eventCount(const std::unique_ptr<CPAPSession>& s) { return s ? s->events.size() : 0; }
+
+}  // namespace
+
+class EventsByTheirTime : public ::testing::Test {
+protected:
+    std::string root;
+    std::string dir;
+    void SetUp() override {
+        root = (fs::temp_directory_path() / ("hms_sdd047_" + std::to_string(getpid()))).string();
+        fs::remove_all(root);
+        dir = root + "/20250928";
+        fs::create_directories(dir);
+        setenv("SESSION_GAP_MINUTES", "60", 1);
+    }
+    void TearDown() override { fs::remove_all(root); unsetenv("SESSION_GAP_MINUTES"); }
+};
+
+// The shape that showed it: the only EVE is named at a short afternoon
+// stretch (14:30), and all five of the day's events sit inside the night
+// stretch that began at 23:10. By name, the nap carried the night's events and
+// the night carried none.
+TEST_F(EventsByTheirTime, AnEveNamedAtAnEarlyStretchGivesItsEventsToTheLaterOne) {
+    writeBrp(dir, "20250928_143000", 25);
+    writeEve(dir, "20250928_143000", {
+        {10 * 3600 + 10 * 60, "Obstructive Apnea"},  // 00:40
+        {10 * 3600 + 35 * 60, "Hypopnea"},
+        {11 * 3600 + 5 * 60,  "Apnea"},              // unclassified
+        {11 * 3600 + 50 * 60, "Hypopnea"},
+        {12 * 3600 + 35 * 60, "Central Apnea"},      // 03:05
+    });
+    writeBrp(dir, "20250928_231000", 240);
+
+    const auto stretches = parseEachStretch(dir, "20250928");
+    ASSERT_EQ(stretches.size(), 2u) << "a break of over six hours is two stretches";
+    ASSERT_TRUE(stretches[0] && stretches[1]);
+
+    EXPECT_EQ(eventCount(stretches[0]), 0u) << "the afternoon stretch took the night's events";
+    EXPECT_EQ(eventCount(stretches[1]), 5u) << "the night lost its events";
+
+    // Its metrics are its own events, the unclassified apnea among them.
+    ASSERT_TRUE(stretches[1]->metrics.has_value());
+    EXPECT_EQ(stretches[1]->metrics->obstructive_apneas, 1);
+    EXPECT_EQ(stretches[1]->metrics->central_apneas, 1);
+    EXPECT_EQ(stretches[1]->metrics->hypopneas, 2);
+    EXPECT_EQ(stretches[1]->metrics->unclassified_apneas, 1);
+    ASSERT_TRUE(stretches[0]->metrics.has_value());
+    EXPECT_EQ(stretches[0]->metrics->total_events, 0) << "the afternoon was recounted";
+}
+
+// The card was pulled and put back between the evening and the night, so the
+// day has two pairs; the night's pair also takes a third stretch after a long
+// break (no new pair: the card stayed in). Every event is counted once, on the
+// stretch it happened in.
+TEST_F(EventsByTheirTime, TwoPairsInOneDayCountEachEventOnce) {
+    writeBrp(dir, "20250928_200000", 60);
+    writeEve(dir, "20250928_200000", {
+        {10 * 60, "Hypopnea"},                       // 20:10
+        {20 * 60, "Obstructive Apnea"},              // 20:20
+    });
+    writeBrp(dir, "20250928_233000", 120);
+    writeEve(dir, "20250928_233000", {
+        {15 * 60, "Hypopnea"},                       // 23:45
+        {90 * 60, "Apnea"},                          // 01:00
+        {3 * 3600 + 50 * 60, "Obstructive Apnea"},   // 03:20, the third stretch
+    });
+    writeBrp(dir, "20250929_030000", 60);
+
+    const auto stretches = parseEachStretch(dir, "20250928");
+    ASSERT_EQ(stretches.size(), 3u);
+    EXPECT_EQ(eventCount(stretches[0]), 2u);
+    EXPECT_EQ(eventCount(stretches[1]), 2u);
+    EXPECT_EQ(eventCount(stretches[2]), 1u)
+        << "an event appended to an earlier stretch's pair belongs to the stretch it happened in";
+    EXPECT_EQ(eventCount(stretches[0]) + eventCount(stretches[1]) + eventCount(stretches[2]), 5u)
+        << "five events on the card, each counted exactly once";
+}
+
+// An event in no stretch (in the gap after one, before the next) stays with
+// the stretch before it.
+TEST_F(EventsByTheirTime, AnEventInAGapGoesToTheStretchBeforeIt) {
+    writeBrp(dir, "20250928_210000", 30);
+    writeEve(dir, "20250928_210000", {
+        {10 * 60, "Hypopnea"},                       // 21:10, inside the first
+        {2 * 3600, "Obstructive Apnea"},             // 23:00, in the gap
+        {5 * 3600 + 30 * 60, "Hypopnea"},            // 02:30, inside the second
+    });
+    writeBrp(dir, "20250929_020000", 60);
+
+    const auto stretches = parseEachStretch(dir, "20250928");
+    ASSERT_EQ(stretches.size(), 2u);
+    EXPECT_EQ(eventCount(stretches[0]), 2u) << "the gap's event belongs to the stretch before it";
+    EXPECT_EQ(eventCount(stretches[1]), 1u);
 }

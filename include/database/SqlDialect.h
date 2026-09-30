@@ -102,5 +102,66 @@ inline std::string tsText(const std::string& col, DbType type) {
     return col;
 }
 
+// ── A night's respiratory indexes (SDD-047 D2) ──────────────────────────────
+//
+// ONE formula for every reader of a night's index: the night's typed event
+// counts, summed over its sessions, divided by the night's summed hours. It is
+// cpapdash::parser::computeIndexes (EventIndexes.h) written as SQL, with that
+// header's numerators, so the daily summary, getNightlyMetrics and the range
+// query cannot disagree about the same night on any engine.
+//
+// The daily summary used to take a duration-weighted mean of each session's
+// own index instead, because the unclassified apnea (ResMed's bare "Apnea")
+// was counted in that index and never stored, so the typed sums fell short of
+// it. It is stored now (cpap_session_metrics.unclassified_apneas), and is in
+// the numerators below.
+//
+// [m] is the query's cpap_session_metrics alias and [s] its cpap_sessions
+// alias. Each returns NULL for a night with no hours; the caller decides what
+// such a night reads.
+
+/// SUM over the night of one cpap_session_metrics count, NULL read as 0.
+inline std::string nightCount(const std::string& m, const std::string& col) {
+    return "COALESCE(SUM(" + m + "." + col + "), 0)";
+}
+
+/// The AI numerator: every apnea, classified or not.
+inline std::string nightApneas(const std::string& m) {
+    return "(" + nightCount(m, "obstructive_apneas") + " + " + nightCount(m, "central_apneas") +
+           " + " + nightCount(m, "clear_airway_apneas") + " + " +
+           nightCount(m, "unclassified_apneas") + ")";
+}
+
+/// The AHI numerator: every apnea, plus hypopneas.
+inline std::string nightApneasAndHypopneas(const std::string& m) {
+    return "(" + nightApneas(m) + " + " + nightCount(m, "hypopneas") + ")";
+}
+
+/// [numerator] events per hour over the night's summed session spans.
+inline std::string perNightHour(const std::string& numerator, const std::string& s) {
+    return "(" + numerator + ") * 3600.0 / NULLIF(SUM(" + s + ".duration_seconds), 0)";
+}
+
+/// The night's AHI.
+inline std::string nightAhi(const std::string& m, const std::string& s) {
+    return perNightHour(nightApneasAndHypopneas(m), s);
+}
+
+/// The daily summary's seven index columns, in its order ahi, hi, ai, oai,
+/// cai, uai, rin, each rounded to the two places it stores. uai is the
+/// unclassified apneas, as in computeIndexes and the STR's own UAI; a
+/// clear-airway apnea (Philips) counts in ai and ahi only.
+inline std::string nightIndexColumns(const std::string& m, const std::string& s, DbType type) {
+    auto idx = [&](const std::string& numerator, const char* as) {
+        return round(perNightHour(numerator, s), 2, type) + " AS " + as;
+    };
+    return idx(nightApneasAndHypopneas(m), "ahi") + ",\n" +
+           idx(nightCount(m, "hypopneas"), "hi") + ",\n" +
+           idx(nightApneas(m), "ai") + ",\n" +
+           idx(nightCount(m, "obstructive_apneas"), "oai") + ",\n" +
+           idx(nightCount(m, "central_apneas"), "cai") + ",\n" +
+           idx(nightCount(m, "unclassified_apneas"), "uai") + ",\n" +
+           idx(nightCount(m, "reras"), "rin");
+}
 
 }} // namespace hms_cpap::sql

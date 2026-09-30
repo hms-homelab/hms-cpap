@@ -432,19 +432,21 @@ TEST_P(OximetryBackendTest, NightlySpo2ReturnsOneAscendingPointPerNight) {
     EXPECT_NEAR(pts[0].min_spo2, 88.0, 0.05);
 }
 
-TEST_P(OximetryBackendTest, NightlySpo2CollapsesTwoSessionsToTheLongest) {
-    // This is what PostgreSQL says with DISTINCT ON. MySQL needs a window
-    // function and SQLite leans on its bare-column-with-MAX rule, so the
-    // selection is worth pinning on every engine.
+TEST_P(OximetryBackendTest, NightlySpo2ChartsEveryRecordingOfTheNight) {
+    // SDD-047: the night is every recording of it. The longest used to stand
+    // for the night, so a night recorded in two stretches charted one of them.
+    // One point, its mean weighted by each stretch's duration, its low the
+    // lowest either stretch reached.
     ASSERT_TRUE(db().saveOximetrySession(
-        device_, makeSession("short.vld", "20260619", 600, 99.0, 99.0)));
+        device_, makeSession("evening.vld", "20260619", 3600, 97.0, 91.0)));
     ASSERT_TRUE(db().saveOximetrySession(
-        device_, makeSession("long.vld", "20260619", 28800, 94.0, 88.0)));
+        device_, makeSession("night.vld", "20260619", 10800, 93.0, 86.0)));
 
     auto pts = db().getOximetryNightlySpo2(device_, "20260619", "20260619");
     ASSERT_EQ(pts.size(), 1u) << "one night must yield exactly one point";
-    EXPECT_NEAR(pts[0].avg_spo2, 94.0, 0.05)
-        << "the 10-minute nap won over the full night";
+    EXPECT_NEAR(pts[0].avg_spo2, (97.0 * 3600 + 93.0 * 10800) / 14400.0, 0.05)
+        << "94.0 is both stretches by their minutes; 93.0 is the longest alone";
+    EXPECT_NEAR(pts[0].min_spo2, 86.0, 0.05) << "the night's lowest reading";
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

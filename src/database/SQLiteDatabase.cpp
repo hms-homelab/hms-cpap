@@ -282,6 +282,7 @@ void SQLiteDatabase::createSchema() {
             hypopneas              INTEGER DEFAULT 0,
             reras                  INTEGER DEFAULT 0,
             clear_airway_apneas    INTEGER DEFAULT 0,
+            unclassified_apneas    INTEGER,
             avg_event_duration     REAL,
             max_event_duration     REAL,
             time_in_apnea_percent  REAL,
@@ -344,6 +345,21 @@ void SQLiteDatabase::createSchema() {
             UNIQUE (session_id, event_timestamp),
             FOREIGN KEY (session_id) REFERENCES cpap_sessions(id) ON DELETE CASCADE
         )
+    )");
+
+    // SDD-047 D2: the unclassified apnea (ResMed's bare "Apnea") counts toward
+    // the AHI and was never stored, so a night's index could not be built from
+    // its typed counts. Added without a default: NULL is "not counted yet",
+    // and a row that predates the column is counted from its own stored
+    // events, once. Every save after this writes the parser's count.
+    sqlite3_exec(db_, "ALTER TABLE cpap_session_metrics ADD COLUMN unclassified_apneas INTEGER",
+                 nullptr, nullptr, nullptr);
+    exec(R"(
+        UPDATE cpap_session_metrics
+           SET unclassified_apneas = (SELECT COUNT(*) FROM cpap_events e
+                                       WHERE e.session_id = cpap_session_metrics.session_id
+                                         AND e.event_type = 'Apnea')
+         WHERE unclassified_apneas IS NULL
     )");
 
     // cpap_breaths (breath-by-breath detail from zero-crossing detection)
@@ -1058,8 +1074,9 @@ void SQLiteDatabase::insertSessionMetrics(int64_t session_id, const SessionMetri
              avg_spo2, min_spo2, avg_heart_rate, max_heart_rate, min_heart_rate,
              avg_mask_pressure, avg_epr_pressure, avg_snore,
              leak_p50, leak_p95, avg_leak_rate, max_leak_rate,
-             avg_target_ventilation, therapy_mode, spo2_drops, odi, index_kind)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             avg_target_ventilation, therapy_mode, spo2_drops, odi, index_kind,
+             unclassified_apneas)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (session_id) DO UPDATE SET
             total_events           = excluded.total_events,
             ahi                    = excluded.ahi,
@@ -1069,6 +1086,7 @@ void SQLiteDatabase::insertSessionMetrics(int64_t session_id, const SessionMetri
             hypopneas              = excluded.hypopneas,
             reras                  = excluded.reras,
             clear_airway_apneas    = excluded.clear_airway_apneas,
+            unclassified_apneas    = excluded.unclassified_apneas,
             avg_spo2               = excluded.avg_spo2,
             min_spo2               = excluded.min_spo2,
             avg_heart_rate         = excluded.avg_heart_rate,
@@ -1120,6 +1138,7 @@ void SQLiteDatabase::insertSessionMetrics(int64_t session_id, const SessionMetri
     const std::string index_kind =
         (m.index_kind == SessionMetrics::IndexKind::AHI) ? "ahi" : "ungraded";
     sqlite3_bind_text(g.stmt, 25, index_kind.c_str(), -1, SQLITE_TRANSIENT);
+    bind_int(g.stmt, 26, m.unclassified_apneas);   // SDD-047 D2
 
     if (sqlite3_step(g.stmt) != SQLITE_DONE) {
         std::cerr << "SQLite: insertSessionMetrics error: " << sqlite3_errmsg(db_) << std::endl;
@@ -2399,15 +2418,9 @@ bool SQLiteDatabase::aggregateDailySummaryFromSessions(const std::string& device
     // signal samples yet (issue #15), so those columns are always 0 in
     // cpap_session_metrics -- store NULL rather than a misleading zero.
     //
-    // ahi is a duration-weighted average of the parser's own per-session m.ahi,
-    // NOT re-derived from summing obstructive/central/clear_airway/hypopneas: the
-    // parser counts a further generic "unclassified apnea" event type that is
-    // folded into m.ahi but never persisted to any typed column (see
-    // cpapdash-parser ParsedSession::calculateMetrics, `apnea_other`), so
-    // reconstructing ahi from the typed sums alone silently undercounts it. ai is
-    // then ahi - hi so the AHI = AI + HI identity holds for the row; ai absorbs
-    // that untracked bucket as a residual, same as it does inside m.ahi itself.
-    const char* sql = R"(
+    // SDD-047 D2: the indexes are the night's typed events over its summed
+    // hours, the one formula getNightlyMetrics uses too (sql::nightIndexColumns).
+    const std::string sql = R"(
         INSERT INTO cpap_daily_summary
             (device_id, record_date, duration_minutes, patient_hours,
              ahi, hi, ai, oai, cai, uai, rin, mask_events, mask_pairs,
@@ -2424,20 +2437,7 @@ bool SQLiteDatabase::aggregateDailySummaryFromSessions(const std::string& device
             -- first mask-off (47 minutes shown, 71 recorded).
             ROUND(SUM(s.duration_seconds) / 60.0, 1),
             ROUND(SUM(s.duration_seconds) / 3600.0, 2),
-            ROUND(SUM(COALESCE(m.ahi,0) * s.duration_seconds / 3600.0)
-                / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS ahi,
-            ROUND(SUM(COALESCE(m.hypopneas,0))
-                / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS hi,
-            ROUND((SUM(COALESCE(m.ahi,0) * s.duration_seconds / 3600.0) - SUM(COALESCE(m.hypopneas,0)))
-                / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS ai,
-            ROUND(SUM(COALESCE(m.obstructive_apneas,0))
-                / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS oai,
-            ROUND(SUM(COALESCE(m.central_apneas,0))
-                / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS cai,
-            ROUND(SUM(COALESCE(m.clear_airway_apneas,0))
-                / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS uai,
-            ROUND(SUM(COALESCE(m.reras,0))
-                / NULLIF(SUM(s.duration_seconds) / 3600.0, 0), 2) AS rin,
+)" + sql::nightIndexColumns("m", "s", DbType::SQLITE) + R"(,
             SUM(COALESCE(m.total_events,0)) AS mask_events,
             '[]' AS mask_pairs,
             -- SDD-033. A session's mean counts for its duration, not as one
@@ -2509,7 +2509,7 @@ bool SQLiteDatabase::aggregateDailySummaryFromSessions(const std::string& device
     )";
 
     StmtGuard g;
-    if (sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr) != SQLITE_OK) {
+    if (sqlite3_prepare_v2(db_, sql.c_str(), -1, &g.stmt, nullptr) != SQLITE_OK) {
         std::cerr << "SQLite: aggregateDailySummaryFromSessions prepare error: "
                   << sqlite3_errmsg(db_) << std::endl;
         return false;
@@ -2637,7 +2637,7 @@ std::optional<SessionMetrics> SQLiteDatabase::getNightlyMetrics(
 
     // SQLite version of the PG nightly aggregation query.
     // sleep_day = date(session_start, '-12 hours')
-    const char* sql = R"(
+    const std::string sql = R"(
         WITH night AS (
             SELECT date(session_start, '-12 hours') AS sleep_day
             FROM cpap_sessions
@@ -2647,9 +2647,10 @@ std::optional<SessionMetrics> SQLiteDatabase::getNightlyMetrics(
         )
         SELECT
             SUM(s.duration_seconds)                          AS total_seconds,
-            -- SDD-033 D2: each session's EVE holds its own events, so the
-            -- night's are their sum. The MAX of each type counted only the
-            -- busiest session and published a second, lower AHI.
+            -- SDD-033 D2: each session holds its own events (SDD-047: the
+            -- ones that happened in it, by their time), so the night's are
+            -- their sum. The MAX of each type counted only the busiest
+            -- session and published a second, lower AHI.
             SUM(sm.total_events)                             AS total_events,
             SUM(sm.obstructive_apneas)                       AS obstructive_apneas,
             SUM(sm.central_apneas)                           AS central_apneas,
@@ -2667,11 +2668,8 @@ std::optional<SessionMetrics> SQLiteDatabase::getNightlyMetrics(
             CASE WHEN SUM(s.duration_seconds) > 0
                  THEN ROUND(SUM(s.duration_seconds) / 3600.0 * 100.0 / 8.0, 4)
                  ELSE 0 END                                  AS usage_percent,
-            CASE WHEN SUM(s.duration_seconds) > 0
-                 THEN ROUND((COALESCE(SUM(sm.obstructive_apneas), 0) + COALESCE(SUM(sm.central_apneas), 0)
-                            + COALESCE(SUM(sm.hypopneas), 0) + COALESCE(SUM(sm.clear_airway_apneas), 0))
-                          * 3600.0 / SUM(s.duration_seconds), 4)
-                 ELSE 0 END                                  AS ahi,
+            -- SDD-047 D2: the daily summary's formula (sql::nightAhi).
+            COALESCE(ROUND()" + sql::nightAhi("sm", "s") + R"(, 4), 0) AS ahi,
             CASE WHEN SUM(s.duration_seconds) > 0
                       AND SUM(sm.avg_event_duration * sm.total_events) IS NOT NULL
                  THEN ROUND(SUM(sm.avg_event_duration * sm.total_events)
@@ -2710,7 +2708,8 @@ std::optional<SessionMetrics> SQLiteDatabase::getNightlyMetrics(
             -- gradable if every session in it was.
             MAX(COALESCE(sm.index_kind, 'ahi')) AS index_kind,
             -- SDD-030: PLD Press, averaged like the EPR pressure beside it.
-            SUM(c.s_therapy) / NULLIF(SUM(c.n_therapy), 0) AS avg_therapy_pressure
+            SUM(c.s_therapy) / NULLIF(SUM(c.n_therapy), 0) AS avg_therapy_pressure,
+            SUM(sm.unclassified_apneas)                      AS unclassified_apneas
         FROM cpap_sessions s
         JOIN cpap_session_metrics sm ON sm.session_id = s.id
         LEFT JOIN (
@@ -2748,7 +2747,7 @@ std::optional<SessionMetrics> SQLiteDatabase::getNightlyMetrics(
     )";
 
     StmtGuard g;
-    sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr);
+    sqlite3_prepare_v2(db_, sql.c_str(), -1, &g.stmt, nullptr);
     bind_text(g.stmt, 1, device_id);
     bind_text(g.stmt, 2, ts);
     bind_text(g.stmt, 3, ts);
@@ -2765,7 +2764,7 @@ std::optional<SessionMetrics> SQLiteDatabase::getNightlyMetrics(
     // 24=avg_mask_pressure  25=avg_epr_pressure  26=avg_snore  27=avg_target_ventilation
     // 28=avg_pressure  29=max_pressure  30=min_pressure
     // 31=leak_p50  32=leak_p95_sess  33=therapy_mode  34=index_kind
-    // 35=avg_therapy_pressure
+    // 35=avg_therapy_pressure  36=unclassified_apneas
     SessionMetrics m;
     m.total_events        = col_int(g.stmt, 1);
     m.ahi                 = col_double(g.stmt, 11);
@@ -2774,6 +2773,7 @@ std::optional<SessionMetrics> SQLiteDatabase::getNightlyMetrics(
     m.hypopneas           = col_int(g.stmt, 4);
     m.reras               = col_int(g.stmt, 5);
     m.clear_airway_apneas = col_int(g.stmt, 6);
+    m.unclassified_apneas = col_int(g.stmt, 36);   // SDD-047 D2
 
     m.avg_event_duration    = col_opt_double(g.stmt, 7);
     m.max_event_duration    = col_opt_double(g.stmt, 8);
@@ -2829,7 +2829,7 @@ std::vector<SessionMetrics> SQLiteDatabase::getMetricsForDateRange(
     std::string cutoff_str = fmtTimestamp(cutoff);
 
     // One row per sleep-night, same aggregation as getNightlyMetrics
-    const char* sql = R"(
+    const std::string sql = R"(
         SELECT
             date(s.session_start, '-12 hours')               AS sleep_day,
             SUM(s.duration_seconds)                          AS total_seconds,
@@ -2852,11 +2852,7 @@ std::vector<SessionMetrics> SQLiteDatabase::getMetricsForDateRange(
             CASE WHEN SUM(s.duration_seconds) > 0
                  THEN ROUND(SUM(s.duration_seconds) / 3600.0 * 100.0 / 8.0, 4)
                  ELSE 0 END                                  AS usage_percent,
-            CASE WHEN SUM(s.duration_seconds) > 0
-                 THEN ROUND((COALESCE(SUM(sm.obstructive_apneas), 0) + COALESCE(SUM(sm.central_apneas), 0)
-                            + COALESCE(SUM(sm.hypopneas), 0) + COALESCE(SUM(sm.clear_airway_apneas), 0))
-                          * 3600.0 / SUM(s.duration_seconds), 4)
-                 ELSE 0 END                                  AS ahi,
+            COALESCE(ROUND()" + sql::nightAhi("sm", "s") + R"(, 4), 0) AS ahi,
             SUM(c.s_leak) / NULLIF(SUM(c.n_leak), 0)   AS avg_leak, MAX(c.max_leak) AS max_leak,
             SUM(c.s_rr)   / NULLIF(SUM(c.n_rr), 0)     AS avg_rr,
             SUM(c.s_tv)   / NULLIF(SUM(c.n_tv), 0)     AS avg_tv,
@@ -2909,7 +2905,7 @@ std::vector<SessionMetrics> SQLiteDatabase::getMetricsForDateRange(
     )";
 
     StmtGuard g;
-    sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr);
+    sqlite3_prepare_v2(db_, sql.c_str(), -1, &g.stmt, nullptr);
     bind_text(g.stmt, 1, device_id);
     bind_text(g.stmt, 2, cutoff_str);
 
@@ -3424,12 +3420,14 @@ std::vector<IDatabase::OxiNightlyPoint> SQLiteDatabase::getOximetryNightlySpo2(
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!db_) return pts;
 
-    // One row per night, longest session winning a tie. PostgreSQL expresses this
-    // as DISTINCT ON; SQLite has no equivalent, but its bare-column rule inside
-    // GROUP BY takes the values from the row that produced MAX(duration_seconds),
-    // which is the same selection.
+    // SDD-047: one point per night, and the night is every recording of it. The
+    // longest recording used to stand for the night, so a night recorded in
+    // two parts charted only one. The mean is weighted by each recording's
+    // duration and the low is the night's lowest. The same on every engine.
     const char* sql = R"(
-        SELECT cpap_session_date, avg_spo2, min_spo2, MAX(duration_seconds)
+        SELECT cpap_session_date,
+               SUM(avg_spo2 * duration_seconds) / SUM(duration_seconds) AS avg_spo2,
+               MIN(min_spo2) AS min_spo2
         FROM oximetry_sessions
         WHERE device_id = ?
           AND cpap_session_date >= ? AND cpap_session_date <= ?

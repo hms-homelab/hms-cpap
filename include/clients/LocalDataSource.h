@@ -14,6 +14,7 @@
 #include "clients/IDataSource.h"
 
 #include <string>
+#include <system_error>
 #include <vector>
 
 namespace hms_cpap {
@@ -46,6 +47,13 @@ public:
     std::vector<std::string> listDateFolders() override;
     std::vector<EzShareFileEntry> listFiles(const std::string& date_folder) override;
     std::vector<EzShareFileEntry> listDir(const std::string& card_path) override;
+
+    /// The regular files of one directory as a listing (size in KB, the file's
+    /// modification time as the card's stamp), sorted by name. What listFiles
+    /// returns for a date folder, for any directory: the reparse groups a
+    /// folder through this, so a local folder groups the same either way.
+    /// [ec] is set when the directory could not be read, or not to the end.
+    static std::vector<EzShareFileEntry> listFolder(const std::string& dir, std::error_code& ec);
 
     bool downloadByPath(const std::string& card_rel_path,
                         const std::string& local_path) override;

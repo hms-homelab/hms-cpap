@@ -1198,7 +1198,8 @@ TEST_F(PgDatabaseTest, GetOximetryNightlySpo2_OneRowPerDate) {
         os.metrics.total_samples = 100;
         ASSERT_TRUE(db_->saveOximetrySession("o2ring", os));
     };
-    // Two sessions on the same UTC date (20250206); longest duration wins.
+    // Two sessions on the same UTC date (20250206): SDD-047, the night is
+    // both, the mean weighted by duration and the low the lowest.
     mk("O2_a.vld", kBaseEpoch, 3600, 95.0, 90.0);
     mk("O2_b.vld", kBaseEpoch + 100, 7200, 92.0, 85.0);
     // One session on the next date.
@@ -1207,7 +1208,8 @@ TEST_F(PgDatabaseTest, GetOximetryNightlySpo2_OneRowPerDate) {
     auto pts = db_->getOximetryNightlySpo2("o2ring", "20250206", "20250207");
     ASSERT_EQ(pts.size(), 2u);
     EXPECT_EQ(pts[0].date, "20250206");
-    EXPECT_NEAR(pts[0].avg_spo2, 92.0, 1e-6);  // longest-duration session wins
+    EXPECT_NEAR(pts[0].avg_spo2, (95.0 * 3600 + 92.0 * 7200) / 10800.0, 1e-6);
+    EXPECT_NEAR(pts[0].min_spo2, 85.0, 1e-6);
     EXPECT_EQ(pts[1].date, "20250207");
     EXPECT_NEAR(pts[1].avg_spo2, 94.0, 1e-6);
 

@@ -1,5 +1,6 @@
 #include "utils/TimeCompat.h"          // timegm_utc
 #include "services/SessionDiscoveryService.h"
+#include "clients/LocalDataSource.h"
 #include "utils/ConfigManager.h"
 #include "utils/FileUtils.h"
 #include <algorithm>
@@ -13,9 +14,9 @@ namespace hms_cpap {
 SessionDiscoveryService::SessionDiscoveryService(IDataSource& data_source)
     : data_source_(data_source) {}
 
-std::string SessionDiscoveryService::extractSessionPrefix(const std::string& filename) {
+static std::string extractSessionPrefix(const std::string& filename) {
     // Extract YYYYMMDD_HHMMSS from "20260204_001809_CSL.edf"
-    std::regex prefix_regex(R"(^(\d{8}_\d{6})_)");
+    static const std::regex prefix_regex(R"(^(\d{8}_\d{6})_)");
     std::smatch match;
     if (std::regex_search(filename, match, prefix_regex)) {
         return match[1].str();
@@ -23,8 +24,10 @@ std::string SessionDiscoveryService::extractSessionPrefix(const std::string& fil
     return "";
 }
 
-std::chrono::system_clock::time_point
-SessionDiscoveryService::parseSessionTime(const std::string& prefix) {
+// The card's wall clock, read on the local clock (mktime) exactly as the
+// parser reads an EDF's start, so a session's start and its events' times
+// compare in one frame.
+static std::chrono::system_clock::time_point parseSessionTime(const std::string& prefix) {
     // Parse "20260204_001809" → 2026-02-04 00:18:09
     if (prefix.size() != 15) {
         return {};  // Invalid format
@@ -91,8 +94,12 @@ static std::chrono::system_clock::time_point estimateCheckpointEnd(
 
 std::vector<SessionFileSet>
 SessionDiscoveryService::groupSessionsInFolder(const std::string& date_folder) {
-    auto files = data_source_.listFiles(date_folder);
+    return groupFiles(data_source_.listFiles(date_folder), date_folder);
+}
 
+std::vector<SessionFileSet>
+SessionDiscoveryService::groupFiles(const std::vector<EzShareFileEntry>& files,
+                                    const std::string& date_folder) {
     if (files.empty()) {
         return {};
     }
@@ -118,6 +125,9 @@ SessionDiscoveryService::groupSessionsInFolder(const std::string& date_folder) {
     };
 
     std::vector<CheckpointFile> checkpoints;
+    // The day's EVE/CSL pairs, in prefix (creation) order. Every stretch
+    // lists all of them (SDD-047): which stretch an event belongs to is
+    // decided by the event's time, never by the file's name.
     std::map<std::string, EzShareFileEntry> csl_files;
     std::map<std::string, EzShareFileEntry> eve_files;
     // SDD-033: the 11 series' TCV rides with the checkpoint of the same
@@ -125,6 +135,7 @@ SessionDiscoveryService::groupSessionsInFolder(const std::string& date_folder) {
     std::map<std::string, EzShareFileEntry> tcv_files;
 
     for (const auto& file : files) {
+        if (file.is_dir) continue;
         std::string name_lower = file.name;
         std::transform(name_lower.begin(), name_lower.end(),
                       name_lower.begin(), ::tolower);
@@ -243,6 +254,7 @@ SessionDiscoveryService::groupSessionsInFolder(const std::string& date_folder) {
                 std::cout << "    PLD: " << cp.name << " (" << cp.size_kb << " KB)" << std::endl;
             } else if (cp.is_sad) {
                 session.sad_files.push_back(cp.name);
+                std::cout << "    SAD: " << cp.name << " (" << cp.size_kb << " KB)" << std::endl;
             }
 
             // SDD-033: the TCV written with this checkpoint, if the machine
@@ -255,68 +267,54 @@ SessionDiscoveryService::groupSessionsInFolder(const std::string& date_folder) {
                 std::cout << "    TCV: " << tcv->second.name
                           << " (" << tcv->second.size_kb << " KB)" << std::endl;
                 tcv_files.erase(tcv);
-                std::cout << "    SAD: " << cp.name << " (" << cp.size_kb << " KB)" << std::endl;
             }
         }
 
-        // Step 4: Match CSL/EVE files to this session
-        // CSL/EVE are written when user presses STOP button
-        // Match them to the LAST session group (most recent)
-        // OR match by timestamp if CSL prefix falls within this session's time range
+        // Step 4: the day's EVE/CSL, and which of their events are this
+        // stretch's (SDD-047).
         //
-        // EVERY sidecar inside the session's own span is taken, not just the
-        // first. A merged session covers several mask-on blocks and each wrote
-        // its own pair; keeping only the first left the night's real
-        // annotations on the card. See SDD-014 and issue #22.
+        // An EVE/CSL pair belongs to the CARD session, not to a mask-on. The
+        // machine opens a new pair at the first mask-on after the card is
+        // opened or re-inserted, and every later mask-on appends to it however
+        // long the break; with the card left in, a mask-on makes no new pair.
+        // So an EVE named at a short afternoon stretch can hold every event
+        // of the night that followed, and matching files to stretches by the
+        // name's time gave that stretch the night's events and the night none.
         //
-        // Matching on the SPAN rather than a flat 12-hour window matters on a
-        // date folder with several sessions: a window that wide would give the
-        // first group every sidecar on the card and leave the rest with none.
+        // Every stretch therefore lists every pair of the day, and the events
+        // are split by their own onset: this stretch keeps what happened from
+        // its start until the next stretch's start. An event in a gap stays
+        // with the stretch before it, one before the first stretch goes to the
+        // first, and no event lands on two stretches. keepOwnEvents() applies
+        // the window after parsing.
+        if (group_idx > 0) session.events_from = session_start;
+        if (group_idx + 1 < session_groups.size())
+            session.events_until = session_groups[group_idx + 1][0].timestamp;
 
-        bool is_last_session = (group_idx == session_groups.size() - 1);
-
-        auto session_end = session_start;
-        for (const auto& cp : group) session_end = std::max(session_end, cp.end);
-
-        const auto slack = std::chrono::minutes(1);
-        auto belongsHere = [&](std::chrono::system_clock::time_point t) {
-            return t >= session_start - slack && t <= session_end + slack;
-        };
-
-        auto claim = [&](std::map<std::string, EzShareFileEntry>& pool,
-                         std::vector<std::string>& into, const char* label) {
-            for (auto it = pool.begin(); it != pool.end(); ) {
-                if (is_last_session || belongsHere(parseSessionTime(it->first))) {
-                    into.push_back(it->second.name);
-                    session.total_size_kb += it->second.size_kb;
-                    session.file_sizes_kb[it->second.name] = it->second.size_kb;
-                    session.card_stamps[it->second.name] = cardStampUtc(it->second);
-                    std::cout << "    " << label << ": " << it->second.name << std::endl;
-                    it = pool.erase(it);
-                } else {
-                    ++it;
-                }
+        auto addSidecars = [&](const std::map<std::string, EzShareFileEntry>& pool,
+                               std::vector<std::string>& into) {
+            for (const auto& [prefix, entry] : pool) {
+                (void)prefix;
+                into.push_back(entry.name);
+                session.total_size_kb += entry.size_kb;
+                session.file_sizes_kb[entry.name] = entry.size_kb;
+                session.card_stamps[entry.name] = cardStampUtc(entry);
             }
         };
-        claim(csl_files, session.csl_files, "CSL");
-        claim(eve_files, session.eve_files, "EVE");
+        addSidecars(csl_files, session.csl_files);
+        addSidecars(eve_files, session.eve_files);
 
         sessions.push_back(session);
     }
 
-    // Print summary for each session
     for (const auto& session : sessions) {
-        std::cout << "  ✅ Session " << session.session_prefix << " summary:" << std::endl;
-        std::cout << "    CSL: " << (session.csl_files.empty()
-                                         ? "MISSING (in progress)"
-                                         : std::to_string(session.csl_files.size())) << std::endl;
-        std::cout << "    EVE: " << (session.eve_files.empty()
-                                         ? "MISSING (in progress)"
-                                         : std::to_string(session.eve_files.size())) << std::endl;
-        std::cout << "    BRP checkpoints: " << session.brp_files.size() << std::endl;
-        std::cout << "    PLD checkpoints: " << session.pld_files.size() << std::endl;
-        std::cout << "    SAD checkpoints: " << session.sad_files.size() << std::endl;
-        std::cout << "    Total size: " << session.total_size_kb << " KB" << std::endl;
+        std::cout << "  Session " << session.session_prefix
+                  << ": BRP=" << session.brp_files.size()
+                  << " PLD=" << session.pld_files.size()
+                  << " SAD=" << session.sad_files.size()
+                  << " CSL=" << session.csl_files.size()
+                  << " EVE=" << session.eve_files.size()
+                  << " (" << session.total_size_kb << " KB)" << std::endl;
     }
 
     return sessions;
@@ -507,238 +505,28 @@ SessionDiscoveryService::groupLocalFolder(
         return {};
     }
 
-    const std::chrono::minutes SESSION_GAP_THRESHOLD(
-        ConfigManager::getInt("SESSION_GAP_MINUTES", 60));
-
-    struct CheckpointFile {
-        std::string name;
-        std::string prefix;
-        std::chrono::system_clock::time_point timestamp;
-        std::chrono::system_clock::time_point end;   // estimated write-close time
-        std::time_t card_stamp{0};   // the card's own stamp, UTC frame
-        int size_kb;
-        bool is_brp;
-        bool is_pld;
-        bool is_sad;
-    };
-
-    std::vector<CheckpointFile> checkpoints;
-    std::map<std::string, std::pair<std::string, int>> csl_files;  // prefix -> {name, size_kb}
-    std::map<std::string, std::pair<std::string, int>> eve_files;
-    std::map<std::string, std::pair<std::string, int>> tcv_files;  // SDD-033
-
-    // Helper to extract prefix (same regex as instance method)
-    auto extractPrefix = [](const std::string& filename) -> std::string {
-        std::regex prefix_regex(R"(^(\d{8}_\d{6})_)");
-        std::smatch match;
-        if (std::regex_search(filename, match, prefix_regex)) {
-            return match[1].str();
-        }
-        return "";
-    };
-
-    // Helper to parse timestamp from prefix (same logic as instance method)
-    auto parseTime = [](const std::string& prefix) -> std::chrono::system_clock::time_point {
-        if (prefix.size() != 15) return {};
-        std::tm tm = {};
-        tm.tm_year = std::stoi(prefix.substr(0, 4)) - 1900;
-        tm.tm_mon  = std::stoi(prefix.substr(4, 2)) - 1;
-        tm.tm_mday = std::stoi(prefix.substr(6, 2));
-        tm.tm_hour = std::stoi(prefix.substr(9, 2));
-        tm.tm_min  = std::stoi(prefix.substr(11, 2));
-        tm.tm_sec  = std::stoi(prefix.substr(13, 2));
-        tm.tm_isdst = -1;
-        return std::chrono::system_clock::from_time_t(std::mktime(&tm));
-    };
-
-    // Iterate with error_code (mirrors the SleepHq/Prisma scans): a date
-    // folder the service user cannot open — e.g. uploaded root-owned 0750 —
-    // is skipped with a warning instead of throwing an uncaught
+    // The folder's listing, read the way a local card source reads it, then
+    // the one grouping (groupFiles). This used to be a second copy of the
+    // grouping, which is how the two could drift apart.
+    //
+    // A date folder the service user cannot open (e.g. uploaded root-owned
+    // 0750) is skipped with a warning instead of throwing an uncaught
     // filesystem_error that terminates the service (incident 2026-07-17).
     std::error_code dir_ec;
-    std::filesystem::directory_iterator dir_it(dir_path, dir_ec);
-    if (dir_ec) {
+    auto files = LocalDataSource::listFolder(dir_path, dir_ec);
+    if (dir_ec && files.empty()) {
         std::cerr << "CPAP: ⚠️  Skipping unreadable folder " << dir_path
                   << " (" << dir_ec.message()
-                  << ") — fix ownership/permissions so the service user can read it"
+                  << "); fix ownership/permissions so the service user can read it"
                   << std::endl;
         return {};
     }
-
-    for (; dir_it != std::filesystem::directory_iterator();
-         dir_it.increment(dir_ec)) {
-        const auto& entry = *dir_it;
-        std::error_code entry_ec;
-        if (!entry.is_regular_file(entry_ec) || entry_ec) continue;
-
-        std::string filename = entry.path().filename().string();
-        std::string name_lower = filename;
-        std::transform(name_lower.begin(), name_lower.end(), name_lower.begin(), ::tolower);
-
-        std::string prefix = extractPrefix(filename);
-        if (prefix.empty()) continue;
-
-        auto file_bytes = std::filesystem::file_size(entry.path(), entry_ec);
-        if (entry_ec) continue;
-        int size_kb = static_cast<int>(file_bytes / 1024);
-
-        if (name_lower.find("_csl.edf") != std::string::npos) {
-            csl_files[prefix] = {filename, size_kb};
-            continue;
-        } else if (name_lower.find("_eve.edf") != std::string::npos) {
-            eve_files[prefix] = {filename, size_kb};
-            continue;
-        } else if (name_lower.find("_tcv.edf") != std::string::npos) {
-            tcv_files[prefix] = {filename, size_kb};   // SDD-033
-            continue;
-        }
-
-        bool is_brp = name_lower.find("_brp.edf") != std::string::npos;
-        bool is_pld = name_lower.find("_pld.edf") != std::string::npos;
-        bool is_sad = isOximetryFile(filename);
-
-        if (is_brp || is_pld || is_sad) {
-            CheckpointFile cp;
-            cp.name = filename;
-            cp.prefix = prefix;
-            cp.timestamp = parseTime(prefix);
-            // fs mtime -> system_clock (C++17: bridge via the two clocks' nows).
-            // A copied file's mtime is the copy time, not therapy time -- the
-            // plausibility gate in estimateCheckpointEnd discards it then.
-            auto ftime = entry.last_write_time(entry_ec);
-            if (entry_ec) continue;
-            auto mtime = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
-                ftime - std::filesystem::file_time_type::clock::now()
-                + std::chrono::system_clock::now());
-            cp.end = estimateCheckpointEnd(cp.timestamp, is_brp, size_kb, mtime);
-            cp.size_kb = size_kb;
-            cp.is_brp = is_brp;
-            cp.is_pld = is_pld;
-            cp.is_sad = is_sad;
-            checkpoints.push_back(cp);
-        }
-    }
-
     if (dir_ec) {
         std::cerr << "CPAP: ⚠️  Scan of " << dir_path << " ended early ("
                   << dir_ec.message() << ")" << std::endl;
     }
 
-    if (checkpoints.empty()) return {};
-
-    std::sort(checkpoints.begin(), checkpoints.end(),
-              [](const CheckpointFile& a, const CheckpointFile& b) {
-                  return a.timestamp < b.timestamp;
-              });
-
-    // Split into session groups by session time gaps (END-to-start: a long
-    // block's own duration is not a gap -- see estimateCheckpointEnd).
-    std::vector<std::vector<CheckpointFile>> session_groups;
-    std::vector<CheckpointFile> current_group;
-    current_group.push_back(checkpoints[0]);
-    auto group_end = checkpoints[0].end;
-
-    for (size_t i = 1; i < checkpoints.size(); ++i) {
-        auto gap = std::chrono::duration_cast<std::chrono::minutes>(
-            checkpoints[i].timestamp - group_end);
-        if (gap >= SESSION_GAP_THRESHOLD) {
-            session_groups.push_back(current_group);
-            current_group.clear();
-            group_end = checkpoints[i].end;
-        } else {
-            group_end = std::max(group_end, checkpoints[i].end);
-        }
-        current_group.push_back(checkpoints[i]);
-    }
-    if (!current_group.empty()) {
-        session_groups.push_back(current_group);
-    }
-
-    std::cout << "  Split " << checkpoints.size() << " checkpoint files into "
-              << session_groups.size() << " session(s)" << std::endl;
-
-    // Build SessionFileSet for each group
-    std::vector<SessionFileSet> sessions;
-
-    for (size_t group_idx = 0; group_idx < session_groups.size(); ++group_idx) {
-        const auto& group = session_groups[group_idx];
-        std::string session_prefix = group[0].prefix;
-        auto session_start = group[0].timestamp;
-
-        SessionFileSet session;
-        session.date_folder = date_folder;
-        session.session_prefix = session_prefix;
-        session.session_start = session_start;
-
-        for (const auto& cp : group) {
-            session.total_size_kb += cp.size_kb;
-            session.file_sizes_kb[cp.name] = cp.size_kb;
-            if (cp.is_brp) session.brp_files.push_back(cp.name);
-            else if (cp.is_pld) session.pld_files.push_back(cp.name);
-            else if (cp.is_sad) session.sad_files.push_back(cp.name);
-
-            // SDD-033: the TCV written with this checkpoint (the 11 series).
-            if (auto tcv = tcv_files.find(cp.prefix); tcv != tcv_files.end()) {
-                session.tcv_files.push_back(tcv->second.first);
-                session.total_size_kb += tcv->second.second;
-                session.file_sizes_kb[tcv->second.first] = tcv->second.second;
-                tcv_files.erase(tcv);
-            }
-        }
-
-        // Match CSL/EVE to this session. EVERY sidecar inside the session's own
-        // span, not just the first: a merged session covers several mask-on
-        // blocks and each block wrote its own pair. Taking only the first kept
-        // the earliest, which is usually the seconds-long mask-fit check with
-        // its empty 832-byte EVE stub, and dropped every real annotation of the
-        // night. See SDD-014 and issue #22.
-        //
-        // The span, NOT a flat 12-hour window: on a date folder holding several
-        // sessions, a window that wide would hand the first group every sidecar
-        // on the card and leave the later groups with none.
-        bool is_last_session = (group_idx == session_groups.size() - 1);
-
-        auto session_end = session_start;
-        for (const auto& cp : group) session_end = std::max(session_end, cp.end);
-
-        // A sidecar is written at the block boundary, so allow a minute either
-        // side of the span rather than demanding it land inside to the second.
-        const auto slack = std::chrono::minutes(1);
-        auto belongsHere = [&](std::chrono::system_clock::time_point t) {
-            return t >= session_start - slack && t <= session_end + slack;
-        };
-
-        auto claim = [&](std::map<std::string, std::pair<std::string, int>>& pool,
-                         std::vector<std::string>& into) {
-            for (auto it = pool.begin(); it != pool.end(); ) {
-                if (is_last_session || belongsHere(parseTime(it->first))) {
-                    into.push_back(it->second.first);
-                    session.total_size_kb += it->second.second;
-                    session.file_sizes_kb[it->second.first] = it->second.second;
-                    it = pool.erase(it);
-                } else {
-                    ++it;
-                }
-            }
-        };
-        claim(csl_files, session.csl_files);
-        claim(eve_files, session.eve_files);
-
-        sessions.push_back(session);
-    }
-
-    // Print summary
-    for (const auto& session : sessions) {
-        std::cout << "  Session " << session.session_prefix
-                  << ": BRP=" << session.brp_files.size()
-                  << " PLD=" << session.pld_files.size()
-                  << " SAD=" << session.sad_files.size()
-                  << " CSL=" << session.csl_files.size()
-                  << " EVE=" << session.eve_files.size()
-                  << " (" << session.total_size_kb << " KB)" << std::endl;
-    }
-
-    return sessions;
+    return groupFiles(files, date_folder);
 }
 
 } // namespace hms_cpap

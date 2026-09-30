@@ -294,8 +294,8 @@ TEST_P(DailyHoursBackendTest, AZeroUsageDayIsZeroHoursNotACounter) {
 // columns keep the STR's 4.2 and 184 beside them. The 09-08 rule, the STR's
 // hours whenever the row had one, froze a live night at its first mask-off.
 //
-// saveOurNight stores m.ahi = 13 events / 3.217 h = 4.041 over 193 minutes,
-// which the writer turns back into the count before dividing again.
+// saveOurNight stores 13 typed events and m.ahi = 13 / 3.217 h = 4.041 over
+// 193 minutes; the writer divides the typed count by the hours (SDD-047 D2).
 
 TEST_P(DailyHoursBackendTest, OurHoursAndLeakWinWhenTheStrCameFirst) {
     saveStrNight(184.0, 4.2, 20.0);
@@ -348,9 +348,9 @@ TEST_P(DailyHoursBackendTest, AnStrAfterOurSessionsChangesNothingOfOurs) {
 // 47 minutes, and the dashboard stayed at 47 with 71 recorded and the mask on.
 // One event over 47 minutes also read as AHI 1.28 instead of 0.85.
 TEST_P(DailyHoursBackendTest, ALiveNightGrowsPastTheStrSnapshot) {
-    saveOurNight(47 * 60, 1.0 / (47.0 / 60.0), 0, 0);   // first mask-off
+    saveOurNight(47 * 60, 1.0 / (47.0 / 60.0), 0, 1);   // first mask-off
     saveStrNight(47.0, 1.2, 0.0);                        // the STR written then
-    saveOurNight(71 * 60, 1.0 / (71.0 / 60.0), 0, 0);   // the files kept growing
+    saveOurNight(71 * 60, 1.0 / (71.0 / 60.0), 0, 1);   // the files kept growing
 
     const auto rows = readNight();
     ASSERT_EQ(rows.size(), 1u) << engineName(GetParam());

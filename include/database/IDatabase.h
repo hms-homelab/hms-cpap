@@ -321,7 +321,9 @@ public:
         double avg_spo2 = 0;
         double min_spo2 = 0;
     };
-    // Per-night SpO2 averages for charting (one row per cpap_session_date, longest session wins on tie).
+    // Per-night SpO2 for charting: one row per cpap_session_date covering every
+    // recording of that night (SDD-047), the mean weighted by duration and the
+    // low the night's lowest.
     virtual std::vector<OxiNightlyPoint> getOximetryNightlySpo2(const std::string& device_id,
                                                                   const std::string& start_yyyymmdd,
                                                                   const std::string& end_yyyymmdd) = 0;

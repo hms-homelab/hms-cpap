@@ -18,7 +18,7 @@ namespace hms_cpap {
  * Handles:
  * - Listing date folders on ez Share SD card
  * - Filtering by last stored session timestamp
- * - Grouping files into sessions (latest BRP/PLD/SAD per session prefix)
+ * - Grouping files into sessions, one per mask-on stretch (groupFiles)
  * - Detecting in-progress sessions
  *
  * Solves the multi-checkpoint problem: CPAP machines write interim BRP/PLD/SAD
@@ -61,13 +61,10 @@ public:
     );
 
     /**
-     * Group files in a date folder into sessions
-     *
-     * Groups by session prefix (YYYYMMDD_HHMMSS from filename).
-     * For multiple BRP/PLD/SAD files with same prefix, keeps largest.
+     * Group the files of a date folder on this source into sessions.
      *
      * @param date_folder e.g., "20260203"
-     * @return Vector of session file sets (grouped by CSL timestamp)
+     * @return one session file set per mask-on stretch (see groupFiles)
      */
     std::vector<SessionFileSet> groupSessionsInFolder(const std::string& date_folder);
 
@@ -78,6 +75,21 @@ public:
      */
     static std::vector<SessionFileSet> groupLocalFolder(
         const std::string& dir_path,
+        const std::string& date_folder);
+
+    /**
+     * THE grouping: one date folder's listing into sessions. Every path that
+     * turns a folder into sessions comes here, whatever read the listing (an
+     * ez Share, a local folder, the Fysetc bridge's FAT), so a folder groups
+     * the same way whichever way it arrived.
+     *
+     * The BRP/PLD/SAD checkpoints split into mask-on stretches wherever the
+     * mask was off for SESSION_GAP_MINUTES, measured end to start. Every
+     * stretch lists the folder's EVE/CSL pairs and carries the window of time
+     * whose events are its own (SDD-047; see SessionFileSet).
+     */
+    static std::vector<SessionFileSet> groupFiles(
+        const std::vector<EzShareFileEntry>& files,
         const std::string& date_folder);
 
     // discoverLocalSessions() lived here: a second copy of discoverNewSessions'
@@ -93,10 +105,6 @@ public:
 
 private:
     IDataSource& data_source_;
-
-    std::string extractSessionPrefix(const std::string& filename);
-    std::chrono::system_clock::time_point parseSessionTime(const std::string& prefix);
-
 };
 
 } // namespace hms_cpap

@@ -382,6 +382,9 @@ int runReparse(const std::string& card_root, const std::string& start_str, const
                 continue;
             }
 
+            // SDD-047: the day's EVEs were staged; keep this stretch's events.
+            hms_cpap::keepOwnEvents(*parsed, session);
+
             // Set relative file paths (same format as normal pipeline)
             hms_cpap::applySessionFilePaths(*parsed, session, folder);
 

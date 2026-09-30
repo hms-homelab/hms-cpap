@@ -21,8 +21,16 @@ class IDatabase;
  *
  * Called from the main burst-collection loop:
  *   - onBurstComplete() on each Fysetc burst (~65s) during a session
- *   - onSessionComplete() when a session finishes (EVE file arrives)
+ *   - finishIfNightOver() on each burst after that; it runs the final pass
+ *     (onSessionComplete) once the night is over by the settle rule
  *   - reset() when session is torn down
+ *
+ * The night is over when nothing in its folder has grown for an hour
+ * (SDD-046, nightIsOver in utils/NightQuiet.h). An EVE file arriving is NOT an
+ * end (SDD-047): the machine creates the EVE/CSL pair at the first mask-on
+ * after the card is opened, then appends to it at every later mask-on, so on a
+ * live night the EVE appears near the start, and a mask back on within the
+ * hour is still the same night.
  */
 class LiveSleepStageRunner {
 public:
@@ -50,6 +58,19 @@ public:
         const CPAPSession& session,
         const std::vector<OximetrySample>& oximetry,
         int session_id);
+
+    /**
+     * Run the final pass (onSessionComplete) only when the night in
+     * [date_folder] is over by the settle rule at [now] (nightIsOver). Which
+     * files the folder holds does not enter into it. Returns whether the night
+     * was over; false as well without a database to ask.
+     */
+    bool finishIfNightOver(
+        const CPAPSession& session,
+        const std::vector<OximetrySample>& oximetry,
+        int session_id,
+        const std::string& date_folder,
+        std::chrono::system_clock::time_point now);
 
     /**
      * Reset state for a new session.

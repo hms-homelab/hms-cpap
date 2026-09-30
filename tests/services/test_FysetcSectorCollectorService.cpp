@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 #include "services/FysetcSectorCollectorService.h"
+#include "services/SessionDiscoveryService.h"
+#include "clients/FysetcDataSource.h"
 #include "clients/FysetcTcpServer.h"
 #include "clients/FysetcProtocol.h"
 
@@ -14,6 +16,7 @@
 #include <chrono>
 #include <atomic>
 #include <map>
+#include <set>
 #include <filesystem>
 #include <fstream>
 #include <algorithm>
@@ -365,4 +368,120 @@ TEST_F(FysetcCollectorTest, DISABLED_IncrementalGrowth) {
 
     device.stop();
     server.stop();
+}
+
+// ── SDD-047: the collector groups through discovery, never its own copy ─────
+//
+// The collector used to group a folder itself: a flat "> 60 minutes" from one
+// file's modified time to the next file's name, and each EVE/CSL given to the
+// last session within 12 hours of the file's name. These feed it a FAT listing
+// and ask for exactly what the discovery service makes of the same listing on
+// the live Fysetc path (FysetcDataSource), which is the one grouping.
+
+namespace {
+
+/// A FAT directory entry named [name], [bytes] long, last written at the given
+/// local wall-clock time.
+Fat32DirEntry fatFile(const std::string& name, uint32_t bytes,
+                      int y, int mo, int d, int h, int mi, int s = 0) {
+    Fat32DirEntry e;
+    e.name = name;
+    e.size = bytes;
+    e.modify_date = static_cast<uint16_t>(((y - 1980) << 9) | (mo << 5) | d);
+    e.modify_time = static_cast<uint16_t>((h << 11) | (mi << 5) | (s / 2));
+    return e;
+}
+
+/// The live Fysetc path's view of a folder: the same entries through
+/// FysetcDataSource's listing, handed to the discovery service.
+class FatListing : public IDataSource {
+public:
+    explicit FatListing(const std::vector<Fat32DirEntry>& entries) {
+        for (const auto& e : entries) listing_.push_back(FysetcDataSource::listingEntry(e));
+    }
+    std::vector<std::string> listDateFolders() override { return {}; }
+    std::vector<EzShareFileEntry> listFiles(const std::string&) override { return listing_; }
+    bool downloadFile(const std::string&, const std::string&, const std::string&) override {
+        return false;
+    }
+    bool downloadFileRange(const std::string&, const std::string&, const std::string&,
+                           size_t, size_t&) override {
+        return false;
+    }
+    bool downloadRootFile(const std::string&, const std::string&) override { return false; }
+
+private:
+    std::vector<EzShareFileEntry> listing_;
+};
+
+std::set<std::string> namesOf(const FysetcSectorCollectorService::FatSession& s) {
+    std::set<std::string> out;
+    for (const auto* f : s.all_files) out.insert(f->name);
+    return out;
+}
+
+std::set<std::string> namesOf(const SessionFileSet& s) {
+    std::set<std::string> out;
+    for (const auto* v : {&s.brp_files, &s.pld_files, &s.sad_files, &s.tcv_files,
+                          &s.csl_files, &s.eve_files})
+        out.insert(v->begin(), v->end());
+    return out;
+}
+
+void expectSameGroups(const std::vector<Fat32DirEntry>& entries, const std::string& folder) {
+    const auto collector = FysetcSectorCollectorService::groupIntoSessions(entries, folder);
+    FatListing source(entries);
+    SessionDiscoveryService discovery(source);
+    const auto discovered = discovery.groupSessionsInFolder(folder);
+
+    ASSERT_EQ(collector.size(), discovered.size());
+    for (size_t i = 0; i < collector.size(); ++i) {
+        EXPECT_EQ(collector[i].session_start, discovered[i].session_start) << "session " << i;
+        EXPECT_EQ(namesOf(collector[i]), namesOf(discovered[i])) << "session " << i;
+    }
+}
+
+}  // namespace
+
+TEST(FysetcCollectorGrouping, AFolderGroupsAsDiscoveryGroupsIt) {
+    // The afternoon stretch, then the night after a long break, one EVE/CSL
+    // pair for the day, named at the afternoon.
+    const std::vector<Fat32DirEntry> entries = {
+        fatFile("20250928_143000_BRP.edf", 150 * 1024, 2025, 9, 28, 14, 55),
+        fatFile("20250928_143000_PLD.edf", 12 * 1024, 2025, 9, 28, 14, 55),
+        fatFile("20250928_143000_EVE.edf", 2 * 1024, 2025, 9, 29, 3, 5),
+        fatFile("20250928_143000_CSL.edf", 1024, 2025, 9, 29, 3, 10),
+        fatFile("20250928_231000_BRP.edf", 1440 * 1024, 2025, 9, 29, 3, 10),
+        fatFile("20250928_231000_PLD.edf", 96 * 1024, 2025, 9, 29, 3, 10),
+    };
+    expectSameGroups(entries, "20250928");
+
+    const auto sessions = FysetcSectorCollectorService::groupIntoSessions(entries, "20250928");
+    ASSERT_EQ(sessions.size(), 2u);
+    EXPECT_EQ(namesOf(sessions[1]).count("20250928_143000_EVE.edf"), 1u)
+        << "the night's events are in the pair named at the afternoon";
+    EXPECT_EQ(sessions[0].checkpoint_sizes_kb.size(), 2u) << "BRP and PLD, not the sidecars";
+}
+
+TEST(FysetcCollectorGrouping, AnHourOffIsANewStretchAsInDiscovery) {
+    // The old copy split only on MORE than 60 minutes, from a file's modified
+    // time to the next file's name. Discovery splits at SESSION_GAP_MINUTES
+    // (60) end to start, so an hour off exactly is two stretches there, and
+    // now here too.
+    const std::vector<Fat32DirEntry> entries = {
+        fatFile("20250928_220000_BRP.edf", 24 * 1024, 2025, 9, 28, 22, 30),
+        fatFile("20250928_233000_BRP.edf", 24 * 1024, 2025, 9, 28, 23, 45),
+    };
+    expectSameGroups(entries, "20250928");
+    EXPECT_EQ(FysetcSectorCollectorService::groupIntoSessions(entries, "20250928").size(), 2u);
+}
+
+TEST(FysetcCollectorGrouping, AShortNameWithNoPrefixStillRidesWithTheLastSession) {
+    const std::vector<Fat32DirEntry> entries = {
+        fatFile("20250928_220000_BRP.edf", 24 * 1024, 2025, 9, 28, 22, 30),
+        fatFile("GROW.EDF", 1024, 2025, 9, 28, 22, 30),
+    };
+    const auto sessions = FysetcSectorCollectorService::groupIntoSessions(entries, "20250928");
+    ASSERT_EQ(sessions.size(), 1u);
+    EXPECT_EQ(namesOf(sessions[0]).count("GROW.EDF"), 1u);
 }

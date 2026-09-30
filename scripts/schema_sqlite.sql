@@ -70,6 +70,11 @@ CREATE TABLE IF NOT EXISTS cpap_session_metrics (
     hypopneas              INTEGER DEFAULT 0,
     reras                  INTEGER DEFAULT 0,
     clear_airway_apneas    INTEGER DEFAULT 0,
+    -- SDD-047 D2: ResMed's bare "Apnea", an apnea it did not classify. It
+    -- counts toward the AHI, so a night's index needs it among the typed
+    -- counts. NULL until counted: a row older than the column is counted from
+    -- its stored events at startup.
+    unclassified_apneas    INTEGER,
     avg_event_duration     REAL,
     max_event_duration     REAL,
     time_in_apnea_percent  REAL,
