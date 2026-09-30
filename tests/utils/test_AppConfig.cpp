@@ -388,30 +388,38 @@ TEST_F(AppConfigTest, ToJsonMasksSecretsButNeverEmptiesThem) {
     EXPECT_EQ(je["database"]["password"], "");
 }
 
-// --- Section round-trip completeness -------------------------------------------
+// --- The removed Fysetc source -----------------------------------------------
 //
-// load() read fysetc but save() never wrote it, so any save silently discarded
-// the whole block. toJson() omitted both fysetc and cpapdash, so the UI could not
-// display them at all.
+// A config.json written while the Fysetc source existed names it as the
+// transport and carries a "fysetc" block. It must still load, read as the
+// default transport (ez Share), and not bring the block back on the next save.
 
-TEST_F(AppConfigTest, SavePreservesFysetcBlock) {
-    AppConfig original;
-    original.fysetc.enabled = true;
-    original.fysetc.listen_port = 9100;
-    original.fysetc.listen_bind = "127.0.0.1";
-    original.fysetc.connection_timeout_s = 45;
-    original.fysetc.archive_dir = "/data/fysetc";
-    original.fysetc.log_dir = "/var/log/custom";
-    original.save(config_path_);
-
+TEST_F(AppConfigTest, AConfigNamingTheRemovedFysetcSourceLoadsAsEzShare) {
+    {
+        std::ofstream f(config_path_);
+        f << R"({"transport": "fysetc", "format": "resmed", "source": "fysetc",
+                 "fysetc": {"enabled": true, "listen_port": 9100}})";
+    }
     AppConfig loaded;
     ASSERT_TRUE(AppConfig::load(config_path_, loaded));
-    EXPECT_TRUE(loaded.fysetc.enabled);
-    EXPECT_EQ(loaded.fysetc.listen_port, 9100);
-    EXPECT_EQ(loaded.fysetc.listen_bind, "127.0.0.1");
-    EXPECT_EQ(loaded.fysetc.connection_timeout_s, 45);
-    EXPECT_EQ(loaded.fysetc.archive_dir, "/data/fysetc");
-    EXPECT_EQ(loaded.fysetc.log_dir, "/var/log/custom");
+    EXPECT_EQ(loaded.transport, "ezshare");
+    EXPECT_EQ(loaded.source, "ezshare");
+    EXPECT_EQ(AppConfig::collectorSource(loaded.transport, loaded.format), "ezshare");
+
+    loaded.save(config_path_);
+    std::ifstream f(config_path_);
+    nlohmann::json saved;
+    f >> saved;
+    EXPECT_FALSE(saved.contains("fysetc")) << "the removed block came back on save";
+    EXPECT_EQ(saved["transport"], "ezshare");
+}
+
+TEST_F(AppConfigTest, AnEnvironmentNamingTheRemovedFysetcSourceUsesEzShare) {
+    ::setenv("CPAP_TRANSPORT", "fysetc", 1);
+    AppConfig c;
+    c.applyEnvFallbacks();
+    ::unsetenv("CPAP_TRANSPORT");
+    EXPECT_EQ(c.transport, "ezshare");
 }
 
 // ---------------------------------------------------------------------------
@@ -457,22 +465,6 @@ TEST_F(AppConfigTest, AConfiguredArchiveDirBeatsTheEnvVar) {
     ::unsetenv("CPAP_ARCHIVE_DIR");
 }
 
-TEST_F(AppConfigTest, ArchiveDirIsNotTheFysetcStagingDir) {
-    // Two different questions: this one is where parsed card files are archived,
-    // fysetc.archive_dir is where raw sectors are staged by that transport.
-    // Collapsing them would make choosing the Mule and Miner quietly repoint the
-    // Fysetc listener.
-    AppConfig c;
-    c.archive_dir = "/data/archive";
-    c.fysetc.archive_dir = "/data/fysetc-staging";
-    c.save(config_path_);
-
-    AppConfig loaded;
-    ASSERT_TRUE(AppConfig::load(config_path_, loaded));
-    EXPECT_EQ(loaded.archive_dir, "/data/archive");
-    EXPECT_EQ(loaded.fysetc.archive_dir, "/data/fysetc-staging");
-}
-
 TEST_F(AppConfigTest, EverySectionLoadReadsIsAlsoWrittenBySave) {
     // Structural guard: anything load() understands must survive save(), or a UI
     // write silently drops it. Adding a section to load() without adding it to
@@ -485,8 +477,7 @@ TEST_F(AppConfigTest, EverySectionLoadReadsIsAlsoWrittenBySave) {
     f >> saved;
 
     for (const char* section : {"database", "mqtt", "llm", "agent", "ml_training",
-                                "o2ring", "sleep_stage", "sleephq", "cpapdash",
-                                "fysetc"}) {
+                                "o2ring", "sleep_stage", "sleephq", "cpapdash"}) {
         EXPECT_TRUE(saved.contains(section))
             << "save() drops the '" << section << "' section that load() reads";
     }
@@ -496,8 +487,7 @@ TEST_F(AppConfigTest, ToJsonExposesEverySectionTheUiEdits) {
     AppConfig cfg;
     auto j = cfg.toJson();
     for (const char* section : {"database", "mqtt", "llm", "agent", "ml_training",
-                                "o2ring", "sleep_stage", "sleephq", "cpapdash",
-                                "fysetc"}) {
+                                "o2ring", "sleep_stage", "sleephq", "cpapdash"}) {
         EXPECT_TRUE(j.contains(section))
             << "GET /api/config hides the '" << section << "' section";
     }
@@ -647,7 +637,7 @@ TEST(TransportFormatMigration, EveryLegacySourceMapsToAPair) {
     struct Case { const char* source; const char* transport; const char* format; };
     const Case cases[] = {
         {"ezshare",    "ezshare", "resmed"},
-        {"fysetc",     "fysetc",  "resmed"},
+        {"fysetc",     "ezshare", "resmed"},   // removed: read as the default
         {"local",      "local",   "resmed"},
         {"lowenstein", "local",   "lowenstein"},
         {"sefam",      "local",   "sefam"},
@@ -688,7 +678,7 @@ TEST(TransportFormatMigration, MigrationIsIdempotent) {
 // upgrade that gets rolled back does not strand the user with a config the old
 // build cannot read. Derived from the pair, so it can never go stale.
 TEST(TransportFormatMigration, TheLegacyValueRoundTrips) {
-    for (const char* s : {"ezshare", "fysetc", "local", "lowenstein", "sefam", "philips"}) {
+    for (const char* s : {"ezshare", "local", "lowenstein", "sefam", "philips"}) {
         AppConfig cfg;
         cfg.source = s;
         cfg.migrateSource();
@@ -702,7 +692,6 @@ TEST(TransportFormatMigration, TheLegacyValueRoundTrips) {
 TEST(TransportFormatMigration, ArchiveIsNeededByTransportNotByVendor) {
     AppConfig cfg;
     cfg.transport = "ezshare"; EXPECT_TRUE(cfg.needsArchive());
-    cfg.transport = "fysetc";  EXPECT_TRUE(cfg.needsArchive());
 
     cfg.transport = "local";
     for (const char* f : {"resmed", "lowenstein", "sefam", "philips", "notyetinvented"}) {

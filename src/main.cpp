@@ -166,10 +166,6 @@ void printConfiguration() {
     if (source == "local") {
         std::cout << "  Source:             Local directory" << std::endl;
         std::cout << "  Local Dir:          " << hms_cpap::ConfigManager::get("CPAP_LOCAL_DIR", "(not set)") << std::endl;
-    } else if (source == "fysetc") {
-        std::cout << "  Source:             Fysetc" << std::endl;
-        std::cout << "  Listen:             " << hms_cpap::ConfigManager::get("FYSETC_LISTEN_BIND", "0.0.0.0")
-                  << ":" << hms_cpap::ConfigManager::getInt("FYSETC_LISTEN_PORT", 9000) << std::endl;
     } else if (source == "lowenstein") {
         std::cout << "  Source:             Löwenstein Prisma" << std::endl;
         std::cout << "  Data Dir:           " << hms_cpap::ConfigManager::get("CPAP_LOCAL_DIR", "(not set)") << std::endl;
@@ -785,7 +781,7 @@ int main(int argc, char** argv) {
 
         std::cout << "HMS-CPAP service is running..." << std::endl;
 
-        // Data source: HTTP polling (ezShare or Fysetc) or local directory
+        // Data source: HTTP polling (ezShare) or local directory
         int burst_interval = hms_cpap::ConfigManager::getInt("BURST_INTERVAL", 120);
 
         burst_service = std::make_unique<hms_cpap::BurstCollectorService>(burst_interval);
@@ -794,10 +790,6 @@ int main(int argc, char** argv) {
 
         if (src == "local") {
             std::cout << "   Source: Local directory at " << hms_cpap::ConfigManager::get("CPAP_LOCAL_DIR", "") << std::endl;
-        } else if (src == "fysetc") {
-            std::cout << "   Source: Fysetc TCP on "
-                      << hms_cpap::ConfigManager::get("FYSETC_LISTEN_BIND", "0.0.0.0") << ":"
-                      << hms_cpap::ConfigManager::getInt("FYSETC_LISTEN_PORT", 9000) << std::endl;
         } else {
             std::cout << "   Source: HTTP at " << hms_cpap::ConfigManager::get("EZSHARE_BASE_URL", "http://192.168.4.1") << std::endl;
         }
@@ -1182,7 +1174,7 @@ int main(int argc, char** argv) {
 
             // Wire BackfillService whenever an archive/local DATALOG path is
             // known. It reparses from the permanent archive, so it must be
-            // available in every source mode (ezshare/fysetc/local) — the
+            // available in every source mode (ezshare/local): the
             // per-session UI reparse delegates to it. The card root is the
             // local folder in local mode and the archive the collector fills
             // in the others: keying this on local_dir alone left Reparse (and

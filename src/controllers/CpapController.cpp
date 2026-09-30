@@ -364,7 +364,7 @@ void CpapController::updateConfig(const drogon::HttpRequestPtr& req,
     {
         const bool has_t = j.isMember("transport");
         const bool has_f = j.isMember("format");
-        if (has_t) config_->transport = j["transport"].asString();
+        if (has_t) config_->transport = AppConfig::supportedTransport(j["transport"].asString());
         if (has_f) config_->format    = j["format"].asString();
         if (has_t || has_f) {
             config_->source = AppConfig::collectorSource(config_->transport, config_->format);
@@ -489,17 +489,6 @@ void CpapController::updateConfig(const drogon::HttpRequestPtr& req,
         if (cd.isMember("token") && cd["token"].asString() != "********")
             config_->cpapdash.token = cd["token"].asString();
         if (cd.isMember("auto_sync")) config_->cpapdash.auto_sync = cd["auto_sync"].asBool();
-    }
-
-    if (j.isMember("fysetc")) {
-        auto& f = j["fysetc"];
-        if (f.isMember("enabled")) config_->fysetc.enabled = f["enabled"].asBool();
-        if (f.isMember("listen_port")) config_->fysetc.listen_port = f["listen_port"].asInt();
-        if (f.isMember("listen_bind")) config_->fysetc.listen_bind = f["listen_bind"].asString();
-        if (f.isMember("connection_timeout_s"))
-            config_->fysetc.connection_timeout_s = f["connection_timeout_s"].asInt();
-        if (f.isMember("archive_dir")) config_->fysetc.archive_dir = f["archive_dir"].asString();
-        if (f.isMember("log_dir")) config_->fysetc.log_dir = f["log_dir"].asString();
     }
 
     // Support log. Saved here but applied on restart: the tee owns fd 1 and 2
@@ -725,7 +714,7 @@ void CpapController::setupApply(const drogon::HttpRequestPtr& req,
     {
         const bool has_t = j.isMember("transport");
         const bool has_f = j.isMember("format");
-        if (has_t) config_->transport = j["transport"].asString();
+        if (has_t) config_->transport = AppConfig::supportedTransport(j["transport"].asString());
         if (has_f) config_->format    = j["format"].asString();
         if (has_t || has_f)
             config_->source = AppConfig::collectorSource(config_->transport, config_->format);

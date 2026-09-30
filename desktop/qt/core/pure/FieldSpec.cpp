@@ -11,10 +11,6 @@ std::function<bool(const ConfigModel&)> enabledBy(const std::string& path) {
     return [path](const ConfigModel& m) { return m.getBool(path); };
 }
 
-std::function<bool(const ConfigModel&)> sourceIs(const std::string& value) {
-    return [value](const ConfigModel& m) { return m.getString("source") == value; };
-}
-
 /// SDD-022. Falls back to the legacy `source` so a config written by an older
 /// build still reveals the right fields on the first run after an upgrade,
 /// before anything has been saved back.
@@ -55,13 +51,14 @@ bool sourceNeedsArchive(const ConfigModel& m) {
     auto t = m.getString("transport");
     if (t.empty()) {
         // Pre-SDD-022 config. `local`, `lowenstein` and `sefam` were all the
-        // same transport -- a folder on disk -- so only the two network values
-        // matter here and the vendor names fall through to false, which is the
-        // right answer for every one of them.
+        // same transport -- a folder on disk -- so only the network value
+        // matters here and the vendor names fall through to false, which is the
+        // right answer for every one of them. The removed Fysetc source reads
+        // as ez Share, as the service's migration reads it.
         const auto s = m.getString("source");
         return s == "ezshare" || s == "fysetc";
     }
-    return t == "ezshare" || t == "fysetc";
+    return t == "ezshare";
 }
 
 std::string trim(const std::string& s) {
@@ -87,7 +84,6 @@ const std::vector<Group>& settingsGroups() {
         {"agent",       "Agent",                "Conversational agent over your therapy history.", "agent.enabled"},
         {"sleep_stage", "Sleep Stage Inference","Estimate sleep stages from flow data.", "sleep_stage.enabled"},
         {"ml_training", "ML Training",          "Retrain the prediction models on your own data.", "ml_training.enabled"},
-        {"fysetc",      "Fysetc TCP",           "", ""},
         {"logging",     "Support Log",          "A log file to attach to a support request.", ""},
         {"advanced",    "Advanced",             "", ""},
     };
@@ -105,11 +101,10 @@ const std::vector<FieldSpec>& settingsFields() {
         f.push_back({"transport", "source", "Where the data comes from", "",
             FieldKind::Choice, "",
             {{"ezshare", "ezShare WiFi SD card"},
-             {"local",   "A folder on this computer"},
-             {"fysetc",  "Fysetc TCP"}},
+             {"local",   "A folder on this computer"}},
             {}, {}, false, nullptr});
 
-        // Offered only for a local folder: ezShare and Fysetc are ResMed-only in
+        // Offered only for a local folder: an ezShare is ResMed-only in
         // fact, so the choice would be a lie there. The field still EXISTS and
         // still says resmed for them, so nothing downstream special-cases its
         // absence.
@@ -254,16 +249,6 @@ const std::vector<FieldSpec>& settingsFields() {
             enabledBy("ml_training.enabled")});
         f.push_back({"ml_training.model_dir", "ml_training", "Model Folder", "", FieldKind::Directory,
             "", {}, {}, {}, false, enabledBy("ml_training.enabled")});
-
-        // ── Fysetc ─────────────────────────────────────────────────────────
-        f.push_back({"fysetc.enabled", "fysetc", "Enabled", "", FieldKind::Bool, "", {}, {}, {}, true, sourceIs("fysetc")});
-        f.push_back({"fysetc.listen_port", "fysetc", "Listen Port", "", FieldKind::Int, "", {}, 1, 65535, true, sourceIs("fysetc")});
-        f.push_back({"fysetc.listen_bind", "fysetc", "Listen Address", "", FieldKind::Text, "0.0.0.0", {}, {}, {}, true, sourceIs("fysetc")});
-        f.push_back({"fysetc.connection_timeout_s", "fysetc", "Connection Timeout (seconds)", "",
-            FieldKind::Int, "", {}, 1, 3600, true, sourceIs("fysetc")});
-        f.push_back({"fysetc.archive_dir", "fysetc", "Reconstructed Card Folder", "", FieldKind::Directory,
-            "", {}, {}, {}, true, sourceIs("fysetc")});
-        f.push_back({"fysetc.log_dir", "fysetc", "Log Folder", "", FieldKind::Directory, "", {}, {}, {}, true, sourceIs("fysetc")});
 
         // ── Logging ────────────────────────────────────────────────────────
         f.push_back({"logging.enabled", "logging", "Write a log file", "", FieldKind::Bool, "", {}, {}, {}, true, nullptr});

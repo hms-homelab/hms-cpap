@@ -124,7 +124,7 @@ private:
     std::string base_url_;
     bool supports_range_ = true;
 
-    static constexpr long DOWNLOAD_TIMEOUT  = 300L;  // large BRP files over slow Fysetc WiFi link
+    static constexpr long DOWNLOAD_TIMEOUT  = 300L;  // large BRP files over a slow WiFi link
     /// A ranged transfer slower than LOW_SPEED_LIMIT bytes/s for
     /// LOW_SPEED_TIME seconds has stalled: fail it and resume next burst.
     static constexpr long LOW_SPEED_LIMIT = 1024L;

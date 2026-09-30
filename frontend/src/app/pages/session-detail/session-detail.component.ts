@@ -378,7 +378,7 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
     if (!this.session) return;
     // Use actual parsed BRP data duration (not wall clock).
     // Wall clock (now - session_start) overestimates because it includes
-    // the delay before Fysetc starts serving files and any downtime gaps.
+    // the delay before the card starts serving files and any downtime gaps.
     this.liveDuration = this.fmtDuration(this.session.duration_hours);
   }
 

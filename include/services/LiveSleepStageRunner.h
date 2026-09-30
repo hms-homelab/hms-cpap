@@ -20,7 +20,7 @@ class IDatabase;
  * stage inference, persists results, and publishes MQTT updates.
  *
  * Called from the main burst-collection loop:
- *   - onBurstComplete() on each Fysetc burst (~65s) during a session
+ *   - onBurstComplete() on each burst (~65s) during a session
  *   - finishIfNightOver() on each burst after that; it runs the final pass
  *     (onSessionComplete) once the night is over by the settle rule
  *   - reset() when session is torn down

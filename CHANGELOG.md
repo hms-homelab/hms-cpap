@@ -22,11 +22,12 @@ An event belongs to the stretch of the night it happened in (SDD-047).
   The night's totals were already right, because they add the sessions up.
   The session list, per-session charts and anything built on a single
   session were not.
-- **One AHI for a night.** The daily summary took a duration-weighted mean of
-  each session's index, and the nightly figures published over MQTT added up
-  the typed events but left out the machine's unclassified apneas. Both are
-  now the night's apneas and hypopneas, unclassified included, over the
-  night's hours, on SQLite, PostgreSQL and MySQL. The unclassified count is
+- **One AHI for a night.** The daily summary and the sessions list each took a
+  duration-weighted mean of the sessions' own indexes, and the nightly figures
+  published over MQTT added up the typed events but left out the machine's
+  unclassified apneas. All three are now one computation: the night's apneas
+  and hypopneas, unclassified included, over the night's hours, on SQLite,
+  PostgreSQL and MySQL. The unclassified count is
   now stored per session; sessions stored before this upgrade are counted
   from their saved events at the first start. `uai` is now the unclassified
   apnea index, as on the machine's own summary.
@@ -36,10 +37,19 @@ An event belongs to the stretch of the night it happened in (SDD-047).
 - **A session no longer counts as finished because its EVE file appeared.**
   The EVE is created near the start of the night, so the sleep-stage final
   pass waits for the night to be over: an hour with nothing new on the card.
-- The Fysetc sector collector groups a folder exactly as every other source
-  does, instead of with an older copy of the rule.
+
+### Removed
+- **The Fysetc source.** The raw SD-sector transport (its TCP listener, the
+  sector collector and its settings in the web page and the desktop app) is
+  gone. The ez Share (through a Mule and Miner or an hms-mm bridge) and a local
+  folder remain the ways to read a card.
 
 ### Upgrading
+- **If your source was Fysetc,** the service still starts: it logs that the
+  source was removed and uses ez Share, the default, until you choose a source
+  in Settings. A `fysetc` block in `config.json` is ignored and dropped on the
+  next save, and `CPAP_SOURCE=fysetc` or `CPAP_TRANSPORT=fysetc` in the
+  environment reads the same way.
 - Nights already stored keep their old per-session events until they are
   parsed again. To fix past nights, re-parse them from the card or archive:
   `hms_cpap --reparse <card_root> <start_date> [end_date]`, or, on a local

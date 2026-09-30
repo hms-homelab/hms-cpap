@@ -20,7 +20,6 @@
       "philips": "Philips Respironics (expérimental)",
       "ezshare": "Carte SD WiFi ezShare",
       "local": "Répertoire local",
-      "fysetc": "Fysetc",
       "notePre": "Voici les façons dont CpapDash lit votre carte SD. ResMed myAir n'en fait pas partie : il ne renvoie qu'un résumé de chaque nuit, pas les enregistrements à partir desquels les graphiques et les rapports sont construits. Vous pouvez tout de même le connecter, dans",
       "notePost": "ci-dessous, pour comparer les chiffres de ResMed à ceux de CpapDash.",
       "ezshareUrl": "URL ezShare",
@@ -30,15 +29,6 @@
       "archiveMissing": "Non défini. Votre {{device}} télécharge des fichiers qui doivent atterrir quelque part, donc rien n'est écrit sur le disque : OSCAR n'a rien à importer et l'export SleepHQ reste bloqué. Les nuits déjà collectées sont à l'abri dans la base de données et s'affichent ici normalement.",
       "archiveHintLocal": "Avec un dossier local, rien n'est copié ici : votre dossier est déjà la carte, pointez donc l'import de carte d'OSCAR dessus. Ce dossier sert aux rapports et à l'export SleepHQ, et peut rester vide.",
       "archiveHint": "Où sont écrites les nuits collectées, sous la forme d'une carte (STR.edf et DATALOG/ côte à côte). Pointez l'import de carte d'OSCAR ici. Sous Windows, utilisez des barres obliques, par exemple C:/Users/vous/CPAPData"
-    },
-    "fysetc": {
-      "heading": "Fysetc TCP",
-      "enabled": "Activé",
-      "listenPort": "Port d'écoute",
-      "listenAddress": "Adresse d'écoute",
-      "timeout": "Délai de connexion (secondes)",
-      "archiveDir": "Répertoire de la carte reconstruite",
-      "logDir": "Répertoire des journaux"
     },
     "logging": {
       "heading": "Journal de support",
@@ -267,7 +257,6 @@
         "sleephq": "les paramètres SleepHQ",
         "agent": "les paramètres de l'agent",
         "sleepStage": "les paramètres des stades du sommeil",
-        "fysetc": "les paramètres Fysetc",
         "logging": "les paramètres du journal de support",
         "database": "les paramètres de la base de données",
         "deviceId": "l'ID de l'appareil"

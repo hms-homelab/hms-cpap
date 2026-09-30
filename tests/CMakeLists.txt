@@ -35,11 +35,6 @@ list(APPEND PROJECT_SOURCES "${CMAKE_SOURCE_DIR}/src/services/MyAirClient.cpp")
 list(APPEND PROJECT_SOURCES "${CMAKE_SOURCE_DIR}/src/web/IngressBase.cpp")
 list(APPEND PROJECT_SOURCES "${CMAKE_SOURCE_DIR}/src/web/QueryService.cpp")
 list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/cli/.*\\.cpp$")
-if(MSVC)
-    list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/FysetcTcpServer\\.cpp$")
-    list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/FysetcDataSource\\.cpp$")
-    list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/FysetcSectorCollectorService\\.cpp$")
-endif()
 # PDF/report services depend on QueryService (web/) and libhpdf — exclude from test build
 list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/PdfRenderer\\.cpp$")
 list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/GnuplotService\\.cpp$")
@@ -49,7 +44,6 @@ list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/services/reports/.*\\.cpp$")
 # Test sources
 set(TEST_SOURCES
     parsers/test_EDFParser.cpp
-    parsers/test_Fat32Parser.cpp
     parsers/test_STRParser.cpp
     parsers/test_PLDParser.cpp
     parsers/test_SA2Parser.cpp
@@ -94,7 +88,6 @@ set(TEST_SOURCES
     utils/test_FailureLogThrottle.cpp
     clients/test_EzShareClient.cpp
     clients/test_LocalDataSource.cpp
-    clients/test_FysetcTcpServer.cpp
     mqtt/test_MqttClient.cpp
     integration/test_STRIntegration.cpp
     integration/test_ASVIntegration.cpp
@@ -116,7 +109,6 @@ set(TEST_SOURCES
     services/test_BilevelSensors.cpp
     services/test_O2RingCsvParser.cpp
     services/test_O2RingCsvWriter.cpp
-    services/test_FysetcSectorCollectorService.cpp
     clients/test_O2RingClient.cpp
     clients/test_O2RingBleProtocol.cpp
     services/test_sleep_stage_classifier.cpp
@@ -132,7 +124,6 @@ set(TEST_SOURCES
     database/test_DatabaseService_pg.cpp
     database/test_PostgresEdges.cpp
     services/test_DataPublisherDeeper.cpp
-    clients/test_FysetcDataSource.cpp
     services/test_LiveSleepStageRunner.cpp
     services/test_MyAirClient.cpp
     services/test_MyAirService.cpp
@@ -155,9 +146,6 @@ set(TEST_SOURCES
     web/test_QueryService_reads.cpp
     scripts/test_PiInstallRuntimeList.cpp
 )
-if(MSVC)
-    list(FILTER TEST_SOURCES EXCLUDE REGEX ".*Fysetc.*")
-endif()
 
 # The supervisor's Qt-free core, compiled straight into run_tests. These files
 # depend on nothing but the standard library, which is the point: the parsing

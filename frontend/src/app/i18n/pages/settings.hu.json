@@ -20,7 +20,6 @@
       "philips": "Philips Respironics (kísérleti)",
       "ezshare": "ezShare WiFi SD-kártya",
       "local": "Helyi könyvtár",
-      "fysetc": "Fysetc",
       "notePre": "Így tudja a CpapDash beolvasni az SD-kártyát. A ResMed myAir nem tartozik ide: csak az egyes éjszakák összegzését adja vissza, nem azokat a felvételeket, amelyekből a diagramok és a jelentések készülnek. Csatlakoztatni ettől még lehet, lentebb a",
       "notePost": "résznél, hogy a ResMed számai a CpapDash számai mellett is látszódjanak.",
       "ezshareUrl": "ezShare URL",
@@ -30,15 +29,6 @@
       "archiveMissing": "Nincs beállítva. A {{device}} olyan fájlokat tölt le, amelyeknek kell egy hely, ahová leérkezzenek, így semmi sem kerül lemezre: az OSCAR-nak nincs mit importálnia, a SleepHQ-exportálás pedig blokkolva marad. A már összegyűjtött éjszakák biztonságban vannak az adatbázisban, és itt a megszokott módon jelennek meg.",
       "archiveHintLocal": "Helyi mappa esetén ide semmi sem másolódik: a mappája már maga a kártya, ezért az OSCAR kártyaimportját arra állítsa. Ez a mappa a jelentésekhez és a SleepHQ-exporthoz kell, és üresen hagyható.",
       "archiveHint": "Ide íródnak az összegyűjtött éjszakák, kártyaelrendezésben (az STR.edf és a DATALOG/ egymás mellett). Az OSCAR kártyaimportját erre a mappára irányítsa. Windowson használjon perjelet, például C:/Users/on/CPAPData"
-    },
-    "fysetc": {
-      "heading": "Fysetc TCP",
-      "enabled": "Bekapcsolva",
-      "listenPort": "Figyelt port",
-      "listenAddress": "Figyelt cím",
-      "timeout": "Kapcsolat időkorlátja (másodperc)",
-      "archiveDir": "Újraépített kártya könyvtára",
-      "logDir": "Naplókönyvtár"
     },
     "logging": {
       "heading": "Támogatási napló",
@@ -267,7 +257,6 @@
         "sleephq": "a SleepHQ beállításai",
         "agent": "az ügynök beállításai",
         "sleepStage": "az alvásfázis beállításai",
-        "fysetc": "a Fysetc beállításai",
         "logging": "a támogatási napló beállításai",
         "database": "az adatbázis beállításai",
         "deviceId": "az eszközazonosító"

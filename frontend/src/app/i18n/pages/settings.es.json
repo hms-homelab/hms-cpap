@@ -20,7 +20,6 @@
       "philips": "Philips Respironics (experimental)",
       "ezshare": "SD WiFi ezShare",
       "local": "Directorio local",
-      "fysetc": "Fysetc",
       "notePre": "Estas son las formas en que CpapDash lee tu tarjeta SD. ResMed myAir no es una de ellas: solo informa un resumen de cada noche, no las grabaciones con las que se construyen los gráficos y los informes. Aun así puedes conectarlo, en",
       "notePost": "más abajo, para comparar los números de ResMed con los de CpapDash.",
       "ezshareUrl": "URL de ezShare",
@@ -30,15 +29,6 @@
       "archiveMissing": "Sin definir. Tu {{device}} descarga archivos que necesitan un lugar donde aterrizar, así que no se está escribiendo nada en el disco: OSCAR no tiene nada que importar y la exportación a SleepHQ queda bloqueada. Las noches ya recogidas están a salvo en la base de datos y aparecen aquí con normalidad.",
       "archiveHintLocal": "Con una carpeta local aquí no se copia nada: tu carpeta ya es la tarjeta, así que apunta la importación de OSCAR a ella. Esta carpeta se usa para los informes y para el envío a SleepHQ, y puede quedar vacía.",
       "archiveHint": "Dónde se escriben las noches recogidas, con la disposición de una tarjeta (STR.edf y DATALOG/ uno junto al otro). Apunta aquí la importación de tarjeta de OSCAR. En Windows usa barras normales, por ejemplo C:/Users/tu/CPAPData"
-    },
-    "fysetc": {
-      "heading": "Fysetc TCP",
-      "enabled": "Activado",
-      "listenPort": "Puerto de escucha",
-      "listenAddress": "Dirección de escucha",
-      "timeout": "Tiempo de espera de conexión (segundos)",
-      "archiveDir": "Directorio de la tarjeta reconstruida",
-      "logDir": "Directorio de registros"
     },
     "logging": {
       "heading": "Registro de soporte",
@@ -267,7 +257,6 @@
         "sleephq": "los ajustes de SleepHQ",
         "agent": "los ajustes del agente",
         "sleepStage": "los ajustes de fases del sueño",
-        "fysetc": "los ajustes de Fysetc",
         "logging": "los ajustes del registro de soporte",
         "database": "los ajustes de la base de datos",
         "deviceId": "el ID del dispositivo"

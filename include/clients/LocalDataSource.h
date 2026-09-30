@@ -3,7 +3,7 @@
 // SDD-040: the local card root, behind the same interface every other transport
 // answers.
 //
-// IDataSource was already the seam (EzShareClient, FysetcDataSource), but
+// IDataSource was already the seam (EzShareClient), but
 // nothing implemented it for a folder, so the burst grew a second branch that
 // read the filesystem directly. Every local defect this month came out of that
 // split: a night that never closed (SDD-037), history that was never scanned

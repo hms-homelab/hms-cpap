@@ -122,7 +122,6 @@ const FIXTURES = {
     sleep_stage: { enabled: true, model_dir: '', model_version: 'shhs-rf-v1' },
     agent: { enabled: true, embed_model: '', temperature: 0.2, max_iterations: 6 },
     o2ring: { enabled: true, mode: 'ble', mule_url: '' },
-    fysetc: { enabled: true, listen_port: 3333, listen_bind: '0.0.0.0', connection_timeout_s: 30, archive_dir: '', log_dir: '' },
     logging: { enabled: true, file: '', max_mb: 10, keep: 5 },
   },
   'myair/status': { connected: true, username: 'someone@example.com', region: 'EU', poll_minutes: 60 },

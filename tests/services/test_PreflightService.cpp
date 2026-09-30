@@ -259,11 +259,14 @@ TEST(PreflightServiceTest, ADownloadingSourceWithNoArchiveDirectoryIsReported) {
     EXPECT_FALSE(c.remedy.empty()) << "a failure without a remedy is a support ticket";
 }
 
-TEST(PreflightServiceTest, FysetcAlsoNeedsSomewhereToWrite) {
+// The Fysetc source was removed; a config that still names it reads as ez
+// Share, so it still needs somewhere to write.
+TEST(PreflightServiceTest, ARemovedFysetcSourceReadsAsEzShare) {
     AppConfig cfg;
     cfg.source = "fysetc";
     cfg.migrateSource();
     cfg.archive_dir = "";
+    EXPECT_EQ(cfg.transport, "ezshare");
     EXPECT_TRUE(PreflightService::sourceNeedsArchive(cfg.transport));
     EXPECT_FALSE(PreflightService::checkArchiveDir(cfg).ok);
 }
@@ -300,12 +303,12 @@ bool supervisorCopyOfSourceNeedsArchive(const std::string& transport,
                                         const std::string& legacy_source) {
     if (transport.empty())
         return legacy_source == "ezshare" || legacy_source == "fysetc";
-    return transport == "ezshare" || transport == "fysetc";
+    return transport == "ezshare";
 }
 }  // namespace
 
 TEST(PreflightServiceTest, SourceNeedsArchive_MatchesTheSupervisorCopy) {
-    for (const char* t : {"ezshare", "local", "fysetc", "", "notyetinvented"}) {
+    for (const char* t : {"ezshare", "local", "", "notyetinvented"}) {
         EXPECT_EQ(PreflightService::sourceNeedsArchive(t),
                   supervisorCopyOfSourceNeedsArchive(t, ""))
             << "the service and the supervisor disagree about transport '" << t << "'";

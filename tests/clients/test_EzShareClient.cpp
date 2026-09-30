@@ -357,7 +357,7 @@ protected:
     EzShareClient client;
 };
 
-// HTML-entity encoded &lt;DIR&gt; — newer firmware / our Fysetc mule
+// HTML-entity encoded &lt;DIR&gt;: newer firmware, or a bridge's listing
 TEST_F(EzShareParserTest, ParsesHtmlEntityEncodedDIR) {
     std::string html = R"(
 <pre>

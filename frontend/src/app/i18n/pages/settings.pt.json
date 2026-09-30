@@ -20,7 +20,6 @@
       "philips": "Philips Respironics (experimental)",
       "ezshare": "Cartão SD WiFi ezShare",
       "local": "Diretório local",
-      "fysetc": "Fysetc",
       "notePre": "Estas são as formas pelas quais o CpapDash lê o seu cartão SD. O ResMed myAir não é uma delas: ele só informa um resumo de cada noite, não as gravações com que os gráficos e os relatórios são montados. Você ainda pode conectá-lo, em",
       "notePost": "abaixo, para comparar os números da ResMed com os do CpapDash.",
       "ezshareUrl": "URL do ezShare",
@@ -30,15 +29,6 @@
       "archiveMissing": "Não definido. Seu {{device}} baixa arquivos que precisam de um lugar para chegar, então nada está sendo gravado em disco: o OSCAR não tem o que importar e a exportação para o SleepHQ fica bloqueada. As noites já coletadas estão a salvo no banco de dados e aparecem aqui normalmente.",
       "archiveHintLocal": "Com uma pasta local nada é copiado para cá: a sua pasta já é o cartão, então aponte a importação de cartão do OSCAR para ela. Esta pasta serve para os relatórios e para a exportação SleepHQ, e pode ficar vazia.",
       "archiveHint": "Onde as noites coletadas são gravadas, no formato de um cartão (STR.edf e DATALOG/ lado a lado). Aponte a importação de cartão do OSCAR para cá. No Windows use barras normais, por exemplo C:/Users/voce/CPAPData"
-    },
-    "fysetc": {
-      "heading": "Fysetc TCP",
-      "enabled": "Ativado",
-      "listenPort": "Porta de escuta",
-      "listenAddress": "Endereço de escuta",
-      "timeout": "Tempo limite de conexão (segundos)",
-      "archiveDir": "Diretório do cartão reconstruído",
-      "logDir": "Diretório de registros"
     },
     "logging": {
       "heading": "Registro de suporte",
@@ -267,7 +257,6 @@
         "sleephq": "as configurações do SleepHQ",
         "agent": "as configurações do agente",
         "sleepStage": "as configurações de estágios do sono",
-        "fysetc": "as configurações do Fysetc",
         "logging": "as configurações do registro de suporte",
         "database": "as configurações do banco de dados",
         "deviceId": "o ID do dispositivo"

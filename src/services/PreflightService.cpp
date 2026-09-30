@@ -256,7 +256,7 @@ bool PreflightService::sourceNeedsArchive(const std::string& transport) {
     // This used to enumerate VENDOR values -- and was correct for sefam only
     // because nobody had updated it. Every new machine was a chance to get it
     // wrong; now a new machine is a new `format` and this line does not move.
-    return transport == "ezshare" || transport == "fysetc";
+    return transport == "ezshare";
 }
 
 PreflightService::Check PreflightService::checkArchiveDir(const AppConfig& cfg) {

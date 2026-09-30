@@ -95,7 +95,7 @@ public:
 
     /// Is there somewhere to put the files a downloading source produces?
     ///
-    /// ezShare and Fysetc hand over raw files that have to land on disk before
+    /// ezShare hands over raw files that have to land on disk before
     /// anything can read them. `local` and `lowenstein` read in place and need
     /// no archive at all, so this is a per-source question rather than a global
     /// one.
@@ -114,7 +114,7 @@ public:
     static Check checkArchiveDir(const AppConfig& cfg);
 
     /// True when this source downloads files that must be written somewhere,
-    /// i.e. ezShare or Fysetc. Shared so the check and its callers cannot
+    /// i.e. ezShare. Shared so the check and its callers cannot
     /// disagree about which sources need an archive.
     /// SDD-022: takes a TRANSPORT, not a vendor. Kept as one function with one
     /// hand-written duplicate in desktop/qt/core/pure/FieldSpec.cpp, which the

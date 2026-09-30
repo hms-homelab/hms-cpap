@@ -40,11 +40,11 @@ echo "== Building run_tests =="
 cmake --build "$BUILD_DIR" --target run_tests -j"$(nproc)" >/dev/null
 
 # Networking/threaded E2E suites are flaky under -O0 --coverage instrumentation
-# (timing races; FysetcTcpServer can segfault, which skips gcov's exit handler
-# and discards ALL .gcda data). Exclude them so the baseline is reproducible.
+# (timing races; a crash skips gcov's exit handler and discards ALL .gcda
+# data). Exclude them so the baseline is reproducible.
 # They still run in the normal CI test step — this only affects the coverage run.
 # Override with COVERAGE_GTEST_FILTER to measure a different slice.
-DEFAULT_EXCLUDE='-FysetcTcpServerTest.*:FysetcLifecycle.*:FysetcCollectorTest.*:MqttClientTest.*:STRMqttIntegrationTest.*:SummaryRegenerationE2ETest.*'
+DEFAULT_EXCLUDE='-MqttClientTest.*:STRMqttIntegrationTest.*:SummaryRegenerationE2ETest.*'
 GTEST_FILTER_ARG="${COVERAGE_GTEST_FILTER:-$DEFAULT_EXCLUDE}"
 echo "== Resetting counters and running tests =="
 echo "   (excluded from coverage run: ${GTEST_FILTER_ARG})"
@@ -77,18 +77,11 @@ lcov --directory "$BUILD_DIR" --capture --output-file "$OUT_DIR/coverage.raw" \
 # and FetchContent deps so the number reflects code we actually own.
 lcov --extract "$OUT_DIR/coverage.raw" "$PROJECT_DIR/src/*" \
      --output-file "$OUT_DIR/coverage.info" $LCOV_FLAGS >/dev/null
-# Also exclude the Fysetc raw-sector-over-TCP transport layer from the coverage
-# DENOMINATOR. These are pure hardware/network I/O glue: a raw TCP server that
-# segfaults under -O0 --coverage instrumentation, plus the sector collector +
-# data-source that only function against a live socket. They are exercised by
-# integration tests, not unit tests (FysetcTcpServerTest etc. are already
-# filtered out of this run for the same reason). Documented exclusion, not a
-# silent cap — the metric reflects unit-testable code we own.
+# Also exclude pure network I/O glue from the coverage DENOMINATOR (below).
+# Documented exclusion, not a silent cap: the metric reflects unit-testable
+# code we own.
 lcov --remove "$OUT_DIR/coverage.info" \
      "$PROJECT_DIR/build*/*" "*/_deps/*" "*/tests/*" \
-     "*/clients/FysetcTcpServer.cpp" \
-     "*/services/FysetcSectorCollectorService.cpp" \
-     "*/clients/FysetcDataSource.cpp" \
      "*/services/SleepHqClient.cpp" \
      "*/services/SleepHqExportService.cpp" \
      "*/clients/EzShareClient.cpp" \
@@ -96,8 +89,8 @@ lcov --remove "$OUT_DIR/coverage.info" \
      --output-file "$OUT_DIR/coverage.info" $LCOV_FLAGS >/dev/null
 # SleepHqClient/SleepHqExportService are pure SleepHQ network I/O (OAuth +
 # multipart upload of a night's files); EzShareClient is the libcurl HTTP client
-# for the ezShare WiFi SD card. Same exclusion rationale as the Fysetc transport
-# above — exercised by integration/live paths, not unit tests.
+# for the ezShare WiFi SD card. Exercised by integration/live paths, not unit
+# tests.
 #
 # MyAirClient is the same shape again and is listed for the same reason: an
 # OAuth client against ResMed's Okta tenant, where the only way to cover the

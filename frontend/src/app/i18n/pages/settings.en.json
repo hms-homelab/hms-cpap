@@ -20,7 +20,6 @@
       "philips": "Philips Respironics (experimental)",
       "ezshare": "ezShare WiFi SD",
       "local": "Local Directory",
-      "fysetc": "Fysetc",
       "notePre": "These are the ways CpapDash reads your SD card. ResMed myAir is not one of them: it only reports a summary of each night, not the recordings the charts and reports are built from. You can still connect it, under",
       "notePost": "below, to compare ResMed's numbers against CpapDash's.",
       "ezshareUrl": "ezShare URL",
@@ -30,15 +29,6 @@
       "archiveMissing": "Not set. Your {{device}} downloads files that need somewhere to land, so nothing is being written to disk: OSCAR has nothing to import and SleepHQ export stays blocked. Nights already collected are safe in the database and appear here as normal.",
       "archiveHint": "Where collected nights are written, as a card layout (STR.edf and DATALOG/ side by side). Point OSCAR's card import here. Use forward slashes on Windows, e.g. C:/Users/you/CPAPData",
       "archiveHintLocal": "With a local folder nothing is copied here: your folder is already the card, so point OSCAR's card import at it. This folder is used for reports and the SleepHQ export, and may be left empty."
-    },
-    "fysetc": {
-      "heading": "Fysetc TCP",
-      "enabled": "Enabled",
-      "listenPort": "Listen Port",
-      "listenAddress": "Listen Address",
-      "timeout": "Connection Timeout (seconds)",
-      "archiveDir": "Reconstructed Card Directory",
-      "logDir": "Log Directory"
     },
     "logging": {
       "heading": "Support Log",
@@ -267,7 +257,6 @@
         "sleephq": "SleepHQ settings",
         "agent": "agent settings",
         "sleepStage": "sleep stage settings",
-        "fysetc": "Fysetc settings",
         "logging": "support log settings",
         "database": "database settings",
         "deviceId": "the device ID"

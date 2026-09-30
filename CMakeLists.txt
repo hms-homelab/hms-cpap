@@ -310,9 +310,6 @@ file(GLOB_RECURSE SOURCES "src/*.cpp")
 # CLI binaries have their own main() — exclude from main executable
 list(FILTER SOURCES EXCLUDE REGEX ".*/cli/.*\\.cpp$")
 if(MSVC)
-    list(FILTER SOURCES EXCLUDE REGEX ".*/FysetcTcpServer\\.cpp$")
-    list(FILTER SOURCES EXCLUDE REGEX ".*/FysetcDataSource\\.cpp$")
-    list(FILTER SOURCES EXCLUDE REGEX ".*/FysetcSectorCollectorService\\.cpp$")
     # PDF/report/gnuplot not available on Windows
     list(FILTER SOURCES EXCLUDE REGEX ".*/PdfRenderer\\.cpp$")
     list(FILTER SOURCES EXCLUDE REGEX ".*/GnuplotService\\.cpp$")

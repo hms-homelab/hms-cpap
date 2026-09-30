@@ -5,7 +5,7 @@
  * serves it is excluded from this test binary (tests/CMakeLists.txt filters
  * src/controllers/ and src/web/ out of PROJECT_SOURCES), so the decision it
  * makes deliberately lives in BurstCollectorService::decideSyncNow as a pure
- * static, shaped after the existing decideFysetcLifecycle. That is what these
+ * static. That is what these
  * tests drive.
  *
  * The state machine is small but the ordering behind it is not obvious, so

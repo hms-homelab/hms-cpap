@@ -29,7 +29,7 @@ struct AppConfig {
     // `source` is still READ for migration and still WRITTEN for one release,
     // so an upgrade that gets rolled back does not strand the user. See
     // migrateSource() below, which is the ONLY place the mapping lives.
-    std::string transport = "ezshare";  // ezshare | local | fysetc
+    std::string transport = "ezshare";  // ezshare | local
     std::string format    = "resmed";   // resmed | lowenstein | sefam | philips
 
     /// LEGACY. Kept so a config written by an older build still loads, and so
@@ -59,14 +59,25 @@ struct AppConfig {
     static std::string transportForSource(const std::string& src) {
         if (src == "lowenstein" || src == "sefam" || src == "philips" || src == "local")
             return "local";
-        if (src == "fysetc")  return "fysetc";
+        if (src == "fysetc") return supportedTransport(src);   // removed: says so
         return "ezshare";   // ezshare, and anything unknown
     }
     static std::string formatForSource(const std::string& src) {
         if (src == "lowenstein") return "lowenstein";
         if (src == "sefam")      return "sefam";
         if (src == "philips")    return "philips";
-        return "resmed";    // local, ezshare, fysetc, and anything unknown
+        return "resmed";    // local, ezshare, and anything unknown
+    }
+
+    /// The Fysetc raw-sector source was removed. A config or environment that
+    /// still names it reads as the default, ez Share, the way any transport
+    /// this build does not have does, and says so where it is read, so the
+    /// service starts instead of failing on a source that is gone.
+    static std::string supportedTransport(const std::string& t) {
+        if (t != "fysetc") return t;
+        std::cerr << "Config: the Fysetc source has been removed; using ez Share instead. "
+                     "Choose the source in Settings." << std::endl;
+        return "ezshare";
     }
 
     /// The reverse, for the compatibility write (migration rule 3) and for
@@ -79,7 +90,7 @@ struct AppConfig {
             if (format == "philips")    return "philips";
             return "local";
         }
-        return transport;   // ezshare, fysetc
+        return transport;   // ezshare
     }
 
     /// What the collector builds for a transport/format pair, the same answer
@@ -101,7 +112,7 @@ struct AppConfig {
     /// enumerate vendor names, which meant every new machine was a chance to get
     /// it wrong -- and it was already only accidentally right for Sefam.
     bool needsArchive() const {
-        return transport == "ezshare" || transport == "fysetc";
+        return transport == "ezshare";
     }
     std::string ezshare_url = "http://192.168.4.1";
     bool ezshare_range = true;
@@ -196,16 +207,6 @@ struct AppConfig {
         std::string model_version = "shhs-rf-v1";
     } sleep_stage;
 
-    // Fysetc TCP (raw sector push mode)
-    struct Fysetc {
-        bool enabled = false;
-        int listen_port = 9000;
-        std::string listen_bind = "0.0.0.0";
-        int connection_timeout_s = 30;
-        std::string archive_dir;
-        std::string log_dir = "/var/log/maestro_hub";
-    } fysetc;
-
     // Support log. A copy of everything the process prints, kept on disk so a
     // user can send it. On by default: a log that has to be switched on is
     // never on when the thing you needed it for happened.
@@ -298,7 +299,7 @@ struct AppConfig {
         {
             const auto t = env("CPAP_TRANSPORT");
             const auto f = env("CPAP_FORMAT");
-            if (!t.empty()) transport = t;
+            if (!t.empty()) transport = supportedTransport(t);
             if (!f.empty()) format    = f;
         }
         if (ezshare_url.empty()) ezshare_url = env("EZSHARE_BASE_URL");
@@ -367,25 +368,6 @@ struct AppConfig {
         if (agent.embed_model == "nomic-embed-text") {
             auto v = env("AGENT_EMBED_MODEL");
             if (!v.empty()) agent.embed_model = v;
-        }
-
-        // Fysetc TCP
-        if (!fysetc.enabled && env("FYSETC_ENABLED") == "true")
-            fysetc.enabled = true;
-        if (fysetc.listen_port == 9000) {
-            int v = envInt("FYSETC_LISTEN_PORT", 0);
-            if (v > 0) fysetc.listen_port = v;
-        }
-        if (fysetc.archive_dir.empty()) fysetc.archive_dir = env("FYSETC_ARCHIVE_DIR");
-
-        // SDD-006: bridges to the CPAP_ARCHIVE_DIR the burst collector already
-        // reads, so anyone currently setting that env var keeps working.
-        // Deliberately NOT merged with fysetc.archive_dir above: that one is the
-        // raw-sector staging directory for the Fysetc transport and answers a
-        // different question.
-        if (fysetc.log_dir == "/var/log/maestro_hub") {
-            auto v = env("FYSETC_LOG_DIR");
-            if (!v.empty()) fysetc.log_dir = v;
         }
 
         // SleepHQ export
@@ -549,7 +531,8 @@ struct AppConfig {
             // when not. Rule 2: a config carrying BOTH -- written by an older
             // build after a newer one has run -- resolves to the new fields
             // rather than silently reverting to the legacy one.
-            if (j.contains("transport"))    config.transport = j["transport"];
+            if (j.contains("transport"))
+                config.transport = supportedTransport(j["transport"].get<std::string>());
             if (j.contains("format"))       config.format    = j["format"];
             if (!j.contains("transport")) {
                 config.migrateSource();
@@ -618,16 +601,6 @@ struct AppConfig {
                 if (ml.contains("model_dir")) config.ml_training.model_dir = ml["model_dir"];
                 if (ml.contains("min_days"))  config.ml_training.min_days = ml["min_days"];
                 if (ml.contains("max_training_days")) config.ml_training.max_training_days = ml["max_training_days"];
-            }
-
-            if (j.contains("fysetc")) {
-                auto& f = j["fysetc"];
-                if (f.contains("enabled"))            config.fysetc.enabled = f["enabled"];
-                if (f.contains("listen_port"))        config.fysetc.listen_port = f["listen_port"];
-                if (f.contains("listen_bind"))        config.fysetc.listen_bind = f["listen_bind"];
-                if (f.contains("connection_timeout_s")) config.fysetc.connection_timeout_s = f["connection_timeout_s"];
-                if (f.contains("archive_dir"))        config.fysetc.archive_dir = f["archive_dir"];
-                if (f.contains("log_dir"))            config.fysetc.log_dir = f["log_dir"];
             }
 
             if (j.contains("logging")) {
@@ -774,12 +747,6 @@ struct AppConfig {
             j["cpapdash"]["token"] = cpapdash.token;
             j["cpapdash"]["auto_sync"] = cpapdash.auto_sync;
 
-            j["fysetc"]["enabled"] = fysetc.enabled;
-            j["fysetc"]["listen_port"] = fysetc.listen_port;
-            j["fysetc"]["listen_bind"] = fysetc.listen_bind;
-            j["fysetc"]["connection_timeout_s"] = fysetc.connection_timeout_s;
-            j["fysetc"]["archive_dir"] = fysetc.archive_dir;
-            j["fysetc"]["log_dir"] = fysetc.log_dir;
             j["logging"]["enabled"] = logging.enabled;
             j["logging"]["file"]    = logging.file;
             j["logging"]["max_mb"]  = logging.max_mb;
@@ -921,12 +888,6 @@ struct AppConfig {
         j["cpapdash"]["token"] = cpapdash.token.empty() ? "" : "********";
         j["cpapdash"]["auto_sync"] = cpapdash.auto_sync;
 
-        j["fysetc"]["enabled"] = fysetc.enabled;
-        j["fysetc"]["listen_port"] = fysetc.listen_port;
-        j["fysetc"]["listen_bind"] = fysetc.listen_bind;
-        j["fysetc"]["connection_timeout_s"] = fysetc.connection_timeout_s;
-        j["fysetc"]["archive_dir"] = fysetc.archive_dir;
-        j["fysetc"]["log_dir"] = fysetc.log_dir;
         j["logging"]["enabled"] = logging.enabled;
         j["logging"]["file"]    = logging.file;
         j["logging"]["max_mb"]  = logging.max_mb;

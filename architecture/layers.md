@@ -96,7 +96,7 @@ The behaviour lives here. Grouped by what they do:
 
 **Collecting from the machine**
 - `BurstCollectorService`: the collection loop. Every burst it lists the source
-  (ezShare over WiFi, a local card root, Fysetc sectors, Lowenstein, Sefam),
+  (ezShare over WiFi, a local card root, Lowenstein, Sefam),
   downloads what changed, parses, stores, updates the folder ledger, writes the
   STR history, derives the daily summary, publishes to MQTT, and imports the
   ring's `.vld` files beside the card. Owns `OximetryService`. Its archive
@@ -119,8 +119,6 @@ The behaviour lives here. Grouped by what they do:
 - `CardUpload`: an uploaded zip read by its files (ResMed, Sefam, Löwenstein).
   A Sefam or Löwenstein card is kept under `<data_dir>/uploads/<format>/` and
   every session not yet stored is imported, on the backfill worker (SDD-031).
-- `FysetcSectorCollectorService`: rebuilds files from raw SD sectors streamed
-  by the Fysetc bridge, grouped by `SessionDiscoveryService::groupFiles`.
 - `BackfillService`: re-reads a date range from the archive (the per-session
   Reparse and the Backfill page use it), and runs an uploaded card's import.
 - `OximetryService` (the ring's live pull through the mule), `OximetryImport`
@@ -192,11 +190,11 @@ itself is wiring.
 
 ## 6. Parsers and clients
 
-- `src/parsers/`: `Fat32Parser` (the Fysetc sector path). EDF, STR, VLD,
+- `src/parsers/`: EDF, STR, VLD,
   Lowenstein and Sefam parsing is in `cpapdash-parser`; this repo's
   `EDFParser.cpp` is excluded from the build for that reason.
 - `src/clients/`: the transports. `EzShareClient` (the ezShare card over WiFi,
-  through the hms-mm bridge), `FysetcTcpServer` / `FysetcDataSource`, `O2RingClient` (HTTP to
+  through the hms-mm bridge), `LocalDataSource` (a card root on disk), `O2RingClient` (HTTP to
   the ring mule) and `O2RingBleClient` (BlueZ). `IDataSource` and
   `IO2RingClient` are the seams the tests mock.
 

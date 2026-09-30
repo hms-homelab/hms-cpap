@@ -37,12 +37,11 @@ import { AppConfig } from '../../models/config.model';
                       (ngModelChange)="onTransportChange($event)">
                 <option value="ezshare">{{ 'settings.source.ezshare' | translate }}</option>
                 <option value="local">{{ 'settings.source.local' | translate }}</option>
-                <option value="fysetc">{{ 'settings.source.fysetc' | translate }}</option>
               </select>
             </label>
             <!-- A folder takes every format. An ez Share takes ResMed and, since
                  SDD-031, a Sefam S.Box card in its slot; not a Löwenstein, which
-                 answers the ez Share with error 601. Fysetc is ResMed-only. -->
+                 answers the ez Share with error 601. -->
             <label *ngIf="config.transport === 'local'">
               {{ 'settings.source.format' | translate }}
               <select [(ngModel)]="config.format" name="format">
@@ -98,7 +97,7 @@ import { AppConfig } from '../../models/config.model';
               <!-- The device name is interpolated rather than concatenated, so
                    a language can put it anywhere in the sentence. -->
               <small class="hint warn" *ngIf="archiveDirMissing()">
-                {{ 'settings.source.archiveMissing' | translate:{ device: config.transport === 'fysetc' ? 'Fysetc' : 'Mule and Miner' } }}
+                {{ 'settings.source.archiveMissing' | translate:{ device: 'Mule and Miner' } }}
               </small>
               <!-- SDD-037 D3 (ticket 129): a local source reads the folder it
                    was given and copies nothing, so the "nights are written
@@ -109,43 +108,6 @@ import { AppConfig } from '../../models/config.model';
                 {{ (config.transport === 'local' ? 'settings.source.archiveHintLocal'
                                                  : 'settings.source.archiveHint') | translate }}
               </small>
-            </label>
-          </div>
-        </div>
-
-        <!-- Section: Fysetc (raw SD sector push). Shown only for its own source,
-             which is also what makes that source configurable at all. -->
-        <div class="section" *ngIf="config.transport === 'fysetc'">
-          <div class="section-header" (click)="toggle('fysetc')">
-            <span class="chevron" [class.open]="open['fysetc']">&#9654;</span>
-            {{ 'settings.fysetc.heading' | translate }}
-            <span class="restart-tag">{{ 'settings.tag.restart' | translate }}</span>
-          </div>
-          <div class="section-body" *ngIf="open['fysetc']">
-            <label class="toggle-row">
-              <input type="checkbox" [(ngModel)]="config.fysetc.enabled" name="fysetc_enabled" />
-              {{ 'settings.fysetc.enabled' | translate }}
-            </label>
-            <label>
-              {{ 'settings.fysetc.listenPort' | translate }}
-              <input type="number" [(ngModel)]="config.fysetc.listen_port" name="fysetc_listen_port" />
-            </label>
-            <label>
-              {{ 'settings.fysetc.listenAddress' | translate }}
-              <input type="text" [(ngModel)]="config.fysetc.listen_bind" name="fysetc_listen_bind"
-                     placeholder="0.0.0.0" />
-            </label>
-            <label>
-              {{ 'settings.fysetc.timeout' | translate }}
-              <input type="number" [(ngModel)]="config.fysetc.connection_timeout_s" name="fysetc_timeout" />
-            </label>
-            <label>
-              {{ 'settings.fysetc.archiveDir' | translate }}
-              <input type="text" [(ngModel)]="config.fysetc.archive_dir" name="fysetc_archive_dir" />
-            </label>
-            <label>
-              {{ 'settings.fysetc.logDir' | translate }}
-              <input type="text" [(ngModel)]="config.fysetc.log_dir" name="fysetc_log_dir" />
             </label>
           </div>
         </div>
@@ -1293,7 +1255,6 @@ export class SettingsComponent implements OnInit, OnDestroy {
 
   open: Record<string, boolean> = {
     source: true,
-    fysetc: false,
     logging: false,
     o2ring: false,
     sleephq: false,
@@ -1350,7 +1311,6 @@ export class SettingsComponent implements OnInit, OnDestroy {
     ['sleephq', 'settings.restart.key.sleephq'],
     ['agent', 'settings.restart.key.agent'],
     ['sleep_stage', 'settings.restart.key.sleepStage'],
-    ['fysetc', 'settings.restart.key.fysetc'],
     ['logging', 'settings.restart.key.logging'],
     ['database', 'settings.restart.key.database'],
     // SDD-042: the id every night is stored and read under. A live switch moved
@@ -1394,11 +1354,6 @@ export class SettingsComponent implements OnInit, OnDestroy {
         if (!cfg.sleep_stage) {
           cfg.sleep_stage = { enabled: false, live_inference: true,
                               model_dir: '', model_version: 'shhs-rf-v1' };
-        }
-        if (!cfg.fysetc) {
-          cfg.fysetc = { enabled: false, listen_port: 9000, listen_bind: '0.0.0.0',
-                         connection_timeout_s: 30, archive_dir: '',
-                         log_dir: '/var/log/maestro_hub' };
         }
         if (!cfg.logging) {
           cfg.logging = { enabled: true, file: '', max_mb: 5, keep: 3 };
@@ -1557,14 +1512,14 @@ export class SettingsComponent implements OnInit, OnDestroy {
    * Does the selected source download files that have to be written somewhere?
    *
    * Mirrors PreflightService::sourceNeedsArchive. local and lowenstein read
-   * files already on disk; ezShare and Fysetc receive them over the network.
+   * files already on disk; ezShare receives them over the network.
    */
   sourceNeedsArchive(): boolean {
     // The transport, which the picker above edits; the legacy `source` only
     // catches up on save. SDD-031: a Sefam card behind an ez Share is copied
     // into this folder, so it needs one exactly as a ResMed card does.
     const t = this.config?.transport ?? this.config?.source;
-    return t === 'ezshare' || t === 'fysetc';
+    return t === 'ezshare';
   }
 
   /** SDD-031: an ez Share reads ResMed or Sefam; any other format goes back to ResMed. */

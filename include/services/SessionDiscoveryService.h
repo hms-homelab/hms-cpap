@@ -80,7 +80,7 @@ public:
     /**
      * THE grouping: one date folder's listing into sessions. Every path that
      * turns a folder into sessions comes here, whatever read the listing (an
-     * ez Share, a local folder, the Fysetc bridge's FAT), so a folder groups
+     * ez Share or a local folder), so a folder groups
      * the same way whichever way it arrived.
      *
      * The BRP/PLD/SAD checkpoints split into mask-on stretches wherever the

@@ -98,8 +98,8 @@ void BurstCollectorService::initDataSource() {
     // or environment carrying only CPAP_SOURCE maps through the SAME table
     // AppConfig uses, never a copy of it.
     const std::string legacy   = ConfigManager::get("CPAP_SOURCE", "ezshare");
-    const std::string transport = ConfigManager::get(
-        "CPAP_TRANSPORT", AppConfig::transportForSource(legacy));
+    const std::string transport = AppConfig::supportedTransport(ConfigManager::get(
+        "CPAP_TRANSPORT", AppConfig::transportForSource(legacy)));
     const std::string format = ConfigManager::get(
         "CPAP_FORMAT", AppConfig::formatForSource(legacy));
 
@@ -151,12 +151,6 @@ void BurstCollectorService::initDataSource() {
         std::cout << "CPAP: Sefam S.Box mode — reading from " << data_dir << std::endl;
     } else if (source == "sefam_ezshare") {
         startSefamOverEzShare(ConfigManager::get("CPAP_ARCHIVE_DIR", ""));
-    } else if (source == "fysetc") {
-#ifndef _WIN32
-        startFysetcServer();
-        data_source_ = std::make_unique<FysetcDataSource>(*fysetc_server_);
-        discovery_service_ = std::make_unique<SessionDiscoveryService>(*data_source_);
-#endif
     } else {
         auto ez = std::make_unique<EzShareClient>();
         if (app_config_ && !app_config_->ezshare_range) {
@@ -886,9 +880,9 @@ bool BurstCollectorService::processSTRFile() {
                 return false;
             }
         } else {
-            // ezShare/Fysetc mode: download from SD card root.
+            // ezShare mode: download from SD card root.
             //
-            // Only those two build a data_source_. A format that ingests off a
+            // Only the network sources build a data_source_ here. A format that ingests off a
             // directory (lowenstein, sefam) leaves it null, and reaching here
             // with it null used to segfault the collector thread mid-cycle —
             // taking the whole service down on a card that had just parsed
@@ -1409,7 +1403,7 @@ bool BurstCollectorService::executeBurstCycle() {
     }
 
     // Step 2-5: Discover sessions and prepare for parsing
-    // Four modes: ezShare (HTTP), fysetc (TCP raw sectors), local filesystem, or Lowenstein Prisma
+    // Modes: ezShare (HTTP), local filesystem, Lowenstein Prisma, or Sefam
     std::vector<SessionFileSet> new_sessions;
     std::vector<std::pair<std::string, SessionFileSet>> downloaded_sessions;
     auto download_start = std::chrono::steady_clock::now();
@@ -1666,8 +1660,8 @@ bool BurstCollectorService::executeBurstCycle() {
             std::cout << "CPAP: Accessing ez Share at "
                       << ConfigManager::get("EZSHARE_BASE_URL", "http://192.168.4.1") << std::endl;
         } else {
-            // Fysetc streams sectors over TCP; it is not an ez Share, and saying
-            // so sent a user looking for HTTP calls that were never made.
+            // Not an ez Share: naming one here would send a user looking for
+            // HTTP calls that were never made.
             std::cout << "CPAP: Reading from " << cpap_source_ << std::endl;
         }
 
@@ -3249,18 +3243,6 @@ void BurstCollectorService::reloadConfig() {
     if (nc.source != last_config_.source || nc.ezshare_url != last_config_.ezshare_url ||
         nc.local_dir != last_config_.local_dir ||
         (nc.source == "sefam_ezshare" && nc.archive_dir != last_config_.archive_dir)) {
-#ifndef _WIN32
-        auto action = decideFysetcLifecycle(last_config_.source, nc.source,
-                                            fysetc_server_ != nullptr);
-        if (action == FysetcLifecycleAction::Stop) {
-            // Drop the data_source_ before destroying the server — FysetcDataSource
-            // holds a reference to *fysetc_server_.
-            data_source_.reset();
-            discovery_service_.reset();
-            stopFysetcServer();
-        }
-
-#endif
         sefam_over_ezshare_ = false;
         if (nc.source == "sefam_ezshare") {
 #ifdef _WIN32
@@ -3296,19 +3278,6 @@ void BurstCollectorService::reloadConfig() {
             discovery_service_ = std::make_unique<SessionDiscoveryService>(*data_source_);
             prisma_ingestion_.reset();
             sefam_ingestion_.reset();
-        } else if (nc.source == "fysetc") {
-            local_source_dir_.clear();
-            prisma_ingestion_.reset();
-            sefam_ingestion_.reset();
-#ifndef _WIN32
-            if (action == FysetcLifecycleAction::Start) {
-                startFysetcServer();
-            }
-            if (fysetc_server_) {
-                data_source_ = std::make_unique<FysetcDataSource>(*fysetc_server_);
-                discovery_service_ = std::make_unique<SessionDiscoveryService>(*data_source_);
-            }
-#endif
         } else {
             local_source_dir_.clear();
             prisma_ingestion_.reset();
@@ -3523,11 +3492,6 @@ void BurstCollectorService::setupMqttSubscriptions() {
         [](const std::string&, const std::string&) {}, 1);
 }
 
-// Deliberately OUTSIDE the #ifndef _WIN32 below. That guard exists for the
-// Fysetc TCP server, which is POSIX-only; sync-now has nothing to do with it.
-// Living inside it made requestSyncNow and syncNowOutcomeString vanish on
-// MSVC, and CpapController failed to link with LNK2019. The unit tests could
-// not catch it: they only ever ran where the guard was satisfied.
 // ── SDD-005: sync now ────────────────────────────────────────────────────
 //
 // The ordering that makes this correct lives in runLoop(): the pending flag is
@@ -3564,49 +3528,6 @@ const char* BurstCollectorService::syncNowOutcomeString(SyncNowOutcome outcome) 
     return "unknown";
 }
 
-#ifndef _WIN32
-BurstCollectorService::FysetcLifecycleAction
-BurstCollectorService::decideFysetcLifecycle(const std::string& old_source,
-                                             const std::string& new_source,
-                                             bool server_exists) {
-    if (new_source == "fysetc" && !server_exists) return FysetcLifecycleAction::Start;
-    if (old_source == "fysetc" && new_source != "fysetc" && server_exists)
-        return FysetcLifecycleAction::Stop;
-    return FysetcLifecycleAction::None;
-}
-
-
-void BurstCollectorService::startFysetcServer() {
-    if (fysetc_server_) return;  // idempotent
-
-    int port = std::stoi(ConfigManager::get("FYSETC_LISTEN_PORT", "9000"));
-    std::string bind = ConfigManager::get("FYSETC_LISTEN_BIND", "0.0.0.0");
-
-    fysetc_server_ = std::make_unique<FysetcTcpServer>(port, bind);
-    fysetc_server_->setLogCallback([](fysetc::LogLevel level, const std::string& tag,
-                                       const std::string& msg) {
-        const char* lvl_str = "?";
-        switch (level) {
-            case fysetc::LogLevel::ERR:  lvl_str = "E"; break;
-            case fysetc::LogLevel::WARN: lvl_str = "W"; break;
-            case fysetc::LogLevel::INFO: lvl_str = "I"; break;
-            case fysetc::LogLevel::DEBUG: lvl_str = "D"; break;
-            default: break;
-        }
-        std::cout << "Fysetc[" << lvl_str << "] " << tag << ": " << msg << std::endl;
-    });
-    fysetc_server_->start();
-    std::cout << "CPAP: Fysetc TCP mode — listening on " << bind << ":" << port << std::endl;
-}
-
-void BurstCollectorService::stopFysetcServer() {
-    if (!fysetc_server_) return;
-    fysetc_server_->stop();
-    fysetc_server_.reset();
-    std::cout << "CPAP: Fysetc TCP server stopped" << std::endl;
-}
-
-#endif // _WIN32
 
 void BurstCollectorService::markUnparsedNightsForExport() {
     namespace fs = std::filesystem;

@@ -1,7 +1,7 @@
 export interface AppConfig {
   device_id: string;
   device_name: string;
-  /** SDD-022: WHERE files come from. ezshare | local | fysetc */
+  /** SDD-022: WHERE files come from. ezshare | local */
   transport: string;
   /** SDD-022: WHAT wrote them. resmed | lowenstein | sefam | philips */
   format: string;
@@ -86,15 +86,6 @@ export interface AppConfig {
     live_inference: boolean;
     model_dir: string;
     model_version: string;
-  };
-  /** Raw SD sector push mode. Shown only when source === 'fysetc'. */
-  fysetc: {
-    enabled: boolean;
-    listen_port: number;
-    listen_bind: string;
-    connection_timeout_s: number;
-    archive_dir: string;
-    log_dir: string;
   };
   /**
    * Support log. A copy of everything the service prints, kept on disk so a

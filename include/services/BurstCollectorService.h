@@ -2,12 +2,6 @@
 
 #include "clients/IDataSource.h"
 #include "clients/EzShareClient.h"
-#ifndef _WIN32
-#include "clients/FysetcTcpServer.h"
-#endif
-#ifndef _WIN32
-#include "clients/FysetcDataSource.h"
-#endif
 #include "llm_client.h"
 #include "parsers/CpapdashBridge.h"
 #include "services/DataPublisherService.h"
@@ -142,17 +136,6 @@ public:
     bool forceCompleteSession(const std::string& sleep_day);
     bool generateSummaryForDate(const std::string& sleep_day);
 
-    /// Lifecycle decision for the Fysetc TCP listener on a source change.
-    enum class FysetcLifecycleAction { None, Start, Stop };
-
-    /// Pure decision: what to do with the fysetc TCP server when source changes.
-    /// Start when switching into fysetc mode without a live server.
-    /// Stop when switching out of fysetc mode with a live server.
-    static FysetcLifecycleAction decideFysetcLifecycle(
-        const std::string& old_source,
-        const std::string& new_source,
-        bool server_exists);
-
     // ── SDD-005: sync now ────────────────────────────────────────────────
     /// What a "sync now" request did.
     enum class SyncNowOutcome {
@@ -162,8 +145,7 @@ public:
         NotRunning         ///< worker is stopped; nothing to wake
     };
 
-    /// Pure decision, deliberately shaped like decideFysetcLifecycle above.
-    /// The test binary excludes controllers/ and web/ (tests/CMakeLists.txt),
+    /// Pure decision. The test binary excludes controllers/ and web/ (tests/CMakeLists.txt),
     /// so the only way sync-now is unit-testable at all is if the reasoning
     /// lives here, in a function that touches no thread and no socket.
     static SyncNowOutcome decideSyncNow(bool service_running,
@@ -321,7 +303,7 @@ private:
     /// contract, and reaching up out of DATALOG to find STR is the bug SDD-010
     /// removes. Use datalogDirFor() to get the session folders beneath it.
     std::string local_source_dir_;
-    std::string cpap_source_;       // "ezshare", "local", "fysetc", or "lowenstein"
+    std::string cpap_source_;       // "ezshare", "local", "lowenstein", or "sefam"
 
     /// SDD-028: what the card-folder .vld scan remembers between bursts: each
     /// file's size and modified time when stored or refused, so a changed file
@@ -345,7 +327,7 @@ private:
     /// line forever is how real signal gets buried (see FailureLogThrottle).
     FailureLogThrottle local_layout_log_;
 
-    // Data source (ezShare HTTP or Fysetc TCP — both implement IDataSource)
+    // Data source (ezShare HTTP or a local folder, both behind IDataSource)
     std::unique_ptr<IDataSource> data_source_;
     std::unique_ptr<PrismaIngestion> prisma_ingestion_;
     std::unique_ptr<SefamIngestion> sefam_ingestion_;
@@ -356,9 +338,6 @@ private:
     bool sefam_over_ezshare_ = false;
     std::string sefam_archive_dir_;
     void startSefamOverEzShare(const std::string& archive_dir);
-    #ifndef _WIN32
-    std::unique_ptr<FysetcTcpServer> fysetc_server_;
-#endif
 
     // Services
     std::unique_ptr<SessionDiscoveryService> discovery_service_;
@@ -792,12 +771,6 @@ private:
     void snapshotConfig(ConfigSnapshot& snap);
     /// (Re)create MQTT subscriptions for commands
     void setupMqttSubscriptions();
-    /// Create and start fysetc_server_ (idempotent; reads port/bind from env)
-    #ifndef _WIN32
-    void startFysetcServer();
-    #endif
-    /// Stop and destroy fysetc_server_ (safe to call when null)
-    void stopFysetcServer();
 
     /// Subsystem init helpers — called from initialize()
     void initDataSource();
