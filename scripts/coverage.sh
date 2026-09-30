@@ -46,6 +46,30 @@ cmake --build "$BUILD_DIR" --target run_tests -j"$(nproc)" >/dev/null
 # Override with COVERAGE_GTEST_FILTER to measure a different slice.
 DEFAULT_EXCLUDE='-MqttClientTest.*:STRMqttIntegrationTest.*:SummaryRegenerationE2ETest.*'
 GTEST_FILTER_ARG="${COVERAGE_GTEST_FILTER:-$DEFAULT_EXCLUDE}"
+# The live-broker tests publish retained Home Assistant topics, so they run
+# against a THROWAWAY broker, never whatever answers on localhost:1883 (on the
+# hub that is the house's real broker). tests/TestBroker.h reads HMS_TEST_MQTT;
+# without it those tests skip, and their lines drop out of the numerator.
+BROKER_PID=""
+if [[ -z "${HMS_TEST_MQTT:-}" ]]; then
+    MOSQUITTO="$(command -v mosquitto || ls /usr/sbin/mosquitto /opt/homebrew/sbin/mosquitto 2>/dev/null | head -1 || true)"
+    if [[ -n "$MOSQUITTO" ]]; then
+        TEST_MQTT_PORT="${TEST_MQTT_PORT:-18830}"
+        "$MOSQUITTO" -p "$TEST_MQTT_PORT" >/dev/null 2>&1 &
+        BROKER_PID=$!
+        trap 'kill "$BROKER_PID" 2>/dev/null || true' EXIT
+        sleep 1
+        if kill -0 "$BROKER_PID" 2>/dev/null; then
+            export HMS_TEST_MQTT="localhost:$TEST_MQTT_PORT"
+            echo "== Throwaway MQTT broker on $HMS_TEST_MQTT =="
+        else
+            echo "WARNING: throwaway broker did not start on $TEST_MQTT_PORT; live-broker tests will skip"
+        fi
+    else
+        echo "WARNING: no mosquitto found; live-broker tests will skip"
+    fi
+fi
+
 echo "== Resetting counters and running tests =="
 echo "   (excluded from coverage run: ${GTEST_FILTER_ARG})"
 lcov --directory "$BUILD_DIR" --zerocounters $LCOV_FLAGS >/dev/null 2>&1 || true

@@ -13,6 +13,7 @@
 #include "database/PostgresDatabase.h"
 #endif
 
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -298,7 +299,13 @@ TEST_F(OximetryImportTest, ARingFileWithoutTheExtensionIsReadByItsHeader) {
 
     // The mismatched one is fixed (the other tool finished writing it): it
     // changed, so its header is read again, and now it matches.
+    // Same size, so only the modified time says it changed. Set it forward
+    // explicitly: rewritten within a few ms, a coarse filesystem clock (ext4 on
+    // the hub) leaves it where it was, which no real "finished later" does.
+    const auto fixed_path = root_ / "OXYMETRY/20260912/20260912233000";
+    const auto before = fs::last_write_time(fixed_path);
     put("OXYMETRY/20260912/20260912233000", vld(3, 23));
+    fs::last_write_time(fixed_path, before + std::chrono::seconds(2));
     const auto fixed = importVldFolder(*db_, root_.string(), state);
     EXPECT_EQ(fixed.imported, 1);
     EXPECT_EQ(sessions(), 2);

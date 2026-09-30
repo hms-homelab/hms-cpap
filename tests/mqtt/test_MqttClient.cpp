@@ -10,18 +10,11 @@
 #include <thread>
 #include <chrono>
 
+#include "TestBroker.h"
+
 using namespace hms;
 
-static hms::MqttConfig testMqttConfig(const std::string& client_id) {
-    hms::MqttConfig cfg;
-    cfg.broker = "localhost";
-    cfg.port = 1883;
-    cfg.client_id = client_id;
-    return cfg;
-}
-
-// Note: These tests require a local MQTT broker running
-// To run: docker run -d -p 1883:1883 eclipse-mosquitto:latest
+// Note: These tests need a throwaway broker named by HMS_TEST_MQTT (TestBroker.h).
 
 class MqttClientTest : public ::testing::Test {
 protected:

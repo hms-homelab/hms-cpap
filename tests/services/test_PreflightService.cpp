@@ -28,9 +28,30 @@ using namespace hms_cpap;
 
 namespace {
 
+// A port that is free right now, chosen by the OS. A fixed "high and unlikely"
+// number is not free on a busy host: 47913-47915 sit inside Linux's ephemeral
+// range (32768-60999), so any outgoing connection may be holding one, and the
+// hub's were.
+int freePort() {
+    const int sock = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) return -1;
+    sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port = 0;
+    socklen_t len = sizeof(addr);
+    int port = -1;
+    if (::bind(sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0 &&
+        ::getsockname(sock, reinterpret_cast<sockaddr*>(&addr), &len) == 0)
+        port = ntohs(addr.sin_port);
+    ::close(sock);
+    return port;
+}
+
 TEST(PreflightServiceTest, AFreePortPasses) {
-    // Port 0 is special-cased by the OS, so pick something high and unlikely.
-    const auto c = PreflightService::checkPort("0.0.0.0", 47913);
+    const int port = freePort();
+    ASSERT_GT(port, 0);
+    const auto c = PreflightService::checkPort("0.0.0.0", port);
     EXPECT_TRUE(c.ok) << c.detail;
     EXPECT_EQ(c.name, "web_port");
 }
@@ -75,8 +96,10 @@ TEST(PreflightServiceTest, ANonsensePortIsRejectedWithoutTouchingTheNetwork) {
 TEST(PreflightServiceTest, TheCheckLeavesNothingBehind) {
     // A probe that changed what it inspected would be a worse version of the bug
     // it replaces: the check must not itself occupy the port it just tested.
-    const auto first = PreflightService::checkPort("0.0.0.0", 47914);
-    const auto second = PreflightService::checkPort("0.0.0.0", 47914);
+    const int port = freePort();
+    ASSERT_GT(port, 0);
+    const auto first = PreflightService::checkPort("0.0.0.0", port);
+    const auto second = PreflightService::checkPort("0.0.0.0", port);
     EXPECT_TRUE(first.ok) << first.detail;
     EXPECT_TRUE(second.ok)
         << "the first check was still holding the port when the second ran";
@@ -346,7 +369,8 @@ TEST(PreflightServiceTest, AConfiguredArchiveDirectoryIsStillWriteTested) {
 
 TEST(PreflightServiceTest, AFullRunCoversTheThingsThatCanBeKnownLocally) {
     AppConfig cfg;
-    cfg.web_port = 47915;
+    cfg.web_port = freePort();
+    ASSERT_GT(cfg.web_port, 0);
     cfg.database.type = "sqlite";
     cfg.database.sqlite_path =
         (std::filesystem::temp_directory_path() /

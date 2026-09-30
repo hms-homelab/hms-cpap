@@ -19,16 +19,10 @@
 #include <sstream>
 #include <iomanip>
 
+#include "TestBroker.h"
+
 using namespace hms_cpap;
 using namespace std::chrono;
-
-static hms::MqttConfig testMqttConfig(const std::string& client_id) {
-    hms::MqttConfig cfg;
-    cfg.broker = "localhost";
-    cfg.port = 1883;
-    cfg.client_id = client_id;
-    return cfg;
-}
 
 // Locate fixture files
 static std::string findFixture(const std::string& name) {

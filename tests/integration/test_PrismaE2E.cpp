@@ -132,5 +132,12 @@ TEST_F(PrismaE2ETest, LargestSessionHasRichData) {
     EXPECT_GT(result->events.size(), 0u);
     EXPECT_GT(result->breathing_summary.size(), 0u);
     EXPECT_TRUE(result->settings.has_value());
-    EXPECT_EQ(result->serial_number, "TESTSN00");
+    // The serial comes from the sample's own device.xml. A literal here matched
+    // no sample: this runs only where real samples exist, and a public repo must
+    // not carry a real machine's serial.
+    const std::string dev_xml = ingestion.deviceXmlPath();
+    ASSERT_FALSE(dev_xml.empty());
+    const auto info = cpapdash::parser::PrismaParser::parseDeviceXml(dev_xml);
+    ASSERT_FALSE(info.serial_number.empty());
+    EXPECT_EQ(result->serial_number, info.serial_number);
 }

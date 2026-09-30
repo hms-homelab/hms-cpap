@@ -16,15 +16,9 @@
 #include <sstream>
 #include <json/json.h>
 
-using namespace hms_cpap;
+#include "TestBroker.h"
 
-static hms::MqttConfig testMqttConfig(const std::string& client_id) {
-    hms::MqttConfig cfg;
-    cfg.broker = "localhost";
-    cfg.port = 1883;
-    cfg.client_id = client_id;
-    return cfg;
-}
+using namespace hms_cpap;
 
 // Test fixture
 class DataPublisherServiceTest : public ::testing::Test {
@@ -103,7 +97,8 @@ TEST_F(DataPublisherServiceTest, HAStatusOnline_RepublishesDiscovery) {
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
     // Simulate Home Assistant restart
-    publisher_client->publish("homeassistant/status", "online", 1, true);
+    // Not retained, as Home Assistant's own birth message is not.
+    publisher_client->publish("homeassistant/status", "online", 1, false);
 
     // Wait for discovery republish
     std::this_thread::sleep_for(std::chrono::seconds(2));
@@ -145,7 +140,7 @@ TEST_F(DataPublisherServiceTest, HAStatusOffline_DoesNotRepublish) {
     discovery_count.store(0);
 
     // Publish "offline" (should NOT trigger discovery)
-    publisher_client->publish("homeassistant/status", "offline", 1, true);
+    publisher_client->publish("homeassistant/status", "offline", 1, false);
 
     std::this_thread::sleep_for(std::chrono::seconds(1));
 
