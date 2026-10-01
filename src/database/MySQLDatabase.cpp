@@ -3271,7 +3271,11 @@ std::optional<SessionMetrics> MySQLDatabase::getNightlyMetrics(
 
     MysqlStmtGuard g;
     g.stmt = mysql_stmt_init(conn_);
-    mysql_stmt_prepare(g.stmt, sql.c_str(), sql.size());
+    if (mysql_stmt_prepare(g.stmt, sql.c_str(), sql.size()) != 0) {
+        std::cerr << "MySQL: getNightlyMetrics prepare error: "
+                  << mysql_stmt_error(g.stmt) << std::endl;
+        return std::nullopt;
+    }
 
     ParamBinder p(4);
     p.bindText(0, device_id);
@@ -3279,7 +3283,11 @@ std::optional<SessionMetrics> MySQLDatabase::getNightlyMetrics(
     p.bindText(2, ts);
     p.bindText(3, ts);
     mysql_stmt_bind_param(g.stmt, p.data());
-    mysql_stmt_execute(g.stmt);
+    if (mysql_stmt_execute(g.stmt) != 0) {
+        std::cerr << "MySQL: getNightlyMetrics error: "
+                  << mysql_stmt_error(g.stmt) << std::endl;
+        return std::nullopt;
+    }
 
     // 37 output columns (indices 0-36; 35 is index_kind, text)
     ResultBinder r(37);
@@ -3440,19 +3448,32 @@ std::vector<SessionMetrics> MySQLDatabase::getMetricsForDateRange(
         WHERE s.device_id = ?
           AND s.session_start >= CAST(? AS DATETIME)
           AND s.session_end IS NOT NULL
-        GROUP BY DATE(DATE_SUB(s.session_start, INTERVAL 12 HOUR))
+        -- By the selected column itself. Grouped by the bare DATE(...) while
+        -- selecting DATE_FORMAT(DATE(...)), MySQL 8's default
+        -- ONLY_FULL_GROUP_BY refused the whole query.
+        GROUP BY sleep_day
         ORDER BY sleep_day ASC
     )";
 
     MysqlStmtGuard g;
     g.stmt = mysql_stmt_init(conn_);
-    mysql_stmt_prepare(g.stmt, sql.c_str(), sql.size());
+    // Said, not swallowed: a failure here used to come back as "0 nights",
+    // which reads as an empty account rather than a broken query.
+    if (mysql_stmt_prepare(g.stmt, sql.c_str(), sql.size()) != 0) {
+        std::cerr << "MySQL: getMetricsForDateRange prepare error: "
+                  << mysql_stmt_error(g.stmt) << std::endl;
+        return {};
+    }
 
     ParamBinder p(2);
     p.bindText(0, device_id);
     p.bindText(1, cutoff_str);
     mysql_stmt_bind_param(g.stmt, p.data());
-    mysql_stmt_execute(g.stmt);
+    if (mysql_stmt_execute(g.stmt) != 0) {
+        std::cerr << "MySQL: getMetricsForDateRange error: "
+                  << mysql_stmt_error(g.stmt) << std::endl;
+        return {};
+    }
 
     // 30 output columns (0-29)
     ResultBinder r(30);
