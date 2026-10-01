@@ -5,6 +5,38 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.4.9] - 2026-10-01
+
+A failed download no longer damages the archive (since 5.4.4).
+
+### Fixed
+- **An error reply was saved into the file being downloaded.** Since 5.4.4 a
+  transfer that stops part way keeps what landed and the next burst resumes
+  from it. But when an hms-mm bridge could not fetch a file from its card, it
+  answered 502 with a short error text, and that text was appended to the
+  partial file and kept as if it were data. Every failed burst grew every
+  file by the error text, and the next burst resumed past it: a night that
+  began during the failure held nothing but error text, and a finished small
+  file grew far past its real end, so later bursts asked the card for ranges
+  past the end of the file, which an ezShare card does not survive well. An
+  error reply now leaves the file exactly as it was.
+- **Copies damaged that way repair themselves.** Before resuming a BRP, PLD
+  or SAD file, a copy longer than the card lists the file, or one that does
+  not open with an EDF header, is discarded and fetched again from the start.
+  A night already stored from such a copy (it shows next to no usage while
+  its STR row shows the real hours) counts as not archived, so it is fetched
+  and parsed again on the next burst, with nothing to delete by hand.
+- **The log says why a download failed.** `HTTP 502 for <file>` is now
+  followed by the reply's own text, which on an hms-mm bridge is the reason
+  its miner gave (from miner 1.0.3, the card's HTTP status or the network
+  error).
+- **MySQL: the weekly and monthly summaries found no nights since 5.4.8.**
+  The query that reads a range of nights grouped by one expression and
+  selected another, which MySQL 8's default `ONLY_FULL_GROUP_BY` refuses, and
+  the refusal was not checked, so it came back as "no nights". It now groups
+  by the selected night, and both night queries log MySQL's own error if they
+  ever fail.
+
 ## [5.4.8] - 2026-09-30
 
 An event belongs to the stretch of the night it happened in (SDD-047).
