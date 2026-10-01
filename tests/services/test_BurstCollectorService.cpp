@@ -62,6 +62,10 @@ protected:
         std::filesystem::create_directories(path.parent_path());
         std::ofstream ofs(path, std::ios::binary);
         std::vector<char> data(size_bytes, 'A');
+        // Opens with the EDF version field, as every file on a ResMed card
+        // does; the collector treats a copy that does not as damaged.
+        const char head[] = "0       ";
+        std::copy(head, head + std::min<size_t>(8, size_bytes), data.begin());
         ofs.write(data.data(), size_bytes);
         ofs.close();
     }
@@ -158,6 +162,33 @@ TEST_F(BurstCollectorServiceTest, SessionFilesArchived_IgnoresSizeMismatch) {
     createTestFile(dir / "20260803_234806_PLD.edf", 23);
 
     EXPECT_TRUE(BurstCollectorService::sessionFilesArchived(s, test_archive_dir.string()));
+}
+
+// A copy damaged by the error-body bug (fixed in 5.4.9) is on disk and not
+// empty, so it passed as archived, and a settled night was never looked at
+// again: its BRP held only the bridge's error text and the night showed 0
+// minutes against the STR's 7.1 hours. Not archived means fetched again.
+TEST_F(BurstCollectorServiceTest, SessionFilesArchived_FalseWhenACopyIsNotAnEdf) {
+    auto s = makeArchiveSession("20260930", "20260930_231815");
+    auto dir = test_archive_dir / "DATALOG" / "20260930";
+    {
+        std::filesystem::create_directories(dir);
+        std::ofstream f(dir / "20260930_231815_BRP.edf", std::ios::binary);
+        for (int i = 0; i < 575; ++i) f << "ezShare request failed";
+    }
+    createTestFile(dir / "20260930_231815_PLD.edf", 265 * 1024);
+
+    EXPECT_FALSE(BurstCollectorService::sessionFilesArchived(s, test_archive_dir.string()));
+}
+
+TEST_F(BurstCollectorServiceTest, SessionFilesArchived_FalseWhenACopyIsLongerThanTheCardsFile) {
+    auto s = makeArchiveSession("20260929", "20260929_204725");
+    s.file_sizes_kb["20260929_204725_BRP.edf"] = 1;   // the card lists it at 1 KB
+    auto dir = test_archive_dir / "DATALOG" / "20260929";
+    createTestFile(dir / "20260929_204725_BRP.edf", 29338);
+    createTestFile(dir / "20260929_204725_PLD.edf", 265 * 1024);
+
+    EXPECT_FALSE(BurstCollectorService::sessionFilesArchived(s, test_archive_dir.string()));
 }
 
 TEST_F(BurstCollectorServiceTest, SessionFilesArchived_TrueWhenNoArchiveConfigured) {
@@ -1764,7 +1795,9 @@ public:
         if (on_download) on_download(date_folder, filename);
         std::filesystem::create_directories(std::filesystem::path(local_path).parent_path());
         std::ofstream ofs(local_path, std::ios::binary);
-        ofs << "NOT_A_REAL_EDF_FILE";
+        // Opens with the EDF version field like a real card file, or the
+        // collector would call the archived copy damaged and fetch it again.
+        ofs << "0       NOT_A_REAL_EDF_FILE";
         return true;
     }
     // Where each ranged request started, in order, by filename.
@@ -1792,14 +1825,17 @@ public:
         }
         const auto mode = std::ios::binary | (start_byte == 0 ? std::ios::trunc : std::ios::app);
         std::ofstream ofs(local_path, mode);
+        // A file the card sends from byte 0 opens with the EDF version field,
+        // as a real one does; the collector discards a copy that does not.
+        const std::string head = start_byte == 0 ? "0       " : "";
         if (auto it = cut_transfers.find(filename); it != cut_transfers.end() && it->second > 0) {
             --it->second;
-            ofs << std::string(cut_bytes, 'x');
+            ofs << head << std::string(cut_bytes - head.size(), 'x');
             bytes_downloaded = cut_bytes;
             return false;
         }
-        ofs << "NOT_A_REAL_EDF_FILE";
-        bytes_downloaded = 19;
+        ofs << head << "NOT_A_REAL_EDF_FILE";
+        bytes_downloaded = head.size() + 19;
         return true;
     }
     int root_downloads = 0;   // STR.edf and friends, via downloadRootFile()
@@ -1972,7 +2008,9 @@ protected:
         auto dir = archive_dir / "DATALOG" / date_folder;
         std::filesystem::create_directories(dir);
         for (const auto& f : filenames) {
-            std::ofstream(dir / f) << "archived";
+            // An EDF opens with its version field; a copy that does not is
+            // damaged, and the collector fetches it again.
+            std::ofstream(dir / f) << "0       archived";
         }
     }
 };
@@ -2028,6 +2066,96 @@ TEST_F(BurstOrchestrationTest, ACutTransferKeepsItsBytesAndTheNextBurstResumesFr
     ASSERT_GE(brp_starts.size(), 2u);
     EXPECT_EQ(brp_starts[0], 0u) << "a file listed at 1 KB or more is asked as a range from 0";
     EXPECT_EQ(brp_starts[1], src_raw->cut_bytes) << "the next burst resumes where the cut left it";
+}
+
+// A night stored and settled before the fix, whose archived BRP is only the
+// bridge's error text. Its card files no longer change, so the burst used to
+// skip it for good and the night stayed at 0 minutes. Its copy is not the
+// card's file, so it is not archived, so the night is fetched again.
+TEST_F(BurstOrchestrationTest, ASettledNightWithADamagedCopyIsFetchedAgain) {
+    auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, sessionExists(_, _)).WillRepeatedly(Return(true));
+    EXPECT_CALL(*db_raw, getCheckpointFileSizes(_, _)).WillRepeatedly(Return(
+        std::map<std::string, int>{{"20200101_220000_BRP.edf", 100},
+                                   {"20200101_220000_PLD.edf", 20}}));
+
+    const auto day = archive_dir / "DATALOG" / "20200101";
+    std::filesystem::create_directories(day);
+    {
+        std::ofstream f(day / "20200101_220000_BRP.edf", std::ios::binary);
+        for (int i = 0; i < 575; ++i) f << "ezShare request failed";
+    }
+    for (const char* name : {"20200101_220000_PLD.edf", "20200101_220000_CSL.edf",
+                             "20200101_220000_EVE.edf"}) {
+        std::ofstream f(day / name, std::ios::binary);
+        f << "0       " << std::string(500, 'x');
+    }
+
+    svc->runBurstCycleForTest();
+
+    const auto& r = src_raw->ranged_files;
+    const auto& d = src_raw->downloaded_files;
+    EXPECT_GE(std::count(r.begin(), r.end(), "20200101_220000_BRP.edf") +
+              std::count(d.begin(), d.end(), "20200101_220000_BRP.edf"), 1)
+        << "a settled night whose copy is not the card's file must be fetched again";
+}
+
+// ── a copy an older build damaged is fetched again, not resumed ─────────────
+//
+// Older builds appended a bridge's 502 body ("ezShare request failed") to the
+// partial file on every failed burst. Resuming such a copy asks the card for a
+// range past its end, or splices the night onto the error text.
+
+namespace {
+size_t firstRangeStart(const FakeDataSource& ds, const std::string& name) {
+    for (const auto& [n, from] : ds.ranged_from)
+        if (n == name) return from;
+    return SIZE_MAX;
+}
+}  // namespace
+
+TEST_F(BurstOrchestrationTest, ACopyLongerThanTheCardsFileIsFetchedAgain) {
+    auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, sessionExists(_, _)).WillRepeatedly(Return(false));
+
+    // The card lists the PLD at 20 KB; the copy holds a real header and more
+    // bytes than the card can have.
+    const auto pld = temp_dir / "20200101" / "20200101_220000_PLD.edf";
+    std::filesystem::create_directories(pld.parent_path());
+    {
+        std::ofstream f(pld, std::ios::binary);
+        f << "0       " << std::string(21 * 1024, 'p') << "ezShare request failed";
+    }
+
+    svc->runBurstCycleForTest();
+
+    EXPECT_EQ(firstRangeStart(*src_raw, "20200101_220000_PLD.edf"), 0u)
+        << "a copy past the card's end must not be resumed";
+}
+
+TEST_F(BurstOrchestrationTest, ACopyThatIsNotAnEdfIsFetchedAgain) {
+    auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, sessionExists(_, _)).WillRepeatedly(Return(false));
+
+    // Nothing but the bridge's error text, as on a night that began while
+    // every download failed.
+    const auto brp = temp_dir / "20200101" / "20200101_220000_BRP.edf";
+    std::filesystem::create_directories(brp.parent_path());
+    {
+        std::ofstream f(brp, std::ios::binary);
+        for (int i = 0; i < 3; ++i) f << "ezShare request failed";
+    }
+
+    svc->runBurstCycleForTest();
+
+    EXPECT_EQ(firstRangeStart(*src_raw, "20200101_220000_BRP.edf"), 0u)
+        << "a copy that is not an EDF must not be resumed";
 }
 
 TEST_F(BurstOrchestrationTest, ASourceThatStopsHonouringRangeFallsBackToAFullDownload) {

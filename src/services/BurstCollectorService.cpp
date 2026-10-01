@@ -58,6 +58,21 @@ void warnIfEmpty(const std::string& local_path, const std::string& name) {
     }
 }
 
+/// True when a partial copy on disk cannot be the start of the card's file,
+/// so resuming it would be wrong. Older builds appended a bridge's error reply
+/// to the partial file on every failed burst and resumed past it, which left
+/// two kinds of copy behind: longer than the card's own file (listed in whole
+/// KB, so anything past the next KB is impossible), and made of nothing but
+/// that text (an EDF always opens with its version field, "0" and seven
+/// spaces). The card's file only grows, so a sound copy is never either.
+bool partialCopyIsDamaged(const std::string& local_path, size_t size, int listed_kb) {
+    if (listed_kb >= 0 && size > (static_cast<size_t>(listed_kb) + 1) * 1024) return true;
+    if (size < 8) return false;
+    char head[8];
+    std::ifstream f(local_path, std::ios::binary);
+    return f.read(head, sizeof(head)) && std::string(head, sizeof(head)) != "0       ";
+}
+
 } // namespace
 
 BurstCollectorService::BurstCollectorService(int burst_interval_seconds)
@@ -480,6 +495,16 @@ bool BurstCollectorService::downloadSessionFiles(
         const auto listed = session.file_sizes_kb.find(filename);
         const bool listed_nonempty = listed != session.file_sizes_kb.end() && listed->second > 0;
 
+        if (existing_size > 0 &&
+            partialCopyIsDamaged(local_path, existing_size,
+                                 listed != session.file_sizes_kb.end() ? listed->second : -1)) {
+            std::cerr << "⚠️  " << filename << " on disk (" << existing_size
+                      << " bytes) is not the card's file; fetching it again" << std::endl;
+            std::filesystem::remove(local_path);
+            file_exists = false;
+            existing_size = 0;
+        }
+
         if (data_source_->supportsRange() &&
             ((file_exists && existing_size > 0) || listed_nonempty)) {
             size_t bytes_downloaded = 0;
@@ -623,13 +648,18 @@ bool BurstCollectorService::downloadSessionFiles(
     if (!std::filesystem::is_directory(dir, ec)) return false;
 
     for (const auto& [filename, size_kb] : session.file_sizes_kb) {
-        (void)size_kb;  // presence and non-emptiness, not a size match: the
-                        // listing is KB-rounded, so comparing it against the
-                        // byte size on disk reports a mismatch for every file
-                        // that is actually fine.
+        // Presence and non-emptiness, not a size match: the listing is
+        // KB-rounded, so comparing it against the byte size on disk reports a
+        // mismatch for every file that is actually fine.
         const auto p = dir / filename;
-        if (!std::filesystem::exists(p, ec) || std::filesystem::file_size(p, ec) == 0)
-            return false;
+        if (!std::filesystem::exists(p, ec)) return false;
+        const auto bytes = std::filesystem::file_size(p, ec);
+        if (ec || bytes == 0) return false;
+        // But a copy that cannot be the card's file is not archived either.
+        // Before 5.4.9 a failed download left a bridge's error text in the
+        // copy, and a settled night with such a copy was never looked at
+        // again. Not archived, it is fetched and parsed again.
+        if (partialCopyIsDamaged(p.string(), bytes, size_kb)) return false;
     }
     return true;
 }

@@ -9,6 +9,28 @@
 
 namespace hms_cpap {
 
+namespace {
+
+/// The text of an error reply, read back from where it landed in the file,
+/// for the log line. A bridge says there why it could not fetch the file
+/// ("ezShare request failed: card answered HTTP 404"), and the file is about
+/// to be cut back, so this is the last chance to keep it. Printable characters
+/// only, and short: a card's error page is HTML.
+std::string errorReason(const std::string& path, size_t from) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f.seekg(static_cast<std::streamoff>(from))) return "";
+    char buf[120];
+    f.read(buf, sizeof(buf));
+    std::string text;
+    for (std::streamsize i = 0; i < f.gcount(); ++i) {
+        const unsigned char c = static_cast<unsigned char>(buf[i]);
+        if (c >= 0x20 && c < 0x7f) text += static_cast<char>(c);
+    }
+    return text.empty() ? "" : ": " + text;
+}
+
+} // namespace
+
 std::chrono::system_clock::time_point EzShareFileEntry::getModTime() const {
     std::tm tm = {};
     tm.tm_year = year - 1900;
@@ -234,7 +256,8 @@ bool EzShareClient::downloadFile(const std::string& date_folder,
     long http_code = 0;
     curl_easy_getinfo(curl_, CURLINFO_RESPONSE_CODE, &http_code);
     if (http_code != 200) {
-        std::cerr << "EzShare: HTTP " << http_code << " for " << filename << std::endl;
+        std::cerr << "EzShare: HTTP " << http_code << " for " << filename
+                  << errorReason(local_path, 0) << std::endl;
         std::filesystem::remove(local_path);
         return false;
     }
@@ -287,7 +310,8 @@ bool EzShareClient::downloadRootFile(const std::string& filename,
     long http_code = 0;
     curl_easy_getinfo(curl_, CURLINFO_RESPONSE_CODE, &http_code);
     if (http_code != 200) {
-        std::cerr << "EzShare: HTTP " << http_code << " for " << filename << std::endl;
+        std::cerr << "EzShare: HTTP " << http_code << " for " << filename
+                  << errorReason(local_path, 0) << std::endl;
         std::filesystem::remove(local_path);
         return false;
     }
@@ -360,16 +384,29 @@ bool EzShareClient::downloadFileRange(const std::string& date_folder,
     curl_easy_setopt(curl_, CURLOPT_LOW_SPEED_LIMIT, 0L);
     curl_easy_setopt(curl_, CURLOPT_LOW_SPEED_TIME, 0L);
 
+    long http_code = 0;
+    curl_easy_getinfo(curl_, CURLINFO_RESPONSE_CODE, &http_code);
+
+    // An error reply's body is not the file. Written in append mode it lands
+    // after the bytes we had, the caller keeps it as progress, and the next
+    // burst resumes past it: a bridge answering 502 grew every file by its
+    // error text once a burst, and soon asked the card for ranges past the
+    // real end of the file. Put the file back exactly as it was.
+    if (http_code >= 300) {
+        const std::string reason = errorReason(local_path, start_byte);
+        std::error_code ec;
+        if (start_byte == 0) std::filesystem::remove(local_path, ec);
+        else std::filesystem::resize_file(local_path, start_byte, ec);
+        std::cerr << "EzShare: HTTP " << http_code << " for " << filename << reason << std::endl;
+        return false;
+    }
+
     // Accept CURLE_OK or CURLE_PARTIAL_FILE (growing file)
     if (res != CURLE_OK && res != CURLE_PARTIAL_FILE) {
         std::cerr << "EzShare: Range download failed (" << filename << "): "
                   << curl_easy_strerror(res) << std::endl;
         return false;
     }
-
-    // Check HTTP status
-    long http_code = 0;
-    curl_easy_getinfo(curl_, CURLINFO_RESPONSE_CODE, &http_code);
     // A 200 to a range past byte 0 is the whole file, just appended after the
     // bytes we already had. Cut it back to where it was and stop asking for
     // ranges, so the caller's full download is what replaces it.
@@ -464,7 +501,8 @@ bool EzShareClient::downloadByPath(const std::string& card_rel_path,
     long http_code = 0;
     curl_easy_getinfo(curl_, CURLINFO_RESPONSE_CODE, &http_code);
     if (http_code != 200) {
-        std::cerr << "EzShare: HTTP " << http_code << " for " << card_rel_path << std::endl;
+        std::cerr << "EzShare: HTTP " << http_code << " for " << card_rel_path
+                  << errorReason(local_path, 0) << std::endl;
         std::filesystem::remove(local_path);
         return false;
     }

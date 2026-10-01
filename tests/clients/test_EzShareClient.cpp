@@ -4,6 +4,12 @@
 #include <fstream>
 #include <filesystem>
 #include <cstdio>
+#include <thread>
+
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 using namespace hms_cpap;
 
@@ -973,6 +979,138 @@ TEST(EzShareFileEntryExtTest, DefaultFieldsAreZeroed) {
     EXPECT_EQ(e.hour, 0);
     EXPECT_EQ(e.minute, 0);
     EXPECT_EQ(e.second, 0);
+}
+
+// ── Ranged download against a loopback server ──────────────────────────
+//
+// An hms-mm bridge that cannot reach its card answers 502 with the miner's
+// error text ("ezShare request failed", 22 bytes). The ranged download used
+// to append that body to the partial file and leave it there, so every failed
+// burst grew the file by 22 bytes and the next one resumed past them.
+
+namespace {
+
+class OneShotHttpServer {
+public:
+    explicit OneShotHttpServer(std::string status, std::string body)
+        : status_(std::move(status)), body_(std::move(body)) {
+        listen_fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
+        EXPECT_GE(listen_fd_, 0);
+        int one = 1;
+        ::setsockopt(listen_fd_, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        addr.sin_port = 0;
+        EXPECT_EQ(::bind(listen_fd_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)), 0);
+        EXPECT_EQ(::listen(listen_fd_, 1), 0);
+        socklen_t len = sizeof(addr);
+        EXPECT_EQ(::getsockname(listen_fd_, reinterpret_cast<sockaddr*>(&addr), &len), 0);
+        port_ = ntohs(addr.sin_port);
+
+        thread_ = std::thread([this] { serve(); });
+    }
+
+    ~OneShotHttpServer() {
+        if (listen_fd_ >= 0) ::shutdown(listen_fd_, SHUT_RDWR);
+        if (thread_.joinable()) thread_.join();
+        if (listen_fd_ >= 0) ::close(listen_fd_);
+    }
+
+    std::string baseUrl() const { return "http://127.0.0.1:" + std::to_string(port_); }
+
+private:
+    void serve() {
+        int conn = ::accept(listen_fd_, nullptr, nullptr);
+        if (conn < 0) return;
+        char buf[2048];
+        ::recv(conn, buf, sizeof(buf), 0);
+        std::string resp =
+            "HTTP/1.1 " + status_ + "\r\n"
+            "Content-Type: text/html\r\n"
+            "Content-Length: " + std::to_string(body_.size()) + "\r\n"
+            "Connection: close\r\n"
+            "\r\n" + body_;
+        size_t sent = 0;
+        while (sent < resp.size()) {
+            ssize_t n = ::send(conn, resp.data() + sent, resp.size() - sent, 0);
+            if (n <= 0) break;
+            sent += static_cast<size_t>(n);
+        }
+        ::close(conn);
+    }
+
+    std::string status_;
+    std::string body_;
+    int listen_fd_ = -1;
+    uint16_t port_ = 0;
+    std::thread thread_;
+};
+
+}  // namespace
+
+TEST_F(EzShareClientTest, RangeErrorReplyLeavesThePartialFileAsItWas) {
+    const std::string path = test_dir + "/20260930_231815_BRP.edf";
+    createTestFile(path, 12628, 'A');
+
+    OneShotHttpServer srv("502 Bad Gateway", "ezShare request failed");
+    EzShareClient client;
+    client.setBaseURL(srv.baseUrl());
+
+    size_t got = 0;
+    EXPECT_FALSE(client.downloadFileRange("20260930", "20260930_231815_BRP.edf",
+                                          path, 12628, got));
+
+    ASSERT_TRUE(std::filesystem::exists(path));
+    EXPECT_EQ(std::filesystem::file_size(path), 12628u);
+    EXPECT_EQ(readFile(path).find("ezShare"), std::string::npos);
+    EXPECT_TRUE(client.supportsRange());
+}
+
+TEST_F(EzShareClientTest, RangeErrorReplyFromByteZeroLeavesNoFile) {
+    const std::string path = test_dir + "/20260930_231815_PLD.edf";
+
+    OneShotHttpServer srv("502 Bad Gateway", "ezShare request failed");
+    EzShareClient client;
+    client.setBaseURL(srv.baseUrl());
+
+    size_t got = 0;
+    EXPECT_FALSE(client.downloadFileRange("20260930", "20260930_231815_PLD.edf",
+                                          path, 0, got));
+    EXPECT_FALSE(std::filesystem::exists(path));
+}
+
+TEST_F(EzShareClientTest, AnErrorReplyLogsTheBridgesReason) {
+    const std::string path = test_dir + "/STR.edf";
+
+    OneShotHttpServer srv("502 Bad Gateway",
+                          "ezShare request failed: card answered HTTP 404");
+    EzShareClient client;
+    client.setBaseURL(srv.baseUrl());
+
+    testing::internal::CaptureStderr();
+    EXPECT_FALSE(client.downloadRootFile("STR.edf", path));
+    const std::string log = testing::internal::GetCapturedStderr();
+
+    EXPECT_NE(log.find("HTTP 502 for STR.edf: ezShare request failed: card answered HTTP 404"),
+              std::string::npos) << log;
+    EXPECT_FALSE(std::filesystem::exists(path));
+}
+
+TEST_F(EzShareClientTest, RangePartialContentStillAppends) {
+    const std::string path = test_dir + "/20260930_231815_SAD.edf";
+    createTestFile(path, 100, 'A');
+
+    OneShotHttpServer srv("206 Partial Content", std::string(50, 'B'));
+    EzShareClient client;
+    client.setBaseURL(srv.baseUrl());
+
+    size_t got = 0;
+    EXPECT_TRUE(client.downloadFileRange("20260930", "20260930_231815_SAD.edf",
+                                         path, 100, got));
+    EXPECT_EQ(got, 50u);
+    EXPECT_EQ(readFile(path), std::string(100, 'A') + std::string(50, 'B'));
 }
 
 // Run all tests
