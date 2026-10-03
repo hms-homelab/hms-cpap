@@ -37,8 +37,6 @@ public:
     /// under the root or the parser cannot read it.
     Read readSessions(const std::string& device_id, const std::string& device_name) const;
 
-    const std::string& root() const { return root_; }
-
 private:
     std::string root_;
 };

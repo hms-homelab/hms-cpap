@@ -36,6 +36,7 @@ resetForTest                         # src/services/SleepHqExportService.cpp
 restart                              # desktop/qt/core/qt/ChildProcess.cpp
 restartReasons                       # desktop/qt/core/pure/FieldSpec.cpp
 runBurstCycleForTest                 # include/services/BurstCollectorService.h
+runRequestedRepublishForTest         # include/services/BurstCollectorService.h -- test seam; BurstOrchestrationTest.ABackfillRequestPublishesTheNewestNightOnce (SDD-048)
 set                                  # desktop/qt/core/pure/ConfigModel.cpp -- Linux only; SettingsDialog calls it
 setAppConfig                         # include/services/BurstCollectorService.h
 setExportHookForTest                 # src/services/SleepHqExportService.cpp
