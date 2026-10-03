@@ -641,6 +641,7 @@ TEST(TransportFormatMigration, EveryLegacySourceMapsToAPair) {
         {"local",      "local",   "resmed"},
         {"lowenstein", "local",   "lowenstein"},
         {"sefam",      "local",   "sefam"},
+        {"bmc",        "local",   "bmc"},     // SDD-049
         {"philips",    "local",   "philips"},
     };
     for (const auto& c : cases) {
@@ -678,7 +679,7 @@ TEST(TransportFormatMigration, MigrationIsIdempotent) {
 // upgrade that gets rolled back does not strand the user with a config the old
 // build cannot read. Derived from the pair, so it can never go stale.
 TEST(TransportFormatMigration, TheLegacyValueRoundTrips) {
-    for (const char* s : {"ezshare", "local", "lowenstein", "sefam", "philips"}) {
+    for (const char* s : {"ezshare", "local", "lowenstein", "sefam", "bmc", "philips"}) {
         AppConfig cfg;
         cfg.source = s;
         cfg.migrateSource();

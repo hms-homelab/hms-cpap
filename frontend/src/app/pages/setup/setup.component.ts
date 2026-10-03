@@ -244,6 +244,7 @@ import { switchMap, tap } from 'rxjs';
                   <option value="resmed">ResMed</option>
                   <option value="lowenstein">Löwenstein Prisma</option>
                   <option value="sefam">Sefam S.Box</option>
+                  <option value="bmc">{{ 'setup.source.bmc' | translate }}</option>
                   <option value="philips">{{ 'setup.source.philips' | translate }}</option>
                 </select>
               </label>

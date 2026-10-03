@@ -57,7 +57,8 @@ struct AppConfig {
     /// this table -- a second copy is exactly the defect SDD-022 exists to
     /// remove. These are that table; migrateSource() above is a thin caller.
     static std::string transportForSource(const std::string& src) {
-        if (src == "lowenstein" || src == "sefam" || src == "philips" || src == "local")
+        if (src == "lowenstein" || src == "sefam" || src == "bmc" || src == "philips" ||
+            src == "local")
             return "local";
         if (src == "fysetc") return supportedTransport(src);   // removed: says so
         return "ezshare";   // ezshare, and anything unknown
@@ -65,6 +66,7 @@ struct AppConfig {
     static std::string formatForSource(const std::string& src) {
         if (src == "lowenstein") return "lowenstein";
         if (src == "sefam")      return "sefam";
+        if (src == "bmc")        return "bmc";      // SDD-049: BMC / React Health Luna
         if (src == "philips")    return "philips";
         return "resmed";    // local, ezshare, and anything unknown
     }
@@ -87,6 +89,7 @@ struct AppConfig {
         if (transport == "local") {
             if (format == "lowenstein") return "lowenstein";
             if (format == "sefam")      return "sefam";
+            if (format == "bmc")        return "bmc";
             if (format == "philips")    return "philips";
             return "local";
         }

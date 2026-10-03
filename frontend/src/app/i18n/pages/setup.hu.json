@@ -39,6 +39,7 @@
       "title": "Adatforrás",
       "formatLabel": "Melyik gép írta ezt a kártyát?",
       "philips": "Philips Respironics (kísérleti)",
+      "bmc": "BMC / React Health Luna (béta)",
       "subtitle": "Hogyan férjen hozzá a HMS-CPAP a CPAP-adataihoz?",
       "mmTitle": "CpapDash Mule and Miner",
       "mmDesc": "Automatikusan megkeresi a CpapDash hidat ezen a hálózaton.",

@@ -21,9 +21,9 @@ namespace hms_cpap {
 
 class IDatabase;
 
-enum class UploadedCard { ResMed, Sefam, Lowenstein, Unknown };
+enum class UploadedCard { ResMed, Sefam, Lowenstein, Bmc, Unknown };
 
-/// "resmed", "sefam", "lowenstein", "unknown": the folder name under uploads/.
+/// "resmed", "sefam", "lowenstein", "bmc", "unknown": the folder name under uploads/.
 const char* uploadedCardName(UploadedCard kind);
 
 /// What an extracted card is, by its files. Sefam by its session folders,

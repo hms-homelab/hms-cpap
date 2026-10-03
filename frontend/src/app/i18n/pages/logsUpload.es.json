@@ -23,7 +23,7 @@
     "title": "Subir datos",
     "zip": {
       "heading": "Datos del CPAP (.zip)",
-      "hint": "Sube un zip de tu tarjeta SD: ResMed (sus carpetas DATALOG), Sefam S.Box o Löwenstein Prisma. La tarjeta se reconoce por sus archivos, y cada noche que aún no está guardada se añade y se procesa automáticamente.",
+      "hint": "Sube un zip de tu tarjeta SD: ResMed (sus carpetas DATALOG), Sefam S.Box, Löwenstein Prisma o BMC / React Health Luna (beta). La tarjeta se reconoce por sus archivos, y cada noche que aún no está guardada se añade y se procesa automáticamente.",
       "idle": "Arrastra un .zip aquí o haz clic para elegir",
       "uploading": "Subiendo...",
       "imported": "{{count}} noche(s) importada(s)"

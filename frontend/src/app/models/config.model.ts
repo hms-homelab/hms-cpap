@@ -3,7 +3,7 @@ export interface AppConfig {
   device_name: string;
   /** SDD-022: WHERE files come from. ezshare | local */
   transport: string;
-  /** SDD-022: WHAT wrote them. resmed | lowenstein | sefam | philips */
+  /** SDD-022: WHAT wrote them. resmed | lowenstein | sefam | bmc | philips */
   format: string;
   /**
    * LEGACY. The backend still writes it for one release so a rollback is not

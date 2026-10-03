@@ -200,4 +200,6 @@ TEST(CollectorSource, TheTransportAndFormatPairMapsToWhatTheCollectorBuilds) {
     EXPECT_EQ(AppConfig::collectorSource("ezshare", "sefam"), "sefam_ezshare");
     // A Prisma answers the ez Share with error 601: not a pair; ResMed reading.
     EXPECT_EQ(AppConfig::collectorSource("ezshare", "lowenstein"), "ezshare");
+    // SDD-049 D1: a BMC card is read from a folder (or an upload), never an ez Share.
+    EXPECT_EQ(AppConfig::collectorSource("local", "bmc"), "bmc");
 }

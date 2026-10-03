@@ -172,6 +172,9 @@ void printConfiguration() {
     } else if (source == "sefam") {
         std::cout << "  Source:             Sefam S.Box" << std::endl;
         std::cout << "  Card Dir:           " << hms_cpap::ConfigManager::get("CPAP_LOCAL_DIR", "(not set)") << std::endl;
+    } else if (source == "bmc") {
+        std::cout << "  Source:             BMC / React Health Luna (beta)" << std::endl;
+        std::cout << "  Card Dir:           " << hms_cpap::ConfigManager::get("CPAP_LOCAL_DIR", "(not set)") << std::endl;
     } else if (source == "philips") {
         std::cout << "  Source:             Philips Respironics (experimental)" << std::endl;
         std::cout << "  Card Dir:           " << hms_cpap::ConfigManager::get("CPAP_LOCAL_DIR", "(not set)") << std::endl;
@@ -1270,14 +1273,16 @@ int main(int argc, char** argv) {
                         // backfill worker (D3), which the upload page already polls.
                         const auto kind = hms_cpap::classifyUploadedCard(staging.string());
                         if (kind == hms_cpap::UploadedCard::Sefam ||
-                            kind == hms_cpap::UploadedCard::Lowenstein) {
+                            kind == hms_cpap::UploadedCard::Lowenstein ||
+                            kind == hms_cpap::UploadedCard::Bmc) {   // SDD-049
                             const std::string fmt = hms_cpap::uploadedCardName(kind);
                             const std::string store =
                                 hms_cpap::AppConfig::dataDir() + "/uploads/" + fmt;
                             std::set<std::string> nights;
                             std::string merge_error;
                             bool merged = false;
-                            if (kind == hms_cpap::UploadedCard::Sefam) {
+                            if (kind == hms_cpap::UploadedCard::Sefam ||
+                                kind == hms_cpap::UploadedCard::Bmc) {
                                 nights = hms_cpap::cardNights(kind, staging.string());
                                 merged = hms_cpap::mergeCardInto(staging.string(), store,
                                                                  merge_error);
@@ -1327,8 +1332,8 @@ int main(int argc, char** argv) {
                         fs::remove_all(staging, ec);
                         if (dates.empty()) {
                             r["error"] = "Not a card this build reads: no ResMed DATALOG "
-                                         "date folders (YYYYMMDD), no Sefam S.Box sessions "
-                                         "and no Löwenstein Prisma data in the zip";
+                                         "date folders (YYYYMMDD), no Sefam S.Box sessions, "
+                                         "no Löwenstein Prisma data and no BMC card in the zip";
                             return r;
                         }
                         auto dash = [](const std::string& d) {

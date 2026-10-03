@@ -18,6 +18,7 @@
       "transport": "De onde vêm os dados",
       "format": "Qual aparelho os gravou",
       "philips": "Philips Respironics (experimental)",
+      "bmc": "BMC / React Health Luna (beta)",
       "ezshare": "Cartão SD WiFi ezShare",
       "local": "Diretório local",
       "notePre": "Estas são as formas pelas quais o CpapDash lê o seu cartão SD. O ResMed myAir não é uma delas: ele só informa um resumo de cada noite, não as gravações com que os gráficos e os relatórios são montados. Você ainda pode conectá-lo, em",

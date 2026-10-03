@@ -2,6 +2,7 @@
 
 #include "database/IDatabase.h"
 #include "parsers/CpapdashBridge.h"
+#include "services/BmcIngestion.h"
 #include "services/PrismaIngestion.h"
 #include "services/RemovedNights.h"
 #include "services/SefamIngestion.h"
@@ -93,6 +94,7 @@ const char* uploadedCardName(UploadedCard kind) {
         case UploadedCard::ResMed:     return "resmed";
         case UploadedCard::Sefam:      return "sefam";
         case UploadedCard::Lowenstein: return "lowenstein";
+        case UploadedCard::Bmc:        return "bmc";
         case UploadedCard::Unknown:    break;
     }
     return "unknown";
@@ -108,6 +110,9 @@ UploadedCard classifyUploadedCard(const std::string& dir) {
         if (probe.initialize()) return UploadedCard::Sefam;
     }
     if (hasLowensteinFile(dir, kZipDepth)) return UploadedCard::Lowenstein;
+    // SDD-049: the parser's own test (a serial-named .usr beside a .evt), in the
+    // folder or in one a zip wrapped it in.
+    if (BmcIngestion::findCardDir(dir, kZipDepth)) return UploadedCard::Bmc;
     if (cpapdash::parser::detectManufacturer(dir) == DeviceManufacturer::RESMED)
         return UploadedCard::ResMed;
     return UploadedCard::Unknown;
@@ -224,6 +229,11 @@ std::set<std::string> cardNights(UploadedCard kind, const std::string& root) {
             for (const auto& s : ing.discoverSessions(std::nullopt)) nights.insert(nightOf(s.session_start));
     } else if (kind == UploadedCard::Lowenstein) {
         for (const auto& s : lowensteinSessions(root)) nights.insert(nightOf(s.session.session_start));
+    } else if (kind == UploadedCard::Bmc) {
+        // A BMC card's sessions only exist once its packets are read; the card
+        // is small (about 1 MB an hour), so the reply reads it.
+        const auto read = BmcIngestion(root).readSessions("upload", "BMC");
+        for (const auto& s : read.sessions) nights.insert(nightOf(*s->session_start));
     }
     return nights;
 }
@@ -278,6 +288,22 @@ CardImportCounts importCardSessions(IDatabase& db, UploadedCard kind, const std:
             std::error_code ec;
             fs::remove_all(staged, ec);
             if (!parsed || !save(*parsed, ps.session_start)) ++c.refused;
+        }
+    } else if (kind == UploadedCard::Bmc) {
+        // SDD-049 D4: every session on the card the database does not hold.
+        const auto read = BmcIngestion(root).readSessions(device_id, device_name);
+        if (!read.ok) {
+            std::cerr << "CardUpload: " << read.error << std::endl;
+            return c;
+        }
+        c.found = static_cast<int>(read.sessions.size());
+        int done = 0;
+        for (const auto& s : read.sessions) {
+            const auto start = *s->session_start;
+            if (progress) progress(done++, c.found);
+            if (isRemovedNight(removed, start)) { ++c.removed; continue; }
+            if (db.sessionExists(device_id, start)) { ++c.already_stored; continue; }
+            if (!save(*s, start)) ++c.refused;
         }
     } else {
         return c;

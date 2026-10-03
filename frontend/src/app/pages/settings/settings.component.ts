@@ -48,6 +48,7 @@ import { AppConfig } from '../../models/config.model';
                 <option value="resmed">ResMed</option>
                 <option value="lowenstein">Löwenstein Prisma</option>
                 <option value="sefam">Sefam S.Box</option>
+                <option value="bmc">{{ 'settings.source.bmc' | translate }}</option>
                 <option value="philips">{{ 'settings.source.philips' | translate }}</option>
               </select>
             </label>

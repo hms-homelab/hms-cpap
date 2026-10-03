@@ -5,6 +5,23 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+BMC / React Health Luna cards (beta).
+
+### Added
+- **A BMC / React Health Luna card**, from a local folder (format "BMC / React
+  Health Luna (beta)" in Setup and Settings) or by uploading a zip of the card.
+  Every session on the card not yet stored is imported; the newest is read
+  again while the machine is still writing it. Sessions, the machine's own
+  obstructive and clear-airway apneas, the AHI, leak, respiratory rate and I:E
+  per minute. On a bi-level Luna, IPAP, EPAP and pressure support are
+  published as on an AirCurve, and `avg_pressure` is not. Not over an ez Share.
+  Beta: it is built on one card, and flow, tidal volume and several of the
+  machine's record types are not read yet.
+- The cpapdash-parser pin moves to v8.5.3, which brings the BMC parser and only
+  that.
+
 ## [5.4.10] - 2026-10-03
 
 A re-parse now reaches Home Assistant (#33).

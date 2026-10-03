@@ -19,6 +19,9 @@
 #ifdef CPAPDASH_WITH_SEFAM
 #include <cpapdash/parser/SefamParser.h>
 #endif
+#ifdef CPAPDASH_WITH_BMC
+#include <cpapdash/parser/BmcParser.h>
+#endif
 
 #include <algorithm>
 #include <chrono>

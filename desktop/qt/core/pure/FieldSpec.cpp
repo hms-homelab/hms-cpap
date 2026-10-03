@@ -21,7 +21,8 @@ std::function<bool(const ConfigModel&)> transportIs(const std::string& value) {
         const auto s = m.getString("source");
         // local, lowenstein and sefam were all one transport: a folder on disk.
         if (value == "local")
-            return s == "local" || s == "lowenstein" || s == "sefam" || s == "philips";
+            return s == "local" || s == "lowenstein" || s == "sefam" || s == "bmc" ||
+                   s == "philips";
         return s == value;
     };
 }
@@ -112,6 +113,7 @@ const std::vector<FieldSpec>& settingsFields() {
             {{"resmed",     "ResMed"},
              {"lowenstein", "Löwenstein Prisma"},
              {"sefam",      "Sefam S.Box"},
+             {"bmc",        "BMC / React Health Luna (beta)"},
              {"philips",    "Philips Respironics (experimental)"}},
             {}, {}, false, transportIs("local")});
 

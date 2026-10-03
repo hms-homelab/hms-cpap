@@ -18,6 +18,7 @@
       "transport": "Honnan érkeznek az adatok",
       "format": "Melyik gép írta",
       "philips": "Philips Respironics (kísérleti)",
+      "bmc": "BMC / React Health Luna (béta)",
       "ezshare": "ezShare WiFi SD-kártya",
       "local": "Helyi könyvtár",
       "notePre": "Így tudja a CpapDash beolvasni az SD-kártyát. A ResMed myAir nem tartozik ide: csak az egyes éjszakák összegzését adja vissza, nem azokat a felvételeket, amelyekből a diagramok és a jelentések készülnek. Csatlakoztatni ettől még lehet, lentebb a",

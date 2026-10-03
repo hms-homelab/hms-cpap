@@ -164,6 +164,14 @@ void BurstCollectorService::initDataSource() {
         }
         sefam_ingestion_ = std::make_unique<SefamIngestion>(data_dir);
         std::cout << "CPAP: Sefam S.Box mode — reading from " << data_dir << std::endl;
+    } else if (source == "bmc") {
+        std::string data_dir = ConfigManager::get("CPAP_LOCAL_DIR", "");
+        if (data_dir.empty()) {
+            std::cerr << "format=bmc but CPAP_LOCAL_DIR not set!" << std::endl;
+            throw std::runtime_error("CPAP_LOCAL_DIR required when format=bmc");
+        }
+        bmc_ingestion_ = std::make_unique<BmcIngestion>(data_dir);
+        std::cout << "CPAP: BMC / React Health Luna mode — reading from " << data_dir << std::endl;
     } else if (source == "sefam_ezshare") {
         startSefamOverEzShare(ConfigManager::get("CPAP_ARCHIVE_DIR", ""));
     } else {
@@ -847,7 +855,7 @@ void BurstCollectorService::processSessionSummary() {
     // STR.edf is a ResMed artefact. A Lowenstein or Sefam card has no equivalent,
     // so there is nothing for processSTRFile() to read and cpap_daily_summary can
     // only come from the sessions we just parsed.
-    if (cpap_source_ == "lowenstein" || cpap_source_ == "sefam") {
+    if (cpap_source_ == "lowenstein" || cpap_source_ == "sefam" || cpap_source_ == "bmc") {
         // TODO(#15): avg_mask_pressure/avg_spo2/avg_epr_pressure etc. are always 0 in
         // cpap_session_metrics because PrismaParser never aggregates the per-minute
         // WMEDF signal samples (pressure/leak/SpO2/HR) into those fields. Once that
@@ -1650,6 +1658,10 @@ bool BurstCollectorService::executeBurstCycle() {
                   << std::endl;
         return true;
 
+    } else if (bmc_ingestion_) {
+        // ===== BMC / REACT HEALTH LUNA (SDD-049) =====
+        return executeBmcBurst();
+
     } else if (cpap_source_ == "local" && !localSourceIsReady()) {
         // SDD-010: the folder is unset or wrong. Nothing is inserted while the
         // configuration is broken, and nights already in the database keep
@@ -2434,6 +2446,79 @@ void BurstCollectorService::republishRevisedNight() {
     if (data_publisher_) publishNightOutcome(start);
 }
 
+bool BurstCollectorService::executeBmcBurst() {
+    const auto cycle_start = std::chrono::steady_clock::now();
+
+    auto read = bmc_ingestion_->readSessions(device_id_, device_name_);
+    if (!read.ok) {
+        std::cerr << "CPAP: " << read.error << std::endl;
+        return false;
+    }
+
+    // D4: every session the database does not hold. A stored one is read again
+    // only while it grows, which is the newest one: once per process (it may
+    // have grown while the service was down), then whenever it got longer.
+    int imported = 0, grown = 0;
+    for (std::size_t i = 0; i < read.sessions.size(); ++i) {
+        const auto& s = *read.sessions[i];
+        const auto start = *s.session_start;
+        if (isRemovedNight(removed_nights_, start)) continue;   // SDD-029
+
+        const long long key =
+            std::chrono::duration_cast<std::chrono::seconds>(start.time_since_epoch()).count();
+        const int seconds = s.duration_seconds.value_or(0);
+        const bool is_newest = i + 1 == read.sessions.size();
+        const bool stored = db_service_->sessionExists(device_id_, start);
+        if (stored) {
+            const auto seen = bmc_saved_seconds_.find(key);
+            const bool grew = seen == bmc_saved_seconds_.end() ? is_newest
+                                                               : seconds > seen->second;
+            if (!grew) {
+                bmc_saved_seconds_[key] = seconds;
+                continue;
+            }
+        }
+
+        if (!db_service_->saveSession(s)) {
+            std::cerr << "CPAP: BMC session could not be saved" << std::endl;
+            continue;
+        }
+        closeWithDataEnd(*db_service_, device_id_, start, s);   // SDD-037 D2
+        bmc_saved_seconds_[key] = seconds;
+        if (stored) ++grown; else ++imported;
+        // The newest changed night is the one Home Assistant shows.
+        bmc_pending_publish_ = std::shared_ptr<const CPAPSession>(std::move(read.sessions[i]));
+        bmc_pending_is_new_ = !stored;
+    }
+
+    // No STR on a BMC card: the daily summary comes from the sessions.
+    if (imported + grown > 0) processSessionSummary();
+
+    if (bmc_pending_publish_ && data_publisher_ && mqtt_client_ && mqtt_client_->isConnected()) {
+        const auto night = std::move(bmc_pending_publish_);
+        // D2: no STR to name the family, so the session does. The parser
+        // marks a session whose IPAP exceeds its EPAP as bi-level (mode 2).
+        const bool bilevel = night->settings && night->settings->therapy_mode == 2;
+        data_publisher_->setMachineFamily(bilevel ? MachineFamily::BiLevel
+                                                  : MachineFamily::Unknown);
+        data_publisher_->publishSession(*night);
+        if (auto metrics = db_service_->getNightlyMetrics(device_id_, *night->session_start)) {
+            data_publisher_->publishHistoricalState(*metrics);
+            // A grown night is the same night again: no second summary.
+            if (bmc_pending_is_new_ && llm_enabled_ && llm_client_)
+                generateAndPublishSummary(*metrics, nullptr);
+        }
+        data_publisher_->publishSessionCompleted();
+    }
+
+    const auto cycle_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - cycle_start).count();
+    std::cout << "CPAP: BMC burst cycle completed in " << cycle_ms << " ms ("
+              << read.sessions.size() << " on the card, " << imported << " imported, "
+              << grown << " grown)" << std::endl;
+    return true;
+}
+
 void BurstCollectorService::runRequestedRepublish() {
     if (!republish_requested_.exchange(false)) return;
     try {
@@ -2460,6 +2545,16 @@ void BurstCollectorService::republishNewestNight() {
     else
         start = db_service_->getLastSessionStart(device_id_);
     if (!start) return;
+
+    // SDD-049 D2: a BMC card has no STR to name the family; the stored night's
+    // mode does (2, bi-level). An upload reaches Home Assistant this way only,
+    // so it cannot wait for a burst to read the card.
+    if (cpap_source_ == "bmc") {
+        if (const auto night = db_service_->getNightlyMetrics(device_id_, *start))
+            data_publisher_->setMachineFamily(night->therapy_mode.value_or(0) == 2
+                                                  ? MachineFamily::BiLevel
+                                                  : MachineFamily::Unknown);
+    }
 
     std::cout << "CPAP: a backfill saved sessions, publishing the newest night again" << std::endl;
     publishNightOutcome(*start, /*with_summary=*/false);   // D1: no LLM call
@@ -2598,6 +2693,7 @@ void BurstCollectorService::runLoop() {
     // mode, a Löwenstein or Sefam folder): that is the user's, not ours.
     try {
         const bool reads_card_in_place = !local_source_dir_.empty() || prisma_ingestion_ ||
+                                         bmc_ingestion_ ||
                                          (sefam_ingestion_ && !sefam_over_ezshare_);
         if (!reads_card_in_place) {
             const std::string archive = ConfigManager::get(
@@ -3308,6 +3404,7 @@ void BurstCollectorService::reloadConfig() {
         nc.local_dir != last_config_.local_dir ||
         (nc.source == "sefam_ezshare" && nc.archive_dir != last_config_.archive_dir)) {
         sefam_over_ezshare_ = false;
+        bmc_ingestion_.reset();   // SDD-049: only the bmc branch below builds one
         if (nc.source == "sefam_ezshare") {
 #ifdef _WIN32
             _putenv_s("EZSHARE_BASE_URL", nc.ezshare_url.c_str());
@@ -3327,6 +3424,13 @@ void BurstCollectorService::reloadConfig() {
             discovery_service_.reset();
             prisma_ingestion_.reset();
             sefam_ingestion_ = std::make_unique<SefamIngestion>(nc.local_dir);
+        } else if (nc.source == "bmc") {
+            local_source_dir_.clear();
+            data_source_.reset();
+            discovery_service_.reset();
+            prisma_ingestion_.reset();
+            sefam_ingestion_.reset();
+            bmc_ingestion_ = std::make_unique<BmcIngestion>(nc.local_dir);
         } else if (nc.source == "local") {
             local_source_dir_ = nc.local_dir;
             // SDD-010: re-classify on reload so a folder corrected in Settings

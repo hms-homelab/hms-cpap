@@ -12,6 +12,7 @@
 #include "services/OximetryService.h"
 #include "services/PrismaIngestion.h"
 #include "services/SefamIngestion.h"
+#include "services/BmcIngestion.h"
 #include "services/SessionDiscoveryService.h"
 #include "mqtt_client.h"
 #include "database/IDatabase.h"
@@ -23,6 +24,7 @@
 #include <atomic>
 #include <chrono>
 #include <functional>
+#include <map>
 #include <mutex>
 #include <set>
 
@@ -258,6 +260,12 @@ public:
     /// The run loop's SDD-048 step, synchronously. Test-only.
     void runRequestedRepublishForTest() { runRequestedRepublish(); }
 
+    /// SDD-049: read a BMC card from [root] on the next burst. Test-only.
+    void useBmcCardForTest(const std::string& root) {
+        bmc_ingestion_ = std::make_unique<BmcIngestion>(root);
+        cpap_source_ = "bmc";
+    }
+
     /// Test-only: the id nights are being stored under (SDD-042).
     const std::string& deviceIdForTest() const { return device_id_; }
     const std::string& deviceNameForTest() const { return device_name_; }
@@ -339,6 +347,23 @@ private:
     std::unique_ptr<IDataSource> data_source_;
     std::unique_ptr<PrismaIngestion> prisma_ingestion_;
     std::unique_ptr<SefamIngestion> sefam_ingestion_;
+    std::unique_ptr<BmcIngestion> bmc_ingestion_;   // SDD-049
+
+    /// SDD-049: the packet count this process last saved for each BMC session,
+    /// by start (epoch seconds). A stored session is read again only while it
+    /// grows: the newest one, once per process and then whenever it got longer.
+    std::map<long long, int> bmc_saved_seconds_;
+
+    /// SDD-049: the newest changed night, until it reaches the broker. A BMC
+    /// burst reads no network and finishes in milliseconds, so at startup it
+    /// can publish before the client is connected, and the messages it drops
+    /// would not come again until the next night. Held, and published on the
+    /// first burst that finds the client connected.
+    std::shared_ptr<const CPAPSession> bmc_pending_publish_;
+    bool bmc_pending_is_new_ = false;
+
+    /// SDD-049: one BMC burst. Split out so a test can run it on a synthetic card.
+    bool executeBmcBurst();
 
     /// SDD-031: a Sefam card behind an ez Share. data_source_ is the ez Share
     /// client; each burst copies the card into sefam_archive_dir_ and the
