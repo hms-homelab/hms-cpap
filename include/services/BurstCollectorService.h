@@ -157,6 +157,11 @@ public:
     /// repeated calls collapse into the one pending request.
     SyncNowOutcome requestSyncNow();
 
+    /// SDD-048: a backfill saved sessions; publish the newest night again on
+    /// the worker thread, after the current cycle. Only sets a flag, so it is
+    /// safe from the backfill thread, and repeated calls collapse into one.
+    void requestRepublish() { republish_requested_.store(true); }
+
     /// Stable string for the API response body.
     static const char* syncNowOutcomeString(SyncNowOutcome outcome);
 
@@ -249,6 +254,9 @@ public:
     /// Apply a pending config change synchronously. Test-only — drives the same
     /// reloadConfig() path the worker thread runs when markConfigDirty() fires.
     void reloadConfigForTest() { reloadConfig(); }
+
+    /// The run loop's SDD-048 step, synchronously. Test-only.
+    void runRequestedRepublishForTest() { runRequestedRepublish(); }
 
     /// Test-only: the id nights are being stored under (SDD-042).
     const std::string& deviceIdForTest() const { return device_id_; }
@@ -383,6 +391,9 @@ private:
     // Pending range summary requests (set by MQTT callback, executed by worker thread)
     std::atomic<int> pending_weekly_days_{0};   // >0 = generate weekly with N days
     std::atomic<int> pending_monthly_days_{0};  // >0 = generate monthly with N days
+
+    // SDD-048: set by requestRepublish(), taken by the worker thread.
+    std::atomic<bool> republish_requested_{false};
 
     // Connection recovery tracking
     int consecutive_failures_ = 0;
@@ -663,7 +674,20 @@ private:
      *         follow-on aggregates, which must not be recomputed off a night
      *         whose usage hours are known to be short.
      */
-    bool publishNightOutcome(const std::chrono::system_clock::time_point& session_start);
+    bool publishNightOutcome(const std::chrono::system_clock::time_point& session_start,
+                             bool with_summary = true);
+
+    /**
+     * SDD-048: what requestRepublish() asks for. The STR first (its daily
+     * sensors, the machine family, the mode), then the newest announced night
+     * through publishNightOutcome, with no LLM call (D1). A history from
+     * before SDD-046 has no announced night, so it falls back to the newest
+     * stored session.
+     */
+    void republishNewestNight();
+
+    /// Runs republishNewestNight() once if requestRepublish() was called.
+    void runRequestedRepublish();
 
     /**
      * SDD-008: clear the STR debt for every folder whose day now has a parsed

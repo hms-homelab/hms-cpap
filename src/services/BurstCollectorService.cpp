@@ -1227,7 +1227,7 @@ void BurstCollectorService::updateFolderLedgers(
 }
 
 bool BurstCollectorService::publishNightOutcome(
-    const std::chrono::system_clock::time_point& session_start) {
+    const std::chrono::system_clock::time_point& session_start, bool with_summary) {
 
     if (!data_publisher_ || !db_service_) return false;
 
@@ -1262,7 +1262,7 @@ bool BurstCollectorService::publishNightOutcome(
               << metrics.value().usage_hours.value_or(0.0) << "h, AHI "
               << metrics.value().ahi << ")" << std::endl;
 
-    if (llm_enabled_ && llm_client_) {
+    if (with_summary && llm_enabled_ && llm_client_) {
         // The record for THIS night's therapy day, not the newest the STR
         // holds, which is another day's whenever the night is not the last.
         generateAndPublishSummary(metrics.value(), strRecordForNight(session_start));
@@ -2434,6 +2434,37 @@ void BurstCollectorService::republishRevisedNight() {
     if (data_publisher_) publishNightOutcome(start);
 }
 
+void BurstCollectorService::runRequestedRepublish() {
+    if (!republish_requested_.exchange(false)) return;
+    try {
+        republishNewestNight();
+    } catch (const std::exception& e) {
+        std::cerr << "CPAP: republish after backfill failed: " << e.what() << std::endl;
+    }
+}
+
+void BurstCollectorService::republishNewestNight() {
+    if (!db_service_ || !data_publisher_) return;
+
+    // The STR first, as announceQuietNights does, and with the same guard: a
+    // changed STR must not make republishRevisedNight publish the night (and
+    // its LLM summary) on the way here.
+    announcing_ = true;
+    processSessionSummary();
+    announcing_ = false;
+
+    std::optional<std::chrono::system_clock::time_point> start;
+    const auto newest = newestAnnouncedNight(*db_service_, device_id_);
+    if (!newest.empty())
+        start = std::chrono::system_clock::time_point{std::chrono::seconds(newest[0].newest_start)};
+    else
+        start = db_service_->getLastSessionStart(device_id_);
+    if (!start) return;
+
+    std::cout << "CPAP: a backfill saved sessions, publishing the newest night again" << std::endl;
+    publishNightOutcome(*start, /*with_summary=*/false);   // D1: no LLM call
+}
+
 const STRDailyRecord* BurstCollectorService::strRecordForNight(
     const std::chrono::system_clock::time_point& session_start) const {
     const std::string day = strDayForSessionStart(session_start);
@@ -2694,6 +2725,9 @@ void BurstCollectorService::runLoop() {
         if (int days = pending_monthly_days_.exchange(0); days > 0) {
             generateRangeSummary(SummaryPeriod::MONTHLY, days);
         }
+
+        // SDD-048: a backfill (another thread) asked for the newest night.
+        runRequestedRepublish();
 
         // Wait for next cycle
         auto next_cycle = std::chrono::system_clock::now() + std::chrono::seconds(burst_interval_seconds_);

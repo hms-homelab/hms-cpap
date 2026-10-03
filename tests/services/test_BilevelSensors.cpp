@@ -46,6 +46,14 @@ TEST(BilevelNightSensors, OneChannelAloneGivesNothing) {
     EXPECT_TRUE(bilevelNightSensors(MachineFamily::BiLevel, nightWith(std::nullopt, 5.0)).empty());
 }
 
+TEST(AvgPressure, NotOnABilevelEverywhereElse) {
+    // SDD-048 D4: on a bi-level the waveform mean sits between EPAP and IPAP.
+    EXPECT_FALSE(publishesAvgPressure(MachineFamily::BiLevel));
+    for (auto f : {MachineFamily::AutoSet, MachineFamily::Cpap, MachineFamily::Asv,
+                   MachineFamily::Unknown})
+        EXPECT_TRUE(publishesAvgPressure(f));
+}
+
 TEST(BilevelStrSensors, AVautoPublishesItsCeilingFloorSupportAndTargets) {
     STRDailyRecord r;
     r.family = MachineFamily::BiLevel;

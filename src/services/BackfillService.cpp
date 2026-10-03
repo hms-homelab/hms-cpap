@@ -108,12 +108,22 @@ void BackfillService::executeCardImport(UploadedCard kind, const std::string& ro
             progress_.status = "complete";
         }
         progress_.completed_at = currentTimestamp();
+        notifySessionsSaved(counts.imported);
     } catch (const std::exception& e) {
         std::lock_guard<std::mutex> lock(progress_mutex_);
         progress_.status = "error";
         progress_.error_message = e.what();
         progress_.completed_at = currentTimestamp();
         spdlog::error("BackfillService: card import failed: {}", e.what());
+    }
+}
+
+void BackfillService::notifySessionsSaved(int saved) {
+    if (saved <= 0 || !on_sessions_saved_) return;
+    try {
+        on_sessions_saved_();
+    } catch (const std::exception& e) {
+        spdlog::error("BackfillService: sessions-saved hook failed: {}", e.what());
     }
 }
 
@@ -416,6 +426,7 @@ void BackfillService::executeBackfill(const std::string& start_date,
         spdlog::info("BackfillService: complete — parsed={}, saved={}, deleted={}, errors={}",
                      progress_.sessions_parsed, progress_.sessions_saved,
                      progress_.sessions_deleted, progress_.errors);
+        notifySessionsSaved(progress_.sessions_saved);
 
     } catch (const std::exception& e) {
         spdlog::error("BackfillService: error — {}", e.what());

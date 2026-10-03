@@ -641,6 +641,58 @@ TEST_F(PayloadTest, ABilevelNightPublishesIpapEpapAndPressureSupport) {
     EXPECT_NEAR(std::stod(get("/historical/pressure_support")), 4.0, 1e-6);
 }
 
+TEST_F(PayloadTest, ABilevelHasNoAvgPressureAndLeavingOneBringsItBack) {
+    if (!connected) GTEST_SKIP() << "MQTT broker not available";
+
+    SessionMetrics m;
+    m.avg_pressure = 6.44;   // the reporter's night: EPAP 5.31, IPAP 9.31
+
+    auto valueOf = [](const std::map<std::string, std::string>& got, const std::string& suffix)
+        -> std::optional<std::string> {
+        for (const auto& [t, v] : got)
+            if (t.size() >= suffix.size() &&
+                t.compare(t.size() - suffix.size(), suffix.size(), suffix) == 0)
+                return v;
+        return std::nullopt;
+    };
+
+    // From a known non-bi-level state with a retained avg_pressure, so entering
+    // bi-level is a transition with something to remove. Only the two filters
+    // below are ever subscribed: the client hands a message to the first
+    // subscription that matches, so an overlapping one would swallow them.
+    publisher->setMachineFamily(STRDailyRecord::Family::AutoSet);
+    publisher->publishHistoricalState(m);
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+    // SDD-048 D4: entering bi-level removes the entity...
+    auto entering = capture("homeassistant/sensor/+/+/config", [&] {
+        publisher->setMachineFamily(STRDailyRecord::Family::BiLevel);
+    });
+    const auto cfg = valueOf(entering, "/hist_avg_pressure/config");
+    ASSERT_TRUE(cfg.has_value()) << "hist_avg_pressure discovery not cleared";
+    EXPECT_TRUE(cfg->empty());
+
+    // ...and its retained value: a new subscriber gets none, and a bi-level
+    // night does not publish one.
+    auto night = capture("cpap/+/historical/#", [&] { publisher->publishHistoricalState(m); });
+    EXPECT_FALSE(valueOf(night, "/historical/avg_pressure").has_value());
+    auto rediscovery = capture("homeassistant/sensor/+/+/config",
+                               [&] { publisher->publishDiscovery(); });
+    EXPECT_FALSE(valueOf(rediscovery, "/hist_avg_pressure/config").has_value());
+
+    // Leaving bi-level announces it again, and the night publishes it.
+    auto leaving = capture("homeassistant/sensor/+/+/config", [&] {
+        publisher->setMachineFamily(STRDailyRecord::Family::AutoSet);
+    });
+    const auto back = valueOf(leaving, "/hist_avg_pressure/config");
+    ASSERT_TRUE(back.has_value()) << "hist_avg_pressure not announced on leaving bi-level";
+    EXPECT_FALSE(back->empty());
+    auto airsense = capture("cpap/+/historical/#", [&] { publisher->publishHistoricalState(m); });
+    const auto avg = valueOf(airsense, "/historical/avg_pressure");
+    ASSERT_TRUE(avg.has_value());
+    EXPECT_NEAR(std::stod(*avg), 6.44, 1e-6);
+}
+
 /**
  * publishSessionSummary wraps the text in {"summary": "..."} JSON and
  * publishes to the daily/session_summary topic.

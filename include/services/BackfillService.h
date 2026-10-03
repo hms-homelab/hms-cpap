@@ -89,7 +89,19 @@ public:
     /// Thread-safe status for API polling.
     Json::Value getStatus() const;
 
+    /**
+     * SDD-048: called on this worker when a backfill or a card import finishes
+     * having saved at least one session. This service has no publisher, so
+     * without it a re-parse rewrote the database and Home Assistant heard
+     * nothing. Set before start(); it must only hand off (set a flag), never
+     * touch another thread's database handle or broker.
+     */
+    void setOnSessionsSaved(std::function<void()> fn) { on_sessions_saved_ = std::move(fn); }
+
 private:
+    std::function<void()> on_sessions_saved_;
+    void notifySessionsSaved(int saved);
+
     std::atomic<bool> card_import_requested_{false};
     UploadedCard pending_card_kind_ = UploadedCard::Unknown;
     std::string pending_card_root_;

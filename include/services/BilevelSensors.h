@@ -34,6 +34,14 @@ inline NamedValues bilevelNightSensors(MachineFamily family, const SessionMetric
     return {{"ipap", ipap}, {"epap", epap}, {"pressure_support", ipap - epap}};
 }
 
+/// SDD-048 D4: `avg_pressure` is the mean of the BRP pressure waveform. On a
+/// bi-level that waveform swings between EPAP and IPAP, so its mean (6.44 on
+/// the reporter's 5.31/9.31 night) is a pressure the patient never gets. It is
+/// published on every other machine.
+inline bool publishesAvgPressure(MachineFamily family) {
+    return family != MachineFamily::BiLevel;
+}
+
 /// The STR day's prescribed bi-level settings and daily targets. A VAuto
 /// writes `S.VA.*` (a ceiling, a floor and the support); a fixed bi-level
 /// writes `S.S.IPAP`/`S.S.EPAP`, whose difference is its support. Only what the

@@ -220,6 +220,9 @@ TEST(BackfillServiceTest, BackfillMarksSessionsCompleted) {
         .WillOnce(Return(true));
 
     BackfillService svc(cfg, mock_db);
+    // SDD-048: a backfill that saved a session asks for a republish, once.
+    std::atomic<int> republish_asks{0};
+    svc.setOnSessionsSaved([&] { ++republish_asks; });
 
     // Run backfill synchronously (not via start/trigger which uses a thread)
     // We call trigger + start, then stop after completion
@@ -238,6 +241,7 @@ TEST(BackfillServiceTest, BackfillMarksSessionsCompleted) {
     auto status = svc.getStatus();
     EXPECT_EQ(status["status"].asString(), "complete");
     EXPECT_GE(status["sessions_saved"].asInt(), 1);
+    EXPECT_EQ(republish_asks.load(), 1);
 
     // Cleanup
     std::filesystem::remove_all(tmp);
@@ -270,6 +274,9 @@ TEST(BackfillServiceTest, BackfillWithoutSaveDoesNotMarkCompleted) {
     EXPECT_CALL(*mock_db, updateCheckpointFileSizesMock(_, _)).Times(0);
 
     BackfillService svc(cfg, mock_db);
+    // SDD-048: nothing saved, nothing for Home Assistant to hear.
+    std::atomic<int> republish_asks{0};
+    svc.setOnSessionsSaved([&] { ++republish_asks; });
     svc.start();
     svc.trigger("2026-02-07", "2026-02-07");
 
@@ -284,6 +291,7 @@ TEST(BackfillServiceTest, BackfillWithoutSaveDoesNotMarkCompleted) {
     auto status = svc.getStatus();
     EXPECT_EQ(status["status"].asString(), "complete");
     EXPECT_EQ(status["sessions_saved"].asInt(), 0);
+    EXPECT_EQ(republish_asks.load(), 0);
 
     std::filesystem::remove_all(tmp);
 }

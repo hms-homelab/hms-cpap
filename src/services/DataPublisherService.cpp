@@ -259,6 +259,8 @@ bool DataPublisherService::publishHistoricalDiscovery() {
     };
 
     for (const auto& sensor : historical_sensors) {
+        // SDD-048 D4: setMachineFamily removed it; a reconnect must not bring it back.
+        if (sensor.name == "avg_pressure" && !publishesAvgPressure(machine_family_)) continue;
         std::string object_id = device_id_ + "_hist_" + sensor.name;
         std::string state_topic = "cpap/" + device_id_ + "/historical/" + sensor.name;
 
@@ -327,6 +329,11 @@ void DataPublisherService::setMachineFamily(MachineFamily family) {
     if (family == MachineFamily::BiLevel) {
         std::cout << "MQTT: bi-level machine, announcing IPAP/EPAP sensors" << std::endl;
         publishBilevelDiscovery();
+        // SDD-048 D4: the waveform mean is not a bi-level pressure. Its
+        // entity and retained value go, the way the bi-level ones go below.
+        mqtt_client_->publish("homeassistant/sensor/" + device_id_ + "/hist_avg_pressure/config",
+                              "", 1, true);
+        mqtt_client_->publish("cpap/" + device_id_ + "/historical/avg_pressure", "", 0, true);
     } else if (was_bilevel) {
         // SDD-023's rule: a user who changes machines must not be left with an
         // entity frozen on the last bi-level night. An empty retained payload
@@ -338,6 +345,9 @@ void DataPublisherService::setMachineFamily(MachineFamily family) {
                                       "/config", "", 1, true);
             mqtt_client_->publish("cpap/" + device_id_ + "/" + d.ns + "/" + d.name, "", 0, true);
         }
+        // SDD-048 D4: avg_pressure is back. Startup discovery ran before the
+        // family was known, so it is announced again here.
+        publishHistoricalDiscovery();
     }
 }
 
@@ -591,7 +601,7 @@ void DataPublisherService::publishHistoricalState(const SessionMetrics& m) {
     }
 
     // PRESSURE
-    if (m.avg_pressure.has_value()) {
+    if (m.avg_pressure.has_value() && publishesAvgPressure(machine_family_)) {
         mqtt_client_->publish("cpap/" + device_id_ + "/historical/avg_pressure",
                              std::to_string(m.avg_pressure.value()), 0, true);
     }

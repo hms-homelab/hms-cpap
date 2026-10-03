@@ -3092,6 +3092,28 @@ TEST_F(BurstOrchestrationTest, AClosedSessionPublishesNothingBeforeItsHour) {
     ASSERT_TRUE(it->second.complete) << "test setup did not actually close the night";
 }
 
+// SDD-048: a backfill rewrites the database from another thread and has no
+// publisher. When it saved sessions it asks the collector, which publishes the
+// newest night on its own thread, once per request. The metrics lookup is what
+// publishing needs, so it stands for the publish.
+TEST_F(BurstOrchestrationTest, ABackfillRequestPublishesTheNewestNightOnce) {
+    auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
+    // A history from before SDD-046 has no announced night: the newest session.
+    const auto newest = std::chrono::system_clock::from_time_t(1577923200);   // 2020-01-02 00:00 UTC
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(newest));
+
+    EXPECT_CALL(*db_raw, getNightlyMetrics(_, _)).Times(0);
+    svc->runRequestedRepublishForTest();   // nothing was asked: nothing published
+    ::testing::Mock::VerifyAndClearExpectations(db_raw);
+
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(newest));
+    EXPECT_CALL(*db_raw, getNightlyMetrics(_, newest)).Times(1).WillOnce(Return(std::nullopt));
+    svc->requestRepublish();
+    svc->requestRepublish();               // two asks before the worker runs are one
+    svc->runRequestedRepublishForTest();
+    svc->runRequestedRepublishForTest();   // taken: the second pass does nothing
+}
+
 // A first run against a card holding many nights used to download every one
 // of them, then the sidecars, then archive, and only then parse, so nothing
 // reached the database until the last folder was in. A session is now parsed

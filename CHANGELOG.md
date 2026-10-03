@@ -5,6 +5,33 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+A re-parse now reaches Home Assistant (#33).
+
+### Fixed
+- **A re-parse changed the database and Home Assistant never heard of it.**
+  A backfill (`POST /api/backfill`, the re-parse in Settings, or an uploaded
+  card) re-read the nights and stored the new numbers, but published nothing,
+  so every sensor kept its old value until the next new night. When a
+  re-parse saves sessions, the newest night and the STR's daily sensors are
+  now published again within one burst cycle. It does not regenerate the AI
+  summary.
+- **An AirCurve upgraded from before 5.2.8 showed IPAP, EPAP and pressure
+  support as unknown.** The sensors were announced, but the nights stored
+  before 5.2.8 hold no IPAP channel, and nothing re-reads a stored night on
+  upgrade. **If your bi-level machine has been on hms-cpap since before
+  5.2.8, run a re-parse once** (Settings, or `POST /api/backfill`): the three
+  sensors fill as soon as it finishes.
+
+### Changed
+- **No `avg_pressure` on a bi-level.** On an AirCurve that sensor is the mean
+  of a pressure waveform swinging between EPAP and IPAP (6.4 cmH2O on a
+  5.3/9.3 night), a pressure the patient never receives. Use `hist_ipap` and
+  `hist_epap` instead. The entity is removed when the machine is seen to be a
+  bi-level and comes back if the machine changes. Every other machine still
+  publishes it.
+
 ## [5.4.9] - 2026-10-01
 
 A failed download no longer damages the archive (since 5.4.4).

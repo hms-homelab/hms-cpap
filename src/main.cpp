@@ -1200,6 +1200,11 @@ int main(int argc, char** argv) {
 
                 backfill_service = std::make_unique<hms_cpap::BackfillService>(
                     bf_cfg, bf_db);
+                // SDD-048: a re-parse reaches Home Assistant. The collector owns
+                // the publisher; the backfill only raises its flag.
+                backfill_service->setOnSessionsSaved([] {
+                    if (burst_service) burst_service->requestRepublish();
+                });
                 backfill_service->start();
 
                 hms_cpap::CpapController::backfill_trigger_ =
