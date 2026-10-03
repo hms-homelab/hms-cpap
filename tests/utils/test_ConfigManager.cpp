@@ -7,6 +7,8 @@
 #include <gtest/gtest.h>
 #include "utils/ConfigManager.h"
 #include <cstdlib>
+#include <map>
+#include <optional>
 
 using namespace hms_cpap;
 
@@ -25,12 +27,14 @@ namespace test_defaults {
 class ConfigManagerTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        // Save original environment
-        saveEnvVar("EZSHARE_HOST");
-        saveEnvVar("EZSHARE_PORT");
-        saveEnvVar("DB_HOST");
-        saveEnvVar("DB_PORT");
-        saveEnvVar("MQTT_HOST");
+        // Save every variable these tests set or unset, including the absent
+        // ones. DB_NAME used to be missing here, so DefaultValues_Database
+        // left it unset for the rest of the run and the agent suites after it
+        // fell back to a database without pgvector, and crashed the binary.
+        for (const char* name : {"EZSHARE_HOST", "EZSHARE_PORT", "DB_HOST", "DB_PORT",
+                                 "DB_NAME", "MQTT_HOST", "MQTT_PORT", "TEST_BOOL",
+                                 "TEST_PORT", "TEST_VAR_EMPTY", "TEST_VAR_MISSING"})
+            saveEnvVar(name);
     }
 
     void TearDown() override {
@@ -40,18 +44,17 @@ protected:
 
     void saveEnvVar(const std::string& name) {
         const char* val = std::getenv(name.c_str());
-        if (val != nullptr) {
-            saved_env_[name] = std::string(val);
-        }
+        saved_env_[name] = val ? std::optional<std::string>(val) : std::nullopt;
     }
 
     void restoreEnvVars() {
         for (const auto& [name, value] : saved_env_) {
-            setenv(name.c_str(), value.c_str(), 1);
+            if (value) setenv(name.c_str(), value->c_str(), 1);
+            else unsetenv(name.c_str());
         }
     }
 
-    std::map<std::string, std::string> saved_env_;
+    std::map<std::string, std::optional<std::string>> saved_env_;
 };
 
 // ============================================================================
