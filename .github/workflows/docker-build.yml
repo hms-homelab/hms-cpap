@@ -989,32 +989,46 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # The full Dockerfile, so the UI comes out of the same build as the
-      # binary. type=local writes the final stage's filesystem to a directory
-      # instead of an image; the two paths below are where that stage puts
-      # the binary and the UI.
-      - name: Build for linux/arm/v7
+      # The UI is architecture-independent: the Dockerfile's own ui-builder
+      # stage, built natively, its output written to a directory.
+      - name: Build the UI
         uses: docker/build-push-action@v5
         with:
           context: .
-          platforms: linux/arm/v7
+          target: ui-builder
           push: false
-          outputs: type=local,dest=armhf-rootfs
-          cache-from: type=gha,scope=armhf
-          cache-to: type=gha,mode=max,scope=armhf
+          outputs: type=local,dest=ui-out
+          cache-from: type=gha,scope=armhf-ui
+          cache-to: type=gha,mode=max,scope=armhf-ui
+
+      # The binary is cross-compiled against a Raspberry Pi OS sysroot with
+      # that sysroot's C++ headers: Debian's armv7 headers assume a shared_ptr
+      # lock policy Raspberry Pi OS's ARMv6 libraries do not have, and the
+      # emulated debian:trixie build this replaces crashed on real Pis
+      # (heap corruption parsing a night, an abort on every stop). The script
+      # fails on that mismatch, then runs --preflight and a one-night --reparse
+      # under qemu-arm against the sysroot.
+      - name: Cache the Raspberry Pi OS sysroot
+        uses: actions/cache@v4
+        with:
+          path: armhf-work/sysroot
+          key: raspbian-sysroot-trixie-${{ hashFiles('packaging/pi/sysroot-packages.txt', 'packaging/pi/build-armhf.sh') }}
+
+      - name: Build for 32-bit Raspberry Pi OS
+        run: |
+          docker run --rm -v "$PWD":/src -w /src -e WORK=/src/armhf-work \
+            debian:trixie packaging/pi/build-armhf.sh /src/armhf-out
+          sudo chown -R "$(id -u):$(id -g)" armhf-work armhf-out
 
       - name: Stage the zip
         run: |
           set -e
           mkdir -p release/static/browser
-          cp armhf-rootfs/usr/local/bin/hms_cpap release/
-          cp -R armhf-rootfs/home/cpap/static/browser/. release/static/browser/
+          cp armhf-out/hms_cpap release/
+          cp -R ui-out/ui/dist/frontend/browser/. release/static/browser/
           cp packaging/pi/install.sh packaging/pi/hms-cpap.service packaging/pi/README.txt release/
           # SDD-041 D10: the root side of Apply in the web UI.
           cp packaging/pi/apply-update.sh packaging/pi/hms-cpap-update.path \
@@ -1024,33 +1038,6 @@ jobs:
           file release/hms_cpap | grep -q 'ELF 32-bit LSB.*ARM, EABI5' \
             || { echo "hms_cpap is not a 32-bit ARM executable"; exit 1; }
           test -f release/static/browser/index.html
-
-      # Load the same build as an image (cache hit, seconds) and run the
-      # binary's own preflight under emulation. It exits 0 or 1 by design
-      # depending on whether the empty config is usable; anything else, a
-      # missing library or a signal, is a broken artefact and fails here
-      # rather than on someone's Pi.
-      - name: Preflight the binary under emulation
-        uses: docker/build-push-action@v5
-        with:
-          context: .
-          platforms: linux/arm/v7
-          push: false
-          load: true
-          tags: hms-cpap:armhf-preflight
-          cache-from: type=gha,scope=armhf
-
-      - name: Run --preflight
-        run: |
-          set +e
-          docker run --rm --platform linux/arm/v7 hms-cpap:armhf-preflight --preflight
-          rc=$?
-          set -e
-          echo "preflight exit code: $rc"
-          if [ "$rc" -ne 0 ] && [ "$rc" -ne 1 ]; then
-            echo "hms_cpap --preflight did not run to completion under emulation"
-            exit 1
-          fi
 
       - name: Upload Linux armhf artifact
         uses: actions/upload-artifact@v4

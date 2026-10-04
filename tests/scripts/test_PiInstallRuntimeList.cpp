@@ -92,6 +92,42 @@ std::set<std::string> installScriptRuntimePackages(const std::string& text) {
     return pkgs;
 }
 
+// The builder stage's apt-get install, up to its `rm -rf`, without the build
+// tools: what the armhf sysroot has to hold to compile the same thing.
+std::set<std::string> dockerfileBuildPackages(const std::string& text) {
+    const auto stage = text.find("Stage 2: C++ Builder");
+    EXPECT_NE(stage, std::string::npos) << "the Dockerfile has no 'Stage 2: C++ Builder' marker";
+    const auto install = text.find("apt-get install", stage);
+    const auto end = text.find("rm -rf", install);
+    EXPECT_TRUE(install != std::string::npos && end != std::string::npos);
+
+    std::string span = text.substr(install, end - install);
+    std::replace(span.begin(), span.end(), '\\', ' ');
+    std::istringstream in(span);
+    const std::set<std::string> tools = {"build-essential", "cmake", "ca-certificates", "git"};
+    std::set<std::string> pkgs;
+    std::string tok;
+    while (in >> tok) {
+        if (tok == "apt-get" || tok == "install" || tools.count(tok)) continue;
+        if (looksLikePackage(tok)) pkgs.insert(tok);
+    }
+    return pkgs;
+}
+
+// One package a line; blank lines and # comments skipped.
+std::set<std::string> listFilePackages(const std::string& text) {
+    std::istringstream in(text);
+    std::set<std::string> pkgs;
+    std::string line;
+    while (std::getline(in, line)) {
+        const auto first = line.find_first_not_of(" \t\r");
+        if (first == std::string::npos || line[first] == '#') continue;
+        line = line.substr(first, line.find_last_not_of(" \t\r") - first + 1);
+        if (looksLikePackage(line)) pkgs.insert(line);
+    }
+    return pkgs;
+}
+
 std::string join(const std::set<std::string>& s) {
     std::string out;
     for (const auto& x : s) out += (out.empty() ? "" : ", ") + x;
@@ -118,6 +154,29 @@ TEST(PiInstallRuntimeList, MatchesTheDockerfileRuntimeStage) {
         << "in the Dockerfile runtime stage but not in packaging/pi/install.sh: " << join(only_docker);
     EXPECT_TRUE(only_script.empty())
         << "in packaging/pi/install.sh but not in the Dockerfile runtime stage: " << join(only_script);
+}
+
+// The armhf zip is cross-compiled against a Raspberry Pi OS sysroot built from
+// packaging/pi/sysroot-packages.txt. A library the image build links and the
+// sysroot lacks fails that build at link time; one the sysroot has and the
+// image does not means the two builds compile different programs.
+TEST(PiInstallRuntimeList, TheSysrootListMatchesTheDockerfileBuilderStage) {
+    const auto root = sourceRoot();
+    const auto docker = dockerfileBuildPackages(slurp(root / "Dockerfile"));
+    const auto sysroot = listFilePackages(slurp(root / "packaging" / "pi" / "sysroot-packages.txt"));
+
+    ASSERT_FALSE(docker.empty()) << "no build packages parsed from the Dockerfile";
+    ASSERT_FALSE(sysroot.empty()) << "no packages parsed from sysroot-packages.txt";
+
+    std::set<std::string> only_docker, only_sysroot;
+    std::set_difference(docker.begin(), docker.end(), sysroot.begin(), sysroot.end(),
+                        std::inserter(only_docker, only_docker.end()));
+    std::set_difference(sysroot.begin(), sysroot.end(), docker.begin(), docker.end(),
+                        std::inserter(only_sysroot, only_sysroot.end()));
+    EXPECT_TRUE(only_docker.empty())
+        << "in the Dockerfile builder stage but not in sysroot-packages.txt: " << join(only_docker);
+    EXPECT_TRUE(only_sysroot.empty())
+        << "in sysroot-packages.txt but not in the Dockerfile builder stage: " << join(only_sysroot);
 }
 
 TEST(PiInstallRuntimeList, TheUnitTemplateHasBothPlaceholders) {
