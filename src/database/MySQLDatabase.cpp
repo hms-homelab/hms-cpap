@@ -2331,6 +2331,42 @@ IDatabase::SessionKeyRepair MySQLDatabase::repairSessionKey() {
 }
 
 // ---------------------------------------------------------------------------
+// SDD-051: re-file every row under a new device id, in one transaction.
+// ---------------------------------------------------------------------------
+
+int MySQLDatabase::moveDeviceId(const std::string& from, const std::string& to) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!conn_ || from.empty() || to.empty() || from == to) return -1;
+    if (!exec("START TRANSACTION")) return -1;
+
+    int sessions_moved = 0;
+    for (const char* table : kDeviceIdTables) {
+        const std::string sql =
+            std::string("UPDATE ") + table + " SET device_id = ? WHERE device_id = ?";
+        MysqlStmtGuard g;
+        g.stmt = mysql_stmt_init(conn_);
+        ParamBinder p(2);
+        p.bindText(0, to);
+        p.bindText(1, from);
+        if (!g.stmt || mysql_stmt_prepare(g.stmt, sql.c_str(), sql.size()) != 0 ||
+            mysql_stmt_bind_param(g.stmt, p.data()) != 0 || mysql_stmt_execute(g.stmt) != 0) {
+            std::cerr << "MySQL: moveDeviceId " << table << ": "
+                      << (g.stmt ? mysql_stmt_error(g.stmt) : mysql_error(conn_)) << std::endl;
+            exec("ROLLBACK");
+            return -1;
+        }
+        if (std::string(table) == "cpap_sessions")
+            sessions_moved = static_cast<int>(mysql_stmt_affected_rows(g.stmt));
+    }
+
+    if (!exec("COMMIT")) {
+        exec("ROLLBACK");
+        return -1;
+    }
+    return sessions_moved;
+}
+
+// ---------------------------------------------------------------------------
 // cpap_session_files (SDD-014)
 // ---------------------------------------------------------------------------
 

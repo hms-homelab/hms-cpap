@@ -94,6 +94,10 @@ IDatabase::SessionKeyRepair PostgresDatabase::repairSessionKey() {   // SDD-034
     return db_->repairSessionKey();
 }
 
+int PostgresDatabase::moveDeviceId(const std::string& from, const std::string& to) {   // SDD-051
+    return db_->moveDeviceId(from, to);
+}
+
 bool PostgresDatabase::replaceSessionFiles(
     const std::string& device_id,
     const std::chrono::system_clock::time_point& session_start,

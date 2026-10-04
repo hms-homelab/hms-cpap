@@ -421,6 +421,28 @@ DB_PASSWORD=your_db_password
 WEB_PORT=8893
 ```
 
+### Device id
+
+Every night is stored under `device_id`, and it names the device in Home
+Assistant (`cpap/<device_id>/...`, entities `<device_id>_<sensor>`). A new
+install generates its own, `cpapdash_` and eight hex characters, so two installs
+on one broker never share topics.
+
+An install still on one of the old fixed defaults (`cpap_resmed_23243570851`, or
+`cpapdash` from 5.4.12) is given a generated id once, at startup: its nights move
+to the new id and its old Home Assistant device is removed. Home Assistant then
+shows a new device with new entities, so dashboards and automations built on the
+old ones need pointing at the new ones, and their history does not carry over.
+
+To keep the id you have, pin it before upgrading:
+
+```json
+"device_id": "cpap_resmed_23243570851",
+"device_id_pinned": true
+```
+
+The Home Assistant add-on pins any id typed into its `device_id` option.
+
 ## CLI Reference
 
 HMS-CPAP supports several command-line modes for batch operations. These run once and exit (no web server, no polling loop).

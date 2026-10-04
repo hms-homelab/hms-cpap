@@ -77,6 +77,7 @@ public:
     bool restoreNight(const std::string& device_id, const std::string& night) override;
     SessionKeyReport inspectSessionKey() override;   // SDD-034
     SessionKeyRepair repairSessionKey() override;    // SDD-034
+    int moveDeviceId(const std::string& from, const std::string& to) override;   // SDD-051
 
     bool replaceSessionFiles(
         const std::string& device_id,

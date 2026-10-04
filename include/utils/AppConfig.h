@@ -22,6 +22,14 @@ struct AppConfig {
     static constexpr const char* kLegacyDeviceName = "ResMed AirSense 10";
     std::string device_id = kDefaultDeviceId;
     std::string device_name = kDefaultDeviceName;
+    /// SDD-051: an id someone chose. Never moved to a generated one, even when
+    /// it is one of the old fixed defaults. The HA add-on sets it when its
+    /// device_id option is filled in.
+    bool device_id_pinned = false;
+    /// SDD-051: set while an install's nights move off an old default id, and
+    /// cleared once they and its Home Assistant topics have. A start that finds
+    /// it finishes the move instead of minting a second id.
+    std::string device_id_previous;
 
     // ── Data source: TWO questions, not one (SDD-022) ───────────────────────
     //
@@ -545,6 +553,10 @@ struct AppConfig {
                                                        : kLegacyDeviceId;
             config.device_name = j.contains("device_name") ? j["device_name"].get<std::string>()
                                                            : kLegacyDeviceName;
+            if (j.contains("device_id_pinned") && j["device_id_pinned"].is_boolean())
+                config.device_id_pinned = j["device_id_pinned"].get<bool>();
+            if (j.contains("device_id_previous") && j["device_id_previous"].is_string())
+                config.device_id_previous = j["device_id_previous"].get<std::string>();
             if (j.contains("source"))       config.source = j["source"];
             // SDD-022. Read the new pair when present; migrate from `source`
             // when not. Rule 2: a config carrying BOTH -- written by an older
@@ -698,6 +710,10 @@ struct AppConfig {
             nlohmann::json j;
             j["device_id"] = device_id;
             j["device_name"] = device_name;
+            // SDD-051. Written only when set, so a config that never had them
+            // does not grow keys nobody asked for.
+            if (device_id_pinned) j["device_id_pinned"] = true;
+            if (!device_id_previous.empty()) j["device_id_previous"] = device_id_previous;
             j["transport"] = transport;
             j["format"]    = format;
             // SDD-022 migration rule 3: keep writing `source` for ONE release,

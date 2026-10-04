@@ -5,6 +5,26 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Every install its own device id (#33).
+
+### Changed
+- **A new install generates its own device id**, `cpapdash_` and eight hex
+  characters, instead of a fixed default. Two installs on one broker kept the
+  same default and published under the same topics, fighting over one Home
+  Assistant device.
+- **An install on an old fixed default is moved to a generated id, once.** If
+  your id is `cpap_resmed_23243570851` (the default until 5.4.11) or `cpapdash`
+  (5.4.12), the first start of this version moves every night to a new
+  `cpapdash_...` id in one transaction and removes the old Home Assistant
+  device. **Home Assistant then shows a new device with new entities:
+  dashboards, automations and history graphs built on the old ones must be
+  pointed at the new ones, and their history does not carry over.** To keep
+  your id, add `"device_id_pinned": true` to `config.json` before upgrading.
+  The Home Assistant add-on pins any id typed into its `device_id` option, and
+  leaves `cpapdash_addon` as it is.
+
 ## [5.4.12] - 2026-10-04
 
 Home Assistant shows the machine you own (#33).

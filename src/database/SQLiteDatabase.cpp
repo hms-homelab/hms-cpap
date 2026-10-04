@@ -1858,6 +1858,42 @@ IDatabase::SessionKeyRepair SQLiteDatabase::repairSessionKey() {
 }
 
 // ---------------------------------------------------------------------------
+// SDD-051: re-file every row under a new device id, in one transaction.
+// ---------------------------------------------------------------------------
+
+int SQLiteDatabase::moveDeviceId(const std::string& from, const std::string& to) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!db_ || from.empty() || to.empty() || from == to) return -1;
+    if (!exec("BEGIN IMMEDIATE")) return -1;
+
+    int sessions_moved = 0;
+    for (const char* table : kDeviceIdTables) {
+        const std::string sql =
+            std::string("UPDATE ") + table + " SET device_id = ? WHERE device_id = ?";
+        StmtGuard g;
+        if (sqlite3_prepare_v2(db_, sql.c_str(), -1, &g.stmt, nullptr) != SQLITE_OK) {
+            std::cerr << "SQLite: moveDeviceId " << table << ": " << sqlite3_errmsg(db_) << std::endl;
+            exec("ROLLBACK");
+            return -1;
+        }
+        bind_text(g.stmt, 1, to);
+        bind_text(g.stmt, 2, from);
+        if (sqlite3_step(g.stmt) != SQLITE_DONE) {
+            std::cerr << "SQLite: moveDeviceId " << table << ": " << sqlite3_errmsg(db_) << std::endl;
+            exec("ROLLBACK");
+            return -1;
+        }
+        if (std::string(table) == "cpap_sessions") sessions_moved = sqlite3_changes(db_);
+    }
+
+    if (!exec("COMMIT")) {
+        exec("ROLLBACK");
+        return -1;
+    }
+    return sessions_moved;
+}
+
+// ---------------------------------------------------------------------------
 // cpap_session_files (SDD-014)
 // ---------------------------------------------------------------------------
 

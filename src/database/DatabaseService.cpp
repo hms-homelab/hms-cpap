@@ -2700,6 +2700,41 @@ IDatabase::SessionKeyRepair DatabaseService::repairSessionKey() {
 }
 
 // ---------------------------------------------------------------------------
+// SDD-051: re-file every row under a new device id, in one transaction.
+// ---------------------------------------------------------------------------
+
+int DatabaseService::moveDeviceId(const std::string& from, const std::string& to) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (from.empty() || to.empty() || from == to) return -1;
+    if (!ensureConnection()) return -1;
+    try {
+        pqxx::work txn(*conn_);
+        int sessions_moved = 0;
+        for (const char* table : kDeviceIdTables) {
+            const auto r = txn.exec_params(
+                std::string("UPDATE ") + table + " SET device_id = $1 WHERE device_id = $2",
+                to, from);
+            if (std::string(table) == "cpap_sessions")
+                sessions_moved = static_cast<int>(r.affected_rows());
+        }
+        // The agent's memory lives here too, when the agent has ever run.
+        for (const char* table : {"agent_conversations", "agent_memory"}) {
+            const auto exists = txn.exec_params("SELECT to_regclass($1) IS NOT NULL",
+                                                std::string(table));
+            if (!exists.empty() && exists[0][0].as<bool>())
+                txn.exec_params(std::string("UPDATE ") + table +
+                                    " SET device_id = $1 WHERE device_id = $2",
+                                to, from);
+        }
+        txn.commit();
+        return sessions_moved;
+    } catch (const std::exception& e) {
+        std::cerr << "DB: moveDeviceId: " << e.what() << std::endl;
+        return -1;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // cpap_session_files (SDD-014)
 // ---------------------------------------------------------------------------
 

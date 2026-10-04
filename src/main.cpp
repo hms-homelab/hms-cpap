@@ -42,6 +42,7 @@
 #include "llm_client.h"
 #include "utils/ConfigManager.h"
 #include "utils/AppConfig.h"
+#include "utils/DeviceIdMigration.h"
 #include "utils/CardResidue.h"
 #include "utils/CardImport.h"
 #include "utils/SessionEnd.h"
@@ -613,6 +614,27 @@ int main(int argc, char** argv) {
         config.database.sqlite_path = data_dir + "/cpap.db";
     }
 
+    // SDD-051: every install its own device id. A first run generates one; an
+    // install still on an old fixed default gets one now, written down BEFORE
+    // anything reads the id (the env bridge below) and before its rows move
+    // (after the database connects), so a crash in between resumes the same
+    // move. A pinned id is never touched.
+    if (!config_existed && config.device_id == hms_cpap::AppConfig::kDefaultDeviceId) {
+        config.device_id = hms_cpap::generateDeviceId();
+    } else if (config_existed) {
+        const std::string before = config.device_id;
+        if (hms_cpap::beginDeviceIdBackfill(config) && config.device_id != before) {
+            std::cout << "Config: device id " << before << " was a shared default; this install is "
+                      << config.device_id << " from now on (SDD-051)" << std::endl;
+            if (!config.save(config_path)) {
+                std::cerr << "Config: could not save the new device id; keeping " << before
+                          << std::endl;
+                config.device_id = before;
+                config.device_id_previous.clear();
+            }
+        }
+    }
+
     // Only create config file on first run -- don't overwrite user's config
     if (!config_existed) {
         config.save(config_path);
@@ -727,6 +749,44 @@ int main(int argc, char** argv) {
                       << fixed.rows_deleted
                       << " row(s)); the duplicates stay and so does the missing key."
                       << std::endl;
+        }
+    }
+
+    // SDD-051 steps 2 to 4: the rows, then Home Assistant's old device, then
+    // the marker. Before anything else opens the database or the broker. Every
+    // step is safe to repeat, so an interrupted move simply finishes next time.
+    if (!config.device_id_previous.empty()) {
+        const std::string old_id = config.device_id_previous;
+        const int moved = db->moveDeviceId(old_id, config.device_id);
+        if (moved < 0) {
+            // Nothing moved. Go on under the old id rather than show an empty
+            // dashboard over a full database; a later start tries again.
+            std::cerr << "Config: could not move the nights from " << old_id << " to "
+                      << config.device_id << "; staying on " << old_id << " for now" << std::endl;
+            config.device_id = old_id;
+            config.device_id_previous.clear();
+            config.save(config_path);
+            portableSetenv("CPAP_DEVICE_ID", config.device_id.c_str());
+        } else {
+            std::cout << "Config: device id " << old_id << " -> " << config.device_id << ", "
+                      << moved << " session(s) moved" << std::endl;
+            bool cleared = true;
+            if (config.mqtt.enabled && !config.mqtt.broker.empty()) {
+                hms::MqttConfig mc;
+                mc.broker = config.mqtt.broker;
+                mc.port = config.mqtt.port;
+                mc.username = config.mqtt.username;
+                mc.password = config.mqtt.password;
+                mc.client_id = config.mqtt.client_id;
+                cleared = hms_cpap::clearRetainedDevice(mc, old_id);
+                if (!cleared)
+                    std::cerr << "MQTT: broker not reachable; the old device " << old_id
+                              << " is removed on a later start" << std::endl;
+            }
+            if (cleared) {
+                config.device_id_previous.clear();
+                config.save(config_path);
+            }
         }
     }
 

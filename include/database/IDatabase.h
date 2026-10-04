@@ -179,6 +179,22 @@ public:
     /// Reparse rebuilds any of it. A no-op when the key is already there.
     virtual SessionKeyRepair repairSessionKey() { return {}; }
 
+    /// SDD-051: every table that files rows under a device id. Child tables
+    /// (session files, events, breaths, vitals, metrics) follow by session id
+    /// and are not in it. The agent's tables, on PostgreSQL only, are moved by
+    /// that backend when they exist.
+    static constexpr const char* kDeviceIdTables[] = {
+        "cpap_sessions", "cpap_daily_summary", "cpap_summaries", "cpap_reports",
+        "cpap_devices", "cpap_removed_nights", "oximetry_sessions",
+    };
+
+    /// SDD-051: re-file every row under [from] as [to], all tables in one
+    /// transaction, so a failure leaves nothing half moved. Returns the
+    /// cpap_sessions rows moved (0 when there were none, as on a second run),
+    /// or -1 when it failed and nothing moved. The default refuses, so a test
+    /// double or a backend without it never pretends to have moved anything.
+    virtual int moveDeviceId(const std::string& /*from*/, const std::string& /*to*/) { return -1; }
+
     // -- Session file set (SDD-014) -------------------------------------------
 
     /// Replace the recorded file set for one session. Delete-then-insert, so a

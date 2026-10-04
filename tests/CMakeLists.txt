@@ -61,6 +61,7 @@ set(TEST_SOURCES
     database/test_DailyHoursBackends.cpp
     database/test_NightAggregationBackends.cpp
     database/test_SessionKeyReport.cpp
+    database/test_DeviceIdMoveBackends.cpp
     database/test_ReportBackends.cpp
     services/test_BurstCollectorService.cpp
     services/test_DataPublisherService.cpp
@@ -73,6 +74,7 @@ set(TEST_SOURCES
     utils/test_ArchiveRecordCount.cpp
     utils/test_CardLayout.cpp
     utils/test_MachineIdentity.cpp
+    utils/test_DeviceIdMigration.cpp
     utils/test_NightQuiet.cpp
     utils/test_DbProbeCli.cpp
     utils/test_FileLogger.cpp
