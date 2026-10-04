@@ -5,6 +5,30 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.4.15] - 2026-10-04
+
+The Raspberry Pi zip is built the way 32-bit Raspberry Pi OS is.
+
+### Fixed
+- **On a Raspberry Pi, hms-cpap could crash parsing a night, and aborted on
+  every stop.** 32-bit Raspberry Pi OS is built for ARMv6, and its C++ library
+  counts shared pointers with a lock; the zip was built with Debian's ARMv7
+  headers, which count them atomically. Where a shared pointer crossed between
+  hms-cpap and the system's libraries it was counted two ways, and memory was
+  freed twice: "corrupted double-linked list" in the log while a night was
+  being read, and an abort (exit 6/ABRT) each time the service stopped. Every
+  Pi zip since the first had it.
+
+### Changed
+- The Pi zip is now cross-compiled against Raspberry Pi OS's own libraries and
+  C++ headers, and the release refuses to ship one built against any other
+  headers. Before it ships, the binary runs its preflight and reads a night
+  under emulation with memory checking on. The zip's contents and install
+  steps are unchanged; an install through Settings > Update or `install.sh`
+  replaces the binary as before.
+- `cmake/arm-toolchain.cmake` (cross-builds for a Pi) uses the sysroot's C++
+  headers too, and takes the sysroot from `RASPBIAN_SYSROOT`.
+
 ## [5.4.14] - 2026-10-04
 
 The shared library moves to hms-shared v1.6.18.
