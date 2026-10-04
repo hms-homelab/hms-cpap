@@ -5,6 +5,23 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.4.14] - 2026-10-04
+
+The shared library moves to hms-shared v1.6.18.
+
+### Fixed
+- **The MQTT client could hang for good on a subscribe.** It held its own lock
+  across a subscribe while the incoming-message thread held the client
+  library's lock to deliver into that same lock, so a subscribe made while
+  retained messages were still arriving froze both: no more publishes, no more
+  commands, until a restart. Home Assistant's retained `online` status is
+  exactly such a message. Fixed in hms-shared v1.6.18.
+
+### Changed
+- The hms-shared pin moves from v1.6.10 to v1.6.18. Also in that range: the
+  database pool reconnects missing connections on its own, and the Ollama
+  agent sends tool-call arguments in the form Ollama expects on every round.
+
 ## [5.4.13] - 2026-10-04
 
 Every install its own device id (#33).

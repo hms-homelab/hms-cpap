@@ -50,10 +50,11 @@ bool clearRetainedDevice(const hms::MqttConfig& mqtt, const std::string& old_id)
         std::lock_guard<std::mutex> lk(mu);
         retained.insert(topic);
     };
-    // ONE subscribe for both filters. hms::MqttClient holds its own lock across
-    // the paho subscribe, while paho's receive thread holds paho's lock to
-    // deliver a message into that same client lock: a second subscribe made
-    // while the first one's retained messages are still arriving deadlocks.
+    // ONE subscribe for both filters. Before hms-shared v1.6.18, hms::MqttClient
+    // held its own lock across the paho subscribe while paho's receive thread
+    // delivered into that same lock, so a second subscribe made while the
+    // first one's retained messages were arriving deadlocked. One call is
+    // still all this needs.
     client.subscribe(std::vector<std::string>{"homeassistant/+/" + old_id + "/#",
                                               "cpap/" + old_id + "/#"},
                      collect, 1);
