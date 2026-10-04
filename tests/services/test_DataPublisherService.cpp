@@ -20,11 +20,21 @@
 
 using namespace hms_cpap;
 
+namespace {
+// The publisher reads its device id from CPAP_DEVICE_ID. These tests set one
+// of their own and listen under it only: a broker shared with other runs and
+// other services holds retained topics under other ids (the old default among
+// them), and a cpap/+/ subscription let those answer for the publisher.
+const std::string kPubDevice = "test_publisher_dev";
+const std::string kPubTopics = "cpap/" + kPubDevice + "/";
+}  // namespace
+
 // Test fixture
 class DataPublisherServiceTest : public ::testing::Test {
 protected:
     void SetUp() override {
         mqtt_broker = "tcp://localhost:1883";
+        setenv("CPAP_DEVICE_ID", kPubDevice.c_str(), 1);
 
         // Create MQTT client and database service
         mqtt_client = std::make_shared<hms::MqttClient>(testMqttConfig("test_data_publisher"));
@@ -38,6 +48,7 @@ protected:
         if (mqtt_client) {
             mqtt_client->disconnect();
         }
+        unsetenv("CPAP_DEVICE_ID");
     }
 
     std::string mqtt_broker;
@@ -214,7 +225,7 @@ TEST_F(DataPublisherServiceTest, PublishHistoricalState_PublishesAHIAndEvents) {
     // Subscribe to historical MQTT topics
     std::map<std::string, std::string> received;
     std::mutex mu;
-    mqtt_client->subscribe("cpap/+/historical/#",
+    mqtt_client->subscribe(kPubTopics + "historical/#",
         [&received, &mu](const std::string& topic, const std::string& payload) {
             std::lock_guard<std::mutex> lk(mu);
             received[topic] = payload;
@@ -282,7 +293,7 @@ TEST_F(DataPublisherServiceTest, PublishHistoricalState_ZeroEvents_PublishesZero
 
     std::map<std::string, std::string> received;
     std::mutex mu;
-    mqtt_client->subscribe("cpap/+/historical/#",
+    mqtt_client->subscribe(kPubTopics + "historical/#",
         [&received, &mu](const std::string& topic, const std::string& payload) {
             std::lock_guard<std::mutex> lk(mu);
             received[topic] = payload;
@@ -452,6 +463,7 @@ TEST_F(MqttDisabledTest, PublishOximetrySummary_NoMqtt_NoCrash) {
 class PayloadTest : public ::testing::Test {
 protected:
     void SetUp() override {
+        setenv("CPAP_DEVICE_ID", kPubDevice.c_str(), 1);
         mqtt_client = std::make_shared<hms::MqttClient>(testMqttConfig("test_payload_pub"));
         db_service = std::make_shared<SQLiteDatabase>(":memory:");
         publisher = std::make_unique<DataPublisherService>(mqtt_client, db_service);
@@ -460,14 +472,25 @@ protected:
 
     void TearDown() override {
         if (mqtt_client) mqtt_client->disconnect();
+        unsetenv("CPAP_DEVICE_ID");
     }
 
-    // Subscribe, run an action, collect all messages matching wildcard.
+    // Subscribe, run an action, collect all messages matching wildcard. A
+    // "cpap/+/" or "homeassistant/sensor/+/" prefix is narrowed to this
+    // fixture's device (see kPubDevice).
     std::map<std::string, std::string> capture(const std::string& wildcard,
                                                std::function<void()> action) {
         std::map<std::string, std::string> received;
         std::mutex mu;
-        mqtt_client->subscribe(wildcard,
+        std::string topic = wildcard;
+        for (const std::string any : {"cpap/+/", "homeassistant/sensor/+/"}) {
+            if (wildcard.rfind(any, 0) == 0) {
+                topic = any.substr(0, any.size() - 2) + kPubDevice + "/" +
+                        wildcard.substr(any.size());
+                break;
+            }
+        }
+        mqtt_client->subscribe(topic,
             [&received, &mu](const std::string& topic, const std::string& payload) {
                 std::lock_guard<std::mutex> lk(mu);
                 received[topic] = payload;

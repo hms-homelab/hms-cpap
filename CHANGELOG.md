@@ -5,6 +5,29 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Home Assistant shows the machine you own (#33).
+
+### Fixed
+- **Every machine said it was an AirSense 10.** The Home Assistant device card
+  carried a fixed model, firmware and manufacturer whatever wrote the card. They
+  now come from the card: a ResMed's `Identification.json` (11 series) or
+  `Identification.tgt`, and for a Prisma, an S.Box or a Luna what its parser
+  read. So an AirCurve 11 VAuto shows as "AirCurve 11 VAuto", with its serial
+  and software version. A field the card does not give is shown blank, never
+  filled in, which also clears the "AirSense 10" an older release put on an
+  existing device. A ResMed is corrected at startup; a Prisma, S.Box or Luna
+  with its next session. Existing entity ids do not change.
+- **A new install's default device id was a real machine's serial**, and its
+  default name "ResMed AirSense 10". A new install now defaults to `cpapdash`
+  and "CPAP". An existing install keeps its id and name, including one whose
+  `config.json` never set them.
+
+### Changed
+- The cpapdash-parser pin moves to v8.5.4, which carries each machine's
+  product name and firmware on the parsed session.
+
 ## [5.4.11] - 2026-10-03
 
 BMC / React Health Luna cards (beta).

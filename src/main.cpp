@@ -161,8 +161,8 @@ inline std::string tempDir() {
 void printConfiguration() {
     std::cout << "Configuration:" << std::endl;
     std::string source = hms_cpap::ConfigManager::get("CPAP_SOURCE", "ezshare");
-    std::cout << "  Device ID:          " << hms_cpap::ConfigManager::get("CPAP_DEVICE_ID", "cpap_resmed_23243570851") << std::endl;
-    std::cout << "  Device Name:        " << hms_cpap::ConfigManager::get("CPAP_DEVICE_NAME", "ResMed AirSense 10") << std::endl;
+    std::cout << "  Device ID:          " << hms_cpap::ConfigManager::get("CPAP_DEVICE_ID", hms_cpap::AppConfig::kDefaultDeviceId) << std::endl;
+    std::cout << "  Device Name:        " << hms_cpap::ConfigManager::get("CPAP_DEVICE_NAME", hms_cpap::AppConfig::kDefaultDeviceName) << std::endl;
     if (source == "local") {
         std::cout << "  Source:             Local directory" << std::endl;
         std::cout << "  Local Dir:          " << hms_cpap::ConfigManager::get("CPAP_LOCAL_DIR", "(not set)") << std::endl;
@@ -203,7 +203,7 @@ void printConfiguration() {
  * Usage: hms_cpap --backfill /path/to/str.edf
  */
 int runBackfill(const std::string& filepath) {
-    std::string device_id = hms_cpap::ConfigManager::get("CPAP_DEVICE_ID", "cpap_resmed_23243570851");
+    std::string device_id = hms_cpap::ConfigManager::get("CPAP_DEVICE_ID", hms_cpap::AppConfig::kDefaultDeviceId);
 
     std::cout << "STR Backfill: Parsing " << filepath << std::endl;
     auto records = hms_cpap::EDFParser::parseSTRFile(filepath, device_id);
@@ -263,8 +263,8 @@ int runReparse(const std::string& card_root, const std::string& start_str, const
         return 1;
     }
     const std::string archive_dir = hms_cpap::datalogDirFor(card_root);
-    std::string device_id = hms_cpap::ConfigManager::get("CPAP_DEVICE_ID", "cpap_resmed_23243570851");
-    std::string device_name = hms_cpap::ConfigManager::get("CPAP_DEVICE_NAME", "ResMed AirSense 10");
+    std::string device_id = hms_cpap::ConfigManager::get("CPAP_DEVICE_ID", hms_cpap::AppConfig::kDefaultDeviceId);
+    std::string device_name = hms_cpap::ConfigManager::get("CPAP_DEVICE_NAME", hms_cpap::AppConfig::kDefaultDeviceName);
 
     // Parse dates
     auto parseDate = [](const std::string& s) -> std::tm {
@@ -894,7 +894,7 @@ int main(int argc, char** argv) {
                                      " dbname=" + a_db_name + " user=" + a_db_user +
                                      " password=" + a_db_pass;
 
-            std::string device_id = hms_cpap::ConfigManager::get("CPAP_DEVICE_ID", "cpap_resmed_23243570851");
+            std::string device_id = hms_cpap::ConfigManager::get("CPAP_DEVICE_ID", hms_cpap::AppConfig::kDefaultDeviceId);
 
             hms_cpap::AgentService::Config agent_cfg;
             agent_cfg.device_id = device_id;

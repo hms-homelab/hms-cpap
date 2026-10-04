@@ -1,6 +1,6 @@
 {
-  "device_id": "cpap_resmed_23243570851",
-  "device_name": "ResMed AirSense 10",
+  "device_id": "cpapdash",
+  "device_name": "CPAP",
   "source": "ezshare",
   "ezshare_url": "http://192.168.4.1",
   "local_dir": "",

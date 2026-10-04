@@ -1,6 +1,7 @@
 #include "services/DataPublisherService.h"
 #include "utils/OximetryDevice.h"
 #include "utils/ConfigManager.h"
+#include "utils/AppConfig.h"
 #include "cpapdash/parser/SleepIndex.h"
 #include <json/json.h>
 #include <iostream>
@@ -16,17 +17,8 @@ DataPublisherService::DataPublisherService(std::shared_ptr<hms::MqttClient> mqtt
     : mqtt_client_(mqtt_client),
       db_service_(db_service) {
 
-    device_id_ = ConfigManager::get("CPAP_DEVICE_ID", "cpap_resmed_23243570851");
-    device_name_ = ConfigManager::get("CPAP_DEVICE_NAME", "ResMed AirSense 10");
-    serial_number_ = "23243570851";
-
-    discovery_publisher_ = std::make_unique<DiscoveryPublisher>(
-        mqtt_client_,
-        device_id_,
-        device_name_,
-        "ResMed",
-        "AirSense 10"
-    );
+    device_id_ = ConfigManager::get("CPAP_DEVICE_ID", AppConfig::kDefaultDeviceId);
+    device_name_ = ConfigManager::get("CPAP_DEVICE_NAME", AppConfig::kDefaultDeviceName);
 }
 
 DataPublisherService::~DataPublisherService() {
@@ -56,17 +48,36 @@ bool DataPublisherService::initialize() {
     return true;
 }
 
-std::string DataPublisherService::createDeviceJson() const {
+Json::Value DataPublisherService::deviceInfo() const {
     Json::Value device;
     device["identifiers"].append(device_id_);
     device["name"] = device_name_;
-    device["model"] = "AirSense 10";
-    device["manufacturer"] = "ResMed";
-    device["sw_version"] = "MID=36 VID=39";
+    // SDD-050: only what the card said, and an empty string for what it did
+    // not. Home Assistant's device registry KEEPS a value when the key is
+    // absent, so leaving a field out would leave an upgraded install showing
+    // the "AirSense 10" an older release announced. An empty string replaces
+    // it. Never null: the discovery schema rejects null and with it the whole
+    // config.
+    device["manufacturer"] = identity_.manufacturer;
+    device["model"] = identity_.model;
+    device["serial_number"] = identity_.serial;
+    device["sw_version"] = identity_.firmware;
+    return device;
+}
 
+std::string DataPublisherService::createDeviceJson() const {
     Json::StreamWriterBuilder builder;
     builder["indentation"] = "";
-    return Json::writeString(builder, device);
+    return Json::writeString(builder, deviceInfo());
+}
+
+void DataPublisherService::setIdentity(const MachineIdentity& identity) {
+    if (identity.empty() || identity == identity_) return;
+    identity_ = identity;
+    std::cout << "MQTT: machine is " << (identity_.manufacturer.empty() ? "?" : identity_.manufacturer)
+              << " " << (identity_.model.empty() ? "?" : identity_.model)
+              << ", re-announcing the device" << std::endl;
+    if (mqtt_client_ && mqtt_client_->isConnected()) publishDiscovery();
 }
 
 bool DataPublisherService::publishDiscovery() {
@@ -975,6 +986,21 @@ bool DataPublisherService::publishSession(const CPAPSession& session) {
     // DB save is handled by BurstCollectorService before publishSession() is called.
     // No re-save here — avoids double-inserting breathing_summary records.
 
+    // SDD-050: a Prisma, S.Box or Luna names itself in what its parser read.
+    // A ResMed session does not carry its model; the collector reads that
+    // from the card's identification file, and the session only fills what
+    // the file left empty (no file on the card: still ResMed, and the EDF
+    // header's serial).
+    if (session.manufacturer == DeviceManufacturer::RESMED) {
+        const auto from_session = identityFromSession(session);
+        MachineIdentity merged = identity_;
+        if (merged.manufacturer.empty()) merged.manufacturer = from_session.manufacturer;
+        if (merged.serial.empty()) merged.serial = from_session.serial;
+        setIdentity(merged);
+    } else if (session.manufacturer != DeviceManufacturer::UNKNOWN) {
+        setIdentity(identityFromSession(session));
+    }
+
     // Publish to MQTT
     static bool discovery_published = false;
     static bool was_disconnected = false;
@@ -1076,12 +1102,7 @@ bool DataPublisherService::publishInsightsDiscovery() {
     config["json_attributes_topic"] = "cpap/" + device_id_ + "/insights/state";
     config["json_attributes_template"] = "{{ {'insights': value_json} | tojson }}";
 
-    Json::Value device;
-    device["identifiers"].append(device_id_);
-    device["name"] = device_name_;
-    device["manufacturer"] = "ResMed";
-    device["model"] = "AirSense 10";
-    config["device"] = device;
+    config["device"] = deviceInfo();
 
     Json::StreamWriterBuilder builder;
     builder["indentation"] = "";

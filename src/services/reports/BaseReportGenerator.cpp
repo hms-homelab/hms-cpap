@@ -4,6 +4,7 @@
 #include "parsers/CpapdashBridge.h"
 #include "database/SqlDialect.h"
 #include "utils/ConfigManager.h"
+#include "utils/AppConfig.h"
 #include <filesystem>
 #include <iostream>
 #include <iomanip>
@@ -236,7 +237,7 @@ void BaseReportGenerator::generate(int report_id,
     // report was attributed to a machine the patient does not own. The default
     // is the same string the rest of the service falls back to.
     pdf.addCoverPage(title(), subtitle(period),
-                     ConfigManager::get("CPAP_DEVICE_NAME", "ResMed AirSense 10"),
+                     ConfigManager::get("CPAP_DEVICE_NAME", AppConfig::kDefaultDeviceName),
                      period, nowStr(), logo_path_);
 
     addSummarySection (pdf, st, start, end, nights);

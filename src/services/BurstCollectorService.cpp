@@ -78,8 +78,8 @@ bool partialCopyIsDamaged(const std::string& local_path, size_t size, int listed
 BurstCollectorService::BurstCollectorService(int burst_interval_seconds)
     : burst_interval_seconds_(burst_interval_seconds),
       running_(false) {
-    device_id_ = ConfigManager::get("CPAP_DEVICE_ID", "cpap_resmed_23243570851");
-    device_name_ = ConfigManager::get("CPAP_DEVICE_NAME", "ResMed AirSense 10");
+    device_id_ = ConfigManager::get("CPAP_DEVICE_ID", AppConfig::kDefaultDeviceId);
+    device_name_ = ConfigManager::get("CPAP_DEVICE_NAME", AppConfig::kDefaultDeviceName);
 }
 
 void BurstCollectorService::initialize(AppConfig* cfg) {
@@ -248,7 +248,21 @@ void BurstCollectorService::initMqtt() {
 
 void BurstCollectorService::initDataPublisher() {
     data_publisher_ = std::make_unique<DataPublisherService>(mqtt_client_, db_service_);
+    // SDD-050: before initialize(), so the first announce already names the
+    // machine rather than announcing a bare device and correcting it.
+    refreshCardIdentity();
     data_publisher_->initialize();
+}
+
+void BurstCollectorService::refreshCardIdentity() {
+    if (!data_publisher_) return;
+    std::string card_root = local_source_dir_;
+    if (card_root.empty()) {
+        const std::string default_archive =
+            (std::filesystem::path(hms_cpap::AppConfig::dataDir()) / "cpap_data").string();
+        card_root = ConfigManager::get("CPAP_ARCHIVE_DIR", default_archive);
+    }
+    data_publisher_->setIdentity(readIdentification(card_root));
 }
 
 void BurstCollectorService::initLlm() {
@@ -2046,7 +2060,10 @@ bool BurstCollectorService::executeBurstCycle() {
         // SDD-002: full-card residue sweep (Identification.*, SETTINGS/, JOURNAL, …)
         // straight into the archive root. ezShare only; no-ops on other
         // transports, and SDD-040 D1 skips it for a source read in place.
-        if (!in_place) captureCardResidue(permanent_archive);
+        if (!in_place) {
+            captureCardResidue(permanent_archive);
+            refreshCardIdentity();   // SDD-050: the sweep may have just landed it
+        }
     }
 
     // Step 6: Parse and store whatever the loops above staged but did not
@@ -3527,6 +3544,9 @@ void BurstCollectorService::reloadConfig() {
         data_publisher_->initialize();
         setupMqttSubscriptions();
     }
+    // SDD-050: a new publisher knows no machine yet, and a new local folder
+    // may be a different card. An unchanged identity is a no-op.
+    refreshCardIdentity();
 
     // LLM
     if (nc.llm_enabled != last_config_.llm_enabled || nc.llm_provider != last_config_.llm_provider ||

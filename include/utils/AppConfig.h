@@ -8,9 +8,20 @@
 namespace hms_cpap {
 
 struct AppConfig {
-    // Device
-    std::string device_id = "cpap_resmed_23243570851";
-    std::string device_name = "ResMed AirSense 10";
+    // Device. SDD-050: the defaults name no machine. The id was a real
+    // AirSense serial and the name "ResMed AirSense 10", so every install that
+    // never set them announced itself to Home Assistant as that one machine.
+    // Only a NEW install gets these: the first run writes both into
+    // config.json, and an id is a key (SDD-042), so an existing one, whatever
+    // it is, is never rewritten.
+    static constexpr const char* kDefaultDeviceId = "cpapdash";
+    static constexpr const char* kDefaultDeviceName = "CPAP";
+    /// What a config.json that omits the keys has always meant. Kept for those
+    /// files only (see loadFile); never given to a new install.
+    static constexpr const char* kLegacyDeviceId = "cpap_resmed_23243570851";
+    static constexpr const char* kLegacyDeviceName = "ResMed AirSense 10";
+    std::string device_id = kDefaultDeviceId;
+    std::string device_name = kDefaultDeviceName;
 
     // ── Data source: TWO questions, not one (SDD-022) ───────────────────────
     //
@@ -527,8 +538,13 @@ struct AppConfig {
             // file to be the object and reports the offending line.
             nlohmann::json j = nlohmann::json::parse(f);
 
-            if (j.contains("device_id"))    config.device_id = j["device_id"];
-            if (j.contains("device_name"))  config.device_name = j["device_name"];
+            // SDD-050: a file that omits them has always meant the values that
+            // were the defaults when it was written, and its nights are stored
+            // under that id. The new defaults are for a first run only.
+            config.device_id = j.contains("device_id") ? j["device_id"].get<std::string>()
+                                                       : kLegacyDeviceId;
+            config.device_name = j.contains("device_name") ? j["device_name"].get<std::string>()
+                                                           : kLegacyDeviceName;
             if (j.contains("source"))       config.source = j["source"];
             // SDD-022. Read the new pair when present; migrate from `source`
             // when not. Rule 2: a config carrying BOTH -- written by an older

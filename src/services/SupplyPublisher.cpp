@@ -154,11 +154,12 @@ SupplyPublisher::Result SupplyPublisher::publishFromDatabase(IDatabase& db, long
 
 Json::Value SupplyPublisher::buildDeviceInfo() const {
     // Same identifiers as DataPublisherService so HA groups supplies under the
-    // existing CPAP device rather than creating a second one.
+    // existing CPAP device rather than creating a second one. No manufacturer:
+    // the machine's own identity is DataPublisherService's to announce
+    // (SDD-050), and a fixed one here would overwrite it on every publish.
     Json::Value device;
     device["identifiers"].append(device_id_);
     device["name"] = device_name_;
-    device["manufacturer"] = "ResMed";
 
     return device;
 }

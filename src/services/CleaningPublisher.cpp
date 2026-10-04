@@ -55,10 +55,10 @@ std::string CleaningPublisher::stateTopic(const std::string& leaf) const {
 Json::Value CleaningPublisher::buildDeviceInfo() const {
     // Same identifiers as DataPublisherService and SupplyPublisher so HA groups
     // cleaning under the existing CPAP device rather than inventing a third one.
+    // No manufacturer: that is DataPublisherService's to announce (SDD-050).
     Json::Value device;
     device["identifiers"].append(device_id_);
     device["name"] = device_name_;
-    device["manufacturer"] = "ResMed";
     return device;
 }
 

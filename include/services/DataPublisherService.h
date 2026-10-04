@@ -4,8 +4,9 @@
 #include "services/BilevelSensors.h"
 #include "services/InsightsEngine.h"
 #include "mqtt_client.h"
-#include "mqtt/DiscoveryPublisher.h"
 #include "database/IDatabase.h"
+#include "utils/MachineIdentity.h"
+#include <json/json.h>
 #include "clients/IO2RingClient.h"
 #include <memory>
 #include <string>
@@ -115,6 +116,16 @@ public:
     /// it was.
     void setMachineFamily(MachineFamily family);
 
+    /// SDD-050: what the card says the machine is. The device block's
+    /// manufacturer, model, serial_number and sw_version come from it, and a
+    /// field it does not give is sent empty. A change re-announces discovery so
+    /// Home Assistant's device card follows; an empty identity is ignored, so
+    /// a card that stops saying does not erase what an earlier one said.
+    void setIdentity(const MachineIdentity& identity);
+
+    /// The device block every discovery config carries. Public for tests.
+    Json::Value deviceInfo() const;
+
     /**
      * Publish STR daily summary to MQTT (daily/ namespace).
      *
@@ -178,11 +189,10 @@ public:
 private:
     std::shared_ptr<hms::MqttClient> mqtt_client_;
     std::shared_ptr<IDatabase> db_service_;
-    std::unique_ptr<DiscoveryPublisher> discovery_publisher_;
 
     std::string device_id_;
     std::string device_name_;
-    std::string serial_number_;
+    MachineIdentity identity_;   // SDD-050
 
     MachineFamily machine_family_ = MachineFamily::Unknown;   // SDD-030
 

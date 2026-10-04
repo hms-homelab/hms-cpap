@@ -828,6 +828,13 @@ private:
     void initDataPublisher();
     void initLlm();
     void initO2Ring();
+
+    /// SDD-050: hand the publisher what the card's identification file says
+    /// the machine is. The card root is the local folder when the card is
+    /// read in place, else the archive, where the residue sweep lands the
+    /// file. Called at start, after a residue sweep, and after the publisher
+    /// is rebuilt.
+    void refreshCardIdentity();
 };
 
 } // namespace hms_cpap
