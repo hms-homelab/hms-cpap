@@ -1,6 +1,7 @@
 #include "services/OximetryService.h"
 #include "services/RemovedNights.h"
 #include "utils/OximetryDevice.h"
+#include <cpapdash/parser/O2RingSParser.h>
 #include <cpapdash/parser/VLDParser.h>
 #include <iostream>
 #include <iomanip>
@@ -9,6 +10,7 @@
 namespace hms_cpap {
 
 using VLDParser = cpapdash::parser::VLDParser;
+using cpapdash::parser::parseOximetryFile;
 
 OximetryService::OximetryService(std::shared_ptr<IO2RingClient> client,
                                  std::shared_ptr<IDatabase> db,
@@ -64,7 +66,9 @@ bool OximetryService::collectAndPublish() {
             continue;
         }
 
-        auto session = VLDParser::parse(data.data(), data.size(), filename);
+        // Either ring's format, chosen by the bytes: the original O2Ring's .vld
+        // or the O2Ring-S's own, whose start time is its file name.
+        auto session = parseOximetryFile(data.data(), data.size(), filename);
         if (!session) {
             std::cerr << "O2Ring: Failed to parse " << filename << std::endl;
             continue;

@@ -49,6 +49,24 @@ std::string vld(int records = 3, int hour = 22) {
     return std::string(d.begin(), d.end());
 }
 
+/// A synthetic O2Ring-S recording: its 10-byte header, [records] 3-byte samples
+/// at one per second, and the 48-byte trailer that marks it finished. Its start
+/// time is its file name, not its bytes.
+std::string o2s(int records = 3, bool finished = true) {
+    std::string d("\x01\x03\x00\x00\x00\x00\x00\x00\x04\x00", 10);
+    for (int i = 0; i < records; ++i) {
+        d.push_back(static_cast<char>(96 - i));   // SpO2
+        d.push_back(static_cast<char>(62));       // HR
+        d.push_back('\0');                        // flags
+    }
+    if (finished) {
+        std::string t(48, '\0');
+        t[4] = '\x48'; t[5] = '\x12'; t[6] = '\x5a'; t[7] = '\xda';
+        d += t;
+    }
+    return d;
+}
+
 long long count(IDatabase& db, const std::string& sql) {
     auto rows = db.executeQuery(sql, {});
     if (!rows.isArray() || rows.empty()) return -1;
@@ -310,6 +328,48 @@ TEST_F(OximetryImportTest, ARingFileWithoutTheExtensionIsReadByItsHeader) {
     EXPECT_EQ(fixed.imported, 1);
     EXPECT_EQ(sessions(), 2);
     EXPECT_EQ(state.not_ring.size(), 2u);
+}
+
+TEST_F(OximetryImportTest, AnO2RingSRecordingIsStoredLikeAVld) {
+    const auto r = importVldFile(*db_, o2s(3), "20261004221500.o2s");
+    ASSERT_TRUE(r.ok) << r.error;
+    EXPECT_EQ(r.samples, 3) << "the trailer is not samples";
+    EXPECT_DOUBLE_EQ(r.sample_interval, 1.0) << "one sample a second, not four";
+    EXPECT_EQ(sessions(), 1);
+    EXPECT_TRUE(db_->oximetrySessionExists(kOximetryDeviceId, "20261004221500.o2s"));
+}
+
+TEST_F(OximetryImportTest, AnO2RingSRecordingStillBeingWrittenIsRefusedUntilItIsDone) {
+    const auto r = importVldFile(*db_, o2s(3, /*finished=*/false), "20261004221500.o2s");
+    EXPECT_FALSE(r.ok);
+    EXPECT_NE(r.error.find("still being written"), std::string::npos) << r.error;
+    EXPECT_EQ(sessions(), 0);
+    ASSERT_TRUE(importVldFile(*db_, o2s(3), "20261004221500.o2s").ok);
+    EXPECT_EQ(sessions(), 1);
+}
+
+TEST_F(OximetryImportTest, TheScanFindsO2RingSRecordingsByNameAndByHeader) {
+    put("Oxymetry/20261004221500.o2s", o2s(3));
+    put("OXYMETRY/20261004/20261004233000", o2s(4));   // the ring's own bare name
+    VldScanState state;
+    const auto scan = importVldFolder(*db_, root_.string(), state);
+    EXPECT_EQ(scan.found, 2);
+    EXPECT_EQ(scan.bare, 1);
+    EXPECT_EQ(scan.imported, 2);
+    EXPECT_EQ(sessions(), 2);
+    EXPECT_TRUE(db_->oximetrySessionExists(kOximetryDeviceId, "20261004233000"));
+}
+
+TEST(OximetryImportHeader, AnO2RingSNameAndHeaderAreRingFiles) {
+    EXPECT_TRUE(isVldFilename("20261004221500.o2s"));
+    EXPECT_TRUE(isVldFilename("20261004221500.O2S"));
+    EXPECT_TRUE(isVldFilename("a.vld"));
+    EXPECT_FALSE(isVldFilename("a.o2"));
+    const std::string f = o2s(3);
+    EXPECT_TRUE(isVldHeader(f, f.size()));
+    std::string wrong = f;
+    wrong[8] = '\x05';
+    EXPECT_FALSE(isVldHeader(wrong, wrong.size()));
 }
 
 TEST(OximetryImportHeader, VersionDateAndSizeMustAllMatch) {

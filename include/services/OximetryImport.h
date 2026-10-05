@@ -91,13 +91,16 @@ VldFolderScan importVldFolder(IDatabase& db, const std::string& card_root,
                               VldScanState& state,
                               const std::set<std::string>& removed_nights = {});
 
-/// True for a filename ending in `.vld`, any case.
+/// True for a ring recording's name: `.vld` (the original O2Ring) or `.o2s`
+/// (the O2Ring-S's own format), any case.
 bool isVldFilename(const std::string& name);
 
 /// SDD-028 §7: whether the first bytes of a file with no extension are a
-/// Wellue ring file's header, in the layout of the one real export we have had:
-/// version 3 (u16 at 0), a real date and time (2-8), and the file's own size
-/// (u32 at 9) equal to [file_size]. [head] needs at least 13 bytes.
+/// Wellue ring file's header. Either the .vld layout of the one real export we
+/// have had: version 3 (u16 at 0), a real date and time (2-8), and the file's
+/// own size (u32 at 9) equal to [file_size]; or the O2Ring-S's 10-byte header
+/// (`01 03 00 00 00 00 00 00 04 00`), whose start time is its file name.
+/// [head] needs at least 13 bytes.
 bool isVldHeader(const std::string& head, std::uintmax_t file_size);
 
 }  // namespace hms_cpap

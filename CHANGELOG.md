@@ -5,6 +5,19 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+The O2Ring-S's recordings are read.
+
+### Added
+- **O2Ring-S (model T8520) recordings.** The O2Ring-S does not write `.vld`
+  files: its recordings are one sample a second with the start time in the
+  file name. hms-cpap now reads them wherever it reads a ring file: pulled
+  from a bridge's `/o2ring/files`, found in a folder beside the card (named
+  `.o2s`, or the ring's own bare `YYYYMMDDhhmmss` name, recognised by its
+  header), and uploaded by hand. A recording the ring is still writing is
+  left until it is finished, then read. Needs cpapdash-parser 8.6.0.
+
 ## [5.4.15] - 2026-10-04
 
 The Raspberry Pi zip is built the way 32-bit Raspberry Pi OS is.

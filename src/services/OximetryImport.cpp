@@ -4,6 +4,7 @@
 #include "services/RemovedNights.h"
 #include "utils/OximetryDevice.h"
 
+#include <cpapdash/parser/O2RingSParser.h>
 #include <cpapdash/parser/VLDParser.h>
 
 #include <algorithm>
@@ -91,10 +92,14 @@ std::vector<fs::path> subfoldersIn(const fs::path& dir) {
 
 bool isVldFilename(const std::string& name) {
     const auto n = lower(name);
-    return n.size() > 4 && n.compare(n.size() - 4, 4, ".vld") == 0;
+    return n.size() > 4 && (n.compare(n.size() - 4, 4, ".vld") == 0 ||
+                            n.compare(n.size() - 4, 4, ".o2s") == 0);
 }
 
 bool isVldHeader(const std::string& head, std::uintmax_t file_size) {
+    if (cpapdash::parser::O2RingSParser::looksLike(
+            reinterpret_cast<const uint8_t*>(head.data()), head.size()))
+        return true;
     if (head.size() < 13) return false;
     const auto b = [&](size_t i) { return static_cast<unsigned>(static_cast<uint8_t>(head[i])); };
     const unsigned version = b(0) | (b(1) << 8);
@@ -112,10 +117,18 @@ VldImportResult importVldFile(IDatabase& db, const std::string& bytes,
                               const std::string& filename,
                               const std::set<std::string>& removed_nights) {
     VldImportResult r;
-    auto session = cpapdash::parser::VLDParser::parse(
-        reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size(), filename);
+    const auto* data = reinterpret_cast<const uint8_t*>(bytes.data());
+    // The O2Ring-S has no declared size: its file is finished once the trailer
+    // is there. Until then it is refused, and read again when it changes.
+    if (cpapdash::parser::O2RingSParser::looksLike(data, bytes.size()) &&
+        !cpapdash::parser::O2RingSParser::isComplete(data, bytes.size())) {
+        r.error = "O2Ring-S recording still being written: " + filename;
+        return r;
+    }
+    // Either ring's format, chosen by the bytes.
+    auto session = cpapdash::parser::parseOximetryFile(data, bytes.size(), filename);
     if (!session || session->samples.empty()) {
-        r.error = "Not a readable O2 Ring .vld file: " + filename;
+        r.error = "Not a readable O2 Ring recording: " + filename;
         return r;
     }
     if (isRemovedOximetryNight(removed_nights, session->start_time)) {
