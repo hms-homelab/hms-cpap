@@ -12,9 +12,9 @@ The O2Ring-S's recordings are read (experimental).
 ### Added
 - **O2Ring-S (model T8520) recordings, EXPERIMENTAL.** Built from the ring's
   published protocol and synthetic recordings, not yet confirmed against a
-  real O2Ring-S night; the label comes off once one has been. The O2Ring-S does not write `.vld`
-  files: its recordings are one sample a second with the start time in the
-  file name. hms-cpap now reads them wherever it reads a ring file: pulled
+  real O2Ring-S night; the label comes off once one has been. The O2Ring-S
+  does not write `.vld` files: its recordings are one sample a second with the
+  start time in the file name. hms-cpap now reads them wherever it reads a ring file: pulled
   from a bridge's `/o2ring/files`, found in a folder beside the card (named
   `.o2s`, or the ring's own bare `YYYYMMDDhhmmss` name, recognised by its
   header), and uploaded by hand. A recording the ring is still writing is
