@@ -46,7 +46,8 @@ constexpr const char* kFileExt = ".o2s";
 constexpr const char* kServiceUuid = "e8fb0001-a14b-98f9-831b-4e2941d01248";
 constexpr const char* kWriteUuid = "e8fb0002-a14b-98f9-831b-4e2941d01248";
 constexpr const char* kNotifyUuid = "e8fb0003-a14b-98f9-831b-4e2941d01248";
-constexpr uint16_t kManufacturerId = 0xF34E;  // in its idle/sync advertising
+// Not matched on: the O2Ring-S advertises manufacturer ID 0xF34E, but so does
+// the original O2Ring.
 
 uint8_t crc8(const uint8_t* data, size_t len);
 

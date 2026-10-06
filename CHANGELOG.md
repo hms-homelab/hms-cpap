@@ -5,6 +5,15 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **Direct Bluetooth mode took an original O2Ring for an O2Ring-S** (since
+  5.5.1). The O2Ring-S was also recognised by its manufacturer ID, which the
+  original O2Ring advertises too, so an original ring went down the O2Ring-S
+  path and was never read. The O2Ring-S is now recognised by its name or its
+  service only.
+
 ## [5.5.1] - 2026-10-05
 
 Direct Bluetooth mode finds the O2Ring-S (experimental).

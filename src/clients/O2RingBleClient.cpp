@@ -39,14 +39,15 @@ std::optional<O2RingBleClient::Proto> O2RingBleClient::classifyDevice(
         const std::map<std::string, sdbus::Variant>& props, bool* by_t8520) {
     if (by_t8520) *by_t8520 = false;
 
-    // The O2Ring-S first: its name, its idle-mode manufacturer ID, or the
-    // OxyII service. It has none of the original family's markers.
+    // The O2Ring-S first, by its name or the OxyII service. Not by the
+    // manufacturer ID 0xF34E: the original O2Ring advertises it too, and
+    // matching on it sent that ring down the O2Ring-S path.
     std::string name;
     auto name_it = props.find("Name");
     if (name_it != props.end()) {
         try { name = name_it->second.get<std::string>(); } catch (...) {}
     }
-    bool svc = false, mfg = false;
+    bool svc = false;
     auto uuids_it = props.find("UUIDs");
     if (uuids_it != props.end()) {
         try {
@@ -54,16 +55,9 @@ std::optional<O2RingBleClient::Proto> O2RingBleClient::classifyDevice(
                 if (uuid == oxyii::kServiceUuid) svc = true;
         } catch (...) {}
     }
-    auto mfg_it = props.find("ManufacturerData");
-    if (mfg_it != props.end()) {
-        try {
-            auto data = mfg_it->second.get<std::map<uint16_t, sdbus::Variant>>();
-            mfg = data.count(oxyii::kManufacturerId) > 0;
-        } catch (...) {}
-    }
     const bool named = oxyii::nameMatches(name);
-    if (svc || mfg || named) {
-        if (by_t8520 && !svc && !mfg) {
+    if (svc || named) {
+        if (by_t8520 && !svc) {
             std::string lower = name.substr(0, 5);
             std::transform(lower.begin(), lower.end(), lower.begin(),
                            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
