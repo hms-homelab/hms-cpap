@@ -50,6 +50,7 @@ better night.
 - **Events explorer**: every respiratory event across all nights, filterable by date, type, and duration
 - **PDF reports** for a date range, made for handing to your doctor
 - **Pulse oximetry**: Wellue O2Ring SpO2/HR overlay with ODI, imported by CSV upload
+- **AirSense 11 over Bluetooth** (off by default): for a machine whose SD slot cannot power a WiFi card, the bridge reads the machine's own daily summary over its Bluetooth and the nights show up without a card
 - **Manual upload page**: drag in a CPAP `.zip` or O2Ring `.csv` from any browser, no shared network needed
 - **Home Assistant**: 47+ sensors via MQTT auto-discovery, or install it as an add-on and run it inside HA
 - **Equipment & supply reminders**: track mask, filters, tubing per profile; days-left sensors and due/overdue events for automations

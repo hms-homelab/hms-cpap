@@ -421,6 +421,32 @@ DB_PASSWORD=your_db_password
 WEB_PORT=8893
 ```
 
+### AirSense 11 over Bluetooth
+
+Some AirSense 11 machines cannot power a WiFi SD card in their slot, so there
+are no session files to read. The machine has its own Bluetooth, and the
+CpapDash bridge can pair with it once (the code on the machine's screen,
+entered on the bridge's own page; this replaces the myAir app's Bluetooth
+pairing) and answer the machine's daily summary: one record per therapy day
+with the figures the machine itself computes, the same ones `STR.edf` carries.
+hms-cpap pulls that summary through the bridge and stores the days as it
+stores STR days, so the dashboard, trends and reports show them. No waveforms
+and no event list come this way; a machine whose card can be read keeps the
+card as the richer source.
+
+```json
+"airsense11": {
+  "enabled": true,
+  "mule_url": "",          // empty: the O2 ring's bridge (o2ring.mule_url)
+  "pull_hours": 6          // how often the summary is asked for
+}
+```
+
+The first pull asks for everything the machine keeps; each later one asks from
+two days before the newest day it has, since the machine revises the current
+day until it is over. A pull the machine does not answer (asleep, out of range,
+not paired yet) is logged and retried on the next pace.
+
 ### Device id
 
 Every night is stored under `device_id`, and it names the device in Home

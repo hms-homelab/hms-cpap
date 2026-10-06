@@ -221,6 +221,18 @@ struct AppConfig {
         std::string mule_url;           // e.g. "http://cpapdash.local"
     } o2ring;
 
+    // An AirSense 11 read over its own Bluetooth, through the bridge
+    // (optional). For a machine whose SD slot cannot power a WiFi card: the
+    // bridge pairs with the machine once (the code on its screen, entered on
+    // the bridge's own page) and answers the machine's daily summary at
+    // GET <mule_url>/airsense11/summary. The nights it yields are the
+    // machine's own figures, as STR.edf carries them; no waveforms.
+    struct AirSense11 {
+        bool enabled = false;
+        std::string mule_url;           // empty: the O2 ring's mule_url
+        int pull_hours = 6;             // how often the summary is asked for
+    } airsense11;
+
     // Sleep Stage Inference (optional)
     struct SleepStage {
         bool enabled = false;
@@ -649,6 +661,13 @@ struct AppConfig {
                 if (o.contains("mule_url"))             config.o2ring.mule_url = o["mule_url"];
             }
 
+            if (j.contains("airsense11")) {
+                auto& a = j["airsense11"];
+                if (a.contains("enabled"))              config.airsense11.enabled = a["enabled"];
+                if (a.contains("mule_url"))             config.airsense11.mule_url = a["mule_url"];
+                if (a.contains("pull_hours"))           config.airsense11.pull_hours = a["pull_hours"];
+            }
+
             if (j.contains("sleep_stage")) {
                 auto& ss = j["sleep_stage"];
                 if (ss.contains("enabled"))        config.sleep_stage.enabled = ss["enabled"];
@@ -767,6 +786,10 @@ struct AppConfig {
             j["o2ring"]["enabled"] = o2ring.enabled;
             j["o2ring"]["mode"] = o2ring.mode;
             j["o2ring"]["mule_url"] = o2ring.mule_url;
+
+            j["airsense11"]["enabled"] = airsense11.enabled;
+            j["airsense11"]["mule_url"] = airsense11.mule_url;
+            j["airsense11"]["pull_hours"] = airsense11.pull_hours;
 
             j["sleep_stage"]["enabled"] = sleep_stage.enabled;
             j["sleep_stage"]["live_inference"] = sleep_stage.live_inference;

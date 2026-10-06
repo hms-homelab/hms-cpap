@@ -52,6 +52,12 @@
     "auto_on_session": true,
     "auto_on_backfill": true
   },
+  "airsense11": {
+    "_note": "An AirSense 11 read over its own Bluetooth through the bridge, for a machine whose SD slot cannot power a WiFi card. mule_url empty = the O2 ring's bridge.",
+    "enabled": false,
+    "mule_url": "",
+    "pull_hours": 6
+  },
   "logging": {
     "enabled": true,
     "file": "",

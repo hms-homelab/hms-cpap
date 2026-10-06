@@ -8,6 +8,7 @@
 #include "services/SupplyPublisher.h"
 #include "services/CpapDashSyncService.h"
 #include "services/MyAirService.h"
+#include "services/AirSense11Pull.h"
 #include "services/OximetryImport.h"
 #include "services/OximetryService.h"
 #include "services/PrismaIngestion.h"
@@ -385,6 +386,10 @@ public:
     OximetryService* getOximetryService() const { return oximetry_service_.get(); }
 private:
     std::unique_ptr<OximetryService> oximetry_service_;
+
+    // An AirSense 11 read over its own Bluetooth, through the bridge: the
+    // machine's daily summary, pulled on a pace (AirSense11Pull).
+    std::unique_ptr<AirSense11Pull> airsense11_pull_;
 
     // Worker thread
     std::thread worker_thread_;
@@ -811,6 +816,9 @@ private:
         int burst_interval = 0;
         bool o2ring_enabled = false;
         std::string o2ring_mode, o2ring_mule_url;
+        bool airsense11_enabled = false;
+        std::string airsense11_mule_url;
+        int airsense11_pull_hours = 6;
     };
     ConfigSnapshot last_config_;
 
@@ -828,6 +836,7 @@ private:
     void initDataPublisher();
     void initLlm();
     void initO2Ring();
+    void initAirSense11();
 
     /// SDD-050: hand the publisher what the card's identification file says
     /// the machine is. The card root is the local folder when the card is

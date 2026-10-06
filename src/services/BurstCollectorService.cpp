@@ -7,6 +7,7 @@
 #include "services/CleaningPublisher.h"
 #include "clients/LocalDataSource.h"
 #include "clients/O2RingClient.h"
+#include "clients/AirSense11Client.h"
 #ifdef WITH_BLE
 #include "clients/O2RingBleClient.h"
 #endif
@@ -94,6 +95,7 @@ void BurstCollectorService::initialize(AppConfig* cfg) {
     initDataPublisher();
     initLlm();
     initO2Ring();
+    initAirSense11();
     setupMqttSubscriptions();
 
     if (cfg) snapshotConfig(last_config_);
@@ -351,6 +353,24 @@ void BurstCollectorService::initO2Ring() {
     }
     if (client)
         oximetry_service_ = std::make_unique<OximetryService>(client, db_service_, device_id_);
+}
+
+void BurstCollectorService::initAirSense11() {
+    if (!app_config_ || !app_config_->airsense11.enabled) return;
+    // The same bridge as the ring unless the config names another.
+    std::string url = app_config_->airsense11.mule_url;
+    if (url.empty()) url = app_config_->o2ring.mule_url;
+    if (url.empty()) url = ConfigManager::get("O2RING_MULE_URL", "");
+    if (url.empty()) {
+        std::cout << "AirSense11: enabled but no bridge URL (airsense11.mule_url or "
+                     "o2ring.mule_url) - the summary is not pulled" << std::endl;
+        return;
+    }
+    const int hours = app_config_->airsense11.pull_hours > 0 ? app_config_->airsense11.pull_hours : 6;
+    airsense11_pull_ = std::make_unique<AirSense11Pull>(
+        std::make_shared<AirSense11Client>(url), db_service_, device_id_,
+        std::chrono::hours(hours));
+    std::cout << "AirSense11: Enabled (bridge=" << url << ", every " << hours << " h)" << std::endl;
 }
 
 BurstCollectorService::~BurstCollectorService() {
@@ -1417,6 +1437,19 @@ bool BurstCollectorService::executeBurstCycle() {
             // STATE: Unreachable or was already inactive — no action, wait
         } catch (const std::exception& e) {
             std::cerr << "O2Ring: Failed (non-fatal): " << e.what() << std::endl;
+        }
+    }
+
+    // ── An AirSense 11 over its own Bluetooth ───────────────────────────
+    //
+    // The machine's daily summary through the bridge, on its own pace. Its
+    // days land in cpap_daily_summary as STR days; the card walk below is
+    // unchanged, and on a machine whose card cannot be read it finds nothing.
+    if (airsense11_pull_) {
+        try {
+            airsense11_pull_->run(std::chrono::steady_clock::now());
+        } catch (const std::exception& e) {
+            std::cerr << "AirSense11: Failed (non-fatal): " << e.what() << std::endl;
         }
     }
 
@@ -3384,6 +3417,9 @@ void BurstCollectorService::snapshotConfig(ConfigSnapshot& snap) {
     snap.o2ring_enabled = app_config_->o2ring.enabled;
     snap.o2ring_mode = app_config_->o2ring.mode;
     snap.o2ring_mule_url = app_config_->o2ring.mule_url;
+    snap.airsense11_enabled = app_config_->airsense11.enabled;
+    snap.airsense11_mule_url = app_config_->airsense11.mule_url;
+    snap.airsense11_pull_hours = app_config_->airsense11.pull_hours;
 }
 
 void BurstCollectorService::reloadConfig() {
@@ -3602,6 +3638,22 @@ void BurstCollectorService::reloadConfig() {
         } else {
             oximetry_service_.reset();
             std::cout << "Config reload: O2Ring -> disabled" << std::endl;
+        }
+    }
+
+    // AirSense 11 over Bluetooth: rebuilt on any change (the bridge URL may be
+    // the ring's), and the first pull of a fresh client is immediate.
+    if (nc.airsense11_enabled != last_config_.airsense11_enabled ||
+        nc.airsense11_mule_url != last_config_.airsense11_mule_url ||
+        nc.airsense11_pull_hours != last_config_.airsense11_pull_hours ||
+        nc.o2ring_mule_url != last_config_.o2ring_mule_url) {
+        airsense11_pull_.reset();
+        if (nc.airsense11_enabled) {
+            initAirSense11();
+            if (!airsense11_pull_)
+                std::cout << "Config reload: AirSense11 enabled but no bridge URL" << std::endl;
+        } else {
+            std::cout << "Config reload: AirSense11 -> disabled" << std::endl;
         }
     }
 
