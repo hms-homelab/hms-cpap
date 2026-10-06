@@ -5,6 +5,19 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Direct Bluetooth mode talks to the O2Ring-S, EXPERIMENTAL.** With
+  `WITH_BLE`, hms-cpap reaches the ring itself over BlueZ instead of through a
+  bridge. Until now it only knew the original O2Ring family's protocol and
+  never found an O2Ring-S. It now recognises the O2Ring-S by its `S8-AW` /
+  `T8520_` name, its manufacturer ID or its service, and speaks its own
+  protocol: live SpO2 and heart rate, the file list (as `<YYYYMMDDhhmmss>.o2s`)
+  and downloads, resuming a download after a reconnect when the ring caps one
+  connection's transfer. The ring's clock is left as its app set it. Not yet
+  confirmed against a real O2Ring-S; the label comes off once it has been.
+
 ## [5.5.0] - 2026-10-05
 
 The O2Ring-S's recordings are read (experimental).

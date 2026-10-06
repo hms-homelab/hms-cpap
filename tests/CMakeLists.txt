@@ -114,6 +114,7 @@ set(TEST_SOURCES
     services/test_O2RingCsvWriter.cpp
     clients/test_O2RingClient.cpp
     clients/test_O2RingBleProtocol.cpp
+    clients/test_OxyIIProtocol.cpp
     services/test_sleep_stage_classifier.cpp
     services/test_PrismaIngestion.cpp
     services/test_SefamIngestion.cpp
