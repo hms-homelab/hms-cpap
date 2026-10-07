@@ -28,6 +28,7 @@ isEnabled                            # desktop/qt/app/Autostart.cpp
 isSupported                          # desktop/qt/app/Autostart.cpp
 keepSecret                           # desktop/qt/core/pure/ConfigModel.cpp
 loadFromApi                          # desktop/qt/core/pure/ConfigModel.cpp
+markStrReadForTest                   # include/services/BurstCollectorService.h -- test seam; BurstOrchestrationTest.ASessionThatClosesReadsTheStrOnThatBurst (SDD-053)
 parseDirForNightForTest              # include/services/BurstCollectorService.h
 parsePendingUpdate                   # desktop/qt/core/pure/PendingUpdate.cpp
 pid                                  # desktop/qt/core/qt/ChildProcess.cpp
