@@ -3092,6 +3092,88 @@ TEST_F(BurstOrchestrationTest, AClosedSessionPublishesNothingBeforeItsHour) {
     ASSERT_TRUE(it->second.complete) << "test setup did not actually close the night";
 }
 
+// SDD-053: the machine writes STR.edf at mask-off, so the burst that closes the
+// session reads it. Waiting for the night's hour left the archive's STR (and an
+// OSCAR import from it) an hour stale for nothing.
+TEST_F(BurstOrchestrationTest, ASessionThatClosesReadsTheStrOnThatBurst) {
+    auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
+    svc->markStrReadForTest();   // past the first-run read
+
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, sessionExists(_, _))
+        .WillOnce(Return(false))
+        .WillRepeatedly(Return(true));
+    std::map<std::string, int> stored = {
+        {"20200101_220000_BRP.edf", 100},
+        {"20200101_220000_PLD.edf", 20},
+    };
+    EXPECT_CALL(*db_raw, getCheckpointFileSizes(_, _)).WillRepeatedly(Return(stored));
+    // First unchanged burst closes it; a later one finds it already closed.
+    EXPECT_CALL(*db_raw, markSessionCompleted(_, _))
+        .WillOnce(Return(true))
+        .WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, getNightlyMetrics(_, _)).WillRepeatedly(Return(std::nullopt));
+
+    svc->runBurstCycleForTest();          // live: the night downloads
+    const int before_close = src_raw->root_downloads;
+
+    svc->runBurstCycleForTest();          // the session closes
+    EXPECT_EQ(src_raw->root_downloads, before_close + 1)
+        << "the close did not read the STR; it waits for the night's hour";
+
+    // The fake's STR bytes do not parse, and a run whose last STR failed reads
+    // it again on its next burst. A real STR parses; say so again.
+    svc->markStrReadForTest();
+    svc->runBurstCycleForTest();          // already closed: nothing new on the card
+    EXPECT_EQ(src_raw->root_downloads, before_close + 1)
+        << "a session closed on an earlier burst read the STR again";
+}
+
+// SDD-053: several sessions closing on one burst read the STR once.
+TEST_F(BurstOrchestrationTest, SessionsClosingTogetherReadTheStrOnce) {
+    auto svc = makeService(&BurstOrchestrationTest::seedTwoSessions);
+    svc->markStrReadForTest();
+
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, sessionExists(_, _))
+        .WillOnce(Return(false))
+        .WillOnce(Return(false))
+        .WillRepeatedly(Return(true));
+    EXPECT_CALL(*db_raw, getNightlyMetrics(_, _)).WillRepeatedly(Return(std::nullopt));
+
+    svc->runBurstCycleForTest();          // live: both download
+
+    // Each session's own stored sizes, matching the listing, in the order the
+    // burst visits them: newest first.
+    const std::map<std::string, int> later = {
+        {"20200101_233000_BRP.edf", 80},
+        {"20200101_233000_PLD.edf", 15},
+    };
+    const std::map<std::string, int> earlier = {
+        {"20200101_220000_BRP.edf", 100},
+        {"20200101_220000_PLD.edf", 20},
+    };
+    EXPECT_CALL(*db_raw, getCheckpointFileSizes(_, _))
+        .WillOnce(Return(later))
+        .WillOnce(Return(earlier))
+        .WillRepeatedly(Return(earlier));
+    svc->markStrReadForTest();
+
+    int closed = 0;
+    EXPECT_CALL(*db_raw, markSessionCompleted(_, _))
+        .WillRepeatedly(::testing::Invoke([&](const std::string&,
+                                              const std::chrono::system_clock::time_point&) {
+            ++closed;
+            return true;
+        }));
+    const int before_close = src_raw->root_downloads;
+    svc->runBurstCycleForTest();          // both close on this burst
+    ASSERT_EQ(closed, 2) << "test setup did not close both sessions on one burst";
+    EXPECT_EQ(src_raw->root_downloads, before_close + 1);
+}
+
 // SDD-048: a backfill rewrites the database from another thread and has no
 // publisher. When it saved sessions it asks the collector, which publishes the
 // newest night on its own thread, once per request. The metrics lookup is what

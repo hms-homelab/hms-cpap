@@ -618,6 +618,9 @@ public:
     int announceQuietNightsForTest(std::chrono::system_clock::time_point now) {
         return announceQuietNights(now);
     }
+    /// Test-only seam for SDD-053: a run that has already parsed an STR, so
+    /// the first-run read does not stand in for the close's.
+    void markStrReadForTest() { str_summary_ok_ = true; }
 private:
 
     void closeIfSettledLocalNight(const std::chrono::system_clock::time_point& session_start,

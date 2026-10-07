@@ -1890,6 +1890,10 @@ bool BurstCollectorService::executeBurstCycle() {
                 return a.session_start > b.session_start;
             });
 
+        // SDD-053: a session that closed on this burst has its STR read on
+        // this burst too, once however many closed.
+        bool session_closed = false;
+
         for (const auto& session : new_sessions) {
             // SDD-029: an operator removed this night; discovery must not store it again.
             if (isRemovedNight(removed_nights_, session.session_start)) {
@@ -1998,12 +2002,15 @@ bool BurstCollectorService::executeBurstCycle() {
                 bool newly_completed = (in_place && cpap_source_ == "local")
                     ? closeOnStoredSpan(session.session_start)
                     : db_service_->markSessionCompleted(device_id_, session.session_start);
+                if (newly_completed) session_closed = true;
 
                 // SDD-046: the SESSION is closed; the NIGHT is not over until its
                 // folder has been quiet for an hour, and announceQuietNights does
-                // what used to happen here (SleepHQ, the outcome, the STR, the
-                // range summaries). One unchanged burst is a minute on a 65 s
+                // what used to happen here (SleepHQ, the outcome, the range
+                // summaries). One unchanged burst is a minute on a 65 s
                 // cycle, so this used to announce a night at every pause in it.
+                // The STR is not held for the hour: the machine writes it at
+                // mask-off, so it is read on this burst (SDD-053).
                 // A night this collector had already closed before the rule
                 // existed is recorded as announced, so an upgrade does not
                 // announce it a second time.
@@ -2052,6 +2059,10 @@ bool BurstCollectorService::executeBurstCycle() {
                 std::cerr << "CPAP: Failed to download session " << session.session_prefix << std::endl;
             }
         }
+
+        // SDD-053: the STR a closing session left on the card, read now rather
+        // than at the night's hour. A local folder already read it this cycle.
+        if (session_closed && !local) processSessionSummary();
 
         // SDD-046: after this burst's growth is recorded, and before the return
         // below, which every burst whose sessions were all unchanged takes.
