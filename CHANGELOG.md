@@ -5,6 +5,22 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.5.4] - 2026-10-07
+
+STR.edf reaches the archive a minute after mask-off, not an hour.
+
+### Fixed
+- **The STR is read on the burst a session closes.** On an ez Share (or any
+  card read over a transport), STR.edf was fetched only once the night had
+  been quiet for an hour, so the archive's `STR.edf`, the dashboard's STR
+  figures and the STR state on MQTT trailed mask-off by an hour. The machine
+  writes STR.edf at mask-off, so the burst that sees a session close now reads
+  it, once however many sessions closed. An OSCAR import from the archive no
+  longer has to wait the hour for the night's settings. The hour of quiet
+  still decides when the night is announced (outcome, SleepHQ export, range
+  summaries) and reads the STR again first. A local folder is unchanged: it
+  already reads its STR every burst.
+
 ## [5.5.3] - 2026-10-06
 
 An AirSense 11 whose card cannot be read is read over its own Bluetooth.
