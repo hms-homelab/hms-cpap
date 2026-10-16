@@ -2314,9 +2314,21 @@ bool BurstCollectorService::executeBurstCycle() {
         }
 
         // SDD-054: a folder something was stored from grew, whatever its
-        // listing's signature said (a first look, a repaired archive).
+        // listing's signature said (a first look, a repaired archive), so it
+        // is listed again and settles: tonight, a recent folder, or one of the
+        // card's two newest (SDD-010: on a card the machine stopped writing to,
+        // the newest nights are old and must still close). NOT an older night
+        // the walk back just imported: a fresh card with 300 nights would
+        // otherwise list all 300 again on the next burst and three times more
+        // at the checkpoints.
+        std::set<std::string> newest_two;
+        for (auto it = card_folders_.rbegin(); it != card_folders_.rend() && newest_two.size() < 2; ++it)
+            newest_two.insert(*it);
         for (const auto& [dir, s] : downloaded_sessions) {
             (void)dir;
+            if (s.date_folder != tonight && !newest_two.count(s.date_folder) &&
+                !isRecentFolder(s.date_folder, now_s, offset))
+                continue;
             auto& w = folder_watch_[s.date_folder];
             if (!w.growing) {
                 w.growing = true;

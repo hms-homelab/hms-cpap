@@ -3946,6 +3946,30 @@ TEST_F(BurstOrchestrationTest, Sdd054_ACheckpointFileThatDidNotGrowIsNotAskedFor
     EXPECT_EQ(asked, 1) << "same stamp, not a KB larger: nothing new to fetch";
 }
 
+TEST_F(BurstOrchestrationTest, Sdd054_AFreshCardsOldNightsAreListedOnceNotAgain) {
+    // A fresh install against a card with history: every night is looked at
+    // and imported on the first burst, and an imported OLD night is not listed
+    // again (no live listing, no checkpoints). A recent one is, so it settles.
+    long long now = kSdd054T0;
+    auto svc = makeService([](FakeDataSource& ds) {
+        ds.date_folders = {"20250301", "20250302", "20261012", "20261013"};
+        for (const auto& f : ds.date_folders)
+            ds.folder_files[f] = {mkEntry(f + "_220000_BRP.edf", 1),
+                                  mkEntry(f + "_220000_PLD.edf", 1)};
+    });
+    onSdd054Clock(*svc, now);
+    expectFreshDownload(*db_raw);
+
+    svc->runBurstCycleForTest();
+    for (int i = 0; i < 3; ++i) {
+        now += 10 * kSdd054Min;
+        svc->runBurstCycleForTest();
+    }
+    EXPECT_EQ(src_raw->folder_lists["20250301"], 1);
+    EXPECT_EQ(src_raw->folder_lists["20250302"], 1);
+    EXPECT_GT(src_raw->folder_lists["20261013"], 1) << "recent: listed again to settle";
+}
+
 TEST_F(BurstOrchestrationTest, Sdd054_SettingsIsListedAtStartAndThenOnItsPace) {
     long long now = kSdd054T0;
     auto svc = makeService([](FakeDataSource& ds) {
