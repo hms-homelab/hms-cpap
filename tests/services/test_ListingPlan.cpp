@@ -141,6 +141,19 @@ TEST(ListingPlan, NoRecentFolderGoesEightHoursUnlisted) {
     EXPECT_FALSE(listed(plan, "20250101"));   // not recent: no ceiling
 }
 
+TEST(ListingPlan, ADoneFolderIsNeverListedForAnyReason) {
+    FolderWatch w = settled(kT0 - 9 * 3600);
+    w.relist = true;
+    w.growing = true;
+    std::map<std::string, FolderWatch> watch{{"20261012", w}};
+    const auto plan = planFolderListings(kT0, kOffset, {"20261012", "20250101"},
+                                         {"20250101"}, watch, {"20261012", "20250101"});
+    EXPECT_FALSE(listed(plan, "20261012"));
+    EXPECT_FALSE(listed(plan, "20250101"));
+    // Tonight is never done.
+    EXPECT_TRUE(listed(planFolderListings(kT0, kOffset, {}, {}, {}, {"20261014"}), "20261014"));
+}
+
 TEST(ListingPlanObserve, ANewSignatureOrAStoredFileIsGrowth) {
     FolderWatch w = observeFolder({}, "1|10|5", false, kT0);
     EXPECT_FALSE(w.growing) << "a first look is a baseline, not growth";

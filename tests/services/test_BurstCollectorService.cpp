@@ -1775,8 +1775,13 @@ public:
         return date_folders;
     }
 
+    // A folder whose listing fails, like an ez Share refusing mid-walk.
+    std::set<std::string> refuse_listing;
+
     std::vector<EzShareFileEntry> listFiles(const std::string& date_folder) override {
         ++folder_lists[date_folder];
+        if (refuse_listing.count(date_folder))
+            throw std::runtime_error("ezShare refused " + date_folder);
         auto it = folder_files.find(date_folder);
         return it == folder_files.end() ? std::vector<EzShareFileEntry>{} : it->second;
     }
@@ -3968,6 +3973,66 @@ TEST_F(BurstOrchestrationTest, Sdd054_AFreshCardsOldNightsAreListedOnceNotAgain)
     EXPECT_EQ(src_raw->folder_lists["20250301"], 1);
     EXPECT_EQ(src_raw->folder_lists["20250302"], 1);
     EXPECT_GT(src_raw->folder_lists["20261013"], 1) << "recent: listed again to settle";
+}
+
+TEST_F(BurstOrchestrationTest, Sdd054_AWalkBackThatDropsResumesFromTheStoredListings) {
+    // D9: the card refuses the third folder of the walk. The two it gave are
+    // kept; the next burst imports their nights from the stored listings and
+    // lists only the folder that failed.
+    long long now = kSdd054T0;
+    auto svc = makeService([](FakeDataSource& ds) {
+        ds.date_folders = {"20250301", "20250302", "20250303"};
+        for (const auto& f : ds.date_folders)
+            ds.folder_files[f] = {mkEntry(f + "_220000_BRP.edf", 1),
+                                  mkEntry(f + "_220000_PLD.edf", 1)};
+        ds.refuse_listing = {"20250303"};
+    });
+    onSdd054Clock(*svc, now);
+    expectFreshDownload(*db_raw);
+
+    EXPECT_FALSE(svc->runBurstCycleForTest());
+    EXPECT_EQ(src_raw->downloaded_files.size() + src_raw->ranged_files.size(), 0u);
+
+    src_raw->refuse_listing.clear();
+    now += kSdd054Min;
+    svc->runBurstCycleForTest();
+    EXPECT_EQ(src_raw->folder_lists["20250301"], 1) << "imported from its stored listing";
+    EXPECT_EQ(src_raw->folder_lists["20250302"], 1);
+    EXPECT_EQ(src_raw->folder_lists["20250303"], 2);
+    const auto fetched = [&](const std::string& n) {
+        return std::count(src_raw->ranged_files.begin(), src_raw->ranged_files.end(), n) +
+               std::count(src_raw->downloaded_files.begin(), src_raw->downloaded_files.end(), n);
+    };
+    EXPECT_GE(fetched("20250301_220000_BRP.edf"), 1);
+    EXPECT_GE(fetched("20250303_220000_BRP.edf"), 1);
+}
+
+TEST_F(BurstOrchestrationTest, Sdd054_AFullyDoneFolderIsNeverListedAgain) {
+    // A recent night imported, settled through its checkpoints, every file in
+    // the archive: fully done. The 8 hour ceiling no longer reaches it.
+    long long now = kSdd054T0;
+    auto svc = makeService([](FakeDataSource& ds) {
+        ds.date_folders = {"20261012", "20261013"};
+        for (const auto& f : ds.date_folders)
+            ds.folder_files[f] = {mkEntry(f + "_220000_BRP.edf", 1),
+                                  mkEntry(f + "_220000_PLD.edf", 1),
+                                  mkEntry(f + "_220000_BRP.crc", 1)};
+    });
+    onSdd054Clock(*svc, now);
+    expectFreshDownload(*db_raw);
+
+    svc->runBurstCycleForTest();                       // first look, imported
+    for (long long m : {1, 6, 36, 66, 70}) {           // live, stop, checkpoints
+        now = kSdd054T0 + m * kSdd054Min;
+        svc->runBurstCycleForTest();
+    }
+    const auto& st = svc->storedListingsForTest().at("20261012");
+    EXPECT_TRUE(st.edf_done) << "done files: " << st.done_files.size();
+    EXPECT_TRUE(st.fully_done);
+    const int settled = src_raw->folder_lists["20261012"];
+    now = kSdd054T0 + 10 * 3600;                       // past the 8 hour ceiling
+    svc->runBurstCycleForTest();
+    EXPECT_EQ(src_raw->folder_lists["20261012"], settled) << "fully done: never listed again";
 }
 
 TEST_F(BurstOrchestrationTest, Sdd054_SettingsIsListedAtStartAndThenOnItsPace) {

@@ -17,6 +17,7 @@
 #include "services/SessionDiscoveryService.h"
 #include "services/ListingPlan.h"
 #include "utils/MachineClock.h"
+#include "utils/FolderListingStore.h"
 #include "mqtt_client.h"
 #include "database/IDatabase.h"
 #include "utils/AppConfig.h"
@@ -631,6 +632,7 @@ public:
         machine_clock_loaded_ = true;
     }
     const std::map<std::string, FolderWatch>& folderWatchForTest() const { return folder_watch_; }
+    const std::map<std::string, StoredListing>& storedListingsForTest() const { return stored_listings_; }
 private:
 
     // ── SDD-054: a folder is listed for a reason ───────────────────────────
@@ -648,6 +650,9 @@ private:
     SettingsState settings_state_;
     MachineClock machine_clock_;
     bool machine_clock_loaded_ = false;
+    /// D9: every folder listing taken, as stored in cpap_folder_listing.
+    std::map<std::string, StoredListing> stored_listings_;
+    bool stored_listings_loaded_ = false;
     /// D6: list everything recent once (set at start, on recovery, a swap, Sync now).
     bool relist_recent_ = true;
     /// D6: a listing or download failed since the last good burst.
@@ -664,6 +669,8 @@ private:
                              const std::set<std::string>& also);
     /// D5: list SETTINGS\ and fetch what changed into the archive.
     void captureSettings(const std::string& archive_root, long long now);
+    /// D9: is this file of this folder done on record (never fetched again)?
+    bool fileDoneOnRecord(const std::string& folder, const std::string& name) const;
 
     void closeIfSettledLocalNight(const std::chrono::system_clock::time_point& session_start,
                                   const std::vector<CPAPSession>& parsed_sessions);

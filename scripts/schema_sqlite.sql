@@ -442,6 +442,19 @@ CREATE TABLE IF NOT EXISTS cpap_machine_clock (
     updated_at  BIGINT NOT NULL DEFAULT 0
 );
 
+-- SDD-054 D9: each folder's listing as the card gave it, with each file's done
+-- mark (JSON), and the folder's edf_done / fully_done. A fully done folder is
+-- never listed again. Created at runtime by utils/FolderListingStore.h.
+CREATE TABLE IF NOT EXISTS cpap_folder_listing (
+    device_id   VARCHAR(128) NOT NULL,
+    date_folder VARCHAR(8)   NOT NULL,
+    files       TEXT NOT NULL,
+    listed_at   BIGINT NOT NULL DEFAULT 0,
+    edf_done    INTEGER NOT NULL DEFAULT 0,
+    fully_done  INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (device_id, date_folder)
+);
+
 -- SDD-029: nights an operator removed; every re-ingest path consults it.
 -- night is YYYYMMDD (strDayForSessionStart). Reparse clears the row.
 CREATE TABLE IF NOT EXISTS cpap_removed_nights (

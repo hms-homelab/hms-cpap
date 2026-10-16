@@ -51,6 +51,10 @@ inline constexpr std::chrono::hours kRelistCeiling{8};
 /// D6: "recent" is the machine's today and the 3 days before it.
 inline constexpr int kRecentDays = 3;
 
+/// D9: how many edf_done folders get their remaining files per burst. A fresh
+/// card's walk back leaves one per night; this keeps each burst short.
+inline constexpr int kSecondPassPerBurst = 10;
+
 /// D5: SETTINGS floors, on a card that keeps logs there.
 inline constexpr std::chrono::minutes kSettingsNightFloor{15};
 inline constexpr std::chrono::minutes kSettingsIdleFloor{60};
@@ -98,11 +102,15 @@ struct PlannedListing {
 /// hold something new (on or after the anchor, a night never imported): each
 /// is listed once per run (first look). Tonight's folder is listed whether or
 /// not the index named it: its first file is how a night is found.
+///
+/// [done] (D9): folders whose every night is stored and whose night is over.
+/// Never listed again, for any reason: ResMed does not write to them.
 std::vector<PlannedListing> planFolderListings(
     long long now, long long offset,
     const std::vector<std::string>& card_folders,
     const std::set<std::string>& candidates,
-    const std::map<std::string, FolderWatch>& watch);
+    const std::map<std::string, FolderWatch>& watch,
+    const std::set<std::string>& done = {});
 
 /// Fold one listing of a folder into its row. Growth is a different signature
 /// from this run's previous listing, or a file stored from it on this burst.

@@ -42,6 +42,20 @@ namespace hms_cpap {
 
 namespace {
 
+/// SDD-054: a folder listing's signature: how many files, how many KB, the
+/// newest stamp. Two listings with the same one show the same folder.
+std::string listingSig(const std::vector<EzShareFileEntry>& files) {
+    long long total_kb = 0, newest = 0;
+    int count = 0;
+    for (const auto& f : files) {
+        if (f.is_dir) continue;
+        ++count;
+        total_kb += f.size_kb;
+        newest = std::max(newest, machine_clock::stampOf(f));
+    }
+    return std::to_string(count) + "|" + std::to_string(total_kb) + "|" + std::to_string(newest);
+}
+
 /// Say so when a download lands empty. A zero-byte .edf is a faulty file, not a
 /// small one, and it is deliberately left unstamped -- which means we re-fetch
 /// it every burst. Without a line in the log that looks exactly like the
@@ -603,7 +617,8 @@ bool BurstCollectorService::downloadSessionFiles(
             std::string local_path = local_dir + "/" + name;
             const std::time_t card_stamp = cardStampFor(session, name);
 
-            if (holdCurrentCopy(card_stamp, local_path)) {
+            // SDD-054 D9: done on record, so already in the archive.
+            if (fileDoneOnRecord(session.date_folder, name) || holdCurrentCopy(card_stamp, local_path)) {
                 skipped_unchanged++;
                 continue;
             }
@@ -634,6 +649,12 @@ bool BurstCollectorService::downloadSessionFiles(
             // KB-rounded) has nothing new, and used to cost a ranged request
             // on every burst.
             const std::time_t card_stamp = cardStampFor(session, filename);
+            // SDD-054 D9: done on record, so already in the archive.
+            if (fileDoneOnRecord(session.date_folder, filename)) {
+                skipped_unchanged++;
+                held_checkpoints++;
+                continue;
+            }
             if (holdCurrentCopy(card_stamp, local_path)) {
                 std::error_code ec;
                 const auto have = std::filesystem::file_size(local_path, ec);
@@ -827,6 +848,7 @@ void BurstCollectorService::downloadDatalogResidue(const std::string& date_folde
         // when the card's stamp is not the one on our copy, instead of on every
         // burst that downloaded something.
         const std::time_t card_stamp = static_cast<std::time_t>(machine_clock::stampOf(f));
+        if (fileDoneOnRecord(date_folder, f.name)) continue;   // D9: already archived
         if (holdCurrentCopy(card_stamp, local_path)) continue;
         if (data_source_->downloadFile(date_folder, f.name, local_path)) {
             stampLocalCopy(card_stamp, local_path);
@@ -933,6 +955,12 @@ void BurstCollectorService::markRecentForRelist(long long now, long long offset,
     for (const auto& f : card_folders_)
         if (isRecentFolder(f, now, offset) || also.count(f)) folder_watch_[f].relist = true;
     for (const auto& f : also) folder_watch_[f].relist = true;
+}
+
+bool BurstCollectorService::fileDoneOnRecord(const std::string& folder,
+                                             const std::string& name) const {
+    const auto it = stored_listings_.find(folder);
+    return it != stored_listings_.end() && it->second.done_files.count(name) > 0;
 }
 
 void BurstCollectorService::captureSettings(const std::string& archive_root, long long now) {
@@ -1832,6 +1860,22 @@ bool BurstCollectorService::executeBurstCycle() {
             machine_clock_ = loadMachineClock(*db_service_, device_id_);
             machine_clock_loaded_ = true;
         }
+        if (!stored_listings_loaded_ && db_service_) {
+            // D9: a folder with a stored listing has been looked at. Its
+            // listing stays true (ResMed writes only tonight's folder), so a
+            // restart does not list it again.
+            stored_listings_ = loadFolderListings(*db_service_, device_id_);
+            for (const auto& [f, s] : stored_listings_) {
+                auto& w = folder_watch_[f];
+                w.last_listed = s.listed_at;
+                w.sig = listingSig(s.files);
+            }
+            stored_listings_loaded_ = true;
+            if (!stored_listings_.empty())
+                std::cout << "CPAP: " << stored_listings_.size()
+                          << " folder listing(s) on record; old folders are not listed again"
+                          << std::endl;
+        }
         const long long offset = machineOffset(machine_clock_, now_s);
         if (sync_now_taken_) {
             // D6: a Sync now lists everything recent, the index and SETTINGS.
@@ -1847,6 +1891,10 @@ bool BurstCollectorService::executeBurstCycle() {
         }
 
         std::map<std::string, std::vector<EzShareFileEntry>> listings;
+        // D9: this burst's listings plus the stored listings of folders not done.
+        std::map<std::string, std::vector<EzShareFileEntry>> discover_in;
+        // Each listed folder's row as it was before this burst listed it.
+        std::map<std::string, FolderWatch> watch_before;
         std::vector<PlannedListing> plan;
         bool index_listed = false;
         std::set<std::string> catch_up;
@@ -1863,6 +1911,18 @@ bool BurstCollectorService::executeBurstCycle() {
                 if (index_state_.ok_this_run)
                     for (const auto& f : card_folders_)
                         if (!std::binary_search(folders.begin(), folders.end(), f)) gone = true;
+                // D9: a stored listing of a folder no longer on the card is dropped.
+                for (auto it = stored_listings_.begin(); it != stored_listings_.end();) {
+                    if (!folders.empty() &&
+                        !std::binary_search(folders.begin(), folders.end(), it->first) &&
+                        it->first != tonightFolder(now_s, offset)) {
+                        if (db_service_) forgetFolderListing(*db_service_, device_id_, it->first);
+                        folder_watch_.erase(it->first);
+                        it = stored_listings_.erase(it);
+                    } else {
+                        ++it;
+                    }
+                }
                 if (gone) {
                     // D6: a folder vanished, so the card was swapped or edited.
                     std::cout << "CPAP: a folder on the card is gone since the last index; "
@@ -1903,27 +1963,63 @@ bool BurstCollectorService::executeBurstCycle() {
                  (!last_session_start.has_value() || *retain_from < *last_session_start))
                     ? retain_from
                     : last_session_start;
-            std::set<std::string> candidates;
+            std::set<std::string> anchored;
             for (const auto& f : SessionDiscoveryService::foldersFromAnchor(card_folders_, folder_anchor))
-                candidates.insert(f);
+                anchored.insert(f);
+            std::set<std::string> candidates = anchored;
             candidates.insert(catch_up.begin(), catch_up.end());
 
             if (relist_recent_) {
-                markRecentForRelist(now_s, offset, candidates);
+                markRecentForRelist(now_s, offset, anchored);
                 relist_recent_ = false;
             }
 
-            plan = planFolderListings(now_s, offset, card_folders_, candidates, folder_watch_);
+            // D9: a fully done folder is never listed again.
+            std::set<std::string> done;
+            for (const auto& [f, s] : stored_listings_)
+                if (s.fully_done) done.insert(f);
+
+            plan = planFolderListings(now_s, offset, card_folders_, candidates, folder_watch_, done);
             std::ostringstream said;
             for (const auto& p : plan) {
-                listings[p.folder] = data_source_->listFiles(p.folder);
+                auto files = data_source_->listFiles(p.folder);
+                // D9: stored the moment it lands, so a card that drops part way
+                // keeps every listing it gave. A file that changed loses its
+                // done mark; one that did not keeps it.
+                auto& st = stored_listings_[p.folder];
+                st = relisted(st, files, now_s);
+                if (db_service_) saveFolderListing(*db_service_, device_id_, p.folder, st);
+                // And looked at, the same moment: a burst that fails at the
+                // next folder must not list this one again. The growth test
+                // below compares against the row as it was before.
+                watch_before[p.folder] = folder_watch_[p.folder];
+                folder_watch_[p.folder].last_listed = now_s;
+                folder_watch_[p.folder].relist = false;
+                listings[p.folder] = std::move(files);
                 said << (said.tellp() > 0 ? ", " : "") << p.folder << " ("
                      << listReasonString(p.reason) << ")";
             }
             std::cout << "CPAP: listing " << said.str() << std::endl;
 
+            // D9: a folder listed before whose nights are not all stored is
+            // imported from its stored listing, not listed again, and is let
+            // past the "newer than the newest stored night" test, as SDD-038's
+            // catch-up is: a walk back that stopped half way resumes here.
+            discover_in = listings;
+            std::set<std::string> resume = catch_up;
+            int from_record = 0;
+            for (const auto& [f, s] : stored_listings_) {
+                if (s.edf_done || discover_in.count(f)) continue;
+                discover_in[f] = s.files;
+                resume.insert(f);
+                ++from_record;
+            }
+            if (from_record > 0)
+                std::cout << "CPAP: importing " << from_record
+                          << " folder(s) from their stored listing" << std::endl;
+
             new_sessions = discovery_service_->discoverInListings(
-                listings, last_session_start, retain_from, catch_up);
+                discover_in, last_session_start, retain_from, resume);
 
             if (fault_streak_) {
                 // D6: the card answers again after a failure streak. Once per
@@ -1987,19 +2083,12 @@ bool BurstCollectorService::executeBurstCycle() {
             }
             folder_stamps_[p.folder] = stampsOf(files);
 
-            // The folder's signature: how many files, how many KB, newest stamp.
-            long long total_kb = 0, newest = 0;
             int count = 0;
-            for (const auto& f : files) {
-                if (f.is_dir) continue;
-                ++count;
-                total_kb += f.size_kb;
-                newest = std::max(newest, machine_clock::stampOf(f));
-            }
-            const std::string sig = std::to_string(count) + "|" + std::to_string(total_kb) + "|" +
-                                    std::to_string(newest);
-            const FolderWatch before = folder_watch_[p.folder];
-            folder_watch_[p.folder] = observeFolder(before, sig, false, now_s);
+            for (const auto& f : files)
+                if (!f.is_dir) ++count;
+            const auto was = watch_before.find(p.folder);
+            const FolderWatch before = was != watch_before.end() ? was->second : FolderWatch{};
+            folder_watch_[p.folder] = observeFolder(before, listingSig(files), false, now_s);
 
             // D5: tonight's first growth is the therapy start (an AirSense 10
             // flushes its log at a start, never at a stop).
@@ -2049,7 +2138,90 @@ bool BurstCollectorService::executeBurstCycle() {
         // checkpoints; a close reads it too, below.
         if (local && (index_listed || checkpoint_listed)) processSessionSummary();
 
+        // D9: done, per file and per folder, in two passes.
+        //
+        // A file is done when its archive copy exists, is not damaged and holds
+        // at least what the listing shows (KB-rounded); in place, by being
+        // there; a junk file the residue rules skip, by definition. The folder
+        // is edf_done when every EDF is done and its night is over (it has
+        // files, is dated before tonight, is not growing, is past its last
+        // checkpoint, and no download from it failed on this burst), and
+        // fully_done when every file is done too. Fully done is never listed
+        // again. An empty folder is never done, so a night whose folder appears
+        // late is still found.
+        std::set<std::string> failed_folders;
+        auto fileIsDone = [&](const std::string& folder, const EzShareFileEntry& f) {
+            const bool edf = isCpapEdf(f.name);
+            if (!edf && residualSkip(f.name, static_cast<uint64_t>(f.size_kb) * 1024)) return true;
+            if (in_place) return true;
+            const auto p = std::filesystem::path(permanent_archive) / "DATALOG" / folder / f.name;
+            std::error_code ec;
+            const auto bytes = std::filesystem::file_size(p, ec);
+            if (ec || bytes == 0) return false;
+            if (bytes + 1023 < static_cast<uintmax_t>(f.size_kb) * 1024) return false;
+            return !(edf && partialCopyIsDamaged(p.string(), bytes, f.size_kb));
+        };
+        auto finishPasses = [&]() {
+            // Second pass: an edf_done folder's remaining files, from its
+            // stored listing, a few folders per burst, no new listing.
+            if (!in_place) {
+                const std::string temp_dir = ConfigManager::get(
+                    "CPAP_TEMP_DIR", (std::filesystem::temp_directory_path() / "cpap_data").string());
+                int taken = 0;
+                for (const auto& [f, st] : stored_listings_) {
+                    if (!st.edf_done || st.fully_done || taken >= kSecondPassPerBurst) continue;
+                    ++taken;
+                    downloadDatalogResidue(f, temp_dir + "/" + f, st.files);
+                    archiveSessionFiles(f, temp_dir, permanent_archive);
+                }
+            }
+
+            const long long last_checkpoint =
+                std::chrono::duration_cast<std::chrono::seconds>(
+                    std::end(kGrowthCheckpoints)[-1]).count();
+            int edf_now = 0, fully_now = 0;
+            for (auto& [f, st] : stored_listings_) {
+                if (st.fully_done) continue;
+                bool changed = false;
+                for (const auto& file : st.files) {
+                    if (file.is_dir || st.done_files.count(file.name)) continue;
+                    if (fileIsDone(f, file)) {
+                        st.done_files.insert(file.name);
+                        changed = true;
+                    }
+                }
+                int count = 0;
+                bool edfs = true, everything = true;
+                for (const auto& file : st.files) {
+                    if (file.is_dir) continue;
+                    ++count;
+                    const bool d = st.done_files.count(file.name) > 0;
+                    if (!d) everything = false;
+                    if (!d && isCpapEdf(file.name)) edfs = false;
+                }
+                bool night_over = count > 0 && f < tonight && !failed_folders.count(f);
+                const auto w = folder_watch_.find(f);
+                if (night_over && w != folder_watch_.end()) {
+                    if (w->second.growing) night_over = false;
+                    if (w->second.stopped_at > 0 && now_s < w->second.stopped_at + last_checkpoint)
+                        night_over = false;
+                }
+                const bool edf_done = night_over && edfs;
+                const bool fully_done = edf_done && everything;
+                if (edf_done && !st.edf_done) ++edf_now;
+                if (fully_done && !st.fully_done) ++fully_now;
+                if (edf_done != st.edf_done || fully_done != st.fully_done) changed = true;
+                st.edf_done = edf_done;
+                st.fully_done = fully_done;
+                if (changed && db_service_) saveFolderListing(*db_service_, device_id_, f, st);
+            }
+            if (edf_now > 0 || fully_now > 0)
+                std::cout << "CPAP: folders done: " << edf_now << " with every EDF stored, "
+                          << fully_now << " complete (not listed again)" << std::endl;
+        };
+
         if (new_sessions.empty()) {
+            finishPasses();
             std::cout << "CPAP: No new sessions to download" << std::endl;
             // SDD-046: a night can reach its hour on a burst that finds nothing.
             announceQuietNights(std::chrono::system_clock::now());
@@ -2192,6 +2364,7 @@ bool BurstCollectorService::executeBurstCycle() {
                     std::cerr << "CPAP: Failed to download session " << session.session_prefix << std::endl;
                     // SDD-054 D6: a failed download lists its folder again.
                     folder_watch_[session.date_folder].relist = true;
+                    failed_folders.insert(session.date_folder);
                     ++download_failures;
                 }
                 continue;
@@ -2309,6 +2482,7 @@ bool BurstCollectorService::executeBurstCycle() {
                 std::cerr << "CPAP: Failed to download session " << session.session_prefix << std::endl;
                 // SDD-054 D6: a failed download lists its folder again.
                 folder_watch_[session.date_folder].relist = true;
+                failed_folders.insert(session.date_folder);
                 ++download_failures;
             }
         }
@@ -2329,6 +2503,12 @@ bool BurstCollectorService::executeBurstCycle() {
             if (s.date_folder != tonight && !newest_two.count(s.date_folder) &&
                 !isRecentFolder(s.date_folder, now_s, offset))
                 continue;
+            // Only on the folder's first look this run, which has no earlier
+            // listing to compare with. After that the listing's own signature
+            // says whether it grew; a session stored again from files we
+            // already hold is not growth.
+            const auto was = watch_before.find(s.date_folder);
+            if (was == watch_before.end() || was->second.last_listed != 0) continue;
             auto& w = folder_watch_[s.date_folder];
             if (!w.growing) {
                 w.growing = true;
@@ -2349,6 +2529,7 @@ bool BurstCollectorService::executeBurstCycle() {
         if (downloaded_sessions.empty()) {
             // SDD-054 D7: an idle burst is not an error. Only a download that
             // was tried and failed is.
+            finishPasses();
             if (download_failures > 0) {
                 std::cerr << "CPAP: No sessions downloaded successfully" << std::endl;
                 return false;
@@ -2382,8 +2563,8 @@ bool BurstCollectorService::executeBurstCycle() {
             // SDD-002: pull the per-night .crc (and any non-junk metadata) into the
             // temp folder first, so archiveSessionFiles() lands it in the OSCAR layout.
             // SDD-054: from this burst's listing of the folder.
-            const auto listed = listings.find(date_folder);
-            if (listed != listings.end())
+            const auto listed = discover_in.find(date_folder);
+            if (listed != discover_in.end())
                 downloadDatalogResidue(date_folder, local_base_dir + "/" + date_folder, listed->second);
             archiveSessionFiles(date_folder, local_base_dir, permanent_archive);
         }
@@ -2392,6 +2573,9 @@ bool BurstCollectorService::executeBurstCycle() {
         // JOURNAL, …) used to run here after every burst that downloaded.
         // SDD-054 runs it with the index (D1) and SETTINGS on its own reasons
         // (D5), above.
+
+        // SDD-054 D9: with this burst's files archived, mark what is done.
+        finishPasses();
     }
 
     // Step 6: Parse and store whatever the loops above staged but did not

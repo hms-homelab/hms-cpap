@@ -67,7 +67,8 @@ std::vector<PlannedListing> planFolderListings(
     long long now, long long offset,
     const std::vector<std::string>& card_folders,
     const std::set<std::string>& candidates,
-    const std::map<std::string, FolderWatch>& watch) {
+    const std::map<std::string, FolderWatch>& watch,
+    const std::set<std::string>& done) {
 
     std::vector<PlannedListing> out;
     std::set<std::string> taken;
@@ -83,6 +84,7 @@ std::vector<PlannedListing> planFolderListings(
 
     for (const auto& f : folders) {
         if (!isDateFolder(f) || f == tonight) continue;
+        if (done.count(f)) continue;   // D9: done is never listed again
         const auto it = watch.find(f);
         const FolderWatch none;
         const FolderWatch& w = it != watch.end() ? it->second : none;
