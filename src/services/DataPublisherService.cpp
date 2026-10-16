@@ -1,5 +1,6 @@
 #include "services/DataPublisherService.h"
 #include "utils/OximetryDevice.h"
+#include "utils/TimeCompat.h"
 #include "utils/ConfigManager.h"
 #include "utils/AppConfig.h"
 #include "cpapdash/parser/SleepIndex.h"
@@ -957,6 +958,56 @@ void DataPublisherService::publishNightPartial(const std::string& date_folder,
 
     std::cout << "📤 MQTT: night " << date_folder << " partial="
               << (partial ? "ON" : "OFF") << std::endl;
+}
+
+void DataPublisherService::publishCardHealth(bool reachable, long long last_answered_epoch,
+                                             const std::string& health) {
+    if (!mqtt_client_) return;
+    const std::string base = "cpap/" + device_id_ + "/card/";
+
+    if (!card_health_declared_) {
+        const std::string device_json = createDeviceJson();
+        auto declare = [&](const std::string& kind, const std::string& id, Json::Value config) {
+            config["unique_id"] = device_id_ + "_" + id;
+            config["state_topic"] = base + id;
+            Json::CharReaderBuilder rb;
+            std::istringstream ds(device_json);
+            Json::parseFromStream(rb, ds, &config["device"], nullptr);
+            Json::StreamWriterBuilder wb;
+            wb["indentation"] = "";
+            mqtt_client_->publish("homeassistant/" + kind + "/" + device_id_ + "/" + id + "/config",
+                                  Json::writeString(wb, config), 1, true);
+        };
+        Json::Value reach;
+        reach["name"] = "Card reachable";
+        reach["device_class"] = "connectivity";
+        reach["payload_on"] = "ON";
+        reach["payload_off"] = "OFF";
+        declare("binary_sensor", "card_reachable", reach);
+
+        Json::Value last;
+        last["name"] = "Card last answered";
+        last["device_class"] = "timestamp";
+        last["icon"] = "mdi:sd";
+        declare("sensor", "card_last_answered", last);
+
+        Json::Value h;
+        h["name"] = "Card health";
+        h["icon"] = "mdi:sd";
+        declare("sensor", "card_health", h);
+        card_health_declared_ = true;
+    }
+
+    mqtt_client_->publish(base + "card_reachable", reachable ? "ON" : "OFF", 0, true);
+    mqtt_client_->publish(base + "card_health", health, 0, true);
+    if (last_answered_epoch > 0) {
+        const std::time_t t = static_cast<std::time_t>(last_answered_epoch);
+        std::tm tm{};
+        gmtime_r(&t, &tm);
+        char iso[32];
+        std::strftime(iso, sizeof(iso), "%Y-%m-%dT%H:%M:%S+00:00", &tm);
+        mqtt_client_->publish(base + "card_last_answered", iso, 0, true);
+    }
 }
 
 bool DataPublisherService::publishSessionCompleted() {

@@ -143,6 +143,13 @@ struct SettingsState {
 bool settingsDue(const SettingsState& s, long long now, bool night_in_progress,
                  bool therapy_started, bool checkpoint_listed);
 
+/// One way to survive an ez Share, D9: the card's health as Home Assistant
+/// shows it. "OK" while it answers; then "Not answering", and after an hour and
+/// after twelve the same thresholds the cloud raises its faults at.
+/// [last_answered] 0 means it has not answered since the service started.
+std::string cardHealth(bool answering, long long last_answered, long long now,
+                       long long started);
+
 /// An AirSense 11's SETTINGS holds only CurrentSettings.json and its .crc;
 /// anything else (the AirSense 10's logs) means the card keeps logs there.
 bool settingsListingHasLogs(const std::vector<std::string>& names);

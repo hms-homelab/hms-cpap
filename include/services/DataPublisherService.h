@@ -155,6 +155,17 @@ public:
     void publishNightPartial(const std::string& date_folder, bool partial);
 
     /**
+     * One way to survive an ez Share, D9: the card's health in Home Assistant.
+     *
+     * Three entities, declared on the first call: "Card reachable"
+     * (connectivity), "Card last answered" (a timestamp) and "Card health"
+     * ("OK", "Not answering", "Not answering for 1 h", "Not answering for
+     * 12 h", the same thresholds the cloud raises its faults at).
+     */
+    void publishCardHealth(bool reachable, long long last_answered_epoch,
+                           const std::string& health);
+
+    /**
      * Publish LLM-generated session summary to MQTT.
      *
      * @param summary Generated summary text
@@ -187,6 +198,8 @@ public:
     void publishOximetrySummary(const std::string& sleep_date_yyyymmdd);
 
 private:
+    /// The card-health entities are declared once per run.
+    bool card_health_declared_ = false;
     std::shared_ptr<hms::MqttClient> mqtt_client_;
     std::shared_ptr<IDatabase> db_service_;
 

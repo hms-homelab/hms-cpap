@@ -676,6 +676,14 @@ private:
     /// D9: is this file of this folder done on record (never fetched again)?
     bool fileDoneOnRecord(const std::string& folder, const std::string& name) const;
 
+    /// One way to survive an ez Share, D9: the card's health to Home Assistant,
+    /// on a change and every 15 minutes.
+    void reportCardHealth(long long now, bool answering);
+    long long card_last_answered_ = 0;
+    long long card_watch_started_ = 0;
+    std::string card_health_said_;
+    long long card_health_said_at_ = 0;
+
     void closeIfSettledLocalNight(const std::chrono::system_clock::time_point& session_start,
                                   const std::vector<CPAPSession>& parsed_sessions);
 

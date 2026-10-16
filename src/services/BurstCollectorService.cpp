@@ -978,6 +978,19 @@ void BurstCollectorService::markRecentForRelist(long long now, long long offset,
     for (const auto& f : also) folder_watch_[f].relist = true;
 }
 
+void BurstCollectorService::reportCardHealth(long long now, bool answering) {
+    if (card_watch_started_ == 0) card_watch_started_ = now;
+    if (answering) card_last_answered_ = now;
+    const std::string health = cardHealth(answering, card_last_answered_, now, card_watch_started_);
+    if (health != card_health_said_)
+        std::cout << "CPAP: card health: " << health << std::endl;
+    if (data_publisher_ && (health != card_health_said_ || now - card_health_said_at_ >= 15 * 60)) {
+        data_publisher_->publishCardHealth(answering, card_last_answered_, health);
+        card_health_said_at_ = now;
+    }
+    card_health_said_ = health;
+}
+
 bool BurstCollectorService::fileDoneOnRecord(const std::string& folder,
                                              const std::string& name) const {
     const auto it = stored_listings_.find(folder);
@@ -2089,9 +2102,11 @@ bool BurstCollectorService::executeBurstCycle() {
             }
             consecutive_failures_ = 0;
             recovery_logged_ = false;
+            reportCardHealth(now_s, true);
         } catch (const std::exception& e) {
             fault_streak_ = true;
             consecutive_failures_++;
+            reportCardHealth(now_s, false);
 
             if (!recovery_logged_) {
                 std::cerr << "CPAP: Session discovery failed: " << e.what() << std::endl;

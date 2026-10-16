@@ -150,6 +150,16 @@ bool settingsDue(const SettingsState& s, long long now, bool night_in_progress,
     return now - s.last_listed >= floor;
 }
 
+std::string cardHealth(bool answering, long long last_answered, long long now,
+                       long long started) {
+    if (answering) return "OK";
+    const long long since = last_answered > 0 ? last_answered : started;
+    const long long quiet = now - since;
+    if (quiet >= 12 * 3600) return "Not answering for 12 h";
+    if (quiet >= 3600) return "Not answering for 1 h";
+    return "Not answering";
+}
+
 bool settingsListingHasLogs(const std::vector<std::string>& names) {
     for (const auto& n : names) {
         std::string l = n;

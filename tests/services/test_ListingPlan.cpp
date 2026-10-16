@@ -194,6 +194,15 @@ TEST(ListingPlanSettings, FirstAndOnReasonsAndOnFloors) {
     EXPECT_TRUE(settingsDue(s, kT0 + kMin, false, false, true));         // a checkpoint
 }
 
+TEST(CardHealth, OkThenNotAnsweringThenTheHourAndTheTwelveHours) {
+    EXPECT_EQ(cardHealth(true, kT0, kT0, kT0), "OK");
+    EXPECT_EQ(cardHealth(false, kT0, kT0 + 59 * kMin, kT0), "Not answering");
+    EXPECT_EQ(cardHealth(false, kT0, kT0 + 3600, kT0), "Not answering for 1 h");
+    EXPECT_EQ(cardHealth(false, kT0, kT0 + 12 * 3600, kT0), "Not answering for 12 h");
+    // Never answered since the start: counted from the start.
+    EXPECT_EQ(cardHealth(false, 0, kT0 + 2 * 3600, kT0), "Not answering for 1 h");
+}
+
 TEST(ListingPlanSettings, AnAirSense11CardIsListedOnlyOnReasons) {
     SettingsState s;
     s.last_listed = kT0;
