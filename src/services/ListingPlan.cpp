@@ -89,6 +89,7 @@ std::vector<PlannedListing> planFolderListings(
         const FolderWatch none;
         const FolderWatch& w = it != watch.end() ? it->second : none;
         const bool future = isFutureFolder(f, now, offset);
+        if (w.parked_until > now) continue;   // keeps refusing: retried after an hour
 
         if (w.last_listed == 0) {
             // D7: a future folder is listed once, when the index finds it.

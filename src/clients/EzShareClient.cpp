@@ -1,7 +1,9 @@
 #include "clients/EzShareClient.h"
 #include "utils/CardNames.h"
 #include "utils/ConfigManager.h"
+#include <chrono>
 #include <iostream>
+#include <thread>
 #include <fstream>
 #include <regex>
 #include <filesystem>
@@ -71,29 +73,42 @@ size_t EzShareClient::WriteFileCallback(void* contents, size_t size, size_t nmem
 }
 
 std::string EzShareClient::httpGet(const std::string& url) {
-    std::string response;
+    // One way to survive an ez Share, D2: a listing is a 200. Any other status
+    // used to be parsed as an empty listing. Asked three times, 400 ms apart,
+    // as the cloud's bridge does, then raised for that folder alone.
+    constexpr int kAttempts = 3;
+    long http_code = 0;
+    for (int attempt = 1; attempt <= kAttempts; ++attempt) {
+        std::string response;
 
-    curl_easy_setopt(curl_, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl_, CURLOPT_WRITEFUNCTION, WriteCallback);
-    curl_easy_setopt(curl_, CURLOPT_WRITEDATA, &response);
-    curl_easy_setopt(curl_, CURLOPT_TIMEOUT, CONNECTION_TIMEOUT);
-    curl_easy_setopt(curl_, CURLOPT_CONNECTTIMEOUT, CONNECTION_TIMEOUT);
-    curl_easy_setopt(curl_, CURLOPT_FOLLOWLOCATION, 0L);
+        curl_easy_setopt(curl_, CURLOPT_URL, url.c_str());
+        curl_easy_setopt(curl_, CURLOPT_WRITEFUNCTION, WriteCallback);
+        curl_easy_setopt(curl_, CURLOPT_WRITEDATA, &response);
+        curl_easy_setopt(curl_, CURLOPT_TIMEOUT, CONNECTION_TIMEOUT);
+        curl_easy_setopt(curl_, CURLOPT_CONNECTTIMEOUT, CONNECTION_TIMEOUT);
+        curl_easy_setopt(curl_, CURLOPT_FOLLOWLOCATION, 0L);
+        curl_easy_setopt(curl_, CURLOPT_LOW_SPEED_LIMIT, 0L);   // a listing has its own total
 
-    CURLcode res = curl_easy_perform(curl_);
-    if (res != CURLE_OK) {
-        std::string error = std::string("HTTP GET failed (") + url + "): " + curl_easy_strerror(res);
-        // An offline device fails every poll cycle; log the first one, then
-        // summarise instead of repeating the same line thousands of times.
-        auto decision = http_fail_log_.onFailure(error);
-        if (decision.log) std::cerr << decision.message << std::endl;
-        throw std::runtime_error(error);
+        CURLcode res = curl_easy_perform(curl_);
+        if (res != CURLE_OK) {
+            std::string error = std::string("HTTP GET failed (") + url + "): " + curl_easy_strerror(res);
+            // An offline device fails every poll cycle; log the first one, then
+            // summarise instead of repeating the same line thousands of times.
+            auto decision = http_fail_log_.onFailure(error);
+            if (decision.log) std::cerr << decision.message << std::endl;
+            throw std::runtime_error(error);
+        }
+
+        if (auto recovered = http_fail_log_.onSuccess(); recovered.log)
+            std::cerr << "ez Share " << recovered.message << std::endl;
+
+        http_code = 0;
+        curl_easy_getinfo(curl_, CURLINFO_RESPONSE_CODE, &http_code);
+        // 0: a transport that reports no status (a test's file:// URL) is taken as is.
+        if (http_code == 200 || http_code == 0) return response;
+        if (attempt < kAttempts) std::this_thread::sleep_for(std::chrono::milliseconds(400));
     }
-
-    if (auto recovered = http_fail_log_.onSuccess(); recovered.log)
-        std::cerr << "ez Share " << recovered.message << std::endl;
-
-    return response;
+    throw ListingRefused("ez Share answered HTTP " + std::to_string(http_code) + " for " + url);
 }
 
 // Parse the ez Share HTML directory listing.
@@ -249,6 +264,10 @@ bool EzShareClient::downloadFile(const std::string& date_folder,
     curl_easy_setopt(curl_, CURLOPT_TIMEOUT, DOWNLOAD_TIMEOUT);
     curl_easy_setopt(curl_, CURLOPT_CONNECTTIMEOUT, CONNECTION_TIMEOUT);
     curl_easy_setopt(curl_, CURLOPT_FOLLOWLOCATION, 0L);
+    // D8: a whole-file transfer stalls out like a ranged one, instead of
+    // holding the card for the full 300 s.
+    curl_easy_setopt(curl_, CURLOPT_LOW_SPEED_LIMIT, LOW_SPEED_LIMIT);
+    curl_easy_setopt(curl_, CURLOPT_LOW_SPEED_TIME, LOW_SPEED_TIME);
 
     CURLcode res = curl_easy_perform(curl_);
     output.close();
@@ -309,6 +328,9 @@ bool EzShareClient::downloadRootFile(const std::string& filename,
     curl_easy_setopt(curl_, CURLOPT_TIMEOUT, DOWNLOAD_TIMEOUT);
     curl_easy_setopt(curl_, CURLOPT_CONNECTTIMEOUT, CONNECTION_TIMEOUT);
     curl_easy_setopt(curl_, CURLOPT_FOLLOWLOCATION, 0L);
+    // D8: a stalled whole-file transfer fails in LOW_SPEED_TIME.
+    curl_easy_setopt(curl_, CURLOPT_LOW_SPEED_LIMIT, LOW_SPEED_LIMIT);
+    curl_easy_setopt(curl_, CURLOPT_LOW_SPEED_TIME, LOW_SPEED_TIME);
 
     CURLcode res = curl_easy_perform(curl_);
     output.close();
@@ -500,6 +522,9 @@ bool EzShareClient::downloadByPath(const std::string& card_rel_path,
     curl_easy_setopt(curl_, CURLOPT_TIMEOUT, DOWNLOAD_TIMEOUT);
     curl_easy_setopt(curl_, CURLOPT_CONNECTTIMEOUT, CONNECTION_TIMEOUT);
     curl_easy_setopt(curl_, CURLOPT_FOLLOWLOCATION, 0L);
+    // D8: a stalled whole-file transfer fails in LOW_SPEED_TIME.
+    curl_easy_setopt(curl_, CURLOPT_LOW_SPEED_LIMIT, LOW_SPEED_LIMIT);
+    curl_easy_setopt(curl_, CURLOPT_LOW_SPEED_TIME, LOW_SPEED_TIME);
 
     CURLcode res = curl_easy_perform(curl_);
     output.close();

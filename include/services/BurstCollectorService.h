@@ -650,6 +650,10 @@ private:
     SettingsState settings_state_;
     MachineClock machine_clock_;
     bool machine_clock_loaded_ = false;
+    /// One way to survive an ez Share, D7: failed downloads in a row, and the
+    /// files parked for an hour after three, keyed "folder/name".
+    std::map<std::string, int> file_failures_;
+    std::map<std::string, long long> file_parked_until_;
     /// D9: every folder listing taken, as stored in cpap_folder_listing.
     std::map<std::string, StoredListing> stored_listings_;
     bool stored_listings_loaded_ = false;

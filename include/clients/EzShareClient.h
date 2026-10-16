@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include <chrono>
+#include <stdexcept>
 #include <curl/curl.h>
 #include "clients/IDataSource.h"
 #include "utils/FailureLogThrottle.h"
@@ -24,6 +25,17 @@ struct EzShareFileEntry {
 
     /** Get file modification time as time_point (from directory listing) */
     std::chrono::system_clock::time_point getModTime() const;
+};
+
+/**
+ * SDD-054 / one way to survive an ez Share, D2: the card answered, but not with
+ * a listing (an HTTP status other than 200, three times). It concerns that one
+ * folder: the burst goes on with the others. A connection that cannot be made
+ * at all is still a plain runtime_error, which means the card is not there.
+ */
+class ListingRefused : public std::runtime_error {
+public:
+    using std::runtime_error::runtime_error;
 };
 
 /**

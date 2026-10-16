@@ -67,7 +67,14 @@ struct FolderWatch {
     bool        growing{false};   ///< the last listing showed growth
     bool        relist{false};    ///< D6 mark: list it on the next burst
     std::string sig;              ///< count|total KB|newest stamp of the last listing
+    int         list_failures{0}; ///< refused or impossible listings in a row
+    long long   parked_until{0};  ///< not listed before this (3 failures: an hour)
 };
+
+/// One way to survive an ez Share, D7: three failures in a row park a folder or
+/// a file for an hour.
+inline constexpr int kFailuresBeforePark = 3;
+inline constexpr std::chrono::hours kParkFor{1};
 
 /// The YYYYMMDD of the machine's clock at [host_now] + [days] days.
 std::string machineDay(long long host_now, long long offset, int days = 0);

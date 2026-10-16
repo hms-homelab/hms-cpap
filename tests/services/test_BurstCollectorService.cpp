@@ -1778,10 +1778,15 @@ public:
     // A folder whose listing fails, like an ez Share refusing mid-walk.
     std::set<std::string> refuse_listing;
 
+    // A folder the card answers with an HTTP error (not a listing).
+    std::set<std::string> answer_not_a_listing;
+
     std::vector<EzShareFileEntry> listFiles(const std::string& date_folder) override {
         ++folder_lists[date_folder];
         if (refuse_listing.count(date_folder))
             throw std::runtime_error("ezShare refused " + date_folder);
+        if (answer_not_a_listing.count(date_folder))
+            throw ListingRefused("HTTP 500 for " + date_folder);
         auto it = folder_files.find(date_folder);
         return it == folder_files.end() ? std::vector<EzShareFileEntry>{} : it->second;
     }
@@ -4033,6 +4038,61 @@ TEST_F(BurstOrchestrationTest, Sdd054_AFullyDoneFolderIsNeverListedAgain) {
     now = kSdd054T0 + 10 * 3600;                       // past the 8 hour ceiling
     svc->runBurstCycleForTest();
     EXPECT_EQ(src_raw->folder_lists["20261012"], settled) << "fully done: never listed again";
+}
+
+// ── One way to survive an ez Share ──────────────────────────────────────────
+
+TEST_F(BurstOrchestrationTest, EzShare_ARefusedFolderDoesNotStopTheOthersAndIsParkedAfterThree) {
+    long long now = kSdd054T0;
+    auto svc = makeService([](FakeDataSource& ds) {
+        ds.date_folders = {"20261012", "20261013"};
+        for (const auto& f : ds.date_folders)
+            ds.folder_files[f] = {mkEntry(f + "_220000_BRP.edf", 1),
+                                  mkEntry(f + "_220000_PLD.edf", 1)};
+        ds.answer_not_a_listing = {"20261012"};
+    });
+    onSdd054Clock(*svc, now);
+    expectFreshDownload(*db_raw);
+
+    svc->runBurstCycleForTest();
+    const auto fetched = [&](const std::string& n) {
+        return std::count(src_raw->ranged_files.begin(), src_raw->ranged_files.end(), n);
+    };
+    EXPECT_GE(fetched("20261013_220000_BRP.edf"), 1) << "the other folder still came in";
+
+    for (int i = 0; i < 3; ++i) {
+        now += kSdd054Min;
+        svc->runBurstCycleForTest();
+    }
+    const int asked = src_raw->folder_lists["20261012"];
+    EXPECT_EQ(asked, 3) << "asked on three bursts, then parked";
+    now += 30 * kSdd054Min;
+    svc->runBurstCycleForTest();
+    EXPECT_EQ(src_raw->folder_lists["20261012"], asked) << "parked for an hour";
+    now += 31 * kSdd054Min;
+    src_raw->answer_not_a_listing.clear();
+    svc->runBurstCycleForTest();
+    EXPECT_EQ(src_raw->folder_lists["20261012"], asked + 1) << "asked again after the hour";
+}
+
+TEST_F(BurstOrchestrationTest, EzShare_AFolderThatHadFilesNeverListsEmpty) {
+    long long now = kSdd054T0;
+    auto svc = makeService([](FakeDataSource& ds) {
+        ds.date_folders = {"20261014"};
+        ds.folder_files["20261014"] = {mkEntry("20261014_220000_BRP.edf", 1),
+                                       mkEntry("20261014_220000_PLD.edf", 1)};
+    });
+    onSdd054Clock(*svc, now);
+    expectFreshDownload(*db_raw);
+
+    svc->runBurstCycleForTest();
+    src_raw->folder_files["20261014"] = {};   // the card answers an empty page
+    now += kSdd054Min;
+    svc->runBurstCycleForTest();
+
+    const auto& st = svc->storedListingsForTest().at("20261014");
+    EXPECT_EQ(st.files.size(), 2u) << "the last good listing stays";
+    EXPECT_TRUE(svc->folderWatchForTest().at("20261014").relist);
 }
 
 TEST_F(BurstOrchestrationTest, Sdd054_SettingsIsListedAtStartAndThenOnItsPace) {

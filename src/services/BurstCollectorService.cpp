@@ -655,13 +655,24 @@ bool BurstCollectorService::downloadSessionFiles(
                 held_checkpoints++;
                 continue;
             }
-            if (holdCurrentCopy(card_stamp, local_path)) {
+            // One way to survive an ez Share, D7: a file that failed three times
+            // in a row waits an hour.
+            const std::string file_key = session.date_folder + "/" + filename;
+            if (const auto parked = file_parked_until_.find(file_key);
+                parked != file_parked_until_.end() && parked->second > nowSeconds())
+                continue;
+            // D6: never ask at or past the end. A copy we hold is asked for
+            // more only when the listing is a full KB larger, whatever its
+            // stamp (an unstamped copy used to be ranged from its size blind).
+            // A copy that cannot be the card's file goes to smartDownload,
+            // which discards it and fetches from 0.
+            {
                 std::error_code ec;
                 const auto have = std::filesystem::file_size(local_path, ec);
                 const auto listed = session.file_sizes_kb.find(filename);
-                const bool grew_kb = !ec && listed != session.file_sizes_kb.end() &&
-                                     static_cast<uintmax_t>(listed->second) * 1024 >= have + 1024;
-                if (!grew_kb) {
+                if (!ec && have > 0 && listed != session.file_sizes_kb.end() &&
+                    !partialCopyIsDamaged(local_path, have, listed->second) &&
+                    static_cast<uintmax_t>(listed->second) * 1024 < have + 1024) {
                     skipped_unchanged++;
                     held_checkpoints++;
                     continue;
@@ -669,10 +680,20 @@ bool BurstCollectorService::downloadSessionFiles(
             }
             if (smartDownload(filename, local_path)) {
                 stampLocalCopy(card_stamp, local_path);
+                file_failures_.erase(file_key);
+                file_parked_until_.erase(file_key);
                 downloaded++;
                 if (on_checkpoint_stored) on_checkpoint_stored();
             } else {
                 std::cerr << "⚠️  CPAP: Failed to download " << label << ": " << filename << std::endl;
+                if (++file_failures_[file_key] >= kFailuresBeforePark) {
+                    file_parked_until_[file_key] =
+                        nowSeconds() + std::chrono::duration_cast<std::chrono::seconds>(kParkFor).count();
+                    std::cerr << "CPAP: " << file_key << " failed " << file_failures_[file_key]
+                              << " times in a row; not asked again for an hour" << std::endl;
+                }
+                // D7 / SDD-054 D6: a failed file lists its folder again.
+                folder_watch_[session.date_folder].relist = true;
             }
         }
     };
@@ -1981,8 +2002,43 @@ bool BurstCollectorService::executeBurstCycle() {
 
             plan = planFolderListings(now_s, offset, card_folders_, candidates, folder_watch_, done);
             std::ostringstream said;
+            // One way to survive an ez Share, D7: a failure counted against the
+            // folder, which is parked for an hour after three in a row.
+            auto countFailure = [&](const std::string& folder, const std::string& why) {
+                auto& w = folder_watch_[folder];
+                w.relist = true;
+                if (++w.list_failures >= kFailuresBeforePark && folder != tonight) {
+                    w.parked_until = now_s + std::chrono::duration_cast<std::chrono::seconds>(kParkFor).count();
+                    std::cerr << "CPAP: " << folder << " " << why << " " << w.list_failures
+                              << " times in a row; not asked again for an hour" << std::endl;
+                } else {
+                    std::cerr << "CPAP: " << folder << " " << why << "; asked again next burst"
+                              << std::endl;
+                }
+            };
             for (const auto& p : plan) {
-                auto files = data_source_->listFiles(p.folder);
+                std::vector<EzShareFileEntry> files;
+                try {
+                    files = data_source_->listFiles(p.folder);
+                } catch (const ListingRefused&) {
+                    // D2: the card answered, but not with a listing. This folder
+                    // only: the burst goes on with the others.
+                    countFailure(p.folder, "was refused");
+                    continue;
+                }
+                // D3: a folder that had files never lists empty. The last
+                // listing and its done marks stay; it is asked again.
+                const auto known = stored_listings_.find(p.folder);
+                const auto hasFiles = [](const std::vector<EzShareFileEntry>& v) {
+                    return std::any_of(v.begin(), v.end(),
+                                       [](const EzShareFileEntry& e) { return !e.is_dir; });
+                };
+                if (!hasFiles(files) && known != stored_listings_.end() && hasFiles(known->second.files)) {
+                    countFailure(p.folder, "listed empty after listing files");
+                    continue;
+                }
+                folder_watch_[p.folder].list_failures = 0;
+                folder_watch_[p.folder].parked_until = 0;
                 // D9: stored the moment it lands, so a card that drops part way
                 // keeps every listing it gave. A file that changed loses its
                 // done mark; one that did not keeps it.
@@ -2061,8 +2117,12 @@ bool BurstCollectorService::executeBurstCycle() {
         bool checkpoint_listed = false;
         bool therapy_started = false;
         for (const auto& p : plan) {
+            // A folder refused or listed empty against its record (D2, D3)
+            // has no listing this burst: nothing to learn from it.
+            const auto listed_now = listings.find(p.folder);
+            if (listed_now == listings.end()) continue;
             if (p.reason == ListReason::Checkpoint) checkpoint_listed = true;
-            const auto& files = listings[p.folder];
+            const auto& files = listed_now->second;
 
             // D3: a fresh listing (a stamp moved) teaches the machine's clock.
             const auto prev_stamps = folder_stamps_.find(p.folder);
