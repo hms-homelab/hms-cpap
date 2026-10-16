@@ -1765,14 +1765,24 @@ public:
     // the collector had already done by the time it came back for more.
     std::function<void(const std::string& date_folder, const std::string& filename)> on_download;
 
-    std::vector<std::string> listDateFolders() override { return date_folders; }
+    // SDD-054: how often each listing was asked for.
+    int index_lists = 0;
+    std::map<std::string, int> folder_lists;
+    std::map<std::string, int> dir_lists;
+
+    std::vector<std::string> listDateFolders() override {
+        ++index_lists;
+        return date_folders;
+    }
 
     std::vector<EzShareFileEntry> listFiles(const std::string& date_folder) override {
+        ++folder_lists[date_folder];
         auto it = folder_files.find(date_folder);
         return it == folder_files.end() ? std::vector<EzShareFileEntry>{} : it->second;
     }
 
     std::vector<EzShareFileEntry> listDir(const std::string& card_path) override {
+        ++dir_lists[card_path];
         auto it = dir_listings.find(card_path);
         return it == dir_listings.end() ? std::vector<EzShareFileEntry>{} : it->second;
     }
@@ -3816,3 +3826,143 @@ TEST(CardStampDetection, AFileMissingFromTheListingHasNoStamp) {
     EXPECT_EQ(BurstCollectorService::cardStampFor(s, "20260812_233427_CSL.edf"), kStamp);
     EXPECT_EQ(BurstCollectorService::cardStampFor(s, "20260812_233427_EVE.edf"), 0);
 }
+
+// ── SDD-054: a folder is listed for a reason ────────────────────────────────
+//
+// Real bursts on a fixed clock: 2026-10-15 03:00 UTC, on a machine whose clock
+// reads UTC-4 (23:00 on the 14th), so tonight's folder is 20261014.
+
+namespace burst_orch {
+
+constexpr long long kSdd054T0 = 1792033200;   // 2026-10-15 03:00:00 UTC
+constexpr long long kSdd054Min = 60;
+
+void onSdd054Clock(BurstCollectorService& svc, long long& now) {
+    svc.setNowForTest([&now] { return now; });
+    MachineClock c;
+    c.zone_s = -4 * 3600;
+    c.zone_known = true;
+    svc.setMachineClockForTest(c);
+}
+
+TEST_F(BurstOrchestrationTest, Sdd054_TheIndexIsListedOncePerRunNotOnEveryBurst) {
+    long long now = kSdd054T0;
+    auto svc = makeService([](FakeDataSource& ds) {
+        ds.date_folders = {"20261013"};
+        ds.folder_files["20261013"] = {mkEntry("notes.txt", 1)};
+    });
+    onSdd054Clock(*svc, now);
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+
+    for (int i = 0; i < 3; ++i) {
+        svc->runBurstCycleForTest();
+        now += kSdd054Min;
+    }
+    EXPECT_EQ(src_raw->index_lists, 1) << "it used to be listed twice on every burst";
+}
+
+TEST_F(BurstOrchestrationTest, Sdd054_TonightIsListedEveryBurstEvenBeforeItExists) {
+    long long now = kSdd054T0;
+    auto svc = makeService([](FakeDataSource& ds) { ds.date_folders = {"20261012"}; });
+    onSdd054Clock(*svc, now);
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+
+    for (int i = 0; i < 3; ++i) {
+        svc->runBurstCycleForTest();
+        now += kSdd054Min;
+    }
+    EXPECT_EQ(src_raw->folder_lists["20261014"], 3);
+}
+
+TEST_F(BurstOrchestrationTest, Sdd054_ASettledFolderIsListedOnceAndThenLeftAlone) {
+    long long now = kSdd054T0;
+    auto svc = makeService([](FakeDataSource& ds) {
+        ds.date_folders = {"20261013"};
+        ds.folder_files["20261013"] = {mkEntry("notes.txt", 1)};
+    });
+    onSdd054Clock(*svc, now);
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+
+    svc->runBurstCycleForTest();
+    src_raw->folder_files["20261013"] = {mkEntry("notes.txt", 2)};
+    for (int i = 0; i < 4; ++i) {
+        now += kSdd054Min;
+        svc->runBurstCycleForTest();
+    }
+    EXPECT_EQ(src_raw->folder_lists["20261013"], 1)
+        << "not tonight's, never seen growing: nothing on the machine writes to it";
+}
+
+TEST_F(BurstOrchestrationTest, Sdd054_AfterTheMachinesNoonLastNightGetsItsCheckpoints) {
+    long long now = kSdd054T0;
+    auto svc = makeService([](FakeDataSource& ds) {
+        ds.date_folders = {"20261014"};
+        ds.folder_files["20261014"] = {mkEntry("notes.txt", 1)};
+    });
+    onSdd054Clock(*svc, now);
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+
+    svc->runBurstCycleForTest();                       // tonight: baseline
+    src_raw->folder_files["20261014"] = {mkEntry("notes.txt", 2)};
+    now += kSdd054Min;
+    svc->runBurstCycleForTest();                       // tonight: it grew
+    ASSERT_TRUE(svc->folderWatchForTest().at("20261014").growing);
+
+    now = kSdd054T0 + 13 * 3600 + kSdd054Min;          // past the machine's noon
+    svc->runBurstCycleForTest();                       // live: no growth, so it stopped
+    const long long stopped = now;
+    EXPECT_EQ(svc->folderWatchForTest().at("20261014").stopped_at, stopped);
+    const int before = src_raw->folder_lists["20261014"];
+
+    now = stopped + 2 * kSdd054Min;
+    svc->runBurstCycleForTest();
+    EXPECT_EQ(src_raw->folder_lists["20261014"], before) << "between checkpoints: left alone";
+
+    now = stopped + 5 * kSdd054Min;
+    svc->runBurstCycleForTest();
+    EXPECT_EQ(src_raw->folder_lists["20261014"], before + 1) << "the 5 minute checkpoint";
+}
+
+TEST_F(BurstOrchestrationTest, Sdd054_ACheckpointFileThatDidNotGrowIsNotAskedForAgain) {
+    long long now = kSdd054T0;
+    auto svc = makeService([](FakeDataSource& ds) {
+        ds.date_folders = {"20261014"};
+        // 1 KB each: the fake writes a few bytes, so a bigger listing would read
+        // as real growth that the copy has not caught up with.
+        ds.folder_files["20261014"] = {
+            mkStampedEntry("20261014_220000_BRP.edf", 1, 2026, 10, 15, 2, 50, 0),
+            mkStampedEntry("20261014_220000_PLD.edf", 1, 2026, 10, 15, 2, 50, 0),
+        };
+    });
+    onSdd054Clock(*svc, now);
+    expectFreshDownload(*db_raw);
+
+    svc->runBurstCycleForTest();
+    now += kSdd054Min;
+    svc->runBurstCycleForTest();
+
+    const auto asked = std::count(src_raw->ranged_files.begin(), src_raw->ranged_files.end(),
+                                  std::string("20261014_220000_BRP.edf"));
+    EXPECT_EQ(asked, 1) << "same stamp, not a KB larger: nothing new to fetch";
+}
+
+TEST_F(BurstOrchestrationTest, Sdd054_SettingsIsListedAtStartAndThenOnItsPace) {
+    long long now = kSdd054T0;
+    auto svc = makeService([](FakeDataSource& ds) {
+        ds.date_folders = {"20261013"};
+        ds.dir_listings["SETTINGS"] = {mkEntry("DLL.log", 2), mkEntry("CurrentSettings.json", 1)};
+    });
+    onSdd054Clock(*svc, now);
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+
+    svc->runBurstCycleForTest();
+    EXPECT_EQ(src_raw->dir_lists["SETTINGS"], 1) << "once at start";
+    now += 30 * kSdd054Min;
+    svc->runBurstCycleForTest();
+    EXPECT_EQ(src_raw->dir_lists["SETTINGS"], 1) << "idle: the hourly floor has not passed";
+    now += 31 * kSdd054Min;
+    svc->runBurstCycleForTest();
+    EXPECT_EQ(src_raw->dir_lists["SETTINGS"], 2);
+}
+
+}  // namespace burst_orch

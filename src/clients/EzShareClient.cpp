@@ -1,4 +1,5 @@
 #include "clients/EzShareClient.h"
+#include "utils/CardNames.h"
 #include "utils/ConfigManager.h"
 #include <iostream>
 #include <fstream>
@@ -120,6 +121,7 @@ std::vector<EzShareFileEntry> EzShareClient::parseDirectoryListing(const std::st
 
     std::sregex_iterator iter(html.begin(), html.end(), entry_regex);
     std::sregex_iterator end;
+    int unusable_names = 0;   // SDD-054 D7
 
     for (; iter != end; ++iter) {
         const auto& match = *iter;
@@ -154,8 +156,19 @@ std::vector<EzShareFileEntry> EzShareClient::parseDirectoryListing(const std::st
         if (entry.name == "." || entry.name == "..")
             continue;
 
+        // SDD-054 D7: a damaged card's 0xFF "names" are not names.
+        if (!isCardNameUsable(entry.name)) {
+            ++unusable_names;
+            continue;
+        }
+
         entries.push_back(std::move(entry));
     }
+
+    if (unusable_names > 0)
+        std::cerr << "EzShare: skipped " << unusable_names
+                  << " listed entries whose names are not valid text (a damaged card?)"
+                  << std::endl;
 
     return entries;
 }

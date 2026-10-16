@@ -517,6 +517,7 @@ bool BurstCollectorService::downloadSessionFiles(
     int downloaded = 0;
     int range_downloads = 0;
     int full_downloads = 0;
+    int held_checkpoints = 0;   // SDD-054: current on disk, not requested
 
     // Helper lambda for smart download (Range if supported, full otherwise).
     //
@@ -627,7 +628,26 @@ bool BurstCollectorService::downloadSessionFiles(
     auto downloadCheckpoints = [&](const char* label, const std::vector<std::string>& names) {
         for (const auto& filename : names) {
             std::string local_path = local_dir + "/" + filename;
+            // SDD-054 D4: only a file that grew. Its card stamp moves whenever
+            // the machine writes it; one that still carries the stamp recorded
+            // on our copy and is not a full KB larger (the listing is
+            // KB-rounded) has nothing new, and used to cost a ranged request
+            // on every burst.
+            const std::time_t card_stamp = cardStampFor(session, filename);
+            if (holdCurrentCopy(card_stamp, local_path)) {
+                std::error_code ec;
+                const auto have = std::filesystem::file_size(local_path, ec);
+                const auto listed = session.file_sizes_kb.find(filename);
+                const bool grew_kb = !ec && listed != session.file_sizes_kb.end() &&
+                                     static_cast<uintmax_t>(listed->second) * 1024 >= have + 1024;
+                if (!grew_kb) {
+                    skipped_unchanged++;
+                    held_checkpoints++;
+                    continue;
+                }
+            }
             if (smartDownload(filename, local_path)) {
+                stampLocalCopy(card_stamp, local_path);
                 downloaded++;
                 if (on_checkpoint_stored) on_checkpoint_stored();
             } else {
@@ -644,8 +664,14 @@ bool BurstCollectorService::downloadSessionFiles(
     // card's files, so it is fetched and resumed like a checkpoint.
     downloadCheckpoints("TCV", session.tcv_files);
 
+    // SDD-054: checkpoints we already hold in full are the session on disk
+    // just the same. Parsed from there when nothing new landed, so a night
+    // whose files are all current (a database rebuilt over a staged card) is
+    // still stored.
+    if (downloaded == 0 && held_checkpoints > 0 && on_checkpoint_stored) on_checkpoint_stored();
+
     // Accept ANY downloaded files (even partial/in-progress sessions)
-    bool success = downloaded > 0;
+    bool success = downloaded > 0 || held_checkpoints > 0;
 
     if (success) {
         std::cout << "✅ CPAP: Session " << session.session_prefix
@@ -786,25 +812,24 @@ bool BurstCollectorService::archiveSessionFiles(
 }
 
 void BurstCollectorService::downloadDatalogResidue(const std::string& date_folder,
-                                                   const std::string& local_dir) {
-    std::vector<EzShareFileEntry> files;
-    try {
-        files = data_source_->listFiles(date_folder);
-    } catch (const std::exception& e) {
-        std::cerr << "📎 Residue: list failed for " << date_folder << ": " << e.what() << std::endl;
-        return;
-    }
-
+                                                   const std::string& local_dir,
+                                                   const std::vector<EzShareFileEntry>& files) {
+    // SDD-054: the burst's own listing of the folder, never a second one.
     int captured = 0;
     for (const auto& f : files) {
+        if (f.is_dir) continue;
         if (isCpapEdf(f.name)) continue;  // analytical — already pulled by downloadSessionFiles()
         uint64_t size_bytes = static_cast<uint64_t>(f.size_kb) * 1024;
         if (residualSkip(f.name, size_bytes)) continue;  // junk / >20 MB
 
         std::string local_path = local_dir + "/" + f.name;
-        // .crc rides the night's EDFs; re-fetch each cycle (tiny) so an active
-        // night's checksum stays in sync. archiveSessionFiles() dedups by size.
+        // .crc rides the night's EDFs and changes with them. SDD-054: fetched
+        // when the card's stamp is not the one on our copy, instead of on every
+        // burst that downloaded something.
+        const std::time_t card_stamp = static_cast<std::time_t>(machine_clock::stampOf(f));
+        if (holdCurrentCopy(card_stamp, local_path)) continue;
         if (data_source_->downloadFile(date_folder, f.name, local_path)) {
+            stampLocalCopy(card_stamp, local_path);
             captured++;
         } else {
             std::cerr << "📎 Residue: failed " << f.name << " in " << date_folder << std::endl;
@@ -816,14 +841,16 @@ void BurstCollectorService::downloadDatalogResidue(const std::string& date_folde
                   << date_folder << std::endl;
 }
 
-void BurstCollectorService::captureCardResidue(const std::string& archive_root) {
-    if (archive_root.empty()) return;
+std::optional<std::vector<std::string>> BurstCollectorService::captureCardResidue(
+    const std::string& archive_root, const std::string& start_dir) {
+    if (archive_root.empty()) return std::nullopt;
 
     // Breadth-first walk: "" is the card root; every non-DATALOG subdir is enqueued.
-    std::vector<std::string> queue = {""};
+    std::vector<std::string> queue = {start_dir};
     size_t head = 0;
     int captured = 0, dirs_listed = 0;
     constexpr int kMaxDirs = 256;  // guard against pathological / looping listings
+    std::optional<std::vector<std::string>> start_names;
 
     while (head < queue.size() && dirs_listed < kMaxDirs) {
         const std::string dir = queue[head++];
@@ -835,6 +862,11 @@ void BurstCollectorService::captureCardResidue(const std::string& archive_root) 
         } catch (const std::exception& e) {
             std::cerr << "📎 Residue: listDir failed '" << dir << "': " << e.what() << std::endl;
             continue;
+        }
+        if (dir == start_dir) {
+            start_names.emplace();
+            for (const auto& e : entries)
+                if (!e.is_dir) start_names->push_back(e.name);
         }
 
         for (const auto& e : entries) {
@@ -882,7 +914,39 @@ void BurstCollectorService::captureCardResidue(const std::string& archive_root) 
         std::cerr << "📎 Residue: sweep hit dir cap (" << kMaxDirs << "), stopping" << std::endl;
     if (captured > 0)
         std::cout << "📎 Residue: captured " << captured
-                  << " card-root file(s) into archive" << std::endl;
+                  << (start_dir.empty() ? " card-root" : " " + start_dir)
+                  << " file(s) into archive" << std::endl;
+    return start_names;
+}
+
+// ── SDD-054 helpers ──────────────────────────────────────────────────────────
+
+long long BurstCollectorService::nowSeconds() const {
+    if (now_for_test_) return now_for_test_();
+    return std::chrono::duration_cast<std::chrono::seconds>(
+               std::chrono::system_clock::now().time_since_epoch())
+        .count();
+}
+
+void BurstCollectorService::markRecentForRelist(long long now, long long offset,
+                                                const std::set<std::string>& also) {
+    for (const auto& f : card_folders_)
+        if (isRecentFolder(f, now, offset) || also.count(f)) folder_watch_[f].relist = true;
+    for (const auto& f : also) folder_watch_[f].relist = true;
+}
+
+void BurstCollectorService::captureSettings(const std::string& archive_root, long long now) {
+    const auto names = captureCardResidue(archive_root, "SETTINGS");
+    settings_state_.reason = false;
+    settings_state_.last_listed = now;
+    if (!names) return;   // the listing failed: the floor tries again
+    const bool logs = settingsListingHasLogs(*names);
+    if (logs != settings_state_.logs_on_card)
+        std::cout << "CPAP: SETTINGS "
+                  << (logs ? "holds the machine's logs: listed on its pace"
+                           : "holds only the current settings: listed only on a reason")
+                  << std::endl;
+    settings_state_.logs_on_card = logs;
 }
 
 void BurstCollectorService::processSessionSummary() {
@@ -1733,18 +1797,10 @@ bool BurstCollectorService::executeBurstCycle() {
                       << " (sessions under " << datalogDirFor(local_source_dir_) << ")"
                       << std::endl;
 
-            // STR.edf is lifetime history sitting on disk, and a local night
-            // reaches the completion-gated STR read only once it settles, which
-            // left cpap_daily_summary frozen after the first run (issue #8).
-            // Read every cycle: parseSTRFile plus an idempotent upsert of the
-            // full history, cheap and self-healing when the folder gains days.
-            processSessionSummary();
-
-            // SDD-028 (#32): the ring's .vld files beside DATALOG, written by
-            // another tool. Before anything can return early, so they are seen
-            // on a burst with no new CPAP file too.
-            if (db_service_)
-                importVldFolder(*db_service_, local_source_dir_, vld_scan_, removed_nights_);
+            // STR.edf (issue #8) and the ring's .vld files (SDD-028, #32) used
+            // to be read on every cycle. SDD-054 D8: a local folder follows the
+            // same plan as a card, so both are read below, on the plan's
+            // reasons (the index, a checkpoint, a close, the SETTINGS pace).
         } else if (cpap_source_ == "ezshare" || cpap_source_ == "sefam") {
             std::cout << "CPAP: Accessing ez Share at "
                       << ConfigManager::get("EZSHARE_BASE_URL", "http://192.168.4.1") << std::endl;
@@ -1762,21 +1818,127 @@ bool BurstCollectorService::executeBurstCycle() {
             return true;
         }
 
+        // SDD-011 / SDD-040: resolved up here because SDD-054's SETTINGS and
+        // residue steps run before the session loop.
+        const std::string default_archive =
+            (std::filesystem::path(hms_cpap::AppConfig::dataDir()) / "cpap_data").string();
+        const std::string permanent_archive =
+            ConfigManager::get("CPAP_ARCHIVE_DIR", default_archive);
+        const bool in_place = data_source_ && data_source_->filesAreInPlace();
+
+        // ===== SDD-054: a folder is listed for a reason =====
+        const long long now_s = nowSeconds();
+        if (!machine_clock_loaded_ && db_service_) {
+            machine_clock_ = loadMachineClock(*db_service_, device_id_);
+            machine_clock_loaded_ = true;
+        }
+        const long long offset = machineOffset(machine_clock_, now_s);
+        if (sync_now_taken_) {
+            // D6: a Sync now lists everything recent, the index and SETTINGS.
+            index_state_.reason = true;
+            settings_state_.reason = true;
+            relist_recent_ = true;
+            sync_now_taken_ = false;
+        }
+        bool night_growing = false;
+        for (const auto& [f, w] : folder_watch_) {
+            (void)f;
+            if (w.growing) night_growing = true;
+        }
+
+        std::map<std::string, std::vector<EzShareFileEntry>> listings;
+        std::vector<PlannedListing> plan;
+        bool index_listed = false;
+        std::set<std::string> catch_up;
+        const std::string tonight = tonightFolder(now_s, offset);
+
         try {
+            // D1: the DATALOG index once per start (until one succeeds), once
+            // a day at the machine's noon, and on a reason. It used to be
+            // listed twice on every burst.
+            if (indexDue(index_state_, now_s, offset, night_growing)) {
+                auto folders = discovery_service_->listDateFolders();
+                std::sort(folders.begin(), folders.end());
+                bool gone = false;
+                if (index_state_.ok_this_run)
+                    for (const auto& f : card_folders_)
+                        if (!std::binary_search(folders.begin(), folders.end(), f)) gone = true;
+                if (gone) {
+                    // D6: a folder vanished, so the card was swapped or edited.
+                    std::cout << "CPAP: a folder on the card is gone since the last index; "
+                                 "listing everything recent again" << std::endl;
+                    relist_recent_ = true;
+                    settings_state_.reason = true;
+                }
+                card_folders_ = std::move(folders);
+                index_state_.ok_this_run = true;
+                index_state_.last_index = now_s;
+                index_state_.reason = false;
+                index_listed = true;
+                if (card_folders_.empty()) {
+                    // D7: said once per index; tonight's folder is still asked
+                    // for by name, which is how a first night is found.
+                    if (!no_datalog_logged_)
+                        std::cout << "CPAP: " << data_source_->sourceName()
+                                  << " has no DATALOG night folders" << std::endl;
+                    no_datalog_logged_ = true;
+                } else {
+                    no_datalog_logged_ = false;
+                    std::cout << "CPAP: DATALOG index: " << card_folders_.size()
+                              << " folder(s)" << std::endl;
+                }
+            }
+
             // SDD-038 D2: a folder takes ALL of its missing history in one
             // pass, where the cost is a directory read. A card takes the oldest
             // three per cycle, because there every extra folder is a listing
             // plus its downloads over its own WiFi and the live night is what
-            // this cycle is for. One listing pays for the question either way.
-            const auto catch_up = historyCatchUpFolders(
-                discovery_service_->listDateFolders(),
-                local ? 0 : kEzShareCatchUpPerCycle);
+            // this cycle is for. SDD-054: from the last index, not a new one.
+            catch_up = historyCatchUpFolders(card_folders_, local ? 0 : kEzShareCatchUpPerCycle);
 
-            new_sessions = discovery_service_->discoverNewSessions(
-                last_session_start, retain_from, catch_up);
+            // What may hold something new: on or after the anchor (SDD-010's
+            // two newest stored nights included), and the nights never imported.
+            const auto folder_anchor =
+                (retain_from.has_value() &&
+                 (!last_session_start.has_value() || *retain_from < *last_session_start))
+                    ? retain_from
+                    : last_session_start;
+            std::set<std::string> candidates;
+            for (const auto& f : SessionDiscoveryService::foldersFromAnchor(card_folders_, folder_anchor))
+                candidates.insert(f);
+            candidates.insert(catch_up.begin(), catch_up.end());
+
+            if (relist_recent_) {
+                markRecentForRelist(now_s, offset, candidates);
+                relist_recent_ = false;
+            }
+
+            plan = planFolderListings(now_s, offset, card_folders_, candidates, folder_watch_);
+            std::ostringstream said;
+            for (const auto& p : plan) {
+                listings[p.folder] = data_source_->listFiles(p.folder);
+                said << (said.tellp() > 0 ? ", " : "") << p.folder << " ("
+                     << listReasonString(p.reason) << ")";
+            }
+            std::cout << "CPAP: listing " << said.str() << std::endl;
+
+            new_sessions = discovery_service_->discoverInListings(
+                listings, last_session_start, retain_from, catch_up);
+
+            if (fault_streak_) {
+                // D6: the card answers again after a failure streak. Once per
+                // streak: everything recent, the index and SETTINGS, next burst.
+                std::cout << "CPAP: " << data_source_->sourceName()
+                          << " answers again; listing everything recent once" << std::endl;
+                relist_recent_ = true;
+                index_state_.reason = true;
+                settings_state_.reason = true;
+                fault_streak_ = false;
+            }
             consecutive_failures_ = 0;
             recovery_logged_ = false;
         } catch (const std::exception& e) {
+            fault_streak_ = true;
             consecutive_failures_++;
 
             if (!recovery_logged_) {
@@ -1798,6 +1960,94 @@ bool BurstCollectorService::executeBurstCycle() {
 
             return false;
         }
+
+        // ── SDD-054: what this burst's listings say ─────────────────────────
+        bool checkpoint_listed = false;
+        bool therapy_started = false;
+        for (const auto& p : plan) {
+            if (p.reason == ListReason::Checkpoint) checkpoint_listed = true;
+            const auto& files = listings[p.folder];
+
+            // D3: a fresh listing (a stamp moved) teaches the machine's clock.
+            const auto prev_stamps = folder_stamps_.find(p.folder);
+            if (prev_stamps != folder_stamps_.end()) {
+                if (auto learned = learnMachineClock(machine_clock_, prev_stamps->second, files, now_s)) {
+                    if (learned->drift_s != machine_clock_.drift_s ||
+                        learned->zone_s != machine_clock_.zone_s ||
+                        learned->zone_known != machine_clock_.zone_known) {
+                        std::cout << "CPAP: the machine's clock: drift " << learned->drift_s
+                                  << " s, zone " << (learned->zone_known
+                                                         ? std::to_string(learned->zone_s) + " s"
+                                                         : std::string("not known yet"))
+                                  << " (learned from " << p.folder << ")" << std::endl;
+                        machine_clock_ = *learned;
+                        if (db_service_) saveMachineClock(*db_service_, device_id_, machine_clock_, now_s);
+                    }
+                }
+            }
+            folder_stamps_[p.folder] = stampsOf(files);
+
+            // The folder's signature: how many files, how many KB, newest stamp.
+            long long total_kb = 0, newest = 0;
+            int count = 0;
+            for (const auto& f : files) {
+                if (f.is_dir) continue;
+                ++count;
+                total_kb += f.size_kb;
+                newest = std::max(newest, machine_clock::stampOf(f));
+            }
+            const std::string sig = std::to_string(count) + "|" + std::to_string(total_kb) + "|" +
+                                    std::to_string(newest);
+            const FolderWatch before = folder_watch_[p.folder];
+            folder_watch_[p.folder] = observeFolder(before, sig, false, now_s);
+
+            // D5: tonight's first growth is the therapy start (an AirSense 10
+            // flushes its log at a start, never at a stop).
+            if (p.folder == tonight && count > 0 && folder_watch_[p.folder].growing &&
+                therapy_night_ != tonight) {
+                therapy_night_ = tonight;
+                therapy_started = true;
+            }
+            // Tonight's folder enters the index's list as soon as it exists.
+            if (count > 0 && !std::binary_search(card_folders_.begin(), card_folders_.end(), p.folder)) {
+                card_folders_.push_back(p.folder);
+                std::sort(card_folders_.begin(), card_folders_.end());
+            }
+        }
+
+        // D1: the whole card's residue (root, Identification, JOURNAL, ...)
+        // with the index, not after every burst that downloaded.
+        if (index_listed && !in_place) {
+            captureCardResidue(permanent_archive);
+            refreshCardIdentity();   // SDD-050: the sweep may have just landed it
+        }
+
+        // D5: SETTINGS\ on its reasons and floors. A local folder has its
+        // SETTINGS already in place; its pace drives the ring's .vld scan.
+        {
+            const auto t = folder_watch_.find(tonight);
+            const bool night_in_progress =
+                night_growing ||
+                (t != folder_watch_.end() && t->second.last_growth > 0 &&
+                 now_s - t->second.last_growth <
+                     std::chrono::duration_cast<std::chrono::seconds>(kNightQuiet).count());
+            if (settingsDue(settings_state_, now_s, night_in_progress, therapy_started,
+                            checkpoint_listed)) {
+                if (!in_place) {
+                    captureSettings(permanent_archive, now_s);
+                } else {
+                    settings_state_.reason = false;
+                    settings_state_.last_listed = now_s;
+                    // SDD-028 (#32): the ring's .vld files beside DATALOG.
+                    if (local && db_service_)
+                        importVldFolder(*db_service_, local_source_dir_, vld_scan_, removed_nights_);
+                }
+            }
+        }
+
+        // D8: a local folder's STR.edf (issue #8) with the index and at the
+        // checkpoints; a close reads it too, below.
+        if (local && (index_listed || checkpoint_listed)) processSessionSummary();
 
         if (new_sessions.empty()) {
             std::cout << "CPAP: No new sessions to download" << std::endl;
@@ -1824,7 +2074,6 @@ bool BurstCollectorService::executeBurstCycle() {
         // nothing is fetched, nothing is mirrored, and the residual walk has
         // nothing to walk: those three steps exist to bring a card's bytes
         // ACROSS a transport, and there is no across here.
-        const bool in_place = data_source_ && data_source_->filesAreInPlace();
         if (in_place) local_base_dir = datalogDirFor(data_source_->rootPath());
 
         // The night's files, ready to parse. A fetch for a card, a no-op for a
@@ -1844,13 +2093,9 @@ bool BurstCollectorService::executeBurstCycle() {
             return true;
         };
 
-        // SDD-011: resolved BEFORE the session loop, because the loop now has to
-        // ask whether a night is already on disk before it is allowed to skip
-        // downloading it. Same value the archive step below uses.
-        const std::string default_archive =
-            (std::filesystem::path(hms_cpap::AppConfig::dataDir()) / "cpap_data").string();
-        const std::string permanent_archive =
-            ConfigManager::get("CPAP_ARCHIVE_DIR", default_archive);
+        // SDD-011: permanent_archive is resolved above, BEFORE the session loop,
+        // because the loop has to ask whether a night is already on disk before
+        // it is allowed to skip downloading it.
 
         // SDD-008: fold this burst's view of the card into the per-folder ledger
         // BEFORE the session loop below, not after.
@@ -1893,6 +2138,8 @@ bool BurstCollectorService::executeBurstCycle() {
         // SDD-053: a session that closed on this burst has its STR read on
         // this burst too, once however many closed.
         bool session_closed = false;
+        // SDD-054 D7: an idle burst is not an error; a failed download is.
+        int download_failures = 0;
 
         for (const auto& session : new_sessions) {
             // SDD-029: an operator removed this night; discovery must not store it again.
@@ -1943,6 +2190,9 @@ bool BurstCollectorService::executeBurstCycle() {
                     stored_inline.insert(session.session_start);
                 } else {
                     std::cerr << "CPAP: Failed to download session " << session.session_prefix << std::endl;
+                    // SDD-054 D6: a failed download lists its folder again.
+                    folder_watch_[session.date_folder].relist = true;
+                    ++download_failures;
                 }
                 continue;
             }
@@ -2057,20 +2307,42 @@ bool BurstCollectorService::executeBurstCycle() {
                 stored_inline.insert(session.session_start);
             } else {
                 std::cerr << "CPAP: Failed to download session " << session.session_prefix << std::endl;
+                // SDD-054 D6: a failed download lists its folder again.
+                folder_watch_[session.date_folder].relist = true;
+                ++download_failures;
+            }
+        }
+
+        // SDD-054: a folder something was stored from grew, whatever its
+        // listing's signature said (a first look, a repaired archive).
+        for (const auto& [dir, s] : downloaded_sessions) {
+            (void)dir;
+            auto& w = folder_watch_[s.date_folder];
+            if (!w.growing) {
+                w.growing = true;
+                w.last_growth = now_s;
+                w.stopped_at = 0;
             }
         }
 
         // SDD-053: the STR a closing session left on the card, read now rather
-        // than at the night's hour. A local folder already read it this cycle.
-        if (session_closed && !local) processSessionSummary();
+        // than at the night's hour. SDD-054 D8: a local folder too, which no
+        // longer reads it on every cycle.
+        if (session_closed) processSessionSummary();
 
         // SDD-046: after this burst's growth is recorded, and before the return
         // below, which every burst whose sessions were all unchanged takes.
         announceQuietNights(std::chrono::system_clock::now());
 
         if (downloaded_sessions.empty()) {
-            std::cerr << "CPAP: No sessions downloaded successfully" << std::endl;
-            return false;
+            // SDD-054 D7: an idle burst is not an error. Only a download that
+            // was tried and failed is.
+            if (download_failures > 0) {
+                std::cerr << "CPAP: No sessions downloaded successfully" << std::endl;
+                return false;
+            }
+            std::cout << "CPAP: nothing new to download" << std::endl;
+            return true;
         }
 
         auto download_end = std::chrono::steady_clock::now();
@@ -2097,17 +2369,17 @@ bool BurstCollectorService::executeBurstCycle() {
             if (in_place) break;
             // SDD-002: pull the per-night .crc (and any non-junk metadata) into the
             // temp folder first, so archiveSessionFiles() lands it in the OSCAR layout.
-            downloadDatalogResidue(date_folder, local_base_dir + "/" + date_folder);
+            // SDD-054: from this burst's listing of the folder.
+            const auto listed = listings.find(date_folder);
+            if (listed != listings.end())
+                downloadDatalogResidue(date_folder, local_base_dir + "/" + date_folder, listed->second);
             archiveSessionFiles(date_folder, local_base_dir, permanent_archive);
         }
 
-        // SDD-002: full-card residue sweep (Identification.*, SETTINGS/, JOURNAL, …)
-        // straight into the archive root. ezShare only; no-ops on other
-        // transports, and SDD-040 D1 skips it for a source read in place.
-        if (!in_place) {
-            captureCardResidue(permanent_archive);
-            refreshCardIdentity();   // SDD-050: the sweep may have just landed it
-        }
+        // SDD-002's full-card residue sweep (Identification.*, SETTINGS/,
+        // JOURNAL, …) used to run here after every burst that downloaded.
+        // SDD-054 runs it with the index (D1) and SETTINGS on its own reasons
+        // (D5), above.
     }
 
     // Step 6: Parse and store whatever the loops above staged but did not
@@ -2784,7 +3056,8 @@ void BurstCollectorService::runLoop() {
         // lines is the one race worth naming: it clears, then sees the flag set
         // and reports AlreadyRunning, so the caller is told a sync is happening
         // rather than being promised a second one.
-        sync_now_requested_.store(false);
+        // SDD-054 D6: a Sync now is also a reason to list everything recent.
+        if (sync_now_requested_.exchange(false)) sync_now_taken_ = true;
         cycle_in_flight_.store(true);
 
         try {

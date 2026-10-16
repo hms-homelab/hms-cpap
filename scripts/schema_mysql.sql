@@ -421,6 +421,16 @@ CREATE TABLE IF NOT EXISTS cpap_night_quiet (
     PRIMARY KEY (device_id, date_folder)
 );
 
+-- SDD-054: the machine's clock, learned from its card (drift and zone, in
+-- seconds). Created at runtime by utils/MachineClock.h; listed here for reference.
+CREATE TABLE IF NOT EXISTS cpap_machine_clock (
+    device_id   VARCHAR(128) NOT NULL PRIMARY KEY,
+    drift_s     BIGINT NOT NULL DEFAULT 0,
+    zone_s      BIGINT NOT NULL DEFAULT 0,
+    zone_known  INTEGER NOT NULL DEFAULT 0,
+    updated_at  BIGINT NOT NULL DEFAULT 0
+);
+
 -- SDD-029: nights an operator removed; every re-ingest path consults it.
 -- night is YYYYMMDD (strDayForSessionStart). Reparse clears the row.
 CREATE TABLE IF NOT EXISTS cpap_removed_nights (

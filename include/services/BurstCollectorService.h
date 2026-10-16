@@ -15,6 +15,8 @@
 #include "services/SefamIngestion.h"
 #include "services/BmcIngestion.h"
 #include "services/SessionDiscoveryService.h"
+#include "services/ListingPlan.h"
+#include "utils/MachineClock.h"
 #include "mqtt_client.h"
 #include "database/IDatabase.h"
 #include "utils/AppConfig.h"
@@ -621,7 +623,47 @@ public:
     /// Test-only seam for SDD-053: a run that has already parsed an STR, so
     /// the first-run read does not stand in for the close's.
     void markStrReadForTest() { str_summary_ok_ = true; }
+    /// Test-only seams for SDD-054: the planner's clock (epoch seconds) and
+    /// the machine clock it plans on.
+    void setNowForTest(std::function<long long()> now) { now_for_test_ = std::move(now); }
+    void setMachineClockForTest(const MachineClock& c) {
+        machine_clock_ = c;
+        machine_clock_loaded_ = true;
+    }
+    const std::map<std::string, FolderWatch>& folderWatchForTest() const { return folder_watch_; }
 private:
+
+    // ── SDD-054: a folder is listed for a reason ───────────────────────────
+    //
+    // In memory: a restart lists everything recent once (D6), which rebuilds
+    // all of it except the machine's clock, which is stored.
+    std::function<long long()> now_for_test_;
+    long long nowSeconds() const;
+    std::map<std::string, FolderWatch> folder_watch_;
+    /// Each folder's stamps at its last listing, for learning the clock.
+    std::map<std::string, std::map<std::string, long long>> folder_stamps_;
+    /// The last DATALOG index (D1).
+    std::vector<std::string> card_folders_;
+    IndexState index_state_;
+    SettingsState settings_state_;
+    MachineClock machine_clock_;
+    bool machine_clock_loaded_ = false;
+    /// D6: list everything recent once (set at start, on recovery, a swap, Sync now).
+    bool relist_recent_ = true;
+    /// D6: a listing or download failed since the last good burst.
+    bool fault_streak_ = false;
+    /// The tonight whose first growth has been seen (D5's therapy start).
+    std::string therapy_night_;
+    /// SDD-005 Sync now, as one of D6's reasons.
+    bool sync_now_taken_ = false;
+    /// D7: the no-DATALOG notice is printed once per index.
+    bool no_datalog_logged_ = false;
+
+    /// Mark every recent folder (and the newest stored nights) for one listing.
+    void markRecentForRelist(long long now, long long offset,
+                             const std::set<std::string>& also);
+    /// D5: list SETTINGS\ and fetch what changed into the archive.
+    void captureSettings(const std::string& archive_root, long long now);
 
     void closeIfSettledLocalNight(const std::chrono::system_clock::time_point& session_start,
                                   const std::vector<CPAPSession>& parsed_sessions);
@@ -632,16 +674,24 @@ private:
      * archiveSessionFiles() copies it into the OSCAR layout. EDFs are pulled by
      * downloadSessionFiles(); this captures only what that path skips.
      */
+    /// SDD-054: from the burst's own listing of the folder, never a second
+    /// listing, and only a file that is new or changed (size or stamp).
     void downloadDatalogResidue(const std::string& date_folder,
-                                const std::string& local_dir);
+                                const std::string& local_dir,
+                                const std::vector<EzShareFileEntry>& files);
 
     /**
      * SDD-002: recursive sweep of the card root + every non-DATALOG directory
      * (Identification.*, SETTINGS/, JOURNAL, unknown vendor layouts), writing each
      * non-junk file straight into the OSCAR archive root. Backup-only (never parsed).
      * ezShare only — transports without listDir()/downloadByPath() no-op here.
+     *
+     * SDD-054: [start_dir] "" walks the whole card (with the daily index and on
+     * a swap); "SETTINGS" walks only that directory (D5). Returns the names the
+     * start directory listed, or nullopt when its listing failed.
      */
-    void captureCardResidue(const std::string& archive_root);
+    std::optional<std::vector<std::string>> captureCardResidue(const std::string& archive_root,
+                                                               const std::string& start_dir = "");
 
     /**
      * SDD-008: fold this burst's view of the card into the per-folder ledger.

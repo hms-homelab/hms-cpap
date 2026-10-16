@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include <gmock/gmock.h>
 #include "clients/EzShareClient.h"
+#include "utils/CardNames.h"
 #include <fstream>
 #include <filesystem>
 #include <cstdio>
@@ -380,6 +381,32 @@ TEST_F(EzShareParserTest, ParsesHtmlEntityEncodedDIR) {
     EXPECT_EQ(entries[0].day, 3);
     EXPECT_TRUE(entries[1].is_dir);
     EXPECT_EQ(entries[1].name, "20260204");
+}
+
+// SDD-054 D7: a damaged card lists about a thousand entries named all 0xFF,
+// dated 2107-15-31 31:63:62. They are not names: dropped, and the real
+// entries beside them still come through.
+TEST_F(EzShareParserTest, ADamagedCardsBlankNamesAreDropped) {
+    std::string html =
+        "<pre>\n"
+        "   2107-15-31   31:63:62         &lt;DIR&gt;   <a href=\"dir?dir=A:%5C%FF%FF\"> "
+        "\xff\xff\xff\xff\xff\xff\xff\xff.\xff\xff\xff</a>\n"
+        "   2107-15-31   31:63:62         &lt;DIR&gt;   <a href=\"dir?dir=A:%5C%FF%FF\"> "
+        "\xff\xff\xff\xff\xff\xff\xff\xff.\xff\xff\xff</a>\n"
+        "2026- 2- 3   20:50:32         &lt;DIR&gt;   <a href=\"dir?dir=A:DATALOG\"> DATALOG</a>\n"
+        "</pre>";
+
+    auto entries = client.parseDirectoryListing(html);
+    ASSERT_EQ(entries.size(), 1u);
+    EXPECT_EQ(entries[0].name, "DATALOG");
+}
+
+TEST(CardNames, OnlyValidTextWithNoNulIsAName) {
+    EXPECT_TRUE(isCardNameUsable("20261014_220000_BRP.edf"));
+    EXPECT_TRUE(isCardNameUsable("Caf\xc3\xa9"));
+    EXPECT_FALSE(isCardNameUsable("\xff\xff\xff\xff\xff\xff\xff\xff.\xff\xff\xff"));
+    EXPECT_FALSE(isCardNameUsable(std::string("A\0B", 3)));
+    EXPECT_FALSE(isCardNameUsable("A\xc0\xafZ"));   // an overlong '/'
 }
 
 // Literal <DIR> — older/cheaper Chinese ezShare clones

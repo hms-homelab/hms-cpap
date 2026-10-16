@@ -358,51 +358,12 @@ SessionDiscoveryService::discoverNewSessions(
 
     std::cout << "CPAP: Found " << date_folders.size() << " date folders" << std::endl;
 
-    // Filter folders by date if we have a last session timestamp
-    std::vector<std::string> relevant_folders;
-
-    if (folder_anchor.has_value()) {
-        auto last_tp = folder_anchor.value();
-        std::time_t last_time = std::chrono::system_clock::to_time_t(last_tp);
-        std::tm* last_tm = std::localtime(&last_time);
-
-        // Format as YYYYMMDD
-        char last_date_str[9];
-        std::strftime(last_date_str, sizeof(last_date_str), "%Y%m%d", last_tm);
-        std::string last_date(last_date_str);
-
-        std::cout << "CPAP: Scanning folders from: " << last_date << std::endl;
-
-        // Include folders >= last date (to catch sessions later on the same day)
-        // ALSO include previous day's folder because ResMed stores early AM sessions there
-        for (const auto& folder : date_folders) {
-            if (folder >= last_date) {
-                relevant_folders.push_back(folder);
-            }
-        }
-
-        // Add previous day folder if it exists (for early morning sessions)
-        std::tm prev_tm = *last_tm;
-        prev_tm.tm_mday -= 1;
-        std::mktime(&prev_tm);  // Normalize
-        char prev_date_str[9];
-        std::strftime(prev_date_str, sizeof(prev_date_str), "%Y%m%d", &prev_tm);
-        std::string prev_date(prev_date_str);
-
-        if (std::find(date_folders.begin(), date_folders.end(), prev_date) != date_folders.end() &&
-            std::find(relevant_folders.begin(), relevant_folders.end(), prev_date) == relevant_folders.end()) {
-            relevant_folders.push_back(prev_date);
-            std::cout << "CPAP: Also checking prev day folder " << prev_date
-                      << " (early AM sessions stored there)" << std::endl;
-        }
-
+    std::vector<std::string> relevant_folders = foldersFromAnchor(date_folders, folder_anchor);
+    if (folder_anchor.has_value())
         std::cout << "CPAP: " << relevant_folders.size()
                   << " folders with potentially new data" << std::endl;
-    } else {
-        // First run - get everything
+    else
         std::cout << "CPAP: No previous sessions in DB, will scan all folders" << std::endl;
-        relevant_folders = date_folders;
-    }
 
     // SDD-038: the nights the anchor cannot reach. Added AFTER the cut above,
     // because the whole point is that they are older than everything stored.
@@ -433,67 +394,134 @@ SessionDiscoveryService::discoverNewSessions(
         std::cout << "CPAP: Found " << folder_sessions.size()
                   << " sessions in " << folder << std::endl;
 
-        // Filter sessions: include NEW sessions OR sessions from TODAY (growing files)
-        // Use both localtime and UTC to handle Docker containers that default to UTC
-        auto now = std::chrono::system_clock::now();
-        std::time_t now_time = std::chrono::system_clock::to_time_t(now);
-
-        char today_local[9], today_utc[9];
-        std::tm* local_tm = std::localtime(&now_time);
-        std::strftime(today_local, sizeof(today_local), "%Y%m%d", local_tm);
-        std::tm* utc_tm = std::gmtime(&now_time);
-        std::strftime(today_utc, sizeof(today_utc), "%Y%m%d", utc_tm);
-
-        // Calculate 48 hours ago (to catch late EVE files that can be written hours later)
-        auto forty_eight_hours_ago = now - std::chrono::hours(48);
-
-        // SDD-038: a folder we are catching up on is here BECAUSE its nights
-        // are older than everything stored, so every wall-clock test below
-        // would refuse them. This is the one flag that says "take them".
-        const bool is_catch_up = catch_up_folders.count(folder) > 0;
-
-        for (const auto& session : folder_sessions) {
-            bool is_today = (folder == today_local || folder == today_utc);
-            bool is_new = (!last_session_start.has_value() ||
-                          session.session_start > last_session_start.value());
-            bool is_recent = (session.session_start > forty_eight_hours_ago);
-            // SDD-010: always re-check the newest stored nights, whatever the
-            // calendar says. is_today and is_recent are both anchored on the
-            // wall clock, so on a card that stopped being written to, or an
-            // archive copied once from an old SD card, NOTHING matches and a
-            // folder is never observed twice. Settling needs two observations
-            // of the same signature, so those nights sit at Live forever and
-            // never resolve to Complete or Partial. >= not >, so the anchor
-            // session itself is retained and not just the one after it.
-            bool is_retained = (retain_from.has_value() &&
-                                session.session_start >= retain_from.value());
-
-            // Re-download if: new session, today's session, within last 48h
-            // (catch late EVE files), among the newest stored nights, or a
-            // night this database has never held at all (SDD-038).
-            if (is_new || is_today || is_recent || is_retained || is_catch_up) {
-                all_sessions.push_back(session);
-
-                std::string reason = is_catch_up ? "Night never imported" :
-                                    is_new ? "New session" :
-                                    is_today ? "Checking today's session" :
-                                    is_recent ? "Checking recent session (catch late EVE files)" :
-                                    "Re-checking newest stored session (settling)";
-
-                std::cout << "  - " << reason << ": " << session.session_prefix
-                          << " (" << session.total_size_kb << " KB)"
-                          << std::endl;
-            } else {
-                std::cout << "  - Skipping already-stored session: "
-                          << session.session_prefix << std::endl;
-            }
-        }
+        keepWanted(folder, folder_sessions, last_session_start, retain_from,
+                   catch_up_folders, all_sessions);
     }
 
     std::cout << "CPAP: Discovered " << all_sessions.size()
               << " new sessions to download" << std::endl;
 
     return all_sessions;
+}
+
+std::vector<SessionFileSet> SessionDiscoveryService::discoverInListings(
+    const std::map<std::string, std::vector<EzShareFileEntry>>& listings,
+    std::optional<std::chrono::system_clock::time_point> last_session_start,
+    std::optional<std::chrono::system_clock::time_point> retain_from,
+    const std::set<std::string>& catch_up_folders) {
+
+    std::vector<SessionFileSet> all_sessions;
+    for (const auto& [folder, files] : listings) {
+        auto folder_sessions = groupFiles(files, folder);
+        if (folder_sessions.empty()) continue;
+        std::cout << "CPAP: Found " << folder_sessions.size()
+                  << " sessions in " << folder << std::endl;
+        keepWanted(folder, folder_sessions, last_session_start, retain_from,
+                   catch_up_folders, all_sessions);
+    }
+    std::cout << "CPAP: Discovered " << all_sessions.size()
+              << " new sessions to download" << std::endl;
+    return all_sessions;
+}
+
+std::vector<std::string> SessionDiscoveryService::foldersFromAnchor(
+    const std::vector<std::string>& date_folders,
+    std::optional<std::chrono::system_clock::time_point> anchor) {
+
+    if (!anchor.has_value()) return date_folders;   // first run: everything
+
+    std::vector<std::string> relevant_folders;
+    std::time_t last_time = std::chrono::system_clock::to_time_t(anchor.value());
+    std::tm last_tm{};
+    localtime_r(&last_time, &last_tm);
+
+    char last_date_str[9];
+    std::strftime(last_date_str, sizeof(last_date_str), "%Y%m%d", &last_tm);
+    const std::string last_date(last_date_str);
+
+    // Include folders >= last date (to catch sessions later on the same day)
+    for (const auto& folder : date_folders)
+        if (folder >= last_date) relevant_folders.push_back(folder);
+
+    // ALSO the previous day's folder, because ResMed stores early AM sessions there
+    std::tm prev_tm = last_tm;
+    prev_tm.tm_mday -= 1;
+    std::mktime(&prev_tm);  // Normalize
+    char prev_date_str[9];
+    std::strftime(prev_date_str, sizeof(prev_date_str), "%Y%m%d", &prev_tm);
+    const std::string prev_date(prev_date_str);
+
+    if (std::find(date_folders.begin(), date_folders.end(), prev_date) != date_folders.end() &&
+        std::find(relevant_folders.begin(), relevant_folders.end(), prev_date) == relevant_folders.end())
+        relevant_folders.push_back(prev_date);
+
+    return relevant_folders;
+}
+
+void SessionDiscoveryService::keepWanted(
+    const std::string& folder,
+    const std::vector<SessionFileSet>& folder_sessions,
+    std::optional<std::chrono::system_clock::time_point> last_session_start,
+    std::optional<std::chrono::system_clock::time_point> retain_from,
+    const std::set<std::string>& catch_up_folders,
+    std::vector<SessionFileSet>& out) {
+
+    // Filter sessions: include NEW sessions OR sessions from TODAY (growing files)
+    // Use both localtime and UTC to handle Docker containers that default to UTC
+    auto now = std::chrono::system_clock::now();
+    std::time_t now_time = std::chrono::system_clock::to_time_t(now);
+
+    char today_local[9], today_utc[9];
+    std::tm local_tm{}, utc_tm{};
+    localtime_r(&now_time, &local_tm);
+    std::strftime(today_local, sizeof(today_local), "%Y%m%d", &local_tm);
+    gmtime_r(&now_time, &utc_tm);
+    std::strftime(today_utc, sizeof(today_utc), "%Y%m%d", &utc_tm);
+
+    // Calculate 48 hours ago (to catch late EVE files that can be written hours later)
+    auto forty_eight_hours_ago = now - std::chrono::hours(48);
+
+    // SDD-038: a folder we are catching up on is here BECAUSE its nights
+    // are older than everything stored, so every wall-clock test below
+    // would refuse them. This is the one flag that says "take them".
+    const bool is_catch_up = catch_up_folders.count(folder) > 0;
+
+    for (const auto& session : folder_sessions) {
+        bool is_today = (folder == today_local || folder == today_utc);
+        bool is_new = (!last_session_start.has_value() ||
+                      session.session_start > last_session_start.value());
+        bool is_recent = (session.session_start > forty_eight_hours_ago);
+        // SDD-010: always re-check the newest stored nights, whatever the
+        // calendar says. is_today and is_recent are both anchored on the
+        // wall clock, so on a card that stopped being written to, or an
+        // archive copied once from an old SD card, NOTHING matches and a
+        // folder is never observed twice. Settling needs two observations
+        // of the same signature, so those nights sit at Live forever and
+        // never resolve to Complete or Partial. >= not >, so the anchor
+        // session itself is retained and not just the one after it.
+        bool is_retained = (retain_from.has_value() &&
+                            session.session_start >= retain_from.value());
+
+        // Re-download if: new session, today's session, within last 48h
+        // (catch late EVE files), among the newest stored nights, or a
+        // night this database has never held at all (SDD-038).
+        if (is_new || is_today || is_recent || is_retained || is_catch_up) {
+            out.push_back(session);
+
+            std::string reason = is_catch_up ? "Night never imported" :
+                                is_new ? "New session" :
+                                is_today ? "Checking today's session" :
+                                is_recent ? "Checking recent session (catch late EVE files)" :
+                                "Re-checking newest stored session (settling)";
+
+            std::cout << "  - " << reason << ": " << session.session_prefix
+                      << " (" << session.total_size_kb << " KB)"
+                      << std::endl;
+        } else {
+            std::cout << "  - Skipping already-stored session: "
+                      << session.session_prefix << std::endl;
+        }
+    }
 }
 
 std::vector<SessionFileSet>

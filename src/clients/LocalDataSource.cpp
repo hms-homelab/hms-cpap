@@ -1,6 +1,7 @@
 #include "clients/LocalDataSource.h"
 
 #include "utils/CardLayout.h"
+#include "utils/CardNames.h"
 
 #include <algorithm>
 #include <cctype>
@@ -131,6 +132,7 @@ std::vector<EzShareFileEntry> LocalDataSource::listFolder(const std::string& dir
         if (!it->is_regular_file(fe)) continue;
         EzShareFileEntry e;
         e.name = it->path().filename().string();
+        if (!isCardNameUsable(e.name)) continue;   // SDD-054 D7: a damaged card's names
         e.size_kb = sizeKb(it->path());
         e.is_dir = false;
         // The listing's timestamp, which grouping READS: estimateCheckpointEnd()
@@ -154,6 +156,7 @@ std::vector<EzShareFileEntry> LocalDataSource::listDir(const std::string& card_p
         std::error_code de;
         EzShareFileEntry e;
         e.name = it->path().filename().string();
+        if (!isCardNameUsable(e.name)) continue;   // SDD-054 D7: a damaged card's names
         e.is_dir = it->is_directory(de);
         e.size_kb = e.is_dir ? 0 : sizeKb(it->path());
         entries.push_back(std::move(e));

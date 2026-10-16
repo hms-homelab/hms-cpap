@@ -76,6 +76,7 @@ set(TEST_SOURCES
     utils/test_MachineIdentity.cpp
     utils/test_DeviceIdMigration.cpp
     utils/test_NightQuiet.cpp
+    utils/test_MachineClock.cpp
     utils/test_DbProbeCli.cpp
     utils/test_FileLogger.cpp
     utils/test_ParentWatch.cpp
@@ -141,6 +142,7 @@ set(TEST_SOURCES
     services/test_CleaningStatus.cpp
     services/test_CleaningPublisher.cpp
     services/test_SyncFolderState.cpp
+    services/test_ListingPlan.cpp
     services/test_SyncNow.cpp
     services/test_SupplyStatus.cpp
     services/test_SupplyPublisher.cpp

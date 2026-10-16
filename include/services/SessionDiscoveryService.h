@@ -7,6 +7,7 @@
 #include <string>
 #include <chrono>
 #include <optional>
+#include <map>
 #include <set>
 #include <filesystem>
 
@@ -103,8 +104,33 @@ public:
     /// single request on an ez Share rather than one per folder.
     std::vector<std::string> listDateFolders();
 
+    /// SDD-054: discoverNewSessions on listings the caller already took. The
+    /// collector decides which folders a burst lists (ListingPlan) and lists
+    /// each once; the same rules then pick the sessions, with no second
+    /// listing of the index or of any folder.
+    std::vector<SessionFileSet> discoverInListings(
+        const std::map<std::string, std::vector<EzShareFileEntry>>& listings,
+        std::optional<std::chrono::system_clock::time_point> last_session_start,
+        std::optional<std::chrono::system_clock::time_point> retain_from = std::nullopt,
+        const std::set<std::string>& catch_up_folders = {});
+
+    /// The folders discoverNewSessions would scan from the index: every folder
+    /// on or after [anchor]'s local date, plus the day before it (early-morning
+    /// sessions are stored there); every folder when there is no anchor.
+    static std::vector<std::string> foldersFromAnchor(
+        const std::vector<std::string>& date_folders,
+        std::optional<std::chrono::system_clock::time_point> anchor);
+
 private:
     IDataSource& data_source_;
+
+    /// The per-session test discoverNewSessions applies to one folder's groups.
+    static void keepWanted(const std::string& folder,
+                           const std::vector<SessionFileSet>& folder_sessions,
+                           std::optional<std::chrono::system_clock::time_point> last_session_start,
+                           std::optional<std::chrono::system_clock::time_point> retain_from,
+                           const std::set<std::string>& catch_up_folders,
+                           std::vector<SessionFileSet>& out);
 };
 
 } // namespace hms_cpap
