@@ -29,7 +29,7 @@ namespace cpapdash::supervisor {
  * are finished.
  *
  *   1. Check the configuration     hms_cpap --preflight
- *   2. Start CpapDash              spawn the child
+ *   2. Start HmsCpap             spawn the child
  *   3. Wait for it to respond      poll /health
  *
  * Every step reports what the SERVICE said, not a guess. A preflight failure

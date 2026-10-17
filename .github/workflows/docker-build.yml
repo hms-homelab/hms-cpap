@@ -374,7 +374,7 @@ jobs:
           # Staging dir the installer script reads from, mirroring the install
           # layout: shell and service side by side.
           mkdir dist-windows -Force
-          Copy-Item build\desktop\qt\CpapDashDesktop.exe dist-windows\
+          Copy-Item build\desktop\qt\HmsCpapInstaller.exe dist-windows\
           Copy-Item -Recurse -Force release\* dist-windows\
 
           # Everything Qt needs, next to the exe. The requirement is that a user
@@ -386,7 +386,7 @@ jobs:
           # supervisor never loads.
           & "$env:QT_ROOT_DIR\bin\windeployqt.exe" `
             --release --no-translations --no-system-d3d-compiler `
-            --no-opengl-sw dist-windows\CpapDashDesktop.exe
+            --no-opengl-sw dist-windows\HmsCpapInstaller.exe
 
           # A missing platform plugin is silent at build time and fatal at run
           # time ("no Qt platform plugin could be initialized"), so it is checked
@@ -409,7 +409,7 @@ jobs:
           # Every binary that ships, not just the two executables. SmartScreen
           # reputation is per-publisher across a bundle, and an unsigned Qt DLL
           # beside a signed exe is a support ticket.
-          $targets = @('dist-windows\CpapDashDesktop.exe','dist-windows\hms_cpap.exe') +
+          $targets = @('dist-windows\HmsCpapInstaller.exe','dist-windows\hms_cpap.exe') +
                      (Get-ChildItem dist-windows -Recurse -Include *.dll | ForEach-Object FullName)
           & $signtool sign /f cert.pfx /p $env:WINDOWS_CERT_PASSWORD `
             /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 @targets
@@ -434,7 +434,7 @@ jobs:
                        Where-Object { $_.FullName -like "*x64*" } | Select-Object -First 1).FullName
           & $signtool sign /f cert.pfx /p $env:WINDOWS_CERT_PASSWORD `
             /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 `
-            dist-installer\CpapDashDesktop-Setup.exe
+            dist-installer\HmsCpapInstaller-Setup.exe
           Remove-Item cert.pfx
 
       - name: Upload Windows artifact
@@ -447,7 +447,7 @@ jobs:
         if: steps.installer.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
-          name: cpapdash-desktop-setup
+          name: hmscpap-installer-setup
           path: dist-installer/
 
   # ── Windows desktop: RUN it, do not just build it ────────────────
@@ -476,8 +476,28 @@ jobs:
       - name: Download installer
         uses: actions/download-artifact@v4
         with:
-          name: cpapdash-desktop-setup
+          name: hmscpap-installer-setup
           path: installer/
+
+      # The tray was "CpapDash Desktop" (CpapDashDesktop.exe) before 5.6.1, and
+      # that is what every machine out there has. So the install below is an
+      # UPGRADE over the last release under the old name, with its Run entry made
+      # the way the old tray's own "Start at login" made it, which the new
+      # installer has to repoint without its own startatlogin task.
+      - name: Install the last CpapDash Desktop release
+        timeout-minutes: 5
+        run: |
+          $old = "$env:RUNNER_TEMP\CpapDashDesktop-Setup.exe"
+          Invoke-WebRequest -UseBasicParsing -OutFile $old `
+            https://github.com/hms-homelab/hms-cpap/releases/download/v5.5.4/CpapDashDesktop-Setup.exe
+          $p = Start-Process -FilePath $old -Wait -PassThru `
+                 -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/CURRENTUSER','/MERGETASKS=!startatlogin'
+          if ($p.ExitCode -ne 0) { throw "the old installer exited $($p.ExitCode)" }
+          $app = "$env:LOCALAPPDATA\Programs\HMS-CPAP"
+          if (-not (Test-Path "$app\CpapDashDesktop.exe")) { throw 'the old release did not install CpapDashDesktop.exe' }
+          New-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Force `
+            -Name CpapDashDesktop -Value "`"$app\CpapDashDesktop.exe`"" | Out-Null
+          Write-Host '  ok CpapDash Desktop 5.5.4 installed, Run entry on the old exe'
 
       - name: Install silently
         # Bounded separately from the job so a hang here is named rather than
@@ -497,8 +517,10 @@ jobs:
           # where Setup and Setup.tmp stayed alive producing no output until the
           # job was killed. /CURRENTUSER matches the installer's own stated design,
           # which is a per-user install with PrivilegesRequired=lowest.
+          # Without the startatlogin task: the Run entry the old tray made has to
+          # be repointed by the installer's own code, not rewritten by the task.
           $p = Start-Process -FilePath $exe -Wait -PassThru `
-                 -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/CURRENTUSER','/TASKS=startatlogin'
+                 -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/CURRENTUSER','/MERGETASKS=!startatlogin'
           if ($p.ExitCode -ne 0) { throw "installer exited $($p.ExitCode)" }
 
       - name: The installed layout is what the shell expects
@@ -506,19 +528,32 @@ jobs:
           $app = "$env:LOCALAPPDATA\Programs\HMS-CPAP"
           # The tray finds hms_cpap.exe by sitting next to it, so this layout IS
           # the contract between the two.
-          foreach ($f in @('CpapDashDesktop.exe','hms_cpap.exe','static\browser\index.html','platforms\qwindows.dll')) {
+          foreach ($f in @('HmsCpapInstaller.exe','hms_cpap.exe','static\browser\index.html','platforms\qwindows.dll')) {
             if (-not (Test-Path "$app\$f")) { throw "missing after install: $f" }
             Write-Host "  ok $f"
           }
+          # The old self-updater starts CpapDashDesktop.exe after installing and
+          # rolls back if it cannot, so an upgrade leaves the new tray under that
+          # name too, byte for byte.
+          if (-not (Test-Path "$app\CpapDashDesktop.exe")) { throw 'the upgrade left no CpapDashDesktop.exe for the old updater to start' }
+          if ((Get-FileHash "$app\CpapDashDesktop.exe").Hash -ne (Get-FileHash "$app\HmsCpapInstaller.exe").Hash) {
+            throw 'CpapDashDesktop.exe is still the old tray, not the new one'
+          }
+          Write-Host '  ok CpapDashDesktop.exe is the new tray'
 
-      - name: Start at Login wrote a usable Run entry
+      - name: The upgrade repointed the Run entry and removed the old shortcuts
         run: |
           $v = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' `
                   -Name CpapDashDesktop -ErrorAction SilentlyContinue).CpapDashDesktop
-          if (-not $v) { throw 'Run value CpapDashDesktop was not created' }
+          if (-not $v) { throw 'the Run value CpapDashDesktop is gone' }
           # Quoted, or a path containing a space starts the wrong program.
           if (-not $v.StartsWith('"')) { throw "Run value is not quoted: $v" }
+          if ($v -notlike '*\HmsCpapInstaller.exe"') { throw "Run value still points at the old tray: $v" }
           Write-Host "  ok $v"
+          $programs = [Environment]::GetFolderPath('Programs')
+          if (Test-Path "$programs\CpapDash Desktop") { throw 'the old CpapDash Desktop Start menu folder survived' }
+          if (-not (Test-Path "$programs\HmsCpap Installer")) { throw 'no HmsCpap Installer Start menu folder' }
+          Write-Host '  ok Start menu says HmsCpap Installer only'
 
       - name: Preflight passes on a clean machine
         run: |
@@ -571,7 +606,7 @@ jobs:
             Remove-Item "$env:USERPROFILE\.hms-cpap\config.json" -Force
           }
 
-          $sup = Start-Process -FilePath "$app\CpapDashDesktop.exe" -PassThru
+          $sup = Start-Process -FilePath "$app\HmsCpapInstaller.exe" -PassThru
           Start-Sleep -Seconds 20
 
           if ($sup.HasExited) {
@@ -585,6 +620,11 @@ jobs:
 
           Stop-Process -Id $sup.Id -Force -ErrorAction SilentlyContinue
           Start-Sleep -Seconds 5
+
+          # Run under its own name, the tray removed the copy the upgrade left
+          # under the old one.
+          if (Test-Path "$app\CpapDashDesktop.exe") { throw 'HmsCpapInstaller.exe left the CpapDashDesktop.exe copy behind' }
+          Write-Host '  ok the CpapDashDesktop.exe copy is gone'
 
       - name: A configured machine starts the service, and it serves
         shell: pwsh
@@ -602,7 +642,7 @@ jobs:
             logging = @{ enabled = $false }; mqtt = @{ enabled = $false }
           } | ConvertTo-Json -Depth 5 | Set-Content "$data\config.json" -Encoding utf8
 
-          $sup = Start-Process -FilePath "$app\CpapDashDesktop.exe" -PassThru
+          $sup = Start-Process -FilePath "$app\HmsCpapInstaller.exe" -PassThru
           Start-Sleep -Seconds 20
           if ($sup.HasExited) { throw "the supervisor exited (code $($sup.ExitCode))" }
 
@@ -662,7 +702,7 @@ jobs:
         run: |
           $app = "$env:LOCALAPPDATA\Programs\HMS-CPAP"
 
-          $p = Start-Process "$app\CpapDashDesktop.exe" -PassThru
+          $p = Start-Process "$app\HmsCpapInstaller.exe" -PassThru
           Start-Sleep -Seconds 18
           if ($p.HasExited) { throw "the supervisor exited during the dependency check" }
 
@@ -714,7 +754,8 @@ jobs:
                  -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART'
           Start-Sleep -Seconds 5
 
-          if (Test-Path "$app\CpapDashDesktop.exe") { throw 'the shell survived uninstall' }
+          if (Test-Path "$app\HmsCpapInstaller.exe") { throw 'the shell survived uninstall' }
+          if (Test-Path "$app\CpapDashDesktop.exe") { throw 'the old-name copy survived uninstall' }
 
           $v = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' `
                   -Name CpapDashDesktop -ErrorAction SilentlyContinue).CpapDashDesktop
@@ -784,7 +825,7 @@ jobs:
       # Qt on the BUILD MACHINE ONLY, to compile the supervisor -- the same
       # reason this job already installs Drogon and libpqxx, which no user has
       # ever installed either. Nothing here reaches anyone: package-macos.sh
-      # copies what is needed INTO CpapDash.app and then fails the build if
+      # copies what is needed INTO HmsCpap.app and then fails the build if
       # anything still resolves outside it.
       - name: Install Qt (build toolchain only, never shipped to users)
         run: brew install qt
@@ -857,14 +898,14 @@ jobs:
           EOF
 
       # ---------------------------------------------------------------------
-      # One CpapDash.app holding the supervisor, the service, the dashboard and
+      # One HmsCpap.app holding the supervisor, the service, the dashboard and
       # every library either needs.
       #
       # Until v5.0.0 the macOS download was a bare hms_cpap binary linking
       # twelve Homebrew dylibs, so it could not start on a machine that did not
       # already have Homebrew and nine brew installs. The script fails the build
       # if anything still resolves outside the bundle.
-      - name: Package CpapDash.app
+      - name: Package HmsCpap.app
         run: |
           ./scripts/package-macos.sh build
 
@@ -881,7 +922,7 @@ jobs:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
         run: |
-          APP=build/package/CpapDash.app
+          APP=build/package/HmsCpap.app
 
           echo "$APPLE_DEVID_P12" | base64 --decode > /tmp/devid.p12
           echo "$ASC_KEY_P8"      | base64 --decode > /tmp/asc.p8
@@ -917,8 +958,8 @@ jobs:
 
           # ditto, not zip: it preserves the bundle layout and symlinks that the
           # notary service expects.
-          /usr/bin/ditto -c -k --keepParent "$APP" /tmp/CpapDash-notarize.zip
-          xcrun notarytool submit /tmp/CpapDash-notarize.zip \
+          /usr/bin/ditto -c -k --keepParent "$APP" /tmp/HmsCpap-notarize.zip
+          xcrun notarytool submit /tmp/HmsCpap-notarize.zip \
             --key /tmp/asc.p8 --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID" \
             --wait --timeout 30m
           xcrun stapler staple "$APP"
@@ -928,18 +969,37 @@ jobs:
 
           rm -f /tmp/devid.p12 /tmp/asc.p8
 
+      # HmsCpap.app, plus a hidden CpapDash.app link to it. A Mac installed
+      # before 5.6.1 updates itself with ITS copy of cpapdash-update.sh, which
+      # looks for CpapDash.app in the image and refuses the update without it;
+      # through the link it finds, verifies and copies the new bundle. Hidden so
+      # a person opening the image sees one app. The flag is set inside a
+      # writable image: hdiutil create -srcfolder drops it.
       - name: Build the disk image
         run: |
-          mkdir -p dist-macos
-          hdiutil create -volname "CpapDash" -srcfolder build/package/CpapDash.app \
-            -ov -format ULFO dist-macos/CpapDash.dmg
-          ls -lh dist-macos/CpapDash.dmg
+          mkdir -p dist-macos build/dmg-stage
+          cp -R build/package/HmsCpap.app build/dmg-stage/
+          ln -s HmsCpap.app build/dmg-stage/CpapDash.app
+          hdiutil create -volname "HmsCpap" -srcfolder build/dmg-stage -ov -format UDRW /tmp/HmsCpap-rw.dmg
+          mkdir -p /tmp/hmscpap-dmg
+          hdiutil attach -nobrowse -mountpoint /tmp/hmscpap-dmg /tmp/HmsCpap-rw.dmg
+          chflags -h hidden /tmp/hmscpap-dmg/CpapDash.app
+          # What the old updater does with it, here, before anyone's Mac does.
+          [ -d /tmp/hmscpap-dmg/CpapDash.app ] || { echo "the CpapDash.app link does not resolve"; exit 1; }
+          # Signed builds only (a fork has no certificate): the old updater checks
+          # the signature through the link, so check it the same way.
+          if codesign -dv build/package/HmsCpap.app 2>&1 | grep -q '^TeamIdentifier=[A-Z0-9]'; then
+            codesign --verify --deep --strict /tmp/hmscpap-dmg/CpapDash.app
+          fi
+          hdiutil detach /tmp/hmscpap-dmg
+          hdiutil convert /tmp/HmsCpap-rw.dmg -format ULFO -o dist-macos/HmsCpap.dmg
+          ls -lh dist-macos/HmsCpap.dmg
 
       - name: Upload macOS app
         uses: actions/upload-artifact@v4
         with:
-          name: cpapdash-macos-app
-          path: dist-macos/CpapDash.dmg
+          name: hmscpap-macos-app
+          path: dist-macos/HmsCpap.dmg
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
@@ -1175,7 +1235,7 @@ jobs:
         continue-on-error: true
         uses: actions/download-artifact@v4
         with:
-          name: cpapdash-desktop-setup
+          name: hmscpap-installer-setup
           path: ./
 
       # The signed, notarised bundle. hms-cpap-macos-arm64.zip stays for now --
@@ -1187,7 +1247,7 @@ jobs:
         continue-on-error: true
         uses: actions/download-artifact@v4
         with:
-          name: cpapdash-macos-app
+          name: hmscpap-macos-app
 
       - name: Download macOS artifact
         id: download-macos
@@ -1215,9 +1275,11 @@ jobs:
           import hashlib, json, os
           version = os.environ["GITHUB_REF_NAME"].lstrip("v")
           candidates = [
-              ("windows-x64", "installer", "CpapDashDesktop-Setup.exe"),
+              # Clients pick by platform and kind, never by name, so the
+              # rename to HmsCpap (5.6.1) reaches installs from before it.
+              ("windows-x64", "installer", "HmsCpapInstaller-Setup.exe"),
               ("windows-x64", "zip",       "hms-cpap-windows-x64.zip"),
-              ("macos-arm64", "dmg",       "CpapDash.dmg"),
+              ("macos-arm64", "dmg",       "HmsCpap.dmg"),
               ("macos-arm64", "zip",       "hms-cpap-macos-arm64.zip"),
               ("linux-armhf", "zip",       "hms-cpap-linux-armhf.zip"),
           ]
@@ -1247,6 +1309,6 @@ jobs:
             hms-cpap-windows-x64.zip
             hms-cpap-macos-arm64.zip
             hms-cpap-linux-armhf.zip
-            CpapDashDesktop-Setup.exe
-            CpapDash.dmg
+            HmsCpapInstaller-Setup.exe
+            HmsCpap.dmg
             manifest.json

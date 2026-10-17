@@ -57,7 +57,7 @@ QLabel* explain(const QString& text, QWidget* parent) {
 class WelcomePage : public QWizardPage {
 public:
     explicit WelcomePage(ConfiguratorWindow* wiz) : wiz_(wiz) {
-        setTitle("CpapDash Setup");
+        setTitle("HmsCpap Setup");
 
         auto* layout = new QVBoxLayout(this);
         layout->addWidget(explain(QString::fromStdString(wiz_->gate_.summary), this));
@@ -113,7 +113,7 @@ public:
 
         cv->addWidget(ezshare_);
         auto* ez_help = explain(
-            "The unit sits next to your machine, reads the SD card, and CpapDash "
+            "The unit sits next to your machine, reads the SD card, and HmsCpap "
             "collects from it over your normal network.", choices);
         ez_help->setContentsMargins(24, 0, 0, 8);   // indented under its radio
         cv->addWidget(ez_help);
@@ -332,14 +332,14 @@ private:
 class DatabasePage : public QWizardPage {
 public:
     explicit DatabasePage(ConfiguratorWindow* wiz) : wiz_(wiz) {
-        setTitle("Where should CpapDash keep your nights?");
+        setTitle("Where should HmsCpap keep your nights?");
 
         auto* layout = new QVBoxLayout(this);
 
         builtin_ = new QRadioButton("Built in (recommended)", this);
         server_  = new QRadioButton("A database server I already run", this);
         layout->addWidget(builtin_);
-        layout->addWidget(explain("A single file in your CpapDash folder. Nothing to install.", this));
+        layout->addWidget(explain("A single file in your HmsCpap folder. Nothing to install.", this));
         layout->addWidget(server_);
 
         server_box_ = new QGroupBox(this);
@@ -458,7 +458,7 @@ private:
                 result_->setText(count > 0
                     ? QString("Connected. This database already holds %1 night(s); "
                               "they will be reused.").arg(count)
-                    : "Connected. The tables will be created when CpapDash starts.");
+                    : "Connected. The tables will be created when HmsCpap starts.");
                 result_->setStyleSheet("color: #2d7a2d;");
             } else {
                 result_->setText(QString::fromStdString(out.value("error", "Could not connect.")));
@@ -506,7 +506,7 @@ public:
         wiz_->model_.set("setup_complete", true);
 
         const auto src = wiz_->model_.getString("source");
-        QString text = "CpapDash will read from ";
+        QString text = "HmsCpap will read from ";
         text += (src == "local")
             ? "the folder you chose"
             : "your ezShare card at " + QString::fromStdString(wiz_->model_.getString("ezshare_url"));
@@ -532,7 +532,7 @@ ConfiguratorWindow::ConfiguratorWindow(ConfigModel model, GateResult gate,
       model_(std::move(model)),
       gate_(std::move(gate)),
       service_exe_(std::move(service_exe)) {
-    setWindowTitle("CpapDash Setup");
+    setWindowTitle("HmsCpap Setup");
 
     // ModernStyle on every platform, deliberately. MacStyle has no side widget
     // and no banner slot, so the brand panel below simply would not render
@@ -559,7 +559,7 @@ ConfiguratorWindow::ConfiguratorWindow(ConfigModel model, GateResult gate,
     mark->setAlignment(Qt::AlignHCenter);
     sl->addWidget(mark);
 
-    auto* name = new QLabel("CpapDash", side);
+    auto* name = new QLabel("HmsCpap", side);
     QFont nf = name->font();
     nf.setPointSizeF(nf.pointSizeF() * 1.45);
     nf.setBold(true);

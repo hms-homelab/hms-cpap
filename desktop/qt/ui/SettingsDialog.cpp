@@ -52,7 +52,7 @@ const char* kStyleSheet = R"(
 
 SettingsDialog::SettingsDialog(ConfigModel model, bool service_running, QWidget* parent)
     : QDialog(parent), model_(std::move(model)), service_running_(service_running) {
-    setWindowTitle("CpapDash Settings");
+    setWindowTitle("HmsCpap Settings");
     setMinimumSize(760, 620);
     setStyleSheet(kStyleSheet + theme::scrollBarStyle());
     buildUi();

@@ -81,7 +81,7 @@ bool SingleInstance::tryBecomePrimary() {
         // rather than refusing to run: a supervisor with no mutual exclusion is
         // worse than one with it, but far better than an application that will
         // not start and cannot say why.
-        qWarning("CpapDash: could not claim the single-instance socket (%s); "
+        qWarning("HmsCpap: could not claim the single-instance socket (%s); "
                  "continuing without it", qPrintable(server_->errorString()));
         server_.reset();
     }

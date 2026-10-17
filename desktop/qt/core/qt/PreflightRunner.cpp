@@ -12,7 +12,7 @@ PreflightReport runPreflight(const QString& exe,
         PreflightReport r;
         r.verdict = Verdict::Unreadable;
         r.message = exe.isEmpty()
-            ? QStringLiteral("hms_cpap was not found next to CpapDash.").toStdString()
+            ? QStringLiteral("hms_cpap was not found next to HmsCpap.").toStdString()
             : ("hms_cpap is missing: " + exe).toStdString();
         return r;
     }

@@ -118,7 +118,7 @@ QString ChildProcess::resolveServiceExecutable() {
     QStringList candidates;
 
 #ifdef Q_OS_MACOS
-    // Out of CpapDashDesktop.app/Contents/MacOS to the build tree that made it.
+    // Out of HmsCpapInstaller.app/Contents/MacOS to the build tree that made it.
     candidates << QDir(dir).filePath("../../../" + name)
                << QDir(dir).filePath("../../../../" + name);
 #endif
@@ -217,7 +217,7 @@ void ChildProcess::start() {
     // child is as small as the API allows. A failure here is logged rather than
     // fatal: the service is running and useful, it just loses the guarantee.
     if (!jobObject().adopt(proc_->processId())) {
-        qWarning("CpapDash: could not put hms_cpap in a job object; it may "
+        qWarning("HmsCpap: could not put hms_cpap in a job object; it may "
                  "outlive this supervisor if the supervisor is force-killed");
     }
 #endif

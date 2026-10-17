@@ -37,7 +37,7 @@ StartupWindow::StartupWindow(ChildProcess* child, QString service_exe,
       child_(child),
       service_exe_(std::move(service_exe)),
       web_port_(web_port) {
-    setWindowTitle("Starting CpapDash");
+    setWindowTitle("Starting HmsCpap");
     setMinimumWidth(520);
     setStyleSheet(theme::headerStyle() + theme::accentStyle());
 
@@ -57,7 +57,7 @@ StartupWindow::StartupWindow(ChildProcess* child, QString service_exe,
     mark->setPixmap(QPixmap(":/icons/app-256.png")
                         .scaled(40, 40, Qt::KeepAspectRatio, Qt::SmoothTransformation));
     hl->addWidget(mark);
-    auto* title = new QLabel("Starting CpapDash", header);
+    auto* title = new QLabel("Starting HmsCpap", header);
     QFont tf = title->font();
     tf.setPointSizeF(tf.pointSizeF() * 1.25);
     tf.setBold(true);
@@ -71,7 +71,7 @@ StartupWindow::StartupWindow(ChildProcess* child, QString service_exe,
     body->setSpacing(14);
 
     addStep(body, "Check the configuration");
-    addStep(body, "Start CpapDash");
+    addStep(body, "Start HmsCpap");
     addStep(body, "Wait for it to respond");
 
     summary_ = new QLabel(this);
@@ -182,7 +182,7 @@ void StartupWindow::runPreflight() {
             }
         }
         setStep(0, StepState::Failed, detail);
-        finish(false, "CpapDash cannot start with these settings.");
+        finish(false, "HmsCpap cannot start with these settings.");
         return;
     }
 
@@ -210,9 +210,9 @@ void StartupWindow::startService() {
     if (!child_->isRunning()) {
         setStep(1, StepState::Failed,
                 child_->stderrTail().isEmpty()
-                    ? QStringLiteral("CpapDash did not start.")
+                    ? QStringLiteral("HmsCpap did not start.")
                     : child_->stderrTail().last());
-        finish(false, "CpapDash could not be started.");
+        finish(false, "HmsCpap could not be started.");
         return;
     }
 
@@ -230,9 +230,9 @@ void StartupWindow::pollHealth() {
         health_timer_.stop();
         setStep(2, StepState::Failed,
                 child_->stderrTail().isEmpty()
-                    ? QStringLiteral("CpapDash stopped while starting up.")
+                    ? QStringLiteral("HmsCpap stopped while starting up.")
                     : child_->stderrTail().last());
-        finish(false, "CpapDash stopped while it was starting.");
+        finish(false, "HmsCpap stopped while it was starting.");
         return;
     }
 
@@ -241,7 +241,7 @@ void StartupWindow::pollHealth() {
         setStep(2, StepState::Failed,
                 QStringLiteral("It is running but has not answered on port %1.")
                     .arg(web_port_));
-        finish(false, "CpapDash started but is not responding yet.");
+        finish(false, "HmsCpap started but is not responding yet.");
         return;
     }
 
@@ -255,7 +255,7 @@ void StartupWindow::pollHealth() {
 
         health_timer_.stop();
         setStep(2, StepState::Ok, QStringLiteral("Answering on port %1.").arg(web_port_));
-        finish(true, "CpapDash is running and collecting.");
+        finish(true, "HmsCpap is running and collecting.");
     });
 }
 

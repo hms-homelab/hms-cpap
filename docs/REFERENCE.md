@@ -123,10 +123,10 @@ terminal, no YAML.
 
 ### Windows
 
-Download `CpapDashDesktop-Setup.exe` from
+Download `HmsCpapInstaller-Setup.exe` from
 [Releases](https://github.com/hms-homelab/hms-cpap/releases) and run it. It
 installs to your user profile, so it never asks for administrator rights. When
-it finishes, CpapDash Desktop appears in the notification area and your browser
+it finishes, HmsCpap Installer appears in the notification area and your browser
 opens on the setup wizard.
 
 The tray icon gives you Open Dashboard, Sync Now, and a Start at Login

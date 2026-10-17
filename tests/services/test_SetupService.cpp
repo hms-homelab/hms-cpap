@@ -732,7 +732,7 @@ TEST(SetupServiceTest, AContainerOwnsItsOwnLifecycle) {
 
 TEST(SetupServiceTest, ContainerBeatsSupervisedWhenBothAreSet) {
     // Someone can set HMS_CPAP_SUPERVISED inside a container. The runtime still
-    // owns the lifecycle, and telling them "CpapDash Desktop manages this"
+    // owns the lifecycle, and telling them "HmsCpap Installer manages this"
     // inside Docker would be actively misleading.
     EXPECT_EQ(SetupService::autostartOwner(true, true),
               SetupService::AutostartOwner::Container);

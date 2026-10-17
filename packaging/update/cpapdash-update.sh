@@ -1,6 +1,8 @@
 #!/bin/bash
-# SDD-041 D8/D9: swap the whole CpapDash.app for a verified new one, and put
-# the old one back if the new one does not come up.
+# SDD-041 D8/D9: swap the whole HmsCpap.app for a verified new one, and put
+# the old one back if the new one does not come up. The new bundle goes where
+# the running one is, whatever that folder is called: a Mac installed before
+# 5.6.1 keeps its CpapDash.app folder, so its Login Items entry stays valid.
 #
 # Started by the supervisor (desktop/qt TrayShell::onUpdateRequested) from a
 # COPY outside the bundle, because the bundle is what this replaces. By then the
@@ -8,7 +10,7 @@
 # and the supervisor has hashed it again. This script checks it a third time,
 # because it is the one that acts.
 #
-#   cpapdash-update.sh --pending <pending.json> --app <CpapDash.app>
+#   cpapdash-update.sh --pending <pending.json> --app <HmsCpap.app>
 #                      --data-dir <dir> --pid <supervisor pid> --port <port>
 #
 # Every outcome is written to <data-dir>/update/result.json, which the service
@@ -123,8 +125,11 @@ for _ in 1 2 3; do   # hdiutil answers "Resource busy" now and then; it passes
 done
 [ "$mounted" = 1 ] || { MNT=""; refuse verify "the disk image would not open"; }
 
-NEW="$MNT/CpapDash.app"
-[ -d "$NEW" ] || refuse verify "the disk image holds no CpapDash.app"
+# HmsCpap.app since 5.6.1; the image also carries a CpapDash.app link to it for
+# the updaters of older installs, and an image from before 5.6.1 only that name.
+NEW="$MNT/HmsCpap.app"
+[ -d "$NEW" ] || NEW="$MNT/CpapDash.app"
+[ -d "$NEW" ] || refuse verify "the disk image holds no HmsCpap.app"
 codesign --verify --deep --strict "$NEW" || refuse verify "the new application's signature is not valid"
 codesign -dv "$NEW" 2>&1 | grep -q "^TeamIdentifier=$TEAM_ID\$" \
     || refuse verify "the new application is not signed by CpapDash's developer"

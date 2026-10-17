@@ -270,7 +270,7 @@ namespace {
 
 namespace fs = std::filesystem;
 
-const std::string kPayload = "pretend this is CpapDash.dmg";
+const std::string kPayload = "pretend this is HmsCpap.dmg";
 
 struct ApplyRig {
     fs::path dir;
@@ -320,7 +320,7 @@ struct ApplyRig {
 }  // namespace
 
 TEST_F(UpdateServiceTest, AVerifiedDownloadIsStagedAndHandedToTheSupervisor) {
-    ApplyRig rig("macos-arm64", update::Handoff::Supervisor, "dmg", "CpapDash.dmg");
+    ApplyRig rig("macos-arm64", update::Handoff::Supervisor, "dmg", "HmsCpap.dmg");
     ASSERT_TRUE(rig.svc->status().can_apply);
 
     ASSERT_EQ(rig.svc->apply(false), UpdateService::ApplyRefusal::None);
@@ -328,7 +328,7 @@ TEST_F(UpdateServiceTest, AVerifiedDownloadIsStagedAndHandedToTheSupervisor) {
 
     EXPECT_EQ(rig.exit_code, kExitApplyUpdate);
     EXPECT_EQ(rig.backups, 1) << "D6: the database is copied before the handoff";
-    const fs::path staged = rig.dir / "update" / "CpapDash.dmg";
+    const fs::path staged = rig.dir / "update" / "HmsCpap.dmg";
     EXPECT_TRUE(fs::exists(staged));
     EXPECT_FALSE(fs::exists(staged.string() + ".part"));
 
@@ -345,7 +345,7 @@ TEST_F(UpdateServiceTest, AVerifiedDownloadIsStagedAndHandedToTheSupervisor) {
 TEST_F(UpdateServiceTest, CheckNowAnswersWithTheSameFieldsAsStatus) {
     // "Check now" returned the raw state, without can_apply: the Apply button
     // stayed hidden until the page was reloaded. Found in the macOS e2e.
-    ApplyRig rig("macos-arm64", update::Handoff::Supervisor, "dmg", "CpapDash.dmg");
+    ApplyRig rig("macos-arm64", update::Handoff::Supervisor, "dmg", "HmsCpap.dmg");
     const auto checked = rig.svc->checkNow();
     EXPECT_TRUE(checked.can_apply);
     EXPECT_EQ(checked.installer, "supervisor");
@@ -353,31 +353,31 @@ TEST_F(UpdateServiceTest, CheckNowAnswersWithTheSameFieldsAsStatus) {
 }
 
 TEST_F(UpdateServiceTest, WindowsHandsOffTheInstaller) {
-    ApplyRig rig("windows-x64", update::Handoff::Supervisor, "installer", "CpapDashDesktop-Setup.exe");
+    ApplyRig rig("windows-x64", update::Handoff::Supervisor, "installer", "HmsCpapInstaller-Setup.exe");
     ASSERT_EQ(rig.svc->apply(false), UpdateService::ApplyRefusal::None);
     rig.svc->waitForApply();
     EXPECT_EQ(rig.exit_code, kExitApplyUpdate);
-    EXPECT_TRUE(fs::exists(rig.dir / "update" / "CpapDashDesktop-Setup.exe"));
+    EXPECT_TRUE(fs::exists(rig.dir / "update" / "HmsCpapInstaller-Setup.exe"));
 }
 
 TEST_F(UpdateServiceTest, AMismatchedChecksumRefusesAndLeavesNothingBehind) {
-    ApplyRig rig("macos-arm64", update::Handoff::Supervisor, "dmg", "CpapDash.dmg");
-    rig.payload = "pretend this is CpapDash.dmX";   // same size, different bytes
+    ApplyRig rig("macos-arm64", update::Handoff::Supervisor, "dmg", "HmsCpap.dmg");
+    rig.payload = "pretend this is HmsCpap.dmX";   // same size, different bytes
     ASSERT_EQ(rig.svc->apply(false), UpdateService::ApplyRefusal::None);
     rig.svc->waitForApply();
 
     EXPECT_EQ(rig.exit_code, -1) << "nothing is handed off";
     EXPECT_EQ(rig.backups, 0);
-    EXPECT_FALSE(fs::exists(rig.dir / "update" / "CpapDash.dmg"));
-    EXPECT_FALSE(fs::exists(rig.dir / "update" / "CpapDash.dmg.part"));
+    EXPECT_FALSE(fs::exists(rig.dir / "update" / "HmsCpap.dmg"));
+    EXPECT_FALSE(fs::exists(rig.dir / "update" / "HmsCpap.dmg.part"));
     EXPECT_FALSE(fs::exists(rig.dir / "update" / "pending.json"));
     const auto s = rig.svc->status();
     EXPECT_FALSE(s.applying);
-    EXPECT_EQ(s.error, "CpapDash.dmg does not match the manifest's SHA-256");
+    EXPECT_EQ(s.error, "HmsCpap.dmg does not match the manifest's SHA-256");
 }
 
 TEST_F(UpdateServiceTest, ATruncatedDownloadRefuses) {
-    ApplyRig rig("macos-arm64", update::Handoff::Supervisor, "dmg", "CpapDash.dmg");
+    ApplyRig rig("macos-arm64", update::Handoff::Supervisor, "dmg", "HmsCpap.dmg");
     rig.payload = kPayload.substr(0, 10);
     ASSERT_EQ(rig.svc->apply(false), UpdateService::ApplyRefusal::None);
     rig.svc->waitForApply();
@@ -386,7 +386,7 @@ TEST_F(UpdateServiceTest, ATruncatedDownloadRefuses) {
 }
 
 TEST_F(UpdateServiceTest, ABusyCollectorWaitsUnlessTheUserSaysNow) {
-    ApplyRig rig("macos-arm64", update::Handoff::Supervisor, "dmg", "CpapDash.dmg");
+    ApplyRig rig("macos-arm64", update::Handoff::Supervisor, "dmg", "HmsCpap.dmg");
     rig.busy = true;
     EXPECT_EQ(rig.svc->apply(false), UpdateService::ApplyRefusal::Busy);
     EXPECT_EQ(rig.downloads, 0);
@@ -398,7 +398,7 @@ TEST_F(UpdateServiceTest, ABusyCollectorWaitsUnlessTheUserSaysNow) {
 }
 
 TEST_F(UpdateServiceTest, NothingToInstallWithNoSupervisorOrSystemd) {
-    ApplyRig rig("macos-arm64", update::Handoff::None, "dmg", "CpapDash.dmg");
+    ApplyRig rig("macos-arm64", update::Handoff::None, "dmg", "HmsCpap.dmg");
     const auto s = rig.svc->status();
     EXPECT_TRUE(s.available) << "the banner still says an update exists";
     EXPECT_FALSE(s.can_apply) << "but offers no button that cannot work";
