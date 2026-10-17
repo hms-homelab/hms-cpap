@@ -1817,9 +1817,26 @@ public:
         std::ofstream ofs(local_path, std::ios::binary);
         // Opens with the EDF version field like a real card file, or the
         // collector would call the archived copy damaged and fetch it again.
-        ofs << "0       NOT_A_REAL_EDF_FILE";
+        const std::string head = "0       NOT_A_REAL_EDF_FILE";
+        ofs << head;
+        // As long as the listing says, as the card's own file is: a whole file
+        // short of its listing is a cut transfer and is not kept.
+        if (const auto it = folder_files.find(date_folder); it != folder_files.end()) {
+            for (const auto& e : it->second) {
+                if (e.name != filename || e.size_kb <= 0) continue;
+                const size_t want = static_cast<size_t>(e.size_kb) * 1024;
+                if (want > head.size()) ofs << std::string(want - head.size(), ' ');
+                break;
+            }
+        }
+        if (short_whole_file.count(filename)) {
+            ofs.close();
+            std::filesystem::resize_file(local_path, 8192);
+        }
         return true;
     }
+    // Files whose next whole-file transfer stops at 8192 bytes yet reports success.
+    std::set<std::string> short_whole_file;
     // Where each ranged request started, in order, by filename.
     std::vector<std::pair<std::string, size_t>> ranged_from;
     // Cut this file's next ranged transfers part way: each writes `cut_bytes`
@@ -4251,6 +4268,51 @@ TEST_F(BurstOrchestrationTest, Sdd054_ArchiveTakesACrcRewrittenAtTheSameSize) {
     long long size = 0;
     ASSERT_TRUE(fileStat((arc / "20261016_235259_BRP.crc").string().c_str(), mtime, size));
     EXPECT_EQ(mtime, card) << "the archive copy keeps the card's stamp";
+}
+
+// A whole-file transfer the link cut short came back as a success and replaced
+// the copy we held, then the archive's (a PLD at 8192 of 29916 bytes, the
+// 2026-10-17 night). It is now held to the listing and not kept.
+TEST_F(BurstOrchestrationTest, AWholeFileCutShortIsNotKept) {
+    namespace fs = std::filesystem;
+    auto svc = makeService([](FakeDataSource& ds) {
+        ds.date_folders = {"20200101"};
+        ds.folder_files["20200101"] = {
+            mkEntry("20200101_220000_BRP.edf", 100),
+            mkEntry("20200101_220000_PLD.edf", 20),
+            mkEntry("20200101_220000_CSL.edf", 1),
+            mkEntry("20200101_220000_EVE.edf", 30),
+        };
+        ds.short_whole_file = {"20200101_220000_EVE.edf"};
+    });
+    expectFreshDownload(*db_raw);
+    EXPECT_CALL(*db_raw, updateCheckpointFileSizesMock(_, _)).Times(AtLeast(0));
+
+    svc->runBurstCycleForTest();
+    const auto eve = archive_dir / "DATALOG" / "20200101" / "20200101_220000_EVE.edf";
+    EXPECT_FALSE(fs::exists(eve)) << "8192 bytes of a 30 KB file is a cut transfer";
+    EXPECT_FALSE(fs::exists(temp_dir / "20200101" / "20200101_220000_EVE.edf.part"));
+
+    src_raw->short_whole_file.clear();
+    svc->runBurstCycleForTest();
+    ASSERT_TRUE(fs::exists(eve));
+    EXPECT_GE(fs::file_size(eve), 30u * 1024) << "the next whole transfer is kept";
+}
+
+// A night's EDF only grows: a shorter working copy (a range that resumes next
+// burst) never cuts the archive's copy back.
+TEST_F(BurstOrchestrationTest, TheArchiveNeverTakesAShorterEdf) {
+    namespace fs = std::filesystem;
+    auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
+    const auto tmp = temp_dir / "20261016";
+    const auto arc = archive_dir / "DATALOG" / "20261016";
+    fs::create_directories(tmp);
+    fs::create_directories(arc);
+    std::ofstream(tmp / "20261016_235259_PLD.edf") << std::string(8192, 'S');
+    std::ofstream(arc / "20261016_235259_PLD.edf") << std::string(29916, 'L');
+
+    ASSERT_TRUE(svc->archiveSessionFilesForTest("20261016", temp_dir.string(), archive_dir.string()));
+    EXPECT_EQ(fs::file_size(arc / "20261016_235259_PLD.edf"), 29916u);
 }
 
 }  // namespace burst_orch

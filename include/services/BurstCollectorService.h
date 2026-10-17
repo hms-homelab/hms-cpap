@@ -641,6 +641,18 @@ private:
     // all of it except the machine's clock, which is stored.
     std::function<long long()> now_for_test_;
     long long nowSeconds() const;
+    /// Where the night's files are written while they grow: CPAP_TEMP_DIR, else
+    /// <data dir>/work. Not the system temp directory, which a service manager
+    /// may hand out empty on every start (systemd's PrivateTmp), so a restart
+    /// lost every partial copy and the stamps recorded on them.
+    static std::string workingDir();
+    /// A whole file a full KB under the size the listing shows did not arrive.
+    /// [listed_kb] <= 0 holds it to nothing.
+    static bool wholeFileIsShort(const std::string& path, int listed_kb);
+    /// Download a whole file beside [local_path] and move it into place only
+    /// when it is not short of [listed_kb]; otherwise the copy held stays.
+    bool fetchWholeFile(const std::string& folder, const std::string& name,
+                        const std::string& local_path, int listed_kb);
     std::map<std::string, FolderWatch> folder_watch_;
     /// Each folder's stamps at its last listing, for learning the clock.
     std::map<std::string, std::map<std::string, long long>> folder_stamps_;

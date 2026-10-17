@@ -593,7 +593,8 @@ bool BurstCollectorService::downloadSessionFiles(
         }
 
         // Full download (new file, Range not supported, or Range fallback)
-        if (data_source_->downloadFile(session.date_folder, filename, local_path)) {
+        if (fetchWholeFile(session.date_folder, filename, local_path,
+                           listed != session.file_sizes_kb.end() ? listed->second : -1)) {
             full_downloads++;
             return true;
         }
@@ -623,7 +624,9 @@ bool BurstCollectorService::downloadSessionFiles(
                 continue;
             }
 
-            if (data_source_->downloadFile(session.date_folder, name, local_path)) {
+            const auto listed_small = session.file_sizes_kb.find(name);
+            if (fetchWholeFile(session.date_folder, name, local_path,
+                               listed_small != session.file_sizes_kb.end() ? listed_small->second : -1)) {
                 stampLocalCopy(card_stamp, local_path);
                 fetched_this_burst_.insert(session.date_folder + "/" + fileStem(name));
                 warnIfEmpty(local_path, name);
@@ -828,6 +831,16 @@ bool BurstCollectorService::archiveSessionFiles(
                     skipped_count++;
                     continue;
                 }
+                // A night's EDF only grows. A working copy shorter than the
+                // archive's is a transfer still under way (a range resumes it
+                // next burst), never a reason to cut the archive back.
+                if (edf && temp_size < archive_size) {
+                    std::cerr << "📦 Archive: " << filename << " working copy (" << temp_size
+                              << " bytes) is shorter than the archive's (" << archive_size
+                              << "); the archive keeps its copy" << std::endl;
+                    skipped_count++;
+                    continue;
+                }
             }
 
             // Copy file to archive
@@ -1021,6 +1034,49 @@ std::optional<std::vector<std::string>> BurstCollectorService::captureCardResidu
 
 // ── SDD-054 helpers ──────────────────────────────────────────────────────────
 
+/*static*/ bool BurstCollectorService::wholeFileIsShort(const std::string& path, int listed_kb) {
+    if (listed_kb <= 0) return false;   // nothing listed to hold it to
+    std::error_code ec;
+    const auto bytes = std::filesystem::file_size(path, ec);
+    if (ec) return true;
+    // The listing is KB-rounded, so a file a full KB under it did not arrive.
+    return bytes + 1024 < static_cast<uintmax_t>(listed_kb) * 1024;
+}
+
+bool BurstCollectorService::fetchWholeFile(const std::string& folder, const std::string& name,
+                                           const std::string& local_path, int listed_kb) {
+    // A whole-file transfer that the link cut short used to come back as a
+    // success: the short file replaced the copy we held and then the archive's
+    // (a PLD stopped at 8192 bytes of 29916 on the 2026-10-17 night). It lands
+    // beside the copy first, and replaces it only when it holds what the
+    // listing shows.
+    const std::string part = local_path + ".part";
+    std::error_code ec;
+    if (!data_source_->downloadFile(folder, name, part)) {
+        std::filesystem::remove(part, ec);
+        return false;
+    }
+    if (wholeFileIsShort(part, listed_kb)) {
+        const auto got = std::filesystem::file_size(part, ec);
+        std::cerr << "⚠️  CPAP: " << name << " arrived short (" << (ec ? 0 : got) << " bytes, listed "
+                  << listed_kb << " KB); keeping the copy we had" << std::endl;
+        std::filesystem::remove(part, ec);
+        return false;
+    }
+    std::filesystem::rename(part, local_path, ec);
+    if (ec) {
+        std::cerr << "⚠️  CPAP: could not move " << part << " into place: " << ec.message() << std::endl;
+        std::filesystem::remove(part, ec);
+        return false;
+    }
+    return true;
+}
+
+/*static*/ std::string BurstCollectorService::workingDir() {
+    return ConfigManager::get(
+        "CPAP_TEMP_DIR", (std::filesystem::path(hms_cpap::AppConfig::dataDir()) / "work").string());
+}
+
 long long BurstCollectorService::nowSeconds() const {
     if (now_for_test_) return now_for_test_();
     return std::chrono::duration_cast<std::chrono::seconds>(
@@ -1168,8 +1224,7 @@ bool BurstCollectorService::processSTRFile() {
                           << std::endl;
                 return false;
             }
-            std::string local_base = ConfigManager::get("CPAP_TEMP_DIR",
-                (std::filesystem::temp_directory_path() / "cpap_data").string());
+            std::string local_base = workingDir();
             std::filesystem::create_directories(local_base);
             str_local_path = local_base + "/STR.edf";
             // Try both cases (ResMed uses STR.edf on newer firmware)
@@ -2330,8 +2385,7 @@ bool BurstCollectorService::executeBurstCycle() {
             // Second pass: an edf_done folder's remaining files, from its
             // stored listing, a few folders per burst, no new listing.
             if (!in_place) {
-                const std::string temp_dir = ConfigManager::get(
-                    "CPAP_TEMP_DIR", (std::filesystem::temp_directory_path() / "cpap_data").string());
+                const std::string temp_dir = workingDir();
                 int taken = 0;
                 for (const auto& [f, st] : stored_listings_) {
                     if (!st.edf_done || st.fully_done || taken >= kSecondPassPerBurst) continue;
@@ -2379,6 +2433,12 @@ bool BurstCollectorService::executeBurstCycle() {
                 st.edf_done = edf_done;
                 st.fully_done = fully_done;
                 if (changed && db_service_) saveFolderListing(*db_service_, device_id_, f, st);
+                // The working copy outlives a restart now, so a night that is
+                // in the archive in full gives its working folder back.
+                if (fully_done && !in_place) {
+                    std::error_code rm_ec;
+                    std::filesystem::remove_all(std::filesystem::path(workingDir()) / f, rm_ec);
+                }
             }
             if (edf_now > 0 || fully_now > 0)
                 std::cout << "CPAP: folders done: " << edf_now << " with every EDF stored, "
@@ -2404,7 +2464,7 @@ bool BurstCollectorService::executeBurstCycle() {
         // not compute. Once an STR has parsed, the read stays at session close.
         if (!str_summary_ok_) processSessionSummary();
 
-        std::string local_base_dir = ConfigManager::get("CPAP_TEMP_DIR", (std::filesystem::temp_directory_path() / "cpap_data").string());
+        std::string local_base_dir = workingDir();
 
         // SDD-040 D1: a source whose files are ALREADY where the archive would
         // put them is read where it lies. The staging directory IS its DATALOG,
