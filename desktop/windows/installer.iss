@@ -30,6 +30,9 @@ AppSupportURL=https://github.com/hms-homelab/hms-cpap
 DefaultDirName={localappdata}\Programs\HMS-CPAP
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
+; Same AppId as CpapDash Desktop, so Inno would reuse the Start menu folder it
+; recorded then ("CpapDash Desktop") and put the new shortcuts back into it.
+UsePreviousGroup=no
 ; No elevation: everything this installs lives under the user's own profile.
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
