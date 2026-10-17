@@ -495,6 +495,9 @@ jobs:
           if ($p.ExitCode -ne 0) { throw "the old installer exited $($p.ExitCode)" }
           $app = "$env:LOCALAPPDATA\Programs\HMS-CPAP"
           if (-not (Test-Path "$app\CpapDashDesktop.exe")) { throw 'the old release did not install CpapDashDesktop.exe' }
+          # A fresh runner profile has no Run key at all.
+          $run = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
+          if (-not (Test-Path $run)) { New-Item $run | Out-Null }
           New-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Force `
             -Name CpapDashDesktop -Value "`"$app\CpapDashDesktop.exe`"" | Out-Null
           Write-Host '  ok CpapDash Desktop 5.5.4 installed, Run entry on the old exe'
