@@ -2,6 +2,9 @@
 #
 # SDD-045 D6: fail on NEW dead-code candidates, never on what is already known.
 #
+# A MANUAL tool, run by hand when a dead-code sweep is wanted. It is not part of
+# CI (taken out of the release pipeline on 2026-10-17).
+#
 # The gate deliberately does NOT try to decide what is dead. cppcheck
 # --enable=unusedFunction produced 111 hits on this repo and 8 of them were
 # real, because it cannot see a caller it did not parse: not the gtest files
