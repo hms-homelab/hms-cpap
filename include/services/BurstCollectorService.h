@@ -667,6 +667,19 @@ private:
     bool sync_now_taken_ = false;
     /// D7: the no-DATALOG notice is printed once per index.
     bool no_datalog_logged_ = false;
+    /// D5: "folder/stem" of every file fetched on this burst; a .crc of the
+    /// same stem waits for a later burst. Cleared when a burst starts.
+    std::set<std::string> fetched_this_burst_;
+    /// D5: a residue .crc left for the next burst, fetched then from the
+    /// listing that found it, without listing its directory again.
+    struct PendingResidue {
+        std::string card_path;    ///< backslash path on the card
+        std::string local_path;   ///< where it lands in the archive
+        std::time_t card_stamp{0};
+    };
+    std::vector<PendingResidue> pending_residue_;
+    /// D5: fetch the .crc files the last residue walk left for this burst.
+    void fetchPendingResidue();
 
     /// Mark every recent folder (and the newest stored nights) for one listing.
     void markRecentForRelist(long long now, long long offset,

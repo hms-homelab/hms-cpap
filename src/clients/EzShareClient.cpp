@@ -472,11 +472,22 @@ bool EzShareClient::downloadFileRange(const std::string& date_folder,
 
 std::string EzShareClient::encodeCardPath(const std::string& path) {
     // ez Share requires backslash separators URL-encoded as %5C; forward slashes 404.
+    // Everything outside the URL's unreserved set is percent-encoded too: a card
+    // can hold "System Volume Information " (spaces, one trailing), and a raw
+    // space is a malformed URL that curl refuses before anything is sent.
+    static const char* kHex = "0123456789ABCDEF";
     std::string out;
     out.reserve(path.size() + 8);
     for (char c : path) {
-        if (c == '\\') out += "%5C";
-        else out += c;
+        const unsigned char u = static_cast<unsigned char>(c);
+        if ((u >= 'A' && u <= 'Z') || (u >= 'a' && u <= 'z') || (u >= '0' && u <= '9') ||
+            u == '-' || u == '_' || u == '.' || u == '~') {
+            out += c;
+        } else {
+            out += '%';
+            out += kHex[u >> 4];
+            out += kHex[u & 0x0F];
+        }
     }
     return out;
 }

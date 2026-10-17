@@ -625,6 +625,7 @@ bool BurstCollectorService::downloadSessionFiles(
 
             if (data_source_->downloadFile(session.date_folder, name, local_path)) {
                 stampLocalCopy(card_stamp, local_path);
+                fetched_this_burst_.insert(session.date_folder + "/" + fileStem(name));
                 warnIfEmpty(local_path, name);
                 downloaded++;
                 full_downloads++;
@@ -680,6 +681,7 @@ bool BurstCollectorService::downloadSessionFiles(
             }
             if (smartDownload(filename, local_path)) {
                 stampLocalCopy(card_stamp, local_path);
+                fetched_this_burst_.insert(session.date_folder + "/" + fileStem(filename));
                 file_failures_.erase(file_key);
                 file_parked_until_.erase(file_key);
                 downloaded++;
@@ -803,13 +805,26 @@ bool BurstCollectorService::archiveSessionFiles(
             std::string filename = entry.path().filename().string();
             std::string dest_path = archive_dir + "/" + filename;
 
+            // SDD-054 D5: a .crc (or any non-EDF) is rewritten in place at the
+            // same size, so size alone kept the first copy forever. Those are
+            // compared by the card stamp too, which the temp copy carries and
+            // the archive copy now keeps. EDFs stay on size: their header is
+            // repaired in the archive below, which moves the archive's stamp.
+            const bool edf = isCpapEdf(filename);
+            std::time_t temp_mtime = 0, archive_mtime = 0;
+            long long temp_bytes = 0, archive_bytes = 0;
+            const bool temp_ok = fileStat(entry.path().string().c_str(), temp_mtime, temp_bytes);
+
             // Check if file already exists in archive
             if (std::filesystem::exists(dest_path)) {
                 // Compare sizes - only skip if identical
                 auto temp_size = std::filesystem::file_size(entry.path());
                 auto archive_size = std::filesystem::file_size(dest_path);
+                const bool same_stamp =
+                    edf || (temp_ok && fileStat(dest_path.c_str(), archive_mtime, archive_bytes) &&
+                            archive_mtime == temp_mtime);
 
-                if (temp_size == archive_size) {
+                if (temp_size == archive_size && same_stamp) {
                     skipped_count++;
                     continue;
                 }
@@ -821,6 +836,7 @@ bool BurstCollectorService::archiveSessionFiles(
                 dest_path,
                 std::filesystem::copy_options::overwrite_existing
             );
+            if (!edf && temp_ok && temp_mtime > 0) setFileMtime(dest_path.c_str(), temp_mtime);
 
             auto file_size = std::filesystem::file_size(dest_path);
             total_bytes += file_size;
@@ -858,6 +874,10 @@ void BurstCollectorService::downloadDatalogResidue(const std::string& date_folde
                                                    const std::vector<EzShareFileEntry>& files) {
     // SDD-054: the burst's own listing of the folder, never a second one.
     int captured = 0;
+    std::set<std::string> fetched_stems;   // D5: this folder's files fetched on this burst
+    const std::string prefix = date_folder + "/";
+    for (const auto& k : fetched_this_burst_)
+        if (k.rfind(prefix, 0) == 0) fetched_stems.insert(k.substr(prefix.size()));
     for (const auto& f : files) {
         if (f.is_dir) continue;
         if (isCpapEdf(f.name)) continue;  // analytical — already pulled by downloadSessionFiles()
@@ -871,6 +891,9 @@ void BurstCollectorService::downloadDatalogResidue(const std::string& date_folde
         const std::time_t card_stamp = static_cast<std::time_t>(machine_clock::stampOf(f));
         if (fileDoneOnRecord(date_folder, f.name)) continue;   // D9: already archived
         if (holdCurrentCopy(card_stamp, local_path)) continue;
+        // D5: its EDF was fetched on this burst, so it is still being written;
+        // the .crc is taken on a burst where the EDF stood still (the close).
+        if (crcWaitsForNextBurst(f.name, fetched_stems)) continue;
         if (data_source_->downloadFile(date_folder, f.name, local_path)) {
             stampLocalCopy(card_stamp, local_path);
             captured++;
@@ -912,6 +935,7 @@ std::optional<std::vector<std::string>> BurstCollectorService::captureCardResidu
                 if (!e.is_dir) start_names->push_back(e.name);
         }
 
+        std::vector<PendingResidue> wanted;   // this directory's new or changed files
         for (const auto& e : entries) {
             if (e.name == "." || e.name == "..") continue;
             const std::string rel = dir.empty() ? e.name : (dir + "\\" + e.name);
@@ -919,6 +943,9 @@ std::optional<std::vector<std::string>> BurstCollectorService::captureCardResidu
             if (e.is_dir) {
                 if (!e.name.empty() && e.name[0] == '.') continue;     // .Spotlight-V100, .fseventsd
                 if (dir.empty() && e.name == "DATALOG") continue;      // analytical walk owns DATALOG
+                // SDD-054 D5: SETTINGS has its own pass and reasons; the whole
+                // card's walk listing it as well listed it twice after a fault.
+                if (dir.empty() && start_dir.empty() && e.name == "SETTINGS") continue;
                 queue.push_back(rel);
                 continue;
             }
@@ -934,22 +961,52 @@ std::optional<std::vector<std::string>> BurstCollectorService::captureCardResidu
             std::replace(rel_os.begin(), rel_os.end(), '\\', '/');
             std::filesystem::path local_path = std::filesystem::path(archive_root) / rel_os;
 
-            // Already archived at this listed size -> skip. Without this the
-            // sweep re-downloaded every SETTINGS/Identification/Journal file on
-            // every session-bearing burst (40+ ezShare round-trips per cycle,
-            // all night). Residue is backup, not analytical data: a same-KB
-            // rewrite (listing sizes are KB-rounded) is not worth re-fetching --
-            // the same trade the cloud API's residual ledger makes.
-            {
+            // SDD-054 D5, as a DATALOG folder: fetched when the listed size OR
+            // the card's stamp is not the one on our copy. Size alone (it used
+            // to be the only test) never saw DLL.log, Journal.dat or a .crc
+            // change: each is rewritten in place at the same size, so the
+            // archive kept its first copy for months. The stamp is recorded on
+            // the copy when it lands; with no stamp listed, size decides.
+            const auto card_stamp = static_cast<std::time_t>(machine_clock::stampOf(e));
+            if (card_stamp != 0) {
+                if (holdCurrentCopy(card_stamp, local_path.string())) continue;
+            } else {
                 std::error_code ec;
                 auto local_sz = std::filesystem::file_size(local_path, ec);
                 if (!ec && (local_sz + 1023) / 1024 ==
                                static_cast<uint64_t>(e.size_kb))
                     continue;
             }
+            wanted.push_back({rel, local_path.string(), card_stamp});
+        }
 
-            if (data_source_->downloadByPath(rel, local_path.string()))
+        // D5: the changed files first; a .crc whose file changed with it is
+        // left for the next burst, which fetches it from this listing.
+        std::set<std::string> fetched_stems;
+        auto lastPart = [](const std::string& card_path) {
+            const auto slash = card_path.rfind('\\');
+            return slash == std::string::npos ? card_path : card_path.substr(slash + 1);
+        };
+        for (const auto& w : wanted) {
+            const std::string name = lastPart(w.card_path);
+            if (isCrcFile(name)) continue;   // every .crc, below
+            if (data_source_->downloadByPath(w.card_path, w.local_path)) {
+                stampLocalCopy(w.card_stamp, w.local_path);
+                fetched_stems.insert(fileStem(name));
                 captured++;
+            }
+        }
+        for (const auto& w : wanted) {
+            const std::string name = lastPart(w.card_path);
+            if (!isCrcFile(name)) continue;
+            if (crcWaitsForNextBurst(name, fetched_stems)) {
+                pending_residue_.push_back(w);
+                continue;
+            }
+            if (data_source_->downloadByPath(w.card_path, w.local_path)) {
+                stampLocalCopy(w.card_stamp, w.local_path);
+                captured++;
+            }
         }
     }
 
@@ -995,6 +1052,25 @@ bool BurstCollectorService::fileDoneOnRecord(const std::string& folder,
                                              const std::string& name) const {
     const auto it = stored_listings_.find(folder);
     return it != stored_listings_.end() && it->second.done_files.count(name) > 0;
+}
+
+void BurstCollectorService::fetchPendingResidue() {
+    std::vector<PendingResidue> due;
+    due.swap(pending_residue_);
+    int captured = 0;
+    for (const auto& p : due) {
+        // Fetched by an earlier pass in the meantime (the same stamp is on it).
+        if (holdCurrentCopy(p.card_stamp, p.local_path)) continue;
+        if (data_source_->downloadByPath(p.card_path, p.local_path)) {
+            stampLocalCopy(p.card_stamp, p.local_path);
+            captured++;
+        }
+        // A failure is not queued again: the next listing that is due finds the
+        // stamp still different and asks for it then.
+    }
+    if (captured > 0)
+        std::cout << "📎 Residue: captured " << captured << " .crc file(s) left from the last burst"
+                  << std::endl;
 }
 
 void BurstCollectorService::captureSettings(const std::string& archive_root, long long now) {
@@ -1505,6 +1581,7 @@ bool BurstCollectorService::executeBurstCycle() {
     std::cout << "\n" << std::string(60, '=') << std::endl;
     std::cout << "🔄 CPAP: Starting burst cycle..." << std::endl;
     std::cout << std::string(60, '=') << std::endl;
+    fetched_this_burst_.clear();   // SDD-054 D5
 
     // ── O2 Ring State Machine ──────────────────────────────────────────
     //
@@ -2179,6 +2256,10 @@ bool BurstCollectorService::executeBurstCycle() {
             }
         }
 
+        // D5: the .crc files the last residue walk left for this burst, before
+        // this burst's walks can leave new ones.
+        if (!in_place && !pending_residue_.empty()) fetchPendingResidue();
+
         // D1: the whole card's residue (root, Identification, JOURNAL, ...)
         // with the index, not after every burst that downloaded.
         if (index_listed && !in_place) {
@@ -2234,6 +2315,15 @@ bool BurstCollectorService::executeBurstCycle() {
             const auto bytes = std::filesystem::file_size(p, ec);
             if (ec || bytes == 0) return false;
             if (bytes + 1023 < static_cast<uintmax_t>(f.size_kb) * 1024) return false;
+            if (!edf) {
+                // D5: a .crc keeps its size when rewritten; done only when the
+                // archive copy carries the stamp this listing shows.
+                const auto stamp = static_cast<std::time_t>(machine_clock::stampOf(f));
+                std::time_t mtime = 0;
+                long long size = 0;
+                if (stamp != 0 && (!fileStat(p.string().c_str(), mtime, size) || mtime != stamp))
+                    return false;
+            }
             return !(edf && partialCopyIsDamaged(p.string(), bytes, f.size_kb));
         };
         auto finishPasses = [&]() {

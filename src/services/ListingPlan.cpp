@@ -171,4 +171,22 @@ bool settingsListingHasLogs(const std::vector<std::string>& names) {
     return false;
 }
 
+std::string fileStem(const std::string& name) {
+    const auto dot = name.rfind('.');
+    return dot == std::string::npos ? name : name.substr(0, dot);
+}
+
+bool isCrcFile(const std::string& name) {
+    const auto dot = name.rfind('.');
+    if (dot == std::string::npos) return false;
+    std::string ext = name.substr(dot + 1);
+    std::transform(ext.begin(), ext.end(), ext.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return ext == "crc";
+}
+
+bool crcWaitsForNextBurst(const std::string& name, const std::set<std::string>& fetched_stems) {
+    return isCrcFile(name) && fetched_stems.count(fileStem(name)) > 0;
+}
+
 }  // namespace hms_cpap

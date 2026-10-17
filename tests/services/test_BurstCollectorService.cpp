@@ -2857,23 +2857,43 @@ TEST_F(BurstOrchestrationTest, Residue_DatalogCrc_CapturedIntoArchive) {
 
     namespace fs = std::filesystem;
     auto datalog = archive_dir / "DATALOG" / "20200101";
-    // The .crc residue rode the download into the OSCAR archive...
-    EXPECT_TRUE(fs::exists(datalog / "20200101_220000_BRP.crc"));
-    EXPECT_TRUE(fs::exists(datalog / "20200101_220000_PLD.crc"));
-    // ...alongside the EDFs...
+    // The EDFs landed in the OSCAR archive...
     EXPECT_TRUE(fs::exists(datalog / "20200101_220000_BRP.edf"));
-    // ...but junk and oversize non-EDF were dropped.
+    // ...their .crc did not on the same burst: SDD-054 D5 leaves a .crc whose
+    // EDF was fetched on this burst for one where the EDF stood still...
+    EXPECT_FALSE(fs::exists(datalog / "20200101_220000_BRP.crc"));
+    EXPECT_FALSE(fs::exists(datalog / "20200101_220000_PLD.crc"));
+    // ...and junk and oversize non-EDF were dropped.
     EXPECT_FALSE(fs::exists(datalog / "vacation.jpg"));
     EXPECT_FALSE(fs::exists(datalog / "huge.bin"));
 
-    // The .crc were fetched via downloadFile; the EDFs too. Junk never fetched.
     auto fetched = [&](const std::string& n) {
         return std::find(src_raw->downloaded_files.begin(),
                          src_raw->downloaded_files.end(), n) != src_raw->downloaded_files.end();
     };
-    EXPECT_TRUE(fetched("20200101_220000_BRP.crc"));
+    EXPECT_FALSE(fetched("20200101_220000_BRP.crc"));
     EXPECT_FALSE(fetched("vacation.jpg"));
     EXPECT_FALSE(fetched("huge.bin"));
+}
+
+// SDD-054 D5: a .crc whose EDF did not move on this burst is taken on it.
+TEST_F(BurstOrchestrationTest, Residue_DatalogCrc_TakenWhenItsEdfStoodStill) {
+    auto svc = makeService([](FakeDataSource& ds) {
+        seedSessionWithResidue(ds);
+        // A third .crc with no EDF fetched beside it on this burst.
+        ds.folder_files["20200101"].push_back(mkEntry("20200101_215000_SAD.crc", 1));
+    });
+    expectFreshDownload(*db_raw);
+    EXPECT_CALL(*db_raw, updateCheckpointFileSizesMock(_, _)).Times(AtLeast(1));
+
+    svc->runBurstCycleForTest();
+
+    auto fetched = [&](const std::string& n) {
+        return std::find(src_raw->downloaded_files.begin(),
+                         src_raw->downloaded_files.end(), n) != src_raw->downloaded_files.end();
+    };
+    EXPECT_TRUE(fetched("20200101_215000_SAD.crc"));
+    EXPECT_FALSE(fetched("20200101_220000_BRP.crc"));
 }
 
 TEST_F(BurstOrchestrationTest, Residue_CardRootSweep_RecursesAndSkips) {
@@ -2902,8 +2922,11 @@ TEST_F(BurstOrchestrationTest, Residue_CardRootSweep_RecursesAndSkips) {
     svc->runBurstCycleForTest();
 
     namespace fs = std::filesystem;
-    // Root metadata captured straight into the OSCAR archive root.
+    // Root metadata captured straight into the OSCAR archive root; the .crc
+    // of a file fetched on this burst comes on the next one (SDD-054 D5).
     EXPECT_TRUE(fs::exists(archive_dir / "Identification.tgt"));
+    EXPECT_FALSE(fs::exists(archive_dir / "Identification.crc"));
+    svc->runBurstCycleForTest();
     EXPECT_TRUE(fs::exists(archive_dir / "Identification.crc"));
     // SETTINGS recursed into and its files captured under the mirrored subdir.
     EXPECT_TRUE(fs::exists(archive_dir / "SETTINGS" / "AGL.tgt"));
@@ -4112,6 +4135,122 @@ TEST_F(BurstOrchestrationTest, Sdd054_SettingsIsListedAtStartAndThenOnItsPace) {
     now += 31 * kSdd054Min;
     svc->runBurstCycleForTest();
     EXPECT_EQ(src_raw->dir_lists["SETTINGS"], 2);
+}
+
+// SDD-054 D5: DLL.log is a fixed-size ring. Size alone never saw it change, so
+// the archive kept its first copy for months (found on the 2026-10-16 night).
+TEST_F(BurstOrchestrationTest, Sdd054_SettingsFetchesALogRewrittenAtTheSameSize) {
+    long long now = kSdd054T0;
+    auto svc = makeService([](FakeDataSource& ds) {
+        ds.date_folders = {"20261013"};
+        ds.dir_listings["SETTINGS"] = {mkStampedEntry("DLL.log", 4, 2026, 10, 15, 2, 0, 0)};
+    });
+    onSdd054Clock(*svc, now);
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    auto pulls = [&] {
+        return std::count(src_raw->downloaded_by_path.begin(), src_raw->downloaded_by_path.end(),
+                          std::string("SETTINGS\\DLL.log"));
+    };
+
+    svc->runBurstCycleForTest();
+    EXPECT_EQ(pulls(), 1) << "new on the card: fetched";
+
+    now += 61 * kSdd054Min;
+    svc->runBurstCycleForTest();
+    EXPECT_EQ(src_raw->dir_lists["SETTINGS"], 2);
+    EXPECT_EQ(pulls(), 1) << "same size, same stamp: the copy is current";
+
+    src_raw->dir_listings["SETTINGS"] = {mkStampedEntry("DLL.log", 4, 2026, 10, 15, 3, 30, 0)};
+    now += 61 * kSdd054Min;
+    svc->runBurstCycleForTest();
+    EXPECT_EQ(pulls(), 2) << "same size, new stamp: rewritten in place, fetched";
+}
+
+// SDD-054 D5: a .crc that changed with its file is taken on the next burst,
+// from the listing that found it, without listing SETTINGS again.
+TEST_F(BurstOrchestrationTest, Sdd054_SettingsCrcIsTakenOnTheNextBurstWithoutListingAgain) {
+    long long now = kSdd054T0;
+    auto svc = makeService([](FakeDataSource& ds) {
+        ds.date_folders = {"20261013"};
+        ds.dir_listings["SETTINGS"] = {
+            mkStampedEntry("AGL.tgt", 1, 2026, 10, 15, 2, 0, 0),
+            mkStampedEntry("AGL.crc", 1, 2026, 10, 15, 2, 0, 0),
+            mkStampedEntry("BGL.crc", 1, 2026, 10, 15, 1, 0, 0),
+        };
+    });
+    onSdd054Clock(*svc, now);
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    auto pulled = [&](const std::string& rel) {
+        return std::count(src_raw->downloaded_by_path.begin(), src_raw->downloaded_by_path.end(),
+                          rel);
+    };
+
+    svc->runBurstCycleForTest();
+    EXPECT_EQ(pulled("SETTINGS\\AGL.tgt"), 1);
+    EXPECT_EQ(pulled("SETTINGS\\AGL.crc"), 0) << "its file was fetched on this burst";
+    EXPECT_EQ(pulled("SETTINGS\\BGL.crc"), 1) << "no file of its stem changed: taken now";
+
+    now += kSdd054Min;
+    svc->runBurstCycleForTest();
+    EXPECT_EQ(pulled("SETTINGS\\AGL.crc"), 1) << "taken on the next burst";
+    EXPECT_EQ(src_raw->dir_lists["SETTINGS"], 1) << "from the first listing, not a new one";
+
+    now += kSdd054Min;
+    svc->runBurstCycleForTest();
+    EXPECT_EQ(pulled("SETTINGS\\AGL.crc"), 1) << "and only once";
+}
+
+// SDD-054 D5: the whole card's walk leaves SETTINGS to its own pass; both
+// listing it listed it twice after every fault.
+TEST_F(BurstOrchestrationTest, Sdd054_TheCardWalkLeavesSettingsToItsOwnPass) {
+    long long now = kSdd054T0;
+    auto svc = makeService([](FakeDataSource& ds) {
+        ds.date_folders = {"20261013"};
+        ds.dir_listings[""] = {
+            mkEntry("Identification.tgt", 1),
+            mkEntry("SETTINGS", 0, /*is_dir=*/true),
+            mkEntry("System Volume Information ", 0, /*is_dir=*/true),
+        };
+        ds.dir_listings["SETTINGS"] = {mkStampedEntry("DLL.log", 4, 2026, 10, 15, 2, 0, 0)};
+    });
+    onSdd054Clock(*svc, now);
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+
+    svc->runBurstCycleForTest();
+    EXPECT_EQ(src_raw->dir_lists[""], 1) << "the index's walk ran";
+    EXPECT_EQ(src_raw->dir_lists["SETTINGS"], 1) << "once, by its own pass";
+    EXPECT_EQ(src_raw->dir_lists["System Volume Information "], 1)
+        << "a directory with spaces is walked like any other";
+    EXPECT_EQ(std::count(src_raw->downloaded_by_path.begin(), src_raw->downloaded_by_path.end(),
+                         std::string("SETTINGS\\DLL.log")),
+              1);
+}
+
+// SDD-054 D5: a .crc rewritten at the same size reaches the archive, which keeps
+// the card's stamp; an EDF still compares on size (its header is repaired there).
+TEST_F(BurstOrchestrationTest, Sdd054_ArchiveTakesACrcRewrittenAtTheSameSize) {
+    namespace fs = std::filesystem;
+    auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
+    const auto tmp = temp_dir / "20261016";
+    const auto arc = archive_dir / "DATALOG" / "20261016";
+    fs::create_directories(tmp);
+    fs::create_directories(arc);
+    auto write = [](const fs::path& p, const std::string& s) { std::ofstream(p) << s; };
+
+    write(tmp / "20261016_235259_BRP.crc", "NEWCRC01");
+    write(arc / "20261016_235259_BRP.crc", "OLDCRC01");
+    const std::time_t card = cardStampOf(2026, 10, 17, 0, 5, 58);
+    ASSERT_TRUE(setFileMtime((tmp / "20261016_235259_BRP.crc").string().c_str(), card));
+
+    ASSERT_TRUE(svc->archiveSessionFilesForTest("20261016", temp_dir.string(), archive_dir.string()));
+
+    std::ifstream in(arc / "20261016_235259_BRP.crc");
+    std::string got((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    EXPECT_EQ(got, "NEWCRC01");
+    std::time_t mtime = 0;
+    long long size = 0;
+    ASSERT_TRUE(fileStat((arc / "20261016_235259_BRP.crc").string().c_str(), mtime, size));
+    EXPECT_EQ(mtime, card) << "the archive copy keeps the card's stamp";
 }
 
 }  // namespace burst_orch

@@ -213,3 +213,19 @@ TEST(ListingPlanSettings, AnAirSense11CardIsListedOnlyOnReasons) {
     EXPECT_FALSE(settingsListingHasLogs({"CurrentSettings.json", "CurrentSettings.crc"}));
     EXPECT_TRUE(settingsListingHasLogs({"CurrentSettings.json", "DLL.log"}));
 }
+
+TEST(ListingPlanSettings, ACrcWaitsWhenItsFileWasFetchedOnTheSameBurst) {
+    EXPECT_EQ(fileStem("DLL.log"), "DLL");
+    EXPECT_EQ(fileStem("20261016_235259_BRP.crc"), "20261016_235259_BRP");
+    EXPECT_EQ(fileStem("Journal"), "Journal");
+    EXPECT_TRUE(isCrcFile("AGL.crc"));
+    EXPECT_TRUE(isCrcFile("Identification.CRC"));
+    EXPECT_FALSE(isCrcFile("AGL.tgt"));
+    EXPECT_FALSE(isCrcFile("crc"));
+
+    const std::set<std::string> fetched = {"AGL", "20261016_235259_BRP"};
+    EXPECT_TRUE(crcWaitsForNextBurst("AGL.crc", fetched));
+    EXPECT_TRUE(crcWaitsForNextBurst("20261016_235259_BRP.crc", fetched));
+    EXPECT_FALSE(crcWaitsForNextBurst("BGL.crc", fetched)) << "its file did not change";
+    EXPECT_FALSE(crcWaitsForNextBurst("AGL.tgt", fetched)) << "not a checksum";
+}

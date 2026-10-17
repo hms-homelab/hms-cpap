@@ -154,4 +154,17 @@ std::string cardHealth(bool answering, long long last_answered, long long now,
 /// anything else (the AirSense 10's logs) means the card keeps logs there.
 bool settingsListingHasLogs(const std::vector<std::string>& names);
 
+/// SDD-054 D5: the name without its last extension ("DLL.log" -> "DLL",
+/// "20261016_235259_BRP.crc" -> "20261016_235259_BRP").
+std::string fileStem(const std::string& name);
+
+/// SDD-054 D5: a checksum file, ".crc" in any case.
+bool isCrcFile(const std::string& name);
+
+/// SDD-054 D5: a .crc (any case) is left for the next burst when the file it
+/// belongs to, same stem, is fetched on this one: the machine rewrites both
+/// together, so asking for the checksum in the same burst only chases a file
+/// that is still moving. [fetched_stems] holds the stems fetched this burst.
+bool crcWaitsForNextBurst(const std::string& name, const std::set<std::string>& fetched_stems);
+
 }  // namespace hms_cpap

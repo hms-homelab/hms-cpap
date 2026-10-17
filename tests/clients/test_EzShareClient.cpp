@@ -1140,6 +1140,19 @@ TEST_F(EzShareClientTest, RangePartialContentStillAppends) {
     EXPECT_EQ(readFile(path), std::string(100, 'A') + std::string(50, 'B'));
 }
 
+// SDD-054 D5: a card can hold "System Volume Information " (spaces, one
+// trailing). A raw space made a malformed URL that curl refused on every walk.
+TEST(EzShareCardPath, EverythingOutsideTheUnreservedSetIsPercentEncoded) {
+    EXPECT_EQ(EzShareClient::encodeCardPath("SETTINGS\\DLL.log"), "SETTINGS%5CDLL.log");
+    EXPECT_EQ(EzShareClient::encodeCardPath("System Volume Information "),
+              "System%20Volume%20Information%20");
+    EXPECT_EQ(EzShareClient::encodeCardPath("System Volume Information \\IndexerVolumeGuid"),
+              "System%20Volume%20Information%20%5CIndexerVolumeGuid");
+    EXPECT_EQ(EzShareClient::encodeCardPath("a#b&c+d%e"), "a%23b%26c%2Bd%25e");
+    EXPECT_EQ(EzShareClient::encodeCardPath("Identification.tgt"), "Identification.tgt");
+    EXPECT_EQ(EzShareClient::encodeCardPath(""), "");
+}
+
 // Run all tests
 int main(int argc, char** argv) {
     testing::InitGoogleTest(&argc, argv);

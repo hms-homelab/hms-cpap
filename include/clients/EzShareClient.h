@@ -149,7 +149,9 @@ private:
     /** Fetch HTML from a URL */
     std::string httpGet(const std::string& url);
 
-    /** Encode a backslash-separated card path for ez Share URLs (\ -> %5C). */
+public:
+    /** Encode a backslash-separated card path for ez Share URLs: \ -> %5C and
+     *  everything outside the URL's unreserved set percent-encoded (SDD-054 D5). */
     static std::string encodeCardPath(const std::string& path);
 };
 
