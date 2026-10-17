@@ -801,7 +801,7 @@ void CpapController::autostartState(const drogon::HttpRequestPtr&,
             "To survive a reboot, make sure the container uses "
             "restart: unless-stopped and that Docker itself starts at boot.";
     } else if (owner == SetupService::AutostartOwner::DesktopShell) {
-        result["message"] = "Managed by CpapDash Desktop.";
+        result["message"] = "Managed by HmsCpap Installer.";
     }
     result["supported"] = entry.error.empty();
     result["error"] = entry.error;
@@ -831,7 +831,7 @@ void CpapController::setupAutostart(const drogon::HttpRequestPtr& req,
         // would silently look like it worked.
         cb(jsonError(owner == SetupService::AutostartOwner::Container
                          ? "Docker manages this service; use a restart policy instead"
-                         : "Autostart is managed by CpapDash Desktop",
+                         : "Autostart is managed by HmsCpap Installer",
                      drogon::k409Conflict));
         return;
     }
@@ -894,8 +894,7 @@ void CpapController::setupAutostart(const drogon::HttpRequestPtr& req,
     // Registry work is left to the installer rather than hand-rolled here; the
     // zip user on Windows is told what to do instead of being lied to.
     result["ok"] = false;
-    result["message"] = "On Windows, use the CpapDash Desktop installer to start "
-                        "at login.";
+    result["message"] = "On Windows, use HmsCpap Installer to start at login.";
     cb(drogon::HttpResponse::newHttpJsonResponse(result));
     return;
 #else

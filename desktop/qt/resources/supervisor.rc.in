@@ -31,11 +31,11 @@ BEGIN
         BLOCK "040904b0"    // US English, Unicode
         BEGIN
             VALUE "CompanyName",      "HMS"
-            VALUE "FileDescription",  "CpapDash Desktop"
+            VALUE "FileDescription",  "HmsCpap Installer"
             VALUE "FileVersion",      "@HMS_CPAP_VERSION@"
-            VALUE "InternalName",     "CpapDashDesktop"
-            VALUE "OriginalFilename", "CpapDashDesktop.exe"
-            VALUE "ProductName",      "CpapDash"
+            VALUE "InternalName",     "HmsCpapInstaller"
+            VALUE "OriginalFilename", "HmsCpapInstaller.exe"
+            VALUE "ProductName",      "HmsCpap"
             VALUE "ProductVersion",   "@HMS_CPAP_VERSION@"
         END
     END

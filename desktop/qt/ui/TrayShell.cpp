@@ -65,7 +65,7 @@ QIcon stateIcon(const char* state) {
             mono.setIsMask(true);
             return mono;
         }
-        qWarning("CpapDash: the macOS template icons are missing from the "
+        qWarning("HmsCpap: the macOS template icons are missing from the "
                  "resource bundle; falling back to the colour set");
     }
 #endif
@@ -73,7 +73,7 @@ QIcon stateIcon(const char* state) {
     icon.addFile(QStringLiteral(":/icons/tray-%1@2x.png").arg(state));
     if (!icon.isNull()) return icon;
 
-    qWarning("CpapDash: no tray icons in the resource bundle at all");
+    qWarning("HmsCpap: no tray icons in the resource bundle at all");
     return QApplication::style()->standardIcon(QStyle::SP_ComputerIcon);
 }
 
@@ -86,7 +86,7 @@ TrayShell::TrayShell(ChildProcess* child, QString service_exe, QObject* parent)
     tray_ = std::make_unique<QSystemTrayIcon>(this);
     buildMenu();
     tray_->setContextMenu(menu_.get());
-    tray_->setToolTip("CpapDash");
+    tray_->setToolTip("HmsCpap");
     applyIcon();
     tray_->show();
 
@@ -112,8 +112,8 @@ TrayShell::TrayShell(ChildProcess* child, QString service_exe, QObject* parent)
 void TrayShell::announcePresence() {
     // There is no window to raise -- this lives in the status area -- so the
     // honest answer is to point at where it already is.
-    tray_->showMessage("CpapDash is already running",
-                       "Look for the CpapDash icon in the menu bar.",
+    tray_->showMessage("HmsCpap is already running",
+                       "Look for the HmsCpap icon in the menu bar.",
                        QSystemTrayIcon::Information, 4000);
 }
 
@@ -124,7 +124,7 @@ bool TrayShell::available() const {
 void TrayShell::buildMenu() {
     menu_ = std::make_unique<QMenu>();
 
-    auto* header = menu_->addAction("CpapDash");
+    auto* header = menu_->addAction("HmsCpap");
     header->setEnabled(false);
 
     menu_->addSeparator();
@@ -190,10 +190,10 @@ void TrayShell::buildMenu() {
             if (!autostart::setEnabled(on, &err)) {
                 // Put the tick back: it must show what IS, not what was asked
                 // for. A checkbox that stays ticked after a failed write is a
-                // user believing CpapDash starts at login when it does not.
+                // user believing HmsCpap starts at login when it does not.
                 QSignalBlocker block(autostart_action_);
                 autostart_action_->setChecked(!on);
-                QMessageBox::warning(nullptr, "CpapDash",
+                QMessageBox::warning(nullptr, "HmsCpap",
                     err.isEmpty() ? QStringLiteral("Could not change your startup items.") : err);
             }
         });
@@ -235,7 +235,7 @@ void TrayShell::applyIcon() {
 
 void TrayShell::setStatusText(const QString& text) {
     if (status_action_) status_action_->setText(text);
-    tray_->setToolTip("CpapDash - " + text.mid(text.indexOf(' ') + 1));
+    tray_->setToolTip("HmsCpap - " + text.mid(text.indexOf(' ') + 1));
 }
 
 int TrayShell::configuredPort() const {
@@ -254,8 +254,8 @@ void TrayShell::onUpdateRequested() {
     // Any refusal below leaves the install exactly as it was and brings the
     // service straight back, so a bad download costs a restart, never the app.
     auto refuse = [this](const QString& why) {
-        qWarning("CpapDash: update not started: %s", qPrintable(why));
-        tray_->showMessage("CpapDash update not started", why,
+        qWarning("HmsCpap: update not started: %s", qPrintable(why));
+        tray_->showMessage("HmsCpap update not started", why,
                            QSystemTrayIcon::Warning, 8000);
         child_->start();
     };
@@ -286,7 +286,7 @@ void TrayShell::onUpdateRequested() {
     const QString app_dir = QCoreApplication::applicationDirPath();
 #ifdef Q_OS_MACOS
     const QString helper_src = QDir(app_dir).filePath("../Resources/cpapdash-update.sh");
-    const QString install = QDir(app_dir + "/../..").absolutePath();   // CpapDash.app
+    const QString install = QDir(app_dir + "/../..").absolutePath();   // HmsCpap.app
     const QString suffix = ".sh";
 #else
     const QString helper_src = QDir(app_dir).filePath("cpapdash-update.ps1");
@@ -318,8 +318,8 @@ void TrayShell::onUpdateRequested() {
     }
 
     setStatusText(QStringLiteral("Status: updating to %1").arg(QString::fromStdString(pending->version)));
-    tray_->showMessage("Updating CpapDash",
-                       QStringLiteral("Installing %1. CpapDash will be back in a moment.")
+    tray_->showMessage("Updating HmsCpap",
+                       QStringLiteral("Installing %1. HmsCpap will be back in a moment.")
                            .arg(QString::fromStdString(pending->version)),
                        QSystemTrayIcon::Information, 5000);
     // Give the message a moment on screen, then leave: the helper waits for
@@ -335,8 +335,8 @@ void TrayShell::openDashboard() {
     // Not running: the user asked for the dashboard, so offer the thing that
     // would produce one rather than refusing.
     if (!child_->isRunning()) {
-        if (QMessageBox::question(nullptr, "CpapDash",
-                "CpapDash is not running, so there is no dashboard to open.\n\n"
+        if (QMessageBox::question(nullptr, "HmsCpap",
+                "HmsCpap is not running, so there is no dashboard to open.\n\n"
                 "Start it now?",
                 QMessageBox::Yes | QMessageBox::No, QMessageBox::Yes)
             == QMessageBox::Yes) {
@@ -349,8 +349,8 @@ void TrayShell::openDashboard() {
     }
 
     if (!healthy_) {
-        tray_->showMessage("CpapDash",
-                           "CpapDash is still starting. The dashboard will be "
+        tray_->showMessage("HmsCpap",
+                           "HmsCpap is still starting. The dashboard will be "
                            "ready in a moment.",
                            QSystemTrayIcon::Information, 4000);
         open_when_ready_ = true;
@@ -358,8 +358,8 @@ void TrayShell::openDashboard() {
     }
 
     if (!ui_available_) {
-        QMessageBox::warning(nullptr, "CpapDash",
-            "CpapDash is running, but the dashboard files are missing from this "
+        QMessageBox::warning(nullptr, "HmsCpap",
+            "HmsCpap is running, but the dashboard files are missing from this "
             "installation.\n\n"
             "Reinstalling should restore them. Your therapy data is not affected.");
         return;
@@ -368,14 +368,14 @@ void TrayShell::openDashboard() {
     QDesktopServices::openUrl(QUrl(baseUrl()));
 }
 
-/// Reveal where CpapDash is actually installed.
+/// Reveal where HmsCpap is actually installed.
 ///
 /// Not the data folder -- that holds config.json and the therapy database and
 /// has its own life. This is the program itself: the place a support request
 /// asks about, and where hms_cpap sits next to the supervisor.
 void TrayShell::openInstallFolder() {
 #ifdef Q_OS_MACOS
-    // applicationDirPath() is CpapDashDesktop.app/Contents/MacOS, which is the
+    // applicationDirPath() is HmsCpapInstaller.app/Contents/MacOS, which is the
     // inside of the bundle and not somewhere a person thinks of as a folder.
     // Reveal the .app itself, the way Finder presents it.
     QDir dir(QCoreApplication::applicationDirPath());
@@ -421,7 +421,7 @@ void TrayShell::openSettings() {
                 // An unparseable config is the ONE case where writing over it
                 // would be wrong: the user hand-edited it and still wants what
                 // is in there. Say so and stop.
-                QMessageBox::critical(nullptr, "CpapDash",
+                QMessageBox::critical(nullptr, "HmsCpap",
                     "config.json could not be read, so settings cannot be shown "
                     "without overwriting it.\n\nFix the file, or use Start Over "
                     "to begin again.");
@@ -459,11 +459,11 @@ void TrayShell::saveSettings(const ConfigModel& model, bool via_api,
             const bool ok = reply->error() == QNetworkReply::NoError;
             reply->deleteLater();
             if (!ok) {
-                QMessageBox::warning(nullptr, "CpapDash", "The settings could not be saved.");
+                QMessageBox::warning(nullptr, "HmsCpap", "The settings could not be saved.");
                 return;
             }
             if (restart_reasons.empty()) {
-                tray_->showMessage("CpapDash", "Settings saved.",
+                tray_->showMessage("HmsCpap", "Settings saved.",
                                    QSystemTrayIcon::Information, 3000);
                 return;
             }
@@ -485,7 +485,7 @@ void TrayShell::saveSettings(const ConfigModel& model, bool via_api,
     if (!safe) {
         // A secret we only ever saw as a mask would be written verbatim as the
         // literal "********". Silent credential loss; refuse instead.
-        QMessageBox::critical(nullptr, "CpapDash",
+        QMessageBox::critical(nullptr, "HmsCpap",
             "These settings came from the running service and include hidden "
             "passwords, so they cannot be written to disk directly.\n\n"
             "Start the service and try again.");
@@ -495,14 +495,14 @@ void TrayShell::saveSettings(const ConfigModel& model, bool via_api,
     QDir().mkpath(dataDir());
     QFile f(dataDir() + "/config.json");
     if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        QMessageBox::critical(nullptr, "CpapDash",
+        QMessageBox::critical(nullptr, "HmsCpap",
             "Could not write to " + f.fileName());
         return;
     }
     f.write(QByteArray::fromStdString(doc.dump(2)));
     f.close();
 
-    tray_->showMessage("CpapDash", "Settings saved. Starting the service...",
+    tray_->showMessage("HmsCpap", "Settings saved. Starting the service...",
                        QSystemTrayIcon::Information, 3000);
     child_->start();
 }
@@ -536,7 +536,7 @@ void TrayShell::startOver() {
         // A second, explicit confirmation. One misclick should not be able to
         // delete a year of someone's medical record.
         if (QMessageBox::warning(nullptr, "Delete therapy history?",
-                "This permanently deletes every night CpapDash has recorded on "
+                "This permanently deletes every night HmsCpap has recorded on "
                 "this computer.\n\nThis cannot be undone. Continue?",
                 QMessageBox::Cancel | QMessageBox::Yes,
                 QMessageBox::Cancel) != QMessageBox::Yes) {
@@ -550,7 +550,7 @@ void TrayShell::startOver() {
     QFile::remove(dir + "/config.json");
 
     if (wipe_data) {
-        // Only the files CpapDash owns. Removing the whole directory would take
+        // Only the files HmsCpap owns. Removing the whole directory would take
         // anything else the user put there with it.
         for (const QString& name : {"cpap.db", "cpap.db-wal", "cpap.db-shm"})
             QFile::remove(dir + "/" + name);
@@ -593,7 +593,7 @@ void TrayShell::runWizard(bool wipe_first) {
     QDir().mkpath(dataDir());
     QFile out(dataDir() + "/config.json");
     if (!out.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        QMessageBox::critical(nullptr, "CpapDash",
+        QMessageBox::critical(nullptr, "HmsCpap",
             "Could not save your settings to " + out.fileName());
         return;
     }
@@ -617,7 +617,7 @@ void TrayShell::runWizard(bool wipe_first) {
 
 void TrayShell::syncNow() {
     if (!healthy_) {
-        tray_->showMessage("CpapDash",
+        tray_->showMessage("HmsCpap",
                            "The service is not answering yet, so there is nothing to sync.",
                            QSystemTrayIcon::Warning, 4000);
         return;
@@ -628,7 +628,7 @@ void TrayShell::syncNow() {
     connect(reply, &QNetworkReply::finished, this, [this, reply] {
         const QString body = QString::fromUtf8(reply->readAll());
         reply->deleteLater();
-        tray_->showMessage("CpapDash",
+        tray_->showMessage("HmsCpap",
                            body.contains("already") ? "A sync is already running."
                                                     : "Sync requested.",
                            QSystemTrayIcon::Information, 3000);
@@ -714,7 +714,7 @@ void TrayShell::onChildExited(int exit_code, const QString& stderr_tail) {
     // do is worse than the problem -- a decision TrayApplication.cs made
     // explicitly and worth keeping.
     const QString last = stderr_tail.section('\n', -1).trimmed();
-    tray_->showMessage("CpapDash stopped",
+    tray_->showMessage("HmsCpap stopped",
                        last.isEmpty() ? QStringLiteral("hms_cpap exited with code %1.").arg(exit_code)
                                       : last,
                        QSystemTrayIcon::Critical, 10000);

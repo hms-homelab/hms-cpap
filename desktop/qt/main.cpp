@@ -1,4 +1,4 @@
-// SDD-016: the CpapDash supervisor.
+// SDD-016: the HmsCpap supervisor.
 //
 // The supervisor decides whether hms_cpap can run, BEFORE running it, by
 // reading config.json itself. That is the reason this program exists rather
@@ -18,6 +18,7 @@
 #include <QApplication>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QIcon>
 #include <QMessageBox>
 #include <QObject>
@@ -70,7 +71,7 @@ bool writeConfig(const nlohmann::json& doc) {
 
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
-    QApplication::setApplicationName("CpapDash");
+    QApplication::setApplicationName("HmsCpap");
     QApplication::setOrganizationName("HMS");
     QApplication::setWindowIcon(QIcon(":/icons/app-256.png"));
 
@@ -91,10 +92,21 @@ int main(int argc, char** argv) {
         return 0;
     }
 
+#ifdef Q_OS_WIN
+    // The upgrade from CpapDash Desktop left a copy of this tray named
+    // CpapDashDesktop.exe, for the old self-updater to start. Running under our
+    // own name, that copy has done its job; while it is the one running, Windows
+    // keeps the file locked and this simply fails until the next start.
+    if (QFileInfo(QCoreApplication::applicationFilePath())
+            .fileName()
+            .compare("HmsCpapInstaller.exe", Qt::CaseInsensitive) == 0)
+        QFile::remove(QCoreApplication::applicationDirPath() + "/CpapDashDesktop.exe");
+#endif
+
     const QString service = ChildProcess::resolveServiceExecutable();
     if (service.isEmpty()) {
-        QMessageBox::critical(nullptr, "CpapDash",
-            "hms_cpap was not found next to CpapDash.\n\n"
+        QMessageBox::critical(nullptr, "HmsCpap",
+            "hms_cpap was not found next to HmsCpap.\n\n"
             "This usually means the installation is incomplete. Reinstalling "
             "should fix it.");
         return 1;
@@ -128,7 +140,7 @@ int main(int argc, char** argv) {
         }
 
         if (!writeConfig(wizard.model().current())) {
-            QMessageBox::critical(nullptr, "CpapDash",
+            QMessageBox::critical(nullptr, "HmsCpap",
                 "Could not save your settings to " + configPath());
             return app.exec();
         }
@@ -147,7 +159,7 @@ int main(int argc, char** argv) {
     // it. Supervising without an icon is degraded; refusing to supervise is
     // broken.
     if (!tray.available()) {
-        qWarning("CpapDash: this desktop has no system tray, so there is no "
+        qWarning("HmsCpap: this desktop has no system tray, so there is no "
                  "status icon. The service is running regardless.");
     }
 

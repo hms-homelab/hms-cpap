@@ -14,7 +14,7 @@ namespace {
 
 nlohmann::json goodMac() {
     return {{"version", "5.4.0"}, {"from", "5.3.0"},
-            {"file", "/Users/me/.hms-cpap/update/CpapDash.dmg"}, {"name", "CpapDash.dmg"},
+            {"file", "/Users/me/.hms-cpap/update/HmsCpap.dmg"}, {"name", "HmsCpap.dmg"},
             {"kind", "dmg"}, {"platform", "macos-arm64"},
             {"sha256", std::string(64, 'a')}, {"size", 47238335}};
 }
@@ -38,7 +38,7 @@ TEST(PendingUpdate, AWindowsInstallerIsAccepted) {
     auto j = goodMac();
     j["platform"] = "windows-x64";
     j["kind"] = "installer";
-    j["name"] = "CpapDashDesktop-Setup.exe";
+    j["name"] = "HmsCpapInstaller-Setup.exe";
     EXPECT_TRUE(parsePendingUpdate(j.dump(), nullptr).has_value());
 }
 
@@ -70,7 +70,7 @@ TEST(PendingUpdate, TheMacHelperGetsEverythingByFlag) {
     p.platform = "macos-arm64";
     p.helper = "/tmp/cpapdash-update-1.sh";
     p.pending = "/Users/me/.hms-cpap/update/pending.json";
-    p.install = "/Applications/CpapDash.app";
+    p.install = "/Applications/HmsCpap.app";
     p.data_dir = "/Users/me/.hms-cpap";
     p.supervisor_pid = 4242;
     p.port = 8893;
@@ -79,7 +79,7 @@ TEST(PendingUpdate, TheMacHelperGetsEverythingByFlag) {
     const std::vector<std::string> expect = {
         "/tmp/cpapdash-update-1.sh",
         "--pending", "/Users/me/.hms-cpap/update/pending.json",
-        "--app", "/Applications/CpapDash.app",
+        "--app", "/Applications/HmsCpap.app",
         "--data-dir", "/Users/me/.hms-cpap",
         "--pid", "4242",
         "--port", "8893"};

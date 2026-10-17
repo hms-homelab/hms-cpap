@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Build CpapDash.app: one bundle holding the desktop supervisor, the service,
+# Build HmsCpap.app: one bundle holding the desktop supervisor, the service,
 # the dashboard, and every library either of them needs.
 #
 # WHY THIS EXISTS
@@ -18,19 +18,19 @@
 #
 # Usage:  scripts/package-macos.sh <build-dir> [output-dir]
 #   build-dir   a configured build tree containing hms_cpap and the supervisor
-#   output-dir  where CpapDash.app is assembled (default: <build-dir>/package)
+#   output-dir  where HmsCpap.app is assembled (default: <build-dir>/package)
 set -euo pipefail
 
 BUILD_DIR="${1:?usage: package-macos.sh <build-dir> [output-dir]}"
 OUT_DIR="${2:-$BUILD_DIR/package}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-APP="$OUT_DIR/CpapDash.app"
+APP="$OUT_DIR/HmsCpap.app"
 MACOS_DIR="$APP/Contents/MacOS"
 FRAMEWORKS="$APP/Contents/Frameworks"
 RESOURCES="$APP/Contents/Resources"
 
-SUPERVISOR_SRC="$BUILD_DIR/desktop/qt/CpapDashDesktop.app"
+SUPERVISOR_SRC="$BUILD_DIR/desktop/qt/HmsCpapInstaller.app"
 SERVICE_SRC="$BUILD_DIR/hms_cpap"
 FRONTEND_SRC="$REPO_ROOT/frontend/dist/frontend/browser"
 

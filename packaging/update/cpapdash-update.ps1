@@ -1,9 +1,9 @@
-# SDD-041 D8/D9: install a verified new CpapDash over the current one, and put
+# SDD-041 D8/D9: install a verified new HmsCpap over the current one, and put
 # the old one back if the new one does not come up.
 #
 # Started by the supervisor (desktop/qt TrayShell::onUpdateRequested) from a
 # COPY in %TEMP%, because the install folder is what this replaces. By then the
-# service has downloaded CpapDashDesktop-Setup.exe and checked it against the
+# service has downloaded HmsCpapInstaller-Setup.exe and checked it against the
 # release manifest, and the supervisor has hashed it again. This script checks
 # it a third time, because it is the one that acts.
 #
@@ -45,12 +45,14 @@ function Write-Result([bool]$ok, [string]$step, [string]$message) {
 }
 
 function Start-Tray {
-    Start-Process -FilePath (Join-Path $InstallDir 'CpapDashDesktop.exe') | Out-Null
+    Start-Process -FilePath (Join-Path $InstallDir 'HmsCpapInstaller.exe') | Out-Null
 }
 
 function Stop-Ours {
     # Only processes running out of THIS install; a second copy elsewhere is not ours.
-    Get-Process CpapDashDesktop, hms_cpap -ErrorAction SilentlyContinue |
+    # CpapDashDesktop is the tray's name before 5.6.1, still running on the first
+    # update after the rename.
+    Get-Process HmsCpapInstaller, CpapDashDesktop, hms_cpap -ErrorAction SilentlyContinue |
         Where-Object { $_.Path -and $_.Path.StartsWith($InstallDir, [StringComparison]::OrdinalIgnoreCase) } |
         Stop-Process -Force -ErrorAction SilentlyContinue
 }

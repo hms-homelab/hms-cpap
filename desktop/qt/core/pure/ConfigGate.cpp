@@ -17,7 +17,7 @@ GateResult evaluateConfig(const std::optional<nlohmann::json>& config,
     if (!config.has_value() || !config->is_object()) {
         r.readiness = Readiness::NeedsSetup;
         r.reason    = SetupReason::NoConfigFile;
-        r.summary   = "Let's get CpapDash set up. This takes a minute.";
+        r.summary   = "Let's get HmsCpap set up. This takes a minute.";
         return r;
     }
 
@@ -44,9 +44,9 @@ GateResult evaluateConfig(const std::optional<nlohmann::json>& config,
         r.reason    = SetupReason::Invalid;
         r.issues    = std::move(blocking);
         r.summary   = r.issues.size() == 1
-            ? "One setting needs attention before CpapDash can start."
+            ? "One setting needs attention before HmsCpap can start."
             : std::to_string(r.issues.size()) +
-              " settings need attention before CpapDash can start.";
+              " settings need attention before HmsCpap can start.";
         return r;
     }
 

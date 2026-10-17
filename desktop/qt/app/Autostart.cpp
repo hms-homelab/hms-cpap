@@ -18,7 +18,9 @@ namespace {
 // The same key and value name the Inno installer writes, and the same the C#
 // shell used. Sharing them is what makes the installer's "Start when I log in"
 // checkbox and this menu item two views of one setting rather than two settings
-// that disagree.
+// that disagree. The value keeps its old name through the rename to HmsCpap
+// Installer: nobody sees it, and keeping it is what lets an upgrade repoint the
+// one entry a machine already has instead of leaving a second, dead one.
 constexpr const char* kRunKey =
     "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 constexpr const char* kValueName = "CpapDashDesktop";
@@ -31,7 +33,7 @@ QString agentPath() {
 
 /// The .app, not the executable inside it.
 ///
-/// applicationFilePath() points at Contents/MacOS/CpapDashDesktop. Launching
+/// applicationFilePath() points at Contents/MacOS/HmsCpapInstaller. Launching
 /// that directly works but starts a process macOS does not associate with the
 /// bundle, so it gets no icon, no menu bar identity and no bundle Info.plist --
 /// including LSUIElement, without which a Dock icon appears.
@@ -95,7 +97,7 @@ bool setEnabled(bool enabled, QString* error) {
     }
     run.sync();
     if (run.status() != QSettings::NoError)
-        return fail("Windows would not let CpapDash change your startup items.");
+        return fail("Windows would not let HmsCpap change your startup items.");
     return true;
 
 #elif defined(Q_OS_MACOS)
@@ -153,7 +155,7 @@ bool setEnabled(bool enabled, QString* error) {
     QTextStream out(&f);
     out << "[Desktop Entry]\n"
            "Type=Application\n"
-           "Name=CpapDash\n"
+           "Name=HmsCpap\n"
            "Comment=Collects and stores your CPAP therapy data\n"
            "Exec=\"" << QCoreApplication::applicationFilePath() << "\"\n"
            "Icon=cpapdash\n"

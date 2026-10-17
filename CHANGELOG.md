@@ -5,6 +5,30 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.6.1] - 2026-10-17
+
+The desktop app is now called HmsCpap Installer, so it is not confused with
+other CpapDash software.
+
+### Changed
+- **New names.** Windows: `HmsCpapInstaller-Setup.exe` installs
+  `HmsCpapInstaller.exe`, with a Start menu folder "HmsCpap Installer".
+  macOS: `HmsCpap.dmg` holds `HmsCpap.app`. The tray, settings window and
+  setup screens say HmsCpap.
+- **Upgrading keeps working.** An install of 5.6.0 or earlier updates itself
+  to 5.6.1 without any step from you:
+  - on Windows the upgrade leaves a copy under the old name for the old
+    updater to start, and the new tray deletes it on its first run; start at
+    login is moved to the new program, and the old Start menu folder and
+    desktop shortcut are removed;
+  - on macOS the disk image also carries the old app name for the old
+    updater, and the app keeps the folder it was installed in, so a Login
+    Items entry stays valid.
+
+### Fixed
+- Uninstalling on Windows now also removes a start-at-login entry that was
+  turned on from the tray rather than in the installer.
+
 ## [5.6.0] - 2026-10-17
 
 A card is listed for a reason, not on every burst, and it survives an ez Share

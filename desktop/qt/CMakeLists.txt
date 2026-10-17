@@ -40,13 +40,14 @@ find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets Network)
 
 qt_standard_project_setup()
 
-# The executable keeps the name the C# shell had. That is not nostalgia: the
-# installer's [Files]/[Icons]/[Registry]/[Run]/[UninstallRun] sections, the Run
-# key value, six assertions in the windows-desktop-test job, and the Run key on
-# every machine that already has this installed all name CpapDashDesktop.exe.
-# Renaming it for tidiness would break an upgrade for existing users and buy
-# nothing they can see.
-set(SUPERVISOR_TARGET CpapDashDesktop)
+# HmsCpapInstaller (was CpapDashDesktop until 5.6.1): "CpapDash Desktop" is the
+# name of a different, cloud app now, and two apps by one name confuse users.
+# Machines installed before keep working through the upgrade: the installer
+# deletes the old exe and its shortcuts, points the existing "CpapDashDesktop"
+# Run value (the name is kept, nobody sees it) at the new exe, and starts the
+# tray after a silent update; a Mac's new disk image carries a CpapDash.app
+# link to HmsCpap.app, which is what an old updater looks for.
+set(SUPERVISOR_TARGET HmsCpapInstaller)
 
 qt_add_executable(${SUPERVISOR_TARGET}
     WIN32 MACOSX_BUNDLE
@@ -173,7 +174,7 @@ if(APPLE)
     # document app, which is wrong for something whose whole job is to sit in
     # the status area.
     set_target_properties(${SUPERVISOR_TARGET} PROPERTIES
-        MACOSX_BUNDLE_BUNDLE_NAME        "CpapDash"
+        MACOSX_BUNDLE_BUNDLE_NAME        "HmsCpap"
         MACOSX_BUNDLE_GUI_IDENTIFIER     "com.hms.cpapdash.supervisor"
         MACOSX_BUNDLE_BUNDLE_VERSION     "${HMS_CPAP_VERSION}"
         MACOSX_BUNDLE_SHORT_VERSION_STRING "${HMS_CPAP_VERSION}"

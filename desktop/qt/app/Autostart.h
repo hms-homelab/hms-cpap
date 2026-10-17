@@ -5,7 +5,7 @@
 namespace cpapdash::supervisor::autostart {
 
 /**
- * SDD-016: start CpapDash when the user logs in.
+ * SDD-016: start HmsCpap when the user logs in.
  *
  * The OS starts the SUPERVISOR and nothing else. That is the whole point of
  * the design: what used to be three service backends -- a Run key, a
@@ -23,7 +23,7 @@ namespace cpapdash::supervisor::autostart {
  * for the same reason.
  */
 
-/// Is CpapDash set to start at login?
+/// Is HmsCpap set to start at login?
 bool isEnabled();
 
 /// Turn it on or off. Returns false and fills `error` when the platform

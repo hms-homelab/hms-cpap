@@ -81,7 +81,7 @@ automatically.
 
 ### Windows
 
-Download `CpapDashDesktop-Setup.exe` from
+Download `HmsCpapInstaller-Setup.exe` from
 [Releases](https://github.com/hms-homelab/hms-cpap/releases) and run it. No
 admin rights needed. A tray icon gives you Open Dashboard, Sync Now, and Start
 at Login.
