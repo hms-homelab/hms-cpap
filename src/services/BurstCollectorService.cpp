@@ -2070,9 +2070,24 @@ bool BurstCollectorService::executeBurstCycle() {
             // D1: the DATALOG index once per start (until one succeeds), once
             // a day at the machine's noon, and on a reason. It used to be
             // listed twice on every burst.
-            if (indexDue(index_state_, now_s, offset, night_growing)) {
-                auto folders = discovery_service_->listDateFolders();
+            // A local card root is also asked each burst whether its folders
+            // changed (indexDueLocal): that is a directory read, and it finds
+            // a night copied in after tonight's folder rolled over.
+            auto folders = std::vector<std::string>();
+            bool index_due;
+            if (local && index_state_.ok_this_run) {
+                folders = discovery_service_->listDateFolders();
                 std::sort(folders.begin(), folders.end());
+                index_due = indexDueLocal(index_state_, now_s, offset, night_growing,
+                                          card_folders_, folders);
+            } else {
+                index_due = indexDue(index_state_, now_s, offset, night_growing);
+            }
+            if (index_due) {
+                if (!local || !index_state_.ok_this_run) {
+                    folders = discovery_service_->listDateFolders();
+                    std::sort(folders.begin(), folders.end());
+                }
                 bool gone = false;
                 if (index_state_.ok_this_run)
                     for (const auto& f : card_folders_)
