@@ -5,6 +5,18 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.6.2] - 2026-10-24
+
+### Fixed
+- **A night copied into a local folder is imported again without a
+  restart** (#39, thanks @rccoleman for the diagnosis and the fix in #40).
+  Since 5.6.0 a local card root read its list of night folders only at
+  start and once a day at the machine's noon, the same plan that spares an
+  ez Share card its slow listings. A night copied in by hand after tonight's
+  folder rolled over was not looked at until the next noon or a restart. A
+  local folder now notices on the next burst when its night folders change,
+  which is a plain directory read. ez Share cards are unchanged.
+
 ## [5.6.1] - 2026-10-17
 
 The desktop app is now called HmsCpap Installer, so it is not confused with
