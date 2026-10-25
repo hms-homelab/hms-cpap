@@ -240,7 +240,11 @@ FetchContent_Declare(miniz
     GIT_REPOSITORY https://github.com/richgel999/miniz.git
     GIT_TAG        3.0.2
 )
+# miniz 3.0.2 asks for a CMake older than 3.5, which CMake 4 refuses; the
+# policy floor lets it configure. Older CMake ignores the variable.
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
 FetchContent_MakeAvailable(miniz)
+unset(CMAKE_POLICY_VERSION_MINIMUM)
 
 # hms-shared modules
 FetchContent_Declare(hms_shared
