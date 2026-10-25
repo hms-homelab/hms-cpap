@@ -182,6 +182,22 @@ TEST(ListingPlanIndex, DueUntilOneSucceedsThenOncePerMachineNoon) {
     EXPECT_TRUE(indexDue(s, kT0 + 60, kOffset, true));
 }
 
+TEST(ListingPlanIndex, LocalIndexIsDueWhenTheFoldersOnDiskChange) {
+    IndexState s;
+    s.ok_this_run = true;
+    s.last_index = kT0;
+    const std::vector<std::string> known{"20261021", "20261022"};
+    EXPECT_FALSE(indexDueLocal(s, kT0 + 3600, kOffset, false, known, known))
+        << "same folders, same day: nothing to read";
+    EXPECT_TRUE(indexDueLocal(s, kT0 + 3600, kOffset, false, known,
+                              {"20261021", "20261022", "20261023"}))
+        << "a night copied in after the index was read";
+    EXPECT_TRUE(indexDueLocal(s, kT0 + 3600, kOffset, true, known, {"20261022"}))
+        << "a folder removed, even while a night is written";
+    EXPECT_TRUE(indexDueLocal(s, kT0 + 13 * 3600, kOffset, false, known, known))
+        << "the daily cadence still applies";
+}
+
 TEST(ListingPlanSettings, FirstAndOnReasonsAndOnFloors) {
     SettingsState s;
     EXPECT_TRUE(settingsDue(s, kT0, false, false, false)) << "once per run, at start";

@@ -134,6 +134,16 @@ struct IndexState {
 };
 bool indexDue(const IndexState& s, long long now, long long offset, bool night_growing);
 
+/// A local card root is read from disk, where listing DATALOG is a directory
+/// read and not a page over WiFi, so the daily cadence above protects nothing.
+/// The index is due when indexDue() says so, or when the date folders on disk
+/// are not the ones the last index named: a night copied in by hand after the
+/// service started (and after tonight's folder rolled over) is found within a
+/// burst instead of at the next machine noon. Both lists are sorted.
+bool indexDueLocal(const IndexState& s, long long now, long long offset, bool night_growing,
+                   const std::vector<std::string>& known,
+                   const std::vector<std::string>& on_disk);
+
 /// D5: is the SETTINGS listing due on this burst?
 struct SettingsState {
     long long last_listed{0};

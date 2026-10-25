@@ -139,6 +139,12 @@ bool indexDue(const IndexState& s, long long now, long long offset, bool night_g
     return s.last_index < lastMachineNoon(now, offset);
 }
 
+bool indexDueLocal(const IndexState& s, long long now, long long offset, bool night_growing,
+                   const std::vector<std::string>& known,
+                   const std::vector<std::string>& on_disk) {
+    return indexDue(s, now, offset, night_growing) || known != on_disk;
+}
+
 bool settingsDue(const SettingsState& s, long long now, bool night_in_progress,
                  bool therapy_started, bool checkpoint_listed) {
     if (s.reason || s.last_listed == 0) return true;
