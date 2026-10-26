@@ -2353,12 +2353,16 @@ bool BurstCollectorService::executeBurstCycle() {
                 } else {
                     settings_state_.reason = false;
                     settings_state_.last_listed = now_s;
-                    // SDD-028 (#32): the ring's .vld files beside DATALOG.
-                    if (local && db_service_)
-                        importVldFolder(*db_service_, local_source_dir_, vld_scan_, removed_nights_);
                 }
             }
         }
+
+        // SDD-028 (#32): the ring's .vld files beside DATALOG. A directory read
+        // costs nothing and the scan skips what it has stored (size and time),
+        // so a local folder is scanned every burst, not on SETTINGS' pace: a
+        // night copied in by hand is found within a burst, not at the next hour.
+        if (local && in_place && db_service_)
+            importVldFolder(*db_service_, local_source_dir_, vld_scan_, removed_nights_);
 
         // D8: a local folder's STR.edf (issue #8) with the index and at the
         // checkpoints; a close reads it too, below.
