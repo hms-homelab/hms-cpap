@@ -159,6 +159,8 @@ set(TEST_SOURCES
     sleepbridge/test_SleepBridgeStore.cpp
     sleepbridge/test_SleepBridgeConversation.cpp
     sleepbridge/test_SleepBridgeRebuild.cpp
+    # Empty unless BUILD_WITH_SLEEPBRIDGE linked the component.
+    sleepbridge/test_SleepBridgeLinked.cpp
 )
 
 # The supervisor's Qt-free core, compiled straight into run_tests. These files
