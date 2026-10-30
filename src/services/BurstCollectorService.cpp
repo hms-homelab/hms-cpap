@@ -1991,10 +1991,10 @@ bool BurstCollectorService::executeBurstCycle() {
                       << " (sessions under " << datalogDirFor(local_source_dir_) << ")"
                       << std::endl;
 
-            // STR.edf (issue #8) and the ring's .vld files (SDD-028, #32) used
-            // to be read on every cycle. SDD-054 D8: a local folder follows the
-            // same plan as a card, so both are read below, on the plan's
-            // reasons (the index, a checkpoint, a close, the SETTINGS pace).
+            // STR.edf (issue #8) used to be read on every cycle. SDD-054 D8: a
+            // local folder follows the same plan as a card, so it is read
+            // below, on the plan's reasons (the index, a checkpoint, a close).
+            // The ring's .vld files (SDD-028, #32) are scanned every burst.
         } else if (cpap_source_ == "ezshare" || cpap_source_ == "sefam") {
             std::cout << "CPAP: Accessing ez Share at "
                       << ConfigManager::get("EZSHARE_BASE_URL", "http://192.168.4.1") << std::endl;
@@ -2338,7 +2338,7 @@ bool BurstCollectorService::executeBurstCycle() {
         }
 
         // D5: SETTINGS\ on its reasons and floors. A local folder has its
-        // SETTINGS already in place; its pace drives the ring's .vld scan.
+        // SETTINGS already in place, so only its pace is kept.
         {
             const auto t = folder_watch_.find(tonight);
             const bool night_in_progress =
@@ -2353,12 +2353,16 @@ bool BurstCollectorService::executeBurstCycle() {
                 } else {
                     settings_state_.reason = false;
                     settings_state_.last_listed = now_s;
-                    // SDD-028 (#32): the ring's .vld files beside DATALOG.
-                    if (local && db_service_)
-                        importVldFolder(*db_service_, local_source_dir_, vld_scan_, removed_nights_);
                 }
             }
         }
+
+        // SDD-028 (#32): the ring's .vld files beside DATALOG. A directory read
+        // costs nothing and the scan skips what it has stored (size and time),
+        // so a local folder is scanned every burst, not on SETTINGS' pace: a
+        // night copied in by hand is found within a burst, not at the next hour.
+        if (local && in_place && db_service_)
+            importVldFolder(*db_service_, local_source_dir_, vld_scan_, removed_nights_);
 
         // D8: a local folder's STR.edf (issue #8) with the index and at the
         // checkpoints; a close reads it too, below.
