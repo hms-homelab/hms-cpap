@@ -64,8 +64,11 @@ Automatically extracts sleep therapy data from ResMed and Lowenstein Prisma CPAP
 |---|---|---|---|
 | **ResMed** | AirSense 10, AirSense 11 | Yes -- EDF files grow during therapy, real-time charts with 65s refresh | Yes |
 | **Lowenstein** | Prisma Line (20A, 20C, 25S, 25ST), Prisma Smart (Max, Plus, Soft) | No -- files written post-session | Yes |
+| **Sefam** | S.Box AUTO (1263R), SleepBox AUTO (1200R) | No -- the card is read after the night | Yes |
+| **BMC / React Health** | Luna (beta) | No -- the card is read after the night | Yes |
 
-All data sources (ezShare WiFi SD, local filesystem) work with both manufacturers -- the WiFi SD adapter sits in the machine's SD card slot regardless of brand.
+An ezShare WiFi SD card works with a ResMed, Löwenstein or Sefam machine. A
+Luna card is read from a local folder or the upload page.
 
 **ResMed** EDF files grow incrementally during therapy, enabling live session monitoring with pulsing LIVE badge and auto-refreshing charts.
 
@@ -360,6 +363,37 @@ software, so hms-cpap computes an apnea-only index and labels it as one rather
 than calling it an AHI. Expect it to read lower than a ResMed AHI for the same
 night. Nothing is being hidden and nothing is broken: it is a different
 measurement.
+
+### BMC / React Health Luna (beta)
+
+Set `CPAP_SOURCE=bmc` (format "BMC / React Health Luna (beta)" in Setup and
+Settings) and point `CPAP_LOCAL_DIR` at the card contents or a copy. There is
+no WiFi path; the card is read after the night. Point at the card root or a
+folder up to three levels above it, and hms-cpap finds the card by its files:
+
+```
+26601017.000            # one 256-byte record per second of therapy
+26601017.evt            # the machine's own events
+26601017.idx
+26601017.log
+26601017.USR
+```
+
+Configuration example:
+```json
+{
+  "source": "bmc",
+  "local_dir": "/mnt/archive/luna",
+  "device_name": "BMC Luna"
+}
+```
+
+**What you get, and what you do not.** Pressure, leak, respiratory rate and
+I:E ratio per minute, and the apneas the machine marks itself (obstructive and
+clear airway), which make up its index. On a bi-level Luna, IPAP, EPAP and
+pressure support are reported too. There is no flow waveform yet: its scale on
+the card is not known, and a number in the wrong unit is worse than none.
+Checked against one card so far, hence the beta label.
 
 The format was decoded from a donated card without reference to any GPL or
 vendor source. See `docs/SEFAM_FORMAT.md` in the parser repository for what is

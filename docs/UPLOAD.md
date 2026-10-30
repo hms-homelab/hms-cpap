@@ -25,7 +25,8 @@ Wired only when an archive (`config.local_dir`) is configured. The handler:
    staging dir.
 2. **Reads what the card is** (`classifyUploadedCard`, `services/CardUpload.h`,
    SDD-031), by its files, not by the install's configured format. A **Sefam**
-   S.Box/SleepBox card is merged into `<data_dir>/uploads/sefam/`. A
+   S.Box/SleepBox card is merged into `<data_dir>/uploads/sefam/`, and a **BMC
+   / React Health Luna** card into `<data_dir>/uploads/bmc/`. A
    **Löwenstein** card has each `.pdat` opened into
    `<data_dir>/uploads/lowenstein/<file stem>/`, and a Prisma Smart tree is
    copied. The backfill worker then imports every session on the card the
