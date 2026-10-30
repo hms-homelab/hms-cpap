@@ -18,7 +18,7 @@
       "transport": "Where the data comes from",
       "format": "What machine wrote it",
       "philips": "Philips Respironics (experimental)",
-      "bmc": "BMC / React Health Luna (beta)",
+      "bmc": "BMC / React Health Luna",
       "ezshare": "ezShare WiFi SD",
       "flashair": "Toshiba FlashAir WiFi SD",
       "local": "Local Directory",

@@ -36,7 +36,7 @@ It is a fully local-first experience.
 | ResMed | AirSense 10, AirSense 11 | Yes, charts update every 65s during therapy |
 | Lowenstein | Prisma Line (20A, 20C, 25S, 25ST), Prisma Smart (Max, Plus, Soft) | No, files are written after each session |
 | Sefam | S.Box AUTO (1263R), SleepBox AUTO (1200R) | No, the card is read after the night |
-| BMC / React Health | Luna (beta) | No, the card is read after the night |
+| BMC / React Health | Luna | No, the card is read after the night |
 
 On a Sefam card you get the recorded signals, breath-by-breath respiratory
 mechanics, and apneas. **You do not get an AHI.** The machine records apneas but
@@ -45,8 +45,7 @@ shows an apnea-only index and labels it as one. It will read lower than the AHI
 a ResMed reports for the same night. That is a different measurement, not a
 better night.
 
-Luna support is in beta: it has been checked against one card so far. You get
-pressure, leak, respiratory rate and I:E ratio per minute, and the apneas the
+On a Luna card you get pressure, leak, respiratory rate and I:E ratio per minute, and the apneas the
 machine marks itself (obstructive and clear airway). On a bi-level Luna, IPAP,
 EPAP and pressure support are reported too. There is no flow waveform yet: its
 scale on the card is not known, and a number in the wrong unit is worse than
@@ -161,7 +160,7 @@ Or without the script: `mkdir build && cd build && cmake .. && make -j$(nproc) &
   on a FlashAir W-02 in an AirSense 10, read live through a full night.
 - **Local folder**: point the wizard at the SD card root (the folder that holds
   both `STR.edf` and `DATALOG/`), on a USB reader, NAS share, or any mount. For
-  a Luna, point it at the card root and pick "BMC / React Health Luna (beta)".
+  a Luna, point it at the card root and pick "BMC / React Health Luna".
 - **Upload page**: zip the card and drop it in the browser. A ResMed, Sefam,
   Löwenstein or Luna card is recognised by its files, and every night not yet
   stored is imported.

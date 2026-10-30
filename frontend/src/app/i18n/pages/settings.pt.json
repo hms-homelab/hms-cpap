@@ -18,7 +18,7 @@
       "transport": "De onde vêm os dados",
       "format": "Qual aparelho os gravou",
       "philips": "Philips Respironics (experimental)",
-      "bmc": "BMC / React Health Luna (beta)",
+      "bmc": "BMC / React Health Luna",
       "ezshare": "Cartão SD WiFi ezShare",
       "flashair": "Cartão SD WiFi Toshiba FlashAir",
       "local": "Diretório local",

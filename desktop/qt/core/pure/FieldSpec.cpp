@@ -114,7 +114,7 @@ const std::vector<FieldSpec>& settingsFields() {
             {{"resmed",     "ResMed"},
              {"lowenstein", "Löwenstein Prisma"},
              {"sefam",      "Sefam S.Box"},
-             {"bmc",        "BMC / React Health Luna (beta)"},
+             {"bmc",        "BMC / React Health Luna"},
              {"philips",    "Philips Respironics (experimental)"}},
             {}, {}, false, transportIs("local")});
 

@@ -174,7 +174,7 @@ void printConfiguration() {
         std::cout << "  Source:             Sefam S.Box" << std::endl;
         std::cout << "  Card Dir:           " << hms_cpap::ConfigManager::get("CPAP_LOCAL_DIR", "(not set)") << std::endl;
     } else if (source == "bmc") {
-        std::cout << "  Source:             BMC / React Health Luna (beta)" << std::endl;
+        std::cout << "  Source:             BMC / React Health Luna" << std::endl;
         std::cout << "  Card Dir:           " << hms_cpap::ConfigManager::get("CPAP_LOCAL_DIR", "(not set)") << std::endl;
     } else if (source == "philips") {
         std::cout << "  Source:             Philips Respironics (experimental)" << std::endl;
