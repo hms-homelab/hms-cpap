@@ -414,7 +414,10 @@ if(BUILD_WITH_BLE)
     find_package(sdbus-c++ REQUIRED)
     target_link_libraries(${PROJECT_NAME} SDBusCpp::sdbus-c++)
     target_compile_definitions(${PROJECT_NAME} PUBLIC WITH_BLE=1)
-    target_sources(${PROJECT_NAME} PRIVATE src/clients/O2RingBleClient.cpp)
+    # The BlueZ transports. The AirSense 11's conversation (As11Session) and
+    # protocol are plain C++ in every build and in run_tests (SDD-057).
+    target_sources(${PROJECT_NAME} PRIVATE src/clients/O2RingBleClient.cpp
+                                           src/clients/AirSense11BleClient.cpp)
     message(STATUS "BLE: Enabled (sdbus-c++ ${sdbus-c++_VERSION})")
 endif()
 
