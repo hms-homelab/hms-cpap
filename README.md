@@ -131,6 +131,12 @@ Or without the script: `mkdir build && cd build && cmake .. && make -j$(nproc) &
 
 ### Getting the data off the machine
 
+> **ResMed AirSense 11 with REF 39517 on the label underneath:** its SD slot
+> can't power a WiFi SD card reliably, so don't use an ez Share or a Toshiba
+> FlashAir in it. Read it over its own Bluetooth instead (see
+> [AirSense 11 over Bluetooth](docs/REFERENCE.md#airsense-11-over-bluetooth)), or
+> use a local folder or the upload page.
+
 - **ezShare WiFi SD** (recommended): the card sits in the CPAP's SD slot and
   serves files over WiFi. It makes its own network, so you need a bridge such as
   [hms-mm](https://github.com/hms-homelab/hms-mm) (Mule & Miner) to put it on
@@ -144,7 +150,7 @@ Or without the script: `mkdir build && cd build && cmake .. && make -j$(nproc) &
   your home WiFi itself, so no bridge is needed. Set it to join your network
   (`APPMODE=5` in its `SD_WLAN/CONFIG`) and pick FlashAir in the wizard; it is
   found as `http://flashair.local`, or give its address. ResMed cards. Tested
-  on a FlashAir W-02.
+  on a FlashAir W-02 in an AirSense 10, read live through a full night.
 - **Local folder**: point the wizard at the SD card root (the folder that holds
   both `STR.edf` and `DATALOG/`), on a USB reader, NAS share, or any mount.
 - **Upload page**: zip the card and drop it in the browser. A ResMed, Sefam or
