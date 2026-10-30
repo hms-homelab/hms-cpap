@@ -5,6 +5,18 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.6.4] - 2026-10-30
+
+### Added
+- **A Toshiba FlashAir WiFi SD card as a source.** The card sits in the
+  CPAP's SD slot and joins your home WiFi itself (`APPMODE=5` in its
+  `SD_WLAN/CONFIG`), so no bridge is needed. Pick "Toshiba FlashAir" in the
+  setup wizard, in Settings or in the desktop installer; it is found as
+  `http://flashair.local`, or give its address (`flashair_url`,
+  `FLASHAIR_BASE_URL`, `CPAP_SOURCE=flashair`). Nights are listed and read
+  as they are recorded, with ranged downloads. ResMed cards. Tested on a
+  FlashAir W-02 in an AirSense 10, reading a session while it recorded.
+
 ## [5.6.3] - 2026-10-29
 
 ### Fixed
