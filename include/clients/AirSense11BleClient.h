@@ -5,12 +5,17 @@
 #include "clients/As11Session.h"
 #include "clients/IAirSense11Client.h"
 #include "clients/IAirSense11Pairing.h"
+#include "services/As11NightWriter.h"
 
 #include <sdbus-c++/sdbus-c++.h>
 
+#include <atomic>
+#include <condition_variable>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace hms_cpap {
@@ -55,7 +60,33 @@ public:
     static constexpr int kScanMs = 15000;
     static constexpr int kConnectMs = 15000;
 
+    /// The live night (SDD-057 step 4): a thread that stays connected while
+    /// the machine is awake, streams while it is in therapy into `writer`,
+    /// and calls `night_ended` when a night's stream ends (the cue for the
+    /// Summary pull). It yields the radio to a summary pull or a pairing
+    /// while it only waits; a night in progress is never interrupted.
+    void startNightLoop(std::shared_ptr<As11NightWriter> writer, std::function<void()> night_ended);
+    void stopNightLoop();
+
+    static constexpr int kStallMs = 30000;       // no report this long: the stream is dead
+    static constexpr int kRetryMs = 30000;       // after the machine was not found
+
 private:
+    void nightLoop();
+    bool streamOnce();                            // false when the machine was not reached
+    void afterPull(const std::string& serial, const std::string& from, const std::vector<uint8_t>& bytes);
+
+    std::shared_ptr<As11NightWriter> writer_;
+    std::function<void()> night_ended_;
+    std::thread night_thread_;
+    std::atomic<bool> running_{false};
+    std::atomic<bool> want_radio_{false};
+    std::atomic<bool> streaming_{false};
+    std::atomic<bool> therapy_{false};
+    std::atomic<uint64_t> reports_{0};
+    std::mutex wake_mtx_;
+    std::condition_variable wake_;
+
     std::string data_dir_;
     std::string address_;
     std::string adapter_path_;

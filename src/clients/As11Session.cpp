@@ -153,6 +153,11 @@ bool Session::encrypted() const {
     return cipher_.has_value();
 }
 
+bool Session::connected() const {
+    std::lock_guard<std::mutex> lk(m_);
+    return connected_;
+}
+
 bool Session::pairPending() const {
     std::lock_guard<std::mutex> lk(m_);
     return pair_pending_;

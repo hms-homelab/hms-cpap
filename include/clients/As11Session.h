@@ -128,6 +128,8 @@ public:
     /// RequestSession and CheckSessionIntegrity; Ok means encrypted from here.
     Result open(const Credentials& creds);
     bool encrypted() const;
+    /// The link is up (between onConnected and onDisconnect).
+    bool connected() const;
     /// A spool by name ("Summary") from `from` ("YYYY-MM-DD", read from
     /// midnight UTC): its fragments joined, in *out.
     Result pullSpool(const std::string& name, const std::string& from, std::vector<uint8_t>* out);

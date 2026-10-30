@@ -1,8 +1,10 @@
 #ifdef WITH_BLE
 
 #include "clients/AirSense11BleClient.h"
+#include "services/As11StrWriter.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <cctype>
 #include <chrono>
 #include <iostream>
@@ -52,6 +54,7 @@ AirSense11BleClient::AirSense11BleClient(std::string data_dir, std::string addre
 }
 
 AirSense11BleClient::~AirSense11BleClient() {
+    stopNightLoop();
     std::lock_guard<std::mutex> lk(op_mtx_);
     session_.pairCancel();
     dropLink();
@@ -309,6 +312,16 @@ bool AirSense11BleClient::writeFrame(const std::vector<uint8_t>& frame) {
 // ── the machine's operations ──
 
 std::vector<uint8_t> AirSense11BleClient::fetchSummary(const std::string& from) {
+    // A night in progress keeps the radio; its end asks for the summary.
+    if (streaming_) {
+        note("the machine is streaming a night: the summary is read when it ends");
+        return {};
+    }
+    struct Want {
+        AirSense11BleClient* c;
+        explicit Want(AirSense11BleClient* x) : c(x) { c->want_radio_ = true; c->wake_.notify_all(); }
+        ~Want() { c->want_radio_ = false; c->wake_.notify_all(); }
+    } want(this);
     std::lock_guard<std::mutex> lk(op_mtx_);
     if (session_.pairPending()) {
         note("a pairing is open: the summary waits for it");
@@ -322,11 +335,16 @@ std::vector<uint8_t> AirSense11BleClient::fetchSummary(const std::string& from) 
     if (!connectLink(kConnectMs)) return {};
 
     std::vector<uint8_t> out;
+    std::string serial, ident;
     as11::Result r = session_.open(*creds);
+    if (r == as11::Result::Ok) r = session_.getState(&serial, nullptr);
+    if (r == as11::Result::Ok && writer_ && session_.getIdentification(&ident) == as11::Result::Ok)
+        writeIdentification(writer_->rootFor(serial), ident);
     if (r == as11::Result::Ok) r = session_.pullSpool("Summary", from, &out);
     const std::string why = session_.lastError();
     const std::string status = session_.lastSpoolStatus();
     dropLink();
+    if (r == as11::Result::Ok && !serial.empty()) afterPull(serial, from, out);
     if (r != as11::Result::Ok) {
         note(std::string("summary from ") + from + " failed: " + as11::resultText(r) +
              (why.empty() ? "" : " (" + why + ")"));
@@ -338,7 +356,14 @@ std::vector<uint8_t> AirSense11BleClient::fetchSummary(const std::string& from) 
 }
 
 as11::Result AirSense11BleClient::pairStart() {
+    if (streaming_) {
+        note("the machine is in therapy: pair it when the night is over");
+        return as11::Result::Connect;
+    }
+    want_radio_ = true;
+    wake_.notify_all();
     std::lock_guard<std::mutex> lk(op_mtx_);
+    want_radio_ = false;   // the pending pairing itself holds the night loop off now
     if (session_.pairPending()) {
         session_.pairCancel();
         dropLink();
@@ -370,6 +395,141 @@ as11::Result AirSense11BleClient::pairConfirm(const std::string& code) {
     }
     std::cout << kTag << "paired with " << device_name_ << std::endl;
     return r;
+}
+
+// ── the live night ──
+
+void AirSense11BleClient::afterPull(const std::string& serial, const std::string& from,
+                                    const std::vector<uint8_t>& bytes) {
+    if (!writer_) return;
+    const std::string root = writer_->rootFor(serial);
+    if (!bytes.empty()) keepSummary(root, from, bytes);
+    // The machine's own offset, from its noon: the night's files are named on
+    // its clock, as its card's are.
+    int off = 0;
+    if (machineOffsetFromSummaries(root, &off)) writer_->setClock(serial, fixedOffsetClock(off));
+    const auto str = writeStrFromSummaries(root, strLayoutDir(data_dir_));
+    if (str.written) std::cout << kTag << "STR.edf: " << str.days << " day(s)" << std::endl;
+    else std::cout << kTag << "no STR.edf: " << str.why << std::endl;
+}
+
+void AirSense11BleClient::startNightLoop(std::shared_ptr<As11NightWriter> writer,
+                                         std::function<void()> night_ended) {
+    stopNightLoop();
+    writer_ = std::move(writer);
+    night_ended_ = std::move(night_ended);
+    if (!conn_ || !writer_) return;
+    running_ = true;
+    night_thread_ = std::thread([this] { nightLoop(); });
+}
+
+void AirSense11BleClient::stopNightLoop() {
+    running_ = false;
+    wake_.notify_all();
+    if (night_thread_.joinable()) night_thread_.join();
+}
+
+void AirSense11BleClient::nightLoop() {
+    while (running_) {
+        {
+            // Out of the way while a pull or a pairing has the radio, or
+            // before there is a pairing to open a session with.
+            std::unique_lock<std::mutex> lk(wake_mtx_);
+            wake_.wait_for(lk, std::chrono::seconds(5), [this] {
+                return !running_ || (!want_radio_ && !session_.pairPending() && paired());
+            });
+        }
+        if (!running_) break;
+        if (want_radio_ || session_.pairPending() || !paired()) continue;
+        const bool reached = streamOnce();
+        if (!reached && running_) {
+            // Asleep, out of range or in use elsewhere: look again later.
+            std::unique_lock<std::mutex> lk(wake_mtx_);
+            wake_.wait_for(lk, std::chrono::milliseconds(kRetryMs), [this] { return !running_ || want_radio_.load(); });
+        }
+    }
+}
+
+bool AirSense11BleClient::streamOnce() {
+    std::unique_lock<std::mutex> op(op_mtx_);
+    if (want_radio_ || session_.pairPending()) return true;
+    auto creds = as11::loadCredentials(as11::credentialsPath(data_dir_));
+    if (!creds) return true;
+    if (!connectLink(kConnectMs)) return false;
+
+    std::string serial;
+    bool therapy = false;
+    if (session_.open(*creds) != as11::Result::Ok || session_.getState(&serial, &therapy) != as11::Result::Ok) {
+        note(std::string("session for the night failed: ") + session_.lastError());
+        dropLink();
+        return false;
+    }
+    if (std::string ident; !std::filesystem::exists(std::filesystem::path(writer_->rootFor(serial)) / "Identification.json") &&
+                           session_.getIdentification(&ident) == as11::Result::Ok)
+        writeIdentification(writer_->rootFor(serial), ident);
+
+    as11::SecondAssembler assembler([this](as11::StreamBlock&& b) { writer_->onBlock(b); });
+    assembler.setSerial(serial);
+    therapy_ = therapy;
+    session_.setStreamHandlers({
+        [this, &assembler](const nlohmann::ordered_json& p) {
+            if (streaming_) { assembler.onStreamData(p); reports_++; }
+        },
+        [this](bool t) { therapy_ = t; wake_.notify_all(); },
+        [this, serial](const as11::RespEvent& e) { writer_->onEvent(serial, e); },
+    });
+    struct Clear {
+        AirSense11BleClient* c;
+        ~Clear() { c->session_.setStreamHandlers({}); c->streaming_ = false; }
+    } clear{this};
+
+    if (session_.subscribe() != as11::Result::Ok) {
+        note(std::string("subscription failed: ") + session_.lastError());
+        dropLink();
+        return true;
+    }
+    // Awake, not breathing yet: stay connected until therapy, a pull or a
+    // pairing wants the radio, or the machine lets go.
+    while (running_ && !therapy_ && !want_radio_ && session_.connected()) {
+        std::unique_lock<std::mutex> lk(wake_mtx_);
+        wake_.wait_for(lk, std::chrono::seconds(1));
+    }
+    if (!therapy_ || !running_ || !session_.connected()) {
+        dropLink();
+        return true;
+    }
+
+    streaming_ = true;
+    if (session_.startStream() != as11::Result::Ok) {
+        note(std::string("stream refused: ") + session_.lastError());
+        dropLink();
+        return true;
+    }
+    std::cout << kTag << "streaming the night from " << device_name_ << std::endl;
+    uint64_t last = reports_;
+    auto last_progress = std::chrono::steady_clock::now();
+    while (running_ && therapy_ && session_.connected()) {
+        {
+            std::unique_lock<std::mutex> lk(wake_mtx_);
+            wake_.wait_for(lk, std::chrono::seconds(1));
+        }
+        if (reports_ != last) { last = reports_; last_progress = std::chrono::steady_clock::now(); }
+        else if (std::chrono::steady_clock::now() - last_progress > std::chrono::milliseconds(kStallMs)) {
+            note("the stream stalled");
+            break;
+        }
+    }
+    const bool still_up = session_.connected();
+    streaming_ = false;
+    assembler.flush();
+    if (still_up) session_.stopStream();
+    session_.setStreamHandlers({});
+    writer_->onStreamEnd(serial);
+    dropLink();
+    std::cout << kTag << "the night's stream ended" << (still_up ? "" : " (the machine let go)") << std::endl;
+    op.unlock();
+    if (night_ended_) night_ended_();
+    return true;
 }
 
 void AirSense11BleClient::pairCancel() {

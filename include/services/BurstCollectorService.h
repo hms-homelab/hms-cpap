@@ -10,6 +10,7 @@
 #include "services/MyAirService.h"
 #include "services/AirSense11Pull.h"
 #include "clients/IAirSense11Pairing.h"
+#include "services/As11NightWriter.h"
 #include "services/OximetryImport.h"
 #include "services/OximetryService.h"
 #include "services/PrismaIngestion.h"
@@ -406,9 +407,15 @@ public:
     }
     /// Whether this build can read the machine over Bluetooth at all.
     static bool airSense11BleCompiled();
+    /// The one writer every AirSense 11 stream source feeds (SDD-057 step 4):
+    /// this host's own Bluetooth now, a bridge's network stream later.
+    std::shared_ptr<IAs11NightSink> getAs11NightSink();
 private:
     std::shared_ptr<IAirSense11Pairing> airsense11_pairing_;
     mutable std::mutex airsense11_mtx_;
+    std::shared_ptr<As11NightWriter> as11_night_writer_;
+    // Set when a night's stream ended: the worker pulls the Summary at once.
+    std::atomic<bool> as11_summary_due_{false};
 
     // Worker thread
     std::thread worker_thread_;

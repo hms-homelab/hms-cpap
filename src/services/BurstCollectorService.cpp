@@ -387,6 +387,13 @@ bool BurstCollectorService::airSense11BleCompiled() {
 #endif
 }
 
+std::shared_ptr<IAs11NightSink> BurstCollectorService::getAs11NightSink() {
+    std::lock_guard<std::mutex> lk(airsense11_mtx_);
+    if (!as11_night_writer_)
+        as11_night_writer_ = std::make_shared<As11NightWriter>(AppConfig::dataDir(), hostLocalClock());
+    return as11_night_writer_;
+}
+
 void BurstCollectorService::initAirSense11() {
     {
         std::lock_guard<std::mutex> lk(airsense11_mtx_);
@@ -401,10 +408,14 @@ void BurstCollectorService::initAirSense11() {
 #ifdef WITH_BLE
         auto client = std::make_shared<AirSense11BleClient>(AppConfig::dataDir(),
                                                             app_config_->airsense11_ble.address);
+        getAs11NightSink();   // makes the shared writer
         {
             std::lock_guard<std::mutex> lk(airsense11_mtx_);
             airsense11_pairing_ = client;
         }
+        // The night, live: the stream into the shared writer; its end asks
+        // for the Summary (the STR day) on the worker.
+        client->startNightLoop(as11_night_writer_, [this] { as11_summary_due_ = true; });
         airsense11_pull_ = std::make_unique<AirSense11Pull>(client, db_service_, device_id_,
                                                             std::chrono::hours(hours));
         std::cout << "AirSense11: Enabled (direct Bluetooth"
@@ -3718,6 +3729,17 @@ void BurstCollectorService::runLoop() {
             // exist right after the switch is saved. Same thread, same
             // reloadConfig() the loop top runs; it does nothing when clean.
             reloadConfig();
+
+            // SDD-057: a night's Bluetooth stream ended; its Summary day now.
+            if (as11_summary_due_.exchange(false) && airsense11_pull_) {
+                try {
+                    const auto r = airsense11_pull_->pullNow();
+                    std::cout << "AirSense11: after the night, " << r.written << " day(s) written"
+                              << (r.error.empty() ? "" : " (" + r.error + ")") << std::endl;
+                } catch (const std::exception& e) {
+                    std::cerr << "AirSense11: after-night pull failed (non-fatal): " << e.what() << std::endl;
+                }
+            }
 
             std::this_thread::sleep_for(std::chrono::seconds(1));
         }
