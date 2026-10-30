@@ -22,6 +22,7 @@
 #include "mqtt_client.h"
 #include "utils/ConfigManager.h"
 #include "utils/AppConfig.h"
+#include "utils/OximetryDevice.h"
 #include "utils/TimeCompat.h"   // fileStat: <sys/stat.h> is not portable to MSVC
 #include <filesystem>
 #include <fstream>
@@ -3650,7 +3651,7 @@ protected:
         std::filesystem::remove_all(base);
         for (const char* k : {"CPAP_SOURCE", "CPAP_LOCAL_DIR", "DB_TYPE", "SQLITE_PATH",
                               "MQTT_ENABLED", "LLM_ENABLED", "LLM_PROVIDER",
-                              "O2RING_MULE_URL"})
+                              "O2RING_MULE_URL", "CPAP_ARCHIVE_DIR"})
             unsetenv(k);
     }
 };
@@ -3671,6 +3672,45 @@ TEST_F(BurstInitTest, Initialize_LocalSqlite_NoMqttNoLlm) {
     BurstCollectorService svc(60);
     svc.initialize(&cfg);  // initDataSource(local)/initDatabase(sqlite)/initMqtt(off)/initLlm(off)/initO2Ring(off)
     SUCCEED();
+}
+
+// #41: a .vld copied into a local card root is imported by the next burst. It
+// used to wait for SETTINGS' pace (15 min in a night, 60 min idle), so the
+// second burst here, a moment after the first, did not look.
+TEST_F(BurstInitTest, ALocalVldIsImportedByTheNextBurst) {
+    setenv("CPAP_SOURCE", "local", 1);
+    setenv("CPAP_LOCAL_DIR", base.c_str(), 1);
+    setenv("CPAP_ARCHIVE_DIR", (base / "archive").c_str(), 1);
+    setenv("DB_TYPE", "sqlite", 1);
+    setenv("SQLITE_PATH", (base / "vld.db").c_str(), 1);
+    setenv("MQTT_ENABLED", "false", 1);
+    setenv("LLM_ENABLED", "false", 1);
+    unsetenv("O2RING_MULE_URL");
+
+    AppConfig cfg;
+    cfg.o2ring.enabled = false;
+    BurstCollectorService svc(60);
+    svc.initialize(&cfg);
+    ASSERT_TRUE(svc.runBurstCycleForTest());   // SETTINGS' pace starts here
+
+    // A minimal VLD v3 (test_OximetryImport.cpp's layout): 3 records from
+    // 2026-09-12 22:30, its own size at offset 9, 4 s a record.
+    std::vector<uint8_t> d(40 + 5 * 3, 0);
+    d[0] = 3;
+    d[2] = 0xEA; d[3] = 0x07;
+    d[4] = 9; d[5] = 12; d[6] = 22; d[7] = 30;
+    d[9] = static_cast<uint8_t>(d.size());
+    d[13] = 12;
+    d[22] = 4;
+    for (int i = 0; i < 3; ++i) { d[40 + 5 * i] = 95; d[40 + 5 * i + 1] = 70; }
+    std::filesystem::create_directories(base / "Oxymetry");
+    std::ofstream(base / "Oxymetry" / "night.vld", std::ios::binary)
+        .write(reinterpret_cast<const char*>(d.data()), static_cast<std::streamsize>(d.size()));
+
+    ASSERT_TRUE(svc.runBurstCycleForTest());
+    SQLiteDatabase db((base / "vld.db").string());
+    ASSERT_TRUE(db.connect());
+    EXPECT_TRUE(db.oximetrySessionExists(kOximetryDeviceId, "night.vld"));
 }
 
 // ezShare source (range disabled branch) + sqlite, LLM enabled (constructs the

@@ -1991,10 +1991,10 @@ bool BurstCollectorService::executeBurstCycle() {
                       << " (sessions under " << datalogDirFor(local_source_dir_) << ")"
                       << std::endl;
 
-            // STR.edf (issue #8) and the ring's .vld files (SDD-028, #32) used
-            // to be read on every cycle. SDD-054 D8: a local folder follows the
-            // same plan as a card, so both are read below, on the plan's
-            // reasons (the index, a checkpoint, a close, the SETTINGS pace).
+            // STR.edf (issue #8) used to be read on every cycle. SDD-054 D8: a
+            // local folder follows the same plan as a card, so it is read
+            // below, on the plan's reasons (the index, a checkpoint, a close).
+            // The ring's .vld files (SDD-028, #32) are scanned every burst.
         } else if (cpap_source_ == "ezshare" || cpap_source_ == "sefam") {
             std::cout << "CPAP: Accessing ez Share at "
                       << ConfigManager::get("EZSHARE_BASE_URL", "http://192.168.4.1") << std::endl;
@@ -2338,7 +2338,7 @@ bool BurstCollectorService::executeBurstCycle() {
         }
 
         // D5: SETTINGS\ on its reasons and floors. A local folder has its
-        // SETTINGS already in place; its pace drives the ring's .vld scan.
+        // SETTINGS already in place, so only its pace is kept.
         {
             const auto t = folder_watch_.find(tonight);
             const bool night_in_progress =

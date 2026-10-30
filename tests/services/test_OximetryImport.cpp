@@ -413,6 +413,26 @@ TEST_F(OximetryImportTest, ARemovedNightsFileIsSkippedUntilTheNightIsRestored) {
     EXPECT_EQ(sessions(), 1);
 }
 
+// #41: the scan runs every burst on a local folder, and its database lookup is
+// what brings a night back. A file stored, then removed with its night, then
+// restored by a Reparse, is unchanged on disk and still remembered as stored,
+// so only asking the database finds that its row is gone.
+TEST_F(OximetryImportTest, AStoredNightRemovedThenRestoredIsStoredAgain) {
+    put("Oxymetry/a.vld", vld(3, 22));   // night 20260912
+    VldScanState state;
+    ASSERT_EQ(importVldFolder(*db_, root_.string(), state).imported, 1);
+
+    db_->removeNight("cpap_test", "20260912");
+    std::set<std::string> removed{"20260912"};
+    ASSERT_EQ(sessions(), 0);
+    EXPECT_EQ(importVldFolder(*db_, root_.string(), state, removed).imported, 0);
+    EXPECT_EQ(sessions(), 0);
+
+    removed.clear();   // Reparse restored it
+    EXPECT_EQ(importVldFolder(*db_, root_.string(), state, removed).imported, 1);
+    EXPECT_EQ(sessions(), 1);
+}
+
 TEST_F(OximetryImportTest, ARemovedNightLeavesTheOtherNightsAlone) {
     put("Oxymetry/a.vld", vld(3, 22));   // night 20260912
     put("Oxymetry/b.vld", vld(3, 10));   // 2026-09-12 10:30, night 20260911
