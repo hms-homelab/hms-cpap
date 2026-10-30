@@ -1,8 +1,11 @@
 #include "clients/OxyIIProtocol.h"
 
+#include <openssl/evp.h>
+
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <memory>
 
 namespace hms_cpap::oxyii {
 
@@ -30,6 +33,20 @@ std::string printable(const uint8_t* p, size_t n) {
     for (size_t i = 0; i < n && p[i] != 0; i++)
         s.push_back((p[i] >= 0x20 && p[i] < 0x7F) ? static_cast<char>(p[i]) : '?');
     return s;
+}
+
+// AES-128-ECB over whole blocks, no padding: PKCS7 is done by the callers, so
+// a bad pad is told apart from a crypto failure.
+bool aesBlocks(const Key& key, const uint8_t* in, size_t n, uint8_t* out, bool enc) {
+    std::unique_ptr<EVP_CIPHER_CTX, decltype(&EVP_CIPHER_CTX_free)> c(EVP_CIPHER_CTX_new(),
+                                                                      EVP_CIPHER_CTX_free);
+    if (!c || EVP_CipherInit_ex(c.get(), EVP_aes_128_ecb(), nullptr, key.data(), nullptr,
+                                enc ? 1 : 0) != 1)
+        return false;
+    EVP_CIPHER_CTX_set_padding(c.get(), 0);
+    int len = 0;
+    return EVP_CipherUpdate(c.get(), out, &len, in, static_cast<int>(n)) == 1 &&
+           static_cast<size_t>(len) == n;
 }
 
 } // namespace
@@ -94,6 +111,49 @@ std::vector<uint8_t> authPayload(uint32_t ts) {
     return out;
 }
 
+std::optional<Key> parseAuthReply(const std::vector<uint8_t>& p) {
+    if (p.size() < 4 + kKeyLen) return std::nullopt;
+    uint8_t d[4 + kKeyLen];
+    for (size_t i = 0; i < sizeof(d); i++) d[i] = p[i] ^ kLepucloudMd5[i % 16];
+    if (d[0] != 0x01 || d[1] != kKeyLen) return std::nullopt;
+    Key key;
+    std::memcpy(key.data(), d + 4, kKeyLen);
+    return key;
+}
+
+bool replyEncrypted(uint8_t op) {
+    switch (op) {
+    case 0x00: case 0x02: case 0x03: case 0x04: case 0x05: case 0x06:
+    case 0x11: case 0x12: case 0x13: case 0x14:
+    case 0xE0: case 0xE1: case 0xE4:
+    case 0xF1: case 0xF2: case 0xF3:
+        return true;
+    default:
+        return false;
+    }
+}
+
+std::vector<uint8_t> encrypt(const Key& key, const std::vector<uint8_t>& p) {
+    const size_t pad = 16 - (p.size() % 16);
+    std::vector<uint8_t> in(p);
+    in.insert(in.end(), pad, static_cast<uint8_t>(pad));
+    std::vector<uint8_t> out(in.size());
+    if (!aesBlocks(key, in.data(), in.size(), out.data(), true)) return {};
+    return out;
+}
+
+std::optional<std::vector<uint8_t>> decrypt(const Key& key, const std::vector<uint8_t>& p) {
+    if (p.empty() || p.size() % 16 != 0) return std::nullopt;
+    std::vector<uint8_t> out(p.size());
+    if (!aesBlocks(key, p.data(), p.size(), out.data(), false)) return std::nullopt;
+    const uint8_t pad = out.back();
+    if (pad < 1 || pad > 16) return std::nullopt;
+    for (size_t i = 1; i <= pad; i++)
+        if (out[out.size() - i] != pad) return std::nullopt;
+    out.resize(out.size() - pad);
+    return out;
+}
+
 std::vector<uint8_t> timePayload(const DateTime& t) {
     return {static_cast<uint8_t>(t.year & 0xFF), static_cast<uint8_t>(t.year >> 8),
             t.month, t.day, t.hour, t.minute, t.second, 0x00};
@@ -128,14 +188,20 @@ std::optional<Info> parseInfo(const std::vector<uint8_t>& p) {
 }
 
 std::optional<Live> parseLive(const std::vector<uint8_t>& p) {
-    if (p.size() < 24) return std::nullopt;
+    if (p.size() < 14) return std::nullopt;
+    const uint16_t pr = static_cast<uint16_t>(p[8] | (p[9] << 8));
     Live l;
+    l.run = p[4];
     l.state = p[5];
     l.spo2 = p[6];
-    l.motion = p[7];
-    l.hr = p[8];
+    l.pi_x10 = p[7];
+    l.hr = pr < 0xFF ? static_cast<uint8_t>(pr) : 0xFF;
+    l.motion = p[11];
+    l.battery_state = p[12];
     l.battery = p[13];
-    l.reading = l.state != 0 && l.spo2 >= 1 && l.spo2 <= 100 && l.hr != 0 && l.hr != 0xFF;
+    // 0, 127 and 255 are the SDK's "no value" for SpO2; 0, 255, 511 and 65535
+    // for the pulse rate. Only sensor state 1 is a finger on the ring.
+    l.reading = l.state == 1 && l.spo2 >= 1 && l.spo2 <= 100 && pr > 0 && pr < 0xFF;
     return l;
 }
 

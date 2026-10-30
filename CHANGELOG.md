@@ -7,7 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Direct Bluetooth mode reads a newer O2Ring-S.** Newer O2Ring-S firmware
+  (1.13.x) answers the handshake with a session key and encrypts everything
+  after it, and hms-cpap read that ciphertext as SpO2, heart rate and file
+  names. It now takes the key and decrypts the session; an older ring that
+  never sends one stays in plaintext as before. The handshake runs once per
+  connection, in the order the ring's own app uses.
+- **The O2Ring-S's live reading is read from the right bytes.** Heart rate is
+  two bytes, not one, and the byte read as motion is the perfusion index;
+  motion is read from its own byte. Only a finger on the sensor counts as a
+  reading, not a probe-off or a fault.
+- The ring's Bluetooth connect honours its own timeout instead of a fixed one.
+
 ### Changed
+- **The O2Ring-S is no longer experimental** in direct Bluetooth mode.
 - **The BMC / React Health Luna is no longer labelled beta**, in Setup,
   Settings, the upload page, the desktop app and the docs.
 

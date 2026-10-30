@@ -7,6 +7,7 @@
 #include <chrono>
 #include <algorithm>
 #include <cctype>
+#include <ctime>
 #include <thread>
 #include <sstream>
 
@@ -291,8 +292,8 @@ bool O2RingBleClient::connect(int timeout_ms) {
     }
     if (!connect_ok) return false;
 
-    // Wait for ServicesResolved (fresh 15s timeout, independent of connect retries)
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(15000);
+    // Wait for ServicesResolved (a fresh timeout, independent of connect retries)
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
     while (std::chrono::steady_clock::now() < deadline) {
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
         try {
@@ -300,6 +301,8 @@ bool O2RingBleClient::connect(int timeout_ms) {
                 .onInterface("org.bluez.Device1");
             if (resolved.get<bool>()) {
                 connected_ = true;
+                oxy_session_ = false;
+                oxy_key_.reset();
                 std::cout << "O2Ring BLE: Connected, services resolved" << std::endl;
                 return discoverGatt() && enableNotifications();
             }
@@ -318,6 +321,8 @@ void O2RingBleClient::disconnect() {
         device->callMethod("Disconnect").onInterface("org.bluez.Device1");
     } catch (...) {}
     connected_ = false;
+    oxy_session_ = false;
+    oxy_key_.reset();
     write_char_path_.clear();
     notify_char_path_.clear();
     reasm_buf_.clear();
@@ -532,8 +537,19 @@ bool O2RingBleClient::sendAndWait(uint8_t cmd, uint16_t block,
 
 // ── OxyII (O2Ring-S) ───────────────────────────────────────────────────
 
+// In an encrypted session a non-empty request goes as ciphertext (auth never
+// does), and the reply is decrypted here, in the caller's thread.
 bool O2RingBleClient::oxyRequest(uint8_t op, const std::vector<uint8_t>& payload,
                                  int timeout_ms) {
+    std::vector<uint8_t> body = payload;
+    if (oxy_key_ && !payload.empty() && op != oxyii::kOpAuth) {
+        body = oxyii::encrypt(*oxy_key_, payload);
+        if (body.empty()) {
+            std::cerr << "O2Ring BLE: OxyII 0x" << std::hex << int(op) << std::dec
+                      << " did not encrypt" << std::endl;
+            return false;
+        }
+    }
     {
         std::lock_guard<std::mutex> lk(mtx_);
         resp_ready_ = false;
@@ -541,7 +557,7 @@ bool O2RingBleClient::oxyRequest(uint8_t op, const std::vector<uint8_t>& payload
         oxy_wait_op_ = op;
     }
     try {
-        writeCharacteristic(oxyii::encode(op, oxy_seq_++, payload));
+        writeCharacteristic(oxyii::encode(op, oxy_seq_++, body));
     } catch (const std::exception& e) {
         std::cerr << "O2Ring BLE: OxyII write 0x" << std::hex << int(op) << std::dec
                   << " failed: " << e.what() << std::endl;
@@ -553,14 +569,52 @@ bool O2RingBleClient::oxyRequest(uint8_t op, const std::vector<uint8_t>& payload
     const bool ok = cv_.wait_for(lk, std::chrono::milliseconds(timeout_ms),
                                  [this]() { return resp_ready_; });
     oxy_wait_op_ = -1;
-    return ok;
+    if (!ok) return false;
+
+    if (oxy_key_ && !resp_buf_.empty() && oxyii::replyEncrypted(op)) {
+        auto plain = oxyii::decrypt(*oxy_key_, resp_buf_);
+        if (!plain) {
+            std::cerr << "O2Ring BLE: OxyII reply to 0x" << std::hex << int(op) << std::dec
+                      << " (" << resp_buf_.size() << " bytes) did not decrypt" << std::endl;
+            resp_buf_.clear();
+            return false;
+        }
+        resp_buf_ = std::move(*plain);
+    }
+    return true;
 }
 
-// The per-connection handshake: GET_INFO, auth 0xFF (never answered), setup
-// 0x10, set time 0xC0, GET_CONFIG 0x00. The ring refuses file opens without it.
-// Set time writes back the ring's own clock, as the Push-C3 miner does, so the
-// ring's clock and its file names stay as the owner's app set them.
+// The per-connection handshake, once per link, in the vendor SDK's order: auth
+// 0xFF, setup 0x10, GET_INFO, set time 0xC0, GET_CONFIG 0x00. The ring refuses
+// file opens without it.
+//
+// Auth waits a second for an answer, as the vendor apps do. Older rings never
+// give one and the session stays plaintext; newer ones answer with a session
+// key and everything after is encrypted. The auth timestamp is a nonce the ring
+// does not check. Set time writes back the ring's own clock, as the Push-C3
+// miner does, so the ring's clock and its file names stay as the owner's app
+// set them.
 bool O2RingBleClient::oxySession() {
+    if (oxy_session_) return true;
+    oxy_key_.reset();
+
+    const auto now = static_cast<uint32_t>(std::time(nullptr));
+    if (oxyRequest(oxyii::kOpAuth, oxyii::authPayload(now), 1000)) {
+        oxy_key_ = oxyii::parseAuthReply(resp_buf_);
+        std::cout << "O2Ring BLE: O2Ring-S auth answered with " << resp_buf_.size()
+                  << " bytes: " << (oxy_key_ ? "AES-128 session" : "no key, plaintext session")
+                  << std::endl;
+    } else if (!connected_) {
+        return false;
+    }
+
+    // Required on a plaintext ring; on an encrypted one the vendor apps only
+    // log its failure, and so does this.
+    if (!oxyRequest(oxyii::kOpSetup, {0x00}, 3000)) {
+        std::cerr << "O2Ring BLE: O2Ring-S setup: no reply" << std::endl;
+        if (!oxy_key_) return false;
+    }
+
     if (!oxyRequest(oxyii::kOpGetInfo, {}, 5000)) {
         std::cerr << "O2Ring BLE: O2Ring-S GET_INFO timeout" << std::endl;
         return false;
@@ -571,23 +625,11 @@ bool O2RingBleClient::oxySession() {
         std::cout << "O2Ring BLE: O2Ring-S SN=" << info->serial << " fw=" << info->firmware
                   << " clock=" << c.year << "-" << int(c.month) << "-" << int(c.day) << " "
                   << int(c.hour) << ":" << int(c.minute) << ":" << int(c.second)
-                  << (info->clock_valid ? "" : " (NOT SET)") << std::endl;
+                  << (info->clock_valid ? "" : " (NOT SET)")
+                  << (oxy_key_ ? " (encrypted)" : "") << std::endl;
     }
     const bool clock_ok = info && info->clock_valid;
 
-    try {
-        writeCharacteristic(oxyii::encode(oxyii::kOpAuth, oxy_seq_++,
-                                          oxyii::authPayload(clock_ok ? oxyii::epochOf(info->clock) : 0)));
-    } catch (const std::exception& e) {
-        std::cerr << "O2Ring BLE: O2Ring-S auth write failed: " << e.what() << std::endl;
-        return false;
-    }
-    std::this_thread::sleep_for(std::chrono::milliseconds(100));
-
-    if (!oxyRequest(oxyii::kOpSetup, {0x00}, 3000)) {
-        std::cerr << "O2Ring BLE: O2Ring-S setup timeout" << std::endl;
-        return false;
-    }
     if (clock_ok) {
         if (!oxyRequest(oxyii::kOpSetTime, oxyii::timePayload(info->clock), 3000))
             std::cerr << "O2Ring BLE: O2Ring-S set time: no reply" << std::endl;

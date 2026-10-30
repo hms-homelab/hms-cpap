@@ -4,6 +4,7 @@
 
 #include "clients/IO2RingClient.h"
 #include <sdbus-c++/sdbus-c++.h>
+#include <array>
 #include <string>
 #include <vector>
 #include <mutex>
@@ -22,7 +23,8 @@ namespace hms_cpap {
  *
  * Speaks two protocols, chosen when the scan matches the ring: the original
  * O2Ring family's 0xAA protocol, and the O2Ring-S's "OxyII" (OxyIIProtocol.h),
- * whose files are named "<YYYYMMDDhhmmss>.o2s". EXPERIMENTAL for the O2Ring-S.
+ * whose files are named "<YYYYMMDDhhmmss>.o2s", in plaintext or in the
+ * encrypted session newer O2Ring-S firmware opens (SDD-057).
  */
 class O2RingBleClient : public IO2RingClient {
 public:
@@ -86,6 +88,10 @@ private:
     // OxyII request/reply: the reply carries the request's opcode.
     uint8_t oxy_seq_ = 0;
     int oxy_wait_op_ = -1;
+    // Per connection: the handshake has run, and the session key when the
+    // ring answered auth with one (every payload after it is AES, SDD-057).
+    bool oxy_session_ = false;
+    std::optional<std::array<uint8_t, 16>> oxy_key_;
 
     // Viatom protocol (the original O2Ring family)
     static uint8_t crc8(const uint8_t* data, size_t len);

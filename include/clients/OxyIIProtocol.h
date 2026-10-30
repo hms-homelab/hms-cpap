@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -28,7 +29,7 @@ constexpr size_t kOverhead = kHeaderLen + 1;
 constexpr size_t kMaxPayload = 1024;
 
 constexpr uint8_t kOpGetConfig = 0x00;
-constexpr uint8_t kOpLive = 0x04;        // 24-byte header with SpO2, HR, motion, battery
+constexpr uint8_t kOpLive = 0x04;        // header with SpO2, PI, pulse rate, motion, battery
 constexpr uint8_t kOpSetup = 0x10;       // payload 00, required after auth
 constexpr uint8_t kOpSetTime = 0xC0;
 constexpr uint8_t kOpGetInfo = 0xE1;
@@ -37,7 +38,7 @@ constexpr uint8_t kOpFileList = 0xF1;
 constexpr uint8_t kOpFileStart = 0xF2;
 constexpr uint8_t kOpFileData = 0xF3;
 constexpr uint8_t kOpFileEnd = 0xF4;
-constexpr uint8_t kOpAuth = 0xFF;        // one-way, never answered
+constexpr uint8_t kOpAuth = 0xFF;        // older rings never answer; newer ones send a key
 
 constexpr size_t kNameLen = 14;          // YYYYMMDDhhmmss
 // The ring's names carry no extension; this one tells every reader the format.
@@ -67,6 +68,33 @@ std::optional<Frame> takeFrame(std::vector<uint8_t>& buf);
 /// bytes 12..15 as (ts >> 0..3), as the ring expects.
 std::vector<uint8_t> authPayload(uint32_t ts);
 
+/*
+ * The encrypted session (SDD-057). Older rings never answer 0xFF and stay in
+ * plaintext. Newer ones (firmware 1.13.x, branch 2D010001) answer it with a
+ * key blob, and from then on payloads are AES-128-ECB with PKCS7 padding in
+ * both directions: a request's when it is not empty (0xFF never), a reply's
+ * for the opcodes replyEncrypted() names. Only the payload is ciphertext; the
+ * envelope and its CRC stay valid, so a client that misses the switch reads
+ * ciphertext as vitals and file names.
+ */
+constexpr size_t kKeyLen = 16;
+using Key = std::array<uint8_t, kKeyLen>;
+
+/// cmd 0xFF reply: >= 20 bytes that XOR MD5("lepucloud") to [1, 16, ?, ?,
+/// key16] carry the session key. Anything else, a 16-byte reply included (some
+/// rings send one and then work in plaintext), is no key: nullopt.
+std::optional<Key> parseAuthReply(const std::vector<uint8_t>& p);
+
+/// Does this opcode's reply payload arrive encrypted in an encrypted session?
+bool replyEncrypted(uint8_t op);
+
+/// PKCS7-pads p and encrypts it; empty on a crypto failure.
+std::vector<uint8_t> encrypt(const Key& key, const std::vector<uint8_t>& p);
+
+/// Decrypts p and strips the padding; nullopt when p is not whole blocks or
+/// the padding is not valid (the wrong key, or a reply that was not encrypted).
+std::optional<std::vector<uint8_t>> decrypt(const Key& key, const std::vector<uint8_t>& p);
+
 struct DateTime {
     uint16_t year = 0;
     uint8_t month = 0, day = 0, hour = 0, minute = 0, second = 0;
@@ -89,12 +117,17 @@ struct Info {
 std::optional<Info> parseInfo(const std::vector<uint8_t>& p);
 
 struct Live {
-    uint8_t state = 0;       // 0 no finger, 1 idle, 3 a file handle is open
-    uint8_t spo2 = 0, hr = 0, motion = 0, battery = 0;
-    bool reading = false;    // a finger and a plausible SpO2 and HR
+    uint8_t run = 0;         // 0 prep, 1 measure prep, 2 measuring, 3 ended
+    uint8_t state = 0;       // sensor: 0 no finger, 1 normal, 2 probe off, 3 fault
+    uint8_t spo2 = 0, hr = 0, motion = 0, battery = 0, battery_state = 0;
+    uint8_t pi_x10 = 0;      // perfusion index, tenths of a percent
+    bool reading = false;    // a finger and a valid SpO2 and pulse rate
 };
 
-/// cmd 0x04 reply: [5] state, [6] SpO2, [7] motion, [8] HR, [13] battery.
+/// cmd 0x04 reply, the vendor SDK's RtParam: [4] run status, [5] sensor state,
+/// [6] SpO2, [7] PI x10, [8..9] pulse rate u16 LE, [11] motion, [12] battery
+/// state, [13] battery %. [7] is perfusion, not motion, and [9] is the pulse
+/// rate's high byte, not padding.
 std::optional<Live> parseLive(const std::vector<uint8_t>& p);
 
 /// cmd 0xF1 reply: u8 count, then 16-byte slots of a 14-digit name. Every
