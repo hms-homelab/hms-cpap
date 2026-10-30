@@ -39,6 +39,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     uuid-dev libmariadb-dev libhiredis-dev libbrotli-dev \
     libyaml-cpp-dev zlib1g-dev \
     libhpdf-dev \
+    libsdbus-c++-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy source code
@@ -53,9 +54,12 @@ COPY include/ ./include/
 COPY third_party/ ./third_party/
 COPY llm_prompt.txt ./
 
-# Build HMS-CPAP with Web UI support
+# Build HMS-CPAP with Web UI support, and direct Bluetooth (SDD-057 D1): the
+# O2 ring and the AirSense 11 through the host's BlueZ. It needs the host's
+# D-Bus mounted (-v /run/dbus:/run/dbus:ro); without it the feature reports
+# no Bluetooth adapter and everything else runs.
 RUN mkdir build && cd build && \
-    cmake -DBUILD_TESTS=OFF -DBUILD_WITH_WEB=ON -DBUILD_WITH_MYSQL=ON .. && \
+    cmake -DBUILD_TESTS=OFF -DBUILD_WITH_WEB=ON -DBUILD_WITH_MYSQL=ON -DBUILD_WITH_BLE=ON .. && \
     make -j$(nproc) && \
     strip hms_cpap
 
@@ -82,6 +86,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libdrogon1t64 \
     libtrantor1 \
     libhpdf-2.3.0 \
+    libsdbus-c++2 \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user for security

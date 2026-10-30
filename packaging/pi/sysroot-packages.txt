@@ -20,3 +20,4 @@ libbrotli-dev
 libyaml-cpp-dev
 zlib1g-dev
 libhpdf-dev
+libsdbus-c++-dev
