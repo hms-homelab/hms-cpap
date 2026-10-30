@@ -3713,6 +3713,12 @@ void BurstCollectorService::runLoop() {
                 break;
             }
 
+            // A Settings save applies within a second rather than at the next
+            // burst: the AirSense 11 pairing (SDD-057) needs its client to
+            // exist right after the switch is saved. Same thread, same
+            // reloadConfig() the loop top runs; it does nothing when clean.
+            reloadConfig();
+
             std::this_thread::sleep_for(std::chrono::seconds(1));
         }
     }

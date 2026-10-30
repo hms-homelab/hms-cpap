@@ -48,6 +48,10 @@ public:
     ADD_METHOD_TO(CpapController::myairConnect,  "/api/myair/connect",       drogon::Post);
     ADD_METHOD_TO(CpapController::myairVerify,   "/api/myair/verify",        drogon::Post);
     ADD_METHOD_TO(CpapController::myairDisconnect, "/api/myair/disconnect",  drogon::Post);
+    ADD_METHOD_TO(CpapController::as11BleStatus,   "/api/airsense11/ble/status",       drogon::Get);
+    ADD_METHOD_TO(CpapController::as11PairStart,   "/api/airsense11/ble/pair/start",   drogon::Post);
+    ADD_METHOD_TO(CpapController::as11PairConfirm, "/api/airsense11/ble/pair/confirm", drogon::Post);
+    ADD_METHOD_TO(CpapController::as11PairCancel,  "/api/airsense11/ble/pair/cancel",  drogon::Post);
     ADD_METHOD_TO(CpapController::logs,          "/api/logs",                drogon::Get);
     // SDD-006 phase 2. All three refuse once setup_complete is true, so a
     // finished install does not expose database provisioning on the LAN forever.
@@ -179,6 +183,17 @@ public:
                      std::function<void(const drogon::HttpResponsePtr&)>&& cb);
     void myairDisconnect(const drogon::HttpRequestPtr& req,
                          std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+
+    // SDD-057: pairing an AirSense 11 over this host's own Bluetooth. The
+    // answers come from web/As11PairingApi.
+    void as11BleStatus(const drogon::HttpRequestPtr& req,
+                       std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+    void as11PairStart(const drogon::HttpRequestPtr& req,
+                       std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+    void as11PairConfirm(const drogon::HttpRequestPtr& req,
+                         std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+    void as11PairCancel(const drogon::HttpRequestPtr& req,
+                        std::function<void(const drogon::HttpResponsePtr&)>&& cb);
 
     /// The live service, so the settings page acts on the running instance
     /// rather than only on the file (SDD-006 section 5).

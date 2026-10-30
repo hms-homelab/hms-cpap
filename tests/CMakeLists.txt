@@ -34,6 +34,8 @@ list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/web/.*")
 list(APPEND PROJECT_SOURCES "${CMAKE_SOURCE_DIR}/src/services/MyAirClient.cpp")
 list(APPEND PROJECT_SOURCES "${CMAKE_SOURCE_DIR}/src/web/IngressBase.cpp")
 list(APPEND PROJECT_SOURCES "${CMAKE_SOURCE_DIR}/src/web/QueryService.cpp")
+# SDD-057: the AirSense 11 pairing endpoints' answers; jsoncpp only, no Drogon.
+list(APPEND PROJECT_SOURCES "${CMAKE_SOURCE_DIR}/src/web/As11PairingApi.cpp")
 list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/cli/.*\\.cpp$")
 # PDF/report services depend on QueryService (web/) and libhpdf — exclude from test build
 list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/PdfRenderer\\.cpp$")
@@ -119,6 +121,7 @@ set(TEST_SOURCES
     clients/test_OxyIIProtocol.cpp
     clients/test_As11Protocol.cpp
     clients/test_As11Session.cpp
+    web/test_As11PairingApi.cpp
     services/test_AirSense11Pull.cpp
     services/test_sleep_stage_classifier.cpp
     services/test_PrismaIngestion.cpp
