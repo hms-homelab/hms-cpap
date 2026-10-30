@@ -8,6 +8,10 @@
   "web_port": 8893,
   "static_dir": "./static/browser",
   "setup_complete": false,
+  "sleep_bridge": {
+    "enabled": true,
+    "port": 8894
+  },
   "database": {
     "type": "sqlite",
     "sqlite_path": "",

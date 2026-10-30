@@ -200,6 +200,11 @@ The [`architecture/`](architecture/) folder maps the code:
   consulted only to understand file formats. [NOTICE](NOTICE)
 - **License.** MIT. Use it, modify it, sell it; keep the notice.
   [LICENSE](LICENSE) · [TERMS.md](TERMS.md)
+- **Sleep Bridge component.** The part that rebuilds card files from a Sleep
+  Bridge's stream is not MIT source: it is a prebuilt binary under its own
+  licence, [LICENSE-sleepbridge](LICENSE-sleepbridge), linked only into builds
+  made with `BUILD_WITH_SLEEPBRIDGE=ON`. The stream itself is documented in
+  [docs/SLEEP_BRIDGE_LOCAL_STREAM.md](docs/SLEEP_BRIDGE_LOCAL_STREAM.md).
 
 ## Contributing & support
 

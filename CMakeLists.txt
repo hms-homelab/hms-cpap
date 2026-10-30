@@ -314,6 +314,10 @@ file(GLOB_RECURSE SOURCES "src/*.cpp")
 # switching went with the dedicated ez Share interface; all three are deleted.
 # CLI binaries have their own main() — exclude from main executable
 list(FILTER SOURCES EXCLUDE REGEX ".*/cli/.*\\.cpp$")
+# The Sleep Bridge component (prebuilt, LICENSE-sleepbridge): its adapter
+# compiles only when BUILD_WITH_SLEEPBRIDGE fetched and verified it.
+include(cmake/SleepBridge.cmake)
+hms_sleepbridge_filter_sources(SOURCES)
 if(MSVC)
     # PDF/report/gnuplot not available on Windows
     list(FILTER SOURCES EXCLUDE REGEX ".*/PdfRenderer\\.cpp$")
@@ -398,6 +402,11 @@ endif()
 
 if(BUILD_WITH_WEB)
     target_link_libraries(${PROJECT_NAME} Drogon::Drogon)
+endif()
+
+if(BUILD_WITH_SLEEPBRIDGE)
+    target_link_libraries(${PROJECT_NAME} sleepbridge_component)
+    install(FILES ${SLEEPBRIDGE_LICENSE_FILE} DESTINATION share/doc/hms-cpap)
 endif()
 
 # libharu PDF generation (Linux/macOS)

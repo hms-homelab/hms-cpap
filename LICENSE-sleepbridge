@@ -1,0 +1,25 @@
+Sleep Bridge component licence
+
+Copyright (c) 2026 Amat Solutions LLC. All rights reserved.
+
+This licence covers the Sleep Bridge component only: the prebuilt library
+and its public header <sleepbridge/rebuild.h>, distributed as release assets
+of hms-cpap and linked into hms-cpap builds made with
+BUILD_WITH_SLEEPBRIDGE=ON. The source code of hms-cpap itself is under the
+MIT licence in LICENSE, which does not extend to this component.
+
+1. You may use the component, and redistribute it unmodified, as part of
+   hms-cpap or a build of hms-cpap, free of charge.
+
+2. You may not modify, decompile, disassemble or otherwise reverse engineer
+   the component, except to the extent applicable law expressly permits it
+   despite this restriction.
+
+3. Each copy you redistribute must carry this licence.
+
+4. THE COMPONENT IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+   OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+   MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN
+   NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR
+   OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE,
+   ARISING FROM, OUT OF OR IN CONNECTION WITH THE COMPONENT OR ITS USE.
