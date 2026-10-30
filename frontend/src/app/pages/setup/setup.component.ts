@@ -164,6 +164,15 @@ import { switchMap, tap } from 'rxjs';
                 </div>
               </label>
 
+              <label class="radio-option" [class.selected]="source === 'flashair'">
+                <input type="radio" name="source" value="flashair"
+                       [(ngModel)]="source" />
+                <div class="radio-content">
+                  <strong>{{ 'setup.source.flashairTitle' | translate }}</strong>
+                  <span>{{ 'setup.source.flashairDesc' | translate }}</span>
+                </div>
+              </label>
+
               <label class="radio-option" [class.selected]="source === 'skip'">
                 <input type="radio" name="source" value="skip"
                        [(ngModel)]="source" />
@@ -234,6 +243,17 @@ import { switchMap, tap } from 'rxjs';
                         : ('setup.source.testFailed' | translate:{ reason: testResult }) }}
                   </div>
                 }
+              </div>
+            }
+
+            @if (source === 'flashair') {
+              <div class="source-config">
+                <label for="flashair-url">{{ 'setup.source.flashairUrl' | translate }}</label>
+                <div class="input-row">
+                  <input id="flashair-url" type="text"
+                         [(ngModel)]="flashairUrl"
+                         placeholder="http://flashair.local" />
+                </div>
               </div>
             }
 
@@ -712,6 +732,8 @@ export class SetupComponent {
   /** SDD-022: which machine wrote the folder. Only meaningful for source==='local'. */
   localFormat = 'resmed';
   ezshareUrl = 'http://192.168.4.1';
+  /** SDD-056: a FlashAir on the home WiFi answers by mDNS. */
+  flashairUrl = 'http://flashair.local';
   localDir = '';
   testing = false;
   saving = false;
@@ -925,6 +947,11 @@ export class SetupComponent {
       configUpdate['transport'] = 'ezshare';
       configUpdate['format'] = 'resmed';
       configUpdate['ezshare_url'] = this.ezshareUrl;
+    } else if (this.source === 'flashair') {
+      configUpdate['source'] = 'flashair';
+      configUpdate['transport'] = 'flashair';
+      configUpdate['format'] = 'resmed';
+      configUpdate['flashair_url'] = this.flashairUrl;
     } else if (this.source === 'local') {
       // SDD-022: a folder is ONE transport read by several parsers. The wizard
       // asks which machine wrote the card rather than assuming ResMed, which is

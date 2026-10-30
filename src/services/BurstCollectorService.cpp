@@ -5,6 +5,7 @@
 #include "services/InsightsEngine.h"
 #include "services/SleepHqExportService.h"
 #include "services/CleaningPublisher.h"
+#include "clients/FlashAirClient.h"
 #include "clients/LocalDataSource.h"
 #include "clients/O2RingClient.h"
 #include "clients/AirSense11Client.h"
@@ -190,6 +191,10 @@ void BurstCollectorService::initDataSource() {
         std::cout << "CPAP: BMC / React Health Luna mode — reading from " << data_dir << std::endl;
     } else if (source == "sefam_ezshare") {
         startSefamOverEzShare(ConfigManager::get("CPAP_ARCHIVE_DIR", ""));
+    } else if (source == "flashair") {
+        // SDD-056: a FlashAir card answers the same interface as an ez Share.
+        data_source_ = std::make_unique<FlashAirClient>();
+        discovery_service_ = std::make_unique<SessionDiscoveryService>(*data_source_);
     } else {
         auto ez = std::make_unique<EzShareClient>();
         if (app_config_ && !app_config_->ezshare_range) {
@@ -1998,6 +2003,9 @@ bool BurstCollectorService::executeBurstCycle() {
         } else if (cpap_source_ == "ezshare" || cpap_source_ == "sefam") {
             std::cout << "CPAP: Accessing ez Share at "
                       << ConfigManager::get("EZSHARE_BASE_URL", "http://192.168.4.1") << std::endl;
+        } else if (cpap_source_ == "flashair") {
+            std::cout << "CPAP: Accessing the FlashAir at "
+                      << ConfigManager::get("FLASHAIR_BASE_URL", "http://flashair.local") << std::endl;
         } else {
             // Not an ez Share: naming one here would send a user looking for
             // HTTP calls that were never made.
@@ -4115,6 +4123,7 @@ void BurstCollectorService::snapshotConfig(ConfigSnapshot& snap) {
     // "ezshare" for a ResMed card and for a Sefam card behind the same ez Share.
     snap.source = AppConfig::collectorSource(app_config_->transport, app_config_->format);
     snap.ezshare_url = app_config_->ezshare_url;
+    snap.flashair_url = app_config_->flashair_url;
     snap.local_dir = app_config_->local_dir;
     snap.archive_dir = app_config_->archive_dir;
     snap.db_type = app_config_->database.type;
@@ -4178,6 +4187,7 @@ void BurstCollectorService::reloadConfig() {
 
     // Source / discovery
     if (nc.source != last_config_.source || nc.ezshare_url != last_config_.ezshare_url ||
+        nc.flashair_url != last_config_.flashair_url ||
         nc.local_dir != last_config_.local_dir ||
         (nc.source == "sefam_ezshare" && nc.archive_dir != last_config_.archive_dir)) {
         sefam_over_ezshare_ = false;
@@ -4223,6 +4233,17 @@ void BurstCollectorService::reloadConfig() {
             discovery_service_ = std::make_unique<SessionDiscoveryService>(*data_source_);
             prisma_ingestion_.reset();
             sefam_ingestion_.reset();
+        } else if (nc.source == "flashair") {
+            local_source_dir_.clear();
+            prisma_ingestion_.reset();
+            sefam_ingestion_.reset();
+#ifdef _WIN32
+            _putenv_s("FLASHAIR_BASE_URL", nc.flashair_url.c_str());
+#else
+            setenv("FLASHAIR_BASE_URL", nc.flashair_url.c_str(), 1);
+#endif
+            data_source_ = std::make_unique<FlashAirClient>();
+            discovery_service_ = std::make_unique<SessionDiscoveryService>(*data_source_);
         } else {
             local_source_dir_.clear();
             prisma_ingestion_.reset();

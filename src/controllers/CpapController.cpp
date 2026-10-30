@@ -385,6 +385,7 @@ void CpapController::updateConfig(const drogon::HttpRequestPtr& req,
     }
     if (j.isMember("ezshare_url")) config_->ezshare_url = j["ezshare_url"].asString();
     if (j.isMember("ezshare_range")) config_->ezshare_range = j["ezshare_range"].asBool();
+    if (j.isMember("flashair_url"))  config_->flashair_url = j["flashair_url"].asString();
     if (j.isMember("auto_update"))   config_->auto_update = j["auto_update"].asBool();
     if (j.isMember("local_dir")) config_->local_dir = j["local_dir"].asString();
     if (j.isMember("burst_interval")) config_->burst_interval = j["burst_interval"].asInt();
@@ -720,6 +721,7 @@ void CpapController::setupApply(const drogon::HttpRequestPtr& req,
             config_->source = AppConfig::collectorSource(config_->transport, config_->format);
     }
     if (j.isMember("ezshare_url")) config_->ezshare_url = j["ezshare_url"].asString();
+    if (j.isMember("flashair_url")) config_->flashair_url = j["flashair_url"].asString();
     if (j.isMember("local_dir"))   config_->local_dir = j["local_dir"].asString();
     if (j.isMember("archive_dir")) config_->archive_dir = j["archive_dir"].asString();
 

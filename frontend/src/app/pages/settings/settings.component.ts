@@ -36,6 +36,7 @@ import { AppConfig } from '../../models/config.model';
               <select [(ngModel)]="config.transport" name="transport"
                       (ngModelChange)="onTransportChange($event)">
                 <option value="ezshare">{{ 'settings.source.ezshare' | translate }}</option>
+                <option value="flashair">{{ 'settings.source.flashair' | translate }}</option>
                 <option value="local">{{ 'settings.source.local' | translate }}</option>
               </select>
             </label>
@@ -78,6 +79,13 @@ import { AppConfig } from '../../models/config.model';
               <input type="checkbox" [(ngModel)]="config.ezshare_range" name="ezshare_range" />
               {{ 'settings.source.rangeDownloads' | translate }}
               <span class="restart-tag">{{ 'settings.tag.restart' | translate }}</span>
+            </label>
+            <!-- SDD-056: a FlashAir on the home WiFi answers as flashair.local.
+                 It carries a ResMed card; onTransportChange sets the format. -->
+            <label *ngIf="config.transport === 'flashair'">
+              {{ 'settings.source.flashairUrl' | translate }}
+              <input type="text" [(ngModel)]="config.flashair_url" name="flashair_url"
+                     placeholder="http://flashair.local" />
             </label>
             <label *ngIf="config.transport === 'local'">
               {{ 'settings.source.localDir' | translate }}
@@ -1513,22 +1521,24 @@ export class SettingsComponent implements OnInit, OnDestroy {
    * Does the selected source download files that have to be written somewhere?
    *
    * Mirrors PreflightService::sourceNeedsArchive. local and lowenstein read
-   * files already on disk; ezShare receives them over the network.
+   * files already on disk; ezShare and FlashAir receive them over the network.
    */
   sourceNeedsArchive(): boolean {
     // The transport, which the picker above edits; the legacy `source` only
     // catches up on save. SDD-031: a Sefam card behind an ez Share is copied
     // into this folder, so it needs one exactly as a ResMed card does.
     const t = this.config?.transport ?? this.config?.source;
-    return t === 'ezshare';
+    return t === 'ezshare' || t === 'flashair';
   }
 
-  /** SDD-031: an ez Share reads ResMed or Sefam; any other format goes back to ResMed. */
+  /** SDD-031: an ez Share reads ResMed or Sefam; any other format goes back to
+   *  ResMed. SDD-056: a FlashAir reads ResMed only. */
   onTransportChange(transport: string): void {
     if (!this.config) return;
     if (transport === 'ezshare' && !['resmed', 'sefam'].includes(this.config.format)) {
       this.config.format = 'resmed';
     }
+    if (transport === 'flashair') this.config.format = 'resmed';
   }
 
   /** Required by the current source, and empty. Ticket 67's silent failure. */

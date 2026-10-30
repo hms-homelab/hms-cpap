@@ -58,7 +58,7 @@ bool sourceNeedsArchive(const ConfigModel& m) {
         const auto s = m.getString("source");
         return s == "ezshare";
     }
-    return t == "ezshare";
+    return t == "ezshare" || t == "flashair";
 }
 
 std::string trim(const std::string& s) {
@@ -100,8 +100,9 @@ const std::vector<FieldSpec>& settingsFields() {
         // why a Prisma or Sefam owner could not pick their machine here at all.
         f.push_back({"transport", "source", "Where the data comes from", "",
             FieldKind::Choice, "",
-            {{"ezshare", "ezShare WiFi SD card"},
-             {"local",   "A folder on this computer"}},
+            {{"ezshare",  "ezShare WiFi SD card"},
+             {"flashair", "Toshiba FlashAir WiFi SD card"},
+             {"local",    "A folder on this computer"}},
             {}, {}, false, nullptr});
 
         // Offered only for a local folder: an ezShare is ResMed-only in
@@ -122,6 +123,11 @@ const std::vector<FieldSpec>& settingsFields() {
 
         f.push_back({"ezshare_range", "source", "Use range requests", "", FieldKind::Bool,
             "", {}, {}, {}, true, transportIs("ezshare")});
+
+        // SDD-056: a FlashAir on the home WiFi answers by mDNS. ResMed only, so
+        // `format` stays hidden and says resmed, as for an ezShare.
+        f.push_back({"flashair_url", "source", "FlashAir URL", "", FieldKind::Text,
+            "http://flashair.local", {}, {}, {}, false, transportIs("flashair")});
 
         f.push_back({"local_dir", "source", "SD Card Folder",
             "The card ROOT, holding both STR.edf and DATALOG. Not the DATALOG folder itself.",

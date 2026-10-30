@@ -24,7 +24,8 @@
 ## What it is
 
 A C++ service with a built-in Angular web UI. It pulls the files your CPAP
-writes to its SD card (over WiFi via an ezShare adapter, or from a folder),
+writes to its SD card (over WiFi via an ezShare or Toshiba FlashAir card, or
+from a folder),
 parses them itself, stores the results in a database, and shows you the data.
 It is a fully local-first experience.
 
@@ -139,6 +140,11 @@ Or without the script: `mkdir build && cd build && cmake .. && make -j$(nproc) &
   install. Works with a ResMed card and a Sefam S.Box card. For a Sefam card,
   set an archive folder: the card is copied there, all of it on the first run
   and then its last two nights.
+- **Toshiba FlashAir WiFi SD**: the card sits in the CPAP's SD slot and joins
+  your home WiFi itself, so no bridge is needed. Set it to join your network
+  (`APPMODE=5` in its `SD_WLAN/CONFIG`) and pick FlashAir in the wizard; it is
+  found as `http://flashair.local`, or give its address. ResMed cards. Tested
+  on a FlashAir W-02.
 - **Local folder**: point the wizard at the SD card root (the folder that holds
   both `STR.edf` and `DATALOG/`), on a USB reader, NAS share, or any mount.
 - **Upload page**: zip the card and drop it in the browser. A ResMed, Sefam or

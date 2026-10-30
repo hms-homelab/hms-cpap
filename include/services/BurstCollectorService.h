@@ -901,7 +901,7 @@ private:
     std::atomic<std::chrono::steady_clock::rep> last_data_at_{0};
 
     struct ConfigSnapshot {
-        std::string source, ezshare_url, local_dir, archive_dir;
+        std::string source, ezshare_url, flashair_url, local_dir, archive_dir;
         std::string db_type, db_host, db_name, db_user, db_password, sqlite_path;
         int db_port = 0;
         bool mqtt_enabled = false;

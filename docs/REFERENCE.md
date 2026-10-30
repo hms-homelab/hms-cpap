@@ -386,8 +386,9 @@ See [`.env.example`](.env.example) for the complete list of variable names, and
 
 ```bash
 # Data source
-CPAP_SOURCE=ezshare          # ezshare | local | lowenstein | sefam
+CPAP_SOURCE=ezshare          # ezshare | flashair | local | lowenstein | sefam
 EZSHARE_BASE_URL=http://192.168.4.1  # ezShare bridge IP
+FLASHAIR_BASE_URL=http://flashair.local  # Toshiba FlashAir on your WiFi (config.json key: flashair_url)
 
 # MQTT broker (required for Home Assistant)
 MQTT_BROKER=localhost

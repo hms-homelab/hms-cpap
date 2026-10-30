@@ -48,7 +48,7 @@ struct AppConfig {
     // `source` is still READ for migration and still WRITTEN for one release,
     // so an upgrade that gets rolled back does not strand the user. See
     // migrateSource() below, which is the ONLY place the mapping lives.
-    std::string transport = "ezshare";  // ezshare | local
+    std::string transport = "ezshare";  // ezshare | flashair | local
     std::string format    = "resmed";   // resmed | lowenstein | sefam | philips
 
     /// LEGACY. Kept so a config written by an older build still loads, and so
@@ -80,6 +80,7 @@ struct AppConfig {
             src == "local")
             return "local";
         if (src == "fysetc") return supportedTransport(src);   // removed: says so
+        if (src == "flashair") return "flashair";               // SDD-056
         return "ezshare";   // ezshare, and anything unknown
     }
     static std::string formatForSource(const std::string& src) {
@@ -134,10 +135,12 @@ struct AppConfig {
     /// enumerate vendor names, which meant every new machine was a chance to get
     /// it wrong -- and it was already only accidentally right for Sefam.
     bool needsArchive() const {
-        return transport == "ezshare";
+        return transport == "ezshare" || transport == "flashair";
     }
     std::string ezshare_url = "http://192.168.4.1";
     bool ezshare_range = true;
+    /// SDD-056: a FlashAir on the home WiFi (APPMODE=5) answers by mDNS.
+    std::string flashair_url = "http://flashair.local";
     /// SDD-041 D1: apply a newer release without asking, once the collector is
     /// idle. Off by default: a therapy data collector should not change under
     /// its owner unasked. The check itself always runs.
@@ -337,6 +340,7 @@ struct AppConfig {
             if (!f.empty()) format    = f;
         }
         if (ezshare_url.empty()) ezshare_url = env("EZSHARE_BASE_URL");
+        if (flashair_url.empty()) flashair_url = env("FLASHAIR_BASE_URL");
         {
             auto v = env("EZSHARE_SUPPORTS_RANGE");
             if (v == "false" || v == "0") ezshare_range = false;
@@ -589,6 +593,7 @@ struct AppConfig {
             }
             if (j.contains("ezshare_url"))    config.ezshare_url = j["ezshare_url"];
             if (j.contains("ezshare_range")) config.ezshare_range = j["ezshare_range"];
+            if (j.contains("flashair_url"))  config.flashair_url = j["flashair_url"];
             if (j.contains("auto_update"))   config.auto_update = j["auto_update"];
             if (j.contains("local_dir"))     config.local_dir = j["local_dir"];
             if (j.contains("archive_dir"))   config.archive_dir = j["archive_dir"];
@@ -741,6 +746,7 @@ struct AppConfig {
             j["source"] = legacySource();
             j["ezshare_url"] = ezshare_url;
             j["ezshare_range"] = ezshare_range;
+            j["flashair_url"] = flashair_url;
             j["auto_update"] = auto_update;
             j["local_dir"] = local_dir;
             j["archive_dir"] = archive_dir;
@@ -864,6 +870,7 @@ struct AppConfig {
         j["source"] = legacySource();   // SDD-022 rule 3, one release only
         j["ezshare_url"] = ezshare_url;
         j["ezshare_range"] = ezshare_range;
+        j["flashair_url"] = flashair_url;
         j["auto_update"] = auto_update;
         j["local_dir"] = local_dir;
         j["archive_dir"] = archive_dir;

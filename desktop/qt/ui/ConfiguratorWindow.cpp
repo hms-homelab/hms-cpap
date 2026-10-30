@@ -103,8 +103,9 @@ public:
         // directly under the second radio, so the whole form read as belonging
         // to that option -- the page looked like "folder on this computer" had
         // a unit address.
-        ezshare_ = new QRadioButton("A CpapDash Mule or Miner on my network", this);
-        local_   = new QRadioButton("A folder on this computer", this);
+        ezshare_  = new QRadioButton("A CpapDash Mule or Miner on my network", this);
+        flashair_ = new QRadioButton("A Toshiba FlashAir card on my WiFi", this);
+        local_    = new QRadioButton("A folder on this computer", this);
 
         auto* choices = new QWidget(this);
         auto* cv = new QVBoxLayout(choices);
@@ -117,6 +118,14 @@ public:
             "collects from it over your normal network.", choices);
         ez_help->setContentsMargins(24, 0, 0, 8);   // indented under its radio
         cv->addWidget(ez_help);
+
+        // SDD-056
+        cv->addWidget(flashair_);
+        auto* fa_help = explain(
+            "The FlashAir stays in your machine and joins your home WiFi; "
+            "HmsCpap reads the card from it directly.", choices);
+        fa_help->setContentsMargins(24, 0, 0, 8);
+        cv->addWidget(fa_help);
 
         cv->addWidget(local_);
         auto* local_help = explain(
@@ -168,7 +177,13 @@ public:
         if (url_->text().isEmpty()) url_->setText(kMuleDefault);
         form->addRow("Unit address", url_);
 
-
+        // Its own setting, flashair_url, so switching back and forth between the
+        // two keeps each address.
+        flashair_url_ = new QLineEdit(this);
+        flashair_url_->setMinimumWidth(320);
+        flashair_url_->setText(QString::fromStdString(wiz_->model_.getString("flashair_url")));
+        if (flashair_url_->text().isEmpty()) flashair_url_->setText("http://flashair.local");
+        form->addRow("FlashAir address", flashair_url_);
 
         // Folders are CHOSEN, never typed. A typed path is a trailing space, a
         // backslash on the wrong side, or a folder that does not exist yet.
@@ -219,12 +234,14 @@ public:
             archive_->setText(dir);
             emit completeChanged();
         });
-        connect(ezshare_, &QRadioButton::toggled, this, [this] { sync(); });
-        connect(local_,   &QRadioButton::toggled, this, [this] { sync(); });
+        connect(ezshare_,  &QRadioButton::toggled, this, [this] { sync(); });
+        connect(flashair_, &QRadioButton::toggled, this, [this] { sync(); });
+        connect(local_,    &QRadioButton::toggled, this, [this] { sync(); });
         connect(url_, &QLineEdit::textEdited, this, [this] { emit completeChanged(); });
+        connect(flashair_url_, &QLineEdit::textEdited, this, [this] { emit completeChanged(); });
 
         const auto src = wiz_->model_.getString("source");
-        (src == "local" ? local_ : ezshare_)->setChecked(true);
+        (src == "local" ? local_ : src == "flashair" ? flashair_ : ezshare_)->setChecked(true);
         sync();
     }
 
@@ -242,9 +259,11 @@ public:
                 return "Choose the folder that holds your SD card data.";
             return {};
         }
-        if (ezshare_->isChecked()) {
-            if (url_->text().trimmed().isEmpty())
+        if (ezshare_->isChecked() || flashair_->isChecked()) {
+            if (ezshare_->isChecked() && url_->text().trimmed().isEmpty())
                 return "Enter the address of your CpapDash unit.";
+            if (flashair_->isChecked() && flashair_url_->text().trimmed().isEmpty())
+                return "Enter the address of your FlashAir card.";
             // The card is DOWNLOADED over the network, so without somewhere to
             // put it nothing reaches disk at all.
             if (archive_->text().trimmed().isEmpty())
@@ -259,6 +278,9 @@ public:
         if (local_->isChecked()) {
             wiz_->model_.set("source", "local");
             wiz_->model_.set("local_dir", folder_->text().toStdString());
+        } else if (flashair_->isChecked()) {
+            wiz_->model_.set("source", "flashair");
+            wiz_->model_.set("flashair_url", flashair_url_->text().trimmed().toStdString());
         } else {
             wiz_->model_.set("source", "ezshare");
             wiz_->model_.set("ezshare_url", url_->text().trimmed().toStdString());
@@ -276,7 +298,8 @@ private:
         // them -- which is worse than it simply not being there. setRowVisible
         // takes the LABEL with the field; hiding only the widget would leave an
         // orphaned caption pointing at nothing.
-        form_->setRowVisible(url_,          !is_local);
+        form_->setRowVisible(url_,          ezshare_->isChecked());
+        form_->setRowVisible(flashair_url_, flashair_->isChecked());
         form_->setRowVisible(folder_row_,     is_local);
 
         // An ezShare card is DOWNLOADED, so it must be written somewhere or
@@ -316,8 +339,10 @@ private:
 
     ConfiguratorWindow* wiz_;
     QRadioButton* ezshare_ = nullptr;
+    QRadioButton* flashair_ = nullptr;
     QRadioButton* local_   = nullptr;
     QLineEdit*    url_     = nullptr;
+    QLineEdit*    flashair_url_ = nullptr;
     QLineEdit*    folder_  = nullptr;
     QLineEdit*    archive_ = nullptr;
     QWidget*      archive_row_ = nullptr;

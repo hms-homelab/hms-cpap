@@ -1,7 +1,7 @@
 export interface AppConfig {
   device_id: string;
   device_name: string;
-  /** SDD-022: WHERE files come from. ezshare | local */
+  /** SDD-022: WHERE files come from. ezshare | flashair | local */
   transport: string;
   /** SDD-022: WHAT wrote them. resmed | lowenstein | sefam | bmc | philips */
   format: string;
@@ -13,6 +13,8 @@ export interface AppConfig {
   source: string;
   ezshare_url: string;
   ezshare_range: boolean;
+  /** SDD-056 */
+  flashair_url: string;
   /** SDD-041 D1: apply a newer release without asking, once idle. Off by default. */
   auto_update?: boolean;
   local_dir: string;

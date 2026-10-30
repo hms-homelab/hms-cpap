@@ -654,6 +654,7 @@ int main(int argc, char** argv) {
     portableSetenv("CPAP_TRANSPORT", config.transport.c_str());
     portableSetenv("CPAP_FORMAT", config.format.c_str());
     portableSetenv("EZSHARE_BASE_URL", config.ezshare_url.c_str());
+    portableSetenv("FLASHAIR_BASE_URL", config.flashair_url.c_str());
     // Store numeric conversions in locals to avoid dangling pointer from temporary
     std::string burst_str = std::to_string(config.burst_interval);
     std::string port_str  = std::to_string(config.web_port);
