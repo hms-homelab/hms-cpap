@@ -507,6 +507,78 @@ TEST(As11Session, ClearFramesAndJunkDoNotDisturbAReply) {
     EXPECT_EQ(rig.session.pairStart(), Result::WaitCode);
 }
 
+// ── the live night ──
+
+TEST(As11Session, StreamsTheNightAndHandsOnWhatTheMachinePushes) {
+    SpoolRig rig;
+    std::vector<json> data;
+    std::vector<bool> fg;
+    std::vector<RespEvent> events;
+    rig.session.setStreamHandlers({
+        [&](const nlohmann::ordered_json& p) { data.push_back(json::parse(p.dump())); },
+        [&](bool therapy) { fg.push_back(therapy); },
+        [&](const RespEvent& e) { events.push_back(e); },
+    });
+    rig.machine.respond = [&rig](const json& req) -> std::vector<json> {
+        const std::string method = req["method"];
+        if (method == "Get" && req["params"][0] == "SerialNumber")
+            return {FakeMachine::reply(req, {{"SerialNumber", "23000000001"}, {"FGState", "Standby"}})};
+        if (method == "Get" && req["params"][0] == "IdentificationProfiles")
+            return {FakeMachine::reply(req, json::parse(R"({"IdentificationProfiles":{"Product":{"SerialNumber":"23000000001"}}})"))};
+        if (method == "SubscribeEvent") {
+            EXPECT_EQ(req["params"]["dataIds"], json::array({"FGState", "TherapyEvents-RespiratoryEvents"}));
+            return {FakeMachine::reply(req, json::object())};
+        }
+        if (method == "StartStream") {
+            if (req["params"]["dataIds"].empty()) return {FakeMachine::reply(req, json::object())};
+            EXPECT_EQ(req["params"]["sampleIntervalMs"], 40);
+            EXPECT_EQ(req["params"]["reportIntervalMs"], 200);
+            EXPECT_EQ(req["params"]["dataIds"].size(), 13u);
+            return {FakeMachine::reply(req, json::object()),
+                    {{"jsonrpc", "1.0"}, {"method", "EventNotification"},
+                     {"params", {{"dataId", "FGState"}, {"events", {{{"value", "Therapy"}}}}}}},
+                    {{"jsonrpc", "1.0"}, {"method", "StreamData"},
+                     {"params", {{"startTime", "2026-10-17T03:00:00.000Z"}, {"intervalMs", 40},
+                                 {"data", {{{"PatientFlow", {0.1, 0.2}}}}}}}},
+                    {{"jsonrpc", "1.0"}, {"method", "EventNotification"},
+                     {"params", {{"dataId", "TherapyEvents-RespiratoryEvents"},
+                                 {"events", {{{"event", "HypopneaEnd"}, {"reportTime", "2026-10-17T03:10:00.000Z"},
+                                              {"durationSeconds", 14}, {"backdateSeconds", 14}},
+                                             {{"event", ""}}}}}}}};
+        }
+        return {};
+    };
+
+    std::string serial;
+    bool therapy = true;
+    ASSERT_EQ(rig.session.getState(&serial, &therapy), Result::Ok);
+    EXPECT_EQ(serial, "23000000001");
+    EXPECT_FALSE(therapy);
+    std::string ident;
+    ASSERT_EQ(rig.session.getIdentification(&ident), Result::Ok);
+    EXPECT_NE(ident.find("\"SerialNumber\":\"23000000001\""), std::string::npos);
+    ASSERT_EQ(rig.session.subscribe(), Result::Ok);
+    ASSERT_EQ(rig.session.startStream(), Result::Ok);
+    EXPECT_EQ(fg, (std::vector<bool>{true}));
+    ASSERT_EQ(data.size(), 1u);
+    EXPECT_EQ(data[0]["startTime"], "2026-10-17T03:00:00.000Z");
+    ASSERT_EQ(events.size(), 1u);   // the nameless one is not an event
+    EXPECT_EQ(events[0].event, "HypopneaEnd");
+    EXPECT_EQ(events[0].durationSeconds, 14);
+    rig.session.stopStream();
+    EXPECT_EQ(rig.machine.requests.back()["params"]["dataIds"], json::array());
+}
+
+TEST(As11Session, NoLiveStepsWithoutASession) {
+    Rig rig;
+    std::string s;
+    bool t = false;
+    EXPECT_EQ(rig.session.getState(&s, &t), Result::Protocol);
+    EXPECT_EQ(rig.session.subscribe(), Result::Protocol);
+    EXPECT_EQ(rig.session.startStream(), Result::Protocol);
+    EXPECT_TRUE(rig.machine.requests.empty());
+}
+
 // ── credentials and scanning ──
 
 TEST(As11Session, CredentialsRoundTripWithMode0600) {

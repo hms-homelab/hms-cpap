@@ -121,6 +121,8 @@ set(TEST_SOURCES
     clients/test_OxyIIProtocol.cpp
     clients/test_As11Protocol.cpp
     clients/test_As11Session.cpp
+    clients/test_As11Stream.cpp
+    services/test_As11NightWriter.cpp
     web/test_As11PairingApi.cpp
     services/test_AirSense11Pull.cpp
     services/test_sleep_stage_classifier.cpp

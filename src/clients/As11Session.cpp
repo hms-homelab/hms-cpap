@@ -208,11 +208,13 @@ void Session::onMessage(const std::string& s) {
     const auto method = m.find("method");
     const bool has_method = method != m.end() && method->is_string();
     if (has_method && id == m.end()) {
-        // A notification. StreamData and EventNotification belong to the live
-        // night (SDD-057 step 4); HeartBeat needs no answer.
+        // A notification; HeartBeat needs no answer.
         const auto params = m.find("params");
-        if (method->get<std::string>() == "SpoolFragment" && params != m.end() && params->is_object())
-            onSpoolFragment(*params);
+        if (params == m.end() || !params->is_object()) return;
+        const std::string name = method->get<std::string>();
+        if (name == "SpoolFragment") onSpoolFragment(*params);
+        else if (name == "StreamData") { if (handlers_.streamData) handlers_.streamData(*params); }
+        else if (name == "EventNotification") onEventNotification(*params);
         return;
     }
     if (id != m.end() && id->is_number() && !has_method && pending_id_ >= 0 &&
@@ -259,9 +261,44 @@ void Session::onSpoolFragment(const json& p) {
     cv_.notify_all();
 }
 
+// EventNotification {"dataId": "FGState", "events": [{"value": "Therapy"}]}, or
+// "TherapyEvents-RespiratoryEvents" with {event, reportTime, durationSeconds,
+// backdateSeconds} per event: the machine's own scoring, live.
+void Session::onEventNotification(const json& p) {
+    const auto id = p.find("dataId");
+    const auto evs = p.find("events");
+    if (id == p.end() || !id->is_string() || evs == p.end() || !evs->is_array()) return;
+    const std::string data_id = id->get<std::string>();
+    if (data_id == "TherapyEvents-RespiratoryEvents") {
+        if (!handlers_.respEvent) return;
+        for (const auto& e : *evs) {
+            if (!e.is_object()) continue;
+            RespEvent r;
+            if (auto v = e.find("event"); v != e.end() && v->is_string()) r.event = v->get<std::string>();
+            if (auto v = e.find("reportTime"); v != e.end() && v->is_string()) r.reportTime = v->get<std::string>();
+            if (auto v = e.find("durationSeconds"); v != e.end() && v->is_number()) r.durationSeconds = v->get<int>();
+            if (auto v = e.find("backdateSeconds"); v != e.end() && v->is_number()) r.backdateSeconds = v->get<int>();
+            if (r.event.empty() || r.reportTime.empty()) continue;
+            handlers_.respEvent(r);
+        }
+        return;
+    }
+    if (data_id != "FGState" || !handlers_.fgState) return;
+    for (const auto& e : *evs) {
+        if (!e.is_object()) continue;
+        const auto v = e.find("value");
+        if (v != e.end() && v->is_string()) handlers_.fgState(v->get<std::string>() == "Therapy");
+    }
+}
+
+void Session::setStreamHandlers(StreamHandlers h) {
+    std::lock_guard<std::mutex> lk(m_);
+    handlers_ = std::move(h);
+}
+
 // ── JSON-RPC ──
 
-std::optional<nlohmann::json> Session::call(int id, const std::string& method, const ojson& params,
+std::optional<nlohmann::ordered_json> Session::call(int id, const std::string& method, const ojson& params,
                                             const char* version, bool encrypted, int* err) {
     *err = 0;
     ojson m;
@@ -317,7 +354,7 @@ std::optional<nlohmann::json> Session::call(int id, const std::string& method, c
 }
 
 namespace {
-std::optional<std::string> str(const nlohmann::json& obj, const char* key) {
+std::optional<std::string> str(const nlohmann::ordered_json& obj, const char* key) {
     if (!obj.is_object()) return std::nullopt;
     const auto it = obj.find(key);
     if (it == obj.end() || !it->is_string()) return std::nullopt;
@@ -560,6 +597,101 @@ Result Session::pullSpool(const std::string& name, const std::string& from,
     spool_id_ = -1;
     spool_state_ = SpoolState::Idle;
     return r;
+}
+
+// ── the live night ──
+
+Result Session::getState(std::string* serial, bool* therapy) {
+    int id = 0;
+    {
+        std::lock_guard<std::mutex> lk(m_);
+        last_error_.clear();
+        if (!cipher_) { last_error_ = "no session open"; return Result::Protocol; }
+        id = next_id_++;
+    }
+    int ec = 0;
+    auto res = call(id, "Get", ojson::array({"SerialNumber", "FGState"}), "1.0", true, &ec);
+    if (!res || !res->is_object()) {
+        fail(ec ? "machine refused the state request" : "no answer to Get");
+        return Result::Protocol;
+    }
+    if (serial) *serial = str(*res, "SerialNumber").value_or("");
+    if (therapy) *therapy = str(*res, "FGState").value_or("") == "Therapy";
+    return Result::Ok;
+}
+
+Result Session::subscribe() {
+    int id = 0;
+    {
+        std::lock_guard<std::mutex> lk(m_);
+        last_error_.clear();
+        if (!cipher_) { last_error_ = "no session open"; return Result::Protocol; }
+        id = next_id_++;
+    }
+    ojson params;
+    params["dataIds"] = ojson::array({"FGState", "TherapyEvents-RespiratoryEvents"});
+    int ec = 0;
+    if (!call(id, "SubscribeEvent", params, "1.0", true, &ec)) {
+        fail(ec ? "machine refused the subscription" : "no answer to SubscribeEvent");
+        return Result::Protocol;
+    }
+    return Result::Ok;
+}
+
+Result Session::startStream() {
+    int id = 0;
+    {
+        std::lock_guard<std::mutex> lk(m_);
+        last_error_.clear();
+        if (!cipher_) { last_error_ = "no session open"; return Result::Protocol; }
+        id = next_id_++;
+    }
+    ojson params;
+    params["dataIds"] = streamIds();
+    params["sampleIntervalMs"] = kIntervalMs;
+    params["reportIntervalMs"] = 200;
+    int ec = 0;
+    if (!call(id, "StartStream", params, "1.0", true, &ec)) {
+        fail(ec ? "machine refused the stream" : "no answer to StartStream");
+        return Result::Protocol;
+    }
+    return Result::Ok;
+}
+
+void Session::stopStream() {
+    int id = 0;
+    {
+        std::lock_guard<std::mutex> lk(m_);
+        if (!cipher_ || !connected_) return;
+        id = next_id_++;
+    }
+    ojson params;
+    params["dataIds"] = ojson::array();
+    params["sampleIntervalMs"] = kIntervalMs;
+    params["reportIntervalMs"] = 200;
+    int ec = 0;
+    const int saved = timeouts_.call_ms;
+    timeouts_.call_ms = std::min(saved, 3000);   // the link may already be going
+    call(id, "StartStream", params, "1.0", true, &ec);
+    timeouts_.call_ms = saved;
+}
+
+Result Session::getIdentification(std::string* result_json) {
+    int id = 0;
+    {
+        std::lock_guard<std::mutex> lk(m_);
+        last_error_.clear();
+        if (!cipher_) { last_error_ = "no session open"; return Result::Protocol; }
+        id = next_id_++;
+    }
+    int ec = 0;
+    auto res = call(id, "Get", ojson::array({"IdentificationProfiles"}), "1.0", true, &ec);
+    if (!res || !res->is_object() || !res->contains("IdentificationProfiles")) {
+        fail(ec ? "machine refused the identity" : "no answer to Get");
+        return Result::Protocol;
+    }
+    if (result_json) *result_json = res->dump();
+    return Result::Ok;
 }
 
 } // namespace hms_cpap::as11

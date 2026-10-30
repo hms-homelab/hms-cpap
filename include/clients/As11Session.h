@@ -1,6 +1,7 @@
 #pragma once
 
 #include "clients/As11Protocol.h"
+#include "clients/As11Stream.h"
 
 #include <nlohmann/json.hpp>
 
@@ -138,8 +139,35 @@ public:
     /// holds a key, a code or the clientId.
     std::string lastError() const;
 
+    // ── the live night (SDD-057 step 4), in an open session ──
+
+    /// What the machine pushes once subscribed and streaming. Called on the
+    /// transport's thread; a handler must not call back into the Session.
+    struct StreamHandlers {
+        std::function<void(const nlohmann::ordered_json& params)> streamData;   // StreamData
+        std::function<void(bool therapy)> fgState;                              // FGState changed
+        std::function<void(const RespEvent& e)> respEvent;                      // scored event
+    };
+    void setStreamHandlers(StreamHandlers h);
+
+    /// Get ["SerialNumber","FGState"]: the machine's serial (it names the
+    /// night's files) and whether it is in therapy now.
+    Result getState(std::string* serial, bool* therapy);
+    /// SubscribeEvent on FGState and the machine's scored respiratory events,
+    /// in ONE call: each SubscribeEvent replaces the set.
+    Result subscribe();
+    /// StartStream with the channels the bridge was proven with, every 40 ms,
+    /// reported every 200 ms.
+    Result startStream();
+    /// StartStream with no channels: the machine stops reporting.
+    void stopStream();
+    /// Get ["IdentificationProfiles"]: the result object as the machine sent
+    /// it, key order kept, which is what a card's Identification.json holds
+    /// under "FlowGenerator".
+    Result getIdentification(std::string* result_json);
+
 private:
-    using json = nlohmann::json;
+    using json = nlohmann::ordered_json;
     using ojson = nlohmann::ordered_json;
 
     // One request and its reply's "result"; nullopt on no reply, a write
@@ -149,6 +177,8 @@ private:
     void onFrame(const Frame& f);          // m_ held
     void onMessage(const std::string& s);  // m_ held
     void onSpoolFragment(const json& p);   // m_ held
+    void onEventNotification(const json& p);   // m_ held
+    StreamHandlers handlers_;
     void fail(const std::string& why);
     void wipePairing();                    // m_ held
 
