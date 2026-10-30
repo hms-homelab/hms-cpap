@@ -117,6 +117,7 @@ set(TEST_SOURCES
     clients/test_O2RingClient.cpp
     clients/test_O2RingBleProtocol.cpp
     clients/test_OxyIIProtocol.cpp
+    clients/test_As11Protocol.cpp
     services/test_AirSense11Pull.cpp
     services/test_sleep_stage_classifier.cpp
     services/test_PrismaIngestion.cpp
