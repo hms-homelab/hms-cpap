@@ -2175,6 +2175,118 @@ TEST_F(BurstOrchestrationTest, ACopyLongerThanTheCardsFileIsFetchedAgain) {
         << "a copy past the card's end must not be resumed";
 }
 
+// ── SDD-056 D2 (b): a source that lists exact sizes ─────────────────────────
+//
+// A FlashAir lists every file to the byte. Held to KB, a copy up to two KB
+// short of the night's last write looked current and was never resumed; held
+// to the byte, it is. The card answers a range at the file's end with no reply
+// at all, so a copy at the exact size is still never asked for more.
+
+namespace {
+EzShareFileEntry mkExactEntry(const std::string& name, uint64_t bytes) {
+    EzShareFileEntry e = mkEntry(name, static_cast<int>(bytes / 1024));
+    e.size_bytes = bytes;
+    return e;
+}
+
+// The BRP is listed at 102,900 bytes: 100 KB, and 500 bytes into the next.
+void seedExactSession(FakeDataSource& ds) {
+    ds.date_folders = {"20200101"};
+    ds.folder_files["20200101"] = {
+        mkExactEntry("20200101_220000_BRP.edf", 102900),
+        mkEntry("20200101_220000_PLD.edf", 20),
+        mkEntry("20200101_220000_CSL.edf", 1),
+        mkEntry("20200101_220000_EVE.edf", 2),
+    };
+}
+
+void holdBrp(const std::filesystem::path& temp_dir, size_t bytes) {
+    const auto brp = temp_dir / "20200101" / "20200101_220000_BRP.edf";
+    std::filesystem::create_directories(brp.parent_path());
+    std::ofstream f(brp, std::ios::binary);
+    f << "0       " << std::string(bytes - 8, 'b');
+}
+}  // namespace
+
+TEST_F(BurstOrchestrationTest, ACopyShortOfAnExactListingIsResumedInsideTheLastKb) {
+    auto svc = makeService(&seedExactSession);
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, sessionExists(_, _)).WillRepeatedly(Return(false));
+    holdBrp(temp_dir, 102200);   // 700 bytes short, as measured on the card
+
+    svc->runBurstCycleForTest();
+
+    EXPECT_EQ(firstRangeStart(*src_raw, "20200101_220000_BRP.edf"), 102200u)
+        << "the last 700 bytes must be asked for, from where the copy ends";
+}
+
+TEST_F(BurstOrchestrationTest, ACopyAtTheExactListedSizeIsNotAskedForMore) {
+    auto svc = makeService(&seedExactSession);
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, sessionExists(_, _)).WillRepeatedly(Return(false));
+    holdBrp(temp_dir, 102900);
+
+    svc->runBurstCycleForTest();
+
+    EXPECT_EQ(firstRangeStart(*src_raw, "20200101_220000_BRP.edf"), SIZE_MAX)
+        << "a range at the file's end gets no reply from a FlashAir";
+    const auto& d = src_raw->downloaded_files;
+    EXPECT_EQ(std::count(d.begin(), d.end(), "20200101_220000_BRP.edf"), 0);
+}
+
+TEST_F(BurstOrchestrationTest, ACopyPastAnExactListingIsFetchedFromZero) {
+    auto svc = makeService(&seedExactSession);
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, sessionExists(_, _)).WillRepeatedly(Return(false));
+    // Past the listed byte yet inside the KB rule's slack: only the exact size
+    // can tell this copy is not the card's file.
+    holdBrp(temp_dir, 103000);
+
+    svc->runBurstCycleForTest();
+
+    EXPECT_EQ(firstRangeStart(*src_raw, "20200101_220000_BRP.edf"), 0u);
+}
+
+// The ez Share lists KB only, and nothing changes for it: the same copy, 700
+// bytes short of a file listed at 100 KB, is within a KB and held as current.
+TEST_F(BurstOrchestrationTest, AKbListingStillHoldsACopyWithinAKb) {
+    auto svc = makeService([](FakeDataSource& ds) {
+        seedExactSession(ds);
+        ds.folder_files["20200101"][0].size_bytes = 0;
+    });
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, sessionExists(_, _)).WillRepeatedly(Return(false));
+    holdBrp(temp_dir, 102200);
+
+    svc->runBurstCycleForTest();
+
+    EXPECT_EQ(firstRangeStart(*src_raw, "20200101_220000_BRP.edf"), SIZE_MAX);
+}
+
+// A whole CSL that arrives short of its exact size is not kept. The fake writes
+// a 27-byte file; listed at 800 bytes, that is 0 KB to the KB rule, which kept
+// it, and short to the exact one.
+TEST_F(BurstOrchestrationTest, AWholeFileShortOfAnExactListingIsNotKept) {
+    auto svc = makeService([](FakeDataSource& ds) {
+        seedExactSession(ds);
+        ds.folder_files["20200101"][2] = mkExactEntry("20200101_220000_CSL.edf", 800);
+    });
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, sessionExists(_, _)).WillRepeatedly(Return(false));
+
+    svc->runBurstCycleForTest();
+
+    const auto& d = src_raw->downloaded_files;
+    ASSERT_GE(std::count(d.begin(), d.end(), "20200101_220000_CSL.edf"), 1);
+    EXPECT_FALSE(std::filesystem::exists(temp_dir / "20200101" / "20200101_220000_CSL.edf"))
+        << "a CSL short of its listed byte count must not replace the copy";
+}
+
 TEST_F(BurstOrchestrationTest, ACopyThatIsNotAnEdfIsFetchedAgain) {
     auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
     EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));

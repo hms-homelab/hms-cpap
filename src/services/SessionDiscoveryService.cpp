@@ -119,6 +119,7 @@ SessionDiscoveryService::groupFiles(const std::vector<EzShareFileEntry>& files,
         std::chrono::system_clock::time_point end;   // estimated write-close time
         std::time_t card_stamp{0};   // the card's own stamp, UTC frame
         int size_kb;
+        uint64_t size_bytes;   // SDD-056 D2 (b): 0 unless the source lists it
         bool is_brp;
         bool is_pld;
         bool is_sad;
@@ -169,6 +170,7 @@ SessionDiscoveryService::groupFiles(const std::vector<EzShareFileEntry>& files,
             cp.end = estimateCheckpointEnd(cp.timestamp, is_brp, file.size_kb,
                                            file.getModTime());
             cp.size_kb = file.size_kb;
+            cp.size_bytes = file.size_bytes;
             cp.is_brp = is_brp;
             cp.is_pld = is_pld;
             cp.is_sad = is_sad;
@@ -244,6 +246,7 @@ SessionDiscoveryService::groupFiles(const std::vector<EzShareFileEntry>& files,
         for (const auto& cp : group) {
             session.total_size_kb += cp.size_kb;
             session.file_sizes_kb[cp.name] = cp.size_kb;  // Store individual size
+            if (cp.size_bytes > 0) session.file_sizes_bytes[cp.name] = cp.size_bytes;
             session.card_stamps[cp.name] = cp.card_stamp;
 
             if (cp.is_brp) {
@@ -263,6 +266,8 @@ SessionDiscoveryService::groupFiles(const std::vector<EzShareFileEntry>& files,
                 session.tcv_files.push_back(tcv->second.name);
                 session.total_size_kb += tcv->second.size_kb;
                 session.file_sizes_kb[tcv->second.name] = tcv->second.size_kb;
+                if (tcv->second.size_bytes > 0)
+                    session.file_sizes_bytes[tcv->second.name] = tcv->second.size_bytes;
                 session.card_stamps[tcv->second.name] = cardStampUtc(tcv->second);
                 std::cout << "    TCV: " << tcv->second.name
                           << " (" << tcv->second.size_kb << " KB)" << std::endl;
@@ -298,6 +303,7 @@ SessionDiscoveryService::groupFiles(const std::vector<EzShareFileEntry>& files,
                 into.push_back(entry.name);
                 session.total_size_kb += entry.size_kb;
                 session.file_sizes_kb[entry.name] = entry.size_kb;
+                if (entry.size_bytes > 0) session.file_sizes_bytes[entry.name] = entry.size_bytes;
                 session.card_stamps[entry.name] = cardStampUtc(entry);
             }
         };

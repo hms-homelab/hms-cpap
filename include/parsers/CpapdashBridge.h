@@ -121,6 +121,12 @@ struct SessionFileSet {
 
     std::map<std::string, int> file_sizes_kb;
 
+    /// SDD-056 D2 (b): the exact size per file, only for a source that lists
+    /// one (a FlashAir). Absent means compare by KB as before. With it, a held
+    /// copy is current only at that exact size: within a KB of the listing is
+    /// not enough, since the night's last write can be that small.
+    std::map<std::string, uint64_t> file_sizes_bytes;
+
     /// The card's own last-modified stamp per file, as a time_t in a FIXED UTC
     /// frame, straight from the listing.
     ///

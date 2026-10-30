@@ -3,6 +3,7 @@
 // against a one-shot HTTP server that records what it was asked.
 #include <gtest/gtest.h>
 #include "clients/FlashAirClient.h"
+#include "utils/FolderListingStore.h"
 
 #include <arpa/inet.h>
 #include <filesystem>
@@ -114,6 +115,7 @@ TEST(FlashAirListing, ANightFolderAsTheCardListsIt) {
     EXPECT_EQ(e[0].name, "20261016_235259_BRP.edf");
     EXPECT_FALSE(e[0].is_dir);
     EXPECT_EQ(e[0].size_kb, 1448) << "1,483,518 bytes, rounded down as a local folder's are";
+    EXPECT_EQ(e[0].size_bytes, 1483518u) << "and the exact size kept beside it (D2 b)";
     // fdate 23889, ftime 10374: FAT-packed 2026-10-17 05:04:12.
     EXPECT_EQ(e[0].year, 2026);
     EXPECT_EQ(e[0].month, 10);
@@ -134,6 +136,7 @@ TEST(FlashAirListing, TheRootHasAnEmptyFolderAndDirectoriesAreMarked) {
     ASSERT_EQ(e.size(), 2u);
     EXPECT_EQ(e[0].name, "DATALOG");
     EXPECT_TRUE(e[0].is_dir);
+    EXPECT_EQ(e[0].size_bytes, 0u) << "a folder has no size";
     EXPECT_EQ(e[1].name, "STR.edf");
     EXPECT_EQ(e[1].size_kb, 34);
 }
@@ -172,6 +175,40 @@ TEST(FlashAirListing, GarbageAndShortLinesAreSkipped) {
 TEST(FlashAirListing, AnEmptyBodyIsAnEmptyListing) {
     EXPECT_TRUE(FlashAirClient::parseFileList("").empty());
     EXPECT_TRUE(FlashAirClient::parseFileList("WLANSD_FILELIST\r\n").empty());
+}
+
+// A night folder as the card listed it, 2026-10-30, mask off mid-session.
+TEST(FlashAirListing, ANightFolderListsEveryFileAtItsExactSize) {
+    const auto e = FlashAirClient::parseFileList(
+        "WLANSD_FILELIST\r\n"
+        "/DATALOG/20261029,20261029_223212_PLD.edf,87910,32,23902,2343\r\n"
+        "/DATALOG/20261029,20261029_222829_CSL.edf,800,32,23901,46031\r\n");
+    ASSERT_EQ(e.size(), 2u);
+    EXPECT_EQ(e[0].size_bytes, 87910u);
+    EXPECT_EQ(e[0].size_kb, 85);
+    EXPECT_EQ(e[1].size_bytes, 800u) << "under a KB, where KB alone reads 0";
+    EXPECT_EQ(e[1].size_kb, 0);
+}
+
+// SDD-056 D2 (b): the stored listing (SDD-054 D9) keeps the exact size as an
+// 11th element, and reads one written before it existed.
+TEST(FlashAirListing, AStoredListingKeepsTheExactSize) {
+    StoredListing s;
+    EzShareFileEntry f;
+    f.name = "20261029_223212_PLD.edf";
+    f.size_kb = 85;
+    f.size_bytes = 87910;
+    s.files.push_back(f);
+    StoredListing back;
+    folder_listing::decode(folder_listing::encode(s), back);
+    ASSERT_EQ(back.files.size(), 1u);
+    EXPECT_EQ(back.files[0].size_bytes, 87910u);
+
+    StoredListing old;
+    folder_listing::decode(R"([["x.edf",3,0,2026,10,29,22,32,12,1]])", old);
+    ASSERT_EQ(old.files.size(), 1u);
+    EXPECT_EQ(old.files[0].size_bytes, 0u) << "an older row has no exact size";
+    EXPECT_EQ(old.done_files.count("x.edf"), 1u) << "and its done mark still reads";
 }
 
 TEST(FlashAirCardPath, BackslashesBecomeSlashesAndTheRestIsEncoded) {

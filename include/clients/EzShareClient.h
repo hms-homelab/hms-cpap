@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include <chrono>
+#include <cstdint>
 #include <stdexcept>
 #include <curl/curl.h>
 #include "clients/IDataSource.h"
@@ -19,6 +20,9 @@ namespace hms_cpap {
 struct EzShareFileEntry {
     std::string name;       // Display name (e.g., "20260204_001809_CSL.edf")
     int size_kb = 0;        // Size in KB from listing
+    /// SDD-056 D2 (b): the exact size, when the source lists one (a FlashAir
+    /// does); 0 when it does not (an ez Share lists KB only).
+    uint64_t size_bytes = 0;
     bool is_dir = false;    // true for <DIR> entries
     int year = 0, month = 0, day = 0;
     int hour = 0, minute = 0, second = 0;

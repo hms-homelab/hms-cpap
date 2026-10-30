@@ -22,7 +22,9 @@
 // cpap_night_quiet. The database is the record; the collector keeps a copy of
 // the rows it read and writes every change through. `files` is a JSON array of
 // [name, size_kb, is_dir, year, month, day, hour, minute, second, done], the
-// listing exactly as the card gave it plus each file's done mark.
+// listing exactly as the card gave it plus each file's done mark, and an 11th
+// element, the exact size, for a source that lists one (SDD-056 D2 b). An
+// older build reads the first ten and ignores it.
 //
 #include "clients/EzShareClient.h"
 #include "database/IDatabase.h"
@@ -80,6 +82,7 @@ inline std::string encode(const StoredListing& s) {
         e.append(f.minute);
         e.append(f.second);
         e.append(s.done_files.count(f.name) ? 1 : 0);
+        if (f.size_bytes > 0) e.append(Json::UInt64(f.size_bytes));
         arr.append(e);
     }
     Json::StreamWriterBuilder wb;
@@ -106,6 +109,7 @@ inline void decode(const std::string& text, StoredListing& s) {
         f.minute  = e[7].asInt();
         f.second  = e[8].asInt();
         if (e.size() > 9 && e[9].asInt() != 0) s.done_files.insert(f.name);
+        if (e.size() > 10) f.size_bytes = static_cast<uint64_t>(asLong(e[10]));
         s.files.push_back(std::move(f));
     }
 }
@@ -125,6 +129,7 @@ inline StoredListing relisted(const StoredListing& prev,
     for (const auto& f : files) {
         const auto it = before.find(f.name);
         const bool same = it != before.end() && it->second->size_kb == f.size_kb &&
+                          it->second->size_bytes == f.size_bytes &&
                           it->second->year == f.year && it->second->month == f.month &&
                           it->second->day == f.day && it->second->hour == f.hour &&
                           it->second->minute == f.minute && it->second->second == f.second;

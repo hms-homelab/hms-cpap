@@ -116,8 +116,10 @@ std::vector<EzShareFileEntry> FlashAirClient::parseFileList(const std::string& b
         EzShareFileEntry e;
         e.name = name;
         e.is_dir = (a & kAttrDirectory) != 0;
-        // SDD-056 D2 (a): KB, rounded down as a local folder's are.
-        e.size_kb = e.is_dir ? 0 : static_cast<int>(std::stoull(bytes) / 1024);
+        // KB rounded down, as a local folder's are, and the exact size beside
+        // it (SDD-056 D2 b).
+        e.size_bytes = e.is_dir ? 0 : std::stoull(bytes);
+        e.size_kb = static_cast<int>(e.size_bytes / 1024);
         const unsigned long d = std::stoul(fdate);
         const unsigned long t = std::stoul(ftime);
         e.year   = 1980 + static_cast<int>(d >> 9);

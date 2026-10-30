@@ -647,12 +647,16 @@ private:
     /// lost every partial copy and the stamps recorded on them.
     static std::string workingDir();
     /// A whole file a full KB under the size the listing shows did not arrive.
-    /// [listed_kb] <= 0 holds it to nothing.
-    static bool wholeFileIsShort(const std::string& path, int listed_kb);
+    /// [listed_kb] <= 0 holds it to nothing. With [listed_bytes] (SDD-056
+    /// D2 b, a source that lists exact sizes), any byte under it is short.
+    static bool wholeFileIsShort(const std::string& path, int listed_kb,
+                                 uint64_t listed_bytes = 0);
     /// Download a whole file beside [local_path] and move it into place only
-    /// when it is not short of [listed_kb]; otherwise the copy held stays.
+    /// when it is not short of [listed_kb] (or [listed_bytes]); otherwise the
+    /// copy held stays.
     bool fetchWholeFile(const std::string& folder, const std::string& name,
-                        const std::string& local_path, int listed_kb);
+                        const std::string& local_path, int listed_kb,
+                        uint64_t listed_bytes = 0);
     std::map<std::string, FolderWatch> folder_watch_;
     /// Each folder's stamps at its last listing, for learning the clock.
     std::map<std::string, std::map<std::string, long long>> folder_stamps_;

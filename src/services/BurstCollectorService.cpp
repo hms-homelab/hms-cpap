@@ -81,7 +81,11 @@ void warnIfEmpty(const std::string& local_path, const std::string& name) {
 /// KB, so anything past the next KB is impossible), and made of nothing but
 /// that text (an EDF always opens with its version field, "0" and seven
 /// spaces). The card's file only grows, so a sound copy is never either.
-bool partialCopyIsDamaged(const std::string& local_path, size_t size, int listed_kb) {
+/// SDD-056 D2 (b): a source that lists exact sizes holds the copy to them, so
+/// anything past the listed byte is impossible, not just past the next KB.
+bool partialCopyIsDamaged(const std::string& local_path, size_t size, int listed_kb,
+                          uint64_t listed_bytes = 0) {
+    if (listed_bytes > 0 && size > listed_bytes) return true;
     if (listed_kb >= 0 && size > (static_cast<size_t>(listed_kb) + 1) * 1024) return true;
     if (size < 8) return false;
     char head[8];
@@ -546,20 +550,30 @@ bool BurstCollectorService::downloadSessionFiles(
     // fails now keeps its bytes and the next burst resumes from them. Only a
     // server that does not honour Range (the client turns supportsRange off)
     // falls back to a full download, and only then is the copy discarded.
+    //
+    // SDD-056 D2 (b): the exact size the card lists for a file, or 0 when its
+    // listing gives KB only.
+    auto listedBytes = [&](const std::string& filename) -> uint64_t {
+        const auto it = session.file_sizes_bytes.find(filename);
+        return it == session.file_sizes_bytes.end() ? 0 : it->second;
+    };
     auto smartDownload = [&](const std::string& filename, const std::string& local_path) -> bool {
         bool file_exists = std::filesystem::exists(local_path);
         size_t existing_size = file_exists ? std::filesystem::file_size(local_path) : 0;
 
         // A file we hold none of is asked as a range from byte 0 too, so its
         // first transfer is also resumable, but only when the card lists it
-        // at 1 KB or more: a range at or past a file's end can wedge the card,
-        // and a 0 KB listing may be an empty file.
+        // at 1 KB or more (or at any exact size): a range at or past a file's
+        // end can wedge the card, and a 0 KB listing may be an empty file.
         const auto listed = session.file_sizes_kb.find(filename);
-        const bool listed_nonempty = listed != session.file_sizes_kb.end() && listed->second > 0;
+        const uint64_t exact = listedBytes(filename);
+        const bool listed_nonempty =
+            exact > 0 || (listed != session.file_sizes_kb.end() && listed->second > 0);
 
         if (existing_size > 0 &&
             partialCopyIsDamaged(local_path, existing_size,
-                                 listed != session.file_sizes_kb.end() ? listed->second : -1)) {
+                                 listed != session.file_sizes_kb.end() ? listed->second : -1,
+                                 exact)) {
             std::cerr << "⚠️  " << filename << " on disk (" << existing_size
                       << " bytes) is not the card's file; fetching it again" << std::endl;
             std::filesystem::remove(local_path);
@@ -599,7 +613,7 @@ bool BurstCollectorService::downloadSessionFiles(
 
         // Full download (new file, Range not supported, or Range fallback)
         if (fetchWholeFile(session.date_folder, filename, local_path,
-                           listed != session.file_sizes_kb.end() ? listed->second : -1)) {
+                           listed != session.file_sizes_kb.end() ? listed->second : -1, exact)) {
             full_downloads++;
             return true;
         }
@@ -631,7 +645,8 @@ bool BurstCollectorService::downloadSessionFiles(
 
             const auto listed_small = session.file_sizes_kb.find(name);
             if (fetchWholeFile(session.date_folder, name, local_path,
-                               listed_small != session.file_sizes_kb.end() ? listed_small->second : -1)) {
+                               listed_small != session.file_sizes_kb.end() ? listed_small->second : -1,
+                               listedBytes(name))) {
                 stampLocalCopy(card_stamp, local_path);
                 fetched_this_burst_.insert(session.date_folder + "/" + fileStem(name));
                 warnIfEmpty(local_path, name);
@@ -675,13 +690,24 @@ bool BurstCollectorService::downloadSessionFiles(
             // stamp (an unstamped copy used to be ranged from its size blind).
             // A copy that cannot be the card's file goes to smartDownload,
             // which discards it and fetches from 0.
+            //
+            // SDD-056 D2 (b): with an exact listing the copy is current only at
+            // the listed byte. Within a KB is not enough there: the night's
+            // last write can be a few hundred bytes, and a transfer cut inside
+            // it was never resumed. A FlashAir answers a range at the file's
+            // end with no reply at all, so a copy that is exactly the listing
+            // is still never asked for more.
             {
                 std::error_code ec;
                 const auto have = std::filesystem::file_size(local_path, ec);
                 const auto listed = session.file_sizes_kb.find(filename);
+                const uint64_t exact = listedBytes(filename);
+                const bool current =
+                    exact > 0 ? have == exact
+                              : listed != session.file_sizes_kb.end() &&
+                                    static_cast<uintmax_t>(listed->second) * 1024 < have + 1024;
                 if (!ec && have > 0 && listed != session.file_sizes_kb.end() &&
-                    !partialCopyIsDamaged(local_path, have, listed->second) &&
-                    static_cast<uintmax_t>(listed->second) * 1024 < have + 1024) {
+                    !partialCopyIsDamaged(local_path, have, listed->second, exact) && current) {
                     skipped_unchanged++;
                     held_checkpoints++;
                     continue;
@@ -1039,17 +1065,21 @@ std::optional<std::vector<std::string>> BurstCollectorService::captureCardResidu
 
 // ── SDD-054 helpers ──────────────────────────────────────────────────────────
 
-/*static*/ bool BurstCollectorService::wholeFileIsShort(const std::string& path, int listed_kb) {
-    if (listed_kb <= 0) return false;   // nothing listed to hold it to
+/*static*/ bool BurstCollectorService::wholeFileIsShort(const std::string& path, int listed_kb,
+                                                       uint64_t listed_bytes) {
+    if (listed_kb <= 0 && listed_bytes == 0) return false;   // nothing listed to hold it to
     std::error_code ec;
     const auto bytes = std::filesystem::file_size(path, ec);
     if (ec) return true;
+    // SDD-056 D2 (b): an exact listing holds it to the byte.
+    if (listed_bytes > 0) return bytes < listed_bytes;
     // The listing is KB-rounded, so a file a full KB under it did not arrive.
     return bytes + 1024 < static_cast<uintmax_t>(listed_kb) * 1024;
 }
 
 bool BurstCollectorService::fetchWholeFile(const std::string& folder, const std::string& name,
-                                           const std::string& local_path, int listed_kb) {
+                                           const std::string& local_path, int listed_kb,
+                                           uint64_t listed_bytes) {
     // A whole-file transfer that the link cut short used to come back as a
     // success: the short file replaced the copy we held and then the archive's
     // (a PLD stopped at 8192 bytes of 29916 on the 2026-10-17 night). It lands
@@ -1061,10 +1091,12 @@ bool BurstCollectorService::fetchWholeFile(const std::string& folder, const std:
         std::filesystem::remove(part, ec);
         return false;
     }
-    if (wholeFileIsShort(part, listed_kb)) {
+    if (wholeFileIsShort(part, listed_kb, listed_bytes)) {
         const auto got = std::filesystem::file_size(part, ec);
         std::cerr << "⚠️  CPAP: " << name << " arrived short (" << (ec ? 0 : got) << " bytes, listed "
-                  << listed_kb << " KB); keeping the copy we had" << std::endl;
+                  << (listed_bytes > 0 ? std::to_string(listed_bytes) + " bytes"
+                                       : std::to_string(listed_kb) + " KB")
+                  << "); keeping the copy we had" << std::endl;
         std::filesystem::remove(part, ec);
         return false;
     }
@@ -2397,6 +2429,9 @@ bool BurstCollectorService::executeBurstCycle() {
             const auto bytes = std::filesystem::file_size(p, ec);
             if (ec || bytes == 0) return false;
             if (bytes + 1023 < static_cast<uintmax_t>(f.size_kb) * 1024) return false;
+            // SDD-056 D2 (b): with an exact listing, a copy short by any byte
+            // is not done.
+            if (f.size_bytes > 0 && bytes < f.size_bytes) return false;
             if (!edf) {
                 // D5: a .crc keeps its size when rewritten; done only when the
                 // archive copy carries the stamp this listing shows.
@@ -2406,7 +2441,7 @@ bool BurstCollectorService::executeBurstCycle() {
                 if (stamp != 0 && (!fileStat(p.string().c_str(), mtime, size) || mtime != stamp))
                     return false;
             }
-            return !(edf && partialCopyIsDamaged(p.string(), bytes, f.size_kb));
+            return !(edf && partialCopyIsDamaged(p.string(), bytes, f.size_kb, f.size_bytes));
         };
         auto finishPasses = [&]() {
             // Second pass: an edf_done folder's remaining files, from its
