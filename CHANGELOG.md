@@ -5,6 +5,17 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.6.3] - 2026-10-29
+
+### Fixed
+- **A ring file copied into a local folder is imported on the next burst**
+  (#41, thanks @rccoleman). Since 5.6.0 the scan for an O2Ring's `.vld`
+  files in a local card root ran at the SETTINGS pace, every 15 minutes
+  during a night and every hour otherwise, so a file copied in by hand could
+  wait up to an hour or a restart. It now runs every burst: it is a
+  directory read, and it skips files already stored. ez Share cards are
+  unchanged.
+
 ## [5.6.2] - 2026-10-24
 
 ### Fixed
