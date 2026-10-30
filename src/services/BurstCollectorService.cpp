@@ -11,6 +11,7 @@
 #include "clients/AirSense11Client.h"
 #ifdef WITH_BLE
 #include "clients/O2RingBleClient.h"
+#include "clients/AirSense11BleClient.h"
 #endif
 #include "utils/ConfigManager.h"
 #include "utils/AppConfig.h"
@@ -378,8 +379,51 @@ void BurstCollectorService::initO2Ring() {
         oximetry_service_ = std::make_unique<OximetryService>(client, db_service_, device_id_);
 }
 
+bool BurstCollectorService::airSense11BleCompiled() {
+#ifdef WITH_BLE
+    return true;
+#else
+    return false;
+#endif
+}
+
 void BurstCollectorService::initAirSense11() {
-    if (!app_config_ || !app_config_->airsense11.enabled) return;
+    {
+        std::lock_guard<std::mutex> lk(airsense11_mtx_);
+        airsense11_pairing_.reset();
+    }
+    if (!app_config_) return;
+    const int hours = app_config_->airsense11.pull_hours > 0 ? app_config_->airsense11.pull_hours : 6;
+
+    // SDD-057: hms-cpap reads the machine over Bluetooth itself. It wins over
+    // the bridge: the machine holds one pairing at a time.
+    if (app_config_->airsense11_ble.enabled) {
+#ifdef WITH_BLE
+        auto client = std::make_shared<AirSense11BleClient>(AppConfig::dataDir(),
+                                                            app_config_->airsense11_ble.address);
+        {
+            std::lock_guard<std::mutex> lk(airsense11_mtx_);
+            airsense11_pairing_ = client;
+        }
+        airsense11_pull_ = std::make_unique<AirSense11Pull>(client, db_service_, device_id_,
+                                                            std::chrono::hours(hours));
+        std::cout << "AirSense11: Enabled (direct Bluetooth"
+                  << (app_config_->airsense11_ble.address.empty()
+                          ? std::string()
+                          : ", address " + app_config_->airsense11_ble.address)
+                  << ", every " << hours << " h"
+                  << (client->paired() ? "" : ", not paired yet: pair it from Settings") << ")"
+                  << std::endl;
+        return;
+#else
+        std::cout << "AirSense11: airsense11_ble is on, but this build has BLE disabled "
+                     "(BUILD_WITH_BLE=OFF)"
+                  << (app_config_->airsense11.enabled ? " - using the bridge" : " - the summary is not pulled")
+                  << std::endl;
+#endif
+    }
+
+    if (!app_config_->airsense11.enabled) return;
     // The same bridge as the ring unless the config names another.
     std::string url = app_config_->airsense11.mule_url;
     if (url.empty()) url = app_config_->o2ring.mule_url;
@@ -389,7 +433,6 @@ void BurstCollectorService::initAirSense11() {
                      "o2ring.mule_url) - the summary is not pulled" << std::endl;
         return;
     }
-    const int hours = app_config_->airsense11.pull_hours > 0 ? app_config_->airsense11.pull_hours : 6;
     airsense11_pull_ = std::make_unique<AirSense11Pull>(
         std::make_shared<AirSense11Client>(url), db_service_, device_id_,
         std::chrono::hours(hours));
@@ -4188,6 +4231,8 @@ void BurstCollectorService::snapshotConfig(ConfigSnapshot& snap) {
     snap.airsense11_enabled = app_config_->airsense11.enabled;
     snap.airsense11_mule_url = app_config_->airsense11.mule_url;
     snap.airsense11_pull_hours = app_config_->airsense11.pull_hours;
+    snap.airsense11_ble_enabled = app_config_->airsense11_ble.enabled;
+    snap.airsense11_ble_address = app_config_->airsense11_ble.address;
 }
 
 void BurstCollectorService::reloadConfig() {
@@ -4426,13 +4471,19 @@ void BurstCollectorService::reloadConfig() {
     if (nc.airsense11_enabled != last_config_.airsense11_enabled ||
         nc.airsense11_mule_url != last_config_.airsense11_mule_url ||
         nc.airsense11_pull_hours != last_config_.airsense11_pull_hours ||
+        nc.airsense11_ble_enabled != last_config_.airsense11_ble_enabled ||
+        nc.airsense11_ble_address != last_config_.airsense11_ble_address ||
         nc.o2ring_mule_url != last_config_.o2ring_mule_url) {
         airsense11_pull_.reset();
-        if (nc.airsense11_enabled) {
+        if (nc.airsense11_enabled || nc.airsense11_ble_enabled) {
             initAirSense11();
             if (!airsense11_pull_)
-                std::cout << "Config reload: AirSense11 enabled but no bridge URL" << std::endl;
+                std::cout << "Config reload: AirSense11 enabled but no client could be made" << std::endl;
         } else {
+            {
+                std::lock_guard<std::mutex> lk(airsense11_mtx_);
+                airsense11_pairing_.reset();
+            }
             std::cout << "Config reload: AirSense11 -> disabled" << std::endl;
         }
     }

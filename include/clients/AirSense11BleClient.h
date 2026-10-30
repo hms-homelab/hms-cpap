@@ -4,6 +4,7 @@
 
 #include "clients/As11Session.h"
 #include "clients/IAirSense11Client.h"
+#include "clients/IAirSense11Pairing.h"
 
 #include <sdbus-c++/sdbus-c++.h>
 
@@ -27,7 +28,7 @@ namespace hms_cpap {
  * The pairing (clientId and masterPairKey) is kept in <data_dir>/as11.json,
  * mode 0600, and never written to a log.
  */
-class AirSense11BleClient : public IAirSense11Client {
+class AirSense11BleClient : public IAirSense11Client, public IAirSense11Pairing {
 public:
     /// `address`: the machine's Bluetooth address, or empty for the first
     /// AirSense 11 the scan finds.
@@ -42,14 +43,14 @@ public:
     /// the machine's screen shows the code now; the link stays up for
     /// pairConfirm, which must follow within the machine's window (under a
     /// minute). Any other result leaves the link down.
-    as11::Result pairStart();
+    as11::Result pairStart() override;
     /// Pairing, step 2: the code from the machine's screen. Ok saves the
     /// pairing. The link is down on return, whatever happened.
-    as11::Result pairConfirm(const std::string& code);
-    void pairCancel();
-    bool pairPending() const;
-    bool paired() const;
-    std::string lastError() const;
+    as11::Result pairConfirm(const std::string& code) override;
+    void pairCancel() override;
+    bool pairPending() const override;
+    bool paired() const override;
+    std::string lastError() const override;
 
     static constexpr int kScanMs = 15000;
     static constexpr int kConnectMs = 15000;

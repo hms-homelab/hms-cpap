@@ -9,6 +9,7 @@
 #include "services/CpapDashSyncService.h"
 #include "services/MyAirService.h"
 #include "services/AirSense11Pull.h"
+#include "clients/IAirSense11Pairing.h"
 #include "services/OximetryImport.h"
 #include "services/OximetryService.h"
 #include "services/PrismaIngestion.h"
@@ -390,9 +391,24 @@ public:
 private:
     std::unique_ptr<OximetryService> oximetry_service_;
 
-    // An AirSense 11 read over its own Bluetooth, through the bridge: the
-    // machine's daily summary, pulled on a pace (AirSense11Pull).
+    // An AirSense 11 read over its own Bluetooth, through the bridge or
+    // directly (SDD-057): the machine's daily summary, pulled on a pace
+    // (AirSense11Pull).
     std::unique_ptr<AirSense11Pull> airsense11_pull_;
+
+public:
+    /// The direct Bluetooth client, for Settings to pair it; null unless
+    /// airsense11_ble is on in a Bluetooth build. The same client the pull
+    /// uses, so a pairing and a pull never both talk to the machine.
+    std::shared_ptr<IAirSense11Pairing> getAirSense11Pairing() const {
+        std::lock_guard<std::mutex> lk(airsense11_mtx_);
+        return airsense11_pairing_;
+    }
+    /// Whether this build can read the machine over Bluetooth at all.
+    static bool airSense11BleCompiled();
+private:
+    std::shared_ptr<IAirSense11Pairing> airsense11_pairing_;
+    mutable std::mutex airsense11_mtx_;
 
     // Worker thread
     std::thread worker_thread_;
@@ -920,6 +936,8 @@ private:
         bool airsense11_enabled = false;
         std::string airsense11_mule_url;
         int airsense11_pull_hours = 6;
+        bool airsense11_ble_enabled = false;
+        std::string airsense11_ble_address;
     };
     ConfigSnapshot last_config_;
 
