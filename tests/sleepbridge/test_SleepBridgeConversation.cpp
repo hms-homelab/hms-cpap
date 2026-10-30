@@ -175,9 +175,11 @@ TEST(SleepBridgeConversation, AnAuthorizationHeaderIsNeverReadStoredOrLogged) {
     svc.closed(a->sender);
     const std::string out = testing::internal::GetCapturedStdout();
     EXPECT_EQ(out.find("SECRET"), std::string::npos);
-    for (const auto& e : fs::recursive_directory_iterator(t.path))
-        if (e.is_regular_file())
+    for (const auto& e : fs::recursive_directory_iterator(t.path)) {
+        if (e.is_regular_file()) {
             EXPECT_EQ(slurp(e.path()).find("SECRET"), std::string::npos) << e.path();
+        }
+    }
     EXPECT_EQ(svc.status().toStyledString().find("SECRET"), std::string::npos);
 }
 
