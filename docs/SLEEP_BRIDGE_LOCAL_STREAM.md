@@ -1,6 +1,6 @@
 # The Sleep Bridge local stream
 
-A Sleep Bridge Cloud sits between the CPAP machine and its SD card and reads
+A Sleep Bridge Lite sits between the CPAP machine and its SD card and reads
 the SD bus. It sees every sector the machine writes, and the sectors the
 machine reads around a mount. Pointed at hms-cpap instead of the cloud, it
 streams those sectors over one WebSocket on your local network, and hms-cpap
