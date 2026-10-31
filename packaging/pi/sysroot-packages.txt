@@ -12,11 +12,10 @@ libpaho-mqttpp-dev
 nlohmann-json3-dev
 libspdlog-dev
 libsqlite3-dev
-libdrogon-dev
 uuid-dev
 libmariadb-dev
-libhiredis-dev
 libbrotli-dev
+patch
 libyaml-cpp-dev
 zlib1g-dev
 libhpdf-dev

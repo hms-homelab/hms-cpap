@@ -33,8 +33,8 @@ libspdlog1.15
 libfmt10
 libsqlite3-0
 libmariadb3
-libdrogon1t64
-libtrantor1
+libbrotli1
+libuuid1
 libhpdf-2.3.0
 libsdbus-c++2
 "
