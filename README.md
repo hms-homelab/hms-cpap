@@ -168,6 +168,8 @@ interrupting the machine's own writes. It is powered over USB-C, not by the
 slot, and the card stays in the machine and stays the machine's. The Lite
 pairs with hms-cpap on port 8894 for the live signal, and hms-cpap rebuilds
 the card's files from what it streams into a folder it reads like any card.
+The device and what it does are introduced in
+[Introducing Sleep Bridge Lite](https://www.cpapdash.com/blog/introducing-sleep-bridge-lite).
 
 Supported today: ResMed AirSense 10 and 11. Coming soon, not supported yet:
 the AirCurve machines and the BMC Luna G3; further along, the Philips
