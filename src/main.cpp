@@ -5,6 +5,7 @@
 #include "controllers/EquipmentController.h"
 #include "controllers/CleaningController.h"
 #include "controllers/SleepBridgeSocket.h"
+#include "sleepbridge/LiveNight.h"
 #include "services/CpapDashSyncService.h"
 #include "services/CardUpload.h"
 #include "services/OximetryImport.h"
@@ -53,6 +54,8 @@
 #include "utils/ParentWatch.h"
 #include <iostream>
 #include <iomanip>
+#include <map>
+#include <mutex>
 #include <csignal>
 #include <atomic>
 #include <memory>
@@ -1552,6 +1555,91 @@ int main(int argc, char** argv) {
                     sb.root = (std::filesystem::path(hms_cpap::AppConfig::dataDir()) / "sleepbridge")
                                   .string();
                     sb.port = config.sleep_bridge.port;
+
+                    // The live night. Each rebuild that wrote card files wakes
+                    // the burst cycle, so a card folder source pointed at the
+                    // bridge's root reads the night seconds after the bridge
+                    // streamed it instead of at the next interval, and the
+                    // files' new events and the mask's state go to the house's
+                    // MQTT as they land, beside the burst cycle's own topics:
+                    //   cpap/<device_id>/realtime/event        one event (QoS 1)
+                    //   cpap/<device_id>/realtime/live_events  counts, retained
+                    //   cpap/<device_id>/realtime/mask         ON/OFF, retained
+                    std::shared_ptr<hms::MqttClient> sb_mqtt;
+                    if (config.mqtt.enabled) {
+                        hms::MqttConfig sb_cfg;
+                        sb_cfg.broker    = config.mqtt.broker;
+                        sb_cfg.port      = config.mqtt.port;
+                        sb_cfg.username  = config.mqtt.username;
+                        sb_cfg.password  = config.mqtt.password;
+                        sb_cfg.client_id = config.mqtt.client_id + "_sleepbridge";
+                        sb_mqtt = std::make_shared<hms::MqttClient>(sb_cfg);
+                        sb_mqtt->connect();
+                    }
+                    const std::string sb_topic = "cpap/" + config.device_id + "/realtime/";
+                    auto sb_publish = [sb_mqtt](const std::string& topic, const std::string& payload,
+                                                bool retain) {
+                        if (sb_mqtt && sb_mqtt->isConnected()) sb_mqtt->publish(topic, payload, 1, retain);
+                    };
+                    using hms_cpap::sleepbridge::LiveNight;
+                    auto lives    = std::make_shared<std::map<std::string, std::unique_ptr<LiveNight>>>();
+                    auto lives_mu = std::make_shared<std::mutex>();
+                    const std::string sb_root = sb.root;
+                    auto liveFor = [=](const std::string& sender) -> LiveNight& {
+                        auto& slot = (*lives)[sender];
+                        if (slot) return *slot;
+                        hms_cpap::sleepbridge::LiveSink sink;
+                        sink.event = [=](const hms_cpap::sleepbridge::LiveEvent& e) {
+                            const auto t = std::chrono::system_clock::to_time_t(e.at);
+                            std::ostringstream iso;
+                            iso << std::put_time(std::localtime(&t), "%Y-%m-%dT%H:%M:%S%z");
+                            std::string at = iso.str();
+                            if (at.size() >= 5) at.insert(at.size() - 2, ":");
+                            Json::Value v(Json::objectValue);
+                            v["type"]        = e.type;
+                            v["description"] = e.description;
+                            v["at"]          = at;
+                            v["epoch"]       = static_cast<Json::Int64>(t);
+                            v["duration_s"]  = e.duration_s;
+                            v["source"]      = "sleepbridge";
+                            v["bridge"]      = sender;
+                            v["file"]        = e.file;
+                            Json::StreamWriterBuilder w;
+                            w["indentation"] = "";
+                            sb_publish(sb_topic + "event", Json::writeString(w, v), false);
+                            std::cout << "[sleepbridge] " << sender << " event " << e.type << " ("
+                                      << e.description << ") at " << at << std::endl;
+                        };
+                        sink.counts = [=](const std::map<std::string, int>& by_type, int total) {
+                            Json::Value v(Json::objectValue);
+                            v["total"] = total;
+                            for (const auto& [type, n] : by_type) v[type] = n;
+                            Json::StreamWriterBuilder w;
+                            w["indentation"] = "";
+                            sb_publish(sb_topic + "live_events", Json::writeString(w, v), true);
+                        };
+                        sink.mask = [=](bool on) {
+                            sb_publish(sb_topic + "mask", on ? "ON" : "OFF", true);
+                            std::cout << "[sleepbridge] " << sender << " mask " << (on ? "on" : "off")
+                                      << std::endl;
+                        };
+                        slot = std::make_unique<LiveNight>(
+                            (std::filesystem::path(sb_root) / sender).string(), std::move(sink));
+                        return *slot;
+                    };
+                    sb.on_rebuilt = [=](const std::string& sender,
+                                        const hms_cpap::sleepbridge::StepReport& step) {
+                        {
+                            std::lock_guard<std::mutex> lk(*lives_mu);
+                            liveFor(sender).onWritten(step.written_paths);
+                        }
+                        if (burst_service) burst_service->requestSyncNow();
+                    };
+                    sb.on_tick = [=] {
+                        std::lock_guard<std::mutex> lk(*lives_mu);
+                        for (auto& [sender, live] : *lives) live->tick();
+                    };
+
                     sleep_bridge = std::make_unique<hms_cpap::sleepbridge::SleepBridgeService>(
                         sb, [](const std::string& saved) {
                             return hms_cpap::sleepbridge::makeRebuilder(

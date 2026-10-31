@@ -196,6 +196,7 @@ StepReport RebuildWorker::step(bool force) {
             continue;
         }
         ++r.written;
+        r.written_paths.push_back(f.path);
         if (!f.cut_from.empty()) replaced.insert(f.cut_from);
     }
     // The pieces are on disk; the file they replace goes after them.

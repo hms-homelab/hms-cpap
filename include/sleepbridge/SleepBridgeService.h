@@ -76,6 +76,15 @@ public:
         int         port{kDefaultPort};
         double      quiet_s{2.0};
         double      most_s{60.0};   // a busy stream is rebuilt at least this often
+        /// Called after a rebuild that wrote files, off the rebuild's locks:
+        /// what landed in <root>/<sender>/ this step. The receiver's seam to
+        /// the rest of hms-cpap (a sync of the card folder, the live night).
+        std::function<void(const std::string& sender, const StepReport& step)> on_rebuilt;
+        /// Called every `tick_s` while the service runs, on the rebuild
+        /// thread, for whatever keeps time off the stream (a mask that went
+        /// quiet). Empty: no ticks.
+        std::function<void()> on_tick;
+        double                tick_s{30.0};
     };
 
     /// `factory` empty (or answering nullptr): this build has no rebuild, and

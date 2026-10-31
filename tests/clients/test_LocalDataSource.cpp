@@ -89,6 +89,20 @@ TEST_F(LocalDataSourceTest, FilesAreListedWithKilobyteSizesLikeTheCard) {
     EXPECT_EQ(files[1].size_kb, 0);
 }
 
+// SDD-056 D2 (b): the exact size rides beside the KB, so a file this folder is
+// still being written into (a Sleep Bridge's rebuilt night) counts as changed
+// when it grew by less than a KB; in KB alone the night read as stopped.
+TEST_F(LocalDataSourceTest, FilesAreListedWithTheirExactSizeToo) {
+    LocalDataSource src(root.string());
+    const auto files = src.listFiles("20260328");
+    ASSERT_EQ(files.size(), 2u);
+    EXPECT_EQ(files[0].size_bytes, std::filesystem::file_size(root / "DATALOG/20260328" / files[0].name));
+    EXPECT_GE(files[0].size_bytes, static_cast<uint64_t>(files[0].size_kb) * 1024);
+    EXPECT_GT(files[1].size_bytes, 0u);   // under a KB, but not nothing
+    for (const auto& e : src.listDir(""))
+        if (e.name == "STR.edf") EXPECT_EQ(e.size_bytes, std::filesystem::file_size(root / "STR.edf"));
+}
+
 TEST_F(LocalDataSourceTest, AnUnknownFolderIsEmptyNotAnError) {
     LocalDataSource src(root.string());
     EXPECT_TRUE(src.listFiles("20991231").empty());

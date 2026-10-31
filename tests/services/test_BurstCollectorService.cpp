@@ -514,6 +514,38 @@ TEST_F(BurstCollectorServiceTest, CheckpointSizes_KBComparison_Changed) {
     EXPECT_FALSE(all_unchanged) << "Changed KB values should be detected";
 }
 
+// A night streamed into a local folder grows by a few hundred bytes between
+// two bursts. In KB that is no change, and the night was closed while it was
+// still being written; with the exact size the source lists, it is a change.
+TEST_F(BurstCollectorServiceTest, CheckpointSizes_AFileThatGrewByLessThanAKbIsAChange) {
+    SessionFileSet before, after;
+    before.file_sizes_kb = {{"20261031_003049_BRP.edf", 18}, {"20261031_003049_PLD.edf", 5},
+                            {"20261031_003049_SA2.edf", 1}, {"20261031_003049_TCV.edf", 9},
+                            {"20261031_003042_EVE.edf", 0}};
+    before.file_sizes_bytes = {{"20261031_003049_BRP.edf", 19030}, {"20261031_003049_PLD.edf", 5750},
+                               {"20261031_003049_SA2.edf", 1750}, {"20261031_003049_TCV.edf", 9774},
+                               {"20261031_003042_EVE.edf", 832}};
+    after = before;
+    after.file_sizes_bytes["20261031_003049_BRP.edf"] = 19330;   // 300 B later, still 18 KB
+
+    const auto a = BurstCollectorService::checkpointSizes(before);
+    const auto b = BurstCollectorService::checkpointSizes(after);
+    // BRP, PLD and the oximetry file are checkpoints; the TCV and EVE are not.
+    EXPECT_EQ(a.size(), 3u);
+    EXPECT_EQ(a.count("20261031_003049_TCV.edf"), 0u);
+    EXPECT_EQ(a.count("20261031_003042_EVE.edf"), 0u);
+    EXPECT_EQ(a.at("20261031_003049_BRP.edf"), 19030);
+    EXPECT_NE(a, b) << "the growth is a change";
+    EXPECT_EQ(b.at("20261031_003049_BRP.edf"), 19330);
+
+    // A source that lists KB only (an ez Share) compares in KB, as before.
+    SessionFileSet kb_only;
+    kb_only.file_sizes_kb = before.file_sizes_kb;
+    const auto k = BurstCollectorService::checkpointSizes(kb_only);
+    EXPECT_EQ(k.at("20261031_003049_BRP.edf"), 18);
+    EXPECT_EQ(k.at("20261031_003049_SA2.edf"), 1);
+}
+
 TEST_F(BurstCollectorServiceTest, CheckpointSizes_BytesVsKB_WouldFail) {
     // This test demonstrates why bytes vs KB comparison fails
     // ez Share reports KB (integer)

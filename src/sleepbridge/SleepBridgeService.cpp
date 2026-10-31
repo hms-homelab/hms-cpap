@@ -88,9 +88,19 @@ void SleepBridgeService::wake(const std::string& sender) {
 void SleepBridgeService::loop() {
     const auto quiet = std::chrono::milliseconds(static_cast<int64_t>(opt_.quiet_s * 1000));
     const auto most  = std::chrono::milliseconds(static_cast<int64_t>(opt_.most_s * 1000));
+    const auto tick  = std::chrono::milliseconds(static_cast<int64_t>(opt_.tick_s * 1000));
     std::unique_lock<std::mutex> lk(q_mu_);
     while (!stop_) {
-        q_cv_.wait(lk, [&] { return stop_ || !dirty_.empty(); });
+        if (opt_.on_tick) {
+            if (!q_cv_.wait_for(lk, tick, [&] { return stop_ || !dirty_.empty(); })) {
+                lk.unlock();
+                opt_.on_tick();
+                lk.lock();
+                continue;
+            }
+        } else {
+            q_cv_.wait(lk, [&] { return stop_ || !dirty_.empty(); });
+        }
         if (stop_) break;
         // Quiet first: every new batch moves the rebuild on by `quiet`, but
         // never past `most` from the first one, so a night that writes
@@ -126,11 +136,14 @@ StepReport SleepBridgeService::rebuildNow(const std::string& sender) {
                   << r.complete_files << " complete, " << r.held_files << " held"
                   << (r.holding ? " (holding: " + r.holding_reason + ")" : std::string())
                   << std::endl;
-    std::lock_guard<std::mutex> lk(mu_);
-    auto& b     = bridges_[sender];
-    b.last_step = r;
-    b.stepped   = true;
-    if (!r.machine.empty()) b.card_machine = r.machine;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        auto& b     = bridges_[sender];
+        b.last_step = r;
+        b.stepped   = true;
+        if (!r.machine.empty()) b.card_machine = r.machine;
+    }
+    if (r.written > 0 && opt_.on_rebuilt) opt_.on_rebuilt(sender, r);
     return r;
 }
 

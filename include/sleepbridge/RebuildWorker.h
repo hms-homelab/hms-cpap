@@ -28,6 +28,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <vector>
 
 namespace hms_cpap::sleepbridge {
 
@@ -39,6 +40,7 @@ struct StepReport {
     int      records_skipped{0};   // at or below what was already fed
     int      cards_fed{0};
     int      written{0};
+    std::vector<std::string> written_paths;   // card-relative, as written this step
     int      removed{0};           // files replaced by their cut pieces
     int      refused_paths{0};
     int      unreadable{0};        // a banked file that would not parse

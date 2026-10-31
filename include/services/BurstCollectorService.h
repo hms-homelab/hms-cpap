@@ -158,6 +158,18 @@ public:
                                         bool cycle_in_flight,
                                         bool request_pending);
 
+    /// The sizes a night is judged "still growing" by: its BRP, PLD and
+    /// oximetry files, as the source lists them. Stored after a fetch, compared
+    /// on the next burst; all equal means the night stopped. The unit is the
+    /// source's: KB from an ez Share, which lists nothing finer, and exact bytes
+    /// from a source that lists them (a FlashAir, a local folder). In KB alone a
+    /// file still being written can grow between two bursts and read as
+    /// unchanged, and a night streamed into a local folder was closed while it
+    /// was still growing. The collector compares only against what it stored,
+    /// so a change of transport costs one re-read of the open night and nothing
+    /// else. An int holds a card file's bytes: residualSkip caps them at 20 MB.
+    static std::map<std::string, int> checkpointSizes(const SessionFileSet& session);
+
     /// Ask the worker to run a burst cycle now rather than waiting out the
     /// rest of its interval. Never starts a second concurrent cycle, and
     /// repeated calls collapse into the one pending request.

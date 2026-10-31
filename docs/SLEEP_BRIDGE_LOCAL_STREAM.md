@@ -30,7 +30,26 @@ and hms-cpap reads it with the matching card format (`resmed` or `bmc`).
    Local folder source at it, with the card format of the machine. `GET
    /api/sleepbridge` lists every bridge with its folder (`card_root`), the
    machine it recognised (`card_machine`) and the format to read it with
-   (`card_format`).
+   (`card_format`). Every rebuild that writes card files wakes the source's
+   sync, so the night is read seconds after the bridge streamed it, not at
+   the next interval; a file still being written counts as changed by its
+   exact size.
+
+## The live night
+
+While a bridge streams, the rebuilt card says what is happening before any
+sync reads it, and hms-cpap pushes that to its MQTT broker beside the burst
+cycle's own `cpap/<device_id>/realtime/*` topics:
+
+| Topic | Payload | |
+|---|---|---|
+| `cpap/<device_id>/realtime/mask` | `ON` / `OFF` | retained. ON when a session's BRP, PLD or oximetry file grows; OFF when the STR is written after therapy (a ResMed writes it at mask-off) or nothing was written for five minutes. |
+| `cpap/<device_id>/realtime/event` | `{"type":"OA","description":"Obstructive apnea","at":"2026-10-31T00:42:10-04:00","epoch":…,"duration_s":14,"source":"sleepbridge","bridge":"TAP-S3-00000123","file":"DATALOG/…_EVE.edf"}` | one per new annotation in a growing EVE or CSL, QoS 1, not retained. `type` is OA, CA, H, UA, RERA, CSR, FL or OTHER. |
+| `cpap/<device_id>/realtime/live_events` | `{"total":3,"OA":1,"H":2}` | retained; the counts since hms-cpap started, per type. |
+
+The night's record (its nights, sessions and counts in the database and the
+web UI) still comes from the burst cycle parsing the files; this is the live
+view only.
 
 There is no login on the stream. Keep the port on your local network.
 
