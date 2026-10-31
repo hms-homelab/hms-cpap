@@ -145,6 +145,12 @@ MuleService::MuleService(Options opt, std::shared_ptr<IAs11NightSink> sink)
             unit(d.path().filename().string());
 }
 
+void MuleService::setLive(std::function<void()> night_changed, std::shared_ptr<LivePublisher> publisher) {
+    std::lock_guard<std::mutex> lk(mu_);
+    night_changed_ = std::move(night_changed);
+    live_          = std::move(publisher);
+}
+
 std::string MuleService::unitDir(const std::string& serial) const {
     return (fs::path(opt_.root) / serial).string();
 }
@@ -322,7 +328,8 @@ void MuleService::applyClock(const std::string& serial, Unit& u) {
 }
 
 void MuleService::stateOf(const std::string& serial, const Json::Value& state) {
-    bool landed = false;
+    bool landed = false, went_on = false, went_off = false;
+    std::string machine;
     {
         std::lock_guard<std::mutex> lk(mu_);
         Unit& u      = unit(serial);
@@ -341,12 +348,14 @@ void MuleService::stateOf(const std::string& serial, const Json::Value& state) {
             const int64_t buffered = a["stream_buffered"].isNumeric() ? a["stream_buffered"].asInt64() : 0;
             if (streaming) {
                 if (!u.streaming || u.end_pending) dirty = true;
+                if (!u.streaming) went_on = true;
                 u.streaming   = true;
                 u.end_pending = false;
             } else if (u.streaming) {
                 u.streaming   = false;
                 u.end_pending = true;
                 dirty         = true;
+                went_off      = true;
                 std::cout << "[mule] " << serial << " stream ended" << std::endl;
             }
             // The night has landed once the stream is over and the unit holds
@@ -358,8 +367,13 @@ void MuleService::stateOf(const std::string& serial, const Json::Value& state) {
             }
         }
         if (dirty) save(serial, u);
+        machine = u.machine;
     }
+    // Therapy on and off, live, before the events the same frame carries.
+    if (live_ && went_on) live_->therapy(serial, machine, true);
     if (state["resp_events"].isArray()) feedEvents(serial, state["resp_events"]);
+    if (live_ && went_off) live_->therapy(serial, machine, false);
+    if ((went_on || went_off) && night_changed_) night_changed_();
     if (landed) nightLanded(serial);
 }
 
@@ -385,7 +399,11 @@ void MuleService::feedEvents(const std::string& serial, const Json::Value& event
         u.events += todo.size();
         machine = u.machine;
     }
-    for (const auto& e : todo) sink_->onEvent(machine, e);
+    for (const auto& e : todo) {
+        sink_->onEvent(machine, e);                       // the EVE, at once
+        if (live_) live_->event(serial, machine, e);      // the broker, at once
+    }
+    if (!todo.empty() && night_changed_) night_changed_();   // the database and the UI
 }
 
 void MuleService::onBinary(uint64_t conn, const std::string& frame) {
@@ -451,7 +469,10 @@ void MuleService::block(uint64_t conn, const std::string& serial, const FrameHea
             return;   // no ack: the unit sends it again
         }
     }
-    if (b) sink_->onBlock(*b);   // the writer keeps a block once, by its start
+    if (b) {
+        sink_->onBlock(*b);   // the writer keeps a block once, by its start
+        if (live_) live_->block(serial, b->start_ms, b->endMs());
+    }
     if (!pending.empty()) {
         Json::Value arr(Json::arrayValue);
         for (auto& e : pending) arr.append(e);
@@ -467,6 +488,8 @@ void MuleService::block(uint64_t conn, const std::string& serial, const FrameHea
     ack["t"]        = "block_ack";
     ack["start_ms"] = static_cast<Json::Int64>(start);
     send(conn, compact(ack));
+    // The night grew: the host's sync picks the new seconds up now.
+    if (b && !resent && night_changed_) night_changed_();
 }
 
 void MuleService::pullBytes(const std::string& serial, const FrameHeader& h, const std::string& frame) {

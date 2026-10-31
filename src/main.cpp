@@ -6,6 +6,7 @@
 #include "controllers/CleaningController.h"
 #include "controllers/SleepBridgeSocket.h"
 #include "controllers/MuleSocket.h"
+#include "mule/LivePublisher.h"
 #include "services/CpapDashSyncService.h"
 #include "services/CardUpload.h"
 #include "services/OximetryImport.h"
@@ -1576,6 +1577,24 @@ int main(int argc, char** argv) {
                                             mo.data_dir, hms_cpap::hostLocalClock());
                     mule_stream = std::make_unique<hms_cpap::mule::MuleService>(mo, night);
                     hms_cpap::mule::installRoutes(mule_stream.get());
+                    if (burst_service) {
+                        // Live: every block and event wakes the sync, so the
+                        // night is in the database and the UI within a block;
+                        // the events and therapy on/off go to the broker as
+                        // they arrive, for the house's automations.
+                        std::shared_ptr<hms_cpap::mule::LivePublisher> live;
+                        if (auto mq = burst_service->getMqttClient()) {
+                            live = std::make_shared<hms_cpap::mule::LivePublisher>(
+                                [mq](const std::string& topic, const std::string& payload, int qos,
+                                     bool retain) {
+                                    return mq->isConnected() && mq->publish(topic, payload, qos, retain);
+                                },
+                                config.device_id, config.device_name);
+                            live->announce();
+                        }
+                        auto* bs = burst_service.get();
+                        mule_stream->setLive([bs] { bs->requestSyncNow(); }, live);
+                    }
                 }
             }
 

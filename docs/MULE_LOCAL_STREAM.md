@@ -103,6 +103,53 @@ no more of it (`stream_buffered` 0), the night's files are completed and
 hms-cpap asks, one at a time: `as11_download` with `spool` `Identification`
 (when no Identification.json is kept), `Summary`, then `Settings`.
 
+## Live
+
+The night is written as it streams, not after it. Every block rewrites the
+open session's BRP (and PLD, SAD) in place as a valid EDF, so the session is
+current within one block; every event goes into its night's EVE (or CSL) the
+moment its state frame arrives. Each block and each event also wakes
+hms-cpap's own sync at once, so the night's sessions, events and counts are
+in the database, the charts and the realtime sensors within a block, with
+no wait for the next sync interval.
+
+### Live on MQTT
+
+With MQTT on, each event and therapy on and off go to the broker as they
+arrive, so a Home Assistant automation can react during the night. The
+topics are under the device id hms-cpap's other sensors use
+(`cpap/<device_id>/...`), and Home Assistant discovers them on the same
+device.
+
+| topic | payload | retained |
+|---|---|---|
+| `cpap/<device_id>/live/event` | one JSON per event (below) | no |
+| `cpap/<device_id>/live/last_event` | the event's type: `OA`, `CA`, `UA`, `H`, `RERA`, `CSR` | yes |
+| `cpap/<device_id>/live/event_count` | apneas and hypopneas scored this night | yes |
+| `cpap/<device_id>/live/ahi` | events so far per hour masked on (over five minutes at least) | yes |
+| `cpap/<device_id>/live/therapy` | `ON` while the machine streams, `OFF` when it stops | yes |
+| `cpap/<device_id>/live/therapy_changed` | one JSON when therapy starts or ends | no |
+
+An event:
+
+```json
+{"type":"OA","event":"ObstructiveApneaEnd","unit":"<unit serial>","machine":"<machine serial>",
+ "time":"2026-10-31T04:32:10.000Z","duration_s":12,"backdate_s":12,
+ "night":{"events":5,"apneas":3,"hypopneas":2,"reras":0,"csr":0,"hours":"1.25","ahi":"4.0"}}
+```
+
+`time` is the machine's clock (UTC) when it reported the event, which is the
+event's end. A therapy change:
+
+```json
+{"unit":"<unit serial>","machine":"<machine serial>","therapy":"off","at":1793422800,
+ "events":5,"hours":"6.80","ahi":"0.7"}
+```
+
+The counts start over when therapy starts. Discovery announces
+`sensor.<device_id>_live_event_count`, `..._live_ahi`, `..._live_last_event`
+and `binary_sensor.<device_id>_live_therapy`.
+
 ## Commands
 
 `GET /api/mule` lists the units with their status and their recent commands

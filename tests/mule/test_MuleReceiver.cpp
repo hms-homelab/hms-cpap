@@ -432,6 +432,99 @@ TEST_F(MuleReceiverTest, TheNightGrowsLiveBlockByBlockAndEventsLandAtOnce) {
     EXPECT_NE(slurp(eve).find("Hypopnea"), std::string::npos);
 }
 
+TEST_F(MuleReceiverTest, EventsAndTherapyGoOutLiveAndEveryChangeWakesTheHost) {
+    struct Sent { std::string topic, payload; bool retain; };
+    std::vector<Sent> out;
+    auto live = std::make_shared<LivePublisher>(
+        [&out](const std::string& t, const std::string& p, int, bool r) { out.push_back({t, p, r}); return true; },
+        "cpap_test", "Test CPAP");
+    int woken = 0;
+    svc_->setLive([&woken] { ++woken; }, live);
+    auto on = [&](const std::string& leaf) {
+        std::vector<Json::Value> v;
+        for (const auto& s : out) if (s.topic == "cpap/cpap_test/live/" + leaf) v.push_back(parse(s.payload));
+        return v;
+    };
+    auto last = [&](const std::string& leaf) {
+        std::string v;
+        for (const auto& s : out) if (s.topic == "cpap/cpap_test/live/" + leaf) v = s.payload;
+        return v;
+    };
+
+    FakeUnit unit(*svc_);
+    unit.hello(false);
+    EXPECT_EQ(woken, 0);
+    EXPECT_EQ(last("therapy"), "") << "no therapy yet, nothing said";
+
+    // Mask on: therapy ON, counts at zero, the host woken.
+    unit.sendState(true, 0);
+    EXPECT_EQ(last("therapy"), "ON");
+    EXPECT_EQ(last("event_count"), "0");
+    EXPECT_EQ(woken, 1);
+    ASSERT_EQ(on("therapy_changed").size(), 1u);
+    EXPECT_EQ(on("therapy_changed")[0]["therapy"].asString(), "on");
+
+    // Blocks: each wakes the host; a resend does not.
+    for (int i = 0; i < 6; i++) unit.block(tenSeconds(kT0 + i * 10000));   // a minute
+    EXPECT_EQ(woken, 7);
+    unit.block(tenSeconds(kT0 + 20000));
+    EXPECT_EQ(woken, 7);
+
+    // Two events in one state frame: two messages, each with the running
+    // count, and the retained sensors at the latest.
+    Json::Value evs(Json::arrayValue);
+    evs.append(event(1, "ObstructiveApneaEnd", kT0 + 20000, 12));
+    evs.append(event(2, "HypopneaEnd", kT0 + 45000, 15));
+    unit.sendState(true, 0, evs);
+    const auto sent = on("event");
+    ASSERT_EQ(sent.size(), 2u);
+    EXPECT_EQ(sent[0]["type"].asString(), "OA");
+    EXPECT_EQ(sent[0]["event"].asString(), "ObstructiveApneaEnd");
+    EXPECT_EQ(sent[0]["machine"].asString(), kMachine);
+    EXPECT_EQ(sent[0]["duration_s"].asInt(), 12);
+    EXPECT_EQ(sent[0]["night"]["events"].asInt(), 1);
+    EXPECT_EQ(sent[0]["night"]["apneas"].asInt(), 1);
+    EXPECT_EQ(sent[1]["type"].asString(), "H");
+    EXPECT_EQ(sent[1]["night"]["events"].asInt(), 2);
+    EXPECT_EQ(sent[1]["night"]["hypopneas"].asInt(), 1);
+    // A minute masked on, counted over five minutes at least: 2 / (5/60) = 24.
+    EXPECT_EQ(sent[1]["night"]["ahi"].asString(), "24.0");
+    EXPECT_EQ(last("event_count"), "2");
+    EXPECT_EQ(last("last_event"), "H");
+    EXPECT_EQ(last("ahi"), "24.0");
+    EXPECT_EQ(woken, 8) << "one wake for the frame's events";
+    EXPECT_EQ(live->night(kUnit).events(), 2);
+
+    // Mask off: therapy OFF with the night's figures; the next night starts at zero.
+    unit.sendState(false, 0);
+    EXPECT_EQ(last("therapy"), "OFF");
+    EXPECT_EQ(on("therapy_changed").back()["events"].asInt(), 2);
+    unit.sendState(true, 0);
+    EXPECT_EQ(last("event_count"), "0");
+    EXPECT_EQ(live->night(kUnit).events(), 0);
+
+    // The discovery configs name the same device as the rest of hms-cpap.
+    out.clear();
+    EXPECT_TRUE(live->announce());
+    bool therapy_sensor = false;
+    for (const auto& s : out) {
+        EXPECT_TRUE(s.retain);
+        EXPECT_EQ(parse(s.payload)["device"]["identifiers"][0].asString(), "cpap_test");
+        therapy_sensor = therapy_sensor || s.topic == "homeassistant/binary_sensor/cpap_test/live_therapy/config";
+    }
+    EXPECT_TRUE(therapy_sensor);
+}
+
+TEST(MuleLive, EventTypesAreTheCardsShortNames) {
+    EXPECT_EQ(eventType("ObstructiveApneaEnd"), "OA");
+    EXPECT_EQ(eventType("CentralApneaEnd"), "CA");
+    EXPECT_EQ(eventType("ApneaEnd"), "UA");
+    EXPECT_EQ(eventType("HypopneaEnd"), "H");
+    EXPECT_EQ(eventType("ReraEnd"), "RERA");
+    EXPECT_EQ(eventType("CsrStart"), "CSR");
+    EXPECT_EQ(eventType("Something"), "Something");
+}
+
 TEST_F(MuleReceiverTest, ARedeliveredBlockIsAckedAgainAndKeptOnceAcrossARestart) {
     {
         FakeUnit unit(*svc_);

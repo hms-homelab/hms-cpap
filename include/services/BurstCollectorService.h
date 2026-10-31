@@ -389,6 +389,9 @@ private:
     // O2 Ring oximetry
 public:
     OximetryService* getOximetryService() const { return oximetry_service_.get(); }
+    /// The house broker's client, for a live publisher beside this service's
+    /// own (the Mule & Miner's events); null when MQTT is off.
+    std::shared_ptr<hms::MqttClient> getMqttClient() const { return mqtt_client_; }
 private:
     std::unique_ptr<OximetryService> oximetry_service_;
 

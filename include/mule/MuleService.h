@@ -31,6 +31,7 @@
 // No authentication on the LAN: a unit is named by X-Device-Serial and
 // nothing else.
 //
+#include "mule/LivePublisher.h"
 #include "services/As11NightWriter.h"
 
 #include <json/json.h>
@@ -95,6 +96,14 @@ public:
     };
 
     MuleService(Options opt, std::shared_ptr<IAs11NightSink> sink);
+
+    /// The night as it happens, for the rest of hms-cpap. `night_changed`
+    /// runs after every block stored and every event taken: the host wakes
+    /// its sync with it, so the database, the charts and the realtime sensors
+    /// follow the stream within a block instead of at the next interval.
+    /// `publisher` puts each event and therapy on and off on MQTT. Either may
+    /// be empty.
+    void setLive(std::function<void()> night_changed, std::shared_ptr<LivePublisher> publisher);
 
     const Options& options() const { return opt_; }
 
@@ -177,6 +186,8 @@ private:
 
     Options                         opt_;
     std::shared_ptr<IAs11NightSink> sink_;
+    std::function<void()>           night_changed_;
+    std::shared_ptr<LivePublisher>  live_;
 
     mutable std::mutex              mu_;
     std::map<std::string, Unit>     units_;
