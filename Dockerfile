@@ -45,6 +45,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy source code
 WORKDIR /build
 COPY CMakeLists.txt VERSION ./
+# cmake/SleepBridge.cmake and its pins, included by CMakeLists.txt.
+COPY cmake/ ./cmake/
 COPY src/ ./src/
 COPY include/ ./include/
 # Vendored mjansson/mdns (Unlicense), on the include path via CMakeLists and
@@ -57,9 +59,13 @@ COPY llm_prompt.txt ./
 # Build HMS-CPAP with Web UI support, and direct Bluetooth (SDD-057 D1): the
 # O2 ring and the AirSense 11 through the host's BlueZ. It needs the host's
 # D-Bus mounted (-v /run/dbus:/run/dbus:ro); without it the feature reports
-# no Bluetooth adapter and everything else runs.
+# no Bluetooth adapter and everything else runs. SLEEPBRIDGE=ON links the
+# prebuilt Sleep Bridge component (LICENSE-sleepbridge), fetched and checked
+# against cmake/sleepbridge-pins.cmake; OFF builds without it.
+ARG SLEEPBRIDGE=OFF
 RUN mkdir build && cd build && \
-    cmake -DBUILD_TESTS=OFF -DBUILD_WITH_WEB=ON -DBUILD_WITH_MYSQL=ON -DBUILD_WITH_BLE=ON .. && \
+    cmake -DBUILD_TESTS=OFF -DBUILD_WITH_WEB=ON -DBUILD_WITH_MYSQL=ON -DBUILD_WITH_BLE=ON \
+          -DBUILD_WITH_SLEEPBRIDGE=${SLEEPBRIDGE} .. && \
     make -j$(nproc) && \
     strip hms_cpap
 
@@ -96,6 +102,10 @@ RUN useradd -r -u 1000 -m -s /bin/bash cpap
 COPY --from=builder /build/build/hms_cpap /usr/local/bin/hms_cpap
 RUN chmod +x /usr/local/bin/hms_cpap
 
+# Both licences ship with the image: MIT for hms-cpap, and the Sleep Bridge
+# component's own.
+COPY LICENSE LICENSE-sleepbridge /usr/share/doc/hms-cpap/
+
 # Copy Angular UI from ui-builder
 COPY --from=ui-builder /ui/dist/frontend/browser/ /home/cpap/static/browser/
 
@@ -123,8 +133,9 @@ WORKDIR /home/cpap
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:${HEALTH_CHECK_PORT:-8893}/health || exit 1
 
-# Expose health check / web UI port
+# Expose health check / web UI port, and the Sleep Bridge local stream
 EXPOSE 8893
+EXPOSE 8894
 
 # Run HMS-CPAP
 ENTRYPOINT ["/usr/local/bin/hms_cpap"]

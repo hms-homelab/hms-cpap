@@ -4,6 +4,7 @@
 #include "controllers/CpapController.h"
 #include "controllers/EquipmentController.h"
 #include "controllers/CleaningController.h"
+#include "controllers/SleepBridgeSocket.h"
 #include "services/CpapDashSyncService.h"
 #include "services/CardUpload.h"
 #include "services/OximetryImport.h"
@@ -1491,10 +1492,20 @@ int main(int argc, char** argv) {
                 // serve the shell and let Angular route it. Anything with an
                 // extension falls through to the static file handler, so assets
                 // are untouched.
+                //
+                // The web port only. Pre-routing advice runs for every
+                // listener, and this one runs ahead of the Sleep Bridge's port
+                // split, so without the check it answered the stream route
+                // with this page (the bridge's upgrade got a 200 and never
+                // connected) and served the UI on the stream port.
                 drogon::app().registerPreRoutingAdvice(
-                    [serve_index](const drogon::HttpRequestPtr& req,
-                                  drogon::AdviceCallback&& stop,
-                                  drogon::AdviceChainCallback&& carry_on) {
+                    [serve_index, web_port](const drogon::HttpRequestPtr& req,
+                                            drogon::AdviceCallback&& stop,
+                                            drogon::AdviceChainCallback&& carry_on) {
+                        if (req->getLocalAddr().toPort() != web_port) {
+                            carry_on();
+                            return;
+                        }
                         const std::string path = req->path();
                         const bool is_api =
                             path.rfind("/api/", 0) == 0 || path == "/health";
@@ -1520,6 +1531,37 @@ int main(int argc, char** argv) {
                         err["error"] = static_cast<int>(code);
                         return drogon::HttpResponse::newHttpJsonResponse(err);
                     });
+            }
+
+            // The Sleep Bridge local stream, on a port of its own. The
+            // service outlives app().run(); without the Sleep Bridge
+            // component in this build it listens and refuses bridges.
+            std::unique_ptr<hms_cpap::sleepbridge::SleepBridgeService> sleep_bridge;
+            if (config.sleep_bridge.enabled) {
+                if (config.sleep_bridge.port == web_port || config.sleep_bridge.port <= 0 ||
+                    config.sleep_bridge.port > 65535) {
+                    std::cerr << "Sleep Bridge: port " << config.sleep_bridge.port
+                              << " is not usable (it must differ from the web port); the "
+                                 "stream is off" << std::endl;
+                } else {
+                    if (config.sleep_bridge.port != hms_cpap::sleepbridge::kDefaultPort)
+                        std::cerr << "Sleep Bridge: port " << config.sleep_bridge.port
+                                  << " is not 8894. A Sleep Bridge connects to 8894 only, so "
+                                     "no bridge will reach this receiver." << std::endl;
+                    hms_cpap::sleepbridge::SleepBridgeService::Options sb;
+                    sb.root = (std::filesystem::path(hms_cpap::AppConfig::dataDir()) / "sleepbridge")
+                                  .string();
+                    sb.port = config.sleep_bridge.port;
+                    sleep_bridge = std::make_unique<hms_cpap::sleepbridge::SleepBridgeService>(
+                        sb, [](const std::string& saved) {
+                            return hms_cpap::sleepbridge::makeRebuilder(
+                                saved, [](const std::string& line) {
+                                    std::cout << "[sleepbridge] " << line << std::endl;
+                                });
+                        });
+                    hms_cpap::sleepbridge::installRoutes(sleep_bridge.get());
+                    sleep_bridge->start();
+                }
             }
 
             std::cout << "Web UI: http://0.0.0.0:" << web_port << std::endl;
@@ -1561,6 +1603,7 @@ int main(int argc, char** argv) {
             }
 
             drogon::app().run();  // Blocks until quit()
+            if (sleep_bridge) sleep_bridge->stop();
             update_service->stop();
             hms_cpap::CpapController::setUpdateService(nullptr);
         }

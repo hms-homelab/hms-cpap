@@ -42,6 +42,7 @@ list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/PdfRenderer\\.cpp$")
 list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/GnuplotService\\.cpp$")
 list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/ReportGeneratorService\\.cpp$")
 list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/services/reports/.*\\.cpp$")
+hms_sleepbridge_filter_sources(PROJECT_SOURCES)
 
 # Test sources
 set(TEST_SOURCES
@@ -161,6 +162,13 @@ set(TEST_SOURCES
     web/test_QueryService_oximetry.cpp
     web/test_QueryService_reads.cpp
     scripts/test_PiInstallRuntimeList.cpp
+    sleepbridge/test_SleepBridgeWire.cpp
+    sleepbridge/test_SleepBridgeStore.cpp
+    sleepbridge/test_SleepBridgeConversation.cpp
+    sleepbridge/test_SleepBridgeRebuild.cpp
+    sleepbridge/test_SleepBridgeCommands.cpp
+    # Empty unless BUILD_WITH_SLEEPBRIDGE linked the component.
+    sleepbridge/test_SleepBridgeLinked.cpp
 )
 
 # The supervisor's Qt-free core, compiled straight into run_tests. These files
@@ -236,6 +244,10 @@ endif()
 # the parent scope when BUILD_WITH_WEB is on.
 if(BUILD_WITH_WEB)
     target_link_libraries(run_tests Drogon::Drogon)
+endif()
+
+if(BUILD_WITH_SLEEPBRIDGE)
+    target_link_libraries(run_tests sleepbridge_component)
 endif()
 
 # Optional DB backends for tests

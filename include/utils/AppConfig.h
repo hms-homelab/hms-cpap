@@ -247,6 +247,16 @@ struct AppConfig {
         std::string address;            // empty: the first AirSense 11 the scan finds
     } airsense11_ble;
 
+    // The Sleep Bridge local stream (docs/SLEEP_BRIDGE_LOCAL_STREAM.md): a
+    // bridge on the local network streams its card's sector writes to
+    // ws://<this host>:<port>/sleepbridge/v1/device, and the card files are
+    // rebuilt under <data_dir>/sleepbridge/<bridge>/. In a build without the
+    // Sleep Bridge component the port still listens and refuses bridges.
+    struct SleepBridge {
+        bool enabled = true;
+        int port = 8894;
+    } sleep_bridge;
+
     // Sleep Stage Inference (optional)
     struct SleepStage {
         bool enabled = false;
@@ -690,6 +700,12 @@ struct AppConfig {
                 if (b.contains("address"))              config.airsense11_ble.address = b["address"];
             }
 
+            if (j.contains("sleep_bridge")) {
+                auto& sb = j["sleep_bridge"];
+                if (sb.contains("enabled")) config.sleep_bridge.enabled = sb["enabled"];
+                if (sb.contains("port"))    config.sleep_bridge.port = sb["port"];
+            }
+
             if (j.contains("sleep_stage")) {
                 auto& ss = j["sleep_stage"];
                 if (ss.contains("enabled"))        config.sleep_stage.enabled = ss["enabled"];
@@ -816,6 +832,9 @@ struct AppConfig {
 
             j["airsense11_ble"]["enabled"] = airsense11_ble.enabled;
             j["airsense11_ble"]["address"] = airsense11_ble.address;
+
+            j["sleep_bridge"]["enabled"] = sleep_bridge.enabled;
+            j["sleep_bridge"]["port"] = sleep_bridge.port;
 
             j["sleep_stage"]["enabled"] = sleep_stage.enabled;
             j["sleep_stage"]["live_inference"] = sleep_stage.live_inference;

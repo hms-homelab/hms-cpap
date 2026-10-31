@@ -57,10 +57,10 @@ tests/
 Testing/
 coverage/
 
-# Documentation
+# Documentation. LICENSE and LICENSE-sleepbridge stay in: the image ships
+# both under /usr/share/doc/hms-cpap.
 docs/
 *.md
-LICENSE
 CONTRIBUTING.md
 
 # CI/CD

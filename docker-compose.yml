@@ -51,6 +51,7 @@ services:
 
     ports:
       - "8893:8893"  # Health check endpoint
+      - "8894:8894"  # Sleep Bridge local stream (docs/SLEEP_BRIDGE_LOCAL_STREAM.md)
 
     depends_on:
       # service_healthy, not the bare list form. Plain depends_on waits for the
