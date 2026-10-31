@@ -169,7 +169,7 @@ TEST_F(NightTest, OneEveAndCslForANightOfSeveralSegments) {
 
 TEST_F(NightTest, IdentificationIsWrittenOnceAndNeverReplaced) {
     const auto root = dir_ / "as11" / kSerial;
-    const std::string id = R"({"IdentificationProfiles":{"Product":{"SerialNumber":"23000000001","ProductCode":"39420"},"Software":{"PlatformIdentifier":"36","VariantIdentifier":"1"}}})";
+    const std::string id = R"({"IdentificationProfiles":{"Product":{"SerialNumber":"23000000001","ProductCode":"39999"},"Software":{"PlatformIdentifier":"36","VariantIdentifier":"1"}}})";
     ASSERT_TRUE(writeIdentification(root.string(), id));
     std::ifstream in(root / "Identification.json");
     std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
@@ -261,13 +261,13 @@ TEST_F(NightTest, StrFromTheSummaryInTheModelsLayout) {
     fs::create_directories(layouts);
     {
         const auto l = layout();
-        std::ofstream(layouts / "39420.edfh", std::ios::binary).write(reinterpret_cast<const char*>(l.data()), l.size());
+        std::ofstream(layouts / "39999.edfh", std::ios::binary).write(reinterpret_cast<const char*>(l.data()), l.size());
     }
 
     // Nothing to build from yet: each missing piece says so.
     EXPECT_NE(writeStrFromSummaries(root.string(), layouts.string()).why.find("Identification"), std::string::npos);
     ASSERT_TRUE(writeIdentification(root.string(),
-        R"({"IdentificationProfiles":{"Product":{"SerialNumber":"23000000001","ProductCode":"39420"},"Software":{"PlatformIdentifier":"36","VariantIdentifier":"1"}}})"));
+        R"({"IdentificationProfiles":{"Product":{"SerialNumber":"23000000001","ProductCode":"39999"},"Software":{"PlatformIdentifier":"36","VariantIdentifier":"1"}}})"));
     EXPECT_NE(writeStrFromSummaries(root.string(), layouts.string()).why.find("Summary"), std::string::npos);
 
     // Three days with one the machine did not report between them.
@@ -296,10 +296,10 @@ TEST_F(NightTest, StrFromTheSummaryInTheModelsLayout) {
     EXPECT_EQ(head.substr(8, 7), "X X X X");
 
     // A model with no layout writes nothing and says which.
-    fs::remove(layouts / "39420.edfh");
+    fs::remove(layouts / "39999.edfh");
     fs::remove(str);
     const auto none = writeStrFromSummaries(root.string(), layouts.string());
     EXPECT_FALSE(none.written);
-    EXPECT_NE(none.why.find("39420"), std::string::npos);
+    EXPECT_NE(none.why.find("39999"), std::string::npos);
     EXPECT_FALSE(fs::exists(str));
 }

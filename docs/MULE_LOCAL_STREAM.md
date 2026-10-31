@@ -1,12 +1,13 @@
 # The Mule & Miner local stream
 
 A Mule & Miner in AirSense 11 Bluetooth mode can send the machine's night to
-your own hms-cpap instead of the cloud. On the unit, set the hms-cpap address
-to this host's IP address or hostname (nothing else: no `ws://`, no port, no
-path). The unit then connects to:
+your own hms-cpap instead of the cloud. On the unit, two fields: the hms-cpap
+address, this host's IP address or hostname and nothing else (no `ws://`, no
+port, no path), and the port, 8894 unless you changed `sleep_bridge.port` in
+hms-cpap. The unit builds the URL itself and connects to:
 
 ```
-ws://<host>:8894/mule/v1/device
+ws://<host>:<port>/mule/v1/device
 ```
 
 Port 8894 is the Sleep Bridge's stream port (`sleep_bridge.port`); both
@@ -161,7 +162,7 @@ and results. `POST /api/mule/command` sends one:
 
 | cmd | arguments |
 |---|---|
-| `config` | `{"config": {"hms_url": "<address>"}}` or `{"hms_url": "<address>"}`, no other key; `""` sends the unit back to the cloud |
+| `config` | `{"config": {"hms_url": "<address>", "hms_port": N}}` or `{"hms_url": ..., "hms_port": N}`: one or both, no other key. `hms_url` is an IP address or hostname only, `""` sends the unit back to the cloud; `hms_port` is 1 to 65535 (8894 when never set) and alone changes only the port of the hms-cpap the unit already points at. The unit tests the new target before it keeps it, and answers on the connection it comes back on |
 | `reboot` | `target`: `mule`, `miner` or `both` (optional) |
 | `logs` | `n`: 1 to 5000 lines (default 200) |
 | `restate` | none: the unit sends its full state again |

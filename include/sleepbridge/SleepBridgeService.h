@@ -56,9 +56,12 @@ inline constexpr size_t kCommandsKept = 20;           // per bridge, newest kept
 inline constexpr size_t kCommandLogMax = 256 * 1024;  // a log pull's text, kept up to this
 
 /// What a stream command's url may be: "" (the cloud), or an IP address or
-/// hostname with nothing else. A bridge always connects to
-/// ws://<host>:8894/sleepbridge/v1/device.
+/// hostname with nothing else; the port is the command's own `port` field
+/// (8894 when left out). A bridge connects to
+/// ws://<host>:<port>/sleepbridge/v1/device.
 bool validBridgeHost(const std::string& host);
+/// 1 to 65535.
+bool validBridgePort(int port);
 
 /// Sends one text frame on a connection; false when it is gone.
 using Outlet = std::function<bool(const std::string& text)>;

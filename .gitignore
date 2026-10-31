@@ -24,6 +24,7 @@ Makefile
 !cmake/arm-toolchain.cmake
 !cmake/SleepBridge.cmake
 !cmake/sleepbridge-pins.cmake
+!cmake/StrLayouts.cmake
 
 # IDE
 .vscode/

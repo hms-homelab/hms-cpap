@@ -1550,9 +1550,11 @@ int main(int argc, char** argv) {
                                  "stream is off" << std::endl;
                 } else {
                     if (config.sleep_bridge.port != hms_cpap::sleepbridge::kDefaultPort)
-                        std::cerr << "Sleep Bridge: port " << config.sleep_bridge.port
-                                  << " is not 8894. A Sleep Bridge connects to 8894 only, so "
-                                     "no bridge will reach this receiver." << std::endl;
+                        std::cout << "Sleep Bridge: the stream listens on port " << config.sleep_bridge.port
+                                  << ", not the default 8894. A Sleep Bridge or a Mule & Miner reaches it "
+                                     "only with " << config.sleep_bridge.port
+                                  << " in its own Port field (its setup page, or the stream / config "
+                                     "command)." << std::endl;
                     hms_cpap::sleepbridge::SleepBridgeService::Options sb;
                     sb.root = (std::filesystem::path(hms_cpap::AppConfig::dataDir()) / "sleepbridge")
                                   .string();

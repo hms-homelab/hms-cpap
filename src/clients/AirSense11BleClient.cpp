@@ -409,8 +409,12 @@ void AirSense11BleClient::afterPull(const std::string& serial, const std::string
     int off = 0;
     if (machineOffsetFromSummaries(root, &off)) writer_->setClock(serial, fixedOffsetClock(off));
     const auto str = writeStrFromSummaries(root, strLayoutDir(data_dir_));
-    if (str.written) std::cout << kTag << "STR.edf: " << str.days << " day(s)" << std::endl;
-    else std::cout << kTag << "no STR.edf: " << str.why << std::endl;
+    if (str.written && str.created)
+        std::cout << kTag << "STR.edf created: " << str.total << " day(s)" << std::endl;
+    else if (str.written)
+        std::cout << kTag << "STR.edf: " << str.appended << " day(s) appended, " << str.replaced
+                  << " revised, " << str.total << " in the file" << std::endl;
+    else std::cout << kTag << "STR.edf unchanged: " << str.why << std::endl;
 }
 
 void AirSense11BleClient::startNightLoop(std::shared_ptr<As11NightWriter> writer,

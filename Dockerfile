@@ -74,6 +74,8 @@ COPY include/ ./include/
 # "COPY . .", so a new top-level source directory has to be added here too or the
 # image build fails on a missing header while a full-checkout build succeeds.
 COPY third_party/ ./third_party/
+# The AirSense 11 STR layouts, compiled in by cmake/StrLayouts.cmake.
+COPY str-layouts/ ./str-layouts/
 COPY llm_prompt.txt ./
 
 # Build HMS-CPAP with Web UI support, and direct Bluetooth (SDD-057 D1): the

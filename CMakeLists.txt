@@ -318,6 +318,10 @@ list(FILTER SOURCES EXCLUDE REGEX ".*/cli/.*\\.cpp$")
 # compiles only when BUILD_WITH_SLEEPBRIDGE fetched and verified it.
 include(cmake/SleepBridge.cmake)
 hms_sleepbridge_filter_sources(SOURCES)
+# The STR layouts of the AirSense 11 models, compiled in (cmake/StrLayouts.cmake).
+include(cmake/StrLayouts.cmake)
+hms_str_layouts_generate(STR_LAYOUTS_SOURCE)
+list(APPEND SOURCES ${STR_LAYOUTS_SOURCE})
 if(MSVC)
     # PDF/report/gnuplot not available on Windows
     list(FILTER SOURCES EXCLUDE REGEX ".*/PdfRenderer\\.cpp$")

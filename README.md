@@ -277,9 +277,10 @@ too far from the CPAP for its own Bluetooth, the Mule & Miner bridges that
 gap. The CpapDash dual-radio unit holds the machine's Bluetooth pairing
 instead of this computer, and sends the night here instead of to the cloud.
 On the unit, set the hms-cpap address to this computer's IP address or
-hostname (nothing else); it connects to `ws://<host>:8894/mule/v1/device`,
-the same port the Sleep Bridge receiver listens on, so `sleep_bridge.enabled`
-must stay on.
+hostname (nothing else: no `ws://`, no port, no path) and the port, 8894
+unless you changed `sleep_bridge.port`; it connects to
+`ws://<host>:<port>/mule/v1/device`, the same port the Sleep Bridge receiver
+listens on, so `sleep_bridge.enabled` must stay on.
 
 It feeds the same writer as 2 above: the same files under
 `<data dir>/as11/<machine serial>/`, the same live night, read the same way

@@ -572,8 +572,12 @@ void MuleService::afterPull(const std::string& serial, Command& c) {
         save(serial, u);
     }
     const auto str = writeStrFromSummaries(root, strLayoutDir(opt_.data_dir));
-    done(str.written ? "Summary kept; STR.edf " + std::to_string(str.days) + " day(s)"
-                     : "Summary kept; no STR.edf: " + str.why);
+    done(str.written ? "Summary kept; STR.edf " +
+                           (str.created ? "created, " + std::to_string(str.total) + " day(s)"
+                                        : std::to_string(str.appended) + " day(s) appended, " +
+                                              std::to_string(str.replaced) + " revised, " +
+                                              std::to_string(str.total) + " in the file")
+                     : "Summary kept; STR.edf unchanged: " + str.why);
 }
 
 void MuleService::nightLanded(const std::string& serial) {
@@ -682,19 +686,30 @@ CommandAnswer MuleService::queueCommand(const std::string& serial, const Json::V
     const std::string cmd = req["cmd"].asString();
     const auto& known     = localCommands();
     if (std::find(known.begin(), known.end(), cmd) == known.end())
-        return refuse(400, "a Mule & Miner takes config (hms_url), reboot, logs, restate, reset, "
+        return refuse(400, "a Mule & Miner takes config (hms_url, hms_port), reboot, logs, restate, reset, "
                            "as11_pair or as11_download from hms-cpap, not \"" + cmd + "\"");
 
     Json::Value f(Json::objectValue);
     if (cmd == "config") {
-        // hms_url and nothing else: "" sends the unit back to the cloud.
+        // hms_url, hms_port, one or both, and no other key: "" sends the unit
+        // back to the cloud; the port alone changes only the port of the
+        // hms-cpap the unit already points at (8894 when never set).
         Json::Value cfg = req["config"].isObject() ? req["config"] : Json::Value(Json::objectValue);
-        if (!req["config"].isObject() && req.isMember("hms_url")) cfg["hms_url"] = req["hms_url"];
-        if (cfg.size() != 1 || !cfg["hms_url"].isString())
-            return refuse(400, "config takes {\"hms_url\": address} and no other key");
-        if (!validUnitHost(cfg["hms_url"].asString()))
+        if (!req["config"].isObject()) {
+            if (req.isMember("hms_url")) cfg["hms_url"] = req["hms_url"];
+            if (req.isMember("hms_port")) cfg["hms_port"] = req["hms_port"];
+        }
+        for (const auto& k : cfg.getMemberNames())
+            if (k != "hms_url" && k != "hms_port")
+                return refuse(400, "config takes {\"hms_url\": address, \"hms_port\": port}, one or both, "
+                                   "and no other key");
+        if (cfg.empty()) return refuse(400, "config takes hms_url, hms_port or both");
+        if (cfg.isMember("hms_url") && (!cfg["hms_url"].isString() || !validUnitHost(cfg["hms_url"].asString())))
             return refuse(400, "hms_url is an IP address or hostname only (e.g. 192.168.1.20), with "
-                               "no scheme, port or path; \"\" for the cloud");
+                               "no scheme, port or path; \"\" for the cloud. The port is hms_port");
+        if (cfg.isMember("hms_port") &&
+            (!cfg["hms_port"].isInt() || cfg["hms_port"].asInt() < 1 || cfg["hms_port"].asInt() > 65535))
+            return refuse(400, "hms_port is a number from 1 to 65535 (8894 when never set)");
         f["config"] = cfg;
     } else if (cmd == "reboot") {
         if (req.isMember("target")) {

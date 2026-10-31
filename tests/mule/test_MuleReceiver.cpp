@@ -117,6 +117,16 @@ public:
         svc_.onBinary(conn_, frame);
     }
 
+    // A command's plain answer.
+    void answer(uint64_t req_id, bool ok) {
+        Json::Value r(Json::objectValue);
+        r["t"]      = "result";
+        r["req_id"] = static_cast<Json::UInt64>(req_id);
+        r["ok"]     = ok;
+        r["result"] = Json::Value(Json::objectValue);
+        text(r);
+    }
+
     // An as11_download's answer: the bytes as kind 6 frames, the empty last
     // frame, then the result.
     void answerPull(uint32_t req_id, const std::string& bytes, size_t chunk = 700) {
@@ -392,7 +402,7 @@ TEST_F(MuleReceiverTest, AShortNightLandsAsACardWithItsEventsStrAndIdentificatio
         EXPECT_EQ(k["state"].asString(), "answered");
         EXPECT_TRUE(k["automatic"].asBool());
     }
-    EXPECT_NE(st["commands"][1]["outcome"].asString().find("STR.edf 1 day"), std::string::npos)
+    EXPECT_NE(st["commands"][1]["outcome"].asString().find("STR.edf created, 1 day"), std::string::npos)
         << st["commands"][1]["outcome"].asString();
 }
 
@@ -706,6 +716,10 @@ TEST_F(MuleReceiverTest, OnlyTheAllowedCommandsAndArgumentsAreTaken) {
     EXPECT_EQ(status(R"({"cmd":"config","hms_url":"ws://192.168.1.20"})"), 400);
     EXPECT_EQ(status(R"({"cmd":"config","hms_url":"192.168.1.20:8894"})"), 400);
     EXPECT_EQ(status(R"({"cmd":"config","hms_url":"hmscpap.local/mule"})"), 400);
+    EXPECT_EQ(status(R"({"cmd":"config","hms_port":0})"), 400);
+    EXPECT_EQ(status(R"({"cmd":"config","hms_port":70000})"), 400);
+    EXPECT_EQ(status(R"({"cmd":"config","hms_port":"8894"})"), 400);
+    EXPECT_EQ(status(R"({"cmd":"config","config":{}})"), 400);
     EXPECT_EQ(status(R"({"cmd":"reboot","target":"everything"})"), 400);
     EXPECT_EQ(status(R"({"cmd":"logs","n":0})"), 400);
     EXPECT_EQ(status(R"({"cmd":"as11_pair","code":"12a4"})"), 400);
@@ -716,6 +730,13 @@ TEST_F(MuleReceiverTest, OnlyTheAllowedCommandsAndArgumentsAreTaken) {
 
     EXPECT_EQ(status(R"({"cmd":"config","config":{"hms_url":"hmscpap.local"}})"), 200);
     EXPECT_EQ(compact(unit.of("cmd").back()["config"]), R"({"hms_url":"hmscpap.local"})");
+    // The port is its own field: with the address, or alone.
+    unit.answer(unit.of("cmd").back()["req_id"].asUInt64(), true);
+    EXPECT_EQ(status(R"({"cmd":"config","hms_url":"192.168.1.20","hms_port":9000})"), 200);
+    EXPECT_EQ(compact(unit.of("cmd").back()["config"]), R"({"hms_port":9000,"hms_url":"192.168.1.20"})");
+    unit.answer(unit.of("cmd").back()["req_id"].asUInt64(), true);
+    EXPECT_EQ(status(R"({"cmd":"config","config":{"hms_port":8894}})"), 200);
+    EXPECT_EQ(compact(unit.of("cmd").back()["config"]), R"({"hms_port":8894})");
 }
 
 // ── the wire's pieces ──

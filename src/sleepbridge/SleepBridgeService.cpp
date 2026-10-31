@@ -45,6 +45,8 @@ bool validBridgeHost(const std::string& host) {
     return host.find("..") == std::string::npos;
 }
 
+bool validBridgePort(int port) { return port >= 1 && port <= 65535; }
+
 SleepBridgeService::SleepBridgeService(Options opt, RebuilderFactory factory)
     : opt_(std::move(opt)), factory_(std::move(factory)), store_(opt_.root) {
     // Asked once: a factory that answers nullptr is a build without the rebuild.
@@ -305,14 +307,21 @@ CommandAnswer SleepBridgeService::queueCommand(const std::string& sender, const 
     frame["cmd"] = cmd;
     if (cmd == "stream") {
         // "" is back to the cloud; otherwise an IP address or a hostname and
-        // nothing else: the bridge adds ws://, port 8894 and the path itself.
+        // nothing else, and the port as its own field (8894 when left out):
+        // the bridge builds ws://<url>:<port>/sleepbridge/v1/device itself.
         if (!req["url"].isString())
             return refuse(400, "stream needs a url: \"\" for the cloud, or an IP address or hostname");
         const std::string url = req["url"].asString();
         if (!validBridgeHost(url))
             return refuse(400, "the url is an IP address or hostname only (e.g. 192.168.1.20), "
-                               "with no port, scheme or path; \"\" for the cloud");
+                               "with no port, scheme or path; \"\" for the cloud. The port is its own "
+                               "field, \"port\"");
         frame["url"] = url;
+        if (req.isMember("port")) {
+            if (!req["port"].isInt() || !validBridgePort(req["port"].asInt()))
+                return refuse(400, "the port is a number from 1 to 65535 (8894 when left out)");
+            frame["port"] = req["port"].asInt();
+        }
     } else if (cmd == "logs") {
         int n = 200;
         if (req.isMember("n")) {

@@ -20,8 +20,9 @@ and hms-cpap reads it with the matching card format (`resmed` or `bmc`).
 
 1. On the bridge's setup page (hold its button 10 s to reopen it), choose
    **My hms-cpap** and type this computer's IP address or hostname, e.g.
-   `192.168.1.20`, and nothing else: no port, no `ws://`. The bridge always
-   connects to port 8894 on it, and tests the address before it keeps it.
+   `192.168.1.20`, and nothing else: no port, no `ws://`. The port is its own
+   field, prefilled 8894: leave it unless you changed `sleep_bridge.port` in
+   hms-cpap. The bridge tests the address before it keeps it.
 2. Power the machine off and on once, outside therapy. The machine reads the
    card when it starts, and that read is what lets the rebuild trust the
    card's layout. Until then hms-cpap holds what it receives and writes no
@@ -42,9 +43,9 @@ There is no login on the stream. Keep the port on your local network.
 "sleep_bridge": { "enabled": true, "port": 8894 }
 ```
 
-Leave the port at 8894: a Sleep Bridge connects to 8894 and no other port,
-so a receiver on any other port is one no bridge reaches (hms-cpap says so at
-start). In Docker, publish it as `8894:8894`. Only the stream answers on it: the
+Leave the port at 8894 unless you have to: a bridge reaches another port only
+with that port typed in its own Port field (hms-cpap says so at start when the
+port is not 8894). In Docker, publish it as `8894:8894`. Only the stream answers on it: the
 web UI and the API are not served there, and the stream is not served on the
 web port.
 
@@ -114,7 +115,7 @@ A bridge takes these commands from a local hms-cpap:
 
 | Command | Arguments | What the bridge does |
 |---|---|---|
-| `stream` | `url`: an IP address or hostname only (the bridge adds `ws://`, port 8894 and the path), or `""` for the cloud | Tests the new target with a probe hello, answers, and only then keeps the address and moves. On a failed test nothing changes. |
+| `stream` | `url`: an IP address or hostname only (the bridge adds `ws://` and the path), or `""` for the cloud; `port`: 1 to 65535, optional, 8894 when left out | Tests the new target with a probe hello, answers, and only then keeps the address and port and moves. On a failed test nothing changes. |
 | `reboot` | | Restarts. Never answered. |
 | `logs` | `n`: lines, 1 to 5000 (200 when left out) | Sends its log as kind 4 frames, then the result. |
 | `restate` | | Sends its card statement again. |

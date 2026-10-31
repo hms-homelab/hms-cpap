@@ -5,6 +5,79 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.8.0] - 2026-10-31
+
+Three new ways for a night to reach hms-cpap, none of them a WiFi SD card.
+
+### Added
+- **Sleep Bridge receiver.** A Sleep Bridge on the local network streams its
+  card's sector writes to `ws://<host>:8894/sleepbridge/v1/device`
+  (`sleep_bridge` in `config.json`, on by default, port 8894), and hms-cpap
+  rebuilds the card's files under `<data dir>/sleepbridge/<bridge>/` in the
+  machine's own layout, to be read as a Local folder. `GET /api/sleepbridge`
+  lists every bridge with its folder, machine and card format;
+  `POST /api/sleepbridge/command` sends `stream`, `reboot`, `logs`,
+  `restate` or `config_reset`. The part that rebuilds files from the stream
+  is a prebuilt component under its own licence, linked only with
+  `-DBUILD_WITH_SLEEPBRIDGE=ON`; a build without it still listens and refuses
+  every bridge, so a bridge's setup test fails rather than pointing at a
+  receiver that cannot use its stream. Protocol in
+  `docs/SLEEP_BRIDGE_LOCAL_STREAM.md`.
+- **Mule & Miner local stream.** A Mule & Miner in AirSense 11 Bluetooth mode
+  sends the machine's night to `ws://<host>:8894/mule/v1/device` instead of
+  the cloud. The night is written live as a card under
+  `<data dir>/as11/<machine serial>/`: BRP, PLD and SAD grow block by block,
+  each a valid EDF at every moment, and the machine's own scored events go
+  into EVE and CSL as they arrive. Every block and event wakes the sync at
+  once; with MQTT on, each event and each therapy start and end is published
+  live (`cpap/<device_id>/live/...`, discovered by Home Assistant). After the
+  night the unit is asked for the machine's identification, summary and
+  settings history. `GET /api/mule` lists the units, `POST /api/mule/command`
+  sends `config` (`hms_url`, `hms_port`), `reboot`, `logs`, `restate`,
+  `reset`, `as11_pair` or `as11_download`. Protocol in
+  `docs/MULE_LOCAL_STREAM.md`.
+- **AirSense 11 over the computer's own Bluetooth** (`airsense11_ble` in
+  `config.json`; Linux with BlueZ, a build with `-DBUILD_WITH_BLE=ON`). Pair
+  from Settings with the code on the machine's screen; the pairing is kept in
+  `<data dir>/as11.json`. hms-cpap reads the machine's daily summary and its
+  live night, into the same card folder as above. The O2Ring-S in direct
+  Bluetooth mode shares the Bluetooth layer.
+- **STR.edf and Identification.json for a Bluetooth night.** The machine's
+  Summary days are laid into the STR layout of its model, with the recording
+  field written for the machine, so the folder is a card root OSCAR and the
+  parser open as one. The layouts of eight AirSense 11 and AirCurve 11
+  models are built into the binary (`str-layouts/`, STR headers cut from a
+  card of each model with the patient and recording fields blanked); a file
+  of the same name under `<data dir>/str-layouts/` wins, which is how a new
+  model gets one before the next release. The settings fields stay -1: the
+  machine's settings history is kept but not read yet.
+- **The Docker image is built with direct Bluetooth** (`BUILD_WITH_BLE=ON`);
+  give the container the host's D-Bus (`-v /run/dbus:/run/dbus:ro`). Without
+  it the feature reports no adapter and everything else runs.
+
+### Changed
+- **An existing STR.edf is appended to, never rewritten.** A folder that
+  already holds an STR.edf, from a card copy or from earlier nights, keeps
+  every record byte for byte: a new day is appended (an unreported day in
+  between gets a day-off record, so the record index stays the date), the
+  file's last day is revised in place on its own record when the Summary
+  carries it, a day before the last is left as it is, and the record count is
+  written after the records, so a reader never sees a count the file does not
+  back. Nothing is appended into a file that names another machine or whose
+  signals differ from the model's layout; that is said and the file is left
+  alone.
+- **The stream port is its own field** on a Sleep Bridge and a Mule & Miner,
+  8894 unless changed. The `stream` command takes `port`, the mule `config`
+  command takes `hms_port` (alone or with `hms_url`), and the start-up
+  message for a port other than 8894 names the port the devices must be set
+  to instead of saying no bridge will reach it.
+- The image's Drogon (1.9.0, built from source) reads a fragmented WebSocket
+  message to its end; the stock library stopped at the first fragment, so a
+  bridge's hello was never answered.
+- The web UI's page fallback answers on the web port only.
+- The Pi package lists follow the Dockerfile.
+- The parser pin moves to 8.9.2.
+
 ## [5.7.1] - 2026-10-30
 
 ### Fixed

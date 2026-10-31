@@ -210,13 +210,29 @@ TEST(SleepBridgeCommands, AStreamUrlIsAnIpOrHostnameOnly) {
                             "host name", ".lan", "lan.", "-a", "a..b", "[fe80::1]"})
         EXPECT_FALSE(validBridgeHost(bad)) << bad;
     EXPECT_FALSE(validBridgeHost(std::string(254, 'a')));
+    // The port is its own field.
+    EXPECT_TRUE(validBridgePort(8894));
+    EXPECT_TRUE(validBridgePort(1));
+    EXPECT_TRUE(validBridgePort(65535));
+    EXPECT_FALSE(validBridgePort(0));
+    EXPECT_FALSE(validBridgePort(65536));
 
     Fixture f;
     Wire w;
     auto c = f.session(w);
     EXPECT_EQ(f.svc.queueCommand(kSender, cmd(R"({"cmd":"stream","url":"192.168.1.20:8894"})")).status, 400);
     EXPECT_EQ(f.svc.queueCommand(kSender, cmd(R"({"cmd":"stream","url":"ws://192.168.1.20"})")).status, 400);
+    EXPECT_EQ(f.svc.queueCommand(kSender, cmd(R"({"cmd":"stream","url":"192.168.1.20","port":0})")).status, 400);
+    EXPECT_EQ(f.svc.queueCommand(kSender, cmd(R"({"cmd":"stream","url":"192.168.1.20","port":70000})")).status, 400);
+    EXPECT_EQ(f.svc.queueCommand(kSender, cmd(R"({"cmd":"stream","url":"192.168.1.20","port":"8894"})")).status, 400);
     EXPECT_TRUE(w.frames->empty());
+    // With a port, the frame carries it; without, the bridge uses 8894.
+    EXPECT_EQ(f.svc.queueCommand(kSender, cmd(R"({"cmd":"stream","url":"192.168.1.20","port":9000})")).status, 200);
+    {
+        const auto& sent = w.frames->back();
+        EXPECT_EQ(sent["url"].asString(), "192.168.1.20");
+        EXPECT_EQ(sent["port"].asInt(), 9000);
+    }
     EXPECT_EQ(f.svc.queueCommand(kSender, cmd(R"({"cmd":"stream","url":"homeassistant.local"})")).status, 200);
 }
 
