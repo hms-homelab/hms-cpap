@@ -140,7 +140,7 @@ TEST(SleepBridgeLinked, AStreamedCardIsRebuiltIntoACardFolder) {
     svc.apply(kSender, hello);
     ASSERT_EQ(parse(hello.texts.at(0))["t"].asString(), "ack");
     streamCard(svc, *c, 1, 'A');
-    svc.closed(kSender);
+    svc.closed(*c);
     svc.rebuildNow(kSender);
 
     const fs::path root = t.path / kSender;
@@ -167,7 +167,7 @@ TEST(SleepBridgeLinked, ARestartReplaysTheBankAndARewriteLands) {
         auto c = svc.open({kSender, "", ""});
         svc.apply(kSender, c->onText(R"({"t":"hello","state":{}})"));
         streamCard(svc, *c, 1, 'A');
-        svc.closed(kSender);
+        svc.closed(*c);
         svc.rebuildNow(kSender);
         ASSERT_EQ(slurp(file), std::string(kFileLen, 'A'));
     }
@@ -177,7 +177,7 @@ TEST(SleepBridgeLinked, ARestartReplaysTheBankAndARewriteLands) {
     auto c = svc.open({kSender, "", ""});
     svc.apply(kSender, c->onText(R"({"t":"hello","state":{}})"));
     streamCard(svc, *c, 2, 'B');
-    svc.closed(kSender);
+    svc.closed(*c);
     svc.rebuildNow(kSender);
     EXPECT_EQ(slurp(file), std::string(kFileLen, 'B'));
 }

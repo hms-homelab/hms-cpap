@@ -159,6 +159,7 @@ set(TEST_SOURCES
     sleepbridge/test_SleepBridgeStore.cpp
     sleepbridge/test_SleepBridgeConversation.cpp
     sleepbridge/test_SleepBridgeRebuild.cpp
+    sleepbridge/test_SleepBridgeCommands.cpp
     # Empty unless BUILD_WITH_SLEEPBRIDGE linked the component.
     sleepbridge/test_SleepBridgeLinked.cpp
 )

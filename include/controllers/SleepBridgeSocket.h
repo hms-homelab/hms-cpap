@@ -4,7 +4,9 @@
 // The Drogon side of the Sleep Bridge local stream:
 //
 //   ws://<host>:8894/sleepbridge/v1/device   the stream (its own listener)
-//   GET /api/sleepbridge                     the bridges, on the web port
+//   GET /api/sleepbridge                     the bridges and their commands,
+//                                            on the web port
+//   POST /api/sleepbridge/command            one command to one bridge
 //
 // The stream has a port of its own so it can be published alone (the Home
 // Assistant add-on publishes 8894 and keeps the UI behind Ingress). Drogon

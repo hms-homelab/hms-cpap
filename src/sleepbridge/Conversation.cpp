@@ -50,11 +50,12 @@ std::optional<Admission> admit(const std::function<std::string(const std::string
     return a;
 }
 
-Conversation::Conversation(BatchStore& store, Admission who)
-    : store_(store), who_(std::move(who)) {}
+Conversation::Conversation(BatchStore& store, Admission who, uint64_t conn)
+    : store_(store), who_(std::move(who)), conn_(conn) {}
 
 Effects Conversation::onText(const std::string& frame) {
     Effects e;
+    e.conn = conn_;
     const auto v = parseObject(frame);
     if (!v || !(*v)["t"].isString()) {
         e.texts.push_back(errorFrame("a text frame is one JSON object with a string \"t\""));
@@ -64,8 +65,14 @@ Effects Conversation::onText(const std::string& frame) {
     const Json::Value state =
         (*v)["state"].isObject() ? (*v)["state"] : Json::Value(Json::objectValue);
     if (t == "hello") {
-        e.hello = true;
-        e.state = state;
+        // A test of this address: the ack and nothing else.
+        const auto flag = [&state](const char* k) { return state[k].isBool() && state[k].asBool(); };
+        if (flag("probe") || flag("portal_test")) {
+            e.probe = true;
+        } else {
+            e.hello = true;
+            e.state = state;
+        }
         Json::Value ack(Json::objectValue);
         ack["t"] = "ack";
         e.texts.push_back(compact(ack));
@@ -76,7 +83,15 @@ Effects Conversation::onText(const std::string& frame) {
         return e;
     }
     if (t == "result") {
-        e.log.push_back("result ignored: no command is sent in local mode");
+        const Json::Value& req = (*v)["req_id"];
+        if (!req.isNumeric() || req.asDouble() < 0) {
+            e.log.push_back("result without a req_id, ignored");
+            return e;
+        }
+        CommandResult r;
+        r.req_id = static_cast<uint64_t>(req.asDouble());
+        if ((*v)["result"].isObject()) r.result = (*v)["result"];
+        e.result = std::move(r);
         return e;
     }
     e.texts.push_back(errorFrame("unknown frame type \"" + t + "\""));
@@ -85,6 +100,7 @@ Effects Conversation::onText(const std::string& frame) {
 
 Effects Conversation::onBinary(const std::string& frame) {
     Effects e;
+    e.conn = conn_;
     const auto h = parseFrameHeader(frame);
     if (!h) {
         e.texts.push_back(errorFrame("a binary frame starts with the 12-byte header"));
@@ -108,7 +124,16 @@ Effects Conversation::onBinary(const std::string& frame) {
                             a.body.get("error", "").asString());
         return e;
     }
-    if (h->kind == kKindLogText || h->kind == kKindRingFile) {
+    if (h->kind == kKindLogText) {
+        LogChunk c;
+        c.req_id = h->req_id;
+        c.seq    = h->seq;
+        c.last   = (h->flags & 1) != 0;
+        c.text   = frame.substr(kFrameHeaderSize);
+        e.log_text = std::move(c);
+        return e;
+    }
+    if (h->kind == kKindRingFile) {
         e.log.push_back("binary kind " + std::to_string(h->kind) +
                         " ignored: not taken in local mode");
         return e;

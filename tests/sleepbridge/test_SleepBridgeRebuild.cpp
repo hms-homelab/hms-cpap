@@ -243,7 +243,7 @@ TEST(SleepBridgeRebuild, AReplayedSessionLandsInACardRootLocalDataSourceReads) {
     fill.push_back(static_cast<char>(0xAA));
     send(c->onBinary(frame(fseq++, fill)));
     send(c->onBinary(frame(fseq++, heartbeat())));
-    svc.closed(kSender);
+    svc.closed(*c);
 
     // Reconnect: frame seq starts over, the resend overlaps the mark.
     auto c2 = svc.open(who);
@@ -256,7 +256,7 @@ TEST(SleepBridgeRebuild, AReplayedSessionLandsInACardRootLocalDataSourceReads) {
     EXPECT_EQ(b["ack"].asInt64(), 11);
     EXPECT_EQ(b["accepted"].asInt64(), 2);
     EXPECT_TRUE(svc.status()["bridges"][0]["online"].asBool());
-    svc.closed(kSender);
+    svc.closed(*c2);
 
     svc.stop();
     svc.rebuildNow(kSender);   // whatever the quiet timer had not reached
@@ -321,6 +321,7 @@ TEST(SleepBridgeRebuild, TheServiceRebuildsAfterTheStreamGoesQuiet) {
     svc.start();
     Admission who{kSender, "", ""};
     auto c = svc.open(who);
+    svc.apply(kSender, c->onText(R"({"t":"hello","state":{}})"));
     svc.apply(kSender, c->onBinary(frame(0, cardStatement(kCard))));
     svc.apply(kSender, c->onBinary(frame(1, run(0, 2, 100))));
     const fs::path f = t.path / kSender / "DATALOG/20261030/101.edf";

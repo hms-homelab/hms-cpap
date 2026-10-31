@@ -1534,6 +1534,10 @@ int main(int argc, char** argv) {
                               << " is not usable (it must differ from the web port); the "
                                  "stream is off" << std::endl;
                 } else {
+                    if (config.sleep_bridge.port != hms_cpap::sleepbridge::kDefaultPort)
+                        std::cerr << "Sleep Bridge: port " << config.sleep_bridge.port
+                                  << " is not 8894. A Sleep Bridge connects to 8894 only, so "
+                                     "no bridge will reach this receiver." << std::endl;
                     hms_cpap::sleepbridge::SleepBridgeService::Options sb;
                     sb.root = (std::filesystem::path(hms_cpap::AppConfig::dataDir()) / "sleepbridge")
                                   .string();

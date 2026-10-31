@@ -108,6 +108,24 @@ void installRoutes(SleepBridgeService* service) {
         },
         {drogon::Get});
 
+    // One command to one bridge: {"sender": "...", "cmd": "...", ...its
+    // arguments}. Sent at once when the bridge is online, else on its next
+    // hello; the answer shows in GET /api/sleepbridge under its req_id.
+    drogon::app().registerHandler(
+        "/api/sleepbridge/command",
+        [](const drogon::HttpRequestPtr& req,
+           std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+            const auto body = req->getJsonObject();
+            if (!body || !(*body)["sender"].isString())
+                return cb(jsonError(drogon::k400BadRequest,
+                                    "a command is {\"sender\": name, \"cmd\": name, ...}"));
+            const CommandAnswer a = g_service->queueCommand((*body)["sender"].asString(), *body);
+            auto resp = drogon::HttpResponse::newHttpJsonResponse(a.body);
+            resp->setStatusCode(static_cast<drogon::HttpStatusCode>(a.status));
+            cb(resp);
+        },
+        {drogon::Post});
+
     std::cout << "Sleep Bridge: listening on ws://0.0.0.0:" << port << kRoute
               << (service->available() ? "" : " (not in this build: bridges are refused)")
               << std::endl;
@@ -131,8 +149,16 @@ void DeviceSocket::handleNewConnection(const drogon::HttpRequestPtr& req,
         conn->shutdown(drogon::CloseCode::kViolation, "unadmitted");
         return;
     }
-    auto e        = std::make_shared<Entry>();
-    e->conv       = g_service->open(req->attributes()->get<Admission>(kWhoAttr));
+    auto e  = std::make_shared<Entry>();
+    // Commands go down on the connection itself; send() is safe from any thread.
+    std::weak_ptr<drogon::WebSocketConnection> weak = conn;
+    e->conv = g_service->open(req->attributes()->get<Admission>(kWhoAttr),
+                              [weak](const std::string& text) {
+                                  const auto c = weak.lock();
+                                  if (!c || !c->connected()) return false;
+                                  c->send(text, drogon::WebSocketMessageType::Text);
+                                  return true;
+                              });
     e->conn       = conn;
     e->last_heard = std::time(nullptr);
     conn->setPingMessage("", std::chrono::seconds(30));
@@ -173,7 +199,7 @@ void DeviceSocket::handleConnectionClosed(const drogon::WebSocketConnectionPtr& 
         g_entries.erase(it);
     }
     std::lock_guard<std::mutex> lk(e->mu);
-    if (g_service) g_service->closed(e->conv->who().sender);
+    if (g_service) g_service->closed(*e->conv);
 }
 
 }  // namespace hms_cpap::sleepbridge

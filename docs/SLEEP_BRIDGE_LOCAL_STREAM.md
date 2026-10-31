@@ -19,8 +19,9 @@ and hms-cpap reads it with the matching card format (`resmed` or `bmc`).
 ## Setting it up
 
 1. On the bridge's setup page (hold its button 10 s to reopen it), choose
-   **My hms-cpap** and type this computer's address, e.g. `192.168.1.20` or
-   `192.168.1.20:8894`. The bridge tests the address before it keeps it.
+   **My hms-cpap** and type this computer's IP address or hostname, e.g.
+   `192.168.1.20`, and nothing else: no port, no `ws://`. The bridge always
+   connects to port 8894 on it, and tests the address before it keeps it.
 2. Power the machine off and on once, outside therapy. The machine reads the
    card when it starts, and that read is what lets the rebuild trust the
    card's layout. Until then hms-cpap holds what it receives and writes no
@@ -41,7 +42,9 @@ There is no login on the stream. Keep the port on your local network.
 "sleep_bridge": { "enabled": true, "port": 8894 }
 ```
 
-The port must differ from the web port. Only the stream answers on it: the
+Leave the port at 8894: a Sleep Bridge connects to 8894 and no other port,
+so a receiver on any other port is one no bridge reaches (hms-cpap says so at
+start). In Docker, publish it as `8894:8894`. Only the stream answers on it: the
 web UI and the API are not served there, and the stream is not served on the
 web port.
 
@@ -80,11 +83,19 @@ a 12-byte header. All integers are little-endian.
 |---|---|
 | `{"t":"hello","state":{...}}` | First frame on every connection. Nothing else flows until it is answered. |
 | `{"t":"state","state":{...}}` | Every 30 s. Kept for the status page, never answered. |
+| `{"t":"result","req_id":N,"result":{...}}` | The answer to a command (below). |
 | binary, kind 7 | One batch (below). |
+| binary, kind 4 | A command's log text, ahead of its result (below). |
 
 `state` is the bridge's own report (firmware version, counters); hms-cpap
-shows it and acts on none of it. The setup page's test sends one hello with
-`"portal_test": true` in its state, waits for the ack, and closes.
+shows it and acts on none of it.
+
+A hello whose state carries `"probe": true` or `"portal_test": true` is a
+test of this address: the setup page's test, or a bridge testing hms-cpap
+before it switches here. It is answered with `{"t":"ack"}` and nothing
+else; its state is not kept, it is not the bridge's session, no command is
+sent on it, and a bridge never seen before does not appear because of it.
+The bridge closes it within seconds.
 
 ### Down (hms-cpap to bridge)
 
@@ -92,11 +103,47 @@ shows it and acts on none of it. The setup page's test sends one hello with
 |---|---|
 | `{"t":"ack"}` | The answer to `hello`. |
 | `{"t":"ack_sectors","seq":N,"status":S,...}` | The answer to one batch (below). |
+| `{"t":"cmd","cmd":"<name>","req_id":N,...}` | A command (below). |
 | `{"t":"error","error":"..."}` | A frame that could not be read. |
 
-hms-cpap sends no commands on the local stream: no firmware update, no log
-pull. A `result` frame, log text (binary kind 4) or a file (kind 5) is
-ignored.
+A file (binary kind 5) is ignored.
+
+## Commands
+
+A bridge takes these commands from a local hms-cpap:
+
+| Command | Arguments | What the bridge does |
+|---|---|---|
+| `stream` | `url`: an IP address or hostname only (the bridge adds `ws://`, port 8894 and the path), or `""` for the cloud | Tests the new target with a probe hello, answers, and only then keeps the address and moves. On a failed test nothing changes. |
+| `reboot` | | Restarts. Never answered. |
+| `logs` | `n`: lines, 1 to 5000 (200 when left out) | Sends its log as kind 4 frames, then the result. |
+| `restate` | | Sends its card statement again. |
+| `config_reset` | | Forgets its network and stream address and restarts into setup. Keeps its name and pairing. Answered first. |
+
+The answer is `{"t":"result","req_id":N,"result":{"ok":bool,...}}`, with
+`error` when `ok` is false; `stream` adds `url` and `changed`. It can come
+on a later connection than the command went on: a `stream` closes the
+connection to test the new target, then answers on the one it comes back
+on. A log pull's text comes as binary kind 4 frames whose header `req_id` is
+the command's, `seq` counting the pieces and flags bit 0 on the last.
+
+No command is refused while the machine records: the card keeps the night,
+and when to switch is the owner's call.
+
+From the web port:
+
+```
+POST /api/sleepbridge/command
+{"sender":"TAP-S3-00000123","cmd":"stream","url":""}
+
+{"ok":true,"req_id":815000123,"command":{"state":"sent",...}}
+```
+
+It is sent at once when the bridge is online, or on its next hello when it is
+not (`"state":"queued"`). 400 for a command or argument a bridge does not
+take, 404 for a bridge never seen. `GET /api/sleepbridge` lists each bridge's
+last 20 commands, newest first, with `state` (`queued`, `sent`, `answered`),
+`result` and, for `logs`, the text.
 
 ### Binary frame header
 
