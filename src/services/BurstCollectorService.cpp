@@ -18,6 +18,7 @@
 #include "utils/FileUtils.h"
 #include "utils/NightQuiet.h"
 #include "utils/SessionEnd.h"
+#include "utils/SessionFileRefs.h"
 #include "database/SqlDialect.h"
 #include "utils/CardResidue.h"
 #include "utils/ArchiveRecordCount.h"
@@ -389,9 +390,43 @@ bool BurstCollectorService::airSense11BleCompiled() {
 
 std::shared_ptr<IAs11NightSink> BurstCollectorService::getAs11NightSink() {
     std::lock_guard<std::mutex> lk(airsense11_mtx_);
-    if (!as11_night_writer_)
+    if (!as11_night_writer_) {
         as11_night_writer_ = std::make_shared<As11NightWriter>(AppConfig::dataDir(), hostLocalClock());
+        // SDD-057 D9: a night whose files are complete is imported by the
+        // worker, whichever source streamed it. Only a flag here: the hook
+        // runs on the stream's thread.
+        as11_night_writer_->setNightEndedHook([this](const std::string&) { as11_import_due_ = true; });
+    }
     return as11_night_writer_;
+}
+
+As11NightImport::Result BurstCollectorService::importAs11Nights() {
+    As11NightImport::Result r;
+    if (!db_service_) return r;
+    if (!as11_import_)
+        as11_import_ = std::make_unique<As11NightImport>(AppConfig::dataDir(), db_service_,
+                                                         device_id_, device_name_);
+    try {
+        r = as11_import_->run(removedNightSet(*db_service_, device_id_));
+    } catch (const std::exception& e) {
+        std::cerr << "AirSense11 night: import failed (non-fatal): " << e.what() << std::endl;
+        return r;
+    }
+    if (r.saved.empty()) return r;
+    last_data_at_.store(std::chrono::steady_clock::now().time_since_epoch().count());
+    db_service_->updateDeviceLastSeen(device_id_);
+
+    // The newest night it saved, published as a card night is when it is
+    // over: the session, its metrics and summary, the range summaries if due.
+    const auto& latest = r.saved.back();
+    if (!latest.session_start || !data_publisher_) return r;
+    data_publisher_->publishSession(latest);
+    const bool full = publishNightOutcome(*latest.session_start);
+    data_publisher_->publishSessionCompleted();
+    if (full) runRangeSummariesIfDue();
+    if (app_config_ && app_config_->sleephq.auto_on_session)
+        SleepHqExportService::getInstance().markDirty(strDayForSessionStart(*latest.session_start));
+    return r;
 }
 
 void BurstCollectorService::initAirSense11() {
@@ -3493,36 +3528,7 @@ bool BurstCollectorService::parseAndStoreSession(
     // The columns hold one path per kind; cpap_session_files holds every
     // file the night is made of, which is what a merged session needs
     // and what the SleepHQ export reads. See SDD-014.
-    std::vector<SessionFileRef> file_refs;
-    if (std::filesystem::exists(session_dir)) {
-        std::vector<std::string> names;
-        for (const auto& entry : std::filesystem::directory_iterator(session_dir)) {
-            names.push_back(entry.path().filename().string());
-        }
-        // directory_iterator order is unspecified, so "first of each
-        // kind" would otherwise not be the same file twice.
-        std::sort(names.begin(), names.end());
-
-        for (const auto& filename : names) {
-            const char* kind = nullptr;
-            if (filename.find("_BRP.edf") != std::string::npos)      kind = "brp";
-            else if (filename.find("_EVE.edf") != std::string::npos) kind = "eve";
-            else if (isOximetryFile(filename))                        kind = "sad";
-            else if (filename.find("_PLD.edf") != std::string::npos) kind = "pld";
-            else if (filename.find("_CSL.edf") != std::string::npos) kind = "csl";
-            if (!kind) continue;
-
-            const std::string rel = relative_path_base + filename;
-            file_refs.push_back({kind, rel});
-
-            std::string k(kind);
-            if (k == "brp" && !parsed->brp_file_path.has_value()) parsed->brp_file_path = rel;
-            else if (k == "eve" && !parsed->eve_file_path.has_value()) parsed->eve_file_path = rel;
-            else if (k == "sad" && !parsed->sad_file_path.has_value()) parsed->sad_file_path = rel;
-            else if (k == "pld" && !parsed->pld_file_path.has_value()) parsed->pld_file_path = rel;
-            else if (k == "csl" && !parsed->csl_file_path.has_value()) parsed->csl_file_path = rel;
-        }
-    }
+    const auto file_refs = recordSessionFiles(session_dir, relative_path_base, *parsed);
 
     // One entry per session: a re-parse after the next file replaces the
     // earlier picture of the same night rather than sitting beside it.
@@ -3543,6 +3549,12 @@ bool BurstCollectorService::parseAndStoreSession(
     }
     db_service_->replaceSessionFiles(device_id_, session_start, file_refs);
     std::cout << "💾 CPAP: Saved session " << date_folder << " to database" << std::endl;
+
+    // SDD-057 D5: the card wins the stretch it carries. A Bluetooth copy of
+    // the same therapy (overlapping in time; the machine may cut its card
+    // files where the stream had one) is replaced by this row.
+    As11NightImport::replaceBluetoothRows(*db_service_, device_id_, session_start,
+                                          dataEndOf(*parsed).value_or(session_start));
 
     // SDD-026: the night's row in cpap_daily_summary is ours wherever the
     // night has sessions, so every save re-derives it. Per session, so the
@@ -3578,6 +3590,11 @@ void BurstCollectorService::runLoop() {
     } catch (const std::exception& e) {
         std::cerr << "CPAP: EDF record-count sweep failed: " << e.what() << std::endl;
     }
+
+    // SDD-057 D9: the Bluetooth nights already on disk that the database does
+    // not hold (a night streamed while hms-cpap was down, or before this
+    // import existed), before the first burst.
+    importAs11Nights();
 
     while (running_) {
         // Hot-reload config if changed via web UI
@@ -3740,6 +3757,10 @@ void BurstCollectorService::runLoop() {
                     std::cerr << "AirSense11: after-night pull failed (non-fatal): " << e.what() << std::endl;
                 }
             }
+            // SDD-057 D9: the night's files are complete: it is a session now.
+            // After the Summary above, so its STR day is there for the
+            // summary the night publishes with.
+            if (as11_import_due_.exchange(false)) importAs11Nights();
 
             std::this_thread::sleep_for(std::chrono::seconds(1));
         }

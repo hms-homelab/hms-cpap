@@ -74,6 +74,11 @@ public:
     void onEvent(const std::string& serial, const as11::RespEvent& e) override;
     void onStreamEnd(const std::string& serial) override;
 
+    /// Called after onStreamEnd completed a night's files, whichever source
+    /// fed them (this host's Bluetooth or a bridge), with the machine's
+    /// serial: the night is on disk and can be imported (SDD-057 D9).
+    void setNightEndedHook(std::function<void(const std::string& serial)> hook);
+
     std::string rootFor(const std::string& serial) const;
     /// Rewrites every file of one sleep day from what is on disk.
     void writeNight(const std::string& serial, const std::string& night);
@@ -109,6 +114,7 @@ private:
     std::map<std::string, WallClockFn> clocks_;
     std::map<std::string, Machine> machines_;
     mutable std::mutex mtx_;
+    std::function<void(const std::string&)> night_ended_;
 };
 
 /// The machine's IdentificationProfiles result written as a card holds it,

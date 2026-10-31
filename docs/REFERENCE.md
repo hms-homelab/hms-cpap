@@ -481,6 +481,19 @@ two days before the newest day it has, since the machine revises the current
 day until it is over. A pull the machine does not answer (asleep, out of range,
 not paired yet) is logged and retried on the next pace.
 
+When this computer (or a Mule & Miner sending to it) streams the live night
+itself, the night is written as a card under `<data dir>/as11/<machine
+serial>/DATALOG/<night>/` and, when it ends, imported as a session through the
+same parser a card folder goes through, under the install's `device_id`, with
+its files recorded as `as11/<serial>/DATALOG/<night>/<file>`. That is so
+whatever `cpap_source` is set to. At start-up, nights under that folder the
+database does not hold are imported too. The link to the machine stays up
+across nights. A card source reading the same machine wins the stretches it
+carries: a card session that overlaps a Bluetooth one in time replaces the
+Bluetooth row (the machine may cut its card files where the stream had one
+stretch, so the test is overlap, not equal starts); where the card has nothing
+the Bluetooth session stays.
+
 ### Device id
 
 Every night is stored under `device_id`, and it names the device in Home
