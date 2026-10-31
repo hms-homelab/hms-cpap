@@ -1492,10 +1492,20 @@ int main(int argc, char** argv) {
                 // serve the shell and let Angular route it. Anything with an
                 // extension falls through to the static file handler, so assets
                 // are untouched.
+                //
+                // The web port only. Pre-routing advice runs for every
+                // listener, and this one runs ahead of the Sleep Bridge's port
+                // split, so without the check it answered the stream route
+                // with this page (the bridge's upgrade got a 200 and never
+                // connected) and served the UI on the stream port.
                 drogon::app().registerPreRoutingAdvice(
-                    [serve_index](const drogon::HttpRequestPtr& req,
-                                  drogon::AdviceCallback&& stop,
-                                  drogon::AdviceChainCallback&& carry_on) {
+                    [serve_index, web_port](const drogon::HttpRequestPtr& req,
+                                            drogon::AdviceCallback&& stop,
+                                            drogon::AdviceChainCallback&& carry_on) {
+                        if (req->getLocalAddr().toPort() != web_port) {
+                            carry_on();
+                            return;
+                        }
                         const std::string path = req->path();
                         const bool is_api =
                             path.rfind("/api/", 0) == 0 || path == "/health";
