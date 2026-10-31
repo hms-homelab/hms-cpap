@@ -49,7 +49,7 @@ say "tools"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq --no-install-recommends \
-    g++-arm-linux-gnueabihf binutils-arm-linux-gnueabihf cmake make git \
+    g++-arm-linux-gnueabihf binutils-arm-linux-gnueabihf cmake make git patch \
     ca-certificates curl gnupg mmdebstrap qemu-user file pkg-config >/dev/null
 
 say "1. the Raspberry Pi OS archive key"
