@@ -79,8 +79,7 @@ int64_t msOf(std::chrono::system_clock::time_point t) {
 }
 
 // Every kept Summary's days, a later file winning a day both carry (by write
-// time, then by name); keyed by
-// the day's start instant (the machine's noon).
+// time, then by name); keyed by the day's start instant (the machine's noon).
 std::map<int64_t, AirSense11Day> keptDays(const fs::path& root) {
     std::map<int64_t, AirSense11Day> days;
     std::vector<fs::path> files;
