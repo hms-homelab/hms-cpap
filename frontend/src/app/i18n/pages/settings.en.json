@@ -83,7 +83,8 @@
       "errBadCode": "Type the digits shown on the machine's screen.",
       "errNoPairing": "The pairing window closed. Start again.",
       "errDisabled": "Turn this on and save first.",
-      "errGeneric": "Pairing failed. Start again."
+      "errGeneric": "Pairing failed. Start again.",
+      "errRadioOff": "Bluetooth is switched off on this computer (rf-kill). Switch it on, or run rfkill unblock bluetooth, and try again."
     },
     "sleephq": {
       "heading": "SleepHQ Sync",

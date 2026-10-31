@@ -1,6 +1,7 @@
 #ifdef WITH_BLE
 
 #include "clients/AirSense11BleClient.h"
+#include "clients/BlueZAdapter.h"
 #include "services/As11StrWriter.h"
 
 #include <algorithm>
@@ -105,12 +106,28 @@ bool AirSense11BleClient::findAdapter() {
 bool AirSense11BleClient::scan(int timeout_ms) {
     device_path_.clear();
     device_name_.clear();
-    auto look = [this]() {
+    link_failure_ = as11::Result::Connect;
+    // The computer's own radio first: BlueZ will not discover on an adapter
+    // that is off, and its NotReady reads like the machine being away.
+    const auto radio = bluez::ensurePowered(*conn_, adapter_path_, kTag);
+    if (radio.power != bluez::Power::Ready) {
+        if (radio.power == bluez::Power::RfKilled) link_failure_ = as11::Result::RadioOff;
+        {
+            std::lock_guard<std::mutex> lk(err_mtx_);
+            last_error_ = radio.detail;
+        }
+        return false;
+    }
+    // `advertising`: only a device seen in this discovery (BlueZ sets RSSI on
+    // an object while the advert comes in). Off, BlueZ's cache counts too,
+    // but only under the machine's own name once that is known.
+    auto look = [this](bool advertising) {
         try {
             auto proxy = sdbus::createProxy(*conn_, BLUEZ, ROOT);
             Objects objects;
             proxy->callMethod("GetManagedObjects")
                 .onInterface("org.freedesktop.DBus.ObjectManager")
+                .withTimeout(bluez::kCallTimeout)
                 .storeResultsTo(objects);
             for (auto& [path, ifaces] : objects) {
                 auto it = ifaces.find("org.bluez.Device1");
@@ -122,6 +139,8 @@ bool AirSense11BleClient::scan(int timeout_ms) {
                 if (!address_.empty() && lower(prop<std::string>(p, "Address").value_or("")) != address_)
                     continue;
                 if (!as11::advertIsAirSense(name, uuids)) continue;
+                if (advertising && !prop<int16_t>(p, "RSSI")) continue;
+                if (!advertising && !machine_name_.empty() && name != machine_name_) continue;
                 device_path_ = std::string(path);
                 device_name_ = name.empty() ? "<unnamed AirSense 11>" : name;
                 return true;
@@ -130,13 +149,13 @@ bool AirSense11BleClient::scan(int timeout_ms) {
         return false;
     };
 
-    if (look()) {
+    if (!rediscover_ && look(false)) {
         std::cout << kTag << "found " << device_name_ << " (known to BlueZ)" << std::endl;
         return true;
     }
     auto adapter = sdbus::createProxy(*conn_, BLUEZ, sdbus::ObjectPath{adapter_path_});
     try {
-        adapter->callMethod("StartDiscovery").onInterface("org.bluez.Adapter1");
+        adapter->callMethod("StartDiscovery").onInterface("org.bluez.Adapter1").withTimeout(bluez::kCallTimeout);
     } catch (const std::exception& e) {
         note(std::string("scan start failed: ") + e.what());
         return false;
@@ -145,11 +164,17 @@ bool AirSense11BleClient::scan(int timeout_ms) {
     bool found = false;
     while (!found && std::chrono::steady_clock::now() < deadline) {
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
-        found = look();
+        found = look(true);
     }
-    try { adapter->callMethod("StopDiscovery").onInterface("org.bluez.Adapter1"); } catch (...) {}
-    if (found) std::cout << kTag << "found " << device_name_ << std::endl;
-    else note("machine not advertising (asleep, out of range, or connected elsewhere)");
+    try {
+        adapter->callMethod("StopDiscovery").onInterface("org.bluez.Adapter1").withTimeout(bluez::kCallTimeout);
+    } catch (...) {}
+    if (found) {
+        rediscover_ = false;
+        std::cout << kTag << "found " << device_name_ << " (advertising now)" << std::endl;
+    } else {
+        note("machine not advertising (asleep, out of range, or connected elsewhere)");
+    }
     return found;
 }
 
@@ -177,12 +202,14 @@ bool AirSense11BleClient::connectLink(int timeout_ms) {
     bool up = false;
     for (int attempt = 0; attempt < 3 && !up; attempt++) {
         try {
-            device_proxy_->callMethod("Connect").onInterface("org.bluez.Device1");
+            device_proxy_->callMethod("Connect").onInterface("org.bluez.Device1").withTimeout(bluez::kConnectTimeout);
             up = true;
-        } catch (const std::exception& e) {
-            std::cerr << kTag << "connect attempt " << (attempt + 1) << "/3 failed: " << e.what()
-                      << std::endl;
-            try { device_proxy_->callMethod("Disconnect").onInterface("org.bluez.Device1"); } catch (...) {}
+        } catch (const sdbus::Error& e) {
+            std::cerr << kTag << "connect attempt " << (attempt + 1) << "/3 "
+                      << (bluez::timedOut(e) ? "timed out" : "failed: " + e.getMessage()) << std::endl;
+            try {
+                device_proxy_->callMethod("Disconnect").onInterface("org.bluez.Device1").withTimeout(bluez::kCallTimeout);
+            } catch (...) {}
             std::this_thread::sleep_for(std::chrono::milliseconds(2000));
         }
     }
@@ -195,7 +222,12 @@ bool AirSense11BleClient::connectLink(int timeout_ms) {
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
     while (std::chrono::steady_clock::now() < deadline) {
         try {
-            sdbus::Variant v = device_proxy_->getProperty("ServicesResolved").onInterface("org.bluez.Device1");
+            sdbus::Variant v;
+            device_proxy_->callMethod("Get")
+                .onInterface("org.freedesktop.DBus.Properties")
+                .withTimeout(bluez::kCallTimeout)
+                .withArguments(std::string("org.bluez.Device1"), std::string("ServicesResolved"))
+                .storeResultsTo(v);
             if (v.get<bool>()) {
                 if (discoverGatt() && enableNotifications()) {
                     std::cout << kTag << "connected to " << device_name_ << std::endl;
@@ -264,7 +296,9 @@ bool AirSense11BleClient::enableNotifications() {
             });
         // A fresh conversation before the first notification can land.
         session_.onConnected();
-        notify_proxy_->callMethod("StartNotify").onInterface("org.bluez.GattCharacteristic1");
+        notify_proxy_->callMethod("StartNotify")
+            .onInterface("org.bluez.GattCharacteristic1")
+            .withTimeout(bluez::kCallTimeout);
         return true;
     } catch (const std::exception& e) {
         note(std::string("notifications could not be enabled: ") + e.what());
@@ -275,10 +309,16 @@ bool AirSense11BleClient::enableNotifications() {
 void AirSense11BleClient::dropLink() {
     session_.onDisconnect();
     if (notify_proxy_) {
-        try { notify_proxy_->callMethod("StopNotify").onInterface("org.bluez.GattCharacteristic1"); } catch (...) {}
+        try {
+            notify_proxy_->callMethod("StopNotify")
+                .onInterface("org.bluez.GattCharacteristic1")
+                .withTimeout(bluez::kCallTimeout);
+        } catch (...) {}
     }
     if (device_proxy_) {
-        try { device_proxy_->callMethod("Disconnect").onInterface("org.bluez.Device1"); } catch (...) {}
+        try {
+            device_proxy_->callMethod("Disconnect").onInterface("org.bluez.Device1").withTimeout(bluez::kCallTimeout);
+        } catch (...) {}
     }
     notify_proxy_.reset();
     write_proxy_.reset();
@@ -290,7 +330,10 @@ void AirSense11BleClient::dropLink() {
 bool AirSense11BleClient::writeFrame(const std::vector<uint8_t>& frame) {
     if (!write_proxy_) return false;
     // Write with response, piece by piece at the MTU, as the machine was
-    // proven with: each piece is acknowledged before the next goes.
+    // proven with: each piece is acknowledged before the next goes. A piece
+    // the machine never acknowledges fails the write after kCallTimeout, and
+    // with it the pull, instead of holding the pull for as long as sd-bus
+    // would wait.
     std::map<std::string, sdbus::Variant> options;
     options["type"] = sdbus::Variant{std::string("request")};
     try {
@@ -300,10 +343,18 @@ bool AirSense11BleClient::writeFrame(const std::vector<uint8_t>& frame) {
                                        frame.begin() + static_cast<long>(end));
             write_proxy_->callMethod("WriteValue")
                 .onInterface("org.bluez.GattCharacteristic1")
+                .withTimeout(bluez::kCallTimeout)
                 .withArguments(piece, options);
         }
+    } catch (const sdbus::Error& e) {
+        if (bluez::timedOut(e))
+            note("write to the machine timed out: the link is dead, the pull is abandoned");
+        else
+            note("write to the machine failed: " + e.getMessage());
+        session_.onDisconnect();
+        return false;
     } catch (const std::exception& e) {
-        std::cerr << kTag << "write failed: " << e.what() << std::endl;
+        note(std::string("write to the machine failed: ") + e.what());
         return false;
     }
     return true;
@@ -368,7 +419,7 @@ as11::Result AirSense11BleClient::pairStart() {
         session_.pairCancel();
         dropLink();
     }
-    if (!connectLink(kConnectMs)) return as11::Result::Connect;
+    if (!connectLink(kConnectMs)) return link_failure_;
     const as11::Result r = session_.pairStart();
     if (r != as11::Result::WaitCode) {
         note(std::string("pairing could not start: ") + session_.lastError());
@@ -385,6 +436,16 @@ as11::Result AirSense11BleClient::pairConfirm(const std::string& code) {
     as11::Credentials creds;
     as11::Result r = session_.pairConfirm(code, &creds);
     dropLink();
+    // The pairing is over, whichever way: the object BlueZ cached for it is
+    // dropped, and the first pull finds the machine by its advertisement
+    // under its own name. A stale object under a generic name once took the
+    // connect and then swallowed the pull.
+    machine_name_ = device_name_;
+    rediscover_ = true;
+    if (bluez::forgetDevice(*conn_, adapter_path_, device_path_))
+        std::cout << kTag << "forgot BlueZ's object for " << device_name_
+                  << ": the next pull rediscovers the machine" << std::endl;
+    device_path_.clear();
     if (r != as11::Result::Ok) {
         note(std::string("pairing failed: ") + session_.lastError());
         return r;

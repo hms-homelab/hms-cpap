@@ -264,9 +264,16 @@ What you get:
   BRP, PLD, EVE and CSL files (SAD when an oximeter rode along), the
   machine's `Identification.json`, and an `STR.edf` built from the summaries
   when the model's layout is known. Each file is a valid EDF at every moment,
-  rewritten as the stream goes. Point a **Local folder** source at that folder
-  (5 below), ResMed format, and the night's sessions and events reach the
-  dashboard on the sync interval while it is still being written.
+  rewritten as the stream goes. When the night ends it goes through the same
+  session import as a card's files and lands as its own session, with its
+  metrics, files and the night's summary, whatever source the rest of the
+  setup reads (none, a card, a WiFi card); nights found on disk at start-up
+  that the database does not hold are imported then. A card read beside it
+  wins the stretches it carries: a card session overlapping a Bluetooth one
+  in time replaces it, and the Bluetooth session stays where the card has
+  nothing. Pointing a **Local folder** source at the folder (5 below) is no
+  longer needed, and still works for reading the night while it is being
+  written.
 
 The older summary-only path through a bridge's HTTP (`"airsense11": {
 "enabled": true, "mule_url": "http://..." }`) still works for a unit that
@@ -285,8 +292,8 @@ unless you changed `sleep_bridge.port`; it connects to
 listens on, so `sleep_bridge.enabled` must stay on.
 
 It feeds the same writer as 2 above: the same files under
-`<data dir>/as11/<machine serial>/`, the same live night, read the same way
-through a Local folder source. Every block and every event also wakes
+`<data dir>/as11/<machine serial>/`, the same live night, imported as a
+session the same way when it ends. Every block and every event also wakes
 hms-cpap's sync at once, and with MQTT on each event and each therapy start
 and end goes to the broker as it arrives (`cpap/<device_id>/live/...`), for
 automations during the night. When the night ends the unit is asked for the

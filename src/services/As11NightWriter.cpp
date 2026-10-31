@@ -320,16 +320,27 @@ void As11NightWriter::onEvent(const std::string& serial, const as11::RespEvent& 
     if (!night.empty()) writeEvents(serial, night);
 }
 
-void As11NightWriter::onStreamEnd(const std::string& serial) {
+void As11NightWriter::setNightEndedHook(std::function<void(const std::string&)> hook) {
     std::lock_guard<std::mutex> lk(mtx_);
-    Machine& m = machine(serial);
-    for (auto& s : m.segments) {
-        if (s.written_end == s.end_ms || !m.nights_touched.count(s.night)) continue;
-        writeSegment(serial, s);
-        s.written_end = s.end_ms;
+    night_ended_ = std::move(hook);
+}
+
+void As11NightWriter::onStreamEnd(const std::string& serial) {
+    std::function<void(const std::string&)> hook;
+    {
+        std::lock_guard<std::mutex> lk(mtx_);
+        Machine& m = machine(serial);
+        for (auto& s : m.segments) {
+            if (s.written_end == s.end_ms || !m.nights_touched.count(s.night)) continue;
+            writeSegment(serial, s);
+            s.written_end = s.end_ms;
+        }
+        for (const auto& night : m.nights_touched) writeEvents(serial, night);
+        m.nights_touched.clear();
+        hook = night_ended_;
     }
-    for (const auto& night : m.nights_touched) writeEvents(serial, night);
-    m.nights_touched.clear();
+    // Outside the lock: the hook's owner may come back to this writer.
+    if (hook) hook(serial);
 }
 
 void As11NightWriter::writeNight(const std::string& serial, const std::string& night) {

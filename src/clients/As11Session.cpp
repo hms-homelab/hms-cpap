@@ -25,6 +25,7 @@ const char* resultText(Result r) {
     case Result::WaitCode:  return "waiting for the code on the machine's screen";
     case Result::NotPaired: return "not paired";
     case Result::Connect:   return "connect failed";
+    case Result::RadioOff:  return "Bluetooth is switched off on this computer (rf-kill)";
     case Result::Verify:    return "machine refused the code or the pairing";
     case Result::Protocol:  return "no answer or a bad one";
     case Result::Spool:     return "fragment lost or stalled";

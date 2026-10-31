@@ -208,13 +208,6 @@ import { AppConfig } from '../../models/config.model';
               <input type="checkbox" [(ngModel)]="config.airsense11_ble.enabled" name="as11_enabled" />
             </label>
             <ng-container *ngIf="config.airsense11_ble.enabled">
-              <label>
-                {{ 'settings.as11.address' | translate }}
-                <input type="text" [(ngModel)]="config.airsense11_ble.address" name="as11_address"
-                       placeholder="AA:BB:CC:DD:EE:FF" />
-                <span class="hint">{{ 'settings.as11.addressHint' | translate }}</span>
-              </label>
-
               <ng-container *ngIf="as11.compiled">
                 <!-- Keyed off the saved config, not the status: the running
                      service picks a save up within a second, so by the time
@@ -241,12 +234,14 @@ import { AppConfig } from '../../models/config.model';
                              [ngModelOptions]="{standalone: true}" placeholder="0000" />
                       <span class="hint">{{ 'settings.as11.codeHint' | translate }}</span>
                     </label>
-                    <button type="button" class="myair-btn" (click)="as11PairConfirm()"
-                            [disabled]="as11Busy || !as11Code">
-                      {{ (as11Busy ? 'settings.as11.confirming' : 'settings.as11.confirm') | translate }}
-                    </button>
-                    <button type="button" class="myair-btn danger" (click)="as11PairCancel()"
-                            [disabled]="as11Busy">{{ 'settings.as11.cancel' | translate }}</button>
+                    <div class="prompt-actions">
+                      <button type="button" class="myair-btn" (click)="as11PairConfirm()"
+                              [disabled]="as11Busy || !as11Code">
+                        {{ (as11Busy ? 'settings.as11.confirming' : 'settings.as11.confirm') | translate }}
+                      </button>
+                      <button type="button" class="myair-btn secondary" (click)="as11PairCancel()"
+                              [disabled]="as11Busy">{{ 'settings.as11.cancel' | translate }}</button>
+                    </div>
                   </ng-container>
                 </ng-container>
               </ng-container>
@@ -1041,6 +1036,8 @@ import { AppConfig } from '../../models/config.model';
                  font-size: 0.8rem; }
     .myair-btn:disabled { opacity: 0.5; cursor: not-allowed; }
     .myair-btn.danger { background: transparent; border-color: #f87171; color: #f87171; }
+    .myair-btn.secondary { background: transparent; border-color: #555; color: #aaa; }
+    .myair-btn.secondary:hover:not(:disabled) { color: #e0e0e0; border-color: #888; }
 
     .section-header .restart-tag { margin-left: auto; }
     .section-header .badge + .restart-tag { margin-left: 0.5rem; }
@@ -1353,6 +1350,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
     const result = e?.error?.result ?? e?.result ?? '';
     const key: Record<string, string> = {
       connect: 'settings.as11.errConnect',
+      radio_off: 'settings.as11.errRadioOff',
       verify: 'settings.as11.errVerify',
       protocol: 'settings.as11.errTimeout',
       bad_code: 'settings.as11.errBadCode',

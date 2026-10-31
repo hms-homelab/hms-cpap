@@ -5,6 +5,21 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **A Bluetooth night is a session.** A night hms-cpap streamed from an
+  AirSense 11 (its own Bluetooth, or a Mule & Miner sending to it) was written
+  under `<data dir>/as11/<serial>/DATALOG/` and nothing read it: the burst
+  cycle walks only the configured source, so the night had no session row and
+  the dashboard showed only a card's copy, when there was one. The night now
+  goes through the same grouping and parser as a card folder when it ends
+  (and at start-up for nights on disk the database does not hold), under the
+  install's `device_id`, with its files recorded as `as11/<serial>/...`, its
+  metrics, and the night's summary and MQTT publish. A card source reading
+  the same machine wins the stretches it carries: a card session overlapping
+  a Bluetooth one in time replaces it; elsewhere the Bluetooth session stays.
+
 ## [5.8.0] - 2026-10-31
 
 Three new ways for a night to reach hms-cpap, none of them a WiFi SD card.

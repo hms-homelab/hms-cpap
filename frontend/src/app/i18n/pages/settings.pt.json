@@ -83,7 +83,8 @@
       "errBadCode": "Digite os números mostrados na tela do aparelho.",
       "errNoPairing": "A janela de emparelhamento fechou. Comece de novo.",
       "errDisabled": "Ative esta opção e salve primeiro.",
-      "errGeneric": "O emparelhamento falhou. Comece de novo."
+      "errGeneric": "O emparelhamento falhou. Comece de novo.",
+      "errRadioOff": "O Bluetooth está desligado neste computador (rf-kill). Ligue-o, ou execute rfkill unblock bluetooth, e tente de novo."
     },
     "sleephq": {
       "heading": "Sincronização com o SleepHQ",

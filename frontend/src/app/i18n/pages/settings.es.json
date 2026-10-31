@@ -83,7 +83,8 @@
       "errBadCode": "Escribe los dígitos que aparecen en la pantalla del equipo.",
       "errNoPairing": "Se cerró la ventana de emparejamiento. Empieza de nuevo.",
       "errDisabled": "Actívalo y guarda primero.",
-      "errGeneric": "No se pudo emparejar. Empieza de nuevo."
+      "errGeneric": "No se pudo emparejar. Empieza de nuevo.",
+      "errRadioOff": "El Bluetooth está apagado en este equipo (rf-kill). Enciéndelo, o ejecuta rfkill unblock bluetooth, e inténtalo de nuevo."
     },
     "sleephq": {
       "heading": "Sincronización con SleepHQ",

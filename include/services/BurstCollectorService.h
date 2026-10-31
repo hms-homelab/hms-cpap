@@ -10,6 +10,7 @@
 #include "services/MyAirService.h"
 #include "services/AirSense11Pull.h"
 #include "clients/IAirSense11Pairing.h"
+#include "services/As11NightImport.h"
 #include "services/As11NightWriter.h"
 #include "services/OximetryImport.h"
 #include "services/OximetryService.h"
@@ -413,12 +414,24 @@ public:
     /// The one writer every AirSense 11 stream source feeds (SDD-057 step 4):
     /// this host's own Bluetooth now, a bridge's network stream later.
     std::shared_ptr<IAs11NightSink> getAs11NightSink();
+    /// Test-only: the SDD-057 D9 import of the Bluetooth nights on disk, as
+    /// the worker runs it at start and after a night. Returns what it saved.
+    As11NightImport::Result importAs11NightsForTest() { return importAs11Nights(); }
 private:
     std::shared_ptr<IAirSense11Pairing> airsense11_pairing_;
     mutable std::mutex airsense11_mtx_;
     std::shared_ptr<As11NightWriter> as11_night_writer_;
     // Set when a night's stream ended: the worker pulls the Summary at once.
     std::atomic<bool> as11_summary_due_{false};
+    /// SDD-057 D9: the nights under <data dir>/as11/ go through the session
+    /// import like a card's. Set when a night's files are complete (the
+    /// writer's hook, whichever source fed it); the worker imports at start
+    /// and whenever this is set, after the Summary so the STR day is there.
+    std::atomic<bool> as11_import_due_{false};
+    std::unique_ptr<As11NightImport> as11_import_;
+    /// Import every Bluetooth night not yet stored (or grown) and publish the
+    /// newest the way a card night is published. Worker thread only.
+    As11NightImport::Result importAs11Nights();
 
     // Worker thread
     std::thread worker_thread_;

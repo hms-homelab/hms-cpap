@@ -128,7 +128,8 @@ say "4. the build"
 cmake -S "$SRC" -B "$WORK/build" \
     -DCMAKE_TOOLCHAIN_FILE="$SRC/cmake/arm-toolchain.cmake" \
     -DRASPBIAN_SYSROOT="$SYSROOT" \
-    -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF -DBUILD_WITH_WEB=ON -DBUILD_WITH_MYSQL=ON
+    -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF -DBUILD_WITH_WEB=ON -DBUILD_WITH_MYSQL=ON \
+    -DBUILD_WITH_BLE=ON
 cmake --build "$WORK/build" --target hms_cpap -j"$(nproc)"
 install -m 755 "$WORK/build/hms_cpap" "$OUT/hms_cpap"
 arm-linux-gnueabihf-strip "$OUT/hms_cpap"

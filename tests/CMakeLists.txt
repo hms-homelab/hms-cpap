@@ -121,11 +121,13 @@ set(TEST_SOURCES
     services/test_O2RingCsvWriter.cpp
     clients/test_O2RingClient.cpp
     clients/test_O2RingBleProtocol.cpp
+    clients/test_BlueZAdapter.cpp
     clients/test_OxyIIProtocol.cpp
     clients/test_As11Protocol.cpp
     clients/test_As11Session.cpp
     clients/test_As11Stream.cpp
     services/test_As11NightWriter.cpp
+    services/test_As11NightImport.cpp
     services/test_As11StrWriter.cpp
     web/test_As11PairingApi.cpp
     services/test_AirSense11Pull.cpp

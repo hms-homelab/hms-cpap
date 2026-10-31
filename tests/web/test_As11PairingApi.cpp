@@ -94,6 +94,21 @@ TEST(As11PairingApi, AFailedStartSaysWhy) {
     EXPECT_EQ(r.body["error"].asString(), "machine not advertising");
 }
 
+TEST(As11PairingApi, TheHostsOwnRadioOffIsNotTheMachineAway) {
+    // rf-kill on the computer: a distinct code, so the page does not say
+    // "check that the machine is on and close by".
+    EXPECT_STREQ(as11api::resultCode(Result::RadioOff), "radio_off");
+    FakePairing p;
+    p.start_result = Result::RadioOff;
+    p.error = "Bluetooth is switched off by rf-kill on this computer";
+    auto r = as11api::start(&p, true, true);
+    EXPECT_FALSE(r.body["ok"].asBool());
+    EXPECT_EQ(r.body["state"].asString(), "failed");
+    EXPECT_EQ(r.body["result"].asString(), "radio_off");
+    EXPECT_EQ(r.body["error"].asString(), p.error);
+    EXPECT_FALSE(as11api::status(&p, true, true).body["pairing"].asBool());
+}
+
 TEST(As11PairingApi, AWrongCodeIsAVerifyFailure) {
     FakePairing p;
     p.confirm_result = Result::Verify;
