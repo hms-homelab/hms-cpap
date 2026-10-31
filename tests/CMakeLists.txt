@@ -310,7 +310,9 @@ if(BUILD_WITH_WEB AND NOT WIN32)
         ${CMAKE_SOURCE_DIR}/src/services/As11StrWriter.cpp
         ${STR_LAYOUTS_SOURCE}
     )
-    target_link_libraries(ws_fragments_test Drogon::Drogon cpapdash_parser OpenSSL::Crypto)
+    # CURL::libcurl: the Mule & Miner's firmware updater (src/mule/MuleFirmware.cpp)
+    # talks HTTP to the unit through libcurl.
+    target_link_libraries(ws_fragments_test Drogon::Drogon cpapdash_parser OpenSSL::Crypto CURL::libcurl)
     if(BUILD_WITH_SLEEPBRIDGE)
         target_link_libraries(ws_fragments_test sleepbridge_component)
     endif()
