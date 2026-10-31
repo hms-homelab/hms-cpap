@@ -20,6 +20,19 @@ stream a night here now take their firmware from here too.
   refusing every bridge with "not in this build". A build from source stays
   without it unless asked (`-DBUILD_WITH_SLEEPBRIDGE=ON`, or
   `--build-arg SLEEPBRIDGE=ON` for a Docker build of your own).
+- **The Sleep Bridge's night is live.** While a bridge streams, hms-cpap
+  reads the rebuilt card as it grows and pushes what is happening to its
+  MQTT broker beside the burst cycle's own `cpap/<device_id>/realtime/*`
+  topics: `realtime/mask` (ON when a session's therapy files grow, OFF when
+  the machine writes its STR after therapy or nothing was written for five
+  minutes; retained), `realtime/event` (one message per new apnea, hypopnea
+  or other event as the machine scores it) and `realtime/live_events` (the
+  counts per type; retained). Every rebuild that writes card files wakes the
+  sync, so the night is read seconds after the bridge streamed it instead of
+  at the next interval. When MQTT is configured but not connected, each
+  dropped live message is logged. The night's record still comes from the
+  sync parsing the files; this is the live view. "The live night" in
+  `docs/SLEEP_BRIDGE_LOCAL_STREAM.md`.
 - **A Mule & Miner's firmware updates from here.** A unit streaming to this
   host never hears from the cloud, so Settings, "Mule & Miner", lists each
   unit with the mule and miner versions it runs, says when the published
@@ -89,6 +102,12 @@ stream a night here now take their firmware from here too.
   buttons sit in a spaced row, Confirm primary and Cancel secondary.
 
 ### Fixed
+- **A local folder night growing by less than a KB is a change.** A Local
+  folder source now lists each file's exact size, and the collector compares
+  exact bytes where the source gives them. Before, a night file that grew by
+  a few hundred bytes between two syncs read as unchanged, and a night still
+  being written (a Sleep Bridge's rebuilt card, for one) could be closed
+  early. A source change costs one re-read of the open night.
 - **A Bluetooth night is a session.** A night hms-cpap streamed from an
   AirSense 11 (its own Bluetooth, or a Mule & Miner sending to it) was written
   under `<data dir>/as11/<serial>/DATALOG/` and nothing read it: the burst

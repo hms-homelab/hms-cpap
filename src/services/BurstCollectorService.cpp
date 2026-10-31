@@ -97,6 +97,20 @@ bool partialCopyIsDamaged(const std::string& local_path, size_t size, int listed
 
 } // namespace
 
+std::map<std::string, int> BurstCollectorService::checkpointSizes(const SessionFileSet& session) {
+    std::map<std::string, int> sizes;
+    for (const auto& [filename, size_kb] : session.file_sizes_kb) {
+        if (filename.find("_BRP.edf") == std::string::npos &&
+            filename.find("_PLD.edf") == std::string::npos && !isOximetryFile(filename))
+            continue;
+        const auto exact = session.file_sizes_bytes.find(filename);
+        sizes[filename] = exact != session.file_sizes_bytes.end()
+                              ? static_cast<int>(std::min<uint64_t>(exact->second, 0x7fffffff))
+                              : size_kb;
+    }
+    return sizes;
+}
+
 BurstCollectorService::BurstCollectorService(int burst_interval_seconds)
     : burst_interval_seconds_(burst_interval_seconds),
       running_(false) {
@@ -2722,15 +2736,8 @@ bool BurstCollectorService::executeBurstCycle() {
                 };
 
                 if (fetchNight(session, storeWhatIsOnDisk)) {
-                    std::map<std::string, int> checkpoint_sizes;
-                    for (const auto& [filename, size_kb] : session.file_sizes_kb) {
-                        if (filename.find("_BRP.edf") != std::string::npos ||
-                            filename.find("_PLD.edf") != std::string::npos ||
-                            isOximetryFile(filename)) {
-                            checkpoint_sizes[filename] = size_kb;
-                        }
-                    }
-                    db_service_->updateCheckpointFileSizes(device_id_, session.session_start, checkpoint_sizes);
+                    db_service_->updateCheckpointFileSizes(device_id_, session.session_start,
+                                                           checkpointSizes(session));
                     // SDD-046: a new session is the night growing.
                     noteNightGrowth(*db_service_, device_id_, session.date_folder,
                                     session.session_start, std::chrono::system_clock::now());
@@ -2748,14 +2755,7 @@ bool BurstCollectorService::executeBurstCycle() {
 
             auto db_checkpoint_sizes = db_service_->getCheckpointFileSizes(device_id_, session.session_start);
 
-            std::map<std::string, int> current_checkpoint_sizes;
-            for (const auto& [filename, size_kb] : session.file_sizes_kb) {
-                if (filename.find("_BRP.edf") != std::string::npos ||
-                    filename.find("_PLD.edf") != std::string::npos ||
-                    isOximetryFile(filename)) {
-                    current_checkpoint_sizes[filename] = size_kb;
-                }
-            }
+            const std::map<std::string, int> current_checkpoint_sizes = checkpointSizes(session);
 
             bool all_unchanged = true;
             bool has_new_files = false;
@@ -2835,15 +2835,8 @@ bool BurstCollectorService::executeBurstCycle() {
             };
 
             if (fetchNight(session, storeWhatIsOnDisk)) {
-                std::map<std::string, int> checkpoint_sizes;
-                for (const auto& [filename, size_kb] : session.file_sizes_kb) {
-                    if (filename.find("_BRP.edf") != std::string::npos ||
-                        filename.find("_PLD.edf") != std::string::npos ||
-                        isOximetryFile(filename)) {
-                        checkpoint_sizes[filename] = size_kb;
-                    }
-                }
-                db_service_->updateCheckpointFileSizes(device_id_, session.session_start, checkpoint_sizes);
+                db_service_->updateCheckpointFileSizes(device_id_, session.session_start,
+                                                       checkpointSizes(session));
 
                 // Session resumed (mask put back on) — clear session_end so
                 // markSessionCompleted() can fire again when it truly stops.

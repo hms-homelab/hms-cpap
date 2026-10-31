@@ -173,6 +173,7 @@ set(TEST_SOURCES
     sleepbridge/test_SleepBridgeRebuild.cpp
     sleepbridge/test_SleepBridgeCommands.cpp
     sleepbridge/test_SleepBridgeUpdate.cpp
+    sleepbridge/test_SleepBridgeLive.cpp
     # Empty unless BUILD_WITH_SLEEPBRIDGE linked the component.
     sleepbridge/test_SleepBridgeLinked.cpp
     # The Mule & Miner local stream: a fake unit through the receiver into

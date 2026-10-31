@@ -34,17 +34,22 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <vector>
 
 namespace hms_cpap::sleepbridge {
 
 struct StepReport {
     bool     looked{false};
+    /// This worker's first step: the whole bank fed again after a start, and
+    /// every file of the card returned, whether or not it changed tonight.
+    bool     catch_up{false};
     std::string machine;           // the look's machine: "resmed", "luna", ""
     int      batches_fed{0};
     int      records_fed{0};
     int      records_skipped{0};   // at or below what was already fed
     int      cards_fed{0};
     int      written{0};
+    std::vector<std::string> written_paths;   // card-relative, as written this step
     int      removed{0};           // files replaced by their cut pieces
     int      refused_paths{0};
     int      unreadable{0};        // a banked file that would not parse
@@ -91,6 +96,7 @@ private:
     std::string                 sender_;
     std::unique_ptr<IRebuilder> rebuilder_;
     std::set<std::string>       fed_files_;
+    bool                        first_step_{true};
     std::optional<int64_t>      fed_through_;
     RebuildGeometry             geometry_;
     std::string                 held_json_;

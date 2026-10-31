@@ -185,6 +185,8 @@ void RebuildWorker::feedBatchFile(const std::string& path, StepReport& r) {
 StepReport RebuildWorker::step(bool force) {
     StepReport r;
     if (!rebuilder_) return r;
+    r.catch_up  = first_step_;
+    first_step_ = false;
     const fs::path bdir = store_.batchesDir(sender_);
 
     // What was banked since the last step, in the order it belongs in the
@@ -261,6 +263,7 @@ StepReport RebuildWorker::step(bool force) {
             continue;
         }
         ++r.written;
+        r.written_paths.push_back(f.path);
         if (!f.cut_from.empty()) replaced.insert(f.cut_from);
     }
     // The pieces are on disk; the file they replace goes after them.

@@ -30,6 +30,12 @@ int sizeKb(const fs::path& p) {
     return static_cast<int>(bytes / 1024);
 }
 
+uint64_t sizeBytes(const fs::path& p) {
+    std::error_code ec;
+    const auto bytes = fs::file_size(p, ec);
+    return ec ? 0 : static_cast<uint64_t>(bytes);
+}
+
 /// Fill the listing's date fields from the file's own modification time, in the
 /// local zone, which is how EzShareClient's HTML listing reports them.
 void setModTime(EzShareFileEntry& e, const fs::path& p) {
@@ -134,6 +140,10 @@ std::vector<EzShareFileEntry> LocalDataSource::listFolder(const std::string& dir
         e.name = it->path().filename().string();
         if (!isCardNameUsable(e.name)) continue;   // SDD-054 D7: a damaged card's names
         e.size_kb = sizeKb(it->path());
+        // The exact size too (SDD-056 D2 (b)): a file this folder is still
+        // being written into grows by less than a KB between two bursts, and
+        // in KB alone that growth is invisible, so the night read as stopped.
+        e.size_bytes = sizeBytes(it->path());
         e.is_dir = false;
         // The listing's timestamp, which grouping READS: estimateCheckpointEnd()
         // widens a checkpoint's end to its modification time, so leaving these
@@ -159,6 +169,7 @@ std::vector<EzShareFileEntry> LocalDataSource::listDir(const std::string& card_p
         if (!isCardNameUsable(e.name)) continue;   // SDD-054 D7: a damaged card's names
         e.is_dir = it->is_directory(de);
         e.size_kb = e.is_dir ? 0 : sizeKb(it->path());
+        e.size_bytes = e.is_dir ? 0 : sizeBytes(it->path());
         entries.push_back(std::move(e));
     }
     std::sort(entries.begin(), entries.end(),
