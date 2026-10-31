@@ -1542,6 +1542,9 @@ int main(int argc, char** argv) {
             // The Mule & Miner local stream rides the same port, on its own
             // route, into the one AirSense 11 night writer (SDD-057's).
             std::unique_ptr<hms_cpap::mule::MuleService> mule_stream;
+            // Its firmware updates, over the LAN, from the published manifest
+            // or a file the owner has (docs/MULE_LOCAL_STREAM.md).
+            std::unique_ptr<hms_cpap::mule::FirmwareUpdater> mule_updater;
             if (config.sleep_bridge.enabled) {
                 if (config.sleep_bridge.port == web_port || config.sleep_bridge.port <= 0 ||
                     config.sleep_bridge.port > 65535) {
@@ -1578,7 +1581,11 @@ int main(int argc, char** argv) {
                                       : std::make_shared<hms_cpap::As11NightWriter>(
                                             mo.data_dir, hms_cpap::hostLocalClock());
                     mule_stream = std::make_unique<hms_cpap::mule::MuleService>(mo, night);
-                    hms_cpap::mule::installRoutes(mule_stream.get());
+                    hms_cpap::mule::FirmwareUpdater::Options fo;
+                    if (const char* m = std::getenv("HMS_CPAP_MULE_MANIFEST_URL"); m && *m) fo.manifest_url = m;
+                    mule_updater = std::make_unique<hms_cpap::mule::FirmwareUpdater>(
+                        *mule_stream, hms_cpap::mule::curlTransport(), fo);
+                    hms_cpap::mule::installRoutes(mule_stream.get(), mule_updater.get());
                     if (burst_service) {
                         // Live: every block and event wakes the sync, so the
                         // night is in the database and the UI within a block;

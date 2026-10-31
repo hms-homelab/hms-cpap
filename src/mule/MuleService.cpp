@@ -202,11 +202,29 @@ void MuleService::save(const std::string& serial, const Unit& u) const {
     writeText(fs::path(unitDir(serial)) / "unit.json", compact(v));
 }
 
-uint64_t MuleService::open(const std::string& serial, Outlet out) {
+uint64_t MuleService::open(const std::string& serial, Outlet out, const std::string& peer_ip) {
     std::lock_guard<std::mutex> lk(mu_);
     const uint64_t id = next_conn_++;
-    conns_[id]        = Conn{serial, std::move(out), false};
+    conns_[id]        = Conn{serial, std::move(out), peer_ip, false};
     return id;
+}
+
+MuleService::Brief MuleService::brief(const std::string& serial) const {
+    Brief b;
+    std::lock_guard<std::mutex> lk(mu_);
+    const auto it = units_.find(serial);
+    if (it == units_.end()) return b;
+    const Unit& u = it->second;
+    b.known      = true;
+    b.online     = u.sessions > 0 && std::time(nullptr) - u.last_heard < kSilenceSec;
+    b.night_open = u.streaming || u.end_pending;
+    b.ip         = u.ip;
+    b.fw         = u.fw;
+    b.miner_fw   = u.miner_fw;
+    b.machine    = u.machine;
+    b.hellos     = u.hellos;
+    b.last_heard = u.last_heard;
+    return b;
 }
 
 void MuleService::send(uint64_t conn, const std::string& text) {
@@ -297,6 +315,8 @@ void MuleService::hello(uint64_t conn, const std::string& serial, const Json::Va
         if (first) u.first_seen = now;
         u.last_heard  = now;
         u.live        = conn;
+        u.ip          = c->second.ip;
+        ++u.hellos;
         u.fw          = f.get("fw", "").asString();
         u.miner_fw    = f.get("miner_fw", "").asString();
         u.mode        = mode;
@@ -340,6 +360,13 @@ void MuleService::stateOf(const std::string& serial, const Json::Value& state) {
         if (state["tz"].isString() && state["tz"].asString() != u.tz) {
             u.tz  = state["tz"].asString();
             dirty = true;
+        }
+        // The miner's version rides every state: after a miner update it
+        // changes here before the mule's next hello.
+        if (state["miner_fw_version"].isString() && !state["miner_fw_version"].asString().empty() &&
+            state["miner_fw_version"].asString() != u.miner_fw) {
+            u.miner_fw = state["miner_fw_version"].asString();
+            dirty      = true;
         }
         applyClock(serial, u);
         const Json::Value& a = state["as11"];
@@ -810,6 +837,7 @@ Json::Value MuleService::status() const {
         v["night_landing"] = u.end_pending;
         v["fw"]            = u.fw;
         v["miner_fw"]      = u.miner_fw;
+        v["ip"]            = u.ip;
         v["mode"]          = u.mode;
         v["tz"]            = u.tz;
         v["summary_from"]  = u.summary_from;

@@ -4,7 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { TranslatePipe, TranslateService } from '@ngx-translate/core';
 import { Subject, Subscription, timer } from 'rxjs';
 import { switchMap, takeUntil, takeWhile, tap } from 'rxjs/operators';
-import { CpapApiService, UpdateStatus } from '../../services/cpap-api.service';
+import { CpapApiService, UpdateStatus, MuleUnit, MuleFirmware, MuleUpdateJob } from '../../services/cpap-api.service';
 import { UpdateFlowService } from '../../services/update-flow.service';
 import { AppConfig } from '../../models/config.model';
 
@@ -252,6 +252,77 @@ import { AppConfig } from '../../models/config.model';
               </ng-container>
             </ng-container>
             <div class="myair-msg" *ngIf="as11Message">{{ as11Message }}</div>
+          </div>
+        </div>
+
+        <!-- Section: the Mule & Miner units streaming to this host, and their
+             firmware. Nothing here is config: the units list themselves when
+             they connect, and an update goes to the unit over the local
+             network (docs/MULE_LOCAL_STREAM.md). -->
+        <div class="section">
+          <div class="section-header" (click)="toggle('mule')">
+            <span class="chevron" [class.open]="open['mule']">&#9654;</span>
+            {{ 'settings.mule.heading' | translate }}
+            <span class="badge connected" *ngIf="muleOnline() > 0">
+              {{ 'settings.mule.badgeOnline' | translate:{ n: muleOnline() } }}
+            </span>
+          </div>
+          <div class="section-body" *ngIf="open['mule']">
+            <p class="section-desc">{{ 'settings.mule.desc' | translate }}</p>
+            <div class="hint" *ngIf="muleUnits.length === 0">{{ 'settings.mule.none' | translate }}</div>
+            <div class="mule-unit" *ngFor="let u of muleUnits">
+              <div class="mule-head">
+                <strong>{{ u.serial }}</strong>
+                <span class="badge" [class.connected]="u.online">
+                  {{ (u.online ? 'settings.mule.online' : 'settings.mule.offline') | translate }}
+                </span>
+                <span class="badge" *ngIf="u.streaming">{{ 'settings.mule.streaming' | translate }}</span>
+                <span class="badge" *ngIf="u.night_landing">{{ 'settings.mule.landing' | translate }}</span>
+              </div>
+              <div class="mule-line" *ngIf="u.machine">
+                <span class="mule-label">{{ 'settings.mule.machine' | translate }}</span> {{ u.machine }}
+              </div>
+              <div class="mule-line" *ngIf="u.last_block">
+                <span class="mule-label">{{ 'settings.mule.lastBlock' | translate }}</span>
+                {{ u.last_block * 1000 | date:'medium' }}
+              </div>
+              <div class="mule-line">
+                <span class="mule-label">{{ 'settings.mule.firmware' | translate }}</span>
+                {{ 'settings.mule.mule' | translate }} {{ u.fw || '?' }},
+                {{ 'settings.mule.miner' | translate }} {{ u.miner_fw || '?' }}
+                <ng-container *ngIf="muleFw[u.serial] as f">
+                  <span class="mule-avail" *ngIf="f.update_available.mule || f.update_available.miner">
+                    {{ 'settings.mule.updateAvailable' | translate:{ mule: f.latest.mule, miner: f.latest.miner } }}
+                  </span>
+                  <span class="hint inline" *ngIf="!f.update_available.mule && !f.update_available.miner && !f.manifest.error">
+                    {{ 'settings.mule.upToDate' | translate }}
+                  </span>
+                  <span class="hint inline" *ngIf="f.manifest.error">{{ 'settings.mule.manifestUnavailable' | translate }}</span>
+                </ng-container>
+              </div>
+              <ng-container *ngIf="muleFw[u.serial] as f">
+                <div class="hint" *ngIf="f.night_open">{{ 'settings.mule.nightOpen' | translate }}</div>
+                <div class="mule-actions" *ngIf="!f.job?.running">
+                  <button type="button" class="myair-btn" (click)="muleUpdate(u.serial)"
+                          *ngIf="f.update_available.mule || f.update_available.miner"
+                          [disabled]="f.night_open || !u.online || muleBusy[u.serial]">
+                    {{ 'settings.mule.update' | translate }}
+                  </button>
+                  <label class="mule-file">
+                    <select [(ngModel)]="muleTarget[u.serial]" [ngModelOptions]="{standalone: true}">
+                      <option value="mule">{{ 'settings.mule.mule' | translate }}</option>
+                      <option value="miner">{{ 'settings.mule.miner' | translate }}</option>
+                    </select>
+                    <input type="file" accept=".bin" (change)="muleFile(u.serial, $event)"
+                           [disabled]="f.night_open || !u.online || muleBusy[u.serial]" />
+                    <span class="hint">{{ 'settings.mule.fileHint' | translate }}</span>
+                  </label>
+                </div>
+                <div class="mule-job" *ngIf="f.job" [class.err]="f.job.phase === 'failed'"
+                     [class.ok]="f.job.phase === 'done'">{{ muleJobText(f.job) }}</div>
+              </ng-container>
+              <div class="myair-msg err" *ngIf="muleMessage[u.serial]">{{ muleMessage[u.serial] }}</div>
+            </div>
           </div>
         </div>
 
@@ -1040,6 +1111,19 @@ import { AppConfig } from '../../models/config.model';
                  background: #1976d2; color: #fff; font-weight: 600; cursor: pointer;
                  font-size: 0.8rem; }
     .myair-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .myair-msg.err { color: #f87171; }
+    .mule-unit { border: 1px solid #2a2d45; border-radius: 8px; padding: 0.7rem 0.9rem; margin-bottom: 0.7rem; }
+    .mule-head { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.4rem; }
+    .mule-line { color: #ddd; font-size: 0.85rem; margin: 0.2rem 0; }
+    .mule-label { color: #888; margin-right: 0.3rem; }
+    .mule-avail { color: #fbbf24; margin-left: 0.5rem; }
+    .hint.inline { display: inline; margin-left: 0.5rem; }
+    .mule-actions { display: flex; align-items: center; gap: 0.8rem; flex-wrap: wrap; margin-top: 0.5rem; }
+    .mule-file { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; font-size: 0.8rem; }
+    .mule-file select { padding: 0.3rem; }
+    .mule-job { font-size: 0.85rem; margin-top: 0.5rem; color: #9ad0a0; }
+    .mule-job.err { color: #f87171; }
+    .mule-job.ok { color: #4ade80; }
     .myair-btn.danger { background: transparent; border-color: #f87171; color: #f87171; }
 
     .section-header .restart-tag { margin-left: auto; }
@@ -1236,6 +1320,15 @@ export class SettingsComponent implements OnInit, OnDestroy {
   update: UpdateStatus | null = null;
   updateChecking = false;
 
+  // The Mule & Miner units streaming here, and each one's firmware answer.
+  // Polled while the section is open, so a running update shows as it goes.
+  muleUnits: MuleUnit[] = [];
+  muleFw: Record<string, MuleFirmware> = {};
+  muleTarget: Record<string, 'mule' | 'miner'> = {};
+  muleBusy: Record<string, boolean> = {};
+  muleMessage: Record<string, string> = {};
+  private muleTimer: any = null;
+
   // LLM Prompt state
   llmPrompt = '';
   llmPromptPath = '';
@@ -1332,6 +1425,71 @@ export class SettingsComponent implements OnInit, OnDestroy {
         this.myairMessage = this.t.instant('settings.myair.errDisconnect');
       },
     });
+  }
+
+  // ── Mule & Miner units and their firmware ──────────────────────────────
+
+  loadMule(): void {
+    this.api.getMuleUnits().subscribe({
+      next: (r) => {
+        this.muleUnits = r?.units ?? [];
+        for (const u of this.muleUnits) {
+          if (!this.muleTarget[u.serial]) this.muleTarget[u.serial] = 'mule';
+          this.api.getMuleFirmware(u.serial).subscribe({
+            next: (f) => { this.muleFw[u.serial] = f; },
+            error: () => {},
+          });
+        }
+      },
+      error: () => {},
+    });
+  }
+
+  muleOnline(): number {
+    return this.muleUnits.filter((u) => u.online).length;
+  }
+
+  /** The update from the manifest: the mule first, then the miner. */
+  muleUpdate(serial: string): void {
+    this.muleBusy[serial] = true;
+    this.muleMessage[serial] = '';
+    this.api.startMuleUpdate(serial, 'both').subscribe({
+      next: () => { this.muleBusy[serial] = false; this.loadMule(); },
+      error: (e) => { this.muleBusy[serial] = false; this.muleMessage[serial] = this.muleError(e); },
+    });
+  }
+
+  /** An image file the owner picked: it goes at once, to the target chosen. */
+  muleFile(serial: string, ev: Event): void {
+    const input = ev.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+    input.value = '';
+    const target = this.muleTarget[serial] || 'mule';
+    this.muleBusy[serial] = true;
+    this.muleMessage[serial] = '';
+    this.api.uploadMuleImage(serial, target, file).subscribe({
+      next: () => { this.muleBusy[serial] = false; this.loadMule(); },
+      error: (e) => { this.muleBusy[serial] = false; this.muleMessage[serial] = this.muleError(e); },
+    });
+  }
+
+  private muleError(e: any): string {
+    return e?.error?.error || e?.message || this.t.instant('settings.mule.errGeneric');
+  }
+
+  muleJobText(job: MuleUpdateJob): string {
+    const which = this.t.instant(job.step === 'miner' ? 'settings.mule.miner' : 'settings.mule.mule');
+    const pct = job.total > 0 ? Math.round((job.sent * 100) / job.total) : 0;
+    switch (job.phase) {
+      case 'downloading': return this.t.instant('settings.mule.jobDownloading', { which });
+      case 'sending': return this.t.instant('settings.mule.jobSending', { which, pct });
+      case 'waiting': return this.t.instant('settings.mule.jobWaiting');
+      case 'done': return this.t.instant('settings.mule.jobDone',
+        { mule: job.fw_after || '?', miner: job.miner_fw_after || '?' });
+      case 'failed': return this.t.instant('settings.mule.jobFailed', { error: job.error });
+      default: return job.phase;
+    }
   }
 
   // ── SDD-057 AirSense 11 over Bluetooth ──────────────────────────────────
@@ -1482,12 +1640,15 @@ export class SettingsComponent implements OnInit, OnDestroy {
   ngOnDestroy(): void {
     this.destroy$.next();
     this.destroy$.complete();
+    if (this.muleTimer) clearInterval(this.muleTimer);
   }
 
   ngOnInit(): void {
     this.loadMyAirStatus();
     this.loadAs11Status();
     this.loadUpdateStatus();
+    this.loadMule();
+    this.muleTimer = setInterval(() => { if (this.open['mule']) this.loadMule(); }, 3000);
 
     this.api.getConfig().subscribe({
       next: (cfg) => {
