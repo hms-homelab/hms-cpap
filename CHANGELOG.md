@@ -20,6 +20,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the same machine wins the stretches it carries: a card session overlapping
   a Bluetooth one in time replaces it; elsewhere the Bluetooth session stays.
 
+### Changed
+- **Sleep Bridge: the card's geometry is kept in `batches/geometry.json`.**
+  The layout that decides where every streamed sector belongs (sectors per
+  cluster, where the data and the FATs begin, the root cluster), the card it
+  describes, where it came from and what confirmed it, as a small readable
+  file written durably when the layout is first trusted and whenever it
+  changes, read at start before any batch is fed. A restart neither forgets
+  the layout nor holds the session until the bank proves it again; a later
+  boot sector that says otherwise wins and rewrites it. It replaces the
+  opaque `rebuild.state`, which is read once and removed. The status shows
+  it under each bridge's `rebuild.geometry`. A card statement that carries
+  the bridge's layout (a stream that began after the bridge read the boot
+  sector) is now handed to the rebuild as a hypothesis, tested on the writes,
+  instead of being dropped. Needs Sleep Bridge component 1.1.0.
+
 ## [5.8.0] - 2026-10-31
 
 Three new ways for a night to reach hms-cpap, none of them a WiFi SD card.

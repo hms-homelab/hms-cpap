@@ -8,6 +8,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <sstream>
 #include <tuple>
 #include <vector>
 
@@ -86,10 +87,74 @@ bool safeCardPath(const std::string& path) {
     return true;
 }
 
+std::string geometryJson(const RebuildGeometry& g) {
+    Json::Value v(Json::objectValue);
+    v["sectors_per_cluster"] = g.sectors_per_cluster;
+    v["data_begin_lba"]      = g.data_begin_lba;
+    v["root_cluster"]        = g.root_cluster;
+    v["fat_begin_lba"]       = g.fat_begin_lba;
+    v["fat_sectors"]         = g.fat_sectors;
+    v["fats"]                = g.fats;
+    v["cluster_count"]       = g.cluster_count;
+    v["cid"]                 = g.cid;
+    v["origin"]              = g.origin;
+    v["confirmed_by"]        = g.confirmed_by;
+    v["session"]             = g.session;
+    v["since"]               = static_cast<Json::UInt64>(g.since);
+    Json::StreamWriterBuilder wb;
+    wb["indentation"] = " ";
+    return Json::writeString(wb, v) + "\n";
+}
+
+std::optional<RebuildGeometry> parseGeometryJson(const std::string& text) {
+    Json::Value v;
+    Json::CharReaderBuilder rb;
+    std::string errs;
+    std::istringstream in(text);
+    if (!Json::parseFromStream(rb, in, &v, &errs) || !v.isObject()) return std::nullopt;
+    auto u32 = [&v](const char* key, uint32_t& out) {
+        if (!v.isMember(key) || !v[key].isUInt()) return false;
+        out = v[key].asUInt();
+        return true;
+    };
+    auto str = [&v](const char* key, std::string& out) {
+        if (!v.isMember(key) || !v[key].isString()) return false;
+        out = v[key].asString();
+        return true;
+    };
+    RebuildGeometry g;
+    if (!u32("sectors_per_cluster", g.sectors_per_cluster) || !u32("data_begin_lba", g.data_begin_lba) ||
+        !u32("root_cluster", g.root_cluster) || !u32("fat_begin_lba", g.fat_begin_lba) ||
+        !u32("fat_sectors", g.fat_sectors) || !u32("fats", g.fats) ||
+        !u32("cluster_count", g.cluster_count) || !str("cid", g.cid) || !str("origin", g.origin) ||
+        !str("confirmed_by", g.confirmed_by) || !u32("session", g.session) ||
+        !v.isMember("since") || !v["since"].isUInt64())
+        return std::nullopt;
+    g.since = v["since"].asUInt64();
+    const uint32_t spc = g.sectors_per_cluster;
+    if (spc == 0 || spc > 128 || (spc & (spc - 1)) != 0 || g.data_begin_lba == 0 || g.root_cluster < 2)
+        return std::nullopt;
+    return g;
+}
+
 RebuildWorker::RebuildWorker(BatchStore& store, std::string sender, const RebuilderFactory& factory)
     : store_(store), sender_(std::move(sender)) {
-    readAll(fs::path(store_.batchesDir(sender_)) / "rebuild.state", saved_state_);
-    if (factory) rebuilder_ = factory(saved_state_);
+    const fs::path bdir = store_.batchesDir(sender_);
+    RebuildStart   start;
+    std::string    text;
+    if (readAll(bdir / kGeometryFile, text)) {
+        if (const auto g = parseGeometryJson(text)) {
+            geometry_      = *g;
+            start.geometry = *g;
+        } else {
+            std::cout << "[sleepbridge] " << sender_ << " batches/" << kGeometryFile
+                      << " is not a geometry, ignored; the bank will establish it again" << std::endl;
+        }
+    }
+    // A build before the geometry file kept the rebuild's opaque state; read
+    // once, replaced by the file after the next look.
+    if (!start.geometry.valid()) readAll(bdir / "rebuild.state", start.legacy_state);
+    if (factory) rebuilder_ = factory(start);
 }
 
 void RebuildWorker::feedBatchFile(const std::string& path, StepReport& r) {
@@ -220,10 +285,25 @@ StepReport RebuildWorker::step(bool force) {
         durableWrite((bdir / "held.json").string(), held_text.data(), held_text.size(), &err))
         held_json_ = held_text;
 
-    const std::string state = rebuilder_->state();
-    if (state != saved_state_ &&
-        durableWrite((bdir / "rebuild.state").string(), state.data(), state.size(), &err))
-        saved_state_ = state;
+    // The geometry, durably, when it is first established or changes: a
+    // later boot sector that says otherwise rewrites it.
+    r.geometry = look.geometry;
+    if (look.geometry.valid() && look.geometry != geometry_) {
+        const std::string text = geometryJson(look.geometry);
+        if (durableWrite((bdir / kGeometryFile).string(), text.data(), text.size(), &err)) {
+            std::cout << "[sleepbridge] " << sender_ << " geometry "
+                      << look.geometry.sectors_per_cluster << ':' << look.geometry.data_begin_lba
+                      << " (" << look.geometry.origin << ", confirmed by " << look.geometry.confirmed_by
+                      << " in session " << look.geometry.session << ") kept in batches/"
+                      << kGeometryFile << std::endl;
+            geometry_ = look.geometry;
+            std::error_code rec;
+            fs::remove(bdir / "rebuild.state", rec);   // the older form of the same
+        } else {
+            std::cout << "[sleepbridge] " << sender_ << " batches/" << kGeometryFile
+                      << " not written: " << err << std::endl;
+        }
+    }
     return r;
 }
 

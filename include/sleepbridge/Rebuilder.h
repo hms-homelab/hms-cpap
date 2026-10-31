@@ -20,9 +20,43 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <tuple>
 #include <vector>
 
 namespace hms_cpap::sleepbridge {
+
+/// The card's layout as the rebuild trusts it, and how it came to: what
+/// decides where every captured sector belongs. Sectors of 512 bytes. It is
+/// what batches/geometry.json keeps across a restart; valid() is false while
+/// no layout is trusted.
+struct RebuildGeometry {
+    uint32_t    sectors_per_cluster{0};
+    uint32_t    data_begin_lba{0};   // the first sector of cluster 2
+    uint32_t    root_cluster{2};
+    uint32_t    fat_begin_lba{0};    // 0: the FAT region is not known
+    uint32_t    fat_sectors{0};      // one FAT's length
+    uint32_t    fats{0};
+    uint32_t    cluster_count{0};    // 0: not known
+    std::string cid;                 // the card it describes, once a mount named it
+    /// "read" (the card's boot sector), "stated" (a card statement's layout)
+    /// or "solved" (from the writes alone).
+    std::string origin;
+    /// What last confirmed it for `session`: "read", "cid", "test" or "library".
+    std::string confirmed_by;
+    uint32_t    session{0};          // the bridge session it was confirmed in
+    uint64_t    since{0};            // the sequence it was confirmed at
+
+    bool valid() const { return sectors_per_cluster > 0; }
+    bool operator==(const RebuildGeometry& o) const {
+        return std::tie(sectors_per_cluster, data_begin_lba, root_cluster, fat_begin_lba,
+                        fat_sectors, fats, cluster_count, cid, origin, confirmed_by, session,
+                        since) ==
+               std::tie(o.sectors_per_cluster, o.data_begin_lba, o.root_cluster, o.fat_begin_lba,
+                        o.fat_sectors, o.fats, o.cluster_count, o.cid, o.origin, o.confirmed_by,
+                        o.session, o.since);
+    }
+    bool operator!=(const RebuildGeometry& o) const { return !(*this == o); }
+};
 
 /// A file to write into the card root.
 struct RebuildFile {
@@ -58,6 +92,9 @@ struct RebuildLook {
     std::vector<RebuildHeld> held;
     uint64_t    complete_files{0};
     uint64_t    unseen_files{0};
+    /// The layout trusted now (valid() false while none is). It changes when
+    /// a boot sector, a mount or the writes confirm another one.
+    RebuildGeometry geometry;
 };
 
 /// One bridge's card, rebuilt. Records fed in sequence order; a record fed
@@ -70,13 +107,19 @@ public:
     /// The card statement, at its place in the stream.
     virtual void card(const CardStatement& statement) = 0;
     virtual RebuildLook look() = 0;
-    /// An opaque string to keep and hand back after a restart.
-    virtual std::string state() const = 0;
 };
 
-/// Builds one bridge's rebuilder from the state it saved before a restart
-/// ("" for none). Answers nullptr when this build has no rebuild.
-using RebuilderFactory = std::function<std::unique_ptr<IRebuilder>(const std::string& saved_state)>;
+/// What a rebuilder starts from after a restart: the geometry its last look
+/// reported (batches/geometry.json), or, from a build before that file, the
+/// opaque state it saved (batches/rebuild.state), read once and replaced.
+struct RebuildStart {
+    RebuildGeometry geometry;
+    std::string     legacy_state;
+};
+
+/// Builds one bridge's rebuilder from what it starts from. Answers nullptr
+/// when this build has no rebuild.
+using RebuilderFactory = std::function<std::unique_ptr<IRebuilder>(const RebuildStart& start)>;
 
 /// The hms-cpap card format a rebuilt card root of `machine` is read as
 /// ("resmed", "bmc"), or "" for a machine it does not know.
@@ -84,7 +127,7 @@ std::string formatForMachine(const std::string& machine);
 
 /// The component's rebuilder, or nullptr when this build has none. `log`
 /// receives the component's one-line notes; may be empty.
-std::unique_ptr<IRebuilder> makeRebuilder(const std::string& saved_state,
+std::unique_ptr<IRebuilder> makeRebuilder(const RebuildStart& start,
                                           std::function<void(const std::string&)> log);
 /// True when this build carries the component.
 bool rebuilderInBuild();

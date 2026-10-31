@@ -17,7 +17,7 @@ std::string formatForMachine(const std::string& machine) {
 
 namespace hms_cpap::sleepbridge {
 
-std::unique_ptr<IRebuilder> makeRebuilder(const std::string&,
+std::unique_ptr<IRebuilder> makeRebuilder(const RebuildStart&,
                                           std::function<void(const std::string&)>) {
     return nullptr;
 }

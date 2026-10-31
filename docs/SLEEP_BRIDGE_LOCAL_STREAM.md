@@ -273,7 +273,7 @@ back to the cloud.
     cursor.json                           the high-water mark
     gaps.jsonl                            one line per gap
     held.json                             files seen in part, never written
-    rebuild.state                         the rebuild's own state, across restarts
+    geometry.json                         the card's layout, across restarts
     bridge.json                           the bridge's name, label and chip id
 ```
 
@@ -281,6 +281,19 @@ The batches are the record; the card files are derived from them. After a
 restart the rebuild reads the whole bank again from the start. A file is
 written only when every sector of it was seen; a file still missing sectors is
 listed in `held.json` and never written with holes in it.
+
+`geometry.json` is the card's layout as the rebuild trusts it (sectors per
+cluster, where the data and the FATs begin, the root cluster), the card it
+describes, where it came from (`read`: the card's boot sector; `stated`: the
+bridge's card statement; `solved`: from the writes alone) and what confirmed
+it in which bridge session. It is written durably when a layout is first
+trusted and whenever it changes, and read when hms-cpap starts, before any
+batch is fed, so a restart neither forgets the layout nor holds the session
+until the bank proves it again. It is a cache of what the batches said last:
+when a later boot sector says otherwise, the boot sector wins and the file is
+rewritten. Delete it and the bank establishes it again. (A build before it
+kept the same thing as `rebuild.state`; that file is read once and replaced.)
+The status page shows it under each bridge's `rebuild.geometry`.
 
 ## Updating the bridge
 
