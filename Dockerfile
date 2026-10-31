@@ -35,12 +35,32 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     nlohmann-json3-dev \
     libspdlog-dev \
     libsqlite3-dev \
-    libdrogon-dev \
-    uuid-dev libmariadb-dev libhiredis-dev libbrotli-dev \
+    uuid-dev libmariadb-dev libbrotli-dev \
     libyaml-cpp-dev zlib1g-dev \
     libhpdf-dev \
     libsdbus-c++-dev \
+    patch \
     && rm -rf /var/lib/apt/lists/*
+
+# Drogon v1.9.0, the version Debian trixie packages, built from source with
+# the patches in third_party/drogon/: its WebSocket reader stopped at the
+# first fragment of a message and left the rest in the buffer until more
+# bytes came, so a Sleep Bridge's hello, which its WebSocket client sends in
+# fragments, was never answered. No Drogon release has the fix yet (v1.9.14
+# and master still return early). Static and without the ORM, which hms-cpap
+# does not use, so the runtime stage needs no libdrogon.
+COPY third_party/drogon/ /tmp/drogon-patches/
+RUN set -eu; \
+    git clone --depth 1 --branch v1.9.0 --recurse-submodules --shallow-submodules \
+        https://github.com/drogonframework/drogon.git /tmp/drogon; \
+    cd /tmp/drogon; \
+    for p in /tmp/drogon-patches/*.patch; do patch -p1 --forward < "$p"; done; \
+    cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
+        -DBUILD_CTL=OFF -DBUILD_EXAMPLES=OFF -DBUILD_ORM=OFF -DBUILD_YAML_CONFIG=OFF \
+        -DBUILD_TESTING=OFF; \
+    cmake --build build -j"$(nproc)"; \
+    cmake --install build; \
+    rm -rf /tmp/drogon /tmp/drogon-patches
 
 # Copy source code
 WORKDIR /build
@@ -89,8 +109,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libfmt10 \
     libsqlite3-0 \
     libmariadb3 \
-    libdrogon1t64 \
-    libtrantor1 \
+    libbrotli1 \
+    libuuid1 \
     libhpdf-2.3.0 \
     libsdbus-c++2 \
     && rm -rf /var/lib/apt/lists/*
