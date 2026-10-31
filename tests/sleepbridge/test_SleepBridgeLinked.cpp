@@ -93,7 +93,7 @@ std::string records(const char* magic, uint64_t first,
 uint64_t seqOf(uint32_t session, uint32_t n) { return (static_cast<uint64_t>(session) << 32) | n; }
 
 RebuilderFactory linkedFactory() {
-    return [](const std::string& saved) { return makeRebuilder(saved, nullptr); };
+    return [](const RebuildStart& start) { return makeRebuilder(start, nullptr); };
 }
 
 Json::Value parse(const std::string& text) {
@@ -127,7 +127,7 @@ void streamCard(SleepBridgeService& svc, Conversation& c, uint32_t session, char
 TEST(SleepBridgeLinked, TheComponentIsInThisBuild) {
     EXPECT_TRUE(rebuilderInBuild());
     EXPECT_FALSE(rebuilderVersion().empty());
-    EXPECT_NE(makeRebuilder("", nullptr), nullptr);
+    EXPECT_NE(makeRebuilder({}, nullptr), nullptr);
 }
 
 TEST(SleepBridgeLinked, AStreamedCardIsRebuiltIntoACardFolder) {
@@ -147,7 +147,18 @@ TEST(SleepBridgeLinked, AStreamedCardIsRebuiltIntoACardFolder) {
     const std::string got = slurp(root / "README.TXT");
     ASSERT_EQ(got.size(), kFileLen);
     EXPECT_EQ(got, std::string(kFileLen, 'A'));
-    EXPECT_FALSE(slurp(root / "batches/rebuild.state").empty());
+    // The geometry the component read from the boot sector, kept durably.
+    const auto kept = parseGeometryJson(slurp(root / "batches" / kGeometryFile));
+    ASSERT_TRUE(kept.has_value());
+    EXPECT_EQ(kept->sectors_per_cluster, 8u);
+    EXPECT_EQ(kept->data_begin_lba, 1000u);
+    EXPECT_EQ(kept->fat_begin_lba, 100u);
+    EXPECT_EQ(kept->fat_sectors, 450u);
+    EXPECT_EQ(kept->fats, 2u);
+    EXPECT_EQ(kept->origin, "read");
+    EXPECT_EQ(kept->confirmed_by, "read");
+    EXPECT_EQ(kept->session, 1u);
+    EXPECT_FALSE(fs::exists(root / "batches/rebuild.state"));
 
     const auto b = svc.status()["bridges"][0];
     EXPECT_EQ(b["sender"].asString(), kSender);
@@ -180,6 +191,74 @@ TEST(SleepBridgeLinked, ARestartReplaysTheBankAndARewriteLands) {
     svc.closed(*c);
     svc.rebuildNow(kSender);
     EXPECT_EQ(slurp(file), std::string(kFileLen, 'B'));
+}
+
+// The writes of one save without the boot sector: both FATs, the root, the
+// file's two sectors.
+std::string saveOnly(uint32_t session, char fill) {
+    const std::string body(kSectorSize, fill);
+    return records("CYS1", seqOf(session, 2),
+                   {{100, fatPage()}, {550, fatPage()}, {kRootLba, rootSector()}, {kFileLba, body},
+                    {kFileLba + 1, body}});
+}
+
+TEST(SleepBridgeLinked, TheGeometryFileAloneLetsTheSessionsWritesLand) {
+    TempDir t;
+    const fs::path file = t.path / kSender / "README.TXT";
+    const fs::path bdir = t.path / kSender / "batches";
+    {
+        SleepBridgeService svc({t.path.string(), kDefaultPort, 0.01}, linkedFactory());
+        auto c = svc.open({kSender, "", ""});
+        svc.apply(kSender, c->onText(R"({"t":"hello","state":{}})"));
+        streamCard(svc, *c, 1, 'A');
+        svc.closed(*c);
+        svc.rebuildNow(kSender);
+        ASSERT_EQ(slurp(file), std::string(kFileLen, 'A'));
+        ASSERT_TRUE(fs::exists(bdir / kGeometryFile));
+    }
+    // The bank gone, the geometry file kept, the rebuilt file gone too: the
+    // same session's writes, with no boot sector in them, land at once.
+    for (const auto& e : fs::directory_iterator(bdir))
+        if (e.path().filename() != kGeometryFile) fs::remove_all(e.path());
+    fs::remove(file);
+    SleepBridgeService svc({t.path.string(), kDefaultPort, 0.01}, linkedFactory());
+    auto c = svc.open({kSender, "", ""});
+    svc.apply(kSender, c->onText(R"({"t":"hello","state":{}})"));
+    svc.apply(kSender, c->onBinary(frame(0, saveOnly(1, 'B'))));
+    svc.closed(*c);
+    svc.rebuildNow(kSender);
+    EXPECT_EQ(slurp(file), std::string(kFileLen, 'B'));
+    const auto r = svc.status()["bridges"][0]["rebuild"];
+    EXPECT_FALSE(r["holding"].asBool());
+    EXPECT_EQ(r["geometry"]["layout"].asString(), "8:1000");
+    EXPECT_EQ(r["geometry"]["origin"].asString(), "read");
+}
+
+TEST(SleepBridgeLinked, ACardStatementsLayoutIsTestedWhenTheStreamBeganAfterTheMount) {
+    TempDir t;
+    const fs::path file = t.path / kSender / "README.TXT";
+    SleepBridgeService svc({t.path.string(), kDefaultPort, 0.01}, linkedFactory());
+    auto c = svc.open({kSender, "", ""});
+    svc.apply(kSender, c->onText(R"({"t":"hello","state":{}})"));
+    // The bridge read the boot sector before this stream began: its
+    // statement carries the layout, and no boot sector ever goes by.
+    const std::string stated =
+        R"({"cid":"0123456789abcdef0123456789abcdef","sectors_per_cluster":8,"data_begin_lba":1000,"mount":1,"seq":)" +
+        std::to_string(seqOf(1, 2)) + "}";
+    svc.apply(kSender, c->onBinary(frame(0, cardStatement(stated))));
+    svc.apply(kSender, c->onBinary(frame(1, saveOnly(1, 'C'))));
+    svc.closed(*c);
+    svc.rebuildNow(kSender);
+    EXPECT_EQ(slurp(file), std::string(kFileLen, 'C'));
+    const auto r = svc.status()["bridges"][0]["rebuild"];
+    EXPECT_FALSE(r["holding"].asBool());
+    EXPECT_EQ(r["geometry"]["layout"].asString(), "8:1000");
+    EXPECT_EQ(r["geometry"]["origin"].asString(), "stated");
+    EXPECT_EQ(r["geometry"]["confirmed_by"].asString(), "test");
+    const auto kept = parseGeometryJson(slurp(t.path / kSender / "batches" / kGeometryFile));
+    ASSERT_TRUE(kept.has_value());
+    EXPECT_EQ(kept->origin, "stated");
+    EXPECT_EQ(kept->cid, "0123456789abcdef0123456789abcdef");
 }
 
 #endif  // HMS_WITH_SLEEPBRIDGE

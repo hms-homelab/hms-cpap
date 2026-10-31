@@ -171,24 +171,164 @@ TEST(SleepBridgeRebuild, APathOutsideTheCardRootIsRefused) {
     EXPECT_NE(slurp(t.path / kSender / "batches/cursor.json").find("high_water"), std::string::npos);
 }
 
-TEST(SleepBridgeRebuild, ARestartKeepsTheStateAndReplaysTheWholeBank) {
+TEST(SleepBridgeRebuild, TheGeometryIsKeptDurablyOnceEstablishedAndARestartStartsFromIt) {
     TempDir t;
+    const fs::path file = t.path / kSender / "batches" / kGeometryFile;
     {
         BatchStore store(t.path.string());
-        RebuildWorker w(store, kSender, fakeFactory(std::make_shared<FakeLog>()));
-        bank(store, batch(0, {0}, /*reads=*/true));   // the mount
-        bank(store, run(1, 3, 100));
-        EXPECT_EQ(w.step().written, 3);
-        EXPECT_EQ(slurp(t.path / kSender / "batches/rebuild.state"), "trusted");
+        auto log = std::make_shared<FakeLog>();
+        RebuildWorker w(store, kSender, fakeFactory(log));
+        ASSERT_EQ(log->starts.size(), 1u);
+        EXPECT_FALSE(log->starts[0].geometry.valid()) << "nothing kept yet";
+        EXPECT_TRUE(log->starts[0].legacy_state.empty());
+        bank(store, run(0, 1, 100));
+        auto r = w.step();
+        EXPECT_TRUE(r.holding);
+        EXPECT_FALSE(fs::exists(file)) << "no geometry while holding";
+        EXPECT_FALSE(r.geometry.valid());
+
+        bank(store, batch(1, {0}, /*reads=*/true));   // the mount: the boot sector
+        bank(store, run(2, 2, 101));
+        r = w.step();
+        EXPECT_EQ(r.written, 3);
+        EXPECT_EQ(r.geometry, fakeGeometry("read"));
+        EXPECT_EQ(w.geometry(), fakeGeometry("read"));
+        const auto kept = parseGeometryJson(slurp(file));
+        ASSERT_TRUE(kept.has_value());
+        EXPECT_EQ(*kept, fakeGeometry("read"));
+        EXPECT_FALSE(fs::exists(t.path / kSender / "batches/rebuild.state"));
+
+        // Unchanged: not rewritten.
+        const auto when = fs::last_write_time(file);
+        bank(store, run(4, 1, 103));
+        w.step();
+        EXPECT_EQ(fs::last_write_time(file), when);
     }
+    // A restart: built from the file, before any batch; then the whole bank
+    // again from the start, never holding.
     BatchStore store(t.path.string());
     auto log = std::make_shared<FakeLog>();
     RebuildWorker w(store, kSender, fakeFactory(log));
-    ASSERT_EQ(log->saved_states.size(), 1u);
-    EXPECT_EQ(log->saved_states[0], "trusted");   // built from what it saved
+    ASSERT_EQ(log->starts.size(), 1u);
+    EXPECT_EQ(log->starts[0].geometry, fakeGeometry("read"));
+    EXPECT_TRUE(log->seqs.empty()) << "the geometry comes before the first record";
     const auto r = w.step();
     EXPECT_FALSE(r.holding);
-    EXPECT_EQ(log->seqs, (std::vector<uint64_t>{0, 1, 2, 3}));   // fed again from the start
+    EXPECT_EQ(r.written, 4) << "the same files again";
+    EXPECT_EQ(log->seqs, (std::vector<uint64_t>{0, 1, 2, 3, 4}));   // fed again from the start
+}
+
+TEST(SleepBridgeRebuild, TheGeometryFileAndAnEmptyBankPlaceARecord) {
+    TempDir t;
+    BatchStore store(t.path.string());
+    const fs::path bdir = store.batchesDir(kSender);
+    fs::create_directories(bdir);
+    const std::string text = geometryJson(fakeGeometry("read"));
+    {
+        std::ofstream f(bdir / kGeometryFile, std::ios::binary);
+        f << text;
+    }
+    auto log = std::make_shared<FakeLog>();
+    RebuildWorker w(store, kSender, fakeFactory(log));
+    ASSERT_EQ(log->starts.size(), 1u);
+    EXPECT_EQ(log->starts[0].geometry, fakeGeometry("read"));
+    EXPECT_FALSE(w.step().looked) << "an empty bank: nothing to feed";
+
+    // A write with no mount and no statement in the bank: placed at once.
+    bank(store, run(0, 1, 100));
+    const auto r = w.step();
+    EXPECT_FALSE(r.holding);
+    EXPECT_EQ(r.written, 1);
+    EXPECT_EQ(slurp(t.path / kSender / "DATALOG/20261030/100.edf"), sector(100, 0));
+    EXPECT_EQ(slurp(bdir / kGeometryFile), text) << "the same geometry: the file stands";
+
+    // Without the file the same bank holds until the bank proves the layout.
+    fs::remove(bdir / kGeometryFile);
+    auto log2 = std::make_shared<FakeLog>();
+    RebuildWorker w2(store, kSender, fakeFactory(log2));
+    EXPECT_FALSE(log2->starts[0].geometry.valid());
+    EXPECT_TRUE(w2.step().holding);
+}
+
+TEST(SleepBridgeRebuild, ABootSectorThatContradictsTheGeometryFileRewritesIt) {
+    TempDir t;
+    BatchStore store(t.path.string());
+    const fs::path bdir = store.batchesDir(kSender);
+    fs::create_directories(bdir);
+    RebuildGeometry stated = fakeGeometry("stated");
+    stated.sectors_per_cluster = 16;
+    stated.data_begin_lba      = 2000;
+    {
+        std::ofstream f(bdir / kGeometryFile, std::ios::binary);
+        f << geometryJson(stated);
+    }
+    auto log = std::make_shared<FakeLog>();
+    RebuildWorker w(store, kSender, fakeFactory(log));
+    EXPECT_EQ(log->starts[0].geometry, stated);
+    bank(store, run(0, 1, 100));
+    auto r = w.step();
+    EXPECT_FALSE(r.holding);
+    EXPECT_EQ(r.geometry, stated);
+
+    bank(store, batch(1, {0}, /*reads=*/true));   // the card's own boot sector
+    bank(store, run(2, 1, 101));
+    r = w.step();
+    EXPECT_EQ(r.geometry, fakeGeometry("read"));
+    const auto kept = parseGeometryJson(slurp(bdir / kGeometryFile));
+    ASSERT_TRUE(kept.has_value());
+    EXPECT_EQ(*kept, fakeGeometry("read")) << "the boot sector wins and the file says so";
+    EXPECT_EQ(w.geometry(), fakeGeometry("read"));
+}
+
+TEST(SleepBridgeRebuild, AnOlderBuildsStateFileIsReadOnceThenReplacedByTheGeometryFile) {
+    TempDir t;
+    BatchStore store(t.path.string());
+    const fs::path bdir = store.batchesDir(kSender);
+    fs::create_directories(bdir);
+    {
+        std::ofstream f(bdir / "rebuild.state", std::ios::binary);
+        f << "trusted";
+    }
+    auto log = std::make_shared<FakeLog>();
+    RebuildWorker w(store, kSender, fakeFactory(log));
+    ASSERT_EQ(log->starts.size(), 1u);
+    EXPECT_FALSE(log->starts[0].geometry.valid());
+    EXPECT_EQ(log->starts[0].legacy_state, "trusted");
+    bank(store, run(0, 1, 100));
+    const auto r = w.step();
+    EXPECT_FALSE(r.holding);
+    EXPECT_EQ(r.written, 1);
+    EXPECT_TRUE(fs::exists(bdir / kGeometryFile));
+    EXPECT_FALSE(fs::exists(bdir / "rebuild.state")) << "replaced by the geometry file";
+}
+
+TEST(SleepBridgeRebuild, ADamagedGeometryFileIsIgnoredNotTrusted) {
+    EXPECT_EQ(parseGeometryJson(geometryJson(fakeGeometry("read"))), fakeGeometry("read"));
+    EXPECT_EQ(parseGeometryJson(geometryJson(fakeGeometry("stated"))), fakeGeometry("stated"));
+    EXPECT_FALSE(parseGeometryJson("").has_value());
+    EXPECT_FALSE(parseGeometryJson("not json").has_value());
+    EXPECT_FALSE(parseGeometryJson("[]").has_value());
+    EXPECT_FALSE(parseGeometryJson(R"({"sectors_per_cluster":8})").has_value()) << "fields missing";
+    RebuildGeometry bad = fakeGeometry("read");
+    bad.sectors_per_cluster = 12;   // not a power of two
+    EXPECT_FALSE(parseGeometryJson(geometryJson(bad)).has_value());
+    bad = fakeGeometry("read");
+    bad.data_begin_lba = 0;
+    EXPECT_FALSE(parseGeometryJson(geometryJson(bad)).has_value());
+
+    TempDir t;
+    BatchStore store(t.path.string());
+    const fs::path bdir = store.batchesDir(kSender);
+    fs::create_directories(bdir);
+    {
+        std::ofstream f(bdir / kGeometryFile, std::ios::binary);
+        f << "{\"sectors_per_cluster\": \"eight\"}";
+    }
+    auto log = std::make_shared<FakeLog>();
+    RebuildWorker w(store, kSender, fakeFactory(log));
+    EXPECT_FALSE(log->starts[0].geometry.valid());
+    bank(store, run(0, 1, 100));
+    EXPECT_TRUE(w.step().holding) << "the bank establishes it again";
 }
 
 TEST(SleepBridgeRebuild, WithoutTheComponentTheServiceIsUnavailable) {
@@ -198,10 +338,10 @@ TEST(SleepBridgeRebuild, WithoutTheComponentTheServiceIsUnavailable) {
     EXPECT_FALSE(none.status()["available"].asBool());
     EXPECT_EQ(none.status()["message"].asString(), "The Sleep Bridge is not in this build");
     SleepBridgeService empty({t.path.string(), kDefaultPort, 0.01},
-                             [](const std::string&) { return std::unique_ptr<IRebuilder>(); });
+                             [](const RebuildStart&) { return std::unique_ptr<IRebuilder>(); });
     EXPECT_FALSE(empty.available());
     // This build carries the component only when it was linked in.
-    EXPECT_EQ(rebuilderInBuild(), makeRebuilder("", nullptr) != nullptr);
+    EXPECT_EQ(rebuilderInBuild(), makeRebuilder({}, nullptr) != nullptr);
     EXPECT_EQ(rebuilderInBuild(), !rebuilderVersion().empty());
 }
 
@@ -310,6 +450,10 @@ TEST(SleepBridgeRebuild, TheMachineIsTheRebuildsToSayNotAssumed) {
     const auto b = svc.status()["bridges"][0];
     EXPECT_EQ(b["card_machine"].asString(), "luna");
     EXPECT_EQ(b["card_format"].asString(), "bmc");
+    // The status shows the geometry the rebuild trusts.
+    EXPECT_EQ(b["rebuild"]["geometry"]["layout"].asString(), "8:1000");
+    EXPECT_EQ(b["rebuild"]["geometry"]["origin"].asString(), "stated");
+    EXPECT_EQ(b["rebuild"]["geometry"]["confirmed_by"].asString(), "test");
     EXPECT_TRUE(fs::exists(t.path / kSender / "LUNA/20261030/session.dat"));
     EXPECT_TRUE(fs::exists(t.path / kSender / "settings.dat"));
 }

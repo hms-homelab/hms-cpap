@@ -27,6 +27,26 @@ Json::Value stepJson(const StepReport& r) {
     v["held_records"]    = static_cast<Json::UInt64>(r.held_records);
     v["held_files"]      = static_cast<Json::UInt64>(r.held_files);
     v["complete_files"]  = static_cast<Json::UInt64>(r.complete_files);
+    // The card's layout the rebuild trusts, and how it was confirmed: what
+    // batches/geometry.json keeps across a restart.
+    if (r.geometry.valid()) {
+        Json::Value g(Json::objectValue);
+        g["layout"] = std::to_string(r.geometry.sectors_per_cluster) + ":" +
+                      std::to_string(r.geometry.data_begin_lba);
+        g["sectors_per_cluster"] = r.geometry.sectors_per_cluster;
+        g["data_begin_lba"]      = r.geometry.data_begin_lba;
+        g["root_cluster"]        = r.geometry.root_cluster;
+        g["fat_begin_lba"]       = r.geometry.fat_begin_lba;
+        g["fat_sectors"]         = r.geometry.fat_sectors;
+        g["fats"]                = r.geometry.fats;
+        g["cluster_count"]       = r.geometry.cluster_count;
+        g["cid"]                 = r.geometry.cid;
+        g["origin"]              = r.geometry.origin;
+        g["confirmed_by"]        = r.geometry.confirmed_by;
+        g["session"]             = r.geometry.session;
+        g["since"]               = static_cast<Json::UInt64>(r.geometry.since);
+        v["geometry"]            = g;
+    }
     return v;
 }
 
@@ -50,7 +70,7 @@ bool validBridgePort(int port) { return port >= 1 && port <= 65535; }
 SleepBridgeService::SleepBridgeService(Options opt, RebuilderFactory factory)
     : opt_(std::move(opt)), factory_(std::move(factory)), store_(opt_.root) {
     // Asked once: a factory that answers nullptr is a build without the rebuild.
-    if (factory_) available_ = factory_(std::string()) != nullptr;
+    if (factory_) available_ = factory_(RebuildStart{}) != nullptr;
     // Seconds since 2001: rises across restarts, below 2^31 until 2069.
     const std::time_t now = std::time(nullptr);
     next_req_ = static_cast<uint64_t>(now > 978307200 ? now - 978307200 : 0) + 1;

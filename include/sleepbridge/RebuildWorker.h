@@ -16,9 +16,15 @@
 // (seen in part) are listed in batches/held.json and never written. A path
 // that would leave the card root, or land in batches/, is refused.
 //
-// The rebuild's own state is kept in batches/rebuild.state after each look.
-// After a restart the rebuild is built from it and the whole bank is fed
-// again from the start: the batches are the record, the files are derived.
+// The card's geometry (the layout that decides where every sector belongs,
+// and how it was confirmed) is kept in batches/geometry.json, written
+// durably when a look first reports one and whenever it changes. After a
+// restart the rebuild is built from it, before any batch is fed, so it
+// neither forgets the layout nor holds the session until the bank proves it
+// again; then the whole bank is fed again from the start: the batches are
+// the record, the files are derived, and the geometry file is a cache of
+// what they said last. When a later boot sector says otherwise, the boot
+// sector wins and the file is rewritten.
 //
 #include "sleepbridge/BatchStore.h"
 #include "sleepbridge/Rebuilder.h"
@@ -47,6 +53,7 @@ struct StepReport {
     uint64_t held_records{0};
     uint64_t held_files{0};
     uint64_t complete_files{0};
+    RebuildGeometry geometry;      // the look's: valid once a layout is trusted
 };
 
 /// A card-relative path the rebuild may write: '/' separated, no empty, '.'
@@ -54,9 +61,18 @@ struct StepReport {
 /// batches/.
 bool safeCardPath(const std::string& path);
 
+/// batches/geometry.json: the geometry as a small JSON object, one field per
+/// member. parseGeometryJson answers nullopt for anything that is not one
+/// (a damaged file is ignored and the bank establishes the layout again).
+constexpr const char* kGeometryFile = "geometry.json";
+std::string                    geometryJson(const RebuildGeometry& g);
+std::optional<RebuildGeometry> parseGeometryJson(const std::string& text);
+
 class RebuildWorker {
 public:
-    /// Builds its rebuilder from `factory` with the state saved last time.
+    /// Builds its rebuilder from `factory` with the geometry kept last time
+    /// (batches/geometry.json; or an older build's batches/rebuild.state,
+    /// read once and replaced by the file after the next look).
     RebuildWorker(BatchStore& store, std::string sender, const RebuilderFactory& factory);
 
     /// Feed what is new and, when anything was (or `force`), look and write.
@@ -65,6 +81,8 @@ public:
     const std::string& sender() const { return sender_; }
     std::optional<int64_t> fedThrough() const { return fed_through_; }
     bool ready() const { return rebuilder_ != nullptr; }
+    /// What batches/geometry.json holds (valid() false while nothing does).
+    const RebuildGeometry& geometry() const { return geometry_; }
 
 private:
     void feedBatchFile(const std::string& path, StepReport& r);
@@ -74,7 +92,7 @@ private:
     std::unique_ptr<IRebuilder> rebuilder_;
     std::set<std::string>       fed_files_;
     std::optional<int64_t>      fed_through_;
-    std::string                 saved_state_;
+    RebuildGeometry             geometry_;
     std::string                 held_json_;
 };
 

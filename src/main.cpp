@@ -1560,9 +1560,9 @@ int main(int argc, char** argv) {
                                   .string();
                     sb.port = config.sleep_bridge.port;
                     sleep_bridge = std::make_unique<hms_cpap::sleepbridge::SleepBridgeService>(
-                        sb, [](const std::string& saved) {
+                        sb, [](const hms_cpap::sleepbridge::RebuildStart& start) {
                             return hms_cpap::sleepbridge::makeRebuilder(
-                                saved, [](const std::string& line) {
+                                start, [](const std::string& line) {
                                     std::cout << "[sleepbridge] " << line << std::endl;
                                 });
                         });

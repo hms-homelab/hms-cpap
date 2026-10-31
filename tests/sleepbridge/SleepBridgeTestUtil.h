@@ -112,39 +112,65 @@ struct TempDir {
     }
 };
 
+/// The geometry the fake reports: a boot sector read ("read") knows the FAT
+/// region, a card statement ("stated") only the clusters.
+inline RebuildGeometry fakeGeometry(const std::string& origin) {
+    RebuildGeometry g;
+    g.sectors_per_cluster = 8;
+    g.data_begin_lba      = 1000;
+    g.root_cluster        = 2;
+    g.cid                 = "0123456789abcdef0123456789abcdef";
+    g.origin              = origin;
+    g.session             = 1;
+    g.since               = 1;
+    if (origin == "read") {
+        g.fat_begin_lba = 100;
+        g.fat_sectors   = 450;
+        g.fats          = 2;
+        g.cluster_count = 4000;
+        g.confirmed_by  = "read";
+    } else {
+        g.confirmed_by = "test";
+    }
+    return g;
+}
+
 /// A stand-in for the component, shaped like it: every written lba is a file
 /// DATALOG/20261030/<lba>.edf holding the latest sector written there. It
-/// holds everything until it has seen a card statement or a read of lba 0
-/// (the boot sector at a mount), and its state() says whether it got there,
-/// so a restart built from that state does not hold again. A look returns
-/// only files that changed. STR.edf is lba 7 and 8; with only one of them it
-/// is held. Once lba 501 is written, the file for lba 500 is "closed and
-/// damaged": it comes back as two pieces cut from it.
+/// holds everything until it has a geometry: from the start it was built
+/// with, a card statement (a "stated" one) or a read of lba 0 (the boot
+/// sector at a mount: a "read" one, which replaces whatever it had). A look
+/// reports that geometry and returns only files that changed. STR.edf is
+/// lba 7 and 8; with only one of them it is held. Once lba 501 is written,
+/// the file for lba 500 is "closed and damaged": it comes back as two pieces
+/// cut from it.
 struct FakeLog {
     std::vector<uint64_t> seqs;   // every sequence fed, in order
     int cards{0};
     int reads{0};
-    std::vector<std::string> saved_states;   // what each rebuilder was built from
-    std::string machine{"resmed"};           // what a look says, once trusted
+    std::vector<RebuildStart> starts;   // what each rebuilder was built from
+    std::string machine{"resmed"};      // what a look says, once trusted
 };
 
 class FakeRebuilder : public IRebuilder {
 public:
     explicit FakeRebuilder(std::shared_ptr<FakeLog> log, std::vector<std::string> extra_paths = {},
-                           const std::string& saved = "")
-        : log_(std::move(log)), extra_(std::move(extra_paths)), trusted_(saved == "trusted") {
-        log_->saved_states.push_back(saved);
+                           const RebuildStart& start = {})
+        : log_(std::move(log)), extra_(std::move(extra_paths)), geometry_(start.geometry) {
+        log_->starts.push_back(start);
+        // An older build's state said only whether it had got there.
+        if (!geometry_.valid() && start.legacy_state == "trusted") geometry_ = fakeGeometry("stated");
     }
 
     void card(const CardStatement&) override {
         ++log_->cards;
-        trusted_ = true;
+        if (!geometry_.valid()) geometry_ = fakeGeometry("stated");
     }
     void record(uint64_t seq, uint32_t lba, const uint8_t* s, bool read) override {
         log_->seqs.push_back(seq);
         if (read) {
             ++log_->reads;
-            if (lba == 0) trusted_ = true;
+            if (lba == 0) geometry_ = fakeGeometry("read");   // the boot sector wins
             return;
         }
         sectors_[lba] = std::string(reinterpret_cast<const char*>(s), kSectorSize);
@@ -152,13 +178,14 @@ public:
     }
     RebuildLook look() override {
         RebuildLook l;
-        if (!trusted_) {
+        if (!geometry_.valid()) {
             l.holding        = true;
             l.holding_reason = "no_mount_since_boot";
             l.held_records   = pending_;
             return l;
         }
         l.layout_known = true;
+        l.geometry     = geometry_;
         l.machine      = log_->machine;
         auto offer = [&](const std::string& path, const std::string& bytes, const std::string& cut) {
             ++l.complete_files;
@@ -183,20 +210,18 @@ public:
         for (const auto& p : extra_) offer(p, "x", "");
         return l;
     }
-    std::string state() const override { return trusted_ ? "trusted" : ""; }
-
 private:
     std::shared_ptr<FakeLog>           log_;
     std::vector<std::string>           extra_;
     std::map<uint32_t, std::string>    sectors_;
     std::map<std::string, std::string> sent_;
     uint64_t                           pending_{0};
-    bool                               trusted_{false};
+    RebuildGeometry                    geometry_;
 };
 
 inline RebuilderFactory fakeFactory(std::shared_ptr<FakeLog> log, std::vector<std::string> extra = {}) {
-    return [log, extra](const std::string& saved) {
-        return std::make_unique<FakeRebuilder>(log, extra, saved);
+    return [log, extra](const RebuildStart& start) {
+        return std::make_unique<FakeRebuilder>(log, extra, start);
     };
 }
 
