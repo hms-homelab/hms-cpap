@@ -121,6 +121,11 @@ jobs:
           push: ${{ github.event_name == 'push' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # The published image carries the Sleep Bridge component: the build
+          # fetches the asset cmake/sleepbridge-pins.cmake names, from the
+          # sleepbridge-v<version> release, which exists before this tag does.
+          build-args: |
+            SLEEPBRIDGE=ON
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

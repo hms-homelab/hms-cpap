@@ -221,10 +221,10 @@ The receiver is new in this version. The wire protocol is in
 [docs/SLEEP_BRIDGE_LOCAL_STREAM.md](docs/SLEEP_BRIDGE_LOCAL_STREAM.md); the
 part that rebuilds files from the stream is a prebuilt component under its
 own licence, linked only into builds made with `-DBUILD_WITH_SLEEPBRIDGE=ON`
-(off by default from source; the Docker image takes
-`--build-arg SLEEPBRIDGE=ON` once the component's asset is pinned in
-`cmake/sleepbridge-pins.cmake`, and the published image is built without it
-until then). A build without it still listens and refuses
+(off by default from source; the published Docker image, the add-on and the
+Raspberry Pi zip are built with it, from the asset pinned in
+`cmake/sleepbridge-pins.cmake`; a Docker build of your own takes
+`--build-arg SLEEPBRIDGE=ON`). A build without it still listens and refuses
 every bridge, so a bridge's setup test fails rather than leaving it pointed at
 a receiver that cannot use what it sends.
 
