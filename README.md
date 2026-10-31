@@ -34,7 +34,7 @@ and shows you the data. It is a fully local-first experience.
 | Manufacturer | Models | Live sessions |
 |---|---|---|
 | ResMed | AirSense 10, AirSense 11 | Yes, charts update every 65s during therapy |
-| Lowenstein | Prisma Line (20A, 20C, 25S, 25ST), Prisma Smart (Max, Plus, Soft) | No, files are written after each session |
+| Löwenstein | Prisma Line (20A, 20C, 25S, 25ST), Prisma Smart (Max, Plus, Soft) | No, files are written after each session |
 | Sefam | S.Box AUTO (1263R), SleepBox AUTO (1200R) | No, the card is read after the night |
 | BMC / React Health | Luna | No, the card is read after the night |
 
@@ -125,7 +125,7 @@ For a Sleep Bridge Lite or a Mule & Miner sending a night here, publish the
 stream port as well: add `-p 8894:8894` to the line above (the compose file
 already does).
 
-To read an O2 ring or an AirSense 11 over the host's own Bluetooth, give the
+To read an O2Ring or an AirSense 11 over the host's own Bluetooth, give the
 container the host's D-Bus as well: add `-v /run/dbus:/run/dbus:ro` to the
 line above. Without it everything else runs and Settings says there is no
 Bluetooth adapter.
@@ -295,7 +295,7 @@ listens on, so `sleep_bridge.enabled` must stay on.
 It feeds the same writer as 2 above: the same files under
 `<data dir>/as11/<machine serial>/`, the same live night, imported as a
 session the same way when it ends. Every block and every event also wakes
-hms-cpap's sync at once, and with MQTT on each event and each therapy start
+hms-cpap's sync at once, and with MQTT on, each event and each therapy start
 and end goes to the broker as it arrives (`cpap/<device_id>/live/...`), for
 automations during the night. When the night ends the unit is asked for the
 machine's identification, summary and settings history; the summary is what
@@ -378,7 +378,7 @@ The [`architecture/`](architecture/) folder maps the code:
   SleepHQ, CpapDash sync, myAir, and LLM summaries, all off by default and each
   one you enable yourself. [PRIVACY.md](PRIVACY.md)
 - **Independence.** Not affiliated with or endorsed by ResMed, Philips,
-  Lowenstein Medical, Sefam, BMC, React Health, SleepHQ, or any other company named here. Trademarks
+  Löwenstein Medical, Sefam, BMC, React Health, SleepHQ, or any other company named here. Trademarks
   belong to their owners. No OSCAR source was copied or derived from; it was
   consulted only to understand file formats. [NOTICE](NOTICE)
 - **License.** MIT. Use it, modify it, sell it; keep the notice.
