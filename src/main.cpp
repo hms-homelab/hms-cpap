@@ -1631,7 +1631,8 @@ int main(int argc, char** argv) {
                                         const hms_cpap::sleepbridge::StepReport& step) {
                         {
                             std::lock_guard<std::mutex> lk(*lives_mu);
-                            liveFor(sender).onWritten(step.written_paths);
+                            liveFor(sender).onWritten(step.written_paths,
+                                                      std::chrono::system_clock::now(), step.catch_up);
                         }
                         if (burst_service) burst_service->requestSyncNow();
                     };

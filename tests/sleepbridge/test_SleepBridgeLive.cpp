@@ -195,6 +195,27 @@ TEST(SleepBridgeLive, EachNewAnnotationIsOneEventOnce) {
     EXPECT_EQ(r.events[4].type, "H");
 }
 
+// After a start the rebuild writes the whole card again. That says nothing
+// about now: last night's events are not tonight's, and a file rewritten from
+// the bank is not the machine writing.
+TEST(SleepBridgeLive, ACatchUpStepReportsNothingButIsRemembered) {
+    TempDir t;
+    Recorder r;
+    LiveNight live(t.path.string(), r.sink());
+    put(t.path / kEve, edfPlus({{0, -1, "Recording starts"}, {120, 14, "Obstructive apnea"}}));
+    live.onWritten({"Identification.json", kBrp, kEve, "STR.edf"}, t0, /*catch_up=*/true);
+    EXPECT_FALSE(live.maskOn());
+    EXPECT_TRUE(r.masks.empty());
+    EXPECT_TRUE(r.events.empty());
+    EXPECT_EQ(live.total(), 0);
+    // Then the night goes on: only what is new is reported.
+    put(t.path / kEve, edfPlus({{0, -1, "Recording starts"}, {120, 14, "Obstructive apnea"}, {400, 10, "Hypopnea"}}));
+    live.onWritten({kBrp, kEve}, t0 + 60s);
+    EXPECT_TRUE(live.maskOn());
+    ASSERT_EQ(r.events.size(), 1u);
+    EXPECT_EQ(r.events[0].type, "H");
+}
+
 TEST(SleepBridgeLive, AFileThatWillNotOpenIsNoEvent) {
     TempDir t;
     Recorder r;

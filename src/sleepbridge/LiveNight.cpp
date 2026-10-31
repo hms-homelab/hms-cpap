@@ -55,7 +55,13 @@ void LiveNight::setMask(bool on) {
     if (sink_.mask) sink_.mask(on);
 }
 
-void LiveNight::onWritten(const std::vector<std::string>& paths, Clock::time_point now) {
+void LiveNight::onWritten(const std::vector<std::string>& paths, Clock::time_point now,
+                          bool catch_up) {
+    if (catch_up) {
+        for (const auto& p : paths)
+            if (isEventFile(p)) readEvents(p, /*report=*/false);
+        return;
+    }
     bool therapy = false, str = false;
     for (const auto& p : paths) {
         if (isTherapyWrite(p)) therapy = true;
@@ -67,7 +73,7 @@ void LiveNight::onWritten(const std::vector<std::string>& paths, Clock::time_poi
     }
     int before = total_;
     for (const auto& p : paths)
-        if (isEventFile(p)) readEvents(p);
+        if (isEventFile(p)) readEvents(p, /*report=*/true);
     if (total_ != before && sink_.counts) sink_.counts(counts_, total_);
     // The STR written after therapy is the machine closing the session.
     if (str && !therapy && mask_on_) setMask(false);
@@ -77,7 +83,7 @@ void LiveNight::tick(Clock::time_point now) {
     if (mask_on_ && now - last_therapy_write_ >= mask_quiet_) setMask(false);
 }
 
-void LiveNight::readEvents(const std::string& path) {
+void LiveNight::readEvents(const std::string& path, bool report) {
     EDFFile edf;
     if (!edf.open((std::filesystem::path(root_) / path).string())) return;
     const auto annotations = edf.readAnnotations();
@@ -85,6 +91,10 @@ void LiveNight::readEvents(const std::string& path) {
     // A file with fewer annotations than reported is a new file under an old
     // name (a card swapped, a folder rebuilt): start over on it.
     if (annotations.size() < seen) seen = 0;
+    if (!report) {
+        seen = annotations.size();
+        return;
+    }
     const auto start = edf.getStartTime();
     for (size_t i = seen; i < annotations.size(); i++) {
         const auto& a    = annotations[i];

@@ -50,8 +50,12 @@ public:
     LiveNight(std::string card_root, LiveSink sink,
               std::chrono::seconds mask_quiet = std::chrono::seconds(300));
 
-    /// Files the rebuild wrote this step (card-relative paths).
-    void onWritten(const std::vector<std::string>& paths, Clock::time_point now = Clock::now());
+    /// Files the rebuild wrote this step (card-relative paths). A catch-up
+    /// step (the first after a start, the whole card written again) says
+    /// nothing about now: its EVE and CSL are read so their annotations are
+    /// known and not reported later as new, and the mask is left alone.
+    void onWritten(const std::vector<std::string>& paths, Clock::time_point now = Clock::now(),
+                   bool catch_up = false);
 
     /// Time passing with nothing written.
     void tick(Clock::time_point now = Clock::now());
@@ -62,7 +66,7 @@ public:
 
 private:
     void setMask(bool on);
-    void readEvents(const std::string& path);
+    void readEvents(const std::string& path, bool report);
 
     std::string                 root_;
     LiveSink                    sink_;
