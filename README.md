@@ -49,8 +49,8 @@ On a Luna card you get pressure, leak, respiratory rate and I:E ratio per minute
 machine marks itself (obstructive and clear airway). On a bi-level Luna, IPAP,
 EPAP and pressure support are reported too. There is no flow waveform yet: its
 scale on the card is not known, and a number in the wrong unit is worse than
-none. A Luna is read from a Sleep Bridge Lite, a local folder or the upload
-page, not from a WiFi SD card.
+none. A Luna is read from a local folder or the upload page, not from a WiFi
+SD card.
 
 ## Features
 
@@ -149,7 +149,7 @@ Or without the script: `mkdir build && cd build && cmake .. && make -j$(nproc) &
 
 ### Getting the data off the machine
 
-There are six ways to get the nights in. The first is the one to pick if you
+There are five ways to get the nights in. The first is the one to pick if you
 are starting today; the others are here for the hardware you already have.
 Whatever the way, the result is the same: card files on this computer, parsed
 by hms-cpap.
@@ -162,29 +162,31 @@ by hms-cpap.
 
 #### 1. Sleep Bridge Lite (recommended)
 
-A Sleep Bridge Lite is a small listener on the SD card's wires, between the
-machine and its card, powered over USB-C. The card stays in the machine and
-stays the machine's: the bridge only listens. Every write the machine makes to
-the card is sent to hms-cpap over your network as it happens, on port 8894, and
-hms-cpap rebuilds the card's files from those writes into a folder it reads
-like any card.
+From the Sleep Bridge series, the Lite connects directly to the CPAP's SD slot
+and streams the data while the machine writes to the card, without
+interrupting the machine's own writes. It is powered over USB-C, not by the
+slot, and the card stays in the machine and stays the machine's. The Lite
+pairs with hms-cpap on port 8894 for the live signal, and hms-cpap rebuilds
+the card's files from what it streams into a folder it reads like any card.
 
-It reads a ResMed AirSense 10 or 11 and a React Health Luna today, and more
-brands as the capture library learns them. The brand work happens once, in
-the rebuild, and hms-cpap reads a card as it always has. That is what makes
-hms-cpap multi-brand.
+Supported today: ResMed AirSense 10 and 11. Coming soon, not supported yet:
+the AirCurve machines and the BMC Luna G3; further along, the Philips
+DreamStation 2. The brand work happens once, in the bridge, and hms-cpap
+reads a card as it always has. That is what makes hms-cpap brand agnostic,
+and what brings real-time capture of therapy to every machine the bridge
+supports.
 
 Setting it up:
 
 1. hms-cpap listens for a bridge out of the box. In `config.json` that is
-   `"sleep_bridge": { "enabled": true, "port": 8894 }`; leave the port at
-   8894, a bridge connects to no other. In Docker publish `-p 8894:8894`; the
-   Home Assistant add-on publishes it already. Only the stream answers on that
-   port, never the web UI, and it has no login: keep it on your local network.
+   `"sleep_bridge": { "enabled": true, "port": 8894 }`. In Docker publish
+   `-p 8894:8894`; the Home Assistant add-on publishes it already. Only the
+   stream answers on that port, never the web UI, and it has no login: keep
+   it on your local network.
 2. On the bridge's setup page (hold its button 10 seconds to reopen it),
-   choose **My hms-cpap** and type this computer's IP address or hostname,
-   and nothing else: no port, no `ws://`. The bridge connects to port 8894
-   on it, and tests the address before it keeps it.
+   choose **My hms-cpap** and type the IP address or hostname of this
+   computer, and the port: 8894 unless you changed `sleep_bridge.port` in
+   hms-cpap. The bridge tests the address before it keeps it.
 3. Power the machine off and on once, outside therapy. The machine reads the
    card when it starts, and seeing that read is what lets the rebuild trust
    the card's layout. Until then hms-cpap holds what it receives and writes
@@ -192,10 +194,9 @@ Setting it up:
 4. The rebuilt card lands in `<data dir>/sleepbridge/<bridge>/`, in the
    machine's own layout. The data dir is `~/.hms-cpap` natively, `/config`
    in the Docker image (the `cpap_config` volume) and `/data` in the add-on.
-   Point a **Local folder** source at that folder (6 below), with the card
-   format of the machine: ResMed, or BMC / React Health Luna. `GET
-   /api/sleepbridge` lists every bridge with its folder (`card_root`), the
-   machine it recognised (`card_machine`) and the format to read it with
+   Point a **Local folder** source at that folder (5 below), ResMed format.
+   `GET /api/sleepbridge` lists every bridge with its folder (`card_root`),
+   the machine it recognised (`card_machine`) and the format to read it with
    (`card_format`).
 
 What you see: the night grows while you sleep. Each write reaches hms-cpap
@@ -211,7 +212,7 @@ answers again.
 The limit: the bridge forwards writes, so it only has what the machine wrote
 while it was powered and listening. Nothing already on the card from before
 is read through it. For the history already on the card, read the card once
-in a reader (6 below) and let the bridge carry on from there.
+in a reader (5 below) and let the bridge carry on from there.
 
 The receiver is new in this version. The wire protocol is in
 [docs/SLEEP_BRIDGE_LOCAL_STREAM.md](docs/SLEEP_BRIDGE_LOCAL_STREAM.md); the
@@ -222,12 +223,15 @@ own licence, linked only into builds made with `-DBUILD_WITH_SLEEPBRIDGE=ON`
 every bridge, so a bridge's setup test fails rather than leaving it pointed at
 a receiver that cannot use what it sends.
 
-#### 2. AirSense 11 over Bluetooth, from this computer
+#### 2. AirSense 11 over Bluetooth from a computer
 
-An AirSense 11 has its own Bluetooth, and hms-cpap can be the device it talks
-to. This needs Linux with BlueZ, a build made with `-DBUILD_WITH_BLE=ON` (the
-Docker image is; give the container the host's D-Bus, see the Docker section)
-and a Bluetooth adapter in range of the machine. New in this version.
+If your PC has Bluetooth and you own an AirSense 11 or an AirCurve 11, you do
+not need a bridge at all: hms-cpap connects to the machine directly and shows
+your nights live. The machine has its own Bluetooth, and hms-cpap becomes the
+device it talks to. This needs Linux with BlueZ, a build made with
+`-DBUILD_WITH_BLE=ON` (the Docker image is; give the container the host's
+D-Bus, see the Docker section) and a Bluetooth adapter in range of the
+machine. New in this version.
 
 Turn it on in `config.json`:
 
@@ -257,7 +261,7 @@ What you get:
   machine's `Identification.json`, and an `STR.edf` built from the summaries
   when the model's layout is known. Each file is a valid EDF at every moment,
   rewritten as the stream goes. Point a **Local folder** source at that folder
-  (6 below), ResMed format, and the night's sessions and events reach the
+  (5 below), ResMed format, and the night's sessions and events reach the
   dashboard on the sync interval while it is still being written.
 
 The older summary-only path through a bridge's HTTP (`"airsense11": {
@@ -266,11 +270,14 @@ offers it; with `airsense11_ble` on it is not used.
 
 #### 3. A Mule & Miner in AirSense 11 Bluetooth mode
 
-The CpapDash dual-radio unit can hold the machine's Bluetooth pairing instead
-of this computer, and send the night here instead of to the cloud. On the unit,
-set the hms-cpap address to this computer's IP address or hostname (nothing
-else); it connects to `ws://<host>:8894/mule/v1/device`, the same port the
-Sleep Bridge receiver listens on, so `sleep_bridge.enabled` must stay on.
+The Mule & Miner now transmits to hms-cpap locally, so if your desktop PC is
+too far from the CPAP for its own Bluetooth, the Mule & Miner bridges that
+gap. The CpapDash dual-radio unit holds the machine's Bluetooth pairing
+instead of this computer, and sends the night here instead of to the cloud.
+On the unit, set the hms-cpap address to this computer's IP address or
+hostname (nothing else); it connects to `ws://<host>:8894/mule/v1/device`,
+the same port the Sleep Bridge receiver listens on, so `sleep_bridge.enabled`
+must stay on.
 
 It feeds the same writer as 2 above: the same files under
 `<data dir>/as11/<machine serial>/`, the same live night, read the same way
@@ -282,45 +289,39 @@ machine's identification, summary and settings history; the summary is what
 builds the folder's `STR.edf`. `GET /api/mule` lists the units seen. New in this version; the
 protocol is in [docs/MULE_LOCAL_STREAM.md](docs/MULE_LOCAL_STREAM.md).
 
-#### 4. Toshiba FlashAir WiFi SD
+#### 4. WiFi SD cards (ez Share and Toshiba FlashAir)
 
-A FlashAir sits in the CPAP's SD slot and joins your home WiFi itself, so no
-bridge is needed and hms-cpap reads the card straight over WiFi. Set the card
-to join your network (`APPMODE=5` in its `SD_WLAN/CONFIG`) and pick FlashAir
-in the wizard; it is found as `http://flashair.local`, or give its address.
-In `config.json`: `"transport": "flashair"`, `"flashair_url":
-"http://flashair.local"`, and an `archive_dir`, where the files it downloads
-land. ResMed cards only. Tested on a FlashAir W-02 in an AirSense 10, read
-live through a full night.
+A WiFi SD card sits in the CPAP's SD slot in place of the plain card and
+serves the card's files over WiFi; hms-cpap polls it and copies what is new
+into an `archive_dir`, which both cards need. The ez Share was the original
+path and the FlashAir came after it. Neither is the recommended path any
+more: the card's WiFi runs on the machine's slot power through the night,
+and some machines cannot hold it (the AirSense 11 REF 39517 above), which
+shows up as brownouts and card errors; and a card reader only ever sees what
+the card already holds, after the card holds it. A Sleep Bridge Lite leaves
+the card alone and sees each write as it is made. If your WiFi card works
+today, nothing here stops working.
 
-Pick it when you already have the card, your machine's slot powers it
-reliably, and you do not want anything on the machine but the card. It has
-the same limit as any WiFi SD card: it runs on the slot's power all night,
-and it can only ever serve what the card holds.
+**ez Share.** The card makes its own network, so you need a bridge such as
+[hms-mm](https://github.com/hms-homelab/hms-mm) (Mule & Miner) to put it on
+your LAN; the wizard can scan for one. To set a bridge up, the
+[hms-mm web flasher](https://hms-homelab.github.io/hms-mm/) flashes both of
+its boards from Chrome and takes your WiFi details on the same page, nothing
+to install. In `config.json`: `"transport": "ezshare"`, `"ezshare_url":
+"http://192.168.4.1"`, `"ezshare_range": true` (set it false for a card that
+does not resume downloads), and an `archive_dir`. Works with a ResMed card
+and a Sefam S.Box card. For a Sefam card the card is copied to the archive,
+all of it on the first run and then its last two nights.
 
-#### 5. ez Share WiFi SD
+**Toshiba FlashAir.** The card joins your home WiFi itself, so no bridge is
+needed. Set it to join your network (`APPMODE=5` in its `SD_WLAN/CONFIG`)
+and pick FlashAir in the wizard; it is found as `http://flashair.local`, or
+give its address. In `config.json`: `"transport": "flashair"`,
+`"flashair_url": "http://flashair.local"`, and an `archive_dir`. ResMed
+cards only. Tested on a FlashAir W-02 in an AirSense 10, read live through a
+full night.
 
-The original path, and no longer the recommended one. The card sits in the
-CPAP's SD slot and serves files over WiFi. It makes its own network, so you
-need a bridge such as [hms-mm](https://github.com/hms-homelab/hms-mm)
-(Mule & Miner) to put it on your LAN; the wizard can scan for one. To set a
-bridge up, the [hms-mm web flasher](https://hms-homelab.github.io/hms-mm/)
-flashes both of its boards from Chrome and takes your WiFi details on the
-same page, nothing to install. In `config.json`: `"transport": "ezshare"`,
-`"ezshare_url": "http://192.168.4.1"`, `"ezshare_range": true` (set it false
-for a card that does not resume downloads), and an `archive_dir`. Works with
-a ResMed card and a Sefam S.Box card. For a Sefam card the card is copied to
-the archive, all of it on the first run and then its last two nights.
-
-Why it stopped being the recommendation: the card's WiFi runs on the
-machine's slot power through the night, and some machines cannot hold it
-(the AirSense 11 REF 39517 above), which shows up as brownouts and card
-errors; and like any card reader it only ever sees what the card already
-holds, after the card holds it. A Sleep Bridge Lite leaves the card alone and
-sees each write as it is made. If your ez Share setup works today, nothing
-here stops working.
-
-#### 6. Local folder and the upload page
+#### 5. Local folder and the upload page
 
 - **Local folder**: point the wizard at the SD card root (the folder that
   holds both `STR.edf` and `DATALOG/`), on a USB reader, a NAS share, or any
