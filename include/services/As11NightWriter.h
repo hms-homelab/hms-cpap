@@ -54,10 +54,13 @@ std::string sleepDayFolder(const cpapdash::parser::WallClock& wc);
  * A segment is cut at a 60 s pause; each is named by its first block on the
  * machine's wall clock. Blocks are kept on disk as they arrive
  * (stream/<sleep day>/<segment start>.cds1s, fsync'd), so a restart loses
- * nothing and a resent block is kept once. The open segment's files are
- * rewritten every 10 s of stream; the night's EVE and CSL are written when
- * the stream ends, one pair under the night's first BRP. An event belongs to
- * the BRP that covers it, or that ended at most 2 minutes before it.
+ * nothing and a resent block is kept once. The night is written live: the
+ * open segment's files are rewritten every 10 s of stream (every block from
+ * a Mule & Miner), each a valid EDF at every moment, and the night's EVE and
+ * CSL, one pair under the night's first BRP, are rewritten with them and the
+ * moment an event arrives. An event belongs to the BRP that covers it, or
+ * that ended at most 2 minutes before it. The stream's end only completes
+ * what is open.
  */
 class As11NightWriter : public IAs11NightSink {
 public:

@@ -279,10 +279,15 @@ void As11NightWriter::onBlock(const as11::StreamBlock& b) {
         if (&s == seg || s.written_end == s.end_ms) continue;
         if (b.start_ms >= s.end_ms + kSegmentGapMs) { writeSegment(b.serial, s); s.written_end = s.end_ms; }
     }
-    // The open segment: live, every 10 s of stream.
+    // The open segment: live, every 10 s of stream (every block from a Mule &
+    // Miner, whose blocks are 10 s). The files are rewritten whole and moved
+    // into place, so each is a valid EDF at every moment, as a card's are
+    // while the machine records. The night's EVE and CSL come along, so the
+    // session is complete on disk from its first block.
     if (seg->end_ms - seg->written_end >= kLiveEveryMs) {
         writeSegment(b.serial, *seg);
         seg->written_end = seg->end_ms;
+        writeEvents(b.serial, seg->night);
     }
 }
 
@@ -299,8 +304,20 @@ void As11NightWriter::onEvent(const std::string& serial, const as11::RespEvent& 
     const fs::path path = fs::path(rootFor(serial)) / "stream" / "events.jsonl";
     std::error_code ec;
     fs::create_directories(path.parent_path(), ec);
-    std::ofstream out(path, std::ios::app);
-    out << j.dump() << "\n";
+    {
+        std::ofstream out(path, std::ios::app);
+        out << j.dump() << "\n";
+    }
+    // Live: the event goes into its night's EVE (or CSL) now, not at the
+    // stream's end. Its night is the segment that covers it, or ended at most
+    // two minutes before; failing that, the night being written.
+    int64_t t = as11::isoToMs(e.reportTime);
+    if (isCsr(e.event)) t -= std::max(0, e.backdateSeconds) * 1000LL;
+    std::string night;
+    for (const auto& s : m.segments)
+        if (!s.starts.empty() && s.start_ms <= t && t <= s.end_ms + kEventTailMs) night = s.night;
+    if (night.empty() && !m.nights_touched.empty()) night = *m.nights_touched.rbegin();
+    if (!night.empty()) writeEvents(serial, night);
 }
 
 void As11NightWriter::onStreamEnd(const std::string& serial) {

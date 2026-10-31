@@ -396,6 +396,42 @@ TEST_F(MuleReceiverTest, AShortNightLandsAsACardWithItsEventsStrAndIdentificatio
         << st["commands"][1]["outcome"].asString();
 }
 
+TEST_F(MuleReceiverTest, TheNightGrowsLiveBlockByBlockAndEventsLandAtOnce) {
+    FakeUnit unit(*svc_);
+    unit.hello();
+    LocalDataSource card(machineRoot().string());
+    const fs::path brp = machineRoot() / "DATALOG" / "20261016" / "20261016_230000_BRP.edf";
+    const fs::path eve = machineRoot() / "DATALOG" / "20261016" / "20261016_230000_EVE.edf";
+
+    // After each block the BRP is a readable EDF with that many seconds, and
+    // the card lists the session while it is still growing.
+    for (int i = 0; i < 3; i++) {
+        unit.block(tenSeconds(kT0 + i * 10000));
+        ASSERT_TRUE(fs::exists(brp)) << "block " << i;
+        EXPECT_EQ(records(brp), 10 * (i + 1));
+        const auto nights = card.listDateFolders();
+        ASSERT_EQ(nights.size(), 1u);
+        bool listed = false;
+        for (const auto& f : card.listFiles("20261016")) listed = listed || f.name == "20261016_230000_BRP.edf";
+        EXPECT_TRUE(listed) << "block " << i;
+    }
+    ASSERT_TRUE(fs::exists(eve)) << "the EVE is there from the first block";
+    EXPECT_EQ(slurp(eve).find("Hypopnea"), std::string::npos);
+
+    // An event in a state frame is in the EVE at once, the stream still open.
+    Json::Value evs(Json::arrayValue);
+    evs.append(event(1, "HypopneaEnd", kT0 + 25000, 14));
+    unit.sendState(true, 0, evs);
+    EXPECT_NE(slurp(eve).find("Hypopnea"), std::string::npos);
+    EXPECT_FALSE(unitStatus()["night_landing"].asBool());
+    EXPECT_TRUE(unit.of("cmd").empty()) << "nothing is pulled while the night runs";
+
+    // The next block keeps the event and grows the BRP.
+    unit.block(tenSeconds(kT0 + 30000));
+    EXPECT_EQ(records(brp), 40);
+    EXPECT_NE(slurp(eve).find("Hypopnea"), std::string::npos);
+}
+
 TEST_F(MuleReceiverTest, ARedeliveredBlockIsAckedAgainAndKeptOnceAcrossARestart) {
     {
         FakeUnit unit(*svc_);
