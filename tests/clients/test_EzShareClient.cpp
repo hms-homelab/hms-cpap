@@ -1227,6 +1227,41 @@ TEST_F(EzShareClientTest, AReplyMatchingItsContentRangeAppends) {
     EXPECT_EQ(readFile(path), std::string(100, 'A') + std::string(50, 'B'));
 }
 
+// Bytes from anywhere but where we asked would sit at the wrong offset.
+TEST_F(EzShareClientTest, ARangeThatStartsElsewhereIsPutBack) {
+    const std::string path = test_dir + "/20260930_231815_BRP.edf";
+    createTestFile(path, 100, 'A');
+
+    OneShotHttpServer srv("206 Partial Content", std::string(50, 'B'),
+                          "Content-Range: bytes 0-49/150\r\n");
+    EzShareClient client;
+    client.setBaseURL(srv.baseUrl());
+
+    size_t got = 0;
+    EXPECT_FALSE(client.downloadFileRange("20260930", "20260930_231815_BRP.edf",
+                                          path, 100, got));
+    EXPECT_EQ(readFile(path), std::string(100, 'A'));
+}
+
+// A file still being written can be sent past the end its reply declared. That
+// is not a lost chunk: the declared span is kept, and only it, so a live file
+// still moves forward during the night.
+TEST_F(EzShareClientTest, AReplyLongerThanItsContentRangeKeepsTheSpan) {
+    const std::string path = test_dir + "/20260930_231815_BRP.edf";
+    createTestFile(path, 100, 'A');
+
+    OneShotHttpServer srv("206 Partial Content", std::string(50, 'B') + std::string(30, 'C'),
+                          "Content-Range: bytes 100-149/150\r\n");
+    EzShareClient client;
+    client.setBaseURL(srv.baseUrl());
+
+    size_t got = 0;
+    EXPECT_TRUE(client.downloadFileRange("20260930", "20260930_231815_BRP.edf",
+                                         path, 100, got));
+    EXPECT_EQ(got, 50u);
+    EXPECT_EQ(readFile(path), std::string(100, 'A') + std::string(50, 'B'));
+}
+
 // A cut is not a hole: the connection died, and what landed before it is good.
 // Throwing it away would restart a big transfer from 0 on a weak link.
 TEST_F(EzShareClientTest, ACutTransferKeepsItsBytes) {

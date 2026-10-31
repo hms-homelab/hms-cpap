@@ -75,18 +75,24 @@ size_t collectHeader(char* line, size_t size, size_t nmemb, void* userp) {
     return size * nmemb;
 }
 
-/// The byte count a reply's "Content-Range: bytes a-b/c" promises, 0 if it has none.
-uint64_t promisedRangeBytes(std::string headers) {
+/// The span a reply's "Content-Range: bytes a-b/c" promises. `bytes` is 0 when
+/// it has none, or one that does not parse.
+struct PromisedRange {
+    uint64_t first = 0;
+    uint64_t bytes = 0;
+};
+
+PromisedRange promisedRange(std::string headers) {
     std::transform(headers.begin(), headers.end(), headers.begin(),
                    [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     const auto at = headers.find("content-range:");
-    if (at == std::string::npos) return 0;
+    if (at == std::string::npos) return {};
     unsigned long long first = 0, last = 0;
     if (std::sscanf(headers.c_str() + at, "content-range: bytes %llu-%llu", &first, &last) != 2 ||
         last < first) {
-        return 0;
+        return {};
     }
-    return last - first + 1;
+    return {first, last - first + 1};
 }
 
 }  // namespace
@@ -504,14 +510,34 @@ bool EzShareClient::downloadFileRange(const std::string& date_folder,
     // What follows the hole is at the wrong offset, and the next read would
     // resume past it, so unlike a cut transfer none of it is kept. A cut ends
     // in CURLE_PARTIAL_FILE, and what landed before it is good.
-    const uint64_t promised = promisedRangeBytes(reply_headers);
-    if (res == CURLE_OK && http_code == 206 && promised > 0 && bytes_downloaded != promised) {
+    //
+    // A range that starts anywhere but where we asked would land at the wrong
+    // offset just the same, so it is put back too. A reply LONGER than its
+    // span is not a hole: a file still being written can be sent past the end
+    // it declared. The span it promised is good and is kept; the rest is
+    // asked for again, so a live file is not refused all night.
+    const auto put_back = [&] {
         std::error_code ec;
         if (start_byte == 0) std::filesystem::remove(local_path, ec);
         else std::filesystem::resize_file(local_path, start_byte, ec);
-        std::cerr << "EzShare: " << filename << " came back with " << bytes_downloaded << " of "
-                  << promised << " bytes; put it back" << std::endl;
+    };
+    const PromisedRange promised = promisedRange(reply_headers);
+    if (http_code == 206 && promised.bytes > 0 && promised.first != start_byte) {
+        put_back();
+        std::cerr << "EzShare: " << filename << " came back from byte " << promised.first
+                  << ", asked from " << start_byte << "; put it back" << std::endl;
         return false;
+    }
+    if (res == CURLE_OK && http_code == 206 && promised.bytes > 0 && bytes_downloaded < promised.bytes) {
+        put_back();
+        std::cerr << "EzShare: " << filename << " came back with " << bytes_downloaded << " of "
+                  << promised.bytes << " bytes; put it back" << std::endl;
+        return false;
+    }
+    if (http_code == 206 && promised.bytes > 0 && bytes_downloaded > promised.bytes) {
+        std::error_code ec;
+        std::filesystem::resize_file(local_path, start_byte + promised.bytes, ec);
+        bytes_downloaded = static_cast<size_t>(promised.bytes);
     }
 
     auto total_size = std::filesystem::file_size(local_path);

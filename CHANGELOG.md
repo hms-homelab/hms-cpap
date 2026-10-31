@@ -12,7 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reply can finish normally with a chunk missing from the middle, and the next
   read used to resume past the hole, leaving the wrong data behind it. A reply
   shorter than its `Content-Range` is now put back and asked for again. A
-  transfer cut by the link is not, and keeps what landed.
+  transfer cut by the link is not, and keeps what landed. A range that starts
+  anywhere but where it was asked is put back too, and a reply longer than its
+  `Content-Range` (a file still being written) keeps the span it declared.
 - **A checkpoint that didn't land is asked for again.** It used to get the
   listing's size in `checkpoint_files` when another file of the night landed,
   which read as unchanged from then on, so the night closed with it short.
