@@ -5,6 +5,9 @@
 #include "clients/O2RingClient.h"
 #include "database/IDatabase.h"
 #include "parsers/CpapdashBridge.h"
+#include <filesystem>
+#include <fstream>
+#include <unistd.h>
 
 using namespace hms_cpap;
 
@@ -642,6 +645,78 @@ TEST_F(OximetryServiceTest, ProcessedFileCache_SkipsOnSecondPass) {
     EXPECT_TRUE(svc->collectAndPublish());   // first pass: download + save
     EXPECT_FALSE(svc->collectAndPublish());  // second pass: cached -> skipped
     EXPECT_EQ(client->download_calls, 1) << "cached file not re-downloaded";
+}
+
+namespace fs_ = std::filesystem;
+
+static std::string freshTmp(const char* tag) {
+    auto d = fs_::temp_directory_path() / (std::string("oxi_raw_") + tag + "_" + std::to_string(::getpid()));
+    fs_::remove_all(d);
+    fs_::create_directories(d);
+    return d.string();
+}
+
+// A saved file is kept byte-for-byte at <archive>/DATALOG/<name>.
+TEST_F(OximetryServiceTest, SavedFile_RetainedInDatalog) {
+    const auto dir = freshTmp("keep");
+    client->files = {"20260418_220000.vld"};
+    client->contents["20260418_220000.vld"] = makeVld(20);
+    EXPECT_CALL(*db, oximetrySessionExists(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db, saveOximetrySession(_, _)).WillOnce(Return(true));
+    svc->setArchiveDirProvider([dir] { return dir; });
+
+    EXPECT_TRUE(svc->collectAndPublish());
+
+    std::ifstream in(fs_::path(dir) / "DATALOG" / "20260418_220000.vld", std::ios::binary);
+    ASSERT_TRUE(in.good());
+    std::vector<uint8_t> got((std::istreambuf_iterator<char>(in)), {});
+    EXPECT_EQ(got, client->contents["20260418_220000.vld"]);
+    fs_::remove_all(dir);
+}
+
+// A file whose save failed is not kept (it will be fetched again).
+TEST_F(OximetryServiceTest, SaveFails_NotRetained) {
+    const auto dir = freshTmp("nosave");
+    client->files = {"a.vld"};
+    client->contents["a.vld"] = makeVld(20);
+    EXPECT_CALL(*db, oximetrySessionExists(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db, saveOximetrySession(_, _)).WillOnce(Return(false));
+    svc->setArchiveDirProvider([dir] { return dir; });
+    svc->collectAndPublish();
+    EXPECT_FALSE(fs_::exists(fs_::path(dir) / "DATALOG" / "a.vld"));
+    fs_::remove_all(dir);
+}
+
+// No archive configured -> nothing written, still saved to the DB.
+TEST_F(OximetryServiceTest, NoArchive_StillSaves) {
+    client->files = {"a.vld"};
+    client->contents["a.vld"] = makeVld(20);
+    EXPECT_CALL(*db, oximetrySessionExists(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db, saveOximetrySession(_, _)).WillOnce(Return(true));
+    svc->setArchiveDirProvider([] { return std::string(); });
+    EXPECT_TRUE(svc->collectAndPublish());
+}
+
+// A device-supplied name cannot escape DATALOG.
+TEST(OximetryRetain, NameCannotEscapeDatalog) {
+    const auto dir = freshTmp("esc");
+    EXPECT_TRUE(OximetryService::retainRawFile(dir, "../../evil.vld", {1, 2, 3}));
+    EXPECT_TRUE(fs_::exists(fs_::path(dir) / "DATALOG" / "evil.vld"));
+    EXPECT_FALSE(fs_::exists(fs_::path(dir).parent_path() / "evil.vld"));
+    EXPECT_FALSE(OximetryService::retainRawFile(dir, "..", {1}));
+    EXPECT_FALSE(OximetryService::retainRawFile("", "a.vld", {1}));
+    fs_::remove_all(dir);
+}
+
+// Same name and size but different bytes replaces the old copy.
+TEST(OximetryRetain, SameSizeDifferentBytesIsReplaced) {
+    const auto dir = freshTmp("repl");
+    ASSERT_TRUE(OximetryService::retainRawFile(dir, "a.vld", {1, 2, 3}));
+    ASSERT_TRUE(OximetryService::retainRawFile(dir, "a.vld", {9, 9, 9}));
+    std::ifstream in(fs_::path(dir) / "DATALOG" / "a.vld", std::ios::binary);
+    std::vector<uint8_t> got((std::istreambuf_iterator<char>(in)), {});
+    EXPECT_EQ(got, (std::vector<uint8_t>{9, 9, 9}));
+    fs_::remove_all(dir);
 }
 
 // pollLive() returns and stores the client's live reading.

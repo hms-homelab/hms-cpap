@@ -3,8 +3,11 @@
 #include "utils/OximetryDevice.h"
 #include <cpapdash/parser/O2RingSParser.h>
 #include <cpapdash/parser/VLDParser.h>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <iomanip>
+#include <iterator>
 #include <sstream>
 
 namespace hms_cpap {
@@ -18,6 +21,36 @@ OximetryService::OximetryService(std::shared_ptr<IO2RingClient> client,
     : client_(std::move(client)),
       db_(std::move(db)),
       cpap_device_id_(std::move(cpap_device_id)) {}
+
+bool OximetryService::retainRawFile(const std::string& archive_dir, const std::string& filename,
+                                    const std::vector<uint8_t>& bytes) {
+    namespace fs = std::filesystem;
+    // Only the final component: a name from the device must not leave DATALOG.
+    const std::string name = fs::path(filename).filename().string();
+    if (archive_dir.empty() || name.empty() || name == "." || name == ".." || bytes.empty())
+        return false;
+    std::error_code ec;
+    const fs::path dir = fs::path(archive_dir) / "DATALOG";
+    fs::create_directories(dir, ec);
+    if (ec) return false;
+    const fs::path dest = dir / name;
+    if (fs::is_regular_file(dest, ec) && fs::file_size(dest, ec) == bytes.size()) {
+        std::ifstream cur(dest, std::ios::binary);
+        std::vector<uint8_t> have((std::istreambuf_iterator<char>(cur)),
+                                  std::istreambuf_iterator<char>());
+        if (have == bytes) return true;   // identical, nothing to write
+    }
+    const fs::path tmp = dir / (name + ".part");
+    {
+        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        out.write(reinterpret_cast<const char*>(bytes.data()),
+                  static_cast<std::streamsize>(bytes.size()));
+        if (!out) { out.close(); fs::remove(tmp, ec); return false; }
+    }
+    fs::rename(tmp, dest, ec);
+    if (ec) { fs::remove(tmp, ec); return false; }
+    return true;
+}
 
 bool OximetryService::collectAndPublish() {
     // Step 1: List available files
@@ -95,6 +128,17 @@ bool OximetryService::collectAndPublish() {
             processed_files_.insert(filename);
             any_new = true;
             std::cout << "O2Ring: Saved " << filename << " to database" << std::endl;
+            if (archive_dir_) {
+                const std::string dir = archive_dir_();
+                if (!dir.empty()) {
+                    if (retainRawFile(dir, filename, data))
+                        std::cout << "O2Ring: Kept raw " << filename << " in " << dir
+                                  << "/DATALOG" << std::endl;
+                    else
+                        std::cerr << "O2Ring: Could not keep raw " << filename << " in "
+                                  << dir << "/DATALOG (non-fatal)" << std::endl;
+                }
+            }
         } else {
             std::cerr << "O2Ring: Failed to save " << filename << " to database" << std::endl;
         }
