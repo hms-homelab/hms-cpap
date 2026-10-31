@@ -14,7 +14,8 @@
 #
 # Steps, each one failing the build:
 #   1. the Raspberry Pi OS archive key, pinned by fingerprint
-#   2. the sysroot: sysroot-packages.txt plus libc and libstdc++, extracted
+#   2. the sysroot: sysroot-packages.txt plus libc and libstdc++, extracted,
+#      then Drogon built from source into it, as the Dockerfile builds it
 #   3. the guard: the C++ config the build will compile with must have no
 #      atomic shared_ptr lock policy, as the Pi's libstdc++ has none
 #   4. the build, stripped
@@ -80,6 +81,33 @@ fi
 for d in lib bin sbin; do
     [ -e "$SYSROOT/$d" ] || [ -L "$SYSROOT/$d" ] || ln -s "usr/$d" "$SYSROOT/$d"
 done
+
+say "2b. Drogon, from source, into the sysroot"
+# The same Drogon the Dockerfile builds: v1.9.0 with the patches in
+# third_party/drogon/ (its WebSocket reader stopped at the first fragment of a
+# message, so a Sleep Bridge's hello was never answered), static, without the
+# ORM. Raspberry Pi OS's libdrogon-dev is the unpatched one and left the
+# package lists with the Dockerfile's, so the Pi build cross-compiles the
+# source against the sysroot and installs it there, where find_package(Drogon)
+# looks. Kept with the sysroot: the marker makes a cached sysroot reusable.
+if [ ! -f "$SYSROOT/.drogon-complete" ]; then
+    rm -rf "$WORK/drogon"
+    git clone -q --depth 1 --branch v1.9.0 --recurse-submodules --shallow-submodules \
+        https://github.com/drogonframework/drogon.git "$WORK/drogon"
+    for p in "$SRC"/third_party/drogon/*.patch; do
+        patch -d "$WORK/drogon" -p1 --forward < "$p"
+    done
+    cmake -S "$WORK/drogon" -B "$WORK/drogon/build" \
+        -DCMAKE_TOOLCHAIN_FILE="$SRC/cmake/arm-toolchain.cmake" \
+        -DRASPBIAN_SYSROOT="$SYSROOT" \
+        -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DBUILD_CTL=OFF -DBUILD_EXAMPLES=OFF -DBUILD_ORM=OFF -DBUILD_YAML_CONFIG=OFF \
+        -DBUILD_TESTING=OFF
+    cmake --build "$WORK/drogon/build" -j"$(nproc)"
+    DESTDIR="$SYSROOT" cmake --install "$WORK/drogon/build"
+    touch "$SYSROOT/.drogon-complete"
+fi
+[ -f "$SYSROOT/usr/local/lib/cmake/Drogon/DrogonConfig.cmake" ] || die "Drogon did not land in the sysroot"
 
 # The same flags cmake/arm-toolchain.cmake gives the build; the guard checks
 # what they produce.
