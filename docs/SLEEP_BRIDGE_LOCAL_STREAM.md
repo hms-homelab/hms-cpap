@@ -106,6 +106,7 @@ The bridge closes it within seconds.
 | `{"t":"ack_sectors","seq":N,"status":S,...}` | The answer to one batch (below). |
 | `{"t":"cmd","cmd":"<name>","req_id":N,...}` | A command (below). |
 | `{"t":"error","error":"..."}` | A frame that could not be read. |
+| binary, kind 8 | One chunk of a firmware image, after an `ota` command ([Updating the bridge](#updating-the-bridge)). |
 
 A file (binary kind 5) is ignored.
 
@@ -115,21 +116,29 @@ A bridge takes these commands from a local hms-cpap:
 
 | Command | Arguments | What the bridge does |
 |---|---|---|
-| `stream` | `url`: an IP address or hostname only (the bridge adds `ws://` and the path), or `""` for the cloud; `port`: 1 to 65535, optional, 8894 when left out | Tests the new target with a probe hello, answers, and only then keeps the address and port and moves. On a failed test nothing changes. |
+| `stream` | `url`: an IP address or hostname only (the bridge adds `ws://` and the path), or `""` for the cloud; `port`: 1 to 65535, optional, 8894 when left out | To another hms-cpap: tests the new target with a probe hello, answers, and only then keeps the address and port and moves; on a failed test nothing changes. To the cloud (`""`): nothing is tested; the bridge answers on this connection, keeps the cloud, and restarts. |
 | `reboot` | | Restarts. Never answered. |
 | `logs` | `n`: lines, 1 to 5000 (200 when left out) | Sends its log as kind 4 frames, then the result. |
 | `restate` | | Sends its card statement again. |
 | `config_reset` | | Forgets its network and stream address and restarts into setup. Keeps its name and pairing. Answered first. |
+| `ota` | `target`: `"tapper"`, `size`: the image's bytes, `sha256`: its digest, 64 hex digits; no `url` | Takes the image that follows as kind 8 frames, checks it, answers, and restarts into it only on `ok`. Sent by the update route below, never by `POST /api/sleepbridge/command`. |
 
 The answer is `{"t":"result","req_id":N,"result":{"ok":bool,...}}`, with
-`error` when `ok` is false; `stream` adds `url` and `changed`. It can come
-on a later connection than the command went on: a `stream` closes the
-connection to test the new target, then answers on the one it comes back
-on. A log pull's text comes as binary kind 4 frames whose header `req_id` is
-the command's, `seq` counting the pieces and flags bit 0 on the last.
+`error` when `ok` is false; `stream` adds `url`, `changed` (and `switched`,
+the same value) and, on a switch to the cloud, `restarting: true`. It can
+come on a later connection than the command went on: a `stream` to another
+hms-cpap closes the connection to test the new target, then answers on the
+one it comes back on. A `stream` to the cloud answers on this connection and
+then leaves: expect the disconnect, and no return. A log pull's text comes as
+binary kind 4 frames whose header `req_id` is the command's, `seq` counting
+the pieces and flags bit 0 on the last.
 
 No command is refused while the machine records: the card keeps the night,
-and when to switch is the owner's call.
+and when to switch is the owner's call. The one exception is the firmware
+update, which hms-cpap itself refuses while a night is open on the bridge
+([Updating the bridge](#updating-the-bridge)). A `stream` or `ota` that
+arrives while the bridge is in the middle of a switch or an update is
+answered `{"ok":false,"error":"busy"}`.
 
 From the web port:
 
@@ -150,11 +159,11 @@ last 20 commands, newest first, with `state` (`queued`, `sent`, `answered`),
 
 | Offset | Size | Field |
 |---|---|---|
-| 0 | u32 | `req_id`, 0 for a batch |
-| 4 | u32 | `seq`: counts batches on this connection from 0; echoed in the ack |
+| 0 | u32 | `req_id`: 0 for a batch; the command's for a log text or a firmware chunk |
+| 4 | u32 | `seq`: counts batches on this connection from 0, echoed in the ack; counts the pieces of a log text or the chunks of an image from 0 |
 | 8 | u16 | `flags`: bit 0 set on the last frame of an item (always 1 for a batch) |
-| 10 | u16 | `kind`: 7 for a batch |
-| 12 | | the batch body |
+| 10 | u16 | `kind`: 7 a batch (up), 4 a log text (up), 8 a firmware chunk (down) |
+| 12 | | the body |
 
 ## Batches
 
@@ -272,6 +281,65 @@ The batches are the record; the card files are derived from them. After a
 restart the rebuild reads the whole bank again from the start. A file is
 written only when every sector of it was seen; a file still missing sectors is
 listed in `held.json` and never written with holes in it.
+
+## Updating the bridge
+
+A bridge pointed at hms-cpap never hears from the cloud, so its firmware
+comes from here, over the same connection it streams on. hms-cpap sends an
+image you have (a `.bin` file); a published release feed can come later.
+
+```
+POST /api/sleepbridge/TAP-S3-00000123/update
+Content-Type: application/octet-stream    (the image as the body)
+    or multipart/form-data with a file field
+
+200 {"ok":true,"req_id":815000124,"update":{"phase":"sending",...}}
+```
+
+Refused with 400 when the body is not a Sleep Bridge image (the ESP32 image
+magic and an app descriptor whose project is `sd_capture`), 404 for a bridge
+never seen, and 409 while a night is open on the bridge, while it is not
+connected, or while an update is already running. **A night is open while
+the machine writes to its card**: a batch with records landed in the last
+15 minutes. The machine writes through therapy and for a minute or two after
+the mask comes off, so fifteen quiet minutes is its downtime. The bridge
+itself refuses nothing here; this end keeps that rule, because an update
+parks the bridge's capture while it writes its flash.
+
+On the stream connection, hms-cpap then sends:
+
+1. `{"t":"cmd","cmd":"ota","req_id":N,"target":"tapper","size":S,"sha256":"<64 hex>"}`,
+   the image's byte count and SHA-256 (lowercase hex);
+2. the image as binary frames with the header above: `req_id` N, `seq` from
+   0, `kind` 8, each carrying the next 4096 bytes of the image and nothing
+   else, the last one (possibly shorter, never empty) with flags bit 0 set.
+
+The bridge writes each chunk into its spare firmware slot as it lands, so the
+connection's own flow control paces the flash. When the last chunk is in it
+checks the byte count and the digest against the command, verifies the
+image, and answers `{"t":"result","req_id":N,"result":{"ok":true,"slot":
+"ota_1","version":"1.0.0","project":"sd_capture","built":"..."}}`; then it
+restarts into the new image, so expect the disconnect. On any failure (a
+chunk out of order, a byte count or digest that disagrees, an image its
+loader rejects, 60 s without a chunk) it answers `{"ok":false,"error":...}`,
+drops the slot, and keeps running what it has. It never restarts on an
+error. Its next hello carries `fw_version`, which `GET /api/sleepbridge`
+shows per bridge.
+
+`GET /api/sleepbridge/{bridge}/update` (and `update` on each bridge in
+`GET /api/sleepbridge`) follows the job:
+
+| `phase` | meaning |
+|---|---|
+| `sending` | the command went; `sent` of `total` bytes handed to the connection |
+| `waiting` | every chunk went; the bridge is checking and answering |
+| `restarting` | answered `ok`; the bridge is rebooting into the image |
+| `done` | the bridge came back; `fw_after` is the version it runs now |
+| `failed` | `error` says why: the bridge's answer, a connection that went, or no answer in 5 minutes |
+
+`image_version`, `image_project` and `image_built` are read from the file
+before anything is sent; `fw_before` is what the bridge reported in its
+last hello.
 
 ## Licence
 

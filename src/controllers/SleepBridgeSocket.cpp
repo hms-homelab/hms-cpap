@@ -2,6 +2,7 @@
 #include "controllers/SleepBridgeSocket.h"
 
 #include <drogon/HttpAppFramework.h>
+#include <drogon/MultiPart.h>
 
 #include <algorithm>
 #include <chrono>
@@ -137,6 +138,42 @@ void installRoutes(SleepBridgeService* service) {
         },
         {drogon::Post});
 
+    // A firmware image to one bridge, over its own stream connection
+    // (docs/SLEEP_BRIDGE_LOCAL_STREAM.md, "Updating the bridge"). The body
+    // is the image: multipart/form-data with a file field, or the raw bytes.
+    // Refused while a night is open on the bridge.
+    using Callback = std::function<void(const drogon::HttpResponsePtr&)>;
+    drogon::app().registerHandler(
+        "/api/sleepbridge/{sender}/update",
+        [](const drogon::HttpRequestPtr& req, Callback&& cb, const std::string& sender) {
+            if (!validSender(sender)) return cb(jsonError(drogon::k400BadRequest, "not a bridge name"));
+            std::string image;
+            if (req->contentType() == drogon::CT_MULTIPART_FORM_DATA) {
+                drogon::MultiPartParser form;
+                if (form.parse(req) != 0 || form.getFiles().empty())
+                    return cb(jsonError(drogon::k400BadRequest, "the form carries no file"));
+                image = std::string(form.getFiles().front().fileContent());
+            } else {
+                image = std::string(req->getBody());
+            }
+            const CommandAnswer a = g_service->startUpdate(sender, image);
+            auto resp = drogon::HttpResponse::newHttpJsonResponse(a.body);
+            resp->setStatusCode(static_cast<drogon::HttpStatusCode>(a.status));
+            cb(resp);
+        },
+        {drogon::Post});
+
+    drogon::app().registerHandler(
+        "/api/sleepbridge/{sender}/update",
+        [](const drogon::HttpRequestPtr&, Callback&& cb, const std::string& sender) {
+            if (!validSender(sender)) return cb(jsonError(drogon::k400BadRequest, "not a bridge name"));
+            Json::Value v(Json::objectValue);
+            v["ok"]     = true;
+            v["update"] = g_service->update(sender);
+            cb(drogon::HttpResponse::newHttpJsonResponse(v));
+        },
+        {drogon::Get});
+
     std::cout << "Sleep Bridge: listening on ws://0.0.0.0:" << port << kRoute
               << (service->available() ? "" : " (not in this build: bridges are refused)")
               << std::endl;
@@ -161,15 +198,23 @@ void DeviceSocket::handleNewConnection(const drogon::HttpRequestPtr& req,
         return;
     }
     auto e  = std::make_shared<Entry>();
-    // Commands go down on the connection itself; send() is safe from any thread.
+    // Commands (text) and an update's image (binary) go down on the
+    // connection itself; send() is safe from any thread.
     std::weak_ptr<drogon::WebSocketConnection> weak = conn;
-    e->conv = g_service->open(req->attributes()->get<Admission>(kWhoAttr),
-                              [weak](const std::string& text) {
-                                  const auto c = weak.lock();
-                                  if (!c || !c->connected()) return false;
-                                  c->send(text, drogon::WebSocketMessageType::Text);
-                                  return true;
-                              });
+    e->conv = g_service->open(
+        req->attributes()->get<Admission>(kWhoAttr),
+        [weak](const std::string& text) {
+            const auto c = weak.lock();
+            if (!c || !c->connected()) return false;
+            c->send(text, drogon::WebSocketMessageType::Text);
+            return true;
+        },
+        [weak](const std::string& bytes) {
+            const auto c = weak.lock();
+            if (!c || !c->connected()) return false;
+            c->send(bytes, drogon::WebSocketMessageType::Binary);
+            return true;
+        });
     e->conn       = conn;
     e->last_heard = std::time(nullptr);
     conn->setPingMessage("", std::chrono::seconds(30));

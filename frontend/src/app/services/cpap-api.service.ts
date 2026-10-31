@@ -116,6 +116,18 @@ export class CpapApiService {
     return this.http.post('/api/airsense11/ble/pair/cancel', {});
   }
 
+  /** The Sleep Bridges streaming to this host (docs/SLEEP_BRIDGE_LOCAL_STREAM.md). */
+  getSleepBridges(): Observable<SleepBridgeStatus> {
+    return this.http.get<SleepBridgeStatus>('/api/sleepbridge');
+  }
+
+  /** A firmware image file to one bridge, sent over its own stream connection. */
+  uploadSleepBridgeImage(sender: string, file: File): Observable<any> {
+    const fd = new FormData();
+    fd.append('file', file, file.name);
+    return this.http.post(`/api/sleepbridge/${encodeURIComponent(sender)}/update`, fd);
+  }
+
   completeSetup(): Observable<any> {
     return this.http.post('/api/setup', {});
   }
@@ -464,4 +476,39 @@ export interface LogTail {
   total_lines?: number;
   truncated: boolean;
   error?: string;
+}
+
+/** A firmware update to a Sleep Bridge, as it runs (GET /api/sleepbridge, `update`). */
+export interface SleepBridgeUpdate {
+  req_id: number;
+  /** sending, waiting, restarting, done, failed */
+  phase: string;
+  running: boolean;
+  total: number;
+  sent: number;
+  image_version: string;
+  fw_before: string;
+  fw_after: string;
+  error: string;
+}
+
+export interface SleepBridge {
+  sender: string;
+  machine: string;
+  online: boolean;
+  last_heard: number;
+  last_batch: number;
+  /** What the bridge said it runs, in its last hello. */
+  fw_version: string;
+  /** The machine wrote to its card recently: no update now. */
+  night_open: boolean;
+  update: SleepBridgeUpdate | null;
+  card_machine: string;
+  card_format: string;
+}
+
+export interface SleepBridgeStatus {
+  available: boolean;
+  port: number;
+  bridges: SleepBridge[];
 }

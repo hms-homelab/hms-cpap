@@ -26,9 +26,11 @@ namespace hms_cpap::sleepbridge {
 // ── Binary frame header ─────────────────────────────────────────────────────
 
 inline constexpr size_t   kFrameHeaderSize = 12;
-inline constexpr uint16_t kKindLogText     = 4;   // not taken in local mode
+inline constexpr uint16_t kKindLogText     = 4;   // up: a command's log text
 inline constexpr uint16_t kKindRingFile    = 5;   // not taken in local mode
-inline constexpr uint16_t kKindSectorBatch = 7;
+inline constexpr uint16_t kKindSectorBatch = 7;   // up: one batch
+inline constexpr uint16_t kKindFirmware    = 8;   // down: a firmware image chunk (an update)
+inline constexpr size_t   kFirmwareChunk   = 4096;   // image bytes per kind 8 frame
 
 struct FrameHeader {
     uint32_t req_id{0};

@@ -170,6 +170,7 @@ set(TEST_SOURCES
     sleepbridge/test_SleepBridgeConversation.cpp
     sleepbridge/test_SleepBridgeRebuild.cpp
     sleepbridge/test_SleepBridgeCommands.cpp
+    sleepbridge/test_SleepBridgeUpdate.cpp
     # Empty unless BUILD_WITH_SLEEPBRIDGE linked the component.
     sleepbridge/test_SleepBridgeLinked.cpp
     # The Mule & Miner local stream: a fake unit through the receiver into
@@ -305,7 +306,7 @@ if(BUILD_WITH_WEB AND NOT WIN32)
         ${CMAKE_SOURCE_DIR}/src/services/As11StrWriter.cpp
         ${STR_LAYOUTS_SOURCE}
     )
-    target_link_libraries(ws_fragments_test Drogon::Drogon cpapdash_parser)
+    target_link_libraries(ws_fragments_test Drogon::Drogon cpapdash_parser OpenSSL::Crypto)
     if(BUILD_WITH_SLEEPBRIDGE)
         target_link_libraries(ws_fragments_test sleepbridge_component)
     endif()

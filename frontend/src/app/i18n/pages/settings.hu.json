@@ -85,6 +85,26 @@
       "errDisabled": "Először kapcsolja be, és mentsen.",
       "errGeneric": "A párosítás nem sikerült. Kezdje újra."
     },
+    "sleepbridge": {
+      "heading": "Sleep Bridge",
+      "desc": "Az ennek a gépnek a címére állított Sleep Bridge ide küldi, amit a készülék a kártyájára ír, és csatlakozáskor megjelenik alább. A firmware-e innen frissíthető, a hálózaton át, a készülék nyugalmi idejében.",
+      "none": "Még egy bridge sem csatlakozott. A bridge beállítási oldalán válassza a Saját hms-cpap lehetőséget, és adja meg ennek a gépnek az IP-címét vagy nevét.",
+      "badgeOnline": "{{n}} online",
+      "online": "online",
+      "offline": "offline",
+      "nightOpen": "éjszaka folyamatban",
+      "machine": "Készülék",
+      "lastWrite": "Utolsó írás",
+      "firmware": "Firmware",
+      "nightOpenHint": "A készülék az elmúlt 15 percben írt a kártyájára. A frissítések megvárják a nyugalmi idejét.",
+      "fileHint": "Küldjön egy meglévő firmware-képfájlt (.bin). Kiválasztáskor azonnal elindul, a bridge saját kapcsolatán át.",
+      "jobSending": "A kép küldése: {{pct}}%",
+      "jobWaiting": "A kép elment. Várakozás, amíg a bridge ellenőrzi...",
+      "jobRestarting": "A bridge átvette a képet, és újraindul. Várakozás a visszatérésére...",
+      "jobDone": "Kész. A bridge verziója: {{version}}.",
+      "jobFailed": "Nem frissült: {{error}}",
+      "errGeneric": "A frissítést nem sikerült elindítani."
+    },
     "sleephq": {
       "heading": "SleepHQ-szinkron",
       "desc": "Továbbítja a terápiás éjszakáit a SleepHQ-nak a nyilvános API-jukon keresztül. Az API-hitelesítőket a SleepHQ-ban, az Account → API menüpontban hozza létre.",
