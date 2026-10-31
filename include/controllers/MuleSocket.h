@@ -6,6 +6,12 @@
 //   ws://<host>:8894/mule/v1/device   the stream, on the Sleep Bridge's port
 //   GET  /api/mule                    the units and their commands, web port
 //   POST /api/mule/command            one command to one unit, web port
+//   GET  /api/mule/{serial}/firmware  its versions, the manifest's, the job
+//   POST /api/mule/{serial}/update    {"target"} from the manifest, or the
+//                                     image itself (raw or multipart) with
+//                                     ?target=mule|miner; refused while a
+//                                     night is open on the unit
+//   GET  /api/mule/{serial}/update    the update as it runs
 //
 // The stream port is the Sleep Bridge's listener; its port split lets this
 // route through there and nowhere else (addStreamRoute).
@@ -13,6 +19,7 @@
 // No authentication (local network only). A connection is admitted on its
 // X-Device-Serial header alone.
 //
+#include "mule/MuleFirmware.h"
 #include "mule/MuleService.h"
 
 #include <drogon/HttpFilter.h>
@@ -20,10 +27,11 @@
 
 namespace hms_cpap::mule {
 
-/// The status and command routes and the socket's hooks. Must precede
-/// app().run(), and the stream port must be listening (the Sleep Bridge's
-/// installRoutes). `service` outlives the app.
-void installRoutes(MuleService* service);
+/// The status, command and firmware routes and the socket's hooks. Must
+/// precede app().run(), and the stream port must be listening (the Sleep
+/// Bridge's installRoutes). `service` and `updater` outlive the app; without
+/// an updater the firmware routes answer 503.
+void installRoutes(MuleService* service, FirmwareUpdater* updater = nullptr);
 
 class AdmitFilter : public drogon::HttpFilter<AdmitFilter> {
 public:

@@ -173,3 +173,70 @@ and results. `POST /api/mule/command` sends one:
 Anything else is refused with 400; a unit never seen here gets 404. A command
 for a unit that is offline or busy waits for it. `reboot` and `reset` are
 never answered: the unit restarts.
+
+## Updating the unit's firmware
+
+A unit streaming here never hears from the cloud, so its firmware comes from
+here too, over your own network. The unit's own control server takes an
+image as a plain HTTP POST (the page at `http://<unit-ip>/api/update` does
+the same by hand):
+
+```
+POST http://<unit-ip>/api/update/mule    body: the mule image
+POST http://<unit-ip>/api/update/miner   body: the miner image
+```
+
+The unit's address is the peer of its stream connection, so nothing is
+configured. The mule restarts after its own image and comes back here with
+its new version in its hello; the miner's image goes through the mule, which
+flashes the miner and keeps its own connection. A 503 "Firmware update in
+progress" means the unit is already taking one.
+
+hms-cpap does this from Settings, "Mule & Miner": each unit's card shows the
+mule and miner versions it runs, "update available" when the published
+manifest has a newer one, and an Update button that sends the mule first,
+then the miner. The same card takes an image file you have, for the mule or
+the miner, when the manifest is out of reach or you built the image yourself.
+The published image is for the standard board; a unit built on another pin
+map takes its own file.
+
+**Only in the unit's downtime.** While a night is open on the unit (the
+machine is streaming, or the stream ended and the unit still holds blocks of
+it) the update is refused, and the job checks again right before each image
+goes. Nothing is queued: press the button again once the night has landed.
+
+The API behind the card:
+
+```
+GET  /api/mule/<serial>/firmware
+     {serial, online, ip, fw, miner_fw, night_open,
+      manifest: {url, error, read_at}, latest: {mule, miner},
+      update_available: {mule, miner}, job}
+POST /api/mule/<serial>/update
+     {"target": "mule" | "miner" | "both"}            from the manifest
+     multipart/form-data, a file + target=mule|miner  an image you have
+     <the image as the raw body>?target=mule|miner    the same, no form
+     202 {ok, job}; 409 a night open, the unit offline, an update already
+     running, or nothing newer; 502 the manifest out of reach; 404, 400
+GET  /api/mule/<serial>/update
+     {ok, job}: phase (downloading, sending, waiting, done, failed), step
+     (mule or miner), sent and total bytes, error, the versions before and
+     after, started, finished, log
+```
+
+With curl, an image file to the mule of one unit:
+
+```
+curl -X POST --data-binary @mule.bin \
+     "http://localhost:8893/api/mule/<serial>/update?target=mule"
+curl "http://localhost:8893/api/mule/<serial>/update"
+```
+
+Sending an image takes some tens of seconds (the unit writes it to flash as
+it arrives); hms-cpap allows five minutes, then two and a half for the mule
+to restart and reconnect before the miner's image goes.
+
+The manifest is `https://fw.cpapdash.com/public/latest.json`
+(`{"mule": {"version", "url"}, "miner": {...}}`), read over TLS from this
+host; `HMS_CPAP_MULE_MANIFEST_URL` points at another. When it cannot be read
+the card says so and the file path remains.

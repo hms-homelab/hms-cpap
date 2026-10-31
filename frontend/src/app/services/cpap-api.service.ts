@@ -116,6 +116,30 @@ export class CpapApiService {
     return this.http.post('/api/airsense11/ble/pair/cancel', {});
   }
 
+  /// The Mule & Miner units streaming to this host (docs/MULE_LOCAL_STREAM.md),
+  /// and their firmware: what each runs, what is published, and an update
+  /// sent to the unit over the local network.
+  getMuleUnits(): Observable<{ units: MuleUnit[] }> {
+    return this.http.get<{ units: MuleUnit[] }>('/api/mule');
+  }
+
+  getMuleFirmware(serial: string): Observable<MuleFirmware> {
+    return this.http.get<MuleFirmware>(`/api/mule/${encodeURIComponent(serial)}/firmware`);
+  }
+
+  /** From the published manifest: mule, miner or both. */
+  startMuleUpdate(serial: string, target: 'mule' | 'miner' | 'both'): Observable<any> {
+    return this.http.post(`/api/mule/${encodeURIComponent(serial)}/update`, { target });
+  }
+
+  /** An image file the owner has, for one of the two. */
+  uploadMuleImage(serial: string, target: 'mule' | 'miner', file: File): Observable<any> {
+    const form = new FormData();
+    form.append('target', target);
+    form.append('image', file, file.name);
+    return this.http.post(`/api/mule/${encodeURIComponent(serial)}/update`, form);
+  }
+
   completeSetup(): Observable<any> {
     return this.http.post('/api/setup', {});
   }
@@ -464,4 +488,56 @@ export interface LogTail {
   total_lines?: number;
   truncated: boolean;
   error?: string;
+}
+
+/** One Mule & Miner as GET /api/mule lists it. */
+export interface MuleUnit {
+  serial: string;
+  machine: string;
+  online: boolean;
+  streaming: boolean;
+  night_landing: boolean;
+  fw: string;
+  miner_fw: string;
+  ip: string;
+  last_heard: number;
+  last_block: number;
+  blocks_stored: number;
+}
+
+/** An update as it runs on one unit (GET /api/mule/{serial}/update). */
+export interface MuleUpdateJob {
+  target: string;
+  source: string;
+  /** queued, downloading, sending, waiting, done, failed */
+  phase: string;
+  /** mule or miner: the image in hand */
+  step: string;
+  sent: number;
+  total: number;
+  error: string;
+  fw_before: string;
+  miner_fw_before: string;
+  fw_after: string;
+  miner_fw_after: string;
+  started: number;
+  finished: number;
+  running: boolean;
+  log: string[];
+}
+
+/** GET /api/mule/{serial}/firmware. */
+export interface MuleFirmware {
+  serial: string;
+  known: boolean;
+  online: boolean;
+  ip: string;
+  fw: string;
+  miner_fw: string;
+  /** streaming, or streamed and not landed here yet: no update now */
+  night_open: boolean;
+  manifest: { url: string; error: string; read_at: number };
+  latest: { mule: string; miner: string };
+  update_available: { mule: boolean; miner: boolean };
+  job: MuleUpdateJob | null;
 }

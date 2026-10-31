@@ -107,8 +107,22 @@ public:
 
     const Options& options() const { return opt_; }
 
-    /// An admitted upgrade: its connection id. `out` sends on it.
-    uint64_t open(const std::string& serial, Outlet out);
+    /// An admitted upgrade: its connection id. `out` sends on it; `peer_ip`
+    /// is the socket's peer address, which is where the unit's own control
+    /// server (http://<peer_ip>/) answers.
+    uint64_t open(const std::string& serial, Outlet out, const std::string& peer_ip = {});
+
+    /// What a firmware update needs to know about a unit, from its session.
+    struct Brief {
+        bool        known{false};
+        bool        online{false};
+        bool        night_open{false};   // streaming, or a night still landing
+        std::string ip;                  // the peer of its live session
+        std::string fw, miner_fw, machine;
+        uint64_t    hellos{0};           // sessions begun: rises when the unit comes back
+        std::time_t last_heard{0};
+    };
+    Brief brief(const std::string& serial) const;
     void onText(uint64_t conn, const std::string& frame);
     void onBinary(uint64_t conn, const std::string& frame);
     void closed(uint64_t conn);
@@ -154,6 +168,8 @@ private:
         std::time_t first_seen{0}, last_heard{0}, last_block{0};
         uint64_t    blocks_stored{0}, blocks_resent{0}, events{0};
         std::string fw, miner_fw, mode, boot_reason;
+        std::string ip;                  // the live session's peer
+        uint64_t    hellos{0};
         Json::Value state{Json::objectValue};
         std::vector<Command> commands;   // oldest first
         std::vector<Json::Value> pending_events;   // before a block named the machine
@@ -163,6 +179,7 @@ private:
     struct Conn {
         std::string serial;
         Outlet      out;
+        std::string ip;
         bool        session{false};      // its own hello came: not a test
     };
 

@@ -177,6 +177,8 @@ set(TEST_SOURCES
     # The Mule & Miner local stream: a fake unit through the receiver into
     # the AirSense 11 night writer.
     mule/test_MuleReceiver.cpp
+    # Its firmware updates over the LAN: a fake unit endpoint and manifest.
+    mule/test_MuleFirmware.cpp
 )
 
 # The supervisor's Qt-free core, compiled straight into run_tests. These files
