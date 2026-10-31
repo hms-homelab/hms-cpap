@@ -111,7 +111,13 @@
       "jobWaiting": "The mule took its image and is restarting. Waiting for it to come back...",
       "jobDone": "Done. Mule {{mule}}, miner {{miner}}.",
       "jobFailed": "Not updated: {{error}}",
-      "errGeneric": "The update could not be started."
+      "errGeneric": "The update could not be started.",
+      "as11Bluetooth": "AirSense 11 Bluetooth",
+      "o2Ring": "O2 ring",
+      "switchQueued": "waiting for the unit",
+      "switchSent": "sent, waiting for the answer",
+      "switchAnswered": "taken; the miner is restarting with it",
+      "switchRefused": "refused: {{error}}"
     },
     "sleephq": {
       "heading": "SleepHQ Sync",

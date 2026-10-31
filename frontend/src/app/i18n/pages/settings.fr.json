@@ -111,7 +111,13 @@
       "jobWaiting": "Le mule a pris son image et redémarre. En attente de son retour...",
       "jobDone": "Terminé. Mule {{mule}}, miner {{miner}}.",
       "jobFailed": "Non mis à jour : {{error}}",
-      "errGeneric": "La mise à jour n'a pas pu démarrer."
+      "errGeneric": "La mise à jour n'a pas pu démarrer.",
+      "as11Bluetooth": "Bluetooth de l'AirSense 11",
+      "o2Ring": "Bague O2",
+      "switchQueued": "en attente de l'unité",
+      "switchSent": "envoyé, en attente de la réponse",
+      "switchAnswered": "pris en compte ; le miner redémarre avec",
+      "switchRefused": "refusé : {{error}}"
     },
     "sleephq": {
       "heading": "Synchronisation SleepHQ",

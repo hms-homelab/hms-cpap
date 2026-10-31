@@ -111,7 +111,13 @@
       "jobWaiting": "O mule recebeu a imagem e está reiniciando. Esperando ele voltar...",
       "jobDone": "Pronto. Mule {{mule}}, miner {{miner}}.",
       "jobFailed": "Não atualizado: {{error}}",
-      "errGeneric": "A atualização não pôde ser iniciada."
+      "errGeneric": "A atualização não pôde ser iniciada.",
+      "as11Bluetooth": "Bluetooth do AirSense 11",
+      "o2Ring": "Anel O2",
+      "switchQueued": "aguardando a unidade",
+      "switchSent": "enviado, aguardando a resposta",
+      "switchAnswered": "aceito; o miner está reiniciando com isso",
+      "switchRefused": "recusado: {{error}}"
     },
     "sleephq": {
       "heading": "Sincronização com o SleepHQ",
