@@ -10,6 +10,7 @@ const char* resultCode(as11::Result r) {
     case as11::Result::WaitCode:  return "wait_code";
     case as11::Result::NotPaired: return "not_paired";
     case as11::Result::Connect:   return "connect";
+    case as11::Result::RadioOff:  return "radio_off";
     case as11::Result::Verify:    return "verify";
     case as11::Result::Protocol:  return "protocol";
     case as11::Result::Spool:     return "spool";

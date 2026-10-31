@@ -83,7 +83,8 @@
       "errBadCode": "Saisissez les chiffres affichés sur l'écran de l'appareil.",
       "errNoPairing": "La fenêtre d'appairage s'est fermée. Recommencez.",
       "errDisabled": "Activez cette option et enregistrez d'abord.",
-      "errGeneric": "L'appairage a échoué. Recommencez."
+      "errGeneric": "L'appairage a échoué. Recommencez.",
+      "errRadioOff": "Le Bluetooth est désactivé sur cet ordinateur (rf-kill). Activez-le, ou lancez rfkill unblock bluetooth, puis réessayez."
     },
     "sleephq": {
       "heading": "Synchronisation SleepHQ",

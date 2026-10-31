@@ -55,6 +55,7 @@ enum class Result {
     WaitCode,      // pairStart: the machine shows its code now
     NotPaired,     // no credentials: pair first
     Connect,       // the link went away (or never came)
+    RadioOff,      // the host's own Bluetooth is off and rf-kill holds it off
     Verify,        // the machine refused the code or the credentials
     Protocol,      // no reply in time, or a reply that did not parse
     Spool,         // a fragment lost, undecodable, or the spool stalled

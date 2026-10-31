@@ -23,8 +23,10 @@ namespace hms_cpap::as11api {
  *        {ok, state: "cancelled"}
  *
  * `result` is a stable code the page translates (ok, wait_code, not_paired,
- * connect, verify, protocol, spool, not_compiled, disabled, no_pairing,
- * bad_code); `error` is the English detail, for the log.
+ * connect, radio_off, verify, protocol, spool, not_compiled, disabled,
+ * no_pairing, bad_code); `error` is the English detail, for the log.
+ * radio_off is the host's own Bluetooth held off by rf-kill, which is not
+ * the machine being out of range.
  */
 struct Reply {
     int status = 200;

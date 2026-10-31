@@ -121,6 +121,7 @@ set(TEST_SOURCES
     services/test_O2RingCsvWriter.cpp
     clients/test_O2RingClient.cpp
     clients/test_O2RingBleProtocol.cpp
+    clients/test_BlueZAdapter.cpp
     clients/test_OxyIIProtocol.cpp
     clients/test_As11Protocol.cpp
     clients/test_As11Session.cpp

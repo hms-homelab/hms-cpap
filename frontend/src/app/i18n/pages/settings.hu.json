@@ -83,7 +83,8 @@
       "errBadCode": "Írja be a készülék kijelzőjén látható számjegyeket.",
       "errNoPairing": "A párosítási ablak bezárult. Kezdje újra.",
       "errDisabled": "Először kapcsolja be, és mentsen.",
-      "errGeneric": "A párosítás nem sikerült. Kezdje újra."
+      "errGeneric": "A párosítás nem sikerült. Kezdje újra.",
+      "errRadioOff": "A Bluetooth ki van kapcsolva ezen a számítógépen (rf-kill). Kapcsolja be, vagy futtassa az rfkill unblock bluetooth parancsot, és próbálja újra."
     },
     "sleephq": {
       "heading": "SleepHQ-szinkron",

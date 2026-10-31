@@ -94,6 +94,13 @@ private:
 
     std::string device_path_;
     std::string device_name_;
+    // The machine's own name, as seen when it was paired in this process. A
+    // device object BlueZ has cached under another name is not reused: the
+    // first pull after a pairing once connected to a stale one and hung.
+    std::string machine_name_;
+    // Set when a pairing ends: the next scan ignores what BlueZ has cached
+    // and finds the machine by its advertisement.
+    bool rediscover_ = false;
     std::string write_char_path_;
     std::string notify_char_path_;
     size_t write_chunk_ = 20;
@@ -105,6 +112,9 @@ private:
     mutable std::mutex op_mtx_;   // one operation on the machine at a time
     mutable std::mutex err_mtx_;
     std::string last_error_;
+    // Why connectLink last failed: Connect (the machine), or RadioOff (this
+    // computer's Bluetooth is held off by rf-kill). Under op_mtx_.
+    as11::Result link_failure_ = as11::Result::Connect;
 
     bool findAdapter();
     bool scan(int timeout_ms);

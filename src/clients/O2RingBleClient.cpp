@@ -1,5 +1,6 @@
 #ifdef WITH_BLE
 
+#include "clients/BlueZAdapter.h"
 #include "clients/O2RingBleClient.h"
 #include "clients/OxyIIProtocol.h"
 #include <nlohmann/json.hpp>
@@ -197,6 +198,11 @@ bool O2RingBleClient::scan(int timeout_ms) {
     if (adapter_path_.empty() || !conn_) return false;
     device_path_.clear();
 
+    // The computer's own radio first: an adapter that is off cannot discover,
+    // and BlueZ's NotReady would read as the ring being away.
+    if (bluez::ensurePowered(*conn_, adapter_path_, "O2Ring BLE: ").power != bluez::Power::Ready)
+        return false;
+
     // Check already-known devices
     try {
         auto proxy = sdbus::createProxy(*conn_, BLUEZ, ROOT);
@@ -225,7 +231,7 @@ bool O2RingBleClient::scan(int timeout_ms) {
     // Start discovery
     auto adapter = sdbus::createProxy(*conn_, BLUEZ, sdbus::ObjectPath{adapter_path_});
     try {
-        adapter->callMethod("StartDiscovery").onInterface("org.bluez.Adapter1");
+        adapter->callMethod("StartDiscovery").onInterface("org.bluez.Adapter1").withTimeout(bluez::kCallTimeout);
     } catch (const std::exception& e) {
         std::cerr << "O2Ring BLE: StartDiscovery failed: " << e.what() << std::endl;
         return false;
@@ -262,7 +268,7 @@ bool O2RingBleClient::scan(int timeout_ms) {
     }
 
     try {
-        adapter->callMethod("StopDiscovery").onInterface("org.bluez.Adapter1");
+        adapter->callMethod("StopDiscovery").onInterface("org.bluez.Adapter1").withTimeout(bluez::kCallTimeout);
     } catch (...) {}
 
     return !device_path_.empty();
@@ -279,14 +285,16 @@ bool O2RingBleClient::connect(int timeout_ms) {
     bool connect_ok = false;
     for (int attempt = 0; attempt < 3; attempt++) {
         try {
-            device->callMethod("Connect").onInterface("org.bluez.Device1");
+            device->callMethod("Connect").onInterface("org.bluez.Device1").withTimeout(bluez::kConnectTimeout);
             connect_ok = true;
             break;
         } catch (const std::exception& e) {
             std::cerr << "O2Ring BLE: Connect attempt " << (attempt + 1) << "/3 failed: "
                       << e.what() << std::endl;
             // Disconnect cleanly before retry
-            try { device->callMethod("Disconnect").onInterface("org.bluez.Device1"); } catch (...) {}
+            try {
+                device->callMethod("Disconnect").onInterface("org.bluez.Device1").withTimeout(bluez::kCallTimeout);
+            } catch (...) {}
             std::this_thread::sleep_for(std::chrono::milliseconds(2000));
         }
     }
@@ -297,8 +305,12 @@ bool O2RingBleClient::connect(int timeout_ms) {
     while (std::chrono::steady_clock::now() < deadline) {
         std::this_thread::sleep_for(std::chrono::milliseconds(500));
         try {
-            sdbus::Variant resolved = device->getProperty("ServicesResolved")
-                .onInterface("org.bluez.Device1");
+            sdbus::Variant resolved;
+            device->callMethod("Get")
+                .onInterface("org.freedesktop.DBus.Properties")
+                .withTimeout(bluez::kCallTimeout)
+                .withArguments(std::string("org.bluez.Device1"), std::string("ServicesResolved"))
+                .storeResultsTo(resolved);
             if (resolved.get<bool>()) {
                 connected_ = true;
                 oxy_session_ = false;
@@ -318,7 +330,7 @@ void O2RingBleClient::disconnect() {
     if (device_path_.empty() || !conn_) return;
     try {
         auto device = sdbus::createProxy(*conn_, BLUEZ, sdbus::ObjectPath{device_path_});
-        device->callMethod("Disconnect").onInterface("org.bluez.Device1");
+        device->callMethod("Disconnect").onInterface("org.bluez.Device1").withTimeout(bluez::kCallTimeout);
     } catch (...) {}
     connected_ = false;
     oxy_session_ = false;
@@ -409,7 +421,8 @@ bool O2RingBleClient::enableNotifications() {
                 }
             });
         notify_proxy_->callMethod("StartNotify")
-            .onInterface("org.bluez.GattCharacteristic1");
+            .onInterface("org.bluez.GattCharacteristic1")
+            .withTimeout(bluez::kCallTimeout);
 
         std::cout << "O2Ring BLE: Notifications enabled" << std::endl;
         return true;
@@ -434,8 +447,12 @@ void O2RingBleClient::writeCharacteristic(const std::vector<uint8_t>& data) {
         std::map<std::string, sdbus::Variant> options;
         options["type"] = sdbus::Variant{"command"};
 
+        // A piece the ring never acknowledges fails the write after
+        // kCallTimeout; the caller's catch reports it instead of waiting
+        // on sd-bus's own, much longer, default.
         proxy->callMethod("WriteValue")
             .onInterface("org.bluez.GattCharacteristic1")
+            .withTimeout(bluez::kCallTimeout)
             .withArguments(chunk, options);
 
         if (end < data.size())
