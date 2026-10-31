@@ -713,24 +713,36 @@ CommandAnswer MuleService::queueCommand(const std::string& serial, const Json::V
     const std::string cmd = req["cmd"].asString();
     const auto& known     = localCommands();
     if (std::find(known.begin(), known.end(), cmd) == known.end())
-        return refuse(400, "a Mule & Miner takes config (hms_url, hms_port), reboot, logs, restate, reset, "
-                           "as11_pair or as11_download from hms-cpap, not \"" + cmd + "\"");
+        return refuse(400, "a Mule & Miner takes config (hms_url, hms_port, as11_enabled, o2_enabled), reboot, "
+                           "logs, restate, reset, as11_pair or as11_download from hms-cpap, not \"" + cmd + "\"");
 
     Json::Value f(Json::objectValue);
     if (cmd == "config") {
-        // hms_url, hms_port, one or both, and no other key: "" sends the unit
-        // back to the cloud; the port alone changes only the port of the
+        // The stream's target: hms_url, hms_port, one or both. "" sends the
+        // unit back to the cloud; the port alone changes only the port of the
         // hms-cpap the unit already points at (8894 when never set).
+        // The two Bluetooth switches: as11_enabled (the machine's own
+        // Bluetooth mode) and o2_enabled (the O2 ring), booleans, each one on
+        // its own. The unit relays either to the miner, which stores it and
+        // restarts; the unit's next state shows what applied.
+        static const std::vector<std::string> keys = {"hms_url", "hms_port", "as11_enabled", "o2_enabled"};
         Json::Value cfg = req["config"].isObject() ? req["config"] : Json::Value(Json::objectValue);
-        if (!req["config"].isObject()) {
-            if (req.isMember("hms_url")) cfg["hms_url"] = req["hms_url"];
-            if (req.isMember("hms_port")) cfg["hms_port"] = req["hms_port"];
-        }
+        if (!req["config"].isObject())
+            for (const auto& k : keys)
+                if (req.isMember(k)) cfg[k] = req[k];
         for (const auto& k : cfg.getMemberNames())
-            if (k != "hms_url" && k != "hms_port")
-                return refuse(400, "config takes {\"hms_url\": address, \"hms_port\": port}, one or both, "
-                                   "and no other key");
-        if (cfg.empty()) return refuse(400, "config takes hms_url, hms_port or both");
+            if (std::find(keys.begin(), keys.end(), k) == keys.end())
+                return refuse(400, "config takes {\"hms_url\": address, \"hms_port\": port} (one or both), "
+                                   "{\"as11_enabled\": true|false} or {\"o2_enabled\": true|false}, and no other key");
+        if (cfg.empty()) return refuse(400, "config takes hms_url, hms_port or both; or as11_enabled; or o2_enabled");
+        const bool target = cfg.isMember("hms_url") || cfg.isMember("hms_port");
+        const bool as11   = cfg.isMember("as11_enabled");
+        const bool o2     = cfg.isMember("o2_enabled");
+        if ((target ? 1 : 0) + (as11 ? 1 : 0) + (o2 ? 1 : 0) > 1)
+            return refuse(400, "config sets one thing at a time: the target (hms_url, hms_port), as11_enabled, "
+                               "or o2_enabled");
+        if (as11 && !cfg["as11_enabled"].isBool()) return refuse(400, "as11_enabled is true or false");
+        if (o2 && !cfg["o2_enabled"].isBool()) return refuse(400, "o2_enabled is true or false");
         if (cfg.isMember("hms_url") && (!cfg["hms_url"].isString() || !validUnitHost(cfg["hms_url"].asString())))
             return refuse(400, "hms_url is an IP address or hostname only (e.g. 192.168.1.20), with "
                                "no scheme, port or path; \"\" for the cloud. The port is hms_port");

@@ -4,7 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { TranslatePipe, TranslateService } from '@ngx-translate/core';
 import { Subject, Subscription, timer } from 'rxjs';
 import { switchMap, takeUntil, takeWhile, tap } from 'rxjs/operators';
-import { CpapApiService, UpdateStatus, MuleUnit, MuleFirmware, MuleUpdateJob } from '../../services/cpap-api.service';
+import { CpapApiService, UpdateStatus, MuleUnit, MuleCommand, MuleFirmware, MuleUpdateJob } from '../../services/cpap-api.service';
 import { UpdateFlowService } from '../../services/update-flow.service';
 import { AppConfig } from '../../models/config.model';
 
@@ -299,6 +299,25 @@ import { AppConfig } from '../../models/config.model';
                   </span>
                   <span class="hint inline" *ngIf="f.manifest.error">{{ 'settings.mule.manifestUnavailable' | translate }}</span>
                 </ng-container>
+              </div>
+              <!-- The unit's two Bluetooth switches, as its last state reports
+                   them. A click posts a config command; the unit relays it to
+                   the miner, which restarts, and the next state shows it. -->
+              <div class="mule-line mule-switches" *ngIf="u.state">
+                <label class="mule-switch" *ngIf="u.state.as11?.enabled !== undefined">
+                  <input type="checkbox" [checked]="u.state.as11?.enabled"
+                         [disabled]="!u.online || muleBusy[u.serial] || muleSwitchPending(u, 'as11_enabled')"
+                         (change)="muleSwitch(u.serial, 'as11_enabled', $any($event.target).checked)" />
+                  {{ 'settings.mule.as11Bluetooth' | translate }}
+                  <span class="hint inline" *ngIf="muleSwitchState(u, 'as11_enabled') as s">{{ s }}</span>
+                </label>
+                <label class="mule-switch" *ngIf="u.state.o2_enabled !== undefined">
+                  <input type="checkbox" [checked]="u.state.o2_enabled"
+                         [disabled]="!u.online || muleBusy[u.serial] || muleSwitchPending(u, 'o2_enabled')"
+                         (change)="muleSwitch(u.serial, 'o2_enabled', $any($event.target).checked)" />
+                  {{ 'settings.mule.o2Ring' | translate }}
+                  <span class="hint inline" *ngIf="muleSwitchState(u, 'o2_enabled') as s">{{ s }}</span>
+                </label>
               </div>
               <ng-container *ngIf="muleFw[u.serial] as f">
                 <div class="hint" *ngIf="f.night_open">{{ 'settings.mule.nightOpen' | translate }}</div>
@@ -1117,6 +1136,9 @@ import { AppConfig } from '../../models/config.model';
     .mule-line { color: #ddd; font-size: 0.85rem; margin: 0.2rem 0; }
     .mule-label { color: #888; margin-right: 0.3rem; }
     .mule-avail { color: #fbbf24; margin-left: 0.5rem; }
+    .mule-switches { display: flex; gap: 1.2rem; flex-wrap: wrap; }
+    .mule-switch { display: flex; align-items: center; gap: 0.4rem; cursor: pointer; }
+    .mule-switch input { margin: 0; }
     .hint.inline { display: inline; margin-left: 0.5rem; }
     .mule-actions { display: flex; align-items: center; gap: 0.8rem; flex-wrap: wrap; margin-top: 0.5rem; }
     .mule-file { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; font-size: 0.8rem; }
@@ -1447,6 +1469,48 @@ export class SettingsComponent implements OnInit, OnDestroy {
 
   muleOnline(): number {
     return this.muleUnits.filter((u) => u.online).length;
+  }
+
+  // ── the unit's Bluetooth switches ──
+
+  /** The newest config command that set this switch, if any. */
+  private muleSwitchCommand(u: MuleUnit, key: 'as11_enabled' | 'o2_enabled'): MuleCommand | null {
+    for (const c of u.commands ?? [])
+      if (c.cmd === 'config' && c.args?.['config']?.[key] !== undefined) return c;
+    return null;
+  }
+
+  /** True while a switch is queued or sent and not answered yet. */
+  muleSwitchPending(u: MuleUnit, key: 'as11_enabled' | 'o2_enabled'): boolean {
+    const c = this.muleSwitchCommand(u, key);
+    return !!c && c.state !== 'answered';
+  }
+
+  /**
+   * The switch's last command as text: pending (queued or sent), answered,
+   * or refused with the unit's reason. Nothing once the unit's state shows
+   * what was asked.
+   */
+  muleSwitchState(u: MuleUnit, key: 'as11_enabled' | 'o2_enabled'): string {
+    const c = this.muleSwitchCommand(u, key);
+    if (!c) return '';
+    const asked = c.args['config'][key] as boolean;
+    if (c.state === 'queued') return this.t.instant('settings.mule.switchQueued');
+    if (c.state === 'sent') return this.t.instant('settings.mule.switchSent');
+    if (c.result && c.result.ok === false)
+      return this.t.instant('settings.mule.switchRefused', { error: c.result.error || '' });
+    const now = key === 'as11_enabled' ? u.state?.as11?.enabled : u.state?.o2_enabled;
+    return now === asked ? '' : this.t.instant('settings.mule.switchAnswered');
+  }
+
+  /** One switch, as the unit's own config takes it: {"as11_enabled": B} or {"o2_enabled": B}. */
+  muleSwitch(serial: string, key: 'as11_enabled' | 'o2_enabled', on: boolean): void {
+    this.muleBusy[serial] = true;
+    this.muleMessage[serial] = '';
+    this.api.sendMuleCommand(serial, 'config', { config: { [key]: on } }).subscribe({
+      next: () => { this.muleBusy[serial] = false; this.loadMule(); },
+      error: (e) => { this.muleBusy[serial] = false; this.muleMessage[serial] = this.muleError(e); this.loadMule(); },
+    });
   }
 
   /** The update from the manifest: the mule first, then the miner. */

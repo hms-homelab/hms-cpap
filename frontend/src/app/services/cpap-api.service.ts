@@ -127,6 +127,15 @@ export class CpapApiService {
     return this.http.get<MuleFirmware>(`/api/mule/${encodeURIComponent(serial)}/firmware`);
   }
 
+  /**
+   * One command to one unit (POST /api/mule/command). Sent at once when the
+   * unit is online and idle, else when it is; the answer shows in the unit's
+   * commands under its req_id.
+   */
+  sendMuleCommand(serial: string, cmd: string, args: Record<string, any> = {}): Observable<any> {
+    return this.http.post('/api/mule/command', { serial, cmd, ...args });
+  }
+
   /** From the published manifest: mule, miner or both. */
   startMuleUpdate(serial: string, target: 'mule' | 'miner' | 'both'): Observable<any> {
     return this.http.post(`/api/mule/${encodeURIComponent(serial)}/update`, { target });
@@ -503,6 +512,32 @@ export interface MuleUnit {
   last_heard: number;
   last_block: number;
   blocks_stored: number;
+  /** The unit's last state frame, as it sent it. */
+  state?: MuleState;
+  /** Its recent commands, newest first. */
+  commands?: MuleCommand[];
+}
+
+/** What a unit reports of itself that the page shows. */
+export interface MuleState {
+  /** The O2 ring's Bluetooth, on the miner. */
+  o2_enabled?: boolean;
+  /** The machine's own Bluetooth mode, on the miner. */
+  as11?: { enabled?: boolean; paired?: boolean; streaming?: boolean };
+}
+
+/** One command as GET /api/mule lists it. */
+export interface MuleCommand {
+  req_id: number;
+  cmd: string;
+  args: Record<string, any>;
+  automatic: boolean;
+  /** queued (unit offline or busy), sent, answered */
+  state: string;
+  queued_at: number;
+  sent_at: number;
+  answered_at: number;
+  result: any;
 }
 
 /** An update as it runs on one unit (GET /api/mule/{serial}/update). */

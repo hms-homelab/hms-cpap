@@ -162,7 +162,7 @@ and results. `POST /api/mule/command` sends one:
 
 | cmd | arguments |
 |---|---|
-| `config` | `{"config": {"hms_url": "<address>", "hms_port": N}}` or `{"hms_url": ..., "hms_port": N}`: one or both, no other key. `hms_url` is an IP address or hostname only, `""` sends the unit back to the cloud; `hms_port` is 1 to 65535 (8894 when never set) and alone changes only the port of the hms-cpap the unit already points at. The unit tests the new target before it keeps it, and answers on the connection it comes back on |
+| `config` | One thing at a time, as `{"config": {...}}` or as top-level keys. The target: `{"hms_url": "<address>", "hms_port": N}`, one or both. `hms_url` is an IP address or hostname only, `""` sends the unit back to the cloud; `hms_port` is 1 to 65535 (8894 when never set) and alone changes only the port of the hms-cpap the unit already points at. The unit tests the new target before it keeps it, and answers on the connection it comes back on. The machine's Bluetooth mode: `{"as11_enabled": true|false}`. The O2 ring's Bluetooth: `{"o2_enabled": true|false}`. Either switch goes to the miner, which stores it and restarts; the unit's next state (`state.as11.enabled`, `state.o2_enabled`) shows what applied. The unit must run a firmware that takes these two keys from hms-cpap; an older one answers `only hms_url can be set from hms-cpap` |
 | `reboot` | `target`: `mule`, `miner` or `both` (optional) |
 | `logs` | `n`: 1 to 5000 lines (default 200) |
 | `restate` | none: the unit sends its full state again |

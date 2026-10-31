@@ -94,6 +94,7 @@ public:
         Json::Value s(Json::objectValue);
         s["tz"]                     = kTz;
         s["as11"]["enabled"]        = true;
+        s["o2_enabled"]             = true;
         s["as11"]["paired"]         = true;
         s["as11"]["streaming"]      = streaming;
         s["as11"]["stream_buffered"] = buffered;
@@ -720,6 +721,12 @@ TEST_F(MuleReceiverTest, OnlyTheAllowedCommandsAndArgumentsAreTaken) {
     EXPECT_EQ(status(R"({"cmd":"config","hms_port":70000})"), 400);
     EXPECT_EQ(status(R"({"cmd":"config","hms_port":"8894"})"), 400);
     EXPECT_EQ(status(R"({"cmd":"config","config":{}})"), 400);
+    // The two Bluetooth switches: booleans, one at a time, never with the target.
+    EXPECT_EQ(status(R"({"cmd":"config","config":{"as11_enabled":"yes"}})"), 400);
+    EXPECT_EQ(status(R"({"cmd":"config","o2_enabled":1})"), 400);
+    EXPECT_EQ(status(R"({"cmd":"config","as11_enabled":true,"o2_enabled":false})"), 400);
+    EXPECT_EQ(status(R"({"cmd":"config","config":{"hms_url":"192.168.1.20","as11_enabled":true}})"), 400);
+    EXPECT_EQ(status(R"({"cmd":"config","config":{"as11_block_s":10}})"), 400);
     EXPECT_EQ(status(R"({"cmd":"reboot","target":"everything"})"), 400);
     EXPECT_EQ(status(R"({"cmd":"logs","n":0})"), 400);
     EXPECT_EQ(status(R"({"cmd":"as11_pair","code":"12a4"})"), 400);
@@ -737,6 +744,50 @@ TEST_F(MuleReceiverTest, OnlyTheAllowedCommandsAndArgumentsAreTaken) {
     unit.answer(unit.of("cmd").back()["req_id"].asUInt64(), true);
     EXPECT_EQ(status(R"({"cmd":"config","config":{"hms_port":8894}})"), 200);
     EXPECT_EQ(compact(unit.of("cmd").back()["config"]), R"({"hms_port":8894})");
+}
+
+TEST_F(MuleReceiverTest, TheBluetoothSwitchesGoDownAsTheUnitsOwnConfigAndItsStateShowsThem) {
+    FakeUnit unit(*svc_);
+    unit.hello();
+    // The hello's state carries both switches as the unit holds them.
+    EXPECT_TRUE(unitStatus()["state"]["as11"]["enabled"].asBool());
+    EXPECT_TRUE(unitStatus()["state"]["o2_enabled"].asBool());
+
+    // Top-level or under config, the frame is the unit's own shape: one key.
+    auto status = [&](const std::string& json) { return svc_->queueCommand(kUnit, parse(json)).status; };
+    EXPECT_EQ(status(R"({"cmd":"config","as11_enabled":false})"), 200);
+    const auto a = unit.of("cmd").back();
+    EXPECT_EQ(a["cmd"].asString(), "config");
+    EXPECT_EQ(compact(a["config"]), R"({"as11_enabled":false})");
+    EXPECT_EQ(unitStatus()["commands"][0]["state"].asString(), "sent");
+    unit.answer(a["req_id"].asUInt64(), true);
+    EXPECT_EQ(unitStatus()["commands"][0]["state"].asString(), "answered");
+
+    EXPECT_EQ(status(R"({"cmd":"config","config":{"o2_enabled":false}})"), 200);
+    const auto b = unit.of("cmd").back();
+    EXPECT_EQ(compact(b["config"]), R"({"o2_enabled":false})");
+    // An older firmware refuses the key; the refusal comes back as sent.
+    Json::Value no(Json::objectValue);
+    no["t"]      = "result";
+    no["req_id"] = b["req_id"];
+    no["ok"]     = false;
+    no["error"]  = "only hms_url can be set from hms-cpap";
+    unit.text(no);
+    EXPECT_EQ(unitStatus()["commands"][0]["state"].asString(), "answered");
+    EXPECT_FALSE(unitStatus()["commands"][0]["result"]["ok"].asBool());
+    EXPECT_EQ(unitStatus()["commands"][0]["result"]["error"].asString(), "only hms_url can be set from hms-cpap");
+
+    // The miner restarts with a taken switch; the unit's next state shows it.
+    Json::Value s = FakeUnit::state(false, 0);
+    s["as11"]["enabled"] = false;
+    s["o2_enabled"]      = false;
+    Json::Value f(Json::objectValue);
+    f["t"]      = "state";
+    f["state"]  = s;
+    f["result"] = Json::nullValue;
+    unit.text(f);
+    EXPECT_FALSE(unitStatus()["state"]["as11"]["enabled"].asBool());
+    EXPECT_FALSE(unitStatus()["state"]["o2_enabled"].asBool());
 }
 
 // ── the wire's pieces ──

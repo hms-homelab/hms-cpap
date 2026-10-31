@@ -110,7 +110,13 @@
       "jobWaiting": "A mule megkapta a képet és újraindul. Várakozás a visszatérésére...",
       "jobDone": "Kész. Mule {{mule}}, miner {{miner}}.",
       "jobFailed": "Nem frissült: {{error}}",
-      "errGeneric": "A frissítést nem sikerült elindítani."
+      "errGeneric": "A frissítést nem sikerült elindítani.",
+      "as11Bluetooth": "AirSense 11 Bluetooth",
+      "o2Ring": "O2 gyűrű",
+      "switchQueued": "várakozás az egységre",
+      "switchSent": "elküldve, válaszra vár",
+      "switchAnswered": "elfogadva; a miner ezzel indul újra",
+      "switchRefused": "elutasítva: {{error}}"
     },
     "sleephq": {
       "heading": "SleepHQ-szinkron",
