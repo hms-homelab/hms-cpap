@@ -236,6 +236,17 @@ struct AppConfig {
         int pull_hours = 6;             // how often the summary is asked for
     } airsense11;
 
+    // An AirSense 11 read over its own Bluetooth by this host directly, no
+    // bridge (SDD-057). Needs a build with BUILD_WITH_BLE and a Bluetooth
+    // adapter. The pairing is made once from Settings and kept in
+    // <data_dir>/as11.json, never here. The summary is pulled every
+    // airsense11.pull_hours. With this on, the bridge client is not used: the
+    // machine holds one pairing at a time.
+    struct AirSense11Ble {
+        bool enabled = false;
+        std::string address;            // empty: the first AirSense 11 the scan finds
+    } airsense11_ble;
+
     // Sleep Stage Inference (optional)
     struct SleepStage {
         bool enabled = false;
@@ -673,6 +684,12 @@ struct AppConfig {
                 if (a.contains("pull_hours"))           config.airsense11.pull_hours = a["pull_hours"];
             }
 
+            if (j.contains("airsense11_ble")) {
+                auto& b = j["airsense11_ble"];
+                if (b.contains("enabled"))              config.airsense11_ble.enabled = b["enabled"];
+                if (b.contains("address"))              config.airsense11_ble.address = b["address"];
+            }
+
             if (j.contains("sleep_stage")) {
                 auto& ss = j["sleep_stage"];
                 if (ss.contains("enabled"))        config.sleep_stage.enabled = ss["enabled"];
@@ -796,6 +813,9 @@ struct AppConfig {
             j["airsense11"]["enabled"] = airsense11.enabled;
             j["airsense11"]["mule_url"] = airsense11.mule_url;
             j["airsense11"]["pull_hours"] = airsense11.pull_hours;
+
+            j["airsense11_ble"]["enabled"] = airsense11_ble.enabled;
+            j["airsense11_ble"]["address"] = airsense11_ble.address;
 
             j["sleep_stage"]["enabled"] = sleep_stage.enabled;
             j["sleep_stage"]["live_inference"] = sleep_stage.live_inference;
@@ -921,6 +941,15 @@ struct AppConfig {
         j["o2ring"]["enabled"] = o2ring.enabled;
         j["o2ring"]["mode"] = o2ring.mode;
         j["o2ring"]["mule_url"] = o2ring.mule_url;
+
+        // airsense11 was missing here although save() persists it; every
+        // persisted key belongs in both serialisers.
+        j["airsense11"]["enabled"] = airsense11.enabled;
+        j["airsense11"]["mule_url"] = airsense11.mule_url;
+        j["airsense11"]["pull_hours"] = airsense11.pull_hours;
+
+        j["airsense11_ble"]["enabled"] = airsense11_ble.enabled;
+        j["airsense11_ble"]["address"] = airsense11_ble.address;
 
         j["sleep_stage"]["enabled"] = sleep_stage.enabled;
         j["sleep_stage"]["live_inference"] = sleep_stage.live_inference;

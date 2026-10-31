@@ -119,6 +119,11 @@ docker run -d --name hms-cpap -p 8893:8893 \
 Open http://localhost:8893/setup. Config lives in the `cpap_config` volume and
 data in `cpap_data`; neither is touched by image updates.
 
+To read an O2 ring or an AirSense 11 over the host's own Bluetooth, give the
+container the host's D-Bus as well: add `-v /run/dbus:/run/dbus:ro` to the
+line above. Without it everything else runs and Settings says there is no
+Bluetooth adapter.
+
 If you'd rather have PostgreSQL and an MQTT broker alongside it, clone the repo
 and run `docker compose up -d` instead; it brings up all three and waits for
 the database before starting CpapDash.

@@ -190,6 +190,71 @@ import { AppConfig } from '../../models/config.model';
           </div>
         </div>
 
+        <!-- Section: AirSense 11 over Bluetooth (SDD-057). The switch and the
+             address are config; the pairing is not: it goes through its own
+             endpoints and is kept beside config.json, never in it. -->
+        <div class="section" *ngIf="config.airsense11_ble">
+          <div class="section-header" (click)="toggle('as11')">
+            <span class="chevron" [class.open]="open['as11']">&#9654;</span>
+            {{ 'settings.as11.heading' | translate }}
+            <span class="badge" *ngIf="!as11.paired">{{ 'settings.tag.optional' | translate }}</span>
+            <span class="badge connected" *ngIf="as11.paired">{{ 'settings.as11.badgePaired' | translate }}</span>
+          </div>
+          <div class="section-body" *ngIf="open['as11']">
+            <p class="section-desc">{{ 'settings.as11.desc' | translate }}</p>
+            <div class="myair-state" *ngIf="!as11.compiled">{{ 'settings.as11.notCompiled' | translate }}</div>
+            <label class="toggle-row">
+              {{ 'settings.as11.enabled' | translate }}
+              <input type="checkbox" [(ngModel)]="config.airsense11_ble.enabled" name="as11_enabled" />
+            </label>
+            <ng-container *ngIf="config.airsense11_ble.enabled">
+              <label>
+                {{ 'settings.as11.address' | translate }}
+                <input type="text" [(ngModel)]="config.airsense11_ble.address" name="as11_address"
+                       placeholder="AA:BB:CC:DD:EE:FF" />
+                <span class="hint">{{ 'settings.as11.addressHint' | translate }}</span>
+              </label>
+
+              <ng-container *ngIf="as11.compiled">
+                <!-- Keyed off the saved config, not the status: the running
+                     service picks a save up within a second, so by the time
+                     the button is pressed the client exists. -->
+                <div class="hint" *ngIf="!as11Saved()">{{ 'settings.as11.saveFirst' | translate }}</div>
+                <ng-container *ngIf="as11Saved()">
+                  <div class="myair-connected">
+                    {{ (as11.paired ? 'settings.as11.paired' : 'settings.as11.notPaired') | translate }}
+                  </div>
+                  <div class="myair-note">{{ 'settings.as11.pairNote' | translate }}</div>
+
+                  <ng-container *ngIf="!as11.pairing">
+                    <button type="button" class="myair-btn" (click)="as11PairStart()" [disabled]="as11Busy">
+                      {{ (as11Busy ? 'settings.as11.searching'
+                                   : (as11.paired ? 'settings.as11.pairAgain' : 'settings.as11.pair')) | translate }}
+                    </button>
+                  </ng-container>
+
+                  <ng-container *ngIf="as11.pairing">
+                    <label>
+                      {{ 'settings.as11.code' | translate }}
+                      <input type="text" inputmode="numeric" autocomplete="one-time-code"
+                             [(ngModel)]="as11Code" name="as11_code"
+                             [ngModelOptions]="{standalone: true}" placeholder="0000" />
+                      <span class="hint">{{ 'settings.as11.codeHint' | translate }}</span>
+                    </label>
+                    <button type="button" class="myair-btn" (click)="as11PairConfirm()"
+                            [disabled]="as11Busy || !as11Code">
+                      {{ (as11Busy ? 'settings.as11.confirming' : 'settings.as11.confirm') | translate }}
+                    </button>
+                    <button type="button" class="myair-btn danger" (click)="as11PairCancel()"
+                            [disabled]="as11Busy">{{ 'settings.as11.cancel' | translate }}</button>
+                  </ng-container>
+                </ng-container>
+              </ng-container>
+            </ng-container>
+            <div class="myair-msg" *ngIf="as11Message">{{ as11Message }}</div>
+          </div>
+        </div>
+
         <!-- Section: SleepHQ Sync -->
         <div class="section">
           <div class="section-header" (click)="toggle('sleephq')">
@@ -1160,6 +1225,13 @@ export class SettingsComponent implements OnInit, OnDestroy {
   // BLE adapter status
   bleStatus = '';
 
+  // SDD-057 AirSense 11 pairing. Held apart from `config`: the code goes to
+  // its own endpoint and the pairing it yields is never part of config.json.
+  as11 = { compiled: false, enabled: false, available: false, paired: false, pairing: false };
+  as11Code = '';
+  as11Busy = false;
+  as11Message = '';
+
   // SDD-041: the last update check, and whether "check now" is in flight.
   update: UpdateStatus | null = null;
   updateChecking = false;
@@ -1262,10 +1334,87 @@ export class SettingsComponent implements OnInit, OnDestroy {
     });
   }
 
+  // ── SDD-057 AirSense 11 over Bluetooth ──────────────────────────────────
+
+  loadAs11Status(): void {
+    this.api.getAs11BleStatus().subscribe({
+      next: (s) => { this.as11 = { ...this.as11, ...s }; },
+      error: () => {},
+    });
+  }
+
+  /** Bluetooth reading is on in the config the server last accepted. */
+  as11Saved(): boolean {
+    return !!this.pristine?.airsense11_ble?.enabled;
+  }
+
+  /** The translated sentence for a failed step, from the stable `result` code. */
+  private as11Error(e: any): string {
+    const result = e?.error?.result ?? e?.result ?? '';
+    const key: Record<string, string> = {
+      connect: 'settings.as11.errConnect',
+      verify: 'settings.as11.errVerify',
+      protocol: 'settings.as11.errTimeout',
+      bad_code: 'settings.as11.errBadCode',
+      no_pairing: 'settings.as11.errNoPairing',
+      disabled: 'settings.as11.errDisabled',
+      not_compiled: 'settings.as11.notCompiled',
+    };
+    return this.t.instant(key[result] ?? 'settings.as11.errGeneric');
+  }
+
+  as11PairStart(): void {
+    this.as11Busy = true;
+    this.as11Message = '';
+    this.as11Code = '';
+    this.api.as11PairStart().subscribe({
+      next: (r: any) => {
+        this.as11Busy = false;
+        if (!r?.ok) this.as11Message = this.as11Error(r);
+        this.loadAs11Status();
+      },
+      error: (e) => {
+        this.as11Busy = false;
+        this.as11Message = this.as11Error(e);
+        this.loadAs11Status();
+      },
+    });
+  }
+
+  as11PairConfirm(): void {
+    this.as11Busy = true;
+    this.as11Message = '';
+    const code = this.as11Code;
+    this.as11Code = '';
+    this.api.as11PairConfirm(code).subscribe({
+      next: (r: any) => {
+        this.as11Busy = false;
+        this.as11Message = r?.ok ? this.t.instant('settings.as11.done') : this.as11Error(r);
+        this.loadAs11Status();
+      },
+      error: (e) => {
+        this.as11Busy = false;
+        this.as11Message = this.as11Error(e);
+        this.loadAs11Status();
+      },
+    });
+  }
+
+  as11PairCancel(): void {
+    this.as11Busy = true;
+    this.as11Message = '';
+    this.as11Code = '';
+    this.api.as11PairCancel().subscribe({
+      next: () => { this.as11Busy = false; this.loadAs11Status(); },
+      error: () => { this.as11Busy = false; this.loadAs11Status(); },
+    });
+  }
+
   open: Record<string, boolean> = {
     source: true,
     logging: false,
     o2ring: false,
+    as11: false,
     sleephq: false,
     myair: false,
     cpapdash: false,
@@ -1337,6 +1486,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
 
   ngOnInit(): void {
     this.loadMyAirStatus();
+    this.loadAs11Status();
     this.loadUpdateStatus();
 
     this.api.getConfig().subscribe({
@@ -1347,6 +1497,9 @@ export class SettingsComponent implements OnInit, OnDestroy {
         }
         if (!cfg.o2ring) {
           cfg.o2ring = { enabled: false, mode: 'http', mule_url: '' };
+        }
+        if (!cfg.airsense11_ble) {
+          cfg.airsense11_ble = { enabled: false, address: '' };
         }
         if (!cfg.sleephq) {
           cfg.sleephq = { enabled: false, client_id: '', client_secret: '',
@@ -1414,6 +1567,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
         this.showToast(this.t.instant('settings.actions.saved'), false);
         this.evaluateRestart(submitted);
         this.pristine = submitted;
+        this.loadAs11Status();
       },
       error: () => {
         this.saving = false;

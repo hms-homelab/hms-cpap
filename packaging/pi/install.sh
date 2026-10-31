@@ -36,6 +36,7 @@ libmariadb3
 libdrogon1t64
 libtrantor1
 libhpdf-2.3.0
+libsdbus-c++2
 "
 # runtime-packages-end
 

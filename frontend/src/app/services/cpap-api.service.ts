@@ -97,6 +97,25 @@ export class CpapApiService {
     return this.http.post('/api/myair/disconnect', {});
   }
 
+  /// SDD-057: pairing an AirSense 11 over this host's Bluetooth, in two steps
+  /// because the machine shows its code only after the first.
+  getAs11BleStatus(): Observable<{compiled: boolean; enabled: boolean; available: boolean;
+                                  paired: boolean; pairing: boolean}> {
+    return this.http.get<any>('/api/airsense11/ble/status');
+  }
+
+  as11PairStart(): Observable<any> {
+    return this.http.post('/api/airsense11/ble/pair/start', {});
+  }
+
+  as11PairConfirm(code: string): Observable<any> {
+    return this.http.post('/api/airsense11/ble/pair/confirm', { code });
+  }
+
+  as11PairCancel(): Observable<any> {
+    return this.http.post('/api/airsense11/ble/pair/cancel', {});
+  }
+
   completeSetup(): Observable<any> {
     return this.http.post('/api/setup', {});
   }

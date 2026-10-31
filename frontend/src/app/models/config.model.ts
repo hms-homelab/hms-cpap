@@ -68,6 +68,12 @@ export interface AppConfig {
     mode: string;          // 'http' | 'ble'
     mule_url: string;      // for HTTP mode
   };
+  /** SDD-057: the AirSense 11 read over this host's own Bluetooth. The pairing
+   *  is made from Settings and never lives in the config. */
+  airsense11_ble: {
+    enabled: boolean;
+    address: string;       // empty: the first AirSense 11 the scan finds
+  };
   sleephq: {
     enabled: boolean;
     client_id: string;

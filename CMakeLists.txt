@@ -230,7 +230,7 @@ else()
         # pin is something ONLY CI can catch. That is exactly how the v4.9.9
         # release build failed: the pin was left on v2026.1.3 while the code
         # had moved on to a field that tag did not have.
-        GIT_TAG        v8.7.0
+        GIT_TAG        v8.9.2
     )
 endif()
 FetchContent_MakeAvailable(cpapdash_parser)
@@ -414,7 +414,10 @@ if(BUILD_WITH_BLE)
     find_package(sdbus-c++ REQUIRED)
     target_link_libraries(${PROJECT_NAME} SDBusCpp::sdbus-c++)
     target_compile_definitions(${PROJECT_NAME} PUBLIC WITH_BLE=1)
-    target_sources(${PROJECT_NAME} PRIVATE src/clients/O2RingBleClient.cpp)
+    # The BlueZ transports. The AirSense 11's conversation (As11Session) and
+    # protocol are plain C++ in every build and in run_tests (SDD-057).
+    target_sources(${PROJECT_NAME} PRIVATE src/clients/O2RingBleClient.cpp
+                                           src/clients/AirSense11BleClient.cpp)
     message(STATUS "BLE: Enabled (sdbus-c++ ${sdbus-c++_VERSION})")
 endif()
 

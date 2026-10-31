@@ -8,6 +8,7 @@
 #include "utils/CardLayout.h"
 #include "utils/ConfigManager.h"
 #include "utils/FileLogger.h"
+#include "web/As11PairingApi.h"
 #include <drogon/MultiPart.h>
 #include <atomic>
 #include <deque>
@@ -465,6 +466,12 @@ void CpapController::updateConfig(const drogon::HttpRequestPtr& req,
         if (o.isMember("enabled")) config_->o2ring.enabled = o["enabled"].asBool();
         if (o.isMember("mode")) config_->o2ring.mode = o["mode"].asString();
         if (o.isMember("mule_url")) config_->o2ring.mule_url = o["mule_url"].asString();
+    }
+
+    if (j.isMember("airsense11_ble")) {
+        auto& b = j["airsense11_ble"];
+        if (b.isMember("enabled")) config_->airsense11_ble.enabled = b["enabled"].asBool();
+        if (b.isMember("address")) config_->airsense11_ble.address = b["address"].asString();
     }
 
     if (j.isMember("agent")) {
@@ -1078,6 +1085,55 @@ void CpapController::myairDisconnect(const drogon::HttpRequestPtr&,
     j["status"] = "disconnected";
     j["message"] = "Disconnected. Nights already fetched are kept.";
     cb(jsonResp(j));
+}
+
+// ── SDD-057: AirSense 11 pairing over this host's Bluetooth ──
+
+namespace {
+
+drogon::HttpResponsePtr as11Resp(const hms_cpap::as11api::Reply& r) {
+    auto resp = jsonResp(r.body);
+    resp->setStatusCode(static_cast<drogon::HttpStatusCode>(r.status));
+    return resp;
+}
+
+} // namespace
+
+void CpapController::as11BleStatus(const drogon::HttpRequestPtr&,
+                                   std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    auto p = burst_service_ ? burst_service_->getAirSense11Pairing() : nullptr;
+    const bool enabled = config_ && config_->airsense11_ble.enabled;
+    cb(as11Resp(hms_cpap::as11api::status(p.get(), BurstCollectorService::airSense11BleCompiled(), enabled)));
+}
+
+// The two steps block for a scan, a connect and a reply (tens of seconds at
+// worst), so they run off the web server's threads.
+void CpapController::as11PairStart(const drogon::HttpRequestPtr&,
+                                   std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    auto p = burst_service_ ? burst_service_->getAirSense11Pairing() : nullptr;
+    const bool enabled = config_ && config_->airsense11_ble.enabled;
+    std::thread([p, enabled, cb = std::move(cb)]() {
+        cb(as11Resp(hms_cpap::as11api::start(p.get(), BurstCollectorService::airSense11BleCompiled(),
+                                             enabled)));
+    }).detach();
+}
+
+void CpapController::as11PairConfirm(const drogon::HttpRequestPtr& req,
+                                     std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    auto p = burst_service_ ? burst_service_->getAirSense11Pairing() : nullptr;
+    const bool enabled = config_ && config_->airsense11_ble.enabled;
+    auto body = req->getJsonObject();
+    const std::string code = (body && body->isMember("code")) ? (*body)["code"].asString() : "";
+    std::thread([p, enabled, code, cb = std::move(cb)]() {
+        cb(as11Resp(hms_cpap::as11api::confirm(p.get(), BurstCollectorService::airSense11BleCompiled(),
+                                               enabled, code)));
+    }).detach();
+}
+
+void CpapController::as11PairCancel(const drogon::HttpRequestPtr&,
+                                    std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    auto p = burst_service_ ? burst_service_->getAirSense11Pairing() : nullptr;
+    cb(as11Resp(hms_cpap::as11api::cancel(p.get())));
 }
 
 void CpapController::myairCompare(const drogon::HttpRequestPtr& req,

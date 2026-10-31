@@ -477,7 +477,8 @@ TEST_F(AppConfigTest, EverySectionLoadReadsIsAlsoWrittenBySave) {
     f >> saved;
 
     for (const char* section : {"database", "mqtt", "llm", "agent", "ml_training",
-                                "o2ring", "sleep_stage", "sleephq", "cpapdash"}) {
+                                "o2ring", "airsense11", "airsense11_ble", "sleep_stage",
+                                "sleephq", "cpapdash"}) {
         EXPECT_TRUE(saved.contains(section))
             << "save() drops the '" << section << "' section that load() reads";
     }
@@ -487,10 +488,41 @@ TEST_F(AppConfigTest, ToJsonExposesEverySectionTheUiEdits) {
     AppConfig cfg;
     auto j = cfg.toJson();
     for (const char* section : {"database", "mqtt", "llm", "agent", "ml_training",
-                                "o2ring", "sleep_stage", "sleephq", "cpapdash"}) {
+                                "o2ring", "airsense11", "airsense11_ble", "sleep_stage",
+                                "sleephq", "cpapdash"}) {
         EXPECT_TRUE(j.contains(section))
             << "GET /api/config hides the '" << section << "' section";
     }
+}
+
+TEST_F(AppConfigTest, AirSense11BluetoothSettingsSurviveSaveAndLoad) {
+    // SDD-057: the direct Bluetooth switch and the machine's address. The
+    // pairing itself never lands in config.json.
+    AppConfig a;
+    a.airsense11_ble.enabled = true;
+    a.airsense11_ble.address = "AA:BB:CC:DD:EE:FF";
+    a.airsense11.pull_hours = 4;
+    a.save(config_path_);
+
+    AppConfig b;
+    ASSERT_TRUE(AppConfig::load(config_path_, b));
+    EXPECT_TRUE(b.airsense11_ble.enabled);
+    EXPECT_EQ(b.airsense11_ble.address, "AA:BB:CC:DD:EE:FF");
+    EXPECT_EQ(b.airsense11.pull_hours, 4);
+
+    auto j = b.toJson();
+    EXPECT_EQ(j["airsense11_ble"]["enabled"], true);
+    EXPECT_EQ(j["airsense11_ble"]["address"], "AA:BB:CC:DD:EE:FF");
+    EXPECT_EQ(j["airsense11"]["pull_hours"], 4);
+
+    std::ifstream f(config_path_);
+    std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    EXPECT_EQ(text.find("masterPairKey"), std::string::npos);
+    EXPECT_EQ(text.find("clientId"), std::string::npos);
+
+    AppConfig defaults;
+    EXPECT_FALSE(defaults.airsense11_ble.enabled);
+    EXPECT_TRUE(defaults.airsense11_ble.address.empty());
 }
 
 // ── HMS_CPAP_DATA_DIR override (issue #16) ──────────────────────────────
