@@ -165,7 +165,8 @@ by hms-cpap.
 From the Sleep Bridge series, the Lite connects directly to the CPAP's SD slot
 and streams the data while the machine writes to the card, without
 interrupting the machine's own writes. It is powered over USB-C, not by the
-slot, and the card stays in the machine and stays the machine's. The Lite
+slot. The card stays in the machine, which keeps writing to it as if nothing
+were listening. The Lite
 pairs with hms-cpap on port 8894 for the live signal, and hms-cpap rebuilds
 the card's files from what it streams into a folder it reads like any card.
 The device and what it does are introduced in
