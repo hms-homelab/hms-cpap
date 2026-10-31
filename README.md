@@ -156,9 +156,9 @@ by hms-cpap.
 
 > **ResMed AirSense 11 with REF 39517 on the label underneath:** its SD slot
 > can't power a WiFi SD card reliably, so don't use an ez Share or a Toshiba
-> FlashAir in it. A Sleep Bridge Lite is powered over USB-C, not by the slot,
-> so it works there; so does reading the machine over its own Bluetooth
-> (2 and 3 below), a local folder or the upload page.
+> FlashAir in it (4 below). Every other way works: a Sleep Bridge Lite (1,
+> powered over USB-C, not by the slot), the machine's own Bluetooth (2 and 3),
+> a local folder or the upload page (5).
 
 #### 1. Sleep Bridge Lite (recommended)
 
