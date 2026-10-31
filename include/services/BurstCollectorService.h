@@ -737,6 +737,10 @@ private:
     /// D5: "folder/stem" of every file fetched on this burst; a .crc of the
     /// same stem waits for a later burst. Cleared when a burst starts.
     std::set<std::string> fetched_this_burst_;
+    /// Checkpoints the last downloadSessionFiles didn't get. They stay out of
+    /// checkpoint_files: a size saved for a file we don't hold reads as
+    /// unchanged from then on, and nothing asks for it again.
+    std::set<std::string> checkpoints_missed_;
     /// D5: a residue .crc left for the next burst, fetched then from the
     /// listing that found it, without listing its directory again.
     struct PendingResidue {

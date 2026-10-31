@@ -8,6 +8,8 @@
 #include <regex>
 #include <filesystem>
 #include <algorithm>
+#include <cctype>
+#include <cstdio>
 #include <ctime>
 
 namespace hms_cpap {
@@ -65,6 +67,29 @@ size_t EzShareClient::WriteCallback(void* contents, size_t size, size_t nmemb, v
     static_cast<std::string*>(userp)->append(static_cast<char*>(contents), total_size);
     return total_size;
 }
+
+namespace {
+
+size_t collectHeader(char* line, size_t size, size_t nmemb, void* userp) {
+    static_cast<std::string*>(userp)->append(line, size * nmemb);
+    return size * nmemb;
+}
+
+/// The byte count a reply's "Content-Range: bytes a-b/c" promises, 0 if it has none.
+uint64_t promisedRangeBytes(std::string headers) {
+    std::transform(headers.begin(), headers.end(), headers.begin(),
+                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    const auto at = headers.find("content-range:");
+    if (at == std::string::npos) return 0;
+    unsigned long long first = 0, last = 0;
+    if (std::sscanf(headers.c_str() + at, "content-range: bytes %llu-%llu", &first, &last) != 2 ||
+        last < first) {
+        return 0;
+    }
+    return last - first + 1;
+}
+
+}  // namespace
 
 size_t EzShareClient::WriteFileCallback(void* contents, size_t size, size_t nmemb, void* userp) {
     size_t total_size = size * nmemb;
@@ -409,6 +434,9 @@ bool EzShareClient::downloadFileRange(const std::string& date_folder,
     // next burst resumes from it.
     curl_easy_setopt(curl_, CURLOPT_LOW_SPEED_LIMIT, LOW_SPEED_LIMIT);
     curl_easy_setopt(curl_, CURLOPT_LOW_SPEED_TIME, LOW_SPEED_TIME);
+    std::string reply_headers;
+    curl_easy_setopt(curl_, CURLOPT_HEADERFUNCTION, collectHeader);
+    curl_easy_setopt(curl_, CURLOPT_HEADERDATA, &reply_headers);
 
     CURLcode res = curl_easy_perform(curl_);
     output.close();
@@ -416,6 +444,8 @@ bool EzShareClient::downloadFileRange(const std::string& date_folder,
     // Clean up headers, and the stall limit, which no other request wants.
     curl_slist_free_all(headers);
     curl_easy_setopt(curl_, CURLOPT_HTTPHEADER, nullptr);
+    curl_easy_setopt(curl_, CURLOPT_HEADERFUNCTION, nullptr);
+    curl_easy_setopt(curl_, CURLOPT_HEADERDATA, nullptr);
     curl_easy_setopt(curl_, CURLOPT_LOW_SPEED_LIMIT, 0L);
     curl_easy_setopt(curl_, CURLOPT_LOW_SPEED_TIME, 0L);
 
@@ -443,14 +473,18 @@ bool EzShareClient::downloadFileRange(const std::string& date_folder,
         return false;
     }
     // A 200 to a range past byte 0 is the whole file, just appended after the
-    // bytes we already had. Cut it back to where it was and stop asking for
-    // ranges, so the caller's full download is what replaces it.
+    // bytes we already had. Cut it back to where it was. One of these is not a
+    // verdict: a bridge can lose a reply's status and send a good range as a
+    // 200. Only a run of them, with no 206 between, means the server ignores
+    // Range and the caller's full download has to replace the file.
     if (http_code == 200 && start_byte > 0) {
         std::error_code ec;
         std::filesystem::resize_file(local_path, start_byte, ec);
-        supports_range_ = false;
-        std::cerr << "EzShare: range ignored for " << filename
-                  << " (HTTP 200); no more ranged requests" << std::endl;
+        const bool give_up = ++range_ignored_in_a_row_ >= RANGE_IGNORED_LIMIT;
+        if (give_up) supports_range_ = false;
+        std::cerr << "EzShare: range ignored for " << filename << " (HTTP 200); "
+                  << (give_up ? "no more ranged requests" : "the next burst asks again")
+                  << std::endl;
         return false;
     }
     if (http_code != 200 && http_code != 206) {
@@ -458,10 +492,27 @@ bool EzShareClient::downloadFileRange(const std::string& date_folder,
         return false;
     }
 
+    if (http_code == 206) range_ignored_in_a_row_ = 0;
+
     // Get downloaded size
     double download_size = 0;
     curl_easy_getinfo(curl_, CURLINFO_SIZE_DOWNLOAD, &download_size);
     bytes_downloaded = static_cast<size_t>(download_size);
+
+    // A reply that finished normally but holds less than it promised lost a
+    // chunk from the middle: a bridge can do that and still close the reply.
+    // What follows the hole is at the wrong offset, and the next read would
+    // resume past it, so unlike a cut transfer none of it is kept. A cut ends
+    // in CURLE_PARTIAL_FILE, and what landed before it is good.
+    const uint64_t promised = promisedRangeBytes(reply_headers);
+    if (res == CURLE_OK && http_code == 206 && promised > 0 && bytes_downloaded != promised) {
+        std::error_code ec;
+        if (start_byte == 0) std::filesystem::remove(local_path, ec);
+        else std::filesystem::resize_file(local_path, start_byte, ec);
+        std::cerr << "EzShare: " << filename << " came back with " << bytes_downloaded << " of "
+                  << promised << " bytes; put it back" << std::endl;
+        return false;
+    }
 
     auto total_size = std::filesystem::file_size(local_path);
     std::cout << "EzShare: " << filename << " -> downloaded " << bytes_downloaded

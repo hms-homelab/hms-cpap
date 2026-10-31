@@ -139,6 +139,10 @@ private:
     FailureLogThrottle http_fail_log_;
     std::string base_url_;
     bool supports_range_ = true;
+    /// 200 replies to a range past byte 0 since the last 206. One can be a
+    /// reply that lost its status on the way; only a run means no ranges.
+    int range_ignored_in_a_row_ = 0;
+    static constexpr int RANGE_IGNORED_LIMIT = 3;
 
     static constexpr long DOWNLOAD_TIMEOUT  = 300L;  // large BRP files over a slow WiFi link
     /// A ranged transfer slower than LOW_SPEED_LIMIT bytes/s for
