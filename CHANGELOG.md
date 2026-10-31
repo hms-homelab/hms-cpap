@@ -5,20 +5,56 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [6.0.0] - 2026-10-31
 
-### Fixed
-- **A Bluetooth night is a session.** A night hms-cpap streamed from an
-  AirSense 11 (its own Bluetooth, or a Mule & Miner sending to it) was written
-  under `<data dir>/as11/<serial>/DATALOG/` and nothing read it: the burst
-  cycle walks only the configured source, so the night had no session row and
-  the dashboard showed only a card's copy, when there was one. The night now
-  goes through the same grouping and parser as a card folder when it ends
-  (and at start-up for nights on disk the database does not hold), under the
-  install's `device_id`, with its files recorded as `as11/<serial>/...`, its
-  metrics, and the night's summary and MQTT publish. A card source reading
-  the same machine wins the stretches it carries: a card session overlapping
-  a Bluetooth one in time replaces it; elsewhere the Bluetooth session stays.
+The Sleep Bridge component ships in the published builds, and the devices that
+stream a night here now take their firmware from here too.
+
+### Added
+- **The Sleep Bridge component is in the published builds.**
+  `cmake/sleepbridge-pins.cmake` pins Sleep Bridge component 0.3.0, as a
+  versioned asset on this repository's releases, for Linux amd64, Linux
+  arm64 and the 32-bit Raspberry Pi. The published Docker image (and so the
+  Home Assistant add-on) and the Raspberry Pi zip are built with
+  `BUILD_WITH_SLEEPBRIDGE=ON`, so they accept a Sleep Bridge instead of
+  refusing every bridge with "not in this build". A build from source stays
+  without it unless asked (`-DBUILD_WITH_SLEEPBRIDGE=ON`, or
+  `--build-arg SLEEPBRIDGE=ON` for a Docker build of your own).
+- **A Mule & Miner's firmware updates from here.** A unit streaming to this
+  host never hears from the cloud, so Settings, "Mule & Miner", lists each
+  unit with the mule and miner versions it runs, says when the published
+  manifest has a newer one, and offers an Update button (the mule first, then
+  the miner) and a file input for an image you have. The image goes to the
+  unit over the local network and the job is followed through the unit's
+  restart. Only in the unit's downtime: while a night is open on it
+  (streaming, or streamed and not yet landed here) the request is refused,
+  and the job checks again before each image goes. Nothing is queued.
+  `GET /api/mule/{serial}/firmware`, `POST /api/mule/{serial}/update`,
+  `GET /api/mule/{serial}/update`; "Updating the unit's firmware" in
+  `docs/MULE_LOCAL_STREAM.md`.
+- **A Sleep Bridge's firmware updates from here.**
+  `POST /api/sleepbridge/{bridge}/update` takes an image you have (raw body
+  or a multipart file), checks that it is a Sleep Bridge image, and sends it
+  to the bridge over its own stream connection. The bridge writes it as it
+  comes, answers, and restarts into it only on success; its next hello
+  carries the version it runs. Refused while a night is open on the bridge
+  (a write landed in the last 15 minutes), while the bridge is offline, or
+  while an update already runs. Nothing is queued. `GET /api/sleepbridge`
+  gains `fw_version`, `night_open` and `update` per bridge, and
+  `GET /api/sleepbridge/{bridge}/update` follows the job. Settings gains a
+  "Sleep Bridge" section with a card per bridge: its firmware, a file input
+  and the update as it runs. "Updating the bridge" in
+  `docs/SLEEP_BRIDGE_LOCAL_STREAM.md`.
+- **A Mule & Miner's two Bluetooth switches, from Settings.** The `config`
+  command over the local stream now takes `as11_enabled` (the machine's own
+  Bluetooth mode) and `o2_enabled` (the O2 ring) beside `hms_url` and
+  `hms_port`, one switch at a time. Settings shows both switches as the
+  unit's last state reports them, posts the command on a click, and says
+  queued, sent or refused (with the unit's reason) beside the switch until
+  the next state agrees with what was asked.
+- **The Raspberry Pi build carries Bluetooth.** The Pi zip can pair an
+  AirSense 11 or an O2Ring directly, as the Docker image and the add-on
+  already could.
 
 ### Changed
 - **Sleep Bridge: the card's geometry is kept in `batches/geometry.json`.**
@@ -33,7 +69,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it under each bridge's `rebuild.geometry`. A card statement that carries
   the bridge's layout (a stream that began after the bridge read the boot
   sector) is now handed to the rebuild as a hypothesis, tested on the writes,
-  instead of being dropped. Needs Sleep Bridge component 1.1.0.
+  instead of being dropped. The pinned component carries what this needs.
+- **Bluetooth: the adapter is switched on, rf-kill is named, and every link
+  call has a timeout.** Before any scan or connect, for the AirSense 11 and
+  the O2 ring alike, hms-cpap reads the adapter's state and switches it on
+  when it is off. When the adapter is soft-blocked by rf-kill it lifts the
+  block where it can; where it cannot, one log line names rf-kill and the
+  command that lifts it, and Settings says "Bluetooth is switched off on
+  this computer (rf-kill)" instead of telling you the machine is out of
+  range. Every call on the link (connect, disconnect, a write, a
+  subscription, discovery) carries a timeout: a write the machine never
+  acknowledged used to hold the first summary pull after a pairing for
+  minutes with nothing in the log; it now fails the pull with a clear note.
+  After a pairing ends the device record is forgotten, so the next scan
+  finds the machine under its own name, never a cached one under a generic
+  name.
+- **Settings: the AirSense 11 section no longer asks for a Bluetooth
+  address** (discovery is automatic), and the pairing's Confirm and Cancel
+  buttons sit in a spaced row, Confirm primary and Cancel secondary.
+
+### Fixed
+- **A Bluetooth night is a session.** A night hms-cpap streamed from an
+  AirSense 11 (its own Bluetooth, or a Mule & Miner sending to it) was written
+  under `<data dir>/as11/<serial>/DATALOG/` and nothing read it: the burst
+  cycle walks only the configured source, so the night had no session row and
+  the dashboard showed only a card's copy, when there was one. The night now
+  goes through the same grouping and parser as a card folder when it ends
+  (and at start-up for nights on disk the database does not hold), under the
+  install's `device_id`, with its files recorded as `as11/<serial>/...`, its
+  metrics, and the night's summary and MQTT publish. A card source reading
+  the same machine wins the stretches it carries: a card session overlapping
+  a Bluetooth one in time replaces it; elsewhere the Bluetooth session stays.
 
 ## [5.8.0] - 2026-10-31
 
