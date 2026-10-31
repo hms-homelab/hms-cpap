@@ -270,6 +270,26 @@ endif()
 # Discover tests (PRE_TEST defers discovery until ctest runs, fixing MSVC multi-config)
 gtest_discover_tests(run_tests DISCOVERY_MODE PRE_TEST)
 
+# The device routes over a real socket: a fragmented text message must be
+# answered (the Drogon this builds against carries third_party/drogon/'s fix,
+# or it fails). Its own binary, since it runs Drogon's app, one per process.
+# POSIX sockets, so not on Windows.
+if(BUILD_WITH_WEB AND NOT WIN32)
+    file(GLOB SLEEPBRIDGE_SOURCES "${CMAKE_SOURCE_DIR}/src/sleepbridge/*.cpp"
+                                  "${CMAKE_SOURCE_DIR}/src/sleepbridge/library/*.cpp")
+    hms_sleepbridge_filter_sources(SLEEPBRIDGE_SOURCES)
+    add_executable(ws_fragments_test
+        sleepbridge/ws_fragments_main.cpp
+        ${SLEEPBRIDGE_SOURCES}
+        ${CMAKE_SOURCE_DIR}/src/controllers/SleepBridgeSocket.cpp
+    )
+    target_link_libraries(ws_fragments_test Drogon::Drogon)
+    if(BUILD_WITH_SLEEPBRIDGE)
+        target_link_libraries(ws_fragments_test sleepbridge_component)
+    endif()
+    add_test(NAME ws_fragments COMMAND ws_fragments_test)
+endif()
+
 # Print test configuration
 message(STATUS "Unit Tests Configuration:")
 message(STATUS "  Test sources: ${TEST_SOURCES}")

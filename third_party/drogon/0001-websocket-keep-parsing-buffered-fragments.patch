@@ -1,0 +1,50 @@
+Subject: [PATCH] websocket: keep parsing frames already buffered after a fragment
+
+WebSocketConnectionImpl::onNewMessage returns as soon as a parsed frame does
+not complete a message, so the next fragments of that message, already in
+the buffer, wait until more bytes arrive on the connection. A client that
+fragments a message and then waits for the answer (an ESP-IDF websocket
+client splits any message larger than its buffer, e.g. a Sleep Bridge's
+hello) never gets one. Keep parsing while whole frames are consumed; return
+only when the frame at the head of the buffer is incomplete.
+
+Against drogon v1.9.0 (Debian trixie's libdrogon 1.9.0+ds); applies to
+v1.9.13 unchanged. Upstream v1.9.14 and master still have the early return.
+
+--- a/lib/src/WebSocketConnectionImpl.cc
++++ b/lib/src/WebSocketConnectionImpl.cc
+@@ -384,12 +384,22 @@
+     auto self = shared_from_this();
+     while (buffer->readableBytes() > 0)
+     {
++        const size_t before = buffer->readableBytes();
+         auto success = parser_.parse(buffer);
+         if (success)
+         {
+             std::string message;
+             WebSocketMessageType type;
+-            if (parser_.gotAll(message, type))
++            if (!parser_.gotAll(message, type))
++            {
++                // A whole frame that is not the message's last (a fragment)
++                // was consumed: the next frames may already be buffered, so
++                // keep parsing. Return only when the frame is incomplete
++                // (nothing consumed) and more bytes must arrive first.
++                if (buffer->readableBytes() < before)
++                    continue;
++                return;
++            }
+             {
+                 if (type == WebSocketMessageType::Ping)
+                 {
+@@ -409,10 +419,6 @@
+                 //           << "\n(type=" << (int)type << ")";
+                 messageCallback_(std::move(message), self, type);
+             }
+-            else
+-            {
+-                return;
+-            }
+         }
+         else
+         {
