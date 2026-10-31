@@ -1,7 +1,10 @@
 #include "sleepbridge/SleepBridgeService.h"
 
+#include <openssl/evp.h>
+
 #include <algorithm>
 #include <chrono>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -11,6 +14,36 @@ namespace hms_cpap::sleepbridge {
 namespace fs = std::filesystem;
 
 namespace {
+
+/// Seconds on the steady clock: the night rule and the update timeout are
+/// measured on it, since std::time_t only counts whole seconds.
+double monoNow() {
+    return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+std::string sha256Hex(const std::string& bytes) {
+    unsigned char md[EVP_MAX_MD_SIZE];
+    unsigned int  n = 0;
+    EVP_MD_CTX*   ctx = EVP_MD_CTX_new();
+    EVP_DigestInit_ex(ctx, EVP_sha256(), nullptr);
+    EVP_DigestUpdate(ctx, bytes.data(), bytes.size());
+    EVP_DigestFinal_ex(ctx, md, &n);
+    EVP_MD_CTX_free(ctx);
+    static const char* hex = "0123456789abcdef";
+    std::string out;
+    out.reserve(2 * n);
+    for (unsigned int i = 0; i < n; i++) {
+        out.push_back(hex[md[i] >> 4]);
+        out.push_back(hex[md[i] & 0xF]);
+    }
+    return out;
+}
+
+/// A fixed-size, NUL-padded field of the app descriptor.
+std::string field(const std::string& s, size_t at, size_t n) {
+    const std::string raw = s.substr(at, n);
+    return raw.substr(0, raw.find('\0'));
+}
 
 Json::Value stepJson(const StepReport& r) {
     Json::Value v(Json::objectValue);
@@ -47,6 +80,51 @@ bool validBridgeHost(const std::string& host) {
 
 bool validBridgePort(int port) { return port >= 1 && port <= 65535; }
 
+// An ESP32 application image: a 24-byte image header whose first byte is
+// 0xE9, an 8-byte segment header, then the app descriptor in the first
+// segment: magic 0xABCD5432 (little-endian), secure_version(4), reserved(8),
+// version[32], project_name[32], time[16], date[16], ...
+std::optional<ImageInfo> inspectImage(const std::string& image, std::string* why) {
+    constexpr size_t kDesc = 24 + 8;
+    auto fail = [&](const char* w) -> std::optional<ImageInfo> {
+        if (why) *why = w;
+        return std::nullopt;
+    };
+    if (image.size() < kDesc + 256) return fail("too short to be a firmware image");
+    if (static_cast<uint8_t>(image[0]) != 0xE9) return fail("not an ESP32 application image (no image magic)");
+    const auto* d = reinterpret_cast<const uint8_t*>(image.data()) + kDesc;
+    const uint32_t magic = d[0] | (d[1] << 8) | (d[2] << 16) | (static_cast<uint32_t>(d[3]) << 24);
+    if (magic != 0xABCD5432u) return fail("not an ESP32 application image (no app descriptor)");
+    ImageInfo info;
+    info.version = field(image, kDesc + 16, 32);
+    info.project = field(image, kDesc + 48, 32);
+    const std::string t = field(image, kDesc + 80, 16), dt = field(image, kDesc + 96, 16);
+    info.built = dt + (dt.empty() || t.empty() ? "" : " ") + t;
+    return info;
+}
+
+std::string otaCommandFrame(uint64_t req_id, size_t size, const std::string& sha256_hex) {
+    Json::Value f(Json::objectValue);
+    f["t"]      = "cmd";
+    f["cmd"]    = "ota";
+    f["req_id"] = static_cast<Json::UInt64>(req_id);
+    f["target"] = "tapper";
+    f["size"]   = static_cast<Json::UInt64>(size);
+    f["sha256"] = sha256_hex;
+    Json::StreamWriterBuilder w;
+    w["indentation"] = "";
+    return Json::writeString(w, f);
+}
+
+std::string firmwareChunkFrame(uint64_t req_id, uint32_t seq, bool last, const std::string& body) {
+    FrameHeader h;
+    h.req_id = static_cast<uint32_t>(req_id);
+    h.seq    = seq;
+    h.flags  = last ? 1 : 0;
+    h.kind   = kKindFirmware;
+    return encodeFrameHeader(h) + body;
+}
+
 SleepBridgeService::SleepBridgeService(Options opt, RebuilderFactory factory)
     : opt_(std::move(opt)), factory_(std::move(factory)), store_(opt_.root) {
     // Asked once: a factory that answers nullptr is a build without the rebuild.
@@ -76,6 +154,7 @@ void SleepBridgeService::stop() {
     }
     q_cv_.notify_all();
     if (thread_.joinable()) thread_.join();
+    waitForUpdateSend();
 }
 
 void SleepBridgeService::wake(const std::string& sender) {
@@ -136,12 +215,12 @@ StepReport SleepBridgeService::rebuildNow(const std::string& sender) {
     return r;
 }
 
-std::unique_ptr<Conversation> SleepBridgeService::open(const Admission& who, Outlet out) {
+std::unique_ptr<Conversation> SleepBridgeService::open(const Admission& who, Outlet out, BinaryOutlet bin) {
     uint64_t id;
     {
         std::lock_guard<std::mutex> lk(mu_);
         id         = next_conn_++;
-        conns_[id] = Conn{who, std::move(out), false};
+        conns_[id] = Conn{who, std::move(out), std::move(bin), false};
     }
     return std::make_unique<Conversation>(store_, who, id);
 }
@@ -203,7 +282,41 @@ void SleepBridgeService::apply(const std::string& sender, const Effects& fx) {
         auto& b      = bridges_[sender];
         b.last_heard = std::time(nullptr);
         if (fx.state) b.state = *fx.state;
-        if (fx.banked) b.last_batch = b.last_heard;
+        if (fx.banked) {
+            b.last_batch      = b.last_heard;
+            b.last_batch_mono = monoNow();
+        }
+
+        if (b.update) expireUpdate(*b.update);   // a late answer changes nothing
+        if (fx.hello && b.update && b.update->phase == "restarting") {
+            // The bridge is back after its update: what it runs now is the
+            // outcome, whatever version that is.
+            auto& j     = *b.update;
+            j.fw_after  = b.state.get("fw_version", "").asString();
+            j.phase     = "done";
+            j.ended_at  = b.last_heard;
+            std::cout << "[sleepbridge] " << sender << " back after the update, firmware "
+                      << (j.fw_after.empty() ? "?" : j.fw_after) << std::endl;
+        }
+        bool update_answered = false;
+        if (fx.result && b.update && b.update->req_id == fx.result->req_id &&
+            (b.update->phase == "sending" || b.update->phase == "waiting")) {
+            auto& j         = *b.update;
+            update_answered = true;
+            j.result        = fx.result->result;
+            j.answered_at   = b.last_heard;
+            if (j.result.get("ok", false).asBool()) {
+                j.phase = "restarting";   // done on its next hello
+            } else {
+                j.phase    = "failed";
+                j.error    = j.result.get("error", "the bridge refused the image").asString();
+                j.ended_at = b.last_heard;
+            }
+            std::cout << "[sleepbridge] " << sender << " update (req_id " << j.req_id << ") answered: "
+                      << (j.phase == "restarting" ? "ok, the bridge is restarting into it"
+                                                  : "error=" + j.error)
+                      << std::endl;
+        }
 
         if (fx.log_text) {
             const auto& t = *fx.log_text;
@@ -220,7 +333,7 @@ void SleepBridgeService::apply(const std::string& sender, const Effects& fx) {
                 c->logs += t.text;
             }
         }
-        if (fx.result) {
+        if (fx.result && !update_answered) {
             auto c = std::find_if(b.commands.begin(), b.commands.end(), [&](const Command& k) {
                 return k.req_id == fx.result->req_id;
             });
@@ -384,6 +497,166 @@ Json::Value SleepBridgeService::commandJson(const Command& c) {
     return v;
 }
 
+// ── updates ─────────────────────────────────────────────────────────────────
+
+bool SleepBridgeService::nightOpen(const std::string& sender) const {
+    std::lock_guard<std::mutex> lk(mu_);
+    const auto it = bridges_.find(sender);
+    if (it == bridges_.end() || it->second.last_batch == 0) return false;
+    return monoNow() - it->second.last_batch_mono < opt_.night_quiet_s;
+}
+
+void SleepBridgeService::expireUpdate(UpdateJob& j) const {
+    if (j.phase != "waiting" || monoNow() - j.sent_mono < opt_.update_timeout_s) return;
+    j.phase    = "failed";
+    j.error    = "no answer from the bridge in " + std::to_string(static_cast<int>(opt_.update_timeout_s)) +
+                 " s";
+    j.ended_at = std::time(nullptr);
+}
+
+Json::Value SleepBridgeService::updateJson(const UpdateJob& j) {
+    Json::Value v(Json::objectValue);
+    v["req_id"]        = static_cast<Json::UInt64>(j.req_id);
+    v["phase"]         = j.phase;
+    v["running"]       = j.phase == "sending" || j.phase == "waiting" || j.phase == "restarting";
+    v["total"]         = static_cast<Json::UInt64>(j.total);
+    v["sent"]          = static_cast<Json::UInt64>(j.sent);
+    v["image_version"] = j.image.version;
+    v["image_project"] = j.image.project;
+    v["image_built"]   = j.image.built;
+    v["sha256"]        = j.sha256;
+    v["fw_before"]     = j.fw_before;
+    v["fw_after"]      = j.fw_after;
+    v["error"]         = j.error;
+    v["started_at"]    = static_cast<Json::Int64>(j.started_at);
+    v["sent_at"]       = static_cast<Json::Int64>(j.sent_at);
+    v["answered_at"]   = static_cast<Json::Int64>(j.answered_at);
+    v["ended_at"]      = static_cast<Json::Int64>(j.ended_at);
+    v["result"]        = j.result;
+    return v;
+}
+
+Json::Value SleepBridgeService::update(const std::string& sender) const {
+    std::lock_guard<std::mutex> lk(mu_);
+    const auto it = bridges_.find(sender);
+    if (it == bridges_.end() || !it->second.update) return Json::Value(Json::nullValue);
+    UpdateJob j = *it->second.update;
+    expireUpdate(j);
+    return updateJson(j);
+}
+
+void SleepBridgeService::waitForUpdateSend() {
+    if (update_thread_.joinable()) update_thread_.join();
+}
+
+CommandAnswer SleepBridgeService::startUpdate(const std::string& sender, const std::string& image) {
+    CommandAnswer a;
+    auto refuse = [&a](int status, const std::string& why) {
+        a.status        = status;
+        a.body["ok"]    = false;
+        a.body["error"] = why;
+        return a;
+    };
+    if (image.empty()) return refuse(400, "the body is the firmware image (a .bin file)");
+    if (image.size() > kImageMax) return refuse(400, "the image is larger than a Sleep Bridge image can be");
+    std::string why;
+    const auto  info = inspectImage(image, &why);
+    if (!info) return refuse(400, why);
+    if (info->project != kBridgeProject)
+        return refuse(400, "not a Sleep Bridge image: it says it is \"" + info->project + "\"");
+
+    const std::time_t now = std::time(nullptr);
+    uint64_t          req_id;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        auto it = bridges_.find(sender);
+        if (it == bridges_.end()) return refuse(404, "no Sleep Bridge named \"" + sender + "\" has connected here");
+        Bridge& b = it->second;
+        if (b.last_batch != 0 && monoNow() - b.last_batch_mono < opt_.night_quiet_s)
+            return refuse(409, "a night is open on this bridge (the machine wrote to its card in the last " +
+                                   std::to_string(static_cast<int>(opt_.night_quiet_s / 60)) +
+                                   " minutes): the update waits for its downtime");
+        const bool online = b.sessions > 0 && now - b.last_heard < kSilenceSec && b.live != 0;
+        if (!online) return refuse(409, "the bridge is not connected here right now");
+        for (auto& [s, other] : bridges_) {
+            if (other.update) expireUpdate(*other.update);
+            if (other.update && (other.update->phase == "sending" || other.update->phase == "waiting"))
+                return refuse(409, "an update is already running on " + s);
+        }
+        if (b.update && b.update->phase == "restarting" && std::difftime(now, b.update->answered_at) < 60)
+            return refuse(409, "the bridge is restarting into the last update; wait for its hello");
+
+        UpdateJob j;
+        j.req_id     = next_req_++;
+        j.total      = image.size();
+        j.image      = *info;
+        j.sha256     = sha256Hex(image);
+        j.fw_before  = b.state.get("fw_version", "").asString();
+        j.started_at = now;
+        b.update     = j;
+        req_id       = j.req_id;
+    }
+    waitForUpdateSend();   // the last job's thread, long done
+    update_thread_ = std::thread([this, sender, image] { sendUpdate(sender, image); });
+    a.body["ok"]     = true;
+    a.body["req_id"] = static_cast<Json::UInt64>(req_id);
+    a.body["update"] = update(sender);
+    return a;
+}
+
+// On its own thread: the command, then the chunks, on the bridge's session.
+// Each frame is handed to the connection in turn; the TCP window paces the
+// bridge's flash. A connection that goes meanwhile fails the job.
+void SleepBridgeService::sendUpdate(const std::string& sender, std::string image) {
+    Outlet       out;
+    BinaryOutlet bin;
+    uint64_t     req_id;
+    std::string  sha;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        auto b = bridges_.find(sender);
+        if (b == bridges_.end() || !b->second.update) return;
+        req_id = b->second.update->req_id;
+        sha    = b->second.update->sha256;
+        auto c = conns_.find(b->second.live);
+        if (c != conns_.end()) {
+            out = c->second.out;
+            bin = c->second.bin;
+        }
+    }
+    auto fail = [&](const std::string& why) {
+        std::lock_guard<std::mutex> lk(mu_);
+        auto b = bridges_.find(sender);
+        if (b == bridges_.end() || !b->second.update || b->second.update->req_id != req_id) return;
+        b->second.update->phase    = "failed";
+        b->second.update->error    = why;
+        b->second.update->ended_at = std::time(nullptr);
+        std::cout << "[sleepbridge] " << sender << " update (req_id " << req_id << ") failed: " << why
+                  << std::endl;
+    };
+    if (!out || !bin) return fail("the bridge's connection takes no frames");
+    if (!out(otaCommandFrame(req_id, image.size(), sha))) return fail("the connection went before the command");
+    std::cout << "[sleepbridge] " << sender << " update (req_id " << req_id << "): sending " << image.size()
+              << " B" << std::endl;
+    uint32_t seq = 0;
+    for (size_t off = 0; off < image.size(); off += kFirmwareChunk, seq++) {
+        const size_t n    = std::min(kFirmwareChunk, image.size() - off);
+        const bool   last = off + n >= image.size();
+        if (!bin(firmwareChunkFrame(req_id, seq, last, image.substr(off, n))))
+            return fail("the connection went during the image, after " + std::to_string(off) + " B");
+        std::lock_guard<std::mutex> lk(mu_);
+        auto b = bridges_.find(sender);
+        if (b == bridges_.end() || !b->second.update || b->second.update->req_id != req_id) return;
+        auto& j = *b->second.update;
+        j.sent  = off + n;
+        if (j.phase == "sending" && last) {
+            j.phase     = "waiting";
+            j.sent_at   = std::time(nullptr);
+            j.sent_mono = monoNow();
+        }
+    }
+}
+
 Json::Value SleepBridgeService::status() const {
     Json::Value out(Json::objectValue);
     out["available"] = available_;
@@ -411,6 +684,15 @@ Json::Value SleepBridgeService::status() const {
         v["last_heard"] = static_cast<Json::Int64>(b.last_heard);
         v["last_batch"] = static_cast<Json::Int64>(b.last_batch);
         v["state"]      = b.state;
+        v["fw_version"] = b.state.get("fw_version", "").asString();
+        v["night_open"] = b.last_batch != 0 && monoNow() - b.last_batch_mono < opt_.night_quiet_s;
+        if (b.update) {
+            UpdateJob j = *b.update;
+            expireUpdate(j);
+            v["update"] = updateJson(j);
+        } else {
+            v["update"] = Json::Value(Json::nullValue);
+        }
         v["card_root"]  = store_.cardRoot(sender);
         // Which machine's card the root holds, and the card format to read
         // it as: a Luna's root is read as "bmc", a ResMed's as "resmed".

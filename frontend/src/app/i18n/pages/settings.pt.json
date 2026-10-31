@@ -119,6 +119,26 @@
       "switchAnswered": "aceito; o miner está reiniciando com isso",
       "switchRefused": "recusado: {{error}}"
     },
+    "sleepbridge": {
+      "heading": "Sleep Bridge",
+      "desc": "Um Sleep Bridge apontado para o endereço deste computador envia para cá o que a máquina grava no cartão e aparece abaixo ao conectar. O firmware dele pode ser atualizado daqui, pela sua rede, no repouso da máquina.",
+      "none": "Nenhum bridge se conectou ainda. Na página de configuração do bridge, escolha Meu hms-cpap e digite o IP ou o nome deste computador.",
+      "badgeOnline": "{{n}} online",
+      "online": "online",
+      "offline": "offline",
+      "nightOpen": "noite aberta",
+      "machine": "Máquina",
+      "lastWrite": "Última gravação",
+      "firmware": "Firmware",
+      "nightOpenHint": "A máquina gravou no cartão nos últimos 15 minutos. As atualizações esperam o repouso dela.",
+      "fileHint": "Envie um arquivo de imagem de firmware (.bin) que você tenha. Ele vai assim que for escolhido, pela própria conexão do bridge.",
+      "jobSending": "Enviando a imagem: {{pct}}%",
+      "jobWaiting": "A imagem foi enviada. Aguardando o bridge verificá-la...",
+      "jobRestarting": "O bridge recebeu a imagem e está reiniciando. Aguardando ele voltar...",
+      "jobDone": "Pronto. O bridge executa {{version}}.",
+      "jobFailed": "Não atualizado: {{error}}",
+      "errGeneric": "Não foi possível iniciar a atualização."
+    },
     "sleephq": {
       "heading": "Sincronização com o SleepHQ",
       "desc": "Envie suas noites de terapia ao SleepHQ pela API pública deles. Crie as credenciais de API no SleepHQ, em Account → API.",

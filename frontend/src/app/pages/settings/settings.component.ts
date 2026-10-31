@@ -4,7 +4,8 @@ import { FormsModule } from '@angular/forms';
 import { TranslatePipe, TranslateService } from '@ngx-translate/core';
 import { Subject, Subscription, timer } from 'rxjs';
 import { switchMap, takeUntil, takeWhile, tap } from 'rxjs/operators';
-import { CpapApiService, UpdateStatus, MuleUnit, MuleCommand, MuleFirmware, MuleUpdateJob } from '../../services/cpap-api.service';
+import { CpapApiService, UpdateStatus, MuleUnit, MuleCommand, MuleFirmware, MuleUpdateJob,
+         SleepBridge, SleepBridgeUpdate } from '../../services/cpap-api.service';
 import { UpdateFlowService } from '../../services/update-flow.service';
 import { AppConfig } from '../../models/config.model';
 
@@ -336,6 +337,54 @@ import { AppConfig } from '../../models/config.model';
                      [class.ok]="f.job.phase === 'done'">{{ muleJobText(f.job) }}</div>
               </ng-container>
               <div class="myair-msg err" *ngIf="muleMessage[u.serial]">{{ muleMessage[u.serial] }}</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Section: the Sleep Bridges streaming to this host, and their
+             firmware. Nothing here is config: a bridge lists itself when it
+             connects, and an image goes to it over its own stream connection
+             (docs/SLEEP_BRIDGE_LOCAL_STREAM.md, "Updating the bridge"). -->
+        <div class="section">
+          <div class="section-header" (click)="toggle('sleepbridge')">
+            <span class="chevron" [class.open]="open['sleepbridge']">&#9654;</span>
+            {{ 'settings.sleepbridge.heading' | translate }}
+            <span class="badge connected" *ngIf="sbOnline() > 0">
+              {{ 'settings.sleepbridge.badgeOnline' | translate:{ n: sbOnline() } }}
+            </span>
+          </div>
+          <div class="section-body" *ngIf="open['sleepbridge']">
+            <p class="section-desc">{{ 'settings.sleepbridge.desc' | translate }}</p>
+            <div class="hint" *ngIf="sbBridges.length === 0">{{ 'settings.sleepbridge.none' | translate }}</div>
+            <div class="sb-unit" *ngFor="let b of sbBridges">
+              <div class="sb-head">
+                <strong>{{ b.sender }}</strong>
+                <span class="badge" [class.connected]="b.online">
+                  {{ (b.online ? 'settings.sleepbridge.online' : 'settings.sleepbridge.offline') | translate }}
+                </span>
+                <span class="badge" *ngIf="b.night_open">{{ 'settings.sleepbridge.nightOpen' | translate }}</span>
+              </div>
+              <div class="sb-line" *ngIf="b.card_machine">
+                <span class="sb-label">{{ 'settings.sleepbridge.machine' | translate }}</span> {{ b.card_machine }}
+              </div>
+              <div class="sb-line" *ngIf="b.last_batch">
+                <span class="sb-label">{{ 'settings.sleepbridge.lastWrite' | translate }}</span>
+                {{ b.last_batch * 1000 | date:'medium' }}
+              </div>
+              <div class="sb-line">
+                <span class="sb-label">{{ 'settings.sleepbridge.firmware' | translate }}</span> {{ b.fw_version || '?' }}
+              </div>
+              <div class="hint" *ngIf="b.night_open">{{ 'settings.sleepbridge.nightOpenHint' | translate }}</div>
+              <div class="sb-actions" *ngIf="!b.update?.running">
+                <label class="sb-file">
+                  <input type="file" accept=".bin" (change)="sbFile(b.sender, $event)"
+                         [disabled]="b.night_open || !b.online || sbBusy[b.sender]" />
+                  <span class="hint">{{ 'settings.sleepbridge.fileHint' | translate }}</span>
+                </label>
+              </div>
+              <div class="sb-job" *ngIf="b.update" [class.err]="b.update.phase === 'failed'"
+                   [class.ok]="b.update.phase === 'done'">{{ sbJobText(b.update) }}</div>
+              <div class="sb-msg" *ngIf="sbMessage[b.sender]">{{ sbMessage[b.sender] }}</div>
             </div>
           </div>
         </div>
@@ -1144,6 +1193,16 @@ import { AppConfig } from '../../models/config.model';
     .myair-btn.danger { background: transparent; border-color: #f87171; color: #f87171; }
     .myair-btn.secondary { background: transparent; border-color: #555; color: #aaa; }
     .myair-btn.secondary:hover:not(:disabled) { color: #e0e0e0; border-color: #888; }
+    .sb-unit { border: 1px solid #2a2d45; border-radius: 8px; padding: 0.7rem 0.9rem; margin-bottom: 0.7rem; }
+    .sb-head { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.4rem; }
+    .sb-line { color: #ddd; font-size: 0.85rem; margin: 0.2rem 0; }
+    .sb-label { color: #888; margin-right: 0.3rem; }
+    .sb-actions { display: flex; align-items: center; gap: 0.8rem; flex-wrap: wrap; margin-top: 0.5rem; }
+    .sb-file { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; font-size: 0.8rem; }
+    .sb-job { font-size: 0.85rem; margin-top: 0.5rem; color: #9ad0a0; }
+    .sb-job.err { color: #f87171; }
+    .sb-job.ok { color: #4ade80; }
+    .sb-msg { font-size: 0.85rem; margin-top: 0.4rem; color: #f87171; }
 
     .section-header .restart-tag { margin-left: auto; }
     .section-header .badge + .restart-tag { margin-left: 0.5rem; }
@@ -1347,6 +1406,13 @@ export class SettingsComponent implements OnInit, OnDestroy {
   muleBusy: Record<string, boolean> = {};
   muleMessage: Record<string, string> = {};
   private muleTimer: any = null;
+
+  // The Sleep Bridges streaming here, with each one's firmware and the
+  // update as it runs. Polled while the section is open.
+  sbBridges: SleepBridge[] = [];
+  sbBusy: Record<string, boolean> = {};
+  sbMessage: Record<string, string> = {};
+  private sbTimer: any = null;
 
   // LLM Prompt state
   llmPrompt = '';
@@ -1699,10 +1765,53 @@ export class SettingsComponent implements OnInit, OnDestroy {
   constructor(private api: CpapApiService, private t: TranslateService,
               public updateFlow: UpdateFlowService) {}
 
+  // ── Sleep Bridges and their firmware ────────────────────────────────────
+
+  loadSleepBridges(): void {
+    this.api.getSleepBridges().subscribe({
+      next: (r) => { this.sbBridges = r?.bridges ?? []; },
+      error: () => {},
+    });
+  }
+
+  sbOnline(): number {
+    return this.sbBridges.filter((b) => b.online).length;
+  }
+
+  /** An image file the owner picked: it goes at once, over the bridge's connection. */
+  sbFile(sender: string, ev: Event): void {
+    const input = ev.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+    input.value = '';
+    this.sbBusy[sender] = true;
+    this.sbMessage[sender] = '';
+    this.api.uploadSleepBridgeImage(sender, file).subscribe({
+      next: () => { this.sbBusy[sender] = false; this.loadSleepBridges(); },
+      error: (e) => {
+        this.sbBusy[sender] = false;
+        this.sbMessage[sender] = e?.error?.error || e?.message || this.t.instant('settings.sleepbridge.errGeneric');
+      },
+    });
+  }
+
+  sbJobText(job: SleepBridgeUpdate): string {
+    const pct = job.total > 0 ? Math.round((job.sent * 100) / job.total) : 0;
+    switch (job.phase) {
+      case 'sending': return this.t.instant('settings.sleepbridge.jobSending', { pct });
+      case 'waiting': return this.t.instant('settings.sleepbridge.jobWaiting');
+      case 'restarting': return this.t.instant('settings.sleepbridge.jobRestarting');
+      case 'done': return this.t.instant('settings.sleepbridge.jobDone', { version: job.fw_after || '?' });
+      case 'failed': return this.t.instant('settings.sleepbridge.jobFailed', { error: job.error });
+      default: return job.phase;
+    }
+  }
+
   ngOnDestroy(): void {
     this.destroy$.next();
     this.destroy$.complete();
     if (this.muleTimer) clearInterval(this.muleTimer);
+    if (this.sbTimer) clearInterval(this.sbTimer);
   }
 
   ngOnInit(): void {
@@ -1711,6 +1820,8 @@ export class SettingsComponent implements OnInit, OnDestroy {
     this.loadUpdateStatus();
     this.loadMule();
     this.muleTimer = setInterval(() => { if (this.open['mule']) this.loadMule(); }, 3000);
+    this.loadSleepBridges();
+    this.sbTimer = setInterval(() => { if (this.open['sleepbridge']) this.loadSleepBridges(); }, 3000);
 
     this.api.getConfig().subscribe({
       next: (cfg) => {

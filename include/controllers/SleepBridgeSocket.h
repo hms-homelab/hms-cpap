@@ -7,6 +7,9 @@
 //   GET /api/sleepbridge                     the bridges and their commands,
 //                                            on the web port
 //   POST /api/sleepbridge/command            one command to one bridge
+//   POST /api/sleepbridge/{sender}/update    a firmware image to one bridge,
+//                                            over its stream connection
+//   GET  /api/sleepbridge/{sender}/update    that update as it runs
 //
 // The stream has a port of its own so it can be published alone (the Home
 // Assistant add-on publishes 8894 and keeps the UI behind Ingress). Drogon

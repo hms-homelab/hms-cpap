@@ -119,6 +119,26 @@
       "switchAnswered": "pris en compte ; le miner redémarre avec",
       "switchRefused": "refusé : {{error}}"
     },
+    "sleepbridge": {
+      "heading": "Sleep Bridge",
+      "desc": "Un Sleep Bridge réglé sur l'adresse de cet ordinateur envoie ici ce que la machine écrit sur sa carte et apparaît ci-dessous dès qu'il se connecte. Son firmware se met à jour d'ici, par votre réseau, quand la machine est au repos.",
+      "none": "Aucun bridge ne s'est encore connecté. Sur la page de configuration du bridge, choisissez Mon hms-cpap et saisissez l'IP ou le nom de cet ordinateur.",
+      "badgeOnline": "{{n}} en ligne",
+      "online": "en ligne",
+      "offline": "hors ligne",
+      "nightOpen": "nuit en cours",
+      "machine": "Machine",
+      "lastWrite": "Dernière écriture",
+      "firmware": "Firmware",
+      "nightOpenHint": "La machine a écrit sur sa carte dans les 15 dernières minutes. Les mises à jour attendent son repos.",
+      "fileHint": "Envoyez un fichier image de firmware (.bin) que vous avez. Il part dès qu'il est choisi, par la connexion du bridge.",
+      "jobSending": "Envoi de l'image : {{pct}} %",
+      "jobWaiting": "L'image est partie. En attente de la vérification par le bridge...",
+      "jobRestarting": "Le bridge a pris l'image et redémarre. En attente de son retour...",
+      "jobDone": "Terminé. Le bridge exécute {{version}}.",
+      "jobFailed": "Non mis à jour : {{error}}",
+      "errGeneric": "La mise à jour n'a pas pu démarrer."
+    },
     "sleephq": {
       "heading": "Synchronisation SleepHQ",
       "desc": "Transmettez vos nuits de traitement à SleepHQ via leur API publique. Créez les identifiants d'API dans SleepHQ, sous Account → API.",

@@ -119,6 +119,26 @@
       "switchAnswered": "taken; the miner is restarting with it",
       "switchRefused": "refused: {{error}}"
     },
+    "sleepbridge": {
+      "heading": "Sleep Bridge",
+      "desc": "A Sleep Bridge set to this computer's address streams the machine's card writes here and is listed below when it connects. Its firmware can be updated from here, over your network, in the machine's downtime.",
+      "none": "No bridge has connected yet. On the bridge's setup page, choose My hms-cpap and type this computer's IP address or hostname.",
+      "badgeOnline": "{{n}} online",
+      "online": "online",
+      "offline": "offline",
+      "nightOpen": "night open",
+      "machine": "Machine",
+      "lastWrite": "Last write",
+      "firmware": "Firmware",
+      "nightOpenHint": "The machine wrote to its card in the last 15 minutes. Updates wait for its downtime.",
+      "fileHint": "Send a firmware image file (.bin) you have. It goes as soon as it is chosen, over the bridge's own connection.",
+      "jobSending": "Sending the image: {{pct}}%",
+      "jobWaiting": "The image went. Waiting for the bridge to check it...",
+      "jobRestarting": "The bridge took the image and is restarting. Waiting for it to come back...",
+      "jobDone": "Done. The bridge runs {{version}}.",
+      "jobFailed": "Not updated: {{error}}",
+      "errGeneric": "The update could not be started."
+    },
     "sleephq": {
       "heading": "SleepHQ Sync",
       "desc": "Forward your therapy nights to SleepHQ via their public API. Create API credentials in SleepHQ under Account → API.",
