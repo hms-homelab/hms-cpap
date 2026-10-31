@@ -1019,8 +1019,10 @@ namespace {
 
 class OneShotHttpServer {
 public:
-    explicit OneShotHttpServer(std::string status, std::string body)
-        : status_(std::move(status)), body_(std::move(body)) {
+    explicit OneShotHttpServer(std::string status, std::string body, std::string headers = "",
+                               long declared_length = -1)
+        : status_(std::move(status)), body_(std::move(body)), headers_(std::move(headers)),
+          declared_length_(declared_length) {
         listen_fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
         EXPECT_GE(listen_fd_, 0);
         int one = 1;
@@ -1056,7 +1058,9 @@ private:
         std::string resp =
             "HTTP/1.1 " + status_ + "\r\n"
             "Content-Type: text/html\r\n"
-            "Content-Length: " + std::to_string(body_.size()) + "\r\n"
+            "Content-Length: " +
+            std::to_string(declared_length_ >= 0 ? static_cast<size_t>(declared_length_) : body_.size()) +
+            "\r\n" + headers_ +
             "Connection: close\r\n"
             "\r\n" + body_;
         size_t sent = 0;
@@ -1070,6 +1074,8 @@ private:
 
     std::string status_;
     std::string body_;
+    std::string headers_;
+    long declared_length_ = -1;
     int listen_fd_ = -1;
     uint16_t port_ = 0;
     std::thread thread_;
@@ -1123,6 +1129,119 @@ TEST_F(EzShareClientTest, AnErrorReplyLogsTheBridgesReason) {
     EXPECT_NE(log.find("HTTP 502 for STR.edf: ezShare request failed: card answered HTTP 404"),
               std::string::npos) << log;
     EXPECT_FALSE(std::filesystem::exists(path));
+}
+
+TEST_F(EzShareClientTest, OneIgnoredRangeLeavesRangesOnAndTheCopyAsItWas) {
+    const std::string path = test_dir + "/20260930_231815_BRP.edf";
+    createTestFile(path, 100, 'A');
+
+    OneShotHttpServer srv("200 OK", std::string(150, 'B'));
+    EzShareClient client;
+    client.setBaseURL(srv.baseUrl());
+
+    size_t got = 0;
+    EXPECT_FALSE(client.downloadFileRange("20260930", "20260930_231815_BRP.edf",
+                                          path, 100, got));
+    EXPECT_EQ(readFile(path), std::string(100, 'A'));
+    EXPECT_TRUE(client.supportsRange());
+}
+
+TEST_F(EzShareClientTest, ARunOfIgnoredRangesTurnsRangesOff) {
+    const std::string path = test_dir + "/20260930_231815_BRP.edf";
+    createTestFile(path, 100, 'A');
+    EzShareClient client;
+
+    size_t got = 0;
+    for (int i = 0; i < 3; ++i) {
+        EXPECT_TRUE(client.supportsRange()) << "after " << i;
+        OneShotHttpServer srv("200 OK", std::string(150, 'B'));
+        client.setBaseURL(srv.baseUrl());
+        EXPECT_FALSE(client.downloadFileRange("20260930", "20260930_231815_BRP.edf",
+                                              path, 100, got));
+    }
+    EXPECT_FALSE(client.supportsRange());
+}
+
+TEST_F(EzShareClientTest, AHonouredRangeEndsTheRun) {
+    const std::string path = test_dir + "/20260930_231815_BRP.edf";
+    createTestFile(path, 100, 'A');
+    EzShareClient client;
+
+    size_t got = 0;
+    auto reply = [&](const char* status) {
+        OneShotHttpServer srv(status, std::string(10, 'B'));
+        client.setBaseURL(srv.baseUrl());
+        client.downloadFileRange("20260930", "20260930_231815_BRP.edf", path,
+                                 std::filesystem::file_size(path), got);
+    };
+    reply("200 OK");
+    reply("200 OK");
+    reply("206 Partial Content");
+    reply("200 OK");
+    reply("200 OK");
+    EXPECT_TRUE(client.supportsRange());
+}
+
+TEST_F(EzShareClientTest, AReplyShortOfItsContentRangeIsPutBack) {
+    const std::string path = test_dir + "/20260930_231815_BRP.edf";
+    createTestFile(path, 100, 'A');
+
+    OneShotHttpServer srv("206 Partial Content", std::string(7908, 'B'),
+                          "Content-Range: bytes 100-12103/12104\r\n");
+    EzShareClient client;
+    client.setBaseURL(srv.baseUrl());
+
+    size_t got = 0;
+    EXPECT_FALSE(client.downloadFileRange("20260930", "20260930_231815_BRP.edf",
+                                          path, 100, got));
+    EXPECT_EQ(readFile(path), std::string(100, 'A'));
+    EXPECT_TRUE(client.supportsRange());
+}
+
+TEST_F(EzShareClientTest, AReplyShortOfItsContentRangeFromByteZeroLeavesNoFile) {
+    const std::string path = test_dir + "/20260930_231815_PLD.edf";
+
+    OneShotHttpServer srv("206 Partial Content", std::string(50, 'B'),
+                          "Content-Range: bytes 0-99/100\r\n");
+    EzShareClient client;
+    client.setBaseURL(srv.baseUrl());
+
+    size_t got = 0;
+    EXPECT_FALSE(client.downloadFileRange("20260930", "20260930_231815_PLD.edf",
+                                          path, 0, got));
+    EXPECT_FALSE(std::filesystem::exists(path));
+}
+
+TEST_F(EzShareClientTest, AReplyMatchingItsContentRangeAppends) {
+    const std::string path = test_dir + "/20260930_231815_BRP.edf";
+    createTestFile(path, 100, 'A');
+
+    OneShotHttpServer srv("206 Partial Content", std::string(50, 'B'),
+                          "Content-Range: bytes 100-149/150\r\n");
+    EzShareClient client;
+    client.setBaseURL(srv.baseUrl());
+
+    size_t got = 0;
+    EXPECT_TRUE(client.downloadFileRange("20260930", "20260930_231815_BRP.edf",
+                                         path, 100, got));
+    EXPECT_EQ(readFile(path), std::string(100, 'A') + std::string(50, 'B'));
+}
+
+// A cut is not a hole: the connection died, and what landed before it is good.
+// Throwing it away would restart a big transfer from 0 on a weak link.
+TEST_F(EzShareClientTest, ACutTransferKeepsItsBytes) {
+    const std::string path = test_dir + "/20260930_231815_BRP.edf";
+    createTestFile(path, 100, 'A');
+
+    OneShotHttpServer srv("206 Partial Content", std::string(50, 'B'),
+                          "Content-Range: bytes 100-12103/12104\r\n", 12004);
+    EzShareClient client;
+    client.setBaseURL(srv.baseUrl());
+
+    size_t got = 0;
+    EXPECT_TRUE(client.downloadFileRange("20260930", "20260930_231815_BRP.edf",
+                                         path, 100, got));
+    EXPECT_EQ(readFile(path), std::string(100, 'A') + std::string(50, 'B'));
 }
 
 TEST_F(EzShareClientTest, RangePartialContentStillAppends) {

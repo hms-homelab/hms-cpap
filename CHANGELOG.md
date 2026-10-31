@@ -5,6 +5,22 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **A chunk lost from a ranged ez Share read no longer lands in the file.** A
+  reply can finish normally with a chunk missing from the middle, and the next
+  read used to resume past the hole, leaving the wrong data behind it. A reply
+  shorter than its `Content-Range` is now put back and asked for again. A
+  transfer cut by the link is not, and keeps what landed.
+- **A checkpoint that didn't land is asked for again.** It used to get the
+  listing's size in `checkpoint_files` when another file of the night landed,
+  which read as unchanged from then on, so the night closed with it short.
+- **One 200 to a range no longer turns ranges off on an ez Share.** It put the
+  rest of the night on whole-file reads until the process restarted. It now
+  takes three in a row with no 206 between, and falling back keeps the local
+  copy until the full file lands.
+
 ## [5.7.1] - 2026-10-30
 
 ### Fixed

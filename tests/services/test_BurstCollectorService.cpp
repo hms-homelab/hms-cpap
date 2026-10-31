@@ -1730,9 +1730,11 @@ public:
     bool updateCheckpointFileSizes(
         const std::string& device_id,
         const std::chrono::system_clock::time_point& session_start,
-        const std::map<std::string, int>& /*file_sizes*/) override {
+        const std::map<std::string, int>& file_sizes) override {
+        saved_checkpoints = file_sizes;
         return updateCheckpointFileSizesMock(device_id, session_start);
     }
+    std::map<std::string, int> saved_checkpoints;
     MOCK_METHOD(bool, updateCheckpointFileSizesMock, (const std::string&, const std::chrono::system_clock::time_point&));
     MOCK_METHOD(bool, updateDeviceLastSeen, (const std::string&), (override));
     MOCK_METHOD(bool, saveSTRDailyRecords, (const std::vector<STRDailyRecord>&), (override));
@@ -2306,6 +2308,65 @@ TEST_F(BurstOrchestrationTest, ACopyThatIsNotAnEdfIsFetchedAgain) {
 
     EXPECT_EQ(firstRangeStart(*src_raw, "20200101_220000_BRP.edf"), 0u)
         << "a copy that is not an EDF must not be resumed";
+}
+
+// A size saved for a file we don't hold reads as unchanged from then on, and the
+// night closes with that file short. One file failing while another lands is
+// the case: the session still counts as downloaded.
+TEST_F(BurstOrchestrationTest, AFileThatDidNotLandGetsNoCheckpointSize) {
+    auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, sessionExists(_, _)).WillRepeatedly(Return(false));
+    src_raw->cut_transfers["20200101_220000_BRP.edf"] = 1;
+
+    svc->runBurstCycleForTest();
+
+    EXPECT_EQ(db_raw->saved_checkpoints.count("20200101_220000_BRP.edf"), 0u);
+    EXPECT_EQ(db_raw->saved_checkpoints.count("20200101_220000_PLD.edf"), 1u);
+}
+
+// The same, on a night already stored, where the size is what decides whether
+// the next burst looks at the session at all.
+TEST_F(BurstOrchestrationTest, AStoredNightAsksAgainForAFileThatDidNotLand) {
+    auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, sessionExists(_, _)).WillRepeatedly(Return(true));
+    EXPECT_CALL(*db_raw, getCheckpointFileSizes(_, _))
+        .WillRepeatedly(testing::Invoke([this](const std::string&, const auto&) {
+            return db_raw->saved_checkpoints;
+        }));
+    db_raw->saved_checkpoints = {{"20200101_220000_BRP.edf", 90}, {"20200101_220000_PLD.edf", 20}};
+    src_raw->cut_transfers["20200101_220000_BRP.edf"] = 1;
+
+    svc->runBurstCycleForTest();
+    EXPECT_EQ(db_raw->saved_checkpoints.count("20200101_220000_BRP.edf"), 0u);
+
+    const auto asked = src_raw->ranged_from.size();
+    svc->runBurstCycleForTest();
+    EXPECT_GT(src_raw->ranged_from.size(), asked) << "the next burst has to ask again";
+}
+
+TEST_F(BurstOrchestrationTest, FallingBackToAFullDownloadKeepsTheCopyUntilItLands) {
+    auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, sessionExists(_, _)).WillRepeatedly(Return(false));
+
+    const auto brp = temp_dir / "20200101" / "20200101_220000_BRP.edf";
+    std::filesystem::create_directories(brp.parent_path());
+    const std::string held = "0       " + std::string(5000, 'r');
+    std::ofstream(brp, std::ios::binary) << held;
+
+    src_raw->refuse_range = true;
+    src_raw->short_whole_file.insert("20200101_220000_BRP.edf");
+
+    svc->runBurstCycleForTest();
+
+    ASSERT_TRUE(std::filesystem::exists(brp));
+    EXPECT_EQ(std::filesystem::file_size(brp), held.size())
+        << "a whole-file fetch that fell short must leave the copy we had";
 }
 
 TEST_F(BurstOrchestrationTest, ASourceThatStopsHonouringRangeFallsBackToAFullDownload) {
