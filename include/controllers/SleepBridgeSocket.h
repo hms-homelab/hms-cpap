@@ -29,6 +29,11 @@ namespace hms_cpap::sleepbridge {
 /// socket's hooks. Must precede app().run(). `service` outlives the app.
 void installRoutes(SleepBridgeService* service);
 
+/// Another route the stream port serves beside the bridge's (the Mule &
+/// Miner's, /mule/v1/device). The port split lets it through on the stream
+/// port and refuses it on every other. Must precede app().run().
+void addStreamRoute(const std::string& path);
+
 class AdmitFilter : public drogon::HttpFilter<AdmitFilter> {
 public:
     void doFilter(const drogon::HttpRequestPtr& req, drogon::FilterCallback&& fcb,

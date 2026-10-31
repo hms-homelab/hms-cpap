@@ -169,6 +169,9 @@ set(TEST_SOURCES
     sleepbridge/test_SleepBridgeCommands.cpp
     # Empty unless BUILD_WITH_SLEEPBRIDGE linked the component.
     sleepbridge/test_SleepBridgeLinked.cpp
+    # The Mule & Miner local stream: a fake unit through the receiver into
+    # the AirSense 11 night writer.
+    mule/test_MuleReceiver.cpp
 )
 
 # The supervisor's Qt-free core, compiled straight into run_tests. These files

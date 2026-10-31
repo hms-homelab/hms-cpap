@@ -1,0 +1,127 @@
+# The Mule & Miner local stream
+
+A Mule & Miner in AirSense 11 Bluetooth mode can send the machine's night to
+your own hms-cpap instead of the cloud. On the unit, set the hms-cpap address
+to this host's IP address or hostname (nothing else: no `ws://`, no port, no
+path). The unit then connects to:
+
+```
+ws://<host>:8894/mule/v1/device
+```
+
+Port 8894 is the Sleep Bridge's stream port (`sleep_bridge.port`); both
+devices share it, each on its own route. The route answers on that port only.
+
+## Upgrade
+
+Plain `ws://`. One header beyond the WebSocket's own:
+
+```
+X-Device-Serial: <the unit's serial>     1-64 of [A-Za-z0-9._-]
+```
+
+No credential is sent or read. Any unit on the network is taken, and a serial
+not seen before is listed on its first connect.
+
+## Frames
+
+Text frames are one JSON object with a string `"t"`. Binary frames start with
+a 12-byte little-endian header: `req_id` u32, `seq` u32, `flags` u16 (bit 0:
+last), `kind` u16.
+
+Up, from the unit:
+
+| frame | what hms-cpap reads |
+|---|---|
+| `hello` `{state, fw, miner_fw, boot_reason, mode}` | the unit's session starts. `mode: "card"` is refused with `error`. |
+| `hello` `{"test": true, ...}` | a test of this address before the unit switches here: answered with `ack` and nothing else; nothing is kept. |
+| `state` `{state}` | `state.as11` (`streaming`, `stream_buffered`, ...), `state.tz` (the owner's zone, POSIX), `state.resp_events` (the machine's scored events: `event`, `reportTime`, `durationSeconds`, `backdateSeconds`) |
+| `result` `{req_id, ok, error?, result?}` | a command's answer |
+| binary kind 1 | one CDS1 stream block (`req_id 0, seq 0, flags 1`) |
+| binary kind 6 | an `as11_download`'s bytes (`req_id` the command's, `seq` from 0), then an empty frame with flags bit 0, then its `result` |
+
+Down, from hms-cpap:
+
+| frame | when |
+|---|---|
+| `ack {server_time, ping_s: 30}` | to every hello |
+| `block_ack {start_ms}` | once the block is on disk |
+| `error {error}` | a frame not understood, a card-mode unit |
+| `cmd {req_id, cmd, ...}` | one at a time |
+
+hms-cpap pings every 30 s and closes a connection silent for 90 s.
+
+## The ack rule
+
+The unit frees a block when its `block_ack` comes, and sends again any block
+not acked (it holds about 13 minutes in its flash while it cannot reach
+hms-cpap). So a block is written and synced to disk before it is acked, and a
+block sent again (same `start_ms`) is acked again and kept once.
+
+## CDS1
+
+```
+magic "CDS1" 4, version 1 (= 1), nchan 1, interval_ms 2 LE (40),
+start_ms 8 LE (the machine's UTC clock), serial_len 1, serial,
+then per channel: id 1, cadence 1 (0: one value per interval_ms,
+1: one per 2 s), count 2 LE, count int16 LE values.
+INT16_MIN (-32768) is "the machine sent none".
+```
+
+| id | channel | unit |
+|---|---|---|
+| 1 | flow | mL/s |
+| 2 | mask pressure | 0.01 cmH2O |
+| 3 | mask pressure (2 s) | 0.01 cmH2O |
+| 4 | inspiratory pressure (2 s) | 0.01 cmH2O |
+| 5 | expiratory pressure (2 s) | 0.01 cmH2O |
+| 6 | leak | mL/s |
+| 7 | respiratory rate | 0.1 /min |
+| 8 | tidal volume | mL |
+| 9 | minute ventilation | 0.01 L/min |
+| 10 | snore | 0.01 |
+| 11 | flow limitation | 0.001 |
+| 12 | SpO2 | 0.1 % |
+| 13 | pulse | bpm |
+
+## What lands on disk
+
+```
+<data_dir>/mule/<unit>/unit.json                   the unit, its machine, its zone
+<data_dir>/mule/<unit>/blocks/<start_ms>.cds1      every block, as it came
+<data_dir>/as11/<machine>/DATALOG/<night>/         BRP, PLD, SAD, EVE, CSL, as a card
+<data_dir>/as11/<machine>/Identification.json
+<data_dir>/as11/<machine>/AS11/summary-<from>.as11, settings-<from>.as11set
+<data_dir>/as11/<machine>/STR.edf                  when the model's layout is in str-layouts/
+```
+
+The night is named on the owner's wall clock from `state.tz`, the sleep day
+running noon to noon, as the machine's card would name it.
+
+When the stream has ended (`streaming` true, then false) and the unit holds
+no more of it (`stream_buffered` 0), the night's files are completed and
+hms-cpap asks, one at a time: `as11_download` with `spool` `Identification`
+(when no Identification.json is kept), `Summary`, then `Settings`.
+
+## Commands
+
+`GET /api/mule` lists the units with their status and their recent commands
+and results. `POST /api/mule/command` sends one:
+
+```
+{"serial": "<unit>", "cmd": "<name>", ...arguments}
+```
+
+| cmd | arguments |
+|---|---|
+| `config` | `{"config": {"hms_url": "<address>"}}` or `{"hms_url": "<address>"}`, no other key; `""` sends the unit back to the cloud |
+| `reboot` | `target`: `mule`, `miner` or `both` (optional) |
+| `logs` | `n`: 1 to 5000 lines (default 200) |
+| `restate` | none: the unit sends its full state again |
+| `reset` | none: the unit erases its WiFi and this address, and restarts into setup |
+| `as11_pair` | none to start, `code` to confirm, `cancel: true` to drop |
+| `as11_download` | `from` (YYYY-MM-DD), `spool` (`Summary`, `Identification`, `Settings`) |
+
+Anything else is refused with 400; a unit never seen here gets 404. A command
+for a unit that is offline or busy waits for it. `reboot` and `reset` are
+never answered: the unit restarts.

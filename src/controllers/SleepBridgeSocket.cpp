@@ -3,6 +3,7 @@
 
 #include <drogon/HttpAppFramework.h>
 
+#include <algorithm>
 #include <chrono>
 #include <ctime>
 #include <iostream>
@@ -27,6 +28,12 @@ SleepBridgeService*                        g_service{nullptr};
 std::mutex                                 g_mu;
 std::map<uint64_t, std::shared_ptr<Entry>> g_entries;
 uint64_t                                   g_next_id{1};
+std::vector<std::string>                   g_more_routes;   // addStreamRoute, before run()
+
+bool streamRoute(const std::string& path) {
+    return path == kRoute ||
+           std::find(g_more_routes.begin(), g_more_routes.end(), path) != g_more_routes.end();
+}
 
 drogon::HttpResponsePtr jsonError(drogon::HttpStatusCode code, const std::string& why) {
     Json::Value v(Json::objectValue);
@@ -76,6 +83,10 @@ void armSilence(const std::weak_ptr<Entry>& weak, double after) {
 
 }  // namespace
 
+void addStreamRoute(const std::string& path) {
+    if (!streamRoute(path)) g_more_routes.push_back(path);
+}
+
 void installRoutes(SleepBridgeService* service) {
     g_service = service;
     if (!service) return;
@@ -91,7 +102,7 @@ void installRoutes(SleepBridgeService* service) {
         [](const drogon::HttpRequestPtr& req, drogon::AdviceCallback&& stop,
            drogon::AdviceChainCallback&& pass) {
             const bool stream = onStreamPort(req);
-            const bool route  = req->path() == kRoute;
+            const bool route  = streamRoute(req->path());
             if (stream != route) {
                 stop(jsonError(drogon::k404NotFound, "not found"));
                 return;

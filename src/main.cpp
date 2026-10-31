@@ -5,6 +5,7 @@
 #include "controllers/EquipmentController.h"
 #include "controllers/CleaningController.h"
 #include "controllers/SleepBridgeSocket.h"
+#include "controllers/MuleSocket.h"
 #include "services/CpapDashSyncService.h"
 #include "services/CardUpload.h"
 #include "services/OximetryImport.h"
@@ -1537,6 +1538,9 @@ int main(int argc, char** argv) {
             // service outlives app().run(); without the Sleep Bridge
             // component in this build it listens and refuses bridges.
             std::unique_ptr<hms_cpap::sleepbridge::SleepBridgeService> sleep_bridge;
+            // The Mule & Miner local stream rides the same port, on its own
+            // route, into the one AirSense 11 night writer (SDD-057's).
+            std::unique_ptr<hms_cpap::mule::MuleService> mule_stream;
             if (config.sleep_bridge.enabled) {
                 if (config.sleep_bridge.port == web_port || config.sleep_bridge.port <= 0 ||
                     config.sleep_bridge.port > 65535) {
@@ -1561,6 +1565,17 @@ int main(int argc, char** argv) {
                         });
                     hms_cpap::sleepbridge::installRoutes(sleep_bridge.get());
                     sleep_bridge->start();
+
+                    hms_cpap::mule::MuleService::Options mo;
+                    mo.data_dir = hms_cpap::AppConfig::dataDir();
+                    mo.root     = (std::filesystem::path(mo.data_dir) / "mule").string();
+                    mo.port     = config.sleep_bridge.port;
+                    std::shared_ptr<hms_cpap::IAs11NightSink> night =
+                        burst_service ? burst_service->getAs11NightSink()
+                                      : std::make_shared<hms_cpap::As11NightWriter>(
+                                            mo.data_dir, hms_cpap::hostLocalClock());
+                    mule_stream = std::make_unique<hms_cpap::mule::MuleService>(mo, night);
+                    hms_cpap::mule::installRoutes(mule_stream.get());
                 }
             }
 
