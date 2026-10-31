@@ -314,6 +314,20 @@ TEST_F(StrAppend, WithNoStrOneIsCreatedFromTheLayoutAndThenAppendedTo) {
     EXPECT_EQ(std::atol(field(second, 236, 8).c_str()), 4);
 }
 
+// Two Summary files with the very same write time: the later-dated name wins
+// a day both carry, whatever order the directory lists them in.
+TEST_F(StrAppend, SummariesWithOneWriteTimeAreOrderedByName) {
+    summary("2026-03-01", {summaryDay(0, 420), summaryDay(2, 380)});
+    ASSERT_TRUE(run().written);
+    summary("2026-03-02", {summaryDay(2, 385), summaryDay(3, 410)});
+    const auto stamp = fs::last_write_time(root_ / "AS11" / "summary-2026-03-01.as11");
+    fs::last_write_time(root_ / "AS11" / "summary-2026-03-02.as11", stamp);
+    const auto more = run();
+    ASSERT_TRUE(more.written) << more.why;
+    EXPECT_EQ(more.replaced, 1);   // 3 March took the later file's 385, not the earlier 380
+    EXPECT_EQ(more.appended, 1);
+}
+
 TEST_F(StrAppend, ATornTailPastTheCountIsOverwrittenByTheNextAppend) {
     Bytes torn = cardStr(15);
     torn.insert(torn.end(), kRecBytes / 2, 0x7F);   // a write that died before its count
