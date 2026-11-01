@@ -78,17 +78,22 @@ int64_t msOf(std::chrono::system_clock::time_point t) {
     return std::chrono::duration_cast<std::chrono::milliseconds>(t.time_since_epoch()).count();
 }
 
-// Every kept Summary's days, a later file winning a day both carry; keyed by
-// the day's start instant (the machine's noon).
+// Every kept Summary's days, a later file winning a day both carry (by write
+// time, then by name); keyed by the day's start instant (the machine's noon).
 std::map<int64_t, AirSense11Day> keptDays(const fs::path& root) {
     std::map<int64_t, AirSense11Day> days;
     std::vector<fs::path> files;
     std::error_code ec;
     for (const auto& f : fs::directory_iterator(root / "AS11", ec))
         if (f.path().extension() == ".as11") files.push_back(f.path());
+    // Oldest write first. Two files written within one clock tick share a
+    // stamp (the kernel's file times are that coarse), so the name breaks the
+    // tie: it carries the Summary's ISO date, which runs in time order.
     std::sort(files.begin(), files.end(), [](const fs::path& a, const fs::path& b) {
         std::error_code e;
-        return fs::last_write_time(a, e) < fs::last_write_time(b, e);
+        const auto ta = fs::last_write_time(a, e), tb = fs::last_write_time(b, e);
+        if (ta != tb) return ta < tb;
+        return a.filename() < b.filename();
     });
     for (const auto& f : files) {
         const auto bytes = readAll(f);
