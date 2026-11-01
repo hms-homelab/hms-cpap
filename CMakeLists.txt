@@ -145,7 +145,11 @@ elseif(APPLE)
     # Findjsoncpp.cmake (on the module path after find_package(Drogon)) answers
     # first and, depending on the Drogon version, does not create jsoncpp_lib --
     # so CMake emits a bare -ljsoncpp_lib and the link fails on CI.
-    find_package(jsoncpp CONFIG REQUIRED)
+    # Newer Drogon formulas already load that config file themselves, and
+    # loading it twice fails ("jsoncpp_lib ... already exists").
+    if(NOT TARGET jsoncpp_lib)
+        find_package(jsoncpp CONFIG REQUIRED)
+    endif()
 else()
     find_package(jsoncpp REQUIRED)
 endif()
