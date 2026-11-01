@@ -168,3 +168,56 @@ TEST_F(SettingsFile, NothingIsWrittenForAResultThatIsNotSettings) {
     EXPECT_FALSE(fs::exists(settingsPath(root_.string())));
     EXPECT_FALSE(readSettings(root_.string()));
 }
+
+namespace {
+// The .crc beside the settings file: four bytes, the file's CRC-32 little-endian.
+std::string crcFileOf(const std::string& settings_path) {
+    std::string p = settings_path;
+    p.replace(p.size() - 5, 5, ".crc");
+    std::ifstream in(p, std::ios::binary);
+    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+}
+// CRC-32 by the book, to check the writer's against.
+uint32_t refCrc32(const std::string& s) {
+    uint32_t c = 0xFFFFFFFFu;
+    for (unsigned char ch : s) {
+        c ^= ch;
+        for (int i = 0; i < 8; i++) c = (c & 1u) ? ((c >> 1) ^ 0xEDB88320u) : (c >> 1);
+    }
+    return ~c;
+}
+}  // namespace
+
+TEST_F(SettingsFile, TheCrcOfTheFileIsKeptBesideItAsACardKeepsIt) {
+    ASSERT_TRUE(writeSettings(root_.string(), profiles()));
+    const std::string crc = crcFileOf(settingsPath(root_.string()));
+    ASSERT_EQ(crc.size(), 4u);
+    const uint32_t want = refCrc32(text());
+    EXPECT_EQ(static_cast<uint8_t>(crc[0]), want & 0xFF);
+    EXPECT_EQ(static_cast<uint8_t>(crc[1]), (want >> 8) & 0xFF);
+    EXPECT_EQ(static_cast<uint8_t>(crc[2]), (want >> 16) & 0xFF);
+    EXPECT_EQ(static_cast<uint8_t>(crc[3]), (want >> 24) & 0xFF);
+
+    // A newer file replaces it, and the CRC follows.
+    ASSERT_TRUE(writeSettings(root_.string(), profiles("2026-10-31T19:00:00.000Z")));
+    EXPECT_NE(crcFileOf(settingsPath(root_.string())), crc);
+    EXPECT_EQ(static_cast<uint8_t>(crcFileOf(settingsPath(root_.string()))[0]), refCrc32(text()) & 0xFF);
+}
+
+TEST_F(SettingsFile, ACardsOwnCrcIsKeptAndAFileWithoutOneGetsOne) {
+    fs::create_directories(fs::path(settingsPath(root_.string())).parent_path());
+    const std::string card = "{\"FlowGenerator\":" + profiles("2026-10-30T19:02:36.785Z") + "}";
+    std::ofstream(settingsPath(root_.string())) << card;
+    // No .crc yet: the file stays, and gets one.
+    EXPECT_FALSE(writeSettings(root_.string(), profiles("2026-10-30T19:02:36.785Z")));
+    EXPECT_EQ(text(), card);
+    EXPECT_EQ(crcFileOf(settingsPath(root_.string())).size(), 4u);
+    // A card's own is not replaced.
+    {
+        std::string p = settingsPath(root_.string());
+        p.replace(p.size() - 5, 5, ".crc");
+        std::ofstream(p, std::ios::binary | std::ios::trunc) << "card";
+    }
+    EXPECT_FALSE(writeSettings(root_.string(), profiles("2026-10-30T19:02:36.785Z")));
+    EXPECT_EQ(crcFileOf(settingsPath(root_.string())), "card");
+}

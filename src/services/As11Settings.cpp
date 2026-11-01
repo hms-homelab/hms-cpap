@@ -58,6 +58,40 @@ std::optional<double> toggle(const std::optional<std::string>& s) {
     return std::nullopt;
 }
 
+// The CRC-32 a card keeps beside CurrentSettings.json, in CurrentSettings.crc:
+// four bytes, little-endian (both of one card's .crc files check).
+uint32_t crc32Of(const std::string& bytes) {
+    uint32_t c = 0xFFFFFFFFu;
+    for (unsigned char ch : bytes) {
+        c ^= ch;
+        for (int b = 0; b < 8; b++) c = (c & 1u) ? ((c >> 1) ^ 0xEDB88320u) : (c >> 1);
+    }
+    return ~c;
+}
+
+// <settings path without .json>.crc for the file as it is now; false on failure.
+bool writeCrcBeside(const fs::path& json_path) {
+    std::ifstream in(json_path, std::ios::binary);
+    if (!in) return false;
+    std::stringstream ss;
+    ss << in.rdbuf();
+    const uint32_t crc = crc32Of(ss.str());
+    fs::path path = json_path;
+    path.replace_extension(".crc");
+    const fs::path tmp = path.string() + ".tmp";
+    std::error_code ec;
+    {
+        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        const char le[4] = {static_cast<char>(crc & 0xFF), static_cast<char>((crc >> 8) & 0xFF),
+                            static_cast<char>((crc >> 16) & 0xFF), static_cast<char>((crc >> 24) & 0xFF)};
+        out.write(le, 4);
+        if (!out) { out.close(); fs::remove(tmp, ec); return false; }
+    }
+    fs::rename(tmp, path, ec);
+    if (ec) { fs::remove(tmp, ec); return false; }
+    return true;
+}
+
 int64_t floorDiv(int64_t a, int64_t b) {
     int64_t q = a / b;
     if ((a % b != 0) && ((a < 0) != (b < 0))) q--;
@@ -151,7 +185,15 @@ std::optional<As11Settings> readSettings(const std::string& root) {
 bool writeSettings(const std::string& root, const std::string& result_json) {
     const auto fresh = parseSettings(result_json);
     if (!fresh) return false;
-    if (const auto have = readSettings(root); have && have->applied_ms >= fresh->applied_ms) return false;
+    if (const auto have = readSettings(root); have && have->applied_ms >= fresh->applied_ms) {
+        // The file there stays (a card's copy, say); one written before the
+        // .crc existed gets its .crc, and a card's own is kept.
+        std::error_code ec;
+        fs::path crc = settingsPath(root);
+        crc.replace_extension(".crc");
+        if (!fs::exists(crc, ec)) writeCrcBeside(settingsPath(root));
+        return false;
+    }
 
     const fs::path path = settingsPath(root);
     std::error_code ec;
@@ -166,6 +208,7 @@ bool writeSettings(const std::string& root, const std::string& result_json) {
     }
     fs::rename(tmp, path, ec);
     if (ec) { fs::remove(tmp, ec); return false; }
+    writeCrcBeside(path);   // CurrentSettings.crc, as the card keeps it
     return true;
 }
 

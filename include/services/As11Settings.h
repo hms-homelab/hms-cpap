@@ -61,7 +61,9 @@ std::optional<As11Settings> readSettings(const std::string& root);
 
 /// Keeps the Get ["SettingProfiles"] result as <root>/SETTINGS/CurrentSettings.json,
 /// laid out as a card's file, unless the one there was applied on the machine
-/// at the same time or later. True when the file now holds this result.
+/// at the same time or later. True when the file now holds this result. The
+/// CRC-32 of the file goes beside it in CurrentSettings.crc, as a card keeps
+/// it (a card's own .crc is not replaced).
 bool writeSettings(const std::string& root, const std::string& result_json);
 
 }  // namespace hms_cpap
