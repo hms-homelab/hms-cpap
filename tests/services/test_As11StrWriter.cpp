@@ -392,3 +392,107 @@ TEST(StrLayouts, ABuiltInLayoutLaysASummaryDayOutAsTheCardWould) {
     EXPECT_NE(h.recording.find("MID=36"), std::string::npos);
     fs::remove_all(dir);
 }
+
+// ── the settings (Mode and the S.* fields), from SETTINGS/CurrentSettings.json ──
+
+namespace {
+
+// A machine's SettingProfiles as a card's file holds them: made-up pressures,
+// applied at 17:00:10 UTC on 3 March, which is noon on the machine's clock at
+// UTC-5, so the sleep day of 3 March.
+std::string settingsFile(double min_press, const char* mode = "AutoSet",
+                         const char* applied = "2026-03-03T17:00:10.000Z") {
+    return std::string(R"({"FlowGenerator":{"SettingProfiles":{"Attributes":{"AppliedDateTime":")") + applied +
+           R"("},"ActiveProfiles":{"TherapyProfile":"AutoSetProfile"},"TherapyProfiles":{"AutoSetProfile":{"TherapyMode":")" +
+           mode + R"(","MaxPressure":15.0,"MinPressure":)" + std::to_string(min_press) +
+           R"(,"StartPressure":4.0}},"FeatureProfiles":{"TimeZoneFeature":{"TimeZoneOffset":"-05:00"}}}}})";
+}
+
+void putSettings(const fs::path& root, const std::string& text) {
+    writeAll(root / "SETTINGS" / "CurrentSettings.json", Bytes(text.begin(), text.end()));
+}
+
+constexpr size_t kModeAt = 2 * (1 + 10 + 10 + 1 + 1);        // byte offsets in a record
+constexpr size_t kMinPressAt = 2 * (1 + 10 + 10 + 1 + 1 + 1);
+
+}  // namespace
+
+TEST_F(StrAppend, SettingsAreWrittenOnTheDaysFromTheDayTheyWereApplied) {
+    putSettings(root_, settingsFile(8.0));
+    // 1 to 4 March; the settings were applied on the 3rd.
+    summary("2026-03-01", {summaryDay(0, 400), summaryDay(1, 410), summaryDay(2, 420), summaryDay(3, 430)});
+    const auto r = run();
+    ASSERT_TRUE(r.written) << r.why;
+    ASSERT_TRUE(r.created);
+    const Bytes after = readAll(str_);
+    const size_t header = after.size() - 4 * kRecBytes;
+    for (size_t i : {0u, 1u}) {   // before they were applied: not written
+        EXPECT_EQ(sample(record(after, header, i), kModeAt), -1) << "day " << i;
+        EXPECT_EQ(sample(record(after, header, i), kMinPressAt), -1) << "day " << i;
+    }
+    for (size_t i : {2u, 3u}) {
+        EXPECT_EQ(sample(record(after, header, i), kModeAt), 1) << "day " << i;          // AutoSet
+        EXPECT_EQ(sample(record(after, header, i), kMinPressAt), 80) << "day " << i;     // 8.0 cmH2O
+    }
+}
+
+TEST_F(StrAppend, ANewDayIsAppendedWithTheSettings) {
+    writeAll(str_, cardStr(15));
+    const size_t header = readAll(str_).size() - 15 * kRecBytes;
+    putSettings(root_, settingsFile(9.0));
+    summary("2026-03-14", {summaryDay(15, 420)});
+    ASSERT_TRUE(run().written);
+    const Bytes rec = record(readAll(str_), header, 15);
+    EXPECT_EQ(sample(rec, kModeAt), 1);
+    EXPECT_EQ(sample(rec, kMinPressAt), 90);
+}
+
+TEST_F(StrAppend, ACardsOwnRecordOfTheLastDayKeepsItsSettings) {
+    // The card wrote 15 March with Mode 1 and a minimum of 7.4; today's file says 8.
+    const Bytes before = cardStr(15);
+    writeAll(str_, before);
+    const size_t header = before.size() - 15 * kRecBytes;
+    putSettings(root_, settingsFile(8.0, "AutoSet", "2026-03-01T17:00:10.000Z"));
+    summary("2026-03-13", {summaryDay(14, 455, 310)});
+    ASSERT_TRUE(run().written);
+    const Bytes rec = record(readAll(str_), header, 14);
+    EXPECT_EQ(sample(rec, 2 * (1 + 10 + 10 + 1)), 455);   // the Summary's usage went in
+    EXPECT_EQ(sample(rec, kMinPressAt), 74);              // the card's 7.4, not today's 8
+}
+
+TEST_F(StrAppend, ALastDayWithNoModeGetsTheSettingsOnceTheyAreKnown) {
+    // The night is written first with no settings file (as before this
+    // existed), then the machine's settings are read and the day is revised.
+    summary("2026-03-01", {summaryDay(0, 400), summaryDay(1, 410)});
+    ASSERT_TRUE(run().created);
+    Bytes file = readAll(str_);
+    const size_t header = file.size() - 2 * kRecBytes;
+    EXPECT_EQ(sample(record(file, header, 1), kModeAt), -1);
+
+    putSettings(root_, settingsFile(8.0, "AutoSet", "2026-03-01T17:00:10.000Z"));
+    summary("2026-03-02", {summaryDay(1, 415)});   // the machine revised its day
+    const auto r = run();
+    ASSERT_TRUE(r.written) << r.why;
+    EXPECT_EQ(r.replaced, 1);
+    file = readAll(str_);
+    EXPECT_EQ(sample(record(file, header, 1), kModeAt), 1);
+    EXPECT_EQ(sample(record(file, header, 1), kMinPressAt), 80);
+    EXPECT_EQ(sample(record(file, header, 0), kModeAt), -1);   // an earlier day is left as it was
+}
+
+TEST_F(StrAppend, NoSettingsFileLeavesTheSettingsUnsetAndADayOffGetsNone) {
+    summary("2026-03-01", {summaryDay(0, 400)});
+    ASSERT_TRUE(run().created);
+    Bytes file = readAll(str_);
+    EXPECT_EQ(sample(record(file, file.size() - kRecBytes, 0), kModeAt), -1);
+
+    // With settings, a day without usage is still the machine's day-off record.
+    fs::remove(str_);
+    putSettings(root_, settingsFile(8.0, "AutoSet", "2026-03-01T17:00:10.000Z"));
+    summary("2026-03-01", {summaryDay(0, 400), summaryDay(1, 0)});
+    ASSERT_TRUE(run().created);
+    file = readAll(str_);
+    const size_t header = file.size() - 2 * kRecBytes;
+    EXPECT_EQ(sample(record(file, header, 0), kModeAt), 1);
+    EXPECT_EQ(sample(record(file, header, 1), kModeAt), -1);
+}

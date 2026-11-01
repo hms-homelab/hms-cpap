@@ -19,7 +19,12 @@ namespace hms_cpap {
  * VariantIdentifier as VID, from Identification.json). Every Summary day is a
  * day-off record (all -1) with the Summary's figures written on it; a day
  * between two Summary days that the machine did not report stays a day-off
- * record. The settings history is not applied yet: settings fields stay -1.
+ * record. The settings (Mode and the S.* fields) come from
+ * <root>/SETTINGS/CurrentSettings.json when there is one (As11Settings.h): a
+ * card's copy, or the machine's own read over Bluetooth. They are written on
+ * the days with usage from the day they were applied, never on an earlier one,
+ * and only the values whose code was matched against a real card; the rest
+ * stay -1.
  *
  * The STR is APPENDED, never rewritten (the STR decision of 2026-10-31). A
  * folder that already holds an STR.edf, from a card copy or from earlier
@@ -31,7 +36,8 @@ namespace hms_cpap {
  *   - the file's last day is rewritten in place when the Summary carries it
  *     (the machine revises the day it is on), on the file's own record of
  *     that day as the base, so what the card wrote and the Summary does not
- *     carry stays;
+ *     carry stays (a record that has a Mode keeps its settings; one without
+ *     gets the settings above);
  *   - a day before the last is left as the file has it, and counted;
  *   - the records go first, then the header's record count: a reader that
  *     sees the old count sees a whole file.

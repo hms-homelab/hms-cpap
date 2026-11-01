@@ -700,4 +700,22 @@ Result Session::getIdentification(std::string* result_json) {
     return Result::Ok;
 }
 
+Result Session::getSettings(std::string* result_json) {
+    int id = 0;
+    {
+        std::lock_guard<std::mutex> lk(m_);
+        last_error_.clear();
+        if (!cipher_) { last_error_ = "no session open"; return Result::Protocol; }
+        id = next_id_++;
+    }
+    int ec = 0;
+    auto res = call(id, "Get", ojson::array({"SettingProfiles"}), "1.0", true, &ec);
+    if (!res || !res->is_object() || !res->contains("SettingProfiles")) {
+        fail(ec ? "machine refused the settings" : "no answer to Get");
+        return Result::Protocol;
+    }
+    if (result_json) *result_json = res->dump();
+    return Result::Ok;
+}
+
 } // namespace hms_cpap::as11

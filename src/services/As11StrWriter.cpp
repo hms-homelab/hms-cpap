@@ -1,5 +1,6 @@
 #include "services/As11StrWriter.h"
 #include "services/As11NightWriter.h"
+#include "services/As11Settings.h"
 #include "services/StrLayouts.h"
 
 #include <cpapdash/parser/AirSense11Summary.h>
@@ -227,6 +228,20 @@ StrHeaderInfo readStrHeader(const std::vector<uint8_t>& file) {
     return h;
 }
 
+// True when the record already carries a Mode: a card's own record, whose
+// settings are the day's and are not to be replaced by today's.
+bool recordHasMode(const StrHeaderInfo& h, const std::vector<uint8_t>& rec) {
+    size_t at = 0;
+    for (size_t i = 0; i < h.labels.size(); i++) {
+        if (h.labels[i] == "Mode") {
+            if (at + 2 > rec.size()) return false;
+            return static_cast<int16_t>(rec[at] | (rec[at + 1] << 8)) != -1;
+        }
+        at += static_cast<size_t>(h.samples_per_record[i]) * 2;
+    }
+    return false;
+}
+
 StrResult writeStrFromSummaries(const std::string& root_s, const std::string& layout_dir) {
     StrResult r;
     const fs::path root(root_s);
@@ -236,6 +251,19 @@ StrResult writeStrFromSummaries(const std::string& root_s, const std::string& la
 
     const auto days = keptDays(root);
     if (days.empty()) { r.why = "no Summary kept yet"; return r; }
+
+    // The settings the machine is set to (a card's file, or the one read over
+    // Bluetooth): written on the days with usage from the day they were applied.
+    const auto settings = readSettings(root.string());
+    auto withSettings = [&settings](STRDayValues v, int64_t day) {
+        if (!settings || v.empty() || day < settings->firstDay()) return v;
+        for (const auto& kv : settings->values) {
+            const bool named = std::any_of(v.values.begin(), v.values.end(),
+                                           [&](const auto& have) { return have.first == kv.first; });
+            if (!named) v.values.push_back(kv);
+        }
+        return v;
+    };
 
     // Each Summary day by its calendar date on the machine's clock.
     std::map<int64_t, const AirSense11Day*> by_date;
@@ -276,7 +304,8 @@ StrResult writeStrFromSummaries(const std::string& root_s, const std::string& la
         std::vector<uint8_t> out = header;
         for (int64_t day = first; day <= last; day++) {
             auto it = by_date.find(day);
-            const STRDayValues values = it != by_date.end() ? AirSense11SummaryParser::toStrDay(*it->second) : STRDayValues{};
+            const STRDayValues values = withSettings(
+                it != by_date.end() ? AirSense11SummaryParser::toStrDay(*it->second) : STRDayValues{}, day);
             const auto rec = writeResMedSTRRecord(header.data(), header.size(), {}, day, values);
             if (rec.empty()) { r.why = "the STR record writer refused day " + isoDay(day); return r; }
             out.insert(out.end(), rec.begin(), rec.end());
@@ -318,13 +347,16 @@ StrResult writeStrFromSummaries(const std::string& root_s, const std::string& la
     std::vector<uint8_t> replaced;     // the last record, rewritten
     std::vector<uint8_t> appended;     // the records after it
     for (const auto& [day, d] : by_date) {
-        const STRDayValues values = AirSense11SummaryParser::toStrDay(*d);
+        STRDayValues values = AirSense11SummaryParser::toStrDay(*d);
         if (day < last_day || (day == last_day && records == 0)) { r.skipped++; continue; }
         if (day == last_day) {
             // The machine revises the day it is on: the file's record of
             // that day is the base, so what the Summary does not carry stays.
             const auto at = file.begin() + static_cast<long>(fh.header_bytes + static_cast<size_t>(records - 1) * rec_bytes);
             const std::vector<uint8_t> base(at, at + static_cast<long>(rec_bytes));
+            // A card's record keeps the settings it has; one without a Mode
+            // (our own, from before the settings were read) gets today's.
+            if (!recordHasMode(fh, base)) values = withSettings(std::move(values), day);
             auto rec = writeResMedSTRRecord(header.data(), header.size(), base, day, values);
             if (rec.empty()) { r.why = "the STR record writer refused day " + isoDay(day); return r; }
             if (rec != base) replaced = std::move(rec);
@@ -335,7 +367,7 @@ StrResult writeStrFromSummaries(const std::string& root_s, const std::string& la
             if (rec.empty()) { r.why = "the STR record writer refused day " + isoDay(gap); return r; }
             appended.insert(appended.end(), rec.begin(), rec.end());
         }
-        const auto rec = writeResMedSTRRecord(header.data(), header.size(), {}, day, values);
+        const auto rec = writeResMedSTRRecord(header.data(), header.size(), {}, day, withSettings(std::move(values), day));
         if (rec.empty()) { r.why = "the STR record writer refused day " + isoDay(day); return r; }
         appended.insert(appended.end(), rec.begin(), rec.end());
         last_day = day;

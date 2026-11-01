@@ -2,6 +2,7 @@
 
 #include "clients/AirSense11BleClient.h"
 #include "clients/BlueZAdapter.h"
+#include "services/As11Settings.h"
 #include "services/As11StrWriter.h"
 
 #include <algorithm>
@@ -391,6 +392,17 @@ std::vector<uint8_t> AirSense11BleClient::fetchSummary(const std::string& from) 
     if (r == as11::Result::Ok) r = session_.getState(&serial, nullptr);
     if (r == as11::Result::Ok && writer_ && session_.getIdentification(&ident) == as11::Result::Ok)
         writeIdentification(writer_->rootFor(serial), ident);
+    // The settings, for the STR.edf the Summary is laid into: not needed for
+    // the Summary itself, so a machine that will not give them costs nothing.
+    if (r == as11::Result::Ok && writer_ && !serial.empty()) {
+        std::string settings;
+        if (session_.getSettings(&settings) == as11::Result::Ok) {
+            if (writeSettings(writer_->rootFor(serial), settings))
+                std::cout << kTag << "settings kept as SETTINGS/CurrentSettings.json" << std::endl;
+        } else {
+            std::cout << kTag << "settings not read: " << session_.lastError() << std::endl;
+        }
+    }
     if (r == as11::Result::Ok) r = session_.pullSpool("Summary", from, &out);
     const std::string why = session_.lastError();
     const std::string status = session_.lastSpoolStatus();
