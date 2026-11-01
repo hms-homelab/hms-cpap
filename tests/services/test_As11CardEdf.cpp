@@ -106,7 +106,8 @@ TEST(As11CardEdf, EveryChannelHasZeroAtZero) {
 
 TEST(As11CardEdf, PldRangesAreTheCards) {
     const auto sigs = decode(writeCardPLD(pld(10)));
-    ASSERT_EQ(sigs.size(), 9u);
+    ASSERT_EQ(sigs.size(), 10u);   // nine channels and the closing Crc16
+    EXPECT_EQ(sigs[9].label, "Crc16");
     struct Want { const char* label; const char* dim; double hi; int dig_hi; };
     const Want want[] = {
         {"MaskPress.2s", "cmH2O", 40, 2000}, {"Press.2s", "cmH2O", 50, 2500},
@@ -145,7 +146,8 @@ TEST(As11CardEdf, FlowIsWrittenInLitresPerSecondAsTheCardHasIt) {
     brp.press_cmh2o.resize(25, 9.0);
     const auto file = writeCardBRP(brp);
     const auto sigs = decode(file);
-    ASSERT_EQ(sigs.size(), 2u);
+    ASSERT_EQ(sigs.size(), 3u);
+    EXPECT_EQ(sigs[2].label, "Crc16");
     EXPECT_EQ(sigs[0].label, "Flow.40ms");
     EXPECT_EQ(sigs[0].dim, "L/s");
     EXPECT_EQ(sigs[0].pmin, -2.0);
@@ -186,7 +188,7 @@ TEST(As11CardEdf, AGapIsZeroAndAChannelWithNoSamplesIsLeftOut) {
     p.leak_lps.clear();
     p.mask_press_cmh2o[3] = NAN;
     const auto sigs = decode(writeCardPLD(p));
-    ASSERT_EQ(sigs.size(), 8u);
+    ASSERT_EQ(sigs.size(), 9u);    // eight channels and the Crc16
     for (const auto& s : sigs) EXPECT_NE(s.label, "Leak.2s");
     EXPECT_EQ(sigs[0].samples[3], 0);
 }
@@ -197,10 +199,138 @@ TEST(As11CardEdf, OximetryKeepsItsValuesFromZero) {
     sad.spo2_pct = {96.0, NAN, 91.0};
     sad.pulse_bpm = {70.0, 71.0, 120.0};
     const auto sigs = decode(writeCardSAD(sad));
-    ASSERT_EQ(sigs.size(), 2u);
+    ASSERT_EQ(sigs.size(), 3u);
     EXPECT_EQ(sigs[0].label, "SpO2");
     EXPECT_NEAR(sigs[0].noOffset(0), 96.0, 0.5);
     EXPECT_EQ(sigs[0].samples[1], 0);
     EXPECT_NEAR(sigs[1].noOffset(2), 120.0, 0.5);
     EXPECT_TRUE(writeCardSAD(StreamedSAD{}).empty());
+}
+
+// ── the card's checksums ──
+
+namespace {
+
+// The data bytes of record [r] without its closing Crc16, and the Crc16 as stored.
+struct Record { std::vector<uint8_t> data; uint16_t stored; };
+
+std::vector<Record> recordsOf(const std::vector<uint8_t>& b) {
+    const int ns = std::atoi(field(b, 252, 4).c_str());
+    const int hl = std::atoi(field(b, 184, 8).c_str());
+    const int nr = std::atoi(field(b, 236, 8).c_str());
+    size_t rec = 0;
+    const size_t spr_at = 256 + static_cast<size_t>(ns) * (16 + 80 + 8 + 8 + 8 + 8 + 8 + 80);
+    for (int i = 0; i < ns; i++) rec += static_cast<size_t>(std::atoi(field(b, spr_at + static_cast<size_t>(i) * 8, 8).c_str())) * 2;
+    std::vector<Record> out;
+    for (int r = 0; r < nr; r++) {
+        const size_t at = static_cast<size_t>(hl) + static_cast<size_t>(r) * rec;
+        out.push_back({std::vector<uint8_t>(b.begin() + static_cast<long>(at), b.begin() + static_cast<long>(at + rec - 2)),
+                       static_cast<uint16_t>(b[at + rec - 2] | (b[at + rec - 1] << 8))});
+    }
+    return out;
+}
+
+std::string hex4(uint16_t v) {
+    char buf[8];
+    std::snprintf(buf, sizeof(buf), "%04X", v);
+    return buf;
+}
+
+StreamedBRP brpOf(size_t seconds) {
+    StreamedBRP b;
+    b.start = {2026, 11, 1, 3, 0, 0};
+    b.serial = "23000000001";
+    for (size_t i = 0; i < seconds * 25; i++) {
+        b.flow_lpm.push_back(30.0 * std::sin(static_cast<double>(i) / 20.0));
+        b.press_cmh2o.push_back(9.0 + static_cast<double>(i % 7) * 0.1);
+    }
+    return b;
+}
+
+// Every file of the card checks the same way: a record's CRC, and the two
+// patient tokens over the main header's tail and over the signal headers.
+void expectCardChecksums(const std::vector<uint8_t>& file) {
+    const int hl = std::atoi(field(file, 184, 8).c_str());
+    const auto recs = recordsOf(file);
+    ASSERT_FALSE(recs.empty());
+    for (size_t r = 0; r < recs.size(); r++)
+        EXPECT_EQ(recs[r].stored, crc16CcittFalse(recs[r].data.data(), recs[r].data.size())) << "record " << r;
+    const std::string patient = field(file, 8, 80);
+    EXPECT_EQ(patient.substr(0, 8), "X X X X ");
+    EXPECT_EQ(patient.substr(8, 4), hex4(crc16CcittFalse(file.data() + 25, 256 - 25)));
+    EXPECT_EQ(patient[12], ' ');
+    EXPECT_EQ(patient.substr(13, 4), hex4(crc16CcittFalse(file.data() + 256, static_cast<size_t>(hl) - 256)));
+    EXPECT_EQ(patient.find_first_not_of(' ', 17), std::string::npos);
+}
+
+}  // namespace
+
+TEST(As11CardEdf, TheCrcIsTheKnownCcittFalseOne) {
+    const std::string check = "123456789";
+    EXPECT_EQ(crc16CcittFalse(reinterpret_cast<const uint8_t*>(check.data()), check.size()), 0x29B1);
+    EXPECT_EQ(crc16CcittFalse(nullptr, 0), 0xFFFF);
+}
+
+TEST(As11CardEdf, EveryRecordEndsInItsCrcAndTheHeaderCarriesTheTwoTokens) {
+    StreamedSAD sad;
+    sad.start = {2026, 11, 1, 3, 0, 0};
+    sad.serial = "23000000001";
+    sad.spo2_pct = {96.0, 95.0, NAN, 91.0};
+    sad.pulse_bpm = {70.0, 71.0, 72.0, 120.0};
+    expectCardChecksums(writeCardBRP(brpOf(7), 46, 3));
+    expectCardChecksums(writeCardPLD(pld(11), 46, 3));
+    expectCardChecksums(writeCardSAD(sad, 46, 3));
+}
+
+TEST(As11CardEdf, TheTokensChangeWithTheHeaderAndTheRecordsWithTheirData) {
+    const auto a = writeCardBRP(brpOf(3));
+    auto other = brpOf(3);
+    other.start.second = 1;                         // another start: another header tail
+    const auto b = writeCardBRP(other);
+    EXPECT_NE(field(a, 8, 80), field(b, 8, 80));
+    other = brpOf(3);
+    other.flow_lpm[0] += 20.0;                      // another first sample: another first CRC
+    const auto c = writeCardBRP(other);
+    EXPECT_NE(recordsOf(a)[0].stored, recordsOf(c)[0].stored);
+    EXPECT_EQ(recordsOf(a)[1].stored, recordsOf(c)[1].stored);
+}
+
+TEST(As11CardEdf, TheRecordingFieldNamesTheModelWhenItIsKnown) {
+    EXPECT_EQ(field(writeCardBRP(brpOf(2), 46, 3), 88, 80), "Startdate 01-NOV-2026 X X X SRN=23000000001 MID=46 VID=3");
+    EXPECT_EQ(field(writeCardPLD(pld(4), 46, 3), 88, 80), "Startdate 01-NOV-2026 X X X SRN=23000000001 MID=46 VID=3");
+    EXPECT_EQ(field(writeCardBRP(brpOf(2)), 88, 80), "Startdate 01-NOV-2026 X X X SRN=23000000001");
+}
+
+TEST(As11CardEdf, AnAnnotationFileGetsTheTokensAndKeepsItsRecords) {
+    ResMedAnnotationFile ann;
+    ann.start = {2026, 11, 1, 3, 0, 0};
+    ann.serial = "23000000001";
+    ann.model_id = 46;
+    ann.vid = 3;
+    ann.annotations = {{12.0, 0.0, "Hypopnea"}};
+    auto file = writeResMedAnnotations(ann);
+    const auto before = file;
+    EXPECT_EQ(field(file, 8, 80), "X X X X");   // as the library leaves it
+    stampHeaderChecksums(file);
+    EXPECT_NE(field(file, 8, 80), "X X X X");
+    EXPECT_EQ(file.size(), before.size());
+    EXPECT_TRUE(std::equal(before.begin() + 88, before.end(), file.begin() + 88));   // nothing but the patient field changed
+    const std::string patient = field(file, 8, 80);
+    EXPECT_EQ(patient.substr(8, 4), hex4(crc16CcittFalse(file.data() + 25, 256 - 25)));
+    EXPECT_EQ(patient.substr(13, 4), hex4(crc16CcittFalse(file.data() + 256, 768 - 256)));
+    // Stamped twice, the same.
+    auto again = file;
+    stampHeaderChecksums(again);
+    EXPECT_EQ(again, file);
+}
+
+TEST(As11CardEdf, WhatIsNotAnEdfHeaderIsLeftAlone) {
+    std::vector<uint8_t> tiny(100, 'x');
+    const auto before = tiny;
+    stampHeaderChecksums(tiny);
+    EXPECT_EQ(tiny, before);
+    std::vector<uint8_t> bad(1024, ' ');       // 256 bytes of nothing, a signal count of 0
+    const auto bad_before = bad;
+    stampHeaderChecksums(bad);
+    EXPECT_EQ(bad, bad_before);
 }

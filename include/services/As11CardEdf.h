@@ -24,10 +24,31 @@ namespace hms_cpap {
 // zero is at the same place), so raw * gain is the value whatever the reader
 // does about the offset. Record lengths and sample counts are the library's.
 //
+// The card's files also carry three checksums, all CRC-16/CCITT-FALSE (polynomial
+// 0x1021, initial 0xFFFF, no reflection, no final XOR), checked against 108 files
+// of one machine's card (BRP, PLD, SA2, EVE, CSL):
+//
+//   - each data record ends in a "Crc16" sample: the CRC of the record's own
+//     data bytes (every signal's samples before it, as stored);
+//   - the patient field reads "X X X X <a> <b>", <a> the CRC of the main
+//     header's bytes 25 to 255 (the recording field, dates and counts: what
+//     follows the tokens) and <b> the CRC of the signal headers (bytes 256 to
+//     the end of the header), in four upper-case hex digits.
+//
+// The files here carry them the same way, and the recording field carries the
+// machine's MID= and VID= (model_id, vid; left out when 0).
+//
 // Pure functions of their input, so a test can decode what they write.
 
-std::vector<uint8_t> writeCardBRP(const cpapdash::parser::StreamedBRP& brp);
-std::vector<uint8_t> writeCardPLD(const cpapdash::parser::StreamedPLD& pld);
-std::vector<uint8_t> writeCardSAD(const cpapdash::parser::StreamedSAD& sad);
+std::vector<uint8_t> writeCardBRP(const cpapdash::parser::StreamedBRP& brp, int model_id = 0, int vid = 0);
+std::vector<uint8_t> writeCardPLD(const cpapdash::parser::StreamedPLD& pld, int model_id = 0, int vid = 0);
+std::vector<uint8_t> writeCardSAD(const cpapdash::parser::StreamedSAD& sad, int model_id = 0, int vid = 0);
+
+/// CRC-16/CCITT-FALSE.
+uint16_t crc16CcittFalse(const uint8_t* data, size_t n);
+
+/// Sets the two header checksums in the patient field of an EDF whose signal
+/// headers are in place, as above. Leaves anything it cannot read as it is.
+void stampHeaderChecksums(std::vector<uint8_t>& edf);
 
 }  // namespace hms_cpap
