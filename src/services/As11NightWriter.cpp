@@ -1,4 +1,5 @@
 #include "services/As11NightWriter.h"
+#include "services/As11CardEdf.h"
 
 #include <nlohmann/json.hpp>
 
@@ -394,7 +395,7 @@ void As11NightWriter::writeSegment(const std::string& serial, const Segment& seg
         cursor = std::max(cursor, b.start_ms + static_cast<int64_t>(n) * iv);
     }
     if (brp.flow_lpm.empty()) return;
-    writeFileAtomic(dir / resmedFileName(wc, "BRP"), writeResMedBRP(brp));
+    writeFileAtomic(dir / resmedFileName(wc, "BRP"), writeCardBRP(brp));
 
     // The slow channels on their own grid: PLD every 2 s, SAD every 1 s. A
     // value covers its 2 s; where none came, NaN (written as the gap).
@@ -437,7 +438,7 @@ void As11NightWriter::writeSegment(const std::string& serial, const Segment& seg
         p.minute_vent_lpm = col(as11::kMinuteVent);
         p.snore = col(as11::kSnore);
         p.flow_limitation = col(as11::kFlowLimitation);
-        writeFileAtomic(dir / resmedFileName(wc, "PLD"), writeResMedPLD(p));
+        writeFileAtomic(dir / resmedFileName(wc, "PLD"), writeCardPLD(p));
     }
     if (have_sad) {
         StreamedSAD s;
@@ -445,7 +446,7 @@ void As11NightWriter::writeSegment(const std::string& serial, const Segment& seg
         s.serial = srn;
         s.spo2_pct = spo2;
         s.pulse_bpm = pulse;
-        writeFileAtomic(dir / resmedFileName(wc, "SAD"), writeResMedSAD(s));
+        writeFileAtomic(dir / resmedFileName(wc, "SAD"), writeCardSAD(s));
     }
 }
 

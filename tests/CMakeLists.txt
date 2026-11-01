@@ -126,6 +126,7 @@ set(TEST_SOURCES
     clients/test_As11Protocol.cpp
     clients/test_As11Session.cpp
     clients/test_As11Stream.cpp
+    services/test_As11CardEdf.cpp
     services/test_As11NightWriter.cpp
     services/test_As11NightImport.cpp
     services/test_As11StrWriter.cpp
@@ -307,6 +308,7 @@ if(BUILD_WITH_WEB AND NOT WIN32)
         ${CMAKE_SOURCE_DIR}/src/controllers/SleepBridgeSocket.cpp
         ${CMAKE_SOURCE_DIR}/src/controllers/MuleSocket.cpp
         ${CMAKE_SOURCE_DIR}/src/clients/As11Stream.cpp
+        ${CMAKE_SOURCE_DIR}/src/services/As11CardEdf.cpp
         ${CMAKE_SOURCE_DIR}/src/services/As11NightWriter.cpp
         ${CMAKE_SOURCE_DIR}/src/services/As11StrWriter.cpp
         ${STR_LAYOUTS_SOURCE}
