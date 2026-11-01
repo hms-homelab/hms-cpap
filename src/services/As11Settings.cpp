@@ -126,6 +126,9 @@ std::optional<As11Settings> parseSettings(const std::string& json_text) {
     };
 
     if (auto when = text(p, {"Attributes", "AppliedDateTime"})) s.applied_ms = as11::isoToMs(*when);
+    // With no (or an unreadable) AppliedDateTime there is no day to start from:
+    // 0 would date them 1970 and put them on every past day. Skip them.
+    if (s.applied_ms <= 0) return std::nullopt;
     if (auto tz = text(p, {"FeatureProfiles", "TimeZoneFeature", "TimeZoneOffset"})) {
         int m = 0;
         if (offsetOf(*tz, &m)) s.offset_min = m;

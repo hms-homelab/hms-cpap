@@ -132,6 +132,22 @@ TEST(As11Settings, WhatIsNotSettingsIsRefused) {
     EXPECT_FALSE(parseSettings(R"({"SettingProfiles":{}})"));   // names nothing we know
 }
 
+TEST(As11Settings, WithoutAUsableAppliedTimeTheyAreSkipped) {
+    EXPECT_FALSE(parseSettings(profiles("")));
+    EXPECT_FALSE(parseSettings(profiles("not a time")));
+    std::string missing = profiles();
+    const std::string attr = R"("AppliedDateTime":"2026-10-30T19:02:36.785Z",)";
+    const auto at = missing.find(attr);
+    ASSERT_NE(at, std::string::npos);
+    missing.erase(at, attr.size());
+    EXPECT_FALSE(parseSettings(missing));
+}
+
+TEST_F(SettingsFile, SettingsWithoutAnAppliedTimeAreNotKept) {
+    EXPECT_FALSE(writeSettings(root_.string(), profiles("")));
+    EXPECT_FALSE(fs::exists(settingsPath(root_.string())));
+}
+
 TEST_F(SettingsFile, TheResultIsKeptAsACardsFile) {
     ASSERT_TRUE(writeSettings(root_.string(), profiles()));
     EXPECT_EQ(text(), "{\"FlowGenerator\":" + profiles() + "}");
