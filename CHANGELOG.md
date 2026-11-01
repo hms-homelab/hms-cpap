@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [6.0.1] - 2026-10-31
+
 ### Fixed
 - **A chunk lost from a ranged ez Share read no longer lands in the file.** A
   reply can finish normally with a chunk missing from the middle, and the next
@@ -22,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   rest of the night on whole-file reads until the process restarted. It now
   takes three in a row with no 206 between, and falling back keeps the local
   copy until the full file lands.
+- **Two AirSense 11 summaries saved within the same clock tick are read in
+  date order.** They share a write time, so a day both carry could come from
+  the older one, depending on how the folder listed them. The file name, which
+  holds the summary's date, now breaks the tie.
 
 ## [6.0.0] - 2026-10-31
 
