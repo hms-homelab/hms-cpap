@@ -3,6 +3,7 @@
 #include <cpapdash/parser/EDFWriter.h>
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace hms_cpap {
@@ -38,6 +39,10 @@ namespace hms_cpap {
 // The files here carry them the same way, and the recording field carries the
 // machine's MID= and VID= (model_id, vid; left out when 0).
 //
+// The oximetry file is the 11 series' own: <start>_SA2.edf, Pulse.1s then SpO2.1s
+// then Crc16, and a second with no reading is -1 (stored outside the signal's
+// declared range, as the card stores it), not 0.
+//
 // Pure functions of their input, so a test can decode what they write.
 
 std::vector<uint8_t> writeCardBRP(const cpapdash::parser::StreamedBRP& brp, int model_id = 0, int vid = 0);
@@ -46,6 +51,19 @@ std::vector<uint8_t> writeCardSAD(const cpapdash::parser::StreamedSAD& sad, int 
 
 /// CRC-16/CCITT-FALSE.
 uint16_t crc16CcittFalse(const uint8_t* data, size_t n);
+
+/// CRC-32 (the zlib one: reflected 0xEDB88320, initial and final 0xFFFFFFFF).
+uint32_t crc32(const uint8_t* data, size_t n);
+
+/// A card keeps the CRC-32 of Identification.json and of SETTINGS/
+/// CurrentSettings.json beside each, in Identification.crc and
+/// CurrentSettings.crc: four bytes, the CRC little-endian (both of one card's
+/// pairs check). Writes <json path without .json>.crc for the file as it is
+/// now. False when the file cannot be read or the CRC written.
+bool writeCrcFor(const std::string& json_path);
+
+/// writeCrcFor() unless that file is there already (a card's own is kept).
+bool ensureCrcFor(const std::string& json_path);
 
 /// Sets the two header checksums in the patient field of an EDF whose signal
 /// headers are in place, as above. Leaves anything it cannot read as it is.

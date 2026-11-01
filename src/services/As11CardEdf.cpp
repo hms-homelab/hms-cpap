@@ -5,6 +5,9 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <string>
 
 namespace hms_cpap {
@@ -47,6 +50,38 @@ long headerLong(const std::vector<uint8_t>& b, size_t at, size_t width) {
     return std::atol(std::string(b.begin() + static_cast<long>(at), b.begin() + static_cast<long>(at + width)).c_str());
 }
 
+// The header text the card's files have and writeEDF does not: "EDF" in the
+// reserved field, and the physical limits with two decimals ("0.00", "40.00"),
+// the closing Crc16's as "-32768.0" and "32767.00". Nothing reads them as
+// anything but numbers; the bytes are the card's.
+void cardHeaderText(std::vector<uint8_t>& edf, long ns) {
+    auto put = [&edf](size_t at, size_t width, const std::string& text) {
+        std::string t = text.substr(0, width);
+        t.resize(width, ' ');
+        std::copy(t.begin(), t.end(), edf.begin() + static_cast<long>(at));
+    };
+    put(192, 44, "EDF");
+    const size_t pmin_at = 256 + static_cast<size_t>(ns) * (16 + 80 + 8);
+    const size_t pmax_at = pmin_at + static_cast<size_t>(ns) * 8;
+    for (long i = 0; i < ns; i++) {
+        const std::string label(edf.begin() + 256 + i * 16, edf.begin() + 256 + i * 16 + 16);
+        const double lo = std::atof(std::string(edf.begin() + static_cast<long>(pmin_at) + i * 8,
+                                                edf.begin() + static_cast<long>(pmin_at) + i * 8 + 8).c_str());
+        const double hi = std::atof(std::string(edf.begin() + static_cast<long>(pmax_at) + i * 8,
+                                                edf.begin() + static_cast<long>(pmax_at) + i * 8 + 8).c_str());
+        char a[32], b[32];
+        if (label.rfind("Crc16", 0) == 0) {
+            std::snprintf(a, sizeof(a), "%.1f", lo);     // -32768.0
+            std::snprintf(b, sizeof(b), "%.2f", hi);     // 32767.00
+        } else {
+            std::snprintf(a, sizeof(a), "%.2f", lo);
+            std::snprintf(b, sizeof(b), "%.2f", hi);
+        }
+        put(pmin_at + static_cast<size_t>(i) * 8, 8, a);
+        put(pmax_at + static_cast<size_t>(i) * 8, 8, b);
+    }
+}
+
 // Writes each record's CRC into the Crc16 sample that ends it, and the header
 // checksums into the patient field. [edf] is what writeEDF made, its last
 // signal being crcSignal().
@@ -67,6 +102,7 @@ std::vector<uint8_t> sealed(std::vector<uint8_t> edf) {
         rec[rec_bytes - 2] = static_cast<uint8_t>(crc & 0xFF);
         rec[rec_bytes - 1] = static_cast<uint8_t>(crc >> 8);
     }
+    cardHeaderText(edf, ns);
     stampHeaderChecksums(edf);
     return edf;
 }
@@ -97,6 +133,46 @@ void stampHeaderChecksums(std::vector<uint8_t>& edf) {
     std::string text(field);
     text.resize(80, ' ');
     std::copy(text.begin(), text.end(), edf.begin() + 8);
+}
+
+uint32_t crc32(const uint8_t* data, size_t n) {
+    uint32_t c = 0xFFFFFFFFu;
+    for (size_t i = 0; i < n; i++) {
+        c ^= data[i];
+        for (int b = 0; b < 8; b++) c = (c & 1u) ? ((c >> 1) ^ 0xEDB88320u) : (c >> 1);
+    }
+    return ~c;
+}
+
+bool writeCrcFor(const std::string& json_path) {
+    namespace fs = std::filesystem;
+    std::ifstream in(json_path, std::ios::binary);
+    if (!in) return false;
+    const std::vector<uint8_t> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    const uint32_t crc = crc32(bytes.data(), bytes.size());
+    fs::path path(json_path);
+    path.replace_extension(".crc");
+    const fs::path tmp = path.string() + ".tmp";
+    {
+        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        const char le[4] = {static_cast<char>(crc & 0xFF), static_cast<char>((crc >> 8) & 0xFF),
+                            static_cast<char>((crc >> 16) & 0xFF), static_cast<char>((crc >> 24) & 0xFF)};
+        out.write(le, 4);
+        if (!out) { out.close(); std::error_code ec; fs::remove(tmp, ec); return false; }
+    }
+    std::error_code ec;
+    fs::rename(tmp, path, ec);
+    if (ec) { fs::remove(tmp, ec); return false; }
+    return true;
+}
+
+bool ensureCrcFor(const std::string& json_path) {
+    namespace fs = std::filesystem;
+    fs::path path(json_path);
+    path.replace_extension(".crc");
+    std::error_code ec;
+    if (fs::exists(path, ec)) return true;
+    return writeCrcFor(json_path);
 }
 
 std::vector<uint8_t> writeCardBRP(const StreamedBRP& brp, int model_id, int vid) {
@@ -156,19 +232,32 @@ std::vector<uint8_t> writeCardPLD(const StreamedPLD& pld, int model_id, int vid)
 std::vector<uint8_t> writeCardSAD(const StreamedSAD& sad, int model_id, int vid) {
     const size_t n = std::max(sad.spo2_pct.size(), sad.pulse_bpm.size());
     if (n == 0) return {};
-    auto padded = [n](const std::vector<double>& v) {
+    // A second with no reading: NaN, or past the end of the shorter series.
+    auto padded = [n](const std::vector<double>& v, std::vector<bool>* gap) {
         std::vector<double> out(n, 0.0);
-        for (size_t i = 0; i < v.size(); i++) out[i] = std::isnan(v[i]) ? 0.0 : v[i];
+        gap->assign(n, true);
+        for (size_t i = 0; i < v.size(); i++)
+            if (!std::isnan(v[i])) { out[i] = v[i]; (*gap)[i] = false; }
         return out;
     };
+    std::vector<bool> pulse_gap, spo2_gap;
     EDFWriteSpec spec;
     spec.recording       = resmedRecordingField(sad.start, sad.serial, model_id, vid);
     spec.start           = sad.start;
     spec.record_duration = 1.0;
-    spec.signals.push_back(signalOf("SpO2", "%", 0.0, 100.0, 0, 100, 1, padded(sad.spo2_pct)));
-    spec.signals.push_back(signalOf("Pulse", "bpm", 0.0, 300.0, 0, 300, 1, padded(sad.pulse_bpm)));
+    spec.signals.push_back(signalOf("Pulse.1s", "bpm", 0.0, 300.0, 0, 300, 1, padded(sad.pulse_bpm, &pulse_gap)));
+    spec.signals.push_back(signalOf("SpO2.1s", "%", 0.0, 100.0, 0, 100, 1, padded(sad.spo2_pct, &spo2_gap)));
     spec.signals.push_back(crcSignal(n));
-    return sealed(writeEDF(spec));
+    auto edf = writeEDF(spec);
+    if (edf.size() < 1024) return edf;
+    // The card's "no reading" is -1, below the signal's declared range, which
+    // writeEDF clamps to: set those samples in the records it laid out.
+    const size_t hl = 256 + 256 * 3, rec = 3 * 2;
+    for (size_t i = 0; i < n && hl + (i + 1) * rec <= edf.size(); i++) {
+        if (pulse_gap[i]) { edf[hl + i * rec] = 0xFF; edf[hl + i * rec + 1] = 0xFF; }
+        if (spo2_gap[i]) { edf[hl + i * rec + 2] = 0xFF; edf[hl + i * rec + 3] = 0xFF; }
+    }
+    return sealed(std::move(edf));
 }
 
 }  // namespace hms_cpap

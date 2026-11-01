@@ -448,7 +448,11 @@ void As11NightWriter::writeSegment(const std::string& serial, const Segment& seg
         s.serial = srn;
         s.spo2_pct = spo2;
         s.pulse_bpm = pulse;
-        writeFileAtomic(dir / resmedFileName(wc, "SAD"), writeCardSAD(s, mid, vid));
+        // The 11 series' name for it; a file of the older name from before is
+        // the same recording and would be read twice.
+        std::error_code rm;
+        fs::remove(dir / resmedFileName(wc, "SAD"), rm);
+        writeFileAtomic(dir / resmedFileName(wc, "SA2"), writeCardSAD(s, mid, vid));
     }
 }
 
@@ -516,10 +520,13 @@ bool writeIdentification(const std::string& root, const std::string& result_json
         const auto hp = "/FlowGenerator/IdentificationProfiles/Product/SerialNumber"_json_pointer;
         const bool same = !have.is_discarded() && have.contains(hp) && have.at(hp) == serial;
         if (!same) std::cerr << "AirSense11: Identification.json there names another machine: left alone" << std::endl;
+        if (same) ensureCrcFor(path.string());   // a card's own .crc is kept
         return same;
     }
     const std::string text = "{\"FlowGenerator\":" + result_json + "}";
-    return writeFileAtomic(path, std::vector<uint8_t>(text.begin(), text.end()));
+    if (!writeFileAtomic(path, std::vector<uint8_t>(text.begin(), text.end()))) return false;
+    writeCrcFor(path.string());   // Identification.crc, as the card keeps it
+    return true;
 }
 
 } // namespace hms_cpap
