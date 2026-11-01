@@ -390,8 +390,11 @@ void BurstCollectorService::initO2Ring() {
                      "(mode=" << o2ring_mode << ", mule_url empty) - oximetry is OFF"
                   << std::endl;
     }
-    if (client)
+    if (client) {
         oximetry_service_ = std::make_unique<OximetryService>(client, db_service_, device_id_);
+        oximetry_service_->setArchiveDirProvider(
+            [] { return ConfigManager::get("CPAP_ARCHIVE_DIR", ""); });
+    }
 }
 
 bool BurstCollectorService::airSense11BleCompiled() {
@@ -4506,6 +4509,8 @@ void BurstCollectorService::reloadConfig() {
             }
             if (client) {
                 oximetry_service_ = std::make_unique<OximetryService>(client, db_service_, device_id_);
+                oximetry_service_->setArchiveDirProvider(
+                    [] { return ConfigManager::get("CPAP_ARCHIVE_DIR", ""); });
             }
         } else {
             oximetry_service_.reset();
