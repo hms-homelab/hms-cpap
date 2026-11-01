@@ -782,8 +782,10 @@ jobs:
   # Dep list mirrors what satisfies the local macOS build (Homebrew), with
   # the one exception that the paho MQTT C++ wrapper has no Homebrew formula
   # and is built from source below.
+  # macos-15: the macos-14 image is retired on 2026-11-02, and its brownouts
+  # before that cancel the job with no runner.
   macos-build:
-    runs-on: macos-14
+    runs-on: macos-15
     continue-on-error: true    # optional, like windows-build: release still ships if this fails
     permissions:
       contents: read
