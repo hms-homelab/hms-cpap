@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 
+#include "services/As11CardEdf.h"
 #include "services/As11NightWriter.h"
 #include "services/As11StrWriter.h"
 
@@ -96,9 +97,9 @@ TEST_F(NightTest, ASegmentIsCutAtASixtySecondPause) {
     EXPECT_EQ(names.front(), "20261016_220000_BRP.edf");
     EXPECT_EQ(records(night() / "20261016_220000_BRP.edf"), 30);
     EXPECT_EQ(records(night() / "20261016_220131_BRP.edf"), 20);
-    // No slow channel and no ring: no PLD, no SAD. One EVE and one CSL.
+    // No slow channel and no ring: no PLD, no SA2. One EVE and one CSL.
     EXPECT_FALSE(fs::exists(night() / "20261016_220000_PLD.edf"));
-    EXPECT_FALSE(fs::exists(night() / "20261016_220000_SAD.edf"));
+    EXPECT_FALSE(fs::exists(night() / "20261016_220000_SA2.edf"));
     EXPECT_TRUE(fs::exists(night() / "20261016_220000_EVE.edf"));
     EXPECT_TRUE(fs::exists(night() / "20261016_220000_CSL.edf"));
 }
@@ -132,13 +133,25 @@ TEST_F(NightTest, TheOpenSegmentIsWrittenLiveEveryTenSeconds) {
     EXPECT_EQ(records(night() / "20261016_220000_BRP.edf"), 10);
 }
 
-TEST_F(NightTest, SlowChannelsMakeAPldAndTheRingASad) {
+TEST_F(NightTest, SlowChannelsMakeAPldAndTheRingAnSa2) {
     auto w = writer();
     for (int i = 0; i < 20; i++)
         w.onBlock(second(kT0 + i * 1000, {{kLeak, 200}, {kRespRate, 150}, {kSpO2, 960}, {kHeartRate, 62}}));
     w.onStreamEnd(kSerial);
     EXPECT_EQ(records(night() / "20261016_220000_PLD.edf"), 10);   // 2 s records
-    EXPECT_EQ(records(night() / "20261016_220000_SAD.edf"), 20);   // 1 s records
+    EXPECT_EQ(records(night() / "20261016_220000_SA2.edf"), 20);   // 1 s records
+    EXPECT_FALSE(fs::exists(night() / "20261016_220000_SAD.edf"));
+}
+
+TEST_F(NightTest, AnOlderSadOfTheSameRecordingIsRemovedWhenTheSa2IsWritten) {
+    fs::create_directories(night());
+    { std::ofstream(night() / "20261016_220000_SAD.edf") << "old"; }
+    auto w = writer();
+    for (int i = 0; i < 20; i++)
+        w.onBlock(second(kT0 + i * 1000, {{kLeak, 200}, {kSpO2, 960}, {kHeartRate, 62}}));
+    w.onStreamEnd(kSerial);
+    EXPECT_TRUE(fs::exists(night() / "20261016_220000_SA2.edf"));
+    EXPECT_FALSE(fs::exists(night() / "20261016_220000_SAD.edf"));
 }
 
 TEST_F(NightTest, EventsLandOnTheirNightWithTheTwoMinuteTail) {
@@ -178,6 +191,37 @@ TEST_F(NightTest, IdentificationIsWrittenOnceAndNeverReplaced) {
     const std::string other = R"({"IdentificationProfiles":{"Product":{"SerialNumber":"23999999999"}}})";
     EXPECT_FALSE(writeIdentification(root.string(), other));
     EXPECT_FALSE(writeIdentification(root.string(), R"({"x":1})"));
+}
+
+TEST_F(NightTest, IdentificationCrcIsKeptBesideItAsTheCardKeepsIt) {
+    const auto root = dir_ / "as11" / kSerial;
+    const std::string id = R"({"IdentificationProfiles":{"Product":{"SerialNumber":"23000000001"}}})";
+    auto crcOf = [&](const fs::path& json) {
+        std::ifstream in(json, std::ios::binary);
+        std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        return crc32(reinterpret_cast<const uint8_t*>(text.data()), text.size());
+    };
+    auto stored = [&]() {
+        std::ifstream in(root / "Identification.crc", std::ios::binary);
+        std::string b((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        if (b.size() != 4) return uint32_t{0};
+        return static_cast<uint32_t>(static_cast<uint8_t>(b[0])) | (static_cast<uint32_t>(static_cast<uint8_t>(b[1])) << 8) |
+               (static_cast<uint32_t>(static_cast<uint8_t>(b[2])) << 16) | (static_cast<uint32_t>(static_cast<uint8_t>(b[3])) << 24);
+    };
+    ASSERT_TRUE(writeIdentification(root.string(), id));
+    ASSERT_TRUE(fs::exists(root / "Identification.crc"));
+    EXPECT_EQ(stored(), crcOf(root / "Identification.json"));
+
+    // A card's own .crc is not replaced.
+    { std::ofstream(root / "Identification.crc", std::ios::binary | std::ios::trunc) << "card"; }
+    EXPECT_TRUE(writeIdentification(root.string(), id));
+    std::ifstream in(root / "Identification.crc", std::ios::binary);
+    EXPECT_EQ(std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>()), "card");
+
+    // A file written before the .crc existed gets one.
+    fs::remove(root / "Identification.crc");
+    EXPECT_TRUE(writeIdentification(root.string(), id));
+    EXPECT_EQ(stored(), crcOf(root / "Identification.json"));
 }
 
 // ── STR.edf from the Summary ──
