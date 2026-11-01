@@ -168,6 +168,11 @@ public:
     /// it, key order kept, which is what a card's Identification.json holds
     /// under "FlowGenerator".
     Result getIdentification(std::string* result_json);
+    /// Get ["SettingProfiles"]: the result object as the machine sent it, which
+    /// is what a card's SETTINGS/CurrentSettings.json holds under
+    /// "FlowGenerator" (the same call as the identity, for the same kind of
+    /// object). A machine that refuses it is Protocol, and nothing is lost.
+    Result getSettings(std::string* result_json);
 
 private:
     using json = nlohmann::ordered_json;

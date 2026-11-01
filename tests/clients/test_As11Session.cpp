@@ -525,6 +525,8 @@ TEST(As11Session, StreamsTheNightAndHandsOnWhatTheMachinePushes) {
             return {FakeMachine::reply(req, {{"SerialNumber", "23000000001"}, {"FGState", "Standby"}})};
         if (method == "Get" && req["params"][0] == "IdentificationProfiles")
             return {FakeMachine::reply(req, json::parse(R"({"IdentificationProfiles":{"Product":{"SerialNumber":"23000000001"}}})"))};
+        if (method == "Get" && req["params"][0] == "SettingProfiles")
+            return {FakeMachine::reply(req, json::parse(R"({"SettingProfiles":{"Attributes":{"AppliedDateTime":"2026-10-17T03:00:00.000Z"}}})"))};
         if (method == "SubscribeEvent") {
             EXPECT_EQ(req["params"]["dataIds"], json::array({"FGState", "TherapyEvents-RespiratoryEvents"}));
             return {FakeMachine::reply(req, json::object())};
@@ -557,6 +559,10 @@ TEST(As11Session, StreamsTheNightAndHandsOnWhatTheMachinePushes) {
     std::string ident;
     ASSERT_EQ(rig.session.getIdentification(&ident), Result::Ok);
     EXPECT_NE(ident.find("\"SerialNumber\":\"23000000001\""), std::string::npos);
+    std::string settings;
+    ASSERT_EQ(rig.session.getSettings(&settings), Result::Ok);
+    EXPECT_EQ(rig.machine.requests.back()["params"], json::array({"SettingProfiles"}));
+    EXPECT_NE(settings.find("\"SettingProfiles\":{\"Attributes\""), std::string::npos);
     ASSERT_EQ(rig.session.subscribe(), Result::Ok);
     ASSERT_EQ(rig.session.startStream(), Result::Ok);
     EXPECT_EQ(fg, (std::vector<bool>{true}));
@@ -576,6 +582,8 @@ TEST(As11Session, NoLiveStepsWithoutASession) {
     EXPECT_EQ(rig.session.getState(&s, &t), Result::Protocol);
     EXPECT_EQ(rig.session.subscribe(), Result::Protocol);
     EXPECT_EQ(rig.session.startStream(), Result::Protocol);
+    std::string settings;
+    EXPECT_EQ(rig.session.getSettings(&settings), Result::Protocol);
     EXPECT_TRUE(rig.machine.requests.empty());
 }
 
