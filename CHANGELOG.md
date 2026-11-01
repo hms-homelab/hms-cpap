@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [6.0.2] - 2026-11-01
+
+### Fixed
+- **An AirSense 11 night rebuilt from Bluetooth is scaled as the card's files
+  are** (#45, thanks @rccoleman). The BRP, PLD and SAD files spread every
+  channel over the whole int16 range, so a reader that takes `raw * gain` with
+  no offset read each value half a range low: a respiratory rate of 16 bpm came
+  out as -14 and OSCAR dropped it as out of range. Each channel now has the
+  card's own range with physical zero at digital zero. Flow is written in L/s
+  as on the card; it was in L/min, which the reader multiplies by 60, so a
+  Bluetooth night's flow was stored 60 times too large. Nights already imported
+  keep the old flow until they are imported again.
+
 ## [6.0.1] - 2026-10-31
 
 ### Fixed
