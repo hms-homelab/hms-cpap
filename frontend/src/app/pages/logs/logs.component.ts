@@ -1,4 +1,4 @@
-import { Component, OnDestroy, OnInit } from '@angular/core';
+import { Component, ElementRef, AfterViewChecked, OnDestroy, OnInit, ViewChild } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { TranslatePipe } from '@ngx-translate/core';
@@ -11,7 +11,7 @@ import { CpapApiService, LogTail } from '../../services/cpap-api.service';
   templateUrl: './logs.component.html',
   styleUrls: ['./logs.component.css']
 })
-export class LogsComponent implements OnInit, OnDestroy {
+export class LogsComponent implements OnInit, OnDestroy, AfterViewChecked {
   loading = true;
   error = '';
   data: LogTail | null = null;
@@ -19,9 +19,12 @@ export class LogsComponent implements OnInit, OnDestroy {
   lineOptions = [200, 1000, 2000, 10000];
   lines = 2000;
 
-  autoRefresh = false;
+  autoRefresh = true;
   copied = false;
 
+  @ViewChild('logPre') private logPre?: ElementRef<HTMLPreElement>;
+
+  private pendingScroll = false;
   private timer: any = null;
   private copiedTimer: any = null;
 
@@ -29,6 +32,7 @@ export class LogsComponent implements OnInit, OnDestroy {
 
   ngOnInit(): void {
     this.refresh();
+    if (this.autoRefresh) this.timer = setInterval(() => this.refresh(), 5000);
   }
 
   ngOnDestroy(): void {
@@ -39,9 +43,25 @@ export class LogsComponent implements OnInit, OnDestroy {
   refresh(): void {
     this.loading = true;
     this.api.getLogs(this.lines).subscribe({
-      next: d => { this.data = d; this.error = ''; this.loading = false; },
+      next: d => {
+        // Open at the latest line, and keep following it while the reader is
+        // at the bottom; a reader who scrolled up to look is left where they are.
+        const pre = this.logPre?.nativeElement;
+        const follow = !pre || pre.scrollHeight - pre.scrollTop - pre.clientHeight < 40;
+        this.data = d; this.error = ''; this.loading = false;
+        if (follow) this.pendingScroll = true;
+      },
       error: e => { this.error = e?.message || 'Could not read the log'; this.loading = false; }
     });
+  }
+
+  /** Runs after the new text is in the DOM, so scrollHeight is the new one. */
+  ngAfterViewChecked(): void {
+    if (!this.pendingScroll) return;
+    const pre = this.logPre?.nativeElement;
+    if (!pre) return;
+    this.pendingScroll = false;
+    pre.scrollTop = pre.scrollHeight;
   }
 
   toggleAutoRefresh(): void {

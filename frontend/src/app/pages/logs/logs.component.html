@@ -55,7 +55,7 @@
   </div>
 
   <div class="log-view" *ngIf="!loading || data">
-    <pre *ngIf="text; else empty">{{ text }}</pre>
+    <pre #logPre *ngIf="text; else empty">{{ text }}</pre>
     <ng-template #empty>
       <p class="empty">{{ 'logs.empty' | translate }}</p>
     </ng-template>
