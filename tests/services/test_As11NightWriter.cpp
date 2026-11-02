@@ -112,6 +112,18 @@ TEST_F(NightTest, AShortGapStaysOneSegmentAndKeepsItsTime) {
     EXPECT_EQ(records(night() / "20261016_220000_BRP.edf"), 50);
 }
 
+TEST_F(NightTest, ASubSampleGapIsLaidToTheNearestSampleAndDoesNotDrift) {
+    auto w = writer();
+    // Each second starts 39 ms after the last one ended, about a sample lost
+    // each time. The 51 seconds span 52.95 s of the machine's time, so the
+    // samples laid at their time come to 1324, 52 whole records. Rounding
+    // each gap down laid none of them (1275 samples, 51 records), and every
+    // sample after a gap stood earlier than the card has it.
+    for (int i = 0; i < 51; i++) w.onBlock(second(kT0 + i * 1039));
+    w.onStreamEnd(kSerial);
+    EXPECT_EQ(records(night() / "20261016_220000_BRP.edf"), 52);
+}
+
 TEST_F(NightTest, AResentBlockIsKeptOnceAndSurvivesARestart) {
     {
         auto w = writer();

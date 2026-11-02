@@ -668,10 +668,14 @@ void O2RingBleClient::oxyCloseFile() {
 
 std::vector<std::string> O2RingBleClient::oxyListFiles() {
     std::vector<std::string> files;
-    if (!oxySession()) return files;
+    if (!oxySession()) {
+        disconnect();
+        return files;
+    }
     oxyCloseFile();
     if (!oxyRequest(oxyii::kOpFileList, {}, 5000)) {
         std::cerr << "O2Ring BLE: O2Ring-S file list timeout" << std::endl;
+        disconnect();
         return files;
     }
     files = oxyii::parseFileList(resp_buf_);
@@ -684,7 +688,10 @@ std::vector<std::string> O2RingBleClient::oxyListFiles() {
 
 IO2RingClient::LiveReading O2RingBleClient::oxyLive() {
     LiveReading r;
-    if (!oxySession() || !oxyRequest(oxyii::kOpLive, {}, 5000)) return r;
+    if (!oxySession() || !oxyRequest(oxyii::kOpLive, {}, 5000)) {
+        disconnect();
+        return r;
+    }
     if (auto l = oxyii::parseLive(resp_buf_)) {
         r.spo2 = l->reading ? l->spo2 : 0xFF;
         r.hr = l->reading ? l->hr : 0xFF;
@@ -775,48 +782,69 @@ bool O2RingBleClient::isConnected() {
     return connected_;
 }
 
+bool O2RingBleClient::linkUp() {
+    if (!connected_ || device_path_.empty() || !conn_) return false;
+    try {
+        auto device = sdbus::createProxy(*conn_, BLUEZ, sdbus::ObjectPath{device_path_});
+        sdbus::Variant up;
+        device->callMethod("Get")
+            .onInterface("org.freedesktop.DBus.Properties")
+            .withTimeout(bluez::kCallTimeout)
+            .withArguments(std::string("org.bluez.Device1"), std::string("Connected"))
+            .storeResultsTo(up);
+        if (up.get<bool>()) return true;
+    } catch (...) {}
+    // Off the finger, charging or out of range: the ring let go.
+    std::cout << "O2Ring BLE: the ring's link went down" << std::endl;
+    disconnect();
+    return false;
+}
+
+bool O2RingBleClient::ensureLink() {
+    if (linkUp()) return true;
+    if (!scan()) { std::cout << "O2Ring BLE: scan failed" << std::endl; return false; }
+    std::cout << "O2Ring BLE: found, connecting..." << std::endl;
+    if (!connect()) { std::cout << "O2Ring BLE: connect failed" << std::endl; return false; }
+    return true;
+}
+
+// A request the ring does not answer drops the link, so the next call starts
+// from a fresh connect; an answered one leaves it up.
 IO2RingClient::LiveReading O2RingBleClient::getLive() {
     LiveReading r;
-    std::cout << "O2Ring BLE: getLive() scanning..." << std::endl;
-    if (!scan()) { std::cout << "O2Ring BLE: scan failed" << std::endl; return r; }
-    std::cout << "O2Ring BLE: found, connecting..." << std::endl;
-    if (!connect()) { std::cout << "O2Ring BLE: connect failed" << std::endl; return r; }
+    if (!ensureLink()) return r;
 
-    if (proto_ == Proto::OxyII) {
-        r = oxyLive();
+    if (proto_ == Proto::OxyII) return oxyLive();
+
+    if (!sendAndWait(0x17, 0, {}, 10000)) {
         disconnect();
         return r;
     }
-
-    if (sendAndWait(0x17, 0, {}, 10000)) {
-        if (resp_buf_.size() >= 12) {
-            r.spo2 = resp_buf_[0];
-            r.hr = resp_buf_[1];
-            r.motion = (resp_buf_.size() > 9) ? resp_buf_[9] : 0;
-            r.active = (r.spo2 != 0xFF && r.hr != 0xFF);
-            r.valid = r.active && r.spo2 > 0 && r.hr > 0;
-            if (resp_buf_.size() > 7) cached_battery_ = resp_buf_[7];
-        }
+    if (resp_buf_.size() >= 12) {
+        r.spo2 = resp_buf_[0];
+        r.hr = resp_buf_[1];
+        r.motion = (resp_buf_.size() > 9) ? resp_buf_[9] : 0;
+        r.active = (r.spo2 != 0xFF && r.hr != 0xFF);
+        r.valid = r.active && r.spo2 > 0 && r.hr > 0;
+        if (resp_buf_.size() > 7) cached_battery_ = resp_buf_[7];
     }
-
-    disconnect();
     return r;
 }
 
 std::vector<std::string> O2RingBleClient::listFiles() {
     std::vector<std::string> files;
-    if (!scan() || !connect()) return files;
+    if (!ensureLink()) return files;
 
-    if (proto_ == Proto::OxyII) {
-        files = oxyListFiles();
+    if (proto_ == Proto::OxyII) return oxyListFiles();
+
+    if (!sendAndWait(0x14, 0, {}, 10000)) {
         disconnect();
         return files;
     }
-
-    if (sendAndWait(0x14, 0, {}, 10000)) {
+    {
         size_t json_len = resp_buf_.size();
         while (json_len > 0 && resp_buf_[json_len - 1] == 0) json_len--;
-        if (json_len == 0) { disconnect(); return files; }
+        if (json_len == 0) return files;
 
         std::string json_str(resp_buf_.begin(), resp_buf_.begin() + json_len);
         try {
@@ -838,18 +866,16 @@ std::vector<std::string> O2RingBleClient::listFiles() {
             std::cerr << "O2Ring BLE: INFO parse error: " << e.what() << std::endl;
         }
     }
-
-    disconnect();
     return files;
 }
 
 std::vector<uint8_t> O2RingBleClient::downloadFile(const std::string& filename) {
     std::vector<uint8_t> result;
-    if (!scan() || !connect()) return result;
+    if (!ensureLink()) return result;
 
     if (proto_ == Proto::OxyII) {
         result = oxyDownload(filename);
-        disconnect();
+        if (result.empty()) disconnect();
         return result;
     }
 
@@ -864,7 +890,6 @@ std::vector<uint8_t> O2RingBleClient::downloadFile(const std::string& filename) 
 
     if (resp_buf_.size() < 4) {
         writeCharacteristic(buildCmd(0x05));
-        disconnect();
         return result;
     }
 
@@ -874,7 +899,6 @@ std::vector<uint8_t> O2RingBleClient::downloadFile(const std::string& filename) 
 
     if (file_size == 0 || file_size > 256 * 1024) {
         writeCharacteristic(buildCmd(0x05));
-        disconnect();
         return result;
     }
 
@@ -910,7 +934,7 @@ std::vector<uint8_t> O2RingBleClient::downloadFile(const std::string& filename) 
     writeCharacteristic(buildCmd(0x05));
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
-    disconnect();
+    if (result.empty()) disconnect();
     return result;
 }
 

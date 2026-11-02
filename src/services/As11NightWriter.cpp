@@ -367,32 +367,37 @@ void As11NightWriter::writeSegment(const std::string& serial, const Segment& seg
     const std::string srn = blocks.front().serial;
 
     // BRP: 25 Hz, a gap inside the segment filled with zeros so later
-    // samples stay at their time.
+    // samples stay at their time. Each block is laid at its own time to the
+    // nearest sample: a gap of 39 ms is one sample, not none, and what a
+    // block's offset rounds to never carries into the next block.
     StreamedBRP brp;
     brp.start = wc;
     brp.serial = srn;
-    int64_t cursor = t0;
+    int64_t cursor = t0;   // the time the next laid sample stands for
     for (const auto& b : blocks) {
         const auto* fl = b.channel(as11::kFlow);
         const auto* pr = b.channel(as11::kMaskPressure);
         if (!fl && !pr) continue;
         const int iv = b.interval_ms > 0 ? b.interval_ms : as11::kIntervalMs;
-        if (b.start_ms > cursor) {
-            const size_t gap = static_cast<size_t>((b.start_ms - cursor) / iv);
+        const int64_t delta = b.start_ms - cursor;
+        size_t skip = 0;
+        if (delta > 0) {
+            const size_t gap = static_cast<size_t>((delta + iv / 2) / iv);
             brp.flow_lpm.insert(brp.flow_lpm.end(), gap, 0.0);
             brp.press_cmh2o.insert(brp.press_cmh2o.end(), gap, 0.0);
             cursor += static_cast<int64_t>(gap) * iv;
+        } else if (delta < 0) {
+            // Samples before the cursor overlap what is already laid: skipped.
+            skip = static_cast<size_t>((-delta + iv / 2) / iv);
         }
         const size_t n = std::max(fl ? fl->values.size() : 0, pr ? pr->values.size() : 0);
-        // Samples before the cursor overlap what is already laid: skipped.
-        const size_t skip = b.start_ms < cursor ? static_cast<size_t>((cursor - b.start_ms) / iv) : 0;
         for (size_t i = skip; i < n; i++) {
             const double f = fl && i < fl->values.size() ? as11::physical(as11::kFlow, fl->values[i]) : NAN;
             const double p = pr && i < pr->values.size() ? as11::physical(as11::kMaskPressure, pr->values[i]) : NAN;
             brp.flow_lpm.push_back(std::isnan(f) ? 0.0 : f * 60.0);   // L/s to L/min
             brp.press_cmh2o.push_back(std::isnan(p) ? 0.0 : p);
+            cursor += iv;
         }
-        cursor = std::max(cursor, b.start_ms + static_cast<int64_t>(n) * iv);
     }
     if (brp.flow_lpm.empty()) return;
     int mid = 0, vid = 0;

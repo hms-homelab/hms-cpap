@@ -102,6 +102,12 @@ private:
     bool scan(int timeout_ms = 15000);
     bool connect(int timeout_ms = 15000);
     void disconnect();
+    // The link is held between calls, as the Push-C3 miner holds it: a scan
+    // and a connect every poll took the radio from the AirSense 11's stream
+    // on the same adapter. True when BlueZ still has the ring connected.
+    bool linkUp();
+    // The held link, or a fresh scan and connect when it is down.
+    bool ensureLink();
     bool discoverGatt();
     bool enableNotifications();
     void writeCharacteristic(const std::vector<uint8_t>& data);
