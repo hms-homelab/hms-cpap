@@ -7,6 +7,7 @@
 #include <gtest/gtest.h>
 
 #include "database/SQLiteDatabase.h"
+#include "services/BmcCardMirror.h"
 #include "services/BmcIngestion.h"
 #include "services/BurstCollectorService.h"
 #include "services/CardUpload.h"
@@ -14,6 +15,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <string>
 #include <unistd.h>
 #include <vector>
@@ -108,7 +110,76 @@ protected:
     }
 };
 
+/// SDD-060: a folder served the way an ez Share serves a card root (sizes in
+/// KB, every file dated 1980), with Range at the root as a Mule and Miner has.
+class FolderAsEzShare : public IDataSource {
+public:
+    explicit FolderAsEzShare(fs::path dir) : dir_(std::move(dir)) {}
+    std::vector<EzShareFileEntry> listDir(const std::string& p) override {
+        std::vector<EzShareFileEntry> out;
+        if (!p.empty()) return out;
+        for (const auto& e : fs::directory_iterator(dir_)) {
+            EzShareFileEntry f;
+            f.name = e.path().filename().string();
+            f.size_kb = static_cast<int>((fs::file_size(e.path()) + 1023) / 1024);
+            f.year = 1980;
+            out.push_back(f);
+        }
+        return out;
+    }
+    bool downloadByPath(const std::string& name, const std::string& local) override {
+        std::error_code ec;
+        fs::copy_file(dir_ / name, local, fs::copy_options::overwrite_existing, ec);
+        return !ec;
+    }
+    bool downloadFileRange(const std::string& folder, const std::string& name,
+                           const std::string& local, size_t start, size_t& got) override {
+        if (!folder.empty()) return false;
+        std::ifstream in(dir_ / name, std::ios::binary);
+        in.seekg(static_cast<std::streamoff>(start));
+        std::string rest((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        std::ofstream(local, std::ios::binary | std::ios::app) << rest;
+        got = rest.size();
+        return !rest.empty();
+    }
+    std::vector<std::string> listDateFolders() override { return {}; }
+    std::vector<EzShareFileEntry> listFiles(const std::string&) override { return {}; }
+    bool downloadFile(const std::string&, const std::string&, const std::string&) override {
+        return false;
+    }
+    bool downloadRootFile(const std::string&, const std::string&) override { return false; }
+
+private:
+    fs::path dir_;
+};
+
 }  // namespace
+
+TEST_F(BmcCardTest, ThroughAnEzShareTheCopyReadsAsTheCardDoesAndFollowsASession) {
+    // SDD-060: the card in a Luna's slot, served over the ez Share; the copy
+    // the mirror keeps reads as the folder itself, and a night that grew after
+    // the mask came off is appended and read longer.
+    const fs::path card = root_ / "card";
+    const fs::path copy = root_ / "archive" / "bmc";
+    writeCard(card, 1800);
+    FolderAsEzShare ez(card);
+
+    ASSERT_TRUE(mirrorBmcCard(ez, copy.string()).ok);
+    auto read = BmcIngestion(copy.string()).readSessions("dev", "Luna");
+    ASSERT_TRUE(read.ok) << read.error;
+    ASSERT_EQ(read.sessions.size(), 2u);
+    EXPECT_EQ(read.sessions[1]->duration_seconds.value_or(0), 1800);
+
+    writeCard(card, 3600);   // the same session, an hour long now
+    const auto m = mirrorBmcCard(ez, copy.string());
+    ASSERT_TRUE(m.ok);
+    EXPECT_EQ(m.appended, 1) << "the Luna only appended, so only the rest was fetched";
+    read = BmcIngestion(copy.string()).readSessions("dev", "Luna");
+    ASSERT_TRUE(read.ok) << read.error;
+    ASSERT_EQ(read.sessions.size(), 2u);
+    EXPECT_EQ(read.sessions[1]->duration_seconds.value_or(0), 3600);
+    EXPECT_EQ(read.sessions[1]->metrics->obstructive_apneas, 1);
+}
 
 TEST_F(BmcCardTest, TheCardIsFoundInsideTheFoldersAZipWrapsItIn) {
     writeCard(root_ / "my card" / "SD");

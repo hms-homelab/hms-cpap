@@ -42,8 +42,9 @@ import { AppConfig } from '../../models/config.model';
               </select>
             </label>
             <!-- A folder takes every format. An ez Share takes ResMed and, since
-                 SDD-031, a Sefam S.Box card in its slot; not a Löwenstein, which
-                 answers the ez Share with error 601. -->
+                 SDD-031, a Sefam S.Box card in its slot, and since SDD-060 a
+                 Luna's; not a Löwenstein, which answers the ez Share with error
+                 601. -->
             <label *ngIf="config.transport === 'local'">
               {{ 'settings.source.format' | translate }}
               <select [(ngModel)]="config.format" name="format">
@@ -59,8 +60,14 @@ import { AppConfig } from '../../models/config.model';
               <select [(ngModel)]="config.format" name="format_ezshare">
                 <option value="resmed">ResMed</option>
                 <option value="sefam">Sefam S.Box</option>
+                <option value="bmc">{{ 'settings.source.bmc' | translate }}</option>
               </select>
             </label>
+            <!-- SDD-060 D5: over an ez Share a Luna session appears once the
+                 mask is off, never during it. -->
+            <small class="hint" *ngIf="config.transport === 'ezshare' && config.format === 'bmc'">
+              {{ 'settings.source.bmcEzshareHint' | translate }}
+            </small>
             <!-- Asked for by the first person to look here for myAir, which will
                  not be the last. myAir cannot BE a source: it returns daily
                  summaries only, with no waveforms, events, sessions or
@@ -2023,7 +2030,8 @@ export class SettingsComponent implements OnInit, OnDestroy {
    *  ResMed. SDD-056: a FlashAir reads ResMed only. */
   onTransportChange(transport: string): void {
     if (!this.config) return;
-    if (transport === 'ezshare' && !['resmed', 'sefam'].includes(this.config.format)) {
+    // SDD-060: a Luna (bmc) runs an ez Share too.
+    if (transport === 'ezshare' && !['resmed', 'sefam', 'bmc'].includes(this.config.format)) {
       this.config.format = 'resmed';
     }
     if (transport === 'flashair') this.config.format = 'resmed';

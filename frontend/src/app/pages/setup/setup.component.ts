@@ -289,6 +289,20 @@ import { switchMap, tap } from 'rxjs';
               </div>
             }
 
+            <!-- SDD-060 D7: an ez Share, or a Mule and Miner (which serves the
+                 same pages), cannot say which machine it sits in until the
+                 first listing, so the wizard asks. -->
+            @if (source === 'mm' || source === 'ezshare') {
+              <label class="field">
+                {{ 'setup.source.formatLabel' | translate }}
+                <select [(ngModel)]="cardFormat" name="cardFormat">
+                  <option value="resmed">ResMed</option>
+                  <option value="sefam">Sefam S.Box</option>
+                  <option value="bmc">{{ 'setup.source.bmc' | translate }}</option>
+                </select>
+              </label>
+            }
+
             <div class="actions">
               <button class="btn-ghost" (click)="currentStep = 2">{{ 'setup.back' | translate }}</button>
               <button class="btn-primary" (click)="currentStep = 4"
@@ -731,6 +745,8 @@ export class SetupComponent {
   source = 'mm';
   /** SDD-022: which machine wrote the folder. Only meaningful for source==='local'. */
   localFormat = 'resmed';
+  /** SDD-060 D7: the machine behind an ez Share or a Mule and Miner. */
+  cardFormat = 'resmed';
   ezshareUrl = 'http://192.168.4.1';
   /** SDD-056: a FlashAir on the home WiFi answers by mDNS. */
   flashairUrl = 'http://flashair.local';
@@ -938,14 +954,15 @@ export class SetupComponent {
       }
       // The whole M&M integration is these two lines. A proxy-mode mule is an
       // ezShare server on the LAN, and EzShareClient already speaks to it.
+      // SDD-060 D7: and the machine behind it, which the unit cannot tell.
       configUpdate['source'] = 'ezshare';
       configUpdate['transport'] = 'ezshare';
-      configUpdate['format'] = 'resmed';
+      configUpdate['format'] = this.cardFormat;
       configUpdate['ezshare_url'] = this.selectedDevice.base_url;
     } else if (this.source === 'ezshare') {
       configUpdate['source'] = 'ezshare';
       configUpdate['transport'] = 'ezshare';
-      configUpdate['format'] = 'resmed';
+      configUpdate['format'] = this.cardFormat;
       configUpdate['ezshare_url'] = this.ezshareUrl;
     } else if (this.source === 'flashair') {
       configUpdate['source'] = 'flashair';

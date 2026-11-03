@@ -140,6 +140,7 @@ set(TEST_SOURCES
     services/test_BmcIngestion.cpp
     services/test_CardUpload.cpp
     services/test_SefamCardMirror.cpp
+    services/test_BmcCardMirror.cpp
     integration/test_PrismaE2E.cpp
     services/test_InsightsEngine.cpp
     database/test_SQLiteDatabase.cpp
