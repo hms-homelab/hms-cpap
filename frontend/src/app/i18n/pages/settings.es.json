@@ -19,6 +19,7 @@
       "format": "Qué máquina los escribió",
       "philips": "Philips Respironics (experimental)",
       "bmc": "BMC / React Health Luna",
+      "bmcEzshareHint": "Con un ezShare, una sesión de la Luna aparece después de quitarse la mascarilla, no mientras está en curso.",
       "ezshare": "SD WiFi ezShare",
       "flashair": "SD WiFi Toshiba FlashAir",
       "local": "Directorio local",

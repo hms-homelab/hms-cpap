@@ -19,6 +19,7 @@
       "format": "Qual aparelho os gravou",
       "philips": "Philips Respironics (experimental)",
       "bmc": "BMC / React Health Luna",
+      "bmcEzshareHint": "Com um ezShare, uma sessão da Luna aparece depois de tirar a máscara, não enquanto decorre.",
       "ezshare": "Cartão SD WiFi ezShare",
       "flashair": "Cartão SD WiFi Toshiba FlashAir",
       "local": "Diretório local",

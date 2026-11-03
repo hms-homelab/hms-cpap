@@ -391,6 +391,14 @@ private:
     std::string sefam_archive_dir_;
     void startSefamOverEzShare(const std::string& archive_dir);
 
+    /// SDD-060: a Luna card behind an ez Share, or a Mule and Miner in local
+    /// mode. data_source_ is the ez Share client; each burst copies the card's
+    /// root files into bmc_mirror_dir_ (<archive>/bmc) and the BMC ingestion
+    /// reads them there.
+    bool bmc_over_ezshare_ = false;
+    std::string bmc_mirror_dir_;
+    void startBmcOverEzShare(const std::string& archive_dir);
+
     // Services
     std::unique_ptr<SessionDiscoveryService> discovery_service_;
 

@@ -398,9 +398,12 @@ bool EzShareClient::downloadFileRange(const std::string& date_folder,
                                         const std::string& local_path,
                                         size_t start_byte,
                                         size_t& bytes_downloaded) {
-    // Construct download URL
-    std::string url = base_url_ + "/download?file=DATALOG%5C"
-                    + date_folder + "%5C" + filename;
+    // Construct download URL. No date folder is a file at the card root (a
+    // Luna card's raw files, SDD-060 D4).
+    std::string url = date_folder.empty()
+                          ? base_url_ + "/download?file=" + encodeCardPath(filename)
+                          : base_url_ + "/download?file=DATALOG%5C" + date_folder + "%5C" +
+                                filename;
 
     std::cout << "EzShare: Range download " << filename << " from byte " << start_byte << std::endl;
 
