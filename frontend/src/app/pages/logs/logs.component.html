@@ -12,7 +12,7 @@
     </div>
 
     <div class="logs-actions">
-      <select [(ngModel)]="lines" (change)="refresh()" [title]="'logs.lineSelectTitle' | translate">
+      <select [(ngModel)]="lines" (change)="open()" [title]="'logs.lineSelectTitle' | translate">
         <option *ngFor="let n of lineOptions" [ngValue]="n">{{ 'logs.lastN' | translate:{ n: n } }}</option>
       </select>
 
@@ -50,12 +50,13 @@
     </span>
   </div>
 
-  <div class="notice" *ngIf="data?.truncated">
-    {{ 'logs.truncated' | translate:{ shown: data?.lines?.length, total: data?.total_lines } }}
+  <div class="notice" *ngIf="!view.empty && !view.atStart">
+    {{ 'logs.truncated' | translate:{ shown: view.lineCount } }}
   </div>
 
   <div class="log-view" *ngIf="!loading || data">
-    <pre *ngIf="text; else empty">{{ text }}</pre>
+    <p class="loading older" *ngIf="loadingOlder">{{ 'logs.reading' | translate }}</p>
+    <pre #logPre (scroll)="onScroll()" *ngIf="text; else empty">{{ text }}</pre>
     <ng-template #empty>
       <p class="empty">{{ 'logs.empty' | translate }}</p>
     </ng-template>

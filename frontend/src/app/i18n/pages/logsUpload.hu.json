@@ -15,7 +15,7 @@
     "copy": "Másolás a vágólapra",
     "copied": "Másolva",
     "enableHint": "Kapcsolja be a naplózást a Beállításokban, indítsa újra, és a fájl itt jelenik meg:",
-    "truncated": "Az utolsó {{shown}} sor látszik a(z) {{total}} sorból. Válasszon nagyobb számot fent, ha többet szeretne látni.",
+    "truncated": "{{shown}} sor látszik. Görgessen a tetejére a korábbiak betöltéséhez.",
     "empty": "Még nincs naplóbejegyzés.",
     "reading": "A napló olvasása…"
   },

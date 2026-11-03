@@ -15,7 +15,7 @@
     "copy": "Copier dans le presse-papiers",
     "copied": "Copié",
     "enableHint": "Activez la journalisation dans les Paramètres, redémarrez, et le fichier apparaîtra dans",
-    "truncated": "Affichage des {{shown}} dernières lignes sur {{total}}. Choisissez un nombre plus grand ci-dessus pour en voir davantage.",
+    "truncated": "Affichage de {{shown}} lignes. Faites défiler jusqu'en haut pour charger les précédentes.",
     "empty": "Rien n'a encore été journalisé.",
     "reading": "Lecture du journal…"
   },

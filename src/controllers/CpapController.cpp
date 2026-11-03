@@ -8,6 +8,7 @@
 #include "utils/CardLayout.h"
 #include "utils/ConfigManager.h"
 #include "utils/FileLogger.h"
+#include "utils/LogTail.h"
 #include "web/As11PairingApi.h"
 #include <drogon/MultiPart.h>
 #include <atomic>
@@ -949,6 +950,16 @@ void CpapController::logs(const drogon::HttpRequestPtr& req,
     if (auto p = req->getParameter("lines"); !p.empty()) {
         try { want = std::max(1, std::min(50000, std::stoi(p))); } catch (...) {}
     }
+    // SDD-059: a byte cursor. `after` asks for what is new since an answer's
+    // `end` (with its `file_id`), `before` for the page ending at an answer's
+    // `start`. Neither reads the file from its beginning.
+    auto offsetParam = [&](const char* name) -> std::optional<std::uint64_t> {
+        const auto p = req->getParameter(name);
+        if (p.empty()) return std::nullopt;
+        try { return static_cast<std::uint64_t>(std::stoull(p)); } catch (...) { return std::nullopt; }
+    };
+    const auto after  = offsetParam("after");
+    const auto before = offsetParam("before");
 
     Json::Value result;
     result["path"]    = path;
@@ -958,8 +969,12 @@ void CpapController::logs(const drogon::HttpRequestPtr& req,
     const auto size = fs::file_size(path, ec);
     result["size_bytes"] = ec ? 0 : static_cast<Json::UInt64>(size);
 
-    std::ifstream in(path, std::ios::binary);
-    if (!in) {
+    namespace lt = hms_cpap::logtail;
+    const lt::Chunk c = after  ? lt::after(path, *after, req->getParameter("file_id"),
+                                           static_cast<std::size_t>(want))
+                      : before ? lt::before(path, *before, static_cast<std::size_t>(want))
+                               : lt::tail(path, static_cast<std::size_t>(want));
+    if (!c.readable) {
         result["lines"]     = Json::Value(Json::arrayValue);
         result["truncated"] = false;
         result["error"]     = active ? "log file is not readable yet"
@@ -968,24 +983,28 @@ void CpapController::logs(const drogon::HttpRequestPtr& req,
         return;
     }
 
-    // Keep only the last `want` lines. A ring buffer rather than reading the
-    // whole file into memory: the cap is what stops a 5 MB log becoming a 5 MB
-    // JSON response, so it has to bound the read too, not just the output.
-    std::deque<std::string> tail;
-    std::string line;
-    std::uintmax_t total = 0;
-    while (std::getline(in, line)) {
-        if (!line.empty() && line.back() == '\r') line.pop_back();
-        tail.push_back(line);
-        ++total;
-        if (tail.size() > static_cast<std::size_t>(want)) tail.pop_front();
-    }
-
     Json::Value arr(Json::arrayValue);
-    for (const auto& l : tail) arr.append(l);
+    for (const auto& l : c.lines) arr.append(l);
     result["lines"]      = arr;
-    result["total_lines"] = static_cast<Json::UInt64>(total);
-    result["truncated"]  = total > tail.size();
+    result["start"]      = static_cast<Json::UInt64>(c.start);
+    result["end"]        = static_cast<Json::UInt64>(c.end);
+    result["file_id"]    = c.file_id;
+    result["size_bytes"] = static_cast<Json::UInt64>(c.size);
+    result["truncated"]  = c.start > 0;   // older lines are in the file
+    result["at_start"]   = c.start == 0;
+    if (after) {
+        result["rotated"] = c.rotated;
+        result["more"]    = c.more;
+    }
+    if (!after && !before) {
+        // Today's answer for a caller that sends `lines` alone (SDD-059 D6):
+        // the file's line count, which only this form reads the file for.
+        std::ifstream in(path, std::ios::binary);
+        std::uintmax_t total = 0;
+        std::string line;
+        while (std::getline(in, line)) ++total;
+        result["total_lines"] = static_cast<Json::UInt64>(total);
+    }
     cb(jsonResp(result));
 }
 

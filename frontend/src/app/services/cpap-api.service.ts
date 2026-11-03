@@ -15,6 +15,16 @@ export class CpapApiService {
     return this.http.get<LogTail>('/api/logs', { params: { lines } as any });
   }
 
+  /** SDD-059: the lines written since byte `after` of the file `fileId`. */
+  getLogsAfter(after: number, fileId: string, lines = 2000): Observable<LogTail> {
+    return this.http.get<LogTail>('/api/logs', { params: { after, file_id: fileId, lines } as any });
+  }
+
+  /** SDD-059: the `lines` lines that end at byte `before`. */
+  getLogsBefore(before: number, lines = 2000): Observable<LogTail> {
+    return this.http.get<LogTail>('/api/logs', { params: { before, lines } as any });
+  }
+
   getHealth(): Observable<{ service: string; status: string; version: string }> {
     return this.http.get<{ service: string; status: string; version: string }>('/health');
   }
@@ -509,6 +519,13 @@ export interface LogTail {
   total_lines?: number;
   truncated: boolean;
   error?: string;
+  // SDD-059: the byte cursor around `lines`.
+  start?: number;
+  end?: number;
+  file_id?: string;
+  at_start?: boolean;
+  rotated?: boolean;   // an `after` whose cursor was another file's: this is the tail
+  more?: boolean;      // an `after` capped: ask again from `end`
 }
 
 /** One Mule & Miner as GET /api/mule lists it. */

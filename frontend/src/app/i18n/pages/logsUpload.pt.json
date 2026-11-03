@@ -15,7 +15,7 @@
     "copy": "Copiar para a área de transferência",
     "copied": "Copiado",
     "enableHint": "Ative o registro nas Configurações, reinicie, e o arquivo aparece em",
-    "truncated": "Mostrando as últimas {{shown}} de {{total}} linhas. Escolha um número maior acima para ver mais.",
+    "truncated": "Mostrando {{shown}} linhas. Role até o topo para carregar as anteriores.",
     "empty": "Nada registrado ainda.",
     "reading": "Lendo o registro…"
   },

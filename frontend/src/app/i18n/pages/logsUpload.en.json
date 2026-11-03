@@ -15,7 +15,7 @@
     "copy": "Copy to clipboard",
     "copied": "Copied",
     "enableHint": "Turn logging on in Settings, then restart, and the file appears at",
-    "truncated": "Showing the last {{shown}} of {{total}} lines. Pick a larger count above to see more.",
+    "truncated": "Showing {{shown}} lines. Scroll to the top to load older ones.",
     "empty": "Nothing logged yet.",
     "reading": "Reading the log…"
   },

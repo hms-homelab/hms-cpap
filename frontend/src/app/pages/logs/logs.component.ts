@@ -1,9 +1,14 @@
-import { Component, OnDestroy, OnInit } from '@angular/core';
+import { AfterViewChecked, Component, ElementRef, OnDestroy, OnInit, ViewChild } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { TranslatePipe } from '@ngx-translate/core';
 import { CpapApiService, LogTail } from '../../services/cpap-api.service';
+import { LogView } from './log-view';
 
+// SDD-059. The page opens at the latest line and follows it while the reader
+// is at the bottom, an idea from @rccoleman (#49). A refresh asks only for
+// what was written since the last one; scrolling to the top loads the page
+// before. Nothing refetches the whole tail.
 @Component({
   selector: 'app-logs',
   standalone: true,
@@ -11,24 +16,30 @@ import { CpapApiService, LogTail } from '../../services/cpap-api.service';
   templateUrl: './logs.component.html',
   styleUrls: ['./logs.component.css']
 })
-export class LogsComponent implements OnInit, OnDestroy {
+export class LogsComponent implements OnInit, OnDestroy, AfterViewChecked {
   loading = true;
+  loadingOlder = false;
   error = '';
-  data: LogTail | null = null;
+  data: LogTail | null = null;     // the last open's answer: path, size, state
+  view = new LogView();
 
   lineOptions = [200, 1000, 2000, 10000];
-  lines = 2000;
+  lines = 2000;                    // the first load, and each page loaded upward
 
-  autoRefresh = false;
+  autoRefresh = false;             // SDD-059 D1: off on every visit
   copied = false;
+
+  @ViewChild('logPre') private logPre?: ElementRef<HTMLPreElement>;
 
   private timer: any = null;
   private copiedTimer: any = null;
+  /** After the next render: scroll to the end, or keep the reader's line. */
+  private pending: 'end' | { height: number; top: number } | null = null;
 
   constructor(private api: CpapApiService) {}
 
   ngOnInit(): void {
-    this.refresh();
+    this.open();
   }
 
   ngOnDestroy(): void {
@@ -36,12 +47,67 @@ export class LogsComponent implements OnInit, OnDestroy {
     if (this.copiedTimer) clearTimeout(this.copiedTimer);
   }
 
-  refresh(): void {
+  /** The last `lines` lines, scrolled to the end. Also a new line count. */
+  open(): void {
     this.loading = true;
     this.api.getLogs(this.lines).subscribe({
-      next: d => { this.data = d; this.error = ''; this.loading = false; },
+      next: d => {
+        this.data = d; this.error = ''; this.loading = false;
+        this.view.reset(d);
+        this.pending = 'end';
+      },
       error: e => { this.error = e?.message || 'Could not read the log'; this.loading = false; }
     });
+  }
+
+  /** What was written since the last answer, appended. */
+  refresh(): void {
+    if (this.view.empty || !this.data?.file_id) { this.open(); return; }
+    const follow = this.atBottom();
+    this.loading = true;
+    this.api.getLogsAfter(this.view.end, this.view.fileId, this.lines).subscribe({
+      next: d => {
+        this.error = ''; this.loading = false;
+        this.data = { ...(this.data as LogTail), size_bytes: d.size_bytes, path: d.path, active: d.active };
+        this.view.append(d);
+        if (follow || d.rotated) this.pending = 'end';
+        if (d.more) this.refresh();   // a burst bigger than one answer
+      },
+      error: e => { this.error = e?.message || 'Could not read the log'; this.loading = false; }
+    });
+  }
+
+  /** The reader reached the top: the page before what is shown. */
+  onScroll(): void {
+    const pre = this.logPre?.nativeElement;
+    if (!pre || pre.scrollTop > 40 || this.loadingOlder || this.view.empty || this.view.atStart) return;
+    this.loadingOlder = true;
+    this.api.getLogsBefore(this.view.start, this.lines).subscribe({
+      next: d => {
+        this.loadingOlder = false;
+        this.pending = { height: pre.scrollHeight, top: pre.scrollTop };
+        this.view.prepend(d);
+      },
+      error: () => { this.loadingOlder = false; }
+    });
+  }
+
+  /** Runs after the new text is in the DOM, so scrollHeight is the new one. */
+  ngAfterViewChecked(): void {
+    const pre = this.logPre?.nativeElement;
+    if (!this.pending || !pre) return;
+    if (this.pending === 'end') {
+      pre.scrollTop = pre.scrollHeight;
+    } else {
+      // The line the reader was looking at stays under their eyes.
+      pre.scrollTop = this.pending.top + (pre.scrollHeight - this.pending.height);
+    }
+    this.pending = null;
+  }
+
+  private atBottom(): boolean {
+    const pre = this.logPre?.nativeElement;
+    return !pre || pre.scrollHeight - pre.scrollTop - pre.clientHeight < 40;
   }
 
   toggleAutoRefresh(): void {
@@ -51,7 +117,7 @@ export class LogsComponent implements OnInit, OnDestroy {
   }
 
   get text(): string {
-    return this.data?.lines?.join('\n') ?? '';
+    return this.view.text;
   }
 
   /**

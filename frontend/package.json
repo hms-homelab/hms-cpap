@@ -5,6 +5,7 @@
     "ng": "ng",
     "start": "ng serve",
     "build": "ng build",
+    "test": "node --test \"src/**/*.spec.ts\"",
     "watch": "ng build --watch --configuration development",
     "i18n:gen": "node scripts/build-i18n.mjs",
     "check:narrow": "node scripts/check-narrow.mjs",

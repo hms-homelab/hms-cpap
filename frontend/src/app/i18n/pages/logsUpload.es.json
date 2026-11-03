@@ -15,7 +15,7 @@
     "copy": "Copiar al portapapeles",
     "copied": "Copiado",
     "enableHint": "Activa el registro en Ajustes, reinicia, y el archivo aparecerá en",
-    "truncated": "Mostrando las últimas {{shown}} de {{total}} líneas. Elige un número mayor arriba para ver más.",
+    "truncated": "Mostrando {{shown}} líneas. Desplázate hasta arriba para cargar las anteriores.",
     "empty": "Todavía no hay nada registrado.",
     "reading": "Leyendo el registro…"
   },

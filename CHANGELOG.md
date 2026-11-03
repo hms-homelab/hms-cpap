@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [6.0.4] - 2026-11-03
+
+The log page follows the end and loads the past as you scroll, with the idea
+from @rccoleman (#49).
+
+### Changed
+- **The Logs page opens at the latest line** and follows it while you are at
+  the bottom; if you scroll up to read, it leaves you where you are (#49,
+  thanks @rccoleman). Auto-refresh stays off until you turn it on.
+- **A refresh asks only for what is new.** `GET /api/logs` takes a byte cursor:
+  `after` (with `file_id`) answers the lines written since an earlier answer's
+  `end`, and `before` answers the page that ends at an earlier answer's
+  `start`. Every answer now carries `start`, `end`, `file_id` and `at_start`.
+  Neither form reads the log from its beginning, so a 10,000-line view no
+  longer refetches 10,000 lines every five seconds. A rotated log is noticed
+  (`rotated`) and the page starts over at its end. A line still being written
+  is held back until it is complete. A call with `lines` alone answers as
+  before.
+- **Scrolling to the top loads the lines before**, keeping your place. The
+  line count you pick is the size of the first load and of each older page.
+  The page holds up to 20,000 lines and lets the far end go past that.
+
 ## [6.0.3] - 2026-11-01
 
 Three more steps toward an AirSense 11 night read over Bluetooth that OSCAR
