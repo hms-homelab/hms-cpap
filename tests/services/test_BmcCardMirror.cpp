@@ -8,6 +8,7 @@
 
 #include "services/BmcCardMirror.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -28,6 +29,7 @@ public:
     bool dead = false;
     bool range = true;
     bool ignore_range = false;   // answers a Range with the whole file
+    int stamp_year = 1980;       // the one bench Luna's 1980-0-0, unless a test dates it
 
     bool supportsRange() const override { return range; }
 
@@ -38,7 +40,7 @@ public:
             EzShareFileEntry e;
             e.name = n;
             e.size_kb = static_cast<int>((b.size() + 1023) / 1024);
-            e.year = 1980;
+            e.year = stamp_year;
             out.push_back(e);
         }
         EzShareFileEntry cfg;
@@ -196,6 +198,22 @@ TEST_F(BmcMirrorTest, ASessionLaterTheRawFileIsAppendedAndTheSidecarsTakenAgain)
     std::vector<std::string> expect_whole{"22B39570.EVT", "22B39570.IDX", "22B39570.LOG"};
     EXPECT_EQ(card_.whole, expect_whole) << ".000 was ranged, .USR untouched";
     EXPECT_FALSE(anyPart());
+}
+
+TEST_F(BmcMirrorTest, AFileWhoseStampMovedAtTheSameKbIsTakenAgain) {
+    // Size alone cannot say a file changed: the KB is rounded. A card that
+    // dates its files is judged by the stamp as well.
+    card_.stamp_year = 2026;
+    ASSERT_TRUE(mirrorBmcCard(card_, dir_.string()).ok);
+    card_.whole.clear();
+    card_.files["22B39570.USR"][0] = 'X';   // same size, rewritten
+    card_.stamp_year = 2027;                 // and the card says so
+
+    const auto r = mirrorBmcCard(card_, dir_.string());
+    ASSERT_TRUE(r.ok);
+    EXPECT_EQ(slurp(dir_ / "22B39570.USR"), card_.files["22B39570.USR"]);
+    EXPECT_NE(std::find(card_.whole.begin(), card_.whole.end(), "22B39570.USR"),
+              card_.whole.end());
 }
 
 TEST_F(BmcMirrorTest, ACardThatNoLongerStartsWithWhatWeHoldIsTakenWhole) {

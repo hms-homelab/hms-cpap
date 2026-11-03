@@ -6,13 +6,15 @@
 // A Luna card is a handful of files at the card root, every session in the same
 // serial-named files: <stem>.000 (.001 ...), .EVT, .IDX, .LOG, .USR. This keeps
 // a copy of them in a folder, where BmcIngestion reads it as it reads a local
-// card. The listing carries no usable time (every entry is dated 1980-0-0), so
-// a file's signature is its size in KB alone:
+// card. A file's signature is its listed size AND its card stamp, as for any
+// card: the size is KB-rounded and misses a rewrite under a KB. (One bench
+// Luna left its entries dated 1980-0-0, which compares equal each pass; a
+// machine that dates its files is followed by its dates.)
 //
 //   D2  only the files of the card's one stem are copied
-//   D3  a raw file is fetched when its KB changed; .EVT, .IDX and .LOG whenever
-//       a raw file changed (a session's events can grow .EVT by under a KB);
-//       .USR only when its own KB changed
+//   D3  a raw file is fetched when its signature changed; .EVT, .IDX and .LOG
+//       whenever a raw file changed, and when their own signature did; .USR
+//       only when its own signature changed
 //   D4  a raw file that grew is appended: the last 4 KB we hold are asked for
 //       again and compared, and only when they match is the rest kept.
 //       Anything else (a mismatch, a shorter file, a source without Range)

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -15,9 +16,20 @@ namespace fs = std::filesystem;
 
 namespace {
 
-/// "<name>\t<size_kb>" per file, so a pass can tell an unchanged file without
-/// keeping anything in memory across restarts.
+/// "<name>\t<size_kb>\t<card stamp>" per file, so a pass can tell an unchanged
+/// file without keeping anything in memory across restarts.
 const char* kManifest = ".ezshare_bmc_manifest";
+
+/// A file's signature: its size AND its card stamp, as every file is judged.
+/// The listed size is KB-rounded, so size alone misses a rewrite under a KB.
+/// One bench Luna (2026-11-03) left its entries dated 1980-0-0, which simply
+/// compares equal every pass; a machine that dates its files is followed by them.
+std::string sigOf(const EzShareFileEntry& e) {
+    char stamp[32];
+    std::snprintf(stamp, sizeof(stamp), "%04d%02d%02d%02d%02d%02d", e.year, e.month, e.day,
+                  e.hour, e.minute, e.second);
+    return std::to_string(e.size_kb) + "\t" + stamp;
+}
 
 /// The bytes asked for again before an append, to prove the card still holds
 /// what we hold (D4).
@@ -55,7 +67,7 @@ struct Pass {
     bool unchanged(const EzShareFileEntry& f) const {
         std::error_code ec;
         const auto it = manifest.find(f.name);
-        return it != manifest.end() && it->second == std::to_string(f.size_kb) &&
+        return it != manifest.end() && it->second == sigOf(f) &&
                fs::exists(dir / f.name, ec);
     }
 
@@ -66,7 +78,7 @@ struct Pass {
         if (card.downloadByPath(f.name, part.string())) {
             fs::rename(part, local, ec);
             if (!ec) {
-                manifest[f.name] = std::to_string(f.size_kb);
+                manifest[f.name] = sigOf(f);
                 ++r.fetched;
                 return true;
             }
@@ -125,7 +137,7 @@ struct Pass {
             fs::remove(part, ec);
             return false;
         }
-        manifest[f.name] = std::to_string(f.size_kb);
+        manifest[f.name] = sigOf(f);
         ++r.appended;
         return true;
     }
