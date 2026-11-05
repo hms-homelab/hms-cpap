@@ -15,6 +15,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 // The two direct Bluetooth clients over a fake ble::ITransport: every decision
@@ -467,6 +468,38 @@ TEST(O2RingBleLink, AWornIdentityWithoutTheServiceIsPassedOver) {
     // Next time the same identity is skipped; nothing else is around.
     EXPECT_TRUE(c.listFiles().empty());
     EXPECT_EQ(t->connected_ids.size(), 1u);
+}
+
+TEST(O2RingBleLink, ALivePollAndAFilePullNeverShareTheRing) {
+    // The burst loop's live poll and a pull asked from the web page come from
+    // two threads. Overlapped, the second connect tore down the first.
+    auto t = std::make_shared<FakeTransport>();
+    t->adverts_ = {dev("r", "O2Ring 1234")};
+    // Links open at each connect: connects so far minus closes so far.
+    std::atomic<int> most{0};
+    t->after_connect = [&](ble::LinkHandlers&) {
+        const int now = static_cast<int>(t->connected_ids.size()) - t->closes();
+        int m = most.load();
+        while (now > m && !most.compare_exchange_weak(m, now)) {}
+        std::this_thread::sleep_for(30ms);   // widen the window
+    };
+    t->responder = [&](FakeLink& l, const std::vector<uint8_t>& piece) {
+        if (piece.size() < 2) return;
+        if (piece[1] == 0x14) l.notify(ringReply(R"({"CurBAT":"60","FileList":"20261101010101"})"));
+        if (piece[1] == 0x17) l.notify(ringReply(std::string("\x60\x48\x00\x00\x00\x00\x00\x50\x00\x00\x00\x00", 12)));
+    };
+    O2RingBleClient c(t);
+    std::vector<std::string> files;
+    IO2RingClient::LiveReading live;
+    std::thread a([&] { files = c.listFiles(); });
+    std::thread b([&] { live = c.getLive(); });
+    a.join();
+    b.join();
+    EXPECT_EQ(most.load(), 1) << "two links to the ring at once";
+    EXPECT_EQ(files.size(), 1u);
+    EXPECT_EQ(live.spo2, 0x60);
+    EXPECT_EQ(live.hr, 0x48);
+    EXPECT_EQ(t->connected_ids.size(), 2u);
 }
 
 TEST(O2RingBleLink, AWriteFailureFailsTheRequestInsteadOfThrowing) {

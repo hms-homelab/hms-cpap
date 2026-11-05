@@ -59,6 +59,11 @@ private:
     ble::Device device_;
     bool have_device_ = false;
 
+    // One operation on the ring at a time. The burst loop's live poll and a
+    // file pull asked from the web page run on different threads, and the
+    // ring holds one link: overlapped, the second connect tore down the first.
+    std::mutex op_mtx_;
+
     // State
     std::mutex mtx_;
     std::condition_variable cv_;
