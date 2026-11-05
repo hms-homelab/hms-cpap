@@ -378,6 +378,16 @@ bool AirSense11BleClient::streamOnce() {
     if (std::string ident; !std::filesystem::exists(std::filesystem::path(writer_->rootFor(serial)) / "Identification.json") &&
                            session_.getIdentification(&ident) == as11::Result::Ok)
         writeIdentification(writer_->rootFor(serial), ident);
+    // The settings too, until the machine has given them once: the STR's
+    // settings fields come from them. A machine that did not answer is asked
+    // again on the next connect, not only at the next Summary pull.
+    if (std::string settings; !std::filesystem::exists(settingsPath(writer_->rootFor(serial)))) {
+        if (session_.getSettings(&settings) == as11::Result::Ok && writeSettings(writer_->rootFor(serial), settings))
+            std::cout << kTag << "settings kept as SETTINGS/CurrentSettings.json" << std::endl;
+        else
+            std::cout << kTag << "settings not read yet (" << session_.lastError()
+                      << "): asked again on the next connect" << std::endl;
+    }
 
     as11::SecondAssembler assembler([this](as11::StreamBlock&& b) { writer_->onBlock(b); });
     assembler.setSerial(serial);
