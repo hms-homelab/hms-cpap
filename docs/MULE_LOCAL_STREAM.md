@@ -219,11 +219,23 @@ progress" means the unit is already taking one.
 
 hms-cpap does this from the Devices page: each unit's card shows the mule and
 miner versions it runs on its Firmware line, "Firmware ... is available.
-Update now" when the published manifest has a newer one (the mule first,
-then the miner), and the update's progress in the same place. Under More it
-takes an image file you have, for the mule or the miner, when the manifest
-is out of reach or you built the image yourself. The published image is for
-the standard board; a unit built on another pin map takes its own file.
+Update now" when CpapDash has released a newer one (the mule first, then
+the miner), and the update's progress in the same place. Under More it
+takes an image file you have, for the mule or the miner, when CpapDash is
+out of reach or you built the image yourself.
+
+The released images are read through CpapDash's public firmware route, the
+one its web flasher uses, and it asks for the **pairing code printed on the
+unit**: the card asks for it once, CpapDash confirms it is this unit's, and
+it is kept in `<data_dir>/ota/mule-pairing.json`. The mule image carries
+the unit's identity, so CpapDash builds it for that unit (a few seconds,
+the first time a release is checked); the miner image is the one for the
+unit's SPI pinout. Before a byte goes to the unit, each image must be an
+ESP32 application image of the right kind (mule or miner) at the released
+version, the mule's must name this unit's serial, and the miner's pinout
+must be the one CpapDash's public fleet map lists for this unit: the wrong
+miner pinout kills the board's SPI bus for good, so any doubt stops the
+update with nothing sent.
 
 **While the machine records** (the unit streaming, or its night not landed
 yet) the update answers 409 with the recording warning above and runs at
@@ -234,14 +246,20 @@ The API behind the card:
 ```
 GET  /api/mule/<serial>/firmware
      {serial, online, ip, fw, miner_fw, night_open, recording, recording_reason,
-      manifest: {url, error, read_at}, latest: {mule, miner},
+      manifest: {url, error, read_at}, latest: {mule, miner}, pairing_set,
       update_available: {mule, miner}, job, ota}
+POST /api/mule/<serial>/pairing
+     {"code": "123456"}   the unit's pairing code; "" forgets it
+     200 {ok, kept}; 400 not six digits; 409 CpapDash does not know it or it
+     is another unit's; 502 CpapDash out of reach
 POST /api/mule/<serial>/update
-     {"target": "mule" | "miner" | "both", "confirm"?: true}   from the manifest
+     {"target": "mule" | "miner" | "both", "confirm"?: true}   from the release
      multipart/form-data, a file + target=mule|miner (+ confirm=true)
      <the image as the raw body>?target=mule|miner&confirm=true
      202 {ok, job, ota}; 409 the unit offline, an update not ended, nothing
-     newer, or the recording warning; 502 the manifest out of reach; 404, 400
+     newer, no pairing code kept, or the recording warning; 502 the release
+     out of reach; 503 the mule image still being built (press again in a few
+     seconds); 404, 400
 GET  /api/mule/<serial>/update
      the job object at the top level, and the older shape under "job" (kept
      one release): phase (downloading, sending, waiting, done, failed), step
@@ -251,7 +269,7 @@ GET  /api/mule/<serial>/update
 The job object is one update made of steps, one per image:
 
 ```
-{"job_id","serial","kind":"mule_miner","path":"local","origin":"owner","source":"manifest 6.1.0",
+{"job_id","serial","kind":"mule_miner","path":"local","origin":"owner","source":"release 6.1.0",
  "confirmed_while_recording","phase","step":2,"steps":2,
  "steps_detail":[{"target":"mule","phase":"done",...},{"target":"miner","phase":"transferring",
                   "bytes","total","bytes_meaning":"sent","version_before","version_target","version_after"}],
@@ -265,7 +283,8 @@ current). No clock ends a step: the mule's step ends on the unit's next
 hello, which also starts the miner's; the miner's ends on the first state
 that shows its new version. A unit that does not come back stays
 `restarting`, with `last_heard` as the fact. Back on the old version is
-`failed`, `back_on_old_version`. The job is kept in
+`failed`, `back_on_old_version`; a downloaded image that fails a check above
+is `failed`, `image_rejected`, with nothing sent. The job is kept in
 `<data_dir>/ota/mule/<serial>.json`; a restart of hms-cpap reads it back.
 
 With curl, an image file to the mule of one unit:
@@ -280,7 +299,11 @@ Sending an image takes some tens of seconds (the unit writes it to flash as
 it arrives); hms-cpap allows five minutes for the request itself, then waits
 for the mule's hello, however long it takes, before the miner's image goes.
 
-The manifest is `https://fw.cpapdash.com/public/latest.json`
-(`{"mule": {"version", "url"}, "miner": {...}}`), read over TLS from this
-host; `HMS_CPAP_MULE_MANIFEST_URL` points at another. When it cannot be read
-the card says so and the file path remains.
+The release is resolved at `https://www.cpapdash.com/fwbake/v1/flasher/resolve`
+(`POST {"pairing_code", "role": "mule"|"miner"}`, answered with the version
+and the signed image URLs, or 202 while a mule image is built), and the
+pinout is confirmed against `.../v1/flasher/fleet-map`, both over TLS from
+this host; `HMS_CPAP_MULE_RELEASE_BASE` points at another base. It is read
+when the Devices page loads (kept ten minutes for its refreshes) and again,
+fresh, when an update starts; never on a timer. When it cannot be read the
+card says why and the file path remains.

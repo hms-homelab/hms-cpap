@@ -6,6 +6,8 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <sstream>
 
@@ -99,31 +101,162 @@ Transport curlTransport() {
         curl_easy_cleanup(c);
         return out;
     };
+    t.post_json = [](const std::string& url, const std::string& json, int timeout_s) {
+        HttpReply r;
+        CURL*     c = curl_easy_init();
+        if (!c) {
+            r.error = "curl_easy_init failed";
+            return r;
+        }
+        struct curl_slist* headers = nullptr;
+        headers = curl_slist_append(headers, "Content-Type: application/json");
+        headers = curl_slist_append(headers, "Accept: application/json");
+        curl_easy_setopt(c, CURLOPT_URL, url.c_str());
+        curl_easy_setopt(c, CURLOPT_HTTPHEADER, headers);
+        curl_easy_setopt(c, CURLOPT_POST, 1L);
+        curl_easy_setopt(c, CURLOPT_POSTFIELDS, json.data());
+        curl_easy_setopt(c, CURLOPT_POSTFIELDSIZE_LARGE, static_cast<curl_off_t>(json.size()));
+        curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, collect);
+        curl_easy_setopt(c, CURLOPT_WRITEDATA, &r.body);
+        curl_easy_setopt(c, CURLOPT_TIMEOUT, static_cast<long>(timeout_s));
+        curl_easy_setopt(c, CURLOPT_CONNECTTIMEOUT, 15L);
+        const HttpReply out = [&] {
+            HttpReply p = perform(c, url);
+            p.body      = std::move(r.body);
+            return p;
+        }();
+        curl_slist_free_all(headers);
+        curl_easy_cleanup(c);
+        return out;
+    };
     return t;
 }
 
-// ── the manifest and versions ──
+// ── the release and versions ──
 
-std::optional<Manifest> parseManifest(const std::string& text, std::string* why) {
+namespace {
+
+std::optional<Json::Value> parseJson(const std::string& text) {
     Json::Value             v;
     Json::CharReaderBuilder rb;
     std::istringstream      ss(text);
-    if (!Json::parseFromStream(rb, ss, &v, nullptr) || !v.isObject()) {
-        if (why) *why = "the manifest is not a JSON object";
+    if (!Json::parseFromStream(rb, ss, &v, nullptr)) return std::nullopt;
+    return v;
+}
+
+// The path of a URL, its query dropped: "https://h/a/b?x" -> "/a/b".
+std::string pathOf(const std::string& url) {
+    std::string p = url.substr(0, url.find('?'));
+    const auto  scheme = p.find("://");
+    if (scheme != std::string::npos) {
+        const auto slash = p.find('/', scheme + 3);
+        p = slash == std::string::npos ? "/" : p.substr(slash);
+    }
+    return p;
+}
+
+}  // namespace
+
+std::string absoluteUrl(const std::string& base, const std::string& path) {
+    if (path.rfind("https://", 0) == 0 || path.rfind("http://", 0) == 0) return path;
+    const auto scheme = base.find("://");
+    if (scheme == std::string::npos) return path;
+    const auto  slash  = base.find('/', scheme + 3);
+    std::string origin = slash == std::string::npos ? base : base.substr(0, slash);
+    return origin + (path.empty() || path[0] != '/' ? "/" : "") + path;
+}
+
+std::optional<Release> parseResolve(const std::string& text, long status, const std::string& role,
+                                    const std::string& serial, const std::string& base, std::string* why) {
+    auto refuse = [why](const std::string& w) -> std::optional<Release> {
+        if (why) *why = w;
         return std::nullopt;
+    };
+    const auto v = parseJson(text);
+    if (!v || !v->isObject()) return refuse("CpapDash's answer for the " + role + " is not JSON");
+    const Json::Value& o = *v;
+    if (status != 200 && status != 202) {
+        const std::string e = o.get("error", "").asString();
+        return refuse("CpapDash answered HTTP " + std::to_string(status) + " for the " + role +
+                      (e.empty() ? "" : ": " + e));
     }
-    Manifest m;
-    for (const auto& [name, into] : {std::pair{"mule", &m.mule}, std::pair{"miner", &m.miner}}) {
-        const Json::Value& e = v[name];
-        if (!e.isObject() || !e["version"].isString() || !e["url"].isString() ||
-            e["version"].asString().empty() || e["url"].asString().empty()) {
-            if (why) *why = std::string("the manifest has no ") + name + " {version, url}";
-            return std::nullopt;
-        }
-        into->version = e["version"].asString();
-        into->url     = e["url"].asString();
+    if (o.get("role", "").asString() != role) return refuse("CpapDash answered for another role than the " + role);
+    // The pairing code is the unit's: an answer for another serial means the
+    // code kept here is not this unit's, and its image would be another's.
+    if (o.get("serial", "").asString() != serial)
+        return refuse("the pairing code kept for " + serial + " belongs to " +
+                      (o.get("serial", "").asString().empty() ? std::string("no unit")
+                                                              : o.get("serial", "").asString()));
+    Release r;
+    r.version = o.get("version", "").asString();
+    if (r.version.empty() || !(r.version[0] >= '0' && r.version[0] <= '9'))
+        return refuse("CpapDash named no " + role + " version");
+    if (status == 202) {
+        if (o.get("status", "").asString() != "baking") return refuse("CpapDash's 202 for the " + role + " is not a build");
+        r.baking = true;
+        return r;
     }
-    return m;
+    const Json::Value& flash = o["flash"];
+    if (flash.isArray())
+        for (const auto& e : flash)
+            if (e.get("offset", "").asString() == "0x20000" && e["url"].isString() && !e["url"].asString().empty())
+                r.url = absoluteUrl(base, e["url"].asString());
+    if (r.url.empty()) return refuse("CpapDash's " + role + " release has no application image");
+    if (r.url.rfind("https://", 0) != 0) return refuse("the " + role + " image is not served over https");
+    return r;
+}
+
+std::optional<std::string> minerVariantOf(const std::string& url, const std::string& version) {
+    if (version.empty()) return std::nullopt;
+    const std::string p    = pathOf(url);
+    const std::string tail = "/" + version + "/miner-";
+    const auto        at   = p.rfind(tail);
+    if (at == std::string::npos) return std::nullopt;
+    std::string name = p.substr(at + tail.size());   // "<v>.bin" or "<variant>-<v>.bin"
+    const std::string end = version + ".bin";
+    if (name.size() < end.size() || name.compare(name.size() - end.size(), end.size(), end) != 0) return std::nullopt;
+    name.resize(name.size() - end.size());
+    if (name.empty()) return std::string("official");
+    if (name.back() != '-' || name.size() < 2) return std::nullopt;
+    name.pop_back();
+    if (name.find_first_of("/-") != std::string::npos) return std::nullopt;
+    return name;
+}
+
+std::optional<std::string> fleetVariant(const std::string& text, const std::string& serial) {
+    const auto v = parseJson(text);
+    if (!v || !v->isArray()) return std::nullopt;
+    for (const auto& e : *v)
+        if (e.isObject() && e.get("serial", "").asString() == serial && e.get("role", "").asString() == "miner" &&
+            e["variant"].isString() && !e["variant"].asString().empty())
+            return e["variant"].asString();
+    return std::nullopt;
+}
+
+bool checkReleaseImage(const std::string& image, const std::string& role, const std::string& version,
+                       const std::string& serial, std::string* why) {
+    auto refuse = [why](const std::string& w) {
+        if (why) *why = w;
+        return false;
+    };
+    if (image.empty()) return refuse("the " + role + " image is empty");
+    if (image.size() > kImageMax) return refuse("the " + role + " image is larger than a Mule & Miner image can be");
+    std::string bad;
+    const auto  info = sleepbridge::inspectImage(image, &bad);
+    if (!info) return refuse("the " + role + " download is " + bad);
+    if (info->project != role)
+        return refuse("the download is not a " + role + " image: it says it is \"" + info->project + "\"");
+    if (info->version != version)
+        return refuse("the " + role + " image is version " + info->version + ", not the released " + version);
+    // The mule carries its identity: an image baked for another unit would
+    // boot as that unit.
+    if (role == "mule" && image.find(serial) == std::string::npos)
+        return refuse("the mule image is not built for " + serial);
+    return true;
+}
+
+bool validPairingCode(const std::string& code) {
+    return code.size() == 6 && code.find_first_not_of("0123456789") == std::string::npos;
 }
 
 int compareVersions(const std::string& a, const std::string& b) {
@@ -175,6 +308,16 @@ FirmwareUpdater::FirmwareUpdater(MuleService& units, Transport transport, Option
         jobs_[serial]    = j;
         if (!was_ended && ota.ended()) devices::otaSave(opt_.jobs_dir, serial, ota);
     }
+    // The pairing codes the owners gave, one per unit.
+    if (!opt_.pairing_file.empty()) {
+        std::ifstream in(opt_.pairing_file);
+        std::stringstream ss;
+        ss << in.rdbuf();
+        if (const auto v = parseJson(ss.str()); v && v->isObject())
+            for (const auto& serial : v->getMemberNames())
+                if ((*v)[serial].isString() && validPairingCode((*v)[serial].asString()))
+                    pairing_[serial] = (*v)[serial].asString();
+    }
     units_.setObserver([this](const std::string& serial, bool hello) { onUnit(serial, hello); });
 }
 
@@ -199,37 +342,133 @@ void FirmwareUpdater::waitIdle() {
     }
 }
 
-std::optional<Manifest> FirmwareUpdater::manifest(std::string* why) {
+std::string FirmwareUpdater::pairingCode(const std::string& serial) const {
+    std::lock_guard<std::mutex> lk(mu_);
+    const auto it = pairing_.find(serial);
+    return it == pairing_.end() ? "" : it->second;
+}
+
+void FirmwareUpdater::savePairing() {
+    if (opt_.pairing_file.empty()) return;
+    Json::Value v(Json::objectValue);
+    for (const auto& [serial, code] : pairing_) v[serial] = code;
+    Json::StreamWriterBuilder w;
+    w["indentation"] = "  ";
+    std::error_code ec;
+    const std::filesystem::path p(opt_.pairing_file);
+    if (p.has_parent_path()) std::filesystem::create_directories(p.parent_path(), ec);
+    const std::string tmp = opt_.pairing_file + ".tmp";
     {
+        std::ofstream out(tmp, std::ios::trunc);
+        out << Json::writeString(w, v);
+        if (!out) {
+            std::cerr << "[mule] the pairing codes could not be written to " << tmp << std::endl;
+            return;
+        }
+    }
+    std::filesystem::rename(tmp, opt_.pairing_file, ec);
+    if (ec) std::cerr << "[mule] the pairing codes could not be kept: " << ec.message() << std::endl;
+}
+
+std::optional<Release> FirmwareUpdater::resolve(const std::string& serial, const std::string& code,
+                                                const std::string& role, std::string* why) {
+    auto refuse = [why](const std::string& w) -> std::optional<Release> {
+        if (why) *why = w;
+        return std::nullopt;
+    };
+    if (!t_.post_json) return refuse("no way to reach CpapDash");
+    Json::Value body(Json::objectValue);
+    body["pairing_code"] = code;
+    body["role"]         = role;
+    Json::StreamWriterBuilder w;
+    w["indentation"]    = "";
+    const std::string url = opt_.release_base + "/v1/flasher/resolve";
+    const HttpReply   r   = t_.post_json(url, Json::writeString(w, body), kResolveTimeoutS);
+    if (!r.ok) return refuse("CpapDash could not be reached: " + r.error);
+    if (r.status == 404) {
+        const auto v = parseJson(r.body);
+        const std::string e = v && v->isObject() ? v->get("error", "").asString() : "";
+        return refuse(e.find("pairing") != std::string::npos
+                          ? "CpapDash does not recognise the pairing code given for " + serial
+                          : "CpapDash has no " + role + " release" + (e.empty() ? "" : " (" + e + ")"));
+    }
+    if (r.status == 429) return refuse("CpapDash asked to wait: too many checks from this network; try again later");
+    return parseResolve(r.body, r.status, role, serial, opt_.release_base, why);
+}
+
+std::optional<Manifest> FirmwareUpdater::manifest(const std::string& serial, std::string* why, bool fresh) {
+    if (!fresh) {
         std::lock_guard<std::mutex> lk(mu_);
-        const auto age = std::chrono::steady_clock::now() - cached_at_;
-        if (cached_wall_ && age < opt_.manifest_ttl) {
-            if (why) *why = cached_error_;
-            return cached_;
+        const auto it = cached_.find(serial);
+        if (it != cached_.end() && it->second.wall &&
+            std::chrono::steady_clock::now() - it->second.at < opt_.manifest_ttl) {
+            if (why) *why = it->second.error;
+            return it->second.m;
         }
     }
     std::string             err;
     std::optional<Manifest> m;
-    if (!t_.get) {
-        err = "no way to read the manifest";
+    const std::string       code = pairingCode(serial);
+    if (code.empty()) {
+        err = "no pairing code is kept for this unit: give the one printed on it to check for releases";
     } else {
-        const HttpReply r = t_.get(opt_.manifest_url, kFetchTimeoutS);
-        if (!r.ok) {
-            err = "the manifest could not be read: " + r.error;
-        } else if (r.status != 200) {
-            err = "the manifest answered HTTP " + std::to_string(r.status) +
-                  (r.status == 403 ? " (it is not published for reading without a key)" : "");
-        } else {
-            m = parseManifest(r.body, &err);
-        }
+        // The miner first: it builds nothing, and a refused code stops here.
+        auto miner = resolve(serial, code, "miner", &err);
+        std::optional<Release> mule;
+        if (miner) mule = resolve(serial, code, "mule", &err);
+        if (miner && mule) m = Manifest{*mule, *miner};
     }
     std::lock_guard<std::mutex> lk(mu_);
-    cached_       = m;
-    cached_error_ = err;
-    cached_at_    = std::chrono::steady_clock::now();
-    cached_wall_  = std::time(nullptr);
+    auto& c = cached_[serial];
+    c.m     = m;
+    c.error = err;
+    c.at    = std::chrono::steady_clock::now();
+    c.wall  = std::time(nullptr);
     if (why) *why = err;
     return m;
+}
+
+CommandAnswer FirmwareUpdater::setPairingCode(const std::string& serial, const std::string& raw) {
+    CommandAnswer a;
+    auto refuse = [&a](int status, const std::string& why) {
+        a.status        = status;
+        a.body["ok"]    = false;
+        a.body["error"] = why;
+        return a;
+    };
+    std::string code;
+    for (const char ch : raw)
+        if (ch != ' ' && ch != '-') code += ch;   // "190 364" as printed
+    if (code.empty()) {
+        std::lock_guard<std::mutex> lk(mu_);
+        pairing_.erase(serial);
+        cached_.erase(serial);
+        savePairing();
+        a.status       = 200;
+        a.body["ok"]   = true;
+        a.body["kept"] = false;
+        return a;
+    }
+    if (!validPairingCode(code)) return refuse(400, "a pairing code is the six digits printed on the unit");
+    // CpapDash confirms it is this unit's code; the miner resolve builds nothing.
+    std::string why;
+    const auto  miner = resolve(serial, code, "miner", &why);
+    if (!miner) {
+        const bool unreachable = why.rfind("CpapDash could not be reached", 0) == 0 ||
+                                 why.rfind("CpapDash asked to wait", 0) == 0 || why.find("HTTP 5") != std::string::npos;
+        return refuse(unreachable ? 502 : 409, why);
+    }
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        pairing_[serial] = code;
+        cached_.erase(serial);   // the next check reads the release with it
+        savePairing();
+    }
+    std::cout << "[mule] " << serial << ": pairing code kept, CpapDash's miner release " << miner->version << std::endl;
+    a.status       = 200;
+    a.body["ok"]   = true;
+    a.body["kept"] = true;
+    return a;
 }
 
 // The shape scripts read before the job object, kept one release beside it.
@@ -321,21 +560,29 @@ Json::Value FirmwareUpdater::firmware(const std::string& serial, bool read_manif
 
     std::string             why;
     std::optional<Manifest> m;
-    if (read_manifest) {
-        m = manifest(&why);
+    if (read_manifest && b.known) {
+        m = manifest(serial, &why);
     } else {
         std::lock_guard<std::mutex> lk(mu_);
-        m   = cached_;
-        why = cached_wall_ ? cached_error_ : "the manifest has not been read yet";
+        const auto it = cached_.find(serial);
+        if (it != cached_.end() && it->second.wall) {
+            m   = it->second.m;
+            why = it->second.error;
+        } else {
+            why = "the release has not been read yet";
+        }
     }
+    const bool  paired = !pairingCode(serial).empty();
     Json::Value man(Json::objectValue);
-    man["url"]   = opt_.manifest_url;
+    man["url"]   = opt_.release_base + "/v1/flasher/resolve";
     man["error"] = why;
     {
         std::lock_guard<std::mutex> lk(mu_);
-        man["read_at"] = static_cast<Json::Int64>(cached_wall_);
+        const auto it  = cached_.find(serial);
+        man["read_at"] = static_cast<Json::Int64>(it == cached_.end() ? 0 : it->second.wall);
     }
-    v["manifest"] = man;
+    v["manifest"]   = man;
+    v["pairing_set"] = paired;
     Json::Value latest(Json::objectValue), avail(Json::objectValue);
     latest["mule"]  = m ? m->mule.version : "";
     latest["miner"] = m ? m->miner.version : "";
@@ -387,19 +634,29 @@ CommandAnswer FirmwareUpdater::start(const std::string& serial, const std::strin
 
     Release mule_release, miner_release;
     if (image.empty()) {
+        if (pairingCode(serial).empty())
+            return refuse(409, "no pairing code is kept for this unit: give the one printed on it, or upload "
+                               "the image file instead");
+        // Fresh: the image URLs are signed for an hour, and a mule being
+        // built a minute ago may be ready now.
         std::string why;
-        const auto  m = manifest(&why);
+        const auto  m = manifest(serial, &why, /*fresh=*/true);
         if (!m) return refuse(502, why + ". Upload the image file instead");
         mule_release  = m->mule;
         miner_release = m->miner;
         const bool mule_new  = updateAvailable(b.fw, m->mule.version);
         const bool miner_new = updateAvailable(b.miner_fw, m->miner.version);
         if (target == "mule" && !mule_new)
-            return refuse(409, "the mule already runs " + b.fw + "; the manifest has " + m->mule.version);
+            return refuse(409, "the mule already runs " + b.fw + "; the latest release is " + m->mule.version);
         if (target == "miner" && !miner_new)
-            return refuse(409, "the miner already runs " + b.miner_fw + "; the manifest has " + m->miner.version);
+            return refuse(409, "the miner already runs " + b.miner_fw + "; the latest release is " + m->miner.version);
         if (target == "both" && !mule_new && !miner_new)
             return refuse(409, "the unit already runs mule " + b.fw + " and miner " + b.miner_fw);
+        // The mule image is built for this unit on demand; this read asked
+        // for it. Nothing is sent until it is there.
+        if (mule_release.baking && (target == "mule" || (target == "both" && mule_new)))
+            return refuse(503, "CpapDash is building this unit's mule " + mule_release.version +
+                                   " image; press Update again in a few seconds");
     }
 
     // While the machine records: the warning, and nothing sent unless the
@@ -420,7 +677,7 @@ CommandAnswer FirmwareUpdater::start(const std::string& serial, const std::strin
     auto& o          = j->ota;
     o.serial         = serial;
     o.kind           = "mule_miner";
-    o.source         = image.empty() ? "manifest " + (target == "miner" ? miner_release.version : mule_release.version)
+    o.source         = image.empty() ? "release " + (target == "miner" ? miner_release.version : mule_release.version)
                                      : "file " + (image_name.empty() ? std::string("(unnamed)") : image_name);
     o.confirmed_while_recording = rec.warns() && confirm;
     o.started_at = o.updated_at = now;
@@ -434,7 +691,7 @@ CommandAnswer FirmwareUpdater::start(const std::string& serial, const std::strin
         s.target         = t;
         s.version_before = t == "mule" ? b.fw : b.miner_fw;
         s.version_target = !image.empty() ? file_version : (t == "mule" ? mule_release.version : miner_release.version);
-        // On "both" from the manifest, an image the unit already runs is
+        // On "both" from the release, an image the unit already runs is
         // not sent again.
         if (target == "both" && image.empty() &&
             !updateAvailable(s.version_before, s.version_target)) {
@@ -535,7 +792,38 @@ bool FirmwareUpdater::fetchImage(Job& j, const Release& r, std::string& out) {
         s->bytes = s->total = 0;
         changed(j);
     }
-    note(j, "downloading " + target + " " + r.version + " from " + r.url);
+    const std::string serial = j.ota.serial;
+    if (r.url.empty()) {
+        std::lock_guard<std::mutex> lk(mu_);
+        fail(j, "image_unavailable", "CpapDash has not finished building the " + target + " image; try again");
+        return false;
+    }
+    // The miner image is per SPI pinout, and the wrong one kills the bus for
+    // good: the image CpapDash chose must be the variant its public fleet map
+    // lists for this unit, or nothing is sent.
+    if (target == "miner") {
+        const auto chosen = minerVariantOf(r.url, r.version);
+        const HttpReply map = t_.get(opt_.release_base + "/v1/flasher/fleet-map", kResolveTimeoutS);
+        const auto listed = map.ok && map.status == 200 ? fleetVariant(map.body, serial) : std::nullopt;
+        std::string bad;
+        if (!chosen)
+            bad = "the miner image's name does not say which pinout it is for";
+        else if (!map.ok || map.status != 200)
+            bad = "the fleet map could not be read to confirm this unit's pinout (" +
+                  (map.ok ? "HTTP " + std::to_string(map.status) : map.error) + ")";
+        else if (!listed)
+            bad = "the fleet map does not list " + serial + ", so its pinout cannot be confirmed";
+        else if (*listed != *chosen)
+            bad = "the miner image is for the " + *chosen + " pinout, but " + serial + " is " + *listed;
+        if (!bad.empty()) {
+            std::lock_guard<std::mutex> lk(mu_);
+            fail(j, "image_rejected", bad + ": nothing was sent");
+            return false;
+        }
+        note(j, "miner pinout " + *chosen + ", as the fleet map lists " + serial);
+    }
+    // The signature in the URL is not logged.
+    note(j, "downloading " + target + " " + r.version + " from " + r.url.substr(0, r.url.find('?')));
     const HttpReply reply = t_.get(r.url, kFetchTimeoutS);
     if (!reply.ok || reply.status != 200 || reply.body.empty()) {
         std::lock_guard<std::mutex> lk(mu_);
@@ -544,8 +832,14 @@ bool FirmwareUpdater::fetchImage(Job& j, const Release& r, std::string& out) {
                  (reply.ok ? "HTTP " + std::to_string(reply.status) : reply.error));
         return false;
     }
+    std::string why;
+    if (!checkReleaseImage(reply.body, target, r.version, serial, &why)) {
+        std::lock_guard<std::mutex> lk(mu_);
+        fail(j, "image_rejected", why + ": nothing was sent");
+        return false;
+    }
     out = reply.body;
-    note(j, target + " image: " + std::to_string(out.size()) + " bytes");
+    note(j, target + " image: " + std::to_string(out.size()) + " bytes, " + target + " " + r.version + " checked");
     return true;
 }
 

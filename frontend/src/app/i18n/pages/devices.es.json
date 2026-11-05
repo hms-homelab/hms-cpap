@@ -28,7 +28,7 @@
       "unknownBadge": "Grabación desconocida"
     },
     "line": {
-      "lastHeard": "Último contacto",
+      "lastHeard": "Visto por última vez",
       "never": "nunca",
       "firmware": "Firmware",
       "machine": "Equipo",
@@ -112,6 +112,8 @@
     "action": {
       "restart": "Reiniciar",
       "restartTarget": "Qué reiniciar",
+      "restartGroup": "Reiniciar",
+      "whichBoard": "Qué placa",
       "resetWifi": "Restablecer WiFi",
       "backToCloud": "Pasar a la nube de CpapDash",
       "restate": "Volver a pedir su estado",
@@ -129,6 +131,15 @@
       "updateAvailable": "Actualización disponible: mule {{mule}}, miner {{miner}}",
       "upToDate": "al día",
       "manifestUnavailable": "No se pudieron leer las versiones publicadas. Aun así puedes enviar un archivo que tengas.",
+      "fwCodeHint": "Para buscar firmware nuevo, escribe el código de emparejamiento impreso en la unidad. Se pide una sola vez.",
+      "fwCodePlaceholder": "Código de emparejamiento",
+      "fwCodeSave": "Comprobar",
+      "fwCodeFailed": "No se guardó el código de emparejamiento: {{error}}",
+      "boardBoth": "Mule y Miner",
+      "boardMuleOnly": "Solo el Mule",
+      "boardMinerOnly": "Solo el Miner",
+      "boardMule": "Mule",
+      "boardMiner": "Miner",
       "update": "Actualizar",
       "fileHint": "Envía un archivo de imagen que tengas, al mule o al miner. Se envía en cuanto lo eliges.",
       "as11Bluetooth": "Bluetooth del AirSense 11",

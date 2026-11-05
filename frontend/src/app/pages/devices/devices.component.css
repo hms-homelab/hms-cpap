@@ -33,8 +33,19 @@
 .rename input { flex: 1; min-width: 160px; }
 
 /* ── facts, fixed order ── */
-dl.facts { margin: 0; display: grid; gap: 0.3rem; }
-dl.facts > div { display: grid; grid-template-columns: minmax(7.5rem, 34%) 1fr; gap: 0.6rem; font-size: 0.85rem; }
+dl.facts { margin: 0; display: grid; gap: 0; }
+dl.facts > div { display: grid; grid-template-columns: minmax(7.5rem, 34%) 1fr; gap: 0.6rem; font-size: 0.85rem;
+                 padding: 0.5rem 0; }
+/* Between rows (none after the last): a black line, thickest in the middle and
+   tapering to a point at both ends. */
+dl.facts > div { position: relative; }
+dl.facts > div:not(:last-child)::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: -3px; height: 4px;
+  background: #000; clip-path: polygon(0 50%, 12% 0, 88% 0, 100% 50%, 88% 100%, 12% 100%);
+  pointer-events: none;
+}
+dl.facts > div:first-child { padding-top: 0; }
+dl.facts > div:last-child { padding-bottom: 0; }
 dl.facts > div.wide { grid-template-columns: 1fr; }
 dt { color: var(--muted); }
 dd { margin: 0; color: #ddd; min-width: 0; overflow-wrap: anywhere; }
@@ -46,11 +57,23 @@ dd { margin: 0; color: #ddd; min-width: 0; overflow-wrap: anywhere; }
 .switch { display: inline-flex; align-items: center; gap: 0.35rem; cursor: pointer; }
 
 /* ── footer, pinned to the bottom ── */
-.footer { margin-top: auto; display: flex; flex-direction: column; gap: 0.6rem; padding-top: 0.6rem; border-top: 1px solid #23253a; }
-.actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
-.split { display: inline-flex; }
-.split select { border-radius: 5px 0 0 5px; border-right: none; }
-.split .btn { border-radius: 0 5px 5px 0; }
+.footer { margin-top: auto; display: flex; flex-direction: column; gap: 0.6rem; padding-top: 0.6rem; position: relative; }
+/* Every divider on the card is the same dark tapered line as between the rows. */
+.footer::before, .folds::before {
+  content: ""; position: absolute; left: 0; right: 0; top: -2px; height: 4px;
+  background: #000; clip-path: polygon(0 50%, 12% 0, 88% 0, 100% 50%, 88% 100%, 12% 100%);
+  pointer-events: none;
+}
+/* Measured 13px of space above it and 9px below at top: -2px; this centres it. */
+.footer::before { top: -4px; }
+/* Stacked: one action, or one labelled group, per line; buttons keep their own width. */
+.actions { display: flex; flex-direction: column; align-items: flex-start; gap: 0.5rem; }
+.action-line { display: flex; gap: 0.5rem; align-items: center; }
+.action-group { border: 1px solid #3a3d55; border-radius: 6px; margin: 0; padding: 0.35rem 0.7rem 0.6rem;
+                min-width: 0; max-width: 100%; display: flex; flex-direction: column; gap: 0.45rem; }
+.action-group legend { padding: 0 0.3rem; font-size: 0.75rem; color: var(--muted); }
+.group-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.5rem; }
+.field { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.75rem; color: var(--muted); }
 
 /* Text and outlined buttons only: never a solid red or green. */
 .btn { display: inline-block; padding: 0.38rem 0.85rem; border-radius: 5px; border: 1px solid #4a4e66; background: transparent;
@@ -76,9 +99,12 @@ dd { margin: 0; color: #ddd; min-width: 0; overflow-wrap: anywhere; }
 .note-line { font-size: 0.83rem; color: #a9c7ad; }
 .note-line.err { color: var(--error); }
 
-.folds { display: flex; gap: 1.2rem; flex-wrap: wrap; }
-.fold { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 0.8rem; padding: 0.1rem 0; font-family: inherit; }
-.fold:hover { color: #e0e0e0; }
+/* "More" / commands: their own footer row, set off from the buttons above and
+   clear of the card's bottom edge. */
+.folds { display: flex; gap: 1.2rem; flex-wrap: wrap; margin-top: 0.25rem; padding: 0.6rem 0 0.35rem;
+         position: relative; }
+.fold { background: none; border: none; color: #ddd; cursor: pointer; font-size: 0.85rem; padding: 0.1rem 0; font-family: inherit; }
+.fold:hover { color: #fff; }
 .fold i { width: 0.8rem; }
 
 .commands ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.2rem; font-size: 0.82rem; }
@@ -92,6 +118,8 @@ dd { margin: 0; color: #ddd; min-width: 0; overflow-wrap: anywhere; }
 .row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 0.2rem 0; }
 .hint { font-size: 0.75rem; color: var(--muted); }
 .hint.block { display: block; }
+.fw-code { margin-top: 0.35rem; display: flex; flex-direction: column; gap: 0.3rem; }
+.fw-code input { width: 8.5rem; }
 
 select, input[type="text"], input[type="password"] { background: #10121c; border: 1px solid #3a3d55;
   color: #e0e0e0; border-radius: 5px; padding: 0.36rem 0.5rem; font-size: 0.85rem; font-family: inherit; }

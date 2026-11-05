@@ -63,6 +63,8 @@ export class DevicesComponent implements OnInit, OnDestroy {
   restartTarget: Record<string, 'mule' | 'miner' | 'both'> = {};
   fileTarget: Record<string, 'mule' | 'miner'> = {};
   pairCode: Record<string, string> = {};
+  /** The unit's printed pairing code, typed for the firmware check. */
+  fwCode: Record<string, string> = {};
 
   // The Sleep Bridge's settings form, per bridge.
   configEdits: Record<string, Record<string, string>> = {};
@@ -333,6 +335,25 @@ export class DevicesComponent implements OnInit, OnDestroy {
     if (f.update_available.mule) parts.push(this.t.instant('devices.mule.mule') + ' ' + f.latest.mule);
     if (f.update_available.miner) parts.push(this.t.instant('devices.mule.miner') + ' ' + f.latest.miner);
     return parts.join(', ');
+  }
+
+  /** The Firmware line asks for the unit's pairing code: none kept, nothing running. */
+  needsFwCode(d: DeviceEntry): boolean {
+    return d.kind === 'mule' && !!d.detail?.firmware && !d.detail.firmware.pairing_set && !d.detail.ota;
+  }
+
+  /** Keeps the printed code once CpapDash says it is this unit's, then reads the release. */
+  saveFwCode(d: DeviceEntry): void {
+    const code = (this.fwCode[d.key] || '').trim();
+    if (!code) return;
+    this.busy[d.key] = true;
+    this.api.setMulePairingCode(d.id, code).subscribe({
+      next: () => { this.busy[d.key] = false; this.fwCode[d.key] = ''; delete this.notes[d.key]; this.load(true); },
+      error: (e) => {
+        this.busy[d.key] = false;
+        this.note(d, this.t.instant('devices.mule.fwCodeFailed', { error: errorText(e) }), true);
+      },
+    });
   }
 
   bridgeRelease(d: DeviceEntry) {

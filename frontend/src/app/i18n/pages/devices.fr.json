@@ -28,7 +28,7 @@
       "unknownBadge": "Enregistrement inconnu"
     },
     "line": {
-      "lastHeard": "Dernier contact",
+      "lastHeard": "Vu pour la dernière fois",
       "never": "jamais",
       "firmware": "Firmware",
       "machine": "Appareil",
@@ -112,6 +112,8 @@
     "action": {
       "restart": "Redémarrer",
       "restartTarget": "Que redémarrer",
+      "restartGroup": "Redémarrer",
+      "whichBoard": "Quelle carte",
       "resetWifi": "Réinitialiser le WiFi",
       "backToCloud": "Passer au cloud CpapDash",
       "restate": "Redemander son état",
@@ -129,6 +131,15 @@
       "updateAvailable": "Mise à jour disponible : mule {{mule}}, miner {{miner}}",
       "upToDate": "à jour",
       "manifestUnavailable": "Les versions publiées n'ont pas pu être lues. Un fichier que vous avez peut tout de même être envoyé.",
+      "fwCodeHint": "Pour chercher un nouveau firmware, saisissez le code d'appairage imprimé sur l'appareil. Il n'est demandé qu'une fois.",
+      "fwCodePlaceholder": "Code d'appairage",
+      "fwCodeSave": "Vérifier",
+      "fwCodeFailed": "Le code d'appairage n'a pas été gardé : {{error}}",
+      "boardBoth": "Mule et Miner",
+      "boardMuleOnly": "Mule seulement",
+      "boardMinerOnly": "Miner seulement",
+      "boardMule": "Mule",
+      "boardMiner": "Miner",
       "update": "Mettre à jour",
       "fileHint": "Envoyez un fichier image que vous avez, au mule ou au miner. Il part dès qu'il est choisi.",
       "as11Bluetooth": "Bluetooth de l'AirSense 11",

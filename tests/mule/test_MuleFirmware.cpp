@@ -10,14 +10,17 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
 
 // Updating a Mule & Miner over the local network: a fake unit sits on the
 // receiver (its session names its address) and a fake transport stands in
-// for the unit's own update endpoint and for the published manifest. Every
-// image here is a few made-up bytes; nothing is flashed anywhere.
+// for the unit's own update endpoint and for CpapDash's public firmware
+// routes (resolve by pairing code, the fleet map, the signed images). The
+// images are made-up bytes shaped like an ESP32 application image, so the
+// checks read them as the real ones are read; nothing is flashed anywhere.
 
 using namespace hms_cpap;
 using namespace hms_cpap::mule;
@@ -25,8 +28,14 @@ namespace fs = std::filesystem;
 
 namespace {
 
-constexpr const char* kUnit = "FE-C3-00000001";
-constexpr const char* kIp   = "192.168.1.50";
+constexpr const char* kUnit    = "FE-C3-00000001";
+constexpr const char* kCode    = "055170";
+constexpr const char* kV2Unit  = "FE-C3-00000009";
+constexpr const char* kV2Code  = "239953";
+constexpr const char* kOther   = "FE-C3-00000002";
+constexpr const char* kOtherCode = "111111";
+constexpr const char* kIp      = "192.168.1.50";
+constexpr const char* kBase    = "https://www.example.test/fwbake";
 
 std::string compact(const Json::Value& v) {
     Json::StreamWriterBuilder w;
@@ -34,20 +43,31 @@ std::string compact(const Json::Value& v) {
     return Json::writeString(w, v);
 }
 
-std::string manifestJson(const std::string& mule, const std::string& miner) {
-    Json::Value m(Json::objectValue);
-    m["mule"]["version"]  = mule;
-    m["mule"]["url"]      = "https://fw.example.test/public/" + mule + "/mule.bin";
-    m["miner"]["version"] = miner;
-    m["miner"]["url"]     = "https://fw.example.test/public/" + miner + "/miner.bin";
-    return compact(m);
+// An ESP32 application image as far as its header and app descriptor go:
+// the image magic, the descriptor's magic, version and project, then
+// `body` (a mule's identity rides in there).
+std::string espImage(const std::string& project, const std::string& version, const std::string& body = "") {
+    std::string img(32 + 256, '\0');
+    img[0] = static_cast<char>(0xE9);
+    const uint32_t magic = 0xABCD5432u;
+    for (int i = 0; i < 4; i++) img[32 + i] = static_cast<char>((magic >> (8 * i)) & 0xFF);
+    img.replace(32 + 16, version.size(), version);
+    img.replace(32 + 48, project.size(), project);
+    return img + body;
+}
+
+std::string pathOnly(const std::string& url) {
+    std::string p = url.substr(0, url.find('?'));
+    const auto  s = p.find("://");
+    if (s != std::string::npos) p = p.substr(p.find('/', s + 3));
+    return p;
 }
 
 // The unit's end of its stream connection, as far as an update cares.
 class FakeUnit {
 public:
-    FakeUnit(MuleService& svc, const std::string& ip = kIp) : svc_(svc) {
-        conn_ = svc_.open(kUnit, [](const std::string&) { return true; }, ip);
+    FakeUnit(MuleService& svc, const std::string& serial = kUnit, const std::string& ip = kIp) : svc_(svc) {
+        conn_ = svc_.open(serial, [](const std::string&) { return true; }, ip);
     }
     ~FakeUnit() { close(); }
     void close() {
@@ -88,31 +108,149 @@ struct Post {
     size_t      progress_calls{0};
 };
 
-// The unit's update endpoint and the manifest's host, in one.
+// The unit's update endpoint and CpapDash's public firmware routes, in one.
 struct FakeNet {
-    std::string                          manifest = manifestJson("6.1.0", "6.1.0");
-    long                                 manifest_status{200};
-    std::map<std::string, std::string>   images;         // url -> bytes
-    long                                 post_status{200};
-    std::string                          post_body{"{\"status\":\"ok\"}"};
-    std::string                          post_error;     // when set, the POST never completes
-    std::vector<Post>                    posts;
-    std::function<void(const Post&)>     after_post;     // the unit's side effect (a restart)
+    struct Unit {
+        std::string serial, pinout;
+    };
+    std::map<std::string, Unit>        codes{{kCode, {kUnit, "official"}},
+                                             {kV2Code, {kV2Unit, "v2"}},
+                                             {kOtherCode, {kOther, "official"}}};
+    std::string                        mule_version{"6.1.0"}, miner_version{"6.1.0"};
+    std::set<std::string>              baked{kUnit, kV2Unit, kOther};   // serials whose mule image exists
+    bool                               bake_on_request{true};           // a 202 builds it for the next ask
+    std::string                        resolve_error;                   // set: CpapDash out of reach
+    long                               resolve_status{0};               // set: answered with this instead
+    std::map<std::string, std::string> pinout_answered;                 // serial -> the pinout resolve picks
+    std::string                        fleet_map;                       // empty: built from `codes`
+    long                               fleet_status{200};
+    std::map<std::string, std::string> images;                          // path -> bytes
+    std::vector<std::string>           gets, resolves;
+    long                               post_status{200};
+    std::string                        post_body{"{\"status\":\"ok\"}"};
+    std::string                        post_error;     // when set, the POST never completes
+    std::vector<Post>                  posts;
+    std::function<void(const Post&)>   after_post;     // the unit's side effect (a restart)
+
+    static std::string minerPath(const std::string& pinout, const std::string& v) {
+        return "/fwbake/v1/flasher/fw/" + v + "/miner-" + (pinout == "official" ? "" : pinout + "-") + v + ".bin";
+    }
+    static std::string mulePath(const std::string& serial, const std::string& v) {
+        return "/fwbake/v1/flasher/fw/" + v + "/" + serial + "/mule-" + v + ".bin";
+    }
+    // The images CpapDash serves for the current versions.
+    void publish() {
+        for (const auto& [code, u] : codes) images[mulePath(u.serial, mule_version)] = espImage("mule", mule_version, u.serial);
+        images[minerPath("official", miner_version)] = espImage("miner", miner_version, "official");
+        images[minerPath("v2", miner_version)]       = espImage("miner", miner_version, "v2");
+    }
+
+    std::string fleetMap() const {
+        if (!fleet_map.empty()) return fleet_map;
+        Json::Value a(Json::arrayValue);
+        for (const auto& [code, u] : codes)
+            for (const char* role : {"mule", "miner"}) {
+                Json::Value e(Json::objectValue);
+                e["mac"]     = "aa:bb:cc:dd:ee:ff";
+                e["role"]    = role;
+                e["serial"]  = u.serial;
+                e["variant"] = u.pinout;
+                a.append(e);
+            }
+        return compact(a);
+    }
+
+    HttpReply resolve(const std::string& body) {
+        HttpReply r;
+        if (!resolve_error.empty()) {
+            r.error = resolve_error;
+            return r;
+        }
+        r.ok = true;
+        Json::Value             req;
+        Json::CharReaderBuilder rb;
+        std::istringstream      ss(body);
+        Json::parseFromStream(rb, ss, &req, nullptr);
+        const std::string code = req["pairing_code"].asString(), role = req["role"].asString();
+        resolves.push_back(role + " " + code);
+        if (resolve_status) {
+            r.status = resolve_status;
+            r.body   = "{\"error\":\"down\"}";
+            return r;
+        }
+        const auto it = codes.find(code);
+        if (it == codes.end()) {
+            r.status = 404;
+            r.body   = "{\"error\":\"pairing code not recognized\"}";
+            return r;
+        }
+        const Unit& u = it->second;
+        Json::Value v(Json::objectValue);
+        v["serial"] = u.serial;
+        v["role"]   = role;
+        if (role == "mule" && !baked.count(u.serial)) {
+            if (bake_on_request) baked.insert(u.serial);
+            v["status"]          = "baking";
+            v["version"]         = mule_version;
+            v["retry_after_sec"] = 10;
+            r.status             = 202;
+            r.body               = compact(v);
+            return r;
+        }
+        const std::string ver = role == "mule" ? mule_version : miner_version;
+        const auto        pa  = pinout_answered.find(u.serial);
+        const std::string app = role == "mule" ? mulePath(u.serial, ver)
+                                               : minerPath(pa == pinout_answered.end() ? u.pinout : pa->second, ver);
+        v["version"] = ver;
+        Json::Value flash(Json::arrayValue);
+        for (const auto& [off, path] : std::vector<std::pair<std::string, std::string>>{
+                 {"0x0", "/fwbake/v1/flasher/fw/" + ver + "/" + role + "-bootloader.bin"},
+                 {"0x8000", "/fwbake/v1/flasher/fw/" + ver + "/" + role + "-partition-table.bin"},
+                 {"0x20000", app}}) {
+            Json::Value e(Json::objectValue);
+            e["offset"] = off;
+            e["url"]    = path + "?exp=1793900000&sig=SIGNATURE";
+            flash.append(e);
+        }
+        v["flash"] = flash;
+        r.status   = 200;
+        r.body     = compact(v);
+        return r;
+    }
 
     Transport transport() {
         Transport t;
         t.get = [this](const std::string& url, int) {
+            gets.push_back(url);
             HttpReply r;
             r.ok = true;
-            if (url.find("latest.json") != std::string::npos) {
-                r.status = manifest_status;
-                r.body   = manifest_status == 200 ? manifest : "MissingKey";
+            if (url.find("latest.json") != std::string::npos) {   // what production answers today
+                r.status = 403;
+                r.body   = "<Error><Code>MissingKey</Code></Error>";
                 return r;
             }
-            const auto it = images.find(url);
+            if (url == std::string(kBase) + "/v1/flasher/fleet-map") {
+                r.status = fleet_status;
+                r.body   = fleet_status == 200 ? fleetMap() : "{\"error\":\"fleet map unavailable\"}";
+                return r;
+            }
+            if (url.rfind("https://www.example.test/", 0) != 0 || url.find("sig=") == std::string::npos) {
+                r.status = 403;
+                return r;
+            }
+            const auto it = images.find(pathOnly(url));
             r.status      = it == images.end() ? 404 : 200;
             if (it != images.end()) r.body = it->second;
             return r;
+        };
+        t.post_json = [this](const std::string& url, const std::string& body, int) {
+            if (url != std::string(kBase) + "/v1/flasher/resolve") {
+                HttpReply r;
+                r.ok     = true;
+                r.status = 404;
+                return r;
+            }
+            return resolve(body);
         };
         t.post = [this](const std::string& url, const std::string& body, int, const Progress& progress) {
             Post p;
@@ -157,8 +295,7 @@ protected:
         o.root     = (dir_ / "mule").string();
         o.data_dir = dir_.string();
         svc_       = std::make_unique<MuleService>(o, writer_);
-        net_.images["https://fw.example.test/public/6.1.0/mule.bin"]  = "MULE-6.1.0-IMAGE";
-        net_.images["https://fw.example.test/public/6.1.0/miner.bin"] = "MINER-6.1.0-IMAGE";
+        net_.publish();
         unit_ = std::make_unique<FakeUnit>(*svc_);
         unit_->hello("6.0.0", "6.0.0");
     }
@@ -170,12 +307,19 @@ protected:
     }
     // The updater runs each step on the caller's thread: start() runs the
     // first, and the unit's hello (or state) runs what follows.
-    void updater() {
+    void updater(bool async = false) {
         FirmwareUpdater::Options fo;
-        fo.manifest_url = "https://fw.example.test/public/latest.json";
-        fo.async        = false;
+        fo.release_base = kBase;
+        fo.async        = async;
         fo.jobs_dir     = (dir_ / "ota").string();
+        fo.pairing_file = (dir_ / "ota" / "mule-pairing.json").string();
         up_             = std::make_unique<FirmwareUpdater>(*svc_, net_.transport(), fo);
+    }
+    // The updater, with the unit's pairing code given.
+    void paired(const std::string& serial = kUnit, const std::string& code = kCode) {
+        if (!up_) updater();
+        const auto a = up_->setPairingCode(serial, code);
+        ASSERT_EQ(a.status, 200) << compact(a.body);
     }
     Json::Value ota() { return up_->ota(kUnit); }
     // What the unit does after it takes a mule image: restarts and comes
@@ -192,7 +336,7 @@ protected:
 
 }  // namespace
 
-// ── versions and the manifest ──
+// ── versions ──
 
 TEST(MuleFirmwareVersions, DottedNumbersCompareFieldByField) {
     EXPECT_LT(compareVersions("6.0.0", "6.1.0"), 0);
@@ -203,20 +347,111 @@ TEST(MuleFirmwareVersions, DottedNumbersCompareFieldByField) {
     EXPECT_FALSE(updateAvailable("6.1.0", "6.1.0"));
     EXPECT_FALSE(updateAvailable("6.2.0", "6.1.0"));
     EXPECT_TRUE(updateAvailable("", "6.1.0"));        // a unit whose version is unknown
-    EXPECT_FALSE(updateAvailable("6.0.0", ""));       // no manifest
+    EXPECT_FALSE(updateAvailable("6.0.0", ""));       // no release read
     EXPECT_FALSE(updateAvailable("6.0.0", "x"));
 }
 
-TEST(MuleFirmwareVersions, ManifestNeedsBothImages) {
+// ── what CpapDash's resolve answers, parsed ──
+
+TEST(MuleFirmwareRelease, ResolveTakesTheApplicationImageAndMakesItAbsolute) {
+    const std::string body =
+        "{\"serial\":\"FE-C3-00000001\",\"role\":\"miner\",\"version\":\"6.0.0\",\"flash\":["
+        "{\"offset\":\"0x0\",\"url\":\"/fwbake/v1/flasher/fw/6.0.0/miner-bootloader.bin?exp=1&sig=a\"},"
+        "{\"offset\":\"0x20000\",\"url\":\"/fwbake/v1/flasher/fw/6.0.0/miner-6.0.0.bin?exp=1&sig=b\"}]}";
     std::string why;
-    const auto  m = parseManifest(manifestJson("6.1.0", "6.1.1"), &why);
-    ASSERT_TRUE(m) << why;
-    EXPECT_EQ(m->mule.version, "6.1.0");
-    EXPECT_EQ(m->miner.version, "6.1.1");
-    EXPECT_EQ(m->miner.url, "https://fw.example.test/public/6.1.1/miner.bin");
-    EXPECT_FALSE(parseManifest("{\"mule\":{\"version\":\"6.1.0\",\"url\":\"u\"}}", &why));
-    EXPECT_NE(why.find("miner"), std::string::npos);
-    EXPECT_FALSE(parseManifest("<xml/>", &why));
+    const auto  r = parseResolve(body, 200, "miner", kUnit, "https://www.cpapdash.com/fwbake", &why);
+    ASSERT_TRUE(r) << why;
+    EXPECT_EQ(r->version, "6.0.0");
+    EXPECT_EQ(r->url, "https://www.cpapdash.com/fwbake/v1/flasher/fw/6.0.0/miner-6.0.0.bin?exp=1&sig=b");
+    EXPECT_FALSE(r->baking);
+}
+
+TEST(MuleFirmwareRelease, ABakingMuleStillNamesItsVersion) {
+    const std::string body = "{\"status\":\"baking\",\"serial\":\"FE-C3-00000001\",\"role\":\"mule\","
+                             "\"version\":\"6.0.0\",\"retry_after_sec\":10}";
+    std::string why;
+    const auto  r = parseResolve(body, 202, "mule", kUnit, kBase, &why);
+    ASSERT_TRUE(r) << why;
+    EXPECT_TRUE(r->baking);
+    EXPECT_EQ(r->version, "6.0.0");
+    EXPECT_EQ(r->url, "");
+}
+
+TEST(MuleFirmwareRelease, ResolveIsRefusedWhenItIsNotThisUnitsRelease) {
+    std::string why;
+    const std::string other = "{\"serial\":\"FE-C3-00000002\",\"role\":\"mule\",\"version\":\"6.0.0\","
+                              "\"flash\":[{\"offset\":\"0x20000\",\"url\":\"/x.bin\"}]}";
+    EXPECT_FALSE(parseResolve(other, 200, "mule", kUnit, kBase, &why));
+    EXPECT_NE(why.find("belongs to FE-C3-00000002"), std::string::npos) << why;
+    EXPECT_FALSE(parseResolve(other, 200, "miner", "FE-C3-00000002", kBase, &why));   // another role
+    EXPECT_FALSE(parseResolve("<html/>", 200, "mule", kUnit, kBase, &why));
+    EXPECT_NE(why.find("not JSON"), std::string::npos);
+    // No application image in the plan.
+    EXPECT_FALSE(parseResolve("{\"serial\":\"FE-C3-00000001\",\"role\":\"mule\",\"version\":\"6.0.0\",\"flash\":[]}",
+                              200, "mule", kUnit, kBase, &why));
+    EXPECT_NE(why.find("no application image"), std::string::npos);
+    // An error answer says what CpapDash said.
+    EXPECT_FALSE(parseResolve("{\"error\":\"This unit's SPI pinout is not on record\"}", 409, "miner", kUnit, kBase, &why));
+    EXPECT_NE(why.find("HTTP 409"), std::string::npos);
+    EXPECT_NE(why.find("pinout is not on record"), std::string::npos);
+    // A version that is not one.
+    EXPECT_FALSE(parseResolve("{\"serial\":\"FE-C3-00000001\",\"role\":\"mule\",\"version\":\"\",\"status\":\"baking\"}",
+                              202, "mule", kUnit, kBase, &why));
+}
+
+TEST(MuleFirmwareRelease, AbsoluteUrlUsesTheBasesOrigin) {
+    EXPECT_EQ(absoluteUrl("https://www.cpapdash.com/fwbake", "/fwbake/v1/x?y=1"),
+              "https://www.cpapdash.com/fwbake/v1/x?y=1");
+    EXPECT_EQ(absoluteUrl("https://h.test", "a/b"), "https://h.test/a/b");
+    EXPECT_EQ(absoluteUrl("https://h.test/base", "https://other.test/z"), "https://other.test/z");
+}
+
+// ── the miner's pinout ──
+
+TEST(MuleFirmwarePinout, TheMinerImagesNameSaysItsPinout) {
+    EXPECT_EQ(minerVariantOf("https://h/fwbake/v1/flasher/fw/6.0.0/miner-6.0.0.bin?exp=1&sig=a", "6.0.0"), "official");
+    EXPECT_EQ(minerVariantOf("https://h/fwbake/v1/flasher/fw/6.0.0/miner-v2-6.0.0.bin?exp=1&sig=a", "6.0.0"), "v2");
+    EXPECT_EQ(minerVariantOf("/fw/6.0.0/miner-unit3-6.0.0.bin", "6.0.0"), "unit3");
+    EXPECT_FALSE(minerVariantOf("https://h/fw/6.0.0/miner-6.0.1.bin", "6.0.0"));       // another version
+    EXPECT_FALSE(minerVariantOf("https://h/fw/6.0.0/mule-6.0.0.bin", "6.0.0"));        // not a miner
+    EXPECT_FALSE(minerVariantOf("https://h/fw/6.0.0/miner-a-b-6.0.0.bin", "6.0.0"));   // not one variant
+    EXPECT_FALSE(minerVariantOf("https://h/fw/6.0.0/miner-6.0.0.bin", ""));
+}
+
+TEST(MuleFirmwarePinout, TheFleetMapNamesTheUnitsMinerVariant) {
+    const std::string map =
+        "[{\"mac\":\"a\",\"role\":\"mule\",\"serial\":\"FE-C3-00000009\",\"variant\":\"official\"},"
+        "{\"mac\":\"b\",\"role\":\"miner\",\"serial\":\"FE-C3-00000009\",\"variant\":\"v2\"},"
+        "{\"mac\":\"c\",\"role\":\"miner\",\"serial\":\"FE-C3-00000001\",\"variant\":\"official\"}]";
+    EXPECT_EQ(fleetVariant(map, "FE-C3-00000009"), "v2");   // the miner's row, not the mule's
+    EXPECT_EQ(fleetVariant(map, "FE-C3-00000001"), "official");
+    EXPECT_FALSE(fleetVariant(map, "FE-C3-00000077"));
+    EXPECT_FALSE(fleetVariant("{\"error\":\"x\"}", "FE-C3-00000001"));
+}
+
+// ── the image's own checks ──
+
+TEST(MuleFirmwareImage, AReleaseImageMustBeTheOneAskedFor) {
+    std::string why;
+    EXPECT_TRUE(checkReleaseImage(espImage("miner", "6.1.0"), "miner", "6.1.0", kUnit, &why)) << why;
+    EXPECT_TRUE(checkReleaseImage(espImage("mule", "6.1.0", kUnit), "mule", "6.1.0", kUnit, &why)) << why;
+    EXPECT_FALSE(checkReleaseImage(espImage("mule", "6.1.0", kOther), "mule", "6.1.0", kUnit, &why));
+    EXPECT_NE(why.find("not built for"), std::string::npos);
+    EXPECT_FALSE(checkReleaseImage(espImage("miner", "6.0.9"), "miner", "6.1.0", kUnit, &why));
+    EXPECT_NE(why.find("version 6.0.9"), std::string::npos);
+    EXPECT_FALSE(checkReleaseImage(espImage("sd_capture", "6.1.0"), "miner", "6.1.0", kUnit, &why));
+    EXPECT_NE(why.find("not a miner image"), std::string::npos);
+    EXPECT_FALSE(checkReleaseImage(std::string(400, 'x'), "miner", "6.1.0", kUnit, &why));
+    EXPECT_FALSE(checkReleaseImage("", "miner", "6.1.0", kUnit, &why));
+    EXPECT_FALSE(checkReleaseImage(espImage("miner", "6.1.0", std::string(kImageMax, 'x')), "miner", "6.1.0", kUnit, &why));
+    EXPECT_NE(why.find("larger"), std::string::npos);
+}
+
+TEST(MuleFirmwareImage, APairingCodeIsSixDigits) {
+    EXPECT_TRUE(validPairingCode("055170"));
+    EXPECT_FALSE(validPairingCode("55170"));
+    EXPECT_FALSE(validPairingCode("05517a"));
+    EXPECT_FALSE(validPairingCode(""));
 }
 
 // ── the owner's file ──
@@ -252,6 +487,8 @@ TEST_F(MuleFirmwareTest, AMuleImagePostsToTheUnitsOwnAddressAndEndsOnItsReturn) 
     EXPECT_EQ(o["steps_detail"][0]["version_after"].asString(), "6.1.0");
     EXPECT_TRUE(o["hold_reason"].isNull());
     EXPECT_FALSE(o["ended_at"].isNull());
+    // The owner's file needs no pairing code and asks CpapDash nothing.
+    EXPECT_TRUE(net_.resolves.empty());
 }
 
 TEST_F(MuleFirmwareTest, AMinerImageGoesThroughTheMuleAndEndsOnTheStateThatShowsIt) {
@@ -268,7 +505,7 @@ TEST_F(MuleFirmwareTest, AMinerImageGoesThroughTheMuleAndEndsOnTheStateThatShows
     EXPECT_EQ(ota()["phase"].asString(), "restarting");
     // The miner's new version rides the unit's next state frame.
     unit_->sendState(false, 0, "6.1.0");
-    EXPECT_EQ(up_->firmware(kUnit)["miner_fw"].asString(), "6.1.0");
+    EXPECT_EQ(up_->firmware(kUnit, false)["miner_fw"].asString(), "6.1.0");
     EXPECT_EQ(ota()["phase"].asString(), "done");
     EXPECT_EQ(ota()["steps_detail"][0]["version_after"].asString(), "6.1.0");
 }
@@ -318,7 +555,7 @@ TEST_F(MuleFirmwareTest, WarnedWhileTheNightIsStillLandingNotAfter) {
 
 TEST_F(MuleFirmwareTest, ANightThatOpensBetweenTheImagesDoesNotHoldTheMiner) {
     // The person's update runs as asked; nothing local is ever held.
-    updater();
+    paired();
     unitRestartsAs("6.1.0", "6.0.0", /*streaming=*/true);   // mask on the moment it is back
     const auto a = up_->start(kUnit, "both");
     ASSERT_EQ(a.status, 202) << compact(a.body);
@@ -378,7 +615,7 @@ TEST_F(MuleFirmwareTest, AMuleThatDoesNotComeBackStaysRestartingUntilItsHello) {
 }
 
 TEST_F(MuleFirmwareTest, AMuleBackOnItsOldVersionFailsAsSuch) {
-    updater();
+    paired();
     unitRestartsAs("6.0.0", "6.0.0");   // it restarted, but on the old image
     ASSERT_EQ(up_->start(kUnit, "both").status, 202);
     EXPECT_EQ(ota()["phase"].asString(), "failed");
@@ -387,10 +624,7 @@ TEST_F(MuleFirmwareTest, AMuleBackOnItsOldVersionFailsAsSuch) {
 }
 
 TEST_F(MuleFirmwareTest, OneUpdateAtATime) {
-    FirmwareUpdater::Options fo;
-    fo.manifest_url = "https://fw.example.test/public/latest.json";
-    fo.async        = true;
-    up_             = std::make_unique<FirmwareUpdater>(*svc_, net_.transport(), fo);
+    updater(/*async=*/true);
     // The mule never comes back: its job stays restarting, and a second
     // start on that unit is refused until it is heard from.
     EXPECT_EQ(up_->start(kUnit, "mule", "IMAGE").status, 202);
@@ -438,38 +672,47 @@ TEST_F(MuleFirmwareTest, AJobCutMidTransferIsInterruptedAfterARestart) {
     EXPECT_EQ(up_->start(kUnit, "miner", "IMAGE").status, 202);
 }
 
-// ── the manifest ──
+// ── the release, from CpapDash's flasher route ──
 
-TEST_F(MuleFirmwareTest, FirmwareShowsWhatRunsAndWhatIsPublished) {
-    updater();
+TEST_F(MuleFirmwareTest, TheLatestReleaseComesFromTheFlasherRouteNotTheRetiredLatestJson) {
+    // Production today: public/latest.json answers 403 MissingKey (the fake
+    // does too), and nothing writes it. The check before this release read
+    // only that file, so it never saw a version; this one asks the route the
+    // web flasher uses, with the unit's pairing code.
+    paired();
     const Json::Value f = up_->firmware(kUnit);
     EXPECT_TRUE(f["known"].asBool());
     EXPECT_TRUE(f["online"].asBool());
     EXPECT_EQ(f["ip"].asString(), kIp);
     EXPECT_EQ(f["fw"].asString(), "6.0.0");
     EXPECT_EQ(f["miner_fw"].asString(), "6.0.0");
-    EXPECT_EQ(f["latest"]["mule"].asString(), "6.1.0");
+    EXPECT_EQ(f["latest"]["mule"].asString(), "6.1.0") << compact(f);
     EXPECT_EQ(f["latest"]["miner"].asString(), "6.1.0");
     EXPECT_TRUE(f["update_available"]["mule"].asBool());
     EXPECT_TRUE(f["update_available"]["miner"].asBool());
+    EXPECT_TRUE(f["pairing_set"].asBool());
     EXPECT_EQ(f["manifest"]["error"].asString(), "");
+    EXPECT_EQ(f["manifest"]["url"].asString(), std::string(kBase) + "/v1/flasher/resolve");
     EXPECT_TRUE(f["job"].isNull());
+    for (const auto& g : net_.gets) EXPECT_EQ(g.find("latest.json"), std::string::npos) << g;
 }
 
-TEST_F(MuleFirmwareTest, BothFromTheManifestSendsTheMuleThenTheMiner) {
-    updater();
+TEST_F(MuleFirmwareTest, BothFromTheReleaseSendsTheMuleThenTheMiner) {
+    paired();
     unitRestartsAs("6.1.0", "6.0.0");
     const auto a = up_->start(kUnit, "both");
     ASSERT_EQ(a.status, 202) << compact(a.body);
     ASSERT_EQ(net_.posts.size(), 2u);
     EXPECT_EQ(net_.posts[0].url, std::string("http://") + kIp + "/api/update/mule");
-    EXPECT_EQ(net_.posts[0].body, "MULE-6.1.0-IMAGE");
+    EXPECT_EQ(net_.posts[0].body, net_.images[FakeNet::mulePath(kUnit, "6.1.0")]);
     EXPECT_EQ(net_.posts[1].url, std::string("http://") + kIp + "/api/update/miner");
-    EXPECT_EQ(net_.posts[1].body, "MINER-6.1.0-IMAGE");
+    EXPECT_EQ(net_.posts[1].body, net_.images[FakeNet::minerPath("official", "6.1.0")]);
     const Json::Value j = up_->job(kUnit);
     EXPECT_EQ(j["phase"].asString(), "done") << compact(j);
-    EXPECT_EQ(j["source"].asString(), "manifest 6.1.0");
+    EXPECT_EQ(j["source"].asString(), "release 6.1.0");
     EXPECT_EQ(j["fw_after"].asString(), "6.1.0");
+    // The signature in an image URL never reaches the job's log.
+    for (const auto& l : j["log"]) EXPECT_EQ(l.asString().find("SIGNATURE"), std::string::npos) << l.asString();
     // One job, two steps: the mule done, the miner restarting until its
     // new version shows in a state.
     const Json::Value o = ota();
@@ -482,9 +725,88 @@ TEST_F(MuleFirmwareTest, BothFromTheManifestSendsTheMuleThenTheMiner) {
     EXPECT_EQ(ota()["phase"].asString(), "done");
 }
 
+TEST_F(MuleFirmwareTest, AV2UnitGetsTheV2MinerImage) {
+    FakeUnit v2(*svc_, kV2Unit, "192.168.1.60");
+    v2.hello("6.1.0", "6.0.0");
+    paired(kV2Unit, kV2Code);
+    const auto a = up_->start(kV2Unit, "miner");
+    ASSERT_EQ(a.status, 202) << compact(a.body);
+    ASSERT_EQ(net_.posts.size(), 1u);
+    EXPECT_EQ(net_.posts[0].url, "http://192.168.1.60/api/update/miner");
+    EXPECT_EQ(net_.posts[0].body, net_.images[FakeNet::minerPath("v2", "6.1.0")]);
+    EXPECT_NE(net_.posts[0].body, net_.images[FakeNet::minerPath("official", "6.1.0")]);
+}
+
+TEST_F(MuleFirmwareTest, AMinerImageForAnotherPinoutIsNeverSent) {
+    // CpapDash's answer and its own fleet map disagree on the unit's pinout:
+    // the wrong miner image kills the SPI bus, so nothing goes.
+    paired();
+    net_.pinout_answered[kUnit] = "v2";
+    ASSERT_EQ(up_->start(kUnit, "miner").status, 202);
+    EXPECT_TRUE(net_.posts.empty());
+    EXPECT_EQ(ota()["phase"].asString(), "failed");
+    EXPECT_EQ(ota()["reason"].asString(), "image_rejected");
+    EXPECT_NE(ota()["detail"].asString().find("for the v2 pinout, but FE-C3-00000001 is official"), std::string::npos)
+        << ota()["detail"].asString();
+}
+
+TEST_F(MuleFirmwareTest, AMinerIsNotSentWhenItsPinoutCannotBeConfirmed) {
+    paired();
+    net_.fleet_map = "[]";   // the map does not list the unit
+    ASSERT_EQ(up_->start(kUnit, "miner").status, 202);
+    EXPECT_TRUE(net_.posts.empty());
+    EXPECT_EQ(ota()["reason"].asString(), "image_rejected");
+    EXPECT_NE(ota()["detail"].asString().find("does not list"), std::string::npos);
+    // Nor when the map cannot be read.
+    unit_->hello("6.0.0", "6.0.0");
+    net_.fleet_map.clear();
+    net_.fleet_status = 502;
+    ASSERT_EQ(up_->start(kUnit, "miner").status, 202);
+    EXPECT_TRUE(net_.posts.empty());
+    EXPECT_NE(ota()["detail"].asString().find("could not be read"), std::string::npos);
+}
+
+TEST_F(MuleFirmwareTest, AnImageThatIsNotTheReleaseIsNeverSent) {
+    paired();
+    // A mule image built for another unit, served at this unit's path.
+    net_.images[FakeNet::mulePath(kUnit, "6.1.0")] = espImage("mule", "6.1.0", kOther);
+    ASSERT_EQ(up_->start(kUnit, "mule").status, 202);
+    EXPECT_TRUE(net_.posts.empty());
+    EXPECT_EQ(ota()["reason"].asString(), "image_rejected");
+    EXPECT_NE(ota()["detail"].asString().find("not built for FE-C3-00000001"), std::string::npos);
+    // A miner image of another version.
+    unit_->hello("6.0.0", "6.0.0");
+    net_.images[FakeNet::minerPath("official", "6.1.0")] = espImage("miner", "6.0.5");
+    ASSERT_EQ(up_->start(kUnit, "miner").status, 202);
+    EXPECT_TRUE(net_.posts.empty());
+    EXPECT_NE(ota()["detail"].asString().find("version 6.0.5"), std::string::npos);
+}
+
+TEST_F(MuleFirmwareTest, AMuleStillBeingBuiltIsReportedAndSentOnTheNextPress) {
+    net_.baked.clear();   // this unit's mule image is not built yet
+    paired();
+    // The check names the version while CpapDash builds the image.
+    const Json::Value f = up_->firmware(kUnit);
+    EXPECT_EQ(f["latest"]["mule"].asString(), "6.1.0");
+    EXPECT_TRUE(f["update_available"]["mule"].asBool());
+    // A press while it builds: said plainly, nothing sent.
+    net_.baked.clear();
+    net_.bake_on_request = false;
+    const auto a = up_->start(kUnit, "both");
+    EXPECT_EQ(a.status, 503);
+    EXPECT_NE(a.body["error"].asString().find("building this unit's mule 6.1.0"), std::string::npos);
+    EXPECT_TRUE(net_.posts.empty());
+    EXPECT_TRUE(ota().isNull());
+    // Built: the next press sends it.
+    net_.baked.insert(kUnit);
+    unitRestartsAs("6.1.0", "6.0.0");
+    ASSERT_EQ(up_->start(kUnit, "both").status, 202);
+    EXPECT_EQ(net_.posts.size(), 2u);
+}
+
 TEST_F(MuleFirmwareTest, BothSkipsAnImageTheUnitAlreadyRuns) {
     unit_->hello("6.1.0", "6.0.0");   // the mule is current, the miner is not
-    updater();
+    paired();
     ASSERT_EQ(up_->start(kUnit, "both").status, 202);
     ASSERT_EQ(net_.posts.size(), 1u);
     EXPECT_EQ(net_.posts[0].url, std::string("http://") + kIp + "/api/update/miner");
@@ -494,36 +816,100 @@ TEST_F(MuleFirmwareTest, BothSkipsAnImageTheUnitAlreadyRuns) {
 
 TEST_F(MuleFirmwareTest, NothingNewerIsRefused) {
     unit_->hello("6.1.0", "6.1.0");
-    updater();
+    paired();
     const auto a = up_->start(kUnit, "both");
     EXPECT_EQ(a.status, 409);
     EXPECT_NE(a.body["error"].asString().find("already runs"), std::string::npos);
     EXPECT_EQ(up_->start(kUnit, "mule").status, 409);
     EXPECT_TRUE(net_.posts.empty());
+    EXPECT_FALSE(up_->firmware(kUnit)["update_available"]["mule"].asBool());
 }
 
-TEST_F(MuleFirmwareTest, AManifestBehindAKeyLeavesTheFileUpload) {
-    net_.manifest_status = 403;
-    updater();
-    const Json::Value f = up_->firmware(kUnit);
-    EXPECT_FALSE(f["update_available"]["mule"].asBool());
-    EXPECT_EQ(f["latest"]["mule"].asString(), "");
-    EXPECT_NE(f["manifest"]["error"].asString().find("403"), std::string::npos);
+TEST_F(MuleFirmwareTest, CpapDashOutOfReachLeavesTheFileUpload) {
+    paired();
+    net_.resolve_error = "Could not resolve host: www.example.test";
     const auto a = up_->start(kUnit, "both");
     EXPECT_EQ(a.status, 502);
+    EXPECT_NE(a.body["error"].asString().find("could not be reached"), std::string::npos) << compact(a.body);
     EXPECT_NE(a.body["error"].asString().find("Upload the image"), std::string::npos);
+    // The page says why, once the cache has the failed read.
+    const Json::Value f = up_->firmware(kUnit, false);
+    EXPECT_EQ(f["latest"]["mule"].asString(), "");
+    EXPECT_FALSE(f["update_available"]["mule"].asBool());
+    EXPECT_NE(f["manifest"]["error"].asString().find("could not be reached"), std::string::npos);
     // The owner's own file still goes.
     EXPECT_EQ(up_->start(kUnit, "miner", "IMAGE").status, 202);
     EXPECT_EQ(net_.posts.size(), 1u);
 }
 
 TEST_F(MuleFirmwareTest, AnImageThatCannotBeDownloadedEndsTheJobBeforeAnyPost) {
+    paired();
     net_.images.clear();
-    updater();
     EXPECT_EQ(up_->start(kUnit, "miner").status, 202);
     EXPECT_TRUE(net_.posts.empty());
     const Json::Value j = up_->job(kUnit);
     EXPECT_EQ(j["phase"].asString(), "failed");
     EXPECT_NE(j["error"].asString().find("HTTP 404"), std::string::npos);
     EXPECT_EQ(ota()["reason"].asString(), "image_unavailable");
+}
+
+// ── the pairing code ──
+
+TEST_F(MuleFirmwareTest, WithoutAPairingCodeTheCardAsksForIt) {
+    updater();
+    const Json::Value f = up_->firmware(kUnit);
+    EXPECT_FALSE(f["pairing_set"].asBool());
+    EXPECT_EQ(f["latest"]["mule"].asString(), "");
+    EXPECT_NE(f["manifest"]["error"].asString().find("pairing code"), std::string::npos);
+    EXPECT_TRUE(net_.resolves.empty());   // nothing asked without a code
+    const auto a = up_->start(kUnit, "both");
+    EXPECT_EQ(a.status, 409);
+    EXPECT_NE(a.body["error"].asString().find("pairing code"), std::string::npos);
+    EXPECT_TRUE(net_.posts.empty());
+}
+
+TEST_F(MuleFirmwareTest, APairingCodeIsKeptOnlyOnceCpapDashSaysItIsThisUnits) {
+    updater();
+    EXPECT_EQ(up_->setPairingCode(kUnit, "12345").status, 400);
+    const auto unknown = up_->setPairingCode(kUnit, "999999");
+    EXPECT_EQ(unknown.status, 409);
+    EXPECT_NE(unknown.body["error"].asString().find("does not recognise"), std::string::npos);
+    const auto other = up_->setPairingCode(kUnit, kOtherCode);
+    EXPECT_EQ(other.status, 409);
+    EXPECT_NE(other.body["error"].asString().find("belongs to FE-C3-00000002"), std::string::npos);
+    net_.resolve_error = "Could not connect";
+    EXPECT_EQ(up_->setPairingCode(kUnit, kCode).status, 502);
+    net_.resolve_error.clear();
+    EXPECT_FALSE(up_->firmware(kUnit, false)["pairing_set"].asBool());
+    // Confirmed with a miner resolve only: checking a code builds nothing.
+    net_.resolves.clear();
+    const auto ok = up_->setPairingCode(kUnit, "055 170");   // as printed, spaced
+    EXPECT_EQ(ok.status, 200) << compact(ok.body);
+    ASSERT_EQ(net_.resolves.size(), 1u);
+    EXPECT_EQ(net_.resolves[0], std::string("miner ") + kCode);
+    // Kept across a restart of hms-cpap.
+    up_.reset();
+    updater();
+    EXPECT_TRUE(up_->firmware(kUnit, false)["pairing_set"].asBool());
+    // "" forgets it.
+    EXPECT_EQ(up_->setPairingCode(kUnit, "").status, 200);
+    up_.reset();
+    updater();
+    EXPECT_FALSE(up_->firmware(kUnit, false)["pairing_set"].asBool());
+}
+
+TEST_F(MuleFirmwareTest, ThePagesRefreshNeverAsksCpapDashAndAPressAlwaysDoes) {
+    paired();
+    net_.resolves.clear();
+    up_->firmware(kUnit);          // the page loads: one read
+    const size_t after_load = net_.resolves.size();
+    EXPECT_EQ(after_load, 2u);     // the miner, then the mule
+    up_->firmware(kUnit, false);   // its 3 s refreshes
+    up_->firmware(kUnit, false);
+    up_->firmware(kUnit);          // a reload inside ten minutes: the cache
+    EXPECT_EQ(net_.resolves.size(), after_load);
+    // A press reads fresh: the signed URLs are short-lived.
+    unitRestartsAs("6.1.0", "6.0.0");
+    ASSERT_EQ(up_->start(kUnit, "both").status, 202);
+    EXPECT_EQ(net_.resolves.size(), after_load + 2);
 }

@@ -100,6 +100,7 @@ Json::Value buildDevices(const DeviceInputs& in, DevicesStore& store) {
                 fw["latest"]           = f->second["latest"];
                 fw["update_available"] = f->second["update_available"];
                 fw["manifest_error"]   = f->second["manifest"].get("error", "");
+                fw["pairing_set"]      = f->second.get("pairing_set", false);
                 detail["firmware"]     = fw;
                 detail["ota"]          = f->second["ota"];
             } else {

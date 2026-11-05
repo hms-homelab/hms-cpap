@@ -28,7 +28,7 @@
       "unknownBadge": "Recording unknown"
     },
     "line": {
-      "lastHeard": "Last heard",
+      "lastHeard": "Last seen",
       "never": "never",
       "firmware": "Firmware",
       "machine": "Machine",
@@ -112,6 +112,8 @@
     "action": {
       "restart": "Restart",
       "restartTarget": "Restart which",
+      "restartGroup": "Restart",
+      "whichBoard": "Which board",
       "resetWifi": "Reset Wi-Fi",
       "backToCloud": "Switch to the CpapDash cloud",
       "restate": "Ask for its state again",
@@ -129,6 +131,15 @@
       "updateAvailable": "Update available: mule {{mule}}, miner {{miner}}",
       "upToDate": "up to date",
       "manifestUnavailable": "The published versions could not be read. A file you have can still be sent.",
+      "fwCodeHint": "To check for new firmware, enter the pairing code printed on the unit. It is asked once.",
+      "fwCodePlaceholder": "Pairing code",
+      "fwCodeSave": "Check",
+      "fwCodeFailed": "The pairing code was not kept: {{error}}",
+      "boardBoth": "Mule & Miner",
+      "boardMuleOnly": "Mule only",
+      "boardMinerOnly": "Miner only",
+      "boardMule": "Mule",
+      "boardMiner": "Miner",
       "update": "Update",
       "fileHint": "Send an image file you have, to the mule or the miner. It goes as soon as it is chosen.",
       "as11Bluetooth": "AirSense 11 Bluetooth",

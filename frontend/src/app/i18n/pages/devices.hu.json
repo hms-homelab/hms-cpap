@@ -28,7 +28,7 @@
       "unknownBadge": "Rögzítés ismeretlen"
     },
     "line": {
-      "lastHeard": "Utoljára jelentkezett",
+      "lastHeard": "Utoljára látva",
       "never": "soha",
       "firmware": "Firmware",
       "machine": "Készülék",
@@ -112,6 +112,8 @@
     "action": {
       "restart": "Újraindítás",
       "restartTarget": "Mit indítson újra",
+      "restartGroup": "Újraindítás",
+      "whichBoard": "Melyik panel",
       "resetWifi": "WiFi visszaállítása",
       "backToCloud": "Átváltás a CpapDash felhőre",
       "restate": "Állapot újbóli lekérése",
@@ -129,6 +131,15 @@
       "updateAvailable": "Frissítés elérhető: mule {{mule}}, miner {{miner}}",
       "upToDate": "naprakész",
       "manifestUnavailable": "A közzétett verziókat nem sikerült beolvasni. Egy meglévő fájl így is elküldhető.",
+      "fwCodeHint": "Új firmware kereséséhez írja be az egységre nyomtatott párosítási kódot. Csak egyszer kérjük.",
+      "fwCodePlaceholder": "Párosítási kód",
+      "fwCodeSave": "Ellenőrzés",
+      "fwCodeFailed": "A párosítási kódot nem sikerült megőrizni: {{error}}",
+      "boardBoth": "Mule és Miner",
+      "boardMuleOnly": "Csak a Mule",
+      "boardMinerOnly": "Csak a Miner",
+      "boardMule": "Mule",
+      "boardMiner": "Miner",
       "update": "Frissítés",
       "fileHint": "Küldjön egy meglévő képfájlt a mule-nak vagy a minernek. A kiválasztás után azonnal indul.",
       "as11Bluetooth": "AirSense 11 Bluetooth",

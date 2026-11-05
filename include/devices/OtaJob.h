@@ -22,8 +22,9 @@
 // fact, until an event (its hello) resolves the step.
 //
 // `reason` is a fixed word the page translates: refused_image,
-// connection_lost, back_on_old_version, image_unavailable, offline,
-// interrupted; `detail` is the device's or server's own text.
+// connection_lost, back_on_old_version, image_unavailable, image_rejected
+// (a downloaded image that is not the one asked for: nothing was sent),
+// offline, interrupted; `detail` is the device's or server's own text.
 //
 // A job is kept as one JSON file per unit, written at every phase change, so
 // a restart of this service reads it back: a job it finds before

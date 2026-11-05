@@ -325,6 +325,8 @@ if(BUILD_WITH_WEB AND NOT WIN32)
         ${CMAKE_SOURCE_DIR}/src/services/As11NightWriter.cpp
         ${CMAKE_SOURCE_DIR}/src/services/As11Settings.cpp
         ${CMAKE_SOURCE_DIR}/src/services/As11StrWriter.cpp
+        # The mule's LivePublisher keeps the one live mask every source shares.
+        ${CMAKE_SOURCE_DIR}/src/mqtt/LiveState.cpp
         ${STR_LAYOUTS_SOURCE}
     )
     # CURL::libcurl: the Mule & Miner's firmware updater (src/mule/MuleFirmware.cpp)
