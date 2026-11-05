@@ -14,12 +14,14 @@ has its own card on a new Devices page, and the dashboard shows the pressure
 the machine delivered.
 
 ### Added
-- **Direct Bluetooth on macOS and Windows.** The AirSense 11 and the O2 ring
-  are read over this computer's own Bluetooth on macOS (CoreBluetooth) and
-  Windows 10 and 11, as they already were on Linux. The macOS and Windows
-  downloads are built with it. Every connect starts from a fresh scan that
-  finds the device by its advert. `hms_cpap --ble-scan [seconds]` lists what
-  is advertising and never connects.
+- **Direct Bluetooth on macOS, Windows and Linux.** The AirSense 11 and the
+  O2 ring are read over this computer's own Bluetooth on macOS and on
+  Windows 10 and 11, not only on Linux. The macOS and Windows downloads are
+  built with it. Every connect starts from a fresh scan that finds the device
+  by its advert. `hms_cpap --ble-scan [seconds]` lists what is advertising and
+  never connects. On Windows, use the Bluetooth adapter maker's own driver:
+  with Windows' generic driver some adapters (a Realtek combo, for one) find
+  the device but never connect to it.
 - **The computer stays awake while a night streams over Bluetooth**, and only
   then: it may idle-sleep again once the night ends or the link drops.
 - **Windows switches its Bluetooth radio on** when it is off, and Settings
