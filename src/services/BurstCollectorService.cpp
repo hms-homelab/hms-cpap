@@ -507,7 +507,7 @@ void BurstCollectorService::initAirSense11() {
                           ? std::string()
                           : ", address " + app_config_->airsense11_ble.address)
                   << ", every " << hours << " h"
-                  << (client->paired() ? "" : ", not paired yet: pair it from Settings") << ")"
+                  << (client->paired() ? "" : ", not paired yet: pair it from the Devices page") << ")"
                   << std::endl;
         return;
 #else

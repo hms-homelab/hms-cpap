@@ -240,7 +240,7 @@ struct AppConfig {
 
     // An AirSense 11 read over its own Bluetooth by this host directly, no
     // bridge (SDD-057). Needs a build with BUILD_WITH_BLE and a Bluetooth
-    // adapter. The pairing is made once from Settings and kept in
+    // adapter. The pairing is made once from the Devices page and kept in
     // <data_dir>/as11.json, never here. The summary is pulled every
     // airsense11.pull_hours. With this on, the bridge client is not used: the
     // machine holds one pairing at a time.
