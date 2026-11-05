@@ -33,8 +33,13 @@
 .rename input { flex: 1; min-width: 160px; }
 
 /* ── facts, fixed order ── */
-dl.facts { margin: 0; display: grid; gap: 0.3rem; }
-dl.facts > div { display: grid; grid-template-columns: minmax(7.5rem, 34%) 1fr; gap: 0.6rem; font-size: 0.85rem; }
+dl.facts { margin: 0; display: grid; gap: 0; }
+dl.facts > div { display: grid; grid-template-columns: minmax(7.5rem, 34%) 1fr; gap: 0.6rem; font-size: 0.85rem;
+                 padding: 0.35rem 0; }
+/* A thin line between rows with a soft shadow under it, none after the last. */
+dl.facts > div:not(:last-child) { border-bottom: 1px solid var(--line); box-shadow: 0 1px 0 rgba(0, 0, 0, 0.25); }
+dl.facts > div:first-child { padding-top: 0; }
+dl.facts > div:last-child { padding-bottom: 0; }
 dl.facts > div.wide { grid-template-columns: 1fr; }
 dt { color: var(--muted); }
 dd { margin: 0; color: #ddd; min-width: 0; overflow-wrap: anywhere; }
