@@ -3668,6 +3668,9 @@ TEST(BurstLocalSweep, ASettledOpenLocalNightClosesOnItsOwnData) {
     std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &want);
     EXPECT_EQ(rows[0]["session_end"].asString().substr(0, 19), std::string(buf));
 
+    // svc holds the database too: let go of it, or the file is still open at
+    // the remove, which Windows refuses.
+    svc.injectDependenciesForTest(nullptr, nullptr, nullptr);
     db.reset();
     fs::remove(path);
 }

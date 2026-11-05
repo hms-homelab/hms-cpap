@@ -92,6 +92,10 @@ protected:
     }
 
     void TearDown() override {
+        // The service holds the database too, and svc_ outlives TearDown, so
+        // without this the SQLite file is still open when it is removed. POSIX
+        // allows that; Windows refuses ("in use by another process").
+        svc_.setDatabase(nullptr);
         db_.reset();
         std::filesystem::remove(db_path_);
         std::filesystem::remove(state_path_);

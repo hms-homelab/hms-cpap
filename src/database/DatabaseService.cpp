@@ -3,6 +3,7 @@
 #include "database/DatabaseService.h"
 #include "database/SqlDialect.h"
 #include <libpq-fe.h>
+#include <algorithm>
 #include <iostream>
 #include <iomanip>
 #include <sstream>
@@ -2268,7 +2269,12 @@ std::vector<SessionMetrics> DatabaseService::getMetricsForDateRange(
     }
 
     try {
-        auto cutoff = std::chrono::system_clock::now() - std::chrono::hours(days_back * 24);
+        // Never before 1970: on Windows localtime() returns null for a time
+        // before the epoch, and put_time below would dereference it. 64-bit
+        // hours, so a large days_back cannot overflow either.
+        const auto cutoff = (std::max)(
+            std::chrono::system_clock::now() - std::chrono::hours(static_cast<long long>(days_back) * 24),
+            std::chrono::system_clock::from_time_t(86400));
         auto cutoff_t = std::chrono::system_clock::to_time_t(cutoff);
         std::tm* cutoff_tm = std::localtime(&cutoff_t);
         std::ostringstream cutoff_oss;

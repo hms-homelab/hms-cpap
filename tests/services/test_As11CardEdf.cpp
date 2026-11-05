@@ -370,8 +370,12 @@ TEST(As11CardEdf, Crc32IsTheZlibOneAndTheCrcFileIsItLittleEndian) {
     const fs::path json = dir / "Identification.json";
     { std::ofstream(json, std::ios::binary) << "abc"; }
     ASSERT_TRUE(writeCrcFor(json.string()));
-    std::ifstream in(dir / "Identification.crc", std::ios::binary);
-    std::vector<char> got((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    // Read and close at once: Windows will not remove a file that is still open.
+    auto readAll = [](const fs::path& p) {
+        std::ifstream in(p, std::ios::binary);
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    };
+    const std::string got = readAll(dir / "Identification.crc");
     // crc32("abc") = 0x352441C2, stored C2 41 24 35
     ASSERT_EQ(got.size(), 4u);
     EXPECT_EQ(static_cast<uint8_t>(got[0]), 0xC2);
@@ -382,9 +386,7 @@ TEST(As11CardEdf, Crc32IsTheZlibOneAndTheCrcFileIsItLittleEndian) {
     // ensureCrcFor keeps a file that is there, and writeCrcFor refreshes it.
     { std::ofstream(dir / "Identification.crc", std::ios::binary | std::ios::trunc) << "keep"; }
     EXPECT_TRUE(ensureCrcFor(json.string()));
-    std::ifstream again(dir / "Identification.crc", std::ios::binary);
-    std::string kept((std::istreambuf_iterator<char>(again)), std::istreambuf_iterator<char>());
-    EXPECT_EQ(kept, "keep");
+    EXPECT_EQ(readAll(dir / "Identification.crc"), "keep");
     EXPECT_FALSE(writeCrcFor((dir / "nothing.json").string()));
     fs::remove_all(dir);
 }

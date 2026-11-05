@@ -87,6 +87,10 @@ TEST_F(ConfigManagerTest, EnvVarMissing_UsesDefault) {
 }
 
 TEST_F(ConfigManagerTest, EnvVarEmpty_UsesDefault) {
+#ifdef _WIN32
+    GTEST_SKIP() << "The Windows CRT cannot hold an empty variable: _putenv_s(name, \"\") "
+                    "removes it, so getenv() is null, never \"\".";
+#endif
     // Set to empty string
     setenv("TEST_VAR_EMPTY", "", 1);
 
