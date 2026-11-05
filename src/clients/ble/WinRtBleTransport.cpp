@@ -37,6 +37,7 @@
 #include <map>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <thread>
 
 namespace hms_cpap::ble {
@@ -258,9 +259,43 @@ public:
                 } else if (radio->State() == wr::RadioState::On) {
                     r.state = Radio::Ready;
                 } else if (radio->State() == wr::RadioState::Off || radio->State() == wr::RadioState::Disabled) {
+                    const std::string advice =
+                        "Bluetooth is switched off on this PC: switch it on in Settings, Bluetooth & "
+                        "devices (and check airplane mode), and try again";
                     r.state = Radio::Off;
-                    r.detail = "Bluetooth is switched off on this PC: switch it on in Settings, Bluetooth & "
-                               "devices (and check airplane mode), and try again";
+                    r.detail = advice;
+                    if (make_ready) {
+                        // Switch it on where Windows lets a desktop process.
+                        wr::Radio rad = *radio;
+                        RadioSwitchOps ops;
+                        ops.state = [rad]() {
+                            const auto s = rad.State();
+                            return s == wr::RadioState::On ? Radio::Ready
+                                   : (s == wr::RadioState::Off || s == wr::RadioState::Disabled) ? Radio::Off
+                                                                                                : Radio::Failed;
+                        };
+                        ops.request_access = []() -> std::string {
+                            auto a = within(wr::Radio::RequestAccessAsync(), kConnectWait);
+                            if (!a) return "no answer to the access request";
+                            return *a == wr::RadioAccessStatus::Allowed
+                                       ? std::string()
+                                       : "access status " + std::to_string(static_cast<int>(*a));
+                        };
+                        ops.switch_on = [rad]() -> std::string {
+                            auto a = within(rad.SetStateAsync(wr::RadioState::On), kConnectWait);
+                            if (!a) return "no answer";
+                            if (*a != wr::RadioAccessStatus::Allowed)
+                                return "access status " + std::to_string(static_cast<int>(*a));
+                            // The state follows a moment later.
+                            for (int i = 0; i < 50 && rad.State() != wr::RadioState::On; i++)
+                                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                            return std::string();
+                        };
+                        const auto adapter_name = r.adapter;
+                        r = switchOn(ops, advice);
+                        r.adapter = adapter_name;
+                        if (r.switched_on) std::cout << tag_ << "Bluetooth was off: switched it on" << std::endl;
+                    }
                 } else {
                     r.state = Radio::Failed;
                     r.detail = "the Bluetooth radio's state is unknown";
@@ -327,6 +362,7 @@ public:
         }
 
         // The match runs here, on the caller's thread, as it does on BlueZ.
+        named_.clear();
         uint64_t since = 0;
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
         while (!res.device && std::chrono::steady_clock::now() < deadline) {
@@ -351,6 +387,16 @@ public:
             }
             for (auto& d : fresh) {
                 d.advertising = true;
+                // A name that never came in the advert (the scan response did
+                // not arrive): Windows usually knows it. Asked once per scan,
+                // and only for a device that advertises a service.
+                if (d.name.empty() && !d.uuids.empty() && named_.insert(d.id).second) {
+                    d.name = cachedName(d.id);
+                    if (!d.name.empty()) {
+                        std::lock_guard<std::mutex> lk(st->m);
+                        st->devices[d.id].name = d.name;
+                    }
+                }
                 if (match(d)) {
                     res.device = d;
                     break;
@@ -518,6 +564,26 @@ public:
     }
 
 private:
+    // The name Windows holds for an address (its device cache, filled by the
+    // system's own scans), "" when it has none. Opening the device object does
+    // not connect to it.
+    std::string cachedName(const std::string& id) {
+        const auto addr = addressOf(id);
+        if (!addr) return {};
+        try {
+            const auto type = typeOf(id).value_or(((*addr >> 46) & 0x3) == 0x3 ? wb::BluetoothAddressType::Random
+                                                                                : wb::BluetoothAddressType::Public);
+            auto dev = within(wb::BluetoothLEDevice::FromBluetoothAddressAsync(*addr, type),
+                              std::chrono::milliseconds(2000));
+            if (!dev || !*dev) return {};
+            std::string name = text(dev->Name());
+            dev->Close();
+            return name;
+        } catch (...) {
+            return {};
+        }
+    }
+
     void rememberType(const std::string& id, wb::BluetoothAddressType t) {
         std::lock_guard<std::mutex> lk(seen_m_);
         types_[id] = t;
@@ -532,6 +598,7 @@ private:
     std::string tag_;
     bool available_ = false;
     std::mutex seen_m_;
+    std::set<std::string> named_;   // asked Windows for a name in this scan
     // The advertised address's type, from the scan that found the device. A ring advertises from a random static
     // address; opened as a public one, Windows answers every GATT call with
     // Unreachable.

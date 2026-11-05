@@ -125,6 +125,7 @@ set(TEST_SOURCES
     clients/test_O2RingBleProtocol.cpp
     clients/test_BlueZAdapter.cpp
     clients/test_BleClientsFakeTransport.cpp
+    utils/test_KeepAwake.cpp
     clients/test_OxyIIProtocol.cpp
     clients/test_As11Protocol.cpp
     clients/test_As11Session.cpp

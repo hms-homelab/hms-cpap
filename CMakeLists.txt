@@ -431,6 +431,14 @@ endif()
 # them (include/clients/ble/BleTransport.h): BlueZ over D-Bus on Linux (needs
 # libsdbus-c++), CoreBluetooth on macOS, WinRT on Windows. The last two come
 # with the OS SDK, so they are on by default there.
+# Keeping the computer awake while a night streams (utils/KeepAwake): the OS
+# calls are made by this executable only; the test binary gets a hold that
+# does nothing.
+target_compile_definitions(${PROJECT_NAME} PRIVATE HMS_KEEP_AWAKE_OS=1)
+if(APPLE)
+    target_link_libraries(${PROJECT_NAME} "-framework IOKit" "-framework CoreFoundation")
+endif()
+
 if(APPLE OR WIN32)
     set(HMS_BLE_DEFAULT ON)
 else()
