@@ -68,6 +68,9 @@ Source: "..\..\dist-windows\HmsCpapInstaller.exe"; DestDir: "{app}"; Flags: igno
 ; that name too; the tray deletes that copy once it runs under its own name.
 Source: "..\..\dist-windows\HmsCpapInstaller.exe"; DestDir: "{app}"; DestName: "{#OldAppExe}"; Flags: ignoreversion; Check: OldTrayInstalled
 Source: "..\..\dist-windows\hms_cpap.exe";        DestDir: "{app}"; Flags: ignoreversion
+; hms-cpap's licence and the Sleep Bridge component's, which hms_cpap.exe links.
+Source: "..\..\dist-windows\LICENSE";             DestDir: "{app}"; Flags: ignoreversion
+Source: "..\..\dist-windows\LICENSE-sleepbridge"; DestDir: "{app}"; Flags: ignoreversion
 ; SDD-041 D9: the helper the tray copies to %TEMP% and runs to install an update.
 Source: "..\..\packaging\update\cpapdash-update.ps1"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\dist-windows\*.dll";               DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist

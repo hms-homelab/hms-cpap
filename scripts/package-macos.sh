@@ -50,6 +50,9 @@ mkdir -p "$FRAMEWORKS" "$RESOURCES"
 cp "$SERVICE_SRC" "$MACOS_DIR/hms_cpap"
 chmod +x "$MACOS_DIR/hms_cpap"
 
+# hms-cpap's licence and the Sleep Bridge component's, which hms_cpap links.
+cp "$REPO_ROOT/LICENSE" "$REPO_ROOT/LICENSE-sleepbridge" "$RESOURCES/"
+
 # The service resolves its web assets relative to its own executable
 # (SetupService::resolveStaticDir), so static/browser sits next to the binary
 # rather than in Resources where a Mac app would normally put it.

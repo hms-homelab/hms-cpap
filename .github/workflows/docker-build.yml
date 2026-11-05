@@ -304,8 +304,11 @@ jobs:
           # MySQL comes from the vcpkg libmysql port. pkg-config is not present
           # under MSVC, so CMakeLists falls back to its find_path/find_library
           # route; the toolchain file puts the vcpkg tree on the search path.
+          # BUILD_WITH_SLEEPBRIDGE links the Sleep Bridge component, fetched
+          # from the sleepbridge-v<version> release and checked against
+          # cmake/sleepbridge-pins.cmake, so the installer takes bridges.
           cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static-md -DBUILD_TESTS=OFF -DBUILD_WITH_WEB=ON -DBUILD_WITH_POSTGRESQL=ON -DBUILD_WITH_MYSQL=ON `
-            -DBUILD_SUPERVISOR=ON -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR" ..
+            -DBUILD_WITH_SLEEPBRIDGE=ON -DBUILD_SUPERVISOR=ON -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR" ..
           cmake --build . --parallel
 
       # ── Package Windows release ─────────────────────────────────
@@ -313,6 +316,9 @@ jobs:
         run: |
           mkdir release
           Copy-Item build\hms_cpap.exe release\
+          # hms-cpap's licence and the Sleep Bridge component's, which the
+          # exe now links.
+          Copy-Item LICENSE, LICENSE-sleepbridge release\
           # Copy any DLLs
           Get-ChildItem -Path build\*.dll -ErrorAction SilentlyContinue | Copy-Item -Destination release\
 
@@ -877,6 +883,9 @@ jobs:
           # The miniz 3.0.2 FetchContent dep still declares an old minimum, so
           # allow it (CMake's own suggested fix). Windows sidesteps this by
           # pinning CMake 3.31.
+          # BUILD_WITH_SLEEPBRIDGE links the Sleep Bridge component, fetched
+          # from the sleepbridge-v<version> release and checked against
+          # cmake/sleepbridge-pins.cmake, so the macOS release takes bridges.
           cmake -G Ninja \
             -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
             -DCMAKE_BUILD_TYPE=Release \
@@ -885,6 +894,7 @@ jobs:
             -DBUILD_WITH_WEB=ON \
             -DBUILD_WITH_POSTGRESQL=ON \
             -DBUILD_WITH_MYSQL=ON \
+            -DBUILD_WITH_SLEEPBRIDGE=ON \
             -DBUILD_SUPERVISOR=ON \
             -DCMAKE_PREFIX_PATH=$(brew --prefix qt) \
             ..
@@ -895,6 +905,9 @@ jobs:
         run: |
           mkdir -p release/static/browser
           cp build/hms_cpap release/
+          # hms-cpap's licence and the Sleep Bridge component's, which
+          # hms_cpap now links.
+          cp LICENSE LICENSE-sleepbridge release/
           cp -R frontend/dist/frontend/browser/* release/static/browser/
           cat > release/config.example.json <<'EOF'
           {
