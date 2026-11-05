@@ -41,7 +41,7 @@ dl.facts > div { display: grid; grid-template-columns: minmax(7.5rem, 34%) 1fr; 
 dl.facts > div { position: relative; }
 dl.facts > div:not(:last-child)::after {
   content: ""; position: absolute; left: 0; right: 0; bottom: -3px; height: 4px;
-  background: radial-gradient(50% 50% at 50% 50%, #000 0%, rgba(0, 0, 0, 0.9) 55%, transparent 100%);
+  background: #000; clip-path: polygon(0 50%, 12% 0, 88% 0, 100% 50%, 88% 100%, 12% 100%);
   pointer-events: none;
 }
 dl.facts > div:first-child { padding-top: 0; }
@@ -61,7 +61,7 @@ dd { margin: 0; color: #ddd; min-width: 0; overflow-wrap: anywhere; }
 /* Every divider on the card is the same dark tapered line as between the rows. */
 .footer::before, .folds::before {
   content: ""; position: absolute; left: 0; right: 0; top: -2px; height: 4px;
-  background: radial-gradient(50% 50% at 50% 50%, #000 0%, rgba(0, 0, 0, 0.9) 55%, transparent 100%);
+  background: #000; clip-path: polygon(0 50%, 12% 0, 88% 0, 100% 50%, 88% 100%, 12% 100%);
   pointer-events: none;
 }
 /* Measured 13px of space above it and 9px below at top: -2px; this centres it. */
