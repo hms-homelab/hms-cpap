@@ -62,6 +62,10 @@ struct StrResult {
 /// set, else <data_dir>/str-layouts. The built-in ones need no directory.
 std::string strLayoutDir(const std::string& data_dir);
 
+/// The newest <data_dir>/as11/<serial>/STR.edf, "" when there is none: the STR
+/// written for a machine read over its own Bluetooth.
+std::string newestBluetoothStr(const std::string& data_dir);
+
 /// Keeps one pulled Summary spool as <root>/AS11/summary-<from>.as11.
 bool keepSummary(const std::string& root, const std::string& from, const std::vector<uint8_t>& bytes);
 

@@ -9,6 +9,7 @@
 #include "clients/LocalDataSource.h"
 #include "clients/O2RingClient.h"
 #include "clients/AirSense11Client.h"
+#include "services/As11StrWriter.h"
 #ifdef WITH_BLE
 #include "clients/O2RingBleClient.h"
 #include "clients/AirSense11BleClient.h"
@@ -511,6 +512,8 @@ void BurstCollectorService::initAirSense11() {
         client->startNightLoop(as11_night_writer_, [this] { as11_summary_due_ = true; });
         airsense11_pull_ = std::make_unique<AirSense11Pull>(client, db_service_, device_id_,
                                                             std::chrono::hours(hours));
+        // The day's settings, from the STR the pull has just written.
+        airsense11_pull_->setStrPathProvider([] { return newestBluetoothStr(AppConfig::dataDir()); });
         std::cout << "AirSense11: Enabled (direct Bluetooth"
                   << (app_config_->airsense11_ble.address.empty()
                           ? std::string()
