@@ -138,7 +138,16 @@
       "jobRestarting": "A bridge átvette a képet, és újraindul. Várakozás a visszatérésére...",
       "jobDone": "Kész. A bridge verziója: {{version}}.",
       "jobFailed": "Nem frissült: {{error}}",
-      "errGeneric": "A frissítést nem sikerült elindítani."
+      "errGeneric": "A frissítést nem sikerült elindítani.",
+      "learned": "Megtanult kártya",
+      "verdict": {
+        "waiting": "várakozik",
+        "latched": "kész a terápiára",
+        "mismatch": "tanítsa újra",
+        "not_used": "nincs használatban"
+      },
+      "learnedWaitingHint": "Kapcsolja be a készüléket, tegye fel a maszkot és lélegezzen normálisan 2 percig, majd vegye le. A bridge ezután megerősíti a kártyát.",
+      "learnedMismatchHint": "Ez a bridge egy másik kártyát lát. Tanítsa meg újra a benne lévő kártyát a CpapDash Desktoppal (Exportálás a HMS CPAP számára), és töltse fel az új fájlt a Feltöltés oldalon."
     },
     "sleephq": {
       "heading": "SleepHQ-szinkron",

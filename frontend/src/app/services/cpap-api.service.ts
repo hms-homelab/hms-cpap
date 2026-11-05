@@ -633,6 +633,22 @@ export interface SleepBridge {
   update: SleepBridgeUpdate | null;
   card_machine: string;
   card_format: string;
+  /** The card learned on a computer this bridge holds (a .cpapcard), or null. */
+  learned: SleepBridgeLearned | null;
+}
+
+/** A learned card on one bridge, and whether the bridge latched it. */
+export interface SleepBridgeLearned {
+  volume_serial: string;
+  boot_sha256: string;
+  read_at: string;
+  fat: string;
+  /** "", fed, fat16, another_layout, session_zero, unreadable */
+  state: string;
+  sectors_fed: number;
+  /** waiting, latched, mismatch, not_used */
+  verdict: string;
+  reason: string;
 }
 
 export interface SleepBridgeStatus {

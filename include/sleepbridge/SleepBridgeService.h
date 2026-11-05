@@ -162,6 +162,16 @@ public:
     /// Rebuild `sender` now, on the caller's thread (tests, and the start).
     StepReport rebuildNow(const std::string& sender);
 
+    /// A card learned on a computer (SDD-061): the CBL1 payload of a
+    /// .cpapcard. 400 when it does not pass the content check (the body names
+    /// the check); otherwise it is kept as the install's latest learn and
+    /// given to every bridge banked here except one that read another layout
+    /// from its own card (D5), each rebuilt from scratch so it goes first.
+    /// 201 with what was kept and, per bridge, whether it took it and why not.
+    /// A bridge first seen later takes it at its first rebuild, unless
+    /// another bridge already holds that card.
+    CommandAnswer learnCard(const std::string& cbl1, const std::string& file_name = {});
+
     /// A night is open on `sender`: sector writes landed within night_quiet_s.
     bool nightOpen(const std::string& sender) const;
 
@@ -231,7 +241,13 @@ private:
         bool        stepped{false};
         std::vector<Command> commands;   // oldest first
         std::optional<UpdateJob> update;   // the last firmware update, if any
+        LearnedUse  learned;   // how its current rebuilder used a learned card
     };
+
+    /// A bridge seen for the first time takes the install's latest learn
+    /// when it holds none, has no geometry yet, and no other bridge holds
+    /// that card (SDD-061 D5). Under rebuild_mu_.
+    void offerLearned(const std::string& sender);
 
     struct Conn {
         Admission    who;

@@ -22,11 +22,16 @@
   "upload": {
     "title": "Importer des données",
     "zip": {
-      "heading": "Données CPAP (.zip)",
-      "hint": "Importez un zip de votre carte SD : ResMed (ses dossiers DATALOG), Sefam S.Box, Löwenstein Prisma ou BMC / React Health Luna. La carte est reconnue par ses fichiers, et chaque nuit pas encore enregistrée est ajoutée et analysée automatiquement.",
-      "idle": "Glissez un .zip ici ou cliquez pour choisir",
+      "heading": "Données CPAP (.zip ou .cpapcard)",
+      "hint": "Importez un zip de votre carte SD : ResMed (ses dossiers DATALOG), Sefam S.Box, Löwenstein Prisma ou BMC / React Health Luna. La carte est reconnue par ses fichiers, et chaque nuit pas encore enregistrée est ajoutée et analysée automatiquement. Un fichier .cpapcard de CpapDash Desktop (Exporter pour HMS CPAP) apprend aussi la structure de la carte à un Sleep Bridge qui transmet ici.",
+      "idle": "Glissez un .zip ou un .cpapcard ici ou cliquez pour choisir",
       "uploading": "Envoi en cours...",
-      "imported": "{{count}} nuit(s) importée(s)"
+      "imported": "{{count}} nuit(s) importée(s)",
+      "layoutKept": "Structure de la carte conservée : {{count}} Sleep Bridge l'utilisera/ont.",
+      "layoutKeptNoBridge": "Structure de la carte conservée. Le prochain Sleep Bridge qui se connecte ici l'utilisera.",
+      "layoutOff": "Structure de la carte conservée pour le Sleep Bridge, désactivé dans les Paramètres.",
+      "layoutRefused": "Structure de la carte non conservée : {{error}} Vos nuits sont quand même importées.",
+      "layoutNotTaken": "{{sender}} ne l'utilise pas : {{reason}}"
     },
     "oxi": {
       "heading": "Données d'oxymétrie O2Ring (.csv ou .vld)",

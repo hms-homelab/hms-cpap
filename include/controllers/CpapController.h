@@ -331,6 +331,9 @@ public:
     // SDD-039 D2: the same import, queued on the backfill worker. Set whenever
     // that worker exists; the inline path above stays for a build without one.
     static std::function<void(const std::string&)> cpap_zip_queue_;
+    // SDD-061: a .cpapcard's layout (the CBL1 payload) and the uploaded file's
+    // name -> what became of it ("error" key when it was not kept).
+    static std::function<Json::Value(const std::string&, const std::string&)> card_layout_;
     // SDD-029: "YYYY-MM-DD" -> {"removed": counts} ("error" key on failure).
     static std::function<Json::Value(const std::string&)> night_remove_;
     // SDD-029 D3: "YYYY-MM-DD" -> the removed-night record cleared, before a reparse.

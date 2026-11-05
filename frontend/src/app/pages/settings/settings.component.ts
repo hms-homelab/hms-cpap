@@ -381,6 +381,20 @@ import { AppConfig } from '../../models/config.model';
               <div class="sb-line">
                 <span class="sb-label">{{ 'settings.sleepbridge.firmware' | translate }}</span> {{ b.fw_version || '?' }}
               </div>
+              <!-- SDD-061 D8: the card learned on a computer, and whether this
+                   bridge latched it. The reason is the server's, English-only. -->
+              <ng-container *ngIf="b.learned as l">
+                <div class="sb-line">
+                  <span class="sb-label">{{ 'settings.sleepbridge.learned' | translate }}</span>
+                  {{ l.volume_serial }}
+                  <span class="badge" [class.connected]="l.verdict === 'latched'">
+                    {{ ('settings.sleepbridge.verdict.' + l.verdict) | translate }}
+                  </span>
+                  <span class="hint"> {{ l.reason }}</span>
+                </div>
+                <div class="hint" *ngIf="l.verdict === 'waiting'">{{ 'settings.sleepbridge.learnedWaitingHint' | translate }}</div>
+                <div class="hint" *ngIf="l.verdict === 'mismatch'">{{ 'settings.sleepbridge.learnedMismatchHint' | translate }}</div>
+              </ng-container>
               <div class="hint" *ngIf="b.night_open">{{ 'settings.sleepbridge.nightOpenHint' | translate }}</div>
               <div class="sb-actions" *ngIf="!b.update?.running">
                 <label class="sb-file">

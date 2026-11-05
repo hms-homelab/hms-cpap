@@ -10,6 +10,8 @@
 #include "sleepbridge/LiveNight.h"
 #include "services/CpapDashSyncService.h"
 #include "services/CardUpload.h"
+#include "services/CpapCard.h"
+#include "sleepbridge/LearnedCard.h"
 #include "services/OximetryImport.h"
 #include "services/RemovedNights.h"
 #include "services/SetupService.h"
@@ -1334,6 +1336,9 @@ int main(int argc, char** argv) {
                             r["error"] = "Could not read zip archive";
                             return r;
                         }
+                        // SDD-061: a .cpapcard's layout went to the Sleep Bridge
+                        // when it was uploaded; it is not a file of the card.
+                        hms_cpap::removeCardLayout(staging.string());
                         // SDD-031 (#28): read the card it was given. A Sefam or
                         // Löwenstein card is kept under uploads/<format>/ (D2) and
                         // every session the database lacks is imported on the
@@ -1548,6 +1553,29 @@ int main(int argc, char** argv) {
             // Its firmware updates, over the LAN, from the published manifest
             // or a file the owner has (docs/MULE_LOCAL_STREAM.md).
             std::unique_ptr<hms_cpap::mule::FirmwareUpdater> mule_updater;
+            // SDD-061: a .cpapcard's layout. With the Sleep Bridge off it is
+            // checked and kept for when it is turned on; with it on (below) it
+            // also goes to the bridges.
+            hms_cpap::CpapController::card_layout_ =
+                [](const std::string& cbl1, const std::string& file_name) -> Json::Value {
+                    namespace sb = hms_cpap::sleepbridge;
+                    Json::Value r;
+                    std::string why;
+                    const auto card = sb::decodeLearnedCard(cbl1, &why);
+                    const std::string root =
+                        (std::filesystem::path(hms_cpap::AppConfig::dataDir()) / "sleepbridge").string();
+                    if (!card) {
+                        r["error"] = why;
+                    } else if (!sb::keepLearnedCard(root, *card, cbl1, file_name, &why)) {
+                        r["error"] = "The card's layout could not be kept: " + why;
+                    } else {
+                        r = sb::learnedSummary(*card);
+                        r["stored"]  = true;
+                        r["bridges"] = Json::Value(Json::arrayValue);
+                        r["message"] = "Kept for the Sleep Bridge, which is off in Settings.";
+                    }
+                    return r;
+                };
             if (config.sleep_bridge.enabled) {
                 if (config.sleep_bridge.port == web_port || config.sleep_bridge.port <= 0 ||
                     config.sleep_bridge.port > 65535) {
@@ -1669,6 +1697,12 @@ int main(int argc, char** argv) {
                         });
                     hms_cpap::sleepbridge::installRoutes(sleep_bridge.get());
                     sleep_bridge->start();
+                    hms_cpap::CpapController::card_layout_ =
+                        [svc = sleep_bridge.get()](const std::string& cbl1,
+                                                   const std::string& file_name) -> Json::Value {
+                            const auto a = svc->learnCard(cbl1, file_name);
+                            return a.body;   // "error" set when it was not kept
+                        };
 
                     hms_cpap::mule::MuleService::Options mo;
                     mo.data_dir = hms_cpap::AppConfig::dataDir();

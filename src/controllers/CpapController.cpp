@@ -3,6 +3,7 @@
 #include "controllers/CpapController.h"
 #include "utils/AppConfig.h"
 #include "services/SleepHqExportService.h"
+#include "services/CpapCard.h"
 #include "services/DeviceDiscoveryService.h"
 #include "services/SetupService.h"
 #include "utils/CardLayout.h"
@@ -46,6 +47,7 @@ std::function<void(const std::string&)> CpapController::night_restore_;
 std::function<std::vector<std::string>()> CpapController::removed_nights_;
 std::function<void(int)> CpapController::shutdown_with_code_;
 std::function<void(const std::string&)> CpapController::cpap_zip_queue_;
+std::function<Json::Value(const std::string&, const std::string&)> CpapController::card_layout_;
 
 void CpapController::setQueryService(std::shared_ptr<QueryService> qs) { qs_ = qs; }
 
@@ -1923,6 +1925,10 @@ void CpapController::uploadOximetryCsv(const drogon::HttpRequestPtr& req,
 // Upload a compressed CPAP data set (multipart form field "file"): a zip of the
 // SD card's DATALOG folders. Files are extracted into the archive and parsed
 // asynchronously via the backfill pipeline; poll /api/backfill/status.
+// SDD-061: a .cpapcard is that zip with the card's layout in it. The layout is
+// read and handed on here, before the nights are queued, so the answer says
+// at once what became of it ("card_layout"); a layout refused never refuses
+// the nights.
 void CpapController::uploadCpapZip(const drogon::HttpRequestPtr& req,
                                    std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
     if (!cpap_zip_import_) {
@@ -1944,6 +1950,19 @@ void CpapController::uploadCpapZip(const drogon::HttpRequestPtr& req,
         std::ofstream o(tmp, std::ios::binary);
         o.write(content.data(), static_cast<std::streamsize>(content.size()));
     }
+    Json::Value layout(Json::nullValue);
+    {
+        std::string why;
+        if (auto cbl1 = readCardLayout(tmp.string(), &why)) {
+            if (card_layout_) {
+                layout = card_layout_(*cbl1, f.getFileName());
+            } else {
+                layout["error"] = "This build does not keep a card's layout";
+            }
+        } else if (!why.empty()) {
+            layout["error"] = why;
+        }
+    }
     // SDD-039 D2 (CpapDash support 129): the import used to run right here, on
     // a web thread. Extracting and mirroring a card is filesystem work that can
     // block for as long as the destination takes -- on a network share, minutes
@@ -1956,6 +1975,7 @@ void CpapController::uploadCpapZip(const drogon::HttpRequestPtr& req,
         Json::Value queued;
         queued["status"] = "queued";
         queued["message"] = "Card uploaded; importing. Poll /api/backfill/status";
+        if (!layout.isNull()) queued["card_layout"] = layout;
         cb(jsonResp(queued));
         return;
     }
@@ -1968,6 +1988,7 @@ void CpapController::uploadCpapZip(const drogon::HttpRequestPtr& req,
             cb(jsonError(result["error"].asString(), drogon::k400BadRequest));
             return;
         }
+        if (!layout.isNull()) result["card_layout"] = layout;
         cb(jsonResp(result));
     } catch (const std::exception& e) {
         std::error_code ec;

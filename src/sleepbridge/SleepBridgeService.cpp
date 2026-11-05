@@ -8,6 +8,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 
 namespace hms_cpap::sleepbridge {
 
@@ -51,6 +52,7 @@ Json::Value stepJson(const StepReport& r) {
     v["records_fed"]     = r.records_fed;
     v["records_skipped"] = r.records_skipped;
     v["cards_fed"]       = r.cards_fed;
+    v["learned_fed"]     = r.learned_fed;
     v["written"]         = r.written;
     v["removed"]         = r.removed;
     v["refused_paths"]   = r.refused_paths;
@@ -225,12 +227,17 @@ void SleepBridgeService::loop() {
 
 StepReport SleepBridgeService::rebuildNow(const std::string& sender) {
     StepReport r;
+    LearnedUse learned;
     if (!available_) return r;
     {
         std::lock_guard<std::mutex> lk(rebuild_mu_);
         auto& w = workers_[sender];
-        if (!w) w = std::make_unique<RebuildWorker>(store_, sender, factory_);
+        if (!w) {
+            offerLearned(sender);
+            w = std::make_unique<RebuildWorker>(store_, sender, factory_);
+        }
         r = w->step();
+        learned = w->learned();
     }
     if (r.written || r.removed || r.refused_paths || r.unreadable)
         std::cout << "[sleepbridge] " << sender << " rebuilt: " << r.written << " written, "
@@ -242,10 +249,104 @@ StepReport SleepBridgeService::rebuildNow(const std::string& sender) {
         auto& b     = bridges_[sender];
         b.last_step = r;
         b.stepped   = true;
+        b.learned   = learned;
         if (!r.machine.empty()) b.card_machine = r.machine;
     }
     if (r.written > 0 && opt_.on_rebuilt) opt_.on_rebuilt(sender, r);
     return r;
+}
+
+void SleepBridgeService::offerLearned(const std::string& sender) {
+    const fs::path bdir = store_.batchesDir(sender);
+    std::error_code ec;
+    if (fs::exists(bdir / kBridgeLearned, ec) || fs::exists(bdir / kGeometryFile, ec)) return;
+    const Json::Value meta = readLearnedMeta(store_.root());
+    if (!meta.isObject()) return;
+    const std::string boot = meta.get("boot_sha256", "").asString();
+    for (const auto& other : store_.senders()) {
+        if (other == sender) continue;
+        const Json::Value held = readBridgeLearned(store_.batchesDir(other));
+        if (held.isObject() && held.get("boot_sha256", "").asString() == boot) {
+            std::cout << "[sleepbridge] " << sender << " first seen; the learned card is " << other
+                      << "'s, not offered" << std::endl;
+            return;
+        }
+    }
+    std::string bytes, why;
+    {
+        std::ifstream f(fs::path(store_.root()) / kLearnedDir / kLearnedCardFile, std::ios::binary);
+        if (!f) return;
+        bytes.assign(std::istreambuf_iterator<char>(f), std::istreambuf_iterator<char>());
+    }
+    Json::Value summary = meta;
+    summary.removeMember("learned_at");
+    summary.removeMember("file_name");
+    if (giveBridgeLearned(bdir.string(), bytes, summary, &why))
+        std::cout << "[sleepbridge] " << sender << " first seen; takes the learned card (volume "
+                  << meta.get("volume_serial", "").asString() << ")" << std::endl;
+    else
+        std::cout << "[sleepbridge] " << sender << " learned card not given: " << why << std::endl;
+}
+
+CommandAnswer SleepBridgeService::learnCard(const std::string& cbl1, const std::string& file_name) {
+    CommandAnswer a;
+    std::string   why;
+    const auto    card = decodeLearnedCard(cbl1, &why);
+    if (!card) {
+        a.status        = 400;
+        a.body["error"] = why;
+        return a;
+    }
+    if (!keepLearnedCard(store_.root(), *card, cbl1, file_name, &why)) {
+        a.status        = 500;
+        a.body["error"] = "The card's layout could not be kept: " + why;
+        return a;
+    }
+    const Json::Value summary = learnedSummary(*card);
+    Json::Value bridges(Json::arrayValue);
+    std::vector<std::string> given;
+    {
+        std::lock_guard<std::mutex> lk(rebuild_mu_);
+        for (const auto& sender : store_.senders()) {
+            Json::Value v(Json::objectValue);
+            v["sender"] = sender;
+            const fs::path bdir = store_.batchesDir(sender);
+            RebuildGeometry g;
+            {
+                std::ifstream f(bdir / kGeometryFile, std::ios::binary);
+                const std::string text((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+                if (const auto parsed = parseGeometryJson(text)) g = *parsed;
+            }
+            // SDD-061 D5: a bridge that read its own card's layout, and it is
+            // another one, gets nothing.
+            if (knowsOwnLayout(g) && !sameLayout(*card, g)) {
+                v["applied"] = false;
+                v["reason"]  = "it reads another card (layout " + std::to_string(g.sectors_per_cluster) +
+                              ":" + std::to_string(g.data_begin_lba) + ")";
+            } else if (!giveBridgeLearned(bdir.string(), cbl1, summary, &why)) {
+                v["applied"] = false;
+                v["reason"]  = "not written: " + why;
+            } else {
+                v["applied"] = true;
+                workers_.erase(sender);   // a fresh rebuilder, the learn fed first
+                given.push_back(sender);
+            }
+            std::cout << "[sleepbridge] " << sender << " learned card "
+                      << (v["applied"].asBool() ? "given" : "not given: " + v["reason"].asString())
+                      << std::endl;
+            bridges.append(v);
+        }
+    }
+    for (const auto& s : given) wake(s);
+    std::cout << "[sleepbridge] card learned: volume " << card->volume_serial << ", layout "
+              << card->sectors_per_cluster << ':' << card->data_begin_lba << ", " << card->sectors.size()
+              << " sector(s), " << given.size() << " bridge(s) take it" << std::endl;
+    a.status         = 201;
+    a.body           = summary;
+    a.body["stored"] = true;
+    a.body["bridges"] = bridges;
+    a.body["rebuild_in_build"] = available_;
+    return a;
 }
 
 std::unique_ptr<Conversation> SleepBridgeService::open(const Admission& who, Outlet out, BinaryOutlet bin) {
@@ -732,12 +833,34 @@ Json::Value SleepBridgeService::status() const {
         v["card_machine"] = b.card_machine;
         v["card_format"]  = formatForMachine(b.card_machine);
         if (b.stepped) v["rebuild"] = stepJson(b.last_step);
+        // SDD-061 D8: the card learned on a computer, and whether it latched.
+        const Json::Value held = readBridgeLearned(store_.batchesDir(sender));
+        if (held.isObject()) {
+            LearnedUse use = b.learned;
+            if (use.state.empty()) use.summary = held;
+            const auto verdict =
+                learnedVerdict(use, b.stepped && !use.state.empty(), b.last_step.geometry,
+                               b.last_step.holding, b.last_step.holding_reason);
+            Json::Value l(Json::objectValue);
+            l["volume_serial"] = held.get("volume_serial", "").asString();
+            l["boot_sha256"]   = held.get("boot_sha256", "").asString();
+            l["read_at"]       = held.get("read_at", "").asString();
+            l["fat"]           = held.get("fat", "").asString();
+            l["state"]         = use.state;
+            l["sectors_fed"]   = use.sectors;
+            l["verdict"]       = verdict.verdict;
+            l["reason"]        = verdict.reason;
+            v["learned"]       = l;
+        } else {
+            v["learned"] = Json::Value(Json::nullValue);
+        }
         Json::Value cmds(Json::arrayValue);
         for (auto it = b.commands.rbegin(); it != b.commands.rend(); ++it) cmds.append(commandJson(*it));
         v["commands"] = cmds;
         list.append(v);
     }
     out["bridges"] = list;
+    out["learned_card"] = readLearnedMeta(store_.root());   // null until a card is learned
     Json::Value names(Json::arrayValue);
     for (const auto& n : localCommands()) names.append(n);
     out["commands"] = names;   // what POST /api/sleepbridge/command takes

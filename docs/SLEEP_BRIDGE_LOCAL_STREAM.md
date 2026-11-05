@@ -294,7 +294,47 @@ back to the cloud.
     held.json                             files seen in part, never written
     geometry.json                         the card's layout, across restarts
     bridge.json                           the bridge's name, label and chip id
+    learned.cbl1, learned.json            a card learned on a computer, below
+<data_dir>/sleepbridge/learned/           the latest card learned on a computer:
+    card.cbl1, card.json                  its layout, and when and from which file
 ```
+
+## A card learned on a computer (.cpapcard)
+
+A bridge put on a card the machine has used for months never saw that card's
+layout or its folders being written. CpapDash Desktop's **Export for HMS
+CPAP** reads the card once in a computer and writes one `.cpapcard` file: a
+zip of the card's files at their card paths, plus `baseline.cbl1`, the card's
+layout and metadata sectors:
+
+```
+"CBL1"   u32 LE json_len   json statement   u32 LE count   count x (u32 LE lba, 512 bytes)
+```
+
+The statement names the layout (`fat`, `partition_lba`,
+`sectors_per_cluster`, `data_begin_lba`, `root_cluster`, `root_dir_lbas`,
+`fat_begin_lba`, `boot_sha256`) and some labels (`volume_serial`,
+`machine_serial`, `brand`) nothing keys on. The sectors are the partition
+table, the boot sector, FAT #1 over the clusters in use and every folder's
+sectors: never the nights. At most 32 MB.
+
+Upload it on the **Upload** page, as a card zip. The nights go in as a card
+zip's do. The layout is checked by content first (the boot sector parses,
+agrees with the statement and hashes to `boot_sha256`; the root folder reads
+as one; the FAT starts with its marks); a refused layout never refuses the
+nights. Kept, it goes to every bridge banked here except one that read another
+layout from its own card, and to a bridge that connects for the first time
+afterwards unless another bridge already holds that card. With the Sleep
+Bridge off it is kept for later.
+
+A bridge that holds one feeds it to the rebuild first, every time the rebuild
+starts, as a mount read in bridge session 0 (a bridge counts its sessions
+from 1): every captured write outranks it, and a boot sector the stream reads
+wins over it. A FAT16 card is kept but not fed (the rebuild reads FAT32).
+`GET /api/sleepbridge` shows the install's latest learn (`learned_card`) and,
+per bridge, `learned`: the card, how it was used, and a verdict, `waiting`
+(nothing written since), `latched` (a session confirmed the layout by its boot
+sector or its writes), `mismatch` (another card) or `not_used`.
 
 The batches are the record; the card files are derived from them. After a
 restart the rebuild reads the whole bank again from the start. A file is

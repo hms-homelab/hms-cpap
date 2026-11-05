@@ -48,6 +48,13 @@ h1 {
 .drop-zone .ok { color: #4ade80; }
 .drop-zone .err { color: #f87171; }
 
+.layout { margin-top: 0.75rem; font-size: 0.85rem; }
+.layout p { margin: 0 0 0.35rem; line-height: 1.4; }
+.layout i { margin-right: 0.4rem; }
+.layout .ok { color: #4ade80; }
+.layout .err { color: #f87171; }
+.layout .hint { margin: 0 0 0.35rem; }
+
 .dates {
   margin-top: 0.75rem;
   font-size: 0.8rem;

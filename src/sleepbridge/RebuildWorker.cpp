@@ -155,6 +155,43 @@ RebuildWorker::RebuildWorker(BatchStore& store, std::string sender, const Rebuil
     // once, replaced by the file after the next look.
     if (!start.geometry.valid()) readAll(bdir / "rebuild.state", start.legacy_state);
     if (factory) rebuilder_ = factory(start);
+    if (rebuilder_) feedLearned();
+}
+
+void RebuildWorker::feedLearned() {
+    const fs::path bdir = store_.batchesDir(sender_);
+    const fs::path path = bdir / kBridgeLearned;
+    std::error_code ec;
+    if (!fs::exists(path, ec)) return;
+    learned_.summary = readBridgeLearned(bdir.string());
+    auto notFed = [this](const char* state, const std::string& why) {
+        learned_.state = state;
+        learned_.why   = why;
+        std::cout << "[sleepbridge] " << sender_ << " learned card not fed: " << why << std::endl;
+    };
+    std::string bytes, why;
+    if (!readAll(path, bytes)) return notFed("unreadable", "the learned card could not be read");
+    const auto card = decodeLearnedCard(bytes, &why);
+    if (!card) return notFed("unreadable", why);
+    learned_.summary = learnedSummary(*card);
+    if (!card->fat32()) return notFed("fat16", "the card is FAT16; the rebuild reads FAT32 cards");
+    // SDD-061 D7: a layout this bridge read from its own card wins.
+    if (knowsOwnLayout(geometry_) && !sameLayout(*card, geometry_))
+        return notFed("another_layout", "the card's own boot sector says another layout");
+    // Session 0 is the learn's; a bridge that streamed in it would collide.
+    for (const auto& e : fs::directory_iterator(bdir, ec)) {
+        const auto rg = batchRange(e.path().filename().string());
+        if (rg && rg->first < (int64_t{1} << 32))
+            return notFed("session_zero", "the bridge streamed in session 0, where the learned card goes");
+    }
+    uint64_t seq = 0;
+    for (const auto& [lba, data] : card->sectors)
+        rebuilder_->record(seq++, lba, reinterpret_cast<const uint8_t*>(data.data()), true);
+    learned_.state   = "fed";
+    learned_.sectors = static_cast<int>(card->sectors.size());
+    std::cout << "[sleepbridge] " << sender_ << " learned card fed first: " << learned_.sectors
+              << " sector(s), layout " << card->sectors_per_cluster << ':' << card->data_begin_lba
+              << ", volume " << card->volume_serial << std::endl;
 }
 
 void RebuildWorker::feedBatchFile(const std::string& path, StepReport& r) {
@@ -186,6 +223,7 @@ StepReport RebuildWorker::step(bool force) {
     StepReport r;
     if (!rebuilder_) return r;
     r.catch_up  = first_step_;
+    if (first_step_) r.learned_fed = learned_.sectors;
     first_step_ = false;
     const fs::path bdir = store_.batchesDir(sender_);
 
