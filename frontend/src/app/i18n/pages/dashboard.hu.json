@@ -17,7 +17,8 @@
       "ahiTrend": "AHI-trend (30 nap)",
       "apneaIndexTrend": "Apnoé index trend (30 nap)",
       "usageHours": "Használati órák (30 nap)",
-      "pressureTrend": "Nyomástrend (30 nap)",
+      "pressureTrend": "Terápiás nyomás trendje (30 nap)",
+      "maskPressureTrend": "Maszknyomás trendje (30 nap)",
       "leakTrend": "Szivárgási trend (30 nap)",
       "eventBreakdown": "Események megoszlása (30 nap)",
       "respiratoryTrends": "Légzési trendek (30 nap)",
@@ -48,6 +49,7 @@
       "str": "STR napi mérőszámok",
       "insights": "Terápiás elemzések",
       "pressure": "Terápiás nyomás",
+      "maskPressure": "Maszknyomás",
       "respiratory": "Légzési mérőszámok"
     },
     "subtitle": {
@@ -93,9 +95,16 @@
       "avgEvent": "Átlagos esemény"
     },
     "pressure": {
-      "subtitle": "Az önbeálló CPAP mérőszámai",
+      "subtitleTherapy": "A készülék által leadott nyomás",
+      "subtitleMask": "A maszknál mérve. Erről az éjszakáról nincs terápiás nyomás adat.",
       "current": "Jelenlegi nyomás",
       "median": "Medián (P50)",
+      "p95": "95. percentilis",
+      "max": "Maximum",
+      "maskMedian": "Maszknyomás (P50)",
+      "trendP50": "P50",
+      "trendP95": "P95",
+      "trendMaskP50": "Maszk P50",
       "leakRate": "Szivárgási arány (P95)"
     },
     "respiratory": {

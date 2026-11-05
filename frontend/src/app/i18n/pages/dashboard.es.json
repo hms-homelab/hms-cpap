@@ -17,7 +17,8 @@
       "ahiTrend": "Tendencia del IAH (30 días)",
       "apneaIndexTrend": "Tendencia del índice de apneas (30 días)",
       "usageHours": "Horas de uso (30 días)",
-      "pressureTrend": "Tendencia de la presión (30 días)",
+      "pressureTrend": "Tendencia de la presión de la terapia (30 días)",
+      "maskPressureTrend": "Tendencia de la presión en la mascarilla (30 días)",
       "leakTrend": "Tendencia de la fuga (30 días)",
       "eventBreakdown": "Desglose de eventos (30 días)",
       "respiratoryTrends": "Tendencias respiratorias (30 días)",
@@ -48,6 +49,7 @@
       "str": "Métricas diarias del STR",
       "insights": "Análisis de la terapia",
       "pressure": "Presión de la terapia",
+      "maskPressure": "Presión en la mascarilla",
       "respiratory": "Métricas respiratorias"
     },
     "subtitle": {
@@ -93,9 +95,16 @@
       "avgEvent": "Evento medio"
     },
     "pressure": {
-      "subtitle": "Métricas del CPAP autoajustable",
+      "subtitleTherapy": "La presión que entregó su equipo",
+      "subtitleMask": "Medida en la mascarilla. Esta noche no tiene registro de la presión de la terapia.",
       "current": "Presión actual",
       "median": "Mediana (P50)",
+      "p95": "Percentil 95",
+      "max": "Máxima",
+      "maskMedian": "Presión en la mascarilla (P50)",
+      "trendP50": "P50",
+      "trendP95": "P95",
+      "trendMaskP50": "Mascarilla P50",
       "leakRate": "Tasa de fuga (P95)"
     },
     "respiratory": {

@@ -3821,6 +3821,29 @@ TEST(BurstMetricsFormatTest, MetricsString_PartialOptionalBranches) {
     EXPECT_NE(out.find("ResMed official daily summary:"), std::string::npos);
     EXPECT_EQ(out.find("ASV EPAP:"), std::string::npos);       // ASV sub-block absent
     EXPECT_EQ(out.find("Target IPAP"), std::string::npos);     // tgt sub-block absent
+    // Issue #56: no avg_therapy_pressure, no therapy line; the STR figure is
+    // named for what it is.
+    EXPECT_EQ(out.find("Therapy pressure"), std::string::npos);
+    EXPECT_NE(out.find("95th mask pressure: 10.00 cmH2O"), std::string::npos);
+}
+
+// Issue #56: minimum 7, EPR 3. The summary is told the pressure the machine
+// delivered, beside the measured one, so it does not report ~5 as the therapy.
+TEST(BurstMetricsFormatTest, MetricsString_CarriesTheTherapyPressure) {
+    BurstCollectorService svc(60);
+    SessionMetrics m;
+    m.ahi = 1.0; m.total_events = 3;
+    m.avg_pressure = 5.1;
+    m.avg_mask_pressure = 5.2;
+    m.avg_therapy_pressure = 7.3;
+    m.therapy_mode = 1;
+
+    std::string out = svc.buildMetricsStringForTest(m, nullptr);
+    EXPECT_NE(out.find("Therapy pressure (delivered by the machine): avg=7.30 cmH2O"),
+              std::string::npos) << out;
+    EXPECT_NE(out.find("Mask pressure (actual): 5.20 cmH2O"), std::string::npos);
+    EXPECT_LT(out.find("Therapy pressure"), out.find("Pressure: avg=5.10"))
+        << "the delivered pressure comes first";
 }
 
 TEST(BurstMetricsFormatTest, RangeMetricsString_SingleNightNoLeak) {

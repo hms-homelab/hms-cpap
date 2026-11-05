@@ -434,6 +434,7 @@ void SQLiteDatabase::createSchema() {
             ahi               REAL, hi REAL, ai REAL, oai REAL, cai REAL, uai REAL,
             rin               REAL, csr REAL,
             mask_press_50     REAL, mask_press_95 REAL, mask_press_max REAL,
+            therapy_press_50  REAL, therapy_press_95 REAL, therapy_press_max REAL,
             leak_50           REAL, leak_95 REAL, leak_max REAL,
             spo2_50           REAL, spo2_95 REAL,
             resp_rate_50      REAL, tid_vol_50 REAL, min_vent_50 REAL,
@@ -496,6 +497,13 @@ void SQLiteDatabase::createSchema() {
                             "duration_minutes_str REAL", "index_source TEXT",
                             "leak_50_str REAL", "leak_95_str REAL",
                             "mask_press_50_str REAL", "spo2_50_str REAL"}) {
+        sqlite3_exec(db_, (std::string("ALTER TABLE cpap_daily_summary ADD COLUMN ") + col).c_str(),
+                     nullptr, nullptr, nullptr);
+    }
+    // Issue #56: the night's therapy pressure (PLD Press), which mask pressure
+    // is not. Filled by the next re-derive, which runs at every start.
+    for (const char* col : {"therapy_press_50 REAL", "therapy_press_95 REAL",
+                            "therapy_press_max REAL"}) {
         sqlite3_exec(db_, (std::string("ALTER TABLE cpap_daily_summary ADD COLUMN ") + col).c_str(),
                      nullptr, nullptr, nullptr);
     }
@@ -2595,7 +2603,9 @@ bool SQLiteDatabase::aggregateDailySummaryFromSessions(const std::string& device
     // p * (n - 1) in the sorted minutes, interpolated between the rows either
     // side, the same number Postgres returns. tidal_volume is mL, the column
     // is litres like the STR's. The STR fills a night we have no calculated
-    // metrics for.
+    // metrics for. Issue #56 adds the therapy pressure's median, 95th
+    // percentile and maximum; the STR has no copy of those, so a night without
+    // calculated metrics keeps them NULL and the UI falls back to mask pressure.
     const char* resp = R"(
         WITH v AS (
             SELECT date(s.session_start, '-12 hours') AS night, 'rr' AS k, 0.5 AS p, c.respiratory_rate AS x
@@ -2613,6 +2623,17 @@ bool SQLiteDatabase::aggregateDailySummaryFromSessions(const std::string& device
             SELECT date(s.session_start, '-12 hours'), 'mp95', 0.95, c.mask_pressure
               FROM cpap_calculated_metrics c JOIN cpap_sessions s ON s.id = c.session_id
              WHERE s.device_id = ?1 AND c.mask_pressure > 0
+            -- Issue #56: the therapy pressure the machine delivered (PLD Press).
+            -- With EPR the mask pressure dips below the set minimum on every
+            -- breath out; this one does not.
+            UNION ALL
+            SELECT date(s.session_start, '-12 hours'), 'tp50', 0.5, c.therapy_pressure
+              FROM cpap_calculated_metrics c JOIN cpap_sessions s ON s.id = c.session_id
+             WHERE s.device_id = ?1 AND c.therapy_pressure > 0
+            UNION ALL
+            SELECT date(s.session_start, '-12 hours'), 'tp95', 0.95, c.therapy_pressure
+              FROM cpap_calculated_metrics c JOIN cpap_sessions s ON s.id = c.session_id
+             WHERE s.device_id = ?1 AND c.therapy_pressure > 0
         ), r AS (
             SELECT night, k, x,
                    ROW_NUMBER() OVER (PARTITION BY night, k ORDER BY x) AS rn,
@@ -2628,6 +2649,8 @@ bool SQLiteDatabase::aggregateDailySummaryFromSessions(const std::string& device
             SELECT night, k, lo + COALESCE(frac * (hi - lo), 0) AS x FROM q
             UNION ALL
             SELECT night, 'mpmax', MAX(x) FROM v WHERE k = 'mp95' GROUP BY night
+            UNION ALL
+            SELECT night, 'tpmax', MAX(x) FROM v WHERE k = 'tp95' GROUP BY night
         )
         UPDATE cpap_daily_summary
            SET resp_rate_50   = COALESCE((SELECT ROUND(x, 1) FROM pct
@@ -2639,7 +2662,13 @@ bool SQLiteDatabase::aggregateDailySummaryFromSessions(const std::string& device
                mask_press_95  = COALESCE((SELECT ROUND(x, 2) FROM pct
                                            WHERE pct.night = cpap_daily_summary.record_date AND k = 'mp95'), mask_press_95),
                mask_press_max = COALESCE((SELECT ROUND(x, 2) FROM pct
-                                           WHERE pct.night = cpap_daily_summary.record_date AND k = 'mpmax'), mask_press_max)
+                                           WHERE pct.night = cpap_daily_summary.record_date AND k = 'mpmax'), mask_press_max),
+               therapy_press_50  = COALESCE((SELECT ROUND(x, 2) FROM pct
+                                           WHERE pct.night = cpap_daily_summary.record_date AND k = 'tp50'), therapy_press_50),
+               therapy_press_95  = COALESCE((SELECT ROUND(x, 2) FROM pct
+                                           WHERE pct.night = cpap_daily_summary.record_date AND k = 'tp95'), therapy_press_95),
+               therapy_press_max = COALESCE((SELECT ROUND(x, 2) FROM pct
+                                           WHERE pct.night = cpap_daily_summary.record_date AND k = 'tpmax'), therapy_press_max)
          WHERE device_id = ?1
     )";
 

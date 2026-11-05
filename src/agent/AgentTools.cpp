@@ -219,6 +219,7 @@ std::string AgentTools::getDailySummary(const nlohmann::json& args, pqxx::connec
         SELECT record_date, duration_minutes, ahi, hi, ai, oai, cai, uai, rin,
                leak_50, leak_95, leak_max,
                mask_press_50, mask_press_95, mask_press_max,
+               therapy_press_50, therapy_press_95, therapy_press_max,
                spo2_50, spo2_95,
                resp_rate_50, tid_vol_50, min_vent_50,
                mode, epr_level, pressure_setting
@@ -240,7 +241,8 @@ std::string AgentTools::getTrendData(const nlohmann::json& args, pqxx::connectio
     // Map metric name to column(s) in cpap_daily_summary
     std::string columns;
     if (metric == "ahi")       columns = "record_date, ahi, hi, ai, oai, cai";
-    else if (metric == "pressure")  columns = "record_date, mask_press_50, mask_press_95, mask_press_max, pressure_setting";
+    else if (metric == "pressure")  columns = "record_date, therapy_press_50, therapy_press_95, therapy_press_max,"
+                                              " mask_press_50, mask_press_95, mask_press_max, pressure_setting";
     else if (metric == "leak")      columns = "record_date, leak_50, leak_95, leak_max";
     else if (metric == "spo2")      columns = "record_date, spo2_50, spo2_95";
     else if (metric == "hr")        columns = "record_date, resp_rate_50";
@@ -272,7 +274,7 @@ std::string AgentTools::comparePeriods(const nlohmann::json& args, pqxx::connect
                    ROUND(AVG(ahi)::numeric, 2) as avg_ahi,
                    ROUND(AVG(duration_minutes)::numeric, 1) as avg_duration_min,
                    ROUND(AVG(leak_95)::numeric, 1) as avg_leak_95,
-                   ROUND(AVG(mask_press_95)::numeric, 1) as avg_pressure_95,
+                   ROUND(AVG(COALESCE(therapy_press_95, mask_press_95))::numeric, 1) as avg_pressure_95,
                    ROUND(AVG(spo2_50)::numeric, 1) as avg_spo2,
                    ROUND(AVG(resp_rate_50)::numeric, 1) as avg_resp_rate,
                    ROUND(SUM(CASE WHEN duration_minutes >= 240 THEN 1 ELSE 0 END) * 100.0 /
@@ -344,7 +346,8 @@ std::string AgentTools::getStatistics(const nlohmann::json& args, pqxx::connecti
                ROUND(MIN(duration_minutes)::numeric, 1) as min_duration_min,
                ROUND(MAX(duration_minutes)::numeric, 1) as max_duration_min,
                ROUND(AVG(leak_95)::numeric, 1) as avg_leak_95,
-               ROUND(AVG(mask_press_95)::numeric, 1) as avg_pressure_95,
+               -- Issue #56: the machine's pressure, the mask's only where a night has none.
+               ROUND(AVG(COALESCE(therapy_press_95, mask_press_95))::numeric, 1) as avg_pressure_95,
                ROUND(AVG(spo2_50)::numeric, 1) as avg_spo2,
                ROUND(AVG(resp_rate_50)::numeric, 1) as avg_resp_rate,
                ROUND(SUM(CASE WHEN duration_minutes >= 240 THEN 1 ELSE 0 END) * 100.0 /

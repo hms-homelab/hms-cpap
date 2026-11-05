@@ -21,6 +21,7 @@
 #include "database/PostgresDatabase.h"
 #endif
 
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -247,10 +248,44 @@ protected:
         ASSERT_TRUE(db_->saveSTRDailyRecords({r})) << engineName(GetParam());
     }
 
+    /// Issue #56: a session whose minutes carry the delivered therapy pressure
+    /// (PLD Press) and the measured mask pressure (MaskPress), one entry each
+    /// per minute. An empty [therapy] is a machine or night without Press.
+    void saveEprSession(system_clock::time_point start,
+                        const std::vector<double>& therapy,
+                        const std::vector<double>& mask) {
+        const int mins = static_cast<int>(std::max(therapy.size(), mask.size()));
+        CPAPSession s;
+        s.device_id = device_;
+        s.device_name = "AirSense 11 AutoSet";
+        s.serial_number = "ISSUE56";
+        s.session_start = start;
+        s.duration_seconds = mins * 60;
+        s.data_records = mins;
+        for (int i = 0; i < mins; ++i) {
+            BreathingSummary b;
+            b.timestamp = start + minutes(i);
+            b.leak_rate = 4.0;
+            if (i < static_cast<int>(therapy.size())) b.therapy_pressure = therapy[i];
+            if (i < static_cast<int>(mask.size())) b.mask_pressure = mask[i];
+            s.breathing_summary.push_back(b);
+        }
+        SessionMetrics m;
+        if (!mask.empty()) {
+            double sum = 0;
+            for (double p : mask) sum += p;
+            m.avg_mask_pressure = sum / mask.size();   // as the parser fills it
+        }
+        s.metrics = m;
+        ASSERT_TRUE(db_->saveSession(s)) << engineName(GetParam());
+        db_->markSessionCompleted(device_, start);
+    }
+
     Json::Value dailyRow() {
         return db_->executeQuery(
             "SELECT leak_95, leak_50, spo2_50, leak_95_str, spo2_50_str, mask_events,"
-            " resp_rate_50, tid_vol_50, min_vent_50, mask_press_95, mask_press_max"
+            " resp_rate_50, tid_vol_50, min_vent_50, mask_press_95, mask_press_max,"
+            " mask_press_50, therapy_press_50, therapy_press_95, therapy_press_max"
             " FROM cpap_daily_summary WHERE device_id = " + sql::param(1, db_->dbType()),
             {device_});
     }
@@ -464,6 +499,68 @@ TEST_P(NightAggregationBackendTest, TheStrFillsPressureP95WeDidNotCompute) {
     ASSERT_TRUE(rows.isArray() && !rows.empty()) << engineName(GetParam());
     EXPECT_NEAR(num(rows[0u]["mask_press_95"]), 12.0, 1e-6) << engineName(GetParam());
     EXPECT_NEAR(num(rows[0u]["mask_press_max"]), 13.0, 1e-6) << engineName(GetParam());
+}
+
+// Issue #56: an AirSense 11 on AutoSet, minimum 7, EPR 3. The machine never
+// delivers less than 7, and lifts to 9 for a while; the mask pressure, measured
+// on every breath out as well as in, sits about 2 below it, so its median is
+// near 5. The night's therapy pressure is the machine's, across both sessions:
+// a median, 95th percentile and maximum of its minutes, all at or above 7.
+TEST_P(NightAggregationBackendTest, ANightWithEprReportsTheTherapyPressureNotTheMask) {
+    // 20 minutes: 14 at 7.0, then 7.5, 8.0, 8.5, 9.0, 9.0, 9.0.
+    std::vector<double> therapy(14, 7.0);
+    for (double p : {7.5, 8.0, 8.5, 9.0, 9.0, 9.0}) therapy.push_back(p);
+    std::vector<double> mask;
+    for (double p : therapy) mask.push_back(p - 2.0);   // EPR 3 averaged over a breath
+    // Split across two sessions, the way a mask-off splits a night.
+    saveEprSession(nightStart(),
+                   {therapy.begin(), therapy.begin() + 12}, {mask.begin(), mask.begin() + 12});
+    saveEprSession(nightStart() + minutes(300),
+                   {therapy.begin() + 12, therapy.end()}, {mask.begin() + 12, mask.end()});
+    ASSERT_TRUE(db_->aggregateDailySummaryFromSessions(device_)) << engineName(GetParam());
+
+    auto rows = dailyRow();
+    ASSERT_TRUE(rows.isArray() && !rows.empty()) << engineName(GetParam());
+    const auto& r = rows[0u];
+    // Sorted minutes: position 0.5 * 19 = 9.5, between two 7.0s.
+    EXPECT_NEAR(num(r["therapy_press_50"]), 7.0, 1e-6)
+        << engineName(GetParam()) << ": -1 is NULL, the column the dashboard reads";
+    // Position 0.95 * 19 = 18.05, between 9.0 and 9.0.
+    EXPECT_NEAR(num(r["therapy_press_95"]), 9.0, 1e-6) << engineName(GetParam());
+    EXPECT_NEAR(num(r["therapy_press_max"]), 9.0, 1e-6) << engineName(GetParam());
+
+    // The issue: the mask's figures sit under the prescribed minimum.
+    EXPECT_GE(num(r["therapy_press_50"]), 7.0) << engineName(GetParam());
+    // mask_press_50 is the minute-weighted mean of the sessions' mask means:
+    // (5.0 * 12 + 6.125 * 8) / 20 = 5.45, stored to one decimal. Still stored,
+    // as its own value, and below the minimum the user set.
+    EXPECT_NEAR(num(r["mask_press_50"]), 5.45, 0.051) << engineName(GetParam());
+    EXPECT_LT(num(r["mask_press_50"]), 7.0) << engineName(GetParam());
+    EXPECT_NEAR(num(r["mask_press_95"]), 7.0, 1e-6) << engineName(GetParam());
+
+    // A re-derive is idempotent, and an STR read after it (which has only
+    // mask pressure) leaves the therapy pressure alone.
+    saveStrPressure(/*p95=*/6.8, /*max=*/7.2);
+    ASSERT_TRUE(db_->aggregateDailySummaryFromSessions(device_)) << engineName(GetParam());
+    rows = dailyRow();
+    ASSERT_TRUE(rows.isArray() && !rows.empty()) << engineName(GetParam());
+    EXPECT_NEAR(num(rows[0u]["therapy_press_50"]), 7.0, 1e-6) << engineName(GetParam());
+    EXPECT_NEAR(num(rows[0u]["therapy_press_95"]), 9.0, 1e-6) << engineName(GetParam());
+}
+
+// Issue #56: a night with no therapy-pressure minutes (no PLD Press: an older
+// parse, or a machine without the channel) has no therapy pressure. NULL, not
+// zero, so the readers fall back to the mask's.
+TEST_P(NightAggregationBackendTest, ANightWithoutPressHasNoTherapyPressure) {
+    saveEprSession(nightStart(), {}, {5.0, 5.5, 6.0, 6.5});
+    ASSERT_TRUE(db_->aggregateDailySummaryFromSessions(device_)) << engineName(GetParam());
+
+    auto rows = dailyRow();
+    ASSERT_TRUE(rows.isArray() && !rows.empty()) << engineName(GetParam());
+    EXPECT_TRUE(rows[0u]["therapy_press_50"].isNull()) << engineName(GetParam());
+    EXPECT_TRUE(rows[0u]["therapy_press_95"].isNull()) << engineName(GetParam());
+    EXPECT_TRUE(rows[0u]["therapy_press_max"].isNull()) << engineName(GetParam());
+    EXPECT_GT(num(rows[0u]["mask_press_95"]), 0.0) << engineName(GetParam());
 }
 
 // Issue #38: an AirSense 11 reads a leak of 0 most of the night, so the

@@ -1,6 +1,7 @@
 #include "web/QueryService.h"
 #include "utils/NightQuiet.h"
 #include "utils/OximetryDevice.h"
+#include "utils/TherapyPressure.h"
 #include "cpapdash/parser/SleepIndex.h"
 
 #include <algorithm>
@@ -497,6 +498,9 @@ Json::Value QueryService::getDailySummary(const std::string& start, const std::s
         " COALESCE(index_kind, 'ahi') as index_kind,"
         " leak_50, leak_95, leak_max,"
         " mask_press_50, mask_press_95, mask_press_max,"
+        // Issue #56: the pressure the machine delivered. NULL on a night
+        // without PLD minutes, where the consumers fall back to mask pressure.
+        " therapy_press_50, therapy_press_95, therapy_press_max,"
         " spo2_50, spo2_95,"
         " resp_rate_50, tid_vol_50, min_vent_50,"
         " mode, epr_level, pressure_setting,"
@@ -609,7 +613,8 @@ Json::Value QueryService::getMyAirComparison(const std::string& start, const std
 Json::Value QueryService::getTrend(const std::string& metric, int days) {
     std::string columns;
     if (metric == "ahi")           columns = "record_date, ahi, hi, ai, oai, cai";
-    else if (metric == "pressure") columns = "record_date, mask_press_50, mask_press_95, mask_press_max";
+    else if (metric == "pressure") columns = "record_date, mask_press_50, mask_press_95, mask_press_max,"
+                                             " therapy_press_50, therapy_press_95, therapy_press_max";
     else if (metric == "leak")     columns = "record_date, leak_50, leak_95, leak_max";
     else if (metric == "spo2")     columns = "record_date, spo2_50, spo2_95";
     else if (metric == "hr")       columns = "record_date, resp_rate_50";
@@ -647,7 +652,9 @@ Json::Value QueryService::getStatistics(const std::string& start, const std::str
         " MAX(COALESCE(index_kind, 'ahi')) as index_kind,"
         " " + sql::round("AVG(duration_minutes)", 1, dt_) + " as avg_duration_min,"
         " " + sql::round("AVG(leak_95)", 1, dt_) + " as avg_leak_95,"
-        " " + sql::round("AVG(mask_press_95)", 1, dt_) + " as avg_pressure_95,"
+        // Issue #56: the machine's pressure, night by night; mask pressure
+        // only on a night that has no therapy pressure.
+        " " + sql::round("AVG(COALESCE(therapy_press_95, mask_press_95))", 1, dt_) + " as avg_pressure_95,"
         " " + sql::round("AVG(spo2_50)", 1, dt_) + " as avg_spo2,"
         " " + sql::round(
             "SUM(CASE WHEN duration_minutes >= 240 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(*), 0)",
@@ -691,6 +698,7 @@ Json::Value QueryService::getInsights(int days) {
         "SELECT record_date, duration_minutes, ahi, hi, ai, oai, cai, uai, rin,"
         " COALESCE(csr, 0) as csr,"
         " mask_press_50, mask_press_95, mask_press_max,"
+        " therapy_press_50, therapy_press_95, therapy_press_max,"
         " leak_50, leak_95, leak_max,"
         " spo2_50, spo2_95,"
         " resp_rate_50, tid_vol_50, min_vent_50,"
@@ -724,9 +732,12 @@ Json::Value QueryService::getInsights(int days) {
         rec.uai = jdouble(r, "uai");
         rec.rin = jdouble(r, "rin");
         rec.csr = jdouble(r, "csr");
-        rec.mask_press_50 = jdouble(r, "mask_press_50");
-        rec.mask_press_95 = jdouble(r, "mask_press_95");
-        rec.mask_press_max = jdouble(r, "mask_press_max");
+        // Issue #56: the insights speak of the machine's pressure ("Machine
+        // median pressure moved from..."), so they get the therapy pressure
+        // wherever the night has one, the mask's only where it does not.
+        rec.mask_press_50 = machinePressure(r, "50");
+        rec.mask_press_95 = machinePressure(r, "95");
+        rec.mask_press_max = machinePressure(r, "max");
         rec.leak_50 = jdouble(r, "leak_50");
         rec.leak_95 = jdouble(r, "leak_95");
         rec.leak_max = jdouble(r, "leak_max");

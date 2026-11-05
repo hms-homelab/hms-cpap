@@ -324,6 +324,7 @@ bool DatabaseService::connect() {
                     ahi               FLOAT, hi FLOAT, ai FLOAT, oai FLOAT, cai FLOAT, uai FLOAT,
                     rin               FLOAT, csr FLOAT,
                     mask_press_50     FLOAT, mask_press_95 FLOAT, mask_press_max FLOAT,
+                    therapy_press_50  FLOAT, therapy_press_95 FLOAT, therapy_press_max FLOAT,
                     leak_50           FLOAT, leak_95 FLOAT, leak_max FLOAT,
                     spo2_50           FLOAT, spo2_95 FLOAT,
                     resp_rate_50      FLOAT, tid_vol_50 FLOAT, min_vent_50 FLOAT,
@@ -376,7 +377,10 @@ bool DatabaseService::connect() {
                                         "cai_str FLOAT", "uai_str FLOAT", "rin_str FLOAT",
                                         "duration_minutes_str FLOAT", "index_source TEXT",
                                         "leak_50_str FLOAT", "leak_95_str FLOAT",
-                                        "mask_press_50_str FLOAT", "spo2_50_str FLOAT"}) {
+                                        "mask_press_50_str FLOAT", "spo2_50_str FLOAT",
+                                        // Issue #56: the night's therapy pressure (PLD Press).
+                                        "therapy_press_50 FLOAT", "therapy_press_95 FLOAT",
+                                        "therapy_press_max FLOAT"}) {
                     txn.exec(std::string("ALTER TABLE cpap_daily_summary ADD COLUMN IF NOT EXISTS ") + col);
                 }
                 txn.exec("ALTER TABLE cpap_session_metrics ADD COLUMN IF NOT EXISTS avg_epr_pressure FLOAT");
@@ -2831,6 +2835,7 @@ bool DatabaseService::saveSTRDailyRecords(const std::vector<STRDailyRecord>& rec
                 ahi FLOAT, hi FLOAT, ai FLOAT, oai FLOAT, cai FLOAT, uai FLOAT,
                 rin FLOAT, csr FLOAT,
                 mask_press_50 FLOAT, mask_press_95 FLOAT, mask_press_max FLOAT,
+                therapy_press_50 FLOAT, therapy_press_95 FLOAT, therapy_press_max FLOAT,
                 leak_50 FLOAT, leak_95 FLOAT, leak_max FLOAT,
                 spo2_50 FLOAT, spo2_95 FLOAT,
                 resp_rate_50 FLOAT, tid_vol_50 FLOAT, min_vent_50 FLOAT,
@@ -3136,13 +3141,21 @@ bool DatabaseService::aggregateDailySummaryFromSessions(const std::string& devic
                    tid_vol_50     = COALESCE(ROUND((x.tv / 1000.0)::numeric, 3), d.tid_vol_50),
                    min_vent_50    = COALESCE(ROUND(x.mv::numeric, 2), d.min_vent_50),
                    mask_press_95  = COALESCE(ROUND(x.mp95::numeric, 2), d.mask_press_95),
-                   mask_press_max = COALESCE(ROUND(x.mpmax::numeric, 2), d.mask_press_max)
+                   mask_press_max = COALESCE(ROUND(x.mpmax::numeric, 2), d.mask_press_max),
+                   -- Issue #56: the delivered therapy pressure. No STR copy
+                   -- exists, so a night without calculated metrics keeps NULL.
+                   therapy_press_50  = COALESCE(ROUND(x.tp50::numeric, 2), d.therapy_press_50),
+                   therapy_press_95  = COALESCE(ROUND(x.tp95::numeric, 2), d.therapy_press_95),
+                   therapy_press_max = COALESCE(ROUND(x.tpmax::numeric, 2), d.therapy_press_max)
               FROM (SELECT DATE(s.session_start - INTERVAL '12 hours') AS night,
                            percentile_cont(0.5) WITHIN GROUP (ORDER BY NULLIF(c.respiratory_rate, 0))   AS rr,
                            percentile_cont(0.5) WITHIN GROUP (ORDER BY NULLIF(c.tidal_volume, 0))       AS tv,
                            percentile_cont(0.5) WITHIN GROUP (ORDER BY NULLIF(c.minute_ventilation, 0)) AS mv,
                            percentile_cont(0.95) WITHIN GROUP (ORDER BY NULLIF(c.mask_pressure, 0))     AS mp95,
-                           MAX(NULLIF(c.mask_pressure, 0))                                              AS mpmax
+                           MAX(NULLIF(c.mask_pressure, 0))                                              AS mpmax,
+                           percentile_cont(0.5) WITHIN GROUP (ORDER BY NULLIF(c.therapy_pressure, 0))   AS tp50,
+                           percentile_cont(0.95) WITHIN GROUP (ORDER BY NULLIF(c.therapy_pressure, 0))  AS tp95,
+                           MAX(NULLIF(c.therapy_pressure, 0))                                           AS tpmax
                       FROM cpap_calculated_metrics c
                       JOIN cpap_sessions s ON s.id = c.session_id
                      WHERE s.device_id = $1

@@ -208,7 +208,9 @@ CREATE TABLE IF NOT EXISTS cpap_daily_summary (
     mask_press_50_str REAL,
     spo2_50_str       REAL,
     mask_press_50     REAL, mask_press_95 REAL, mask_press_max REAL,
-    leak_50           REAL, leak_95 REAL, leak_max REAL,
+    -- Issue #56: the delivered therapy pressure (PLD Press), ours only.
+    therapy_press_50  REAL, therapy_press_95 REAL, therapy_press_max REAL,
+    leak_50          REAL, leak_95 REAL, leak_max REAL,
     spo2_50           REAL, spo2_95 REAL,
     resp_rate_50      REAL, tid_vol_50 REAL, min_vent_50 REAL,
     mode              INTEGER, epr_level REAL, pressure_setting REAL,

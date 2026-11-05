@@ -4158,6 +4158,15 @@ std::string BurstCollectorService::buildMetricsString(const SessionMetrics& metr
         oss << "\n";
     }
 
+    // Issue #56: the pressure the machine delivered (PLD Press), the number a
+    // user compares with their prescription. The block after it is measured
+    // and, with EPR, sits below the set minimum on every breath out; without
+    // this line the summary reported that as the therapy pressure.
+    if (metrics.avg_therapy_pressure.has_value()) {
+        oss << "Therapy pressure (delivered by the machine): avg="
+            << metrics.avg_therapy_pressure.value() << " cmH2O\n";
+    }
+
     // Pressure (only include fields that have data)
     if (metrics.avg_pressure.has_value() || metrics.pressure_p95.has_value()) {
         oss << "Pressure:";
@@ -4268,7 +4277,8 @@ std::string BurstCollectorService::buildMetricsString(const SessionMetrics& metr
         oss << "  STR AHI: " << str_record->ahi << " events/hour\n";
         oss << "  Mask events: " << (str_record->mask_events / 2) << " (on/off pairs)\n";
         oss << "  95th leak: " << str_record->leak_95 << " L/min\n";
-        oss << "  95th pressure: " << str_record->mask_press_95 << " cmH2O\n";
+        // The STR's MaskPress.95: measured at the mask, not the therapy pressure.
+        oss << "  95th mask pressure: " << str_record->mask_press_95 << " cmH2O\n";
         // ASV STR settings
         if (str_record->asv_epap.has_value()) {
             oss << "  ASV EPAP: " << str_record->asv_epap.value() << " cmH2O\n";

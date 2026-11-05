@@ -613,6 +613,7 @@ void MySQLDatabase::createSchema() {
             index_kind        VARCHAR(16) DEFAULT 'ahi',   -- SDD-024
             rin               DOUBLE, csr DOUBLE,
             mask_press_50     DOUBLE, mask_press_95 DOUBLE, mask_press_max DOUBLE,
+            therapy_press_50  DOUBLE, therapy_press_95 DOUBLE, therapy_press_max DOUBLE,
             leak_50           DOUBLE, leak_95 DOUBLE, leak_max DOUBLE,
             spo2_50           DOUBLE, spo2_95 DOUBLE,
             resp_rate_50      DOUBLE, tid_vol_50 DOUBLE, min_vent_50 DOUBLE,
@@ -1087,6 +1088,10 @@ void MySQLDatabase::migrateSchema() {
         {"cpap_daily_summary", "leak_95_str",          "DOUBLE"},
         {"cpap_daily_summary", "mask_press_50_str",    "DOUBLE"},
         {"cpap_daily_summary", "spo2_50_str",          "DOUBLE"},
+        // Issue #56: the night's therapy pressure (PLD Press), not the mask's.
+        {"cpap_daily_summary", "therapy_press_50",     "DOUBLE"},
+        {"cpap_daily_summary", "therapy_press_95",     "DOUBLE"},
+        {"cpap_daily_summary", "therapy_press_max",    "DOUBLE"},
 
         // Oximetry metrics, added with the tables themselves.
         {"oximetry_sessions", "avg_spo2",      "DOUBLE"},
@@ -3133,7 +3138,10 @@ bool MySQLDatabase::aggregateDailySummaryFromSessions(const std::string& device_
                        MAX(CASE WHEN k = 'tv'   THEN val END) AS tv,
                        MAX(CASE WHEN k = 'mv'   THEN val END) AS mv,
                        MAX(CASE WHEN k = 'mp95' THEN val END) AS mp95,
-                       MAX(CASE WHEN k = 'mp95' THEN mx  END) AS mpmax
+                       MAX(CASE WHEN k = 'mp95' THEN mx  END) AS mpmax,
+                       MAX(CASE WHEN k = 'tp50' THEN val END) AS tp50,
+                       MAX(CASE WHEN k = 'tp95' THEN val END) AS tp95,
+                       MAX(CASE WHEN k = 'tp95' THEN mx  END) AS tpmax
                   FROM (SELECT night, k, lo + COALESCE(frac * (hi - lo), 0) AS val, mx
                           FROM (SELECT night, k,
                                        MAX(CASE WHEN rn = FLOOR(pos) + 1 THEN x END) AS lo,
@@ -3158,7 +3166,15 @@ bool MySQLDatabase::aggregateDailySummaryFromSessions(const std::string& device_
                                                 UNION ALL
                                                 SELECT DATE(DATE_SUB(s.session_start, INTERVAL 12 HOUR)), 'mp95', 0.95, c.mask_pressure
                                                   FROM cpap_calculated_metrics c JOIN cpap_sessions s ON s.id = c.session_id
-                                                 WHERE s.device_id = ? AND c.mask_pressure > 0) v) r
+                                                 WHERE s.device_id = ? AND c.mask_pressure > 0
+                                                UNION ALL
+                                                SELECT DATE(DATE_SUB(s.session_start, INTERVAL 12 HOUR)), 'tp50', 0.5, c.therapy_pressure
+                                                  FROM cpap_calculated_metrics c JOIN cpap_sessions s ON s.id = c.session_id
+                                                 WHERE s.device_id = ? AND c.therapy_pressure > 0
+                                                UNION ALL
+                                                SELECT DATE(DATE_SUB(s.session_start, INTERVAL 12 HOUR)), 'tp95', 0.95, c.therapy_pressure
+                                                  FROM cpap_calculated_metrics c JOIN cpap_sessions s ON s.id = c.session_id
+                                                 WHERE s.device_id = ? AND c.therapy_pressure > 0) v) r
                                  GROUP BY night, k) q) pct
                  GROUP BY night) x
             ON x.night = d.record_date
@@ -3166,7 +3182,12 @@ bool MySQLDatabase::aggregateDailySummaryFromSessions(const std::string& device_
                d.tid_vol_50     = COALESCE(ROUND(x.tv / 1000.0, 3), d.tid_vol_50),
                d.min_vent_50    = COALESCE(ROUND(x.mv, 2), d.min_vent_50),
                d.mask_press_95  = COALESCE(ROUND(x.mp95, 2), d.mask_press_95),
-               d.mask_press_max = COALESCE(ROUND(x.mpmax, 2), d.mask_press_max)
+               d.mask_press_max = COALESCE(ROUND(x.mpmax, 2), d.mask_press_max),
+               -- Issue #56: the delivered therapy pressure. No STR copy exists,
+               -- so a night without calculated metrics keeps NULL.
+               d.therapy_press_50  = COALESCE(ROUND(x.tp50, 2), d.therapy_press_50),
+               d.therapy_press_95  = COALESCE(ROUND(x.tp95, 2), d.therapy_press_95),
+               d.therapy_press_max = COALESCE(ROUND(x.tpmax, 2), d.therapy_press_max)
          WHERE d.device_id = ?
     )";
 
@@ -3177,8 +3198,8 @@ bool MySQLDatabase::aggregateDailySummaryFromSessions(const std::string& device_
                   << mysql_stmt_error(rs.stmt) << std::endl;
         return false;
     }
-    ParamBinder rp(5);
-    for (int i = 0; i < 5; ++i) rp.bindText(i, device_id);
+    ParamBinder rp(7);
+    for (int i = 0; i < 7; ++i) rp.bindText(i, device_id);
     mysql_stmt_bind_param(rs.stmt, rp.data());
     if (mysql_stmt_execute(rs.stmt) != 0) {
         std::cerr << "MySQL: aggregateDailySummaryFromSessions (respiratory) error: "
