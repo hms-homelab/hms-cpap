@@ -22,6 +22,7 @@
 
 #include "database/SQLiteDatabase.h"
 #include "database/SqlDialect.h"
+#include "services/AirSense11Pull.h"
 #ifdef WITH_MYSQL
 #include "database/MySQLDatabase.h"
 #endif
@@ -476,6 +477,36 @@ TEST_P(DailyHoursBackendTest, TheMigrationLeavesACorrectRowAlone) {
 // default (AHI) and an apnea-only number went out under the name "AHI".
 //
 // A test that never crosses the database proves nothing about a path that does.
+
+// A day read over Bluetooth, given its settings from the machine's STR as a
+// card day carries them, keeps them through the database on every engine.
+TEST_P(DailyHoursBackendTest, ABluetoothDaysSettingsSurviveTheRoundTrip) {
+    STRDailyRecord card;
+    card.device_id = device_;
+    card.record_date = strDay();
+    card.mode = 1;
+    card.epr_level = 3.0;
+    card.pressure_setting = 10.0;
+
+    STRDailyRecord bluetooth;   // the Summary's day: no settings of its own
+    bluetooth.device_id = device_;
+    bluetooth.record_date = strDay();
+    bluetooth.duration_minutes = 412;
+    bluetooth.patient_hours = 1050.0;
+    std::vector<STRDailyRecord> days{bluetooth};
+    ASSERT_EQ(AirSense11Pull::withStrSettings(days, {card}), 1);
+    ASSERT_TRUE(db_->saveSTRDailyRecords(days)) << engineName(GetParam());
+
+    const auto rows = db_->executeQuery(
+        "SELECT mode, epr_level, pressure_setting FROM cpap_daily_summary WHERE device_id = " +
+            sql::param(1, db_->dbType()),
+        {device_});
+    ASSERT_EQ(rows.size(), 1u) << engineName(GetParam());
+    auto num = [](const Json::Value& v) { return v.isString() ? std::atof(v.asCString()) : v.asDouble(); };
+    EXPECT_DOUBLE_EQ(num(rows[0u]["mode"]), 1) << engineName(GetParam());
+    EXPECT_DOUBLE_EQ(num(rows[0u]["epr_level"]), 3.0) << engineName(GetParam());
+    EXPECT_DOUBLE_EQ(num(rows[0u]["pressure_setting"]), 10.0) << engineName(GetParam());
+}
 
 TEST_P(DailyHoursBackendTest, IndexKindSurvivesTheRoundTrip) {
     const auto start = std::chrono::system_clock::now() - std::chrono::hours(8);

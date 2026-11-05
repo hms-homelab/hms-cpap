@@ -229,6 +229,63 @@ TEST(BleUuid, AShortServiceUuidStillIdentifiesTheMachine) {
     EXPECT_FALSE(as11::advertIsAirSense("", {ble::normalizeUuid("180D")}));
 }
 
+// ── switching a radio that is off on (Windows; BlueZ has its own) ──
+
+TEST(BleRadioSwitch, ARadioThatIsOnOrAbsentIsLeftAlone) {
+    int asked = 0;
+    ble::RadioSwitchOps ops;
+    ops.request_access = [&] { asked++; return std::string(); };
+    for (auto st : {ble::Radio::Ready, ble::Radio::NoAdapter, ble::Radio::Failed}) {
+        ops.state = [st] { return st; };
+        EXPECT_EQ(ble::switchOn(ops, "advice").state, st);
+    }
+    EXPECT_EQ(asked, 0);
+}
+
+TEST(BleRadioSwitch, OffIsSwitchedOnWhenTheSystemAllows) {
+    ble::Radio now = ble::Radio::Off;
+    ble::RadioSwitchOps ops;
+    ops.state = [&] { return now; };
+    ops.request_access = [] { return std::string(); };
+    ops.switch_on = [&] { now = ble::Radio::Ready; return std::string(); };
+    const auto r = ble::switchOn(ops, "switch it on");
+    EXPECT_EQ(r.state, ble::Radio::Ready);
+    EXPECT_TRUE(r.switched_on);
+    EXPECT_TRUE(r.detail.empty());
+}
+
+TEST(BleRadioSwitch, ARefusalKeepsTheAdviceAndSaysWhy) {
+    bool switched = false;
+    ble::RadioSwitchOps ops;
+    ops.state = [] { return ble::Radio::Off; };
+    ops.request_access = [] { return std::string("access status 2"); };
+    ops.switch_on = [&] { switched = true; return std::string(); };
+    const auto r = ble::switchOn(ops, "switch it on");
+    EXPECT_EQ(r.state, ble::Radio::Off);
+    EXPECT_FALSE(switched);
+    EXPECT_NE(r.detail.find("switch it on"), std::string::npos);
+    EXPECT_NE(r.detail.find("access status 2"), std::string::npos);
+}
+
+TEST(BleRadioSwitch, ARadioThatStaysOffIsReportedOff) {
+    ble::RadioSwitchOps ops;
+    ops.state = [] { return ble::Radio::Off; };
+    ops.request_access = [] { return std::string(); };
+    ops.switch_on = [] { return std::string(); };
+    const auto r = ble::switchOn(ops, "switch it on");
+    EXPECT_EQ(r.state, ble::Radio::Off);
+    EXPECT_FALSE(r.switched_on);
+    EXPECT_NE(r.detail.find("still off"), std::string::npos);
+}
+
+TEST(BleRadioSwitch, WithoutTheMeansItOnlyAdvises) {
+    ble::RadioSwitchOps ops;
+    ops.state = [] { return ble::Radio::Off; };
+    const auto r = ble::switchOn(ops, "switch it on");
+    EXPECT_EQ(r.state, ble::Radio::Off);
+    EXPECT_NE(r.detail.find("switch it on"), std::string::npos);
+}
+
 // ── the AirSense 11 ──
 
 TEST(As11BleLink, TheRadioOffIsRadioOffWhateverTheOsCallsIt) {

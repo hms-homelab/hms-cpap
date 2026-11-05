@@ -331,7 +331,7 @@
       "errGeneric": "A párosítás nem sikerült. Kezdje újra.",
       "errRadioOff": "A Bluetooth ki van kapcsolva ezen a számítógépen (rf-kill). Kapcsolja be, vagy futtassa az rfkill unblock bluetooth parancsot, és próbálja újra.",
       "errRadioOffMac": "A Bluetooth ki van kapcsolva ezen a Macen, vagy a CpapDash nem használhatja. Kapcsolja be, engedélyezze a CpapDash-t a Rendszerbeállítások, Adatvédelem és biztonság, Bluetooth menüpontban, és próbálja újra.",
-      "errRadioOffWin": "A Bluetooth ki van kapcsolva ezen a PC-n. Kapcsolja be a Gépházban (Bluetooth és eszközök), ellenőrizze a repülőgépes üzemmódot, és próbálja újra."
+      "errRadioOffWin": "A Bluetooth ki van kapcsolva ezen a PC-n, és a Windows nem engedte, hogy a CpapDash bekapcsolja. Kapcsolja be a Gépházban (Bluetooth és eszközök), ellenőrizze a repülőgépes üzemmódot, és próbálja újra."
     },
     "ota": {
       "current": "Firmware {{current}}",

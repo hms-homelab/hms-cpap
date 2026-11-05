@@ -238,15 +238,17 @@ If your computer has Bluetooth and you own an AirSense 11 or an AirCurve 11,
 you do not need a bridge at all: hms-cpap connects to the machine directly and
 shows your nights live. The machine has its own Bluetooth, and hms-cpap
 becomes the device it talks to. The computer has to be in range of the
-machine and awake at night: one that sleeps drops the live night until it
-wakes (the day's summary is still read afterwards).
+machine. While a night streams, hms-cpap keeps the computer from going to
+sleep on its own (the screen can still turn off), and lets it sleep again when
+the night ends. A computer put to sleep by hand, or a closed laptop, drops the
+live night until it wakes; the day's summary is still read afterwards.
 
 Which downloads have it:
 
 | Download | Bluetooth |
 |---|---|
-| macOS (the `.dmg`) | Yes, through the Mac's own Bluetooth. The first time, macOS asks whether CpapDash may use Bluetooth: allow it (System Settings, Privacy & Security, Bluetooth, if you said no). |
-| Windows (installer or zip) | Yes, Windows 10 or 11 with Bluetooth LE. Switch Bluetooth on in Settings, Bluetooth & devices. No Windows pairing is involved. |
+| macOS (the `.dmg`) | Yes, through the Mac's own Bluetooth. The first time, macOS asks whether CpapDash may use Bluetooth: allow it (System Settings, Privacy & Security, Bluetooth, if you said no). If Bluetooth is off, switch it on: macOS does not let an app do that. |
+| Windows (installer or zip) | Yes, Windows 10 or 11 with Bluetooth LE. If Bluetooth is off, hms-cpap switches it on. Use the Bluetooth adapter maker's own driver: on some adapters (a Realtek combo, for one) Windows' generic driver finds the device but never connects to it. No Windows pairing is involved. |
 | Docker image, Home Assistant add-on | Yes, through the host's BlueZ: give the container the host's D-Bus, see the Docker section. |
 | Raspberry Pi zip | Yes, through BlueZ. |
 | Built from source on Linux | Only with `-DBUILD_WITH_BLE=ON` (needs libsdbus-c++). |

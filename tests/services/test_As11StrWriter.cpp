@@ -1,9 +1,12 @@
 #include <gtest/gtest.h>
 
+#include "parsers/CpapdashBridge.h"
+#include "services/AirSense11Pull.h"
 #include "services/As11NightWriter.h"
 #include "services/As11StrWriter.h"
 #include "services/StrLayouts.h"
 
+#include <cpapdash/parser/AirSense11Summary.h>
 #include <cpapdash/parser/EDFWriter.h>
 
 #include <chrono>
@@ -433,6 +436,40 @@ TEST_F(StrAppend, SettingsAreWrittenOnTheDaysFromTheDayTheyWereApplied) {
     for (size_t i : {2u, 3u}) {
         EXPECT_EQ(sample(record(after, header, i), kModeAt), 1) << "day " << i;          // AutoSet
         EXPECT_EQ(sample(record(after, header, i), kMinPressAt), 80) << "day " << i;     // 8.0 cmH2O
+    }
+}
+
+// The settings reach the database as a card's do: the Summary's days (no
+// settings) take them from the STR this writer laid out, read back by the
+// card's own STR parser. A day before the settings were applied keeps none.
+TEST_F(StrAppend, ABluetoothDayAndACardDayOfTheSameNightReadTheSameSettings) {
+    putSettings(root_, settingsFile(8.0));
+    const std::vector<Bytes> days = {summaryDay(0, 400), summaryDay(1, 410), summaryDay(2, 420), summaryDay(3, 430)};
+    summary("2026-03-01", days);
+    ASSERT_TRUE(run().written);
+
+    Bytes spool;
+    for (const auto& d : days) append(spool, d);
+    using cpapdash::parser::AirSense11SummaryParser;
+    auto bluetooth = AirSense11SummaryParser::toStrRecords(AirSense11SummaryParser::parse(spool.data(), spool.size()),
+                                                           "cpap_test");
+    ASSERT_EQ(bluetooth.size(), 4u);
+    const auto card = EDFParser::parseSTRFile(str_.string(), "cpap_test");
+    ASSERT_EQ(card.size(), 4u);
+
+    EXPECT_EQ(AirSense11Pull::withStrSettings(bluetooth, card), 2);
+    for (size_t i : {0u, 1u}) {   // 1 and 2 March: before the settings were applied
+        EXPECT_EQ(bluetooth[i].mode, 0) << "day " << i;
+        EXPECT_EQ(bluetooth[i].family, STRDailyRecord::Family::Unknown) << "day " << i;
+    }
+    for (size_t i : {2u, 3u}) {   // 3 and 4 March: as the card parser reads them
+        EXPECT_EQ(bluetooth[i].mode, 1) << "day " << i;   // AutoSet
+        EXPECT_EQ(bluetooth[i].mode, card[i].mode);
+        EXPECT_EQ(bluetooth[i].epr_level, card[i].epr_level);
+        EXPECT_EQ(bluetooth[i].pressure_setting, card[i].pressure_setting);
+        EXPECT_EQ(bluetooth[i].max_pressure, card[i].max_pressure);
+        EXPECT_EQ(bluetooth[i].min_pressure, card[i].min_pressure);
+        EXPECT_EQ(bluetooth[i].family, card[i].family);
     }
 }
 

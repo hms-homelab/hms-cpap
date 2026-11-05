@@ -5,6 +5,7 @@
 #include "parsers/CpapdashBridge.h"
 
 #include <chrono>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -59,6 +60,23 @@ public:
     /** The first pull's `from`: everything the machine keeps. */
     static constexpr const char* kFromTheBeginning = "2000-01-01";
 
+    /**
+     * Where the machine's STR.edf is ("" when there is none): the one written
+     * from the Summary days and the machine's settings, read over Bluetooth.
+     * With it, a day is stored with the settings its STR record carries.
+     */
+    void setStrPathProvider(std::function<std::string()> provider) { str_path_ = std::move(provider); }
+
+    /**
+     * The settings fields (mode, EPR, pressures, family, the bi-level and ASV
+     * settings) of each day's STR record, parsed by the card's own STR parser,
+     * onto the Summary's day of the same calendar date. So a Bluetooth day and
+     * a card day of the same night read the same. A day whose STR record has
+     * no Mode (-1: before the settings were read) keeps what it had. Returns
+     * the days given settings.
+     */
+    static int withStrSettings(std::vector<STRDailyRecord>& days, const std::vector<STRDailyRecord>& str);
+
 private:
     std::shared_ptr<IAirSense11Client> client_;
     std::shared_ptr<IDatabase>         db_;
@@ -67,6 +85,7 @@ private:
     std::string                        from_ = kFromTheBeginning;
     bool                               pulled_once_ = false;
     Clock::time_point                  last_pull_{};
+    std::function<std::string()>       str_path_;
 };
 
 } // namespace hms_cpap

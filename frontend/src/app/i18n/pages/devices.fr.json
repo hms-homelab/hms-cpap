@@ -331,7 +331,7 @@
       "errGeneric": "L'appairage a échoué. Recommencez.",
       "errRadioOff": "Le Bluetooth est désactivé sur cet ordinateur (rf-kill). Activez-le, ou lancez rfkill unblock bluetooth, puis réessayez.",
       "errRadioOffMac": "Le Bluetooth est désactivé sur ce Mac, ou CpapDash n'est pas autorisé à l'utiliser. Activez-le, autorisez CpapDash dans Réglages Système, Confidentialité et sécurité, Bluetooth, puis réessayez.",
-      "errRadioOffWin": "Le Bluetooth est désactivé sur ce PC. Activez-le dans Paramètres, Bluetooth et appareils (et vérifiez le mode Avion), puis réessayez."
+      "errRadioOffWin": "Le Bluetooth est désactivé sur ce PC et Windows n'a pas laissé CpapDash l'activer. Activez-le dans Paramètres, Bluetooth et appareils (et vérifiez le mode Avion), puis réessayez."
     },
     "ota": {
       "current": "Firmware {{current}}",

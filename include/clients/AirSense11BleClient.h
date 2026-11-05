@@ -61,6 +61,11 @@ public:
     bool busy() const override;
 
     static constexpr int kScanMs = 15000;
+    /// The Summary pull that follows a night: the machine may not advertise for
+    /// a while after the stream ends (Windows was seen holding the link), so
+    /// the scan stays open until its advert arrives. It returns the moment it
+    /// does; this only bounds the wait.
+    static constexpr int kAfterNightScanMs = 180000;
     static constexpr int kConnectMs = 15000;
 
     /// The live night (SDD-057 step 4): a thread that stays connected while
@@ -128,7 +133,10 @@ private:
     as11::Result link_failure_ = as11::Result::Connect;
 
     bool scan(int timeout_ms);
-    bool connectLink(int timeout_ms);
+    bool connectLink(int timeout_ms, int scan_ms = kScanMs);
+    // Set when a night's stream ends: the next Summary pull waits for the
+    // machine's advert instead of giving up after one short scan.
+    std::atomic<bool> after_night_{false};
     void dropLink();
     bool writeFrame(const std::vector<uint8_t>& frame);
     void note(const std::string& what);

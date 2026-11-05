@@ -165,6 +165,24 @@ std::string strLayoutDir(const std::string& data_dir) {
     return (fs::path(data_dir) / "str-layouts").string();
 }
 
+std::string newestBluetoothStr(const std::string& data_dir) {
+    std::error_code ec;
+    fs::path newest;
+    fs::file_time_type newest_time{};
+    for (const auto& entry : fs::directory_iterator(fs::path(data_dir) / "as11", ec)) {
+        std::error_code fec;
+        const auto str = entry.path() / "STR.edf";
+        if (!entry.is_directory(fec) || !fs::is_regular_file(str, fec)) continue;
+        const auto t = fs::last_write_time(str, fec);
+        if (fec) continue;
+        if (newest.empty() || t > newest_time) {
+            newest = str;
+            newest_time = t;
+        }
+    }
+    return newest.string();
+}
+
 std::vector<uint8_t> strLayoutFor(int product_code, const std::string& layout_dir) {
     if (!layout_dir.empty()) {
         auto own = readAll(fs::path(layout_dir) / (std::to_string(product_code) + ".edfh"));

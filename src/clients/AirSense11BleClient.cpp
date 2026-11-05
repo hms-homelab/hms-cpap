@@ -1,6 +1,7 @@
 #include "clients/AirSense11BleClient.h"
 #include "services/As11Settings.h"
 #include "services/As11StrWriter.h"
+#include "utils/KeepAwake.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -108,7 +109,9 @@ bool AirSense11BleClient::scan(int timeout_ms) {
     };
     auto take = [this](const ble::Device& d) {
         device_ = d;
-        if (device_.name.empty()) device_.name = "<unnamed AirSense 11>";
+        // An advert without its name (matched by the machine's service): the
+        // name it had when it was paired, which is the same machine.
+        if (device_.name.empty()) device_.name = machine_name_.empty() ? "<unnamed AirSense 11>" : machine_name_;
         have_device_ = true;
     };
 
@@ -136,12 +139,12 @@ bool AirSense11BleClient::scan(int timeout_ms) {
     return found;
 }
 
-bool AirSense11BleClient::connectLink(int timeout_ms) {
+bool AirSense11BleClient::connectLink(int timeout_ms, int scan_ms) {
     if (!transport_ || !transport_->available()) {
         note("no Bluetooth adapter");
         return false;
     }
-    if (!scan(kScanMs)) return false;
+    if (!scan(scan_ms)) return false;
 
     auto attempt = [this, timeout_ms] {
         ble::LinkHandlers handlers;
@@ -239,7 +242,12 @@ std::vector<uint8_t> AirSense11BleClient::fetchSummary(const std::string& from) 
         note("not paired with the machine yet");
         return {};
     }
-    if (!connectLink(kConnectMs)) return {};
+    // After a night the machine can be silent for a while: wait for its
+    // advert rather than giving the night's Summary up after one short scan.
+    const bool after_night = after_night_.load();
+    if (after_night) std::cout << kTag << "the night ended: waiting for the machine to advertise for its summary" << std::endl;
+    if (!connectLink(kConnectMs, after_night ? kAfterNightScanMs : kScanMs)) return {};
+    after_night_ = false;
 
     std::vector<uint8_t> out;
     std::string serial, ident;
@@ -457,17 +465,24 @@ bool AirSense11BleClient::streamOnce() {
     }
     std::cout << kTag << "streaming the night from " << device_.name << std::endl;
     if (live_.therapy) live_.therapy(serial, true);
-    uint64_t last = reports_;
-    auto last_progress = std::chrono::steady_clock::now();
-    while (running_ && therapy_ && session_.connected()) {
-        {
-            std::unique_lock<std::mutex> lk(wake_mtx_);
-            wake_.wait_for(lk, std::chrono::seconds(1));
-        }
-        if (reports_ != last) { last = reports_; last_progress = std::chrono::steady_clock::now(); }
-        else if (std::chrono::steady_clock::now() - last_progress > std::chrono::milliseconds(kStallMs)) {
-            note("the stream stalled");
-            break;
+    {
+        // The computer stays awake while the night streams, and only then: a
+        // computer that idle-sleeps drops the link. Released as this block
+        // ends, when the stream ends or the link drops; on the same thread,
+        // which Windows requires.
+        KeepAwake awake("a night streams from the AirSense 11");
+        uint64_t last = reports_;
+        auto last_progress = std::chrono::steady_clock::now();
+        while (running_ && therapy_ && session_.connected()) {
+            {
+                std::unique_lock<std::mutex> lk(wake_mtx_);
+                wake_.wait_for(lk, std::chrono::seconds(1));
+            }
+            if (reports_ != last) { last = reports_; last_progress = std::chrono::steady_clock::now(); }
+            else if (std::chrono::steady_clock::now() - last_progress > std::chrono::milliseconds(kStallMs)) {
+                note("the stream stalled");
+                break;
+            }
         }
     }
     const bool still_up = session_.connected();
@@ -479,6 +494,7 @@ bool AirSense11BleClient::streamOnce() {
     if (live_.therapy) live_.therapy(serial, false);
     dropLink();
     std::cout << kTag << "the night's stream ended" << (still_up ? "" : " (the machine let go)") << std::endl;
+    after_night_ = true;
     op.unlock();
     if (night_ended_) night_ended_();
     return true;

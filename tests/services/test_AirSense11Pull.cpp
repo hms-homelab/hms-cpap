@@ -191,6 +191,80 @@ TEST_F(AirSense11PullTest, TheSameDayAgainIsAnUpsertNotASecondRow) {
     EXPECT_DOUBLE_EQ(num(rows[0u]["duration_minutes"]), 420);
 }
 
+// ── the settings, from the machine's STR, onto the Summary's days ──────────
+
+namespace {
+STRDailyRecord dayAt(uint64_t noon_ms) {
+    STRDailyRecord r;
+    r.device_id = "AS11-TEST";
+    r.record_date = std::chrono::system_clock::time_point(std::chrono::milliseconds(noon_ms));
+    r.duration_minutes = 400;
+    return r;
+}
+}  // namespace
+
+TEST(AirSense11PullSettings, EverySettingsFieldComesFromTheStrRecordOfTheSameDay) {
+    // A bi-level ASV card record, so every settings field is carried.
+    STRDailyRecord card = dayAt(kNoon);
+    card.mode = 8;
+    card.epr_level = 2;
+    card.pressure_setting = 9.5;
+    card.max_pressure = 20;
+    card.min_pressure = 5;
+    card.family = STRDailyRecord::Family::Asv;
+    card.bl_max_ipap = 18; card.bl_min_epap = 6; card.bl_ps = 4; card.bl_ipap = 14; card.bl_epap = 7;
+    card.asv_start_press = 6; card.asv_epap = 7; card.asv_max_ps = 12; card.asv_min_ps = 3;
+    card.asvauto_min_epap = 5; card.asvauto_max_epap = 11;
+    card.duration_minutes = 999;   // not a setting: the Summary's own stays
+
+    std::vector<STRDailyRecord> days{dayAt(kNoon)};
+    EXPECT_EQ(AirSense11Pull::withStrSettings(days, {card}), 1);
+    const auto& d = days[0];
+    EXPECT_EQ(d.mode, card.mode);
+    EXPECT_EQ(d.epr_level, card.epr_level);
+    EXPECT_EQ(d.pressure_setting, card.pressure_setting);
+    EXPECT_EQ(d.max_pressure, card.max_pressure);
+    EXPECT_EQ(d.min_pressure, card.min_pressure);
+    EXPECT_EQ(d.family, card.family);
+    EXPECT_EQ(d.bl_max_ipap, card.bl_max_ipap);
+    EXPECT_EQ(d.bl_min_epap, card.bl_min_epap);
+    EXPECT_EQ(d.bl_ps, card.bl_ps);
+    EXPECT_EQ(d.bl_ipap, card.bl_ipap);
+    EXPECT_EQ(d.bl_epap, card.bl_epap);
+    EXPECT_EQ(d.asv_start_press, card.asv_start_press);
+    EXPECT_EQ(d.asv_epap, card.asv_epap);
+    EXPECT_EQ(d.asv_max_ps, card.asv_max_ps);
+    EXPECT_EQ(d.asv_min_ps, card.asv_min_ps);
+    EXPECT_EQ(d.asvauto_min_epap, card.asvauto_min_epap);
+    EXPECT_EQ(d.asvauto_max_epap, card.asvauto_max_epap);
+    EXPECT_EQ(d.duration_minutes, 400) << "only settings are taken";
+}
+
+TEST(AirSense11PullSettings, ADayBeforeTheSettingsWereReadKeepsNone) {
+    STRDailyRecord before = dayAt(kNoon);
+    before.mode = -1;   // the STR's "not set": before the settings were read
+    STRDailyRecord after = dayAt(kNoon + kDay);
+    after.mode = 1;
+    after.epr_level = 3;
+    std::vector<STRDailyRecord> days{dayAt(kNoon), dayAt(kNoon + kDay), dayAt(kNoon + 2 * kDay)};
+    EXPECT_EQ(AirSense11Pull::withStrSettings(days, {before, after}), 1);
+    EXPECT_EQ(days[0].mode, 0);
+    EXPECT_EQ(days[0].epr_level, 0);
+    EXPECT_EQ(days[1].mode, 1);
+    EXPECT_EQ(days[1].epr_level, 3);
+    EXPECT_EQ(days[2].mode, 0) << "no STR record for that day";
+}
+
+TEST_F(AirSense11PullTest, WithoutAnStrThePullStoresTheDaysAsBefore) {
+    bridge_->answer = day(kNoon + kDay, 412);
+    AirSense11Pull pull(bridge_, db_, "AS11-TEST", std::chrono::hours(6));
+    pull.setStrPathProvider([] { return std::string(); });
+    EXPECT_EQ(pull.pullNow().written, 1);
+    pull.setStrPathProvider([] { return std::string("/nonexistent/STR.edf"); });
+    EXPECT_EQ(pull.pullNow().written, 1);
+    EXPECT_EQ(days(), 1);
+}
+
 TEST(AirSense11PullFrom, TwoDaysBeforeTheNewestDay) {
     STRDailyRecord a, b;
     a.record_date = std::chrono::system_clock::time_point(std::chrono::milliseconds(kNoon));

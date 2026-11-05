@@ -41,6 +41,31 @@ std::string normalizeUuid(const std::string& uuid) {
     return s;
 }
 
+RadioStatus switchOn(const RadioSwitchOps& ops, const std::string& advice) {
+    RadioStatus s;
+    s.state = ops.state ? ops.state() : Radio::Failed;
+    if (s.state != Radio::Off) return s;
+    s.detail = advice;
+    const std::string denied = ops.request_access ? ops.request_access() : "not possible here";
+    if (!denied.empty()) {
+        s.detail = advice + " (the system would not let CpapDash switch it on: " + denied + ")";
+        return s;
+    }
+    const std::string failed = ops.switch_on ? ops.switch_on() : "not possible here";
+    if (!failed.empty()) {
+        s.detail = advice + " (switching it on failed: " + failed + ")";
+        return s;
+    }
+    s.state = ops.state ? ops.state() : Radio::Failed;
+    if (s.state == Radio::Ready) {
+        s.switched_on = true;
+        s.detail.clear();
+    } else if (s.state == Radio::Off) {
+        s.detail = advice + " (it was asked to switch on and is still off)";
+    }
+    return s;
+}
+
 bool compiled() {
 #ifdef WITH_BLE
     return true;

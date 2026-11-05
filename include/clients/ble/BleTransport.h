@@ -56,7 +56,22 @@ struct RadioStatus {
     Radio state = Radio::Failed;
     std::string detail;    // for the log and lastError(): the OS's own advice when there is one
     std::string adapter;   // the adapter's name or path, when there is one
+    bool switched_on = false;   // this call switched the radio on
 };
+
+/// Switching a radio that is off on, where the OS lets this process: Linux
+/// (BlueZ, BlueZAdapter.h) and Windows. macOS has no public way for an
+/// unbundled process, so it keeps the advice. Every callback may be missing;
+/// a missing one reads as "cannot".
+struct RadioSwitchOps {
+    std::function<Radio()> state;                 // as it reads now
+    std::function<std::string()> request_access;  // "" allowed, else why not
+    std::function<std::string()> switch_on;       // "" done, else why not
+};
+
+/// Off: ask for access, switch it on, read it again. Anything other than Off
+/// is returned as it is. `advice` is the detail when it stays off.
+RadioStatus switchOn(const RadioSwitchOps& ops, const std::string& advice);
 
 /// Why connect() gave no link.
 enum class LinkError { None, Connect, Resolve, NoCharacteristics, Notify };

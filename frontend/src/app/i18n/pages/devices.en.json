@@ -331,7 +331,7 @@
       "errGeneric": "Pairing failed. Start again.",
       "errRadioOff": "Bluetooth is switched off on this computer (rf-kill). Switch it on, or run rfkill unblock bluetooth, and try again.",
       "errRadioOffMac": "Bluetooth is off on this Mac, or CpapDash is not allowed to use it. Switch it on, allow CpapDash in System Settings, Privacy & Security, Bluetooth, and try again.",
-      "errRadioOffWin": "Bluetooth is switched off on this PC. Switch it on in Settings, Bluetooth & devices (and check airplane mode), and try again."
+      "errRadioOffWin": "Bluetooth is switched off on this PC and Windows would not let CpapDash switch it on. Switch it on in Settings, Bluetooth & devices (and check airplane mode), and try again."
     },
     "ota": {
       "current": "Firmware {{current}}",

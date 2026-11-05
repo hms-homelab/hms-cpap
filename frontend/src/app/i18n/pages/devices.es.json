@@ -331,7 +331,7 @@
       "errGeneric": "No se pudo emparejar. Empieza de nuevo.",
       "errRadioOff": "El Bluetooth está apagado en este equipo (rf-kill). Enciéndelo, o ejecuta rfkill unblock bluetooth, e inténtalo de nuevo.",
       "errRadioOffMac": "El Bluetooth está apagado en este Mac, o CpapDash no tiene permiso para usarlo. Enciéndelo, permite CpapDash en Ajustes del Sistema, Privacidad y seguridad, Bluetooth, e inténtalo de nuevo.",
-      "errRadioOffWin": "El Bluetooth está apagado en este PC. Enciéndelo en Configuración, Bluetooth y dispositivos (y revisa el modo avión), e inténtalo de nuevo."
+      "errRadioOffWin": "El Bluetooth está apagado en este PC y Windows no dejó que CpapDash lo encendiera. Enciéndelo en Configuración, Bluetooth y dispositivos (y revisa el modo avión), e inténtalo de nuevo."
     },
     "ota": {
       "current": "Firmware {{current}}",
