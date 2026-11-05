@@ -22,11 +22,16 @@
   "upload": {
     "title": "Adatok feltöltése",
     "zip": {
-      "heading": "CPAP-adatok (.zip)",
-      "hint": "Töltsön fel egy zipet az SD-kártyájáról: ResMed (a DATALOG mappái), Sefam S.Box, Löwenstein Prisma vagy BMC / React Health Luna. A kártyát a fájljai alapján ismerjük fel, és minden még nem tárolt éjszakát automatikusan hozzáadunk és feldolgozunk.",
-      "idle": "Húzzon ide egy .zip fájlt, vagy kattintson a kiválasztáshoz",
+      "heading": "CPAP-adatok (.zip vagy .cpapcard)",
+      "hint": "Töltsön fel egy zipet az SD-kártyájáról: ResMed (a DATALOG mappái), Sefam S.Box, Löwenstein Prisma vagy BMC / React Health Luna. A kártyát a fájljai alapján ismerjük fel, és minden még nem tárolt éjszakát automatikusan hozzáadunk és feldolgozunk. A CpapDash Desktop .cpapcard fájlja (Exportálás a HMS CPAP számára) az ide küldő Sleep Bridge-nek a kártya szerkezetét is megtanítja.",
+      "idle": "Húzzon ide egy .zip vagy .cpapcard fájlt, vagy kattintson a kiválasztáshoz",
       "uploading": "Feltöltés...",
-      "imported": "{{count}} éjszaka importálva"
+      "imported": "{{count}} éjszaka importálva",
+      "layoutKept": "A kártya szerkezete elmentve: {{count}} Sleep Bridge használja.",
+      "layoutKeptNoBridge": "A kártya szerkezete elmentve. A következő ide csatlakozó Sleep Bridge használja.",
+      "layoutOff": "A kártya szerkezete elmentve a Sleep Bridge számára, amely a Beállításokban ki van kapcsolva.",
+      "layoutRefused": "A kártya szerkezete nincs elmentve: {{error}} Az éjszakái így is importálódnak.",
+      "layoutNotTaken": "{{sender}} nem használja: {{reason}}"
     },
     "oxi": {
       "heading": "O2Ring oximetriai adatok (.csv vagy .vld)",

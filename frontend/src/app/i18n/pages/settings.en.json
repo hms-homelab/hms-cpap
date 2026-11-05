@@ -138,7 +138,16 @@
       "jobRestarting": "The bridge took the image and is restarting. Waiting for it to come back...",
       "jobDone": "Done. The bridge runs {{version}}.",
       "jobFailed": "Not updated: {{error}}",
-      "errGeneric": "The update could not be started."
+      "errGeneric": "The update could not be started.",
+      "learned": "Learned card",
+      "verdict": {
+        "waiting": "waiting",
+        "latched": "ready for therapy",
+        "mismatch": "learn again",
+        "not_used": "not used"
+      },
+      "learnedWaitingHint": "Turn your machine on, put the mask on and breathe normally for 2 minutes, then take it off. The bridge then confirms the card.",
+      "learnedMismatchHint": "This bridge sees another card. Learn the card that is in it again with CpapDash Desktop (Export for HMS CPAP) and upload the new file on the Upload page."
     },
     "sleephq": {
       "heading": "SleepHQ Sync",

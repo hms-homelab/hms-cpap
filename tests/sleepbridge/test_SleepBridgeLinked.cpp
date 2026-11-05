@@ -261,4 +261,139 @@ TEST(SleepBridgeLinked, ACardStatementsLayoutIsTestedWhenTheStreamBeganAfterTheM
     EXPECT_EQ(kept->cid, "0123456789abcdef0123456789abcdef");
 }
 
+// ── SDD-061: a card learned on a computer ───────────────────────────────────
+//
+// The same card, with a night folder the machine made before the bridge was
+// there: DATALOG (cluster 3) holds 20261101 (cluster 4). The learn carries the
+// boot sector, FAT #1, the root, DATALOG and 20261101. Tonight the machine
+// writes NOTE.TXT (cluster 6) into 20261101: the FAT, that folder's sector and
+// the file's two sectors, and nothing above it. Without the learn, nothing in
+// the stream says where 20261101 is.
+
+namespace {
+
+constexpr uint32_t kDatalogLba = 1000 + (3 - 2) * 8;
+constexpr uint32_t kNightLba   = 1000 + (4 - 2) * 8;
+constexpr uint32_t kNoteLba    = 1000 + (6 - 2) * 8;
+
+std::string learnedFat(bool with_note) {
+    std::string s = fatPage();
+    le32(s, 4 * 4, 0x0FFFFFFF);                  // 20261101, one cluster
+    if (with_note) le32(s, 6 * 4, 0x0FFFFFFF);   // NOTE.TXT, one cluster
+    return s;
+}
+
+std::string datalogSector() {
+    std::string s(kSectorSize, '\0');
+    dirEntry(s, 0, ".          ", 0x10, 3, 0);
+    dirEntry(s, 32, "..         ", 0x10, 0, 0);
+    dirEntry(s, 64, "20261101   ", 0x10, 4, 0);
+    return s;
+}
+
+std::string nightSector(bool with_note) {
+    std::string s(kSectorSize, '\0');
+    dirEntry(s, 0, ".          ", 0x10, 4, 0);
+    dirEntry(s, 32, "..         ", 0x10, 3, 0);
+    if (with_note) dirEntry(s, 64, "NOTE    TXT", 0x20, 6, kFileLen);
+    return s;
+}
+
+std::string learnedPayload() {
+    Json::Value st(Json::objectValue);
+    st["fat"]                 = "fat32";
+    st["volume_serial"]       = "00000000";
+    st["machine_serial"]      = "";
+    st["brand"]               = "resmed";
+    st["boot_sha256"]         = sha256HexOf(bootSector());
+    st["partition_lba"]       = 0;
+    st["sectors_per_cluster"] = 8;
+    st["data_begin_lba"]      = 1000;
+    st["root_cluster"]        = 2;
+    Json::Value roots(Json::arrayValue);
+    roots.append(kRootLba);
+    st["root_dir_lbas"]   = roots;
+    st["fat_begin_lba"]   = 100;
+    st["desktop_version"] = "1.2.0";
+    st["read_at"]         = "2026-11-01T22:10:00Z";
+    st["nights"]          = 1;
+    return encodeCbl1(st, {{0, bootSector()},
+                           {100, learnedFat(false)},
+                           {kRootLba, rootSector()},
+                           {kDatalogLba, datalogSector()},
+                           {kNightLba, nightSector(false)}});
+}
+
+/// Tonight's writes into the folder the learn knows, no boot sector.
+void streamNote(SleepBridgeService& svc, uint32_t session, char fill) {
+    auto c = svc.open({kSender, "", ""});
+    svc.apply(kSender, c->onText(R"({"t":"hello","state":{}})"));
+    const std::string body(kSectorSize, fill);
+    svc.apply(kSender, c->onBinary(frame(0, records("CYS1", seqOf(session, 1),
+                                                     {{100, learnedFat(true)},
+                                                      {550, learnedFat(true)},
+                                                      {kNightLba, nightSector(true)},
+                                                      {kNoteLba, body},
+                                                      {kNoteLba + 1, body}}))));
+    svc.closed(*c);
+}
+
+Json::Value bridgeOf(SleepBridgeService& svc) {
+    const Json::Value status = svc.status();
+    return status["bridges"][0];
+}
+
+}  // namespace
+
+TEST(SleepBridgeLinked, TheLearnedCardPlacesAFileInAFolderTheStreamNeverShowed) {
+    TempDir t;
+    SleepBridgeService svc({t.path.string(), kDefaultPort, 0.01}, linkedFactory());
+    const auto a = svc.learnCard(learnedPayload(), "card.cpapcard");
+    ASSERT_EQ(a.status, 201) << a.body.toStyledString();
+
+    streamNote(svc, 1, 'N');
+    const auto r = svc.rebuildNow(kSender);
+    EXPECT_EQ(r.learned_fed, 5);
+    EXPECT_EQ(slurp(t.path / kSender / "DATALOG/20261101/NOTE.TXT"), std::string(kFileLen, 'N'));
+
+    const auto b = bridgeOf(svc);
+    EXPECT_FALSE(b["rebuild"]["holding"].asBool());
+    EXPECT_EQ(b["rebuild"]["geometry"]["layout"].asString(), "8:1000");
+    EXPECT_EQ(b["learned"]["state"].asString(), "fed");
+    EXPECT_EQ(b["learned"]["verdict"].asString(), "latched") << b["learned"]["reason"].asString();
+
+    // A restart: the learn goes first again and the same file comes out.
+    fs::remove(t.path / kSender / "DATALOG/20261101/NOTE.TXT");
+    SleepBridgeService again({t.path.string(), kDefaultPort, 0.01}, linkedFactory());
+    again.rebuildNow(kSender);
+    EXPECT_EQ(slurp(t.path / kSender / "DATALOG/20261101/NOTE.TXT"), std::string(kFileLen, 'N'));
+}
+
+TEST(SleepBridgeLinked, WithoutTheLearnTheSameStreamDoesNotPlaceTheFile) {
+    TempDir t;
+    SleepBridgeService svc({t.path.string(), kDefaultPort, 0.01}, linkedFactory());
+    streamNote(svc, 1, 'N');
+    svc.rebuildNow(kSender);
+    EXPECT_FALSE(fs::exists(t.path / kSender / "DATALOG/20261101/NOTE.TXT"));
+}
+
+TEST(SleepBridgeLinked, ABootSectorOfAnotherCardWinsOverTheLearn) {
+    TempDir t;
+    SleepBridgeService svc({t.path.string(), kDefaultPort, 0.01}, linkedFactory());
+    ASSERT_EQ(svc.learnCard(learnedPayload(), "card.cpapcard").status, 201);
+
+    // The machine mounts a card of 16 sectors a cluster: another card.
+    std::string other = bootSector();
+    other[13]         = 16;
+    auto c = svc.open({kSender, "", ""});
+    svc.apply(kSender, c->onText(R"({"t":"hello","state":{}})"));
+    svc.apply(kSender, c->onBinary(frame(0, records("CYR1", seqOf(1, 1), {{0, other}}))));
+    svc.closed(*c);
+    svc.rebuildNow(kSender);
+
+    const auto b = bridgeOf(svc);
+    EXPECT_EQ(b["rebuild"]["geometry"]["layout"].asString(), "16:1000");
+    EXPECT_EQ(b["learned"]["verdict"].asString(), "mismatch") << b["learned"]["reason"].asString();
+}
+
 #endif  // HMS_WITH_SLEEPBRIDGE

@@ -5,6 +5,15 @@ import { CpapApiService } from '../../services/cpap-api.service';
 
 type ZoneState = 'idle' | 'uploading' | 'processing' | 'complete' | 'error';
 
+/** What became of a .cpapcard's card layout (the upload's `card_layout`). */
+interface CardLayoutResult {
+  error?: string;
+  stored?: boolean;
+  /** Set when the Sleep Bridge is off: kept for later. */
+  message?: string;
+  bridges?: { sender: string; applied: boolean; reason?: string }[];
+}
+
 @Component({
   selector: 'app-upload',
   standalone: true,
@@ -19,6 +28,7 @@ export class UploadComponent implements OnDestroy {
   zipError = '';
   zipDates: string[] = [];
   zipStatusText = '';
+  layout: CardLayoutResult | null = null;
   private pollTimer: any = null;
 
   // O2Ring CSV
@@ -51,9 +61,11 @@ export class UploadComponent implements OnDestroy {
     this.zipState = 'uploading';
     this.zipError = '';
     this.zipDates = [];
+    this.layout = null;
     this.api.uploadCpapZip(file).subscribe({
       next: (res) => {
         this.zipDates = res?.dates ?? [];
+        this.layout = res?.card_layout ?? null;
         this.zipState = 'processing';
         this.zipStatusText = `Added ${this.zipDates.length} night(s); parsing...`;
         this.pollBackfill();
@@ -63,6 +75,16 @@ export class UploadComponent implements OnDestroy {
         this.zipError = err.error?.error || 'Upload failed.';
       }
     });
+  }
+
+  /** How many Sleep Bridges took the card's layout. */
+  layoutTaken(): number {
+    return (this.layout?.bridges ?? []).filter((b) => b.applied).length;
+  }
+
+  /** The bridges that did not, each with the server's reason. */
+  layoutRefusedBy() {
+    return (this.layout?.bridges ?? []).filter((b) => !b.applied);
   }
 
   private pollBackfill() {

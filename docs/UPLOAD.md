@@ -48,6 +48,17 @@ Wired only when an archive (`config.local_dir`) is configured. The handler:
 **Upload the card ROOT**, the folder holding both `STR.edf` and `DATALOG`. That
 is the layout SDD-010 pins and the one this handler expects.
 
+**A `.cpapcard`** (CpapDash Desktop's Export for HMS CPAP, SDD-061) is such a
+zip with the card's layout in a `baseline.cbl1` entry. Before the card is
+queued, the handler reads that entry (`readCardLayout`, `services/CpapCard.h`;
+over 32 MB unpacked is refused before it is inflated), and hands it to the
+Sleep Bridge, which checks it by content and keeps it
+(`docs/SLEEP_BRIDGE_LOCAL_STREAM.md`, "A card learned on a computer"). The
+reply gains `card_layout`: what was kept and which bridges take it, or
+`{error}` when it was refused; the nights import either way. The importer
+removes the entry from the extracted card before step 2, so it never reaches
+the archive.
+
 `STR.edf` is no longer out of scope: if it is in the zip it is archived at the
 card root and backfill picks it up, so the daily summary comes from the machine's
 own record instead of being derived from sessions. It used to be dropped silently

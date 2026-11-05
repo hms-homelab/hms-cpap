@@ -26,7 +26,19 @@
 // what they said last. When a later boot sector says otherwise, the boot
 // sector wins and the file is rewritten.
 //
+// A card learned on a computer (SDD-061, batches/learned.cbl1) goes in first,
+// on every fresh rebuilder, before the bank: each of its sectors as a READ
+// record at sequence 0, 1, 2, ..., which is bridge session 0, a session no
+// bridge streams (it counts from 1). That is the shape of a mount read, so
+// the rebuild trusts the learned boot sector's layout and keeps the learned
+// FAT and folders in its card, then tests the layout on each real session's
+// first writes. Every captured write outranks a learned sector (a higher
+// sequence), and a boot sector the stream reads wins over the learn. Not fed:
+// a FAT16 card (the rebuild reads FAT32), a learn whose layout differs from
+// one this bridge read from its own card, a bank that holds session 0.
+//
 #include "sleepbridge/BatchStore.h"
+#include "sleepbridge/LearnedCard.h"
 #include "sleepbridge/Rebuilder.h"
 
 #include <cstdint>
@@ -48,6 +60,7 @@ struct StepReport {
     int      records_fed{0};
     int      records_skipped{0};   // at or below what was already fed
     int      cards_fed{0};
+    int      learned_fed{0};       // learned sectors fed ahead of the bank (catch_up only)
     int      written{0};
     std::vector<std::string> written_paths;   // card-relative, as written this step
     int      removed{0};           // files replaced by their cut pieces
@@ -88,9 +101,12 @@ public:
     bool ready() const { return rebuilder_ != nullptr; }
     /// What batches/geometry.json holds (valid() false while nothing does).
     const RebuildGeometry& geometry() const { return geometry_; }
+    /// How this rebuilder used the learned card the bridge holds.
+    const LearnedUse& learned() const { return learned_; }
 
 private:
     void feedBatchFile(const std::string& path, StepReport& r);
+    void feedLearned();
 
     BatchStore&                 store_;
     std::string                 sender_;
@@ -100,6 +116,7 @@ private:
     std::optional<int64_t>      fed_through_;
     RebuildGeometry             geometry_;
     std::string                 held_json_;
+    LearnedUse                  learned_;
 };
 
 }  // namespace hms_cpap::sleepbridge

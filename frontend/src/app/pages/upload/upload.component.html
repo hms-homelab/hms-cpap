@@ -11,7 +11,7 @@
            (dragover)="$event.preventDefault(); zipDrag = true"
            (dragleave)="zipDrag = false"
            (drop)="onZipDrop($event)">
-      <input type="file" accept=".zip" hidden (change)="onZipPick($event)" />
+      <input type="file" accept=".zip,.cpapcard" hidden (change)="onZipPick($event)" />
       <ng-container [ngSwitch]="zipState">
         <span *ngSwitchCase="'idle'"><i class="fa-solid fa-folder-zip"></i> {{ 'upload.zip.idle' | translate }}</span>
         <span *ngSwitchCase="'uploading'"><i class="fa-solid fa-spinner fa-spin"></i> {{ 'upload.zip.uploading' | translate }}</span>
@@ -24,6 +24,29 @@
 
     <div class="dates" *ngIf="zipDates.length">
       {{ zipDates.join(', ') }}
+    </div>
+
+    <!-- A .cpapcard's layout, for a Sleep Bridge streaming here. The reasons
+         a bridge did not take it come from the server, English-only. -->
+    <div class="layout" *ngIf="layout as l">
+      <ng-container *ngIf="!l.error; else layoutRefused">
+        <p class="ok">
+          <i class="fa-solid fa-sd-card"></i>
+          <ng-container *ngIf="l.message; else layoutOn">{{ 'upload.zip.layoutOff' | translate }}</ng-container>
+          <ng-template #layoutOn>
+            {{ (layoutTaken() ? 'upload.zip.layoutKept' : 'upload.zip.layoutKeptNoBridge') | translate:{ count: layoutTaken() } }}
+          </ng-template>
+        </p>
+        <p class="hint" *ngFor="let b of layoutRefusedBy()">
+          {{ 'upload.zip.layoutNotTaken' | translate:{ sender: b.sender, reason: b.reason } }}
+        </p>
+      </ng-container>
+      <ng-template #layoutRefused>
+        <p class="err">
+          <i class="fa-solid fa-triangle-exclamation"></i>
+          {{ 'upload.zip.layoutRefused' | translate:{ error: l.error } }}
+        </p>
+      </ng-template>
     </div>
   </section>
 

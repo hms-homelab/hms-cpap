@@ -57,6 +57,7 @@ set(TEST_SOURCES
     database/test_EquipmentBackends.cpp
     database/test_OximetryBackends.cpp
     database/test_RemoveNightBackends.cpp
+    database/test_CpapCardBackends.cpp
     database/test_BilevelPressureBackends.cpp
     database/test_MySQLMigration.cpp
     database/test_CleaningBackends.cpp
@@ -139,6 +140,7 @@ set(TEST_SOURCES
     services/test_SefamIngestion.cpp
     services/test_BmcIngestion.cpp
     services/test_CardUpload.cpp
+    services/test_CpapCard.cpp
     services/test_SefamCardMirror.cpp
     services/test_BmcCardMirror.cpp
     integration/test_PrismaE2E.cpp
@@ -178,6 +180,7 @@ set(TEST_SOURCES
     sleepbridge/test_SleepBridgeCommands.cpp
     sleepbridge/test_SleepBridgeUpdate.cpp
     sleepbridge/test_SleepBridgeLive.cpp
+    sleepbridge/test_SleepBridgeLearnedCard.cpp
     # Empty unless BUILD_WITH_SLEEPBRIDGE linked the component.
     sleepbridge/test_SleepBridgeLinked.cpp
     # The Mule & Miner local stream: a fake unit through the receiver into
