@@ -507,7 +507,7 @@ void BurstCollectorService::initAirSense11() {
                           ? std::string()
                           : ", address " + app_config_->airsense11_ble.address)
                   << ", every " << hours << " h"
-                  << (client->paired() ? "" : ", not paired yet: pair it from Settings") << ")"
+                  << (client->paired() ? "" : ", not paired yet: pair it from the Devices page") << ")"
                   << std::endl;
         return;
 #else
@@ -1280,6 +1280,44 @@ void BurstCollectorService::reportCardHealth(long long now, bool answering) {
         card_health_said_at_ = now;
     }
     card_health_said_ = health;
+    std::lock_guard<std::mutex> lk(facts_mtx_);
+    card_facts_.last_attempt         = now;
+    card_facts_.answering            = answering;
+    card_facts_.last_answered        = card_last_answered_;
+    card_facts_.health               = health;
+    card_facts_.consecutive_failures = consecutive_failures_;
+}
+
+BurstCollectorService::CardFacts BurstCollectorService::cardFacts() const {
+    std::lock_guard<std::mutex> lk(facts_mtx_);
+    return card_facts_;
+}
+
+BurstCollectorService::As11Facts BurstCollectorService::as11Facts() const {
+    std::lock_guard<std::mutex> lk(facts_mtx_);
+    As11Facts f = as11_facts_;
+    f.pull_due  = as11_summary_due_.load();
+    return f;
+}
+
+bool BurstCollectorService::requestAs11Pull() {
+    // The config says whether a pull is set up; the worker, which owns the
+    // pull, runs it within a second (and skips it when there is none).
+    if (!app_config_) return false;
+    // Over this host's Bluetooth only in a Bluetooth build; else through a bridge.
+    const bool direct = app_config_->airsense11_ble.enabled && airSense11BleCompiled();
+    if (!direct && !app_config_->airsense11.enabled) return false;
+    as11_summary_due_ = true;
+    return true;
+}
+
+void BurstCollectorService::noteAs11Pull(const AirSense11Pull::Result& r) {
+    if (!r.asked) return;
+    std::lock_guard<std::mutex> lk(facts_mtx_);
+    as11_facts_.summary_at   = nowSeconds();
+    as11_facts_.days_written = r.written;
+    as11_facts_.error        = r.error;
+    if (!r.newest_day.empty()) as11_facts_.summary_day = r.newest_day;
 }
 
 bool BurstCollectorService::fileDoneOnRecord(const std::string& folder,
@@ -1883,7 +1921,7 @@ bool BurstCollectorService::executeBurstCycle() {
     // unchanged, and on a machine whose card cannot be read it finds nothing.
     if (airsense11_pull_) {
         try {
-            airsense11_pull_->run(std::chrono::steady_clock::now());
+            noteAs11Pull(airsense11_pull_->run(std::chrono::steady_clock::now()));
         } catch (const std::exception& e) {
             std::cerr << "AirSense11: Failed (non-fatal): " << e.what() << std::endl;
         }
@@ -3796,10 +3834,12 @@ void BurstCollectorService::runLoop() {
             reloadConfig();
 
             // SDD-057: a night's Bluetooth stream ended; its Summary day now.
+            // The same flag is a person's "Pull the summary now" (SDD-062).
             if (as11_summary_due_.exchange(false) && airsense11_pull_) {
                 try {
                     const auto r = airsense11_pull_->pullNow();
-                    std::cout << "AirSense11: after the night, " << r.written << " day(s) written"
+                    noteAs11Pull(r);
+                    std::cout << "AirSense11: a pull out of turn, " << r.written << " day(s) written"
                               << (r.error.empty() ? "" : " (" + r.error + ")") << std::endl;
                 } catch (const std::exception& e) {
                     std::cerr << "AirSense11: after-night pull failed (non-fatal): " << e.what() << std::endl;

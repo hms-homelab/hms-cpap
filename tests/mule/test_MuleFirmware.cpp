@@ -168,15 +168,16 @@ protected:
         svc_.reset();
         fs::remove_all(dir_);
     }
-    // The updater runs the job before start() returns, and waits little.
-    void updater(std::chrono::seconds reconnect_wait = std::chrono::seconds(2)) {
+    // The updater runs each step on the caller's thread: start() runs the
+    // first, and the unit's hello (or state) runs what follows.
+    void updater() {
         FirmwareUpdater::Options fo;
-        fo.manifest_url   = "https://fw.example.test/public/latest.json";
-        fo.async          = false;
-        fo.reconnect_wait = reconnect_wait;
-        fo.poll           = std::chrono::milliseconds(5);
-        up_               = std::make_unique<FirmwareUpdater>(*svc_, net_.transport(), fo);
+        fo.manifest_url = "https://fw.example.test/public/latest.json";
+        fo.async        = false;
+        fo.jobs_dir     = (dir_ / "ota").string();
+        up_             = std::make_unique<FirmwareUpdater>(*svc_, net_.transport(), fo);
     }
+    Json::Value ota() { return up_->ota(kUnit); }
     // What the unit does after it takes a mule image: restarts and comes
     // back here with the new version in its hello.
     void unitRestartsAs(const std::string& fw, const std::string& miner_fw, bool streaming = false) {
@@ -220,7 +221,7 @@ TEST(MuleFirmwareVersions, ManifestNeedsBothImages) {
 
 // ── the owner's file ──
 
-TEST_F(MuleFirmwareTest, AMuleImagePostsToTheUnitsOwnAddressAndWaitsForItsReturn) {
+TEST_F(MuleFirmwareTest, AMuleImagePostsToTheUnitsOwnAddressAndEndsOnItsReturn) {
     updater();
     unitRestartsAs("6.1.0", "6.0.0");
     const auto a = up_->start(kUnit, "mule", "MULE-IMAGE-BYTES", "mule-6.1.0.bin");
@@ -229,6 +230,7 @@ TEST_F(MuleFirmwareTest, AMuleImagePostsToTheUnitsOwnAddressAndWaitsForItsReturn
     EXPECT_EQ(net_.posts[0].url, std::string("http://") + kIp + "/api/update/mule");
     EXPECT_EQ(net_.posts[0].body, "MULE-IMAGE-BYTES");
     EXPECT_EQ(net_.posts[0].progress_calls, 2u);
+    // The older shape, kept one release beside the job object.
     const Json::Value j = up_->job(kUnit);
     EXPECT_EQ(j["phase"].asString(), "done") << compact(j);
     EXPECT_EQ(j["source"].asString(), "file mule-6.1.0.bin");
@@ -237,18 +239,38 @@ TEST_F(MuleFirmwareTest, AMuleImagePostsToTheUnitsOwnAddressAndWaitsForItsReturn
     EXPECT_EQ(j["sent"].asUInt64(), 16u);
     EXPECT_EQ(j["total"].asUInt64(), 16u);
     EXPECT_FALSE(j["running"].asBool());
+    // The job object.
+    const Json::Value o = ota();
+    EXPECT_EQ(o["kind"].asString(), "mule_miner");
+    EXPECT_EQ(o["path"].asString(), "local");
+    EXPECT_EQ(o["origin"].asString(), "owner");
+    EXPECT_EQ(o["phase"].asString(), "done");
+    EXPECT_EQ(o["steps"].asUInt64(), 1u);
+    EXPECT_EQ(o["steps_detail"][0]["target"].asString(), "mule");
+    EXPECT_EQ(o["steps_detail"][0]["bytes"].asUInt64(), 16u);
+    EXPECT_EQ(o["steps_detail"][0]["bytes_meaning"].asString(), "sent");
+    EXPECT_EQ(o["steps_detail"][0]["version_after"].asString(), "6.1.0");
+    EXPECT_TRUE(o["hold_reason"].isNull());
+    EXPECT_FALSE(o["ended_at"].isNull());
 }
 
-TEST_F(MuleFirmwareTest, AMinerImageGoesThroughTheMuleAndNeedsNoRestart) {
+TEST_F(MuleFirmwareTest, AMinerImageGoesThroughTheMuleAndEndsOnTheStateThatShowsIt) {
     updater();
     const auto a = up_->start(kUnit, "miner", "MINER-IMAGE", "miner.bin");
     ASSERT_EQ(a.status, 202) << compact(a.body);
     ASSERT_EQ(net_.posts.size(), 1u);
     EXPECT_EQ(net_.posts[0].url, std::string("http://") + kIp + "/api/update/miner");
-    EXPECT_EQ(up_->job(kUnit)["phase"].asString(), "done");
+    // The mule flashed it inside the request; the miner is restarting.
+    EXPECT_EQ(ota()["phase"].asString(), "restarting");
+    EXPECT_EQ(up_->job(kUnit)["phase"].asString(), "done");   // the older shape said done here
+    // A state with the old version is not a verdict: no clock, no guess.
+    unit_->sendState(false, 0, "6.0.0");
+    EXPECT_EQ(ota()["phase"].asString(), "restarting");
     // The miner's new version rides the unit's next state frame.
     unit_->sendState(false, 0, "6.1.0");
     EXPECT_EQ(up_->firmware(kUnit)["miner_fw"].asString(), "6.1.0");
+    EXPECT_EQ(ota()["phase"].asString(), "done");
+    EXPECT_EQ(ota()["steps_detail"][0]["version_after"].asString(), "6.1.0");
 }
 
 TEST_F(MuleFirmwareTest, AnUploadedImageIsOneTargetAndNotTooLarge) {
@@ -259,40 +281,50 @@ TEST_F(MuleFirmwareTest, AnUploadedImageIsOneTargetAndNotTooLarge) {
     EXPECT_TRUE(net_.posts.empty());
 }
 
-// ── downtime ──
+// ── the machine recording: warned, then sent on confirm ──
 
-TEST_F(MuleFirmwareTest, RefusedWhileTheUnitStreams) {
+TEST_F(MuleFirmwareTest, WarnedWhileTheUnitStreamsAndSentOnConfirm) {
     updater();
     unit_->sendState(true, 0);
-    const auto a = up_->start(kUnit, "mule", "IMAGE");
+    const auto a = up_->start(kUnit, "miner", "IMAGE");
     EXPECT_EQ(a.status, 409);
-    EXPECT_NE(a.body["error"].asString().find("night is open"), std::string::npos);
+    EXPECT_EQ(a.body["warning"].asString(), "recording");
+    EXPECT_TRUE(a.body["confirm"].asBool());
+    EXPECT_NE(a.body["reason"].asString().find("streaming"), std::string::npos);
     EXPECT_TRUE(net_.posts.empty());
     EXPECT_TRUE(up_->firmware(kUnit)["night_open"].asBool());
+    EXPECT_EQ(up_->firmware(kUnit)["recording"].asString(), "yes");
+    // Confirmed: it goes at once, and the job says it was confirmed.
+    const auto b = up_->start(kUnit, "miner", "IMAGE", "m.bin", /*confirm=*/true);
+    EXPECT_EQ(b.status, 202) << compact(b.body);
+    EXPECT_EQ(net_.posts.size(), 1u);
+    EXPECT_TRUE(ota()["confirmed_while_recording"].asBool());
 }
 
-TEST_F(MuleFirmwareTest, RefusedWhileTheNightIsStillLanding) {
+TEST_F(MuleFirmwareTest, WarnedWhileTheNightIsStillLandingNotAfter) {
     updater();
     unit_->sendState(true, 0);
     unit_->sendState(false, 3);   // the mask is off, the unit still holds blocks
-    EXPECT_EQ(up_->start(kUnit, "miner", "IMAGE").status, 409);
+    const auto a = up_->start(kUnit, "miner", "IMAGE");
+    EXPECT_EQ(a.status, 409);
+    EXPECT_NE(a.body["reason"].asString().find("not landed"), std::string::npos);
     EXPECT_TRUE(net_.posts.empty());
-    unit_->sendState(false, 0);   // landed: downtime
+    unit_->sendState(false, 0);   // landed: downtime, no warning
     EXPECT_FALSE(up_->firmware(kUnit)["night_open"].asBool());
     EXPECT_EQ(up_->start(kUnit, "miner", "IMAGE").status, 202);
     EXPECT_EQ(net_.posts.size(), 1u);
+    EXPECT_FALSE(ota()["confirmed_while_recording"].asBool());
 }
 
-TEST_F(MuleFirmwareTest, ANightThatOpensBetweenTheImagesStopsTheMiner) {
+TEST_F(MuleFirmwareTest, ANightThatOpensBetweenTheImagesDoesNotHoldTheMiner) {
+    // The person's update runs as asked; nothing local is ever held.
     updater();
     unitRestartsAs("6.1.0", "6.0.0", /*streaming=*/true);   // mask on the moment it is back
     const auto a = up_->start(kUnit, "both");
     ASSERT_EQ(a.status, 202) << compact(a.body);
-    ASSERT_EQ(net_.posts.size(), 1u);   // the mule only
-    const Json::Value j = up_->job(kUnit);
-    EXPECT_EQ(j["phase"].asString(), "failed");
-    EXPECT_NE(j["error"].asString().find("night opened"), std::string::npos) << compact(j);
-    EXPECT_EQ(j["step"].asString(), "miner");
+    ASSERT_EQ(net_.posts.size(), 2u);
+    EXPECT_EQ(ota()["steps_detail"][1]["target"].asString(), "miner");
+    EXPECT_EQ(ota()["step"].asUInt64(), 2u);
 }
 
 TEST_F(MuleFirmwareTest, RefusedWhenTheUnitIsNotHere) {
@@ -316,6 +348,8 @@ TEST_F(MuleFirmwareTest, TheUnitsBusyAnswerEndsTheJob) {
     EXPECT_EQ(j["phase"].asString(), "failed");
     EXPECT_NE(j["error"].asString().find("HTTP 503"), std::string::npos);
     EXPECT_NE(j["error"].asString().find("in progress"), std::string::npos);
+    EXPECT_EQ(ota()["reason"].asString(), "refused_image");
+    EXPECT_TRUE(ota()["retryable"].asBool());
 }
 
 TEST_F(MuleFirmwareTest, ALostConnectionEndsTheJob) {
@@ -324,30 +358,84 @@ TEST_F(MuleFirmwareTest, ALostConnectionEndsTheJob) {
     EXPECT_EQ(up_->start(kUnit, "miner", "IMAGE").status, 202);
     EXPECT_EQ(up_->job(kUnit)["phase"].asString(), "failed");
     EXPECT_NE(up_->job(kUnit)["error"].asString().find("reset by peer"), std::string::npos);
+    EXPECT_EQ(ota()["reason"].asString(), "connection_lost");
 }
 
-TEST_F(MuleFirmwareTest, AMuleThatDoesNotComeBackIsReported) {
-    updater(std::chrono::seconds(0));
+TEST_F(MuleFirmwareTest, AMuleThatDoesNotComeBackStaysRestartingUntilItsHello) {
+    // D4: no clock turns silence into a failure.
+    updater();
     EXPECT_EQ(up_->start(kUnit, "mule", "IMAGE").status, 202);
-    const Json::Value j = up_->job(kUnit);
-    EXPECT_EQ(j["phase"].asString(), "failed");
-    EXPECT_NE(j["error"].asString().find("not come back"), std::string::npos);
+    EXPECT_EQ(ota()["phase"].asString(), "restarting");
+    EXPECT_EQ(up_->job(kUnit)["phase"].asString(), "waiting");
+    EXPECT_TRUE(up_->job(kUnit)["running"].asBool());
+    EXPECT_GT(ota()["last_heard"].asInt64(), 0);
+    // Its hello, whenever it comes, is the outcome.
+    unit_->close();
+    unit_ = std::make_unique<FakeUnit>(*svc_);
+    unit_->hello("6.1.0", "6.0.0");
+    EXPECT_EQ(ota()["phase"].asString(), "done");
+    EXPECT_FALSE(up_->job(kUnit)["running"].asBool());
+}
+
+TEST_F(MuleFirmwareTest, AMuleBackOnItsOldVersionFailsAsSuch) {
+    updater();
+    unitRestartsAs("6.0.0", "6.0.0");   // it restarted, but on the old image
+    ASSERT_EQ(up_->start(kUnit, "both").status, 202);
+    EXPECT_EQ(ota()["phase"].asString(), "failed");
+    EXPECT_EQ(ota()["reason"].asString(), "back_on_old_version");
+    EXPECT_EQ(net_.posts.size(), 1u);   // the miner's image never went
 }
 
 TEST_F(MuleFirmwareTest, OneUpdateAtATime) {
     FirmwareUpdater::Options fo;
-    fo.manifest_url   = "https://fw.example.test/public/latest.json";
-    fo.async          = true;
-    fo.reconnect_wait = std::chrono::seconds(3);
-    fo.poll           = std::chrono::milliseconds(5);
-    up_               = std::make_unique<FirmwareUpdater>(*svc_, net_.transport(), fo);
-    // The mule never comes back, so the job waits its 3 s: a second start
-    // in that window is refused.
+    fo.manifest_url = "https://fw.example.test/public/latest.json";
+    fo.async        = true;
+    up_             = std::make_unique<FirmwareUpdater>(*svc_, net_.transport(), fo);
+    // The mule never comes back: its job stays restarting, and a second
+    // start on that unit is refused until it is heard from.
     EXPECT_EQ(up_->start(kUnit, "mule", "IMAGE").status, 202);
+    up_->waitIdle();
     const auto again = up_->start(kUnit, "miner", "IMAGE");
     EXPECT_EQ(again.status, 409);
-    EXPECT_NE(again.body["error"].asString().find("already running"), std::string::npos);
+    EXPECT_NE(again.body["error"].asString().find("has not ended"), std::string::npos);
     EXPECT_TRUE(up_->job(kUnit)["running"].asBool());
+}
+
+TEST_F(MuleFirmwareTest, TheJobIsKeptAcrossARestartOfHmsCpap) {
+    updater();
+    EXPECT_EQ(up_->start(kUnit, "mule", "IMAGE").status, 202);
+    EXPECT_EQ(ota()["phase"].asString(), "restarting");
+    ASSERT_TRUE(fs::exists(dir_ / "ota" / (std::string(kUnit) + ".json")));
+    // hms-cpap restarts: the job comes back restarting, and the unit's hello
+    // still resolves it.
+    up_.reset();
+    updater();
+    EXPECT_EQ(ota()["phase"].asString(), "restarting");
+    unit_->close();
+    unit_ = std::make_unique<FakeUnit>(*svc_);
+    unit_->hello("6.1.0", "6.0.0");
+    EXPECT_EQ(ota()["phase"].asString(), "done");
+}
+
+TEST_F(MuleFirmwareTest, AJobCutMidTransferIsInterruptedAfterARestart) {
+    // A job file left in transferring: hms-cpap stopped while sending.
+    devices::OtaJob j;
+    j.job_id = "7";
+    j.serial = kUnit;
+    j.kind   = "mule_miner";
+    devices::OtaStep s;
+    s.target = "miner";
+    s.phase  = "transferring";
+    s.bytes  = 100;
+    s.total  = 1000;
+    j.steps.push_back(s);
+    ASSERT_TRUE(devices::otaSave((dir_ / "ota").string(), kUnit, j));
+    updater();
+    EXPECT_EQ(ota()["phase"].asString(), "failed");
+    EXPECT_EQ(ota()["reason"].asString(), "interrupted");
+    EXPECT_TRUE(ota()["retryable"].asBool());
+    // A new update may start.
+    EXPECT_EQ(up_->start(kUnit, "miner", "IMAGE").status, 202);
 }
 
 // ── the manifest ──
@@ -382,6 +470,16 @@ TEST_F(MuleFirmwareTest, BothFromTheManifestSendsTheMuleThenTheMiner) {
     EXPECT_EQ(j["phase"].asString(), "done") << compact(j);
     EXPECT_EQ(j["source"].asString(), "manifest 6.1.0");
     EXPECT_EQ(j["fw_after"].asString(), "6.1.0");
+    // One job, two steps: the mule done, the miner restarting until its
+    // new version shows in a state.
+    const Json::Value o = ota();
+    EXPECT_EQ(o["steps"].asUInt64(), 2u);
+    EXPECT_EQ(o["step"].asUInt64(), 2u);
+    EXPECT_EQ(o["steps_detail"][0]["phase"].asString(), "done");
+    EXPECT_EQ(o["steps_detail"][1]["phase"].asString(), "restarting");
+    EXPECT_EQ(o["steps_detail"][1]["version_target"].asString(), "6.1.0");
+    unit_->sendState(false, 0, "6.1.0");
+    EXPECT_EQ(ota()["phase"].asString(), "done");
 }
 
 TEST_F(MuleFirmwareTest, BothSkipsAnImageTheUnitAlreadyRuns) {
@@ -391,6 +489,7 @@ TEST_F(MuleFirmwareTest, BothSkipsAnImageTheUnitAlreadyRuns) {
     ASSERT_EQ(net_.posts.size(), 1u);
     EXPECT_EQ(net_.posts[0].url, std::string("http://") + kIp + "/api/update/miner");
     EXPECT_EQ(up_->job(kUnit)["phase"].asString(), "done");
+    EXPECT_EQ(ota()["steps_detail"][0]["phase"].asString(), "skipped");
 }
 
 TEST_F(MuleFirmwareTest, NothingNewerIsRefused) {
@@ -426,4 +525,5 @@ TEST_F(MuleFirmwareTest, AnImageThatCannotBeDownloadedEndsTheJobBeforeAnyPost) {
     const Json::Value j = up_->job(kUnit);
     EXPECT_EQ(j["phase"].asString(), "failed");
     EXPECT_NE(j["error"].asString().find("HTTP 404"), std::string::npos);
+    EXPECT_EQ(ota()["reason"].asString(), "image_unavailable");
 }

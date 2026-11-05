@@ -140,6 +140,7 @@ A bridge takes these commands from a local hms-cpap:
 | `logs` | `n`: lines, 1 to 5000 (200 when left out) | Sends its log as kind 4 frames, then the result. |
 | `restate` | | Sends its card statement again. |
 | `config_reset` | | Forgets its network and stream address and restarts into setup. Keeps its name and pairing. Answered first. |
+| `config` | `get`: `true`; or `set`: an object of 1 to 16 settings (strings of at most 64 characters, booleans, whole numbers), never `stream_url` or `stream_port` (those are `stream`'s). Firmware 1.0.1 and later. | Answers its settings as `values` (the WiFi password as `***`, the pairing secret and token left out) and `pending_reboot`, the settings written that apply at its next start. A `set` checks every key first and writes all or nothing; a new network (`ssid`, `pass`) is joined and tested first and the old one kept when the test fails. Never restarts by itself. The answer names `risks` for a lowered sequence counter or a changed identity. |
 | `ota` | `target`: `"tapper"`, `size`: the image's bytes, `sha256`: its digest, 64 hex digits; no `url` | Takes the image that follows as kind 8 frames, checks it, answers, and restarts into it only on `ok`. Sent by the update route below, never by `POST /api/sleepbridge/command`. |
 
 The answer is `{"t":"result","req_id":N,"result":{"ok":bool,...}}`, with
@@ -153,11 +154,35 @@ binary kind 4 frames whose header `req_id` is the command's, `seq` counting
 the pieces and flags bit 0 on the last.
 
 No command is refused while the machine records: the card keeps the night,
-and when to switch is the owner's call. The one exception is the firmware
-update, which hms-cpap itself refuses while a night is open on the bridge
-([Updating the bridge](#updating-the-bridge)). A `stream` or `ota` that
-arrives while the bridge is in the middle of a switch or an update is
-answered `{"ok":false,"error":"busy"}`.
+and when to act is the owner's call. But the commands that can cost the
+night are **warned** first. The machine counts as recording while the
+bridge's sector writes land (a batch with records in the last 15 minutes),
+and as "maybe" for a bridge not heard from since hms-cpap started. Then
+`reboot`, `config_reset`, `stream`, a `config` `set` that carries `ssid` or
+`pass`, and a firmware update answer
+
+```
+409 {"ok":false,"warning":"recording","reason":"the machine wrote to its card 2 min ago",
+     "recording":"yes","confirm":true,"error":"..."}
+```
+
+and nothing is sent. The same request with `"confirm": true` goes at once;
+nothing is ever held. `logs`, `restate` and `config` `get` are never warned.
+A script that relied on the old behaviour adds `"confirm": true`. A `config`
+sent with `confirm` carries `"confirm": true` to the bridge too.
+
+**The WiFi password never stays here.** A `config` `set` with `pass` (or the
+pairing secret `pair`, or the token `jwt`) puts it in the frame sent to the
+bridge and nowhere else: the command kept and listed here shows `"***"`, the
+frame is scrubbed once sent, the log never prints it, and the bridge's answer
+is kept without them.
+
+A `stream` or `ota` that arrives while the bridge is in the middle of a
+switch or an update is answered `{"ok":false,"error":"busy"}`.
+
+A command still waiting for the bridge (`"state":"queued"`) is taken back
+with `DELETE /api/sleepbridge/command?req_id=N`; one already sent cannot be
+(409).
 
 From the web port:
 
@@ -358,25 +383,45 @@ The status page shows it under each bridge's `rebuild.geometry`.
 
 A bridge pointed at hms-cpap never hears from the cloud, so its firmware
 comes from here, over the same connection it streams on. hms-cpap sends an
-image you have (a `.bin` file); a published release feed can come later.
+image you have (a `.bin` file), or the public release for the bridge's board.
 
 ```
 POST /api/sleepbridge/TAP-S3-00000123/update
-Content-Type: application/octet-stream    (the image as the body)
-    or multipart/form-data with a file field
+Content-Type: application/octet-stream    (the image as the body; ?confirm=true)
+    or multipart/form-data with a file field (and a "confirm" field)
+    or application/json {"source":"release","confirm"?:true}
 
-200 {"ok":true,"req_id":815000124,"update":{"phase":"sending",...}}
+200 {"ok":true,"req_id":815000124,"job":{...},"update":{"phase":"sending",...}}
 ```
 
 Refused with 400 when the body is not a Sleep Bridge image (the ESP32 image
 magic and an app descriptor whose project is `sd_capture`), 404 for a bridge
-never seen, and 409 while a night is open on the bridge, while it is not
-connected, or while an update is already running. **A night is open while
-the machine writes to its card**: a batch with records landed in the last
-15 minutes. The machine writes through therapy and for a minute or two after
-the mask comes off, so fifteen quiet minutes is its downtime. The bridge
-itself refuses nothing here; this end keeps that rule, because an update
-parks the bridge's capture while it writes its flash.
+never seen, and 409 while it is not connected or while an update is already
+running. **While the machine writes to its card** (a batch with records in
+the last 15 minutes) it answers 409 with the recording warning of
+[Commands](#commands) and runs at once when sent again with `confirm`: an
+update parks the bridge's capture while it writes its flash, so the person
+is told, never held.
+
+**The public release.** `sleep_bridge.release_feed` in `config.json` names a
+public JSON document, by default
+`https://fw.cpapdash.com/public/tapper/latest.json`:
+
+```
+{"schema":1,"component":"tapper","version":"1.0.2","released_at":"...",
+ "variants":{"":{"url":"https://.../tapper-1.0.2.bin","size":1136528,"sha256":"<64 hex>"}}}
+```
+
+It is read over HTTPS on a bridge's hello and when the Devices page loads,
+never on a timer, and `GET /api/sleepbridge/release?sender=` answers
+`{"state","version","available","variant","size","error"?}` for one bridge.
+`state` is `ok`, `not_published` (the address answers 403 or 404: update from
+a file), `failed` (out of reach or malformed), `off` (the setting is empty) or
+`unchecked`. A release is offered only to a bridge whose hello states its
+board (`state.variant`) and only when the feed lists that board; the image is
+downloaded and checked against the feed's `size` and `sha256` before a single
+byte goes to the bridge, and a mismatch ends the job `failed`
+(`image_unavailable`) with nothing sent. Nothing is ever sent unasked.
 
 On the stream connection, hms-cpap then sends:
 
@@ -398,20 +443,35 @@ drops the slot, and keeps running what it has. It never restarts on an
 error. Its next hello carries `fw_version`, which `GET /api/sleepbridge`
 shows per bridge.
 
-`GET /api/sleepbridge/{bridge}/update` (and `update` on each bridge in
-`GET /api/sleepbridge`) follows the job:
+`GET /api/sleepbridge/{bridge}/update` follows the job. Its top level is the
+job object every page reads (`ota` on each bridge in `GET /api/sleepbridge`):
+
+```
+{"job_id","serial","kind":"tapper","path":"local","origin":"owner","source":"file x.bin"|"release 1.0.2",
+ "confirmed_while_recording","phase","step":1,"steps":1,
+ "steps_detail":[{"target":"tapper","phase","bytes","total","bytes_meaning":"sent",
+                  "version_before","version_target","version_after"}],
+ "reason","detail","retryable","last_heard","started_at","updated_at","ended_at"}
+```
 
 | `phase` | meaning |
 |---|---|
-| `sending` | the command went; `sent` of `total` bytes handed to the connection |
-| `waiting` | every chunk went; the bridge is checking and answering |
+| `preparing` | the release image is being downloaded and checked |
+| `transferring` | `bytes` of `total` handed to the connection |
+| `verifying` | every chunk went; the bridge is checking and answering |
 | `restarting` | answered `ok`; the bridge is rebooting into the image |
-| `done` | the bridge came back; `fw_after` is the version it runs now |
-| `failed` | `error` says why: the bridge's answer, a connection that went, or no answer in 5 minutes |
+| `done` | the bridge came back; `version_after` is what it runs now |
+| `failed` | `reason`: `refused_image` (its answer, in `detail`), `connection_lost`, `back_on_old_version` (it came back on the version it ran), `image_unavailable`, `offline`, `interrupted` (hms-cpap restarted mid-update) |
 
-`image_version`, `image_project` and `image_built` are read from the file
-before anything is sent; `fw_before` is what the bridge reported in its
-last hello.
+No clock fails a job: a bridge that does not answer stays `verifying`, and
+one that does not come back stays `restarting` with `last_heard` as the
+fact; its next hello ends the job. The job is kept in
+`<data_dir>/ota/sleepbridge/<bridge>.json`, so a restart of hms-cpap reads it
+back (one cut before `restarting` becomes `failed`, `interrupted`).
+
+The older shape stays under `"update"` for one release, for scripts:
+`phase` `sending`, `waiting`, `restarting`, `done` or `failed`, with `sent`,
+`total`, `error`, `fw_before`, `fw_after`, `image_version`.
 
 ## Licence
 

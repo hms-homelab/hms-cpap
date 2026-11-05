@@ -6,11 +6,13 @@
 //   ws://<host>:8894/mule/v1/device   the stream, on the Sleep Bridge's port
 //   GET  /api/mule                    the units and their commands, web port
 //   POST /api/mule/command            one command to one unit, web port
+//   DELETE /api/mule/command?req_id=  a command still queued, dropped
 //   GET  /api/mule/{serial}/firmware  its versions, the manifest's, the job
 //   POST /api/mule/{serial}/update    {"target"} from the manifest, or the
 //                                     image itself (raw or multipart) with
-//                                     ?target=mule|miner; refused while a
-//                                     night is open on the unit
+//                                     ?target=mule|miner; warned (409, then
+//                                     sent with confirm) while the machine
+//                                     records
 //   GET  /api/mule/{serial}/update    the update as it runs
 //
 // The stream port is the Sleep Bridge's listener; its port split lets this

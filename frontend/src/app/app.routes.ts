@@ -11,6 +11,7 @@ export const routes: Routes = [
   { path: 'events', loadComponent: () => import('./pages/events/events.component').then(m => m.EventsComponent) , canActivate: [setupGuard] },
   { path: 'reports', loadComponent: () => import('./pages/reports/reports.component').then(m => m.ReportsComponent) , canActivate: [setupGuard] },
   { path: 'equipment', loadComponent: () => import('./pages/equipment/equipment.component').then(m => m.EquipmentComponent) , canActivate: [setupGuard] },
+  { path: 'devices', loadComponent: () => import('./pages/devices/devices.component').then(m => m.DevicesComponent) , canActivate: [setupGuard] },
   { path: 'upload', loadComponent: () => import('./pages/upload/upload.component').then(m => m.UploadComponent) , canActivate: [setupGuard] },
   { path: 'setup', loadComponent: () => import('./pages/setup/setup.component').then(m => m.SetupComponent) },
   { path: 'logs', loadComponent: () => import('./pages/logs/logs.component').then(m => m.LogsComponent) , canActivate: [setupGuard] },

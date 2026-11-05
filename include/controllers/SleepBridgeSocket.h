@@ -7,8 +7,11 @@
 //   GET /api/sleepbridge                     the bridges and their commands,
 //                                            on the web port
 //   POST /api/sleepbridge/command            one command to one bridge
+//   DELETE /api/sleepbridge/command?req_id=  a command still queued, dropped
+//   GET  /api/sleepbridge/release?sender=    the public release, for one bridge
 //   POST /api/sleepbridge/{sender}/update    a firmware image to one bridge,
-//                                            over its stream connection
+//                                            over its stream connection, or
+//                                            {"source": "release"}
 //   GET  /api/sleepbridge/{sender}/update    that update as it runs
 //
 // The stream has a port of its own so it can be published alone (the Home
@@ -29,8 +32,9 @@
 namespace hms_cpap::sleepbridge {
 
 /// Adds the stream listener, the port split, the status route and the
-/// socket's hooks. Must precede app().run(). `service` outlives the app.
-void installRoutes(SleepBridgeService* service);
+/// socket's hooks. Must precede app().run(). `service` and `feed` outlive
+/// the app; without a feed the release check answers "off".
+void installRoutes(SleepBridgeService* service, ReleaseFeed* feed = nullptr);
 
 /// Another route the stream port serves beside the bridge's (the Mule &
 /// Miner's, /mule/v1/device). The port split lets it through on the stream

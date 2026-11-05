@@ -174,6 +174,23 @@ Anything else is refused with 400; a unit never seen here gets 404. A command
 for a unit that is offline or busy waits for it. `reboot` and `reset` are
 never answered: the unit restarts.
 
+**The recording warning.** While the machine records (the unit is streaming,
+or the stream ended and its night has not landed here yet; "maybe" for a unit
+not heard from since hms-cpap started) the commands that restart the unit or
+its miner (`config`, `reboot`, `reset`) answer
+
+```
+409 {"ok":false,"warning":"recording","reason":"the unit is streaming the machine's night",
+     "recording":"yes","confirm":true,"error":"..."}
+```
+
+and nothing is sent. The same request with `"confirm": true` goes at once;
+nothing is held. `logs`, `restate`, `as11_pair` and `as11_download` are never
+warned. A script that relied on the old behaviour adds `"confirm": true`.
+
+A command still waiting (`"state":"queued"`) is taken back with
+`DELETE /api/mule/command?req_id=N`; one already sent cannot be (409).
+
 ## Updating the unit's firmware
 
 A unit streaming here never hears from the cloud, so its firmware comes from
@@ -192,37 +209,56 @@ its new version in its hello; the miner's image goes through the mule, which
 flashes the miner and keeps its own connection. A 503 "Firmware update in
 progress" means the unit is already taking one.
 
-hms-cpap does this from Settings, "Mule & Miner": each unit's card shows the
-mule and miner versions it runs, "update available" when the published
-manifest has a newer one, and an Update button that sends the mule first,
-then the miner. The same card takes an image file you have, for the mule or
-the miner, when the manifest is out of reach or you built the image yourself.
-The published image is for the standard board; a unit built on another pin
-map takes its own file.
+hms-cpap does this from the Devices page: each unit's card shows the mule and
+miner versions it runs on its Firmware line, "Firmware ... is available.
+Update now" when the published manifest has a newer one (the mule first,
+then the miner), and the update's progress in the same place. Under More it
+takes an image file you have, for the mule or the miner, when the manifest
+is out of reach or you built the image yourself. The published image is for
+the standard board; a unit built on another pin map takes its own file.
 
-**Only in the unit's downtime.** While a night is open on the unit (the
-machine is streaming, or the stream ended and the unit still holds blocks of
-it) the update is refused, and the job checks again right before each image
-goes. Nothing is queued: press the button again once the night has landed.
+**While the machine records** (the unit streaming, or its night not landed
+yet) the update answers 409 with the recording warning above and runs at
+once when sent again with `confirm`. Nothing is held and nothing is automatic.
 
 The API behind the card:
 
 ```
 GET  /api/mule/<serial>/firmware
-     {serial, online, ip, fw, miner_fw, night_open,
+     {serial, online, ip, fw, miner_fw, night_open, recording, recording_reason,
       manifest: {url, error, read_at}, latest: {mule, miner},
-      update_available: {mule, miner}, job}
+      update_available: {mule, miner}, job, ota}
 POST /api/mule/<serial>/update
-     {"target": "mule" | "miner" | "both"}            from the manifest
-     multipart/form-data, a file + target=mule|miner  an image you have
-     <the image as the raw body>?target=mule|miner    the same, no form
-     202 {ok, job}; 409 a night open, the unit offline, an update already
-     running, or nothing newer; 502 the manifest out of reach; 404, 400
+     {"target": "mule" | "miner" | "both", "confirm"?: true}   from the manifest
+     multipart/form-data, a file + target=mule|miner (+ confirm=true)
+     <the image as the raw body>?target=mule|miner&confirm=true
+     202 {ok, job, ota}; 409 the unit offline, an update not ended, nothing
+     newer, or the recording warning; 502 the manifest out of reach; 404, 400
 GET  /api/mule/<serial>/update
-     {ok, job}: phase (downloading, sending, waiting, done, failed), step
-     (mule or miner), sent and total bytes, error, the versions before and
-     after, started, finished, log
+     the job object at the top level, and the older shape under "job" (kept
+     one release): phase (downloading, sending, waiting, done, failed), step
+     (mule or miner), sent and total bytes, error, versions, log
 ```
+
+The job object is one update made of steps, one per image:
+
+```
+{"job_id","serial","kind":"mule_miner","path":"local","origin":"owner","source":"manifest 6.1.0",
+ "confirmed_while_recording","phase","step":2,"steps":2,
+ "steps_detail":[{"target":"mule","phase":"done",...},{"target":"miner","phase":"transferring",
+                  "bytes","total","bytes_meaning":"sent","version_before","version_target","version_after"}],
+ "reason","detail","retryable","last_heard","started_at","updated_at","ended_at"}
+```
+
+A step is `preparing` (the image downloaded), `transferring` (bytes the
+unit's server took), `verifying` (every byte went; the unit is flashing),
+`restarting` (it took the image), `done`, `failed` or `skipped` (already
+current). No clock ends a step: the mule's step ends on the unit's next
+hello, which also starts the miner's; the miner's ends on the first state
+that shows its new version. A unit that does not come back stays
+`restarting`, with `last_heard` as the fact. Back on the old version is
+`failed`, `back_on_old_version`. The job is kept in
+`<data_dir>/ota/mule/<serial>.json`; a restart of hms-cpap reads it back.
 
 With curl, an image file to the mule of one unit:
 
@@ -233,8 +269,8 @@ curl "http://localhost:8893/api/mule/<serial>/update"
 ```
 
 Sending an image takes some tens of seconds (the unit writes it to flash as
-it arrives); hms-cpap allows five minutes, then two and a half for the mule
-to restart and reconnect before the miner's image goes.
+it arrives); hms-cpap allows five minutes for the request itself, then waits
+for the mule's hello, however long it takes, before the miner's image goes.
 
 The manifest is `https://fw.cpapdash.com/public/latest.json`
 (`{"mule": {"version", "url"}, "miner": {...}}`), read over TLS from this

@@ -1,6 +1,7 @@
 #ifdef BUILD_WITH_WEB
 
 #include "controllers/CpapController.h"
+#include "controllers/DevicesRoutes.h"
 #include "utils/AppConfig.h"
 #include "services/SleepHqExportService.h"
 #include "services/CpapCard.h"
@@ -1124,7 +1125,14 @@ void CpapController::as11BleStatus(const drogon::HttpRequestPtr&,
                                    std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
     auto p = burst_service_ ? burst_service_->getAirSense11Pairing() : nullptr;
     const bool enabled = config_ && config_->airsense11_ble.enabled;
-    cb(as11Resp(hms_cpap::as11api::status(p.get(), BurstCollectorService::airSense11BleCompiled(), enabled)));
+    auto r = hms_cpap::as11api::status(p.get(), BurstCollectorService::airSense11BleCompiled(), enabled);
+    // SDD-062: the summary pulls, beside the link.
+    const auto f = burst_service_ ? burst_service_->as11Facts() : BurstCollectorService::As11Facts{};
+    r.body["last_summary_at"]    = static_cast<Json::Int64>(f.summary_at);
+    r.body["last_summary_day"]   = f.summary_day;
+    r.body["last_summary_error"] = f.error;
+    r.body["pull_due"]           = f.pull_due;
+    cb(as11Resp(r));
 }
 
 // The two steps block for a scan, a connect and a reply (tens of seconds at
@@ -1262,15 +1270,19 @@ void CpapController::setupComplete(const drogon::HttpRequestPtr&,
 
 void CpapController::testEzshare(const drogon::HttpRequestPtr& req,
                                   std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    // SDD-062 D9: ?transport=flashair probes a FlashAir with its own listing;
+    // anything else is the ez Share's probe, as before.
+    const bool flashair = req->getParameter("transport") == "flashair";
     std::string url = req->getParameter("url");
-    if (url.empty() && config_) url = config_->ezshare_url;
+    if (url.empty() && config_) url = flashair ? config_->flashair_url : config_->ezshare_url;
 
     // Blocks this Drogon worker for up to the client's 10 s connect timeout,
     // the same trade discoverDevices makes for its scan.
-    const auto probe = SetupService::probeEzshare(url);
+    const auto probe = flashair ? SetupService::probeFlashair(url) : SetupService::probeEzshare(url);
 
     Json::Value result;
     result["url"] = probe.url.empty() ? url : probe.url;
+    result["transport"] = flashair ? "flashair" : "ezshare";
     result["configured"] = !url.empty();
     result["status"] = probe.ok ? "ok" : "failed";
     if (!probe.ok) result["error"] = probe.error;
@@ -1278,6 +1290,8 @@ void CpapController::testEzshare(const drogon::HttpRequestPtr& req,
         result["bridge_serial"] = probe.bridge_serial;
         result["bridge_fw"] = probe.bridge_fw;
     }
+    result["tested_at"] = static_cast<Json::Int64>(std::time(nullptr));
+    devices::rememberSourceProbe(result);
     cb(jsonResp(result));
 }
 

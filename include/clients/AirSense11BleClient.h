@@ -56,6 +56,8 @@ public:
     bool pairPending() const override;
     bool paired() const override;
     std::string lastError() const override;
+    Presence presence() const override;
+    bool busy() const override;
 
     static constexpr int kScanMs = 15000;
     static constexpr int kConnectMs = 15000;
@@ -84,6 +86,8 @@ private:
     std::atomic<bool> streaming_{false};
     std::atomic<bool> therapy_{false};
     std::atomic<uint64_t> reports_{0};
+    std::atomic<bool> link_up_{false};             // the GATT link is up now
+    std::atomic<long long> last_contact_{0};       // epoch s: connected, or a report heard
     std::mutex wake_mtx_;
     std::condition_variable wake_;
 

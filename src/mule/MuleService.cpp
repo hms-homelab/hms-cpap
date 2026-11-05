@@ -216,6 +216,7 @@ MuleService::Brief MuleService::brief(const std::string& serial) const {
     if (it == units_.end()) return b;
     const Unit& u = it->second;
     b.known      = true;
+    b.connected  = u.sessions > 0;
     b.online     = u.sessions > 0 && std::time(nullptr) - u.last_heard < kSilenceSec;
     b.night_open = u.streaming || u.end_pending;
     b.ip         = u.ip;
@@ -328,6 +329,12 @@ void MuleService::hello(uint64_t conn, const std::string& serial, const Json::Va
               << ")" << std::endl;
     if (f["state"].isObject()) stateOf(serial, f["state"]);
     flush(serial);
+    std::function<void(const std::string&, bool)> observer;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        observer = observer_;
+    }
+    if (observer) observer(serial, true);
 }
 
 void MuleService::applyClock(const std::string& serial, Unit& u) {
@@ -402,6 +409,91 @@ void MuleService::stateOf(const std::string& serial, const Json::Value& state) {
     if (live_ && went_off) live_->therapy(serial, machine, false);
     if ((went_on || went_off) && night_changed_) night_changed_();
     if (landed) nightLanded(serial);
+    std::function<void(const std::string&, bool)> observer;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        observer = observer_;
+    }
+    if (observer) observer(serial, false);
+}
+
+void MuleService::setObserver(std::function<void(const std::string& serial, bool hello)> observer) {
+    std::lock_guard<std::mutex> lk(mu_);
+    observer_ = std::move(observer);
+}
+
+devices::Recording MuleService::recording(const std::string& serial) const {
+    devices::Recording r;
+    std::lock_guard<std::mutex> lk(mu_);
+    const auto it = units_.find(serial);
+    if (it == units_.end()) {
+        r.state  = "unknown";
+        r.reason = "the unit has not been heard from since hms-cpap started";
+        return r;
+    }
+    const Unit& u = it->second;
+    if (u.streaming) {
+        r.state  = "yes";
+        r.reason = "the unit is streaming the machine's night";
+    } else if (u.end_pending) {
+        r.state  = "yes";
+        r.reason = "the night the unit streamed has not landed here yet";
+    } else if (u.last_heard == 0) {
+        r.state  = "unknown";
+        r.reason = "the unit has not been heard from since hms-cpap started";
+    }
+    return r;
+}
+
+CommandAnswer MuleService::cancelCommand(uint64_t req_id) {
+    CommandAnswer a;
+    std::lock_guard<std::mutex> lk(mu_);
+    for (auto& [serial, u] : units_) {
+        auto c = std::find_if(u.commands.begin(), u.commands.end(),
+                              [&](const Command& k) { return k.req_id == req_id; });
+        if (c == u.commands.end()) continue;
+        if (c->state != "queued") {
+            a.status          = 409;
+            a.body["ok"]      = false;
+            a.body["error"]   = "the command was already sent to the unit; it cannot be taken back";
+            a.body["command"] = commandJson(*c);
+            return a;
+        }
+        std::cout << "[mule] " << serial << " " << c->cmd << " (req_id " << req_id
+                  << ") cancelled before it was sent" << std::endl;
+        u.commands.erase(c);
+        a.body["ok"]        = true;
+        a.body["req_id"]    = static_cast<Json::UInt64>(req_id);
+        a.body["cancelled"] = true;
+        return a;
+    }
+    a.status        = 404;
+    a.body["ok"]    = false;
+    a.body["error"] = "no command " + std::to_string(req_id) + " is listed here";
+    return a;
+}
+
+CommandAnswer MuleService::forget(const std::string& serial) {
+    CommandAnswer a;
+    std::lock_guard<std::mutex> lk(mu_);
+    const auto it = units_.find(serial);
+    if (it != units_.end() && it->second.sessions > 0) {
+        a.status        = 409;
+        a.body["ok"]    = false;
+        a.body["error"] = "this device is connected";
+        return a;
+    }
+    size_t dropped = 0;
+    if (it != units_.end()) {
+        for (const auto& c : it->second.commands)
+            if (c.state == "queued") ++dropped;
+        units_.erase(it);
+    }
+    std::cout << "[mule] " << serial << " forgotten (" << dropped
+              << " queued command(s) dropped; its blocks and nights stay)" << std::endl;
+    a.body["ok"]             = true;
+    a.body["dropped_queued"] = static_cast<Json::UInt64>(dropped);
+    return a;
 }
 
 void MuleService::feedEvents(const std::string& serial, const Json::Value& events) {
@@ -788,6 +880,21 @@ CommandAnswer MuleService::queueCommand(const std::string& serial, const Json::V
         f["spool"] = spool;
     }
 
+    // What restarts the unit or its miner (the stream target, the Bluetooth
+    // switches, a reboot, a reset) is warned while the machine records.
+    const bool warned = cmd == "config" || cmd == "reboot" || cmd == "reset";
+    if (warned && !devices::confirmed(req)) {
+        {
+            std::lock_guard<std::mutex> lk(mu_);
+            if (!units_.count(serial)) return refuse(404, "no Mule & Miner \"" + serial + "\" has connected here");
+        }
+        const devices::Recording rec = recording(serial);
+        if (rec.warns()) {
+            a.status = 409;
+            a.body   = devices::recordingWarning(rec);
+            return a;
+        }
+    }
     uint64_t id = 0;
     {
         std::lock_guard<std::mutex> lk(mu_);

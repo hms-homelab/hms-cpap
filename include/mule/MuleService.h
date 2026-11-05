@@ -31,6 +31,7 @@
 // No authentication on the LAN: a unit is named by X-Device-Serial and
 // nothing else.
 //
+#include "devices/Recording.h"
 #include "mule/LivePublisher.h"
 #include "services/As11NightWriter.h"
 
@@ -117,6 +118,7 @@ public:
         bool        known{false};
         bool        online{false};
         bool        night_open{false};   // streaming, or a night still landing
+        bool        connected{false};    // a session open now, whatever was last heard
         std::string ip;                  // the peer of its live session
         std::string fw, miner_fw, machine;
         uint64_t    hellos{0};           // sessions begun: rises when the unit comes back
@@ -131,7 +133,29 @@ public:
     /// command or argument the unit does not take from here, 404 for a unit
     /// never seen; otherwise 200 with its req_id. Sent when nothing else is in
     /// flight on the unit's session, else queued; the answer shows in status().
+    /// The ones that restart the unit or the miner (config, reboot, reset)
+    /// are warned while the machine records: 409 with the warning and nothing
+    /// sent unless the request carries "confirm": true (devices/Recording.h).
     CommandAnswer queueCommand(const std::string& serial, const Json::Value& request);
+
+    /// Drops a command still queued (never sent). 404 for a req_id not
+    /// listed, 409 for one already sent.
+    CommandAnswer cancelCommand(uint64_t req_id);
+
+    /// Stops listing a unit that is away: its row and its queued commands go;
+    /// its blocks, its nights and its unit.json stay, so it comes back as new
+    /// on its next hello. 409 while it is connected.
+    CommandAnswer forget(const std::string& serial);
+
+    /// Whether the machine behind `serial` is recording now: the stream on,
+    /// or a night that has not landed yet. A unit not heard from since this
+    /// service started, and not known to be streaming, is "unknown".
+    devices::Recording recording(const std::string& serial) const;
+
+    /// Called after a unit's hello (`hello` true) and after each of its state
+    /// frames, outside this service's lock: the firmware updater moves its
+    /// job on these events.
+    void setObserver(std::function<void(const std::string& serial, bool hello)> observer);
 
     Json::Value status() const;
 
@@ -205,6 +229,7 @@ private:
     std::shared_ptr<IAs11NightSink> sink_;
     std::function<void()>           night_changed_;
     std::shared_ptr<LivePublisher>  live_;
+    std::function<void(const std::string&, bool)> observer_;
 
     mutable std::mutex              mu_;
     std::map<std::string, Unit>     units_;

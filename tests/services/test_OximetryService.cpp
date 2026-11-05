@@ -478,15 +478,18 @@ public:
     std::map<std::string, std::vector<uint8_t>> contents;
     int battery = 88;
     int download_calls = 0;
+    bool connected = true;
+    int connected_calls = 0;
+    LiveReading live;
 
-    bool isConnected() override { return true; }
+    bool isConnected() override { ++connected_calls; return connected; }
     std::vector<std::string> listFiles() override { return files; }
     std::vector<uint8_t> downloadFile(const std::string& filename) override {
         ++download_calls;
         auto it = contents.find(filename);
         return it == contents.end() ? std::vector<uint8_t>{} : it->second;
     }
-    LiveReading getLive() override { return {}; }
+    LiveReading getLive() override { return live; }
     int getBattery() const override { return battery; }
 };
 
@@ -728,6 +731,45 @@ TEST_F(OximetryServiceTest, PollLive_StoresLastReading) {
     EXPECT_EQ(live.spo2, 0);
     EXPECT_EQ(svc->getLastLive().spo2, live.spo2);
     EXPECT_EQ(svc->getLastLive().active, live.active);
+}
+
+// SDD-062: the ring's status for the Devices page is what the last talk with
+// it found; reading it never talks to the ring.
+TEST_F(OximetryServiceTest, Facts_RecordWhatTheLastTalkFound) {
+    EXPECT_EQ(svc->facts().checked_at, 0) << "not asked since the start";
+    const int asked = client->connected_calls;
+    (void)svc->facts();
+    EXPECT_EQ(client->connected_calls, asked) << "reading the facts never asks the ring";
+
+    // A live reading: connected, battery, the reading itself.
+    client->live.valid  = true;
+    client->live.active = true;
+    client->live.spo2   = 95;
+    client->battery     = 64;
+    svc->pollLive();
+    auto f = svc->facts();
+    EXPECT_GT(f.checked_at, 0);
+    EXPECT_TRUE(f.connected);
+    EXPECT_EQ(f.battery, 64);
+    EXPECT_TRUE(f.live.active);
+    EXPECT_EQ(f.live.spo2, 95);
+
+    // A file stored: when and which.
+    client->files = {"20260418_220000.vld"};
+    client->contents["20260418_220000.vld"] = makeVld(20);
+    EXPECT_CALL(*db, oximetrySessionExists("o2ring", "20260418_220000.vld")).WillOnce(Return(false));
+    EXPECT_CALL(*db, saveOximetrySession("o2ring", _)).WillOnce(Return(true));
+    svc->collectAndPublish();
+    f = svc->facts();
+    EXPECT_EQ(f.last_file, "20260418_220000.vld");
+    EXPECT_GT(f.last_read_at, 0);
+
+    // Nothing listed and the ring itself not answering: not connected.
+    client->files.clear();
+    client->connected = false;
+    svc->collectAndPublish();
+    EXPECT_FALSE(svc->facts().connected);
+    EXPECT_EQ(svc->facts().last_file, "20260418_220000.vld") << "the last file stays";
 }
 
 }  // namespace oxi_service

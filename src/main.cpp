@@ -6,6 +6,8 @@
 #include "controllers/CleaningController.h"
 #include "controllers/SleepBridgeSocket.h"
 #include "controllers/MuleSocket.h"
+#include "controllers/DevicesRoutes.h"
+#include "sleepbridge/ReleaseFeed.h"
 #include "mule/LivePublisher.h"
 #include "sleepbridge/LiveNight.h"
 #include "services/CpapDashSyncService.h"
@@ -1543,6 +1545,26 @@ int main(int argc, char** argv) {
                     });
             }
 
+            // SDD-062 D13: the public Sleep Bridge release feed, read on a
+            // bridge's hello and when the Devices page loads, never on a
+            // timer. Declared first: the services below use it until they go.
+            hms_cpap::sleepbridge::FeedGet feed_get = [get = hms_cpap::mule::curlTransport().get](
+                                                          const std::string& url, int timeout_s) {
+                const auto r = get(url, timeout_s);
+                hms_cpap::sleepbridge::FeedReply out;
+                out.ok     = r.ok;
+                out.status = r.status;
+                out.body   = r.body;
+                out.error  = r.error;
+                return out;
+            };
+            std::unique_ptr<hms_cpap::sleepbridge::ReleaseFeed> release_feed;
+            if (config.sleep_bridge.enabled)
+                release_feed = std::make_unique<hms_cpap::sleepbridge::ReleaseFeed>(
+                    config.sleep_bridge.release_feed, feed_get);
+            // SDD-062 D12: the local names and the forgotten devices.
+            hms_cpap::devices::DevicesStore devices_store(
+                (std::filesystem::path(hms_cpap::AppConfig::dataDir()) / "devices.json").string());
             // The Sleep Bridge local stream, on a port of its own. The
             // service outlives app().run(); without the Sleep Bridge
             // component in this build it listens and refuses bridges.
@@ -1593,6 +1615,11 @@ int main(int argc, char** argv) {
                     sb.root = (std::filesystem::path(hms_cpap::AppConfig::dataDir()) / "sleepbridge")
                                   .string();
                     sb.port = config.sleep_bridge.port;
+                    // SDD-062: each bridge's update job, kept across a restart;
+                    // the release image's download (checked against the feed).
+                    sb.jobs_dir = (std::filesystem::path(hms_cpap::AppConfig::dataDir()) / "ota" / "sleepbridge")
+                                      .string();
+                    sb.fetch = feed_get;
 
                     // The live night. Each rebuild that wrote card files wakes
                     // the burst cycle, so a card folder source pointed at the
@@ -1695,7 +1722,8 @@ int main(int argc, char** argv) {
                                     std::cout << "[sleepbridge] " << line << std::endl;
                                 });
                         });
-                    hms_cpap::sleepbridge::installRoutes(sleep_bridge.get());
+                    sleep_bridge->setReleaseFeed(release_feed.get());
+                    hms_cpap::sleepbridge::installRoutes(sleep_bridge.get(), release_feed.get());
                     sleep_bridge->start();
                     hms_cpap::CpapController::card_layout_ =
                         [svc = sleep_bridge.get()](const std::string& cbl1,
@@ -1715,6 +1743,7 @@ int main(int argc, char** argv) {
                     mule_stream = std::make_unique<hms_cpap::mule::MuleService>(mo, night);
                     hms_cpap::mule::FirmwareUpdater::Options fo;
                     if (const char* m = std::getenv("HMS_CPAP_MULE_MANIFEST_URL"); m && *m) fo.manifest_url = m;
+                    fo.jobs_dir = (std::filesystem::path(mo.data_dir) / "ota" / "mule").string();
                     mule_updater = std::make_unique<hms_cpap::mule::FirmwareUpdater>(
                         *mule_stream, hms_cpap::mule::curlTransport(), fo);
                     hms_cpap::mule::installRoutes(mule_stream.get(), mule_updater.get());
@@ -1737,6 +1766,21 @@ int main(int argc, char** argv) {
                         mule_stream->setLive([bs] { bs->requestSyncNow(); }, live);
                     }
                 }
+            }
+
+            // SDD-062: the Devices page's routes, over whatever is on.
+            {
+                hms_cpap::devices::RouteDeps dd;
+                dd.config      = &config;
+                dd.burst       = burst_service.get();
+                dd.query       = query_service;
+                dd.mule        = mule_stream.get();
+                dd.updater     = mule_updater.get();
+                dd.bridges     = sleep_bridge.get();
+                dd.feed        = release_feed.get();
+                dd.store       = &devices_store;
+                dd.stream_port = config.sleep_bridge.port;
+                hms_cpap::devices::installRoutes(dd);
             }
 
             std::cout << "Web UI: http://0.0.0.0:" << web_port << std::endl;

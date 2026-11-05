@@ -4,16 +4,15 @@ import { FormsModule } from '@angular/forms';
 import { TranslatePipe, TranslateService } from '@ngx-translate/core';
 import { Subject, Subscription, timer } from 'rxjs';
 import { switchMap, takeUntil, takeWhile, tap } from 'rxjs/operators';
-import { CpapApiService, UpdateStatus, MuleUnit, MuleCommand, MuleFirmware, MuleUpdateJob,
-         SleepBridge, SleepBridgeUpdate } from '../../services/cpap-api.service';
+import { RouterLink } from '@angular/router';
+import { CpapApiService, UpdateStatus } from '../../services/cpap-api.service';
 import { UpdateFlowService } from '../../services/update-flow.service';
 import { AppConfig } from '../../models/config.model';
-import { BridgeCloud, cloudError } from './sleepbridge-cloud';
 
 @Component({
   selector: 'app-settings',
   standalone: true,
-  imports: [CommonModule, FormsModule, TranslatePipe],
+  imports: [CommonModule, FormsModule, RouterLink, TranslatePipe],
   template: `
     <div class="settings">
       <h2>{{ 'settings.title' | translate }}</h2>
@@ -33,6 +32,9 @@ import { BridgeCloud, cloudError } from './sleepbridge-cloud';
             <!-- SDD-022: two questions. Where the files come from, and what
                  wrote them. One field answering both is why a Prisma or Sefam
                  owner had to hand-edit config.json to select their machine. -->
+            <p class="devices-link" *ngIf="config.transport !== 'local'">
+              <a routerLink="/devices">{{ 'settings.devicesLink' | translate }}</a>
+            </p>
             <label>
               {{ 'settings.source.transport' | translate }}
               <select [(ngModel)]="config.transport" name="transport"
@@ -170,6 +172,9 @@ import { BridgeCloud, cloudError } from './sleepbridge-cloud';
             <span class="badge" *ngIf="!config.o2ring?.enabled">{{ 'settings.tag.optional' | translate }}</span>
           </div>
           <div class="section-body" *ngIf="open['o2ring']">
+            <p class="devices-link" *ngIf="config.o2ring.enabled">
+              <a routerLink="/devices">{{ 'settings.devicesLink' | translate }}</a>
+            </p>
             <label class="toggle-row">
               {{ 'settings.o2ring.enabled' | translate }}
               <input type="checkbox" [(ngModel)]="config.o2ring.enabled" name="o2ring_enabled" />
@@ -199,248 +204,30 @@ import { BridgeCloud, cloudError } from './sleepbridge-cloud';
           </div>
         </div>
 
-        <!-- Section: AirSense 11 over Bluetooth (SDD-057). The switch and the
-             address are config; the pairing is not: it goes through its own
-             endpoints and is kept beside config.json, never in it. -->
+        <!-- Section: AirSense 11 over Bluetooth (SDD-057). The switch is
+             config; pairing it, its status and its actions are the Devices
+             page's card (SDD-062 D1). -->
         <div class="section" *ngIf="config.airsense11_ble">
           <div class="section-header" (click)="toggle('as11')">
             <span class="chevron" [class.open]="open['as11']">&#9654;</span>
             {{ 'settings.as11.heading' | translate }}
-            <span class="badge" *ngIf="!as11.paired">{{ 'settings.tag.optional' | translate }}</span>
-            <span class="badge connected" *ngIf="as11.paired">{{ 'settings.as11.badgePaired' | translate }}</span>
+            <span class="badge" *ngIf="!config.airsense11_ble.enabled">{{ 'settings.tag.optional' | translate }}</span>
           </div>
           <div class="section-body" *ngIf="open['as11']">
             <p class="section-desc">{{ 'settings.as11.desc' | translate }}</p>
-            <div class="myair-state" *ngIf="!as11.compiled">{{ 'settings.as11.notCompiled' | translate }}</div>
             <label class="toggle-row">
               {{ 'settings.as11.enabled' | translate }}
               <input type="checkbox" [(ngModel)]="config.airsense11_ble.enabled" name="as11_enabled" />
             </label>
-            <ng-container *ngIf="config.airsense11_ble.enabled">
-              <ng-container *ngIf="as11.compiled">
-                <!-- Keyed off the saved config, not the status: the running
-                     service picks a save up within a second, so by the time
-                     the button is pressed the client exists. -->
-                <div class="hint" *ngIf="!as11Saved()">{{ 'settings.as11.saveFirst' | translate }}</div>
-                <ng-container *ngIf="as11Saved()">
-                  <div class="myair-connected">
-                    {{ (as11.paired ? 'settings.as11.paired' : 'settings.as11.notPaired') | translate }}
-                  </div>
-                  <div class="myair-note">{{ 'settings.as11.pairNote' | translate }}</div>
-
-                  <ng-container *ngIf="!as11.pairing">
-                    <button type="button" class="myair-btn" (click)="as11PairStart()" [disabled]="as11Busy">
-                      {{ (as11Busy ? 'settings.as11.searching'
-                                   : (as11.paired ? 'settings.as11.pairAgain' : 'settings.as11.pair')) | translate }}
-                    </button>
-                  </ng-container>
-
-                  <ng-container *ngIf="as11.pairing">
-                    <label>
-                      {{ 'settings.as11.code' | translate }}
-                      <input type="text" inputmode="numeric" autocomplete="one-time-code"
-                             [(ngModel)]="as11Code" name="as11_code"
-                             [ngModelOptions]="{standalone: true}" placeholder="0000" />
-                      <span class="hint">{{ 'settings.as11.codeHint' | translate }}</span>
-                    </label>
-                    <div class="prompt-actions">
-                      <button type="button" class="myair-btn" (click)="as11PairConfirm()"
-                              [disabled]="as11Busy || !as11Code">
-                        {{ (as11Busy ? 'settings.as11.confirming' : 'settings.as11.confirm') | translate }}
-                      </button>
-                      <button type="button" class="myair-btn secondary" (click)="as11PairCancel()"
-                              [disabled]="as11Busy">{{ 'settings.as11.cancel' | translate }}</button>
-                    </div>
-                  </ng-container>
-                </ng-container>
-              </ng-container>
-            </ng-container>
-            <div class="myair-msg" *ngIf="as11Message">{{ as11Message }}</div>
+            <p class="devices-link" *ngIf="config.airsense11_ble.enabled">
+              <a routerLink="/devices">{{ 'settings.devicesLink' | translate }}</a>
+            </p>
           </div>
         </div>
 
-        <!-- Section: the Mule & Miner units streaming to this host, and their
-             firmware. Nothing here is config: the units list themselves when
-             they connect, and an update goes to the unit over the local
-             network (docs/MULE_LOCAL_STREAM.md). -->
-        <div class="section">
-          <div class="section-header" (click)="toggle('mule')">
-            <span class="chevron" [class.open]="open['mule']">&#9654;</span>
-            {{ 'settings.mule.heading' | translate }}
-            <span class="badge connected" *ngIf="muleOnline() > 0">
-              {{ 'settings.mule.badgeOnline' | translate:{ n: muleOnline() } }}
-            </span>
-          </div>
-          <div class="section-body" *ngIf="open['mule']">
-            <p class="section-desc">{{ 'settings.mule.desc' | translate }}</p>
-            <div class="hint" *ngIf="muleUnits.length === 0">{{ 'settings.mule.none' | translate }}</div>
-            <div class="mule-unit" *ngFor="let u of muleUnits">
-              <div class="mule-head">
-                <strong>{{ u.serial }}</strong>
-                <span class="badge" [class.connected]="u.online">
-                  {{ (u.online ? 'settings.mule.online' : 'settings.mule.offline') | translate }}
-                </span>
-                <span class="badge" *ngIf="u.streaming">{{ 'settings.mule.streaming' | translate }}</span>
-                <span class="badge" *ngIf="u.night_landing">{{ 'settings.mule.landing' | translate }}</span>
-              </div>
-              <div class="mule-line" *ngIf="u.machine">
-                <span class="mule-label">{{ 'settings.mule.machine' | translate }}</span> {{ u.machine }}
-              </div>
-              <div class="mule-line" *ngIf="u.last_block">
-                <span class="mule-label">{{ 'settings.mule.lastBlock' | translate }}</span>
-                {{ u.last_block * 1000 | date:'medium' }}
-              </div>
-              <div class="mule-line">
-                <span class="mule-label">{{ 'settings.mule.firmware' | translate }}</span>
-                {{ 'settings.mule.mule' | translate }} {{ u.fw || '?' }},
-                {{ 'settings.mule.miner' | translate }} {{ u.miner_fw || '?' }}
-                <ng-container *ngIf="muleFw[u.serial] as f">
-                  <span class="mule-avail" *ngIf="f.update_available.mule || f.update_available.miner">
-                    {{ 'settings.mule.updateAvailable' | translate:{ mule: f.latest.mule, miner: f.latest.miner } }}
-                  </span>
-                  <span class="hint inline" *ngIf="!f.update_available.mule && !f.update_available.miner && !f.manifest.error">
-                    {{ 'settings.mule.upToDate' | translate }}
-                  </span>
-                  <span class="hint inline" *ngIf="f.manifest.error">{{ 'settings.mule.manifestUnavailable' | translate }}</span>
-                </ng-container>
-              </div>
-              <!-- The unit's two Bluetooth switches, as its last state reports
-                   them. A click posts a config command; the unit relays it to
-                   the miner, which restarts, and the next state shows it. -->
-              <div class="mule-line mule-switches" *ngIf="u.state">
-                <label class="mule-switch" *ngIf="u.state.as11?.enabled !== undefined">
-                  <input type="checkbox" [checked]="u.state.as11?.enabled"
-                         [disabled]="!u.online || muleBusy[u.serial] || muleSwitchPending(u, 'as11_enabled')"
-                         (change)="muleSwitch(u.serial, 'as11_enabled', $any($event.target).checked)" />
-                  {{ 'settings.mule.as11Bluetooth' | translate }}
-                  <span class="hint inline" *ngIf="muleSwitchState(u, 'as11_enabled') as s">{{ s }}</span>
-                </label>
-                <label class="mule-switch" *ngIf="u.state.o2_enabled !== undefined">
-                  <input type="checkbox" [checked]="u.state.o2_enabled"
-                         [disabled]="!u.online || muleBusy[u.serial] || muleSwitchPending(u, 'o2_enabled')"
-                         (change)="muleSwitch(u.serial, 'o2_enabled', $any($event.target).checked)" />
-                  {{ 'settings.mule.o2Ring' | translate }}
-                  <span class="hint inline" *ngIf="muleSwitchState(u, 'o2_enabled') as s">{{ s }}</span>
-                </label>
-              </div>
-              <ng-container *ngIf="muleFw[u.serial] as f">
-                <div class="hint" *ngIf="f.night_open">{{ 'settings.mule.nightOpen' | translate }}</div>
-                <div class="mule-actions" *ngIf="!f.job?.running">
-                  <button type="button" class="myair-btn" (click)="muleUpdate(u.serial)"
-                          *ngIf="f.update_available.mule || f.update_available.miner"
-                          [disabled]="f.night_open || !u.online || muleBusy[u.serial]">
-                    {{ 'settings.mule.update' | translate }}
-                  </button>
-                  <label class="mule-file">
-                    <select [(ngModel)]="muleTarget[u.serial]" [ngModelOptions]="{standalone: true}">
-                      <option value="mule">{{ 'settings.mule.mule' | translate }}</option>
-                      <option value="miner">{{ 'settings.mule.miner' | translate }}</option>
-                    </select>
-                    <input type="file" accept=".bin" (change)="muleFile(u.serial, $event)"
-                           [disabled]="f.night_open || !u.online || muleBusy[u.serial]" />
-                    <span class="hint">{{ 'settings.mule.fileHint' | translate }}</span>
-                  </label>
-                </div>
-                <div class="mule-job" *ngIf="f.job" [class.err]="f.job.phase === 'failed'"
-                     [class.ok]="f.job.phase === 'done'">{{ muleJobText(f.job) }}</div>
-              </ng-container>
-              <div class="myair-msg err" *ngIf="muleMessage[u.serial]">{{ muleMessage[u.serial] }}</div>
-            </div>
-          </div>
-        </div>
-
-        <!-- Section: the Sleep Bridges streaming to this host, and their
-             firmware. Nothing here is config: a bridge lists itself when it
-             connects, and an image goes to it over its own stream connection
-             (docs/SLEEP_BRIDGE_LOCAL_STREAM.md, "Updating the bridge"). -->
-        <div class="section">
-          <div class="section-header" (click)="toggle('sleepbridge')">
-            <span class="chevron" [class.open]="open['sleepbridge']">&#9654;</span>
-            {{ 'settings.sleepbridge.heading' | translate }}
-            <span class="badge connected" *ngIf="sbOnline() > 0">
-              {{ 'settings.sleepbridge.badgeOnline' | translate:{ n: sbOnline() } }}
-            </span>
-          </div>
-          <div class="section-body" *ngIf="open['sleepbridge']">
-            <p class="section-desc">{{ 'settings.sleepbridge.desc' | translate }}</p>
-            <div class="hint" *ngIf="sbBridges.length === 0">{{ 'settings.sleepbridge.none' | translate }}</div>
-            <div class="sb-unit" *ngFor="let b of sbBridges">
-              <div class="sb-head">
-                <strong>{{ b.sender }}</strong>
-                <span class="badge" [class.connected]="b.online">
-                  {{ (b.online ? 'settings.sleepbridge.online' : 'settings.sleepbridge.offline') | translate }}
-                </span>
-                <span class="badge" *ngIf="b.night_open">{{ 'settings.sleepbridge.nightOpen' | translate }}</span>
-              </div>
-              <div class="sb-line" *ngIf="b.card_machine">
-                <span class="sb-label">{{ 'settings.sleepbridge.machine' | translate }}</span> {{ b.card_machine }}
-              </div>
-              <div class="sb-line" *ngIf="b.last_batch">
-                <span class="sb-label">{{ 'settings.sleepbridge.lastWrite' | translate }}</span>
-                {{ b.last_batch * 1000 | date:'medium' }}
-              </div>
-              <div class="sb-line">
-                <span class="sb-label">{{ 'settings.sleepbridge.firmware' | translate }}</span> {{ b.fw_version || '?' }}
-              </div>
-              <!-- SDD-061 D8: the card learned on a computer, and whether this
-                   bridge latched it. The reason is the server's, English-only. -->
-              <ng-container *ngIf="b.learned as l">
-                <div class="sb-line">
-                  <span class="sb-label">{{ 'settings.sleepbridge.learned' | translate }}</span>
-                  {{ l.volume_serial }}
-                  <span class="badge" [class.connected]="l.verdict === 'latched'">
-                    {{ ('settings.sleepbridge.verdict.' + l.verdict) | translate }}
-                  </span>
-                  <span class="hint"> {{ l.reason }}</span>
-                </div>
-                <div class="hint" *ngIf="l.verdict === 'waiting'">{{ 'settings.sleepbridge.learnedWaitingHint' | translate }}</div>
-                <div class="hint" *ngIf="l.verdict === 'mismatch'">{{ 'settings.sleepbridge.learnedMismatchHint' | translate }}</div>
-              </ng-container>
-              <div class="hint" *ngIf="b.night_open">{{ 'settings.sleepbridge.nightOpenHint' | translate }}</div>
-              <div class="sb-actions" *ngIf="!b.update?.running">
-                <label class="sb-file">
-                  <input type="file" accept=".bin" (change)="sbFile(b.sender, $event)"
-                         [disabled]="b.night_open || !b.online || sbBusy[b.sender]" />
-                  <span class="hint">{{ 'settings.sleepbridge.fileHint' | translate }}</span>
-                </label>
-              </div>
-              <div class="sb-job" *ngIf="b.update" [class.err]="b.update.phase === 'failed'"
-                   [class.ok]="b.update.phase === 'done'">{{ sbJobText(b.update) }}</div>
-              <div class="sb-msg" *ngIf="sbMessage[b.sender]">{{ sbMessage[b.sender] }}</div>
-              <!-- Back to the CpapDash cloud: the stream command with an
-                   empty url, to this one bridge, after an in-page confirm. -->
-              <div>
-                <div class="sb-actions" *ngIf="sbCloud.phase(b.sender) !== 'confirming'">
-                  <button type="button" class="myair-btn secondary" (click)="sbCloud.ask(b)"
-                          [disabled]="!sbCloud.canAsk(b)">
-                    {{ (sbCloud.phase(b.sender) === 'sending' ? 'settings.sleepbridge.cloudSending'
-                                                              : 'settings.sleepbridge.cloudButton') | translate }}
-                  </button>
-                  <span class="hint" *ngIf="!b.online && sbCloud.phase(b.sender) !== 'sent'">
-                    {{ 'settings.sleepbridge.cloudOffline' | translate }}
-                  </span>
-                </div>
-                <div class="restart-banner" *ngIf="sbCloud.phase(b.sender) === 'confirming'">
-                  <span class="restart-text">{{ 'settings.sleepbridge.cloudConfirm' | translate:{ name: b.sender } }}</span>
-                  <div class="restart-actions">
-                    <button type="button" class="myair-btn danger" (click)="sbCloudSend(b)">
-                      {{ 'settings.sleepbridge.cloudYes' | translate }}
-                    </button>
-                    <button type="button" class="myair-btn secondary" (click)="sbCloud.cancel(b.sender)">
-                      {{ 'settings.sleepbridge.cloudCancel' | translate }}
-                    </button>
-                  </div>
-                </div>
-                <div class="sb-job ok" *ngIf="sbCloud.phase(b.sender) === 'sent'">
-                  {{ 'settings.sleepbridge.cloudSent' | translate }}
-                </div>
-                <div class="sb-job err" *ngIf="sbCloud.phase(b.sender) === 'failed'">
-                  {{ 'settings.sleepbridge.cloudFailed' | translate:{ error: sbCloud.state(b.sender).error } }}
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+        <!-- The Mule & Miner and Sleep Bridge sections moved to the Devices
+             page (SDD-062 D1): they held no config, only presence and
+             actions. -->
 
         <!-- Section: SleepHQ Sync -->
         <div class="section">
@@ -1228,34 +1015,13 @@ import { BridgeCloud, cloudError } from './sleepbridge-cloud';
                  font-size: 0.8rem; }
     .myair-btn:disabled { opacity: 0.5; cursor: not-allowed; }
     .myair-msg.err { color: #f87171; }
-    .mule-unit { border: 1px solid #2a2d45; border-radius: 8px; padding: 0.7rem 0.9rem; margin-bottom: 0.7rem; }
-    .mule-head { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.4rem; }
-    .mule-line { color: #ddd; font-size: 0.85rem; margin: 0.2rem 0; }
-    .mule-label { color: #888; margin-right: 0.3rem; }
-    .mule-avail { color: #fbbf24; margin-left: 0.5rem; }
-    .mule-switches { display: flex; gap: 1.2rem; flex-wrap: wrap; }
-    .mule-switch { display: flex; align-items: center; gap: 0.4rem; cursor: pointer; }
-    .mule-switch input { margin: 0; }
     .hint.inline { display: inline; margin-left: 0.5rem; }
-    .mule-actions { display: flex; align-items: center; gap: 0.8rem; flex-wrap: wrap; margin-top: 0.5rem; }
-    .mule-file { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; font-size: 0.8rem; }
-    .mule-file select { padding: 0.3rem; }
-    .mule-job { font-size: 0.85rem; margin-top: 0.5rem; color: #9ad0a0; }
-    .mule-job.err { color: #f87171; }
-    .mule-job.ok { color: #4ade80; }
     .myair-btn.danger { background: transparent; border-color: #f87171; color: #f87171; }
     .myair-btn.secondary { background: transparent; border-color: #555; color: #aaa; }
     .myair-btn.secondary:hover:not(:disabled) { color: #e0e0e0; border-color: #888; }
-    .sb-unit { border: 1px solid #2a2d45; border-radius: 8px; padding: 0.7rem 0.9rem; margin-bottom: 0.7rem; }
-    .sb-head { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.4rem; }
-    .sb-line { color: #ddd; font-size: 0.85rem; margin: 0.2rem 0; }
-    .sb-label { color: #888; margin-right: 0.3rem; }
-    .sb-actions { display: flex; align-items: center; gap: 0.8rem; flex-wrap: wrap; margin-top: 0.5rem; }
-    .sb-file { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; font-size: 0.8rem; }
-    .sb-job { font-size: 0.85rem; margin-top: 0.5rem; color: #9ad0a0; }
-    .sb-job.err { color: #f87171; }
-    .sb-job.ok { color: #4ade80; }
-    .sb-msg { font-size: 0.85rem; margin-top: 0.4rem; color: #f87171; }
+    /* SDD-062 D1: a section whose device has a card points there. */
+    .devices-link { font-size: 0.82rem; margin: 0.2rem 0 0.6rem; }
+    .devices-link a { color: #64b5f6; }
 
     .section-header .restart-tag { margin-left: auto; }
     .section-header .badge + .restart-tag { margin-left: 0.5rem; }
@@ -1440,33 +1206,9 @@ export class SettingsComponent implements OnInit, OnDestroy {
   // BLE adapter status
   bleStatus = '';
 
-  // SDD-057 AirSense 11 pairing. Held apart from `config`: the code goes to
-  // its own endpoint and the pairing it yields is never part of config.json.
-  as11 = { compiled: false, enabled: false, available: false, paired: false, pairing: false };
-  as11Code = '';
-  as11Busy = false;
-  as11Message = '';
-
   // SDD-041: the last update check, and whether "check now" is in flight.
   update: UpdateStatus | null = null;
   updateChecking = false;
-
-  // The Mule & Miner units streaming here, and each one's firmware answer.
-  // Polled while the section is open, so a running update shows as it goes.
-  muleUnits: MuleUnit[] = [];
-  muleFw: Record<string, MuleFirmware> = {};
-  muleTarget: Record<string, 'mule' | 'miner'> = {};
-  muleBusy: Record<string, boolean> = {};
-  muleMessage: Record<string, string> = {};
-  private muleTimer: any = null;
-
-  // The Sleep Bridges streaming here, with each one's firmware and the
-  // update as it runs. Polled while the section is open.
-  sbBridges: SleepBridge[] = [];
-  sbBusy: Record<string, boolean> = {};
-  sbMessage: Record<string, string> = {};
-  sbCloud = new BridgeCloud();
-  private sbTimer: any = null;
 
   // LLM Prompt state
   llmPrompt = '';
@@ -1566,190 +1308,6 @@ export class SettingsComponent implements OnInit, OnDestroy {
     });
   }
 
-  // ── Mule & Miner units and their firmware ──────────────────────────────
-
-  loadMule(): void {
-    this.api.getMuleUnits().subscribe({
-      next: (r) => {
-        this.muleUnits = r?.units ?? [];
-        for (const u of this.muleUnits) {
-          if (!this.muleTarget[u.serial]) this.muleTarget[u.serial] = 'mule';
-          this.api.getMuleFirmware(u.serial).subscribe({
-            next: (f) => { this.muleFw[u.serial] = f; },
-            error: () => {},
-          });
-        }
-      },
-      error: () => {},
-    });
-  }
-
-  muleOnline(): number {
-    return this.muleUnits.filter((u) => u.online).length;
-  }
-
-  // ── the unit's Bluetooth switches ──
-
-  /** The newest config command that set this switch, if any. */
-  private muleSwitchCommand(u: MuleUnit, key: 'as11_enabled' | 'o2_enabled'): MuleCommand | null {
-    for (const c of u.commands ?? [])
-      if (c.cmd === 'config' && c.args?.['config']?.[key] !== undefined) return c;
-    return null;
-  }
-
-  /** True while a switch is queued or sent and not answered yet. */
-  muleSwitchPending(u: MuleUnit, key: 'as11_enabled' | 'o2_enabled'): boolean {
-    const c = this.muleSwitchCommand(u, key);
-    return !!c && c.state !== 'answered';
-  }
-
-  /**
-   * The switch's last command as text: pending (queued or sent), answered,
-   * or refused with the unit's reason. Nothing once the unit's state shows
-   * what was asked.
-   */
-  muleSwitchState(u: MuleUnit, key: 'as11_enabled' | 'o2_enabled'): string {
-    const c = this.muleSwitchCommand(u, key);
-    if (!c) return '';
-    const asked = c.args['config'][key] as boolean;
-    if (c.state === 'queued') return this.t.instant('settings.mule.switchQueued');
-    if (c.state === 'sent') return this.t.instant('settings.mule.switchSent');
-    if (c.result && c.result.ok === false)
-      return this.t.instant('settings.mule.switchRefused', { error: c.result.error || '' });
-    const now = key === 'as11_enabled' ? u.state?.as11?.enabled : u.state?.o2_enabled;
-    return now === asked ? '' : this.t.instant('settings.mule.switchAnswered');
-  }
-
-  /** One switch, as the unit's own config takes it: {"as11_enabled": B} or {"o2_enabled": B}. */
-  muleSwitch(serial: string, key: 'as11_enabled' | 'o2_enabled', on: boolean): void {
-    this.muleBusy[serial] = true;
-    this.muleMessage[serial] = '';
-    this.api.sendMuleCommand(serial, 'config', { config: { [key]: on } }).subscribe({
-      next: () => { this.muleBusy[serial] = false; this.loadMule(); },
-      error: (e) => { this.muleBusy[serial] = false; this.muleMessage[serial] = this.muleError(e); this.loadMule(); },
-    });
-  }
-
-  /** The update from the manifest: the mule first, then the miner. */
-  muleUpdate(serial: string): void {
-    this.muleBusy[serial] = true;
-    this.muleMessage[serial] = '';
-    this.api.startMuleUpdate(serial, 'both').subscribe({
-      next: () => { this.muleBusy[serial] = false; this.loadMule(); },
-      error: (e) => { this.muleBusy[serial] = false; this.muleMessage[serial] = this.muleError(e); },
-    });
-  }
-
-  /** An image file the owner picked: it goes at once, to the target chosen. */
-  muleFile(serial: string, ev: Event): void {
-    const input = ev.target as HTMLInputElement;
-    const file = input.files?.[0];
-    if (!file) return;
-    input.value = '';
-    const target = this.muleTarget[serial] || 'mule';
-    this.muleBusy[serial] = true;
-    this.muleMessage[serial] = '';
-    this.api.uploadMuleImage(serial, target, file).subscribe({
-      next: () => { this.muleBusy[serial] = false; this.loadMule(); },
-      error: (e) => { this.muleBusy[serial] = false; this.muleMessage[serial] = this.muleError(e); },
-    });
-  }
-
-  private muleError(e: any): string {
-    return e?.error?.error || e?.message || this.t.instant('settings.mule.errGeneric');
-  }
-
-  muleJobText(job: MuleUpdateJob): string {
-    const which = this.t.instant(job.step === 'miner' ? 'settings.mule.miner' : 'settings.mule.mule');
-    const pct = job.total > 0 ? Math.round((job.sent * 100) / job.total) : 0;
-    switch (job.phase) {
-      case 'downloading': return this.t.instant('settings.mule.jobDownloading', { which });
-      case 'sending': return this.t.instant('settings.mule.jobSending', { which, pct });
-      case 'waiting': return this.t.instant('settings.mule.jobWaiting');
-      case 'done': return this.t.instant('settings.mule.jobDone',
-        { mule: job.fw_after || '?', miner: job.miner_fw_after || '?' });
-      case 'failed': return this.t.instant('settings.mule.jobFailed', { error: job.error });
-      default: return job.phase;
-    }
-  }
-
-  // ── SDD-057 AirSense 11 over Bluetooth ──────────────────────────────────
-
-  loadAs11Status(): void {
-    this.api.getAs11BleStatus().subscribe({
-      next: (s) => { this.as11 = { ...this.as11, ...s }; },
-      error: () => {},
-    });
-  }
-
-  /** Bluetooth reading is on in the config the server last accepted. */
-  as11Saved(): boolean {
-    return !!this.pristine?.airsense11_ble?.enabled;
-  }
-
-  /** The translated sentence for a failed step, from the stable `result` code. */
-  private as11Error(e: any): string {
-    const result = e?.error?.result ?? e?.result ?? '';
-    const key: Record<string, string> = {
-      connect: 'settings.as11.errConnect',
-      radio_off: 'settings.as11.errRadioOff',
-      verify: 'settings.as11.errVerify',
-      protocol: 'settings.as11.errTimeout',
-      bad_code: 'settings.as11.errBadCode',
-      no_pairing: 'settings.as11.errNoPairing',
-      disabled: 'settings.as11.errDisabled',
-      not_compiled: 'settings.as11.notCompiled',
-    };
-    return this.t.instant(key[result] ?? 'settings.as11.errGeneric');
-  }
-
-  as11PairStart(): void {
-    this.as11Busy = true;
-    this.as11Message = '';
-    this.as11Code = '';
-    this.api.as11PairStart().subscribe({
-      next: (r: any) => {
-        this.as11Busy = false;
-        if (!r?.ok) this.as11Message = this.as11Error(r);
-        this.loadAs11Status();
-      },
-      error: (e) => {
-        this.as11Busy = false;
-        this.as11Message = this.as11Error(e);
-        this.loadAs11Status();
-      },
-    });
-  }
-
-  as11PairConfirm(): void {
-    this.as11Busy = true;
-    this.as11Message = '';
-    const code = this.as11Code;
-    this.as11Code = '';
-    this.api.as11PairConfirm(code).subscribe({
-      next: (r: any) => {
-        this.as11Busy = false;
-        this.as11Message = r?.ok ? this.t.instant('settings.as11.done') : this.as11Error(r);
-        this.loadAs11Status();
-      },
-      error: (e) => {
-        this.as11Busy = false;
-        this.as11Message = this.as11Error(e);
-        this.loadAs11Status();
-      },
-    });
-  }
-
-  as11PairCancel(): void {
-    this.as11Busy = true;
-    this.as11Message = '';
-    this.as11Code = '';
-    this.api.as11PairCancel().subscribe({
-      next: () => { this.as11Busy = false; this.loadAs11Status(); },
-      error: () => { this.as11Busy = false; this.loadAs11Status(); },
-    });
-  }
-
   open: Record<string, boolean> = {
     source: true,
     logging: false,
@@ -1819,82 +1377,14 @@ export class SettingsComponent implements OnInit, OnDestroy {
   constructor(private api: CpapApiService, private t: TranslateService,
               public updateFlow: UpdateFlowService) {}
 
-  // ── Sleep Bridges and their firmware ────────────────────────────────────
-
-  loadSleepBridges(): void {
-    this.api.getSleepBridges().subscribe({
-      next: (r) => { this.sbBridges = r?.bridges ?? []; },
-      error: () => {},
-    });
-  }
-
-  sbOnline(): number {
-    return this.sbBridges.filter((b) => b.online).length;
-  }
-
-  /** An image file the owner picked: it goes at once, over the bridge's connection. */
-  sbFile(sender: string, ev: Event): void {
-    const input = ev.target as HTMLInputElement;
-    const file = input.files?.[0];
-    if (!file) return;
-    input.value = '';
-    this.sbBusy[sender] = true;
-    this.sbMessage[sender] = '';
-    this.api.uploadSleepBridgeImage(sender, file).subscribe({
-      next: () => { this.sbBusy[sender] = false; this.loadSleepBridges(); },
-      error: (e) => {
-        this.sbBusy[sender] = false;
-        this.sbMessage[sender] = e?.error?.error || e?.message || this.t.instant('settings.sleepbridge.errGeneric');
-      },
-    });
-  }
-
-  /** The owner confirmed on the page: the bridge goes back to the cloud. */
-  sbCloudSend(b: SleepBridge): void {
-    const body = this.sbCloud.confirm(b);
-    if (!body) return;
-    this.api.sleepBridgeCommand(body).subscribe({
-      next: (r) => {
-        if (r?.ok === false) {
-          this.sbCloud.failed(b.sender, r.error || this.t.instant('settings.sleepbridge.cloudErrGeneric'));
-        } else {
-          this.sbCloud.sent(b.sender);
-          this.loadSleepBridges();
-        }
-      },
-      error: (e) => {
-        this.sbCloud.failed(b.sender, cloudError(e) || this.t.instant('settings.sleepbridge.cloudErrGeneric'));
-      },
-    });
-  }
-
-  sbJobText(job: SleepBridgeUpdate): string {
-    const pct = job.total > 0 ? Math.round((job.sent * 100) / job.total) : 0;
-    switch (job.phase) {
-      case 'sending': return this.t.instant('settings.sleepbridge.jobSending', { pct });
-      case 'waiting': return this.t.instant('settings.sleepbridge.jobWaiting');
-      case 'restarting': return this.t.instant('settings.sleepbridge.jobRestarting');
-      case 'done': return this.t.instant('settings.sleepbridge.jobDone', { version: job.fw_after || '?' });
-      case 'failed': return this.t.instant('settings.sleepbridge.jobFailed', { error: job.error });
-      default: return job.phase;
-    }
-  }
-
   ngOnDestroy(): void {
     this.destroy$.next();
     this.destroy$.complete();
-    if (this.muleTimer) clearInterval(this.muleTimer);
-    if (this.sbTimer) clearInterval(this.sbTimer);
   }
 
   ngOnInit(): void {
     this.loadMyAirStatus();
-    this.loadAs11Status();
     this.loadUpdateStatus();
-    this.loadMule();
-    this.muleTimer = setInterval(() => { if (this.open['mule']) this.loadMule(); }, 3000);
-    this.loadSleepBridges();
-    this.sbTimer = setInterval(() => { if (this.open['sleepbridge']) this.loadSleepBridges(); }, 3000);
 
     this.api.getConfig().subscribe({
       next: (cfg) => {
@@ -1974,7 +1464,6 @@ export class SettingsComponent implements OnInit, OnDestroy {
         this.showToast(this.t.instant('settings.actions.saved'), false);
         this.evaluateRestart(submitted);
         this.pristine = submitted;
-        this.loadAs11Status();
       },
       error: () => {
         this.saving = false;

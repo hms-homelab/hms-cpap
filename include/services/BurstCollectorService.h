@@ -768,6 +768,39 @@ private:
     /// D9: is this file of this folder done on record (never fetched again)?
     bool fileDoneOnRecord(const std::string& folder, const std::string& name) const;
 
+public:
+    /// The card source's reachability as the bursts found it: what the MQTT
+    /// card_* topics carry, for GET /api/source/status. last_attempt 0:
+    /// nothing tried yet since this start.
+    struct CardFacts {
+        long long   last_attempt = 0;
+        bool        answering = false;
+        long long   last_answered = 0;
+        std::string health;
+        int         consecutive_failures = 0;
+    };
+    CardFacts cardFacts() const;
+
+    /// The AirSense 11 summary pulls: the last one asked, the newest day it
+    /// brought, why nothing was written when nothing was. summary_at 0: none
+    /// since this start.
+    struct As11Facts {
+        long long   summary_at = 0;
+        std::string summary_day;
+        int         days_written = 0;
+        std::string error;
+        bool        pull_due = false;   // a pull out of turn asked and not run yet
+    };
+    As11Facts as11Facts() const;
+    /// Pull the machine's summary now, on the worker, out of turn. False when
+    /// no pull is set up (no machine read over Bluetooth or a bridge).
+    bool requestAs11Pull();
+private:
+    void noteAs11Pull(const AirSense11Pull::Result& r);
+    mutable std::mutex facts_mtx_;
+    CardFacts card_facts_;
+    As11Facts as11_facts_;
+
     /// One way to survive an ez Share, D9: the card's health to Home Assistant,
     /// on a change and every 15 minutes.
     void reportCardHealth(long long now, bool answering);

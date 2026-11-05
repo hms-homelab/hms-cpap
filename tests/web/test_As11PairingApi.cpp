@@ -2,6 +2,10 @@
 
 #include "web/As11PairingApi.h"
 
+#include <chrono>
+#include <filesystem>
+#include <fstream>
+
 using namespace hms_cpap;
 using hms_cpap::as11::Result;
 
@@ -35,9 +39,54 @@ struct FakePairing : IAirSense11Pairing {
     bool pairPending() const override { return pending; }
     bool paired() const override { return is_paired; }
     std::string lastError() const override { return error; }
+    Presence presence() const override { return link; }
+    bool busy() const override { return pending || pulling; }
+    Presence link;
+    bool pulling = false;
 };
 
 } // namespace
+
+TEST(As11PairingApi, StatusCarriesTheLinkAsItIsNow) {
+    FakePairing p;
+    auto r = as11api::status(&p, true, true);
+    EXPECT_FALSE(r.body["connected"].asBool());
+    EXPECT_TRUE(r.body["therapy"].isNull()) << "no therapy state without a link";
+    EXPECT_EQ(r.body["last_contact"].asInt64(), 0);
+    p.link.connected    = true;
+    p.link.therapy      = true;
+    p.link.streaming    = true;
+    p.link.last_contact = 1762300000;
+    r = as11api::status(&p, true, true);
+    EXPECT_TRUE(r.body["connected"].asBool());
+    EXPECT_TRUE(r.body["therapy"].asBool());
+    EXPECT_TRUE(r.body["streaming"].asBool());
+    EXPECT_EQ(r.body["last_contact"].asInt64(), 1762300000);
+}
+
+TEST(As11PairingApi, ForgetRemovesThePairingButNotWhileBusy) {
+    const auto dir = std::filesystem::temp_directory_path() /
+                     ("as11_forget_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::filesystem::create_directories(dir);
+    const std::string path = (dir / "as11.json").string();
+    { std::ofstream(path) << R"({"clientId":"x","masterPairKey":"00"})"; }
+    FakePairing p;
+    p.pulling = true;
+    auto r = as11api::forget(&p, path, false);
+    EXPECT_EQ(r.status, 409);
+    EXPECT_TRUE(std::filesystem::exists(path));
+    p.pulling = false;
+    r = as11api::forget(&p, path, /*pull_due=*/true);
+    EXPECT_EQ(r.status, 409) << "a pull asked and not run yet is busy too";
+    r = as11api::forget(&p, path, false);
+    EXPECT_EQ(r.status, 200);
+    EXPECT_TRUE(r.body["removed"].asBool());
+    EXPECT_FALSE(std::filesystem::exists(path));
+    // Again: nothing to remove, still fine. And with no client (Bluetooth off).
+    EXPECT_FALSE(as11api::forget(&p, path, false).body["removed"].asBool());
+    EXPECT_EQ(as11api::forget(nullptr, path, false).status, 200);
+    std::filesystem::remove_all(dir);
+}
 
 TEST(As11PairingApi, StatusSaysWhatTheHostCanDo) {
     auto r = as11api::status(nullptr, false, false);

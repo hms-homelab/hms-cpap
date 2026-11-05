@@ -1,5 +1,7 @@
 #include "mule/MuleFirmware.h"
 
+#include "sleepbridge/SleepBridgeService.h"   // inspectImage: an ESP32 image's own version
+
 #include <curl/curl.h>
 
 #include <algorithm>
@@ -157,13 +159,44 @@ bool updateAvailable(const std::string& have, const std::string& latest) {
 // ── the updater ──
 
 FirmwareUpdater::FirmwareUpdater(MuleService& units, Transport transport, Options opt)
-    : units_(units), t_(std::move(transport)), opt_(std::move(opt)) {}
+    : units_(units), t_(std::move(transport)), opt_(std::move(opt)) {
+    const std::time_t now = std::time(nullptr);
+    next_job_ = static_cast<uint64_t>(now > 978307200 ? now - 978307200 : 0) * 10;
+    // The jobs kept before this start: one cut before the unit took its
+    // image failed (interrupted); one restarting waits for the unit's hello.
+    for (auto& [serial, ota] : devices::otaLoadAll(opt_.jobs_dir)) {
+        const bool was_ended = ota.ended();
+        devices::otaAfterRestart(ota, now);
+        auto j    = std::make_shared<Job>();
+        j->ota    = ota;
+        j->target = ota.steps.size() == 2 ? "both" : (ota.steps.empty() ? "mule" : ota.steps[0].target);
+        // Its mule step, restarting: any hello from here on is its return.
+        j->hellos_before = 0;
+        jobs_[serial]    = j;
+        if (!was_ended && ota.ended()) devices::otaSave(opt_.jobs_dir, serial, ota);
+    }
+    units_.setObserver([this](const std::string& serial, bool hello) { onUnit(serial, hello); });
+}
 
 FirmwareUpdater::FirmwareUpdater(MuleService& units, Transport transport)
     : FirmwareUpdater(units, std::move(transport), Options{}) {}
 
 FirmwareUpdater::~FirmwareUpdater() {
-    if (worker_.joinable()) worker_.join();
+    units_.setObserver({});
+    waitIdle();
+}
+
+void FirmwareUpdater::waitIdle() {
+    for (;;) {
+        std::vector<std::thread> ws;
+        {
+            std::lock_guard<std::mutex> lk(workers_mu_);
+            ws.swap(workers_);
+        }
+        if (ws.empty()) return;
+        for (auto& w : ws)
+            if (w.joinable()) w.join();
+    }
 }
 
 std::optional<Manifest> FirmwareUpdater::manifest(std::string* why) {
@@ -199,22 +232,38 @@ std::optional<Manifest> FirmwareUpdater::manifest(std::string* why) {
     return m;
 }
 
+// The shape scripts read before the job object, kept one release beside it.
 Json::Value FirmwareUpdater::jobJson(const Job& j) {
+    const devices::OtaJob&  o = j.ota;
+    const devices::OtaStep* s = o.current();
+    const std::string       p = o.phase();
+    std::string legacy = p == "preparing"                         ? "downloading"
+                         : (p == "transferring" || p == "verifying") ? "sending"
+                         : p == "restarting"                        ? "waiting"
+                                                                    : p;
+    // A miner step restarting means the mule took and flashed it: done, as
+    // the old shape said.
+    if (p == "restarting" && s && s->target == "miner") legacy = "done";
+    auto version = [&](const std::string& target, bool after) -> std::string {
+        for (const auto& st : o.steps)
+            if (st.target == target) return after ? st.version_after : st.version_before;
+        return "";
+    };
     Json::Value v(Json::objectValue);
     v["target"]          = j.target;
-    v["source"]          = j.source;
-    v["phase"]           = j.phase;
-    v["step"]            = j.step;
-    v["sent"]            = static_cast<Json::UInt64>(j.sent);
-    v["total"]           = static_cast<Json::UInt64>(j.total);
-    v["error"]           = j.error;
-    v["fw_before"]       = j.fw_before;
-    v["miner_fw_before"] = j.miner_fw_before;
-    v["fw_after"]        = j.fw_after;
-    v["miner_fw_after"]  = j.miner_fw_after;
-    v["started"]         = static_cast<Json::Int64>(j.started);
-    v["finished"]        = static_cast<Json::Int64>(j.finished);
-    v["running"]         = j.running;
+    v["source"]          = o.source;
+    v["phase"]           = legacy;
+    v["step"]            = s ? s->target : "";
+    v["sent"]            = static_cast<Json::UInt64>(s ? s->bytes : 0);
+    v["total"]           = static_cast<Json::UInt64>(s ? s->total : 0);
+    v["error"]           = o.detail.empty() ? o.reason : o.detail;
+    v["fw_before"]       = version("mule", false);
+    v["miner_fw_before"] = version("miner", false);
+    v["fw_after"]        = version("mule", true);
+    v["miner_fw_after"]  = version("miner", true);
+    v["started"]         = static_cast<Json::Int64>(o.started_at);
+    v["finished"]        = static_cast<Json::Int64>(o.ended_at);
+    v["running"]         = !o.ended();
     Json::Value log(Json::arrayValue);
     for (const auto& l : j.log) log.append(l);
     v["log"] = log;
@@ -227,7 +276,39 @@ Json::Value FirmwareUpdater::job(const std::string& serial) const {
     return it == jobs_.end() ? Json::Value(Json::nullValue) : jobJson(*it->second);
 }
 
-Json::Value FirmwareUpdater::firmware(const std::string& serial) {
+Json::Value FirmwareUpdater::ota(const std::string& serial) const {
+    std::lock_guard<std::mutex> lk(mu_);
+    const auto it = jobs_.find(serial);
+    return it == jobs_.end() ? Json::Value(Json::nullValue) : devices::otaJson(it->second->ota);
+}
+
+void FirmwareUpdater::changed(Job& j) {
+    j.ota.updated_at = std::time(nullptr);
+    if (j.ota.ended() && !j.ota.ended_at) j.ota.ended_at = j.ota.updated_at;
+    devices::otaSave(opt_.jobs_dir, j.ota.serial, j.ota);
+}
+
+void FirmwareUpdater::fail(Job& j, const std::string& reason, const std::string& detail) {
+    if (auto* s = j.ota.current()) s->phase = "failed";
+    j.ota.reason = reason;
+    j.ota.detail = detail;
+    changed(j);
+    j.log.push_back("failed: " + reason + ", " + detail);
+    std::cout << "[mule] " << j.ota.serial << " update failed: " << reason << ", " << detail << std::endl;
+}
+
+void FirmwareUpdater::advance(Job& j) {
+    while (j.ota.current() && (j.ota.current()->phase == "done" || j.ota.current()->phase == "skipped"))
+        ++j.ota.step;
+    if (!j.ota.current()) {
+        // Past the last step: the job reads as its last step's outcome.
+        j.ota.step = j.ota.steps.empty() ? 0 : j.ota.steps.size() - 1;
+        if (!j.ota.steps.empty() && j.ota.steps.back().phase == "skipped") j.ota.steps.back().phase = "done";
+    }
+    changed(j);
+}
+
+Json::Value FirmwareUpdater::firmware(const std::string& serial, bool read_manifest) {
     const MuleService::Brief b = units_.brief(serial);
     Json::Value v(Json::objectValue);
     v["serial"]     = serial;
@@ -238,8 +319,15 @@ Json::Value FirmwareUpdater::firmware(const std::string& serial) {
     v["miner_fw"]   = b.miner_fw;
     v["night_open"] = b.night_open;
 
-    std::string why;
-    const auto  m = manifest(&why);
+    std::string             why;
+    std::optional<Manifest> m;
+    if (read_manifest) {
+        m = manifest(&why);
+    } else {
+        std::lock_guard<std::mutex> lk(mu_);
+        m   = cached_;
+        why = cached_wall_ ? cached_error_ : "the manifest has not been read yet";
+    }
     Json::Value man(Json::objectValue);
     man["url"]   = opt_.manifest_url;
     man["error"] = why;
@@ -256,11 +344,15 @@ Json::Value FirmwareUpdater::firmware(const std::string& serial) {
     v["latest"]           = latest;
     v["update_available"] = avail;
     v["job"]              = job(serial);
+    v["ota"]              = ota(serial);
+    const devices::Recording rec = units_.recording(serial);
+    v["recording"]        = rec.state;
+    v["recording_reason"] = rec.reason;
     return v;
 }
 
 CommandAnswer FirmwareUpdater::start(const std::string& serial, const std::string& target, std::string image,
-                                     const std::string& image_name) {
+                                     const std::string& image_name, bool confirm) {
     CommandAnswer a;
     auto refuse = [&a](int status, const std::string& why) {
         a.status        = status;
@@ -277,18 +369,21 @@ CommandAnswer FirmwareUpdater::start(const std::string& serial, const std::strin
 
     const MuleService::Brief b = units_.brief(serial);
     if (!b.known) return refuse(404, "no Mule & Miner \"" + serial + "\" has connected here");
-    if (b.night_open)
-        return refuse(409, "a night is open on this unit: the update waits for its downtime (no mask on, "
-                           "and the night landed here)");
     if (!b.online || b.ip.empty()) return refuse(409, "the unit is not connected here right now");
 
     std::shared_ptr<Job> j;
     {
         std::lock_guard<std::mutex> lk(mu_);
-        for (const auto& [s, running] : jobs_)
-            if (running->running) return refuse(409, "an update is already running on " + s);
+        for (const auto& [s, other] : jobs_) {
+            if (other->ota.ended()) continue;
+            const std::string p = other->ota.phase();
+            if (s == serial)
+                return refuse(409, "the last update to this unit has not ended (" + p +
+                                       "); it ends when the unit is heard from again");
+            if (p == "preparing" || p == "transferring" || p == "verifying")
+                return refuse(409, "an update is already running on " + s);
+        }
     }
-    if (worker_.joinable()) worker_.join();   // the last job ended: its thread is done
 
     Release mule_release, miner_release;
     if (image.empty()) {
@@ -307,190 +402,228 @@ CommandAnswer FirmwareUpdater::start(const std::string& serial, const std::strin
             return refuse(409, "the unit already runs mule " + b.fw + " and miner " + b.miner_fw);
     }
 
-    j                  = std::make_shared<Job>();
-    j->serial          = serial;
-    j->target          = target;
-    j->source          = image.empty() ? "manifest " + (target == "miner" ? miner_release.version : mule_release.version)
-                                       : "file " + (image_name.empty() ? std::string("(unnamed)") : image_name);
-    j->fw_before       = b.fw;
-    j->miner_fw_before = b.miner_fw;
-    j->started         = std::time(nullptr);
-    j->running         = true;
+    // While the machine records: the warning, and nothing sent unless the
+    // person confirmed it (SDD-062 D4).
+    const devices::Recording rec = units_.recording(serial);
+    if (rec.warns() && !confirm) {
+        a.status = 409;
+        a.body   = devices::recordingWarning(rec);
+        return a;
+    }
+
+    const std::time_t now = std::time(nullptr);
+    j                = std::make_shared<Job>();
+    j->target        = target;
+    j->mule_release  = mule_release;
+    j->miner_release = miner_release;
+    j->hellos_before = b.hellos;
+    auto& o          = j->ota;
+    o.serial         = serial;
+    o.kind           = "mule_miner";
+    o.source         = image.empty() ? "manifest " + (target == "miner" ? miner_release.version : mule_release.version)
+                                     : "file " + (image_name.empty() ? std::string("(unnamed)") : image_name);
+    o.confirmed_while_recording = rec.warns() && confirm;
+    o.started_at = o.updated_at = now;
+    o.last_heard = b.last_heard;
+    // The version an owner's file carries, read from its app descriptor.
+    std::string file_version;
+    if (!image.empty())
+        if (const auto info = sleepbridge::inspectImage(image, nullptr)) file_version = info->version;
+    auto addStep = [&](const std::string& t) {
+        devices::OtaStep s;
+        s.target         = t;
+        s.version_before = t == "mule" ? b.fw : b.miner_fw;
+        s.version_target = !image.empty() ? file_version : (t == "mule" ? mule_release.version : miner_release.version);
+        // On "both" from the manifest, an image the unit already runs is
+        // not sent again.
+        if (target == "both" && image.empty() &&
+            !updateAvailable(s.version_before, s.version_target)) {
+            s.phase         = "skipped";
+            s.version_after = s.version_before;
+        }
+        o.steps.push_back(s);
+    };
+    if (target == "mule" || target == "both") addStep("mule");
+    if (target == "miner" || target == "both") addStep("miner");
+    if (!image.empty()) (target == "mule" ? j->mule_image : j->miner_image) = std::move(image);
     {
         std::lock_guard<std::mutex> lk(mu_);
+        o.job_id      = std::to_string(++next_job_);
         jobs_[serial] = j;
+        for (const auto& s : o.steps)
+            if (s.phase == "skipped") j->log.push_back(s.target + " " + s.version_before + " is current: not sent");
+        advance(*j);
     }
-    std::string mule_image, miner_image;
-    if (!image.empty()) (target == "mule" ? mule_image : miner_image) = std::move(image);
 
-    a.status      = 202;
-    a.body["ok"]  = true;
-    a.body["job"] = jobJson(*j);
-    if (opt_.async) {
-        worker_ = std::thread([this, j, mi = std::move(mule_image), ni = std::move(miner_image), mule_release,
-                               miner_release]() mutable {
-            run(j, std::move(mi), std::move(ni), mule_release, miner_release);
-        });
-    } else {
-        run(j, std::move(mule_image), std::move(miner_image), mule_release, miner_release);
-        a.body["job"] = job(serial);
-    }
+    a.status = 202;
+    a.body["ok"] = true;
+    launch(j);
+    a.body["job"] = job(serial);
+    a.body["ota"] = ota(serial);
     return a;
+}
+
+void FirmwareUpdater::launch(std::shared_ptr<Job> j) {
+    if (!opt_.async) return runStep(std::move(j));
+    std::lock_guard<std::mutex> lk(workers_mu_);
+    workers_.emplace_back([this, j] { runStep(j); });
+}
+
+void FirmwareUpdater::onUnit(const std::string& serial, bool hello) {
+    const MuleService::Brief b = units_.brief(serial);
+    std::shared_ptr<Job> next;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        const auto it = jobs_.find(serial);
+        if (it == jobs_.end()) return;
+        Job& j = *it->second;
+        if (j.ota.ended()) return;
+        j.ota.last_heard = b.last_heard;
+        devices::OtaStep* s = j.ota.current();
+        if (!s) return;
+        if (s->target == "mule" && hello && b.hellos > j.hellos_before &&
+            (s->phase == "restarting" || s->phase == "verifying")) {
+            // The mule is back: what it runs is the outcome.
+            s->version_after = b.fw;
+            const bool old = !s->version_target.empty() && s->version_target != s->version_before &&
+                             b.fw == s->version_before;
+            if (old) {
+                fail(j, "back_on_old_version", "the unit came back on mule " + b.fw);
+                return;
+            }
+            s->phase = "done";
+            j.log.push_back("the unit is back: mule " + b.fw + ", miner " + b.miner_fw);
+            std::cout << "[mule] " << serial << " update: the unit is back on mule " << b.fw << std::endl;
+            advance(j);
+            if (!j.ota.ended()) next = it->second;   // the miner's step, now
+        } else if (s->target == "miner" && s->phase == "restarting") {
+            // The miner runs what the unit's state says. A version that moved
+            // is the outcome; the old one, on a hello of the mule, means the
+            // new image did not take.
+            const bool moved = !b.miner_fw.empty() && b.miner_fw != s->version_before;
+            const bool same_image = !s->version_target.empty() && s->version_target == s->version_before;
+            if (moved || same_image) {
+                s->version_after = b.miner_fw;
+                s->phase         = "done";
+                j.log.push_back("the miner runs " + b.miner_fw);
+                std::cout << "[mule] " << serial << " update: the miner runs " << b.miner_fw << std::endl;
+                advance(j);
+            } else if (hello && !s->version_target.empty() && b.miner_fw == s->version_before) {
+                s->version_after = b.miner_fw;
+                fail(j, "back_on_old_version", "the miner still runs " + b.miner_fw);
+            } else {
+                j.ota.updated_at = std::time(nullptr);
+            }
+        }
+    }
+    if (next) launch(next);
 }
 
 void FirmwareUpdater::note(Job& j, const std::string& what) {
     std::lock_guard<std::mutex> lk(mu_);
     j.log.push_back(what);
-    std::cout << "[mule] " << j.serial << " update: " << what << std::endl;
+    std::cout << "[mule] " << j.ota.serial << " update: " << what << std::endl;
 }
 
 bool FirmwareUpdater::fetchImage(Job& j, const Release& r, std::string& out) {
+    std::string target;
     {
         std::lock_guard<std::mutex> lk(mu_);
-        j.phase = "downloading";
-        j.sent = j.total = 0;
+        auto* s = j.ota.current();
+        target   = s->target;
+        s->phase = "preparing";
+        s->bytes = s->total = 0;
+        changed(j);
     }
-    note(j, "downloading " + j.step + " " + r.version + " from " + r.url);
+    note(j, "downloading " + target + " " + r.version + " from " + r.url);
     const HttpReply reply = t_.get(r.url, kFetchTimeoutS);
     if (!reply.ok || reply.status != 200 || reply.body.empty()) {
         std::lock_guard<std::mutex> lk(mu_);
-        j.phase = "failed";
-        j.error = "the " + j.step + " image could not be downloaded: " +
-                  (reply.ok ? "HTTP " + std::to_string(reply.status) : reply.error);
+        fail(j, "image_unavailable",
+             "the " + target + " image could not be downloaded: " +
+                 (reply.ok ? "HTTP " + std::to_string(reply.status) : reply.error));
         return false;
     }
     out = reply.body;
-    note(j, j.step + " image: " + std::to_string(out.size()) + " bytes");
+    note(j, target + " image: " + std::to_string(out.size()) + " bytes");
     return true;
 }
 
 bool FirmwareUpdater::sendImage(Job& j, const std::string& target, const std::string& image) {
-    // The unit's downtime is checked again right here: a night can open
-    // between the button and this image, and between the two images.
-    const MuleService::Brief b = units_.brief(j.serial);
-    if (b.night_open) {
-        std::lock_guard<std::mutex> lk(mu_);
-        j.phase = "failed";
-        j.error = "a night opened on the unit: the " + target + " image was not sent";
-        return false;
-    }
+    const MuleService::Brief b = units_.brief(j.ota.serial);
     if (!b.online || b.ip.empty()) {
         std::lock_guard<std::mutex> lk(mu_);
-        j.phase = "failed";
-        j.error = "the unit is not connected here: the " + target + " image was not sent";
+        fail(j, "offline", "the unit is not connected here: the " + target + " image was not sent");
         return false;
     }
     const std::string url = "http://" + b.ip + "/api/update/" + target;
+    size_t idx = 0;   // this step, whatever the job's current step becomes meanwhile
     {
         std::lock_guard<std::mutex> lk(mu_);
-        j.phase = "sending";
-        j.step  = target;
-        j.sent  = 0;
-        j.total = image.size();
+        idx      = j.ota.step;
+        auto* s  = &j.ota.steps[idx];
+        s->phase = "transferring";
+        s->bytes = 0;
+        s->total = image.size();
+        if (target == "mule") j.hellos_before = b.hellos;
+        changed(j);
     }
     note(j, "sending the " + target + " image (" + std::to_string(image.size()) + " bytes) to " + url);
     Job* jp = &j;
-    const HttpReply reply = t_.post(url, image, kPostTimeoutS, [this, jp](size_t sent, size_t total) {
+    const HttpReply reply = t_.post(url, image, kPostTimeoutS, [this, jp, idx](size_t sent, size_t total) {
         std::lock_guard<std::mutex> lk(mu_);
-        jp->sent = sent;
-        if (total) jp->total = total;
+        auto* s = &jp->ota.steps[idx];
+        if (s->phase != "transferring") return;
+        s->bytes = sent;
+        if (total) s->total = total;
+        jp->ota.updated_at = std::time(nullptr);
+        // Every byte went: the unit is writing and checking it.
+        if (s->total && s->bytes >= s->total) {
+            s->phase = "verifying";
+            changed(*jp);
+        }
     });
+    std::lock_guard<std::mutex> lk(mu_);
+    auto* s = &j.ota.steps[idx];
+    // The unit's own return (its hello) may have ended this step already.
+    const bool open = s->phase == "transferring" || s->phase == "verifying";
     if (!reply.ok) {
-        std::lock_guard<std::mutex> lk(mu_);
-        j.phase = "failed";
-        j.error = "the " + target + " image did not get through: " + reply.error;
+        if (open) fail(j, "connection_lost", "the " + target + " image did not get through: " + reply.error);
         return false;
     }
     if (reply.status != 200) {
-        std::lock_guard<std::mutex> lk(mu_);
-        j.phase = "failed";
-        j.error = "the unit refused the " + target + " image: HTTP " + std::to_string(reply.status) +
-                  (reply.body.empty() ? "" : " " + reply.body.substr(0, 200));
+        if (open)
+            fail(j, "refused_image",
+                 "HTTP " + std::to_string(reply.status) + (reply.body.empty() ? "" : " " + reply.body.substr(0, 200)));
         return false;
     }
-    {
-        std::lock_guard<std::mutex> lk(mu_);
-        j.sent = j.total = image.size();
-    }
-    note(j, "the unit took the " + target + " image: " + reply.body.substr(0, 200));
+    if (open) s->bytes = s->total = image.size();
+    // The mule restarts into its image and comes back with a hello; the mule
+    // flashed the miner inside this request, and the miner's new version
+    // comes in the unit's next state. A hello that came first already ended
+    // the step.
+    if (open) s->phase = "restarting";
+    j.log.push_back("the unit took the " + target + " image: " + reply.body.substr(0, 200));
+    std::cout << "[mule] " << j.ota.serial << " update: the unit took the " << target << " image" << std::endl;
+    changed(j);
     return true;
 }
 
-bool FirmwareUpdater::waitForReturn(Job& j, uint64_t hellos_before) {
+void FirmwareUpdater::runStep(std::shared_ptr<Job> jp) {
+    Job&        j = *jp;
+    std::string target, image;
+    Release     release;
     {
         std::lock_guard<std::mutex> lk(mu_);
-        j.phase = "waiting";
+        if (j.ota.ended()) return;
+        const auto* s = j.ota.current();
+        if (!s || s->phase != "queued") return;
+        target  = s->target;
+        image   = std::move(target == "mule" ? j.mule_image : j.miner_image);
+        release = target == "mule" ? j.mule_release : j.miner_release;
     }
-    note(j, "waiting for the unit to restart and come back here");
-    const auto until = std::chrono::steady_clock::now() + opt_.reconnect_wait;
-    while (std::chrono::steady_clock::now() < until) {
-        const MuleService::Brief b = units_.brief(j.serial);
-        if (b.hellos > hellos_before && b.online) {
-            note(j, "the unit is back: mule " + b.fw + ", miner " + b.miner_fw);
-            return true;
-        }
-        std::this_thread::sleep_for(opt_.poll);
-    }
-    std::lock_guard<std::mutex> lk(mu_);
-    j.phase = "failed";
-    j.error = "the unit has not come back within " + std::to_string(opt_.reconnect_wait.count()) +
-              " s of taking the mule image";
-    return false;
-}
-
-void FirmwareUpdater::run(std::shared_ptr<Job> jp, std::string mule_image, std::string miner_image,
-                          Release mule_release, Release miner_release) {
-    Job&       j        = *jp;
-    const bool do_mule  = j.target == "mule" || j.target == "both";
-    const bool do_miner = j.target == "miner" || j.target == "both";
-    bool       ok       = true;
-
-    // The mule first: it restarts after its image and must be back before
-    // the miner's goes through it. On "both" from the manifest, an image
-    // the unit already runs is not sent again.
-    if (do_mule) {
-        const MuleService::Brief before = units_.brief(j.serial);
-        const bool skip = j.target == "both" && mule_image.empty() &&
-                          !updateAvailable(before.fw, mule_release.version);
-        if (skip) {
-            note(j, "mule " + before.fw + " is current: not sent");
-        } else {
-            {
-                std::lock_guard<std::mutex> lk(mu_);
-                j.step = "mule";
-            }
-            ok = !mule_image.empty() || fetchImage(j, mule_release, mule_image);
-            ok = ok && sendImage(j, "mule", mule_image);
-            mule_image.clear();
-            ok = ok && waitForReturn(j, before.hellos);
-        }
-    }
-    if (ok && do_miner) {
-        const MuleService::Brief before = units_.brief(j.serial);
-        const bool skip = j.target == "both" && miner_image.empty() &&
-                          !updateAvailable(before.miner_fw, miner_release.version);
-        if (skip) {
-            note(j, "miner " + before.miner_fw + " is current: not sent");
-        } else {
-            {
-                std::lock_guard<std::mutex> lk(mu_);
-                j.step = "miner";
-            }
-            ok = !miner_image.empty() || fetchImage(j, miner_release, miner_image);
-            ok = ok && sendImage(j, "miner", miner_image);
-            miner_image.clear();
-            if (ok) note(j, "the mule is flashing the miner; its new version shows in the unit's next state");
-        }
-    }
-    const MuleService::Brief after = units_.brief(j.serial);
-    std::lock_guard<std::mutex> lk(mu_);
-    if (ok) j.phase = "done";
-    j.fw_after       = after.fw;
-    j.miner_fw_after = after.miner_fw;
-    j.finished       = std::time(nullptr);
-    j.running        = false;
-    std::cout << "[mule] " << j.serial << " update " << j.phase << (j.error.empty() ? "" : ": " + j.error)
-              << std::endl;
+    if (image.empty() && !fetchImage(j, release, image)) return;
+    sendImage(j, target, image);
 }
 
 }  // namespace hms_cpap::mule

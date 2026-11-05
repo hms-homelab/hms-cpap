@@ -10,7 +10,8 @@
   "setup_complete": false,
   "sleep_bridge": {
     "enabled": true,
-    "port": 8894
+    "port": 8894,
+    "release_feed": "https://fw.cpapdash.com/public/tapper/latest.json"
   },
   "database": {
     "type": "sqlite",

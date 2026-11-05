@@ -26,6 +26,19 @@ public:
     virtual bool paired() const = 0;
     /// Why the last step failed, in English, for the log. Holds no secret.
     virtual std::string lastError() const = 0;
+
+    /// What the link to the machine is doing now, for the Devices page.
+    /// last_contact: epoch seconds of the last thing heard, 0 never.
+    struct Presence {
+        bool      connected = false;
+        bool      therapy = false;     // the machine said it is in therapy
+        bool      streaming = false;   // its night is streaming here
+        long long last_contact = 0;
+    };
+    virtual Presence presence() const { return {}; }
+    /// Something is talking to the machine now (a pairing, a pull): the
+    /// pairing is not removed under it.
+    virtual bool busy() const { return pairPending(); }
 };
 
 } // namespace hms_cpap
