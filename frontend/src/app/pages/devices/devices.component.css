@@ -47,10 +47,14 @@ dd { margin: 0; color: #ddd; min-width: 0; overflow-wrap: anywhere; }
 
 /* ── footer, pinned to the bottom ── */
 .footer { margin-top: auto; display: flex; flex-direction: column; gap: 0.6rem; padding-top: 0.6rem; border-top: 1px solid #23253a; }
-.actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
-.split { display: inline-flex; }
-.split select { border-radius: 5px 0 0 5px; border-right: none; }
-.split .btn { border-radius: 0 5px 5px 0; }
+/* Stacked: one action, or one labelled group, per line; buttons keep their own width. */
+.actions { display: flex; flex-direction: column; align-items: flex-start; gap: 0.5rem; }
+.action-line { display: flex; gap: 0.5rem; align-items: center; }
+.action-group { border: 1px solid #3a3d55; border-radius: 6px; margin: 0; padding: 0.35rem 0.7rem 0.6rem;
+                min-width: 0; max-width: 100%; display: flex; flex-direction: column; gap: 0.45rem; }
+.action-group legend { padding: 0 0.3rem; font-size: 0.75rem; color: var(--muted); }
+.group-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.5rem; }
+.field { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.75rem; color: var(--muted); }
 
 /* Text and outlined buttons only: never a solid red or green. */
 .btn { display: inline-block; padding: 0.38rem 0.85rem; border-radius: 5px; border: 1px solid #4a4e66; background: transparent;

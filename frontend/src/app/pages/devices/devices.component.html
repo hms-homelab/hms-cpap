@@ -210,46 +210,78 @@
         </ng-container>
         <div class="quiet" *ngIf="(d.kind === 'mule' || d.kind === 'sleepbridge') && d.present !== 'yes'">{{ 'devices.action.offline' | translate }}</div>
 
-        <!-- Actions, in a fixed order: the kind's own, then Restart, Reset, Forget. -->
+        <!-- Actions, stacked in a fixed order: the kind's own, then the stream
+             switch, the Restart group, Reset Wi-Fi, Forget. One action (or one
+             labelled group) per line, so nothing wraps under another by chance. -->
         <div class="actions" *ngIf="!confirms.get(d.key)">
           <ng-container *ngIf="d.kind === 'o2ring' && !d.detail.through_bridge">
-            <button type="button" class="btn primary" (click)="readRing(d)" [disabled]="busy[d.key] || d.detail.not_compiled">
-              {{ (busy[d.key] ? 'devices.o2ring.reading' : 'devices.o2ring.readNow') | translate }}</button>
-            <button type="button" class="btn" (click)="checkAdapter(d)">{{ 'devices.o2ring.checkAdapter' | translate }}</button>
+            <div class="action-line">
+              <button type="button" class="btn primary" (click)="readRing(d)" [disabled]="busy[d.key] || d.detail.not_compiled">
+                {{ (busy[d.key] ? 'devices.o2ring.reading' : 'devices.o2ring.readNow') | translate }}</button>
+            </div>
+            <div class="action-line">
+              <button type="button" class="btn" (click)="checkAdapter(d)">{{ 'devices.o2ring.checkAdapter' | translate }}</button>
+            </div>
           </ng-container>
-          <a *ngIf="d.kind === 'o2ring'" routerLink="/upload" class="btn">{{ 'devices.o2ring.importCsv' | translate }}</a>
+          <div class="action-line" *ngIf="d.kind === 'o2ring'">
+            <a routerLink="/upload" class="btn">{{ 'devices.o2ring.importCsv' | translate }}</a>
+          </div>
 
           <ng-container *ngIf="d.kind === 'ezshare' || d.kind === 'flashair'">
-            <button type="button" class="btn primary" (click)="testCard(d)" [disabled]="busy[d.key]">
-              {{ (busy[d.key] ? 'devices.source.testing' : 'devices.source.test') | translate }}</button>
-            <button type="button" class="btn" (click)="syncNow(d)">{{ 'devices.source.sync' | translate }}</button>
-            <button type="button" class="btn" (click)="find(d)" [disabled]="busy[d.key]">
-              {{ (finding[d.key] ? 'devices.source.finding' : 'devices.source.find') | translate }}</button>
+            <div class="action-line">
+              <button type="button" class="btn primary" (click)="testCard(d)" [disabled]="busy[d.key]">
+                {{ (busy[d.key] ? 'devices.source.testing' : 'devices.source.test') | translate }}</button>
+            </div>
+            <div class="action-line">
+              <button type="button" class="btn" (click)="syncNow(d)">{{ 'devices.source.sync' | translate }}</button>
+            </div>
+            <div class="action-line">
+              <button type="button" class="btn" (click)="find(d)" [disabled]="busy[d.key]">
+                {{ (finding[d.key] ? 'devices.source.finding' : 'devices.source.find') | translate }}</button>
+            </div>
           </ng-container>
 
           <ng-container *ngIf="d.kind === 'as11_ble' && !d.detail.not_compiled">
-            <button type="button" class="btn primary" (click)="as11Pull(d)" [disabled]="!d.detail.paired">{{ 'devices.as11.pull' | translate }}</button>
-            <button type="button" class="btn" *ngIf="!d.detail.pairing" (click)="as11PairStart()" [disabled]="as11Pairing">
-              {{ (d.detail.paired ? 'devices.as11.pairAgain' : 'devices.as11.pair') | translate }}</button>
-            <button type="button" class="btn danger" *ngIf="d.detail.paired" (click)="askAs11Forget(d)">{{ 'devices.as11.forgetPairing' | translate }}</button>
+            <div class="action-line">
+              <button type="button" class="btn primary" (click)="as11Pull(d)" [disabled]="!d.detail.paired">{{ 'devices.as11.pull' | translate }}</button>
+            </div>
+            <div class="action-line" *ngIf="!d.detail.pairing">
+              <button type="button" class="btn" (click)="as11PairStart()" [disabled]="as11Pairing">
+                {{ (d.detail.paired ? 'devices.as11.pairAgain' : 'devices.as11.pair') | translate }}</button>
+            </div>
+            <div class="action-line" *ngIf="d.detail.paired">
+              <button type="button" class="btn danger" (click)="askAs11Forget(d)">{{ 'devices.as11.forgetPairing' | translate }}</button>
+            </div>
           </ng-container>
 
           <ng-container *ngIf="d.kind === 'mule' || d.kind === 'sleepbridge'">
             <!-- A device here streams here: its one stream control is the move to the cloud. -->
-            <button type="button" class="btn" (click)="askCloud(d)" [disabled]="busy[d.key]">{{ 'devices.action.backToCloud' | translate }}</button>
-            <span class="split" *ngIf="d.kind === 'mule'">
-              <select [(ngModel)]="restartTarget[d.key]" [ngModelOptions]="{standalone: true}" [attr.aria-label]="'devices.action.restartTarget' | translate">
-                <option [ngValue]="undefined">{{ 'devices.mule.both' | translate }}</option>
-                <option value="mule">{{ 'devices.mule.mule' | translate }}</option>
-                <option value="miner">{{ 'devices.mule.miner' | translate }}</option>
-              </select>
-              <button type="button" class="btn primary" (click)="restart(d)" [disabled]="busy[d.key]">{{ 'devices.action.restart' | translate }}</button>
-            </span>
-            <button *ngIf="d.kind === 'sleepbridge'" type="button" class="btn primary" (click)="restart(d)" [disabled]="busy[d.key]">{{ 'devices.action.restart' | translate }}</button>
-            <button type="button" class="btn danger" (click)="askReset(d)" [disabled]="busy[d.key]">{{ 'devices.action.resetWifi' | translate }}</button>
-            <span [title]="d.present !== 'no' ? ('devices.forget.disabled' | translate) : ''">
-              <button type="button" class="btn danger" (click)="askForget(d)" [disabled]="d.present !== 'no'">{{ 'devices.forget.button' | translate }}</button>
-            </span>
+            <div class="action-line">
+              <button type="button" class="btn" (click)="askCloud(d)" [disabled]="busy[d.key]">{{ 'devices.action.backToCloud' | translate }}</button>
+            </div>
+            <!-- Restart: the board picker and its button, in one labelled group. -->
+            <fieldset class="action-group">
+              <legend>{{ 'devices.action.restartGroup' | translate }}</legend>
+              <div class="group-row">
+                <label class="field" *ngIf="d.kind === 'mule'">
+                  <span>{{ 'devices.action.whichBoard' | translate }}</span>
+                  <select [(ngModel)]="restartTarget[d.key]" [ngModelOptions]="{standalone: true}">
+                    <option [ngValue]="undefined">{{ 'devices.mule.boardBoth' | translate }}</option>
+                    <option value="mule">{{ 'devices.mule.boardMuleOnly' | translate }}</option>
+                    <option value="miner">{{ 'devices.mule.boardMinerOnly' | translate }}</option>
+                  </select>
+                </label>
+                <button type="button" class="btn primary" (click)="restart(d)" [disabled]="busy[d.key]">{{ 'devices.action.restart' | translate }}</button>
+              </div>
+            </fieldset>
+            <div class="action-line">
+              <button type="button" class="btn danger" (click)="askReset(d)" [disabled]="busy[d.key]">{{ 'devices.action.resetWifi' | translate }}</button>
+            </div>
+            <div class="action-line">
+              <span [title]="d.present !== 'no' ? ('devices.forget.disabled' | translate) : ''">
+                <button type="button" class="btn danger" (click)="askForget(d)" [disabled]="d.present !== 'no'">{{ 'devices.forget.button' | translate }}</button>
+              </span>
+            </div>
           </ng-container>
         </div>
 
@@ -359,14 +391,17 @@
 
           <!-- Firmware from a file (Mule & Miner, Sleep Bridge). -->
           <ng-container *ngIf="d.kind === 'mule' || d.kind === 'sleepbridge'">
-            <div class="sub-head">{{ 'devices.ota.updateFromFile' | translate }}</div>
-            <div class="row">
-              <select *ngIf="d.kind === 'mule'" [(ngModel)]="fileTarget[d.key]" [ngModelOptions]="{standalone: true}">
-                <option [ngValue]="undefined">{{ 'devices.mule.mule' | translate }}</option>
-                <option value="miner">{{ 'devices.mule.miner' | translate }}</option>
-              </select>
+            <fieldset class="action-group">
+              <legend>{{ 'devices.ota.updateFromFile' | translate }}</legend>
+              <label class="field" *ngIf="d.kind === 'mule'">
+                <span>{{ 'devices.action.whichBoard' | translate }}</span>
+                <select [(ngModel)]="fileTarget[d.key]" [ngModelOptions]="{standalone: true}">
+                  <option [ngValue]="undefined">{{ 'devices.mule.boardMule' | translate }}</option>
+                  <option value="miner">{{ 'devices.mule.boardMiner' | translate }}</option>
+                </select>
+              </label>
               <input type="file" accept=".bin" (change)="file(d, $event)" [disabled]="!canUpdate(d)" />
-            </div>
+            </fieldset>
             <div class="hint">{{ (d.kind === 'mule' ? 'devices.mule.fileHint' : 'devices.sleepbridge.fileHint') | translate }}</div>
           </ng-container>
         </div>
