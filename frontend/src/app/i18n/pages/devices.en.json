@@ -28,7 +28,7 @@
       "unknownBadge": "Recording unknown"
     },
     "line": {
-      "lastHeard": "Last heard",
+      "lastHeard": "Last seen",
       "never": "never",
       "firmware": "Firmware",
       "machine": "Machine",
