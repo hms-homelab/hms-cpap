@@ -135,11 +135,16 @@ def build_wmedf(n_records):
     return head + bytes(body)
 
 
-def build_event_xml(n_events):
+def build_event_xml(n_events, recording_s):
     """Events the parser will actually map, plus the settings it reads.
 
     ParameterID 1003 is the one that matters: it carries therapy mode, and the
     tests assert settings.therapy_mode is present. 2 is APAP.
+
+    EndTime and Duration are in TENTHS of a second, as the machine writes
+    them, and every event ends inside the recording, as on a real card. The
+    old values (EndTime 30 + n*20, Duration 10) read just as plausibly as
+    seconds, so they could not catch the parser taking them for seconds.
     """
     lines = ['<?xml version="1.0" encoding="utf-8"?>', "<desc>"]
     for pid, val in [
@@ -157,11 +162,13 @@ def build_event_xml(n_events):
     # Cycle through IDs the parser maps, so every branch of mapRespEventId is
     # exercised by real fixture data rather than only by the unit test.
     ids = [101, 102, 103, 111, 112, 121, 131, 151, 161, 181]
+    spacing = recording_s * 10 // (n_events + 1)     # tenths between event ends
+    duration = min(100, spacing // 2)                # 10 s, or less if crowded
     for n in range(n_events):
         rid = ids[n % len(ids)]
-        end = 30 + n * 20
+        end = spacing * (n + 1)
         lines.append(f'<RespEvent  RespEventID="{rid}" EndTime="{end}" '
-                     f'Duration="10" Pressure="0" Strength="2"/>')
+                     f'Duration="{duration}" Pressure="0" Strength="2"/>')
     lines.append("</desc>")
     return "\n".join(lines) + "\n"
 
