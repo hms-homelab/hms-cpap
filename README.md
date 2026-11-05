@@ -60,7 +60,7 @@ SD card.
 - **PDF reports** for a date range, made for handing to your doctor
 - **Pulse oximetry**: Wellue O2Ring SpO2/HR overlay with ODI, imported by CSV upload
 - **Sleep Bridge Lite receiver**: a bridge on the SD card's wires sends every write to hms-cpap as the machine makes it, and the card's files are rebuilt here, live
-- **AirSense 11 over Bluetooth** (off by default): this computer pairs with the machine itself and reads its daily summary and its live night, no card involved, on macOS and Linux (Windows being tested); a Mule & Miner in the same mode can send the night here instead
+- **AirSense 11 over Bluetooth** (off by default): this computer pairs with the machine itself and reads its daily summary and its live night, no card involved, on macOS, Windows and Linux; a Mule & Miner in the same mode can send the night here instead
 - **Manual upload page**: drag in a CPAP `.zip` or O2Ring `.csv` from any browser, no shared network needed
 - **Home Assistant**: 47+ sensors via MQTT auto-discovery, or install it as an add-on and run it inside HA
 - **Equipment & supply reminders**: track mask, filters, tubing per profile; days-left sensors and due/overdue events for automations
@@ -245,7 +245,7 @@ Which downloads have it:
 | Download | Bluetooth |
 |---|---|
 | macOS (the `.dmg`) | Yes, through the Mac's own Bluetooth. The first time, macOS asks whether CpapDash may use Bluetooth: allow it (System Settings, Privacy & Security, Bluetooth, if you said no). If Bluetooth is off, switch it on: macOS does not let an app do that. |
-| Windows (installer or zip) | The O2 Ring, yes; the AirSense 11 is being tested. Windows 10 or 11 with Bluetooth LE. If Bluetooth is off, hms-cpap switches it on. Use the Bluetooth adapter maker's own driver: on some adapters (a Realtek combo, for one) Windows' generic driver finds the device but never connects to it. No Windows pairing is involved. |
+| Windows (installer or zip) | Yes, Windows 10 or 11 with Bluetooth LE. If Bluetooth is off, hms-cpap switches it on. Use the Bluetooth adapter maker's own driver: on some adapters (a Realtek combo, for one) Windows' generic driver finds the device but never connects to it. No Windows pairing is involved. |
 | Docker image, Home Assistant add-on | Yes, through the host's BlueZ: give the container the host's D-Bus, see the Docker section. |
 | Raspberry Pi zip | Yes, through BlueZ. |
 | Built from source on Linux | Only with `-DBUILD_WITH_BLE=ON` (needs libsdbus-c++). |
