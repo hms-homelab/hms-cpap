@@ -57,7 +57,15 @@ dd { margin: 0; color: #ddd; min-width: 0; overflow-wrap: anywhere; }
 .switch { display: inline-flex; align-items: center; gap: 0.35rem; cursor: pointer; }
 
 /* ── footer, pinned to the bottom ── */
-.footer { margin-top: auto; display: flex; flex-direction: column; gap: 0.6rem; padding-top: 0.6rem; border-top: 1px solid #23253a; }
+.footer { margin-top: auto; display: flex; flex-direction: column; gap: 0.6rem; padding-top: 0.6rem; position: relative; }
+/* Every divider on the card is the same dark tapered line as between the rows. */
+.footer::before, .folds::before {
+  content: ""; position: absolute; left: 0; right: 0; top: -2px; height: 4px;
+  background: radial-gradient(50% 50% at 50% 50%, #000 0%, rgba(0, 0, 0, 0.9) 55%, transparent 100%);
+  pointer-events: none;
+}
+/* Measured 13px of space above it and 9px below at top: -2px; this centres it. */
+.footer::before { top: -4px; }
 /* Stacked: one action, or one labelled group, per line; buttons keep their own width. */
 .actions { display: flex; flex-direction: column; align-items: flex-start; gap: 0.5rem; }
 .action-line { display: flex; gap: 0.5rem; align-items: center; }
@@ -94,7 +102,7 @@ dd { margin: 0; color: #ddd; min-width: 0; overflow-wrap: anywhere; }
 /* "More" / commands: their own footer row, set off from the buttons above and
    clear of the card's bottom edge. */
 .folds { display: flex; gap: 1.2rem; flex-wrap: wrap; margin-top: 0.25rem; padding: 0.6rem 0 0.35rem;
-         border-top: 1px solid var(--line); }
+         position: relative; }
 .fold { background: none; border: none; color: #ddd; cursor: pointer; font-size: 0.85rem; padding: 0.1rem 0; font-family: inherit; }
 .fold:hover { color: #fff; }
 .fold i { width: 0.8rem; }
