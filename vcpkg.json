@@ -2,6 +2,7 @@
   "name": "hms-cpap",
   "version-string": "2.2.0",
   "description": "CPAP data collection service for ResMed devices",
+  "builtin-baseline": "afa249f12f52ed8a3b919f195495ba8b330288d1",
   "dependencies": [
     "curl",
     "jsoncpp",

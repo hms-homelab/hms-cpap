@@ -275,30 +275,43 @@ jobs:
         run: npm run build -- --configuration production
 
       # ── vcpkg + C++ Build ───────────────────────────────────────
-      # The cache key must change whenever vcpkg's package ABIs change, or the
-      # cache restores archives vcpkg can no longer use. vcpkg.json has no
-      # builtin-baseline, so the ports come from the runner image's own vcpkg
-      # clone ($VCPKG_INSTALLATION_ROOT), which moves with every image update:
-      # image 20261021 -> 20261103 took drogon 1.9.13#2 -> 1.9.14 and changed
-      # every ABI. Keying on vcpkg.json alone made run 42032383687 get an
-      # EXACT hit on the 2026-11-01 master cache, restore 0 of 197 packages,
-      # rebuild for 55 min, and then skip the save ("Cache hit occurred on the
-      # primary key ... not saving cache"), so it could never refresh.
-      # Key = triplet + that vcpkg commit + the MSVC toolset + vcpkg.json.
-      - name: Compute vcpkg cache key
+      # vcpkg is pinned: vcpkg.json's builtin-baseline fixes the port versions,
+      # and this job builds with its OWN vcpkg checkout at that same commit
+      # rather than the runner image's ($VCPKG_INSTALLATION_ROOT). A baseline
+      # alone pins the versions but not the vcpkg tool or its scripts/ tree,
+      # and those come from the image, which moves them every update; vcpkg
+      # hashes them into every package ABI, so the binary cache would still go
+      # dead each time the image moved. Our checkout fixes tool, scripts and
+      # ports together, leaving only the compiler and pwsh to drift.
+      #
+      # Why the cache key carries all of this: keyed on vcpkg.json alone, run
+      # 42032383687 got an EXACT hit on the 2026-11-01 master cache after the
+      # image had moved its vcpkg (drogon 1.9.13#2 -> 1.9.14), restored 0 of
+      # 197 packages, rebuilt for 55 min, and then skipped the save ("Cache
+      # hit occurred on the primary key ... not saving cache"), so it could
+      # never refresh. Key = triplet + pinned commit + MSVC + pwsh + vcpkg.json.
+      - name: Check out pinned vcpkg
         id: vcpkg-key
         run: |
+          $baseline = (Get-Content vcpkg.json -Raw | ConvertFrom-Json).'builtin-baseline'
+          if (-not $baseline) { throw "vcpkg.json has no builtin-baseline" }
+          $root = Join-Path $env:RUNNER_TEMP 'vcpkg'
+          # Treeless, not shallow: vcpkg's baseline lookup can reject a
+          # shallow clone, and with the baseline equal to HEAD every port version
+          # it resolves is a tree inside the commit the checkout pulls in, so
+          # the history's trees and blobs are never needed.
+          git clone -q --filter=tree:0 --no-checkout https://github.com/microsoft/vcpkg.git $root
+          git -C $root checkout -q $baseline
+          & "$root\bootstrap-vcpkg.bat" -disableMetrics
+          if ($LASTEXITCODE -ne 0) { throw "bootstrap-vcpkg failed" }
+          "VCPKG_ROOT=$root" >> $env:GITHUB_ENV
+
           New-Item -ItemType Directory -Force vcpkg-bincache | Out-Null
-          $commit = (git -c safe.directory='*' -C "$env:VCPKG_INSTALLATION_ROOT" rev-parse --short=12 HEAD 2>$null)
-          # A failed git would leave a non-zero LASTEXITCODE that the runner's
-          # pwsh wrapper turns into a step failure; the image version is a
-          # coarser but safe stand-in for the vcpkg tree.
-          $global:LASTEXITCODE = 0
-          if (-not $commit) { $commit = "img$env:ImageVersion" }
           $msvc = $env:VCToolsVersion
           if (-not $msvc) { throw "VCToolsVersion not set; the MSVC environment step did not run" }
-          Write-Host "vcpkg commit $commit, MSVC $msvc"
-          "prefix=vcpkg-bin-win-x64-static-md-$commit-$msvc-" >> $env:GITHUB_OUTPUT
+          $pwsh = $PSVersionTable.PSVersion.ToString()
+          Write-Host "vcpkg $baseline, MSVC $msvc, pwsh $pwsh"
+          "prefix=vcpkg-bin-win-x64-static-md-$($baseline.Substring(0,12))-$msvc-pwsh$pwsh-" >> $env:GITHUB_OUTPUT
 
       - name: Restore vcpkg binary cache
         id: vcpkg-cache
@@ -306,15 +319,16 @@ jobs:
         with:
           path: vcpkg-bincache
           key: ${{ steps.vcpkg-key.outputs.prefix }}${{ hashFiles('vcpkg.json') }}
-          # Same vcpkg tree and compiler, different vcpkg.json: most ABIs still
-          # match. The bare prefix is a last resort that may restore nothing usable.
+          # Same pinned vcpkg and compiler, different vcpkg.json: most ABIs
+          # still match. The bare prefix is a last resort (a new MSVC or a
+          # moved baseline) that may restore little; the prune drops the rest.
           restore-keys: |
             ${{ steps.vcpkg-key.outputs.prefix }}
             vcpkg-bin-win-x64-static-md-
 
       - name: Install vcpkg dependencies
         run: |
-          vcpkg install --triplet x64-windows-static-md
+          & "$env:VCPKG_ROOT\vcpkg.exe" install --triplet x64-windows-static-md
 
       # Saved straight after the install, not in a post step at the end of the
       # job: a cancelled or failed build later on (run 42058753942 was
@@ -370,7 +384,7 @@ jobs:
           # cmake/sleepbridge-pins.cmake, so the installer takes bridges.
           # BUILD_WITH_BLE: direct Bluetooth (the AirSense 11, the O2 rings)
           # through WinRT, whose C++/WinRT headers come with the Windows SDK.
-          cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static-md -DBUILD_TESTS=OFF -DBUILD_WITH_WEB=ON -DBUILD_WITH_POSTGRESQL=ON -DBUILD_WITH_MYSQL=ON `
+          cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static-md -DBUILD_TESTS=OFF -DBUILD_WITH_WEB=ON -DBUILD_WITH_POSTGRESQL=ON -DBUILD_WITH_MYSQL=ON `
             -DBUILD_WITH_SLEEPBRIDGE=ON -DBUILD_WITH_BLE=ON -DBUILD_SUPERVISOR=ON -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR" ..
           cmake --build . --parallel
 
