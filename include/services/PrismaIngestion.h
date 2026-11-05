@@ -22,6 +22,14 @@ public:
     // by the CPAP zip upload endpoint.
     static bool extractZip(const std::string& zip_path, const std::string& dest_dir);
 
+    // A zip entry's name as a path relative to the extraction folder, with '/'
+    // separators, or nullopt when it must not be extracted. Windows
+    // PowerShell 5.1's Compress-Archive writes '\' separators (issue #55), so
+    // '\' is read as a separator too; an entry naming an absolute path, a
+    // drive, or a ".." step would land outside the folder and is refused. A
+    // trailing '/' (after that conversion) marks a directory entry.
+    static std::optional<std::string> safeZipEntryName(const std::string& raw);
+
     explicit PrismaIngestion(const std::string& data_dir);
 
     bool initialize();

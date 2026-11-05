@@ -63,15 +63,72 @@ void BackfillService::triggerCardImport(UploadedCard kind, const std::string& ro
 
 // SDD-039 D2: the upload's work, queued for this worker instead of held on a
 // web thread.
-void BackfillService::triggerZipImport(const std::string& zip_path,
-                                       std::function<void(const std::string&)> job) {
+uint64_t BackfillService::triggerZipImport(const std::string& zip_path,
+                                           std::function<Json::Value(const std::string&)> job) {
+    const uint64_t id = next_zip_id_++;
+    {
+        // Before the reply goes out, so the page's first poll already sees
+        // its upload rather than whatever the last job left behind.
+        std::lock_guard<std::mutex> lock(progress_mutex_);
+        upload_ = Json::Value(Json::objectValue);
+        upload_["id"] = static_cast<Json::UInt64>(id);
+        upload_["state"] = "queued";
+    }
     {
         std::lock_guard<std::mutex> lock(pending_mutex_);
         pending_zip_path_ = zip_path;
         pending_zip_job_ = std::move(job);
+        pending_zip_id_ = id;
     }
     zip_import_requested_ = true;
-    spdlog::info("BackfillService: zip import queued ({})", zip_path);
+    spdlog::info("BackfillService: zip import {} queued ({})", id, zip_path);
+    return id;
+}
+
+void BackfillService::executeZipImport(
+    uint64_t id, const std::string& path,
+    const std::function<Json::Value(const std::string&)>& job) {
+    {
+        std::lock_guard<std::mutex> lock(progress_mutex_);
+        progress_ = Progress{};
+        progress_.status = "running";
+        progress_.started_at = currentTimestamp();
+        if (upload_.isObject() && upload_["id"].asUInt64() == id) upload_["state"] = "reading";
+    }
+    Json::Value r;
+    try {
+        r = job(path);
+    } catch (const std::exception& e) {
+        spdlog::error("BackfillService: zip import failed: {}", e.what());
+        r = Json::Value(Json::objectValue);
+        r["error"] = std::string("The zip could not be imported: ") + e.what();
+    }
+    if (!r.isObject()) r = Json::Value(Json::objectValue);
+
+    std::lock_guard<std::mutex> lock(progress_mutex_);
+    if (!upload_.isObject() || upload_["id"].asUInt64() != id) {
+        // A newer upload was queued while this one ran; it owns the slot.
+        upload_ = Json::Value(Json::objectValue);
+    }
+    for (const auto& key : r.getMemberNames()) {
+        if (key == "status" || key == "message") continue;   // the job's, not the page's
+        upload_[key] = r[key];
+    }
+    upload_["id"] = static_cast<Json::UInt64>(id);
+    upload_["state"] = "done";
+
+    if (r.isMember("error")) {
+        progress_.status = "error";
+        progress_.error_message = r["error"].asString();
+        progress_.completed_at = currentTimestamp();
+        spdlog::warn("BackfillService: zip import {}: {}", id, progress_.error_message);
+    } else if (r.get("status", "").asString() != "queued") {
+        // Nothing was handed on to import, so the upload ends here.
+        progress_.status = "complete";
+        progress_.completed_at = currentTimestamp();
+    }
+    // Otherwise the nights it found are queued on this worker and "running"
+    // stands until their import sets the outcome.
 }
 
 void BackfillService::executeCardImport(UploadedCard kind, const std::string& root) {
@@ -147,6 +204,8 @@ Json::Value BackfillService::getStatus() const {
         j["start_date"] = progress_.start_date;
     if (!progress_.end_date.empty())
         j["end_date"] = progress_.end_date;
+    if (!upload_.isNull())
+        j["upload"] = upload_;
     return j;
 }
 
@@ -177,21 +236,17 @@ void BackfillService::runLoop() {
         // destination takes, and a web thread is the wrong place for it.
         if (zip_import_requested_.exchange(false)) {
             std::string path;
-            std::function<void(const std::string&)> job;
+            std::function<Json::Value(const std::string&)> job;
+            uint64_t id = 0;
             {
                 std::lock_guard<std::mutex> lock(pending_mutex_);
                 path = pending_zip_path_;
                 job = pending_zip_job_;
+                id = pending_zip_id_;
                 pending_zip_path_.clear();
                 pending_zip_job_ = nullptr;
             }
-            if (job) {
-                try {
-                    job(path);
-                } catch (const std::exception& e) {
-                    spdlog::error("BackfillService: zip import failed: {}", e.what());
-                }
-            }
+            if (job) executeZipImport(id, path, job);
             continue;
         }
 

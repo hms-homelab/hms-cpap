@@ -46,6 +46,22 @@ static std::optional<PrismaSessionFile> buildSessionFile(
 PrismaIngestion::PrismaIngestion(const std::string& data_dir)
     : data_dir_(data_dir), therapy_dir_(data_dir), config_dir_(data_dir) {}
 
+std::optional<std::string> PrismaIngestion::safeZipEntryName(const std::string& raw) {
+    std::string name = raw;
+    std::replace(name.begin(), name.end(), '\\', '/');
+    if (name.empty() || name.front() == '/') return std::nullopt;
+    if (name.size() >= 2 && name[1] == ':') return std::nullopt;   // C:...
+    size_t start = 0;
+    while (start <= name.size()) {
+        size_t end = name.find('/', start);
+        if (end == std::string::npos) end = name.size();
+        if (name.compare(start, end - start, "..") == 0 && end - start == 2)
+            return std::nullopt;
+        start = end + 1;
+    }
+    return name;
+}
+
 bool PrismaIngestion::extractZip(const std::string& zip_path, const std::string& dest_dir) {
     mz_zip_archive zip{};
     if (!mz_zip_reader_init_file(&zip, zip_path.c_str(), 0)) {
@@ -58,10 +74,17 @@ bool PrismaIngestion::extractZip(const std::string& zip_path, const std::string&
         mz_zip_archive_file_stat stat;
         if (!mz_zip_reader_file_stat(&zip, i, &stat)) continue;
 
-        std::string filename = stat.m_filename;
-        fs::path dest = fs::path(dest_dir) / filename;
+        const auto name = safeZipEntryName(stat.m_filename);
+        if (!name) {
+            std::cerr << "PrismaIngestion: skipped zip entry outside the archive root: "
+                      << stat.m_filename << std::endl;
+            continue;
+        }
+        fs::path dest = fs::path(dest_dir) / fs::path(*name).make_preferred();
 
-        if (mz_zip_reader_is_file_a_directory(&zip, i)) {
+        // A Compress-Archive directory entry ends in '\' and carries no
+        // directory attribute, so miniz alone would call it a file.
+        if (name->back() == '/' || mz_zip_reader_is_file_a_directory(&zip, i)) {
             fs::create_directories(dest);
             continue;
         }

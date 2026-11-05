@@ -2,6 +2,7 @@ import { Component, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { TranslatePipe } from '@ngx-translate/core';
 import { CpapApiService } from '../../services/cpap-api.service';
+import { zipOutcome } from './zip-outcome';
 
 type ZoneState = 'idle' | 'uploading' | 'processing' | 'complete' | 'error';
 
@@ -64,11 +65,15 @@ export class UploadComponent implements OnDestroy {
     this.layout = null;
     this.api.uploadCpapZip(file).subscribe({
       next: (res) => {
-        this.zipDates = res?.dates ?? [];
+        const replyDates: string[] = res?.dates ?? [];
         this.layout = res?.card_layout ?? null;
         this.zipState = 'processing';
-        this.zipStatusText = `Added ${this.zipDates.length} night(s); parsing...`;
-        this.pollBackfill();
+        // A queued zip has not been read yet, so its reply has no nights to
+        // count (issue #55); a server importing inline has already read it.
+        this.zipStatusText = res?.upload_id
+          ? 'Reading the zip...'
+          : `Added ${replyDates.length} night(s); parsing...`;
+        this.pollBackfill(res?.upload_id, replyDates);
       },
       error: (err) => {
         this.zipState = 'error';
@@ -87,23 +92,25 @@ export class UploadComponent implements OnDestroy {
     return (this.layout?.bridges ?? []).filter((b) => !b.applied);
   }
 
-  private pollBackfill() {
+  private pollBackfill(uploadId: number | undefined, replyDates: string[]) {
     if (this.pollTimer) clearInterval(this.pollTimer);
     this.pollTimer = setInterval(() => {
       this.api.getBackfillStatus().subscribe({
         next: (s) => {
-          const status = s?.status ?? '';
-          if (status === 'running') {
-            this.zipStatusText = 'Parsing nights...';
-          } else if (status === 'complete' || status === 'idle') {
-            clearInterval(this.pollTimer);
-            this.pollTimer = null;
-            this.zipState = 'complete';
-          } else if (status === 'error') {
-            clearInterval(this.pollTimer);
-            this.pollTimer = null;
+          const out = zipOutcome(uploadId, s, replyDates);
+          if (!out.done) {
+            this.zipStatusText = out.reading ? 'Reading the zip...'
+              : s?.upload?.state === 'queued' ? this.zipStatusText : 'Parsing nights...';
+            return;
+          }
+          clearInterval(this.pollTimer);
+          this.pollTimer = null;
+          if (out.error !== null) {
             this.zipState = 'error';
-            this.zipError = s?.error_message || 'Parsing failed.';
+            this.zipError = out.error || 'Parsing failed.';
+          } else {
+            this.zipDates = out.dates;
+            this.zipState = 'complete';
           }
         },
         error: () => { /* keep polling */ }

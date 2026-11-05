@@ -330,7 +330,9 @@ public:
     static std::function<Json::Value(const std::string&)> cpap_zip_import_;
     // SDD-039 D2: the same import, queued on the backfill worker. Set whenever
     // that worker exists; the inline path above stays for a build without one.
-    static std::function<void(const std::string&)> cpap_zip_queue_;
+    // Returns the upload's id, which /api/backfill/status reports its outcome
+    // under ("upload"); 0 when nothing was queued.
+    static std::function<uint64_t(const std::string&)> cpap_zip_queue_;
     // SDD-061: a .cpapcard's layout (the CBL1 payload) and the uploaded file's
     // name -> what became of it ("error" key when it was not kept).
     static std::function<Json::Value(const std::string&, const std::string&)> card_layout_;

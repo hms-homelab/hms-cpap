@@ -46,7 +46,7 @@ std::function<Json::Value(const std::string&)> CpapController::night_remove_;
 std::function<void(const std::string&)> CpapController::night_restore_;
 std::function<std::vector<std::string>()> CpapController::removed_nights_;
 std::function<void(int)> CpapController::shutdown_with_code_;
-std::function<void(const std::string&)> CpapController::cpap_zip_queue_;
+std::function<uint64_t(const std::string&)> CpapController::cpap_zip_queue_;
 std::function<Json::Value(const std::string&, const std::string&)> CpapController::card_layout_;
 
 void CpapController::setQueryService(std::shared_ptr<QueryService> qs) { qs_ = qs; }
@@ -1971,9 +1971,11 @@ void CpapController::uploadCpapZip(const drogon::HttpRequestPtr& req,
     // worker, which already owns long ingest and already reports through
     // /api/backfill/status, which this page polls.
     if (cpap_zip_queue_) {
-        cpap_zip_queue_(tmp.string());
+        const uint64_t upload_id = cpap_zip_queue_(tmp.string());
         Json::Value queued;
         queued["status"] = "queued";
+        // What the page waits for in /api/backfill/status's "upload".
+        if (upload_id) queued["upload_id"] = static_cast<Json::UInt64>(upload_id);
         queued["message"] = "Card uploaded; importing. Poll /api/backfill/status";
         if (!layout.isNull()) queued["card_layout"] = layout;
         cb(jsonResp(queued));

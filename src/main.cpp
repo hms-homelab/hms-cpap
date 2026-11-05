@@ -1307,10 +1307,13 @@ int main(int argc, char** argv) {
                 };
                 // SDD-039 D2: the handler hands the zip here, and the worker
                 // runs the importer wired just below.
+                // The importer's reply is kept in /api/backfill/status under the
+                // id the upload's reply carries (issue #55), so the page shows
+                // what became of the zip instead of only the log saying it.
                 hms_cpap::CpapController::cpap_zip_queue_ =
-                    [](const std::string& zip_path) {
-                        if (!backfill_service) return;
-                        backfill_service->triggerZipImport(
+                    [](const std::string& zip_path) -> uint64_t {
+                        if (!backfill_service) return 0;
+                        return backfill_service->triggerZipImport(
                             zip_path, [](const std::string& path) {
                                 Json::Value r = hms_cpap::CpapController::cpap_zip_import_
                                                     ? hms_cpap::CpapController::cpap_zip_import_(path)
@@ -1319,6 +1322,7 @@ int main(int argc, char** argv) {
                                     std::cerr << "Upload: " << r["error"].asString() << std::endl;
                                 std::error_code ec;
                                 std::filesystem::remove(path, ec);
+                                return r;
                             });
                     };
                 hms_cpap::CpapController::cpap_zip_import_ =

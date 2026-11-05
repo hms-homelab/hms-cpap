@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Löwenstein event times and durations were ten times too long** (#54).
+  A prisma card's event file counts in tenths of a second; it was read as
+  seconds, so every event on the Events page lasted ten times its length and
+  sat ten times further into the night, often past its end. Counts and the
+  AHI were right. The fix is in cpapdash-parser. A night already imported
+  keeps its old times, because an upload skips nights it already has: Remove
+  night on the Sessions page, then upload the card again.
+- **The session page's AHI for a night of several sessions counted every
+  event** (#54): flow limitation, snore, RERA and large leak included. It now
+  counts apneas and hypopneas, as the sessions list and the dashboard do.
+- **The Upload page says what became of the zip** (#55). Since the import
+  moved to the background worker it said "Imported 0 night(s)" for every zip,
+  good or bad, and a refusal only reached the log. It now waits for this
+  upload's own result and shows the nights found, or the reason it was
+  refused.
+- **A zip made by Windows PowerShell's `Compress-Archive` is read** (#55). It
+  writes `\` between folders, which Linux and macOS took as part of one long
+  file name, so the card's folders never appeared. A zip entry that would land
+  outside the upload folder (`..`, an absolute path or a drive) is now skipped.
+
 ## [6.0.6] - 2026-11-05
 
 A Sleep Bridge streams into hms-cpap on macOS and Windows, not only on Linux,
