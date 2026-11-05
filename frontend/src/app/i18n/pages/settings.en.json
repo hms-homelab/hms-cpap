@@ -138,7 +138,16 @@
       "jobRestarting": "The bridge took the image and is restarting. Waiting for it to come back...",
       "jobDone": "Done. The bridge runs {{version}}.",
       "jobFailed": "Not updated: {{error}}",
-      "errGeneric": "The update could not be started."
+      "errGeneric": "The update could not be started.",
+      "cloudButton": "Send back to CpapDash cloud",
+      "cloudSending": "Sending...",
+      "cloudOffline": "The bridge is offline. It can be sent back to the cloud once it connects here again.",
+      "cloudConfirm": "{{name}} will restart and stream to the CpapDash cloud instead of this computer. It stops showing here. You can point it back to this computer from cpapdash.com.",
+      "cloudYes": "Restart and send to the cloud",
+      "cloudCancel": "Cancel",
+      "cloudSent": "Sent. The bridge is restarting and will stream to the CpapDash cloud.",
+      "cloudFailed": "Not sent: {{error}}",
+      "cloudErrGeneric": "The command could not be sent."
     },
     "sleephq": {
       "heading": "SleepHQ Sync",

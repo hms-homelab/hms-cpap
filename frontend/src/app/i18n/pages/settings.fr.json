@@ -138,7 +138,16 @@
       "jobRestarting": "Le bridge a pris l'image et redémarre. En attente de son retour...",
       "jobDone": "Terminé. Le bridge exécute {{version}}.",
       "jobFailed": "Non mis à jour : {{error}}",
-      "errGeneric": "La mise à jour n'a pas pu démarrer."
+      "errGeneric": "La mise à jour n'a pas pu démarrer.",
+      "cloudButton": "Renvoyer vers le cloud CpapDash",
+      "cloudSending": "Envoi...",
+      "cloudOffline": "Le pont est hors ligne. Il pourra être renvoyé vers le cloud une fois reconnecté ici.",
+      "cloudConfirm": "{{name}} va redémarrer et transmettre au cloud CpapDash au lieu de cet ordinateur. Il n'apparaîtra plus ici. Vous pourrez le rediriger vers cet ordinateur depuis cpapdash.com.",
+      "cloudYes": "Redémarrer et envoyer vers le cloud",
+      "cloudCancel": "Annuler",
+      "cloudSent": "Envoyé. Le pont redémarre et transmettra au cloud CpapDash.",
+      "cloudFailed": "Non envoyé : {{error}}",
+      "cloudErrGeneric": "La commande n'a pas pu être envoyée."
     },
     "sleephq": {
       "heading": "Synchronisation SleepHQ",

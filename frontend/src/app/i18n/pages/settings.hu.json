@@ -138,7 +138,16 @@
       "jobRestarting": "A bridge átvette a képet, és újraindul. Várakozás a visszatérésére...",
       "jobDone": "Kész. A bridge verziója: {{version}}.",
       "jobFailed": "Nem frissült: {{error}}",
-      "errGeneric": "A frissítést nem sikerült elindítani."
+      "errGeneric": "A frissítést nem sikerült elindítani.",
+      "cloudButton": "Visszaküldés a CpapDash felhőbe",
+      "cloudSending": "Küldés...",
+      "cloudOffline": "A híd offline. Akkor küldhető vissza a felhőbe, ha újra csatlakozik ide.",
+      "cloudConfirm": "{{name}} újraindul, és ezután nem erre a számítógépre, hanem a CpapDash felhőbe küldi az adatokat. Itt többé nem jelenik meg. A cpapdash.com oldalon visszairányíthatja erre a számítógépre.",
+      "cloudYes": "Újraindítás és küldés a felhőbe",
+      "cloudCancel": "Mégse",
+      "cloudSent": "Elküldve. A híd újraindul, és a CpapDash felhőbe küldi az adatokat.",
+      "cloudFailed": "Nem sikerült elküldeni: {{error}}",
+      "cloudErrGeneric": "A parancsot nem sikerült elküldeni."
     },
     "sleephq": {
       "heading": "SleepHQ-szinkron",
