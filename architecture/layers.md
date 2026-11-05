@@ -195,8 +195,12 @@ itself is wiring.
   `EDFParser.cpp` is excluded from the build for that reason.
 - `src/clients/`: the transports. `EzShareClient` (the ezShare card over WiFi,
   through the hms-mm bridge), `LocalDataSource` (a card root on disk), `O2RingClient` (HTTP to
-  the ring mule) and `O2RingBleClient` (BlueZ). `IDataSource` and
-  `IO2RingClient` are the seams the tests mock.
+  the ring mule), and the direct Bluetooth clients `O2RingBleClient` and
+  `AirSense11BleClient`. Those two sit on `ble::ITransport`
+  (`include/clients/ble/BleTransport.h`), whose backends are under
+  `src/clients/ble/`: BlueZ on Linux, CoreBluetooth on macOS, WinRT on
+  Windows. `IDataSource`, `IO2RingClient` and `ble::ITransport` are the seams
+  the tests mock.
 
 ## 7. Frontend (frontend/)
 

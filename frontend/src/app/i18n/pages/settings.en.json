@@ -54,8 +54,10 @@
       "bleChecking": "Checking Bluetooth adapter...",
       "bleOk": "Bluetooth adapter detected. BLE direct mode ready.",
       "bleNoAdapter": "No Bluetooth adapter detected. Plug in a USB BLE adapter.",
-      "bleNotCompiled": "BLE support not compiled. Rebuild with -DBUILD_WITH_BLE=ON.",
-      "bleError": "BlueZ error — check Bluetooth service."
+      "bleNotCompiled": "This build has no Bluetooth support. Built from source on Linux, it needs -DBUILD_WITH_BLE=ON.",
+      "bleError": "Bluetooth could not be checked. Check that Bluetooth works on this computer.",
+      "bleRadioOff": "Bluetooth is switched off on this computer. Switch it on and check again.",
+      "bleUnauthorized": "CpapDash is not allowed to use Bluetooth on this Mac. Allow it in System Settings, Privacy & Security, Bluetooth."
     },
     "devicesLink": "Status and actions: Devices",
     "as11": {

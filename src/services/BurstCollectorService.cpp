@@ -400,7 +400,7 @@ void BurstCollectorService::initO2Ring() {
 #ifdef WITH_BLE
     if (o2ring_mode == "ble") {
         client = std::make_shared<O2RingBleClient>();
-        std::cout << "O2Ring: Enabled (mode=ble, direct BlueZ)" << std::endl;
+        std::cout << "O2Ring: Enabled (mode=ble, direct Bluetooth)" << std::endl;
     }
 #else
     // Without this warning the config silently lies: `mode: "ble"` produced a
@@ -4587,7 +4587,7 @@ void BurstCollectorService::reloadConfig() {
 #ifdef WITH_BLE
             if (nc.o2ring_mode == "ble") {
                 client = std::make_shared<O2RingBleClient>();
-                std::cout << "Config reload: O2Ring -> ble (direct BlueZ)" << std::endl;
+                std::cout << "Config reload: O2Ring -> ble (direct Bluetooth)" << std::endl;
             }
 #else
             // Same silent-fallback trap as the startup path — announce it.

@@ -307,8 +307,10 @@ jobs:
           # BUILD_WITH_SLEEPBRIDGE links the Sleep Bridge component, fetched
           # from the sleepbridge-v<version> release and checked against
           # cmake/sleepbridge-pins.cmake, so the installer takes bridges.
+          # BUILD_WITH_BLE: direct Bluetooth (the AirSense 11, the O2 rings)
+          # through WinRT, whose C++/WinRT headers come with the Windows SDK.
           cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static-md -DBUILD_TESTS=OFF -DBUILD_WITH_WEB=ON -DBUILD_WITH_POSTGRESQL=ON -DBUILD_WITH_MYSQL=ON `
-            -DBUILD_WITH_SLEEPBRIDGE=ON -DBUILD_SUPERVISOR=ON -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR" ..
+            -DBUILD_WITH_SLEEPBRIDGE=ON -DBUILD_WITH_BLE=ON -DBUILD_SUPERVISOR=ON -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR" ..
           cmake --build . --parallel
 
       # ── Package Windows release ─────────────────────────────────
@@ -886,6 +888,8 @@ jobs:
           # BUILD_WITH_SLEEPBRIDGE links the Sleep Bridge component, fetched
           # from the sleepbridge-v<version> release and checked against
           # cmake/sleepbridge-pins.cmake, so the macOS release takes bridges.
+          # BUILD_WITH_BLE: direct Bluetooth through CoreBluetooth; hms_cpap
+          # carries its own Bluetooth usage description, and so does the app.
           cmake -G Ninja \
             -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
             -DCMAKE_BUILD_TYPE=Release \
@@ -895,6 +899,7 @@ jobs:
             -DBUILD_WITH_POSTGRESQL=ON \
             -DBUILD_WITH_MYSQL=ON \
             -DBUILD_WITH_SLEEPBRIDGE=ON \
+            -DBUILD_WITH_BLE=ON \
             -DBUILD_SUPERVISOR=ON \
             -DCMAKE_PREFIX_PATH=$(brew --prefix qt) \
             ..

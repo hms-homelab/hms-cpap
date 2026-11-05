@@ -54,8 +54,10 @@
       "bleChecking": "Comprobando el adaptador Bluetooth...",
       "bleOk": "Adaptador Bluetooth detectado. El modo BLE directo está listo.",
       "bleNoAdapter": "No se detectó ningún adaptador Bluetooth. Conecta un adaptador BLE USB.",
-      "bleNotCompiled": "El soporte BLE no está compilado. Recompila con -DBUILD_WITH_BLE=ON.",
-      "bleError": "Error de BlueZ: revisa el servicio Bluetooth."
+      "bleNotCompiled": "Esta compilación no tiene soporte Bluetooth. Compilada desde el código en Linux, necesita -DBUILD_WITH_BLE=ON.",
+      "bleError": "No se pudo comprobar el Bluetooth. Revisa que el Bluetooth funcione en este equipo.",
+      "bleRadioOff": "El Bluetooth está apagado en este equipo. Enciéndelo y vuelve a comprobarlo.",
+      "bleUnauthorized": "CpapDash no tiene permiso para usar el Bluetooth en este Mac. Permítelo en Ajustes del Sistema, Privacidad y seguridad, Bluetooth."
     },
     "devicesLink": "Estado y acciones: Dispositivos",
     "as11": {

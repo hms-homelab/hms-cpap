@@ -502,8 +502,13 @@ export class DevicesComponent implements OnInit, OnDestroy {
     this.api.testBle().subscribe({
       next: (r) => {
         const key = !r.compiled ? 'devices.o2ring.adapterNotCompiled'
-          : r.available ? 'devices.o2ring.adapterFound' : 'devices.o2ring.adapterNone';
-        this.note(d, this.t.instant(key, { adapter: r.adapter ?? '' }), !r.available);
+          : r.status === 'adapter_found' ? 'devices.o2ring.adapterFound'
+          : r.status === 'radio_off' ? 'devices.o2ring.adapterRadioOff'
+          : r.status === 'unauthorized' ? 'devices.o2ring.adapterUnauthorized'
+          : r.status === 'bluez_error' ? 'devices.o2ring.adapterUnchecked'
+          : 'devices.o2ring.adapterNone';
+        const ok = r.status === 'adapter_found';
+        this.note(d, this.t.instant(key, { adapter: r.adapter ?? '' }), !ok);
       },
       error: (e) => this.note(d, this.t.instant('devices.o2ring.adapterError', { error: errorText(e) }), true),
     });
@@ -593,8 +598,13 @@ export class DevicesComponent implements OnInit, OnDestroy {
   }
 
   private as11Fail(r: any): void {
+    // The radio's advice is the OS's: rf-kill on Linux, the Mac's and the PC's own settings.
+    const backend = this.devices.find((d) => d.kind === 'as11_ble')?.detail?.backend ?? '';
+    const radioOff = backend === 'corebluetooth' ? 'devices.as11.errRadioOffMac'
+                   : backend === 'winrt' ? 'devices.as11.errRadioOffWin'
+                   : 'devices.as11.errRadioOff';
     const key: Record<string, string> = {
-      connect: 'devices.as11.errConnect', radio_off: 'devices.as11.errRadioOff', verify: 'devices.as11.errVerify',
+      connect: 'devices.as11.errConnect', radio_off: radioOff, verify: 'devices.as11.errVerify',
       protocol: 'devices.as11.errTimeout', bad_code: 'devices.as11.errBadCode', no_pairing: 'devices.as11.errNoPairing',
       disabled: 'devices.as11.errDisabled', not_compiled: 'devices.as11.notCompiled',
     };

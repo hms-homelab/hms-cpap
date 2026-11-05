@@ -242,6 +242,9 @@
       "adapterNone": "No Bluetooth adapter found.",
       "adapterNotCompiled": "This build has no Bluetooth.",
       "adapterError": "Bluetooth could not be checked: {{error}}",
+      "adapterUnchecked": "Bluetooth could not be checked. Check that Bluetooth works on this computer.",
+      "adapterRadioOff": "Bluetooth is switched off on this computer. Switch it on and check again.",
+      "adapterUnauthorized": "CpapDash is not allowed to use Bluetooth on this Mac. Allow it in System Settings, Privacy & Security, Bluetooth.",
       "importCsv": "Import a CSV",
       "ringRecording": "The ring is recording"
     },
@@ -315,7 +318,9 @@
       "errNoPairing": "The pairing window closed. Start again.",
       "errDisabled": "Turn this on and save first.",
       "errGeneric": "Pairing failed. Start again.",
-      "errRadioOff": "Bluetooth is switched off on this computer (rf-kill). Switch it on, or run rfkill unblock bluetooth, and try again."
+      "errRadioOff": "Bluetooth is switched off on this computer (rf-kill). Switch it on, or run rfkill unblock bluetooth, and try again.",
+      "errRadioOffMac": "Bluetooth is off on this Mac, or CpapDash is not allowed to use it. Switch it on, allow CpapDash in System Settings, Privacy & Security, Bluetooth, and try again.",
+      "errRadioOffWin": "Bluetooth is switched off on this PC. Switch it on in Settings, Bluetooth & devices (and check airplane mode), and try again."
     },
     "ota": {
       "current": "Firmware {{current}}",

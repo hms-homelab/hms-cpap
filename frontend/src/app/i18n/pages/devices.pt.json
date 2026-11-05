@@ -242,6 +242,9 @@
       "adapterNone": "Nenhum adaptador Bluetooth encontrado.",
       "adapterNotCompiled": "Esta versão não tem Bluetooth.",
       "adapterError": "Não foi possível verificar o Bluetooth: {{error}}",
+      "adapterUnchecked": "Não foi possível verificar o Bluetooth. Verifique se o Bluetooth funciona neste computador.",
+      "adapterRadioOff": "O Bluetooth está desligado neste computador. Ligue-o e verifique de novo.",
+      "adapterUnauthorized": "O CpapDash não tem permissão para usar o Bluetooth neste Mac. Permita em Ajustes do Sistema, Privacidade e Segurança, Bluetooth.",
       "importCsv": "Importar um CSV",
       "ringRecording": "O anel está gravando"
     },
@@ -315,7 +318,9 @@
       "errNoPairing": "A janela de emparelhamento fechou. Comece de novo.",
       "errDisabled": "Ative esta opção e salve primeiro.",
       "errGeneric": "O emparelhamento falhou. Comece de novo.",
-      "errRadioOff": "O Bluetooth está desligado neste computador (rf-kill). Ligue-o, ou execute rfkill unblock bluetooth, e tente de novo."
+      "errRadioOff": "O Bluetooth está desligado neste computador (rf-kill). Ligue-o, ou execute rfkill unblock bluetooth, e tente de novo.",
+      "errRadioOffMac": "O Bluetooth está desligado neste Mac, ou o CpapDash não tem permissão para usá-lo. Ligue-o, permita o CpapDash em Ajustes do Sistema, Privacidade e Segurança, Bluetooth, e tente de novo.",
+      "errRadioOffWin": "O Bluetooth está desligado neste PC. Ligue-o em Configurações, Bluetooth e dispositivos (e verifique o modo avião), e tente de novo."
     },
     "ota": {
       "current": "Firmware {{current}}",

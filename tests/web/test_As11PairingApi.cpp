@@ -92,6 +92,7 @@ TEST(As11PairingApi, StatusSaysWhatTheHostCanDo) {
     auto r = as11api::status(nullptr, false, false);
     EXPECT_EQ(r.status, 200);
     EXPECT_FALSE(r.body["compiled"].asBool());
+    EXPECT_EQ(r.body["backend"].asString(), "");
     EXPECT_FALSE(r.body["available"].asBool());
     EXPECT_FALSE(r.body["paired"].asBool());
 

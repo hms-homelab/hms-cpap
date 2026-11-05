@@ -1,4 +1,5 @@
 #include "web/As11PairingApi.h"
+#include "clients/ble/BleTransport.h"
 
 #include <cctype>
 #include <filesystem>
@@ -58,6 +59,9 @@ void failed(Reply* r, as11::Result res, const std::string& why) {
 Reply status(const IAirSense11Pairing* p, bool compiled, bool enabled) {
     Reply r;
     r.body["compiled"] = compiled;
+    // Which OS Bluetooth is under it, so the page can word its advice:
+    // "bluez", "corebluetooth", "winrt", or "" without Bluetooth.
+    r.body["backend"] = compiled ? ble::backendName() : "";
     r.body["enabled"] = enabled;
     r.body["available"] = compiled && enabled && p != nullptr;
     r.body["paired"] = p ? p->paired() : false;

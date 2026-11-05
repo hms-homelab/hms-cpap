@@ -371,7 +371,7 @@ export class CpapApiService {
     return this.http.put<any>('/api/llm-prompt', { prompt });
   }
 
-  testBle(): Observable<{compiled: boolean; available: boolean; status: string; adapter?: string}> {
+  testBle(): Observable<{compiled: boolean; available: boolean; status: string; adapter?: string; backend?: string}> {
     return this.http.get<any>('/api/config/test-ble');
   }
 

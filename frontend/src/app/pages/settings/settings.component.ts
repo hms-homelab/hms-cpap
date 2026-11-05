@@ -199,6 +199,8 @@ import { AppConfig } from '../../models/config.model';
                 <span class="hint" *ngIf="bleStatus === 'no_adapter'" style="color: #ef4444;">{{ 'settings.o2ring.bleNoAdapter' | translate }}</span>
                 <span class="hint" *ngIf="bleStatus === 'not_compiled'" style="color: #fb923c;">{{ 'settings.o2ring.bleNotCompiled' | translate }}</span>
                 <span class="hint" *ngIf="bleStatus === 'error'" style="color: #ef4444;">{{ 'settings.o2ring.bleError' | translate }}</span>
+                <span class="hint" *ngIf="bleStatus === 'radio_off'" style="color: #fb923c;">{{ 'settings.o2ring.bleRadioOff' | translate }}</span>
+                <span class="hint" *ngIf="bleStatus === 'unauthorized'" style="color: #ef4444;">{{ 'settings.o2ring.bleUnauthorized' | translate }}</span>
               </label>
             </ng-container>
           </div>
@@ -1753,7 +1755,10 @@ export class SettingsComponent implements OnInit, OnDestroy {
     this.api.testBle().subscribe({
       next: (res) => {
         if (!res.compiled) this.bleStatus = 'not_compiled';
-        else if (res.available) this.bleStatus = 'ok';
+        else if (res.status === 'adapter_found') this.bleStatus = 'ok';
+        else if (res.status === 'radio_off') this.bleStatus = 'radio_off';
+        else if (res.status === 'unauthorized') this.bleStatus = 'unauthorized';
+        else if (res.status === 'bluez_error') this.bleStatus = 'error';
         else this.bleStatus = 'no_adapter';
       },
       error: () => this.bleStatus = 'error',

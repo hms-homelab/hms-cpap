@@ -428,17 +428,52 @@ if(NOT MSVC)
     target_link_libraries(${PROJECT_NAME} ${HPDF_LIB})
 endif()
 
-# BLE support (optional, requires libsdbus-c++)
-option(BUILD_WITH_BLE "Build with BLE support for direct O2 Ring connectivity" OFF)
+# Direct Bluetooth LE: the O2 Ring family and the AirSense 11, read by this
+# computer itself. The two clients and both conversations are plain C++ in
+# every build and in run_tests; this option adds the host's transport under
+# them (include/clients/ble/BleTransport.h): BlueZ over D-Bus on Linux (needs
+# libsdbus-c++), CoreBluetooth on macOS, WinRT on Windows. The last two come
+# with the OS SDK, so they are on by default there.
+if(APPLE OR WIN32)
+    set(HMS_BLE_DEFAULT ON)
+else()
+    set(HMS_BLE_DEFAULT OFF)
+endif()
+option(BUILD_WITH_BLE "Build with direct Bluetooth LE (BlueZ, CoreBluetooth or WinRT)" ${HMS_BLE_DEFAULT})
 if(BUILD_WITH_BLE)
-    find_package(sdbus-c++ REQUIRED)
-    target_link_libraries(${PROJECT_NAME} SDBusCpp::sdbus-c++)
     target_compile_definitions(${PROJECT_NAME} PUBLIC WITH_BLE=1)
-    # The BlueZ transports. The AirSense 11's conversation (As11Session) and
-    # protocol are plain C++ in every build and in run_tests (SDD-057).
-    target_sources(${PROJECT_NAME} PRIVATE src/clients/O2RingBleClient.cpp
-                                           src/clients/AirSense11BleClient.cpp)
-    message(STATUS "BLE: Enabled (sdbus-c++ ${sdbus-c++_VERSION})")
+    if(APPLE)
+        enable_language(OBJCXX)
+        target_sources(${PROJECT_NAME} PRIVATE src/clients/ble/CoreBluetoothTransport.mm)
+        set_source_files_properties(src/clients/ble/CoreBluetoothTransport.mm PROPERTIES
+            COMPILE_OPTIONS "-fobjc-arc")
+        target_compile_definitions(${PROJECT_NAME} PRIVATE HMS_BLE_COREBLUETOOTH=1)
+        target_link_libraries(${PROJECT_NAME} "-framework CoreBluetooth" "-framework Foundation")
+        # macOS kills a process that opens CoreBluetooth without a Bluetooth
+        # usage description, charged to the process responsible for it. Inside
+        # HmsCpap.app that is the app, whose Info.plist carries one; a bare
+        # hms_cpap (the zip, launchd) is its own, so it carries one too.
+        configure_file(cmake/hms_cpap-Info.plist.in
+                       "${CMAKE_CURRENT_BINARY_DIR}/hms_cpap-Info.plist" @ONLY)
+        target_link_options(${PROJECT_NAME} PRIVATE
+            "LINKER:-sectcreate,__TEXT,__info_plist,${CMAKE_CURRENT_BINARY_DIR}/hms_cpap-Info.plist")
+        message(STATUS "BLE: Enabled (CoreBluetooth)")
+    elseif(WIN32)
+        # C++/WinRT ships with the Windows SDK (Include/<ver>/cppwinrt);
+        # WindowsApp is its umbrella import library.
+        target_compile_definitions(${PROJECT_NAME} PRIVATE HMS_BLE_WINRT=1)
+        target_link_libraries(${PROJECT_NAME} WindowsApp)
+        if(MSVC)
+            set_source_files_properties(src/clients/ble/WinRtBleTransport.cpp PROPERTIES
+                COMPILE_OPTIONS "/bigobj")
+        endif()
+        message(STATUS "BLE: Enabled (WinRT)")
+    else()
+        find_package(sdbus-c++ REQUIRED)
+        target_link_libraries(${PROJECT_NAME} SDBusCpp::sdbus-c++)
+        target_compile_definitions(${PROJECT_NAME} PRIVATE HMS_BLE_BLUEZ=1)
+        message(STATUS "BLE: Enabled (BlueZ, sdbus-c++ ${sdbus-c++_VERSION})")
+    endif()
 endif()
 
 # ── Sleep Stage Training CLI ─────────────────────────────────────────────────

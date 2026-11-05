@@ -60,7 +60,7 @@ SD card.
 - **PDF reports** for a date range, made for handing to your doctor
 - **Pulse oximetry**: Wellue O2Ring SpO2/HR overlay with ODI, imported by CSV upload
 - **Sleep Bridge Lite receiver**: a bridge on the SD card's wires sends every write to hms-cpap as the machine makes it, and the card's files are rebuilt here, live
-- **AirSense 11 over Bluetooth** (off by default): this computer pairs with the machine itself and reads its daily summary and its live night, no card involved; a Mule & Miner in the same mode can send the night here instead
+- **AirSense 11 over Bluetooth** (off by default): this computer pairs with the machine itself and reads its daily summary and its live night, no card involved, on macOS, Windows and Linux; a Mule & Miner in the same mode can send the night here instead
 - **Manual upload page**: drag in a CPAP `.zip` or O2Ring `.csv` from any browser, no shared network needed
 - **Home Assistant**: 47+ sensors via MQTT auto-discovery, or install it as an add-on and run it inside HA
 - **Equipment & supply reminders**: track mask, filters, tubing per profile; days-left sensors and due/overdue events for automations
@@ -231,13 +231,26 @@ a receiver that cannot use what it sends.
 
 #### 2. AirSense 11 over Bluetooth from a computer
 
-If your PC has Bluetooth and you own an AirSense 11 or an AirCurve 11, you do
-not need a bridge at all: hms-cpap connects to the machine directly and shows
-your nights live. The machine has its own Bluetooth, and hms-cpap becomes the
-device it talks to. This needs Linux with BlueZ, a build made with
-`-DBUILD_WITH_BLE=ON` (the Docker image is; give the container the host's
-D-Bus, see the Docker section) and a Bluetooth adapter in range of the
-machine. New in this version.
+If your computer has Bluetooth and you own an AirSense 11 or an AirCurve 11,
+you do not need a bridge at all: hms-cpap connects to the machine directly and
+shows your nights live. The machine has its own Bluetooth, and hms-cpap
+becomes the device it talks to. The computer has to be in range of the
+machine and awake at night: one that sleeps drops the live night until it
+wakes (the day's summary is still read afterwards).
+
+Which downloads have it:
+
+| Download | Bluetooth |
+|---|---|
+| macOS (the `.dmg`) | Yes, through the Mac's own Bluetooth. The first time, macOS asks whether CpapDash may use Bluetooth: allow it (System Settings, Privacy & Security, Bluetooth, if you said no). |
+| Windows (installer or zip) | Yes, Windows 10 or 11 with Bluetooth LE. Switch Bluetooth on in Settings, Bluetooth & devices. No Windows pairing is involved. |
+| Docker image, Home Assistant add-on | Yes, through the host's BlueZ: give the container the host's D-Bus, see the Docker section. |
+| Raspberry Pi zip | Yes, through BlueZ. |
+| Built from source on Linux | Only with `-DBUILD_WITH_BLE=ON` (needs libsdbus-c++). |
+
+`hms_cpap --ble-scan` lists what this computer's Bluetooth can see and exits,
+without connecting to anything: a quick way to check that the machine is in
+range.
 
 Turn it on in `config.json`:
 

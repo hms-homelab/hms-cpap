@@ -58,6 +58,8 @@
 #include "utils/CardLayout.h"
 #include "utils/DbProbeCli.h"
 #include "utils/ParentWatch.h"
+#include "clients/ble/BleTransport.h"
+#include <algorithm>
 #include <iostream>
 #include <iomanip>
 #include <map>
@@ -451,6 +453,19 @@ int runReparse(const std::string& card_root, const std::string& start_str, const
  * Main entry point
  */
 int main(int argc, char** argv) {
+    // `--ble-scan [seconds]`: list what advertises over this computer's
+    // Bluetooth and exit, before any config, log or database is touched. A
+    // diagnostic: it never connects to anything.
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--ble-scan") == 0) {
+            int seconds = 10;
+            if (i + 1 < argc) {
+                try { seconds = (std::max)(1, (std::min)(120, std::stoi(argv[i + 1]))); } catch (...) {}
+            }
+            return hms_cpap::ble::runScan(seconds);
+        }
+    }
+
     // ── Support log ─────────────────────────────────────────────────
     // Started before anything else can fail, and before the config is read.
     // A user asked to "send the log" has to be able to produce one even when

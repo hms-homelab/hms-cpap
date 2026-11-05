@@ -242,6 +242,9 @@
       "adapterNone": "Nem található Bluetooth-adapter.",
       "adapterNotCompiled": "Ebben a változatban nincs Bluetooth.",
       "adapterError": "A Bluetooth-t nem sikerült ellenőrizni: {{error}}",
+      "adapterUnchecked": "A Bluetooth nem ellenőrizhető. Ellenőrizze, hogy működik-e a Bluetooth ezen a számítógépen.",
+      "adapterRadioOff": "A Bluetooth ki van kapcsolva ezen a számítógépen. Kapcsolja be, és ellenőrizze újra.",
+      "adapterUnauthorized": "A CpapDash nem használhatja a Bluetooth-t ezen a Macen. Engedélyezze a Rendszerbeállítások, Adatvédelem és biztonság, Bluetooth menüpontban.",
       "importCsv": "CSV importálása",
       "ringRecording": "A gyűrű rögzít"
     },
@@ -315,7 +318,9 @@
       "errNoPairing": "A párosítási ablak bezárult. Kezdje újra.",
       "errDisabled": "Először kapcsolja be, és mentsen.",
       "errGeneric": "A párosítás nem sikerült. Kezdje újra.",
-      "errRadioOff": "A Bluetooth ki van kapcsolva ezen a számítógépen (rf-kill). Kapcsolja be, vagy futtassa az rfkill unblock bluetooth parancsot, és próbálja újra."
+      "errRadioOff": "A Bluetooth ki van kapcsolva ezen a számítógépen (rf-kill). Kapcsolja be, vagy futtassa az rfkill unblock bluetooth parancsot, és próbálja újra.",
+      "errRadioOffMac": "A Bluetooth ki van kapcsolva ezen a Macen, vagy a CpapDash nem használhatja. Kapcsolja be, engedélyezze a CpapDash-t a Rendszerbeállítások, Adatvédelem és biztonság, Bluetooth menüpontban, és próbálja újra.",
+      "errRadioOffWin": "A Bluetooth ki van kapcsolva ezen a PC-n. Kapcsolja be a Gépházban (Bluetooth és eszközök), ellenőrizze a repülőgépes üzemmódot, és próbálja újra."
     },
     "ota": {
       "current": "Firmware {{current}}",

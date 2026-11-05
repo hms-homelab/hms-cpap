@@ -54,8 +54,10 @@
       "bleChecking": "Bluetooth-adapter ellenőrzése...",
       "bleOk": "Bluetooth-adapter észlelve. A közvetlen BLE mód készen áll.",
       "bleNoAdapter": "Nem található Bluetooth-adapter. Csatlakoztasson egy USB-s BLE-adaptert.",
-      "bleNotCompiled": "A BLE-támogatás nincs belefordítva. Fordítsa újra a -DBUILD_WITH_BLE=ON kapcsolóval.",
-      "bleError": "BlueZ-hiba: ellenőrizze a Bluetooth-szolgáltatást."
+      "bleNotCompiled": "Ez a változat nem támogatja a Bluetooth-t. Linuxon forrásból fordítva a -DBUILD_WITH_BLE=ON kapcsoló kell hozzá.",
+      "bleError": "A Bluetooth nem ellenőrizhető. Ellenőrizze, hogy működik-e a Bluetooth ezen a számítógépen.",
+      "bleRadioOff": "A Bluetooth ki van kapcsolva ezen a számítógépen. Kapcsolja be, és ellenőrizze újra.",
+      "bleUnauthorized": "A CpapDash nem használhatja a Bluetooth-t ezen a Macen. Engedélyezze a Rendszerbeállítások, Adatvédelem és biztonság, Bluetooth menüpontban."
     },
     "devicesLink": "Állapot és műveletek: Készülékek",
     "as11": {

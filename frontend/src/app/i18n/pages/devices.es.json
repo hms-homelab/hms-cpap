@@ -242,6 +242,9 @@
       "adapterNone": "No se encontró ningún adaptador Bluetooth.",
       "adapterNotCompiled": "Esta compilación no tiene Bluetooth.",
       "adapterError": "No se pudo comprobar el Bluetooth: {{error}}",
+      "adapterUnchecked": "No se pudo comprobar el Bluetooth. Revisa que el Bluetooth funcione en este equipo.",
+      "adapterRadioOff": "El Bluetooth está apagado en este equipo. Enciéndelo y vuelve a comprobarlo.",
+      "adapterUnauthorized": "CpapDash no tiene permiso para usar el Bluetooth en este Mac. Permítelo en Ajustes del Sistema, Privacidad y seguridad, Bluetooth.",
       "importCsv": "Importar un CSV",
       "ringRecording": "El anillo está grabando"
     },
@@ -315,7 +318,9 @@
       "errNoPairing": "Se cerró la ventana de emparejamiento. Empieza de nuevo.",
       "errDisabled": "Actívalo y guarda primero.",
       "errGeneric": "No se pudo emparejar. Empieza de nuevo.",
-      "errRadioOff": "El Bluetooth está apagado en este equipo (rf-kill). Enciéndelo, o ejecuta rfkill unblock bluetooth, e inténtalo de nuevo."
+      "errRadioOff": "El Bluetooth está apagado en este equipo (rf-kill). Enciéndelo, o ejecuta rfkill unblock bluetooth, e inténtalo de nuevo.",
+      "errRadioOffMac": "El Bluetooth está apagado en este Mac, o CpapDash no tiene permiso para usarlo. Enciéndelo, permite CpapDash en Ajustes del Sistema, Privacidad y seguridad, Bluetooth, e inténtalo de nuevo.",
+      "errRadioOffWin": "El Bluetooth está apagado en este PC. Enciéndelo en Configuración, Bluetooth y dispositivos (y revisa el modo avión), e inténtalo de nuevo."
     },
     "ota": {
       "current": "Firmware {{current}}",
