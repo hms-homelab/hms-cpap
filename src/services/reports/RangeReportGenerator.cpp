@@ -1,5 +1,6 @@
 #include "services/reports/RangeReportGenerator.h"
 #include "utils/OximetryDevice.h"
+#include "utils/TherapyPressure.h"
 #include <filesystem>
 
 namespace hms_cpap {
@@ -59,7 +60,15 @@ void RangeReportGenerator::buildCharts(const std::string& tmpDir,
         out.slot_b,   "Therapy Duration (Hours)",               "Hours",     "#3b82f6", 0.0, 10.0);
     GnuplotService::renderLineChart(makePoints("leak_95"),
         out.leak,     "Leak Rate 95th Percentile (L/min)",      "L/min",     "#f59e0b", 0.0);
-    GnuplotService::renderLineChart(makePoints("mask_press_95"),
+    // Issue #56: the chart is captioned "Machine pressure", so it plots the
+    // therapy pressure, and the mask's only on a night without one.
+    std::vector<ChartPoint> pressPts;
+    for (const auto& r : daily) {
+        std::string d = js(r, "record_date");
+        if (d.size() >= 10) d = d.substr(5);
+        pressPts.push_back({d, machinePressure(r, "95")});
+    }
+    GnuplotService::renderLineChart(pressPts,
         out.pressure, "Pressure 95th Percentile (cmH2O)",       "cmH2O",     "#8b5cf6", 4.0);
 
     // O2Ring nightly SpO2 (fetched from DB)
@@ -125,7 +134,7 @@ void RangeReportGenerator::addDataSection(PdfRenderer& pdf,
         // cell. Empty reads as a rendering gap; the reader cannot tell it from
         // a column that failed to populate. ASCII prints.
         const bool typed = gradableIndex(r);
-        const double press95 = jd(r, "mask_press_95");
+        const double press95 = machinePressure(r, "95");   // issue #56
         rows.push_back({{
             d, fmtHM(hrs),
             fmt1(jd(r, "ahi")),

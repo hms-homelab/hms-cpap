@@ -198,7 +198,9 @@ CREATE TABLE IF NOT EXISTS cpap_daily_summary (
     spo2_50_str       DOUBLE,
     rin               DOUBLE, csr DOUBLE,
     mask_press_50     DOUBLE, mask_press_95 DOUBLE, mask_press_max DOUBLE,
-    leak_50           DOUBLE, leak_95 DOUBLE, leak_max DOUBLE,
+    -- Issue #56: the delivered therapy pressure (PLD Press), ours only.
+    therapy_press_50  DOUBLE, therapy_press_95 DOUBLE, therapy_press_max DOUBLE,
+    leak_50          DOUBLE, leak_95 DOUBLE, leak_max DOUBLE,
     spo2_50           DOUBLE, spo2_95 DOUBLE,
     resp_rate_50      DOUBLE, tid_vol_50 DOUBLE, min_vent_50 DOUBLE,
     mode              INT, epr_level DOUBLE, pressure_setting DOUBLE,

@@ -479,4 +479,85 @@ TEST_F(QueryServiceReadTest, InsightsRunOverStoredNights) {
     EXPECT_NO_THROW({ (void)qs_->getInsights(3650); });
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Issue #56: the dashboard's "Therapy Pressure" read the mask pressure. On a
+// minimum of 7 with EPR 3 the mask sits about 2 lower, so the panel showed ~5.
+// ─────────────────────────────────────────────────────────────────────────────
+
+namespace {
+double numAt(const Json::Value& row, const char* key) {
+    const auto& v = row[key];
+    if (v.isNull()) return -1.0;
+    return v.isString() ? std::stod(v.asString()) : v.asDouble();
+}
+}  // namespace
+
+TEST_F(QueryServiceReadTest, ThePressureReadsCarryTheTherapyPressureBesideTheMask) {
+    // One night two days back: 30 minutes at a delivered 7.0 to 8.0, each with
+    // a mask pressure 2 lower, as EPR 3 gives.
+    CPAPSession s;
+    s.device_id = kDevice;
+    s.device_name = "AirSense 11 AutoSet";
+    const auto start = tp(noonDaysAgo(2) - 2 * 3600);   // 10:00
+    s.session_start = start;
+    s.duration_seconds = 30 * 60;
+    s.data_records = 30;
+    SessionMetrics m;
+    double mask_sum = 0;
+    for (int i = 0; i < 30; ++i) {
+        BreathingSummary b;
+        b.timestamp = start + minutes(i);
+        b.therapy_pressure = i < 20 ? 7.0 : 8.0;
+        b.mask_pressure = *b.therapy_pressure - 2.0;
+        mask_sum += *b.mask_pressure;
+        s.breathing_summary.push_back(b);
+    }
+    m.avg_mask_pressure = mask_sum / 30;
+    s.metrics = m;
+    ASSERT_TRUE(db_->saveSession(s));
+    db_->markSessionCompleted(kDevice, start);
+    ASSERT_TRUE(db_->aggregateDailySummaryFromSessions(kDevice));
+
+    const auto trend = qs_->getTrend("pressure", 3650);
+    ASSERT_TRUE(trend.isArray());
+    ASSERT_EQ(trend.size(), 1u);
+    EXPECT_NEAR(numAt(trend[0], "therapy_press_50"), 7.0, 1e-6)
+        << "the trend must carry the delivered pressure";
+    EXPECT_NEAR(numAt(trend[0], "therapy_press_95"), 8.0, 1e-6);
+    EXPECT_NEAR(numAt(trend[0], "therapy_press_max"), 8.0, 1e-6);
+    EXPECT_NEAR(numAt(trend[0], "mask_press_95"), 6.0, 1e-6)
+        << "and the mask's beside it, as its own value";
+
+    const auto daily = qs_->getDailySummary("2000-01-01", "2099-12-31");
+    ASSERT_TRUE(daily.isArray());
+    ASSERT_EQ(daily.size(), 1u);
+    EXPECT_NEAR(numAt(daily[0], "therapy_press_50"), 7.0, 1e-6)
+        << "the dashboard's panel reads this row";
+    EXPECT_LT(numAt(daily[0], "mask_press_50"), 7.0);
+
+    // The PDF report's "Avg Pressure 95th" is the machine's.
+    const auto st = qs_->getStatistics("2000-01-01", "2099-12-31");
+    ASSERT_TRUE(st.isArray() && st.size() == 1u);
+    EXPECT_NEAR(numAt(st[0], "avg_pressure_95"), 8.0, 1e-6);
+}
+
+TEST_F(QueryServiceReadTest, ANightWithoutTherapyPressureFallsBackToTheMask) {
+    STRDailyRecord r;
+    r.device_id = kDevice;
+    r.record_date = tp(noonDaysAgo(1));
+    r.duration_minutes = 400;
+    r.mask_press_50 = 9.1;
+    r.mask_press_95 = 11.2;
+    ASSERT_TRUE(db_->saveSTRDailyRecords({r}));
+
+    const auto trend = qs_->getTrend("pressure", 3650);
+    ASSERT_TRUE(trend.isArray() && trend.size() == 1u);
+    EXPECT_TRUE(trend[0]["therapy_press_50"].isNull())
+        << "no PLD minutes, no therapy pressure: NULL, never a 0 reading";
+
+    const auto st = qs_->getStatistics("2000-01-01", "2099-12-31");
+    ASSERT_TRUE(st.isArray() && st.size() == 1u);
+    EXPECT_NEAR(numAt(st[0], "avg_pressure_95"), 11.2, 1e-6);
+}
+
 }  // namespace

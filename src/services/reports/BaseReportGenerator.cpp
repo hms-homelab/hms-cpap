@@ -1,5 +1,6 @@
 #include "services/reports/BaseReportGenerator.h"
 #include "utils/OximetryDevice.h"
+#include "utils/TherapyPressure.h"
 #include "services/InsightsEngine.h"
 #include "parsers/CpapdashBridge.h"
 #include "database/SqlDialect.h"
@@ -177,8 +178,9 @@ void BaseReportGenerator::addInsightsSection(PdfRenderer& pdf,
         rec.cai       = jd(r, "cai");
         rec.leak_95   = jd(r, "leak_95");
         rec.leak_50   = jd(r, "leak_50");
-        rec.mask_press_50 = jd(r, "mask_press_50");
-        rec.mask_press_95 = jd(r, "mask_press_95");
+        // Issue #56: the insights speak of the machine's pressure.
+        rec.mask_press_50 = machinePressure(r, "50");
+        rec.mask_press_95 = machinePressure(r, "95");
         rec.spo2_50   = jd(r, "spo2_50");
         records.push_back(rec);
     }

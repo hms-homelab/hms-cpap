@@ -17,7 +17,8 @@
       "ahiTrend": "AHI Trend (30 days)",
       "apneaIndexTrend": "Apnea Index Trend (30 days)",
       "usageHours": "Usage Hours (30 days)",
-      "pressureTrend": "Pressure Trend (30 days)",
+      "pressureTrend": "Therapy Pressure Trend (30 days)",
+      "maskPressureTrend": "Mask Pressure Trend (30 days)",
       "leakTrend": "Leak Trend (30 days)",
       "eventBreakdown": "Event Breakdown (30 days)",
       "respiratoryTrends": "Respiratory Trends (30 days)",
@@ -48,6 +49,7 @@
       "str": "STR Daily Metrics",
       "insights": "Therapy Insights",
       "pressure": "Therapy Pressure",
+      "maskPressure": "Mask Pressure",
       "respiratory": "Respiratory Metrics"
     },
     "subtitle": {
@@ -93,9 +95,16 @@
       "avgEvent": "Avg Event"
     },
     "pressure": {
-      "subtitle": "Auto-Adjusting CPAP Metrics",
+      "subtitleTherapy": "The pressure your machine delivered",
+      "subtitleMask": "Measured at the mask. This night has no therapy pressure record.",
       "current": "Current Pressure",
       "median": "Median (P50)",
+      "p95": "95th Percentile",
+      "max": "Maximum",
+      "maskMedian": "Mask Pressure (P50)",
+      "trendP50": "P50",
+      "trendP95": "P95",
+      "trendMaskP50": "Mask P50",
       "leakRate": "Leak Rate (P95)"
     },
     "respiratory": {

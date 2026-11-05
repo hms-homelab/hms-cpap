@@ -2,12 +2,17 @@ import { Component, Input, ViewChild, ElementRef, AfterViewInit, OnChanges } fro
 import { CommonModule } from '@angular/common';
 import { TranslatePipe } from '@ngx-translate/core';
 import Chart from 'chart.js/auto';
+import { PressureSource } from './pressure-source';
 
 export interface PressureSectionData {
-  avgPressure: number;
-  p95Pressure: number;
+  /** Issue #56: 'therapy' is what the machine delivered; 'mask' is measured at
+   *  the mask, shown only for a night without the therapy pressure. */
+  source: PressureSource;
   p50Pressure: number;
+  p95Pressure: number;
   maxPressure: number;
+  /** The mask's median beside a therapy pressure, as its own value. */
+  maskP50: number | null;
   leakP95: number;
   currentPressure: number;
 }
@@ -19,23 +24,29 @@ export interface PressureSectionData {
   template: `
     <div class="section" *ngIf="data">
       <div class="section-header">
-        <div class="section-title"><i class="fa-solid fa-gauge-high"></i> {{ 'dashboard.title.pressure' | translate }}</div>
-        <div class="section-subtitle">{{ 'dashboard.pressure.subtitle' | translate }}</div>
+        <div class="section-title"><i class="fa-solid fa-gauge-high"></i>
+          {{ (data.source === 'therapy' ? 'dashboard.title.pressure' : 'dashboard.title.maskPressure') | translate }}</div>
+        <div class="section-subtitle">
+          {{ (data.source === 'therapy' ? 'dashboard.pressure.subtitleTherapy' : 'dashboard.pressure.subtitleMask') | translate }}</div>
       </div>
       <div class="gauge-row">
         <div class="gauge-wrap">
           <canvas #avgGauge width="160" height="100"></canvas>
-          <div class="gauge-title">Average Pressure</div>
+          <div class="gauge-title">{{ 'dashboard.pressure.median' | translate }}</div>
         </div>
         <div class="gauge-wrap">
           <canvas #p95Gauge width="160" height="100"></canvas>
-          <div class="gauge-title">95th Percentile</div>
+          <div class="gauge-title">{{ 'dashboard.pressure.p95' | translate }}</div>
         </div>
       </div>
       <div class="metrics-row">
-        <div class="press-card">
-          <div class="press-label">{{ 'dashboard.pressure.median' | translate }}</div>
-          <div class="press-value">{{ data.p50Pressure.toFixed(1) }} cmH2O</div>
+        <div class="press-card" *ngIf="data.maxPressure">
+          <div class="press-label">{{ 'dashboard.pressure.max' | translate }}</div>
+          <div class="press-value">{{ data.maxPressure.toFixed(1) }} cmH2O</div>
+        </div>
+        <div class="press-card" *ngIf="data.maskP50">
+          <div class="press-label">{{ 'dashboard.pressure.maskMedian' | translate }}</div>
+          <div class="press-value">{{ data.maskP50.toFixed(1) }} cmH2O</div>
         </div>
         <div class="press-card" *ngIf="data.currentPressure">
           <div class="press-label">{{ 'dashboard.pressure.current' | translate }}</div>
@@ -84,7 +95,7 @@ export class PressureSectionComponent implements AfterViewInit, OnChanges {
     if (!this.data || !this.avgGaugeRef) return;
     this.charts.forEach(c => c.destroy());
     this.charts = [];
-    this.charts.push(this.makeGauge(this.avgGaugeRef, this.data.avgPressure, 4, 20));
+    this.charts.push(this.makeGauge(this.avgGaugeRef, this.data.p50Pressure, 4, 20));
     this.charts.push(this.makeGauge(this.p95GaugeRef, this.data.p95Pressure, 4, 20));
   }
 

@@ -11,6 +11,7 @@ import { TherapyInsightsComponent } from '../../components/dashboard/therapy-ins
 import { StrMetricsComponent, StrMetricsData } from '../../components/dashboard/str-metrics.component';
 import { EventsBreakdownComponent, EventsBreakdownData } from '../../components/dashboard/events-breakdown.component';
 import { PressureSectionComponent, PressureSectionData } from '../../components/dashboard/pressure-section.component';
+import { nightPressure, pressureTrendPlan } from '../../components/dashboard/pressure-source';
 import { RespiratoryMetricsComponent, RespiratoryMetricsData } from '../../components/dashboard/respiratory-metrics.component';
 import { RealtimeStatusComponent, RealtimeStatusData } from '../../components/dashboard/realtime-status.component';
 import { MlIntelligenceComponent } from '../../components/dashboard/ml-intelligence.component';
@@ -484,14 +485,18 @@ export class DashboardComponent implements OnInit, AfterViewInit {
               // nothing rather than as the absence of a measurement -- a Sefam
               // and a Löwenstein have no mask-pressure or respiratory-rate
               // column at all (issue 15). No values, no panel.
-              const pressP50 = parseFloat(r.mask_press_50) || 0;
-              const pressP95 = parseFloat(r.mask_press_95) || 0;
-              const pressMax = parseFloat(r.mask_press_max) || 0;
-              this.pressureData = (pressP50 || pressP95 || pressMax) ? {
-                avgPressure: pressP50,
-                p95Pressure: pressP95,
-                p50Pressure: pressP50,
-                maxPressure: pressMax,
+              //
+              // Issue #56: the panel is "Therapy Pressure", so it shows what
+              // the machine delivered, not the mask pressure (which EPR pulls
+              // ~2 under the minimum on every breath out). A night without
+              // the therapy pressure shows the mask's, titled as the mask's.
+              const press = nightPressure(r);
+              this.pressureData = press ? {
+                source: press.source,
+                p50Pressure: press.p50,
+                p95Pressure: press.p95,
+                maxPressure: press.max,
+                maskP50: press.maskP50,
                 leakP95: parseFloat(r.leak_95) || 0,
                 currentPressure: 0,
               } : null;
@@ -819,15 +824,19 @@ export class DashboardComponent implements OnInit, AfterViewInit {
 
     // Fetch additional trends
     this.api.getTrend('pressure', 30).subscribe(d => {
-      // A Sefam or a Löwenstein has no mask-pressure column (issue 15), so
-      // every night here is 0 and the chart drew a flat purple line along the
-      // axis for the whole month.
-      this.showPressureTrend = this.anyNonZero(d, ['mask_press_50', 'mask_press_95']);
-      if (!this.showPressureTrend) return;
-      this.renderTrendChart(d, this.pressureChartRef, this.t.instant('dashboard.chart.pressureTrend'), [
-        { key: 'mask_press_50', label: 'P50', color: '#ce93d8' },
-        { key: 'mask_press_95', label: 'P95', color: '#ba68c8', fill: '-1' },
-      ]);
+      // A Sefam or a Löwenstein has no pressure column (issue 15), so every
+      // night here is 0 and the chart drew a flat purple line along the axis
+      // for the whole month. Issue #56: the therapy pressure where the month
+      // has it, with the mask's median as its own line; the mask's alone,
+      // titled as the mask's, where it does not.
+      const plan = pressureTrendPlan(d);
+      this.showPressureTrend = !!plan;
+      if (!plan) return;
+      this.renderTrendChart(d, this.pressureChartRef, this.t.instant(plan.titleKey),
+        plan.series.map(s => ({
+          key: s.key, label: this.t.instant(s.labelKey), color: s.color,
+          fill: s.fill, dashed: s.dashed, zeroIsGap: s.zeroIsGap,
+        })));
     });
 
     this.api.getTrend('leak', 30).subscribe(d => this.renderTrendChart(d, this.leakChartRef, this.t.instant('dashboard.chart.leakTrend'), [
@@ -870,7 +879,7 @@ export class DashboardComponent implements OnInit, AfterViewInit {
   showEventsTrend = true;
   showRespiratoryTrend = true;
 
-  private renderTrendChart(data: TrendPoint[], ref: ElementRef<HTMLCanvasElement>, title: string, series: { key: string; label: string; color: string; fill?: string }[]) {
+  private renderTrendChart(data: TrendPoint[], ref: ElementRef<HTMLCanvasElement>, title: string, series: { key: string; label: string; color: string; fill?: string; dashed?: boolean; zeroIsGap?: boolean }[]) {
     if (!data?.length || !ref?.nativeElement) return;
     const labels = data.map(p => (p['record_date'] || '').slice(5));
     this.charts.push(new Chart(ref.nativeElement, {
@@ -878,9 +887,14 @@ export class DashboardComponent implements OnInit, AfterViewInit {
       data: {
         labels,
         datasets: series.map(s => ({
-          label: s.label, data: data.map(p => this.orGap(p, s.key)),
+          label: s.label,
+          data: data.map(p => {
+            const v = this.orGap(p, s.key);
+            return s.zeroIsGap && v === 0 ? null : v;
+          }),
           borderColor: s.color, backgroundColor: s.color + '1a',
           fill: s.fill || false, tension: 0.3, pointRadius: 2, borderWidth: 1.5,
+          borderDash: s.dashed ? [5, 4] : [],
         })),
       },
       options: {

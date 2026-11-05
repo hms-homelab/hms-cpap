@@ -306,6 +306,7 @@ protected:
                 ahi FLOAT, hi FLOAT, ai FLOAT, oai FLOAT, cai FLOAT, uai FLOAT, rin FLOAT,
                 leak_50 FLOAT, leak_95 FLOAT, leak_max FLOAT,
                 mask_press_50 FLOAT, mask_press_95 FLOAT, mask_press_max FLOAT,
+                therapy_press_50 FLOAT, therapy_press_95 FLOAT, therapy_press_max FLOAT,
                 spo2_50 FLOAT, spo2_95 FLOAT,
                 resp_rate_50 FLOAT, tid_vol_50 FLOAT, min_vent_50 FLOAT,
                 mode INT, epr_level FLOAT, pressure_setting FLOAT
@@ -497,7 +498,24 @@ TEST_F(AgentToolsDbTest, GetTrendDataPressureColumns) {
     ASSERT_TRUE(j.is_array());
     ASSERT_GE(j.size(), 1u);
     EXPECT_TRUE(j[0].contains("mask_press_95"));
+    EXPECT_TRUE(j[0].contains("therapy_press_95"));   // issue #56
     EXPECT_TRUE(j[0].contains("pressure_setting"));
+}
+
+// Issue #56: the agent's "avg_pressure_95" is the machine's pressure where a
+// night has it, and the mask's only where it does not. The fixture's nights
+// all read mask 10.5; one of them gets a delivered 12.0.
+TEST_F(AgentToolsDbTest, StatisticsPreferTheTherapyPressure) {
+    {
+        pqxx::work txn(*conn_);
+        txn.exec_params("UPDATE cpap_daily_summary SET therapy_press_95 = 12.0"
+                        " WHERE device_id = $1 AND record_date = '2025-02-06'", kDevice);
+        txn.commit();
+    }
+    auto j = json::parse(tools_.execute("get_statistics", json{
+        {"start_date", "2025-02-06"}, {"end_date", "2025-02-08"}}, *conn_));
+    ASSERT_EQ(j.size(), 1u);
+    EXPECT_EQ(j[0]["avg_pressure_95"].get<std::string>(), "11.0");   // (12 + 10.5 + 10.5) / 3
 }
 
 TEST_F(AgentToolsDbTest, GetTrendDataLeakColumns) {

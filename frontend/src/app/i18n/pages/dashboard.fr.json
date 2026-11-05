@@ -17,7 +17,8 @@
       "ahiTrend": "Tendance de l'IAH (30 jours)",
       "apneaIndexTrend": "Tendance de l'indice d'apnées (30 jours)",
       "usageHours": "Heures d'utilisation (30 jours)",
-      "pressureTrend": "Tendance de la pression (30 jours)",
+      "pressureTrend": "Tendance de la pression de la thérapie (30 jours)",
+      "maskPressureTrend": "Tendance de la pression au masque (30 jours)",
       "leakTrend": "Tendance de la fuite (30 jours)",
       "eventBreakdown": "Détail des événements (30 jours)",
       "respiratoryTrends": "Tendances respiratoires (30 jours)",
@@ -48,6 +49,7 @@
       "str": "Indicateurs quotidiens STR",
       "insights": "Analyses de la thérapie",
       "pressure": "Pression de la thérapie",
+      "maskPressure": "Pression au masque",
       "respiratory": "Indicateurs respiratoires"
     },
     "subtitle": {
@@ -93,9 +95,16 @@
       "avgEvent": "Événement moyen"
     },
     "pressure": {
-      "subtitle": "Indicateurs de la PPC auto-pilotée",
+      "subtitleTherapy": "La pression délivrée par votre appareil",
+      "subtitleMask": "Mesurée au masque. Cette nuit n'a pas d'enregistrement de la pression de la thérapie.",
       "current": "Pression actuelle",
       "median": "Médiane (P50)",
+      "p95": "95e centile",
+      "max": "Maximum",
+      "maskMedian": "Pression au masque (P50)",
+      "trendP50": "P50",
+      "trendP95": "P95",
+      "trendMaskP50": "Masque P50",
       "leakRate": "Débit de fuite (P95)"
     },
     "respiratory": {
