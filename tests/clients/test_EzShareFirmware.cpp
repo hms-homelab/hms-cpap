@@ -107,7 +107,9 @@ protected:
     EzShareClient client;
     void fallback() { client.no_listing_ = true; }
     uint64_t probe(const std::string& path) { return client.probe(path); }
-    void seed(std::time_t start) { client.starts_[client.folderForStart(start)] = {start}; }
+    void seed(std::time_t start, size_t sessions = 1) {
+        client.starts_[client.folderForStart(start)] = std::vector<std::time_t>(sessions, start);
+    }
     std::string folder(std::time_t start) { return client.folderForStart(start); }
     bool fallbackEnabled() { return client.no_listing_; }
     std::time_t time(int day, int hour, int minute) {
@@ -201,6 +203,24 @@ TEST_F(EzShareFirmwareTest, NoonSplitAndAirSense10SAD) {
     EXPECT_TRUE(std::any_of(files.begin(), files.end(), [](const auto& e) {
         return e.name == "20260302_000510_SAD.edf";
     }));
+}
+
+TEST_F(EzShareFirmwareTest, SessionsSharingAnSTRMinuteFindTheirOwnFiles) {
+    // STR keeps minutes, so two short sessions can share a start minute.
+    FirmwareHttp http;
+    for (const auto* stamp : {"221603", "221657"})
+        for (const auto* type : {"BRP", "PLD", "SA2", "EVE", "CSL"})
+            http.files[std::string("/DATALOG/20260301/20260301_") + stamp + "_" + type + ".edf"] = "synthetic";
+    http.start(); client.setBaseURL(http.url); fallback();
+    const auto start = time(1, 22, 16);
+    seed(start, 2);
+    auto files = client.listFiles("20260301");
+    ASSERT_EQ(files.size(), 10u);
+    EXPECT_TRUE(std::any_of(files.begin(), files.end(), [](const auto& e) {
+        return e.name == "20260301_221657_BRP.edf";
+    }));
+    files = client.listFiles("20260301");
+    EXPECT_EQ(files.size(), 10u); // cached names stay with their own session
 }
 
 TEST_F(EzShareFirmwareTest, BoundedChunksResumeAfterCutAndTimeout) {

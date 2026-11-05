@@ -148,7 +148,9 @@ private:
     static constexpr std::chrono::minutes SESSIONS_REFRESH{10};
     std::map<std::string, std::vector<std::time_t>> starts_;
     std::map<std::string, EzShareFileEntry> discovered_;
-    std::map<std::time_t, std::map<std::string, std::string>> session_names_;
+    // Keyed by STR start and its ordinal among equal starts in a folder:
+    // STR keeps minutes only, so two sessions can share a start.
+    std::map<std::pair<std::time_t, int>, std::map<std::string, std::string>> session_names_;
     static std::string folderForStart(std::time_t start);
     void refreshSessions();
     std::vector<EzShareFileEntry> enumerateFiles(const std::string& folder);
