@@ -85,6 +85,7 @@ struct FakeTransport : ble::ITransport {
 
     // connect()
     ble::LinkError connect_error = ble::LinkError::None;
+    std::vector<std::string> unreachable_ids;   // these ids refuse with Connect
     uint16_t mtu = 0;
     Responder responder;
     ble::WriteResult write_fail;
@@ -124,8 +125,9 @@ struct FakeTransport : ble::ITransport {
         connected_ids.push_back(d.id);
         specs.push_back(spec);
         ble::ConnectResult r;
-        if (connect_error != ble::LinkError::None) {
-            r.error = connect_error;
+        const bool refuse = std::find(unreachable_ids.begin(), unreachable_ids.end(), d.id) != unreachable_ids.end();
+        if (connect_error != ble::LinkError::None || refuse) {
+            r.error = refuse ? ble::LinkError::Connect : connect_error;
             r.detail = "fake refusal";
             return r;
         }
@@ -500,6 +502,46 @@ TEST(O2RingBleLink, ALivePollAndAFilePullNeverShareTheRing) {
     EXPECT_EQ(live.spo2, 0x60);
     EXPECT_EQ(live.hr, 0x48);
     EXPECT_EQ(t->connected_ids.size(), 2u);
+}
+
+TEST(O2RingBleLink, ARememberedRingThatWillNotConnectIsFoundAgainByItsAdvert) {
+    // The ring as the OS remembers it (an old address) is unreachable; the
+    // same ring advertising now, under another address, is not.
+    auto t = std::make_shared<FakeTransport>();
+    t->known_ = {dev("old", "O2Ring 1276", {}, false)};
+    t->adverts_ = {dev("now", "O2Ring 1276", {}, true)};
+    t->unreachable_ids = {"old"};
+    t->responder = [](FakeLink& l, const std::vector<uint8_t>& piece) {
+        if (piece.size() >= 2 && piece[1] == 0x14)
+            l.notify(ringReply(R"({"CurBAT":"70","FileList":"20261105003602"})"));
+    };
+    O2RingBleClient c(t);
+    EXPECT_EQ(c.listFiles().size(), 1u);
+    ASSERT_EQ(t->connected_ids.size(), 2u);
+    EXPECT_EQ(t->connected_ids[0], "old");
+    EXPECT_EQ(t->connected_ids[1], "now");
+}
+
+TEST(O2RingBleLink, ARingFoundAdvertisingIsNotRetriedForever) {
+    auto t = std::make_shared<FakeTransport>();
+    t->adverts_ = {dev("now", "O2Ring 1276", {}, true)};
+    t->unreachable_ids = {"now"};
+    O2RingBleClient c(t);
+    EXPECT_TRUE(c.listFiles().empty());
+    EXPECT_EQ(t->connected_ids.size(), 1u);
+}
+
+TEST(As11BleLink, ARememberedMachineThatWillNotConnectIsFoundAgainByItsAdvert) {
+    auto t = std::make_shared<FakeTransport>();
+    t->known_ = {dev("old", "ResMed 123456", {}, false)};
+    t->adverts_ = {dev("now", "ResMed 123456", {}, true)};
+    t->unreachable_ids = {"old"};
+    t->write_fail.error = "refused";
+    AirSense11BleClient c(tempDir(), "", t, quick());
+    c.pairStart();
+    ASSERT_EQ(t->connected_ids.size(), 2u);
+    EXPECT_EQ(t->connected_ids[0], "old");
+    EXPECT_EQ(t->connected_ids[1], "now");
 }
 
 TEST(O2RingBleLink, AWriteFailureFailsTheRequestInsteadOfThrowing) {

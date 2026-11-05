@@ -274,16 +274,12 @@ public:
         return r;
     }
 
-    std::vector<Device> known() override {
-        std::vector<Device> out;
-        std::lock_guard<std::mutex> lk(seen_m_);
-        for (const auto& [id, d] : seen_) {
-            Device copy = d;
-            copy.advertising = false;
-            out.push_back(std::move(copy));
-        }
-        return out;
-    }
+    // Nothing is offered from memory: every connect starts from a fresh scan
+    // that finds the device by its advert, and opens it with that advert's
+    // address and address type. A remembered address alone (the type unknown,
+    // the device gone or moved to another identity) is what made a ring
+    // unreachable.
+    std::vector<Device> known() override { return {}; }
 
     DiscoverResult discover(const std::function<bool(const Device&)>& match, int timeout_ms) override {
         apartment();
@@ -355,7 +351,6 @@ public:
             }
             for (auto& d : fresh) {
                 d.advertising = true;
-                remember(d);
                 if (match(d)) {
                     res.device = d;
                     break;
@@ -523,10 +518,6 @@ public:
     }
 
 private:
-    void remember(const Device& d) {
-        std::lock_guard<std::mutex> lk(seen_m_);
-        seen_[d.id] = d;
-    }
     void rememberType(const std::string& id, wb::BluetoothAddressType t) {
         std::lock_guard<std::mutex> lk(seen_m_);
         types_[id] = t;
@@ -541,8 +532,7 @@ private:
     std::string tag_;
     bool available_ = false;
     std::mutex seen_m_;
-    std::map<std::string, Device> seen_;
-    // The advertised address's type. A ring advertises from a random static
+    // The advertised address's type, from the scan that found the device. A ring advertises from a random static
     // address; opened as a public one, Windows answers every GATT call with
     // Unreachable.
     std::map<std::string, wb::BluetoothAddressType> types_;

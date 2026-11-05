@@ -125,16 +125,29 @@ bool AirSense11BleClient::connectLink(int timeout_ms) {
     }
     if (!scan(kScanMs)) return false;
 
-    ble::LinkHandlers handlers;
-    // A fresh conversation before the first notification can land.
-    handlers.ready = [this] { session_.onConnected(); };
-    handlers.notify = [this](const std::vector<uint8_t>& v) { session_.onNotify(v); };
-    // The link dropping wakes whatever the session waits on.
-    handlers.disconnected = [this] { session_.onDisconnect(); };
-    ble::ConnectOptions options;
-    options.resolve_timeout_ms = timeout_ms;
-    options.resolve_poll_ms = 250;
-    auto res = transport_->connect(device_, {as11::kWriteUuid, as11::kNotifyUuid}, std::move(handlers), options);
+    auto attempt = [this, timeout_ms] {
+        ble::LinkHandlers handlers;
+        // A fresh conversation before the first notification can land.
+        handlers.ready = [this] { session_.onConnected(); };
+        handlers.notify = [this](const std::vector<uint8_t>& v) { session_.onNotify(v); };
+        // The link dropping wakes whatever the session waits on.
+        handlers.disconnected = [this] { session_.onDisconnect(); };
+        ble::ConnectOptions options;
+        options.resolve_timeout_ms = timeout_ms;
+        options.resolve_poll_ms = 250;
+        return transport_->connect(device_, {as11::kWriteUuid, as11::kNotifyUuid}, std::move(handlers), options);
+    };
+    auto res = attempt();
+    // A remembered machine that would not connect: find it again by its
+    // advert and connect to what that advert names, once.
+    if (!res.link && !device_.advertising) {
+        std::cerr << kTag << "the remembered " << device_.name
+                  << " did not connect; looking for it by its advert" << std::endl;
+        session_.onDisconnect();
+        rediscover_ = true;
+        if (!scan(kScanMs)) return false;
+        res = attempt();
+    }
     if (!res.link) {
         switch (res.error) {
         case ble::LinkError::Resolve: note("services not resolved in time"); break;
