@@ -45,7 +45,8 @@
     "more": "Mais",
     "less": "Menos",
     "stream": {
-      "here": "Envia para este hms-cpap."
+      "label": "Envia para",
+      "here": "este hms-cpap"
     },
     "forget": {
       "button": "Esquecer este dispositivo",
@@ -57,6 +58,12 @@
     "confirm": {
       "cancel": "Cancelar",
       "recordingTitle": "Seu aparelho está gravando.",
+      "recordingLine": "Seu CPAP está gravando ({{reason}}).",
+      "anyway": "{{verb}} mesmo assim",
+      "verb": {
+        "change": "Alterar",
+        "send": "Enviar"
+      },
       "recordingAnyway": "Fazer mesmo assim",
       "notNow": "Agora não",
       "costs": {
@@ -70,6 +77,8 @@
       "reason": "Motivo: {{reason}}"
     },
     "result": {
+      "sending": "Enviando...",
+      "starting": "Iniciando a atualização...",
       "sent": "Enviado.",
       "queued": "Aguardando o dispositivo: vai quando ele se conectar.",
       "failed": "Não enviado: {{error}}"
@@ -223,6 +232,7 @@
       "notRecording": "não está gravando",
       "lastFile": "Último arquivo lido",
       "readNow": "Ler o anel agora",
+      "reading": "Lendo o anel...",
       "readCollected": "Novos dados lidos do anel.",
       "readNone": "Nenhum arquivo novo no anel.",
       "checkAdapter": "Verificar o adaptador Bluetooth",

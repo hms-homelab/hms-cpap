@@ -45,7 +45,8 @@
     "more": "Több",
     "less": "Kevesebb",
     "stream": {
-      "here": "Ennek a hms-cpapnak küld."
+      "label": "Ide küld",
+      "here": "erre a hms-cpapra"
     },
     "forget": {
       "button": "Eszköz elfelejtése",
@@ -57,6 +58,12 @@
     "confirm": {
       "cancel": "Mégse",
       "recordingTitle": "A készülék éppen rögzít.",
+      "recordingLine": "A CPAP éppen rögzít ({{reason}}).",
+      "anyway": "{{verb}} mégis",
+      "verb": {
+        "change": "Módosítás",
+        "send": "Küldés"
+      },
       "recordingAnyway": "Mégis végrehajtom",
       "notNow": "Most nem",
       "costs": {
@@ -70,6 +77,8 @@
       "reason": "Ok: {{reason}}"
     },
     "result": {
+      "sending": "Küldés...",
+      "starting": "A frissítés indul...",
       "sent": "Elküldve.",
       "queued": "Várakozás az eszközre: csatlakozáskor megy el.",
       "failed": "Nem sikerült elküldeni: {{error}}"
@@ -223,6 +232,7 @@
       "notRecording": "nem rögzít",
       "lastFile": "Utoljára beolvasott fájl",
       "readNow": "Gyűrű beolvasása most",
+      "reading": "A gyűrű beolvasása...",
       "readCollected": "Új adatok beolvasva a gyűrűről.",
       "readNone": "Nincs új fájl a gyűrűn.",
       "checkAdapter": "Bluetooth-adapter ellenőrzése",

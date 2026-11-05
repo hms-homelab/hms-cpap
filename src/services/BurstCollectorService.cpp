@@ -1303,7 +1303,10 @@ BurstCollectorService::As11Facts BurstCollectorService::as11Facts() const {
 bool BurstCollectorService::requestAs11Pull() {
     // The config says whether a pull is set up; the worker, which owns the
     // pull, runs it within a second (and skips it when there is none).
-    if (!app_config_ || !(app_config_->airsense11_ble.enabled || app_config_->airsense11.enabled)) return false;
+    if (!app_config_) return false;
+    // Over this host's Bluetooth only in a Bluetooth build; else through a bridge.
+    const bool direct = app_config_->airsense11_ble.enabled && airSense11BleCompiled();
+    if (!direct && !app_config_->airsense11.enabled) return false;
     as11_summary_due_ = true;
     return true;
 }

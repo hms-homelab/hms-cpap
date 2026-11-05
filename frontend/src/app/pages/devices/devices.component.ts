@@ -48,6 +48,8 @@ export class DevicesComponent implements OnInit, OnDestroy {
   host = hostOf(window.location);
 
   open: Record<string, boolean> = {};
+  cmdsOpen: Record<string, boolean> = {};
+  finding: Record<string, boolean> = {};
   busy: Record<string, boolean> = {};
   notes: Record<string, Note> = {};
   confirms = new Confirmations();
@@ -72,6 +74,7 @@ export class DevicesComponent implements OnInit, OnDestroy {
   as11Err = false;
 
   private timer: any = null;
+  private tables = new Map<string, { src: unknown; table: { rows: ConfigRow[]; read: boolean; risks: any[] } }>();
 
   constructor(private api: CpapApiService, private t: TranslateService) {}
 
@@ -165,6 +168,7 @@ export class DevicesComponent implements OnInit, OnDestroy {
   /** One command; a 409 recording warning opens the in-page question. */
   send(d: DeviceEntry, action: string, payload: any): void {
     this.busy[d.key] = true;
+    this.note(d, this.t.instant('devices.result.sending'), false);
     const req = d.kind === 'mule'
       ? this.api.sendMuleCommand(d.id, payload.cmd, payload)
       : this.api.sleepBridgeCommand({ sender: d.id, ...payload });
@@ -179,6 +183,7 @@ export class DevicesComponent implements OnInit, OnDestroy {
         this.busy[d.key] = false;
         const w = recordingWarning(e);
         if (w) {
+          delete this.notes[d.key];
           this.confirms.recording(d.key, action, costKey(action), w.reason, payload);
           return;
         }
@@ -311,12 +316,14 @@ export class DevicesComponent implements OnInit, OnDestroy {
   private runUpdate(d: DeviceEntry, first: Observable<any>, again: () => Observable<any>): void {
     this.busy[d.key] = true;
     delete this.updateWarnings[d.key];
+    this.note(d, this.t.instant('devices.result.starting'), false);
     first.subscribe({
-      next: () => { this.busy[d.key] = false; this.load(false); },
+      next: () => { this.busy[d.key] = false; delete this.notes[d.key]; this.load(false); },
       error: (e) => {
         this.busy[d.key] = false;
         const w = recordingWarning(e);
         if (w) {
+          delete this.notes[d.key];
           this.updateWarnings[d.key] = { reason: w.reason, again };
           return;
         }
@@ -368,9 +375,24 @@ export class DevicesComponent implements OnInit, OnDestroy {
 
   // ── the Sleep Bridge's settings ──────────────────────────────────────────
 
+  /**
+   * The settings table, built once per read of the device (the command
+   * list's identity changes only when a refresh brings a new one). Built on
+   * every change-detection pass instead, its rows and their inputs were
+   * recreated each pass, and each new input scheduled another pass.
+   */
   configTable(d: DeviceEntry): { rows: ConfigRow[]; read: boolean; risks: any[] } {
-    const v = latestConfigValues(this.commands(d));
-    return { rows: configRows(v?.values, v?.pending ?? []), read: !!v, risks: v?.risks ?? [] };
+    const src = this.commands(d);
+    const hit = this.tables.get(d.key);
+    if (hit && hit.src === src) return hit.table;
+    const v = latestConfigValues(src);
+    const table = { rows: configRows(v?.values, v?.pending ?? []), read: !!v, risks: v?.risks ?? [] };
+    this.tables.set(d.key, { src, table });
+    return table;
+  }
+
+  trackRow(_: number, row: ConfigRow): string {
+    return row.key;
   }
 
   pendingKeys(d: DeviceEntry): string[] {
@@ -434,6 +456,7 @@ export class DevicesComponent implements OnInit, OnDestroy {
 
   readRing(d: DeviceEntry): void {
     this.busy[d.key] = true;
+    delete this.notes[d.key];
     this.api.collectOximetry().subscribe({
       next: (r: any) => {
         this.busy[d.key] = false;
@@ -483,14 +506,16 @@ export class DevicesComponent implements OnInit, OnDestroy {
 
   find(d: DeviceEntry): void {
     this.busy[d.key] = true;
+    this.finding[d.key] = true;
     this.api.discoverDevices().subscribe({
       next: (r) => {
         this.busy[d.key] = false;
+        this.finding[d.key] = false;
         const lines = r.count ? this.t.instant('devices.source.found', { n: r.count }) + ': ' + r.devices.map((x) => x.base_url || x.host).join(', ')
                               : this.t.instant('devices.source.findNone');
         this.note(d, lines + (d.kind === 'flashair' ? ' ' + this.t.instant('devices.source.findFlashairNote') : ''), !r.count);
       },
-      error: (e) => { this.busy[d.key] = false; this.note(d, this.t.instant('devices.result.failed', { error: errorText(e) }), true); },
+      error: (e) => { this.busy[d.key] = false; this.finding[d.key] = false; this.note(d, this.t.instant('devices.result.failed', { error: errorText(e) }), true); },
     });
   }
 
@@ -544,6 +569,62 @@ export class DevicesComponent implements OnInit, OnDestroy {
     };
     this.as11Message = this.t.instant(key[r?.result] ?? 'devices.as11.errGeneric');
     this.as11Err = true;
+  }
+
+  // ── the card's anatomy ───────────────────────────────────────────────────
+
+  /** The one status pill: Recording when the machine records, else here, away or unknown. */
+  pill(d: DeviceEntry): { key: string; cls: string } {
+    if (d.recording === 'yes') return { key: 'devices.recording.badge', cls: 'rec' };
+    return { key: 'devices.presence.' + d.present, cls: d.present };
+  }
+
+  /** The version on offer for the Firmware row's one line, or ''. */
+  offer(d: DeviceEntry): string {
+    if (d.kind === 'mule') return this.muleOffer(d);
+    const r = this.bridgeRelease(d);
+    return r.button ? d.detail?.release?.version ?? '' : '';
+  }
+
+  upToDate(d: DeviceEntry): boolean {
+    if (d.kind === 'mule') return !!d.detail?.firmware && !this.muleOffer(d) && !d.detail.firmware.manifest_error;
+    return false;   // the release line says it for a bridge
+  }
+
+  /** The action's own label: the confirm's verb uses the same words. */
+  verbKey(action: string): string {
+    switch (action) {
+      case 'reboot': return 'devices.action.restart';
+      case 'reset':
+      case 'config_reset': return 'devices.action.resetWifi';
+      case 'cloud': return 'devices.action.backToCloud';
+      case 'forget': return 'devices.forget.button';
+      case 'as11_forget': return 'devices.as11.forgetPairing';
+      case 'switch': return 'devices.confirm.verb.change';
+      case 'config':
+      case 'config_risk': return 'devices.config.send';
+      default: return 'devices.confirm.verb.send';
+    }
+  }
+
+  isDestructive(action: string): boolean {
+    return action === 'reset' || action === 'config_reset' || action === 'forget' || action === 'as11_forget';
+  }
+
+  /** The kind line under the name, unless the name already says it. */
+  showKind(d: DeviceEntry): boolean {
+    return !!d.own_name || this.t.instant('devices.kind.' + d.kind) !== d.name;
+  }
+
+  /** The kind has something under More. */
+  hasMore(d: DeviceEntry): boolean {
+    return d.kind === 'mule' || d.kind === 'sleepbridge';
+  }
+
+  /** The machine as the device names it; nothing assumed beyond that. */
+  machineName(reported: string): string {
+    const known: Record<string, string> = { resmed: 'ResMed', luna: 'Luna', bmc: 'Luna' };
+    return known[reported] ?? reported;
   }
 
   // ── shared ───────────────────────────────────────────────────────────────

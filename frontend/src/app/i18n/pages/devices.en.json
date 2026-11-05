@@ -45,7 +45,8 @@
     "more": "More",
     "less": "Less",
     "stream": {
-      "here": "Sends to this hms-cpap."
+      "label": "Sends to",
+      "here": "this hms-cpap"
     },
     "forget": {
       "button": "Forget this device",
@@ -57,6 +58,12 @@
     "confirm": {
       "cancel": "Cancel",
       "recordingTitle": "Your machine is recording.",
+      "recordingLine": "Your CPAP is recording ({{reason}}).",
+      "anyway": "{{verb}} anyway",
+      "verb": {
+        "change": "Change",
+        "send": "Send"
+      },
       "recordingAnyway": "Do it anyway",
       "notNow": "Not now",
       "costs": {
@@ -70,6 +77,8 @@
       "reason": "Why: {{reason}}"
     },
     "result": {
+      "sending": "Sending...",
+      "starting": "Starting the update...",
       "sent": "Sent.",
       "queued": "Waiting for the device: it goes when it connects.",
       "failed": "Not sent: {{error}}"
@@ -223,6 +232,7 @@
       "notRecording": "not recording",
       "lastFile": "Last file read",
       "readNow": "Read the ring now",
+      "reading": "Reading the ring...",
       "readCollected": "New data read from the ring.",
       "readNone": "No new file on the ring.",
       "checkAdapter": "Check the Bluetooth adapter",
