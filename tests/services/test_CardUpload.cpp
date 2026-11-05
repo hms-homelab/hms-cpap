@@ -186,6 +186,50 @@ TEST_F(CardUploadTest, ARemovedNightStaysRemovedThroughAnUpload) {
     EXPECT_EQ(c.refused, 0);
 }
 
+// Issue #54: a Löwenstein RespEvent's EndTime and Duration are tenths of a
+// second from the recording start. The synthetic signal starts 02.01.2024
+// 22:00:00 and runs ten minutes; an OA ending at 3000 (300 s) lasting 150
+// (15 s) began at 22:04:45. Read as seconds it was a 150 s apnea at 22:47:30,
+// past the end of the recording. Through the upload's own import, so what is
+// checked is what the Events page reads.
+TEST_F(CardUploadTest, ALowensteinCardStoresEventTimesReadInTenthsOfASecond) {
+    std::string wmedf;
+    for (const char* p : {"tests/fixtures/prisma/signal_synthetic.wmedf",
+                          "../tests/fixtures/prisma/signal_synthetic.wmedf",
+                          "../../tests/fixtures/prisma/signal_synthetic.wmedf"}) {
+        if (fs::exists(p)) { wmedf = p; break; }
+    }
+    if (wmedf.empty()) GTEST_SKIP() << "prisma wmedf fixture not found";
+
+    // SMART max combined layout: <serial>/<YYYYMMDD>/<NNNN>/{signal,event}.
+    const auto sess = root_ / "0000000000" / "20240102" / "0001";
+    fs::create_directories(sess);
+    fs::copy_file(wmedf, sess / "signal_001.wmedf", fs::copy_options::overwrite_existing);
+    put("0000000000/20240102/0001/event_001.xml",
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<desc>\n"
+        "<RespEvent RespEventID = \"101\" EndTime = \"3000\" Duration = \"150\"/>\n"
+        "<RespEvent RespEventID = \"111\" EndTime = \"5000\" Duration = \"200\"/>\n"
+        "</desc>\n");
+
+    const auto c = importCardSessions(*db_, UploadedCard::Lowenstein, root_.string(),
+                                      "dev", "prisma");
+    ASSERT_EQ(c.found, 1);
+    ASSERT_EQ(c.imported, 1);
+
+    // The machine's own events only; desaturations the synthetic oximetry
+    // channel yields are stored alongside them.
+    const auto rows = db_->executeQuery(
+        "SELECT event_type, event_timestamp, duration_seconds FROM cpap_events"
+        " WHERE event_type IN ('Obstructive', 'Hypopnea') ORDER BY event_timestamp", {});
+    ASSERT_EQ(rows.size(), 2u);
+    EXPECT_NE(rows[0]["event_timestamp"].asString().find("22:04:45"), std::string::npos)
+        << rows[0]["event_timestamp"].asString();
+    EXPECT_DOUBLE_EQ(std::stod(rows[0]["duration_seconds"].asString()), 15.0);
+    EXPECT_NE(rows[1]["event_timestamp"].asString().find("22:08:00"), std::string::npos)
+        << rows[1]["event_timestamp"].asString();
+    EXPECT_DOUBLE_EQ(std::stod(rows[1]["duration_seconds"].asString()), 20.0);
+}
+
 TEST_F(CardUploadTest, AFolderThatIsNotTheCardImportsNothing) {
     const auto c = importCardSessions(*db_, UploadedCard::Sefam, root_.string(), "dev", "S.Box");
     EXPECT_EQ(c.found, 0);

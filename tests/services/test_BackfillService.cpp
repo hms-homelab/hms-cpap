@@ -610,3 +610,124 @@ TEST(BackfillServiceTest, ALocalDirPointedAtDatalogRefusesAndImportsNothing) {
 
     std::filesystem::remove_all(tmp);
 }
+
+// ── Issue #55: the upload page learns what became of its zip ─────────────
+
+namespace {
+
+BackfillService::Config zipCfg() {
+    BackfillService::Config cfg;
+    cfg.local_dir = "/nonexistent";
+    cfg.device_id = "test_device";
+    cfg.device_name = "Test CPAP";
+    return cfg;
+}
+
+/// Poll as the page does until the upload [id] is read and nothing is still
+/// running on its behalf.
+Json::Value waitForUpload(BackfillService& svc, uint64_t id) {
+    Json::Value s;
+    for (int i = 0; i < 60; ++i) {
+        s = svc.getStatus();
+        if (s["upload"]["id"].asUInt64() == id && s["upload"]["state"].asString() == "done" &&
+            s["status"].asString() != "running")
+            break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    }
+    return s;
+}
+
+}  // namespace
+
+TEST(BackfillServiceZipTest, TheUploadIsVisibleAsQueuedBeforeTheWorkerTakesIt) {
+    BackfillService svc(zipCfg(), nullptr);
+    const auto first = svc.triggerZipImport("/tmp/a.zip", [](const std::string&) { return Json::Value(); });
+    const auto second = svc.triggerZipImport("/tmp/b.zip", [](const std::string&) { return Json::Value(); });
+    EXPECT_GT(first, 0u);
+    EXPECT_GT(second, first) << "every upload gets its own id";
+    const auto s = svc.getStatus();
+    EXPECT_EQ(s["upload"]["id"].asUInt64(), second);
+    EXPECT_EQ(s["upload"]["state"].asString(), "queued");
+}
+
+// The reporter's bad zip: the importer refused it and the page said
+// "Imported 0 night(s)" with a green tick. The refusal is the outcome now.
+TEST(BackfillServiceZipTest, AnImporterErrorReachesTheStatus) {
+    BackfillService svc(zipCfg(), nullptr);
+    svc.start();
+    const auto id = svc.triggerZipImport("/tmp/x.zip", [](const std::string&) {
+        Json::Value r;
+        r["error"] = "The zip looks like a lowenstein card but holds no session this build can read";
+        return r;
+    });
+    const auto s = waitForUpload(svc, id);
+    svc.stop();
+    EXPECT_EQ(s["status"].asString(), "error");
+    EXPECT_NE(s["error_message"].asString().find("holds no session"), std::string::npos);
+    EXPECT_EQ(s["upload"]["error"].asString(), s["error_message"].asString());
+}
+
+TEST(BackfillServiceZipTest, AnImporterThatThrowsIsAnErrorNotASilentSuccess) {
+    BackfillService svc(zipCfg(), nullptr);
+    svc.start();
+    const auto id = svc.triggerZipImport("/tmp/x.zip", [](const std::string&) -> Json::Value {
+        throw std::runtime_error("disk full");
+    });
+    const auto s = waitForUpload(svc, id);
+    svc.stop();
+    EXPECT_EQ(s["status"].asString(), "error");
+    EXPECT_NE(s["upload"]["error"].asString().find("disk full"), std::string::npos);
+}
+
+// The reporter's good zip: the nights the importer found are what the page
+// counts, not the empty list the upload's own reply carried.
+TEST(BackfillServiceZipTest, TheImportersNightsAreKeptForThePage) {
+    BackfillService svc(zipCfg(), nullptr);
+    svc.start();
+    const auto id = svc.triggerZipImport("/tmp/x.zip", [](const std::string&) {
+        Json::Value r;
+        r["sessions_found"] = 2;
+        r["format"] = "lowenstein";
+        r["dates"].append("2026-10-01");
+        r["dates"].append("2026-10-02");
+        r["message"] = "not for the page";
+        return r;
+    });
+    const auto s = waitForUpload(svc, id);
+    svc.stop();
+    EXPECT_EQ(s["status"].asString(), "complete");
+    ASSERT_EQ(s["upload"]["dates"].size(), 2u);
+    EXPECT_EQ(s["upload"]["dates"][1].asString(), "2026-10-02");
+    EXPECT_EQ(s["upload"]["sessions_found"].asInt(), 2);
+    EXPECT_FALSE(s["upload"].isMember("message"));
+}
+
+// A zip that hands its nights on to the card import: the status stays
+// "running" through that import and its outcome is the final word, while the
+// upload's own reply survives it.
+TEST(BackfillServiceZipTest, TheCardImportItQueuesDecidesTheOutcomeAndKeepsTheReply) {
+    namespace fs = std::filesystem;
+    const auto empty = fs::temp_directory_path() / ("zip_handoff_" + std::to_string(::getpid()));
+    fs::create_directories(empty);
+    auto db = std::make_shared<MockDatabase>();
+
+    BackfillService svc(zipCfg(), db);
+    svc.start();
+    const auto id = svc.triggerZipImport("/tmp/x.zip", [&](const std::string&) {
+        svc.triggerCardImport(UploadedCard::Lowenstein, empty.string());
+        Json::Value r;
+        r["status"] = "queued";
+        r["dates"].append("2026-10-01");
+        return r;
+    });
+    const auto s = waitForUpload(svc, id);
+    svc.stop();
+    fs::remove_all(empty);
+
+    // The empty card finds nothing, and says so, under the same upload.
+    EXPECT_EQ(s["status"].asString(), "error");
+    EXPECT_NE(s["error_message"].asString().find("no lowenstein sessions"), std::string::npos)
+        << s["error_message"].asString();
+    EXPECT_EQ(s["upload"]["id"].asUInt64(), id);
+    ASSERT_EQ(s["upload"]["dates"].size(), 1u);
+}

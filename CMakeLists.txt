@@ -234,7 +234,10 @@ else()
         # pin is something ONLY CI can catch. That is exactly how the v4.9.9
         # release build failed: the pin was left on v2026.1.3 while the code
         # had moved on to a field that tag did not have.
-        GIT_TAG        v8.9.2
+        # Pinned to the unreleased parser commit carrying the Löwenstein
+        # event-time fix (issue #54); move to the parser's release tag
+        # before this branch is released.
+        GIT_TAG        2ecd8a3eacb8e90ce31eb6b7d8c10bf39dcf9d87
     )
 endif()
 FetchContent_MakeAvailable(cpapdash_parser)

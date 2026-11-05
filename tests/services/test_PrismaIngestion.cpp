@@ -682,3 +682,66 @@ TEST_F(PrismaIngestionTest, StageSessionClearsStaleContents) {
     EXPECT_TRUE(has_signal);
     fs::remove_all(staged);
 }
+
+// ── Zip entry names (issue #55) ─────────────────────────────────────────────
+
+TEST(PrismaZipEntryName, BackslashesAreSeparators) {
+    EXPECT_EQ(PrismaIngestion::safeZipEntryName("0000000000\\20240102\\0001\\event_001.xml"),
+              "0000000000/20240102/0001/event_001.xml");
+    EXPECT_EQ(PrismaIngestion::safeZipEntryName("0000000000\\20240102\\"),
+              "0000000000/20240102/");
+    EXPECT_EQ(PrismaIngestion::safeZipEntryName("a/b\\c.txt"), "a/b/c.txt");
+    EXPECT_EQ(PrismaIngestion::safeZipEntryName("plain.txt"), "plain.txt");
+    EXPECT_EQ(PrismaIngestion::safeZipEntryName("..data/x"), "..data/x");
+}
+
+TEST(PrismaZipEntryName, AnEntryThatWouldLeaveTheFolderIsRefused) {
+    EXPECT_FALSE(PrismaIngestion::safeZipEntryName(""));
+    EXPECT_FALSE(PrismaIngestion::safeZipEntryName("/etc/passwd"));
+    EXPECT_FALSE(PrismaIngestion::safeZipEntryName("\\Windows\\x.dll"));
+    EXPECT_FALSE(PrismaIngestion::safeZipEntryName("C:\\x.txt"));
+    EXPECT_FALSE(PrismaIngestion::safeZipEntryName("../x.txt"));
+    EXPECT_FALSE(PrismaIngestion::safeZipEntryName("a\\..\\..\\x.txt"));
+    EXPECT_FALSE(PrismaIngestion::safeZipEntryName("a/.."));
+}
+
+// The shape Windows PowerShell 5.1's Compress-Archive writes, read off one it
+// made (5.1.26100): every name '\'-separated, and a directory entry ending in
+// '\' with no directory attribute. On Linux and macOS the whole name used to
+// become ONE file name in the extraction folder, so no date tree existed and
+// the upload said the card held no session.
+TEST_F(PrismaIngestionTest, ACompressArchiveZipExtractsIntoItsTree) {
+    const std::string zip = tmp_dir + "/card.zip";
+    ASSERT_TRUE(buildZip(zip, {
+        {"0000000000\\20260620\\", ""},
+        {"0000000000\\20260620\\0001\\event_003.xml", "<desc></desc>"},
+        {"0000000000\\20260620\\0001\\signal_003.wmedf", "dummy"},
+    }));
+    const std::string out = tmp_dir + "/out";
+    ASSERT_TRUE(PrismaIngestion::extractZip(zip, out));
+
+    EXPECT_TRUE(fs::is_directory(out + "/0000000000/20260620"));
+    EXPECT_TRUE(fs::is_regular_file(out + "/0000000000/20260620/0001/event_003.xml"));
+    EXPECT_TRUE(fs::is_regular_file(out + "/0000000000/20260620/0001/signal_003.wmedf"));
+
+    PrismaIngestion ingestion(out);
+    ASSERT_TRUE(ingestion.initialize());
+    const auto sessions = ingestion.discoverSessions(std::nullopt);
+    ASSERT_EQ(sessions.size(), 1u);
+    EXPECT_EQ(sessions[0].date_folder, "20260620");
+}
+
+TEST_F(PrismaIngestionTest, AZipEntryNamingAPathOutsideTheFolderIsNotWritten) {
+    const std::string zip = tmp_dir + "/evil.zip";
+    ASSERT_TRUE(buildZip(zip, {
+        {"../escaped.txt", "x"},
+        {"a\\..\\..\\escaped2.txt", "x"},
+        {"kept.txt", "y"},
+    }));
+    const std::string out = tmp_dir + "/nested/out";
+    ASSERT_TRUE(PrismaIngestion::extractZip(zip, out));
+    EXPECT_TRUE(fs::exists(out + "/kept.txt"));
+    EXPECT_FALSE(fs::exists(tmp_dir + "/nested/escaped.txt"));
+    EXPECT_FALSE(fs::exists(tmp_dir + "/nested/escaped2.txt"));
+    EXPECT_FALSE(fs::exists(tmp_dir + "/escaped2.txt"));
+}

@@ -90,6 +90,9 @@ export interface SessionListItem {
 
 export interface SessionDetail extends SessionListItem {
   session_end: string;
+  duration_seconds?: string | number | null;
+  clear_airway_apneas?: string | null;
+  unclassified_apneas?: string | null;
   min_spo2: string | null;
   max_heart_rate: string | null;
   min_heart_rate: string | null;

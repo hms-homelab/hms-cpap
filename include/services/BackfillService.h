@@ -82,9 +82,18 @@ public:
      *
      * [job] is the existing importer, given the zip's path on disk; it is
      * responsible for its own cleanup, as it was when it ran inline.
+     *
+     * Issue #55: the importer's answer (its "error", or the nights it found)
+     * used to be printed to the log and dropped, so the page that polls
+     * /api/backfill/status reported "Imported 0 night(s)" for every upload,
+     * good or bad. It is kept now, as the status's "upload" object under the
+     * id returned here, which the upload's reply carries:
+     *   {"id": N, "state": "queued" | "reading" | "done", ...importer's reply}
+     * "done" is the zip read; the nights it queued are then imported under
+     * the usual "status", which stays "running" until they are.
      */
-    void triggerZipImport(const std::string& zip_path,
-                          std::function<void(const std::string&)> job);
+    uint64_t triggerZipImport(const std::string& zip_path,
+                              std::function<Json::Value(const std::string&)> job);
 
     /// Thread-safe status for API polling.
     Json::Value getStatus() const;
@@ -110,7 +119,13 @@ private:
     /// SDD-039 D2: a queued zip import, run on this worker.
     std::atomic<bool> zip_import_requested_{false};
     std::string pending_zip_path_;
-    std::function<void(const std::string&)> pending_zip_job_;
+    std::function<Json::Value(const std::string&)> pending_zip_job_;
+    uint64_t pending_zip_id_ = 0;
+    std::atomic<uint64_t> next_zip_id_{1};
+    /// The latest upload's state and the importer's reply (progress_mutex_).
+    Json::Value upload_{Json::nullValue};
+    void executeZipImport(uint64_t id, const std::string& path,
+                          const std::function<Json::Value(const std::string&)>& job);
 
     Config config_;
     std::shared_ptr<IDatabase> db_;

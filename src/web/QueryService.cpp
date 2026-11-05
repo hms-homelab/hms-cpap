@@ -420,6 +420,9 @@ Json::Value QueryService::getSessionDetail(const std::string& date) {
         " COALESCE(m.index_kind, 'ahi') as index_kind,"
         " m.total_events, m.obstructive_apneas, m.central_apneas,"
         " m.hypopneas, m.reras, m.clear_airway_apneas,"
+        // Issue #54: with the typed counts above, the numerator of the night's
+        // AHI (sql::nightAhi), which the page computes when it merges sessions.
+        " m.unclassified_apneas,"
         " m.avg_event_duration, m.max_event_duration, m.time_in_apnea_percent,"
         " m.avg_spo2, m.min_spo2, m.spo2_drops, m.odi,"
         " m.avg_heart_rate, m.min_heart_rate, m.max_heart_rate,"

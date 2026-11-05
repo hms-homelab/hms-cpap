@@ -12,6 +12,7 @@ import { formatTimestamps, eventAnnotations, makeDataset, makeFillBand, EVENT_CO
 import { detectDesaturations, desatAnnotations, odiPerHour, inferSampleSec } from '../../utils/signal-analysis';
 import { formatIndex } from '../../utils/format';
 import { isGradable, indexLabelKey } from '../../utils/index-kind';
+import { nightAhi, sessionSeconds } from './night-ahi';
 import { Chart, ChartDataset, registerables } from 'chart.js';
 import annotationPlugin from 'chartjs-plugin-annotation';
 import zoomPlugin from 'chartjs-plugin-zoom';
@@ -651,7 +652,7 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
   private mergeSessions(sessions: SessionDetail[]): SessionDetail {
     if (sessions.length === 1) return sessions[0];
     const first = sessions[0];
-    const totalSeconds = sessions.reduce((sum, s) => sum + (+s.duration_hours || 0) * 3600, 0);
+    const totalSeconds = sessions.reduce((sum, s) => sum + sessionSeconds(s), 0);
     const totalEvents = sessions.reduce((sum, s) => sum + +(s.total_events || 0), 0);
     const totalHours = totalSeconds / 3600;
     const allEvents = sessions.flatMap(s => s.events || []);
@@ -664,7 +665,9 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
       // wrong half.
       index_kind: sessions.some(s => !isGradable(s)) ? 'ungraded' : 'ahi',
       duration_hours: totalHours.toFixed(2),
-      ahi: totalHours > 0 ? formatIndex(totalEvents / totalHours, '0') : '0',
+      // Issue #54: apneas and hypopneas only, as the list and dashboard count
+      // the same night; total_events also holds RERA, snore, flow limitation.
+      ahi: totalHours > 0 ? formatIndex(nightAhi(sessions), '0') : '0',
       total_events: totalEvents.toString(),
       obstructive_apneas: sessions.reduce((sum, s) => sum + +(s.obstructive_apneas || 0), 0).toString(),
       central_apneas: sessions.reduce((sum, s) => sum + +(s.central_apneas || 0), 0).toString(),
