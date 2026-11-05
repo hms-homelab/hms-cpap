@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [6.0.6] - 2026-11-05
+
+A Sleep Bridge streams into hms-cpap on macOS and Windows, not only on Linux,
+a card learned on a computer comes in one file, and Settings sends a Sleep
+Bridge back to the CpapDash cloud.
+
+### Fixed
+- **The Sleep Bridge receiver is in the macOS and Windows builds.** Since
+  6.0.0 only the Linux builds (Docker, the add-on, the Linux zips) carried the
+  Sleep Bridge component, so the DMG, the Windows installer and the macOS and
+  Windows zips refused every bridge ("not in this build"). The component is
+  now built for macOS (arm64 and x86_64) and Windows x64 and linked into every
+  release build. Its licence ships beside the binary on every platform.
+
+### Added
+- **A `.cpapcard` file carries a learned card into hms-cpap** (SDD-061): the
+  card's layout and its nights in one upload, so a bridge on that card is
+  understood from its first write. A layout that does not match its card is
+  refused and the nights are still imported.
+- **Settings: send a Sleep Bridge back to the CpapDash cloud.** One button
+  per bridge streaming here; the bridge tests the cloud before it moves.
+
 ## [6.0.5] - 2026-11-03
 
 A BMC / React Health Luna card is read over an ez Share, or through a Mule and
