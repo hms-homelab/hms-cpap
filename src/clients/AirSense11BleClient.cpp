@@ -1,58 +1,35 @@
-#ifdef WITH_BLE
-
 #include "clients/AirSense11BleClient.h"
-#include "clients/BlueZAdapter.h"
 #include "services/As11Settings.h"
 #include "services/As11StrWriter.h"
 
 #include <algorithm>
 #include <filesystem>
-#include <cctype>
 #include <chrono>
 #include <iostream>
-#include <map>
 #include <thread>
 
 namespace hms_cpap {
 
-// SDD-057. The conversation is as11::Session; this file is the BlueZ link it
-// runs over. Nothing here logs the clientId, the key, the code or a payload.
+// SDD-057. The conversation is as11::Session; the link is a ble::ITransport.
+// Nothing here logs the clientId, the key, the code or a payload.
 
 namespace {
-
-const sdbus::ServiceName BLUEZ{"org.bluez"};
-const sdbus::ObjectPath ROOT{"/"};
 constexpr const char* kTag = "AirSense11 BLE: ";
-
-using Props = std::map<std::string, sdbus::Variant>;
-using Objects = std::map<sdbus::ObjectPath, std::map<std::string, Props>>;
-
-std::string lower(std::string s) {
-    std::transform(s.begin(), s.end(), s.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return s;
-}
-
-template <typename T>
-std::optional<T> prop(const Props& p, const char* key) {
-    auto it = p.find(key);
-    if (it == p.end()) return std::nullopt;
-    try { return it->second.get<T>(); } catch (...) { return std::nullopt; }
-}
-
 } // namespace
 
-AirSense11BleClient::AirSense11BleClient(std::string data_dir, std::string address)
+AirSense11BleClient::AirSense11BleClient(std::string data_dir, std::string address,
+                                         std::shared_ptr<ble::ITransport> transport, as11::Timeouts timeouts)
     : data_dir_(std::move(data_dir)),
-      address_(lower(std::move(address))),
-      session_([this](const std::vector<uint8_t>& f) { return writeFrame(f); }) {
-    if (!findAdapter()) {
+      address_(ble::lower(std::move(address))),
+      transport_(transport ? std::move(transport) : ble::makeHostTransport(kTag)),
+      session_([this](const std::vector<uint8_t>& f) { return writeFrame(f); }, timeouts) {
+    if (!transport_ || !transport_->available()) {
         std::cerr << kTag << "no Bluetooth adapter: the machine cannot be read directly" << std::endl;
         return;
     }
-    conn_ = sdbus::createSystemBusConnection();
-    conn_->enterEventLoopAsync();
-    std::cout << kTag << "initialized (adapter " << adapter_path_ << ")" << std::endl;
+    const auto radio = transport_->radio(false);
+    std::cout << kTag << "initialized (" << transport_->backend()
+              << (radio.adapter.empty() ? "" : ", adapter " + radio.adapter) << ")" << std::endl;
 }
 
 AirSense11BleClient::~AirSense11BleClient() {
@@ -60,8 +37,7 @@ AirSense11BleClient::~AirSense11BleClient() {
     std::lock_guard<std::mutex> lk(op_mtx_);
     session_.pairCancel();
     dropLink();
-    if (conn_) conn_->leaveEventLoop();
-    conn_.reset();
+    transport_.reset();
 }
 
 void AirSense11BleClient::note(const std::string& what) {
@@ -85,94 +61,57 @@ bool AirSense11BleClient::pairPending() const { return session_.pairPending(); }
 
 // ── adapter, scan, connect ──
 
-bool AirSense11BleClient::findAdapter() {
-    try {
-        auto proxy = sdbus::createProxy(BLUEZ, ROOT);
-        Objects objects;
-        proxy->callMethod("GetManagedObjects")
-            .onInterface("org.freedesktop.DBus.ObjectManager")
-            .storeResultsTo(objects);
-        for (auto& [path, ifaces] : objects) {
-            if (ifaces.count("org.bluez.Adapter1")) {
-                adapter_path_ = std::string(path);
-                return true;
-            }
-        }
-    } catch (const std::exception& e) {
-        std::cerr << kTag << "adapter lookup failed: " << e.what() << std::endl;
-    }
-    return false;
-}
-
 bool AirSense11BleClient::scan(int timeout_ms) {
-    device_path_.clear();
-    device_name_.clear();
+    device_ = {};
+    have_device_ = false;
     link_failure_ = as11::Result::Connect;
-    // The computer's own radio first: BlueZ will not discover on an adapter
-    // that is off, and its NotReady reads like the machine being away.
-    const auto radio = bluez::ensurePowered(*conn_, adapter_path_, kTag);
-    if (radio.power != bluez::Power::Ready) {
-        if (radio.power == bluez::Power::RfKilled) link_failure_ = as11::Result::RadioOff;
+    // The computer's own radio first: an adapter that is off cannot discover,
+    // and the OS's refusal reads like the machine being away.
+    const auto radio = transport_->radio(true);
+    if (radio.state != ble::Radio::Ready) {
+        if (radio.state == ble::Radio::RfKilled || radio.state == ble::Radio::Off ||
+            radio.state == ble::Radio::Unauthorized)
+            link_failure_ = as11::Result::RadioOff;
         {
             std::lock_guard<std::mutex> lk(err_mtx_);
             last_error_ = radio.detail;
         }
-        return false;
+        return false;   // radio(true) has logged why
     }
-    // `advertising`: only a device seen in this discovery (BlueZ sets RSSI on
-    // an object while the advert comes in). Off, BlueZ's cache counts too,
-    // but only under the machine's own name once that is known.
-    auto look = [this](bool advertising) {
-        try {
-            auto proxy = sdbus::createProxy(*conn_, BLUEZ, ROOT);
-            Objects objects;
-            proxy->callMethod("GetManagedObjects")
-                .onInterface("org.freedesktop.DBus.ObjectManager")
-                .withTimeout(bluez::kCallTimeout)
-                .storeResultsTo(objects);
-            for (auto& [path, ifaces] : objects) {
-                auto it = ifaces.find("org.bluez.Device1");
-                if (it == ifaces.end()) continue;
-                const auto& p = it->second;
-                const auto name = prop<std::string>(p, "Name").value_or("");
-                const auto uuids = prop<std::vector<std::string>>(p, "UUIDs").value_or(
-                    std::vector<std::string>{});
-                if (!address_.empty() && lower(prop<std::string>(p, "Address").value_or("")) != address_)
-                    continue;
-                if (!as11::advertIsAirSense(name, uuids)) continue;
-                if (advertising && !prop<int16_t>(p, "RSSI")) continue;
-                if (!advertising && !machine_name_.empty() && name != machine_name_) continue;
-                device_path_ = std::string(path);
-                device_name_ = name.empty() ? "<unnamed AirSense 11>" : name;
-                return true;
-            }
-        } catch (...) {}
-        return false;
+    // `advertising`: only a device seen in this discovery. Off, the OS's
+    // cache counts too, but only under the machine's own name once that is
+    // known.
+    auto wanted = [this](const ble::Device& d, bool advertising) {
+        if (!address_.empty() && ble::lower(d.address) != address_) return false;
+        if (!as11::advertIsAirSense(d.name, d.uuids)) return false;
+        if (advertising && !d.advertising) return false;
+        if (!advertising && !machine_name_.empty() && d.name != machine_name_) return false;
+        return true;
+    };
+    auto take = [this](const ble::Device& d) {
+        device_ = d;
+        if (device_.name.empty()) device_.name = "<unnamed AirSense 11>";
+        have_device_ = true;
     };
 
-    if (!rediscover_ && look(false)) {
-        std::cout << kTag << "found " << device_name_ << " (known to BlueZ)" << std::endl;
-        return true;
+    if (!rediscover_) {
+        for (const auto& d : transport_->known()) {
+            if (!wanted(d, false)) continue;
+            take(d);
+            std::cout << kTag << "found " << device_.name << " (already known)" << std::endl;
+            return true;
+        }
     }
-    auto adapter = sdbus::createProxy(*conn_, BLUEZ, sdbus::ObjectPath{adapter_path_});
-    try {
-        adapter->callMethod("StartDiscovery").onInterface("org.bluez.Adapter1").withTimeout(bluez::kCallTimeout);
-    } catch (const std::exception& e) {
-        note(std::string("scan start failed: ") + e.what());
+    const auto res = transport_->discover([&](const ble::Device& d) { return wanted(d, true); }, timeout_ms);
+    if (!res.started) {
+        note("scan start failed: " + res.error);
         return false;
     }
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
-    bool found = false;
-    while (!found && std::chrono::steady_clock::now() < deadline) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
-        found = look(true);
-    }
-    try {
-        adapter->callMethod("StopDiscovery").onInterface("org.bluez.Adapter1").withTimeout(bluez::kCallTimeout);
-    } catch (...) {}
+    const bool found = res.device.has_value();
+    if (found) take(*res.device);
     if (found) {
         rediscover_ = false;
-        std::cout << kTag << "found " << device_name_ << " (advertising now)" << std::endl;
+        std::cout << kTag << "found " << device_.name << " (advertising now)" << std::endl;
     } else {
         note("machine not advertising (asleep, out of range, or connected elsewhere)");
     }
@@ -180,182 +119,64 @@ bool AirSense11BleClient::scan(int timeout_ms) {
 }
 
 bool AirSense11BleClient::connectLink(int timeout_ms) {
-    if (!conn_) {
+    if (!transport_ || !transport_->available()) {
         note("no Bluetooth adapter");
         return false;
     }
     if (!scan(kScanMs)) return false;
 
-    device_proxy_ = sdbus::createProxy(*conn_, BLUEZ, sdbus::ObjectPath{device_path_});
+    ble::LinkHandlers handlers;
+    // A fresh conversation before the first notification can land.
+    handlers.ready = [this] { session_.onConnected(); };
+    handlers.notify = [this](const std::vector<uint8_t>& v) { session_.onNotify(v); };
     // The link dropping wakes whatever the session waits on.
-    device_proxy_->uponSignal("PropertiesChanged")
-        .onInterface("org.freedesktop.DBus.Properties")
-        .call([this](const std::string& iface, const Props& changed, const std::vector<std::string>&) {
-            if (iface != "org.bluez.Device1") return;
-            auto it = changed.find("Connected");
-            if (it == changed.end()) return;
-            try {
-                if (!it->second.get<bool>()) session_.onDisconnect();
-            } catch (...) {}
-        });
-
-    // BlueZ often aborts the first LE connect (le-connection-abort-by-local).
-    bool up = false;
-    for (int attempt = 0; attempt < 3 && !up; attempt++) {
-        try {
-            device_proxy_->callMethod("Connect").onInterface("org.bluez.Device1").withTimeout(bluez::kConnectTimeout);
-            up = true;
-        } catch (const sdbus::Error& e) {
-            std::cerr << kTag << "connect attempt " << (attempt + 1) << "/3 "
-                      << (bluez::timedOut(e) ? "timed out" : "failed: " + e.getMessage()) << std::endl;
-            try {
-                device_proxy_->callMethod("Disconnect").onInterface("org.bluez.Device1").withTimeout(bluez::kCallTimeout);
-            } catch (...) {}
-            std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+    handlers.disconnected = [this] { session_.onDisconnect(); };
+    ble::ConnectOptions options;
+    options.resolve_timeout_ms = timeout_ms;
+    options.resolve_poll_ms = 250;
+    auto res = transport_->connect(device_, {as11::kWriteUuid, as11::kNotifyUuid}, std::move(handlers), options);
+    if (!res.link) {
+        switch (res.error) {
+        case ble::LinkError::Resolve: note("services not resolved in time"); break;
+        case ble::LinkError::NoCharacteristics:
+            note("the machine's characteristics were not found" + (res.detail.empty() ? "" : " (" + res.detail + ")"));
+            break;
+        case ble::LinkError::Notify: note("notifications could not be enabled: " + res.detail); break;
+        default: note("connect failed"); break;
         }
-    }
-    if (!up) {
-        note("connect failed");
         dropLink();
         return false;
     }
-
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
-    while (std::chrono::steady_clock::now() < deadline) {
-        try {
-            sdbus::Variant v;
-            device_proxy_->callMethod("Get")
-                .onInterface("org.freedesktop.DBus.Properties")
-                .withTimeout(bluez::kCallTimeout)
-                .withArguments(std::string("org.bluez.Device1"), std::string("ServicesResolved"))
-                .storeResultsTo(v);
-            if (v.get<bool>()) {
-                if (discoverGatt() && enableNotifications()) {
-                    std::cout << kTag << "connected to " << device_name_ << std::endl;
-                    return true;
-                }
-                dropLink();
-                return false;
-            }
-        } catch (...) {}
-        std::this_thread::sleep_for(std::chrono::milliseconds(250));
-    }
-    note("services not resolved in time");
-    dropLink();
-    return false;
-}
-
-bool AirSense11BleClient::discoverGatt() {
-    write_char_path_.clear();
-    notify_char_path_.clear();
-    write_chunk_ = 20;
-    try {
-        auto proxy = sdbus::createProxy(*conn_, BLUEZ, ROOT);
-        Objects objects;
-        proxy->callMethod("GetManagedObjects")
-            .onInterface("org.freedesktop.DBus.ObjectManager")
-            .storeResultsTo(objects);
-        for (auto& [path, ifaces] : objects) {
-            const std::string p(path);
-            if (p.rfind(device_path_ + "/", 0) != 0) continue;
-            auto it = ifaces.find("org.bluez.GattCharacteristic1");
-            if (it == ifaces.end()) continue;
-            const auto uuid = lower(prop<std::string>(it->second, "UUID").value_or(""));
-            if (uuid == as11::kWriteUuid) {
-                write_char_path_ = p;
-                // BlueZ 5.62+ publishes the link's ATT MTU on the characteristic.
-                if (auto mtu = prop<uint16_t>(it->second, "MTU"); mtu && *mtu > 23)
-                    write_chunk_ = *mtu - 3;
-            } else if (uuid == as11::kNotifyUuid) {
-                notify_char_path_ = p;
-            }
-        }
-    } catch (const std::exception& e) {
-        note(std::string("GATT discovery failed: ") + e.what());
-        return false;
-    }
-    if (write_char_path_.empty() || notify_char_path_.empty()) {
-        note("the machine's characteristics were not found");
-        return false;
-    }
-    write_proxy_ = sdbus::createProxy(*conn_, BLUEZ, sdbus::ObjectPath{write_char_path_});
+    link_ = std::move(res.link);
+    const uint16_t mtu = link_->mtu();
+    write_chunk_ = mtu > 23 ? mtu - 3 : 20;
+    std::cout << kTag << "connected to " << device_.name << std::endl;
     return true;
-}
-
-bool AirSense11BleClient::enableNotifications() {
-    try {
-        notify_proxy_ = sdbus::createProxy(*conn_, BLUEZ, sdbus::ObjectPath{notify_char_path_});
-        notify_proxy_->uponSignal("PropertiesChanged")
-            .onInterface("org.freedesktop.DBus.Properties")
-            .call([this](const std::string& iface, const Props& changed, const std::vector<std::string>&) {
-                if (iface != "org.bluez.GattCharacteristic1") return;
-                auto it = changed.find("Value");
-                if (it == changed.end()) return;
-                try {
-                    session_.onNotify(it->second.get<std::vector<uint8_t>>());
-                } catch (...) {}
-            });
-        // A fresh conversation before the first notification can land.
-        session_.onConnected();
-        notify_proxy_->callMethod("StartNotify")
-            .onInterface("org.bluez.GattCharacteristic1")
-            .withTimeout(bluez::kCallTimeout);
-        return true;
-    } catch (const std::exception& e) {
-        note(std::string("notifications could not be enabled: ") + e.what());
-        return false;
-    }
 }
 
 void AirSense11BleClient::dropLink() {
     session_.onDisconnect();
-    if (notify_proxy_) {
-        try {
-            notify_proxy_->callMethod("StopNotify")
-                .onInterface("org.bluez.GattCharacteristic1")
-                .withTimeout(bluez::kCallTimeout);
-        } catch (...) {}
-    }
-    if (device_proxy_) {
-        try {
-            device_proxy_->callMethod("Disconnect").onInterface("org.bluez.Device1").withTimeout(bluez::kCallTimeout);
-        } catch (...) {}
-    }
-    notify_proxy_.reset();
-    write_proxy_.reset();
-    device_proxy_.reset();
-    write_char_path_.clear();
-    notify_char_path_.clear();
+    if (link_) link_->close();
+    link_.reset();
 }
 
 bool AirSense11BleClient::writeFrame(const std::vector<uint8_t>& frame) {
-    if (!write_proxy_) return false;
+    if (!link_) return false;
     // Write with response, piece by piece at the MTU, as the machine was
     // proven with: each piece is acknowledged before the next goes. A piece
-    // the machine never acknowledges fails the write after kCallTimeout, and
-    // with it the pull, instead of holding the pull for as long as sd-bus
-    // would wait.
-    std::map<std::string, sdbus::Variant> options;
-    options["type"] = sdbus::Variant{std::string("request")};
-    try {
-        for (size_t at = 0; at < frame.size(); at += write_chunk_) {
-            const size_t end = std::min(at + write_chunk_, frame.size());
-            std::vector<uint8_t> piece(frame.begin() + static_cast<long>(at),
-                                       frame.begin() + static_cast<long>(end));
-            write_proxy_->callMethod("WriteValue")
-                .onInterface("org.bluez.GattCharacteristic1")
-                .withTimeout(bluez::kCallTimeout)
-                .withArguments(piece, options);
-        }
-    } catch (const sdbus::Error& e) {
-        if (bluez::timedOut(e))
+    // the machine never acknowledges fails the write after the transport's
+    // call timeout, and with it the pull, instead of holding the pull.
+    for (size_t at = 0; at < frame.size(); at += write_chunk_) {
+        const size_t end = std::min(at + write_chunk_, frame.size());
+        const std::vector<uint8_t> piece(frame.begin() + static_cast<long>(at),
+                                         frame.begin() + static_cast<long>(end));
+        const auto w = link_->write(piece, true);
+        if (w.ok) continue;
+        if (w.timed_out)
             note("write to the machine timed out: the link is dead, the pull is abandoned");
         else
-            note("write to the machine failed: " + e.getMessage());
+            note("write to the machine failed: " + w.error);
         session_.onDisconnect();
-        return false;
-    } catch (const std::exception& e) {
-        note(std::string("write to the machine failed: ") + e.what());
         return false;
     }
     return true;
@@ -438,7 +259,7 @@ as11::Result AirSense11BleClient::pairStart() {
         dropLink();
         return r;
     }
-    std::cout << kTag << "key exchange open with " << device_name_
+    std::cout << kTag << "key exchange open with " << device_.name
               << ": the machine shows its code now" << std::endl;
     return r;
 }
@@ -448,16 +269,16 @@ as11::Result AirSense11BleClient::pairConfirm(const std::string& code) {
     as11::Credentials creds;
     as11::Result r = session_.pairConfirm(code, &creds);
     dropLink();
-    // The pairing is over, whichever way: the object BlueZ cached for it is
+    // The pairing is over, whichever way: the object the OS cached for it is
     // dropped, and the first pull finds the machine by its advertisement
     // under its own name. A stale object under a generic name once took the
     // connect and then swallowed the pull.
-    machine_name_ = device_name_;
+    machine_name_ = device_.name;
     rediscover_ = true;
-    if (bluez::forgetDevice(*conn_, adapter_path_, device_path_))
-        std::cout << kTag << "forgot BlueZ's object for " << device_name_
+    if (have_device_ && transport_ && transport_->forget(device_))
+        std::cout << kTag << "forgot the cached object for " << device_.name
                   << ": the next pull rediscovers the machine" << std::endl;
-    device_path_.clear();
+    have_device_ = false;
     if (r != as11::Result::Ok) {
         note(std::string("pairing failed: ") + session_.lastError());
         return r;
@@ -466,7 +287,7 @@ as11::Result AirSense11BleClient::pairConfirm(const std::string& code) {
         note("paired, but the pairing could not be saved");
         return as11::Result::Protocol;
     }
-    std::cout << kTag << "paired with " << device_name_ << std::endl;
+    std::cout << kTag << "paired with " << device_.name << std::endl;
     return r;
 }
 
@@ -495,7 +316,7 @@ void AirSense11BleClient::startNightLoop(std::shared_ptr<As11NightWriter> writer
     stopNightLoop();
     writer_ = std::move(writer);
     night_ended_ = std::move(night_ended);
-    if (!conn_ || !writer_) return;
+    if (!transport_ || !transport_->available() || !writer_) return;
     running_ = true;
     night_thread_ = std::thread([this] { nightLoop(); });
 }
@@ -582,7 +403,7 @@ bool AirSense11BleClient::streamOnce() {
         dropLink();
         return true;
     }
-    std::cout << kTag << "streaming the night from " << device_name_ << std::endl;
+    std::cout << kTag << "streaming the night from " << device_.name << std::endl;
     uint64_t last = reports_;
     auto last_progress = std::chrono::steady_clock::now();
     while (running_ && therapy_ && session_.connected()) {
@@ -618,5 +439,3 @@ void AirSense11BleClient::pairCancel() {
 }
 
 } // namespace hms_cpap
-
-#endif // WITH_BLE

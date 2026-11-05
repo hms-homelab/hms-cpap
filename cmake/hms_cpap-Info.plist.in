@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Linked into the hms_cpap executable itself (__TEXT,__info_plist) on macOS,
+     so a bare hms_cpap may ask for Bluetooth: without a usage description the
+     system ends the process the moment it opens CoreBluetooth. HmsCpap.app
+     carries the same key for the copy the supervisor starts. -->
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.hms.cpapdash.service</string>
+    <key>CFBundleName</key>
+    <string>hms_cpap</string>
+    <key>CFBundleShortVersionString</key>
+    <string>@HMS_CPAP_VERSION@</string>
+    <key>CFBundleVersion</key>
+    <string>@HMS_CPAP_VERSION@</string>
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>CpapDash uses Bluetooth to read your CPAP machine and your oximeter directly.</string>
+</dict>
+</plist>

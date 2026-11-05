@@ -25,9 +25,7 @@
 #else
   #include <process.h>
 #endif
-#ifdef WITH_BLE
-#include <sdbus-c++/sdbus-c++.h>
-#endif
+#include "clients/ble/BleTransport.h"
 
 namespace hms_cpap {
 
@@ -1283,37 +1281,33 @@ void CpapController::testEzshare(const drogon::HttpRequestPtr& req,
 
 void CpapController::testBle(const drogon::HttpRequestPtr&,
                               std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    // The host's transport (BlueZ, CoreBluetooth or WinRT), asked without
+    // switching anything on.
+    const auto probe = hms_cpap::ble::probe();
     Json::Value result;
-#ifdef WITH_BLE
-    result["compiled"] = true;
-    // Check if BlueZ adapter exists via D-Bus
-    try {
-        auto conn = sdbus::createSystemBusConnection();
-        auto proxy = sdbus::createProxy(*conn, sdbus::ServiceName{"org.bluez"}, sdbus::ObjectPath{"/"});
-        std::map<sdbus::ObjectPath, std::map<std::string, std::map<std::string, sdbus::Variant>>> objects;
-        proxy->callMethod("GetManagedObjects")
-            .onInterface("org.freedesktop.DBus.ObjectManager")
-            .storeResultsTo(objects);
-        bool found = false;
-        for (auto& [path, ifaces] : objects) {
-            if (ifaces.count("org.bluez.Adapter1")) {
-                result["adapter"] = std::string(path);
-                found = true;
-                break;
-            }
-        }
-        result["available"] = found;
-        result["status"] = found ? "adapter_found" : "no_adapter";
-    } catch (const std::exception& e) {
+    result["compiled"] = probe.compiled;
+    result["backend"] = probe.backend;
+    if (!probe.compiled) {
         result["available"] = false;
-        result["status"] = "bluez_error";
-        result["error"] = e.what();
+        result["status"] = "not_compiled";
+        cb(jsonResp(result));
+        return;
     }
-#else
-    result["compiled"] = false;
-    result["available"] = false;
-    result["status"] = "not_compiled";
-#endif
+    using hms_cpap::ble::Radio;
+    if (!probe.radio.adapter.empty()) result["adapter"] = probe.radio.adapter;
+    // An adapter that is switched off is still an adapter: the direct mode
+    // switches it on when it needs it where the OS allows (Linux).
+    result["available"] = probe.radio.state == Radio::Ready || probe.radio.state == Radio::Off ||
+                          probe.radio.state == Radio::RfKilled;
+    switch (probe.radio.state) {
+    case Radio::Ready:        result["status"] = "adapter_found"; break;
+    case Radio::Off:
+    case Radio::RfKilled:     result["status"] = "radio_off"; break;
+    case Radio::Unauthorized: result["status"] = "unauthorized"; break;
+    case Radio::NoAdapter:    result["status"] = "no_adapter"; break;
+    case Radio::Failed:       result["status"] = "bluez_error"; break;
+    }
+    if (!probe.radio.detail.empty()) result["error"] = probe.radio.detail;
     cb(jsonResp(result));
 }
 

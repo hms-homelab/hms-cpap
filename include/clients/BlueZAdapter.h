@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-#ifdef WITH_BLE
+#ifdef HMS_BLE_BLUEZ
 #include <sdbus-c++/sdbus-c++.h>
 #endif
 
@@ -81,7 +81,7 @@ bool liftSoftBlock(const std::string& soft_file);
 
 /// The AdapterOps of the live host: BlueZ over D-Bus for the adapter at
 /// `adapter_path`, sysfs for rf-kill.
-#ifdef WITH_BLE
+#ifdef HMS_BLE_BLUEZ
 AdapterOps hostOps(sdbus::IConnection& conn, const std::string& adapter_path);
 
 /// ensurePowered over hostOps, logging what it did under `tag`.

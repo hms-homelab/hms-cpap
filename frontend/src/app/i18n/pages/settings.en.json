@@ -54,8 +54,10 @@
       "bleChecking": "Checking Bluetooth adapter...",
       "bleOk": "Bluetooth adapter detected. BLE direct mode ready.",
       "bleNoAdapter": "No Bluetooth adapter detected. Plug in a USB BLE adapter.",
-      "bleNotCompiled": "BLE support not compiled. Rebuild with -DBUILD_WITH_BLE=ON.",
-      "bleError": "BlueZ error — check Bluetooth service."
+      "bleNotCompiled": "This build has no Bluetooth support. Built from source on Linux, it needs -DBUILD_WITH_BLE=ON.",
+      "bleError": "Bluetooth could not be checked. Check that Bluetooth works on this computer.",
+      "bleRadioOff": "Bluetooth is switched off on this computer. Switch it on and check again.",
+      "bleUnauthorized": "CpapDash is not allowed to use Bluetooth on this Mac. Allow it in System Settings, Privacy & Security, Bluetooth."
     },
     "as11": {
       "heading": "AirSense 11 over Bluetooth",
@@ -63,7 +65,7 @@
       "enabled": "Enabled",
       "address": "Machine's Bluetooth address",
       "addressHint": "Optional. Leave it empty to use the first AirSense 11 in range.",
-      "notCompiled": "This build has no Bluetooth support. Bluetooth works in a Linux build made with -DBUILD_WITH_BLE=ON.",
+      "notCompiled": "This build has no Bluetooth support. Built from source on Linux, it needs -DBUILD_WITH_BLE=ON.",
       "saveFirst": "Save the settings, then pair the machine.",
       "pairNote": "Pairing replaces the myAir app's Bluetooth pairing (and any bridge's) with this computer. myAir's nightly reports keep arriving over the machine's own modem.",
       "paired": "Paired with the machine.",
@@ -85,7 +87,9 @@
       "errNoPairing": "The pairing window closed. Start again.",
       "errDisabled": "Turn this on and save first.",
       "errGeneric": "Pairing failed. Start again.",
-      "errRadioOff": "Bluetooth is switched off on this computer (rf-kill). Switch it on, or run rfkill unblock bluetooth, and try again."
+      "errRadioOff": "Bluetooth is switched off on this computer (rf-kill). Switch it on, or run rfkill unblock bluetooth, and try again.",
+      "errRadioOffMac": "Bluetooth is off on this Mac, or CpapDash is not allowed to use it. Switch it on, allow CpapDash in System Settings, Privacy & Security, Bluetooth, and try again.",
+      "errRadioOffWin": "Bluetooth is switched off on this PC. Switch it on in Settings, Bluetooth & devices (and check airplane mode), and try again."
     },
     "mule": {
       "heading": "Mule & Miner",

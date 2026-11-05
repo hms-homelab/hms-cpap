@@ -91,7 +91,7 @@ bool liftSoftBlock(const std::string& soft_file) {
     return static_cast<bool>(out);
 }
 
-#ifdef WITH_BLE
+#ifdef HMS_BLE_BLUEZ
 
 namespace {
 const sdbus::ServiceName kBlueZ{"org.bluez"};
@@ -167,6 +167,6 @@ Outcome ensurePowered(sdbus::IConnection& conn, const std::string& adapter_path,
     return out;
 }
 
-#endif // WITH_BLE
+#endif // HMS_BLE_BLUEZ
 
 } // namespace hms_cpap::bluez

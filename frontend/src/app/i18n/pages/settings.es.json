@@ -54,8 +54,10 @@
       "bleChecking": "Comprobando el adaptador Bluetooth...",
       "bleOk": "Adaptador Bluetooth detectado. El modo BLE directo está listo.",
       "bleNoAdapter": "No se detectó ningún adaptador Bluetooth. Conecta un adaptador BLE USB.",
-      "bleNotCompiled": "El soporte BLE no está compilado. Recompila con -DBUILD_WITH_BLE=ON.",
-      "bleError": "Error de BlueZ: revisa el servicio Bluetooth."
+      "bleNotCompiled": "Esta compilación no tiene soporte Bluetooth. Compilada desde el código en Linux, necesita -DBUILD_WITH_BLE=ON.",
+      "bleError": "No se pudo comprobar el Bluetooth. Revisa que el Bluetooth funcione en este equipo.",
+      "bleRadioOff": "El Bluetooth está apagado en este equipo. Enciéndelo y vuelve a comprobarlo.",
+      "bleUnauthorized": "CpapDash no tiene permiso para usar el Bluetooth en este Mac. Permítelo en Ajustes del Sistema, Privacidad y seguridad, Bluetooth."
     },
     "as11": {
       "heading": "AirSense 11 por Bluetooth",
@@ -63,7 +65,7 @@
       "enabled": "Activado",
       "address": "Dirección Bluetooth del equipo",
       "addressHint": "Opcional. Déjala vacía para usar el primer AirSense 11 que esté al alcance.",
-      "notCompiled": "Esta compilación no tiene soporte Bluetooth. Bluetooth funciona en una compilación para Linux hecha con -DBUILD_WITH_BLE=ON.",
+      "notCompiled": "Esta compilación no tiene soporte Bluetooth. Compilada desde el código en Linux, necesita -DBUILD_WITH_BLE=ON.",
       "saveFirst": "Guarda los ajustes y luego empareja el equipo.",
       "pairNote": "Emparejar sustituye el emparejamiento Bluetooth de la app myAir (y el de cualquier puente) por este ordenador. Los informes nocturnos de myAir siguen llegando por el módem del propio equipo.",
       "paired": "Emparejado con el equipo.",
@@ -85,7 +87,9 @@
       "errNoPairing": "Se cerró la ventana de emparejamiento. Empieza de nuevo.",
       "errDisabled": "Actívalo y guarda primero.",
       "errGeneric": "No se pudo emparejar. Empieza de nuevo.",
-      "errRadioOff": "El Bluetooth está apagado en este equipo (rf-kill). Enciéndelo, o ejecuta rfkill unblock bluetooth, e inténtalo de nuevo."
+      "errRadioOff": "El Bluetooth está apagado en este equipo (rf-kill). Enciéndelo, o ejecuta rfkill unblock bluetooth, e inténtalo de nuevo.",
+      "errRadioOffMac": "El Bluetooth está apagado en este Mac, o CpapDash no tiene permiso para usarlo. Enciéndelo, permite CpapDash en Ajustes del Sistema, Privacidad y seguridad, Bluetooth, e inténtalo de nuevo.",
+      "errRadioOffWin": "El Bluetooth está apagado en este PC. Enciéndelo en Configuración, Bluetooth y dispositivos (y revisa el modo avión), e inténtalo de nuevo."
     },
     "mule": {
       "heading": "Mule & Miner",

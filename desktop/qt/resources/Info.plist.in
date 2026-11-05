@@ -24,6 +24,13 @@
     <key>LSUIElement</key>
     <true/>
 
+    <!-- The service this app starts (Contents/MacOS/hms_cpap) reads a CPAP
+         machine and an oximeter over Bluetooth when that is turned on. macOS
+         asks the user once, in this app's name, with this text, and ends the
+         process outright if the app has no such text. -->
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>CpapDash uses Bluetooth to read your CPAP machine and your oximeter directly.</string>
+
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>LSMinimumSystemVersion</key>

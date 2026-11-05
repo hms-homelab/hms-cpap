@@ -1,6 +1,3 @@
-#ifdef WITH_BLE
-
-#include "clients/BlueZAdapter.h"
 #include "clients/O2RingBleClient.h"
 #include "clients/OxyIIProtocol.h"
 #include <nlohmann/json.hpp>
@@ -13,9 +10,6 @@
 #include <sstream>
 
 namespace hms_cpap {
-
-static const sdbus::ServiceName BLUEZ{"org.bluez"};
-static const sdbus::ObjectPath ROOT{"/"};
 
 // ── Device match ──────────────────────────────────────────────────────
 //
@@ -38,25 +32,15 @@ static const char* const KNOWN_NAME_SUBSTRINGS[] = {
 };
 
 std::optional<O2RingBleClient::Proto> O2RingBleClient::classifyDevice(
-        const std::map<std::string, sdbus::Variant>& props, bool* by_t8520) {
+        const std::string& name, const std::vector<std::string>& uuids, bool* by_t8520) {
     if (by_t8520) *by_t8520 = false;
 
     // The O2Ring-S first, by its name or the OxyII service. Not by the
     // manufacturer ID 0xF34E: the original O2Ring advertises it too, and
     // matching on it sent that ring down the O2Ring-S path.
-    std::string name;
-    auto name_it = props.find("Name");
-    if (name_it != props.end()) {
-        try { name = name_it->second.get<std::string>(); } catch (...) {}
-    }
     bool svc = false;
-    auto uuids_it = props.find("UUIDs");
-    if (uuids_it != props.end()) {
-        try {
-            for (const auto& uuid : uuids_it->second.get<std::vector<std::string>>())
-                if (uuid == oxyii::kServiceUuid) svc = true;
-        } catch (...) {}
-    }
+    for (const auto& uuid : uuids)
+        if (ble::normalizeUuid(uuid) == oxyii::kServiceUuid) svc = true;
     const bool named = oxyii::nameMatches(name);
     if (svc || named) {
         if (by_t8520 && !svc) {
@@ -68,42 +52,24 @@ std::optional<O2RingBleClient::Proto> O2RingBleClient::classifyDevice(
         return Proto::OxyII;
     }
 
-    if (deviceMatches(props)) return Proto::Legacy;
+    if (deviceMatches(name, uuids)) return Proto::Legacy;
     return std::nullopt;
 }
 
-bool O2RingBleClient::deviceMatches(const std::map<std::string, sdbus::Variant>& props) {
-    auto name_it = props.find("Name");
-    if (name_it != props.end()) {
-        try {
-            std::string lower = name_it->second.get<std::string>();
-            std::transform(lower.begin(), lower.end(), lower.begin(),
-                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-            for (const char* needle : KNOWN_NAME_SUBSTRINGS)
-                if (lower.find(needle) != std::string::npos) return true;
-        } catch (...) {}
-    }
+bool O2RingBleClient::deviceMatches(const std::string& name, const std::vector<std::string>& uuids) {
+    const std::string lower = ble::lower(name);
+    for (const char* needle : KNOWN_NAME_SUBSTRINGS)
+        if (lower.find(needle) != std::string::npos) return true;
 
-    // BlueZ publishes advertised service UUIDs on Device1.UUIDs, lowercased,
-    // which is the same form as SVC_UUID.
-    auto uuids_it = props.find("UUIDs");
-    if (uuids_it != props.end()) {
-        try {
-            for (const auto& uuid : uuids_it->second.get<std::vector<std::string>>())
-                if (uuid == SVC_UUID) return true;
-        } catch (...) {}
-    }
+    // Every transport hands advertised service UUIDs up lower-case and in
+    // full, which is the same form as SVC_UUID.
+    for (const auto& uuid : uuids)
+        if (ble::normalizeUuid(uuid) == SVC_UUID) return true;
     return false;
 }
 
-std::string O2RingBleClient::describeDevice(const std::map<std::string, sdbus::Variant>& props) {
-    auto it = props.find("Name");
-    if (it != props.end()) {
-        try {
-            std::string name = it->second.get<std::string>();
-            if (!name.empty()) return name;
-        } catch (...) {}
-    }
+std::string O2RingBleClient::describeDevice(const ble::Device& d) {
+    if (!d.name.empty()) return d.name;
     return "<unnamed, matched by service UUID>";
 }
 
@@ -144,298 +110,141 @@ std::vector<uint8_t> O2RingBleClient::buildCmd(uint8_t cmd, uint16_t block,
 
 // ── Constructor / Destructor ───────────────────────────────────────────
 
-O2RingBleClient::O2RingBleClient() {
-    adapter_path_ = findAdapter();
-    if (adapter_path_.empty()) {
-        std::cerr << "O2Ring BLE: No Bluetooth adapter detected — plug in a USB BLE adapter or switch to HTTP mode" << std::endl;
+O2RingBleClient::O2RingBleClient(std::shared_ptr<ble::ITransport> transport)
+    : transport_(transport ? std::move(transport) : ble::makeHostTransport("O2Ring BLE: ")) {
+    if (!transport_ || !transport_->available()) {
+        std::cerr << "O2Ring BLE: No Bluetooth adapter detected: plug in a USB BLE adapter or switch to HTTP mode" << std::endl;
         return;
     }
-    startDBusLoop();
-    std::cout << "O2Ring BLE: Initialized (adapter: " << adapter_path_ << ")" << std::endl;
+    const auto radio = transport_->radio(false);
+    std::cout << "O2Ring BLE: Initialized (" << transport_->backend()
+              << (radio.adapter.empty() ? "" : ", adapter: " + radio.adapter) << ")" << std::endl;
 }
 
 O2RingBleClient::~O2RingBleClient() {
     disconnect();
-    stopDBusLoop();
-}
-
-// ── D-Bus event loop ───────────────────────────────────────────────────
-
-void O2RingBleClient::startDBusLoop() {
-    conn_ = sdbus::createSystemBusConnection();
-    conn_->enterEventLoopAsync();
-    dbus_running_ = true;
-}
-
-void O2RingBleClient::stopDBusLoop() {
-    dbus_running_ = false;
-    if (conn_) conn_->leaveEventLoop();
-    conn_.reset();
-}
-
-std::string O2RingBleClient::findAdapter() {
-    try {
-        auto proxy = sdbus::createProxy(BLUEZ, ROOT);
-        std::map<sdbus::ObjectPath, std::map<std::string, std::map<std::string, sdbus::Variant>>> objects;
-        proxy->callMethod("GetManagedObjects")
-            .onInterface("org.freedesktop.DBus.ObjectManager")
-            .storeResultsTo(objects);
-
-        for (auto& [path, ifaces] : objects) {
-            if (ifaces.count("org.bluez.Adapter1")) {
-                return std::string(path);
-            }
-        }
-    } catch (const std::exception& e) {
-        std::cerr << "O2Ring BLE: findAdapter error: " << e.what() << std::endl;
-    }
-    return "";
+    transport_.reset();
 }
 
 // ── Scan ───────────────────────────────────────────────────────────────
 
 bool O2RingBleClient::scan(int timeout_ms) {
-    if (adapter_path_.empty() || !conn_) return false;
-    device_path_.clear();
+    if (!transport_ || !transport_->available()) return false;
+    have_device_ = false;
 
     // The computer's own radio first: an adapter that is off cannot discover,
-    // and BlueZ's NotReady would read as the ring being away.
-    if (bluez::ensurePowered(*conn_, adapter_path_, "O2Ring BLE: ").power != bluez::Power::Ready)
-        return false;
+    // and the OS's refusal would read as the ring being away.
+    if (transport_->radio(true).state != ble::Radio::Ready) return false;
 
-    // Check already-known devices
-    try {
-        auto proxy = sdbus::createProxy(*conn_, BLUEZ, ROOT);
-        std::map<sdbus::ObjectPath, std::map<std::string, std::map<std::string, sdbus::Variant>>> objects;
-        proxy->callMethod("GetManagedObjects")
-            .onInterface("org.freedesktop.DBus.ObjectManager")
-            .storeResultsTo(objects);
+    auto pick = [this](const ble::Device& d) {
+        if (skip_ids_.count(d.id)) return false;
+        bool by_t8520 = false;
+        auto proto = classifyDevice(d.name, d.uuids, &by_t8520);
+        if (!proto) return false;
+        device_ = d;
+        have_device_ = true;
+        proto_ = *proto;
+        oxy_by_t8520_ = by_t8520;
+        return true;
+    };
 
-        for (auto& [path, ifaces] : objects) {
-            if (ifaces.count("org.bluez.Device1")) {
-                auto& props = ifaces.at("org.bluez.Device1");
-                if (skip_paths_.count(std::string(path))) continue;
-                bool by_t8520 = false;
-                if (auto proto = classifyDevice(props, &by_t8520)) {
-                    device_path_ = std::string(path);
-                    proto_ = *proto;
-                    oxy_by_t8520_ = by_t8520;
-                    std::cout << "O2Ring BLE: Found cached " << describeDevice(props)
-                              << (proto_ == Proto::OxyII ? " (O2Ring-S)" : "") << std::endl;
-                    return true;
-                }
-            }
-        }
-    } catch (...) {}
-
-    // Start discovery
-    auto adapter = sdbus::createProxy(*conn_, BLUEZ, sdbus::ObjectPath{adapter_path_});
-    try {
-        adapter->callMethod("StartDiscovery").onInterface("org.bluez.Adapter1").withTimeout(bluez::kCallTimeout);
-    } catch (const std::exception& e) {
-        std::cerr << "O2Ring BLE: StartDiscovery failed: " << e.what() << std::endl;
-        return false;
+    // Already-known devices first
+    for (const auto& d : transport_->known()) {
+        if (!pick(d)) continue;
+        std::cout << "O2Ring BLE: Found cached " << describeDevice(device_)
+                  << (proto_ == Proto::OxyII ? " (O2Ring-S)" : "") << std::endl;
+        return true;
     }
 
-    // Poll for device appearance
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
-    while (std::chrono::steady_clock::now() < deadline && device_path_.empty()) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
-
-        try {
-            auto proxy = sdbus::createProxy(*conn_, BLUEZ, ROOT);
-            std::map<sdbus::ObjectPath, std::map<std::string, std::map<std::string, sdbus::Variant>>> objects;
-            proxy->callMethod("GetManagedObjects")
-                .onInterface("org.freedesktop.DBus.ObjectManager")
-                .storeResultsTo(objects);
-
-            for (auto& [path, ifaces] : objects) {
-                if (ifaces.count("org.bluez.Device1")) {
-                    auto& props = ifaces.at("org.bluez.Device1");
-                    if (skip_paths_.count(std::string(path))) continue;
-                    bool by_t8520 = false;
-                    if (auto proto = classifyDevice(props, &by_t8520)) {
-                        device_path_ = std::string(path);
-                        proto_ = *proto;
-                        oxy_by_t8520_ = by_t8520;
-                        std::cout << "O2Ring BLE: Found " << describeDevice(props)
-                                  << (proto_ == Proto::OxyII ? " (O2Ring-S)" : "") << std::endl;
-                        break;
-                    }
-                }
-            }
-        } catch (...) {}
+    const auto res = transport_->discover([&](const ble::Device& d) { return pick(d); }, timeout_ms);
+    if (!res.started) {
+        std::cerr << "O2Ring BLE: StartDiscovery failed: " << res.error << std::endl;
+        return false;
     }
-
-    try {
-        adapter->callMethod("StopDiscovery").onInterface("org.bluez.Adapter1").withTimeout(bluez::kCallTimeout);
-    } catch (...) {}
-
-    return !device_path_.empty();
+    if (!res.device) {
+        have_device_ = false;
+        return false;
+    }
+    std::cout << "O2Ring BLE: Found " << describeDevice(device_)
+              << (proto_ == Proto::OxyII ? " (O2Ring-S)" : "") << std::endl;
+    return true;
 }
 
 // ── Connect ────────────────────────────────────────────────────────────
 
 bool O2RingBleClient::connect(int timeout_ms) {
-    if (device_path_.empty() || !conn_) return false;
+    if (!have_device_ || !transport_) return false;
 
-    auto device = sdbus::createProxy(*conn_, BLUEZ, sdbus::ObjectPath{device_path_});
-
-    // Retry connect — BlueZ frequently aborts the first attempt with le-connection-abort-by-local
-    bool connect_ok = false;
-    for (int attempt = 0; attempt < 3; attempt++) {
-        try {
-            device->callMethod("Connect").onInterface("org.bluez.Device1").withTimeout(bluez::kConnectTimeout);
-            connect_ok = true;
+    const bool oxy = proto_ == Proto::OxyII;
+    ble::LinkHandlers handlers;
+    handlers.notify = [this](const std::vector<uint8_t>& v) { onNotification(v); };
+    handlers.disconnected = [this] { connected_ = false; };
+    ble::ConnectOptions options;
+    options.resolve_timeout_ms = timeout_ms;
+    options.resolve_poll_ms = 500;
+    auto res = transport_->connect(device_,
+                                   {oxy ? oxyii::kWriteUuid : WRITE_UUID, oxy ? oxyii::kNotifyUuid : NOTIFY_UUID},
+                                   std::move(handlers), options);
+    if (!res.link) {
+        switch (res.error) {
+        case ble::LinkError::Resolve:
+            std::cerr << "O2Ring BLE: Services not resolved (timeout)" << std::endl;
             break;
-        } catch (const std::exception& e) {
-            std::cerr << "O2Ring BLE: Connect attempt " << (attempt + 1) << "/3 failed: "
-                      << e.what() << std::endl;
-            // Disconnect cleanly before retry
-            try {
-                device->callMethod("Disconnect").onInterface("org.bluez.Device1").withTimeout(bluez::kCallTimeout);
-            } catch (...) {}
-            std::this_thread::sleep_for(std::chrono::milliseconds(2000));
-        }
-    }
-    if (!connect_ok) return false;
-
-    // Wait for ServicesResolved (a fresh timeout, independent of connect retries)
-    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
-    while (std::chrono::steady_clock::now() < deadline) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(500));
-        try {
-            sdbus::Variant resolved;
-            device->callMethod("Get")
-                .onInterface("org.freedesktop.DBus.Properties")
-                .withTimeout(bluez::kCallTimeout)
-                .withArguments(std::string("org.bluez.Device1"), std::string("ServicesResolved"))
-                .storeResultsTo(resolved);
-            if (resolved.get<bool>()) {
-                connected_ = true;
-                oxy_session_ = false;
-                oxy_key_.reset();
-                std::cout << "O2Ring BLE: Connected, services resolved" << std::endl;
-                return discoverGatt() && enableNotifications();
+        case ble::LinkError::NoCharacteristics:
+            if (oxy) {
+                std::cerr << "O2Ring BLE: OxyII characteristics not found" << std::endl;
+                if (oxy_by_t8520_) {
+                    // The worn identity without the service, as the protocol
+                    // write-up warns: pass it over until this process restarts.
+                    std::cerr << "O2Ring BLE: T8520 identity has no OxyII service; "
+                                 "waiting for its S8-AW identity" << std::endl;
+                    skip_ids_.insert(device_.id);
+                }
+            } else {
+                std::cerr << "O2Ring BLE: Viatom characteristics not found" << std::endl;
             }
-        } catch (...) {}
+            break;
+        case ble::LinkError::Notify:
+            std::cerr << "O2Ring BLE: StartNotify failed: " << res.detail << std::endl;
+            break;
+        default:
+            std::cerr << "O2Ring BLE: connect failed" << (res.detail.empty() ? "" : ": " + res.detail)
+                      << std::endl;
+            break;
+        }
+        disconnect();
+        return false;
     }
-
-    std::cerr << "O2Ring BLE: Services not resolved (timeout)" << std::endl;
-    disconnect();
-    return false;
-}
-
-void O2RingBleClient::disconnect() {
-    if (device_path_.empty() || !conn_) return;
-    try {
-        auto device = sdbus::createProxy(*conn_, BLUEZ, sdbus::ObjectPath{device_path_});
-        device->callMethod("Disconnect").onInterface("org.bluez.Device1").withTimeout(bluez::kCallTimeout);
-    } catch (...) {}
-    connected_ = false;
+    link_ = std::move(res.link);
+    connected_ = true;
     oxy_session_ = false;
     oxy_key_.reset();
-    write_char_path_.clear();
-    notify_char_path_.clear();
     reasm_buf_.clear();
-    notify_proxy_.reset();
-}
-
-// ── GATT Discovery ─────────────────────────────────────────────────────
-
-bool O2RingBleClient::discoverGatt() {
-    try {
-        auto proxy = sdbus::createProxy(*conn_, BLUEZ, ROOT);
-        std::map<sdbus::ObjectPath, std::map<std::string, std::map<std::string, sdbus::Variant>>> objects;
-        proxy->callMethod("GetManagedObjects")
-            .onInterface("org.freedesktop.DBus.ObjectManager")
-            .storeResultsTo(objects);
-
-        for (auto& [path, ifaces] : objects) {
-            std::string p = std::string(path);
-            if (p.find(device_path_) != 0) continue;
-
-            if (ifaces.count("org.bluez.GattCharacteristic1")) {
-                auto& props = ifaces.at("org.bluez.GattCharacteristic1");
-                if (props.count("UUID")) {
-                    const bool oxy = proto_ == Proto::OxyII;
-                    std::string uuid = props.at("UUID").get<std::string>();
-                    if (uuid == (oxy ? oxyii::kWriteUuid : WRITE_UUID)) {
-                        write_char_path_ = p;
-                        std::cout << "O2Ring BLE: Write char: " << p << std::endl;
-                        // BlueZ 5.62+ publishes the link's ATT MTU here. An
-                        // O2Ring-S refuses file opens below 517, so say so.
-                        if (props.count("MTU")) {
-                            try {
-                                const uint16_t mtu = props.at("MTU").get<uint16_t>();
-                                if (mtu > 3) write_chunk_ = mtu - 3;
-                                std::cout << "O2Ring BLE: MTU " << mtu << std::endl;
-                                if (oxy && mtu < 517)
-                                    std::cerr << "O2Ring BLE: MTU " << mtu
-                                              << " is under the 517 O2Ring-S file reads need"
-                                              << std::endl;
-                            } catch (...) {}
-                        }
-                    } else if (uuid == (oxy ? oxyii::kNotifyUuid : NOTIFY_UUID)) {
-                        notify_char_path_ = p;
-                        std::cout << "O2Ring BLE: Notify char: " << p << std::endl;
-                    }
-                }
-            }
-        }
-    } catch (const std::exception& e) {
-        std::cerr << "O2Ring BLE: GATT discovery error: " << e.what() << std::endl;
-        return false;
+    std::cout << "O2Ring BLE: Connected, services resolved" << std::endl;
+    if (const uint16_t mtu = link_->mtu(); mtu > 3) {
+        write_chunk_ = mtu - 3;
+        std::cout << "O2Ring BLE: MTU " << mtu << std::endl;
+        // An O2Ring-S refuses file opens below 517, so say so.
+        if (oxy && mtu < 517)
+            std::cerr << "O2Ring BLE: MTU " << mtu << " is under the 517 O2Ring-S file reads need" << std::endl;
     }
-
-    if (write_char_path_.empty() || notify_char_path_.empty()) {
-        if (proto_ == Proto::OxyII) {
-            std::cerr << "O2Ring BLE: OxyII characteristics not found" << std::endl;
-            if (oxy_by_t8520_) {
-                // The worn identity without the service, as the protocol
-                // write-up warns: pass it over until this process restarts.
-                std::cerr << "O2Ring BLE: T8520 identity has no OxyII service; "
-                             "waiting for its S8-AW identity" << std::endl;
-                skip_paths_.insert(device_path_);
-            }
-        } else {
-            std::cerr << "O2Ring BLE: Viatom characteristics not found" << std::endl;
-        }
-        return false;
-    }
+    std::cout << "O2Ring BLE: Notifications enabled" << std::endl;
     return true;
 }
 
-bool O2RingBleClient::enableNotifications() {
-    try {
-        notify_proxy_ = sdbus::createProxy(*conn_, BLUEZ, sdbus::ObjectPath{notify_char_path_});
-
-        notify_proxy_->uponSignal("PropertiesChanged")
-            .onInterface("org.freedesktop.DBus.Properties")
-            .call([this](const std::string& iface,
-                          const std::map<std::string, sdbus::Variant>& changed,
-                          const std::vector<std::string>&) {
-                if (iface == "org.bluez.GattCharacteristic1" && changed.count("Value")) {
-                    auto value = changed.at("Value").get<std::vector<uint8_t>>();
-                    onNotification(value);
-                }
-            });
-        notify_proxy_->callMethod("StartNotify")
-            .onInterface("org.bluez.GattCharacteristic1")
-            .withTimeout(bluez::kCallTimeout);
-
-        std::cout << "O2Ring BLE: Notifications enabled" << std::endl;
-        return true;
-    } catch (const std::exception& e) {
-        std::cerr << "O2Ring BLE: StartNotify failed: " << e.what() << std::endl;
-        return false;
-    }
+void O2RingBleClient::disconnect() {
+    if (link_) link_->close();
+    link_.reset();
+    connected_ = false;
+    oxy_session_ = false;
+    oxy_key_.reset();
+    reasm_buf_.clear();
 }
 
 // ── Write + Notification ───────────────────────────────────────────────
 
-void O2RingBleClient::writeCharacteristic(const std::vector<uint8_t>& data) {
-    auto proxy = sdbus::createProxy(*conn_, BLUEZ, sdbus::ObjectPath{write_char_path_});
+bool O2RingBleClient::writeCharacteristic(const std::vector<uint8_t>& data) {
+    if (!link_) return false;
 
     // The original O2Ring has always been written in 20-byte pieces; the
     // O2Ring-S takes a whole frame per write once the MTU allows it.
@@ -444,20 +253,20 @@ void O2RingBleClient::writeCharacteristic(const std::vector<uint8_t>& data) {
         size_t end = std::min(i + chunk_max, data.size());
         std::vector<uint8_t> chunk(data.begin() + i, data.begin() + end);
 
-        std::map<std::string, sdbus::Variant> options;
-        options["type"] = sdbus::Variant{"command"};
-
-        // A piece the ring never acknowledges fails the write after
-        // kCallTimeout; the caller's catch reports it instead of waiting
-        // on sd-bus's own, much longer, default.
-        proxy->callMethod("WriteValue")
-            .onInterface("org.bluez.GattCharacteristic1")
-            .withTimeout(bluez::kCallTimeout)
-            .withArguments(chunk, options);
+        // Without response, as the ring has always been written. A piece the
+        // OS cannot hand over fails the write after the transport's call
+        // timeout instead of waiting on its own, much longer, default.
+        const auto w = link_->write(chunk, false);
+        if (!w.ok) {
+            std::cerr << "O2Ring BLE: write failed" << (w.timed_out ? " (timed out)" : "")
+                      << (w.error.empty() ? "" : ": " + w.error) << std::endl;
+            return false;
+        }
 
         if (end < data.size())
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
+    return true;
 }
 
 void O2RingBleClient::onNotification(const std::vector<uint8_t>& value) {
@@ -545,7 +354,7 @@ bool O2RingBleClient::sendAndWait(uint8_t cmd, uint16_t block,
         resp_buf_.clear();
     }
 
-    writeCharacteristic(buildCmd(cmd, block, payload));
+    if (!writeCharacteristic(buildCmd(cmd, block, payload))) return false;
 
     std::unique_lock<std::mutex> lk(mtx_);
     return cv_.wait_for(lk, std::chrono::milliseconds(timeout_ms),
@@ -573,11 +382,9 @@ bool O2RingBleClient::oxyRequest(uint8_t op, const std::vector<uint8_t>& payload
         resp_buf_.clear();
         oxy_wait_op_ = op;
     }
-    try {
-        writeCharacteristic(oxyii::encode(op, oxy_seq_++, body));
-    } catch (const std::exception& e) {
+    if (!writeCharacteristic(oxyii::encode(op, oxy_seq_++, body))) {
         std::cerr << "O2Ring BLE: OxyII write 0x" << std::hex << int(op) << std::dec
-                  << " failed: " << e.what() << std::endl;
+                  << " failed" << std::endl;
         std::lock_guard<std::mutex> lk(mtx_);
         oxy_wait_op_ = -1;
         return false;
@@ -915,5 +722,3 @@ std::vector<uint8_t> O2RingBleClient::downloadFile(const std::string& filename) 
 }
 
 } // namespace hms_cpap
-
-#endif // WITH_BLE
