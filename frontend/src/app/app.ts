@@ -56,6 +56,9 @@ interface ConfigError {
       max-width: 1200px;
       margin: 0.75rem auto;
       display: flex;
+      /* The action drops under the text when both do not fit on one line
+         (a phone), instead of running past the edge of the screen. */
+      flex-wrap: wrap;
       align-items: flex-start;
       gap: 0.75rem;
       padding: 0.85rem 1rem;
@@ -68,7 +71,10 @@ interface ConfigError {
       line-height: 1.45;
     }
     .config-error .icon { color: #f44336; font-size: 1.1rem; line-height: 1.3; }
-    .config-error .body { flex: 1; display: flex; flex-direction: column; gap: 0.15rem; }
+    /* min-width 0 and anywhere: the problem names the configured folder, a
+       path with no spaces, which otherwise holds the column wider than a phone. */
+    .config-error .body { flex: 1 1 14rem; min-width: 0; overflow-wrap: anywhere;
+                          display: flex; flex-direction: column; gap: 0.15rem; }
     .config-error strong { color: #ff8a80; }
     .config-error .remedy { color: #ffb3ad; }
     .config-error .action {

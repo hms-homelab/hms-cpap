@@ -40,7 +40,7 @@ dl.facts > div { display: grid; grid-template-columns: minmax(7.5rem, 34%) 1fr; 
    tapering to a point at both ends. */
 dl.facts > div { position: relative; }
 dl.facts > div:not(:last-child)::after {
-  content: ""; position: absolute; left: -0.5rem; right: -0.5rem; bottom: -3px; height: 4px;
+  content: ""; position: absolute; left: 0; right: 0; bottom: -3px; height: 4px;
   background: radial-gradient(50% 50% at 50% 50%, #000 0%, rgba(0, 0, 0, 0.9) 55%, transparent 100%);
   pointer-events: none;
 }
