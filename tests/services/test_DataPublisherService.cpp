@@ -5,6 +5,7 @@
  */
 
 #include <gtest/gtest.h>
+#include "PosixCompat.h"
 #include <gmock/gmock.h>
 #include "services/DataPublisherService.h"
 #include "mqtt_client.h"

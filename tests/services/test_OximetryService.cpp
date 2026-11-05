@@ -7,7 +7,11 @@
 #include "parsers/CpapdashBridge.h"
 #include <filesystem>
 #include <fstream>
+#ifndef _WIN32
 #include <unistd.h>
+#else
+#include <process.h>
+#endif
 
 using namespace hms_cpap;
 

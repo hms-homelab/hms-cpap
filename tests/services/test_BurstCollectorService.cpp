@@ -6,6 +6,7 @@
 
 #include "EquipmentStubs.h"
 #include <gtest/gtest.h>
+#include "PosixCompat.h"
 
 #include <algorithm>
 #include <gmock/gmock.h>
@@ -1975,8 +1976,8 @@ protected:
         std::filesystem::create_directories(temp_dir);
         std::filesystem::create_directories(archive_dir);
 
-        setenv("CPAP_TEMP_DIR", temp_dir.c_str(), 1);
-        setenv("CPAP_ARCHIVE_DIR", archive_dir.c_str(), 1);
+        setenv("CPAP_TEMP_DIR", temp_dir.string().c_str(), 1);
+        setenv("CPAP_ARCHIVE_DIR", archive_dir.string().c_str(), 1);
         // ezShare mode: ensure local source / prisma stay unset (they do via the seam).
         unsetenv("SESSION_GAP_MINUTES");
 
@@ -3887,9 +3888,9 @@ protected:
 // local source + sqlite, MQTT + LLM + O2Ring all disabled.
 TEST_F(BurstInitTest, Initialize_LocalSqlite_NoMqttNoLlm) {
     setenv("CPAP_SOURCE", "local", 1);
-    setenv("CPAP_LOCAL_DIR", base.c_str(), 1);
+    setenv("CPAP_LOCAL_DIR", base.string().c_str(), 1);
     setenv("DB_TYPE", "sqlite", 1);
-    setenv("SQLITE_PATH", (base / "init.db").c_str(), 1);
+    setenv("SQLITE_PATH", (base / "init.db").string().c_str(), 1);
     setenv("MQTT_ENABLED", "false", 1);
     setenv("LLM_ENABLED", "false", 1);
     unsetenv("O2RING_MULE_URL");
@@ -3907,10 +3908,10 @@ TEST_F(BurstInitTest, Initialize_LocalSqlite_NoMqttNoLlm) {
 // second burst here, a moment after the first, did not look.
 TEST_F(BurstInitTest, ALocalVldIsImportedByTheNextBurst) {
     setenv("CPAP_SOURCE", "local", 1);
-    setenv("CPAP_LOCAL_DIR", base.c_str(), 1);
-    setenv("CPAP_ARCHIVE_DIR", (base / "archive").c_str(), 1);
+    setenv("CPAP_LOCAL_DIR", base.string().c_str(), 1);
+    setenv("CPAP_ARCHIVE_DIR", (base / "archive").string().c_str(), 1);
     setenv("DB_TYPE", "sqlite", 1);
-    setenv("SQLITE_PATH", (base / "vld.db").c_str(), 1);
+    setenv("SQLITE_PATH", (base / "vld.db").string().c_str(), 1);
     setenv("MQTT_ENABLED", "false", 1);
     setenv("LLM_ENABLED", "false", 1);
     unsetenv("O2RING_MULE_URL");
@@ -3946,7 +3947,7 @@ TEST_F(BurstInitTest, ALocalVldIsImportedByTheNextBurst) {
 TEST_F(BurstInitTest, Initialize_EzShareSqlite_LlmEnabled) {
     setenv("CPAP_SOURCE", "ezshare", 1);
     setenv("DB_TYPE", "sqlite", 1);
-    setenv("SQLITE_PATH", (base / "init2.db").c_str(), 1);
+    setenv("SQLITE_PATH", (base / "init2.db").string().c_str(), 1);
     setenv("MQTT_ENABLED", "false", 1);
     setenv("LLM_ENABLED", "true", 1);
     setenv("LLM_PROVIDER", "ollama", 1);
@@ -3963,7 +3964,7 @@ TEST_F(BurstInitTest, Initialize_EzShareSqlite_LlmEnabled) {
 TEST_F(BurstInitTest, Initialize_UnknownDbType_FallsBackToSqlite) {
     setenv("CPAP_SOURCE", "ezshare", 1);
     setenv("DB_TYPE", "bogus", 1);
-    setenv("SQLITE_PATH", (base / "init3.db").c_str(), 1);
+    setenv("SQLITE_PATH", (base / "init3.db").string().c_str(), 1);
     setenv("MQTT_ENABLED", "false", 1);
     setenv("LLM_ENABLED", "false", 1);
 

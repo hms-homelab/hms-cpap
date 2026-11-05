@@ -18,7 +18,11 @@
 #include <fstream>
 #include <string>
 #include <thread>
+#ifndef _WIN32
 #include <unistd.h>
+#else
+#include <process.h>
+#endif
 #include <vector>
 
 namespace fs = std::filesystem;

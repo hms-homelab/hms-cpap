@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include "utils/TimeCompat.h"
 
 #include <chrono>
 #include <ctime>
@@ -28,7 +29,7 @@ std::chrono::system_clock::time_point utc(int y, int mon, int d, int h, int mi, 
     tm.tm_hour = h;
     tm.tm_min = mi;
     tm.tm_sec = s;
-    return std::chrono::system_clock::from_time_t(timegm(&tm));
+    return std::chrono::system_clock::from_time_t(timegm_utc(&tm));
 }
 }  // namespace
 

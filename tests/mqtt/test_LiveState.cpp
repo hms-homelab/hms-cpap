@@ -16,7 +16,11 @@
 
 #include <gtest/gtest.h>
 #include <json/json.h>
+#ifndef _WIN32
 #include <unistd.h>
+#else
+#include <process.h>
+#endif
 
 #include <chrono>
 #include <ctime>

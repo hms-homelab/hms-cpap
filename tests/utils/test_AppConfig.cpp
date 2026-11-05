@@ -5,6 +5,7 @@
  */
 
 #include <gtest/gtest.h>
+#include "PosixCompat.h"
 #include "utils/AppConfig.h"
 #include <cstdlib>
 #include <filesystem>

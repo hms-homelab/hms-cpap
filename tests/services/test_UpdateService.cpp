@@ -11,7 +11,11 @@
 #include <fstream>
 #include <nlohmann/json.hpp>
 #include <string>
+#ifndef _WIN32
 #include <unistd.h>
+#else
+#include <process.h>
+#endif
 #include <vector>
 
 using namespace hms_cpap;

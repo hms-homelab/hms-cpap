@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include "PosixCompat.h"
 #include "services/SessionDiscoveryService.h"
 #include "clients/IDataSource.h"
 #include "clients/EzShareClient.h"

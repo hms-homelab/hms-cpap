@@ -136,7 +136,8 @@ TEST(BackfillServiceTest, StartAndStopCleanly) {
 // ── Backfill marks sessions completed ───────────────────────────────────
 
 // Helper: write a minimal EDF file (same approach as test_EDFParser)
-static void writeMinimalEDF(const std::string& filepath,
+// A path, not a string: MSVC's path is wchar_t and does not convert implicitly.
+static void writeMinimalEDF(const std::filesystem::path& filepath,
                             const std::string& timestamp_str,
                             const std::string& file_type,
                             int duration_seconds = 60) {

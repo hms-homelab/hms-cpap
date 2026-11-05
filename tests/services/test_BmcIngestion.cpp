@@ -5,6 +5,7 @@
 // region), with an invented serial and invented dates. The donor card is
 // exercised end to end, outside the repository.
 #include <gtest/gtest.h>
+#include "utils/TimeCompat.h"
 
 #include "database/SQLiteDatabase.h"
 #include "services/BmcCardMirror.h"
@@ -17,7 +18,11 @@
 #include <fstream>
 #include <iterator>
 #include <string>
+#ifndef _WIN32
 #include <unistd.h>
+#else
+#include <process.h>
+#endif
 #include <vector>
 
 using namespace hms_cpap;
@@ -47,7 +52,7 @@ std::vector<uint8_t> run(int session, Clock at, int seconds) {
     for (int i = 0; i < seconds; ++i) {
         std::tm t = tm;
         t.tm_sec += i;
-        timegm(&t);   // normalise the fields, no zone involved
+        timegm_utc(&t);   // normalise the fields, no zone involved
         std::vector<uint8_t> p(bmc::kBmcPacketBytes, 0);
         putLe16(p, 2 * bmc::bmc_word::kSync, bmc::kBmcSync);
         putLe16(p, 2 * bmc::bmc_word::kSessionNumber, static_cast<uint16_t>(session));

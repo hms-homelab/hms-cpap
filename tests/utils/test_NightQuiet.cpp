@@ -17,13 +17,26 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#ifndef _WIN32
 #include <unistd.h>
+#else
+#include <process.h>
+#endif
 
 using namespace hms_cpap;
 using namespace std::chrono;
 namespace fs = std::filesystem;
 
 namespace {
+
+// setenv/unsetenv are POSIX; MSVC has _putenv_s, where "" removes the variable.
+void setEnv(const char* k, const char* v) {
+#ifdef _WIN32
+    _putenv_s(k, v ? v : "");
+#else
+    if (v) setenv(k, v, 1); else unsetenv(k);
+#endif
+}
 
 class NightQuietTest : public ::testing::Test {
 protected:
@@ -122,9 +135,9 @@ TEST_F(NightQuietTest, TheStrSignatureMovesWithTheNightsFigures) {
 // ── the collector ───────────────────────────────────────────────────────────
 
 TEST_F(NightQuietTest, TheCollectorAnnouncesAQuietNightOnce) {
-    setenv("CPAP_DEVICE_ID", "q_dev", 1);
+    setEnv("CPAP_DEVICE_ID", "q_dev");
     BurstCollectorService svc(300);
-    unsetenv("CPAP_DEVICE_ID");
+    setEnv("CPAP_DEVICE_ID", nullptr);
     svc.injectDependenciesForTest(db_, nullptr, nullptr);
     svc.setSourceForTest("local");
 
@@ -139,9 +152,9 @@ TEST_F(NightQuietTest, TheCollectorAnnouncesAQuietNightOnce) {
 }
 
 TEST_F(NightQuietTest, ARemovedNightIsMarkedButNotAnnounced) {
-    setenv("CPAP_DEVICE_ID", "q_gone", 1);
+    setEnv("CPAP_DEVICE_ID", "q_gone");
     BurstCollectorService svc(300);
-    unsetenv("CPAP_DEVICE_ID");
+    setEnv("CPAP_DEVICE_ID", nullptr);
     svc.injectDependenciesForTest(db_, nullptr, nullptr);
     svc.setSourceForTest("local");
 

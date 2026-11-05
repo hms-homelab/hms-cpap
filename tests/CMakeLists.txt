@@ -235,9 +235,12 @@ if(MSVC)
         GTest::gtest_main
         GTest::gmock
         cpapdash_parser
+        miniz
         JsonCpp::JsonCpp
-        PahoMqttCpp::paho-mqttpp3
-        eclipse-paho-mqtt-c::paho-mqtt3as
+        # The root CMakeLists picks these: the -static targets under a static
+        # triplet (x64-windows-static-md, what CI ships), the plain ones otherwise.
+        ${PAHO_CPP_TARGET}
+        ${PAHO_C_TARGET}
         CURL::libcurl
         unofficial::sqlite3::sqlite3
         OpenSSL::SSL
@@ -245,6 +248,8 @@ if(MSVC)
         hms_llm
         hms_mqtt
     )
+    # M_PI and friends are behind this switch in the MSVC <cmath>.
+    target_compile_definitions(run_tests PRIVATE _USE_MATH_DEFINES)
 else()
     target_link_libraries(run_tests
         GTest::gtest
