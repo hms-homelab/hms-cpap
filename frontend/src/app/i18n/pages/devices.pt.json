@@ -44,9 +44,11 @@
     },
     "more": "Mais",
     "less": "Menos",
-    "stream": {
-      "label": "Envia para",
-      "here": "este hms-cpap"
+    "cloud": {
+      "switching": "Mudando...",
+      "switched": "Pronto: agora envia para a nuvem CpapDash.",
+      "failed": "Não conseguiu alcançar a nuvem CpapDash e ficou aqui.",
+      "tryAgain": "Tentar de novo"
     },
     "forget": {
       "button": "Esquecer este dispositivo",
@@ -111,7 +113,7 @@
       "restart": "Reiniciar",
       "restartTarget": "Reiniciar qual",
       "resetWifi": "Redefinir WiFi",
-      "backToCloud": "Voltar para a nuvem CpapDash",
+      "backToCloud": "Passar para a nuvem CpapDash",
       "restate": "Pedir o estado de novo",
       "offline": "Os comandos aguardam o dispositivo: vão quando ele se conectar."
     },

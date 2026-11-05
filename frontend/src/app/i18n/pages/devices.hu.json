@@ -44,9 +44,11 @@
     },
     "more": "Több",
     "less": "Kevesebb",
-    "stream": {
-      "label": "Ide küld",
-      "here": "erre a hms-cpapra"
+    "cloud": {
+      "switching": "Átváltás...",
+      "switched": "Kész: mostantól a CpapDash felhőbe küld.",
+      "failed": "Nem érte el a CpapDash felhőt, és itt maradt.",
+      "tryAgain": "Újra"
     },
     "forget": {
       "button": "Eszköz elfelejtése",
@@ -111,7 +113,7 @@
       "restart": "Újraindítás",
       "restartTarget": "Mit indítson újra",
       "resetWifi": "WiFi visszaállítása",
-      "backToCloud": "Vissza a CpapDash felhőbe",
+      "backToCloud": "Átváltás a CpapDash felhőre",
       "restate": "Állapot újbóli lekérése",
       "offline": "A parancsok megvárják az eszközt: csatlakozáskor mennek el."
     },

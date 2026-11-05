@@ -49,6 +49,7 @@ export class DevicesComponent implements OnInit, OnDestroy {
 
   open: Record<string, boolean> = {};
   cmdsOpen: Record<string, boolean> = {};
+  switching: Record<string, number> = {};   // the cloud switch's req_id, per card
   finding: Record<string, boolean> = {};
   busy: Record<string, boolean> = {};
   notes: Record<string, Note> = {};
@@ -175,6 +176,13 @@ export class DevicesComponent implements OnInit, OnDestroy {
     req.subscribe({
       next: (r: any) => {
         this.busy[d.key] = false;
+        if (action === 'cloud') {
+          // Followed on each refresh by the command's own answer (cloudState).
+          this.switching[d.key] = Number(r?.req_id ?? 0);
+          delete this.notes[d.key];
+          this.load(false);
+          return;
+        }
         const state = r?.command?.state;
         this.note(d, this.t.instant(state === 'queued' ? 'devices.result.queued' : 'devices.result.sent'), false);
         this.load(false);
@@ -202,10 +210,33 @@ export class DevicesComponent implements OnInit, OnDestroy {
     else this.confirms.ask(d.key, 'config_reset', 'devices.sleepbridge.resetConfirm', { cmd: 'config_reset' });
   }
 
+  private cloudPayload(d: DeviceEntry): any {
+    return d.kind === 'mule' ? { cmd: 'config', hms_url: '' } : { cmd: 'stream', url: '' };
+  }
+
   askCloud(d: DeviceEntry): void {
-    const payload = d.kind === 'mule' ? { cmd: 'config', hms_url: '' } : { cmd: 'stream', url: '' };
     const key = d.kind === 'mule' ? 'devices.mule.cloudConfirm' : 'devices.sleepbridge.cloudConfirm';
-    this.confirms.ask(d.key, 'cloud', key, payload, { name: d.name });
+    this.confirms.ask(d.key, 'cloud', key, this.cloudPayload(d), { name: d.name });
+  }
+
+  /**
+   * The switch to the cloud as the device answers it: switching while the
+   * command waits or is out; switched once it answered ok (or left);
+   * failed when it answered that it could not reach the cloud and stayed.
+   */
+  cloudState(d: DeviceEntry): '' | 'switching' | 'switched' | 'failed' {
+    const id = this.switching[d.key];
+    if (!id) return '';
+    const c = this.commands(d).find((k) => k.req_id === id);
+    if (c && c.state === 'answered') return c.result?.ok === false ? 'failed' : 'switched';
+    if (d.present === 'no' && (!c || c.state === 'sent')) return 'switched';
+    return 'switching';
+  }
+
+  /** Try again after a switch the device could not make: the same, confirmed already. */
+  retryCloud(d: DeviceEntry): void {
+    delete this.switching[d.key];
+    this.send(d, 'cloud', { ...this.cloudPayload(d), confirm: true });
   }
 
   logs(d: DeviceEntry): void {

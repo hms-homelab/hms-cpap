@@ -70,14 +70,6 @@
           </dd>
         </div>
 
-        <!-- Sends to, and its one switch (Mule & Miner, Sleep Bridge). -->
-        <div *ngIf="d.kind === 'mule' || d.kind === 'sleepbridge'">
-          <dt>{{ 'devices.stream.label' | translate }}</dt>
-          <dd>{{ 'devices.stream.here' | translate }}
-            <button type="button" class="link" (click)="askCloud(d)" [disabled]="busy[d.key]">{{ 'devices.action.backToCloud' | translate }}</button>
-          </dd>
-        </div>
-
         <!-- ── Mule & Miner ── -->
         <ng-container *ngIf="d.kind === 'mule'">
           <div *ngIf="d.detail.machine"><dt>{{ 'devices.line.machine' | translate }}</dt><dd>AirSense 11 · <span class="mono">{{ d.detail.machine }}</span></dd></div>
@@ -197,6 +189,13 @@
         </div>
 
         <div class="note-line" *ngIf="notes[d.key] as n" [class.err]="n.err">{{ n.text }}</div>
+        <!-- The switch to the cloud, as the device answers it. -->
+        <ng-container [ngSwitch]="cloudState(d)">
+          <div class="quiet" *ngSwitchCase="'switching'">{{ 'devices.cloud.switching' | translate }}</div>
+          <div class="note-line" *ngSwitchCase="'switched'">{{ 'devices.cloud.switched' | translate }}</div>
+          <div class="quiet" *ngSwitchCase="'failed'">{{ 'devices.cloud.failed' | translate }}
+            <button type="button" class="link" (click)="retryCloud(d)" [disabled]="busy[d.key]">{{ 'devices.cloud.tryAgain' | translate }}</button></div>
+        </ng-container>
         <div class="quiet" *ngIf="(d.kind === 'mule' || d.kind === 'sleepbridge') && d.present !== 'yes'">{{ 'devices.action.offline' | translate }}</div>
 
         <!-- Actions, in a fixed order: the kind's own, then Restart, Reset, Forget. -->
@@ -224,6 +223,8 @@
           </ng-container>
 
           <ng-container *ngIf="d.kind === 'mule' || d.kind === 'sleepbridge'">
+            <!-- A device here streams here: its one stream control is the move to the cloud. -->
+            <button type="button" class="btn" (click)="askCloud(d)" [disabled]="busy[d.key]">{{ 'devices.action.backToCloud' | translate }}</button>
             <span class="split" *ngIf="d.kind === 'mule'">
               <select [(ngModel)]="restartTarget[d.key]" [ngModelOptions]="{standalone: true}" [attr.aria-label]="'devices.action.restartTarget' | translate">
                 <option [ngValue]="undefined">{{ 'devices.mule.both' | translate }}</option>

@@ -206,8 +206,10 @@ Json::Value buildDevices(const DeviceInputs& in, DevicesStore& store) {
             detail["not_compiled"] = true;
         } else {
             const bool connected = detail.get("connected", false).asBool();
-            const auto contact   = detail.get("last_contact", 0).asInt64();
-            const auto pulled    = detail.get("last_summary_at", 0).asInt64();
+            // long long, not Json::Int64: that is long on Linux and long long
+            // on macOS, and std::max wants one type.
+            const long long contact = detail.get("last_contact", 0).asInt64();
+            const long long pulled  = detail.get("last_summary_at", 0).asInt64();
             const bool pull_ok   = pulled > 0 && detail.get("last_summary_error", "").asString().empty();
             const bool recent    = pull_ok && in.now - pulled < static_cast<long long>(in.as11_pull_hours) * 3600;
             if (connected || recent) d["present"] = "yes";
