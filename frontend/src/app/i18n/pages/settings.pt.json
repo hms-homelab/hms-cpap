@@ -89,7 +89,7 @@
       "errGeneric": "O emparelhamento falhou. Comece de novo.",
       "errRadioOff": "O Bluetooth está desligado neste computador (rf-kill). Ligue-o, ou execute rfkill unblock bluetooth, e tente de novo.",
       "errRadioOffMac": "O Bluetooth está desligado neste Mac, ou o CpapDash não tem permissão para usá-lo. Ligue-o, permita o CpapDash em Ajustes do Sistema, Privacidade e Segurança, Bluetooth, e tente de novo.",
-      "errRadioOffWin": "O Bluetooth está desligado neste PC. Ligue-o em Configurações, Bluetooth e dispositivos (e verifique o modo avião), e tente de novo."
+      "errRadioOffWin": "O Bluetooth está desligado neste PC e o Windows não deixou o CpapDash ligá-lo. Ligue-o em Configurações, Bluetooth e dispositivos (e verifique o modo avião), e tente de novo."
     },
     "mule": {
       "heading": "Mule & Miner",
