@@ -111,9 +111,17 @@ private:
 class BlueZTransport : public ITransport {
 public:
     explicit BlueZTransport(std::string tag) : tag_(std::move(tag)) {
+        try {
+            conn_ = sdbus::createSystemBusConnection();
+        } catch (const std::exception& e) {
+            std::cerr << tag_ << "no system D-Bus: " << e.what() << std::endl;
+            return;
+        }
         adapter_path_ = findAdapter();
-        if (adapter_path_.empty()) return;
-        conn_ = sdbus::createSystemBusConnection();
+        if (adapter_path_.empty()) {
+            conn_.reset();
+            return;
+        }
         conn_->enterEventLoopAsync();
     }
     ~BlueZTransport() override {
@@ -351,11 +359,12 @@ private:
         return out;
     }
 
+    // On the system bus, always. sdbus's default connection is the session
+    // bus whenever one exists (a desktop or an SSH login), where BlueZ is not,
+    // so the lookup found no adapter outside systemd and Docker.
     std::string findAdapter() {
         try {
-            auto proxy = sdbus::createProxy(kBlueZ, kRoot);
-            Objects objects;
-            proxy->callMethod("GetManagedObjects").onInterface(kObjectManager).storeResultsTo(objects);
+            Objects objects = this->objects();
             for (const auto& [path, ifaces] : objects)
                 if (ifaces.count(kAdapter1)) return std::string(path);
         } catch (const std::exception& e) {
