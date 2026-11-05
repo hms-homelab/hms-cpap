@@ -716,6 +716,17 @@ void EzShareClient::refreshSessions() {
             const auto start = std::chrono::system_clock::to_time_t(pair.first);
             starts_[folderForStart(start)].push_back(start);
         }
+        // STR has a fixed number of mask-on slots per day (20 on an
+        // AirSense 11). A day with more sessions counts them in MaskEvents
+        // but has no start for the rest, so they cannot be found here.
+        const auto listed = static_cast<int>(record.mask_pairs.size());
+        if (listed >= 10 && record.mask_events > listed) {
+            const auto first = std::chrono::system_clock::to_time_t(record.mask_pairs.front().first);
+            std::cerr << "ez Share: STR.edf lists " << listed << " session starts for "
+                      << folderForStart(first) << " but counts " << record.mask_events
+                      << " mask events; sessions past its last slot may be missing"
+                      << " without a directory listing" << std::endl;
+        }
     }
     sessions_read_at_ = now;
 }
@@ -725,8 +736,14 @@ std::vector<EzShareFileEntry> EzShareClient::enumerateFiles(const std::string& f
     const auto it = starts_.find(folder);
     if (it == starts_.end()) return files;
     std::set<std::string> returned;
+    // Names already taken by an earlier session of this folder; a session
+    // that shares its STR minute with another must find the next file set.
+    std::set<std::string> claimed;
+    for (const auto& known : session_names_)
+        for (const auto& name : known.second) claimed.insert(name.second);
+    std::map<std::time_t, int> seen;
     for (auto start : it->second) {
-        auto& names = session_names_[start];
+        auto& names = session_names_[{start, seen[start]++}];
         const auto candidate = [](std::time_t at, const std::string& type) {
             auto tm = *std::localtime(&at);
             char prefix[32];
@@ -737,9 +754,11 @@ std::vector<EzShareFileEntry> EzShareClient::enumerateFiles(const std::string& f
             if (names.count(type)) return;
             for (int second = 0; second < count; ++second) {
                 auto name = candidate(from + second, type);
+                if (claimed.count(name)) continue;
                 const auto size = probe("DATALOG/" + folder + "/" + name);
                 if (size) {
                     names[type] = name;
+                    claimed.insert(name);
                     EzShareFileEntry e; e.name = name; e.size_bytes = size;
                     e.size_kb = (size + 1023) / 1024;
                     discovered_[folder + "/" + name] = e;
