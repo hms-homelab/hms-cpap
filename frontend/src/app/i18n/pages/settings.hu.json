@@ -147,7 +147,16 @@
         "not_used": "nincs használatban"
       },
       "learnedWaitingHint": "Kapcsolja be a készüléket, tegye fel a maszkot és lélegezzen normálisan 2 percig, majd vegye le. A bridge ezután megerősíti a kártyát.",
-      "learnedMismatchHint": "Ez a bridge egy másik kártyát lát. Tanítsa meg újra a benne lévő kártyát a CpapDash Desktoppal (Exportálás a HMS CPAP számára), és töltse fel az új fájlt a Feltöltés oldalon."
+      "learnedMismatchHint": "Ez a bridge egy másik kártyát lát. Tanítsa meg újra a benne lévő kártyát a CpapDash Desktoppal (Exportálás a HMS CPAP számára), és töltse fel az új fájlt a Feltöltés oldalon.",
+      "cloudButton": "Visszaküldés a CpapDash felhőbe",
+      "cloudSending": "Küldés...",
+      "cloudOffline": "A híd offline. Akkor küldhető vissza a felhőbe, ha újra csatlakozik ide.",
+      "cloudConfirm": "{{name}} újraindul, és ezután nem erre a számítógépre, hanem a CpapDash felhőbe küldi az adatokat. Itt többé nem jelenik meg. A cpapdash.com oldalon visszairányíthatja erre a számítógépre.",
+      "cloudYes": "Újraindítás és küldés a felhőbe",
+      "cloudCancel": "Mégse",
+      "cloudSent": "Elküldve. A híd újraindul, és a CpapDash felhőbe küldi az adatokat.",
+      "cloudFailed": "Nem sikerült elküldeni: {{error}}",
+      "cloudErrGeneric": "A parancsot nem sikerült elküldeni."
     },
     "sleephq": {
       "heading": "SleepHQ-szinkron",

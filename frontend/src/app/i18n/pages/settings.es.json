@@ -147,7 +147,16 @@
         "not_used": "sin usar"
       },
       "learnedWaitingHint": "Enciende tu equipo, ponte la mascarilla y respira con normalidad durante 2 minutos, luego quítatela. El bridge confirma entonces la tarjeta.",
-      "learnedMismatchHint": "Este bridge ve otra tarjeta. Vuelve a aprender la tarjeta que tiene con CpapDash Desktop (Exportar para HMS CPAP) y sube el archivo nuevo en la página Subir."
+      "learnedMismatchHint": "Este bridge ve otra tarjeta. Vuelve a aprender la tarjeta que tiene con CpapDash Desktop (Exportar para HMS CPAP) y sube el archivo nuevo en la página Subir.",
+      "cloudButton": "Devolver a la nube de CpapDash",
+      "cloudSending": "Enviando...",
+      "cloudOffline": "El puente está desconectado. Se podrá devolver a la nube cuando vuelva a conectarse aquí.",
+      "cloudConfirm": "{{name}} se reiniciará y enviará sus datos a la nube de CpapDash en lugar de a este equipo. Dejará de aparecer aquí. Puedes volver a apuntarlo a este equipo desde cpapdash.com.",
+      "cloudYes": "Reiniciar y enviar a la nube",
+      "cloudCancel": "Cancelar",
+      "cloudSent": "Enviado. El puente se está reiniciando y enviará sus datos a la nube de CpapDash.",
+      "cloudFailed": "No se envió: {{error}}",
+      "cloudErrGeneric": "No se pudo enviar el comando."
     },
     "sleephq": {
       "heading": "Sincronización con SleepHQ",

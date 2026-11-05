@@ -171,6 +171,11 @@ export class CpapApiService {
     return this.http.post(`/api/sleepbridge/${encodeURIComponent(sender)}/update`, fd);
   }
 
+  /** One command to one bridge (docs/SLEEP_BRIDGE_LOCAL_STREAM.md, "Commands"). */
+  sleepBridgeCommand(body: { sender: string; cmd: string; [arg: string]: unknown }): Observable<any> {
+    return this.http.post('/api/sleepbridge/command', body);
+  }
+
   completeSetup(): Observable<any> {
     return this.http.post('/api/setup', {});
   }

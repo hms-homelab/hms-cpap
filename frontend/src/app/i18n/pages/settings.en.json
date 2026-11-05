@@ -147,7 +147,16 @@
         "not_used": "not used"
       },
       "learnedWaitingHint": "Turn your machine on, put the mask on and breathe normally for 2 minutes, then take it off. The bridge then confirms the card.",
-      "learnedMismatchHint": "This bridge sees another card. Learn the card that is in it again with CpapDash Desktop (Export for HMS CPAP) and upload the new file on the Upload page."
+      "learnedMismatchHint": "This bridge sees another card. Learn the card that is in it again with CpapDash Desktop (Export for HMS CPAP) and upload the new file on the Upload page.",
+      "cloudButton": "Send back to CpapDash cloud",
+      "cloudSending": "Sending...",
+      "cloudOffline": "The bridge is offline. It can be sent back to the cloud once it connects here again.",
+      "cloudConfirm": "{{name}} will restart and stream to the CpapDash cloud instead of this computer. It stops showing here. You can point it back to this computer from cpapdash.com.",
+      "cloudYes": "Restart and send to the cloud",
+      "cloudCancel": "Cancel",
+      "cloudSent": "Sent. The bridge is restarting and will stream to the CpapDash cloud.",
+      "cloudFailed": "Not sent: {{error}}",
+      "cloudErrGeneric": "The command could not be sent."
     },
     "sleephq": {
       "heading": "SleepHQ Sync",

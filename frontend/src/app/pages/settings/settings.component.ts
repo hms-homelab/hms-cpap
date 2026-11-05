@@ -8,6 +8,7 @@ import { CpapApiService, UpdateStatus, MuleUnit, MuleCommand, MuleFirmware, Mule
          SleepBridge, SleepBridgeUpdate } from '../../services/cpap-api.service';
 import { UpdateFlowService } from '../../services/update-flow.service';
 import { AppConfig } from '../../models/config.model';
+import { BridgeCloud, cloudError } from './sleepbridge-cloud';
 
 @Component({
   selector: 'app-settings',
@@ -406,6 +407,37 @@ import { AppConfig } from '../../models/config.model';
               <div class="sb-job" *ngIf="b.update" [class.err]="b.update.phase === 'failed'"
                    [class.ok]="b.update.phase === 'done'">{{ sbJobText(b.update) }}</div>
               <div class="sb-msg" *ngIf="sbMessage[b.sender]">{{ sbMessage[b.sender] }}</div>
+              <!-- Back to the CpapDash cloud: the stream command with an
+                   empty url, to this one bridge, after an in-page confirm. -->
+              <div>
+                <div class="sb-actions" *ngIf="sbCloud.phase(b.sender) !== 'confirming'">
+                  <button type="button" class="myair-btn secondary" (click)="sbCloud.ask(b)"
+                          [disabled]="!sbCloud.canAsk(b)">
+                    {{ (sbCloud.phase(b.sender) === 'sending' ? 'settings.sleepbridge.cloudSending'
+                                                              : 'settings.sleepbridge.cloudButton') | translate }}
+                  </button>
+                  <span class="hint" *ngIf="!b.online && sbCloud.phase(b.sender) !== 'sent'">
+                    {{ 'settings.sleepbridge.cloudOffline' | translate }}
+                  </span>
+                </div>
+                <div class="restart-banner" *ngIf="sbCloud.phase(b.sender) === 'confirming'">
+                  <span class="restart-text">{{ 'settings.sleepbridge.cloudConfirm' | translate:{ name: b.sender } }}</span>
+                  <div class="restart-actions">
+                    <button type="button" class="myair-btn danger" (click)="sbCloudSend(b)">
+                      {{ 'settings.sleepbridge.cloudYes' | translate }}
+                    </button>
+                    <button type="button" class="myair-btn secondary" (click)="sbCloud.cancel(b.sender)">
+                      {{ 'settings.sleepbridge.cloudCancel' | translate }}
+                    </button>
+                  </div>
+                </div>
+                <div class="sb-job ok" *ngIf="sbCloud.phase(b.sender) === 'sent'">
+                  {{ 'settings.sleepbridge.cloudSent' | translate }}
+                </div>
+                <div class="sb-job err" *ngIf="sbCloud.phase(b.sender) === 'failed'">
+                  {{ 'settings.sleepbridge.cloudFailed' | translate:{ error: sbCloud.state(b.sender).error } }}
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -1433,6 +1465,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
   sbBridges: SleepBridge[] = [];
   sbBusy: Record<string, boolean> = {};
   sbMessage: Record<string, string> = {};
+  sbCloud = new BridgeCloud();
   private sbTimer: any = null;
 
   // LLM Prompt state
@@ -1812,6 +1845,25 @@ export class SettingsComponent implements OnInit, OnDestroy {
       error: (e) => {
         this.sbBusy[sender] = false;
         this.sbMessage[sender] = e?.error?.error || e?.message || this.t.instant('settings.sleepbridge.errGeneric');
+      },
+    });
+  }
+
+  /** The owner confirmed on the page: the bridge goes back to the cloud. */
+  sbCloudSend(b: SleepBridge): void {
+    const body = this.sbCloud.confirm(b);
+    if (!body) return;
+    this.api.sleepBridgeCommand(body).subscribe({
+      next: (r) => {
+        if (r?.ok === false) {
+          this.sbCloud.failed(b.sender, r.error || this.t.instant('settings.sleepbridge.cloudErrGeneric'));
+        } else {
+          this.sbCloud.sent(b.sender);
+          this.loadSleepBridges();
+        }
+      },
+      error: (e) => {
+        this.sbCloud.failed(b.sender, cloudError(e) || this.t.instant('settings.sleepbridge.cloudErrGeneric'));
       },
     });
   }
