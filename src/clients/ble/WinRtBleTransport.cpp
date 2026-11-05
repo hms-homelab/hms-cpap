@@ -36,6 +36,8 @@
 #include <iostream>
 #include <map>
 #include <mutex>
+#include <optional>
+#include <thread>
 
 namespace hms_cpap::ble {
 
@@ -214,6 +216,7 @@ struct ScanState {
     std::mutex m;
     std::condition_variable cv;
     std::map<std::string, Device> devices;
+    std::map<std::string, wb::BluetoothAddressType> address_types;
     std::map<std::string, uint64_t> device_gen;
     uint64_t gen = 0;
     bool stopped = false;
@@ -307,6 +310,7 @@ public:
                     for (const auto& u : uuids)
                         if (std::find(d.uuids.begin(), d.uuids.end(), u) == d.uuids.end()) d.uuids.push_back(u);
                     d.rssi = a.RawSignalStrengthInDBm();
+                    st->address_types[id] = a.BluetoothAddressType();
                     st->device_gen[id] = ++st->gen;
                     st->cv.notify_all();
                 } catch (...) {}
@@ -344,6 +348,10 @@ public:
                 for (const auto& [id, g] : st->device_gen)
                     if (g > since) fresh.push_back(st->devices[id]);
                 since = st->gen;
+                for (const auto& d : fresh) {
+                    auto t = st->address_types.find(d.id);
+                    if (t != st->address_types.end()) rememberType(d.id, t->second);
+                }
             }
             for (auto& d : fresh) {
                 d.advertising = true;
@@ -375,18 +383,34 @@ public:
         auto state = std::make_shared<LinkState>();
         state->handlers = std::move(handlers);
         try {
-            auto dev = within(wb::BluetoothLEDevice::FromBluetoothAddressAsync(*addr), kConnectWait);
+            // The address type the device advertised with; a random one opened
+            // as public is a device Windows can never reach. When the scan did
+            // not say, the address's top two bits do (11: random static).
+            const auto type = typeOf(device.id).value_or(((*addr >> 46) & 0x3) == 0x3
+                                                             ? wb::BluetoothAddressType::Random
+                                                             : wb::BluetoothAddressType::Public);
+            auto dev = within(wb::BluetoothLEDevice::FromBluetoothAddressAsync(*addr, type), kConnectWait);
             if (!dev || !*dev) {
                 res.detail = "the device could not be opened";
                 std::cerr << tag_ << "connect failed: " << res.detail << std::endl;
                 return res;
             }
             wb::BluetoothLEDevice ble = *dev;
-            // Holds the link between calls, and says the link's MTU.
+            // Holds the link between calls, and says the link's MTU. With
+            // MaintainConnection Windows starts connecting now; GATT calls made
+            // before the session is active can come back Unreachable.
             wg::GattSession session{nullptr};
             if (auto s = within(wg::GattSession::FromDeviceIdAsync(ble.BluetoothDeviceId()), kConnectWait); s && *s) {
                 session = *s;
                 session.MaintainConnection(true);
+                const auto until = std::chrono::steady_clock::now() + kConnectWait;
+                while (session.SessionStatus() != wg::GattSessionStatus::Active &&
+                       std::chrono::steady_clock::now() < until)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                if (session.SessionStatus() != wg::GattSessionStatus::Active)
+                    std::cerr << tag_ << "the link did not come up within "
+                              << std::chrono::duration_cast<std::chrono::seconds>(kConnectWait).count()
+                              << " s; reading services anyway" << std::endl;
             }
             auto fail = [&](LinkError e, const std::string& detail, std::vector<wg::GattDeviceService>* svcs) {
                 if (svcs)
@@ -407,8 +431,20 @@ public:
 
             // Uncached: what the device offers now, which is also what makes
             // Windows actually connect.
-            auto services = within(ble.GetGattServicesAsync(wb::BluetoothCacheMode::Uncached),
-                                   std::chrono::milliseconds(options.resolve_timeout_ms));
+            // Unreachable while the link is still coming up is retried, within
+            // the resolve timeout, as BlueZ's connect is retried.
+            const auto resolve_by =
+                std::chrono::steady_clock::now() + std::chrono::milliseconds(options.resolve_timeout_ms);
+            std::optional<wg::GattDeviceServicesResult> services;
+            for (int attempt = 1;; attempt++) {
+                const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    resolve_by - std::chrono::steady_clock::now());
+                if (left.count() <= 0) break;
+                services = within(ble.GetGattServicesAsync(wb::BluetoothCacheMode::Uncached), left);
+                if (!services || services->Status() != wg::GattCommunicationStatus::Unreachable) break;
+                std::cerr << tag_ << "services unreachable (attempt " << attempt << "), retrying" << std::endl;
+                std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+            }
             if (!services) return fail(LinkError::Resolve, "services not resolved in time", nullptr);
             if (services->Status() != wg::GattCommunicationStatus::Success)
                 return fail(services->Status() == wg::GattCommunicationStatus::Unreachable ? LinkError::Connect
@@ -491,11 +527,25 @@ private:
         std::lock_guard<std::mutex> lk(seen_m_);
         seen_[d.id] = d;
     }
+    void rememberType(const std::string& id, wb::BluetoothAddressType t) {
+        std::lock_guard<std::mutex> lk(seen_m_);
+        types_[id] = t;
+    }
+    std::optional<wb::BluetoothAddressType> typeOf(const std::string& id) {
+        std::lock_guard<std::mutex> lk(seen_m_);
+        auto it = types_.find(id);
+        if (it == types_.end()) return std::nullopt;
+        return it->second;
+    }
 
     std::string tag_;
     bool available_ = false;
     std::mutex seen_m_;
     std::map<std::string, Device> seen_;
+    // The advertised address's type. A ring advertises from a random static
+    // address; opened as a public one, Windows answers every GATT call with
+    // Unreachable.
+    std::map<std::string, wb::BluetoothAddressType> types_;
 };
 
 } // namespace
