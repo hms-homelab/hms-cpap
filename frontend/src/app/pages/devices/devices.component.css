@@ -40,7 +40,7 @@ dl.facts > div { display: grid; grid-template-columns: minmax(7.5rem, 34%) 1fr; 
    tapering to a point at both ends. */
 dl.facts > div { position: relative; }
 dl.facts > div:not(:last-child)::after {
-  content: ""; position: absolute; left: -0.5rem; right: -0.5rem; bottom: -3px; height: 6px;
+  content: ""; position: absolute; left: -0.5rem; right: -0.5rem; bottom: -3px; height: 4px;
   background: radial-gradient(50% 50% at 50% 50%, #000 0%, rgba(0, 0, 0, 0.9) 55%, transparent 100%);
   pointer-events: none;
 }
@@ -92,8 +92,8 @@ dd { margin: 0; color: #ddd; min-width: 0; overflow-wrap: anywhere; }
 .note-line.err { color: var(--error); }
 
 .folds { display: flex; gap: 1.2rem; flex-wrap: wrap; }
-.fold { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 0.8rem; padding: 0.1rem 0; font-family: inherit; }
-.fold:hover { color: #e0e0e0; }
+.fold { background: none; border: none; color: #ddd; cursor: pointer; font-size: 0.85rem; padding: 0.1rem 0; font-family: inherit; }
+.fold:hover { color: #fff; }
 .fold i { width: 0.8rem; }
 
 .commands ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.2rem; font-size: 0.82rem; }
