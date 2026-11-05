@@ -151,6 +151,15 @@ private:
     // Keyed by STR start and its ordinal among equal starts in a folder:
     // STR keeps minutes only, so two sessions can share a start.
     std::map<std::pair<std::time_t, int>, std::map<std::string, std::string>> session_names_;
+    // FAT keeps an 8.3 alias for every long name ("202611~5.EDF" for
+    // "20261103_221626_BRP.edf"), numbered in creation order, and this
+    // firmware serves files by that alias too. Per folder and alias stem:
+    // the next number to try, and the start times read from the headers.
+    std::map<std::string, std::map<std::string, int>> alias_next_;
+    std::map<std::string, std::set<std::time_t>> alias_starts_;
+    std::map<std::string, std::map<std::time_t, std::set<std::string>>> alias_names_;
+    std::set<std::time_t> scanAliases(const std::string& folder);
+    std::string readRange(const std::string& path, size_t first, size_t last);
     static std::string folderForStart(std::time_t start);
     void refreshSessions();
     std::vector<EzShareFileEntry> enumerateFiles(const std::string& folder);

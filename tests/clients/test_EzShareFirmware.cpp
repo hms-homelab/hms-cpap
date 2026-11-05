@@ -187,7 +187,8 @@ TEST_F(EzShareFirmwareTest, SecondsOffsetsSA2AndCachedNames) {
     int before = http.requests;
     files = client.listFiles("20260301");
     EXPECT_EQ(files.size(), 5u);
-    EXPECT_EQ(http.requests - before, 5); // no repeated second search
+    // No repeated second search; only the three aliases past the last one.
+    EXPECT_EQ(http.requests - before, 5 + 3);
 }
 
 TEST_F(EzShareFirmwareTest, NoonSplitAndAirSense10SAD) {
@@ -221,6 +222,35 @@ TEST_F(EzShareFirmwareTest, SessionsSharingAnSTRMinuteFindTheirOwnFiles) {
     }));
     files = client.listFiles("20260301");
     EXPECT_EQ(files.size(), 10u); // cached names stay with their own session
+}
+
+TEST_F(EzShareFirmwareTest, AliasesFindSessionsSTRDoesNotList) {
+    // Synthetic 8.3 aliases in creation order, each a header whose bytes
+    // 168-183 carry the start. No STR start is known for any of them.
+    FirmwareHttp http;
+    int number = 0;
+    const auto put = [&](const std::string& stamp, const std::string& name) {
+        std::string header(256, ' ');
+        header.replace(168, 16, stamp);
+        http.files["/DATALOG/20260301/" + name] = header;
+        const auto digits = std::to_string(++number);
+        http.files["/DATALOG/20260301/" + std::string("202603").substr(0, 7 - digits.size()) +
+                   "~" + digits + ".EDF"] = header;
+    };
+    for (const auto* type : {"CSL", "EVE"}) put("01.03.2622.16.16", std::string("20260301_221616_") + type + ".edf");
+    for (const auto* type : {"PLD", "SA2", "BRP"}) put("01.03.2622.16.26", std::string("20260301_221626_") + type + ".edf");
+    // A mask-on that wrote no BRP, and a session after midnight.
+    for (const auto* type : {"CSL", "EVE"}) put("01.03.2623.00.00", std::string("20260301_230000_") + type + ".edf");
+    put("02.03.2601.02.03", "20260302_010203_BRP.edf");
+    http.start(); client.setBaseURL(http.url); fallback();
+    auto files = client.listFiles("20260301");
+    ASSERT_EQ(files.size(), 8u);
+    for (const auto* name : {"20260301_230000_EVE.edf", "20260302_010203_BRP.edf", "20260301_221626_BRP.edf"})
+        EXPECT_TRUE(std::any_of(files.begin(), files.end(), [&](const auto& e) { return e.name == name; })) << name;
+    const int before = http.requests;
+    files = client.listFiles("20260301");
+    EXPECT_EQ(files.size(), 8u);
+    EXPECT_EQ(http.requests - before, 8 + 3); // sizes, then aliases past ~8
 }
 
 TEST_F(EzShareFirmwareTest, BoundedChunksResumeAfterCutAndTimeout) {

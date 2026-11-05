@@ -731,25 +731,124 @@ void EzShareClient::refreshSessions() {
     sessions_read_at_ = now;
 }
 
+std::string EzShareClient::readRange(const std::string& path, size_t first, size_t last) {
+    std::string body;
+    const std::string url = base_url_ + "/" + path;
+    const auto range = std::to_string(first) + "-" + std::to_string(last);
+    curl_easy_setopt(curl_, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl_, CURLOPT_RANGE, range.c_str());
+    curl_easy_setopt(curl_, CURLOPT_TIMEOUT, 8L);
+    curl_easy_setopt(curl_, CURLOPT_LOW_SPEED_LIMIT, 0L);
+    curl_easy_setopt(curl_, CURLOPT_WRITEFUNCTION, WriteCallback);
+    curl_easy_setopt(curl_, CURLOPT_WRITEDATA, &body);
+    CURLcode result = CURLE_OK;
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        body.clear();
+        result = curl_easy_perform(curl_);
+        if (result == CURLE_OK) break;
+    }
+    curl_easy_setopt(curl_, CURLOPT_RANGE, nullptr);
+    long status = 0;
+    char* type = nullptr;
+    curl_easy_getinfo(curl_, CURLINFO_RESPONSE_CODE, &status);
+    curl_easy_getinfo(curl_, CURLINFO_CONTENT_TYPE, &type);
+    if (result != CURLE_OK || status != 206 || !type ||
+        std::string(type).find("text/plain") != 0 || body.size() != last - first + 1)
+        return {};
+    return body;
+}
+
+std::set<std::time_t> EzShareClient::scanAliases(const std::string& folder) {
+    if (folder.size() != 8 || !std::all_of(folder.begin(), folder.end(), ::isdigit)) return {};
+    // Session files in a noon-split folder are named after its own day or
+    // the next one. Each name date is its own alias stem; in a month the two
+    // stems share their first six digits and so one numbering.
+    std::tm day{};
+    day.tm_year = std::stoi(folder.substr(0, 4)) - 1900;
+    day.tm_mon = std::stoi(folder.substr(4, 2)) - 1;
+    day.tm_mday = std::stoi(folder.substr(6, 2)) + 1;
+    day.tm_hour = 12;
+    day.tm_isdst = -1;
+    std::mktime(&day);
+    char next[16];
+    std::strftime(next, sizeof(next), "%Y%m%d", &day);
+    auto& found = alias_starts_[folder];
+    std::set<std::string> tried;
+    for (const auto& stem : {folder, std::string(next)}) {
+        // Two stems of one month share their six-digit alias base and its numbering.
+        auto& number = alias_next_[folder][stem.substr(0, 6)];
+        if (number == 0) number = 1;
+        // A missing alias ends the run; a short tolerance covers a number
+        // freed by a deleted file or taken by a name of the other stem.
+        for (int misses = 0, n = number; misses < 3 && n < 1000000; ++n) {
+            const auto digits = std::to_string(n);
+            const auto alias = stem.substr(0, 7 - digits.size()) + "~" + digits + ".EDF";
+            if (!tried.insert(alias).second) break; // the other stem's numbering
+            // Bytes 168-183 of an EDF header are its start, "dd.mm.yyhh.mm.ss".
+            const auto stamp = readRange("DATALOG/" + folder + "/" + alias, 168, 183);
+            std::tm tm{};
+            if (stamp.size() != 16 ||
+                std::sscanf(stamp.c_str(), "%2d.%2d.%2d%2d.%2d.%2d", &tm.tm_mday, &tm.tm_mon,
+                            &tm.tm_year, &tm.tm_hour, &tm.tm_min, &tm.tm_sec) != 6) {
+                ++misses;
+                continue;
+            }
+            misses = 0;
+            number = n + 1;
+            tm.tm_mon -= 1;
+            tm.tm_year += 100;
+            tm.tm_isdst = -1;
+            found.insert(std::mktime(&tm));
+        }
+    }
+    return found;
+}
+
 std::vector<EzShareFileEntry> EzShareClient::enumerateFiles(const std::string& folder) {
     std::vector<EzShareFileEntry> files;
+    std::set<std::string> returned;
+    const auto candidate = [](std::time_t at, const std::string& type) {
+        auto tm = *std::localtime(&at);
+        char prefix[32];
+        std::strftime(prefix, sizeof(prefix), "%Y%m%d_%H%M%S_", &tm);
+        return std::string(prefix) + type + ".edf";
+    };
+    const auto add = [&](const std::string& name) {
+        if (!returned.insert(name).second) return;
+        const auto size = probe("DATALOG/" + folder + "/" + name);
+        if (!size) return;
+        auto& e = discovered_[folder + "/" + name];
+        e.name = name; e.size_bytes = size; e.size_kb = (size + 1023) / 1024;
+        files.push_back(e);
+    };
+    // Every file found through its alias has a known start second, so its
+    // long name is one of a few candidates.
+    const auto aliased = scanAliases(folder);
+    for (auto start : aliased) {
+        auto& names = alias_names_[folder][start];
+        if (names.empty()) {
+            for (const auto* type : {"BRP", "PLD", "SA2", "SAD", "EVE", "CSL"}) {
+                const auto name = candidate(start, type);
+                if (probe("DATALOG/" + folder + "/" + name)) names.insert(name);
+            }
+        }
+        for (const auto& name : names) add(name);
+    }
     const auto it = starts_.find(folder);
     if (it == starts_.end()) return files;
-    std::set<std::string> returned;
     // Names already taken by an earlier session of this folder; a session
     // that shares its STR minute with another must find the next file set.
     std::set<std::string> claimed;
     for (const auto& known : session_names_)
         for (const auto& name : known.second) claimed.insert(name.second);
+    for (const auto& known : alias_names_[folder])
+        claimed.insert(known.second.begin(), known.second.end());
     std::map<std::time_t, int> seen;
     for (auto start : it->second) {
         auto& names = session_names_[{start, seen[start]++}];
-        const auto candidate = [](std::time_t at, const std::string& type) {
-            auto tm = *std::localtime(&at);
-            char prefix[32];
-            std::strftime(prefix, sizeof(prefix), "%Y%m%d_%H%M%S_", &tm);
-            return std::string(prefix) + type + ".edf";
-        };
+        // A BRP found through an alias within this STR minute covers it.
+        const auto covered = aliased.lower_bound(start);
+        if (covered != aliased.end() && *covered < start + 60) continue;
         auto find = [&](const std::string& type, std::time_t from, int count) {
             if (names.count(type)) return;
             for (int second = 0; second < count; ++second) {
