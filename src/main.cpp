@@ -1761,8 +1761,9 @@ int main(int argc, char** argv) {
                                             mo.data_dir, hms_cpap::hostLocalClock());
                     mule_stream = std::make_unique<hms_cpap::mule::MuleService>(mo, night);
                     hms_cpap::mule::FirmwareUpdater::Options fo;
-                    if (const char* m = std::getenv("HMS_CPAP_MULE_MANIFEST_URL"); m && *m) fo.manifest_url = m;
-                    fo.jobs_dir = (std::filesystem::path(mo.data_dir) / "ota" / "mule").string();
+                    if (const char* m = std::getenv("HMS_CPAP_MULE_RELEASE_BASE"); m && *m) fo.release_base = m;
+                    fo.jobs_dir     = (std::filesystem::path(mo.data_dir) / "ota" / "mule").string();
+                    fo.pairing_file = (std::filesystem::path(mo.data_dir) / "ota" / "mule-pairing.json").string();
                     mule_updater = std::make_unique<hms_cpap::mule::FirmwareUpdater>(
                         *mule_stream, hms_cpap::mule::curlTransport(), fo);
                     hms_cpap::mule::installRoutes(mule_stream.get(), mule_updater.get());

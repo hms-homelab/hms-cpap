@@ -7,8 +7,10 @@
 //   GET  /api/mule                    the units and their commands, web port
 //   POST /api/mule/command            one command to one unit, web port
 //   DELETE /api/mule/command?req_id=  a command still queued, dropped
-//   GET  /api/mule/{serial}/firmware  its versions, the manifest's, the job
-//   POST /api/mule/{serial}/update    {"target"} from the manifest, or the
+//   GET  /api/mule/{serial}/firmware  its versions, the latest release's, the job
+//   POST /api/mule/{serial}/pairing   {"code"}: the pairing code printed on
+//                                     the unit, kept once CpapDash confirms it
+//   POST /api/mule/{serial}/update    {"target"} from the release, or the
 //                                     image itself (raw or multipart) with
 //                                     ?target=mule|miner; warned (409, then
 //                                     sent with confirm) while the machine

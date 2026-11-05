@@ -147,7 +147,12 @@ export class CpapApiService {
     return this.http.post('/api/mule/command', { serial, cmd, ...args });
   }
 
-  /** From the published manifest: mule, miner or both. `confirm`: past the recording warning. */
+  /** The pairing code printed on the unit, which CpapDash's release check asks for; '' forgets it. */
+  setMulePairingCode(serial: string, code: string): Observable<any> {
+    return this.http.post(`/api/mule/${encodeURIComponent(serial)}/pairing`, { code });
+  }
+
+  /** From CpapDash's latest release: mule, miner or both. `confirm`: past the recording warning. */
   startMuleUpdate(serial: string, target: 'mule' | 'miner' | 'both', confirm = false): Observable<any> {
     return this.http.post(`/api/mule/${encodeURIComponent(serial)}/update`, confirm ? { target, confirm } : { target });
   }
@@ -661,6 +666,8 @@ export interface MuleFirmware {
   /** streaming, or streamed and not landed here yet: no update now */
   night_open: boolean;
   manifest: { url: string; error: string; read_at: number };
+  /** A pairing code is kept for the unit, so its releases can be read. */
+  pairing_set: boolean;
   latest: { mule: string; miner: string };
   update_available: { mule: boolean; miner: boolean };
   job: MuleUpdateJob | null;

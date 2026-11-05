@@ -92,6 +92,8 @@ dd { margin: 0; color: #ddd; min-width: 0; overflow-wrap: anywhere; }
 .row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 0.2rem 0; }
 .hint { font-size: 0.75rem; color: var(--muted); }
 .hint.block { display: block; }
+.fw-code { margin-top: 0.35rem; display: flex; flex-direction: column; gap: 0.3rem; }
+.fw-code input { width: 8.5rem; }
 
 select, input[type="text"], input[type="password"] { background: #10121c; border: 1px solid #3a3d55;
   color: #e0e0e0; border-radius: 5px; padding: 0.36rem 0.5rem; font-size: 0.85rem; font-family: inherit; }

@@ -66,7 +66,19 @@
             <div class="quiet" *ngIf="d.kind === 'sleepbridge' && !offer(d) && bridgeRelease(d).key && !d.detail.ota">
               {{ bridgeRelease(d).key | translate:bridgeRelease(d).params }}
             </div>
-            <div class="quiet" *ngIf="d.kind === 'mule' && d.detail.firmware?.manifest_error && !d.detail.ota">{{ 'devices.mule.manifestUnavailable' | translate }}</div>
+            <!-- No pairing code kept: the release check asks for the one printed on the unit. -->
+            <div class="fw-code" *ngIf="needsFwCode(d)">
+              <div class="hint block">{{ 'devices.mule.fwCodeHint' | translate }}</div>
+              <div class="row">
+                <input type="text" inputmode="numeric" maxlength="7" autocomplete="off" [(ngModel)]="fwCode[d.key]"
+                       [placeholder]="'devices.mule.fwCodePlaceholder' | translate" (keyup.enter)="saveFwCode(d)" />
+                <button type="button" class="btn primary" (click)="saveFwCode(d)" [disabled]="busy[d.key] || !fwCode[d.key]">{{ 'devices.mule.fwCodeSave' | translate }}</button>
+              </div>
+            </div>
+            <div class="quiet" *ngIf="d.kind === 'mule' && !needsFwCode(d) && d.detail.firmware?.manifest_error && !d.detail.ota">
+              {{ 'devices.mule.manifestUnavailable' | translate }}
+              <div class="hint block">{{ d.detail.firmware.manifest_error }}</div>
+            </div>
           </dd>
         </div>
 

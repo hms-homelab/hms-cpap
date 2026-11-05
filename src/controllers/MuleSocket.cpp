@@ -92,6 +92,20 @@ void installRoutes(MuleService* service, FirmwareUpdater* updater) {
         },
         {drogon::Get});
 
+    // The pairing code printed on the unit, which CpapDash's release route
+    // asks for: {"code": "123456"}, or "" to forget it.
+    drogon::app().registerHandler(
+        "/api/mule/{serial}/pairing",
+        [answer](const drogon::HttpRequestPtr& req, Callback&& cb, const std::string& serial) {
+            if (!g_updater) return cb(jsonError(drogon::k503ServiceUnavailable, "firmware updates are not available"));
+            if (!validSerial(serial)) return cb(jsonError(drogon::k400BadRequest, "not a unit serial"));
+            const auto body = req->getJsonObject();
+            if (!body || !(*body)["code"].isString())
+                return cb(jsonError(drogon::k400BadRequest, "the body is {\"code\": \"<six digits>\"}"));
+            answer(cb, g_updater->setPairingCode(serial, (*body)["code"].asString()));
+        },
+        {drogon::Post});
+
     drogon::app().registerHandler(
         "/api/mule/{serial}/update",
         [](const drogon::HttpRequestPtr&, Callback&& cb, const std::string& serial) {
