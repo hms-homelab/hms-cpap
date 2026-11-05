@@ -2,6 +2,9 @@
 
 #include <string>
 #include <vector>
+#include <map>
+#include <set>
+#include <ctime>
 #include <chrono>
 #include <cstdint>
 #include <stdexcept>
@@ -133,6 +136,25 @@ public:
     std::vector<EzShareFileEntry> parseDirectoryListing(const std::string& html);
 
 private:
+    friend class EzShareFirmwareTest;
+    bool no_listing_ = false;
+    // Set only while downloadChunks() drives downloadFileRange() for one span.
+    bool chunking_ = false;
+    size_t chunk_end_ = 0;
+    uint64_t chunk_total_ = 0;
+    // STR.edf is the only session index on a listing-free card; re-reading it
+    // every burst would spend a large share of the card's slow link.
+    std::chrono::steady_clock::time_point sessions_read_at_{};
+    static constexpr std::chrono::minutes SESSIONS_REFRESH{10};
+    std::map<std::string, std::vector<std::time_t>> starts_;
+    std::map<std::string, EzShareFileEntry> discovered_;
+    std::map<std::time_t, std::map<std::string, std::string>> session_names_;
+    static std::string folderForStart(std::time_t start);
+    void refreshSessions();
+    std::vector<EzShareFileEntry> enumerateFiles(const std::string& folder);
+    uint64_t probe(const std::string& path);
+    bool downloadChunks(const std::string& path, const std::string& local,
+                        size_t start, size_t& downloaded);
     CURL* curl_;
     // Collapses repeated identical HTTP failures (offline device) into one
     // line plus periodic summaries, instead of one error per poll cycle.

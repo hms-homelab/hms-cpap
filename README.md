@@ -440,6 +440,13 @@ A BMC Luna card (`"format": "bmc"`) and a Sefam S.Box card (`"format":
 "sefam"`) in an ez Share are not tested yet on a real machine: read those
 cards from a local folder or the upload page (5 below).
 
+Some ez Share cards (firmware `LZ1001EDPG:4.4.0`) answer every directory
+listing with their welcome page. On a ResMed card hms-cpap then finds the
+nights from `STR.edf` instead, looks up each session's files by name
+(AirSense 10 and 11) and reads them in 8 KiB pieces, which is what those
+cards serve reliably. They are slow, about 1 KB/s, so the first sync of a
+full card takes hours; after that it keeps up with each night.
+
 **Toshiba FlashAir.** The card joins your home WiFi itself, so no bridge is
 needed. Set it to join your network (`APPMODE=5` in its `SD_WLAN/CONFIG`)
 and pick FlashAir in the wizard; it is found as `http://flashair.local`, or
