@@ -48,6 +48,21 @@ cycle's own `cpap/<device_id>/realtime/*` topics:
 | `cpap/<device_id>/realtime/event` | `{"type":"OA","description":"Obstructive apnea","at":"2026-10-31T00:42:10-04:00","epoch":…,"duration_s":14,"source":"sleepbridge","bridge":"TAP-S3-00000123","file":"DATALOG/…_EVE.edf"}` | one per new annotation in a growing EVE or CSL, QoS 1, not retained. `type` is OA, CA, H, UA, RERA, CSR, FL or OTHER. |
 | `cpap/<device_id>/realtime/live_events` | `{"total":3,"OA":1,"H":2}` | retained; the counts since hms-cpap started, per type. |
 
+Home Assistant discovers the mask as a binary sensor, **Mask**
+(`homeassistant/binary_sensor/<device_id>/mask/config`, retained, unique id
+`<device_id>_mask`, device class `running`), on the same device as the rest
+of hms-cpap's sensors. The config is published when hms-cpap starts and again
+the first time each bridge's live night begins in that run.
+
+How fast: ON goes out on the rebuild that carries the first therapy write,
+two seconds after the batch lands (at most a minute while batches keep
+arriving), and the machine writes therapy once a minute. OFF goes out on the
+rebuild that carries the STR written at mask-off, or five minutes after the
+last therapy write. After hms-cpap restarts, the retained state may be one
+from before the restart: a night still running says ON again at its next
+therapy write, and if nothing says the mask for five minutes, OFF is
+published.
+
 The night's record (its nights, sessions and counts in the database and the
 web UI) still comes from the burst cycle parsing the files; this is the live
 view only.

@@ -212,6 +212,17 @@ never written with holes in it. The bridge keeps more than a night of writes
 in its own memory while hms-cpap is unreachable and sends them when it
 answers again.
 
+With MQTT on, the mask's state and each event go to the broker as the
+rebuilt card shows them (`cpap/<device_id>/realtime/mask`, `.../event`,
+`.../live_events`), and Home Assistant discovers the mask as a binary sensor,
+**Mask** (`binary_sensor.<device name>_mask`, Running while the mask is on),
+on the same device as the other sensors, for automations during the night.
+It turns on at the first therapy write the bridge streams after the mask goes
+on (the machine writes once a minute, so within about a minute), and off when
+the machine writes its summary at mask-off, or after five minutes with no
+therapy written. After a restart of hms-cpap it says ON again at the next
+therapy write, or OFF after five minutes without one.
+
 The limit: the bridge forwards writes, so it only has what the machine wrote
 while it was powered and listening. Nothing already on the card from before
 is read through it. For the history already on the card, read the card once

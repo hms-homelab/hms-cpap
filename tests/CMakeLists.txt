@@ -181,6 +181,7 @@ set(TEST_SOURCES
     sleepbridge/test_SleepBridgeCommands.cpp
     sleepbridge/test_SleepBridgeUpdate.cpp
     sleepbridge/test_SleepBridgeLive.cpp
+    sleepbridge/test_SleepBridgeLiveMask.cpp
     sleepbridge/test_SleepBridgeLearnedCard.cpp
     # Empty unless BUILD_WITH_SLEEPBRIDGE linked the component.
     sleepbridge/test_SleepBridgeLinked.cpp

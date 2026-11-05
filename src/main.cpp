@@ -9,6 +9,7 @@
 #include "controllers/DevicesRoutes.h"
 #include "sleepbridge/ReleaseFeed.h"
 #include "mule/LivePublisher.h"
+#include "sleepbridge/LiveMask.h"
 #include "sleepbridge/LiveNight.h"
 #include "services/CpapDashSyncService.h"
 #include "services/CardUpload.h"
@@ -1649,6 +1650,7 @@ int main(int argc, char** argv) {
                     //   cpap/<device_id>/realtime/event        one event (QoS 1)
                     //   cpap/<device_id>/realtime/live_events  counts, retained
                     //   cpap/<device_id>/realtime/mask         ON/OFF, retained
+                    // and the mask's Home Assistant entity (sleepbridge/LiveMask.h).
                     std::shared_ptr<hms::MqttClient> sb_mqtt;
                     if (config.mqtt.enabled) {
                         hms::MqttConfig sb_cfg;
@@ -1665,15 +1667,23 @@ int main(int argc, char** argv) {
                     // the client not connected: the message is dropped, and the
                     // log says so, so a silent live view shows up in the log.
                     auto sb_publish = [sb_mqtt](const std::string& topic, const std::string& payload,
-                                                bool retain) {
-                        if (!sb_mqtt) return;
+                                                bool retain) -> bool {
+                        if (!sb_mqtt) return false;
                         if (!sb_mqtt->isConnected()) {
                             std::cout << "[sleepbridge] MQTT not connected, dropped " << topic
                                       << " " << payload.substr(0, 120) << std::endl;
-                            return;
+                            return false;
                         }
-                        sb_mqtt->publish(topic, payload, 1, retain);
+                        return sb_mqtt->publish(topic, payload, 1, retain);
                     };
+                    std::shared_ptr<hms_cpap::sleepbridge::LiveMask> mask_out;
+                    if (sb_mqtt) {
+                        mask_out = std::make_shared<hms_cpap::sleepbridge::LiveMask>(
+                            [sb_publish](const std::string& topic, const std::string& payload, int,
+                                         bool retain) { return sb_publish(topic, payload, retain); },
+                            config.device_id, config.device_name);
+                        mask_out->announce();
+                    }
                     using hms_cpap::sleepbridge::LiveNight;
                     auto lives    = std::make_shared<std::map<std::string, std::unique_ptr<LiveNight>>>();
                     auto lives_mu = std::make_shared<std::mutex>();
@@ -1712,10 +1722,11 @@ int main(int argc, char** argv) {
                             sb_publish(sb_topic + "live_events", Json::writeString(w, v), true);
                         };
                         sink.mask = [=](bool on) {
-                            sb_publish(sb_topic + "mask", on ? "ON" : "OFF", true);
+                            if (mask_out) mask_out->set(sender, on);
                             std::cout << "[sleepbridge] " << sender << " mask " << (on ? "on" : "off")
                                       << std::endl;
                         };
+                        if (mask_out) mask_out->sourceSeen(sender);
                         slot = std::make_unique<LiveNight>(
                             (std::filesystem::path(sb_root) / sender).string(), std::move(sink));
                         return *slot;
@@ -1732,6 +1743,7 @@ int main(int argc, char** argv) {
                     sb.on_tick = [=] {
                         std::lock_guard<std::mutex> lk(*lives_mu);
                         for (auto& [sender, live] : *lives) live->tick();
+                        if (mask_out) mask_out->tick();
                     };
 
                     sleep_bridge = std::make_unique<hms_cpap::sleepbridge::SleepBridgeService>(

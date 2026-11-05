@@ -803,6 +803,8 @@ Sensors auto-appear as a device with 47+ entities:
 - `sensor.cpap_pressure_current` - Current pressure (cmH2O)
 - `sensor.cpap_usage_hours` - Total usage hours
 - `binary_sensor.cpap_session_active` - Live session indicator
+- `binary_sensor.cpap_mask` - Mask on or off, live from a Sleep Bridge Lite
+  (`cpap/<device_id>/realtime/mask`); only with the Sleep Bridge receiver on
 - `sensor.cpap_sleep_index` - The CpapDash index for the night, plus its band
 - ... and 42 more metrics
 
