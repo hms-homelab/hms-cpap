@@ -166,6 +166,10 @@ public:
         /// what landed in <root>/<sender>/ this step. The receiver's seam to
         /// the rest of hms-cpap (a sync of the card folder, the live night).
         std::function<void(const std::string& sender, const StepReport& step)> on_rebuilt;
+        /// Called when a batch with records from `sender` was stored, off the
+        /// service's locks, before the rebuild it wakes. The live night reads
+        /// it as the stream being alive (a mask said off on quiet needs it).
+        std::function<void(const std::string& sender)> on_banked;
         /// Called every `tick_s` while the service runs, on the rebuild
         /// thread, for whatever keeps time off the stream (a mask that went
         /// quiet). Empty: no ticks.

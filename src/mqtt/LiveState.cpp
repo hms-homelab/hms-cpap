@@ -133,18 +133,24 @@ void LiveState::mask(const MaskChange& c, Clock::time_point detected_at) {
             }
             return;
         }
+        // A mask going on starts the counts over, unless it is the session
+        // said off a moment ago coming back: an off on quiet that a late
+        // delivery proved wrong (issue #57), the same night going on.
+        const bool resumed = said_ == Said::Off && !c.session.empty() && c.session == session_;
         said_    = Said::On;
         session_ = c.session;
-        // A mask going on starts the counts over.
-        counts_.clear();
-        total_ = 0;
+        if (!resumed) {
+            counts_.clear();
+            total_ = 0;
+        }
         sendMask(true, c.source, c.source_id, c.session, c.occurred_at, detected_at);
         sendCounts();
         return;
     }
     on_.erase(c.source_id);
     if (!on_.empty() || said_ == Said::Off) return;
-    said_ = Said::Off;
+    said_     = Said::Off;
+    off_from_ = c.source;
     sendMask(false, c.source, c.source_id, c.session, c.occurred_at, detected_at);
 }
 
@@ -183,6 +189,15 @@ void LiveState::tick(Clock::time_point now) {
 bool LiveState::maskOn() const {
     std::lock_guard<std::mutex> lk(mu_);
     return said_ == Said::On;
+}
+
+bool LiveState::isStreamingSource(const std::string& source) {
+    return source == kSleepBridge || source == kMuleBle || source == kAs11Ble;
+}
+
+bool LiveState::streamSaidOff() const {
+    std::lock_guard<std::mutex> lk(mu_);
+    return said_ == Said::Off && isStreamingSource(off_from_);
 }
 
 }  // namespace hms_cpap

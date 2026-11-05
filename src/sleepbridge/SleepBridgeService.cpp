@@ -560,6 +560,7 @@ void SleepBridgeService::apply(const std::string& sender, const Effects& fx) {
     }
     if (fx.hello) flush(sender);
     if (fx.hello && feed_) feed_->refreshAsync();   // the release check: on a hello, no timer
+    if (fx.banked && opt_.on_banked) opt_.on_banked(sender);
     if (fx.banked || fx.card) wake(sender);
 }
 

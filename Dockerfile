@@ -115,7 +115,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libuuid1 \
     libhpdf-2.3.0 \
     libsdbus-c++2 \
+    tzdata \
     && rm -rf /var/lib/apt/lists/*
+
+# The CPAP's clock is local time with no zone, and hms-cpap reads it in the
+# container's zone. tzdata is what makes TZ=America/New_York (or the TZ the
+# Home Assistant Supervisor passes an add-on) mean anything: without it glibc
+# quietly falls back to UTC. Set TZ when running the image.
 
 # Create non-root user for security
 RUN useradd -r -u 1000 -m -s /bin/bash cpap

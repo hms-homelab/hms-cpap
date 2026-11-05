@@ -802,7 +802,9 @@ Sensors auto-appear as a device with 47+ entities:
 - `sensor.cpap_leak_rate` - Leak rate (L/min)
 - `sensor.cpap_pressure_current` - Current pressure (cmH2O)
 - `sensor.cpap_usage_hours` - Total usage hours
-- `binary_sensor.cpap_session_active` - Live session indicator
+- `binary_sensor.cpap_session_active` - The session is running; OFF a minute
+  or two after the mask comes off on a streamed night, an hour after the files
+  stop on a card (use `binary_sensor.cpap_mask` for real time)
 - `binary_sensor.cpap_mask` - Mask on or off, from every source
   (`cpap/<device_id>/realtime/mask`), with the change's `source`,
   `occurred_at`, `detected_at` and `delay_s` as attributes

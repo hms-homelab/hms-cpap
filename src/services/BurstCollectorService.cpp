@@ -2997,6 +2997,10 @@ bool BurstCollectorService::executeBurstCycle() {
                               session.session_start, std::chrono::system_clock::now(),
                               /*already_closed=*/!newly_completed);
 
+                // Issue #57: streamed, the end is known now (mask off on the
+                // stream, files stopped), so Home Assistant hears it now.
+                publishStreamedSessionEnd(session.session_start);
+
                 std::cout << "   No changes, skipping download" << std::endl;
                 continue;
             }
@@ -3182,6 +3186,8 @@ bool BurstCollectorService::executeBurstCycle() {
             std::cout << std::string(60, '-') << std::endl;
 
             data_publisher_->publishSession(*latest);
+            // In progress again: the next end is said again (issue #57).
+            session_end_said_.reset();
 
             // Also publish nightly aggregated metrics.
             //
@@ -3512,6 +3518,21 @@ int BurstCollectorService::announceQuietNights(std::chrono::system_clock::time_p
         }
     }
     return announced;
+}
+
+bool BurstCollectorService::publishStreamedSessionEnd(
+    const std::chrono::system_clock::time_point& session_start) {
+    if (!data_publisher_) return false;
+    const auto live = liveState();
+    if (!live || !live->streamSaidOff()) return false;
+    // Said already for this session or a later one (a night of several
+    // sessions lists them all on every burst).
+    if (session_end_said_ && session_start <= *session_end_said_) return false;
+    session_end_said_ = session_start;
+    std::cout << "CPAP: session over (the stream saw the mask come off and its files have "
+                 "stopped), publishing it completed"
+              << std::endl;
+    return data_publisher_->publishSessionCompleted();
 }
 
 void BurstCollectorService::republishRevisedNight() {

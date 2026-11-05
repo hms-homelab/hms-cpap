@@ -37,6 +37,7 @@ libbrotli1
 libuuid1
 libhpdf-2.3.0
 libsdbus-c++2
+tzdata
 "
 # runtime-packages-end
 

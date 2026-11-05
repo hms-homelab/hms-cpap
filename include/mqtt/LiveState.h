@@ -88,6 +88,14 @@ public:
     void tick(Clock::time_point now = Clock::now());
 
     bool maskOn() const;
+    /// The mask is off, and a source that streams the night (the Sleep
+    /// Bridge, the Mule & Miner over Bluetooth, the AirSense 11 over
+    /// Bluetooth) said so: an end seen as it happened, not a card read a
+    /// burst later or the startup default. The session's end on MQTT
+    /// (session_active / session_status) waits on this instead of the night's
+    /// hour (issue #57).
+    bool streamSaidOff() const;
+    static bool isStreamingSource(const std::string& source);
 
     std::string topic(const std::string& leaf) const;
     std::string maskConfigTopic() const;
@@ -110,6 +118,7 @@ private:
     mutable std::mutex         mu_;
     Said                       said_{Said::Nothing};
     std::string                session_;   // of the last on said
+    std::string                off_from_;  // the source of the last off said
     std::set<std::string>      on_;      // the sources whose mask is on
     std::set<std::string>      seen_;
     std::map<std::string, int> counts_;

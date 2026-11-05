@@ -45,7 +45,7 @@ every source shares (the README's "The night, live, on MQTT"), with `source`
 
 | Topic | Payload | |
 |---|---|---|
-| `cpap/<device_id>/realtime/mask` | `ON` / `OFF` | retained. ON when a session's BRP, PLD or oximetry file grows; OFF when the STR is written after therapy (a ResMed writes it at mask-off) or nothing was written for five minutes. |
+| `cpap/<device_id>/realtime/mask` | `ON` / `OFF` | retained. ON when a session's BRP, PLD or oximetry file grows; OFF when the STR is written after therapy (a ResMed writes it at mask-off), or nothing was written for five minutes while the bridge kept delivering (fifteen when it delivered nothing at all). |
 | `cpap/<device_id>/realtime/mask_changed` | `{"state":"on","source":"sleep_bridge","source_id":"TAP-S3-00000123","session":"20261031_003049","occurred_at":"2026-10-31T04:30:49Z","detected_at":"2026-10-31T04:31:52Z","delay_s":63}` | retained; the change that set the mask, the Mask entity's attributes. On: the session's start (its file's name, read in the host's zone). Off: the end of its last record. |
 | `cpap/<device_id>/realtime/event` | `{"type":"OA","description":"Obstructive apnea","at":"2026-10-31T00:42:10-04:00","epoch":…,"duration_s":14,"source":"sleep_bridge","source_id":"TAP-S3-00000123","bridge":"TAP-S3-00000123","file":"DATALOG/…_EVE.edf","occurred_at":"2026-10-31T04:42:10Z","detected_at":"…","delay_s":41}` | one per new annotation in a growing EVE or CSL, QoS 1, not retained. `type` is OA, CA, H, UA, RERA, CSR, FL or OTHER. |
 | `cpap/<device_id>/realtime/live_events` | `{"total":3,"OA":1,"H":2}` | retained; the counts since the mask went on, per type. |
@@ -61,7 +61,12 @@ How fast: ON goes out on the rebuild that carries the first therapy write,
 two seconds after the batch lands (at most a minute while batches keep
 arriving), and the machine writes therapy once a minute. OFF goes out on the
 rebuild that carries the STR written at mask-off, or five minutes after the
-last therapy write. After hms-cpap restarts, the retained state may be one
+last therapy write once a later batch has shown the bridge is still
+delivering and brought no therapy. A bridge that has delivered nothing at all
+since the last therapy write may be a stalled link holding the night, so the
+mask is held until fifteen minutes; a late backlog that carries the same
+session on keeps it on, and a session that grows again after an OFF says ON
+again with its counts kept. After hms-cpap restarts, the retained state may be one
 from before the restart: a night still running says ON again at its next
 therapy write, and if no source says the mask for five minutes, OFF is
 published (`source` `startup`).
