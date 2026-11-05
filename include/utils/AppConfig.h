@@ -257,6 +257,11 @@ struct AppConfig {
     struct SleepBridge {
         bool enabled = true;
         int port = 8894;
+        // The public Sleep Bridge release feed, read on a bridge's hello and
+        // when the Devices page loads, so the page can offer the release.
+        // Empty: no check (an install with no internet). It answers 403
+        // until it is published; the page then offers a file upload.
+        std::string release_feed = "https://fw.cpapdash.com/public/tapper/latest.json";
     } sleep_bridge;
 
     // Sleep Stage Inference (optional)
@@ -706,6 +711,8 @@ struct AppConfig {
                 auto& sb = j["sleep_bridge"];
                 if (sb.contains("enabled")) config.sleep_bridge.enabled = sb["enabled"];
                 if (sb.contains("port"))    config.sleep_bridge.port = sb["port"];
+                if (sb.contains("release_feed") && sb["release_feed"].is_string())
+                    config.sleep_bridge.release_feed = sb["release_feed"];
             }
 
             if (j.contains("sleep_stage")) {
@@ -837,6 +844,7 @@ struct AppConfig {
 
             j["sleep_bridge"]["enabled"] = sleep_bridge.enabled;
             j["sleep_bridge"]["port"] = sleep_bridge.port;
+            j["sleep_bridge"]["release_feed"] = sleep_bridge.release_feed;
 
             j["sleep_stage"]["enabled"] = sleep_stage.enabled;
             j["sleep_stage"]["live_inference"] = sleep_stage.live_inference;
@@ -971,6 +979,11 @@ struct AppConfig {
 
         j["airsense11_ble"]["enabled"] = airsense11_ble.enabled;
         j["airsense11_ble"]["address"] = airsense11_ble.address;
+
+        // sleep_bridge was missing here although save() persists it.
+        j["sleep_bridge"]["enabled"] = sleep_bridge.enabled;
+        j["sleep_bridge"]["port"] = sleep_bridge.port;
+        j["sleep_bridge"]["release_feed"] = sleep_bridge.release_feed;
 
         j["sleep_stage"]["enabled"] = sleep_stage.enabled;
         j["sleep_stage"]["live_inference"] = sleep_stage.live_inference;

@@ -41,6 +41,7 @@ public:
         int  days = 0;          ///< day records the spool carried
         int  written = 0;       ///< days with usage written (0 on a day off, or nothing)
         std::string error;      ///< why nothing was written, when asked
+        std::string newest_day; ///< the newest day the spool carried, "YYYY-MM-DD"
     };
 
     /** One pull if it is due at `now`; the next is due `interval` later. */

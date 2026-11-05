@@ -252,6 +252,13 @@ public:
     /// Same, over HTTP: libcurl for the status, EzShareClient for the listing.
     static EzShareProbe probeEzshare(const std::string& url);
 
+    /// ok when a FlashAir answers its own listing of the card root
+    /// (command.cgi?op=100): a FlashAir does not answer an ez Share's /dir,
+    /// so the ez Share probe would call a working card unreachable. Read
+    /// only, like everything hms-cpap asks of a FlashAir.
+    static EzShareProbe probeFlashair(const std::string& url, const EzShareLister& list_root);
+    static EzShareProbe probeFlashair(const std::string& url);
+
     /// Run provisionPlan() against the maintenance database as the admin, then
     /// reconnect as the ORDINARY user to prove the result is usable. A
     /// successful CREATE DATABASE followed by a failed GRANT otherwise looks

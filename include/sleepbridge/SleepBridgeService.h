@@ -15,27 +15,47 @@
 // is answered and is never a session.
 //
 // Commands: queueCommand() sends one of the commands a bridge takes from a
-// local hms-cpap (stream, reboot, logs, restate, config_reset) on the
-// bridge's session, or keeps it until the next session's hello. The answer
-// comes back as a result frame with the same req_id, on that session or a
-// later one (a stream switch reconnects first; a stream back to the cloud
-// answers, then restarts); a log pull's text comes ahead of it as kind 4
-// frames. No command is refused while the machine records: that is the
-// owner's call. reboot is never answered.
+// local hms-cpap (stream, reboot, logs, restate, config_reset, config) on
+// the bridge's session, or keeps it until the next session's hello. The
+// answer comes back as a result frame with the same req_id, on that session
+// or a later one (a stream switch reconnects first; a stream back to the
+// cloud answers, then restarts); a log pull's text comes ahead of it as kind
+// 4 frames. reboot is never answered. A command still queued can be
+// cancelled; one already sent cannot.
 //
-// Updates: startUpdate() sends a firmware image the owner has to a bridge
-// on its session: an `ota` command naming the image's size and SHA-256,
-// then the image as binary kind 8 frames of 4096 bytes. The bridge writes
-// it as it comes, checks it, answers the command, and restarts into it only
-// when the answer is ok; its next hello carries the version it runs. This
-// is the one command refused while a night is open on the bridge (sector
-// writes landed within night_quiet_s): an update is a downtime action, and
-// the bridge cannot tell, so this end keeps the rule. One update at a time.
+// Recording: the machine records while sector writes land (a batch with
+// records within night_quiet_s, 15 minutes). A bridge not heard from since
+// this service started is "unknown". No command is refused while it records,
+// that is the owner's call, but the ones that can cost the night (reboot,
+// config_reset, stream, a config set carrying ssid or pass, an update) are
+// warned: without "confirm": true they answer 409 with the warning and send
+// nothing (devices/Recording.h).
 //
+// config (firmware 1.0.1 and later): {"get": true} or {"set": {...}}, passed
+// down as the bridge's own frame; the bridge is the validator of record,
+// this end checks only the shape. The WiFi password, the pairing secret and
+// the token go into the frame sent to the bridge and nowhere else: the
+// command kept here, its listing and the log carry "***", the frame is
+// scrubbed once sent, and an answer's values never carry them back.
+//
+// Updates: startUpdate() sends a firmware image to a bridge on its session:
+// an `ota` command naming the image's size and SHA-256, then the image as
+// binary kind 8 frames of 4096 bytes. The bridge writes it as it comes,
+// checks it, answers the command, and restarts into it only when the answer
+// is ok; its next hello carries the version it runs, and only that hello
+// ends the job (no clock: a bridge that does not come back stays
+// "restarting"). The image is the owner's file, or the public release
+// (startReleaseUpdate), downloaded and checked against the feed's size and
+// SHA-256 before anything is sent. One update at a time. The job is the
+// shape of devices/OtaJob.h, kept as one JSON file per bridge.
+//
+#include "devices/OtaJob.h"
+#include "devices/Recording.h"
 #include "sleepbridge/BatchStore.h"
 #include "sleepbridge/Conversation.h"
 #include "sleepbridge/RebuildWorker.h"
 #include "sleepbridge/Rebuilder.h"
+#include "sleepbridge/ReleaseFeed.h"
 
 #include <json/json.h>
 
@@ -59,9 +79,26 @@ inline constexpr const char* kRoute = "/sleepbridge/v1/device";
 
 /// The commands a bridge takes from a local hms-cpap.
 inline const std::vector<std::string>& localCommands() {
-    static const std::vector<std::string> k = {"stream", "reboot", "logs", "restate", "config_reset"};
+    static const std::vector<std::string> k = {"stream", "reboot", "logs", "restate", "config_reset", "config"};
     return k;
 }
+
+/// The keys a bridge's config never shows or keeps here: the WiFi password,
+/// the pairing secret, the token.
+inline bool secretConfigKey(const std::string& k) { return k == "pass" || k == "pair" || k == "jwt"; }
+
+/// The first firmware that takes `config`.
+inline constexpr const char* kConfigSince = "1.0.1";
+
+/// What a config command may carry, checked before anything is kept: {"get":
+/// true}, or {"set": {...}} of 1 to 16 keys, each a string of at most 64
+/// characters, a boolean or an integer, and no stream_url or stream_port
+/// (the stream command's). Empty when it is fine; else why not.
+std::string configShapeError(const Json::Value& request);
+
+/// Whether a config set carries the network (ssid or pass): it is tested by
+/// the bridge, which pauses its uplink, so it is warned while recording.
+bool configTouchesNetwork(const Json::Value& request);
 
 inline constexpr size_t kCommandsKept = 20;           // per bridge, newest kept
 inline constexpr size_t kCommandLogMax = 256 * 1024;  // a log pull's text, kept up to this
@@ -119,8 +156,12 @@ public:
         // for a minute or two after the mask comes off; 15 quiet minutes is
         // its downtime.
         double      night_quiet_s{15 * 60.0};
-        // An update whose answer has not come in this long has failed.
-        double      update_timeout_s{300.0};
+        // Where each bridge's update job is kept, one <sender>.json each, so
+        // a restart reads it back. Empty: in memory only.
+        std::string jobs_dir;
+        // Downloads a release image (startReleaseUpdate). Empty: no release
+        // updates.
+        FeedGet     fetch;
         /// Called after a rebuild that wrote files, off the rebuild's locks:
         /// what landed in <root>/<sender>/ this step. The receiver's seam to
         /// the rest of hms-cpap (a sync of the card folder, the live night).
@@ -154,10 +195,30 @@ public:
     void closed(const Conversation& conv);
 
     /// One command to `sender`: {"cmd": name, ...its arguments} ("url" for
-    /// stream, an optional "n" for logs). 400 for a command or argument the
-    /// bridge does not take, 404 for a bridge never seen; otherwise 200 with
-    /// the req_id and whether it was sent now or waits for the bridge.
+    /// stream, an optional "n" for logs, "get" or "set" for config), and
+    /// "confirm": true once the person saw the recording warning. 400 for a
+    /// command or argument the bridge does not take, 404 for a bridge never
+    /// seen, 409 for config below firmware 1.0.1, 409 with the warning for a
+    /// warned command while the machine records and no confirm; otherwise
+    /// 200 with the req_id and whether it was sent now or waits for the
+    /// bridge.
     CommandAnswer queueCommand(const std::string& sender, const Json::Value& request);
+
+    /// Drops a command still queued (never sent). 404 for a req_id not
+    /// listed, 409 for one already sent.
+    CommandAnswer cancelCommand(uint64_t req_id);
+
+    /// Stops listing a bridge that is away: its row here, its queued
+    /// commands and its update job go; its batches and files stay. 409 while
+    /// it is connected. It comes back as new on its next hello.
+    CommandAnswer forget(const std::string& sender);
+
+    /// Whether the machine behind `sender` is recording now (D5's window).
+    devices::Recording recording(const std::string& sender) const;
+
+    /// The release feed this service reads on each hello and lists for each
+    /// bridge in status(); null: none. It outlives the service.
+    void setReleaseFeed(ReleaseFeed* feed) { feed_ = feed; }
 
     /// Rebuild `sender` now, on the caller's thread (tests, and the start).
     StepReport rebuildNow(const std::string& sender);
@@ -177,13 +238,23 @@ public:
 
     /// One firmware image to `sender`, on its session, now. 400 when the
     /// bytes are not a Sleep Bridge image, 404 for a bridge never seen, 409
-    /// while a night is open on it, while it is offline, or while an update
-    /// runs; otherwise 200 with the req_id and the job as it starts. The
-    /// frames go on a thread of their own; the job (sent bytes, the answer,
-    /// the version the bridge came back with) is in status() and update().
-    CommandAnswer startUpdate(const std::string& sender, const std::string& image);
-    /// The last update job of `sender`, or null.
+    /// while it is offline or an update runs, 409 with the recording warning
+    /// while the machine records and `confirm` is false; otherwise 200 with
+    /// the req_id and the job as it starts. The frames go on a thread of
+    /// their own; the job is in status(), update() and ota().
+    CommandAnswer startUpdate(const std::string& sender, const std::string& image, bool confirm = false,
+                              const std::string& file_name = {});
+    /// The same from the public release for the bridge's board: 409 when
+    /// the feed has no newer release for it (the reason says why: not
+    /// published yet, no board stated, already current). The job starts in
+    /// "preparing": the image is downloaded and checked against the feed's
+    /// size and SHA-256 first, and nothing is sent when it does not match.
+    CommandAnswer startReleaseUpdate(const std::string& sender, bool confirm = false);
+    /// The last update job of `sender`, in the shape scripts read before the
+    /// job object (kept one release), or null.
     Json::Value update(const std::string& sender) const;
+    /// The last update job of `sender` as devices/OtaJob.h's object, or null.
+    Json::Value ota(const std::string& sender) const;
     /// Returns once the running update's frames have all been handed to the
     /// connection (or it failed on the way). Tests, and stop().
     void waitForUpdateSend();
@@ -192,31 +263,31 @@ public:
 
 private:
     struct UpdateJob {
+        devices::OtaJob job;            // what every page reads
         uint64_t    req_id{0};
-        std::string phase{"sending"};   // sending, waiting, restarting, done, failed
-        size_t      total{0};
-        size_t      sent{0};
         ImageInfo   image;
         std::string sha256;
-        std::string fw_before;
-        std::string fw_after;
-        std::string error;
-        std::time_t started_at{0};
         std::time_t sent_at{0};
-        double      sent_mono{0};   // steady clock, for the timeout
         std::time_t answered_at{0};
-        std::time_t ended_at{0};
         Json::Value result{Json::nullValue};
     };
     static Json::Value updateJson(const UpdateJob& j);
-    /// Under mu_: a job waiting past update_timeout_s has failed.
-    void expireUpdate(UpdateJob& j) const;
+    /// Under mu_: a phase change, stamped and written to the job's file.
+    void jobChanged(const std::string& sender, UpdateJob& j);
+    /// Under mu_: the refusals every update start shares; empty answer: none.
+    std::optional<CommandAnswer> updateRefusal(const std::string& sender, bool confirm, bool* recording_now);
+    UpdateJob newJob(const std::string& sender, const std::string& source, const std::string& target_version,
+                     size_t total, bool confirmed_while_recording);
     void sendUpdate(const std::string& sender, std::string image);
+    void fetchAndSend(const std::string& sender, FeedImage img);
+    /// Under mu_: the job of `sender` ends failed.
+    void failJob(const std::string& sender, uint64_t req_id, const std::string& reason, const std::string& detail);
 
     struct Command {
         uint64_t    req_id{0};
         std::string cmd;
-        Json::Value frame;              // what goes down, req_id included
+        Json::Value frame;              // what goes down, req_id included; secrets until sent
+        Json::Value shown;              // its arguments as listed: secrets as "***"
         std::string state{"queued"};    // queued, sent, answered
         std::time_t queued_at{0};
         std::time_t sent_at{0};
@@ -256,6 +327,7 @@ private:
         bool         session{false};   // its own hello came: not a probe
     };
 
+    devices::Recording recordingLocked(const std::string& sender) const;   // mu_ held
     void loop();
     void wake(const std::string& sender);
     void startSession(const std::string& sender, uint64_t conn);
@@ -267,6 +339,7 @@ private:
     RebuilderFactory factory_;
     bool             available_{false};
     BatchStore       store_;
+    ReleaseFeed*     feed_{nullptr};
 
     mutable std::mutex mu_;   // bridges_, conns_, next_conn_, next_req_
     std::map<std::string, Bridge> bridges_;

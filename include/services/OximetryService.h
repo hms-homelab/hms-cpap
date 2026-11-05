@@ -6,6 +6,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <set>
 #include <string>
 #include <vector>
@@ -54,7 +55,23 @@ public:
     /** Get last live reading (from most recent pollLive call). */
     const IO2RingClient::LiveReading& getLastLive() const { return last_live_; }
 
+    /// What the last talk with the ring found, for GET /api/oximetry/status.
+    /// Recorded when this service polls or reads the ring; reading it never
+    /// talks to the ring. checked_at 0: not asked since this start.
+    struct Facts {
+        long long   checked_at = 0;
+        bool        connected = false;
+        int         battery = -1;          // -1: not known
+        long long   last_read_at = 0;      // the last file stored
+        std::string last_file;
+        IO2RingClient::LiveReading live;
+    };
+    Facts facts() const;
+
 private:
+    void noteFacts(bool connected);
+    mutable std::mutex facts_mtx_;
+    Facts facts_;
     std::shared_ptr<IO2RingClient> client_;
     std::shared_ptr<IDatabase> db_;
     std::string cpap_device_id_;

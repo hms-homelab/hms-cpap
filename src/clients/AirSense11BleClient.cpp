@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <cctype>
 #include <chrono>
+#include <ctime>
 #include <iostream>
 #include <map>
 #include <thread>
@@ -82,6 +83,23 @@ bool AirSense11BleClient::paired() const {
 }
 
 bool AirSense11BleClient::pairPending() const { return session_.pairPending(); }
+
+IAirSense11Pairing::Presence AirSense11BleClient::presence() const {
+    Presence p;
+    p.connected    = link_up_;
+    p.therapy      = link_up_ && therapy_;
+    p.streaming    = streaming_;
+    p.last_contact = last_contact_;
+    return p;
+}
+
+bool AirSense11BleClient::busy() const {
+    if (pairPending()) return true;
+    // A pull or a pairing holds the operation lock while it talks to the machine.
+    if (!op_mtx_.try_lock()) return true;
+    op_mtx_.unlock();
+    return false;
+}
 
 // ── adapter, scan, connect ──
 
@@ -232,6 +250,8 @@ bool AirSense11BleClient::connectLink(int timeout_ms) {
             if (v.get<bool>()) {
                 if (discoverGatt() && enableNotifications()) {
                     std::cout << kTag << "connected to " << device_name_ << std::endl;
+                    link_up_      = true;
+                    last_contact_ = static_cast<long long>(std::time(nullptr));
                     return true;
                 }
                 dropLink();
@@ -308,6 +328,7 @@ bool AirSense11BleClient::enableNotifications() {
 }
 
 void AirSense11BleClient::dropLink() {
+    if (link_up_.exchange(false)) last_contact_ = static_cast<long long>(std::time(nullptr));
     session_.onDisconnect();
     if (notify_proxy_) {
         try {
@@ -551,8 +572,13 @@ bool AirSense11BleClient::streamOnce() {
     session_.setStreamHandlers({
         [this, &assembler](const nlohmann::ordered_json& p) {
             if (streaming_) { assembler.onStreamData(p); reports_++; }
+            last_contact_ = static_cast<long long>(std::time(nullptr));
         },
-        [this](bool t) { therapy_ = t; wake_.notify_all(); },
+        [this](bool t) {
+            therapy_      = t;
+            last_contact_ = static_cast<long long>(std::time(nullptr));
+            wake_.notify_all();
+        },
         [this, serial](const as11::RespEvent& e) { writer_->onEvent(serial, e); },
     });
     struct Clear {

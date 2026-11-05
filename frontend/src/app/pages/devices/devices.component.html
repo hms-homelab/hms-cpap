@@ -1,0 +1,387 @@
+<div class="devices">
+  <header class="page-head">
+    <h2>{{ 'devices.title' | translate }}</h2>
+    <p class="subtitle">{{ 'devices.subtitle' | translate }}</p>
+  </header>
+
+  <div class="loading" *ngIf="loading">{{ 'devices.loading' | translate }}</div>
+  <div class="error" *ngIf="loadError">{{ 'devices.loadError' | translate:{ error: loadError } }}</div>
+
+  <!-- Empty: how each kind comes here. -->
+  <section class="empty" *ngIf="!loading && !loadError && devices.length === 0">
+    <h3>{{ 'devices.empty.heading' | translate }}</h3>
+    <p>{{ 'devices.empty.streaming' | translate:{ host: host, port: answer?.stream_port ?? 8894 } }}</p>
+    <p>{{ 'devices.empty.settings' | translate }}</p>
+    <a routerLink="/settings" class="myair-btn secondary">{{ 'devices.empty.openSettings' | translate }}</a>
+  </section>
+
+  <div class="grid">
+    <article class="card" *ngFor="let d of devices; trackBy: trackKey" [attr.data-kind]="d.kind"
+             [class.away]="d.present === 'no'">
+
+      <!-- Header: kind, name, presence, recording. -->
+      <div class="card-head">
+        <i [class]="icon(d.kind)" aria-hidden="true"></i>
+        <div class="titles">
+          <div class="kind">{{ ('devices.kind.' + d.kind) | translate }}</div>
+          <div class="name" *ngIf="renaming !== d.key">
+            <strong>{{ d.name }}</strong>
+            <span class="sub" *ngIf="d.own_name">{{ d.default_name }}</span>
+            <button type="button" class="icon-btn" (click)="startRename(d)" [attr.aria-label]="'devices.rename.button' | translate"
+                    [title]="'devices.rename.button' | translate"><i class="fa-solid fa-pen"></i></button>
+          </div>
+          <div class="rename" *ngIf="renaming === d.key">
+            <input type="text" maxlength="40" [(ngModel)]="renameDraft" [placeholder]="'devices.rename.placeholder' | translate"
+                   (keydown.enter)="saveRename(d)" (keydown.escape)="renaming = ''" />
+            <button type="button" class="myair-btn" (click)="saveRename(d)" [disabled]="busy[d.key]">{{ 'devices.rename.save' | translate }}</button>
+            <button type="button" class="myair-btn secondary" (click)="renaming = ''">{{ 'devices.rename.cancel' | translate }}</button>
+            <div class="hint">{{ 'devices.rename.hint' | translate }}</div>
+          </div>
+        </div>
+        <div class="badges">
+          <span class="badge" [class.connected]="d.present === 'yes'" [class.unknown]="d.present === 'unknown'">
+            {{ ('devices.presence.' + d.present) | translate }}
+          </span>
+          <span class="badge rec" *ngIf="d.recording === 'yes'" [title]="d.recording_reason">{{ 'devices.recording.badge' | translate }}</span>
+          <span class="badge rec-unknown" *ngIf="d.recording === 'unknown' && (d.kind === 'mule' || d.kind === 'sleepbridge')"
+                [title]="d.recording_reason">{{ 'devices.recording.unknownBadge' | translate }}</span>
+          <ng-container *ngIf="d.kind === 'mule'">
+            <span class="badge" *ngIf="d.detail.streaming">{{ 'devices.mule.streaming' | translate }}</span>
+            <span class="badge" *ngIf="d.detail.night_landing">{{ 'devices.mule.landing' | translate }}</span>
+          </ng-container>
+          <span class="badge" *ngIf="d.kind === 'sleepbridge' && d.detail.night_open">{{ 'devices.sleepbridge.writing' | translate }}</span>
+          <span class="badge" *ngIf="d.kind === 'as11_ble' && d.detail.streaming">{{ 'devices.as11.streaming' | translate }}</span>
+        </div>
+      </div>
+
+      <!-- Status lines common to every kind. -->
+      <dl class="lines">
+        <div><dt>{{ 'devices.line.lastHeard' | translate }}</dt>
+          <dd>{{ d.last_heard ? (ms(d.last_heard) | date:'short') : ('devices.line.never' | translate) }}</dd></div>
+
+        <!-- Where it sends now: one plain line (its one action is "Switch back to the cloud"). -->
+        <div *ngIf="d.kind === 'mule' || d.kind === 'sleepbridge'" class="wide"><dd>{{ 'devices.stream.here' | translate }}</dd></div>
+
+        <!-- ── Mule & Miner ── -->
+        <ng-container *ngIf="d.kind === 'mule'">
+          <div *ngIf="d.detail.machine"><dt>{{ 'devices.line.machine' | translate }}</dt><dd>{{ d.detail.machine }}</dd></div>
+          <div *ngIf="d.detail.last_block"><dt>{{ 'devices.mule.lastBlock' | translate }}</dt><dd>{{ ms(d.detail.last_block) | date:'short' }}</dd></div>
+          <div><dt>{{ 'devices.mule.blocks' | translate }}</dt><dd>{{ d.detail.blocks_stored }} / {{ d.detail.blocks_resent }}</dd></div>
+        </ng-container>
+
+        <!-- ── Sleep Bridge ── -->
+        <ng-container *ngIf="d.kind === 'sleepbridge'">
+          <div *ngIf="d.detail.card_machine"><dt>{{ 'devices.line.machine' | translate }}</dt><dd>{{ d.detail.card_machine }}</dd></div>
+          <div *ngIf="d.detail.last_batch"><dt>{{ 'devices.sleepbridge.lastWrite' | translate }}</dt><dd>{{ ms(d.detail.last_batch) | date:'short' }}</dd></div>
+          <div *ngIf="d.detail.chip_id"><dt>{{ 'devices.sleepbridge.chip' | translate }}</dt><dd>{{ d.detail.chip_id }}</dd></div>
+          <div *ngIf="d.detail.rebuild"><dt></dt>
+            <dd>{{ 'devices.sleepbridge.files' | translate:{ complete: d.detail.rebuild.complete_files, held: d.detail.rebuild.held_files } }}</dd></div>
+          <div *ngIf="d.detail.learned as l"><dt>{{ 'devices.sleepbridge.learned' | translate }}</dt>
+            <dd>{{ l.volume_serial }}
+              <span class="badge" [class.connected]="l.verdict === 'latched'">{{ ('devices.sleepbridge.verdict.' + l.verdict) | translate }}</span>
+              <span class="hint" *ngIf="l.reason"> {{ l.reason }}</span></dd></div>
+        </ng-container>
+
+        <!-- ── O2 ring ── -->
+        <ng-container *ngIf="d.kind === 'o2ring'">
+          <div *ngIf="d.detail.through_bridge" class="wide"><dd>{{ 'devices.o2ring.throughBridge' | translate:{ url: d.detail.url } }}</dd></div>
+          <div *ngIf="d.detail.not_compiled" class="wide"><dd class="warn">{{ 'devices.o2ring.notCompiled' | translate }}</dd></div>
+          <ng-container *ngIf="!d.detail.through_bridge && !d.detail.not_compiled">
+            <div *ngIf="d.present === 'unknown'" class="wide"><dd class="hint">{{ 'devices.o2ring.notAsked' | translate }}</dd></div>
+            <div *ngIf="d.present !== 'unknown'"><dt></dt><dd>{{ (d.present === 'yes' ? 'devices.o2ring.connected' : 'devices.o2ring.notConnected') | translate }}</dd></div>
+            <div *ngIf="d.detail.battery >= 0"><dt>{{ 'devices.o2ring.battery' | translate }}</dt><dd>{{ d.detail.battery }}%</dd></div>
+            <div *ngIf="d.detail.live"><dt>{{ 'devices.o2ring.live' | translate }}</dt>
+              <dd>{{ d.detail.live.active ? ('devices.o2ring.liveValue' | translate:{ spo2: d.detail.live.spo2, hr: d.detail.live.hr }) : ('devices.o2ring.notRecording' | translate) }}</dd></div>
+            <div *ngIf="d.detail.last_file"><dt>{{ 'devices.o2ring.lastFile' | translate }}</dt>
+              <dd>{{ d.detail.last_file }} · {{ ms(d.detail.last_read_at) | date:'short' }}</dd></div>
+          </ng-container>
+        </ng-container>
+
+        <!-- ── ez Share / FlashAir ── -->
+        <ng-container *ngIf="d.kind === 'ezshare' || d.kind === 'flashair'">
+          <div><dt>{{ 'devices.source.address' | translate }}</dt><dd class="mono">{{ d.detail.url }}</dd></div>
+          <div *ngIf="d.present === 'unknown'" class="wide"><dd class="hint">{{ 'devices.source.notYet' | translate }}</dd></div>
+          <div *ngIf="d.detail.health"><dt>{{ 'devices.source.health' | translate }}</dt>
+            <dd [class.warn]="d.present === 'no'">{{ d.detail.health }}</dd></div>
+          <div *ngIf="d.detail.consecutive_failures"><dt>{{ 'devices.source.failures' | translate }}</dt><dd>{{ d.detail.consecutive_failures }}</dd></div>
+          <div *ngIf="d.detail.last_sync as s"><dt>{{ 'devices.source.lastSync' | translate }}</dt>
+            <dd>{{ ms(s.at) | date:'short' }}, {{ (s.answered ? 'devices.source.answered' : 'devices.source.notAnswered') | translate }}</dd></div>
+          <div><dt>{{ 'devices.source.format' | translate }}</dt><dd>{{ d.detail.format }}</dd></div>
+          <div *ngIf="d.kind === 'ezshare'"><dt>{{ 'devices.source.range' | translate }}</dt>
+            <dd>{{ (d.detail.range ? 'devices.source.on' : 'devices.source.off') | translate }}</dd></div>
+          <div *ngIf="d.detail.bridge as b" class="wide"><dd>{{ 'devices.source.bridge' | translate:{ serial: b.serial, fw: b.fw } }}</dd></div>
+        </ng-container>
+
+        <!-- ── AirSense 11 over Bluetooth ── -->
+        <ng-container *ngIf="d.kind === 'as11_ble'">
+          <div *ngIf="d.detail.not_compiled" class="wide"><dd class="warn">{{ 'devices.as11.notCompiled' | translate }}</dd></div>
+          <ng-container *ngIf="!d.detail.not_compiled">
+            <div><dt></dt><dd>{{ (d.detail.paired ? 'devices.as11.paired' : 'devices.as11.notPaired') | translate }}</dd></div>
+            <div><dt></dt><dd>{{ (d.detail.connected ? 'devices.as11.connected' : 'devices.as11.notConnected') | translate }}
+              <span class="badge rec" *ngIf="d.detail.therapy === true">{{ 'devices.as11.therapy' | translate }}</span></dd></div>
+            <div *ngIf="d.detail.last_contact"><dt>{{ 'devices.as11.lastContact' | translate }}</dt><dd>{{ ms(d.detail.last_contact) | date:'short' }}</dd></div>
+            <div *ngIf="d.detail.last_summary_at"><dt>{{ 'devices.as11.lastSummary' | translate }}</dt>
+              <dd>{{ ms(d.detail.last_summary_at) | date:'short' }}
+                <span *ngIf="d.detail.last_summary_day"> {{ 'devices.as11.summaryDay' | translate:{ day: d.detail.last_summary_day } }}</span></dd></div>
+            <div *ngIf="d.detail.last_summary_error" class="wide"><dd class="warn">{{ 'devices.as11.summaryError' | translate:{ error: d.detail.last_summary_error } }}</dd></div>
+            <div><dt>{{ 'devices.as11.address' | translate }}</dt><dd class="mono">{{ d.detail.address || ('devices.as11.anyMachine' | translate) }}</dd></div>
+          </ng-container>
+        </ng-container>
+
+        <!-- The Firmware line, with Update and its progress (Mule & Miner, Sleep Bridge). -->
+        <div *ngIf="d.kind === 'mule' || d.kind === 'sleepbridge'" class="fw-line">
+          <dt>{{ 'devices.line.firmware' | translate }}</dt>
+          <dd>
+            <span *ngIf="d.kind === 'mule'">{{ 'devices.mule.firmwareLine' | translate:{ mule: d.detail.fw || '?', miner: d.detail.miner_fw || '?' } }}</span>
+            <span *ngIf="d.kind === 'sleepbridge'">{{ d.version || '?' }}</span>
+            <ng-container *ngIf="d.kind === 'sleepbridge' && bridgeRelease(d) as r">
+              <div class="hint fw-note" *ngIf="r.key && !r.button">{{ r.key | translate:r.params }}</div>
+            </ng-container>
+            <div class="hint fw-note" *ngIf="d.kind === 'mule' && d.detail.firmware?.manifest_error">{{ 'devices.mule.manifestUnavailable' | translate }}</div>
+            <app-ota-progress
+              [job]="d.detail.ota"
+              [available]="d.kind === 'mule' ? muleOffer(d) : (bridgeRelease(d).button ? d.detail.release.version : '')"
+              [upToDate]="d.kind === 'mule' ? (!!d.detail.firmware && !muleOffer(d) && !d.detail.firmware.manifest_error) : false"
+              [canUpdate]="canUpdate(d)"
+              [busy]="!!busy[d.key]"
+              [warning]="warningOf(d)"
+              [now]="now"
+              [dismissed]="dismissed"
+              (update)="update(d)"
+              (updateAnyway)="updateAnyway(d)"
+              (notNow)="notNow(d)"
+              (tryAgain)="tryAgain(d)">
+            </app-ota-progress>
+          </dd>
+        </div>
+      </dl>
+
+      <!-- Held-night banner (Sleep Bridge). -->
+      <div class="banner" *ngIf="d.kind === 'sleepbridge' && d.detail.rebuild?.holding">
+        {{ 'devices.sleepbridge.holding' | translate:{ reason: d.detail.rebuild.holding_reason } }}
+      </div>
+      <div class="hint" *ngIf="d.kind === 'sleepbridge' && d.detail.learned?.verdict === 'waiting'">{{ 'devices.sleepbridge.learnedWaitingHint' | translate }}</div>
+      <div class="hint" *ngIf="d.kind === 'sleepbridge' && d.detail.learned?.verdict === 'mismatch'">{{ 'devices.sleepbridge.learnedMismatchHint' | translate }}</div>
+
+      <!-- Mule & Miner: its two Bluetooth switches. -->
+      <div class="switches" *ngIf="d.kind === 'mule' && d.detail.state">
+        <ng-container *ngFor="let k of ['as11_enabled', 'o2_enabled']">
+          <label class="switch" *ngIf="switchOf(d, $any(k)) as s">
+            <ng-container *ngIf="s.on !== null">
+              <input type="checkbox" [checked]="s.on" [disabled]="busy[d.key] || !!s.pending && s.pending !== 'devices.mule.switchRefused'"
+                     (change)="toggle(d, $any(k), $any($event.target).checked)" />
+              {{ (k === 'as11_enabled' ? 'devices.mule.as11Bluetooth' : 'devices.mule.o2Ring') | translate }}
+              <span class="hint" *ngIf="s.pending">{{ s.pending | translate:{ error: '' } }}</span>
+            </ng-container>
+          </label>
+        </ng-container>
+      </div>
+
+      <!-- The in-page question: a confirm, or the recording warning. -->
+      <div class="restart-banner" *ngIf="confirms.get(d.key) as p" [class.recording]="p.mode === 'recording'" role="alert">
+        <span class="restart-text">
+          <ng-container *ngIf="p.mode === 'recording'">
+            <strong>{{ 'devices.confirm.recordingTitle' | translate }}</strong> {{ p.textKey | translate }}
+            <span class="why" *ngIf="p.reason">{{ 'devices.confirm.reason' | translate:{ reason: p.reason } }}</span>
+          </ng-container>
+          <ng-container *ngIf="p.mode === 'confirm'">{{ p.textKey | translate:p.params }}</ng-container>
+        </span>
+        <div class="restart-actions">
+          <button type="button" class="myair-btn danger" (click)="yes(d)">
+            {{ (p.mode === 'recording' ? 'devices.confirm.recordingAnyway'
+                : p.action === 'forget' ? 'devices.forget.yes'
+                : p.action === 'as11_forget' ? 'devices.as11.forgetPairingYes'
+                : 'devices.confirm.recordingAnyway') | translate }}
+          </button>
+          <button type="button" class="myair-btn secondary" (click)="no(d)">
+            {{ (p.mode === 'recording' ? 'devices.confirm.notNow' : 'devices.confirm.cancel') | translate }}
+          </button>
+        </div>
+      </div>
+
+      <!-- Actions row. -->
+      <div class="actions" *ngIf="!confirms.get(d.key)">
+        <ng-container *ngIf="d.kind === 'mule' || d.kind === 'sleepbridge'">
+          <span class="split" *ngIf="d.kind === 'mule'">
+            <select [(ngModel)]="restartTarget[d.key]" [ngModelOptions]="{standalone: true}" [attr.aria-label]="'devices.action.restartTarget' | translate">
+              <option [ngValue]="undefined">{{ 'devices.mule.both' | translate }}</option>
+              <option value="mule">{{ 'devices.mule.mule' | translate }}</option>
+              <option value="miner">{{ 'devices.mule.miner' | translate }}</option>
+            </select>
+            <button type="button" class="myair-btn" (click)="restart(d)" [disabled]="busy[d.key]">{{ 'devices.action.restart' | translate }}</button>
+          </span>
+          <button *ngIf="d.kind === 'sleepbridge'" type="button" class="myair-btn" (click)="restart(d)" [disabled]="busy[d.key]">{{ 'devices.action.restart' | translate }}</button>
+          <button type="button" class="myair-btn secondary" (click)="askCloud(d)" [disabled]="busy[d.key]">{{ 'devices.action.backToCloud' | translate }}</button>
+          <button type="button" class="myair-btn danger" (click)="askReset(d)" [disabled]="busy[d.key]">{{ 'devices.action.resetWifi' | translate }}</button>
+        </ng-container>
+
+        <ng-container *ngIf="d.kind === 'o2ring' && !d.detail.through_bridge">
+          <button type="button" class="myair-btn" (click)="readRing(d)" [disabled]="busy[d.key] || d.detail.not_compiled">{{ 'devices.o2ring.readNow' | translate }}</button>
+          <button type="button" class="myair-btn secondary" (click)="checkAdapter(d)">{{ 'devices.o2ring.checkAdapter' | translate }}</button>
+        </ng-container>
+        <a *ngIf="d.kind === 'o2ring'" routerLink="/upload" class="myair-btn secondary">{{ 'devices.o2ring.importCsv' | translate }}</a>
+
+        <ng-container *ngIf="d.kind === 'ezshare' || d.kind === 'flashair'">
+          <button type="button" class="myair-btn" (click)="testCard(d)" [disabled]="busy[d.key]">
+            {{ (busy[d.key] ? 'devices.source.testing' : 'devices.source.test') | translate }}</button>
+          <button type="button" class="myair-btn secondary" (click)="syncNow(d)">{{ 'devices.source.sync' | translate }}</button>
+          <button type="button" class="myair-btn secondary" *ngIf="d.present === 'no'" (click)="find(d)" [disabled]="busy[d.key]">{{ 'devices.source.find' | translate }}</button>
+        </ng-container>
+
+        <ng-container *ngIf="d.kind === 'as11_ble' && !d.detail.not_compiled">
+          <button type="button" class="myair-btn" (click)="as11Pull(d)" [disabled]="!d.detail.paired">{{ 'devices.as11.pull' | translate }}</button>
+          <button type="button" class="myair-btn secondary" *ngIf="!d.detail.pairing" (click)="as11PairStart()" [disabled]="as11Pairing">
+            {{ (as11Pairing ? 'devices.as11.searching' : d.detail.paired ? 'devices.as11.pairAgain' : 'devices.as11.pair') | translate }}</button>
+        </ng-container>
+      </div>
+      <div class="hint offline" *ngIf="(d.kind === 'mule' || d.kind === 'sleepbridge') && d.present !== 'yes'">{{ 'devices.action.offline' | translate }}</div>
+
+      <!-- The AirSense 11 pairing, inline, with its warning. -->
+      <div class="inline-form" *ngIf="d.kind === 'as11_ble' && !d.detail.not_compiled">
+        <div class="hint">{{ 'devices.as11.pairNote' | translate }}</div>
+        <ng-container *ngIf="d.detail.pairing">
+          <label>{{ 'devices.as11.code' | translate }}
+            <input type="text" inputmode="numeric" autocomplete="one-time-code" [(ngModel)]="as11Code" placeholder="0000" /></label>
+          <button type="button" class="myair-btn" (click)="as11PairConfirm()" [disabled]="as11Pairing || !as11Code">
+            {{ (as11Pairing ? 'devices.as11.confirming' : 'devices.as11.confirm') | translate }}</button>
+          <button type="button" class="myair-btn secondary" (click)="as11PairCancel()">{{ 'devices.as11.cancel' | translate }}</button>
+          <div class="hint">{{ 'devices.as11.codeHint' | translate }}</div>
+        </ng-container>
+        <div class="note" [class.err]="as11Err" *ngIf="as11Message">{{ as11Message }}</div>
+      </div>
+
+      <div class="note" *ngIf="notes[d.key] as n" [class.err]="n.err">{{ n.text }}</div>
+
+      <!-- Recent commands, the last 5, with Cancel on a waiting one. -->
+      <div class="commands" *ngIf="(d.kind === 'mule' || d.kind === 'sleepbridge') && commands(d).length">
+        <div class="sub-head">{{ 'devices.commands.heading' | translate }}</div>
+        <ul>
+          <li *ngFor="let c of commands(d).slice(0, open[d.key] ? 10 : 5)">
+            <span class="cmd">{{ c.cmd }}</span>
+            <span class="state" [class.err]="stateOf(c).key.endsWith('refused')">{{ stateOf(c).key | translate:stateOf(c).params }}</span>
+            <button type="button" class="link" *ngIf="c.state === 'queued'" (click)="cancelCommand(d, c)">{{ 'devices.commands.cancel' | translate }}</button>
+          </li>
+        </ul>
+      </div>
+
+      <!-- More. -->
+      <button type="button" class="more-toggle" (click)="open[d.key] = !open[d.key]" [attr.aria-expanded]="!!open[d.key]">
+        <i class="fa-solid" [class.fa-chevron-down]="!open[d.key]" [class.fa-chevron-up]="open[d.key]"></i>
+        {{ (open[d.key] ? 'devices.less' : 'devices.more') | translate }}
+      </button>
+
+      <div class="more" *ngIf="open[d.key]">
+        <!-- Logs, restate (Mule & Miner, Sleep Bridge). -->
+        <ng-container *ngIf="d.kind === 'mule' || d.kind === 'sleepbridge'">
+          <div class="sub-head">{{ 'devices.logs.heading' | translate }}</div>
+          <div class="row">
+            <button type="button" class="myair-btn secondary" (click)="logs(d)" [disabled]="busy[d.key]">{{ 'devices.logs.get' | translate }}</button>
+            <button type="button" class="myair-btn secondary" (click)="restate(d)" [disabled]="busy[d.key]">
+              {{ (d.kind === 'mule' ? 'devices.mule.restateLabel' : 'devices.sleepbridge.restateLabel') | translate }}</button>
+          </div>
+          <div class="hint" *ngIf="waitingFor(d, 'logs') && !d.detail.last_logs">{{ 'devices.logs.waiting' | translate }}</div>
+          <ng-container *ngIf="d.detail.last_logs as l">
+            <pre class="logs">{{ l.text }}</pre>
+            <div class="row">
+              <button type="button" class="myair-btn secondary" (click)="copyLogs(d)">{{ 'devices.logs.copy' | translate }}</button>
+              <button type="button" class="myair-btn secondary" (click)="downloadLogs(d)">{{ 'devices.logs.download' | translate }}</button>
+              <span class="hint" *ngIf="l.cut">{{ 'devices.logs.cut' | translate }}</span>
+            </div>
+          </ng-container>
+        </ng-container>
+
+        <!-- Mule & Miner: pairing its AirSense 11. -->
+        <ng-container *ngIf="d.kind === 'mule'">
+          <div class="sub-head">{{ 'devices.mule.pair' | translate }}</div>
+          <div class="hint">{{ 'devices.mule.pairHint' | translate }}</div>
+          <div class="row">
+            <button type="button" class="myair-btn secondary" (click)="pairStart(d)" [disabled]="busy[d.key]">{{ 'devices.mule.pair' | translate }}</button>
+            <input type="text" inputmode="numeric" [(ngModel)]="pairCode[d.key]" [placeholder]="'devices.mule.pairCode' | translate" />
+            <button type="button" class="myair-btn secondary" (click)="pairSend(d)" [disabled]="!pairCode[d.key]">{{ 'devices.mule.pairSend' | translate }}</button>
+            <button type="button" class="link" (click)="pairCancel(d)">{{ 'devices.mule.pairCancel' | translate }}</button>
+          </div>
+        </ng-container>
+
+        <!-- Sleep Bridge: its settings, every key, no further fold. -->
+        <ng-container *ngIf="d.kind === 'sleepbridge'">
+          <div class="sub-head">{{ 'devices.config.heading' | translate }}</div>
+          <div class="hint warn" *ngIf="!d.detail.config_capable">{{ 'devices.config.needs101' | translate }}</div>
+          <ng-container *ngIf="d.detail.config_capable">
+            <div class="row">
+              <button type="button" class="myair-btn secondary" (click)="configGet(d)" [disabled]="busy[d.key]">
+                {{ (waitingFor(d, 'config') ? 'devices.config.reading' : 'devices.config.read') | translate }}</button>
+              <ng-container *ngIf="pendingKeys(d).length">
+                <span class="hint">{{ 'devices.config.pending' | translate:{ keys: pendingKeys(d).join(', ') } }}</span>
+                <button type="button" class="myair-btn" (click)="restartToApply(d)">{{ 'devices.config.restartToApply' | translate }}</button>
+              </ng-container>
+            </div>
+            <ng-container *ngIf="configTable(d) as table">
+              <div class="risks" *ngIf="table.risks.length">
+                <strong>{{ 'devices.config.risksTitle' | translate }}</strong>
+                <div *ngFor="let r of table.risks">{{ riskText(r) }}</div>
+              </div>
+              <div class="hint" *ngIf="!table.read">{{ 'devices.config.notRead' | translate }}</div>
+              <table class="config">
+                <thead><tr><th>{{ 'devices.config.key' | translate }}</th><th>{{ 'devices.config.value' | translate }}</th>
+                  <th>{{ 'devices.config.newValue' | translate }}</th></tr></thead>
+                <tbody>
+                  <tr *ngFor="let row of table.rows" [class.pending]="row.pending">
+                    <td>{{ ('devices.config.names.' + row.key) | translate }}
+                      <span class="hint block" *ngIf="row.nextBoot">{{ 'devices.config.nextBoot' | translate }}</span></td>
+                    <td class="mono">{{ row.secret ? '' : (row.type === 'boolean' && row.value ? (('devices.config.' + row.value) | translate) : row.value) }}</td>
+                    <td>
+                      <select *ngIf="row.type === 'boolean'" [(ngModel)]="edits(d)[row.key]" [ngModelOptions]="{standalone: true}">
+                        <option [ngValue]="undefined"></option>
+                        <option value="true">{{ 'devices.config.true' | translate }}</option>
+                        <option value="false">{{ 'devices.config.false' | translate }}</option>
+                      </select>
+                      <input *ngIf="row.type !== 'boolean'" [type]="row.secret ? 'password' : (row.type === 'number' ? 'text' : 'text')"
+                             [attr.inputmode]="row.type === 'number' ? 'numeric' : null" autocomplete="off"
+                             [(ngModel)]="edits(d)[row.key]" [ngModelOptions]="{standalone: true}" />
+                      <span class="hint block" *ngIf="row.key === 'pass'">{{ 'devices.config.passwordHint' | translate }}</span>
+                      <span class="hint block" *ngIf="row.secret && row.key !== 'pass'">{{ 'devices.config.secretHint' | translate }}</span>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+              <div class="row">
+                <button type="button" class="myair-btn" (click)="configSend(d)" [disabled]="busy[d.key]">{{ 'devices.config.send' | translate }}</button>
+              </div>
+            </ng-container>
+          </ng-container>
+        </ng-container>
+
+        <!-- Firmware from a file (Mule & Miner, Sleep Bridge). -->
+        <ng-container *ngIf="d.kind === 'mule' || d.kind === 'sleepbridge'">
+          <div class="sub-head">{{ 'devices.ota.updateFromFile' | translate }}</div>
+          <div class="row">
+            <select *ngIf="d.kind === 'mule'" [(ngModel)]="fileTarget[d.key]" [ngModelOptions]="{standalone: true}">
+              <option [ngValue]="undefined">{{ 'devices.mule.mule' | translate }}</option>
+              <option value="miner">{{ 'devices.mule.miner' | translate }}</option>
+            </select>
+            <input type="file" accept=".bin" (change)="file(d, $event)" [disabled]="!canUpdate(d)" />
+          </div>
+          <div class="hint">{{ (d.kind === 'mule' ? 'devices.mule.fileHint' : 'devices.sleepbridge.fileHint') | translate }}</div>
+        </ng-container>
+
+        <!-- Find cards (also offered above when the card does not answer). -->
+        <ng-container *ngIf="(d.kind === 'ezshare' || d.kind === 'flashair') && d.present !== 'no'">
+          <div class="row"><button type="button" class="myair-btn secondary" (click)="find(d)" [disabled]="busy[d.key]">{{ 'devices.source.find' | translate }}</button></div>
+        </ng-container>
+
+        <!-- AirSense 11: forget the pairing. -->
+        <ng-container *ngIf="d.kind === 'as11_ble' && !d.detail.not_compiled && d.detail.paired">
+          <div class="row"><button type="button" class="myair-btn danger" (click)="askAs11Forget(d)">{{ 'devices.as11.forgetPairing' | translate }}</button></div>
+        </ng-container>
+
+        <!-- Rename and forget. -->
+        <div class="row">
+          <button type="button" class="myair-btn secondary" (click)="startRename(d)">{{ 'devices.rename.button' | translate }}</button>
+          <span *ngIf="d.forgettable" [title]="d.present !== 'no' ? ('devices.forget.disabled' | translate) : ''">
+            <button type="button" class="myair-btn danger" (click)="askForget(d)" [disabled]="d.present !== 'no'">{{ 'devices.forget.button' | translate }}</button>
+          </span>
+        </div>
+      </div>
+    </article>
+  </div>
+</div>

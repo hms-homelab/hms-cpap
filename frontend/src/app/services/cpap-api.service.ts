@@ -5,6 +5,7 @@ import { DashboardData, SessionListItem, SessionDetail, SessionEvent, EventRow, 
 import { AppConfig, DiscoveredDevice } from '../models/config.model';
 import { EquipmentType, EquipmentProfile, EquipmentItem, EquipmentItemPayload } from '../models/equipment.model';
 import { CleaningTask, CleaningTaskType, CleaningSuggestResult } from '../models/cleaning.model';
+import type { DevicesAnswer } from '../pages/devices/devices-model';
 
 @Injectable({ providedIn: 'root' })
 export class CpapApiService {
@@ -146,17 +147,70 @@ export class CpapApiService {
     return this.http.post('/api/mule/command', { serial, cmd, ...args });
   }
 
-  /** From the published manifest: mule, miner or both. */
-  startMuleUpdate(serial: string, target: 'mule' | 'miner' | 'both'): Observable<any> {
-    return this.http.post(`/api/mule/${encodeURIComponent(serial)}/update`, { target });
+  /** From the published manifest: mule, miner or both. `confirm`: past the recording warning. */
+  startMuleUpdate(serial: string, target: 'mule' | 'miner' | 'both', confirm = false): Observable<any> {
+    return this.http.post(`/api/mule/${encodeURIComponent(serial)}/update`, confirm ? { target, confirm } : { target });
   }
 
   /** An image file the owner has, for one of the two. */
-  uploadMuleImage(serial: string, target: 'mule' | 'miner', file: File): Observable<any> {
+  uploadMuleImage(serial: string, target: 'mule' | 'miner', file: File, confirm = false): Observable<any> {
     const form = new FormData();
     form.append('target', target);
+    if (confirm) form.append('confirm', 'true');
     form.append('image', file, file.name);
     return this.http.post(`/api/mule/${encodeURIComponent(serial)}/update`, form);
+  }
+
+  /** A command still queued, taken back before it is sent (409 once sent). */
+  cancelMuleCommand(reqId: number): Observable<any> {
+    return this.http.delete('/api/mule/command', { params: { req_id: String(reqId) } });
+  }
+
+  cancelSleepBridgeCommand(reqId: number): Observable<any> {
+    return this.http.delete('/api/sleepbridge/command', { params: { req_id: String(reqId) } });
+  }
+
+  /// SDD-062: every device this hms-cpap reads or talks to, in one read.
+  /// `fresh` also reads the published versions now (the page's first load).
+  getDevices(fresh = false): Observable<DevicesAnswer> {
+    return this.http.get<DevicesAnswer>('/api/devices', fresh ? { params: { fresh: '1' } } : {});
+  }
+
+  /** A local name; '' clears it. Never sent to the device. */
+  renameDevice(kind: string, id: string, name: string): Observable<any> {
+    return this.http.put(`/api/devices/${encodeURIComponent(kind)}/${encodeURIComponent(id)}/name`, { name });
+  }
+
+  /** Stop listing an away Mule & Miner or Sleep Bridge. Its data stays. */
+  forgetDevice(kind: string, id: string): Observable<any> {
+    return this.http.delete(`/api/devices/${encodeURIComponent(kind)}/${encodeURIComponent(id)}`);
+  }
+
+  /** The public release for one bridge, read now. */
+  getSleepBridgeRelease(sender: string): Observable<any> {
+    return this.http.get('/api/sleepbridge/release', { params: { sender } });
+  }
+
+  /** The public release, downloaded, checked and sent to one bridge. */
+  startSleepBridgeRelease(sender: string, confirm = false): Observable<any> {
+    return this.http.post(`/api/sleepbridge/${encodeURIComponent(sender)}/update`,
+                          confirm ? { source: 'release', confirm } : { source: 'release' });
+  }
+
+  /** The machine's summary, pulled now (SDD-062). */
+  as11Pull(): Observable<any> {
+    return this.http.post('/api/airsense11/ble/pull', {});
+  }
+
+  /** The saved AirSense 11 pairing removed. */
+  as11ForgetPairing(): Observable<any> {
+    return this.http.delete('/api/airsense11/ble/pairing');
+  }
+
+  /** The card at its saved address, probed now: an ez Share's listing, or a FlashAir's own. */
+  testSource(transport: 'ezshare' | 'flashair'): Observable<{ status: string; url: string; error?: string;
+                                                              bridge_serial?: string; bridge_fw?: string }> {
+    return this.http.get<any>('/api/config/test-ezshare', { params: { transport } });
   }
 
   /** The Sleep Bridges streaming to this host (docs/SLEEP_BRIDGE_LOCAL_STREAM.md). */
@@ -165,8 +219,9 @@ export class CpapApiService {
   }
 
   /** A firmware image file to one bridge, sent over its own stream connection. */
-  uploadSleepBridgeImage(sender: string, file: File): Observable<any> {
+  uploadSleepBridgeImage(sender: string, file: File, confirm = false): Observable<any> {
     const fd = new FormData();
+    if (confirm) fd.append('confirm', 'true');
     fd.append('file', file, file.name);
     return this.http.post(`/api/sleepbridge/${encodeURIComponent(sender)}/update`, fd);
   }

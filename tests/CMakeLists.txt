@@ -188,6 +188,9 @@ set(TEST_SOURCES
     mule/test_MuleReceiver.cpp
     # Its firmware updates over the LAN: a fake unit endpoint and manifest.
     mule/test_MuleFirmware.cpp
+    # The Devices page's one read, its names and forgotten devices, and the
+    # update job object.
+    devices/test_Devices.cpp
 )
 
 # The supervisor's Qt-free core, compiled straight into run_tests. These files

@@ -74,7 +74,11 @@ public:
             return true;
         });
     }
-    ~FakeUnit() { svc_.closed(conn_); }
+    ~FakeUnit() { close(); }
+    void close() {
+        if (conn_) svc_.closed(conn_);
+        conn_ = 0;
+    }
 
     void text(const Json::Value& v) { svc_.onText(conn_, compact(v)); }
 
@@ -619,6 +623,7 @@ TEST_F(MuleReceiverTest, CommandsGoDownOneAtATimeAndTheirResultsComeBack) {
     Json::Value back(Json::objectValue);
     back["cmd"]     = "config";
     back["hms_url"] = "";
+    back["confirm"] = true;   // the unit is streaming: the person saw the warning
     const auto b = svc_->queueCommand(kUnit, back);
     ASSERT_EQ(b.status, 200) << compact(b.body);
     EXPECT_EQ(b.body["command"]["state"].asString(), "queued") << "one command in flight";
@@ -680,8 +685,9 @@ TEST_F(MuleReceiverTest, RebootDoesNotHoldTheNextCommandAndOfflineCommandsWait) 
     FakeUnit unit(*svc_);
     unit.hello();
     Json::Value reboot(Json::objectValue);
-    reboot["cmd"]    = "reboot";
-    reboot["target"] = "miner";
+    reboot["cmd"]     = "reboot";
+    reboot["target"]  = "miner";
+    reboot["confirm"] = true;
     ASSERT_EQ(svc_->queueCommand(kUnit, reboot).status, 200);
     Json::Value restate(Json::objectValue);
     restate["cmd"] = "restate";
@@ -694,7 +700,8 @@ TEST_F(MuleReceiverTest, RebootDoesNotHoldTheNextCommandAndOfflineCommandsWait) 
 TEST_F(MuleReceiverTest, AQueuedCommandGoesOnTheNextSession) {
     { FakeUnit unit(*svc_); unit.hello(); }   // seen, then gone
     Json::Value reset(Json::objectValue);
-    reset["cmd"] = "reset";
+    reset["cmd"]     = "reset";
+    reset["confirm"] = true;
     const auto a = svc_->queueCommand(kUnit, reset);
     ASSERT_EQ(a.status, 200);
     EXPECT_EQ(a.body["command"]["state"].asString(), "queued");
@@ -735,15 +742,60 @@ TEST_F(MuleReceiverTest, OnlyTheAllowedCommandsAndArgumentsAreTaken) {
     EXPECT_TRUE(unit.of("cmd").empty());
     EXPECT_EQ(svc_->queueCommand("FE-C3-99999999", parse(R"({"cmd":"restate"})")).status, 404);
 
-    EXPECT_EQ(status(R"({"cmd":"config","config":{"hms_url":"hmscpap.local"}})"), 200);
+    // The unit streams: each of these is confirmed past the warning.
+    EXPECT_EQ(status(R"({"cmd":"config","config":{"hms_url":"hmscpap.local"},"confirm":true})"), 200);
     EXPECT_EQ(compact(unit.of("cmd").back()["config"]), R"({"hms_url":"hmscpap.local"})");
     // The port is its own field: with the address, or alone.
     unit.answer(unit.of("cmd").back()["req_id"].asUInt64(), true);
-    EXPECT_EQ(status(R"({"cmd":"config","hms_url":"192.168.1.20","hms_port":9000})"), 200);
+    EXPECT_EQ(status(R"({"cmd":"config","hms_url":"192.168.1.20","hms_port":9000,"confirm":true})"), 200);
     EXPECT_EQ(compact(unit.of("cmd").back()["config"]), R"({"hms_port":9000,"hms_url":"192.168.1.20"})");
     unit.answer(unit.of("cmd").back()["req_id"].asUInt64(), true);
-    EXPECT_EQ(status(R"({"cmd":"config","config":{"hms_port":8894}})"), 200);
+    EXPECT_EQ(status(R"({"cmd":"config","config":{"hms_port":8894},"confirm":true})"), 200);
     EXPECT_EQ(compact(unit.of("cmd").back()["config"]), R"({"hms_port":8894})");
+}
+
+// SDD-062 D3: what restarts the unit or its miner is warned while the machine
+// records, nothing sent; confirmed, it goes at once. Reads never warn.
+TEST_F(MuleReceiverTest, RestartsAreWarnedWhileRecordingAndSentOnConfirm) {
+    FakeUnit unit(*svc_);
+    unit.hello(/*streaming=*/true);
+    EXPECT_EQ(svc_->recording(kUnit).state, "yes");
+    for (const char* warned : {R"({"cmd":"reboot"})", R"({"cmd":"reset"})", R"({"cmd":"config","hms_url":""})",
+                               R"({"cmd":"config","o2_enabled":false})"}) {
+        const auto a = svc_->queueCommand(kUnit, parse(warned));
+        EXPECT_EQ(a.status, 409) << warned;
+        EXPECT_EQ(a.body["warning"].asString(), "recording");
+        EXPECT_NE(a.body["reason"].asString().find("streaming"), std::string::npos);
+    }
+    EXPECT_TRUE(unit.of("cmd").empty());
+    EXPECT_EQ(svc_->queueCommand(kUnit, parse(R"({"cmd":"logs"})")).status, 200);
+    unit.answer(unit.of("cmd").back()["req_id"].asUInt64(), true);
+    EXPECT_EQ(svc_->queueCommand(kUnit, parse(R"({"cmd":"reboot","confirm":true})")).status, 200);
+    EXPECT_EQ(unit.of("cmd").back()["cmd"].asString(), "reboot");
+    EXPECT_FALSE(unit.of("cmd").back().isMember("confirm")) << "the unit's frame is unchanged";
+}
+
+TEST_F(MuleReceiverTest, CancelAQueuedCommandAndForgetAnAwayUnit) {
+    { FakeUnit unit(*svc_); unit.hello(false); }   // seen, then gone
+    const auto a = svc_->queueCommand(kUnit, parse(R"({"cmd":"restate"})"));
+    ASSERT_EQ(a.body["command"]["state"].asString(), "queued");
+    EXPECT_EQ(svc_->cancelCommand(a.body["req_id"].asUInt64()).status, 200);
+    EXPECT_EQ(svc_->cancelCommand(a.body["req_id"].asUInt64()).status, 404);
+    // Forget: refused while connected, then the row and its queue go.
+    FakeUnit unit(*svc_);
+    unit.hello(false);
+    EXPECT_EQ(svc_->forget(kUnit).status, 409);
+    unit.close();
+    svc_->queueCommand(kUnit, parse(R"({"cmd":"restate"})"));
+    const auto f = svc_->forget(kUnit);
+    EXPECT_EQ(f.status, 200);
+    EXPECT_EQ(f.body["dropped_queued"].asUInt64(), 1u);
+    EXPECT_TRUE(svc_->status()["units"].empty());
+    // Back on its next hello, as new, with nothing sent from before.
+    FakeUnit again(*svc_);
+    again.hello(false);
+    EXPECT_EQ(svc_->status()["units"].size(), 1u);
+    EXPECT_TRUE(again.of("cmd").empty());
 }
 
 TEST_F(MuleReceiverTest, TheBluetoothSwitchesGoDownAsTheUnitsOwnConfigAndItsStateShowsThem) {
@@ -755,7 +807,9 @@ TEST_F(MuleReceiverTest, TheBluetoothSwitchesGoDownAsTheUnitsOwnConfigAndItsStat
 
     // Top-level or under config, the frame is the unit's own shape: one key.
     auto status = [&](const std::string& json) { return svc_->queueCommand(kUnit, parse(json)).status; };
-    EXPECT_EQ(status(R"({"cmd":"config","as11_enabled":false})"), 200);
+    // The unit streams, so the switch (the miner restarts) is confirmed.
+    EXPECT_EQ(status(R"({"cmd":"config","as11_enabled":false,"confirm":true})"), 200);
+    ASSERT_FALSE(unit.of("cmd").empty());
     const auto a = unit.of("cmd").back();
     EXPECT_EQ(a["cmd"].asString(), "config");
     EXPECT_EQ(compact(a["config"]), R"({"as11_enabled":false})");
@@ -763,7 +817,7 @@ TEST_F(MuleReceiverTest, TheBluetoothSwitchesGoDownAsTheUnitsOwnConfigAndItsStat
     unit.answer(a["req_id"].asUInt64(), true);
     EXPECT_EQ(unitStatus()["commands"][0]["state"].asString(), "answered");
 
-    EXPECT_EQ(status(R"({"cmd":"config","config":{"o2_enabled":false}})"), 200);
+    EXPECT_EQ(status(R"({"cmd":"config","config":{"o2_enabled":false},"confirm":true})"), 200);
     const auto b = unit.of("cmd").back();
     EXPECT_EQ(compact(b["config"]), R"({"o2_enabled":false})");
     // An older firmware refuses the key; the refusal comes back as sent.

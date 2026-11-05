@@ -3,6 +3,7 @@
 #include "utils/OximetryDevice.h"
 #include <cpapdash/parser/O2RingSParser.h>
 #include <cpapdash/parser/VLDParser.h>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -57,6 +58,8 @@ bool OximetryService::collectAndPublish() {
     auto files = client_->listFiles();
     if (files.empty()) {
         std::cout << "O2Ring: No files available" << std::endl;
+        // Nothing listed: no file yet, or no ring. Its own answer says which.
+        noteFacts(client_->isConnected());
         return false;
     }
 
@@ -128,6 +131,11 @@ bool OximetryService::collectAndPublish() {
             processed_files_.insert(filename);
             any_new = true;
             std::cout << "O2Ring: Saved " << filename << " to database" << std::endl;
+            {
+                std::lock_guard<std::mutex> lk(facts_mtx_);
+                facts_.last_read_at = static_cast<long long>(std::time(nullptr));
+                facts_.last_file    = filename;
+            }
             if (archive_dir_) {
                 const std::string dir = archive_dir_();
                 if (!dir.empty()) {
@@ -144,6 +152,7 @@ bool OximetryService::collectAndPublish() {
         }
     }
 
+    noteFacts(true);
     return any_new;
 }
 
@@ -153,7 +162,22 @@ IO2RingClient::LiveReading OximetryService::pollLive() {
               << " SpO2=" << last_live_.spo2
               << " HR=" << last_live_.hr
               << " Motion=" << last_live_.motion << std::endl;
+    noteFacts(last_live_.valid);
     return last_live_;
+}
+
+void OximetryService::noteFacts(bool connected) {
+    const int battery = client_->getBattery();   // the client's own cached value
+    std::lock_guard<std::mutex> lk(facts_mtx_);
+    facts_.checked_at = static_cast<long long>(std::time(nullptr));
+    facts_.connected  = connected;
+    if (battery >= 0) facts_.battery = battery;
+    facts_.live = last_live_;
+}
+
+OximetryService::Facts OximetryService::facts() const {
+    std::lock_guard<std::mutex> lk(facts_mtx_);
+    return facts_;
 }
 
 } // namespace hms_cpap

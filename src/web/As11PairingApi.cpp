@@ -1,6 +1,8 @@
 #include "web/As11PairingApi.h"
 
 #include <cctype>
+#include <filesystem>
+#include <system_error>
 
 namespace hms_cpap::as11api {
 
@@ -60,6 +62,34 @@ Reply status(const IAirSense11Pairing* p, bool compiled, bool enabled) {
     r.body["available"] = compiled && enabled && p != nullptr;
     r.body["paired"] = p ? p->paired() : false;
     r.body["pairing"] = p ? p->pairPending() : false;
+    // The link as it is now (SDD-062): connected, the machine's own therapy
+    // state while connected (null when not), streaming, the last contact.
+    const auto pr = p ? p->presence() : IAirSense11Pairing::Presence{};
+    r.body["connected"] = pr.connected;
+    r.body["therapy"] = pr.connected ? Json::Value(pr.therapy) : Json::Value(Json::nullValue);
+    r.body["streaming"] = pr.streaming;
+    r.body["last_contact"] = static_cast<Json::Int64>(pr.last_contact);
+    return r;
+}
+
+Reply forget(IAirSense11Pairing* p, const std::string& credentials_path, bool pull_due) {
+    Reply r;
+    if ((p && p->busy()) || pull_due) {
+        r.status = 409;
+        r.body["ok"] = false;
+        r.body["error"] = "a pairing or a pull is talking to the machine: try again when it ends";
+        return r;
+    }
+    std::error_code ec;
+    const bool had = std::filesystem::exists(credentials_path, ec);
+    if (had && !std::filesystem::remove(credentials_path, ec)) {
+        r.status = 500;
+        r.body["ok"] = false;
+        r.body["error"] = "the pairing could not be removed: " + ec.message();
+        return r;
+    }
+    r.body["ok"] = true;
+    r.body["removed"] = had;
     return r;
 }
 

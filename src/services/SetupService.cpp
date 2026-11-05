@@ -1,4 +1,5 @@
 #include "services/SetupService.h"
+#include "clients/FlashAirClient.h"
 
 #include "utils/AppConfig.h"
 
@@ -485,6 +486,41 @@ SetupService::EzShareProbe SetupService::probeEzshare(const std::string& url,
     }
     out.ok = true;
     return out;
+}
+
+SetupService::EzShareProbe SetupService::probeFlashair(const std::string& url, const EzShareLister& list_root) {
+    EzShareProbe out;
+    std::string base = url;
+    while (!base.empty() && std::isspace(static_cast<unsigned char>(base.front()))) base.erase(0, 1);
+    while (!base.empty() && (std::isspace(static_cast<unsigned char>(base.back())) || base.back() == '/'))
+        base.pop_back();
+    if (base.empty()) {
+        out.error = "no address entered";
+        return out;
+    }
+    if (base.find("://") == std::string::npos) base = "http://" + base;
+    out.url = base;
+    std::vector<EzShareFileEntry> entries;
+    try {
+        entries = list_root(base);
+    } catch (const std::exception& e) {
+        out.error = e.what();
+        return out;
+    }
+    if (entries.empty()) {
+        out.error = "the address answered, but not with a FlashAir card listing";
+        return out;
+    }
+    out.ok = true;
+    return out;
+}
+
+SetupService::EzShareProbe SetupService::probeFlashair(const std::string& url) {
+    return probeFlashair(url, [](const std::string& base_url) {
+        FlashAirClient client;
+        client.setBaseURL(base_url);
+        return client.listDir("");
+    });
 }
 
 namespace {

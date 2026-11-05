@@ -14,7 +14,13 @@ namespace hms_cpap::as11api {
  * server or Bluetooth. CpapController only routes to them.
  *
  *   GET  /api/airsense11/ble/status
- *        {compiled, enabled, available, paired, pairing}
+ *        {compiled, enabled, available, paired, pairing, connected,
+ *         therapy (null unless connected), streaming, last_contact,
+ *         last_summary_at, last_summary_day}
+ *   DELETE /api/airsense11/ble/pairing
+ *        {ok, removed}; 409 while a pairing or a pull runs
+ *   POST /api/airsense11/ble/pull
+ *        {ok}: the summary pulled now, out of turn
  *   POST /api/airsense11/ble/pair/start
  *        {ok, state: "wait_code" | "failed", result, error?}
  *   POST /api/airsense11/ble/pair/confirm   {code}
@@ -44,5 +50,9 @@ Reply status(const IAirSense11Pairing* p, bool compiled, bool enabled);
 Reply start(IAirSense11Pairing* p, bool compiled, bool enabled);
 Reply confirm(IAirSense11Pairing* p, bool compiled, bool enabled, const std::string& code);
 Reply cancel(IAirSense11Pairing* p);
+/// Removes the saved pairing (the keys the pairing made). The machine keeps
+/// hms-cpap in its own paired list until removed there. 409 while `p` is
+/// busy or a pull is due.
+Reply forget(IAirSense11Pairing* p, const std::string& credentials_path, bool pull_due);
 
 } // namespace hms_cpap::as11api

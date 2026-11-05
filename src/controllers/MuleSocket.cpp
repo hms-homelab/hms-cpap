@@ -97,7 +97,10 @@ void installRoutes(MuleService* service, FirmwareUpdater* updater) {
         [](const drogon::HttpRequestPtr&, Callback&& cb, const std::string& serial) {
             if (!g_updater) return cb(jsonError(drogon::k503ServiceUnavailable, "firmware updates are not available"));
             if (!validSerial(serial)) return cb(jsonError(drogon::k400BadRequest, "not a unit serial"));
-            Json::Value v(Json::objectValue);
+            // The job object (devices/OtaJob.h) at the top; the older shape
+            // under "job", kept one release for scripts.
+            Json::Value v = g_updater->ota(serial);
+            if (!v.isObject()) v = Json::Value(Json::objectValue);
             v["ok"]  = true;
             v["job"] = g_updater->job(serial);
             cb(drogon::HttpResponse::newHttpJsonResponse(v));
@@ -105,20 +108,23 @@ void installRoutes(MuleService* service, FirmwareUpdater* updater) {
         {drogon::Get});
 
     // One update to one unit. Three bodies are taken:
-    //   application/json       {"target": "mule"|"miner"|"both"}: from the manifest
-    //   multipart/form-data    a file field (the image), target as a field or ?target=
-    //   anything else          the image itself as the raw body, ?target=mule|miner
+    //   application/json       {"target": "mule"|"miner"|"both", "confirm"?}: from the manifest
+    //   multipart/form-data    a file field (the image), target and confirm as fields or ?target=
+    //   anything else          the image itself as the raw body, ?target=mule|miner&confirm=true
+    // While the machine records it answers 409 with the warning unless confirmed.
     drogon::app().registerHandler(
         "/api/mule/{serial}/update",
         [answer](const drogon::HttpRequestPtr& req, Callback&& cb, const std::string& serial) {
             if (!g_updater) return cb(jsonError(drogon::k503ServiceUnavailable, "firmware updates are not available"));
             if (!validSerial(serial)) return cb(jsonError(drogon::k400BadRequest, "not a unit serial"));
-            std::string target = req->getParameter("target");
-            const auto  type   = req->contentType();
+            std::string target  = req->getParameter("target");
+            bool        confirm = req->getParameter("confirm") == "true";
+            const auto  type    = req->contentType();
             if (type == drogon::CT_APPLICATION_JSON) {
                 const auto body = req->getJsonObject();
                 if (body && (*body)["target"].isString()) target = (*body)["target"].asString();
-                return answer(cb, g_updater->start(serial, target));
+                if (body) confirm = confirm || devices::confirmed(*body);
+                return answer(cb, g_updater->start(serial, target, {}, {}, confirm));
             }
             if (type == drogon::CT_MULTIPART_FORM_DATA) {
                 drogon::MultiPartParser form;
@@ -126,14 +132,28 @@ void installRoutes(MuleService* service, FirmwareUpdater* updater) {
                     return cb(jsonError(drogon::k400BadRequest, "the form carries no file"));
                 const auto& params = form.getParameters();
                 if (params.count("target")) target = params.at("target");
+                if (params.count("confirm")) confirm = confirm || params.at("confirm") == "true";
                 const auto& f = form.getFiles().front();
-                return answer(cb, g_updater->start(serial, target, std::string(f.fileContent()), f.getFileName()));
+                return answer(cb, g_updater->start(serial, target, std::string(f.fileContent()), f.getFileName(),
+                                                   confirm));
             }
             const auto body = req->getBody();
             if (body.empty()) return cb(jsonError(drogon::k400BadRequest, "the body is the image, or {\"target\"}"));
-            answer(cb, g_updater->start(serial, target, std::string(body), "upload"));
+            answer(cb, g_updater->start(serial, target, std::string(body), "upload", confirm));
         },
         {drogon::Post});
+
+    // A command still queued (the unit away or busy), taken back before it
+    // is sent: DELETE /api/mule/command?req_id=N. 409 once sent.
+    drogon::app().registerHandler(
+        "/api/mule/command",
+        [answer](const drogon::HttpRequestPtr& req, Callback&& cb) {
+            const std::string id = req->getParameter("req_id");
+            if (id.empty() || id.find_first_not_of("0123456789") != std::string::npos)
+                return cb(jsonError(drogon::k400BadRequest, "req_id is the command's number"));
+            answer(cb, g_service->cancelCommand(std::stoull(id)));
+        },
+        {drogon::Delete});
 
     drogon::app().registerHandler(
         "/api/mule",

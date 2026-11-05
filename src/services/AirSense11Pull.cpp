@@ -4,6 +4,7 @@
 
 #include <cpapdash/parser/AirSense11Summary.h>
 
+#include <algorithm>
 #include <ctime>
 #include <iostream>
 
@@ -59,6 +60,20 @@ AirSense11Pull::Result AirSense11Pull::pullNow() {
     // All the days, so a window that ends on days off still moves forward.
     std::vector<STRDailyRecord> all;
     for (const auto& d : days) all.push_back(AirSense11SummaryParser::toStrRecord(d, device_id_));
+    if (!all.empty()) {
+        auto newest = all.front().record_date;
+        for (const auto& rec : all) newest = std::max(newest, rec.record_date);
+        const std::time_t t = std::chrono::system_clock::to_time_t(newest);
+        std::tm tm{};
+#ifdef _WIN32
+        localtime_s(&tm, &t);
+#else
+        localtime_r(&t, &tm);
+#endif
+        char buf[16];
+        std::strftime(buf, sizeof(buf), "%Y-%m-%d", &tm);
+        r.newest_day = buf;
+    }
     auto used = AirSense11SummaryParser::toStrRecords(days, device_id_);
     used = withoutRemovedNights(std::move(used), removedNightSet(*db_, device_id_));
     if (!used.empty()) {

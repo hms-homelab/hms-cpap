@@ -20,6 +20,7 @@
 #include <thread>
 
 using namespace sbtest;
+namespace devices = hms_cpap::devices;
 
 namespace {
 
@@ -99,19 +100,45 @@ struct Wire {
     }
 };
 
+/// The release feed's host and its images, in one: what a GET of a URL answers.
+struct FakeHost {
+    std::map<std::string, FeedReply> answers;
+    std::vector<std::string>         asked;
+    FeedGet get() {
+        return [this](const std::string& url, int) {
+            asked.push_back(url);
+            const auto it = answers.find(url);
+            if (it != answers.end()) return it->second;
+            FeedReply r;
+            r.ok     = true;
+            r.status = 404;
+            return r;
+        };
+    }
+    void serve(const std::string& url, const std::string& body, long status = 200) {
+        FeedReply r;
+        r.ok     = true;
+        r.status = status;
+        r.body   = body;
+        answers[url] = r;
+    }
+};
+
 struct Fixture {
     TempDir            t;
+    FakeHost           host;
     SleepBridgeService svc;
 
-    explicit Fixture(double night_quiet_s = 15 * 60.0, double update_timeout_s = 300.0)
-        : svc(options(t, night_quiet_s, update_timeout_s), fakeFactory(std::make_shared<FakeLog>())) {}
+    explicit Fixture(double night_quiet_s = 15 * 60.0)
+        : svc(options(t, host, night_quiet_s), fakeFactory(std::make_shared<FakeLog>())) {}
 
-    static SleepBridgeService::Options options(const TempDir& t, double night_quiet_s, double update_timeout_s) {
+    static SleepBridgeService::Options options(const TempDir& t, FakeHost& host, double night_quiet_s) {
         SleepBridgeService::Options o;
-        o.root             = t.path.string();
-        o.quiet_s          = 0.01;
-        o.night_quiet_s    = night_quiet_s;
-        o.update_timeout_s = update_timeout_s;
+        o.root          = t.path.string();
+        o.quiet_s       = 0.01;
+        o.night_quiet_s = night_quiet_s;
+        o.jobs_dir      = (t.path / "ota").string();
+        o.fetch         = host.get();
         return o;
     }
 
@@ -271,18 +298,22 @@ TEST(SleepBridgeUpdate, TheBridgesRefusalFailsTheJob) {
     EXPECT_EQ(f.bridge()["update"]["fw_after"].asString(), "");
 }
 
-TEST(SleepBridgeUpdate, NothingGoesWhileANightIsOpen) {
+TEST(SleepBridgeUpdate, WarnedWhileANightIsOpenSentOnConfirm) {
     Fixture f(0.2);
     Wire w;
     auto c = f.session(w);
     EXPECT_FALSE(f.bridge()["night_open"].asBool());
     EXPECT_FALSE(f.svc.nightOpen(kSender));
+    EXPECT_EQ(f.bridge()["recording"].asString(), "no");
     f.svc.apply(kSender, c->onBinary(frame(0, run(0, 3, 100))));
     EXPECT_TRUE(f.bridge()["night_open"].asBool());
     EXPECT_TRUE(f.svc.nightOpen(kSender));
+    EXPECT_EQ(f.bridge()["recording"].asString(), "yes");
     const auto a = f.svc.startUpdate(kSender, image(10000));
     EXPECT_EQ(a.status, 409);
-    EXPECT_NE(a.body["error"].asString().find("night is open"), std::string::npos) << a.body;
+    EXPECT_EQ(a.body["warning"].asString(), "recording") << a.body;
+    EXPECT_TRUE(a.body["confirm"].asBool());
+    EXPECT_NE(a.body["reason"].asString().find("wrote to its card"), std::string::npos) << a.body;
     EXPECT_TRUE(w.frames->empty());
     EXPECT_TRUE(w.bins->empty());
     EXPECT_TRUE(f.bridge()["update"].isNull());
@@ -293,6 +324,22 @@ TEST(SleepBridgeUpdate, NothingGoesWhileANightIsOpen) {
     EXPECT_EQ(f.svc.startUpdate(kSender, image(10000)).status, 200);
     f.svc.waitForUpdateSend();
     EXPECT_EQ(w.bins->size(), 3u);
+    EXPECT_FALSE(f.svc.ota(kSender)["confirmed_while_recording"].asBool());
+}
+
+TEST(SleepBridgeUpdate, AConfirmedUpdateWhileRecordingGoesAtOnce) {
+    Fixture f;
+    Wire w;
+    auto c = f.session(w);
+    f.svc.apply(kSender, c->onBinary(frame(0, run(0, 3, 100))));
+    const auto a = f.svc.startUpdate(kSender, image(10000), /*confirm=*/true, "sd_capture.bin");
+    ASSERT_EQ(a.status, 200) << a.body;
+    f.svc.waitForUpdateSend();
+    EXPECT_EQ(w.bins->size(), 3u);
+    const auto o = f.svc.ota(kSender);
+    EXPECT_TRUE(o["confirmed_while_recording"].asBool());
+    EXPECT_EQ(o["source"].asString(), "file sd_capture.bin");
+    EXPECT_EQ(o["kind"].asString(), "tapper");
 }
 
 TEST(SleepBridgeUpdate, OnlyOneAtATimeOnlyOnlineOnlyABridgeImage) {
@@ -354,20 +401,275 @@ TEST(SleepBridgeUpdate, AConnectionThatGoesFailsTheJob) {
     EXPECT_TRUE(gw.bins->empty());
 }
 
-TEST(SleepBridgeUpdate, AnUnansweredJobTimesOut) {
-    Fixture f(15 * 60.0, 0.0);
+TEST(SleepBridgeUpdate, NoAnswerIsNotAFailureTheAnswerAndTheHelloAre) {
+    // D4: no clock. The job waits in verifying for the bridge's own word.
+    Fixture f;
     Wire w;
     auto c = f.session(w);
-    const auto a = f.svc.startUpdate(kSender, image(10000));
+    const auto a = f.svc.startUpdate(kSender, image(10000, "sd_capture", "1.0.2"));
     ASSERT_EQ(a.status, 200);
     f.svc.waitForUpdateSend();
-    const auto u = f.svc.update(kSender);
-    EXPECT_EQ(u["phase"].asString(), "failed");
-    EXPECT_NE(u["error"].asString().find("no answer"), std::string::npos) << u;
-    EXPECT_EQ(f.bridge()["update"]["phase"].asString(), "failed");
-    // A late answer no longer changes it.
+    EXPECT_EQ(f.svc.ota(kSender)["phase"].asString(), "verifying");
+    EXPECT_EQ(f.svc.update(kSender)["phase"].asString(), "waiting");
+    EXPECT_TRUE(f.svc.update(kSender)["running"].asBool());
+    // A late answer still counts.
     f.answer(*c, a.body["req_id"].asUInt64(), R"({"ok":true})");
-    EXPECT_EQ(f.bridge()["update"]["phase"].asString(), "failed");
+    EXPECT_EQ(f.svc.ota(kSender)["phase"].asString(), "restarting");
+    // It comes back on the version it ran: the new one did not take.
+    f.svc.closed(*c);
+    Wire w2;
+    auto c2 = f.session(w2, "1.0.0");
+    const auto o = f.svc.ota(kSender);
+    EXPECT_EQ(o["phase"].asString(), "failed");
+    EXPECT_EQ(o["reason"].asString(), "back_on_old_version");
+    EXPECT_TRUE(o["retryable"].asBool());
+}
+
+TEST(SleepBridgeUpdate, ARestartWithoutAnAnswerIsResolvedByTheHello) {
+    Fixture f;
+    Wire w;
+    auto c = f.session(w);
+    ASSERT_EQ(f.svc.startUpdate(kSender, image(10000, "sd_capture", "1.0.2")).status, 200);
+    f.svc.waitForUpdateSend();
+    f.svc.closed(*c);
+    Wire w2;
+    auto c2 = f.session(w2, "1.0.2");
+    const auto o = f.svc.ota(kSender);
+    EXPECT_EQ(o["phase"].asString(), "done");
+    EXPECT_EQ(o["steps_detail"][0]["version_before"].asString(), "1.0.0");
+    EXPECT_EQ(o["steps_detail"][0]["version_target"].asString(), "1.0.2");
+    EXPECT_EQ(o["steps_detail"][0]["version_after"].asString(), "1.0.2");
+}
+
+TEST(SleepBridgeUpdate, TheJobIsKeptAcrossARestart) {
+    TempDir keep;
+    auto opts = [&](FakeHost& h) {
+        SleepBridgeService::Options o;
+        o.root     = keep.path.string();
+        o.quiet_s  = 0.01;
+        o.jobs_dir = (keep.path / "ota").string();
+        o.fetch    = h.get();
+        return o;
+    };
+    FakeHost h;
+    {
+        SleepBridgeService svc(opts(h), fakeFactory(std::make_shared<FakeLog>()));
+        Wire w;
+        auto c = svc.open({kSender, "", ""}, w.outlet(), w.binary());
+        svc.apply(kSender, c->onText(R"({"t":"hello","state":{"fw_version":"1.0.0"}})"));
+        const auto a = svc.startUpdate(kSender, image(10000, "sd_capture", "1.0.2"));
+        ASSERT_EQ(a.status, 200);
+        svc.waitForUpdateSend();
+        std::ostringstream res;
+        res << R"({"t":"result","req_id":)" << a.body["req_id"].asUInt64() << R"(,"result":{"ok":true}})";
+        svc.apply(kSender, c->onText(res.str()));
+        ASSERT_EQ(svc.ota(kSender)["phase"].asString(), "restarting");
+    }
+    ASSERT_TRUE(fs::exists(keep.path / "ota" / (kSender + ".json")));
+    // hms-cpap restarted: the job is still restarting, and the hello ends it.
+    SleepBridgeService svc(opts(h), fakeFactory(std::make_shared<FakeLog>()));
+    EXPECT_EQ(svc.ota(kSender)["phase"].asString(), "restarting");
+    Wire w;
+    auto c = svc.open({kSender, "", ""}, w.outlet(), w.binary());
+    svc.apply(kSender, c->onText(R"({"t":"hello","state":{"fw_version":"1.0.2"}})"));
+    EXPECT_EQ(svc.ota(kSender)["phase"].asString(), "done");
+}
+
+TEST(SleepBridgeUpdate, AJobCutMidTransferReadsInterrupted) {
+    TempDir keep;
+    devices::OtaJob j;
+    j.job_id = "42";
+    j.serial = kSender;
+    j.kind   = "tapper";
+    devices::OtaStep s;
+    s.target = "tapper";
+    s.phase  = "transferring";
+    s.bytes  = 4096;
+    s.total  = 10000;
+    j.steps.push_back(s);
+    ASSERT_TRUE(devices::otaSave((keep.path / "ota").string(), kSender, j));
+    SleepBridgeService::Options o;
+    o.root     = keep.path.string();
+    o.jobs_dir = (keep.path / "ota").string();
+    SleepBridgeService svc(o, fakeFactory(std::make_shared<FakeLog>()));
+    const auto v = svc.ota(kSender);
+    EXPECT_EQ(v["phase"].asString(), "failed");
+    EXPECT_EQ(v["reason"].asString(), "interrupted");
+    EXPECT_EQ(svc.update(kSender)["phase"].asString(), "failed");   // the older shape too
+}
+
+// ── the public release feed (D13) ──
+
+namespace {
+const std::string kFeed = "https://fw.example.test/public/tapper/latest.json";
+const std::string kImg  = "https://fw.example.test/public/tapper/1.0.2/tapper-1.0.2.bin";
+
+std::string feedJson(const std::string& version, const std::string& img, const std::string& variant = "",
+                     long size_delta = 0) {
+    Json::Value v(Json::objectValue);
+    v["schema"]    = 1;
+    v["component"] = "tapper";
+    v["version"]   = version;
+    v["variants"][variant]["url"]    = kImg;
+    v["variants"][variant]["size"]   = static_cast<Json::UInt64>(img.size() + size_delta);
+    v["variants"][variant]["sha256"] = hexDigest(img);
+    Json::StreamWriterBuilder w;
+    return Json::writeString(w, v);
+}
+
+std::unique_ptr<Conversation> sessionWithVariant(Fixture& f, Wire& w, const std::string& fw, bool variant) {
+    auto c = f.svc.open({kSender, "", ""}, w.outlet(), w.binary());
+    f.svc.apply(kSender, c->onText(R"({"t":"hello","state":{"fw_version":")" + fw + "\"" +
+                                   (variant ? R"(,"variant":"")" : "") + "}}"));
+    return c;
+}
+}  // namespace
+
+TEST(SleepBridgeRelease, TheFeedIsParsedStrictly) {
+    std::string why;
+    const std::string img = image(5000, "sd_capture", "1.0.2");
+    const auto feed = parseFeed(feedJson("1.0.2", img), &why);
+    ASSERT_TRUE(feed) << why;
+    EXPECT_EQ(feed->version, "1.0.2");
+    ASSERT_EQ(feed->variants.count(""), 1u);
+    EXPECT_EQ(feed->variants.at("").size, 5000u);
+    EXPECT_FALSE(parseFeed("[]", &why));
+    EXPECT_FALSE(parseFeed(R"({"version":"1.0.2","variants":{"":{"url":"http://x/a.bin","size":1,"sha256":")" +
+                               std::string(64, 'a') + R"("}}})", &why));
+    EXPECT_NE(why.find("https"), std::string::npos) << why;
+    EXPECT_FALSE(parseFeed(R"({"version":"1.0.2","variants":{"":{"url":"https://x/a.bin","size":1,"sha256":"zz"}}})", &why));
+    EXPECT_FALSE(parseFeed(R"({"component":"mule","version":"1","variants":{}})", &why));
+}
+
+TEST(SleepBridgeRelease, NewerSameOlderAndTheVariant) {
+    FakeHost h;
+    const std::string img = image(5000, "sd_capture", "1.0.2");
+    h.serve(kFeed, feedJson("1.0.2", img));
+    ReleaseFeed feed(kFeed, h.get());
+    EXPECT_EQ(feed.state(), "unchecked");
+    feed.refresh();
+    EXPECT_EQ(feed.state(), "ok");
+    EXPECT_TRUE(feed.answer("1.0.1", std::string(""))["available"].asBool());
+    EXPECT_FALSE(feed.answer("1.0.2", std::string(""))["available"].asBool());
+    EXPECT_FALSE(feed.answer("1.0.3", std::string(""))["available"].asBool());
+    // A board not in the feed, and a bridge that states none: no button.
+    const auto other = feed.answer("1.0.1", std::string("cmd9"));
+    EXPECT_FALSE(other["available"].asBool());
+    EXPECT_NE(other["error"].asString().find("board"), std::string::npos);
+    const auto none = feed.answer("1.0.1", std::nullopt);
+    EXPECT_FALSE(none["available"].asBool());
+    EXPECT_TRUE(none["variant"].isNull());
+}
+
+TEST(SleepBridgeRelease, A403IsNotPublishedYetAndOtherFailuresSaySo) {
+    FakeHost h;
+    h.serve(kFeed, "AccessDenied", 403);
+    ReleaseFeed feed(kFeed, h.get());
+    feed.refresh();
+    EXPECT_EQ(feed.state(), "not_published");
+    EXPECT_FALSE(feed.answer("1.0.1", std::string(""))["available"].asBool());
+    h.serve(kFeed, "{not json", 200);
+    feed.refresh();
+    EXPECT_EQ(feed.state(), "failed");
+    EXPECT_NE(feed.answer("1.0.1", std::string(""))["error"].asString().find("malformed"), std::string::npos);
+    FeedReply down;
+    down.ok    = false;
+    down.error = "could not resolve host";
+    h.answers[kFeed] = down;
+    feed.refresh();
+    EXPECT_EQ(feed.state(), "failed");
+    // An empty address: no check at all.
+    ReleaseFeed off("", h.get());
+    EXPECT_EQ(off.state(), "off");
+    EXPECT_FALSE(off.enabled());
+}
+
+TEST(SleepBridgeRelease, TheReleaseIsDownloadedCheckedThenSent) {
+    Fixture f;
+    const std::string img = image(10000, "sd_capture", "1.0.2");
+    f.host.serve(kFeed, feedJson("1.0.2", img));
+    f.host.serve(kImg, img);
+    ReleaseFeed feed(kFeed, f.host.get());
+    f.svc.setReleaseFeed(&feed);
+    feed.refresh();
+    Wire w;
+    auto c = sessionWithVariant(f, w, "1.0.1", true);
+    feed.wait();
+    EXPECT_TRUE(f.bridge()["release"]["available"].asBool());
+    const auto a = f.svc.startReleaseUpdate(kSender);
+    ASSERT_EQ(a.status, 200) << a.body;
+    f.svc.waitForUpdateSend();
+    ASSERT_EQ(w.frames->size(), 1u);
+    EXPECT_EQ((*w.frames)[0]["sha256"].asString(), hexDigest(img));
+    EXPECT_EQ(w.bins->size(), 3u);
+    const auto o = f.svc.ota(kSender);
+    EXPECT_EQ(o["source"].asString(), "release 1.0.2");
+    EXPECT_EQ(o["phase"].asString(), "verifying");
+    EXPECT_EQ(o["steps_detail"][0]["version_target"].asString(), "1.0.2");
+}
+
+TEST(SleepBridgeRelease, AMismatchedImageEndsFailedWithNothingSent) {
+    Fixture f;
+    const std::string img = image(10000, "sd_capture", "1.0.2");
+    f.host.serve(kFeed, feedJson("1.0.2", img));
+    std::string other = img;
+    other[5000] ^= 0x1;   // one bit off: the checksum does not match
+    f.host.serve(kImg, other);
+    ReleaseFeed feed(kFeed, f.host.get());
+    f.svc.setReleaseFeed(&feed);
+    feed.refresh();
+    Wire w;
+    auto c = sessionWithVariant(f, w, "1.0.1", true);
+    feed.wait();
+    ASSERT_EQ(f.svc.startReleaseUpdate(kSender).status, 200);
+    f.svc.waitForUpdateSend();
+    EXPECT_TRUE(w.frames->empty());
+    EXPECT_TRUE(w.bins->empty());
+    const auto o = f.svc.ota(kSender);
+    EXPECT_EQ(o["phase"].asString(), "failed");
+    EXPECT_EQ(o["reason"].asString(), "image_unavailable");
+    EXPECT_NE(o["detail"].asString().find("does not match the release"), std::string::npos) << o;
+}
+
+TEST(SleepBridgeRelease, NoButtonWithoutAVariantOrWhenNotPublishedAndWarnedWhileRecording) {
+    Fixture f;
+    const std::string img = image(10000, "sd_capture", "1.0.2");
+    f.host.serve(kFeed, feedJson("1.0.2", img));
+    f.host.serve(kImg, img);
+    ReleaseFeed feed(kFeed, f.host.get());
+    f.svc.setReleaseFeed(&feed);
+    feed.refresh();
+    Wire w;
+    auto c = sessionWithVariant(f, w, "1.0.1", false);   // states no board
+    feed.wait();
+    EXPECT_FALSE(f.bridge()["release"]["available"].asBool());
+    EXPECT_EQ(f.svc.startReleaseUpdate(kSender).status, 409);
+    f.svc.closed(*c);
+    Wire w2;
+    auto c2 = sessionWithVariant(f, w2, "1.0.1", true);
+    feed.wait();
+    // Recording: warned, then sent on confirm.
+    f.svc.apply(kSender, c2->onBinary(frame(0, run(0, 3, 100))));
+    const auto a = f.svc.startReleaseUpdate(kSender);
+    EXPECT_EQ(a.status, 409);
+    EXPECT_EQ(a.body["warning"].asString(), "recording");
+    EXPECT_TRUE(w2.frames->empty());
+    EXPECT_EQ(f.svc.startReleaseUpdate(kSender, true).status, 200);
+    f.svc.waitForUpdateSend();
+    // Not published: 409 with the reason, no job.
+    Fixture g;
+    g.host.serve(kFeed, "AccessDenied", 403);
+    ReleaseFeed closed(kFeed, g.host.get());
+    g.svc.setReleaseFeed(&closed);
+    closed.refresh();
+    Wire gw;
+    auto gc = sessionWithVariant(g, gw, "1.0.1", true);
+    closed.wait();
+    EXPECT_EQ(g.bridge()["release"]["state"].asString(), "not_published");
+    const auto n = g.svc.startReleaseUpdate(kSender);
+    EXPECT_EQ(n.status, 409);
+    EXPECT_NE(n.body["error"].asString().find("not published"), std::string::npos) << n.body;
+    EXPECT_TRUE(g.svc.ota(kSender).isNull());
 }
 
 TEST(SleepBridgeUpdate, StatusCarriesTheFirmwareAndOtaIsNotAQueuedCommand) {

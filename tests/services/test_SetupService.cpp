@@ -890,4 +890,32 @@ TEST(SetupServiceTest, EzshareProbeNormalisesATypedAddress) {
     EXPECT_EQ(probe.url, "http://10.1.1.140");
 }
 
+// -- probeFlashair (SDD-062 D9) -----------------------------------------------
+//
+// A FlashAir answers its own listing (op=100), never an ez Share's /dir: the
+// ez Share probe would call a working FlashAir unreachable.
+
+TEST(SetupServiceTest, FlashairProbeSucceedsOnItsOwnListing) {
+    std::string asked;
+    const auto probe = SetupService::probeFlashair(" flashair.local/ ",
+        [&](const std::string& base) { asked = base; return cardRoot(); });
+    EXPECT_TRUE(probe.ok) << probe.error;
+    EXPECT_EQ(asked, "http://flashair.local");
+    EXPECT_TRUE(probe.bridge_serial.empty());
+}
+
+TEST(SetupServiceTest, FlashairProbeSaysWhyItFailed) {
+    auto empty = SetupService::probeFlashair("http://192.168.1.1",
+        [](const std::string&) { return std::vector<EzShareFileEntry>{}; });
+    EXPECT_FALSE(empty.ok);
+    EXPECT_NE(empty.error.find("FlashAir"), std::string::npos) << empty.error;
+    auto down = SetupService::probeFlashair("http://flashair.local",
+        [](const std::string&) -> std::vector<EzShareFileEntry> {
+            throw std::runtime_error("Couldn't resolve host name");
+        });
+    EXPECT_FALSE(down.ok);
+    EXPECT_NE(down.error.find("resolve"), std::string::npos);
+    EXPECT_FALSE(SetupService::probeFlashair("  ", [](const std::string&) { return cardRoot(); }).ok);
+}
+
 }  // namespace

@@ -11,12 +11,15 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <thread>
 
 namespace hms_cpap::sleepbridge {
 
 namespace {
 
 const char* const kWhoAttr = "sleepbridge_who";
+
+ReleaseFeed* g_feed{nullptr};
 
 struct Entry {
     std::mutex                                 mu;   // one frame at a time per session
@@ -88,8 +91,9 @@ void addStreamRoute(const std::string& path) {
     if (!streamRoute(path)) g_more_routes.push_back(path);
 }
 
-void installRoutes(SleepBridgeService* service) {
+void installRoutes(SleepBridgeService* service, ReleaseFeed* feed) {
     g_service = service;
+    g_feed    = feed;
     if (!service) return;
     const int port = service->options().port;
 
@@ -138,36 +142,104 @@ void installRoutes(SleepBridgeService* service) {
         },
         {drogon::Post});
 
+    // A command still queued (the bridge away), taken back before it is
+    // sent: DELETE /api/sleepbridge/command?req_id=N. 409 once sent.
+    drogon::app().registerHandler(
+        "/api/sleepbridge/command",
+        [](const drogon::HttpRequestPtr& req,
+           std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+            const std::string id = req->getParameter("req_id");
+            if (id.empty() || id.find_first_not_of("0123456789") != std::string::npos)
+                return cb(jsonError(drogon::k400BadRequest, "req_id is the command's number"));
+            const CommandAnswer a = g_service->cancelCommand(std::stoull(id));
+            auto resp = drogon::HttpResponse::newHttpJsonResponse(a.body);
+            resp->setStatusCode(static_cast<drogon::HttpStatusCode>(a.status));
+            cb(resp);
+        },
+        {drogon::Delete});
+
+    // The public release, for one bridge: {"state", "version", "available",
+    // "variant", "size", "error"?}. Read fresh here (the Devices page asks
+    // when it loads); its 3 s refreshes read what this kept.
+    drogon::app().registerHandler(
+        "/api/sleepbridge/release",
+        [](const drogon::HttpRequestPtr& req,
+           std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+            const std::string sender = req->getParameter("sender");
+            if (!g_feed) {
+                Json::Value v(Json::objectValue);
+                v["state"]     = "off";
+                v["available"] = false;
+                return cb(drogon::HttpResponse::newHttpJsonResponse(v));
+            }
+            const auto bridges = g_service->status()["bridges"];
+            std::string fw;
+            Json::Value state(Json::objectValue);
+            for (const auto& b : bridges)
+                if (b["sender"].asString() == sender) {
+                    fw    = b["fw_version"].asString();
+                    state = b["state"];
+                }
+            // A blocking read on a worker of its own: the web's threads stay free.
+            std::thread([sender, fw, state, cb = std::move(cb)]() {
+                if (g_feed) g_feed->refresh();
+                Json::Value v = g_feed ? g_feed->answer(fw, bridgeVariant(state)) : Json::Value(Json::objectValue);
+                v["sender"] = sender;
+                cb(drogon::HttpResponse::newHttpJsonResponse(v));
+            }).detach();
+        },
+        {drogon::Get});
+
     // A firmware image to one bridge, over its own stream connection
-    // (docs/SLEEP_BRIDGE_LOCAL_STREAM.md, "Updating the bridge"). The body
-    // is the image: multipart/form-data with a file field, or the raw bytes.
-    // Refused while a night is open on the bridge.
+    // (docs/SLEEP_BRIDGE_LOCAL_STREAM.md, "Updating the bridge"). Three bodies:
+    //   application/json     {"source": "release", "confirm"?}: the public
+    //                        release for the bridge's board
+    //   multipart/form-data  a file field (the image); "confirm" as a field
+    //   anything else        the image itself; ?confirm=true
+    // While the machine records it answers 409 with the warning unless
+    // confirmed.
     using Callback = std::function<void(const drogon::HttpResponsePtr&)>;
     drogon::app().registerHandler(
         "/api/sleepbridge/{sender}/update",
         [](const drogon::HttpRequestPtr& req, Callback&& cb, const std::string& sender) {
             if (!validSender(sender)) return cb(jsonError(drogon::k400BadRequest, "not a bridge name"));
-            std::string image;
+            auto send = [&cb](const CommandAnswer& a) {
+                auto resp = drogon::HttpResponse::newHttpJsonResponse(a.body);
+                resp->setStatusCode(static_cast<drogon::HttpStatusCode>(a.status));
+                cb(resp);
+            };
+            bool confirm = req->getParameter("confirm") == "true";
+            if (req->contentType() == drogon::CT_APPLICATION_JSON) {
+                const auto body = req->getJsonObject();
+                if (!body || (*body)["source"].asString() != "release")
+                    return cb(jsonError(drogon::k400BadRequest,
+                                        "a JSON body is {\"source\": \"release\"}; a file is sent as the body"));
+                return send(g_service->startReleaseUpdate(sender, confirm || devices::confirmed(*body)));
+            }
+            std::string image, name = "upload";
             if (req->contentType() == drogon::CT_MULTIPART_FORM_DATA) {
                 drogon::MultiPartParser form;
                 if (form.parse(req) != 0 || form.getFiles().empty())
                     return cb(jsonError(drogon::k400BadRequest, "the form carries no file"));
+                const auto& params = form.getParameters();
+                if (params.count("confirm")) confirm = confirm || params.at("confirm") == "true";
                 image = std::string(form.getFiles().front().fileContent());
+                name  = form.getFiles().front().getFileName();
             } else {
                 image = std::string(req->getBody());
             }
-            const CommandAnswer a = g_service->startUpdate(sender, image);
-            auto resp = drogon::HttpResponse::newHttpJsonResponse(a.body);
-            resp->setStatusCode(static_cast<drogon::HttpStatusCode>(a.status));
-            cb(resp);
+            send(g_service->startUpdate(sender, image, confirm, name));
         },
         {drogon::Post});
 
+    // The update as it runs: the job object (devices/OtaJob.h) at the top,
+    // and the older shape under "update", kept one release for scripts.
     drogon::app().registerHandler(
         "/api/sleepbridge/{sender}/update",
         [](const drogon::HttpRequestPtr&, Callback&& cb, const std::string& sender) {
             if (!validSender(sender)) return cb(jsonError(drogon::k400BadRequest, "not a bridge name"));
-            Json::Value v(Json::objectValue);
+            Json::Value v = g_service->ota(sender);
+            if (!v.isObject()) v = Json::Value(Json::objectValue);
             v["ok"]     = true;
             v["update"] = g_service->update(sender);
             cb(drogon::HttpResponse::newHttpJsonResponse(v));
