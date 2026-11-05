@@ -37,6 +37,12 @@ struct LiveSink {
     std::function<void(const LiveEvent&)>                                 event;
     std::function<void(const std::map<std::string, int>& by_type, int total)> counts;
     std::function<void(bool on)>                                          mask;
+    /// The same change with its moment: the session (the therapy file's
+    /// stem, e.g. 20261030_223000) and when it happened, the session's start
+    /// for on and the end of its last record for off, the file's name read
+    /// in the host's zone.
+    std::function<void(bool on, const std::string& session,
+                       std::chrono::system_clock::time_point occurred)>   mask_change;
 };
 
 /// The short type an annotation's label stands for ("" for a marker that is
@@ -73,6 +79,7 @@ private:
     std::chrono::seconds        mask_quiet_;
     bool                        mask_on_{false};
     Clock::time_point           last_therapy_write_{};
+    std::string                 therapy_file_;   // the newest therapy write, card-relative
     std::map<std::string, size_t> seen_;      // annotations already reported, per file
     std::map<std::string, int>    counts_;
     int                           total_{0};

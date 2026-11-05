@@ -356,6 +356,10 @@ void MuleService::applyClock(const std::string& serial, Unit& u) {
 
 void MuleService::stateOf(const std::string& serial, const Json::Value& state) {
     bool landed = false, went_on = false, went_off = false;
+    // The stream's state on this run's first word from the unit, said live
+    // even when it did not change: `streaming` outlives a restart, and a night
+    // that ran through one has no start to report.
+    std::optional<bool> first_state;
     std::string machine;
     {
         std::lock_guard<std::mutex> lk(mu_);
@@ -399,11 +403,16 @@ void MuleService::stateOf(const std::string& serial, const Json::Value& state) {
                 landed        = true;
                 dirty         = true;
             }
+            if (!u.therapy_said) {
+                u.therapy_said = true;
+                if (!went_on && !went_off) first_state = streaming;
+            }
         }
         if (dirty) save(serial, u);
         machine = u.machine;
     }
     // Therapy on and off, live, before the events the same frame carries.
+    if (live_ && first_state) live_->therapy(serial, machine, *first_state, /*restated=*/true);
     if (live_ && went_on) live_->therapy(serial, machine, true);
     if (state["resp_events"].isArray()) feedEvents(serial, state["resp_events"]);
     if (live_ && went_off) live_->therapy(serial, machine, false);

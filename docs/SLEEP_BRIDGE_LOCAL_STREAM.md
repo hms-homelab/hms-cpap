@@ -39,19 +39,22 @@ and hms-cpap reads it with the matching card format (`resmed` or `bmc`).
 ## The live night
 
 While a bridge streams, the rebuilt card says what is happening before any
-sync reads it, and hms-cpap pushes that to its MQTT broker beside the burst
-cycle's own `cpap/<device_id>/realtime/*` topics:
+sync reads it, and hms-cpap pushes that to its MQTT broker on the live topics
+every source shares (the README's "The night, live, on MQTT"), with `source`
+`sleep_bridge` and the bridge as `source_id`:
 
 | Topic | Payload | |
 |---|---|---|
 | `cpap/<device_id>/realtime/mask` | `ON` / `OFF` | retained. ON when a session's BRP, PLD or oximetry file grows; OFF when the STR is written after therapy (a ResMed writes it at mask-off) or nothing was written for five minutes. |
-| `cpap/<device_id>/realtime/event` | `{"type":"OA","description":"Obstructive apnea","at":"2026-10-31T00:42:10-04:00","epoch":…,"duration_s":14,"source":"sleepbridge","bridge":"TAP-S3-00000123","file":"DATALOG/…_EVE.edf"}` | one per new annotation in a growing EVE or CSL, QoS 1, not retained. `type` is OA, CA, H, UA, RERA, CSR, FL or OTHER. |
-| `cpap/<device_id>/realtime/live_events` | `{"total":3,"OA":1,"H":2}` | retained; the counts since hms-cpap started, per type. |
+| `cpap/<device_id>/realtime/mask_changed` | `{"state":"on","source":"sleep_bridge","source_id":"TAP-S3-00000123","session":"20261031_003049","occurred_at":"2026-10-31T04:30:49Z","detected_at":"2026-10-31T04:31:52Z","delay_s":63}` | retained; the change that set the mask, the Mask entity's attributes. On: the session's start (its file's name, read in the host's zone). Off: the end of its last record. |
+| `cpap/<device_id>/realtime/event` | `{"type":"OA","description":"Obstructive apnea","at":"2026-10-31T00:42:10-04:00","epoch":…,"duration_s":14,"source":"sleep_bridge","source_id":"TAP-S3-00000123","bridge":"TAP-S3-00000123","file":"DATALOG/…_EVE.edf","occurred_at":"2026-10-31T04:42:10Z","detected_at":"…","delay_s":41}` | one per new annotation in a growing EVE or CSL, QoS 1, not retained. `type` is OA, CA, H, UA, RERA, CSR, FL or OTHER. |
+| `cpap/<device_id>/realtime/live_events` | `{"total":3,"OA":1,"H":2}` | retained; the counts since the mask went on, per type. |
 
-Home Assistant discovers the mask as a binary sensor, **Mask**
-(`homeassistant/binary_sensor/<device_id>/mask/config`, retained, unique id
-`<device_id>_mask`, device class `running`), on the same device as the rest
-of hms-cpap's sensors. The config is published when hms-cpap starts and again
+Home Assistant discovers **Mask** (`homeassistant/binary_sensor/<device_id>/mask/config`,
+unique id `<device_id>_mask`, device class `running`) and **Live events**
+(`homeassistant/sensor/<device_id>/live_events/config`, unique id
+`<device_id>_live_events`), retained, on the same device as the rest of
+hms-cpap's sensors. The configs are published when hms-cpap starts and again
 the first time each bridge's live night begins in that run.
 
 How fast: ON goes out on the rebuild that carries the first therapy write,
@@ -60,8 +63,8 @@ arriving), and the machine writes therapy once a minute. OFF goes out on the
 rebuild that carries the STR written at mask-off, or five minutes after the
 last therapy write. After hms-cpap restarts, the retained state may be one
 from before the restart: a night still running says ON again at its next
-therapy write, and if nothing says the mask for five minutes, OFF is
-published.
+therapy write, and if no source says the mask for five minutes, OFF is
+published (`source` `startup`).
 
 The night's record (its nights, sessions and counts in the database and the
 web UI) still comes from the burst cycle parsing the files; this is the live

@@ -212,16 +212,8 @@ never written with holes in it. The bridge keeps more than a night of writes
 in its own memory while hms-cpap is unreachable and sends them when it
 answers again.
 
-With MQTT on, the mask's state and each event go to the broker as the
-rebuilt card shows them (`cpap/<device_id>/realtime/mask`, `.../event`,
-`.../live_events`), and Home Assistant discovers the mask as a binary sensor,
-**Mask** (`binary_sensor.<device name>_mask`, Running while the mask is on),
-on the same device as the other sensors, for automations during the night.
-It turns on at the first therapy write the bridge streams after the mask goes
-on (the machine writes once a minute, so within about a minute), and off when
-the machine writes its summary at mask-off, or after five minutes with no
-therapy written. After a restart of hms-cpap it says ON again at the next
-therapy write, or OFF after five minutes without one.
+With MQTT on, the mask and each event go to the broker as the rebuilt card
+shows them (see [The night, live, on MQTT](#the-night-live-on-mqtt) below).
 
 The limit: the bridge forwards writes, so it only has what the machine wrote
 while it was powered and listening. Nothing already on the card from before
@@ -321,7 +313,8 @@ It feeds the same writer as 2 above: the same files under
 `<data dir>/as11/<machine serial>/`, the same live night, imported as a
 session the same way when it ends. Every block and every event also wakes
 hms-cpap's sync at once, and with MQTT on, each event and each therapy start
-and end goes to the broker as it arrives (`cpap/<device_id>/live/...`), for
+and end goes to the broker as it arrives (see
+[The night, live, on MQTT](#the-night-live-on-mqtt) below), for
 automations during the night. When the night ends the unit is asked for the
 machine's identification, summary and settings history; the summary is what
 builds the folder's `STR.edf`. `GET /api/mule` lists the units seen. New in this version; the
@@ -372,6 +365,49 @@ full night.
 - **Upload page**: zip the card and drop it in the browser. A ResMed, Sefam,
   Löwenstein or Luna card is recognised by its files, and every night not yet
   stored is imported. No shared network needed.
+
+#### The night, live, on MQTT
+
+With MQTT on, every source above says the mask on the same topics, and Home
+Assistant discovers the same entities on the hms-cpap device:
+
+| Entity | Topic | What it holds |
+|---|---|---|
+| **Mask** (`binary_sensor`, Running / Not running) | `cpap/<device_id>/realtime/mask` | `ON` / `OFF`, retained |
+| its attributes | `cpap/<device_id>/realtime/mask_changed` | the change that set it, retained: `state`, `source`, `source_id`, `session`, `occurred_at`, `detected_at`, `delay_s` |
+| **Live events** (`sensor`) | `cpap/<device_id>/realtime/live_events` | events since the mask went on: `{"total":3,"OA":1,"H":2}`, retained; the per-type counts are its attributes |
+| (no entity) | `cpap/<device_id>/realtime/event` | one respiratory event as it lands, not retained |
+
+`occurred_at` is when the mask really went on or off, on the machine's clock
+read on the real one, and `detected_at` is when hms-cpap saw it (both UTC,
+ISO 8601 with `Z`, as the CpapDash cloud's `mask.on` and `mask.off` carry
+them); `delay_s` is the difference, so an automation can tell a live change
+from a late one. A mask goes on at its session's start and off at the end of
+its last record. The mask is on while any source says so.
+
+| Source (`source`) | Mask on | Mask off | Events | Typical `delay_s` |
+|---|---|---|---|---|
+| Sleep Bridge Lite (`sleep_bridge`) | the first therapy write streamed | the STR the machine writes at mask-off, or 5 min with no therapy write | yes | on: up to about a minute (the machine's first write); off: seconds after the STR, about 5 min on the fallback |
+| Mule & Miner, AirSense 11 Bluetooth mode (`mule_ble`) | the stream starts | the stream ends (the end of its last block) | yes | seconds |
+| AirSense 11 over this computer's Bluetooth (`as11_ble`) | the stream starts | the stream ends | yes | seconds |
+| ez Share (`ezshare`), FlashAir (`flashair`), local folder (`local`) | a burst finds the session's BRP grown | the BRP has not grown for 135 s | no | about 2 minutes, up to a burst interval more: a change needs the next burst to show |
+
+A local folder that a Sleep Bridge or an AirSense 11 stream writes is
+reported by that source, live, not again as a card. A Löwenstein, Sefam or
+Luna card has no BRP, so it has no live mask.
+
+After a restart of hms-cpap, a source that sees the mask says it again (a
+Mule & Miner on its first state, a Sleep Bridge on its next therapy write); if
+no source says anything for 5 minutes, `OFF` is published once with `source`
+`startup`, so a retained `ON` from a night that ended while hms-cpap was away
+does not stay.
+
+Kept for the automations already built on them: the Mule & Miner's own
+`cpap/<device_id>/live/*` topics (`therapy`, `therapy_changed`, `event`,
+`last_event`, `event_count`, `ahi`) and their entities (**Live therapy**,
+**Live event count**, **Live AHI**, **Live last event**), as
+[docs/MULE_LOCAL_STREAM.md](docs/MULE_LOCAL_STREAM.md) describes them. New
+automations should use the table above, which every source fills.
 
 Everything else (config keys, CLI flags, MQTT sensor list, myAir setup,
 architecture, development, cross-compiling) is in

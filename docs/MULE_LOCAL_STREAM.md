@@ -122,6 +122,14 @@ topics are under the device id hms-cpap's other sensors use
 (`cpap/<device_id>/...`), and Home Assistant discovers them on the same
 device.
 
+They go out on the live topics every source shares (the README's "The
+night, live, on MQTT": `realtime/mask` with its `mask_changed` attributes,
+`realtime/event`, `realtime/live_events`), with `source` `mule_ble` and the
+unit as `source_id`: on when the stream starts, off when it ends at the end
+of its last block. After an hms-cpap restart the unit's first state says the
+mask again on those topics. The unit's own topics below are kept as they
+were, for the automations already built on them.
+
 | topic | payload | retained |
 |---|---|---|
 | `cpap/<device_id>/live/event` | one JSON per event (below) | no |

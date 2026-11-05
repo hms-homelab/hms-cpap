@@ -187,6 +187,7 @@ private:
         std::string summary_from{"2000-01-01"};
         bool        streaming{false};
         bool        end_pending{false};  // the stream ended; the night has not landed yet
+        bool        therapy_said{false}; // this run has told the live publisher the stream's state
         int         sessions{0};
         uint64_t    live{0};
         std::time_t first_seen{0}, last_heard{0}, last_block{0};

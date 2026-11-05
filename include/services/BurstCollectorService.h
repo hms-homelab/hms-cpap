@@ -20,7 +20,10 @@
 #include "services/SessionDiscoveryService.h"
 #include "services/ListingPlan.h"
 #include "utils/MachineClock.h"
+#include "utils/CardMask.h"
 #include "utils/FolderListingStore.h"
+#include "mqtt/LiveState.h"
+#include "mule/LivePublisher.h"
 #include "mqtt_client.h"
 #include "database/IDatabase.h"
 #include "utils/AppConfig.h"
@@ -413,7 +416,31 @@ public:
     /// The house broker's client, for a live publisher beside this service's
     /// own (the Mule & Miner's events); null when MQTT is off.
     std::shared_ptr<hms::MqttClient> getMqttClient() const { return mqtt_client_; }
+
+    /// The live night's shared topics (mqtt/LiveState.h), for the mask a
+    /// card shows (an ez Share, a FlashAir, a local folder) and the AirSense
+    /// 11 read over this computer's own Bluetooth. Null: none.
+    void setLiveState(std::shared_ptr<LiveState> live);
+
+    /// The source a card's mask is reported as: ezshare, flashair or local;
+    /// "" when this source has no BRP to read it from (a Lowenstein, a Sefam,
+    /// a Luna) or a live source already reports it (a local folder that is a
+    /// Sleep Bridge's or an AirSense 11 stream's).
+    std::string cardMaskSource() const;
+
+    /// One session the burst found grown: its newest BRP read for the mask.
+    /// Public for the suite.
+    void observeCardSession(const SessionFileSet& session, const std::string& session_dir,
+                            long long now_s);
+    /// After a burst: the card's off, and the live state's own tick.
+    void cardMaskTick(long long now_s);
 private:
+    std::shared_ptr<LiveState> liveState() const;
+    std::shared_ptr<mule::LivePublisher> as11Live() const;
+    mutable std::mutex live_mtx_;
+    std::shared_ptr<LiveState> live_;
+    std::shared_ptr<mule::LivePublisher> as11_live_;   // the Bluetooth night, on live_
+    CardMask card_mask_;
     std::unique_ptr<OximetryService> oximetry_service_;
 
     // An AirSense 11 read over its own Bluetooth, through the bridge or
@@ -676,6 +703,7 @@ public:
         return closeSettledOpenLocalNights(now);
     }
     void setSourceForTest(const std::string& source) { cpap_source_ = source; }
+    void setLocalDirForTest(const std::string& dir) { local_source_dir_ = dir; }
     /// Test-only seam for SDD-046.
     int announceQuietNightsForTest(std::chrono::system_clock::time_point now) {
         return announceQuietNights(now);

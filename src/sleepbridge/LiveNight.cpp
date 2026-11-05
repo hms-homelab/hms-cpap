@@ -4,7 +4,9 @@
 
 #include <algorithm>
 #include <cctype>
+#include <ctime>
 #include <filesystem>
+#include <optional>
 
 namespace hms_cpap::sleepbridge {
 
@@ -26,6 +28,32 @@ bool isTherapyWrite(const std::string& path) {
 
 bool isEventFile(const std::string& path) {
     return underDatalog(path) && (endsWith(path, "_EVE.edf") || endsWith(path, "_CSL.edf"));
+}
+
+/// The YYYYMMDD_HHMMSS a session file is named for, "" when it has none.
+std::string stemOf(const std::string& path) {
+    const std::string name = std::filesystem::path(path).filename().string();
+    if (name.size() < 15 || name[8] != '_') return {};
+    for (int i = 0; i < 15; ++i)
+        if (i != 8 && !std::isdigit(static_cast<unsigned char>(name[i]))) return {};
+    return name.substr(0, 15);
+}
+
+/// The stem as a moment, read in the host's zone (the machine writes its
+/// names in its own, which at home is the host's).
+std::optional<std::chrono::system_clock::time_point> stemTime(const std::string& stem) {
+    if (stem.size() != 15) return std::nullopt;
+    std::tm tm{};
+    tm.tm_year  = std::stoi(stem.substr(0, 4)) - 1900;
+    tm.tm_mon   = std::stoi(stem.substr(4, 2)) - 1;
+    tm.tm_mday  = std::stoi(stem.substr(6, 2));
+    tm.tm_hour  = std::stoi(stem.substr(9, 2));
+    tm.tm_min   = std::stoi(stem.substr(11, 2));
+    tm.tm_sec   = std::stoi(stem.substr(13, 2));
+    tm.tm_isdst = -1;
+    const std::time_t t = std::mktime(&tm);
+    if (t == static_cast<std::time_t>(-1)) return std::nullopt;
+    return std::chrono::system_clock::from_time_t(t);
 }
 
 }  // namespace
@@ -53,6 +81,22 @@ void LiveNight::setMask(bool on) {
     if (mask_on_ == on) return;
     mask_on_ = on;
     if (sink_.mask) sink_.mask(on);
+    if (!sink_.mask_change) return;
+    const std::string stem  = stemOf(therapy_file_);
+    const auto        start = stemTime(stem);
+    // Unknown: the last write seen stands in.
+    Clock::time_point occurred = last_therapy_write_;
+    if (on && start) {
+        occurred = *start;
+    } else if (!on && start) {
+        // The end of the session's last record, from its header.
+        EDFFile edf;
+        if (edf.open((std::filesystem::path(root_) / therapy_file_).string()) &&
+            edf.record_duration > 0 && edf.actual_records > 0)
+            occurred = *start + std::chrono::milliseconds(static_cast<int64_t>(
+                                    edf.actual_records * edf.record_duration * 1000));
+    }
+    sink_.mask_change(on, stem, occurred);
 }
 
 void LiveNight::onWritten(const std::vector<std::string>& paths, Clock::time_point now,
@@ -64,8 +108,15 @@ void LiveNight::onWritten(const std::vector<std::string>& paths, Clock::time_poi
     }
     bool therapy = false, str = false;
     for (const auto& p : paths) {
-        if (isTherapyWrite(p)) therapy = true;
-        else if (p == "STR.edf") str = true;
+        if (isTherapyWrite(p)) {
+            therapy = true;
+            // The newest session's file, its BRP when it has one.
+            const std::string s = stemOf(p), cur = stemOf(therapy_file_);
+            if (therapy_file_.empty() || s > cur || (s == cur && endsWith(p, "_BRP.edf")))
+                therapy_file_ = p;
+        } else if (p == "STR.edf") {
+            str = true;
+        }
     }
     if (therapy) {
         last_therapy_write_ = now;

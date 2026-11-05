@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "clients/LocalDataSource.h"
+#include "mqtt/LiveState.h"
 #include "mule/MuleService.h"
 #include "mule/PosixTz.h"
 #include "services/As11NightWriter.h"
@@ -528,6 +529,110 @@ TEST_F(MuleReceiverTest, EventsAndTherapyGoOutLiveAndEveryChangeWakesTheHost) {
         therapy_sensor = therapy_sensor || s.topic == "homeassistant/binary_sensor/cpap_test/live_therapy/config";
     }
     EXPECT_TRUE(therapy_sensor);
+}
+
+// The same night on the topics every live source shares (mqtt/LiveState.h),
+// beside the unit's own live/* topics, which say what they always said.
+TEST_F(MuleReceiverTest, TheNightGoesOutOnTheSharedLiveTopicsAndSurvivesARestart) {
+    struct Sent { std::string topic, payload; };
+    std::vector<Sent> out;
+    auto rec = [&out](const std::string& t, const std::string& p, int, bool) {
+        out.push_back({t, p});
+        return true;
+    };
+    auto last = [&](const std::string& topic) {
+        std::string v;
+        for (const auto& s : out) if (s.topic == topic) v = s.payload;
+        return v;
+    };
+    auto count = [&](const std::string& topic) {
+        size_t n = 0;
+        for (const auto& s : out) n += s.topic == topic;
+        return n;
+    };
+    const std::string mask = "cpap/cpap_test/realtime/mask";
+    const std::string change = "cpap/cpap_test/realtime/mask_changed";
+    auto wire = [&](std::chrono::system_clock::time_point started) {
+        auto state = std::make_shared<LiveState>(rec, "cpap_test", "Test CPAP", started);
+        auto live  = std::make_shared<LivePublisher>(rec, "cpap_test", "Test CPAP");
+        live->setState(state, LiveState::kMuleBle);
+        svc_->setLive([] {}, live);
+        return state;
+    };
+    auto state = wire(std::chrono::system_clock::now());
+
+    {
+        FakeUnit unit(*svc_);
+        unit.hello(false);
+        // Stream start: ON at once, as the Mule's own live/therapy.
+        unit.sendState(true, 0);
+        EXPECT_EQ(last(mask), "ON");
+        EXPECT_EQ(last("cpap/cpap_test/live/therapy"), "ON");
+        auto c = parse(last(change));
+        EXPECT_EQ(c["source"].asString(), "mule_ble");
+        EXPECT_EQ(c["source_id"].asString(), kUnit);
+        EXPECT_LE(c["delay_s"].asInt(), 1);
+
+        for (int i = 0; i < 3; i++) unit.block(tenSeconds(kT0 + i * 10000));
+        Json::Value evs(Json::arrayValue);
+        evs.append(event(1, "ObstructiveApneaEnd", kT0 + 20000, 12));
+        unit.sendState(true, 0, evs);
+        const auto ev = parse(last("cpap/cpap_test/realtime/event"));
+        EXPECT_EQ(ev["type"].asString(), "OA");
+        EXPECT_EQ(ev["source"].asString(), "mule_ble");
+        EXPECT_EQ(ev["occurred_at"].asString(),
+                  LiveState::isoUtc(std::chrono::system_clock::time_point(
+                      std::chrono::milliseconds(kT0 + 8000))))
+            << "reported at +20 s, begun 12 s before";
+
+        // Stream end: OFF, at the end of the last block the machine streamed.
+        unit.sendState(false, 0);
+        EXPECT_EQ(last(mask), "OFF");
+        EXPECT_EQ(last("cpap/cpap_test/live/therapy"), "OFF");
+        c = parse(last(change));
+        EXPECT_EQ(c["occurred_at"].asString(),
+                  LiveState::isoUtc(std::chrono::system_clock::time_point(
+                      std::chrono::milliseconds(kT0 + 30000))));
+    }
+
+    // A restart mid-night: the unit was streaming when hms-cpap went down and
+    // still is. Its first state says ON again on the shared topics; the
+    // live/* topics have no change to say and say nothing.
+    {
+        FakeUnit unit(*svc_);
+        unit.sendState(true, 0);
+    }
+    restart();
+    out.clear();
+    state = wire(std::chrono::system_clock::now());
+    {
+        FakeUnit unit(*svc_);
+        unit.hello();   // streaming
+        EXPECT_EQ(last(mask), "ON");
+        EXPECT_EQ(count("cpap/cpap_test/live/therapy_changed"), 0u);
+        state->tick(std::chrono::system_clock::now() + std::chrono::seconds(600));
+        EXPECT_EQ(last(mask), "ON") << "no settling to OFF while the unit says on";
+        unit.sendState(true, 0);
+        EXPECT_EQ(count(mask), 1u) << "said once";
+    }
+
+    // A restart after the night: the unit's first state says it is not
+    // streaming, and the shared mask is OFF at once.
+    {
+        FakeUnit unit(*svc_);
+        unit.sendState(false, 0);
+    }
+    restart();
+    out.clear();
+    state = wire(std::chrono::system_clock::now());
+    {
+        FakeUnit unit(*svc_);
+        unit.hello(false);
+        unit.sendState(false, 0);
+        EXPECT_EQ(last(mask), "OFF");
+        EXPECT_EQ(parse(last(change))["source"].asString(), "mule_ble");
+        EXPECT_EQ(count("cpap/cpap_test/live/therapy_changed"), 0u);
+    }
 }
 
 TEST(MuleLive, EventTypesAreTheCardsShortNames) {

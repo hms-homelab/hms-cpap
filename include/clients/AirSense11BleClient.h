@@ -71,6 +71,15 @@ public:
     void startNightLoop(std::shared_ptr<As11NightWriter> writer, std::function<void()> night_ended);
     void stopNightLoop();
 
+    /// The night, live, for the house's MQTT: therapy when the stream starts
+    /// and ends, and each of the machine's events as it arrives. Set before
+    /// startNightLoop; either may be empty.
+    struct LiveHooks {
+        std::function<void(const std::string& serial, bool on)>                  therapy;
+        std::function<void(const std::string& serial, const as11::RespEvent& e)> event;
+    };
+    void setLiveHooks(LiveHooks hooks) { live_ = std::move(hooks); }
+
     static constexpr int kStallMs = 30000;       // no report this long: the stream is dead
     static constexpr int kRetryMs = 30000;       // after the machine was not found
 
@@ -81,6 +90,7 @@ private:
 
     std::shared_ptr<As11NightWriter> writer_;
     std::function<void()> night_ended_;
+    LiveHooks live_;
     std::thread night_thread_;
     std::atomic<bool> running_{false};
     std::atomic<bool> want_radio_{false};

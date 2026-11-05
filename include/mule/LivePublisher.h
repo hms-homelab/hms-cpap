@@ -14,13 +14,22 @@
 //   cpap/<device_id>/live/therapy_changed  one JSON when therapy starts or ends, not retained
 //
 // Home Assistant discovers them as sensors of the same device the rest of
-// hms-cpap's sensors belong to (identifiers: the device id).
+// hms-cpap's sensors belong to (identifiers: the device id). They are kept as
+// they were for the automations already built on them.
+//
+// Given a LiveState (setState), the same night also goes out on the topics
+// every live source shares (mqtt/LiveState.h): realtime/mask with the change's
+// moment, realtime/event, realtime/live_events. The AirSense 11 read over this
+// computer's own Bluetooth uses this class for that alone, with no publish
+// function, so it has no live/* topics.
 //
 #include "clients/As11Stream.h"
+#include "mqtt/LiveState.h"
 
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <string>
 
@@ -41,10 +50,17 @@ public:
     /// The Home Assistant discovery configs, retained. Once at start.
     bool announce();
 
+    /// The shared live topics too, as `source` (LiveState::kMuleBle,
+    /// LiveState::kAs11Ble). Set before the first night.
+    void setState(std::shared_ptr<LiveState> state, std::string source);
+
     /// Therapy started (`on`) or ended on the machine behind `unit`. Nights
     /// are kept per unit (one unit streams one machine); `machine` is the
     /// machine's serial when a block has named it, else "".
-    void therapy(const std::string& unit, const std::string& machine, bool on);
+    /// `restated`: no change, the state as this run first hears it (after a
+    /// restart). It goes to the shared live topics only; the live/* topics
+    /// say changes, as they always have.
+    void therapy(const std::string& unit, const std::string& machine, bool on, bool restated = false);
     /// A block landed: where the night stands on the machine's clock.
     void block(const std::string& unit, int64_t start_ms, int64_t end_ms);
     /// One of the machine's events, as its state frame carried it.
@@ -66,6 +82,8 @@ private:
 
     Publish     publish_;
     std::string device_id_, device_name_;
+    std::shared_ptr<LiveState> state_;
+    std::string                source_;
     mutable std::mutex mu_;
     std::map<std::string, Night> nights_;
 };

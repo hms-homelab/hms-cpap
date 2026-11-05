@@ -96,22 +96,48 @@ bool LivePublisher::announce() {
     return ok;
 }
 
+void LivePublisher::setState(std::shared_ptr<LiveState> state, std::string source) {
+    std::lock_guard<std::mutex> lk(mu_);
+    state_  = std::move(state);
+    source_ = std::move(source);
+}
+
 LivePublisher::Night LivePublisher::night(const std::string& unit) const {
     std::lock_guard<std::mutex> lk(mu_);
     const auto it = nights_.find(unit);
     return it == nights_.end() ? Night{} : it->second;
 }
 
-void LivePublisher::therapy(const std::string& unit, const std::string& machine, bool on) {
+void LivePublisher::therapy(const std::string& unit, const std::string& machine, bool on,
+                            bool restated) {
     Night n;
+    std::shared_ptr<LiveState> state;
+    std::string source;
     {
         std::lock_guard<std::mutex> lk(mu_);
         Night& cur = nights_[unit];
-        if (cur.on == on) return;
-        if (on) cur = Night{};   // a new night: the counts start over
+        if (!restated && cur.on == on) return;
+        if (on && !restated) cur = Night{};   // a new night: the counts start over
         cur.on = on;
         n      = cur;
+        state  = state_;
+        source = source_;
     }
+    if (state) {
+        // On: the stream's start as it arrived (the machine says therapy as it
+        // starts). Off: the end of the last block the machine streamed.
+        const auto now = LiveState::Clock::now();
+        LiveState::MaskChange c;
+        c.source      = source;
+        c.source_id   = unit;
+        c.on          = on;
+        c.occurred_at = (!on && n.end_ms > 0)
+                            ? LiveState::Clock::time_point(std::chrono::milliseconds(n.end_ms))
+                            : now;
+        state->sourceSeen(unit);
+        state->mask(c, now);
+    }
+    if (restated) return;
     Json::Value v(Json::objectValue);
     v["unit"]        = unit;
     v["machine"]     = machine;
@@ -139,6 +165,8 @@ void LivePublisher::block(const std::string& unit, int64_t start_ms, int64_t end
 void LivePublisher::event(const std::string& unit, const std::string& machine, const as11::RespEvent& e) {
     const std::string type = eventType(e.event);
     Night n;
+    std::shared_ptr<LiveState> state;
+    std::string source;
     {
         std::lock_guard<std::mutex> lk(mu_);
         Night& cur = nights_[unit];
@@ -146,7 +174,27 @@ void LivePublisher::event(const std::string& unit, const std::string& machine, c
         else if (type == "H") ++cur.hypopneas;
         else if (type == "RERA") ++cur.reras;
         else if (type == "CSR") ++cur.csr;
-        n = cur;
+        n      = cur;
+        state  = state_;
+        source = source_;
+    }
+    if (state) {
+        // When it began: reported, less how long before the report it began.
+        const auto    now = LiveState::Clock::now();
+        const int64_t at  = as11::isoToMs(e.reportTime);
+        const auto occurred =
+            at > 0 ? LiveState::Clock::time_point(std::chrono::milliseconds(
+                         at - std::max(0, e.backdateSeconds) * 1000LL))
+                   : now;
+        Json::Value c(Json::objectValue);
+        c["type"]        = type;
+        c["description"] = e.event;
+        c["duration_s"]  = e.durationSeconds;
+        c["source"]      = source;
+        c["source_id"]   = unit;
+        c["machine"]     = machine;
+        state->sourceSeen(unit);
+        state->event(c, occurred, now);
     }
     Json::Value v(Json::objectValue);
     v["type"]           = type;

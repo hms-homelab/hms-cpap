@@ -400,7 +400,10 @@ bool AirSense11BleClient::streamOnce() {
             last_contact_ = static_cast<long long>(std::time(nullptr));
             wake_.notify_all();
         },
-        [this, serial](const as11::RespEvent& e) { writer_->onEvent(serial, e); },
+        [this, serial](const as11::RespEvent& e) {
+            writer_->onEvent(serial, e);
+            if (live_.event) live_.event(serial, e);
+        },
     });
     struct Clear {
         AirSense11BleClient* c;
@@ -430,6 +433,7 @@ bool AirSense11BleClient::streamOnce() {
         return true;
     }
     std::cout << kTag << "streaming the night from " << device_.name << std::endl;
+    if (live_.therapy) live_.therapy(serial, true);
     uint64_t last = reports_;
     auto last_progress = std::chrono::steady_clock::now();
     while (running_ && therapy_ && session_.connected()) {
@@ -449,6 +453,7 @@ bool AirSense11BleClient::streamOnce() {
     if (still_up) session_.stopStream();
     session_.setStreamHandlers({});
     writer_->onStreamEnd(serial);
+    if (live_.therapy) live_.therapy(serial, false);
     dropLink();
     std::cout << kTag << "the night's stream ended" << (still_up ? "" : " (the machine let go)") << std::endl;
     op.unlock();

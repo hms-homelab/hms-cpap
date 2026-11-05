@@ -803,10 +803,16 @@ Sensors auto-appear as a device with 47+ entities:
 - `sensor.cpap_pressure_current` - Current pressure (cmH2O)
 - `sensor.cpap_usage_hours` - Total usage hours
 - `binary_sensor.cpap_session_active` - Live session indicator
-- `binary_sensor.cpap_mask` - Mask on or off, live from a Sleep Bridge Lite
-  (`cpap/<device_id>/realtime/mask`); only with the Sleep Bridge receiver on
+- `binary_sensor.cpap_mask` - Mask on or off, from every source
+  (`cpap/<device_id>/realtime/mask`), with the change's `source`,
+  `occurred_at`, `detected_at` and `delay_s` as attributes
+- `sensor.cpap_live_events` - Respiratory events since the mask went on, from
+  the live sources (`cpap/<device_id>/realtime/live_events`)
 - `sensor.cpap_sleep_index` - The CpapDash index for the night, plus its band
 - ... and 42 more metrics
+
+Which source fills the mask and the live events, and how late each says it:
+the table in the README, "The night, live, on MQTT".
 
 ## ResMed myAir
 

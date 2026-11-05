@@ -478,6 +478,88 @@ As11NightImport::Result BurstCollectorService::importAs11Nights() {
     return r;
 }
 
+// ── the live night's shared topics (mqtt/LiveState.h) ──────────────────────
+
+void BurstCollectorService::setLiveState(std::shared_ptr<LiveState> live) {
+    std::lock_guard<std::mutex> lk(live_mtx_);
+    live_ = live;
+    as11_live_.reset();
+    if (!live_) return;
+    // No publish function: the Bluetooth night has only the shared topics.
+    as11_live_ = std::make_shared<mule::LivePublisher>(nullptr, device_id_, "");
+    as11_live_->setState(live_, LiveState::kAs11Ble);
+}
+
+std::shared_ptr<LiveState> BurstCollectorService::liveState() const {
+    std::lock_guard<std::mutex> lk(live_mtx_);
+    return live_;
+}
+
+std::shared_ptr<mule::LivePublisher> BurstCollectorService::as11Live() const {
+    std::lock_guard<std::mutex> lk(live_mtx_);
+    return as11_live_;
+}
+
+std::string BurstCollectorService::cardMaskSource() const {
+    if (cpap_source_ == "ezshare") return LiveState::kEzShare;
+    if (cpap_source_ == "flashair") return LiveState::kFlashAir;
+    if (cpap_source_ != "local") return "";
+    // A folder a live source writes is that source's to report, at once.
+    std::error_code ec;
+    const auto dir  = std::filesystem::weakly_canonical(local_source_dir_, ec).string();
+    const auto data = std::filesystem::weakly_canonical(AppConfig::dataDir(), ec);
+    for (const char* live : {"sleepbridge", "as11"}) {
+        const std::string root = (data / live).string();
+        if (dir.compare(0, root.size(), root) == 0) return "";
+    }
+    return LiveState::kLocal;
+}
+
+void BurstCollectorService::observeCardSession(const SessionFileSet& session,
+                                               const std::string& session_dir, long long now_s) {
+    const auto live = liveState();
+    if (!live || session.brp_files.empty()) return;
+    const std::string source = cardMaskSource();
+    if (source.empty()) return;
+
+    // The newest BRP is the session the mask is on now: one per mask-on.
+    std::string brp = *std::max_element(session.brp_files.begin(), session.brp_files.end());
+    brp = std::filesystem::path(brp).filename().string();
+    const std::string stem = brp.substr(0, std::min<size_t>(15, brp.size()));
+    const long long name_s = machine_clock::nameTimeOf(brp);
+    if (name_s == 0) return;
+    // The machine names it on its clock; read on the real one (SDD-054 D3).
+    const long long start_s = name_s - machineOffset(machine_clock_, now_s);
+    long long end_s = 0;
+    EDFFile edf;
+    if (edf.open((std::filesystem::path(session_dir) / brp).string()) && edf.record_duration > 0)
+        end_s = start_s + static_cast<long long>(edf.actual_records * edf.record_duration);
+
+    const auto change = card_mask_.grew(stem, start_s, end_s, now_s);
+    if (!change) return;
+    std::cout << "CPAP: mask on (" << source << ", session " << stem << ", "
+              << (now_s - change->occurred_s) << " s ago)" << std::endl;
+    live->sourceSeen("card");
+    live->mask({source, "card", true,
+                LiveState::Clock::time_point(std::chrono::seconds(change->occurred_s)), stem},
+               LiveState::Clock::time_point(std::chrono::seconds(now_s)));
+}
+
+void BurstCollectorService::cardMaskTick(long long now_s) {
+    const auto live = liveState();
+    if (!live) return;
+    const auto now = LiveState::Clock::time_point(std::chrono::seconds(now_s));
+    if (const auto change = card_mask_.tick(now_s)) {
+        std::cout << "CPAP: mask off (session " << change->session << " has not grown for "
+                  << CardMask::kMaskOffAfterS << " s)" << std::endl;
+        live->mask({cardMaskSource(), "card", false,
+                    LiveState::Clock::time_point(std::chrono::seconds(change->occurred_s)),
+                    change->session},
+                   now);
+    }
+    live->tick(now);
+}
+
 void BurstCollectorService::initAirSense11() {
     {
         std::lock_guard<std::mutex> lk(airsense11_mtx_);
@@ -498,7 +580,16 @@ void BurstCollectorService::initAirSense11() {
             airsense11_pairing_ = client;
         }
         // The night, live: the stream into the shared writer; its end asks
-        // for the Summary (the STR day) on the worker.
+        // for the Summary (the STR day) on the worker. Therapy and the
+        // machine's events go to the house's MQTT as they arrive.
+        client->setLiveHooks({
+            [this](const std::string& serial, bool on) {
+                if (auto p = as11Live()) p->therapy(serial, serial, on);
+            },
+            [this](const std::string& serial, const as11::RespEvent& e) {
+                if (auto p = as11Live()) p->event(serial, serial, e);
+            },
+        });
         client->startNightLoop(as11_night_writer_, [this] { as11_summary_due_ = true; });
         airsense11_pull_ = std::make_unique<AirSense11Pull>(client, db_service_, device_id_,
                                                             std::chrono::hours(hours));
@@ -2925,6 +3016,11 @@ bool BurstCollectorService::executeBurstCycle() {
 
                 downloaded_sessions.push_back({session_dir, session});
                 stored_inline.insert(session.session_start);
+
+                // The mask, as the card shows it: a session that grew. Not a
+                // download that only repaired the archive.
+                if (!all_unchanged || has_new_files)
+                    observeCardSession(session, session_dir, nowSeconds());
             } else {
                 std::cerr << "CPAP: Failed to download session " << session.session_prefix << std::endl;
                 // SDD-054 D6: a failed download lists its folder again.
@@ -3710,6 +3806,10 @@ void BurstCollectorService::runLoop() {
                       << " — will retry next cycle" << std::endl;
         }
         cycle_in_flight_.store(false);
+
+        // The card's mask off (no growth for long enough), and the live
+        // state's own settling after a start. On the burst, no timer.
+        cardMaskTick(nowSeconds());
 
         // SleepHQ: nights we could NOT parse must still reach SleepHQ.
         //

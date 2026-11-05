@@ -9,7 +9,7 @@
 #include "controllers/DevicesRoutes.h"
 #include "sleepbridge/ReleaseFeed.h"
 #include "mule/LivePublisher.h"
-#include "sleepbridge/LiveMask.h"
+#include "mqtt/LiveState.h"
 #include "sleepbridge/LiveNight.h"
 #include "services/CpapDashSyncService.h"
 #include "services/CardUpload.h"
@@ -878,6 +878,36 @@ int main(int argc, char** argv) {
         burst_service->initialize(&config);
         burst_service->start();
 
+        // The night, live, on the house's MQTT: the mask and the events, the
+        // same topics and Home Assistant entities from every source (a Sleep
+        // Bridge, a Mule & Miner, the AirSense 11 over Bluetooth, a card read
+        // by the bursts). mqtt/LiveState.h. Its own client, as the Sleep
+        // Bridge's was: MQTT on but the client not connected, the message is
+        // dropped and the log says so.
+        std::shared_ptr<hms_cpap::LiveState> live_state;
+        if (config.mqtt.enabled) {
+            hms::MqttConfig live_cfg;
+            live_cfg.broker    = config.mqtt.broker;
+            live_cfg.port      = config.mqtt.port;
+            live_cfg.username  = config.mqtt.username;
+            live_cfg.password  = config.mqtt.password;
+            live_cfg.client_id = config.mqtt.client_id + "_live";
+            auto live_mqtt = std::make_shared<hms::MqttClient>(live_cfg);
+            live_mqtt->connect();
+            live_state = std::make_shared<hms_cpap::LiveState>(
+                [live_mqtt](const std::string& topic, const std::string& payload, int qos, bool retain) {
+                    if (!live_mqtt->isConnected()) {
+                        std::cout << "[live] MQTT not connected, dropped " << topic << " "
+                                  << payload.substr(0, 120) << std::endl;
+                        return false;
+                    }
+                    return live_mqtt->publish(topic, payload, qos, retain);
+                },
+                config.device_id, config.device_name);
+            live_state->announce();
+            burst_service->setLiveState(live_state);
+        }
+
         if (src == "local") {
             std::cout << "   Source: Local directory at " << hms_cpap::ConfigManager::get("CPAP_LOCAL_DIR", "") << std::endl;
         } else {
@@ -1646,44 +1676,8 @@ int main(int argc, char** argv) {
                     // bridge's root reads the night seconds after the bridge
                     // streamed it instead of at the next interval, and the
                     // files' new events and the mask's state go to the house's
-                    // MQTT as they land, beside the burst cycle's own topics:
-                    //   cpap/<device_id>/realtime/event        one event (QoS 1)
-                    //   cpap/<device_id>/realtime/live_events  counts, retained
-                    //   cpap/<device_id>/realtime/mask         ON/OFF, retained
-                    // and the mask's Home Assistant entity (sleepbridge/LiveMask.h).
-                    std::shared_ptr<hms::MqttClient> sb_mqtt;
-                    if (config.mqtt.enabled) {
-                        hms::MqttConfig sb_cfg;
-                        sb_cfg.broker    = config.mqtt.broker;
-                        sb_cfg.port      = config.mqtt.port;
-                        sb_cfg.username  = config.mqtt.username;
-                        sb_cfg.password  = config.mqtt.password;
-                        sb_cfg.client_id = config.mqtt.client_id + "_sleepbridge";
-                        sb_mqtt = std::make_shared<hms::MqttClient>(sb_cfg);
-                        sb_mqtt->connect();
-                    }
-                    const std::string sb_topic = "cpap/" + config.device_id + "/realtime/";
-                    // MQTT off: nothing to publish to, nothing to say. MQTT on but
-                    // the client not connected: the message is dropped, and the
-                    // log says so, so a silent live view shows up in the log.
-                    auto sb_publish = [sb_mqtt](const std::string& topic, const std::string& payload,
-                                                bool retain) -> bool {
-                        if (!sb_mqtt) return false;
-                        if (!sb_mqtt->isConnected()) {
-                            std::cout << "[sleepbridge] MQTT not connected, dropped " << topic
-                                      << " " << payload.substr(0, 120) << std::endl;
-                            return false;
-                        }
-                        return sb_mqtt->publish(topic, payload, 1, retain);
-                    };
-                    std::shared_ptr<hms_cpap::sleepbridge::LiveMask> mask_out;
-                    if (sb_mqtt) {
-                        mask_out = std::make_shared<hms_cpap::sleepbridge::LiveMask>(
-                            [sb_publish](const std::string& topic, const std::string& payload, int,
-                                         bool retain) { return sb_publish(topic, payload, retain); },
-                            config.device_id, config.device_name);
-                        mask_out->announce();
-                    }
+                    // MQTT as they land, on the live topics every source shares
+                    // (live_state, mqtt/LiveState.h). MQTT off: nothing to say.
                     using hms_cpap::sleepbridge::LiveNight;
                     auto lives    = std::make_shared<std::map<std::string, std::unique_ptr<LiveNight>>>();
                     auto lives_mu = std::make_shared<std::mutex>();
@@ -1704,29 +1698,23 @@ int main(int argc, char** argv) {
                             v["at"]          = at;
                             v["epoch"]       = static_cast<Json::Int64>(t);
                             v["duration_s"]  = e.duration_s;
-                            v["source"]      = "sleepbridge";
+                            v["source"]      = hms_cpap::LiveState::kSleepBridge;
+                            v["source_id"]   = sender;
                             v["bridge"]      = sender;
                             v["file"]        = e.file;
-                            Json::StreamWriterBuilder w;
-                            w["indentation"] = "";
-                            sb_publish(sb_topic + "event", Json::writeString(w, v), false);
+                            if (live_state) live_state->event(v, e.at);
                             std::cout << "[sleepbridge] " << sender << " event " << e.type << " ("
                                       << e.description << ") at " << at << std::endl;
                         };
-                        sink.counts = [=](const std::map<std::string, int>& by_type, int total) {
-                            Json::Value v(Json::objectValue);
-                            v["total"] = total;
-                            for (const auto& [type, n] : by_type) v[type] = n;
-                            Json::StreamWriterBuilder w;
-                            w["indentation"] = "";
-                            sb_publish(sb_topic + "live_events", Json::writeString(w, v), true);
-                        };
-                        sink.mask = [=](bool on) {
-                            if (mask_out) mask_out->set(sender, on);
+                        sink.mask_change = [=](bool on, const std::string& session,
+                                               std::chrono::system_clock::time_point occurred) {
+                            if (live_state)
+                                live_state->mask({hms_cpap::LiveState::kSleepBridge, sender, on,
+                                                  occurred, session});
                             std::cout << "[sleepbridge] " << sender << " mask " << (on ? "on" : "off")
                                       << std::endl;
                         };
-                        if (mask_out) mask_out->sourceSeen(sender);
+                        if (live_state) live_state->sourceSeen(sender);
                         slot = std::make_unique<LiveNight>(
                             (std::filesystem::path(sb_root) / sender).string(), std::move(sink));
                         return *slot;
@@ -1743,7 +1731,7 @@ int main(int argc, char** argv) {
                     sb.on_tick = [=] {
                         std::lock_guard<std::mutex> lk(*lives_mu);
                         for (auto& [sender, live] : *lives) live->tick();
-                        if (mask_out) mask_out->tick();
+                        if (live_state) live_state->tick();
                     };
 
                     sleep_bridge = std::make_unique<hms_cpap::sleepbridge::SleepBridgeService>(
@@ -1782,7 +1770,9 @@ int main(int argc, char** argv) {
                         // Live: every block and event wakes the sync, so the
                         // night is in the database and the UI within a block;
                         // the events and therapy on/off go to the broker as
-                        // they arrive, for the house's automations.
+                        // they arrive, for the house's automations: on the live
+                        // topics every source shares, and on the unit's own
+                        // live/* topics, kept for the automations built on them.
                         std::shared_ptr<hms_cpap::mule::LivePublisher> live;
                         if (auto mq = burst_service->getMqttClient()) {
                             live = std::make_shared<hms_cpap::mule::LivePublisher>(
@@ -1792,7 +1782,12 @@ int main(int argc, char** argv) {
                                 },
                                 config.device_id, config.device_name);
                             live->announce();
+                        } else if (live_state) {
+                            live = std::make_shared<hms_cpap::mule::LivePublisher>(
+                                nullptr, config.device_id, config.device_name);
                         }
+                        if (live && live_state)
+                            live->setState(live_state, hms_cpap::LiveState::kMuleBle);
                         auto* bs = burst_service.get();
                         mule_stream->setLive([bs] { bs->requestSyncNow(); }, live);
                     }
