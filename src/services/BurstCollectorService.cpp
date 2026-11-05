@@ -335,7 +335,12 @@ void BurstCollectorService::refreshCardIdentity() {
             (std::filesystem::path(hms_cpap::AppConfig::dataDir()) / "cpap_data").string();
         card_root = ConfigManager::get("CPAP_ARCHIVE_DIR", default_archive);
     }
-    data_publisher_->setIdentity(readIdentification(card_root));
+    auto identity = readIdentification(card_root);
+    // No card to name the machine: an AirSense 11 read over its own Bluetooth
+    // (directly or through a Mule & Miner) named itself in its own folder.
+    // Without this a Bluetooth-only install announced "ResMed ?".
+    if (identity.empty()) identity = readBluetoothIdentification(hms_cpap::AppConfig::dataDir());
+    data_publisher_->setIdentity(identity);
 }
 
 void BurstCollectorService::initLlm() {
@@ -469,6 +474,10 @@ As11NightImport::Result BurstCollectorService::importAs11Nights() {
     // over: the session, its metrics and summary, the range summaries if due.
     const auto& latest = r.saved.back();
     if (!latest.session_start || !data_publisher_) return r;
+    // The night's machine may have named itself since start-up (its
+    // Identification.json is written on the first connect), so the announce
+    // that goes with this session carries the model.
+    refreshCardIdentity();
     data_publisher_->publishSession(latest);
     const bool full = publishNightOutcome(*latest.session_start);
     data_publisher_->publishSessionCompleted();

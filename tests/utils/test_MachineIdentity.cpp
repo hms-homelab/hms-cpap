@@ -9,6 +9,7 @@
 #include "services/DataPublisherService.h"
 #include "utils/AppConfig.h"
 
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -101,6 +102,45 @@ TEST(ReadIdentification, JsonGivesModelSerialAndSoftware) {
     EXPECT_EQ(id.model, "AirCurve 11 VAuto");
     EXPECT_EQ(id.serial, "99990000002");
     EXPECT_EQ(id.firmware, "SW04600.18.8.7.0.2d0405660");
+}
+
+// The folder an AirSense 11's own Bluetooth fills: <data_dir>/as11/<serial>/,
+// the identification in the card's shape.
+TEST(ReadBluetoothIdentification, NamesTheMachineFromItsBluetoothFolder) {
+    CardRoot data;
+    fs::create_directories(fs::path(data.path()) / "as11" / "99990000003");
+    std::ofstream(fs::path(data.path()) / "as11" / "99990000003" / "Identification.json") << R"({
+        "FlowGenerator": {"IdentificationProfiles": {
+            "Product": {"SerialNumber": "99990000003", "ProductCode": "39485",
+                        "ProductName": "AirSense 11 AutoSet"},
+            "Software": {"ApplicationIdentifier": "SW04600.17.8.6.0.0000000"}}}})";
+    const auto id = readBluetoothIdentification(data.path());
+    EXPECT_EQ(id.manufacturer, "ResMed");
+    EXPECT_EQ(id.model, "AirSense 11 AutoSet");
+    EXPECT_EQ(id.serial, "99990000003");
+    EXPECT_EQ(id.firmware, "SW04600.17.8.6.0.0000000");
+}
+
+TEST(ReadBluetoothIdentification, TheNewestMachineWins) {
+    CardRoot data;
+    const auto as11 = fs::path(data.path()) / "as11";
+    for (const char* serial : {"99990000004", "99990000005"}) {
+        fs::create_directories(as11 / serial);
+        std::ofstream(as11 / serial / "Identification.json")
+            << R"({"FlowGenerator":{"IdentificationProfiles":{"Product":{"SerialNumber":")" << serial
+            << R"(","ProductName":"AirSense11AutoSet"}}}})";
+    }
+    fs::last_write_time(as11 / "99990000004" / "Identification.json",
+                        fs::file_time_type::clock::now() - std::chrono::hours(24));
+    EXPECT_EQ(readBluetoothIdentification(data.path()).serial, "99990000005");
+}
+
+TEST(ReadBluetoothIdentification, NoBluetoothFolderIsEmpty) {
+    CardRoot data;
+    EXPECT_TRUE(readBluetoothIdentification(data.path()).empty());
+    fs::create_directories(fs::path(data.path()) / "as11" / "99990000006");   // a folder, no file yet
+    EXPECT_TRUE(readBluetoothIdentification(data.path()).empty());
+    EXPECT_TRUE(readBluetoothIdentification("").empty());
 }
 
 TEST(ReadIdentification, JsonWinsWhenBothArePresent) {
