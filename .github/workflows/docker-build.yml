@@ -229,6 +229,10 @@ jobs:
 
     env:
       VCPKG_DEFAULT_TRIPLET: x64-windows-static-md
+      # vcpkg binary cache: one zip per package ABI, in a directory we own and
+      # cache below. Job level so the `vcpkg install` step AND the CMake
+      # configure (the toolchain file re-runs vcpkg in manifest mode) both use it.
+      VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}\vcpkg-bincache,readwrite
       # Lifted to JOB level on purpose. A step's own `env:` block is not visible
       # to that same step's `if:` expression, so guarding the signing steps on a
       # step-local variable would silently evaluate to empty and skip forever,
@@ -271,16 +275,73 @@ jobs:
         run: npm run build -- --configuration production
 
       # ── vcpkg + C++ Build ───────────────────────────────────────
-      - name: Cache vcpkg packages
-        uses: actions/cache@v4
+      # The cache key must change whenever vcpkg's package ABIs change, or the
+      # cache restores archives vcpkg can no longer use. vcpkg.json has no
+      # builtin-baseline, so the ports come from the runner image's own vcpkg
+      # clone ($VCPKG_INSTALLATION_ROOT), which moves with every image update:
+      # image 20261021 -> 20261103 took drogon 1.9.13#2 -> 1.9.14 and changed
+      # every ABI. Keying on vcpkg.json alone made run 42032383687 get an
+      # EXACT hit on the 2026-11-01 master cache, restore 0 of 197 packages,
+      # rebuild for 55 min, and then skip the save ("Cache hit occurred on the
+      # primary key ... not saving cache"), so it could never refresh.
+      # Key = triplet + that vcpkg commit + the MSVC toolset + vcpkg.json.
+      - name: Compute vcpkg cache key
+        id: vcpkg-key
+        run: |
+          New-Item -ItemType Directory -Force vcpkg-bincache | Out-Null
+          $commit = (git -c safe.directory='*' -C "$env:VCPKG_INSTALLATION_ROOT" rev-parse --short=12 HEAD 2>$null)
+          # A failed git would leave a non-zero LASTEXITCODE that the runner's
+          # pwsh wrapper turns into a step failure; the image version is a
+          # coarser but safe stand-in for the vcpkg tree.
+          $global:LASTEXITCODE = 0
+          if (-not $commit) { $commit = "img$env:ImageVersion" }
+          $msvc = $env:VCToolsVersion
+          if (-not $msvc) { throw "VCToolsVersion not set; the MSVC environment step did not run" }
+          Write-Host "vcpkg commit $commit, MSVC $msvc"
+          "prefix=vcpkg-bin-win-x64-static-md-$commit-$msvc-" >> $env:GITHUB_OUTPUT
+
+      - name: Restore vcpkg binary cache
+        id: vcpkg-cache
+        uses: actions/cache/restore@v4
         with:
-          path: ~\AppData\Local\vcpkg\archives
-          key: vcpkg-win-x64-static-md-${{ hashFiles('vcpkg.json') }}
-          restore-keys: vcpkg-win-x64-static-md-
+          path: vcpkg-bincache
+          key: ${{ steps.vcpkg-key.outputs.prefix }}${{ hashFiles('vcpkg.json') }}
+          # Same vcpkg tree and compiler, different vcpkg.json: most ABIs still
+          # match. The bare prefix is a last resort that may restore nothing usable.
+          restore-keys: |
+            ${{ steps.vcpkg-key.outputs.prefix }}
+            vcpkg-bin-win-x64-static-md-
 
       - name: Install vcpkg dependencies
         run: |
           vcpkg install --triplet x64-windows-static-md
+
+      # Saved straight after the install, not in a post step at the end of the
+      # job: a cancelled or failed build later on (run 42058753942 was
+      # cancelled mid-install and its post step was skipped) must not throw
+      # away an hour of compiled packages. Archives this install did not use
+      # are pruned first, so a partial restore from an older key does not
+      # carry dead ABIs forward and grow the cache every image update.
+      - name: Prune unused vcpkg archives
+        if: ${{ !cancelled() && steps.vcpkg-cache.outputs.cache-hit != 'true' }}
+        run: |
+          $status = 'vcpkg_installed\vcpkg\status'
+          if (-not (Test-Path $status)) { Write-Host "no $status, not pruning"; exit 0 }
+          $used = @{}
+          Select-String -Path $status -Pattern '^Abi: (\S+)' |
+            ForEach-Object { $used[$_.Matches[0].Groups[1].Value] = $true }
+          if ($used.Count -eq 0) { Write-Host "no ABIs in $status, not pruning"; exit 0 }
+          $all = @(Get-ChildItem vcpkg-bincache -Recurse -File -Filter *.zip)
+          $dead = @($all | Where-Object { -not $used.ContainsKey($_.BaseName) })
+          $dead | Remove-Item -Force
+          Write-Host "kept $($all.Count - $dead.Count) archives, pruned $($dead.Count), installed ABIs $($used.Count)"
+
+      - name: Save vcpkg binary cache
+        if: ${{ !cancelled() && steps.vcpkg-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: vcpkg-bincache
+          key: ${{ steps.vcpkg-cache.outputs.cache-primary-key }}
 
       # SDD-016: Qt on the BUILD MACHINE ONLY, to compile the supervisor -- the
       # same reason the step above installs Drogon and libpqxx, which no user
