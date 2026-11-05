@@ -91,7 +91,10 @@ dd { margin: 0; color: #ddd; min-width: 0; overflow-wrap: anywhere; }
 .note-line { font-size: 0.83rem; color: #a9c7ad; }
 .note-line.err { color: var(--error); }
 
-.folds { display: flex; gap: 1.2rem; flex-wrap: wrap; }
+/* "More" / commands: their own footer row, set off from the buttons above and
+   clear of the card's bottom edge. */
+.folds { display: flex; gap: 1.2rem; flex-wrap: wrap; margin-top: 0.25rem; padding: 0.6rem 0 0.35rem;
+         border-top: 1px solid var(--line); }
 .fold { background: none; border: none; color: #ddd; cursor: pointer; font-size: 0.85rem; padding: 0.1rem 0; font-family: inherit; }
 .fold:hover { color: #fff; }
 .fold i { width: 0.8rem; }
