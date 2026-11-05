@@ -42,6 +42,12 @@ std::string readableModel(const std::string& product_name);
 /// when both are there. Absent or unreadable: an empty identity, no error.
 MachineIdentity readIdentification(const std::string& card_root);
 
+/// The machine an AirSense 11's own Bluetooth identified: the newest
+/// <data_dir>/as11/<serial>/Identification.json, written when hms-cpap reads
+/// the machine directly or a Mule & Miner streams it here. For an install with
+/// no card to name the machine. Empty when there is none.
+MachineIdentity readBluetoothIdentification(const std::string& data_dir);
+
 /// What a parsed session says about the machine that wrote it.
 MachineIdentity identityFromSession(const CPAPSession& session);
 

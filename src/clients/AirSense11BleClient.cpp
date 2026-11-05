@@ -143,16 +143,29 @@ bool AirSense11BleClient::connectLink(int timeout_ms) {
     }
     if (!scan(kScanMs)) return false;
 
-    ble::LinkHandlers handlers;
-    // A fresh conversation before the first notification can land.
-    handlers.ready = [this] { session_.onConnected(); };
-    handlers.notify = [this](const std::vector<uint8_t>& v) { session_.onNotify(v); };
-    // The link dropping wakes whatever the session waits on.
-    handlers.disconnected = [this] { session_.onDisconnect(); };
-    ble::ConnectOptions options;
-    options.resolve_timeout_ms = timeout_ms;
-    options.resolve_poll_ms = 250;
-    auto res = transport_->connect(device_, {as11::kWriteUuid, as11::kNotifyUuid}, std::move(handlers), options);
+    auto attempt = [this, timeout_ms] {
+        ble::LinkHandlers handlers;
+        // A fresh conversation before the first notification can land.
+        handlers.ready = [this] { session_.onConnected(); };
+        handlers.notify = [this](const std::vector<uint8_t>& v) { session_.onNotify(v); };
+        // The link dropping wakes whatever the session waits on.
+        handlers.disconnected = [this] { session_.onDisconnect(); };
+        ble::ConnectOptions options;
+        options.resolve_timeout_ms = timeout_ms;
+        options.resolve_poll_ms = 250;
+        return transport_->connect(device_, {as11::kWriteUuid, as11::kNotifyUuid}, std::move(handlers), options);
+    };
+    auto res = attempt();
+    // A remembered machine that would not connect: find it again by its
+    // advert and connect to what that advert names, once.
+    if (!res.link && !device_.advertising) {
+        std::cerr << kTag << "the remembered " << device_.name
+                  << " did not connect; looking for it by its advert" << std::endl;
+        session_.onDisconnect();
+        rediscover_ = true;
+        if (!scan(kScanMs)) return false;
+        res = attempt();
+    }
     if (!res.link) {
         switch (res.error) {
         case ble::LinkError::Resolve: note("services not resolved in time"); break;
@@ -386,6 +399,16 @@ bool AirSense11BleClient::streamOnce() {
     if (std::string ident; !std::filesystem::exists(std::filesystem::path(writer_->rootFor(serial)) / "Identification.json") &&
                            session_.getIdentification(&ident) == as11::Result::Ok)
         writeIdentification(writer_->rootFor(serial), ident);
+    // The settings too, until the machine has given them once: the STR's
+    // settings fields come from them. A machine that did not answer is asked
+    // again on the next connect, not only at the next Summary pull.
+    if (std::string settings; !std::filesystem::exists(settingsPath(writer_->rootFor(serial)))) {
+        if (session_.getSettings(&settings) == as11::Result::Ok && writeSettings(writer_->rootFor(serial), settings))
+            std::cout << kTag << "settings kept as SETTINGS/CurrentSettings.json" << std::endl;
+        else
+            std::cout << kTag << "settings not read yet (" << session_.lastError()
+                      << "): asked again on the next connect" << std::endl;
+    }
 
     as11::SecondAssembler assembler([this](as11::StreamBlock&& b) { writer_->onBlock(b); });
     assembler.setSerial(serial);

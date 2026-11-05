@@ -128,7 +128,7 @@ O2RingBleClient::~O2RingBleClient() {
 
 // ── Scan ───────────────────────────────────────────────────────────────
 
-bool O2RingBleClient::scan(int timeout_ms) {
+bool O2RingBleClient::scan(int timeout_ms, bool fresh_only) {
     if (!transport_ || !transport_->available()) return false;
     have_device_ = false;
 
@@ -136,8 +136,9 @@ bool O2RingBleClient::scan(int timeout_ms) {
     // and the OS's refusal would read as the ring being away.
     if (transport_->radio(true).state != ble::Radio::Ready) return false;
 
-    auto pick = [this](const ble::Device& d) {
+    auto pick = [this, fresh_only](const ble::Device& d) {
         if (skip_ids_.count(d.id)) return false;
+        if (fresh_only && !d.advertising) return false;
         bool by_t8520 = false;
         auto proto = classifyDevice(d.name, d.uuids, &by_t8520);
         if (!proto) return false;
@@ -148,8 +149,9 @@ bool O2RingBleClient::scan(int timeout_ms) {
         return true;
     };
 
-    // Already-known devices first
-    for (const auto& d : transport_->known()) {
+    // Already-known devices first (only BlueZ remembers any; macOS and
+    // Windows always find the ring by its advert).
+    for (const auto& d : fresh_only ? std::vector<ble::Device>{} : transport_->known()) {
         if (!pick(d)) continue;
         std::cout << "O2Ring BLE: Found cached " << describeDevice(device_)
                   << (proto_ == Proto::OxyII ? " (O2Ring-S)" : "") << std::endl;
@@ -213,6 +215,14 @@ bool O2RingBleClient::connect(int timeout_ms) {
             break;
         }
         disconnect();
+        // A remembered device that would not connect: find the ring again by
+        // its advert, as the Mule & Miner does, and connect to what that
+        // advert names. Once: a ring found advertising is not retried here.
+        if (!device_.advertising) {
+            std::cerr << "O2Ring BLE: the remembered " << describeDevice(device_)
+                      << " did not connect; looking for it by its advert" << std::endl;
+            if (scan(15000, true)) return connect(timeout_ms);
+        }
         return false;
     }
     link_ = std::move(res.link);

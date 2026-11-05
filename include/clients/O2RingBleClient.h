@@ -108,7 +108,9 @@ private:
                                           const std::vector<uint8_t>& payload = {});
 
     // BLE operations
-    bool scan(int timeout_ms = 15000);
+    /// fresh_only: ignore what the OS remembers and take only a ring
+    /// advertising now (the retry after a remembered device would not connect).
+    bool scan(int timeout_ms = 15000, bool fresh_only = false);
     bool connect(int timeout_ms = 15000);
     void disconnect();
     bool writeCharacteristic(const std::vector<uint8_t>& data);

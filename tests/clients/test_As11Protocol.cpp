@@ -72,6 +72,25 @@ TEST(As11Protocol, JoinsAFrameSplitAcrossNotifications) {
     EXPECT_FALSE(r.next().has_value());
 }
 
+TEST(As11Protocol, AReplyLargerThanASpoolFragmentIsNotDroppedAsNoise) {
+    // The SettingProfiles reply is larger than any spool fragment. The old
+    // 4096-byte cap dropped it piece by piece, which read as no answer.
+    std::string big = "{\"id\":7,\"result\":{\"SettingProfiles\":\"";
+    big += std::string(12000, 'x');
+    big += "\"}}";
+    const auto frame = buildFrame(kDevEncrypted, bytes(big));
+    ASSERT_FALSE(frame.empty());
+    Reassembler r;
+    std::optional<Frame> f;
+    for (size_t at = 0; at < frame.size(); at += 182) {   // MTU 185 notifications
+        r.feed(frame.data() + at, std::min<size_t>(182, frame.size() - at));
+        if (auto got = r.next()) f = got;
+    }
+    ASSERT_TRUE(f.has_value());
+    EXPECT_EQ(f->type, kDevEncrypted);
+    EXPECT_EQ(f->payload.size(), big.size());
+}
+
 TEST(As11Protocol, TwoFramesInOneNotificationAfterNoise) {
     const auto f1 = buildFrame(kDevPlain, bytes("{\"id\":1}"));
     const auto f2 = buildFrame(kDevEncrypted, bytes("0123456789abcdef0123456789abcdef"));

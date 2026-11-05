@@ -39,9 +39,12 @@ constexpr uint16_t kDevEncrypted = 0x0396;
 constexpr uint16_t kAppEncrypted = 0x0397;
 constexpr uint16_t kEncryptedBit = 0x0004;
 
-// The largest frame the machine sends: a spool fragment of maxFragmentSize
-// 2808 bytes is base64 (3744) inside JSON inside the cipher.
-constexpr size_t kMaxPayload = 4096;
+// The largest payload a frame can carry: its length is 16 bits. It was 4096,
+// sized for a spool fragment (2808 bytes as base64 inside JSON inside the
+// cipher), and the machine's SettingProfiles reply is larger: the reassembler
+// dropped it as noise, which read as "no answer to Get", so no settings were
+// ever kept over Bluetooth.
+constexpr size_t kMaxPayload = 65535;
 
 constexpr const char* kServiceUuid = "0000fd56-0000-1000-8000-00805f9b34fb";
 constexpr const char* kWriteUuid = "a6220002-35f1-4b20-afae-cb089d2044aa";

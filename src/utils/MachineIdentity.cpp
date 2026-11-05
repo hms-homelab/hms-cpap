@@ -116,6 +116,26 @@ MachineIdentity readIdentification(const std::string& card_root) {
     return {};
 }
 
+MachineIdentity readBluetoothIdentification(const std::string& data_dir) {
+    if (data_dir.empty()) return {};
+    std::error_code ec;
+    std::filesystem::path newest;
+    std::filesystem::file_time_type newest_time{};
+    for (const auto& entry : std::filesystem::directory_iterator(std::filesystem::path(data_dir) / "as11", ec)) {
+        const auto file = entry.path() / "Identification.json";
+        std::error_code fec;
+        if (!entry.is_directory(fec) || !std::filesystem::is_regular_file(file, fec)) continue;
+        const auto t = std::filesystem::last_write_time(file, fec);
+        if (fec) continue;
+        if (newest.empty() || t > newest_time) {
+            newest = entry.path();
+            newest_time = t;
+        }
+    }
+    if (newest.empty()) return {};
+    return readIdentification(newest.string());
+}
+
 MachineIdentity identityFromSession(const CPAPSession& session) {
     MachineIdentity id;
     id.manufacturer = manufacturerName(session.manufacturer);

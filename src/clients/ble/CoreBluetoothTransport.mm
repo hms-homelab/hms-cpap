@@ -253,16 +253,9 @@ public:
         return r;
     }
 
-    std::vector<Device> known() override {
-        std::vector<Device> out;
-        std::lock_guard<std::mutex> lk(s_->m);
-        for (const auto& [id, d] : s_->devices) {
-            Device copy = d;
-            copy.advertising = false;
-            out.push_back(std::move(copy));
-        }
-        return out;
-    }
+    // Nothing is offered from memory: every connect starts from a fresh scan
+    // that finds the device by its advert, as the Mule & Miner does.
+    std::vector<Device> known() override { return {}; }
 
     DiscoverResult discover(const std::function<bool(const Device&)>& match, int timeout_ms) override {
         DiscoverResult res;
