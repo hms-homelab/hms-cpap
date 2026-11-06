@@ -7,13 +7,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [6.1.1] - 2026-11-05
+
+The end of a streamed night reaches Home Assistant in a minute or two instead
+of an hour, the Mask sensor no longer flips off on a slow link, the session
+page charts the pressure the machine delivered, and every data source has its
+picture.
+
 ### Added
 - **Pictures of the data sources.** Each card on the Devices page shows the
   device it is about (Mule & Miner, Sleep Bridge Lite, O2 ring, ez Share card,
   FlashAir card, AirSense 11) in place of the small icon, and the set-up
   wizard's source step and the Settings source picker show the device beside
-  each choice. Rendered 3D pictures on a transparent background with a soft
+  each choice. The pictures are on a transparent background with a soft
   violet glow, made for the dark theme.
+
+### Fixed
+- **Session end on MQTT for a streamed night** (Fixes #57).
+  `session_active` and `session_status` only changed to `OFF` and `completed`
+  when the whole night was announced, an hour after its files stopped
+  growing, while the web page showed the session done right away. With a
+  source that streams the night (Sleep Bridge Lite, Mule & Miner, AirSense 11
+  over Bluetooth), they now change on the first check after the mask comes
+  off and the files stop, usually within a minute or two. A night read from a
+  card over WiFi or from a folder keeps the hour, which is how ResMed decides
+  a night is over, so a mask back on within it is the same night.
+- **AirSense 11 and AirCurve 11 over this computer's Bluetooth:
+  `session_active` follows the night** (#50). The night was published only
+  when its stream ended, with its start and its end at the same moment, so
+  `session_active` read `OFF` all night. It now goes `ON` (`in_progress`)
+  when the stream starts and `OFF` (`completed`) when it ends.
+- **The Sleep Bridge's Mask sensor no longer goes off when the link stalls.**
+  The "five minutes with no therapy" fallback fired when a weak WiFi link held
+  back part of the night, and the mask came back on seconds later when the
+  backlog arrived. The fallback now needs the bridge to be delivering data that
+  has no therapy in it. A bridge gone completely silent is waited on for 15
+  minutes. If the same session grows again after an off, the mask goes back on
+  and the night's counts are kept.
+- **Time zone in Docker.** The image now includes the time zone data, so
+  `TZ` works. Without it a container ran on UTC: a night that started at 1 AM
+  was stored and published as 1 AM UTC. Set `TZ` on the container (the compose
+  file and the README show how). The startup log prints the zone in use and
+  says so when it is UTC. The Home Assistant add-on needs nothing: it gets Home
+  Assistant's own time zone.
+- **The session page's pressure chart shows the pressure the machine
+  delivered** (Fixes #56). 6.1.0 moved the dashboard and the trend to the
+  delivered pressure; the session page still plotted the pressure measured at
+  the mask, which with EPR drops on every breath out, so a minimum of 7 with
+  EPR 3 sat around 5. The chart is now Therapy Pressure, with the mask's
+  pressure as its own dashed line and a legend naming both. Compare Nights
+  shows Therapy Pressure and Mask Pressure as two charts. A night imported
+  before 5.2.8 has no delivered pressure and shows the mask's, titled Mask
+  Pressure. Existing nights show the new chart on the first load after the
+  update.
+- **Windows: a summary request for a very long range returned no nights.**
+  A request reaching back before 1970 (36500 days, for example) failed on
+  Windows. The range now stops at 1970.
+
+### Changed
+- **The dashboard's "Refresh Summary" button is now "Regenerate AI
+  summary"** (#50). It only writes the latest night's AI summary again, and
+  its tooltip now says it does not fetch new data from the machine.
+
+### Documentation
+- **"Therapy active over MQTT"** in the README (#58): the Mask entity is the
+  real-time signal for whether therapy is running, with its MQTT topics, a Home
+  Assistant automation example, and how it differs from `session_active`.
 
 ## [6.1.0] - 2026-11-05
 

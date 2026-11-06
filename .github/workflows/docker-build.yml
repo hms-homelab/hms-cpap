@@ -384,7 +384,9 @@ jobs:
           # cmake/sleepbridge-pins.cmake, so the installer takes bridges.
           # BUILD_WITH_BLE: direct Bluetooth (the AirSense 11, the O2 rings)
           # through WinRT, whose C++/WinRT headers come with the Windows SDK.
-          cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static-md -DBUILD_TESTS=OFF -DBUILD_WITH_WEB=ON -DBUILD_WITH_POSTGRESQL=ON -DBUILD_WITH_MYSQL=ON `
+          # BUILD_TESTS=ON builds run_tests too (gtest is in vcpkg.json); the
+          # last step of this job runs it, after the artifacts are uploaded.
+          cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static-md -DBUILD_TESTS=ON -DBUILD_WITH_WEB=ON -DBUILD_WITH_POSTGRESQL=ON -DBUILD_WITH_MYSQL=ON `
             -DBUILD_WITH_SLEEPBRIDGE=ON -DBUILD_WITH_BLE=ON -DBUILD_SUPERVISOR=ON -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR" ..
           cmake --build . --parallel
 
@@ -539,6 +541,17 @@ jobs:
         with:
           name: hmscpap-installer-setup
           path: dist-installer/
+
+      # The unit tests under MSVC. Last on purpose: the artifacts above are
+      # already uploaded, so a failing test turns this job red without holding
+      # back the installer. Same exclusions as the Linux job (no MQTT broker
+      # here); PostgreSQL and MySQL arms skip, SQLite runs.
+      - name: Run tests (MSVC)
+        timeout-minutes: 30
+        working-directory: build/tests
+        run: |
+          .\run_tests.exe --gtest_filter='-MqttClientTest.*:STRMqttIntegrationTest.*:SummaryRegenerationE2ETest.*'
+          if ($LASTEXITCODE -ne 0) { throw "run_tests failed ($LASTEXITCODE)" }
 
   # ── Windows desktop: RUN it, do not just build it ────────────────
   #
