@@ -82,6 +82,7 @@ set(TEST_SOURCES
     utils/test_MachineIdentity.cpp
     utils/test_DeviceIdMigration.cpp
     utils/test_NightQuiet.cpp
+    services/test_SessionEndOnMqtt.cpp
     utils/test_TherapyPressure.cpp
     utils/test_MachineClock.cpp
     utils/test_DbProbeCli.cpp

@@ -74,8 +74,12 @@ std::string liveEventType(const std::string& description) {
     return "OTHER";
 }
 
-LiveNight::LiveNight(std::string card_root, LiveSink sink, std::chrono::seconds mask_quiet)
-    : root_(std::move(card_root)), sink_(std::move(sink)), mask_quiet_(mask_quiet) {}
+LiveNight::LiveNight(std::string card_root, LiveSink sink, std::chrono::seconds mask_quiet,
+                     std::chrono::seconds stall_limit)
+    : root_(std::move(card_root)),
+      sink_(std::move(sink)),
+      mask_quiet_(mask_quiet),
+      stall_limit_(std::max(stall_limit, mask_quiet)) {}
 
 void LiveNight::setMask(bool on) {
     if (mask_on_ == on) return;
@@ -130,8 +134,19 @@ void LiveNight::onWritten(const std::vector<std::string>& paths, Clock::time_poi
     if (str && !therapy && mask_on_) setMask(false);
 }
 
+void LiveNight::onDelivered(Clock::time_point now) { last_delivery_ = now; }
+
 void LiveNight::tick(Clock::time_point now) {
-    if (mask_on_ && now - last_therapy_write_ >= mask_quiet_) setMask(false);
+    if (!mask_on_) return;
+    const auto quiet = now - last_therapy_write_;
+    if (quiet < mask_quiet_) return;
+    // The stream is alive and had no therapy to bring: a batch landed after
+    // the last therapy write, long enough ago that its rebuild has run.
+    const bool delivering = last_delivery_ > last_therapy_write_ &&
+                            now - last_delivery_ >= kDeliverySettled;
+    // Nothing at all since the last therapy write: a stall looks the same as
+    // an end, so wait for the longer limit.
+    if (delivering || quiet >= stall_limit_) setMask(false);
 }
 
 void LiveNight::readEvents(const std::string& path, bool report) {

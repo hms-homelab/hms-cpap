@@ -73,6 +73,7 @@
 #include <string>
 #include <cstring>
 #include <cstdlib>
+#include <ctime>
 #include <filesystem>
 #include <sstream>
 #ifdef _WIN32
@@ -208,6 +209,31 @@ void printConfiguration() {
     std::cout << "  Burst Interval:     " << hms_cpap::ConfigManager::getInt("BURST_INTERVAL", 120) << " seconds" << std::endl;
     std::cout << "  Session Gap:        " << hms_cpap::ConfigManager::getInt("SESSION_GAP_MINUTES", 60) << " minutes" << std::endl;
     std::cout << "  Health Check Port:  " << hms_cpap::ConfigManager::getInt("HEALTH_CHECK_PORT", 8893) << std::endl;
+    // Issue #57: a CPAP names its files and stamps its records on its own
+    // clock, which is local time with no zone. hms-cpap reads those times in
+    // this process's zone, so a container left on UTC files a 1 AM night as
+    // 1 AM UTC and publishes it with +00:00. Say which zone is in use, and
+    // how to change it when it is UTC.
+    {
+        const std::time_t now_t = std::time(nullptr);
+        std::tm local{};
+#ifdef _WIN32
+        localtime_s(&local, &now_t);
+#else
+        localtime_r(&now_t, &local);
+#endif
+        char zone[64];
+        std::strftime(zone, sizeof(zone), "%Z (UTC%z)", &local);
+        const char* tz = std::getenv("TZ");
+        std::cout << "  Time Zone:          " << zone
+                  << (tz && *tz ? std::string(", TZ=") + tz : std::string()) << std::endl;
+        char offset[8];
+        std::strftime(offset, sizeof(offset), "%z", &local);
+        if (std::string(offset) == "+0000")
+            std::cout << "  (the machine's clock is read in this zone; if yours is not UTC, set TZ, "
+                         "e.g. TZ=America/New_York in Docker)"
+                      << std::endl;
+    }
     std::cout << std::endl;
 }
 
@@ -1727,6 +1753,13 @@ int main(int argc, char** argv) {
                                                       std::chrono::system_clock::now(), step.catch_up);
                         }
                         if (burst_service) burst_service->requestSyncNow();
+                    };
+                    // Issue #57: a batch landing is the stream alive, which
+                    // is what lets five quiet minutes mean the mask is off
+                    // rather than the bridge's link being down.
+                    sb.on_banked = [=](const std::string& sender) {
+                        std::lock_guard<std::mutex> lk(*lives_mu);
+                        liveFor(sender).onDelivered(std::chrono::system_clock::now());
                     };
                     sb.on_tick = [=] {
                         std::lock_guard<std::mutex> lk(*lives_mu);

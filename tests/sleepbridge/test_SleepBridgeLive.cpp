@@ -140,8 +140,10 @@ TEST(SleepBridgeLive, TherapyWritesPutTheMaskOnAndTheStrTakesItOff) {
     live.onWritten({"STR.edf"}, t0 + 120s);
     EXPECT_FALSE(live.maskOn());
     EXPECT_EQ(r.masks, (std::vector<bool>{true, false}));
-    // Therapy again, then nothing for the quiet span.
+    // Therapy again, then nothing for the quiet span from a bridge that is
+    // still delivering (a batch after the write that brought no therapy).
     live.onWritten({kBrp}, t0 + 200s);
+    live.onDelivered(t0 + 230s);
     live.tick(t0 + 400s);
     EXPECT_TRUE(live.maskOn());
     live.tick(t0 + 200s + 300s);
@@ -224,4 +226,81 @@ TEST(SleepBridgeLive, AFileThatWillNotOpenIsNoEvent) {
     live.onWritten({kEve, "DATALOG/20261030/missing_EVE.edf"}, t0);
     EXPECT_TRUE(r.events.empty());
     EXPECT_TRUE(r.counts.empty());
+}
+
+// ── issue #57: a delivery stall is not a mask-off ───────────────────────────
+//
+// The reported night, by arrival time: therapy rebuilt at 7:54:16, nothing
+// delivered at all until 7:58:46, then the backlog, the same therapy file
+// carrying on. The five-minute rule took the mask off at 7:58:16 on arrival
+// silence alone, and on again 33 s later.
+
+TEST(SleepBridgeLive, ADeliveryStallDoesNotTakeTheMaskOff) {
+    TempDir t;
+    Recorder r;
+    LiveNight live(t.path.string(), r.sink());
+    live.onDelivered(t0);
+    live.onWritten({kBrp}, t0 + 2s);   // the rebuild after that batch
+    // Four and a half minutes with nothing at all from the bridge.
+    live.tick(t0 + 2s + 300s);
+    live.tick(t0 + 272s + 30s);
+    EXPECT_TRUE(live.maskOn()) << "silence from the bridge is not silence from the machine";
+    // The backlog lands, the session's file carries on.
+    live.onDelivered(t0 + 272s);
+    live.onWritten({kBrp}, t0 + 275s);
+    live.tick(t0 + 400s);
+    EXPECT_TRUE(live.maskOn());
+    EXPECT_EQ(r.masks, std::vector<bool>{true}) << "no off, no second on";
+}
+
+TEST(SleepBridgeLive, SilenceLongerThanTheStallLimitIsAnEnd) {
+    TempDir t;
+    Recorder r;
+    LiveNight live(t.path.string(), r.sink(), 300s, 900s);
+    live.onWritten({kBrp}, t0);
+    live.tick(t0 + 899s);
+    EXPECT_TRUE(live.maskOn());
+    live.tick(t0 + 900s);
+    EXPECT_FALSE(live.maskOn()) << "a bridge that never comes back cannot hold the mask on";
+}
+
+TEST(SleepBridgeLive, AQuietOffNeedsADeliveryItsRebuildHasSeen) {
+    TempDir t;
+    Recorder r;
+    LiveNight live(t.path.string(), r.sink());
+    live.onWritten({kBrp}, t0);
+    // The machine stopped; the bridge still sends what it writes after
+    // therapy (the card's own bookkeeping), and none of it is therapy.
+    live.onDelivered(t0 + 64s);
+    live.tick(t0 + 299s);
+    EXPECT_TRUE(live.maskOn()) << "inside the quiet span";
+    live.tick(t0 + 300s);
+    EXPECT_FALSE(live.maskOn()) << "five quiet minutes from a bridge still delivering";
+
+    // A batch that landed just now has not been rebuilt yet: it may be the
+    // therapy, so it says nothing about the stream.
+    Recorder r2;
+    LiveNight late(t.path.string(), r2.sink());
+    late.onWritten({kBrp}, t0);
+    late.onDelivered(t0 + 299s);
+    late.tick(t0 + 300s);
+    EXPECT_TRUE(late.maskOn());
+    late.tick(t0 + 299s + LiveNight::kDeliverySettled);
+    EXPECT_FALSE(late.maskOn()) << "its rebuild ran and brought no therapy";
+}
+
+// Off on quiet, then the SAME session's file grows: the off was a stall after
+// all, and the mask is on again (a real mask-off and on starts a new session
+// file).
+TEST(SleepBridgeLive, TheSameSessionGrowingAfterAQuietOffPutsTheMaskBackOn) {
+    TempDir t;
+    Recorder r;
+    LiveNight live(t.path.string(), r.sink());
+    live.onWritten({kBrp}, t0);
+    live.onDelivered(t0 + 30s);   // a batch that brought no therapy
+    live.tick(t0 + 300s);
+    ASSERT_FALSE(live.maskOn());
+    live.onWritten({kBrp}, t0 + 330s);
+    EXPECT_TRUE(live.maskOn());
+    EXPECT_EQ(r.masks, (std::vector<bool>{true, false, true}));
 }

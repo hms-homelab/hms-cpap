@@ -697,7 +697,26 @@ private:
     /// republish the previous night on the way to announcing the next one.
     bool announcing_ = false;
 
+    /**
+     * Issue #57: session_active OFF / session_status completed at the
+     * session's end when the night is streamed. A session whose files have
+     * stopped (the burst's close) and whose mask a streaming source said off
+     * (LiveState::streamSaidOff) is over: it is published on that burst, not
+     * an hour later. The night's announcement (outcome, SleepHQ, summaries)
+     * keeps its hour (SDD-046), and a mask back on grows the files, which
+     * publishes in_progress / ON again. Once per session end, and never for
+     * a session older than the last one said. True when it published.
+     */
+    bool publishStreamedSessionEnd(const std::chrono::system_clock::time_point& session_start);
+    /// The session whose end publishStreamedSessionEnd last said; cleared
+    /// when a session is published in progress again.
+    std::optional<std::chrono::system_clock::time_point> session_end_said_;
+
 public:
+    /// Test-only seam for issue #57.
+    bool publishStreamedSessionEndForTest(const std::chrono::system_clock::time_point& start) {
+        return publishStreamedSessionEnd(start);
+    }
     /// Test-only seam for the SDD-043 sweep.
     int closeSettledOpenLocalNightsForTest(std::chrono::system_clock::time_point now) {
         return closeSettledOpenLocalNights(now);

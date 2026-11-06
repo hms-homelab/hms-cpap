@@ -419,11 +419,86 @@ TEST(LiveSources, SleepBridgeOffAfterFiveQuietMinutes) {
     };
     LiveNight night(dir.p.string(), std::move(sink), 300s);
     night.onWritten({brp}, t0 + 120s);
+    night.onDelivered(t0 + 180s);   // the bridge still delivering, no therapy in it
     night.tick(t0 + 419s);
     EXPECT_EQ(rec.last("mask"), "ON");
     night.tick(t0 + 420s);
     EXPECT_EQ(rec.last("mask"), "OFF");
     EXPECT_EQ(rec.change()["occurred_at"].asString(), LiveState::isoUtc(t0 + 120s));
+}
+
+// Issue #57, replayed on the shared topics: the bridge's link went quiet for
+// four and a half minutes mid-night and then delivered the backlog. Before,
+// realtime/mask said OFF at five quiet minutes and ON 33 s later; a stall now
+// says nothing.
+TEST(LiveSources, SleepBridgeDeliveryStallPublishesNoOff) {
+    TempDir dir;
+    const std::string brp = "DATALOG/20261105/20261105_041502_BRP.edf";
+    writeEdf(dir.p / brp, 400);
+    Recorder rec;
+    const auto t0 = localStem(2026, 11, 5, 4, 15, 2);
+    LiveState live(rec.publish(), "cpap_test", "Test CPAP", t0);
+    LiveSink sink;
+    sink.mask_change = [&](bool on, const std::string& session, Clock::time_point occurred) {
+        live.mask({LiveState::kSleepBridge, "TAP-1", on, occurred, session});
+    };
+    LiveNight night(dir.p.string(), std::move(sink));
+    const auto stall = t0 + 6h;   // the last batch before the stall
+    night.onWritten({brp}, t0 + 60s);
+    night.onDelivered(stall);
+    night.onWritten({brp}, stall + 2s);
+    for (auto t = stall + 30s; t < stall + 272s; t += 30s) night.tick(t);
+    night.tick(stall + 2s + 300s);
+    night.onDelivered(stall + 272s);   // the backlog
+    night.onWritten({brp}, stall + 275s);
+    for (auto t = stall + 300s; t < stall + 600s; t += 30s) night.tick(t);
+    ASSERT_EQ(rec.on("mask").size(), 1u);
+    EXPECT_EQ(rec.last("mask"), "ON");
+    EXPECT_FALSE(live.streamSaidOff());
+}
+
+// An off on quiet that the same session growing disproves: ON again, and the
+// night's event counts are kept, since it is the same night going on. A new
+// session after an off starts them over, as before.
+TEST(LiveState, TheSameSessionBackOnAfterAnOffKeepsItsCounts) {
+    Recorder rec;
+    LiveState live(rec.publish(), "cpap_test", "Test CPAP", at(kT0));
+    live.mask({LiveState::kSleepBridge, "TAP-1", true, at(kT0), "20261105_041502"}, at(kT0 + 5));
+    Json::Value e(Json::objectValue);
+    e["type"] = "H";
+    live.event(e, at(kT0 + 100), at(kT0 + 110));
+    live.mask({LiveState::kSleepBridge, "TAP-1", false, at(kT0 + 200), "20261105_041502"},
+              at(kT0 + 500));
+    EXPECT_TRUE(live.streamSaidOff());
+    live.mask({LiveState::kSleepBridge, "TAP-1", true, at(kT0), "20261105_041502"}, at(kT0 + 530));
+    EXPECT_FALSE(live.streamSaidOff());
+    EXPECT_EQ(rec.last("mask"), "ON");
+    EXPECT_EQ(parse(rec.last("live_events"))["total"].asInt(), 1) << "the same night";
+    EXPECT_EQ(rec.change()["occurred_at"].asString(), LiveState::isoUtc(at(kT0)))
+        << "the session's own start, the moment it went on";
+
+    live.mask({LiveState::kSleepBridge, "TAP-1", false, at(kT0 + 900), "20261105_041502"},
+              at(kT0 + 1200));
+    live.mask({LiveState::kSleepBridge, "TAP-1", true, at(kT0 + 1500), "20261105_044002"},
+              at(kT0 + 1505));
+    EXPECT_EQ(parse(rec.last("live_events"))["total"].asInt(), 0) << "a new session";
+}
+
+// Issue #50: the AirSense 11 / AirCurve 11 over this computer's Bluetooth is
+// imported only when its stream ends, so no burst ever said the session was
+// running: rt_session_active went ON and OFF back to back at the import. The
+// stream's start and end now say it, on the burst publisher's own topics.
+TEST(LiveState, TheSessionTopicsFollowABluetoothStream) {
+    Recorder rec;
+    LiveState live(rec.publish(), "cpap_test", "Test CPAP", at(kT0));
+    live.session(true);
+    EXPECT_EQ(rec.last("session_status"), "in_progress");
+    EXPECT_EQ(rec.last("session_active"), "ON");
+    ASSERT_EQ(rec.on("session_active").size(), 1u);
+    EXPECT_TRUE(rec.on("session_active")[0].retain);
+    live.session(false);
+    EXPECT_EQ(rec.last("session_status"), "completed");
+    EXPECT_EQ(rec.last("session_active"), "OFF");
 }
 
 // After a restart the bridge's first step only catches up; the night still
@@ -598,5 +673,91 @@ TEST(LiveStateBroker, TheEntitiesTheStateAndItsChangeAreRetained) {
         pub->publish(t, "", 1, true);   // tidy up: empty retained payloads delete them
     std::this_thread::sleep_for(200ms);
     probe.disconnect();
+    pub->disconnect();
+}
+
+// Issue #58: a Sleep Bridge night, end to end on a broker, as Home Assistant
+// would read it after the fact (retained): the Mask entity's discovery, ON at
+// the first therapy write with the session's start as occurred_at, nothing
+// said through a delivery stall, OFF at the STR with the end of the last
+// record, and the change's attributes beside the state.
+TEST(LiveStateBroker, ASleepBridgeNightIsRetainedOnTheMaskEntity) {
+    auto pub = std::make_shared<hms::MqttClient>(testMqttConfig("livestate_sb_pub"));
+    if (!pub->connect()) GTEST_SKIP() << "no MQTT broker";
+    const std::string id = "livestate_sb_" + std::to_string(::getpid());
+    TempDir dir;
+    const std::string brp = "DATALOG/20261105/20261105_041502_BRP.edf";
+    writeEdf(dir.p / brp, 3);
+    const auto t0 = localStem(2026, 11, 5, 4, 15, 2);
+
+    std::vector<std::string> mask_said;
+    LiveState live(
+        [&, pub](const std::string& t, const std::string& p, int q, bool r) {
+            if (t == "cpap/" + id + "/realtime/mask") mask_said.push_back(p);
+            return pub->isConnected() && pub->publish(t, p, q, r);
+        },
+        id, "Live test", t0);
+    ASSERT_TRUE(live.announce());
+    LiveSink sink;
+    sink.mask_change = [&](bool on, const std::string& session, Clock::time_point occurred) {
+        live.mask({LiveState::kSleepBridge, "TAP-1", on, occurred, session}, t0 + 240s);
+    };
+    LiveNight night(dir.p.string(), std::move(sink));
+
+    // Hold the probe's view of each topic: the last retained value.
+    auto read = [&](const std::vector<std::string>& topics) {
+        hms::MqttClient probe(testMqttConfig("livestate_sb_probe"));
+        std::map<std::string, std::string> got;
+        std::mutex mu;
+        EXPECT_TRUE(probe.connect());
+        probe.subscribe(topics,
+                        [&](const std::string& t, const std::string& p) {
+                            std::lock_guard<std::mutex> lk(mu);
+                            got[t] = p;
+                        },
+                        1);
+        std::this_thread::sleep_for(800ms);
+        probe.disconnect();
+        std::lock_guard<std::mutex> lk(mu);
+        return got;
+    };
+    const std::vector<std::string> topics{live.maskConfigTopic(), live.topic("mask"),
+                                          live.topic("mask_changed")};
+
+    night.onDelivered(t0 + 58s);
+    night.onWritten({brp}, t0 + 60s);
+    // A stall: nothing delivered for four and a half minutes, then the backlog.
+    night.tick(t0 + 60s + 300s);
+    night.onDelivered(t0 + 330s);
+    night.onWritten({brp}, t0 + 332s);
+    std::this_thread::sleep_for(300ms);
+    auto got = read(topics);
+    const auto cfg = parse(got[live.maskConfigTopic()]);
+    EXPECT_EQ(cfg["unique_id"].asString(), id + "_mask");
+    EXPECT_EQ(cfg["state_topic"].asString(), live.topic("mask"));
+    EXPECT_EQ(cfg["json_attributes_topic"].asString(), live.topic("mask_changed"));
+    EXPECT_EQ(cfg["device_class"].asString(), "running");
+    EXPECT_EQ(got[live.topic("mask")], "ON");
+    auto c = parse(got[live.topic("mask_changed")]);
+    EXPECT_EQ(c["source"].asString(), "sleep_bridge");
+    EXPECT_EQ(c["source_id"].asString(), "TAP-1");
+    EXPECT_EQ(c["session"].asString(), "20261105_041502");
+    EXPECT_EQ(c["occurred_at"].asString(), LiveState::isoUtc(t0));
+    EXPECT_EQ(mask_said, std::vector<std::string>{"ON"}) << "the stall said nothing";
+
+    // Mask off: the machine writes the STR.
+    night.onWritten({"STR.edf"}, t0 + 400s);
+    std::this_thread::sleep_for(300ms);
+    got = read(topics);
+    EXPECT_EQ(got[live.topic("mask")], "OFF");
+    c = parse(got[live.topic("mask_changed")]);
+    EXPECT_EQ(c["state"].asString(), "off");
+    EXPECT_EQ(c["occurred_at"].asString(), LiveState::isoUtc(t0 + 180s)) << "the last record's end";
+    EXPECT_EQ(c["delay_s"].asInt(), 60);
+
+    for (const auto& t : {live.maskConfigTopic(), live.eventsConfigTopic(), live.topic("mask"),
+                          live.topic("mask_changed"), live.topic("live_events")})
+        pub->publish(t, "", 1, true);
+    std::this_thread::sleep_for(200ms);
     pub->disconnect();
 }

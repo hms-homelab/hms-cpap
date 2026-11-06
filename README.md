@@ -114,12 +114,20 @@ The image on GHCR is built for `arm64` and `amd64`, so it runs as-is on a
 
 ```bash
 docker run -d --name hms-cpap -p 8893:8893 \
+  -e TZ=America/New_York \
   -v cpap_config:/config -v cpap_data:/data \
   ghcr.io/hms-homelab/hms-cpap:latest
 ```
 
 Open http://localhost:8893/setup. Config lives in the `cpap_config` volume and
 data in `cpap_data`; neither is touched by image updates.
+
+Set `TZ` to your own time zone (the compose file reads it from your shell or
+`.env`). The CPAP keeps local time with no zone, and hms-cpap reads it in the
+container's: a container left on UTC files a night that started at 1 AM as
+1 AM UTC, and Home Assistant shows its times with `+00:00`. The log's
+configuration block prints the zone in use. The Home Assistant add-on needs
+nothing: the Supervisor gives it Home Assistant's own time zone.
 
 For a Sleep Bridge Lite or a Mule & Miner sending a night here, publish the
 stream port as well: add `-p 8894:8894` to the line above (the compose file
@@ -389,7 +397,7 @@ its last record. The mask is on while any source says so.
 
 | Source (`source`) | Mask on | Mask off | Events | Typical `delay_s` |
 |---|---|---|---|---|
-| Sleep Bridge Lite (`sleep_bridge`) | the first therapy write streamed | the STR the machine writes at mask-off, or 5 min with no therapy write | yes | on: up to about a minute (the machine's first write); off: seconds after the STR, about 5 min on the fallback |
+| Sleep Bridge Lite (`sleep_bridge`) | the first therapy write streamed | the STR the machine writes at mask-off, or 5 min with no therapy write while the bridge is still delivering; a bridge gone completely silent is waited on for 15 min, since a link that stalls and delivers late looks the same | yes | on: up to about a minute (the machine's first write); off: seconds after the STR, about 5 min on the fallback, 15 on a silent link |
 | Mule & Miner, AirSense 11 Bluetooth mode (`mule_ble`) | the stream starts | the stream ends (the end of its last block) | yes | seconds |
 | AirSense 11 over this computer's Bluetooth (`as11_ble`) | the stream starts | the stream ends | yes | seconds |
 | ez Share (`ezshare`), FlashAir (`flashair`), local folder (`local`) | a burst finds the session's BRP grown | the BRP has not grown for 135 s | no | about 2 minutes, up to a burst interval more: a change needs the next burst to show |
@@ -410,6 +418,57 @@ Kept for the automations already built on them: the Mule & Miner's own
 **Live event count**, **Live AHI**, **Live last event**), as
 [docs/MULE_LOCAL_STREAM.md](docs/MULE_LOCAL_STREAM.md) describes them. New
 automations should use the table above, which every source fills.
+
+#### Therapy active over MQTT
+
+For "is therapy running right now", use the **Mask** entity. With a Sleep
+Bridge Lite it flips within about a minute of the mask going on (the
+machine's first therapy write) and within seconds of it coming off (the STR
+the machine writes at mask-off); a card read over WiFi or from a folder is
+about two minutes late, and says so in `delay_s`.
+
+```
+cpap/<device_id>/realtime/mask           ON
+cpap/<device_id>/realtime/mask_changed   {"state":"on","source":"sleep_bridge",
+                                          "source_id":"TAP-S3-00000123",
+                                          "session":"20261105_010913",
+                                          "occurred_at":"2026-11-05T06:09:13Z",
+                                          "detected_at":"2026-11-05T06:10:02Z",
+                                          "delay_s":49}
+```
+
+Both are retained, so Home Assistant has the state and its attributes after a
+restart of either side. A Home Assistant automation:
+
+```yaml
+automation:
+  - alias: "CPAP therapy started"
+    triggers:
+      - trigger: state
+        entity_id: binary_sensor.cpapdash_mask   # the Mask entity on your hms-cpap device
+        to: "on"
+    actions:
+      - action: light.turn_off
+        target:
+          entity_id: light.bedroom
+```
+
+Or straight off the broker: `mosquitto_sub -v -t 'cpap/+/realtime/mask'`.
+
+`RT session_active` and `RT session_status`
+(`cpap/<device_id>/realtime/session_active`, `.../session_status`) are the
+slower "is the session over" signal: `ON` / `in_progress` while the session's
+files grow, `OFF` / `completed` once they have stopped. With a source that
+streams the night (Sleep Bridge, Mule & Miner) that is the first burst after
+the mask comes off on the stream and the files stop, a minute or two. An
+AirSense 11 or AirCurve 11 read over this computer's Bluetooth says `ON` when
+its stream starts and `OFF` when it ends. With a card read over WiFi or from a folder it is when
+the night is over: an hour with no growth, ResMed's own rule for a closed
+night, so a mask back on within it is the same night.
+
+The times in these payloads are only as right as the zone hms-cpap runs in:
+the machine keeps local time, so set `TZ` on a Docker container (see
+Install).
 
 Everything else (config keys, CLI flags, MQTT sensor list, myAir setup,
 architecture, development, cross-compiling) is in

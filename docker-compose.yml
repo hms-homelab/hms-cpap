@@ -10,6 +10,11 @@ services:
     restart: unless-stopped
 
     environment:
+      # Your time zone. The CPAP's clock is local time with no zone, and
+      # hms-cpap reads it in this one: left on UTC, a night that starts at
+      # 1 AM is stored and published as 1 AM UTC.
+      - TZ=${TZ:-Etc/UTC}
+
       # Device Configuration
       - CPAP_DEVICE_ID=${CPAP_DEVICE_ID:-resmed_airsense10}
       - CPAP_DEVICE_NAME=${CPAP_DEVICE_NAME:-ResMed AirSense 10}
