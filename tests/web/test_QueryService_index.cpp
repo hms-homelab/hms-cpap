@@ -172,6 +172,14 @@ protected:
                 "SELECT id FROM cpap_sessions WHERE device_id = " +
                     sql::param(1, db_->dbType()) + ")",
                 {device_});
+            // Issue #56: the session-signals test writes per-minute rows.
+            for (const char* table : {"cpap_breathing_summary", "cpap_calculated_metrics"}) {
+                db_->executeQuery(
+                    std::string("DELETE FROM ") + table + " WHERE session_id IN ("
+                    "SELECT id FROM cpap_sessions WHERE device_id = " +
+                        sql::param(1, db_->dbType()) + ")",
+                    {device_});
+            }
             db_->executeQuery("DELETE FROM cpap_sessions WHERE device_id = " +
                                   sql::param(1, db_->dbType()),
                               {device_});
@@ -601,6 +609,62 @@ TEST_P(QueryServiceIndexTest, TheEventsSearchFiltersByTypeAndDuration) {
     // "no clause" on one dialect only.
     auto none = qs_->getEvents("1999-01-01", "1999-12-31", {}, 0, 100, 0);
     EXPECT_EQ(none.size(), 0u) << eng << ": the date window was ignored";
+}
+
+// Issue #56, the session page. Its Pressure chart plotted the pressure measured
+// at the mask (cpap_breathing_summary.avg_pressure). With EPR 3 on a minimum of
+// 7 that sits near 5, below the minimum the machine never goes under. The
+// signals read now carries the per-minute delivered pressure (PLD Press, the
+// same rows the night's therapy_press_50/95/max come from) beside the mask's,
+// on every engine, and a minute without one is NULL rather than 0.
+TEST_P(QueryServiceIndexTest, TheSessionSignalsCarryTheDeliveredPressureBesideTheMask) {
+    const std::string eng = engineName(GetParam());
+    const auto start = time_point_cast<seconds>(system_clock::now() - hours(30));
+
+    CPAPSession s;
+    s.device_id = device_;
+    s.device_name = "AirSense 11 AutoSet";
+    s.session_start = start;
+    s.session_end = start + minutes(10);
+    s.duration_seconds = 10 * 60;
+    s.data_records = 10;
+    s.status = CPAPSession::Status::COMPLETED;
+    for (int i = 0; i < 10; ++i) {
+        BreathingSummary b;
+        b.timestamp = start + minutes(i);
+        b.avg_flow_rate = 20;
+        b.avg_pressure = 5.0 + 0.1 * i;     // the mask, EPR taking ~2 off
+        b.min_pressure = 4.0;
+        b.max_pressure = 7.0 + 0.1 * i;
+        b.leak_rate = 1.0;                  // a calculated row for every minute
+        if (i < 9) b.therapy_pressure = 7.0 + 0.1 * i;   // the last minute has none
+        s.breathing_summary.push_back(b);
+    }
+    ASSERT_TRUE(db_->saveSession(s)) << eng;
+
+    // The night's sleep day, as the sessions list names it, so the test does
+    // not depend on the zone it runs in.
+    std::string day;
+    for (const auto& r : qs_->getSessions(50, 0))
+        if (r["oximetry_only"].asString() != "1") day = r["sleep_day"].asString();
+    ASSERT_FALSE(day.empty()) << eng;
+
+    const auto sig = qs_->getSessionSignals(day);
+    ASSERT_TRUE(sig["therapy_pressure"].isArray())
+        << eng << ": the signals read has no therapy_pressure series";
+    ASSERT_EQ(sig["timestamps"].size(), 10u) << eng;
+    ASSERT_EQ(sig["therapy_pressure"].size(), 10u)
+        << eng << ": the series must line up with the timestamps";
+    ASSERT_EQ(sig["pressure_avg"].size(), 10u) << eng;
+
+    for (int i = 0; i < 9; ++i) {
+        EXPECT_NEAR(asNumber(sig["therapy_pressure"][i]), 7.0 + 0.1 * i, 1e-6)
+            << eng << " minute " << i << ": not the delivered pressure";
+        EXPECT_NEAR(asNumber(sig["pressure_avg"][i]), 5.0 + 0.1 * i, 1e-6)
+            << eng << " minute " << i << ": the mask's line changed";
+    }
+    EXPECT_TRUE(sig["therapy_pressure"][9].isNull())
+        << eng << ": a minute with no delivered pressure must be a gap, never a 0";
 }
 
 INSTANTIATE_TEST_SUITE_P(

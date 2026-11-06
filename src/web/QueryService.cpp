@@ -760,14 +760,22 @@ Json::Value QueryService::getInsights(int days) {
 }
 
 Json::Value QueryService::getSessionSignals(const std::string& date) {
-    // Join breathing_summary + calculated_metrics for per-minute signal data
+    // Join breathing_summary + calculated_metrics for per-minute signal data.
+    //
+    // Issue #56: b.avg/min/max_pressure is the pressure MEASURED at the mask
+    // (the high-resolution waveform), which with EPR drops by up to the EPR
+    // level on every breath out. c.therapy_pressure is the pressure the machine
+    // delivered (the card's PLD Press, per minute), the same source the night's
+    // therapy_press_50/95/max are computed from. The session page plots the
+    // therapy pressure and the mask's as its own line.
     std::string q =
         "SELECT b.timestamp,"
         " b.avg_flow_rate, b.max_flow_rate, b.min_flow_rate,"
         " b.avg_pressure, b.max_pressure, b.min_pressure,"
         " c.respiratory_rate, c.tidal_volume, c.minute_ventilation,"
         " c.ie_ratio, c.flow_limitation, c.leak_rate,"
-        " c.mask_pressure, c.epr_pressure, c.snore_index, c.target_ventilation"
+        " c.mask_pressure, c.epr_pressure, c.snore_index, c.target_ventilation,"
+        " c.therapy_pressure"
         " FROM cpap_sessions s"
         " JOIN cpap_breathing_summary b ON b.session_id = s.id"
         " LEFT JOIN cpap_calculated_metrics c ON c.session_id = s.id AND c.timestamp = b.timestamp"
@@ -785,6 +793,7 @@ Json::Value QueryService::getSessionSignals(const std::string& date) {
     Json::Value rr(Json::arrayValue), tv(Json::arrayValue), mv(Json::arrayValue);
     Json::Value ie(Json::arrayValue), fl(Json::arrayValue), leak(Json::arrayValue);
     Json::Value mask_press(Json::arrayValue), epr_press(Json::arrayValue), snore(Json::arrayValue), tgt_vent(Json::arrayValue);
+    Json::Value therapy_press(Json::arrayValue);
 
     for (const auto& r : rows) {
         timestamps.append(r.get("timestamp", Json::nullValue));
@@ -804,6 +813,7 @@ Json::Value QueryService::getSessionSignals(const std::string& date) {
         epr_press.append(r.get("epr_pressure", Json::nullValue));
         snore.append(r.get("snore_index", Json::nullValue));
         tgt_vent.append(r.get("target_ventilation", Json::nullValue));
+        therapy_press.append(r.get("therapy_pressure", Json::nullValue));
     }
 
     result["timestamps"] = timestamps;
@@ -823,6 +833,7 @@ Json::Value QueryService::getSessionSignals(const std::string& date) {
     result["epr_pressure"] = epr_press;
     result["snore_index"] = snore;
     result["target_ventilation"] = tgt_vent;
+    result["therapy_pressure"] = therapy_press;
     return result;
 }
 

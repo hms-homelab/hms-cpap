@@ -12,6 +12,13 @@
     "fullScreen": "Pantalla completa",
     "closeFullScreen": "Salir de pantalla completa",
     "close": "Cerrar",
-    "odiTitle": "Índice de desaturación de oxígeno — desaturaciones ≥3% por hora"
+    "odiTitle": "Índice de desaturación de oxígeno — desaturaciones ≥3% por hora",
+    "pressure": {
+      "legendTherapy": "Entregada por el equipo",
+      "legendMask": "Medida en la mascarilla",
+      "noteTherapy": "La línea continua es la presión que entregó su equipo. La línea discontinua se mide en la mascarilla; con el EPR activado, baja en cada espiración.",
+      "noteTherapyOnly": "La presión que entregó su equipo.",
+      "noteMask": "Medida en la mascarilla. Esta noche no tiene registro de la presión de la terapia."
+    }
   }
 }

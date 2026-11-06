@@ -13,6 +13,7 @@ import { detectDesaturations, desatAnnotations, odiPerHour, inferSampleSec } fro
 import { formatIndex } from '../../utils/format';
 import { isGradable, indexLabelKey } from '../../utils/index-kind';
 import { nightAhi, sessionSeconds } from './night-ahi';
+import { sessionPressurePlan, SessionPressurePlan } from './session-pressure';
 import { Chart, ChartDataset, registerables } from 'chart.js';
 import annotationPlugin from 'chartjs-plugin-annotation';
 import zoomPlugin from 'chartjs-plugin-zoom';
@@ -34,6 +35,10 @@ interface SignalDef {
   source: 'signals' | 'vitals' | 'oximetry';
   fill?: boolean;
   minMode?: number;        // only show if therapy_mode >= this (e.g., 1=not CPAP, 7=ASV only)
+  // Issue #56: the pressure chart. Its series, title and lines are decided per
+  // night by sessionPressurePlan (the delivered pressure, the mask's dashed).
+  pressure?: boolean;
+  pressurePlan?: SessionPressurePlan;
 }
 
 // SDD-080: `titleKey` rather than `title`. The names come from core.signal so
@@ -45,7 +50,9 @@ interface SignalDef {
 // every language this product ships.
 const SIGNAL_DEFS: SignalDef[] = [
   { key: 'flow_avg', titleKey: 'signal.flow', unit: 'L/min', color: '#64b5f6', hasBand: true, bandMinKey: 'flow_min', bandMaxKey: 'flow_max', showEvents: true, source: 'signals' },
-  { key: 'pressure_avg', titleKey: 'signal.pressure', unit: 'cmH2O', color: '#ce93d8', hasBand: true, bandMinKey: 'pressure_min', bandMaxKey: 'pressure_max', showEvents: true, source: 'signals' },
+  // Issue #56: resolved per night by withPressurePlan(); these are the mask
+  // fallback's values, what the chart was before it showed the delivered pressure.
+  { key: 'pressure_avg', titleKey: 'signal.maskPressure', unit: 'cmH2O', color: '#ce93d8', hasBand: true, bandMinKey: 'pressure_min', bandMaxKey: 'pressure_max', showEvents: true, source: 'signals', pressure: true },
   { key: 'mask_pressure', titleKey: 'signal.maskPressure', unit: 'cmH2O', color: '#ba68c8', source: 'signals' },
   { key: 'leak_rate', titleKey: 'signal.leak', unit: 'L/min', color: '#ffb74d', showEvents: true, source: 'signals', fill: true },
   { key: 'flow_limitation', titleKey: 'signal.flowLimitation', unit: '0-1', color: '#ef5350', yMin: 0, yMax: 1, source: 'signals', fill: true },
@@ -146,6 +153,10 @@ const SIGNAL_DEFS: SignalDef[] = [
             </button>
           </div>
         </div>
+        <!-- Issue #56: which pressure is drawn, in one line. -->
+        <p class="detail-note" *ngIf="selectedSignal.pressurePlan">
+          {{ selectedSignal.pressurePlan.noteKey | translate }}
+        </p>
         <div class="detail-chart-container">
           <canvas #detailCanvas></canvas>
         </div>
@@ -218,6 +229,7 @@ const SIGNAL_DEFS: SignalDef[] = [
     .detail-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem; }
     .detail-header h3 { margin: 0; }
     .detail-unit { color: #888; font-size: 0.75rem; font-weight: normal; }
+    .detail-note { color: #999; font-size: 0.75rem; line-height: 1.45; margin: 0.35rem 0 0; max-width: 80ch; }
     .detail-controls { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
     .range-buttons { display: flex; gap: 2px; }
     .range-buttons button { background: #2a2a3a; border: 1px solid #444; color: #aaa; padding: 0.2rem 0.5rem; font-size: 0.7rem; cursor: pointer; border-radius: 3px; }
@@ -527,6 +539,7 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
         if (s.minMode !== undefined && therapyMode < s.minMode) return false;
         return true;
       });
+      this.availableSignals = this.withPressurePlan(this.availableSignals);
 
       if (!this.signalLabels.length && !this.vitalsLabels.length &&
           !this.oximetryLabels.length) {
@@ -637,12 +650,22 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
         this.stopPolling();
       }
 
+      // Issue #56: a live night's delivered pressure can start arriving after
+      // the page opened, so the pressure chart is decided again.
+      if (signals?.timestamps?.length) {
+        this.availableSignals = this.withPressurePlan(
+          this.availableSignals.map(s => s.pressure ? SIGNAL_DEFS.find(d => d.pressure)! : s));
+      }
+      const current = currentSignal?.pressure
+        ? this.availableSignals.find(s => s.pressure) ?? currentSignal
+        : currentSignal;
+
       // Re-render charts
       this.destroyCharts();
       setTimeout(() => {
         this.renderOverviewCharts();
-        if (currentSignal) {
-          this.selectedSignal = currentSignal;
+        if (current) {
+          this.selectedSignal = current;
           this.renderDetailChart();
         }
       }, 50);
@@ -676,6 +699,29 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
       session_end: sessions.some(s => !s.session_end) ? null : sessions[sessions.length - 1].session_end,
       events: allEvents,
     } as SessionDetail;
+  }
+
+  /**
+   * Issue #56: the pressure chart for this night. The delivered (therapy)
+   * pressure with the mask's dashed beside it, or the mask's alone, titled as
+   * the mask's, for a night without one; no chart for a night with neither.
+   */
+  private withPressurePlan(defs: SignalDef[]): SignalDef[] {
+    const plan = sessionPressurePlan(this.signalData as unknown as Record<string, unknown>);
+    return defs.flatMap(d => {
+      if (!d.pressure) return [d];
+      if (!plan) return [];
+      return [{
+        ...d,
+        key: plan.mainKey,
+        titleKey: plan.titleKey,
+        color: plan.lines[0].color,
+        hasBand: !!plan.band,
+        bandMinKey: plan.band?.minKey,
+        bandMaxKey: plan.band?.maxKey,
+        pressurePlan: plan,
+      }];
+    });
   }
 
   private getTimestamps(): string[] {
@@ -730,6 +776,20 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
     const sigTitle = this.t.instant(sig.titleKey);
     const datasets: ChartDataset<'line'>[] = [makeDataset(sigTitle, mainData, sig.color, { fill: sig.fill })];
 
+    // Issue #56: the pressure chart's other lines (the mask's, dashed), each
+    // with its own legend label. The first line is the main dataset above.
+    const plan = sig.pressurePlan;
+    const showLegend = !!plan && plan.lines.length > 1;
+    if (plan) {
+      datasets[0].label = this.t.instant(plan.lines[0].labelKey);
+      for (const line of plan.lines.slice(1)) {
+        let d = this.getData(line.key);
+        if (this.activeRange !== 'all') d = d.slice(this.viewStart, this.viewEnd);
+        datasets.push(makeDataset(this.t.instant(line.labelKey), d, line.color,
+          line.dashed ? { borderDash: [6, 4], borderWidth: 1.25 } : {}));
+      }
+    }
+
     if (sig.hasBand && sig.bandMinKey && sig.bandMaxKey) {
       let minD = this.getData(sig.bandMinKey);
       let maxD = this.getData(sig.bandMaxKey);
@@ -769,7 +829,13 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
         animation: false,
         interaction: { mode: 'index', intersect: false },
         plugins: {
-          legend: { display: false },
+          legend: {
+            display: showLegend,
+            // A line swatch in each line's colour; the labels name which is which.
+            labels: { color: '#ccc', font: { size: 11 }, usePointStyle: true, pointStyle: 'line', pointStyleWidth: 28,
+              // The min/max band datasets are not lines anyone reads by name.
+              filter: (item) => !!item.text && !/ (min|max)$/.test(item.text) },
+          },
           tooltip: {
             backgroundColor: '#1e1e2f',
             titleColor: '#e0e0e0',

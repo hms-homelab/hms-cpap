@@ -1,0 +1,76 @@
+// Issue #56, the session page: its Pressure chart plotted the mask pressure.
+// `npm test` runs it with Node's own test runner; nothing is installed for it.
+
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+
+import { sessionPressurePlan, THERAPY_COLOR, MASK_COLOR } from './session-pressure.ts';
+
+// The reporter's case: an AirSense 11 on a minimum of 7 with EPR 3. The machine
+// delivers 7 and up; the mask reads about 2 lower on the breath out.
+const epr3 = {
+  timestamps: ['2026-11-03 23:00:00', '2026-11-03 23:01:00', '2026-11-03 23:02:00'],
+  therapy_pressure: ['7.0', '7.4', '8.1'],
+  pressure_avg: ['5.1', '5.4', '6.0'],
+  pressure_min: ['4.0', '4.2', '4.9'],
+  pressure_max: ['7.0', '7.5', '8.2'],
+};
+
+test('the chart is the delivered pressure, with the mask as its own dashed line', () => {
+  const p = sessionPressurePlan(epr3)!;
+  assert.equal(p.source, 'therapy');
+  assert.equal(p.mainKey, 'therapy_pressure');
+  assert.equal(p.titleKey, 'signal.therapyPressure');
+  assert.deepEqual(p.lines.map(l => [l.key, l.dashed]), [
+    ['therapy_pressure', false],
+    ['pressure_avg', true],
+  ]);
+  assert.equal(p.lines[0].labelKey, 'sessionDetail.pressure.legendTherapy');
+  assert.equal(p.lines[1].labelKey, 'sessionDetail.pressure.legendMask');
+  assert.notEqual(p.lines[0].color, p.lines[1].color, 'two lines, two colours');
+  assert.equal(p.band, null, 'no mask band around the therapy line');
+  assert.equal(p.noteKey, 'sessionDetail.pressure.noteTherapy');
+});
+
+test('a night parsed before the per-minute delivered pressure was kept shows the mask, titled as the mask', () => {
+  const p = sessionPressurePlan({ ...epr3, therapy_pressure: [null, null, null] })!;
+  assert.equal(p.source, 'mask');
+  assert.equal(p.mainKey, 'pressure_avg');
+  assert.equal(p.titleKey, 'signal.maskPressure', 'never a mask figure titled as therapy pressure');
+  assert.deepEqual(p.lines.map(l => l.key), ['pressure_avg']);
+  assert.deepEqual(p.band, { minKey: 'pressure_min', maxKey: 'pressure_max' });
+  assert.equal(p.noteKey, 'sessionDetail.pressure.noteMask');
+});
+
+test('an older backend without the series at all is the same fallback', () => {
+  const { therapy_pressure, ...old } = epr3;
+  assert.equal(sessionPressurePlan(old)!.source, 'mask');
+});
+
+test('zeros are no reading: a series of 0 is not a therapy pressure', () => {
+  const p = sessionPressurePlan({ ...epr3, therapy_pressure: [0, '0', '0.0'] })!;
+  assert.equal(p.source, 'mask');
+});
+
+test('a few delivered minutes are enough to plot the therapy pressure', () => {
+  const p = sessionPressurePlan({ ...epr3, therapy_pressure: [null, '7.0', null] })!;
+  assert.equal(p.source, 'therapy');
+});
+
+test('a delivered pressure with no mask waveform plots the one line, and says so', () => {
+  const p = sessionPressurePlan({ timestamps: epr3.timestamps, therapy_pressure: epr3.therapy_pressure })!;
+  assert.equal(p.source, 'therapy');
+  assert.deepEqual(p.lines.map(l => l.key), ['therapy_pressure']);
+  assert.equal(p.noteKey, 'sessionDetail.pressure.noteTherapyOnly');
+});
+
+test('no pressure at all is no chart', () => {
+  assert.equal(sessionPressurePlan({ timestamps: [], pressure_avg: [] }), null);
+  assert.equal(sessionPressurePlan(null), null);
+  assert.equal(sessionPressurePlan(undefined), null);
+});
+
+test('the colours are the ones the trend chart uses for the same two pressures', () => {
+  assert.equal(THERAPY_COLOR, '#ce93d8');
+  assert.equal(MASK_COLOR, '#64b5f6');
+});
