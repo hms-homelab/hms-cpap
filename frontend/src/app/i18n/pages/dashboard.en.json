@@ -7,8 +7,8 @@
       "lastNight": "Last night",
       "duration": "Duration",
       "cpapdashIndex": "CpapDash index",
-      "refreshSummary": "Refresh Summary",
-      "regenerateTitle": "Regenerate AI summary for latest session",
+      "refreshSummary": "Regenerate AI summary",
+      "regenerateTitle": "Writes the AI summary of the latest night again. It does not fetch new data from the machine.",
       "generating": "Generating...",
       "queueFailed": "Failed to queue summary",
       "unknown": "Unknown"

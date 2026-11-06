@@ -7,8 +7,8 @@
       "lastNight": "Tegnap éjszaka",
       "duration": "Időtartam",
       "cpapdashIndex": "CpapDash index",
-      "refreshSummary": "Összefoglaló frissítése",
-      "regenerateTitle": "A legutóbbi alvásidőszak MI-összefoglalójának újragenerálása",
+      "refreshSummary": "MI-összefoglaló újragenerálása",
+      "regenerateTitle": "Újraírja a legutóbbi éjszaka MI-összefoglalóját. Nem tölt le új adatot a készülékről.",
       "generating": "Készítés...",
       "queueFailed": "Az összefoglalót nem sikerült sorba állítani",
       "unknown": "Ismeretlen"

@@ -7,8 +7,8 @@
       "lastNight": "La nuit dernière",
       "duration": "Durée",
       "cpapdashIndex": "Indice CpapDash",
-      "refreshSummary": "Actualiser le résumé",
-      "regenerateTitle": "Régénérer le résumé IA de la dernière session",
+      "refreshSummary": "Régénérer le résumé IA",
+      "regenerateTitle": "Réécrit le résumé IA de la dernière nuit. Ne récupère pas de nouvelles données de l'appareil.",
       "generating": "Génération...",
       "queueFailed": "Impossible de mettre le résumé en file",
       "unknown": "Inconnu"
