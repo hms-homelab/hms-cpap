@@ -4,6 +4,7 @@
 // got a "connect to localhost:5432" failure. The factory must pick the backend
 // from DB_TYPE, exactly like BurstCollectorService::initDatabase.
 #include <gtest/gtest.h>
+#include "PosixCompat.h"
 #include <cstdlib>
 
 #include "database/DatabaseFactory.h"

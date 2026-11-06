@@ -23,7 +23,11 @@
 
 #include <json/json.h>
 
+#ifndef _WIN32
 #include <unistd.h>
+#else
+#include <process.h>
+#endif
 
 #include <cstdint>
 #include <filesystem>

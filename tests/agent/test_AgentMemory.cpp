@@ -5,7 +5,11 @@
 #include <pqxx/pqxx>
 #include <cstdlib>
 #include <string>
+#ifndef _WIN32
 #include <unistd.h>
+#else
+#include <process.h>
+#endif
 #endif
 
 using namespace hms_cpap;
@@ -436,15 +440,16 @@ TEST_F(AgentMemoryPgTest, UpdateSummary_WithEmbeddingBranch) {
 
 TEST_F(AgentMemoryPgTest, SearchSimilar_OrdersByEmbeddingDistance) {
     // Two summarized conversations; query nearest the second one's vector.
-    std::string near = mem_->getOrCreateConversation(*conn_);
-    mem_->updateSummary(*conn_, near, "near summary", embed768(0.5f));
-    std::string far = mem_->getOrCreateConversation(*conn_);
-    mem_->updateSummary(*conn_, far, "far summary", embed768(50.0f));
+    // Not `near`/`far`: <windows.h> defines both as empty macros.
+    std::string near_id = mem_->getOrCreateConversation(*conn_);
+    mem_->updateSummary(*conn_, near_id, "near summary", embed768(0.5f));
+    std::string far_id = mem_->getOrCreateConversation(*conn_);
+    mem_->updateSummary(*conn_, far_id, "far summary", embed768(50.0f));
 
     auto ctxs = mem_->searchSimilar(*conn_, embed768(0.5f), 3);
     ASSERT_GE(ctxs.size(), 2u);
     // The closest must be the "near" conversation.
-    EXPECT_EQ(ctxs[0].conversation_id, near);
+    EXPECT_EQ(ctxs[0].conversation_id, near_id);
     EXPECT_EQ(ctxs[0].summary, "near summary");
     EXPECT_EQ(ctxs[0].category, "general");        // default category column
     EXPECT_GE(ctxs[0].similarity, ctxs[1].similarity);  // ordered nearest-first

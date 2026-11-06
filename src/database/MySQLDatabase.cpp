@@ -4,6 +4,7 @@
 #include "database/SqlDialect.h"
 #include "database/StrPercentile.h"
 #include "utils/TimeCompat.h"  // timegm_utc() for started_epoch
+#include <algorithm>
 #include <iostream>
 #include <iomanip>
 #include <sstream>
@@ -3430,8 +3431,13 @@ std::vector<SessionMetrics> MySQLDatabase::getMetricsForDateRange(
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!conn_) return {};
 
-    // Compute cutoff timestamp string
-    auto cutoff = std::chrono::system_clock::now() - std::chrono::hours(days_back * 24);
+    // Compute cutoff timestamp string. Never before 1970: days_back arrives from
+    // a summary request, and on Windows localtime() returns null for a time
+    // before the epoch, which fmtTimestamp's put_time then dereferences. 64-bit
+    // hours, so a large days_back cannot overflow either.
+    const auto cutoff = (std::max)(
+        std::chrono::system_clock::now() - std::chrono::hours(static_cast<long long>(days_back) * 24),
+        std::chrono::system_clock::from_time_t(86400));
     std::string cutoff_str = fmtTimestamp(cutoff);
 
     // One row per sleep-night, same aggregation as getNightlyMetrics

@@ -215,8 +215,11 @@ TEST_F(NightTest, IdentificationCrcIsKeptBesideItAsTheCardKeepsIt) {
     // A card's own .crc is not replaced.
     { std::ofstream(root / "Identification.crc", std::ios::binary | std::ios::trunc) << "card"; }
     EXPECT_TRUE(writeIdentification(root.string(), id));
-    std::ifstream in(root / "Identification.crc", std::ios::binary);
-    EXPECT_EQ(std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>()), "card");
+    {
+        // Scoped: Windows will not remove a file that is still open (below).
+        std::ifstream in(root / "Identification.crc", std::ios::binary);
+        EXPECT_EQ(std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>()), "card");
+    }
 
     // A file written before the .crc existed gets one.
     fs::remove(root / "Identification.crc");
@@ -332,9 +335,12 @@ TEST_F(NightTest, StrFromTheSummaryInTheModelsLayout) {
     EXPECT_EQ(records(str), 4);
     const size_t rec_bytes = 2 * (1 + 10 + 10 + 1 + 1 + 1 + 1);
     EXPECT_EQ(fs::file_size(str), layout().size() + 4 * rec_bytes);
-    std::ifstream in(str, std::ios::binary);
     std::string head(256, '\0');
-    in.read(head.data(), 256);
+    {
+        // Scoped: Windows will not remove a file that is still open (below).
+        std::ifstream in(str, std::ios::binary);
+        in.read(head.data(), 256);
+    }
     EXPECT_EQ(head.substr(168, 8), "01.03.26");
     EXPECT_NE(head.substr(88, 80).find("SRN=23000000001"), std::string::npos);
     EXPECT_EQ(head.substr(8, 7), "X X X X");

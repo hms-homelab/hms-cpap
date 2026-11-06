@@ -7,6 +7,7 @@
  */
 
 #include <gtest/gtest.h>
+#include "PosixCompat.h"
 #include "parsers/CpapdashBridge.h"
 #include "database/DatabaseService.h"
 #include "services/DataPublisherService.h"

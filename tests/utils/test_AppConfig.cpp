@@ -5,6 +5,7 @@
  */
 
 #include <gtest/gtest.h>
+#include "PosixCompat.h"
 #include "utils/AppConfig.h"
 #include <cstdlib>
 #include <filesystem>
@@ -566,9 +567,15 @@ TEST(AppConfigDataDirTest, LegacyConfigIsMigratedWhenTargetHasNone) {
         f << R"({"device_id":"migrated","setup_complete":true})";
     }
 
-    const char* prev_home = std::getenv("HOME");
+    // legacyDataDir() reads the platform's home variable: USERPROFILE on Windows.
+#ifdef _WIN32
+    const char* home_var = "USERPROFILE";
+#else
+    const char* home_var = "HOME";
+#endif
+    const char* prev_home = std::getenv(home_var);
     std::string saved_home = prev_home ? prev_home : "";
-    setenv("HOME", fake_home.string().c_str(), 1);
+    setenv(home_var, fake_home.string().c_str(), 1);
 
     EXPECT_TRUE(hms_cpap::AppConfig::migrateLegacyDataDir(target.string()));
     EXPECT_TRUE(std::filesystem::exists(target / "config.json"));
@@ -577,7 +584,7 @@ TEST(AppConfigDataDirTest, LegacyConfigIsMigratedWhenTargetHasNone) {
     // since edited in the new location.
     EXPECT_FALSE(hms_cpap::AppConfig::migrateLegacyDataDir(target.string()));
 
-    if (!saved_home.empty()) setenv("HOME", saved_home.c_str(), 1);
+    if (!saved_home.empty()) setenv(home_var, saved_home.c_str(), 1);
     std::filesystem::remove_all(root);
 }
 

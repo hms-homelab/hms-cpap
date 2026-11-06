@@ -7,7 +7,11 @@
 #include "parsers/CpapdashBridge.h"
 #include <filesystem>
 #include <fstream>
+#ifndef _WIN32
 #include <unistd.h>
+#else
+#include <process.h>
+#endif
 
 using namespace hms_cpap;
 
@@ -670,10 +674,13 @@ TEST_F(OximetryServiceTest, SavedFile_RetainedInDatalog) {
 
     EXPECT_TRUE(svc->collectAndPublish());
 
-    std::ifstream in(fs_::path(dir) / "DATALOG" / "20260418_220000.vld", std::ios::binary);
-    ASSERT_TRUE(in.good());
-    std::vector<uint8_t> got((std::istreambuf_iterator<char>(in)), {});
-    EXPECT_EQ(got, client->contents["20260418_220000.vld"]);
+    {
+        // Scoped: Windows will not remove a file that is still open.
+        std::ifstream in(fs_::path(dir) / "DATALOG" / "20260418_220000.vld", std::ios::binary);
+        ASSERT_TRUE(in.good());
+        std::vector<uint8_t> got((std::istreambuf_iterator<char>(in)), {});
+        EXPECT_EQ(got, client->contents["20260418_220000.vld"]);
+    }
     fs_::remove_all(dir);
 }
 
@@ -716,9 +723,12 @@ TEST(OximetryRetain, SameSizeDifferentBytesIsReplaced) {
     const auto dir = freshTmp("repl");
     ASSERT_TRUE(OximetryService::retainRawFile(dir, "a.vld", {1, 2, 3}));
     ASSERT_TRUE(OximetryService::retainRawFile(dir, "a.vld", {9, 9, 9}));
-    std::ifstream in(fs_::path(dir) / "DATALOG" / "a.vld", std::ios::binary);
-    std::vector<uint8_t> got((std::istreambuf_iterator<char>(in)), {});
-    EXPECT_EQ(got, (std::vector<uint8_t>{9, 9, 9}));
+    {
+        // Scoped: Windows will not remove a file that is still open.
+        std::ifstream in(fs_::path(dir) / "DATALOG" / "a.vld", std::ios::binary);
+        std::vector<uint8_t> got((std::istreambuf_iterator<char>(in)), {});
+        EXPECT_EQ(got, (std::vector<uint8_t>{9, 9, 9}));
+    }
     fs_::remove_all(dir);
 }
 

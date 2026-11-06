@@ -35,7 +35,11 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#ifndef _WIN32
 #include <unistd.h>
+#else
+#include <process.h>
+#endif
 
 using namespace hms_cpap;
 using namespace std::chrono;

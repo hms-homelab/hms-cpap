@@ -23,7 +23,11 @@
 #ifdef WITH_POSTGRESQL
 #include "database/PostgresDatabase.h"
 #include <pqxx/pqxx>
+#ifndef _WIN32
 #include <unistd.h>
+#else
+#include <process.h>
+#endif
 #endif
 
 #include <cstdlib>

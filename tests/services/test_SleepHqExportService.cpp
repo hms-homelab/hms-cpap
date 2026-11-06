@@ -2,6 +2,7 @@
 // retry backoff, and re-dirty semantics, driven with an injected clock and
 // export hook against a temp archive.
 #include <gtest/gtest.h>
+#include "PosixCompat.h"
 #include "services/SleepHqExportService.h"
 #include "utils/AppConfig.h"
 

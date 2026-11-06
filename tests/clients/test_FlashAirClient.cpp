@@ -5,13 +5,10 @@
 #include "clients/FlashAirClient.h"
 #include "utils/FolderListingStore.h"
 
-#include <arpa/inet.h>
+#include "TestSocketCompat.h"
 #include <filesystem>
 #include <fstream>
-#include <netinet/in.h>
-#include <sys/socket.h>
 #include <thread>
-#include <unistd.h>
 
 using namespace hms_cpap;
 namespace fs = std::filesystem;
@@ -25,7 +22,8 @@ public:
         listen_fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
         EXPECT_GE(listen_fd_, 0);
         int one = 1;
-        ::setsockopt(listen_fd_, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+        ::setsockopt(listen_fd_, SOL_SOCKET, SO_REUSEADDR,
+                     reinterpret_cast<const char*>(&one), sizeof(one));
         sockaddr_in addr{};
         addr.sin_family = AF_INET;
         addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
@@ -39,9 +37,9 @@ public:
     }
 
     ~OneShotHttpServer() {
-        if (listen_fd_ >= 0) ::shutdown(listen_fd_, SHUT_RDWR);
+        stopListening(listen_fd_);
         if (thread_.joinable()) thread_.join();
-        if (listen_fd_ >= 0) ::close(listen_fd_);
+        if (listen_fd_ >= 0) closeSocket(listen_fd_);
     }
 
     std::string baseUrl() const { return "http://127.0.0.1:" + std::to_string(port_); }
@@ -66,11 +64,11 @@ private:
             "\r\n" + body_;
         size_t sent = 0;
         while (sent < resp.size()) {
-            const ssize_t s = ::send(conn, resp.data() + sent, resp.size() - sent, 0);
+            const ssize_t s = ::send(conn, resp.data() + sent, static_cast<int>(resp.size() - sent), 0);
             if (s <= 0) break;
             sent += static_cast<size_t>(s);
         }
-        ::close(conn);
+        closeSocket(conn);
     }
 
     std::string status_, body_, headers_, request_;

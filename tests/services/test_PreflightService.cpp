@@ -17,12 +17,13 @@
 
 #include <filesystem>
 #include <string>
-#include <unistd.h>
-
 #ifndef _WIN32
-  #include <netinet/in.h>
-  #include <sys/socket.h>
+#include <unistd.h>
+#else
+#include <process.h>
 #endif
+
+#include "TestSocketCompat.h"
 
 using namespace hms_cpap;
 
@@ -44,7 +45,7 @@ int freePort() {
     if (::bind(sock, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0 &&
         ::getsockname(sock, reinterpret_cast<sockaddr*>(&addr), &len) == 0)
         port = ntohs(addr.sin_port);
-    ::close(sock);
+    closeSocket(sock);
     return port;
 }
 
@@ -74,7 +75,7 @@ TEST(PreflightServiceTest, AGenuinelyBusyPortIsDetectedAndNamed) {
     ASSERT_EQ(::listen(sock, 1), 0);
 
     const auto c = PreflightService::checkPort("0.0.0.0", port);
-    ::close(sock);
+    closeSocket(sock);
 
     EXPECT_FALSE(c.ok) << "a bound port was reported as free";
     EXPECT_NE(c.detail.find(std::to_string(port)), std::string::npos)
