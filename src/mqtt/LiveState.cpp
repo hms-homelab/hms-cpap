@@ -195,6 +195,12 @@ bool LiveState::isStreamingSource(const std::string& source) {
     return source == kSleepBridge || source == kMuleBle || source == kAs11Ble;
 }
 
+void LiveState::session(bool on) {
+    std::lock_guard<std::mutex> lk(mu_);
+    send("session_status", on ? "in_progress" : "completed", true, 0);
+    send("session_active", on ? "ON" : "OFF", true, 0);
+}
+
 bool LiveState::streamSaidOff() const {
     std::lock_guard<std::mutex> lk(mu_);
     return said_ == Said::Off && isStreamingSource(off_from_);

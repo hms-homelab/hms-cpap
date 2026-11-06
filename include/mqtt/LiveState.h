@@ -97,6 +97,14 @@ public:
     bool streamSaidOff() const;
     static bool isStreamingSource(const std::string& source);
 
+    /// The session's own topics, realtime/session_status (in_progress /
+    /// completed) and realtime/session_active (ON / OFF), retained, for a
+    /// source no burst reads while it runs: the AirSense 11 or AirCurve 11
+    /// streaming over this computer's Bluetooth, whose night is imported
+    /// only when its stream ends (issue #50). The same topics the burst's
+    /// publisher uses.
+    void session(bool on);
+
     std::string topic(const std::string& leaf) const;
     std::string maskConfigTopic() const;
     std::string eventsConfigTopic() const;

@@ -595,6 +595,13 @@ void BurstCollectorService::initAirSense11() {
         client->setLiveHooks({
             [this](const std::string& serial, bool on) {
                 if (auto p = as11Live()) p->therapy(serial, serial, on);
+                // Issue #50: no burst reads this night while it streams (it
+                // is imported when the stream ends), so the session's own
+                // topics are said here: ON while the machine streams, OFF
+                // when it stops. Through LiveState, whose client lives as
+                // long as the process; the burst's publisher can be replaced
+                // by a config reload on another thread.
+                if (auto l = liveState()) l->session(on);
             },
             [this](const std::string& serial, const as11::RespEvent& e) {
                 if (auto p = as11Live()) p->event(serial, serial, e);

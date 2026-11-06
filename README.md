@@ -459,9 +459,10 @@ Or straight off the broker: `mosquitto_sub -v -t 'cpap/+/realtime/mask'`.
 (`cpap/<device_id>/realtime/session_active`, `.../session_status`) are the
 slower "is the session over" signal: `ON` / `in_progress` while the session's
 files grow, `OFF` / `completed` once they have stopped. With a source that
-streams the night (Sleep Bridge, Mule & Miner, AirSense 11 over Bluetooth)
-that is the first burst after the mask comes off on the stream and the files
-stop, a minute or two. With a card read over WiFi or from a folder it is when
+streams the night (Sleep Bridge, Mule & Miner) that is the first burst after
+the mask comes off on the stream and the files stop, a minute or two. An
+AirSense 11 or AirCurve 11 read over this computer's Bluetooth says `ON` when
+its stream starts and `OFF` when it ends. With a card read over WiFi or from a folder it is when
 the night is over: an hour with no growth, ResMed's own rule for a closed
 night, so a mask back on within it is the same night.
 

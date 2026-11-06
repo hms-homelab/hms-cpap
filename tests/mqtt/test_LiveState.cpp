@@ -480,6 +480,23 @@ TEST(LiveState, TheSameSessionBackOnAfterAnOffKeepsItsCounts) {
     EXPECT_EQ(parse(rec.last("live_events"))["total"].asInt(), 0) << "a new session";
 }
 
+// Issue #50: the AirSense 11 / AirCurve 11 over this computer's Bluetooth is
+// imported only when its stream ends, so no burst ever said the session was
+// running: rt_session_active went ON and OFF back to back at the import. The
+// stream's start and end now say it, on the burst publisher's own topics.
+TEST(LiveState, TheSessionTopicsFollowABluetoothStream) {
+    Recorder rec;
+    LiveState live(rec.publish(), "cpap_test", "Test CPAP", at(kT0));
+    live.session(true);
+    EXPECT_EQ(rec.last("session_status"), "in_progress");
+    EXPECT_EQ(rec.last("session_active"), "ON");
+    ASSERT_EQ(rec.on("session_active").size(), 1u);
+    EXPECT_TRUE(rec.on("session_active")[0].retain);
+    live.session(false);
+    EXPECT_EQ(rec.last("session_status"), "completed");
+    EXPECT_EQ(rec.last("session_active"), "OFF");
+}
+
 // After a restart the bridge's first step only catches up; the night still
 // running says ON at its next therapy write, with no OFF in between.
 TEST(LiveSources, SleepBridgeRestartMidNightStaysOn) {
