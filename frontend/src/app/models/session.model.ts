@@ -136,9 +136,14 @@ export interface SignalData {
   flow_avg: (number | null)[];
   flow_max: (number | null)[];
   flow_min: (number | null)[];
+  /** Measured at the mask (the high-resolution waveform, per minute). */
   pressure_avg: (number | null)[];
   pressure_max: (number | null)[];
   pressure_min: (number | null)[];
+  /** Issue #56: the pressure the machine delivered (PLD Press), per minute.
+   *  Absent from an older backend; NULL minutes on a night parsed before it
+   *  was kept. */
+  therapy_pressure?: (number | null)[];
   respiratory_rate: (number | null)[];
   tidal_volume: (number | null)[];
   minute_ventilation: (number | null)[];

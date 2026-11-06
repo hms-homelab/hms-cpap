@@ -12,6 +12,13 @@
     "fullScreen": "Tela cheia",
     "closeFullScreen": "Sair da tela cheia",
     "close": "Fechar",
-    "odiTitle": "Índice de dessaturação de oxigênio — dessaturações ≥3% por hora"
+    "odiTitle": "Índice de dessaturação de oxigênio — dessaturações ≥3% por hora",
+    "pressure": {
+      "legendTherapy": "Entregue pelo aparelho",
+      "legendMask": "Medida na máscara",
+      "noteTherapy": "A linha contínua é a pressão que o seu aparelho entregou. A linha tracejada é medida na máscara; com o EPR ligado, ela cai a cada expiração.",
+      "noteTherapyOnly": "A pressão que o seu aparelho entregou.",
+      "noteMask": "Medida na máscara. Esta noite não tem registro da pressão da terapia."
+    }
   }
 }

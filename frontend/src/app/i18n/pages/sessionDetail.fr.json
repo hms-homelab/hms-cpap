@@ -12,6 +12,13 @@
     "fullScreen": "Plein écran",
     "closeFullScreen": "Quitter le plein écran",
     "close": "Fermer",
-    "odiTitle": "Indice de désaturation en oxygène — désaturations ≥3 % par heure"
+    "odiTitle": "Indice de désaturation en oxygène — désaturations ≥3 % par heure",
+    "pressure": {
+      "legendTherapy": "Délivrée par l'appareil",
+      "legendMask": "Mesurée au masque",
+      "noteTherapy": "La ligne continue est la pression délivrée par votre appareil. La ligne en pointillés est mesurée au masque ; avec l'EPR activé, elle baisse à chaque expiration.",
+      "noteTherapyOnly": "La pression délivrée par votre appareil.",
+      "noteMask": "Mesurée au masque. Cette nuit n'a pas d'enregistrement de la pression de la thérapie."
+    }
   }
 }

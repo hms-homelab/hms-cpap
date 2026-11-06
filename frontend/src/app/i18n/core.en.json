@@ -14,6 +14,7 @@
   "signal": {
     "flow": "Flow Rate",
     "pressure": "Pressure",
+    "therapyPressure": "Therapy Pressure",
     "leak": "Leak Rate",
     "respRate": "Respiratory Rate",
     "tidalVolume": "Tidal Volume",

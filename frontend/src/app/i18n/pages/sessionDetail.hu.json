@@ -12,6 +12,13 @@
     "fullScreen": "Teljes képernyő",
     "closeFullScreen": "Kilépés a teljes képernyőből",
     "close": "Bezárás",
-    "odiTitle": "Oxigén-deszaturációs index — óránkénti ≥3%-os deszaturációk"
+    "odiTitle": "Oxigén-deszaturációs index — óránkénti ≥3%-os deszaturációk",
+    "pressure": {
+      "legendTherapy": "A készülék által leadott",
+      "legendMask": "A maszknál mért",
+      "noteTherapy": "A folytonos vonal a készülék által leadott nyomás. A szaggatott vonal a maszknál mért nyomás; bekapcsolt EPR mellett minden kilégzéskor csökken.",
+      "noteTherapyOnly": "A készülék által leadott nyomás.",
+      "noteMask": "A maszknál mérve. Erről az éjszakáról nincs terápiás nyomás adat."
+    }
   }
 }

@@ -12,6 +12,13 @@
     "fullScreen": "Full screen",
     "closeFullScreen": "Close full screen",
     "close": "Close",
-    "odiTitle": "Oxygen Desaturation Index — desaturations ≥3% per hour"
+    "odiTitle": "Oxygen Desaturation Index — desaturations ≥3% per hour",
+    "pressure": {
+      "legendTherapy": "Delivered by the machine",
+      "legendMask": "Measured at the mask",
+      "noteTherapy": "The solid line is the pressure your machine delivered. The dashed line is measured at the mask; with EPR on, it dips on every breath out.",
+      "noteTherapyOnly": "The pressure your machine delivered.",
+      "noteMask": "Measured at the mask. This night has no therapy pressure record."
+    }
   }
 }

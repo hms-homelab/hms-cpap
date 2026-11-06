@@ -22,7 +22,10 @@ interface CmpSig { key: keyof SignalData; titleKey: string; unit: string; }
 
 const COMPARE_SIGNALS: CmpSig[] = [
   { key: 'flow_avg', titleKey: 'signal.flow', unit: 'L/min' },
-  { key: 'pressure_avg', titleKey: 'signal.pressure', unit: 'cmH2O' },
+  // Issue #56: the delivered pressure, and the mask's as its own chart. This was
+  // one "Pressure" chart of the mask's, which with EPR reads below the minimum.
+  { key: 'therapy_pressure', titleKey: 'signal.therapyPressure', unit: 'cmH2O' },
+  { key: 'pressure_avg', titleKey: 'signal.maskPressure', unit: 'cmH2O' },
   { key: 'leak_rate', titleKey: 'signal.leak', unit: 'L/min' },
   { key: 'respiratory_rate', titleKey: 'signal.respRate', unit: '/min' },
   { key: 'tidal_volume', titleKey: 'signal.tidalVolume', unit: 'mL' },

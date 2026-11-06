@@ -14,6 +14,7 @@
   "signal": {
     "flow": "Fluxo",
     "pressure": "Pressão",
+    "therapyPressure": "Pressão da terapia",
     "leak": "Taxa de fuga",
     "respRate": "Frequência respiratória",
     "tidalVolume": "Volume corrente",

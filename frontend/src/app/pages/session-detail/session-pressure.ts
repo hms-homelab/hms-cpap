@@ -1,0 +1,93 @@
+// Issue #56, the session page: which pressure its Pressure chart plots.
+//
+// The night's signals carry two pressures per minute. pressure_avg (with
+// pressure_min/max) is measured at the mask; with EPR it drops by up to the EPR
+// level on every breath out, so on a minimum of 7 with EPR 3 it sits near 5.
+// therapy_pressure is what the machine delivered (the card's PLD Press, the
+// same per-minute rows the dashboard's therapy pressure is computed from),
+// which never goes below the prescribed minimum.
+//
+// The chart plots the therapy pressure, with the mask's as its own dashed line.
+// A night with no therapy pressure (parsed before the machine's per-minute
+// pressure was kept) plots the mask's as before, titled as the mask's.
+//
+// Plain functions with no Angular in them, so `npm test` runs them directly.
+
+export type SessionPressureSource = 'therapy' | 'mask';
+
+export interface PressureLine {
+  /** Key of the series in the signals response. */
+  key: string;
+  /** i18n key of the legend label. */
+  labelKey: string;
+  color: string;
+  dashed: boolean;
+}
+
+export interface SessionPressurePlan {
+  source: SessionPressureSource;
+  /** The series the chart is about, and its overview thumbnail. */
+  mainKey: string;
+  /** i18n key of the chart title. */
+  titleKey: string;
+  /** i18n key of the line under the title saying what is drawn. */
+  noteKey: string;
+  /** Every line drawn, the main one first. */
+  lines: PressureLine[];
+  /** The mask's min/max band, drawn only when the mask is the chart. */
+  band: { minKey: string; maxKey: string } | null;
+}
+
+type Signals = Record<string, unknown> | null | undefined;
+
+/** True when any minute of the series is a real reading (no machine delivers 0). */
+function hasReading(signals: Signals, key: string): boolean {
+  const s = signals?.[key];
+  if (!Array.isArray(s)) return false;
+  return s.some(v => {
+    const n = parseFloat(String(v ?? ''));
+    return Number.isFinite(n) && n > 0;
+  });
+}
+
+export const THERAPY_COLOR = '#ce93d8';
+export const MASK_COLOR = '#64b5f6';
+
+/**
+ * What the session page's pressure chart plots, or null when the night has no
+ * pressure at all (no chart rather than a flat line at zero).
+ */
+export function sessionPressurePlan(signals: Signals): SessionPressurePlan | null {
+  const therapy = hasReading(signals, 'therapy_pressure');
+  const mask = hasReading(signals, 'pressure_avg');
+
+  if (therapy) {
+    const lines: PressureLine[] = [
+      { key: 'therapy_pressure', labelKey: 'sessionDetail.pressure.legendTherapy',
+        color: THERAPY_COLOR, dashed: false },
+    ];
+    if (mask) {
+      lines.push({ key: 'pressure_avg', labelKey: 'sessionDetail.pressure.legendMask',
+        color: MASK_COLOR, dashed: true });
+    }
+    return {
+      source: 'therapy',
+      mainKey: 'therapy_pressure',
+      titleKey: 'signal.therapyPressure',
+      noteKey: mask ? 'sessionDetail.pressure.noteTherapy' : 'sessionDetail.pressure.noteTherapyOnly',
+      lines,
+      band: null,
+    };
+  }
+  if (mask) {
+    return {
+      source: 'mask',
+      mainKey: 'pressure_avg',
+      titleKey: 'signal.maskPressure',
+      noteKey: 'sessionDetail.pressure.noteMask',
+      lines: [{ key: 'pressure_avg', labelKey: 'signal.maskPressure', color: THERAPY_COLOR, dashed: false }],
+      band: { minKey: 'pressure_min', maxKey: 'pressure_max' },
+    };
+  }
+  return null;
+}
