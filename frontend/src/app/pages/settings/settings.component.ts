@@ -8,6 +8,7 @@ import { RouterLink } from '@angular/router';
 import { CpapApiService, UpdateStatus } from '../../services/cpap-api.service';
 import { UpdateFlowService } from '../../services/update-flow.service';
 import { AppConfig } from '../../models/config.model';
+import { sourceImage } from '../../utils/source-image';
 
 @Component({
   selector: 'app-settings',
@@ -37,12 +38,17 @@ import { AppConfig } from '../../models/config.model';
             </p>
             <label>
               {{ 'settings.source.transport' | translate }}
-              <select [(ngModel)]="config.transport" name="transport"
-                      (ngModelChange)="onTransportChange($event)">
-                <option value="ezshare">{{ 'settings.source.ezshare' | translate }}</option>
-                <option value="flashair">{{ 'settings.source.flashair' | translate }}</option>
-                <option value="local">{{ 'settings.source.local' | translate }}</option>
-              </select>
+              <span class="transport-row">
+                <select [(ngModel)]="config.transport" name="transport"
+                        (ngModelChange)="onTransportChange($event)">
+                  <option value="ezshare">{{ 'settings.source.ezshare' | translate }}</option>
+                  <option value="flashair">{{ 'settings.source.flashair' | translate }}</option>
+                  <option value="local">{{ 'settings.source.local' | translate }}</option>
+                </select>
+                <!-- The chosen card's picture; the select beside it names it. -->
+                <img *ngIf="sourceImage(config.transport) as src" class="transport-img" [src]="src"
+                     alt="" width="48" height="48" />
+              </span>
             </label>
             <!-- A folder takes every format. An ez Share takes ResMed and, since
                  SDD-031, a Sefam S.Box card in its slot, and since SDD-060 a
@@ -1065,6 +1071,9 @@ import { AppConfig } from '../../models/config.model';
       display: flex; flex-direction: column; gap: 0.3rem;
       color: #bbb; font-size: 0.85rem; margin-top: 0.75rem;
     }
+    .transport-row { display: flex; align-items: center; gap: 0.5rem; }
+    .transport-row select { flex: 1; min-width: 0; }
+    .transport-img { flex: none; width: 48px; height: 48px; object-fit: contain; margin: -0.5rem 0; }
     label.toggle-row {
       flex-direction: row; align-items: center; gap: 0.6rem;
     }
@@ -1179,6 +1188,8 @@ import { AppConfig } from '../../models/config.model';
 })
 export class SettingsComponent implements OnInit, OnDestroy {
   config: AppConfig | null = null;
+  /** A source's picture (public/sources/), null for a folder. */
+  readonly sourceImage = (kind: string | undefined): string | null => sourceImage(kind ?? '');
   loading = true;
   saving = false;
   error = '';

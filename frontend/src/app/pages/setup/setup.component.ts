@@ -7,6 +7,7 @@ import { markSetupComplete } from '../../guards/setup.guard';
 import { TranslatePipe, TranslateService } from '@ngx-translate/core';
 import { LanguageSwitcherComponent } from '../../components/language-switcher/language-switcher.component';
 import { switchMap, tap } from 'rxjs';
+import { sourceImage } from '../../utils/source-image';
 
 @Component({
   selector: 'app-setup',
@@ -140,6 +141,9 @@ import { switchMap, tap } from 'rxjs';
               <label class="radio-option" [class.selected]="source === 'mm'">
                 <input type="radio" name="source" value="mm"
                        [(ngModel)]="source" />
+                <!-- The pictures sit beside a title that names the device:
+                     decorative, so alt="" (a screen reader reads the title). -->
+                <img class="source-img" [src]="sourceImage('mm')" alt="" width="64" height="64" />
                 <div class="radio-content">
                   <strong>{{ 'setup.source.mmTitle' | translate }}</strong>
                   <span>{{ 'setup.source.mmDesc' | translate }}</span>
@@ -149,6 +153,7 @@ import { switchMap, tap } from 'rxjs';
               <label class="radio-option" [class.selected]="source === 'local'">
                 <input type="radio" name="source" value="local"
                        [(ngModel)]="source" />
+                <span class="source-img source-icon" aria-hidden="true"><i class="fa-solid fa-folder-open"></i></span>
                 <div class="radio-content">
                   <strong>{{ 'setup.source.localTitle' | translate }}</strong>
                   <span>{{ 'setup.source.localDesc' | translate }}</span>
@@ -158,6 +163,7 @@ import { switchMap, tap } from 'rxjs';
               <label class="radio-option" [class.selected]="source === 'ezshare'">
                 <input type="radio" name="source" value="ezshare"
                        [(ngModel)]="source" />
+                <img class="source-img" [src]="sourceImage('ezshare')" alt="" width="64" height="64" />
                 <div class="radio-content">
                   <strong>{{ 'setup.source.ezshareTitle' | translate }}</strong>
                   <span>{{ 'setup.source.ezshareDesc' | translate }}</span>
@@ -167,6 +173,7 @@ import { switchMap, tap } from 'rxjs';
               <label class="radio-option" [class.selected]="source === 'flashair'">
                 <input type="radio" name="source" value="flashair"
                        [(ngModel)]="source" />
+                <img class="source-img" [src]="sourceImage('flashair')" alt="" width="64" height="64" />
                 <div class="radio-content">
                   <strong>{{ 'setup.source.flashairTitle' | translate }}</strong>
                   <span>{{ 'setup.source.flashairDesc' | translate }}</span>
@@ -176,6 +183,7 @@ import { switchMap, tap } from 'rxjs';
               <label class="radio-option" [class.selected]="source === 'skip'">
                 <input type="radio" name="source" value="skip"
                        [(ngModel)]="source" />
+                <span class="source-img source-icon" aria-hidden="true"><i class="fa-solid fa-forward"></i></span>
                 <div class="radio-content">
                   <strong>{{ 'setup.source.skipTitle' | translate }}</strong>
                   <span>{{ 'setup.source.skipDesc' | translate }}</span>
@@ -559,6 +567,25 @@ import { switchMap, tap } from 'rxjs';
       display: flex;
       flex-direction: column;
       gap: 0.25rem;
+      min-width: 0;
+    }
+
+    /* The source's picture (or, for a folder and for skip, an icon in the
+       same box), so every option's text starts at one line. The picture's
+       own transparent margin is pulled into the option's padding. */
+    .source-img {
+      flex: none;
+      width: 64px; height: 64px;
+      margin: -0.6rem -0.25rem -0.6rem -0.2rem;
+      object-fit: contain;
+    }
+    .source-icon {
+      display: flex; align-items: center; justify-content: center;
+      font-size: 1.5rem; color: #9575cd;
+    }
+    @media (max-width: 420px) {
+      .source-img { width: 48px; height: 48px; margin: -0.4rem -0.2rem -0.4rem -0.2rem; }
+      .source-icon { font-size: 1.15rem; }
     }
 
     .radio-content strong {
@@ -743,6 +770,8 @@ export class SetupComponent {
   // /dir and /download an ezShare card does; 'mm' only ever names the way the
   // user got there.
   source = 'mm';
+  /** A source's picture (public/sources/). */
+  readonly sourceImage = sourceImage;
   /** SDD-022: which machine wrote the folder. Only meaningful for source==='local'. */
   localFormat = 'resmed';
   /** SDD-060 D7: the machine behind an ez Share or a Mule and Miner. */

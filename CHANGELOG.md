@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Pictures of the data sources.** Each card on the Devices page shows the
+  device it is about (Mule & Miner, Sleep Bridge Lite, O2 ring, ez Share card,
+  FlashAir card, AirSense 11) in place of the small icon, and the set-up
+  wizard's source step and the Settings source picker show the device beside
+  each choice. Rendered 3D pictures on a transparent background with a soft
+  violet glow, made for the dark theme.
+
 ## [6.1.0] - 2026-11-05
 
 Direct Bluetooth works on macOS and Windows, not only on Linux, every device
