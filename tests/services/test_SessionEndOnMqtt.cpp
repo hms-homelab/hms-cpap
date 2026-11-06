@@ -29,6 +29,8 @@
 #include "services/DataPublisherService.h"
 #include "utils/NightQuiet.h"
 
+#include "PosixCompat.h"   // getpid, setenv/unsetenv on MSVC too
+
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -37,7 +39,6 @@
 #include <mutex>
 #include <string>
 #include <thread>
-#include <unistd.h>
 
 using namespace hms_cpap;
 using namespace std::chrono;
