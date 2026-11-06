@@ -1,7 +1,9 @@
 #include "clients/EzShareClient.h"
 #include "utils/CardNames.h"
+#include "parsers/CpapdashBridge.h"
 #include "utils/ConfigManager.h"
 #include <chrono>
+#include <atomic>
 #include <iostream>
 #include <thread>
 #include <fstream>
@@ -15,6 +17,17 @@
 namespace hms_cpap {
 
 namespace {
+
+bool isListing(const std::string& html) {
+    if (html.find("publicdir/welcome.htm") != std::string::npos) return false;
+    // Parent entries count too: an empty directory is still a listing.
+    static const std::regex row(
+        R"(\d{4}-\s*\d{1,2}-\s*\d{1,2}\s+\d{1,2}:\s*\d{1,2}:\s*\d{1,2}\s+)"
+        R"((?:\d+KB|&lt;DIR&gt;|<DIR>)\s+<a\s+href="[^"]*">\s*[^<]+</a>)",
+        std::regex::icase);
+    return std::regex_search(html, row) ||
+        std::regex_search(html, std::regex(R"(<pre>\s*</pre>)", std::regex::icase));
+}
 
 /// The text of an error reply, read back from where it landed in the file,
 /// for the log line. A bridge says there why it could not fetch the file
@@ -220,12 +233,24 @@ std::vector<EzShareFileEntry> EzShareClient::parseDirectoryListing(const std::st
 }
 
 std::vector<std::string> EzShareClient::listDateFolders() {
+    if (no_listing_) {
+        refreshSessions();
+        std::vector<std::string> folders;
+        for (const auto& pair : starts_) folders.push_back(pair.first);
+        return folders;
+    }
     // GET /dir?dir=A:DATALOG → lists date folders like 20260203, 20260204
     std::string url = base_url_ + "/dir?dir=A:DATALOG";
     std::string html = httpGet(url);
-    if (html.empty()) return {};
 
     auto entries = parseDirectoryListing(html);
+    if (entries.empty() && !isListing(html)) no_listing_ = true;
+    if (no_listing_) {
+        refreshSessions();
+        std::vector<std::string> folders;
+        for (const auto& pair : starts_) folders.push_back(pair.first);
+        return folders;
+    }
     std::vector<std::string> folders;
 
     for (const auto& e : entries) {
@@ -241,6 +266,7 @@ std::vector<std::string> EzShareClient::listDateFolders() {
 }
 
 std::vector<EzShareFileEntry> EzShareClient::listFiles(const std::string& date_folder) {
+    if (no_listing_) return enumerateFiles(date_folder);
     // GET /dir?dir=A:DATALOG%5CYYYYMMDD → lists session files
     // %5C = backslash (required, forward slash returns 404)
     std::string url = base_url_ + "/dir?dir=A:DATALOG%5C" + date_folder;
@@ -248,12 +274,12 @@ std::vector<EzShareFileEntry> EzShareClient::listFiles(const std::string& date_f
     std::cout << "EzShare: listing " << date_folder << std::endl;
 
     std::string html = httpGet(url);
-    if (html.empty()) {
-        std::cerr << "EzShare: empty response for " << date_folder << std::endl;
-        return {};
-    }
-
     auto entries = parseDirectoryListing(html);
+    if (entries.empty() && !isListing(html)) {
+        no_listing_ = true;
+        refreshSessions();
+        return enumerateFiles(date_folder);
+    }
 
     // Filter to files only (skip directories)
     std::vector<EzShareFileEntry> files;
@@ -270,6 +296,10 @@ std::vector<EzShareFileEntry> EzShareClient::listFiles(const std::string& date_f
 bool EzShareClient::downloadFile(const std::string& date_folder,
                                   const std::string& filename,
                                   const std::string& local_path) {
+    if (no_listing_) {
+        size_t got = 0;
+        return downloadChunks("DATALOG/" + date_folder + "/" + filename, local_path, 0, got);
+    }
     // Construct download URL: /download?file=DATALOG%5CYYYYMMDD%5Cfilename
     // Note: Card hrefs have a firmware bug (drops first char). We build URLs ourselves.
     // Backslash (%5C) is required; forward slashes return 404.
@@ -338,6 +368,12 @@ bool EzShareClient::downloadFile(const std::string& date_folder,
 
 bool EzShareClient::downloadRootFile(const std::string& filename,
                                       const std::string& local_path) {
+    if (no_listing_) {
+        size_t got = 0;
+        std::string name = filename;
+        if (name == "STR.EDF") name = "STR.edf";
+        return downloadChunks(name, local_path, 0, got);
+    }
     // Root-level file on SD card: /download?file=filename
     std::string url = base_url_ + "/download?file=" + filename;
 
@@ -398,6 +434,11 @@ bool EzShareClient::downloadFileRange(const std::string& date_folder,
                                         const std::string& local_path,
                                         size_t start_byte,
                                         size_t& bytes_downloaded) {
+    bytes_downloaded = 0;
+    if (no_listing_ && !chunking_) {
+        return downloadChunks(date_folder.empty() ? filename : "DATALOG/" + date_folder + "/" + filename,
+                              local_path, start_byte, bytes_downloaded);
+    }
     // Construct download URL. No date folder is a file at the card root (a
     // Luna card's raw files, SDD-060 D4).
     std::string url = date_folder.empty()
@@ -405,6 +446,7 @@ bool EzShareClient::downloadFileRange(const std::string& date_folder,
                           : base_url_ + "/download?file=DATALOG%5C" + date_folder + "%5C" +
                                 filename;
 
+    if (no_listing_) url = base_url_ + "/" + filename;
     std::cout << "EzShare: Range download " << filename << " from byte " << start_byte << std::endl;
 
     // Create parent directories
@@ -427,7 +469,8 @@ bool EzShareClient::downloadFileRange(const std::string& date_folder,
     }
 
     // Set HTTP Range header
-    std::string range_header = "Range: bytes=" + std::to_string(start_byte) + "-";
+    std::string range_header = "Range: bytes=" + std::to_string(start_byte) + "-" +
+        (no_listing_ ? std::to_string(chunk_end_) : "");
     struct curl_slist* headers = nullptr;
     headers = curl_slist_append(headers, range_header.c_str());
 
@@ -435,14 +478,16 @@ bool EzShareClient::downloadFileRange(const std::string& date_folder,
     curl_easy_setopt(curl_, CURLOPT_HTTPHEADER, headers);
     curl_easy_setopt(curl_, CURLOPT_WRITEFUNCTION, WriteFileCallback);
     curl_easy_setopt(curl_, CURLOPT_WRITEDATA, &output);
-    curl_easy_setopt(curl_, CURLOPT_TIMEOUT, DOWNLOAD_TIMEOUT);
+    // A listing-free card moves about 1 KB/s, so an 8 KiB piece may need
+    // longer than 8 s in total; it is cut only when it goes quiet for 8 s.
+    curl_easy_setopt(curl_, CURLOPT_TIMEOUT, no_listing_ ? 60L : DOWNLOAD_TIMEOUT);
     curl_easy_setopt(curl_, CURLOPT_CONNECTTIMEOUT, CONNECTION_TIMEOUT);
     curl_easy_setopt(curl_, CURLOPT_FOLLOWLOCATION, 0L);
     // A transfer that has stalled fails in LOW_SPEED_TIME rather than holding
     // the burst for the whole DOWNLOAD_TIMEOUT; what landed is kept and the
     // next burst resumes from it.
-    curl_easy_setopt(curl_, CURLOPT_LOW_SPEED_LIMIT, LOW_SPEED_LIMIT);
-    curl_easy_setopt(curl_, CURLOPT_LOW_SPEED_TIME, LOW_SPEED_TIME);
+    curl_easy_setopt(curl_, CURLOPT_LOW_SPEED_LIMIT, no_listing_ ? 1L : LOW_SPEED_LIMIT);
+    curl_easy_setopt(curl_, CURLOPT_LOW_SPEED_TIME, no_listing_ ? 8L : LOW_SPEED_TIME);
     std::string reply_headers;
     curl_easy_setopt(curl_, CURLOPT_HEADERFUNCTION, collectHeader);
     curl_easy_setopt(curl_, CURLOPT_HEADERDATA, &reply_headers);
@@ -466,7 +511,15 @@ bool EzShareClient::downloadFileRange(const std::string& date_folder,
     // burst resumes past it: a bridge answering 502 grew every file by its
     // error text once a burst, and soon asked the card for ranges past the
     // real end of the file. Put the file back exactly as it was.
-    if (http_code >= 300) {
+    char* content_type = nullptr;
+    curl_easy_getinfo(curl_, CURLINFO_CONTENT_TYPE, &content_type);
+    // Firmware 4.4.0 answers a range that spans the whole file with a plain
+    // 200 and the full body; any other 200 to a bounded range is refused.
+    const bool whole_file = no_listing_ && http_code == 200 && start_byte == 0 &&
+        chunk_end_ + 1 == chunk_total_;
+    if (http_code >= 300 || (no_listing_ &&
+        ((http_code != 206 && !whole_file) || !content_type ||
+         std::string(content_type).find("text/plain") != 0))) {
         const std::string reason = errorReason(local_path, start_byte);
         std::error_code ec;
         if (start_byte == 0) std::filesystem::remove(local_path, ec);
@@ -476,7 +529,8 @@ bool EzShareClient::downloadFileRange(const std::string& date_folder,
     }
 
     // Accept CURLE_OK or CURLE_PARTIAL_FILE (growing file)
-    if (res != CURLE_OK && res != CURLE_PARTIAL_FILE) {
+    if (res != CURLE_OK && res != CURLE_PARTIAL_FILE &&
+        !(no_listing_ && res == CURLE_OPERATION_TIMEDOUT)) {
         std::cerr << "EzShare: Range download failed (" << filename << "): "
                   << curl_easy_strerror(res) << std::endl;
         return false;
@@ -525,7 +579,9 @@ bool EzShareClient::downloadFileRange(const std::string& date_folder,
         else std::filesystem::resize_file(local_path, start_byte, ec);
     };
     const PromisedRange promised = promisedRange(reply_headers);
-    if (http_code == 206 && promised.bytes > 0 && promised.first != start_byte) {
+    if (http_code == 206 && ((no_listing_ && (promised.bytes == 0 ||
+        promised.bytes > chunk_end_ - start_byte + 1)) ||
+        (promised.bytes > 0 && promised.first != start_byte))) {
         put_back();
         std::cerr << "EzShare: " << filename << " came back from byte " << promised.first
                   << ", asked from " << start_byte << "; put it back" << std::endl;
@@ -548,6 +604,288 @@ bool EzShareClient::downloadFileRange(const std::string& date_folder,
               << " bytes (total now: " << total_size << " bytes)" << std::endl;
 
     return true;
+}
+
+// Firmware 4.4.0 answers a missing path with a 200 HTML welcome page. A
+// one-byte GET both avoids its broken HEAD and gives the exact file size.
+uint64_t EzShareClient::probe(const std::string& path) {
+    std::string body, headers;
+    const std::string url = base_url_ + "/" + path;
+    curl_easy_setopt(curl_, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl_, CURLOPT_RANGE, "0-0");
+    curl_easy_setopt(curl_, CURLOPT_TIMEOUT, 8L);
+    curl_easy_setopt(curl_, CURLOPT_LOW_SPEED_LIMIT, 0L);
+    curl_easy_setopt(curl_, CURLOPT_WRITEFUNCTION, WriteCallback);
+    curl_easy_setopt(curl_, CURLOPT_WRITEDATA, &body);
+    curl_easy_setopt(curl_, CURLOPT_HEADERFUNCTION, collectHeader);
+    curl_easy_setopt(curl_, CURLOPT_HEADERDATA, &headers);
+    CURLcode result = CURLE_OK;
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        body.clear();
+        headers.clear();
+        result = curl_easy_perform(curl_);
+        if (result == CURLE_OK) break;
+    }
+    long status = 0;
+    char* type = nullptr;
+    curl_easy_getinfo(curl_, CURLINFO_RESPONSE_CODE, &status);
+    curl_easy_getinfo(curl_, CURLINFO_CONTENT_TYPE, &type);
+    const bool plain = result == CURLE_OK && type &&
+        std::string(type).find("text/plain") == 0 && body.size() == 1;
+    // A one-byte file is wholly covered by bytes=0-0, so it comes back as 200.
+    const bool hit = plain && status == 206;
+    if (plain && status == 200) {
+        curl_easy_setopt(curl_, CURLOPT_RANGE, nullptr);
+        curl_easy_setopt(curl_, CURLOPT_HEADERFUNCTION, nullptr);
+        curl_easy_setopt(curl_, CURLOPT_HEADERDATA, nullptr);
+        return 1;
+    }
+    curl_easy_setopt(curl_, CURLOPT_RANGE, nullptr);
+    curl_easy_setopt(curl_, CURLOPT_HEADERFUNCTION, nullptr);
+    curl_easy_setopt(curl_, CURLOPT_HEADERDATA, nullptr);
+    std::transform(headers.begin(), headers.end(), headers.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+    auto at = headers.find("content-range:");
+    unsigned long long first = 0, last = 0, total = 0;
+    if (!hit || at == std::string::npos ||
+        std::sscanf(headers.c_str() + at, "content-range: bytes %llu-%llu/%llu",
+                    &first, &last, &total) != 3 || first != 0 || last != 0) return 0;
+    return total;
+}
+
+bool EzShareClient::downloadChunks(const std::string& path, const std::string& local,
+                                   size_t start, size_t& downloaded) {
+    downloaded = 0;
+    const auto total = probe(path);
+    if (!total || start > total) return false;
+    size_t offset = start;
+    int failures = 0;
+    while (offset < total) {
+        chunk_end_ = std::min<uint64_t>(offset + 8192, total) - 1;
+        chunk_total_ = total;
+        chunking_ = true;
+        size_t got = 0;
+        const bool ok = downloadFileRange("", path, local, offset, got);
+        chunking_ = false;
+        if (!ok || got == 0) {
+            if (++failures >= 5) return false;
+            continue;
+        }
+        offset += got;
+        downloaded += got;
+        failures = 0;
+    }
+    return true;
+}
+
+std::string EzShareClient::folderForStart(std::time_t start) {
+    auto tm = *std::localtime(&start);
+    if (tm.tm_hour < 12) {
+        --tm.tm_mday;
+        tm.tm_isdst = -1;
+        std::mktime(&tm);
+    }
+    char folder[16];
+    std::strftime(folder, sizeof(folder), "%Y%m%d", &tm);
+    return folder;
+}
+
+void EzShareClient::refreshSessions() {
+    const auto now = std::chrono::steady_clock::now();
+    if (!starts_.empty() && now - sessions_read_at_ < SESSIONS_REFRESH) return;
+    // A private temporary directory keeps concurrent sources and unrelated
+    // collector staging files apart. Only a complete STR is parsed.
+    static std::atomic<unsigned long> sequence{0};
+    auto dir = std::filesystem::temp_directory_path() /
+        ("hms-ezshare-str-" + std::to_string(
+            std::chrono::steady_clock::now().time_since_epoch().count()) + "-" +
+         std::to_string(sequence++));
+    std::filesystem::create_directory(dir);
+    struct Cleanup {
+        std::filesystem::path dir;
+        ~Cleanup() { std::error_code ec; std::filesystem::remove_all(dir, ec); }
+    } cleanup{dir};
+    size_t got = 0;
+    const auto path = (dir / "STR.edf").string();
+    if (!downloadChunks("STR.edf", path, 0, got))
+        throw std::runtime_error("ez Share: could not read STR.edf for listing-free discovery");
+    auto records = EDFParser::parseSTRFile(path, "ezshare");
+    starts_.clear();
+    for (const auto& record : records) {
+        for (const auto& pair : record.mask_pairs) {
+            const auto start = std::chrono::system_clock::to_time_t(pair.first);
+            starts_[folderForStart(start)].push_back(start);
+        }
+        // STR has a fixed number of mask-on slots per day (20 on an
+        // AirSense 11). A day with more sessions counts them in MaskEvents
+        // but has no start for the rest, so they cannot be found here.
+        const auto listed = static_cast<int>(record.mask_pairs.size());
+        if (listed >= 10 && record.mask_events > listed) {
+            const auto first = std::chrono::system_clock::to_time_t(record.mask_pairs.front().first);
+            std::cerr << "ez Share: STR.edf lists " << listed << " session starts for "
+                      << folderForStart(first) << " but counts " << record.mask_events
+                      << " mask events; sessions past its last slot may be missing"
+                      << " without a directory listing" << std::endl;
+        }
+    }
+    sessions_read_at_ = now;
+}
+
+std::string EzShareClient::readRange(const std::string& path, size_t first, size_t last) {
+    std::string body;
+    const std::string url = base_url_ + "/" + path;
+    const auto range = std::to_string(first) + "-" + std::to_string(last);
+    curl_easy_setopt(curl_, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl_, CURLOPT_RANGE, range.c_str());
+    curl_easy_setopt(curl_, CURLOPT_TIMEOUT, 8L);
+    curl_easy_setopt(curl_, CURLOPT_LOW_SPEED_LIMIT, 0L);
+    curl_easy_setopt(curl_, CURLOPT_WRITEFUNCTION, WriteCallback);
+    curl_easy_setopt(curl_, CURLOPT_WRITEDATA, &body);
+    CURLcode result = CURLE_OK;
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        body.clear();
+        result = curl_easy_perform(curl_);
+        if (result == CURLE_OK) break;
+    }
+    curl_easy_setopt(curl_, CURLOPT_RANGE, nullptr);
+    long status = 0;
+    char* type = nullptr;
+    curl_easy_getinfo(curl_, CURLINFO_RESPONSE_CODE, &status);
+    curl_easy_getinfo(curl_, CURLINFO_CONTENT_TYPE, &type);
+    if (result != CURLE_OK || status != 206 || !type ||
+        std::string(type).find("text/plain") != 0 || body.size() != last - first + 1)
+        return {};
+    return body;
+}
+
+std::set<std::time_t> EzShareClient::scanAliases(const std::string& folder) {
+    if (folder.size() != 8 || !std::all_of(folder.begin(), folder.end(), ::isdigit)) return {};
+    // Session files in a noon-split folder are named after its own day or
+    // the next one. Each name date is its own alias stem; in a month the two
+    // stems share their first six digits and so one numbering.
+    std::tm day{};
+    day.tm_year = std::stoi(folder.substr(0, 4)) - 1900;
+    day.tm_mon = std::stoi(folder.substr(4, 2)) - 1;
+    day.tm_mday = std::stoi(folder.substr(6, 2)) + 1;
+    day.tm_hour = 12;
+    day.tm_isdst = -1;
+    std::mktime(&day);
+    char next[16];
+    std::strftime(next, sizeof(next), "%Y%m%d", &day);
+    auto& found = alias_starts_[folder];
+    std::set<std::string> tried;
+    for (const auto& stem : {folder, std::string(next)}) {
+        // Two stems of one month share their six-digit alias base and its numbering.
+        auto& number = alias_next_[folder][stem.substr(0, 6)];
+        if (number == 0) number = 1;
+        // A missing alias ends the run; a short tolerance covers a number
+        // freed by a deleted file or taken by a name of the other stem.
+        for (int misses = 0, n = number; misses < 3 && n < 1000000; ++n) {
+            const auto digits = std::to_string(n);
+            const auto alias = stem.substr(0, 7 - digits.size()) + "~" + digits + ".EDF";
+            if (!tried.insert(alias).second) break; // the other stem's numbering
+            // Bytes 168-183 of an EDF header are its start, "dd.mm.yyhh.mm.ss".
+            const auto stamp = readRange("DATALOG/" + folder + "/" + alias, 168, 183);
+            std::tm tm{};
+            if (stamp.size() != 16 ||
+                std::sscanf(stamp.c_str(), "%2d.%2d.%2d%2d.%2d.%2d", &tm.tm_mday, &tm.tm_mon,
+                            &tm.tm_year, &tm.tm_hour, &tm.tm_min, &tm.tm_sec) != 6) {
+                ++misses;
+                continue;
+            }
+            misses = 0;
+            number = n + 1;
+            tm.tm_mon -= 1;
+            tm.tm_year += 100;
+            tm.tm_isdst = -1;
+            found.insert(std::mktime(&tm));
+        }
+    }
+    return found;
+}
+
+std::vector<EzShareFileEntry> EzShareClient::enumerateFiles(const std::string& folder) {
+    std::vector<EzShareFileEntry> files;
+    std::set<std::string> returned;
+    const auto candidate = [](std::time_t at, const std::string& type) {
+        auto tm = *std::localtime(&at);
+        char prefix[32];
+        std::strftime(prefix, sizeof(prefix), "%Y%m%d_%H%M%S_", &tm);
+        return std::string(prefix) + type + ".edf";
+    };
+    const auto add = [&](const std::string& name) {
+        if (!returned.insert(name).second) return;
+        const auto size = probe("DATALOG/" + folder + "/" + name);
+        if (!size) return;
+        auto& e = discovered_[folder + "/" + name];
+        e.name = name; e.size_bytes = size; e.size_kb = (size + 1023) / 1024;
+        files.push_back(e);
+    };
+    // Every file found through its alias has a known start second, so its
+    // long name is one of a few candidates.
+    const auto aliased = scanAliases(folder);
+    for (auto start : aliased) {
+        auto& names = alias_names_[folder][start];
+        if (names.empty()) {
+            for (const auto* type : {"BRP", "PLD", "SA2", "SAD", "EVE", "CSL"}) {
+                const auto name = candidate(start, type);
+                if (probe("DATALOG/" + folder + "/" + name)) names.insert(name);
+            }
+        }
+        for (const auto& name : names) add(name);
+    }
+    const auto it = starts_.find(folder);
+    if (it == starts_.end()) return files;
+    // Names already taken by an earlier session of this folder; a session
+    // that shares its STR minute with another must find the next file set.
+    std::set<std::string> claimed;
+    for (const auto& known : session_names_)
+        for (const auto& name : known.second) claimed.insert(name.second);
+    for (const auto& known : alias_names_[folder])
+        claimed.insert(known.second.begin(), known.second.end());
+    std::map<std::time_t, int> seen;
+    for (auto start : it->second) {
+        auto& names = session_names_[{start, seen[start]++}];
+        // A BRP found through an alias within this STR minute covers it.
+        const auto covered = aliased.lower_bound(start);
+        if (covered != aliased.end() && *covered < start + 60) continue;
+        auto find = [&](const std::string& type, std::time_t from, int count) {
+            if (names.count(type)) return;
+            for (int second = 0; second < count; ++second) {
+                auto name = candidate(from + second, type);
+                if (claimed.count(name)) continue;
+                const auto size = probe("DATALOG/" + folder + "/" + name);
+                if (size) {
+                    names[type] = name;
+                    claimed.insert(name);
+                    EzShareFileEntry e; e.name = name; e.size_bytes = size;
+                    e.size_kb = (size + 1023) / 1024;
+                    discovered_[folder + "/" + name] = e;
+                    return;
+                }
+            }
+        };
+        find("BRP", start, 60);
+        if (!names.count("BRP")) continue;
+        // Recover the BRP's second without interpreting a timestamp as UTC.
+        auto tm = *std::localtime(&start);
+        tm.tm_sec = std::stoi(names["BRP"].substr(13, 2));
+        const auto brp = std::mktime(&tm);
+        for (const auto* type : {"PLD", "SA2", "SAD", "EVE", "CSL"}) {
+            if ((std::string(type) == "SAD" && names.count("SA2")) ||
+                (std::string(type) == "SA2" && names.count("SAD"))) continue;
+            find(type, brp - 15, 31);
+        }
+        for (const auto& name : names) {
+            if (!returned.insert(name.second).second) continue;
+            auto& e = discovered_[folder + "/" + name.second];
+            const auto size = probe("DATALOG/" + folder + "/" + name.second);
+            if (!size) continue;
+            e.size_bytes = size; e.size_kb = (size + 1023) / 1024;
+            files.push_back(e);
+        }
+    }
+    return files;
 }
 
 std::string EzShareClient::encodeCardPath(const std::string& path) {
@@ -573,6 +911,31 @@ std::string EzShareClient::encodeCardPath(const std::string& path) {
 }
 
 std::vector<EzShareFileEntry> EzShareClient::listDir(const std::string& card_path) {
+    if (no_listing_) {
+        if (card_path == "DATALOG") {
+            std::vector<EzShareFileEntry> entries;
+            for (const auto& folder : starts_) {
+                EzShareFileEntry e; e.name = folder.first; e.is_dir = true;
+                entries.push_back(e);
+            }
+            return entries;
+        }
+        const std::vector<std::string> names = card_path.empty()
+            ? std::vector<std::string>{"STR.edf", "Identification.json", "Identification.crc", "journal.jnl"}
+            : card_path == "SETTINGS"
+                ? std::vector<std::string>{"CurrentSettings.json", "CurrentSettings.crc"}
+                : std::vector<std::string>{};
+        std::vector<EzShareFileEntry> entries;
+        for (const auto& name : names) {
+            auto size = probe(card_path.empty() ? name : card_path + "/" + name);
+            if (size) { EzShareFileEntry e; e.name = name; e.size_bytes = size;
+                e.size_kb = (size + 1023) / 1024; entries.push_back(e); }
+        }
+        if (card_path.empty()) {
+            EzShareFileEntry e; e.is_dir = true; e.name = "SETTINGS"; entries.push_back(e);
+        }
+        return entries;
+    }
     // "" -> card root (/dir?dir=A:), otherwise /dir?dir=A:<backslash-path>.
     // Unlike listFiles(), this returns directories too — the residue sweep
     // recurses into every non-DATALOG subdir.
@@ -582,16 +945,22 @@ std::vector<EzShareFileEntry> EzShareClient::listDir(const std::string& card_pat
               << "'" << std::endl;
 
     std::string html = httpGet(url);
-    if (html.empty()) {
-        std::cerr << "EzShare: empty response listing '" << card_path << "'" << std::endl;
-        return {};
+    auto entries = parseDirectoryListing(html);
+    if (entries.empty() && !isListing(html)) {
+        no_listing_ = true;
+        return listDir(card_path);
     }
-
-    return parseDirectoryListing(html);  // includes both files and <DIR> entries
+    return entries;  // includes both files and <DIR> entries
 }
 
 bool EzShareClient::downloadByPath(const std::string& card_rel_path,
                                     const std::string& local_path) {
+    if (no_listing_) {
+        size_t got = 0;
+        std::string path = card_rel_path;
+        std::replace(path.begin(), path.end(), '\\', '/');
+        return downloadChunks(path, local_path, 0, got);
+    }
     // Generic single-file download by card-relative (backslash) path.
     std::string url = base_url_ + "/download?file=" + encodeCardPath(card_rel_path);
 
