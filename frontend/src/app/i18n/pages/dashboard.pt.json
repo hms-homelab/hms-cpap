@@ -7,8 +7,8 @@
       "lastNight": "Noite passada",
       "duration": "Duração",
       "cpapdashIndex": "Índice do CpapDash",
-      "refreshSummary": "Atualizar resumo",
-      "regenerateTitle": "Gerar de novo o resumo com IA da última sessão",
+      "refreshSummary": "Gerar de novo o resumo com IA",
+      "regenerateTitle": "Reescreve o resumo com IA da última noite. Não busca dados novos do aparelho.",
       "generating": "Gerando...",
       "queueFailed": "Não foi possível colocar o resumo na fila",
       "unknown": "Desconhecido"

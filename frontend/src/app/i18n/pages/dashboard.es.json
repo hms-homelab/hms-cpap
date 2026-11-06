@@ -7,8 +7,8 @@
       "lastNight": "Anoche",
       "duration": "Duración",
       "cpapdashIndex": "Índice de CpapDash",
-      "refreshSummary": "Actualizar resumen",
-      "regenerateTitle": "Regenerar el resumen con IA de la última sesión",
+      "refreshSummary": "Regenerar resumen con IA",
+      "regenerateTitle": "Vuelve a escribir el resumen con IA de la última noche. No trae datos nuevos de la máquina.",
       "generating": "Generando...",
       "queueFailed": "No se pudo poner el resumen en cola",
       "unknown": "Desconocido"
