@@ -13,6 +13,7 @@ import {
   errorText, groupKeys, hostOf, latestCommand, latestConfigValues, recordingWarning, releaseLine, riskyGroups,
   switchView,
 } from './devices-model';
+import { sourceImage } from '../../utils/source-image';
 
 /** A line under a card: what the last action did. */
 interface Note {
@@ -694,6 +695,9 @@ export class DevicesComponent implements OnInit, OnDestroy {
   private note(d: DeviceEntry, text: string, err: boolean): void {
     this.notes[d.key] = { text, err };
   }
+
+  /** The kind's picture (public/sources/), or null to fall back to icon(). */
+  readonly sourceImage = (kind: string): string | null => sourceImage(kind);
 
   icon(kind: string): string {
     switch (kind) {

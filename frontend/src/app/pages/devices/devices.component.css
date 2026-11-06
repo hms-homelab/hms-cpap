@@ -16,6 +16,10 @@
 /* ── header: name, kind, one pill ── */
 .card-head { display: flex; align-items: flex-start; gap: 0.7rem; }
 .card-head > i { font-size: 1.1rem; color: var(--primary); width: 1.5rem; text-align: center; margin-top: 0.2rem; }
+/* The picture carries its own transparent margin (and glow): pull it into the
+   card's padding so the name keeps its place beside it. */
+.card-head > .kind-img { flex: none; width: 56px; height: 56px; object-fit: contain;
+  margin: -0.45rem -0.2rem -0.45rem -0.45rem; }
 .titles { flex: 1; min-width: 0; }
 .name { display: flex; align-items: center; gap: 0.35rem; }
 .name strong { font-size: 1rem; overflow-wrap: anywhere; }

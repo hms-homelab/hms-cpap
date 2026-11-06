@@ -21,7 +21,11 @@
 
       <!-- ── Header: name, kind, one status pill ── -->
       <div class="card-head">
-        <i [class]="icon(d.kind)" aria-hidden="true"></i>
+        <!-- The kind's picture; its alt names the kind, since the name above
+             may be the person's own ("Bedroom"). A kind with none keeps its icon. -->
+        <img *ngIf="sourceImage(d.kind) as src; else kindIcon" class="kind-img" [src]="src"
+             [alt]="('devices.kind.' + d.kind) | translate" width="56" height="56" />
+        <ng-template #kindIcon><i [class]="icon(d.kind)" aria-hidden="true"></i></ng-template>
         <div class="titles">
           <div class="name" *ngIf="renaming !== d.key">
             <strong>{{ d.name }}</strong>
