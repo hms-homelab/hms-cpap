@@ -73,8 +73,6 @@
       "enabled": "Ativado",
       "address": "Endereço Bluetooth do aparelho",
       "addressHint": "Opcional. Deixe em branco para usar a primeira DreamStation 2 ao alcance.",
-      "readAt": "Ler todos os dias depois das",
-      "readAtHint": "Hora local. Escolha uma hora em que a noite já terminou: nunca é lida com a máscara colocada.",
       "noSleepHq": "As noites lidas por Bluetooth não são enviadas ao SleepHQ."
     },
     "sleephq": {

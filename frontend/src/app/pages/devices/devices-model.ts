@@ -337,6 +337,28 @@ export function ds2RefusalKey(result: string | undefined, backend = ''): string 
   }
 }
 
+/** The sources that can say a night ended, in the order the line names them. */
+const NIGHT_SOURCES = ['sleep_bridge', 'mule_ble', 'as11_ble', 'o2ring', 'ezshare', 'flashair', 'local'];
+
+/**
+ * When the DreamStation is read (no timer): after another source here says the
+ * night ended, or only with Read now when none can. The i18n key of the line,
+ * and the i18n keys of the sources it names (unknown ones are left out).
+ */
+export function ds2Trigger(status: any): { key: string; sources: string[] } {
+  const named: string[] = Array.isArray(status?.night_sources) ? status.night_sources : [];
+  const sources = NIGHT_SOURCES.filter((s) => named.includes(s)).map((s) => 'devices.ds2.source.' + s);
+  if (status?.trigger === 'night_end' && sources.length > 0) return { key: 'devices.ds2.readsNightEnd', sources };
+  return { key: 'devices.ds2.readsManual', sources: [] };
+}
+
+/** A real calendar day as YYYY-MM-DD, nothing else. */
+export function isIsoDay(s: string | null | undefined): boolean {
+  if (!s || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const d = new Date(s + 'T00:00:00Z');
+  return !isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+}
+
 /** The address and port this page reaches the service on, for the empty state. */
 export function hostOf(location: { hostname: string }): string {
   return location.hostname || 'localhost';

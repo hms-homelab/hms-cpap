@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import {
   CONFIG_KEYS, Confirmations, buildSet, commandState, configRows, costKey, errorText, groupKeys, latestConfigValues,
   recordingWarning, releaseLine, riskyGroups, setTouchesNetwork, switchView,
-  groupCode, ds2PairView, ds2PairRunning, ds2RefusalKey,
+  groupCode, ds2PairView, ds2PairRunning, ds2RefusalKey, ds2Trigger, isIsoDay,
 } from './devices-model.ts';
 
 // ── the in-page confirm and the recording warning ──
@@ -202,6 +202,24 @@ test('the page polls only while a pairing runs', () => {
     assert.equal(ds2PairRunning({ pairing: { state: st } }), true, st);
   for (const st of ['idle', 'paired', 'rejected', 'timeout', 'failed', 'cancelled'])
     assert.equal(ds2PairRunning({ pairing: { state: st } }), false, st);
+});
+
+test('the read follows the night end another source reports, else only Read now', () => {
+  assert.deepEqual(ds2Trigger({ trigger: 'night_end', night_sources: ['o2ring', 'sleep_bridge', 'bogus'] }), {
+    key: 'devices.ds2.readsNightEnd',
+    sources: ['devices.ds2.source.sleep_bridge', 'devices.ds2.source.o2ring'],
+  });
+  assert.deepEqual(ds2Trigger({ trigger: 'manual', night_sources: [] }), { key: 'devices.ds2.readsManual', sources: [] });
+  assert.equal(ds2Trigger({ trigger: 'night_end', night_sources: [] }).key, 'devices.ds2.readsManual');
+  assert.equal(ds2Trigger(null).key, 'devices.ds2.readsManual');
+});
+
+test('the import date is a real day', () => {
+  assert.equal(isIsoDay('2026-11-03'), true);
+  assert.equal(isIsoDay('2026-02-30'), false);
+  assert.equal(isIsoDay('2026-11-3'), false);
+  assert.equal(isIsoDay(''), false);
+  assert.equal(isIsoDay(undefined), false);
 });
 
 test('a refused request names why', () => {

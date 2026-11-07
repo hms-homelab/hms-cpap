@@ -252,10 +252,6 @@ import { sourceImage } from '../../utils/source-image';
                 <input type="text" [(ngModel)]="config.ds2_ble.address" name="ds2_address" placeholder="aa:bb:cc:dd:ee:ff" />
                 <span class="hint">{{ 'settings.ds2.addressHint' | translate }}</span>
               </label>
-              <label>{{ 'settings.ds2.readAt' | translate }}
-                <input type="time" [(ngModel)]="config.ds2_ble.read_at" name="ds2_read_at" />
-                <span class="hint">{{ 'settings.ds2.readAtHint' | translate }}</span>
-              </label>
               <p class="hint">{{ 'settings.ds2.noSleepHq' | translate }}</p>
               <p class="devices-link">
                 <a routerLink="/devices">{{ 'settings.devicesLink' | translate }}</a>
@@ -1443,9 +1439,8 @@ export class SettingsComponent implements OnInit, OnDestroy {
           cfg.airsense11_ble = { enabled: false, address: '' };
         }
         if (!cfg.ds2_ble) {
-          cfg.ds2_ble = { enabled: false, address: '', read_at: '10:00' };
+          cfg.ds2_ble = { enabled: false, address: '' };
         }
-        if (!cfg.ds2_ble.read_at) cfg.ds2_ble.read_at = '10:00';
         if (!cfg.sleephq) {
           cfg.sleephq = { enabled: false, client_id: '', client_secret: '',
                           auto_on_session: true, auto_on_backfill: true,

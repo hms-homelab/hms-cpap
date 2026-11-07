@@ -238,6 +238,11 @@ export class CpapApiService {
     return this.http.post('/api/ds2/ble/read', {});
   }
 
+  /** The first day whose sessions are imported ("YYYY-MM-DD"); earlier ones are skipped and never kept. */
+  ds2ImportFrom(date: string): Observable<any> {
+    return this.http.post('/api/ds2/ble/import-from', { date });
+  }
+
   /** The pairing removed (the OS bond where the OS allows it). */
   ds2ForgetPairing(): Observable<any> {
     return this.http.delete('/api/ds2/ble/pairing');

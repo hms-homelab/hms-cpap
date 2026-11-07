@@ -73,8 +73,6 @@
       "enabled": "Enabled",
       "address": "Machine's Bluetooth address",
       "addressHint": "Optional. Leave it empty to use the first DreamStation 2 in range.",
-      "readAt": "Read every day after",
-      "readAtHint": "Local time. Pick an hour when the night is over: it is never read while a mask is on.",
       "noSleepHq": "Nights read over Bluetooth are not sent to SleepHQ."
     },
     "sleephq": {

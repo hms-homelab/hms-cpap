@@ -11,7 +11,7 @@ import { Dismissed } from '../../components/ota-progress/ota-progress-model';
 import {
   Confirmations, ConfigRow, DeviceCommand, DeviceEntry, DevicesAnswer, buildSet, commandState, configRows, costKey,
   errorText, groupKeys, hostOf, latestCommand, latestConfigValues, recordingWarning, releaseLine, riskyGroups,
-  switchView, groupCode, ds2PairView, ds2PairRunning, ds2RefusalKey,
+  switchView, groupCode, ds2PairView, ds2PairRunning, ds2RefusalKey, ds2Trigger, isIsoDay,
 } from './devices-model';
 import { sourceImage } from '../../utils/source-image';
 
@@ -85,6 +85,8 @@ export class DevicesComponent implements OnInit, OnDestroy {
   ds2Message = '';
   ds2Err = false;
   readonly groupCode = groupCode;
+  /** The import date being edited; null shows the server's. */
+  ds2ImportDraft: string | null = null;
   private ds2Timer: any = null;
 
   private timer: any = null;
@@ -706,6 +708,41 @@ export class DevicesComponent implements OnInit, OnDestroy {
     this.api.ds2Read().subscribe({
       next: () => { this.note(d, this.t.instant('devices.ds2.readStarted'), false); this.load(false); },
       error: (e) => this.note(d, this.t.instant(ds2RefusalKey(e?.error?.result, d.detail?.backend)), true),
+    });
+  }
+
+  /** "When another source says the night ended (Sleep Bridge, O2 ring), or with Read now", or "Read now" only. */
+  ds2ReadsLine(d: DeviceEntry): string {
+    const t = ds2Trigger(d.detail);
+    const sources = t.sources.map((k) => this.t.instant(k)).join(', ');
+    return this.t.instant(t.key, { sources });
+  }
+
+  ds2ImportValue(d: DeviceEntry): string {
+    return this.ds2ImportDraft ?? d.detail?.import_from ?? '';
+  }
+
+  ds2SaveImportFrom(d: DeviceEntry): void {
+    const date = this.ds2ImportValue(d);
+    if (!isIsoDay(date)) {
+      this.note(d, this.t.instant('devices.ds2.importBadDate'), true);
+      return;
+    }
+    this.busy[d.key] = true;
+    this.api.ds2ImportFrom(date).subscribe({
+      next: (r: any) => {
+        this.busy[d.key] = false;
+        this.ds2ImportDraft = null;
+        this.note(d, this.t.instant('devices.ds2.importSaved', { date: r?.import_from ?? date }), false);
+        this.load(false);
+      },
+      error: (e) => {
+        this.busy[d.key] = false;
+        const result = e?.error?.result;
+        this.note(d, this.t.instant(result === 'bad_date' ? 'devices.ds2.importBadDate'
+                                  : result === 'not_paired' ? 'devices.ds2.notPaired'
+                                  : 'devices.ds2.importFailed', { error: errorText(e) }), true);
+      },
     });
   }
 

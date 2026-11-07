@@ -73,8 +73,6 @@
       "enabled": "Bekapcsolva",
       "address": "A készülék Bluetooth-címe",
       "addressHint": "Nem kötelező. Hagyja üresen, és a hatótávolságban lévő első DreamStation 2 lesz használva.",
-      "readAt": "Napi olvasás ezután",
-      "readAtHint": "Helyi idő. Olyan órát válasszon, amikor az éjszaka már véget ért: felvett maszkkal sosem olvas.",
       "noSleepHq": "A Bluetooth-on beolvasott éjszakák nem kerülnek a SleepHQ-ba."
     },
     "sleephq": {
