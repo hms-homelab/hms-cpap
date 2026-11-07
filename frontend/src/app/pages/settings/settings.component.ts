@@ -233,6 +233,37 @@ import { sourceImage } from '../../utils/source-image';
           </div>
         </div>
 
+        <!-- Section: DreamStation 2 over Bluetooth (SDD-064). Config only;
+             pairing, status and the read are the Devices page's card. -->
+        <div class="section" *ngIf="config.ds2_ble">
+          <div class="section-header" (click)="toggle('ds2')">
+            <span class="chevron" [class.open]="open['ds2']">&#9654;</span>
+            {{ 'settings.ds2.heading' | translate }}
+            <span class="badge" *ngIf="!config.ds2_ble.enabled">{{ 'settings.tag.optional' | translate }}</span>
+          </div>
+          <div class="section-body" *ngIf="open['ds2']">
+            <p class="section-desc">{{ 'settings.ds2.desc' | translate }}</p>
+            <label class="toggle-row">
+              {{ 'settings.ds2.enabled' | translate }}
+              <input type="checkbox" [(ngModel)]="config.ds2_ble.enabled" name="ds2_enabled" />
+            </label>
+            <ng-container *ngIf="config.ds2_ble.enabled">
+              <label>{{ 'settings.ds2.address' | translate }}
+                <input type="text" [(ngModel)]="config.ds2_ble.address" name="ds2_address" placeholder="aa:bb:cc:dd:ee:ff" />
+                <span class="hint">{{ 'settings.ds2.addressHint' | translate }}</span>
+              </label>
+              <label>{{ 'settings.ds2.readAt' | translate }}
+                <input type="time" [(ngModel)]="config.ds2_ble.read_at" name="ds2_read_at" />
+                <span class="hint">{{ 'settings.ds2.readAtHint' | translate }}</span>
+              </label>
+              <p class="hint">{{ 'settings.ds2.noSleepHq' | translate }}</p>
+              <p class="devices-link">
+                <a routerLink="/devices">{{ 'settings.devicesLink' | translate }}</a>
+              </p>
+            </ng-container>
+          </div>
+        </div>
+
         <!-- The Mule & Miner and Sleep Bridge sections moved to the Devices
              page (SDD-062 D1): they held no config, only presence and
              actions. -->
@@ -1411,6 +1442,10 @@ export class SettingsComponent implements OnInit, OnDestroy {
         if (!cfg.airsense11_ble) {
           cfg.airsense11_ble = { enabled: false, address: '' };
         }
+        if (!cfg.ds2_ble) {
+          cfg.ds2_ble = { enabled: false, address: '', read_at: '10:00' };
+        }
+        if (!cfg.ds2_ble.read_at) cfg.ds2_ble.read_at = '10:00';
         if (!cfg.sleephq) {
           cfg.sleephq = { enabled: false, client_id: '', client_secret: '',
                           auto_on_session: true, auto_on_backfill: true,

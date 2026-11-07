@@ -67,6 +67,16 @@
       "address": "Machine's Bluetooth address",
       "addressHint": "Optional. Leave it empty to use the first AirSense 11 in range."
     },
+    "ds2": {
+      "heading": "DreamStation 2 over Bluetooth",
+      "desc": "Reads a Philips DreamStation 2 over this computer's Bluetooth, after the night: each session's summary and events, no waveform. Pair it from the Devices page.",
+      "enabled": "Enabled",
+      "address": "Machine's Bluetooth address",
+      "addressHint": "Optional. Leave it empty to use the first DreamStation 2 in range.",
+      "readAt": "Read every day after",
+      "readAtHint": "Local time. Pick an hour when the night is over: it is never read while a mask is on.",
+      "noSleepHq": "Nights read over Bluetooth are not sent to SleepHQ."
+    },
     "sleephq": {
       "heading": "SleepHQ Sync",
       "desc": "Forward your therapy nights to SleepHQ via their public API. Create API credentials in SleepHQ under Account → API.",

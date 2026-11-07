@@ -132,6 +132,14 @@ input[type="file"] { font-size: 0.8rem; color: #bbb; max-width: 100%; }
 .inline-form { display: flex; flex-direction: column; gap: 0.4rem; }
 .inline-form label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.78rem; color: #999; }
 
+/* SDD-064: the DreamStation 2 pairing. The code is the one thing to read, so it is big. */
+.ds2-pair { border: 1px solid var(--line); border-radius: 8px; padding: 0.65rem 0.75rem; background: rgba(149, 117, 205, 0.05); }
+.ds2-notes { margin: 0; padding-left: 1.1rem; display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.82rem; color: #c8cede; }
+.ds2-code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 2.4rem; font-weight: 600; letter-spacing: 0.12em;
+  color: var(--primary-text); text-align: center; padding: 0.2rem 0; font-variant-numeric: tabular-nums; }
+.ds2-question { font-size: 0.92rem; color: #e0e0e0; text-align: center; }
+.ds2-pair .row { display: flex; gap: 0.5rem; justify-content: flex-end; flex-wrap: wrap; }
+
 pre.logs { max-height: 240px; overflow: auto; background: #0c0d14; border: 1px solid #23253a; border-radius: 6px; padding: 0.6rem;
   font-size: 0.75rem; line-height: 1.4; color: #c8cede; white-space: pre-wrap; word-break: break-word; margin: 0.2rem 0; }
 

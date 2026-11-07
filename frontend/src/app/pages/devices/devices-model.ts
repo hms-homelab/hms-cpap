@@ -4,7 +4,7 @@
 
 /** One device as GET /api/devices lists it. */
 export interface DeviceEntry {
-  kind: 'mule' | 'sleepbridge' | 'o2ring' | 'ezshare' | 'flashair' | 'as11_ble';
+  kind: 'mule' | 'sleepbridge' | 'o2ring' | 'ezshare' | 'flashair' | 'as11_ble' | 'ds2_ble';
   id: string;
   key: string;
   name: string;
@@ -275,6 +275,66 @@ export function switchView(unit: any, key: 'as11_enabled' | 'o2_enabled'): { on:
     else if (on !== asked.args.config[key]) pending = 'devices.mule.switchAnswered';
   }
   return { on: typeof on === 'boolean' ? on : null, pending };
+}
+
+// ── SDD-064: the DreamStation 2 pairing, as the page shows it ──────────────
+
+/** "042517" -> "042 517", so six digits are easy to compare at a glance. */
+export function groupCode(code: string | null | undefined): string {
+  const c = (code ?? '').replace(/\D/g, '');
+  return c.length === 6 ? `${c.slice(0, 3)} ${c.slice(3)}` : c;
+}
+
+export type Ds2Phase = 'idle' | 'working' | 'confirm' | 'os_dialog' | 'paired' | 'failed';
+
+/**
+ * What the pairing panel shows for a status answer: the phase, and the i18n
+ * key of its one line. `radio_off` is worded per OS, as the AirSense 11's is.
+ */
+export function ds2PairView(status: any): { phase: Ds2Phase; key: string } {
+  const p = status?.pairing ?? {};
+  const state: string = p.state ?? 'idle';
+  const backend: string = status?.backend ?? '';
+  switch (state) {
+    case 'idle': return { phase: 'idle', key: '' };
+    case 'scanning': return { phase: 'working', key: 'devices.ds2.scanning' };
+    case 'pairing':
+      // macOS asks in its own window, and the machine's code shows meanwhile.
+      return status?.os_dialog ? { phase: 'os_dialog', key: 'devices.ds2.osDialog' }
+                               : { phase: 'working', key: 'devices.ds2.pairing' };
+    case 'confirm': return { phase: 'confirm', key: 'devices.ds2.confirmQuestion' };
+    case 'os_dialog': return { phase: 'os_dialog', key: 'devices.ds2.osDialog' };
+    case 'paired': return { phase: 'paired', key: 'devices.ds2.done' };
+    case 'radio_off':
+      return { phase: 'failed', key: backend === 'corebluetooth' ? 'devices.ds2.errRadioOffMac'
+                                   : backend === 'winrt' ? 'devices.ds2.errRadioOffWin' : 'devices.ds2.errRadioOff' };
+    case 'rejected': return { phase: 'failed', key: 'devices.ds2.errRejected' };
+    case 'timeout': return { phase: 'failed', key: 'devices.ds2.errTimeout' };
+    case 'not_found': return { phase: 'failed', key: 'devices.ds2.errNotFound' };
+    case 'unsupported': return { phase: 'failed', key: 'devices.ds2.errUnsupported' };
+    case 'cancelled': return { phase: 'failed', key: 'devices.ds2.cancelled' };
+    default: return { phase: 'failed', key: 'devices.ds2.errGeneric' };
+  }
+}
+
+/** The pairing is still running: the page polls the status every second. */
+export function ds2PairRunning(status: any): boolean {
+  const ph = ds2PairView(status).phase;
+  return ph === 'working' || ph === 'confirm' || ph === 'os_dialog';
+}
+
+/** A refusal of a DS2 request (409 result), as its i18n key. */
+export function ds2RefusalKey(result: string | undefined, backend = ''): string {
+  switch (result) {
+    case 'busy': return 'devices.ds2.errBusy';
+    case 'not_paired': return 'devices.ds2.notPaired';
+    case 'disabled': return 'devices.ds2.errDisabled';
+    case 'not_compiled': return 'devices.ds2.notCompiled';
+    case 'radio_off':
+      return backend === 'corebluetooth' ? 'devices.ds2.errRadioOffMac'
+           : backend === 'winrt' ? 'devices.ds2.errRadioOffWin' : 'devices.ds2.errRadioOff';
+    default: return 'devices.ds2.errGeneric';
+  }
 }
 
 /** The address and port this page reaches the service on, for the empty state. */

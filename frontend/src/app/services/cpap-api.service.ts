@@ -212,6 +212,37 @@ export class CpapApiService {
     return this.http.delete('/api/airsense11/ble/pairing');
   }
 
+  // ── SDD-064: a DreamStation 2 over this host's Bluetooth ──
+
+  /** Pairing, the machine, the last and next read. */
+  getDs2BleStatus(): Observable<any> {
+    return this.http.get<any>('/api/ds2/ble/status');
+  }
+
+  /** Starts the OS pairing (numeric comparison); follow it on the status. */
+  ds2PairStart(): Observable<any> {
+    return this.http.post('/api/ds2/ble/pair/start', {});
+  }
+
+  /** The person's answer to the six-digit code. */
+  ds2PairConfirm(match: boolean): Observable<any> {
+    return this.http.post('/api/ds2/ble/pair/confirm', { match });
+  }
+
+  ds2PairCancel(): Observable<any> {
+    return this.http.post('/api/ds2/ble/pair/cancel', {});
+  }
+
+  /** Reads now, in the background; the status says when it is done. */
+  ds2Read(): Observable<any> {
+    return this.http.post('/api/ds2/ble/read', {});
+  }
+
+  /** The pairing removed (the OS bond where the OS allows it). */
+  ds2ForgetPairing(): Observable<any> {
+    return this.http.delete('/api/ds2/ble/pairing');
+  }
+
   /** The card at its saved address, probed now: an ez Share's listing, or a FlashAir's own. */
   testSource(transport: 'ezshare' | 'flashair'): Observable<{ status: string; url: string; error?: string;
                                                               bridge_serial?: string; bridge_fw?: string }> {

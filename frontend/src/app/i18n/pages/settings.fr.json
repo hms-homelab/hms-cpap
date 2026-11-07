@@ -67,6 +67,16 @@
       "address": "Adresse Bluetooth de l'appareil",
       "addressHint": "Facultatif. Laissez vide pour utiliser le premier AirSense 11 à portée."
     },
+    "ds2": {
+      "heading": "DreamStation 2 en Bluetooth",
+      "desc": "Lit une Philips DreamStation 2 par le Bluetooth de cet ordinateur, après la nuit : le résumé et les événements de chaque session, sans la courbe de débit. Appairez-la depuis la page Appareils.",
+      "enabled": "Activé",
+      "address": "Adresse Bluetooth de l'appareil",
+      "addressHint": "Facultatif. Laissez vide pour utiliser la première DreamStation 2 à portée.",
+      "readAt": "Lire chaque jour après",
+      "readAtHint": "Heure locale. Choisissez une heure où la nuit est finie : rien n'est lu masque en place.",
+      "noSleepHq": "Les nuits lues en Bluetooth ne sont pas envoyées à SleepHQ."
+    },
     "sleephq": {
       "heading": "Synchronisation SleepHQ",
       "desc": "Transmettez vos nuits de traitement à SleepHQ via leur API publique. Créez les identifiants d'API dans SleepHQ, sous Account → API.",

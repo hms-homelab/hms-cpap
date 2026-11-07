@@ -165,7 +165,78 @@
             <div><dt>{{ 'devices.as11.address' | translate }}</dt><dd class="mono">{{ d.detail.address || ('devices.as11.anyMachine' | translate) }}</dd></div>
           </ng-container>
         </ng-container>
+
+        <!-- ── DreamStation 2 over Bluetooth (SDD-064): read after the night ── -->
+        <ng-container *ngIf="d.kind === 'ds2_ble'">
+          <div *ngIf="d.detail.not_compiled" class="wide"><dd class="note">{{ 'devices.ds2.notCompiled' | translate }}</dd></div>
+          <ng-container *ngIf="!d.detail.not_compiled">
+            <div><dt></dt><dd>{{ (d.detail.paired ? 'devices.ds2.paired' : 'devices.ds2.notPaired') | translate }}<span
+              *ngIf="d.detail.busy && !ds2Panel">, {{ 'devices.ds2.reading' | translate }}</span></dd></div>
+            <div *ngIf="d.detail.machine as m"><dt>{{ 'devices.line.machine' | translate }}</dt>
+              <dd>{{ m.model || 'DreamStation 2' }}<span *ngIf="m.serial"> · <span class="mono">{{ m.serial }}</span></span></dd></div>
+            <div *ngIf="d.detail.machine?.firmware"><dt>{{ 'devices.line.firmware' | translate }}</dt>
+              <dd class="mono">{{ d.detail.machine.firmware }}</dd></div>
+            <div *ngIf="d.detail.last_read as lr"><dt>{{ 'devices.ds2.lastRead' | translate }}</dt>
+              <dd>
+                <ng-container *ngIf="lr.at">{{ ms(lr.at) | date:'short' }} · {{ 'devices.ds2.records' | translate:{ n: lr.records } }}</ng-container>
+                <ng-container *ngIf="!lr.at">{{ 'devices.line.never' | translate }}</ng-container>
+              </dd></div>
+            <div *ngIf="d.detail.last_read?.error" class="wide">
+              <dd class="note">{{ 'devices.ds2.lastReadError' | translate:{ when: (ms(d.detail.last_read.attempt_at) | date:'short'), error: d.detail.last_read.error } }}</dd></div>
+            <div *ngIf="d.detail.paired"><dt>{{ 'devices.ds2.nextRead' | translate }}</dt>
+              <dd>{{ d.detail.next_read_at ? (ms(d.detail.next_read_at) | date:'short') : ('devices.ds2.noNextRead' | translate) }}</dd></div>
+            <div><dt>{{ 'devices.ds2.readAt' | translate }}</dt><dd>{{ 'devices.ds2.readAtLine' | translate:{ time: d.detail.read_at || '10:00' } }}</dd></div>
+            <div><dt>{{ 'devices.as11.address' | translate }}</dt><dd class="mono">{{ d.detail.address || ('devices.ds2.anyMachine' | translate) }}</dd></div>
+          </ng-container>
+        </ng-container>
       </dl>
+
+      <!-- DreamStation 2 pairing (SDD-064 D3, D4): in the page, never a dialog. -->
+      <div class="inline-form ds2-pair" *ngIf="d.kind === 'ds2_ble' && !d.detail.not_compiled && (ds2Panel || ds2View(d).phase === 'confirm' || ds2View(d).phase === 'os_dialog')">
+        <ng-container *ngIf="ds2View(d) as v">
+          <!-- Before starting: what pairing needs, and what it replaces. -->
+          <ng-container *ngIf="v.phase === 'idle' || v.phase === 'failed' || v.phase === 'paired'">
+            <ul class="ds2-notes" *ngIf="v.phase !== 'paired'">
+              <li>{{ 'devices.ds2.noteBlower' | translate }}</li>
+              <li><strong>{{ 'devices.ds2.noteOneBond' | translate }}</strong></li>
+              <li>{{ 'devices.ds2.noteForgetOld' | translate }}</li>
+              <li *ngIf="ds2Status(d).os_dialog">{{ 'devices.ds2.noteMac' | translate }}</li>
+            </ul>
+            <div class="note-line" [class.err]="v.phase === 'failed'" *ngIf="v.key">{{ v.key | translate }}</div>
+            <div class="row">
+              <button type="button" class="btn" (click)="ds2ClosePanel()">{{ (v.phase === 'paired' ? 'devices.ds2.close' : 'devices.ds2.cancel') | translate }}</button>
+              <button type="button" class="btn primary" *ngIf="v.phase !== 'paired'" (click)="ds2PairStart(d)">
+                {{ (v.phase === 'failed' ? 'devices.ds2.startAgain' : 'devices.ds2.start') | translate }}</button>
+            </div>
+          </ng-container>
+
+          <!-- Looking for the machine, or asking the OS to pair. -->
+          <ng-container *ngIf="v.phase === 'working'">
+            <div class="quiet">{{ v.key | translate }}</div>
+            <div class="row"><button type="button" class="btn" (click)="ds2PairCancel()">{{ 'devices.ds2.cancel' | translate }}</button></div>
+          </ng-container>
+
+          <!-- The comparison: the six digits, big, and the two answers. -->
+          <ng-container *ngIf="v.phase === 'confirm'">
+            <div class="ds2-code" aria-live="polite">{{ groupCode(ds2Status(d).pairing?.code) }}</div>
+            <div class="ds2-question">{{ v.key | translate }}</div>
+            <div class="hint">{{ 'devices.ds2.confirmOnMachine' | translate }}
+              <span *ngIf="ds2Status(d).pairing?.seconds_left"> {{ 'devices.ds2.secondsLeft' | translate:{ s: ds2Status(d).pairing.seconds_left } }}</span></div>
+            <div class="row">
+              <button type="button" class="btn" (click)="ds2Answer(false)">{{ 'devices.ds2.noMatch' | translate }}</button>
+              <button type="button" class="btn primary" (click)="ds2Answer(true)">{{ 'devices.ds2.match' | translate }}</button>
+            </div>
+          </ng-container>
+
+          <!-- macOS: the OS asks in its own window. -->
+          <ng-container *ngIf="v.phase === 'os_dialog'">
+            <div class="ds2-question">{{ v.key | translate }}</div>
+            <div class="hint" *ngIf="ds2Status(d).pairing?.seconds_left">{{ 'devices.ds2.secondsLeft' | translate:{ s: ds2Status(d).pairing.seconds_left } }}</div>
+            <div class="row"><button type="button" class="btn" (click)="ds2PairCancel()">{{ 'devices.ds2.cancel' | translate }}</button></div>
+          </ng-container>
+        </ng-container>
+        <div class="note-line" [class.err]="ds2Err" *ngIf="ds2Message">{{ ds2Message }}</div>
+      </div>
 
       <!-- AirSense 11 pairing in progress: its code field, with its warning. -->
       <div class="inline-form" *ngIf="d.kind === 'as11_ble' && !d.detail.not_compiled && (d.detail.pairing || as11Pairing || as11Message)">
@@ -255,6 +326,21 @@
             </div>
             <div class="action-line" *ngIf="d.detail.paired">
               <button type="button" class="btn danger" (click)="askAs11Forget(d)">{{ 'devices.as11.forgetPairing' | translate }}</button>
+            </div>
+          </ng-container>
+
+          <ng-container *ngIf="d.kind === 'ds2_ble' && !d.detail.not_compiled">
+            <div class="action-line">
+              <button type="button" class="btn primary" (click)="ds2ReadNow(d)" [disabled]="!d.detail.paired || d.detail.busy">
+                {{ (d.detail.busy && !ds2Panel ? 'devices.ds2.reading' : 'devices.ds2.readNow') | translate }}</button>
+            </div>
+            <div class="hint">{{ 'devices.ds2.afterNightOnly' | translate }}</div>
+            <div class="action-line" *ngIf="!ds2Panel">
+              <button type="button" class="btn" (click)="ds2OpenPanel()" [disabled]="d.detail.busy">
+                {{ (d.detail.paired ? 'devices.ds2.pairAgain' : 'devices.ds2.pair') | translate }}</button>
+            </div>
+            <div class="action-line" *ngIf="d.detail.paired">
+              <button type="button" class="btn danger" (click)="askDs2Forget(d)">{{ 'devices.ds2.forgetPairing' | translate }}</button>
             </div>
           </ng-container>
 
