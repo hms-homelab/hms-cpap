@@ -406,6 +406,44 @@ public:
         return res;
     }
 
+    // ── SDD-064: an OS bond by numeric comparison (the DreamStation 2) ──
+    //
+    // CoreBluetooth has no pairing API. The OS pairs on demand: the device
+    // refuses the first subscribe ("insufficient authentication"), macOS
+    // shows its own window with the six digits, and the subscribe goes
+    // through once the user accepted there and on the device. The machine
+    // drops the link while it shows its code, so this connects and
+    // subscribes again until the subscribe holds or the time is up.
+    bool osShowsPairingCode() const override { return true; }
+
+    PairResult pair(const Device& device, const GattSpec& spec, PairHandlers h, int timeout_ms) override {
+        PairResult r;
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+        std::string last;
+        bool prompted = false;
+        while (std::chrono::steady_clock::now() < deadline) {
+            auto c = connect(device, spec, LinkHandlers{}, ConnectOptions{});
+            if (c.link) {
+                c.link->close();
+                r.outcome = PairOutcome::Paired;
+                r.detail = prompted ? "" : "macOS already held a bond with it";
+                return r;
+            }
+            last = c.detail;
+            const std::string why = lower(c.detail);
+            if (c.error == LinkError::Notify || why.find("authentic") != std::string::npos ||
+                why.find("encrypt") != std::string::npos) {
+                prompted = true;
+                if (h.os_prompt) h.os_prompt();
+            }
+            std::this_thread::sleep_for(std::chrono::seconds(2));
+        }
+        r.outcome = PairOutcome::TimedOut;
+        r.detail = prompted ? "macOS asked, but the pairing was not completed in time (" + last + ")"
+                            : "the machine never asked to pair (" + last + ")";
+        return r;
+    }
+
 private:
     std::string tag_;
     std::shared_ptr<CbState> s_;

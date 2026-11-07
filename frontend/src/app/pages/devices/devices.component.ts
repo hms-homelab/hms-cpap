@@ -11,7 +11,7 @@ import { Dismissed } from '../../components/ota-progress/ota-progress-model';
 import {
   Confirmations, ConfigRow, DeviceCommand, DeviceEntry, DevicesAnswer, buildSet, commandState, configRows, costKey,
   errorText, groupKeys, hostOf, latestCommand, latestConfigValues, recordingWarning, releaseLine, riskyGroups,
-  switchView,
+  switchView, groupCode, ds2PairView, ds2PairRunning, ds2RefusalKey, ds2Reads, ds2NextRead, isIsoDay,
 } from './devices-model';
 import { sourceImage } from '../../utils/source-image';
 
@@ -77,6 +77,18 @@ export class DevicesComponent implements OnInit, OnDestroy {
   as11Message = '';
   as11Err = false;
 
+  // SDD-064: the DreamStation 2 pairing over this computer's Bluetooth.
+  /** The panel is open: the notes before starting, then the pairing itself. */
+  ds2Panel = false;
+  /** The status, polled every second while a pairing runs. */
+  ds2Live: any = null;
+  ds2Message = '';
+  ds2Err = false;
+  readonly groupCode = groupCode;
+  /** The import date being edited; null shows the server's. */
+  ds2ImportDraft: string | null = null;
+  private ds2Timer: any = null;
+
   private timer: any = null;
   private tables = new Map<string, { src: unknown; table: { rows: ConfigRow[]; read: boolean; risks: any[] } }>();
 
@@ -92,6 +104,7 @@ export class DevicesComponent implements OnInit, OnDestroy {
 
   ngOnDestroy(): void {
     if (this.timer) clearInterval(this.timer);
+    this.ds2StopPolling();
   }
 
   load(fresh: boolean): void {
@@ -152,6 +165,17 @@ export class DevicesComponent implements OnInit, OnDestroy {
       this.api.as11ForgetPairing().subscribe({
         next: () => { this.note(d, this.t.instant('devices.as11.forgotten'), false); this.load(false); },
         error: (e) => this.note(d, this.t.instant('devices.as11.forgetFailed', { error: errorText(e) }), true),
+      });
+      return;
+    }
+    if (p.action === 'ds2_forget') {
+      this.api.ds2ForgetPairing().subscribe({
+        next: (r: any) => {
+          this.note(d, this.t.instant(r?.unpaired_os ? 'devices.ds2.forgotten' : 'devices.ds2.forgottenOsKeeps'), false);
+          this.ds2Live = null;
+          this.load(false);
+        },
+        error: (e) => this.note(d, this.t.instant('devices.ds2.forgetFailed', { error: errorText(e) }), true),
       });
       return;
     }
@@ -634,6 +658,131 @@ export class DevicesComponent implements OnInit, OnDestroy {
     this.as11Err = true;
   }
 
+  // ── SDD-064: a DreamStation 2 over Bluetooth ─────────────────────────────
+
+  /** The freshest status: the second-by-second poll while pairing, else the list's. */
+  ds2Status(d: DeviceEntry): any {
+    return this.ds2Live ?? d.detail;
+  }
+
+  ds2View(d: DeviceEntry): { phase: string; key: string } {
+    return ds2PairView(this.ds2Status(d));
+  }
+
+  /** Pair: first the notes (blower off, one bond), then Start. */
+  ds2OpenPanel(): void {
+    this.ds2Panel = true;
+    this.ds2Message = '';
+    this.ds2Err = false;
+    this.ds2Live = null;
+  }
+
+  ds2ClosePanel(): void {
+    this.ds2Panel = false;
+    this.ds2Message = '';
+    this.ds2Live = null;
+    this.ds2StopPolling();
+  }
+
+  ds2PairStart(d: DeviceEntry): void {
+    this.ds2Message = '';
+    this.ds2Err = false;
+    this.api.ds2PairStart().subscribe({
+      next: () => this.ds2StartPolling(),
+      error: (e) => this.ds2Refused(d, e?.error),
+    });
+  }
+
+  ds2Answer(match: boolean): void {
+    this.api.ds2PairConfirm(match).subscribe({
+      next: () => this.ds2Poll(),
+      error: () => this.ds2Poll(),
+    });
+  }
+
+  ds2PairCancel(): void {
+    this.api.ds2PairCancel().subscribe({ next: () => this.ds2Poll(), error: () => this.ds2Poll() });
+  }
+
+  ds2ReadNow(d: DeviceEntry): void {
+    this.api.ds2Read().subscribe({
+      next: () => { this.note(d, this.t.instant('devices.ds2.readStarted'), false); this.load(false); },
+      error: (e) => this.note(d, this.t.instant(ds2RefusalKey(e?.error?.result, d.detail?.backend)), true),
+    });
+  }
+
+  /** SDD-064 D5a: "Once a day at 11:00, and when another source says the night ended (...)", and the rest. */
+  ds2ReadsLine(d: DeviceEntry): string {
+    const r = ds2Reads(d.detail);
+    const sources = r.sources.map((k) => this.t.instant(k)).join(', ');
+    return this.t.instant(r.key, { sources, time: r.time });
+  }
+
+  ds2NextRead(d: DeviceEntry): number {
+    return ds2NextRead(d.detail);
+  }
+
+  ds2ImportValue(d: DeviceEntry): string {
+    return this.ds2ImportDraft ?? d.detail?.import_from ?? '';
+  }
+
+  ds2SaveImportFrom(d: DeviceEntry): void {
+    const date = this.ds2ImportValue(d);
+    if (!isIsoDay(date)) {
+      this.note(d, this.t.instant('devices.ds2.importBadDate'), true);
+      return;
+    }
+    this.busy[d.key] = true;
+    this.api.ds2ImportFrom(date).subscribe({
+      next: (r: any) => {
+        this.busy[d.key] = false;
+        this.ds2ImportDraft = null;
+        this.note(d, this.t.instant('devices.ds2.importSaved', { date: r?.import_from ?? date }), false);
+        this.load(false);
+      },
+      error: (e) => {
+        this.busy[d.key] = false;
+        const result = e?.error?.result;
+        this.note(d, this.t.instant(result === 'bad_date' ? 'devices.ds2.importBadDate'
+                                  : result === 'not_paired' ? 'devices.ds2.notPaired'
+                                  : 'devices.ds2.importFailed', { error: errorText(e) }), true);
+      },
+    });
+  }
+
+  askDs2Forget(d: DeviceEntry): void {
+    this.confirms.ask(d.key, 'ds2_forget', 'devices.ds2.forgetPairingConfirm', null);
+  }
+
+  private ds2Refused(d: DeviceEntry, r: any): void {
+    this.ds2Message = this.t.instant(ds2RefusalKey(r?.result, d.detail?.backend));
+    this.ds2Err = true;
+  }
+
+  private ds2StartPolling(): void {
+    this.ds2StopPolling();
+    this.ds2Poll();
+    this.ds2Timer = setInterval(() => this.ds2Poll(), 1000);
+  }
+
+  private ds2StopPolling(): void {
+    if (this.ds2Timer) clearInterval(this.ds2Timer);
+    this.ds2Timer = null;
+  }
+
+  private ds2Poll(): void {
+    this.api.getDs2BleStatus().subscribe({
+      next: (s) => {
+        this.ds2Live = s;
+        if (!ds2PairRunning(s)) {
+          this.ds2StopPolling();
+          this.load(false);
+        }
+      },
+      error: () => {},
+    });
+  }
+
   // ── the card's anatomy ───────────────────────────────────────────────────
 
   /** The one status pill: Recording when the machine records, else here, away or unknown. */
@@ -663,6 +812,7 @@ export class DevicesComponent implements OnInit, OnDestroy {
       case 'cloud': return 'devices.action.backToCloud';
       case 'forget': return 'devices.forget.button';
       case 'as11_forget': return 'devices.as11.forgetPairing';
+      case 'ds2_forget': return 'devices.ds2.forgetPairing';
       case 'switch': return 'devices.confirm.verb.change';
       case 'config':
       case 'config_risk': return 'devices.config.send';
@@ -671,7 +821,8 @@ export class DevicesComponent implements OnInit, OnDestroy {
   }
 
   isDestructive(action: string): boolean {
-    return action === 'reset' || action === 'config_reset' || action === 'forget' || action === 'as11_forget';
+    return action === 'reset' || action === 'config_reset' || action === 'forget' || action === 'as11_forget' ||
+           action === 'ds2_forget';
   }
 
   /** The kind line under the name, unless the name already says it. */
@@ -706,7 +857,8 @@ export class DevicesComponent implements OnInit, OnDestroy {
       case 'o2ring': return 'fa-solid fa-heart-pulse';
       case 'ezshare':
       case 'flashair': return 'fa-solid fa-wifi';
-      case 'as11_ble': return 'fa-brands fa-bluetooth-b';
+      case 'as11_ble':
+      case 'ds2_ble': return 'fa-brands fa-bluetooth-b';
       default: return 'fa-solid fa-plug';
     }
   }

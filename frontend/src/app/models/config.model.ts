@@ -74,6 +74,15 @@ export interface AppConfig {
     enabled: boolean;
     address: string;       // empty: the first AirSense 11 the scan finds
   };
+  /** SDD-064: a DreamStation 2 read over this host's own Bluetooth, after the
+   *  night (when another source says the night ended, or on Read now). The
+   *  pairing is the OS's own and never lives in the config. */
+  ds2_ble?: {
+    enabled: boolean;
+    address: string;       // empty: the first DreamStation 2 the scan finds
+    read_mode?: 'daily' | 'manual';   // SDD-064 D5a: once a day at read_at, or only on Read now
+    read_at?: string;                 // "HH:MM", local
+  };
   sleephq: {
     enabled: boolean;
     client_id: string;

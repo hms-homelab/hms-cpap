@@ -125,12 +125,20 @@ dd { margin: 0; color: #ddd; min-width: 0; overflow-wrap: anywhere; }
 .fw-code { margin-top: 0.35rem; display: flex; flex-direction: column; gap: 0.3rem; }
 .fw-code input { width: 8.5rem; }
 
-select, input[type="text"], input[type="password"] { background: #10121c; border: 1px solid #3a3d55;
-  color: #e0e0e0; border-radius: 5px; padding: 0.36rem 0.5rem; font-size: 0.85rem; font-family: inherit; }
+select, input[type="text"], input[type="password"], input[type="date"] { background: #10121c; border: 1px solid #3a3d55;
+  color: #e0e0e0; border-radius: 5px; padding: 0.36rem 0.5rem; font-size: 0.85rem; font-family: inherit; color-scheme: dark; }
 input[type="file"] { font-size: 0.8rem; color: #bbb; max-width: 100%; }
 
 .inline-form { display: flex; flex-direction: column; gap: 0.4rem; }
 .inline-form label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.78rem; color: #999; }
+
+/* SDD-064: the DreamStation 2 pairing; the code is big. */
+.ds2-pair { border: 1px solid var(--line); border-radius: 8px; padding: 0.65rem 0.75rem; }
+.ds2-notes { margin: 0; padding-left: 1.1rem; font-size: 0.82rem; line-height: 1.45; }
+.ds2-code { font: 600 2.4rem ui-monospace, monospace; letter-spacing: 0.12em; color: var(--primary-text); text-align: center; }
+.ds2-question { text-align: center; }
+.ds2-pair .row, .ds2-import .row { display: flex; gap: 0.5rem; justify-content: flex-end; flex-wrap: wrap; }
+.ds2-import .row { justify-content: flex-start; align-items: center; }
 
 pre.logs { max-height: 240px; overflow: auto; background: #0c0d14; border: 1px solid #23253a; border-radius: 6px; padding: 0.6rem;
   font-size: 0.75rem; line-height: 1.4; color: #c8cede; white-space: pre-wrap; word-break: break-word; margin: 0.2rem 0; }

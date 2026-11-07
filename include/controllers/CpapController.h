@@ -52,6 +52,14 @@ public:
     ADD_METHOD_TO(CpapController::as11PairStart,   "/api/airsense11/ble/pair/start",   drogon::Post);
     ADD_METHOD_TO(CpapController::as11PairConfirm, "/api/airsense11/ble/pair/confirm", drogon::Post);
     ADD_METHOD_TO(CpapController::as11PairCancel,  "/api/airsense11/ble/pair/cancel",  drogon::Post);
+    // SDD-064: a DreamStation 2 over this host's Bluetooth.
+    ADD_METHOD_TO(CpapController::ds2BleStatus,    "/api/ds2/ble/status",              drogon::Get);
+    ADD_METHOD_TO(CpapController::ds2PairStart,    "/api/ds2/ble/pair/start",          drogon::Post);
+    ADD_METHOD_TO(CpapController::ds2PairConfirm,  "/api/ds2/ble/pair/confirm",        drogon::Post);
+    ADD_METHOD_TO(CpapController::ds2PairCancel,   "/api/ds2/ble/pair/cancel",         drogon::Post);
+    ADD_METHOD_TO(CpapController::ds2Read,         "/api/ds2/ble/read",                drogon::Post);
+    ADD_METHOD_TO(CpapController::ds2Forget,       "/api/ds2/ble/pairing",             drogon::Delete);
+    ADD_METHOD_TO(CpapController::ds2ImportFrom,   "/api/ds2/ble/import-from",         drogon::Post);
     ADD_METHOD_TO(CpapController::logs,          "/api/logs",                drogon::Get);
     // SDD-006 phase 2. All three refuse once setup_complete is true, so a
     // finished install does not expose database provisioning on the LAN forever.
@@ -194,6 +202,22 @@ public:
                          std::function<void(const drogon::HttpResponsePtr&)>&& cb);
     void as11PairCancel(const drogon::HttpRequestPtr& req,
                         std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+
+    // SDD-064: a DreamStation 2 read over this host's Bluetooth.
+    void ds2BleStatus(const drogon::HttpRequestPtr& req,
+                      std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+    void ds2PairStart(const drogon::HttpRequestPtr& req,
+                      std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+    void ds2PairConfirm(const drogon::HttpRequestPtr& req,
+                        std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+    void ds2PairCancel(const drogon::HttpRequestPtr& req,
+                       std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+    void ds2Read(const drogon::HttpRequestPtr& req,
+                 std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+    void ds2Forget(const drogon::HttpRequestPtr& req,
+                   std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+    void ds2ImportFrom(const drogon::HttpRequestPtr& req,
+                       std::function<void(const drogon::HttpResponsePtr&)>&& cb);
 
     /// The live service, so the settings page acts on the running instance
     /// rather than only on the file (SDD-006 section 5).

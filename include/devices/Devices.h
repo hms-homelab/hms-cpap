@@ -3,7 +3,7 @@
 // GET /api/devices: every device this hms-cpap reads or talks to, in one
 // answer, so the Devices page makes one call per refresh (SDD-062 D8).
 //
-//   {"devices": [{"kind": "mule"|"sleepbridge"|"o2ring"|"ezshare"|"flashair"|"as11_ble",
+//   {"devices": [{"kind": "mule"|"sleepbridge"|"o2ring"|"ezshare"|"flashair"|"as11_ble"|"ds2_ble",
 //                 "id", "key", "name", "default_name", "own_name",
 //                 "present": "yes"|"no"|"unknown", "last_heard",
 //                 "recording": "yes"|"no"|"unknown", "recording_reason",
@@ -64,6 +64,13 @@ struct DeviceInputs {
     std::string as11_address;
     int         as11_pull_hours{6};
     Json::Value as11{Json::nullValue};
+
+    // SDD-064: a DreamStation 2 over this host's Bluetooth (Settings) and its
+    // status (GET /api/ds2/ble/status). Read after the night only: it is
+    // never "recording" from here.
+    bool        ds2_enabled{false};
+    std::string ds2_address;
+    Json::Value ds2{Json::nullValue};
 
     // The latest night in the ledger: "yes" while it is live, "no", or
     // "unknown" when the ledger cannot be read.

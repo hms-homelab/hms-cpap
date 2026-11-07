@@ -10,6 +10,7 @@
 #include "sleepbridge/SleepBridgeService.h"
 #include "utils/AppConfig.h"
 #include "web/As11PairingApi.h"
+#include "web/Ds2BleApi.h"
 #include "web/QueryService.h"
 
 #include <drogon/HttpAppFramework.h>
@@ -121,6 +122,13 @@ Json::Value as11Status() {
     return v;
 }
 
+Json::Value ds2Status() {
+    auto r = g.burst ? g.burst->getDs2Reader() : nullptr;
+    const bool enabled = g.config && g.config->ds2_ble.enabled;
+    const auto trigger = g.burst ? g.burst->ds2Trigger() : ds2api::Trigger{};
+    return ds2api::status(r.get(), bleCompiled(), enabled, trigger).body;
+}
+
 Json::Value currentDevices(bool fresh) {
     DeviceInputs in;
     in.now         = std::time(nullptr);
@@ -148,6 +156,8 @@ Json::Value currentDevices(bool fresh) {
         in.as11_enabled  = g.config->airsense11_ble.enabled;
         in.as11_address  = g.config->airsense11_ble.address;
         in.as11_pull_hours = g.config->airsense11.pull_hours > 0 ? g.config->airsense11.pull_hours : 6;
+        in.ds2_enabled   = g.config->ds2_ble.enabled;   // SDD-064
+        in.ds2_address   = g.config->ds2_ble.address;
     }
     in.ble_compiled = bleCompiled();
     if (in.transport == "ezshare" || in.transport == "flashair") {
@@ -156,6 +166,7 @@ Json::Value currentDevices(bool fresh) {
     }
     if (in.o2_enabled) in.o2 = oximetryStatus();
     if (in.as11_enabled) in.as11 = as11Status();
+    if (in.ds2_enabled) in.ds2 = ds2Status();
     in.ledger_live = ledgerLive();
     return buildDevices(in, *g.store);
 }

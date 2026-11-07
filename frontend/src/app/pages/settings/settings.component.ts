@@ -233,6 +233,47 @@ import { sourceImage } from '../../utils/source-image';
           </div>
         </div>
 
+        <!-- Section: DreamStation 2 over Bluetooth (SDD-064). Config only;
+             pairing, status and the read are the Devices page's card. -->
+        <div class="section" *ngIf="config.ds2_ble">
+          <div class="section-header" (click)="toggle('ds2')">
+            <span class="chevron" [class.open]="open['ds2']">&#9654;</span>
+            {{ 'settings.ds2.heading' | translate }}
+            <span class="badge" *ngIf="!config.ds2_ble.enabled">{{ 'settings.tag.optional' | translate }}</span>
+          </div>
+          <div class="section-body" *ngIf="open['ds2']">
+            <p class="section-desc">{{ 'settings.ds2.desc' | translate }}</p>
+            <label class="toggle-row">
+              {{ 'settings.ds2.enabled' | translate }}
+              <input type="checkbox" [(ngModel)]="config.ds2_ble.enabled" name="ds2_enabled" />
+            </label>
+            <ng-container *ngIf="config.ds2_ble.enabled">
+              <label>{{ 'settings.ds2.address' | translate }}
+                <input type="text" [(ngModel)]="config.ds2_ble.address" name="ds2_address" placeholder="aa:bb:cc:dd:ee:ff" />
+                <span class="hint">{{ 'settings.ds2.addressHint' | translate }}</span>
+              </label>
+              <!-- SDD-064 D5a: once a day at a time, or only when asked. -->
+              <div class="ds2-mode">
+                <label class="radio-row">
+                  <input type="radio" name="ds2_read_mode" value="daily" [(ngModel)]="config.ds2_ble.read_mode" />
+                  {{ 'settings.ds2.modeDaily' | translate }}
+                  <input type="time" name="ds2_read_at" [(ngModel)]="config.ds2_ble.read_at"
+                         [disabled]="config.ds2_ble.read_mode !== 'daily'" />
+                </label>
+                <label class="radio-row">
+                  <input type="radio" name="ds2_read_mode" value="manual" [(ngModel)]="config.ds2_ble.read_mode" />
+                  {{ 'settings.ds2.modeManual' | translate }}
+                </label>
+                <span class="hint">{{ 'settings.ds2.modeNote' | translate }}</span>
+              </div>
+              <p class="hint">{{ 'settings.ds2.noSleepHq' | translate }}</p>
+              <p class="devices-link">
+                <a routerLink="/devices">{{ 'settings.devicesLink' | translate }}</a>
+              </p>
+            </ng-container>
+          </div>
+        </div>
+
         <!-- The Mule & Miner and Sleep Bridge sections moved to the Devices
              page (SDD-062 D1): they held no config, only presence and
              actions. -->
@@ -1080,6 +1121,12 @@ import { sourceImage } from '../../utils/source-image';
     label.toggle-row input[type="checkbox"] {
       width: 18px; height: 18px; accent-color: #64b5f6; cursor: pointer;
     }
+    /* SDD-064 D5a: the DreamStation's read, a radio pair. */
+    .ds2-mode { display: flex; flex-direction: column; margin-top: 0.5rem; }
+    label.radio-row { flex-direction: row; align-items: center; gap: 0.6rem; margin-top: 0.5rem; }
+    label.radio-row input[type="radio"] { accent-color: #64b5f6; cursor: pointer; }
+    label.radio-row input[type="time"] { color-scheme: dark; padding: 0.3rem 0.5rem; }
+    .ds2-mode .hint { margin-top: 0.5rem; }
 
     input, select {
       background: #15152a; border: 1px solid #444; border-radius: 4px;
@@ -1411,6 +1458,11 @@ export class SettingsComponent implements OnInit, OnDestroy {
         if (!cfg.airsense11_ble) {
           cfg.airsense11_ble = { enabled: false, address: '' };
         }
+        if (!cfg.ds2_ble) {
+          cfg.ds2_ble = { enabled: false, address: '' };
+        }
+        if (cfg.ds2_ble.read_mode !== 'manual') cfg.ds2_ble.read_mode = 'daily';
+        if (!cfg.ds2_ble.read_at) cfg.ds2_ble.read_at = '11:00';
         if (!cfg.sleephq) {
           cfg.sleephq = { enabled: false, client_id: '', client_secret: '',
                           auto_on_session: true, auto_on_backfill: true,

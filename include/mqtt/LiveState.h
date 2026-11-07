@@ -78,6 +78,13 @@ public:
     void sourceSeen(const std::string& source_id);
     /// A source's mask went on or off.
     void mask(const MaskChange& c, Clock::time_point detected_at = Clock::now());
+    /// Called after every mask() with the change and whether it turned the
+    /// device's mask OFF (the last source on went off): the night ended, as
+    /// a source saw it (SDD-064: what a DreamStation 2 read waits for). The
+    /// startup OFF of tick() is not a night's end and never calls it. Runs on
+    /// the caller's thread, outside this object's lock.
+    using MaskHook = std::function<void(const MaskChange& c, bool night_ended)>;
+    void setMaskHook(MaskHook hook);
     /// One respiratory event. `e` carries type (OA, CA, UA, H, RERA, CSR, FL,
     /// OTHER), description, duration_s, source and whatever the source adds;
     /// occurred_at, detected_at and delay_s are added here, and the counts.
@@ -114,6 +121,7 @@ public:
 
 private:
     enum class Said { Nothing, On, Off };
+    void applyMask(const MaskChange& c, Clock::time_point detected_at);   // under mu_
     bool send(const std::string& leaf, const std::string& payload, bool retain, int qos = 1);
     void sendMask(bool on, const std::string& source, const std::string& source_id,
                   const std::string& session, Clock::time_point occurred, Clock::time_point detected);
@@ -131,6 +139,7 @@ private:
     std::set<std::string>      seen_;
     std::map<std::string, int> counts_;
     int                        total_{0};
+    MaskHook                   hook_;
 };
 
 }  // namespace hms_cpap

@@ -216,6 +216,8 @@ include(FetchContent)
 set(CPAPDASH_PARSER_WITH_LOWENSTEIN ON CACHE BOOL "Enable Lowenstein Prisma parser" FORCE)
 set(CPAPDASH_PARSER_WITH_SEFAM ON CACHE BOOL "Enable Sefam S.Box parser" FORCE)
 set(CPAPDASH_PARSER_WITH_BMC ON CACHE BOOL "Enable BMC / React Health Luna parser" FORCE)
+# SDD-064: a DreamStation 2 read over Bluetooth is parsed by the Philips parser.
+set(CPAPDASH_PARSER_WITH_PHILIPS ON CACHE BOOL "Enable Philips Respironics PRS1 parser" FORCE)
 set(CPAPDASH_PARSER_LOCAL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../hms-cpapdash-parser)
 set(CPAPDASH_PARSER_LOCAL_DIR2 ${CMAKE_CURRENT_SOURCE_DIR}/../hms-cpapdash/hms-cpapdash-parser)
 if(EXISTS ${CPAPDASH_PARSER_LOCAL_DIR}/CMakeLists.txt)
@@ -239,6 +241,25 @@ else()
     )
 endif()
 FetchContent_MakeAvailable(cpapdash_parser)
+
+# cpapdash-ds2-ble: a DreamStation 2's Bluetooth protocol (frames, commands,
+# the record walk), no radio code (SDD-064). A sibling checkout wins, as for
+# the parser; otherwise the pin below, which must move with the library.
+set(CPAPDASH_DS2_BLE_LOCAL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../cpapdash-ds2-ble)
+if(EXISTS ${CPAPDASH_DS2_BLE_LOCAL_DIR}/CMakeLists.txt)
+    FetchContent_Declare(cpapdash_ds2_ble
+        SOURCE_DIR ${CPAPDASH_DS2_BLE_LOCAL_DIR}
+    )
+else()
+    FetchContent_Declare(cpapdash_ds2_ble
+        GIT_REPOSITORY https://github.com/hms-homelab/cpapdash-ds2-ble.git
+        # Untagged so far: pinned by commit until the library has a tag.
+        GIT_TAG        f5bb5ef3cac61322132819bf720bf596544968b3
+    )
+endif()
+set(CPAPDASH_DS2_BLE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(CPAPDASH_DS2_BLE_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(cpapdash_ds2_ble)
 
 # miniz: ZIP library (for Lowenstein Prisma Line therapy.pdat extraction)
 FetchContent_Declare(miniz
@@ -356,6 +377,7 @@ endif()
 if(MSVC)
     target_link_libraries(${PROJECT_NAME}
         cpapdash_parser
+        cpapdash_ds2_ble
         miniz
         JsonCpp::JsonCpp
         ${PAHO_CPP_TARGET}
@@ -370,6 +392,7 @@ if(MSVC)
 else()
     target_link_libraries(${PROJECT_NAME}
         cpapdash_parser
+        cpapdash_ds2_ble
         miniz
         jsoncpp_lib
         ${PAHO_MQTTPP3_LIB}

@@ -67,6 +67,17 @@
       "address": "A készülék Bluetooth-címe",
       "addressHint": "Nem kötelező. Hagyja üresen, és a hatótávolságban lévő első AirSense 11 lesz használva."
     },
+    "ds2": {
+      "heading": "DreamStation 2 Bluetooth-on",
+      "desc": "Philips DreamStation 2 olvasása a számítógép Bluetooth-án, az éjszaka után: minden munkamenet összesítője és eseményei, áramlási görbe nélkül. Párosítás az Eszközök oldalon.",
+      "enabled": "Bekapcsolva",
+      "address": "A készülék Bluetooth-címe",
+      "addressHint": "Nem kötelező. Hagyja üresen, és a hatótávolságban lévő első DreamStation 2 lesz használva.",
+      "modeDaily": "Automatikus olvasás naponta egyszer, ekkor:",
+      "modeManual": "Csak ha kérem (Olvasás most)",
+      "modeNote": "Ha egy másik forrás jelzi az éjszaka végét (Sleep Bridge, O2 gyűrű...), az is elindítja az olvasást, mindkét módban. Felvett maszkkal sosem.",
+      "noSleepHq": "A Bluetooth-on beolvasott éjszakák nem kerülnek a SleepHQ-ba."
+    },
     "sleephq": {
       "heading": "SleepHQ-szinkron",
       "desc": "Továbbítja a terápiás éjszakáit a SleepHQ-nak a nyilvános API-jukon keresztül. Az API-hitelesítőket a SleepHQ-ban, az Account → API menüpontban hozza létre.",

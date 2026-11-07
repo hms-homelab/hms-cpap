@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import {
   CONFIG_KEYS, Confirmations, buildSet, commandState, configRows, costKey, errorText, groupKeys, latestConfigValues,
   recordingWarning, releaseLine, riskyGroups, setTouchesNetwork, switchView,
+  groupCode, ds2PairView, ds2PairRunning, ds2RefusalKey, ds2Reads, ds2NextRead, isIsoDay,
 } from './devices-model.ts';
 
 // ── the in-page confirm and the recording warning ──
@@ -159,4 +160,83 @@ test('a Mule & Miner switch shows the unit state and the last ask', () => {
   assert.deepEqual(switchView(unit, 'as11_enabled'), { on: true, pending: '' });
   assert.deepEqual(switchView(unit, 'o2_enabled'), { on: false, pending: 'devices.mule.switchSent' });
   assert.equal(switchView({}, 'o2_enabled').on, null);
+});
+
+// ── SDD-064: the DreamStation 2 pairing ──
+
+test('the six-digit code is grouped in threes, anything else left as digits', () => {
+  assert.equal(groupCode('042517'), '042 517');
+  assert.equal(groupCode('42517'), '42517');
+  assert.equal(groupCode(''), '');
+  assert.equal(groupCode(undefined), '');
+});
+
+test('each pairing state has its phase and its line', () => {
+  const s = (state: string, extra: any = {}) => ({ pairing: { state }, ...extra });
+  assert.deepEqual(ds2PairView(s('idle')), { phase: 'idle', key: '' });
+  assert.equal(ds2PairView(s('scanning')).phase, 'working');
+  assert.equal(ds2PairView(s('pairing')).phase, 'working');
+  assert.equal(ds2PairView(s('pairing', { os_dialog: true })).phase, 'os_dialog');
+  assert.deepEqual(ds2PairView(s('confirm')), { phase: 'confirm', key: 'devices.ds2.confirmQuestion' });
+  assert.equal(ds2PairView(s('os_dialog')).key, 'devices.ds2.osDialog');
+  assert.equal(ds2PairView(s('paired')).phase, 'paired');
+  assert.equal(ds2PairView(s('rejected')).key, 'devices.ds2.errRejected');
+  assert.equal(ds2PairView(s('timeout')).key, 'devices.ds2.errTimeout');
+  assert.equal(ds2PairView(s('not_found')).key, 'devices.ds2.errNotFound');
+  assert.equal(ds2PairView(s('unsupported')).key, 'devices.ds2.errUnsupported');
+  assert.equal(ds2PairView(s('cancelled')).key, 'devices.ds2.cancelled');
+  assert.equal(ds2PairView(s('failed')).key, 'devices.ds2.errGeneric');
+  assert.deepEqual(ds2PairView(null), { phase: 'idle', key: '' });
+});
+
+test('radio off is worded per OS', () => {
+  const s = (backend: string) => ({ backend, pairing: { state: 'radio_off' } });
+  assert.equal(ds2PairView(s('bluez')).key, 'devices.ds2.errRadioOff');
+  assert.equal(ds2PairView(s('corebluetooth')).key, 'devices.ds2.errRadioOffMac');
+  assert.equal(ds2PairView(s('winrt')).key, 'devices.ds2.errRadioOffWin');
+  assert.equal(ds2RefusalKey('radio_off', 'winrt'), 'devices.ds2.errRadioOffWin');
+});
+
+test('the page polls only while a pairing runs', () => {
+  for (const st of ['scanning', 'pairing', 'confirm', 'os_dialog'])
+    assert.equal(ds2PairRunning({ pairing: { state: st } }), true, st);
+  for (const st of ['idle', 'paired', 'rejected', 'timeout', 'failed', 'cancelled'])
+    assert.equal(ds2PairRunning({ pairing: { state: st } }), false, st);
+});
+
+test('daily or only when asked, plus the night end other sources report', () => {
+  assert.deepEqual(ds2Reads({ read_mode: 'daily', read_at: '11:00', night_sources: ['o2ring', 'sleep_bridge', 'bogus'] }), {
+    key: 'devices.ds2.readsDailyNight',
+    sources: ['devices.ds2.source.sleep_bridge', 'devices.ds2.source.o2ring'],
+    time: '11:00',
+  });
+  assert.equal(ds2Reads({ read_mode: 'daily', read_at: '09:30', night_sources: [] }).key, 'devices.ds2.readsDaily');
+  assert.equal(ds2Reads({ read_mode: 'daily', read_at: '09:30' }).time, '09:30');
+  assert.equal(ds2Reads({ read_mode: 'manual', night_sources: ['as11_ble'] }).key, 'devices.ds2.readsManualNight');
+  assert.equal(ds2Reads({ read_mode: 'manual', night_sources: [] }).key, 'devices.ds2.readsManualOnly');
+  // An older server says nothing about the mode: the default, daily at 11:00.
+  assert.deepEqual(ds2Reads(null), { key: 'devices.ds2.readsDaily', sources: [], time: '11:00' });
+});
+
+test('the next read shows only for the daily mode with a time planned', () => {
+  assert.equal(ds2NextRead({ read_mode: 'daily', next_read_at: 1893456000 }), 1893456000);
+  assert.equal(ds2NextRead({ read_mode: 'daily', next_read_at: 0 }), 0);
+  assert.equal(ds2NextRead({ read_mode: 'manual', next_read_at: 1893456000 }), 0);
+  assert.equal(ds2NextRead(null), 0);
+});
+
+test('the import date is a real day', () => {
+  assert.equal(isIsoDay('2026-11-03'), true);
+  assert.equal(isIsoDay('2026-02-30'), false);
+  assert.equal(isIsoDay('2026-11-3'), false);
+  assert.equal(isIsoDay(''), false);
+  assert.equal(isIsoDay(undefined), false);
+});
+
+test('a refused request names why', () => {
+  assert.equal(ds2RefusalKey('busy'), 'devices.ds2.errBusy');
+  assert.equal(ds2RefusalKey('not_paired'), 'devices.ds2.notPaired');
+  assert.equal(ds2RefusalKey('disabled'), 'devices.ds2.errDisabled');
+  assert.equal(ds2RefusalKey('not_compiled'), 'devices.ds2.notCompiled');
+  assert.equal(ds2RefusalKey(undefined), 'devices.ds2.errGeneric');
 });

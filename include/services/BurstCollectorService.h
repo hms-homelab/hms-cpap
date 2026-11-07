@@ -12,6 +12,9 @@
 #include "clients/IAirSense11Pairing.h"
 #include "services/As11NightImport.h"
 #include "services/As11NightWriter.h"
+#include "clients/Ds2BleReader.h"
+#include "services/Ds2NightImport.h"
+#include "web/Ds2BleApi.h"
 #include "services/OximetryImport.h"
 #include "services/OximetryService.h"
 #include "services/PrismaIngestion.h"
@@ -479,6 +482,56 @@ private:
     /// Import every Bluetooth night not yet stored (or grown) and publish the
     /// newest the way a card night is published. Worker thread only.
     As11NightImport::Result importAs11Nights();
+
+public:
+    // ── SDD-064: a DreamStation 2 read over this host's Bluetooth ──────
+
+    /// The reader, for the Devices page; null unless ds2_ble is on in a
+    /// Bluetooth build.
+    std::shared_ptr<Ds2BleReader> getDs2Reader() const {
+        std::lock_guard<std::mutex> lk(ds2_mtx_);
+        return ds2_reader_;
+    }
+    static bool ds2BleCompiled() { return airSense11BleCompiled(); }
+    /// The sources on this install that can say a night ended, which is
+    /// what starts a read (SDD-064 D5). Empty: only "Read now".
+    std::vector<std::string> ds2NightSources() const;
+    /// What the page shows of what starts a read: the night sources, and the
+    /// owner's choice with the next daily read (SDD-064 D5a).
+    ds2api::Trigger ds2Trigger() const;
+    /// "Read now" from the page: starts the read on its own thread. False
+    /// when there is no reader, or a pairing or a read runs.
+    bool requestDs2Read();
+    /// A source says the night ended (a mask went off for the device, the
+    /// ring's session ended): the read is started on the worker. Any thread.
+    void ds2NightEnded(const std::string& source);
+    /// Test-only: the import as the worker runs it after a read.
+    Ds2NightImport::Result importDs2NightsForTest() { return importDs2Nights(); }
+
+private:
+    mutable std::mutex ds2_mtx_;
+    std::shared_ptr<Ds2BleReader> ds2_reader_;
+    std::thread ds2_thread_;
+    std::atomic<bool> ds2_import_due_{false};
+    std::atomic<bool> ds2_night_ended_{false};
+    mutable std::mutex ds2_src_mtx_;
+    std::set<std::string> ds2_sources_heard_;   // sources that said a mask on/off this run
+    std::string ds2_ended_by_;
+    std::unique_ptr<Ds2NightImport> ds2_import_;
+    void initDs2Ble();
+    /// On the worker: a night ended, so read now unless a mask is on
+    /// (SDD-064 D5). No timer: nothing else starts a read but "Read now".
+    void ds2OnNightEnded();
+    /// D5a, on the worker: the owner's daily read, at the chosen time or at
+    /// the first check after it once no mask is on. Checked every 30 s.
+    void ds2DailyCheck(long long now);
+    long long ds2_daily_checked_ = 0;
+    std::atomic<long long> ds2_next_read_at_{0};
+    /// Starts one read on ds2_thread_. False when one is running.
+    bool startDs2Read(const char* why);
+    void joinDs2Thread();
+    /// Saves the nights the reads stored and publishes the newest. Worker only.
+    Ds2NightImport::Result importDs2Nights();
 
     // Worker thread
     std::thread worker_thread_;
@@ -1065,6 +1118,8 @@ private:
         int airsense11_pull_hours = 6;
         bool airsense11_ble_enabled = false;
         std::string airsense11_ble_address;
+        bool ds2_ble_enabled = false;
+        std::string ds2_ble_address;
     };
     ConfigSnapshot last_config_;
 

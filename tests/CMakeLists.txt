@@ -36,6 +36,8 @@ list(APPEND PROJECT_SOURCES "${CMAKE_SOURCE_DIR}/src/web/IngressBase.cpp")
 list(APPEND PROJECT_SOURCES "${CMAKE_SOURCE_DIR}/src/web/QueryService.cpp")
 # SDD-057: the AirSense 11 pairing endpoints' answers; jsoncpp only, no Drogon.
 list(APPEND PROJECT_SOURCES "${CMAKE_SOURCE_DIR}/src/web/As11PairingApi.cpp")
+# SDD-064: the DreamStation 2 endpoints' answers, the same way.
+list(APPEND PROJECT_SOURCES "${CMAKE_SOURCE_DIR}/src/web/Ds2BleApi.cpp")
 list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/cli/.*\\.cpp$")
 # PDF/report services depend on QueryService (web/) and libhpdf — exclude from test build
 list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/PdfRenderer\\.cpp$")
@@ -127,6 +129,8 @@ set(TEST_SOURCES
     clients/test_O2RingBleProtocol.cpp
     clients/test_BlueZAdapter.cpp
     clients/test_BleClientsFakeTransport.cpp
+    clients/test_Ds2BleReader.cpp
+    clients/test_Ds2CaptureReplay.cpp
     utils/test_KeepAwake.cpp
     clients/test_OxyIIProtocol.cpp
     clients/test_As11Protocol.cpp
@@ -136,8 +140,12 @@ set(TEST_SOURCES
     services/test_As11NightWriter.cpp
     services/test_As11Settings.cpp
     services/test_As11NightImport.cpp
+    services/test_Ds2NightImport.cpp
+    services/test_Ds2ReadTime.cpp
+    database/test_Ds2ImportBackends.cpp
     services/test_As11StrWriter.cpp
     web/test_As11PairingApi.cpp
+    web/test_Ds2BleApi.cpp
     services/test_AirSense11Pull.cpp
     services/test_sleep_stage_classifier.cpp
     services/test_PrismaIngestion.cpp
@@ -237,6 +245,7 @@ if(MSVC)
         GTest::gtest_main
         GTest::gmock
         cpapdash_parser
+        cpapdash_ds2_ble
         miniz
         JsonCpp::JsonCpp
         # The root CMakeLists picks these: the -static targets under a static
@@ -258,6 +267,7 @@ else()
         GTest::gtest_main
         GTest::gmock
         cpapdash_parser
+        cpapdash_ds2_ble
         miniz
         jsoncpp_lib
         ${PAHO_MQTTPP3_LIB}
