@@ -73,6 +73,9 @@
       "enabled": "Bekapcsolva",
       "address": "A készülék Bluetooth-címe",
       "addressHint": "Nem kötelező. Hagyja üresen, és a hatótávolságban lévő első DreamStation 2 lesz használva.",
+      "modeDaily": "Automatikus olvasás naponta egyszer, ekkor:",
+      "modeManual": "Csak ha kérem (Olvasás most)",
+      "modeNote": "Ha egy másik forrás jelzi az éjszaka végét (Sleep Bridge, O2 gyűrű...), az is elindítja az olvasást, mindkét módban. Felvett maszkkal sosem.",
       "noSleepHq": "A Bluetooth-on beolvasott éjszakák nem kerülnek a SleepHQ-ba."
     },
     "sleephq": {

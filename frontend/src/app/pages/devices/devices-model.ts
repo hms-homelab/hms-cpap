@@ -341,15 +341,24 @@ export function ds2RefusalKey(result: string | undefined, backend = ''): string 
 const NIGHT_SOURCES = ['sleep_bridge', 'mule_ble', 'as11_ble', 'o2ring', 'ezshare', 'flashair', 'local'];
 
 /**
- * When the DreamStation is read (no timer): after another source here says the
- * night ended, or only with Read now when none can. The i18n key of the line,
- * and the i18n keys of the sources it names (unknown ones are left out).
+ * When the DreamStation is read (SDD-064 D5a): once a day at read_at, or only
+ * when asked; in both modes also when another source here says the night
+ * ended. The i18n key of the line, the i18n keys of the sources it names
+ * (unknown ones left out; none means the night-end clause is left out), and
+ * the time for the daily mode.
  */
-export function ds2Trigger(status: any): { key: string; sources: string[] } {
+export function ds2Reads(status: any): { key: string; sources: string[]; time: string } {
   const named: string[] = Array.isArray(status?.night_sources) ? status.night_sources : [];
   const sources = NIGHT_SOURCES.filter((s) => named.includes(s)).map((s) => 'devices.ds2.source.' + s);
-  if (status?.trigger === 'night_end' && sources.length > 0) return { key: 'devices.ds2.readsNightEnd', sources };
-  return { key: 'devices.ds2.readsManual', sources: [] };
+  const time: string = status?.read_at || '11:00';
+  if (status?.read_mode === 'manual')
+    return { key: sources.length ? 'devices.ds2.readsManualNight' : 'devices.ds2.readsManualOnly', sources, time };
+  return { key: sources.length ? 'devices.ds2.readsDailyNight' : 'devices.ds2.readsDaily', sources, time };
+}
+
+/** The next daily read, epoch s, or 0 when none is planned (manual, or nothing paired). */
+export function ds2NextRead(status: any): number {
+  return status?.read_mode !== 'manual' && Number(status?.next_read_at) > 0 ? Number(status.next_read_at) : 0;
 }
 
 /** A real calendar day as YYYY-MM-DD, nothing else. */

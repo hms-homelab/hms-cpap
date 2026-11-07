@@ -73,6 +73,9 @@
       "enabled": "Enabled",
       "address": "Machine's Bluetooth address",
       "addressHint": "Optional. Leave it empty to use the first DreamStation 2 in range.",
+      "modeDaily": "Read automatically once a day at",
+      "modeManual": "Only when I ask (Read now)",
+      "modeNote": "Another source saying the night ended (Sleep Bridge, O2 ring...) also reads it, in both modes. Never while a mask is on.",
       "noSleepHq": "Nights read over Bluetooth are not sent to SleepHQ."
     },
     "sleephq": {

@@ -11,7 +11,7 @@ import { Dismissed } from '../../components/ota-progress/ota-progress-model';
 import {
   Confirmations, ConfigRow, DeviceCommand, DeviceEntry, DevicesAnswer, buildSet, commandState, configRows, costKey,
   errorText, groupKeys, hostOf, latestCommand, latestConfigValues, recordingWarning, releaseLine, riskyGroups,
-  switchView, groupCode, ds2PairView, ds2PairRunning, ds2RefusalKey, ds2Trigger, isIsoDay,
+  switchView, groupCode, ds2PairView, ds2PairRunning, ds2RefusalKey, ds2Reads, ds2NextRead, isIsoDay,
 } from './devices-model';
 import { sourceImage } from '../../utils/source-image';
 
@@ -711,11 +711,15 @@ export class DevicesComponent implements OnInit, OnDestroy {
     });
   }
 
-  /** "When another source says the night ended (Sleep Bridge, O2 ring), or with Read now", or "Read now" only. */
+  /** SDD-064 D5a: "Once a day at 11:00, and when another source says the night ended (...)", and the rest. */
   ds2ReadsLine(d: DeviceEntry): string {
-    const t = ds2Trigger(d.detail);
-    const sources = t.sources.map((k) => this.t.instant(k)).join(', ');
-    return this.t.instant(t.key, { sources });
+    const r = ds2Reads(d.detail);
+    const sources = r.sources.map((k) => this.t.instant(k)).join(', ');
+    return this.t.instant(r.key, { sources, time: r.time });
+  }
+
+  ds2NextRead(d: DeviceEntry): number {
+    return ds2NextRead(d.detail);
   }
 
   ds2ImportValue(d: DeviceEntry): string {

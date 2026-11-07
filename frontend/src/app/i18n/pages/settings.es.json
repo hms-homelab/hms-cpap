@@ -73,6 +73,9 @@
       "enabled": "Activado",
       "address": "Dirección Bluetooth de la máquina",
       "addressHint": "Opcional. Déjala vacía para usar la primera DreamStation 2 que esté al alcance.",
+      "modeDaily": "Leer automáticamente una vez al día a las",
+      "modeManual": "Solo cuando lo pida (Leer ahora)",
+      "modeNote": "Si otra fuente dice que la noche terminó (Sleep Bridge, anillo O2...) también se lee, en los dos modos. Nunca con la mascarilla puesta.",
       "noSleepHq": "Las noches leídas por Bluetooth no se envían a SleepHQ."
     },
     "sleephq": {

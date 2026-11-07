@@ -80,6 +80,8 @@ export interface AppConfig {
   ds2_ble?: {
     enabled: boolean;
     address: string;       // empty: the first DreamStation 2 the scan finds
+    read_mode?: 'daily' | 'manual';   // SDD-064 D5a: once a day at read_at, or only on Read now
+    read_at?: string;                 // "HH:MM", local
   };
   sleephq: {
     enabled: boolean;

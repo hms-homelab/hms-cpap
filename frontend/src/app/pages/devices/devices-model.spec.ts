@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import {
   CONFIG_KEYS, Confirmations, buildSet, commandState, configRows, costKey, errorText, groupKeys, latestConfigValues,
   recordingWarning, releaseLine, riskyGroups, setTouchesNetwork, switchView,
-  groupCode, ds2PairView, ds2PairRunning, ds2RefusalKey, ds2Trigger, isIsoDay,
+  groupCode, ds2PairView, ds2PairRunning, ds2RefusalKey, ds2Reads, ds2NextRead, isIsoDay,
 } from './devices-model.ts';
 
 // ── the in-page confirm and the recording warning ──
@@ -204,14 +204,25 @@ test('the page polls only while a pairing runs', () => {
     assert.equal(ds2PairRunning({ pairing: { state: st } }), false, st);
 });
 
-test('the read follows the night end another source reports, else only Read now', () => {
-  assert.deepEqual(ds2Trigger({ trigger: 'night_end', night_sources: ['o2ring', 'sleep_bridge', 'bogus'] }), {
-    key: 'devices.ds2.readsNightEnd',
+test('daily or only when asked, plus the night end other sources report', () => {
+  assert.deepEqual(ds2Reads({ read_mode: 'daily', read_at: '11:00', night_sources: ['o2ring', 'sleep_bridge', 'bogus'] }), {
+    key: 'devices.ds2.readsDailyNight',
     sources: ['devices.ds2.source.sleep_bridge', 'devices.ds2.source.o2ring'],
+    time: '11:00',
   });
-  assert.deepEqual(ds2Trigger({ trigger: 'manual', night_sources: [] }), { key: 'devices.ds2.readsManual', sources: [] });
-  assert.equal(ds2Trigger({ trigger: 'night_end', night_sources: [] }).key, 'devices.ds2.readsManual');
-  assert.equal(ds2Trigger(null).key, 'devices.ds2.readsManual');
+  assert.equal(ds2Reads({ read_mode: 'daily', read_at: '09:30', night_sources: [] }).key, 'devices.ds2.readsDaily');
+  assert.equal(ds2Reads({ read_mode: 'daily', read_at: '09:30' }).time, '09:30');
+  assert.equal(ds2Reads({ read_mode: 'manual', night_sources: ['as11_ble'] }).key, 'devices.ds2.readsManualNight');
+  assert.equal(ds2Reads({ read_mode: 'manual', night_sources: [] }).key, 'devices.ds2.readsManualOnly');
+  // An older server says nothing about the mode: the default, daily at 11:00.
+  assert.deepEqual(ds2Reads(null), { key: 'devices.ds2.readsDaily', sources: [], time: '11:00' });
+});
+
+test('the next read shows only for the daily mode with a time planned', () => {
+  assert.equal(ds2NextRead({ read_mode: 'daily', next_read_at: 1893456000 }), 1893456000);
+  assert.equal(ds2NextRead({ read_mode: 'daily', next_read_at: 0 }), 0);
+  assert.equal(ds2NextRead({ read_mode: 'manual', next_read_at: 1893456000 }), 0);
+  assert.equal(ds2NextRead(null), 0);
 });
 
 test('the import date is a real day', () => {

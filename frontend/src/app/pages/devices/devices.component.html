@@ -183,7 +183,10 @@
               </dd></div>
             <div *ngIf="d.detail.last_read?.error" class="wide">
               <dd class="note">{{ 'devices.ds2.lastReadError' | translate:{ when: (ms(d.detail.last_read.attempt_at) | date:'short'), error: d.detail.last_read.error } }}</dd></div>
-            <div><dt>{{ 'devices.ds2.reads' | translate }}</dt><dd>{{ ds2ReadsLine(d) }}</dd></div>
+            <div><dt>{{ 'devices.ds2.reads' | translate }}</dt>
+              <dd>{{ ds2ReadsLine(d) }} <a routerLink="/settings" class="hint">{{ 'devices.ds2.changeInSettings' | translate }}</a></dd></div>
+            <div *ngIf="d.detail.paired && ds2NextRead(d)"><dt>{{ 'devices.ds2.nextRead' | translate }}</dt>
+              <dd>{{ ms(ds2NextRead(d)) | date:'short' }}</dd></div>
             <div><dt>{{ 'devices.as11.address' | translate }}</dt><dd class="mono">{{ d.detail.address || ('devices.ds2.anyMachine' | translate) }}</dd></div>
             <!-- SDD-064: the first day kept; older sessions (a used machine's) are skipped. -->
             <div *ngIf="d.detail.paired" class="wide ds2-import">
