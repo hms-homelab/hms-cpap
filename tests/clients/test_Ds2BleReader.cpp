@@ -169,7 +169,8 @@ TEST_F(Ds2Reader, FirstReadStoresEveryRecordThenResumesFromTheBookmarks) {
     EXPECT_TRUE(fs::exists(m / "P0" / "000001F4.B02"));
     EXPECT_TRUE(fs::exists(m / "P0" / "000001F5.B01"));
     EXPECT_TRUE(fs::exists(m / "PROP.TXT"));
-    std::ifstream prop(m / "PROP.TXT");
+    // Binary: a text-mode read on Windows would drop the \r this checks for.
+    std::ifstream prop(m / "PROP.TXT", std::ios::binary);
     std::string first;
     std::getline(prop, first);
     EXPECT_EQ(first, "SN=TEST0000000002\r");
