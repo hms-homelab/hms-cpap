@@ -49,13 +49,14 @@ and shows you the data. It is a fully local-first experience.
 | ResMed AirCurve 11 | Coming soon | ✅ live | ✅ live | ✅ live | ✅ live | ✅ after the night |
 | Philips DreamStation 2 | Coming soon | ✅ after the night | ✅ after the night | ❌ | ❌ | ❌ |
 | Löwenstein Prisma Line, Prisma Smart | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ after the night |
-| Sefam S.Box, SleepBox | ❌ | ❌ | ❌ | ✅ after the night | ❌ | ✅ after the night |
+| Sefam S.Box, SleepBox | ❌ | ❌ | ❌ | Not tested yet | ❌ | ✅ after the night |
 | BMC / React Health Luna | Coming soon | ❌ | ❌ | ✅ after the night | ❌ | ✅ after the night |
 
 ✅ live: the charts update during therapy (as each write reaches hms-cpap from
 a Sleep Bridge Lite or over Bluetooth, every 65 seconds from a WiFi SD card).
 ✅ after the night: the night arrives once it has ended. ❌: not supported.
-Coming soon: not supported yet. A card in a reader is read when you put it
+Coming soon: not supported yet. Not tested yet: the code reads it, but it
+hasn't been shown working on a real machine. A card in a reader is read when you put it
 in, so its last night is there once the machine has finished writing it.
 
 On a Sefam card you get the recorded signals, breath-by-breath respiratory
@@ -420,11 +421,10 @@ your LAN; the wizard can scan for one. To set a bridge up, the
 its boards from Chrome and takes your WiFi details on the same page, nothing
 to install. In `config.json`: `"transport": "ezshare"`, `"ezshare_url":
 "http://192.168.4.1"`, `"ezshare_range": true` (set it false for a card that
-does not resume downloads), and an `archive_dir`. Works with a ResMed card,
-a Sefam S.Box card and a BMC Luna card (`"format"`: `resmed`, `sefam` or
-`bmc`). For a Sefam card the card is copied to the archive, all of it on the
-first run and then its last two nights; a Luna's files are copied as they
-change.
+does not resume downloads), and an `archive_dir`. Works with a ResMed card
+and a BMC Luna card (`"format"`: `resmed` or `bmc`); a Luna's files are
+copied as they change. A Sefam S.Box card in an ez Share is not tested yet:
+read a Sefam card from a local folder or the upload page (5 below).
 
 **Toshiba FlashAir.** The card joins your home WiFi itself, so no bridge is
 needed. Set it to join your network (`APPMODE=5` in its `SD_WLAN/CONFIG`)
