@@ -79,6 +79,28 @@ TEST(SourceChoiceTest, TheOtherChoicesStillWriteTheirSource) {
     EXPECT_EQ(mule.getString("archive_dir"), "/tmp/archive");
 }
 
+TEST(SourceChoiceTest, AFirstRunOpensOnTheSleepBridge) {
+    EXPECT_EQ(initialSourceChoice(firstRun()), SourceChoice::SleepBridge);
+}
+
+TEST(SourceChoiceTest, TheServiceDefaultEzShareStillOpensOnTheSleepBridge) {
+    // The service saves source=ezshare as its default on first start, so it
+    // is no sign of a Mule; the Sleep Bridge writes nothing and keeps it.
+    ConfigModel m;
+    m.loadFromDisk({{"source", "ezshare"}, {"ezshare_url", "http://192.168.4.1"}});
+    EXPECT_EQ(initialSourceChoice(m), SourceChoice::SleepBridge);
+}
+
+TEST(SourceChoiceTest, ASavedFolderOrFlashAirOpensOnItself) {
+    ConfigModel local;
+    local.loadFromDisk({{"source", "local"}, {"local_dir", "/gone"}});
+    EXPECT_EQ(initialSourceChoice(local), SourceChoice::Local);
+
+    ConfigModel flashair;
+    flashair.loadFromDisk({{"source", "flashair"}});
+    EXPECT_EQ(initialSourceChoice(flashair), SourceChoice::FlashAir);
+}
+
 TEST(SourceChoiceTest, ThePortIsTheConfiguredOne) {
     EXPECT_EQ(sleepBridgePort(firstRun()), 8894);
 

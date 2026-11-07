@@ -38,6 +38,13 @@ void applySourceChoice(ConfigModel& model, SourceChoice choice, const SourceInpu
     model.set("archive_dir", in.archive_dir);
 }
 
+SourceChoice initialSourceChoice(const ConfigModel& model) {
+    const auto src = model.getString("source");
+    if (src == "local")    return SourceChoice::Local;
+    if (src == "flashair") return SourceChoice::FlashAir;
+    return SourceChoice::SleepBridge;
+}
+
 int sleepBridgePort(const ConfigModel& model) {
     const int p = model.getInt("sleep_bridge.port", kSleepBridgeDefaultPort);
     return (p > 0 && p <= 65535) ? p : kSleepBridgeDefaultPort;

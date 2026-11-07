@@ -44,6 +44,16 @@ constexpr int kSleepBridgeDefaultPort = 8894;
  */
 void applySourceChoice(ConfigModel& model, SourceChoice choice, const SourceInputs& in);
 
+/**
+ * The choice selected when the source page opens: the Sleep Bridge, the top
+ * choice. A saved local folder or FlashAir is selected instead, so a wizard
+ * reopened over a folder that moved lands on the field to fix. A saved
+ * `ezshare` is not, because the service writes it as its default on first
+ * start, and so it says nothing about what the user has; the Sleep Bridge
+ * writes nothing, so leaving it selected keeps that setting as it is.
+ */
+SourceChoice initialSourceChoice(const ConfigModel& model);
+
 /// The receiver's port: sleep_bridge.port, or 8894 when unset or out of range.
 int sleepBridgePort(const ConfigModel& model);
 

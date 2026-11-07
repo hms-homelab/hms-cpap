@@ -131,6 +131,17 @@ public:
         cv->setContentsMargins(0, 0, 0, 0);
         cv->setSpacing(3);
 
+        // The Sleep Bridge is the top choice. Its receiver is on by default,
+        // so this choice sets nothing; the page only says where to point the
+        // bridge.
+        sleepbridge_ = new QRadioButton("A CpapDash Sleep Bridge", this);
+        cv->addWidget(sleepbridge_);
+        auto* sb_help = explain(
+            "Your Sleep Bridge streams each night to this computer while it is recorded.",
+            choices);
+        sb_help->setContentsMargins(24, 0, 0, 8);
+        cv->addWidget(sb_help);
+
         cv->addWidget(ezshare_);
         auto* ez_help = explain(
             "The unit sits next to your machine, reads the SD card, and HmsCpap "
@@ -150,18 +161,8 @@ public:
         auto* local_help = explain(
             "Point at the card ROOT: the folder holding both STR.edf and DATALOG.",
             choices);
-        local_help->setContentsMargins(24, 0, 0, 8);
+        local_help->setContentsMargins(24, 0, 0, 2);
         cv->addWidget(local_help);
-
-        // The Sleep Bridge receiver is on by default, so this choice sets
-        // nothing; the page only says where to point the bridge.
-        sleepbridge_ = new QRadioButton("A CpapDash Sleep Bridge", this);
-        cv->addWidget(sleepbridge_);
-        auto* sb_help = explain(
-            "Your Sleep Bridge streams each night to this computer while it is recorded.",
-            choices);
-        sb_help->setContentsMargins(24, 0, 0, 2);
-        cv->addWidget(sb_help);
 
         layout->addWidget(choices);
 
@@ -277,8 +278,12 @@ public:
         connect(url_, &QLineEdit::textEdited, this, [this] { emit completeChanged(); });
         connect(flashair_url_, &QLineEdit::textEdited, this, [this] { emit completeChanged(); });
 
-        const auto src = wiz_->model_.getString("source");
-        (src == "local" ? local_ : src == "flashair" ? flashair_ : ezshare_)->setChecked(true);
+        switch (initialSourceChoice(wiz_->model_)) {
+            case SourceChoice::Local:       local_->setChecked(true); break;
+            case SourceChoice::FlashAir:    flashair_->setChecked(true); break;
+            case SourceChoice::Mule:        ezshare_->setChecked(true); break;
+            case SourceChoice::SleepBridge: sleepbridge_->setChecked(true); break;
+        }
         sync();
     }
 

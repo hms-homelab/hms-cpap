@@ -9,7 +9,7 @@ import { LanguageSwitcherComponent } from '../../components/language-switcher/la
 import { switchMap, tap } from 'rxjs';
 import { sourceImage } from '../../utils/source-image';
 import {
-  SLEEP_BRIDGE_DEFAULT_PORT, sleepBridgePort, sleepBridgeTarget, sourceConfig
+  DEFAULT_SETUP_SOURCE, SLEEP_BRIDGE_DEFAULT_PORT, sleepBridgePort, sleepBridgeTarget, sourceConfig
 } from './setup-source';
 import type { SetupSource } from './setup-source';
 
@@ -142,11 +142,23 @@ import type { SetupSource } from './setup-source';
             <p class="subtitle">{{ 'setup.source.subtitle' | translate }}</p>
 
             <div class="radio-group">
-              <label class="radio-option" [class.selected]="source === 'mm'">
-                <input type="radio" name="source" value="mm"
+              <!-- The Sleep Bridge is the top choice, and the one picked when
+                   the step opens. -->
+              <label class="radio-option" [class.selected]="source === 'sleepbridge'">
+                <input type="radio" name="source" value="sleepbridge"
                        [(ngModel)]="source" />
                 <!-- The pictures sit beside a title that names the device:
                      decorative, so alt="" (a screen reader reads the title). -->
+                <img class="source-img" [src]="sourceImage('sleepbridge')" alt="" width="64" height="64" />
+                <div class="radio-content">
+                  <strong>{{ 'setup.source.sleepbridgeTitle' | translate }}</strong>
+                  <span>{{ 'setup.source.sleepbridgeDesc' | translate }}</span>
+                </div>
+              </label>
+
+              <label class="radio-option" [class.selected]="source === 'mm'">
+                <input type="radio" name="source" value="mm"
+                       [(ngModel)]="source" />
                 <img class="source-img" [src]="sourceImage('mm')" alt="" width="64" height="64" />
                 <div class="radio-content">
                   <strong>{{ 'setup.source.mmTitle' | translate }}</strong>
@@ -181,16 +193,6 @@ import type { SetupSource } from './setup-source';
                 <div class="radio-content">
                   <strong>{{ 'setup.source.flashairTitle' | translate }}</strong>
                   <span>{{ 'setup.source.flashairDesc' | translate }}</span>
-                </div>
-              </label>
-
-              <label class="radio-option" [class.selected]="source === 'sleepbridge'">
-                <input type="radio" name="source" value="sleepbridge"
-                       [(ngModel)]="source" />
-                <img class="source-img" [src]="sourceImage('sleepbridge')" alt="" width="64" height="64" />
-                <div class="radio-content">
-                  <strong>{{ 'setup.source.sleepbridgeTitle' | translate }}</strong>
-                  <span>{{ 'setup.source.sleepbridgeDesc' | translate }}</span>
                 </div>
               </label>
 
@@ -800,11 +802,11 @@ import type { SetupSource } from './setup-source';
 })
 export class SetupComponent {
   currentStep = 1;
-  // SDD-005: the Mule and Miner is the default path now. It resolves to
-  // source=ezshare underneath, because a proxy-mode mule serves the same
-  // /dir and /download an ezShare card does; 'mm' only ever names the way the
-  // user got there.
-  source: SetupSource = 'mm';
+  // The Sleep Bridge is the default (setup-source.ts), and it writes no source.
+  // 'mm' resolves to source=ezshare underneath, because a proxy-mode mule
+  // serves the same /dir and /download an ezShare card does; 'mm' only ever
+  // names the way the user got there.
+  source: SetupSource = DEFAULT_SETUP_SOURCE;
   /** A source's picture (public/sources/). */
   readonly sourceImage = sourceImage;
   /** The port the Sleep Bridge receiver listens on, from the running service. */

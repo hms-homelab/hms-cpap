@@ -5,6 +5,13 @@
 /** The choices on the wizard's source step. 'mm' is the Mule and Miner. */
 export type SetupSource = 'mm' | 'local' | 'ezshare' | 'flashair' | 'sleepbridge' | 'skip';
 
+/**
+ * The choice picked when the step opens, and the first one listed: the Sleep
+ * Bridge. It writes nothing, so a user who clicks straight through changes no
+ * source setting.
+ */
+export const DEFAULT_SETUP_SOURCE: SetupSource = 'sleepbridge';
+
 /** What the user filled in beside the choice. */
 export interface SetupSourceInputs {
   /** The machine behind an ez Share or a Mule and Miner. */

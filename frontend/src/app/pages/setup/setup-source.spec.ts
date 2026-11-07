@@ -7,9 +7,11 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import {
-  SLEEP_BRIDGE_DEFAULT_PORT, sleepBridgePort, sleepBridgeTarget, sourceConfig
+  DEFAULT_SETUP_SOURCE, SLEEP_BRIDGE_DEFAULT_PORT, sleepBridgePort, sleepBridgeTarget, sourceConfig
 } from './setup-source.ts';
 import type { SetupSourceInputs } from './setup-source.ts';
+
+const COMPONENT = fileURLToPath(new URL('./setup.component.ts', import.meta.url));
 
 const INPUTS: SetupSourceInputs = {
   cardFormat: 'resmed', localFormat: 'resmed', ezshareUrl: 'http://192.168.4.1',
@@ -19,6 +21,18 @@ const INPUTS: SetupSourceInputs = {
 test('Sleep Bridge writes the same config as skip: no source keys at all', () => {
   assert.deepEqual(sourceConfig('sleepbridge', INPUTS), sourceConfig('skip', INPUTS));
   assert.deepEqual(sourceConfig('sleepbridge', INPUTS), {});
+});
+
+test('the step opens on the Sleep Bridge, which writes nothing', () => {
+  assert.equal(DEFAULT_SETUP_SOURCE, 'sleepbridge');
+  assert.deepEqual(sourceConfig(DEFAULT_SETUP_SOURCE, INPUTS), {});
+});
+
+test('the Sleep Bridge is listed first, the rest in their order', () => {
+  // The order of the radios in the step's template.
+  const html = readFileSync(COMPONENT, 'utf8');
+  const order = [...html.matchAll(/name="source" value="([a-z]+)"/g)].map(m => m[1]);
+  assert.deepEqual(order, ['sleepbridge', 'mm', 'local', 'ezshare', 'flashair', 'skip']);
 });
 
 test('the other choices still write their source', () => {
