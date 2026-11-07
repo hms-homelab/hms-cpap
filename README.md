@@ -31,12 +31,32 @@ and shows you the data. It is a fully local-first experience.
 
 **Supported machines**
 
-| Manufacturer | Models | Live sessions |
-|---|---|---|
-| ResMed | AirSense 10, AirSense 11 | Yes, charts update every 65s during therapy |
-| Löwenstein | Prisma Line (20A, 20C, 25S, 25ST), Prisma Smart (Max, Plus, Soft) | No, files are written after each session |
-| Sefam | S.Box AUTO (1263R), SleepBox AUTO (1200R) | No, the card is read after the night |
-| BMC / React Health | Luna | No, the card is read after the night |
+| Manufacturer | Models |
+|---|---|
+| ResMed | AirSense 10, AirSense 11, AirCurve 10, AirCurve 11 |
+| Philips | DreamStation 2 |
+| Löwenstein | Prisma Line (20A, 20C, 25S, 25ST), Prisma Smart (Max, Plus, Soft) |
+| Sefam | S.Box AUTO (1263R), SleepBox AUTO (1200R) |
+| BMC / React Health | Luna |
+
+**How each machine gets here**
+
+| Machine | Sleep Bridge Lite | Bluetooth from this computer | Mule & Miner (Bluetooth) | Mule & Miner (WiFi SD card, ez Share) | Toshiba FlashAir | Card reader or upload page |
+|---|---|---|---|---|---|---|
+| ResMed AirSense 10 | ✅ live | ❌ | ❌ | ✅ live | ✅ live | ✅ after the night |
+| ResMed AirSense 11 | ✅ live | ✅ live | ✅ live | ✅ live | ✅ live | ✅ after the night |
+| ResMed AirCurve 10 | Coming soon | ❌ | ❌ | ✅ live | ✅ live | ✅ after the night |
+| ResMed AirCurve 11 | Coming soon | ✅ live | ✅ live | ✅ live | ✅ live | ✅ after the night |
+| Philips DreamStation 2 | Coming soon | ✅ after the night | ✅ after the night | ❌ | ❌ | ❌ |
+| Löwenstein Prisma Line, Prisma Smart | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ after the night |
+| Sefam S.Box, SleepBox | ❌ | ❌ | ❌ | ✅ after the night | ❌ | ✅ after the night |
+| BMC / React Health Luna | Coming soon | ❌ | ❌ | ✅ after the night | ❌ | ✅ after the night |
+
+✅ live: the charts update during therapy (as each write reaches hms-cpap from
+a Sleep Bridge Lite or over Bluetooth, every 65 seconds from a WiFi SD card).
+✅ after the night: the night arrives once it has ended. ❌: not supported.
+Coming soon: not supported yet. A card in a reader is read when you put it
+in, so its last night is there once the machine has finished writing it.
 
 On a Sefam card you get the recorded signals, breath-by-breath respiratory
 mechanics, and apneas. **You do not get an AHI.** The machine records apneas but
@@ -49,8 +69,14 @@ On a Luna card you get pressure, leak, respiratory rate and I:E ratio per minute
 machine marks itself (obstructive and clear airway). On a bi-level Luna, IPAP,
 EPAP and pressure support are reported too. There is no flow waveform yet: its
 scale on the card is not known, and a number in the wrong unit is worse than
-none. A Luna is read from a local folder or the upload page, not from a WiFi
-SD card.
+none. A Luna is read from a local folder, the upload page, or an ez Share
+card through a Mule & Miner.
+
+A DreamStation 2 is read over Bluetooth after the night: from this
+computer's own Bluetooth (2 below) or through a Mule & Miner (3 below). You
+get each session's summary and its events: the night's usage, its events and
+its AHI. Bluetooth carries no waveform, so there are no flow or pressure
+charts for these nights.
 
 ## Features
 
@@ -61,6 +87,7 @@ SD card.
 - **Pulse oximetry**: Wellue O2Ring SpO2/HR overlay with ODI, imported by CSV upload
 - **Sleep Bridge Lite receiver**: a bridge on the SD card's wires sends every write to hms-cpap as the machine makes it, and the card's files are rebuilt here, live
 - **AirSense 11 over Bluetooth** (off by default): this computer pairs with the machine itself and reads its daily summary and its live night, no card involved, on macOS, Windows and Linux; a Mule & Miner in the same mode can send the night here instead
+- **Philips DreamStation 2 over Bluetooth** (off by default): read after the night from this computer's Bluetooth or through a Mule & Miner, once a day at your time or when you ask
 - **Manual upload page**: drag in a CPAP `.zip` or O2Ring `.csv` from any browser, no shared network needed
 - **Home Assistant**: 47+ sensors via MQTT auto-discovery, or install it as an add-on and run it inside HA
 - **Equipment & supply reminders**: track mask, filters, tubing per profile; days-left sensors and due/overdue events for automations
@@ -181,8 +208,9 @@ The device and what it does are introduced in
 [Introducing Sleep Bridge Lite](https://www.cpapdash.com/blog/introducing-sleep-bridge-lite).
 
 Supported today: ResMed AirSense 10 and 11. Coming soon, not supported yet:
-the AirCurve machines and the BMC Luna G3; further along, the Philips
-DreamStation 2. The brand work happens once, in the bridge, and hms-cpap
+the AirCurve machines, the BMC Luna G3 and the Philips DreamStation 2. A
+DreamStation 2 is supported today over Bluetooth instead (2 and 3 below).
+The brand work happens once, in the bridge, and hms-cpap
 reads a card as it always has. That is what makes hms-cpap brand agnostic,
 and what brings real-time capture of therapy to every machine the bridge
 supports.
@@ -240,7 +268,7 @@ from the asset pinned in
 every bridge, so a bridge's setup test fails rather than leaving it pointed at
 a receiver that cannot use what it sends.
 
-#### 2. AirSense 11 over Bluetooth from a computer
+#### 2. AirSense 11 or DreamStation 2 over Bluetooth from a computer
 
 If your computer has Bluetooth and you own an AirSense 11 or an AirCurve 11,
 you do not need a bridge at all: hms-cpap connects to the machine directly and
@@ -307,7 +335,34 @@ The older summary-only path through a bridge's HTTP (`"airsense11": {
 "enabled": true, "mule_url": "http://..." }`) still works for a unit that
 offers it; with `airsense11_ble` on it is not used.
 
-#### 3. A Mule & Miner in AirSense 11 Bluetooth mode
+**Philips DreamStation 2.** The same downloads read a DreamStation 2 over the
+computer's own Bluetooth, after the night. Turn it on in **Settings,
+DreamStation 2 over Bluetooth** (in `config.json`: `"ds2_ble": { "enabled":
+true, "address": "" }`), then pair it from the **Devices** page, with the
+blower off and the machine close to the computer:
+
+- The machine shows six digits, and so does the page; check they match and
+  confirm on both within about 30 seconds. On a Mac, macOS shows the code in
+  a window of its own instead: accept there and on the machine. Unlike the
+  AirSense 11, this is a real Bluetooth pairing of the computer with the
+  machine.
+- The DreamStation keeps one Bluetooth pairing. Pairing hms-cpap replaces
+  DreamMapper, or any other reader, on that machine: forget the machine in
+  the old reader's Bluetooth settings (the phone's, for DreamMapper) first.
+- **Import nights from**, on the Devices page, is the first day kept: the day
+  of pairing unless you pick another. Sessions before it (a used machine's
+  previous owner) are skipped and never stored.
+
+When it is read is your choice, in Settings: **once a day at a time you
+pick** (11:00 by default) or **only when I ask** (Read now on the Devices
+page). In both, another source here saying the night ended (a Sleep Bridge,
+a Mule & Miner, the AirSense 11 over Bluetooth, the O2 ring) also starts a
+read. Nothing is read while a mask is on, and the machine never hands over a
+session still being recorded. Each read brings the sessions closed since the
+last one and imports them like a card's nights. These nights are not sent to
+SleepHQ.
+
+#### 3. A Mule & Miner in Bluetooth mode (AirSense 11 or DreamStation 2)
 
 The Mule & Miner now transmits to hms-cpap locally, so if your desktop PC is
 too far from the CPAP for its own Bluetooth, the Mule & Miner bridges that
@@ -330,6 +385,21 @@ machine's identification, summary and settings history; the summary is what
 builds the folder's `STR.edf`. `GET /api/mule` lists the units seen. New in this version; the
 protocol is in [docs/MULE_LOCAL_STREAM.md](docs/MULE_LOCAL_STREAM.md).
 
+**A DreamStation 2 through a Mule & Miner.** A unit whose firmware supports
+the DreamStation 2 reads one over its own Bluetooth instead of an AirSense
+11, set up the same way (the hms-cpap address and port on the unit). On the
+unit's card on the **Devices** page, turn on **DreamStation 2 Bluetooth**
+(the miner restarts with it), then **Pair DreamStation 2**: the unit asks the
+machine to pair and the page shows the six digits it holds; check they match
+the machine's, press **Codes match** and confirm on the machine. The same
+notes as in 2 above apply: blower off, one pairing per machine, and nights
+kept from the import day on. It is read on the same Settings choice as in 2
+(once a day at your time, or only when asked, and when another source says
+the night ended), its nights are imported the same way, and beside them the
+unit's reads leave the machine's files in a card's layout under
+`<data dir>/ds2card/<serial>/P-SERIES/`, which OSCAR 2.1.1 imports like a
+card.
+
 #### 4. WiFi SD cards (ez Share and Toshiba FlashAir)
 
 A WiFi SD card sits in the CPAP's SD slot in place of the plain card and
@@ -350,9 +420,11 @@ your LAN; the wizard can scan for one. To set a bridge up, the
 its boards from Chrome and takes your WiFi details on the same page, nothing
 to install. In `config.json`: `"transport": "ezshare"`, `"ezshare_url":
 "http://192.168.4.1"`, `"ezshare_range": true` (set it false for a card that
-does not resume downloads), and an `archive_dir`. Works with a ResMed card
-and a Sefam S.Box card. For a Sefam card the card is copied to the archive,
-all of it on the first run and then its last two nights.
+does not resume downloads), and an `archive_dir`. Works with a ResMed card,
+a Sefam S.Box card and a BMC Luna card (`"format"`: `resmed`, `sefam` or
+`bmc`). For a Sefam card the card is copied to the archive, all of it on the
+first run and then its last two nights; a Luna's files are copied as they
+change.
 
 **Toshiba FlashAir.** The card joins your home WiFi itself, so no bridge is
 needed. Set it to join your network (`APPMODE=5` in its `SD_WLAN/CONFIG`)
