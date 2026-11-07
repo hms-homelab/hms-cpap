@@ -253,6 +253,52 @@ TEST(CardLayoutTest, AnEmptyPathSaysNothingIsConfiguredRatherThanNamingAnEmptyPa
         << "got: " << problem;
 }
 
+// Issue #59: an AirSense 11 read over Bluetooth is a source of its own, beside
+// any card. With it on and no folder set, there is no card to look for, so the
+// empty folder is not a fault.
+TEST(CardLayoutTest, NoFolderWithBluetoothOnIsABluetoothOnlySetup) {
+    EXPECT_TRUE(isBluetoothOnly("", true));
+}
+
+TEST(CardLayoutTest, NoFolderWithBluetoothOffIsStillUnconfigured) {
+    EXPECT_FALSE(isBluetoothOnly("", false))
+        << "with no Bluetooth source, an empty folder means nothing is imported";
+}
+
+TEST(CardLayoutTest, AFolderThatIsSetIsHeldToTheCardRootEvenWithBluetoothOn) {
+    // Someone who typed a path meant a card. A wrong one must still say so.
+    EXPECT_FALSE(isBluetoothOnly("/definitely/not/here", true));
+    EXPECT_FALSE(isBluetoothOnly("/definitely/not/here", false));
+}
+
+// The dashboard banner ("Nothing is being imported.") for a ResMed local
+// source, as /api/capabilities sends it.
+TEST(CardLayoutTest, TheBannerIsSilentForABluetoothOnlySetup) {
+    EXPECT_FALSE(localSourceBanner("", true).has_value())
+        << "issue #59: Bluetooth nights are being imported, the banner said nothing was";
+}
+
+TEST(CardLayoutTest, TheBannerStillShowsWithNoFolderAndNoBluetooth) {
+    const auto b = localSourceBanner("", false);
+    ASSERT_TRUE(b.has_value());
+    EXPECT_EQ(b->layout, LocalDirLayout::Unusable);
+    EXPECT_NE(b->problem.find("no local folder"), std::string::npos) << b->problem;
+    EXPECT_FALSE(b->remedy.empty());
+}
+
+TEST(CardLayoutTest, TheBannerStillShowsForAWrongFolderWithBluetoothOn) {
+    const auto b = localSourceBanner("/definitely/not/here", true);
+    ASSERT_TRUE(b.has_value()) << "a folder that is set and wrong must still be reported";
+    EXPECT_NE(b->problem.find("/definitely/not/here"), std::string::npos) << b->problem;
+}
+
+TEST(CardLayoutTest, TheBannerIsSilentForACardRootWithBluetoothOn) {
+    TempTree t("banner_both");
+    t.dir("DATALOG");
+    EXPECT_FALSE(localSourceBanner(t.str(), true).has_value());
+    EXPECT_FALSE(localSourceBanner(t.str(), false).has_value());
+}
+
 TEST(CardLayoutTest, LayoutStringsAreStable) {
     // These travel to the UI over /api/capabilities, so they are an interface.
     EXPECT_STREQ(localDirLayoutString(LocalDirLayout::Root), "root");

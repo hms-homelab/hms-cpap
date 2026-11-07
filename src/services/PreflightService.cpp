@@ -206,6 +206,15 @@ PreflightService::Check PreflightService::checkSource(const AppConfig& cfg) {
     c.name = "source";
 
     if (cfg.source == "local") {
+        // Issue #59: no folder, and the AirSense 11 is read over Bluetooth.
+        // Its nights import on their own, so there is no card to look for and
+        // nothing to fix.
+        if (isBluetoothOnly(cfg.local_dir, cfg.airsense11_ble.enabled)) {
+            c.ok = true;
+            c.fatal = false;
+            c.detail = "no card folder set; nights arrive from the AirSense 11 over Bluetooth";
+            return c;
+        }
         // SDD-010: local_dir names the card ROOT, the folder holding both
         // STR.edf and DATALOG. Existence alone is not enough to establish that:
         // a path pointed at DATALOG exists perfectly well, imports sessions, and

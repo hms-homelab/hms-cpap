@@ -106,4 +106,17 @@ std::string localDirRemedy(LocalDirLayout layout, const std::string& path) {
     return {};
 }
 
+bool isBluetoothOnly(const std::string& local_dir, bool airsense11_ble_enabled) {
+    return airsense11_ble_enabled && local_dir.empty();
+}
+
+std::optional<LocalSourceBanner> localSourceBanner(const std::string& local_dir,
+                                                   bool airsense11_ble_enabled) {
+    if (isBluetoothOnly(local_dir, airsense11_ble_enabled)) return std::nullopt;
+    const auto layout = classifyLocalDir(local_dir);
+    if (layout == LocalDirLayout::Root) return std::nullopt;
+    return LocalSourceBanner{layout, localDirProblem(layout, local_dir),
+                             localDirRemedy(layout, local_dir)};
+}
+
 }  // namespace hms_cpap

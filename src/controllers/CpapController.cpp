@@ -1234,16 +1234,27 @@ void CpapController::capabilities(const drogon::HttpRequestPtr&,
     // looks for a ResMed DATALOG tree, and a Prisma or S.Box card has none, so
     // running it on those would hard-fail a setup that is working perfectly
     // well. The old comment said exactly that in prose; now the code says it.
-    if (AppConfig::transportForSource(ConfigManager::get("CPAP_SOURCE", "ezshare")) == "local"
-        && AppConfig::formatForSource(ConfigManager::get("CPAP_SOURCE", "ezshare")) == "resmed") {
-        const std::string dir = ConfigManager::get("CPAP_LOCAL_DIR", "");
-        const auto layout = classifyLocalDir(dir);
-        if (layout != LocalDirLayout::Root) {
+    //
+    // Read from the live config, as the collector does. CPAP_LOCAL_DIR is put
+    // in the environment once at startup, so a folder changed in Settings
+    // never reached this check: the banner kept describing the folder the
+    // service started with.
+    const std::string source = config_ ? config_->legacySource()
+                                       : ConfigManager::get("CPAP_SOURCE", "ezshare");
+    if (AppConfig::transportForSource(source) == "local"
+        && AppConfig::formatForSource(source) == "resmed") {
+        const std::string dir = config_ ? config_->local_dir
+                                        : ConfigManager::get("CPAP_LOCAL_DIR", "");
+        // Issue #59: no folder, with the AirSense 11 read over Bluetooth, is a
+        // Bluetooth-only setup whose nights ARE being imported: no banner. A
+        // folder that is set and wrong still raises it.
+        if (const auto banner =
+                localSourceBanner(dir, config_ && config_->airsense11_ble.enabled)) {
             Json::Value err;
-            err["layout"]  = localDirLayoutString(layout);
+            err["layout"]  = localDirLayoutString(banner->layout);
             err["path"]    = dir;
-            err["problem"] = localDirProblem(layout, dir);
-            err["remedy"]  = localDirRemedy(layout, dir);
+            err["problem"] = banner->problem;
+            err["remedy"]  = banner->remedy;
             result["config_error"] = err;
         }
     }
