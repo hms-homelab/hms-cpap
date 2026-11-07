@@ -29,7 +29,8 @@
     "spo2": "SpO2",
     "heartRate": "Fréquence cardiaque",
     "o2ringSpo2": "SpO2 de l'O2Ring",
-    "o2ringHeartRate": "Fréquence cardiaque de l'O2Ring"
+    "o2ringHeartRate": "Fréquence cardiaque de l'O2Ring",
+    "o2ringMotion": "Mouvement de l'O2Ring"
   },
   "nav": {
     "dashboard": "Tableau de bord",

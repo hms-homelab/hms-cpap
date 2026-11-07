@@ -67,6 +67,8 @@ const SIGNAL_DEFS: SignalDef[] = [
   { key: 'heart_rate', titleKey: 'signal.heartRate', unit: 'bpm', color: '#f06292', hasBand: true, bandMinKey: 'hr_min', bandMaxKey: 'hr_max', source: 'vitals' },
   { key: 'spo2', titleKey: 'signal.o2ringSpo2', unit: '%', color: '#ef5350', yMin: 85, yMax: 100, source: 'oximetry', desat: true },
   { key: 'heart_rate', titleKey: 'signal.o2ringHeartRate', unit: 'bpm', color: '#ec407a', source: 'oximetry' },
+  // The ring's movement count for each second; mostly 0, with a spike when the wearer moves.
+  { key: 'motion', titleKey: 'signal.o2ringMotion', unit: '', color: '#ffa726', yMin: 0, source: 'oximetry', fill: true },
 ];
 
 @Component({
