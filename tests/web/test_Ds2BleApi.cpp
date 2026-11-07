@@ -47,8 +47,20 @@ protected:
 TEST_F(Ds2Api, NotCompiledOrDisabled) {
     auto s = ds2api::status(nullptr, false, false, {});
     EXPECT_EQ(s.status, 200);
-    EXPECT_EQ(s.body["trigger"].asString(), "manual");   // no source says a night ended: Read now only
+    EXPECT_EQ(s.body["trigger"].asString(), "manual");   // no source says a night ended
     EXPECT_TRUE(s.body["night_sources"].empty());
+    // D5a: the owner's choice, carried as it is set.
+    EXPECT_EQ(s.body["read_mode"].asString(), "daily");
+    EXPECT_EQ(s.body["read_at"].asString(), "11:00");
+    EXPECT_EQ(s.body["next_read_at"].asInt64(), 0);
+    ds2api::Trigger t;
+    t.read_mode = "manual";
+    t.read_at = "08:30";
+    t.next_read_at = 1893492000;
+    const auto chosen = ds2api::status(nullptr, true, true, t);
+    EXPECT_EQ(chosen.body["read_mode"].asString(), "manual");
+    EXPECT_EQ(chosen.body["read_at"].asString(), "08:30");
+    EXPECT_EQ(chosen.body["next_read_at"].asInt64(), 1893492000);
     EXPECT_FALSE(s.body["compiled"].asBool());
     EXPECT_FALSE(s.body["paired"].asBool());
     EXPECT_EQ(s.body["pairing"]["state"].asString(), "idle");

@@ -25,6 +25,7 @@
 #include "utils/ArchiveRecordCount.h"
 #include "services/OximetryImport.h"
 #include "services/RemovedNights.h"
+#include "services/Ds2ReadTime.h"
 #include "services/SefamCardMirror.h"
 #include "services/BmcCardMirror.h"
 #include "database/SQLiteDatabase.h"
@@ -496,13 +497,18 @@ void BurstCollectorService::initDs2Ble() {
     std::lock_guard<std::mutex> lk(ds2_mtx_);
     ds2_reader_.reset();
     ds2_night_ended_ = false;
+    ds2_daily_checked_ = 0;
+    ds2_next_read_at_ = 0;
     if (!app_config_ || !app_config_->ds2_ble.enabled) return;
 #ifdef WITH_BLE
     ds2_reader_ = std::make_shared<Ds2BleReader>(AppConfig::dataDir(), app_config_->ds2_ble.address);
     // Records a read stored before hms-cpap stopped are nights to import.
     ds2_import_due_ = true;
-    std::cout << "DS2 Bluetooth: Enabled (read when another source says a night ended, or with Read now;"
-              << " never while a mask is on"
+    std::cout << "DS2 Bluetooth: Enabled ("
+              << (ds2time::normaliseMode(app_config_->ds2_ble.read_mode) == "manual"
+                      ? std::string("read only when asked")
+                      : "read once a day at " + app_config_->ds2_ble.read_at)
+              << ", and when another source says a night ended; never while a mask is on"
               << (ds2_reader_->paired() ? "" : "; not paired yet: pair it from the Devices page") << ")"
               << std::endl;
 #else
@@ -552,6 +558,45 @@ std::vector<std::string> BurstCollectorService::ds2NightSources() const {
     }
     if (app_config_ && app_config_->o2ring.enabled) s.insert("o2ring");
     return {s.begin(), s.end()};
+}
+
+ds2api::Trigger BurstCollectorService::ds2Trigger() const {
+    ds2api::Trigger t;
+    t.sources = ds2NightSources();
+    if (app_config_) {
+        t.read_mode = ds2time::normaliseMode(app_config_->ds2_ble.read_mode);
+        t.read_at = ds2time::parseTimeOfDay(app_config_->ds2_ble.read_at) ? app_config_->ds2_ble.read_at
+                                                                           : ds2time::kDefaultReadAt;
+    }
+    t.next_read_at = t.read_mode == "daily" ? ds2_next_read_at_.load() : 0;
+    return t;
+}
+
+void BurstCollectorService::ds2DailyCheck(long long now) {
+    if (now - ds2_daily_checked_ < 30) return;
+    ds2_daily_checked_ = now;
+    auto reader = getDs2Reader();
+    if (!reader || !app_config_) {
+        ds2_next_read_at_ = 0;
+        return;
+    }
+    const auto st = reader->store().load();
+    if (!st.paired) {
+        ds2_next_read_at_ = 0;
+        return;
+    }
+    ds2time::Input in;
+    in.now = now;
+    in.read_mode = app_config_->ds2_ble.read_mode;
+    in.read_at = app_config_->ds2_ble.read_at;
+    in.paired_at = st.paired->paired_at;
+    if (auto it = st.machines.find(st.paired->serial); it != st.machines.end())
+        in.last_attempt_at = it->second.last_attempt_at;
+    const auto live = liveState();
+    in.mask_on = live && live->maskOn();
+    const auto d = ds2time::decide(in);
+    ds2_next_read_at_ = d.next_at;
+    if (d.due && !reader->busy()) startDs2Read(("the owner's daily read at " + in.read_at).c_str());
 }
 
 void BurstCollectorService::ds2OnNightEnded() {
@@ -4122,6 +4167,8 @@ void BurstCollectorService::runLoop() {
             // SDD-064: a night ended somewhere: the DreamStation 2 is read;
             // and the nights a read stored are imported.
             ds2OnNightEnded();
+            ds2DailyCheck(std::chrono::duration_cast<std::chrono::seconds>(
+                              std::chrono::system_clock::now().time_since_epoch()).count());
             if (ds2_import_due_.exchange(false)) importDs2Nights();
 
             std::this_thread::sleep_for(std::chrono::seconds(1));

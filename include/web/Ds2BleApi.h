@@ -21,7 +21,8 @@ namespace hms_cpap::ds2api {
  *           pairing: {state, code, seconds_left, machine_name, error},
  *           last_read: {at, attempt_at, records, error} | null,
  *           import_from, first_read_done,
- *           trigger: "night_end" | "manual", night_sources: [...]}
+ *           trigger: "night_end" | "manual", night_sources: [...],
+ *           read_mode: "daily" | "manual", read_at: "HH:MM", next_read_at}
  *   POST   /api/ds2/ble/import-from    {date} -> {ok, import_from}
  *   POST   /api/ds2/ble/pair/start     {ok, state}; 409 while busy
  *   POST   /api/ds2/ble/pair/confirm   {match: bool} -> {ok, state}; 409 when no code waits
@@ -42,6 +43,11 @@ struct Reply {
 /// here (e.g. "sleep_bridge", "o2ring"); none: only "Read now".
 struct Trigger {
     std::vector<std::string> sources;
+    // D5a: the owner's choice ("daily" at read_at, or "manual") and the next
+    // daily read (epoch s, 0 with "manual" or nothing paired).
+    std::string read_mode = "daily";
+    std::string read_at = "11:00";
+    long long next_read_at = 0;
 };
 
 Reply status(const Ds2BleReader* r, bool compiled, bool enabled, const Trigger& trigger);

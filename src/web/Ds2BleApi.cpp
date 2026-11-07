@@ -34,6 +34,9 @@ Reply status(const Ds2BleReader* r, bool compiled, bool enabled, const Trigger& 
     Json::Value srcs(Json::arrayValue);
     for (const auto& s : trigger.sources) srcs.append(s);
     b["night_sources"] = srcs;
+    b["read_mode"] = trigger.read_mode;
+    b["read_at"] = trigger.read_at;
+    b["next_read_at"] = static_cast<Json::Int64>(trigger.next_read_at);
     b["machine"] = Json::nullValue;
     b["last_read"] = Json::nullValue;
     b["import_from"] = "";

@@ -13,6 +13,7 @@
 #include "utils/LogTail.h"
 #include "web/As11PairingApi.h"
 #include "web/Ds2BleApi.h"
+#include "services/Ds2ReadTime.h"
 #include <drogon/MultiPart.h>
 #include <atomic>
 #include <deque>
@@ -481,6 +482,11 @@ void CpapController::updateConfig(const drogon::HttpRequestPtr& req,
         auto& b = j["ds2_ble"];
         if (b.isMember("enabled")) config_->ds2_ble.enabled = b["enabled"].asBool();
         if (b.isMember("address")) config_->ds2_ble.address = b["address"].asString();
+        // SDD-064 D5a: the owner's choice of when it is read.
+        if (b.isMember("read_mode"))
+            config_->ds2_ble.read_mode = hms_cpap::ds2time::normaliseMode(b["read_mode"].asString());
+        if (b.isMember("read_at") && hms_cpap::ds2time::parseTimeOfDay(b["read_at"].asString()))
+            config_->ds2_ble.read_at = b["read_at"].asString();
     }
 
     if (j.isMember("agent")) {
@@ -1186,8 +1192,7 @@ void CpapController::ds2BleStatus(const drogon::HttpRequestPtr&,
                                   std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
     auto r = burst_service_ ? burst_service_->getDs2Reader() : nullptr;
     const bool enabled = config_ && config_->ds2_ble.enabled;
-    hms_cpap::ds2api::Trigger trigger;
-    if (burst_service_) trigger.sources = burst_service_->ds2NightSources();
+    const auto trigger = burst_service_ ? burst_service_->ds2Trigger() : hms_cpap::ds2api::Trigger{};
     cb(ds2Resp(hms_cpap::ds2api::status(r.get(), BurstCollectorService::ds2BleCompiled(), enabled, trigger)));
 }
 

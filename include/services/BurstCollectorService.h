@@ -14,6 +14,7 @@
 #include "services/As11NightWriter.h"
 #include "clients/Ds2BleReader.h"
 #include "services/Ds2NightImport.h"
+#include "web/Ds2BleApi.h"
 #include "services/OximetryImport.h"
 #include "services/OximetryService.h"
 #include "services/PrismaIngestion.h"
@@ -495,6 +496,9 @@ public:
     /// The sources on this install that can say a night ended, which is
     /// what starts a read (SDD-064 D5). Empty: only "Read now".
     std::vector<std::string> ds2NightSources() const;
+    /// What the page shows of what starts a read: the night sources, and the
+    /// owner's choice with the next daily read (SDD-064 D5a).
+    ds2api::Trigger ds2Trigger() const;
     /// "Read now" from the page: starts the read on its own thread. False
     /// when there is no reader, or a pairing or a read runs.
     bool requestDs2Read();
@@ -518,6 +522,11 @@ private:
     /// On the worker: a night ended, so read now unless a mask is on
     /// (SDD-064 D5). No timer: nothing else starts a read but "Read now".
     void ds2OnNightEnded();
+    /// D5a, on the worker: the owner's daily read, at the chosen time or at
+    /// the first check after it once no mask is on. Checked every 30 s.
+    void ds2DailyCheck(long long now);
+    long long ds2_daily_checked_ = 0;
+    std::atomic<long long> ds2_next_read_at_{0};
     /// Starts one read on ds2_thread_. False when one is running.
     bool startDs2Read(const char* why);
     void joinDs2Thread();

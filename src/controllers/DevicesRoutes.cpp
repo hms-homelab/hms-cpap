@@ -125,8 +125,7 @@ Json::Value as11Status() {
 Json::Value ds2Status() {
     auto r = g.burst ? g.burst->getDs2Reader() : nullptr;
     const bool enabled = g.config && g.config->ds2_ble.enabled;
-    ds2api::Trigger trigger;
-    if (g.burst) trigger.sources = g.burst->ds2NightSources();
+    const auto trigger = g.burst ? g.burst->ds2Trigger() : ds2api::Trigger{};
     return ds2api::status(r.get(), bleCompiled(), enabled, trigger).body;
 }
 

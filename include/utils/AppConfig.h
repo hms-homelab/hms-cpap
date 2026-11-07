@@ -253,11 +253,15 @@ struct AppConfig {
     // after the night (SDD-064). Needs a Bluetooth build. The pairing is the
     // OS's own (the six-digit code on the machine, confirmed on the Devices
     // page) and the per-stream bookmarks live in <data_dir>/ds2.json, never
-    // here. Read when another source says a night ended, or with "Read now";
-    // never on a timer, never while a mask is on.
+    // here. SDD-064 D5a: the machine says nothing about therapy over
+    // Bluetooth, so its owner chooses: read once a day at read_at (local), or
+    // only when asked ("Read now"). Another source saying the night ended
+    // reads it in both; nothing reads while a mask is on.
     struct Ds2Ble {
         bool enabled = false;
         std::string address;            // empty: the first DreamStation 2 the scan finds
+        std::string read_mode = "daily";   // "daily" | "manual"
+        std::string read_at = "11:00";     // HH:MM, local, with "daily"
     } ds2_ble;
 
     // The Sleep Bridge local stream (docs/SLEEP_BRIDGE_LOCAL_STREAM.md): a
@@ -722,6 +726,8 @@ struct AppConfig {
                 auto& b = j["ds2_ble"];
                 if (b.contains("enabled"))              config.ds2_ble.enabled = b["enabled"];
                 if (b.contains("address"))              config.ds2_ble.address = b["address"];
+                if (b.contains("read_mode"))            config.ds2_ble.read_mode = b["read_mode"];
+                if (b.contains("read_at"))              config.ds2_ble.read_at = b["read_at"];
             }
 
             if (j.contains("sleep_bridge")) {
@@ -861,6 +867,8 @@ struct AppConfig {
 
             j["ds2_ble"]["enabled"] = ds2_ble.enabled;
             j["ds2_ble"]["address"] = ds2_ble.address;
+            j["ds2_ble"]["read_mode"] = ds2_ble.read_mode;
+            j["ds2_ble"]["read_at"] = ds2_ble.read_at;
 
             j["sleep_bridge"]["enabled"] = sleep_bridge.enabled;
             j["sleep_bridge"]["port"] = sleep_bridge.port;
@@ -1002,6 +1010,8 @@ struct AppConfig {
 
         j["ds2_ble"]["enabled"] = ds2_ble.enabled;
         j["ds2_ble"]["address"] = ds2_ble.address;
+        j["ds2_ble"]["read_mode"] = ds2_ble.read_mode;
+        j["ds2_ble"]["read_at"] = ds2_ble.read_at;
 
         // sleep_bridge was missing here although save() persists it.
         j["sleep_bridge"]["enabled"] = sleep_bridge.enabled;
