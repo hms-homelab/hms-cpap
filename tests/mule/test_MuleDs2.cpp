@@ -933,6 +933,86 @@ TEST_F(MuleDs2Test, TheCardSaysTheChoiceAndTheNextRead) {
     EXPECT_EQ(v["next_read_at"].asInt64(), 0);
 }
 
+// HMS_CPAP_DS2R_SYNC=<a folder of .ds2r files one unit sent for one sync>,
+// kept OUTSIDE this repository: every file applied in name order, as the
+// reads of a sync come; the nights imported; the card tree listed. Skipped
+// without it. HMS_CPAP_DS2R_TREE_OUT, if set, is a folder the tree is copied
+// to, to compare with a tree built elsewhere.
+TEST_F(MuleDs2Test, ASyncAUnitSentBecomesNightsAndACardTree) {
+    const char* dir = std::getenv("HMS_CPAP_DS2R_SYNC");
+    if (!dir || !*dir) GTEST_SKIP() << "HMS_CPAP_DS2R_SYNC not set (a folder of .ds2r kept outside this repository)";
+    std::vector<fs::path> files;
+    for (const auto& e : fs::directory_iterator(dir))
+        if (e.path().extension() == ".ds2r") files.push_back(e.path());
+    std::sort(files.begin(), files.end());
+    ASSERT_FALSE(files.empty());
+    const char* from = std::getenv("HMS_CPAP_DS2R_IMPORT_FROM");
+    FakeUnit unit(*svc_);
+    unit.hello();
+    ds2_->setImportFrom(kUnit, from && *from ? from : "2000-01-01");
+    std::string serial;
+    for (const auto& p : files) {
+        const std::string bytes = readAll(p);
+        const auto f = readOf(bytes);
+        if (serial.empty()) serial = f.machineSerial();
+        const auto r = ds2_->apply(kUnit, bytes);
+        EXPECT_TRUE(r.stored_ok) << p.filename() << ": " << r.error;
+        std::cout << p.filename().string() << ": " << f.records.size() << " record(s), " << f.sealed.size()
+                  << " card file(s) in the file; " << r.records << " kept, " << r.card_files << " placed"
+                  << (r.card_meta ? ", PROP.BIN and LOG.SEQ" : "") << ", " << r.walked_past << " walked past, more "
+                  << r.more << ", error \"" << r.error << "\"" << std::endl;
+    }
+    ASSERT_FALSE(serial.empty());
+    auto db = std::make_shared<SQLiteDatabase>((dir_ / "sync.db").string());
+    ASSERT_TRUE(db->connect());
+    Ds2NightImport imp(dir_.string(), db, "mule_ds2_sync", "DreamStation 2");
+    const auto n = imp.run({});
+    std::cout << "nights: " << n.imported << " session(s) imported, " << n.skipped << " skipped, " << n.failed
+              << " failed" << std::endl;
+    EXPECT_EQ(n.failed, 0);
+    db->disconnect();
+    const fs::path tree = ds2_->cardTree().root(serial);
+    int count = 0;
+    for (const auto& e : fs::recursive_directory_iterator(tree))
+        if (e.is_regular_file() && e.path().filename() != "tree.json") ++count;
+    const auto c = ds2_->cardTree().counts(serial);
+    std::cout << "card tree: " << count << " file(s) (LAST.TXT included); P" << c.p_folder << " " << c.pfn
+              << ", D " << c.dfn << ", E " << c.efn << ", FD " << c.fd << ", folder "
+              << Ds2CardTree::folderFor(serial) << std::endl;
+    // A tree built elsewhere from the same reads: every file under its machine
+    // folder must be here, byte for byte, under ours (the folder's name may
+    // differ: OSCAR and SleepHQ do not read it).
+    if (const char* ref = std::getenv("HMS_CPAP_DS2R_TREE_REF"); ref && *ref) {
+        fs::path ref_machine;
+        for (const auto& e : fs::directory_iterator(fs::path(ref) / "P-SERIES"))
+            if (e.is_directory()) ref_machine = e.path();
+        ASSERT_FALSE(ref_machine.empty());
+        const fs::path ours = ds2_->cardTree().machineDir(serial);
+        int same = 0, differ = 0, missing = 0, extra = 0;
+        for (const auto& e : fs::recursive_directory_iterator(ref_machine)) {
+            if (!e.is_regular_file()) continue;
+            const fs::path rel = fs::relative(e.path(), ref_machine);
+            if (!fs::exists(ours / rel)) {
+                ++missing;
+                std::cout << "  missing here: " << rel.generic_string() << std::endl;
+            } else if (readAll(ours / rel) != readAll(e.path())) {
+                ++differ;
+                std::cout << "  differs: " << rel.generic_string() << std::endl;
+            } else {
+                ++same;
+            }
+        }
+        for (const auto& e : fs::recursive_directory_iterator(ours))
+            if (e.is_regular_file() && !fs::exists(ref_machine / fs::relative(e.path(), ours))) {
+                ++extra;
+                std::cout << "  only here: " << fs::relative(e.path(), ours).generic_string() << std::endl;
+            }
+        std::cout << "against the reference tree: " << same << " identical, " << differ << " differ, " << missing
+                  << " missing here, " << extra << " only here" << std::endl;
+        EXPECT_EQ(differ + missing + extra, 0);
+    }
+}
+
 TEST_F(MuleDs2Test, ACaptureAUnitSentIsStoredLikeTheSyntheticOne) {
     const char* path = std::getenv("HMS_CPAP_DS2R_CAPTURE");
     if (!path || !*path) GTEST_SKIP() << "HMS_CPAP_DS2R_CAPTURE not set (a .ds2r kept outside this repository)";
