@@ -31,12 +31,30 @@ and shows you the data. It is a fully local-first experience.
 
 **Supported machines**
 
-| Manufacturer | Models | Live sessions |
-|---|---|---|
-| ResMed | AirSense 10, AirSense 11 | Yes, charts update every 65s during therapy |
-| Löwenstein | Prisma Line (20A, 20C, 25S, 25ST), Prisma Smart (Max, Plus, Soft) | No, files are written after each session |
-| Sefam | S.Box AUTO (1263R), SleepBox AUTO (1200R) | No, the card is read after the night |
-| BMC / React Health | Luna | No, the card is read after the night |
+| Manufacturer | Models |
+|---|---|
+| ResMed | AirSense 10, AirSense 11 |
+| Löwenstein | Prisma Line (20A, 20C, 25S, 25ST), Prisma Smart (Max, Plus, Soft) |
+| Sefam | S.Box AUTO (1263R), SleepBox AUTO (1200R) |
+| BMC / React Health | Luna |
+
+**How each machine gets here**
+
+| Machine | Sleep Bridge Lite | Bluetooth from this computer | Mule & Miner (Bluetooth) | Mule & Miner (WiFi SD card, ez Share) | Toshiba FlashAir | Card reader or upload page |
+|---|---|---|---|---|---|---|
+| ResMed AirSense 10 | ✅ live | ❌ | ❌ | ✅ live | ✅ live | ✅ after the night |
+| ResMed AirSense 11 | ✅ live | ✅ live | ✅ live | ✅ live | Not tested yet | ✅ after the night |
+| Philips DreamStation 2 | Coming soon | Coming soon | Coming soon | ❌ | ❌ | ❌ |
+| Löwenstein Prisma Line, Prisma Smart | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ after the night |
+| Sefam S.Box, SleepBox | ❌ | ❌ | ❌ | Not tested yet | ❌ | ✅ after the night |
+| BMC / React Health Luna | Coming soon | ❌ | ❌ | Not tested yet | ❌ | ✅ after the night |
+
+✅ live: the charts update during therapy (as each write reaches hms-cpap from
+a Sleep Bridge Lite or over Bluetooth, every 65 seconds from a WiFi SD card).
+✅ after the night: the night arrives once it has ended. ❌: not supported.
+Coming soon: not supported yet. Not tested yet: the code reads it, but it
+hasn't been shown working on a real machine. An AirSense 11 with REF 39517
+can't power a WiFi SD card (see "Getting the data off the machine" below).
 
 On a Sefam card you get the recorded signals, breath-by-breath respiratory
 mechanics, and apneas. **You do not get an AHI.** The machine records apneas but
@@ -49,8 +67,9 @@ On a Luna card you get pressure, leak, respiratory rate and I:E ratio per minute
 machine marks itself (obstructive and clear airway). On a bi-level Luna, IPAP,
 EPAP and pressure support are reported too. There is no flow waveform yet: its
 scale on the card is not known, and a number in the wrong unit is worse than
-none. A Luna is read from a local folder or the upload page, not from a WiFi
-SD card.
+none. A Luna is read from a local folder or the upload page. Reading one
+from an ez Share card through a Mule & Miner is in, but not tested on a real
+Luna yet.
 
 ## Features
 
@@ -350,9 +369,9 @@ your LAN; the wizard can scan for one. To set a bridge up, the
 its boards from Chrome and takes your WiFi details on the same page, nothing
 to install. In `config.json`: `"transport": "ezshare"`, `"ezshare_url":
 "http://192.168.4.1"`, `"ezshare_range": true` (set it false for a card that
-does not resume downloads), and an `archive_dir`. Works with a ResMed card
-and a Sefam S.Box card. For a Sefam card the card is copied to the archive,
-all of it on the first run and then its last two nights.
+does not resume downloads), and an `archive_dir`. Works with a ResMed card.
+A Sefam S.Box card and a BMC Luna card in an ez Share are not tested yet on a
+real machine: read those cards from a local folder or the upload page.
 
 **Toshiba FlashAir.** The card joins your home WiFi itself, so no bridge is
 needed. Set it to join your network (`APPMODE=5` in its `SD_WLAN/CONFIG`)
