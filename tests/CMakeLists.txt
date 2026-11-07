@@ -204,6 +204,8 @@ set(TEST_SOURCES
     mule/test_MuleFirmware.cpp
     # SDD-065: a DreamStation 2 read through a unit, a synthetic .ds2r.
     mule/test_MuleDs2.cpp
+    # SDD-065 D8: the card tree placed from the miner's card files.
+    services/test_Ds2CardTree.cpp
     # The Devices page's one read, its names and forgotten devices, and the
     # update job object.
     devices/test_Devices.cpp
@@ -347,6 +349,7 @@ if(BUILD_WITH_WEB AND NOT WIN32)
         # SDD-065: the unit's DreamStation 2 reads keep their records here.
         ${CMAKE_SOURCE_DIR}/src/services/Ds2Store.cpp
         ${CMAKE_SOURCE_DIR}/src/services/Ds2ReadTime.cpp
+        ${CMAKE_SOURCE_DIR}/src/services/Ds2CardTree.cpp
         # The mule's LivePublisher keeps the one live mask every source shares.
         ${CMAKE_SOURCE_DIR}/src/mqtt/LiveState.cpp
         ${STR_LAYOUTS_SOURCE}

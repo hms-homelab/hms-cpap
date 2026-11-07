@@ -1823,6 +1823,8 @@ int main(int argc, char** argv) {
                             mule_ds2->setNightSources([bs] { return bs->ds2NightSources(); });
                             // SDD-065 D4a: the owner's one read choice for every DS2.
                             mule_ds2->setReadSchedule([bs] { return bs->ds2ReadSchedule(); });
+                            // SDD-065 D8: records and the card's own files, by default.
+                            mule_ds2->setCardMode([&config] { return config.ds2_ble.card; });
                             bs->addDs2NightListener(
                                 [m = mule_ds2.get()](const std::string& by) { m->nightEnded(by); });
                             bs->addDs2DailyListener(

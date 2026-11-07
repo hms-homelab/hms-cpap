@@ -23,10 +23,27 @@
 // most max_records records; when the file says there are more, the next read
 // is asked as soon as this one is stored, never on a clock.
 //
+// The card tree (SDD-065 D8): a read asks the miner for each record's card
+// file too (`card` "both" by default; "sealed" for the card files only,
+// "plain" for none), and Ds2CardTree places those bytes, as they came, in a
+// card's layout for OSCAR and SleepHQ. Once a sync has ended and the tree
+// grew, one more read carries `card_meta` (the tree's file counts and FD), and
+// the miner answers it with the card's own PROP.BIN and LOG.SEQ. That read
+// gives every stream a bookmark of this unit's own (only a stream read empty
+// to its end goes from the oldest), so it brings nothing that would make its
+// counts wrong; if it brings files anyway, it is asked again with the new
+// counts.
+//
+// The bookmarks a read sends are only ones this unit's own reads returned,
+// kept in its ds2.json: a bookmark from another reader's era can make the
+// machine answer "nothing after it" for a stream that has records.
+//
 // Nothing here talks to the unit but through MuleService::queueCommand, and
-// nothing is decrypted: the records are the machine's plaintext.
+// nothing here opens, changes or makes a card file: the records are the
+// machine's own, and the card files are placed byte for byte as they came.
 //
 #include "mule/MuleService.h"
+#include "services/Ds2CardTree.h"
 #include "services/Ds2ReadTime.h"
 #include "services/Ds2Store.h"
 
@@ -88,6 +105,13 @@ public:
     /// The owner's read choice as the page shows it: {read_mode, read_at}.
     void setReadSchedule(std::function<std::pair<std::string, std::string>()> f);
 
+    /// What a read asks for besides the records: "both" (the default), "sealed"
+    /// or "plain" (config ds2_ble.card).
+    void setCardMode(std::function<std::string()> f);
+
+    /// The card tree the miner's card files go to.
+    Ds2CardTree& cardTree() { return tree_; }
+
     /// The collector's import, run when a read stored records.
     void setImportDue(std::function<void()> f);
     /// The sources that can say a night ended here (the collector's list).
@@ -100,6 +124,8 @@ public:
         bool        stored_ok{false};     // every record kept and every bookmark saved
         std::string serial;               // the machine, from the file's identity answers
         int         records{0};           // records written
+        int         card_files{0};        // card files placed (P, D and E; not PROP.BIN, LOG.SEQ)
+        bool        card_meta{false};     // the card's PROP.BIN and LOG.SEQ came
         int         walked_past{0};       // before the import day: bookmarked, never kept
         bool        more{false};          // the machine has more after this read
         std::string error;                // "" or a token: SDD-043 §4's, stream_broken, storage, ...
@@ -114,19 +140,31 @@ private:
         long long   paired_at{0};  // epoch s this host first saw that bond
         std::string machine;       // the serial this unit last read
         Json::Value last_read{Json::nullValue};
+        /// Per machine serial, per stream ("1".."4"): the bookmark this unit's
+        /// own reads returned (hex), or "" for a stream read empty to its end.
+        Json::Value own{Json::objectValue};
     };
     UnitDs2 load(const std::string& unit) const;          // mu_ held
     bool    save(const std::string& unit, const UnitDs2& u) const;   // mu_ held
     /// A bond seen: a new peer starts a new import day. mu_ held.
     void notePeer(const std::string& unit, UnitDs2& u, const std::string& peer);
     void noteRead(const std::string& unit, const Json::Value& last_read);
-    CommandAnswer queueRead(const std::string& unit, bool automatic);
+    /// `card_meta`: the read that ends a sync, carrying the tree's counts.
+    CommandAnswer queueRead(const std::string& unit, bool automatic, bool card_meta = false);
+    std::string cardMode() const;
+    /// The card_meta read can go: every stream has a bookmark of the unit's
+    /// own, or was read empty to its end. mu_ held.
+    bool everyStreamOwned(const UnitDs2& u, const std::string& serial) const;
 
     Options                 opt_;
     MuleService&            svc_;
     Ds2Store                store_;
+    Ds2CardTree             tree_;
     mutable std::mutex      mu_;
     std::map<std::string, int> chain_;   // reads in a row the machine said "more" to
+    std::map<std::string, bool> tree_grew_;   // card files placed since the last card_meta
+    std::map<std::string, int>  meta_tries_;  // card_meta reads asked again this sync
+    std::function<std::string()> card_mode_;
     std::function<void()>   import_due_;
     std::function<std::vector<std::string>()> night_sources_;
     std::function<std::pair<std::string, std::string>()> schedule_;

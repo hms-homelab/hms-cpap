@@ -57,13 +57,29 @@ std::string compact(const Json::Value& v) {
 
 // ── a .ds2r, written the way the miner's ds2_walk.c writes it ──
 
+constexpr uint8_t kItemAnswer    = 0x01;
+constexpr uint8_t kItemRecord    = 0x02;
+constexpr uint8_t kItemStreamEnd = 0x03;
+constexpr uint8_t kItemEnd       = 0x04;
+constexpr uint8_t kItemSealed    = 0x05;
+constexpr uint8_t kHowNone       = 0x00;
+constexpr uint8_t kHowStopped    = 0xFF;
+
+/// A made-up stand-in for a card file: opaque bytes that name what they
+/// stand for. This host only places them; it never looks inside.
+Bytes cardBytes(const std::string& what) {
+    Bytes b(32, 0xC5);
+    b.insert(b.end(), what.begin(), what.end());
+    return b;
+}
+
 class Ds2rWriter {
 public:
     Ds2rWriter() { out_ = {'D', 'S', '2', 'R', 0x01}; }
     Ds2rWriter& answer(uint16_t cmd, uint8_t sub, uint8_t status, const Bytes& data) {
         Bytes p = {static_cast<uint8_t>(cmd >> 8), static_cast<uint8_t>(cmd), sub, status};
         p.insert(p.end(), data.begin(), data.end());
-        return item(ds2r::kItemAnswer, p);
+        return item(kItemAnswer, p);
     }
     Ds2rWriter& identity(const std::string& serial, uint32_t newest) {
         auto z = [](const std::string& s) {
@@ -85,15 +101,25 @@ public:
                    static_cast<uint8_t>(session >> 8), static_cast<uint8_t>(session)};
         p.insert(p.end(), bookmark.begin(), bookmark.end());
         p.insert(p.end(), body.begin(), body.end());
-        return item(ds2r::kItemRecord, p);
+        return item(kItemRecord, p);
+    }
+    Ds2rWriter& sealed(uint8_t stream, uint32_t session, const Bytes& bookmark, const std::string& path,
+                       const Bytes& card) {
+        Bytes p = {stream, static_cast<uint8_t>(session >> 24), static_cast<uint8_t>(session >> 16),
+                   static_cast<uint8_t>(session >> 8), static_cast<uint8_t>(session)};
+        p.insert(p.end(), bookmark.begin(), bookmark.end());
+        p.push_back(static_cast<uint8_t>(path.size()));
+        p.insert(p.end(), path.begin(), path.end());
+        p.insert(p.end(), card.begin(), card.end());
+        return item(kItemSealed, p);
     }
     Ds2rWriter& streamEnd(uint8_t stream, uint8_t how, uint16_t records, const Bytes& bookmark) {
         Bytes p = {stream, how, static_cast<uint8_t>(records), static_cast<uint8_t>(records >> 8)};
         p.insert(p.end(), bookmark.begin(), bookmark.end());
-        return item(ds2r::kItemStreamEnd, p);
+        return item(kItemStreamEnd, p);
     }
     Ds2rWriter& end(uint8_t result, bool more, uint8_t status = 0) {
-        return item(ds2r::kItemEnd, {result, static_cast<uint8_t>(more ? 1 : 0), status});
+        return item(kItemEnd, {result, static_cast<uint8_t>(more ? 1 : 0), status});
     }
     std::string bytes() const { return std::string(out_.begin(), out_.end()); }
 
@@ -111,26 +137,63 @@ private:
 Bytes bm(uint8_t stream, uint8_t n) { return {stream, n, 0, 0, 0, 0, 0, 0, 0, 0x5a}; }
 const Bytes kNone(10, 0);
 
+std::string pPath(uint8_t stream, uint32_t session) {
+    char b[32];
+    std::snprintf(b, sizeof b, "P0/%08X.B0%u", session, static_cast<unsigned>(stream));
+    return b;
+}
+
 /// Nights `sessions` (one a day from kT0 + day * 86400), each a summary and
-/// its events, then the two log streams with one record each.
+/// its events. `card`: "plain" (RECORD only), "both" (RECORD, then the card
+/// file as SEALED), "sealed" (SEALED only), as the miner writes them. `logs`
+/// adds that many D log records (stream 3), numbered from 000 in this read as
+/// the miner numbers them, with bookmarks from `first_log`.
 Ds2rWriter nights(const std::vector<std::pair<uint32_t, uint32_t>>& sessions, bool more = false,
-                  uint8_t first_bm = 1) {
+                  uint8_t first_bm = 1, const std::string& card = "plain", int logs = 0,
+                  uint8_t first_log = 1) {
     Ds2rWriter w;
     w.identity(kSerial, sessions.empty() ? 0 : sessions.back().first);
+    const bool plain = card != "sealed", seal = card != "plain";
     uint8_t n = first_bm;
     for (const auto& [session, day] : sessions) {
         auto [s, e] = ds2test::night(session, kT0 + day * kDaySecs, 3600);
-        w.record(1, session, bm(1, n), s);
-        w.record(2, session, bm(2, n), e);
+        if (plain) w.record(1, session, bm(1, n), s);
+        if (seal) w.sealed(1, session, bm(1, n), pPath(1, session), cardBytes(pPath(1, session)));
+        if (plain) w.record(2, session, bm(2, n), e);
+        if (seal) w.sealed(2, session, bm(2, n), pPath(2, session), cardBytes(pPath(2, session)));
         ++n;
+    }
+    for (int i = 0; i < logs; ++i) {
+        const Bytes b = bm(3, static_cast<uint8_t>(first_log + i));
+        char path[16];
+        std::snprintf(path, sizeof path, "D/%03d.B03", i);
+        if (plain) w.record(3, 0, b, Bytes(24, static_cast<uint8_t>(0x30 + i)));
+        if (seal) w.sealed(3, 0, b, path, cardBytes("log " + std::to_string(first_log + i)));
     }
     const uint16_t c = static_cast<uint16_t>(sessions.size());
     const Bytes last1 = sessions.empty() ? kNone : bm(1, static_cast<uint8_t>(n - 1));
     const Bytes last2 = sessions.empty() ? kNone : bm(2, static_cast<uint8_t>(n - 1));
-    w.streamEnd(1, more ? ds2r::kHowStopped : ds2r::kHowNone, c, last1);
-    w.streamEnd(2, more ? ds2r::kHowStopped : ds2r::kHowNone, c, last2);
+    w.streamEnd(1, more ? kHowStopped : kHowNone, c, last1);
+    w.streamEnd(2, more ? kHowStopped : kHowNone, c, last2);
+    w.streamEnd(3, kHowNone, static_cast<uint16_t>(logs),
+                logs > 0 ? bm(3, static_cast<uint8_t>(first_log + logs - 1)) : kNone);
+    w.streamEnd(4, kHowNone, 0, kNone);   // read to its end, empty
     return w;
 }
+
+/// The card-level files the miner seals on a read that carried card_meta.
+Ds2rWriter& withCardMeta(Ds2rWriter& w) {
+    w.sealed(0, 0, kNone, "PROP.BIN", cardBytes("PROP.BIN"));
+    return w.sealed(0, 0, kNone, "LOG.SEQ", cardBytes("LOG.SEQ"));
+}
+
+std::string readAll(const fs::path& p) {
+    std::ifstream in(p, std::ios::binary);
+    std::stringstream ss;
+    ss << in.rdbuf();
+    return ss.str();
+}
+std::string asString(const Bytes& b) { return std::string(b.begin(), b.end()); }
 
 // The unit's end of one connection, in DreamStation 2 mode.
 class FakeUnit {
@@ -284,31 +347,36 @@ protected:
 
 // ── the file ────────────────────────────────────────────────────────────────
 
-TEST(Ds2rFile, ReadsEveryItemAndTheIdentity) {
+namespace {
+ds2::ReadFile readOf(const std::string& bytes) {
+    return ds2::parseReadFile(reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size());
+}
+}  // namespace
+
+// What the miner writes, as the library this host pins reads it (v0.1.1).
+TEST(Ds2rFile, TheLibraryReadsTheMinersFileRecordsCardFilesAndTheIdentity) {
     auto [s, e] = ds2test::night(7, kT0, 600);
     const std::string bytes = Ds2rWriter()
                                   .identity(kSerial, 7)
                                   .record(1, 7, bm(1, 1), s)
+                                  .sealed(1, 7, bm(1, 1), pPath(1, 7), cardBytes("s7"))
                                   .record(2, 7, bm(2, 1), e)
-                                  .streamEnd(1, ds2r::kHowNone, 1, bm(1, 1))
-                                  .streamEnd(3, ds2r::kHowNoNext, 0, kNone)
+                                  .streamEnd(1, kHowNone, 1, bm(1, 1))
+                                  .streamEnd(3, 0x06, 0, kNone)
+                                  .sealed(0, 0, kNone, "PROP.BIN", cardBytes("PROP.BIN"))
                                   .end(0, false)
                                   .bytes();
-    const auto f = ds2r::parse(bytes);
-    ASSERT_TRUE(f);
-    EXPECT_FALSE(f->cut);
-    ASSERT_EQ(f->records.size(), 2u);
-    EXPECT_EQ(f->records[0].stream, 1);
-    EXPECT_EQ(f->records[0].session, 7u);
-    EXPECT_EQ(f->records[0].bookmark_out, bm(1, 1));
-    EXPECT_EQ(f->records[0].body, s);
-    EXPECT_EQ(f->records[1].body, e);
-    ASSERT_EQ(f->stream_ends.size(), 2u);
-    EXPECT_EQ(f->stream_ends[1].how, ds2r::kHowNoNext);
-    EXPECT_TRUE(ds2r::noBookmark(f->stream_ends[1].bookmark));
-    ASSERT_TRUE(f->end);
-    EXPECT_EQ(f->end->result, 0);
-    const auto id = ds2r::identity(*f);
+    const auto f = readOf(bytes);
+    ASSERT_EQ(f.records.size(), 2u);
+    EXPECT_EQ(f.records[0].bookmark, bm(1, 1));
+    EXPECT_EQ(f.records[0].body, s);
+    ASSERT_EQ(f.sealed.size(), 2u);
+    EXPECT_EQ(f.sealed[0].path, "P0/00000007.B01");
+    EXPECT_EQ(f.sealed[0].card, cardBytes("s7"));
+    EXPECT_EQ(f.sealed[1].stream, 0);
+    EXPECT_EQ(f.sealed[1].path, "PROP.BIN");
+    ASSERT_TRUE(f.end);
+    const auto id = ds2r::identity(f);
     EXPECT_EQ(id.serial, kSerial);
     EXPECT_EQ(id.model, "TESTMODEL");
     EXPECT_EQ(id.firmware, "V9.9.9");
@@ -316,31 +384,18 @@ TEST(Ds2rFile, ReadsEveryItemAndTheIdentity) {
     EXPECT_EQ(id.commands, (std::vector<uint16_t>{0x002b, 0x009a}));
 }
 
-TEST(Ds2rFile, ACutFileKeepsTheWholeRecordsBeforeTheCut) {
+TEST(Ds2rFile, ACutFileIsRefusedWholeAndAnUnknownItemSkipped) {
     auto [s, e] = ds2test::night(7, kT0, 600);
     std::string bytes = Ds2rWriter().identity(kSerial, 7).record(1, 7, bm(1, 1), s).record(2, 7, bm(2, 1), e).bytes();
     bytes.resize(bytes.size() - 5);   // the stream broke inside the second record
-    const auto f = ds2r::parse(bytes);
-    ASSERT_TRUE(f);
-    EXPECT_TRUE(f->cut);
-    EXPECT_FALSE(f->end);
-    ASSERT_EQ(f->records.size(), 1u);
-    EXPECT_EQ(f->records[0].stream, 1);
-}
-
-TEST(Ds2rFile, RefusesWhatIsNotOneAndSkipsUnknownItems) {
-    std::string why;
-    EXPECT_FALSE(ds2r::parse("DS2Q\x01", &why));
-    EXPECT_FALSE(why.empty());
-    EXPECT_FALSE(ds2r::parse(std::string("DS2R\x02", 5), &why));
-    // An item of a kind a later version adds is skipped by its length.
-    std::string bytes = Ds2rWriter().identity(kSerial, 1).bytes();
-    bytes += std::string("\x09\x02\x00\x00\x00zz", 7);
-    bytes += Ds2rWriter().end(0, false).bytes().substr(5);
-    const auto f = ds2r::parse(bytes);
-    ASSERT_TRUE(f);
-    EXPECT_FALSE(f->cut);
-    EXPECT_TRUE(f->end);
+    EXPECT_THROW(readOf(bytes), ds2::ReadFileError);
+    EXPECT_THROW(readOf("DS2Q\x01"), ds2::ReadFileError);
+    std::string later = Ds2rWriter().identity(kSerial, 1).bytes();
+    later += std::string("\x09\x02\x00\x00\x00zz", 7);   // a kind a later version adds
+    later += Ds2rWriter().end(0, false).bytes().substr(5);
+    const auto f = readOf(later);
+    EXPECT_EQ(f.skipped_items, 1u);
+    EXPECT_TRUE(f.end);
 }
 
 TEST(Ds2rFile, TokensAndBookmarks) {
@@ -387,6 +442,22 @@ TEST_F(MuleDs2Test, TheCommandsAreCheckedBeforeTheyGo) {
     rd["streams"]["1"]    = "";
     rd["machine"]         = "bad serial!";
     EXPECT_EQ(q(rd), 400);
+    rd.removeMember("machine");
+    rd["card"] = "everything";   // plain, both or sealed
+    EXPECT_EQ(q(rd), 400);
+    rd["card"]                   = "both";
+    rd["card_meta"]["pfn"]       = -1;
+    EXPECT_EQ(q(rd), 400);
+    rd["card_meta"]["pfn"]       = 4;
+    rd["card_meta"]["dfn"]       = 2;
+    rd["card_meta"]["efn"]       = 0;
+    rd["card_meta"]["fd"]        = static_cast<Json::Int64>(kT0);
+    rd["card_meta"]["extra"]     = 1;
+    EXPECT_EQ(q(rd), 400);
+    rd["card_meta"].removeMember("extra");
+    EXPECT_EQ(q(rd), 200);
+    EXPECT_EQ(unit.last("ds2_read")["card_meta"]["fd"].asInt64(), static_cast<Json::Int64>(kT0));
+    unit.answerFailed(reqOf(unit.last("ds2_read")), "not_found");   // one command at a time
 
     Json::Value c;
     c["cmd"]                   = "config";
@@ -456,6 +527,8 @@ TEST_F(MuleDs2Test, AFirstReadStoresTheNightsAndTheBookmarksAndImportsThem) {
     const Json::Value cmd = unit.last("ds2_read");
     ASSERT_TRUE(cmd.isObject());
     EXPECT_EQ(cmd["max_records"].asInt(), 32);
+    EXPECT_EQ(cmd["card"].asString(), "both");   // the default: records and card files
+    EXPECT_FALSE(cmd.isMember("card_meta"));
     EXPECT_FALSE(cmd.isMember("machine"));
     for (const char* s : {"1", "2", "3", "4"}) EXPECT_EQ(cmd["streams"][s].asString(), "") << s;
 
@@ -551,7 +624,7 @@ TEST_F(MuleDs2Test, MoreToReadAsksTheNextBatchAtOnceUntilTheMachineIsDone) {
     EXPECT_EQ(imports_due_, 2);
 }
 
-TEST_F(MuleDs2Test, AReadThatBrokeKeepsEveryWholeRecordAndNoLaterBookmark) {
+TEST_F(MuleDs2Test, ACutFileIsNotStoredAtAllAndItsBookmarksStay) {
     FakeUnit unit(*svc_);
     unit.hello();
     ds2_->setImportFrom(kUnit, "2029-12-31");
@@ -560,11 +633,10 @@ TEST_F(MuleDs2Test, AReadThatBrokeKeepsEveryWholeRecordAndNoLaterBookmark) {
     std::string bytes = Ds2rWriter().identity(kSerial, 500).record(1, 500, bm(1, 1), s).record(2, 500, bm(2, 1), e).bytes();
     bytes.resize(bytes.size() - 3);   // the link went inside the events record
     unit.answerRead(reqOf(unit.last("ds2_read")), bytes);
-    const auto st = store().load();
-    EXPECT_EQ(st.machines.at(kSerial).bookmarks.at(1), bm(1, 1));
-    EXPECT_FALSE(st.machines.at(kSerial).bookmarks.count(2));
-    EXPECT_TRUE(fs::exists(dir_ / "ds2" / kSerial / "P0" / ds2::cardFileName(1, 500)));
-    EXPECT_EQ(ds2_->view(kUnit)["last_read"]["error"].asString(), "stream_broken");
+    // All or nothing: the next read asks from the same place again.
+    EXPECT_TRUE(store().load().machines.empty());
+    EXPECT_FALSE(fs::exists(dir_ / "ds2" / kSerial / "P0" / ds2::cardFileName(1, 500)));
+    EXPECT_EQ(ds2_->view(kUnit)["last_read"]["error"].asString(), "bad_file");
     // The miner's own outcome, after whole records: link_lost, kept as it said.
     ASSERT_EQ(ds2_->readNow(kUnit).status, 200);
     unit.answerRead(reqOf(unit.last("ds2_read")), nights({}).end(11, false).bytes());
@@ -639,6 +711,159 @@ TEST_F(MuleDs2Test, AnotherMachineIsNotReadAndItsSerialIsForgotten) {
     unit.answerFailed(reqOf(unit.last("ds2_read")), "other_machine");
     ASSERT_EQ(ds2_->readNow(kUnit).status, 200);
     EXPECT_FALSE(unit.last("ds2_read").isMember("machine"));
+}
+
+// ── SDD-065 D8: the card tree from the miner's card files ─────────────────
+
+namespace {
+fs::path cardDir(const fs::path& data) {
+    return data / "ds2card" / kSerial / "P-SERIES" / Ds2CardTree::folderFor(kSerial);
+}
+}  // namespace
+
+TEST_F(MuleDs2Test, ABothReadPlacesTheCardFilesThenAsksForTheCardsOwnFiles) {
+    FakeUnit unit(*svc_);
+    unit.hello();
+    ds2_->setImportFrom(kUnit, "2029-12-31");
+    ASSERT_EQ(ds2_->readNow(kUnit).status, 200);
+    const Json::Value first = unit.last("ds2_read");
+    unit.answerRead(reqOf(first), nights({{500, 0}, {501, 1}}, false, 1, "both", 2).end(0, false).bytes());
+
+    // The miner's bytes, as they came, at their card paths; the records too.
+    const fs::path m = cardDir(dir_);
+    EXPECT_EQ(readAll(m / "P0" / "000001F4.B01"), asString(cardBytes(pPath(1, 500))));
+    EXPECT_EQ(readAll(m / "P0" / "000001F5.B02"), asString(cardBytes(pPath(2, 501))));
+    EXPECT_EQ(readAll(m / "D" / "000.B03"), asString(cardBytes("log 1")));
+    EXPECT_EQ(readAll(m / "D" / "001.B03"), asString(cardBytes("log 2")));
+    EXPECT_EQ(readAll(dir_ / "ds2card" / kSerial / "P-SERIES" / "LAST.TXT"), Ds2CardTree::folderFor(kSerial));
+    EXPECT_TRUE(fs::exists(dir_ / "ds2" / kSerial / "P0" / ds2::cardFileName(1, 500)));
+    EXPECT_EQ(imports_due_, 1);
+
+    // The sync is over and the tree grew: one more read, every stream from a
+    // bookmark of our own (stream 4, read empty to its end, from the oldest),
+    // with the tree's counts, for the card's PROP.BIN and LOG.SEQ.
+    ASSERT_EQ(unit.count("ds2_read"), 2u);
+    const Json::Value meta = unit.last("ds2_read");
+    EXPECT_EQ(meta["streams"]["1"].asString(), ds2r::toHex(bm(1, 2)));
+    EXPECT_EQ(meta["streams"]["2"].asString(), ds2r::toHex(bm(2, 2)));
+    EXPECT_EQ(meta["streams"]["3"].asString(), ds2r::toHex(bm(3, 2)));
+    EXPECT_EQ(meta["streams"]["4"].asString(), "");
+    EXPECT_EQ(meta["card_meta"]["pfn"].asInt(), 4);
+    EXPECT_EQ(meta["card_meta"]["dfn"].asInt(), 2);
+    EXPECT_EQ(meta["card_meta"]["efn"].asInt(), 0);
+    EXPECT_EQ(meta["card_meta"]["fd"].asInt64(), static_cast<Json::Int64>(kT0));
+    EXPECT_TRUE(unitCommand(reqOf(meta))["automatic"].asBool());
+
+    Ds2rWriter w = nights({}, false, 1, "both");
+    unit.answerRead(reqOf(meta), withCardMeta(w).end(0, false).bytes());
+    EXPECT_EQ(readAll(m / "PROP.BIN"), asString(cardBytes("PROP.BIN")));
+    EXPECT_EQ(readAll(m / "LOG.SEQ"), asString(cardBytes("LOG.SEQ")));
+    EXPECT_EQ(unit.count("ds2_read"), 2u);   // done: nothing new came
+}
+
+TEST_F(MuleDs2Test, LogFilesAreNumberedOnAcrossTheReadsOfASync) {
+    FakeUnit unit(*svc_);
+    unit.hello();
+    ds2_->setImportFrom(kUnit, "2029-12-31");
+    ASSERT_EQ(ds2_->readNow(kUnit).status, 200);
+    unit.answerRead(reqOf(unit.last("ds2_read")), nights({{500, 0}}, true, 1, "both", 2, 1).end(0, true).bytes());
+    // The next batch numbers its logs from 000 again; here they go on at 002.
+    unit.answerRead(reqOf(unit.last("ds2_read")), nights({{501, 1}}, false, 2, "both", 2, 3).end(0, false).bytes());
+    const fs::path m = cardDir(dir_);
+    EXPECT_EQ(readAll(m / "D" / "002.B03"), asString(cardBytes("log 3")));
+    EXPECT_EQ(readAll(m / "D" / "003.B03"), asString(cardBytes("log 4")));
+    EXPECT_FALSE(fs::exists(m / "D" / "004.B03"));
+    // The card's counts are across the whole sync.
+    const Json::Value meta = unit.last("ds2_read");
+    ASSERT_TRUE(meta.isMember("card_meta"));
+    EXPECT_EQ(meta["card_meta"]["pfn"].asInt(), 4);
+    EXPECT_EQ(meta["card_meta"]["dfn"].asInt(), 4);
+}
+
+TEST_F(MuleDs2Test, ACardMetaReadThatBringsFilesIsAskedAgainWithTheNewCounts) {
+    FakeUnit unit(*svc_);
+    unit.hello();
+    ds2_->setImportFrom(kUnit, "2029-12-31");
+    ASSERT_EQ(ds2_->readNow(kUnit).status, 200);
+    unit.answerRead(reqOf(unit.last("ds2_read")), nights({{500, 0}}, false, 1, "both").end(0, false).bytes());
+    const Json::Value meta = unit.last("ds2_read");
+    EXPECT_EQ(meta["card_meta"]["pfn"].asInt(), 2);
+    // A night closed meanwhile: its files came with PROP.BIN, counted before them.
+    Ds2rWriter w = nights({{501, 1}}, false, 2, "both");
+    unit.answerRead(reqOf(meta), withCardMeta(w).end(0, false).bytes());
+    ASSERT_EQ(unit.count("ds2_read"), 3u);
+    EXPECT_EQ(unit.last("ds2_read")["card_meta"]["pfn"].asInt(), 4);
+}
+
+TEST_F(MuleDs2Test, NoCardMetaReadUntilEveryStreamHasABookmarkOfOurOwn) {
+    FakeUnit unit(*svc_);
+    unit.hello();
+    ds2_->setImportFrom(kUnit, "2029-12-31");
+    ASSERT_EQ(ds2_->readNow(kUnit).status, 200);
+    auto [s, e] = ds2test::night(500, kT0, 3600);
+    // Stream 2 stopped without a word of where it is (no STREAM_END for it).
+    const std::string bytes = Ds2rWriter()
+                                  .identity(kSerial, 500)
+                                  .record(1, 500, bm(1, 1), s)
+                                  .sealed(1, 500, bm(1, 1), pPath(1, 500), cardBytes("x"))
+                                  .streamEnd(1, kHowNone, 1, bm(1, 1))
+                                  .streamEnd(3, kHowNone, 0, kNone)
+                                  .streamEnd(4, kHowNone, 0, kNone)
+                                  .end(0, false)
+                                  .bytes();
+    unit.answerRead(reqOf(unit.last("ds2_read")), bytes);
+    EXPECT_EQ(unit.count("ds2_read"), 1u);
+    EXPECT_TRUE(fs::exists(cardDir(dir_) / "P0" / "000001F4.B01"));
+}
+
+TEST_F(MuleDs2Test, ASealedOnlyReadKeepsTheCardFilesAndItsBookmarksButNoNights) {
+    ds2_->setCardMode([] { return std::string("sealed"); });
+    FakeUnit unit(*svc_);
+    unit.hello();
+    ds2_->setImportFrom(kUnit, "2029-12-31");
+    ASSERT_EQ(ds2_->readNow(kUnit).status, 200);
+    EXPECT_EQ(unit.last("ds2_read")["card"].asString(), "sealed");
+    unit.answerRead(reqOf(unit.last("ds2_read")), nights({{500, 0}}, false, 1, "sealed").end(0, false).bytes());
+    EXPECT_TRUE(fs::exists(cardDir(dir_) / "P0" / "000001F4.B02"));
+    EXPECT_FALSE(fs::exists(dir_ / "ds2" / kSerial / "P0" / ds2::cardFileName(1, 500)));
+    EXPECT_EQ(imports_due_, 0);
+    EXPECT_EQ(unit.last("ds2_read")["streams"]["1"].asString(), ds2r::toHex(bm(1, 1)));
+}
+
+TEST_F(MuleDs2Test, APlainReadAsksForNoCardFiles) {
+    ds2_->setCardMode([] { return std::string("plain"); });
+    FakeUnit unit(*svc_);
+    unit.hello();
+    ASSERT_EQ(ds2_->readNow(kUnit).status, 200);
+    EXPECT_EQ(unit.last("ds2_read")["card"].asString(), "plain");
+}
+
+TEST_F(MuleDs2Test, ANightBeforeTheImportDayLeavesNoCardFile) {
+    FakeUnit unit(*svc_);
+    unit.hello();
+    ds2_->setImportFrom(kUnit, "2030-01-03");
+    ASSERT_EQ(ds2_->readNow(kUnit).status, 200);
+    unit.answerRead(reqOf(unit.last("ds2_read")), nights({{500, 0}, {502, 4}}, false, 1, "both").end(0, false).bytes());
+    EXPECT_FALSE(fs::exists(cardDir(dir_) / "P0" / "000001F4.B01"));
+    EXPECT_FALSE(fs::exists(cardDir(dir_) / "P0" / "000001F4.B02"));
+    EXPECT_TRUE(fs::exists(cardDir(dir_) / "P0" / "000001F6.B01"));
+    // FD is the oldest session kept.
+    EXPECT_EQ(unit.last("ds2_read")["card_meta"]["fd"].asInt64(), static_cast<Json::Int64>(kT0 + 4 * kDaySecs));
+}
+
+TEST_F(MuleDs2Test, OnlyBookmarksFromThisUnitsOwnReadsAreSent) {
+    FakeUnit unit(*svc_);
+    unit.hello();
+    ds2_->setImportFrom(kUnit, "2029-12-31");
+    ASSERT_EQ(ds2_->readNow(kUnit).status, 200);
+    unit.answerRead(reqOf(unit.last("ds2_read")), nights({{500, 0}}).end(0, false).bytes());
+    // A bookmark from elsewhere (another reader's era) lands in the shared store.
+    ASSERT_TRUE(store().saveBookmark(kSerial, 2, bm(2, 0x77)));
+    ASSERT_TRUE(store().saveBookmark(kSerial, 4, bm(4, 0x77)));
+    ASSERT_EQ(ds2_->readNow(kUnit).status, 200);
+    const Json::Value cmd = unit.last("ds2_read");
+    EXPECT_EQ(cmd["streams"]["2"].asString(), ds2r::toHex(bm(2, 1)));
+    EXPECT_EQ(cmd["streams"]["4"].asString(), "");
 }
 
 // ── SDD-065 D4a: the owner's daily read, the same choice as the direct read ──
@@ -719,11 +944,12 @@ TEST_F(MuleDs2Test, ACaptureAUnitSentIsStoredLikeTheSyntheticOne) {
     unit.hello();
     const char* from = std::getenv("HMS_CPAP_DS2R_IMPORT_FROM");
     ds2_->setImportFrom(kUnit, from && *from ? from : "2000-01-01");
-    const auto f = ds2r::parse(ss.str());
-    ASSERT_TRUE(f);
+    const auto f = readOf(ss.str());
     const auto r = ds2_->apply(kUnit, ss.str());
     EXPECT_TRUE(r.stored_ok);
-    EXPECT_EQ(r.records + r.walked_past, static_cast<int>(f->records.size()));
-    std::cout << "capture: " << f->records.size() << " record(s), " << r.records << " kept, " << r.walked_past
+    // Every record is kept or walked past; every card file of a kept one is placed.
+    EXPECT_GE(r.records + r.walked_past, static_cast<int>(f.records.size()));
+    std::cout << "capture: " << f.records.size() << " record(s), " << f.sealed.size() << " card file(s); "
+              << r.records << " kept, " << r.card_files << " placed, " << r.walked_past
               << " walked past, error \"" << r.error << "\"" << std::endl;
 }

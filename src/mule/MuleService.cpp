@@ -997,6 +997,26 @@ CommandAnswer MuleService::queueCommand(const std::string& serial, const Json::V
                 return refuse(400, "max_records is 0 (no cap) to 65535");
             f["max_records"] = req["max_records"].asInt();
         }
+        // SDD-065 D8 (push-c3 SDD-043 §8): the card files beside the records,
+        // and on the read that ends a sync, the card's counts for its own files.
+        if (req.isMember("card")) {
+            const std::string c = req["card"].isString() ? req["card"].asString() : "";
+            if (c != "plain" && c != "both" && c != "sealed") return refuse(400, "card is plain, both or sealed");
+            f["card"] = c;
+        }
+        if (req.isMember("card_meta")) {
+            const Json::Value& m = req["card_meta"];
+            if (!m.isObject()) return refuse(400, "card_meta is {pfn, dfn, efn, fd}");
+            Json::Value meta(Json::objectValue);
+            for (const auto& k : m.getMemberNames()) {
+                if (k != "pfn" && k != "dfn" && k != "efn" && k != "fd")
+                    return refuse(400, "card_meta takes pfn, dfn, efn and fd, and no other key");
+                if (!m[k].isIntegral() || m[k].asInt64() < 0 || m[k].asInt64() > 4294967295LL)
+                    return refuse(400, "card_meta's " + k + " is a whole number from 0 to 4294967295");
+                meta[k] = static_cast<Json::Int64>(m[k].asInt64());
+            }
+            f["card_meta"] = meta;
+        }
     }
 
     // What restarts the unit or its miner (the stream target, the Bluetooth

@@ -262,6 +262,10 @@ struct AppConfig {
         std::string address;            // empty: the first DreamStation 2 the scan finds
         std::string read_mode = "daily";   // "daily" | "manual"
         std::string read_at = "11:00";     // HH:MM, local, with "daily"
+        // SDD-065 D8: what a read through a Mule & Miner asks for besides the
+        // records: "both" (records and the card's own files), "sealed" (the
+        // card files only, no nights here) or "plain" (records only).
+        std::string card = "both";
     } ds2_ble;
 
     // The Sleep Bridge local stream (docs/SLEEP_BRIDGE_LOCAL_STREAM.md): a
@@ -728,6 +732,7 @@ struct AppConfig {
                 if (b.contains("address"))              config.ds2_ble.address = b["address"];
                 if (b.contains("read_mode"))            config.ds2_ble.read_mode = b["read_mode"];
                 if (b.contains("read_at"))              config.ds2_ble.read_at = b["read_at"];
+                if (b.contains("card"))                 config.ds2_ble.card = b["card"];
             }
 
             if (j.contains("sleep_bridge")) {
@@ -869,6 +874,7 @@ struct AppConfig {
             j["ds2_ble"]["address"] = ds2_ble.address;
             j["ds2_ble"]["read_mode"] = ds2_ble.read_mode;
             j["ds2_ble"]["read_at"] = ds2_ble.read_at;
+            j["ds2_ble"]["card"] = ds2_ble.card;
 
             j["sleep_bridge"]["enabled"] = sleep_bridge.enabled;
             j["sleep_bridge"]["port"] = sleep_bridge.port;
@@ -1012,6 +1018,7 @@ struct AppConfig {
         j["ds2_ble"]["address"] = ds2_ble.address;
         j["ds2_ble"]["read_mode"] = ds2_ble.read_mode;
         j["ds2_ble"]["read_at"] = ds2_ble.read_at;
+        j["ds2_ble"]["card"] = ds2_ble.card;
 
         // sleep_bridge was missing here although save() persists it.
         j["sleep_bridge"]["enabled"] = sleep_bridge.enabled;
