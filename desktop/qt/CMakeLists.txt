@@ -58,6 +58,7 @@ qt_add_executable(${SUPERVISOR_TARGET}
     core/pure/FieldSpec.cpp
     core/pure/ConfigGate.cpp
     core/pure/PendingUpdate.cpp
+    core/pure/SourceChoice.cpp
 
     core/qt/PreflightRunner.cpp
     core/qt/ChildProcess.cpp

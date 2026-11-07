@@ -8,6 +8,10 @@ import { TranslatePipe, TranslateService } from '@ngx-translate/core';
 import { LanguageSwitcherComponent } from '../../components/language-switcher/language-switcher.component';
 import { switchMap, tap } from 'rxjs';
 import { sourceImage } from '../../utils/source-image';
+import {
+  SLEEP_BRIDGE_DEFAULT_PORT, sleepBridgePort, sleepBridgeTarget, sourceConfig
+} from './setup-source';
+import type { SetupSource } from './setup-source';
 
 @Component({
   selector: 'app-setup',
@@ -180,6 +184,16 @@ import { sourceImage } from '../../utils/source-image';
                 </div>
               </label>
 
+              <label class="radio-option" [class.selected]="source === 'sleepbridge'">
+                <input type="radio" name="source" value="sleepbridge"
+                       [(ngModel)]="source" />
+                <img class="source-img" [src]="sourceImage('sleepbridge')" alt="" width="64" height="64" />
+                <div class="radio-content">
+                  <strong>{{ 'setup.source.sleepbridgeTitle' | translate }}</strong>
+                  <span>{{ 'setup.source.sleepbridgeDesc' | translate }}</span>
+                </div>
+              </label>
+
               <label class="radio-option" [class.selected]="source === 'skip'">
                 <input type="radio" name="source" value="skip"
                        [(ngModel)]="source" />
@@ -262,6 +276,22 @@ import { sourceImage } from '../../utils/source-image';
                          [(ngModel)]="flashairUrl"
                          placeholder="http://flashair.local" />
                 </div>
+              </div>
+            }
+
+            <!-- The Sleep Bridge receiver is on by default, so there is
+                 nothing to set here: only where to point the bridge. -->
+            @if (source === 'sleepbridge') {
+              <div class="source-config sb-note">
+                <p>{{ 'setup.source.sleepbridgeListening' | translate }}</p>
+                <p>
+                  @if (sleepBridgeTarget) {
+                    {{ 'setup.source.sleepbridgeStreamTo' | translate:{ target: sleepBridgeTarget } }}
+                  } @else {
+                    {{ 'setup.source.sleepbridgeStreamToPort' | translate:{ port: sleepBridgePort } }}
+                  }
+                </p>
+                <p>{{ 'setup.source.sleepbridgeNights' | translate }}</p>
               </div>
             }
 
@@ -601,6 +631,11 @@ import { sourceImage } from '../../utils/source-image';
       margin-bottom: 1.5rem;
     }
 
+    .sb-note p {
+      color: #aaa; font-size: 0.9rem; line-height: 1.5;
+      margin: 0 0 0.5rem;
+    }
+
     .device-list {
       display: flex;
       flex-direction: column;
@@ -769,9 +804,15 @@ export class SetupComponent {
   // source=ezshare underneath, because a proxy-mode mule serves the same
   // /dir and /download an ezShare card does; 'mm' only ever names the way the
   // user got there.
-  source = 'mm';
+  source: SetupSource = 'mm';
   /** A source's picture (public/sources/). */
   readonly sourceImage = sourceImage;
+  /** The port the Sleep Bridge receiver listens on, from the running service. */
+  sleepBridgePort = SLEEP_BRIDGE_DEFAULT_PORT;
+  /** "address:port" to give the bridge, when the page's own address says it. */
+  get sleepBridgeTarget(): string | null {
+    return sleepBridgeTarget(window.location.hostname, this.sleepBridgePort);
+  }
   /** SDD-022: which machine wrote the folder. Only meaningful for source==='local'. */
   localFormat = 'resmed';
   /** SDD-060 D7: the machine behind an ez Share or a Mule and Miner. */
@@ -873,6 +914,12 @@ export class SetupComponent {
       },
       error: () => { this.autostartSupported = false; }
     });
+
+    // The configured port, so the note names the one the bridge must use.
+    this.api.getSleepBridges().subscribe({
+      next: (s) => { this.sleepBridgePort = sleepBridgePort(s); },
+      error: () => { this.sleepBridgePort = SLEEP_BRIDGE_DEFAULT_PORT; }
+    });
   }
 
   syncDefaultPort(): void {
@@ -973,42 +1020,22 @@ export class SetupComponent {
     this.saving = true;
     this.error = null;
 
-    const configUpdate: Record<string, string> = {};
-
-    if (this.source === 'mm') {
-      if (!this.selectedDevice) {
-        this.error = this.t.instant('setup.source.pickDeviceFirst');
-        this.saving = false;
-        return;
-      }
-      // The whole M&M integration is these two lines. A proxy-mode mule is an
-      // ezShare server on the LAN, and EzShareClient already speaks to it.
-      // SDD-060 D7: and the machine behind it, which the unit cannot tell.
-      configUpdate['source'] = 'ezshare';
-      configUpdate['transport'] = 'ezshare';
-      configUpdate['format'] = this.cardFormat;
-      configUpdate['ezshare_url'] = this.selectedDevice.base_url;
-    } else if (this.source === 'ezshare') {
-      configUpdate['source'] = 'ezshare';
-      configUpdate['transport'] = 'ezshare';
-      configUpdate['format'] = this.cardFormat;
-      configUpdate['ezshare_url'] = this.ezshareUrl;
-    } else if (this.source === 'flashair') {
-      configUpdate['source'] = 'flashair';
-      configUpdate['transport'] = 'flashair';
-      configUpdate['format'] = 'resmed';
-      configUpdate['flashair_url'] = this.flashairUrl;
-    } else if (this.source === 'local') {
-      // SDD-022: a folder is ONE transport read by several parsers. The wizard
-      // asks which machine wrote the card rather than assuming ResMed, which is
-      // what made a Prisma or S.Box owner hand-edit config.json after setup.
-      configUpdate['transport'] = 'local';
-      configUpdate['format'] = this.localFormat;
-      configUpdate['source'] =
-        this.localFormat === 'resmed' ? 'local' : this.localFormat;
-      configUpdate['local_dir'] = this.localDir;
+    if (this.source === 'mm' && !this.selectedDevice) {
+      this.error = this.t.instant('setup.source.pickDeviceFirst');
+      this.saving = false;
+      return;
     }
-    // skip: no config update needed
+    // The source keys for the choice (setup-source.ts). The wizard asks which
+    // machine wrote a folder rather than assuming ResMed (SDD-022). skip and
+    // sleepbridge write none.
+    const configUpdate = sourceConfig(this.source, {
+      cardFormat: this.cardFormat,
+      localFormat: this.localFormat,
+      ezshareUrl: this.ezshareUrl,
+      flashairUrl: this.flashairUrl,
+      localDir: this.localDir,
+      mmBaseUrl: this.selectedDevice?.base_url ?? ''
+    });
 
     // SDD-006 phase 2: one call that writes the config, marks setup complete
     // and restarts. A database change CANNOT be hot-reloaded (main.cpp builds

@@ -15,12 +15,15 @@
 #include <QRadioButton>
 #include <QSpinBox>
 #include <QFrame>
+#include <QHostAddress>
+#include <QNetworkInterface>
 #include <QPixmap>
 #include <QVBoxLayout>
 #include <QWizardPage>
 
 #include <nlohmann/json.hpp>
 
+#include "SourceChoice.h"
 #include "Theme.h"
 #include "utils/CardLayout.h"
 
@@ -44,6 +47,22 @@ QLabel* explain(const QString& text, QWidget* parent) {
     f.setPointSizeF(f.pointSizeF() * 0.95);
     l->setFont(f);
     return l;
+}
+
+/// This computer's address on the network, for the Sleep Bridge note: the
+/// IPv4 addresses of the interfaces that are up, chosen by lanAddress().
+std::string thisComputersAddress() {
+    std::vector<std::string> ipv4;
+    for (const auto& iface : QNetworkInterface::allInterfaces()) {
+        const auto flags = iface.flags();
+        if (!(flags & QNetworkInterface::IsUp) || !(flags & QNetworkInterface::IsRunning) ||
+            (flags & QNetworkInterface::IsLoopBack))
+            continue;
+        for (const auto& entry : iface.addressEntries())
+            if (entry.ip().protocol() == QAbstractSocket::IPv4Protocol)
+                ipv4.push_back(entry.ip().toString().toStdString());
+    }
+    return lanAddress(ipv4);
 }
 
 }  // namespace
@@ -131,8 +150,18 @@ public:
         auto* local_help = explain(
             "Point at the card ROOT: the folder holding both STR.edf and DATALOG.",
             choices);
-        local_help->setContentsMargins(24, 0, 0, 2);
+        local_help->setContentsMargins(24, 0, 0, 8);
         cv->addWidget(local_help);
+
+        // The Sleep Bridge receiver is on by default, so this choice sets
+        // nothing; the page only says where to point the bridge.
+        sleepbridge_ = new QRadioButton("A CpapDash Sleep Bridge", this);
+        cv->addWidget(sleepbridge_);
+        auto* sb_help = explain(
+            "Your Sleep Bridge streams each night to this computer while it is recorded.",
+            choices);
+        sb_help->setContentsMargins(24, 0, 0, 2);
+        cv->addWidget(sb_help);
 
         layout->addWidget(choices);
 
@@ -214,6 +243,13 @@ public:
 
         layout->addLayout(form);
 
+        // The configured port, and this computer's address when it has one.
+        sb_note_ = explain(QString::fromStdString(sleepBridgeNote(
+                               thisComputersAddress(), sleepBridgePort(wiz_->model_))),
+                           this);
+        sb_note_->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        layout->addWidget(sb_note_);
+
         todo_ = explain("", this);
         todo_->setContentsMargins(0, 6, 0, 0);
         layout->addWidget(todo_);
@@ -237,6 +273,7 @@ public:
         connect(ezshare_,  &QRadioButton::toggled, this, [this] { sync(); });
         connect(flashair_, &QRadioButton::toggled, this, [this] { sync(); });
         connect(local_,    &QRadioButton::toggled, this, [this] { sync(); });
+        connect(sleepbridge_, &QRadioButton::toggled, this, [this] { sync(); });
         connect(url_, &QLineEdit::textEdited, this, [this] { emit completeChanged(); });
         connect(flashair_url_, &QLineEdit::textEdited, this, [this] { emit completeChanged(); });
 
@@ -254,6 +291,7 @@ public:
     /// A disabled Next with nothing explaining it is the same complaint as a
     /// greyed-out field: the user can see they are stuck and cannot see why.
     QString missingPiece() const {
+        if (sleepbridge_->isChecked()) return {};   // nothing to fill in
         if (local_->isChecked()) {
             if (folder_->text().trimmed().isEmpty())
                 return "Choose the folder that holds your SD card data.";
@@ -275,23 +313,24 @@ public:
     }
 
     bool validatePage() override {
-        if (local_->isChecked()) {
-            wiz_->model_.set("source", "local");
-            wiz_->model_.set("local_dir", folder_->text().toStdString());
-        } else if (flashair_->isChecked()) {
-            wiz_->model_.set("source", "flashair");
-            wiz_->model_.set("flashair_url", flashair_url_->text().trimmed().toStdString());
-        } else {
-            wiz_->model_.set("source", "ezshare");
-            wiz_->model_.set("ezshare_url", url_->text().trimmed().toStdString());
-        }
-        wiz_->model_.set("archive_dir", archive_->text().toStdString());
+        const SourceChoice choice =
+            sleepbridge_->isChecked() ? SourceChoice::SleepBridge
+            : local_->isChecked()     ? SourceChoice::Local
+            : flashair_->isChecked()  ? SourceChoice::FlashAir
+                                      : SourceChoice::Mule;
+        wiz_->sleep_bridge_ = choice == SourceChoice::SleepBridge;
+        applySourceChoice(wiz_->model_, choice,
+                          {url_->text().trimmed().toStdString(),
+                           flashair_url_->text().trimmed().toStdString(),
+                           folder_->text().toStdString(),
+                           archive_->text().toStdString()});
         return true;
     }
 
 private:
     void sync() {
         const bool is_local = local_->isChecked();
+        const bool is_bridge = sleepbridge_->isChecked();
 
         // HIDDEN, not disabled. A greyed-out field still occupies the page and
         // still asks the user to read it and work out why it does not apply to
@@ -305,7 +344,9 @@ private:
         // An ezShare card is DOWNLOADED, so it must be written somewhere or
         // nothing reaches disk. A local folder is already on disk and is read
         // in place, so asking where to copy it to would be meaningless.
-        form_->setRowVisible(archive_row_,  !is_local);
+        // A Sleep Bridge's nights land in its own folder, so it has none.
+        form_->setRowVisible(archive_row_,  !is_local && !is_bridge);
+        sb_note_->setVisible(is_bridge);
 
         const QString missing = missingPiece();
         todo_->setText(missing);
@@ -341,6 +382,8 @@ private:
     QRadioButton* ezshare_ = nullptr;
     QRadioButton* flashair_ = nullptr;
     QRadioButton* local_   = nullptr;
+    QRadioButton* sleepbridge_ = nullptr;
+    QLabel*       sb_note_ = nullptr;
     QLineEdit*    url_     = nullptr;
     QLineEdit*    flashair_url_ = nullptr;
     QLineEdit*    folder_  = nullptr;
@@ -531,10 +574,16 @@ public:
         wiz_->model_.set("setup_complete", true);
 
         const auto src = wiz_->model_.getString("source");
-        QString text = "HmsCpap will read from ";
-        text += (src == "local")
-            ? "the folder you chose"
-            : "your ezShare card at " + QString::fromStdString(wiz_->model_.getString("ezshare_url"));
+        QString text;
+        if (wiz_->sleep_bridge_) {
+            text = QString("HmsCpap will listen for your Sleep Bridge on port %1")
+                       .arg(sleepBridgePort(wiz_->model_));
+        } else {
+            text = "HmsCpap will read from ";
+            text += (src == "local")
+                ? "the folder you chose"
+                : "your ezShare card at " + QString::fromStdString(wiz_->model_.getString("ezshare_url"));
+        }
         text += ", and store your nights in ";
         text += (wiz_->model_.getString("database.type") == "sqlite")
             ? "its own database file."
