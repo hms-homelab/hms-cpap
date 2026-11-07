@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+hms-cpap reads a Philips DreamStation 2 over Bluetooth after the night, from
+this computer's own Bluetooth or through a Mule & Miner, and the setup wizard
+opens on the Sleep Bridge.
+
+### Added
+- **Philips DreamStation 2 over this computer's Bluetooth.** Turn it on in
+  Settings, DreamStation 2 over Bluetooth, then pair it from the Devices page.
+  The machine shows a six-digit code and so does the page (macOS shows it in
+  a window of its own): check they match and confirm on both, with the
+  blower off. The DreamStation keeps one Bluetooth pairing, so pairing
+  hms-cpap replaces DreamMapper on that machine. After each night the
+  session's summary and events are read (Bluetooth carries no waveform) and
+  imported like any other night. Linux, macOS and Windows; not in a build
+  without Bluetooth.
+- **When the DreamStation 2 is read is your choice**, in Settings: once a day
+  at a time you pick (11:00 by default), or only when you press Read now. In
+  both, a night's end reported by another source here (a Sleep Bridge, a Mule
+  & Miner, the AirSense 11 over Bluetooth, the O2 ring) also starts a read.
+  Nothing is read while a mask is on.
+- **Nights from a day you pick.** The first read of a used machine imports
+  only from the day of pairing, or a day you set on the Devices page; older
+  sessions (a previous owner's) are skipped and never kept.
+- **A DreamStation 2 through a Mule & Miner.** A Mule & Miner whose miner
+  reads a DreamStation 2 over Bluetooth now shows it on its Devices card: a
+  DreamStation 2 switch beside the AirSense 11 and O2 ring switches, pairing
+  with the machine's code shown on the page, Read now, Forget the pairing,
+  the last read and the import day. Its nights are imported the same way, on
+  the same Settings choice. It needs Mule & Miner firmware with DreamStation
+  2 support.
+- **A card tree for OSCAR from a Mule & Miner's DreamStation 2.** Beside the
+  nights, each read keeps the machine's files as the machine itself writes
+  them to its card, in a card's layout, under the data folder's
+  `ds2card/<serial>/P-SERIES/`. OSCAR 2.1.1 imports that folder like a card.
+- **Sleep Bridge in the setup wizard.** The source step of the web wizard and
+  of the desktop app's first-run wizard offers the CpapDash Sleep Bridge,
+  first and selected. It needs nothing set up: the step says which address
+  and port to point the bridge at.
+
+### Fixed
+- **A Bluetooth-only AirSense 11 no longer shows "Nothing is being
+  imported"** (Fixes #59). With AirSense 11 over Bluetooth on and no local
+  folder set, every page said no local folder was configured, while the
+  nights were being imported. An empty folder with Bluetooth on is now a
+  Bluetooth-only setup: no banner, nothing logged as an error. A folder that
+  is set is still checked, and a folder changed in Settings is now seen by
+  that check without a restart.
+
+### Notes
+- DreamStation 2 nights read over Bluetooth are not sent to SleepHQ yet.
+- Pairing a DreamStation 2 with this computer's Bluetooth has been tested
+  against a simulated machine only, on all three systems; pairing with a real
+  machine is not proven yet. The Mule & Miner path was checked against reads
+  a real unit made from a real DreamStation 2.
+
 ## [6.1.1] - 2026-11-05
 
 The end of a streamed night reaches Home Assistant in a minute or two instead
