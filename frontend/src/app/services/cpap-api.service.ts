@@ -147,6 +147,16 @@ export class CpapApiService {
     return this.http.post('/api/mule/command', { serial, cmd, ...args });
   }
 
+  /** SDD-065: a DreamStation 2 read through the unit now, from the stored bookmarks. */
+  muleDs2Read(serial: string): Observable<any> {
+    return this.http.post(`/api/mule/${encodeURIComponent(serial)}/ds2/read`, {});
+  }
+
+  /** SDD-065: the first day whose sessions the unit's DreamStation 2 reads import. */
+  muleDs2ImportFrom(serial: string, date: string): Observable<any> {
+    return this.http.post(`/api/mule/${encodeURIComponent(serial)}/ds2/import-from`, { date });
+  }
+
   /** The pairing code printed on the unit, which CpapDash's release check asks for; '' forgets it. */
   setMulePairingCode(serial: string, code: string): Observable<any> {
     return this.http.post(`/api/mule/${encodeURIComponent(serial)}/pairing`, { code });

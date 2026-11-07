@@ -560,6 +560,13 @@ std::vector<std::string> BurstCollectorService::ds2NightSources() const {
     return {s.begin(), s.end()};
 }
 
+std::pair<std::string, std::string> BurstCollectorService::ds2ReadSchedule() const {
+    if (!app_config_) return {"daily", ds2time::kDefaultReadAt};
+    const auto& b = app_config_->ds2_ble;
+    return {ds2time::normaliseMode(b.read_mode),
+            ds2time::parseTimeOfDay(b.read_at) ? b.read_at : std::string(ds2time::kDefaultReadAt)};
+}
+
 ds2api::Trigger BurstCollectorService::ds2Trigger() const {
     ds2api::Trigger t;
     t.sources = ds2NightSources();
@@ -575,8 +582,26 @@ ds2api::Trigger BurstCollectorService::ds2Trigger() const {
 void BurstCollectorService::ds2DailyCheck(long long now) {
     if (now - ds2_daily_checked_ < 30) return;
     ds2_daily_checked_ = now;
+    if (!app_config_) {
+        ds2_next_read_at_ = 0;
+        return;
+    }
+    ds2time::Input in;
+    in.now = now;
+    in.read_mode = app_config_->ds2_ble.read_mode;
+    in.read_at = app_config_->ds2_ble.read_at;
+    const auto live = liveState();
+    in.mask_on = live && live->maskOn();
+    // SDD-065 D4a: the same choice for a DreamStation 2 read through a Mule &
+    // Miner; each one decides from its own last read and pairing.
+    std::vector<std::function<void(const ds2time::Input&)>> daily;
+    {
+        std::lock_guard<std::mutex> lk(ds2_src_mtx_);
+        daily = ds2_daily_listeners_;
+    }
+    for (const auto& l : daily) l(in);
     auto reader = getDs2Reader();
-    if (!reader || !app_config_) {
+    if (!reader) {
         ds2_next_read_at_ = 0;
         return;
     }
@@ -585,15 +610,9 @@ void BurstCollectorService::ds2DailyCheck(long long now) {
         ds2_next_read_at_ = 0;
         return;
     }
-    ds2time::Input in;
-    in.now = now;
-    in.read_mode = app_config_->ds2_ble.read_mode;
-    in.read_at = app_config_->ds2_ble.read_at;
     in.paired_at = st.paired->paired_at;
     if (auto it = st.machines.find(st.paired->serial); it != st.machines.end())
         in.last_attempt_at = it->second.last_attempt_at;
-    const auto live = liveState();
-    in.mask_on = live && live->maskOn();
     const auto d = ds2time::decide(in);
     ds2_next_read_at_ = d.next_at;
     if (d.due && !reader->busy()) startDs2Read(("the owner's daily read at " + in.read_at).c_str());
@@ -602,12 +621,14 @@ void BurstCollectorService::ds2DailyCheck(long long now) {
 void BurstCollectorService::ds2OnNightEnded() {
     if (!ds2_night_ended_.exchange(false)) return;
     std::string by;
+    std::vector<std::function<void(const std::string&)>> listeners;
     {
         std::lock_guard<std::mutex> lk(ds2_src_mtx_);
-        by = ds2_ended_by_;
+        by        = ds2_ended_by_;
+        listeners = ds2_night_listeners_;
     }
     auto reader = getDs2Reader();
-    if (!reader || !reader->paired()) return;
+    if ((!reader || !reader->paired()) && listeners.empty()) return;
     // Another machine (or the ring on its own) may say its night ended while a
     // mask is still on somewhere: never read during therapy.
     const auto live = liveState();
@@ -615,6 +636,9 @@ void BurstCollectorService::ds2OnNightEnded() {
         std::cout << "DS2 Bluetooth: " << by << " said a night ended, but a mask is on: not reading" << std::endl;
         return;
     }
+    // SDD-065: a DreamStation 2 read through a Mule & Miner, on the same event.
+    for (const auto& l : listeners) l(by);
+    if (!reader || !reader->paired()) return;
     if (!startDs2Read(("the night ended (" + by + ")").c_str()))
         std::cout << "DS2 Bluetooth: " << by << " said a night ended; a read or a pairing is already running"
                   << std::endl;

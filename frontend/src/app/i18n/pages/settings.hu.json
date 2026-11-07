@@ -76,6 +76,7 @@
       "modeDaily": "Automatikus olvasás naponta egyszer, ekkor:",
       "modeManual": "Csak ha kérem (Olvasás most)",
       "modeNote": "Ha egy másik forrás jelzi az éjszaka végét (Sleep Bridge, O2 gyűrű...), az is elindítja az olvasást, mindkét módban. Felvett maszkkal sosem.",
+      "modeMule": "Ugyanez a választás érvényes egy Mule & Minerrel olvasott DreamStation 2-re is.",
       "noSleepHq": "A Bluetooth-on beolvasott éjszakák nem kerülnek a SleepHQ-ba."
     },
     "sleephq": {

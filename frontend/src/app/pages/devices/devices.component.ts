@@ -13,6 +13,10 @@ import {
   errorText, groupKeys, hostOf, latestCommand, latestConfigValues, recordingWarning, releaseLine, riskyGroups,
   switchView, groupCode, ds2PairView, ds2PairRunning, ds2RefusalKey, ds2Reads, ds2NextRead, isIsoDay,
 } from './devices-model';
+import {
+  MuleDs2Pairing, muleDs2ErrorKey, muleDs2ModePayload, muleDs2On, muleDs2Pairing, muleDs2Reading, muleDs2RefusalKey,
+  muleDs2Switch,
+} from './mule-ds2-model';
 import { sourceImage } from '../../utils/source-image';
 
 /** A line under a card: what the last action did. */
@@ -88,6 +92,12 @@ export class DevicesComponent implements OnInit, OnDestroy {
   /** The import date being edited; null shows the server's. */
   ds2ImportDraft: string | null = null;
   private ds2Timer: any = null;
+
+  // SDD-065: a DreamStation 2 through a Mule & Miner, per unit card.
+  /** The pairing panel is open on this card. */
+  muleDs2Panel: Record<string, boolean> = {};
+  /** The import day being edited on this card; absent shows the saved one. */
+  muleDs2ImportDraft: Record<string, string> = {};
 
   private timer: any = null;
   private tables = new Map<string, { src: unknown; table: { rows: ConfigRow[]; read: boolean; risks: any[] } }>();
@@ -349,6 +359,114 @@ export class DevicesComponent implements OnInit, OnDestroy {
 
   pairCancel(d: DeviceEntry): void {
     this.send(d, 'as11_pair', { cmd: 'as11_pair', cancel: true });
+  }
+
+  // ── Mule & Miner: a DreamStation 2 through the miner (SDD-065) ───────────
+
+  muleDs2On(d: DeviceEntry): boolean {
+    return muleDs2On(d.detail);
+  }
+
+  muleDs2Switch(d: DeviceEntry) {
+    return muleDs2Switch(d.detail);
+  }
+
+  /** The mode on or off: the miner restarts with it. */
+  muleDs2Toggle(d: DeviceEntry, on: boolean): void {
+    this.send(d, 'switch', muleDs2ModePayload(on));
+  }
+
+  /** What this computer keeps for the unit's DreamStation 2. */
+  muleDs2Local(d: DeviceEntry): any {
+    return d.detail?.ds2_local ?? {};
+  }
+
+  muleDs2Pair(d: DeviceEntry): MuleDs2Pairing {
+    return muleDs2Pairing(d.detail, this.now);
+  }
+
+  muleDs2Reading(d: DeviceEntry): boolean {
+    return muleDs2Reading(d.detail);
+  }
+
+  muleDs2ErrorText(token: string): string {
+    return this.t.instant(muleDs2ErrorKey(token), { error: token });
+  }
+
+  muleDs2OpenPanel(d: DeviceEntry): void {
+    this.muleDs2Panel[d.key] = true;
+  }
+
+  muleDs2ClosePanel(d: DeviceEntry): void {
+    this.muleDs2Panel[d.key] = false;
+  }
+
+  muleDs2PairStart(d: DeviceEntry): void {
+    this.muleDs2Panel[d.key] = true;
+    this.send(d, 'ds2_bond', { cmd: 'ds2_bond', action: 'start' });
+  }
+
+  /** The person's answer to the code: confirm with the code shown, or cancel. */
+  muleDs2Answer(d: DeviceEntry, match: boolean): void {
+    const p = this.muleDs2Pair(d);
+    if (match && p.code) this.send(d, 'ds2_bond', { cmd: 'ds2_bond', action: 'confirm', code: p.code });
+    else this.send(d, 'ds2_bond', { cmd: 'ds2_bond', action: 'cancel' });
+  }
+
+  askMuleDs2Forget(d: DeviceEntry): void {
+    this.confirms.ask(d.key, 'ds2_bond', 'devices.muleDs2.forgetConfirm', { cmd: 'ds2_bond', action: 'forget' });
+  }
+
+  muleDs2ReadNow(d: DeviceEntry): void {
+    this.busy[d.key] = true;
+    this.api.muleDs2Read(d.id).subscribe({
+      next: () => {
+        this.busy[d.key] = false;
+        this.note(d, this.t.instant('devices.ds2.readStarted'), false);
+        this.load(false);
+      },
+      error: (e) => {
+        this.busy[d.key] = false;
+        this.note(d, this.t.instant(muleDs2RefusalKey(e?.error?.result)), true);
+      },
+    });
+  }
+
+  muleDs2ReadsLine(d: DeviceEntry): string {
+    // SDD-065 D4a: the same choice and wording as the direct read's.
+    const r = ds2Reads(this.muleDs2Local(d));
+    const sources = r.sources.map((k) => this.t.instant(k)).join(', ');
+    return this.t.instant(r.key, { sources, time: r.time });
+  }
+
+  muleDs2NextRead(d: DeviceEntry): number {
+    return ds2NextRead(this.muleDs2Local(d));
+  }
+
+  muleDs2ImportValue(d: DeviceEntry): string {
+    return this.muleDs2ImportDraft[d.key] ?? this.muleDs2Local(d).import_from ?? '';
+  }
+
+  muleDs2SaveImportFrom(d: DeviceEntry): void {
+    const date = this.muleDs2ImportValue(d);
+    if (!isIsoDay(date)) {
+      this.note(d, this.t.instant('devices.ds2.importBadDate'), true);
+      return;
+    }
+    this.busy[d.key] = true;
+    this.api.muleDs2ImportFrom(d.id, date).subscribe({
+      next: (r: any) => {
+        this.busy[d.key] = false;
+        delete this.muleDs2ImportDraft[d.key];
+        this.note(d, this.t.instant('devices.ds2.importSaved', { date: r?.import_from ?? date }), false);
+        this.load(false);
+      },
+      error: (e) => {
+        this.busy[d.key] = false;
+        this.note(d, this.t.instant(e?.error?.result === 'bad_date' ? 'devices.ds2.importBadDate'
+                                  : 'devices.ds2.importFailed', { error: errorText(e) }), true);
+      },
+    });
   }
 
   // ── firmware updates ─────────────────────────────────────────────────────

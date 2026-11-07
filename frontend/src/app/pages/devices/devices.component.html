@@ -105,7 +105,50 @@
                   </ng-container>
                 </label>
               </ng-container>
+              <!-- SDD-065: the miner reads a DreamStation 2 instead (one machine at a time). -->
+              <label class="switch" *ngIf="muleDs2Switch(d) as s">
+                <input type="checkbox" [checked]="s.on" [disabled]="busy[d.key] || (!!s.pending && s.pending !== 'devices.mule.switchRefused')"
+                       (change)="muleDs2Toggle(d, $any($event.target).checked)" />
+                {{ 'devices.muleDs2.switch' | translate }}
+                <span class="hint" *ngIf="s.pending">{{ s.pending | translate:{ error: '' } }}</span>
+              </label>
             </dd></div>
+
+          <!-- ── its DreamStation 2 (SDD-065): read after the night, through the miner ── -->
+          <ng-container *ngIf="muleDs2On(d)">
+            <div><dt>DreamStation 2</dt><dd>{{ (d.detail.state.ds2.bonded ? 'devices.ds2.paired' : 'devices.ds2.notPaired') | translate }}<span
+              *ngIf="muleDs2Reading(d)">, {{ 'devices.ds2.reading' | translate }}</span></dd></div>
+            <div *ngIf="muleDs2Local(d).machine"><dt>{{ 'devices.line.machine' | translate }}</dt>
+              <dd>{{ muleDs2Local(d).model || 'DreamStation 2' }} · <span class="mono">{{ muleDs2Local(d).machine }}</span></dd></div>
+            <div *ngIf="muleDs2Local(d).firmware"><dt>{{ 'devices.line.firmware' | translate }}</dt>
+              <dd class="mono">{{ muleDs2Local(d).firmware }}</dd></div>
+            <div *ngIf="d.detail.state.ds2.bonded"><dt>{{ 'devices.ds2.lastRead' | translate }}</dt>
+              <dd>
+                <ng-container *ngIf="muleDs2Local(d).last_read?.at as at">{{ ms(at) | date:'short' }} · {{ 'devices.ds2.records' | translate:{ n: muleDs2Local(d).last_read.records } }}</ng-container>
+                <ng-container *ngIf="!muleDs2Local(d).last_read?.at">{{ 'devices.line.never' | translate }}</ng-container>
+              </dd></div>
+            <div *ngIf="muleDs2Local(d).last_read?.walked_past" class="wide">
+              <dd class="hint">{{ 'devices.muleDs2.walkedPast' | translate:{ n: muleDs2Local(d).last_read.walked_past } }}</dd></div>
+            <div *ngIf="muleDs2Local(d).last_read?.error" class="wide">
+              <dd class="note">{{ 'devices.ds2.lastReadError' | translate:{ when: (ms(muleDs2Local(d).last_read.attempt_at) | date:'short'), error: muleDs2ErrorText(muleDs2Local(d).last_read.error) } }}</dd></div>
+            <div *ngIf="d.detail.state.ds2.bonded"><dt>{{ 'devices.ds2.reads' | translate }}</dt>
+              <dd>{{ muleDs2ReadsLine(d) }} <a routerLink="/settings" class="hint">{{ 'devices.ds2.changeInSettings' | translate }}</a></dd></div>
+            <div *ngIf="d.detail.state.ds2.bonded && muleDs2NextRead(d)"><dt>{{ 'devices.ds2.nextRead' | translate }}</dt>
+              <dd>{{ ms(muleDs2NextRead(d)) | date:'short' }}</dd></div>
+            <div *ngIf="d.detail.state.ds2.bonded" class="wide ds2-import">
+              <dt>{{ 'devices.ds2.importFrom' | translate }}</dt>
+              <dd>
+                <div class="row">
+                  <input type="date" [ngModel]="muleDs2ImportValue(d)" (ngModelChange)="muleDs2ImportDraft[d.key] = $event" [name]="'mule_ds2_import_' + d.id" />
+                  <button type="button" class="btn" (click)="muleDs2SaveImportFrom(d)"
+                          [disabled]="busy[d.key] || muleDs2ImportDraft[d.key] === undefined || muleDs2ImportDraft[d.key] === muleDs2Local(d).import_from">
+                    {{ 'devices.ds2.importSave' | translate }}</button>
+                </div>
+                <div class="hint block">{{ 'devices.ds2.importNote' | translate }}</div>
+                <div class="hint block" *ngIf="muleDs2Local(d).first_read_done">{{ 'devices.ds2.importAlreadyRead' | translate }}</div>
+              </dd>
+            </div>
+          </ng-container>
         </ng-container>
 
         <!-- ── Sleep Bridge ── -->
@@ -253,6 +296,40 @@
         <div class="note-line" [class.err]="ds2Err" *ngIf="ds2Message">{{ ds2Message }}</div>
       </div>
 
+      <!-- A Mule & Miner's DreamStation 2 pairing (SDD-065): the unit shows the code here. -->
+      <div class="inline-form ds2-pair" *ngIf="d.kind === 'mule' && muleDs2On(d) && (muleDs2Panel[d.key] || muleDs2Pair(d).phase === 'confirm' || muleDs2Pair(d).phase === 'confirming' || muleDs2Pair(d).phase === 'working')">
+        <ng-container *ngIf="muleDs2Pair(d) as v">
+          <ng-container *ngIf="v.phase === 'idle' || v.phase === 'failed' || v.phase === 'paired'">
+            <ul class="ds2-notes" *ngIf="v.phase !== 'paired'">
+              <li>{{ 'devices.muleDs2.noteBlower' | translate }}</li>
+              <li><strong>{{ 'devices.muleDs2.noteOneBond' | translate }}</strong></li>
+              <li>{{ 'devices.ds2.noteForgetOld' | translate }}</li>
+            </ul>
+            <div class="note-line" [class.err]="v.phase === 'failed'" *ngIf="v.key">{{ v.key | translate:{ error: v.error } }}</div>
+            <div class="row">
+              <button type="button" class="btn" (click)="muleDs2ClosePanel(d)">{{ (v.phase === 'paired' ? 'devices.ds2.close' : 'devices.ds2.cancel') | translate }}</button>
+              <button type="button" class="btn primary" *ngIf="v.phase !== 'paired'" (click)="muleDs2PairStart(d)" [disabled]="busy[d.key] || d.present !== 'yes'">
+                {{ (v.phase === 'failed' ? 'devices.ds2.startAgain' : 'devices.ds2.start') | translate }}</button>
+            </div>
+          </ng-container>
+
+          <ng-container *ngIf="v.phase === 'working' || v.phase === 'confirming'">
+            <div class="quiet">{{ v.key | translate }}</div>
+          </ng-container>
+
+          <ng-container *ngIf="v.phase === 'confirm'">
+            <div class="ds2-code" aria-live="polite">{{ groupCode(v.code) }}</div>
+            <div class="ds2-question">{{ v.key | translate }}</div>
+            <div class="hint">{{ 'devices.ds2.confirmOnMachine' | translate }}
+              <span *ngIf="v.secondsLeft"> {{ 'devices.ds2.secondsLeft' | translate:{ s: v.secondsLeft } }}</span></div>
+            <div class="row">
+              <button type="button" class="btn" (click)="muleDs2Answer(d, false)" [disabled]="busy[d.key]">{{ 'devices.ds2.noMatch' | translate }}</button>
+              <button type="button" class="btn primary" (click)="muleDs2Answer(d, true)" [disabled]="busy[d.key]">{{ 'devices.ds2.match' | translate }}</button>
+            </div>
+          </ng-container>
+        </ng-container>
+      </div>
+
       <!-- AirSense 11 pairing in progress: its code field, with its warning. -->
       <div class="inline-form" *ngIf="d.kind === 'as11_ble' && !d.detail.not_compiled && (d.detail.pairing || as11Pairing || as11Message)">
         <div class="hint">{{ 'devices.as11.pairNote' | translate }}</div>
@@ -356,6 +433,23 @@
             </div>
             <div class="action-line" *ngIf="d.detail.paired">
               <button type="button" class="btn danger" (click)="askDs2Forget(d)">{{ 'devices.ds2.forgetPairing' | translate }}</button>
+            </div>
+          </ng-container>
+
+          <!-- SDD-065: a Mule & Miner in DreamStation 2 mode: its machine's read and pairing. -->
+          <ng-container *ngIf="d.kind === 'mule' && muleDs2On(d)">
+            <div class="action-line" *ngIf="d.detail.state.ds2.bonded">
+              <button type="button" class="btn primary" (click)="muleDs2ReadNow(d)" [disabled]="busy[d.key] || muleDs2Reading(d) || d.present !== 'yes'">
+                {{ (muleDs2Reading(d) ? 'devices.ds2.reading' : 'devices.ds2.readNow') | translate }}</button>
+            </div>
+            <div class="hint" *ngIf="d.detail.state.ds2.bonded">{{ 'devices.ds2.afterNightOnly' | translate }}</div>
+            <div class="action-line" *ngIf="!muleDs2Panel[d.key] && muleDs2Pair(d).phase !== 'confirm'">
+              <button type="button" class="btn" (click)="muleDs2OpenPanel(d)" [disabled]="muleDs2Reading(d) || d.present !== 'yes'">
+                {{ (d.detail.state.ds2.bonded ? 'devices.ds2.pairAgain' : 'devices.ds2.pair') | translate }}</button>
+            </div>
+            <div class="action-line" *ngIf="d.detail.state.ds2.bonded">
+              <button type="button" class="btn danger" (click)="askMuleDs2Forget(d)" [disabled]="muleDs2Reading(d) || d.present !== 'yes'">
+                {{ 'devices.ds2.forgetPairing' | translate }}</button>
             </div>
           </ng-container>
 

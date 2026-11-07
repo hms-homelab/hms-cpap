@@ -14,6 +14,7 @@
 #include "services/As11NightWriter.h"
 #include "clients/Ds2BleReader.h"
 #include "services/Ds2NightImport.h"
+#include "services/Ds2ReadTime.h"
 #include "web/Ds2BleApi.h"
 #include "services/OximetryImport.h"
 #include "services/OximetryService.h"
@@ -507,6 +508,30 @@ public:
     void ds2NightEnded(const std::string& source);
     /// Test-only: the import as the worker runs it after a read.
     Ds2NightImport::Result importDs2NightsForTest() { return importDs2Nights(); }
+    /// SDD-065: also told when a night ended and no mask is on (on the
+    /// worker), e.g. to read a DreamStation 2 through a Mule & Miner.
+    void addDs2NightListener(std::function<void(const std::string& by)> listener) {
+        std::lock_guard<std::mutex> lk(ds2_src_mtx_);
+        ds2_night_listeners_.push_back(std::move(listener));
+    }
+    /// SDD-065 D4a: told on every daily check (each 30 s, on the worker) with
+    /// the time, the owner's read choice and whether a mask is on; a Mule &
+    /// Miner's DreamStation 2 decides its own daily read from it.
+    void addDs2DailyListener(std::function<void(const ds2time::Input&)> listener) {
+        std::lock_guard<std::mutex> lk(ds2_src_mtx_);
+        ds2_daily_listeners_.push_back(std::move(listener));
+    }
+    /// The owner's read choice for every DreamStation 2, direct or through a
+    /// Mule & Miner: {read_mode "daily"|"manual", read_at "HH:MM"}, normalised.
+    std::pair<std::string, std::string> ds2ReadSchedule() const;
+    /// Before a listener's owner goes (the worker may still be running).
+    void clearDs2NightListeners() {
+        std::lock_guard<std::mutex> lk(ds2_src_mtx_);
+        ds2_night_listeners_.clear();
+        ds2_daily_listeners_.clear();
+    }
+    /// SDD-065: records were stored by another reader: import them on the worker.
+    void ds2ImportDue() { ds2_import_due_ = true; }
 
 private:
     mutable std::mutex ds2_mtx_;
@@ -517,6 +542,8 @@ private:
     mutable std::mutex ds2_src_mtx_;
     std::set<std::string> ds2_sources_heard_;   // sources that said a mask on/off this run
     std::string ds2_ended_by_;
+    std::vector<std::function<void(const std::string&)>> ds2_night_listeners_;
+    std::vector<std::function<void(const ds2time::Input&)>> ds2_daily_listeners_;
     std::unique_ptr<Ds2NightImport> ds2_import_;
     void initDs2Ble();
     /// On the worker: a night ended, so read now unless a mask is on

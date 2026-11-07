@@ -253,8 +253,8 @@ if(EXISTS ${CPAPDASH_DS2_BLE_LOCAL_DIR}/CMakeLists.txt)
 else()
     FetchContent_Declare(cpapdash_ds2_ble
         GIT_REPOSITORY https://github.com/hms-homelab/cpapdash-ds2-ble.git
-        # Untagged so far: pinned by commit until the library has a tag.
-        GIT_TAG        f5bb5ef3cac61322132819bf720bf596544968b3
+        # v0.1.1: the read file (.ds2r) with its SEALED item (SDD-065).
+        GIT_TAG        v0.1.1
     )
 endif()
 set(CPAPDASH_DS2_BLE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
