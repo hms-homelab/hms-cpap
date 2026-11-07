@@ -163,6 +163,50 @@ TEST(PreflightServiceTest, ALocalSourceWithNoFolderFailsButDoesNotBlockStartup) 
     EXPECT_FALSE(c.remedy.empty());
 }
 
+// Issue #59: a ResMed AirSense 11 read over Bluetooth, with no card folder at
+// all. The nights arrive over Bluetooth, so "no local folder is configured" is
+// not a problem and must not be reported as one.
+TEST(PreflightServiceTest, NoFolderWithBluetoothOnIsABluetoothOnlySetupAndPasses) {
+    AppConfig cfg;
+    cfg.source = "local";
+    cfg.local_dir = "";
+    cfg.airsense11_ble.enabled = true;
+    const auto c = PreflightService::checkSource(cfg);
+    EXPECT_TRUE(c.ok) << c.detail;
+    EXPECT_TRUE(c.remedy.empty()) << "a working setup was told to fix something: " << c.remedy;
+    EXPECT_NE(c.detail.find("Bluetooth"), std::string::npos) << c.detail;
+}
+
+TEST(PreflightServiceTest, AWrongFolderStillFailsWithBluetoothOn) {
+    AppConfig cfg;
+    cfg.source = "local";
+    cfg.local_dir = "/definitely/not/here";
+    cfg.airsense11_ble.enabled = true;
+    const auto c = PreflightService::checkSource(cfg);
+    EXPECT_FALSE(c.ok) << "a folder that is set is a card the user expects to be read";
+    EXPECT_FALSE(c.fatal);
+    EXPECT_NE(c.detail.find("/definitely/not/here"), std::string::npos);
+}
+
+TEST(PreflightServiceTest, ACardRootWithBluetoothOnIsAccepted) {
+    namespace fs = std::filesystem;
+    const auto root = fs::temp_directory_path() /
+                      ("hms_preflight_root_ble_" + std::to_string(::getpid()));
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    fs::create_directories(root / "DATALOG", ec);
+
+    AppConfig cfg;
+    cfg.source = "local";
+    cfg.local_dir = root.string();
+    cfg.airsense11_ble.enabled = true;
+    const auto c = PreflightService::checkSource(cfg);
+    EXPECT_TRUE(c.ok) << c.detail;
+    EXPECT_NE(c.detail.find(root.string()), std::string::npos) << c.detail;
+
+    fs::remove_all(root, ec);
+}
+
 TEST(PreflightServiceTest, ALocalSourcePointingNowhereFailsAndNamesThePath) {
     AppConfig cfg;
     cfg.source = "local";

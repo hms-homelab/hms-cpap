@@ -176,7 +176,13 @@ void BurstCollectorService::initDataSource() {
         // it, and the web server is the only thing that can tell the user what
         // to fix. Record the verdict, refuse to ingest, keep serving.
         local_layout_ = classifyLocalDir(local_source_dir_);
-        if (local_layout_ != LocalDirLayout::Root) {
+        if (isBluetoothOnly(local_source_dir_,
+                            app_config_ && app_config_->airsense11_ble.enabled)) {
+            // Issue #59: a Bluetooth-only setup. Not a fault; see
+            // localSourceIsReady().
+            std::cout << "CPAP: no card folder set; nights arrive from the AirSense 11 "
+                         "over Bluetooth" << std::endl;
+        } else if (local_layout_ != LocalDirLayout::Root) {
             std::cerr << "CPAP: " << localDirProblem(local_layout_, local_source_dir_)
                       << ". " << localDirRemedy(local_layout_, local_source_dir_)
                       << " Nothing will be imported until this is corrected."
@@ -3528,6 +3534,21 @@ std::string BurstCollectorService::parseDirForNight(const SessionFileSet& sessio
  * banner.
  */
 bool BurstCollectorService::localSourceIsReady() {
+    // Issue #59: no folder, and the AirSense 11 is read over Bluetooth. Those
+    // nights are imported when their stream ends (importAs11Nights), not by
+    // the burst, so there is no card to list and nothing is wrong. Not ready,
+    // so the burst reads nothing; said once, not as a fault.
+    if (isBluetoothOnly(local_source_dir_,
+                        app_config_ && app_config_->airsense11_ble.enabled)) {
+        local_layout_ = LocalDirLayout::Unusable;
+        if (!bluetooth_only_logged_) {
+            std::cout << "CPAP: no card folder set; nights arrive from the AirSense 11 "
+                         "over Bluetooth, so no folder is read" << std::endl;
+            bluetooth_only_logged_ = true;
+        }
+        return false;
+    }
+    bluetooth_only_logged_ = false;
     local_layout_ = classifyLocalDir(local_source_dir_);
     if (local_layout_ != LocalDirLayout::Root) {
         const auto d = local_layout_log_.onFailure(

@@ -369,6 +369,10 @@ private:
     /// line forever is how real signal gets buried (see FailureLogThrottle).
     FailureLogThrottle local_layout_log_;
 
+    /// Issue #59: the Bluetooth-only line is said once per stretch, not every
+    /// burst; it is a fact about the setup, not a fault.
+    bool bluetooth_only_logged_ = false;
+
     // Data source (ezShare HTTP or a local folder, both behind IDataSource)
     std::unique_ptr<IDataSource> data_source_;
     std::unique_ptr<PrismaIngestion> prisma_ingestion_;

@@ -25,6 +25,7 @@
 // keeps it unit testable against a temp directory, with no service, no database
 // and no card.
 //
+#include <optional>
 #include <string>
 
 namespace hms_cpap {
@@ -65,5 +66,31 @@ std::string localDirProblem(LocalDirLayout layout, const std::string& path);
 /// remedy is how a user ends up filing a support ticket, which is exactly the
 /// outcome this is meant to prevent.
 std::string localDirRemedy(LocalDirLayout layout, const std::string& path);
+
+/// A ResMed local source with NO folder set, while the AirSense 11 is read over
+/// Bluetooth (`airsense11_ble.enabled`).
+///
+/// The Bluetooth reader is a source of its own, beside whatever card source is
+/// set, and its nights are imported whether or not a card source exists. So an
+/// empty folder with Bluetooth on is a Bluetooth-only setup, not a broken one:
+/// there is no card to list and nothing to warn about. A folder that IS set is
+/// still the card root and is still held to it (classifyLocalDir), Bluetooth
+/// or not, because whoever typed it expects a card to be read.
+bool isBluetoothOnly(const std::string& local_dir, bool airsense11_ble_enabled);
+
+/// What the dashboard's "Nothing is being imported." banner carries for a
+/// ResMed local source.
+struct LocalSourceBanner {
+    LocalDirLayout layout;
+    std::string problem;
+    std::string remedy;
+};
+
+/// The banner for a ResMed local source, or nothing when its nights are being
+/// imported: the folder is a card root, or there is no folder and the AirSense
+/// 11 is read over Bluetooth (isBluetoothOnly). Pure, so the banner's rule is
+/// tested without a web server.
+std::optional<LocalSourceBanner> localSourceBanner(const std::string& local_dir,
+                                                   bool airsense11_ble_enabled);
 
 }  // namespace hms_cpap

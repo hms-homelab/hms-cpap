@@ -2109,6 +2109,85 @@ TEST_F(BurstOrchestrationTest, NewSession_DownloadsAndStoresCheckpoints) {
     EXPECT_GT(src_raw->download_count, 0) << "New session should be downloaded";
 }
 
+// ── issue #59: an AirSense 11 over Bluetooth with no card folder ─────────────
+//
+// The Bluetooth nights are imported on their own (when a stream ends), not by
+// the burst. A local source with no folder and Bluetooth on is therefore a
+// working Bluetooth-only setup: the burst must list nothing and must not log
+// "no local folder is configured" as a fault.
+
+TEST_F(BurstOrchestrationTest, BluetoothOnlyListsNoFolderAndReportsNoFault) {
+    auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
+    AppConfig cfg;
+    cfg.airsense11_ble.enabled = true;
+    svc->setAppConfig(&cfg);
+    svc->setSourceForTest("local");
+    svc->setLocalDirForTest("");
+
+    testing::internal::CaptureStderr();
+    EXPECT_TRUE(svc->runBurstCycleForTest());
+    const std::string err = testing::internal::GetCapturedStderr();
+
+    EXPECT_EQ(src_raw->index_lists, 0) << "a Bluetooth-only setup listed a card folder";
+    EXPECT_EQ(src_raw->download_count, 0);
+    EXPECT_EQ(err.find("no local folder is configured"), std::string::npos)
+        << "a working Bluetooth-only setup was reported as broken: " << err;
+    svc->setAppConfig(nullptr);
+}
+
+TEST_F(BurstOrchestrationTest, NoFolderAndNoBluetoothIsStillReportedAsNothingImported) {
+    auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
+    AppConfig cfg;   // Bluetooth off
+    svc->setAppConfig(&cfg);
+    svc->setSourceForTest("local");
+    svc->setLocalDirForTest("");
+
+    testing::internal::CaptureStderr();
+    EXPECT_TRUE(svc->runBurstCycleForTest());
+    const std::string err = testing::internal::GetCapturedStderr();
+
+    EXPECT_EQ(src_raw->index_lists, 0);
+    EXPECT_NE(err.find("no local folder is configured"), std::string::npos) << err;
+    svc->setAppConfig(nullptr);
+}
+
+TEST_F(BurstOrchestrationTest, AWrongFolderWithBluetoothOnIsStillRefusedAndReported) {
+    auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
+    AppConfig cfg;
+    cfg.airsense11_ble.enabled = true;
+    svc->setAppConfig(&cfg);
+    svc->setSourceForTest("local");
+    svc->setLocalDirForTest("/definitely/not/here");
+
+    testing::internal::CaptureStderr();
+    EXPECT_TRUE(svc->runBurstCycleForTest());
+    const std::string err = testing::internal::GetCapturedStderr();
+
+    EXPECT_EQ(src_raw->index_lists, 0) << "a wrong folder must not be read";
+    EXPECT_NE(err.find("/definitely/not/here"), std::string::npos)
+        << "a folder that is set and wrong must still be reported: " << err;
+    svc->setAppConfig(nullptr);
+}
+
+TEST_F(BurstOrchestrationTest, ACardRootWithBluetoothOnIsStillRead) {
+    auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, sessionExists(_, _)).WillRepeatedly(Return(false));
+    const auto root = temp_dir / "card";
+    std::filesystem::create_directories(root / "DATALOG");
+    AppConfig cfg;
+    cfg.airsense11_ble.enabled = true;
+    svc->setAppConfig(&cfg);
+    svc->setSourceForTest("local");
+    svc->setLocalDirForTest(root.string());
+
+    svc->runBurstCycleForTest();
+
+    EXPECT_GT(src_raw->index_lists, 0) << "Bluetooth on must not stop a card from being read";
+    svc->setAppConfig(nullptr);
+}
+
 // ── a transfer cut part way keeps what landed ───────────────────────────────
 //
 // A weak link drops a big transfer part way. The partial file used to be
