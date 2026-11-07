@@ -50,7 +50,7 @@ and shows you the data. It is a fully local-first experience.
 | Philips DreamStation 2 | Coming soon | ✅ after the night | ✅ after the night | ❌ | ❌ | ❌ |
 | Löwenstein Prisma Line, Prisma Smart | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ after the night |
 | Sefam S.Box, SleepBox | ❌ | ❌ | ❌ | Not tested yet | ❌ | ✅ after the night |
-| BMC / React Health Luna | Coming soon | ❌ | ❌ | ✅ after the night | ❌ | ✅ after the night |
+| BMC / React Health Luna | Coming soon | ❌ | ❌ | Not tested yet | ❌ | ✅ after the night |
 
 ✅ live: the charts update during therapy (as each write reaches hms-cpap from
 a Sleep Bridge Lite or over Bluetooth, every 65 seconds from a WiFi SD card).
@@ -70,8 +70,9 @@ On a Luna card you get pressure, leak, respiratory rate and I:E ratio per minute
 machine marks itself (obstructive and clear airway). On a bi-level Luna, IPAP,
 EPAP and pressure support are reported too. There is no flow waveform yet: its
 scale on the card is not known, and a number in the wrong unit is worse than
-none. A Luna is read from a local folder, the upload page, or an ez Share
-card through a Mule & Miner.
+none. A Luna is read from a local folder or the upload page. Reading one
+from an ez Share card through a Mule & Miner is in, but not tested on a real
+Luna yet.
 
 A DreamStation 2 is read over Bluetooth after the night: from this
 computer's own Bluetooth (2 below) or through a Mule & Miner (3 below). You
@@ -421,10 +422,10 @@ your LAN; the wizard can scan for one. To set a bridge up, the
 its boards from Chrome and takes your WiFi details on the same page, nothing
 to install. In `config.json`: `"transport": "ezshare"`, `"ezshare_url":
 "http://192.168.4.1"`, `"ezshare_range": true` (set it false for a card that
-does not resume downloads), and an `archive_dir`. Works with a ResMed card
-and a BMC Luna card (`"format"`: `resmed` or `bmc`); a Luna's files are
-copied as they change. A Sefam S.Box card in an ez Share is not tested yet:
-read a Sefam card from a local folder or the upload page (5 below).
+does not resume downloads), and an `archive_dir`. Works with a ResMed card.
+A BMC Luna card (`"format": "bmc"`) and a Sefam S.Box card (`"format":
+"sefam"`) in an ez Share are not tested yet on a real machine: read those
+cards from a local folder or the upload page (5 below).
 
 **Toshiba FlashAir.** The card joins your home WiFi itself, so no bridge is
 needed. Set it to join your network (`APPMODE=5` in its `SD_WLAN/CONFIG`)

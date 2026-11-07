@@ -56,6 +56,9 @@ opens on the Sleep Bridge.
 
 ### Notes
 - DreamStation 2 nights read over Bluetooth are not sent to SleepHQ yet.
+- Reading a BMC / React Health Luna card over an ez Share (added in 6.0.5) is
+  in, but not tested on a real Luna yet. Until it is, read a Luna card from a
+  local folder or the upload page.
 - Pairing a DreamStation 2 with this computer's Bluetooth has been tested
   against a simulated machine only, on all three systems; pairing with a real
   machine is not proven yet. The Mule & Miner path was checked against reads
