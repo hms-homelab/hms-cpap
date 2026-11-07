@@ -47,6 +47,9 @@ private:
     GateResult  gate_;
     QString     service_exe_;
     QLabel*     step_label_ = nullptr;
+    /// The source step's choice was a Sleep Bridge, which writes nothing to
+    /// the model, so the last page cannot read it from there.
+    bool        sleep_bridge_ = false;
 
     friend class WelcomePage;
     friend class SourcePage;
