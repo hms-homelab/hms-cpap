@@ -616,7 +616,6 @@ public:
                 case wde::DevicePairingResultStatus::RejectedByHandler:
                 case wde::DevicePairingResultStatus::PairingCanceled:
                 case wde::DevicePairingResultStatus::AuthenticationFailure:
-                case wde::DevicePairingResultStatus::RejectedByOtherAuthenticator:
                     r.outcome = PairOutcome::Rejected;
                     r.detail = "Windows pairing status " + std::to_string(static_cast<int>(res->Status()));
                     break;
