@@ -77,6 +77,10 @@ std::vector<std::unique_ptr<CPAPSession>> Ds2NightImport::parseMachine(const std
 Ds2NightImport::Result Ds2NightImport::run(const std::set<std::string>& removed) {
     Result r;
     if (!db_) return r;
+    // SDD-064 D9: never a night before the paired machine's import date
+    // (records from before it are not kept, but a date moved later may leave
+    // some on disk).
+    const long long cutoff = store_.importCutoff();
     for (const auto& serial : store_.serials()) {
         // Session number -> its files' bytes, and the files themselves.
         std::map<uint32_t, uint64_t> sizes;
@@ -102,6 +106,11 @@ Ds2NightImport::Result Ds2NightImport::run(const std::set<std::string>& removed)
             }
             const auto start = *s.session_start;
             if (isRemovedNight(removed, start)) {   // SDD-029
+                ++r.skipped;
+                continue;
+            }
+            if (cutoff > 0 &&
+                std::chrono::duration_cast<std::chrono::seconds>(start.time_since_epoch()).count() < cutoff) {
                 ++r.skipped;
                 continue;
             }

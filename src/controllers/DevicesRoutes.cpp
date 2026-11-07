@@ -125,10 +125,9 @@ Json::Value as11Status() {
 Json::Value ds2Status() {
     auto r = g.burst ? g.burst->getDs2Reader() : nullptr;
     const bool enabled = g.config && g.config->ds2_ble.enabled;
-    ds2api::Schedule sched;
-    sched.read_at = g.config ? g.config->ds2_ble.read_at : "";
-    sched.next_read_at = g.burst ? g.burst->ds2NextReadAt() : 0;
-    return ds2api::status(r.get(), bleCompiled(), enabled, sched).body;
+    ds2api::Trigger trigger;
+    if (g.burst) trigger.sources = g.burst->ds2NightSources();
+    return ds2api::status(r.get(), bleCompiled(), enabled, trigger).body;
 }
 
 Json::Value currentDevices(bool fresh) {

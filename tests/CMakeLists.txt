@@ -142,7 +142,6 @@ set(TEST_SOURCES
     services/test_As11NightImport.cpp
     services/test_Ds2NightImport.cpp
     database/test_Ds2ImportBackends.cpp
-    services/test_Ds2Schedule.cpp
     services/test_As11StrWriter.cpp
     web/test_As11PairingApi.cpp
     web/test_Ds2BleApi.cpp

@@ -120,8 +120,25 @@ void LiveState::sendCounts() {
     send("live_events", compact(v), true);
 }
 
-void LiveState::mask(const MaskChange& c, Clock::time_point detected_at) {
+void LiveState::setMaskHook(MaskHook hook) {
     std::lock_guard<std::mutex> lk(mu_);
+    hook_ = std::move(hook);
+}
+
+void LiveState::mask(const MaskChange& c, Clock::time_point detected_at) {
+    MaskHook hook;
+    bool ended = false;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        const Said before = said_;
+        applyMask(c, detected_at);
+        ended = !c.on && before == Said::On && said_ == Said::Off;
+        hook = hook_;
+    }
+    if (hook) hook(c, ended);
+}
+
+void LiveState::applyMask(const MaskChange& c, Clock::time_point detected_at) {
     if (c.on) {
         on_.insert(c.source_id);
         if (said_ == Said::On) {

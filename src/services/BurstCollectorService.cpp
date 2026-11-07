@@ -25,7 +25,6 @@
 #include "utils/ArchiveRecordCount.h"
 #include "services/OximetryImport.h"
 #include "services/RemovedNights.h"
-#include "services/Ds2Schedule.h"
 #include "services/SefamCardMirror.h"
 #include "services/BmcCardMirror.h"
 #include "database/SQLiteDatabase.h"
@@ -496,15 +495,14 @@ void BurstCollectorService::initDs2Ble() {
     joinDs2Thread();
     std::lock_guard<std::mutex> lk(ds2_mtx_);
     ds2_reader_.reset();
-    ds2_next_read_at_ = 0;
-    ds2_last_check_ = 0;
+    ds2_night_ended_ = false;
     if (!app_config_ || !app_config_->ds2_ble.enabled) return;
 #ifdef WITH_BLE
     ds2_reader_ = std::make_shared<Ds2BleReader>(AppConfig::dataDir(), app_config_->ds2_ble.address);
     // Records a read stored before hms-cpap stopped are nights to import.
     ds2_import_due_ = true;
-    std::cout << "DS2 Bluetooth: Enabled (read daily at " << app_config_->ds2_ble.read_at
-              << " local, never while a mask is on"
+    std::cout << "DS2 Bluetooth: Enabled (read when another source says a night ended, or with Read now;"
+              << " never while a mask is on"
               << (ds2_reader_->paired() ? "" : "; not paired yet: pair it from the Devices page") << ")"
               << std::endl;
 #else
@@ -538,31 +536,43 @@ bool BurstCollectorService::startDs2Read(const char* why) {
     return true;
 }
 
-void BurstCollectorService::ds2Tick(long long now) {
-    if (now - ds2_last_check_ < 60) return;
-    ds2_last_check_ = now;
+void BurstCollectorService::ds2NightEnded(const std::string& source) {
+    {
+        std::lock_guard<std::mutex> lk(ds2_src_mtx_);
+        ds2_ended_by_ = source;
+    }
+    ds2_night_ended_ = true;
+}
+
+std::vector<std::string> BurstCollectorService::ds2NightSources() const {
+    std::set<std::string> s;
+    {
+        std::lock_guard<std::mutex> lk(ds2_src_mtx_);
+        s = ds2_sources_heard_;
+    }
+    if (app_config_ && app_config_->o2ring.enabled) s.insert("o2ring");
+    return {s.begin(), s.end()};
+}
+
+void BurstCollectorService::ds2OnNightEnded() {
+    if (!ds2_night_ended_.exchange(false)) return;
+    std::string by;
+    {
+        std::lock_guard<std::mutex> lk(ds2_src_mtx_);
+        by = ds2_ended_by_;
+    }
     auto reader = getDs2Reader();
-    if (!reader || !app_config_) {
-        ds2_next_read_at_ = 0;
-        return;
-    }
-    const auto st = reader->store().load();
-    if (!st.paired) {
-        ds2_next_read_at_ = 0;
-        return;
-    }
-    ds2sched::Input in;
-    in.now = now;
-    in.read_at = app_config_->ds2_ble.read_at;
-    if (auto it = st.machines.find(st.paired->serial); it != st.machines.end()) {
-        in.last_read_at = it->second.last_read_at;
-        in.last_attempt_at = it->second.last_attempt_at;
-    }
+    if (!reader || !reader->paired()) return;
+    // Another machine (or the ring on its own) may say its night ended while a
+    // mask is still on somewhere: never read during therapy.
     const auto live = liveState();
-    in.mask_on = live && live->maskOn();
-    const auto d = ds2sched::decide(in);
-    ds2_next_read_at_ = d.next_at;
-    if (d.due && !reader->busy()) startDs2Read("the day's read");
+    if (live && live->maskOn()) {
+        std::cout << "DS2 Bluetooth: " << by << " said a night ended, but a mask is on: not reading" << std::endl;
+        return;
+    }
+    if (!startDs2Read(("the night ended (" + by + ")").c_str()))
+        std::cout << "DS2 Bluetooth: " << by << " said a night ended; a read or a pairing is already running"
+                  << std::endl;
 }
 
 Ds2NightImport::Result BurstCollectorService::importDs2Nights() {
@@ -604,6 +614,15 @@ void BurstCollectorService::setLiveState(std::shared_ptr<LiveState> live) {
     // No publish function: the Bluetooth night has only the shared topics.
     as11_live_ = std::make_shared<mule::LivePublisher>(nullptr, device_id_, "");
     as11_live_->setState(live_, LiveState::kAs11Ble);
+    // SDD-064 D5: the device's mask going off is a night's end, whichever
+    // source saw it; it is what starts a DreamStation 2 read.
+    live_->setMaskHook([this](const LiveState::MaskChange& c, bool night_ended) {
+        {
+            std::lock_guard<std::mutex> lk(ds2_src_mtx_);
+            ds2_sources_heard_.insert(c.source);
+        }
+        if (night_ended) ds2NightEnded(c.source);
+    });
 }
 
 std::shared_ptr<LiveState> BurstCollectorService::liveState() const {
@@ -751,6 +770,8 @@ void BurstCollectorService::initAirSense11() {
 }
 
 BurstCollectorService::~BurstCollectorService() {
+    // The live state may outlive this service: its hook must not call into it.
+    if (auto live = liveState()) live->setMaskHook(nullptr);
     stop();
 }
 
@@ -2124,6 +2145,7 @@ bool BurstCollectorService::executeBurstCycle() {
                 std::cout << "O2Ring: Session ended — checking for new files" << std::endl;
                 oximetry_service_->collectAndPublish();
                 o2ring_was_active = false;
+                ds2NightEnded("o2ring");   // SDD-064 D5: the ring's night ended too
             }
             // STATE: Unreachable or was already inactive — no action, wait
         } catch (const std::exception& e) {
@@ -4097,9 +4119,9 @@ void BurstCollectorService::runLoop() {
             // summary the night publishes with.
             if (as11_import_due_.exchange(false)) importAs11Nights();
 
-            // SDD-064: the DreamStation 2's day read, and its nights.
-            ds2Tick(std::chrono::duration_cast<std::chrono::seconds>(
-                        std::chrono::system_clock::now().time_since_epoch()).count());
+            // SDD-064: a night ended somewhere: the DreamStation 2 is read;
+            // and the nights a read stored are imported.
+            ds2OnNightEnded();
             if (ds2_import_due_.exchange(false)) importDs2Nights();
 
             std::this_thread::sleep_for(std::chrono::seconds(1));

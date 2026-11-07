@@ -6,6 +6,7 @@
 
 #include <functional>
 #include <string>
+#include <vector>
 
 namespace hms_cpap::ds2api {
 
@@ -19,7 +20,9 @@ namespace hms_cpap::ds2api {
  *           machine: {name, address, serial, model, firmware, newest_session} | null,
  *           pairing: {state, code, seconds_left, machine_name, error},
  *           last_read: {at, attempt_at, records, error} | null,
- *           read_at, next_read_at}
+ *           import_from, first_read_done,
+ *           trigger: "night_end" | "manual", night_sources: [...]}
+ *   POST   /api/ds2/ble/import-from    {date} -> {ok, import_from}
  *   POST   /api/ds2/ble/pair/start     {ok, state}; 409 while busy
  *   POST   /api/ds2/ble/pair/confirm   {match: bool} -> {ok, state}; 409 when no code waits
  *   POST   /api/ds2/ble/pair/cancel    {ok, state: "cancelled"}
@@ -34,14 +37,17 @@ struct Reply {
     Json::Value body;
 };
 
-/// What the caller adds to the status: the scheduled time of day and the
-/// next automatic read (epoch s, 0 = none).
-struct Schedule {
-    std::string read_at;
-    long long next_read_at = 0;
+/// What starts a read besides "Read now" (SDD-064 D5): another source this
+/// install has saying a night ended. `sources` are the ones that can say it
+/// here (e.g. "sleep_bridge", "o2ring"); none: only "Read now".
+struct Trigger {
+    std::vector<std::string> sources;
 };
 
-Reply status(const Ds2BleReader* r, bool compiled, bool enabled, const Schedule& sched);
+Reply status(const Ds2BleReader* r, bool compiled, bool enabled, const Trigger& trigger);
+/// POST /api/ds2/ble/import-from {date: "YYYY-MM-DD"}: nights from that local
+/// day on are imported (D9). 400 for a bad date, 409 when nothing is paired.
+Reply setImportFrom(Ds2BleReader* r, const Json::Value& body);
 Reply pairStart(Ds2BleReader* r, bool compiled, bool enabled);
 Reply pairConfirm(Ds2BleReader* r, const Json::Value& body);
 Reply pairCancel(Ds2BleReader* r);

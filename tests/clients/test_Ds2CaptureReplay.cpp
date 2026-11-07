@@ -59,7 +59,9 @@ std::string utc(std::chrono::system_clock::time_point t) {
 TEST(Ds2CaptureReplay, ReadThenImport) {
     const char* path = std::getenv("DS2BLE_CAPTURE");
     if (!path) GTEST_SKIP() << "DS2BLE_CAPTURE not set";
-    const long long from = std::getenv("DS2BLE_FROM_SESSION") ? std::atoll(std::getenv("DS2BLE_FROM_SESSION")) : 0;
+    // The first night to import (SDD-064 D9), "YYYY-MM-DD"; earlier records
+    // (a used machine's previous owner) are walked past and never kept.
+    const std::string from = std::getenv("DS2BLE_IMPORT_FROM") ? std::getenv("DS2BLE_IMPORT_FROM") : "1970-01-02";
 
     const fs::path dir = fs::temp_directory_path() /
                          ("ds2_capture_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -78,21 +80,14 @@ TEST(Ds2CaptureReplay, ReadThenImport) {
     ASSERT_TRUE(reader.pairAnswer(true));
     while (reader.busy()) std::this_thread::sleep_for(std::chrono::milliseconds(5));
     ASSERT_TRUE(reader.paired());
+    ASSERT_TRUE(reader.store().setImportFrom(from));
 
     const auto res = reader.read();
     ASSERT_TRUE(res.ok) << res.error;
     std::cout << "  " << res.identity.model << " firmware " << res.identity.firmware << ": " << res.records
-              << " records, newest session " << res.identity.newest_session << std::endl;
+              << " records kept, " << res.walked_past << " walked past (before " << from
+              << "), newest session " << res.identity.newest_session << std::endl;
     EXPECT_GT(res.records, 0);
-
-    // Only the sessions asked for become nights (a used machine holds a
-    // previous owner's): the others' files are removed before the import.
-    if (from > 0) {
-        const fs::path p0 = dir / "ds2" / Ds2Store::safeSerial(res.identity.serial) / "P0";
-        for (const auto& e : fs::directory_iterator(p0))
-            if (std::strtoul(e.path().stem().string().c_str(), nullptr, 16) < static_cast<unsigned long>(from))
-                fs::remove(e.path());
-    }
 
     auto db = std::make_shared<SQLiteDatabase>((dir / "test.db").string());
     ASSERT_TRUE(db->connect());

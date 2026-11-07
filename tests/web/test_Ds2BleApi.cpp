@@ -35,7 +35,7 @@ protected:
         std::error_code ec;
         fs::remove_all(dir_, ec);
     }
-    Json::Value statusBody() { return ds2api::status(r_.get(), true, true, {"10:00", 0}).body; }
+    Json::Value statusBody() { return ds2api::status(r_.get(), true, true, {{"sleep_bridge"}}).body; }
     void waitState(const std::string& s) {
         for (int i = 0; i < 600 && statusBody()["pairing"]["state"].asString() != s; ++i)
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
@@ -45,8 +45,10 @@ protected:
 }  // namespace
 
 TEST_F(Ds2Api, NotCompiledOrDisabled) {
-    auto s = ds2api::status(nullptr, false, false, {"10:00", 0});
+    auto s = ds2api::status(nullptr, false, false, {});
     EXPECT_EQ(s.status, 200);
+    EXPECT_EQ(s.body["trigger"].asString(), "manual");   // no source says a night ended: Read now only
+    EXPECT_TRUE(s.body["night_sources"].empty());
     EXPECT_FALSE(s.body["compiled"].asBool());
     EXPECT_FALSE(s.body["paired"].asBool());
     EXPECT_EQ(s.body["pairing"]["state"].asString(), "idle");
@@ -76,6 +78,26 @@ TEST_F(Ds2Api, PairThroughTheCode) {
     EXPECT_TRUE(st["paired"].asBool());
     EXPECT_EQ(st["machine"]["name"].asString(), "PR BT 0001");
     EXPECT_TRUE(st["last_read"].isNull());
+    EXPECT_EQ(st["trigger"].asString(), "night_end");
+    EXPECT_EQ(st["night_sources"][0].asString(), "sleep_bridge");
+    // D9: the import date defaults to the day of pairing.
+    EXPECT_EQ(st["import_from"].asString(), Ds2Store::localDate(std::time(nullptr)));
+    EXPECT_FALSE(st["first_read_done"].asBool());
+
+    Json::Value bad;
+    bad["date"] = "2030-13-01";
+    EXPECT_EQ(ds2api::setImportFrom(r_.get(), bad).status, 400);
+    Json::Value day;
+    day["date"] = "2030-01-02";
+    auto set = ds2api::setImportFrom(r_.get(), day);
+    EXPECT_EQ(set.status, 200);
+    EXPECT_EQ(statusBody()["import_from"].asString(), "2030-01-02");
+}
+
+TEST_F(Ds2Api, ImportFromNeedsAPairing) {
+    Json::Value day;
+    day["date"] = "2030-01-02";
+    EXPECT_EQ(ds2api::setImportFrom(r_.get(), day).status, 409);
 }
 
 TEST_F(Ds2Api, ReadStartsInTheBackground) {

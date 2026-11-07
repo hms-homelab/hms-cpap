@@ -230,6 +230,43 @@ TEST_F(Ds2Reader, AReadCutShortKeepsWhatItStoredAndResumesAfterIt) {
     EXPECT_TRUE(r->store().load().machines.at("TEST0000000002").last_error.empty());
 }
 
+TEST_F(Ds2Reader, NightsBeforeTheImportDateAreWalkedPastNotKept) {
+    // A used machine: two earlier nights, then one from the day picked.
+    t_->machine->addNight(800, kT0, 3600);
+    t_->machine->addNight(801, kT0 + 86400, 3600);
+    t_->machine->addNight(802, kT0 + 3 * 86400, 3600);
+    auto r = reader();
+    pairOk(*r);
+    // D9: the day of pairing by default.
+    EXPECT_EQ(r->pairedMachine()->import_from, Ds2Store::localDate(std::time(nullptr)));
+    ASSERT_TRUE(r->store().setImportFrom(Ds2Store::localDate(kT0 + 2 * 86400)));
+
+    auto res = r->read();
+    ASSERT_TRUE(res.ok) << res.error;
+    EXPECT_EQ(res.walked_past, 4);   // summary and events of 800 and 801
+    EXPECT_EQ(res.records, 2);
+    EXPECT_EQ(res.sessions, (std::vector<uint32_t>{802}));
+    const fs::path p0 = dir_ / "ds2" / "TEST0000000002" / "P0";
+    EXPECT_FALSE(fs::exists(p0 / "00000320.B01"));
+    EXPECT_FALSE(fs::exists(p0 / "00000321.B02"));
+    EXPECT_TRUE(fs::exists(p0 / "00000322.B01"));
+    // The bookmarks moved past all three: the next read asks for none of them.
+    const auto mc = r->store().load().machines.at("TEST0000000002");
+    EXPECT_EQ(mc.bookmarks.at(1), Machine::bookmarkFor(1, 2));
+    t_->machine->bare_opens = 0;
+    res = r->read();
+    ASSERT_TRUE(res.ok);
+    EXPECT_EQ(res.records + res.walked_past, 0);
+}
+
+TEST_F(Ds2Reader, PairingTheSameMachineAgainKeepsItsImportDate) {
+    auto r = reader();
+    pairOk(*r);
+    ASSERT_TRUE(r->store().setImportFrom("2030-01-05"));
+    pairOk(*r);
+    EXPECT_EQ(r->pairedMachine()->import_from, "2030-01-05");
+}
+
 TEST_F(Ds2Reader, ARefusedSubscriptionMeansTheBondIsGone) {
     auto r = reader();
     pairOk(*r);

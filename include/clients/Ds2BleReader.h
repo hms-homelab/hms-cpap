@@ -94,6 +94,7 @@ public:
                                            // bond_lost, protocol, storage, busy, not_compiled
         cpapdash::ds2ble::Identity identity;
         int records = 0;                   // records stored by this read
+        int walked_past = 0;               // records before import_from: bookmarked, not kept
         std::vector<uint32_t> sessions;    // session numbers with a new summary or events record
     };
     /// One read of every stream from its stored bookmark. Blocks; one at a time.

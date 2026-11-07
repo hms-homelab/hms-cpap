@@ -224,6 +224,35 @@ TEST(LiveState, TheMaskIsOnWhileAnySourceSaysSo) {
     EXPECT_EQ(rec.change()["source"].asString(), "mule_ble");
 }
 
+// SDD-064 D5: the night's end, as a hook, for what waits on it.
+TEST(LiveState, TheHookHearsTheNightEndOnlyWhenTheLastMaskGoesOff) {
+    Recorder rec;
+    LiveState live(rec.publish(), "cpap_test", "Test CPAP", at(kT0));
+    std::vector<std::pair<std::string, bool>> heard;
+    live.setMaskHook([&](const LiveState::MaskChange& c, bool ended) { heard.emplace_back(c.source, ended); });
+    live.mask({LiveState::kSleepBridge, "TAP-1", true, at(kT0), "s"}, at(kT0 + 2));
+    live.mask({LiveState::kMuleBle, "FE-1", true, at(kT0 + 1), ""}, at(kT0 + 3));
+    live.mask({LiveState::kSleepBridge, "TAP-1", false, at(kT0 + 60), "s"}, at(kT0 + 62));
+    live.mask({LiveState::kMuleBle, "FE-1", false, at(kT0 + 70), ""}, at(kT0 + 71));
+    live.mask({LiveState::kMuleBle, "FE-1", false, at(kT0 + 80), ""}, at(kT0 + 81));   // said again
+    ASSERT_EQ(heard.size(), 5u);
+    EXPECT_FALSE(heard[0].second);
+    EXPECT_FALSE(heard[2].second) << "the Mule's mask is still on";
+    EXPECT_TRUE(heard[3].second);
+    EXPECT_EQ(heard[3].first, "mule_ble");
+    EXPECT_FALSE(heard[4].second) << "already off: not a second end";
+}
+
+TEST(LiveState, TheStartupOffIsNotANightsEnd) {
+    Recorder rec;
+    LiveState live(rec.publish(), "cpap_test", "Test CPAP", at(kT0), std::chrono::seconds(10));
+    int ends = 0;
+    live.setMaskHook([&](const LiveState::MaskChange&, bool ended) { ends += ended; });
+    live.tick(at(kT0 + 20));
+    EXPECT_EQ(rec.last("mask"), "OFF");
+    EXPECT_EQ(ends, 0);
+}
+
 TEST(LiveState, ANewSessionWhileOnIsSaidWithItsOwnMoment) {
     Recorder rec;
     LiveState live(rec.publish(), "cpap_test", "Test CPAP", at(kT0));

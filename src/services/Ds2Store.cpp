@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -67,6 +68,7 @@ Ds2Store::State Ds2Store::load() const {
         p.id = j["paired"]["id"].asString();
         p.paired_at = j["paired"]["paired_at"].asInt64();
         p.serial = j["paired"]["serial"].asString();
+        p.import_from = j["paired"]["import_from"].asString();
         st.paired = p;
     }
     const Json::Value& ms = j["machines"];
@@ -109,6 +111,7 @@ bool Ds2Store::save(const State& s) const {
         j["paired"]["id"] = s.paired->id;
         j["paired"]["paired_at"] = static_cast<Json::Int64>(s.paired->paired_at);
         j["paired"]["serial"] = s.paired->serial;
+        j["paired"]["import_from"] = s.paired->import_from;
     }
     j["machines"] = Json::Value(Json::objectValue);
     for (const auto& [serial, m] : s.machines) {
@@ -229,6 +232,48 @@ std::vector<std::string> Ds2Store::serials() const {
         if (e.is_directory()) out.push_back(e.path().filename().string());
     std::sort(out.begin(), out.end());
     return out;
+}
+
+std::optional<long long> Ds2Store::localMidnight(const std::string& ymd) {
+    if (ymd.size() != 10 || ymd[4] != '-' || ymd[7] != '-') return std::nullopt;
+    for (size_t i : {0u, 1u, 2u, 3u, 5u, 6u, 8u, 9u})
+        if (!std::isdigit(static_cast<unsigned char>(ymd[i]))) return std::nullopt;
+    std::tm tm{};
+    tm.tm_year = std::stoi(ymd.substr(0, 4)) - 1900;
+    tm.tm_mon = std::stoi(ymd.substr(5, 2)) - 1;
+    tm.tm_mday = std::stoi(ymd.substr(8, 2));
+    if (tm.tm_mon < 0 || tm.tm_mon > 11 || tm.tm_mday < 1 || tm.tm_mday > 31 || tm.tm_year < 70) return std::nullopt;
+    tm.tm_isdst = -1;
+    const std::time_t t = std::mktime(&tm);
+    if (t == static_cast<std::time_t>(-1)) return std::nullopt;
+    return static_cast<long long>(t);
+}
+
+std::string Ds2Store::localDate(long long epoch) {
+    std::time_t t = static_cast<std::time_t>(epoch);
+    std::tm tm{};
+#ifdef _WIN32
+    localtime_s(&tm, &t);
+#else
+    localtime_r(&t, &tm);
+#endif
+    char b[16];
+    std::strftime(b, sizeof b, "%Y-%m-%d", &tm);
+    return b;
+}
+
+long long Ds2Store::importCutoff() const {
+    const auto st = load();
+    if (!st.paired || st.paired->import_from.empty()) return 0;
+    return localMidnight(st.paired->import_from).value_or(0);
+}
+
+bool Ds2Store::setImportFrom(const std::string& ymd) const {
+    if (!localMidnight(ymd)) return false;
+    auto st = load();
+    if (!st.paired) return false;
+    st.paired->import_from = ymd;
+    return save(st);
 }
 
 ds2::Identity Ds2Store::readIdentity(const std::string& serial) const {

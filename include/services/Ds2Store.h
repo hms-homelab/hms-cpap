@@ -36,7 +36,21 @@ public:
         std::string id;        // the backend's handle when it was paired
         long long paired_at = 0;
         std::string serial;    // learned on its first read; "" until then
+        /// SDD-064 D9: nights from this local day on are imported; older
+        /// records are walked past (their bookmarks advance) and never kept.
+        /// "YYYY-MM-DD"; the day of pairing unless the user picks another.
+        std::string import_from;
     };
+
+    /// "YYYY-MM-DD" -> that local day's midnight (epoch s); nullopt if not a date.
+    static std::optional<long long> localMidnight(const std::string& ymd);
+    /// The local day of an epoch second, "YYYY-MM-DD".
+    static std::string localDate(long long epoch);
+    /// The import_from cutoff of the paired machine (epoch s), 0 = none.
+    long long importCutoff() const;
+    /// Sets the paired machine's import_from. False when nothing is paired
+    /// or the date is not one.
+    bool setImportFrom(const std::string& ymd) const;
 
     /// What is kept per machine serial.
     struct Machine {

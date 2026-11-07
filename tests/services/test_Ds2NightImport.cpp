@@ -112,6 +112,31 @@ TEST_F(Ds2Import, ARemovedNightIsNotPutBack) {
     EXPECT_FALSE(db_->sessionExists(kDevice, *parsed.front()->session_start));
 }
 
+TEST_F(Ds2Import, NoNightBeforeTheImportDate) {
+    store(500, kT0, 3600);
+    store(501, kT0 + 3 * 86400, 1800);
+    Ds2Store st(dir_.string());
+    auto s = st.load();
+    s.paired = Ds2Store::Paired{};
+    s.paired->import_from = Ds2Store::localDate(kT0 + 2 * 86400);
+    ASSERT_TRUE(st.save(s));
+    const auto r = importer().run({});
+    EXPECT_EQ(r.imported, 1);
+    EXPECT_EQ(r.skipped, 1);
+    EXPECT_FALSE(db_->sessionExists(kDevice, system_clock::time_point(seconds(kT0 + 1))));
+}
+
+TEST_F(Ds2Import, LocalDates) {
+    EXPECT_FALSE(Ds2Store::localMidnight("2030-1-01"));
+    EXPECT_FALSE(Ds2Store::localMidnight("2030-00-01"));
+    EXPECT_FALSE(Ds2Store::localMidnight("not a date"));
+    const auto m = Ds2Store::localMidnight("2030-01-02");
+    ASSERT_TRUE(m);
+    EXPECT_EQ(Ds2Store::localDate(*m), "2030-01-02");
+    EXPECT_EQ(Ds2Store::localDate(*m + 86399), "2030-01-02");
+    EXPECT_EQ(Ds2Store::localDate(*m - 1), "2030-01-01");
+}
+
 TEST_F(Ds2Import, AMachineSwitchedOnWithNoMaskIsNoSession) {
     Ds2Store st(dir_.string());
     ds2::Identity id;

@@ -243,6 +243,12 @@ void Ds2BleReader::pairThread() {
             p.name = dev->name;
             p.id = dev->id;
             p.paired_at = nowEpoch();
+            // SDD-064 D9: nights from the day of pairing on, unless the user
+            // picks another day; the same machine paired again keeps its day.
+            p.import_from = st.paired && st.paired->address == p.address && !st.paired->import_from.empty()
+                                ? st.paired->import_from
+                                : Ds2Store::localDate(p.paired_at);
+            p.serial = st.paired && st.paired->address == p.address ? st.paired->serial : "";
             st.paired = p;
             if (!store_.save(st)) {
                 setPair(PairState::Failed, "paired, but the pairing could not be saved");
@@ -358,12 +364,35 @@ Ds2BleReader::ReadResult Ds2BleReader::read() {
     bool storage_failed = false;
     std::string storage_error;
     ds2::SyncSession* session_ptr = nullptr;
+    const long long cutoff = st.paired->import_from.empty()
+                                 ? 0
+                                 : Ds2Store::localMidnight(st.paired->import_from).value_or(0);
     opt.on_record = [&](const ds2::Record& r) {
         if (storage_failed) return;
         const auto& id = session_ptr->identity();
         if (serial.empty()) {
             serial = id.serial;
             store_.writeIdentity(id);
+        }
+        // SDD-064 D9: a session from before import_from (a used machine's
+        // earlier owner, or nights the user did not want) is walked past:
+        // its bookmark advances, its record is never kept.
+        bool keep = true;
+        if (cutoff > 0 && (r.stream == 1 || r.stream == 2)) {
+            try {
+                const auto blocks = ds2::verifyBody(r.body);
+                keep = blocks.empty() || static_cast<long long>(blocks.front().timestamp) >= cutoff;
+            } catch (const std::exception&) {
+                // kept: the parser decides what a damaged record is worth
+            }
+        }
+        if (!keep) {
+            ++res.walked_past;
+            if (!store_.saveBookmark(serial, r.stream, r.bookmark_out)) {
+                storage_failed = true;
+                storage_error = "could not save a bookmark";
+            }
+            return;
         }
         const std::string rel = store_.writeRecord(serial, r);
         if (rel.empty() || !store_.saveBookmark(serial, r.stream, r.bookmark_out)) {
@@ -459,6 +488,7 @@ Ds2BleReader::ReadResult Ds2BleReader::read() {
     res.ok = true;
     res.code = "ok";
     std::cout << kTag << "read " << s.identity().model << ": " << res.records << " new record(s), "
+              << res.walked_past << " before the import date walked past, "
               << res.sessions.size() << " session(s), newest session " << s.identity().newest_session << std::endl;
     return res;
 }

@@ -492,11 +492,15 @@ public:
         return ds2_reader_;
     }
     static bool ds2BleCompiled() { return airSense11BleCompiled(); }
-    /// Epoch s of the next automatic read, 0 = none planned.
-    long long ds2NextReadAt() const { return ds2_next_read_at_.load(); }
+    /// The sources on this install that can say a night ended, which is
+    /// what starts a read (SDD-064 D5). Empty: only "Read now".
+    std::vector<std::string> ds2NightSources() const;
     /// "Read now" from the page: starts the read on its own thread. False
     /// when there is no reader, or a pairing or a read runs.
     bool requestDs2Read();
+    /// A source says the night ended (a mask went off for the device, the
+    /// ring's session ended): the read is started on the worker. Any thread.
+    void ds2NightEnded(const std::string& source);
     /// Test-only: the import as the worker runs it after a read.
     Ds2NightImport::Result importDs2NightsForTest() { return importDs2Nights(); }
 
@@ -505,13 +509,15 @@ private:
     std::shared_ptr<Ds2BleReader> ds2_reader_;
     std::thread ds2_thread_;
     std::atomic<bool> ds2_import_due_{false};
-    std::atomic<long long> ds2_next_read_at_{0};
-    long long ds2_last_check_ = 0;
+    std::atomic<bool> ds2_night_ended_{false};
+    mutable std::mutex ds2_src_mtx_;
+    std::set<std::string> ds2_sources_heard_;   // sources that said a mask on/off this run
+    std::string ds2_ended_by_;
     std::unique_ptr<Ds2NightImport> ds2_import_;
     void initDs2Ble();
-    /// Once a minute on the worker: start the day's read when it is due
-    /// (SDD-064 D5). Worker thread only.
-    void ds2Tick(long long now);
+    /// On the worker: a night ended, so read now unless a mask is on
+    /// (SDD-064 D5). No timer: nothing else starts a read but "Read now".
+    void ds2OnNightEnded();
     /// Starts one read on ds2_thread_. False when one is running.
     bool startDs2Read(const char* why);
     void joinDs2Thread();

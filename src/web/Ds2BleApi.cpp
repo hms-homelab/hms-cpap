@@ -24,16 +24,20 @@ Reply busy() {
 
 }  // namespace
 
-Reply status(const Ds2BleReader* r, bool compiled, bool enabled, const Schedule& sched) {
+Reply status(const Ds2BleReader* r, bool compiled, bool enabled, const Trigger& trigger) {
     Reply out;
     Json::Value& b = out.body;
     b["compiled"] = compiled;
     b["enabled"] = enabled;
     b["backend"] = ble::backendName();
-    b["read_at"] = sched.read_at;
-    b["next_read_at"] = static_cast<Json::Int64>(sched.next_read_at);
+    b["trigger"] = trigger.sources.empty() ? "manual" : "night_end";
+    Json::Value srcs(Json::arrayValue);
+    for (const auto& s : trigger.sources) srcs.append(s);
+    b["night_sources"] = srcs;
     b["machine"] = Json::nullValue;
     b["last_read"] = Json::nullValue;
+    b["import_from"] = "";
+    b["first_read_done"] = false;
     Json::Value pairing(Json::objectValue);
     pairing["state"] = "idle";
     pairing["code"] = "";
@@ -68,6 +72,8 @@ Reply status(const Ds2BleReader* r, bool compiled, bool enabled, const Schedule&
         m["firmware"] = it != st.machines.end() ? it->second.firmware : "";
         m["newest_session"] = it != st.machines.end() ? it->second.newest_session : 0u;
         b["machine"] = m;
+        b["import_from"] = st.paired->import_from;
+        b["first_read_done"] = it != st.machines.end() && it->second.last_read_at > 0;
         if (it != st.machines.end() && it->second.last_attempt_at > 0) {
             Json::Value lr(Json::objectValue);
             lr["at"] = static_cast<Json::Int64>(it->second.last_read_at);
@@ -130,6 +136,26 @@ Reply read(Ds2BleReader* r, bool compiled, bool enabled, const std::function<boo
     out.status = 202;
     out.body["ok"] = true;
     out.body["result"] = "reading";
+    return out;
+}
+
+Reply setImportFrom(Ds2BleReader* r, const Json::Value& body) {
+    Reply out;
+    const std::string date = body.isObject() && body["date"].isString() ? body["date"].asString() : "";
+    if (!Ds2Store::localMidnight(date)) {
+        out.status = 400;
+        out.body["ok"] = false;
+        out.body["result"] = "bad_date";
+        return out;
+    }
+    if (!r || !r->paired() || !r->store().setImportFrom(date)) {
+        out.status = 409;
+        out.body["ok"] = false;
+        out.body["result"] = "not_paired";
+        return out;
+    }
+    out.body["ok"] = true;
+    out.body["import_from"] = date;
     return out;
 }
 
