@@ -12,6 +12,8 @@
 #include "clients/IAirSense11Pairing.h"
 #include "services/As11NightImport.h"
 #include "services/As11NightWriter.h"
+#include "clients/Ds2BleReader.h"
+#include "services/Ds2NightImport.h"
 #include "services/OximetryImport.h"
 #include "services/OximetryService.h"
 #include "services/PrismaIngestion.h"
@@ -479,6 +481,42 @@ private:
     /// Import every Bluetooth night not yet stored (or grown) and publish the
     /// newest the way a card night is published. Worker thread only.
     As11NightImport::Result importAs11Nights();
+
+public:
+    // ── SDD-064: a DreamStation 2 read over this host's Bluetooth ──────
+
+    /// The reader, for the Devices page; null unless ds2_ble is on in a
+    /// Bluetooth build.
+    std::shared_ptr<Ds2BleReader> getDs2Reader() const {
+        std::lock_guard<std::mutex> lk(ds2_mtx_);
+        return ds2_reader_;
+    }
+    static bool ds2BleCompiled() { return airSense11BleCompiled(); }
+    /// Epoch s of the next automatic read, 0 = none planned.
+    long long ds2NextReadAt() const { return ds2_next_read_at_.load(); }
+    /// "Read now" from the page: starts the read on its own thread. False
+    /// when there is no reader, or a pairing or a read runs.
+    bool requestDs2Read();
+    /// Test-only: the import as the worker runs it after a read.
+    Ds2NightImport::Result importDs2NightsForTest() { return importDs2Nights(); }
+
+private:
+    mutable std::mutex ds2_mtx_;
+    std::shared_ptr<Ds2BleReader> ds2_reader_;
+    std::thread ds2_thread_;
+    std::atomic<bool> ds2_import_due_{false};
+    std::atomic<long long> ds2_next_read_at_{0};
+    long long ds2_last_check_ = 0;
+    std::unique_ptr<Ds2NightImport> ds2_import_;
+    void initDs2Ble();
+    /// Once a minute on the worker: start the day's read when it is due
+    /// (SDD-064 D5). Worker thread only.
+    void ds2Tick(long long now);
+    /// Starts one read on ds2_thread_. False when one is running.
+    bool startDs2Read(const char* why);
+    void joinDs2Thread();
+    /// Saves the nights the reads stored and publishes the newest. Worker only.
+    Ds2NightImport::Result importDs2Nights();
 
     // Worker thread
     std::thread worker_thread_;
@@ -1065,6 +1103,8 @@ private:
         int airsense11_pull_hours = 6;
         bool airsense11_ble_enabled = false;
         std::string airsense11_ble_address;
+        bool ds2_ble_enabled = false;
+        std::string ds2_ble_address;
     };
     ConfigSnapshot last_config_;
 

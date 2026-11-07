@@ -12,6 +12,8 @@
 #include "utils/FileLogger.h"
 #include "utils/LogTail.h"
 #include "web/As11PairingApi.h"
+#include "web/Ds2BleApi.h"
+#include "services/Ds2Schedule.h"
 #include <drogon/MultiPart.h>
 #include <atomic>
 #include <deque>
@@ -474,6 +476,14 @@ void CpapController::updateConfig(const drogon::HttpRequestPtr& req,
         auto& b = j["airsense11_ble"];
         if (b.isMember("enabled")) config_->airsense11_ble.enabled = b["enabled"].asBool();
         if (b.isMember("address")) config_->airsense11_ble.address = b["address"].asString();
+    }
+
+    if (j.isMember("ds2_ble")) {   // SDD-064
+        auto& b = j["ds2_ble"];
+        if (b.isMember("enabled")) config_->ds2_ble.enabled = b["enabled"].asBool();
+        if (b.isMember("address")) config_->ds2_ble.address = b["address"].asString();
+        if (b.isMember("read_at") && hms_cpap::ds2sched::parseTimeOfDay(b["read_at"].asString()))
+            config_->ds2_ble.read_at = b["read_at"].asString();
     }
 
     if (j.isMember("agent")) {
@@ -1161,6 +1171,63 @@ void CpapController::as11PairCancel(const drogon::HttpRequestPtr&,
                                     std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
     auto p = burst_service_ ? burst_service_->getAirSense11Pairing() : nullptr;
     cb(as11Resp(hms_cpap::as11api::cancel(p.get())));
+}
+
+// ── SDD-064: a DreamStation 2 over this host's Bluetooth ──
+
+namespace {
+
+drogon::HttpResponsePtr ds2Resp(const hms_cpap::ds2api::Reply& r) {
+    auto resp = jsonResp(r.body);
+    resp->setStatusCode(static_cast<drogon::HttpStatusCode>(r.status));
+    return resp;
+}
+
+} // namespace
+
+void CpapController::ds2BleStatus(const drogon::HttpRequestPtr&,
+                                  std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    auto r = burst_service_ ? burst_service_->getDs2Reader() : nullptr;
+    const bool enabled = config_ && config_->ds2_ble.enabled;
+    hms_cpap::ds2api::Schedule sched;
+    sched.read_at = config_ ? config_->ds2_ble.read_at : "";
+    sched.next_read_at = burst_service_ ? burst_service_->ds2NextReadAt() : 0;
+    cb(ds2Resp(hms_cpap::ds2api::status(r.get(), BurstCollectorService::ds2BleCompiled(), enabled, sched)));
+}
+
+void CpapController::ds2PairStart(const drogon::HttpRequestPtr&,
+                                  std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    auto r = burst_service_ ? burst_service_->getDs2Reader() : nullptr;
+    const bool enabled = config_ && config_->ds2_ble.enabled;
+    cb(ds2Resp(hms_cpap::ds2api::pairStart(r.get(), BurstCollectorService::ds2BleCompiled(), enabled)));
+}
+
+void CpapController::ds2PairConfirm(const drogon::HttpRequestPtr& req,
+                                    std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    auto r = burst_service_ ? burst_service_->getDs2Reader() : nullptr;
+    auto body = req->getJsonObject();
+    cb(ds2Resp(hms_cpap::ds2api::pairConfirm(r.get(), body ? *body : Json::Value())));
+}
+
+void CpapController::ds2PairCancel(const drogon::HttpRequestPtr&,
+                                   std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    auto r = burst_service_ ? burst_service_->getDs2Reader() : nullptr;
+    cb(ds2Resp(hms_cpap::ds2api::pairCancel(r.get())));
+}
+
+void CpapController::ds2Read(const drogon::HttpRequestPtr&,
+                             std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    auto r = burst_service_ ? burst_service_->getDs2Reader() : nullptr;
+    const bool enabled = config_ && config_->ds2_ble.enabled;
+    auto* svc = burst_service_;
+    cb(ds2Resp(hms_cpap::ds2api::read(r.get(), BurstCollectorService::ds2BleCompiled(), enabled,
+                                      [svc] { return svc && svc->requestDs2Read(); })));
+}
+
+void CpapController::ds2Forget(const drogon::HttpRequestPtr&,
+                               std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    auto r = burst_service_ ? burst_service_->getDs2Reader() : nullptr;
+    cb(ds2Resp(hms_cpap::ds2api::forget(r.get())));
 }
 
 void CpapController::myairCompare(const drogon::HttpRequestPtr& req,

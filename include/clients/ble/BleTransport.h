@@ -125,6 +125,33 @@ struct DiscoverResult {
     std::string error;
 };
 
+/// SDD-064: an OS bond, made by LE Secure Connections numeric comparison.
+/// Only the DreamStation 2 asks for one; the AirSense 11 and the rings never
+/// call pair() (SDD-063 D4 stands for them).
+enum class PairOutcome {
+    Paired,        // bonded now
+    Rejected,      // the user said the codes differ, or the device refused
+    TimedOut,      // nobody answered in time, or the device never asked
+    Failed,        // anything else; detail says what
+    Unsupported,   // this backend cannot pair
+};
+
+struct PairResult {
+    PairOutcome outcome = PairOutcome::Failed;
+    std::string detail;
+};
+
+struct PairHandlers {
+    /// The OS asks whether these six digits match the ones on the device.
+    /// Called on the backend's thread; it blocks until the user answers and
+    /// returns their answer (false when they did not answer in time). Never
+    /// called where the OS asks the user itself (osShowsPairingCode()).
+    std::function<bool(const std::string& code)> confirm;
+    /// Where the OS shows its own pairing window (macOS): called each time
+    /// the device asked for a bond and the OS is asking the user now.
+    std::function<void()> os_prompt;
+};
+
 class ITransport {
 public:
     virtual ~ITransport() = default;
@@ -146,6 +173,23 @@ public:
     /// Drops the OS's cached object for a device, so the next scan sees it as
     /// it advertises now. False when there is nothing to drop.
     virtual bool forget(const Device&) { return false; }
+
+    // ── SDD-064: OS bonding, for a device that requires it ──────────────
+
+    /// The OS shows the comparison code to the user itself (macOS): pair()
+    /// then never calls confirm, and the page tells the user to look for the
+    /// system's window.
+    virtual bool osShowsPairingCode() const { return false; }
+    /// Bonds with the device by numeric comparison, within timeout_ms. `spec`
+    /// is the characteristic the device protects: where the OS pairs only on
+    /// demand (macOS), subscribing to it is what makes the OS ask.
+    virtual PairResult pair(const Device&, const GattSpec&, PairHandlers, int /*timeout_ms*/) {
+        return {PairOutcome::Unsupported, std::string("pairing is not supported by ") + backend()};
+    }
+    /// The OS holds a bond with this device. nullopt: the OS does not say.
+    virtual std::optional<bool> bonded(const Device&) { return std::nullopt; }
+    /// Removes the OS's bond. False when it could not, or the OS has no way.
+    virtual bool unpair(const Device&) { return false; }
 };
 
 /// This build has a Bluetooth backend (BUILD_WITH_BLE).

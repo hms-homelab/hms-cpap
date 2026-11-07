@@ -348,6 +348,143 @@ public:
         return bluez::forgetDevice(*conn_, adapter_path_, device.id);
     }
 
+    // ── SDD-064: an OS bond by numeric comparison (the DreamStation 2) ──
+    //
+    // BlueZ asks the agent of the D-Bus client that called Device1.Pair, so
+    // hms-cpap registers its own org.bluez.Agent1 (DisplayYesNo) on a second
+    // connection, calls Pair from that same connection, and answers
+    // RequestConfirmation with what the user said about the six digits. The
+    // agent lives only for the length of the pairing.
+    PairResult pair(const Device& device, const GattSpec&, PairHandlers h, int timeout_ms) override {
+        PairResult r;
+        if (!available()) {
+            r.detail = "no Bluetooth adapter";
+            return r;
+        }
+        if (bonded(device).value_or(false)) {
+            r.outcome = PairOutcome::Paired;
+            r.detail = "BlueZ already holds a bond with it";
+            return r;
+        }
+        const sdbus::ObjectPath agent_path{"/org/hmscpap/ds2agent"};
+        const sdbus::Error::Name rejected{"org.bluez.Error.Rejected"};
+        std::unique_ptr<sdbus::IConnection> aconn;
+        std::unique_ptr<sdbus::IObject> agent;
+        std::atomic<bool> asked{false};
+        try {
+            aconn = sdbus::createSystemBusConnection();
+            agent = sdbus::createObject(*aconn, agent_path);
+            agent->addVTable(
+                    sdbus::registerMethod("Release").implementedAs([] {}),
+                    sdbus::registerMethod("Cancel").implementedAs([] {}),
+                    sdbus::registerMethod("RequestConfirmation")
+                        .implementedAs([&](const sdbus::ObjectPath&, uint32_t passkey) {
+                            asked = true;
+                            char code[16];
+                            std::snprintf(code, sizeof code, "%06u", passkey);
+                            if (!(h.confirm && h.confirm(code)))
+                                throw sdbus::Error(rejected, "the codes do not match");
+                        }),
+                    // Anything but numeric comparison is not what this device
+                    // does: refused.
+                    sdbus::registerMethod("RequestAuthorization").implementedAs([&](const sdbus::ObjectPath&) {
+                        throw sdbus::Error(rejected, "only numeric comparison is accepted");
+                    }),
+                    sdbus::registerMethod("RequestPinCode").implementedAs([&](const sdbus::ObjectPath&) -> std::string {
+                        throw sdbus::Error(rejected, "only numeric comparison is accepted");
+                    }),
+                    sdbus::registerMethod("RequestPasskey").implementedAs([&](const sdbus::ObjectPath&) -> uint32_t {
+                        throw sdbus::Error(rejected, "only numeric comparison is accepted");
+                    }),
+                    sdbus::registerMethod("DisplayPasskey").implementedAs([](const sdbus::ObjectPath&, uint32_t, uint16_t) {}),
+                    sdbus::registerMethod("DisplayPinCode").implementedAs([](const sdbus::ObjectPath&, const std::string&) {}),
+                    sdbus::registerMethod("AuthorizeService").implementedAs([&](const sdbus::ObjectPath&, const std::string&) {
+                        throw sdbus::Error(rejected, "not asked for");
+                    }))
+                .forInterface("org.bluez.Agent1");
+            aconn->enterEventLoopAsync();
+        } catch (const std::exception& e) {
+            r.detail = std::string("could not make a pairing agent: ") + e.what();
+            return r;
+        }
+
+        auto manager = sdbus::createProxy(*aconn, kBlueZ, sdbus::ObjectPath{"/org/bluez"});
+        bool registered = false;
+        try {
+            manager->callMethod("RegisterAgent")
+                .onInterface("org.bluez.AgentManager1")
+                .withTimeout(bluez::kCallTimeout)
+                .withArguments(agent_path, std::string("DisplayYesNo"));
+            registered = true;
+            auto dev = sdbus::createProxy(*aconn, kBlueZ, sdbus::ObjectPath{device.id});
+            dev->callMethod("Pair")
+                .onInterface(kDevice1)
+                .withTimeout(std::chrono::milliseconds(timeout_ms));
+            r.outcome = PairOutcome::Paired;
+        } catch (const sdbus::Error& e) {
+            const std::string name = e.getName();
+            r.detail = name + ": " + e.getMessage();
+            if (name == "org.bluez.Error.AlreadyExists") {
+                r.outcome = PairOutcome::Paired;
+                r.detail.clear();
+            } else if (name == "org.bluez.Error.AuthenticationRejected" ||
+                       name == "org.bluez.Error.AuthenticationCanceled" ||
+                       name == "org.bluez.Error.AuthenticationFailed") {
+                r.outcome = PairOutcome::Rejected;
+            } else if (name == "org.bluez.Error.AuthenticationTimeout" || bluez::timedOut(e)) {
+                r.outcome = PairOutcome::TimedOut;
+                if (!asked) r.detail = "the machine never asked to pair (" + r.detail + ")";
+            } else {
+                r.outcome = PairOutcome::Failed;
+            }
+        } catch (const std::exception& e) {
+            r.detail = e.what();
+        }
+        if (registered) {
+            try {
+                manager->callMethod("UnregisterAgent")
+                    .onInterface("org.bluez.AgentManager1")
+                    .withTimeout(bluez::kCallTimeout)
+                    .withArguments(agent_path);
+            } catch (...) {}
+        }
+        try { aconn->leaveEventLoop(); } catch (...) {}
+        agent.reset();
+
+        if (r.outcome == PairOutcome::Paired) {
+            // Trusted, so BlueZ lets the bonded machine back in on its own.
+            try {
+                auto dev = sdbus::createProxy(*conn_, kBlueZ, sdbus::ObjectPath{device.id});
+                dev->callMethod("Set")
+                    .onInterface(kProps)
+                    .withTimeout(bluez::kCallTimeout)
+                    .withArguments(std::string(kDevice1), std::string("Trusted"), sdbus::Variant{true});
+            } catch (...) {}
+        } else {
+            std::cerr << tag_ << "pairing: " << r.detail << std::endl;
+        }
+        return r;
+    }
+
+    std::optional<bool> bonded(const Device& device) override {
+        if (!available()) return std::nullopt;
+        try {
+            auto dev = sdbus::createProxy(*conn_, kBlueZ, sdbus::ObjectPath{device.id});
+            sdbus::Variant v;
+            dev->callMethod("Get")
+                .onInterface(kProps)
+                .withTimeout(bluez::kCallTimeout)
+                .withArguments(std::string(kDevice1), std::string("Paired"))
+                .storeResultsTo(v);
+            return v.get<bool>();
+        } catch (...) {
+            return std::nullopt;
+        }
+    }
+
+    /// RemoveDevice drops the object and its bond together.
+    bool unpair(const Device& device) override { return forget(device); }
+
 private:
     Objects objects() {
         auto proxy = sdbus::createProxy(*conn_, kBlueZ, kRoot);

@@ -280,6 +280,43 @@ TEST(Devices, TheAirSense11OverBluetooth) {
     EXPECT_EQ((*find(out, "as11_ble"))["present"].asString(), "no");
 }
 
+// SDD-064: read after the night, so never "recording" from here.
+TEST(Devices, TheDreamStation2OverBluetooth) {
+    DevicesStore store("");
+    auto in = none();
+    in.ds2_enabled  = true;
+    in.ble_compiled = false;
+    auto out = buildDevices(in, store);
+    const auto* d = find(out, "ds2_ble");
+    ASSERT_TRUE(d);
+    EXPECT_TRUE((*d)["detail"]["not_compiled"].asBool());
+    EXPECT_EQ((*d)["id"].asString(), "ds2");
+    EXPECT_EQ((*d)["default_name"].asString(), "DreamStation 2");
+
+    in.ble_compiled = true;
+    in.ds2 = parse(R"({"paired":true,"machine":{"name":"PR BT 0001","serial":"TEST0000000002","model":"520X110C",
+                        "firmware":"V1"},"last_read":{"at":)" + std::to_string(kNow - 3600) +
+                   R"(,"attempt_at":)" + std::to_string(kNow - 3600) + R"(,"records":2,"error":""}})");
+    out = buildDevices(in, store);
+    d = find(out, "ds2_ble");
+    EXPECT_EQ((*d)["present"].asString(), "yes");
+    EXPECT_EQ((*d)["recording"].asString(), "unknown");
+    EXPECT_EQ((*d)["version"].asString(), "V1");
+    EXPECT_EQ((*d)["last_heard"].asInt64(), kNow - 3600);
+
+    // Tried, never finished: away.
+    in.ds2 = parse(R"({"paired":true,"last_read":{"at":0,"attempt_at":)" + std::to_string(kNow - 60) +
+                   R"(,"records":0,"error":"no answer"}})");
+    out = buildDevices(in, store);
+    EXPECT_EQ((*find(out, "ds2_ble"))["present"].asString(), "no");
+
+    // Paired, never read: unknown.
+    in.ds2 = parse(R"({"paired":true,"last_read":null})");
+    out = buildDevices(in, store);
+    EXPECT_EQ((*find(out, "ds2_ble"))["present"].asString(), "unknown");
+    EXPECT_TRUE(knownKind("ds2_ble"));
+}
+
 TEST(Devices, OrderIsHereFirstThenLastHeardThenNeverHeard) {
     DevicesStore store("");
     auto in = none();

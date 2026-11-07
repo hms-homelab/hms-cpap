@@ -3,9 +3,11 @@
 // it. Kept to this one file, with nothing of the web server's included, so
 // the WinRT headers meet no other headers' macros.
 //
-// No OS pairing: the AirSense 11 pairs at the application level (the code on
-// its screen) and the rings ask for no link security, so this never calls the
-// pairing API and Windows never shows a pairing prompt.
+// No OS pairing for the AirSense 11 (it pairs at the application level, the
+// code on its screen) or the rings (no link security). The one device that
+// needs an OS bond, the DreamStation 2 (SDD-064 D3), pairs through pair():
+// custom pairing by numeric comparison, the code handed to the page and the
+// user's answer handed back, so Windows shows no prompt of its own.
 #if defined(HMS_BLE_WINRT)
 
 #ifndef NOMINMAX
@@ -20,6 +22,7 @@
 #include <winrt/Windows.Devices.Bluetooth.Advertisement.h>
 #include <winrt/Windows.Devices.Bluetooth.GenericAttributeProfile.h>
 #include <winrt/Windows.Devices.Bluetooth.h>
+#include <winrt/Windows.Devices.Enumeration.h>
 #include <winrt/Windows.Devices.Radios.h>
 #include <winrt/Windows.Foundation.Collections.h>
 #include <winrt/Windows.Foundation.h>
@@ -49,6 +52,7 @@ namespace wb = winrt::Windows::Devices::Bluetooth;
 namespace wa = winrt::Windows::Devices::Bluetooth::Advertisement;
 namespace wg = winrt::Windows::Devices::Bluetooth::GenericAttributeProfile;
 namespace wr = winrt::Windows::Devices::Radios;
+namespace wde = winrt::Windows::Devices::Enumeration;
 namespace ws = winrt::Windows::Storage::Streams;
 
 constexpr auto kCallWait = std::chrono::seconds(5);      // a write, notifications on
@@ -563,7 +567,114 @@ public:
         }
     }
 
+    // ── SDD-064: an OS bond by numeric comparison (the DreamStation 2) ──
+
+    PairResult pair(const Device& device, const GattSpec&, PairHandlers h, int timeout_ms) override {
+        apartment();
+        PairResult r;
+        try {
+            auto dev = open(device, kConnectWait);
+            if (!dev) {
+                r.detail = "the device could not be opened";
+                return r;
+            }
+            auto pairing = dev->DeviceInformation().Pairing();
+            if (pairing.IsPaired()) {
+                dev->Close();
+                r.outcome = PairOutcome::Paired;
+                r.detail = "Windows already holds a bond with it";
+                return r;
+            }
+            auto custom = pairing.Custom();
+            std::atomic<bool> asked{false};
+            auto token = custom.PairingRequested(
+                [&](const wde::DeviceInformationCustomPairing&, const wde::DevicePairingRequestedEventArgs& args) {
+                    asked = true;
+                    // Numeric comparison only: anything else is not what this
+                    // machine does, and is left unanswered (the pairing fails).
+                    if (args.PairingKind() != wde::DevicePairingKinds::ConfirmPinMatch) return;
+                    auto deferral = args.GetDeferral();
+                    const bool yes = h.confirm && h.confirm(text(args.Pin()));
+                    if (yes) args.Accept();
+                    deferral.Complete();
+                });
+            auto res = within(custom.PairAsync(wde::DevicePairingKinds::ConfirmPinMatch,
+                                               wde::DevicePairingProtectionLevel::EncryptionAndAuthentication),
+                              std::chrono::milliseconds(timeout_ms));
+            custom.PairingRequested(token);
+            dev->Close();
+            if (!res) {
+                r.outcome = PairOutcome::TimedOut;
+                r.detail = asked ? "the pairing did not finish in time" : "the machine never asked to pair";
+                return r;
+            }
+            switch (res->Status()) {
+                case wde::DevicePairingResultStatus::Paired:
+                case wde::DevicePairingResultStatus::AlreadyPaired:
+                    r.outcome = PairOutcome::Paired;
+                    break;
+                case wde::DevicePairingResultStatus::RejectedByHandler:
+                case wde::DevicePairingResultStatus::PairingCanceled:
+                case wde::DevicePairingResultStatus::AuthenticationFailure:
+                case wde::DevicePairingResultStatus::RejectedByOtherAuthenticator:
+                    r.outcome = PairOutcome::Rejected;
+                    r.detail = "Windows pairing status " + std::to_string(static_cast<int>(res->Status()));
+                    break;
+                case wde::DevicePairingResultStatus::AuthenticationTimeout:
+                    r.outcome = PairOutcome::TimedOut;
+                    r.detail = "the machine's pairing window closed";
+                    break;
+                default:
+                    r.outcome = PairOutcome::Failed;
+                    r.detail = "Windows pairing status " + std::to_string(static_cast<int>(res->Status()));
+                    break;
+            }
+        } catch (const winrt::hresult_error& e) {
+            r.outcome = PairOutcome::Failed;
+            r.detail = why(e);
+        }
+        if (r.outcome != PairOutcome::Paired) std::cerr << tag_ << "pairing: " << r.detail << std::endl;
+        return r;
+    }
+
+    std::optional<bool> bonded(const Device& device) override {
+        apartment();
+        try {
+            auto dev = open(device, std::chrono::milliseconds(3000));
+            if (!dev) return std::nullopt;
+            const bool paired = dev->DeviceInformation().Pairing().IsPaired();
+            dev->Close();
+            return paired;
+        } catch (...) {
+            return std::nullopt;
+        }
+    }
+
+    bool unpair(const Device& device) override {
+        apartment();
+        try {
+            auto dev = open(device, kConnectWait);
+            if (!dev) return false;
+            auto res = within(dev->DeviceInformation().Pairing().UnpairAsync(), std::chrono::milliseconds(10000));
+            dev->Close();
+            return res && (res->Status() == wde::DeviceUnpairingResultStatus::Unpaired ||
+                           res->Status() == wde::DeviceUnpairingResultStatus::AlreadyUnpaired);
+        } catch (...) {
+            return false;
+        }
+    }
+
 private:
+    std::optional<wb::BluetoothLEDevice> open(const Device& device, std::chrono::milliseconds wait) {
+        const auto addr = addressOf(device.id);
+        if (!addr) return std::nullopt;
+        const auto type = typeOf(device.id).value_or(((*addr >> 46) & 0x3) == 0x3 ? wb::BluetoothAddressType::Random
+                                                                                   : wb::BluetoothAddressType::Public);
+        auto dev = within(wb::BluetoothLEDevice::FromBluetoothAddressAsync(*addr, type), wait);
+        if (!dev || !*dev) return std::nullopt;
+        return *dev;
+    }
+
     // The name Windows holds for an address (its device cache, filled by the
     // system's own scans), "" when it has none. Opening the device object does
     // not connect to it.

@@ -64,7 +64,7 @@ void trimCommands(Json::Value& detail) {
 
 bool knownKind(const std::string& kind) {
     return kind == "mule" || kind == "sleepbridge" || kind == "o2ring" || kind == "ezshare" || kind == "flashair" ||
-           kind == "as11_ble";
+           kind == "as11_ble" || kind == "ds2_ble";
 }
 
 bool forgettableKind(const std::string& kind) { return kind == "mule" || kind == "sleepbridge"; }
@@ -222,6 +222,31 @@ Json::Value buildDevices(const DeviceInputs& in, DevicesStore& store) {
             } else {
                 ledgerRecording(d, in.ledger_live);
             }
+        }
+        d["detail"] = detail;
+        list.push_back(d);
+    }
+
+    // ── SDD-064: a DreamStation 2 over this host's own Bluetooth ──
+    if (in.ds2_enabled) {
+        Json::Value d = entry("ds2_ble", in.ds2_address.empty() ? "ds2" : in.ds2_address, "DreamStation 2");
+        Json::Value detail = in.ds2.isObject() ? in.ds2 : Json::Value(Json::objectValue);
+        detail["address"] = in.ds2_address;
+        if (!in.ble_compiled) {
+            detail["not_compiled"] = true;
+        } else {
+            const Json::Value& lr = detail["last_read"];
+            const long long read_at = lr.isObject() ? lr.get("at", 0).asInt64() : 0;
+            const long long tried = lr.isObject() ? lr.get("attempt_at", 0).asInt64() : 0;
+            // Heard from when its last read finished; there is no link between reads.
+            if (read_at > 0 && in.now - read_at < 36 * 3600) d["present"] = "yes";
+            else if (tried > 0) d["present"] = "no";
+            d["last_heard"] = static_cast<Json::Int64>(read_at);
+            const Json::Value& m = detail["machine"];
+            if (m.isObject() && !m["firmware"].asString().empty()) d["version"] = m["firmware"].asString();
+            // Read after the night only: the machine's recording is never seen from here.
+            d["recording"] = "unknown";
+            d["recording_reason"] = "read after the night, never during it";
         }
         d["detail"] = detail;
         list.push_back(d);
