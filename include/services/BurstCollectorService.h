@@ -507,6 +507,19 @@ public:
     void ds2NightEnded(const std::string& source);
     /// Test-only: the import as the worker runs it after a read.
     Ds2NightImport::Result importDs2NightsForTest() { return importDs2Nights(); }
+    /// SDD-065: also told when a night ended and no mask is on (on the
+    /// worker), e.g. to read a DreamStation 2 through a Mule & Miner.
+    void addDs2NightListener(std::function<void(const std::string& by)> listener) {
+        std::lock_guard<std::mutex> lk(ds2_src_mtx_);
+        ds2_night_listeners_.push_back(std::move(listener));
+    }
+    /// Before a listener's owner goes (the worker may still be running).
+    void clearDs2NightListeners() {
+        std::lock_guard<std::mutex> lk(ds2_src_mtx_);
+        ds2_night_listeners_.clear();
+    }
+    /// SDD-065: records were stored by another reader: import them on the worker.
+    void ds2ImportDue() { ds2_import_due_ = true; }
 
 private:
     mutable std::mutex ds2_mtx_;
@@ -517,6 +530,7 @@ private:
     mutable std::mutex ds2_src_mtx_;
     std::set<std::string> ds2_sources_heard_;   // sources that said a mask on/off this run
     std::string ds2_ended_by_;
+    std::vector<std::function<void(const std::string&)>> ds2_night_listeners_;
     std::unique_ptr<Ds2NightImport> ds2_import_;
     void initDs2Ble();
     /// On the worker: a night ended, so read now unless a mask is on

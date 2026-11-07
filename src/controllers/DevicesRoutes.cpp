@@ -3,6 +3,7 @@
 
 #include "clients/As11Session.h"
 #include "devices/Devices.h"
+#include "mule/MuleDs2.h"
 #include "mule/MuleFirmware.h"
 #include "mule/MuleService.h"
 #include "services/BurstCollectorService.h"
@@ -135,6 +136,13 @@ Json::Value currentDevices(bool fresh) {
     in.stream_port = g.stream_port;
     if (g.mule) {
         in.mule = g.mule->status();
+        // SDD-065: what this host keeps for a unit's DreamStation 2 (the
+        // import day, the last read), beside what the unit reports.
+        if (g.mule_ds2)
+            for (auto& u : in.mule["units"]) {
+                const Json::Value& seen = u;   // read without adding keys
+                if (seen["state"]["ds2"].isObject()) u["ds2_local"] = g.mule_ds2->view(seen["serial"].asString());
+            }
         if (g.updater)
             for (const auto& u : in.mule["units"]) {
                 const std::string s = u["serial"].asString();

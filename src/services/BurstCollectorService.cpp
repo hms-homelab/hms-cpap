@@ -602,12 +602,14 @@ void BurstCollectorService::ds2DailyCheck(long long now) {
 void BurstCollectorService::ds2OnNightEnded() {
     if (!ds2_night_ended_.exchange(false)) return;
     std::string by;
+    std::vector<std::function<void(const std::string&)>> listeners;
     {
         std::lock_guard<std::mutex> lk(ds2_src_mtx_);
-        by = ds2_ended_by_;
+        by        = ds2_ended_by_;
+        listeners = ds2_night_listeners_;
     }
     auto reader = getDs2Reader();
-    if (!reader || !reader->paired()) return;
+    if ((!reader || !reader->paired()) && listeners.empty()) return;
     // Another machine (or the ring on its own) may say its night ended while a
     // mask is still on somewhere: never read during therapy.
     const auto live = liveState();
@@ -615,6 +617,9 @@ void BurstCollectorService::ds2OnNightEnded() {
         std::cout << "DS2 Bluetooth: " << by << " said a night ended, but a mask is on: not reading" << std::endl;
         return;
     }
+    // SDD-065: a DreamStation 2 read through a Mule & Miner, on the same event.
+    for (const auto& l : listeners) l(by);
+    if (!reader || !reader->paired()) return;
     if (!startDs2Read(("the night ended (" + by + ")").c_str()))
         std::cout << "DS2 Bluetooth: " << by << " said a night ended; a read or a pairing is already running"
                   << std::endl;

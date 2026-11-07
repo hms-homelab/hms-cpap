@@ -85,8 +85,10 @@ std::string fromAfter(const std::string& bytes) {
 }  // namespace
 
 const std::vector<std::string>& localCommands() {
-    static const std::vector<std::string> k = {"config",  "reboot",    "logs",         "restate",
-                                               "reset",   "as11_pair", "as11_download"};
+    static const std::vector<std::string> k = {"config",   "reboot",    "logs",          "restate",
+                                               "reset",    "as11_pair", "as11_download",
+                                               // SDD-065: the DreamStation 2 through the miner.
+                                               "ds2_bond", "ds2_read"};
     return k;
 }
 
@@ -225,6 +227,10 @@ MuleService::Brief MuleService::brief(const std::string& serial) const {
     b.machine    = u.machine;
     b.hellos     = u.hellos;
     b.last_heard = u.last_heard;
+    b.state      = u.state;
+    for (const auto& c : u.commands)
+        if (c.state == "queued" || (c.state == "sent" && c.conn == u.live))
+            b.unanswered.push_back(c.cmd);
     return b;
 }
 
@@ -295,7 +301,12 @@ void MuleService::hello(uint64_t conn, const std::string& serial, const Json::Va
         return;
     }
     const std::string mode = f.get("mode", "").asString();
-    if (mode == "card") {
+    // SDD-065: a miner in DreamStation 2 mode reads no card; the mule's hello
+    // still says "card" (only AirSense 11 mode has its own name), and its
+    // state carries ds2.enabled.
+    const bool ds2 = mode == "ds2_ble" || (f["state"].isObject() && f["state"]["ds2"].isObject() &&
+                                           f["state"]["ds2"].get("enabled", false).asBool());
+    if (mode == "card" && !ds2) {
         send(conn, errorFrame("this unit reads a card: use Home network mode"));
         std::cout << "[mule] " << serial << " is in card mode: refused" << std::endl;
         return;
@@ -320,7 +331,7 @@ void MuleService::hello(uint64_t conn, const std::string& serial, const Json::Va
         ++u.hellos;
         u.fw          = f.get("fw", "").asString();
         u.miner_fw    = f.get("miner_fw", "").asString();
-        u.mode        = mode;
+        u.mode        = ds2 ? "ds2_ble" : mode;
         u.boot_reason = f.get("boot_reason", "").asString();
         save(serial, u);
     }
@@ -548,7 +559,7 @@ void MuleService::onBinary(uint64_t conn, const std::string& frame) {
         return;
     }
     if (h->kind == kKindBlock) return block(conn, serial, *h, frame);
-    if (h->kind == kKindAs11) return pullBytes(serial, *h, frame);
+    if (h->kind == kKindAs11 || h->kind == kKindDs2) return pullBytes(serial, *h, frame);
     std::cout << "[mule] " << serial << " binary kind " << h->kind << " ignored" << std::endl;
 }
 
@@ -648,25 +659,62 @@ void MuleService::result(const std::string& serial, const Json::Value& f) {
         return;
     }
     const uint64_t id = static_cast<uint64_t>(req.asDouble());
-    std::lock_guard<std::mutex> lk(mu_);
-    Unit& u = unit(serial);
-    auto c  = std::find_if(u.commands.begin(), u.commands.end(),
-                           [&](const Command& k) { return k.req_id == id; });
-    if (c == u.commands.end()) {
-        std::cout << "[mule] " << serial << " result for unknown req_id " << id << ", ignored" << std::endl;
-        return;
+    std::optional<Answered>              answered;
+    std::function<void(const Answered&)> hook;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        Unit& u = unit(serial);
+        auto c  = std::find_if(u.commands.begin(), u.commands.end(),
+                               [&](const Command& k) { return k.req_id == id; });
+        if (c == u.commands.end()) {
+            std::cout << "[mule] " << serial << " result for unknown req_id " << id << ", ignored" << std::endl;
+            return;
+        }
+        Json::Value r(Json::objectValue);
+        r["ok"] = f.get("ok", false).asBool();
+        if (f.isMember("error")) r["error"] = f["error"];
+        if (f.isMember("result")) r["result"] = f["result"];
+        c->state       = "answered";
+        c->answered_at = u.last_heard = std::time(nullptr);
+        c->result      = r;
+        std::cout << "[mule] " << serial << " " << c->cmd << " (req_id " << c->req_id
+                  << ") answered: ok=" << (r["ok"].asBool() ? "true" : "false")
+                  << (r.isMember("error") ? " error=" + r["error"].asString() : std::string()) << std::endl;
+        if (c->cmd == "as11_download") afterPull(serial, *c);
+        // SDD-065: the DreamStation 2's answers go to whoever keeps its records.
+        if ((c->cmd == "ds2_read" || c->cmd == "ds2_bond") && answer_hook_) {
+            Answered a;
+            a.serial     = serial;
+            a.req_id     = c->req_id;
+            a.cmd        = c->cmd;
+            a.result     = c->result;
+            a.bytes_done = c->bytes_done;
+            a.bytes_cut  = c->bytes_cut;
+            a.automatic  = c->automatic;
+            for (const auto& k : c->frame.getMemberNames())
+                if (k != "t" && k != "cmd" && k != "req_id") a.args[k] = c->frame[k];
+            c->bytes_kept = c->bytes.size();
+            a.bytes.swap(c->bytes);   // handed over, not held twice
+            answered = std::move(a);
+            hook     = answer_hook_;
+        }
     }
-    Json::Value r(Json::objectValue);
-    r["ok"] = f.get("ok", false).asBool();
-    if (f.isMember("error")) r["error"] = f["error"];
-    if (f.isMember("result")) r["result"] = f["result"];
-    c->state       = "answered";
-    c->answered_at = u.last_heard = std::time(nullptr);
-    c->result      = r;
-    std::cout << "[mule] " << serial << " " << c->cmd << " (req_id " << c->req_id
-              << ") answered: ok=" << (r["ok"].asBool() ? "true" : "false")
-              << (r.isMember("error") ? " error=" + r["error"].asString() : std::string()) << std::endl;
-    if (c->cmd == "as11_download") afterPull(serial, *c);
+    if (answered && hook) hook(*answered);
+}
+
+void MuleService::setAnswerHook(std::function<void(const Answered&)> hook) {
+    std::lock_guard<std::mutex> lk(mu_);
+    answer_hook_ = std::move(hook);
+}
+
+void MuleService::setOutcome(uint64_t req_id, const std::string& outcome) {
+    std::lock_guard<std::mutex> lk(mu_);
+    for (auto& [serial, u] : units_)
+        for (auto& c : u.commands)
+            if (c.req_id == req_id) {
+                c.outcome = outcome;
+                return;
+            }
 }
 
 void MuleService::afterPull(const std::string& serial, Command& c) {
@@ -802,7 +850,7 @@ void MuleService::flush(const std::string& serial) {
         if (k.req_id == req && k.state == "sent") k.state = "queued";   // waits for the next session
 }
 
-CommandAnswer MuleService::queueCommand(const std::string& serial, const Json::Value& req) {
+CommandAnswer MuleService::queueCommand(const std::string& serial, const Json::Value& req, bool automatic) {
     CommandAnswer a;
     auto refuse = [&a](int status, const std::string& why) {
         a.status        = status;
@@ -814,8 +862,9 @@ CommandAnswer MuleService::queueCommand(const std::string& serial, const Json::V
     const std::string cmd = req["cmd"].asString();
     const auto& known     = localCommands();
     if (std::find(known.begin(), known.end(), cmd) == known.end())
-        return refuse(400, "a Mule & Miner takes config (hms_url, hms_port, as11_enabled, o2_enabled), reboot, "
-                           "logs, restate, reset, as11_pair or as11_download from hms-cpap, not \"" + cmd + "\"");
+        return refuse(400, "a Mule & Miner takes config (hms_url, hms_port, as11_enabled, o2_enabled, "
+                           "ble_machine), reboot, logs, restate, reset, as11_pair, as11_download, ds2_bond or "
+                           "ds2_read from hms-cpap, not \"" + cmd + "\"");
 
     Json::Value f(Json::objectValue);
     if (cmd == "config") {
@@ -826,7 +875,10 @@ CommandAnswer MuleService::queueCommand(const std::string& serial, const Json::V
         // Bluetooth mode) and o2_enabled (the O2 ring), booleans, each one on
         // its own. The unit relays either to the miner, which stores it and
         // restarts; the unit's next state shows what applied.
-        static const std::vector<std::string> keys = {"hms_url", "hms_port", "as11_enabled", "o2_enabled"};
+        // SDD-065: ble_machine ("as11", "ds2" or "") is the machine the miner
+        // reads over Bluetooth, on its own too; it supersedes as11_enabled.
+        static const std::vector<std::string> keys = {"hms_url", "hms_port", "as11_enabled", "o2_enabled",
+                                                      "ble_machine"};
         Json::Value cfg = req["config"].isObject() ? req["config"] : Json::Value(Json::objectValue);
         if (!req["config"].isObject())
             for (const auto& k : keys)
@@ -834,16 +886,23 @@ CommandAnswer MuleService::queueCommand(const std::string& serial, const Json::V
         for (const auto& k : cfg.getMemberNames())
             if (std::find(keys.begin(), keys.end(), k) == keys.end())
                 return refuse(400, "config takes {\"hms_url\": address, \"hms_port\": port} (one or both), "
-                                   "{\"as11_enabled\": true|false} or {\"o2_enabled\": true|false}, and no other key");
-        if (cfg.empty()) return refuse(400, "config takes hms_url, hms_port or both; or as11_enabled; or o2_enabled");
+                                   "{\"as11_enabled\": true|false}, {\"o2_enabled\": true|false} or "
+                                   "{\"ble_machine\": \"as11\"|\"ds2\"|\"\"}, and no other key");
+        if (cfg.empty())
+            return refuse(400, "config takes hms_url, hms_port or both; or as11_enabled; or o2_enabled; or ble_machine");
         const bool target = cfg.isMember("hms_url") || cfg.isMember("hms_port");
         const bool as11   = cfg.isMember("as11_enabled");
         const bool o2     = cfg.isMember("o2_enabled");
-        if ((target ? 1 : 0) + (as11 ? 1 : 0) + (o2 ? 1 : 0) > 1)
+        const bool bm     = cfg.isMember("ble_machine");
+        if ((target ? 1 : 0) + (as11 ? 1 : 0) + (o2 ? 1 : 0) + (bm ? 1 : 0) > 1)
             return refuse(400, "config sets one thing at a time: the target (hms_url, hms_port), as11_enabled, "
-                               "or o2_enabled");
+                               "o2_enabled, or ble_machine");
         if (as11 && !cfg["as11_enabled"].isBool()) return refuse(400, "as11_enabled is true or false");
         if (o2 && !cfg["o2_enabled"].isBool()) return refuse(400, "o2_enabled is true or false");
+        if (bm && !(cfg["ble_machine"].isString() &&
+                    (cfg["ble_machine"].asString() == "as11" || cfg["ble_machine"].asString() == "ds2" ||
+                     cfg["ble_machine"].asString().empty())))
+            return refuse(400, "ble_machine is \"as11\", \"ds2\" or \"\" (none)");
         if (cfg.isMember("hms_url") && (!cfg["hms_url"].isString() || !validUnitHost(cfg["hms_url"].asString())))
             return refuse(400, "hms_url is an IP address or hostname only (e.g. 192.168.1.20), with "
                                "no scheme, port or path; \"\" for the cloud. The port is hms_port");
@@ -887,6 +946,57 @@ CommandAnswer MuleService::queueCommand(const std::string& serial, const Json::V
             return refuse(400, "spool is Summary, Identification or Settings");
         f["from"]  = from;
         f["spool"] = spool;
+    } else if (cmd == "ds2_bond") {
+        // SDD-065 (push-c3 SDD-043 D5): start shows a code on the machine and
+        // in the unit's answer; confirm carries that code back; cancel; forget.
+        const std::string action = req.get("action", "").asString();
+        if (action != "start" && action != "confirm" && action != "cancel" && action != "forget")
+            return refuse(400, "ds2_bond's action is start, confirm, cancel or forget");
+        f["action"] = action;
+        if (action == "confirm") {
+            const std::string code = req["code"].isString() ? req["code"].asString() : "";
+            if (code.size() != 6 ||
+                !std::all_of(code.begin(), code.end(), [](char ch) { return ch >= '0' && ch <= '9'; }))
+                return refuse(400, "confirm carries the six digits the unit showed");
+            f["code"] = code;
+        }
+        for (const char* k : {"just_works", "self_confirm"}) {
+            if (!req.isMember(k)) continue;
+            if (action != "start" || !req[k].isBool()) return refuse(400, std::string(k) + " is true or false, on start only");
+            if (req[k].asBool()) f[k] = true;
+        }
+    } else if (cmd == "ds2_read") {
+        // {machine?, streams?: {"1".."4": "<20 hex>" | ""}, max_records?}:
+        // the bookmarks are this host's, so the read resumes where the last
+        // one stopped. Built by the DreamStation 2 reads (MuleDs2), not typed.
+        if (req.isMember("machine")) {
+            const std::string m = req["machine"].isString() ? req["machine"].asString() : "#";
+            if (m.size() > 16 || !std::all_of(m.begin(), m.end(), [](char ch) {
+                    return (ch >= '0' && ch <= '9') || (ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z');
+                }))
+                return refuse(400, "machine is the DreamStation's serial: up to 16 letters and digits");
+            if (!m.empty()) f["machine"] = m;
+        }
+        if (req.isMember("streams")) {
+            if (!req["streams"].isObject()) return refuse(400, "streams is {\"1\": bookmark, ...}");
+            Json::Value s(Json::objectValue);
+            for (const auto& k : req["streams"].getMemberNames()) {
+                const Json::Value& b = req["streams"][k];
+                const std::string h  = b.isString() ? b.asString() : "#";
+                const bool hex       = h.size() == 20 && std::all_of(h.begin(), h.end(), [](char ch) {
+                    return (ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F');
+                });
+                if ((k != "1" && k != "2" && k != "3" && k != "4") || !(h.empty() || hex))
+                    return refuse(400, "streams' keys are 1 to 4, each a bookmark of 20 hex digits or \"\"");
+                s[k] = h;
+            }
+            f["streams"] = s;
+        }
+        if (req.isMember("max_records")) {
+            if (!req["max_records"].isInt() || req["max_records"].asInt() < 0 || req["max_records"].asInt() > 65535)
+                return refuse(400, "max_records is 0 (no cap) to 65535");
+            f["max_records"] = req["max_records"].asInt();
+        }
     }
 
     // What restarts the unit or its miner (the stream target, the Bluetooth
@@ -908,7 +1018,7 @@ CommandAnswer MuleService::queueCommand(const std::string& serial, const Json::V
     {
         std::lock_guard<std::mutex> lk(mu_);
         if (!units_.count(serial)) return refuse(404, "no Mule & Miner \"" + serial + "\" has connected here");
-        id = enqueue(units_[serial], cmd, f, false);
+        id = enqueue(units_[serial], cmd, f, automatic);
     }
     flush(serial);
     std::lock_guard<std::mutex> lk(mu_);
@@ -935,6 +1045,10 @@ Json::Value MuleService::commandJson(const Command& c) {
     v["result"]      = c.result;
     if (c.cmd == "as11_download") {
         v["bytes"]   = static_cast<Json::UInt64>(c.bytes.size());
+        v["outcome"] = c.outcome;
+    }
+    if (c.cmd == "ds2_read") {
+        v["bytes"]   = static_cast<Json::UInt64>(std::max(c.bytes_kept, c.bytes.size()));
         v["outcome"] = c.outcome;
     }
     // A reboot or a reset restarts the unit before it can answer; its next

@@ -30,6 +30,7 @@ class QueryService;
 namespace mule {
 class MuleService;
 class FirmwareUpdater;
+class MuleDs2;
 }  // namespace mule
 namespace sleepbridge {
 class SleepBridgeService;
@@ -45,6 +46,7 @@ struct RouteDeps {
     std::shared_ptr<QueryService>    query;
     mule::MuleService*               mule{nullptr};
     mule::FirmwareUpdater*           updater{nullptr};
+    mule::MuleDs2*                   mule_ds2{nullptr};   // SDD-065: each unit's "ds2_local"
     sleepbridge::SleepBridgeService* bridges{nullptr};
     sleepbridge::ReleaseFeed*        feed{nullptr};
     DevicesStore*                    store{nullptr};

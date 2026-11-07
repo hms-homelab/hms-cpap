@@ -6,6 +6,7 @@
 #include "controllers/CleaningController.h"
 #include "controllers/SleepBridgeSocket.h"
 #include "controllers/MuleSocket.h"
+#include "controllers/MuleDs2Routes.h"
 #include "controllers/DevicesRoutes.h"
 #include "sleepbridge/ReleaseFeed.h"
 #include "mule/LivePublisher.h"
@@ -1651,6 +1652,8 @@ int main(int argc, char** argv) {
             // Its firmware updates, over the LAN, from the published manifest
             // or a file the owner has (docs/MULE_LOCAL_STREAM.md).
             std::unique_ptr<hms_cpap::mule::FirmwareUpdater> mule_updater;
+            // SDD-065: a DreamStation 2 read through a unit in that mode.
+            std::unique_ptr<hms_cpap::mule::MuleDs2> mule_ds2;
             // SDD-061: a .cpapcard's layout. With the Sleep Bridge off it is
             // checked and kept for when it is turned on; with it on (below) it
             // also goes to the bridges.
@@ -1800,6 +1803,27 @@ int main(int argc, char** argv) {
                     mule_updater = std::make_unique<hms_cpap::mule::FirmwareUpdater>(
                         *mule_stream, hms_cpap::mule::curlTransport(), fo);
                     hms_cpap::mule::installRoutes(mule_stream.get(), mule_updater.get());
+                    // SDD-065: its records land where the direct read's do
+                    // and the same import turns them into nights; a read
+                    // starts when another source says the night ended, or
+                    // from Read now. Never on a timer.
+                    {
+                        hms_cpap::mule::MuleDs2::Options d2;
+                        d2.data_dir   = mo.data_dir;
+                        d2.units_root = mo.root;
+                        mule_ds2 = std::make_unique<hms_cpap::mule::MuleDs2>(d2, *mule_stream);
+                        mule_stream->setAnswerHook(
+                            [m = mule_ds2.get()](const hms_cpap::mule::MuleService::Answered& a) {
+                                m->onAnswer(a);
+                            });
+                        hms_cpap::mule::installDs2Routes(mule_ds2.get());
+                        if (auto* bs = burst_service.get()) {
+                            mule_ds2->setImportDue([bs] { bs->ds2ImportDue(); });
+                            mule_ds2->setNightSources([bs] { return bs->ds2NightSources(); });
+                            bs->addDs2NightListener(
+                                [m = mule_ds2.get()](const std::string& by) { m->nightEnded(by); });
+                        }
+                    }
                     if (burst_service) {
                         // Live: every block and event wakes the sync, so the
                         // night is in the database and the UI within a block;
@@ -1836,6 +1860,7 @@ int main(int argc, char** argv) {
                 dd.query       = query_service;
                 dd.mule        = mule_stream.get();
                 dd.updater     = mule_updater.get();
+                dd.mule_ds2    = mule_ds2.get();
                 dd.bridges     = sleep_bridge.get();
                 dd.feed        = release_feed.get();
                 dd.store       = &devices_store;
@@ -1882,6 +1907,9 @@ int main(int argc, char** argv) {
             }
 
             drogon::app().run();  // Blocks until quit()
+            // The collector outlives this scope: it no longer calls into the
+            // Mule & Miner's DreamStation 2 reads (SDD-065).
+            if (burst_service) burst_service->clearDs2NightListeners();
             if (sleep_bridge) sleep_bridge->stop();
             update_service->stop();
             hms_cpap::CpapController::setUpdateService(nullptr);

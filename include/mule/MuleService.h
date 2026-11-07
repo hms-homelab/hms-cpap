@@ -13,7 +13,8 @@
 //                result {req_id, ok, result, error}: a command's answer
 //         binary 12-byte header (req_id u32, seq u32, flags u16, kind u16),
 //                kind 1: one CDS1 stream block; kind 6: an as11_download's
-//                bytes, ended by an empty frame with flags bit 0
+//                bytes, ended by an empty frame with flags bit 0; kind 7: a
+//                ds2_read's .ds2r, the same way (SDD-065)
 //   down  text   ack {server_time, ping_s}, block_ack {start_ms},
 //                error {error}, cmd {req_id, cmd, ...}
 //
@@ -55,6 +56,7 @@ inline constexpr int         kSilenceSec   = 90;
 inline constexpr size_t      kHeaderSize   = 12;
 inline constexpr uint16_t    kKindBlock    = 1;
 inline constexpr uint16_t    kKindAs11     = 6;
+inline constexpr uint16_t    kKindDs2      = 7;                // SDD-065: a ds2_read's .ds2r
 inline constexpr size_t      kCommandsKept = 30;               // per unit, newest kept
 inline constexpr size_t      kPullMax      = 4 * 1024 * 1024;  // an as11_download's bytes
 inline constexpr std::time_t kInFlightSec  = 300;              // a command unanswered this long no longer blocks the next
@@ -123,6 +125,10 @@ public:
         std::string fw, miner_fw, machine;
         uint64_t    hellos{0};           // sessions begun: rises when the unit comes back
         std::time_t last_heard{0};
+        Json::Value state{Json::objectValue};   // its last state, as it sent it
+        /// A command of each name not answered yet (queued or sent on the
+        /// live session): SDD-065 never queues a second ds2_read beside one.
+        std::vector<std::string> unanswered;
     };
     Brief brief(const std::string& serial) const;
     void onText(uint64_t conn, const std::string& frame);
@@ -136,7 +142,29 @@ public:
     /// The ones that restart the unit or the miner (config, reboot, reset)
     /// are warned while the machine records: 409 with the warning and nothing
     /// sent unless the request carries "confirm": true (devices/Recording.h).
-    CommandAnswer queueCommand(const std::string& serial, const Json::Value& request);
+    /// `automatic`: asked by this host (after a night), not by a person.
+    CommandAnswer queueCommand(const std::string& serial, const Json::Value& request,
+                               bool automatic = false);
+
+    /// SDD-065: a ds2_read or ds2_bond answered. `args` are the command's
+    /// arguments as sent, `result` its answer ({ok, error?, result?}),
+    /// `bytes` a ds2_read's .ds2r (kind 7) and whether it overran kPullMax.
+    struct Answered {
+        std::string serial;
+        uint64_t    req_id{0};
+        std::string cmd;
+        Json::Value args{Json::objectValue};
+        Json::Value result{Json::objectValue};
+        std::string bytes;
+        bool        bytes_done{false};
+        bool        bytes_cut{false};
+        bool        automatic{false};
+    };
+    /// Runs after each such answer, outside this service's lock: it may
+    /// queue the next command.
+    void setAnswerHook(std::function<void(const Answered&)> hook);
+    /// What this host made of an answered command (shown as its outcome).
+    void setOutcome(uint64_t req_id, const std::string& outcome);
 
     /// Drops a command still queued (never sent). 404 for a req_id not
     /// listed, 409 for one already sent.
@@ -177,7 +205,8 @@ private:
         std::string bytes;               // an as11_download's kind 6 bytes
         bool        bytes_done{false};
         bool        bytes_cut{false};
-        std::string outcome;             // what this host made of an as11_download
+        size_t      bytes_kept{0};       // a ds2_read's bytes, handed to the answer hook
+        std::string outcome;             // what this host made of an as11_download or a ds2_read
     };
 
     struct Unit {
@@ -231,6 +260,7 @@ private:
     std::function<void()>           night_changed_;
     std::shared_ptr<LivePublisher>  live_;
     std::function<void(const std::string&, bool)> observer_;
+    std::function<void(const Answered&)>          answer_hook_;
 
     mutable std::mutex              mu_;
     std::map<std::string, Unit>     units_;
