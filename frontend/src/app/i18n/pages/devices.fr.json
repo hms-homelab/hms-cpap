@@ -344,7 +344,7 @@
       "cancelling": "Annulation de l'appairage.",
       "forgetting": "Suppression de l'appairage.",
       "timeout": "La fenêtre d'appairage s'est fermée avant la fin. Recommencez et confirmez en 30 secondes environ.",
-      "done": "Appairée. L'appareil est lu par le Mule & Miner après chaque nuit.",
+      "done": "Appairée. Le Mule & Miner lit l'appareil comme choisi dans les Paramètres : une fois par jour à votre heure, ou seulement à votre demande.",
       "walkedPast": "{{n}} enregistrements plus anciens, d'avant le jour d'import, ont été ignorés et non gardés.",
       "forgetConfirm": "Le Mule & Miner oublie son appairage Bluetooth avec l'appareil. Les nuits déjà lues restent. Pour le relire, il faudra l'appairer à nouveau.",
       "err": {

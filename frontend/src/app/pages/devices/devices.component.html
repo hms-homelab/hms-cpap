@@ -131,7 +131,10 @@
               <dd class="hint">{{ 'devices.muleDs2.walkedPast' | translate:{ n: muleDs2Local(d).last_read.walked_past } }}</dd></div>
             <div *ngIf="muleDs2Local(d).last_read?.error" class="wide">
               <dd class="note">{{ 'devices.ds2.lastReadError' | translate:{ when: (ms(muleDs2Local(d).last_read.attempt_at) | date:'short'), error: muleDs2ErrorText(muleDs2Local(d).last_read.error) } }}</dd></div>
-            <div *ngIf="d.detail.state.ds2.bonded"><dt>{{ 'devices.ds2.reads' | translate }}</dt><dd>{{ muleDs2ReadsLine(d) }}</dd></div>
+            <div *ngIf="d.detail.state.ds2.bonded"><dt>{{ 'devices.ds2.reads' | translate }}</dt>
+              <dd>{{ muleDs2ReadsLine(d) }} <a routerLink="/settings" class="hint">{{ 'devices.ds2.changeInSettings' | translate }}</a></dd></div>
+            <div *ngIf="d.detail.state.ds2.bonded && muleDs2NextRead(d)"><dt>{{ 'devices.ds2.nextRead' | translate }}</dt>
+              <dd>{{ ms(muleDs2NextRead(d)) | date:'short' }}</dd></div>
             <div *ngIf="d.detail.state.ds2.bonded" class="wide ds2-import">
               <dt>{{ 'devices.ds2.importFrom' | translate }}</dt>
               <dd>

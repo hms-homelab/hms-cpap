@@ -61,6 +61,38 @@ void MuleDs2::setNightSources(std::function<std::vector<std::string>()> f) {
     night_sources_ = std::move(f);
 }
 
+void MuleDs2::setReadSchedule(std::function<std::pair<std::string, std::string>()> f) {
+    std::lock_guard<std::mutex> lk(mu_);
+    schedule_ = std::move(f);
+}
+
+int MuleDs2::dailyCheck(const ds2time::Input& base) {
+    if (ds2time::normaliseMode(base.read_mode) == "manual") return 0;
+    int asked = 0;
+    const Json::Value status = svc_.status();
+    for (const auto& u : status["units"]) {
+        const std::string unit = u["serial"].asString();
+        const Json::Value& d   = u["state"]["ds2"];
+        if (!d.isObject() || !d.get("enabled", false).asBool() || !d.get("bonded", false).asBool()) continue;
+        ds2time::Input in = base;
+        {
+            std::lock_guard<std::mutex> lk(mu_);
+            const UnitDs2 s   = load(unit);
+            in.paired_at       = s.paired_at;
+            in.last_attempt_at = s.last_read.isObject() ? s.last_read.get("attempt_at", 0).asInt64() : 0;
+        }
+        const auto dec = ds2time::decide(in);
+        if (!dec.due) continue;
+        // Away, or a read or pairing under way: asked again at the next check.
+        const auto a = readNow(unit, /*automatic=*/true);
+        if (a.status == 200) {
+            ++asked;
+            std::cout << kTag << unit << ": the owner's daily read at " << in.read_at << std::endl;
+        }
+    }
+    return asked;
+}
+
 MuleDs2::UnitDs2 MuleDs2::load(const std::string& unit) const {
     UnitDs2 u;
     std::ifstream in(fs::path(opt_.units_root) / unit / "ds2.json");
@@ -74,6 +106,7 @@ MuleDs2::UnitDs2 MuleDs2::load(const std::string& unit) const {
     u.import_from = v.get("import_from", "").asString();
     if (!Ds2Store::localMidnight(u.import_from)) u.import_from.clear();
     u.peer      = v.get("peer", "").asString();
+    u.paired_at = v.get("paired_at", 0).asInt64();
     u.machine   = v.get("machine", "").asString();
     u.last_read = v.get("last_read", Json::Value(Json::nullValue));
     return u;
@@ -83,6 +116,7 @@ bool MuleDs2::save(const std::string& unit, const UnitDs2& u) const {
     Json::Value v(Json::objectValue);
     v["import_from"] = u.import_from;
     v["peer"]        = u.peer;
+    v["paired_at"]   = static_cast<Json::Int64>(u.paired_at);
     v["machine"]     = u.machine;
     v["last_read"]   = u.last_read;
     const std::string text = compact(v);
@@ -96,12 +130,14 @@ bool MuleDs2::save(const std::string& unit, const UnitDs2& u) const {
 void MuleDs2::notePeer(const std::string& unit, UnitDs2& u, const std::string& peer) {
     if (!peer.empty() && u.peer.empty() && !u.import_from.empty()) {
         // The first bond this host sees, after the person already picked a day.
-        u.peer = peer;
+        u.peer      = peer;
+        u.paired_at = static_cast<long long>(std::time(nullptr));
         save(unit, u);
     } else if (!peer.empty() && peer != u.peer) {
         // A new bond: nights from today on (SDD-064 D10). Its machine is not
         // known until it is read; the one read before may be another.
         u.peer        = peer;
+        u.paired_at   = static_cast<long long>(std::time(nullptr));
         u.import_from = today();
         u.machine.clear();
         std::cout << kTag << unit << " bonded with " << peer << ": nights from " << u.import_from
@@ -394,11 +430,13 @@ CommandAnswer MuleDs2::setImportFrom(const std::string& unit, const std::string&
 Json::Value MuleDs2::view(const std::string& unit) const {
     Json::Value v(Json::objectValue);
     std::function<std::vector<std::string>()> sources;
+    std::function<std::pair<std::string, std::string>()> schedule;
     UnitDs2 u;
     {
         std::lock_guard<std::mutex> lk(mu_);
-        u       = load(unit);
-        sources = night_sources_;
+        u        = load(unit);
+        sources  = night_sources_;
+        schedule = schedule_;
         const auto c = chain_.find(unit);
         v["chain"] = c == chain_.end() ? 0 : c->second;
     }
@@ -423,6 +461,17 @@ Json::Value MuleDs2::view(const std::string& unit) const {
         for (const auto& s : sources()) ns.append(s);
     v["night_sources"] = ns;
     v["trigger"]       = ns.empty() ? "manual" : "night_end";
+    // SDD-065 D4a: the owner's choice, and this unit's next daily read.
+    const auto sched = schedule ? schedule() : std::make_pair(std::string("daily"), std::string(ds2time::kDefaultReadAt));
+    v["read_mode"] = sched.first;
+    v["read_at"]   = sched.second;
+    ds2time::Input in;
+    in.now             = static_cast<long long>(std::time(nullptr));
+    in.read_mode       = sched.first;
+    in.read_at         = sched.second;
+    in.paired_at       = u.paired_at;
+    in.last_attempt_at = u.last_read.isObject() ? u.last_read.get("attempt_at", 0).asInt64() : 0;
+    v["next_read_at"]  = static_cast<Json::Int64>(ds2time::decide(in).next_at);
     return v;
 }
 

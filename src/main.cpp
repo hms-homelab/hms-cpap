@@ -1804,9 +1804,10 @@ int main(int argc, char** argv) {
                         *mule_stream, hms_cpap::mule::curlTransport(), fo);
                     hms_cpap::mule::installRoutes(mule_stream.get(), mule_updater.get());
                     // SDD-065: its records land where the direct read's do
-                    // and the same import turns them into nights; a read
-                    // starts when another source says the night ended, or
-                    // from Read now. Never on a timer.
+                    // and the same import turns them into nights; it is read
+                    // on the owner's one choice for every DS2 (once a day at
+                    // their time, or only when asked), and when another
+                    // source says the night ended; never while a mask is on.
                     {
                         hms_cpap::mule::MuleDs2::Options d2;
                         d2.data_dir   = mo.data_dir;
@@ -1820,8 +1821,12 @@ int main(int argc, char** argv) {
                         if (auto* bs = burst_service.get()) {
                             mule_ds2->setImportDue([bs] { bs->ds2ImportDue(); });
                             mule_ds2->setNightSources([bs] { return bs->ds2NightSources(); });
+                            // SDD-065 D4a: the owner's one read choice for every DS2.
+                            mule_ds2->setReadSchedule([bs] { return bs->ds2ReadSchedule(); });
                             bs->addDs2NightListener(
                                 [m = mule_ds2.get()](const std::string& by) { m->nightEnded(by); });
+                            bs->addDs2DailyListener(
+                                [m = mule_ds2.get()](const hms_cpap::ds2time::Input& in) { m->dailyCheck(in); });
                         }
                     }
                     if (burst_service) {

@@ -76,6 +76,7 @@
       "modeDaily": "Ler automaticamente uma vez por dia às",
       "modeManual": "Só quando eu pedir (Ler agora)",
       "modeNote": "Quando outra fonte diz que a noite terminou (Sleep Bridge, anel O2...), também lê, nos dois modos. Nunca com a máscara colocada.",
+      "modeMule": "A mesma escolha vale para uma DreamStation 2 lida por um Mule & Miner.",
       "noSleepHq": "As noites lidas por Bluetooth não são enviadas ao SleepHQ."
     },
     "sleephq": {

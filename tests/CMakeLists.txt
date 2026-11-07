@@ -346,6 +346,7 @@ if(BUILD_WITH_WEB AND NOT WIN32)
         ${CMAKE_SOURCE_DIR}/src/services/As11StrWriter.cpp
         # SDD-065: the unit's DreamStation 2 reads keep their records here.
         ${CMAKE_SOURCE_DIR}/src/services/Ds2Store.cpp
+        ${CMAKE_SOURCE_DIR}/src/services/Ds2ReadTime.cpp
         # The mule's LivePublisher keeps the one live mask every source shares.
         ${CMAKE_SOURCE_DIR}/src/mqtt/LiveState.cpp
         ${STR_LAYOUTS_SOURCE}

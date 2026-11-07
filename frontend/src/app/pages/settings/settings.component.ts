@@ -252,20 +252,25 @@ import { sourceImage } from '../../utils/source-image';
                 <input type="text" [(ngModel)]="config.ds2_ble.address" name="ds2_address" placeholder="aa:bb:cc:dd:ee:ff" />
                 <span class="hint">{{ 'settings.ds2.addressHint' | translate }}</span>
               </label>
-              <!-- SDD-064 D5a: once a day at a time, or only when asked. -->
-              <div class="ds2-mode">
-                <label class="radio-row">
-                  <input type="radio" name="ds2_read_mode" value="daily" [(ngModel)]="config.ds2_ble.read_mode" />
-                  {{ 'settings.ds2.modeDaily' | translate }}
-                  <input type="time" name="ds2_read_at" [(ngModel)]="config.ds2_ble.read_at"
-                         [disabled]="config.ds2_ble.read_mode !== 'daily'" />
-                </label>
-                <label class="radio-row">
-                  <input type="radio" name="ds2_read_mode" value="manual" [(ngModel)]="config.ds2_ble.read_mode" />
-                  {{ 'settings.ds2.modeManual' | translate }}
-                </label>
-                <span class="hint">{{ 'settings.ds2.modeNote' | translate }}</span>
-              </div>
+            </ng-container>
+            <!-- SDD-064 D5a: once a day at a time, or only when asked. SDD-065 D4a:
+                 the same choice for a DreamStation 2 read through a Mule & Miner,
+                 so it shows with this computer's Bluetooth off too. -->
+            <div class="ds2-mode">
+              <label class="radio-row">
+                <input type="radio" name="ds2_read_mode" value="daily" [(ngModel)]="config.ds2_ble.read_mode" />
+                {{ 'settings.ds2.modeDaily' | translate }}
+                <input type="time" name="ds2_read_at" [(ngModel)]="config.ds2_ble.read_at"
+                       [disabled]="config.ds2_ble.read_mode !== 'daily'" />
+              </label>
+              <label class="radio-row">
+                <input type="radio" name="ds2_read_mode" value="manual" [(ngModel)]="config.ds2_ble.read_mode" />
+                {{ 'settings.ds2.modeManual' | translate }}
+              </label>
+              <span class="hint">{{ 'settings.ds2.modeNote' | translate }}</span>
+              <span class="hint">{{ 'settings.ds2.modeMule' | translate }}</span>
+            </div>
+            <ng-container *ngIf="config.ds2_ble.enabled">
               <p class="hint">{{ 'settings.ds2.noSleepHq' | translate }}</p>
               <p class="devices-link">
                 <a routerLink="/devices">{{ 'settings.devicesLink' | translate }}</a>

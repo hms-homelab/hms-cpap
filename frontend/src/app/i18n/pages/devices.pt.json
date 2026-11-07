@@ -344,7 +344,7 @@
       "cancelling": "Cancelando o emparelhamento.",
       "forgetting": "Esquecendo o emparelhamento.",
       "timeout": "A janela de emparelhamento fechou antes de terminar. Comece de novo e confirme em cerca de 30 segundos.",
-      "done": "Emparelhada. O aparelho é lido pelo Mule & Miner depois de cada noite.",
+      "done": "Emparelhada. O Mule & Miner lê o aparelho como escolhido nas Configurações: uma vez por dia no seu horário, ou só quando você pedir.",
       "walkedPast": "{{n}} registros mais antigos, de antes do dia de importação, foram ignorados e não guardados.",
       "forgetConfirm": "O Mule & Miner esquece o emparelhamento Bluetooth com o aparelho. As noites já lidas ficam. Para ler de novo, é preciso emparelhar de novo.",
       "err": {

@@ -15,9 +15,11 @@
 //     another; the same machine bonded again keeps its day), the machine the
 //     unit last read, and the last read's outcome.
 //
-// When to read is not the unit's (it has no timer, SDD-043 D2) and not a
-// timer here (SDD-064 D5): another source on this install says a night ended
-// (nightEnded), or the person presses Read now (readNow). A read brings at
+// When to read is not the unit's (it has no timer, SDD-043 D2). It is the
+// owner's one choice for every DreamStation 2 here (SDD-064 D5a): once a day
+// at their time (dailyCheck), or only when asked (readNow); in both, also when
+// another source on this install says a night ended (nightEnded); never while
+// a mask is on. Each unit decides from its own last read. A read brings at
 // most max_records records; when the file says there are more, the next read
 // is asked as soon as this one is stored, never on a clock.
 //
@@ -25,6 +27,7 @@
 // nothing is decrypted: the records are the machine's plaintext.
 //
 #include "mule/MuleService.h"
+#include "services/Ds2ReadTime.h"
 #include "services/Ds2Store.h"
 
 #include <json/json.h>
@@ -70,8 +73,20 @@ public:
     /// Per unit, for the Devices page: {import_from, import_from_default,
     /// machine, model, firmware, newest_session, first_read_done,
     /// last_read: {at, attempt_at, records, walked_past, error, more} | null,
-    /// chain, trigger: "night_end" | "manual", night_sources}.
+    /// chain, trigger: "night_end" | "manual", night_sources,
+    /// read_mode: "daily" | "manual", read_at: "HH:MM", next_read_at}.
     Json::Value view(const std::string& unit) const;
+
+    /// SDD-065 D4a (SDD-064 D5a): the owner's daily read, for every unit in
+    /// DreamStation 2 mode that is bonded: once `in.read_at` has come today
+    /// with no read tried (or bond made) since, the unit is read, at the first
+    /// check after it with no mask on. `in` carries the time, the choice and
+    /// the mask; each unit's own last read and bond fill the rest. "manual"
+    /// reads nothing here. How many reads were asked.
+    int dailyCheck(const ds2time::Input& in);
+
+    /// The owner's read choice as the page shows it: {read_mode, read_at}.
+    void setReadSchedule(std::function<std::pair<std::string, std::string>()> f);
 
     /// The collector's import, run when a read stored records.
     void setImportDue(std::function<void()> f);
@@ -96,6 +111,7 @@ private:
     struct UnitDs2 {
         std::string import_from;   // "YYYY-MM-DD", local
         std::string peer;          // the bond's address when import_from was set
+        long long   paired_at{0};  // epoch s this host first saw that bond
         std::string machine;       // the serial this unit last read
         Json::Value last_read{Json::nullValue};
     };
@@ -113,6 +129,7 @@ private:
     std::map<std::string, int> chain_;   // reads in a row the machine said "more" to
     std::function<void()>   import_due_;
     std::function<std::vector<std::string>()> night_sources_;
+    std::function<std::pair<std::string, std::string>()> schedule_;
 };
 
 }  // namespace hms_cpap::mule

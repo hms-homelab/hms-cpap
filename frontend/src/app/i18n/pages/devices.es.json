@@ -344,7 +344,7 @@
       "cancelling": "Cancelando el emparejamiento.",
       "forgetting": "Olvidando el emparejamiento.",
       "timeout": "La ventana de emparejamiento se cerró antes de terminar. Empieza de nuevo y confirma en unos 30 segundos.",
-      "done": "Emparejada. La máquina se lee a través del Mule & Miner después de cada noche.",
+      "done": "Emparejada. El Mule & Miner lee la máquina como elegiste en Ajustes: una vez al día a tu hora, o solo cuando lo pidas.",
       "walkedPast": "{{n}} registros más antiguos, de antes del día de importación, se omitieron y no se guardaron.",
       "forgetConfirm": "El Mule & Miner olvida su emparejamiento Bluetooth con la máquina. Las noches ya leídas se quedan. Para leerla otra vez hay que emparejarla de nuevo.",
       "err": {

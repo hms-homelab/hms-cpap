@@ -641,6 +641,73 @@ TEST_F(MuleDs2Test, AnotherMachineIsNotReadAndItsSerialIsForgotten) {
     EXPECT_FALSE(unit.last("ds2_read").isMember("machine"));
 }
 
+// ── SDD-065 D4a: the owner's daily read, the same choice as the direct read ──
+
+namespace {
+ds2time::Input dailyAt(const std::string& at, bool mask_on = false, const std::string& mode = "daily") {
+    ds2time::Input in;
+    in.now       = static_cast<long long>(std::time(nullptr));
+    in.read_mode = mode;
+    in.read_at   = at;   // "00:00": today's time has always come
+    in.mask_on   = mask_on;
+    return in;
+}
+}  // namespace
+
+TEST_F(MuleDs2Test, TheDailyReadGoesOnceTheTimeHasComeAndOnceADay) {
+    FakeUnit unit(*svc_);
+    unit.hello();
+    ds2_->setImportFrom(kUnit, "2029-12-31");
+    EXPECT_EQ(ds2_->dailyCheck(dailyAt("00:00")), 1);
+    const Json::Value cmd = unit.last("ds2_read");
+    ASSERT_TRUE(cmd.isObject());
+    EXPECT_TRUE(unitCommand(reqOf(cmd))["automatic"].asBool());
+    EXPECT_EQ(ds2_->dailyCheck(dailyAt("00:00")), 0);   // under way
+    unit.answerRead(reqOf(cmd), nights({{500, 0}}).end(0, false).bytes());
+    EXPECT_EQ(ds2_->dailyCheck(dailyAt("00:00")), 0);   // read today already
+    EXPECT_EQ(unit.count("ds2_read"), 1u);
+}
+
+TEST_F(MuleDs2Test, TheDailyReadWaitsForTheMaskAndForTheTime) {
+    FakeUnit unit(*svc_);
+    unit.hello();
+    EXPECT_EQ(ds2_->dailyCheck(dailyAt("00:00", /*mask_on=*/true)), 0);
+    auto later = dailyAt("00:00");
+    later.read_at = "23:59";
+    later.now     = ds2time::todayAt(later.now, 23 * 60 + 59) - 60;   // a minute before the time
+    EXPECT_EQ(ds2_->dailyCheck(later), 0);
+    EXPECT_EQ(unit.count("ds2_read"), 0u);
+    EXPECT_EQ(ds2_->dailyCheck(dailyAt("00:00")), 1);   // the mask is off, the time has come
+}
+
+TEST_F(MuleDs2Test, OnlyWhenAskedReadsNothingDailyButTheNightsEndStillReads) {
+    FakeUnit unit(*svc_);
+    unit.hello();
+    EXPECT_EQ(ds2_->dailyCheck(dailyAt("00:00", false, "manual")), 0);
+    EXPECT_EQ(unit.count("ds2_read"), 0u);
+    EXPECT_EQ(ds2_->nightEnded("sleep_bridge"), 1);
+}
+
+TEST_F(MuleDs2Test, AnUnbondedUnitIsNotReadDaily) {
+    FakeUnit unit(*svc_);
+    unit.hello(true, false);
+    EXPECT_EQ(ds2_->dailyCheck(dailyAt("00:00")), 0);
+}
+
+TEST_F(MuleDs2Test, TheCardSaysTheChoiceAndTheNextRead) {
+    FakeUnit unit(*svc_);
+    unit.hello();
+    ds2_->setReadSchedule([] { return std::make_pair(std::string("daily"), std::string("23:59")); });
+    auto v = ds2_->view(kUnit);
+    EXPECT_EQ(v["read_mode"].asString(), "daily");
+    EXPECT_EQ(v["read_at"].asString(), "23:59");
+    EXPECT_GT(v["next_read_at"].asInt64(), 0);
+    ds2_->setReadSchedule([] { return std::make_pair(std::string("manual"), std::string("11:00")); });
+    v = ds2_->view(kUnit);
+    EXPECT_EQ(v["read_mode"].asString(), "manual");
+    EXPECT_EQ(v["next_read_at"].asInt64(), 0);
+}
+
 TEST_F(MuleDs2Test, ACaptureAUnitSentIsStoredLikeTheSyntheticOne) {
     const char* path = std::getenv("HMS_CPAP_DS2R_CAPTURE");
     if (!path || !*path) GTEST_SKIP() << "HMS_CPAP_DS2R_CAPTURE not set (a .ds2r kept outside this repository)";

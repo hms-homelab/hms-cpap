@@ -344,7 +344,7 @@
       "cancelling": "Cancelling the pairing.",
       "forgetting": "Forgetting the pairing.",
       "timeout": "The pairing window closed before it finished. Start again and confirm within about 30 seconds.",
-      "done": "Paired. The machine is read through the Mule & Miner after each night.",
+      "done": "Paired. The Mule & Miner reads the machine as chosen in Settings: once a day at your time, or only when you ask.",
       "walkedPast": "{{n}} older records, from before the import day, were skipped and not kept.",
       "forgetConfirm": "The Mule & Miner forgets its Bluetooth pairing with the machine. The nights already read stay. To read it again you pair it again.",
       "err": {

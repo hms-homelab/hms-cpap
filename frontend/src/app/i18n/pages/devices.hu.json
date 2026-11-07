@@ -344,7 +344,7 @@
       "cancelling": "A párosítás megszakítása.",
       "forgetting": "A párosítás törlése.",
       "timeout": "A párosítási ablak bezárult, mielőtt befejeződött volna. Kezdje újra, és nagyjából 30 másodpercen belül erősítse meg.",
-      "done": "Párosítva. A készüléket minden éjszaka után a Mule & Miner olvassa be.",
+      "done": "Párosítva. A Mule & Miner a Beállításokban választott módon olvassa a készüléket: naponta egyszer a megadott időben, vagy csak kérésre.",
       "walkedPast": "{{n}} régebbi rekord, az importálás napja előttről, ki lett hagyva és nem lett megtartva.",
       "forgetConfirm": "A Mule & Miner elfelejti a Bluetooth-párosítását a készülékkel. A már beolvasott éjszakák megmaradnak. Újabb olvasáshoz újra párosítani kell.",
       "err": {

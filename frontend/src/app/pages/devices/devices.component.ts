@@ -433,9 +433,14 @@ export class DevicesComponent implements OnInit, OnDestroy {
   }
 
   muleDs2ReadsLine(d: DeviceEntry): string {
-    const t = ds2Trigger(this.muleDs2Local(d));
-    const sources = t.sources.map((k) => this.t.instant(k)).join(', ');
-    return this.t.instant(t.key, { sources });
+    // SDD-065 D4a: the same choice and wording as the direct read's.
+    const r = ds2Reads(this.muleDs2Local(d));
+    const sources = r.sources.map((k) => this.t.instant(k)).join(', ');
+    return this.t.instant(r.key, { sources, time: r.time });
+  }
+
+  muleDs2NextRead(d: DeviceEntry): number {
+    return ds2NextRead(this.muleDs2Local(d));
   }
 
   muleDs2ImportValue(d: DeviceEntry): string {

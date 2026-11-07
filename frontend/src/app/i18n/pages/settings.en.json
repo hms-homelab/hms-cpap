@@ -76,6 +76,7 @@
       "modeDaily": "Read automatically once a day at",
       "modeManual": "Only when I ask (Read now)",
       "modeNote": "Another source saying the night ended (Sleep Bridge, O2 ring...) also reads it, in both modes. Never while a mask is on.",
+      "modeMule": "The same choice applies to a DreamStation 2 read through a Mule & Miner.",
       "noSleepHq": "Nights read over Bluetooth are not sent to SleepHQ."
     },
     "sleephq": {
