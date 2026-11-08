@@ -200,6 +200,36 @@ TEST_P(SessionEndBackendTest, AnAlreadyClosedSessionKeepsTheEndItHas) {
     EXPECT_EQ(storedEnd(), after_first) << engineName(GetParam());
 }
 
+// The Luna night of 2026-11-08: a session saved again as it grows must take the
+// new end, not keep the one from the first save. Session 37 read 03:28:03 to
+// 03:29:05 with 5043 s of therapy in it.
+TEST_P(SessionEndBackendTest, AGrownSessionTakesItsNewEnd) {
+    const auto start = local(2099, 3, 14, 23, 0);
+    ASSERT_TRUE(db_->saveSession(makeSession(start, 62)));
+    ASSERT_TRUE(closeWithDataEnd(*db_, device_, start, makeSession(start, 62)));
+    EXPECT_NE(storedEnd().find("2099-03-14 23:01:02"), std::string::npos)
+        << engineName(GetParam()) << ": " << storedEnd();
+
+    ASSERT_TRUE(db_->saveSession(makeSession(start, 5043)));
+    ASSERT_TRUE(closeWithDataEnd(*db_, device_, start, makeSession(start, 5043)))
+        << engineName(GetParam());
+    EXPECT_NE(storedEnd().find("2099-03-15 00:24:03"), std::string::npos)
+        << engineName(GetParam()) << ": session_end is " << storedEnd();
+}
+
+TEST_P(SessionEndBackendTest, TheClockFallbackNeverMovesAnEndTheDataGave) {
+    const auto start = local(2099, 3, 14, 23, 0);
+    ASSERT_TRUE(db_->saveSession(makeSession(start, 3600)));
+    ASSERT_TRUE(closeWithDataEnd(*db_, device_, start, makeSession(start, 3600)));
+    const auto data_end = storedEnd();
+
+    CPAPSession unknown;                 // a parse that knows neither end nor duration
+    unknown.device_id = device_;
+    unknown.session_start = start;
+    EXPECT_FALSE(closeWithDataEnd(*db_, device_, start, unknown)) << engineName(GetParam());
+    EXPECT_EQ(storedEnd(), data_end) << engineName(GetParam());
+}
+
 // SDD-039 D1: a query that did not run must not look like a night list with
 // nothing in it. A user watched /api/sessions answer [] with 63 rows in the
 // table and there was no error anywhere to explain it (support 129).

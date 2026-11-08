@@ -98,12 +98,19 @@ inline std::vector<OpenSession> openSessionsStartedBefore(
 
 /// Close [start] with the end [parsed] carries, falling back to the clock when
 /// the parse knows no end. One line at each import site.
+///
+/// When the data knows the end, it replaces any end already stored. The import
+/// paths save a session again whenever it grows (a Luna appends the whole night
+/// to one set of files), and the end written the first time stayed while the
+/// duration grew: a 5043 s session kept the end it had 62 s in. The clock
+/// fallback still only fills an empty end, so it never overwrites a real one.
 inline bool closeWithDataEnd(IDatabase& db, const std::string& device_id,
                              const std::chrono::system_clock::time_point& start,
                              const CPAPSession& parsed) {
     const auto end = dataEndOf(parsed);
-    return end.has_value() ? db.markSessionCompletedAt(device_id, start, end.value())
-                           : db.markSessionCompleted(device_id, start);
+    if (!end.has_value()) return db.markSessionCompleted(device_id, start);
+    db.reopenSession(device_id, start);
+    return db.markSessionCompletedAt(device_id, start, end.value());
 }
 
 }  // namespace hms_cpap
