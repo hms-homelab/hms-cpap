@@ -455,6 +455,9 @@ protected:
             << "No agent response received";
         auto snap = resp_collector_.snapshot();
         EXPECT_GE(snap.size(), which);
+        // No response: the test fails here. Reading past the end crashed the
+        // whole run, and every test after this one went unreported.
+        if (snap.size() < which) return json::object();
         return json::parse(snap[which - 1]);
     }
 };
@@ -898,6 +901,9 @@ protected:
             << "No agent response received";
         auto snap = resp_collector_.snapshot();
         EXPECT_GE(snap.size(), which);
+        // No response: the test fails here. Reading past the end crashed the
+        // whole run, and every test after this one went unreported.
+        if (snap.size() < which) return json::object();
         return json::parse(snap[which - 1]);
     }
 };
