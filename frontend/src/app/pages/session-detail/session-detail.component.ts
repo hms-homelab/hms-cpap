@@ -530,7 +530,12 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
       const therapyMode = +(this.session?.therapy_mode || '0');
       const machineSpo2 = ((vitals as any)?.spo2 || []).some((v: any) => Number(v) > 0 && Number(v) <= 100);
       this.availableSignals = SIGNAL_DEFS.filter(s => {
-        if (s.source === 'oximetry') return oximetry?.timestamps?.length;
+        if (s.source === 'oximetry') {
+          if (!oximetry?.timestamps?.length) return false;
+          // Without the ring's own movement the chart would show only the few
+          // live readings, so leave it out until the night has some.
+          return s.key === 'motion' ? !!oximetry.motion_available : true;
+        }
         if (s.source === 'vitals') {
           // Machine SpO2 only if the EDF actually carried it; otherwise fall
           // back to the O2Ring SpO2 chart (which keeps its own desat overlay).

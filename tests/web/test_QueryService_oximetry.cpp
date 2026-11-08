@@ -20,6 +20,7 @@
 
 #include <gtest/gtest.h>
 #include "database/SQLiteDatabase.h"
+#include "services/OximetryMotion.h"
 #include "web/QueryService.h"
 
 #include <chrono>
@@ -79,7 +80,8 @@ protected:
     // deliberately sets cpap_session_date to the recording's own calendar date
     // — which is what the ring does, and what the old query was trying (and
     // failing) to compensate for.
-    void addSession(const std::string& filename, long start_epoch, int sample_count) {
+    void addSession(const std::string& filename, long start_epoch, int sample_count,
+                    int motion = 0) {
         OximetrySession os;
         os.filename = filename;
         os.start_time = tpFromEpoch(start_epoch);
@@ -94,7 +96,7 @@ protected:
             s.spo2 = 95;
             s.heart_rate = 58;
             s.invalid_flag = 0;
-            s.motion = 0;
+            s.motion = static_cast<uint8_t>(motion);
             s.vibration = 0;
             s.timestamp = tpFromEpoch(start_epoch + i);
             os.samples.push_back(s);
@@ -175,3 +177,30 @@ TEST_F(QueryServiceOximetryTest, ANightWithNoRecordingsReturnsEmptyRatherThanBor
 }
 
 } // namespace
+
+// The movement chart is offered only once the ring's own recording has movement
+// in it. The live poll adds a few moving readings to the same night, and those
+// alone must not make an all-zero night look as if it had a movement trace.
+TEST_F(QueryServiceOximetryTest, MovementIsAvailableWhenTheRingsRecordingHasSome) {
+    addSession("20260505223000.o2s", kEveningOf5th, 5, /*motion=*/3);
+    EXPECT_TRUE(qs_->getSessionOximetry("2026-05-05", 1)["motion_available"].asBool());
+}
+
+TEST_F(QueryServiceOximetryTest, MovementIsNotAvailableWhenTheRingsRecordingIsAllZero) {
+    addSession("20260505223000.o2s", kEveningOf5th, 5, /*motion=*/0);
+    auto r = qs_->getSessionOximetry("2026-05-05", 1);
+    EXPECT_FALSE(r["motion_available"].asBool());
+    EXPECT_EQ(r["spo2"].size(), 5u) << "the samples themselves are still returned";
+}
+
+TEST_F(QueryServiceOximetryTest, ANightWithNoRecordingsHasNoMovement) {
+    EXPECT_FALSE(qs_->getSessionOximetry("2026-05-05", 1)["motion_available"].asBool());
+}
+
+TEST(RecordsMovement, OnlyTheRingsOwnRecordingCounts) {
+    EXPECT_TRUE(recordsMovement("vld", 1));
+    EXPECT_TRUE(recordsMovement("vld", 111));
+    EXPECT_FALSE(recordsMovement("vld", 0));
+    EXPECT_FALSE(recordsMovement("live", 7)) << "a live reading is not a movement trace";
+    EXPECT_FALSE(recordsMovement("live", 0));
+}
