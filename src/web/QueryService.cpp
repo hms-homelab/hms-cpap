@@ -6,10 +6,12 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdlib>
 #include <cmath>
 #include <map>
 #include <optional>
 #include "services/InsightsEngine.h"
+#include "services/OximetryMotion.h"
 #include <sstream>
 #include <algorithm>
 #include <ctime>
@@ -991,7 +993,7 @@ Json::Value QueryService::getSessionOximetry(const std::string& date, int interv
 
     std::string q =
         "SELECT s.timestamp" + std::string(dt_ == DbType::POSTGRESQL ? "::text" : "") + " AS ts,"
-        " s.spo2, s.heart_rate, s.motion"
+        " s.spo2, s.heart_rate, s.motion, s.source"
         " FROM oximetry_sessions os"
         " JOIN oximetry_samples s ON s.oximetry_session_id = os.id"
         " WHERE os.device_id = " + sql::param(1, dt_) +
@@ -1006,8 +1008,17 @@ Json::Value QueryService::getSessionOximetry(const std::string& date, int interv
     Json::Value spo2(Json::arrayValue);
     Json::Value heart_rate(Json::arrayValue);
     Json::Value motion(Json::arrayValue);
+    bool motion_available = false;
 
     for (const auto& r : rows) {
+        if (!motion_available) {
+            // Rows can carry numbers as text, and motion can be NULL.
+            const Json::Value& m = r["motion"];
+            const int level = m.isNumeric() ? m.asInt()
+                            : m.isString()  ? std::atoi(m.asCString()) : 0;
+            const Json::Value& src = r["source"];
+            motion_available = recordsMovement(src.isString() ? src.asString() : "", level);
+        }
         timestamps.append(r.get("ts", Json::nullValue));
         spo2.append(r.get("spo2", Json::nullValue));
         heart_rate.append(r.get("heart_rate", Json::nullValue));
@@ -1018,6 +1029,10 @@ Json::Value QueryService::getSessionOximetry(const std::string& date, int interv
     result["spo2"] = spo2;
     result["heart_rate"] = heart_rate;
     result["motion"] = motion;
+    // True once the ring's own recording has movement in it. The live readings
+    // do not count (see recordsMovement), so the UI can hide a movement chart
+    // that would show only those.
+    result["motion_available"] = motion_available;
     return result;
 }
 

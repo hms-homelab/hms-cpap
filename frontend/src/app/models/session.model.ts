@@ -170,4 +170,6 @@ export interface OximetryData {
   spo2: (number | null)[];
   heart_rate: (number | null)[];
   motion: (number | null)[];
+  // True once the ring's own recording has movement in it (older servers omit it).
+  motion_available?: boolean;
 }

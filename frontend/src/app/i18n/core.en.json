@@ -29,7 +29,8 @@
     "spo2": "SpO2",
     "heartRate": "Heart Rate",
     "o2ringSpo2": "O2Ring SpO2",
-    "o2ringHeartRate": "O2Ring Heart Rate"
+    "o2ringHeartRate": "O2Ring Heart Rate",
+    "o2ringMotion": "O2Ring Movement"
   },
   "nav": {
     "dashboard": "Dashboard",

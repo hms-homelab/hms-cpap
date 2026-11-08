@@ -29,7 +29,8 @@
     "spo2": "SpO2",
     "heartRate": "Pulzusszám",
     "o2ringSpo2": "O2Ring SpO2",
-    "o2ringHeartRate": "O2Ring pulzusszám"
+    "o2ringHeartRate": "O2Ring pulzusszám",
+    "o2ringMotion": "O2Ring mozgás"
   },
   "nav": {
     "dashboard": "Irányítópult",
