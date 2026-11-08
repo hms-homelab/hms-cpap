@@ -67,6 +67,8 @@ const SIGNAL_DEFS: SignalDef[] = [
   { key: 'heart_rate', titleKey: 'signal.heartRate', unit: 'bpm', color: '#f06292', hasBand: true, bandMinKey: 'hr_min', bandMaxKey: 'hr_max', source: 'vitals' },
   { key: 'spo2', titleKey: 'signal.o2ringSpo2', unit: '%', color: '#ef5350', yMin: 85, yMax: 100, source: 'oximetry', desat: true },
   { key: 'heart_rate', titleKey: 'signal.o2ringHeartRate', unit: 'bpm', color: '#ec407a', source: 'oximetry' },
+  // The ring's movement level for each second (unitless, so no unit in the title); mostly 0, with a spike when the wearer moves.
+  { key: 'motion', titleKey: 'signal.o2ringMotion', unit: '', color: '#ffa726', yMin: 0, source: 'oximetry', fill: true },
 ];
 
 @Component({
@@ -135,7 +137,7 @@ const SIGNAL_DEFS: SignalDef[] = [
       <div class="detail-section" *ngIf="selectedSignal" [class.expanded]="isExpanded">
         <div class="detail-header">
           <h3>
-            {{ selectedSignal.titleKey | translate }} <span class="detail-unit">({{ selectedSignal.unit }})</span>
+            {{ selectedSignal.titleKey | translate }} <span class="detail-unit" *ngIf="selectedSignal.unit">({{ selectedSignal.unit }})</span>
             <span class="odi-badge" *ngIf="detailOdi !== null" [style.color]="odiColor"
               [title]="'sessionDetail.odiTitle' | translate">
               <i class="fa-solid fa-arrow-trend-down"></i> ODI {{ detailOdi.toFixed(1) }}/hr
@@ -528,7 +530,12 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
       const therapyMode = +(this.session?.therapy_mode || '0');
       const machineSpo2 = ((vitals as any)?.spo2 || []).some((v: any) => Number(v) > 0 && Number(v) <= 100);
       this.availableSignals = SIGNAL_DEFS.filter(s => {
-        if (s.source === 'oximetry') return oximetry?.timestamps?.length;
+        if (s.source === 'oximetry') {
+          if (!oximetry?.timestamps?.length) return false;
+          // Without the ring's own movement the chart would show only the few
+          // live readings, so leave it out until the night has some.
+          return s.key === 'motion' ? !!oximetry.motion_available : true;
+        }
         if (s.source === 'vitals') {
           // Machine SpO2 only if the EDF actually carried it; otherwise fall
           // back to the O2Ring SpO2 chart (which keeps its own desat overlay).

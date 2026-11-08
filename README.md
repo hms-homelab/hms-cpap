@@ -33,7 +33,7 @@ and shows you the data. It is a fully local-first experience.
 
 | Manufacturer | Models |
 |---|---|
-| ResMed | AirSense 10, AirSense 11, AirCurve 10, AirCurve 11 |
+| ResMed | AirSense 10, AirSense 11 |
 | Philips | DreamStation 2 |
 | Löwenstein | Prisma Line (20A, 20C, 25S, 25ST), Prisma Smart (Max, Plus, Soft) |
 | Sefam | S.Box AUTO (1263R), SleepBox AUTO (1200R) |
@@ -44,9 +44,7 @@ and shows you the data. It is a fully local-first experience.
 | Machine | Sleep Bridge Lite | Bluetooth from this computer | Mule & Miner (Bluetooth) | Mule & Miner (WiFi SD card, ez Share) | Toshiba FlashAir | Card reader or upload page |
 |---|---|---|---|---|---|---|
 | ResMed AirSense 10 | ✅ live | ❌ | ❌ | ✅ live | ✅ live | ✅ after the night |
-| ResMed AirSense 11 | ✅ live | ✅ live | ✅ live | ✅ live | ✅ live | ✅ after the night |
-| ResMed AirCurve 10 | Coming soon | ❌ | ❌ | ✅ live | ✅ live | ✅ after the night |
-| ResMed AirCurve 11 | Coming soon | ✅ live | ✅ live | ✅ live | ✅ live | ✅ after the night |
+| ResMed AirSense 11 | ✅ live | ✅ live | ✅ live | ✅ live | Not tested yet | ✅ after the night |
 | Philips DreamStation 2 | Coming soon | ✅ after the night | ✅ after the night | ❌ | ❌ | ❌ |
 | Löwenstein Prisma Line, Prisma Smart | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ after the night |
 | Sefam S.Box, SleepBox | ❌ | ❌ | ❌ | Not tested yet | ❌ | ✅ after the night |
@@ -57,7 +55,9 @@ a Sleep Bridge Lite or over Bluetooth, every 65 seconds from a WiFi SD card).
 ✅ after the night: the night arrives once it has ended. ❌: not supported.
 Coming soon: not supported yet. Not tested yet: the code reads it, but it
 hasn't been shown working on a real machine. A card in a reader is read when you put it
-in, so its last night is there once the machine has finished writing it.
+in, so its last night is there once the machine has finished writing it. An
+AirSense 11 with REF 39517 can't power a WiFi SD card (see "Getting the data
+off the machine" below).
 
 On a Sefam card you get the recorded signals, breath-by-breath respiratory
 mechanics, and apneas. **You do not get an AHI.** The machine records apneas but
