@@ -18,7 +18,9 @@
       "legendMask": "A maszknál mért",
       "noteTherapy": "A folytonos vonal a készülék által leadott nyomás. A szaggatott vonal a maszknál mért nyomás; bekapcsolt EPR mellett minden kilégzéskor csökken.",
       "noteTherapyOnly": "A készülék által leadott nyomás.",
-      "noteMask": "A maszknál mérve. Erről az éjszakáról nincs terápiás nyomás adat."
+      "noteMask": "A maszknál mérve. Erről az éjszakáról nincs terápiás nyomás adat.",
+      "noteTherapyMeasured": "A folytonos vonal a készülék által leadott nyomás. A szaggatott vonal a készülék által mért nyomás; minden légvétellel emelkedik és csökken.",
+      "noteMeasured": "A készülék által mért nyomás. Erről az éjszakáról nincs terápiás nyomás adat."
     }
   }
 }

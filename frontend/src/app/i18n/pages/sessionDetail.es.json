@@ -18,7 +18,9 @@
       "legendMask": "Medida en la mascarilla",
       "noteTherapy": "La línea continua es la presión que entregó su equipo. La línea discontinua se mide en la mascarilla; con el EPR activado, baja en cada espiración.",
       "noteTherapyOnly": "La presión que entregó su equipo.",
-      "noteMask": "Medida en la mascarilla. Esta noche no tiene registro de la presión de la terapia."
+      "noteMask": "Medida en la mascarilla. Esta noche no tiene registro de la presión de la terapia.",
+      "noteTherapyMeasured": "La línea continua es la presión que entregó su equipo. La línea discontinua es la presión que midió su equipo; sube y baja con cada respiración.",
+      "noteMeasured": "La presión que midió su equipo. Esta noche no tiene registro de la presión de la terapia."
     }
   }
 }

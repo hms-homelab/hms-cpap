@@ -388,14 +388,20 @@ Configuration example:
 }
 ```
 
-**What you get, and what you do not.** Pressure, leak, respiratory rate and
-I:E ratio per minute, and the apneas the machine marks itself (obstructive and
-clear airway), which make up its index. On a bi-level Luna, IPAP, EPAP and
-pressure support are reported too. There is no flow waveform yet: its scale on
-the card is not known, and a number in the wrong unit is worse than none.
+**What you get, and what you do not.** Flow, pressure, leak, respiratory rate,
+tidal volume, minute ventilation and I:E ratio per minute, and the apneas the
+machine marks itself (obstructive and clear airway), which make up its index.
+On a bi-level Luna, IPAP, EPAP and pressure support are reported too. The flow
+and pressure scales were measured against the machine's own screen. Flow is
+patient flow (the leak taken out), as for a ResMed, so it reads lower than the
+total flow the Luna's screen shows. Pressure is the machine's own reading,
+charted as "Pressure", not as mask pressure; a model whose pressure scale has
+not been measured gets no pressure chart. A minute with no reading (the leak at
+the machine's cap, or too little of it on the card) is left empty, not drawn
+as 0. There is no breath-by-breath (25 Hz) view yet.
 
 The format was decoded from a donated card without reference to any GPL or
-vendor source. See `docs/SEFAM_FORMAT.md` in the parser repository for what is
+vendor source. See `docs/BMC_FORMAT.md` in the parser repository for what is
 confirmed, what is supported, and what is still unknown.
 
 ## Configuration

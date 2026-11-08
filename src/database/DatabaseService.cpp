@@ -914,9 +914,21 @@ void DatabaseService::insertBreathingSummaries(pqxx::work& work, int session_id,
         std::ostringstream oss;
         oss << std::put_time(tm, "%Y-%m-%d %H:%M:%S");
 
+        // A minute the parser marks unmeasured carries 0 placeholders, not
+        // readings: it is stored as NULL, so no chart or average reads a 0.
+        auto measured = [](bool m, double v) {
+            if (!m) return std::string("NULL");
+            std::ostringstream o;   // the stream's default format, as before
+            o << v;
+            return o.str();
+        };
         query << "(" << session_id << ", '" << oss.str() << "', "
-              << s.avg_flow_rate << ", " << s.max_flow_rate << ", " << s.min_flow_rate << ", "
-              << s.avg_pressure << ", " << s.max_pressure << ", " << s.min_pressure << ")";
+              << measured(s.flow_measured, s.avg_flow_rate) << ", "
+              << measured(s.flow_measured, s.max_flow_rate) << ", "
+              << measured(s.flow_measured, s.min_flow_rate) << ", "
+              << measured(s.pressure_measured, s.avg_pressure) << ", "
+              << measured(s.pressure_measured, s.max_pressure) << ", "
+              << measured(s.pressure_measured, s.min_pressure) << ")";
 
         if (i < summaries.size() - 1) {
             query << ", ";

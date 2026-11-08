@@ -214,7 +214,13 @@ void CpapController::sessionSignals(const drogon::HttpRequestPtr&,
                                     std::function<void(const drogon::HttpResponsePtr&)>&& cb,
                                     const std::string& date) {
     try {
-        cb(jsonResp(qs_->getSessionSignals(date)));
+        auto signals = qs_->getSessionSignals(date);
+        // Which card format this install reads, so the page can name what the
+        // pressure columns are: a ResMed's is measured at the mask; a BMC /
+        // React Health Luna's is the machine's own pressure reading, and the
+        // card does not say where it is sensed, so it is not called the mask's.
+        if (config_) signals["machine_format"] = config_->format;
+        cb(jsonResp(signals));
     } catch (const std::exception& e) {
         cb(jsonError(e.what(), drogon::k500InternalServerError));
     }

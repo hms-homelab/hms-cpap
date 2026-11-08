@@ -70,6 +70,44 @@ test('no pressure at all is no chart', () => {
   assert.equal(sessionPressurePlan(undefined), null);
 });
 
+// A BMC / React Health Luna: IPAP per minute as the therapy pressure, and the
+// machine's own pressure reading, which the card does not place at the mask.
+const luna = {
+  machine_format: 'bmc',
+  timestamps: epr3.timestamps,
+  therapy_pressure: ['6.0', '6.0', '6.5'],
+  pressure_avg: ['5.9', '6.1', null],
+  pressure_min: ['4.6', '4.8', null],
+  pressure_max: ['7.4', '7.6', null],
+};
+
+test('a Luna\'s measured pressure is never called the mask\'s', () => {
+  const p = sessionPressurePlan(luna)!;
+  assert.equal(p.source, 'therapy');
+  assert.deepEqual(p.lines.map(l => l.key), ['therapy_pressure', 'pressure_avg']);
+  assert.equal(p.lines[1].labelKey, 'signal.pressure');
+  assert.equal(p.lines[1].dashed, true);
+  assert.equal(p.noteKey, 'sessionDetail.pressure.noteTherapyMeasured');
+  for (const l of p.lines) assert.ok(!/mask/i.test(l.labelKey), l.labelKey);
+});
+
+test('a Luna night with only the measured pressure is titled Pressure', () => {
+  const p = sessionPressurePlan({ ...luna, therapy_pressure: [null, null, null] })!;
+  assert.equal(p.mainKey, 'pressure_avg');
+  assert.equal(p.titleKey, 'signal.pressure');
+  assert.equal(p.lines[0].labelKey, 'signal.pressure');
+  assert.equal(p.noteKey, 'sessionDetail.pressure.noteMeasured');
+  assert.deepEqual(p.band, { minKey: 'pressure_min', maxKey: 'pressure_max' });
+});
+
+test('every other format keeps the mask wording', () => {
+  for (const machine_format of ['resmed', undefined]) {
+    const p = sessionPressurePlan({ ...epr3, machine_format })!;
+    assert.equal(p.lines[1].labelKey, 'sessionDetail.pressure.legendMask');
+    assert.equal(p.noteKey, 'sessionDetail.pressure.noteTherapy');
+  }
+});
+
 test('the colours are the ones the trend chart uses for the same two pressures', () => {
   assert.equal(THERAPY_COLOR, '#ce93d8');
   assert.equal(MASK_COLOR, '#64b5f6');

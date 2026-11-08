@@ -18,7 +18,9 @@
       "legendMask": "Mesurée au masque",
       "noteTherapy": "La ligne continue est la pression délivrée par votre appareil. La ligne en pointillés est mesurée au masque ; avec l'EPR activé, elle baisse à chaque expiration.",
       "noteTherapyOnly": "La pression délivrée par votre appareil.",
-      "noteMask": "Mesurée au masque. Cette nuit n'a pas d'enregistrement de la pression de la thérapie."
+      "noteMask": "Mesurée au masque. Cette nuit n'a pas d'enregistrement de la pression de la thérapie.",
+      "noteTherapyMeasured": "La ligne continue est la pression délivrée par votre appareil. La ligne en pointillés est la pression mesurée par votre appareil ; elle monte et descend à chaque respiration.",
+      "noteMeasured": "La pression mesurée par votre appareil. Cette nuit n'a pas d'enregistrement de la pression de la thérapie."
     }
   }
 }

@@ -11,6 +11,11 @@
 // A night with no therapy pressure (parsed before the machine's per-minute
 // pressure was kept) plots the mask's as before, titled as the mask's.
 //
+// A BMC / React Health Luna card (machine_format 'bmc') carries the machine's
+// own pressure reading, and nothing on the card says whether it is sensed at
+// the mask or at the outlet. Its pressure_avg is drawn the same way but called
+// plain "Pressure", never the mask's.
+//
 // Plain functions with no Angular in them, so `npm test` runs them directly.
 
 export type SessionPressureSource = 'therapy' | 'mask';
@@ -41,7 +46,7 @@ export interface SessionPressurePlan {
 type Signals = Record<string, unknown> | null | undefined;
 
 /** True when any minute of the series is a real reading (no machine delivers 0). */
-function hasReading(signals: Signals, key: string): boolean {
+export function hasReading(signals: Signals, key: string): boolean {
   const s = signals?.[key];
   if (!Array.isArray(s)) return false;
   return s.some(v => {
@@ -60,6 +65,8 @@ export const MASK_COLOR = '#64b5f6';
 export function sessionPressurePlan(signals: Signals): SessionPressurePlan | null {
   const therapy = hasReading(signals, 'therapy_pressure');
   const mask = hasReading(signals, 'pressure_avg');
+  // A Luna's measured pressure is not the mask's (see the header).
+  const measuredNotMask = signals?.['machine_format'] === 'bmc';
 
   if (therapy) {
     const lines: PressureLine[] = [
@@ -67,25 +74,29 @@ export function sessionPressurePlan(signals: Signals): SessionPressurePlan | nul
         color: THERAPY_COLOR, dashed: false },
     ];
     if (mask) {
-      lines.push({ key: 'pressure_avg', labelKey: 'sessionDetail.pressure.legendMask',
+      lines.push({ key: 'pressure_avg',
+        labelKey: measuredNotMask ? 'signal.pressure' : 'sessionDetail.pressure.legendMask',
         color: MASK_COLOR, dashed: true });
     }
     return {
       source: 'therapy',
       mainKey: 'therapy_pressure',
       titleKey: 'signal.therapyPressure',
-      noteKey: mask ? 'sessionDetail.pressure.noteTherapy' : 'sessionDetail.pressure.noteTherapyOnly',
+      noteKey: !mask ? 'sessionDetail.pressure.noteTherapyOnly'
+        : measuredNotMask ? 'sessionDetail.pressure.noteTherapyMeasured'
+        : 'sessionDetail.pressure.noteTherapy',
       lines,
       band: null,
     };
   }
   if (mask) {
+    const titleKey = measuredNotMask ? 'signal.pressure' : 'signal.maskPressure';
     return {
       source: 'mask',
       mainKey: 'pressure_avg',
-      titleKey: 'signal.maskPressure',
-      noteKey: 'sessionDetail.pressure.noteMask',
-      lines: [{ key: 'pressure_avg', labelKey: 'signal.maskPressure', color: THERAPY_COLOR, dashed: false }],
+      titleKey,
+      noteKey: measuredNotMask ? 'sessionDetail.pressure.noteMeasured' : 'sessionDetail.pressure.noteMask',
+      lines: [{ key: 'pressure_avg', labelKey: titleKey, color: THERAPY_COLOR, dashed: false }],
       band: { minKey: 'pressure_min', maxKey: 'pressure_max' },
     };
   }

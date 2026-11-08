@@ -937,12 +937,18 @@ void SQLiteDatabase::insertBreathingSummaries(int64_t session_id,
 
         bind_int64(g.stmt, 1, session_id);
         bind_text(g.stmt, 2, fmtTimestamp(s.timestamp));
-        bind_double(g.stmt, 3, s.avg_flow_rate);
-        bind_double(g.stmt, 4, s.max_flow_rate);
-        bind_double(g.stmt, 5, s.min_flow_rate);
-        bind_double(g.stmt, 6, s.avg_pressure);
-        bind_double(g.stmt, 7, s.max_pressure);
-        bind_double(g.stmt, 8, s.min_pressure);
+        // A minute the parser marks unmeasured carries 0 placeholders, not
+        // readings: it is stored as NULL, so no chart or average reads a 0.
+        auto bind_measured = [&](int idx, bool measured, double v) {
+            if (measured) bind_double(g.stmt, idx, v);
+            else bind_null(g.stmt, idx);
+        };
+        bind_measured(3, s.flow_measured, s.avg_flow_rate);
+        bind_measured(4, s.flow_measured, s.max_flow_rate);
+        bind_measured(5, s.flow_measured, s.min_flow_rate);
+        bind_measured(6, s.pressure_measured, s.avg_pressure);
+        bind_measured(7, s.pressure_measured, s.max_pressure);
+        bind_measured(8, s.pressure_measured, s.min_pressure);
 
         if (sqlite3_step(g.stmt) != SQLITE_DONE) {
             std::cerr << "SQLite: insertBreathingSummaries error: " << sqlite3_errmsg(db_) << std::endl;

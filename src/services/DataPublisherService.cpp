@@ -434,13 +434,16 @@ void DataPublisherService::publishRealtimeState(const CPAPSession& session) {
     if (!session.breathing_summary.empty()) {
         const auto& latest = session.breathing_summary.back();
 
-        // Pressure
-        mqtt_client_->publish("cpap/" + device_id_ + "/realtime/current_pressure",
-                             std::to_string(latest.avg_pressure), 0, true);
-
-        // Flow
-        mqtt_client_->publish("cpap/" + device_id_ + "/realtime/current_flow_rate",
-                             std::to_string(latest.avg_flow_rate), 0, true);
+        // Pressure and flow, each only when the minute has a reading: an
+        // unmeasured minute's 0 is a placeholder, not a value to publish.
+        if (latest.pressure_measured) {
+            mqtt_client_->publish("cpap/" + device_id_ + "/realtime/current_pressure",
+                                 std::to_string(latest.avg_pressure), 0, true);
+        }
+        if (latest.flow_measured) {
+            mqtt_client_->publish("cpap/" + device_id_ + "/realtime/current_flow_rate",
+                                 std::to_string(latest.avg_flow_rate), 0, true);
+        }
 
         // Leak
         if (latest.leak_rate.has_value()) {

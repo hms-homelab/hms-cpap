@@ -154,6 +154,9 @@ export interface SignalData {
   epr_pressure: (number | null)[];
   snore_index: (number | null)[];
   target_ventilation: (number | null)[];
+  /** The card format this install reads ('resmed', 'bmc', ...). Absent from an
+   *  older backend. It decides what the pressure columns are called. */
+  machine_format?: string;
 }
 
 export interface VitalsData {

@@ -18,7 +18,9 @@
       "legendMask": "Medida na máscara",
       "noteTherapy": "A linha contínua é a pressão que o seu aparelho entregou. A linha tracejada é medida na máscara; com o EPR ligado, ela cai a cada expiração.",
       "noteTherapyOnly": "A pressão que o seu aparelho entregou.",
-      "noteMask": "Medida na máscara. Esta noite não tem registro da pressão da terapia."
+      "noteMask": "Medida na máscara. Esta noite não tem registro da pressão da terapia.",
+      "noteTherapyMeasured": "A linha contínua é a pressão que o seu aparelho entregou. A linha tracejada é a pressão que o seu aparelho mediu; ela sobe e desce a cada respiração.",
+      "noteMeasured": "A pressão que o seu aparelho mediu. Esta noite não tem registro da pressão da terapia."
     }
   }
 }

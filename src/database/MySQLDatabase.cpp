@@ -1376,12 +1376,18 @@ void MySQLDatabase::insertBreathingSummaries(int64_t session_id,
         ParamBinder p(8);
         p.bindInt64(0, session_id);
         p.bindText(1, fmtTimestamp(s.timestamp));
-        p.bindDouble(2, s.avg_flow_rate);
-        p.bindDouble(3, s.max_flow_rate);
-        p.bindDouble(4, s.min_flow_rate);
-        p.bindDouble(5, s.avg_pressure);
-        p.bindDouble(6, s.max_pressure);
-        p.bindDouble(7, s.min_pressure);
+        // A minute the parser marks unmeasured carries 0 placeholders, not
+        // readings: it is stored as NULL, so no chart or average reads a 0.
+        auto bindMeasured = [&](int idx, bool measured, double v) {
+            if (measured) p.bindDouble(idx, v);
+            else p.bindNull(idx);
+        };
+        bindMeasured(2, s.flow_measured, s.avg_flow_rate);
+        bindMeasured(3, s.flow_measured, s.max_flow_rate);
+        bindMeasured(4, s.flow_measured, s.min_flow_rate);
+        bindMeasured(5, s.pressure_measured, s.avg_pressure);
+        bindMeasured(6, s.pressure_measured, s.max_pressure);
+        bindMeasured(7, s.pressure_measured, s.min_pressure);
 
         mysql_stmt_bind_param(g.stmt, p.data());
         if (mysql_stmt_execute(g.stmt) != 0) {

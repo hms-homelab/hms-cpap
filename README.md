@@ -66,11 +66,13 @@ shows an apnea-only index and labels it as one. It will read lower than the AHI
 a ResMed reports for the same night. That is a different measurement, not a
 better night.
 
-On a Luna card you get pressure, leak, respiratory rate and I:E ratio per minute, and the apneas the
-machine marks itself (obstructive and clear airway). On a bi-level Luna, IPAP,
-EPAP and pressure support are reported too. There is no flow waveform yet: its
-scale on the card is not known, and a number in the wrong unit is worse than
-none. A Luna is read from a local folder or the upload page. Reading one
+On a Luna card you get flow, pressure, leak, respiratory rate, tidal volume,
+minute ventilation and I:E ratio per minute, and the apneas the machine marks
+itself (obstructive and clear airway). On a bi-level Luna, IPAP, EPAP and
+pressure support are reported too. The flow and pressure scales were measured
+against the machine's own screen. The flow chart is your breathing with the
+leak taken out, as for a ResMed; the Luna's screen shows total flow, so it
+reads higher. There is no breath-by-breath (25 Hz) view yet. A Luna is read from a local folder or the upload page. Reading one
 from an ez Share card through a Mule & Miner is in, but not tested on a real
 Luna yet.
 
