@@ -269,6 +269,44 @@ TEST_P(UnmeasuredMinuteBackendTest, AveragesSkipTheUnmeasuredMinutes) {
     EXPECT_NEAR(num(rows[0]["f"]), 2.0, 1e-6) << engineName(GetParam());   // (1.5 + 2.5) / 2
 }
 
+// A session saved again as it grows brings the minute it was cut in, now
+// whole: the newest write of a minute replaces the first, on every engine. A
+// Luna's .000 is handed on every 60 packets, at any second of a minute.
+TEST_P(UnmeasuredMinuteBackendTest, AMinuteWrittenAgainTakesItsNewReadings) {
+    auto first = makeSession();
+    first.breathing_summary.resize(2);   // the second minute, cut short
+    first.breathing_summary[1].avg_flow_rate = 0.4;
+    ASSERT_TRUE(db_->saveSession(first)) << engineName(GetParam());
+
+    auto grown = makeSession();
+    grown.breathing_summary[1].pressure_measured = true;
+    grown.breathing_summary[1].avg_pressure = 6.8;
+    grown.breathing_summary[1].max_pressure = 7.9;
+    grown.breathing_summary[1].min_pressure = 5.6;
+    ASSERT_TRUE(db_->saveSession(grown)) << engineName(GetParam());
+
+    const auto rows = storedMinutes();
+    ASSERT_EQ(rows.size(), 3u) << engineName(GetParam()) << ": no duplicate minute";
+    EXPECT_NEAR(num(rows[1]["avg_flow_rate"]), 2.5, 1e-6) << engineName(GetParam());
+    ASSERT_FALSE(rows[1]["avg_pressure"].isNull()) << engineName(GetParam());
+    EXPECT_NEAR(num(rows[1]["avg_pressure"]), 6.8, 1e-6) << engineName(GetParam());
+    EXPECT_NEAR(num(rows[1]["min_pressure"]), 5.6, 1e-6) << engineName(GetParam());
+}
+
+// One save naming a minute twice keeps the last; PostgreSQL's batch upsert
+// would refuse the statement outright otherwise.
+TEST_P(UnmeasuredMinuteBackendTest, AMinuteNamedTwiceInOneSaveKeepsTheLast) {
+    auto s = makeSession();
+    auto again = s.breathing_summary[0];
+    again.avg_flow_rate = 3.25;
+    s.breathing_summary.push_back(again);
+    ASSERT_TRUE(db_->saveSession(s)) << engineName(GetParam());
+
+    const auto rows = storedMinutes();
+    ASSERT_EQ(rows.size(), 3u) << engineName(GetParam());
+    EXPECT_NEAR(num(rows[0]["avg_flow_rate"]), 3.25, 1e-6) << engineName(GetParam());
+}
+
 INSTANTIATE_TEST_SUITE_P(
     AllEngines, UnmeasuredMinuteBackendTest,
     ::testing::Values(Engine::SQLite, Engine::MySQL, Engine::Postgres),

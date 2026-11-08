@@ -921,11 +921,21 @@ void SQLiteDatabase::insertBreathingSummaries(int64_t session_id,
                                                const std::vector<BreathingSummary>& summaries) {
     if (summaries.empty()) return;
 
+    // The newest write of a minute wins. A session saved again as it grows
+    // (a Luna's .000 handed on mid-minute) brings the minute it cut short,
+    // now whole; keeping the first write left that minute partial for good.
     const char* sql = R"(
-        INSERT OR IGNORE INTO cpap_breathing_summary
+        INSERT INTO cpap_breathing_summary
             (session_id, timestamp, avg_flow_rate, max_flow_rate, min_flow_rate,
              avg_pressure, max_pressure, min_pressure)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT (session_id, timestamp) DO UPDATE SET
+            avg_flow_rate = excluded.avg_flow_rate,
+            max_flow_rate = excluded.max_flow_rate,
+            min_flow_rate = excluded.min_flow_rate,
+            avg_pressure  = excluded.avg_pressure,
+            max_pressure  = excluded.max_pressure,
+            min_pressure  = excluded.min_pressure
     )";
 
     StmtGuard g;

@@ -1358,11 +1358,21 @@ void MySQLDatabase::insertBreathingSummaries(int64_t session_id,
                                               const std::vector<BreathingSummary>& summaries) {
     if (summaries.empty()) return;
 
+    // The newest write of a minute wins. A session saved again as it grows
+    // (a Luna's .000 handed on mid-minute) brings the minute it cut short,
+    // now whole; keeping the first write left that minute partial for good.
     const char* sql = R"(
-        INSERT IGNORE INTO cpap_breathing_summary
+        INSERT INTO cpap_breathing_summary
             (session_id, timestamp, avg_flow_rate, max_flow_rate, min_flow_rate,
              avg_pressure, max_pressure, min_pressure)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+            avg_flow_rate = VALUES(avg_flow_rate),
+            max_flow_rate = VALUES(max_flow_rate),
+            min_flow_rate = VALUES(min_flow_rate),
+            avg_pressure  = VALUES(avg_pressure),
+            max_pressure  = VALUES(max_pressure),
+            min_pressure  = VALUES(min_pressure)
     )";
 
     MysqlStmtGuard g;

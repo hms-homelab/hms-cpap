@@ -64,6 +64,10 @@ opens on the Sleep Bridge.
   no flow limitation, snore index or mask pressure) no longer gets a tile.
 - **A session saved again as it grows takes its new end.** A Luna session
   kept the end it had when first saved while its duration grew.
+- **A minute saved again takes its new readings.** A growing session's last
+  minute was stored as it stood when first saved, part of a minute, and kept
+  that way. On PostgreSQL, a session that named one minute twice could not be
+  saved at all.
 - **A Bluetooth-only AirSense 11 no longer shows "Nothing is being
   imported"** (Fixes #59). With AirSense 11 over Bluetooth on and no local
   folder set, every page said no local folder was configured, while the

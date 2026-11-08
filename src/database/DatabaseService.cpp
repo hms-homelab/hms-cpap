@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <iostream>
 #include <iomanip>
+#include <map>
 #include <sstream>
 
 namespace hms_cpap {
@@ -906,13 +907,21 @@ void DatabaseService::insertBreathingSummaries(pqxx::work& work, int session_id,
           << "(session_id, timestamp, avg_flow_rate, max_flow_rate, min_flow_rate, "
           << "avg_pressure, max_pressure, min_pressure) VALUES ";
 
+    // One row per minute in the statement, the last one given: ON CONFLICT DO
+    // UPDATE refuses a statement that names the same row twice.
+    std::map<std::string, std::size_t> last_of_minute;
     for (size_t i = 0; i < summaries.size(); ++i) {
-        const auto& s = summaries[i];
-
-        auto time_t = std::chrono::system_clock::to_time_t(s.timestamp);
-        std::tm* tm = std::localtime(&time_t);
+        auto t = std::chrono::system_clock::to_time_t(summaries[i].timestamp);
         std::ostringstream oss;
-        oss << std::put_time(tm, "%Y-%m-%d %H:%M:%S");
+        oss << std::put_time(std::localtime(&t), "%Y-%m-%d %H:%M:%S");
+        last_of_minute[oss.str()] = i;
+    }
+
+    bool first_row = true;
+    for (const auto& [stamp, i] : last_of_minute) {
+        const auto& s = summaries[i];
+        if (!first_row) query << ", ";
+        first_row = false;
 
         // A minute the parser marks unmeasured carries 0 placeholders, not
         // readings: it is stored as NULL, so no chart or average reads a 0.
@@ -922,21 +931,25 @@ void DatabaseService::insertBreathingSummaries(pqxx::work& work, int session_id,
             o << v;
             return o.str();
         };
-        query << "(" << session_id << ", '" << oss.str() << "', "
+        query << "(" << session_id << ", '" << stamp << "', "
               << measured(s.flow_measured, s.avg_flow_rate) << ", "
               << measured(s.flow_measured, s.max_flow_rate) << ", "
               << measured(s.flow_measured, s.min_flow_rate) << ", "
               << measured(s.pressure_measured, s.avg_pressure) << ", "
               << measured(s.pressure_measured, s.max_pressure) << ", "
               << measured(s.pressure_measured, s.min_pressure) << ")";
-
-        if (i < summaries.size() - 1) {
-            query << ", ";
-        }
     }
 
-    // Use ON CONFLICT DO NOTHING to avoid duplicates when re-downloading sessions (48h window)
-    query << " ON CONFLICT (session_id, timestamp) DO NOTHING";
+    // The newest write of a minute wins. A session saved again as it grows
+    // (a Luna's .000 handed on mid-minute) brings the minute it cut short,
+    // now whole; keeping the first write left that minute partial for good.
+    query << " ON CONFLICT (session_id, timestamp) DO UPDATE SET"
+          << " avg_flow_rate = EXCLUDED.avg_flow_rate,"
+          << " max_flow_rate = EXCLUDED.max_flow_rate,"
+          << " min_flow_rate = EXCLUDED.min_flow_rate,"
+          << " avg_pressure = EXCLUDED.avg_pressure,"
+          << " max_pressure = EXCLUDED.max_pressure,"
+          << " min_pressure = EXCLUDED.min_pressure";
     work.exec(query.str());
 }
 
@@ -1135,6 +1148,21 @@ void DatabaseService::insertCalculatedMetrics(pqxx::work& work, int session_id,
     }
 
     if (with_metrics.empty()) return;
+
+    // One row per minute in the statement, the last one given: ON CONFLICT DO
+    // UPDATE refuses a statement that names the same row twice, and the whole
+    // session's save failed with it.
+    {
+        std::map<std::string, const BreathingSummary*> last_of_minute;
+        for (const auto* s : with_metrics) {
+            auto t = std::chrono::system_clock::to_time_t(s->timestamp);
+            std::ostringstream oss;
+            oss << std::put_time(std::localtime(&t), "%Y-%m-%d %H:%M:%S");
+            last_of_minute[oss.str()] = s;
+        }
+        with_metrics.clear();
+        for (const auto& [stamp, s] : last_of_minute) with_metrics.push_back(s);
+    }
 
     // Batch insert for performance
     std::ostringstream query;
