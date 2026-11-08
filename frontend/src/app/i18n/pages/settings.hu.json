@@ -20,6 +20,7 @@
       "philips": "Philips Respironics (kísérleti)",
       "bmc": "BMC / React Health Luna",
       "bmcEzshareHint": "ezShare-en keresztül a Luna munkamenete a maszk levétele után jelenik meg, nem közben.",
+      "philipsHint": "A DreamStation kártyája csak akkor olvasható, ha a fájljai nincsenek titkosítva; a hms-cpap nem fejti vissza őket. A folyamatban lévő kezelés áramlása menet közben látszik, a nyomása a végén.",
       "ezshare": "ezShare WiFi SD-kártya",
       "flashair": "Toshiba FlashAir WiFi SD-kártya",
       "local": "Helyi könyvtár",

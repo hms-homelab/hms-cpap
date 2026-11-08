@@ -21,6 +21,13 @@
       "noteMask": "A maszknál mérve. Erről az éjszakáról nincs terápiás nyomás adat.",
       "noteTherapyMeasured": "A folytonos vonal a készülék által leadott nyomás. A szaggatott vonal a készülék által mért nyomás; minden légvétellel emelkedik és csökken.",
       "noteMeasured": "A készülék által mért nyomás. Erről az éjszakáról nincs terápiás nyomás adat."
+    },
+    "pressureLive": {
+      "chip": "a kezelés végén",
+      "flowOnly": "Amíg a kezelés tart, ez a készülék csak az áramlást rögzíti. A nyomás a kezelés végén kerül a kártyára.",
+      "pendingTitle": "A nyomás a kezelés végén érkezik.",
+      "pendingPhilips": "Ez a Philips készülék csak a maszk levételekor írja a nyomást a kártyájára. Addig a grafikonok azt mutatják, amit az áramlás ad: a légzésedet, annak gyakoriságát és ritmusát.",
+      "deliveredPhilips": "A készülék által leadott nyomás, ahogy kiírja: 2 perces átlag, minden kezelés végén hozzáadva."
     }
   }
 }

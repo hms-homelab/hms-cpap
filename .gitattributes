@@ -1,0 +1,3 @@
+# Card fixtures are bytes, not text: a checkout must not change a line ending
+# in them (a DreamStation PROP.BIN is CR LF on the card).
+tests/fixtures/philips/** binary

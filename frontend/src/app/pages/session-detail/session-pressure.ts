@@ -16,9 +16,14 @@
 // the mask or at the outlet. Its pressure_avg is drawn the same way but called
 // plain "Pressure", never the mask's.
 //
+// A Philips DreamStation card (machine_format 'philips') holds flow only while
+// a session is open; the machine writes the pressure it delivered at
+// mask-off, a 2-minute average. While live the chart says pressure arrives
+// when the session ends; after, it plots that delivered pressure.
+//
 // Plain functions with no Angular in them, so `npm test` runs them directly.
 
-export type SessionPressureSource = 'therapy' | 'mask';
+export type SessionPressureSource = 'therapy' | 'mask' | 'delivered' | 'pending';
 
 export interface PressureLine {
   /** Key of the series in the signals response. */
@@ -41,6 +46,10 @@ export interface SessionPressurePlan {
   lines: PressureLine[];
   /** The mask's min/max band, drawn only when the mask is the chart. */
   band: { minKey: string; maxKey: string } | null;
+  /** Draw the line across minutes with no value (a 2-minute series). */
+  spanGaps?: boolean;
+  /** No pressure yet: the chart says when it arrives instead of drawing. */
+  pending?: boolean;
 }
 
 type Signals = Record<string, unknown> | null | undefined;
@@ -75,7 +84,7 @@ export const MASK_COLOR = '#64b5f6';
  * What the session page's pressure chart plots, or null when the night has no
  * pressure at all (no chart rather than a flat line at zero).
  */
-export function sessionPressurePlan(signals: Signals): SessionPressurePlan | null {
+export function sessionPressurePlan(signals: Signals, live = false): SessionPressurePlan | null {
   const therapy = hasReading(signals, 'therapy_pressure');
   const mask = hasReading(signals, 'pressure_avg');
   // A Luna's measured pressure is not the mask's (see the header).
@@ -112,6 +121,35 @@ export function sessionPressurePlan(signals: Signals): SessionPressurePlan | nul
       lines: [{ key: 'pressure_avg', labelKey: titleKey, color: THERAPY_COLOR, dashed: false }],
       band: { minKey: 'pressure_min', maxKey: 'pressure_max' },
     };
+  }
+  if (signals?.['machine_format'] === 'philips') {
+    // A DreamStation's waveform is flow only. The pressure it delivered is
+    // written at mask-off, a 2-minute average, in epr_pressure (every other
+    // minute has none, so the line spans them).
+    if (hasReading(signals, 'epr_pressure')) {
+      return {
+        source: 'delivered',
+        mainKey: 'epr_pressure',
+        titleKey: 'signal.pressureDelivered',
+        noteKey: 'sessionDetail.pressureLive.deliveredPhilips',
+        lines: [{ key: 'epr_pressure', labelKey: 'signal.pressureDelivered',
+          color: THERAPY_COLOR, dashed: false }],
+        band: null,
+        spanGaps: true,
+      };
+    }
+    // While the session is open there is none yet: say so, never an empty chart.
+    if (live && hasAnyValue(signals, 'flow_avg')) {
+      return {
+        source: 'pending',
+        mainKey: 'epr_pressure',
+        titleKey: 'signal.pressure',
+        noteKey: 'sessionDetail.pressureLive.pendingPhilips',
+        lines: [],
+        band: null,
+        pending: true,
+      };
+    }
   }
   return null;
 }

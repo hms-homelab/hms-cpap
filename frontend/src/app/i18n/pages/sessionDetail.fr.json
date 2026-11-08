@@ -21,6 +21,13 @@
       "noteMask": "Mesurée au masque. Cette nuit n'a pas d'enregistrement de la pression de la thérapie.",
       "noteTherapyMeasured": "La ligne continue est la pression délivrée par votre appareil. La ligne en pointillés est la pression mesurée par votre appareil ; elle monte et descend à chaque respiration.",
       "noteMeasured": "La pression mesurée par votre appareil. Cette nuit n'a pas d'enregistrement de la pression de la thérapie."
+    },
+    "pressureLive": {
+      "chip": "en fin de séance",
+      "flowOnly": "Tant que la séance est ouverte, cet appareil n'enregistre que le débit. Sa pression arrive sur la carte à la fin de la séance.",
+      "pendingTitle": "La pression arrive à la fin de la séance.",
+      "pendingPhilips": "Cet appareil Philips n'écrit la pression sur sa carte qu'au retrait du masque. D'ici là, les graphiques montrent ce que donne le débit : votre respiration, sa fréquence et son rythme.",
+      "deliveredPhilips": "La pression délivrée par l'appareil, telle qu'il l'écrit : une moyenne sur 2 minutes, ajoutée à la fin de chaque séance."
     }
   }
 }

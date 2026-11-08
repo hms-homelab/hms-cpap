@@ -21,6 +21,13 @@
       "noteMask": "Medida na máscara. Esta noite não tem registro da pressão da terapia.",
       "noteTherapyMeasured": "A linha contínua é a pressão que o seu aparelho entregou. A linha tracejada é a pressão que o seu aparelho mediu; ela sobe e desce a cada respiração.",
       "noteMeasured": "A pressão que o seu aparelho mediu. Esta noite não tem registro da pressão da terapia."
+    },
+    "pressureLive": {
+      "chip": "no fim da sessão",
+      "flowOnly": "Enquanto a sessão está aberta, esta máquina registra apenas o fluxo. A pressão chega ao cartão quando a sessão termina.",
+      "pendingTitle": "A pressão chega quando a sessão termina.",
+      "pendingPhilips": "Esta máquina Philips só escreve a pressão no cartão quando a máscara é retirada. Até lá, os gráficos mostram o que o fluxo dá: sua respiração, a frequência e o ritmo.",
+      "deliveredPhilips": "A pressão que a máquina entregou, como ela a escreve: uma média de 2 minutos, adicionada ao fim de cada sessão."
     }
   }
 }

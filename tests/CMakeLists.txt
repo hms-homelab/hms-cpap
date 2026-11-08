@@ -153,6 +153,7 @@ set(TEST_SOURCES
     services/test_PrismaIngestion.cpp
     services/test_SefamIngestion.cpp
     services/test_BmcIngestion.cpp
+    services/test_PhilipsCardIngestion.cpp
     services/test_CardUpload.cpp
     services/test_CpapCard.cpp
     services/test_SefamCardMirror.cpp

@@ -93,6 +93,7 @@ const SIGNAL_DEFS: SignalDef[] = [
         <span class="live-info">Started {{ liveStartTime }} &mdash; {{ liveDuration }}</span>
         <span class="live-poll">{{ 'sessionDetail.refreshing' | translate }}</span>
       </div>
+      <p class="live-note" *ngIf="isLive && isPhilips">{{ 'sessionDetail.pressureLive.flowOnly' | translate }}</p>
 
       <div class="o2-only-note" *ngIf="oximetryOnly">
         <i class="fa-solid fa-heart-pulse"></i>
@@ -143,7 +144,7 @@ const SIGNAL_DEFS: SignalDef[] = [
               <i class="fa-solid fa-arrow-trend-down"></i> ODI {{ detailOdi.toFixed(1) }}/hr
             </span>
           </h3>
-          <div class="detail-controls">
+          <div class="detail-controls" *ngIf="!selectedSignal.pressurePlan?.pending">
             <div class="range-buttons">
               <button *ngFor="let r of rangeOptions" [class.active]="activeRange === r.value"
                 (click)="setRange(r.value)">{{ r.label }}</button>
@@ -156,10 +157,18 @@ const SIGNAL_DEFS: SignalDef[] = [
           </div>
         </div>
         <!-- Issue #56: which pressure is drawn, in one line. -->
-        <p class="detail-note" *ngIf="selectedSignal.pressurePlan">
+        <p class="detail-note" *ngIf="selectedSignal.pressurePlan && !selectedSignal.pressurePlan.pending">
           {{ selectedSignal.pressurePlan.noteKey | translate }}
         </p>
-        <div class="detail-chart-container">
+        <!-- A Philips session still being recorded has no pressure on its card yet. -->
+        <div class="pressure-pending" *ngIf="selectedSignal.pressurePlan?.pending">
+          <i class="fa-regular fa-clock"></i>
+          <div>
+            <strong>{{ 'sessionDetail.pressureLive.pendingTitle' | translate }}</strong>
+            <p>{{ selectedSignal.pressurePlan!.noteKey | translate }}</p>
+          </div>
+        </div>
+        <div class="detail-chart-container" [hidden]="selectedSignal.pressurePlan?.pending">
           <canvas #detailCanvas></canvas>
         </div>
         <div class="slider-container" *ngIf="activeRange !== 'all'">
@@ -183,7 +192,10 @@ const SIGNAL_DEFS: SignalDef[] = [
               <span class="ov-title">{{ sig.titleKey | translate }}</span>
               <span class="ov-unit">{{ sig.unit }}</span>
             </div>
-            <canvas [id]="'ov-' + sig.key"></canvas>
+            <canvas [id]="'ov-' + sig.key" *ngIf="!sig.pressurePlan?.pending"></canvas>
+            <div class="ov-pending" *ngIf="sig.pressurePlan?.pending">
+              <i class="fa-regular fa-clock"></i> {{ 'sessionDetail.pressureLive.chip' | translate }}
+            </div>
           </div>
         </div>
       </div>
@@ -278,6 +290,13 @@ const SIGNAL_DEFS: SignalDef[] = [
     .live-text { color: #4caf50; font-weight: 700; font-size: 0.85rem; letter-spacing: 1px; }
     .live-info { color: #ccc; font-size: 0.8rem; }
     .live-poll { color: #666; font-size: 0.7rem; margin-left: auto; }
+    .live-note { color: #aaa; font-size: 0.8rem; margin: -0.4rem 0 1rem; max-width: 80ch; }
+    .pressure-pending { display: flex; gap: 0.75rem; align-items: flex-start; padding: 1.5rem 1rem;
+      margin-top: 0.75rem; border: 1px dashed #444; border-radius: 6px; color: #ccc; }
+    .pressure-pending i { color: #ce93d8; font-size: 1.2rem; margin-top: 0.1rem; }
+    .pressure-pending p { margin: 0.35rem 0 0; color: #999; font-size: 0.8rem; line-height: 1.45; max-width: 70ch; }
+    .ov-pending { color: #999; font-size: 0.75rem; padding: 0.9rem 0.25rem; }
+    .ov-pending i { color: #ce93d8; margin-right: 0.3rem; }
     @keyframes pulse-dot {
       0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(76,175,80,0.4); }
       50% { opacity: 0.6; box-shadow: 0 0 0 6px rgba(76,175,80,0); }
@@ -455,6 +474,10 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
 
   get hasSpo2(): boolean { return this.displaySpo2 > 0; }
   get hasHr(): boolean { return this.displayHr > 0; }
+  /** A Philips DreamStation card: flow only until a session ends. */
+  get isPhilips(): boolean {
+    return (this.signalData as any)?.machine_format === 'philips';
+  }
   get hasChartData(): boolean {
     return !!(this.signalLabels.length || this.vitalsLabels.length ||
               this.oximetryLabels.length);
@@ -547,6 +570,9 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
         // The mask pressure is a ResMed PLD channel. A machine that has none
         // (a BMC / React Health Luna) gets no empty tile titled as the mask's.
         if (s.key === 'mask_pressure') return hasReading(signals as any, 'mask_pressure');
+        // A Philips card's epr_pressure is the pressure it delivered, and the
+        // pressure chart already plots it.
+        if (s.key === 'epr_pressure' && this.isPhilips) return false;
         // A channel the machine does not record is empty in every minute and
         // gets no tile (a Luna has no flow limitation or snore index). The
         // pressure chart is decided by its plan below.
@@ -721,7 +747,8 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
    * the mask's, for a night without one; no chart for a night with neither.
    */
   private withPressurePlan(defs: SignalDef[]): SignalDef[] {
-    const plan = sessionPressurePlan(this.signalData as unknown as Record<string, unknown>);
+    const plan = sessionPressurePlan(this.signalData as unknown as Record<string, unknown>,
+                                     this.isLive);
     return defs.flatMap(d => {
       if (!d.pressure) return [d];
       if (!plan) return [];
@@ -729,7 +756,7 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
         ...d,
         key: plan.mainKey,
         titleKey: plan.titleKey,
-        color: plan.lines[0].color,
+        color: plan.lines[0]?.color ?? d.color,   // a pending plan draws no line
         hasBand: !!plan.band,
         bandMinKey: plan.band?.minKey,
         bandMaxKey: plan.band?.maxKey,
@@ -770,8 +797,10 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
   private renderDetailChart() {
     if (!this.selectedSignal || !this.detailCanvasRef?.nativeElement) return;
     this.detailChart?.destroy();
+    this.detailChart = null;
 
     const sig = this.selectedSignal;
+    if (sig.pressurePlan?.pending) return;   // the panel says when it arrives
     let labels = this.getLabels();
     let mainData = this.getData(sig.key);
     let timestamps = this.getTimestamps();
@@ -788,7 +817,8 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
 
     // Build datasets
     const sigTitle = this.t.instant(sig.titleKey);
-    const datasets: ChartDataset<'line'>[] = [makeDataset(sigTitle, mainData, sig.color, { fill: sig.fill })];
+    const datasets: ChartDataset<'line'>[] = [makeDataset(sigTitle, mainData, sig.color,
+      { fill: sig.fill, spanGaps: !!sig.pressurePlan?.spanGaps })];
 
     // Issue #56: the pressure chart's other lines (the mask's, dashed), each
     // with its own legend label. The first line is the main dataset above.
@@ -930,6 +960,7 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
             pointRadius: 0,
             tension: 0.3,
             fill: true,
+            spanGaps: !!sig.pressurePlan?.spanGaps,
           }],
         },
         options: {

@@ -70,12 +70,18 @@ import { sourceImage } from '../../utils/source-image';
                 <option value="resmed">ResMed</option>
                 <option value="sefam">Sefam S.Box</option>
                 <option value="bmc">{{ 'settings.source.bmc' | translate }}</option>
+                <option value="philips">{{ 'settings.source.philips' | translate }}</option>
               </select>
             </label>
             <!-- SDD-060 D5: over an ez Share a Luna session appears once the
                  mask is off, never during it. -->
             <small class="hint" *ngIf="config.transport === 'ezshare' && config.format === 'bmc'">
               {{ 'settings.source.bmcEzshareHint' | translate }}
+            </small>
+            <!-- hms-cpap does not decrypt: a DreamStation 2 card is read only
+                 when its files are plain. -->
+            <small class="hint" *ngIf="config.format === 'philips'">
+              {{ 'settings.source.philipsHint' | translate }}
             </small>
             <!-- Asked for by the first person to look here for myAir, which will
                  not be the last. myAir cannot BE a source: it returns daily
@@ -1655,8 +1661,9 @@ export class SettingsComponent implements OnInit, OnDestroy {
    *  ResMed. SDD-056: a FlashAir reads ResMed only. */
   onTransportChange(transport: string): void {
     if (!this.config) return;
-    // SDD-060: a Luna (bmc) runs an ez Share too.
-    if (transport === 'ezshare' && !['resmed', 'sefam', 'bmc'].includes(this.config.format)) {
+    // SDD-060: a Luna (bmc) runs an ez Share too, and so does a Philips card.
+    if (transport === 'ezshare' &&
+        !['resmed', 'sefam', 'bmc', 'philips'].includes(this.config.format)) {
       this.config.format = 'resmed';
     }
     if (transport === 'flashair') this.config.format = 'resmed';

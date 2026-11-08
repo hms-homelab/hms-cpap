@@ -127,6 +127,7 @@ struct AppConfig {
         if (transport == "local") return format == "resmed" ? "local" : format;
         if (transport == "ezshare" && format == "sefam") return "sefam_ezshare";
         if (transport == "ezshare" && format == "bmc") return "bmc_ezshare";
+        if (transport == "ezshare" && format == "philips") return "philips_ezshare";
         return transport;
     }
 

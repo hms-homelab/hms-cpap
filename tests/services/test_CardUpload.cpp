@@ -252,4 +252,8 @@ TEST(CollectorSource, TheTransportAndFormatPairMapsToWhatTheCollectorBuilds) {
     // SDD-060 (reopening SDD-049 D1): a Luna runs an ez Share, read through a
     // copy of the card as a Sefam is.
     EXPECT_EQ(AppConfig::collectorSource("ezshare", "bmc"), "bmc_ezshare");
+    // A Philips card with plain files: a folder, or a copy through an ez Share
+    // or a Mule & Miner in proxy mode.
+    EXPECT_EQ(AppConfig::collectorSource("local", "philips"), "philips");
+    EXPECT_EQ(AppConfig::collectorSource("ezshare", "philips"), "philips_ezshare");
 }

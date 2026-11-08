@@ -15,6 +15,7 @@
     "flow": "Áramlás",
     "pressure": "Nyomás",
     "therapyPressure": "Terápiás nyomás",
+    "pressureDelivered": "Leadott nyomás",
     "leak": "Szivárgási arány",
     "respRate": "Légzésszám",
     "tidalVolume": "Légzési térfogat",

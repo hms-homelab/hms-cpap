@@ -404,6 +404,38 @@ The format was decoded from a donated card without reference to any GPL or
 vendor source. See `docs/BMC_FORMAT.md` in the parser repository for what is
 confirmed, what is supported, and what is still unknown.
 
+### Philips DreamStation card (plain files)
+
+Card format `philips` reads a DreamStation card whose files are **not
+encrypted**. A DreamStation 2 encrypts the files on its card and hms-cpap does
+not decrypt them: an encrypted card is reported once in the log ("the Philips
+card ... is encrypted") and nothing is stored from it. A night read over
+Bluetooth (above) is unaffected.
+
+The card's data sits under `P-SERIES/<folder>/`; point `local_dir` at the card
+root or a folder up to three levels above it:
+
+```
+P-SERIES/<folder>/PROP.BIN      # the machine's identity, key=value text
+P-SERIES/<folder>/P0/<session>.B05   # flow, appended as the session goes
+P-SERIES/<folder>/P0/<session>.B01   # summary, written at mask-off
+P-SERIES/<folder>/P0/<session>.B02   # events, written at mask-off
+```
+
+It is read from a folder (`"transport": "local", "format": "philips"`: a card
+reader, a card shared on the network, a folder a Mule & Miner fills), or
+through an ez Share or a Mule & Miner in proxy mode (`"transport": "ezshare",
+"format": "philips"`, with an `archive_dir`: the card's session files are
+copied into `<archive_dir>/philips`, never its `D/` and `E/` logs).
+
+**While a session is recorded** the machine writes flow only, a 4-minute block
+at a time. The night reads live: flow, breathing rate, I:E, tidal volume and
+minute ventilation, and the pressure chart says "Pressure arrives when the
+session ends". **When the session ends** its summary and events land, the
+session closes at once on its own data, and the pressure the machine delivered
+(a 2-minute average) and its events appear. A session that stops growing
+without a summary is closed on its data after five minutes.
+
 ## Configuration
 
 The setup wizard writes everything below for you, so this section is for people

@@ -15,6 +15,7 @@
     "flow": "Débit",
     "pressure": "Pression",
     "therapyPressure": "Pression de la thérapie",
+    "pressureDelivered": "Pression délivrée",
     "leak": "Débit de fuite",
     "respRate": "Fréquence respiratoire",
     "tidalVolume": "Volume courant",

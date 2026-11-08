@@ -312,11 +312,11 @@ TEST_F(BmcCardTest, ASessionGrowingWhileWatchedIsOpenAndClosesOnItsDataWhenQuiet
     EXPECT_EQ(open(), 1) << "a session growing now is open";
     EXPECT_EQ(end(), "");
 
-    svc.setBmcMaskQuietForTest(std::chrono::hours(1));
+    svc.setCardMaskQuietForTest(std::chrono::hours(1));
     ASSERT_TRUE(svc.runBurstCycleForTest());   // no growth, inside the window
     EXPECT_EQ(open(), 1);
 
-    svc.setBmcMaskQuietForTest(std::chrono::seconds(0));
+    svc.setCardMaskQuietForTest(std::chrono::seconds(0));
     ASSERT_TRUE(svc.runBurstCycleForTest());   // quiet: closed on its data
     EXPECT_EQ(open(), 0);
     EXPECT_EQ(end().substr(0, 19), "2025-03-10 23:50:00") << "start plus 1200 s, not the clock";

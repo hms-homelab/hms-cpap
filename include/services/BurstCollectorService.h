@@ -21,6 +21,7 @@
 #include "services/PrismaIngestion.h"
 #include "services/SefamIngestion.h"
 #include "services/BmcIngestion.h"
+#include "services/PhilipsCardIngestion.h"
 #include "services/SessionDiscoveryService.h"
 #include "services/ListingPlan.h"
 #include "utils/MachineClock.h"
@@ -292,9 +293,15 @@ public:
         cpap_source_ = "bmc";
     }
 
-    /// SDD-058 D2: how long a live Luna session may go without growing before
+    /// Read a Philips card with plain files from [root] on the next burst. Test-only.
+    void usePhilipsCardForTest(const std::string& root) {
+        philips_ingestion_ = std::make_unique<PhilipsCardIngestion>(root);
+        cpap_source_ = "philips";
+    }
+
+    /// SDD-058 D2: how long a live card session may go without growing before
     /// it is closed. Test-only.
-    void setBmcMaskQuietForTest(std::chrono::seconds quiet) { bmc_mask_quiet_ = quiet; }
+    void setCardMaskQuietForTest(std::chrono::seconds quiet) { card_mask_quiet_ = quiet; }
 
     /// Test-only: the id nights are being stored under (SDD-042).
     const std::string& deviceIdForTest() const { return device_id_; }
@@ -382,32 +389,65 @@ private:
     std::unique_ptr<PrismaIngestion> prisma_ingestion_;
     std::unique_ptr<SefamIngestion> sefam_ingestion_;
     std::unique_ptr<BmcIngestion> bmc_ingestion_;   // SDD-049
+    std::unique_ptr<PhilipsCardIngestion> philips_ingestion_;
 
-    /// SDD-049: the packet count this process last saved for each BMC session,
-    /// by start (epoch seconds). A stored session is read again once per
-    /// process, every one of them, and then whenever it got longer.
-    std::map<long long, int> bmc_saved_seconds_;
+    // ── A card read whole each burst, whose newest session grows: a Luna
+    //    (SDD-049) and a Philips card with plain files. One source at a time.
 
-    /// SDD-058 D2: the Luna session being written now, so its night reads live
+    /// What this process last saved for each session, by start (epoch
+    /// seconds): its seconds x 2, plus 1 once its summary is on the card. A
+    /// stored session is read again once per process, every one of them, and
+    /// then whenever that changed.
+    std::map<long long, int> card_seen_;
+
+    /// SDD-058 D2: the session being written now, so its night reads live
     /// (the night page's LIVE banner and its refresh). A session that starts or
     /// grows while this process watches is left open; it is closed on its own
-    /// data end once it has not grown for bmc_mask_quiet_. The first burst of a
-    /// process only imports: what it finds was written before it looked.
-    long long bmc_live_start_ = 0;   // epoch seconds, 0 for none
-    std::chrono::steady_clock::time_point bmc_live_grew_at_{};
-    std::chrono::seconds bmc_mask_quiet_{300};
-    bool bmc_first_burst_done_ = false;
+    /// data end once it has not grown for card_mask_quiet_, or at once when the
+    /// card says it ended (a Philips summary). The first burst of a process
+    /// only imports: what it finds was written before it looked.
+    long long card_live_start_ = 0;   // epoch seconds, 0 for none
+    std::chrono::steady_clock::time_point card_live_grew_at_{};
+    std::chrono::seconds card_mask_quiet_{300};
+    bool card_first_burst_done_ = false;
 
-    /// SDD-049: the newest changed night, until it reaches the broker. A BMC
+    /// SDD-049: the newest changed night, until it reaches the broker. A card
     /// burst reads no network and finishes in milliseconds, so at startup it
     /// can publish before the client is connected, and the messages it drops
     /// would not come again until the next night. Held, and published on the
     /// first burst that finds the client connected.
-    std::shared_ptr<const CPAPSession> bmc_pending_publish_;
-    bool bmc_pending_is_new_ = false;
+    std::shared_ptr<const CPAPSession> card_pending_publish_;
+    bool card_pending_is_new_ = false;
+
+    /// One card session as the burst sees it. closed: the card says the
+    /// session ended (1), is still being written (0), or does not say (-1, a
+    /// Luna, whose end is known only from its growth stopping).
+    struct CardSession {
+        std::unique_ptr<CPAPSession> session;
+        int closed = -1;
+    };
+
+    /// Save what changed, keep the session being written open, close the
+    /// rest on their data, then the daily summary and the publish. [what]
+    /// names the machine in the log. Shared by the BMC and Philips bursts.
+    void storeCardSessions(std::vector<CardSession> sessions, const char* what,
+                           std::chrono::steady_clock::time_point cycle_start);
 
     /// SDD-049: one BMC burst. Split out so a test can run it on a synthetic card.
     bool executeBmcBurst();
+
+    /// One burst of a Philips card with plain files (a folder, or the copy
+    /// an ez Share or a Mule & Miner in proxy mode keeps).
+    bool executePhilipsBurst();
+
+    /// A Philips card behind an ez Share, or a Mule & Miner in proxy mode:
+    /// data_source_ is the client; each burst copies the card's session files
+    /// into philips_mirror_dir_ (<archive>/philips) first.
+    bool philips_over_ezshare_ = false;
+    std::string philips_mirror_dir_;
+    /// An encrypted card is said once per stretch, not every burst.
+    bool philips_encrypted_logged_ = false;
+    void startPhilipsOverEzShare(const std::string& archive_dir);
 
     /// SDD-031: a Sefam card behind an ez Share. data_source_ is the ez Share
     /// client; each burst copies the card into sefam_archive_dir_ and the

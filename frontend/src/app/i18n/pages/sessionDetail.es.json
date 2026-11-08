@@ -21,6 +21,13 @@
       "noteMask": "Medida en la mascarilla. Esta noche no tiene registro de la presión de la terapia.",
       "noteTherapyMeasured": "La línea continua es la presión que entregó su equipo. La línea discontinua es la presión que midió su equipo; sube y baja con cada respiración.",
       "noteMeasured": "La presión que midió su equipo. Esta noche no tiene registro de la presión de la terapia."
+    },
+    "pressureLive": {
+      "chip": "al terminar la sesión",
+      "flowOnly": "Mientras la sesión está abierta, esta máquina solo registra el flujo. Su presión llega a la tarjeta cuando termina la sesión.",
+      "pendingTitle": "La presión llega cuando termina la sesión.",
+      "pendingPhilips": "Esta máquina Philips escribe la presión en su tarjeta solo al quitarse la mascarilla. Hasta entonces, los gráficos muestran lo que da el flujo: tu respiración, su frecuencia y su ritmo.",
+      "deliveredPhilips": "La presión que entregó la máquina, tal como la escribe: un promedio de 2 minutos, añadido al terminar cada sesión."
     }
   }
 }

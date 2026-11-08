@@ -108,6 +108,47 @@ test('every other format keeps the mask wording', () => {
   }
 });
 
+// A Philips DreamStation card: flow only while the session is open; at
+// mask-off the machine writes the pressure it delivered, every 2 minutes.
+const ds2Open = {
+  machine_format: 'philips',
+  timestamps: epr3.timestamps,
+  flow_avg: ['0.4', '-0.2', '0.1'],
+  pressure_avg: [null, null, null],
+  therapy_pressure: [null, null, null],
+  epr_pressure: [null, null, null],
+};
+
+test('a live Philips session says its pressure arrives at mask-off, no chart', () => {
+  const p = sessionPressurePlan(ds2Open, true)!;
+  assert.equal(p.source, 'pending');
+  assert.equal(p.pending, true);
+  assert.equal(p.titleKey, 'signal.pressure');
+  assert.equal(p.noteKey, 'sessionDetail.pressureLive.pendingPhilips');
+  assert.deepEqual(p.lines, []);
+});
+
+test('a Philips session no longer live with no pressure has no pressure chart', () => {
+  assert.equal(sessionPressurePlan(ds2Open, false), null);
+});
+
+test('after mask-off a Philips night plots the pressure it delivered, gaps spanned', () => {
+  const p = sessionPressurePlan({ ...ds2Open, epr_pressure: ['6.2', null, '6.4'] }, false)!;
+  assert.equal(p.source, 'delivered');
+  assert.equal(p.mainKey, 'epr_pressure');
+  assert.equal(p.titleKey, 'signal.pressureDelivered');
+  assert.equal(p.noteKey, 'sessionDetail.pressureLive.deliveredPhilips');
+  assert.equal(p.spanGaps, true);
+  assert.ok(!p.pending);
+  // Still the delivered pressure if the page was opened while live.
+  assert.equal(sessionPressurePlan({ ...ds2Open, epr_pressure: ['6.2', null, '6.4'] }, true)!.source,
+    'delivered');
+});
+
+test('another machine live with no pressure is not told it arrives at mask-off', () => {
+  assert.equal(sessionPressurePlan({ ...ds2Open, machine_format: 'bmc' }, true), null);
+});
+
 test('a channel empty in every minute has no value; one at 0 all night does', () => {
   const night = {
     flow_limitation: [null, null, null],    // a Luna records none

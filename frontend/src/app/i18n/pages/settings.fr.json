@@ -20,6 +20,7 @@
       "philips": "Philips Respironics (expérimental)",
       "bmc": "BMC / React Health Luna",
       "bmcEzshareHint": "Avec un ezShare, une session de la Luna apparaît une fois le masque retiré, pas pendant qu'elle se déroule.",
+      "philipsHint": "Une carte DreamStation n'est lue que si ses fichiers ne sont pas chiffrés ; hms-cpap ne les déchiffre pas. Une séance en cours montre son débit au fur et à mesure, et sa pression à la fin.",
       "ezshare": "Carte SD WiFi ezShare",
       "flashair": "Carte SD WiFi Toshiba FlashAir",
       "local": "Répertoire local",

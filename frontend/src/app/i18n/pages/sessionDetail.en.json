@@ -21,6 +21,13 @@
       "noteMask": "Measured at the mask. This night has no therapy pressure record.",
       "noteTherapyMeasured": "The solid line is the pressure your machine delivered. The dashed line is the pressure your machine measured; it rises and falls with each breath.",
       "noteMeasured": "The pressure your machine measured. This night has no therapy pressure record."
+    },
+    "pressureLive": {
+      "chip": "at session end",
+      "flowOnly": "While the session is open, this machine records flow only. Its pressure reaches the card when the session ends.",
+      "pendingTitle": "Pressure arrives when the session ends.",
+      "pendingPhilips": "This Philips machine writes pressure to its card only at mask-off. Until then the charts show what the flow gives: your breathing, its rate and its timing.",
+      "deliveredPhilips": "The pressure the machine delivered, as it writes it: a 2-minute average, added when each session ends."
     }
   }
 }

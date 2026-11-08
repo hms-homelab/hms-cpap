@@ -15,6 +15,7 @@
     "flow": "Flow Rate",
     "pressure": "Pressure",
     "therapyPressure": "Therapy Pressure",
+    "pressureDelivered": "Delivered Pressure",
     "leak": "Leak Rate",
     "respRate": "Respiratory Rate",
     "tidalVolume": "Tidal Volume",

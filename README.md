@@ -443,7 +443,9 @@ full night.
   holds both `STR.edf` and `DATALOG/`), on a USB reader, a NAS share, or any
   mount, and say which machine wrote it. In `config.json`: `"transport":
   "local"`, `"local_dir"`, and `"format"`: `resmed`, `lowenstein` (a Prisma
-  tree, a serial folder with no `DATALOG`), `sefam`, or `bmc` for a Luna. A
+  tree, a serial folder with no `DATALOG`), `sefam`, `bmc` for a Luna, or
+  `philips` for a DreamStation card whose files are not encrypted (a
+  DreamStation 2 encrypts its card, and hms-cpap does not decrypt it). A
   path one level too deep is refused rather than guessed. This is also how
   the folders written by a Sleep Bridge Lite (1) and the AirSense 11 streams
   (2 and 3) are read.

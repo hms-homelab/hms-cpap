@@ -28,6 +28,7 @@
 #include "services/Ds2ReadTime.h"
 #include "services/SefamCardMirror.h"
 #include "services/BmcCardMirror.h"
+#include "services/PhilipsCardMirror.h"
 #include "database/SQLiteDatabase.h"
 #include "database/DatabaseFactory.h"
 #ifdef WITH_POSTGRESQL
@@ -166,9 +167,10 @@ void BurstCollectorService::initDataSource() {
     // SDD-031: a Sefam card behind an ez Share is still a Sefam source to
     // everything downstream (no STR, sessions as the daily summary's writer).
     // SDD-060: and a Luna behind one is still a BMC source.
-    cpap_source_ = (source == "sefam_ezshare") ? "sefam"
-                   : (source == "bmc_ezshare") ? "bmc"
-                                               : source;
+    cpap_source_ = (source == "sefam_ezshare")     ? "sefam"
+                   : (source == "bmc_ezshare")     ? "bmc"
+                   : (source == "philips_ezshare") ? "philips"
+                                                   : source;
     if (source == "local") {
         local_source_dir_ = ConfigManager::get("CPAP_LOCAL_DIR", "");
         // SDD-010: local_source_dir_ is the card ROOT. A wrong layout is NOT
@@ -226,6 +228,18 @@ void BurstCollectorService::initDataSource() {
         startSefamOverEzShare(ConfigManager::get("CPAP_ARCHIVE_DIR", ""));
     } else if (source == "bmc_ezshare") {
         startBmcOverEzShare(ConfigManager::get("CPAP_ARCHIVE_DIR", ""));
+    } else if (source == "philips") {
+        // A Philips card with plain files in a folder: a card reader, a card
+        // shared on the network, or a folder a Mule & Miner fills.
+        std::string data_dir = ConfigManager::get("CPAP_LOCAL_DIR", "");
+        if (data_dir.empty()) {
+            std::cerr << "format=philips but CPAP_LOCAL_DIR not set!" << std::endl;
+            throw std::runtime_error("CPAP_LOCAL_DIR required when format=philips");
+        }
+        philips_ingestion_ = std::make_unique<PhilipsCardIngestion>(data_dir);
+        std::cout << "CPAP: Philips card mode — reading from " << data_dir << std::endl;
+    } else if (source == "philips_ezshare") {
+        startPhilipsOverEzShare(ConfigManager::get("CPAP_ARCHIVE_DIR", ""));
     } else if (source == "flashair") {
         // SDD-056: a FlashAir card answers the same interface as an ez Share.
         data_source_ = std::make_unique<FlashAirClient>();
@@ -285,6 +299,32 @@ void BurstCollectorService::startBmcOverEzShare(const std::string& archive_dir) 
     } else {
         std::cout << "CPAP: BMC / React Health Luna over ez Share — copying the card into "
                   << bmc_mirror_dir_ << std::endl;
+    }
+}
+
+void BurstCollectorService::startPhilipsOverEzShare(const std::string& archive_dir) {
+    // The ez Share client (the card, or a Mule & Miner in proxy mode) copies
+    // the card's P-SERIES session files into <archive>/philips; the Philips
+    // ingestion reads that folder exactly as it reads a local card.
+    local_source_dir_.clear();
+    prisma_ingestion_.reset();
+    sefam_ingestion_.reset();
+    bmc_ingestion_.reset();
+    discovery_service_.reset();   // the ResMed DATALOG discovery is not used
+    auto ez = std::make_unique<EzShareClient>();
+    if (app_config_ && !app_config_->ezshare_range) ez->setSupportsRange(false);
+    data_source_ = std::move(ez);
+    philips_mirror_dir_ =
+        archive_dir.empty() ? std::string() : (std::filesystem::path(archive_dir) / "philips").string();
+    philips_over_ezshare_ = true;
+    philips_ingestion_ = std::make_unique<PhilipsCardIngestion>(philips_mirror_dir_);
+    if (philips_mirror_dir_.empty()) {
+        std::cerr << "CPAP: a Philips card over ez Share needs an archive folder (archive_dir) "
+                     "to copy the card into; nothing will be imported until one is set"
+                  << std::endl;
+    } else {
+        std::cout << "CPAP: Philips card over ez Share — copying the card into "
+                  << philips_mirror_dir_ << std::endl;
     }
 }
 
@@ -1676,7 +1716,8 @@ void BurstCollectorService::processSessionSummary() {
     // STR.edf is a ResMed artefact. A Lowenstein or Sefam card has no equivalent,
     // so there is nothing for processSTRFile() to read and cpap_daily_summary can
     // only come from the sessions we just parsed.
-    if (cpap_source_ == "lowenstein" || cpap_source_ == "sefam" || cpap_source_ == "bmc") {
+    if (cpap_source_ == "lowenstein" || cpap_source_ == "sefam" || cpap_source_ == "bmc" ||
+        cpap_source_ == "philips") {
         // TODO(#15): avg_mask_pressure/avg_spo2/avg_epr_pressure etc. are always 0 in
         // cpap_session_metrics because PrismaParser never aggregates the per-minute
         // WMEDF signal samples (pressure/leak/SpO2/HR) into those fields. Once that
@@ -2496,6 +2537,10 @@ bool BurstCollectorService::executeBurstCycle() {
     } else if (bmc_ingestion_) {
         // ===== BMC / REACT HEALTH LUNA (SDD-049) =====
         return executeBmcBurst();
+
+    } else if (philips_ingestion_) {
+        // ===== PHILIPS CARD, PLAIN FILES =====
+        return executePhilipsBurst();
 
     } else if (cpap_source_ == "local" && !localSourceIsReady()) {
         // SDD-010: the folder is unset or wrong. Nothing is inserted while the
@@ -3800,87 +3845,134 @@ bool BurstCollectorService::executeBmcBurst() {
         std::cerr << "CPAP: " << read.error << std::endl;
         return false;
     }
+    std::vector<CardSession> sessions;
+    for (auto& s : read.sessions) sessions.push_back({std::move(s), -1});
+    storeCardSessions(std::move(sessions), "BMC", cycle_start);
+    return true;
+}
 
+bool BurstCollectorService::executePhilipsBurst() {
+    const auto cycle_start = std::chrono::steady_clock::now();
+
+    if (philips_over_ezshare_) {
+        if (!data_source_ || philips_mirror_dir_.empty()) {
+            std::cerr << "CPAP: Philips over ez Share is not ready (no archive folder)" << std::endl;
+            return false;
+        }
+        const auto m = mirrorPhilipsCard(*data_source_, philips_mirror_dir_);
+        if (!m.ok) {
+            std::cerr << "CPAP: Philips card copy failed: " << m.error << std::endl;
+            return false;
+        }
+        if (m.encrypted) {
+            if (!philips_encrypted_logged_)
+                std::cerr << "CPAP: the Philips card is encrypted; hms-cpap reads a DreamStation "
+                             "card only when its files are plain" << std::endl;
+            philips_encrypted_logged_ = true;
+            return false;
+        }
+    }
+
+    auto read = philips_ingestion_->readSessions(device_id_, device_name_);
+    if (!read.ok) {
+        // An encrypted card is a fact about the card, said once per stretch.
+        if (!read.encrypted || !philips_encrypted_logged_) std::cerr << "CPAP: " << read.error << std::endl;
+        philips_encrypted_logged_ = read.encrypted;
+        return false;
+    }
+    philips_encrypted_logged_ = false;
+    std::vector<CardSession> sessions;
+    for (auto& s : read.sessions) sessions.push_back({std::move(s.parsed), s.closed ? 1 : 0});
+    storeCardSessions(std::move(sessions), "Philips", cycle_start);
+    return true;
+}
+
+void BurstCollectorService::storeCardSessions(std::vector<CardSession> sessions, const char* what,
+                                              std::chrono::steady_clock::time_point cycle_start) {
     // D4: every session the database does not hold. A stored one is read again
     // once per process, every one of them (a Luna appends every session to the
     // same files, and a row saved by an older pass can carry a wrong end), then
-    // whenever it got longer.
+    // whenever it changed.
     const auto now = std::chrono::steady_clock::now();
     bool live_grew = false;
     int imported = 0, grown = 0;
-    for (std::size_t i = 0; i < read.sessions.size(); ++i) {
-        const auto& s = *read.sessions[i];
+    for (std::size_t i = 0; i < sessions.size(); ++i) {
+        const auto& s = *sessions[i].session;
+        const int closed = sessions[i].closed;
         const auto start = *s.session_start;
         if (isRemovedNight(removed_nights_, start)) continue;   // SDD-029
 
         const long long key =
             std::chrono::duration_cast<std::chrono::seconds>(start.time_since_epoch()).count();
-        const int seconds = s.duration_seconds.value_or(0);
-        const bool is_newest = i + 1 == read.sessions.size();
+        const int seen_value = s.duration_seconds.value_or(0) * 2 + (closed == 1 ? 1 : 0);
+        const bool is_newest = i + 1 == sessions.size();
         const bool stored = db_service_->sessionExists(device_id_, start);
         // SDD-058 D2: the newest session started or grew since this process
-        // last looked, so the machine is writing it now.
-        bool written_now = is_newest && bmc_first_burst_done_ && !stored;
+        // last looked, so the machine is writing it now; never one the card
+        // says has ended.
+        bool written_now = is_newest && card_first_burst_done_ && !stored;
         if (stored) {
-            const auto seen = bmc_saved_seconds_.find(key);
-            const bool first_look = seen == bmc_saved_seconds_.end();
-            const bool grew = first_look || seconds > seen->second;
-            if (!grew) {
-                bmc_saved_seconds_[key] = seconds;
+            const auto seen = card_seen_.find(key);
+            const bool first_look = seen == card_seen_.end();
+            const bool changed = first_look || seen_value != seen->second;
+            if (!changed) {
+                card_seen_[key] = seen_value;
                 continue;
             }
             written_now = is_newest && !first_look;
         }
+        if (closed == 1) written_now = false;
 
         if (!db_service_->saveSession(s)) {
-            std::cerr << "CPAP: BMC session could not be saved" << std::endl;
+            std::cerr << "CPAP: " << what << " session could not be saved" << std::endl;
             continue;
         }
         if (written_now) {
             // Open while it grows: the night reads live. Closed below, on its
             // own data end, once it stops growing.
             db_service_->reopenSession(device_id_, start);
-            bmc_live_start_ = key;
-            bmc_live_grew_at_ = now;
+            card_live_start_ = key;
+            card_live_grew_at_ = now;
             live_grew = true;
         } else {
             closeWithDataEnd(*db_service_, device_id_, start, s);   // SDD-037 D2
+            if (key == card_live_start_) card_live_start_ = 0;      // the card says it ended
         }
-        bmc_saved_seconds_[key] = seconds;
+        card_seen_[key] = seen_value;
         if (stored) ++grown; else ++imported;
         // The newest changed night is the one Home Assistant shows.
-        bmc_pending_publish_ = std::shared_ptr<const CPAPSession>(std::move(read.sessions[i]));
-        bmc_pending_is_new_ = !stored;
+        card_pending_publish_ = std::shared_ptr<const CPAPSession>(std::move(sessions[i].session));
+        card_pending_is_new_ = !stored;
     }
-    bmc_first_burst_done_ = true;
+    card_first_burst_done_ = true;
 
     // SDD-058 D2: every open session but the one still growing is closed on
     // its stored span: the live one once it has been quiet for the window, the
     // one before it when a new session began, and one an earlier process left
     // open.
-    const bool live_quiet = bmc_live_start_ != 0 && !live_grew &&
-                            now - bmc_live_grew_at_ >= bmc_mask_quiet_;
+    const bool live_quiet = card_live_start_ != 0 && !live_grew &&
+                            now - card_live_grew_at_ >= card_mask_quiet_;
     for (const auto& open : openSessionsStartedBefore(
              *db_service_, device_id_, std::chrono::system_clock::now() + std::chrono::hours(48))) {
         const long long at =
             std::chrono::duration_cast<std::chrono::seconds>(open.start.time_since_epoch()).count();
-        const bool is_live = bmc_live_start_ != 0 && std::llabs(at - bmc_live_start_) <= 5;
+        const bool is_live = card_live_start_ != 0 && std::llabs(at - card_live_start_) <= 5;
         if (is_live && !live_quiet) continue;
         if (open.duration_seconds <= 0) continue;   // nothing the data knows (SDD-037)
         db_service_->markSessionCompletedAt(device_id_, open.start,
                                             open.start + std::chrono::seconds(open.duration_seconds));
         if (is_live) {
-            std::cout << "CPAP: the Luna session has not grown for "
-                      << bmc_mask_quiet_.count() << " s; closed on its data" << std::endl;
+            std::cout << "CPAP: the " << what << " session has not grown for "
+                      << card_mask_quiet_.count() << " s; closed on its data" << std::endl;
         }
     }
-    if (live_quiet) bmc_live_start_ = 0;
+    if (live_quiet) card_live_start_ = 0;
 
-    // No STR on a BMC card: the daily summary comes from the sessions.
+    // No STR on these cards: the daily summary comes from the sessions.
     if (imported + grown > 0) processSessionSummary();
 
-    if (bmc_pending_publish_ && data_publisher_ && mqtt_client_ && mqtt_client_->isConnected()) {
-        const auto night = std::move(bmc_pending_publish_);
+    if (card_pending_publish_ && data_publisher_ && mqtt_client_ && mqtt_client_->isConnected()) {
+        const auto night = std::move(card_pending_publish_);
         // D2: no STR to name the family, so the session does. The parser
         // marks a session whose IPAP exceeds its EPAP as bi-level (mode 2).
         const bool bilevel = night->settings && night->settings->therapy_mode == 2;
@@ -3890,7 +3982,7 @@ bool BurstCollectorService::executeBmcBurst() {
         if (auto metrics = db_service_->getNightlyMetrics(device_id_, *night->session_start)) {
             data_publisher_->publishHistoricalState(*metrics);
             // A grown night is the same night again: no second summary.
-            if (bmc_pending_is_new_ && llm_enabled_ && llm_client_)
+            if (card_pending_is_new_ && llm_enabled_ && llm_client_)
                 generateAndPublishSummary(*metrics, nullptr);
         }
         data_publisher_->publishSessionCompleted();
@@ -3898,10 +3990,9 @@ bool BurstCollectorService::executeBmcBurst() {
 
     const auto cycle_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - cycle_start).count();
-    std::cout << "CPAP: BMC burst cycle completed in " << cycle_ms << " ms ("
-              << read.sessions.size() << " on the card, " << imported << " imported, "
+    std::cout << "CPAP: " << what << " burst cycle completed in " << cycle_ms << " ms ("
+              << sessions.size() << " on the card, " << imported << " imported, "
               << grown << " grown)" << std::endl;
-    return true;
 }
 
 void BurstCollectorService::runRequestedRepublish() {
@@ -4055,7 +4146,7 @@ void BurstCollectorService::runLoop() {
     // mode, a Löwenstein or Sefam folder): that is the user's, not ours.
     try {
         const bool reads_card_in_place = !local_source_dir_.empty() || prisma_ingestion_ ||
-                                         bmc_ingestion_ ||
+                                         bmc_ingestion_ || philips_ingestion_ ||
                                          (sefam_ingestion_ && !sefam_over_ezshare_);
         if (!reads_card_in_place) {
             const std::string archive = ConfigManager::get(
@@ -4823,11 +4914,14 @@ void BurstCollectorService::reloadConfig() {
     if (nc.source != last_config_.source || nc.ezshare_url != last_config_.ezshare_url ||
         nc.flashair_url != last_config_.flashair_url ||
         nc.local_dir != last_config_.local_dir ||
-        ((nc.source == "sefam_ezshare" || nc.source == "bmc_ezshare") &&
+        ((nc.source == "sefam_ezshare" || nc.source == "bmc_ezshare" ||
+          nc.source == "philips_ezshare") &&
          nc.archive_dir != last_config_.archive_dir)) {
         sefam_over_ezshare_ = false;
         bmc_over_ezshare_ = false;
         bmc_ingestion_.reset();   // SDD-049: only the bmc branches below build one
+        philips_over_ezshare_ = false;
+        philips_ingestion_.reset();   // only the philips branches below build one
         if (nc.source == "sefam_ezshare") {
 #ifdef _WIN32
             _putenv_s("EZSHARE_BASE_URL", nc.ezshare_url.c_str());
@@ -4843,6 +4937,21 @@ void BurstCollectorService::reloadConfig() {
             setenv("EZSHARE_BASE_URL", nc.ezshare_url.c_str(), 1);
 #endif
             startBmcOverEzShare(nc.archive_dir);
+        } else if (nc.source == "philips_ezshare") {
+            // The card (or a Mule & Miner in proxy mode) the URL names.
+#ifdef _WIN32
+            _putenv_s("EZSHARE_BASE_URL", nc.ezshare_url.c_str());
+#else
+            setenv("EZSHARE_BASE_URL", nc.ezshare_url.c_str(), 1);
+#endif
+            startPhilipsOverEzShare(nc.archive_dir);
+        } else if (nc.source == "philips") {
+            local_source_dir_.clear();
+            data_source_.reset();
+            discovery_service_.reset();
+            prisma_ingestion_.reset();
+            sefam_ingestion_.reset();
+            philips_ingestion_ = std::make_unique<PhilipsCardIngestion>(nc.local_dir);
         } else if (nc.source == "lowenstein") {
             local_source_dir_.clear();
             data_source_.reset();
@@ -4904,9 +5013,10 @@ void BurstCollectorService::reloadConfig() {
             data_source_ = std::move(ez);
             discovery_service_ = std::make_unique<SessionDiscoveryService>(*data_source_);
         }
-        cpap_source_ = (nc.source == "sefam_ezshare") ? "sefam"
-                       : (nc.source == "bmc_ezshare") ? "bmc"
-                                                      : nc.source;
+        cpap_source_ = (nc.source == "sefam_ezshare")     ? "sefam"
+                       : (nc.source == "bmc_ezshare")     ? "bmc"
+                       : (nc.source == "philips_ezshare") ? "philips"
+                                                          : nc.source;
         std::cout << "Config reload: source -> " << nc.source << std::endl;
     }
 
