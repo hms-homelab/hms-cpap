@@ -45,10 +45,10 @@ and shows you the data. It is a fully local-first experience.
 |---|---|---|---|---|---|---|
 | ResMed AirSense 10 | ✅ live | ❌ | ❌ | ✅ live | ✅ live | ✅ after the night |
 | ResMed AirSense 11 | ✅ live | ✅ live | ✅ live | ✅ live | Not tested yet | ✅ after the night |
-| Philips DreamStation 2 | Coming soon | ✅ after the night | ✅ after the night | ❌ | ❌ | ❌ |
+| Philips DreamStation 2 | ❌ card encrypted | ✅ after the night | ✅ after the night | Not tested yet (unencrypted cards only) | ❌ | Not tested yet (unencrypted cards only) |
 | Löwenstein Prisma Line, Prisma Smart | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ after the night |
 | Sefam S.Box, SleepBox | ❌ | ❌ | ❌ | Not tested yet | ❌ | ✅ after the night |
-| BMC / React Health Luna | Coming soon | ❌ | ❌ | Not tested yet | ❌ | ✅ after the night |
+| BMC / React Health Luna | ✅ live | ❌ | ❌ | ✅ after the night | ❌ | ✅ after the night |
 
 ✅ live: the charts update during therapy (as each write reaches hms-cpap from
 a Sleep Bridge Lite or over Bluetooth, every 65 seconds from a WiFi SD card).
@@ -72,20 +72,30 @@ itself (obstructive and clear airway). On a bi-level Luna, IPAP, EPAP and
 pressure support are reported too. The flow and pressure scales were measured
 against the machine's own screen. The flow chart is your breathing with the
 leak taken out, as for a ResMed; the Luna's screen shows total flow, so it
-reads higher. There is no breath-by-breath (25 Hz) view yet. A Luna is read from a local folder or the upload page. Reading one
-from an ez Share card through a Mule & Miner is in, but not tested on a real
-Luna yet.
+reads higher. Through a Sleep Bridge Lite the charts grow while the night is
+written; over an ez Share a session appears once the mask is off. There is
+no breath-by-breath (25 Hz) view yet. Details: [the Luna in the
+reference](docs/REFERENCE.md#bmc--react-health-luna).
 
 A DreamStation 2 is read over Bluetooth after the night: from this
 computer's own Bluetooth (2 below) or through a Mule & Miner (3 below). You
 get each session's summary and its events: the night's usage, its events and
 its AHI. Bluetooth carries no waveform, so there are no flow or pressure
-charts for these nights.
+charts for these nights. A DreamStation 2 encrypts the files on its card and
+hms-cpap does not decrypt them, so its card through a Sleep Bridge Lite or
+an ez Share gives nothing to chart. A DreamStation card whose files are not
+encrypted (in a folder, on a network share, behind an ez Share or a Mule &
+Miner in proxy mode) is charted live: flow, breathing rate and I:E while the
+session is open, with "Pressure arrives when the session ends", then the
+pressure the machine delivered. Details: [the Philips card in the
+reference](docs/REFERENCE.md#philips-dreamstation-card-plain-files).
 
 ## Features
 
 - **Dashboard** with the key numbers per night, 30-day trends, pressure gauges, and a per-night CpapDash Index (usage + AHI + leak in one number)
-- **Session detail** with 13 zoomable signal charts, event markers, and live view while you sleep (ResMed)
+- **Session detail** with 13 zoomable signal charts, event markers, and live view while you sleep (ResMed, Luna, and a DreamStation card whose files are not encrypted); a minute the machine did not measure is left empty, never drawn as 0
+- **Luna flow and pressure charts**, per minute, growing live while the night is written through a Sleep Bridge Lite
+- **DreamStation live flow** from a card whose files are not encrypted: flow, breathing rate and I:E while the session is open, the pressure chart saying "Pressure arrives when the session ends", and the delivered pressure after mask-off
 - **Events explorer**: every respiratory event across all nights, filterable by date, type, and duration
 - **PDF reports** for a date range, made for handing to your doctor
 - **Pulse oximetry**: Wellue O2Ring SpO2/HR overlay with ODI, imported by CSV upload
@@ -211,9 +221,10 @@ the card's files from what it streams into a folder it reads like any card.
 The device and what it does are introduced in
 [Introducing Sleep Bridge Lite](https://www.cpapdash.com/blog/introducing-sleep-bridge-lite).
 
-Supported today: ResMed AirSense 10 and 11. Coming soon, not supported yet:
-the AirCurve machines, the BMC Luna G3 and the Philips DreamStation 2. A
-DreamStation 2 is supported today over Bluetooth instead (2 and 3 below).
+Supported today: ResMed AirSense 10 and 11, and the BMC Luna G3, live. Coming
+soon, not supported yet: the AirCurve machines. A Philips DreamStation 2
+encrypts its card, so a Sleep Bridge Lite on it gives hms-cpap nothing it
+can read; it is supported over Bluetooth instead (2 and 3 below).
 The brand work happens once, in the bridge, and hms-cpap
 reads a card as it always has. That is what makes hms-cpap brand agnostic,
 and what brings real-time capture of therapy to every machine the bridge

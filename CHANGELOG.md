@@ -5,11 +5,13 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [6.2.0] - 2026-11-08
 
-hms-cpap reads a Philips DreamStation 2 over Bluetooth after the night, from
-this computer's own Bluetooth or through a Mule & Miner, and the setup wizard
-opens on the Sleep Bridge.
+A BMC / React Health Luna charts its flow and pressure, live while the night
+is written, and so does a Philips DreamStation card whose files are plain.
+hms-cpap reads a Philips DreamStation 2 over Bluetooth after the
+night, from this computer's own Bluetooth or through a Mule & Miner, and the
+setup wizard opens on the Sleep Bridge.
 
 ### Added
 - **Philips DreamStation 2 over this computer's Bluetooth.** Turn it on in
@@ -50,6 +52,16 @@ opens on the Sleep Bridge.
   ventilation, Ti, Te and I:E. The scales were measured against the machine's
   own screen. The measured pressure is called Pressure, not the mask's: the
   card does not say where it is sensed.
+- **A Philips DreamStation card with plain files, charted live.** Card
+  format "Philips Respironics" in Settings reads a DreamStation card whose
+  files are not encrypted, from a folder (a card reader, a card shared on the
+  network, a folder a Mule & Miner fills) or through an ez Share or a Mule &
+  Miner in proxy mode. While a session is being recorded the machine writes
+  flow only, so the night shows live its flow, breathing rate, I:E, tidal
+  volume and minute ventilation, and the pressure chart says "Pressure
+  arrives when the session ends". When it ends, the session closes at once
+  and the pressure the machine delivered (a 2-minute average) and its events
+  appear.
 - **A Luna night reads live while it is written.** A Luna session that grows
   while hms-cpap watches its folder (a Sleep Bridge Lite rebuilding the card)
   is shown as live, and the night page refreshes as for a ResMed. It closes
@@ -81,10 +93,19 @@ opens on the Sleep Bridge.
   that check without a restart.
 
 ### Notes
+- **A DreamStation 2 card is charted only when its files are plain.** A
+  DreamStation 2 encrypts the files on its card, and hms-cpap does not
+  decrypt them: a card read through a Sleep Bridge Lite, an ez Share or a
+  Mule & Miner as the machine wrote it is reported as encrypted, and nothing
+  is stored from it. Bluetooth gives a session only once it has ended, with
+  its summary and events and no flow or pressure.
+- The README's machine table now says a Luna G3 is live through a Sleep
+  Bridge Lite, and after the night over an ez Share: both have carried real
+  Luna nights into hms-cpap.
+- A DreamStation card with plain files was tested on synthetic cards built
+  from the format; no real card of that kind has been read yet, so the table
+  says "Not tested yet" for it.
 - DreamStation 2 nights read over Bluetooth are not sent to SleepHQ yet.
-- Reading a BMC / React Health Luna card over an ez Share (added in 6.0.5) is
-  in, but not tested on a real Luna yet. Until it is, read a Luna card from a
-  local folder or the upload page.
 - Pairing a DreamStation 2 with this computer's Bluetooth has been tested
   against a simulated machine only, on all three systems; pairing with a real
   machine is not proven yet. The Mule & Miner path was checked against reads
