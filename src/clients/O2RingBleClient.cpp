@@ -418,9 +418,11 @@ bool O2RingBleClient::oxyRequest(uint8_t op, const std::vector<uint8_t>& payload
     return true;
 }
 
-// The per-connection handshake, once per link, in the vendor SDK's order: auth
-// 0xFF, setup 0x10, GET_INFO, set time 0xC0, GET_CONFIG 0x00. The ring refuses
-// file opens without it.
+// The per-connection handshake, once per link. A ring that answers GET_INFO
+// at once is in a plaintext session, as the vendor phone app finds it, and
+// goes on to set time and GET_CONFIG. A ring that does not gets the vendor
+// SDK's order: auth 0xFF, setup 0x10, GET_INFO, set time 0xC0, GET_CONFIG 0x00.
+// The ring refuses file opens without one or the other.
 //
 // Auth waits a second for an answer, as the vendor apps do. Older rings never
 // give one and the session stays plaintext; newer ones answer with a session
@@ -432,24 +434,29 @@ bool O2RingBleClient::oxySession() {
     if (oxy_session_) return true;
     oxy_key_.reset();
 
-    const auto now = static_cast<uint32_t>(std::time(nullptr));
-    if (oxyRequest(oxyii::kOpAuth, oxyii::authPayload(now), 1000)) {
-        oxy_key_ = oxyii::parseAuthReply(resp_buf_);
-        std::cout << "O2Ring BLE: O2Ring-S auth answered with " << resp_buf_.size()
-                  << " bytes: " << (oxy_key_ ? "AES-128 session" : "no key, plaintext session")
-                  << std::endl;
-    } else if (!connected_) {
-        return false;
-    }
+    // The vendor phone app starts with GET_INFO and sends neither auth nor
+    // setup, and a ring that answers it is in a plaintext session. Only a
+    // ring that does not answer gets the auth and setup handshake.
+    bool info_ok = oxyRequest(oxyii::kOpGetInfo, {}, 3000);
+    if (!info_ok && connected_) {
+        const auto now = static_cast<uint32_t>(std::time(nullptr));
+        if (oxyRequest(oxyii::kOpAuth, oxyii::authPayload(now), 1000)) {
+            oxy_key_ = oxyii::parseAuthReply(resp_buf_);
+            std::cout << "O2Ring BLE: O2Ring-S auth answered with " << resp_buf_.size()
+                      << " bytes: " << (oxy_key_ ? "AES-128 session" : "no key, plaintext session")
+                      << std::endl;
+        }
+        if (!connected_) return false;
 
-    // Required on a plaintext ring; on an encrypted one the vendor apps only
-    // log its failure, and so does this.
-    if (!oxyRequest(oxyii::kOpSetup, {0x00}, 3000)) {
-        std::cerr << "O2Ring BLE: O2Ring-S setup: no reply" << std::endl;
-        if (!oxy_key_) return false;
+        // Required on a plaintext ring; on an encrypted one the vendor apps only
+        // log its failure, and so does this.
+        if (!oxyRequest(oxyii::kOpSetup, {0x00}, 3000)) {
+            std::cerr << "O2Ring BLE: O2Ring-S setup: no reply" << std::endl;
+            if (!oxy_key_) return false;
+        }
+        info_ok = oxyRequest(oxyii::kOpGetInfo, {}, 5000);
     }
-
-    if (!oxyRequest(oxyii::kOpGetInfo, {}, 5000)) {
+    if (!info_ok) {
         std::cerr << "O2Ring BLE: O2Ring-S GET_INFO timeout" << std::endl;
         return false;
     }
@@ -486,7 +493,6 @@ void O2RingBleClient::oxyCloseFile() {
 std::vector<std::string> O2RingBleClient::oxyListFiles() {
     std::vector<std::string> files;
     if (!oxySession()) return files;
-    oxyCloseFile();
     if (!oxyRequest(oxyii::kOpFileList, {}, 5000)) {
         std::cerr << "O2Ring BLE: O2Ring-S file list timeout" << std::endl;
         return files;
