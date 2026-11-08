@@ -384,8 +384,8 @@ private:
     std::unique_ptr<BmcIngestion> bmc_ingestion_;   // SDD-049
 
     /// SDD-049: the packet count this process last saved for each BMC session,
-    /// by start (epoch seconds). A stored session is read again only while it
-    /// grows: the newest one, once per process and then whenever it got longer.
+    /// by start (epoch seconds). A stored session is read again once per
+    /// process, every one of them, and then whenever it got longer.
     std::map<long long, int> bmc_saved_seconds_;
 
     /// SDD-058 D2: the Luna session being written now, so its night reads live

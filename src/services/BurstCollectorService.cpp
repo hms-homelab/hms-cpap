@@ -3802,8 +3802,9 @@ bool BurstCollectorService::executeBmcBurst() {
     }
 
     // D4: every session the database does not hold. A stored one is read again
-    // only while it grows, which is the newest one: once per process (it may
-    // have grown while the service was down), then whenever it got longer.
+    // once per process, every one of them (a Luna appends every session to the
+    // same files, and a row saved by an older pass can carry a wrong end), then
+    // whenever it got longer.
     const auto now = std::chrono::steady_clock::now();
     bool live_grew = false;
     int imported = 0, grown = 0;
@@ -3823,7 +3824,7 @@ bool BurstCollectorService::executeBmcBurst() {
         if (stored) {
             const auto seen = bmc_saved_seconds_.find(key);
             const bool first_look = seen == bmc_saved_seconds_.end();
-            const bool grew = first_look ? is_newest : seconds > seen->second;
+            const bool grew = first_look || seconds > seen->second;
             if (!grew) {
                 bmc_saved_seconds_[key] = seconds;
                 continue;

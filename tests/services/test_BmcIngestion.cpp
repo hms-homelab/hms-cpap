@@ -43,8 +43,9 @@ void putLe32(std::vector<uint8_t>& b, size_t at, uint32_t v) {
 
 struct Clock { int y, mo, d, h, mi, s; };
 
-/// [seconds] packets from [at], one per second, EPAP 8 / IPAP 12 cmH2O.
-std::vector<uint8_t> run(int session, Clock at, int seconds) {
+/// [seconds] packets from [at], one per second, EPAP 8 / IPAP 12 cmH2O, and
+/// the 25 Hz pressure channel at [pressure_code] (code / 10 cmH2O on a G3).
+std::vector<uint8_t> run(int session, Clock at, int seconds, uint16_t pressure_code = 0) {
     std::vector<uint8_t> out;
     std::tm tm{};
     tm.tm_year = at.y - 1900; tm.tm_mon = at.mo - 1; tm.tm_mday = at.d;
@@ -61,6 +62,8 @@ std::vector<uint8_t> run(int session, Clock at, int seconds) {
         putLe16(p, 2 * bmc::bmc_word::kLeak, 50);
         putLe16(p, 2 * bmc::bmc_word::kRespRate, 15);
         putLe16(p, 2 * bmc::bmc_word::kIeRatio, 20);
+        for (int k = 0; k < bmc::kBmcWaveHz; ++k)
+            putLe16(p, 2 * (bmc::bmc_word::kPressure + k), pressure_code);
         putLe16(p, 248, static_cast<uint16_t>(t.tm_year + 1900));
         p[250] = static_cast<uint8_t>(t.tm_mon + 1);
         p[251] = static_cast<uint8_t>(t.tm_mday);
@@ -317,6 +320,66 @@ TEST_F(BmcCardTest, ASessionGrowingWhileWatchedIsOpenAndClosesOnItsDataWhenQuiet
     ASSERT_TRUE(svc.runBurstCycleForTest());   // quiet: closed on its data
     EXPECT_EQ(open(), 0);
     EXPECT_EQ(end().substr(0, 19), "2025-03-10 23:50:00") << "start plus 1200 s, not the clock";
+}
+
+// A night stored by an older pass, its minutes a flat 0 (a parser that read no
+// Luna pressure) and its end the one it had a minute in, is read again once by
+// a new process, every session and not only the newest: its minutes take the
+// real pressure and its end the data's.
+TEST_F(BmcCardTest, AnOlderFlatZeroNightIsReadAgainIntoRealValuesAndItsEnd) {
+    auto raw = run(1, {2025, 3, 10, 21, 0, 0}, 600, 70);     // 7.0 cmH2O
+    const auto later = run(2, {2025, 3, 10, 23, 30, 0}, 600, 70);
+    raw.insert(raw.end(), later.begin(), later.end());
+    write(root_ / (std::string(kSerial) + ".000"), raw);
+    write(root_ / (std::string(kSerial) + ".evt"), evt());
+    std::vector<uint8_t> usr(bmc::kBmcUsrModelOffset + bmc::kBmcUsrModelBytes, 0x20);
+    const std::string model = "G3 A20";
+    std::copy(model.begin(), model.end(), usr.begin() + bmc::kBmcUsrModelOffset);
+    write(root_ / (std::string(kSerial) + ".USR"), usr);
+
+    auto db = std::make_shared<SQLiteDatabase>((root_ / "cpap.db").string());
+    ASSERT_TRUE(db->connect());
+    std::string device;
+    {
+        BurstCollectorService before(60);
+        before.injectDependenciesForTest(
+            db, nullptr,
+            std::make_unique<DataPublisherService>(std::shared_ptr<hms::MqttClient>{}, db));
+        before.useBmcCardForTest(root_.string());
+        ASSERT_TRUE(before.runBurstCycleForTest());
+        device = before.deviceIdForTest();
+    }
+
+    // What an older pass left: flat zeros, and an end 62 s in.
+    const std::string mine = "(SELECT id FROM cpap_sessions WHERE device_id = ?)";
+    db->executeQuery("UPDATE cpap_breathing_summary SET avg_pressure = 0, max_pressure = 0,"
+                     " min_pressure = 0 WHERE session_id IN " + mine, {device});
+    db->executeQuery("UPDATE cpap_sessions SET session_end = '2025-03-10 21:01:02'"
+                     " WHERE device_id = ? AND session_start < '2025-03-10 22:00:00'", {device});
+
+    BurstCollectorService after(60);
+    after.injectDependenciesForTest(
+        db, nullptr,
+        std::make_unique<DataPublisherService>(std::shared_ptr<hms::MqttClient>{}, db));
+    after.useBmcCardForTest(root_.string());
+    ASSERT_EQ(after.deviceIdForTest(), device);
+    ASSERT_TRUE(after.runBurstCycleForTest());
+
+    const Json::Value older = db->executeQuery(
+        "SELECT MIN(b.avg_pressure) AS lo, MAX(b.avg_pressure) AS hi, COUNT(*) AS n,"
+        " MAX(s.session_end) AS session_end"
+        " FROM cpap_breathing_summary b JOIN cpap_sessions s ON s.id = b.session_id"
+        " WHERE s.device_id = ? AND s.session_start < '2025-03-10 22:00:00'", {device});
+    ASSERT_EQ(older.size(), 1u);
+    const auto num = [](const Json::Value& v) {
+        return v.isString() ? std::stod(v.asString()) : v.asDouble();
+    };
+    ASSERT_FALSE(older[0]["lo"].isNull()) << "the older night's minutes have a pressure";
+    EXPECT_GT(num(older[0]["n"]), 0);
+    EXPECT_NEAR(num(older[0]["lo"]), 7.0, 1e-6) << "no minute is left at 0";
+    EXPECT_NEAR(num(older[0]["hi"]), 7.0, 1e-6);
+    EXPECT_EQ(older[0]["session_end"].asString().substr(0, 19), "2025-03-10 21:10:00")
+        << "start plus 600 s, not the end it had a minute in";
 }
 
 // SDD-058 D2: a session that begins while hms-cpap watches is live from its

@@ -64,6 +64,10 @@ opens on the Sleep Bridge.
   no flow limitation, snore index or mask pressure) no longer gets a tile.
 - **A session saved again as it grows takes its new end.** A Luna session
   kept the end it had when first saved while its duration grew.
+- **Every Luna night already stored is read again once.** After an update,
+  each session on the card is read once more, not only the newest, so a
+  night stored before this release gets its flow and pressure in place of
+  the flat zeros, and its true end.
 - **A minute saved again takes its new readings.** A growing session's last
   minute was stored as it stood when first saved, part of a minute, and kept
   that way. On PostgreSQL, a session that named one minute twice could not be
