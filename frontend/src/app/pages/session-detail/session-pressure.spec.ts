@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { sessionPressurePlan, THERAPY_COLOR, MASK_COLOR } from './session-pressure.ts';
+import { hasAnyValue, sessionPressurePlan, THERAPY_COLOR, MASK_COLOR } from './session-pressure.ts';
 
 // The reporter's case: an AirSense 11 on a minimum of 7 with EPR 3. The machine
 // delivers 7 and up; the mask reads about 2 lower on the breath out.
@@ -106,6 +106,19 @@ test('every other format keeps the mask wording', () => {
     assert.equal(p.lines[1].labelKey, 'sessionDetail.pressure.legendMask');
     assert.equal(p.noteKey, 'sessionDetail.pressure.noteTherapy');
   }
+});
+
+test('a channel empty in every minute has no value; one at 0 all night does', () => {
+  const night = {
+    flow_limitation: [null, null, null],    // a Luna records none
+    snore_index: ['0', '0', '0'],           // a ResMed night with no snoring
+    leak_rate: [null, '2.5', null],
+  };
+  assert.equal(hasAnyValue(night, 'flow_limitation'), false);
+  assert.equal(hasAnyValue(night, 'snore_index'), true);
+  assert.equal(hasAnyValue(night, 'leak_rate'), true);
+  assert.equal(hasAnyValue(night, 'not_in_the_response'), false);
+  assert.equal(hasAnyValue(null, 'leak_rate'), false);
 });
 
 test('the colours are the ones the trend chart uses for the same two pressures', () => {

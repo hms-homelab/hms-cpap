@@ -236,11 +236,11 @@ else()
         # pin is something ONLY CI can catch. That is exactly how the v4.9.9
         # release build failed: the pin was left on v2026.1.3 while the code
         # had moved on to a field that tag did not have.
-        # v2026.8.6 (the Löwenstein event-time fix, issue #54)
-        # TODO before the next release: pin v12.0.0. This branch reads
-        # BreathingSummary::flow_measured (a BMC / Luna minute with no flow),
-        # which the pin below does not have, so a build on it fails.
-        GIT_TAG        cfba78472ed78b355527d346f84612d882877b59
+        # v12.0.0 (a BMC / Luna minute's flow and pressure, and
+        # BreathingSummary::flow_measured). Pinned by sha, never by picking
+        # the newest tag: the parser left year.month.patch at v12.0.0, so a
+        # version sort still puts v2026.11.1 above it.
+        GIT_TAG        d14acb58012449af75b0c15c0bfb1eb173b60a1f
     )
 endif()
 FetchContent_MakeAvailable(cpapdash_parser)

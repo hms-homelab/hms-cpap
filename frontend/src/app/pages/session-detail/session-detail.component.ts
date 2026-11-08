@@ -13,7 +13,7 @@ import { detectDesaturations, desatAnnotations, odiPerHour, inferSampleSec } fro
 import { formatIndex } from '../../utils/format';
 import { isGradable, indexLabelKey } from '../../utils/index-kind';
 import { nightAhi, sessionSeconds } from './night-ahi';
-import { hasReading, sessionPressurePlan, SessionPressurePlan } from './session-pressure';
+import { hasAnyValue, hasReading, sessionPressurePlan, SessionPressurePlan } from './session-pressure';
 import { Chart, ChartDataset, registerables } from 'chart.js';
 import annotationPlugin from 'chartjs-plugin-annotation';
 import zoomPlugin from 'chartjs-plugin-zoom';
@@ -547,6 +547,10 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
         // The mask pressure is a ResMed PLD channel. A machine that has none
         // (a BMC / React Health Luna) gets no empty tile titled as the mask's.
         if (s.key === 'mask_pressure') return hasReading(signals as any, 'mask_pressure');
+        // A channel the machine does not record is empty in every minute and
+        // gets no tile (a Luna has no flow limitation or snore index). The
+        // pressure chart is decided by its plan below.
+        if (!s.pressure) return hasAnyValue(signals as any, s.key);
         return true;
       });
       this.availableSignals = this.withPressurePlan(this.availableSignals);

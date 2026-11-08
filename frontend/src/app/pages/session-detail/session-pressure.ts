@@ -55,6 +55,19 @@ export function hasReading(signals: Signals, key: string): boolean {
   });
 }
 
+/**
+ * True when any minute of the series holds a value, 0 included. A channel the
+ * machine does not record is empty (null) in every minute, and gets no tile:
+ * a Luna has no flow limitation or snore index. A ResMed night with no flow
+ * limitation is 0 all night, which is a reading, and keeps its tile.
+ */
+export function hasAnyValue(signals: Signals, key: string): boolean {
+  const s = signals?.[key];
+  if (!Array.isArray(s)) return false;
+  return s.some(v => v !== null && v !== undefined && v !== '' &&
+    Number.isFinite(parseFloat(String(v))));
+}
+
 export const THERAPY_COLOR = '#ce93d8';
 export const MASK_COLOR = '#64b5f6';
 

@@ -44,8 +44,26 @@ opens on the Sleep Bridge.
   of the desktop app's first-run wizard offers the CpapDash Sleep Bridge,
   first and selected. It needs nothing set up: the step says which address
   and port to point the bridge at.
+- **A BMC / React Health Luna charts its flow and pressure.** Each minute of a
+  Luna night now has its flow (your breathing, leak taken out, as for a
+  ResMed), the pressure the machine measured, tidal volume, minute
+  ventilation, Ti, Te and I:E. The scales were measured against the machine's
+  own screen. The measured pressure is called Pressure, not the mask's: the
+  card does not say where it is sensed.
+- **A Luna night reads live while it is written.** A Luna session that grows
+  while hms-cpap watches its folder (a Sleep Bridge Lite rebuilding the card)
+  is shown as live, and the night page refreshes as for a ResMed. It closes
+  on its own data five minutes after it stops growing.
 
 ### Fixed
+- **A minute with no reading is stored empty, not as 0.** A Luna night drew
+  flat lines at 0 for flow and pressure. A minute the machine did not
+  measure is now empty on SQLite, MySQL and PostgreSQL, so the chart leaves
+  a gap and the night's averages skip it.
+- **No empty chart tiles.** A channel the machine does not record (a Luna has
+  no flow limitation, snore index or mask pressure) no longer gets a tile.
+- **A session saved again as it grows takes its new end.** A Luna session
+  kept the end it had when first saved while its duration grew.
 - **A Bluetooth-only AirSense 11 no longer shows "Nothing is being
   imported"** (Fixes #59). With AirSense 11 over Bluetooth on and no local
   folder set, every page said no local folder was configured, while the

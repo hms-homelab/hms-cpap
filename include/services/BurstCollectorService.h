@@ -292,6 +292,10 @@ public:
         cpap_source_ = "bmc";
     }
 
+    /// SDD-058 D2: how long a live Luna session may go without growing before
+    /// it is closed. Test-only.
+    void setBmcMaskQuietForTest(std::chrono::seconds quiet) { bmc_mask_quiet_ = quiet; }
+
     /// Test-only: the id nights are being stored under (SDD-042).
     const std::string& deviceIdForTest() const { return device_id_; }
     const std::string& deviceNameForTest() const { return device_name_; }
@@ -383,6 +387,16 @@ private:
     /// by start (epoch seconds). A stored session is read again only while it
     /// grows: the newest one, once per process and then whenever it got longer.
     std::map<long long, int> bmc_saved_seconds_;
+
+    /// SDD-058 D2: the Luna session being written now, so its night reads live
+    /// (the night page's LIVE banner and its refresh). A session that starts or
+    /// grows while this process watches is left open; it is closed on its own
+    /// data end once it has not grown for bmc_mask_quiet_. The first burst of a
+    /// process only imports: what it finds was written before it looked.
+    long long bmc_live_start_ = 0;   // epoch seconds, 0 for none
+    std::chrono::steady_clock::time_point bmc_live_grew_at_{};
+    std::chrono::seconds bmc_mask_quiet_{300};
+    bool bmc_first_burst_done_ = false;
 
     /// SDD-049: the newest changed night, until it reaches the broker. A BMC
     /// burst reads no network and finishes in milliseconds, so at startup it

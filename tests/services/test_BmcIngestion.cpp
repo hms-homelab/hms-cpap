@@ -272,3 +272,84 @@ TEST_F(BmcCardTest, TheBurstImportsNewSessionsAndANightThatGrew) {
     EXPECT_EQ(count(), 2) << "the same night, longer, not a third session";
     EXPECT_EQ(seconds(), 3600);
 }
+
+// SDD-058 D2: a session growing while hms-cpap watches is open, so its night
+// reads live; it is closed on its own data end once it stops growing.
+TEST_F(BmcCardTest, ASessionGrowingWhileWatchedIsOpenAndClosesOnItsDataWhenQuiet) {
+    writeCard(root_, 600);
+    auto db = std::make_shared<SQLiteDatabase>((root_ / "cpap.db").string());
+    ASSERT_TRUE(db->connect());
+
+    BurstCollectorService svc(60);
+    svc.injectDependenciesForTest(
+        db, nullptr,
+        std::make_unique<DataPublisherService>(std::shared_ptr<hms::MqttClient>{}, db));
+    svc.useBmcCardForTest(root_.string());
+
+    const auto open = [&] {
+        const Json::Value rows = db->executeQuery(
+            "SELECT COUNT(*) AS v FROM cpap_sessions WHERE device_id = ? AND session_end IS NULL",
+            {svc.deviceIdForTest()});
+        const Json::Value& v = rows[0]["v"];
+        return v.isString() ? std::stoi(v.asString()) : v.asInt();
+    };
+    const auto end = [&] {
+        const Json::Value rows = db->executeQuery(
+            "SELECT session_end AS v FROM cpap_sessions WHERE device_id = ?"
+            " ORDER BY session_start DESC LIMIT 1",
+            {svc.deviceIdForTest()});
+        return rows[0]["v"].isNull() ? std::string() : rows[0]["v"].asString();
+    };
+
+    ASSERT_TRUE(svc.runBurstCycleForTest());
+    EXPECT_EQ(open(), 0) << "the first look imports what was already written";
+
+    writeCard(root_, 1200);                    // the machine is writing it
+    ASSERT_TRUE(svc.runBurstCycleForTest());
+    EXPECT_EQ(open(), 1) << "a session growing now is open";
+    EXPECT_EQ(end(), "");
+
+    svc.setBmcMaskQuietForTest(std::chrono::hours(1));
+    ASSERT_TRUE(svc.runBurstCycleForTest());   // no growth, inside the window
+    EXPECT_EQ(open(), 1);
+
+    svc.setBmcMaskQuietForTest(std::chrono::seconds(0));
+    ASSERT_TRUE(svc.runBurstCycleForTest());   // quiet: closed on its data
+    EXPECT_EQ(open(), 0);
+    EXPECT_EQ(end().substr(0, 19), "2025-03-10 23:50:00") << "start plus 1200 s, not the clock";
+}
+
+// SDD-058 D2: a session that begins while hms-cpap watches is live from its
+// first minute, and the one before it is closed.
+TEST_F(BmcCardTest, ASessionBegunWhileWatchedIsOpenAndThePreviousOneIsClosed) {
+    auto first = run(1, {2025, 3, 10, 21, 0, 0}, 120);
+    write(root_ / (std::string(kSerial) + ".000"), first);
+    write(root_ / (std::string(kSerial) + ".evt"), evt());
+    write(root_ / (std::string(kSerial) + ".USR"), std::vector<uint8_t>(64, 0x20));
+    auto db = std::make_shared<SQLiteDatabase>((root_ / "cpap.db").string());
+    ASSERT_TRUE(db->connect());
+
+    BurstCollectorService svc(60);
+    svc.injectDependenciesForTest(
+        db, nullptr,
+        std::make_unique<DataPublisherService>(std::shared_ptr<hms::MqttClient>{}, db));
+    svc.useBmcCardForTest(root_.string());
+    const auto open = [&] {
+        const Json::Value rows = db->executeQuery(
+            "SELECT COUNT(*) AS v FROM cpap_sessions WHERE device_id = ? AND session_end IS NULL",
+            {svc.deviceIdForTest()});
+        const Json::Value& v = rows[0]["v"];
+        return v.isString() ? std::stoi(v.asString()) : v.asInt();
+    };
+
+    ASSERT_TRUE(svc.runBurstCycleForTest());
+    EXPECT_EQ(open(), 0);
+
+    writeCard(root_, 300);                     // session 2 began after the first look
+    ASSERT_TRUE(svc.runBurstCycleForTest());
+    EXPECT_EQ(open(), 1) << "the new session is live";
+    const Json::Value earlier = db->executeQuery(
+        "SELECT session_end AS v FROM cpap_sessions WHERE device_id = ?"
+        " ORDER BY session_start ASC LIMIT 1", {svc.deviceIdForTest()});
+    EXPECT_FALSE(earlier[0]["v"].isNull()) << "the earlier session is closed";
+}

@@ -3804,6 +3804,8 @@ bool BurstCollectorService::executeBmcBurst() {
     // D4: every session the database does not hold. A stored one is read again
     // only while it grows, which is the newest one: once per process (it may
     // have grown while the service was down), then whenever it got longer.
+    const auto now = std::chrono::steady_clock::now();
+    bool live_grew = false;
     int imported = 0, grown = 0;
     for (std::size_t i = 0; i < read.sessions.size(); ++i) {
         const auto& s = *read.sessions[i];
@@ -3815,27 +3817,63 @@ bool BurstCollectorService::executeBmcBurst() {
         const int seconds = s.duration_seconds.value_or(0);
         const bool is_newest = i + 1 == read.sessions.size();
         const bool stored = db_service_->sessionExists(device_id_, start);
+        // SDD-058 D2: the newest session started or grew since this process
+        // last looked, so the machine is writing it now.
+        bool written_now = is_newest && bmc_first_burst_done_ && !stored;
         if (stored) {
             const auto seen = bmc_saved_seconds_.find(key);
-            const bool grew = seen == bmc_saved_seconds_.end() ? is_newest
-                                                               : seconds > seen->second;
+            const bool first_look = seen == bmc_saved_seconds_.end();
+            const bool grew = first_look ? is_newest : seconds > seen->second;
             if (!grew) {
                 bmc_saved_seconds_[key] = seconds;
                 continue;
             }
+            written_now = is_newest && !first_look;
         }
 
         if (!db_service_->saveSession(s)) {
             std::cerr << "CPAP: BMC session could not be saved" << std::endl;
             continue;
         }
-        closeWithDataEnd(*db_service_, device_id_, start, s);   // SDD-037 D2
+        if (written_now) {
+            // Open while it grows: the night reads live. Closed below, on its
+            // own data end, once it stops growing.
+            db_service_->reopenSession(device_id_, start);
+            bmc_live_start_ = key;
+            bmc_live_grew_at_ = now;
+            live_grew = true;
+        } else {
+            closeWithDataEnd(*db_service_, device_id_, start, s);   // SDD-037 D2
+        }
         bmc_saved_seconds_[key] = seconds;
         if (stored) ++grown; else ++imported;
         // The newest changed night is the one Home Assistant shows.
         bmc_pending_publish_ = std::shared_ptr<const CPAPSession>(std::move(read.sessions[i]));
         bmc_pending_is_new_ = !stored;
     }
+    bmc_first_burst_done_ = true;
+
+    // SDD-058 D2: every open session but the one still growing is closed on
+    // its stored span: the live one once it has been quiet for the window, the
+    // one before it when a new session began, and one an earlier process left
+    // open.
+    const bool live_quiet = bmc_live_start_ != 0 && !live_grew &&
+                            now - bmc_live_grew_at_ >= bmc_mask_quiet_;
+    for (const auto& open : openSessionsStartedBefore(
+             *db_service_, device_id_, std::chrono::system_clock::now() + std::chrono::hours(48))) {
+        const long long at =
+            std::chrono::duration_cast<std::chrono::seconds>(open.start.time_since_epoch()).count();
+        const bool is_live = bmc_live_start_ != 0 && std::llabs(at - bmc_live_start_) <= 5;
+        if (is_live && !live_quiet) continue;
+        if (open.duration_seconds <= 0) continue;   // nothing the data knows (SDD-037)
+        db_service_->markSessionCompletedAt(device_id_, open.start,
+                                            open.start + std::chrono::seconds(open.duration_seconds));
+        if (is_live) {
+            std::cout << "CPAP: the Luna session has not grown for "
+                      << bmc_mask_quiet_.count() << " s; closed on its data" << std::endl;
+        }
+    }
+    if (live_quiet) bmc_live_start_ = 0;
 
     // No STR on a BMC card: the daily summary comes from the sessions.
     if (imported + grown > 0) processSessionSummary();
