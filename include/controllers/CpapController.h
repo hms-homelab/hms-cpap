@@ -359,7 +359,8 @@ public:
     static std::function<uint64_t(const std::string&)> cpap_zip_queue_;
     // SDD-061: a .cpapcard's layout (the CBL1 payload) and the uploaded file's
     // name -> what became of it ("error" key when it was not kept).
-    static std::function<Json::Value(const std::string&, const std::string&)> card_layout_;
+    /// (layout, file name, the uploaded zip's path): SDD-061, D9 for the files.
+    static std::function<Json::Value(const std::string&, const std::string&, const std::string&)> card_layout_;
     // SDD-029: "YYYY-MM-DD" -> {"removed": counts} ("error" key on failure).
     static std::function<Json::Value(const std::string&)> night_remove_;
     // SDD-029 D3: "YYYY-MM-DD" -> the removed-night record cleared, before a reparse.

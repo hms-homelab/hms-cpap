@@ -8,12 +8,15 @@
 #include "SleepBridgeTestUtil.h"
 
 #include "sleepbridge/LearnedCard.h"
+#include "sleepbridge/LearnedFiles.h"
 #include "sleepbridge/RebuildWorker.h"
 #include "sleepbridge/SleepBridgeService.h"
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <fstream>
+#include <map>
 
 using namespace sbtest;
 
@@ -27,6 +30,7 @@ struct Fed {
     uint64_t seq;
     uint32_t lba;
     bool     read;
+    std::string data;   // the 512 bytes
 };
 
 struct Recorded {
@@ -38,8 +42,8 @@ struct Recorded {
 class Recorder : public IRebuilder {
 public:
     explicit Recorder(std::shared_ptr<Recorded> r) : r_(std::move(r)) { ++r_->built; }
-    void record(uint64_t seq, uint32_t lba, const uint8_t*, bool read) override {
-        r_->fed.push_back({seq, lba, read});
+    void record(uint64_t seq, uint32_t lba, const uint8_t* data, bool read) override {
+        r_->fed.push_back({seq, lba, read, std::string(reinterpret_cast<const char*>(data), kSectorSize)});
     }
     void card(const CardStatement&) override {}
     RebuildLook look() override { return {}; }
@@ -449,4 +453,150 @@ TEST(LearnedCard, ABuildWithoutTheRebuildStillKeepsIt) {
     EXPECT_EQ(a.status, 201);
     EXPECT_FALSE(a.body["rebuild_in_build"].asBool());
     EXPECT_TRUE(fs::exists(t.path / kLearnedDir / kLearnedCardFile));
+}
+
+// ── SDD-061 D9: the learned files' contents, seeded after the learn ─────────
+//
+// The synthetic card (LearnedCardTestUtil.h: 8 sectors a cluster, FAT at 40,
+// data at 240, root in cluster 2) gains a file the machine appends to every
+// night, 5,000 bytes in clusters 5 and 6 (LBAs 264..271, 272..273), and
+// DATALOG/STR.EDF, 100 bytes in cluster 7 (LBA 280).
+
+namespace {
+
+constexpr uint32_t kFileBytes = 5000;
+
+lctest::Card cardWithFiles(bool fat_of_file = true) {
+    auto c = lctest::card();
+    std::string& root = c.at(240);
+    lctest::dirEntry(root, 64, "22B39570000", 0x20, 5);
+    lctest::le32(root, 64 + 28, kFileBytes);
+    std::string& datalog = c.at(248);
+    lctest::dirEntry(datalog, 96, "STR     EDF", 0x20, 7);
+    lctest::le32(datalog, 96 + 28, 100);
+    std::string& fat = c.at(40);
+    if (fat_of_file) {
+        lctest::le32(fat, 5 * 4, 6);
+        lctest::le32(fat, 6 * 4, 0x0FFFFFFF);
+    }
+    lctest::le32(fat, 7 * 4, 0x0FFFFFFF);
+    return c;
+}
+
+std::string fileBytes(size_t n, char seed) {
+    std::string s(n, '\0');
+    for (size_t i = 0; i < n; i++) s[i] = static_cast<char>(seed + i % 97);
+    return s;
+}
+
+std::vector<LearnedFile> files() {
+    return {{"22B39570.000", fileBytes(kFileBytes, 'a')}, {"DATALOG/STR.edf", fileBytes(100, 'K')},
+            {"DATALOG/NOTHERE.TXT", "x"}};
+}
+
+/// The card as the rebuild sees it once every record is applied in sequence
+/// order: the last record at each LBA.
+std::map<uint32_t, std::string> applied(const Recorded& r) {
+    std::vector<Fed> fed = r.fed;
+    std::stable_sort(fed.begin(), fed.end(), [](const Fed& a, const Fed& b) { return a.seq < b.seq; });
+    std::map<uint32_t, std::string> card;
+    for (const auto& f : fed) card[f.lba] = f.data;
+    return card;
+}
+
+}  // namespace
+
+TEST(LearnedFiles, TheBlobRoundTripsAndRefusesAPathOffTheCard) {
+    const auto blob = encodeLearnedFiles(files());
+    std::string why;
+    const auto back = decodeLearnedFiles(blob, &why);
+    ASSERT_TRUE(back) << why;
+    ASSERT_EQ(back->size(), 3u);
+    EXPECT_EQ((*back)[1].path, "DATALOG/STR.edf");
+    EXPECT_EQ((*back)[0].bytes, fileBytes(kFileBytes, 'a'));
+    EXPECT_FALSE(decodeLearnedFiles(encodeLearnedFiles({{"../evil", "x"}}), &why));
+    EXPECT_FALSE(decodeLearnedFiles(encodeLearnedFiles({{"batches/learned.cbl1", "x"}}), &why));
+    EXPECT_FALSE(decodeLearnedFiles(blob.substr(0, blob.size() - 3), &why));
+    EXPECT_FALSE(decodeLearnedFiles("CBL1", &why));
+}
+
+TEST(LearnedFiles, EachFileGoesToTheSectorsItsEntryAndChainName) {
+    const auto c = cardWithFiles();
+    const auto d = decodeLearnedCard(c.cbl1(), nullptr);
+    ASSERT_TRUE(d);
+    const auto seed = seedLearnedFiles(*d, files());
+    EXPECT_EQ(seed.files, 2);
+    ASSERT_EQ(seed.skipped.size(), 1u);   // not in the learned folders
+    EXPECT_NE(seed.skipped[0].find("NOTHERE"), std::string::npos);
+    ASSERT_EQ(seed.sectors.size(), 11u);   // 10 for the 5,000 bytes, 1 for STR.EDF
+    const std::vector<uint32_t> want = {264, 265, 266, 267, 268, 269, 270, 271, 272, 273, 280};
+    for (size_t i = 0; i < want.size(); i++) EXPECT_EQ(seed.sectors[i].first, want[i]) << i;
+    const auto content = fileBytes(kFileBytes, 'a');
+    EXPECT_EQ(seed.sectors[0].second, content.substr(0, kSectorSize));
+    // The last sector: the file's last 392 bytes, then zeros.
+    EXPECT_EQ(seed.sectors[9].second.substr(0, 392), content.substr(9 * kSectorSize));
+    EXPECT_EQ(seed.sectors[9].second.substr(392), std::string(kSectorSize - 392, '\0'));
+}
+
+TEST(LearnedFiles, AFileWhoseChainIsNotInTheLearnIsLeftOut) {
+    const auto c = cardWithFiles(/*fat_of_file=*/false);   // cluster 5's FAT entry is free
+    const auto seed = seedLearnedFiles(*decodeLearnedCard(c.cbl1(), nullptr), files());
+    EXPECT_EQ(seed.files, 1);   // STR.EDF only
+    EXPECT_EQ(seed.sectors.size(), 1u);
+}
+
+TEST(LearnedFiles, AFileWrittenBeforeCaptureIsWholeAndACapturedWriteWins) {
+    TempDir t;
+    BatchStore store(t.path.string());
+    const auto c = cardWithFiles();
+    // Tonight's capture: one sector of the file rewritten (an append landing
+    // in its last cluster), and nothing of the rest, written before the bridge.
+    bank(store, kSender, batch(kSession1 + 1, {266}));
+    ASSERT_TRUE(giveBridgeLearned(store.batchesDir(kSender), c.cbl1(),
+                                  learnedSummary(*decodeLearnedCard(c.cbl1(), nullptr)), nullptr));
+    writeFile(fs::path(store.batchesDir(kSender)) / kBridgeLearnedFiles, encodeLearnedFiles(files()));
+
+    auto rec = std::make_shared<Recorded>();
+    RebuildWorker w(store, kSender, recorder(rec));
+    const auto r = w.step();
+    EXPECT_EQ(w.learned().state, "fed");
+    EXPECT_EQ(w.learned().files, 2);
+    EXPECT_EQ(w.learned().file_sectors, 11);
+    EXPECT_EQ(r.learned_fed, static_cast<int>(c.sectors.size()) + 11);
+    EXPECT_EQ(r.records_fed, 1);
+
+    // All seeded in session 0, after the learned sectors, as reads.
+    for (size_t i = c.sectors.size(); i < c.sectors.size() + 11; i++) {
+        EXPECT_EQ(rec->fed[i].seq, i);
+        EXPECT_TRUE(rec->fed[i].read);
+        EXPECT_LT(rec->fed[i].seq, kSession1);
+    }
+    // The file is whole on the card the rebuild sees, and the captured write
+    // outranks the seeded sector at 266.
+    const auto card = applied(*rec);
+    const auto content = fileBytes(kFileBytes, 'a');
+    for (uint32_t lba = 264; lba <= 273; lba++) ASSERT_TRUE(card.count(lba)) << lba;
+    EXPECT_EQ(card.at(264), content.substr(0, kSectorSize));
+    EXPECT_EQ(card.at(266), sector(266, kSession1 + 1));
+    EXPECT_EQ(card.at(267), content.substr(3 * kSectorSize, kSectorSize));
+}
+
+TEST(LearnedFiles, TheServiceKeepsTheFilesWithTheLearnAndSaysWhatItPlaces) {
+    TempDir t;
+    auto rec = std::make_shared<Recorded>();
+    SleepBridgeService svc({t.path.string(), kDefaultPort, 0.01}, recorder(rec));
+    bank(svc.store(), kSender, run(kSession1 + 1, 1, 300));
+    const auto c = cardWithFiles();
+    const auto a = svc.learnCard(c.cbl1(), "22B39570-20261108.cpapcard", encodeLearnedFiles(files()));
+    ASSERT_EQ(a.status, 201) << a.body.toStyledString();
+    EXPECT_EQ(a.body["files"]["kept"].asInt(), 3);
+    EXPECT_EQ(a.body["files"]["placed"].asInt(), 2);
+    EXPECT_EQ(a.body["files"]["sectors"].asInt(), 11);
+    EXPECT_TRUE(fs::exists(t.path / kLearnedDir / kLearnedFilesFile));
+    EXPECT_TRUE(fs::exists(fs::path(svc.store().batchesDir(kSender)) / kBridgeLearnedFiles));
+    // A learn without files drops the bridge's earlier ones.
+    ASSERT_EQ(svc.learnCard(c.cbl1(), "card.cpapcard").status, 201);
+    EXPECT_FALSE(fs::exists(fs::path(svc.store().batchesDir(kSender)) / kBridgeLearnedFiles));
+    // A blob that is not one refuses the learn.
+    EXPECT_EQ(svc.learnCard(c.cbl1(), "card.cpapcard", "CBF1junk").status, 400);
 }

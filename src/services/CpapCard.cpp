@@ -1,9 +1,12 @@
 #include "services/CpapCard.h"
 
 #include "sleepbridge/LearnedCard.h"
+#include "sleepbridge/LearnedFiles.h"
+#include "sleepbridge/RebuildWorker.h"   // safeCardPath
 
 #include "miniz.h"
 
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <vector>
@@ -56,6 +59,51 @@ std::optional<std::string> readCardLayout(const std::string& zip_path, std::stri
     }
     mz_zip_reader_end(&zip);
     return out;
+}
+
+std::string readCardFilesBlob(const std::string& zip_path, std::string* why) {
+    if (why) why->clear();
+    mz_zip_archive zip{};
+    if (!mz_zip_reader_init_file(&zip, zip_path.c_str(), 0)) return {};
+    const auto n = mz_zip_reader_get_num_files(&zip);
+    // The folder that wraps the card: where the layout entry sits.
+    std::string prefix;
+    for (mz_uint i = 0; i < n; ++i) {
+        mz_zip_archive_file_stat st;
+        if (!mz_zip_reader_file_stat(&zip, i, &st) || st.m_is_directory) continue;
+        std::string name = st.m_filename;
+        std::replace(name.begin(), name.end(), '\\', '/');
+        if (!isLayoutEntry(name)) continue;
+        if (name != kCardLayoutEntry) prefix = name.substr(0, name.size() - std::string(kCardLayoutEntry).size());
+        break;
+    }
+    std::vector<sleepbridge::LearnedFile> files;
+    size_t total = 0;
+    for (mz_uint i = 0; i < n; ++i) {
+        mz_zip_archive_file_stat st;
+        if (!mz_zip_reader_file_stat(&zip, i, &st) || st.m_is_directory) continue;
+        std::string name = st.m_filename;
+        std::replace(name.begin(), name.end(), '\\', '/');
+        if (isLayoutEntry(name)) continue;
+        if (!prefix.empty()) {
+            if (name.compare(0, prefix.size(), prefix) != 0) continue;
+            name = name.substr(prefix.size());
+        }
+        if (!sleepbridge::safeCardPath(name)) continue;
+        // Judged by the size it says before a byte is inflated.
+        if (total + st.m_uncomp_size + name.size() + 6 > sleepbridge::kLearnedFilesMax) {
+            if (why) *why = "The card's files pass 64 MB; the rest are not kept.";
+            continue;
+        }
+        size_t size = 0;
+        void*  heap = mz_zip_reader_extract_to_heap(&zip, i, &size, 0);
+        if (!heap) continue;
+        files.push_back({name, std::string(static_cast<const char*>(heap), size)});
+        mz_free(heap);
+        total += size + name.size() + 6;
+    }
+    mz_zip_reader_end(&zip);
+    return files.empty() ? std::string() : sleepbridge::encodeLearnedFiles(files);
 }
 
 int removeCardLayout(const std::string& extracted_root) {

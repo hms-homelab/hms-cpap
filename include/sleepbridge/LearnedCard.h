@@ -125,6 +125,10 @@ struct LearnedUse {
     std::string why;           // for every state but "" and "fed"
     int         sectors{0};    // fed this rebuild
     Json::Value summary{Json::nullValue};
+    // SDD-061 D9: the learned files' contents fed after the sectors.
+    int         files{0};
+    int         file_sectors{0};
+    std::vector<std::string> files_skipped;
 };
 
 /// The verdict on a bridge that holds a learned card (D8), from how the

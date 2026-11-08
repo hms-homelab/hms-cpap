@@ -1658,7 +1658,7 @@ int main(int argc, char** argv) {
             // checked and kept for when it is turned on; with it on (below) it
             // also goes to the bridges.
             hms_cpap::CpapController::card_layout_ =
-                [](const std::string& cbl1, const std::string& file_name) -> Json::Value {
+                [](const std::string& cbl1, const std::string& file_name, const std::string&) -> Json::Value {
                     namespace sb = hms_cpap::sleepbridge;
                     Json::Value r;
                     std::string why;
@@ -1781,9 +1781,13 @@ int main(int argc, char** argv) {
                     hms_cpap::sleepbridge::installRoutes(sleep_bridge.get(), release_feed.get());
                     sleep_bridge->start();
                     hms_cpap::CpapController::card_layout_ =
-                        [svc = sleep_bridge.get()](const std::string& cbl1,
-                                                   const std::string& file_name) -> Json::Value {
-                            const auto a = svc->learnCard(cbl1, file_name);
+                        [svc = sleep_bridge.get()](const std::string& cbl1, const std::string& file_name,
+                                                   const std::string& zip_path) -> Json::Value {
+                            // SDD-061 D9: the card's own files go with its layout.
+                            std::string why;
+                            const std::string files = hms_cpap::readCardFilesBlob(zip_path, &why);
+                            auto a = svc->learnCard(cbl1, file_name, files);
+                            if (!why.empty()) a.body["files_note"] = why;
                             return a.body;   // "error" set when it was not kept
                         };
 

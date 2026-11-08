@@ -235,7 +235,11 @@ public:
     /// 201 with what was kept and, per bridge, whether it took it and why not.
     /// A bridge first seen later takes it at its first rebuild, unless
     /// another bridge already holds that card.
-    CommandAnswer learnCard(const std::string& cbl1, const std::string& file_name = {});
+    /// `files_blob`: the card's own files (sleepbridge/LearnedFiles.h), kept
+    /// beside the layout and fed after it (SDD-061 D9); "" for none, which
+    /// also drops a bridge's files from an earlier learn.
+    CommandAnswer learnCard(const std::string& cbl1, const std::string& file_name = {},
+                            const std::string& files_blob = {});
 
     /// A night is open on `sender`: sector writes landed within night_quiet_s.
     bool nightOpen(const std::string& sender) const;

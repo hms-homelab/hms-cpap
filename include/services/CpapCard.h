@@ -27,4 +27,11 @@ std::optional<std::string> readCardLayout(const std::string& zip_path, std::stri
 /// Removes every layout entry from an extracted card; how many were removed.
 int removeCardLayout(const std::string& extracted_root);
 
+/// SDD-061 D9: the card's own files in an uploaded zip, as the learned files
+/// blob (sleepbridge/LearnedFiles.h): every entry but the layout, at its card
+/// path (the folder that wraps the card, if any, taken off), '/' separated.
+/// A path that would leave the card is left out, and so is every file once
+/// the blob would pass 64 MB (`why` says so). "" when the zip has no files.
+std::string readCardFilesBlob(const std::string& zip_path, std::string* why);
+
 }  // namespace hms_cpap

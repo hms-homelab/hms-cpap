@@ -8,6 +8,7 @@
 #include "services/CpapCard.h"
 #include "services/PrismaIngestion.h"
 #include "sleepbridge/LearnedCard.h"
+#include "sleepbridge/LearnedFiles.h"
 
 #include <gtest/gtest.h>
 
@@ -72,6 +73,28 @@ TEST(CpapCard, APlainCardZipHasNoLayout) {
     std::ofstream(s.path("junk.zip")) << "not a zip";
     EXPECT_FALSE(readCardLayout(s.path("junk.zip"), &why));
     EXPECT_TRUE(why.empty());
+}
+
+// SDD-061 D9: the card's own files, kept beside the layout for the rebuild.
+TEST(CpapCard, TheCardsFilesAreReadAtTheirCardPathsWithoutTheLayout) {
+    Scratch s;
+    const std::string cbl1 = lctest::card().cbl1();
+    ASSERT_TRUE(cpapcardtest::writeZip(s.path("w.cpapcard"),
+                                       {{"MYCARD/22B39570.000", kBrp},
+                                        {"MYCARD/DATALOG/STR.edf", kStr},
+                                        {"MYCARD/baseline.cbl1", cbl1, true},
+                                        {"OTHER/x.bin", "outside the card"}}));
+    std::string why;
+    const auto blob = readCardFilesBlob(s.path("w.cpapcard"), &why);
+    const auto files = sleepbridge::decodeLearnedFiles(blob, &why);
+    ASSERT_TRUE(files) << why;
+    ASSERT_EQ(files->size(), 2u);
+    EXPECT_EQ((*files)[0].path, "22B39570.000");
+    EXPECT_EQ((*files)[0].bytes, kBrp);
+    EXPECT_EQ((*files)[1].path, "DATALOG/STR.edf");
+
+    ASSERT_TRUE(cpapcardtest::writeZip(s.path("plain.cpapcard"), {{"baseline.cbl1", cbl1, true}}));
+    EXPECT_TRUE(readCardFilesBlob(s.path("plain.cpapcard"), &why).empty());
 }
 
 TEST(CpapCard, TheLayoutIsFoundInsideOneWrappingFolderOnly) {

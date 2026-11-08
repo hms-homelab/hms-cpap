@@ -1,5 +1,7 @@
 #include "sleepbridge/RebuildWorker.h"
 
+#include "sleepbridge/LearnedFiles.h"
+
 #include <json/json.h>
 
 #include <algorithm>
@@ -192,6 +194,27 @@ void RebuildWorker::feedLearned() {
     std::cout << "[sleepbridge] " << sender_ << " learned card fed first: " << learned_.sectors
               << " sector(s), layout " << card->sectors_per_cluster << ':' << card->data_begin_lba
               << ", volume " << card->volume_serial << std::endl;
+
+    // SDD-061 D9: the learned files' contents, at their sectors, in the same
+    // session 0 right after the learned sectors: a file the machine appends
+    // to every night is whole from its first captured write on. Every
+    // captured write still outranks them (a higher sequence).
+    std::string blob;
+    if (!fs::exists(bdir / kBridgeLearnedFiles, ec) || !readAll(bdir / kBridgeLearnedFiles, blob)) return;
+    const auto files = decodeLearnedFiles(blob, &why);
+    if (!files) {
+        std::cout << "[sleepbridge] " << sender_ << " learned files not fed: " << why << std::endl;
+        return;
+    }
+    const auto seed = seedLearnedFiles(*card, *files);
+    for (const auto& [lba, data] : seed.sectors)
+        rebuilder_->record(seq++, lba, reinterpret_cast<const uint8_t*>(data.data()), true);
+    learned_.files        = seed.files;
+    learned_.file_sectors = static_cast<int>(seed.sectors.size());
+    learned_.files_skipped = seed.skipped;
+    std::cout << "[sleepbridge] " << sender_ << " learned files fed: " << seed.files << " of " << files->size()
+              << " file(s), " << seed.sectors.size() << " sector(s)" << std::endl;
+    for (const auto& s : seed.skipped) std::cout << "[sleepbridge] " << sender_ << "   not fed: " << s << std::endl;
 }
 
 void RebuildWorker::feedBatchFile(const std::string& path, StepReport& r) {
@@ -223,7 +246,7 @@ StepReport RebuildWorker::step(bool force) {
     StepReport r;
     if (!rebuilder_) return r;
     r.catch_up  = first_step_;
-    if (first_step_) r.learned_fed = learned_.sectors;
+    if (first_step_) r.learned_fed = learned_.sectors + learned_.file_sectors;
     first_step_ = false;
     const fs::path bdir = store_.batchesDir(sender_);
 

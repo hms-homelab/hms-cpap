@@ -1,5 +1,7 @@
 #include "sleepbridge/SleepBridgeService.h"
 
+#include "sleepbridge/LearnedFiles.h"
+
 #include "mule/MuleFirmware.h"   // compareVersions, updateAvailable
 
 #include <openssl/evp.h>
@@ -341,7 +343,8 @@ void SleepBridgeService::offerLearned(const std::string& sender) {
         std::cout << "[sleepbridge] " << sender << " learned card not given: " << why << std::endl;
 }
 
-CommandAnswer SleepBridgeService::learnCard(const std::string& cbl1, const std::string& file_name) {
+CommandAnswer SleepBridgeService::learnCard(const std::string& cbl1, const std::string& file_name,
+                                            const std::string& files_blob) {
     CommandAnswer a;
     std::string   why;
     const auto    card = decodeLearnedCard(cbl1, &why);
@@ -350,11 +353,28 @@ CommandAnswer SleepBridgeService::learnCard(const std::string& cbl1, const std::
         a.body["error"] = why;
         return a;
     }
+    // SDD-061 D9: the card's files go with the layout, or none at all.
+    std::optional<std::vector<LearnedFile>> files;
+    if (!files_blob.empty()) {
+        files = decodeLearnedFiles(files_blob, &why);
+        if (!files) {
+            a.status        = 400;
+            a.body["error"] = "The card's files could not be read: " + why;
+            return a;
+        }
+    }
     if (!keepLearnedCard(store_.root(), *card, cbl1, file_name, &why)) {
         a.status        = 500;
         a.body["error"] = "The card's layout could not be kept: " + why;
         return a;
     }
+    auto keepFiles = [&](const fs::path& p) {
+        std::error_code ec;
+        if (files_blob.empty()) return fs::remove(p, ec), true;
+        return durableWrite(p.string(), files_blob.data(), files_blob.size(), &why);
+    };
+    keepFiles(fs::path(store_.root()) / kLearnedDir / kLearnedFilesFile);
+    const LearnedSeed seed = files ? seedLearnedFiles(*card, *files) : LearnedSeed{};
     const Json::Value summary = learnedSummary(*card);
     Json::Value bridges(Json::arrayValue);
     std::vector<std::string> given;
@@ -376,7 +396,8 @@ CommandAnswer SleepBridgeService::learnCard(const std::string& cbl1, const std::
                 v["applied"] = false;
                 v["reason"]  = "it reads another card (layout " + std::to_string(g.sectors_per_cluster) +
                               ":" + std::to_string(g.data_begin_lba) + ")";
-            } else if (!giveBridgeLearned(bdir.string(), cbl1, summary, &why)) {
+            } else if (!giveBridgeLearned(bdir.string(), cbl1, summary, &why) ||
+                       !keepFiles(bdir / kBridgeLearnedFiles)) {
                 v["applied"] = false;
                 v["reason"]  = "not written: " + why;
             } else {
@@ -398,6 +419,15 @@ CommandAnswer SleepBridgeService::learnCard(const std::string& cbl1, const std::
     a.body           = summary;
     a.body["stored"] = true;
     a.body["bridges"] = bridges;
+    // SDD-061 D9: how many of the card's files the rebuild can place.
+    Json::Value fv(Json::objectValue);
+    fv["kept"]    = files ? static_cast<Json::UInt>(files->size()) : 0u;
+    fv["placed"]  = seed.files;
+    fv["sectors"] = static_cast<Json::UInt>(seed.sectors.size());
+    Json::Value skipped(Json::arrayValue);
+    for (const auto& s : seed.skipped) skipped.append(s);
+    fv["not_placed"]  = skipped;
+    a.body["files"]   = fv;
     a.body["rebuild_in_build"] = available_;
     return a;
 }

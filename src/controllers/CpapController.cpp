@@ -48,7 +48,7 @@ std::function<void(const std::string&)> CpapController::night_restore_;
 std::function<std::vector<std::string>()> CpapController::removed_nights_;
 std::function<void(int)> CpapController::shutdown_with_code_;
 std::function<uint64_t(const std::string&)> CpapController::cpap_zip_queue_;
-std::function<Json::Value(const std::string&, const std::string&)> CpapController::card_layout_;
+std::function<Json::Value(const std::string&, const std::string&, const std::string&)> CpapController::card_layout_;
 
 void CpapController::setQueryService(std::shared_ptr<QueryService> qs) { qs_ = qs; }
 
@@ -2049,7 +2049,7 @@ void CpapController::uploadCpapZip(const drogon::HttpRequestPtr& req,
         std::string why;
         if (auto cbl1 = readCardLayout(tmp.string(), &why)) {
             if (card_layout_) {
-                layout = card_layout_(*cbl1, f.getFileName());
+                layout = card_layout_(*cbl1, f.getFileName(), tmp.string());
             } else {
                 layout["error"] = "This build does not keep a card's layout";
             }
