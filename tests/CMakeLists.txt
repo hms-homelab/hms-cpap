@@ -185,6 +185,7 @@ set(TEST_SOURCES
     controllers/test_EquipmentController.cpp
     web/test_IngressBase.cpp
     web/test_QueryService_index.cpp
+    web/test_ArchiveChart.cpp
     web/test_QueryService_oximetry.cpp
     web/test_QueryService_reads.cpp
     scripts/test_PiInstallRuntimeList.cpp

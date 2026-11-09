@@ -1,4 +1,6 @@
 #include "web/QueryService.h"
+#include "utils/AppConfig.h"
+#include "web/ArchiveChart.h"
 #include "utils/NightQuiet.h"
 #include "utils/OximetryDevice.h"
 #include "utils/TherapyPressure.h"
@@ -357,10 +359,12 @@ Json::Value QueryService::getSessions(int limit, int offset) {
     // UNION ALL rather than a join: the arms are disjoint by construction, and
     // pagination has to apply to the combined set or the frontend's
     // offset-by-rows-loaded "load more" walks past nights.
+    const auto archive = archive_chart::load(AppConfig::dataDir(), device_id_);
+    const bool archive_enabled = archive["nights"].isObject() && !archive["nights"].empty();
     std::string q = cpap_arm + " UNION ALL " + oxi_arm +
         " ORDER BY sleep_day DESC"
-        " LIMIT " + std::to_string(limit) +
-        " OFFSET " + std::to_string(offset);
+        " LIMIT " + std::to_string(archive_enabled ? limit + offset + static_cast<int>(archive["nights"].size()) : limit) +
+        " OFFSET " + std::to_string(archive_enabled ? 0 : offset);
 
     Json::Value rows = query(q, {device_id_, device_id_});
 
@@ -403,6 +407,24 @@ Json::Value QueryService::getSessions(int limit, int offset) {
         row["partial"] = (it->second == NightState::Partial);
     }
 
+    if (archive_enabled) {
+        std::set<std::string> present;
+        for (const auto& row : rows) present.insert(row["sleep_day"].asString());
+        const auto removed = db_->removedNights(device_id_);
+        const auto summaries = query("SELECT record_date AS sleep_day, duration_minutes_str, ahi_str FROM cpap_daily_summary WHERE device_id = " + sql::param(1, dt_), {device_id_});
+        for (const auto& summary : summaries) {
+            const auto date = summary["sleep_day"].asString();
+            if (present.count(date) || archive_chart::removed(date, removed)) continue;
+            const auto day = archive_chart::day(archive, date);
+            const auto row = archive_chart::summaryRow(summary, day);
+            if (!row.isNull()) rows.append(row);
+        }
+        std::vector<Json::Value> sorted;
+        for (const auto& row : rows) sorted.push_back(row);
+        std::sort(sorted.begin(), sorted.end(), [](const auto& a, const auto& b) { return a["sleep_day"].asString() > b["sleep_day"].asString(); });
+        rows = Json::Value(Json::arrayValue);
+        for (int i = std::max(0, offset); i < static_cast<int>(sorted.size()) && static_cast<int>(rows.size()) < limit; ++i) rows.append(sorted[i]);
+    }
     return rows;
 }
 
@@ -490,6 +512,18 @@ Json::Value QueryService::getSessionDetail(const std::string& date) {
     }
     for (auto& row : result) row["night_state"] = state;
 
+    const auto archive = archive_chart::load(AppConfig::dataDir(), device_id_);
+    const auto day = archive_chart::day(archive, date);
+    if (!day.isNull() && !archive_chart::removed(date, db_->removedNights(device_id_))) {
+        if (result.empty()) {
+            const auto summaries = query("SELECT record_date AS sleep_day, duration_minutes_str, ahi_str FROM cpap_daily_summary WHERE device_id = " + sql::param(1, dt_) + " AND record_date = " + sql::castDate(2, dt_), {device_id_, date});
+            if (!summaries.empty()) {
+                const auto row = archive_chart::summaryRow(summaries[0], day);
+                if (!row.isNull()) result.append(row);
+            }
+        }
+        for (auto& row : result) row["archive_chart_available"] = true;
+    }
     return result;
 }
 
@@ -836,6 +870,9 @@ Json::Value QueryService::getSessionSignals(const std::string& date) {
     result["snore_index"] = snore;
     result["target_ventilation"] = tgt_vent;
     result["therapy_pressure"] = therapy_press;
+    const auto archive = archive_chart::load(AppConfig::dataDir(), device_id_);
+    const auto day = archive_chart::day(archive, date);
+    if (!day.isNull() && !archive_chart::removed(date, db_->removedNights(device_id_))) return archive_chart::mergeSignals(result, day);
     return result;
 }
 
