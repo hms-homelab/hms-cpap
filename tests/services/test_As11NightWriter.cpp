@@ -162,6 +162,7 @@ TEST_F(NightTest, EventsLandOnTheirNightWithTheTwoMinuteTail) {
     w.onEvent(kSerial, {"HypopneaEnd", "2026-10-17T03:02:30.000Z", 15, 15});   // 90 s past the end: kept
     w.onEvent(kSerial, {"HypopneaEnd", "2026-10-17T03:05:00.000Z", 15, 15});   // 4 min past: dropped
     w.onEvent(kSerial, {"ObstructiveApneaEnd", "2026-10-17T03:00:30.000Z", 12, 12});  // again: once
+    w.onEvent(kSerial, {"ObstructiveApneaEnd", "2026-10-17T03:00:30Z", 12, 12, true});
     w.onEvent(kSerial, {"CsrStart", "2026-10-17T03:00:50.000Z", 0, 20});
     w.onStreamEnd(kSerial);
     // Records are "Recording starts" plus one per annotation.

@@ -93,6 +93,7 @@ struct RespEvent {
     std::string reportTime;          // ISO UTC, when the machine reported it
     int durationSeconds = -1;
     int backdateSeconds = -1;        // how far before reportTime it began
+    bool historical = false;       // stored event, duration may be unknown
 };
 
 /// The channel a StreamData key names, 0 for one not kept.

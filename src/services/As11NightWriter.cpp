@@ -25,6 +25,13 @@ namespace hms_cpap {
 
 namespace {
 
+std::string eventKey(const std::string& time, const std::string& event) {
+    // AS11 timestamps are UTC. Keep the original key for legacy values that
+    // cannot be interpreted by the AS11 clock parser.
+    const auto millis = !time.empty() && time.back() == 'Z' ? as11::isoToMs(time) : 0;
+    return (millis ? std::to_string(millis) : time) + "|" + event;
+}
+
 // ── civil time, no libc zone involved ──
 
 int64_t floorDiv(int64_t a, int64_t b) { return a / b - ((a % b != 0) && ((a < 0) != (b < 0))); }
@@ -235,7 +242,7 @@ void As11NightWriter::load(const std::string& serial, Machine& m) {
     std::ifstream ev(root / "stream" / "events.jsonl");
     for (std::string line; std::getline(ev, line);) {
         const auto j = nlohmann::json::parse(line, nullptr, false);
-        if (j.is_object()) m.event_keys.insert(j.value("reportTime", "") + "|" + j.value("event", ""));
+        if (j.is_object()) m.event_keys.insert(eventKey(j.value("reportTime", ""), j.value("event", "")));
     }
 }
 
@@ -296,8 +303,9 @@ void As11NightWriter::onEvent(const std::string& serial, const as11::RespEvent& 
     if (e.event.empty() || e.reportTime.empty()) return;
     std::lock_guard<std::mutex> lk(mtx_);
     Machine& m = machine(serial);
-    if (!m.event_keys.insert(e.reportTime + "|" + e.event).second) return;
+    if (!m.event_keys.insert(eventKey(e.reportTime, e.event)).second) return;
     nlohmann::ordered_json j;
+    j["historical"] = e.historical;
     j["event"] = e.event;
     j["reportTime"] = e.reportTime;
     j["durationSeconds"] = e.durationSeconds;
@@ -492,7 +500,7 @@ void As11NightWriter::writeEvents(const std::string& serial, const std::string& 
             csl.annotations.push_back({onset, 0.0, name.find("Start") != std::string::npos ? "CSR Start" : "CSR End"});
         } else {
             eve.annotations.push_back({onset, static_cast<double>(std::max(0, j.value("durationSeconds", 0))),
-                                       eveText(name)});
+                                       eveText(name) + (j.value("historical", false) && j.value("durationSeconds", -1) < 0 ? " [BT duration unknown]" : "")});
         }
     }
     auto byOnset = [](const EDFWriteAnnotation& a, const EDFWriteAnnotation& b) { return a.onset_s < b.onset_s; };

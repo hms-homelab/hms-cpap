@@ -26,6 +26,19 @@ namespace {
 // than letting each caller guess. Anything that is not eight digits after
 // stripping punctuation is handed back untouched, so a malformed date fails
 // in the database as a bad date rather than silently matching a real night.
+Json::Value eventDurationKnown(Json::Value rows) {
+    for (auto& row : rows) {
+        const auto value=row.get("duration_seconds",Json::nullValue);
+        double duration=0;
+        try { duration=value.isString()?std::stod(value.asString()):value.asDouble(); } catch (...) { continue; }
+        if (!value.isNull() && duration<0) {
+            row["duration_seconds"]=Json::nullValue;
+            row["duration_known"]=false;
+        }
+    }
+    return rows;
+}
+
 std::string normalizeSleepDay(const std::string& date) {
     std::string digits;
     for (unsigned char c : date)
@@ -450,7 +463,7 @@ Json::Value QueryService::getSessionDetail(const std::string& date) {
                 "SELECT event_type, event_timestamp, duration_seconds, details"
                 " FROM cpap_events WHERE session_id = " + sql::param(1, dt_) +
                 " ORDER BY event_timestamp";
-            row["events"] = query(q_events, {session_id});
+            row["events"] = eventDurationKnown(query(q_events, {session_id}));
         } else {
             row["events"] = Json::Value(Json::arrayValue);
         }
@@ -912,7 +925,7 @@ Json::Value QueryService::getSessionEvents(const std::string& date) {
         " AND " + sql::sleepDay("s.session_start", dt_) + " = " + sql::castDate(2, dt_) +
         " ORDER BY e.event_timestamp";
 
-    return query(q, {device_id_, date});
+    return eventDurationKnown(query(q, {device_id_, date}));
 }
 
 Json::Value QueryService::getEvents(const std::string& start, const std::string& end,
@@ -959,7 +972,7 @@ Json::Value QueryService::getEvents(const std::string& start, const std::string&
          " LIMIT " + std::to_string(limit) +
          " OFFSET " + std::to_string(offset);
 
-    return query(q, params);
+    return eventDurationKnown(query(q, params));
 }
 
 Json::Value QueryService::getSessionBreaths(const std::string& date) {
