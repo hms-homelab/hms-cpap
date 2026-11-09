@@ -277,8 +277,8 @@ CREATE INDEX idx_cpap_sleep_stages_session
 -- Local-first mirror of the cloud model (hms-cpapdash-api SDD-035), minus
 -- user_id: hms-cpap is single-household. A profile ("setup") owns exactly one
 -- machine plus its accessories; supply wear is COMPUTED on read, never stored.
--- client_uuid exists only so optional cloud sync is idempotent; it is unused
--- offline. Keep this in lockstep with MySQLDatabase::createSchema().
+-- client_uuid is unused, kept from SDD-004's cloud sync (removed by SDD-066).
+-- Keep this in lockstep with MySQLDatabase::createSchema().
 --
 -- started_using_at is VARCHAR, not DATETIME, on purpose: it is an ISO-8601
 -- string that must round-trip byte-for-byte with the SQLite/Postgres backends

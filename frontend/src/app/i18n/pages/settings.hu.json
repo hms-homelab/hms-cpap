@@ -120,16 +120,6 @@
       "errVerify": "Nem sikerült ellenőrizni a kódot.",
       "errDisconnect": "Nem sikerült lecsatlakozni."
     },
-    "cloud": {
-      "heading": "CpapDash Cloud",
-      "desc": "Tükrözi a felszerelését és a kellékeit a CpapDash-fiókjába. A helyi telepítés marad az igazság forrása, és ennek kikapcsolása után a felszerelés funkció pontosan úgy működik tovább, ahogy most.",
-      "enabled": "Bekapcsolva",
-      "apiUrl": "API URL",
-      "token": "Token",
-      "tokenPlaceholder": "Illesszen be egy hosszú élettartamú API-tokent",
-      "tokenHint": "Kitakarva tároljuk. Hagyja érintetlenül a maszkolt értéket a jelenlegi token megtartásához. Egy token visszavonható a fiókjelszó megváltoztatása nélkül.",
-      "autoSync": "Szinkronizálás a gyűjtési körben is, helyi szerkesztés után"
-    },
     "sleepStage": {
       "heading": "Alvásfázis-következtetés",
       "enabled": "Bekapcsolva",

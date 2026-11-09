@@ -16,9 +16,9 @@ namespace cpapdash::supervisor {
  *
  * ── The trap this class exists to prevent ──────────────────────────────────
  *
- * `GET /api/config` REDACTS five fields to the literal "********":
- * database.password, mqtt.password, llm.api_key, sleephq.client_secret and
- * cpapdash.token. The write path treats that literal as "keep what you have",
+ * `GET /api/config` REDACTS four fields to the literal "********":
+ * database.password, mqtt.password, llm.api_key and sleephq.client_secret.
+ * The write path treats that literal as "keep what you have",
  * so:
  *
  *     PUT "********"  -> the stored secret is PRESERVED

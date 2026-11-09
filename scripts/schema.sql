@@ -314,7 +314,7 @@ CREATE INDEX IF NOT EXISTS idx_cpap_sleep_stages_session
 -- (DatabaseService::connect). Drift between the two is what forced v4.4.10.
 --
 -- Conventions: replace_after_days NULL = use the type default;
---              client_uuid NULL offline (only used for optional cloud sync);
+--              client_uuid unused, kept from SDD-004 (sync removed by SDD-066);
 --              deleted = TRUE is a tombstone (hidden from lists, kept for sync).
 
 -- Catalog of equipment types (6 seeded system rows + user-defined)

@@ -115,13 +115,6 @@ export interface AppConfig {
     max_mb: number;
     keep: number;
   };
-  /** SDD-004 optional cloud mirror. Local stays the source of truth. */
-  cpapdash: {
-    enabled: boolean;
-    api_url: string;
-    token: string;      // redacted to '********' on read; resend it to keep
-    auto_sync: boolean;
-  };
 }
 
 /**

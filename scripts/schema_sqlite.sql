@@ -287,7 +287,7 @@ CREATE INDEX IF NOT EXISTS idx_cpap_sleep_stages_session
 -- Local-first mirror of the cloud model (hms-cpapdash-api SDD-035), minus
 -- user_id: hms-cpap is single-household. A profile ("setup") owns exactly one
 -- machine plus its accessories; supply wear is COMPUTED on read, never stored.
--- client_uuid exists only so optional cloud sync is idempotent; unused offline.
+-- client_uuid is unused, kept from SDD-004's cloud sync (removed by SDD-066).
 -- Keep this in lockstep with SQLiteDatabase::createSchema().
 
 -- Catalog: seeded system defaults + user customs

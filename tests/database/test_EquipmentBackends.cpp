@@ -276,8 +276,7 @@ protected:
         return isPostgres() ? ("$" + std::to_string(n)) : std::string("?");
     }
 
-    // Read a tombstoned item's updated_at the way CpapDashSyncService does: a
-    // direct query, because a tombstone is invisible to both listEquipmentItems
+    // Read a tombstoned item's updated_at with a direct query, because a tombstone is invisible to both listEquipmentItems
     // and getEquipmentItem. Postgres stores updated_at as TIMESTAMPTZ and would
     // otherwise render it in the server's timezone, so it is normalised to the
     // same ISO-8601 UTC shape SQLite stores natively — the equipment readers
@@ -627,8 +626,7 @@ TEST_P(EquipmentBackend, TombstonesHonourAnExplicitUpdatedAt) {
     ASSERT_TRUE(db().tombstoneEquipmentItem(iid, "2020-01-02T03:04:05Z"));
     // A tombstoned item is invisible to BOTH listEquipmentItems(include_history)
     // and getEquipmentItem() -- TombstonesHideFromListsAndGetById pins that -- so
-    // the stamp is read the same way CpapDashSyncService reads tombstones: a
-    // direct query (rawItemUpdatedAt papers over nothing but the placeholder
+    // the stamp is read with a direct query (rawItemUpdatedAt papers over nothing but the placeholder
     // syntax and Postgres' timezone rendering).
     const std::string item_stamp = rawItemUpdatedAt(iid);
     EXPECT_NE(item_stamp.find("2020-01-02"), std::string::npos)

@@ -59,16 +59,7 @@ void CpapController::setConfig(hms_cpap::AppConfig* cfg, const std::string& path
 
 void CpapController::setBurstService(BurstCollectorService* svc) { burst_service_ = svc; }
 
-// Defined here rather than beside report_svc_: that one lives inside the
-// POSIX-only report block, and putting this there compiled everywhere except
-// MSVC, where it failed with "sync_ undeclared". The cloud mirror is not
-// platform-specific.
-std::shared_ptr<CpapDashSyncService> CpapController::sync_;
 std::shared_ptr<hms_cpap::MyAirService> CpapController::myair_;
-
-void CpapController::setSyncService(std::shared_ptr<CpapDashSyncService> sync) {
-    sync_ = std::move(sync);
-}
 
 std::shared_ptr<UpdateService> CpapController::update_;
 
@@ -511,15 +502,6 @@ void CpapController::updateConfig(const drogon::HttpRequestPtr& req,
         if (ss.isMember("model_version")) config_->sleep_stage.model_version = ss["model_version"].asString();
     }
 
-    if (j.isMember("cpapdash")) {
-        auto& cd = j["cpapdash"];
-        if (cd.isMember("enabled")) config_->cpapdash.enabled = cd["enabled"].asBool();
-        if (cd.isMember("api_url")) config_->cpapdash.api_url = cd["api_url"].asString();
-        if (cd.isMember("token") && cd["token"].asString() != "********")
-            config_->cpapdash.token = cd["token"].asString();
-        if (cd.isMember("auto_sync")) config_->cpapdash.auto_sync = cd["auto_sync"].asBool();
-    }
-
     // Support log. Saved here but applied on restart: the tee owns fd 1 and 2
     // for the whole process, and swapping those under a running service to
     // satisfy a settings save is not worth the risk of losing output mid-write.
@@ -547,17 +529,6 @@ void CpapController::updateConfig(const drogon::HttpRequestPtr& req,
 
     // Signal hot-reload to BurstCollectorService
     if (burst_service_) burst_service_->markConfigDirty();
-
-    // SDD-006 section 5: the cloud mirror took its settings once, in main.cpp,
-    // and nothing re-applied them. A token pasted into the Settings page
-    // therefore reached the file and the in-memory config but never the running
-    // service, so the next sync still used the old one. The wizard's restart hid
-    // this; the Settings page does not restart.
-    if (sync_) {
-        sync_->setSettings(CpapDashSyncService::Settings::from(
-            config_->cpapdash.enabled, config_->cpapdash.api_url,
-            config_->cpapdash.token, config_->cpapdash.auto_sync));
-    }
 
     // Return redacted config
     auto resp_json = config_->toJson();
@@ -775,13 +746,6 @@ void CpapController::setupApply(const drogon::HttpRequestPtr& req,
         config_->ml_training.enabled = j["ml_training"]["enabled"].asBool();
     if (j.isMember("sleep_stage") && j["sleep_stage"].isMember("enabled"))
         config_->sleep_stage.enabled = j["sleep_stage"]["enabled"].asBool();
-    if (j.isMember("cpapdash")) {
-        auto& c = j["cpapdash"];
-        if (c.isMember("enabled"))   config_->cpapdash.enabled   = c["enabled"].asBool();
-        if (c.isMember("api_url"))   config_->cpapdash.api_url   = c["api_url"].asString();
-        if (c.isMember("token"))     config_->cpapdash.token     = c["token"].asString();
-        if (c.isMember("auto_sync")) config_->cpapdash.auto_sync = c["auto_sync"].asBool();
-    }
 
     config_->setup_complete = true;
     config_->save(config_path_);

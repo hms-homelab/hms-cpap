@@ -57,15 +57,7 @@ This is a real transfer of your health data to a third party. Their handling of
 it is governed by their own privacy policy and terms, not this project's. Review
 them before enabling this.
 
-### 3. CpapDash cloud sync (`api.cpapdash.com`)
-If cloud sync is enabled with a token, **equipment profiles and supply
-information** are mirrored to the CpapDash API. This syncs your equipment
-catalog -- machine and accessory names, models, and replacement dates -- and not
-your therapy or session data. It is opt-in, off by default, and local remains the
-source of truth. CpapDash is a separate service with its own privacy policy and
-terms.
-
-### 4. LLM session summaries
+### 3. LLM session summaries
 If LLM summaries are enabled, **session data is sent to whatever endpoint you
 configure**. The default provider is Ollama, which normally means a model running
 on your own hardware, and in that case nothing leaves your network. **If you
@@ -74,7 +66,7 @@ that company** and becomes subject to their retention, logging, and training
 policies. This is entirely your choice and your responsibility. Check whether
 your provider trains on submitted data.
 
-### 5. Your CPAP device and SD bridge
+### 4. Your CPAP device and SD bridge
 The service talks to your machine's WiFi SD card or bridge over your local
 network. This traffic is unencrypted HTTP on your LAN. It does not leave your
 network, but anyone on that network can observe it.

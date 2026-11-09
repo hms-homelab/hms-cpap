@@ -135,10 +135,10 @@ deletes its file rows first (`deleteSessionsByDateFolder`, `removeNight`).
 | Table | Key | What it holds | Written by | Read by |
 |---|---|---|---|---|
 | `cpap_equipment_types` | `id`; UNIQUE `type_key` | SDD-004 catalog: six seeded system types (`machine`, `mask`, `tubing`, `filter`, `humidifier`, `headgear`) with default replacement intervals, plus user types. | `EquipmentController` | `EquipmentController`, `CleaningController`, `SupplyPublisher` |
-| `cpap_equipment_profiles` | `id`; UNIQUE `client_uuid` | Named setups. Soft-deleted (`deleted`). | `EquipmentController`, `CpapDashSyncService` | the same |
-| `cpap_equipment_items` | `id`; UNIQUE `client_uuid`; at most one live `machine` per profile (partial unique index) | The gear in a setup: type, brand/model, started using, replacement interval. Supply wear is computed on read, never stored. | `EquipmentController`, `CpapDashSyncService` | `EquipmentController`, `SupplyPublisher` (MQTT, wear computed by `SupplyStatus`) |
+| `cpap_equipment_profiles` | `id`; UNIQUE `client_uuid` (unused since SDD-066) | Named setups. Soft-deleted (`deleted`). | `EquipmentController` | the same |
+| `cpap_equipment_items` | `id`; UNIQUE `client_uuid` (unused since SDD-066); at most one live `machine` per profile (partial unique index) | The gear in a setup: type, brand/model, started using, replacement interval. Supply wear is computed on read, never stored. | `EquipmentController` | `EquipmentController`, `SupplyPublisher` (MQTT, wear computed by `SupplyStatus`) |
 | `cleaning_task_types` | `id`; UNIQUE `task_key` | SDD-007: seven seeded wash presets (wipe the cushion daily, wash the tubing weekly, ...). | seeded | `CleaningController` |
-| `cleaning_tasks` | `id`; one live task per `(profile_id, task_key)` | A profile's schedule: interval, time of day, start date, last done. | `CleaningController`, `CpapDashSyncService` | `CleaningController`, `CleaningPublisher` (MQTT, due times computed by `CleaningStatus`) |
+| `cleaning_tasks` | `id`; one live task per `(profile_id, task_key)` | A profile's schedule: interval, time of day, start date, last done. | `CleaningController` | `CleaningController`, `CleaningPublisher` (MQTT, due times computed by `CleaningStatus`) |
 
 ## The single-device assumption
 

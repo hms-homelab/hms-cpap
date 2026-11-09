@@ -87,7 +87,7 @@ Luna card is read from a local folder or the upload page.
 - **Therapy Insights Engine** - Automated analysis of AHI trends, leak correlation, compliance, best/worst nights
 - **Pulse Oximetry** - Wellue O2Ring SpO2/HR with ODI calculation, session overlay, and fallback in session cards
 - **Manual Upload Page** - Drag-and-drop a CPAP `.zip` or a Wellue O2 Ring `.csv` from any browser, no shared network needed. CPAP zips merge into the archive and reparse; O2 Ring CSVs (both Wellue export dialects, auto-detected sample interval) become oximetry sessions -- an OSCAR-free way to view your O2 ring data. See [docs/UPLOAD.md](UPLOAD.md)
-- **Equipment & Supply Reminders** - Track machine and accessories per profile, with wear computed from your in-use dates. Publishes days-left and wear sensors to Home Assistant plus a due/overdue event so an automation fires once per crossing. Optional CpapDash cloud sync. See [Equipment & Supplies](#equipment--supplies)
+- **Equipment & Supply Reminders** - Track machine and accessories per profile, with wear computed from your in-use dates. Publishes days-left and wear sensors to Home Assistant plus a due/overdue event so an automation fires once per crossing. See [Equipment & Supplies](#equipment--supplies)
 - **SleepHQ Auto-Export** - Automatically forward each completed night's raw data to SleepHQ via their public API, toggleable on session complete and on local import, plus a manual per-night "Upload to SleepHQ" button
 - **Multi-Database** - PostgreSQL, MySQL/MariaDB, or SQLite (auto-created on first run)
 - **Signal Charts** - Per-minute resolution with event markers and oximetry overlay
@@ -783,14 +783,6 @@ automation:
           {{ trigger.payload_json.type }} is
           {{ trigger.payload_json.state | replace('_', ' ') }}
 ```
-
-### Optional cloud sync
-
-Equipment can mirror to [CpapDash](https://www.cpapdash.com) so the same profiles
-appear in the app. **Off by default**, opt-in with a pasted token, and local stays
-the source of truth -- an unreachable cloud degrades to local-only with no data
-loss. Only equipment data syncs; therapy and session data never leave. See
-[PRIVACY.md](../PRIVACY.md).
 
 ## Home Assistant Integration
 

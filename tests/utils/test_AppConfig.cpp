@@ -283,16 +283,15 @@ TEST_F(AppConfigTest, FirstRunWithEnvVarsCreatesCorrectConfig) {
 // --- Secret-redaction boundary -------------------------------------------------
 //
 // save() persists to disk; toJson() answers the API. Redaction belongs only in
-// the latter. save() used to emit the cpapdash block twice, the second time with
-// the token masked, so the mask overwrote the real value on disk and the next
-// load() read "********" back as the token. Enabling cloud sync and then saving
-// anything at all from the UI silently destroyed the credential.
+// the latter. save() once emitted a secret block twice, the second time masked,
+// so the mask overwrote the real value on disk and the next load() read
+// "********" back as the secret. Saving anything at all from the UI silently
+// destroyed the credential.
 
-TEST_F(AppConfigTest, SaveWritesCpapdashTokenVerbatim) {
+TEST_F(AppConfigTest, SaveWritesSecretsVerbatim) {
     AppConfig original;
-    original.cpapdash.enabled = true;
-    original.cpapdash.token = "tok_live_abc123";
-    original.cpapdash.auto_sync = true;
+    original.sleephq.enabled = true;
+    original.sleephq.client_secret = "shq_secret_xyz";
     original.save(config_path_);
 
     // Assert against the file itself, not just a reload, so a symmetric
@@ -300,20 +299,17 @@ TEST_F(AppConfigTest, SaveWritesCpapdashTokenVerbatim) {
     std::ifstream f(config_path_);
     nlohmann::json j;
     f >> j;
-    EXPECT_EQ(j["cpapdash"]["token"], "tok_live_abc123");
+    EXPECT_EQ(j["sleephq"]["client_secret"], "shq_secret_xyz");
 
     AppConfig loaded;
     ASSERT_TRUE(AppConfig::load(config_path_, loaded));
-    EXPECT_EQ(loaded.cpapdash.token, "tok_live_abc123");
-    EXPECT_TRUE(loaded.cpapdash.enabled);
-    EXPECT_TRUE(loaded.cpapdash.auto_sync);
+    EXPECT_EQ(loaded.sleephq.client_secret, "shq_secret_xyz");
+    EXPECT_TRUE(loaded.sleephq.enabled);
 }
 
 TEST_F(AppConfigTest, SaveLoadSaveDoesNotDegradeSecrets) {
     // The original failure needed two cycles to show: save, load, save again.
     AppConfig a;
-    a.cpapdash.enabled = true;
-    a.cpapdash.token = "tok_live_abc123";
     a.sleephq.enabled = true;
     a.sleephq.client_secret = "shq_secret_xyz";
     a.database.password = "pgpass";
@@ -327,7 +323,6 @@ TEST_F(AppConfigTest, SaveLoadSaveDoesNotDegradeSecrets) {
 
     AppConfig c;
     ASSERT_TRUE(AppConfig::load(config_path_, c));
-    EXPECT_EQ(c.cpapdash.token, "tok_live_abc123");
     EXPECT_EQ(c.sleephq.client_secret, "shq_secret_xyz");
     EXPECT_EQ(c.database.password, "pgpass");
     EXPECT_EQ(c.mqtt.password, "mqttpass");
@@ -368,25 +363,53 @@ TEST_F(AppConfigTest, NewlySettableKeysSurviveSaveAndLoad) {
 
 TEST_F(AppConfigTest, ToJsonMasksSecretsButNeverEmptiesThem) {
     AppConfig cfg;
-    cfg.cpapdash.token = "tok_live_abc123";
     cfg.database.password = "pgpass";
     cfg.mqtt.password = "mqttpass";
     cfg.llm.api_key = "llm_key";
     cfg.sleephq.client_secret = "shq_secret_xyz";
 
     auto j = cfg.toJson();
-    EXPECT_EQ(j["cpapdash"]["token"], "********");
     EXPECT_EQ(j["database"]["password"], "********");
     EXPECT_EQ(j["mqtt"]["password"], "********");
     EXPECT_EQ(j["llm"]["api_key"], "********");
     EXPECT_EQ(j["sleephq"]["client_secret"], "********");
 
     // An unset secret stays empty rather than masking into a fake value, which is
-    // what lets the UI tell "no token" from "token withheld".
+    // what lets the UI tell "no secret" from "secret withheld".
     AppConfig empty;
     auto je = empty.toJson();
-    EXPECT_EQ(je["cpapdash"]["token"], "");
+    EXPECT_EQ(je["sleephq"]["client_secret"], "");
     EXPECT_EQ(je["database"]["password"], "");
+}
+
+// --- The removed CpapDash cloud sync (SDD-066) -------------------------------
+//
+// A config.json written while the cloud sync existed carries a "cpapdash" block
+// with a token. It must still load with everything else intact, never appear in
+// the API's view, and leave the file (token included) at the next save.
+
+TEST_F(AppConfigTest, AConfigWithTheRemovedCloudSyncBlockLoadsAndDropsIt) {
+    {
+        std::ofstream f(config_path_);
+        f << R"({"transport": "ezshare", "format": "resmed",
+                 "sleephq": {"enabled": true, "client_secret": "shq_secret_xyz"},
+                 "cpapdash": {"enabled": true, "api_url": "https://api.cpapdash.com",
+                              "token": "tok_live_abc123", "auto_sync": true}})";
+    }
+    AppConfig loaded;
+    ASSERT_TRUE(AppConfig::load(config_path_, loaded));
+    EXPECT_EQ(loaded.transport, "ezshare");
+    EXPECT_TRUE(loaded.sleephq.enabled);
+    EXPECT_EQ(loaded.sleephq.client_secret, "shq_secret_xyz");
+
+    EXPECT_FALSE(loaded.toJson().contains("cpapdash")) << "the API still shows the removed block";
+
+    loaded.save(config_path_);
+    std::ifstream f(config_path_);
+    nlohmann::json saved;
+    f >> saved;
+    EXPECT_FALSE(saved.contains("cpapdash")) << "the removed block, token included, survived save";
+    EXPECT_EQ(saved["sleephq"]["client_secret"], "shq_secret_xyz");
 }
 
 // --- The removed Fysetc source -----------------------------------------------
@@ -479,7 +502,7 @@ TEST_F(AppConfigTest, EverySectionLoadReadsIsAlsoWrittenBySave) {
 
     for (const char* section : {"database", "mqtt", "llm", "agent", "ml_training",
                                 "o2ring", "airsense11", "airsense11_ble", "sleep_stage",
-                                "sleephq", "cpapdash"}) {
+                                "sleephq"}) {
         EXPECT_TRUE(saved.contains(section))
             << "save() drops the '" << section << "' section that load() reads";
     }
@@ -490,7 +513,7 @@ TEST_F(AppConfigTest, ToJsonExposesEverySectionTheUiEdits) {
     auto j = cfg.toJson();
     for (const char* section : {"database", "mqtt", "llm", "agent", "ml_training",
                                 "o2ring", "airsense11", "airsense11_ble", "sleep_stage",
-                                "sleephq", "cpapdash"}) {
+                                "sleephq"}) {
         EXPECT_TRUE(j.contains(section))
             << "GET /api/config hides the '" << section << "' section";
     }

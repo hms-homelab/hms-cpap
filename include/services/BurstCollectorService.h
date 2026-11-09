@@ -6,7 +6,6 @@
 #include "parsers/CpapdashBridge.h"
 #include "services/DataPublisherService.h"
 #include "services/SupplyPublisher.h"
-#include "services/CpapDashSyncService.h"
 #include "services/MyAirService.h"
 #include "services/AirSense11Pull.h"
 #include "clients/IAirSense11Pairing.h"
@@ -124,15 +123,6 @@ public:
      * Stop service (joins worker thread)
      */
     void stop();
-
-    /**
-     * SDD-004: inject the optional cloud-sync service. When left unset the burst
-     * cycle simply never calls sweep(), so the equipment feature stays entirely
-     * local — which is the default and the supported offline path.
-     */
-    void setCpapDashSync(std::shared_ptr<CpapDashSyncService> sync) {
-        cpapdash_sync_ = std::move(sync);
-    }
 
     /**
      * SDD-020: inject the optional myAir pull. Left unset, the burst cycle never
@@ -347,8 +337,6 @@ private:
     void markUnparsedNightsForExport();
 
     std::string device_id_;
-    /// SDD-004 optional cloud mirror; null when the feature is off.
-    std::shared_ptr<CpapDashSyncService> cpapdash_sync_;
     std::shared_ptr<MyAirService> myair_;
     std::string device_name_;
     /// SDD-010: the card ROOT when CPAP_SOURCE=local. STR.edf and DATALOG are

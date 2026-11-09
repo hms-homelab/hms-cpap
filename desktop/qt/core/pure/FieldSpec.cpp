@@ -77,7 +77,6 @@ const std::vector<Group>& settingsGroups() {
         {"device",      "Device",               "How this machine identifies itself.", ""},
         {"timing",      "Collection Timing",    "", ""},
         {"sleephq",     "SleepHQ Sync",         "Upload nights to SleepHQ. Credentials come from SleepHQ Account, API.", "sleephq.enabled"},
-        {"cpapdash",    "CpapDash Cloud",       "Sync to the CpapDash service.", "cpapdash.enabled"},
         {"o2ring",      "O2 Ring Oximetry",     "Pulse oximetry from a Wellue O2 Ring.", "o2ring.enabled"},
         {"mqtt",        "MQTT",                 "Publish sensors to Home Assistant.", "mqtt.enabled"},
         {"llm",         "AI Summaries",         "Nightly summaries from a language model.", "llm.enabled"},
@@ -178,15 +177,6 @@ const std::vector<FieldSpec>& settingsFields() {
         f.push_back({"sleephq.quiet_minutes", "sleephq", "Quiet Period (minutes)",
             "How long the card must be idle before a night is considered finished.",
             FieldKind::Int, "", {}, 1, 1440, true, enabledBy("sleephq.enabled")});
-
-        // ── CpapDash Cloud ─────────────────────────────────────────────────
-        f.push_back({"cpapdash.enabled", "cpapdash", "Enabled", "", FieldKind::Bool, "", {}, {}, {}, false, nullptr});
-        f.push_back({"cpapdash.api_url", "cpapdash", "API URL", "", FieldKind::Text,
-            "https://api.cpapdash.com", {}, {}, {}, false, enabledBy("cpapdash.enabled")});
-        f.push_back({"cpapdash.token", "cpapdash", "Token", "", FieldKind::Secret,
-            "", {}, {}, {}, false, enabledBy("cpapdash.enabled")});
-        f.push_back({"cpapdash.auto_sync", "cpapdash", "Sync after each collection sweep", "",
-            FieldKind::Bool, "", {}, {}, {}, false, enabledBy("cpapdash.enabled")});
 
         // ── O2 Ring ────────────────────────────────────────────────────────
         f.push_back({"o2ring.enabled", "o2ring", "Enabled", "", FieldKind::Bool, "", {}, {}, {}, false, nullptr});

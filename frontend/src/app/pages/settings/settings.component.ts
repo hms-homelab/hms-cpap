@@ -422,43 +422,6 @@ import { sourceImage } from '../../utils/source-image';
           </div>
         </div>
 
-        <!-- Section: CpapDash Cloud (SDD-004 mirror). Local stays authoritative. -->
-        <div class="section">
-          <div class="section-header" (click)="toggle('cpapdash')">
-            <span class="chevron" [class.open]="open['cpapdash']">&#9654;</span>
-            {{ 'settings.cloud.heading' | translate }}
-            <span class="badge" *ngIf="!config.cpapdash.enabled">{{ 'settings.tag.optional' | translate }}</span>
-          </div>
-          <div class="section-body" *ngIf="open['cpapdash']">
-            <p class="section-desc">
-              {{ 'settings.cloud.desc' | translate }}
-            </p>
-            <label class="toggle-row">
-              {{ 'settings.cloud.enabled' | translate }}
-              <input type="checkbox" [(ngModel)]="config.cpapdash.enabled" name="cpapdash_enabled" />
-            </label>
-            <ng-container *ngIf="config.cpapdash.enabled">
-              <label>
-                {{ 'settings.cloud.apiUrl' | translate }}
-                <input type="text" [(ngModel)]="config.cpapdash.api_url" name="cpapdash_api_url"
-                       placeholder="https://api.cpapdash.com" />
-              </label>
-              <label>
-                {{ 'settings.cloud.token' | translate }}
-                <input type="password" [(ngModel)]="config.cpapdash.token" name="cpapdash_token"
-                       [placeholder]="'settings.cloud.tokenPlaceholder' | translate" />
-                <small class="hint">
-                  {{ 'settings.cloud.tokenHint' | translate }}
-                </small>
-              </label>
-              <label class="toggle-row">
-                <input type="checkbox" [(ngModel)]="config.cpapdash.auto_sync" name="cpapdash_auto_sync" />
-                {{ 'settings.cloud.autoSync' | translate }}
-              </label>
-            </ng-container>
-          </div>
-        </div>
-
         <!-- Section: Sleep Stage Inference -->
         <div class="section">
           <div class="section-header" (click)="toggle('sleep_stage')">
@@ -1386,7 +1349,6 @@ export class SettingsComponent implements OnInit, OnDestroy {
     as11: false,
     sleephq: false,
     myair: false,
-    cpapdash: false,
     sleep_stage: false,
     agent: false,
     timing: false,
@@ -1492,10 +1454,6 @@ export class SettingsComponent implements OnInit, OnDestroy {
         }
         if (!cfg.logging) {
           cfg.logging = { enabled: true, file: '', max_mb: 5, keep: 3 };
-        }
-        if (!cfg.cpapdash) {
-          cfg.cpapdash = { enabled: false, api_url: 'https://api.cpapdash.com',
-                           token: '', auto_sync: false };
         }
         if (cfg.archive_dir == null) cfg.archive_dir = '';
         if (cfg.static_dir == null) cfg.static_dir = '';

@@ -120,16 +120,6 @@
       "errVerify": "No se pudo verificar el código.",
       "errDisconnect": "No se pudo desconectar."
     },
-    "cloud": {
-      "heading": "CpapDash Cloud",
-      "desc": "Replica tu equipo y tus suministros en tu cuenta de CpapDash. Tu instalación local sigue siendo la fuente de verdad, y desactivar esto deja la función de equipo funcionando exactamente igual que ahora.",
-      "enabled": "Activado",
-      "apiUrl": "URL de la API",
-      "token": "Token",
-      "tokenPlaceholder": "Pega un token de API de larga duración",
-      "tokenHint": "Se guarda censurado. Deja el valor enmascarado sin tocar para conservar el token actual. Un token se puede revocar sin cambiar la contraseña de tu cuenta.",
-      "autoSync": "Sincronizar también en el barrido de recogida tras editar en local"
-    },
     "sleepStage": {
       "heading": "Inferencia de fases del sueño",
       "enabled": "Activado",

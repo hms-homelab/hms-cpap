@@ -12,7 +12,6 @@
 #include "mule/LivePublisher.h"
 #include "mqtt/LiveState.h"
 #include "sleepbridge/LiveNight.h"
-#include "services/CpapDashSyncService.h"
 #include "services/CardUpload.h"
 #include "services/CpapCard.h"
 #include "sleepbridge/LearnedCard.h"
@@ -1100,29 +1099,6 @@ int main(int argc, char** argv) {
             // SDD-007: cleaning schedules share the web connection for the same
             // thread-safety reason the equipment controller does.
             hms_cpap::CleaningController::setDatabase(web_db ? web_db : db);
-
-            // Optional cloud mirror. Constructed even when disabled so the route can
-            // answer 409 ("disabled") instead of 404 — a user pressing Sync deserves
-            // to be told why nothing happened. enabled() gates all network work.
-            {
-                auto sync = std::make_shared<hms_cpap::CpapDashSyncService>();
-                sync->setDatabase(web_db ? web_db : db);
-                sync->setSettings(hms_cpap::CpapDashSyncService::Settings::from(
-                    config.cpapdash.enabled, config.cpapdash.api_url,
-                    config.cpapdash.token, config.cpapdash.auto_sync));
-                hms_cpap::EquipmentController::setSyncService(sync);
-                // SDD-006 section 5: PUT /api/config must re-apply these to the
-                // LIVE service, not just to the file.
-                hms_cpap::CpapController::setSyncService(sync);
-                // SDD-007: cleaning edits make the mirror stale too.
-                hms_cpap::CleaningController::setSyncService(sync);
-                // Same instance drives the burst-loop sweep, so a UI edit marked
-                // dirty and the periodic auto_sync share one cursor and one lock.
-                if (burst_service) burst_service->setCpapDashSync(sync);
-                if (config.cpapdash.enabled && config.cpapdash.token.empty())
-                    std::cout << "CpapDash sync: enabled but no token set - staying local-only"
-                              << std::endl;
-            }
 
             // SDD-041: check GitHub for a newer stable release, daily and on
             // demand. It only reports; the supervisor applies. Off by itself in a

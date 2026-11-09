@@ -347,17 +347,9 @@ struct AppConfig {
         int poll_minutes = 60;       // myAir updates once a day; hourly is generous
     } myair;
 
-    /// SDD-004 optional cloud mirror of equipment/supplies to hms-cpapdash-api.
-    /// Local is always the source of truth; with enabled=false the whole equipment
-    /// feature works untouched. Auth is a pasted long-lived TOKEN rather than an
-    /// account password, so no cloud password is ever at rest here and it can be
-    /// revoked without changing the account.
-    struct {
-        bool enabled = false;
-        std::string api_url = "https://api.cpapdash.com";
-        std::string token;
-        bool auto_sync = false;        // also sync on the burst sweep after local edits
-    } cpapdash;
+    // SDD-066: there is no "cpapdash" cloud-sync block any more. An old
+    // config.json that still has one loads fine (the key is never read) and
+    // loses it, token included, at the next save().
 
     bool setup_complete = false;
 
@@ -752,14 +744,6 @@ struct AppConfig {
                 if (ss.contains("model_version"))  config.sleep_stage.model_version = ss["model_version"];
             }
 
-            if (j.contains("cpapdash")) {
-                auto& cd = j["cpapdash"];
-                if (cd.contains("enabled"))   config.cpapdash.enabled = cd["enabled"];
-                if (cd.contains("api_url"))   config.cpapdash.api_url = cd["api_url"];
-                if (cd.contains("token"))     config.cpapdash.token = cd["token"];
-                if (cd.contains("auto_sync")) config.cpapdash.auto_sync = cd["auto_sync"];
-            }
-
             if (j.contains("sleephq")) {
                 auto& sh = j["sleephq"];
                 if (sh.contains("enabled"))           config.sleephq.enabled = sh["enabled"];
@@ -885,15 +869,6 @@ struct AppConfig {
             j["sleep_stage"]["live_inference"] = sleep_stage.live_inference;
             j["sleep_stage"]["model_dir"] = sleep_stage.model_dir;
             j["sleep_stage"]["model_version"] = sleep_stage.model_version;
-
-            // Secrets are written verbatim here. save() persists to disk, so
-            // redaction belongs only in toJson(), which answers the API. A
-            // masked value written here comes back as the literal token on the
-            // next load().
-            j["cpapdash"]["enabled"] = cpapdash.enabled;
-            j["cpapdash"]["api_url"] = cpapdash.api_url;
-            j["cpapdash"]["token"] = cpapdash.token;
-            j["cpapdash"]["auto_sync"] = cpapdash.auto_sync;
 
             j["logging"]["enabled"] = logging.enabled;
             j["logging"]["file"]    = logging.file;
@@ -1051,11 +1026,6 @@ struct AppConfig {
         // So the settings page can say "connected" without ever seeing either.
         j["myair"]["connected"] = !myair.refresh_token.empty();
         j["myair"]["poll_minutes"] = myair.poll_minutes;
-
-        j["cpapdash"]["enabled"] = cpapdash.enabled;
-        j["cpapdash"]["api_url"] = cpapdash.api_url;
-        j["cpapdash"]["token"] = cpapdash.token.empty() ? "" : "********";
-        j["cpapdash"]["auto_sync"] = cpapdash.auto_sync;
 
         j["logging"]["enabled"] = logging.enabled;
         j["logging"]["file"]    = logging.file;

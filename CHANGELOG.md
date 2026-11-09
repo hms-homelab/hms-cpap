@@ -5,7 +5,17 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [6.2.0] - 2026-11-08
+## [Unreleased]
+
+### Removed
+- **Settings: the CpapDash Cloud section** (SDD-066). It only mirrored
+  equipment and cleaning, never therapy nights, and its token could not be
+  created. Your equipment and cleaning schedules keep working locally. Gone
+  with it: the same group in the desktop configurator, the
+  `/api/equipment/cloud-sync` route and the `cpapdash` block in
+  `config.json`. An existing `config.json` that still has the block loads
+  as before and drops it, token included, at the next save.
+
 
 A BMC / React Health Luna charts its flow and pressure, live while the night
 is written, and so does a Philips DreamStation card whose files are plain.

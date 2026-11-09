@@ -120,16 +120,6 @@
       "errVerify": "Impossible de vérifier le code.",
       "errDisconnect": "Impossible de se déconnecter."
     },
-    "cloud": {
-      "heading": "CpapDash Cloud",
-      "desc": "Recopiez votre matériel et vos consommables vers votre compte CpapDash. Votre installation locale reste la source de vérité, et désactiver ceci laisse la fonction matériel exactement telle qu'elle est aujourd'hui.",
-      "enabled": "Activé",
-      "apiUrl": "URL de l'API",
-      "token": "Jeton",
-      "tokenPlaceholder": "Collez un jeton d'API de longue durée",
-      "tokenHint": "Stocké masqué. Laissez la valeur masquée intacte pour conserver le jeton actuel. Un jeton peut être révoqué sans changer le mot de passe de votre compte.",
-      "autoSync": "Synchroniser aussi lors du balayage de collecte après une modification locale"
-    },
     "sleepStage": {
       "heading": "Inférence des stades du sommeil",
       "enabled": "Activé",

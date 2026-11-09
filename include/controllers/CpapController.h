@@ -5,7 +5,6 @@
 #include "web/QueryService.h"
 #include "utils/AppConfig.h"
 #include "services/BurstCollectorService.h"
-#include "services/CpapDashSyncService.h"
 #include "services/MyAirService.h"
 #include "services/UpdateService.h"
 #ifndef _WIN32
@@ -335,10 +334,6 @@ public:
     static void setConfig(hms_cpap::AppConfig* cfg, const std::string& config_path);
     static void setBurstService(BurstCollectorService* svc);
 
-    /// SDD-006 section 5: the live cloud-mirror instance, so PUT /api/config can
-    /// re-apply changed sync settings instead of only writing them to disk.
-    static void setSyncService(std::shared_ptr<CpapDashSyncService> sync);
-
     /// SDD-041: the updater's check. Absent in a build or test that has none,
     /// which the routes answer as "no updater" rather than an error.
     static void setUpdateService(std::shared_ptr<UpdateService> svc);
@@ -379,10 +374,6 @@ private:
     // genuinely platform-gated.
     static std::shared_ptr<ReportGeneratorService> report_svc_;
 #endif
-    // NOT gated: the cloud mirror works on every platform. It briefly lived
-    // inside the guard above and broke the MSVC build with "sync_ undeclared",
-    // which no macOS or Linux build could have caught.
-    static std::shared_ptr<CpapDashSyncService>   sync_;
     static std::shared_ptr<hms_cpap::MyAirService> myair_;
     static std::shared_ptr<UpdateService>         update_;
     static hms_cpap::AppConfig* config_;

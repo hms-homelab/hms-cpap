@@ -9,7 +9,7 @@
 // ResMed can change it without notice; the card is the product, this is a second
 // opinion on it.
 //
-// No thread and no scheduler, following CpapDashSyncService: the burst loop
+// No thread and no scheduler: the burst loop
 // already runs on a timer, so sweep() is called from there and decides for
 // itself whether enough time has passed. A detached thread here would be a
 // second clock to reason about for no gain.

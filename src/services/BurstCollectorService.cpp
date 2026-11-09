@@ -4261,13 +4261,6 @@ void BurstCollectorService::runLoop() {
                 std::cerr << "CleaningPublisher: some MQTT messages were rejected" << std::endl;
         }
 
-        // SDD-004: opt-in cloud mirror. sweep() is a no-op unless auto_sync is on
-        // AND something was marked dirty, so a user who never enables it pays
-        // nothing here and local remains the source of truth either way.
-        if (cpapdash_sync_) {
-            cpapdash_sync_->sweep();
-        }
-
         // SDD-020: opt-in myAir pull. sweep() returns immediately unless myAir is
         // configured AND poll_minutes has elapsed, so a user who never enables it
         // pays nothing here, and an enabled one talks to ResMed once an hour

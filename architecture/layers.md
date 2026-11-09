@@ -131,8 +131,6 @@ The behaviour lives here. Grouped by what they do:
   equipment wear and cleaning due-times to MQTT. The `*Status` classes are pure
   logic, ported from the phone app so both compute the same dates.
 - `SleepHqExportService` / `SleepHqClient`: raw card files to SleepHQ.
-- `CpapDashSyncService`: optional mirror of equipment and cleaning to the
-  CpapDash cloud.
 - `ReportGeneratorService`, `GnuplotService`, `PdfRenderer`,
   `services/reports/`: PDF reports (POSIX builds only).
 
