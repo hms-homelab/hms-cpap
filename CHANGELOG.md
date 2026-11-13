@@ -5,6 +5,19 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **SleepHQ: the O2 Ring night goes up as an O2 Ring, and a refusal is a
+  failure** (#66). SleepHQ refused every ring CSV ("We couldn't find any
+  CPAP machine data in this upload") while the log said "exported". The
+  ring's import now names SleepHQ's O2 Ring device (69184); the card's
+  import names none, as before. The CSV goes up under its own name, not its
+  temp file's, and is named after the team's own ring when SleepHQ already
+  knows one (`O2Ring <serial>_<stamp>.csv`). After the upload, SleepHQ's
+  verdict is read back for up to three minutes: a refused import is logged
+  as a FAILED oximetry export with SleepHQ's reason.
+
 ## [6.2.3] - 2026-11-13
 
 ### Added

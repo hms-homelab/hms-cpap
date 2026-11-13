@@ -170,6 +170,7 @@ set(TEST_SOURCES
     services/test_MyAirClient.cpp
     services/test_MyAirService.cpp
     services/test_SleepHqExportService.cpp
+    services/test_SleepHqClient.cpp
     services/test_DeviceDiscoveryService.cpp
     services/test_SetupService.cpp
     services/test_PreflightService.cpp
