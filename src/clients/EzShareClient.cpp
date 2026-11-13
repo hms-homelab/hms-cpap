@@ -2,6 +2,8 @@
 #include "utils/CardNames.h"
 #include "parsers/CpapdashBridge.h"
 #include "utils/ConfigManager.h"
+#include "utils/AppConfig.h"
+#include "utils/ArchiveRecordCount.h"
 #include <chrono>
 #include <atomic>
 #include <iostream>
@@ -232,8 +234,75 @@ std::vector<EzShareFileEntry> EzShareClient::parseDirectoryListing(const std::st
     return entries;
 }
 
+bool EzShareClient::resmedFormat() const {
+    return ConfigManager::get("CPAP_FORMAT", AppConfig::formatForSource(
+        ConfigManager::get("CPAP_SOURCE", "ezshare"))) == "resmed";
+}
+
+bool EzShareClient::listingFallback(const std::string& url, std::string& html) {
+    // Empty and truncated 200 listings are normal through Mule/Miner. Only
+    // two actual welcome-page replies establish the firmware limitation.
+    if (!resmedFormat() || html.find("publicdir/welcome.htm") == std::string::npos) return false;
+    html = httpGet(url);
+    if (html.find("publicdir/welcome.htm") == std::string::npos) return false;
+    no_listing_ = true;
+    listing_checked_at_ = std::chrono::steady_clock::now();
+    return true;
+}
+
+bool EzShareClient::retryListing() {
+    if (!no_listing_ || std::chrono::steady_clock::now() - listing_checked_at_ < SESSIONS_REFRESH)
+        return no_listing_;
+    listing_checked_at_ = std::chrono::steady_clock::now();
+    try {
+        if (isListing(httpGet(base_url_ + "/dir?dir=A:DATALOG"))) no_listing_ = false;
+    } catch (const std::exception&) {
+        // Keep discovery working while the directory endpoint is unavailable.
+    }
+    return no_listing_;
+}
+
+bool EzShareClient::needsFullRefresh(const std::string& card_path, const std::string& local_path) {
+    if (!no_listing_) return false;
+    std::string path = card_path;
+    std::replace(path.begin(), path.end(), '\\', '/');
+    std::string lower = path;
+    std::transform(lower.begin(), lower.end(), lower.begin(),
+                   [](unsigned char c) { return std::tolower(c); });
+    std::string expected;
+    size_t offset = 0;
+    std::string local = local_path;
+    if (lower.size() >= 4 && lower.substr(lower.size() - 4) == ".edf") {
+        const auto found = record_counts_.find(path);
+        if (found == record_counts_.end() || found->second.empty()) return true;
+        expected = found->second;
+        if (signalEdfRecordCountMatches(local_path, expected)) return false;
+        offset = 236;
+    } else if (lower == "identification.json" || lower == "settings/currentsettings.json" ||
+               (lower.size() >= 4 && lower.substr(lower.size() - 4) == ".crc")) {
+        auto crc = path;
+        if (lower.substr(lower.size() - 4) != ".crc") {
+            crc.replace(crc.size() - 5, 5, ".crc");
+            local.replace(local.size() - 5, 5, ".crc");
+        }
+        const auto size = probe(crc);
+        if (!size || size > 1024) return true;
+        expected = readRange(crc, 0, size - 1);
+        if (expected.empty()) return true;
+    } else return true; // no timestamp or companion: size cannot prove freshness
+    if (offset == 0) {
+        std::error_code ec;
+        if (std::filesystem::file_size(local, ec) != expected.size() || ec) return true;
+    }
+    std::ifstream input(local, std::ios::binary);
+    input.seekg(offset);
+    std::string actual(expected.size(), '\0');
+    input.read(actual.data(), actual.size());
+    return !input || actual != expected;
+}
+
 std::vector<std::string> EzShareClient::listDateFolders() {
-    if (no_listing_) {
+    if (retryListing()) {
         refreshSessions();
         std::vector<std::string> folders;
         for (const auto& pair : starts_) folders.push_back(pair.first);
@@ -243,8 +312,8 @@ std::vector<std::string> EzShareClient::listDateFolders() {
     std::string url = base_url_ + "/dir?dir=A:DATALOG";
     std::string html = httpGet(url);
 
+    listingFallback(url, html);
     auto entries = parseDirectoryListing(html);
-    if (entries.empty() && !isListing(html)) no_listing_ = true;
     if (no_listing_) {
         refreshSessions();
         std::vector<std::string> folders;
@@ -266,7 +335,7 @@ std::vector<std::string> EzShareClient::listDateFolders() {
 }
 
 std::vector<EzShareFileEntry> EzShareClient::listFiles(const std::string& date_folder) {
-    if (no_listing_) return enumerateFiles(date_folder);
+    if (retryListing()) return enumerateFiles(date_folder);
     // GET /dir?dir=A:DATALOG%5CYYYYMMDD → lists session files
     // %5C = backslash (required, forward slash returns 404)
     std::string url = base_url_ + "/dir?dir=A:DATALOG%5C" + date_folder;
@@ -274,13 +343,12 @@ std::vector<EzShareFileEntry> EzShareClient::listFiles(const std::string& date_f
     std::cout << "EzShare: listing " << date_folder << std::endl;
 
     std::string html = httpGet(url);
-    auto entries = parseDirectoryListing(html);
-    if (entries.empty() && !isListing(html)) {
-        no_listing_ = true;
+    if (listingFallback(url, html)) {
         refreshSessions();
         return enumerateFiles(date_folder);
     }
 
+    auto entries = parseDirectoryListing(html);
     // Filter to files only (skip directories)
     std::vector<EzShareFileEntry> files;
     for (auto& e : entries) {
@@ -372,7 +440,20 @@ bool EzShareClient::downloadRootFile(const std::string& filename,
         size_t got = 0;
         std::string name = filename;
         if (name == "STR.EDF") name = "STR.edf";
-        return downloadChunks(name, local_path, 0, got);
+        const auto now = std::chrono::steady_clock::now();
+        if (name == "STR.edf" && !cached_str_.empty() && now - str_read_at_ < SESSIONS_REFRESH) {
+            std::filesystem::create_directories(std::filesystem::path(local_path).parent_path());
+            std::ofstream output(local_path, std::ios::binary);
+            output.write(cached_str_.data(), cached_str_.size());
+            return static_cast<bool>(output);
+        }
+        if (!downloadChunks(name, local_path, 0, got)) return false;
+        if (name == "STR.edf") {
+            std::ifstream input(local_path, std::ios::binary);
+            cached_str_.assign(std::istreambuf_iterator<char>(input), {});
+            str_read_at_ = now;
+        }
+        return true;
     }
     // Root-level file on SD card: /download?file=filename
     std::string url = base_url_ + "/download?file=" + filename;
@@ -607,12 +688,19 @@ bool EzShareClient::downloadFileRange(const std::string& date_folder,
 }
 
 // Firmware 4.4.0 answers a missing path with a 200 HTML welcome page. A
-// one-byte GET both avoids its broken HEAD and gives the exact file size.
+// small ranged GET avoids broken HEAD, returns the exact size and, for
+// EDFs, the record count that changes when a same-length file is finalised.
 uint64_t EzShareClient::probe(const std::string& path) {
     std::string body, headers;
     const std::string url = base_url_ + "/" + path;
     curl_easy_setopt(curl_, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl_, CURLOPT_RANGE, "0-0");
+    std::string lower = path;
+    std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return std::tolower(c); });
+    const bool edf = lower.size() >= 4 && lower.substr(lower.size() - 4) == ".edf";
+    const unsigned first_byte = edf ? 236 : 0;
+    const unsigned last_byte = edf ? 243 : 0;
+    if (edf) record_counts_.erase(path);
+    curl_easy_setopt(curl_, CURLOPT_RANGE, edf ? "236-243" : "0-0");
     curl_easy_setopt(curl_, CURLOPT_TIMEOUT, 8L);
     curl_easy_setopt(curl_, CURLOPT_LOW_SPEED_LIMIT, 0L);
     curl_easy_setopt(curl_, CURLOPT_WRITEFUNCTION, WriteCallback);
@@ -631,10 +719,10 @@ uint64_t EzShareClient::probe(const std::string& path) {
     curl_easy_getinfo(curl_, CURLINFO_RESPONSE_CODE, &status);
     curl_easy_getinfo(curl_, CURLINFO_CONTENT_TYPE, &type);
     const bool plain = result == CURLE_OK && type &&
-        std::string(type).find("text/plain") == 0 && body.size() == 1;
+        std::string(type).find("text/plain") == 0 && body.size() == last_byte - first_byte + 1;
     // A one-byte file is wholly covered by bytes=0-0, so it comes back as 200.
     const bool hit = plain && status == 206;
-    if (plain && status == 200) {
+    if (!edf && plain && status == 200) {
         curl_easy_setopt(curl_, CURLOPT_RANGE, nullptr);
         curl_easy_setopt(curl_, CURLOPT_HEADERFUNCTION, nullptr);
         curl_easy_setopt(curl_, CURLOPT_HEADERDATA, nullptr);
@@ -649,7 +737,8 @@ uint64_t EzShareClient::probe(const std::string& path) {
     unsigned long long first = 0, last = 0, total = 0;
     if (!hit || at == std::string::npos ||
         std::sscanf(headers.c_str() + at, "content-range: bytes %llu-%llu/%llu",
-                    &first, &last, &total) != 3 || first != 0 || last != 0) return 0;
+                    &first, &last, &total) != 3 || first != first_byte || last != last_byte) return 0;
+    if (edf) record_counts_[path] = body;
     return total;
 }
 
@@ -692,7 +781,8 @@ std::string EzShareClient::folderForStart(std::time_t start) {
 
 void EzShareClient::refreshSessions() {
     const auto now = std::chrono::steady_clock::now();
-    if (!starts_.empty() && now - sessions_read_at_ < SESSIONS_REFRESH) return;
+    if (sessions_read_at_ != std::chrono::steady_clock::time_point{} &&
+        now - sessions_read_at_ < SESSIONS_REFRESH) return;
     // A private temporary directory keeps concurrent sources and unrelated
     // collector staging files apart. Only a complete STR is parsed.
     static std::atomic<unsigned long> sequence{0};
@@ -705,9 +795,8 @@ void EzShareClient::refreshSessions() {
         std::filesystem::path dir;
         ~Cleanup() { std::error_code ec; std::filesystem::remove_all(dir, ec); }
     } cleanup{dir};
-    size_t got = 0;
     const auto path = (dir / "STR.edf").string();
-    if (!downloadChunks("STR.edf", path, 0, got))
+    if (!downloadRootFile("STR.edf", path))
         throw std::runtime_error("ez Share: could not read STR.edf for listing-free discovery");
     auto records = EDFParser::parseSTRFile(path, "ezshare");
     starts_.clear();
@@ -752,7 +841,7 @@ std::string EzShareClient::readRange(const std::string& path, size_t first, size
     char* type = nullptr;
     curl_easy_getinfo(curl_, CURLINFO_RESPONSE_CODE, &status);
     curl_easy_getinfo(curl_, CURLINFO_CONTENT_TYPE, &type);
-    if (result != CURLE_OK || status != 206 || !type ||
+    if (result != CURLE_OK || (status != 206 && !(status == 200 && first == 0)) || !type ||
         std::string(type).find("text/plain") != 0 || body.size() != last - first + 1)
         return {};
     return body;
@@ -826,12 +915,28 @@ std::vector<EzShareFileEntry> EzShareClient::enumerateFiles(const std::string& f
     const auto aliased = scanAliases(folder);
     for (auto start : aliased) {
         auto& names = alias_names_[folder][start];
-        if (names.empty()) {
-            for (const auto* type : {"BRP", "PLD", "SA2", "SAD", "EVE", "CSL"}) {
-                const auto name = candidate(start, type);
-                if (probe("DATALOG/" + folder + "/" + name)) names.insert(name);
+        {
+            for (const auto* type : {"BRP", "PLD", "SA2", "SAD", "EVE", "CSL", "TCV"}) {
+                const auto hasType = [&](const std::string& wanted) {
+                    return std::any_of(names.begin(), names.end(), [&](const std::string& name) {
+                        return name.size() >= wanted.size() + 4 &&
+                            name.substr(name.size() - wanted.size() - 4) == wanted + ".edf";
+                    });
+                };
+                if (hasType(type) || (std::string(type) == "SAD" && hasType("SA2")) ||
+                    (std::string(type) == "SA2" && hasType("SAD"))) continue;
+                for (int delta : {0, -1, 1, -2, 2, -3, 3}) {
+                    const auto name = candidate(start + delta, type);
+                    if (probe("DATALOG/" + folder + "/" + name)) {
+                        names.insert(name);
+                        break;
+                    }
+                }
             }
         }
+        if (names.empty() && unresolved_aliases_.insert({folder, start}).second)
+            std::cerr << "ez Share: unresolved alias start " << start << " in " << folder
+                      << "; searching its STR minute" << std::endl;
         for (const auto& name : names) add(name);
     }
     const auto it = starts_.find(folder);
@@ -845,10 +950,17 @@ std::vector<EzShareFileEntry> EzShareClient::enumerateFiles(const std::string& f
         claimed.insert(known.second.begin(), known.second.end());
     std::map<std::time_t, int> seen;
     for (auto start : it->second) {
-        auto& names = session_names_[{start, seen[start]++}];
-        // A BRP found through an alias within this STR minute covers it.
-        const auto covered = aliased.lower_bound(start);
-        if (covered != aliased.end() && *covered < start + 60) continue;
+        const int ordinal = seen[start]++;
+        auto& names = session_names_[{start, ordinal}];
+        // Each resolved BRP covers only one STR start, even when several
+        // sessions share its minute. An unresolved alias covers none.
+        std::set<std::string> covered;
+        for (const auto& alias : alias_names_[folder]) {
+            if (alias.first < start || alias.first >= start + 60) continue;
+            for (const auto& name : alias.second)
+                if (name.find("_BRP.edf") != std::string::npos) covered.insert(name);
+        }
+        if (static_cast<size_t>(ordinal) < covered.size()) continue;
         auto find = [&](const std::string& type, std::time_t from, int count) {
             if (names.count(type)) return;
             for (int second = 0; second < count; ++second) {
@@ -871,10 +983,13 @@ std::vector<EzShareFileEntry> EzShareClient::enumerateFiles(const std::string& f
         auto tm = *std::localtime(&start);
         tm.tm_sec = std::stoi(names["BRP"].substr(13, 2));
         const auto brp = std::mktime(&tm);
-        for (const auto* type : {"PLD", "SA2", "SAD", "EVE", "CSL"}) {
+        for (const auto* type : {"PLD", "SA2", "SAD", "EVE", "CSL", "TCV"}) {
             if ((std::string(type) == "SAD" && names.count("SA2")) ||
                 (std::string(type) == "SA2" && names.count("SAD"))) continue;
-            find(type, brp - 15, 31);
+            // TCV is a checkpoint companion with the same filename prefix
+            // (SessionDiscoveryService pairs it by that exact prefix).
+            if (std::string(type) == "TCV") find(type, brp, 1);
+            else find(type, brp - 15, 31);
         }
         for (const auto& name : names) {
             if (!returned.insert(name.second).second) continue;
@@ -911,7 +1026,7 @@ std::string EzShareClient::encodeCardPath(const std::string& path) {
 }
 
 std::vector<EzShareFileEntry> EzShareClient::listDir(const std::string& card_path) {
-    if (no_listing_) {
+    if (retryListing()) {
         if (card_path == "DATALOG") {
             std::vector<EzShareFileEntry> entries;
             for (const auto& folder : starts_) {
@@ -945,12 +1060,10 @@ std::vector<EzShareFileEntry> EzShareClient::listDir(const std::string& card_pat
               << "'" << std::endl;
 
     std::string html = httpGet(url);
-    auto entries = parseDirectoryListing(html);
-    if (entries.empty() && !isListing(html)) {
-        no_listing_ = true;
+    if (listingFallback(url, html)) {
         return listDir(card_path);
     }
-    return entries;  // includes both files and <DIR> entries
+    return parseDirectoryListing(html);  // includes both files and <DIR> entries
 }
 
 bool EzShareClient::downloadByPath(const std::string& card_rel_path,

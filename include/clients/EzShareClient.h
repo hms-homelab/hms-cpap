@@ -126,6 +126,8 @@ public:
      */
     bool downloadRootFile(const std::string& filename, const std::string& local_path) override;
 
+    bool needsFullRefresh(const std::string& card_path, const std::string& local_path) override;
+
     bool supportsRange() const override { return supports_range_; }
     void setSupportsRange(bool v) { supports_range_ = v; }
 
@@ -138,6 +140,14 @@ public:
 private:
     friend class EzShareFirmwareTest;
     bool no_listing_ = false;
+    std::chrono::steady_clock::time_point listing_checked_at_{};
+    bool listingFallback(const std::string& url, std::string& html);
+    bool retryListing();
+    bool resmedFormat() const;
+    std::map<std::string, std::string> record_counts_;
+    std::set<std::pair<std::string, std::time_t>> unresolved_aliases_;
+    std::string cached_str_;
+    std::chrono::steady_clock::time_point str_read_at_{};
     // Set only while downloadChunks() drives downloadFileRange() for one span.
     bool chunking_ = false;
     size_t chunk_end_ = 0;

@@ -1,8 +1,9 @@
 #include <gtest/gtest.h>
 #include "clients/EzShareClient.h"
-#include <arpa/inet.h>
-#include <sys/socket.h>
-#include <unistd.h>
+#include "utils/ArchiveRecordCount.h"
+#include "TestSocketCompat.h"
+#include "PosixCompat.h"
+#include <mutex>
 #include <thread>
 #include <fstream>
 #include <filesystem>
@@ -17,6 +18,18 @@ class FirmwareHttp {
 public:
     std::map<std::string, std::string> files;
     std::string listing = "<html><form action='http://ezshare.card/publicdir/welcome.htm'></form></html>";
+    std::mutex mutex;
+    std::atomic<int> dir_requests{0};
+    std::atomic<int> str_transfers{0};
+    std::vector<std::string> listing_replies;
+    void setFile(const std::string& path, const std::string& body) {
+        std::lock_guard<std::mutex> lock(mutex);
+        files[path] = body;
+    }
+    void setListing(const std::string& body) {
+        std::lock_guard<std::mutex> lock(mutex);
+        listing = body;
+    }
     std::atomic<int> cut{0};
     std::atomic<int> short_reply{0};
     std::atomic<int> stalled{0};
@@ -27,6 +40,12 @@ public:
     std::string url;
 
     void start() {
+        // Synthetic EDFs still need the fixed header used by the real probe.
+        for (auto& file : files) {
+            const auto& name = file.first;
+            if ((name.find(".edf") != std::string::npos || name.find(".EDF") != std::string::npos) &&
+                file.second.size() < 256) file.second.resize(256, ' ');
+        }
         fd = socket(AF_INET, SOCK_STREAM, 0);
         ASSERT_GE(fd, 0);
         sockaddr_in addr{};
@@ -41,6 +60,11 @@ public:
             for (;;) {
                 int conn = accept(fd, nullptr, nullptr);
                 if (conn < 0) return;
+#ifdef SO_NOSIGPIPE
+                int no_sigpipe = 1;
+                setsockopt(conn, SOL_SOCKET, SO_NOSIGPIPE,
+                           reinterpret_cast<const char*>(&no_sigpipe), sizeof(no_sigpipe));
+#endif
                 std::string request;
                 char buf[2048];
                 while (request.find("\r\n\r\n") == std::string::npos) {
@@ -51,7 +75,15 @@ public:
                 ++requests;
                 const auto end = request.find(' ', 4);
                 auto path = request.substr(4, end - 4);
+                std::unique_lock<std::mutex> lock(mutex);
                 std::string body = listing, extra, status = "200 OK", type = "text/html";
+                if (path.find("/dir?") == 0) {
+                    ++dir_requests;
+                    if (!listing_replies.empty()) {
+                        body = listing_replies.front();
+                        listing_replies.erase(listing_replies.begin());
+                    }
+                }
                 auto found = files.find(path);
                 bool truncate = false, stall = false, short_body = false;
                 if (found != files.end()) {
@@ -73,31 +105,38 @@ public:
                     }
                     type = "text/plain";
                     body = found->second.substr(first, last - first + 1);
-                    if (body.size() > 1) {
+                    if (path == "/STR.edf" && first == 0 && body.size() > 8) ++str_transfers;
+                    if (body.size() > 16) {
                         largest = std::max(largest.load(), body.size());
                         truncate = cut.exchange(0) != 0;
                         short_body = short_reply.exchange(0) != 0;
                         stall = stalled.exchange(0) != 0;
                     }
                 }
+                lock.unlock();
                 std::string response = "HTTP/1.1 " + status + "\r\nContent-Type: " + type +
                     "\r\nContent-Length: " + std::to_string(short_body ? 17 : body.size()) + "\r\n" + extra +
                     "Connection: close\r\n\r\n" + (truncate || stall || short_body ? body.substr(0, 17) : body);
                 size_t sent = 0;
                 while (sent < response.size()) {
-                    auto n = send(conn, response.data() + sent, response.size() - sent, MSG_NOSIGNAL);
+#ifdef MSG_NOSIGNAL
+                    constexpr int send_flags = MSG_NOSIGNAL;
+#else
+                    constexpr int send_flags = 0;
+#endif
+                    auto n = send(conn, response.data() + sent, response.size() - sent, send_flags);
                     if (n <= 0) break;
                     sent += n;
                 }
                 if (stall) std::this_thread::sleep_for(std::chrono::seconds(9));
-                close(conn);
+                closeSocket(conn);
             }
         });
     }
     ~FirmwareHttp() {
-        if (fd >= 0) shutdown(fd, SHUT_RDWR);
+        stopListening(fd);
         if (worker.joinable()) worker.join();
-        if (fd >= 0) close(fd);
+        if (fd >= 0) closeSocket(fd);
     }
 };
 }
@@ -105,7 +144,12 @@ public:
 class EzShareFirmwareTest : public testing::Test {
 protected:
     EzShareClient client;
-    void fallback() { client.no_listing_ = true; }
+    void fallback() {
+        client.no_listing_ = true;
+        client.listing_checked_at_ = std::chrono::steady_clock::now();
+    }
+    void retryNow() { client.listing_checked_at_ = {}; }
+    void expireSTR() { client.str_read_at_ = {}; client.sessions_read_at_ = {}; }
     uint64_t probe(const std::string& path) { return client.probe(path); }
     void seed(std::time_t start, size_t sessions = 1) {
         client.starts_[client.folderForStart(start)] = std::vector<std::time_t>(sessions, start);
@@ -129,7 +173,7 @@ TEST_F(EzShareFirmwareTest, RedirectListingAndHtml200MissUsePlainPathProbes) {
     EXPECT_EQ(root[0].name, "Identification.json");
     EXPECT_EQ(probe("missing.edf"), 0u);
     EXPECT_EQ(probe("Identification.json"), 2u);
-    http.files["/Identification.crc"] = "x";
+    http.setFile("/Identification.crc", "x");
     EXPECT_EQ(probe("Identification.crc"), 1u);
     const auto path = (std::filesystem::temp_directory_path() / "hms-fw440-small.json").string();
     ASSERT_TRUE(client.downloadRootFile("Identification.json", path)); // one 200 chunk
@@ -170,6 +214,11 @@ TEST_F(EzShareFirmwareTest, STRMaskTimesDriveListingFreeDiscovery) {
     const int after_first = http.requests;
     EXPECT_EQ(client.listDateFolders(), std::vector<std::string>{"20260301"});
     EXPECT_EQ(http.requests, after_first); // STR is not re-read every burst
+    const auto path = (std::filesystem::temp_directory_path() / "hms-str-cache.edf").string();
+    ASSERT_TRUE(client.downloadRootFile("STR.edf", path));
+    EXPECT_EQ(http.requests, after_first);
+    EXPECT_EQ(http.str_transfers, 1);
+    std::filesystem::remove(path);
     const auto files = client.listFiles("20260301");
     ASSERT_EQ(files.size(), 1u);
     EXPECT_EQ(files[0].name, "20260301_221626_BRP.edf");
@@ -188,7 +237,7 @@ TEST_F(EzShareFirmwareTest, SecondsOffsetsSA2AndCachedNames) {
     files = client.listFiles("20260301");
     EXPECT_EQ(files.size(), 5u);
     // No repeated second search; only the three aliases past the last one.
-    EXPECT_EQ(http.requests - before, 5 + 3);
+    EXPECT_EQ(http.requests - before, 5 + 3 + 1); // optional TCV at the checkpoint prefix
 }
 
 TEST_F(EzShareFirmwareTest, NoonSplitAndAirSense10SAD) {
@@ -250,7 +299,7 @@ TEST_F(EzShareFirmwareTest, AliasesFindSessionsSTRDoesNotList) {
     const int before = http.requests;
     files = client.listFiles("20260301");
     EXPECT_EQ(files.size(), 8u);
-    EXPECT_EQ(http.requests - before, 8 + 3); // sizes, then aliases past ~8
+    EXPECT_GT(http.requests - before, 8 + 3); // absent companions are retried // sizes, then aliases past ~8
 }
 
 TEST_F(EzShareFirmwareTest, BoundedChunksResumeAfterCutAndTimeout) {
@@ -266,6 +315,7 @@ TEST_F(EzShareFirmwareTest, BoundedChunksResumeAfterCutAndTimeout) {
     EXPECT_EQ(std::string(std::istreambuf_iterator<char>(in), {}), bytes);
     in.close();
     http.short_reply = 1;
+    expireSTR();
     ASSERT_TRUE(client.downloadRootFile("STR.edf", path));
     std::ifstream short_read(path, std::ios::binary);
     EXPECT_EQ(std::string(std::istreambuf_iterator<char>(short_read), {}), bytes);
@@ -290,5 +340,160 @@ TEST_F(EzShareFirmwareTest, ListingFirmwareKeepsItsExistingBehaviour) {
     const auto path = (std::filesystem::temp_directory_path() / "hms-fw440-listing.edf").string();
     EXPECT_TRUE(client.downloadRootFile("STR.edf", path));
     std::filesystem::remove(path);
+}
+
+TEST_F(EzShareFirmwareTest, EmptyAndCutShort200ListingsNeverEnableFallback) {
+    FirmwareHttp http;
+    http.listing = "";
+    http.start(); client.setBaseURL(http.url);
+    EXPECT_TRUE(client.listDateFolders().empty());
+    EXPECT_FALSE(fallbackEnabled());
+    http.setListing("<pre>2026- 3-");
+    EXPECT_TRUE(client.listFiles("20260301").empty());
+    EXPECT_TRUE(client.listDir("").empty());
+    EXPECT_FALSE(fallbackEnabled());
+    EXPECT_EQ(http.dir_requests, 3);
+}
+
+TEST_F(EzShareFirmwareTest, WelcomeMustRepeatAndRecoveredListingLeavesFallback) {
+    FirmwareHttp http;
+    const std::string valid = "<pre>2026- 3- 1 22:16:26 <DIR> <a href=\"x\">20260301</a></pre>";
+    http.listing_replies = {http.listing, valid};
+    http.start(); client.setBaseURL(http.url);
+    EXPECT_EQ(client.listDateFolders(), std::vector<std::string>{"20260301"});
+    EXPECT_FALSE(fallbackEnabled());
+    client.listDir("");
+    EXPECT_TRUE(fallbackEnabled());
+    http.setListing(valid);
+    retryNow();
+    EXPECT_EQ(client.listDateFolders(), std::vector<std::string>{"20260301"});
+    EXPECT_FALSE(fallbackEnabled());
+}
+
+TEST_F(EzShareFirmwareTest, NonResmedFormatsNeverUseResmedDiscovery) {
+    FirmwareHttp http;
+    http.start(); client.setBaseURL(http.url);
+    const char* old = std::getenv("CPAP_FORMAT");
+    const std::string saved = old ? old : "";
+    for (const auto* format : {"sefam", "bmc", "lowenstein", "philips"}) {
+        setenv("CPAP_FORMAT", format, 1);
+        EXPECT_TRUE(client.listDir("").empty());
+        EXPECT_TRUE(client.listDateFolders().empty());
+        EXPECT_FALSE(fallbackEnabled());
+    }
+    if (old) setenv("CPAP_FORMAT", saved.c_str(), 1); else unsetenv("CPAP_FORMAT");
+    EXPECT_EQ(http.requests, 8);
+}
+
+TEST_F(EzShareFirmwareTest, SameSizeEdfFinalisationAndCrcChangesRequireFullRefresh) {
+    FirmwareHttp http;
+    std::string edf(512, ' ');
+    edf.replace(236, 8, "-1      ");
+    const std::string remote = "DATALOG/20260301/20260301_221626_BRP.edf";
+    http.files["/" + remote] = edf;
+    http.files["/Identification.crc"] = "aaaa";
+    http.files["/SETTINGS/CurrentSettings.crc"] = "cccc";
+    http.start(); client.setBaseURL(http.url); fallback();
+    const auto dir = std::filesystem::temp_directory_path() / "hms-fw-freshness";
+    std::filesystem::create_directories(dir / "SETTINGS");
+    const auto local = (dir / "sample.edf").string();
+    std::ofstream(local, std::ios::binary) << edf;
+    EXPECT_EQ(probe(remote), 512u);
+    EXPECT_FALSE(client.needsFullRefresh(remote, local));
+    edf.replace(236, 8, "13      ");
+    http.setFile("/" + remote, edf);
+    EXPECT_EQ(probe(remote), 512u);
+    EXPECT_TRUE(client.needsFullRefresh(remote, local));
+    std::ofstream(local, std::ios::binary) << edf;
+    EXPECT_FALSE(client.needsFullRefresh(remote, local));
+    for (const auto& name : {std::string("Identification"), std::string("SETTINGS/CurrentSettings")}) {
+        const auto json = (dir / (name + ".json")).string();
+        const auto crc = (dir / (name + ".crc")).string();
+        std::ofstream(crc) << (name == "Identification" ? "aaaa" : "cccc");
+        EXPECT_FALSE(client.needsFullRefresh(name + ".json", json));
+        http.setFile("/" + name + ".crc", "bbbb");
+        EXPECT_TRUE(client.needsFullRefresh(name + ".json", json));
+    }
+    std::filesystem::remove_all(dir);
+}
+
+TEST_F(EzShareFirmwareTest, AliasOffsetsAndUnresolvedAliasesKeepStrSearchAndTcv) {
+    FirmwareHttp http;
+    std::string alias(256, ' ');
+    alias.replace(168, 16, "01.03.2622.16.10");
+    http.files["/DATALOG/20260301/202603~1.EDF"] = alias;
+    // Beyond the three-second alias tolerance: STR must still search the minute.
+    http.files["/DATALOG/20260301/20260301_221630_BRP.edf"] = std::string(256, ' ');
+    http.files["/DATALOG/20260301/20260301_221630_TCV.edf"] = std::string(256, ' ');
+    // A second alias differs from its filename by two seconds.
+    alias.replace(168, 16, "01.03.2623.00.10");
+    http.files["/DATALOG/20260301/202603~2.EDF"] = alias;
+    http.files["/DATALOG/20260301/20260301_230012_PLD.edf"] = std::string(256, ' ');
+    http.start(); client.setBaseURL(http.url); fallback(); seed(time(1, 22, 16));
+    testing::internal::CaptureStderr();
+    const auto first = client.listFiles("20260301");
+    const auto again = client.listFiles("20260301");
+    const auto log = testing::internal::GetCapturedStderr();
+    EXPECT_EQ(first.size(), 3u);
+    EXPECT_EQ(again.size(), 3u);
+    const auto warning = log.find("unresolved alias start");
+    ASSERT_NE(warning, std::string::npos);
+    EXPECT_EQ(log.find("unresolved alias start", warning + 1), std::string::npos);
+}
+TEST_F(EzShareFirmwareTest, AliasRetriesMissingCompanion) {
+    FirmwareHttp http;
+    std::string header(256, ' ');
+    header.replace(168, 16, "01.03.2622.16.26");
+    http.files["/DATALOG/20260301/202603~1.EDF"] = header;
+    http.files["/DATALOG/20260301/20260301_221626_BRP.edf"] = header;
+    http.start(); client.setBaseURL(http.url); fallback(); seed(time(1,22,16));
+    ASSERT_EQ(client.listFiles("20260301").size(), 1u);
+    http.setFile("/DATALOG/20260301/20260301_221626_PLD.edf", header);
+    http.setFile("/DATALOG/20260301/202603~2.EDF", header);
+    EXPECT_EQ(client.listFiles("20260301").size(), 2u);
+}
+TEST_F(EzShareFirmwareTest, RepairedArchiveIsNotARemoteRewrite) {
+    FirmwareHttp http;
+    std::string header(514, ' ');
+    header.replace(184, 8, "512     "); header.replace(236, 8, "-1      ");
+    header.replace(252, 4, "1   "); header.replace(472, 8, "1       ");
+    const std::string remote = "DATALOG/20260301/20260301_221626_BRP.edf";
+    http.files["/" + remote] = header;
+    http.start(); client.setBaseURL(http.url); fallback();
+    const auto path = (std::filesystem::temp_directory_path()/"hms-review-repaired_BRP.edf").string();
+    std::ofstream(path, std::ios::binary) << header;
+    ASSERT_TRUE(repairSignalEdfFile(path));
+    ASSERT_EQ(probe(remote), 514u);
+    EXPECT_FALSE(client.needsFullRefresh(remote, path));
+    std::filesystem::remove(path);
+}
+TEST_F(EzShareFirmwareTest, ResolvedAliasCoversOnlyOneSessionInSharedStrMinute) {
+    FirmwareHttp http;
+    std::string alias(256, ' ');
+    alias.replace(168, 16, "01.03.2622.16.10");
+    http.files["/DATALOG/20260301/202603~1.EDF"] = alias;
+    http.files["/DATALOG/20260301/20260301_221610_BRP.edf"] = alias;
+    alias.replace(168, 16, "01.03.2622.16.20");
+    http.files["/DATALOG/20260301/202603~2.EDF"] = alias;
+    http.files["/DATALOG/20260301/20260301_221650_BRP.edf"] = alias;
+    http.start(); client.setBaseURL(http.url); fallback(); seed(time(1, 22, 16), 2);
+    const auto files = client.listFiles("20260301");
+    ASSERT_EQ(files.size(), 2u);
+    EXPECT_TRUE(std::any_of(files.begin(), files.end(), [](const auto& file) {
+        return file.name == "20260301_221650_BRP.edf";
+    }));
+}
+TEST_F(EzShareFirmwareTest, UnchangedEventCountsMatchWithoutSignalRepair) {
+    const auto dir = std::filesystem::temp_directory_path() / "hms-fw-event-counts";
+    std::filesystem::create_directories(dir);
+    for (const auto* type : {"CSL", "EVE"}) {
+        const auto path = (dir / (std::string("20260301_221626_") + type + ".edf")).string();
+        std::string edf(256, ' ');
+        edf.replace(236, 8, "13      ");
+        std::ofstream(path, std::ios::binary) << edf;
+        EXPECT_TRUE(signalEdfRecordCountMatches(path, "13      ")) << type;
+        EXPECT_FALSE(signalEdfRecordCountMatches(path, "14      ")) << type;
+    }
+    std::filesystem::remove_all(dir);
 }
 } // namespace hms_cpap
