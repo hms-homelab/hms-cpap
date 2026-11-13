@@ -281,6 +281,41 @@ std::vector<uint8_t> AirSense11BleClient::fetchSummary(const std::string& from) 
     return out;
 }
 
+AirSense11BleClient::SpoolProbe AirSense11BleClient::probeSpool(const std::string& name,
+                                                               const std::string& from) {
+    SpoolProbe p;
+    if (streaming_) {
+        p.error = "the machine is streaming a night";
+        return p;
+    }
+    struct Want {
+        AirSense11BleClient* c;
+        explicit Want(AirSense11BleClient* x) : c(x) { c->want_radio_ = true; c->wake_.notify_all(); }
+        ~Want() { c->want_radio_ = false; c->wake_.notify_all(); }
+    } want(this);
+    std::lock_guard<std::mutex> lk(op_mtx_);
+    auto creds = as11::loadCredentials(as11::credentialsPath(data_dir_));
+    if (!creds) {
+        p.result = as11::Result::NotPaired;
+        p.error = "not paired with the machine yet";
+        return p;
+    }
+    if (!connectLink(kConnectMs, kScanMs)) {
+        p.error = "machine not reached: " + lastError();
+        return p;
+    }
+    p.result = session_.open(*creds);
+    if (p.result == as11::Result::Ok) {
+        const auto t0 = std::chrono::steady_clock::now();
+        p.result = session_.pullSpool(name, from, &p.bytes);
+        p.seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    }
+    p.error = session_.lastError();
+    p.status = session_.lastSpoolStatus();
+    dropLink();
+    return p;
+}
+
 as11::Result AirSense11BleClient::pairStart() {
     if (streaming_) {
         note("the machine is in therapy: pair it when the night is over");
