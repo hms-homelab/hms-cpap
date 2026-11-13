@@ -482,7 +482,12 @@ public:
     /// Public for the suite.
     void observeCardSession(const SessionFileSet& session, const std::string& session_dir,
                             long long now_s);
-    /// After a burst: the card's off, and the live state's own tick.
+    /// SDD-068 D1: a burst's listings, before its downloads, for the open
+    /// session's mask off (its BRP at EOF and unchanged). Public for the suite.
+    void observeCardListing(const std::map<std::string, std::vector<EzShareFileEntry>>& listings,
+                            const std::string& archive, bool in_place, long long now_s);
+    /// After a burst: the live state's own tick (the card's off is in
+    /// observeCardListing, SDD-068).
     void cardMaskTick(long long now_s);
 private:
     std::shared_ptr<LiveState> liveState() const;

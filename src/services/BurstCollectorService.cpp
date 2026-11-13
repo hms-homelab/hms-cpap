@@ -781,33 +781,79 @@ void BurstCollectorService::observeCardSession(const SessionFileSet& session,
     // The machine names it on its clock; read on the real one (SDD-054 D3).
     const long long start_s = name_s - machineOffset(machine_clock_, now_s);
     long long end_s = 0;
+    long long records = -1;   // not read
     EDFFile edf;
-    if (edf.open((std::filesystem::path(session_dir) / brp).string()) && edf.record_duration > 0)
-        end_s = start_s + static_cast<long long>(edf.actual_records * edf.record_duration);
+    if (edf.open((std::filesystem::path(session_dir) / brp).string()) && edf.record_duration > 0) {
+        end_s   = start_s + static_cast<long long>(edf.actual_records * edf.record_duration);
+        records = edf.actual_records;
+    }
 
-    const auto change = card_mask_.grew(stem, start_s, end_s, now_s);
-    if (!change) return;
-    std::cout << "CPAP: mask on (" << source << ", session " << stem << ", "
-              << (now_s - change->occurred_s) << " s ago)" << std::endl;
+    // SDD-068 D3: a header-only BRP is no mask-on. D4: a new session is the
+    // off of the one before, then its on.
+    const auto changes = card_mask_.grew(stem, start_s, end_s, now_s, records);
+    if (changes.empty()) return;
     live->sourceSeen("card");
-    live->mask({source, "card", true,
-                LiveState::Clock::time_point(std::chrono::seconds(change->occurred_s)), stem},
-               LiveState::Clock::time_point(std::chrono::seconds(now_s)));
+    for (const auto& change : changes) {
+        std::cout << "CPAP: mask " << (change.on ? "on" : "off") << " (" << source << ", session "
+                  << change.session << ", " << (now_s - change.occurred_s) << " s ago"
+                  << (change.on ? "" : "; a later session began") << ")" << std::endl;
+        live->mask({source, "card", change.on,
+                    LiveState::Clock::time_point(std::chrono::seconds(change.occurred_s)),
+                    change.session},
+                   LiveState::Clock::time_point(std::chrono::seconds(now_s)));
+    }
+}
+
+void BurstCollectorService::observeCardListing(
+    const std::map<std::string, std::vector<EzShareFileEntry>>& listings,
+    const std::string& archive, bool in_place, long long now_s) {
+    const auto live = liveState();
+    if (!live) return;
+    const std::string source = cardMaskSource();
+    if (source.empty()) return;
+
+    for (const auto& [folder, files] : listings) {
+        for (const auto& f : files) {
+            // YYYYMMDD_HHMMSS_BRP.edf
+            if (f.is_dir || f.name.size() < 19 || f.name[15] != '_') continue;
+            std::string type = f.name.substr(16, 3);
+            std::transform(type.begin(), type.end(), type.begin(), ::toupper);
+            if (type != "BRP") continue;
+            const std::string stem = f.name.substr(0, 15);
+            if (!card_mask_.session().empty() && stem < card_mask_.session()) continue;
+
+            // At EOF: what is stored holds what the listing shows, within its
+            // grain (KB on an ez Share, the byte where the listing is exact).
+            bool at_eof = in_place;
+            if (!in_place) {
+                std::error_code ec;
+                const auto bytes = std::filesystem::file_size(
+                    std::filesystem::path(archive) / "DATALOG" / folder / f.name, ec);
+                at_eof = !ec && bytes > 0 &&
+                         bytes + 1023 >= static_cast<uintmax_t>(f.size_kb) * 1024 &&
+                         (f.size_bytes == 0 || bytes >= f.size_bytes);
+            }
+            const std::string sig = std::to_string(f.size_kb) + "|" + std::to_string(f.size_bytes) +
+                                    "|" + std::to_string(machine_clock::stampOf(f));
+            const auto change = card_mask_.listed(stem, at_eof, sig);
+            if (!change) continue;
+            std::cout << "CPAP: mask off (" << source << ", session " << change->session
+                      << ": its BRP is at EOF and unchanged across " << CardMask::kUnchangedLists
+                      << " listings, " << (now_s - change->occurred_s) << " s ago)" << std::endl;
+            live->mask({source, "card", false,
+                        LiveState::Clock::time_point(std::chrono::seconds(change->occurred_s)),
+                        change->session},
+                       LiveState::Clock::time_point(std::chrono::seconds(now_s)));
+        }
+    }
 }
 
 void BurstCollectorService::cardMaskTick(long long now_s) {
+    // SDD-068: the card's off comes from its listings (observeCardListing),
+    // never from a timer. What is left is the live state's own settling.
     const auto live = liveState();
     if (!live) return;
-    const auto now = LiveState::Clock::time_point(std::chrono::seconds(now_s));
-    if (const auto change = card_mask_.tick(now_s)) {
-        std::cout << "CPAP: mask off (session " << change->session << " has not grown for "
-                  << CardMask::kMaskOffAfterS << " s)" << std::endl;
-        live->mask({cardMaskSource(), "card", false,
-                    LiveState::Clock::time_point(std::chrono::seconds(change->occurred_s)),
-                    change->session},
-                   now);
-    }
-    live->tick(now);
+    live->tick(LiveState::Clock::time_point(std::chrono::seconds(now_s)));
 }
 
 void BurstCollectorService::initAirSense11() {
@@ -3044,6 +3090,10 @@ bool BurstCollectorService::executeBurstCycle() {
                 std::cout << "CPAP: folders done: " << edf_now << " with every EDF stored, "
                           << fully_now << " complete (not listed again)" << std::endl;
         };
+
+        // SDD-068 D1: this burst's listings, before anything is downloaded,
+        // say whether the open session's BRP is at EOF and unchanged.
+        observeCardListing(listings, permanent_archive, in_place, now_s);
 
         if (new_sessions.empty()) {
             finishPasses();
