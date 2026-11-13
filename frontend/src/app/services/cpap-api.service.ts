@@ -222,6 +222,11 @@ export class CpapApiService {
     return this.http.delete('/api/airsense11/ble/pairing');
   }
 
+  /** #67: the machine's OS object forgotten and the adapter power-cycled, now. */
+  as11ResetBluetooth(): Observable<any> {
+    return this.http.post('/api/airsense11/ble/reset', {});
+  }
+
   // ── SDD-064: a DreamStation 2 over this host's Bluetooth ──
 
   /** Pairing, the machine, the last and next read. */

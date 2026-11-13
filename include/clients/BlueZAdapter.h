@@ -62,10 +62,17 @@ struct AdapterOps {
     std::function<std::vector<std::string>()> soft_blocked;
     /// Writes 0 to one such file. False when it is not writable.
     std::function<bool(const std::string&)> unblock;
+    /// #67: sets Powered = false. Empty on success, else the error text.
+    std::function<std::string()> power_off;
 };
 
 /// Makes the adapter ready as described above.
 Outcome ensurePowered(const AdapterOps& ops);
+
+/// #67: powers the adapter off, then makes it ready again with
+/// ensurePowered. Ready only when it is on again; an adapter that would not
+/// power off is left as it was (Failed, detail says why).
+Outcome cyclePower(const AdapterOps& ops);
 
 /// The one log line for a radio held off by rf-kill, naming the switch and
 /// the command that lifts it.
@@ -86,6 +93,9 @@ AdapterOps hostOps(sdbus::IConnection& conn, const std::string& adapter_path);
 
 /// ensurePowered over hostOps, logging what it did under `tag`.
 Outcome ensurePowered(sdbus::IConnection& conn, const std::string& adapter_path, const char* tag);
+
+/// cyclePower over hostOps, logging what it did under `tag`.
+Outcome cyclePower(sdbus::IConnection& conn, const std::string& adapter_path, const char* tag);
 
 /// True when a call failed because its timeout ran out, not because the
 /// other side refused it.

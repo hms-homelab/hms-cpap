@@ -5,6 +5,35 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **An AirSense 11 that BlueZ holds a stale object for recovers without a
+  host reboot** (#67). The machine was found ("already known") and every
+  connect ended "services not resolved in time" until the host rebooted:
+  another scanner on the adapter (Home Assistant) kept the cached object
+  looking live, so it was reused forever. Now each failed link with the
+  machine in sight is counted, and only failures move it on: after two in a
+  row the cached object is forgotten (RemoveDevice) and the machine is found
+  again by a fresh advert under its own name; if the next attempt fails too,
+  the Bluetooth adapter is powered off and on once, and the machine is found
+  again. Never while a night streams or an O2 Ring transfer runs in
+  hms-cpap; other devices linked on the adapter are named in the log before
+  the reset. A link that comes up ends the streak. Nothing here runs on a
+  timer, and a machine out of range, a radio that is off or no adapter never
+  escalate.
+- **Forget the pairing also drops BlueZ's object for the machine**, not only
+  the saved keys.
+
+### Added
+- **"Bluetooth adapter not recovering"** on the Devices page, distinct from
+  "Not connected", when the forget and the adapter reset did not bring the
+  link back (`bluetooth_stuck` in the AirSense 11 status).
+- **Reset Bluetooth** on the Devices page (`POST /api/airsense11/ble/reset`):
+  forgets the machine's BlueZ object and power-cycles the adapter now. It
+  answers 409 while a night streams, a pairing or pull runs, or an O2 Ring
+  transfer is in progress.
+
 ## [6.2.3] - 2026-11-13
 
 ### Added

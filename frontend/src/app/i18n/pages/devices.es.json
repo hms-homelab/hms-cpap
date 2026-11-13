@@ -332,7 +332,13 @@
       "errGeneric": "No se pudo emparejar. Empieza de nuevo.",
       "errRadioOff": "El Bluetooth está apagado en este equipo (rf-kill). Enciéndelo, o ejecuta rfkill unblock bluetooth, e inténtalo de nuevo.",
       "errRadioOffMac": "El Bluetooth está apagado en este Mac, o CpapDash no tiene permiso para usarlo. Enciéndelo, permite CpapDash en Ajustes del Sistema, Privacidad y seguridad, Bluetooth, e inténtalo de nuevo.",
-      "errRadioOffWin": "El Bluetooth está apagado en este PC y Windows no dejó que CpapDash lo encendiera. Enciéndelo en Configuración, Bluetooth y dispositivos (y revisa el modo avión), e inténtalo de nuevo."
+      "errRadioOffWin": "El Bluetooth está apagado en este PC y Windows no dejó que CpapDash lo encendiera. Enciéndelo en Configuración, Bluetooth y dispositivos (y revisa el modo avión), e inténtalo de nuevo.",
+      "adapterStuck": "El adaptador Bluetooth no se recupera",
+      "adapterStuckHint": "La máquina está al alcance pero no se conecta, ni siquiera después de que CpapDash la olvidara y reiniciara el adaptador Bluetooth. Pulsa Reiniciar Bluetooth para intentarlo de nuevo.",
+      "resetBluetooth": "Reiniciar Bluetooth",
+      "resetDone": "Bluetooth reiniciado. La máquina se busca de nuevo en la próxima conexión.",
+      "resetOthers": "Estos dispositivos también perdieron su enlace Bluetooth: {{devices}}.",
+      "resetFailed": "Bluetooth no se reinició: {{error}}"
     },
     "muleDs2": {
       "switch": "Bluetooth de la DreamStation 2",
