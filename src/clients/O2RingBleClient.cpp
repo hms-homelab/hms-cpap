@@ -506,6 +506,7 @@ IO2RingClient::LiveReading O2RingBleClient::oxyLive() {
         r.spo2 = l->reading ? l->spo2 : 0xFF;
         r.hr = l->reading ? l->hr : 0xFF;
         r.motion = l->motion;
+        r.run = l->run;
         r.active = l->reading;
         r.valid = l->reading;
         cached_battery_ = l->battery;
