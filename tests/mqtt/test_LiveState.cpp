@@ -35,6 +35,7 @@
 
 using hms_cpap::BurstCollectorService;
 using hms_cpap::CardMask;
+using hms_cpap::EzShareFileEntry;
 using hms_cpap::LiveState;
 using hms_cpap::MachineClock;
 using hms_cpap::SessionFileSet;
@@ -339,68 +340,139 @@ TEST(LiveState, ABrokerAwayAtTheSettleTimeIsToldAtTheNextTick) {
 
 // ── a card: the mask as the bursts read it ──────────────────────────────────
 
+// SDD-068: on when a new BRP grows; off when a listing after its last growth
+// shows it at EOF and two bursts end with its listed size and stamp unchanged.
+// No timer.
+
 TEST(CardMask, ASessionThatGrowsIsOnFromItsStart) {
     CardMask m;
     const auto c = m.grew("20261105_041502", kT0, kT0 + 180, kT0 + 250);
-    ASSERT_TRUE(c);
-    EXPECT_TRUE(c->on);
-    EXPECT_EQ(c->session, "20261105_041502");
-    EXPECT_EQ(c->occurred_s, kT0);
-    EXPECT_FALSE(m.grew("20261105_041502", kT0, kT0 + 240, kT0 + 315)) << "still on";
+    ASSERT_EQ(c.size(), 1u);
+    EXPECT_TRUE(c[0].on);
+    EXPECT_EQ(c[0].session, "20261105_041502");
+    EXPECT_EQ(c[0].occurred_s, kT0);
+    EXPECT_TRUE(m.grew("20261105_041502", kT0, kT0 + 240, kT0 + 315).empty()) << "still on";
 }
 
-TEST(CardMask, ItIsOffOnceTheSessionHasNotGrownForTwoMissedMinutes) {
+TEST(CardMask, ItIsOffAtEofAndTwoListingsUnchanged) {
+    CardMask m;
+    EXPECT_FALSE(m.listed("20261105_041502", false, "6|0|100")) << "listed before it grew";
+    m.grew("20261105_041502", kT0, kT0 + 180, kT0 + 250);
+    EXPECT_FALSE(m.listed("20261105_041502", true, "6|0|100")) << "one burst unchanged";
+    const auto c = m.listed("20261105_041502", true, "6|0|100");
+    ASSERT_TRUE(c) << "two bursts unchanged at EOF";
+    EXPECT_FALSE(c->on);
+    EXPECT_EQ(c->occurred_s, kT0 + 180) << "the end of its last record";
+    EXPECT_FALSE(m.on());
+    EXPECT_FALSE(m.listed("20261105_041502", true, "6|0|100")) << "said once";
+}
+
+TEST(CardMask, NoTimerTurnsItOffHowEverLongTheCardIsSilent) {
+    // D2: the card unreachable for an hour lists nothing, so nothing is decided
+    // (unit 11's false offs whenever a slow round crossed 135 s).
     CardMask m;
     m.grew("20261105_041502", kT0, kT0 + 180, kT0 + 250);
-    m.grew("20261105_041502", kT0, kT0 + 240, kT0 + 315);
-    EXPECT_FALSE(m.tick(kT0 + 380));
-    EXPECT_FALSE(m.tick(kT0 + 315 + CardMask::kMaskOffAfterS - 1));
-    const auto c = m.tick(kT0 + 315 + CardMask::kMaskOffAfterS);
-    ASSERT_TRUE(c);
-    EXPECT_FALSE(c->on);
-    EXPECT_EQ(c->occurred_s, kT0 + 240) << "the end of its last record";
-    EXPECT_FALSE(m.tick(kT0 + 900)) << "said once";
+    EXPECT_TRUE(m.on());
+    EXPECT_TRUE(m.grew("20261105_041502", kT0, kT0 + 180, kT0 + 3850).empty());
+    EXPECT_TRUE(m.on()) << "an hour later, still on";
+}
+
+TEST(CardMask, APartialBrpDecidesNothing) {
+    // D2: the listing shows more than is stored (a slow tail, a cut download).
+    CardMask m;
+    m.grew("20261105_041502", kT0, kT0 + 180, kT0 + 250);
+    for (int i = 0; i < 6; ++i)
+        EXPECT_FALSE(m.listed("20261105_041502", false, "12|0|160")) << "burst " << i;
+    EXPECT_TRUE(m.on());
+    EXPECT_FALSE(m.listed("20261105_041502", true, "12|0|160")) << "stored now: one burst";
+    EXPECT_TRUE(m.listed("20261105_041502", true, "12|0|160")) << "two";
+}
+
+TEST(CardMask, AListingThatMovedStartsTheCountAgain) {
+    // Grown with no listing seen before it: the first listing has nothing to
+    // compare with, and a moved stamp starts over.
+    CardMask m;
+    m.grew("20261105_041502", kT0, kT0 + 180, kT0 + 250);
+    EXPECT_FALSE(m.listed("20261105_041502", true, "6|0|100")) << "nothing to compare";
+    EXPECT_FALSE(m.listed("20261105_041502", true, "6|0|160")) << "the stamp moved";
+    EXPECT_FALSE(m.listed("20261105_041502", true, "6|0|160")) << "one unchanged";
+    EXPECT_TRUE(m.listed("20261105_041502", true, "6|0|160")) << "two unchanged";
+}
+
+TEST(CardMask, AHeaderOnlyBrpIsNotAMaskOn) {
+    CardMask m;
+    EXPECT_TRUE(m.grew("20261105_041502", kT0, kT0, kT0 + 20, 0).empty()) << "D3: no record yet";
+    EXPECT_FALSE(m.on());
+    EXPECT_EQ(m.grew("20261105_041502", kT0, kT0 + 60, kT0 + 85, 1).size(), 1u);
+    EXPECT_TRUE(m.on());
 }
 
 TEST(CardMask, AnOldNightReadLateSaysNothing) {
     CardMask m;
-    EXPECT_FALSE(m.grew("20261104_231502", kT0 - 20000, kT0 - 7200, kT0));
+    EXPECT_TRUE(m.grew("20261104_231502", kT0 - 20000, kT0 - 7200, kT0).empty());
     EXPECT_FALSE(m.on());
 }
 
 TEST(CardMask, AnOlderSessionReadAgainSaysNothing) {
     CardMask m;
     m.grew("20261105_041502", kT0, kT0 + 180, kT0 + 250);
-    EXPECT_FALSE(m.grew("20261105_031502", kT0 - 3600, kT0 + 100, kT0 + 250));
+    EXPECT_TRUE(m.grew("20261105_031502", kT0 - 3600, kT0 + 100, kT0 + 250).empty());
     EXPECT_EQ(m.session(), "20261105_041502");
 }
 
-TEST(CardMask, ALaterSessionIsTheMaskOnAgain) {
+TEST(CardMask, ALaterSessionIsTheOffOfTheOneBeforeThenItsOn) {
+    // D4: in the order they occurred, each with its own time.
     CardMask m;
     m.grew("20261105_041502", kT0, kT0 + 180, kT0 + 250);
     const auto c = m.grew("20261105_043002", kT0 + 900, kT0 + 960, kT0 + 1000);
-    ASSERT_TRUE(c);
-    EXPECT_TRUE(c->on);
-    EXPECT_EQ(c->session, "20261105_043002");
-    EXPECT_EQ(c->occurred_s, kT0 + 900);
+    ASSERT_EQ(c.size(), 2u);
+    EXPECT_FALSE(c[0].on);
+    EXPECT_EQ(c[0].session, "20261105_041502");
+    EXPECT_EQ(c[0].occurred_s, kT0 + 180);
+    EXPECT_TRUE(c[1].on);
+    EXPECT_EQ(c[1].session, "20261105_043002");
+    EXPECT_EQ(c[1].occurred_s, kT0 + 900);
 }
 
-TEST(CardMask, ASessionThatGrowsAfterItsOffWasOnThroughAMissedBurst) {
+TEST(CardMask, AReconnectProvesOffOnOffInOrder) {
+    // A link drop mid BRP: the card comes back with the old BRP finished, a
+    // new one, and that one finished too.
     CardMask m;
     m.grew("20261105_041502", kT0, kT0 + 180, kT0 + 250);
-    ASSERT_TRUE(m.tick(kT0 + 400));
-    EXPECT_FALSE(m.grew("20261105_041502", kT0, kT0 + 180, kT0 + 460)) << "no new record: still off";
+    // Back: the new BRP is listed before it is downloaded, then grows.
+    EXPECT_FALSE(m.listed("20261105_051502", true, "20|0|500"));
+    const auto c = m.grew("20261105_051502", kT0 + 3600, kT0 + 4800, kT0 + 5000);
+    ASSERT_EQ(c.size(), 2u);
+    EXPECT_FALSE(c[0].on);
+    EXPECT_TRUE(c[1].on);
+    // Its listing before the download was the first; two more unchanged end it.
+    EXPECT_FALSE(m.listed("20261105_051502", true, "20|0|500"));
+    const auto off = m.listed("20261105_051502", true, "20|0|500");
+    ASSERT_TRUE(off);
+    EXPECT_EQ(off->session, "20261105_051502");
+    EXPECT_EQ(off->occurred_s, kT0 + 4800);
+}
+
+TEST(CardMask, ASessionThatGrowsAfterItsOffIsOnAgain) {
+    CardMask m;
+    m.grew("20261105_041502", kT0, kT0 + 180, kT0 + 250);
+    m.listed("20261105_041502", true, "6|0|100");
+    m.listed("20261105_041502", true, "6|0|100");
+    ASSERT_TRUE(m.listed("20261105_041502", true, "6|0|100"));
+    ASSERT_FALSE(m.on());
+    EXPECT_TRUE(m.grew("20261105_041502", kT0, kT0 + 180, kT0 + 460).empty())
+        << "no new record: still off";
     const auto c = m.grew("20261105_041502", kT0, kT0 + 420, kT0 + 470);
-    ASSERT_TRUE(c);
-    EXPECT_TRUE(c->on);
-    EXPECT_EQ(c->occurred_s, kT0 + 180);
+    ASSERT_EQ(c.size(), 1u);
+    EXPECT_TRUE(c[0].on);
+    EXPECT_EQ(c[0].occurred_s, kT0 + 180);
 }
 
 TEST(CardMask, AFileThatWillNotReadIsJudgedByItsStart) {
     CardMask m;
-    EXPECT_TRUE(m.grew("20261105_041502", kT0, 0, kT0 + 250));
+    EXPECT_FALSE(m.grew("20261105_041502", kT0, 0, kT0 + 250).empty());
     CardMask old;
-    EXPECT_FALSE(old.grew("20261104_041502", kT0 - 86400, 0, kT0 + 250));
+    EXPECT_TRUE(old.grew("20261104_041502", kT0 - 86400, 0, kT0 + 250).empty());
 }
 
 // ── per source ──────────────────────────────────────────────────────────────
@@ -594,8 +666,8 @@ TEST(LiveSources, As11BluetoothRestartWithNoStreamSettlesOff) {
 }
 
 // A card read by the bursts (an ez Share, a FlashAir, a local folder): on
-// from the newest BRP's start, off after two missed minutes at its last
-// record's end, both a burst or two late and saying so.
+// from the newest BRP's start, off at its last record's end once two listings
+// show it at EOF and unchanged (SDD-068), both a burst or two late and saying so.
 TEST(LiveSources, CardOnAtTheSessionsStartOffAtItsEndWithTheDelay) {
     TempDir dir;
     writeEdf(dir.p / "20261105_041502_BRP.edf", 3);
@@ -619,13 +691,68 @@ TEST(LiveSources, CardOnAtTheSessionsStartOffAtItsEndWithTheDelay) {
     EXPECT_EQ(c["occurred_at"].asString(), "2026-11-05T04:15:02Z");
     EXPECT_EQ(c["delay_s"].asInt(), 250);
 
-    svc.cardMaskTick(kT0 + 250 + CardMask::kMaskOffAfterS - 1);
+    // No timer: an hour of bursts with nothing listed keeps it on.
+    svc.cardMaskTick(kT0 + 3850);
     EXPECT_EQ(rec.last("mask"), "ON");
-    svc.cardMaskTick(kT0 + 250 + CardMask::kMaskOffAfterS);
+
+    // The archive holds the BRP; each listing shows it at that size and stamp.
+    const auto archive = dir.p / "archive";
+    std::filesystem::create_directories(archive / "DATALOG" / "20261105");
+    std::filesystem::copy_file(dir.p / "20261105_041502_BRP.edf",
+                               archive / "DATALOG" / "20261105" / "20261105_041502_BRP.edf");
+    const auto bytes = std::filesystem::file_size(dir.p / "20261105_041502_BRP.edf");
+    EzShareFileEntry brp;
+    brp.name    = "20261105_041502_BRP.edf";
+    brp.size_kb = static_cast<int>((bytes + 1023) / 1024);
+    brp.year = 2026; brp.month = 11; brp.day = 5; brp.hour = 4; brp.minute = 18; brp.second = 2;
+    std::map<std::string, std::vector<EzShareFileEntry>> listings{{"20261105", {brp}}};
+
+    // A listing larger than what is stored (a partial BRP) decides nothing.
+    auto bigger = listings;
+    bigger["20261105"][0].size_kb += 6;
+    for (int i = 0; i < 4; ++i) svc.observeCardListing(bigger, archive.string(), false, kT0 + 300);
+    EXPECT_EQ(rec.last("mask"), "ON");
+
+    svc.observeCardListing(listings, archive.string(), false, kT0 + 315);   // moved: count starts
+    svc.observeCardListing(listings, archive.string(), false, kT0 + 380);   // one unchanged
+    EXPECT_EQ(rec.last("mask"), "ON");
+    svc.observeCardListing(listings, archive.string(), false, kT0 + 445);   // two
     EXPECT_EQ(rec.last("mask"), "OFF");
     c = rec.change();
     EXPECT_EQ(c["occurred_at"].asString(), "2026-11-05T04:18:02Z");
-    EXPECT_EQ(c["delay_s"].asInt(), 250 + CardMask::kMaskOffAfterS - 180);
+    EXPECT_EQ(c["delay_s"].asInt(), 445 - 180);
+}
+
+// SDD-068 D4: a new session's BRP is the off of the one before, then its on.
+TEST(LiveSources, CardALaterSessionPublishesTheOffBeforeTheOn) {
+    TempDir dir;
+    writeEdf(dir.p / "20261105_041502_BRP.edf", 3);
+    writeEdf(dir.p / "20261105_051502_BRP.edf", 2);
+    Recorder rec;
+    auto live = std::make_shared<LiveState>(rec.publish(), "cpap_test", "Test CPAP", at(kT0));
+    BurstCollectorService svc(300);
+    svc.setSourceForTest("ezshare");
+    svc.setMachineClockForTest(MachineClock{0, 0, true});
+    svc.setLiveState(live);
+
+    SessionFileSet a;
+    a.date_folder    = "20261105";
+    a.session_prefix = "20261105_041502";
+    a.brp_files      = {"20261105_041502_BRP.edf"};
+    svc.observeCardSession(a, dir.p.string(), kT0 + 250);
+    SessionFileSet b = a;
+    b.session_prefix = "20261105_051502";
+    b.brp_files      = {"20261105_051502_BRP.edf"};
+    svc.observeCardSession(b, dir.p.string(), kT0 + 3800);
+
+    const auto changes = rec.on("mask_changed");
+    ASSERT_GE(changes.size(), 3u);
+    const auto off = parse(changes[changes.size() - 2].payload);
+    EXPECT_EQ(off["session"].asString(), "20261105_041502");
+    EXPECT_EQ(off["occurred_at"].asString(), "2026-11-05T04:18:02Z") << "its last record's end";
+    EXPECT_EQ(rec.last("mask"), "ON");
+    EXPECT_EQ(rec.change()["session"].asString(), "20261105_051502");
+    EXPECT_EQ(rec.change()["occurred_at"].asString(), "2026-11-05T05:15:02Z");
 }
 
 TEST(LiveSources, CardSourcesAndTheFoldersALiveSourceAlreadyReports) {
