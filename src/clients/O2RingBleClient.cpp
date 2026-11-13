@@ -424,6 +424,13 @@ bool O2RingBleClient::oxyRequest(uint8_t op, const std::vector<uint8_t>& payload
 // SDK's order: auth 0xFF, setup 0x10, GET_INFO, set time 0xC0, GET_CONFIG 0x00.
 // The ring refuses file opens without one or the other.
 //
+// GET_INFO first skips auth, so a ring that would have answered auth with a
+// session key (firmware 1.13.x, SDD-057) and also answers a plaintext GET_INFO
+// never gets one. Whether any such ring exists is untested. If one does, its
+// file list fails, and oxyListFiles then reconnects and sets
+// oxy_vendor_order_, after which every handshake on this client starts with
+// auth.
+//
 // Auth waits a second for an answer, as the vendor apps do. Older rings never
 // give one and the session stays plaintext; newer ones answer with a session
 // key and everything after is encrypted. The auth timestamp is a nonce the ring
@@ -433,12 +440,15 @@ bool O2RingBleClient::oxyRequest(uint8_t op, const std::vector<uint8_t>& payload
 bool O2RingBleClient::oxySession() {
     if (oxy_session_) return true;
     oxy_key_.reset();
+    oxy_authed_ = false;
 
     // The vendor phone app starts with GET_INFO and sends neither auth nor
     // setup, and a ring that answers it is in a plaintext session. Only a
-    // ring that does not answer gets the auth and setup handshake.
-    bool info_ok = oxyRequest(oxyii::kOpGetInfo, {}, 3000);
+    // ring that does not answer, or one already found to need it, gets the
+    // auth and setup handshake.
+    bool info_ok = !oxy_vendor_order_ && oxyRequest(oxyii::kOpGetInfo, {}, 3000);
     if (!info_ok && connected_) {
+        oxy_authed_ = true;
         const auto now = static_cast<uint32_t>(std::time(nullptr));
         if (oxyRequest(oxyii::kOpAuth, oxyii::authPayload(now), 1000)) {
             oxy_key_ = oxyii::parseAuthReply(resp_buf_);
@@ -483,9 +493,12 @@ bool O2RingBleClient::oxySession() {
     return true;
 }
 
-// 0xF4 clears a handle the ring's own overnight recording left open, without
-// which 0xF1 hangs. A no-op when nothing is open, and some firmware does not
-// answer it then, so no reply is not a failure.
+// 0xF4 clears a handle left open, without which 0xF1 hangs: the ring's own
+// overnight recording can leave one, and so can a download cut off by a
+// disconnect. A no-op when nothing is open, and some firmware does not answer
+// it then, so no reply is not a failure. Sent before a file is opened and
+// after one is read, and before the file list is asked again when its first
+// ask timed out; not before the first ask, as the phone app lists first.
 void O2RingBleClient::oxyCloseFile() {
     oxyRequest(oxyii::kOpFileEnd, {}, 2000);
 }
@@ -493,7 +506,38 @@ void O2RingBleClient::oxyCloseFile() {
 std::vector<std::string> O2RingBleClient::oxyListFiles() {
     std::vector<std::string> files;
     if (!oxySession()) return files;
-    if (!oxyRequest(oxyii::kOpFileList, {}, 5000)) {
+
+    // List first, as the phone app does. When that times out the likely cause
+    // is a file left open (see oxyCloseFile): close it and list again.
+    bool listed = oxyRequest(oxyii::kOpFileList, {}, oxy_list_timeout_ms_);
+    if (!listed && connected_) {
+        std::cerr << "O2Ring BLE: O2Ring-S file list timeout; closing any open file and asking again"
+                  << std::endl;
+        oxyCloseFile();
+        listed = oxyRequest(oxyii::kOpFileList, {}, oxy_list_timeout_ms_);
+    }
+    // Still nothing, on a handshake that skipped auth: this ring may want the
+    // vendor SDK's order (and its session key). Reconnect and try it once; if
+    // that lists, keep it for this ring.
+    if (!listed && connected_ && !oxy_authed_ && !oxy_vendor_order_) {
+        std::cerr << "O2Ring BLE: O2Ring-S file list still timing out; trying the vendor "
+                     "handshake (auth first) on a new link" << std::endl;
+        disconnect();
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+        if (connect()) {
+            oxy_vendor_order_ = true;
+            if (oxySession()) {
+                oxyCloseFile();
+                listed = oxyRequest(oxyii::kOpFileList, {}, oxy_list_timeout_ms_);
+            }
+            if (listed)
+                std::cout << "O2Ring BLE: O2Ring-S lists after auth; auth first from now on"
+                          << std::endl;
+            else
+                oxy_vendor_order_ = false;
+        }
+    }
+    if (!listed) {
         std::cerr << "O2Ring BLE: O2Ring-S file list timeout" << std::endl;
         return files;
     }

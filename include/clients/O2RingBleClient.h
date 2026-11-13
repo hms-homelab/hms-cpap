@@ -49,6 +49,10 @@ public:
     /// True if a scanned device looks like a Viatom/Wellue oximeter.
     static bool deviceMatches(const std::string& name, const std::vector<std::string>& uuids);
 
+    /// How long an O2Ring-S is given to answer the file list (0xF1), in ms.
+    /// A seam for tests; the default is what the ring needs.
+    void setListTimeoutMs(int ms) { oxy_list_timeout_ms_ = ms; }
+
     static constexpr const char* SVC_UUID = "14839ac4-7d7e-415c-9a42-167340cf2339";
     static constexpr const char* WRITE_UUID = "8b00ace7-eb0b-49b0-bbe9-9aee0a26e1a3";
     static constexpr const char* NOTIFY_UUID = "0734594a-a8e7-4b1a-a6b1-cd5243059a57";
@@ -101,6 +105,13 @@ private:
     // ring answered auth with one (every payload after it is AES, SDD-057).
     bool oxy_session_ = false;
     std::optional<std::array<uint8_t, 16>> oxy_key_;
+    // Set once a ring that answered GET_INFO first would not list its files,
+    // and the vendor SDK's order (auth first) did: from then on this ring gets
+    // the vendor order straight away. Held for this client's life, not per link.
+    bool oxy_vendor_order_ = false;
+    // Whether the handshake on this link sent auth.
+    bool oxy_authed_ = false;
+    int oxy_list_timeout_ms_ = 5000;
 
     // Viatom protocol (the original O2Ring family)
     static uint8_t crc8(const uint8_t* data, size_t len);

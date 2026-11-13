@@ -609,3 +609,160 @@ TEST(O2RingBleLink, AWriteFailureFailsTheRequestInsteadOfThrowing) {
     EXPECT_NO_THROW({ EXPECT_TRUE(c.listFiles().empty()); });
     EXPECT_EQ(t->writes().size(), 1u);
 }
+
+// ── An O2Ring-S's handshake and file list ──
+//
+// The order the requests go in is what these pin: GET_INFO first and the file
+// list before any close, as the phone app does, and the recoveries when that
+// does not work.
+
+namespace {
+
+/// An O2Ring-S over the fake link, answering each OxyII request by its opcode.
+struct FakeOxyRing {
+    std::vector<uint8_t> pending;        // request bytes not yet a whole frame
+    std::vector<uint8_t> ops;            // every request's opcode, in the order sent
+    std::function<bool(uint8_t)> answers = [](uint8_t) { return true; };
+    bool authed = false;                 // a 0xFF has been received
+
+    static std::vector<uint8_t> reply(uint8_t op, const std::vector<uint8_t>& payload) {
+        auto f = oxyii::encode(op, 0, payload);
+        f[3] = 1;                        // a reply, not a request
+        f.back() = oxyii::crc8(f.data(), f.size() - 1);
+        return f;
+    }
+    static std::vector<uint8_t> payloadFor(uint8_t op) {
+        switch (op) {
+        case oxyii::kOpGetInfo: {
+            std::vector<uint8_t> p(60, 0);
+            const char fw[] = "2D010002";
+            for (size_t i = 0; i < 8; i++) p[9 + i] = static_cast<uint8_t>(fw[i]);
+            p[24] = 0xEA; p[25] = 0x07;                 // 2026
+            p[26] = 11; p[27] = 9; p[28] = 6; p[29] = 30; p[30] = 0;
+            p[37] = 4;
+            for (size_t i = 0; i < 4; i++) p[38 + i] = static_cast<uint8_t>("1476"[i]);
+            return p;
+        }
+        case oxyii::kOpFileList: {
+            std::vector<uint8_t> p(1 + 16, 0);
+            p[0] = 1;
+            const char name[] = "20261108232616";
+            for (size_t i = 0; i < 14; i++) p[1 + i] = static_cast<uint8_t>(name[i]);
+            return p;
+        }
+        case oxyii::kOpGetBattery: return {0, 80};
+        case oxyii::kOpAuth: return std::vector<uint8_t>(16, 0);   // no key: stays plaintext
+        default: return {0};
+        }
+    }
+    Responder responder() {
+        return [this](FakeLink& l, const std::vector<uint8_t>& piece) {
+            pending.insert(pending.end(), piece.begin(), piece.end());
+            while (auto f = oxyii::takeFrame(pending)) {
+                ops.push_back(f->op);
+                if (f->op == oxyii::kOpAuth) authed = true;
+                if (answers(f->op)) l.notify(reply(f->op, payloadFor(f->op)));
+            }
+        };
+    }
+    size_t count(uint8_t op) const { return static_cast<size_t>(std::count(ops.begin(), ops.end(), op)); }
+    long at(uint8_t op, size_t nth = 0) const {
+        size_t seen = 0;
+        for (size_t i = 0; i < ops.size(); i++)
+            if (ops[i] == op && seen++ == nth) return static_cast<long>(i);
+        return -1;
+    }
+};
+
+std::shared_ptr<FakeTransport> oxyTransport(FakeOxyRing& ring) {
+    auto t = std::make_shared<FakeTransport>();
+    t->adverts_ = {dev("r", "S8-AW 0042")};
+    t->mtu = 517;
+    t->responder = ring.responder();
+    return t;
+}
+
+}  // namespace
+
+TEST(O2RingSHandshake, AnAnsweringRingIsAskedGetInfoFirstAndListedBeforeAnyClose) {
+    FakeOxyRing ring;
+    auto t = oxyTransport(ring);
+    O2RingBleClient c(t);
+    const auto files = c.listFiles();
+    ASSERT_EQ(files.size(), 1u);
+    EXPECT_EQ(files[0], "20261108232616.o2s");
+    ASSERT_FALSE(ring.ops.empty());
+    EXPECT_EQ(ring.ops.front(), oxyii::kOpGetInfo) << "GET_INFO is the first thing sent";
+    EXPECT_EQ(ring.count(oxyii::kOpAuth), 0u);
+    EXPECT_EQ(ring.count(oxyii::kOpSetup), 0u);
+    EXPECT_EQ(ring.count(oxyii::kOpFileEnd), 0u) << "nothing is closed before the first list";
+    EXPECT_GE(ring.at(oxyii::kOpFileList), 0);
+}
+
+TEST(O2RingSHandshake, ARingThatLeftAFileOpenListsAfterA0xF4) {
+    FakeOxyRing ring;
+    bool closed = false;
+    ring.answers = [&](uint8_t op) {
+        if (op == oxyii::kOpFileEnd) closed = true;
+        return op != oxyii::kOpFileList || closed;   // the list hangs until a close
+    };
+    auto t = oxyTransport(ring);
+    O2RingBleClient c(t);
+    c.setListTimeoutMs(200);
+    const auto files = c.listFiles();
+    ASSERT_EQ(files.size(), 1u);
+    EXPECT_EQ(ring.count(oxyii::kOpFileList), 2u);
+    EXPECT_EQ(ring.count(oxyii::kOpFileEnd), 1u);
+    EXPECT_LT(ring.at(oxyii::kOpFileList, 0), ring.at(oxyii::kOpFileEnd));
+    EXPECT_LT(ring.at(oxyii::kOpFileEnd), ring.at(oxyii::kOpFileList, 1));
+    EXPECT_EQ(ring.count(oxyii::kOpAuth), 0u) << "a close was enough; no new handshake";
+    EXPECT_EQ(t->connected_ids.size(), 1u);
+}
+
+TEST(O2RingSHandshake, ARingThatOnlyListsAfterAuthIsGivenTheVendorOrderAndKeepsIt) {
+    FakeOxyRing ring;
+    // Answers GET_INFO in plaintext but will not list until it has been authed.
+    ring.answers = [&](uint8_t op) { return op != oxyii::kOpFileList || ring.authed; };
+    auto t = oxyTransport(ring);
+    O2RingBleClient c(t);
+    c.setListTimeoutMs(200);
+    ASSERT_EQ(c.listFiles().size(), 1u);
+    EXPECT_EQ(t->connected_ids.size(), 2u) << "a second link for the vendor handshake";
+    EXPECT_EQ(ring.count(oxyii::kOpAuth), 1u);
+    const long auth = ring.at(oxyii::kOpAuth);
+    EXPECT_GT(auth, ring.at(oxyii::kOpFileList, 1)) << "auth only after both plain lists failed";
+
+    // The next ring read starts with auth: the ring is known to need it.
+    const size_t before = ring.ops.size();
+    ASSERT_EQ(c.listFiles().size(), 1u);
+    ASSERT_GT(ring.ops.size(), before);
+    EXPECT_EQ(ring.ops[before], oxyii::kOpAuth);
+}
+
+TEST(O2RingSHandshake, ARingThatNeverListsIsGivenUpOnAndNotRemembered) {
+    FakeOxyRing ring;
+    ring.answers = [](uint8_t op) { return op != oxyii::kOpFileList; };
+    auto t = oxyTransport(ring);
+    O2RingBleClient c(t);
+    c.setListTimeoutMs(100);
+    EXPECT_TRUE(c.listFiles().empty());
+    // A later read starts the plain way again: nothing was learned.
+    const size_t before = ring.ops.size();
+    c.listFiles();
+    ASSERT_GT(ring.ops.size(), before);
+    EXPECT_EQ(ring.ops[before], oxyii::kOpGetInfo);
+}
+
+TEST(O2RingSHandshake, ARingThatDoesNotAnswerGetInfoGetsAuthAndSetupFirst) {
+    FakeOxyRing ring;
+    // Silent to GET_INFO until it has seen auth: the older rings' behaviour.
+    ring.answers = [&](uint8_t op) { return op != oxyii::kOpGetInfo || ring.authed; };
+    auto t = oxyTransport(ring);
+    O2RingBleClient c(t);
+    ASSERT_EQ(c.listFiles().size(), 1u);
+    EXPECT_EQ(ring.ops.front(), oxyii::kOpGetInfo) << "tried first, unanswered";
+    EXPECT_LT(ring.at(oxyii::kOpGetInfo, 0), ring.at(oxyii::kOpAuth));
+    EXPECT_LT(ring.at(oxyii::kOpAuth), ring.at(oxyii::kOpSetup));
+    EXPECT_LT(ring.at(oxyii::kOpSetup), ring.at(oxyii::kOpGetInfo, 1));
+    EXPECT_EQ(ring.count(oxyii::kOpFileEnd), 0u);
+}
