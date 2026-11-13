@@ -175,6 +175,7 @@ set(TEST_SOURCES
     services/test_CpapDashSyncService.cpp
     # platform SDD-059: the uploader, against a local server speaking its frames.
     services/test_CpapDashStream.cpp
+    services/test_SleepHqClient.cpp
     services/test_DeviceDiscoveryService.cpp
     services/test_SetupService.cpp
     services/test_PreflightService.cpp
