@@ -61,7 +61,7 @@ std::string o2s(int records = 3, bool finished = true) {
     for (int i = 0; i < records; ++i) {
         d.push_back(static_cast<char>(96 - i));   // SpO2
         d.push_back(static_cast<char>(62));       // HR
-        d.push_back('\0');                        // flags
+        d.push_back('\0');                        // movement
     }
     if (finished) {
         std::string t(48, '\0');
@@ -341,6 +341,32 @@ TEST_F(OximetryImportTest, AnO2RingSRecordingIsStoredLikeAVld) {
     EXPECT_DOUBLE_EQ(r.sample_interval, 1.0) << "one sample a second, not four";
     EXPECT_EQ(sessions(), 1);
     EXPECT_TRUE(db_->oximetrySessionExists(kOximetryDeviceId, "20261004221500.o2s"));
+}
+
+TEST_F(OximetryImportTest, AnO2RingSSecondOfMovementIsStoredAsMovementAndStaysValid) {
+    // Five seconds of a normal SpO2 and heart rate; the third byte is the
+    // movement count, 0 when still. It used to read as a validity flag, which
+    // made every moving second invalid and stored the movement as 0.
+    std::string d("\x01\x03\x00\x00\x00\x00\x00\x00\x04\x00", 10);
+    const unsigned char mv[] = {0, 2, 47, 0, 111};
+    for (unsigned char m : mv) {
+        d.push_back(static_cast<char>(96));
+        d.push_back(static_cast<char>(62));
+        d.push_back(static_cast<char>(m));
+    }
+    std::string t(48, '\0');
+    t[4] = '\x48'; t[5] = '\x12'; t[6] = '\x5a'; t[7] = '\xda';
+    d += t;
+
+    const auto r = importVldFile(*db_, d, "20261004221500.o2s");
+    ASSERT_TRUE(r.ok) << r.error;
+    EXPECT_EQ(r.samples, 5);
+    EXPECT_EQ(r.valid_samples, 5) << "movement does not make a reading invalid";
+    EXPECT_EQ(count(*db_, "SELECT COUNT(*) AS n FROM oximetry_samples WHERE motion > 0"), 3);
+    EXPECT_EQ(count(*db_, "SELECT MAX(motion) AS n FROM oximetry_samples"), 111);
+    EXPECT_EQ(count(*db_, "SELECT motion AS n FROM oximetry_samples ORDER BY timestamp LIMIT 1 OFFSET 2"), 47)
+        << "each second keeps its own count";
+    EXPECT_EQ(count(*db_, "SELECT COUNT(*) AS n FROM oximetry_samples WHERE valid = 0"), 0);
 }
 
 TEST_F(OximetryImportTest, AnO2RingSRecordingStillBeingWrittenIsRefusedUntilItIsDone) {
