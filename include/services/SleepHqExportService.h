@@ -112,6 +112,18 @@ public:
     /// detector the wrong cadence. Empty when the night had no ring.
     cpapdash::parser::OximetrySession oximetrySessionFor(const std::string& date_folder);
 
+    /// SleepHQ's verdict on an import, read after process_files: accepted is
+    /// not imported, and SleepHQ refused every ring CSV while this logged
+    /// "exported". `read` fetches the status once (false when unreadable);
+    /// `wait` sleeps the given seconds between reads. Stops at "complete" or
+    /// "failed"; after about three minutes without either, `status` holds the
+    /// last read (or "") and the import counts as accepted. Returns false only
+    /// when SleepHQ said "failed", with its words in `reason`.
+    static bool awaitImportVerdict(
+        const std::function<bool(std::string& status, std::string& reason)>& read,
+        const std::function<void(int seconds)>& wait,
+        std::string& status, std::string& reason);
+
 private:
     SleepHqExportService() = default;
 

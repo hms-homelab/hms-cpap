@@ -6,6 +6,7 @@
 #include "services/SleepHqExportService.h"
 #include "utils/AppConfig.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -451,4 +452,49 @@ TEST_F(ExportFileSet, UnrecognisedFilesInTheNightFolderAreNotDropped) {
     EXPECT_TRUE(hasFile(files, "20260706_195339_BRP.crc", "DATALOG/20260706"));
     EXPECT_TRUE(hasFile(files, "SOMETHING.UNKNOWN", "DATALOG/20260706"));
     EXPECT_TRUE(hasFile(files, "Journal.dat", "DATALOG/20260706"));
+}
+
+// Issue #66: accepted is not imported. SleepHQ refused every ring CSV after
+// process_files while this logged "exported"; its verdict is read back and a
+// refusal is a failed export.
+TEST(SleepHqImportVerdict, ARefusedImportIsAFailedExport) {
+    std::vector<std::string> answers = {"pending", "processing", "failed"};
+    size_t reads = 0;
+    std::vector<int> waits;
+    std::string status, reason;
+    const bool ok = SleepHqExportService::awaitImportVerdict(
+        [&](std::string& st, std::string& why) {
+            st = answers[std::min(reads++, answers.size() - 1)];
+            why = st == "failed" ? "We couldn't find any CPAP machine data in this upload" : "";
+            return true;
+        },
+        [&](int s) { waits.push_back(s); }, status, reason);
+    EXPECT_FALSE(ok);
+    EXPECT_EQ(status, "failed");
+    EXPECT_EQ(reason, "We couldn't find any CPAP machine data in this upload");
+    EXPECT_EQ(reads, 3u) << "stops at the verdict";
+}
+
+TEST(SleepHqImportVerdict, ACompleteImportIsExported) {
+    std::string status, reason;
+    EXPECT_TRUE(SleepHqExportService::awaitImportVerdict(
+        [](std::string& st, std::string&) { st = "complete"; return true; },
+        [](int) {}, status, reason));
+    EXPECT_EQ(status, "complete");
+}
+
+TEST(SleepHqImportVerdict, NoVerdictInThreeMinutesCountsAsAcceptedNotFailed) {
+    int total = 0, reads = 0;
+    std::string status, reason;
+    EXPECT_TRUE(SleepHqExportService::awaitImportVerdict(
+        [&](std::string& st, std::string&) {
+            ++reads;
+            if (reads % 2) return false;   // unreadable half the time
+            st = "processing";
+            return true;
+        },
+        [&](int s) { total += s; }, status, reason));
+    EXPECT_EQ(status, "processing");
+    EXPECT_EQ(total, 180) << "three minutes of waiting, spread over five reads";
+    EXPECT_EQ(reads, 5);
 }

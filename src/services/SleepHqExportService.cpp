@@ -427,13 +427,46 @@ SleepHqExportService::oximetrySessionFor(const std::string& date_folder) {
     return session;
 }
 
+bool SleepHqExportService::awaitImportVerdict(
+    const std::function<bool(std::string&, std::string&)>& read,
+    const std::function<void(int)>& wait,
+    std::string& status, std::string& reason) {
+    // SleepHQ's verdict usually lands in seconds; three minutes without one is
+    // "accepted", not a guess either way.
+    static const int kSchedule[] = {10, 20, 30, 60, 60};
+    status.clear();
+    reason.clear();
+    for (const int s : kSchedule) {
+        wait(s);
+        std::string st, why;
+        if (!read(st, why)) continue;
+        status = st;
+        reason = why;
+        if (status == "complete" || status == "failed") break;
+    }
+    return status != "failed";
+}
+
 bool SleepHqExportService::exportOximetry(const std::string& date_folder) {
     namespace fs = std::filesystem;
 
     const auto session = oximetrySessionFor(date_folder);
     if (session.samples.empty()) return true;    // no ring that night
 
-    const std::string name = cpapdash::parser::o2RingCsvFilename(session);
+    std::string err;
+    SleepHqClient client(config_->sleephq.client_id, config_->sleephq.client_secret);
+    if (!client.connect(err)) {
+        std::cerr << "[sleephq] oximetry connect failed: " << err << std::endl;
+        return false;
+    }
+
+    // Named after the team's own ring when SleepHQ knows one: a team whose
+    // ring machine has a serial refuses a CSV that names none.
+    std::string serr;
+    const std::string serial = client.o2RingSerial(serr);
+    if (!serr.empty()) std::cerr << "[sleephq] " << serr << "; ring CSV names no serial" << std::endl;
+    const std::string name =
+        cpapdash::parser::o2RingCsvFilename(session, serial.empty() ? "" : "O2Ring " + serial);
     const fs::path tmp = fs::temp_directory_path() / ("hms_oxi_" + date_folder + "_" + name);
     {
         // Derived data, so it lives in temp. Writing it into the card archive
@@ -443,23 +476,34 @@ bool SleepHqExportService::exportOximetry(const std::string& date_folder) {
         f << cpapdash::parser::writeO2RingCsv(session);
     }
 
-    std::string err;
-    SleepHqClient client(config_->sleephq.client_id, config_->sleephq.client_secret);
     bool ok = false;
-    if (!client.connect(err)) {
-        std::cerr << "[sleephq] oximetry connect failed: " << err << std::endl;
+    // AS AN O2 RING: with no device type SleepHQ reads the import as a CPAP
+    // card and fails the CSV, after accepting the upload and process_files.
+    const std::string import_id = client.createImport(err, SleepHqClient::kO2RingDeviceId);
+    if (import_id.empty()) {
+        std::cerr << "[sleephq] oximetry createImport failed: " << err << std::endl;
+    } else if (!client.uploadFile(import_id, name, "", tmp.string(), err)) {
+        std::cerr << "[sleephq] oximetry upload failed: " << err << std::endl;
+    } else if (!client.processFiles(import_id, err)) {
+        std::cerr << "[sleephq] oximetry process failed: " << err << std::endl;
     } else {
-        const std::string import_id = client.createImport(err);
-        if (import_id.empty()) {
-            std::cerr << "[sleephq] oximetry createImport failed: " << err << std::endl;
-        } else if (!client.uploadFile(import_id, name, "", tmp.string(), err)) {
-            std::cerr << "[sleephq] oximetry upload failed: " << err << std::endl;
-        } else if (!client.processFiles(import_id, err)) {
-            std::cerr << "[sleephq] oximetry process failed: " << err << std::endl;
+        std::string status, reason;
+        const bool accepted = awaitImportVerdict(
+            [&](std::string& st, std::string& why) {
+                std::string e;
+                return client.importStatus(import_id, st, why, e);
+            },
+            [](int s) { std::this_thread::sleep_for(std::chrono::seconds(s)); },
+            status, reason);
+        if (!accepted) {
+            std::cerr << "[sleephq] oximetry export FAILED for " << date_folder
+                      << ": SleepHQ refused import " << import_id << " (" << name
+                      << "): " << (reason.empty() ? "no reason given" : reason) << std::endl;
         } else {
             std::cout << "[sleephq] exported " << session.samples.size()
                       << " oximetry samples for " << date_folder
-                      << " as " << name << " (import " << import_id << ")" << std::endl;
+                      << " as " << name << " (import " << import_id << ", "
+                      << (status.empty() ? "status unread" : status) << ")" << std::endl;
             ok = true;
         }
     }
