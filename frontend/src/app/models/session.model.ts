@@ -66,6 +66,8 @@ export interface MyAirComparisonRow {
 }
 
 export interface SessionListItem {
+  archive_only?: boolean;
+  archive_chart_available?: boolean;
   sleep_day?: string;
   session_start: string;
   session_end: string | null;
@@ -132,6 +134,8 @@ export interface TrendPoint {
 }
 
 export interface SignalData {
+  archive_note?: string;
+  point_source?: string[];
   timestamps: string[];
   flow_avg: (number | null)[];
   flow_max: (number | null)[];
