@@ -5,6 +5,15 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.2.3] - 2026-11-13
+
+### Added
+- **`hms_cpap --as11-spool-probe <data_dir> <YYYY-MM-DD> [spool...]`**: a
+  bench probe for an AirSense 11 over Bluetooth. It uses the data dir's
+  pairing, pulls each named spool on its own link, saves it as
+  `<data_dir>/spool-probe/<name>.bin` and prints one `### SPOOL` line per
+  spool. It reads the first page of each spool only.
+
 ## [6.2.2] - 2026-11-12
 
 ### Fixed
