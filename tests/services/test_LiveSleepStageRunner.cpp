@@ -99,7 +99,7 @@ public:
     void* rawConnection() override { return nullptr; }
     bool saveOximetrySession(const std::string&, const cpapdash::parser::OximetrySession&) override { return true; }
     bool oximetrySessionExists(const std::string&, const std::string&) override { return false; }
-    bool saveLiveOximetrySample(const std::string&, const std::string&, int, int, int) override { return true; }
+    bool saveLiveOximetrySample(const std::string&, std::chrono::system_clock::time_point, int, int, int) override { return true; }
     OxiSummary getOximetrySummary(const std::string&, const std::string&, const std::string&) override { return {}; }
     OxiRangeSummary getOximetryRangeSummary(const std::string&, const std::string&, const std::string&) override { return {}; }
     std::vector<OxiNightlyPoint> getOximetryNightlySpo2(const std::string&, const std::string&, const std::string&) override { return {}; }

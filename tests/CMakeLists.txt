@@ -58,6 +58,7 @@ set(TEST_SOURCES
     database/test_DatabaseService.cpp
     database/test_EquipmentBackends.cpp
     database/test_OximetryBackends.cpp
+    database/test_LiveOximetryBackends.cpp
     database/test_RemoveNightBackends.cpp
     database/test_CpapCardBackends.cpp
     database/test_BilevelPressureBackends.cpp

@@ -151,9 +151,10 @@ public:
         return false;
     }
 
-    bool saveLiveOximetrySample(const std::string& d, const std::string& dt,
+    bool saveLiveOximetrySample(const std::string& d,
+                                 std::chrono::system_clock::time_point at,
                                  int spo2, int hr, int m) override {
-        if (db_) return db_->saveLiveOximetrySample(d, dt, spo2, hr, m);
+        if (db_) return db_->saveLiveOximetrySample(d, at, spo2, hr, m);
         return false;
     }
 

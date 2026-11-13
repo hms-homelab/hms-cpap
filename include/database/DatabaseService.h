@@ -158,7 +158,8 @@ public:
     bool oximetrySessionExists(const std::string& device_id,
                                const std::string& filename) override;
 
-    bool saveLiveOximetrySample(const std::string& device_id, const std::string& date,
+    bool saveLiveOximetrySample(const std::string& device_id,
+                                 std::chrono::system_clock::time_point wall_clock,
                                  int spo2, int hr, int motion) override;
 
     OxiSummary getOximetrySummary(const std::string& device_id,

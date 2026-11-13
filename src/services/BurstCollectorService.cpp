@@ -2290,15 +2290,15 @@ bool BurstCollectorService::executeBurstCycle() {
             bool reachable = (live.spo2 != 0 || live.active);
 
             if (live.active) {
-                // STATE: Ring on finger — recording
-                auto now = std::chrono::system_clock::now();
-                auto tt = std::chrono::system_clock::to_time_t(now);
-                std::tm tm{}; gmtime_r(&tt, &tm);
-                char date_buf[9];
-                std::strftime(date_buf, sizeof(date_buf), "%Y%m%d", &tm);
+                // STATE: Ring on finger, recording. Stamped on this host's
+                // wall clock in the ring-file shape, so the sample sits where the
+                // ring's own file for the night will put it (and where the CPAP
+                // side puts the same minute), whatever zone the database is in.
                 if (live.valid) {
-                    db_service_->saveLiveOximetrySample(kOximetryDeviceId, date_buf,
-                                                         live.spo2, live.hr, live.motion);
+                    db_service_->saveLiveOximetrySample(
+                        kOximetryDeviceId,
+                        liveOximetryWallClock(std::chrono::system_clock::now()),
+                        live.spo2, live.hr, live.motion);
                 }
                 o2ring_was_active = true;
             } else if (o2ring_was_active && reachable) {

@@ -349,7 +349,10 @@ Json::Value QueryService::getSessions(int limit, int offset) {
         " 0 as has_live,"
         " 1 as oximetry_only"
         " FROM oximetry_sessions o"
-        " WHERE " + sql::sleepDay("o.start_time", dt_) + " NOT IN ("
+        // A live stand-in beside the ring's own file would add its hours to
+        // the night's duration a second time.
+        " WHERE " + sql::oxiNotSuperseded("o", dt_) +
+        " AND " + sql::sleepDay("o.start_time", dt_) + " NOT IN ("
         "SELECT DISTINCT " + sql::sleepDay("s2.session_start", dt_) +
         " FROM cpap_sessions s2 WHERE s2.device_id = " + sql::param(2, dt_) + ")"
         " GROUP BY " + sql::sleepDay("o.start_time", dt_);
@@ -999,6 +1002,9 @@ Json::Value QueryService::getSessionOximetry(const std::string& date, int interv
         " WHERE os.device_id = " + sql::param(1, dt_) +
         " AND " + sql::sleepDay("os.start_time", dt_) + " = " + sql::castDate(2, dt_) +
         " AND s." + std::string(dt_ == DbType::SQLITE ? "valid = 1" : "valid = true") +
+        // The bridge's live stand-in, once the ring's own file for the night
+        // is in, would draw the night twice.
+        " AND " + sql::oxiNotSuperseded("os", dt_) +
         " ORDER BY s.timestamp";
 
     auto rows = query(q, {kOximetryDeviceId, sleep_day});

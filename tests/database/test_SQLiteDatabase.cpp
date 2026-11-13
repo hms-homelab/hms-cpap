@@ -1046,8 +1046,10 @@ TEST_F(SQLiteDatabaseTest, SaveOximetrySession_UpsertReplacesSamples) {
 }
 
 TEST_F(SQLiteDatabaseTest, SaveLiveOximetrySample_CreatesAndAppends) {
-    EXPECT_TRUE(db_->saveLiveOximetrySample("o2ring", "20260206", 96, 58, 0));
-    EXPECT_TRUE(db_->saveLiveOximetrySample("o2ring", "20260206", 95, 60, 1));
+    // 2026-02-06 12:00 on the ring's wall clock (read as UTC, like the parsers).
+    const auto at = std::chrono::system_clock::from_time_t(1770379200);
+    EXPECT_TRUE(db_->saveLiveOximetrySample("o2ring", at, 96, 58, 0));
+    EXPECT_TRUE(db_->saveLiveOximetrySample("o2ring", at + std::chrono::seconds(4), 95, 60, 1));
 
     // One live session for the date.
     auto sess = db_->executeQuery(

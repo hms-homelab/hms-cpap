@@ -1779,7 +1779,7 @@ public:
     MOCK_METHOD(void*, rawConnection, (), (override));
     MOCK_METHOD(bool, saveOximetrySession, (const std::string&, const cpapdash::parser::OximetrySession&), (override));
     MOCK_METHOD(bool, oximetrySessionExists, (const std::string&, const std::string&), (override));
-    MOCK_METHOD(bool, saveLiveOximetrySample, (const std::string&, const std::string&, int, int, int), (override));
+    MOCK_METHOD(bool, saveLiveOximetrySample, (const std::string&, std::chrono::system_clock::time_point, int, int, int), (override));
     OxiSummary getOximetrySummary(const std::string&, const std::string&, const std::string&) override { return {}; }
     OxiRangeSummary getOximetryRangeSummary(const std::string&, const std::string&, const std::string&) override { return {}; }
     std::vector<OxiNightlyPoint> getOximetryNightlySpo2(const std::string&, const std::string&, const std::string&) override { return {}; }

@@ -5,6 +5,25 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **Live O2 Ring samples in bridge mode sit on the same clock as the rest of
+  the night.** On PostgreSQL and MySQL they were stamped with the database's
+  own `NOW()`, which follows the database server's time zone (UTC in most
+  Docker setups), so the live trace could land hours away from the CPAP data
+  and from the ring's own file for the same night. They are now stamped with
+  this host's local wall clock, the clock every other ring intake stores.
+  SQLite already did this.
+- **The ring's own file replaces the night's live samples.** When the .vld,
+  O2Ring-S file, CSV or Bluetooth download for a night is saved, that night's
+  live session is removed in the same step. A live session that is still
+  beside a real file (written before this release, or a second wear the same
+  morning) is left out of the night chart, the daily report, the sessions list
+  and the SleepHQ export. Before, a bridge-mode night could export both sets
+  of samples to SleepHQ and chart them twice. Nights with only live samples,
+  and setups without a bridge, read as before.
+
 ## [6.2.3] - 2026-11-13
 
 ### Added

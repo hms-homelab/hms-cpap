@@ -1099,8 +1099,10 @@ TEST_F(PgDatabaseTest, SaveOximetrySession_UpsertReplacesSamples) {
 }
 
 TEST_F(PgDatabaseTest, SaveLiveOximetrySample_CreatesAndAppends) {
-    EXPECT_TRUE(db_->saveLiveOximetrySample("o2ring", "20250206", 96, 58, 0));
-    EXPECT_TRUE(db_->saveLiveOximetrySample("o2ring", "20250206", 95, 60, 1));
+    // 2025-02-06 12:00 on the ring's wall clock (read as UTC, like the parsers).
+    const auto at = std::chrono::system_clock::from_time_t(1738843200);
+    EXPECT_TRUE(db_->saveLiveOximetrySample("o2ring", at, 96, 58, 0));
+    EXPECT_TRUE(db_->saveLiveOximetrySample("o2ring", at + std::chrono::seconds(4), 95, 60, 1));
 
     EXPECT_EQ(count("oximetry_sessions", "filename='live_20250206.vld'"), 1);
     EXPECT_EQ(count("oximetry_samples", "source='live'"), 2);

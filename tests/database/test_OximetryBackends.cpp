@@ -251,8 +251,9 @@ TEST_P(OximetryBackendTest, UpsertReplacesMetricsRatherThanKeepingStale) {
 }
 
 TEST_P(OximetryBackendTest, SaveLiveOximetrySampleCreatesAndAccumulates) {
-    ASSERT_TRUE(db().saveLiveOximetrySample(device_, "20260619", 96, 60, 0));
-    ASSERT_TRUE(db().saveLiveOximetrySample(device_, "20260619", 95, 62, 1));
+    const auto at = tpUtc(2026, 6, 19, 12, 0);
+    ASSERT_TRUE(db().saveLiveOximetrySample(device_, at, 96, 60, 0));
+    ASSERT_TRUE(db().saveLiveOximetrySample(device_, at + std::chrono::seconds(4), 95, 62, 1));
 
     // One synthetic session per day, both samples inside it.
     EXPECT_TRUE(db().oximetrySessionExists(device_, "live_20260619.vld"));

@@ -1,6 +1,7 @@
 #include "database/SQLiteDatabase.h"
 #include "database/SqlDialect.h"
 #include "database/StrPercentile.h"
+#include "utils/OximetryDevice.h"
 #include "utils/TimeCompat.h"  // timegm_utc() for started_epoch
 #include <algorithm>
 #include <iostream>
@@ -3284,6 +3285,32 @@ bool SQLiteDatabase::saveOximetrySession(const std::string& device_id,
             }
         }
 
+        // The ring's own file for this night has landed: it supersedes the
+        // live stand-in the bridge polled into, so that one goes, on this
+        // event and in this transaction.
+        if (!isLiveOximetryFilename(session.filename)) {
+            const std::string night = oximetrySleepDay(session.start_time);
+            const std::string live_of_night =
+                "SELECT id FROM oximetry_sessions WHERE device_id = ? AND " +
+                sql::isLiveOxiFilename("filename") + " AND " +
+                sql::sleepDay("start_time", DbType::SQLITE) + " = date(?)";
+            for (const std::string del : {
+                     "DELETE FROM oximetry_samples WHERE oximetry_session_id IN (" +
+                         live_of_night + ")",
+                     "DELETE FROM oximetry_sessions WHERE id IN (" + live_of_night + ")"}) {
+                StmtGuard gd;
+                sqlite3_prepare_v2(db_, del.c_str(), -1, &gd.stmt, nullptr);
+                bind_text(gd.stmt, 1, device_id);
+                bind_text(gd.stmt, 2, night);
+                if (sqlite3_step(gd.stmt) != SQLITE_DONE) {
+                    std::cerr << "SQLite: superseding the live oximetry session failed: "
+                              << sqlite3_errmsg(db_) << std::endl;
+                    exec("ROLLBACK");
+                    return false;
+                }
+            }
+        }
+
         exec("COMMIT");
         std::cout << "SQLite: Oximetry session saved (" << session.filename
                   << ", " << session.samples.size() << " samples)" << std::endl;
@@ -3326,13 +3353,16 @@ bool SQLiteDatabase::oximetrySessionExists(const std::string& device_id,
 }
 
 bool SQLiteDatabase::saveLiveOximetrySample(const std::string& device_id,
-                                              const std::string& date,
+                                              std::chrono::system_clock::time_point wall_clock,
                                               int spo2, int hr, int motion) {
     if (!db_) return false;
 
     try {
-        // Get or create a "live" session for today
-        std::string live_filename = "live_" + date + ".vld";
+        // Get or create a "live" session for today. Stamped with the caller's
+        // ring wall clock (rendered like every other ring timestamp), not
+        // datetime('now'), so all three engines store the same reading.
+        const std::string live_filename = liveOximetryFilename(wall_clock);
+        const std::string ts = fmtOximetryTimestamp(wall_clock);
 
         // Check if session exists
         StmtGuard g1;
@@ -3346,20 +3376,18 @@ bool SQLiteDatabase::saveLiveOximetrySample(const std::string& device_id,
         if (sqlite3_step(g1.stmt) == SQLITE_ROW) {
             session_id = sqlite3_column_int64(g1.stmt, 0);
         } else {
-            // Create session for today.
-            // 'localtime': SQLite's datetime('now') is UTC, but every timestamp
-            // column here holds bare local wall clock (see
-            // fmtOximetryTimestamp). Storing UTC put live samples hours away
-            // from the CPAP data for the same night on any non-UTC host.
+            // Create session for today, opened at this sample.
             StmtGuard g2;
             sqlite3_prepare_v2(db_, R"(
                 INSERT INTO oximetry_sessions
                     (device_id, filename, start_time, end_time, duration_seconds,
                      sample_interval, valid_samples, total_samples)
-                VALUES (?, ?, datetime('now','localtime'), datetime('now','localtime'), 0, 0, 0, 0)
+                VALUES (?, ?, ?, ?, 0, 0, 0, 0)
             )", -1, &g2.stmt, nullptr);
             bind_text(g2.stmt, 1, device_id);
             bind_text(g2.stmt, 2, live_filename);
+            bind_text(g2.stmt, 3, ts);
+            bind_text(g2.stmt, 4, ts);
             if (sqlite3_step(g2.stmt) != SQLITE_DONE) return false;
             session_id = sqlite3_last_insert_rowid(db_);
         }
@@ -3370,12 +3398,13 @@ bool SQLiteDatabase::saveLiveOximetrySample(const std::string& device_id,
             INSERT INTO oximetry_samples
                 (oximetry_session_id, timestamp, spo2, heart_rate,
                  motion, vibration, valid, source)
-            VALUES (?, datetime('now','localtime'), ?, ?, ?, 0, 1, 'live')
+            VALUES (?, ?, ?, ?, ?, 0, 1, 'live')
         )", -1, &gs.stmt, nullptr);
         bind_int64(gs.stmt, 1, session_id);
-        bind_int(gs.stmt, 2, spo2);
-        bind_int(gs.stmt, 3, hr);
-        bind_int(gs.stmt, 4, motion);
+        bind_text(gs.stmt, 2, ts);
+        bind_int(gs.stmt, 3, spo2);
+        bind_int(gs.stmt, 4, hr);
+        bind_int(gs.stmt, 5, motion);
 
         if (sqlite3_step(gs.stmt) != SQLITE_DONE) {
             std::cerr << "SQLite: live sample insert error: " << sqlite3_errmsg(db_) << std::endl;
@@ -3386,15 +3415,17 @@ bool SQLiteDatabase::saveLiveOximetrySample(const std::string& device_id,
         StmtGuard gu;
         sqlite3_prepare_v2(db_, R"(
             UPDATE oximetry_sessions SET
-                end_time = datetime('now','localtime'),
-                duration_seconds = CAST((julianday(datetime('now','localtime')) - julianday(start_time)) * 86400 AS INTEGER),
+                end_time = ?,
+                duration_seconds = CAST(ROUND((julianday(?) - julianday(start_time)) * 86400) AS INTEGER),
                 total_samples = (SELECT COUNT(*) FROM oximetry_samples WHERE oximetry_session_id = ?),
                 valid_samples = (SELECT COUNT(*) FROM oximetry_samples WHERE oximetry_session_id = ? AND valid = 1)
             WHERE id = ?
         )", -1, &gu.stmt, nullptr);
-        bind_int64(gu.stmt, 1, session_id);
-        bind_int64(gu.stmt, 2, session_id);
+        bind_text(gu.stmt, 1, ts);
+        bind_text(gu.stmt, 2, ts);
         bind_int64(gu.stmt, 3, session_id);
+        bind_int64(gu.stmt, 4, session_id);
+        bind_int64(gu.stmt, 5, session_id);
         sqlite3_step(gu.stmt);
 
         return true;

@@ -2,6 +2,7 @@
 #include "utils/TimeCompat.h"
 #include "database/DatabaseService.h"
 #include "database/SqlDialect.h"
+#include "utils/OximetryDevice.h"
 #include <libpq-fe.h>
 #include <algorithm>
 #include <iostream>
@@ -3321,6 +3322,22 @@ bool DatabaseService::saveOximetrySession(const std::string& device_id,
             txn.exec(q.str());
         }
 
+        // The ring's own file for this night has landed: it supersedes the
+        // live stand-in the bridge polled into, so that one goes, on this
+        // event and in this transaction.
+        if (!isLiveOximetryFilename(session.filename)) {
+            const std::string live_of_night =
+                "SELECT id FROM oximetry_sessions WHERE device_id = $1 AND " +
+                sql::isLiveOxiFilename("filename") + " AND " +
+                sql::sleepDay("start_time", DbType::POSTGRESQL) + " = $2::date";
+            const std::string night = oximetrySleepDay(session.start_time);
+            txn.exec_params("DELETE FROM oximetry_samples WHERE oximetry_session_id IN (" +
+                                live_of_night + ")",
+                            device_id, night);
+            txn.exec_params("DELETE FROM oximetry_sessions WHERE id IN (" + live_of_night + ")",
+                            device_id, night);
+        }
+
         txn.commit();
         std::cout << "O2Ring: Saved to PostgreSQL (" << session.filename
                   << ", " << session.samples.size() << " samples)" << std::endl;
@@ -3350,7 +3367,7 @@ bool DatabaseService::oximetrySessionExists(const std::string& device_id,
 }
 
 bool DatabaseService::saveLiveOximetrySample(const std::string& device_id,
-                                              const std::string& date,
+                                              std::chrono::system_clock::time_point wall_clock,
                                               int spo2, int hr, int motion) {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!ensureConnection()) return false;
@@ -3358,7 +3375,11 @@ bool DatabaseService::saveLiveOximetrySample(const std::string& device_id,
     try {
         pqxx::work txn(*conn_);
 
-        std::string live_filename = "live_" + date + ".vld";
+        // Stamped with the caller's ring wall clock, never NOW(): NOW() cast
+        // into these TIMESTAMP columns is the server's TimeZone (UTC in most
+        // containers), while every other ring row holds the ring's own clock.
+        const std::string live_filename = liveOximetryFilename(wall_clock);
+        const std::string ts = fmtTs(wall_clock);
 
         // Get or create live session
         auto r = txn.exec_params(
@@ -3371,9 +3392,9 @@ bool DatabaseService::saveLiveOximetrySample(const std::string& device_id,
                 INSERT INTO oximetry_sessions
                     (device_id, filename, start_time, end_time, duration_seconds,
                      sample_interval, valid_samples, total_samples)
-                VALUES ($1, $2, NOW(), NOW(), 0, 0, 0, 0)
+                VALUES ($1, $2, $3::timestamp, $3::timestamp, 0, 0, 0, 0)
                 RETURNING id
-            )", device_id, live_filename);
+            )", device_id, live_filename, ts);
             session_id = ins[0][0].as<int>();
         } else {
             session_id = r[0][0].as<int>();
@@ -3383,18 +3404,18 @@ bool DatabaseService::saveLiveOximetrySample(const std::string& device_id,
         txn.exec_params(R"(
             INSERT INTO oximetry_samples
                 (oximetry_session_id, timestamp, spo2, heart_rate, motion, vibration, valid, source)
-            VALUES ($1, NOW(), $2, $3, $4, 0, true, 'live')
-        )", session_id, spo2, hr, motion);
+            VALUES ($1, $2::timestamp, $3, $4, $5, 0, true, 'live')
+        )", session_id, ts, spo2, hr, motion);
 
         // Update session counts
         txn.exec_params(R"(
             UPDATE oximetry_sessions SET
-                end_time = NOW(),
-                duration_seconds = EXTRACT(EPOCH FROM (NOW() - start_time))::INT,
+                end_time = $2::timestamp,
+                duration_seconds = EXTRACT(EPOCH FROM ($2::timestamp - start_time))::INT,
                 total_samples = (SELECT COUNT(*) FROM oximetry_samples WHERE oximetry_session_id = $1),
                 valid_samples = (SELECT COUNT(*) FROM oximetry_samples WHERE oximetry_session_id = $1 AND valid = true)
             WHERE id = $1
-        )", session_id);
+        )", session_id, ts);
 
         txn.commit();
         return true;

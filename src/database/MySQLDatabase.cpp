@@ -3,6 +3,7 @@
 #include "database/MySQLDatabase.h"
 #include "database/SqlDialect.h"
 #include "database/StrPercentile.h"
+#include "utils/OximetryDevice.h"
 #include "utils/TimeCompat.h"  // timegm_utc() for started_epoch
 #include <algorithm>
 #include <iostream>
@@ -3830,6 +3831,35 @@ bool MySQLDatabase::saveOximetrySession(const std::string& device_id,
         }
     }
 
+    // The ring's own file for this night has landed: it supersedes the live
+    // stand-in the bridge polled into, so that one goes, on this event and in
+    // this transaction. The sessions DELETE filters directly rather than
+    // through a subquery: MySQL refuses a subquery on the table being deleted.
+    if (!isLiveOximetryFilename(session.filename)) {
+        const std::string night = oximetrySleepDay(session.start_time);
+        const std::string live_of_night =
+            "device_id = ? AND " + sql::isLiveOxiFilename("filename") + " AND " +
+            sql::sleepDay("start_time", DbType::MYSQL) + " = CAST(? AS DATE)";
+        for (const std::string del : {
+                 "DELETE FROM oximetry_samples WHERE oximetry_session_id IN "
+                 "(SELECT id FROM oximetry_sessions WHERE " + live_of_night + ")",
+                 "DELETE FROM oximetry_sessions WHERE " + live_of_night}) {
+            MysqlStmtGuard g;
+            g.stmt = mysql_stmt_init(conn_);
+            ParamBinder p(2);
+            p.bindText(0, device_id);
+            p.bindText(1, night);
+            if (mysql_stmt_prepare(g.stmt, del.c_str(), del.size()) != 0 ||
+                mysql_stmt_bind_param(g.stmt, p.data()) != 0 ||
+                mysql_stmt_execute(g.stmt) != 0) {
+                std::cerr << "MySQL: superseding the live oximetry session failed: "
+                          << mysql_stmt_error(g.stmt) << std::endl;
+                exec("ROLLBACK");
+                return false;
+            }
+        }
+    }
+
     exec("COMMIT");
     std::cout << "MySQL: Oximetry session saved (" << session.filename
               << ", " << session.samples.size() << " samples)" << std::endl;
@@ -3866,13 +3896,17 @@ bool MySQLDatabase::oximetrySessionExists(const std::string& device_id,
 }
 
 bool MySQLDatabase::saveLiveOximetrySample(const std::string& device_id,
-                                            const std::string& date,
+                                            std::chrono::system_clock::time_point wall_clock,
                                             int spo2, int hr, int motion) {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!conn_) return false;
 
-    // One synthetic session per day collects the live stream.
-    std::string live_filename = "live_" + date + ".vld";
+    // One synthetic session per day collects the live stream. Stamped with the
+    // caller's ring wall clock, never NOW(): NOW() is the MySQL server's time
+    // zone (UTC in most containers), while every other ring row holds the
+    // ring's own wall clock.
+    const std::string live_filename = liveOximetryFilename(wall_clock);
+    const std::string ts = fmtOximetryTimestamp(wall_clock);
 
     int64_t session_id = 0;
     {
@@ -3898,14 +3932,16 @@ bool MySQLDatabase::saveLiveOximetrySample(const std::string& device_id,
             INSERT INTO oximetry_sessions
                 (device_id, filename, start_time, end_time, duration_seconds,
                  sample_interval, valid_samples, total_samples)
-            VALUES (?, ?, NOW(), NOW(), 0, 0, 0, 0)
+            VALUES (?, ?, ?, ?, 0, 0, 0, 0)
         )";
         MysqlStmtGuard g;
         g.stmt = mysql_stmt_init(conn_);
         mysql_stmt_prepare(g.stmt, ins, std::strlen(ins));
-        ParamBinder p(2);
+        ParamBinder p(4);
         p.bindText(0, device_id);
         p.bindText(1, live_filename);
+        p.bindText(2, ts);
+        p.bindText(3, ts);
         mysql_stmt_bind_param(g.stmt, p.data());
         if (mysql_stmt_execute(g.stmt) != 0) {
             std::cerr << "MySQL: live oximetry session insert error: "
@@ -3920,16 +3956,17 @@ bool MySQLDatabase::saveLiveOximetrySample(const std::string& device_id,
             INSERT INTO oximetry_samples
                 (oximetry_session_id, timestamp, spo2, heart_rate,
                  motion, vibration, valid, source)
-            VALUES (?, NOW(), ?, ?, ?, 0, 1, 'live')
+            VALUES (?, ?, ?, ?, ?, 0, 1, 'live')
         )";
         MysqlStmtGuard g;
         g.stmt = mysql_stmt_init(conn_);
         mysql_stmt_prepare(g.stmt, ins, std::strlen(ins));
-        ParamBinder p(4);
+        ParamBinder p(5);
         p.bindInt64(0, session_id);
-        p.bindInt(1, spo2);
-        p.bindInt(2, hr);
-        p.bindInt(3, motion);
+        p.bindText(1, ts);
+        p.bindInt(2, spo2);
+        p.bindInt(3, hr);
+        p.bindInt(4, motion);
         mysql_stmt_bind_param(g.stmt, p.data());
         if (mysql_stmt_execute(g.stmt) != 0) {
             std::cerr << "MySQL: live sample insert error: "
@@ -3941,8 +3978,8 @@ bool MySQLDatabase::saveLiveOximetrySample(const std::string& device_id,
     {
         const char* upd = R"(
             UPDATE oximetry_sessions SET
-                end_time = NOW(),
-                duration_seconds = TIMESTAMPDIFF(SECOND, start_time, NOW()),
+                end_time = ?,
+                duration_seconds = TIMESTAMPDIFF(SECOND, start_time, ?),
                 total_samples = (SELECT COUNT(*) FROM (
                     SELECT id FROM oximetry_samples WHERE oximetry_session_id = ?
                 ) AS t),
@@ -3954,10 +3991,12 @@ bool MySQLDatabase::saveLiveOximetrySample(const std::string& device_id,
         MysqlStmtGuard g;
         g.stmt = mysql_stmt_init(conn_);
         mysql_stmt_prepare(g.stmt, upd, std::strlen(upd));
-        ParamBinder p(3);
-        p.bindInt64(0, session_id);
-        p.bindInt64(1, session_id);
+        ParamBinder p(5);
+        p.bindText(0, ts);
+        p.bindText(1, ts);
         p.bindInt64(2, session_id);
+        p.bindInt64(3, session_id);
+        p.bindInt64(4, session_id);
         mysql_stmt_bind_param(g.stmt, p.data());
         mysql_stmt_execute(g.stmt);
     }
