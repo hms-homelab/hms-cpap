@@ -529,6 +529,7 @@ void MuleService::feedEvents(const std::string& serial, const Json::Value& event
                 continue;
             }
             as11::RespEvent e;
+            e.historical      = ev.get("historical", false).asBool();
             e.event           = ev.get("event", "").asString();
             e.reportTime      = ev.get("reportTime", "").asString();
             e.durationSeconds = ev.get("durationSeconds", -1).asInt();
@@ -540,7 +541,7 @@ void MuleService::feedEvents(const std::string& serial, const Json::Value& event
     }
     for (const auto& e : todo) {
         sink_->onEvent(machine, e);                       // the EVE, at once
-        if (live_) live_->event(serial, machine, e);      // the broker, at once
+        if (live_ && !e.historical) live_->event(serial, machine, e);      // the broker, at once
     }
     if (!todo.empty() && night_changed_) night_changed_();   // the database and the UI
 }
