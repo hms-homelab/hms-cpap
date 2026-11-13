@@ -41,6 +41,7 @@ struct Device {
     std::vector<std::string> uuids;   // advertised services, normalizeUuid form
     std::optional<int> rssi;
     bool advertising = false;         // seen advertising in this discovery, not only remembered
+    bool connected = false;           // the OS holds a link to it now (anyone's: Home Assistant's too)
 };
 
 enum class Radio {
@@ -141,6 +142,12 @@ struct PairResult {
     std::string detail;
 };
 
+/// #67: what resetAdapter() did.
+struct AdapterReset {
+    bool ok = false;      // powered off and on again, and on now
+    std::string detail;   // why not, when it did not
+};
+
 struct PairHandlers {
     /// The OS asks whether these six digits match the ones on the device.
     /// Called on the backend's thread; it blocks until the user answers and
@@ -173,6 +180,13 @@ public:
     /// Drops the OS's cached object for a device, so the next scan sees it as
     /// it advertises now. False when there is nothing to drop.
     virtual bool forget(const Device&) { return false; }
+    /// #67: powers the adapter off and on again (BlueZ: Adapter1 Powered
+    /// false, then true), which drops every link on it and BlueZ's state for
+    /// the controller. The last resort after forget() did not help. Every
+    /// other device on the adapter loses its link too, whoever holds it.
+    virtual AdapterReset resetAdapter() {
+        return {false, std::string("resetting the adapter is not supported by ") + backend()};
+    }
 
     // ── SDD-064: OS bonding, for a device that requires it ──────────────
 

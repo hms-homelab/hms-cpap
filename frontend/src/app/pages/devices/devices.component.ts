@@ -732,6 +732,25 @@ export class DevicesComponent implements OnInit, OnDestroy {
     this.confirms.ask(d.key, 'as11_forget', 'devices.as11.forgetPairingConfirm', null);
   }
 
+  /** #67: one click, no confirm: forget the machine's OS object and power-cycle the adapter. */
+  as11ResetBluetooth(d: DeviceEntry): void {
+    this.busy[d.key] = true;
+    this.api.as11ResetBluetooth().subscribe({
+      next: (r: any) => {
+        this.busy[d.key] = false;
+        const others: string[] = r?.others_connected ?? [];
+        this.note(d, this.t.instant('devices.as11.resetDone') +
+          (others.length ? ' ' + this.t.instant('devices.as11.resetOthers', { devices: others.join(', ') }) : ''), false);
+        this.load(false);
+      },
+      error: (e) => {
+        this.busy[d.key] = false;
+        this.note(d, this.t.instant('devices.as11.resetFailed', { error: errorText(e) }), true);
+        this.load(false);
+      },
+    });
+  }
+
   as11PairStart(): void {
     this.as11Pairing = true;
     this.as11Message = '';

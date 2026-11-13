@@ -199,7 +199,8 @@
           <div *ngIf="d.detail.not_compiled" class="wide"><dd class="note">{{ 'devices.as11.notCompiled' | translate }}</dd></div>
           <ng-container *ngIf="!d.detail.not_compiled">
             <div><dt></dt><dd>{{ (d.detail.paired ? 'devices.as11.paired' : 'devices.as11.notPaired') | translate }},
-              {{ (d.detail.connected ? (d.detail.therapy ? 'devices.as11.therapy' : 'devices.as11.connected') : 'devices.as11.notConnected') | translate }}</dd></div>
+              {{ (d.detail.connected ? (d.detail.therapy ? 'devices.as11.therapy' : 'devices.as11.connected') : (d.detail.bluetooth_stuck ? 'devices.as11.adapterStuck' : 'devices.as11.notConnected')) | translate }}</dd></div>
+            <div *ngIf="!d.detail.connected && d.detail.bluetooth_stuck" class="wide"><dd class="note">{{ 'devices.as11.adapterStuckHint' | translate }}</dd></div>
             <div *ngIf="d.detail.last_contact"><dt>{{ 'devices.as11.lastContact' | translate }}</dt><dd>{{ ms(d.detail.last_contact) | date:'short' }}</dd></div>
             <div *ngIf="d.detail.last_summary_at"><dt>{{ 'devices.as11.lastSummary' | translate }}</dt>
               <dd>{{ ms(d.detail.last_summary_at) | date:'short' }}
@@ -418,6 +419,10 @@
             </div>
             <div class="action-line" *ngIf="d.detail.paired">
               <button type="button" class="btn danger" (click)="askAs11Forget(d)">{{ 'devices.as11.forgetPairing' | translate }}</button>
+            </div>
+            <div class="action-line">
+              <button type="button" class="btn" [class.primary]="d.detail.bluetooth_stuck" (click)="as11ResetBluetooth(d)"
+                      [disabled]="busy[d.key] || d.detail.streaming">{{ 'devices.as11.resetBluetooth' | translate }}</button>
             </div>
           </ng-container>
 

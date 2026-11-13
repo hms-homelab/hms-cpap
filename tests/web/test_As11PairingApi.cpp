@@ -41,8 +41,15 @@ struct FakePairing : IAirSense11Pairing {
     std::string lastError() const override { return error; }
     Presence presence() const override { return link; }
     bool busy() const override { return pending || pulling; }
+    void forgetMachine() override { machine_forgets++; }
+    BluetoothReset resetBluetooth() override {
+        resets++;
+        return reset_answer;
+    }
     Presence link;
     bool pulling = false;
+    int machine_forgets = 0, resets = 0;
+    BluetoothReset reset_answer{BluetoothReset::State::Done, true, true, {}, ""};
 };
 
 } // namespace
@@ -178,6 +185,61 @@ TEST(As11PairingApi, ATypoKeepsTheExchangeOpen) {
     }
     EXPECT_EQ(p.confirms, 0);
     EXPECT_TRUE(p.pending);
+}
+
+// ── #67 ──
+
+TEST(As11PairingApi, StatusSaysWhenTheAdapterIsNotRecovering) {
+    FakePairing p;
+    EXPECT_FALSE(as11api::status(&p, true, true).body["bluetooth_stuck"].asBool());
+    p.link.bluetooth_stuck = true;
+    EXPECT_TRUE(as11api::status(&p, true, true).body["bluetooth_stuck"].asBool());
+    EXPECT_FALSE(as11api::status(nullptr, true, true).body["bluetooth_stuck"].asBool());
+}
+
+TEST(As11PairingApi, UnpairForgetsTheMachinesOsObject) {
+    FakePairing p;
+    const auto path = (std::filesystem::temp_directory_path() / "hms_as11_unpair_forget.json").string();
+    std::ofstream(path) << "{}";
+    auto r = as11api::forget(&p, path, false);
+    EXPECT_EQ(r.status, 200);
+    EXPECT_EQ(p.machine_forgets, 1);
+    // Already gone: the OS object is still dropped.
+    r = as11api::forget(&p, path, false);
+    EXPECT_EQ(p.machine_forgets, 2);
+    // Busy: nothing at all.
+    p.pulling = true;
+    r = as11api::forget(&p, path, false);
+    EXPECT_EQ(r.status, 409);
+    EXPECT_EQ(p.machine_forgets, 2);
+}
+
+TEST(As11PairingApi, ResetBluetoothAnswers) {
+    using S = IAirSense11Pairing::BluetoothReset::State;
+    FakePairing p;
+    auto r = as11api::resetBluetooth(&p, true, true);
+    EXPECT_EQ(r.status, 200);
+    EXPECT_TRUE(r.body["ok"].asBool());
+    EXPECT_TRUE(r.body["forgot"].asBool());
+    EXPECT_TRUE(r.body["adapter_reset"].asBool());
+    EXPECT_TRUE(r.body["others_connected"].isArray());
+
+    p.reset_answer = {S::Busy, false, false, {}, "not while an O2 Ring transfer"};
+    r = as11api::resetBluetooth(&p, true, true);
+    EXPECT_EQ(r.status, 409);
+    EXPECT_EQ(r.body["error"].asString(), "not while an O2 Ring transfer");
+
+    p.reset_answer = {S::Failed, true, false, {"O2Ring 1234"}, "no"};
+    r = as11api::resetBluetooth(&p, true, true);
+    EXPECT_EQ(r.status, 500);
+    EXPECT_FALSE(r.body["ok"].asBool());
+    EXPECT_EQ(r.body["others_connected"][0].asString(), "O2Ring 1234");
+
+    const int asked = p.resets;
+    EXPECT_EQ(as11api::resetBluetooth(&p, false, true).status, 503);
+    EXPECT_EQ(as11api::resetBluetooth(&p, true, false).status, 503);
+    EXPECT_EQ(as11api::resetBluetooth(nullptr, true, true).status, 503);
+    EXPECT_EQ(p.resets, asked) << "unavailable: never asked";
 }
 
 TEST(As11PairingApi, ConfirmWithoutAStartIsAConflict) {

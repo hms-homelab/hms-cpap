@@ -69,6 +69,23 @@ Outcome ensurePowered(const AdapterOps& ops) {
     return out;
 }
 
+Outcome cyclePower(const AdapterOps& ops) {
+    if (!ops.power_off) {
+        Outcome out;
+        out.detail = "the adapter cannot be powered off from here";
+        return out;
+    }
+    const std::string err = ops.power_off();
+    if (!err.empty()) {
+        Outcome out;
+        out.detail = "the adapter would not power off: " + err;
+        return out;
+    }
+    Outcome out = ensurePowered(ops);
+    if (out.power != Power::Ready) out.detail = "powered off, but not on again: " + out.detail;
+    return out;
+}
+
 std::vector<std::string> softBlockedBluetooth(const std::string& sysfs_root) {
     std::vector<std::string> out;
     std::error_code ec;
@@ -137,13 +154,13 @@ AdapterOps hostOps(sdbus::IConnection& conn, const std::string& adapter_path) {
             return std::nullopt;
         }
     };
-    ops.power_on = [&conn, adapter_path]() -> std::string {
+    auto set_powered = [&conn, adapter_path](bool on) -> std::string {
         try {
             auto proxy = sdbus::createProxy(conn, kBlueZ, sdbus::ObjectPath{adapter_path});
             proxy->callMethod("Set")
                 .onInterface(kProps)
                 .withTimeout(kCallTimeout)
-                .withArguments(std::string(kAdapter), std::string("Powered"), sdbus::Variant{true});
+                .withArguments(std::string(kAdapter), std::string("Powered"), sdbus::Variant{on});
             return {};
         } catch (const sdbus::Error& e) {
             return e.getName() + " " + e.getMessage();
@@ -151,6 +168,9 @@ AdapterOps hostOps(sdbus::IConnection& conn, const std::string& adapter_path) {
             return e.what();
         }
     };
+    ops.power_on = [set_powered]() { return set_powered(true); };
+    // The same Properties.Set as power_on, with the same D-Bus permission.
+    ops.power_off = [set_powered]() { return set_powered(false); };
     ops.soft_blocked = []() { return softBlockedBluetooth(); };
     ops.unblock = [](const std::string& soft) { return liftSoftBlock(soft); };
     return ops;
@@ -164,6 +184,14 @@ Outcome ensurePowered(sdbus::IConnection& conn, const std::string& adapter_path,
     } else {
         std::cerr << tag << out.detail << std::endl;
     }
+    return out;
+}
+
+Outcome cyclePower(sdbus::IConnection& conn, const std::string& adapter_path, const char* tag) {
+    std::cerr << tag << "powering the adapter off and on again" << std::endl;
+    const Outcome out = cyclePower(hostOps(conn, adapter_path));
+    if (out.power == Power::Ready) std::cout << tag << "the adapter was powered off and on again" << std::endl;
+    else std::cerr << tag << out.detail << std::endl;
     return out;
 }
 

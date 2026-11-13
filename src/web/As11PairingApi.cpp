@@ -73,6 +73,25 @@ Reply status(const IAirSense11Pairing* p, bool compiled, bool enabled) {
     r.body["therapy"] = pr.connected ? Json::Value(pr.therapy) : Json::Value(Json::nullValue);
     r.body["streaming"] = pr.streaming;
     r.body["last_contact"] = static_cast<Json::Int64>(pr.last_contact);
+    // #67: in sight but will not link, after the forget and the reset.
+    r.body["bluetooth_stuck"] = pr.bluetooth_stuck;
+    return r;
+}
+
+Reply resetBluetooth(IAirSense11Pairing* p, bool compiled, bool enabled) {
+    Reply r;
+    if (unavailable(p, compiled, enabled, &r)) return r;
+    const auto out = p->resetBluetooth();
+    using S = IAirSense11Pairing::BluetoothReset::State;
+    r.body["ok"] = out.state == S::Done;
+    r.body["forgot"] = out.forgot;
+    r.body["adapter_reset"] = out.adapter_reset;
+    Json::Value others(Json::arrayValue);
+    for (const auto& o : out.others_connected) others.append(o);
+    r.body["others_connected"] = others;
+    if (out.state == S::Busy) r.status = 409;
+    else if (out.state == S::Failed) r.status = 500;
+    if (!out.detail.empty()) r.body["error"] = out.detail;
     return r;
 }
 
@@ -92,6 +111,8 @@ Reply forget(IAirSense11Pairing* p, const std::string& credentials_path, bool pu
         r.body["error"] = "the pairing could not be removed: " + ec.message();
         return r;
     }
+    // #67: the OS's object for the machine goes with it.
+    if (p) p->forgetMachine();
     r.body["ok"] = true;
     r.body["removed"] = had;
     return r;

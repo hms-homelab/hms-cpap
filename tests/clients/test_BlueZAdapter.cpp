@@ -27,13 +27,27 @@ struct Host {
     bool unblock_works = true;
     int power_reads = 0, power_ons = 0, rfkill_reads = 0;
     std::vector<std::string> unblocked;
+    // #67: power_off, and the order of the power calls.
+    std::string power_off_answer;
+    int power_offs = 0;
+    std::vector<std::string> calls;
 
     AdapterOps ops() {
         AdapterOps o;
         o.powered = [this] { power_reads++; return powered; };
         o.power_on = [this] {
+            calls.push_back("on");
             const size_t i = static_cast<size_t>(power_ons++);
-            return i < power_on_answers.size() ? power_on_answers[i] : std::string("org.bluez.Error.Failed Failed");
+            const std::string a =
+                i < power_on_answers.size() ? power_on_answers[i] : std::string("org.bluez.Error.Failed Failed");
+            if (a.empty()) powered = true;
+            return a;
+        };
+        o.power_off = [this] {
+            calls.push_back("off");
+            power_offs++;
+            if (power_off_answer.empty()) powered = false;
+            return power_off_answer;
         };
         o.soft_blocked = [this] { rfkill_reads++; return blocked; };
         o.unblock = [this](const std::string& f) { unblocked.push_back(f); return unblock_works; };
@@ -176,3 +190,47 @@ TEST(BlueZAdapter, LiftingAReadOnlySoftBlockFails) {
     EXPECT_EQ(softBlockedBluetooth(t.path.string()).size(), 1u);   // still blocked
 }
 #endif
+
+// ── #67: the adapter powered off and on again ──
+
+TEST(BlueZAdapterCycle, OffThenOnAndReadyAgain) {
+    Host h;
+    h.powered = true;
+    h.power_on_answers = {""};
+    const auto out = cyclePower(h.ops());
+    EXPECT_EQ(out.power, Power::Ready);
+    EXPECT_TRUE(out.powered_on);
+    EXPECT_EQ(h.calls, (std::vector<std::string>{"off", "on"}));
+    EXPECT_EQ(h.powered, std::optional<bool>(true));
+}
+
+TEST(BlueZAdapterCycle, AnAdapterThatWillNotPowerOffIsLeftAsItWas) {
+    Host h;
+    h.powered = true;
+    h.power_off_answer = "org.freedesktop.DBus.Error.AccessDenied denied";
+    const auto out = cyclePower(h.ops());
+    EXPECT_EQ(out.power, Power::Failed);
+    EXPECT_NE(out.detail.find("would not power off"), std::string::npos);
+    EXPECT_NE(out.detail.find("AccessDenied"), std::string::npos);
+    EXPECT_EQ(h.power_ons, 0);
+    EXPECT_EQ(h.powered, std::optional<bool>(true));
+}
+
+TEST(BlueZAdapterCycle, OffButNotOnAgainSaysSo) {
+    Host h;
+    h.powered = true;
+    h.power_on_answers = {"org.bluez.Error.Failed Failed"};
+    const auto out = cyclePower(h.ops());
+    EXPECT_NE(out.power, Power::Ready);
+    EXPECT_NE(out.detail.find("powered off, but not on again"), std::string::npos);
+}
+
+TEST(BlueZAdapterCycle, WithoutTheMeansNothingIsTouched) {
+    Host h;
+    h.powered = true;
+    auto ops = h.ops();
+    ops.power_off = nullptr;
+    const auto out = cyclePower(ops);
+    EXPECT_EQ(out.power, Power::Failed);
+    EXPECT_TRUE(h.calls.empty());
+}

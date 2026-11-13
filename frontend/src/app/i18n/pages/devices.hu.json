@@ -332,7 +332,13 @@
       "errGeneric": "A párosítás nem sikerült. Kezdje újra.",
       "errRadioOff": "A Bluetooth ki van kapcsolva ezen a számítógépen (rf-kill). Kapcsolja be, vagy futtassa az rfkill unblock bluetooth parancsot, és próbálja újra.",
       "errRadioOffMac": "A Bluetooth ki van kapcsolva ezen a Macen, vagy a CpapDash nem használhatja. Kapcsolja be, engedélyezze a CpapDash-t a Rendszerbeállítások, Adatvédelem és biztonság, Bluetooth menüpontban, és próbálja újra.",
-      "errRadioOffWin": "A Bluetooth ki van kapcsolva ezen a PC-n, és a Windows nem engedte, hogy a CpapDash bekapcsolja. Kapcsolja be a Gépházban (Bluetooth és eszközök), ellenőrizze a repülőgépes üzemmódot, és próbálja újra."
+      "errRadioOffWin": "A Bluetooth ki van kapcsolva ezen a PC-n, és a Windows nem engedte, hogy a CpapDash bekapcsolja. Kapcsolja be a Gépházban (Bluetooth és eszközök), ellenőrizze a repülőgépes üzemmódot, és próbálja újra.",
+      "adapterStuck": "A Bluetooth-adapter nem áll helyre",
+      "adapterStuckHint": "A készülék hatótávon belül van, de nem csatlakozik, még azután sem, hogy a CpapDash elfelejtette és újraindította a Bluetooth-adaptert. Nyomja meg a Bluetooth újraindítása gombot az újrapróbáláshoz.",
+      "resetBluetooth": "Bluetooth újraindítása",
+      "resetDone": "A Bluetooth újraindult. A készüléket a következő csatlakozáskor újra megkeresi.",
+      "resetOthers": "Ezek az eszközök is elvesztették a Bluetooth-kapcsolatukat: {{devices}}.",
+      "resetFailed": "A Bluetooth nem indult újra: {{error}}"
     },
     "muleDs2": {
       "switch": "DreamStation 2 Bluetooth",
