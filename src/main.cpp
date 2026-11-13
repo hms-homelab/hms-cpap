@@ -60,6 +60,7 @@
 #include "utils/DbProbeCli.h"
 #include "utils/ParentWatch.h"
 #include "clients/ble/BleTransport.h"
+#include "clients/AirSense11BleClient.h"
 #include <algorithm>
 #include <iostream>
 #include <iomanip>
@@ -490,6 +491,41 @@ int main(int argc, char** argv) {
                 try { seconds = (std::max)(1, (std::min)(120, std::stoi(argv[i + 1]))); } catch (...) {}
             }
             return hms_cpap::ble::runScan(seconds);
+        }
+        // `--as11-spool-probe <data_dir> <YYYY-MM-DD> [spool...]`: a bench
+        // probe. Opens a session with <data_dir>'s pairing, pulls each spool
+        // on its own link, writes it to <data_dir>/spool-probe/<name>.bin and
+        // prints one ### line per spool. Nothing else runs.
+        if (std::strcmp(argv[i], "--as11-spool-probe") == 0) {
+            if (i + 2 >= argc) {
+                std::cerr << "usage: --as11-spool-probe <data_dir> <YYYY-MM-DD> [spool...]" << std::endl;
+                return 2;
+            }
+            const std::string dir = argv[i + 1], from = argv[i + 2];
+            std::vector<std::string> names;
+            for (int j = i + 3; j < argc; ++j) names.emplace_back(argv[j]);
+            if (names.empty())
+                names = {"Summary", "TherapyEvents-RespiratoryEvents", "RespiratoryFlow6p25Hz",
+                         "MaskPressure6p25Hz", "Leak0p5Hz", "InspiratoryPressure0p5Hz"};
+            hms_cpap::AirSense11BleClient client(dir);
+            const std::filesystem::path out_dir = std::filesystem::path(dir) / "spool-probe";
+            std::error_code ec;
+            std::filesystem::create_directories(out_dir, ec);
+            int ok = 0;
+            for (const auto& n : names) {
+                const auto p = client.probeSpool(n, from);
+                if (p.result == hms_cpap::as11::Result::Ok) {
+                    ++ok;
+                    std::ofstream f(out_dir / (n + ".bin"), std::ios::binary);
+                    f.write(reinterpret_cast<const char*>(p.bytes.data()),
+                            static_cast<std::streamsize>(p.bytes.size()));
+                }
+                std::cout << "### SPOOL " << n << " result=" << hms_cpap::as11::resultText(p.result)
+                          << " bytes=" << p.bytes.size() << " seconds=" << p.seconds
+                          << " status=" << (p.status.empty() ? "-" : p.status)
+                          << " error=" << (p.error.empty() ? "-" : p.error) << std::endl;
+            }
+            return ok > 0 ? 0 : 1;
         }
     }
 

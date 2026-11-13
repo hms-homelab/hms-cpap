@@ -45,6 +45,17 @@ public:
 
     std::vector<uint8_t> fetchSummary(const std::string& from) override;
 
+    /// One spool by name, from `from` ("YYYY-MM-DD"), on its own link: a
+    /// bench probe (`--as11-spool-probe`). Never while a night streams.
+    struct SpoolProbe {
+        as11::Result result = as11::Result::Protocol;
+        std::string status;   // the spool's last status (SPOOL_COMPLETE...)
+        std::string error;    // why it failed, when it did
+        std::vector<uint8_t> bytes;
+        double seconds = 0;   // StartSpool to the last fragment
+    };
+    SpoolProbe probeSpool(const std::string& name, const std::string& from);
+
     /// Pairing, step 1: connects and starts the key exchange. WaitCode means
     /// the machine's screen shows the code now; the link stays up for
     /// pairConfirm, which must follow within the machine's window (under a
