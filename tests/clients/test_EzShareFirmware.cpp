@@ -22,6 +22,16 @@ public:
     std::atomic<int> dir_requests{0};
     std::atomic<int> str_transfers{0};
     std::vector<std::string> listing_replies;
+    std::set<std::string> unavailable;
+    std::map<std::string, int> path_requests;
+    void setUnavailable(const std::string& path, bool fail) {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (fail) unavailable.insert(path); else unavailable.erase(path);
+    }
+    int calls(const std::string& path) {
+        std::lock_guard<std::mutex> lock(mutex);
+        return path_requests[path];
+    }
     void setFile(const std::string& path, const std::string& body) {
         std::lock_guard<std::mutex> lock(mutex);
         files[path] = body;
@@ -36,6 +46,8 @@ public:
     std::atomic<int> requests{0};
     std::atomic<size_t> largest{0};
     int fd = -1;
+    sockaddr_in address{};
+    std::atomic<bool> stopping{false};
     std::thread worker;
     std::string url;
 
@@ -55,11 +67,13 @@ public:
         ASSERT_EQ(listen(fd, 8), 0);
         socklen_t len = sizeof(addr);
         ASSERT_EQ(getsockname(fd, reinterpret_cast<sockaddr*>(&addr), &len), 0);
+        address = addr;
         url = "http://127.0.0.1:" + std::to_string(ntohs(addr.sin_port));
         worker = std::thread([this] {
             for (;;) {
                 int conn = accept(fd, nullptr, nullptr);
                 if (conn < 0) return;
+                if (stopping) { closeSocket(conn); return; }
 #ifdef SO_NOSIGPIPE
                 int no_sigpipe = 1;
                 setsockopt(conn, SOL_SOCKET, SO_NOSIGPIPE,
@@ -84,6 +98,7 @@ public:
                         listing_replies.erase(listing_replies.begin());
                     }
                 }
+                ++path_requests[path];
                 auto found = files.find(path);
                 bool truncate = false, stall = false, short_body = false;
                 if (found != files.end()) {
@@ -113,6 +128,12 @@ public:
                         stall = stalled.exchange(0) != 0;
                     }
                 }
+                if (unavailable.count(path)) {
+                    status = "503 Service Unavailable";
+                    type = "text/plain";
+                    body = "temporary failure";
+                    extra.clear();
+                }
                 lock.unlock();
                 std::string response = "HTTP/1.1 " + status + "\r\nContent-Type: " + type +
                     "\r\nContent-Length: " + std::to_string(short_body ? 17 : body.size()) + "\r\n" + extra +
@@ -134,8 +155,18 @@ public:
         });
     }
     ~FirmwareHttp() {
+        if (worker.joinable()) {
+            stopping = true;
+            // A real connection wakes accept() on macOS as well as Winsock.
+            // The worker observes stopping before reading from this socket.
+            int wake = socket(AF_INET, SOCK_STREAM, 0);
+            if (wake >= 0) {
+                EXPECT_EQ(connect(wake, reinterpret_cast<sockaddr*>(&address), sizeof(address)), 0);
+                closeSocket(wake);
+            }
+            worker.join();
+        }
         stopListening(fd);
-        if (worker.joinable()) worker.join();
         if (fd >= 0) closeSocket(fd);
     }
 };
@@ -146,10 +177,10 @@ protected:
     EzShareClient client;
     void fallback() {
         client.no_listing_ = true;
-        client.listing_checked_at_ = std::chrono::steady_clock::now();
+        client.listing_attempts_ = 0;
     }
-    void retryNow() { client.listing_checked_at_ = {}; }
-    void expireSTR() { client.str_read_at_ = {}; client.sessions_read_at_ = {}; }
+    void retryNow() { client.beginRefresh(); }
+    void expireSTR() { client.beginRefresh(); }
     uint64_t probe(const std::string& path) { return client.probe(path); }
     void seed(std::time_t start, size_t sessions = 1) {
         client.starts_[client.folderForStart(start)] = std::vector<std::time_t>(sessions, start);
@@ -213,7 +244,7 @@ TEST_F(EzShareFirmwareTest, STRMaskTimesDriveListingFreeDiscovery) {
     EXPECT_EQ(client.listDateFolders(), std::vector<std::string>{"20260301"});
     const int after_first = http.requests;
     EXPECT_EQ(client.listDateFolders(), std::vector<std::string>{"20260301"});
-    EXPECT_EQ(http.requests, after_first); // STR is not re-read every burst
+    EXPECT_EQ(http.requests, after_first); // reuse only within this refresh
     const auto path = (std::filesystem::temp_directory_path() / "hms-str-cache.edf").string();
     ASSERT_TRUE(client.downloadRootFile("STR.edf", path));
     EXPECT_EQ(http.requests, after_first);
@@ -222,6 +253,19 @@ TEST_F(EzShareFirmwareTest, STRMaskTimesDriveListingFreeDiscovery) {
     const auto files = client.listFiles("20260301");
     ASSERT_EQ(files.size(), 1u);
     EXPECT_EQ(files[0].name, "20260301_221626_BRP.edf");
+    // A new refresh sees new STR content immediately, without advancing time.
+    edf[256 + 256 * labels.size() + 2] = static_cast<char>(617 & 255);
+    edf[256 + 256 * labels.size() + 3] = static_cast<char>(617 >> 8);
+    http.setFile("/STR.edf", edf);
+    client.beginRefresh();
+    EXPECT_EQ(client.listDateFolders(), std::vector<std::string>{"20260301"});
+    EXPECT_EQ(http.str_transfers, 2);
+    ASSERT_TRUE(client.downloadRootFile("STR.edf", path));
+    std::ifstream updated(path, std::ios::binary);
+    EXPECT_EQ(std::string(std::istreambuf_iterator<char>(updated), {}), edf);
+    EXPECT_EQ(http.str_transfers, 2);
+    updated.close();
+    std::filesystem::remove(path);
 }
 
 TEST_F(EzShareFirmwareTest, SecondsOffsetsSA2AndCachedNames) {
@@ -299,7 +343,7 @@ TEST_F(EzShareFirmwareTest, AliasesFindSessionsSTRDoesNotList) {
     const int before = http.requests;
     files = client.listFiles("20260301");
     EXPECT_EQ(files.size(), 8u);
-    EXPECT_GT(http.requests - before, 8 + 3); // absent companions are retried // sizes, then aliases past ~8
+    EXPECT_EQ(http.requests - before, 8 + 3); // cached sizes, then aliases past ~8
 }
 
 TEST_F(EzShareFirmwareTest, BoundedChunksResumeAfterCutAndTimeout) {
@@ -346,13 +390,21 @@ TEST_F(EzShareFirmwareTest, EmptyAndCutShort200ListingsNeverEnableFallback) {
     FirmwareHttp http;
     http.listing = "";
     http.start(); client.setBaseURL(http.url);
+    testing::internal::CaptureStderr();
     EXPECT_TRUE(client.listDateFolders().empty());
+    EXPECT_TRUE(client.listFiles("20260301").empty());
+    EXPECT_TRUE(client.listDir("").empty());
+    const auto log = testing::internal::GetCapturedStderr();
+    EXPECT_NE(log.find("empty response listing DATALOG"), std::string::npos);
+    EXPECT_NE(log.find("empty response for 20260301"), std::string::npos);
+    EXPECT_NE(log.find("empty response listing ''"), std::string::npos);
     EXPECT_FALSE(fallbackEnabled());
     http.setListing("<pre>2026- 3-");
+    EXPECT_TRUE(client.listDateFolders().empty());
     EXPECT_TRUE(client.listFiles("20260301").empty());
     EXPECT_TRUE(client.listDir("").empty());
     EXPECT_FALSE(fallbackEnabled());
-    EXPECT_EQ(http.dir_requests, 3);
+    EXPECT_EQ(http.dir_requests, 6);
 }
 
 TEST_F(EzShareFirmwareTest, WelcomeMustRepeatAndRecoveredListingLeavesFallback) {
@@ -495,5 +547,66 @@ TEST_F(EzShareFirmwareTest, UnchangedEventCountsMatchWithoutSignalRepair) {
         EXPECT_FALSE(signalEdfRecordCountMatches(path, "14      ")) << type;
     }
     std::filesystem::remove_all(dir);
+}
+
+TEST_F(EzShareFirmwareTest, ListingRecoveryRetriesAfterBoundedListingAttempts) {
+    FirmwareHttp http;
+    http.start(); client.setBaseURL(http.url); fallback();
+    http.setListing("<pre>2026- 3- 1 22:16:26 <DIR> <a href=\"x\">20260301</a></pre>");
+    for (int attempt = 0; attempt < 3; ++attempt) client.listDir("unknown");
+    EXPECT_EQ(http.dir_requests, 0);
+    EXPECT_EQ(client.listDateFolders(), std::vector<std::string>{"20260301"});
+    EXPECT_FALSE(fallbackEnabled());
+    EXPECT_EQ(http.dir_requests, 2); // recovery check, then normal listing
+}
+
+TEST_F(EzShareFirmwareTest, MissingTypesAreCachedButFailuresAndLateFilesAreRetried) {
+    FirmwareHttp http;
+    std::string header(256, ' ');
+    header.replace(168, 16, "01.03.2622.16.26");
+    const std::string prefix = "/DATALOG/20260301/20260301_221626_";
+    http.files["/DATALOG/20260301/202603~1.EDF"] = header;
+    http.files[prefix + "BRP.edf"] = header;
+    http.setUnavailable(prefix + "PLD.edf", true);
+    http.start(); client.setBaseURL(http.url); fallback();
+    ASSERT_EQ(client.listFiles("20260301").size(), 1u);
+    EXPECT_EQ(http.calls(prefix + "TCV.edf"), 1);
+    http.setUnavailable(prefix + "PLD.edf", false);
+    http.setFile(prefix + "PLD.edf", header);
+    ASSERT_EQ(client.listFiles("20260301").size(), 2u);
+    EXPECT_EQ(http.calls(prefix + "TCV.edf"), 1) << "confirmed absence avoids another seven offsets";
+    EXPECT_EQ(http.calls(prefix + "PLD.edf"), 3) << "retry resolves PLD, then reads its current size";
+    http.setFile(prefix + "TCV.edf", header);
+    ASSERT_EQ(client.listFiles("20260301").size(), 2u); // cached on third scan
+    EXPECT_EQ(client.listFiles("20260301").size(), 3u); // bounded retry finds late file without alias
+}
+
+TEST_F(EzShareFirmwareTest, JournalIsHeldAcrossRefreshesButFailedTransferRetries) {
+    FirmwareHttp http;
+    http.files["/journal.jnl"] = std::string(32, 'j');
+    http.files["/STR.edf"] = std::string(256, ' ');
+    http.start(); client.setBaseURL(http.url); fallback();
+    const auto path = (std::filesystem::temp_directory_path()/"hms-fw440-journal.jnl").string();
+    ASSERT_TRUE(client.downloadByPath("journal.jnl", path));
+    const auto before = http.calls("/journal.jnl");
+    client.beginRefresh();
+    EXPECT_FALSE(client.needsFullRefresh("journal.jnl", path));
+    client.beginRefresh();
+    EXPECT_FALSE(client.needsFullRefresh("journal.jnl", path));
+    EXPECT_EQ(http.calls("/journal.jnl"), before);
+    http.setUnavailable("/journal.jnl", true);
+    EXPECT_FALSE(client.downloadByPath("journal.jnl", path));
+    client.beginRefresh();
+    EXPECT_TRUE(client.needsFullRefresh("journal.jnl", path));
+    http.setUnavailable("/journal.jnl", false);
+    ASSERT_TRUE(client.downloadByPath("journal.jnl", path));
+    EXPECT_FALSE(client.needsFullRefresh("journal.jnl", path));
+    std::filesystem::remove(path);
+}
+
+TEST_F(EzShareFirmwareTest, IdleServerTeardownWakesAcceptWithoutAnHttpRequest) {
+    const auto before = std::chrono::steady_clock::now();
+    { FirmwareHttp http; http.start(); }
+    EXPECT_LT(std::chrono::steady_clock::now() - before, std::chrono::seconds(2));
 }
 } // namespace hms_cpap

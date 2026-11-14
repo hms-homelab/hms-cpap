@@ -1578,8 +1578,8 @@ std::optional<std::vector<std::string>> BurstCollectorService::captureCardResidu
             } else {
                 std::error_code ec;
                 auto local_sz = std::filesystem::file_size(local_path, ec);
-                if (!ec && (local_sz + 1023) / 1024 ==
-                               static_cast<uint64_t>(e.size_kb) &&
+                if (!ec && (e.size_bytes > 0 ? local_sz == e.size_bytes :
+                            (local_sz + 1023) / 1024 == static_cast<uint64_t>(e.size_kb)) &&
                     !data_source_->needsFullRefresh(rel, local_path.string()))
                     continue;
             }
@@ -2723,6 +2723,7 @@ bool BurstCollectorService::executeBurstCycle() {
         const std::string tonight = tonightFolder(now_s, offset);
 
         try {
+            data_source_->beginRefresh();
             // D1: the DATALOG index once per start (until one succeeds), once
             // a day at the machine's noon, and on a reason. It used to be
             // listed twice on every burst.

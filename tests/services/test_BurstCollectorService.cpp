@@ -1789,6 +1789,12 @@ public:
 class FakeDataSource : public IDataSource {
 public:
     std::set<std::string> rewritten_files;
+    int refreshes = 0;
+    bool fail_refresh = false;
+    void beginRefresh() override {
+        ++refreshes;
+        if (fail_refresh) throw std::runtime_error("synthetic STR refresh failed");
+    }
     bool needsFullRefresh(const std::string& path, const std::string&) override {
         return rewritten_files.count(path) > 0;
     }
@@ -4676,6 +4682,71 @@ TEST_F(BurstOrchestrationTest, TheArchiveNeverTakesAShorterEdf) {
 
 
 namespace burst_orch {
+
+
+TEST_F(BurstOrchestrationTest, FailedRefreshUsesDiscoveryRecoveryAndRelistsNextBurst) {
+    long long now = kSdd054T0;
+    auto svc = makeService([](FakeDataSource& ds) {
+        ds.date_folders = {"20261013"};
+        ds.folder_files["20261013"] = {mkEntry("notes.txt", 1)};
+    });
+    onSdd054Clock(*svc, now);
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    ASSERT_TRUE(svc->runBurstCycleForTest());
+    ASSERT_EQ(src_raw->index_lists, 1);
+
+    src_raw->fail_refresh = true;
+    now += kSdd054Min;
+    testing::internal::CaptureStderr();
+    EXPECT_FALSE(svc->runBurstCycleForTest());
+    const auto failure = testing::internal::GetCapturedStderr();
+    EXPECT_NE(failure.find("Session discovery failed: synthetic STR refresh failed"), std::string::npos);
+    EXPECT_NE(failure.find("Consecutive failures: 1/"), std::string::npos);
+    EXPECT_EQ(src_raw->index_lists, 1) << "a failed STR read does not use stale listings";
+
+    src_raw->fail_refresh = false;
+    now += kSdd054Min;
+    testing::internal::CaptureStdout();
+    EXPECT_TRUE(svc->runBurstCycleForTest());
+    const auto recovered = testing::internal::GetCapturedStdout();
+    EXPECT_NE(recovered.find("answers again; listing everything recent once"), std::string::npos);
+    EXPECT_EQ(src_raw->index_lists, 1) << "recovery schedules the following burst";
+
+    now += kSdd054Min;
+    EXPECT_TRUE(svc->runBurstCycleForTest());
+    EXPECT_EQ(src_raw->index_lists, 2) << "recovery re-lists the card index without waiting for noon";
+    EXPECT_EQ(src_raw->refreshes, 4);
+}
+
+TEST_F(BurstOrchestrationTest, JournalUsesExactSizeAcrossRefreshes) {
+    long long now = kSdd054T0;
+    auto svc = makeService([](FakeDataSource&) {});
+    onSdd054Clock(*svc, now);
+    auto entry = mkEntry("journal.jnl", 1);
+    entry.size_bytes = 13; // FakeDataSource's RESIDUE_BYTES
+    src_raw->dir_listings[""] = {entry};
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, sessionExists(_, _)).WillRepeatedly(Return(false));
+    auto pulls = [&] {
+        return std::count(src_raw->downloaded_by_path.begin(), src_raw->downloaded_by_path.end(),
+                          std::string("journal.jnl"));
+    };
+    svc->runBurstCycleForTest();
+    EXPECT_EQ(src_raw->refreshes, 1);
+    EXPECT_EQ(pulls(), 1);
+    now += 24 * 60 * kSdd054Min; // next daily card-root sweep
+    svc->runBurstCycleForTest();
+    EXPECT_EQ(src_raw->refreshes, 2);
+    EXPECT_EQ(src_raw->index_lists, 2);
+    EXPECT_EQ(pulls(), 1) << "an unchanged journal is held across refreshes";
+    src_raw->dir_listings[""][0].size_bytes = 14; // same rounded KiB
+    now += 24 * 60 * kSdd054Min;
+    svc->runBurstCycleForTest();
+    EXPECT_EQ(src_raw->refreshes, 3);
+    EXPECT_EQ(pulls(), 2) << "a one-byte change invalidates the captured journal";
+}
+
 TEST_F(BurstOrchestrationTest, SameLengthRewriteBypassesDatabaseAndLocalSizeSkips) {
     auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
     archiveSeededNight({"20200101_220000_BRP.edf", "20200101_220000_PLD.edf",
