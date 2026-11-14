@@ -11,6 +11,13 @@ class IDataSource {
 public:
     virtual ~IDataSource() = default;
 
+    /// Listing-free sources can detect rewrites that keep the same size.
+    /// True also when an available content check cannot establish freshness.
+    virtual bool needsFullRefresh(const std::string&, const std::string&) { return false; }
+
+    /// Start one collector refresh. Sources may reuse reads until the next call.
+    virtual void beginRefresh() {}
+
     virtual bool supportsRange() const { return true; }
 
     /**

@@ -1788,6 +1788,16 @@ public:
 // ── In-memory fake data source (pattern from test_SessionDiscoveryService) ────
 class FakeDataSource : public IDataSource {
 public:
+    std::set<std::string> rewritten_files;
+    int refreshes = 0;
+    bool fail_refresh = false;
+    void beginRefresh() override {
+        ++refreshes;
+        if (fail_refresh) throw std::runtime_error("synthetic STR refresh failed");
+    }
+    bool needsFullRefresh(const std::string& path, const std::string&) override {
+        return rewritten_files.count(path) > 0;
+    }
     std::vector<std::string> date_folders;
     std::map<std::string, std::vector<EzShareFileEntry>> folder_files;
     int download_count = 0;
@@ -1796,6 +1806,7 @@ public:
     std::map<std::string, std::vector<EzShareFileEntry>> dir_listings;
     std::vector<std::string> downloaded_files;     // filenames via downloadFile()
     std::vector<std::string> ranged_files;         // filenames via downloadFileRange()
+    std::set<std::string> failed_by_path;
     std::vector<std::string> downloaded_by_path;   // card-rel paths via downloadByPath()
     // Observed at the moment each file is requested, so a test can ask what
     // the collector had already done by the time it came back for more.
@@ -1836,6 +1847,7 @@ public:
     bool downloadByPath(const std::string& card_rel_path,
                         const std::string& local_path) override {
         downloaded_by_path.push_back(card_rel_path);
+        if (failed_by_path.count(card_rel_path)) return false;
         std::filesystem::create_directories(std::filesystem::path(local_path).parent_path());
         std::ofstream ofs(local_path, std::ios::binary);
         ofs << "RESIDUE_BYTES";
@@ -4667,3 +4679,158 @@ TEST_F(BurstOrchestrationTest, TheArchiveNeverTakesAShorterEdf) {
 }
 
 }  // namespace burst_orch
+
+
+namespace burst_orch {
+
+
+TEST_F(BurstOrchestrationTest, FailedRefreshUsesDiscoveryRecoveryAndRelistsNextBurst) {
+    long long now = kSdd054T0;
+    auto svc = makeService([](FakeDataSource& ds) {
+        ds.date_folders = {"20261013"};
+        ds.folder_files["20261013"] = {mkEntry("notes.txt", 1)};
+    });
+    onSdd054Clock(*svc, now);
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    ASSERT_TRUE(svc->runBurstCycleForTest());
+    ASSERT_EQ(src_raw->index_lists, 1);
+
+    src_raw->fail_refresh = true;
+    now += kSdd054Min;
+    testing::internal::CaptureStderr();
+    EXPECT_FALSE(svc->runBurstCycleForTest());
+    const auto failure = testing::internal::GetCapturedStderr();
+    EXPECT_NE(failure.find("Session discovery failed: synthetic STR refresh failed"), std::string::npos);
+    EXPECT_NE(failure.find("Consecutive failures: 1/"), std::string::npos);
+    EXPECT_EQ(src_raw->index_lists, 1) << "a failed STR read does not use stale listings";
+
+    src_raw->fail_refresh = false;
+    now += kSdd054Min;
+    testing::internal::CaptureStdout();
+    EXPECT_TRUE(svc->runBurstCycleForTest());
+    const auto recovered = testing::internal::GetCapturedStdout();
+    EXPECT_NE(recovered.find("answers again; listing everything recent once"), std::string::npos);
+    EXPECT_EQ(src_raw->index_lists, 1) << "recovery schedules the following burst";
+
+    now += kSdd054Min;
+    EXPECT_TRUE(svc->runBurstCycleForTest());
+    EXPECT_EQ(src_raw->index_lists, 2) << "recovery re-lists the card index without waiting for noon";
+    EXPECT_EQ(src_raw->refreshes, 4);
+}
+
+TEST_F(BurstOrchestrationTest, JournalUsesExactSizeAcrossRefreshes) {
+    long long now = kSdd054T0;
+    auto svc = makeService([](FakeDataSource&) {});
+    onSdd054Clock(*svc, now);
+    auto entry = mkEntry("journal.jnl", 1);
+    entry.size_bytes = 13; // FakeDataSource's RESIDUE_BYTES
+    src_raw->dir_listings[""] = {entry};
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, sessionExists(_, _)).WillRepeatedly(Return(false));
+    auto pulls = [&] {
+        return std::count(src_raw->downloaded_by_path.begin(), src_raw->downloaded_by_path.end(),
+                          std::string("journal.jnl"));
+    };
+    svc->runBurstCycleForTest();
+    EXPECT_EQ(src_raw->refreshes, 1);
+    EXPECT_EQ(pulls(), 1);
+    now += 24 * 60 * kSdd054Min; // next daily card-root sweep
+    svc->runBurstCycleForTest();
+    EXPECT_EQ(src_raw->refreshes, 2);
+    EXPECT_EQ(src_raw->index_lists, 2);
+    EXPECT_EQ(pulls(), 1) << "an unchanged journal is held across refreshes";
+    src_raw->dir_listings[""][0].size_bytes = 14; // same rounded KiB
+    now += 24 * 60 * kSdd054Min;
+    svc->runBurstCycleForTest();
+    EXPECT_EQ(src_raw->refreshes, 3);
+    EXPECT_EQ(pulls(), 2) << "a one-byte change invalidates the captured journal";
+}
+
+TEST_F(BurstOrchestrationTest, SameLengthRewriteBypassesDatabaseAndLocalSizeSkips) {
+    auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
+    archiveSeededNight({"20200101_220000_BRP.edf", "20200101_220000_PLD.edf",
+                        "20200101_220000_CSL.edf", "20200101_220000_EVE.edf"});
+    for (auto& entry : src_raw->folder_files["20200101"]) {
+        entry.size_bytes = static_cast<uint64_t>(entry.size_kb) * 1024;
+        const auto local = temp_dir / "20200101" / entry.name;
+        std::filesystem::create_directories(local.parent_path());
+        std::ofstream(local, std::ios::binary) << "0       " << std::string(entry.size_bytes - 8, ' ');
+    }
+    src_raw->rewritten_files.insert("DATALOG/20200101/20200101_220000_BRP.edf");
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, sessionExists(_, _)).WillRepeatedly(Return(true));
+    const std::map<std::string, int> stored = {
+        {"20200101_220000_BRP.edf", 100 * 1024},
+        {"20200101_220000_PLD.edf", 20 * 1024}};
+    EXPECT_CALL(*db_raw, getCheckpointFileSizes(_, _)).WillRepeatedly(Return(stored));
+    svc->runBurstCycleForTest();
+    EXPECT_TRUE(fetched(src_raw->downloaded_files, "20200101_220000_BRP.edf"));
+    EXPECT_FALSE(fetched(src_raw->ranged_files, "20200101_220000_BRP.edf"))
+        << "a same-length header rewrite must replace the copy from byte zero";
+    EXPECT_FALSE(fetched(src_raw->downloaded_files, "20200101_220000_PLD.edf"));
+}
+
+TEST_F(BurstOrchestrationTest, SameLengthResidueRewriteBypassesSizeSkip) {
+    auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
+    src_raw->dir_listings[""] = {mkEntry("Identification.json", 1)};
+    src_raw->dir_listings["SETTINGS"] = {mkEntry("CurrentSettings.json", 1)};
+    std::filesystem::create_directories(archive_dir / "SETTINGS");
+    std::ofstream(archive_dir / "SETTINGS" / "CurrentSettings.json") << std::string(1024, 'y');
+    src_raw->rewritten_files.insert("SETTINGS\\CurrentSettings.json");
+    std::ofstream(archive_dir / "Identification.json") << std::string(1024, 'x');
+    src_raw->rewritten_files.insert("Identification.json");
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, sessionExists(_, _)).WillRepeatedly(Return(false));
+    svc->runBurstCycleForTest();
+    EXPECT_TRUE(fetched(src_raw->downloaded_by_path, "Identification.json"));
+    EXPECT_TRUE(fetched(src_raw->downloaded_by_path, "SETTINGS\\CurrentSettings.json"));
+}
+
+TEST_F(BurstOrchestrationTest, FailedJsonDoesNotAdvanceItsCompanionCrc) {
+    auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
+    src_raw->dir_listings[""] = {mkEntry("Identification.json", 1), mkEntry("Identification.crc", 1)};
+    std::ofstream(archive_dir / "Identification.json") << std::string(1024, 'x');
+    std::ofstream(archive_dir / "Identification.crc") << "OLD";
+    src_raw->rewritten_files = {"Identification.json", "Identification.crc"};
+    src_raw->failed_by_path.insert("Identification.json");
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, sessionExists(_, _)).WillRepeatedly(Return(false));
+    svc->runBurstCycleForTest();
+    EXPECT_TRUE(fetched(src_raw->downloaded_by_path, "Identification.json"));
+    EXPECT_FALSE(fetched(src_raw->downloaded_by_path, "Identification.crc"));
+    std::ifstream old_crc(archive_dir / "Identification.crc");
+    EXPECT_EQ(std::string(std::istreambuf_iterator<char>(old_crc), {}), "OLD");
+    // A later successful JSON transfer admits the CRC in the same pass.
+    old_crc.close();
+    svc.reset();
+    svc = makeService(&BurstOrchestrationTest::seedOneSession);
+    src_raw->dir_listings[""] = {mkEntry("Identification.json", 1), mkEntry("Identification.crc", 1)};
+    src_raw->rewritten_files = {"Identification.json", "Identification.crc"};
+    svc->runBurstCycleForTest();
+    EXPECT_TRUE(fetched(src_raw->downloaded_by_path, "Identification.json"));
+    EXPECT_TRUE(fetched(src_raw->downloaded_by_path, "Identification.crc"));
+}
+
+} // namespace burst_orch
+
+TEST_F(BurstCollectorServiceTest, ArchivePreservesSameLengthFinalisedHeader) {
+    const auto source = test_temp_dir / "20260301" / "20260301_221626_BRP.edf";
+    const auto target = test_archive_dir / "DATALOG" / "20260301" / source.filename();
+    createTestFile(source, 512);
+    createTestFile(target, 512);
+    {
+        std::fstream out(source, std::ios::binary | std::ios::in | std::ios::out);
+        out.seekp(236); out << "13      ";
+    }
+    BurstCollectorService service(60);
+    ASSERT_TRUE(service.archiveSessionFilesForTest("20260301", test_temp_dir.string(),
+                                                   test_archive_dir.string()));
+    std::ifstream input(target, std::ios::binary);
+    input.seekg(236);
+    std::string count(8, ' '); input.read(count.data(), count.size());
+    EXPECT_EQ(count, "13      ");
+}

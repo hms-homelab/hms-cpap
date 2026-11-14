@@ -23,6 +23,10 @@ namespace hms_cpap {
 /// it rewrote the field.
 bool repairSignalEdfFile(const std::string& path);
 
+/// Compare a probed remote record count with the local copy, allowing the
+/// archive's canonical count repair. Does not write the local file.
+bool signalEdfRecordCountMatches(const std::string& path, const std::string& remote_count);
+
 struct SignalEdfRepair {
     int checked  = 0;   ///< signal files looked at
     int repaired = 0;   ///< of those, rewritten

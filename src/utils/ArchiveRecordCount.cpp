@@ -52,6 +52,28 @@ bool repairSignalEdfFile(const std::string& path) {
     return static_cast<bool>(f);
 }
 
+bool signalEdfRecordCountMatches(const std::string& path, const std::string& remote_count) {
+    if (remote_count.size() != 8) return false;
+    std::error_code ec;
+    const auto size = fs::file_size(path, ec);
+    if (ec) return false;
+    std::ifstream input(path, std::ios::binary);
+    std::vector<char> head(256);
+    if (!input.read(head.data(), head.size())) return false;
+    const std::string local_count(head.data() + 236, 8);
+    if (local_count == remote_count) return true;
+    if (!cpapdash::parser::isResmedSignalEdf(fs::path(path).filename().string())) return false;
+    const auto bytes = cpapdash::parser::edfHeaderBytes(head.data(), head.size());
+    if (bytes < 256 || bytes > kMaxHeaderBytes || bytes > size) return false;
+    head.resize(bytes);
+    if (!input.read(head.data() + 256, bytes - 256)) return false;
+    std::copy(remote_count.begin(), remote_count.end(), head.begin() + 236);
+    // The same parser repair used when the archive was written decides
+    // whether its count is equivalent to the remote, still-open header.
+    if (!cpapdash::parser::repairEdfDataRecords(head.data(), head.size(), size)) return false;
+    return std::string(head.data() + 236, 8) == local_count;
+}
+
 SignalEdfRepair repairSignalEdfsIn(const std::string& dir) {
     SignalEdfRepair r;
     std::error_code ec;
