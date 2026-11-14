@@ -259,7 +259,7 @@ test('every Reset Bluetooth line exists in every language (#67)', async () => {
     for (const k of keys) {
       const v = j.devices.as11[k];
       assert.ok(typeof v === 'string' && v.length > 0, `${lang} devices.as11.${k}`);
-      assert.ok(!v.includes('—'), `${lang} devices.as11.${k} has an em-dash`);
+      assert.ok(!v.includes(String.fromCharCode(0x2014)), `${lang} devices.as11.${k} has an em-dash`);
     }
     assert.equal(j.devices.as11.resetFailed, undefined, `${lang}: the raw-error line is gone`);
   }
