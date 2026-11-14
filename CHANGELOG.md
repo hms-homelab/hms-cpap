@@ -23,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the SleepHQ export. Before, a bridge-mode night could export both sets
   of samples to SleepHQ and chart them twice. Nights with only live samples,
   and setups without a bridge, read as before.
+- **A PostgreSQL database object closes its query connection when it goes
+  away.** Each one left a server connection open until the process exited.
+  In the test suite that ran the server out of connections and failed the
+  later PostgreSQL tests.
 
 ## [6.2.3] - 2026-11-13
 

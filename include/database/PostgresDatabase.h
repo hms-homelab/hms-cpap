@@ -20,6 +20,12 @@ class PostgresDatabase : public IDatabase {
 public:
     explicit PostgresDatabase(const std::string& connection_string);
 
+    // Closes the separate libpq connection executeQuery opens. Without this
+    // every instance left one server connection open until the process
+    // exited, which in the test suite (one instance per Postgres test) ran
+    // the server out of connections and failed the later Postgres tests.
+    ~PostgresDatabase() override;
+
     DbType dbType() const override { return DbType::POSTGRESQL; }
 
     // -- Connection management ------------------------------------------------
