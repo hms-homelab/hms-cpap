@@ -92,6 +92,8 @@ Reply resetBluetooth(IAirSense11Pairing* p, bool compiled, bool enabled) {
     if (out.state == S::Busy) r.status = 409;
     else if (out.state == S::Failed) r.status = 500;
     if (!out.detail.empty()) r.body["error"] = out.detail;
+    // The page shows a translated line for this, never `error`.
+    if (!out.reason.empty()) r.body["reason"] = out.reason;
     return r;
 }
 

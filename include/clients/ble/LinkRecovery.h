@@ -80,16 +80,21 @@ private:
  */
 class RadioInUse {
 public:
-    explicit RadioInUse(std::string what);
+    /// `code`: a stable word for the page ("streaming", "o2ring_transfer");
+    /// `what`: the English for the log.
+    RadioInUse(std::string code, std::string what);
     ~RadioInUse();
     RadioInUse(const RadioInUse&) = delete;
     RadioInUse& operator=(const RadioInUse&) = delete;
 
 private:
+    std::string code_;
     std::string what_;
 };
 
 /// What holds the radio now, one entry per RadioInUse alive.
 std::vector<std::string> radioInUse();
+/// The same, as their codes, in the same order.
+std::vector<std::string> radioInUseCodes();
 
 } // namespace hms_cpap::ble

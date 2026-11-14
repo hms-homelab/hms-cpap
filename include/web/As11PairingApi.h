@@ -22,7 +22,7 @@ namespace hms_cpap::as11api {
  *   POST /api/airsense11/ble/pull
  *        {ok}: the summary pulled now, out of turn
  *   POST /api/airsense11/ble/reset
- *        {ok, forgot, adapter_reset, others_connected, error?} (#67)
+ *        {ok, forgot, adapter_reset, others_connected, reason?, error?} (#67)
  *   POST /api/airsense11/ble/pair/start
  *        {ok, state: "wait_code" | "failed", result, error?}
  *   POST /api/airsense11/ble/pair/confirm   {code}
@@ -58,8 +58,10 @@ Reply cancel(IAirSense11Pairing* p);
 Reply forget(IAirSense11Pairing* p, const std::string& credentials_path, bool pull_due);
 /// #67: "Reset Bluetooth": forgets the OS's object for the machine and
 /// power-cycles the adapter now. {ok, forgot, adapter_reset,
-/// others_connected, error?}; 409 while a night streams, a pairing or a pull
-/// talks to the machine, or an O2 Ring transfer runs; 500 when it failed.
+/// others_connected, reason?, error?}; 409 while a night streams, a pairing
+/// is open, or an O2 Ring transfer runs (reason streaming, pairing_open,
+/// o2ring_transfer); 500 when it failed (no_adapter, reset_failed). `error`
+/// is English for the log; the page translates `reason`.
 Reply resetBluetooth(IAirSense11Pairing* p, bool compiled, bool enabled);
 
 } // namespace hms_cpap::as11api

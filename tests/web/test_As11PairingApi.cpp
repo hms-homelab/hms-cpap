@@ -224,15 +224,22 @@ TEST(As11PairingApi, ResetBluetoothAnswers) {
     EXPECT_TRUE(r.body["adapter_reset"].asBool());
     EXPECT_TRUE(r.body["others_connected"].isArray());
 
-    p.reset_answer = {S::Busy, false, false, {}, "not while an O2 Ring transfer"};
-    r = as11api::resetBluetooth(&p, true, true);
-    EXPECT_EQ(r.status, 409);
-    EXPECT_EQ(r.body["error"].asString(), "not while an O2 Ring transfer");
+    EXPECT_FALSE(r.body.isMember("reason")) << "no reason when it was done";
 
-    p.reset_answer = {S::Failed, true, false, {"O2Ring 1234"}, "no"};
+    // Every refusal carries the code the page translates.
+    for (const char* code : {"streaming", "o2ring_transfer", "pairing_open"}) {
+        p.reset_answer = {S::Busy, false, false, {}, "not reset: English for the log", code};
+        r = as11api::resetBluetooth(&p, true, true);
+        EXPECT_EQ(r.status, 409);
+        EXPECT_EQ(r.body["reason"].asString(), code);
+        EXPECT_FALSE(r.body["ok"].asBool());
+    }
+
+    p.reset_answer = {S::Failed, true, false, {"O2Ring 1234"}, "no", "reset_failed"};
     r = as11api::resetBluetooth(&p, true, true);
     EXPECT_EQ(r.status, 500);
     EXPECT_FALSE(r.body["ok"].asBool());
+    EXPECT_EQ(r.body["reason"].asString(), "reset_failed");
     EXPECT_EQ(r.body["others_connected"][0].asString(), "O2Ring 1234");
 
     const int asked = p.resets;

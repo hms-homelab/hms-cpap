@@ -368,6 +368,20 @@ export function isIsoDay(s: string | null | undefined): boolean {
   return !isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
 }
 
+/**
+ * #67: the line for a Reset Bluetooth that was not done, by the `reason` code
+ * the service sends. Never the service's own English: an unknown code (or
+ * none) is a generic line.
+ */
+export function as11ResetRefusalKey(reason: string | null | undefined): string {
+  switch (reason) {
+    case 'streaming':       return 'devices.as11.resetNotStreaming';
+    case 'o2ring_transfer': return 'devices.as11.resetNotO2Ring';
+    case 'pairing_open':    return 'devices.as11.resetNotPairing';
+    default:                return 'devices.as11.resetNotGeneric';
+  }
+}
+
 /** The address and port this page reaches the service on, for the empty state. */
 export function hostOf(location: { hostname: string }): string {
   return location.hostname || 'localhost';

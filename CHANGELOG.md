@@ -31,8 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   link back (`bluetooth_stuck` in the AirSense 11 status).
 - **Reset Bluetooth** on the Devices page (`POST /api/airsense11/ble/reset`):
   forgets the machine's BlueZ object and power-cycles the adapter now. It
-  answers 409 while a night streams, a pairing or pull runs, or an O2 Ring
-  transfer is in progress.
+  answers 409 while a night streams, a pairing is open, or an O2 Ring
+  transfer is in progress, with a `reason` code (`streaming`,
+  `pairing_open`, `o2ring_transfer`) that the page shows in its own
+  language.
 
 ## [6.2.3] - 2026-11-13
 

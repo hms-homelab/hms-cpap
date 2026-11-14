@@ -336,9 +336,12 @@
       "adapterStuck": "Bluetooth adapter not recovering",
       "adapterStuckHint": "The machine is in range but will not connect, even after CpapDash forgot it and restarted the Bluetooth adapter. Press Reset Bluetooth to try again.",
       "resetBluetooth": "Reset Bluetooth",
-      "resetDone": "Bluetooth was reset. The machine is looked for again on the next connect.",
+      "resetDone": "Bluetooth was reset. CpapDash looks for your machine again on the next connection.",
       "resetOthers": "These devices lost their Bluetooth link too: {{devices}}.",
-      "resetFailed": "Bluetooth was not reset: {{error}}"
+      "resetNotStreaming": "Not reset: a night is streaming. Try again when it ends.",
+      "resetNotO2Ring": "Not reset: an O2 Ring transfer is running. Try again when it ends.",
+      "resetNotPairing": "Not reset: a pairing is open. Try again when it ends.",
+      "resetNotGeneric": "Not reset. Try again in a moment."
     },
     "muleDs2": {
       "switch": "DreamStation 2 Bluetooth",

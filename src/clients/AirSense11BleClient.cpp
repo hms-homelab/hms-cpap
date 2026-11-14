@@ -330,11 +330,13 @@ IAirSense11Pairing::BluetoothReset AirSense11BleClient::resetBluetooth() {
     BluetoothReset out;
     if (!transport_ || !transport_->available()) {
         out.detail = "no Bluetooth adapter";
+        out.reason = "no_adapter";
         return out;
     }
     if (streaming_) {
         out.state = BluetoothReset::State::Busy;
-        out.detail = "a night is streaming from the machine: reset Bluetooth when it ends";
+        out.detail = "not reset: a night is streaming from the machine";
+        out.reason = "streaming";
         return out;
     }
     struct Want {
@@ -345,12 +347,14 @@ IAirSense11Pairing::BluetoothReset AirSense11BleClient::resetBluetooth() {
     std::lock_guard<std::mutex> lk(op_mtx_);
     if (session_.pairPending()) {
         out.state = BluetoothReset::State::Busy;
-        out.detail = "a pairing is open: reset Bluetooth when it ends";
+        out.detail = "not reset: a pairing is open";
+        out.reason = "pairing_open";
         return out;
     }
     if (const auto in_use = ble::radioInUse(); !in_use.empty()) {
         out.state = BluetoothReset::State::Busy;
-        out.detail = "not while " + joined(in_use);
+        out.detail = "not reset: " + joined(in_use) + " is running";
+        out.reason = ble::radioInUseCodes().front();
         return out;
     }
     std::cerr << kTag << "Reset Bluetooth (Devices page)" << std::endl;
@@ -372,6 +376,7 @@ IAirSense11Pairing::BluetoothReset AirSense11BleClient::resetBluetooth() {
     } else {
         out.state = BluetoothReset::State::Failed;
         out.detail = r.detail;
+        out.reason = "reset_failed";
         note("Reset Bluetooth: the adapter could not be reset: " + r.detail);
     }
     return out;
@@ -694,7 +699,7 @@ bool AirSense11BleClient::streamOnce() {
         // which Windows requires.
         KeepAwake awake("a night streams from the AirSense 11");
         // #67: and the adapter is never reset under it.
-        ble::RadioInUse in_use("an AirSense 11 night streaming");
+        ble::RadioInUse in_use("streaming", "an AirSense 11 night streaming");
         uint64_t last = reports_;
         auto last_progress = std::chrono::steady_clock::now();
         while (running_ && therapy_ && session_.connected()) {
