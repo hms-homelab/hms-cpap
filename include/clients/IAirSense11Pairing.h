@@ -58,9 +58,15 @@ public:
         bool forgot = false;          // an OS object for the machine was dropped
         bool adapter_reset = false;   // the adapter was powered off and on again
         std::vector<std::string> others_connected;   // other devices that lost their link
-        std::string detail;           // why not, when Busy or Failed
+        std::string detail;           // why not, when Busy or Failed (English, for the log)
+        /// Why not, as a stable code the page translates: Busy is
+        /// "streaming", "pairing_open" or "o2ring_transfer"; Failed is
+        /// "no_adapter" or "reset_failed".
+        std::string reason;
     };
-    virtual BluetoothReset resetBluetooth() { return {BluetoothReset::State::Failed, false, false, {}, "not supported here"}; }
+    virtual BluetoothReset resetBluetooth() {
+        return {BluetoothReset::State::Failed, false, false, {}, "not supported here", "reset_failed"};
+    }
 };
 
 } // namespace hms_cpap

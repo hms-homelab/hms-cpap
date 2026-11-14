@@ -12,6 +12,7 @@ import {
   Confirmations, ConfigRow, DeviceCommand, DeviceEntry, DevicesAnswer, buildSet, commandState, configRows, costKey,
   errorText, groupKeys, hostOf, latestCommand, latestConfigValues, recordingWarning, releaseLine, riskyGroups,
   switchView, groupCode, ds2PairView, ds2PairRunning, ds2RefusalKey, ds2Reads, ds2NextRead, isIsoDay,
+  as11ResetRefusalKey,
 } from './devices-model';
 import {
   MuleDs2Pairing, muleDs2ErrorKey, muleDs2ModePayload, muleDs2On, muleDs2Pairing, muleDs2Reading, muleDs2RefusalKey,
@@ -745,7 +746,8 @@ export class DevicesComponent implements OnInit, OnDestroy {
       },
       error: (e) => {
         this.busy[d.key] = false;
-        this.note(d, this.t.instant('devices.as11.resetFailed', { error: errorText(e) }), true);
+        // The service's reason code, translated; never its English.
+        this.note(d, this.t.instant(as11ResetRefusalKey(e?.error?.reason)), true);
         this.load(false);
       },
     });

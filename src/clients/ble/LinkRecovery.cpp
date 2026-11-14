@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <mutex>
+#include <utility>
 
 namespace hms_cpap::ble {
 
@@ -48,27 +49,37 @@ std::mutex& inUseMutex() {
     static std::mutex m;
     return m;
 }
-std::vector<std::string>& inUseList() {
-    static std::vector<std::string> v;
+// (code, what), one per RadioInUse alive.
+std::vector<std::pair<std::string, std::string>>& inUseList() {
+    static std::vector<std::pair<std::string, std::string>> v;
     return v;
 }
 } // namespace
 
-RadioInUse::RadioInUse(std::string what) : what_(std::move(what)) {
+RadioInUse::RadioInUse(std::string code, std::string what) : code_(std::move(code)), what_(std::move(what)) {
     std::lock_guard<std::mutex> lk(inUseMutex());
-    inUseList().push_back(what_);
+    inUseList().emplace_back(code_, what_);
 }
 
 RadioInUse::~RadioInUse() {
     std::lock_guard<std::mutex> lk(inUseMutex());
     auto& v = inUseList();
-    auto it = std::find(v.begin(), v.end(), what_);
+    auto it = std::find(v.begin(), v.end(), std::make_pair(code_, what_));
     if (it != v.end()) v.erase(it);
 }
 
 std::vector<std::string> radioInUse() {
     std::lock_guard<std::mutex> lk(inUseMutex());
-    return inUseList();
+    std::vector<std::string> out;
+    for (const auto& e : inUseList()) out.push_back(e.second);
+    return out;
+}
+
+std::vector<std::string> radioInUseCodes() {
+    std::lock_guard<std::mutex> lk(inUseMutex());
+    std::vector<std::string> out;
+    for (const auto& e : inUseList()) out.push_back(e.first);
+    return out;
 }
 
 } // namespace hms_cpap::ble

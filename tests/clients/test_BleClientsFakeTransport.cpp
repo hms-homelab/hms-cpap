@@ -798,7 +798,7 @@ TEST(As11Recovery, NoAdapterResetWhileATransferHoldsTheRadio) {
     auto t = stuckMachine({}, Step::Resolve);
     AirSense11BleClient c(tempDir(), "", t, quick());
     {
-        ble::RadioInUse ring("an O2 Ring transfer");
+        ble::RadioInUse ring("o2ring_transfer", "an O2 Ring transfer");
         for (int i = 0; i < 4; i++) c.pairStart();
         EXPECT_EQ(t->resets, 0);
         EXPECT_FALSE(t->forgotten.empty()) << "the forget does not cut anyone's transfer";
@@ -856,12 +856,24 @@ TEST(As11Recovery, ResetBluetoothForgetsAndResetsAndClearsNotRecovering) {
 TEST(As11Recovery, ResetBluetoothWaitsForATransfer) {
     auto t = stuckMachine({});
     AirSense11BleClient c(tempDir(), "", t, quick());
-    ble::RadioInUse ring("an O2 Ring transfer");
+    ble::RadioInUse ring("o2ring_transfer", "an O2 Ring transfer");
     const auto r = c.resetBluetooth();
     EXPECT_EQ(r.state, IAirSense11Pairing::BluetoothReset::State::Busy);
+    EXPECT_EQ(r.reason, "o2ring_transfer");
     EXPECT_NE(r.detail.find("O2 Ring"), std::string::npos);
     EXPECT_EQ(t->resets, 0);
-    EXPECT_EQ(as11api::resetBluetooth(&c, true, true).status, 409);
+    const auto a = as11api::resetBluetooth(&c, true, true);
+    EXPECT_EQ(a.status, 409);
+    EXPECT_EQ(a.body["reason"].asString(), "o2ring_transfer");
+}
+
+TEST(As11Recovery, AFailedResetCarriesItsCode) {
+    auto t = stuckMachine({});
+    t->reset_result = {false, "the adapter would not power off"};
+    AirSense11BleClient c(tempDir(), "", t, quick());
+    const auto a = as11api::resetBluetooth(&c, true, true);
+    EXPECT_EQ(a.status, 500);
+    EXPECT_EQ(a.body["reason"].asString(), "reset_failed");
 }
 
 TEST(As11Recovery, ResetBluetoothSaysWhyItFailed) {
@@ -878,7 +890,9 @@ TEST(As11Recovery, ResetBluetoothWithoutAnAdapter) {
     auto t = stuckMachine({});
     t->available_ = false;
     AirSense11BleClient c(tempDir(), "", t, quick());
-    EXPECT_EQ(c.resetBluetooth().state, IAirSense11Pairing::BluetoothReset::State::Failed);
+    const auto r = c.resetBluetooth();
+    EXPECT_EQ(r.state, IAirSense11Pairing::BluetoothReset::State::Failed);
+    EXPECT_EQ(r.reason, "no_adapter");
     EXPECT_EQ(t->resets, 0);
 }
 
@@ -963,11 +977,15 @@ TEST(LinkRecoveryLadder, RestartIsANewStreak) {
 TEST(LinkRecoveryLadder, RadioInUseIsHeldForItsScope) {
     const auto before = ble::radioInUse().size();
     {
-        ble::RadioInUse a("an O2 Ring transfer");
-        ble::RadioInUse b("an AirSense 11 night streaming");
+        ble::RadioInUse a("o2ring_transfer", "an O2 Ring transfer");
+        ble::RadioInUse b("streaming", "an AirSense 11 night streaming");
         const auto now = ble::radioInUse();
         EXPECT_EQ(now.size(), before + 2);
         EXPECT_NE(std::find(now.begin(), now.end(), "an O2 Ring transfer"), now.end());
+        const auto codes = ble::radioInUseCodes();
+        ASSERT_EQ(codes.size(), now.size());
+        EXPECT_EQ(codes[codes.size() - 2], "o2ring_transfer");
+        EXPECT_EQ(codes.back(), "streaming");
     }
     EXPECT_EQ(ble::radioInUse().size(), before);
 }
