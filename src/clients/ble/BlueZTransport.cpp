@@ -48,6 +48,7 @@ Device toDevice(const std::string& path, const Props& p) {
     if (auto rssi = prop<int16_t>(p, "RSSI")) d.rssi = *rssi;
     // BlueZ sets RSSI on an object while its adverts come in.
     d.advertising = d.rssi.has_value();
+    d.connected = prop<bool>(p, "Connected").value_or(false);
     return d;
 }
 
@@ -346,6 +347,15 @@ public:
     bool forget(const Device& device) override {
         if (!available()) return false;
         return bluez::forgetDevice(*conn_, adapter_path_, device.id);
+    }
+
+    // #67: Powered false then true on Adapter1, the same Properties.Set the
+    // power-on before every scan already makes.
+    AdapterReset resetAdapter() override {
+        if (!available()) return {false, "no Bluetooth adapter"};
+        const auto out = bluez::cyclePower(*conn_, adapter_path_, tag_.c_str());
+        if (out.power == bluez::Power::Ready) return {true, ""};
+        return {false, out.detail};
     }
 
     // ── SDD-064: an OS bond by numeric comparison (the DreamStation 2) ──

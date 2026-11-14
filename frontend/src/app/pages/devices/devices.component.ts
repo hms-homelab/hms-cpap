@@ -12,6 +12,7 @@ import {
   Confirmations, ConfigRow, DeviceCommand, DeviceEntry, DevicesAnswer, buildSet, commandState, configRows, costKey,
   errorText, groupKeys, hostOf, latestCommand, latestConfigValues, recordingWarning, releaseLine, riskyGroups,
   switchView, groupCode, ds2PairView, ds2PairRunning, ds2RefusalKey, ds2Reads, ds2NextRead, isIsoDay,
+  as11ResetRefusalKey,
 } from './devices-model';
 import {
   MuleDs2Pairing, muleDs2ErrorKey, muleDs2ModePayload, muleDs2On, muleDs2Pairing, muleDs2Reading, muleDs2RefusalKey,
@@ -730,6 +731,26 @@ export class DevicesComponent implements OnInit, OnDestroy {
 
   askAs11Forget(d: DeviceEntry): void {
     this.confirms.ask(d.key, 'as11_forget', 'devices.as11.forgetPairingConfirm', null);
+  }
+
+  /** #67: one click, no confirm: forget the machine's OS object and power-cycle the adapter. */
+  as11ResetBluetooth(d: DeviceEntry): void {
+    this.busy[d.key] = true;
+    this.api.as11ResetBluetooth().subscribe({
+      next: (r: any) => {
+        this.busy[d.key] = false;
+        const others: string[] = r?.others_connected ?? [];
+        this.note(d, this.t.instant('devices.as11.resetDone') +
+          (others.length ? ' ' + this.t.instant('devices.as11.resetOthers', { devices: others.join(', ') }) : ''), false);
+        this.load(false);
+      },
+      error: (e) => {
+        this.busy[d.key] = false;
+        // The service's reason code, translated; never its English.
+        this.note(d, this.t.instant(as11ResetRefusalKey(e?.error?.reason)), true);
+        this.load(false);
+      },
+    });
   }
 
   as11PairStart(): void {

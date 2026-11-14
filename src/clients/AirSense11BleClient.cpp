@@ -67,6 +67,7 @@ IAirSense11Pairing::Presence AirSense11BleClient::presence() const {
     p.therapy      = link_up_ && therapy_;
     p.streaming    = streaming_;
     p.last_contact = last_contact_;
+    p.bluetooth_stuck = bluetooth_stuck_;
     return p;
 }
 
@@ -105,6 +106,9 @@ bool AirSense11BleClient::scan(int timeout_ms) {
         if (!as11::advertIsAirSense(d.name, d.uuids)) return false;
         if (advertising && !d.advertising) return false;
         if (!advertising && !machine_name_.empty() && d.name != machine_name_) return false;
+        // #67: recovering, the fresh advert must be the same machine.
+        if (advertising && match_name_ && !machine_name_.empty() && !d.name.empty() && d.name != machine_name_)
+            return false;
         return true;
     };
     auto take = [this](const ble::Device& d) {
@@ -132,6 +136,7 @@ bool AirSense11BleClient::scan(int timeout_ms) {
     if (found) take(*res.device);
     if (found) {
         rediscover_ = false;
+        match_name_ = false;
         std::cout << kTag << "found " << device_.name << " (advertising now)" << std::endl;
     } else {
         note("machine not advertising (asleep, out of range, or connected elsewhere)");
@@ -143,6 +148,11 @@ bool AirSense11BleClient::connectLink(int timeout_ms, int scan_ms) {
     if (!transport_ || !transport_->available()) {
         note("no Bluetooth adapter");
         return false;
+    }
+    // A pairing removed while a link was up: its OS object goes now.
+    if (forget_pending_.exchange(false)) {
+        forgetCachedMachine();
+        rediscover_ = true;
     }
     if (!scan(scan_ms)) return false;
 
@@ -169,18 +179,25 @@ bool AirSense11BleClient::connectLink(int timeout_ms, int scan_ms) {
         if (!scan(kScanMs)) return false;
         res = attempt();
     }
+    // #67: the machine is in sight and will not link. Each counted failure
+    // moves the recovery one rung; a rung that does something is followed at
+    // once by a fresh attempt. Only failures drive it, never a timer.
+    while (!res.link) {
+        noteLinkError(res);
+        if (!ble::countsTowardRecovery(res.error)) break;
+        if (!recover(recovery_.onFailure())) break;
+        session_.onDisconnect();
+        if (!scan(kScanMs)) return false;
+        res = attempt();
+    }
     if (!res.link) {
-        switch (res.error) {
-        case ble::LinkError::Resolve: note("services not resolved in time"); break;
-        case ble::LinkError::NoCharacteristics:
-            note("the machine's characteristics were not found" + (res.detail.empty() ? "" : " (" + res.detail + ")"));
-            break;
-        case ble::LinkError::Notify: note("notifications could not be enabled: " + res.detail); break;
-        default: note("connect failed"); break;
-        }
         dropLink();
         return false;
     }
+    if (recovery_.failures() > 0)
+        std::cout << kTag << "the link is back after " << recovery_.failures() << " failed attempt(s)" << std::endl;
+    recovery_.onSuccess();
+    bluetooth_stuck_ = false;
     link_ = std::move(res.link);
     const uint16_t mtu = link_->mtu();
     write_chunk_ = mtu > 23 ? mtu - 3 : 20;
@@ -188,6 +205,181 @@ bool AirSense11BleClient::connectLink(int timeout_ms, int scan_ms) {
     link_up_      = true;
     last_contact_ = static_cast<long long>(std::time(nullptr));
     return true;
+}
+
+void AirSense11BleClient::noteLinkError(const ble::ConnectResult& res) {
+    std::string what;
+    switch (res.error) {
+    case ble::LinkError::Resolve: what = "services not resolved in time"; break;
+    case ble::LinkError::NoCharacteristics:
+        what = "the machine's characteristics were not found" + (res.detail.empty() ? "" : " (" + res.detail + ")");
+        break;
+    case ble::LinkError::Notify: what = "notifications could not be enabled: " + res.detail; break;
+    default: what = "connect failed"; break;
+    }
+    // #67: still not recovering, and the page and the log keep saying so.
+    note(bluetooth_stuck_ ? "Bluetooth adapter not recovering (" + what + ")" : what);
+}
+
+// ── #67: a machine in sight that will not link ──
+
+namespace {
+std::string joined(const std::vector<std::string>& v) {
+    std::string s;
+    for (const auto& x : v) s += (s.empty() ? "" : ", ") + x;
+    return s;
+}
+} // namespace
+
+int AirSense11BleClient::forgetCachedMachine() {
+    if (!transport_ || !transport_->available()) return 0;
+    std::vector<std::string> dropped;
+    auto drop = [&](const ble::Device& d) {
+        if (d.id.empty() || std::find(dropped.begin(), dropped.end(), d.id) != dropped.end()) return;
+        if (!transport_->forget(d)) return;
+        dropped.push_back(d.id);
+        std::cout << kTag << "forgot the cached object for " << (d.name.empty() ? d.id : d.name) << std::endl;
+    };
+    if (have_device_) drop(device_);
+    // Every object that is this machine: the one just used, and any other
+    // the OS still holds under its address or its name.
+    for (const auto& d : transport_->known()) {
+        if (!address_.empty() && ble::lower(d.address) != address_) continue;
+        if (!as11::advertIsAirSense(d.name, d.uuids)) continue;
+        if (!machine_name_.empty() && !d.name.empty() && d.name != machine_name_) continue;
+        drop(d);
+    }
+    have_device_ = false;
+    return static_cast<int>(dropped.size());
+}
+
+std::vector<std::string> AirSense11BleClient::othersConnected() {
+    std::vector<std::string> out;
+    if (!transport_) return out;
+    for (const auto& d : transport_->known()) {
+        if (!d.connected) continue;
+        if (have_device_ && d.id == device_.id) continue;
+        if (as11::advertIsAirSense(d.name, d.uuids) && (machine_name_.empty() || d.name == machine_name_)) continue;
+        out.push_back(d.name.empty() ? d.address : d.name + " (" + d.address + ")");
+    }
+    return out;
+}
+
+bool AirSense11BleClient::recover(ble::RecoveryStep step) {
+    switch (step) {
+    case ble::RecoveryStep::None:
+        return false;
+    case ble::RecoveryStep::Forget:
+        std::cerr << kTag << device_.name << " is in sight but did not link " << recovery_.failures()
+                  << " times in a row: forgetting the OS's cached object and finding it again by a fresh advert"
+                  << std::endl;
+        if (machine_name_.empty() && !device_.name.empty() && device_.name[0] != '<') machine_name_ = device_.name;
+        forgetCachedMachine();
+        rediscover_ = true;
+        match_name_ = true;
+        return true;
+    case ble::RecoveryStep::ResetAdapter: {
+        // Never under a transfer hms-cpap itself has running on the radio.
+        const auto in_use = ble::radioInUse();
+        if (!in_use.empty()) {
+            std::cerr << kTag << "the link still fails after the forget, but the adapter is not reset while "
+                      << joined(in_use) << ": the next failure asks again" << std::endl;
+            recovery_.resetDeferred();
+            return false;
+        }
+        const auto others = othersConnected();
+        if (!others.empty())
+            std::cerr << kTag << "WARNING: resetting the Bluetooth adapter now; these devices are linked on it and "
+                      << "lose their link too: " << joined(others) << std::endl;
+        else
+            std::cerr << kTag << "the link still fails after the forget: resetting the Bluetooth adapter "
+                      << "(no other device is linked on it)" << std::endl;
+        forgetCachedMachine();
+        const auto r = transport_->resetAdapter();
+        if (r.ok) std::cout << kTag << "the adapter was reset: finding the machine again by a fresh advert" << std::endl;
+        else std::cerr << kTag << "the adapter could not be reset: " << r.detail << std::endl;
+        rediscover_ = true;
+        match_name_ = true;
+        // One more fresh attempt decides it, reset or not.
+        return true;
+    }
+    case ble::RecoveryStep::NotRecovering:
+        bluetooth_stuck_ = true;
+        note("Bluetooth adapter not recovering: the machine is in sight but will not link, after forgetting it "
+             "and resetting the adapter. Use Reset Bluetooth on the Devices page.");
+        return false;
+    }
+    return false;
+}
+
+void AirSense11BleClient::forgetMachine() {
+    // Never wait here for a link to end: the Devices page's request would
+    // hang for it. Held, the forget happens on the next connect instead.
+    std::unique_lock<std::mutex> lk(op_mtx_, std::try_to_lock);
+    if (!lk.owns_lock()) {
+        forget_pending_ = true;
+        std::cout << kTag << "the machine's cached object is dropped on the next connect" << std::endl;
+        return;
+    }
+    const int n = forgetCachedMachine();
+    rediscover_ = true;
+    std::cout << kTag << "the pairing was removed: " << n << " cached object(s) for the machine forgotten" << std::endl;
+}
+
+IAirSense11Pairing::BluetoothReset AirSense11BleClient::resetBluetooth() {
+    BluetoothReset out;
+    if (!transport_ || !transport_->available()) {
+        out.detail = "no Bluetooth adapter";
+        out.reason = "no_adapter";
+        return out;
+    }
+    if (streaming_) {
+        out.state = BluetoothReset::State::Busy;
+        out.detail = "not reset: a night is streaming from the machine";
+        out.reason = "streaming";
+        return out;
+    }
+    struct Want {
+        AirSense11BleClient* c;
+        explicit Want(AirSense11BleClient* x) : c(x) { c->want_radio_ = true; c->wake_.notify_all(); }
+        ~Want() { c->want_radio_ = false; c->wake_.notify_all(); }
+    } want(this);
+    std::lock_guard<std::mutex> lk(op_mtx_);
+    if (session_.pairPending()) {
+        out.state = BluetoothReset::State::Busy;
+        out.detail = "not reset: a pairing is open";
+        out.reason = "pairing_open";
+        return out;
+    }
+    if (const auto in_use = ble::radioInUse(); !in_use.empty()) {
+        out.state = BluetoothReset::State::Busy;
+        out.detail = "not reset: " + joined(in_use) + " is running";
+        out.reason = ble::radioInUseCodes().front();
+        return out;
+    }
+    std::cerr << kTag << "Reset Bluetooth (Devices page)" << std::endl;
+    out.others_connected = othersConnected();
+    if (!out.others_connected.empty())
+        std::cerr << kTag << "WARNING: resetting the Bluetooth adapter; these devices are linked on it and lose "
+                  << "their link too: " << joined(out.others_connected) << std::endl;
+    out.forgot = forgetCachedMachine() > 0;
+    const auto r = transport_->resetAdapter();
+    out.adapter_reset = r.ok;
+    // A new start: the next failures climb the ladder from the bottom.
+    recovery_.restart();
+    bluetooth_stuck_ = false;
+    rediscover_ = true;
+    match_name_ = !machine_name_.empty();
+    if (r.ok) {
+        out.state = BluetoothReset::State::Done;
+        std::cout << kTag << "Bluetooth reset: the next connect finds the machine by a fresh advert" << std::endl;
+    } else {
+        out.state = BluetoothReset::State::Failed;
+        out.detail = r.detail;
+        out.reason = "reset_failed";
+        note("Reset Bluetooth: the adapter could not be reset: " + r.detail);
+    }
+    return out;
 }
 
 void AirSense11BleClient::dropLink() {
@@ -506,6 +698,8 @@ bool AirSense11BleClient::streamOnce() {
         // ends, when the stream ends or the link drops; on the same thread,
         // which Windows requires.
         KeepAwake awake("a night streams from the AirSense 11");
+        // #67: and the adapter is never reset under it.
+        ble::RadioInUse in_use("streaming", "an AirSense 11 night streaming");
         uint64_t last = reports_;
         auto last_progress = std::chrono::steady_clock::now();
         while (running_ && therapy_ && session_.connected()) {

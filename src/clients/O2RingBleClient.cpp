@@ -1,5 +1,6 @@
 #include "clients/O2RingBleClient.h"
 #include "clients/OxyIIProtocol.h"
+#include "clients/ble/LinkRecovery.h"
 #include <nlohmann/json.hpp>
 #include <iostream>
 #include <chrono>
@@ -594,6 +595,7 @@ bool O2RingBleClient::isConnected() {
 
 IO2RingClient::LiveReading O2RingBleClient::getLive() {
     std::lock_guard<std::mutex> op(op_mtx_);
+    ble::RadioInUse in_use("o2ring_transfer", "an O2 Ring live reading");   // #67: no adapter reset under it
     LiveReading r;
     std::cout << "O2Ring BLE: getLive() scanning..." << std::endl;
     if (!scan()) { std::cout << "O2Ring BLE: scan failed" << std::endl; return r; }
@@ -623,6 +625,7 @@ IO2RingClient::LiveReading O2RingBleClient::getLive() {
 
 std::vector<std::string> O2RingBleClient::listFiles() {
     std::lock_guard<std::mutex> op(op_mtx_);
+    ble::RadioInUse in_use("o2ring_transfer", "an O2 Ring transfer");   // #67: no adapter reset under it
     std::vector<std::string> files;
     if (!scan() || !connect()) return files;
 
@@ -664,6 +667,7 @@ std::vector<std::string> O2RingBleClient::listFiles() {
 
 std::vector<uint8_t> O2RingBleClient::downloadFile(const std::string& filename) {
     std::lock_guard<std::mutex> op(op_mtx_);
+    ble::RadioInUse in_use("o2ring_transfer", "an O2 Ring transfer");   // #67: no adapter reset under it
     std::vector<uint8_t> result;
     if (!scan() || !connect()) return result;
 

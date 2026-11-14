@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import {
   CONFIG_KEYS, Confirmations, buildSet, commandState, configRows, costKey, errorText, groupKeys, latestConfigValues,
   recordingWarning, releaseLine, riskyGroups, setTouchesNetwork, switchView,
-  groupCode, ds2PairView, ds2PairRunning, ds2RefusalKey, ds2Reads, ds2NextRead, isIsoDay,
+  groupCode, ds2PairView, ds2PairRunning, ds2RefusalKey, ds2Reads, ds2NextRead, isIsoDay, as11ResetRefusalKey,
 } from './devices-model.ts';
 
 // ── the in-page confirm and the recording warning ──
@@ -239,4 +239,28 @@ test('a refused request names why', () => {
   assert.equal(ds2RefusalKey('disabled'), 'devices.ds2.errDisabled');
   assert.equal(ds2RefusalKey('not_compiled'), 'devices.ds2.notCompiled');
   assert.equal(ds2RefusalKey(undefined), 'devices.ds2.errGeneric');
+});
+
+test('a Reset Bluetooth that was not done says why in the page\'s own words (#67)', () => {
+  assert.equal(as11ResetRefusalKey('streaming'), 'devices.as11.resetNotStreaming');
+  assert.equal(as11ResetRefusalKey('o2ring_transfer'), 'devices.as11.resetNotO2Ring');
+  assert.equal(as11ResetRefusalKey('pairing_open'), 'devices.as11.resetNotPairing');
+  // Anything else, or nothing, is the generic line: never the service's English.
+  for (const r of ['reset_failed', 'no_adapter', 'disabled', 'something_new', '', null, undefined])
+    assert.equal(as11ResetRefusalKey(r), 'devices.as11.resetNotGeneric');
+});
+
+test('every Reset Bluetooth line exists in every language (#67)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const keys = ['resetNotStreaming', 'resetNotO2Ring', 'resetNotPairing', 'resetNotGeneric', 'resetDone',
+                'resetOthers', 'adapterStuck', 'adapterStuckHint', 'resetBluetooth'];
+  for (const lang of ['en', 'es', 'fr', 'hu', 'pt']) {
+    const j = JSON.parse(readFileSync(new URL(`../../i18n/pages/devices.${lang}.json`, import.meta.url), 'utf8'));
+    for (const k of keys) {
+      const v = j.devices.as11[k];
+      assert.ok(typeof v === 'string' && v.length > 0, `${lang} devices.as11.${k}`);
+      assert.ok(!v.includes(String.fromCharCode(0x2014)), `${lang} devices.as11.${k} has an em-dash`);
+    }
+    assert.equal(j.devices.as11.resetFailed, undefined, `${lang}: the raw-error line is gone`);
+  }
 });
