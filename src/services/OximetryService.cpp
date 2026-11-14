@@ -102,6 +102,16 @@ bool OximetryService::collectAndPublish() {
             continue;
         }
 
+        // An O2Ring-S file is whole once its trailer is there. One listed before
+        // that is half a night, and storing it would stop the finished file
+        // being read (a stored name is skipped), so it is left for the next ask.
+        if (cpapdash::parser::O2RingSParser::looksLike(data.data(), data.size()) &&
+            !cpapdash::parser::O2RingSParser::isComplete(data.data(), data.size())) {
+            std::cout << "O2Ring: " << filename
+                      << " is still being written, not stored yet" << std::endl;
+            continue;
+        }
+
         // Either ring's format, chosen by the bytes: the original O2Ring's .vld
         // or the O2Ring-S's own, whose start time is its file name.
         auto session = parseOximetryFile(data.data(), data.size(), filename);

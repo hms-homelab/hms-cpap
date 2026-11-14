@@ -1,4 +1,6 @@
 // TimeCompat brings fileStat/setFileMtime; <utime.h> does not exist on MSVC.
+#include <chrono>
+#include <thread>
 #include "utils/TimeCompat.h"
 #include "utils/OximetryDevice.h"
 #include "services/BurstCollectorService.h"
@@ -24,6 +26,7 @@
 #include "utils/CardResidue.h"
 #include "utils/ArchiveRecordCount.h"
 #include "services/OximetryImport.h"
+#include "services/O2RingFileWatch.h"
 #include "services/RemovedNights.h"
 #include "services/Ds2ReadTime.h"
 #include "services/SefamCardMirror.h"
@@ -2261,21 +2264,23 @@ bool BurstCollectorService::executeBurstCycle() {
     //   INACTIVE (off finger) → .vld files available, no live data
     //
     // We always poll /o2ring/live to detect the current state.
-    // File download triggers ONLY on the active→inactive transition
-    // (session just ended, .vld file freshly written to ring storage).
+    // File download is owed from the active→inactive transition on
+    // (session just ended, file freshly written to ring storage), and only
+    // while it is owed: the ring can take a few seconds to list it, so
+    // each poll where it answers asks again, up to O2RingFileWatch::kMaxTries.
     //
     // Three outcomes from pollLive():
     //   1. active=true  → ring on finger, save live sample + MQTT
     //   2. active=false, reachable → ring off finger (spo2=255)
     //   3. unreachable (timeout) → mule can't connect to ring, all zeros
     //
-    // Edge case: if ring is unreachable (off/out of range), we do NOT
-    // reset o2ring_was_active — we wait until we get a confirmed
-    // active=true before triggering any file download.
+    // Edge case: if ring is unreachable (off/out of range), O2RingFileWatch
+    // keeps its state, so the end of a session is not lost: the download
+    // happens once the ring answers again as inactive.
     //
     if (oximetry_service_) {
         try {
-            static bool o2ring_was_active = false;
+            static O2RingFileWatch o2ring_watch;
 
             auto live = oximetry_service_->pollLive();
 
@@ -2300,16 +2305,28 @@ bool BurstCollectorService::executeBurstCycle() {
                     db_service_->saveLiveOximetrySample(kOximetryDeviceId, date_buf,
                                                          live.spo2, live.hr, live.motion);
                 }
-                o2ring_was_active = true;
-            } else if (o2ring_was_active && reachable) {
-                // STATE: Session just ended (active→inactive transition)
-                // Ring wrote .vld file — download it now
-                std::cout << "O2Ring: Session ended — checking for new files" << std::endl;
-                oximetry_service_->collectAndPublish();
-                o2ring_was_active = false;
-                ds2NightEnded("o2ring");   // SDD-064 D5: the ring's night ended too
             }
-            // STATE: Unreachable or was already inactive — no action, wait
+            // The ring's own run status, logged whenever it changes, so the
+            // seconds around a session's end say when its file becomes ready.
+            static int o2ring_run = -2;
+            if (reachable && live.run != o2ring_run) {
+                std::cout << "O2Ring: run status " << live.run << " (was " << o2ring_run
+                          << "), active=" << live.active << std::endl;
+                o2ring_run = live.run;
+            }
+            // The end of a session owes its file. The ring may not list it for
+            // a few seconds, so each poll where it answers and is off the
+            // finger asks again, until a new file is saved or the tries are
+            // spent. No wait: the next cycle is the retry.
+            if (o2ring_watch.shouldCollect(live.active, reachable)) {
+                std::cout << "O2Ring: checking for new files (try " << o2ring_watch.tries()
+                          << " of " << O2RingFileWatch::kMaxTries
+                          << ", run status " << live.run << ")" << std::endl;
+                const bool saved = oximetry_service_->collectAndPublish();
+                o2ring_watch.collected(saved);
+                if (o2ring_watch.firstTry())
+                    ds2NightEnded("o2ring");   // SDD-064 D5: the ring's night ended too
+            }
         } catch (const std::exception& e) {
             std::cerr << "O2Ring: Failed (non-fatal): " << e.what() << std::endl;
         }
