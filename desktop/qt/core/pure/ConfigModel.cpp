@@ -46,6 +46,7 @@ const std::vector<std::string>& secretPaths() {
         "mqtt.password",
         "llm.api_key",
         "sleephq.client_secret",
+        "cpapdash.token",
     };
     return paths;
 }
