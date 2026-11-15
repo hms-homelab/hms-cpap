@@ -173,6 +173,7 @@ void OximetryService::noteFacts(bool connected) {
     std::lock_guard<std::mutex> lk(facts_mtx_);
     facts_.checked_at = static_cast<long long>(std::time(nullptr));
     facts_.connected  = connected;
+    if (connected) facts_.last_contact = facts_.checked_at;
     if (battery >= 0) facts_.battery = battery;
     facts_.live = last_live_;
 }

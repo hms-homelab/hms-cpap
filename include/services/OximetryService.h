@@ -62,6 +62,7 @@ public:
         long long   checked_at = 0;
         bool        connected = false;
         int         battery = -1;          // -1: not known
+        long long   last_contact = 0;      // the last time the ring answered, this run
         long long   last_read_at = 0;      // the last file stored
         std::string last_file;
         IO2RingClient::LiveReading live;

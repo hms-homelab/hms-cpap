@@ -244,6 +244,7 @@
       "live": "En direct",
       "liveValue": "SpO2 {{spo2}} %, pouls {{hr}}",
       "notRecording": "n'enregistre pas",
+      "lastContact": "Dernier contact",
       "lastFile": "Dernier fichier lu",
       "readNow": "Lire la bague maintenant",
       "reading": "Lecture de la bague...",

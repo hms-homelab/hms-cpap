@@ -244,6 +244,7 @@
       "live": "Ao vivo",
       "liveValue": "SpO2 {{spo2}}%, pulso {{hr}}",
       "notRecording": "não está gravando",
+      "lastContact": "Último contato",
       "lastFile": "Último arquivo lido",
       "readNow": "Ler o anel agora",
       "reading": "Lendo o anel...",

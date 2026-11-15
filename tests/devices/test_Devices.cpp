@@ -190,7 +190,8 @@ TEST(Devices, TheRingThroughABridgeInABuildWithoutBluetoothAndDirect) {
     out = buildDevices(in, store);
     EXPECT_EQ((*find(out, "o2ring"))["present"].asString(), "unknown") << "not asked yet";
 
-    in.o2 = parse(R"({"checked_at":1762299990,"connected":true,"battery":81,"last_read_at":1762290000,
+    in.o2 = parse(R"({"checked_at":1762299990,"connected":true,"last_contact":1762299990,"battery":81,
+                      "last_read_at":1762290000,
                       "last_file":"20261105.vld","live":{"active":true,"spo2":96,"hr":61}})");
     out = buildDevices(in, store);
     d = find(out, "o2ring");
@@ -199,6 +200,62 @@ TEST(Devices, TheRingThroughABridgeInABuildWithoutBluetoothAndDirect) {
     EXPECT_EQ((*d)["recording"].asString(), "yes");
     EXPECT_NE((*d)["recording_reason"].asString().find("ring"), std::string::npos);
     EXPECT_EQ((*d)["last_heard"].asInt64(), 1762299990);
+    EXPECT_EQ((*d)["detail"]["last_contact"].asInt64(), 1762299990);
+}
+
+// The ring reads as the AirSense 11 does: present while it answers, away once it
+// has been heard or read and does not, unknown until either; last seen is the
+// later of the last contact and the last file read.
+TEST(Devices, TheRingIsAwayOnceHeardAndSeenAtTheLaterOfContactAndRead) {
+    DevicesStore store("");
+    auto in = none();
+    in.o2_enabled  = true;
+    in.o2_mode     = "ble";
+    in.ble_compiled = true;
+
+    in.o2 = parse(R"({"checked_at":1762300500,"connected":false,"last_contact":1762300000,"last_read_at":1762290000})");
+    auto out = buildDevices(in, store);
+    auto d = find(out, "o2ring");
+    ASSERT_TRUE(d);
+    EXPECT_EQ((*d)["present"].asString(), "no") << "heard before, not answering now";
+    EXPECT_EQ((*d)["last_heard"].asInt64(), 1762300000) << "the contact is later than the read";
+    EXPECT_EQ((*d)["detail"]["last_contact"].asInt64(), 1762300000);
+
+    in.o2 = parse(R"({"checked_at":1762300500,"connected":false,"last_contact":1762280000,"last_read_at":1762290000})");
+    out = buildDevices(in, store);
+    d = find(out, "o2ring");
+    ASSERT_TRUE(d);
+    EXPECT_EQ((*d)["last_heard"].asInt64(), 1762290000) << "the read is later than the contact";
+}
+
+TEST(Devices, TheRingAfterARestartHasOnlyItsLastReadAndIsAwayNotUnknown) {
+    DevicesStore store("");
+    auto in = none();
+    in.o2_enabled  = true;
+    in.o2_mode     = "ble";
+    in.ble_compiled = true;
+    in.o2 = parse(R"({"checked_at":0,"connected":null,"last_contact":0,"last_read_at":1762290000,
+                      "last_file":"20261105.o2s"})");
+    const auto out = buildDevices(in, store);
+    const auto* d = find(out, "o2ring");
+    ASSERT_TRUE(d);
+    EXPECT_EQ((*d)["present"].asString(), "no");
+    EXPECT_EQ((*d)["last_heard"].asInt64(), 1762290000);
+    EXPECT_EQ((*d)["detail"]["last_contact"].asInt64(), 0);
+}
+
+TEST(Devices, ARingNeverHeardNorReadIsUnknownAndNeverSeen) {
+    DevicesStore store("");
+    auto in = none();
+    in.o2_enabled  = true;
+    in.o2_mode     = "ble";
+    in.ble_compiled = true;
+    in.o2 = parse(R"({"checked_at":1762300500,"connected":false,"last_contact":0,"last_read_at":0})");
+    const auto out = buildDevices(in, store);
+    const auto* d = find(out, "o2ring");
+    ASSERT_TRUE(d);
+    EXPECT_EQ((*d)["present"].asString(), "unknown");
+    EXPECT_EQ((*d)["last_heard"].asInt64(), 0);
 }
 
 TEST(Devices, TheCardSourceReachableNotAnsweringNotYetAndTheMuleInCardMode) {

@@ -244,6 +244,7 @@
       "live": "Live",
       "liveValue": "SpO2 {{spo2}}%, pulse {{hr}}",
       "notRecording": "not recording",
+      "lastContact": "Last contact",
       "lastFile": "Last file read",
       "readNow": "Read the ring now",
       "reading": "Reading the ring...",

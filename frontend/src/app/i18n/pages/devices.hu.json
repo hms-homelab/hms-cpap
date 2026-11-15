@@ -244,6 +244,7 @@
       "live": "Élő",
       "liveValue": "SpO2 {{spo2}}%, pulzus {{hr}}",
       "notRecording": "nem rögzít",
+      "lastContact": "Utolsó kapcsolat",
       "lastFile": "Utoljára beolvasott fájl",
       "readNow": "Gyűrű beolvasása most",
       "reading": "A gyűrű beolvasása...",

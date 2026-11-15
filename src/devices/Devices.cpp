@@ -140,12 +140,17 @@ Json::Value buildDevices(const DeviceInputs& in, DevicesStore& store) {
             detail["through_bridge"] = true;
         } else if (!in.ble_compiled) {
             detail["not_compiled"] = true;
-        } else if (in.o2.isObject() && in.o2.get("checked_at", 0).asInt64() > 0) {
+        } else if (in.o2.isObject()) {
+            // As the AirSense 11 reads: present while it answers, away once it
+            // has been heard or read and does not, unknown until either.
+            // Last seen is the later of the last contact and the last file read.
             const bool connected = in.o2.get("connected", false).asBool();
-            d["present"] = connected ? "yes" : "no";
-            const auto checked = in.o2["checked_at"].asInt64();
-            const auto read    = in.o2.get("last_read_at", 0).asInt64();
-            d["last_heard"]    = static_cast<Json::Int64>(connected ? std::max(checked, read) : read);
+            const long long contact = in.o2.get("last_contact", 0).asInt64();
+            const long long read    = in.o2.get("last_read_at", 0).asInt64();
+            if (connected) d["present"] = "yes";
+            else if (contact > 0 || read > 0) d["present"] = "no";
+            d["last_heard"]        = static_cast<Json::Int64>(std::max(contact, read));
+            detail["last_contact"] = in.o2.get("last_contact", 0);
             detail["battery"]      = in.o2.get("battery", -1);
             detail["last_read_at"] = in.o2.get("last_read_at", 0);
             detail["last_file"]    = in.o2.get("last_file", "");

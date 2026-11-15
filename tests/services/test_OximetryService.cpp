@@ -797,6 +797,27 @@ TEST_F(OximetryServiceTest, Facts_ARingOffTheFingerThatAnswersIsHeard) {
     EXPECT_FALSE(f.live.valid);
 }
 
+// The last contact is the last time the ring answered, kept through the polls
+// that get no answer after it.
+TEST_F(OximetryServiceTest, Facts_LastContactIsWhenItLastAnsweredAndStaysAfterSilence) {
+    EXPECT_EQ(svc->facts().last_contact, 0) << "nothing heard yet";
+
+    client->live = {};   // no answer
+    svc->pollLive();
+    EXPECT_EQ(svc->facts().last_contact, 0) << "a poll that got no answer is not a contact";
+
+    client->live.spo2 = 255;   // the idle answer off the finger
+    svc->pollLive();
+    const auto heard = svc->facts().last_contact;
+    EXPECT_NEAR(static_cast<double>(heard), static_cast<double>(std::time(nullptr)), 5);
+
+    client->live = {};   // silent again
+    svc->pollLive();
+    const auto f = svc->facts();
+    EXPECT_EQ(f.last_contact, heard) << "the last time it answered stays";
+    EXPECT_FALSE(f.connected);
+}
+
 TEST_F(OximetryServiceTest, Facts_NoAnswerIsNotHeard) {
     client->live = {};   // a timeout: spo2 0, not active
     svc->pollLive();
