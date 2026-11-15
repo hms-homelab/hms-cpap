@@ -126,8 +126,8 @@
       "enabled": "Bekapcsolva",
       "apiUrl": "API URL",
       "token": "Token",
-      "tokenPlaceholder": "Illesszen be egy hosszú élettartamú API-tokent",
-      "tokenHint": "Kitakarva tároljuk. Hagyja érintetlenül a maszkolt értéket a jelenlegi token megtartásához. Egy token visszavonható a fiókjelszó megváltoztatása nélkül.",
+      "tokenPlaceholder": "Illessze be a cpapdash.com-on kapott hms-cpap tokent",
+      "tokenHint": "Hozza létre a cpapdash.com oldalon: Beállítások, hms-cpap. Nem jár le, és ott bármikor visszavonhatja. Kitakarva tároljuk: hagyja érintetlenül a maszkolt értéket a jelenlegi token megtartásához.",
       "autoSync": "Szinkronizálás a gyűjtési körben is, helyi szerkesztés után"
     },
     "sleepStage": {

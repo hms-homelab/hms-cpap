@@ -75,7 +75,7 @@ protected:
             json req = json::parse(body, nullptr, false);
             if (req.is_discarded()) req = json::object();
 
-            if (url.find("/v1/cleaning/sync") != std::string::npos) {
+            if (url.find("/equipment/v1/hms/cleaning/sync") != std::string::npos) {
                 cleaning_requests_.push_back(req);
                 if (!transport_ok_) return false;
                 out = cleaning_response_.dump();

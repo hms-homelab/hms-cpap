@@ -126,8 +126,8 @@
       "enabled": "Activé",
       "apiUrl": "URL de l'API",
       "token": "Jeton",
-      "tokenPlaceholder": "Collez un jeton d'API de longue durée",
-      "tokenHint": "Stocké masqué. Laissez la valeur masquée intacte pour conserver le jeton actuel. Un jeton peut être révoqué sans changer le mot de passe de votre compte.",
+      "tokenPlaceholder": "Collez votre jeton hms-cpap de cpapdash.com",
+      "tokenHint": "Créez-le sur cpapdash.com, Paramètres, hms-cpap. Il n'expire pas et vous pouvez le révoquer là-bas à tout moment. Stocké masqué : laissez la valeur masquée intacte pour conserver le jeton actuel.",
       "autoSync": "Synchroniser aussi lors du balayage de collecte après une modification locale"
     },
     "sleepStage": {

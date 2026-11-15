@@ -126,8 +126,8 @@
       "enabled": "Ativado",
       "apiUrl": "URL da API",
       "token": "Token",
-      "tokenPlaceholder": "Cole um token de API de longa duração",
-      "tokenHint": "Guardado censurado. Deixe o valor mascarado intacto para manter o token atual. Um token pode ser revogado sem trocar a senha da sua conta.",
+      "tokenPlaceholder": "Cole seu token do hms-cpap do cpapdash.com",
+      "tokenHint": "Crie-o em cpapdash.com, Configurações, hms-cpap. Ele não expira e você pode revogá-lo lá a qualquer momento. Guardado censurado: deixe o valor mascarado intacto para manter o token atual.",
       "autoSync": "Sincronizar também na varredura de coleta após edições locais"
     },
     "sleepStage": {

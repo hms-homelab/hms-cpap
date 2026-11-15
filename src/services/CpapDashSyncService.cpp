@@ -19,8 +19,10 @@ using json = nlohmann::json;
 
 namespace {
 
-constexpr const char* kSyncPath = "/v1/equipment/sync";
-constexpr const char* kCleaningSyncPath = "/v1/cleaning/sync";
+// platform SDD-057: the routes that take the long-term hms-cpap token made on
+// cpapdash.com (Settings, hms-cpap). The app's own sync routes refuse it.
+constexpr const char* kSyncPath = "/equipment/v1/hms/sync";
+constexpr const char* kCleaningSyncPath = "/equipment/v1/hms/cleaning/sync";
 constexpr int kMaxPasses = 2;
 
 std::string trimTrailingSlash(std::string s) {

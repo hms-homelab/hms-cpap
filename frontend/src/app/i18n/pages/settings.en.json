@@ -126,8 +126,8 @@
       "enabled": "Enabled",
       "apiUrl": "API URL",
       "token": "Token",
-      "tokenPlaceholder": "Paste a long-lived API token",
-      "tokenHint": "Stored redacted. Leave the masked value untouched to keep the current token. A token can be revoked without changing your account password.",
+      "tokenPlaceholder": "Paste your hms-cpap token from cpapdash.com",
+      "tokenHint": "Create it at cpapdash.com, Settings, hms-cpap. It does not expire, and you can revoke it there at any time. Stored redacted: leave the masked value untouched to keep the current token.",
       "autoSync": "Also sync on the collection sweep after local edits"
     },
     "sleepStage": {

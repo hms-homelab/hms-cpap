@@ -1,7 +1,8 @@
 #pragma once
 //
 // CpapDashSyncService (SDD-004, phase 6) — OPTIONAL mirror of the local equipment
-// tables to hms-cpapdash-api (`POST /v1/equipment/sync`).
+// tables to the CpapDash cloud (`POST /equipment/v1/hms/sync`, platform
+// SDD-057), with the long-term hms-cpap token made on cpapdash.com.
 //
 // LOCAL IS THE SOURCE OF TRUTH. The cloud is a mirror the user opts into; every
 // equipment feature works untouched with `cpapdash.enabled = false`, and a failed
