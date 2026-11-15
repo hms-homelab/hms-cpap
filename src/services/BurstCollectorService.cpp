@@ -2287,7 +2287,7 @@ bool BurstCollectorService::executeBurstCycle() {
             // Reachable = mule responded with real data (not a timeout)
             // Timeout: getLive() returns spo2=0, hr=0, active=false
             // Inactive but reachable: mule returns spo2=255, active=false
-            bool reachable = (live.spo2 != 0 || live.active);
+            bool reachable = live.answered();
 
             if (live.active) {
                 // STATE: Ring on finger — recording

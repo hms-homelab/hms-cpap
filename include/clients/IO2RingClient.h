@@ -17,6 +17,10 @@ public:
         int vibration = 0;
         bool active = false;
         bool valid = false;
+
+        /// The ring answered: a reading, or the idle 255 an O2Ring-S sends off
+        /// the finger. A timeout is all zeros, which is no answer.
+        bool answered() const { return spo2 != 0 || active; }
     };
 
     virtual bool isConnected() = 0;

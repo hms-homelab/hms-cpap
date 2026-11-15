@@ -782,4 +782,106 @@ TEST_F(OximetryServiceTest, Facts_RecordWhatTheLastTalkFound) {
     EXPECT_EQ(svc->facts().last_file, "20260418_220000.vld") << "the last file stays";
 }
 
+// ── When the ring was last heard (the Devices page's "last seen") ──
+
+// The ring answering with nothing on its finger is still heard: 255 is its idle
+// reading, not silence. Only no answer at all (all zeros) is not.
+TEST_F(OximetryServiceTest, Facts_ARingOffTheFingerThatAnswersIsHeard) {
+    client->live = {};
+    client->live.spo2 = 255;
+    client->live.hr   = 255;
+    svc->pollLive();
+    const auto f = svc->facts();
+    EXPECT_GT(f.checked_at, 0);
+    EXPECT_TRUE(f.connected) << "it answered";
+    EXPECT_FALSE(f.live.valid);
+}
+
+TEST_F(OximetryServiceTest, Facts_NoAnswerIsNotHeard) {
+    client->live = {};   // a timeout: spo2 0, not active
+    svc->pollLive();
+    EXPECT_FALSE(svc->facts().connected);
+}
+
+// The database as a restart finds it: one canned answer to the "newest ring
+// file" query, and a record of what was asked.
+class LastReadDb : public MockDatabase {
+public:
+    Json::Value rows{Json::arrayValue};
+    int queries = 0;
+    std::string last_sql;
+    Json::Value executeQuery(const std::string& sql, const std::vector<std::string>&) override {
+        ++queries;
+        last_sql = sql;
+        return rows;
+    }
+    void answer(const std::string& file, const Json::Value& age) {
+        Json::Value r;
+        r["filename"] = file;
+        r["age"] = age;
+        rows = Json::Value(Json::arrayValue);
+        rows.append(r);
+    }
+};
+
+class LastReadTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        client = std::make_shared<FakeO2RingClient>();
+        db = std::make_shared<NiceMock<LastReadDb>>();
+        svc = std::make_unique<OximetryService>(client, db);
+    }
+    std::shared_ptr<FakeO2RingClient> client;
+    std::shared_ptr<NiceMock<LastReadDb>> db;
+    std::unique_ptr<OximetryService> svc;
+};
+
+TEST_F(LastReadTest, ARestartTakesTheLastReadFromTheNewestRingFile) {
+    db->answer("20261108232616.o2s", "3600");   // engines hand numbers back as text
+    const auto f = svc->facts();
+    EXPECT_EQ(f.last_file, "20261108232616.o2s");
+    EXPECT_NEAR(static_cast<double>(f.last_read_at),
+                static_cast<double>(std::time(nullptr)) - 3600, 5);
+    EXPECT_NE(db->last_sql.find("oximetry_sessions"), std::string::npos);
+    EXPECT_NE(db->last_sql.find("NOT LIKE 'live%'"), std::string::npos)
+        << "the live poll's own row is not a file read";
+}
+
+TEST_F(LastReadTest, ANumericAgeIsTakenToo) {
+    db->answer("a.o2s", Json::Value(120));
+    EXPECT_NEAR(static_cast<double>(svc->facts().last_read_at),
+                static_cast<double>(std::time(nullptr)) - 120, 5);
+}
+
+TEST_F(LastReadTest, TheDatabaseIsAskedOnceNotOnEveryRead) {
+    db->answer("a.o2s", "60");
+    svc->facts();
+    svc->facts();
+    svc->facts();
+    EXPECT_EQ(db->queries, 1);
+}
+
+TEST_F(LastReadTest, NoRingFileMeansNothingIsMadeUp) {
+    EXPECT_EQ(svc->facts().last_read_at, 0);
+    EXPECT_EQ(svc->facts().last_file, "");
+}
+
+TEST_F(LastReadTest, AClockThatSaysTheFutureIsNotTaken) {
+    db->answer("a.o2s", "-30");
+    EXPECT_EQ(svc->facts().last_read_at, 0);
+}
+
+TEST_F(LastReadTest, AFileReadThisRunIsNotReplacedByTheOlderOne) {
+    db->answer("old.o2s", "86400");
+    client->files = {"20260418_220000.vld"};
+    client->contents["20260418_220000.vld"] = makeVld(20);
+    EXPECT_CALL(*db, oximetrySessionExists("o2ring", "20260418_220000.vld")).WillOnce(Return(false));
+    EXPECT_CALL(*db, saveOximetrySession("o2ring", _)).WillOnce(Return(true));
+    svc->collectAndPublish();
+    const auto f = svc->facts();
+    EXPECT_EQ(f.last_file, "20260418_220000.vld");
+    EXPECT_NEAR(static_cast<double>(f.last_read_at), static_cast<double>(std::time(nullptr)), 5);
+    EXPECT_EQ(db->queries, 0) << "a real read means there is nothing to look up";
+}
+
 }  // namespace oxi_service

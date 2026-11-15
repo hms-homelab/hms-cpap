@@ -70,8 +70,13 @@ public:
 
 private:
     void noteFacts(bool connected);
+    /// A restart forgets which file was read last. Takes it from the newest
+    /// ring file in the database, once, so the Devices page can say when the
+    /// ring was last heard before this start's first read.
+    void seedLastRead() const;
     mutable std::mutex facts_mtx_;
-    Facts facts_;
+    mutable Facts facts_;
+    mutable bool last_read_seeded_ = false;
     std::shared_ptr<IO2RingClient> client_;
     std::shared_ptr<IDatabase> db_;
     std::string cpap_device_id_;

@@ -7,7 +7,9 @@
 #include <gtest/gtest.h>
 
 #include "database/SQLiteDatabase.h"
+#include "clients/IO2RingClient.h"
 #include "services/OximetryImport.h"
+#include "services/OximetryService.h"
 #include "utils/OximetryDevice.h"
 #ifdef WITH_POSTGRESQL
 #include "database/PostgresDatabase.h"
@@ -15,6 +17,7 @@
 
 #include <chrono>
 #include <cstdlib>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -542,4 +545,39 @@ TEST(OximetryImportName, OnlyAVldEndingCounts) {
     EXPECT_FALSE(isVldFilename("O2Ring export.csv"));
     EXPECT_FALSE(isVldFilename(".vld"));
     EXPECT_FALSE(isVldFilename("x.vld.bak"));
+}
+
+// ── The last read, from a real database ──
+
+namespace {
+
+/// A ring that is not there: lists nothing and never answers.
+class IdleRing : public IO2RingClient {
+public:
+    bool isConnected() override { return false; }
+    std::vector<std::string> listFiles() override { return {}; }
+    std::vector<uint8_t> downloadFile(const std::string&) override { return {}; }
+    LiveReading getLive() override { return {}; }
+    int getBattery() const override { return -1; }
+};
+
+}  // namespace
+
+TEST_F(OximetryImportTest, ARestartedServiceKnowsWhenTheLastRingFileWasStored) {
+    ASSERT_TRUE(importVldFile(*db_, o2s(3), "20261004221500.o2s").ok);
+    std::shared_ptr<IDatabase> shared(std::move(db_));
+    OximetryService svc(std::make_shared<IdleRing>(), shared);
+    const auto f = svc.facts();
+    EXPECT_EQ(f.last_file, "20261004221500.o2s");
+    EXPECT_NEAR(static_cast<double>(f.last_read_at), static_cast<double>(std::time(nullptr)), 10)
+        << "stored a moment ago, by the database's own clock";
+    shared.reset();
+}
+
+TEST_F(OximetryImportTest, TheLivePollsOwnRowIsNotAFileRead) {
+    ASSERT_TRUE(db_->saveLiveOximetrySample(kOximetryDeviceId, "20261004", 96, 60, 0));
+    std::shared_ptr<IDatabase> shared(std::move(db_));
+    OximetryService svc(std::make_shared<IdleRing>(), shared);
+    EXPECT_EQ(svc.facts().last_read_at, 0);
+    shared.reset();
 }
