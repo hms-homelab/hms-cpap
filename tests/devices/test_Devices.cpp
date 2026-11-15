@@ -374,17 +374,46 @@ TEST(Devices, TheDreamStation2OverBluetooth) {
     EXPECT_TRUE(knownKind("ds2_ble"));
 }
 
-TEST(Devices, OrderIsHereFirstThenLastHeardThenNeverHeard) {
+TEST(Devices, TheOrderIsFixedByKindThenIdWhateverIsHereOrHeard) {
     DevicesStore store("");
     auto in = none();
-    in.mule["units"].append(muleUnit("A", false, 0));
+    // Out of the order they are shown in, some here, some away, some never heard.
     in.mule["units"].append(muleUnit("B", false, kNow - 100));
     in.mule["units"].append(muleUnit("C", true, kNow - 50));
+    in.mule["units"].append(muleUnit("A", false, 0));
     in.sleepbridge["bridges"].append(bridge("D", false, kNow - 10));
     const auto out = buildDevices(in, store);
     std::string order;
     for (const auto& d : out["devices"]) order += d["id"].asString();
-    EXPECT_EQ(order, "CDBA");
+    EXPECT_EQ(order, "ABCD") << "mules by id, then the Sleep Bridge";
+}
+
+TEST(Devices, CpapDevicesComeBeforeTheRingWhicheverIsHereOrHeardLast) {
+    DevicesStore store("");
+    auto in = none();
+    in.as11_enabled = true;
+    in.ble_compiled = true;
+    in.o2_enabled   = true;
+    in.o2_mode      = "ble";
+    in.now          = kNow;
+
+    auto kinds = [&](const Json::Value& as11, const Json::Value& o2) {
+        in.as11 = as11;
+        in.o2   = o2;
+        const auto out = buildDevices(in, store);
+        std::string order;
+        for (const auto& d : out["devices"]) order += d["kind"].asString() + " ";
+        return order;
+    };
+    // The machine here and the ring away, then the other way round, then both
+    // away: the same order every time.
+    const auto machine_here = parse(R"({"connected":true,"last_contact":1762300000})");
+    const auto machine_away = parse(R"({"connected":false,"last_contact":1762200000})");
+    const auto ring_here    = parse(R"({"connected":true,"last_contact":1762300000,"last_read_at":1762290000})");
+    const auto ring_away    = parse(R"({"connected":false,"last_contact":1762200000,"last_read_at":1762290000})");
+    EXPECT_EQ(kinds(machine_here, ring_away), "as11_ble o2ring ");
+    EXPECT_EQ(kinds(machine_away, ring_here), "as11_ble o2ring ");
+    EXPECT_EQ(kinds(machine_away, ring_away), "as11_ble o2ring ");
 }
 
 // ── names and forgetting (D12) ──

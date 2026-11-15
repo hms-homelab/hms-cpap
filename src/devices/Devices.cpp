@@ -9,6 +9,19 @@ namespace {
 
 constexpr size_t kCommandsShown = 10;
 
+// Where a kind's cards sit: CPAP devices (machines, card readers, bridges)
+// before accessories (the O2 ring).
+int kindRank(const std::string& kind) {
+    if (kind == "as11_ble")  return 0;
+    if (kind == "ds2_ble")   return 1;
+    if (kind == "mule")      return 2;
+    if (kind == "sleepbridge") return 3;
+    if (kind == "ezshare")   return 4;
+    if (kind == "flashair")  return 5;
+    if (kind == "o2ring")    return 100;   // an accessory
+    return 50;                              // a CPAP-side kind this list does not know
+}
+
 Json::Value entry(const std::string& kind, const std::string& id, const std::string& default_name) {
     Json::Value d(Json::objectValue);
     d["kind"]             = kind;
@@ -272,12 +285,14 @@ Json::Value buildDevices(const DeviceInputs& in, DevicesStore& store) {
         d["own_name"] = own.empty() ? Json::Value(Json::nullValue) : Json::Value(own);
         shown.push_back(d);
     }
+    // A fixed order, so the cards never trade places as devices come and go:
+    // the CPAP side first (the machines, then what reads their cards or relays
+    // them), the accessories after, each kind in a set place and units of one
+    // kind by id.
     std::stable_sort(shown.begin(), shown.end(), [](const Json::Value& a, const Json::Value& b) {
-        const bool ah = a["present"].asString() == "yes", bh = b["present"].asString() == "yes";
-        if (ah != bh) return ah;
-        const auto la = a["last_heard"].asInt64(), lb = b["last_heard"].asInt64();
-        if ((la == 0) != (lb == 0)) return lb == 0;
-        return la > lb;
+        const int ra = kindRank(a["kind"].asString()), rb = kindRank(b["kind"].asString());
+        if (ra != rb) return ra < rb;
+        return a["id"].asString() < b["id"].asString();
     });
 
     Json::Value out(Json::objectValue);
