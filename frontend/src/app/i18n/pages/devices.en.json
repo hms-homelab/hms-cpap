@@ -240,6 +240,7 @@
       "notAsked": "Not talked to since hms-cpap started.",
       "connected": "Connected",
       "notConnected": "Not connected",
+      "connectedNow": "Connected now",
       "battery": "Battery",
       "live": "Live",
       "liveValue": "SpO2 {{spo2}}%, pulse {{hr}}",

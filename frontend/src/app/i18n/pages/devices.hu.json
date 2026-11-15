@@ -240,6 +240,7 @@
       "notAsked": "A hms-cpap indulása óta nem volt kapcsolat vele.",
       "connected": "Csatlakoztatva",
       "notConnected": "Nincs csatlakoztatva",
+      "connectedNow": "Most csatlakoztatva",
       "battery": "Akkumulátor",
       "live": "Élő",
       "liveValue": "SpO2 {{spo2}}%, pulzus {{hr}}",

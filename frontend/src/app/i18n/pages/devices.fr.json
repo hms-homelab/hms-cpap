@@ -240,6 +240,7 @@
       "notAsked": "Aucun échange depuis le démarrage de hms-cpap.",
       "connected": "Connectée",
       "notConnected": "Non connectée",
+      "connectedNow": "Connectée en ce moment",
       "battery": "Batterie",
       "live": "En direct",
       "liveValue": "SpO2 {{spo2}} %, pouls {{hr}}",
