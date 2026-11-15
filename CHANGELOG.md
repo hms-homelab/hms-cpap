@@ -5,13 +5,21 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [6.3.0] - 2026-11-15
 
 ### Restored
 - **Settings: the CpapDash Cloud section**, which 6.2.1 removed by mistake
   (SDD-066 withdrawn). Equipment, supplies and cleaning schedules sync with
   your CpapDash account again, through the same `cpapdash` block in
   `config.json` and `POST /api/equipment/cloud-sync`.
+
+### Added
+- **A token that does not expire** (platform SDD-057). Create it at
+  cpapdash.com, Settings, hms-cpap, and paste it in Settings, CpapDash Cloud.
+  It keeps syncing until you revoke or regenerate it there; the old 24-hour
+  login token is no longer needed. The sync now calls
+  `/equipment/v1/hms/sync` and `/equipment/v1/hms/cleaning/sync`, the routes
+  that take this token.
 
 ## [6.2.3] - 2026-11-13
 
