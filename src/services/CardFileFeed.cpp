@@ -18,12 +18,32 @@ RootSink& rootSink() {
     static RootSink s;
     return s;
 }
+BurstSink& burstSink() {
+    static BurstSink s;
+    return s;
+}
 }  // namespace
 
-void setSinks(FileSink file_sink, RootSink root_sink) {
+void setSinks(FileSink file_sink, RootSink root_sink, BurstSink burst_sink) {
     std::lock_guard<std::mutex> lk(mu());
     fileSink() = std::move(file_sink);
     rootSink() = std::move(root_sink);
+    burstSink() = std::move(burst_sink);
+}
+
+void burstEnded(const std::string& root) {
+    BurstSink s;
+    {
+        std::lock_guard<std::mutex> lk(mu());
+        s = burstSink();
+    }
+    if (!s || root.empty()) return;
+    try {
+        s(root);
+    } catch (const std::exception& e) {
+        std::cerr << "[cpapdash-stream] burst end for " << root << " dropped: " << e.what() << std::endl;
+    } catch (...) {
+    }
 }
 
 void fileWritten(const std::string& root, const std::string& rel_path, const std::string& machine) {

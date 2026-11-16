@@ -122,6 +122,10 @@ std::string fileReadyFrame(uint32_t req_id, const CardHeaders& h, uint64_t offse
                            uint64_t total_size, uint32_t chunks, uint64_t size,
                            const std::string& md5, const std::string& machine_serial);
 
+/// A burst's end. PLACEHOLDER shape until ingest confirms the frame it reads:
+/// {"t":"round","done":true,"new_files":<n>}
+std::string roundFrame(int new_files);
+
 /// Now, as ISO-8601 UTC ("2026-11-16T03:04:05Z").
 std::string isoNowUtc();
 
@@ -199,6 +203,9 @@ public:
     /// The collectors' notes (card_feed). Never block, never fail.
     void fileWritten(const std::string& root, const std::string& rel, const std::string& machine);
     void rootWritten(const std::string& root, const std::string& machine);
+    /// A burst pass over [root] ended. Queued behind what that burst wrote, so
+    /// its frame goes only once those files are sent and acked, in order.
+    void burstEnded(const std::string& root);
 
     Status status() const;
 
@@ -215,6 +222,7 @@ private:
         std::string root;
         std::string rel;       // "" = look at the whole root
         std::string machine;
+        bool        round = false;   // a burst's end: say so once what is ahead of it is acked
     };
     struct Stamp {
         uint64_t  size  = 0;
@@ -272,6 +280,7 @@ private:
     std::map<std::string, Stamp>       settled_;   // root\npath -> what was on disk when it matched the index
     std::map<std::string, std::string> machines_;  // root -> serial read from its card
     std::set<std::string>              told_no_serial_;
+    std::map<std::string, int>         round_files_;   // root -> files acked since its last round
     uint32_t                           next_req_ = 1;
 
     std::atomic<bool> stop_{false};

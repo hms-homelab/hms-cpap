@@ -22,9 +22,16 @@ namespace hms_cpap::card_feed {
 using FileSink = std::function<void(const std::string& root, const std::string& rel_path,
                                     const std::string& machine)>;
 using RootSink = std::function<void(const std::string& root, const std::string& machine)>;
+using BurstSink = std::function<void(const std::string& root)>;
 
 /// Installs (or, with empty functions, removes) where the notes go.
-void setSinks(FileSink file_sink, RootSink root_sink);
+void setSinks(FileSink file_sink, RootSink root_sink, BurstSink burst_sink = {});
+
+/// A burst collection pass over [root] ended, whether or not it found
+/// anything new. The uploader says so to CpapDash after every file that
+/// burst wrote has been sent and acked: the burst is the only clock in the
+/// process, and ingest closes an ez Share night from it.
+void burstEnded(const std::string& root);
 
 /// One file under [root] was written.
 void fileWritten(const std::string& root, const std::string& rel_path, const std::string& machine);

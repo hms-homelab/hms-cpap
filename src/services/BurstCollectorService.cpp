@@ -3098,6 +3098,9 @@ bool BurstCollectorService::executeBurstCycle() {
             const std::string card_root =
                 in_place ? (data_source_ ? data_source_->rootPath() : std::string()) : permanent_archive;
             card_feed::rootWritten(card_root, "");
+            // The pass is over, found something or not: said after this
+            // burst's files, in order. The burst is the only clock there is.
+            card_feed::burstEnded(card_root);
         };
 
         // SDD-068 D1: this burst's listings, before anything is downloaded,

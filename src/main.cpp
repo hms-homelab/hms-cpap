@@ -1208,7 +1208,8 @@ int main(int argc, char** argv) {
                     },
                     [s = cpapdash_stream](const std::string& root, const std::string& machine) {
                         s->rootWritten(root, machine);
-                    });
+                    },
+                    [s = cpapdash_stream](const std::string& root) { s->burstEnded(root); });
                 hms_cpap::CpapController::setStreamService(cpapdash_stream);
                 cpapdash_stream->start();
                 if (config.cpapdash.stream && config.cpapdash.token.empty())

@@ -434,9 +434,11 @@ import { sourceImage } from '../../utils/source-image';
             <p class="section-desc">
               {{ 'settings.cloud.desc' | translate }}
             </p>
+            <!-- Checkbox first, then the label (as autoSync below), so the
+                 controls line up whatever the label's length. -->
             <label class="toggle-row">
-              {{ 'settings.cloud.enabled' | translate }}
               <input type="checkbox" [(ngModel)]="config.cpapdash.enabled" name="cpapdash_enabled" />
+              {{ 'settings.cloud.enabled' | translate }}
             </label>
             <ng-container *ngIf="config.cpapdash.enabled">
               <label>
@@ -465,8 +467,8 @@ import { sourceImage } from '../../utils/source-image';
 
             <!-- platform SDD-059: the nights, on their own switch. -->
             <label class="toggle-row stream-toggle">
-              {{ 'settings.cloud.stream' | translate }}
               <input type="checkbox" [(ngModel)]="config.cpapdash.stream" name="cpapdash_stream" />
+              {{ 'settings.cloud.stream' | translate }}
             </label>
             <small class="hint stream-hint">{{ 'settings.cloud.streamHint' | translate }}</small>
             <!-- Where it stands, as saved: shown for the switch the service runs with. -->

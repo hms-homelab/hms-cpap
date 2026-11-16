@@ -148,6 +148,13 @@ public:
     }
 
     int pings() { std::lock_guard<std::mutex> lk(mu_); return pings_; }
+    /// file_ready ("ready:<name>:kept|not") and round ("round:<n>") frames, in arrival order.
+    std::vector<std::string> events() { std::lock_guard<std::mutex> lk(mu_); return events_; }
+    size_t roundsLocked() const {
+        size_t n = 0;
+        for (const auto& e : events_) n += e.rfind("round:", 0) == 0;
+        return n;
+    }
     /// Steady-clock times of each upgrade, for the waits between them.
     std::vector<std::chrono::steady_clock::time_point> upgradeTimes() {
         std::lock_guard<std::mutex> lk(mu_);
@@ -376,6 +383,12 @@ private:
                 } else {
                     writeFrame(fd, 1, R"({"t":"ack","server_time":"2026-11-16T00:00:00Z","ping_s":30})");
                 }
+            } else if (t == "round") {
+                {
+                    std::lock_guard<std::mutex> lk(mu_);
+                    events_.push_back("round:" + std::to_string(v.get("new_files", -1).asInt()));
+                }
+                cv_.notify_all();
             } else if (t == "file_ready") {
                 const uint32_t req = v.get("req_id", 0).asUInt();
                 const uint32_t n = v.get("chunks", 0).asUInt();
@@ -402,6 +415,7 @@ private:
                 {
                     std::lock_guard<std::mutex> lk(mu_);
                     readies_.push_back({v, body, keep});
+                    events_.push_back("ready:" + v.get("filename", "").asString() + (keep ? ":kept" : ":not"));
                     if (keep) {
                         auto& file = landed_[keyOf(v.get("machine_serial", "").asString(),
                                                    v.get("date_folder", "").asString(),
@@ -439,6 +453,7 @@ private:
     int hellos_ = 0;
     int chunks_seen_ = 0;
     int pings_ = 0;
+    std::vector<std::string> events_;
     std::vector<std::chrono::steady_clock::time_point> upgrade_times_;
     long long chunk_bytes_ = 0;
     std::string last_path_;

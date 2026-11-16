@@ -205,6 +205,14 @@ std::string helloFrame(const std::string& version, const std::string& source) {
     return compact(v);
 }
 
+std::string roundFrame(int new_files) {
+    Json::Value v;
+    v["t"]         = "round";
+    v["done"]      = true;
+    v["new_files"] = new_files;
+    return compact(v);
+}
+
 std::string sourceKind(bool bluetooth_on, bool bridge_receiver_on, const std::string& data_dir) {
     if (bluetooth_on) return "ble";
     if (bridge_receiver_on && !data_dir.empty()) {
@@ -268,6 +276,8 @@ const char* kTag = "[cpapdash-stream] ";
 const char* kRevokedPrefix = "hms token revoked";
 
 std::string keyOf(const std::string& root, const std::string& rel) { return root + "\n" + rel; }
+// A round's queue key: no card path starts with a control character.
+std::string roundKeyOf(const std::string& root) { return root + "\n\x01round"; }
 
 bool readFile(const fs::path& p, std::string& out) {
     std::ifstream in(p, std::ios::binary);
@@ -381,6 +391,18 @@ void CpapDashStreamer::rootWritten(const std::string& root, const std::string& m
     enqueue({root, "", machine}, false);
 }
 
+void CpapDashStreamer::burstEnded(const std::string& root) {
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        roots_[root];
+        if (!settings_.stream) return;
+    }
+    Work w;
+    w.root = root;
+    w.round = true;
+    enqueue(std::move(w), false);
+}
+
 CpapDashStreamer::Status CpapDashStreamer::status() const {
     std::lock_guard<std::mutex> lk(mu_);
     Status s = status_;
@@ -440,6 +462,20 @@ std::vector<CpapDashStreamer::Root> CpapDashStreamer::discoverRoots(
 void CpapDashStreamer::enqueue(Work w, bool front) {
     {
         std::lock_guard<std::mutex> lk(mu_);
+        if (w.round) {
+            // Bursts that end while CpapDash is away fold into one: the
+            // round still waiting moves behind whatever was queued since.
+            const std::string key = roundKeyOf(w.root);
+            if (!queued_keys_.insert(key).second) {
+                queue_.erase(std::remove_if(queue_.begin(), queue_.end(),
+                                            [&](const Work& q) { return q.round && q.root == w.root; }),
+                             queue_.end());
+            }
+            if (front) queue_.push_front(std::move(w));
+            else queue_.push_back(std::move(w));
+            cv_.notify_all();
+            return;
+        }
         const std::string key = keyOf(w.root, w.rel);
         if (!queued_keys_.insert(key).second) {
             if (!w.machine.empty()) {
@@ -459,7 +495,7 @@ std::optional<CpapDashStreamer::Work> CpapDashStreamer::popWork() {
     if (queue_.empty()) return std::nullopt;
     Work w = std::move(queue_.front());
     queue_.pop_front();
-    queued_keys_.erase(keyOf(w.root, w.rel));
+    queued_keys_.erase(w.round ? roundKeyOf(w.root) : keyOf(w.root, w.rel));
     return w;
 }
 
@@ -741,6 +777,20 @@ CpapDashStreamer::SessionEnd CpapDashStreamer::session(CpapDashLink& link, uint6
             }
             continue;
         }
+        if (w->round) {
+            // Everything queued ahead of it has been sent and acked (or
+            // refused, which ingest has answered too).
+            const int n = round_files_[w->root];
+            if (!link.sendText(cdstream::roundFrame(n))) {
+                enqueue(*w, true);
+                SessionEnd lost;
+                lost.end = End::Closed;
+                lost.connected = true;
+                return lost;
+            }
+            round_files_[w->root] = 0;
+            continue;
+        }
         if (w->rel.empty()) {
             scanRoot(*w);
             continue;
@@ -797,6 +847,7 @@ void CpapDashStreamer::scanRoot(const Work& w) {
         const int ga = groupOf(a), gb = groupOf(b);
         return ga != gb ? ga < gb : a < b;
     });
+    std::vector<Work> changed;
     for (const auto& rel : rels) {
         const fs::path p = base / rel;
         Stamp now;
@@ -805,8 +856,11 @@ void CpapDashStreamer::scanRoot(const Work& w) {
         now.mtime = static_cast<long long>(fs::last_write_time(p, ec).time_since_epoch().count());
         auto s = settled_.find(keyOf(w.root, rel));
         if (s != settled_.end() && s->second == now) continue;
-        enqueue({w.root, rel, w.machine}, false);
+        changed.push_back({w.root, rel, w.machine});
     }
+    // In place of the scan, in path order: ahead of anything queued after it,
+    // a burst's end above all, so that end goes once these are acked.
+    for (auto it = changed.rbegin(); it != changed.rend(); ++it) enqueue(*it, true);
 }
 
 CpapDashStreamer::SendResult CpapDashStreamer::sendFile(CpapDashLink& link, const Work& w,
@@ -930,6 +984,7 @@ CpapDashStreamer::SendResult CpapDashStreamer::sendFile(CpapDashLink& link, cons
                 } else {
                     std::cerr << kTag << "the index did not take " << w.rel << std::endl;
                 }
+                ++round_files_[w.root];
                 {
                     std::lock_guard<std::mutex> lk(mu_);
                     status_.files_acked++;

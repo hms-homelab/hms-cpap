@@ -345,7 +345,8 @@ protected:
             [s = streamer_](const std::string& r, const std::string& rel, const std::string& m) {
                 s->fileWritten(r, rel, m);
             },
-            [s = streamer_](const std::string& r, const std::string& m) { s->rootWritten(r, m); });
+            [s = streamer_](const std::string& r, const std::string& m) { s->rootWritten(r, m); },
+            [s = streamer_](const std::string& r) { s->burstEnded(r); });
         streamer_->start();
     }
 
@@ -425,6 +426,93 @@ TEST_F(StreamTest, EveryHelloCarriesTheInstallsSourceAsItIsNow) {
         EXPECT_EQ(hello["mode"].asString(), "hms");
     }
     streamer_->stop();   // before `source` goes
+}
+
+// ── a burst's end (ez Share) ─────────────────────────────────────────────────
+
+namespace {
+// The ez Share archive: the card's own Identification names the machine.
+fs::path archiveWithIdentity(const fs::path& dir) {
+    const fs::path a = dir / "cpap_data";
+    writeFile(a / "Identification.json",
+              R"({"FlowGenerator":{"IdentificationProfiles":{"Product":{"SerialNumber":"22000000009"}}}})");
+    return a;
+}
+std::vector<std::string> since(const std::vector<std::string>& all, size_t from) {
+    return std::vector<std::string>(all.begin() + static_cast<long>(std::min(from, all.size())), all.end());
+}
+}  // namespace
+
+TEST_F(StreamTest, ABurstSendsItsFilesThenItsRound) {
+    const auto archive = archiveWithIdentity(dir_);
+    startStreamer();
+    ASSERT_TRUE(waitState("connected"));
+    // The burst collector's first pass: the root as it stands, then its end.
+    card_feed::rootWritten(archive.string(), "");
+    card_feed::burstEnded(archive.string());
+    ASSERT_TRUE(server_->waitFor([&] { return server_->roundsLocked() >= 1; }));
+    const size_t mark = server_->events().size();
+
+    // A burst that brought two files of tonight.
+    writeFile(archive / "DATALOG/20261116/20261116_221502_BRP.edf", edf(40));
+    writeFile(archive / "DATALOG/20261116/20261116_221502_EVE.edf", edf(3));
+    card_feed::rootWritten(archive.string(), "");
+    card_feed::burstEnded(archive.string());
+    ASSERT_TRUE(server_->waitFor([&] { return server_->roundsLocked() >= 2; }));
+    const auto ev = since(server_->events(), mark);
+    ASSERT_EQ(ev.size(), 3u);
+    EXPECT_EQ(ev[0], "ready:20261116_221502_BRP.edf:kept");
+    EXPECT_EQ(ev[1], "ready:20261116_221502_EVE.edf:kept");
+    EXPECT_EQ(ev[2], "round:2");
+}
+
+TEST_F(StreamTest, AnEmptyBurstStillSendsItsRound) {
+    const auto archive = archiveWithIdentity(dir_);
+    startStreamer();
+    ASSERT_TRUE(waitState("connected"));
+    card_feed::rootWritten(archive.string(), "");
+    card_feed::burstEnded(archive.string());
+    ASSERT_TRUE(server_->waitFor([&] { return server_->roundsLocked() >= 1; }));
+    const size_t mark = server_->events().size();
+
+    // Nothing new on the card: the pass still ends, and says so.
+    card_feed::rootWritten(archive.string(), "");
+    card_feed::burstEnded(archive.string());
+    ASSERT_TRUE(server_->waitFor([&] { return server_->roundsLocked() >= 2; }));
+    EXPECT_EQ(since(server_->events(), mark), std::vector<std::string>{"round:0"});
+}
+
+TEST_F(StreamTest, ARoundStaysBehindItsFilesAcrossAReconnect) {
+    const auto archive = archiveWithIdentity(dir_);
+    startStreamer();
+    ASSERT_TRUE(waitState("connected"));
+    card_feed::rootWritten(archive.string(), "");
+    card_feed::burstEnded(archive.string());
+    ASSERT_TRUE(server_->waitFor([&] { return server_->roundsLocked() >= 1; }));
+    const size_t mark = server_->events().size();
+
+    // The link drops in the middle of the burst's second file.
+    const auto brp = edf(40);   // 4 KB+ : two chunks
+    const auto pld = edf(200);  // six chunks
+    writeFile(archive / "DATALOG/20261116/20261116_221502_BRP.edf", brp);
+    writeFile(archive / "DATALOG/20261116/20261116_221502_PLD.edf", pld);
+    server_->drop_after_chunks = static_cast<int>((brp.size() + 4095) / 4096) + 3;
+    const int hellos = server_->hellos();
+    card_feed::rootWritten(archive.string(), "");
+    card_feed::burstEnded(archive.string());
+    ASSERT_TRUE(server_->waitFor([&] { return server_->roundsLocked() >= 2; }, 15000));
+    EXPECT_GT(server_->hellos(), hellos);   // it came back
+
+    const auto ev = since(server_->events(), mark);
+    // The round went once, last, after both files were kept, counting both.
+    ASSERT_FALSE(ev.empty());
+    EXPECT_EQ(ev.back(), "round:2");
+    EXPECT_EQ(std::count_if(ev.begin(), ev.end(), [](const std::string& e) { return e.rfind("round:", 0) == 0; }), 1);
+    const auto kept = [&](const std::string& name) {
+        return std::find(ev.begin(), ev.end(), "ready:" + name + ":kept") != ev.end();
+    };
+    EXPECT_TRUE(kept("20261116_221502_BRP.edf"));
+    EXPECT_TRUE(kept("20261116_221502_PLD.edf"));
 }
 
 TEST_F(StreamTest, AnAckMovesTheIndexAndTheFileLandsWhole) {
