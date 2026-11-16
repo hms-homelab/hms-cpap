@@ -5,6 +5,24 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.3.1] - 2026-11-16
+
+### Fixed
+- **"Regenerate AI summary" says when no summary was written** (#74). The
+  server answers `status: "failed"` when it will not write one, for example on
+  a night that has only myAir data and no detailed session, but the dashboard
+  said "Summary queued" anyway and nothing ever appeared. It now says no
+  summary was written for that night, with the reason when the reply gives one.
+
+### Changed
+- **The dashboard leaves out a card it has no data for.** A card with nothing
+  for the night or the source being viewed is no longer drawn as a frame of
+  zeros, dashes or empty chart axes. On a myAir-only install that removes the
+  key metrics that read "AHI 0.00 Excellent" for a night with no CPAP data,
+  the "Not enough data" insight and the empty 30-day charts. A recorded zero,
+  such as a night with no central apneas, still shows. The remaining cards
+  close up so the layout has no gaps.
+
 ## [6.3.0] - 2026-11-15
 
 ### Restored
