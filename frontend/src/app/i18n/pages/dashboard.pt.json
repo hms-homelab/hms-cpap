@@ -11,6 +11,8 @@
       "regenerateTitle": "Reescreve o resumo com IA da última noite. Não busca dados novos do aparelho.",
       "generating": "Gerando...",
       "queueFailed": "Não foi possível colocar o resumo na fila",
+      "summaryFailed": "Nenhum resumo foi escrito para esta noite",
+      "summaryFailedReason": "Nenhum resumo foi escrito para esta noite: {{reason}}",
       "unknown": "Desconhecido"
     },
     "chart": {

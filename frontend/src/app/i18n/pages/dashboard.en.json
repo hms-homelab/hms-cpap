@@ -11,6 +11,8 @@
       "regenerateTitle": "Writes the AI summary of the latest night again. It does not fetch new data from the machine.",
       "generating": "Generating...",
       "queueFailed": "Failed to queue summary",
+      "summaryFailed": "No summary was written for this night",
+      "summaryFailedReason": "No summary was written for this night: {{reason}}",
       "unknown": "Unknown"
     },
     "chart": {

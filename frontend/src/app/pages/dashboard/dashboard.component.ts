@@ -20,6 +20,8 @@ import { MyAirCompareComponent } from '../../components/dashboard/myair-compare.
 import { UpdateBannerComponent } from '../../components/dashboard/update-banner.component';
 import { detectDesaturations, odiPerHour, inferSampleSec } from '../../utils/signal-analysis';
 import { isGradableAhi } from '../../utils/index-kind';
+import { summaryRefreshOutcome } from './summary-refresh';
+import { hasCardData, CARD_FIELDS } from './card-data';
 import Chart from 'chart.js/auto';
 
 const MODE_LABELS: Record<string, string> = {
@@ -41,8 +43,8 @@ const MODE_LABELS: Record<string, string> = {
            (unlike the 30-day trend below). A machine that stopped syncing three
            weeks ago shows a three-week-old AHI that looks identical to last
            night's, so the age is called out once it is no longer current. -->
-      <div class="dash-subtitle" *ngIf="data">
-        {{ 'dashboard.page.latestNight' | translate:{ date: formatDate(data.latest_night.date) } }}
+      <div class="dash-subtitle" *ngIf="data?.latest_night?.date">
+        {{ 'dashboard.page.latestNight' | translate:{ date: formatDate(data!.latest_night.date) } }}
         <span class="night-age" *ngIf="isStale">{{ 'dashboard.page.latestNightAge' | translate:{ count: nightAgeDays } }}</span>
       </div>
 
@@ -94,22 +96,26 @@ const MODE_LABELS: Record<string, string> = {
         </div>
       </div>
 
+      <!-- Every card below is shown only when hasCardData (card-data.ts) finds
+           data for it: an empty card is better not shown. -->
+
       <!-- 1. Key Metrics -->
-      <app-key-metrics [data]="keyMetrics" />
+      <app-key-metrics [data]="keyMetrics" *ngIf="keyMetrics" />
 
       <!-- 2. O2 Ring Oximetry -->
-      <app-oximetry-row [data]="oximetryData" *ngIf="oximetryData" />
+      <app-oximetry-row [data]="oximetryData" *ngIf="hasCardData(oximetryData)" />
 
-      <!-- SDD-020: myAir users only. Gated on the capability rather than on the
-           data, so a configured user with nothing fetched yet still sees why. -->
-      <app-myair-compare [rows]="myairRows" *ngIf="hasMyAir" />
+      <!-- SDD-020: myAir users only, and only once there are nights to list. -->
+      <app-myair-compare [rows]="myairRows" *ngIf="hasMyAir && hasCardData(myairRows)" />
 
-      <!-- Two-column layout for Summary + Insights -->
-      <div class="two-col" *ngIf="aiSummaryText || insights.length || true">
+      <!-- Two-column layout for Summary + Insights. The regenerate button is a
+           control, not a card, so its row stays; with no insights it takes
+           the full width. -->
+      <div class="two-col" [class.single]="!insights.length">
         <!-- 3. AI Session Summary -->
         <div class="ai-summary-wrapper">
           <div class="ai-summary-header">
-            <span class="ai-summary-label" *ngIf="aiSummaryText">{{ 'dashboard.title.aiSummary' | translate }}</span>
+            <span class="ai-summary-label" *ngIf="hasCardData(aiSummaryText)">{{ 'dashboard.title.aiSummary' | translate }}</span>
             <button class="refresh-summary-btn"
               [disabled]="summaryRefreshing || !data?.latest_night?.date"
               (click)="refreshAiSummary()"
@@ -118,26 +124,26 @@ const MODE_LABELS: Record<string, string> = {
             </button>
             <span class="refresh-msg" *ngIf="summaryRefreshMsg">{{ summaryRefreshMsg }}</span>
           </div>
-          <app-ai-summary [summaryText]="aiSummaryText" *ngIf="aiSummaryText" />
+          <app-ai-summary [summaryText]="aiSummaryText" *ngIf="hasCardData(aiSummaryText)" />
         </div>
         <!-- 4. Therapy Insights -->
         <app-therapy-insights [insights]="insights" *ngIf="insights.length" />
       </div>
 
       <!-- 5. STR Daily Metrics -->
-      <app-str-metrics [data]="strMetrics" *ngIf="strMetrics" />
+      <app-str-metrics [data]="strMetrics" *ngIf="hasCardData(strMetrics)" />
 
       <!-- 6. Sleep Events Breakdown -->
-      <app-events-breakdown [data]="eventsData" *ngIf="eventsData" />
+      <app-events-breakdown [data]="eventsData" *ngIf="hasCardData(eventsData)" />
 
       <!-- 7. Therapy Pressure -->
-      <app-pressure-section [data]="pressureData" *ngIf="pressureData" />
+      <app-pressure-section [data]="pressureData" *ngIf="hasCardData(pressureData)" />
 
       <!-- 8. Respiratory Metrics -->
-      <app-respiratory-metrics [data]="respiratoryData" *ngIf="respiratoryData" />
+      <app-respiratory-metrics [data]="respiratoryData" *ngIf="hasCardData(respiratoryData)" />
 
       <!-- 9. Real-Time Status -->
-      <app-realtime-status [data]="realtimeData" *ngIf="realtimeData" />
+      <app-realtime-status [data]="realtimeData" *ngIf="showRealtime" />
 
       <!-- 10. ML Intelligence -->
       <app-ml-intelligence [mlStatus]="mlStatus" [mlPredictions]="mlPredictions"
@@ -145,21 +151,21 @@ const MODE_LABELS: Record<string, string> = {
 
       <!-- 11. Historical Charts -->
       <div class="charts">
-        <div class="chart-container">
-          <canvas #ahiChart></canvas>
-        </div>
-        <div class="chart-container">
-          <canvas #usageChart></canvas>
-        </div>
         <!-- SDD-024: [hidden] rather than *ngIf. The canvas has to stay in the
              DOM for its ViewChild ref to resolve when the trend data arrives;
              what these flags remove is the empty bordered box, not the element.
-             A chart whose every value is zero is not an empty chart, it is a
-             flat line at zero, and that reads as a measurement of nothing. -->
+             Every chart starts hidden and is shown once hasCardData finds a
+             value in its trend, so a month with nothing never draws a frame. -->
+        <div class="chart-container" [hidden]="!showAhiTrend">
+          <canvas #ahiChart></canvas>
+        </div>
+        <div class="chart-container" [hidden]="!showUsageTrend">
+          <canvas #usageChart></canvas>
+        </div>
         <div class="chart-container" [hidden]="!showPressureTrend">
           <canvas #pressureChart></canvas>
         </div>
-        <div class="chart-container">
+        <div class="chart-container" [hidden]="!showLeakTrend">
           <canvas #leakChart></canvas>
         </div>
         <div class="chart-container wide" [hidden]="!showEventsTrend">
@@ -169,11 +175,11 @@ const MODE_LABELS: Record<string, string> = {
           <canvas #respiratoryChart></canvas>
         </div>
         <!-- CSR: hidden in CPAP mode (mode 0) -->
-        <div class="chart-container" *ngIf="!isCpapMode">
+        <div class="chart-container" *ngIf="!isCpapMode" [hidden]="!showCsrTrend">
           <canvas #csrChart></canvas>
         </div>
         <!-- EPR: hidden in CPAP mode -->
-        <div class="chart-container" *ngIf="!isCpapMode">
+        <div class="chart-container" *ngIf="!isCpapMode" [hidden]="!showEprTrend">
           <canvas #eprChart></canvas>
         </div>
       </div>
@@ -194,8 +200,11 @@ const MODE_LABELS: Record<string, string> = {
     .gauge-container { display: flex; flex-direction: column; align-items: center; }
     .gauge-label { color: #888; font-size: 0.75rem; margin-top: 6px; text-transform: uppercase; letter-spacing: 0.05em; }
     .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1.5rem; }
+    .two-col.single { grid-template-columns: 1fr; }
     @media (max-width: 900px) { .two-col { grid-template-columns: 1fr; } }
-    .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
+    /* dense: when a chart drops out, the next half-width one moves up into
+       its place instead of leaving a hole beside a lone chart. */
+    .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; grid-auto-flow: row dense; }
     .chart-container { background: #1e1e2f; border: 1px solid #333; border-radius: 8px; padding: 1rem; }
     .chart-container.wide { grid-column: 1 / -1; }
     @media (max-width: 768px) { .charts { grid-template-columns: 1fr; } }
@@ -271,6 +280,14 @@ export class DashboardComponent implements OnInit, AfterViewInit {
   pressureData: PressureSectionData | null = null;
   respiratoryData: RespiratoryMetricsData | null = null;
   realtimeData: RealtimeStatusData | null = null;
+
+  /** The one rule every card's *ngIf uses (card-data.ts). */
+  readonly hasCardData = hasCardData;
+
+  /** The status alone ("Completed") is not data; a time or a pressure is. */
+  get showRealtime(): boolean {
+    return hasCardData(this.realtimeData, CARD_FIELDS.realtime, { zeroIsEmpty: true });
+  }
 
   // ML state
   mlStatus: any = null;
@@ -391,8 +408,10 @@ export class DashboardComponent implements OnInit, AfterViewInit {
       this.modeName = MODE_LABELS[mode] || this.t.instant('dashboard.page.unknown');
       this.isCpapMode = mode === '0';
 
-      // Populate key metrics (initial from STR, overridden by sessions below)
-      this.keyMetrics = {
+      // Populate key metrics (initial from STR, overridden by sessions below).
+      // Not built without a night: a myAir-only install has no daily summary,
+      // and the zeros below read "AHI 0.00 Excellent" for a night we never saw.
+      this.keyMetrics = !hasCardData(d.latest_night, CARD_FIELDS.keyMetrics) ? null : {
         ahi: parseFloat(d.latest_night.ahi) || 0,
         indexKind: d.latest_night.index_kind,   // SDD-024
         usageHours: parseFloat(d.latest_night.usage_hours) || 0,
@@ -465,7 +484,7 @@ export class DashboardComponent implements OnInit, AfterViewInit {
               const ca = Math.round((parseFloat(r.cai) || 0) * (parseFloat(r.duration_minutes) || 0) / 60);
               const hy = Math.round((parseFloat(r.hi) || 0) * (parseFloat(r.duration_minutes) || 0) / 60);
               const re = Math.round((parseFloat(r.rin) || 0) * (parseFloat(r.duration_minutes) || 0) / 60);
-              this.eventsData = {
+              this.eventsData = !hasCardData(r, CARD_FIELDS.events) ? null : {
                 classified,
                 obstructive: oa, central: ca, hypopneas: hy, reras: re,
                 // Unclassified: the real count is the one the sessions request
@@ -561,7 +580,10 @@ export class DashboardComponent implements OnInit, AfterViewInit {
 
     // Load therapy insights
     this.api.getInsights().subscribe({
-      next: (items) => { this.insights = items || []; },
+      // "Not enough data" is a placeholder, not an insight: it names no metric.
+      next: (items) => {
+        this.insights = (items || []).filter(i => hasCardData(i, CARD_FIELDS.insight));
+      },
       error: () => {},
     });
 
@@ -582,9 +604,18 @@ export class DashboardComponent implements OnInit, AfterViewInit {
     this.summaryRefreshing = true;
     this.summaryRefreshMsg = '';
     this.api.generateSessionSummary(this.data.latest_night.date).subscribe({
-      next: () => {
-        this.summaryRefreshMsg = 'Summary queued — check back in ~30s';
+      next: (reply) => {
         this.summaryRefreshing = false;
+        // Issue #74: the server answers 200 with status "failed" when it will
+        // not write one (a myAir-only night has no session to summarise).
+        const outcome = summaryRefreshOutcome(reply);
+        if (!outcome.queued) {
+          this.summaryRefreshMsg = outcome.reason
+            ? this.t.instant('dashboard.page.summaryFailedReason', { reason: outcome.reason })
+            : this.t.instant('dashboard.page.summaryFailed');
+          return;
+        }
+        this.summaryRefreshMsg = 'Summary queued — check back in ~30s';
         setTimeout(() => {
           this.api.getLatestSummary().subscribe({
             next: (rows) => {
@@ -786,7 +817,10 @@ export class DashboardComponent implements OnInit, AfterViewInit {
       ? 'dashboard.chart.ahiTrend'
       : 'dashboard.chart.apneaIndexTrend';
 
-    this.charts.push(new Chart(this.ahiChartRef.nativeElement, {
+    this.showAhiTrend = hasCardData(this.data.ahi_trend, CARD_FIELDS.ahiTrend);
+    this.showUsageTrend = hasCardData(this.data.usage_trend, CARD_FIELDS.usageTrend);
+
+    if (this.showAhiTrend) this.charts.push(new Chart(this.ahiChartRef.nativeElement, {
       type: 'line',
       data: {
         labels,
@@ -805,7 +839,7 @@ export class DashboardComponent implements OnInit, AfterViewInit {
     }));
 
     // Usage Hours
-    this.charts.push(new Chart(this.usageChartRef.nativeElement, {
+    if (this.showUsageTrend) this.charts.push(new Chart(this.usageChartRef.nativeElement, {
       type: 'bar',
       data: {
         labels,
@@ -839,10 +873,14 @@ export class DashboardComponent implements OnInit, AfterViewInit {
         })));
     });
 
-    this.api.getTrend('leak', 30).subscribe(d => this.renderTrendChart(d, this.leakChartRef, this.t.instant('dashboard.chart.leakTrend'), [
-      { key: 'leak_50', label: 'L50', color: '#ffb74d' },
-      { key: 'leak_95', label: 'L95', color: '#ff9800', fill: '-1' },
-    ]));
+    this.api.getTrend('leak', 30).subscribe(d => {
+      this.showLeakTrend = hasCardData(d, CARD_FIELDS.leakTrend);
+      if (!this.showLeakTrend) return;
+      this.renderTrendChart(d, this.leakChartRef, this.t.instant('dashboard.chart.leakTrend'), [
+        { key: 'leak_50', label: 'L50', color: '#ffb74d' },
+        { key: 'leak_95', label: 'L95', color: '#ff9800', fill: '-1' },
+      ]);
+    });
 
     this.api.getTrend('events', 30).subscribe(d => this.renderEventsChart(d));
 
@@ -855,18 +893,6 @@ export class DashboardComponent implements OnInit, AfterViewInit {
   }
 
   /**
-   * SDD-024: does any night in this trend carry a value for any of these keys?
-   *
-   * A machine without a channel writes zeros, not nulls, so "there is data" and
-   * "the data is all zero" have to be told apart before a chart is drawn. A
-   * flat line along the axis is not an empty state: it is a plotted claim that
-   * the pressure was zero all month.
-   */
-  private anyNonZero(data: TrendPoint[], keys: string[]): boolean {
-    return data.some(p => keys.some(k => +(p[k] || 0) !== 0));
-  }
-
-  /**
    * A night with no value is a gap in the line, not a point at zero (issue
    * #38: three nights with no respiratory figures plotted as a drop to 0).
    */
@@ -875,9 +901,15 @@ export class DashboardComponent implements OnInit, AfterViewInit {
     return v === null || v === undefined || v === '' ? null : +v * scale;
   }
 
-  showPressureTrend = true;
-  showEventsTrend = true;
-  showRespiratoryTrend = true;
+  // All false until their trend arrives with a value in it (card-data.ts).
+  showAhiTrend = false;
+  showUsageTrend = false;
+  showPressureTrend = false;
+  showLeakTrend = false;
+  showEventsTrend = false;
+  showRespiratoryTrend = false;
+  showCsrTrend = false;
+  showEprTrend = false;
 
   private renderTrendChart(data: TrendPoint[], ref: ElementRef<HTMLCanvasElement>, title: string, series: { key: string; label: string; color: string; fill?: string; dashed?: boolean; zeroIsGap?: boolean }[]) {
     if (!data?.length || !ref?.nativeElement) return;
@@ -912,14 +944,13 @@ export class DashboardComponent implements OnInit, AfterViewInit {
   }
 
   private renderEventsChart(data: TrendPoint[]) {
-    if (!data?.length || !this.eventsChartRef?.nativeElement) return;
     // SDD-024. This is a stacked bar of OA/CA/H/RERA, and a machine that does
     // not classify its events leaves all four at zero for every night: an empty
     // plot area under a legend naming four event types, which reads as a month
     // without a single event. The Sleep Events Breakdown panel above already
     // carries the real count and says why there is no split.
-    this.showEventsTrend = this.anyNonZero(data, ['oai', 'cai', 'hi', 'rin']);
-    if (!this.showEventsTrend) return;
+    this.showEventsTrend = hasCardData(data, CARD_FIELDS.eventsTrend, { zeroIsEmpty: true });
+    if (!this.showEventsTrend || !this.eventsChartRef?.nativeElement) return;
     const labels = data.map(p => (p['record_date'] || '').slice(5));
     this.charts.push(new Chart(this.eventsChartRef.nativeElement, {
       type: 'bar',
@@ -947,12 +978,11 @@ export class DashboardComponent implements OnInit, AfterViewInit {
   }
 
   private renderRespiratoryChart(data: TrendPoint[]) {
-    if (!data?.length || !this.respiratoryChartRef?.nativeElement) return;
     // Same as the pressure trend: no respiratory-rate, tidal-volume or
     // minute-ventilation channel means three flat lines at zero on two axes.
     this.showRespiratoryTrend =
-      this.anyNonZero(data, ['resp_rate_50', 'tid_vol_50', 'min_vent_50']);
-    if (!this.showRespiratoryTrend) return;
+      hasCardData(data, CARD_FIELDS.respiratoryTrend, { zeroIsEmpty: true });
+    if (!this.showRespiratoryTrend || !this.respiratoryChartRef?.nativeElement) return;
     const labels = data.map(p => (p['record_date'] || '').slice(5));
     this.charts.push(new Chart(this.respiratoryChartRef.nativeElement, {
       type: 'line',
@@ -989,7 +1019,9 @@ export class DashboardComponent implements OnInit, AfterViewInit {
   }
 
   private renderCsrChart(data: TrendPoint[]) {
-    if (!data?.length || !this.csrChartRef?.nativeElement) return;
+    // A month of zero CSR minutes is an empty axis, the same as no rows.
+    this.showCsrTrend = hasCardData(data, CARD_FIELDS.csrTrend, { zeroIsEmpty: true });
+    if (!this.showCsrTrend || !this.csrChartRef?.nativeElement) return;
     const labels = data.map(p => (p['record_date'] || '').slice(5));
     this.charts.push(new Chart(this.csrChartRef.nativeElement, {
       type: 'bar',
@@ -1015,7 +1047,9 @@ export class DashboardComponent implements OnInit, AfterViewInit {
   }
 
   private renderEprChart(data: TrendPoint[]) {
-    if (!data?.length || !this.eprChartRef?.nativeElement) return;
+    // Level 0 is "EPR off", a real setting, so a zero counts here.
+    this.showEprTrend = hasCardData(data, CARD_FIELDS.eprTrend);
+    if (!this.showEprTrend || !this.eprChartRef?.nativeElement) return;
     const labels = data.map(p => (p['record_date'] || '').slice(5));
     this.charts.push(new Chart(this.eprChartRef.nativeElement, {
       type: 'line',

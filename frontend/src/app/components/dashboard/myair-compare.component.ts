@@ -45,10 +45,9 @@ import { LanguageService } from '../../services/language.service';
         </span>
       </div>
 
-      <!-- Rendered rather than hidden. The panel is gated on having a myAir
-           account, so reaching here with nothing means the first poll has not
-           run yet or ResMed holds no nights, and silence would leave the user
-           to guess which. -->
+      <!-- The dashboard no longer shows this panel without rows (an empty card
+           is better not shown), so this is only reached by another host that
+           renders the panel before its rows arrive. -->
       <div class="empty" *ngIf="!rows?.length">
         {{ 'myairCompare.empty' | translate }}
       </div>

@@ -11,6 +11,8 @@
       "regenerateTitle": "Réécrit le résumé IA de la dernière nuit. Ne récupère pas de nouvelles données de l'appareil.",
       "generating": "Génération...",
       "queueFailed": "Impossible de mettre le résumé en file",
+      "summaryFailed": "Aucun résumé n'a été rédigé pour cette nuit",
+      "summaryFailedReason": "Aucun résumé n'a été rédigé pour cette nuit : {{reason}}",
       "unknown": "Inconnu"
     },
     "chart": {

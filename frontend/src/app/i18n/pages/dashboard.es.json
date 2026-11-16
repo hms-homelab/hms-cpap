@@ -11,6 +11,8 @@
       "regenerateTitle": "Vuelve a escribir el resumen con IA de la última noche. No trae datos nuevos de la máquina.",
       "generating": "Generando...",
       "queueFailed": "No se pudo poner el resumen en cola",
+      "summaryFailed": "No se escribió ningún resumen para esta noche",
+      "summaryFailedReason": "No se escribió ningún resumen para esta noche: {{reason}}",
       "unknown": "Desconocido"
     },
     "chart": {

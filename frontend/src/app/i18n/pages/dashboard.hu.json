@@ -11,6 +11,8 @@
       "regenerateTitle": "Újraírja a legutóbbi éjszaka MI-összefoglalóját. Nem tölt le új adatot a készülékről.",
       "generating": "Készítés...",
       "queueFailed": "Az összefoglalót nem sikerült sorba állítani",
+      "summaryFailed": "Ehhez az éjszakához nem készült összefoglaló",
+      "summaryFailedReason": "Ehhez az éjszakához nem készült összefoglaló: {{reason}}",
       "unknown": "Ismeretlen"
     },
     "chart": {
