@@ -199,7 +199,9 @@ std::string helloFrame(const std::string& version, const std::string& source) {
     v["t"]      = "hello";
     v["mode"]   = "hms";
     v["fw"]     = version;
-    v["source"] = source;
+    // In `state`: the socket passes the hello's state to ingest unchanged
+    // (device.connected), and ingest reads the source from there.
+    v["state"]["source"] = source;
     return compact(v);
 }
 

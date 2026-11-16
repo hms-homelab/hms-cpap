@@ -414,10 +414,15 @@ TEST_F(StreamTest, EveryHelloCarriesTheInstallsSourceAsItIsNow) {
         // A new token reconnects: the next hello says the source as it is now.
         streamer_->apply({true, std::string(kToken) + std::to_string(++n)});
         const auto by = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-        while (server_->lastHello()["source"].asString() != want && std::chrono::steady_clock::now() < by)
+        // In the hello's `state`, which the socket hands ingest unchanged;
+        // never at the top level.
+        while (server_->lastHello()["state"]["source"].asString() != want &&
+               std::chrono::steady_clock::now() < by)
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
-        EXPECT_EQ(server_->lastHello()["source"].asString(), want);
-        EXPECT_EQ(server_->lastHello()["mode"].asString(), "hms");
+        const auto hello = server_->lastHello();
+        EXPECT_EQ(hello["state"]["source"].asString(), want);
+        EXPECT_FALSE(hello.isMember("source"));
+        EXPECT_EQ(hello["mode"].asString(), "hms");
     }
     streamer_->stop();   // before `source` goes
 }

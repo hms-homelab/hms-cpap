@@ -104,7 +104,7 @@ std::optional<CardHeaders> cardHeadersFor(const std::string& rel);
 /// flags u16 (bit 0 = last), kind u16.
 std::string binaryHeader(uint32_t req_id, uint32_t seq, bool last, uint16_t kind);
 
-/// {"t":"hello","mode":"hms","fw":<version>,"source":<source>}
+/// {"t":"hello","mode":"hms","fw":<version>,"state":{"source":<source>}}
 std::string helloFrame(const std::string& version, const std::string& source);
 
 /// The one source behind this install, for the hello (ingest closes a night
