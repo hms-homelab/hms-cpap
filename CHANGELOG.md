@@ -5,6 +5,33 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.4.0] - 2026-11-16
+
+### Added
+- **Send my nights to CpapDash.** A new switch in Settings,
+  CpapDash Cloud, off by default, that uses the same long-term token as the
+  equipment sync. When it is on, hms-cpap sends every card file it holds to
+  your CpapDash account over one WebSocket, `wss://api.cpapdash.com/socket/v1/hms`,
+  and nowhere else. CpapDash lists the install as a device named "HMS-CPAP",
+  which you can rename or make your default.
+  - Every source sends: the ez Share card's bursts, a Sleep Bridge's rebuilt
+    files and an AirSense 11 or AirCurve 11 read over Bluetooth. A file is
+    sent after it is on disk; collecting never waits on CpapDash, so the local
+    night carries on as before when CpapDash cannot be reached.
+  - A growing BRP or PLD goes from where the last send stopped; EVE, CSL, STR
+    and the other files go whole.
+  - What CpapDash has acknowledged is kept in a new `cpapdash_sent` table on
+    SQLite, MySQL and PostgreSQL, so a reconnect or a restart resumes where it
+    stopped. Turning the switch off or on clears it, and the next switch-on
+    sends every night again; CpapDash keeps one copy of each.
+  - Settings shows the stream's state, what was acknowledged, and why it
+    stopped: a revoked or regenerated token closes the connection, and the
+    server's own reason is shown.
+  - `GET /api/cpapdash/stream` reports the same state.
+
+### Changed
+- **Settings, CpapDash Cloud:** each checkbox sits before its label.
+
 ## [6.3.1] - 2026-11-16
 
 ### Fixed

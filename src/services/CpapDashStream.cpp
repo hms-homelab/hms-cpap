@@ -345,7 +345,7 @@ void CpapDashStreamer::apply(const Settings& s) {
     {
         std::lock_guard<std::mutex> lk(mu_);
         if (applied_) {
-            // Albin: "on switch on and off clear the index" (D5).
+            // The index is cleared when the switch goes off or on.
             if (s.stream != settings_.stream) clear_pending_ = true;
             if (s.stream != settings_.stream || s.token != settings_.token) ++gen_;
         }

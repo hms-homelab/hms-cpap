@@ -80,7 +80,7 @@ IDatabase::CpapDashSent ackedRow(const std::string& name, const std::string& byt
 // ── the rules ────────────────────────────────────────────────────────────────
 
 TEST(CpapDashStreamRules, TheOnlyAddressIsTheGatewaysHmsRoute) {
-    // Albin: never poll.cpapdash.com, never the device socket's port.
+    // Never poll.cpapdash.com, never the device socket's port.
     const CpapDashEndpoint ep;
     EXPECT_TRUE(ep.tls);
     EXPECT_EQ(ep.host, "api.cpapdash.com");
