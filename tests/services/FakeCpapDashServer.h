@@ -79,7 +79,12 @@ public:
     std::atomic<int>  refuse_status{0};     // answer the upgrade with this HTTP status
     std::atomic<int>  drop_after_chunks{-1};// close after this many chunks, once
     std::atomic<bool> ack_ok{true};
-    std::string       bye_reason;           // answer hello with bye {retry_in_s:1, reason}
+    // Answer hello with bye {retry_in_s, reason}, then close 1008 with the
+    // reason: the socket turning a refused install away.
+    std::string       bye_reason;
+    std::atomic<int>  bye_retry_s{1};
+    std::atomic<int>  ack_delay_ms{0};      // ingest still handling the file_ready
+    std::atomic<bool> refuse_range_once{false};   // ok:false to the next range (offset > 0)
 
     FakeCpapDashServer() {
         listen_ = static_cast<int>(::socket(AF_INET, SOCK_STREAM, 0));
@@ -127,6 +132,26 @@ public:
     void sendText(const std::string& t) {
         std::lock_guard<std::mutex> lk(mu_);
         if (conn_ >= 0) writeFrame(conn_, 1, t);
+    }
+
+    /// Closes the current socket with [code] and [reason], as the gateway
+    /// does on a revoked token (1008, "hms token revoked: ...").
+    void closeWith(int code, const std::string& reason) {
+        std::lock_guard<std::mutex> lk(mu_);
+        if (conn_ < 0) return;
+        std::string p;
+        p += static_cast<char>((code >> 8) & 0xff);
+        p += static_cast<char>(code & 0xff);
+        p += reason;
+        writeFrame(conn_, 8, p);
+        ::shutdown(conn_, 2);
+    }
+
+    int pings() { std::lock_guard<std::mutex> lk(mu_); return pings_; }
+    /// Steady-clock times of each upgrade, for the waits between them.
+    std::vector<std::chrono::steady_clock::time_point> upgradeTimes() {
+        std::lock_guard<std::mutex> lk(mu_);
+        return upgrade_times_;
     }
 
     // What was seen, read under lock() or through the accessors.
@@ -245,6 +270,7 @@ private:
         {
             std::lock_guard<std::mutex> lk(mu_);
             ++upgrades_;
+            upgrade_times_.push_back(std::chrono::steady_clock::now());
             last_path_ = path;
             last_headers_ = headers;
         }
@@ -294,8 +320,12 @@ private:
                 return;
             }
             if (opcode == 9) {
-                std::lock_guard<std::mutex> lk(mu_);
-                writeFrame(fd, 10, payload);
+                {
+                    std::lock_guard<std::mutex> lk(mu_);
+                    ++pings_;
+                    writeFrame(fd, 10, payload);
+                }
+                cv_.notify_all();
                 continue;
             }
             if (opcode == 2) {
@@ -335,7 +365,14 @@ private:
                 ++hellos_;
                 last_hello_ = v;
                 if (!bye_reason.empty()) {
-                    writeFrame(fd, 1, R"({"t":"bye","retry_in_s":1,"reason":")" + bye_reason + "\"}");
+                    writeFrame(fd, 1, R"({"t":"bye","retry_in_s":)" + std::to_string(bye_retry_s.load()) +
+                                          R"(,"reason":")" + bye_reason + "\"}");
+                    std::string p;
+                    p += static_cast<char>(1008 >> 8);
+                    p += static_cast<char>(1008 & 0xff);
+                    p += bye_reason;
+                    writeFrame(fd, 8, p);
+                    return;
                 } else {
                     writeFrame(fd, 1, R"({"t":"ack","server_time":"2026-11-16T00:00:00Z","ping_s":30})");
                 }
@@ -356,10 +393,16 @@ private:
                 if (body.size() != v.get("size", 0).asUInt64()) whole = false;
                 if (md5Hex(body) != v.get("md5", "").asString()) whole = false;
                 chunks.erase(req);
+                // file_ack only once ingest has handled the file_ready.
+                if (const int d = ack_delay_ms.load(); d > 0)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(d));
+                bool keep = whole && ack_ok.load();
+                if (keep && v.get("offset", 0).asUInt64() > 0 && refuse_range_once.exchange(false))
+                    keep = false;   // a range past what ingest holds: nothing kept
                 {
                     std::lock_guard<std::mutex> lk(mu_);
-                    readies_.push_back({v, body, whole});
-                    if (whole) {
+                    readies_.push_back({v, body, keep});
+                    if (keep) {
                         auto& file = landed_[keyOf(v.get("machine_serial", "").asString(),
                                                    v.get("date_folder", "").asString(),
                                                    v.get("rel_dir", "").asString(),
@@ -372,7 +415,7 @@ private:
                     Json::Value ack;
                     ack["t"] = "file_ack";
                     ack["req_id"] = req;
-                    ack["ok"] = ack_ok.load();
+                    ack["ok"] = keep;   // ingest: ok:false means nothing was kept
                     ack["whole"] = whole;
                     Json::StreamWriterBuilder wb;
                     wb["indentation"] = "";
@@ -395,6 +438,8 @@ private:
     int upgrades_ = 0;
     int hellos_ = 0;
     int chunks_seen_ = 0;
+    int pings_ = 0;
+    std::vector<std::chrono::steady_clock::time_point> upgrade_times_;
     long long chunk_bytes_ = 0;
     std::string last_path_;
     std::map<std::string, std::string> last_headers_;

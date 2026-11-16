@@ -138,6 +138,7 @@
         "noToken": "Collez ci-dessus le jeton hms-cpap de cpapdash.com pour commencer l'envoi.",
         "unreachable": "CpapDash est injoignable pour le moment. Les nuits sont toujours collectées ici et partiront dès son retour.",
         "refused": "CpapDash a refusé le jeton (HTTP {{status}}). Les nuits sont toujours collectées ici. Collez un nouveau jeton de cpapdash.com et enregistrez pour reprendre.",
+        "revoked": "CpapDash a mis fin à la connexion ({{reason}}). Les nuits sont toujours collectées ici. Collez un nouveau jeton de cpapdash.com et enregistrez pour reprendre.",
         "closed": "CpapDash a fermé la connexion : {{reason}}. Les nuits sont toujours collectées ici.",
         "unavailable": "Cette version de hms-cpap ne peut pas envoyer de nuits à CpapDash."
       }

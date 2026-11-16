@@ -605,7 +605,7 @@ export interface ApplyResult {
 /** platform SDD-059: GET /api/cpapdash/stream. */
 export interface CpapDashStreamStatus {
   stream: boolean;
-  /** off | no_token | connecting | connected | unreachable | refused | closed | unavailable */
+  /** off | no_token | connecting | connected | unreachable | refused | revoked | closed | unavailable */
   state: string;
   http_status?: number;
   reason?: string;

@@ -138,6 +138,7 @@
         "noToken": "A küldés indításához illeszd be fent a cpapdash.com-on készült hms-cpap tokent.",
         "unreachable": "A CpapDash most nem érhető el. Az éjszakák gyűjtése itt folytatódik, és amint újra elérhető, elküldésre kerülnek.",
         "refused": "A CpapDash elutasította a tokent (HTTP {{status}}). Az éjszakák gyűjtése itt folytatódik. Illessz be egy új tokent a cpapdash.com-ról, és mentsd az újraindításhoz.",
+        "revoked": "A CpapDash bontotta a kapcsolatot ({{reason}}). Az éjszakák gyűjtése itt folytatódik. Illessz be egy új tokent a cpapdash.com-ról, és mentsd az újraindításhoz.",
         "closed": "A CpapDash lezárta a kapcsolatot: {{reason}}. Az éjszakák gyűjtése itt folytatódik.",
         "unavailable": "A hms-cpap ezen változata nem tud éjszakákat küldeni a CpapDash-be."
       }

@@ -473,7 +473,7 @@ import { sourceImage } from '../../utils/source-image';
             <div *ngIf="streamSaved && streamStatus as s" class="stream-status"
                  [class.ok]="s.state === 'connected'"
                  [class.warn]="s.state === 'connecting' || s.state === 'unreachable' || s.state === 'no_token'"
-                 [class.err]="s.state === 'refused' || s.state === 'closed' || s.state === 'unavailable'">
+                 [class.err]="s.state === 'refused' || s.state === 'revoked' || s.state === 'closed' || s.state === 'unavailable'">
               <ng-container [ngSwitch]="s.state">
                 <span *ngSwitchCase="'connected'">
                   {{ 'settings.cloud.streamState.connected' | translate:{ files: s.files_acked || 0 } }}
@@ -485,6 +485,7 @@ import { sourceImage } from '../../utils/source-image';
                 <span *ngSwitchCase="'no_token'">{{ 'settings.cloud.streamState.noToken' | translate }}</span>
                 <span *ngSwitchCase="'unreachable'">{{ 'settings.cloud.streamState.unreachable' | translate }}</span>
                 <span *ngSwitchCase="'refused'">{{ 'settings.cloud.streamState.refused' | translate:{ status: s.http_status } }}</span>
+                <span *ngSwitchCase="'revoked'">{{ 'settings.cloud.streamState.revoked' | translate:{ reason: s.reason || '' } }}</span>
                 <span *ngSwitchCase="'closed'">{{ 'settings.cloud.streamState.closed' | translate:{ reason: s.reason || '' } }}</span>
                 <span *ngSwitchCase="'unavailable'">{{ 'settings.cloud.streamState.unavailable' | translate }}</span>
               </ng-container>

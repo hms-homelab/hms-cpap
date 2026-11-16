@@ -138,6 +138,7 @@
         "noToken": "Cole acima o token do hms-cpap gerado em cpapdash.com para começar a enviar.",
         "unreachable": "Não é possível acessar o CpapDash agora. As noites continuam sendo coletadas aqui e seguem quando ele voltar.",
         "refused": "O CpapDash recusou o token (HTTP {{status}}). As noites continuam sendo coletadas aqui. Cole um token novo de cpapdash.com e salve para recomeçar.",
+        "revoked": "O CpapDash encerrou a conexão ({{reason}}). As noites continuam sendo coletadas aqui. Cole um token novo de cpapdash.com e salve para recomeçar.",
         "closed": "O CpapDash fechou a conexão: {{reason}}. As noites continuam sendo coletadas aqui.",
         "unavailable": "Esta versão do hms-cpap não consegue enviar noites ao CpapDash."
       }

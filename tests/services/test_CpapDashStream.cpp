@@ -232,6 +232,25 @@ TEST(CpapDashStreamRules, FileReadyCarriesTheMachineSerial) {
     EXPECT_EQ(v["machine_serial"].asString(), "23000000001");
 }
 
+TEST(CpapDashStreamRules, TheSourceIsOneOfEzshareBridgeOrBle) {
+    const fs::path dir = fs::temp_directory_path() /
+                         ("cdstream_src_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    fs::create_directories(dir);
+    // Nothing else configured: a card source (ez Share, FlashAir, a folder).
+    EXPECT_EQ(cdstream::sourceKind(false, true, dir.string()), "ezshare");
+    // A bridge folder with no card yet is not a bridge source.
+    fs::create_directories(dir / "sleepbridge" / "bridge-1" / "batches");
+    EXPECT_EQ(cdstream::sourceKind(false, true, dir.string()), "ezshare");
+    // A bridge that has rebuilt a card.
+    fs::create_directories(dir / "sleepbridge" / "bridge-1" / "DATALOG");
+    EXPECT_EQ(cdstream::sourceKind(false, true, dir.string()), "bridge");
+    // The receiver switched off: not a bridge source.
+    EXPECT_EQ(cdstream::sourceKind(false, false, dir.string()), "ezshare");
+    // A Bluetooth reader switched on wins: one source per install.
+    EXPECT_EQ(cdstream::sourceKind(true, true, dir.string()), "ble");
+    fs::remove_all(dir);
+}
+
 TEST(CpapDashStreamRules, TheInstallIdIsMadeOnceAndKept) {
     const fs::path dir = fs::temp_directory_path() /
                          ("cdstream_id_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -298,15 +317,16 @@ protected:
 
     fs::path root() const { return dir_ / "as11" / kSerial; }
 
-    void startStreamer(bool on = true, uint16_t port = 0) {
+    void startStreamer(bool on = true, uint16_t port = 0, double ping_s = 30.0) {
         const uint16_t p = port ? port : port_;
         streamer_ = std::make_shared<CpapDashStreamer>(
             db_,
-            [p] {
+            [p, ping_s] {
                 CpapDashEndpoint ep;
                 ep.tls = false;
                 ep.host = "127.0.0.1";
                 ep.port = p;
+                ep.ping_every_s = ping_s;
                 return makeCpapDashLink(ep);
             },
             "11111111-2222-4333-8444-555555555555", "6.3.1-test");
@@ -377,6 +397,31 @@ TEST_F(StreamTest, ItConnectsToTheHmsRouteWithTheTokenAndSaysHelloAsHms) {
     EXPECT_EQ(hello["fw"].asString(), "6.3.1-test");
 }
 
+TEST_F(StreamTest, EveryHelloCarriesTheInstallsSourceAsItIsNow) {
+    std::string source = "ezshare";
+    std::mutex m;
+    startStreamer();
+    streamer_->setSourceProvider([&] {
+        std::lock_guard<std::mutex> lk(m);
+        return source;
+    });
+    int n = 0;
+    for (const char* want : {"ezshare", "bridge", "ble"}) {
+        {
+            std::lock_guard<std::mutex> lk(m);
+            source = want;
+        }
+        // A new token reconnects: the next hello says the source as it is now.
+        streamer_->apply({true, std::string(kToken) + std::to_string(++n)});
+        const auto by = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (server_->lastHello()["source"].asString() != want && std::chrono::steady_clock::now() < by)
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        EXPECT_EQ(server_->lastHello()["source"].asString(), want);
+        EXPECT_EQ(server_->lastHello()["mode"].asString(), "hms");
+    }
+    streamer_->stop();   // before `source` goes
+}
+
 TEST_F(StreamTest, AnAckMovesTheIndexAndTheFileLandsWhole) {
     const auto bytes = edf(100);   // 10 KB: three 4 KB chunks
     writeFile(root() / kBrp, bytes);
@@ -398,7 +443,110 @@ TEST_F(StreamTest, NoAckMovesNothing) {
     startStreamer();
     ASSERT_TRUE(waitReadies(1));
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
+    // ok:false: nothing acked; the row only says "from 0 next time".
+    const auto row = db_->getCpapDashSent(root().string(), kEve);
+    EXPECT_TRUE(!row || row->acked_to == 0);
+    // A refused WHOLE file is not sent again until it is noted again.
+    EXPECT_EQ(server_->readies().size(), 1u);
+}
+
+TEST_F(StreamTest, ARefusedRangeIsSentAgainWholeFromZeroThenAdvances) {
+    // Ingest: ok:false is nothing kept (a range past what it holds, after a
+    // purge). The next attempt goes whole from 0, never the same range.
+    const auto first = edf(10);
+    writeFile(root() / kBrp, first);
+    startStreamer();
+    ASSERT_TRUE(waitAcked(kBrp, static_cast<long long>(first.size())));
+
+    server_->refuse_range_once = true;
+    const auto later = edf(25);
+    writeFile(root() / kBrp, later);
+    card_feed::fileWritten(root().string(), kBrp, kSerial);
+    ASSERT_TRUE(waitAcked(kBrp, static_cast<long long>(later.size())));
+
+    const auto r = server_->readies();
+    ASSERT_EQ(r.size(), 3u);
+    EXPECT_EQ(r[1].frame["offset"].asUInt64(), first.size());   // the range, refused
+    EXPECT_FALSE(r[1].whole);
+    EXPECT_EQ(r[2].frame["offset"].asUInt64(), 0u);             // then whole, kept
+    EXPECT_TRUE(r[2].whole);
+    EXPECT_EQ(landedFor("20261116", "20261116_220000_BRP.edf"), later);
+}
+
+TEST_F(StreamTest, TheIndexMovesOnlyWhenTheAckArrives) {
+    // file_ack comes once ingest has handled the file_ready, which can take a while.
+    server_->ack_delay_ms = 800;
+    const auto bytes = edf(20);
+    writeFile(root() / kEve, bytes);
+    startStreamer();
+    const auto by = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (server_->chunkBytes() < static_cast<long long>(bytes.size()) &&
+           std::chrono::steady_clock::now() < by)
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    ASSERT_EQ(server_->chunkBytes(), static_cast<long long>(bytes.size()));
+    // Every byte is there and file_ready went; ingest has not answered yet.
+    std::this_thread::sleep_for(std::chrono::milliseconds(200));
     EXPECT_FALSE(db_->getCpapDashSent(root().string(), kEve).has_value());
+    ASSERT_TRUE(waitAcked(kEve, static_cast<long long>(bytes.size())));
+}
+
+TEST_F(StreamTest, ARefusedInstallWaitsItsRetryAndShowsTheReason) {
+    // The socket opens, then bye {retry_in_s, reason} and a 1008 close.
+    server_->bye_reason = "this account cannot stream";
+    server_->bye_retry_s = 1;
+    startStreamer();
+    ASSERT_TRUE(waitState("closed"));
+    EXPECT_EQ(streamer_->status().reason, "this account cannot stream");
+    ASSERT_TRUE(server_->waitFor([&] { return server_->upgradesLocked() >= 2; }, 5000));
+    const auto t = server_->upgradeTimes();
+    // Waited out as asked (1 s), not the 50 ms backoff.
+    EXPECT_GE(std::chrono::duration_cast<std::chrono::milliseconds>(t[1] - t[0]).count(), 900);
+}
+
+TEST_F(StreamTest, ARevokedTokenStopsLikeA401UntilTheTokenChanges) {
+    writeFile(root() / kEve, edf(2));
+    startStreamer();
+    ASSERT_TRUE(waitState("connected"));
+    ASSERT_TRUE(waitAcked(kEve, static_cast<long long>(edf(2).size())));
+    server_->closeWith(1008, "hms token revoked: regenerated");
+    ASSERT_TRUE(waitState("revoked"));
+    EXPECT_EQ(streamer_->status().reason, "hms token revoked: regenerated");
+    const int tries = server_->upgrades();
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));   // several backoffs' worth
+    EXPECT_EQ(server_->upgrades(), tries);
+
+    streamer_->apply({true, std::string(kToken) + "new"});
+    EXPECT_TRUE(waitState("connected"));
+}
+
+TEST_F(StreamTest, ItPingsSoAnIdleSocketIsNeverSilent) {
+    startStreamer(true, 0, 0.2);
+    ASSERT_TRUE(waitState("connected"));
+    const auto by = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (server_->pings() < 2 && std::chrono::steady_clock::now() < by)
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    EXPECT_GE(server_->pings(), 2);
+}
+
+TEST_F(StreamTest, ADeployByeReconnectsAndResumesFromTheIndex) {
+    const auto eve = edf(3);
+    writeFile(root() / kEve, eve);
+    startStreamer();
+    ASSERT_TRUE(waitAcked(kEve, static_cast<long long>(eve.size())));
+    const size_t before = server_->readies().size();
+
+    // The socket's deploy: bye with a retry and no reason. A night's file
+    // lands while hms-cpap is away.
+    server_->sendText(R"({"t":"bye","retry_in_s":1})");
+    server_->dropNow();
+    const auto brp = edf(40);
+    writeFile(root() / kBrp, brp);
+    ASSERT_TRUE(server_->waitFor([&] { return server_->hellosLocked() >= 2; }, 5000));
+    ASSERT_TRUE(waitAcked(kBrp, static_cast<long long>(brp.size())));
+    // Only the new file went: the acked one was resumed past, not resent.
+    const auto r = server_->readies();
+    ASSERT_EQ(r.size(), before + 1);
+    EXPECT_EQ(r.back().frame["filename"].asString(), "20261116_220000_BRP.edf");
 }
 
 TEST_F(StreamTest, AGrowingBrpSendsOnlyItsNewRecordsAfterTheAck) {

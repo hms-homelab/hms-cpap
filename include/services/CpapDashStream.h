@@ -104,8 +104,18 @@ std::optional<CardHeaders> cardHeadersFor(const std::string& rel);
 /// flags u16 (bit 0 = last), kind u16.
 std::string binaryHeader(uint32_t req_id, uint32_t seq, bool last, uint16_t kind);
 
-/// {"t":"hello","mode":"hms","fw":<version>}
-std::string helloFrame(const std::string& version);
+/// {"t":"hello","mode":"hms","fw":<version>,"source":<source>}
+std::string helloFrame(const std::string& version, const std::string& source);
+
+/// The one source behind this install, for the hello (ingest closes a night
+/// by it): "ble" when a Bluetooth reader is switched on (AirSense 11 or
+/// DreamStation 2, directly or through the bridge client); otherwise
+/// "bridge" when the Sleep Bridge receiver is on and a bridge has a card
+/// folder under <data_dir>/sleepbridge; otherwise "ezshare" (ez Share,
+/// FlashAir, a local card folder). The config names no Sleep Bridge choice
+/// (the receiver is on by default and a bridge install writes no source), so
+/// a bridge is known by its folder.
+std::string sourceKind(bool bluetooth_on, bool bridge_receiver_on, const std::string& data_dir);
 
 /// The text frame that closes a file's chunks (D4).
 std::string fileReadyFrame(uint32_t req_id, const CardHeaders& h, uint64_t offset,
@@ -147,8 +157,9 @@ public:
 
     struct Status {
         bool        stream = false;
-        /// off | no_token | connecting | connected | unreachable | refused |
-        /// closed | unavailable
+        /// off | no_token | connecting | connected | unreachable | refused (a
+        /// 401) | revoked (the gateway's close on a revoked token) | closed |
+        /// unavailable
         std::string state = "off";
         int         http_status = 0;
         std::string reason;          ///< the server's or the network's words
@@ -174,6 +185,9 @@ public:
     void setTiming(const Timing& t);
     /// Every card root hms-cpap holds, asked on each connection (D8).
     void setRootsProvider(RootsProvider p);
+    /// The install's source ("ezshare" | "bridge" | "ble"), asked on every
+    /// hello so a change of source shows on the next connect.
+    void setSourceProvider(std::function<std::string()> p);
 
     /// The settings now. The first call only sets them; after that, the switch
     /// going off or on clears the index (D5), and any change reconnects.
@@ -240,6 +254,7 @@ private:
     std::string                version_;
     Timing                     timing_;
     RootsProvider              roots_provider_;
+    std::function<std::string()> source_provider_;
 
     mutable std::mutex      mu_;
     std::condition_variable cv_;

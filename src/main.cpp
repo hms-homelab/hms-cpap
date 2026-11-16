@@ -1192,6 +1192,14 @@ int main(int argc, char** argv) {
                     const std::string local = hms_cpap::ConfigManager::get("CPAP_LOCAL_DIR", "");
                     return hms_cpap::CpapDashStreamer::discoverRoots(data_dir, {archive, local});
                 });
+                // The one source behind this install, said on every hello:
+                // ingest closes a night by it.
+                cpapdash_stream->setSourceProvider([&config, data_dir] {
+                    return hms_cpap::cdstream::sourceKind(
+                        config.airsense11_ble.enabled || config.ds2_ble.enabled ||
+                            config.airsense11.enabled,
+                        config.sleep_bridge.enabled, data_dir);
+                });
                 cpapdash_stream->apply({config.cpapdash.stream, config.cpapdash.token});
                 hms_cpap::card_feed::setSinks(
                     [s = cpapdash_stream](const std::string& root, const std::string& rel,

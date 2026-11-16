@@ -25,6 +25,9 @@ struct CpapDashEndpoint {
     std::string host = "api.cpapdash.com";
     uint16_t    port = 443;
     std::string path = "/socket/v1/hms";
+    /// A WebSocket ping this often, so an idle socket is never silent: the
+    /// gateway closes one that has heard nothing from hms-cpap for 90 s.
+    double      ping_every_s = 30.0;
 };
 
 class CpapDashLink {

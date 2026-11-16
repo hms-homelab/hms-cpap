@@ -194,12 +194,31 @@ std::string binaryHeader(uint32_t req_id, uint32_t seq, bool last, uint16_t kind
     return h;
 }
 
-std::string helloFrame(const std::string& version) {
+std::string helloFrame(const std::string& version, const std::string& source) {
     Json::Value v;
-    v["t"]    = "hello";
-    v["mode"] = "hms";
-    v["fw"]   = version;
+    v["t"]      = "hello";
+    v["mode"]   = "hms";
+    v["fw"]     = version;
+    v["source"] = source;
     return compact(v);
+}
+
+std::string sourceKind(bool bluetooth_on, bool bridge_receiver_on, const std::string& data_dir) {
+    if (bluetooth_on) return "ble";
+    if (bridge_receiver_on && !data_dir.empty()) {
+        std::error_code ec;
+        const fs::path base = fs::path(data_dir) / "sleepbridge";
+        if (fs::is_directory(base, ec)) {
+            for (const auto& e : fs::directory_iterator(base, ec)) {
+                const auto name = e.path().filename().string();
+                if (!e.is_directory(ec) || name.empty() || name[0] == '.') continue;
+                // A sender's folder holds its card once a rebuild wrote one.
+                if (fs::exists(e.path() / "DATALOG", ec) || fs::exists(e.path() / "STR.edf", ec))
+                    return "bridge";
+            }
+        }
+    }
+    return "ezshare";
 }
 
 std::string fileReadyFrame(uint32_t req_id, const CardHeaders& h, uint64_t offset,
@@ -242,6 +261,9 @@ std::string isoNowUtc() {
 namespace {
 
 const char* kTag = "[cpapdash-stream] ";
+// The gateway's close reason when the token is revoked (D7): "hms token
+// revoked: <revoked|regenerated|password_changed|account_deleted>".
+const char* kRevokedPrefix = "hms token revoked";
 
 std::string keyOf(const std::string& root, const std::string& rel) { return root + "\n" + rel; }
 
@@ -301,6 +323,11 @@ void CpapDashStreamer::setTiming(const Timing& t) {
 void CpapDashStreamer::setRootsProvider(RootsProvider p) {
     std::lock_guard<std::mutex> lk(mu_);
     roots_provider_ = std::move(p);
+}
+
+void CpapDashStreamer::setSourceProvider(std::function<std::string()> p) {
+    std::lock_guard<std::mutex> lk(mu_);
+    source_provider_ = std::move(p);
 }
 
 void CpapDashStreamer::apply(const Settings& s) {
@@ -564,17 +591,34 @@ void CpapDashStreamer::run() {
             case End::SettingsChanged:
                 break;
             case End::Bye: {
-                // The socket's deploy, or CpapDash turning this install away
-                // (hms.stream off, D10): its words go to Settings.
+                // Two kinds, both waited out exactly as asked: a socket
+                // deploy's bye (no reason; back within seconds, resuming from
+                // the index), and CpapDash turning this install away (ingest
+                // refused it, 300 s, or did not answer, 5 s; then a 1008
+                // close), whose reason goes to Settings.
                 const auto wait = std::chrono::milliseconds(
                     std::max<long long>(end.retry_in_s, 1) * 1000);
                 std::cout << kTag << "CpapDash said bye" << (end.reason.empty() ? "" : ": " + end.reason)
                           << "; back in " << wait.count() / 1000 << " s" << std::endl;
-                setState("closed", 0, end.reason);
-                waitForChange(gen, end.reason.empty() ? wait : std::max(wait, backoff));
-                if (!end.reason.empty()) backoff = std::min(backoff * 2, t.backoff_max);
+                setState(end.reason.empty() ? "connecting" : "closed", 0, end.reason);
+                waitForChange(gen, wait);
                 break;
             }
+            case End::Closed:
+                if (end.reason.rfind(kRevokedPrefix, 0) == 0) {
+                    // The gateway closes every socket of a revoked token
+                    // (D7). As a 401: nothing more is sent until the token or
+                    // the switch changes; the collectors carry on.
+                    {
+                        std::lock_guard<std::mutex> lk(mu_);
+                        refused_gen_ = gen;
+                    }
+                    std::cerr << kTag << "CpapDash closed the connection: " << end.reason
+                              << "; nothing is sent until the token changes" << std::endl;
+                    setState("revoked", 0, end.reason);
+                    break;
+                }
+                [[fallthrough]];
             default:
                 std::cerr << kTag << "connection lost" << (end.reason.empty() ? "" : ": " + end.reason)
                           << "; trying again in " << backoff.count() / 1000 << " s" << std::endl;
@@ -632,7 +676,13 @@ CpapDashStreamer::SessionEnd CpapDashStreamer::session(CpapDashLink& link, uint6
         t = timing_;
     }
     SessionEnd end;
-    link.sendText(cdstream::helloFrame(version_));
+    std::function<std::string()> source_of;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        source_of = source_provider_;
+    }
+    // Asked on every hello: a change of source shows on the next connect.
+    link.sendText(cdstream::helloFrame(version_, source_of ? source_of() : "ezshare"));
     const auto hello_by = std::chrono::steady_clock::now() + t.hello_timeout;
     bool acked = false;
     while (!acked) {
@@ -839,14 +889,31 @@ CpapDashStreamer::SendResult CpapDashStreamer::sendFile(CpapDashLink& link, cons
             if (Json::parseFromStream(rb, in, &v, nullptr) && v.isObject() &&
                 v.get("t", "").asString() == "file_ack" &&
                 v.get("req_id", 0).asUInt64() == req_id) {
+                // ok:true is a complete read that landed, or bytes ingest
+                // already holds: the index advances (D6). ok:false is nothing
+                // kept: an incomplete read, or a range starting past what
+                // ingest holds (a purge, say). Then the file's row is reset
+                // so its next attempt goes WHOLE from 0; sending the same
+                // range again would be refused forever.
                 const bool ok = v.get("ok", false).asBool();
-                const bool whole = v.get("whole", false).asBool();
-                if (!ok || !whole) {
-                    // Not acked: the index stays where it was, and the file
-                    // goes again when it is next noted or on the next
-                    // connection (D6).
-                    std::cerr << kTag << w.rel << " not taken (ok=" << ok << ", whole=" << whole
-                              << "); it goes again" << std::endl;
+                if (!ok) {
+                    std::cerr << kTag << w.rel << " not kept by CpapDash (from byte " << plan.offset
+                              << "); it goes again whole" << std::endl;
+                    if (db_) {
+                        IDatabase::CpapDashSent reset;
+                        reset.root = w.root;
+                        reset.path = w.rel;
+                        reset.machine = machine;
+                        reset.acked_to = 0;
+                        reset.acked_md5 = "";   // matches nothing: the plan is whole
+                        reset.updated_at = cdstream::isoNowUtc();
+                        db_->upsertCpapDashSent(reset);
+                    }
+                    settled_.erase(key);
+                    // A refused range is tried again whole straight away; a
+                    // refused whole file waits for its next note or the next
+                    // connection, so a file CpapDash keeps refusing never loops.
+                    if (plan.offset > 0) enqueue(w, false);
                     return SendResult::Done;
                 }
                 IDatabase::CpapDashSent r;

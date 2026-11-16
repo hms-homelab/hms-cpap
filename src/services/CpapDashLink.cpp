@@ -120,6 +120,11 @@ public:
         }
         const auto r = fut.get();
         if (r == drogon::ReqResult::Ok) {
+            // Pings from this side too: the gateway closes a socket that
+            // has heard nothing from hms-cpap for 90 s (Drogon already
+            // answers the server's pings with pongs).
+            if (auto conn = client_->getConnection(); conn && ep_.ping_every_s > 0)
+                conn->setPingMessage("", std::chrono::duration<double>(ep_.ping_every_s));
             out.ok = true;
             return out;
         }
