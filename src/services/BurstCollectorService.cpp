@@ -2683,6 +2683,12 @@ bool BurstCollectorService::executeBurstCycle() {
         }
 
         std::map<std::string, std::vector<EzShareFileEntry>> listings;
+        // platform SDD-059: a card read of this burst failed (a folder refused
+        // or listed empty against its record, a download that failed). Such a
+        // burst tells CpapDash nothing: a card that does not answer never
+        // ends a session (SDD-053 D2). A listing that throws never reaches
+        // finishPasses at all.
+        bool card_read_failed = false;
         // D9: this burst's listings plus the stored listings of folders not done.
         std::map<std::string, std::vector<EzShareFileEntry>> discover_in;
         // Each listed folder's row as it was before this burst listed it.
@@ -2791,6 +2797,7 @@ bool BurstCollectorService::executeBurstCycle() {
             // One way to survive an ez Share, D7: a failure counted against the
             // folder, which is parked for an hour after three in a row.
             auto countFailure = [&](const std::string& folder, const std::string& why) {
+                card_read_failed = true;
                 auto& w = folder_watch_[folder];
                 w.relist = true;
                 if (++w.list_failures >= kFailuresBeforePark && folder != tonight) {
@@ -3100,7 +3107,8 @@ bool BurstCollectorService::executeBurstCycle() {
             card_feed::rootWritten(card_root, "");
             // The pass is over, found something or not: said after this
             // burst's files, in order. The burst is the only clock there is.
-            card_feed::burstEnded(card_root);
+            // Only for a burst whose card reads all answered (SDD-053 D2).
+            if (!card_read_failed) card_feed::burstEnded(card_root);
         };
 
         // SDD-068 D1: this burst's listings, before anything is downloaded,
@@ -3247,6 +3255,7 @@ bool BurstCollectorService::executeBurstCycle() {
                     folder_watch_[session.date_folder].relist = true;
                     failed_folders.insert(session.date_folder);
                     ++download_failures;
+                    card_read_failed = true;
                 }
                 continue;
             }
@@ -3361,6 +3370,7 @@ bool BurstCollectorService::executeBurstCycle() {
                 folder_watch_[session.date_folder].relist = true;
                 failed_folders.insert(session.date_folder);
                 ++download_failures;
+                card_read_failed = true;
             }
         }
 

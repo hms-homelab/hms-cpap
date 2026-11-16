@@ -148,11 +148,11 @@ public:
     }
 
     int pings() { std::lock_guard<std::mutex> lk(mu_); return pings_; }
-    /// file_ready ("ready:<name>:kept|not") and round ("round:<n>") frames, in arrival order.
+    /// file_ready ("ready:<name>:kept|not") and round ("round") frames, in arrival order.
     std::vector<std::string> events() { std::lock_guard<std::mutex> lk(mu_); return events_; }
     size_t roundsLocked() const {
         size_t n = 0;
-        for (const auto& e : events_) n += e.rfind("round:", 0) == 0;
+        for (const auto& e : events_) n += e.rfind("round", 0) == 0;
         return n;
     }
     /// Steady-clock times of each upgrade, for the waits between them.
@@ -386,7 +386,9 @@ private:
             } else if (t == "round") {
                 {
                     std::lock_guard<std::mutex> lk(mu_);
-                    events_.push_back("round:" + std::to_string(v.get("new_files", -1).asInt()));
+                    // The confirmed shape: {"t":"round","done":true}, nothing else.
+                    const bool exact = v.size() == 2 && v.get("done", false).asBool();
+                    events_.push_back(exact ? "round" : "round:bad-shape");
                 }
                 cv_.notify_all();
             } else if (t == "file_ready") {

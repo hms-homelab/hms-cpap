@@ -205,11 +205,10 @@ std::string helloFrame(const std::string& version, const std::string& source) {
     return compact(v);
 }
 
-std::string roundFrame(int new_files) {
+std::string roundFrame() {
     Json::Value v;
-    v["t"]         = "round";
-    v["done"]      = true;
-    v["new_files"] = new_files;
+    v["t"]    = "round";
+    v["done"] = true;
     return compact(v);
 }
 
@@ -392,11 +391,16 @@ void CpapDashStreamer::rootWritten(const std::string& root, const std::string& m
 }
 
 void CpapDashStreamer::burstEnded(const std::string& root) {
+    std::function<std::string()> source_of;
     {
         std::lock_guard<std::mutex> lk(mu_);
         roots_[root];
         if (!settings_.stream) return;
+        source_of = source_provider_;
     }
+    // Only an ez Share install's bursts end a round; a bridge or Bluetooth
+    // night closes by its own source's rules.
+    if ((source_of ? source_of() : std::string("ezshare")) != "ezshare") return;
     Work w;
     w.root = root;
     w.round = true;
@@ -780,15 +784,13 @@ CpapDashStreamer::SessionEnd CpapDashStreamer::session(CpapDashLink& link, uint6
         if (w->round) {
             // Everything queued ahead of it has been sent and acked (or
             // refused, which ingest has answered too).
-            const int n = round_files_[w->root];
-            if (!link.sendText(cdstream::roundFrame(n))) {
+            if (!link.sendText(cdstream::roundFrame())) {
                 enqueue(*w, true);
                 SessionEnd lost;
                 lost.end = End::Closed;
                 lost.connected = true;
                 return lost;
             }
-            round_files_[w->root] = 0;
             continue;
         }
         if (w->rel.empty()) {
@@ -984,7 +986,6 @@ CpapDashStreamer::SendResult CpapDashStreamer::sendFile(CpapDashLink& link, cons
                 } else {
                     std::cerr << kTag << "the index did not take " << w.rel << std::endl;
                 }
-                ++round_files_[w.root];
                 {
                     std::lock_guard<std::mutex> lk(mu_);
                     status_.files_acked++;

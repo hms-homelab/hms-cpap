@@ -374,6 +374,17 @@ protected:
         return false;
     }
 
+    // Any ack of [rel] under another root, polled.
+    bool waitAcked2(const fs::path& under, const std::string& rel, int ms = 10000) {
+        const auto by = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
+        while (std::chrono::steady_clock::now() < by) {
+            auto r = db_->getCpapDashSent(under.string(), rel);
+            if (r && r->acked_to > 0) return true;
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+        return false;
+    }
+
     std::string landedFor(const std::string& date, const std::string& name) {
         return server_->landed()[cdfake::FakeCpapDashServer::keyOf(kSerial, date, "", name)];
     }
@@ -463,7 +474,7 @@ TEST_F(StreamTest, ABurstSendsItsFilesThenItsRound) {
     ASSERT_EQ(ev.size(), 3u);
     EXPECT_EQ(ev[0], "ready:20261116_221502_BRP.edf:kept");
     EXPECT_EQ(ev[1], "ready:20261116_221502_EVE.edf:kept");
-    EXPECT_EQ(ev[2], "round:2");
+    EXPECT_EQ(ev[2], "round");   // {"t":"round","done":true}, exactly
 }
 
 TEST_F(StreamTest, AnEmptyBurstStillSendsItsRound) {
@@ -479,7 +490,7 @@ TEST_F(StreamTest, AnEmptyBurstStillSendsItsRound) {
     card_feed::rootWritten(archive.string(), "");
     card_feed::burstEnded(archive.string());
     ASSERT_TRUE(server_->waitFor([&] { return server_->roundsLocked() >= 2; }));
-    EXPECT_EQ(since(server_->events(), mark), std::vector<std::string>{"round:0"});
+    EXPECT_EQ(since(server_->events(), mark), std::vector<std::string>{"round"});
 }
 
 TEST_F(StreamTest, ARoundStaysBehindItsFilesAcrossAReconnect) {
@@ -506,13 +517,39 @@ TEST_F(StreamTest, ARoundStaysBehindItsFilesAcrossAReconnect) {
     const auto ev = since(server_->events(), mark);
     // The round went once, last, after both files were kept, counting both.
     ASSERT_FALSE(ev.empty());
-    EXPECT_EQ(ev.back(), "round:2");
-    EXPECT_EQ(std::count_if(ev.begin(), ev.end(), [](const std::string& e) { return e.rfind("round:", 0) == 0; }), 1);
+    EXPECT_EQ(ev.back(), "round");
+    EXPECT_EQ(std::count_if(ev.begin(), ev.end(), [](const std::string& e) { return e.rfind("round", 0) == 0; }), 1);
     const auto kept = [&](const std::string& name) {
         return std::find(ev.begin(), ev.end(), "ready:" + name + ":kept") != ev.end();
     };
     EXPECT_TRUE(kept("20261116_221502_BRP.edf"));
     EXPECT_TRUE(kept("20261116_221502_PLD.edf"));
+}
+
+TEST_F(StreamTest, ABridgeOrBluetoothInstallSendsNoRound) {
+    const auto archive = archiveWithIdentity(dir_);
+    std::string source = "bridge";
+    std::mutex m;
+    startStreamer();
+    streamer_->setSourceProvider([&] {
+        std::lock_guard<std::mutex> lk(m);
+        return source;
+    });
+    ASSERT_TRUE(waitState("connected"));
+    for (const char* s : {"bridge", "ble"}) {
+        {
+            std::lock_guard<std::mutex> lk(m);
+            source = s;
+        }
+        writeFile(archive / "DATALOG/20261116" / (std::string(s) + "_EVE.edf"), edf(2));
+        card_feed::rootWritten(archive.string(), "");
+        card_feed::burstEnded(archive.string());
+        ASSERT_TRUE(waitAcked2(archive, std::string("DATALOG/20261116/") + s + "_EVE.edf"));
+    }
+    // Give a wrongly queued round every chance to arrive.
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    EXPECT_EQ(server_->waitFor([&] { return server_->roundsLocked() > 0; }, 1), false);
+    streamer_->stop();   // before `source` goes
 }
 
 TEST_F(StreamTest, AnAckMovesTheIndexAndTheFileLandsWhole) {

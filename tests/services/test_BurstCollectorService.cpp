@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <gmock/gmock.h>
 #include "services/BurstCollectorService.h"
+#include "services/CardFileFeed.h"
 #include "services/DataPublisherService.h"
 #include "services/SessionDiscoveryService.h"
 #include "services/PrismaIngestion.h"
@@ -4465,6 +4466,81 @@ TEST_F(BurstOrchestrationTest, EzShare_ARefusedFolderDoesNotStopTheOthersAndIsPa
     src_raw->answer_not_a_listing.clear();
     svc->runBurstCycleForTest();
     EXPECT_EQ(src_raw->folder_lists["20261012"], asked + 1) << "asked again after the hour";
+}
+
+// ── platform SDD-059: a burst that reached the card ends one round ──────────
+//
+// The burst is the only clock in the process: ingest closes an ez Share night
+// from the end of each burst that reached the card. A burst whose card reads
+// failed says nothing, since a card that does not answer never ends a session
+// (SDD-053 D2).
+
+namespace {
+struct BurstEnds {
+    std::vector<std::string> roots;
+    BurstEnds() {
+        card_feed::setSinks({}, {}, [this](const std::string& root) { roots.push_back(root); });
+    }
+    ~BurstEnds() { card_feed::setSinks({}, {}); }
+};
+}  // namespace
+
+TEST_F(BurstOrchestrationTest, EzShare_ABurstThatReachedTheCardEndsExactlyOneRound) {
+    long long now = kSdd054T0;
+    auto svc = makeService([](FakeDataSource& ds) {
+        ds.date_folders = {"20261013"};
+        ds.folder_files["20261013"] = {mkEntry("20261013_220000_BRP.edf", 1),
+                                       mkEntry("20261013_220000_PLD.edf", 1)};
+    });
+    onSdd054Clock(*svc, now);
+    expectFreshDownload(*db_raw);
+    BurstEnds ends;
+
+    svc->runBurstCycleForTest();   // files came in
+    ASSERT_EQ(ends.roots.size(), 1u);
+    EXPECT_EQ(ends.roots[0], archive_dir.string());
+
+    now += kSdd054Min;
+    svc->runBurstCycleForTest();   // nothing new: still one
+    EXPECT_EQ(ends.roots.size(), 2u);
+}
+
+TEST_F(BurstOrchestrationTest, EzShare_ABurstWithARefusedFolderEndsNoRound) {
+    long long now = kSdd054T0;
+    auto svc = makeService([](FakeDataSource& ds) {
+        ds.date_folders = {"20261012", "20261013"};
+        for (const auto& f : ds.date_folders)
+            ds.folder_files[f] = {mkEntry(f + "_220000_BRP.edf", 1),
+                                  mkEntry(f + "_220000_PLD.edf", 1)};
+        ds.answer_not_a_listing = {"20261012"};
+    });
+    onSdd054Clock(*svc, now);
+    expectFreshDownload(*db_raw);
+    BurstEnds ends;
+
+    svc->runBurstCycleForTest();
+    EXPECT_TRUE(ends.roots.empty()) << "a card read failed: no round";
+
+    // The card answers every read again: the next burst ends its round.
+    src_raw->answer_not_a_listing.clear();
+    now += kSdd054Min;
+    svc->runBurstCycleForTest();
+    EXPECT_EQ(ends.roots.size(), 1u);
+}
+
+TEST_F(BurstOrchestrationTest, EzShare_ABurstThatCouldNotListEndsNoRound) {
+    long long now = kSdd054T0;
+    auto svc = makeService([](FakeDataSource& ds) {
+        ds.date_folders = {"20261013"};
+        ds.folder_files["20261013"] = {mkEntry("20261013_220000_BRP.edf", 1)};
+        ds.refuse_listing = {"20261013"};   // the card stops answering mid-walk
+    });
+    onSdd054Clock(*svc, now);
+    expectFreshDownload(*db_raw);
+    BurstEnds ends;
+
+    svc->runBurstCycleForTest();
+    EXPECT_TRUE(ends.roots.empty());
 }
 
 TEST_F(BurstOrchestrationTest, EzShare_AFolderThatHadFilesNeverListsEmpty) {
