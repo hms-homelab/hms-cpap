@@ -1713,6 +1713,7 @@ namespace burst_orch {
 class MockDatabase : public IDatabase {
 public:
     HMS_CPAP_STUB_EQUIPMENT_METHODS
+    HMS_CPAP_STUB_CPAPDASH_SENT_METHODS
 
     // SDD-008: a REAL in-memory ledger, not the stub macro. Settling requires
     // comparing this burst's signature against a stored one, so a double that

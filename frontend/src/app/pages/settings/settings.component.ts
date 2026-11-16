@@ -5,7 +5,7 @@ import { TranslatePipe, TranslateService } from '@ngx-translate/core';
 import { Subject, Subscription, timer } from 'rxjs';
 import { switchMap, takeUntil, takeWhile, tap } from 'rxjs/operators';
 import { RouterLink } from '@angular/router';
-import { CpapApiService, UpdateStatus } from '../../services/cpap-api.service';
+import { CpapApiService, CpapDashStreamStatus, UpdateStatus } from '../../services/cpap-api.service';
 import { UpdateFlowService } from '../../services/update-flow.service';
 import { AppConfig } from '../../models/config.model';
 import { sourceImage } from '../../utils/source-image';
@@ -427,7 +427,8 @@ import { sourceImage } from '../../utils/source-image';
           <div class="section-header" (click)="toggle('cpapdash')">
             <span class="chevron" [class.open]="open['cpapdash']">&#9654;</span>
             {{ 'settings.cloud.heading' | translate }}
-            <span class="badge" *ngIf="!config.cpapdash.enabled">{{ 'settings.tag.optional' | translate }}</span>
+            <span class="badge" *ngIf="!config.cpapdash.enabled && !config.cpapdash.stream">{{ 'settings.tag.optional' | translate }}</span>
+            <span class="badge connected" *ngIf="config.cpapdash.stream && streamStatus?.state === 'connected'">{{ 'settings.tag.connected' | translate }}</span>
           </div>
           <div class="section-body" *ngIf="open['cpapdash']">
             <p class="section-desc">
@@ -443,6 +444,9 @@ import { sourceImage } from '../../utils/source-image';
                 <input type="text" [(ngModel)]="config.cpapdash.api_url" name="cpapdash_api_url"
                        placeholder="https://api.cpapdash.com" />
               </label>
+            </ng-container>
+            <!-- The token is shared: equipment sync and the nights both use it. -->
+            <ng-container *ngIf="config.cpapdash.enabled || config.cpapdash.stream">
               <label>
                 {{ 'settings.cloud.token' | translate }}
                 <input type="password" [(ngModel)]="config.cpapdash.token" name="cpapdash_token"
@@ -451,11 +455,40 @@ import { sourceImage } from '../../utils/source-image';
                   {{ 'settings.cloud.tokenHint' | translate }}
                 </small>
               </label>
+            </ng-container>
+            <ng-container *ngIf="config.cpapdash.enabled">
               <label class="toggle-row">
                 <input type="checkbox" [(ngModel)]="config.cpapdash.auto_sync" name="cpapdash_auto_sync" />
                 {{ 'settings.cloud.autoSync' | translate }}
               </label>
             </ng-container>
+
+            <!-- platform SDD-059: the nights, on their own switch. -->
+            <label class="toggle-row stream-toggle">
+              {{ 'settings.cloud.stream' | translate }}
+              <input type="checkbox" [(ngModel)]="config.cpapdash.stream" name="cpapdash_stream" />
+            </label>
+            <small class="hint stream-hint">{{ 'settings.cloud.streamHint' | translate }}</small>
+            <!-- Where it stands, as saved: shown for the switch the service runs with. -->
+            <div *ngIf="streamSaved && streamStatus as s" class="stream-status"
+                 [class.ok]="s.state === 'connected'"
+                 [class.warn]="s.state === 'connecting' || s.state === 'unreachable' || s.state === 'no_token'"
+                 [class.err]="s.state === 'refused' || s.state === 'closed' || s.state === 'unavailable'">
+              <ng-container [ngSwitch]="s.state">
+                <span *ngSwitchCase="'connected'">
+                  {{ 'settings.cloud.streamState.connected' | translate:{ files: s.files_acked || 0 } }}
+                  <ng-container *ngIf="s.last_ack_at">
+                    {{ 'settings.cloud.streamState.lastAck' | translate:{ at: (s.last_ack_at | date:'medium') } }}
+                  </ng-container>
+                </span>
+                <span *ngSwitchCase="'connecting'">{{ 'settings.cloud.streamState.connecting' | translate }}</span>
+                <span *ngSwitchCase="'no_token'">{{ 'settings.cloud.streamState.noToken' | translate }}</span>
+                <span *ngSwitchCase="'unreachable'">{{ 'settings.cloud.streamState.unreachable' | translate }}</span>
+                <span *ngSwitchCase="'refused'">{{ 'settings.cloud.streamState.refused' | translate:{ status: s.http_status } }}</span>
+                <span *ngSwitchCase="'closed'">{{ 'settings.cloud.streamState.closed' | translate:{ reason: s.reason || '' } }}</span>
+                <span *ngSwitchCase="'unavailable'">{{ 'settings.cloud.streamState.unavailable' | translate }}</span>
+              </ng-container>
+            </div>
           </div>
         </div>
 
@@ -1077,6 +1110,17 @@ import { sourceImage } from '../../utils/source-image';
     .myair-msg.err { color: #f87171; }
     .hint.inline { display: inline; margin-left: 0.5rem; }
     .myair-btn.danger { background: transparent; border-color: #f87171; color: #f87171; }
+    /* platform SDD-059: the nights' switch and where it stands. */
+    .stream-toggle { margin-top: 1rem; }
+    .stream-hint { display: block; margin: -0.25rem 0 0.6rem; line-height: 1.5; }
+    .stream-status { border-radius: 6px; padding: 0.55rem 0.8rem; font-size: 0.8rem;
+                     line-height: 1.5; border: 1px solid #444; color: #ccc; }
+    .stream-status.ok { background: rgba(74, 222, 128, 0.08); border-color: rgba(74, 222, 128, 0.4);
+                        color: #bbf7d0; }
+    .stream-status.warn { background: rgba(251, 191, 36, 0.08); border-color: rgba(251, 191, 36, 0.4);
+                          color: #fde68a; }
+    .stream-status.err { background: rgba(248, 113, 113, 0.08); border-color: rgba(248, 113, 113, 0.45);
+                         color: #fecaca; }
     .myair-btn.secondary { background: transparent; border-color: #555; color: #aaa; }
     .myair-btn.secondary:hover:not(:disabled) { color: #e0e0e0; border-color: #888; }
     /* SDD-062 D1: a section whose device has a card points there. */
@@ -1274,6 +1318,21 @@ export class SettingsComponent implements OnInit, OnDestroy {
   myairBusy = false;
   myairMessage = '';
 
+  // platform SDD-059: where "Send my nights to CpapDash" stands. Read when the
+  // page opens, when the section is opened and after a save: on those events,
+  // never on a timer.
+  streamStatus: CpapDashStreamStatus | null = null;
+
+  /** The switch as saved, which is the one the service runs with. */
+  get streamSaved(): boolean { return !!this.pristine?.cpapdash?.stream; }
+
+  loadStreamStatus(): void {
+    this.api.getCpapDashStreamStatus().subscribe({
+      next: (s) => { this.streamStatus = s; },
+      error: () => { this.streamStatus = null; },
+    });
+  }
+
   // BLE adapter status
   bleStatus = '';
 
@@ -1456,6 +1515,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
   ngOnInit(): void {
     this.loadMyAirStatus();
     this.loadUpdateStatus();
+    this.loadStreamStatus();
 
     this.api.getConfig().subscribe({
       next: (cfg) => {
@@ -1495,8 +1555,9 @@ export class SettingsComponent implements OnInit, OnDestroy {
         }
         if (!cfg.cpapdash) {
           cfg.cpapdash = { enabled: false, api_url: 'https://api.cpapdash.com',
-                           token: '', auto_sync: false };
+                           token: '', auto_sync: false, stream: false };
         }
+        if (cfg.cpapdash.stream == null) cfg.cpapdash.stream = false;
         if (cfg.archive_dir == null) cfg.archive_dir = '';
         if (cfg.static_dir == null) cfg.static_dir = '';
         this.config = cfg;
@@ -1528,6 +1589,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
 
   toggle(section: string): void {
     this.open[section] = !this.open[section];
+    if (section === 'cpapdash' && this.open[section]) this.loadStreamStatus();
   }
 
   save(): void {
@@ -1540,6 +1602,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
         this.showToast(this.t.instant('settings.actions.saved'), false);
         this.evaluateRestart(submitted);
         this.pristine = submitted;
+        this.loadStreamStatus();   // the switch and the token reach the service on save
       },
       error: () => {
         this.saving = false;

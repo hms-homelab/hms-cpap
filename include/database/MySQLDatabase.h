@@ -223,6 +223,13 @@ public:
     std::optional<FolderLedger> getSyncFolder(const std::string& date_folder) override;
     bool upsertSyncFolder(const FolderLedger& f) override;
 
+    // platform SDD-059 D5: what CpapDash has acknowledged
+    std::optional<CpapDashSent> getCpapDashSent(const std::string& root,
+                                                const std::string& path) override;
+    std::vector<CpapDashSent> listCpapDashSent(const std::string& root) override;
+    bool upsertCpapDashSent(const CpapDashSent& row) override;
+    bool clearCpapDashSent(const std::string& root) override;
+
 
     void* rawConnection() override;
 

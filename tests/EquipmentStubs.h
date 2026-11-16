@@ -82,4 +82,19 @@
     std::optional<FolderLedger> getSyncFolder(const std::string&) override {     \
         return std::nullopt;                                                     \
     }                                                                            \
-    bool upsertSyncFolder(const FolderLedger&) override { return false; }
+    bool upsertSyncFolder(const FolderLedger&) override { return false; }            \
+    HMS_CPAP_STUB_CPAPDASH_SENT_METHODS
+
+// platform SDD-059 D5: the CpapDash resume index. Folded into the sync folder
+// macro, since every double that takes one is a double with no storage. The
+// index itself is exercised on real engines in test_CpapDashSentBackends.cpp.
+#define HMS_CPAP_STUB_CPAPDASH_SENT_METHODS                                      \
+    std::optional<IDatabase::CpapDashSent> getCpapDashSent(const std::string&,   \
+                                                           const std::string&)   \
+        override { return std::nullopt; }                                        \
+    std::vector<IDatabase::CpapDashSent> listCpapDashSent(const std::string&)    \
+        override { return {}; }                                                  \
+    bool upsertCpapDashSent(const IDatabase::CpapDashSent&) override {           \
+        return false;                                                            \
+    }                                                                            \
+    bool clearCpapDashSent(const std::string&) override { return false; }

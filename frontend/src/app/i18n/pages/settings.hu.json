@@ -128,7 +128,19 @@
       "token": "Token",
       "tokenPlaceholder": "Illessze be a cpapdash.com-on kapott hms-cpap tokent",
       "tokenHint": "Hozza létre a cpapdash.com oldalon: Beállítások, hms-cpap. Nem jár le, és ott bármikor visszavonhatja. Kitakarva tároljuk: hagyja érintetlenül a maszkolt értéket a jelenlegi token megtartásához.",
-      "autoSync": "Szinkronizálás a gyűjtési körben is, helyi szerkesztés után"
+      "autoSync": "Szinkronizálás a gyűjtési körben is, helyi szerkesztés után",
+      "stream": "Éjszakáim küldése a CpapDash-be",
+      "streamHint": "Ugyanazt a hms-cpap tokent használja, mint az eszközszinkron. Bekapcsolás után a hms-cpap minden tárolt éjszakája a CpapDash-fiókodba kerül, majd minden új éjszaka, ahogy begyűjtésre kerül. A gyűjtés itt ugyanúgy folytatódik, akár elérhető a CpapDash, akár nem. Kikapcsoláskor vagy újbóli bekapcsoláskor az elküldöttek nyilvántartása elölről indul.",
+      "streamState": {
+        "connected": "Kapcsolódva a CpapDash-hez. {{files}} fájl elküldve a hms-cpap indulása óta.",
+        "lastAck": "Az utolsó átvétele: {{at}}.",
+        "connecting": "Kapcsolódás a CpapDash-hez.",
+        "noToken": "A küldés indításához illeszd be fent a cpapdash.com-on készült hms-cpap tokent.",
+        "unreachable": "A CpapDash most nem érhető el. Az éjszakák gyűjtése itt folytatódik, és amint újra elérhető, elküldésre kerülnek.",
+        "refused": "A CpapDash elutasította a tokent (HTTP {{status}}). Az éjszakák gyűjtése itt folytatódik. Illessz be egy új tokent a cpapdash.com-ról, és mentsd az újraindításhoz.",
+        "closed": "A CpapDash lezárta a kapcsolatot: {{reason}}. Az éjszakák gyűjtése itt folytatódik.",
+        "unavailable": "A hms-cpap ezen változata nem tud éjszakákat küldeni a CpapDash-be."
+      }
     },
     "sleepStage": {
       "heading": "Alvásfázis-következtetés",

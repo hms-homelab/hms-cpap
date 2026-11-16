@@ -64,6 +64,8 @@ set(TEST_SOURCES
     database/test_MySQLMigration.cpp
     database/test_CleaningBackends.cpp
     database/test_SyncFolderBackends.cpp
+    # platform SDD-059 D5: the CpapDash resume index on every engine.
+    database/test_CpapDashSentBackends.cpp
     database/test_SessionFilesBackends.cpp
     database/test_SessionEndBackends.cpp
     database/test_UnmeasuredMinuteBackends.cpp
@@ -171,6 +173,8 @@ set(TEST_SOURCES
     services/test_MyAirService.cpp
     services/test_SleepHqExportService.cpp
     services/test_CpapDashSyncService.cpp
+    # platform SDD-059: the uploader, against a local server speaking its frames.
+    services/test_CpapDashStream.cpp
     services/test_DeviceDiscoveryService.cpp
     services/test_SetupService.cpp
     services/test_PreflightService.cpp
@@ -350,6 +354,8 @@ if(BUILD_WITH_WEB AND NOT WIN32)
         ${CMAKE_SOURCE_DIR}/src/services/As11NightWriter.cpp
         ${CMAKE_SOURCE_DIR}/src/services/As11Settings.cpp
         ${CMAKE_SOURCE_DIR}/src/services/As11StrWriter.cpp
+        # platform SDD-059: the night writer and the receiver note what they write.
+        ${CMAKE_SOURCE_DIR}/src/services/CardFileFeed.cpp
         # SDD-065: the unit's DreamStation 2 reads keep their records here.
         ${CMAKE_SOURCE_DIR}/src/services/Ds2Store.cpp
         ${CMAKE_SOURCE_DIR}/src/services/Ds2ReadTime.cpp

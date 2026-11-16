@@ -13,6 +13,9 @@
 #include "mqtt/LiveState.h"
 #include "sleepbridge/LiveNight.h"
 #include "services/CpapDashSyncService.h"
+#include "services/CardFileFeed.h"
+#include "services/CpapDashLink.h"
+#include "services/CpapDashStream.h"
 #include "services/CardUpload.h"
 #include "services/CpapCard.h"
 #include "sleepbridge/LearnedCard.h"
@@ -1160,6 +1163,51 @@ int main(int argc, char** argv) {
                               << std::endl;
             }
 
+            // platform SDD-059: "Send my nights to CpapDash". One uploader, fed
+            // by every collector through card_feed once a piece is on disk; it
+            // talks to wss://api.cpapdash.com/socket/v1/hms only. Built even
+            // with the switch off, so turning it on in Settings needs no
+            // restart; off, it holds no connection and sends nothing.
+            std::shared_ptr<hms_cpap::CpapDashStreamer> cpapdash_stream;
+            {
+                // Its own connection on a server database: it runs on its own
+                // thread, as the web layer's does.
+                std::shared_ptr<hms_cpap::IDatabase> stream_db = db;
+                if (config.database.type != "sqlite") {
+                    stream_db = hms_cpap::makeDatabaseFromConfig();
+                    stream_db->connect();
+                }
+                const std::string data_dir = hms_cpap::AppConfig::dataDir();
+                cpapdash_stream = std::make_shared<hms_cpap::CpapDashStreamer>(
+                    stream_db,
+                    [] { return hms_cpap::makeCpapDashLink(hms_cpap::CpapDashEndpoint{}); },
+                    hms_cpap::CpapDashStreamer::loadOrCreateInstallId(data_dir), HMS_CPAP_VERSION);
+                cpapdash_stream->setRootsProvider([data_dir] {
+                    // Every card root this install holds (D8): the ez Share
+                    // archive, a local folder read in place, and the Bluetooth
+                    // and Sleep Bridge roots under the data folder.
+                    const std::string archive = hms_cpap::ConfigManager::get(
+                        "CPAP_ARCHIVE_DIR",
+                        (std::filesystem::path(data_dir) / "cpap_data").string());
+                    const std::string local = hms_cpap::ConfigManager::get("CPAP_LOCAL_DIR", "");
+                    return hms_cpap::CpapDashStreamer::discoverRoots(data_dir, {archive, local});
+                });
+                cpapdash_stream->apply({config.cpapdash.stream, config.cpapdash.token});
+                hms_cpap::card_feed::setSinks(
+                    [s = cpapdash_stream](const std::string& root, const std::string& rel,
+                                          const std::string& machine) {
+                        s->fileWritten(root, rel, machine);
+                    },
+                    [s = cpapdash_stream](const std::string& root, const std::string& machine) {
+                        s->rootWritten(root, machine);
+                    });
+                hms_cpap::CpapController::setStreamService(cpapdash_stream);
+                cpapdash_stream->start();
+                if (config.cpapdash.stream && config.cpapdash.token.empty())
+                    std::cout << "CpapDash nights: switched on but no token set - nothing is sent"
+                              << std::endl;
+            }
+
             // SDD-041: check GitHub for a newer stable release, daily and on
             // demand. It only reports; the supervisor applies. Off by itself in a
             // container (D5), where the image is what updates.
@@ -1791,6 +1839,10 @@ int main(int argc, char** argv) {
                             liveFor(sender).onWritten(step.written_paths,
                                                       std::chrono::system_clock::now(), step.catch_up);
                         }
+                        // platform SDD-059 D3: the rebuilt files are on disk.
+                        const std::string card_root = (std::filesystem::path(sb_root) / sender).string();
+                        for (const auto& rel : step.written_paths)
+                            hms_cpap::card_feed::fileWritten(card_root, rel, "");
                         if (burst_service) burst_service->requestSyncNow();
                     };
                     // Issue #57: a batch landing is the stream alive, which
@@ -1960,6 +2012,10 @@ int main(int argc, char** argv) {
             if (sleep_bridge) sleep_bridge->stop();
             update_service->stop();
             hms_cpap::CpapController::setUpdateService(nullptr);
+            // The collectors stop telling it before it stops.
+            hms_cpap::card_feed::setSinks({}, {});
+            hms_cpap::CpapController::setStreamService(nullptr);
+            cpapdash_stream->stop();
         }
 #else
         // No web UI — simple sleep loop

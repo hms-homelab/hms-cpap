@@ -723,6 +723,20 @@ void SQLiteDatabase::createSchema() {
     exec("CREATE INDEX IF NOT EXISTS idx_sync_folders_debt "
          "ON cpap_sync_folders(str_due, sidecars_due)");
 
+    // platform SDD-059 D5: what CpapDash has acknowledged, per card file. A row
+    // moves only on a file_ack with ok; a fresh connection resumes from it.
+    exec(R"(
+        CREATE TABLE IF NOT EXISTS cpapdash_sent (
+            root        TEXT    NOT NULL,
+            path        TEXT    NOT NULL,
+            machine     TEXT    NOT NULL,
+            acked_to    INTEGER NOT NULL,
+            acked_md5   TEXT    NOT NULL,
+            updated_at  TEXT    NOT NULL,
+            PRIMARY KEY (root, path)
+        )
+    )");
+
     // SDD-029: nights an operator removed. Every path that re-reads the card
     // (the STR the local burst re-writes, discovery, the .vld scan, SleepHQ,
     // backfill) consults this, or the night is back within one burst. night is
@@ -4457,6 +4471,92 @@ bool SQLiteDatabase::upsertSyncFolder(const FolderLedger& f) {
     bind_int(g.stmt, 11, f.resync_count);
     if (sqlite3_step(g.stmt) != SQLITE_DONE) {
         std::cerr << "SQLite: upsertSyncFolder error: " << sqlite3_errmsg(db_) << std::endl;
+        return false;
+    }
+    return true;
+}
+
+// ── platform SDD-059 D5: what CpapDash has acknowledged ──────────────────────
+
+namespace {
+constexpr const char* kCpapDashSentCols = "root, path, machine, acked_to, acked_md5, updated_at";
+
+IDatabase::CpapDashSent parseCpapDashSentRow(sqlite3_stmt* s) {
+    IDatabase::CpapDashSent r;
+    r.root       = col_text(s, 0);
+    r.path       = col_text(s, 1);
+    r.machine    = col_text(s, 2);
+    r.acked_to   = sqlite3_column_int64(s, 3);
+    r.acked_md5  = col_text(s, 4);
+    r.updated_at = col_text(s, 5);
+    return r;
+}
+} // namespace
+
+std::optional<IDatabase::CpapDashSent> SQLiteDatabase::getCpapDashSent(const std::string& root,
+                                                                       const std::string& path) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!db_) return std::nullopt;
+    const std::string sql = std::string("SELECT ") + kCpapDashSentCols +
+                            " FROM cpapdash_sent WHERE root = ? AND path = ?";
+    StmtGuard g;
+    if (sqlite3_prepare_v2(db_, sql.c_str(), -1, &g.stmt, nullptr) != SQLITE_OK) return std::nullopt;
+    bind_text(g.stmt, 1, root);
+    bind_text(g.stmt, 2, path);
+    if (sqlite3_step(g.stmt) != SQLITE_ROW) return std::nullopt;
+    return parseCpapDashSentRow(g.stmt);
+}
+
+std::vector<IDatabase::CpapDashSent> SQLiteDatabase::listCpapDashSent(const std::string& root) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::vector<CpapDashSent> out;
+    if (!db_) return out;
+    const std::string sql = std::string("SELECT ") + kCpapDashSentCols + " FROM cpapdash_sent" +
+                            (root.empty() ? "" : " WHERE root = ?") + " ORDER BY root, path";
+    StmtGuard g;
+    if (sqlite3_prepare_v2(db_, sql.c_str(), -1, &g.stmt, nullptr) != SQLITE_OK) return out;
+    if (!root.empty()) bind_text(g.stmt, 1, root);
+    while (sqlite3_step(g.stmt) == SQLITE_ROW) out.push_back(parseCpapDashSentRow(g.stmt));
+    return out;
+}
+
+bool SQLiteDatabase::upsertCpapDashSent(const CpapDashSent& row) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!db_ || row.root.empty() || row.path.empty()) return false;
+    const char* sql = R"(
+        INSERT INTO cpapdash_sent (root, path, machine, acked_to, acked_md5, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(root, path) DO UPDATE SET
+            machine    = excluded.machine,
+            acked_to   = excluded.acked_to,
+            acked_md5  = excluded.acked_md5,
+            updated_at = excluded.updated_at
+    )";
+    StmtGuard g;
+    if (sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr) != SQLITE_OK) return false;
+    bind_text(g.stmt, 1, row.root);
+    bind_text(g.stmt, 2, row.path);
+    bind_text(g.stmt, 3, row.machine);
+    sqlite3_bind_int64(g.stmt, 4, row.acked_to);
+    bind_text(g.stmt, 5, row.acked_md5);
+    bind_text(g.stmt, 6, row.updated_at);
+    if (sqlite3_step(g.stmt) != SQLITE_DONE) {
+        std::cerr << "SQLite: upsertCpapDashSent error: " << sqlite3_errmsg(db_) << std::endl;
+        return false;
+    }
+    return true;
+}
+
+bool SQLiteDatabase::clearCpapDashSent(const std::string& root) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!db_) return false;
+    const std::string sql =
+        std::string("DELETE FROM cpapdash_sent") + (root.empty() ? "" : " WHERE root = ?");
+    StmtGuard g;
+    if (sqlite3_prepare_v2(db_, sql.c_str(), -1, &g.stmt, nullptr) != SQLITE_OK) return false;
+    if (!root.empty()) bind_text(g.stmt, 1, root);
+    if (sqlite3_step(g.stmt) != SQLITE_DONE) {
+        std::cerr << "SQLite: clearCpapDashSent error: " << sqlite3_errmsg(db_) << std::endl;
         return false;
     }
     return true;

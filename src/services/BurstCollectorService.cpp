@@ -10,6 +10,7 @@
 #include "clients/O2RingClient.h"
 #include "clients/AirSense11Client.h"
 #include "services/As11StrWriter.h"
+#include "services/CardFileFeed.h"
 #ifdef WITH_BLE
 #include "clients/O2RingBleClient.h"
 #include "clients/AirSense11BleClient.h"
@@ -1856,6 +1857,7 @@ bool BurstCollectorService::processSTRFile() {
                 auto dest = std::filesystem::path(archive_dir) / "STR.edf";
                 std::filesystem::copy_file(str_local_path, dest,
                     std::filesystem::copy_options::overwrite_existing);
+                card_feed::fileWritten(archive_dir, "STR.edf", "");   // platform SDD-059 D3
             }
         }
 
@@ -3089,6 +3091,13 @@ bool BurstCollectorService::executeBurstCycle() {
             if (edf_now > 0 || fully_now > 0)
                 std::cout << "CPAP: folders done: " << edf_now << " with every EDF stored, "
                           << fully_now << " complete (not listed again)" << std::endl;
+
+            // platform SDD-059 D3: this burst's ranges, residue, SETTINGS and
+            // STR are on disk in the card root. The uploader looks at what
+            // changed there; the burst does not wait on it.
+            const std::string card_root =
+                in_place ? (data_source_ ? data_source_->rootPath() : std::string()) : permanent_archive;
+            card_feed::rootWritten(card_root, "");
         };
 
         // SDD-068 D1: this burst's listings, before anything is downloaded,

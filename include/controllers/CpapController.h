@@ -5,6 +5,7 @@
 #include "web/QueryService.h"
 #include "utils/AppConfig.h"
 #include "services/BurstCollectorService.h"
+#include "services/CpapDashStream.h"
 #include "services/CpapDashSyncService.h"
 #include "services/MyAirService.h"
 #include "services/UpdateService.h"
@@ -45,6 +46,7 @@ public:
     ADD_METHOD_TO(CpapController::capabilities,  "/api/capabilities",        drogon::Get);
     ADD_METHOD_TO(CpapController::myairCompare,  "/api/myair/compare",       drogon::Get);
     ADD_METHOD_TO(CpapController::myairStatus,   "/api/myair/status",        drogon::Get);
+    ADD_METHOD_TO(CpapController::cpapdashStreamStatus, "/api/cpapdash/stream", drogon::Get);
     ADD_METHOD_TO(CpapController::myairConnect,  "/api/myair/connect",       drogon::Post);
     ADD_METHOD_TO(CpapController::myairVerify,   "/api/myair/verify",        drogon::Post);
     ADD_METHOD_TO(CpapController::myairDisconnect, "/api/myair/disconnect",  drogon::Post);
@@ -180,6 +182,11 @@ public:
     /// handle rather than a special case.
     void myairCompare(const drogon::HttpRequestPtr& req,
                       std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+
+    /// platform SDD-059: where "Send my nights to CpapDash" stands (connected,
+    /// refused with a 401, unreachable), for Settings.
+    void cpapdashStreamStatus(const drogon::HttpRequestPtr& req,
+                              std::function<void(const drogon::HttpResponsePtr&)>&& cb);
 
     /// SDD-020 settings page. connect takes the password ONCE and exchanges it
     /// for a refresh token; nothing here ever returns a credential back.
@@ -339,6 +346,10 @@ public:
     /// re-apply changed sync settings instead of only writing them to disk.
     static void setSyncService(std::shared_ptr<CpapDashSyncService> sync);
 
+    /// platform SDD-059: the live uploader, so PUT /api/config re-applies the
+    /// switch and the token to it.
+    static void setStreamService(std::shared_ptr<CpapDashStreamer> stream);
+
     /// SDD-041: the updater's check. Absent in a build or test that has none,
     /// which the routes answer as "no updater" rather than an error.
     static void setUpdateService(std::shared_ptr<UpdateService> svc);
@@ -383,6 +394,7 @@ private:
     // inside the guard above and broke the MSVC build with "sync_ undeclared",
     // which no macOS or Linux build could have caught.
     static std::shared_ptr<CpapDashSyncService>   sync_;
+    static std::shared_ptr<CpapDashStreamer>      stream_;
     static std::shared_ptr<hms_cpap::MyAirService> myair_;
     static std::shared_ptr<UpdateService>         update_;
     static hms_cpap::AppConfig* config_;

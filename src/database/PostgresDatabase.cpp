@@ -396,6 +396,23 @@ bool PostgresDatabase::upsertSyncFolder(const FolderLedger& f) {
     return db_->upsertSyncFolder(f);
 }
 
+std::optional<IDatabase::CpapDashSent> PostgresDatabase::getCpapDashSent(const std::string& root,
+                                                                         const std::string& path) {
+    return db_->getCpapDashSent(root, path);
+}
+
+std::vector<IDatabase::CpapDashSent> PostgresDatabase::listCpapDashSent(const std::string& root) {
+    return db_->listCpapDashSent(root);
+}
+
+bool PostgresDatabase::upsertCpapDashSent(const CpapDashSent& row) {
+    return db_->upsertCpapDashSent(row);
+}
+
+bool PostgresDatabase::clearCpapDashSent(const std::string& root) {
+    return db_->clearCpapDashSent(root);
+}
+
 
 } // namespace hms_cpap
 

@@ -357,6 +357,11 @@ struct AppConfig {
         std::string api_url = "https://api.cpapdash.com";
         std::string token;
         bool auto_sync = false;        // also sync on the burst sweep after local edits
+        /// platform SDD-059 D10: "Send my nights to CpapDash". Its own switch,
+        /// off by default, on the same token. On, every card file hms-cpap
+        /// holds goes to wss://api.cpapdash.com/socket/v1/hms; off or on again,
+        /// the record of what was sent is cleared.
+        bool stream = false;
     } cpapdash;
 
     bool setup_complete = false;
@@ -758,6 +763,7 @@ struct AppConfig {
                 if (cd.contains("api_url"))   config.cpapdash.api_url = cd["api_url"];
                 if (cd.contains("token"))     config.cpapdash.token = cd["token"];
                 if (cd.contains("auto_sync")) config.cpapdash.auto_sync = cd["auto_sync"];
+                if (cd.contains("stream"))    config.cpapdash.stream = cd["stream"];
             }
 
             if (j.contains("sleephq")) {
@@ -894,6 +900,7 @@ struct AppConfig {
             j["cpapdash"]["api_url"] = cpapdash.api_url;
             j["cpapdash"]["token"] = cpapdash.token;
             j["cpapdash"]["auto_sync"] = cpapdash.auto_sync;
+            j["cpapdash"]["stream"] = cpapdash.stream;
 
             j["logging"]["enabled"] = logging.enabled;
             j["logging"]["file"]    = logging.file;
@@ -1056,6 +1063,7 @@ struct AppConfig {
         j["cpapdash"]["api_url"] = cpapdash.api_url;
         j["cpapdash"]["token"] = cpapdash.token.empty() ? "" : "********";
         j["cpapdash"]["auto_sync"] = cpapdash.auto_sync;
+        j["cpapdash"]["stream"] = cpapdash.stream;
 
         j["logging"]["enabled"] = logging.enabled;
         j["logging"]["file"]    = logging.file;

@@ -121,6 +121,8 @@ export interface AppConfig {
     api_url: string;
     token: string;      // redacted to '********' on read; resend it to keep
     auto_sync: boolean;
+    /** platform SDD-059: "Send my nights to CpapDash", on the same token. */
+    stream: boolean;
   };
 }
 

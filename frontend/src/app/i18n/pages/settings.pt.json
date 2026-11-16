@@ -128,7 +128,19 @@
       "token": "Token",
       "tokenPlaceholder": "Cole seu token do hms-cpap do cpapdash.com",
       "tokenHint": "Crie-o em cpapdash.com, Configurações, hms-cpap. Ele não expira e você pode revogá-lo lá a qualquer momento. Guardado censurado: deixe o valor mascarado intacto para manter o token atual.",
-      "autoSync": "Sincronizar também na varredura de coleta após edições locais"
+      "autoSync": "Sincronizar também na varredura de coleta após edições locais",
+      "stream": "Enviar minhas noites para o CpapDash",
+      "streamHint": "Usa o mesmo token do hms-cpap da sincronização de equipamentos. Ao ativar, todas as noites que o hms-cpap guarda vão para a sua conta CpapDash, e depois cada noite nova à medida que é coletada. A coleta aqui continua igual, com ou sem acesso ao CpapDash. Ao desativar, ou ativar de novo, o registro do que foi enviado recomeça do zero.",
+      "streamState": {
+        "connected": "Conectado ao CpapDash. {{files}} arquivo(s) enviados desde que o hms-cpap iniciou.",
+        "lastAck": "Último recebido em {{at}}.",
+        "connecting": "Conectando ao CpapDash.",
+        "noToken": "Cole acima o token do hms-cpap gerado em cpapdash.com para começar a enviar.",
+        "unreachable": "Não é possível acessar o CpapDash agora. As noites continuam sendo coletadas aqui e seguem quando ele voltar.",
+        "refused": "O CpapDash recusou o token (HTTP {{status}}). As noites continuam sendo coletadas aqui. Cole um token novo de cpapdash.com e salve para recomeçar.",
+        "closed": "O CpapDash fechou a conexão: {{reason}}. As noites continuam sendo coletadas aqui.",
+        "unavailable": "Esta versão do hms-cpap não consegue enviar noites ao CpapDash."
+      }
     },
     "sleepStage": {
       "heading": "Inferência de estágios do sono",

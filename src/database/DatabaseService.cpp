@@ -742,6 +742,20 @@ bool DatabaseService::connect() {
                     CREATE INDEX IF NOT EXISTS idx_sync_folders_debt
                     ON cpap_sync_folders(str_due, sidecars_due)
                 )");
+                // platform SDD-059 D5: what CpapDash has acknowledged, per
+                // card file. A row moves only on a file_ack with ok; a fresh
+                // connection resumes from it.
+                txn.exec(R"(
+                    CREATE TABLE IF NOT EXISTS cpapdash_sent (
+                        root        VARCHAR(255) NOT NULL,
+                        path        VARCHAR(255) NOT NULL,
+                        machine     VARCHAR(64)  NOT NULL,
+                        acked_to    BIGINT       NOT NULL,
+                        acked_md5   CHAR(32)     NOT NULL,
+                        updated_at  VARCHAR(32)  NOT NULL,
+                        PRIMARY KEY (root, path)
+                    )
+                )");
                 // SDD-029: nights an operator removed; every re-ingest path
                 // consults it. night is YYYYMMDD (strDayForSessionStart).
                 // Reparse clears the row.
@@ -4322,6 +4336,103 @@ bool DatabaseService::upsertSyncFolder(const FolderLedger& f) {
         return true;
     } catch (const std::exception& e) {
         std::cerr << "upsertSyncFolder error: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+// ── platform SDD-059 D5: what CpapDash has acknowledged ──────────────────────
+
+namespace {
+constexpr const char* kCpapDashSentCols = "root, path, machine, acked_to, acked_md5, updated_at";
+
+// Templated on the row type as rowToSyncFolder is: row_ref from a range-for,
+// row from operator[].
+template <typename Row>
+IDatabase::CpapDashSent rowToCpapDashSent(const Row& r) {
+    IDatabase::CpapDashSent s;
+    s.root       = r["root"].c_str();
+    s.path       = r["path"].c_str();
+    s.machine    = r["machine"].c_str();
+    s.acked_to   = r["acked_to"].template as<long long>(0);
+    s.acked_md5  = r["acked_md5"].c_str();
+    s.updated_at = r["updated_at"].c_str();
+    return s;
+}
+} // namespace
+
+std::optional<IDatabase::CpapDashSent> DatabaseService::getCpapDashSent(const std::string& root,
+                                                                        const std::string& path) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!ensureConnection()) return std::nullopt;
+    try {
+        pqxx::work txn(*conn_);
+        auto rows = txn.exec_params(std::string("SELECT ") + kCpapDashSentCols +
+                                        " FROM cpapdash_sent WHERE root = $1 AND path = $2",
+                                    root, path);
+        txn.commit();
+        if (rows.empty()) return std::nullopt;
+        return rowToCpapDashSent(rows[0]);
+    } catch (const std::exception& e) {
+        std::cerr << "getCpapDashSent error: " << e.what() << std::endl;
+        return std::nullopt;
+    }
+}
+
+std::vector<IDatabase::CpapDashSent> DatabaseService::listCpapDashSent(const std::string& root) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::vector<CpapDashSent> out;
+    if (!ensureConnection()) return out;
+    try {
+        pqxx::work txn(*conn_);
+        pqxx::result rows =
+            root.empty()
+                ? txn.exec(std::string("SELECT ") + kCpapDashSentCols +
+                           " FROM cpapdash_sent ORDER BY root, path")
+                : txn.exec_params(std::string("SELECT ") + kCpapDashSentCols +
+                                      " FROM cpapdash_sent WHERE root = $1 ORDER BY root, path",
+                                  root);
+        txn.commit();
+        for (const auto& r : rows) out.push_back(rowToCpapDashSent(r));
+    } catch (const std::exception& e) {
+        std::cerr << "listCpapDashSent error: " << e.what() << std::endl;
+    }
+    return out;
+}
+
+bool DatabaseService::upsertCpapDashSent(const CpapDashSent& row) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (row.root.empty() || row.path.empty()) return false;
+    if (!ensureConnection()) return false;
+    try {
+        pqxx::work txn(*conn_);
+        txn.exec_params(R"(
+            INSERT INTO cpapdash_sent (root, path, machine, acked_to, acked_md5, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            ON CONFLICT (root, path) DO UPDATE SET
+                machine    = EXCLUDED.machine,
+                acked_to   = EXCLUDED.acked_to,
+                acked_md5  = EXCLUDED.acked_md5,
+                updated_at = EXCLUDED.updated_at
+        )", row.root, row.path, row.machine, row.acked_to, row.acked_md5, row.updated_at);
+        txn.commit();
+        return true;
+    } catch (const std::exception& e) {
+        std::cerr << "upsertCpapDashSent error: " << e.what() << std::endl;
+        return false;
+    }
+}
+
+bool DatabaseService::clearCpapDashSent(const std::string& root) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!ensureConnection()) return false;
+    try {
+        pqxx::work txn(*conn_);
+        if (root.empty()) txn.exec("DELETE FROM cpapdash_sent");
+        else txn.exec_params("DELETE FROM cpapdash_sent WHERE root = $1", root);
+        txn.commit();
+        return true;
+    } catch (const std::exception& e) {
+        std::cerr << "clearCpapDashSent error: " << e.what() << std::endl;
         return false;
     }
 }

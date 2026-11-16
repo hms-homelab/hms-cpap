@@ -128,7 +128,19 @@
       "token": "Jeton",
       "tokenPlaceholder": "Collez votre jeton hms-cpap de cpapdash.com",
       "tokenHint": "Créez-le sur cpapdash.com, Paramètres, hms-cpap. Il n'expire pas et vous pouvez le révoquer là-bas à tout moment. Stocké masqué : laissez la valeur masquée intacte pour conserver le jeton actuel.",
-      "autoSync": "Synchroniser aussi lors du balayage de collecte après une modification locale"
+      "autoSync": "Synchroniser aussi lors du balayage de collecte après une modification locale",
+      "stream": "Envoyer mes nuits à CpapDash",
+      "streamHint": "Utilise le même jeton hms-cpap que la synchronisation de l'équipement. Une fois activé, chaque nuit que conserve hms-cpap part vers votre compte CpapDash, puis chaque nouvelle nuit au fur et à mesure de sa collecte. La collecte ici continue de la même façon, que CpapDash soit joignable ou non. Le désactiver, ou le réactiver, remet à zéro le suivi de ce qui a été envoyé.",
+      "streamState": {
+        "connected": "Connecté à CpapDash. {{files}} fichier(s) envoyé(s) depuis le démarrage de hms-cpap.",
+        "lastAck": "Dernier reçu le {{at}}.",
+        "connecting": "Connexion à CpapDash en cours.",
+        "noToken": "Collez ci-dessus le jeton hms-cpap de cpapdash.com pour commencer l'envoi.",
+        "unreachable": "CpapDash est injoignable pour le moment. Les nuits sont toujours collectées ici et partiront dès son retour.",
+        "refused": "CpapDash a refusé le jeton (HTTP {{status}}). Les nuits sont toujours collectées ici. Collez un nouveau jeton de cpapdash.com et enregistrez pour reprendre.",
+        "closed": "CpapDash a fermé la connexion : {{reason}}. Les nuits sont toujours collectées ici.",
+        "unavailable": "Cette version de hms-cpap ne peut pas envoyer de nuits à CpapDash."
+      }
     },
     "sleepStage": {
       "heading": "Inférence des stades du sommeil",

@@ -1,6 +1,7 @@
 #include "clients/AirSense11BleClient.h"
 #include "services/As11Settings.h"
 #include "services/As11StrWriter.h"
+#include "services/CardFileFeed.h"
 #include "utils/KeepAwake.h"
 
 #include <algorithm>
@@ -386,6 +387,8 @@ void AirSense11BleClient::afterPull(const std::string& serial, const std::string
         std::cout << kTag << "STR.edf: " << str.appended << " day(s) appended, " << str.replaced
                   << " revised, " << str.total << " in the file" << std::endl;
     else std::cout << kTag << "STR.edf unchanged: " << str.why << std::endl;
+    // platform SDD-059 D3: STR.edf, Identification and SETTINGS are on disk.
+    card_feed::rootWritten(root, serial);
 }
 
 void AirSense11BleClient::startNightLoop(std::shared_ptr<As11NightWriter> writer,
@@ -452,6 +455,7 @@ bool AirSense11BleClient::streamOnce() {
             std::cout << kTag << "settings not read yet (" << session_.lastError()
                       << "): asked again on the next connect" << std::endl;
     }
+    card_feed::rootWritten(writer_->rootFor(serial), serial);   // platform SDD-059 D3
 
     as11::SecondAssembler assembler([this](as11::StreamBlock&& b) { writer_->onBlock(b); });
     assembler.setSerial(serial);

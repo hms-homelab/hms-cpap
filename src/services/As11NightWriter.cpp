@@ -1,5 +1,6 @@
 #include "services/As11NightWriter.h"
 #include "services/As11CardEdf.h"
+#include "services/CardFileFeed.h"
 
 #include <nlohmann/json.hpp>
 
@@ -68,6 +69,17 @@ bool writeFileAtomic(const fs::path& path, const std::vector<uint8_t>& bytes) {
     }
     fs::rename(tmp, path, ec);
     if (ec) { fs::remove(tmp, ec); return false; }
+    return true;
+}
+
+// A card file of the night, written whole and moved into place, then noted for
+// the CpapDash uploader (platform SDD-059 D3) once it is on disk.
+bool writeCardFile(const fs::path& root, const fs::path& path, const std::vector<uint8_t>& bytes,
+                   const std::string& serial) {
+    if (!writeFileAtomic(path, bytes)) return false;
+    std::error_code ec;
+    const auto rel = fs::relative(path, root, ec).generic_string();
+    if (!ec) card_feed::fileWritten(root.string(), rel, serial);
     return true;
 }
 
@@ -397,7 +409,7 @@ void As11NightWriter::writeSegment(const std::string& serial, const Segment& seg
     if (brp.flow_lpm.empty()) return;
     int mid = 0, vid = 0;
     modelOf(rootFor(serial), &mid, &vid);   // the card's files name the model in the recording field
-    writeFileAtomic(dir / resmedFileName(wc, "BRP"), writeCardBRP(brp, mid, vid));
+    writeCardFile(rootFor(serial), dir / resmedFileName(wc, "BRP"), writeCardBRP(brp, mid, vid), serial);
 
     // The slow channels on their own grid: PLD every 2 s, SAD every 1 s. A
     // value covers its 2 s; where none came, NaN (written as the gap).
@@ -440,7 +452,7 @@ void As11NightWriter::writeSegment(const std::string& serial, const Segment& seg
         p.minute_vent_lpm = col(as11::kMinuteVent);
         p.snore = col(as11::kSnore);
         p.flow_limitation = col(as11::kFlowLimitation);
-        writeFileAtomic(dir / resmedFileName(wc, "PLD"), writeCardPLD(p, mid, vid));
+        writeCardFile(rootFor(serial), dir / resmedFileName(wc, "PLD"), writeCardPLD(p, mid, vid), serial);
     }
     if (have_sad) {
         StreamedSAD s;
@@ -452,7 +464,7 @@ void As11NightWriter::writeSegment(const std::string& serial, const Segment& seg
         // the same recording and would be read twice.
         std::error_code rm;
         fs::remove(dir / resmedFileName(wc, "SAD"), rm);
-        writeFileAtomic(dir / resmedFileName(wc, "SA2"), writeCardSAD(s, mid, vid));
+        writeCardFile(rootFor(serial), dir / resmedFileName(wc, "SA2"), writeCardSAD(s, mid, vid), serial);
     }
 }
 
@@ -500,8 +512,8 @@ void As11NightWriter::writeEvents(const std::string& serial, const std::string& 
     std::sort(csl.annotations.begin(), csl.annotations.end(), byOnset);
     const fs::path dir = root / "DATALOG" / night;
     auto stamped = [](std::vector<uint8_t> edf) { stampHeaderChecksums(edf); return edf; };
-    writeFileAtomic(dir / resmedFileName(eve.start, "EVE"), stamped(writeResMedAnnotations(eve)));
-    writeFileAtomic(dir / resmedFileName(csl.start, "CSL"), stamped(writeResMedAnnotations(csl)));
+    writeCardFile(root, dir / resmedFileName(eve.start, "EVE"), stamped(writeResMedAnnotations(eve)), serial);
+    writeCardFile(root, dir / resmedFileName(csl.start, "CSL"), stamped(writeResMedAnnotations(csl)), serial);
 }
 
 bool writeIdentification(const std::string& root, const std::string& result_json) {

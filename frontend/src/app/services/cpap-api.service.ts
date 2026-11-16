@@ -96,6 +96,11 @@ export class CpapApiService {
     return this.http.get('/api/myair/status');
   }
 
+  /// platform SDD-059: where "Send my nights to CpapDash" stands.
+  getCpapDashStreamStatus(): Observable<CpapDashStreamStatus> {
+    return this.http.get<CpapDashStreamStatus>('/api/cpapdash/stream');
+  }
+
   myairConnect(username: string, password: string, region: string): Observable<any> {
     return this.http.post('/api/myair/connect', { username, password, region });
   }
@@ -595,6 +600,20 @@ export interface ApplyResult {
   restarting: boolean;
   restart_mode: 'supervised' | 'reexec' | 'manual';
   message?: string;
+}
+
+/** platform SDD-059: GET /api/cpapdash/stream. */
+export interface CpapDashStreamStatus {
+  stream: boolean;
+  /** off | no_token | connecting | connected | unreachable | refused | closed | unavailable */
+  state: string;
+  http_status?: number;
+  reason?: string;
+  since?: string;
+  last_ack_at?: string;
+  files_acked?: number;
+  bytes_acked?: number;
+  queued?: number;
 }
 
 /** SDD-041: GET /api/update and POST /api/update/check. */

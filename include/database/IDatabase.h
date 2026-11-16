@@ -526,6 +526,32 @@ public:
     /// Insert or update by date_folder, which is the natural key.
     virtual bool upsertSyncFolder(const FolderLedger& f) = 0;
 
+    // -- platform SDD-059 D5: what CpapDash has acknowledged -------------------
+    //
+    // One row per card file sent to CpapDash, keyed by the card root it lives
+    // under and its card-relative path. A row moves only when CpapDash answers
+    // a file_ack with ok, so a fresh connection resumes from here: the bytes
+    // past acked_to, or the whole file when acked_md5 no longer matches what
+    // is on disk. The switch going off and on clears it (SDD-059 D5).
+
+    struct CpapDashSent {
+        std::string root;        ///< the card root: the archive, a bridge's folder, as11/<serial>
+        std::string path;        ///< card-relative, forward slashes: DATALOG/20261116/x_BRP.edf
+        std::string machine;     ///< the machine serial the file belongs to
+        long long   acked_to{0}; ///< bytes CpapDash acknowledged
+        std::string acked_md5;   ///< md5 of the acked bytes after an EDF header, else of [0, acked_to)
+        std::string updated_at;  ///< ISO-8601 UTC, written by the caller
+    };
+
+    virtual std::optional<CpapDashSent> getCpapDashSent(const std::string& root,
+                                                        const std::string& path) = 0;
+    /// Every row under [root], or every row when [root] is empty.
+    virtual std::vector<CpapDashSent> listCpapDashSent(const std::string& root) = 0;
+    /// Insert or update by (root, path).
+    virtual bool upsertCpapDashSent(const CpapDashSent& row) = 0;
+    /// Delete the rows under [root], or every row when [root] is empty.
+    virtual bool clearCpapDashSent(const std::string& root) = 0;
+
     virtual void* rawConnection() = 0;
 
     // -- Generic query --------------------------------------------------------

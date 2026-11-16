@@ -128,7 +128,19 @@
       "token": "Token",
       "tokenPlaceholder": "Paste your hms-cpap token from cpapdash.com",
       "tokenHint": "Create it at cpapdash.com, Settings, hms-cpap. It does not expire, and you can revoke it there at any time. Stored redacted: leave the masked value untouched to keep the current token.",
-      "autoSync": "Also sync on the collection sweep after local edits"
+      "autoSync": "Also sync on the collection sweep after local edits",
+      "stream": "Send my nights to CpapDash",
+      "streamHint": "Uses the same hms-cpap token as equipment sync. When turned on, every night hms-cpap holds goes to your CpapDash account, then each new night as it is collected. Collection here carries on the same whether CpapDash can be reached or not. Turning this off, or on again, starts the record of what was sent over.",
+      "streamState": {
+        "connected": "Connected to CpapDash. {{files}} file(s) sent since hms-cpap started.",
+        "lastAck": "Last one taken {{at}}.",
+        "connecting": "Connecting to CpapDash.",
+        "noToken": "Paste the hms-cpap token from cpapdash.com above to start sending.",
+        "unreachable": "CpapDash cannot be reached right now. Nights are still collected here and go once it is back.",
+        "refused": "CpapDash refused the token (HTTP {{status}}). Nights are still collected here. Paste a new token from cpapdash.com and save to start again.",
+        "closed": "CpapDash closed the connection: {{reason}}. Nights are still collected here.",
+        "unavailable": "This build of hms-cpap cannot send nights to CpapDash."
+      }
     },
     "sleepStage": {
       "heading": "Sleep Stage Inference",

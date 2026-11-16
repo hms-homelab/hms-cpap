@@ -888,6 +888,20 @@ void MySQLDatabase::createSchema() {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     )");
 
+    // platform SDD-059 D5: what CpapDash has acknowledged, per card file. A row
+    // moves only on a file_ack with ok; a fresh connection resumes from it.
+    exec(R"(
+        CREATE TABLE IF NOT EXISTS cpapdash_sent (
+            root        VARCHAR(255) NOT NULL,
+            path        VARCHAR(255) NOT NULL,
+            machine     VARCHAR(64)  NOT NULL,
+            acked_to    BIGINT       NOT NULL,
+            acked_md5   CHAR(32)     NOT NULL,
+            updated_at  VARCHAR(32)  NOT NULL,
+            PRIMARY KEY (root, path)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    )");
+
     // SDD-029: nights an operator removed; every re-ingest path consults it.
     // night is YYYYMMDD (strDayForSessionStart). Reparse clears the row.
     exec(R"(
@@ -5480,6 +5494,127 @@ bool MySQLDatabase::upsertSyncFolder(const FolderLedger& f) {
     mysql_stmt_bind_param(g.stmt, p.data());
     if (mysql_stmt_execute(g.stmt) != 0) {
         std::cerr << "MySQL: upsertSyncFolder error: " << mysql_stmt_error(g.stmt) << std::endl;
+        return false;
+    }
+    return true;
+}
+
+// ── platform SDD-059 D5: what CpapDash has acknowledged ──────────────────────
+
+namespace {
+constexpr const char* kCpapDashSentCols = "root, path, machine, acked_to, acked_md5, updated_at";
+
+void bindCpapDashSentCols(ResultBinder& r) {
+    r.bindColString(0, 1024);   // root
+    r.bindColString(1, 1024);   // path
+    r.bindColString(2, 256);    // machine
+    r.bindColInt64(3);          // acked_to
+    r.bindColString(4, 64);     // acked_md5
+    r.bindColString(5, 64);     // updated_at
+}
+
+IDatabase::CpapDashSent readCpapDashSentRow(const ResultBinder& r) {
+    IDatabase::CpapDashSent s;
+    s.root       = r.colText(0);
+    s.path       = r.colText(1);
+    s.machine    = r.colText(2);
+    s.acked_to   = r.colInt64(3);
+    s.acked_md5  = r.colText(4);
+    s.updated_at = r.colText(5);
+    return s;
+}
+} // namespace
+
+std::optional<IDatabase::CpapDashSent> MySQLDatabase::getCpapDashSent(const std::string& root,
+                                                                      const std::string& path) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!conn_) return std::nullopt;
+    const std::string sql = std::string("SELECT ") + kCpapDashSentCols +
+                            " FROM cpapdash_sent WHERE root = ? AND path = ?";
+    MysqlStmtGuard g;
+    g.stmt = mysql_stmt_init(conn_);
+    if (mysql_stmt_prepare(g.stmt, sql.c_str(), sql.size()) != 0) return std::nullopt;
+    ParamBinder p(2);
+    p.bindText(0, root);
+    p.bindText(1, path);
+    mysql_stmt_bind_param(g.stmt, p.data());
+    if (mysql_stmt_execute(g.stmt) != 0) return std::nullopt;
+    ResultBinder r(6);
+    bindCpapDashSentCols(r);
+    mysql_stmt_bind_result(g.stmt, r.data());
+    mysql_stmt_store_result(g.stmt);
+    if (mysql_stmt_fetch(g.stmt) != 0) return std::nullopt;
+    return readCpapDashSentRow(r);
+}
+
+std::vector<IDatabase::CpapDashSent> MySQLDatabase::listCpapDashSent(const std::string& root) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::vector<CpapDashSent> out;
+    if (!conn_) return out;
+    const std::string sql = std::string("SELECT ") + kCpapDashSentCols + " FROM cpapdash_sent" +
+                            (root.empty() ? "" : " WHERE root = ?") + " ORDER BY root, path";
+    MysqlStmtGuard g;
+    g.stmt = mysql_stmt_init(conn_);
+    if (mysql_stmt_prepare(g.stmt, sql.c_str(), sql.size()) != 0) return out;
+    ParamBinder p(1);
+    if (!root.empty()) {
+        p.bindText(0, root);
+        mysql_stmt_bind_param(g.stmt, p.data());
+    }
+    if (mysql_stmt_execute(g.stmt) != 0) return out;
+    ResultBinder r(6);
+    bindCpapDashSentCols(r);
+    mysql_stmt_bind_result(g.stmt, r.data());
+    mysql_stmt_store_result(g.stmt);
+    while (mysql_stmt_fetch(g.stmt) == 0) out.push_back(readCpapDashSentRow(r));
+    return out;
+}
+
+bool MySQLDatabase::upsertCpapDashSent(const CpapDashSent& row) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!conn_ || row.root.empty() || row.path.empty()) return false;
+    const char* sql = R"(
+        INSERT INTO cpapdash_sent (root, path, machine, acked_to, acked_md5, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+            machine    = VALUES(machine),
+            acked_to   = VALUES(acked_to),
+            acked_md5  = VALUES(acked_md5),
+            updated_at = VALUES(updated_at)
+    )";
+    MysqlStmtGuard g;
+    g.stmt = mysql_stmt_init(conn_);
+    if (mysql_stmt_prepare(g.stmt, sql, strlen(sql)) != 0) return false;
+    ParamBinder p(6);
+    p.bindText(0, row.root);
+    p.bindText(1, row.path);
+    p.bindText(2, row.machine);
+    p.bindInt64(3, row.acked_to);
+    p.bindText(4, row.acked_md5);
+    p.bindText(5, row.updated_at);
+    mysql_stmt_bind_param(g.stmt, p.data());
+    if (mysql_stmt_execute(g.stmt) != 0) {
+        std::cerr << "MySQL: upsertCpapDashSent error: " << mysql_stmt_error(g.stmt) << std::endl;
+        return false;
+    }
+    return true;
+}
+
+bool MySQLDatabase::clearCpapDashSent(const std::string& root) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (!conn_) return false;
+    const std::string sql =
+        std::string("DELETE FROM cpapdash_sent") + (root.empty() ? "" : " WHERE root = ?");
+    MysqlStmtGuard g;
+    g.stmt = mysql_stmt_init(conn_);
+    if (mysql_stmt_prepare(g.stmt, sql.c_str(), sql.size()) != 0) return false;
+    ParamBinder p(1);
+    if (!root.empty()) {
+        p.bindText(0, root);
+        mysql_stmt_bind_param(g.stmt, p.data());
+    }
+    if (mysql_stmt_execute(g.stmt) != 0) {
+        std::cerr << "MySQL: clearCpapDashSent error: " << mysql_stmt_error(g.stmt) << std::endl;
         return false;
     }
     return true;

@@ -411,6 +411,20 @@ CREATE TABLE IF NOT EXISTS cpap_sync_folders (
     KEY idx_sync_folders_debt (str_due, sidecars_due)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- platform SDD-059 D5: what CpapDash has acknowledged, per card file. A row
+-- moves only on a file_ack with ok; a fresh connection resumes from it.
+-- acked_md5 is the md5 of the acked bytes after an EDF's header, or of all of
+-- [0, acked_to) for any other file. Cleared when the switch goes off and on.
+CREATE TABLE IF NOT EXISTS cpapdash_sent (
+    root        VARCHAR(255) NOT NULL,
+    path        VARCHAR(255) NOT NULL,
+    machine     VARCHAR(64)  NOT NULL,
+    acked_to    BIGINT       NOT NULL,
+    acked_md5   CHAR(32)     NOT NULL,
+    updated_at  VARCHAR(32)  NOT NULL,
+    PRIMARY KEY (root, path)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- SDD-046: a night is over after an hour with no growth. Times are epoch
 -- seconds. Created at runtime by utils/NightQuiet.h; listed here for reference.
 CREATE TABLE IF NOT EXISTS cpap_night_quiet (

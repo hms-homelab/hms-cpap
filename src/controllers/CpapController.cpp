@@ -64,7 +64,12 @@ void CpapController::setBurstService(BurstCollectorService* svc) { burst_service
 // MSVC, where it failed with "sync_ undeclared". The cloud mirror is not
 // platform-specific.
 std::shared_ptr<CpapDashSyncService> CpapController::sync_;
+std::shared_ptr<CpapDashStreamer> CpapController::stream_;
 std::shared_ptr<hms_cpap::MyAirService> CpapController::myair_;
+
+void CpapController::setStreamService(std::shared_ptr<CpapDashStreamer> stream) {
+    stream_ = std::move(stream);
+}
 
 void CpapController::setSyncService(std::shared_ptr<CpapDashSyncService> sync) {
     sync_ = std::move(sync);
@@ -518,6 +523,7 @@ void CpapController::updateConfig(const drogon::HttpRequestPtr& req,
         if (cd.isMember("token") && cd["token"].asString() != "********")
             config_->cpapdash.token = cd["token"].asString();
         if (cd.isMember("auto_sync")) config_->cpapdash.auto_sync = cd["auto_sync"].asBool();
+        if (cd.isMember("stream"))    config_->cpapdash.stream = cd["stream"].asBool();
     }
 
     // Support log. Saved here but applied on restart: the tee owns fd 1 and 2
@@ -558,6 +564,9 @@ void CpapController::updateConfig(const drogon::HttpRequestPtr& req,
             config_->cpapdash.enabled, config_->cpapdash.api_url,
             config_->cpapdash.token, config_->cpapdash.auto_sync));
     }
+    // platform SDD-059: the switch and the token reach the running uploader;
+    // the switch changing clears its index (D5).
+    if (stream_) stream_->apply({config_->cpapdash.stream, config_->cpapdash.token});
 
     // Return redacted config
     auto resp_json = config_->toJson();
@@ -781,6 +790,7 @@ void CpapController::setupApply(const drogon::HttpRequestPtr& req,
         if (c.isMember("api_url"))   config_->cpapdash.api_url   = c["api_url"].asString();
         if (c.isMember("token"))     config_->cpapdash.token     = c["token"].asString();
         if (c.isMember("auto_sync")) config_->cpapdash.auto_sync = c["auto_sync"].asBool();
+        if (c.isMember("stream"))    config_->cpapdash.stream    = c["stream"].asBool();
     }
 
     config_->setup_complete = true;
@@ -1030,6 +1040,18 @@ void CpapController::logs(const drogon::HttpRequestPtr& req,
 
 void CpapController::setMyAirService(std::shared_ptr<hms_cpap::MyAirService> svc) {
     myair_ = std::move(svc);
+}
+
+void CpapController::cpapdashStreamStatus(const drogon::HttpRequestPtr&,
+                                          std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    if (!stream_) {
+        Json::Value j;
+        j["stream"] = config_ ? config_->cpapdash.stream : false;
+        j["state"] = "unavailable";
+        cb(jsonResp(j));
+        return;
+    }
+    cb(jsonResp(stream_->status().toJson()));
 }
 
 void CpapController::myairStatus(const drogon::HttpRequestPtr&,
