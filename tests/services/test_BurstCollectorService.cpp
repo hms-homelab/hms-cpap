@@ -4528,6 +4528,69 @@ TEST_F(BurstOrchestrationTest, EzShare_ABurstWithARefusedFolderEndsNoRound) {
     EXPECT_EQ(ends.roots.size(), 1u);
 }
 
+// A file the card stops sending part way is a read that did not answer, even
+// when the session's other files came: that burst ends no round, the burst
+// that reads it to the end does, and a clean burst after it still does.
+TEST_F(BurstOrchestrationTest, EzShare_ABurstWithAStoppedRangeReadEndsNoRoundUntilItIsRead) {
+    long long now = kSdd054T0;
+    auto svc = makeService([](FakeDataSource& ds) {
+        ds.date_folders = {"20261013"};
+        // 4 KB listed: what stopped is well short of it, as a real BRP's is.
+        ds.folder_files["20261013"] = {mkEntry("20261013_220000_BRP.edf", 4),
+                                       mkEntry("20261013_220000_PLD.edf", 1)};
+        ds.cut_transfers["20261013_220000_BRP.edf"] = 1;   // the next ranged read stops
+    });
+    onSdd054Clock(*svc, now);
+    expectFreshDownload(*db_raw);
+    BurstEnds ends;
+
+    svc->runBurstCycleForTest();
+    EXPECT_TRUE(ends.roots.empty()) << "the BRP stopped part way: no round";
+    ASSERT_FALSE(src_raw->ranged_from.empty());
+
+    // The card sends the rest: that burst reads it to the end and ends its round.
+    now += kSdd054Min;
+    const size_t asked_before = src_raw->ranged_from.size();
+    svc->runBurstCycleForTest();
+    bool resumed = false;
+    for (size_t i = asked_before; i < src_raw->ranged_from.size(); ++i)
+        if (src_raw->ranged_from[i].first == "20261013_220000_BRP.edf" &&
+            src_raw->ranged_from[i].second == src_raw->cut_bytes)
+            resumed = true;
+    EXPECT_TRUE(resumed) << "the BRP was asked again from where it stopped";
+    ASSERT_EQ(ends.roots.size(), 1u);
+    EXPECT_EQ(ends.roots[0], archive_dir.string());
+
+    // Nothing stopped: a clean burst still ends its round.
+    now += kSdd054Min;
+    svc->runBurstCycleForTest();
+    EXPECT_EQ(ends.roots.size(), 2u);
+}
+
+// Stopped on two bursts running: neither ends a round; the round waits for
+// the read, not for a clock.
+TEST_F(BurstOrchestrationTest, EzShare_AReadStoppedOnTwoBurstsEndsNeitherRound) {
+    long long now = kSdd054T0;
+    auto svc = makeService([](FakeDataSource& ds) {
+        ds.date_folders = {"20261013"};
+        ds.folder_files["20261013"] = {mkEntry("20261013_220000_BRP.edf", 4),
+                                       mkEntry("20261013_220000_PLD.edf", 1)};
+        ds.cut_transfers["20261013_220000_BRP.edf"] = 2;
+    });
+    onSdd054Clock(*svc, now);
+    expectFreshDownload(*db_raw);
+    BurstEnds ends;
+
+    svc->runBurstCycleForTest();
+    now += kSdd054Min;
+    svc->runBurstCycleForTest();
+    EXPECT_TRUE(ends.roots.empty()) << "two bursts, the BRP stopped on both";
+
+    now += kSdd054Min;
+    svc->runBurstCycleForTest();
+    EXPECT_EQ(ends.roots.size(), 1u) << "read to the end on the third: its round";
+}
+
 TEST_F(BurstOrchestrationTest, EzShare_ABurstThatCouldNotListEndsNoRound) {
     long long now = kSdd054T0;
     auto svc = makeService([](FakeDataSource& ds) {

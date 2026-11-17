@@ -3148,7 +3148,22 @@ bool BurstCollectorService::executeBurstCycle() {
         // told before, so the store path below does not care which it is.
         auto fetchNight = [&](const SessionFileSet& session,
                               const std::function<void()>& store) -> bool {
-            if (!in_place) return downloadSessionFiles(session, local_base_dir, store);
+            if (!in_place) {
+                const bool fetched = downloadSessionFiles(session, local_base_dir, store);
+                // SDD-053 D2: a session counts as fetched when any of its
+                // files came, but a file the card stopped sending part way
+                // (or one parked after failing) is a read that did not
+                // answer. Such a burst ends no round, so ingest never judges
+                // a night from a copy shorter than the card's. The next burst
+                // that reads it to the end ends its round as any other.
+                if (fetched && !checkpoints_missed_.empty()) {
+                    card_read_failed = true;
+                    std::cerr << "CPAP: " << checkpoints_missed_.size() << " file(s) of session "
+                              << session.session_prefix
+                              << " not read to the end; this burst ends no round" << std::endl;
+                }
+                return fetched;
+            }
             store();
             // SDD-037 lives in step 6, which only sees sessions that were NOT
             // stored inline -- and everything a folder yields is stored inline,
