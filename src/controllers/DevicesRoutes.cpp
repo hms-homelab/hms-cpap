@@ -277,6 +277,18 @@ void installRoutes(const RouteDeps& deps) {
         },
         {drogon::Delete});
 
+    // #67: "Reset Bluetooth": forget the machine's OS object and power-cycle
+    // the adapter, on demand.
+    drogon::app().registerHandler(
+        "/api/airsense11/ble/reset",
+        [](const drogon::HttpRequestPtr&, Callback&& cb) {
+            auto p = g.burst ? g.burst->getAirSense11Pairing() : nullptr;
+            const bool enabled = g.config && g.config->airsense11_ble.enabled;
+            const auto r = as11api::resetBluetooth(p.get(), bleCompiled(), enabled);
+            cb(json(r.body, r.status));
+        },
+        {drogon::Post});
+
     std::cout << "Devices: /api/devices ready" << std::endl;
 }
 

@@ -4,6 +4,7 @@
 #include "clients/IAirSense11Client.h"
 #include "clients/IAirSense11Pairing.h"
 #include "clients/ble/BleTransport.h"
+#include "clients/ble/LinkRecovery.h"
 #include "services/As11NightWriter.h"
 
 #include <atomic>
@@ -70,6 +71,8 @@ public:
     std::string lastError() const override;
     Presence presence() const override;
     bool busy() const override;
+    void forgetMachine() override;
+    BluetoothReset resetBluetooth() override;
 
     static constexpr int kScanMs = 15000;
     /// The Summary pull that follows a night: the machine may not advertise for
@@ -131,6 +134,17 @@ private:
     // Set when a pairing ends: the next scan ignores what the OS has cached
     // and finds the machine by its advertisement.
     bool rediscover_ = false;
+    // #67: set while recovering: the advert must carry machine_name_ (when
+    // it carries a name at all), so the rediscovery finds the same machine.
+    bool match_name_ = false;
+    // #67: consecutive link failures with the machine in sight, and what
+    // they have led to. Under op_mtx_; bluetooth_stuck_ mirrors
+    // notRecovering() for presence().
+    ble::LinkRecovery recovery_;
+    std::atomic<bool> bluetooth_stuck_{false};
+    // The pairing was removed while the operation lock was held: the OS's
+    // object is dropped at the next connect.
+    std::atomic<bool> forget_pending_{false};
     size_t write_chunk_ = 20;
     std::unique_ptr<ble::ILink> link_;
 
@@ -145,6 +159,13 @@ private:
 
     bool scan(int timeout_ms);
     bool connectLink(int timeout_ms, int scan_ms = kScanMs);
+    // #67: one rung of the recovery ladder; true when a new attempt follows.
+    bool recover(ble::RecoveryStep step);
+    // Drops every OS object that is this machine. How many it dropped.
+    int forgetCachedMachine();
+    // Other devices linked on the adapter now, for the log before a reset.
+    std::vector<std::string> othersConnected();
+    void noteLinkError(const ble::ConnectResult& res);
     // Set when a night's stream ends: the next Summary pull waits for the
     // machine's advert instead of giving up after one short scan.
     std::atomic<bool> after_night_{false};
