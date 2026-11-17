@@ -5,6 +5,17 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.4.1] - 2026-11-17
+
+### Fixed
+- **Send my nights to CpapDash: a burst that did not read a file to the end
+  no longer ends a round.** When the ez Share stopped sending a file part way
+  (or a file was set aside after failing), the burst still told CpapDash it
+  had read the card, so CpapDash could judge a night from a copy shorter than
+  the card's. Such a burst now ends no round, and the log says which session
+  was not read to the end. The next burst that reads the file to the end ends
+  its round as before.
+
 ## [6.4.0] - 2026-11-16
 
 ### Added
