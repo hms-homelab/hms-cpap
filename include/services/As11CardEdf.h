@@ -46,6 +46,15 @@ namespace hms_cpap {
 // Pure functions of their input, so a test can decode what they write.
 
 std::vector<uint8_t> writeCardBRP(const cpapdash::parser::StreamedBRP& brp, int model_id = 0, int vid = 0);
+
+/// A BRP from the machine's stored pages (SDD-070): flow (L/s) and mask
+/// pressure (cmH2O) at 6.25 Hz, the rate the machine keeps them at. The
+/// card's labels and ranges, in 4 s records of 25 samples (EDF carries the
+/// rate per signal, and the readers take it from there); a tail short of a
+/// whole record is left out. Empty when there is not one record.
+std::vector<uint8_t> writeStoredBRP(const cpapdash::parser::WallClock& start, const std::string& serial,
+                                    const std::vector<double>& flow_lps,
+                                    const std::vector<double>& mask_cmh2o, int model_id = 0, int vid = 0);
 std::vector<uint8_t> writeCardPLD(const cpapdash::parser::StreamedPLD& pld, int model_id = 0, int vid = 0);
 std::vector<uint8_t> writeCardSAD(const cpapdash::parser::StreamedSAD& sad, int model_id = 0, int vid = 0);
 
