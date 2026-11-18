@@ -6,7 +6,14 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <set>
 #include <string>
+
+#ifndef _WIN32
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
 
 namespace fs = std::filesystem;
 using hms_cpap::FileLogger;
@@ -161,6 +168,79 @@ TEST(FileLoggerTest, StopIsSafeWhenNothingWasStarted) {
     FileLogger::stop();
     FileLogger::stop();
     EXPECT_TRUE(FileLogger::activePath().empty());
+}
+
+namespace {
+
+// Every descriptor open in this process now, by number.
+std::set<int> openFds() {
+    std::set<int> out;
+    for (int fd = 0; fd < 1024; ++fd)
+        if (::fcntl(fd, F_GETFD) != -1) out.insert(fd);
+    return out;
+}
+
+// The descriptors opened since `before` that an exec would carry over.
+std::set<int> inheritableSince(const std::set<int>& before) {
+    std::set<int> out;
+    for (int fd : openFds()) {
+        if (before.count(fd)) continue;
+        const int flags = ::fcntl(fd, F_GETFD);
+        if (flags != -1 && !(flags & FD_CLOEXEC)) out.insert(fd);
+    }
+    return out;
+}
+
+}  // namespace
+
+// hmscpap-tapper41, 2026-11-18: the in-place restart (reexec) handed the tee's
+// pipe, its saved console copies and its log file to the new image. The new
+// image took the old pipe as its console; the pipe's only reader had died with
+// the old image, and once 64 KiB of log filled it every thread that logs
+// blocked, the web server's included. Nothing the tee opens may survive an exec,
+// including the file rotation reopens mid-run.
+TEST(FileLoggerTest, NothingTheTeeOpensSurvivesAnExec) {
+    const fs::path dir = tempDir("posix-cloexec");
+    const fs::path log = dir / "hms-cpap.log";
+
+    // gtest's capture opens descriptors of its own: snapshot after it, so only
+    // the logger's count.
+    testing::internal::CaptureStdout();
+    const std::set<int> before = openFds();
+    ASSERT_TRUE(FileLogger::start(log.string(), 4096, 2));   // small cap: rotation runs
+    const std::set<int> at_start = inheritableSince(before);
+    for (int i = 0; i < 400; ++i)
+        std::cout << "cloexec-filler-line-" << i << "-padding-padding-padding" << std::endl;
+    std::cout.flush();
+    const std::set<int> after_rotation = inheritableSince(before);
+    FileLogger::stop();
+    testing::internal::GetCapturedStdout();
+
+    ASSERT_TRUE(fs::exists(log.string() + ".1")) << "rotation did not run, the reopen is untested";
+    EXPECT_TRUE(at_start.empty()) << at_start.size()
+        << " descriptor(s) from start() would be inherited by an exec";
+    EXPECT_TRUE(after_rotation.empty()) << after_rotation.size()
+        << " descriptor(s) after a rotation would be inherited by an exec";
+}
+
+// The restart calls stop() before it execs, so the new image's fd 1 is the real
+// console again and not the old tee pipe. That only holds if stop() puts back
+// exactly the descriptor start() found.
+TEST(FileLoggerTest, StopGivesFdOneBackAsTheConsoleItFound) {
+    const fs::path dir = tempDir("posix-restore");
+    const fs::path log = dir / "hms-cpap.log";
+    struct stat was {}, now {};
+    ASSERT_EQ(::fstat(1, &was), 0);
+
+    ASSERT_TRUE(FileLogger::start(log.string(), 0, 0));
+    struct stat during {};
+    ASSERT_EQ(::fstat(1, &during), 0);
+    EXPECT_TRUE(S_ISFIFO(during.st_mode)) << "while the tee runs, fd 1 is its pipe";
+    FileLogger::stop();
+
+    ASSERT_EQ(::fstat(1, &now), 0);
+    EXPECT_EQ(now.st_dev, was.st_dev);
+    EXPECT_EQ(now.st_ino, was.st_ino) << "fd 1 after stop() is not the console it was before start()";
 }
 
 #endif  // !_WIN32

@@ -640,6 +640,13 @@ void respondAndRestart(std::function<void(const drogon::HttpResponsePtr&)>&& cb,
             else std::exit(0);
             return;
         }
+        // The log tee's fd 1 and 2 are the write end of a pipe whose reader is
+        // a thread of THIS image. An exec keeps fd 1 and 2 and drops the thread,
+        // so the new image would log into a pipe nobody reads and freeze once
+        // it filled (6.4.2, hmscpap-tapper41, 2026-11-18). stop() puts the real
+        // console back on fd 1 and 2 and lets the pump drain the last lines to
+        // the file; the new image starts its own tee.
+        FileLogger::stop();
 #ifdef _WIN32
         const char* argv[] = {exe.c_str(), nullptr};
         _execv(exe.c_str(), const_cast<char* const*>(argv));
