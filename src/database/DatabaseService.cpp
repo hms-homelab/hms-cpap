@@ -2378,7 +2378,10 @@ std::vector<SessionMetrics> DatabaseService::getMetricsForDateRange(
                      THEN MAX(d.leak_50_str) ELSE MAX(sm.leak_p50) END AS leak_p50,
                 CASE WHEN COUNT(*) > 1 AND MAX(d.leak_95_str) IS NOT NULL
                      THEN MAX(d.leak_95_str) ELSE MAX(sm.leak_p95) END AS leak_p95_sess,
-                MAX(sm.therapy_mode) AS therapy_mode
+                MAX(sm.therapy_mode) AS therapy_mode,
+                -- Issue #78: the unclassified apnea is in the AHI, so a weekly
+                -- summary without it lists types that do not add up to it.
+                SUM(sm.unclassified_apneas)                     AS unclassified_apneas
             FROM cpap_sessions s
             JOIN cpap_session_metrics sm ON sm.session_id = s.id
             LEFT JOIN (
@@ -2480,6 +2483,7 @@ std::vector<SessionMetrics> DatabaseService::getMetricsForDateRange(
             if (!pgNull(r, 27)) m.leak_p50               = pgDbl(r, 27);
             if (!pgNull(r, 28)) m.leak_p95               = pgDbl(r, 28);
             if (!pgNull(r, 29)) m.therapy_mode           = pgInt(r, 29);
+            m.unclassified_apneas = pgInt(r, 30);   // issue #78
 
             nights.push_back(std::move(m));
         }

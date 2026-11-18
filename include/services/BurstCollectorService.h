@@ -310,8 +310,9 @@ public:
     /// Test-only thin wrappers over the private LLM-prompt formatters so their
     /// many optional-field branches can be unit-tested without a live LLM/MQTT.
     std::string buildMetricsStringForTest(const SessionMetrics& metrics,
-                                          const STRDailyRecord* str_record = nullptr) const {
-        return buildMetricsString(metrics, str_record);
+                                          const STRDailyRecord* str_record = nullptr,
+                                          const std::string& sleep_day = "") const {
+        return buildMetricsString(metrics, str_record, sleep_day);
     }
     std::string buildRangeMetricsStringForTest(const std::vector<SessionMetrics>& nights,
                                                SummaryPeriod period) const {
@@ -1152,9 +1153,12 @@ private:
 
     /**
      * Build metrics string from session data for LLM prompt substitution.
+     * sleep_day ("YYYY-MM-DD") is the night it describes, for the O2 Ring
+     * lookup; empty means the night that just ended (now - 12 h).
      */
     std::string buildMetricsString(const SessionMetrics& metrics,
-                                   const STRDailyRecord* str_record = nullptr) const;
+                                   const STRDailyRecord* str_record = nullptr,
+                                   const std::string& sleep_day = "") const;
 
     /**
      * Generate and publish a weekly or monthly LLM summary.

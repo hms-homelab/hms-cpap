@@ -652,6 +652,9 @@ TEST_P(NightAggregationBackendTest, TheDailySummaryAndTheNightlyMetricsGiveOneAh
     const auto range = db_->getMetricsForDateRange(device_, 36500);
     ASSERT_FALSE(range.empty()) << engineName(GetParam());
     EXPECT_NEAR(range.back().ahi, m->ahi, 1e-3) << engineName(GetParam());
+    // Issue #78: and it carries the unclassified apneas, which the weekly and
+    // monthly AI summaries list.
+    EXPECT_EQ(range.back().unclassified_apneas, 6) << engineName(GetParam());
 }
 
 // A metrics row written before the unclassified count was stored has none, so

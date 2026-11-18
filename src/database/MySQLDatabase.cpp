@@ -3511,7 +3511,10 @@ std::vector<SessionMetrics> MySQLDatabase::getMetricsForDateRange(
                  THEN MAX(d.leak_50_str) ELSE MAX(sm.leak_p50) END AS leak_p50,
             CASE WHEN COUNT(*) > 1 AND MAX(d.leak_95_str) IS NOT NULL
                  THEN MAX(d.leak_95_str) ELSE MAX(sm.leak_p95) END AS leak_p95_sess,
-            MAX(sm.therapy_mode) AS therapy_mode
+            MAX(sm.therapy_mode) AS therapy_mode,
+            -- Issue #78: the unclassified apnea is in the AHI, so a weekly
+            -- summary without it lists types that do not add up to it.
+            SUM(sm.unclassified_apneas)          AS unclassified_apneas
         FROM cpap_sessions s
         JOIN cpap_session_metrics sm ON sm.session_id = s.id
         LEFT JOIN (
@@ -3568,10 +3571,10 @@ std::vector<SessionMetrics> MySQLDatabase::getMetricsForDateRange(
         return {};
     }
 
-    // 30 output columns (0-29)
-    ResultBinder r(30);
+    // 31 output columns (0-30)
+    ResultBinder r(31);
     r.bindColString(0);  // sleep_day
-    for (int i = 1; i < 30; ++i) r.bindColDouble(i);
+    for (int i = 1; i < 31; ++i) r.bindColDouble(i);
     // Override int columns
     r.bindColInt(2);   // total_events
     r.bindColInt(3);   // OA
@@ -3580,6 +3583,7 @@ std::vector<SessionMetrics> MySQLDatabase::getMetricsForDateRange(
     r.bindColInt(6);   // reras
     r.bindColInt(7);   // CA_clear
     r.bindColInt(29);  // therapy_mode
+    r.bindColInt(30);  // unclassified_apneas (issue #78)
 
     mysql_stmt_bind_result(g.stmt, r.data());
     mysql_stmt_store_result(g.stmt);
@@ -3620,6 +3624,7 @@ std::vector<SessionMetrics> MySQLDatabase::getMetricsForDateRange(
         m.leak_p50               = r.colOptDouble(27);
         m.leak_p95               = r.colOptDouble(28);
         m.therapy_mode           = r.colOptInt(29);
+        m.unclassified_apneas    = r.colIsNull(30) ? 0 : r.colInt(30);   // issue #78
 
         nights.push_back(std::move(m));
     }

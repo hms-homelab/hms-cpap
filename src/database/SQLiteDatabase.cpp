@@ -2972,7 +2972,10 @@ std::vector<SessionMetrics> SQLiteDatabase::getMetricsForDateRange(
                  THEN MAX(d.leak_50_str) ELSE MAX(sm.leak_p50) END AS leak_p50,
             CASE WHEN COUNT(*) > 1 AND MAX(d.leak_95_str) IS NOT NULL
                  THEN MAX(d.leak_95_str) ELSE MAX(sm.leak_p95) END AS leak_p95_sess,
-            MAX(sm.therapy_mode) AS therapy_mode
+            MAX(sm.therapy_mode) AS therapy_mode,
+            -- Issue #78: the unclassified apnea is in the AHI, so a weekly
+            -- summary without it lists types that do not add up to it.
+            SUM(sm.unclassified_apneas)                      AS unclassified_apneas
         FROM cpap_sessions s
         JOIN cpap_session_metrics sm ON sm.session_id = s.id
         LEFT JOIN (
@@ -3017,7 +3020,7 @@ std::vector<SessionMetrics> SQLiteDatabase::getMetricsForDateRange(
     // 12=ahi  13=avg_leak  14=max_leak  15=avg_rr  16=avg_tv  17=avg_mv  18=avg_fl
     // 19=pp95  20=avg_mask_pressure  21=avg_epr_pressure  22=avg_snore
     // 23=avg_target_ventilation  24=avg_pressure  25=max_pressure  26=min_pressure
-    // 27=leak_p50  28=leak_p95_sess  29=therapy_mode
+    // 27=leak_p50  28=leak_p95_sess  29=therapy_mode  30=unclassified_apneas
 
     std::vector<SessionMetrics> nights;
     while (sqlite3_step(g.stmt) == SQLITE_ROW) {
@@ -3055,6 +3058,7 @@ std::vector<SessionMetrics> SQLiteDatabase::getMetricsForDateRange(
         m.leak_p50               = col_opt_double(g.stmt, 27);
         m.leak_p95               = col_opt_double(g.stmt, 28);
         m.therapy_mode           = col_opt_int(g.stmt, 29);
+        m.unclassified_apneas    = col_int(g.stmt, 30);   // issue #78
 
         nights.push_back(std::move(m));
     }

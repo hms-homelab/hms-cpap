@@ -38,6 +38,7 @@
 #ifdef WITH_MYSQL
 #include "database/MySQLDatabase.h"
 #endif
+#include <cstdio>
 #include <iostream>
 #include <iomanip>
 #include <sstream>
@@ -99,6 +100,31 @@ bool partialCopyIsDamaged(const std::string& local_path, size_t size, int listed
     std::ifstream f(local_path, std::ios::binary);
     return f.read(head, sizeof(head)) && std::string(head, sizeof(head)) != "0       ";
 }
+
+// Issue #78: a night's events as the AI summaries give them. in_ahi is every
+// type the AHI counts (the parser's formula: obstructive + central + clear
+// airway + unclassified + hypopnea); other is what total_events holds beyond
+// those and the RERAs (Cheyne-Stokes, flow limitation, large leak, snore,
+// unknown annotations), so in_ahi + reras + other == total_events.
+struct EventSplit {
+    int in_ahi = 0;
+    int other = 0;
+};
+
+EventSplit splitEvents(const SessionMetrics& m) {
+    EventSplit s;
+    s.in_ahi = m.obstructive_apneas + m.central_apneas + m.clear_airway_apneas +
+               m.unclassified_apneas + m.hypopneas;
+    s.other = (std::max)(0, m.total_events - s.in_ahi - m.reras);
+    return s;
+}
+
+// Rides with the counts, not in the prompt, so it reaches a user's own
+// LLM_PROMPT_FILE too.
+constexpr const char* kEventLabelRule =
+    "Report each event type only under the label it has here. An unclassified "
+    "apnea is an apnea the machine did not classify: never describe it as "
+    "obstructive, central or a hypopnea.";
 
 } // namespace
 
@@ -1052,8 +1078,9 @@ bool BurstCollectorService::generateSummaryForDate(const std::string& sleep_day)
         std::cerr << "generateSummaryForDate: no metrics for " << sleep_day << std::endl;
         return false;
     }
-    const STRDailyRecord* str_rec = !last_str_records_.empty()
-        ? &last_str_records_.back() : nullptr;
+    // The requested night's STR row, or none: the newest row (back()) put the
+    // latest night's official numbers into an older night's summary.
+    const STRDailyRecord* str_rec = strRecordForNight(session_start.value());
     generateAndPublishSummary(metrics.value(), str_rec, sleep_day);
     return true;
 }
@@ -2445,8 +2472,7 @@ bool BurstCollectorService::executeBurstCycle() {
                 if (metrics) {
                     data_publisher_->publishHistoricalState(*metrics);
                     if (llm_enabled_ && llm_client_) {
-                        const STRDailyRecord* str_rec = !last_str_records_.empty()
-                            ? &last_str_records_.back() : nullptr;
+                        const STRDailyRecord* str_rec = strRecordForNight(ps.session_start);
                         generateAndPublishSummary(*metrics, str_rec);
                     }
                 }
@@ -2558,8 +2584,7 @@ bool BurstCollectorService::executeBurstCycle() {
                 if (metrics) {
                     data_publisher_->publishHistoricalState(*metrics);
                     if (llm_enabled_ && llm_client_) {
-                        const STRDailyRecord* str_rec = !last_str_records_.empty()
-                            ? &last_str_records_.back() : nullptr;
+                        const STRDailyRecord* str_rec = strRecordForNight(ss.session_start);
                         generateAndPublishSummary(*metrics, str_rec);
                     }
                 }
@@ -4589,6 +4614,11 @@ std::string BurstCollectorService::buildRangeMetricsString(
     oss << "─────────────────────────────────────\n\n";
 
     // Per-night summary line
+    oss << "Event codes: OA obstructive apnea, CA central apnea, CLR clear airway "
+           "apnea, UA unclassified apnea, H hypopnea (these five make the AHI); "
+           "RERA respiratory effort related arousal, other = every other "
+           "recorded event type (not in the AHI).\n";
+    oss << kEventLabelRule << "\n\n";
     oss << "Night-by-night:\n";
     double total_ahi = 0, total_hours = 0, total_leak = 0;
     int leak_count = 0;
@@ -4598,11 +4628,21 @@ std::string BurstCollectorService::buildRangeMetricsString(
         oss << "  " << n.sleep_day
             << " | " << hours << "h"
             << " | AHI " << n.ahi
-            << " | events " << n.total_events
-            << " (OA=" << n.obstructive_apneas
-            << " CA=" << n.central_apneas
-            << " H=" << n.hypopneas
-            << " R=" << n.reras << ")";
+            << " | events " << n.total_events;
+        {
+            // Issue #78: the same split as the daily summary, so a night's
+            // parts add up to its total (codes in the legend above).
+            const EventSplit split = splitEvents(n);
+            oss << " (in AHI " << split.in_ahi
+                << ": OA=" << n.obstructive_apneas
+                << " CA=" << n.central_apneas
+                << " CLR=" << n.clear_airway_apneas
+                << " UA=" << n.unclassified_apneas
+                << " H=" << n.hypopneas
+                << "; not in AHI " << (n.reras + split.other)
+                << ": RERA=" << n.reras
+                << " other=" << split.other << ")";
+        }
         if (n.avg_leak_rate.has_value())
             oss << " | leak avg " << n.avg_leak_rate.value() << " L/min";
         if (n.avg_pressure.has_value())
@@ -4678,7 +4718,12 @@ void BurstCollectorService::generateAndPublishSummary(const SessionMetrics& metr
                                                        const std::string& requested_sleep_day) {
     std::cout << "LLM: Generating session summary..." << std::endl;
 
-    std::string metrics_str = buildMetricsString(metrics, str_record);
+    // The night this summary is FOR (see the saveSummary comment below); the
+    // O2 Ring block in the metrics reads the same night, not today's.
+    const std::string sleep_day = resolveSleepDay(
+        requested_sleep_day, std::chrono::system_clock::now());
+
+    std::string metrics_str = buildMetricsString(metrics, str_record, sleep_day);
     std::string prompt = hms::LLMClient::substituteTemplate(
         llm_prompt_template_, {{"metrics", metrics_str}});
 
@@ -4703,10 +4748,7 @@ void BurstCollectorService::generateAndPublishSummary(const SessionMetrics& metr
         // just ended" IS today minus twelve hours. Without the parameter, asking
         // for 2026-08-12 on the 13th filed the result under the 13th, so a
         // historical summary overwrote today's row and could never be found
-        // under its own date. Issue 24.
-        const std::string sleep_day = resolveSleepDay(
-            requested_sleep_day, std::chrono::system_clock::now());
-
+        // under its own date. Issue 24. (sleep_day is resolved above.)
         double hours = metrics.usage_hours.value_or(0.0);
         double compliance = (hours >= 4.0) ? 100.0 : 0.0;
         db_service_->saveSummary(
@@ -4725,7 +4767,8 @@ void BurstCollectorService::generateAndPublishSummary(const SessionMetrics& metr
 }
 
 std::string BurstCollectorService::buildMetricsString(const SessionMetrics& metrics,
-                                                       const STRDailyRecord* str_record) const {
+                                                       const STRDailyRecord* str_record,
+                                                       const std::string& sleep_day) const {
     std::ostringstream oss;
     oss << std::fixed << std::setprecision(2);
 
@@ -4760,18 +4803,30 @@ std::string BurstCollectorService::buildMetricsString(const SessionMetrics& metr
     // is a fact the model will faithfully report as "no hypopneas were
     // recorded" -- which is the same false reassurance the UI was giving before
     // SDD-024, laundered through a sentence.
-    oss << "Total events: " << metrics.total_events;
+    //
+    // Issue #78: every type the AHI counts is named, and what is not in the
+    // AHI is its own line, so the parts add up to the total. A line that named
+    // three of the night's six events let the model call all six hypopneas.
     if (metrics.index_kind == SessionMetrics::IndexKind::AHI) {
-        oss << " (obstructive=" << metrics.obstructive_apneas
-            << ", central=" << metrics.central_apneas
-            << ", hypopnea=" << metrics.hypopneas
-            << ", RERA=" << metrics.reras << ")";
+        const EventSplit split = splitEvents(metrics);
+        oss << "Apneas and hypopneas (the events counted in the AHI): " << split.in_ahi
+            << " (obstructive apnea=" << metrics.obstructive_apneas
+            << ", central apnea=" << metrics.central_apneas
+            << ", clear airway apnea=" << metrics.clear_airway_apneas
+            << ", unclassified apnea=" << metrics.unclassified_apneas
+            << ", hypopnea=" << metrics.hypopneas << ")\n";
+        oss << "Other recorded events (not counted in the AHI): "
+            << (metrics.reras + split.other)
+            << " (RERA=" << metrics.reras
+            << ", other event types=" << split.other << ")\n";
+        oss << "Total events recorded: " << metrics.total_events << "\n";
+        oss << kEventLabelRule << "\n";
     } else {
-        oss << " (all apneas; this machine does not classify them as "
+        oss << "Total events: " << metrics.total_events
+            << " (all apneas; this machine does not classify them as "
                "obstructive or central and does not mark hypopneas, so no "
-               "per-type breakdown exists. Do not report any type as zero.)";
+               "per-type breakdown exists. Do not report any type as zero.)\n";
     }
-    oss << "\n";
 
     if (metrics.avg_event_duration.has_value()) {
         oss << "Avg event duration: " << metrics.avg_event_duration.value() << "s";
@@ -4869,12 +4924,25 @@ std::string BurstCollectorService::buildMetricsString(const SessionMetrics& metr
 
     // O2 Ring oximetry (if available for this night)
     if (db_service_) {
+        // The summary's own night (issue #78: a regenerated older night read
+        // today's oximetry). Empty = the night that just ended, now - 12 h.
         auto now_t = std::chrono::system_clock::to_time_t(
             std::chrono::system_clock::now() - std::chrono::hours(12));
-        std::tm* day_tm = std::localtime(&now_t);
+        std::tm day = *std::localtime(&now_t);
+        int y = 0, mo = 0, d = 0;
+        if (sleep_day.size() == 10 &&
+            std::sscanf(sleep_day.c_str(), "%4d-%2d-%2d", &y, &mo, &d) == 3) {
+            day = std::tm{};
+            day.tm_year = y - 1900;
+            day.tm_mon = mo - 1;
+            day.tm_mday = d;
+            day.tm_hour = 12;
+            day.tm_isdst = -1;
+            mktime(&day);
+        }
         char date_buf[9], next_buf[9];
-        std::strftime(date_buf, sizeof(date_buf), "%Y%m%d", day_tm);
-        std::tm next_tm = *day_tm;
+        std::strftime(date_buf, sizeof(date_buf), "%Y%m%d", &day);
+        std::tm next_tm = day;
         next_tm.tm_mday += 1;
         mktime(&next_tm);
         std::strftime(next_buf, sizeof(next_buf), "%Y%m%d", &next_tm);
@@ -5322,8 +5390,7 @@ void BurstCollectorService::setupMqttSubscriptions() {
                 if (metrics) {
                     data_publisher_->publishHistoricalState(metrics.value());
                     if (llm_enabled_ && llm_client_) {
-                        const STRDailyRecord* str_rec = !last_str_records_.empty()
-                            ? &last_str_records_.back() : nullptr;
+                        const STRDailyRecord* str_rec = strRecordForNight(last_start.value());
                         generateAndPublishSummary(metrics.value(), str_rec);
                     }
                 }
