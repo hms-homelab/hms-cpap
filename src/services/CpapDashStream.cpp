@@ -212,11 +212,20 @@ std::string roundFrame() {
     return compact(v);
 }
 
-std::string sourceKind(bool bluetooth_on, bool bridge_receiver_on, const std::string& data_dir) {
+std::string sourceKind(bool bluetooth_on, bool bridge_receiver_on, const std::string& data_dir,
+                       const std::string& local_dir) {
     if (bluetooth_on) return "ble";
     if (bridge_receiver_on && !data_dir.empty()) {
         std::error_code ec;
         const fs::path base = fs::path(data_dir) / "sleepbridge";
+        // The local folder read is a bridge's own card folder: a bridge, even
+        // before its first rebuild put a DATALOG there.
+        if (!local_dir.empty()) {
+            const fs::path b = fs::weakly_canonical(base, ec);
+            const fs::path l = fs::weakly_canonical(fs::path(local_dir), ec);
+            const auto rel = l.lexically_relative(b);
+            if (!ec && !rel.empty() && *rel.begin() != ".." && rel != ".") return "bridge";
+        }
         if (fs::is_directory(base, ec)) {
             for (const auto& e : fs::directory_iterator(base, ec)) {
                 const auto name = e.path().filename().string();

@@ -114,8 +114,13 @@ std::string helloFrame(const std::string& version, const std::string& source);
 /// folder under <data_dir>/sleepbridge; otherwise "ezshare" (ez Share,
 /// FlashAir, a local card folder). The config names no Sleep Bridge choice
 /// (the receiver is on by default and a bridge install writes no source), so
-/// a bridge is known by its folder.
-std::string sourceKind(bool bluetooth_on, bool bridge_receiver_on, const std::string& data_dir);
+/// a bridge is known by its folder: a local card folder that IS a bridge's
+/// card folder (under <data_dir>/sleepbridge) is "bridge" from the first
+/// hello, before the bridge has rebuilt anything into it. Saying "ezshare"
+/// there closed that install's first nights by the card rule, which a bridge
+/// never satisfies, so they closed partial (2026-11-18).
+std::string sourceKind(bool bluetooth_on, bool bridge_receiver_on, const std::string& data_dir,
+                       const std::string& local_dir = "");
 
 /// The text frame that closes a file's chunks (D4).
 std::string fileReadyFrame(uint32_t req_id, const CardHeaders& h, uint64_t offset,
