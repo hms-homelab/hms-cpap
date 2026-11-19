@@ -2,6 +2,9 @@
 
 #include <string>
 #include <vector>
+#include <map>
+#include <set>
+#include <ctime>
 #include <chrono>
 #include <cstdint>
 #include <stdexcept>
@@ -123,6 +126,9 @@ public:
      */
     bool downloadRootFile(const std::string& filename, const std::string& local_path) override;
 
+    void beginRefresh() override;
+    bool needsFullRefresh(const std::string& card_path, const std::string& local_path) override;
+
     bool supportsRange() const override { return supports_range_; }
     void setSupportsRange(bool v) { supports_range_ = v; }
 
@@ -133,6 +139,50 @@ public:
     std::vector<EzShareFileEntry> parseDirectoryListing(const std::string& html);
 
 private:
+    friend class EzShareFirmwareTest;
+    bool no_listing_ = false;
+    unsigned listing_attempts_ = 0;
+    static constexpr unsigned LISTING_RETRY_ATTEMPTS = 4;
+    bool listingFallback(const std::string& url, std::string& html);
+    bool retryListing();
+    bool resmedFormat() const;
+    std::map<std::string, std::string> record_counts_;
+    std::set<std::pair<std::string, std::time_t>> unresolved_aliases_;
+    std::string cached_str_;
+    std::set<std::string> failed_downloads_;
+
+    // Set only while downloadChunks() drives downloadFileRange() for one span.
+    bool chunking_ = false;
+    size_t chunk_end_ = 0;
+    uint64_t chunk_total_ = 0;
+    // STR is shared by discovery and summary parsing within one refresh.
+    bool sessions_loaded_ = false;
+    std::map<std::string, std::vector<std::time_t>> starts_;
+    std::map<std::string, EzShareFileEntry> discovered_;
+    // Keyed by STR start and its ordinal among equal starts in a folder:
+    // STR keeps minutes only, so two sessions can share a start.
+    std::map<std::pair<std::time_t, int>, std::map<std::string, std::string>> session_names_;
+    // FAT keeps an 8.3 alias for every long name ("202611~5.EDF" for
+    // "20261103_221626_BRP.edf"), numbered in creation order, and this
+    // firmware serves files by that alias too. Per folder and alias stem:
+    // the next number to try, and the start times read from the headers.
+    std::map<std::string, std::map<std::string, int>> alias_next_;
+    std::map<std::string, std::set<std::time_t>> alias_starts_;
+    std::map<std::string, std::map<std::time_t, std::set<std::string>>> alias_names_;
+    // Missing types are invalidated by newly observed aliases, with an
+    // occasional listing-attempt retry for late files without a new alias.
+    std::map<std::string, unsigned> alias_generation_;
+    std::map<std::string, unsigned> alias_scan_attempts_;
+    std::map<std::string, std::map<std::time_t, unsigned>> alias_checked_generation_;
+    std::map<std::string, std::map<std::time_t, std::set<std::string>>> alias_missing_;
+    std::set<std::time_t> scanAliases(const std::string& folder);
+    std::string readRange(const std::string& path, size_t first, size_t last);
+    static std::string folderForStart(std::time_t start);
+    void refreshSessions();
+    std::vector<EzShareFileEntry> enumerateFiles(const std::string& folder);
+    uint64_t probe(const std::string& path, bool* confirmed_missing = nullptr);
+    bool downloadChunks(const std::string& path, const std::string& local,
+                        size_t start, size_t& downloaded);
     CURL* curl_;
     // Collapses repeated identical HTTP failures (offline device) into one
     // line plus periodic summaries, instead of one error per poll cycle.
