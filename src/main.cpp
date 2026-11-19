@@ -1204,7 +1204,8 @@ int main(int argc, char** argv) {
                     return hms_cpap::cdstream::sourceKind(
                         config.airsense11_ble.enabled || config.ds2_ble.enabled ||
                             config.airsense11.enabled,
-                        config.sleep_bridge.enabled, data_dir);
+                        config.sleep_bridge.enabled, data_dir,
+                        config.transport == "local" ? config.local_dir : std::string());
                 });
                 cpapdash_stream->apply({config.cpapdash.stream, config.cpapdash.token});
                 hms_cpap::card_feed::setSinks(

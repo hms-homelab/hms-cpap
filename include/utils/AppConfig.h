@@ -555,6 +555,18 @@ struct AppConfig {
         #endif
     }
 
+    /// #77: the one place the AI summary prompt lives. llm.prompt_file (which
+    /// load() fills from LLM_PROMPT_FILE when the config leaves it empty), then
+    /// LLM_PROMPT_FILE for a caller with no config, then llm_prompt.txt in the
+    /// data folder. The Settings editor writes here and the summary generator
+    /// reads here; before, the generator read only LLM_PROMPT_FILE, so a path
+    /// set in Settings, or a prompt saved by the editor, was never used.
+    static std::string llmPromptPath(const AppConfig* cfg) {
+        if (cfg && !cfg->llm.prompt_file.empty()) return cfg->llm.prompt_file;
+        if (const char* e = std::getenv("LLM_PROMPT_FILE"); e && *e) return e;
+        return (std::filesystem::path(dataDir()) / "llm_prompt.txt").string();
+    }
+
     /// The pre-HMS_CPAP_DATA_DIR location, kept only so an existing install that
     /// bind-mounted the home directory as a workaround is migrated instead of
     /// silently reset to a fresh config. See migrateLegacyDataDir().

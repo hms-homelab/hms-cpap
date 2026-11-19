@@ -435,12 +435,25 @@ void BurstCollectorService::initLlm() {
 
     llm_client_ = std::make_unique<hms::LLMClient>(llm_config);
 
-    std::string prompt_file = ConfigManager::get("LLM_PROMPT_FILE", "");
-    if (!prompt_file.empty())
-        llm_prompt_template_ = hms::LLMClient::loadPromptFile(prompt_file);
+    std::cout << "LLM: Enabled (" << hms::LLMClient::providerName(llm_config.provider)
+              << " / " << llm_config.model << " at " << llm_config.endpoint << ")" << std::endl;
+}
 
-    if (llm_prompt_template_.empty()) {
-        llm_prompt_template_ =
+// #77: read at every summary from AppConfig::llmPromptPath, the file the
+// Settings editor saves, so a path set in Settings or an edited prompt is used
+// at the next summary with no restart. No file there: the built-in prompt.
+std::string BurstCollectorService::summaryPromptTemplate(const AppConfig* cfg, std::string* source) {
+    const std::string path = AppConfig::llmPromptPath(cfg);
+    std::error_code ec;
+    if (std::filesystem::is_regular_file(path, ec)) {
+        std::string tmpl = hms::LLMClient::loadPromptFile(path);
+        if (!tmpl.empty()) {
+            if (source) *source = path;
+            return tmpl;
+        }
+    }
+    if (source) *source = "built-in (no prompt file at " + path + ")";
+    return
             "You are a CPAP therapy analyst. Summarize this CPAP session using "
             "this exact markdown structure:\n\n"
             "**Overall**\n"
@@ -462,10 +475,6 @@ void BurstCollectorService::initLlm() {
             "* 1-2 actionable suggestions based on the data\n\n"
             "Use bullet points with * prefix. Keep it concise.\n\n"
             "Session data:\n{metrics}";
-    }
-
-    std::cout << "LLM: Enabled (" << hms::LLMClient::providerName(llm_config.provider)
-              << " / " << llm_config.model << " at " << llm_config.endpoint << ")" << std::endl;
 }
 
 void BurstCollectorService::initO2Ring() {
@@ -1137,6 +1146,13 @@ bool BurstCollectorService::downloadSessionFiles(
         const bool listed_nonempty =
             exact > 0 || (listed != session.file_sizes_kb.end() && listed->second > 0);
 
+        const bool rewritten = data_source_->needsFullRefresh(
+            "DATALOG/" + session.date_folder + "/" + filename, local_path);
+        if (existing_size > 0 && rewritten && exact > 0 && existing_size >= exact) {
+            return fetchWholeFile(session.date_folder, filename, local_path,
+                                  listed != session.file_sizes_kb.end() ? listed->second : -1, exact);
+        }
+
         if (existing_size > 0 &&
             partialCopyIsDamaged(local_path, existing_size,
                                  listed != session.file_sizes_kb.end() ? listed->second : -1,
@@ -1204,7 +1220,9 @@ bool BurstCollectorService::downloadSessionFiles(
             const std::time_t card_stamp = cardStampFor(session, name);
 
             // SDD-054 D9: done on record, so already in the archive.
-            if (fileDoneOnRecord(session.date_folder, name) || holdCurrentCopy(card_stamp, local_path)) {
+            if (fileDoneOnRecord(session.date_folder, name) ||
+                (holdCurrentCopy(card_stamp, local_path) && !data_source_->needsFullRefresh(
+                    "DATALOG/" + session.date_folder + "/" + name, local_path))) {
                 skipped_unchanged++;
                 continue;
             }
@@ -1275,7 +1293,9 @@ bool BurstCollectorService::downloadSessionFiles(
                               : listed != session.file_sizes_kb.end() &&
                                     static_cast<uintmax_t>(listed->second) * 1024 < have + 1024;
                 if (!ec && have > 0 && listed != session.file_sizes_kb.end() &&
-                    !partialCopyIsDamaged(local_path, have, listed->second, exact) && current) {
+                    !partialCopyIsDamaged(local_path, have, listed->second, exact) && current &&
+                    !data_source_->needsFullRefresh("DATALOG/" + session.date_folder + "/" + filename,
+                                                   local_path)) {
                     skipped_unchanged++;
                     held_checkpoints++;
                     continue;
@@ -1411,8 +1431,8 @@ bool BurstCollectorService::archiveSessionFiles(
             // SDD-054 D5: a .crc (or any non-EDF) is rewritten in place at the
             // same size, so size alone kept the first copy forever. Those are
             // compared by the card stamp too, which the temp copy carries and
-            // the archive copy now keeps. EDFs stay on size: their header is
-            // repaired in the archive below, which moves the archive's stamp.
+            // the archive copy now keeps. EDF content is compared too: a
+            // same-length finalisation must reach the archive.
             const bool edf = isCpapEdf(filename);
             std::time_t temp_mtime = 0, archive_mtime = 0;
             long long temp_bytes = 0, archive_bytes = 0;
@@ -1427,7 +1447,16 @@ bool BurstCollectorService::archiveSessionFiles(
                     edf || (temp_ok && fileStat(dest_path.c_str(), archive_mtime, archive_bytes) &&
                             archive_mtime == temp_mtime);
 
-                if (temp_size == archive_size && same_stamp) {
+                bool same_record_count = true;
+                if (temp_size == archive_size && edf && temp_size >= 244) {
+                    // Finalisation rewrites this fixed EDF header field without
+                    // changing the length. Avoid reading the signal payload.
+                    std::ifstream from(entry.path(), std::ios::binary);
+                    std::string source_count(8, ' ');
+                    from.seekg(236); from.read(source_count.data(), source_count.size());
+                    same_record_count = from && signalEdfRecordCountMatches(dest_path, source_count);
+                }
+                if (temp_size == archive_size && same_stamp && same_record_count) {
                     skipped_count++;
                     continue;
                 }
@@ -1582,12 +1611,14 @@ std::optional<std::vector<std::string>> BurstCollectorService::captureCardResidu
             // the copy when it lands; with no stamp listed, size decides.
             const auto card_stamp = static_cast<std::time_t>(machine_clock::stampOf(e));
             if (card_stamp != 0) {
-                if (holdCurrentCopy(card_stamp, local_path.string())) continue;
+                if (holdCurrentCopy(card_stamp, local_path.string()) &&
+                    !data_source_->needsFullRefresh(rel, local_path.string())) continue;
             } else {
                 std::error_code ec;
                 auto local_sz = std::filesystem::file_size(local_path, ec);
-                if (!ec && (local_sz + 1023) / 1024 ==
-                               static_cast<uint64_t>(e.size_kb))
+                if (!ec && (e.size_bytes > 0 ? local_sz == e.size_bytes :
+                            (local_sz + 1023) / 1024 == static_cast<uint64_t>(e.size_kb)) &&
+                    !data_source_->needsFullRefresh(rel, local_path.string()))
                     continue;
             }
             wanted.push_back({rel, local_path.string(), card_stamp});
@@ -1596,6 +1627,8 @@ std::optional<std::vector<std::string>> BurstCollectorService::captureCardResidu
         // D5: the changed files first; a .crc whose file changed with it is
         // left for the next burst, which fetches it from this listing.
         std::set<std::string> fetched_stems;
+        std::set<std::string> failed_stems;
+        std::set<std::string> paired_json_stems;
         auto lastPart = [](const std::string& card_path) {
             const auto slash = card_path.rfind('\\');
             return slash == std::string::npos ? card_path : card_path.substr(slash + 1);
@@ -1606,13 +1639,20 @@ std::optional<std::vector<std::string>> BurstCollectorService::captureCardResidu
             if (data_source_->downloadByPath(w.card_path, w.local_path)) {
                 stampLocalCopy(w.card_stamp, w.local_path);
                 fetched_stems.insert(fileStem(name));
+                // A listing-free JSON's CRC is its version. Store the pair
+                // in this pass, only after the JSON transfer succeeded.
+                if (w.card_stamp == 0 && std::filesystem::path(name).extension() == ".json")
+                    paired_json_stems.insert(fileStem(name));
                 captured++;
+            } else {
+                failed_stems.insert(fileStem(name));
             }
         }
         for (const auto& w : wanted) {
             const std::string name = lastPart(w.card_path);
             if (!isCrcFile(name)) continue;
-            if (crcWaitsForNextBurst(name, fetched_stems)) {
+            if (failed_stems.count(fileStem(name))) continue;
+            if (!paired_json_stems.count(fileStem(name)) && crcWaitsForNextBurst(name, fetched_stems)) {
                 pending_residue_.push_back(w);
                 continue;
             }
@@ -2054,7 +2094,8 @@ bool BurstCollectorService::refetchSidecars(
             // it replaces was every CSL and EVE of the night, over and over,
             // back-to-back full downloads at the card. That is the shape that
             // wedged the ezShare on the bench.
-            if (holdCurrentCopy(card_stamp, local_path)) {
+            if (holdCurrentCopy(card_stamp, local_path) &&
+                !data_source_->needsFullRefresh("DATALOG/" + s->date_folder + "/" + name, local_path)) {
                 ++unchanged;
                 continue;
             }
@@ -2725,6 +2766,7 @@ bool BurstCollectorService::executeBurstCycle() {
         const std::string tonight = tonightFolder(now_s, offset);
 
         try {
+            data_source_->beginRefresh();
             // D1: the DATALOG index once per start (until one succeeds), once
             // a day at the machine's noon, and on a reason. It used to be
             // listed twice on every burst.
@@ -2863,6 +2905,16 @@ bool BurstCollectorService::executeBurstCycle() {
                 // done mark; one that did not keeps it.
                 auto& st = stored_listings_[p.folder];
                 st = relisted(st, files, now_s);
+                for (const auto& file : files) {
+                    if (file.is_dir) continue;
+                    const auto local = (std::filesystem::path(permanent_archive) / "DATALOG" /
+                                        p.folder / file.name).string();
+                    if (data_source_->needsFullRefresh("DATALOG/" + p.folder + "/" + file.name, local)) {
+                        st.done_files.erase(file.name);
+                        st.edf_done = false;
+                        st.fully_done = false;
+                    }
+                }
                 if (db_service_) saveFolderListing(*db_service_, device_id_, p.folder, st);
                 // And looked at, the same moment: a burst that fails at the
                 // next folder must not list this one again. The growth test
@@ -3060,6 +3112,8 @@ bool BurstCollectorService::executeBurstCycle() {
                 if (stamp != 0 && (!fileStat(p.string().c_str(), mtime, size) || mtime != stamp))
                     return false;
             }
+            if (data_source_->needsFullRefresh("DATALOG/" + folder + "/" + f.name, p.string()))
+                return false;
             return !(edf && partialCopyIsDamaged(p.string(), bytes, f.size_kb, f.size_bytes));
         };
         auto finishPasses = [&]() {
@@ -3338,6 +3392,17 @@ bool BurstCollectorService::executeBurstCycle() {
             // defect SDD-037 exists for.
             const bool archived =
                 in_place || sessionFilesArchived(session, permanent_archive);
+            if (all_unchanged && !in_place) {
+                for (const auto& file : current_checkpoint_sizes) {
+                    const auto local = (std::filesystem::path(local_base_dir) /
+                                        session.date_folder / file.first).string();
+                    if (data_source_->needsFullRefresh("DATALOG/" + session.date_folder + "/" + file.first,
+                                                       local)) {
+                        all_unchanged = false;
+                        break;
+                    }
+                }
+            }
             if (all_unchanged && !has_new_files && archived) {
                 std::cout << "CPAP: Session " << session.session_prefix
                           << " stopped (all checkpoint files unchanged)" << std::endl;
@@ -4725,8 +4790,11 @@ void BurstCollectorService::generateAndPublishSummary(const SessionMetrics& metr
         requested_sleep_day, std::chrono::system_clock::now());
 
     std::string metrics_str = buildMetricsString(metrics, str_record, sleep_day);
+    std::string prompt_source;
+    const std::string prompt_template = summaryPromptTemplate(app_config_, &prompt_source);
+    std::cout << "LLM: prompt: " << prompt_source << std::endl;
     std::string prompt = hms::LLMClient::substituteTemplate(
-        llm_prompt_template_, {{"metrics", metrics_str}});
+        prompt_template, {{"metrics", metrics_str}});
 
     auto summary = llm_client_->generate(prompt);
     if (!summary) {

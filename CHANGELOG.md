@@ -5,6 +5,33 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.4.5] - 2026-11-19
+
+### Added
+- **ez Share cards on firmware 4.4.0 are read without a directory listing**
+  (#53, thanks to Darafei Praliaskouski). These cards answer a folder listing
+  with their welcome page. After two such answers in a row, hms-cpap finds a
+  ResMed card's nights from STR.edf and the files' FAT short names, checks
+  each file by its EDF record count (bytes 236-243) or its `.crc`, and fetches
+  in small ranges that resume after a stall. It tries the listing again every
+  few refreshes and goes back to normal when the card lists. ResMed only, shown
+  on an AirSense 11, not through a Mule & Miner. Known costs on this card are
+  listed in SDD-076.
+
+### Fixed
+- **AI summaries use the prompt file set in Settings** (#77). The summary
+  generator read only `LLM_PROMPT_FILE`, once at startup, so a path set in
+  Settings, or a prompt saved in the Settings editor, was never used. The
+  editor and the generator now use the same file (the Settings path, then
+  `LLM_PROMPT_FILE`, then `llm_prompt.txt` in the data folder), read at every
+  summary, so an edit takes effect with no restart. The log names the prompt
+  each summary used, and the editor reports a failed save instead of "saved".
+- **A Sleep Bridge install's first nights no longer close as partial.** An
+  install reading a bridge's card folder told CpapDash its source was an ez
+  Share card until the bridge's first rebuild, so CpapDash closed those first
+  nights by the card rule and marked them incomplete. The bridge's folder now
+  says bridge from the first connection.
+
 ## [6.4.4] - 2026-11-19
 
 ### Added

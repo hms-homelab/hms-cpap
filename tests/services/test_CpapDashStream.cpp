@@ -251,6 +251,30 @@ TEST(CpapDashStreamRules, TheSourceIsOneOfEzshareBridgeOrBle) {
     fs::remove_all(dir);
 }
 
+// 2026-11-18: a new install reading a bridge's card folder said "ezshare"
+// until the bridge's first rebuild, so its first nights closed by the card
+// rule and came out partial.
+TEST(CpapDashStreamRules, ALocalFolderThatIsABridgesCardIsABridgeFromTheFirstHello) {
+    const fs::path dir = fs::temp_directory_path() /
+                         ("cdstream_lb_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    const fs::path card = dir / "sleepbridge" / "TAP-S3-00000041";
+    fs::create_directories(card);   // no DATALOG yet: nothing rebuilt
+    EXPECT_EQ(cdstream::sourceKind(false, true, dir.string(), card.string()), "bridge");
+    EXPECT_EQ(cdstream::sourceKind(false, true, dir.string(), (card / ".." / "TAP-S3-00000041").string()),
+              "bridge") << "the same folder written another way";
+
+    const fs::path copy = dir / "my-card-copy";
+    fs::create_directories(copy);
+    EXPECT_EQ(cdstream::sourceKind(false, true, dir.string(), copy.string()), "ezshare")
+        << "a card copied to a folder keeps the card rule";
+    EXPECT_EQ(cdstream::sourceKind(false, true, dir.string(), (dir / "sleepbridge").string()), "ezshare")
+        << "the receiver's own root is no one bridge's card";
+    EXPECT_EQ(cdstream::sourceKind(false, false, dir.string(), card.string()), "ezshare")
+        << "the receiver off: not a bridge source";
+    EXPECT_EQ(cdstream::sourceKind(true, true, dir.string(), card.string()), "ble");
+    fs::remove_all(dir);
+}
+
 TEST(CpapDashStreamRules, TheInstallIdIsMadeOnceAndKept) {
     const fs::path dir = fs::temp_directory_path() /
                          ("cdstream_id_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));

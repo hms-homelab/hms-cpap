@@ -107,6 +107,7 @@ set(TEST_SOURCES
 
     utils/test_FailureLogThrottle.cpp
     clients/test_EzShareClient.cpp
+    clients/test_EzShareFirmware.cpp
     clients/test_FlashAirClient.cpp
     clients/test_LocalDataSource.cpp
     mqtt/test_MqttClient.cpp
@@ -129,6 +130,7 @@ set(TEST_SOURCES
     services/test_OximetryImport.cpp
     services/test_BilevelSensors.cpp
     services/test_AiSummaryEvents.cpp
+    services/test_SummaryPrompt.cpp
     services/test_O2RingCsvParser.cpp
     services/test_O2RingCsvWriter.cpp
     clients/test_O2RingClient.cpp

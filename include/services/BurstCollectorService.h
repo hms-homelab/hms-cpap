@@ -307,6 +307,12 @@ public:
     const std::string& deviceIdForTest() const { return device_id_; }
     const std::string& deviceNameForTest() const { return device_name_; }
 
+    /// #77: the summary prompt, read now from AppConfig::llmPromptPath(cfg)
+    /// (the file the Settings editor saves). Falls back to the built-in prompt
+    /// when there is no readable, non-empty file. `source` (optional) names the
+    /// file used, or says the built-in prompt was used and why.
+    static std::string summaryPromptTemplate(const AppConfig* cfg, std::string* source = nullptr);
+
     /// Test-only thin wrappers over the private LLM-prompt formatters so their
     /// many optional-field branches can be unit-tested without a live LLM/MQTT.
     std::string buildMetricsStringForTest(const SessionMetrics& metrics,
@@ -640,7 +646,6 @@ private:
     // LLM summary
     std::unique_ptr<hms::LLMClient> llm_client_;
     bool llm_enabled_ = false;
-    std::string llm_prompt_template_;
 
     // Cached STR records for on-demand insights regeneration
     std::vector<STRDailyRecord> last_str_records_;
