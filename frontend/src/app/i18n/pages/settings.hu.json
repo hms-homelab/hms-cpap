@@ -66,7 +66,11 @@
       "desc": "Egy AirSense 11 napi összesítőjét közvetlenül a készülékről olvassa be, ennek a számítógépnek a Bluetooth-ján át. Akkor használja, ha a készülék kártyája nem olvasható. Ha a kártyán megvan egy éjszaka, a kártya az irányadó.",
       "enabled": "Bekapcsolva",
       "address": "A készülék Bluetooth-címe",
-      "addressHint": "Nem kötelező. Hagyja üresen, és a hatótávolságban lévő első AirSense 11 lesz használva."
+      "addressHint": "Nem kötelező. Hagyja üresen, és a hatótávolságban lévő első AirSense 11 lesz használva.",
+      "capture": "Minden éjszaka rögzítése az ügyfélszolgálatnak",
+      "captureHint": "Fájlba menti mindazt, amit a készülék éjszakánként küld, hogy elküldhesse nekünk az adott éjszaka SD-kártya mappájával együtt. Az éjszakái ugyanúgy beolvasódnak, mint nélküle. Ha végzett, kapcsolja ki.",
+      "captureFile": "Rögzítés ide: {{path}} ({{size}}).",
+      "captureNone": "Még nincs rögzítve semmi: a fájl a következő éjszakával kezdődik."
     },
     "ds2": {
       "heading": "DreamStation 2 Bluetooth-on",

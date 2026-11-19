@@ -208,6 +208,8 @@ void Session::onFrame(const Frame& f) {
 }
 
 void Session::onMessage(const std::string& s) {
+    // SDD-071: the machine's own words, before anything is made of them.
+    if (capture_) capture_("in", s);
     auto m = json::parse(s, nullptr, false);
     if (m.is_discarded() || !m.is_object()) return;
     const auto id = m.find("id");
@@ -302,6 +304,12 @@ void Session::setStreamHandlers(StreamHandlers h) {
     handlers_ = std::move(h);
 }
 
+void Session::setCaptureTap(CaptureTap tap) {
+    std::lock_guard<std::mutex> lk(m_);
+    // Never while a pairing is open, whatever the caller does.
+    capture_ = pair_pending_ ? CaptureTap{} : std::move(tap);
+}
+
 // ── JSON-RPC ──
 
 std::optional<nlohmann::ordered_json> Session::call(int id, const std::string& method, const ojson& params,
@@ -318,6 +326,11 @@ std::optional<nlohmann::ordered_json> Session::call(int id, const std::string& m
     {
         std::lock_guard<std::mutex> lk(m_);
         if (!connected_) return std::nullopt;
+        // SDD-071: only requests that carry no key material are captured.
+        if (capture_ && (method == "Get" || method == "SubscribeEvent" ||
+                         method == "StartStream" || method == "StartSpool" ||
+                         method == "PullSpoolFragments"))
+            capture_("out", text);
         if (encrypted) {
             if (!cipher_) return std::nullopt;
             std::array<uint8_t, 16> iv{};
@@ -375,6 +388,7 @@ Result Session::pairStart() {
         std::lock_guard<std::mutex> lk(m_);
         wipePairing();
         last_error_.clear();
+        capture_ = {};   // SDD-071: a pairing is never captured
     }
     std::array<uint8_t, 32> a{};
     random_(a.data(), a.size());
@@ -482,6 +496,12 @@ Result Session::pairConfirm(const std::string& code, Credentials* out) {
 
 Result Session::open(const Credentials& creds) {
     fail("");
+    {
+        // SDD-071: the opening's replies (challenge, nonce) are never captured;
+        // a caller sets the tap again once the session is open.
+        std::lock_guard<std::mutex> lk(m_);
+        capture_ = {};
+    }
     if (!creds.valid()) {
         fail("not paired with the machine yet");
         return Result::NotPaired;
@@ -644,7 +664,7 @@ Result Session::subscribe() {
     return Result::Ok;
 }
 
-Result Session::startStream() {
+Result Session::startStream(const std::vector<std::string>& ids) {
     int id = 0;
     {
         std::lock_guard<std::mutex> lk(m_);
@@ -653,7 +673,7 @@ Result Session::startStream() {
         id = next_id_++;
     }
     ojson params;
-    params["dataIds"] = streamIds();
+    params["dataIds"] = ids;
     params["sampleIntervalMs"] = kIntervalMs;
     params["reportIntervalMs"] = 200;
     int ec = 0;

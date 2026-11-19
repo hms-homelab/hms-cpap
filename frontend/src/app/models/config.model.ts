@@ -73,6 +73,7 @@ export interface AppConfig {
   airsense11_ble: {
     enabled: boolean;
     address: string;       // empty: the first AirSense 11 the scan finds
+    capture?: boolean;     // SDD-071: record each night as the machine sends it
   };
   /** SDD-064: a DreamStation 2 read over this host's own Bluetooth, after the
    *  night (when another source says the night ended, or on Read now). The

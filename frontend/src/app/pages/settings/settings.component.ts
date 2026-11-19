@@ -236,6 +236,20 @@ import { sourceImage } from '../../utils/source-image';
             <p class="devices-link" *ngIf="config.airsense11_ble.enabled">
               <a routerLink="/devices">{{ 'settings.devicesLink' | translate }}</a>
             </p>
+            <!-- SDD-071: record each night as the machine sends it, to send us. -->
+            <ng-container *ngIf="config.airsense11_ble.enabled">
+              <label class="toggle-row">
+                {{ 'settings.as11.capture' | translate }}
+                <input type="checkbox" [(ngModel)]="config.airsense11_ble.capture" name="as11_capture" />
+              </label>
+              <p class="hint">{{ 'settings.as11.captureHint' | translate }}</p>
+              <p class="hint" *ngIf="config.airsense11_ble.capture && captureFile?.path">
+                {{ 'settings.as11.captureFile' | translate: { path: captureFile!.path, size: captureSize(captureFile!.bytes) } }}
+              </p>
+              <p class="hint" *ngIf="config.airsense11_ble.capture && !captureFile?.path">
+                {{ 'settings.as11.captureNone' | translate }}
+              </p>
+            </ng-container>
           </div>
         </div>
 
@@ -1336,6 +1350,23 @@ export class SettingsComponent implements OnInit, OnDestroy {
     });
   }
 
+  // SDD-071: the AirSense 11 capture file, read on the same events as the
+  // stream state (page open, section opened, after a save), never on a timer.
+  captureFile: { enabled: boolean; path: string; bytes: number } | null = null;
+
+  loadCaptureStatus(): void {
+    this.api.getAs11BleStatus().subscribe({
+      next: (s) => { this.captureFile = s.capture ?? null; },
+      error: () => { this.captureFile = null; },
+    });
+  }
+
+  /** "12.3 MB": the capture file's size, read the way a person reads it. */
+  captureSize(bytes: number): string {
+    if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
   // BLE adapter status
   bleStatus = '';
 
@@ -1530,8 +1561,9 @@ export class SettingsComponent implements OnInit, OnDestroy {
           cfg.o2ring = { enabled: false, mode: 'http', mule_url: '' };
         }
         if (!cfg.airsense11_ble) {
-          cfg.airsense11_ble = { enabled: false, address: '' };
+          cfg.airsense11_ble = { enabled: false, address: '', capture: false };
         }
+        if (cfg.airsense11_ble.capture === undefined) cfg.airsense11_ble.capture = false;
         if (!cfg.ds2_ble) {
           cfg.ds2_ble = { enabled: false, address: '' };
         }
@@ -1593,6 +1625,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
   toggle(section: string): void {
     this.open[section] = !this.open[section];
     if (section === 'cpapdash' && this.open[section]) this.loadStreamStatus();
+    if (section === 'as11' && this.open[section]) this.loadCaptureStatus();
   }
 
   save(): void {
@@ -1606,6 +1639,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
         this.evaluateRestart(submitted);
         this.pristine = submitted;
         this.loadStreamStatus();   // the switch and the token reach the service on save
+        this.loadCaptureStatus();
       },
       error: () => {
         this.saving = false;

@@ -66,7 +66,11 @@
       "desc": "Lê o resumo diário de um AirSense 11 diretamente do aparelho, pelo Bluetooth deste computador. Use quando o cartão do aparelho não puder ser lido. Quando o cartão tem uma noite, vale o cartão.",
       "enabled": "Ativado",
       "address": "Endereço Bluetooth do aparelho",
-      "addressHint": "Opcional. Deixe em branco para usar o primeiro AirSense 11 ao alcance."
+      "addressHint": "Opcional. Deixe em branco para usar o primeiro AirSense 11 ao alcance.",
+      "capture": "Gravar cada noite para o suporte",
+      "captureHint": "Guarda num ficheiro tudo o que o aparelho envia durante cada noite, para que nos possa enviar junto com a pasta do cartão SD dessa noite. As suas noites são lidas da mesma forma que sem esta opção. Desligue-a quando terminar.",
+      "captureFile": "A gravar em {{path}} ({{size}}).",
+      "captureNone": "Ainda nada gravado: o ficheiro começa com a próxima noite."
     },
     "ds2": {
       "heading": "DreamStation 2 por Bluetooth",
