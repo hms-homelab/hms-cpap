@@ -210,6 +210,7 @@ TEST_F(EzShareFirmwareTest, RedirectListingAndHtml200MissUsePlainPathProbes) {
     ASSERT_TRUE(client.downloadRootFile("Identification.json", path)); // one 200 chunk
     std::ifstream in(path, std::ios::binary);
     EXPECT_EQ(std::string(std::istreambuf_iterator<char>(in), {}), "{}");
+    in.close();   // Windows will not remove a file that is still open
     std::filesystem::remove(path);
 }
 
@@ -371,6 +372,7 @@ TEST_F(EzShareFirmwareTest, BoundedChunksResumeAfterCutAndTimeout) {
     std::ifstream resumed(path, std::ios::binary);
     EXPECT_EQ(std::string(std::istreambuf_iterator<char>(resumed), {}), bytes);
     EXPECT_LE(http.largest, 8192u);
+    resumed.close();   // Windows will not remove a file that is still open
     std::filesystem::remove(path);
 }
 
