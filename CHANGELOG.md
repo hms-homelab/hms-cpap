@@ -5,6 +5,17 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.4.6] - 2026-11-19
+
+### Fixed
+- **Pairing a DreamStation 2 over Bluetooth on Linux and the Home Assistant
+  add-on no longer times out** (#83). hms-cpap asked BlueZ to pair with a call
+  that held the same connection BlueZ uses to deliver the six-digit code, so
+  the code reached the page only after the machine had given up. The pairing
+  request now leaves that connection free: the code reaches the page within a
+  couple of seconds, and the log says how long it took. Confirm on the
+  DreamStation within about 30 seconds of the code appearing.
+
 ## [6.4.5] - 2026-11-19
 
 ### Added
