@@ -1,5 +1,11 @@
 {
   "dashboard": {
+    "empty": {
+      "title": "Aucune nuit pour l'instant",
+      "body": "Importez la carte SD de votre appareil pour voir votre première nuit, ou choisissez dans les Paramètres comment hms-cpap lit votre appareil.",
+      "upload": "Importer une carte",
+      "settings": "Ouvrir les Paramètres"
+    },
     "page": {
       "heading": "Thérapie du sommeil : {{device}}",
       "latestNight": "Dernière nuit : {{date}}",

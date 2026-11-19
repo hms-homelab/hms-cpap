@@ -5,6 +5,15 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **A fresh install's dashboard says what to do next.** With no night yet the
+  dashboard was a heading and a disabled "Regenerate AI summary" button. It
+  now shows the CpapDash robot, "No nights yet", and two buttons: Upload a
+  card, and Open Settings to choose how hms-cpap reads the machine. In all
+  five languages.
+
 ## [6.4.3] - 2026-11-18
 
 ### Fixed
