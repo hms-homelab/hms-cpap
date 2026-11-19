@@ -1486,16 +1486,8 @@ void CpapController::mlStatus(const drogon::HttpRequestPtr&,
 
 void CpapController::getLlmPrompt(const drogon::HttpRequestPtr&,
                                    std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
-    auto resolve_prompt_path = [this]() -> std::string {
-        if (config_ && !config_->llm.prompt_file.empty())
-            return config_->llm.prompt_file;
-        const char* env_path = std::getenv("LLM_PROMPT_FILE");
-        if (env_path) return env_path;
-        const char* home = std::getenv("HOME");
-        return std::string(home ? home : ".") + "/.hms-cpap/llm_prompt.txt";
-    };
-
-    std::string path = resolve_prompt_path();
+    // #77: the same file the summary generator reads.
+    const std::string path = AppConfig::llmPromptPath(config_);
 
     Json::Value result;
     result["path"] = path;
@@ -1522,19 +1514,21 @@ void CpapController::updateLlmPrompt(const drogon::HttpRequestPtr& req,
         return;
     }
 
-    auto resolve_prompt_path = [this]() -> std::string {
-        if (config_ && !config_->llm.prompt_file.empty())
-            return config_->llm.prompt_file;
-        const char* env_path = std::getenv("LLM_PROMPT_FILE");
-        if (env_path) return env_path;
-        const char* home = std::getenv("HOME");
-        return std::string(home ? home : ".") + "/.hms-cpap/llm_prompt.txt";
-    };
-    std::string path = resolve_prompt_path();
+    // #77: the same file the summary generator reads, so a save takes effect
+    // at the next summary with no restart.
+    const std::string path = AppConfig::llmPromptPath(config_);
 
     try {
-        std::ofstream f(path);
+        std::error_code ec;
+        const auto parent = std::filesystem::path(path).parent_path();
+        if (!parent.empty()) std::filesystem::create_directories(parent, ec);
+        std::ofstream f(path, std::ios::binary | std::ios::trunc);
         f << (*body)["prompt"].asString();
+        f.close();
+        if (!f) {
+            cb(jsonError("Failed to write prompt to " + path, drogon::k500InternalServerError));
+            return;
+        }
         Json::Value result;
         result["status"] = "saved";
         result["path"] = path;

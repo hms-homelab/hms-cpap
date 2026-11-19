@@ -435,12 +435,25 @@ void BurstCollectorService::initLlm() {
 
     llm_client_ = std::make_unique<hms::LLMClient>(llm_config);
 
-    std::string prompt_file = ConfigManager::get("LLM_PROMPT_FILE", "");
-    if (!prompt_file.empty())
-        llm_prompt_template_ = hms::LLMClient::loadPromptFile(prompt_file);
+    std::cout << "LLM: Enabled (" << hms::LLMClient::providerName(llm_config.provider)
+              << " / " << llm_config.model << " at " << llm_config.endpoint << ")" << std::endl;
+}
 
-    if (llm_prompt_template_.empty()) {
-        llm_prompt_template_ =
+// #77: read at every summary from AppConfig::llmPromptPath, the file the
+// Settings editor saves, so a path set in Settings or an edited prompt is used
+// at the next summary with no restart. No file there: the built-in prompt.
+std::string BurstCollectorService::summaryPromptTemplate(const AppConfig* cfg, std::string* source) {
+    const std::string path = AppConfig::llmPromptPath(cfg);
+    std::error_code ec;
+    if (std::filesystem::is_regular_file(path, ec)) {
+        std::string tmpl = hms::LLMClient::loadPromptFile(path);
+        if (!tmpl.empty()) {
+            if (source) *source = path;
+            return tmpl;
+        }
+    }
+    if (source) *source = "built-in (no prompt file at " + path + ")";
+    return
             "You are a CPAP therapy analyst. Summarize this CPAP session using "
             "this exact markdown structure:\n\n"
             "**Overall**\n"
@@ -462,10 +475,6 @@ void BurstCollectorService::initLlm() {
             "* 1-2 actionable suggestions based on the data\n\n"
             "Use bullet points with * prefix. Keep it concise.\n\n"
             "Session data:\n{metrics}";
-    }
-
-    std::cout << "LLM: Enabled (" << hms::LLMClient::providerName(llm_config.provider)
-              << " / " << llm_config.model << " at " << llm_config.endpoint << ")" << std::endl;
 }
 
 void BurstCollectorService::initO2Ring() {
@@ -4781,8 +4790,11 @@ void BurstCollectorService::generateAndPublishSummary(const SessionMetrics& metr
         requested_sleep_day, std::chrono::system_clock::now());
 
     std::string metrics_str = buildMetricsString(metrics, str_record, sleep_day);
+    std::string prompt_source;
+    const std::string prompt_template = summaryPromptTemplate(app_config_, &prompt_source);
+    std::cout << "LLM: prompt: " << prompt_source << std::endl;
     std::string prompt = hms::LLMClient::substituteTemplate(
-        llm_prompt_template_, {{"metrics", metrics_str}});
+        prompt_template, {{"metrics", metrics_str}});
 
     auto summary = llm_client_->generate(prompt);
     if (!summary) {
