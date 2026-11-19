@@ -1,5 +1,11 @@
 {
   "dashboard": {
+    "empty": {
+      "title": "No nights yet",
+      "body": "Upload your machine's SD card to see your first night, or choose in Settings how hms-cpap reads your machine.",
+      "upload": "Upload a card",
+      "settings": "Open Settings"
+    },
     "page": {
       "heading": "{{device}} Sleep Therapy",
       "latestNight": "Latest night: {{date}}",

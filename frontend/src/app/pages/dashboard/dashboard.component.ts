@@ -1,5 +1,6 @@
 import { Component, OnInit, ViewChild, ElementRef, AfterViewInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { RouterLink } from '@angular/router';
 import { TranslatePipe, TranslateService } from '@ngx-translate/core';
 import { CpapApiService } from '../../services/cpap-api.service';
 import { formatIndex, formatNightDate, nightAgeInDays } from '../../utils/format';
@@ -34,7 +35,8 @@ const MODE_LABELS: Record<string, string> = {
   imports: [CommonModule, KeyMetricsComponent, OximetryRowComponent, AiSummaryComponent,
             TherapyInsightsComponent, StrMetricsComponent, EventsBreakdownComponent,
             PressureSectionComponent, RespiratoryMetricsComponent, RealtimeStatusComponent,
-            MlIntelligenceComponent, MyAirCompareComponent, UpdateBannerComponent, TranslatePipe],
+            MlIntelligenceComponent, MyAirCompareComponent, UpdateBannerComponent, TranslatePipe,
+            RouterLink],
   template: `
     <div class="dashboard">
       <app-update-banner></app-update-banner>
@@ -46,6 +48,17 @@ const MODE_LABELS: Record<string, string> = {
       <div class="dash-subtitle" *ngIf="data?.latest_night?.date">
         {{ 'dashboard.page.latestNight' | translate:{ date: formatDate(data!.latest_night.date) } }}
         <span class="night-age" *ngIf="isStale">{{ 'dashboard.page.latestNightAge' | translate:{ count: nightAgeDays } }}</span>
+      </div>
+
+      <!-- A fresh install has no night yet: say so, and point at the two ways in. -->
+      <div class="empty-state" *ngIf="isEmpty">
+        <img src="empty/cpap-robot-sad.png" alt="" width="220" height="220" />
+        <h3>{{ 'dashboard.empty.title' | translate }}</h3>
+        <p>{{ 'dashboard.empty.body' | translate }}</p>
+        <div class="empty-actions">
+          <a class="empty-btn primary" routerLink="/upload">{{ 'dashboard.empty.upload' | translate }}</a>
+          <a class="empty-btn" routerLink="/settings">{{ 'dashboard.empty.settings' | translate }}</a>
+        </div>
       </div>
 
       <!-- SDD-019: the index. Hidden entirely when there is nothing to score,
@@ -111,7 +124,7 @@ const MODE_LABELS: Record<string, string> = {
       <!-- Two-column layout for Summary + Insights. The regenerate button is a
            control, not a card, so its row stays; with no insights it takes
            the full width. -->
-      <div class="two-col" [class.single]="!insights.length">
+      <div class="two-col" [class.single]="!insights.length" *ngIf="!isEmpty">
         <!-- 3. AI Session Summary -->
         <div class="ai-summary-wrapper">
           <div class="ai-summary-header">
@@ -236,6 +249,17 @@ const MODE_LABELS: Record<string, string> = {
     .band-fair { color: #fbbf24; }
     .band-needs_attention { color: #f87171; }
     @media (max-width: 600px) { .index-card { flex-direction: column; align-items: flex-start; } }
+    .empty-state { display: flex; flex-direction: column; align-items: center; text-align: center; padding: 2rem 1rem 3rem; }
+    .empty-state img { width: 220px; height: 220px; }
+    .empty-state h3 { color: #e0e0e0; font-size: 1.3rem; margin: 0.75rem 0 0.4rem; }
+    .empty-state p { color: #9aa4b2; max-width: 30rem; line-height: 1.5; margin: 0 0 1.5rem; }
+    .empty-actions { display: flex; gap: 0.75rem; flex-wrap: wrap; justify-content: center; }
+    .empty-btn {
+      padding: 0.6rem 1.25rem; border-radius: 6px; border: 1px solid #1976d2;
+      color: #64b5f6; text-decoration: none; font-weight: 600; transition: all 0.2s;
+    }
+    .empty-btn.primary { background: #1976d2; color: #fff; }
+    .empty-btn:hover { background: #1565c0; color: #fff; }
   `]
 })
 export class DashboardComponent implements OnInit, AfterViewInit {
@@ -256,6 +280,11 @@ export class DashboardComponent implements OnInit, AfterViewInit {
 
   data: DashboardData | null = null;
   deviceName = 'CPAP'; // overridden from /api/config in ngOnInit
+
+  /** Loaded, and there is no night and no live session: a fresh install. */
+  get isEmpty(): boolean {
+    return !!this.data && !this.data.latest_night?.date && !this.liveSession;
+  }
 
   // SDD-020. hasMyAir comes from /api/capabilities, not from whether any rows
   // arrived: a configured user whose first poll has not run yet should see the

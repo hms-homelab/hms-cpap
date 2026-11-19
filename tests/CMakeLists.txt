@@ -141,6 +141,7 @@ set(TEST_SOURCES
     clients/test_OxyIIProtocol.cpp
     clients/test_As11Protocol.cpp
     clients/test_As11Session.cpp
+    clients/test_As11Capture.cpp
     clients/test_As11Stream.cpp
     services/test_As11CardEdf.cpp
     services/test_As11NightWriter.cpp

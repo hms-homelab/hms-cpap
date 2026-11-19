@@ -634,6 +634,30 @@ bool AirSense11BleClient::streamOnce() {
         dropLink();
         return false;
     }
+    // SDD-071: a capture night records from here, once the session is open
+    // (nothing of the pairing or the session's opening is ever seen). A new
+    // connect is a new file; one that never reached a stream leaves none.
+    bool streamed = false;
+    const bool capturing =
+        capture_on_ && capture_.open(as11::As11Capture::pathFor(data_dir_, serial, std::time(nullptr)));
+    if (capture_on_ && !capturing) note("capture: could not open a capture file");
+    struct EndCapture {
+        AirSense11BleClient* c;
+        bool on;
+        const bool* streamed;
+        ~EndCapture() {
+            if (!on) return;
+            c->session_.setCaptureTap({});
+            c->capture_.close(*streamed);
+        }
+    } end_capture{this, capturing, &streamed};
+    if (capturing) {
+        session_.setCaptureTap([this](const char* dir, const std::string& text) {
+            capture_.record(dir, text);
+        });
+        std::string ident;   // the machine's Identification, once per file (D3)
+        session_.getIdentification(&ident);
+    }
     if (std::string ident; !std::filesystem::exists(std::filesystem::path(writer_->rootFor(serial)) / "Identification.json") &&
                            session_.getIdentification(&ident) == as11::Result::Ok)
         writeIdentification(writer_->rootFor(serial), ident);
@@ -689,11 +713,29 @@ bool AirSense11BleClient::streamOnce() {
     }
 
     streaming_ = true;
-    if (session_.startStream() != as11::Result::Ok) {
+    as11::Result started = as11::Result::Protocol;
+    if (capturing) {
+        // D2: the 13 and the candidates. A machine that refuses the call over
+        // them is asked again with the 13, so a capture night is never lost.
+        started = session_.startStream(as11::captureStreamIds());
+        if (started != as11::Result::Ok) {
+            const std::string why = session_.lastError();
+            capture_.note("StartStream with the candidate ids failed (" + why +
+                          "); asked again with the 13");
+            note("capture: the stream with the candidate ids failed (" + why +
+                 "), asking for the usual 13");
+            started = session_.startStream();
+        }
+    } else {
+        started = session_.startStream();
+    }
+    if (started != as11::Result::Ok) {
         note(std::string("stream refused: ") + session_.lastError());
         dropLink();
         return true;
     }
+    streamed = true;
+    if (capturing) std::cout << kTag << "capturing the night to " << capture_.path() << std::endl;
     std::cout << kTag << "streaming the night from " << device_.name << std::endl;
     if (live_.therapy) live_.therapy(serial, true);
     {

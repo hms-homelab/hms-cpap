@@ -1,5 +1,6 @@
 #pragma once
 
+#include "clients/As11Capture.h"
 #include "clients/As11Session.h"
 #include "clients/IAirSense11Client.h"
 #include "clients/IAirSense11Pairing.h"
@@ -99,6 +100,14 @@ public:
     };
     void setLiveHooks(LiveHooks hooks) { live_ = std::move(hooks); }
 
+    /// SDD-071: record each night's stream to a capture file
+    /// (airsense11_ble.capture). Read at the start of each night's connect.
+    void setCapture(bool on) { capture_on_ = on; }
+    bool captureOn() const { return capture_on_; }
+    /// The capture file being written, or the last one kept, and its size.
+    std::string capturePath() const { return capture_.path(); }
+    long long captureBytes() const { return capture_.bytes(); }
+
     static constexpr int kStallMs = 30000;       // no report this long: the stream is dead
     static constexpr int kRetryMs = 30000;       // after the machine was not found
 
@@ -110,6 +119,8 @@ private:
     std::shared_ptr<As11NightWriter> writer_;
     std::function<void()> night_ended_;
     LiveHooks live_;
+    std::atomic<bool> capture_on_{false};
+    as11::As11Capture capture_;
     std::thread night_thread_;
     std::atomic<bool> running_{false};
     std::atomic<bool> want_radio_{false};

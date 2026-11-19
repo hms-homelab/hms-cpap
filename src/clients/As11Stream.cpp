@@ -148,6 +148,17 @@ const std::vector<std::string>& streamIds() {
     return ids;
 }
 
+const std::vector<std::string>& captureStreamIds() {
+    static const std::vector<std::string> ids = [] {
+        auto v = streamIds();
+        // SDD-071 D2: the candidates, protocol facts by name only. _TGT is
+        // target minute ventilation, sent by an ASV.
+        for (const char* k : {"_TGT", "_IE2", "_BYV", "_INT"}) v.emplace_back(k);
+        return v;
+    }();
+    return ids;
+}
+
 // ── StreamData into seconds ──
 
 void SecondAssembler::resetSecond() {

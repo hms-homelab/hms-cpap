@@ -12,6 +12,9 @@
 #include "utils/FileLogger.h"
 #include "utils/LogTail.h"
 #include "utils/ReExec.h"
+#ifdef WITH_BLE
+#include "clients/AirSense11BleClient.h"
+#endif
 #include "web/As11PairingApi.h"
 #include "web/Ds2BleApi.h"
 #include "services/Ds2ReadTime.h"
@@ -488,6 +491,7 @@ void CpapController::updateConfig(const drogon::HttpRequestPtr& req,
         auto& b = j["airsense11_ble"];
         if (b.isMember("enabled")) config_->airsense11_ble.enabled = b["enabled"].asBool();
         if (b.isMember("address")) config_->airsense11_ble.address = b["address"].asString();
+        if (b.isMember("capture")) config_->airsense11_ble.capture = b["capture"].asBool();   // SDD-071
     }
 
     if (j.isMember("ds2_ble")) {   // SDD-064
@@ -1175,6 +1179,18 @@ void CpapController::as11BleStatus(const drogon::HttpRequestPtr&,
     r.body["last_summary_day"]   = f.summary_day;
     r.body["last_summary_error"] = f.error;
     r.body["pull_due"]           = f.pull_due;
+    // SDD-071 D4: the capture file, so the person can find it to send.
+    Json::Value cap(Json::objectValue);
+    cap["enabled"] = config_ && config_->airsense11_ble.capture;
+    cap["path"]    = "";
+    cap["bytes"]   = static_cast<Json::Int64>(0);
+#ifdef WITH_BLE
+    if (auto ble = std::dynamic_pointer_cast<AirSense11BleClient>(p)) {
+        cap["path"]  = ble->capturePath();
+        cap["bytes"] = static_cast<Json::Int64>(ble->captureBytes());
+    }
+#endif
+    r.body["capture"] = cap;
     cb(as11Resp(r));
 }
 

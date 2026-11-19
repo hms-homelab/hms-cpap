@@ -66,7 +66,11 @@
       "desc": "Reads an AirSense 11's daily summary straight from the machine, over this computer's Bluetooth. Use it when the machine's card cannot be read. When the card has a night, the card wins.",
       "enabled": "Enabled",
       "address": "Machine's Bluetooth address",
-      "addressHint": "Optional. Leave it empty to use the first AirSense 11 in range."
+      "addressHint": "Optional. Leave it empty to use the first AirSense 11 in range.",
+      "capture": "Record each night for support",
+      "captureHint": "Saves everything the machine sends during each night to a file, so you can send it to us with that night's SD card folder. Your nights are read the same as without it. Turn it off when you are done.",
+      "captureFile": "Recording to {{path}} ({{size}}).",
+      "captureNone": "Nothing recorded yet: the file starts with the next night."
     },
     "ds2": {
       "heading": "DreamStation 2 over Bluetooth",

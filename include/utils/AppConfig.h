@@ -248,6 +248,9 @@ struct AppConfig {
     struct AirSense11Ble {
         bool enabled = false;
         std::string address;            // empty: the first AirSense 11 the scan finds
+        // SDD-071: record every message of each night's stream, as the machine
+        // sent it, to <data_dir>/as11/<serial>/capture/. Off: nothing changes.
+        bool capture = false;
     } airsense11_ble;
 
     // A Philips DreamStation 2 read over its own Bluetooth by this host,
@@ -730,6 +733,7 @@ struct AppConfig {
                 auto& b = j["airsense11_ble"];
                 if (b.contains("enabled"))              config.airsense11_ble.enabled = b["enabled"];
                 if (b.contains("address"))              config.airsense11_ble.address = b["address"];
+                if (b.contains("capture"))              config.airsense11_ble.capture = b["capture"];
             }
 
             if (j.contains("ds2_ble")) {
@@ -876,6 +880,7 @@ struct AppConfig {
 
             j["airsense11_ble"]["enabled"] = airsense11_ble.enabled;
             j["airsense11_ble"]["address"] = airsense11_ble.address;
+            j["airsense11_ble"]["capture"] = airsense11_ble.capture;
 
             j["ds2_ble"]["enabled"] = ds2_ble.enabled;
             j["ds2_ble"]["address"] = ds2_ble.address;
@@ -1021,6 +1026,7 @@ struct AppConfig {
 
         j["airsense11_ble"]["enabled"] = airsense11_ble.enabled;
         j["airsense11_ble"]["address"] = airsense11_ble.address;
+        j["airsense11_ble"]["capture"] = airsense11_ble.capture;
 
         j["ds2_ble"]["enabled"] = ds2_ble.enabled;
         j["ds2_ble"]["address"] = ds2_ble.address;

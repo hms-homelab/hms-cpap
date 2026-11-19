@@ -160,8 +160,18 @@ public:
     /// in ONE call: each SubscribeEvent replaces the set.
     Result subscribe();
     /// StartStream with the channels the bridge was proven with, every 40 ms,
-    /// reported every 200 ms.
-    Result startStream();
+    /// reported every 200 ms. A capture night (SDD-071) passes
+    /// captureStreamIds() instead.
+    Result startStream(const std::vector<std::string>& ids = streamIds());
+
+    /// SDD-071: sees every message the machine sends from now on ("in", the
+    /// decrypted text) and the requests sent for Get, SubscribeEvent,
+    /// StartStream, StartSpool and PullSpoolFragments ("out"). Never a pairing
+    /// or session-opening message: those carry key material, and the tap is
+    /// set only once a session is open. Called with the session's lock held;
+    /// it must not call back into the Session. An empty function clears it.
+    using CaptureTap = std::function<void(const char* dir, const std::string& text)>;
+    void setCaptureTap(CaptureTap tap);
     /// StartStream with no channels: the machine stops reporting.
     void stopStream();
     /// Get ["IdentificationProfiles"]: the result object as the machine sent
@@ -187,6 +197,7 @@ private:
     void onSpoolFragment(const json& p);   // m_ held
     void onEventNotification(const json& p);   // m_ held
     StreamHandlers handlers_;
+    CaptureTap capture_;
     void fail(const std::string& why);
     void wipePairing();                    // m_ held
 

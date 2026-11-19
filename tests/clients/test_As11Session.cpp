@@ -587,6 +587,106 @@ TEST(As11Session, NoLiveStepsWithoutASession) {
     EXPECT_TRUE(rig.machine.requests.empty());
 }
 
+// ── SDD-071: the capture tap ──
+
+namespace {
+
+struct Tapped {
+    std::string dir, text;
+};
+
+// A machine for the night with the capture's extra ids: it accepts the 17,
+// or refuses them when `refuse_extra` and then accepts the 13.
+std::vector<json> captureNight(SpoolRig& rig, const json& req, bool refuse_extra) {
+    const std::string method = req["method"];
+    if (method == "RequestSession" || method == "CheckSessionIntegrity")
+        return sessionMachine(rig.machine, req);
+    if (method == "SubscribeEvent") return {FakeMachine::reply(req, json::object())};
+    if (method == "StartStream") {
+        const auto n = req["params"]["dataIds"].size();
+        if (n == 17u && refuse_extra) return {FakeMachine::error(req, -11002)};
+        return {FakeMachine::reply(req, {{"_TGT", "OK"}}),
+                {{"jsonrpc", "1.0"}, {"method", "StreamData"},
+                 {"params", {{"startTime", "2026-11-18T03:00:00.000Z"}, {"intervalMs", 40},
+                             {"data", {{{"PatientFlow", {0.1}}, {"TargetVentilation", {6.2}}}}}}}}};
+    }
+    return {};
+}
+
+}  // namespace
+
+TEST(As11Session, TheCaptureTapSeesTheNightAsSentAndAsked) {
+    SpoolRig rig;
+    rig.machine.respond = [&rig](const json& req) { return captureNight(rig, req, false); };
+    std::vector<Tapped> seen;
+    rig.session.setCaptureTap([&](const char* dir, const std::string& t) { seen.push_back({dir, t}); });
+
+    ASSERT_EQ(rig.session.subscribe(), Result::Ok);
+    ASSERT_EQ(rig.session.startStream(captureStreamIds()), Result::Ok);
+    EXPECT_EQ(rig.machine.requests.back()["params"]["dataIds"].size(), 17u);
+    EXPECT_EQ(rig.machine.requests.back()["params"]["dataIds"][13], "_TGT");
+
+    // In order: the subscription asked and answered, the stream asked and
+    // answered (its per-code verdict kept), then the report, verbatim.
+    ASSERT_EQ(seen.size(), 5u);
+    EXPECT_EQ(seen[0].dir, "out");
+    EXPECT_NE(seen[0].text.find("SubscribeEvent"), std::string::npos);
+    EXPECT_EQ(seen[1].dir, "in");
+    EXPECT_EQ(seen[2].dir, "out");
+    EXPECT_NE(seen[2].text.find("_TGT"), std::string::npos);
+    EXPECT_EQ(seen[3].dir, "in");
+    EXPECT_NE(seen[3].text.find("\"_TGT\":\"OK\""), std::string::npos);
+    EXPECT_EQ(seen[4].dir, "in");
+    EXPECT_NE(seen[4].text.find("TargetVentilation"), std::string::npos)
+        << "a field no channel knows still reaches the capture";
+
+    rig.session.setCaptureTap({});
+    rig.session.stopStream();
+    EXPECT_EQ(seen.size(), 5u) << "a cleared tap sees nothing more";
+}
+
+TEST(As11Session, ARefusedCandidateStreamIsSeenAndThe13StillStream) {
+    SpoolRig rig;
+    rig.machine.respond = [&rig](const json& req) { return captureNight(rig, req, true); };
+    std::vector<Tapped> seen;
+    rig.session.setCaptureTap([&](const char* dir, const std::string& t) { seen.push_back({dir, t}); });
+    EXPECT_NE(rig.session.startStream(captureStreamIds()), Result::Ok);
+    ASSERT_EQ(rig.session.startStream(), Result::Ok);
+    EXPECT_EQ(rig.machine.requests.back()["params"]["dataIds"].size(), 13u);
+    bool refusal = false;
+    for (const auto& s : seen)
+        if (s.dir == std::string("in") && s.text.find("-11002") != std::string::npos) refusal = true;
+    EXPECT_TRUE(refusal) << "the machine's refusal is in the capture";
+}
+
+TEST(As11Session, NothingOfThePairingOrTheOpeningIsEverCaptured) {
+    // A tap set while a pairing is open is refused; a pairing started under a
+    // tap clears it. The session's opening is never asked under a tap by the
+    // client, and its requests are not in the tapped set either.
+    Rig rig;
+    rig.machine.respond = pairingMachine;
+    std::vector<Tapped> seen;
+    auto tap = [&](const char* dir, const std::string& t) { seen.push_back({dir, t}); };
+    rig.session.setCaptureTap(tap);
+    ASSERT_EQ(rig.session.pairStart(), Result::WaitCode);
+    rig.session.setCaptureTap(tap);   // refused: a pairing is open
+    Credentials out;
+    EXPECT_EQ(rig.session.pairConfirm(kCode, &out), Result::Ok);
+    EXPECT_TRUE(seen.empty()) << "a pairing reached the capture";
+
+    // Opening a session clears any tap, so neither the opening's requests nor
+    // its replies (the challenge and the nonce) are seen.
+    SpoolRig open_rig;
+    std::vector<Tapped> seen2;
+    open_rig.session.setCaptureTap([&](const char* d, const std::string& t) { seen2.push_back({d, t}); });
+    EXPECT_EQ(open_rig.session.open(refCreds()), Result::Ok);
+    EXPECT_TRUE(seen2.empty()) << "the session's opening reached the capture";
+    std::string s;
+    bool t = false;
+    open_rig.session.getState(&s, &t);
+    EXPECT_TRUE(seen2.empty()) << "open() cleared the tap; it stays cleared";
+}
+
 // ── credentials and scanning ──
 
 TEST(As11Session, CredentialsRoundTripWithMode0600) {

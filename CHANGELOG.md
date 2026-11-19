@@ -5,6 +5,24 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.4.4] - 2026-11-19
+
+### Added
+- **Record an AirSense 11 night for support** (SDD-071). A new switch in
+  Settings, under AirSense 11 over Bluetooth, saves everything the machine
+  sends during each night to a file under
+  `<data folder>/as11/<serial>/capture/`, one line per message, to send with
+  that night's SD card folder. Off by default; nights are read the same with
+  it on. The night's stream also asks for the ASV fields (target ventilation,
+  I:E ratio, backup rate, intervals) and asks again without them if the
+  machine refuses. Nothing is recorded during pairing, and a connection that
+  never streamed leaves no file. Settings shows the last file and its size.
+- **A fresh install's dashboard says what to do next.** With no night yet the
+  dashboard was a heading and a disabled "Regenerate AI summary" button. It
+  now shows the CpapDash robot, "No nights yet", and two buttons: Upload a
+  card, and Open Settings to choose how hms-cpap reads the machine. In all
+  five languages.
+
 ## [6.4.3] - 2026-11-18
 
 ### Fixed
