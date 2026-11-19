@@ -5,6 +5,33 @@ All notable changes to HMS-CPAP will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [6.4.3] - 2026-11-18
+
+### Fixed
+- **A restart from Settings no longer freezes hms-cpap** (Linux, macOS,
+  Docker). After an in-place restart the new image wrote its log into a pipe
+  nobody read, and stopped once the pipe filled. The log tee is stopped
+  before the restart and opens nothing the new image inherits.
+- **A restart from Settings on Windows leaves hms-cpap running.** The new
+  process started while the old one still held the web port, refused to
+  start, and left nothing running (every version since 5.2.0). It now waits
+  for the old process to end before it checks or opens the port.
+- **AI summaries name every apnea type and the counts add up** (#78). A night
+  of 3 hypopneas and 3 unclassified apneas reached the model as "Total
+  events: 6 (obstructive=0, central=0, hypopnea=3, RERA=0)" and came back as
+  six hypopneas. The daily and the weekly/monthly summaries now list the
+  events counted in the AHI by type (obstructive, central, clear airway,
+  unclassified, hypopnea), then the other recorded events, which together
+  make the total; and tell the model to report each type only under its own
+  label. The weekly and monthly figures carry the unclassified apneas on
+  every database.
+- **A regenerated summary describes its own night.** It took the newest
+  night's ResMed daily summary and today's O2 Ring figures; it now takes the
+  night it is for.
+- **A card with no identification file is still named.** The machine's
+  serial is read from its EDF headers, so its files are no longer held back
+  for want of a serial.
+
 ## [6.4.2] - 2026-11-17
 
 ### Fixed
