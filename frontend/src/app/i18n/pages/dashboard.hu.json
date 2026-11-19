@@ -1,5 +1,11 @@
 {
   "dashboard": {
+    "empty": {
+      "title": "Még nincs egy éjszaka sem",
+      "body": "Töltse fel a készülék SD-kártyáját az első éjszaka megtekintéséhez, vagy válassza ki a Beállításokban, hogyan olvassa a hms-cpap a készüléket.",
+      "upload": "Kártya feltöltése",
+      "settings": "Beállítások megnyitása"
+    },
     "page": {
       "heading": "Alvásterápia: {{device}}",
       "latestNight": "Legutóbbi éjszaka: {{date}}",

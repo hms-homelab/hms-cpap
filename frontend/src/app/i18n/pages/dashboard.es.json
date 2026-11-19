@@ -1,5 +1,11 @@
 {
   "dashboard": {
+    "empty": {
+      "title": "Todavía no hay noches",
+      "body": "Sube la tarjeta SD de tu equipo para ver tu primera noche, o elige en Ajustes cómo hms-cpap lee tu equipo.",
+      "upload": "Subir una tarjeta",
+      "settings": "Abrir Ajustes"
+    },
     "page": {
       "heading": "Terapia del sueño: {{device}}",
       "latestNight": "Última noche: {{date}}",

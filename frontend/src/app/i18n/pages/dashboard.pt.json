@@ -1,5 +1,11 @@
 {
   "dashboard": {
+    "empty": {
+      "title": "Ainda não há noites",
+      "body": "Envie o cartão SD do seu aparelho para ver a sua primeira noite, ou escolha nas Configurações como o hms-cpap lê o seu aparelho.",
+      "upload": "Enviar um cartão",
+      "settings": "Abrir Configurações"
+    },
     "page": {
       "heading": "Terapia do sono: {{device}}",
       "latestNight": "Última noite: {{date}}",
