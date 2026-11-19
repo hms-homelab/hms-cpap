@@ -11,6 +11,7 @@
 #include "utils/ConfigManager.h"
 #include "utils/FileLogger.h"
 #include "utils/LogTail.h"
+#include "utils/ReExec.h"
 #include "web/As11PairingApi.h"
 #include "web/Ds2BleApi.h"
 #include "services/Ds2ReadTime.h"
@@ -647,14 +648,10 @@ void respondAndRestart(std::function<void(const drogon::HttpResponsePtr&)>&& cb,
         // console back on fd 1 and 2 and lets the pump drain the last lines to
         // the file; the new image starts its own tee.
         FileLogger::stop();
-#ifdef _WIN32
-        const char* argv[] = {exe.c_str(), nullptr};
-        _execv(exe.c_str(), const_cast<char* const*>(argv));
-#else
-        char* const argv[] = {const_cast<char*>(exe.c_str()), nullptr};
-        ::execv(exe.c_str(), argv);
-#endif
-        // execv only returns on failure, and by now the old process is no longer
+        // execv on POSIX; on Windows a fresh process that waits for this one to
+        // end before it binds the port (utils/ReExec.h).
+        reexec::replaceSelf(exe);
+        // Only returns on failure, and by now the old process is no longer
         // serving usefully, so exiting lets a supervisor notice.
         std::exit(1);
     }).detach();

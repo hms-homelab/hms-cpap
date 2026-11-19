@@ -60,6 +60,7 @@
 #include "utils/CardImport.h"
 #include "utils/SessionEnd.h"
 #include "utils/FileLogger.h"
+#include "utils/ReExec.h"
 #include "utils/CardLayout.h"
 #include "utils/DbProbeCli.h"
 #include "utils/ParentWatch.h"
@@ -485,6 +486,11 @@ int runReparse(const std::string& card_root, const std::string& start_str, const
  * Main entry point
  */
 int main(int argc, char** argv) {
+    // A Windows in-place restart starts us while the process we replace is
+    // still ending and still holds the web port: wait for its exit before
+    // anything checks or binds (utils/ReExec.h). Nothing on POSIX.
+    hms_cpap::reexec::waitForReplacedProcess();
+
     // `--ble-scan [seconds]`: list what advertises over this computer's
     // Bluetooth and exit, before any config, log or database is touched. A
     // diagnostic: it never connects to anything.
