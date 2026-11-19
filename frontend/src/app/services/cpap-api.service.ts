@@ -116,7 +116,8 @@ export class CpapApiService {
   /// SDD-057: pairing an AirSense 11 over this host's Bluetooth, in two steps
   /// because the machine shows its code only after the first.
   getAs11BleStatus(): Observable<{compiled: boolean; enabled: boolean; available: boolean;
-                                  paired: boolean; pairing: boolean}> {
+                                  paired: boolean; pairing: boolean;
+                                  capture?: {enabled: boolean; path: string; bytes: number}}> {
     return this.http.get<any>('/api/airsense11/ble/status');
   }
 

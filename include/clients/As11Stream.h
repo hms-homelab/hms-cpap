@@ -100,6 +100,10 @@ uint8_t channelOfKey(const std::string& key);
 
 /// The stream ids StartStream asks for (the set the bridge was proven with).
 const std::vector<std::string>& streamIds();
+/// SDD-071: streamIds() plus the candidates a capture night also asks for
+/// (_TGT _IE2 _BYV _INT). They reach only the capture file: channelOfKey
+/// knows none of them, so the night's blocks are what they are without them.
+const std::vector<std::string>& captureStreamIds();
 
 /**
  * The machine's StreamData reports into one-second CDS1 blocks, as the bridge

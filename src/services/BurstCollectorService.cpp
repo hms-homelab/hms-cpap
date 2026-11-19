@@ -897,6 +897,7 @@ void BurstCollectorService::initAirSense11() {
 #ifdef WITH_BLE
         auto client = std::make_shared<AirSense11BleClient>(AppConfig::dataDir(),
                                                             app_config_->airsense11_ble.address);
+        client->setCapture(app_config_->airsense11_ble.capture);   // SDD-071
         getAs11NightSink();   // makes the shared writer
         {
             std::lock_guard<std::mutex> lk(airsense11_mtx_);
