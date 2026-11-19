@@ -178,6 +178,60 @@ TEST(ReadIdentification, NoFileIsEmpty) {
     EXPECT_TRUE(readIdentification("/nonexistent/card/root").empty());
 }
 
+namespace {
+
+// A ResMed EDF's first 256 bytes, with [recording] in its 80-byte recording
+// field at offset 88, as DATALOG/<night>/<name> under [root].
+void writeEdfHeader(const std::string& root, const std::string& night, const std::string& name,
+                    const std::string& recording) {
+    const fs::path dir = fs::path(root) / "DATALOG" / night;
+    fs::create_directories(dir);
+    std::string header(256, ' ');
+    header.replace(0, 8, "0       ");
+    header.replace(88, std::min<size_t>(80, recording.size()), recording.substr(0, 80));
+    std::ofstream(dir / name, std::ios::binary) << header;
+}
+
+}  // namespace
+
+// hmscpap-tapper41, 2026-11-18: a Sleep Bridge's card is rebuilt from what the
+// machine writes during therapy, and an AirSense writes Identification.tgt only
+// when the card is set up, so the rebuilt card had none and the CpapDash
+// uploader held every file of the night. Every ResMed EDF names the serial in
+// its header.
+TEST(ReadIdentification, NoFileTakesTheSerialFromAnEdfHeader) {
+    CardRoot card;
+    writeEdfHeader(card.path(), "20261117", "20261118_013236_BRP.edf",
+                   "Startdate 18-NOV-2026 X X X SRN=99990000004 MID=36 VID=39");
+    const auto id = readIdentification(card.path());
+    EXPECT_EQ(id.serial, "99990000004");
+    EXPECT_EQ(id.manufacturer, "ResMed");
+    EXPECT_EQ(id.model, "") << "the header names no model: nothing is made up";
+}
+
+TEST(ReadIdentification, TheNewestNightsHeaderWins) {
+    CardRoot card;
+    writeEdfHeader(card.path(), "20261101", "20261101_220000_BRP.edf",
+                   "Startdate 01-NOV-2026 X X X SRN=99990000005");
+    writeEdfHeader(card.path(), "20261117", "20261117_223407_BRP.edf",
+                   "Startdate 17-NOV-2026 X X X SRN=99990000006");
+    EXPECT_EQ(readIdentification(card.path()).serial, "99990000006");
+}
+
+TEST(ReadIdentification, AnIdentificationFileWinsOverTheHeaders) {
+    CardRoot card;
+    card.write("Identification.tgt", kTgt);
+    writeEdfHeader(card.path(), "20261117", "20261118_013236_BRP.edf",
+                   "Startdate 18-NOV-2026 X X X SRN=99990000007");
+    EXPECT_EQ(readIdentification(card.path()).serial, "99990000001");
+}
+
+TEST(ReadIdentification, AnEdfWithoutASerialGivesNothing) {
+    CardRoot card;
+    writeEdfHeader(card.path(), "20261117", "20261118_013236_BRP.edf", "Startdate 18-NOV-2026 X X X");
+    EXPECT_TRUE(readIdentification(card.path()).empty());
+}
+
 // ── identityFromSession ──────────────────────────────────────────────────────
 
 TEST(IdentityFromSession, SefamNamesModelSerialAndFirmware) {

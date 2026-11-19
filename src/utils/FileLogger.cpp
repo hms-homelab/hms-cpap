@@ -14,6 +14,7 @@
 #include <vector>
 
 #ifndef _WIN32
+#include <fcntl.h>
 #include <unistd.h>
 #endif
 
@@ -56,6 +57,28 @@ std::string stamp() {
     return buf;
 }
 
+// *** NOTHING OF THE TEE MAY OUTLIVE AN exec. *** The in-place restart
+// (POST /api/config/restart, "reexec") execs this same binary. Every
+// descriptor without close-on-exec is inherited by the new image: on 6.4.2 the
+// new image took the old pipe as its console, whose only reader (the old pump
+// thread) died at the exec, and once the pipe's 64 KiB filled every thread
+// that logs blocked, the web server's included (hmscpap-tapper41, 2026-11-18,
+// reproduced). So the pipe ends, the saved console copies and the log file are
+// all close-on-exec. fd 1 and 2 cannot be (they must survive an exec); the
+// restart puts them back with stop() first.
+// fcntl and not pipe2 / "e": macOS has neither.
+void closeOnExec(int fd) {
+    if (fd < 0) return;
+    const int flags = ::fcntl(fd, F_GETFD);
+    if (flags >= 0) (void)::fcntl(fd, F_SETFD, flags | FD_CLOEXEC);
+}
+
+std::FILE* openLog(const std::string& path) {
+    std::FILE* f = std::fopen(path.c_str(), "ab");
+    if (f) closeOnExec(::fileno(f));
+    return f;
+}
+
 // Rotate the live file, from the pump thread, between chunks.
 void rotateLive() {
     if (g_file) { std::fclose(g_file); g_file = nullptr; }
@@ -72,7 +95,7 @@ void rotateLive() {
         fs::remove(g_path, ec);
     }
 
-    g_file = std::fopen(g_path.c_str(), "ab");
+    g_file = openLog(g_path);
     g_written = 0;
     g_line_start = true;
 }
@@ -239,14 +262,17 @@ bool FileLogger::start(const std::string& path, std::size_t max_bytes, int keep)
     // renames on a file nothing is holding open.
     std::fclose(f);
     rotateIfNeeded(path, max_bytes, keep);
-    f = std::fopen(path.c_str(), "ab");
+    f = openLog(path);
     if (!f) return false;
 
     int fds[2];
     if (::pipe(fds) != 0) { std::fclose(f); return false; }
+    closeOnExec(fds[0]);
+    closeOnExec(fds[1]);
 
-    g_saved_stdout = ::dup(1);
-    g_saved_stderr = ::dup(2);
+    // The console copies, close-on-exec from the start (see closeOnExec).
+    g_saved_stdout = ::fcntl(1, F_DUPFD_CLOEXEC, 0);
+    g_saved_stderr = ::fcntl(2, F_DUPFD_CLOEXEC, 0);
     if (g_saved_stdout < 0 || g_saved_stderr < 0) {
         ::close(fds[0]); ::close(fds[1]); std::fclose(f);
         return false;

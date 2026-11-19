@@ -2,9 +2,11 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <cctype>
 #include <filesystem>
 #include <fstream>
+#include <vector>
 
 namespace hms_cpap {
 
@@ -61,6 +63,53 @@ MachineIdentity fromTgt(const std::filesystem::path& path) {
     return id;
 }
 
+/// The serial a ResMed EDF carries in its header's recording field (bytes 88
+/// to 167, "... SRN=23243570851 MID=..."), from the newest DATALOG night that
+/// has an EDF. For a card with no identification file: a Sleep Bridge's card is
+/// rebuilt from what the machine writes during therapy, and the machine writes
+/// Identification.tgt only when the card is set up, so a tapper's card never
+/// has one (hmscpap-tapper41, 2026-11-18: the CpapDash uploader held every file
+/// of the night, "names no machine serial yet"). Serial only: the header names
+/// no model.
+MachineIdentity fromEdfHeader(const std::filesystem::path& root) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    std::vector<fs::path> nights;
+    for (const auto& e : fs::directory_iterator(root / "DATALOG", ec)) {
+        const auto name = e.path().filename().string();
+        std::error_code dec;
+        if (name.size() == 8 && std::all_of(name.begin(), name.end(), ::isdigit) && e.is_directory(dec))
+            nights.push_back(e.path());
+    }
+    std::sort(nights.rbegin(), nights.rend());   // newest night first
+    for (const auto& night : nights) {
+        std::vector<fs::path> edfs;
+        std::error_code nec;
+        for (const auto& f : fs::directory_iterator(night, nec)) {
+            std::string ext = f.path().extension().string();
+            for (auto& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            if (ext == ".edf") edfs.push_back(f.path());
+        }
+        std::sort(edfs.begin(), edfs.end());
+        for (const auto& edf : edfs) {
+            std::ifstream in(edf, std::ios::binary);
+            char header[256] = {};
+            if (!in.read(header, sizeof(header))) continue;
+            const std::string recording(header + 88, 80);
+            const auto at = recording.find("SRN=");
+            if (at == std::string::npos) continue;
+            const auto end = recording.find(' ', at + 4);
+            const std::string serial = trim(recording.substr(at + 4, end == std::string::npos ? std::string::npos : end - at - 4));
+            if (serial.empty() || !std::all_of(serial.begin(), serial.end(), ::isalnum)) continue;
+            MachineIdentity id;
+            id.manufacturer = "ResMed";
+            id.serial = serial;
+            return id;
+        }
+    }
+    return {};
+}
+
 std::string manufacturerName(DeviceManufacturer m) {
     switch (m) {
         case DeviceManufacturer::RESMED:     return "ResMed";
@@ -113,7 +162,7 @@ MachineIdentity readIdentification(const std::string& card_root) {
     }
     const auto tgt = root / "Identification.tgt";
     if (std::filesystem::is_regular_file(tgt, ec)) return fromTgt(tgt);
-    return {};
+    return fromEdfHeader(root);
 }
 
 MachineIdentity readBluetoothIdentification(const std::string& data_dir) {

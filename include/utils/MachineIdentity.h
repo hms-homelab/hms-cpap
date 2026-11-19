@@ -39,7 +39,10 @@ struct MachineIdentity {
 std::string readableModel(const std::string& product_name);
 
 /// The ResMed identification file in [card_root]. Identification.json wins
-/// when both are there. Absent or unreadable: an empty identity, no error.
+/// when both are there. With neither, the serial from the header of an EDF in
+/// the newest DATALOG night (its recording field's SRN=), manufacturer ResMed
+/// and no model: a Sleep Bridge's rebuilt card has no identification file.
+/// Nothing readable: an empty identity, no error.
 MachineIdentity readIdentification(const std::string& card_root);
 
 /// The machine an AirSense 11's own Bluetooth identified: the newest
