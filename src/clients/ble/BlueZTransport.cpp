@@ -12,6 +12,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <future>
 #include <iostream>
 #include <map>
 #include <thread>
@@ -381,6 +382,11 @@ public:
         std::unique_ptr<sdbus::IConnection> aconn;
         std::unique_ptr<sdbus::IObject> agent;
         std::atomic<bool> asked{false};
+        const auto pair_started = std::chrono::steady_clock::now();
+        const auto since_start = [&] {
+            return std::chrono::duration_cast<std::chrono::milliseconds>(
+                       std::chrono::steady_clock::now() - pair_started).count();
+        };
         try {
             aconn = sdbus::createSystemBusConnection();
             agent = sdbus::createObject(*aconn, agent_path);
@@ -392,6 +398,8 @@ public:
                             asked = true;
                             char code[16];
                             std::snprintf(code, sizeof code, "%06u", passkey);
+                            std::cout << tag_ << "pairing: the machine's code reached the agent "
+                                      << since_start() << " ms after Pair" << std::endl;
                             if (!(h.confirm && h.confirm(code)))
                                 throw sdbus::Error(rejected, "the codes do not match");
                         }),
@@ -427,9 +435,22 @@ public:
                 .withArguments(agent_path, std::string("DisplayYesNo"));
             registered = true;
             auto dev = sdbus::createProxy(*aconn, kBlueZ, sdbus::ObjectPath{device.id});
-            dev->callMethod("Pair")
-                .onInterface(kDevice1)
-                .withTimeout(std::chrono::milliseconds(timeout_ms));
+            // #83: Pair goes out ASYNC on the agent's connection. A blocking
+            // call held that connection, so BlueZ's RequestConfirmation (the
+            // six digits) reached the agent only once Pair had timed out: the
+            // page showed the code after the machine had given up. The
+            // connection's own loop now delivers both the code and the reply.
+            auto done = dev->callMethodAsync("Pair")
+                            .onInterface(kDevice1)
+                            .withTimeout(std::chrono::milliseconds(timeout_ms))
+                            .getResultAsFuture<>();
+            // BlueZ answers by the timeout given; the margin only covers a
+            // reply that never comes at all.
+            if (done.wait_for(std::chrono::milliseconds(timeout_ms) + bluez::kCallTimeout) !=
+                std::future_status::ready)
+                throw sdbus::Error(sdbus::Error::Name{"org.freedesktop.DBus.Error.Timeout"},
+                                   "no answer to Pair");
+            done.get();
             r.outcome = PairOutcome::Paired;
         } catch (const sdbus::Error& e) {
             const std::string name = e.getName();
