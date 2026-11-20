@@ -230,6 +230,18 @@ inline void keepOwnEvents(ParsedSessionT& parsed, const SessionFileSet& s) {
                             [&](const auto& e) { return !s.holdsEventAt(e.timestamp); }),
              ev.end());
     if (ev.size() != before) parsed.calculateMetrics();
+    bool unknown_duration = false;
+    for (auto& event : ev) {
+        if (event.details && event.details->find("[BT duration unknown]") != std::string::npos) {
+            event.duration_seconds = -1.0;
+            unknown_duration = true;
+        }
+    }
+    if (unknown_duration && parsed.metrics) {
+        parsed.metrics->avg_event_duration.reset();
+        parsed.metrics->max_event_duration.reset();
+        parsed.metrics->time_in_apnea_percent.reset();
+    }
 }
 
 } // namespace hms_cpap
