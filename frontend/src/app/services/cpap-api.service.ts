@@ -519,6 +519,21 @@ export class CpapApiService {
     return this.http.post<any>('/api/garmin/fetch', {});
   }
 
+  /** SDD-080 D7: the OSCAR fields, the program found, the last check, the reader. */
+  getOscar(): Observable<any> {
+    return this.http.get<any>('/api/oscar');
+  }
+
+  /** SDD-080 D7: the three fields saved, each checked; the answer carries the check. */
+  saveOscar(s: { program: string; data_dir: string; profile: string }): Observable<any> {
+    return this.http.put<any>('/api/oscar', s);
+  }
+
+  /** SDD-080 D7: "Read now", one OSCAR read of the card. 409 until an encrypted card was found. */
+  oscarReadNow(): Observable<any> {
+    return this.http.post<any>('/api/oscar/read', {});
+  }
+
   /** SDD-078 D4: the code Garmin asked for, entered on the Devices page. */
   garminMfa(code: string): Observable<any> {
     return this.http.post<any>('/api/garmin/mfa', { code });

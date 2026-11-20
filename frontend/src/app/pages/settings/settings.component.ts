@@ -102,6 +102,46 @@ import { showLocalModelSection } from './local-model';
             <small class="hint" *ngIf="config.format === 'philips'">
               {{ 'settings.source.philipsHint' | translate }}
             </small>
+            <!-- SDD-080 D7: an encrypted DreamStation 2 card is read through the
+                 user's own OSCAR. Three fields, each checked on save. -->
+            <div class="oscar-block" *ngIf="config.format === 'philips' && oscar">
+              <b>{{ 'settings.source.oscar.title' | translate }}</b>
+              <small class="hint">{{ 'settings.source.oscar.desc' | translate }}</small>
+              <small class="hint warn" *ngIf="oscarContainerised">{{ 'settings.source.oscar.container' | translate }}</small>
+              <label>
+                {{ 'settings.source.oscar.program' | translate }}
+                <input type="text" [(ngModel)]="oscar.program" name="oscar_program"
+                       [placeholder]="oscarFound || '/usr/bin/OSCAR20'" />
+                <small class="hint" *ngIf="oscarFound && oscar.program === oscarFound && !oscarCheck">
+                  {{ 'settings.source.oscar.found' | translate }}</small>
+                <small class="hint" *ngIf="oscarCheck?.program?.state as st" [class.warn]="st !== 'ok'" [class.ok]="st === 'ok'">
+                  {{ ('settings.source.oscar.program_' + st) | translate }}</small>
+              </label>
+              <label>
+                {{ 'settings.source.oscar.dataDir' | translate }}
+                <input type="text" [(ngModel)]="oscar.data_dir" name="oscar_data_dir"
+                       placeholder="/home/you/Documents/OSCAR_Data" />
+                <small class="hint" *ngIf="!oscarCheck">{{ 'settings.source.oscar.dataDirHint' | translate }}</small>
+                <small class="hint" *ngIf="oscarCheck?.data_dir?.state as st" [class.warn]="st !== 'ok'" [class.ok]="st === 'ok'">
+                  {{ ('settings.source.oscar.dataDir_' + st) | translate:{ version: oscarCheck.data_dir.version || '?', schema: oscarCheck.data_dir.schema || '?' } }}</small>
+              </label>
+              <label>
+                {{ 'settings.source.oscar.profile' | translate }}
+                <input type="text" [(ngModel)]="oscar.profile" name="oscar_profile" list="oscar-profiles" placeholder="hms-cpap" />
+                <datalist id="oscar-profiles">
+                  <option *ngFor="let p of oscarProfiles" [value]="p"></option>
+                </datalist>
+                <small class="hint" *ngIf="!oscarCheck || oscarCheck?.profile?.state === 'ok'">
+                  {{ 'settings.source.oscar.profileHint' | translate }}</small>
+                <small class="hint warn" *ngIf="oscarCheck?.profile?.state && oscarCheck.profile.state !== 'ok'">
+                  {{ ('settings.source.oscar.profile_' + oscarCheck.profile.state) | translate:{ profile: oscar.profile } }}</small>
+              </label>
+              <div class="oscar-actions">
+                <button type="button" class="btn-primary" (click)="saveOscar()" [disabled]="oscarSaving">
+                  {{ (oscarSaving ? 'settings.source.oscar.checking' : 'settings.source.oscar.save') | translate }}</button>
+                <small class="hint ok" *ngIf="oscarCheck?.ok">{{ 'settings.source.oscar.allGood' | translate }}</small>
+              </div>
+            </div>
             <!-- Asked for by the first person to look here for myAir, which will
                  not be the last. myAir cannot BE a source: it returns daily
                  summaries only, with no waveforms, events, sessions or
@@ -1234,6 +1274,14 @@ import { showLocalModelSection } from './local-model';
     }
     /* SDD-020 myAir */
     .source-note { display: block; margin-top: 0.5rem; line-height: 1.5; }
+    /* SDD-080 D7: the OSCAR fields */
+    .oscar-block { border: 1px solid #333; border-radius: 6px; padding: 0.75rem 0.9rem; margin: 0.75rem 0; }
+    .oscar-block > b { display: block; margin-bottom: 0.25rem; }
+    .oscar-block > .hint { display: block; margin-bottom: 0.5rem; line-height: 1.45; }
+    .oscar-block label .hint { display: block; margin-top: 0.25rem; }
+    .oscar-block .hint.ok { color: #4ade80; font-style: normal; }
+    .oscar-actions { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; margin-top: 0.5rem; }
+    .oscar-actions .btn-primary { padding: 0.45rem 1rem; border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 0.8rem; }
     .badge.connected { background: #14532d; color: #4ade80; }
     .myair-note { background: rgba(100, 181, 246, 0.08); border: 1px solid rgba(100, 181, 246, 0.35);
                   border-radius: 6px; padding: 0.6rem 0.8rem; color: #cfe6fb; font-size: 0.8rem;
@@ -1661,6 +1709,45 @@ export class SettingsComponent implements OnInit, OnDestroy {
   // ── SDD-073 D10: the Sleep Bridges, in Source ─────────────────────────────
   bridges: SleepBridge[] = [];
   bridgesWatchClosed = false;
+
+  // SDD-080 D7: the OSCAR fields, saved and checked on their own.
+  oscar: { program: string; data_dir: string; profile: string } | null = null;
+  oscarFound = '';
+  oscarCheck: any = null;
+  oscarProfiles: string[] = [];
+  oscarContainerised = false;
+  oscarSaving = false;
+
+  loadOscar(): void {
+    this.api.getOscar().subscribe({
+      next: (v) => {
+        this.oscarFound = v?.found_program || '';
+        this.oscarContainerised = !!v?.containerised;
+        this.oscarCheck = v?.check || null;
+        this.oscarProfiles = (v?.check?.profiles ?? []) as string[];
+        // The program found where this OS's installer puts it fills an empty field.
+        this.oscar = {
+          program: v?.program || this.oscarFound,
+          data_dir: v?.data_dir || '',
+          profile: v?.profile || 'hms-cpap',
+        };
+      },
+      error: () => { this.oscar = null; },   // an older server: no section
+    });
+  }
+
+  saveOscar(): void {
+    if (!this.oscar) return;
+    this.oscarSaving = true;
+    this.api.saveOscar(this.oscar).subscribe({
+      next: (v) => {
+        this.oscarSaving = false;
+        this.oscarCheck = v?.check || null;
+        this.oscarProfiles = (v?.check?.profiles ?? []) as string[];
+      },
+      error: () => { this.oscarSaving = false; },
+    });
+  }
   private bridgeWatch: SleepBridgeWatch;
 
   /** In use: the SAVED source is a local folder at this bridge's folder. */
@@ -1699,6 +1786,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
     this.loadUpdateStatus();
     this.loadStreamStatus();
     this.loadLocalModel();
+    this.loadOscar();
 
     this.api.getConfig().subscribe({
       next: (cfg) => {

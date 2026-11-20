@@ -903,6 +903,32 @@ export class DevicesComponent implements OnInit, OnDestroy {
     this.api.ds2PairCancel().subscribe({ next: () => this.ds2Poll(), error: () => this.ds2Poll() });
   }
 
+  /** SDD-080 D7: "Read now", one OSCAR read of the card. */
+  oscarReadNow(d: DeviceEntry): void {
+    this.busy[d.key] = true;
+    delete this.notes[d.key];
+    this.api.oscarReadNow().subscribe({
+      next: () => { this.busy[d.key] = false; this.note(d, this.t.instant('devices.oscar.readStarted'), false); this.load(false); },
+      error: (e) => { this.busy[d.key] = false; this.note(d, this.t.instant('devices.result.failed', { error: errorText(e) }), true); },
+    });
+  }
+
+  /** SDD-080 D7: "OSCAR 2.1.1, last read 06:12, 1 session", or why it did not read. */
+  oscarLine(o: any): string {
+    if (o.reading) return this.t.instant('devices.oscar.reading');
+    if (o.containerised && (o.state === 'no_program' || o.state === 'not_set_up'))
+      return this.t.instant('devices.oscar.state_not_here');
+    const time = o.last_read_at
+      ? new Date(o.last_read_at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+    const version = (o.version || '').split('+')[0];
+    return this.t.instant('devices.oscar.state_' + (o.state || 'never'),
+                          { version, time, sessions: o.sessions ?? 0 });
+  }
+
+  oscarWarn(o: any): boolean {
+    return !o.reading && !['imported', 'nothing_new', 'never'].includes(o.state);
+  }
+
   ds2ReadNow(d: DeviceEntry): void {
     this.api.ds2Read().subscribe({
       next: () => { this.note(d, this.t.instant('devices.ds2.readStarted'), false); this.load(false); },

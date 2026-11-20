@@ -411,6 +411,24 @@
         "other": "Nem sikerült: {{error}}"
       }
     },
+    "oscar": {
+      "readNow": "Olvasás most",
+      "reading": "Az OSCAR olvassa a kártyát...",
+      "readStarted": "Az OSCAR olvassa a kártyát.",
+      "openSettings": "OSCAR beállítása a Beállításokban",
+      "state_never": "Még nincs beolvasva. A készülék minden befejezett kezelését az OSCAR olvassa be.",
+      "state_imported": "OSCAR {{version}}, utolsó olvasás {{time}}, {{sessions}} kezelés",
+      "state_nothing_new": "OSCAR {{version}}, utolsó olvasás {{time}}, nincs új",
+      "state_read_nothing": "Az OSCAR semmit nem olvasott be erről a kártyáról.",
+      "state_busy": "Az OSCAR foglalt volt (nyitva van ezen a számítógépen). A kezelést a következő befejezéskor vagy az Olvasás most gombbal olvassuk be.",
+      "state_timeout": "Az OSCAR nem végzett időben, ezért leállítottuk.",
+      "state_failed": "Az OSCAR nem tudta beolvasni a kártyát.",
+      "state_not_set_up": "Az OSCAR nincs beállítva (Beállítások, Adatforrás).",
+      "state_no_program": "Az OSCAR program nem indult el.",
+      "state_not_supported": "Ez az OSCAR-verzió még nem támogatott.",
+      "state_no_profile": "Hiányzik a hms-cpap OSCAR-profilja. Hozza létre az OSCAR-ban.",
+      "state_not_here": "Az OSCAR-nak ugyanazon a számítógépen kell lennie, mint a hms-cpap."
+    },
     "ds2": {
       "notCompiled": "Ebben a változatban nincs Bluetooth: a DreamStation 2 nem olvasható erről a számítógépről.",
       "paired": "Párosítva a készülékkel",
