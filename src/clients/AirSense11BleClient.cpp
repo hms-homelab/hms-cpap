@@ -451,8 +451,9 @@ std::vector<uint8_t> AirSense11BleClient::fetchSummary(const std::string& from) 
 
     std::vector<uint8_t> out;
     std::string serial, ident;
+    bool recording = false;
     as11::Result r = session_.open(*creds);
-    if (r == as11::Result::Ok) r = session_.getState(&serial, nullptr);
+    if (r == as11::Result::Ok) r = session_.getState(&serial, &recording);
     if (r == as11::Result::Ok && writer_ && session_.getIdentification(&ident) == as11::Result::Ok)
         writeIdentification(writer_->rootFor(serial), ident);
     // The settings, for the STR.edf the Summary is laid into: not needed for
@@ -469,8 +470,13 @@ std::vector<uint8_t> AirSense11BleClient::fetchSummary(const std::string& from) 
     if (r == as11::Result::Ok) r = session_.pullSpool("Summary", from, &out);
     const std::string why = session_.lastError();
     const std::string status = session_.lastSpoolStatus();
+    if (r == as11::Result::Ok && !serial.empty()) {
+        afterPull(serial, from, out);
+        // SDD-070 D1: the nights this Summary brings, from the machine's
+        // stored pages, on the same link (the machine's clock is set now).
+        pullStoredNights(serial, out, recording);
+    }
     dropLink();
-    if (r == as11::Result::Ok && !serial.empty()) afterPull(serial, from, out);
     if (r != as11::Result::Ok) {
         note(std::string("summary from ") + from + " failed: " + as11::resultText(r) +
              (why.empty() ? "" : " (" + why + ")"));
@@ -592,6 +598,50 @@ void AirSense11BleClient::afterPull(const std::string& serial, const std::string
     else std::cout << kTag << "STR.edf unchanged: " << str.why << std::endl;
     // platform SDD-059 D3: STR.edf, Identification and SETTINGS are on disk.
     card_feed::rootWritten(root, serial);
+}
+
+std::string AirSense11BleClient::storedPullHeldBy(bool recording) {
+    if (recording) return "the machine is recording a night";
+    // D7, the #67 rule: a night streaming or an O2 Ring transfer has the radio.
+    const auto held = ble::radioInUse();
+    return held.empty() ? "" : held.front();
+}
+
+void AirSense11BleClient::pullStoredNights(const std::string& serial, const std::vector<uint8_t>& summary,
+                                           bool recording) {
+    using cpapdash::parser::AirSense11SummaryParser;
+    if (!writer_ || summary.empty()) return;
+    const std::string root = writer_->rootFor(serial);
+    for (const auto& day : AirSense11SummaryParser::parse(summary.data(), summary.size())) {
+        if (!day.used()) continue;
+        const auto on = maskOnSpans(day);
+        if (on.empty()) continue;
+        const std::string night = writer_->nightFor(serial, on.front().start_ms);
+        if (storedNightDone(root, night)) continue;
+        // Left for the next Summary pull, which asks again for every night not done.
+        if (const std::string held = storedPullHeldBy(recording); !held.empty()) {
+            std::cout << kTag << "stored pages of " << night << " not read now: " << held << std::endl;
+            return;
+        }
+        const auto res = pullStoredNight(root, night, on,
+            [this](const std::string& spool, const std::string& from, std::vector<uint8_t>* page,
+                   std::string* next, std::string* why) {
+                const as11::Result pr = session_.pullSpoolPage(spool, from, page, next);
+                if (pr == as11::Result::Ok) return true;
+                *why = std::string(as11::resultText(pr)) +
+                       (session_.lastError().empty() ? "" : " (" + session_.lastError() + ")");
+                return false;
+            });
+        if (!res.complete) {
+            note("stored pages of " + night + " not read to the end: " + res.why);
+            return;   // the link is likely gone: the next pull asks again
+        }
+        const int written = writer_->writeStoredGaps(serial, night, on);
+        if (!markStoredNightDone(root, night))
+            note("stored pages of " + night + " read, but the night could not be marked done");
+        std::cout << kTag << "stored pages of " << night << ": " << res.pages << " page(s) kept, " << written
+                  << " file(s) written for the minutes the stream missed" << std::endl;
+    }
 }
 
 void AirSense11BleClient::startNightLoop(std::shared_ptr<As11NightWriter> writer,

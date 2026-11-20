@@ -1,6 +1,9 @@
 {
   "sessionDetail": {
     "overview": "Aperçu",
+    "oximetryFrom": "Oxymétrie - {{device}}",
+    "oximetryOnly": "Oxymétrie seule ({{device}}) ; aucune séance de PPC n'a été enregistrée cette nuit",
+    "oximetryUpload": "Import",
     "expandHint": "(cliquez pour développer)",
     "eventDistribution": "Répartition des événements",
     "notClassified": "Cet appareil signale les apnées sans indiquer si elles étaient obstructives ou centrales, et ne marque pas les hypopnées. Il n'y a aucune répartition à afficher pour cette nuit.",

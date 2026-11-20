@@ -17,7 +17,8 @@
       "ezshare": "Carte ez Share",
       "flashair": "Carte FlashAir",
       "as11_ble": "AirSense 11 (Bluetooth)",
-      "ds2_ble": "DreamStation 2 (Bluetooth)"
+      "ds2_ble": "DreamStation 2 (Bluetooth)",
+      "garmin": "Garmin"
     },
     "presence": {
       "yes": "présent",
@@ -233,6 +234,34 @@
         "spl_drain": "File vidée jusqu'à"
       },
       "nextBoot": "s'applique au prochain démarrage"
+    },
+    "garmin": {
+      "signedInAs": "Connecté en tant que {{email}}",
+      "notSetUp": "Saisissez le compte Garmin dans les Paramètres pour commencer.",
+      "signedOut": "Pas encore connecté : hms-cpap se connecte au prochain événement, ou avec Récupérer depuis Garmin.",
+      "signingIn": "Connexion à Garmin...",
+      "readAfter": "Lu depuis Garmin Connect après la nuit, jamais pendant.",
+      "watch": "Montre",
+      "lastFetch": "Dernière récupération",
+      "fetchStored": "Nuits enregistrées : {{n}}",
+      "fetchNothing": "Rien de nouveau. Une nuit encore manquante est redemandée au prochain événement.",
+      "fetchNow": "Récupérer depuis Garmin",
+      "fetching": "Récupération...",
+      "asked": "Demandé. La carte affiche le résultat.",
+      "mfaNote": "Garmin a envoyé un code pour terminer la connexion. Saisissez-le ici.",
+      "code": "Code de Garmin",
+      "submitCode": "Se connecter",
+      "checking": "Vérification...",
+      "openSettings": "Compte Garmin : Paramètres",
+      "err": {
+        "changed": "Garmin a changé sa connexion ; mettez hms-cpap à jour",
+        "bad_password": "Garmin a refusé l'e-mail ou le mot de passe. Vérifiez-les dans les Paramètres.",
+        "bad_mfa_code": "Garmin n'a pas accepté le code. Réessayez.",
+        "blocked": "Garmin refuse cette connexion pour le moment. Elle est retentée au prochain événement.",
+        "unreachable": "Garmin n'a pas répondu. C'est retenté au prochain événement.",
+        "expired": "Garmin demande une nouvelle connexion.",
+        "failed": "Garmin : {{message}}"
+      }
     },
     "o2ring": {
       "throughBridge": "Lue via {{url}}, pas par le Bluetooth de cet ordinateur.",

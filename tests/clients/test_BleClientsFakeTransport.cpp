@@ -473,6 +473,22 @@ TEST(As11BleLink, NoNightLoopWithoutAnAdapter) {
     EXPECT_EQ(t->discover_calls, 0);
 }
 
+// SDD-070 D1/D7: the stored pages wait while the machine records, a night
+// streams or an O2 Ring transfer runs; the next Summary pull asks again.
+TEST(As11StoredPull, WaitsWhileTheMachineRecordsOrTheRadioIsHeld) {
+    EXPECT_EQ(AirSense11BleClient::storedPullHeldBy(false), "");
+    EXPECT_EQ(AirSense11BleClient::storedPullHeldBy(true), "the machine is recording a night");
+    {
+        ble::RadioInUse night("streaming", "an AirSense 11 night streaming");
+        EXPECT_EQ(AirSense11BleClient::storedPullHeldBy(false), "an AirSense 11 night streaming");
+    }
+    {
+        ble::RadioInUse ring("o2ring_transfer", "an O2 Ring transfer");
+        EXPECT_EQ(AirSense11BleClient::storedPullHeldBy(false), "an O2 Ring transfer");
+    }
+    EXPECT_EQ(AirSense11BleClient::storedPullHeldBy(false), "");
+}
+
 // ── the ring ──
 
 TEST(O2RingBleMatch, ProtocolByNameOrService) {
@@ -509,8 +525,12 @@ TEST(O2RingBleLink, TheOriginalRingListsItsFilesOverTheTransport) {
         EXPECT_FALSE(w.with_response);
         EXPECT_LE(w.bytes.size(), 20u) << "the original ring is written 20 bytes at a time";
     }
-    EXPECT_EQ(t->closes(), 1);
-    EXPECT_FALSE(c.isConnected());
+    // The link is held between calls, so the next poll does not scan and
+    // connect again on the adapter the AirSense 11 streams on.
+    EXPECT_EQ(t->closes(), 0);
+    EXPECT_TRUE(c.isConnected());
+    EXPECT_EQ(c.listFiles().size(), 2u);
+    EXPECT_EQ(t->connected_ids.size(), 1u) << "the held link is reused";
 }
 
 TEST(O2RingBleLink, ANotificationSplitAcrossPiecesIsReassembled) {
@@ -578,7 +598,7 @@ TEST(O2RingBleLink, ALivePollAndAFilePullNeverShareTheRing) {
     EXPECT_EQ(files.size(), 1u);
     EXPECT_EQ(live.spo2, 0x60);
     EXPECT_EQ(live.hr, 0x48);
-    EXPECT_EQ(t->connected_ids.size(), 2u);
+    EXPECT_EQ(t->connected_ids.size(), 1u) << "the second call reuses the held link";
 }
 
 TEST(O2RingBleLink, ARememberedRingThatWillNotConnectIsFoundAgainByItsAdvert) {
@@ -989,7 +1009,6 @@ TEST(LinkRecoveryLadder, RadioInUseIsHeldForItsScope) {
     }
     EXPECT_EQ(ble::radioInUse().size(), before);
 }
-
 // ── An O2Ring-S's handshake and file list ──
 //
 // The order the requests go in is what these pin: GET_INFO first and the file

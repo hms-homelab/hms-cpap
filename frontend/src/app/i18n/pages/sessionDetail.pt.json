@@ -1,6 +1,9 @@
 {
   "sessionDetail": {
     "overview": "Visão geral",
+    "oximetryFrom": "Oximetria - {{device}}",
+    "oximetryOnly": "Apenas oximetria ({{device}}); nenhuma sessão de CPAP foi registada nesta noite",
+    "oximetryUpload": "Envio",
     "expandHint": "(clique para expandir)",
     "eventDistribution": "Distribuição dos eventos",
     "notClassified": "Este aparelho comunica as apneias sem indicar se foram obstrutivas ou centrais, e não marca hipopneias. Não há discriminação para mostrar nesta noite.",

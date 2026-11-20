@@ -18,6 +18,7 @@
 #include "services/CpapDashLink.h"
 #include "services/CpapDashStream.h"
 #include "services/CardUpload.h"
+#include "services/GarminService.h"
 #include "services/CpapCard.h"
 #include "sleepbridge/LearnedCard.h"
 #include "sleepbridge/CardReadCli.h"
@@ -45,9 +46,7 @@
 #include "database/DatabaseService.h"
 #include "database/PostgresDatabase.h"
 #endif
-#ifdef WITH_POSTGRESQL
 #include "agent/AgentService.h"
-#endif
 #include "services/MLTrainingService.h"
 #include "services/BackfillService.h"
 #include <cpapdash/parser/OximetryCsv.h>
@@ -61,6 +60,8 @@
 #include "utils/CardResidue.h"
 #include "utils/CardImport.h"
 #include "utils/SessionEnd.h"
+#include "utils/CheckpointSizes.h"
+#include "services/As11NightImport.h"
 #include "utils/FileLogger.h"
 #include "utils/ReExec.h"
 #include "utils/CardLayout.h"
@@ -96,9 +97,7 @@ std::atomic<bool> shutdown_requested(false);
 /// event-loop thread"), and the supervisor saw exit 1 instead of 42.
 std::atomic<int> requested_exit_code(0);
 std::unique_ptr<hms_cpap::BurstCollectorService> burst_service;
-#ifdef WITH_POSTGRESQL
 std::unique_ptr<hms_cpap::AgentService> agent_service;
-#endif
 std::unique_ptr<hms_cpap::MLTrainingService> ml_service;
 std::unique_ptr<hms_cpap::BackfillService> backfill_service;
 
@@ -108,9 +107,7 @@ std::unique_ptr<hms_cpap::BackfillService> backfill_service;
 void requestShutdown() {
     shutdown_requested = true;
     if (burst_service) burst_service->stop();
-#ifdef WITH_POSTGRESQL
     if (agent_service) agent_service->stop();
-#endif
     if (ml_service) ml_service->stop();
     if (backfill_service) backfill_service->stop();
 #ifdef BUILD_WITH_WEB
@@ -447,17 +444,16 @@ int runReparse(const std::string& card_root, const std::string& start_str, const
                 db->replaceSessionFiles(device_id, session.session_start,
                                         hms_cpap::sessionFileRefs(session, folder));
 
-                // Store checkpoint file sizes (same as burst cycle)
-                std::map<std::string, int> checkpoint_sizes;
-                for (const auto& [filename, size_kb] : session.file_sizes_kb) {
-                    if (filename.find("_BRP.edf") != std::string::npos ||
-                        filename.find("_PLD.edf") != std::string::npos ||
-                        filename.find("_SAD.edf") != std::string::npos ||
-                        filename.find("_SA2.edf") != std::string::npos) {
-                        checkpoint_sizes[filename] = size_kb;
-                    }
-                }
-                db->updateCheckpointFileSizes(device_id, session.session_start, checkpoint_sizes);
+                // SDD-077 D2: the card's copy replaces a Bluetooth copy of
+                // the same stretch.
+                hms_cpap::As11NightImport::replaceConstructedFiles(
+                    *db, device_id, session.session_start,
+                    hms_cpap::dataEndOf(*parsed).value_or(session.session_start));
+
+                // Store checkpoint file sizes: the burst cycle's own function
+                // (SDD-077 D3).
+                db->updateCheckpointFileSizes(device_id, session.session_start,
+                                              hms_cpap::checkpointSizes(session));
 
                 double hours = parsed->duration_seconds.value_or(0) / 3600.0;
                 double ahi = parsed->metrics.has_value() ? parsed->metrics->ahi : 0.0;
@@ -1042,8 +1038,8 @@ int main(int argc, char** argv) {
                       << ", min_days: " << config.ml_training.min_days << ")" << std::endl;
         }
 
-#ifdef WITH_POSTGRESQL
-        // Start Agent module if enabled
+        // Start Agent module if enabled. SDD-072 D4: on every engine; its
+        // tools read through IDatabase.
         std::string agent_enabled = hms_cpap::ConfigManager::get("AGENT_ENABLED", "false");
         if (agent_enabled == "true" || agent_enabled == "1") {
             std::string agent_provider = hms_cpap::ConfigManager::get("AGENT_LLM_PROVIDER", "ollama");
@@ -1080,15 +1076,25 @@ int main(int argc, char** argv) {
                 agent_llm = std::make_shared<hms_cpap::AgentLLM>(llm_client, agent_embed);
             }
 
-            // Build DB connection string for agent
-            std::string a_db_host = hms_cpap::ConfigManager::get("DB_HOST", "localhost");
-            std::string a_db_port = hms_cpap::ConfigManager::get("DB_PORT", "5432");
-            std::string a_db_name = hms_cpap::ConfigManager::get("DB_NAME", "cpap_monitoring");
-            std::string a_db_user = hms_cpap::ConfigManager::get("DB_USER", "maestro");
-            std::string a_db_pass = hms_cpap::ConfigManager::get("DB_PASSWORD", "");
-            std::string a_conn_str = "host=" + a_db_host + " port=" + a_db_port +
-                                     " dbname=" + a_db_name + " user=" + a_db_user +
-                                     " password=" + a_db_pass;
+            // The tools' own connection (client libraries are not thread-safe),
+            // as the ML service does; SQLite shares the service's.
+            std::shared_ptr<hms_cpap::IDatabase> agent_db;
+            if (config.database.type == "sqlite") {
+                agent_db = db;
+            } else {
+                agent_db = hms_cpap::makeDatabaseFromConfig();
+                agent_db->connect();
+            }
+
+            // The pgvector memory's connection: PostgreSQL only.
+            std::string a_conn_str;
+            if (agent_db->dbType() == hms_cpap::DbType::POSTGRESQL) {
+                a_conn_str = "host=" + hms_cpap::ConfigManager::get("DB_HOST", "localhost") +
+                             " port=" + hms_cpap::ConfigManager::get("DB_PORT", "5432") +
+                             " dbname=" + hms_cpap::ConfigManager::get("DB_NAME", "cpap_monitoring") +
+                             " user=" + hms_cpap::ConfigManager::get("DB_USER", "maestro") +
+                             " password=" + hms_cpap::ConfigManager::get("DB_PASSWORD", "");
+            }
 
             std::string device_id = hms_cpap::ConfigManager::get("CPAP_DEVICE_ID", hms_cpap::AppConfig::kDefaultDeviceId);
 
@@ -1110,12 +1116,12 @@ int main(int argc, char** argv) {
             auto agent_mqtt = std::make_shared<hms::MqttClient>(amqtt_cfg);
             agent_mqtt->connect();
 
-            agent_service = std::make_unique<hms_cpap::AgentService>(agent_cfg, agent_mqtt, agent_llm);
+            agent_service = std::make_unique<hms_cpap::AgentService>(agent_cfg, agent_mqtt,
+                                                                     agent_llm, agent_db);
             agent_service->start();
 
             std::cout << "Agent: AI module enabled (model: " << agent_model << ")" << std::endl;
         }
-#endif // WITH_POSTGRESQL
 
 #ifdef BUILD_WITH_WEB
         // Start web UI server (Drogon blocks until shutdown)
@@ -1242,6 +1248,30 @@ int main(int argc, char** argv) {
                               << std::endl;
             }
 
+            // SDD-078: Garmin SpO2 as an oximetry source. Built even when it is
+            // off, so turning it on in Settings needs no restart. Asked only on
+            // events (D2): a night's close, the dashboard or night list being
+            // opened, the Devices page's button, the settings saved.
+            std::shared_ptr<hms_cpap::GarminService> garmin;
+            {
+                std::shared_ptr<hms_cpap::IDatabase> garmin_db = db;
+                if (config.database.type != "sqlite") {
+                    garmin_db = hms_cpap::makeDatabaseFromConfig();
+                    garmin_db->connect();
+                }
+                hms_cpap::GarminService::Deps gd;
+                gd.db             = garmin_db;
+                gd.config         = &config;
+                gd.config_path    = config_path;
+                gd.cpap_device_id = config.device_id;
+                garmin = std::make_shared<hms_cpap::GarminService>(std::move(gd));
+                garmin->start();
+                hms_cpap::CpapController::setGarminService(garmin);
+                if (burst_service)
+                    burst_service->setNightClosedListener(
+                        [g = garmin](const std::string& folder) { g->onNightClosed(folder); });
+            }
+
             // SDD-041: check GitHub for a newer stable release, daily and on
             // demand. It only reports; the supervisor applies. Off by itself in a
             // container (D5), where the image is what updates.
@@ -1362,42 +1392,12 @@ int main(int argc, char** argv) {
             {
                 std::shared_ptr<hms_cpap::IDatabase> oxi_db = web_db ? web_db : db;
                 hms_cpap::CpapController::oxi_csv_import_ =
-                    [oxi_db](const std::string& content, const std::string& filename) -> Json::Value {
-                        Json::Value r;
-                        // SDD-028 (#32): the ring's own .vld is taken too, through
-                        // the importer the card-folder scan uses, so it is the
-                        // same row the live pull would store.
-                        if (hms_cpap::isVldFilename(filename)) {
-                            const auto v = hms_cpap::importVldFile(*oxi_db, content, filename);
-                            if (!v.ok) {
-                                r["error"] = v.error;
-                                return r;
-                            }
-                            r["samples"]         = v.samples;
-                            r["valid_samples"]   = v.valid_samples;
-                            r["avg_spo2"]        = v.avg_spo2;
-                            r["min_spo2"]        = v.min_spo2;
-                            r["sample_interval"] = v.sample_interval;
-                            r["duration_seconds"] = v.duration_seconds;
-                            return r;
-                        }
-                        auto session =
-                            cpapdash::parser::readO2RingCsv(content, filename).session;
-                        if (session.samples.empty()) {
-                            r["error"] = "No readable rows in CSV (expected a Wellue / O2 Ring export)";
-                            return r;
-                        }
-                        if (!oxi_db->saveOximetrySession(hms_cpap::kOximetryDeviceId, session)) {
-                            r["error"] = "Failed to save oximetry session";
-                            return r;
-                        }
-                        r["samples"]          = (int)session.samples.size();
-                        r["valid_samples"]    = session.metrics.valid_samples;
-                        r["avg_spo2"]         = session.metrics.avg_spo2;
-                        r["min_spo2"]         = session.metrics.min_spo2;
-                        r["sample_interval"]  = session.sample_interval;
-                        r["duration_seconds"] = session.duration_seconds;
-                        return r;
+                    [oxi_db](const std::string& content, const std::string& filename,
+                             const std::string& source, const std::string& device_name) -> Json::Value {
+                        // SDD-078 D3: stored with where it came from ("upload"
+                        // unless the sender names a source).
+                        return hms_cpap::importOximetryUpload(
+                            *oxi_db, content, filename, hms_cpap::uploadOrigin(source, device_name));
                     };
             }
 
@@ -2007,6 +2007,7 @@ int main(int argc, char** argv) {
                 dd.bridges     = sleep_bridge.get();
                 dd.feed        = release_feed.get();
                 dd.store       = &devices_store;
+                dd.garmin      = garmin.get();
                 dd.stream_port = config.sleep_bridge.port;
                 hms_cpap::devices::installRoutes(dd);
             }
@@ -2060,6 +2061,9 @@ int main(int argc, char** argv) {
             hms_cpap::card_feed::setSinks({}, {});
             hms_cpap::CpapController::setStreamService(nullptr);
             cpapdash_stream->stop();
+            if (burst_service) burst_service->setNightClosedListener({});
+            hms_cpap::CpapController::setGarminService(nullptr);
+            garmin->stop();
         }
 #else
         // No web UI — simple sleep loop
@@ -2073,12 +2077,10 @@ int main(int argc, char** argv) {
             ml_service->stop();
             ml_service.reset();
         }
-#ifdef WITH_POSTGRESQL
         if (agent_service) {
             agent_service->stop();
             agent_service.reset();
         }
-#endif
         if (burst_service) {
             burst_service->stop();
             burst_service.reset();

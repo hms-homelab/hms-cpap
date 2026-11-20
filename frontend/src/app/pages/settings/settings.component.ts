@@ -236,6 +236,42 @@ import { sourceImage } from '../../utils/source-image';
           </div>
         </div>
 
+        <!-- Section: Garmin SpO2 (SDD-078). The account is a setting, masked
+             as the CpapDash token is (D1); its state, the MFA code and the
+             fetch button are the Devices page's Garmin card (D4). -->
+        <div class="section" *ngIf="config.garmin">
+          <div class="section-header" (click)="toggle('garmin')">
+            <span class="chevron" [class.open]="open['garmin']">&#9654;</span>
+            {{ 'settings.garmin.heading' | translate }}
+            <span class="badge" *ngIf="!config.garmin.enabled">{{ 'settings.tag.optional' | translate }}</span>
+            <span class="badge connected" *ngIf="config.garmin.enabled && config.garmin.signed_in">{{ 'settings.tag.connected' | translate }}</span>
+          </div>
+          <div class="section-body" *ngIf="open['garmin']">
+            <p class="section-desc">{{ 'settings.garmin.desc' | translate }}</p>
+            <label class="toggle-row">
+              <input type="checkbox" [(ngModel)]="config.garmin.enabled" name="garmin_enabled" />
+              {{ 'settings.garmin.enabled' | translate }}
+            </label>
+            <ng-container *ngIf="config.garmin.enabled">
+              <label>
+                {{ 'settings.garmin.email' | translate }}
+                <input type="email" [(ngModel)]="config.garmin.email" name="garmin_email"
+                       autocomplete="off" placeholder="name@example.com" />
+              </label>
+              <label>
+                {{ 'settings.garmin.password' | translate }}
+                <input type="password" [(ngModel)]="config.garmin.password" name="garmin_password"
+                       autocomplete="new-password"
+                       [placeholder]="'settings.garmin.passwordPlaceholder' | translate" />
+                <small class="hint">{{ 'settings.garmin.passwordHint' | translate }}</small>
+              </label>
+              <p class="devices-link">
+                <a routerLink="/devices">{{ 'settings.devicesLink' | translate }}</a>
+              </p>
+            </ng-container>
+          </div>
+        </div>
+
         <!-- Section: AirSense 11 over Bluetooth (SDD-057). The switch is
              config; pairing it, its status and its actions are the Devices
              page's card (SDD-062 D1). -->
@@ -1497,6 +1533,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
     source: true,
     logging: false,
     o2ring: false,
+    garmin: false,
     as11: false,
     sleephq: false,
     myair: false,
@@ -1642,6 +1679,8 @@ export class SettingsComponent implements OnInit, OnDestroy {
                            token: '', auto_sync: false, stream: false };
         }
         if (cfg.cpapdash.stream == null) cfg.cpapdash.stream = false;
+        // SDD-078: an older server has no Garmin block; then there is no section.
+        if (cfg.garmin && cfg.garmin.email == null) cfg.garmin.email = '';
         if (cfg.archive_dir == null) cfg.archive_dir = '';
         if (cfg.static_dir == null) cfg.static_dir = '';
         this.config = cfg;

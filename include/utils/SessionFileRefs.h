@@ -20,10 +20,14 @@ namespace hms_cpap {
  * for a night hms-cpap wrote from the machine's Bluetooth stream (SDD-057).
  * The names are sorted first: directory_iterator order is unspecified, so
  * "first of each kind" would otherwise not be the same file twice.
+ *
+ * [source] is where the files came from (SDD-077 D1): kSourceCard for a card
+ * or the archive, kSourceBleAs11 for a night written from the stream.
  */
 inline std::vector<SessionFileRef> recordSessionFiles(const std::string& session_dir,
                                                       const std::string& rel_base,
-                                                      CPAPSession& parsed) {
+                                                      CPAPSession& parsed,
+                                                      const std::string& source) {
     std::vector<SessionFileRef> refs;
     std::error_code ec;
     if (!std::filesystem::exists(session_dir, ec)) return refs;
@@ -43,7 +47,7 @@ inline std::vector<SessionFileRef> recordSessionFiles(const std::string& session
         if (!kind) continue;
 
         const std::string rel = rel_base + filename;
-        refs.push_back({kind, rel});
+        refs.push_back({kind, rel, source});
 
         const std::string k(kind);
         if (k == "brp" && !parsed.brp_file_path.has_value()) parsed.brp_file_path = rel;

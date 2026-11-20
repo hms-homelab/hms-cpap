@@ -102,6 +102,19 @@ inline std::string tsText(const std::string& col, DbType type) {
     return col;
 }
 
+// A timestamp column cut to its minute, as text: "2026-08-12 07:24:00".
+// SDD-072 D4: the agent's per-minute vitals, on every engine (it was
+// date_trunc, PostgreSQL only).
+inline std::string minuteText(const std::string& col, DbType type) {
+    switch (type) {
+        case DbType::POSTGRESQL:
+            return "to_char(date_trunc('minute', " + col + "), 'YYYY-MM-DD HH24:MI:SS')";
+        case DbType::MYSQL:      return "DATE_FORMAT(" + col + ", '%Y-%m-%d %H:%i:00')";
+        case DbType::SQLITE:     return "strftime('%Y-%m-%d %H:%M:00', " + col + ")";
+    }
+    return col;
+}
+
 // ── A night's respiratory indexes (SDD-047 D2) ──────────────────────────────
 //
 // ONE formula for every reader of a night's index: the night's typed event
@@ -177,6 +190,16 @@ inline std::string nightIndexColumns(const std::string& m, const std::string& s,
 //
 // SUBSTR rather than LIKE 'live\_%': the three engines disagree on LIKE's
 // escape character, and an unescaped '_' matches any character.
+
+/// SDD-078 D3: rows stored before oximetry_sessions had a source (or by a
+/// writer that does not set one, the live ring stream) get one: a CSV only
+/// ever came in through the upload page, everything else is the ring's. Run
+/// on every start; a row the new writers store already has its source. The
+/// same statement on all three engines.
+inline std::string oxiSourceBackfill() {
+    return "UPDATE oximetry_sessions SET source = CASE WHEN LOWER(filename) LIKE '%.csv'"
+           " THEN 'upload' ELSE 'o2ring' END WHERE source IS NULL";
+}
 
 /// True when [col] names a live session (live_<date>.vld).
 inline std::string isLiveOxiFilename(const std::string& col) {

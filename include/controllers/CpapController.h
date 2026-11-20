@@ -7,6 +7,7 @@
 #include "services/BurstCollectorService.h"
 #include "services/CpapDashStream.h"
 #include "services/CpapDashSyncService.h"
+#include "services/GarminService.h"
 #include "services/MyAirService.h"
 #include "services/UpdateService.h"
 #ifndef _WIN32
@@ -358,6 +359,10 @@ public:
     /// switch and the token to it.
     static void setStreamService(std::shared_ptr<CpapDashStreamer> stream);
 
+    /// SDD-078: told when the dashboard or the night list is opened and when
+    /// the Garmin settings are saved (D2's events).
+    static void setGarminService(std::shared_ptr<GarminService> garmin) { garmin_ = std::move(garmin); }
+
     /// SDD-041: the updater's check. Absent in a build or test that has none,
     /// which the routes answer as "no updater" rather than an error.
     static void setUpdateService(std::shared_ptr<UpdateService> svc);
@@ -367,8 +372,10 @@ public:
     static std::function<void(const std::string&, const std::string&, const std::string&)> backfill_trigger_;
     static std::function<Json::Value()> backfill_status_getter_;
     static std::function<Json::Value()> sleep_stage_status_getter_;
-    // CSV content + filename -> result Json ("error" key on failure).
-    static std::function<Json::Value(const std::string&, const std::string&)> oxi_csv_import_;
+    // CSV content + filename + the optional source and device_name fields
+    // (SDD-078 D3) -> result Json ("error" key on failure).
+    static std::function<Json::Value(const std::string&, const std::string&,
+                                     const std::string&, const std::string&)> oxi_csv_import_;
     // Path to an uploaded zip on disk -> result Json ("error" key on failure).
     static std::function<Json::Value(const std::string&)> cpap_zip_import_;
     // SDD-039 D2: the same import, queued on the backfill worker. Set whenever
@@ -406,6 +413,7 @@ private:
     // which no macOS or Linux build could have caught.
     static std::shared_ptr<CpapDashSyncService>   sync_;
     static std::shared_ptr<CpapDashStreamer>      stream_;
+    static std::shared_ptr<GarminService>         garmin_;
     static std::shared_ptr<hms_cpap::MyAirService> myair_;
     static std::shared_ptr<UpdateService>         update_;
     static hms_cpap::AppConfig* config_;

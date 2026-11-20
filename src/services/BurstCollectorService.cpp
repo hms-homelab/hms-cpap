@@ -20,6 +20,7 @@
 #include "utils/ConfigManager.h"
 #include "utils/AppConfig.h"
 #include "utils/FileUtils.h"
+#include "utils/CheckpointSizes.h"
 #include "utils/NightQuiet.h"
 #include "utils/SessionEnd.h"
 #include "utils/SessionFileRefs.h"
@@ -33,6 +34,8 @@
 #include "services/SefamCardMirror.h"
 #include "services/BmcCardMirror.h"
 #include "services/PhilipsCardMirror.h"
+#include "services/NightFacts.h"
+#include "services/AiGrounding.h"
 #include "database/SQLiteDatabase.h"
 #include "database/DatabaseFactory.h"
 #ifdef WITH_POSTGRESQL
@@ -104,45 +107,30 @@ bool partialCopyIsDamaged(const std::string& local_path, size_t size, int listed
     return f.read(head, sizeof(head)) && std::string(head, sizeof(head)) != "0       ";
 }
 
-// Issue #78: a night's events as the AI summaries give them. in_ahi is every
-// type the AHI counts (the parser's formula: obstructive + central + clear
-// airway + unclassified + hypopnea); other is what total_events holds beyond
-// those and the RERAs (Cheyne-Stokes, flow limitation, large leak, snore,
-// unknown annotations), so in_ahi + reras + other == total_events.
-struct EventSplit {
-    int in_ahi = 0;
-    int other = 0;
-};
-
-EventSplit splitEvents(const SessionMetrics& m) {
-    EventSplit s;
-    s.in_ahi = m.obstructive_apneas + m.central_apneas + m.clear_airway_apneas +
-               m.unclassified_apneas + m.hypopneas;
-    s.other = (std::max)(0, m.total_events - s.in_ahi - m.reras);
-    return s;
+// SDD-072 D3: the summary after the grounding check, logged as it goes.
+// [given] is the whole prompt: every figure the model was handed.
+std::string groundSummary(const std::string& summary, const std::string& given,
+                          hms::LLMClient& llm, const std::string& what) {
+    const auto r = grounding::check(summary, given, [&](const std::string& p) {
+        return llm.generate(p);
+    });
+    if (r.regenerated > 0 || r.unverified > 0) {
+        std::cout << "LLM: " << what << " grounding: " << r.checked
+                  << " sentence(s) with numbers, " << r.regenerated << " regenerated, "
+                  << r.unverified << " kept unverified" << std::endl;
+    }
+    return r.text;
 }
-
-// Rides with the counts, not in the prompt, so it reaches a user's own
-// LLM_PROMPT_FILE too.
-constexpr const char* kEventLabelRule =
-    "Report each event type only under the label it has here. An unclassified "
-    "apnea is an apnea the machine did not classify: never describe it as "
-    "obstructive, central or a hypopnea.";
 
 } // namespace
 
-std::map<std::string, int> BurstCollectorService::checkpointSizes(const SessionFileSet& session) {
-    std::map<std::string, int> sizes;
-    for (const auto& [filename, size_kb] : session.file_sizes_kb) {
-        if (filename.find("_BRP.edf") == std::string::npos &&
-            filename.find("_PLD.edf") == std::string::npos && !isOximetryFile(filename))
-            continue;
-        const auto exact = session.file_sizes_bytes.find(filename);
-        sizes[filename] = exact != session.file_sizes_bytes.end()
-                              ? static_cast<int>(std::min<uint64_t>(exact->second, 0x7fffffff))
-                              : size_kb;
-    }
-    return sizes;
+std::string BurstCollectorService::currentNightFolder(const std::vector<std::string>& card_folders,
+                                                     const std::vector<SessionFileSet>& sessions) {
+    // Date folders are YYYYMMDD, so the newest is the greatest.
+    std::string newest;
+    for (const auto& f : card_folders) newest = std::max(newest, f);
+    for (const auto& s : sessions) newest = std::max(newest, s.date_folder);
+    return newest;
 }
 
 BurstCollectorService::BurstCollectorService(int burst_interval_seconds)
@@ -808,6 +796,8 @@ void BurstCollectorService::observeCardSession(const SessionFileSet& session,
                                                const std::string& session_dir, long long now_s) {
     const auto live = liveState();
     if (!live || session.brp_files.empty()) return;
+    // SDD-069 D1: no mask events from a card that cannot hold timestamps.
+    if (data_source_ && !data_source_->givesFileStamps()) return;
     const std::string source = cardMaskSource();
     if (source.empty()) return;
 
@@ -848,6 +838,8 @@ void BurstCollectorService::observeCardListing(
     const std::string& archive, bool in_place, long long now_s) {
     const auto live = liveState();
     if (!live) return;
+    // SDD-069 D1: no mask events from a card that cannot hold timestamps.
+    if (data_source_ && !data_source_->givesFileStamps()) return;
     const std::string source = cardMaskSource();
     if (source.empty()) return;
 
@@ -2161,6 +2153,16 @@ void BurstCollectorService::updateFolderLedgers(
                     std::filesystem::file_size(p, ec) == 0) {
                     obs.all_files_stored = false;
                 }
+                // SDD-069 P8: a card with no listing gives the exact size, and
+                // its night is whole only when every file is held to its end.
+                // A BRP the card never lets reach EOF leaves it partial after
+                // the night's hour, until a later burst gets the rest.
+                const auto exact = s->file_sizes_bytes.find(filename);
+                if (data_source_ && !data_source_->givesFileStamps() &&
+                    exact != s->file_sizes_bytes.end() &&
+                    std::filesystem::file_size(p, ec) < exact->second) {
+                    obs.all_files_stored = false;
+                }
             }
         }
 
@@ -2470,6 +2472,11 @@ bool BurstCollectorService::executeBurstCycle() {
     std::set<std::chrono::system_clock::time_point> stored_inline;
     std::set<std::chrono::system_clock::time_point> saved_inline;
     int saved_count = 0;
+    // SDD-077 D5: the newest night folder on the source, and the stored
+    // sessions this burst saved again and kept completed (a repair, D4, or an
+    // older night, D5), which Step 8 does not publish as a session in progress.
+    std::string current_night;
+    std::set<std::chrono::system_clock::time_point> kept_completed;
 
     if (prisma_ingestion_) {
         // ===== LOWENSTEIN PRISMA MODE =====
@@ -2782,7 +2789,22 @@ bool BurstCollectorService::executeBurstCycle() {
         std::set<std::string> catch_up;
         const std::string tonight = tonightFolder(now_s, offset);
 
+        // SDD-069: what this burst is for, for a card with no listing, which
+        // chooses what to ask from it. All of it from this burst's own state:
+        // the 65-min checkpoint is the burst that first passes the mark.
+        IDataSource::BurstScope scope;
+        scope.now_s = now_s;
+        scope.night_growing = night_growing;
+        for (const auto& [f, w] : folder_watch_) {
+            (void)f;
+            if (w.stopped_at <= 0) continue;
+            const long long at = w.stopped_at +
+                std::chrono::duration_cast<std::chrono::seconds>(std::end(kGrowthCheckpoints)[-1]).count();
+            if (now_s >= at && w.last_listed < at) scope.str_checkpoint = true;
+        }
+
         try {
+            data_source_->setBurstScope(scope);
             data_source_->beginRefresh();
             // D1: the DATALOG index once per start (until one succeeds), once
             // a day at the machine's noon, and on a reason. It used to be
@@ -2896,6 +2918,11 @@ bool BurstCollectorService::executeBurstCycle() {
             };
             for (const auto& p : plan) {
                 std::vector<EzShareFileEntry> files;
+                // SDD-069 P1: the full alias scan with the index and on D6's
+                // reasons; tonight, a live folder and a checkpoint ask less.
+                scope.full_scan = index_listed || p.reason == ListReason::FirstLook ||
+                                  p.reason == ListReason::Relist || p.reason == ListReason::Ceiling;
+                data_source_->setBurstScope(scope);
                 try {
                     files = data_source_->listFiles(p.folder);
                 } catch (const ListingRefused&) {
@@ -3052,6 +3079,19 @@ bool BurstCollectorService::executeBurstCycle() {
                 card_folders_.push_back(p.folder);
                 std::sort(card_folders_.begin(), card_folders_.end());
             }
+        }
+
+        // SDD-069 P5: a card with no stamps teaches the machine's clock from
+        // a BRP its probes saw grow, drift and zone as one offset, into the
+        // same row SDD-054 D3 keeps. It decides which folder is tonight's.
+        long long seen_offset = 0;
+        if (data_source_->takeMachineOffset(seen_offset) &&
+            (!machine_clock_.zone_known ||
+             machine_clock_.drift_s + machine_clock_.zone_s != seen_offset)) {
+            machine_clock_ = MachineClock{0, seen_offset, true};
+            std::cout << "CPAP: the machine's clock is " << seen_offset
+                      << " s from UTC (learned from the BRP it is writing)" << std::endl;
+            if (db_service_) saveMachineClock(*db_service_, device_id_, machine_clock_, now_s);
         }
 
         // D5: the .crc files the last residue walk left for this burst, before
@@ -3319,6 +3359,9 @@ bool BurstCollectorService::executeBurstCycle() {
         bool session_closed = false;
         // SDD-054 D7: an idle burst is not an error; a failed download is.
         int download_failures = 0;
+        // SDD-077 D5: only a session in the night the machine is writing may
+        // reopen. The newest night folder on the source, on the machine's clock.
+        current_night = currentNightFolder(card_folders_, new_sessions);
 
         for (const auto& session : new_sessions) {
             // SDD-029: an operator removed this night; discovery must not store it again.
@@ -3376,25 +3419,11 @@ bool BurstCollectorService::executeBurstCycle() {
 
             const std::map<std::string, int> current_checkpoint_sizes = checkpointSizes(session);
 
-            bool all_unchanged = true;
-            bool has_new_files = false;
-
-            for (const auto& [filename, db_size] : db_checkpoint_sizes) {
-                auto it = current_checkpoint_sizes.find(filename);
-                if (it == current_checkpoint_sizes.end()) {
-                    all_unchanged = false;
-                    break;
-                }
-                if (it->second != db_size) {
-                    all_unchanged = false;
-                    break;
-                }
-            }
-
-            if (current_checkpoint_sizes.size() > db_checkpoint_sizes.size()) {
-                has_new_files = true;
-                all_unchanged = false;
-            }
+            // SDD-077 D3: the one compare, against the one shape every writer
+            // stores. A row written in the old KB shape reads as unchanged once.
+            const auto compared = compareCheckpoints(db_checkpoint_sizes, session);
+            bool all_unchanged = compared.all_unchanged;
+            const bool has_new_files = compared.has_new_files;
 
             // SDD-011: unchanged is not the same as done. Skipping the download
             // also skips the archive, so a session that goes stable while its
@@ -3423,6 +3452,12 @@ bool BurstCollectorService::executeBurstCycle() {
             if (all_unchanged && !has_new_files && archived) {
                 std::cout << "CPAP: Session " << session.session_prefix
                           << " stopped (all checkpoint files unchanged)" << std::endl;
+
+                // SDD-077 D3: a KB-shape row is rewritten in bytes, so it is
+                // read by its KB rounding this once and exactly after.
+                if (compared.legacy_kb)
+                    db_service_->updateCheckpointFileSizes(device_id_, session.session_start,
+                                                           current_checkpoint_sizes);
 
                 // markSessionCompleted returns true only the FIRST time
                 // (when session_end was not yet set). Returns false if already completed.
@@ -3473,19 +3508,45 @@ bool BurstCollectorService::executeBurstCycle() {
                 for (const auto& missed : checkpoints_missed_) checkpoint_sizes.erase(missed);
                 db_service_->updateCheckpointFileSizes(device_id_, session.session_start, checkpoint_sizes);
 
-                // Session resumed (mask put back on) — clear session_end so
-                // markSessionCompleted() can fire again when it truly stops.
-                db_service_->reopenSession(device_id_, session.session_start);
-                // SDD-046: and the night's hour starts again.
-                noteNightGrowth(*db_service_, device_id_, session.date_folder,
-                                session.session_start, std::chrono::system_clock::now());
+                // SDD-077 D4: a download that only repaired the archive is not
+                // the mask going back on; it stores what it fetched and keeps
+                // session_end. D5: growth reopens only in the night the machine
+                // is writing.
+                const bool grew = !all_unchanged || has_new_files;
+                const bool in_current_night = session.date_folder == current_night;
+                if (grew && in_current_night) {
+                    // Session resumed (mask put back on) — clear session_end so
+                    // markSessionCompleted() can fire again when it truly stops.
+                    db_service_->reopenSession(device_id_, session.session_start);
+                    // SDD-046: and the night's hour starts again.
+                    noteNightGrowth(*db_service_, device_id_, session.date_folder,
+                                    session.session_start, std::chrono::system_clock::now());
+                } else if (in_current_night) {
+                    // D4: a repair keeps its session_end, so it is not
+                    // published as a session in progress either.
+                    kept_completed.insert(session.session_start);
+                } else {
+                    // D5: an older night is repaired and reparsed, and stays
+                    // completed, at the end its data now says (SDD-037 D2).
+                    kept_completed.insert(session.session_start);
+                    const auto parsed = std::find_if(
+                        parsed_sessions.begin(), parsed_sessions.end(), [&](const CPAPSession& s) {
+                            return s.session_start.has_value() &&
+                                   *s.session_start == session.session_start;
+                        });
+                    if (saved_inline.count(session.session_start) && parsed != parsed_sessions.end())
+                        closeWithDataEnd(*db_service_, device_id_, session.session_start, *parsed);
+                    std::cout << "CPAP: Session " << session.session_prefix << " is in night "
+                              << session.date_folder << ", not the current one ("
+                              << current_night << "); stored and kept completed" << std::endl;
+                }
 
                 downloaded_sessions.push_back({session_dir, session});
                 stored_inline.insert(session.session_start);
 
                 // The mask, as the card shows it: a session that grew. Not a
-                // download that only repaired the archive.
-                if (!all_unchanged || has_new_files)
+                // download that only repaired the archive, nor an older night.
+                if (grew && in_current_night)
                     observeCardSession(session, session_dir, nowSeconds());
             } else {
                 std::cerr << "CPAP: Failed to download session " << session.session_prefix << std::endl;
@@ -3613,12 +3674,18 @@ bool BurstCollectorService::executeBurstCycle() {
     std::cout << "💾 CPAP: Saved " << saved_count << "/" << parsed_sessions.size()
               << " session(s) to database" << std::endl;
 
-    // Step 8: Publish LATEST session to MQTT (most recent by session_start)
-    if (!parsed_sessions.empty() && data_publisher_) {
+    // Step 8: Publish LATEST session to MQTT (most recent by session_start).
+    // SDD-077 D4/D5: never a session this burst kept completed; publishing
+    // it would say a session is in progress that has ended.
+    std::vector<CPAPSession> publishable;
+    for (const auto& s : parsed_sessions)
+        if (!s.session_start.has_value() || !kept_completed.count(*s.session_start))
+            publishable.push_back(s);
+    if (!publishable.empty() && data_publisher_) {
         // Find latest session
         auto latest = std::max_element(
-            parsed_sessions.begin(),
-            parsed_sessions.end(),
+            publishable.begin(),
+            publishable.end(),
             [](const CPAPSession& a, const CPAPSession& b) {
                 if (!a.session_start.has_value()) return true;
                 if (!b.session_start.has_value()) return false;
@@ -3970,6 +4037,12 @@ int BurstCollectorService::announceQuietNights(std::chrono::system_clock::time_p
                   << kNightQuiet.count() << " min, it is over"
                   << (rec ? "" : " (the STR has no record for it yet)") << std::endl;
 
+        // SDD-078 D2: the night's close is when its Garmin SpO2 is asked for.
+        {
+            std::lock_guard<std::mutex> lk(night_closed_mu_);
+            if (night_closed_) night_closed_(n.date_folder);
+        }
+
         // D5: SleepHQ gets it now, with no second quiet window. Not a night
         // whose transfer never finished (D3): its files are still arriving,
         // and the landing that completes them is growth, which announces the
@@ -4135,7 +4208,11 @@ void BurstCollectorService::storeCardSessions(std::vector<CardSession> sessions,
         }
         card_seen_[key] = seen_value;
         if (stored) ++grown; else ++imported;
-        // The newest changed night is the one Home Assistant shows.
+        // The newest night is the one Home Assistant shows. SDD-077 D5: an
+        // older session read again is saved and closed above, never published
+        // as one in progress; only the newest may reopen (written_now) or be
+        // published.
+        if (!is_newest) continue;
         card_pending_publish_ = std::shared_ptr<const CPAPSession>(std::move(sessions[i].session));
         card_pending_is_new_ = !stored;
     }
@@ -4294,7 +4371,7 @@ bool BurstCollectorService::parseAndStoreSession(
     // The columns hold one path per kind; cpap_session_files holds every
     // file the night is made of, which is what a merged session needs
     // and what the SleepHQ export reads. See SDD-014.
-    const auto file_refs = recordSessionFiles(session_dir, relative_path_base, *parsed);
+    const auto file_refs = recordSessionFiles(session_dir, relative_path_base, *parsed, kSourceCard);
 
     // One entry per session: a re-parse after the next file replaces the
     // earlier picture of the same night rather than sitting beside it.
@@ -4316,11 +4393,12 @@ bool BurstCollectorService::parseAndStoreSession(
     db_service_->replaceSessionFiles(device_id_, session_start, file_refs);
     std::cout << "💾 CPAP: Saved session " << date_folder << " to database" << std::endl;
 
-    // SDD-057 D5: the card wins the stretch it carries. A Bluetooth copy of
-    // the same therapy (overlapping in time; the machine may cut its card
-    // files where the stream had one) is replaced by this row.
-    As11NightImport::replaceBluetoothRows(*db_service_, device_id_, session_start,
-                                          dataEndOf(*parsed).value_or(session_start));
+    // SDD-057 D5, SDD-077 D2: the card wins the stretch it carries. A copy
+    // built from a Bluetooth stream of the same therapy (overlapping in time;
+    // the machine may cut its card files where the stream had one) is
+    // replaced by this row. The collector and a local folder both save here.
+    As11NightImport::replaceConstructedFiles(*db_service_, device_id_, session_start,
+                                             dataEndOf(*parsed).value_or(session_start));
 
     // SDD-026: the night's row in cpap_daily_summary is ours wherever the
     // night has sessions, so every save re-derives it. Per session, so the
@@ -4614,14 +4692,17 @@ void BurstCollectorService::generateRangeSummary(SummaryPeriod period, int days_
 
     std::string metrics_str = buildRangeMetricsString(nights, period);
 
-    // Period-specific prompt — the LLM sees all the per-night data and averages
+    // Period-specific prompt — the LLM sees all the per-night data and averages.
+    // SDD-072 D2: the assessment is asked for only where the data gives an
+    // AHI (SDD-024); the rules ride in metrics_str.
     std::string prompt;
     if (period == SummaryPeriod::WEEKLY) {
         prompt =
             "You are a CPAP therapy analyst. Summarize this week of CPAP data "
             "using this exact markdown structure:\n\n"
             "**Overall Trends**\n"
-            "* Average AHI with assessment (good/moderate/elevated)\n"
+            "* Average AHI, with an assessment (good/moderate/elevated) ONLY if "
+            "the data gives an AHI\n"
             "* Average usage hours/night and total hours\n"
             "* Leak control assessment\n\n"
             "**Night-by-Night Highlights**\n"
@@ -4637,7 +4718,8 @@ void BurstCollectorService::generateRangeSummary(SummaryPeriod period, int days_
             "You are a CPAP therapy analyst. Summarize this month of CPAP data "
             "using this exact markdown structure:\n\n"
             "**Overall Trends**\n"
-            "* Average AHI with assessment (good/moderate/elevated)\n"
+            "* Average AHI, with an assessment (good/moderate/elevated) ONLY if "
+            "the data gives an AHI\n"
             "* Average usage hours/night and total hours\n"
             "* Leak control assessment\n\n"
             "**First Half vs Second Half**\n"
@@ -4656,6 +4738,7 @@ void BurstCollectorService::generateRangeSummary(SummaryPeriod period, int days_
         std::cerr << "LLM: " << period_str << " summary generation failed" << std::endl;
         return;
     }
+    summary = groundSummary(*summary, prompt, *llm_client_, period_str);   // SDD-072 D3
 
     std::cout << "LLM: " << period_str << " summary generated ("
               << summary->size() << " chars)" << std::endl;
@@ -4689,99 +4772,17 @@ void BurstCollectorService::generateRangeSummary(SummaryPeriod period, int days_
 std::string BurstCollectorService::buildRangeMetricsString(
     const std::vector<SessionMetrics>& nights, SummaryPeriod period) const {
 
-    std::ostringstream oss;
-    oss << std::fixed << std::setprecision(2);
+    // SDD-072 D1: the nights' facts, rendered once by the shared renderer.
+    std::vector<NightFacts> facts;
+    facts.reserve(nights.size());
+    for (const auto& n : nights) facts.push_back(NightFacts::from(n));
 
-    std::string period_str = (period == SummaryPeriod::WEEKLY) ? "Weekly" : "Monthly";
-    oss << period_str << " CPAP report (" << nights.size() << " nights)\n";
-    oss << "─────────────────────────────────────\n\n";
-
-    // Per-night summary line
-    oss << "Event codes: OA obstructive apnea, CA central apnea, CLR clear airway "
-           "apnea, UA unclassified apnea, H hypopnea (these five make the AHI); "
-           "RERA respiratory effort related arousal, other = every other "
-           "recorded event type (not in the AHI).\n";
-    oss << kEventLabelRule << "\n\n";
-    oss << "Night-by-night:\n";
-    double total_ahi = 0, total_hours = 0, total_leak = 0;
-    int leak_count = 0;
-
-    for (const auto& n : nights) {
-        double hours = n.usage_hours.value_or(0.0);
-        oss << "  " << n.sleep_day
-            << " | " << hours << "h"
-            << " | AHI " << n.ahi
-            << " | events " << n.total_events;
-        {
-            // Issue #78: the same split as the daily summary, so a night's
-            // parts add up to its total (codes in the legend above).
-            const EventSplit split = splitEvents(n);
-            oss << " (in AHI " << split.in_ahi
-                << ": OA=" << n.obstructive_apneas
-                << " CA=" << n.central_apneas
-                << " CLR=" << n.clear_airway_apneas
-                << " UA=" << n.unclassified_apneas
-                << " H=" << n.hypopneas
-                << "; not in AHI " << (n.reras + split.other)
-                << ": RERA=" << n.reras
-                << " other=" << split.other << ")";
-        }
-        if (n.avg_leak_rate.has_value())
-            oss << " | leak avg " << n.avg_leak_rate.value() << " L/min";
-        if (n.avg_pressure.has_value())
-            oss << " | press " << n.avg_pressure.value() << " cmH2O";
-        oss << "\n";
-
-        total_ahi += n.ahi;
-        total_hours += hours;
-        if (n.avg_leak_rate.has_value()) {
-            total_leak += n.avg_leak_rate.value();
-            leak_count++;
-        }
-    }
-
-    // Period averages
-    int count = static_cast<int>(nights.size());
-    oss << "\n" << period_str << " averages:\n";
-    oss << "  Avg AHI: " << (total_ahi / count) << " events/hour\n";
-    oss << "  Avg usage: " << (total_hours / count) << " hours/night\n";
-    oss << "  Total usage: " << total_hours << " hours\n";
-    if (leak_count > 0)
-        oss << "  Avg leak: " << (total_leak / leak_count) << " L/min\n";
-
-    // Compliance: nights >= 4h
-    int compliant = 0;
-    for (const auto& n : nights)
-        if (n.usage_hours.value_or(0.0) >= 4.0) compliant++;
-    oss << "  Compliance (>=4h): " << compliant << "/" << count
-        << " nights (" << (100.0 * compliant / count) << "%)\n";
-
-    // Best and worst nights
-    auto best = std::min_element(nights.begin(), nights.end(),
-        [](const SessionMetrics& a, const SessionMetrics& b) { return a.ahi < b.ahi; });
-    auto worst = std::max_element(nights.begin(), nights.end(),
-        [](const SessionMetrics& a, const SessionMetrics& b) { return a.ahi < b.ahi; });
-    oss << "  Best AHI: " << best->ahi << " (" << best->sleep_day << ")\n";
-    oss << "  Worst AHI: " << worst->ahi << " (" << worst->sleep_day << ")\n";
-
-    // O2 Ring oximetry across the date range
-    if (db_service_) {
-        std::string start_nd = nights.front().sleep_day, end_nd = nights.back().sleep_day;
-        start_nd.erase(std::remove(start_nd.begin(), start_nd.end(), '-'), start_nd.end());
-        end_nd.erase(std::remove(end_nd.begin(), end_nd.end(), '-'), end_nd.end());
-
-        auto oxi = db_service_->getOximetryRangeSummary(kOximetryDeviceId, start_nd, end_nd);
-        if (oxi.found) {
-            oss << "\nO2 Ring Oximetry (" << oxi.nights << " nights with data):\n";
-            oss << "  Avg SpO2: " << oxi.avg_spo2 << "%\n";
-            oss << "  Lowest SpO2: " << oxi.min_spo2 << "%\n";
-            oss << "  Avg ODI (3%): " << oxi.avg_odi << " events/hour\n";
-            oss << "  Avg time below 90%: " << oxi.avg_below_90 << "%\n";
-            oss << "  Avg HR: " << oxi.avg_hr << " bpm\n";
-        }
-    }
-
-    return oss.str();
+    std::optional<RangeOximetryFacts> oxi;
+    if (db_service_ && !nights.empty())
+        oxi = night_facts::oximetryForRange(*db_service_, nights.front().sleep_day,
+                                            nights.back().sleep_day);
+    return night_facts::renderRange(
+        facts, period == SummaryPeriod::WEEKLY ? "Weekly" : "Monthly", oxi);
 }
 
 // --- Daily summary (single night) ---
@@ -4818,6 +4819,7 @@ void BurstCollectorService::generateAndPublishSummary(const SessionMetrics& metr
         std::cerr << "LLM: Summary generation failed (non-fatal)" << std::endl;
         return;
     }
+    summary = groundSummary(*summary, prompt, *llm_client_, "daily");   // SDD-072 D3
 
     std::cout << "LLM: Summary generated (" << summary->size() << " chars)" << std::endl;
 
@@ -4855,221 +4857,20 @@ void BurstCollectorService::generateAndPublishSummary(const SessionMetrics& metr
 std::string BurstCollectorService::buildMetricsString(const SessionMetrics& metrics,
                                                        const STRDailyRecord* str_record,
                                                        const std::string& sleep_day) const {
-    std::ostringstream oss;
-    oss << std::fixed << std::setprecision(2);
-
-    // Usage
-    oss << "Usage: " << metrics.usage_hours.value_or(0.0) << " hours"
-        << " (" << metrics.usage_percent.value_or(0.0) << "% of 8h target)\n";
-
-    // AHI and events.
-    //
-    // The index only goes into the prompt when it IS an AHI. A machine with no
-    // hypopnea detection produces an apnea count per hour, and handing that to
-    // an LLM under the label "AHI" is how a number with no severity meaning
-    // comes back out as "your AHI is excellent". The model has no way to know
-    // the difference and every reason to characterise what it is given.
-    //
-    // The event counts below still go, because they are counts and not an
-    // index -- the model can report them without grading anything.
-    //
-    // This is a suppression and not a deletion: the index is still computed and
-    // still stored, so when there is eventually something to compare it against
-    // it is already there (SDD-081).
-    if (metrics.index_kind == SessionMetrics::IndexKind::AHI) {
-        oss << "AHI: " << metrics.ahi << " events/hour\n";
-    } else {
-        oss << "AHI: not available for this machine -- it does not detect "
-               "hypopneas, so no apnea-hypopnea index can be formed. Do not "
-               "estimate one, and do not describe the events below as mild, "
-               "normal or severe.\n";
-    }
-    // The per-type breakdown goes only when the machine produced one. On a
-    // machine that does not classify, every one of these is 0, and "hypopnea=0"
-    // is a fact the model will faithfully report as "no hypopneas were
-    // recorded" -- which is the same false reassurance the UI was giving before
-    // SDD-024, laundered through a sentence.
-    //
-    // Issue #78: every type the AHI counts is named, and what is not in the
-    // AHI is its own line, so the parts add up to the total. A line that named
-    // three of the night's six events let the model call all six hypopneas.
-    if (metrics.index_kind == SessionMetrics::IndexKind::AHI) {
-        const EventSplit split = splitEvents(metrics);
-        oss << "Apneas and hypopneas (the events counted in the AHI): " << split.in_ahi
-            << " (obstructive apnea=" << metrics.obstructive_apneas
-            << ", central apnea=" << metrics.central_apneas
-            << ", clear airway apnea=" << metrics.clear_airway_apneas
-            << ", unclassified apnea=" << metrics.unclassified_apneas
-            << ", hypopnea=" << metrics.hypopneas << ")\n";
-        oss << "Other recorded events (not counted in the AHI): "
-            << (metrics.reras + split.other)
-            << " (RERA=" << metrics.reras
-            << ", other event types=" << split.other << ")\n";
-        oss << "Total events recorded: " << metrics.total_events << "\n";
-        oss << kEventLabelRule << "\n";
-    } else {
-        oss << "Total events: " << metrics.total_events
-            << " (all apneas; this machine does not classify them as "
-               "obstructive or central and does not mark hypopneas, so no "
-               "per-type breakdown exists. Do not report any type as zero.)\n";
-    }
-
-    if (metrics.avg_event_duration.has_value()) {
-        oss << "Avg event duration: " << metrics.avg_event_duration.value() << "s";
-        if (metrics.max_event_duration.has_value()) {
-            oss << ", max: " << metrics.max_event_duration.value() << "s";
-        }
-        oss << "\n";
-    }
-
-    // Issue #56: the pressure the machine delivered (PLD Press), the number a
-    // user compares with their prescription. The block after it is measured
-    // and, with EPR, sits below the set minimum on every breath out; without
-    // this line the summary reported that as the therapy pressure.
-    if (metrics.avg_therapy_pressure.has_value()) {
-        oss << "Therapy pressure (delivered by the machine): avg="
-            << metrics.avg_therapy_pressure.value() << " cmH2O\n";
-    }
-
-    // Pressure (only include fields that have data)
-    if (metrics.avg_pressure.has_value() || metrics.pressure_p95.has_value()) {
-        oss << "Pressure:";
-        if (metrics.avg_pressure.has_value()) {
-            oss << " avg=" << metrics.avg_pressure.value() << " cmH2O";
-        }
-        if (metrics.min_pressure.has_value()) {
-            oss << ", min=" << metrics.min_pressure.value() << " cmH2O";
-        }
-        if (metrics.max_pressure.has_value()) {
-            oss << ", max=" << metrics.max_pressure.value() << " cmH2O";
-        }
-        if (metrics.pressure_p95.has_value()) {
-            oss << ", 95th=" << metrics.pressure_p95.value() << " cmH2O";
-        }
-        oss << "\n";
-    }
-
-    // Leak (only include fields that have data)
-    if (metrics.avg_leak_rate.has_value() || metrics.max_leak_rate.has_value()) {
-        oss << "Leak:";
-        if (metrics.avg_leak_rate.has_value()) {
-            oss << " avg=" << metrics.avg_leak_rate.value() << " L/min";
-        }
-        if (metrics.max_leak_rate.has_value()) {
-            oss << ", max=" << metrics.max_leak_rate.value() << " L/min";
-        }
-        if (metrics.leak_p95.has_value()) {
-            oss << ", 95th=" << metrics.leak_p95.value() << " L/min";
-        }
-        if (metrics.leak_p50.has_value()) {
-            oss << ", median=" << metrics.leak_p50.value() << " L/min";
-        }
-        oss << "\n";
-    }
-
-    // PLD-derived metrics (machine's own calculations)
-    if (metrics.avg_mask_pressure.has_value()) {
-        oss << "Mask pressure (actual): " << metrics.avg_mask_pressure.value() << " cmH2O\n";
-    }
-    if (metrics.avg_epr_pressure.has_value()) {
-        oss << "EPR/EPAP pressure: " << metrics.avg_epr_pressure.value() << " cmH2O\n";
-    }
-    if (metrics.avg_snore.has_value()) {
-        oss << "Snore index: " << metrics.avg_snore.value() << " (0-5 scale)\n";
-    }
-
-    // ASV-specific metrics
-    if (metrics.avg_target_ventilation.has_value() && metrics.avg_target_ventilation.value() > 0) {
-        oss << "Target ventilation (ASV): " << metrics.avg_target_ventilation.value() << " L/min\n";
-    }
-    // SDD-030, the standing rule: the session's mode first, the STR's when
-    // the session's is 0. No parser fills a ResMed session's mode and every
-    // engine stores "none" as 0, so there it is the STR's (seen on two
-    // AirCurves, which read "CPAP" before). Named through the machine family.
-    {
-        const auto family = str_record ? str_record->family : MachineFamily::Unknown;
-        const auto mode = therapyModeFor(
-            metrics.therapy_mode,
-            str_record ? std::optional<int>(str_record->mode) : std::nullopt);
-        if (mode) oss << "Therapy mode: " << therapyModeName(*mode, family) << "\n";
-    }
-
-    // Respiratory
-    if (metrics.avg_respiratory_rate.has_value()) {
-        oss << "Respiratory rate: " << metrics.avg_respiratory_rate.value() << " breaths/min\n";
-    }
-    if (metrics.avg_tidal_volume.has_value()) {
-        oss << "Tidal volume: " << metrics.avg_tidal_volume.value() << " mL\n";
-    }
-    if (metrics.avg_minute_ventilation.has_value()) {
-        oss << "Minute ventilation: " << metrics.avg_minute_ventilation.value() << " L/min\n";
-    }
-    if (metrics.avg_flow_limitation.has_value()) {
-        oss << "Flow limitation: " << metrics.avg_flow_limitation.value() << " (0-1 scale)\n";
-    }
-
-    // O2 Ring oximetry (if available for this night)
+    // SDD-072 D1: the night's facts, rendered by the shared renderer. The O2
+    // Ring block is the summary's own night (issue #78: a regenerated older
+    // night read today's oximetry); empty = the night that just ended.
+    const std::string day = resolveSleepDay(sleep_day, std::chrono::system_clock::now());
+    std::optional<NightOximetryFacts> oxi;
     if (db_service_) {
-        // The summary's own night (issue #78: a regenerated older night read
-        // today's oximetry). Empty = the night that just ended, now - 12 h.
-        auto now_t = std::chrono::system_clock::to_time_t(
-            std::chrono::system_clock::now() - std::chrono::hours(12));
-        std::tm day = *std::localtime(&now_t);
-        int y = 0, mo = 0, d = 0;
-        if (sleep_day.size() == 10 &&
-            std::sscanf(sleep_day.c_str(), "%4d-%2d-%2d", &y, &mo, &d) == 3) {
-            day = std::tm{};
-            day.tm_year = y - 1900;
-            day.tm_mon = mo - 1;
-            day.tm_mday = d;
-            day.tm_hour = 12;
-            day.tm_isdst = -1;
-            mktime(&day);
-        }
-        char date_buf[9], next_buf[9];
-        std::strftime(date_buf, sizeof(date_buf), "%Y%m%d", &day);
-        std::tm next_tm = day;
-        next_tm.tm_mday += 1;
-        mktime(&next_tm);
-        std::strftime(next_buf, sizeof(next_buf), "%Y%m%d", &next_tm);
-
-        auto oxi = db_service_->getOximetrySummary(kOximetryDeviceId, date_buf, next_buf);
-        if (oxi.found) {
-            oss << "\nO2 Ring Oximetry (overnight):\n";
-            oss << "  Avg SpO2: " << oxi.avg_spo2 << "%\n";
-            oss << "  Min SpO2: " << oxi.min_spo2 << "%\n";
-            oss << "  SpO2 baseline (P95): " << oxi.spo2_baseline << "%\n";
-            oss << "  ODI (3%): " << oxi.odi_3pct << " events/hour\n";
-            oss << "  Time below 90%: " << oxi.time_below_90 << "%\n";
-            oss << "  Time below 88%: " << oxi.time_below_88 << "%\n";
-            oss << "  Avg HR: " << oxi.avg_hr << " bpm\n";
-            oss << "  HR range: " << oxi.min_hr << "-" << oxi.max_hr << " bpm\n";
-            std::cout << "O2Ring LLM: oximetry included (avg_spo2=" << oxi.avg_spo2 << ")" << std::endl;
-        }
+        oxi = night_facts::oximetryForNight(*db_service_, day);
+        if (oxi)
+            std::cout << "O2Ring LLM: oximetry included (avg_spo2=" << oxi->avg_spo2 << ")"
+                      << std::endl;
     }
-
-    // STR data (if available)
-    if (str_record) {
-        oss << "\nResMed official daily summary:\n";
-        oss << "  STR AHI: " << str_record->ahi << " events/hour\n";
-        oss << "  Mask events: " << (str_record->mask_events / 2) << " (on/off pairs)\n";
-        oss << "  95th leak: " << str_record->leak_95 << " L/min\n";
-        // The STR's MaskPress.95: measured at the mask, not the therapy pressure.
-        oss << "  95th mask pressure: " << str_record->mask_press_95 << " cmH2O\n";
-        // ASV STR settings
-        if (str_record->asv_epap.has_value()) {
-            oss << "  ASV EPAP: " << str_record->asv_epap.value() << " cmH2O\n";
-            oss << "  ASV Pressure Support: " << str_record->asv_min_ps.value_or(0) << "-"
-                << str_record->asv_max_ps.value_or(0) << " cmH2O\n";
-        }
-        if (str_record->tgt_ipap_50.has_value()) {
-            oss << "  Target IPAP (median): " << str_record->tgt_ipap_50.value() << " cmH2O\n";
-            oss << "  Target EPAP (median): " << str_record->tgt_epap_50.value_or(0) << " cmH2O\n";
-            oss << "  Target ventilation (median): " << str_record->tgt_vent_50.value_or(0) << " L/min\n";
-        }
-    }
-
-    return oss.str();
+    NightFacts facts = NightFacts::from(metrics, str_record, oxi);
+    if (facts.sleep_day.empty()) facts.sleep_day = day;
+    return night_facts::renderNight(facts);
 }
 
 std::string BurstCollectorService::loadPromptFile(const std::string& filepath) {

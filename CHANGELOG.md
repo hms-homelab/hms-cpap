@@ -33,8 +33,92 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `hms_cpap --read-card`, `ws://.../api/sleepbridge/watch`, `POST
   /api/sleepbridge/<bridge>/use` and `GET /api/sleepbridge/qr`, which the
   setup steps use (docs/SLEEP_BRIDGE_LOCAL_STREAM.md).
+- **Garmin SpO2 is an oximetry source (SDD-078, #76).** With a Garmin email
+  and password in Settings (stored masked, like the CpapDash token), each
+  night's SpO2, heart rate and movement are read from Garmin Connect after the
+  night: when a CPAP night closes, when the dashboard or the night list is
+  opened, or with "Fetch from Garmin now" on the Devices page, which also asks
+  for Garmin's code when it wants one. Nothing runs on a timer. Garmin's API is
+  unofficial and can change; when it does, the Garmin card says so.
+- **Oximetry says where it came from.** Each recording now carries its source
+  (O2 Ring, Garmin, upload) and device name, and a night shows "Oximetry" with
+  the device, for example "Oximetry - Garmin Fenix 7X", instead of "O2 Ring"
+  for every source. `/api/upload/oximetry` accepts optional `source` and
+  `device_name` fields, so an outside importer can label what it sends.
+- **An AirSense 11 night the stream missed is filled from the machine's
+  stored pages (SDD-070, #61, #62).** After a night, the Summary pull also
+  reads the machine's stored pages for each night with usage: its respiratory
+  events, flow and mask pressure (6.25 Hz), leak and inspiratory pressure
+  (0.5 Hz). The pages are kept as they came under
+  `as11/<serial>/stored/<night>/`. The minutes the machine was on the mask and
+  no streamed segment covers are written into the night's folder as card
+  files: a BRP at 6.25 Hz (its EDF recording field ends `STORED=6.25Hz`) and a
+  PLD, named as the card names them, so the charts, the OSCAR export and
+  SleepHQ read them as any other. The stored events go into the night's EVE,
+  an event the stream already gave (same kind, within 2 s) kept once. A file
+  already in the folder, streamed or a card's, is never replaced. Nothing runs
+  on a timer: the pull follows the Summary pull, never while the machine
+  records, a night streams or an O2 Ring transfer runs; a night not read to
+  the end is asked for again by the next Summary pull.
+- **A live night on an ez Share card with no listing (SDD-069).** On firmware
+  4.4.0, which lists nothing, each burst now asks the card only what can have
+  changed while therapy runs: the next 8.3 alias of tonight's folder (one
+  request per name stem; the three-miss scan stays for the daily index and a
+  re-list), and the files of the open session. A session the card has
+  finished (its BRP held to the end and unchanged in size and record count
+  across two bursts, or followed by a new BRP) is asked about again only 5,
+  35 and 65 minutes after its last growth. A file that answers with the
+  welcome page, or a transfer that stalls, changes nothing. The probe reads
+  the record duration with the record count, and a BRP that grows teaches the
+  machine's clock, so tonight's folder follows the machine's day rather than
+  the host's zone. STR.edf is no longer read on every burst: it is read with
+  the daily index and 65 minutes after the night's growth stops, never while
+  the night grows. This card publishes no mask on or off: it holds no file
+  dates. Its night is complete only when every file is held to its exact
+  size; a BRP the card never lets reach its end leaves the night partial
+  after its hour of quiet, until a later burst gets the rest. Shown on
+  synthetic tests only: no live night on this card has been logged yet.
+
+### Changed
+- **The AI is given facts that add up, and says only those (SDD-072).** The
+  daily summary, the weekly and monthly summaries and the chat agent now read
+  one set of facts per night instead of three hand-built ones: the events
+  behind the index by type (obstructive, central, clear airway, unclassified,
+  hypopnea), RERAs and other recorded types beside them, so the parts always
+  equal the night's total. A night from a machine that detects no hypopneas
+  carries no AHI and no per-type zeros anywhere, including the weekly and
+  monthly text, which used to grade and average it. A figure the night does
+  not have is left out, never shown as 0 (a night with no usage recorded
+  reads "Usage: not recorded", not "0.00 hours"). The rules for reporting
+  them travel with the facts, so they reach a custom `LLM_PROMPT_FILE` too.
+- **Every number in a summary is checked against the data it was given.**
+  After the model writes a daily, weekly or monthly summary, each sentence
+  that states a number not in its data (allowing for rounding) is asked for
+  once more. If the second answer still fails, the sentence is kept and the
+  summary ends with a line saying it holds an unverified figure. Works the same
+  with Ollama, Gemini, OpenAI or any other provider.
+- **The chat agent runs on SQLite and MySQL, not only PostgreSQL.** Its seven
+  tools read through the database layer, and their answers are the same night
+  facts the summaries use. Its prompt no longer tells the model to flag
+  "AHI > 5" for every machine; every number it states must come from a tool
+  result, and a list that was cut short says so. Conversation memory
+  (pgvector) is still PostgreSQL's only; on SQLite and MySQL each question is
+  answered on its own.
+- **`llm_prompt.txt` is machine-neutral.** The example prompt for
+  `LLM_PROMPT_FILE` described an AirSense 10 and asked for AHI severity on
+  every machine; it now grades the AHI only where the data gives one.
 
 ### Fixed
+- **An SD card import no longer reopens finished nights, and the card's
+  files always replace ones built from Bluetooth** (#85, SDD-077). The SD/ZIP
+  import and the collector recorded file sizes differently, so every imported
+  session read as changed on the next pass and was reopened. Both now use one
+  rule (exact bytes, the same file types). Each session file now records
+  where it came from (the card, or built from an AirSense 11 or DreamStation 2
+  over Bluetooth), and every card path, the SD/ZIP import included, replaces a
+  Bluetooth-built copy of the same stretch. A download that only repairs the
+  archive never reopens a session, and a session from any night before the
+  current one is read again but stays completed.
 - **Live O2 Ring samples in bridge mode sit on the same clock as the rest of
   the night.** On PostgreSQL and MySQL they were stamped with the database's
   own `NOW()`, which follows the database server's time zone (UTC in most

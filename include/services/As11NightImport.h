@@ -27,13 +27,15 @@ namespace hms_cpap {
  * stretch through the same grouping and parser a card folder goes through
  * (SessionDiscoveryService::groupLocalFolder, EDFParser::parseSession), under
  * the install's device id, with its files recorded relative to the data
- * directory ("as11/<serial>/DATALOG/<night>/<file>"). That prefix is how a
- * Bluetooth row is told from a card's, whose files are "DATALOG/<night>/...".
+ * directory ("as11/<serial>/DATALOG/<night>/<file>") and their source,
+ * "ble-as11" (SDD-077 D1). The source, not the path, is how a Bluetooth row is
+ * told from a card's.
  *
  * D5, card and Bluetooth on one install: the card wins a stretch it carries.
  * A Bluetooth stretch that overlaps a stored card session in time is not
- * imported, and a card session stored over a Bluetooth row that overlaps it
- * replaces that row (replaceBluetoothRows, called where the card path saves).
+ * imported, and a card session stored over a constructed row that overlaps it
+ * replaces that row (replaceConstructedFiles, SDD-077 D2, called by every card
+ * path after it saves).
  * The two copies of one night need not match: on a bench the machine split
  * the session at its noon boundary into two card files while the stream had
  * one, so the test is overlap, never equality of starts.
@@ -67,11 +69,13 @@ public:
 
     // ── the decisions, pure ─────────────────────────────────────────────
 
-    /// A stored session's span, and whether it came over Bluetooth.
+    /// A stored session's span, and whether it was constructed: it has files
+    /// and none of them is "card" (SDD-077 D1). A row with no file rows at all
+    /// is not known to be constructed, so it is never replaced.
     struct StoredSpan {
         std::chrono::system_clock::time_point start;
         std::chrono::system_clock::time_point end;
-        bool bluetooth = false;
+        bool constructed = false;
     };
 
     /// Two stretches of therapy touch: inclusive on both ends, so a card
@@ -88,31 +92,33 @@ public:
                           const std::chrono::system_clock::time_point& end,
                           const std::vector<StoredSpan>& stored);
 
-    /// D5 for a card session [start, end] just stored: the Bluetooth rows it
-    /// replaces, i.e. every stored Bluetooth span overlapping it.
-    static std::vector<std::chrono::system_clock::time_point> bluetoothRowsReplacedBy(
+    /// D5 for a card session [start, end] just stored: the constructed rows it
+    /// replaces, i.e. every stored constructed span overlapping it.
+    static std::vector<std::chrono::system_clock::time_point> constructedRowsReplacedBy(
         const std::chrono::system_clock::time_point& start,
         const std::chrono::system_clock::time_point& end,
         const std::vector<StoredSpan>& stored);
 
-    /// Is this a Bluetooth night's file path, as the rows record it?
-    static bool isBluetoothPath(const std::string& rel_path);
-
     // ── the database side ───────────────────────────────────────────────
 
     /// Every session of [device_id] whose span touches [start, end], with its
-    /// end taken from session_end, else start plus the stored duration. One
-    /// query for all three engines, through executeQuery.
+    /// end taken from session_end, else start plus the stored duration, and
+    /// whether its files are constructed (their source). One query for all
+    /// three engines, through executeQuery.
     static std::vector<StoredSpan> storedSpansOverlapping(
         IDatabase& db, const std::string& device_id,
         const std::chrono::system_clock::time_point& start,
         const std::chrono::system_clock::time_point& end);
 
-    /// D5 at the card path's save: delete the Bluetooth rows (and their
-    /// children) that overlap the card session [start, end]. Returns how many.
-    static int replaceBluetoothRows(IDatabase& db, const std::string& device_id,
-                                    const std::chrono::system_clock::time_point& start,
-                                    const std::chrono::system_clock::time_point& end);
+    /// SDD-077 D2: a native card file always replaces a constructed one. Every
+    /// card path (the collector, a local folder, the SD and ZIP backfill, the
+    /// reparse) calls this after it saves the card session [start, end]: each
+    /// stored session overlapping it whose files are not "card" is deleted
+    /// with its cpap_session_files rows. The constructed EDFs on disk stay
+    /// (SDD-070 reads them). Returns how many rows it replaced.
+    static int replaceConstructedFiles(IDatabase& db, const std::string& device_id,
+                                       const std::chrono::system_clock::time_point& start,
+                                       const std::chrono::system_clock::time_point& end);
 
     /// Delete one session row and its children, by its start.
     static bool deleteSessionAt(IDatabase& db, const std::string& device_id,

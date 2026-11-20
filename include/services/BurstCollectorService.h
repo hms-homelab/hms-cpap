@@ -144,6 +144,14 @@ public:
         myair_ = std::move(myair);
     }
 
+    /// SDD-078 D2: told the DATALOG folder (YYYYMMDD) of each night
+    /// announceQuietNights closes, on the burst's thread; it must only take
+    /// the event and return. Empty: nobody listens.
+    void setNightClosedListener(std::function<void(const std::string&)> f) {
+        std::lock_guard<std::mutex> lk(night_closed_mu_);
+        night_closed_ = std::move(f);
+    }
+
     /**
      * Check if service is running
      *
@@ -169,17 +177,13 @@ public:
                                         bool cycle_in_flight,
                                         bool request_pending);
 
-    /// The sizes a night is judged "still growing" by: its BRP, PLD and
-    /// oximetry files, as the source lists them. Stored after a fetch, compared
-    /// on the next burst; all equal means the night stopped. The unit is the
-    /// source's: KB from an ez Share, which lists nothing finer, and exact bytes
-    /// from a source that lists them (a FlashAir, a local folder). In KB alone a
-    /// file still being written can grow between two bursts and read as
-    /// unchanged, and a night streamed into a local folder was closed while it
-    /// was still growing. The collector compares only against what it stored,
-    /// so a change of transport costs one re-read of the open night and nothing
-    /// else. An int holds a card file's bytes: residualSkip caps them at 20 MB.
-    static std::map<std::string, int> checkpointSizes(const SessionFileSet& session);
+    /// SDD-077 D5: the night the machine is writing, as the source shows it:
+    /// the newest DATALOG date folder, named on the machine's own clock
+    /// (SDD-074). [card_folders] is the last index, [sessions] what this burst
+    /// found; the newest folder of either. Never the server's today. Only a
+    /// session in this night may reopen. Empty when the source shows none.
+    static std::string currentNightFolder(const std::vector<std::string>& card_folders,
+                                          const std::vector<SessionFileSet>& sessions);
 
     /// Ask the worker to run a burst cycle now rather than waiting out the
     /// rest of its interval. Never starts a second concurrent cycle, and
@@ -357,6 +361,8 @@ private:
     /// SDD-004 optional cloud mirror; null when the feature is off.
     std::shared_ptr<CpapDashSyncService> cpapdash_sync_;
     std::shared_ptr<MyAirService> myair_;
+    std::mutex night_closed_mu_;
+    std::function<void(const std::string&)> night_closed_;   // SDD-078 D2
     std::string device_name_;
     /// SDD-010: the card ROOT when CPAP_SOURCE=local. STR.edf and DATALOG are
     /// siblings INSIDE it. Never the DATALOG folder itself: that was the old
@@ -886,6 +892,7 @@ public:
         machine_clock_ = c;
         machine_clock_loaded_ = true;
     }
+    const MachineClock& machineClockForTest() const { return machine_clock_; }
     const std::map<std::string, FolderWatch>& folderWatchForTest() const { return folder_watch_; }
     const std::map<std::string, StoredListing>& storedListingsForTest() const { return stored_listings_; }
 private:

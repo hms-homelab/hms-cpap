@@ -38,8 +38,14 @@ export class CpapApiService {
     return this.http.get<any>('/api/realtime');
   }
 
-  getSessions(limit = 20, offset = 0): Observable<SessionListItem[]> {
-    const params = new HttpParams().set('limit', limit).set('offset', offset);
+  /**
+   * `opened`: this is the list being opened, not refreshed. SDD-078 D2: the
+   * opening is an event that asks Garmin for a night still missing; a refresh
+   * must not be one, or the refresh timer would become a polling loop.
+   */
+  getSessions(limit = 20, offset = 0, opened = false): Observable<SessionListItem[]> {
+    let params = new HttpParams().set('limit', limit).set('offset', offset);
+    if (opened) params = params.set('opened', 1);
     return this.http.get<SessionListItem[]>('/api/sessions', { params });
   }
 
@@ -505,6 +511,16 @@ export class CpapApiService {
 
   collectOximetry(): Observable<any> {
     return this.http.post<any>('/api/oximetry/collect', {});
+  }
+
+  /** SDD-078: "Fetch from Garmin now" (an event, D2). 202 accepted, 409 when not set up. */
+  garminFetch(): Observable<any> {
+    return this.http.post<any>('/api/garmin/fetch', {});
+  }
+
+  /** SDD-078 D4: the code Garmin asked for, entered on the Devices page. */
+  garminMfa(code: string): Observable<any> {
+    return this.http.post<any>('/api/garmin/mfa', { code });
   }
 
   exportSleepHq(date: string): Observable<any> {

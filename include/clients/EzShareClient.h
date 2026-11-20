@@ -128,6 +128,9 @@ public:
 
     void beginRefresh() override;
     bool needsFullRefresh(const std::string& card_path, const std::string& local_path) override;
+    void setBurstScope(const BurstScope& scope) override;
+    bool givesFileStamps() const override { return !no_listing_; }
+    bool takeMachineOffset(long long& offset_s) override;
 
     bool supportsRange() const override { return supports_range_; }
     void setSupportsRange(bool v) { supports_range_ = v; }
@@ -175,10 +178,38 @@ private:
     std::map<std::string, unsigned> alias_scan_attempts_;
     std::map<std::string, std::map<std::time_t, unsigned>> alias_checked_generation_;
     std::map<std::string, std::map<std::time_t, std::set<std::string>>> alias_missing_;
-    std::set<std::time_t> scanAliases(const std::string& folder);
+    std::set<std::time_t> scanAliases(const std::string& folder, int misses_allowed,
+                                      std::set<std::time_t>* fresh = nullptr);
     std::string readRange(const std::string& path, size_t first, size_t last);
     static std::string folderForStart(std::time_t start);
     void refreshSessions();
+    void loadSessions(const std::string& str_path);
+
+    // SDD-069: a live night on this card. Until the collector says what a
+    // burst is for, every burst is a full scan, as before SDD-069.
+    BurstScope scope_{0, true, false, false};
+    /// When this burst's scope arrived: P5 reads the host's clock as the
+    /// burst's time plus what has passed since, since a burst can be long.
+    std::chrono::steady_clock::time_point scope_set_at_ = std::chrono::steady_clock::now();
+    /// What the probes have said of one file (by card path).
+    struct LiveFile {
+        uint64_t size = 0;
+        std::string count;          ///< EDF bytes 236-243, the record count
+        long long duration_s = 0;   ///< EDF bytes 244-251, the record duration
+        long long last_growth = 0;  ///< the burst that first saw it, or saw it move
+        long long last_probe = 0;   ///< the last burst a probe of it answered
+        int unchanged = 0;          ///< bursts since then that saw nothing move (P3)
+        bool short_copy = false;    ///< its last transfer stopped before its end (P4)
+    };
+    std::map<std::string, LiveFile> live_;
+    bool offset_seen_ = false;
+    long long offset_s_ = 0;
+    long long str_refused_at_ = -1;   ///< the burst whose STR refusal was logged
+    void observeProbe(const std::string& path, uint64_t size, const std::string& tail);
+    bool settled(const LiveFile& f) const;
+    /// P6: the files of [folder] probed on a burst that is not a full scan:
+    /// the open sessions' every burst, the others at SDD-054 D4's checkpoints.
+    std::set<std::string> probedThisBurst(const std::string& folder);
     std::vector<EzShareFileEntry> enumerateFiles(const std::string& folder);
     uint64_t probe(const std::string& path, bool* confirmed_missing = nullptr);
     bool downloadChunks(const std::string& path, const std::string& local,

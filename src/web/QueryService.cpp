@@ -467,7 +467,13 @@ Json::Value QueryService::getSessionDetail(const std::string& date) {
         " m.avg_event_duration, m.max_event_duration, m.time_in_apnea_percent,"
         " m.avg_spo2, m.min_spo2, m.spo2_drops, m.odi,"
         " m.avg_heart_rate, m.min_heart_rate, m.max_heart_rate,"
-        " COALESCE(d.mode, 0) as therapy_mode"
+        " COALESCE(d.mode, 0) as therapy_mode,"
+        // SDD-077 D1: where the session's files came from, so a night says
+        // whether it is the card's or built from a Bluetooth stream. 'card'
+        // when any file is the card's; NULL when no file is recorded.
+        " (SELECT CASE WHEN SUM(CASE WHEN COALESCE(f.source, 'card') = 'card' THEN 1 ELSE 0 END) > 0"
+        "              THEN 'card' ELSE MIN(f.source) END"
+        "    FROM cpap_session_files f WHERE f.session_id = s.id) as source"
         " FROM cpap_sessions s"
         " LEFT JOIN cpap_session_metrics m ON m.session_id = s.id"
         " LEFT JOIN cpap_daily_summary d ON d.device_id = s.device_id"
@@ -1089,6 +1095,30 @@ Json::Value QueryService::getSessionOximetry(const std::string& date, int interv
     // do not count (see recordsMovement), so the UI can hide a movement chart
     // that would show only those.
     result["motion_available"] = motion_available;
+
+    // SDD-078 D3: where the night's recordings came from, so the page can say
+    // "Oximetry - Garmin Fenix 7X" instead of assuming a ring. One entry per
+    // distinct source and device, in the order they started. A row stored
+    // before the column existed and not yet backfilled reads as the ring's.
+    const std::string oq =
+        "SELECT COALESCE(os.source, 'o2ring') AS source, COALESCE(os.device_name, '') AS device_name,"
+        " MIN(os.start_time) AS first_start"
+        " FROM oximetry_sessions os"
+        " WHERE os.device_id = " + sql::param(1, dt_) +
+        " AND " + sql::sleepDay("os.start_time", dt_) + " = " + sql::castDate(2, dt_) +
+        " AND " + sql::oxiNotSuperseded("os", dt_) +
+        " GROUP BY COALESCE(os.source, 'o2ring'), COALESCE(os.device_name, '')"
+        " ORDER BY first_start";
+    Json::Value sources(Json::arrayValue);
+    for (const auto& r : query(oq, {kOximetryDeviceId, sleep_day})) {
+        Json::Value o(Json::objectValue);
+        o["source"]      = r.get("source", "o2ring").asString();
+        o["device_name"] = r.get("device_name", "").asString();
+        sources.append(o);
+    }
+    result["sources"]     = sources;
+    result["source"]      = sources.empty() ? Json::Value(Json::nullValue) : sources[0u]["source"];
+    result["device_name"] = sources.empty() ? Json::Value(Json::nullValue) : sources[0u]["device_name"];
     return result;
 }
 

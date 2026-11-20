@@ -145,6 +145,45 @@ std::string eveText(const std::string& e) {
 }
 bool isCsr(const std::string& e) { return e.rfind("Csr", 0) == 0 || e.rfind("CSR", 0) == 0; }
 
+// SDD-070: what a night got from its stored pages, kept beside them
+// (stored/<night>/filled.json) so its EVE is right after a restart too:
+//   {"head": first stored BRP's first sample, ms (0: none),
+//    "gaps": [[start ms, end ms], ...] the mask-on minutes the stream missed}
+// A stored or live event in a gap has its home there; the EVE goes under the
+// night's first BRP, streamed or stored.
+struct Filled {
+    int64_t head_ms = 0;
+    std::vector<StoredSpan> gaps;
+};
+
+fs::path filledPath(const std::string& root, const std::string& night) {
+    return fs::path(storedNightDir(root, night)) / "filled.json";
+}
+
+Filled readFilled(const std::string& root, const std::string& night) {
+    Filled out;
+    std::ifstream in(filledPath(root, night));
+    if (!in) return out;
+    std::stringstream ss; ss << in.rdbuf();
+    const auto j = nlohmann::json::parse(ss.str(), nullptr, false);
+    if (!j.is_object()) return out;
+    if (j.contains("head") && j["head"].is_number_integer()) out.head_ms = j["head"].get<int64_t>();
+    if (j.contains("gaps") && j["gaps"].is_array())
+        for (const auto& r : j["gaps"])
+            if (r.is_array() && r.size() == 2 && r[0].is_number_integer() && r[1].is_number_integer())
+                out.gaps.push_back({r[0].get<int64_t>(), r[1].get<int64_t>()});
+    return out;
+}
+
+bool keepFilled(const std::string& root, const std::string& night, const Filled& f) {
+    nlohmann::json j;
+    j["head"] = f.head_ms;
+    j["gaps"] = nlohmann::json::array();
+    for (const auto& g : f.gaps) j["gaps"].push_back({g.start_ms, g.end_ms});
+    const std::string text = j.dump();
+    return writeFileAtomic(filledPath(root, night), std::vector<uint8_t>(text.begin(), text.end()));
+}
+
 } // namespace
 
 // ── clocks ──
@@ -383,6 +422,77 @@ std::vector<StoredSpan> As11NightWriter::streamedSpans(const std::string& serial
     return out;
 }
 
+std::string As11NightWriter::nightFor(const std::string& serial, int64_t utc_ms) const {
+    std::lock_guard<std::mutex> lk(mtx_);
+    return sleepDayFolder(clockFor(serial)(utc_ms));
+}
+
+int As11NightWriter::writeStoredGaps(const std::string& serial, const std::string& night,
+                                     const std::vector<StoredSpan>& mask_on) {
+    int written = 0;
+    std::function<void(const std::string&)> hook;
+    {
+        std::lock_guard<std::mutex> lk(mtx_);
+        written = fillStoredGaps(serial, night, mask_on);
+        hook = night_ended_;
+    }
+    // Outside the lock, as after onStreamEnd: the night is imported again.
+    if (hook) hook(serial);
+    return written;
+}
+
+int As11NightWriter::fillStoredGaps(const std::string& serial, const std::string& night,
+                                    const std::vector<StoredSpan>& mask_on) {
+    using namespace cpapdash::parser;
+    std::vector<StoredSpan> streamed;
+    for (const auto& s : machine(serial).segments)
+        if (s.night == night && !s.starts.empty()) streamed.push_back({s.start_ms, s.end_ms});
+    const auto gaps = gapsToFill(mask_on, streamed);
+    // A night the stream covered still gets the stored events it missed.
+    if (gaps.empty()) { writeEvents(serial, night); return 0; }
+
+    const std::string root = rootFor(serial);
+    auto chunksOf = [&](const char* spool) { return storedChunks(keptStoredPages(root, night, spool)); };
+    const auto brp_runs = storedRuns(chunksOf("RespiratoryFlow6p25Hz"), chunksOf("MaskPressure6p25Hz"), gaps);
+    const auto pld_runs = storedRuns(chunksOf("InspiratoryPressure0p5Hz"), chunksOf("Leak0p5Hz"), gaps);
+
+    int mid = 0, vid = 0;
+    modelOf(root, &mid, &vid);
+    const fs::path dir = fs::path(root) / "DATALOG" / night;
+    int written = 0;
+    // A name already in the folder is a streamed or card minute, or this
+    // run written before: never replaced (D3). True when the file is there.
+    auto put = [&](const WallClock& wc, const char* kind, const std::vector<uint8_t>& edf) {
+        const fs::path path = dir / resmedFileName(wc, kind);
+        std::error_code ec;
+        if (edf.empty()) return false;
+        if (fs::exists(path, ec)) return true;
+        if (!writeCardFile(root, path, edf, serial)) return false;
+        written++;
+        return true;
+    };
+    Filled filled;
+    filled.gaps = gaps;
+    for (const auto& r : brp_runs) {
+        const WallClock wc = clockFor(serial)(r.start_ms);
+        if (put(wc, "BRP", writeStoredBRP(wc, serial, r.a, r.b, mid, vid)) && filled.head_ms == 0)
+            filled.head_ms = r.start_ms;   // runs are in time order
+    }
+    for (const auto& r : pld_runs) {
+        StreamedPLD p;
+        p.start = clockFor(serial)(r.start_ms);
+        p.serial = serial;
+        p.press_cmh2o = r.a;   // inspiratory pressure
+        p.leak_lps = r.b;
+        put(p.start, "PLD", writeCardPLD(p, mid, vid));
+    }
+    // What was filled, then the night's EVE and CSL with the stored events (D4).
+    if (!keepFilled(root, night, filled))
+        std::cerr << "AirSense11 night: could not keep the stored runs of " << night << std::endl;
+    writeEvents(serial, night);
+    return written;
+}
+
 void As11NightWriter::writeSegment(const std::string& serial, const Segment& seg) {
     using namespace cpapdash::parser;
     const auto blocks = readSegment(seg.file);
@@ -492,20 +602,38 @@ void As11NightWriter::writeSegment(const std::string& serial, const Segment& seg
 void As11NightWriter::writeEvents(const std::string& serial, const std::string& night) {
     using namespace cpapdash::parser;
     Machine& m = machines_[serial];
-    std::vector<const Segment*> segs;
-    for (const auto& s : m.segments)
-        if (s.night == night && !s.starts.empty()) segs.push_back(&s);
-    if (segs.empty()) return;
-    const Segment* head = segs.front();
     const fs::path root = rootFor(serial);
+    // An event's home: a streamed segment, or a mask-on gap the stored pages
+    // filled (SDD-070). The night's EVE and CSL go under its first BRP:
+    // the stream's or the stored one, whichever is earlier.
+    std::vector<StoredSpan> homes;
+    for (const auto& s : m.segments)
+        if (s.night == night && !s.starts.empty()) homes.push_back({s.start_ms, s.end_ms});
+    const int64_t stream_head = homes.empty() ? 0 : homes.front().start_ms;
+    const Filled filled = readFilled(root.string(), night);
+    homes.insert(homes.end(), filled.gaps.begin(), filled.gaps.end());
+    if (homes.empty()) return;
+    std::sort(homes.begin(), homes.end(),
+              [](const StoredSpan& a, const StoredSpan& b) { return a.start_ms < b.start_ms; });
+    int64_t head_ms = stream_head;
+    if (filled.head_ms != 0 && (head_ms == 0 || filled.head_ms < head_ms)) head_ms = filled.head_ms;
+    if (head_ms == 0) head_ms = homes.front().start_ms;   // stored events, no waveform at all
+    // An event before the head has no file to sit in: left out.
+    auto homed = [&](int64_t t) {
+        if (t < head_ms) return false;
+        const StoredSpan* home = nullptr;
+        for (const auto& h : homes) if (h.start_ms <= t) home = &h;
+        return home && t <= home->end_ms + kEventTailMs;
+    };
 
     ResMedAnnotationFile eve, csl;
-    eve.start = csl.start = clockFor(serial)(head->start_ms);
+    eve.start = csl.start = clockFor(serial)(head_ms);
     eve.serial = csl.serial = serial;
     modelOf(root, &eve.model_id, &eve.vid);
     csl.model_id = eve.model_id;
     csl.vid = eve.vid;
 
+    std::vector<std::pair<int64_t, std::string>> live;   // (time, EVE text) of each scored live event
     std::ifstream in(root / "stream" / "events.jsonl");
     for (std::string line; std::getline(in, line);) {
         const auto j = nlohmann::json::parse(line, nullptr, false);
@@ -517,16 +645,29 @@ void As11NightWriter::writeEvents(const std::string& serial, const std::string& 
         // Scored events are stamped at their end, as the card's are; a CSR
         // mark is moved back to when the stretch began.
         if (csr) t -= std::max(0, j.value("backdateSeconds", 0)) * 1000LL;
-        const Segment* home = nullptr;
-        for (const auto* s : segs) if (s->start_ms <= t) home = s;
-        if (!home || t > home->end_ms + kEventTailMs) continue;
-        const double onset = static_cast<double>((t - head->start_ms + 500) / 1000);
+        if (!homed(t)) continue;
+        const double onset = static_cast<double>((t - head_ms + 500) / 1000);
         if (csr) {
             csl.annotations.push_back({onset, 0.0, name.find("Start") != std::string::npos ? "CSR Start" : "CSR End"});
         } else {
             eve.annotations.push_back({onset, static_cast<double>(std::max(0, j.value("durationSeconds", 0))),
                                        eveText(name) + (j.value("historical", false) && j.value("durationSeconds", -1) < 0 ? " [BT duration unknown]" : "")});
+            live.emplace_back(t, eveText(name));   // its kind, for the stored-event match below
         }
+    }
+
+    // The machine's stored events (D4), on the card's time as the live ones
+    // are. One the stream already gave (same kind, within 2 s) is kept once.
+    for (const auto& e : storedEvents(keptStoredPages(root.string(), night, kStoredEventsSpool))) {
+        const std::string name = storedEventName(e.type);
+        if (name.empty() || !homed(e.onset_ms)) continue;
+        const std::string text = eveText(name);
+        const bool streamed = std::any_of(live.begin(), live.end(), [&](const auto& l) {
+            return l.second == text && std::llabs(l.first - e.onset_ms) <= kStoredEventMatchMs;
+        });
+        if (streamed) continue;
+        eve.annotations.push_back({static_cast<double>((e.onset_ms - head_ms + 500) / 1000),
+                                   static_cast<double>(std::max<int64_t>(0, e.duration_ms)) / 1000.0, text});
     }
     auto byOnset = [](const EDFWriteAnnotation& a, const EDFWriteAnnotation& b) { return a.onset_s < b.onset_s; };
     std::sort(eve.annotations.begin(), eve.annotations.end(), byOnset);
@@ -535,6 +676,17 @@ void As11NightWriter::writeEvents(const std::string& serial, const std::string& 
     auto stamped = [](std::vector<uint8_t> edf) { stampHeaderChecksums(edf); return edf; };
     writeCardFile(root, dir / resmedFileName(eve.start, "EVE"), stamped(writeResMedAnnotations(eve)), serial);
     writeCardFile(root, dir / resmedFileName(csl.start, "CSL"), stamped(writeResMedAnnotations(csl)), serial);
+    // A stored run before the stream moved the night's head: the pair written
+    // under the stream's first segment would be a second EVE, its events read
+    // twice. It was ours (named by a streamed block), so it goes.
+    if (stream_head != 0 && stream_head != head_ms) {
+        const WallClock old = clockFor(serial)(stream_head);
+        if (resmedFileName(old, "EVE") != resmedFileName(eve.start, "EVE")) {
+            std::error_code ec;
+            fs::remove(dir / resmedFileName(old, "EVE"), ec);
+            fs::remove(dir / resmedFileName(old, "CSL"), ec);
+        }
+    }
 }
 
 bool writeIdentification(const std::string& root, const std::string& result_json) {

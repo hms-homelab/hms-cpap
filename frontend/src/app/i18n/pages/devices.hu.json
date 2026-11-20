@@ -17,7 +17,8 @@
       "ezshare": "ez Share kártya",
       "flashair": "FlashAir kártya",
       "as11_ble": "AirSense 11 (Bluetooth)",
-      "ds2_ble": "DreamStation 2 (Bluetooth)"
+      "ds2_ble": "DreamStation 2 (Bluetooth)",
+      "garmin": "Garmin"
     },
     "presence": {
       "yes": "itt van",
@@ -233,6 +234,34 @@
         "spl_drain": "Puffer kiürítve eddig"
       },
       "nextBoot": "a következő indításkor lép életbe"
+    },
+    "garmin": {
+      "signedInAs": "Bejelentkezve mint {{email}}",
+      "notSetUp": "A kezdéshez adja meg a Garmin-fiókot a Beállításokban.",
+      "signedOut": "Még nincs bejelentkezve: a hms-cpap a következő eseménynél jelentkezik be, vagy a Lekérés a Garmintól most gombbal.",
+      "signingIn": "Bejelentkezés a Garminba...",
+      "readAfter": "Az éjszaka után olvassuk a Garmin Connectből, soha nem közben.",
+      "watch": "Óra",
+      "lastFetch": "Utolsó lekérés",
+      "fetchStored": "Tárolt éjszakák: {{n}}",
+      "fetchNothing": "Nincs újdonság. A még hiányzó éjszakát a következő eseménynél újra kérjük.",
+      "fetchNow": "Lekérés a Garmintól most",
+      "fetching": "Lekérés...",
+      "asked": "Kérve. A kártya mutatja az eredményt.",
+      "mfaNote": "A Garmin kódot küldött a bejelentkezés befejezéséhez. Írja be ide.",
+      "code": "Kód a Garmintól",
+      "submitCode": "Bejelentkezés",
+      "checking": "Ellenőrzés...",
+      "openSettings": "Garmin-fiók: Beállítások",
+      "err": {
+        "changed": "A Garmin megváltoztatta a bejelentkezést; frissítse a hms-cpapot",
+        "bad_password": "A Garmin elutasította az e-mail-címet vagy a jelszót. Ellenőrizze őket a Beállításokban.",
+        "bad_mfa_code": "A Garmin nem fogadta el a kódot. Próbálja újra.",
+        "blocked": "A Garmin egyelőre elutasítja ezt a bejelentkezést. A következő eseménynél újra próbáljuk.",
+        "unreachable": "A Garmin nem válaszolt. A következő eseménynél újra próbáljuk.",
+        "expired": "A Garmin új bejelentkezést kér.",
+        "failed": "Garmin: {{message}}"
+      }
     },
     "o2ring": {
       "throughBridge": "{{url}} címen át olvasva, nem ennek a számítógépnek a Bluetooth-ján.",

@@ -1,22 +1,29 @@
 #include "agent/AgentService.h"
-#ifdef WITH_POSTGRESQL
-#include "utils/ConfigManager.h"
+#include "services/NightFacts.h"
 #include <nlohmann/json.hpp>
+#ifdef WITH_POSTGRESQL
 #include <pqxx/pqxx>
+#endif
 #include <chrono>
 #include <future>
 #include <iostream>
+#include <optional>
 
 namespace hms_cpap {
 
 AgentService::AgentService(const Config& config,
                            std::shared_ptr<hms::MqttClient> mqtt,
-                           std::shared_ptr<IAgentLLM> llm)
+                           std::shared_ptr<IAgentLLM> llm,
+                           std::shared_ptr<IDatabase> db)
     : config_(config)
     , mqtt_(std::move(mqtt))
     , llm_(std::move(llm))
+    , db_(std::move(db))
     , tools_(std::make_unique<AgentTools>(config.device_id))
-    , memory_(std::make_unique<AgentMemory>(config.device_id)) {}
+#ifdef WITH_POSTGRESQL
+    , memory_(std::make_unique<AgentMemory>(config.device_id))
+#endif
+{}
 
 AgentService::~AgentService() {
     stop();
@@ -25,15 +32,28 @@ AgentService::~AgentService() {
 void AgentService::start() {
     if (running_) return;
 
-    // Ensure DB schema
-    try {
-        pqxx::connection conn(config_.db_connection_string);
-        memory_->ensureSchema(conn);
-        std::cout << "Agent: Memory schema ready" << std::endl;
-    } catch (const std::exception& e) {
-        std::cerr << "Agent: Schema setup failed: " << e.what() << std::endl;
+    // SDD-072 D4: the tools need the database, on whichever engine it is.
+    if (!db_ || !db_->isConnected()) {
+        std::cerr << "Agent: no database connection, not started" << std::endl;
         return;
     }
+
+#ifdef WITH_POSTGRESQL
+    // The pgvector memory is PostgreSQL's; elsewhere there is none.
+    if (db_->dbType() == DbType::POSTGRESQL && !config_.db_connection_string.empty()) {
+        try {
+            pqxx::connection conn(config_.db_connection_string);
+            memory_->ensureSchema(conn);
+            memory_enabled_ = true;
+            std::cout << "Agent: Memory schema ready" << std::endl;
+        } catch (const std::exception& e) {
+            std::cerr << "Agent: Memory schema setup failed, answering without memory: "
+                      << e.what() << std::endl;
+        }
+    }
+#endif
+    if (!memory_enabled_)
+        std::cout << "Agent: no conversation memory on this engine" << std::endl;
 
     // Subscribe to query topic
     std::string query_topic = "cpap/" + config_.device_id + "/agent/query";
@@ -80,38 +100,44 @@ void AgentService::onQuery(const std::string& payload) {
             return;
         }
 
-        pqxx::connection conn(config_.db_connection_string);
+        std::vector<ConversationContext> convos;
+        std::vector<MemoryFact> facts;
+        std::vector<float> embedding;
+        std::vector<std::pair<std::string, std::string>> prior_msgs;
+#ifdef WITH_POSTGRESQL
+        std::optional<pqxx::connection> conn;
+        if (memory_enabled_) {
+            conn.emplace(config_.db_connection_string);
 
-        // Get or create conversation
-        conv_id = memory_->getOrCreateConversation(conn, conv_id);
+            // Get or create conversation
+            conv_id = memory_->getOrCreateConversation(*conn, conv_id);
 
-        // Parallel phase: embed query + search memory
-        auto mem_future = std::async(std::launch::async, [&]() {
-            struct MemResult {
-                std::vector<ConversationContext> convos;
-                std::vector<MemoryFact> facts;
-                std::vector<float> embedding;
-            };
-            MemResult result;
-            try {
-                result.embedding = llm_->embed(text);
-                pqxx::connection mem_conn(config_.db_connection_string);
-                result.convos = memory_->searchSimilar(mem_conn, result.embedding, config_.memory_limit);
-                result.facts = memory_->searchFacts(mem_conn, result.embedding, 5);
-            } catch (const std::exception& e) {
-                std::cerr << "Agent: Memory search error: " << e.what() << std::endl;
-            }
-            return result;
-        });
+            // Parallel phase: embed query + search memory
+            auto mem_future = std::async(std::launch::async, [&]() {
+                try {
+                    embedding = llm_->embed(text);
+                    pqxx::connection mem_conn(config_.db_connection_string);
+                    convos = memory_->searchSimilar(mem_conn, embedding, config_.memory_limit);
+                    facts = memory_->searchFacts(mem_conn, embedding, 5);
+                } catch (const std::exception& e) {
+                    std::cerr << "Agent: Memory search error: " << e.what() << std::endl;
+                }
+            });
 
-        // Get prior messages while memory search runs
-        auto prior_msgs = memory_->getMessages(conn, conv_id, config_.max_context);
-
-        // Wait for memory results
-        auto mem_result = mem_future.get();
+            // Get prior messages while memory search runs
+            prior_msgs = memory_->getMessages(*conn, conv_id, config_.max_context);
+            mem_future.get();
+        }
+#endif
+        if (conv_id.empty()) {
+            // No memory to issue one: the reply still names its exchange.
+            conv_id = "local-" + std::to_string(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::system_clock::now().time_since_epoch()).count());
+        }
 
         // Build messages
-        std::string system_prompt = buildSystemPrompt(mem_result.convos, mem_result.facts);
+        std::string system_prompt = buildSystemPrompt(convos, facts);
         std::vector<hms::ChatMessage> messages;
         messages.push_back({"system", system_prompt, {}, ""});
 
@@ -123,17 +149,21 @@ void AgentService::onQuery(const std::string& payload) {
         // Run tool-use loop
         std::string response_text = runToolLoop(messages);
 
-        // Store conversation
-        memory_->storeMessage(conn, conv_id, "user", text, mem_result.embedding);
-        memory_->storeMessage(conn, conv_id, "assistant", response_text);
+#ifdef WITH_POSTGRESQL
+        if (memory_enabled_ && conn) {
+            // Store conversation
+            memory_->storeMessage(*conn, conv_id, "user", text, embedding);
+            memory_->storeMessage(*conn, conv_id, "assistant", response_text);
 
-        // Update summary
-        std::string summary = text.substr(0, 100) + " -> " + response_text.substr(0, 100);
-        std::vector<float> summary_emb;
-        try {
-            summary_emb = llm_->embed(summary);
-        } catch (...) {}
-        memory_->updateSummary(conn, conv_id, summary, summary_emb);
+            // Update summary
+            std::string summary = text.substr(0, 100) + " -> " + response_text.substr(0, 100);
+            std::vector<float> summary_emb;
+            try {
+                summary_emb = llm_->embed(summary);
+            } catch (...) {}
+            memory_->updateSummary(*conn, conv_id, summary, summary_emb);
+        }
+#endif
 
         // Publish response
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -166,24 +196,38 @@ void AgentService::publishStatus(const std::string& status) {
     mqtt_->publish(topic, j.dump(), 1, true);
 }
 
-std::string AgentService::buildSystemPrompt(
-    const std::vector<ConversationContext>& similar_convos,
-    const std::vector<MemoryFact>& facts) {
-
+std::string AgentService::basePrompt() {
+    // SDD-072 D4: no "AHI > 5" grading for every machine (SDD-024: an index
+    // that is not an AHI must not be graded); D2's rules instead, and every
+    // number from a tool result.
     std::string prompt = R"(You are a CPAP therapy assistant that helps users understand their sleep apnea treatment data.
 
 You have access to tools that query the user's CPAP therapy database. Use these tools to answer questions with specific data.
 
 Guidelines:
 - Always use tools to look up data rather than guessing
-- Present numbers with appropriate precision (AHI to 2 decimal places, durations in hours:minutes)
+- Every number you state must come from a tool result. Never fill a gap: if a figure is not in a result, say it is not available
+- Each tool result carries "rules"; follow them
+- When a result says it was capped, say that the list is not complete
+- Report the AHI only where a result gives one. Where it says the AHI is not available, the machine does not detect hypopneas: do not estimate an AHI or describe the events as mild, normal or severe
+- Present numbers with the precision the tool result gives them
 - Explain medical metrics in plain language when relevant
-- Flag concerning trends (AHI > 5, SpO2 < 90%, compliance < 4 hours)
 - Be encouraging about positive trends
 - If data is not available, say so clearly
 - Use the get_daily_summary tool for official ResMed stats, get_recent_sessions for detailed session data
 - When comparing periods, use the compare_periods tool
 )";
+    prompt += "\nRules:\n";
+    prompt += std::string("- ") + night_facts::kEventLabelRule + "\n";
+    prompt += std::string("- ") + night_facts::kUngradedRule + "\n";
+    return prompt;
+}
+
+std::string AgentService::buildSystemPrompt(
+    const std::vector<ConversationContext>& similar_convos,
+    const std::vector<MemoryFact>& facts) {
+
+    std::string prompt = basePrompt();
 
     if (!facts.empty()) {
         prompt += "\nRelevant facts about this user:\n";
@@ -205,8 +249,6 @@ Guidelines:
 }
 
 std::string AgentService::runToolLoop(std::vector<hms::ChatMessage>& messages) {
-    std::vector<std::string> tools_used;
-
     for (int i = 0; i < config_.max_iterations; ++i) {
         if (abort_) return "Query was cancelled.";
 
@@ -222,15 +264,11 @@ std::string AgentService::runToolLoop(std::vector<hms::ChatMessage>& messages) {
             assistant_msg.tool_calls = resp.tool_calls;
             messages.push_back(assistant_msg);
 
-            // Execute each tool call
-            pqxx::connection conn(config_.db_connection_string);
+            // Execute each tool call, through the database layer (SDD-072 D4)
             for (const auto& tc : resp.tool_calls) {
-                std::string result = tools_->execute(tc.name, tc.arguments, conn);
-                tools_used.push_back(tc.name);
-
                 hms::ChatMessage tool_msg;
                 tool_msg.role = "tool";
-                tool_msg.content = result;
+                tool_msg.content = tools_->execute(tc.name, tc.arguments, *db_);
                 tool_msg.tool_call_id = tc.id;
                 messages.push_back(tool_msg);
             }
@@ -246,4 +284,3 @@ std::string AgentService::runToolLoop(std::vector<hms::ChatMessage>& messages) {
 }
 
 } // namespace hms_cpap
-#endif // WITH_POSTGRESQL

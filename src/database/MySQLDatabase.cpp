@@ -465,6 +465,7 @@ void MySQLDatabase::createSchema() {
             session_id  INT NOT NULL,
             kind        VARCHAR(8) NOT NULL,
             rel_path    VARCHAR(512) NOT NULL,
+            source      VARCHAR(16),
             UNIQUE KEY uq_session_file (session_id, rel_path(255)),
             KEY idx_session_files_session (session_id),
             KEY idx_session_files_path (rel_path(255))
@@ -698,6 +699,8 @@ void MySQLDatabase::createSchema() {
             valid_samples    INT,
             total_samples    INT,
             cpap_session_date VARCHAR(8),
+            source           VARCHAR(32),
+            device_name      VARCHAR(255),
             created_at       DATETIME NOT NULL DEFAULT NOW(),
             -- Every oximetry read path filters on exactly this pair. Declared
             -- inline rather than as a separate CREATE INDEX so re-running the
@@ -1059,6 +1062,10 @@ void MySQLDatabase::migrateSchema() {
         // stored before. No default: NULL is "not counted yet" (see below).
         {"cpap_session_metrics", "unclassified_apneas",    "INT"},
 
+        // SDD-077 D1: where each session file came from. No default: NULL is
+        // "not filled yet" (see below).
+        {"cpap_session_files", "source",                   "VARCHAR(16)"},
+
         // Session bookkeeping the collector and SleepHQ export both read.
         {"cpap_sessions", "session_end",       "DATETIME"},
         {"cpap_sessions", "data_records",      "INT DEFAULT 0"},
@@ -1118,6 +1125,9 @@ void MySQLDatabase::migrateSchema() {
         {"oximetry_sessions", "odi_3pct",      "DOUBLE"},
         {"oximetry_sessions", "desat_count",   "INT"},
         {"oximetry_sessions", "cpap_session_date", "VARCHAR(8)"},
+        // SDD-078 D3: where each recording came from (backfilled below).
+        {"oximetry_sessions", "source",        "VARCHAR(32)"},
+        {"oximetry_sessions", "device_name",   "VARCHAR(255)"},
         {"oximetry_samples",  "spo2",          "INT"},
         {"oximetry_samples",  "motion",        "INT"},
         {"oximetry_samples",  "vibration",     "INT"},
@@ -1176,6 +1186,10 @@ void MySQLDatabase::migrateSchema() {
                   << std::endl;
     }
 
+    // SDD-078 D3: a recording stored before it had a source reads as the
+    // ring's, or as an upload where the upload page stored it.
+    if (tableExists("oximetry_sessions")) exec(sql::oxiSourceBackfill());
+
     // SDD-047 D2: a metrics row that predates unclassified_apneas is counted
     // from its own stored events, once; every save after this writes the
     // parser's count. Idempotent: a counted row is never NULL again.
@@ -1184,6 +1198,15 @@ void MySQLDatabase::migrateSchema() {
          "                                 WHERE e.session_id = m.session_id"
          "                                   AND e.event_type = 'Apnea')"
          " WHERE m.unclassified_apneas IS NULL");
+
+    // SDD-077 D1: a file row that predates source is filled from its path,
+    // once; that is the last time the path decides anything. Idempotent: a
+    // filled row is never NULL again.
+    exec("UPDATE cpap_session_files"
+         "   SET source = CASE WHEN rel_path LIKE 'as11/%' THEN 'ble-as11'"
+         "                     WHEN rel_path LIKE 'ds2/%'  THEN 'ble-ds2'"
+         "                     ELSE 'card' END"
+         " WHERE source IS NULL");
 
     // Split ResMed's lifetime PatientHours counter out of patient_hours, which
     // two writers had been filling with two different quantities. Runs after the
@@ -2446,14 +2469,18 @@ bool MySQLDatabase::replaceSessionFiles(
 
     int session_id = -1;
     {
+        // The nearest row within 5 s wins (SDD-077 D2): a card session saved
+        // a few seconds off a Bluetooth row must get its own files.
         const char* sql = "SELECT id FROM cpap_sessions WHERE device_id = ? "
-                          "AND ABS(TIMESTAMPDIFF(SECOND, session_start, ?)) <= 5 LIMIT 1";
+                          "AND ABS(TIMESTAMPDIFF(SECOND, session_start, ?)) <= 5 "
+                          "ORDER BY ABS(TIMESTAMPDIFF(SECOND, session_start, ?)) LIMIT 1";
         MysqlStmtGuard g;
         g.stmt = mysql_stmt_init(conn_);
         if (mysql_stmt_prepare(g.stmt, sql, std::strlen(sql)) != 0) return false;
-        ParamBinder p(2);
+        ParamBinder p(3);
         p.bindText(0, device_id);
         p.bindText(1, ts);
+        p.bindText(2, ts);
         mysql_stmt_bind_param(g.stmt, p.data());
         if (mysql_stmt_execute(g.stmt) != 0) return false;
         ResultBinder r(1);
@@ -2477,14 +2504,15 @@ bool MySQLDatabase::replaceSessionFiles(
 
     for (const auto& f : files) {
         const char* sql = "INSERT IGNORE INTO cpap_session_files "
-                          "(session_id, kind, rel_path) VALUES (?, ?, ?)";
+                          "(session_id, kind, rel_path, source) VALUES (?, ?, ?, ?)";
         MysqlStmtGuard g;
         g.stmt = mysql_stmt_init(conn_);
         if (mysql_stmt_prepare(g.stmt, sql, std::strlen(sql)) != 0) return false;
-        ParamBinder p(3);
+        ParamBinder p(4);
         p.bindInt(0, session_id);
         p.bindText(1, f.kind);
         p.bindText(2, f.rel_path);
+        p.bindText(3, f.source);
         mysql_stmt_bind_param(g.stmt, p.data());
         if (mysql_stmt_execute(g.stmt) != 0) {
             std::cerr << "MySQL: replaceSessionFiles insert error: "
@@ -2503,7 +2531,7 @@ std::vector<SessionFileRef> MySQLDatabase::getSessionFilesForDateFolder(
 
     const std::string pattern = "%DATALOG/" + date_folder + "/%";
     const char* sql = R"(
-        SELECT f.kind, f.rel_path
+        SELECT f.kind, f.rel_path, COALESCE(f.source, 'card')
         FROM cpap_session_files f
         JOIN cpap_sessions s ON s.id = f.session_id
         WHERE s.device_id = ? AND f.rel_path LIKE ?
@@ -2518,13 +2546,14 @@ std::vector<SessionFileRef> MySQLDatabase::getSessionFilesForDateFolder(
     mysql_stmt_bind_param(g.stmt, p.data());
     if (mysql_stmt_execute(g.stmt) != 0) return out;
 
-    ResultBinder r(2);
+    ResultBinder r(3);
     r.bindColString(0, 16);
     r.bindColStringN(1, 512);
+    r.bindColString(2, 16);
     mysql_stmt_bind_result(g.stmt, r.data());
     if (mysql_stmt_store_result(g.stmt) != 0) return out;
     while (mysql_stmt_fetch(g.stmt) == 0) {
-        out.push_back({r.colText(0), r.colText(1)});
+        out.push_back({r.colText(0), r.colText(1), r.colText(2)});
     }
     return out;
 }
@@ -3029,7 +3058,7 @@ bool MySQLDatabase::aggregateDailySummaryFromSessions(const std::string& device_
             (device_id, record_date, duration_minutes, patient_hours,
              ahi, hi, ai, oai, cai, uai, rin, mask_events, mask_pairs,
              mask_press_50, leak_50, leak_95, spo2_50, epr_level, mode,
-             index_source, updated_at)
+             index_kind, index_source, updated_at)
         SELECT
             s.device_id,
             DATE(DATE_SUB(s.session_start, INTERVAL 12 HOUR)) AS record_date,
@@ -3070,6 +3099,9 @@ bool MySQLDatabase::aggregateDailySummaryFromSessions(const std::string& device_
                     / NULLIF(SUM(CASE WHEN m.avg_epr_pressure > 0 THEN s.duration_seconds END), 0),
                 AVG(NULLIF(m.avg_epr_pressure, 0))), 2),
             MAX(COALESCE(m.therapy_mode, 0)),
+            -- SDD-024 / SDD-072 D1: the night's kind, as on SQLite (MAX over
+            -- text: any ungraded session makes the night ungraded).
+            MAX(COALESCE(m.index_kind, 'ahi')),
             'computed',
             NOW()
         FROM cpap_sessions s
@@ -3515,7 +3547,11 @@ std::vector<SessionMetrics> MySQLDatabase::getMetricsForDateRange(
             MAX(sm.therapy_mode) AS therapy_mode,
             -- Issue #78: the unclassified apnea is in the AHI, so a weekly
             -- summary without it lists types that do not add up to it.
-            SUM(sm.unclassified_apneas)          AS unclassified_apneas
+            SUM(sm.unclassified_apneas)          AS unclassified_apneas,
+            -- SDD-072 D1: what getNightlyMetrics gives the same night, its
+            -- index kind (SDD-024) and its therapy pressure (SDD-030).
+            MAX(COALESCE(sm.index_kind, 'ahi'))  AS index_kind,
+            SUM(c.s_therapy) / NULLIF(SUM(c.n_therapy), 0) AS avg_therapy_pressure
         FROM cpap_sessions s
         JOIN cpap_session_metrics sm ON sm.session_id = s.id
         LEFT JOIN (
@@ -3529,7 +3565,8 @@ std::vector<SessionMetrics> MySQLDatabase::getMetricsForDateRange(
                    SUM(mask_pressure) AS s_mask, COUNT(mask_pressure) AS n_mask,
                    SUM(epr_pressure) AS s_epr, COUNT(epr_pressure) AS n_epr,
                    SUM(snore_index) AS s_snore, COUNT(snore_index) AS n_snore,
-                   SUM(target_ventilation) AS s_tgt, COUNT(target_ventilation) AS n_tgt
+                   SUM(target_ventilation) AS s_tgt, COUNT(target_ventilation) AS n_tgt,
+                   SUM(therapy_pressure) AS s_therapy, COUNT(therapy_pressure) AS n_therapy
             FROM cpap_calculated_metrics GROUP BY session_id
         ) c ON c.session_id = sm.session_id
         LEFT JOIN (
@@ -3572,10 +3609,11 @@ std::vector<SessionMetrics> MySQLDatabase::getMetricsForDateRange(
         return {};
     }
 
-    // 31 output columns (0-30)
-    ResultBinder r(31);
+    // 33 output columns (0-32; 31 is index_kind, text)
+    ResultBinder r(33);
     r.bindColString(0);  // sleep_day
-    for (int i = 1; i < 31; ++i) r.bindColDouble(i);
+    for (int i = 1; i < 33; ++i) r.bindColDouble(i);
+    r.bindColString(31);  // SDD-072 D1: index_kind
     // Override int columns
     r.bindColInt(2);   // total_events
     r.bindColInt(3);   // OA
@@ -3626,6 +3664,9 @@ std::vector<SessionMetrics> MySQLDatabase::getMetricsForDateRange(
         m.leak_p95               = r.colOptDouble(28);
         m.therapy_mode           = r.colOptInt(29);
         m.unclassified_apneas    = r.colIsNull(30) ? 0 : r.colInt(30);   // issue #78
+        m.index_kind = (r.colText(31) == "ungraded") ? SessionMetrics::IndexKind::Ungraded
+                                                     : SessionMetrics::IndexKind::AHI;
+        m.avg_therapy_pressure   = r.colOptDouble(32);   // SDD-072 D1
 
         nights.push_back(std::move(m));
     }
@@ -3697,6 +3738,12 @@ bool MySQLDatabase::saveSummary(
 
 bool MySQLDatabase::saveOximetrySession(const std::string& device_id,
                                         const cpapdash::parser::OximetrySession& session) {
+    return saveOximetrySessionFrom(device_id, session, OximetryOrigin{});
+}
+
+bool MySQLDatabase::saveOximetrySessionFrom(const std::string& device_id,
+                                            const cpapdash::parser::OximetrySession& session,
+                                            const OximetryOrigin& origin) {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!conn_) { std::cerr << "MySQL: Not connected" << std::endl; return false; }
 
@@ -3709,9 +3756,11 @@ bool MySQLDatabase::saveOximetrySession(const std::string& device_id,
              sample_interval, avg_spo2, min_spo2, spo2_baseline,
              time_below_90, time_below_88, odi_3pct, desat_count,
              avg_hr, min_hr, max_hr, valid_samples, total_samples,
-             cpap_session_date)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             cpap_session_date, source, device_name)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
+            source            = VALUES(source),
+            device_name       = VALUES(device_name),
             start_time        = VALUES(start_time),
             end_time          = VALUES(end_time),
             duration_seconds  = VALUES(duration_seconds),
@@ -3745,7 +3794,7 @@ bool MySQLDatabase::saveOximetrySession(const std::string& device_id,
         std::string end_str   = fmtOximetryTimestamp(session.end_time);
         std::string date_str  = session.date_str();
 
-        ParamBinder p(19);
+        ParamBinder p(21);
         p.bindText(0, device_id);
         p.bindText(1, session.filename);
         p.bindText(2, start_str);
@@ -3765,6 +3814,8 @@ bool MySQLDatabase::saveOximetrySession(const std::string& device_id,
         p.bindInt(16, session.metrics.valid_samples);
         p.bindInt(17, session.metrics.total_samples);
         p.bindText(18, date_str);
+        p.bindText(19, origin.source);
+        p.bindText(20, origin.device_name);
         mysql_stmt_bind_param(g.stmt, p.data());
 
         if (mysql_stmt_execute(g.stmt) != 0) {
@@ -3854,7 +3905,8 @@ bool MySQLDatabase::saveOximetrySession(const std::string& device_id,
     // stand-in the bridge polled into, so that one goes, on this event and in
     // this transaction. The sessions DELETE filters directly rather than
     // through a subquery: MySQL refuses a subquery on the table being deleted.
-    if (!isLiveOximetryFilename(session.filename)) {
+    // SDD-078: a Garmin night is not the ring's file and leaves it.
+    if (!isLiveOximetryFilename(session.filename) && oximetryOriginSupersedesLive(origin.source)) {
         const std::string night = oximetrySleepDay(session.start_time);
         const std::string live_of_night =
             "device_id = ? AND " + sql::isLiveOxiFilename("filename") + " AND " +

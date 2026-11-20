@@ -11,6 +11,7 @@ import { SessionDetail, SessionEvent, SignalData, VitalsData, OximetryData } fro
 import { formatTimestamps, eventAnnotations, makeDataset, makeFillBand, EVENT_COLORS } from '../../utils/chart-helpers';
 import { detectDesaturations, desatAnnotations, odiPerHour, inferSampleSec } from '../../utils/signal-analysis';
 import { formatIndex } from '../../utils/format';
+import { oximetryDevices, originsOf } from '../../utils/oximetry-label';
 import { isGradable, indexLabelKey } from '../../utils/index-kind';
 import { nightAhi, sessionSeconds } from './night-ahi';
 import { hasAnyValue, hasReading, sessionPressurePlan, SessionPressurePlan } from './session-pressure';
@@ -98,8 +99,13 @@ const SIGNAL_DEFS: SignalDef[] = [
 
       <div class="o2-only-note" *ngIf="oximetryOnly">
         <i class="fa-solid fa-heart-pulse"></i>
-        O2 ring recording only; no CPAP session was recorded for this night
+        {{ 'sessionDetail.oximetryOnly' | translate:{ device: oximetryDevice || 'O2 Ring' } }}
       </div>
+      <!-- SDD-078 D3: where the night's oximetry came from. -->
+      <p class="oxi-source" *ngIf="oximetryDevice && !oximetryOnly">
+        <i class="fa-solid fa-droplet"></i>
+        {{ 'sessionDetail.oximetryFrom' | translate:{ device: oximetryDevice } }}
+      </p>
 
       <div class="cards">
         <!-- SDD-024: the card is named by the index it is showing, and an
@@ -140,6 +146,7 @@ const SIGNAL_DEFS: SignalDef[] = [
         <div class="detail-header">
           <h3>
             {{ selectedSignal.titleKey | translate }} <span class="detail-unit" *ngIf="selectedSignal.unit">({{ selectedSignal.unit }})</span>
+            <span class="detail-unit" style="margin-right: 0.5rem" *ngIf="selectedSignal.source === 'oximetry' && oximetryDevice">&middot; {{ oximetryDevice }}</span>
             <span class="odi-badge" *ngIf="detailOdi !== null" [style.color]="odiColor"
               [title]="'sessionDetail.odiTitle' | translate">
               <i class="fa-solid fa-arrow-trend-down"></i> ODI {{ detailOdi.toFixed(1) }}/hr
@@ -235,6 +242,8 @@ const SIGNAL_DEFS: SignalDef[] = [
     .o2-only-note { display: flex; align-items: center; gap: 0.5rem; background: #1e2430;
       border: 1px solid #3a4a63; border-radius: 8px; padding: 0.5rem 0.75rem;
       margin-bottom: 0.75rem; color: #93b4e0; font-size: 0.8rem; }
+    .oxi-source { display: flex; align-items: center; gap: 0.4rem; margin: 0 0 0.75rem;
+      color: #93b4e0; font-size: 0.8rem; }
     .event-summary { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
     .event-badge { color: #fff; padding: 0.2rem 0.5rem; border-radius: 12px; font-size: 0.7rem; font-weight: 600; }
     .event-unclassified { color: #888; font-size: 0.78rem; line-height: 1.5; max-width: 68ch; }
@@ -386,6 +395,12 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
 
   constructor(private route: ActivatedRoute, private api: CpapApiService,
               private t: TranslateService) {}
+
+  /** SDD-078 D3: the device(s) the night's oximetry came from, '' when none. */
+  get oximetryDevice(): string {
+    if (!this.oximetryData?.timestamps?.length) return '';
+    return oximetryDevices(originsOf(this.oximetryData), this.t.instant('sessionDetail.oximetryUpload'));
+  }
 
   ngOnInit() {
     this.date = this.route.snapshot.paramMap.get('date') || '';
