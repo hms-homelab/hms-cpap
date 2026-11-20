@@ -988,6 +988,7 @@ TEST(LinkRecoveryLadder, RadioInUseIsHeldForItsScope) {
         EXPECT_EQ(codes.back(), "streaming");
     }
     EXPECT_EQ(ble::radioInUse().size(), before);
+}
 // ── An O2Ring-S's handshake and file list ──
 //
 // The order the requests go in is what these pin: GET_INFO first and the file
