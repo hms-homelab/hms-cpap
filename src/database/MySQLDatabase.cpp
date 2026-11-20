@@ -134,6 +134,50 @@ struct ParamBinder {
 };
 
 // ---------------------------------------------------------------------------
+// Multi-row INSERT
+// ---------------------------------------------------------------------------
+
+// Rows per multi-row INSERT. A night's rows used to go one statement each, one
+// network round trip per row: a night's breaths, minutes and events took 24 s
+// at a 2 ms round trip, and a night with an oximeter's SpO2 almost two
+// minutes. 500 rows of the widest table (19 columns) stay far under the
+// 65535 placeholders a statement may hold.
+constexpr std::size_t kRowsPerInsert = 500;
+
+/// [n] rows as multi-row prepared INSERTs of kRowsPerInsert: [head]
+/// "INSERT ... VALUES ", [cols] placeholders a row, [tail] the ON DUPLICATE KEY
+/// clause (or ""). [bind](p, base, i) binds row i from parameter [base] on.
+template <class Bind>
+void insertInBatches(MYSQL* conn, const char* what, std::size_t n, int cols,
+                     const std::string& head, const std::string& tail, Bind bind) {
+    std::string tuple = "(";
+    for (int c = 0; c < cols; ++c) tuple += c ? ", ?" : "?";
+    tuple += ")";
+    for (std::size_t from = 0; from < n; from += kRowsPerInsert) {
+        const std::size_t rows = std::min(kRowsPerInsert, n - from);
+        std::string sql = head;
+        for (std::size_t r = 0; r < rows; ++r) {
+            if (r) sql += ", ";
+            sql += tuple;
+        }
+        sql += tail;
+
+        MysqlStmtGuard g;
+        g.stmt = mysql_stmt_init(conn);
+        if (mysql_stmt_prepare(g.stmt, sql.c_str(), sql.size()) != 0) {
+            std::cerr << "MySQL: " << what << " prepare error: " << mysql_stmt_error(g.stmt) << std::endl;
+            return;
+        }
+        ParamBinder p(rows * static_cast<std::size_t>(cols));
+        for (std::size_t r = 0; r < rows; ++r) bind(p, static_cast<int>(r) * cols, from + r);
+        mysql_stmt_bind_param(g.stmt, p.data());
+        if (mysql_stmt_execute(g.stmt) != 0) {
+            std::cerr << "MySQL: " << what << " error: " << mysql_stmt_error(g.stmt) << std::endl;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Result-row fetch helper
 // ---------------------------------------------------------------------------
 
@@ -1438,49 +1482,36 @@ void MySQLDatabase::insertBreathingSummaries(int64_t session_id,
     // The newest write of a minute wins. A session saved again as it grows
     // (a Luna's .000 handed on mid-minute) brings the minute it cut short,
     // now whole; keeping the first write left that minute partial for good.
-    const char* sql = R"(
-        INSERT INTO cpap_breathing_summary
-            (session_id, timestamp, avg_flow_rate, max_flow_rate, min_flow_rate,
-             avg_pressure, max_pressure, min_pressure)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ON DUPLICATE KEY UPDATE
-            avg_flow_rate = VALUES(avg_flow_rate),
-            max_flow_rate = VALUES(max_flow_rate),
-            min_flow_rate = VALUES(min_flow_rate),
-            avg_pressure  = VALUES(avg_pressure),
-            max_pressure  = VALUES(max_pressure),
-            min_pressure  = VALUES(min_pressure)
-    )";
-
-    MysqlStmtGuard g;
-    g.stmt = mysql_stmt_init(conn_);
-    if (mysql_stmt_prepare(g.stmt, sql, std::strlen(sql)) != 0) {
-        std::cerr << "MySQL: insertBreathingSummaries prepare error: " << mysql_stmt_error(g.stmt) << std::endl;
-        return;
-    }
-
-    for (const auto& s : summaries) {
-        ParamBinder p(8);
-        p.bindInt64(0, session_id);
-        p.bindText(1, fmtTimestamp(s.timestamp));
-        // A minute the parser marks unmeasured carries 0 placeholders, not
-        // readings: it is stored as NULL, so no chart or average reads a 0.
-        auto bindMeasured = [&](int idx, bool measured, double v) {
-            if (measured) p.bindDouble(idx, v);
-            else p.bindNull(idx);
-        };
-        bindMeasured(2, s.flow_measured, s.avg_flow_rate);
-        bindMeasured(3, s.flow_measured, s.max_flow_rate);
-        bindMeasured(4, s.flow_measured, s.min_flow_rate);
-        bindMeasured(5, s.pressure_measured, s.avg_pressure);
-        bindMeasured(6, s.pressure_measured, s.max_pressure);
-        bindMeasured(7, s.pressure_measured, s.min_pressure);
-
-        mysql_stmt_bind_param(g.stmt, p.data());
-        if (mysql_stmt_execute(g.stmt) != 0) {
-            std::cerr << "MySQL: insertBreathingSummaries error: " << mysql_stmt_error(g.stmt) << std::endl;
-        }
-    }
+    // Batched; a later row of the same minute in one statement updates the
+    // earlier one, as the row-at-a-time inserts did.
+    insertInBatches(conn_, "insertBreathingSummaries", summaries.size(), 8,
+        "INSERT INTO cpap_breathing_summary"
+        " (session_id, timestamp, avg_flow_rate, max_flow_rate, min_flow_rate,"
+        " avg_pressure, max_pressure, min_pressure) VALUES ",
+        " ON DUPLICATE KEY UPDATE"
+        " avg_flow_rate = VALUES(avg_flow_rate),"
+        " max_flow_rate = VALUES(max_flow_rate),"
+        " min_flow_rate = VALUES(min_flow_rate),"
+        " avg_pressure  = VALUES(avg_pressure),"
+        " max_pressure  = VALUES(max_pressure),"
+        " min_pressure  = VALUES(min_pressure)",
+        [&](ParamBinder& p, int b, std::size_t i) {
+            const auto& s = summaries[i];
+            p.bindInt64(b + 0, session_id);
+            p.bindText(b + 1, fmtTimestamp(s.timestamp));
+            // A minute the parser marks unmeasured carries 0 placeholders, not
+            // readings: it is stored as NULL, so no chart or average reads a 0.
+            auto bindMeasured = [&](int idx, bool measured, double v) {
+                if (measured) p.bindDouble(b + idx, v);
+                else p.bindNull(b + idx);
+            };
+            bindMeasured(2, s.flow_measured, s.avg_flow_rate);
+            bindMeasured(3, s.flow_measured, s.max_flow_rate);
+            bindMeasured(4, s.flow_measured, s.min_flow_rate);
+            bindMeasured(5, s.pressure_measured, s.avg_pressure);
+            bindMeasured(6, s.pressure_measured, s.max_pressure);
+            bindMeasured(7, s.pressure_measured, s.min_pressure);
+        });
 }
 
 // ---------------------------------------------------------------------------
@@ -1490,60 +1521,36 @@ void MySQLDatabase::insertBreathingSummaries(int64_t session_id,
 void MySQLDatabase::insertEvents(int64_t session_id, const std::vector<CPAPEvent>& events) {
     if (events.empty()) return;
 
-    const char* sql = R"(
-        INSERT IGNORE INTO cpap_events
-            (session_id, event_type, event_timestamp, duration_seconds, details)
-        VALUES (?, ?, ?, ?, ?)
-    )";
-
-    MysqlStmtGuard g;
-    g.stmt = mysql_stmt_init(conn_);
-    if (mysql_stmt_prepare(g.stmt, sql, std::strlen(sql)) != 0) {
-        std::cerr << "MySQL: insertEvents prepare error: " << mysql_stmt_error(g.stmt) << std::endl;
-        return;
-    }
-
-    for (const auto& e : events) {
-        ParamBinder p(5);
-        p.bindInt64(0, session_id);
-        p.bindText(1, eventTypeToString(e.event_type));
-        p.bindText(2, fmtTimestamp(e.timestamp));
-        p.bindDouble(3, e.duration_seconds);
-        p.bindText(4, e.details.value_or(""));
-
-        mysql_stmt_bind_param(g.stmt, p.data());
-        if (mysql_stmt_execute(g.stmt) != 0) {
-            std::cerr << "MySQL: insertEvents error: " << mysql_stmt_error(g.stmt) << std::endl;
-        }
-    }
+    insertInBatches(conn_, "insertEvents", events.size(), 5,
+        "INSERT IGNORE INTO cpap_events"
+        " (session_id, event_type, event_timestamp, duration_seconds, details) VALUES ",
+        "",
+        [&](ParamBinder& p, int b, std::size_t i) {
+            const auto& e = events[i];
+            p.bindInt64(b + 0, session_id);
+            p.bindText(b + 1, eventTypeToString(e.event_type));
+            p.bindText(b + 2, fmtTimestamp(e.timestamp));
+            p.bindDouble(b + 3, e.duration_seconds);
+            p.bindText(b + 4, e.details.value_or(""));
+        });
 }
 
 void MySQLDatabase::insertDesaturations(int64_t session_id, const std::vector<DesatEvent>& desats) {
     if (desats.empty()) return;
-    const char* sql = R"(
-        INSERT IGNORE INTO cpap_events
-            (session_id, event_type, event_timestamp, duration_seconds, details)
-        VALUES (?, 'Desaturation', ?, ?, ?)
-    )";
-    MysqlStmtGuard g;
-    g.stmt = mysql_stmt_init(conn_);
-    if (mysql_stmt_prepare(g.stmt, sql, std::strlen(sql)) != 0) {
-        std::cerr << "MySQL: insertDesaturations prepare error: " << mysql_stmt_error(g.stmt) << std::endl;
-        return;
-    }
-    for (const auto& d : desats) {
-        char details[96];
-        std::snprintf(details, sizeof(details), "{\"nadir\":%.1f,\"depth\":%.1f}", d.nadir, d.depth);
-        ParamBinder p(4);
-        p.bindInt64(0, session_id);
-        p.bindText(1, fmtTimestamp(d.onset));
-        p.bindDouble(2, d.duration_seconds);
-        p.bindText(3, std::string(details));
-        mysql_stmt_bind_param(g.stmt, p.data());
-        if (mysql_stmt_execute(g.stmt) != 0) {
-            std::cerr << "MySQL: insertDesaturations error: " << mysql_stmt_error(g.stmt) << std::endl;
-        }
-    }
+    insertInBatches(conn_, "insertDesaturations", desats.size(), 5,
+        "INSERT IGNORE INTO cpap_events"
+        " (session_id, event_type, event_timestamp, duration_seconds, details) VALUES ",
+        "",
+        [&](ParamBinder& p, int b, std::size_t i) {
+            const auto& d = desats[i];
+            char details[96];
+            std::snprintf(details, sizeof(details), "{\"nadir\":%.1f,\"depth\":%.1f}", d.nadir, d.depth);
+            p.bindInt64(b + 0, session_id);
+            p.bindText(b + 1, "Desaturation");
+            p.bindText(b + 2, fmtTimestamp(d.onset));
+            p.bindDouble(b + 3, d.duration_seconds);
+            p.bindText(b + 4, std::string(details));
+        });
 }
 
 // SDD-001: the session's stored desaturations, before a save writes them again.
@@ -1566,30 +1573,19 @@ void MySQLDatabase::deleteDesaturations(int64_t session_id) {
 
 void MySQLDatabase::insertBreaths(int64_t session_id, const std::vector<Breath>& breaths) {
     if (breaths.empty()) return;
-    const char* sql = R"(
-        INSERT IGNORE INTO cpap_breaths
-            (session_id, onset, tidal_volume, inspiratory_time, expiratory_time, flow_limitation)
-        VALUES (?, ?, ?, ?, ?, ?)
-    )";
-    MysqlStmtGuard g;
-    g.stmt = mysql_stmt_init(conn_);
-    if (mysql_stmt_prepare(g.stmt, sql, std::strlen(sql)) != 0) {
-        std::cerr << "MySQL: insertBreaths prepare error: " << mysql_stmt_error(g.stmt) << std::endl;
-        return;
-    }
-    for (const auto& b : breaths) {
-        ParamBinder p(6);
-        p.bindInt64(0, session_id);
-        p.bindText(1, fmtTimestamp(b.onset));
-        p.bindDouble(2, b.tidal_volume);
-        p.bindDouble(3, b.inspiratory_time);
-        p.bindDouble(4, b.expiratory_time);
-        p.bindDouble(5, b.flow_limitation);
-        mysql_stmt_bind_param(g.stmt, p.data());
-        if (mysql_stmt_execute(g.stmt) != 0) {
-            std::cerr << "MySQL: insertBreaths error: " << mysql_stmt_error(g.stmt) << std::endl;
-        }
-    }
+    insertInBatches(conn_, "insertBreaths", breaths.size(), 6,
+        "INSERT IGNORE INTO cpap_breaths"
+        " (session_id, onset, tidal_volume, inspiratory_time, expiratory_time, flow_limitation) VALUES ",
+        "",
+        [&](ParamBinder& p, int base, std::size_t i) {
+            const auto& b = breaths[i];
+            p.bindInt64(base + 0, session_id);
+            p.bindText(base + 1, fmtTimestamp(b.onset));
+            p.bindDouble(base + 2, b.tidal_volume);
+            p.bindDouble(base + 3, b.inspiratory_time);
+            p.bindDouble(base + 4, b.expiratory_time);
+            p.bindDouble(base + 5, b.flow_limitation);
+        });
 }
 
 // ---------------------------------------------------------------------------
@@ -1599,32 +1595,19 @@ void MySQLDatabase::insertBreaths(int64_t session_id, const std::vector<Breath>&
 void MySQLDatabase::insertVitals(int64_t session_id, const std::vector<CPAPVitals>& vitals) {
     if (vitals.empty()) return;
 
-    const char* sql = R"(
-        INSERT IGNORE INTO cpap_vitals (session_id, timestamp, spo2, heart_rate)
-        VALUES (?, ?, ?, ?)
-    )";
-
-    MysqlStmtGuard g;
-    g.stmt = mysql_stmt_init(conn_);
-    if (mysql_stmt_prepare(g.stmt, sql, std::strlen(sql)) != 0) {
-        std::cerr << "MySQL: insertVitals prepare error: " << mysql_stmt_error(g.stmt) << std::endl;
-        return;
-    }
-
-    for (const auto& v : vitals) {
-        ParamBinder p(4);
-        p.bindInt64(0, session_id);
-        p.bindText(1, fmtTimestamp(v.timestamp));
-        if (v.spo2.has_value()) p.bindDouble(2, v.spo2.value());
-        else p.bindNull(2);
-        if (v.heart_rate.has_value()) p.bindInt(3, v.heart_rate.value());
-        else p.bindNull(3);
-
-        mysql_stmt_bind_param(g.stmt, p.data());
-        if (mysql_stmt_execute(g.stmt) != 0) {
-            std::cerr << "MySQL: insertVitals error: " << mysql_stmt_error(g.stmt) << std::endl;
-        }
-    }
+    // Batched: an oximeter's SpO2 is a row a second, 28800 a night.
+    insertInBatches(conn_, "insertVitals", vitals.size(), 4,
+        "INSERT IGNORE INTO cpap_vitals (session_id, timestamp, spo2, heart_rate) VALUES ",
+        "",
+        [&](ParamBinder& p, int b, std::size_t i) {
+            const auto& v = vitals[i];
+            p.bindInt64(b + 0, session_id);
+            p.bindText(b + 1, fmtTimestamp(v.timestamp));
+            if (v.spo2.has_value()) p.bindDouble(b + 2, v.spo2.value());
+            else p.bindNull(b + 2);
+            if (v.heart_rate.has_value()) p.bindInt(b + 3, v.heart_rate.value());
+            else p.bindNull(b + 3);
+        });
 }
 
 // ---------------------------------------------------------------------------
@@ -1731,14 +1714,15 @@ void MySQLDatabase::insertCalculatedMetrics(int64_t session_id,
     // and INSERT IGNORE kept that half-empty row forever. Same shape as the
     // SQLite and PostgreSQL upserts. VALUES() is what MariaDB and every MySQL
     // in the field understand; the row alias form is 8.0.19+ only.
-    const char* sql = R"(
+    const char* head = R"(
         INSERT INTO cpap_calculated_metrics
             (session_id, timestamp, respiratory_rate, tidal_volume, minute_ventilation,
              inspiratory_time, expiratory_time, ie_ratio, flow_limitation, leak_rate,
              flow_p95, flow_p90, pressure_p95, pressure_p90,
              mask_pressure, epr_pressure, snore_index, target_ventilation,
              therapy_pressure)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES )";
+    const char* tail = R"(
         ON DUPLICATE KEY UPDATE
             respiratory_rate   = COALESCE(VALUES(respiratory_rate),   respiratory_rate),
             tidal_volume       = COALESCE(VALUES(tidal_volume),       tidal_volume),
@@ -1759,57 +1743,51 @@ void MySQLDatabase::insertCalculatedMetrics(int64_t session_id,
             therapy_pressure   = COALESCE(VALUES(therapy_pressure),   therapy_pressure)
     )";
 
-    MysqlStmtGuard g;
-    g.stmt = mysql_stmt_init(conn_);
-    if (mysql_stmt_prepare(g.stmt, sql, std::strlen(sql)) != 0) {
-        std::cerr << "MySQL: insertCalculatedMetrics prepare error: " << mysql_stmt_error(g.stmt) << std::endl;
-        return;
-    }
-
+    // Only the rows that carry any of the values this table holds.
+    // leak_rate, ie_ratio, epr_pressure and therapy_pressure were missing
+    // from this list, so a minute that had only those was dropped. That is
+    // every minute a Löwenstein records: those machines report no
+    // respiratory rate and no tidal volume, so their per-minute leak and
+    // EPR were computed and then discarded (issue 15).
+    std::vector<const BreathingSummary*> rows;
+    rows.reserve(summaries.size());
     for (const auto& s : summaries) {
-        // Only insert if the row carries any of the values this table holds.
-        // leak_rate, ie_ratio, epr_pressure and therapy_pressure were missing
-        // from this list, so a minute that had only those was dropped. That is
-        // every minute a Löwenstein records: those machines report no
-        // respiratory rate and no tidal volume, so their per-minute leak and
-        // EPR were computed and then discarded (issue 15).
         if (!s.respiratory_rate && !s.tidal_volume && !s.minute_ventilation &&
             !s.flow_limitation && !s.mask_pressure && !s.snore_index &&
             !s.target_ventilation && !s.leak_rate && !s.ie_ratio &&
             !s.epr_pressure && !s.therapy_pressure) continue;
-
-        ParamBinder p(19);
-        p.bindInt64(0, session_id);
-        p.bindText(1, fmtTimestamp(s.timestamp));
-
-        auto bind_opt = [&](int idx, const std::optional<double>& v) {
-            if (v) p.bindDouble(idx, *v);
-            else p.bindNull(idx);
-        };
-
-        bind_opt(18, s.therapy_pressure);   // SDD-030
-        bind_opt(2, s.respiratory_rate);
-        bind_opt(3, s.tidal_volume);
-        bind_opt(4, s.minute_ventilation);
-        bind_opt(5, s.inspiratory_time);
-        bind_opt(6, s.expiratory_time);
-        bind_opt(7, s.ie_ratio);
-        bind_opt(8, s.flow_limitation);
-        bind_opt(9, s.leak_rate);
-        bind_opt(10, s.flow_p95);
-        p.bindNull(11);  // flow_p90 placeholder
-        bind_opt(12, s.pressure_p95);
-        p.bindNull(13);  // pressure_p90 placeholder
-        bind_opt(14, s.mask_pressure);
-        bind_opt(15, s.epr_pressure);
-        bind_opt(16, s.snore_index);
-        bind_opt(17, s.target_ventilation);
-
-        mysql_stmt_bind_param(g.stmt, p.data());
-        if (mysql_stmt_execute(g.stmt) != 0) {
-            std::cerr << "MySQL: insertCalculatedMetrics error: " << mysql_stmt_error(g.stmt) << std::endl;
-        }
+        rows.push_back(&s);
     }
+
+    insertInBatches(conn_, "insertCalculatedMetrics", rows.size(), 19, head, tail,
+        [&](ParamBinder& p, int b, std::size_t i) {
+            const auto& s = *rows[i];
+            p.bindInt64(b + 0, session_id);
+            p.bindText(b + 1, fmtTimestamp(s.timestamp));
+
+            auto bind_opt = [&](int idx, const std::optional<double>& v) {
+                if (v) p.bindDouble(b + idx, *v);
+                else p.bindNull(b + idx);
+            };
+
+            bind_opt(18, s.therapy_pressure);   // SDD-030
+            bind_opt(2, s.respiratory_rate);
+            bind_opt(3, s.tidal_volume);
+            bind_opt(4, s.minute_ventilation);
+            bind_opt(5, s.inspiratory_time);
+            bind_opt(6, s.expiratory_time);
+            bind_opt(7, s.ie_ratio);
+            bind_opt(8, s.flow_limitation);
+            bind_opt(9, s.leak_rate);
+            bind_opt(10, s.flow_p95);
+            p.bindNull(b + 11);  // flow_p90 placeholder
+            bind_opt(12, s.pressure_p95);
+            p.bindNull(b + 13);  // pressure_p90 placeholder
+            bind_opt(14, s.mask_pressure);
+            bind_opt(15, s.epr_pressure);
+            bind_opt(16, s.snore_index);
+            bind_opt(17, s.target_ventilation);
+        });
 }
 
 // ---------------------------------------------------------------------------

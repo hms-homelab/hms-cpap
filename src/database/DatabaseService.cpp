@@ -25,6 +25,36 @@ std::tm* cpapWall(const std::time_t* t) {
     return &out;
 }
 
+std::string cpapWallText(const std::chrono::system_clock::time_point& tp) {
+    auto t = std::chrono::system_clock::to_time_t(tp);
+    std::ostringstream oss;
+    oss << std::put_time(cpapWall(&t), "%Y-%m-%d %H:%M:%S");
+    return oss.str();
+}
+
+// Rows per multi-row INSERT. A night's rows used to go one statement each, one
+// network round trip per breath: 7200 breaths took 22 s at a 2 ms round trip,
+// longer than docker stop waits. 1000 rows keep a statement well under any
+// size limit.
+constexpr std::size_t kRowsPerInsert = 1000;
+
+/// [rows] as multi-row INSERTs of kRowsPerInsert: [head] "INSERT ... VALUES ",
+/// [row](i) one "(...)" tuple, [tail] the ON CONFLICT clause.
+template <class Row>
+void insertInBatches(pqxx::work& work, std::size_t n, const std::string& head,
+                     const std::string& tail, Row row) {
+    for (std::size_t from = 0; from < n; from += kRowsPerInsert) {
+        std::string query = head;
+        const std::size_t to = std::min(n, from + kRowsPerInsert);
+        for (std::size_t i = from; i < to; ++i) {
+            if (i > from) query += ", ";
+            query += row(i);
+        }
+        query += tail;
+        work.exec(query);
+    }
+}
+
 }  // namespace
 
 DatabaseService::DatabaseService(const std::string& connection_string)
@@ -1067,43 +1097,35 @@ void DatabaseService::insertEvents(pqxx::work& work, int session_id,
                                     const std::vector<CPAPEvent>& events) {
     if (events.empty()) return;
 
-    for (const auto& event : events) {
-        auto time_t = std::chrono::system_clock::to_time_t(event.timestamp);
-        std::tm* tm = cpapWall(&time_t);
-        std::ostringstream oss;
-        oss << std::put_time(tm, "%Y-%m-%d %H:%M:%S");
-
-        std::string query = R"(
-            INSERT INTO cpap_events (session_id, event_type, event_timestamp, duration_seconds, details)
-            VALUES ($1, $2, $3, $4, $5)
-            ON CONFLICT (session_id, event_timestamp) DO NOTHING
-        )";
-
-        work.exec_params(query,
-            session_id,
-            eventTypeToString(event.event_type),
-            oss.str(),
-            event.duration_seconds,
-            event.details.value_or("")
-        );
-    }
+    // Batched; every value quoted as the text a bound parameter would carry.
+    insertInBatches(work, events.size(),
+        "INSERT INTO cpap_events (session_id, event_type, event_timestamp, duration_seconds, details) VALUES ",
+        " ON CONFLICT (session_id, event_timestamp) DO NOTHING",
+        [&](std::size_t i) {
+            const auto& event = events[i];
+            return "(" + work.quote(session_id) + ", " +
+                   work.quote(eventTypeToString(event.event_type)) + ", " +
+                   work.quote(cpapWallText(event.timestamp)) + ", " +
+                   work.quote(event.duration_seconds) + ", " +
+                   work.quote(event.details.value_or("")) + ")";
+        });
 }
 
 void DatabaseService::insertDesaturations(pqxx::work& work, int session_id,
                                           const std::vector<DesatEvent>& desats) {
     if (desats.empty()) return;
-    for (const auto& d : desats) {
-        auto tt = std::chrono::system_clock::to_time_t(d.onset);
-        std::ostringstream oss;
-        oss << std::put_time(cpapWall(&tt), "%Y-%m-%d %H:%M:%S");
-        char details[96];
-        std::snprintf(details, sizeof(details), "{\"nadir\":%.1f,\"depth\":%.1f}", d.nadir, d.depth);
-        work.exec_params(R"(
-            INSERT INTO cpap_events (session_id, event_type, event_timestamp, duration_seconds, details)
-            VALUES ($1, 'Desaturation', $2, $3, $4)
-            ON CONFLICT (session_id, event_timestamp) DO NOTHING
-        )", session_id, oss.str(), d.duration_seconds, std::string(details));
-    }
+    insertInBatches(work, desats.size(),
+        "INSERT INTO cpap_events (session_id, event_type, event_timestamp, duration_seconds, details) VALUES ",
+        " ON CONFLICT (session_id, event_timestamp) DO NOTHING",
+        [&](std::size_t i) {
+            const auto& d = desats[i];
+            char details[96];
+            std::snprintf(details, sizeof(details), "{\"nadir\":%.1f,\"depth\":%.1f}", d.nadir, d.depth);
+            return "(" + work.quote(session_id) + ", 'Desaturation', " +
+                   work.quote(cpapWallText(d.onset)) + ", " +
+                   work.quote(d.duration_seconds) + ", " +
+                   work.quote(std::string(details)) + ")";
+        });
 }
 
 // SDD-001: the session's stored desaturations, before a save writes them again.
@@ -1116,17 +1138,17 @@ void DatabaseService::deleteDesaturations(pqxx::work& work, int session_id) {
 void DatabaseService::insertBreaths(pqxx::work& work, int session_id,
                                     const std::vector<Breath>& breaths) {
     if (breaths.empty()) return;
-    for (const auto& b : breaths) {
-        auto tt = std::chrono::system_clock::to_time_t(b.onset);
-        std::ostringstream oss;
-        oss << std::put_time(cpapWall(&tt), "%Y-%m-%d %H:%M:%S");
-        work.exec_params(R"(
-            INSERT INTO cpap_breaths
-                (session_id, onset, tidal_volume, inspiratory_time, expiratory_time, flow_limitation)
-            VALUES ($1, $2, $3, $4, $5, $6)
-            ON CONFLICT (session_id, onset) DO NOTHING
-        )", session_id, oss.str(), b.tidal_volume, b.inspiratory_time, b.expiratory_time, b.flow_limitation);
-    }
+    // Batched: a night's thousands of breaths were one round trip each.
+    insertInBatches(work, breaths.size(),
+        "INSERT INTO cpap_breaths"
+        " (session_id, onset, tidal_volume, inspiratory_time, expiratory_time, flow_limitation) VALUES ",
+        " ON CONFLICT (session_id, onset) DO NOTHING",
+        [&](std::size_t i) {
+            const auto& b = breaths[i];
+            return "(" + work.quote(session_id) + ", " + work.quote(cpapWallText(b.onset)) + ", " +
+                   work.quote(b.tidal_volume) + ", " + work.quote(b.inspiratory_time) + ", " +
+                   work.quote(b.expiratory_time) + ", " + work.quote(b.flow_limitation) + ")";
+        });
 }
 
 void DatabaseService::insertVitals(pqxx::work& work, int session_id,

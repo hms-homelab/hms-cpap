@@ -64,6 +64,8 @@ set(TEST_SOURCES
     database/test_OximetryOriginBackends.cpp
     database/test_LiveOximetryBackends.cpp
     database/test_RemoveNightBackends.cpp
+    # A re-imported night is one transaction; a night saves in batches.
+    database/test_NightReplaceBackends.cpp
     database/test_CpapCardBackends.cpp
     database/test_BilevelPressureBackends.cpp
     database/test_MySQLMigration.cpp
