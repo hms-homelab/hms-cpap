@@ -92,6 +92,135 @@ TEST(As11StoredNight, APageIsKeptOnceAndReadBackInOrder) {
     fs::remove_all(root, ec);
 }
 
+namespace {
+
+constexpr int64_t kHour = 60 * kMin;
+
+fs::path freshRoot(const char* name) {
+    const fs::path root = fs::temp_directory_path() / name;
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    return root;
+}
+
+// A machine answering pages: each signal spool has a page every 3 h from
+// the night's start, its cursor the next one; the events spool one page.
+// Every ask is logged as "<spool> <from>".
+struct FakeSpools {
+    std::vector<std::string> asks;
+    std::string fail_spool;   // this spool fails on its second page
+    StoredPagePull pull() {
+        return [this](const std::string& spool, const std::string& from, std::vector<uint8_t>* page,
+                      std::string* next, std::string* why) {
+            asks.push_back(spool + " " + from);
+            int n = 0;
+            for (const auto& a : asks) if (a.rfind(spool + " ", 0) == 0) n++;
+            if (spool == fail_spool && n == 2) { *why = "machine disconnected mid-spool"; return false; }
+            *page = {static_cast<uint8_t>(n), static_cast<uint8_t>(spool.size())};
+            next->clear();
+            if (spool != kStoredEventsSpool) *next = storedFromDateTime(kT0 + n * 3 * kHour);
+            return true;
+        };
+    }
+};
+
+}  // namespace
+
+TEST(As11StoredNight, AFromDateTimeIsTheInstantInUtcToTheMillisecond) {
+    EXPECT_EQ(storedFromDateTime(kT0), "2026-11-02T04:55:17.496Z");
+    EXPECT_EQ(storedFromDateTime(kT0 - 496), "2026-11-02T04:55:17.000Z");
+}
+
+TEST(As11StoredNight, APullFollowsTheMachinesCursorAndStopsPastTheNight) {
+    const fs::path root = freshRoot("as11_stored_pull_test");
+    FakeSpools m;
+    const auto r = pullStoredNight(root.string(), "20261101", {{kT0, kT0 + 8 * kHour}}, m.pull());
+    ASSERT_TRUE(r.complete) << r.why;
+    // Events: one page. Each signal: pages from 0 h, 3 h and 6 h; the third
+    // page's cursor (9 h) is past the night's 8 h, so no fourth is asked.
+    EXPECT_EQ(r.pages, 1 + 4 * 3);
+    ASSERT_EQ(m.asks.size(), 13u);
+    EXPECT_EQ(m.asks[0], std::string(kStoredEventsSpool) + " " + storedFromDateTime(kT0));
+    EXPECT_EQ(m.asks[1], "RespiratoryFlow6p25Hz " + storedFromDateTime(kT0));
+    EXPECT_EQ(m.asks[2], "RespiratoryFlow6p25Hz " + storedFromDateTime(kT0 + 3 * kHour));
+    EXPECT_EQ(m.asks[3], "RespiratoryFlow6p25Hz " + storedFromDateTime(kT0 + 6 * kHour));
+    EXPECT_EQ(keptStoredPages(root.string(), "20261101", "Leak0p5Hz").size(), 3u);
+    EXPECT_EQ(keptStoredPages(root.string(), "20261101", kStoredEventsSpool).size(), 1u);
+    // The caller marks the night done once it is written, not the pull.
+    EXPECT_FALSE(storedNightDone(root.string(), "20261101"));
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
+TEST(As11StoredNight, ASpoolWithNothingStoredEndsAtOnce) {
+    const fs::path root = freshRoot("as11_stored_empty_test");
+    int asks = 0;
+    const auto r = pullStoredNight(root.string(), "20261101", {{kT0, kT0 + kHour}},
+        [&](const std::string&, const std::string&, std::vector<uint8_t>* page, std::string* next, std::string*) {
+            asks++;
+            page->clear();   // ERROR_DATA_UNAVAILABLE: nothing, and no cursor
+            next->clear();
+            return true;
+        });
+    EXPECT_TRUE(r.complete);
+    EXPECT_EQ(r.pages, 0);
+    EXPECT_EQ(asks, 5);
+    EXPECT_TRUE(keptStoredPages(root.string(), "20261101", "Leak0p5Hz").empty());
+}
+
+TEST(As11StoredNight, ACursorThatDoesNotMoveEndsTheSpool) {
+    const fs::path root = freshRoot("as11_stored_stuck_test");
+    int asks = 0;
+    const auto r = pullStoredNight(root.string(), "20261101", {{kT0, kT0 + 8 * kHour}},
+        [&](const std::string&, const std::string& from, std::vector<uint8_t>* page, std::string* next, std::string*) {
+            asks++;
+            *page = {1};
+            *next = from;
+            return true;
+        });
+    EXPECT_TRUE(r.complete);
+    EXPECT_EQ(asks, 5);
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
+TEST(As11StoredNight, APullCutPartWayIsNotCompleteAndIsAskedAgainFromTheStart) {
+    const fs::path root = freshRoot("as11_stored_cut_test");
+    FakeSpools cut;
+    cut.fail_spool = "MaskPressure6p25Hz";
+    const auto r = pullStoredNight(root.string(), "20261101", {{kT0, kT0 + 8 * kHour}}, cut.pull());
+    EXPECT_FALSE(r.complete);
+    EXPECT_NE(r.why.find("MaskPressure6p25Hz"), std::string::npos) << r.why;
+    EXPECT_NE(r.why.find("disconnected"), std::string::npos) << r.why;
+    EXPECT_FALSE(storedNightDone(root.string(), "20261101"));
+    const auto flow = keptStoredPages(root.string(), "20261101", "RespiratoryFlow6p25Hz");
+    ASSERT_EQ(flow.size(), 3u);
+
+    // The next pull asks every spool again from the night's start; the pages
+    // already kept are the same bytes.
+    FakeSpools again;
+    const auto r2 = pullStoredNight(root.string(), "20261101", {{kT0, kT0 + 8 * kHour}}, again.pull());
+    EXPECT_TRUE(r2.complete) << r2.why;
+    EXPECT_EQ(again.asks[0], std::string(kStoredEventsSpool) + " " + storedFromDateTime(kT0));
+    EXPECT_EQ(keptStoredPages(root.string(), "20261101", "RespiratoryFlow6p25Hz"), flow);
+    EXPECT_EQ(keptStoredPages(root.string(), "20261101", "MaskPressure6p25Hz").size(), 3u);
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
+TEST(As11StoredNight, ANightStartsFromItsFirstMaskOnAndEndsAfterItsLast) {
+    const fs::path root = freshRoot("as11_stored_two_sessions_test");
+    FakeSpools m;
+    // Two mask-ons, given out of order: from the earlier, to past the later.
+    const auto r = pullStoredNight(root.string(), "20261101",
+                                   {{kT0 + 5 * kHour, kT0 + 7 * kHour}, {kT0, kT0 + kHour}}, m.pull());
+    ASSERT_TRUE(r.complete);
+    EXPECT_EQ(m.asks[1], "RespiratoryFlow6p25Hz " + storedFromDateTime(kT0));
+    EXPECT_EQ(keptStoredPages(root.string(), "20261101", "RespiratoryFlow6p25Hz").size(), 3u);
+    std::error_code ec;
+    fs::remove_all(root, ec);
+}
+
 TEST(As11StoredNight, EventTypesTakeTheStreamsNames) {
     EXPECT_EQ(storedEventName(3), "CentralApneaEnd");
     EXPECT_EQ(storedEventName(4), "ObstructiveApneaEnd");

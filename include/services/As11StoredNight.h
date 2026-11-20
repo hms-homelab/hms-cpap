@@ -4,6 +4,7 @@
 #include <cpapdash/parser/AirSense11Summary.h>
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -23,8 +24,9 @@ namespace hms_cpap {
  * (D4): a BRP at 6.25 Hz for flow and mask pressure, a PLD with leak and
  * inspiratory pressure, and the stored events merged into the night's EVE.
  *
- * This file is the part with no radio and no EDF: which spools, where the
- * pages are kept, which minutes are gaps, and which samples fall in them.
+ * This file is the part with no radio and no EDF: which spools, the order a
+ * night's pages are asked for in, where they are kept, which minutes are
+ * gaps, and which samples fall in them.
  */
 
 /// A span of time, UTC epoch ms, [start, end).
@@ -87,5 +89,32 @@ storedEvents(const std::vector<std::vector<uint8_t>>& pages);
 /// The live stream's name for a stored event type ("CentralApneaEnd",
 /// "ObstructiveApneaEnd"), or "" for a type not yet seen.
 std::string storedEventName(int type);
+
+/// "2026-11-04T03:00:01.000Z" for a UTC instant: a spool's fromDateTime.
+std::string storedFromDateTime(int64_t utc_ms);
+
+/// One page of a spool from `from` (a fromDateTime), as the machine answers
+/// it: true with the page in *page and, when more follows, the next page's
+/// cursor in *next_from (empty at the spool's end, or when the machine has
+/// nothing from there). False with *why when the page could not be read.
+using StoredPagePull = std::function<bool(const std::string& spool, const std::string& from,
+                                          std::vector<uint8_t>* page, std::string* next_from,
+                                          std::string* why)>;
+
+struct StoredPullResult {
+    bool complete = false;   // every spool read to past the night (or to its end)
+    int pages = 0;           // pages kept this time
+    std::string why;         // the first failure, when not complete
+};
+
+/// D2: every spool of one night with usage, from its first mask-on, page by
+/// page following the machine's cursor until it reaches past the night's
+/// last mask-off or the spool ends, each page kept as it came
+/// (keepStoredPage). The caller writes the night and then marks it done
+/// (markStoredNightDone); a night that failed part way is asked again from
+/// its start by the next pull (a page already kept is the same bytes and
+/// stays as it is). No radio here: `pull` is it.
+StoredPullResult pullStoredNight(const std::string& root, const std::string& night,
+                                 const std::vector<StoredSpan>& mask_on, const StoredPagePull& pull);
 
 }  // namespace hms_cpap

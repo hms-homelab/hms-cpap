@@ -119,22 +119,18 @@ bool As11NightImport::cardHolds(const std::chrono::system_clock::time_point& sta
                                 const std::chrono::system_clock::time_point& end,
                                 const std::vector<StoredSpan>& stored) {
     return std::any_of(stored.begin(), stored.end(), [&](const StoredSpan& s) {
-        return !s.bluetooth && overlaps(start, end, s.start, s.end);
+        return !s.constructed && overlaps(start, end, s.start, s.end);
     });
 }
 
-std::vector<std::chrono::system_clock::time_point> As11NightImport::bluetoothRowsReplacedBy(
+std::vector<std::chrono::system_clock::time_point> As11NightImport::constructedRowsReplacedBy(
     const std::chrono::system_clock::time_point& start,
     const std::chrono::system_clock::time_point& end,
     const std::vector<StoredSpan>& stored) {
     std::vector<std::chrono::system_clock::time_point> out;
     for (const auto& s : stored)
-        if (s.bluetooth && overlaps(start, end, s.start, s.end)) out.push_back(s.start);
+        if (s.constructed && overlaps(start, end, s.start, s.end)) out.push_back(s.start);
     return out;
-}
-
-bool As11NightImport::isBluetoothPath(const std::string& rel_path) {
-    return rel_path.rfind(kRelPrefix, 0) == 0;
 }
 
 // ── the database side ────────────────────────────────────────────────────
@@ -146,9 +142,16 @@ std::vector<As11NightImport::StoredSpan> As11NightImport::storedSpansOverlapping
     const DbType dt = db.dbType();
     // Sessions that started up to a day before the window can still reach
     // into it; the overlap itself is decided here from each row's span.
+    // SDD-077 D1: constructed is read from the files' source. A file whose
+    // source is unknown counts as the card's, so it is never replaced.
     const std::string sql =
         "SELECT " + sql::tsText("session_start", dt) + " AS start, " +
-        sql::tsText("session_end", dt) + " AS finish, duration_seconds, brp_file_path"
+        sql::tsText("session_end", dt) + " AS finish, duration_seconds,"
+        " (SELECT COUNT(*) FROM cpap_session_files f"
+        "   WHERE f.session_id = cpap_sessions.id) AS files,"
+        " (SELECT COUNT(*) FROM cpap_session_files f"
+        "   WHERE f.session_id = cpap_sessions.id"
+        "     AND COALESCE(f.source, 'card') = 'card') AS card_files"
         " FROM cpap_sessions"
         " WHERE device_id = " + sql::param(1, dt) +
         "   AND session_start >= " + sql::castTimestamp(2, dt) +
@@ -167,8 +170,11 @@ std::vector<As11NightImport::StoredSpan> As11NightImport::storedSpansOverlapping
         const auto by_span = span.start + std::chrono::seconds(secs);
         auto e = finish.isNull() ? std::nullopt : wallFrom(finish.asString());
         span.end = e ? std::max(*e, by_span) : by_span;
-        const Json::Value& brp = row["brp_file_path"];
-        span.bluetooth = !brp.isNull() && isBluetoothPath(brp.asString());
+        auto count = [&](const char* col) {
+            const Json::Value& v = row[col];
+            return v.isNull() ? 0LL : std::atoll(v.asString().c_str());
+        };
+        span.constructed = count("files") > 0 && count("card_files") == 0;
         if (overlaps(start, end, span.start, span.end)) out.push_back(span);
     }
     return out;
@@ -189,11 +195,11 @@ bool As11NightImport::deleteSessionAt(IDatabase& db, const std::string& device_i
     return db.executeQueryChecked("DELETE FROM cpap_sessions" + where, params).ok;
 }
 
-int As11NightImport::replaceBluetoothRows(IDatabase& db, const std::string& device_id,
-                                          const std::chrono::system_clock::time_point& start,
-                                          const std::chrono::system_clock::time_point& end) {
+int As11NightImport::replaceConstructedFiles(IDatabase& db, const std::string& device_id,
+                                             const std::chrono::system_clock::time_point& start,
+                                             const std::chrono::system_clock::time_point& end) {
     int replaced = 0;
-    for (const auto& at : bluetoothRowsReplacedBy(start, end, storedSpansOverlapping(db, device_id, start, end))) {
+    for (const auto& at : constructedRowsReplacedBy(start, end, storedSpansOverlapping(db, device_id, start, end))) {
         if (deleteSessionAt(db, device_id, at)) ++replaced;
     }
     if (replaced > 0)
@@ -268,8 +274,14 @@ As11NightImport::Result As11NightImport::run(const std::set<std::string>& remove
             const auto end = dataEndOf(*parsed).value_or(start);
 
             // D5: the card wins the stretch it carries.
-            if (cardHolds(start, end, storedSpansOverlapping(*db_, device_id_, start, end))) {
-                if (stored) deleteSessionAt(*db_, device_id_, start);
+            const auto spans = storedSpansOverlapping(*db_, device_id_, start, end);
+            if (cardHolds(start, end, spans)) {
+                // This stretch's own earlier row goes; a card row, even one
+                // that starts at the same second, is never touched (SDD-077 D2).
+                const bool own_row = std::any_of(spans.begin(), spans.end(), [&](const StoredSpan& s) {
+                    return s.constructed && s.start == start;
+                });
+                if (stored && own_row) deleteSessionAt(*db_, device_id_, start);
                 std::cout << kTag << st.night << " " << set.session_prefix
                           << " is on the card: the card's copy is the session" << std::endl;
                 ++r.card_wins;
@@ -278,7 +290,7 @@ As11NightImport::Result As11NightImport::run(const std::set<std::string>& remove
             }
 
             const std::string rel_base = std::string(kRelPrefix) + serial + "/DATALOG/" + st.night + "/";
-            auto refs = recordSessionFiles(folder.string(), rel_base, *parsed);
+            auto refs = recordSessionFiles(folder.string(), rel_base, *parsed, kSourceBleAs11);
             if (!db_->saveSession(*parsed)) {
                 std::cerr << kTag << "could not save " << st.night << " " << set.session_prefix << std::endl;
                 ++r.failed;

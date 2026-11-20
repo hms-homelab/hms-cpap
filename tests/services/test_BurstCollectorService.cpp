@@ -21,6 +21,7 @@
 #include "database/SQLiteDatabase.h"
 #include "database/SqlDialect.h"
 #include "utils/SessionEnd.h"
+#include "utils/CheckpointSizes.h"
 #include "mqtt_client.h"
 #include "utils/ConfigManager.h"
 #include "utils/AppConfig.h"
@@ -530,8 +531,8 @@ TEST_F(BurstCollectorServiceTest, CheckpointSizes_AFileThatGrewByLessThanAKbIsAC
     after = before;
     after.file_sizes_bytes["20261031_003049_BRP.edf"] = 19330;   // 300 B later, still 18 KB
 
-    const auto a = BurstCollectorService::checkpointSizes(before);
-    const auto b = BurstCollectorService::checkpointSizes(after);
+    const auto a = checkpointSizes(before);
+    const auto b = checkpointSizes(after);
     // BRP, PLD and the oximetry file are checkpoints; the TCV and EVE are not.
     EXPECT_EQ(a.size(), 3u);
     EXPECT_EQ(a.count("20261031_003049_TCV.edf"), 0u);
@@ -543,7 +544,7 @@ TEST_F(BurstCollectorServiceTest, CheckpointSizes_AFileThatGrewByLessThanAKbIsAC
     // A source that lists KB only (an ez Share) compares in KB, as before.
     SessionFileSet kb_only;
     kb_only.file_sizes_kb = before.file_sizes_kb;
-    const auto k = BurstCollectorService::checkpointSizes(kb_only);
+    const auto k = checkpointSizes(kb_only);
     EXPECT_EQ(k.at("20261031_003049_BRP.edf"), 18);
     EXPECT_EQ(k.at("20261031_003049_SA2.edf"), 1);
 }
@@ -2782,6 +2783,135 @@ TEST_F(BurstOrchestrationTest, ExistingSession_Changed_RedownloadsAndReopens) {
     EXPECT_GT(src_raw->download_count, 0) << "Changed session should re-download";
 }
 
+// ── SDD-077: a repair never reopens; only the current night does ─────────────
+
+static std::chrono::system_clock::time_point sessionTime(const std::string& prefix);   // below
+
+// §3.4, D4: files unchanged but missing from the archive. The download repairs
+// the archive and stores what it fetched; session_end is kept.
+TEST_F(BurstOrchestrationTest, ARepairDownloadKeepsTheSessionCompleted) {
+    auto svc = makeService(&BurstOrchestrationTest::seedOneSession);
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, sessionExists(_, _)).WillRepeatedly(Return(true));
+    EXPECT_CALL(*db_raw, getCheckpointFileSizes(_, _)).WillRepeatedly(Return(
+        std::map<std::string, int>{{"20200101_220000_BRP.edf", 100}, {"20200101_220000_PLD.edf", 20}}));
+    // Nothing archived: the night is fetched to repair it.
+    EXPECT_CALL(*db_raw, updateCheckpointFileSizesMock(_, _)).Times(AtLeast(1));
+    EXPECT_CALL(*db_raw, reopenSession(_, _)).Times(0);
+
+    svc->runBurstCycleForTest();
+
+    EXPECT_GT(src_raw->download_count, 0) << "the archive must still be repaired";
+}
+
+// Two nights on the card: 20200101 and the newest, 20200102.
+static void seedTwoNights(FakeDataSource& ds) {
+    ds.date_folders = {"20200101", "20200102"};
+    ds.folder_files["20200101"] = {
+        mkEntry("20200101_220000_BRP.edf", 100),
+        mkEntry("20200101_220000_PLD.edf", 20),
+    };
+    ds.folder_files["20200102"] = {
+        mkEntry("20200102_220000_BRP.edf", 80),
+        mkEntry("20200102_220000_PLD.edf", 15),
+    };
+}
+
+// §3.3, D5: a changed file in an older night is downloaded and stored again,
+// and the session is not reopened: only the current night's may.
+TEST_F(BurstOrchestrationTest, AChangedOlderNightIsStoredAndNotReopened) {
+    auto svc = makeService(&seedTwoNights);
+    archiveSeededNight({"20200101_220000_BRP.edf", "20200101_220000_PLD.edf"}, "20200101");
+    archiveSeededNight({"20200102_220000_BRP.edf", "20200102_220000_PLD.edf"}, "20200102");
+    const auto t_old = sessionTime("20200101_220000");
+    const auto t_new = sessionTime("20200102_220000");
+
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, sessionExists(_, _)).WillRepeatedly(Return(true));
+    EXPECT_CALL(*db_raw, getCheckpointFileSizes(_, t_old)).WillRepeatedly(Return(
+        std::map<std::string, int>{{"20200101_220000_BRP.edf", 50}, {"20200101_220000_PLD.edf", 20}}));
+    EXPECT_CALL(*db_raw, getCheckpointFileSizes(_, t_new)).WillRepeatedly(Return(
+        std::map<std::string, int>{{"20200102_220000_BRP.edf", 80}, {"20200102_220000_PLD.edf", 15}}));
+
+    EXPECT_CALL(*db_raw, updateCheckpointFileSizesMock(_, t_old)).Times(AtLeast(1));
+    EXPECT_CALL(*db_raw, reopenSession(_, _)).Times(0);
+    EXPECT_CALL(*db_raw, markSessionCompleted(_, t_new)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, getNightlyMetrics(_, _)).WillRepeatedly(Return(std::nullopt));
+
+    svc->runBurstCycleForTest();
+
+    EXPECT_TRUE(fetched(src_raw->downloaded_files, "20200101_220000_BRP.edf") ||
+                fetched(src_raw->ranged_files, "20200101_220000_BRP.edf"))
+        << "the older night's changed file must still be read";
+}
+
+// §3.2: the same change in the current night (the newest folder) reopens it.
+TEST_F(BurstOrchestrationTest, AChangedCurrentNightReopens) {
+    auto svc = makeService(&seedTwoNights);
+    archiveSeededNight({"20200101_220000_BRP.edf", "20200101_220000_PLD.edf"}, "20200101");
+    archiveSeededNight({"20200102_220000_BRP.edf", "20200102_220000_PLD.edf"}, "20200102");
+    const auto t_old = sessionTime("20200101_220000");
+    const auto t_new = sessionTime("20200102_220000");
+
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, sessionExists(_, _)).WillRepeatedly(Return(true));
+    EXPECT_CALL(*db_raw, getCheckpointFileSizes(_, t_old)).WillRepeatedly(Return(
+        std::map<std::string, int>{{"20200101_220000_BRP.edf", 100}, {"20200101_220000_PLD.edf", 20}}));
+    EXPECT_CALL(*db_raw, getCheckpointFileSizes(_, t_new)).WillRepeatedly(Return(
+        std::map<std::string, int>{{"20200102_220000_BRP.edf", 40}, {"20200102_220000_PLD.edf", 15}}));
+
+    EXPECT_CALL(*db_raw, reopenSession(_, t_new)).Times(1).WillOnce(Return(true));
+    EXPECT_CALL(*db_raw, reopenSession(_, t_old)).Times(0);
+    EXPECT_CALL(*db_raw, markSessionCompleted(_, t_old)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, getNightlyMetrics(_, _)).WillRepeatedly(Return(std::nullopt));
+
+    svc->runBurstCycleForTest();
+}
+
+// §3.5, D3: a source that lists exact bytes, a row stored in the old KB shape.
+// Unchanged, no download, and the row is rewritten in bytes once; the next
+// burst reads it exactly and writes nothing.
+TEST_F(BurstOrchestrationTest, AKbShapeCheckpointIsReadOnceAsUnchangedAndRewritten) {
+    auto svc = makeService([](FakeDataSource& ds) {
+        ds.date_folders = {"20200101"};
+        auto brp = mkEntry("20200101_220000_BRP.edf", 100);
+        brp.size_bytes = 102700;   // 100 KB rounded down
+        auto pld = mkEntry("20200101_220000_PLD.edf", 20);
+        pld.size_bytes = 20900;
+        ds.folder_files["20200101"] = {brp, pld};
+    });
+    archiveSeededNight({"20200101_220000_BRP.edf", "20200101_220000_PLD.edf"});
+
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, sessionExists(_, _)).WillRepeatedly(Return(true));
+    ::testing::Sequence seq;
+    EXPECT_CALL(*db_raw, getCheckpointFileSizes(_, _))
+        .InSequence(seq)
+        .WillOnce(Return(std::map<std::string, int>{{"20200101_220000_BRP.edf", 100},
+                                                    {"20200101_220000_PLD.edf", 20}}));
+    EXPECT_CALL(*db_raw, getCheckpointFileSizes(_, _))
+        .InSequence(seq)
+        .WillRepeatedly(Return(std::map<std::string, int>{{"20200101_220000_BRP.edf", 102700},
+                                                          {"20200101_220000_PLD.edf", 20900}}));
+    EXPECT_CALL(*db_raw, updateCheckpointFileSizesMock(_, _)).Times(1).WillOnce(Return(true));
+    EXPECT_CALL(*db_raw, reopenSession(_, _)).Times(0);
+    EXPECT_CALL(*db_raw, markSessionCompleted(_, _)).WillRepeatedly(Return(false));
+
+    svc->runBurstCycleForTest();
+    EXPECT_EQ(db_raw->saved_checkpoints.at("20200101_220000_BRP.edf"), 102700);
+    EXPECT_EQ(db_raw->saved_checkpoints.at("20200101_220000_PLD.edf"), 20900);
+    src_raw->downloaded_files.clear();
+    src_raw->ranged_files.clear();
+    svc->runBurstCycleForTest();
+
+    for (const auto& f : src_raw->downloaded_files) EXPECT_EQ(f.find("_BRP.edf"), std::string::npos) << f;
+    EXPECT_TRUE(src_raw->ranged_files.empty());
+}
+
 // No date folders discovered -> cycle returns true early, only getLastSessionStart
 // is consulted. Exercises the empty-discovery short-circuit.
 TEST_F(BurstOrchestrationTest, NoSessions_ReturnsTrueEarly) {
@@ -3863,7 +3993,9 @@ TEST(BurstMetricsFormatTest, MetricsString_MinimalNoOptionals) {
     std::string out = svc.buildMetricsStringForTest(m, nullptr);
 
     EXPECT_NE(out.find("AHI: 1.00 events/hour"), std::string::npos);
-    EXPECT_NE(out.find("Usage: 0.00 hours"), std::string::npos);
+    // SDD-072 D1: a usage the night does not have is absent, never 0.
+    EXPECT_NE(out.find("Usage: not recorded"), std::string::npos);
+    EXPECT_EQ(out.find("Usage: 0.00 hours"), std::string::npos);
     // None of the optional sections should appear.
     EXPECT_EQ(out.find("Pressure:"), std::string::npos);
     EXPECT_EQ(out.find("Leak:"), std::string::npos);

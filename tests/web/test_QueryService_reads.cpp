@@ -357,6 +357,24 @@ TEST_F(QueryServiceReadTest, ADayWithASessionHasDetail) {
     EXPECT_GE(detail.size(), 1u) << "a night that exists returned no detail";
 }
 
+// SDD-077 D1: a session says where its files came from.
+TEST_F(QueryServiceReadTest, ASessionSaysWhereItsFilesCameFrom) {
+    addSession(1778020200, 3600);
+    addSession(1778020200 + 7200, 3600);
+    ASSERT_TRUE(db_->replaceSessionFiles(kDevice, tp(1778020200),
+                                         {{"brp", "DATALOG/20260505/20260505_223000_BRP.edf"}}));
+    ASSERT_TRUE(db_->replaceSessionFiles(
+        kDevice, tp(1778020200 + 7200),
+        {{"brp", "as11/23000000001/DATALOG/20260505/20260506_003000_BRP.edf", kSourceBleAs11}}));
+    const auto sessions = qs_->getSessions(10, 0);
+    ASSERT_GE(sessions.size(), 1u);
+
+    const auto detail = qs_->getSessionDetail(sessions[0]["sleep_day"].asString());
+    ASSERT_EQ(detail.size(), 2u);
+    EXPECT_EQ(detail[0]["source"].asString(), kSourceCard);
+    EXPECT_EQ(detail[1]["source"].asString(), kSourceBleAs11);
+}
+
 TEST_F(QueryServiceReadTest, TrendAndStatisticsAcceptOrdinaryArguments) {
     addSession(1778020200, 8 * 3600);
     // Both return arrays of rows. Written after checking, not before: guessing
