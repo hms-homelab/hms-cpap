@@ -311,6 +311,10 @@ std::string nowIsoUtc() {
 
 }  // namespace
 
+namespace update {
+bool downloadFile(const std::string& url, const std::string& path) { return curlDownload(url, path); }
+}  // namespace update
+
 UpdateService::UpdateService(std::string current_version, std::string repo, HttpGet http)
     : current_(std::move(current_version)), repo_(std::move(repo)),
       http_(http ? std::move(http) : HttpGet(curlGet)),

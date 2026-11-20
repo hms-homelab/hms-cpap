@@ -9,6 +9,8 @@
 #include "controllers/MuleDs2Routes.h"
 #include "controllers/DevicesRoutes.h"
 #include "controllers/SetupWatch.h"
+#include "controllers/LocalModelRoutes.h"
+#include "model/LocalModelService.h"
 #include "sleepbridge/ReleaseFeed.h"
 #include "mule/LivePublisher.h"
 #include "mqtt/LiveState.h"
@@ -1307,8 +1309,32 @@ int main(int argc, char** argv) {
                 garmin->start();
                 hms_cpap::CpapController::setGarminService(garmin);
                 if (burst_service)
-                    burst_service->setNightClosedListener(
+                    burst_service->addNightClosedListener(
                         [g = garmin](const std::string& folder) { g->onNightClosed(folder); });
+            }
+
+            // SDD-013: the local sleep model's nightly job. Built even when it
+            // is off, so the Settings switch needs no restart. It runs only on
+            // a night's close (the SDD-046 announce), never on a clock.
+            std::shared_ptr<hms_cpap::model::LocalModelService> local_model;
+            {
+                std::shared_ptr<hms_cpap::IDatabase> lm_db = db;
+                if (config.database.type != "sqlite") {
+                    lm_db = hms_cpap::makeDatabaseFromConfig();
+                    lm_db->connect();
+                }
+                hms_cpap::model::LocalModelService::Deps ld;
+                ld.db          = lm_db;
+                ld.config      = &config;
+                ld.config_path = config_path;
+                ld.device_id   = hms_cpap::ConfigManager::get(
+                    "CPAP_DEVICE_ID", hms_cpap::AppConfig::kDefaultDeviceId);
+                local_model = std::make_shared<hms_cpap::model::LocalModelService>(std::move(ld));
+                local_model->start();
+                hms_cpap::model::installRoutes(local_model.get());
+                if (burst_service)
+                    burst_service->addNightClosedListener(
+                        [m = local_model](const std::string& folder) { m->onNightClosed(folder); });
             }
 
             // SDD-041: check GitHub for a newer stable release, daily and on
@@ -2104,7 +2130,8 @@ int main(int argc, char** argv) {
             hms_cpap::card_feed::setSinks({}, {});
             hms_cpap::CpapController::setStreamService(nullptr);
             cpapdash_stream->stop();
-            if (burst_service) burst_service->setNightClosedListener({});
+            if (burst_service) burst_service->clearNightClosedListeners();
+            local_model->stop();
             hms_cpap::CpapController::setGarminService(nullptr);
             garmin->stop();
         }

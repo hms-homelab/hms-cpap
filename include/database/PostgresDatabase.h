@@ -142,7 +142,8 @@ public:
                      double avg_ahi,
                      double avg_usage_hours,
                      double compliance_pct,
-                     const std::string& summary_text) override;
+                     const std::string& summary_text,
+                     const std::string& source = "llm") override;
 
     // -- Oximetry (O2 Ring) ---------------------------------------------------
 

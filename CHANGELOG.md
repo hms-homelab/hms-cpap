@@ -25,6 +25,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stays closed until the computed index agrees with a reference on real
   nights: nothing is computed, stored or shown in this release, and no screen
   reads either.
+- **The local sleep model's harness (SDD-013), with no model yet.** A
+  Settings section, "Local Sleep Model", whose switch writes each night's
+  summary on this machine from the stored data, with no network. The section
+  stays hidden until a model is published. The job runs when a night closes (the SDD-046 quiet close),
+  never on a timer: the night is read through the database layer into the
+  shared night facts (SDD-072), the model is given only those facts, every
+  number and date it writes is checked against them, a rejected text is tried
+  once more at a lower temperature, and a second rejection gives a plain
+  template instead. Turning it on downloads the pinned model and checks its
+  SHA-256; "Load model from file" does the same check for an install with no
+  network. No model is published yet, so turning it on is refused with that
+  reason, and this build has no GGUF runtime linked, so no local summary is
+  written yet. Summaries now carry a `source` (`llm` for the configured LLM,
+  `local` for the local model) on SQLite, MySQL and PostgreSQL, and
+  `/api/summaries` returns it. New routes: `GET /api/local-model/status`,
+  `POST /api/local-model/enable`, `/disable` and `/file`.
 - **Each file sent to CpapDash says its source, and oximetry goes too
   (SDD-079, platform SDD-061).** Every `file_ready` now carries `source`:
   `card` for the machine's own card (ez Share, a local folder, a ZIP, a Sleep

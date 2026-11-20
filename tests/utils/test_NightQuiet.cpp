@@ -151,6 +151,34 @@ TEST_F(NightQuietTest, TheCollectorAnnouncesAQuietNightOnce) {
     EXPECT_TRUE(nightHourPassed(nightHourStates(*db_, "q_dev"), "20260923"));
 }
 
+// SDD-013: the close is told to every listener (Garmin and the local sleep
+// model), once each, and to none after they are cleared.
+TEST_F(NightQuietTest, EveryNightClosedListenerIsToldOnce) {
+    setEnv("CPAP_DEVICE_ID", "q_two");
+    BurstCollectorService svc(300);
+    setEnv("CPAP_DEVICE_ID", nullptr);
+    svc.injectDependenciesForTest(db_, nullptr, nullptr);
+    svc.setSourceForTest("local");
+
+    std::vector<std::string> first, second;
+    svc.addNightClosedListener([&first](const std::string& f) { first.push_back(f); });
+    svc.addNightClosedListener([&second](const std::string& f) { second.push_back(f); });
+
+    const auto start = now_ - hours(8);
+    save("q_two", start);
+    ASSERT_TRUE(noteNightGrowth(*db_, "q_two", "20260923", start, now_ - minutes(30)));
+    EXPECT_EQ(svc.announceQuietNightsForTest(now_ + minutes(30)), 1);
+    EXPECT_EQ(first, std::vector<std::string>{"20260923"});
+    EXPECT_EQ(second, std::vector<std::string>{"20260923"});
+
+    svc.clearNightClosedListeners();
+    const auto next = now_ + hours(20);
+    save("q_two", next);
+    ASSERT_TRUE(noteNightGrowth(*db_, "q_two", "20260924", next, next + minutes(1)));
+    EXPECT_EQ(svc.announceQuietNightsForTest(next + minutes(62)), 1);
+    EXPECT_EQ(first.size(), 1u) << "a cleared listener is not told";
+}
+
 TEST_F(NightQuietTest, ARemovedNightIsMarkedButNotAnnounced) {
     setEnv("CPAP_DEVICE_ID", "q_gone");
     BurstCollectorService svc(300);

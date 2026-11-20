@@ -164,6 +164,32 @@
       "modelDirPlaceholder": "Hagyja üresen az adatkönyvtár használatához",
       "modelVersion": "Modellverzió"
     },
+    "localModel": {
+      "heading": "Helyi alvásmodell",
+      "desc": "Minden éjszaka összefoglalóját ezen a gépen írja meg, a tárolt adatokból, hálózat nélkül. A modellfájl (kb. 62 MB) az első bekapcsoláskor töltődik le, vagy fájlból tölthető be.",
+      "enabled": "Minden éjszaka összefoglalása a helyi modellel",
+      "version": "Modell",
+      "lastNight": "Utoljára összefoglalt éjszaka",
+      "state": {
+        "off": "Kikapcsolva",
+        "not_published": "Még nem érhető el",
+        "downloading": "A modell letöltése...",
+        "installing": "A modellfájl ellenőrzése...",
+        "ready": "Bekapcsolva",
+        "no_runtime": "Bekapcsolva, de ez a verzió még nem tudja futtatni a modellt",
+        "error": "Nincs bekapcsolva"
+      },
+      "how": {
+        "model": "a modell írta",
+        "model_retry": "a modell írta, második próbálkozásra",
+        "template": "az egyszerű sablonból",
+        "none": "nincs összefoglalva"
+      },
+      "notPublished": "Még nem jelent meg helyi alvásmodell. Bekapcsolható lesz, amint lesz egy.",
+      "loadFile": "Modell betöltése fájlból",
+      "loadFileHint": "Hálózat nélküli telepítéshez: a fájlt használat előtt a közzétett modellhez ellenőrizzük.",
+      "failed": "A helyi modellt nem sikerült módosítani."
+    },
     "agent": {
       "heading": "Ügynök",
       "unavailable": "Nem érhető el: az ügynökhöz bekapcsolt LLM-összefoglalók és PostgreSQL-adatbázis kell.",

@@ -524,6 +524,27 @@ export class CpapApiService {
     return this.http.post<any>('/api/garmin/mfa', { code });
   }
 
+  /** SDD-013: the local sleep model's state, for its Settings section. */
+  getLocalModelStatus(): Observable<any> {
+    return this.http.get<any>('/api/local-model/status');
+  }
+
+  /** SDD-013: the switch on. 202 (on, or the download queued); 409 with the reason. */
+  enableLocalModel(): Observable<any> {
+    return this.http.post<any>('/api/local-model/enable', {});
+  }
+
+  disableLocalModel(): Observable<any> {
+    return this.http.post<any>('/api/local-model/disable', {});
+  }
+
+  /** SDD-013: "Load model from file", for an install with no network. */
+  loadLocalModelFile(file: File): Observable<any> {
+    const fd = new FormData();
+    fd.append('file', file, file.name);
+    return this.http.post<any>('/api/local-model/file', fd);
+  }
+
   exportSleepHq(date: string): Observable<any> {
     return this.http.post<any>(`/api/sleephq/export/${date}`, {});
   }

@@ -393,6 +393,15 @@ struct AppConfig {
         std::string device_name;
     } garmin;
 
+    /// SDD-013: the local sleep model that writes each closed night's summary
+    /// from the database, with no network. `enabled` is set only through
+    /// POST /api/local-model/enable, which refuses until a model is published
+    /// and verified; PUT /api/config does not change it.
+    struct LocalModel {
+        bool enabled = false;
+        std::string model_dir;          // default: empty (uses dataDir()/models)
+    } local_model;
+
     bool setup_complete = false;
 
     /// Fill empty config fields from environment variables (fallback).
@@ -824,6 +833,12 @@ struct AppConfig {
                 if (g.contains("device_name"))   config.garmin.device_name = g["device_name"];
             }
 
+            if (j.contains("local_model")) {
+                auto& lm = j["local_model"];
+                if (lm.contains("enabled"))   config.local_model.enabled = lm["enabled"];
+                if (lm.contains("model_dir")) config.local_model.model_dir = lm["model_dir"];
+            }
+
             if (j.contains("sleephq")) {
                 auto& sh = j["sleephq"];
                 if (sh.contains("enabled"))           config.sleephq.enabled = sh["enabled"];
@@ -971,6 +986,9 @@ struct AppConfig {
             j["garmin"]["client_id"]     = garmin.client_id;
             j["garmin"]["display_name"]  = garmin.display_name;
             j["garmin"]["device_name"]   = garmin.device_name;
+
+            j["local_model"]["enabled"]   = local_model.enabled;     // SDD-013
+            j["local_model"]["model_dir"] = local_model.model_dir;
 
             j["logging"]["enabled"] = logging.enabled;
             j["logging"]["file"]    = logging.file;
@@ -1148,6 +1166,9 @@ struct AppConfig {
         j["garmin"]["display_name"]  = garmin.display_name;
         j["garmin"]["device_name"]   = garmin.device_name;
         j["garmin"]["signed_in"]     = !garmin.refresh_token.empty() || !garmin.access_token.empty();
+
+        j["local_model"]["enabled"]   = local_model.enabled;     // SDD-013
+        j["local_model"]["model_dir"] = local_model.model_dir;
 
         j["logging"]["enabled"] = logging.enabled;
         j["logging"]["file"]    = logging.file;

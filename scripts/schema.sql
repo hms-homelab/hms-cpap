@@ -255,6 +255,7 @@ CREATE TABLE IF NOT EXISTS cpap_summaries (
     avg_usage_hours DOUBLE PRECISION,
     compliance_pct  DOUBLE PRECISION,
     summary_text    TEXT NOT NULL,
+    source          TEXT NOT NULL DEFAULT 'llm',   -- SDD-013: 'llm' or 'local'
     created_at      TIMESTAMP NOT NULL DEFAULT NOW()
 );
 

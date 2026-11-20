@@ -682,6 +682,7 @@ void MySQLDatabase::createSchema() {
             avg_usage_hours DOUBLE,
             compliance_pct  DOUBLE,
             summary_text    TEXT NOT NULL,
+            source          VARCHAR(16) NOT NULL DEFAULT 'llm',
             created_at      DATETIME NOT NULL DEFAULT NOW(),
             KEY idx_cpap_summaries_device_period (device_id, period, range_end)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
@@ -1140,6 +1141,9 @@ void MySQLDatabase::migrateSchema() {
         {"cpap_daily_summary", "therapy_press_50",     "DOUBLE"},
         {"cpap_daily_summary", "therapy_press_95",     "DOUBLE"},
         {"cpap_daily_summary", "therapy_press_max",    "DOUBLE"},
+
+        // SDD-013: what wrote the summary ('llm' or 'local').
+        {"cpap_summaries", "source", "VARCHAR(16) NOT NULL DEFAULT 'llm'"},
 
         // Oximetry metrics, added with the tables themselves.
         {"oximetry_sessions", "avg_spo2",      "DOUBLE"},
@@ -3744,7 +3748,8 @@ bool MySQLDatabase::saveSummary(
     double avg_ahi,
     double avg_usage_hours,
     double compliance_pct,
-    const std::string& summary_text) {
+    const std::string& summary_text,
+    const std::string& source) {
 
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!conn_) return false;
@@ -3752,15 +3757,15 @@ bool MySQLDatabase::saveSummary(
     const char* sql = R"(
         INSERT INTO cpap_summaries
             (device_id, period, range_start, range_end, nights_count,
-             avg_ahi, avg_usage_hours, compliance_pct, summary_text)
-        VALUES (?, ?, CAST(? AS DATE), CAST(? AS DATE), ?, ?, ?, ?, ?)
+             avg_ahi, avg_usage_hours, compliance_pct, summary_text, source)
+        VALUES (?, ?, CAST(? AS DATE), CAST(? AS DATE), ?, ?, ?, ?, ?, ?)
     )";
 
     MysqlStmtGuard g;
     g.stmt = mysql_stmt_init(conn_);
     mysql_stmt_prepare(g.stmt, sql, std::strlen(sql));
 
-    ParamBinder p(9);
+    ParamBinder p(10);
     p.bindText(0, device_id);
     p.bindText(1, period);
     p.bindText(2, range_start);
@@ -3770,6 +3775,7 @@ bool MySQLDatabase::saveSummary(
     p.bindDouble(6, avg_usage_hours);
     p.bindDouble(7, compliance_pct);
     p.bindText(8, summary_text);
+    p.bindText(9, source);
 
     mysql_stmt_bind_param(g.stmt, p.data());
     if (mysql_stmt_execute(g.stmt) != 0) {

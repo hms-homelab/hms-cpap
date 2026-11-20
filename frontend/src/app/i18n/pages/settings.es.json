@@ -164,6 +164,32 @@
       "modelDirPlaceholder": "Déjalo vacío para usar el directorio de datos",
       "modelVersion": "Versión del modelo"
     },
+    "localModel": {
+      "heading": "Modelo de sueño local",
+      "desc": "Escribe el resumen de cada noche en este equipo, a partir de los datos guardados, sin red. El archivo del modelo (unos 62 MB) se descarga la primera vez que se activa, o se carga desde un archivo.",
+      "enabled": "Resumir cada noche con el modelo local",
+      "version": "Modelo",
+      "lastNight": "Última noche resumida",
+      "state": {
+        "off": "Desactivado",
+        "not_published": "Aún no disponible",
+        "downloading": "Descargando el modelo...",
+        "installing": "Comprobando el archivo del modelo...",
+        "ready": "Activado",
+        "no_runtime": "Activado, pero esta versión aún no puede ejecutar el modelo",
+        "error": "No activado"
+      },
+      "how": {
+        "model": "escrito por el modelo",
+        "model_retry": "escrito por el modelo, segundo intento",
+        "template": "escrito con la plantilla simple",
+        "none": "sin resumir"
+      },
+      "notPublished": "Todavía no se ha publicado ningún modelo de sueño local. Podrá activarse cuando haya uno.",
+      "loadFile": "Cargar modelo desde archivo",
+      "loadFileHint": "Para una instalación sin red: el archivo se compara con el modelo publicado antes de usarse.",
+      "failed": "No se pudo cambiar el modelo local."
+    },
     "agent": {
       "heading": "Agente",
       "unavailable": "No disponible: el agente necesita las Resúmenes con LLM activados y una base de datos PostgreSQL.",

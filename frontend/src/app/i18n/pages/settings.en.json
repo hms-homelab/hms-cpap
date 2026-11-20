@@ -164,6 +164,32 @@
       "modelDirPlaceholder": "Leave empty to use the data directory",
       "modelVersion": "Model Version"
     },
+    "localModel": {
+      "heading": "Local Sleep Model",
+      "desc": "Writes each night's summary on this machine, from the stored data, with no network. The model file (about 62 MB) is downloaded the first time it is turned on, or loaded from a file.",
+      "enabled": "Summarize each night with the local model",
+      "version": "Model",
+      "lastNight": "Last night summarized",
+      "state": {
+        "off": "Off",
+        "not_published": "Not available yet",
+        "downloading": "Downloading the model...",
+        "installing": "Checking the model file...",
+        "ready": "On",
+        "no_runtime": "On, but this build cannot run the model yet",
+        "error": "Not on"
+      },
+      "how": {
+        "model": "written by the model",
+        "model_retry": "written by the model, second try",
+        "template": "written from the plain template",
+        "none": "not summarized"
+      },
+      "notPublished": "No local sleep model has been published yet. It can be turned on once one is.",
+      "loadFile": "Load model from file",
+      "loadFileHint": "For an install with no network: the file is checked against the published model before it is used.",
+      "failed": "The local model could not be changed."
+    },
     "agent": {
       "heading": "Agent",
       "unavailable": "Unavailable: the agent needs LLM Summaries enabled and a PostgreSQL database.",

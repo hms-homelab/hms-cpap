@@ -489,6 +489,8 @@ TEST_F(QueryServiceReadTest, ASavedSummaryComesBack) {
     const auto s = qs_->getSummaries("weekly", 5);
     ASSERT_TRUE(s.isArray());
     ASSERT_GE(s.size(), 1u) << "a saved summary never came back";
+    // SDD-013: and it says what wrote it.
+    EXPECT_EQ(s[0]["source"].asString(), "llm");
 
     // And the period filter is real, not decorative.
     const auto monthly = qs_->getSummaries("monthly", 5);

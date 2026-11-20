@@ -100,7 +100,7 @@ public:
         return {}; }
     bool saveSummary(const std::string&, const std::string&, const std::string&,
                      const std::string&, int, double, double, double,
-                     const std::string&) override { return true; }
+                     const std::string&, const std::string&) override { return true; }
     bool saveOximetrySession(const std::string&,
                              const cpapdash::parser::OximetrySession&) override { return true; }
     bool oximetrySessionExists(const std::string&, const std::string&) override { return false; }
