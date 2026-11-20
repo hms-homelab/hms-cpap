@@ -759,6 +759,14 @@ def price_table(args, batch=None, defaults_only=False):
     return table
 
 
+def token_report(tin, tout, tok):
+    """input = every input token however billed (comparable across providers),
+    input_uncached = the part billed at the plain input price."""
+    r = lambda v: round(v, 1)
+    return {"input": r(tin), "output_incl_thinking": r(tout), "input_uncached": r(tok["input"]),
+            **{k: r(tok[k]) for k in ("cache_write_5m", "cache_write_1h", "cache_read")}}
+
+
 def mix_cost(tokens, prices):
     return sum(tokens[k] * prices[k] for k in TOKEN_KINDS) / 1e6
 
@@ -871,7 +879,7 @@ def stage_check_and_split(args, out):
         "drop_reasons": dict(reasons),
         "flags_on_accepted": dict(flags),
         "splits": {k: len(v) for k, v in splits.items()},
-        "tokens": {"input": tin, "output_incl_thinking": tout, **tok},
+        "tokens": token_report(tin, tout, tok),
         "price_per_1m": prices,
         "cost_usd": round(cost, 4),
         "cost_per_answer_usd": round(cost / len(answers), 6) if answers else None,
@@ -898,9 +906,7 @@ def stage_check_and_split(args, out):
         batch_prices = price_table(args, batch=True, defaults_only=True)
         report["projection"] = {
             "pairs": args.project_pairs, "requests": round(need),
-            "tokens_per_answer": {"input": round(tin / len(answers), 1),
-                                  "output_incl_thinking": round(tout / len(answers), 1),
-                                  **{k: round(v, 1) for k, v in per.items()}},
+            "tokens_per_answer": token_report(tin / len(answers), tout / len(answers), per),
             "cost_usd_at_these_prices": round(need * cost / len(answers), 2),
             "batch_price_per_1m": batch_prices,
             "cost_usd_batch_api": round(need * mix_cost(as_batch_mix(per, args), batch_prices), 2),
