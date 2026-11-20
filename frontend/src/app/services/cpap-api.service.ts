@@ -549,6 +549,11 @@ export class CpapApiService {
     return this.http.post<any>('/api/oscar/read', {});
   }
 
+  /** SDD-081 D4: Forget the OSCAR helper; the next one to connect is remembered. */
+  forgetOscarHelper(): Observable<any> {
+    return this.http.delete<any>('/api/oscar/helper');
+  }
+
   /** SDD-078 D4: the code Garmin asked for, entered on the Devices page. */
   garminMfa(code: string): Observable<any> {
     return this.http.post<any>('/api/garmin/mfa', { code });

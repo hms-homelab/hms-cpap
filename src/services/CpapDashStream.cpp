@@ -826,7 +826,7 @@ void CpapDashStreamer::run() {
 std::optional<CpapDashStreamer::SessionEnd> CpapDashStreamer::handle(CpapDashLink& link,
                                                                      const CpapDashLink::Frame& f) {
     using Kind = CpapDashLink::Frame::Kind;
-    if (f.kind == Kind::Ping) return std::nullopt;
+    if (f.kind == Kind::Ping || f.kind == Kind::Binary) return std::nullopt;   // CpapDash sends none
     if (f.kind == Kind::Closed) {
         SessionEnd e;
         e.end = End::Closed;

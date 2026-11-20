@@ -106,8 +106,35 @@ import { showLocalModelSection } from './local-model';
                  user's own OSCAR. Three fields, each checked on save. -->
             <div class="oscar-block" *ngIf="config.format === 'philips' && oscar">
               <b>{{ 'settings.source.oscar.title' | translate }}</b>
+              <!-- SDD-081 D9: OSCAR here, or on a home PC through the helper. -->
+              <div class="oscar-where" role="radiogroup" [attr.aria-label]="'settings.source.oscar.title' | translate">
+                <label class="radio"><input type="radio" name="oscar_where" value="here" [(ngModel)]="oscarWhere" />
+                  {{ 'settings.source.oscar.whereHere' | translate }}</label>
+                <label class="radio"><input type="radio" name="oscar_where" value="helper" [(ngModel)]="oscarWhere" />
+                  {{ 'settings.source.oscar.whereHelper' | translate }}</label>
+              </div>
+              <ng-container *ngIf="oscarWhere === 'helper'">
+                <small class="hint">{{ 'settings.source.oscar.helperDesc' | translate }}</small>
+                <ol class="oscar-steps" *ngIf="!oscarHelper?.remembered">
+                  <li>{{ 'settings.source.oscar.helperStep1' | translate }}</li>
+                  <li>{{ 'settings.source.oscar.helperStep2' | translate }}</li>
+                  <li>{{ 'settings.source.oscar.helperStep3' | translate:{ address: hostAddress, port: oscarStreamPort } }}</li>
+                </ol>
+                <div class="oscar-helper-line" *ngIf="oscarHelper?.remembered && oscarHelper as h">
+                  <i class="fa-solid fa-desktop" aria-hidden="true"></i>
+                  <span>{{ 'settings.source.oscar.helperIs' | translate:{ name: h.name } }}</span>
+                  <small class="hint" [class.ok]="h.connected" [class.warn]="h.update">
+                    {{ (h.update ? 'settings.source.oscar.helperUpdate'
+                        : (h.connected ? 'settings.source.oscar.helperConnected' : 'settings.source.oscar.helperOffline'))
+                       | translate:{ name: h.name } }}</small>
+                  <a routerLink="/devices">{{ 'settings.source.oscar.helperOnDevices' | translate }}</a>
+                </div>
+                <small class="hint" *ngIf="!oscarHelper?.remembered">{{ 'settings.source.oscar.helperNone' | translate }}</small>
+              </ng-container>
+              <ng-container *ngIf="oscarWhere === 'here'">
               <small class="hint">{{ 'settings.source.oscar.desc' | translate }}</small>
-              <small class="hint warn" *ngIf="oscarContainerised">{{ 'settings.source.oscar.container' | translate }}</small>
+              <small class="hint warn" *ngIf="oscarContainerised">{{ 'settings.source.oscar.containerShort' | translate }}</small>
+              <fieldset class="oscar-fields" [disabled]="oscarContainerised">
               <label>
                 {{ 'settings.source.oscar.program' | translate }}
                 <input type="text" [(ngModel)]="oscar.program" name="oscar_program"
@@ -141,6 +168,8 @@ import { showLocalModelSection } from './local-model';
                   {{ (oscarSaving ? 'settings.source.oscar.checking' : 'settings.source.oscar.save') | translate }}</button>
                 <small class="hint ok" *ngIf="oscarCheck?.ok">{{ 'settings.source.oscar.allGood' | translate }}</small>
               </div>
+              </fieldset>
+              </ng-container>
             </div>
             <!-- Asked for by the first person to look here for myAir, which will
                  not be the last. myAir cannot BE a source: it returns daily
@@ -1303,6 +1332,13 @@ import { showLocalModelSection } from './local-model';
     .oscar-block label .hint { display: block; margin-top: 0.25rem; }
     .oscar-block .hint.ok { color: #4ade80; font-style: normal; }
     .oscar-actions { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; margin-top: 0.5rem; }
+    /* SDD-081 D9 */
+    .oscar-where, .oscar-helper-line { display: flex; gap: 1rem; flex-wrap: wrap; align-items: center; margin: .4rem 0; }
+    .oscar-where label { flex-direction: row; align-items: center; gap: .4rem; }
+    .oscar-steps { margin: .25rem 0 .5rem 1.1rem; padding: 0; line-height: 1.6; }
+    .oscar-block .ok { color: #4ade80; font-style: normal; }
+    .oscar-fields { border: 0; padding: 0; margin: 0; }
+    .oscar-fields:disabled { opacity: .55; }
     .oscar-actions .btn-primary { padding: 0.45rem 1rem; border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 0.8rem; }
     .badge.connected { background: #14532d; color: #4ade80; }
     .myair-note { background: rgba(100, 181, 246, 0.08); border: 1px solid rgba(100, 181, 246, 0.35);
@@ -1739,12 +1775,22 @@ export class SettingsComponent implements OnInit, OnDestroy {
   oscarProfiles: string[] = [];
   oscarContainerised = false;
   oscarSaving = false;
+  /** SDD-081 D9: OSCAR on this computer, or on a home PC (the helper). Shown
+   *  from what is there: the helper once one is remembered or in a container,
+   *  else this computer. Choosing only changes what the page shows. */
+  oscarWhere: 'here' | 'helper' = 'here';
+  oscarHelper: { remembered: boolean; name: string; connected: boolean; update?: boolean } | null = null;
+  oscarStreamPort = 8894;
+  get hostAddress(): string { return window.location.hostname; }
 
   loadOscar(): void {
     this.api.getOscar().subscribe({
       next: (v) => {
         this.oscarFound = v?.found_program || '';
         this.oscarContainerised = !!v?.containerised;
+        this.oscarHelper = v?.helper ?? null;
+        this.oscarStreamPort = v?.stream_port ?? 8894;
+        this.oscarWhere = this.oscarHelper?.remembered || this.oscarContainerised ? 'helper' : 'here';
         this.oscarCheck = v?.check || null;
         this.oscarProfiles = (v?.check?.profiles ?? []) as string[];
         // The program found where this OS's installer puts it fills an empty field.

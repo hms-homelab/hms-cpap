@@ -427,7 +427,26 @@
       "state_no_program": "Az OSCAR program nem indult el.",
       "state_not_supported": "Ez az OSCAR-verzió még nem támogatott.",
       "state_no_profile": "Hiányzik a hms-cpap OSCAR-profilja. Hozza létre az OSCAR-ban.",
-      "state_not_here": "Az OSCAR-nak ugyanazon a számítógépen kell lennie, mint a hms-cpap."
+      "state_not_here": "Az OSCAR-nak ugyanazon a számítógépen kell lennie, mint a hms-cpap.",
+      "helper_never": "A(z) {{name}} gépen futó OSCAR olvassa. Még nincs beolvasva: a készülék minden befejezett kezelését ott olvassa be.",
+      "helper_imported": "OSCAR {{version}} a(z) {{name}} gépen, utolsó olvasás {{time}}, {{sessions}} kezelés",
+      "helper_nothing_new": "OSCAR {{version}} a(z) {{name}} gépen, utolsó olvasás {{time}}, nincs új",
+      "helper_busy": "Az OSCAR foglalt volt (nyitva a(z) {{name}} gépen). A kezelést a következő befejezéskor, az Olvasás most gombbal, vagy amikor a(z) {{name}} újra csatlakozik, olvassa be.",
+      "state_helper_offline": "Várakozás a(z) {{name}} gépre: az éjszakát akkor olvassa be, amikor be van kapcsolva.",
+      "state_helper_update": "Frissítse a hms-cpap-ot a(z) {{name}} gépen."
+    },
+    "oscarHelper": {
+      "title": "OSCAR segéd: {{name}}",
+      "kind": "A DreamStation 2 kártyáját a saját OSCAR-jával olvassa",
+      "state": "Állapot",
+      "connected": "Csatlakozva. A készülék minden befejezett kezelését a(z) {{name}} gépen olvassa be.",
+      "offline": "Nincs csatlakozva. Az éjszakát akkor olvassa be, amikor a(z) {{name}} be van kapcsolva.",
+      "update": "A(z) {{name}} gépen olyan hms-cpap fut, amellyel ez nem tud beszélni. Frissítse a hms-cpap-ot a(z) {{name}} gépen.",
+      "pillUpdate": "Frissítés",
+      "version": "hms-cpap rajta",
+      "forget": "Elfelejtés",
+      "forgetHint": "Helyette a következő csatlakozó PC-t jegyzi meg. A(z) {{name}} gépet ezután elutasítja, amíg újra csatlakozásra nem utasítják.",
+      "forgotten": "A(z) {{name}} elfelejtve. A következő csatlakozó segédet jegyzi meg."
     },
     "ds2": {
       "notCompiled": "Ebben a változatban nincs Bluetooth: a DreamStation 2 nem olvasható erről a számítógépről.",

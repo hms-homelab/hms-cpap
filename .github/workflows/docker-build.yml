@@ -1184,6 +1184,8 @@ jobs:
           cp armhf-out/hms_cpap release/
           cp -R ui-out/ui/dist/frontend/browser/. release/static/browser/
           cp packaging/pi/install.sh packaging/pi/hms-cpap.service packaging/pi/README.txt release/
+          # SDD-081: the OSCAR helper role (install.sh --oscar-helper).
+          cp packaging/pi/hms-cpap-oscar-helper.service release/
           # SDD-041 D10: the root side of Apply in the web UI.
           cp packaging/pi/apply-update.sh packaging/pi/hms-cpap-update.path \
              packaging/pi/hms-cpap-update.service release/

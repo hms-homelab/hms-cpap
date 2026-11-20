@@ -488,9 +488,9 @@
           <!-- SDD-080 D7: one OSCAR read of the card, now. -->
           <div class="action-line" *ngIf="d.detail.oscar as o">
             <button type="button" class="btn btn-primary" (click)="oscarReadNow(d)"
-                    [disabled]="busy[d.key] || o.reading || !o.set_up">
+                    [disabled]="busy[d.key] || o.reading || (!o.set_up && o.where !== 'helper')">
               {{ (o.reading ? 'devices.oscar.reading' : 'devices.oscar.readNow') | translate }}</button>
-            <a routerLink="/settings" *ngIf="!o.set_up">{{ 'devices.oscar.openSettings' | translate }}</a>
+            <a routerLink="/settings" *ngIf="!o.set_up && o.where !== 'helper'">{{ 'devices.oscar.openSettings' | translate }}</a>
           </div>
           <ng-container *ngIf="d.kind === 'o2ring' && !d.detail.through_bridge">
             <div class="action-line">
@@ -731,6 +731,35 @@
             <div class="hint">{{ (d.kind === 'mule' ? 'devices.mule.fileHint' : 'devices.sleepbridge.fileHint') | translate }}</div>
           </ng-container>
         </div>
+      </div>
+    </article>
+
+    <!-- SDD-081 D4: the PC whose OSCAR reads the DreamStation 2 card for this
+         hms-cpap. Forget lets the next helper to connect in. -->
+    <article class="card" data-kind="oscar_helper" *ngIf="answer?.oscar_helper?.remembered && answer?.oscar_helper as h"
+             [class.away]="!h.connected">
+      <div class="card-head">
+        <i class="fa-solid fa-desktop" aria-hidden="true"></i>
+        <div class="titles">
+          <div class="name"><strong>{{ 'devices.oscarHelper.title' | translate:{ name: h.name } }}</strong></div>
+          <div class="kind">{{ 'devices.oscarHelper.kind' | translate }}</div>
+        </div>
+        <span class="pill" [ngClass]="h.update ? 'unknown' : (h.connected ? 'yes' : 'no')">
+          {{ (h.update ? 'devices.oscarHelper.pillUpdate' : (h.connected ? 'devices.presence.yes' : 'devices.presence.no')) | translate }}</span>
+      </div>
+      <dl class="facts">
+        <div class="wide"><dt>{{ 'devices.oscarHelper.state' | translate }}</dt>
+          <dd [class.amber]="h.update">{{ (h.update ? 'devices.oscarHelper.update'
+                : (h.connected ? 'devices.oscarHelper.connected' : 'devices.oscarHelper.offline')) | translate:{ name: h.name } }}</dd></div>
+        <div *ngIf="h.version"><dt>{{ 'devices.oscarHelper.version' | translate }}</dt><dd>{{ h.version }}</dd></div>
+      </dl>
+      <div class="note-line" *ngIf="helperNote as n" [class.err]="n.err">{{ n.text }}</div>
+      <div class="actions">
+        <div class="action-line">
+          <button type="button" class="btn btn-secondary" (click)="forgetHelper()" [disabled]="helperBusy">
+            {{ 'devices.oscarHelper.forget' | translate }}</button>
+        </div>
+        <div class="hint">{{ 'devices.oscarHelper.forgetHint' | translate:{ name: h.name } }}</div>
       </div>
     </article>
   </div>

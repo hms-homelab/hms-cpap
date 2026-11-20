@@ -427,7 +427,26 @@
       "state_no_program": "Le programme OSCAR n'a pas démarré.",
       "state_not_supported": "Cette version d'OSCAR n'est pas encore prise en charge.",
       "state_no_profile": "Le profil OSCAR de hms-cpap manque. Créez-le dans OSCAR.",
-      "state_not_here": "Nécessite OSCAR sur le même ordinateur que hms-cpap."
+      "state_not_here": "Nécessite OSCAR sur le même ordinateur que hms-cpap.",
+      "helper_never": "Lue par OSCAR sur {{name}}. Pas encore lue : chaque séance que l'appareil termine y est lue.",
+      "helper_imported": "OSCAR {{version}} sur {{name}}, dernière lecture {{time}}, {{sessions}} séance(s)",
+      "helper_nothing_new": "OSCAR {{version}} sur {{name}}, dernière lecture {{time}}, rien de nouveau",
+      "helper_busy": "OSCAR était occupé (ouvert sur {{name}}). La séance est lue à la prochaine fin de séance, avec Lire maintenant, ou quand {{name}} se reconnecte.",
+      "state_helper_offline": "En attente de {{name}} : la nuit est lue quand il est allumé.",
+      "state_helper_update": "Mettez à jour hms-cpap sur {{name}}."
+    },
+    "oscarHelper": {
+      "title": "Assistant OSCAR : {{name}}",
+      "kind": "Lit la carte de la DreamStation 2 avec son OSCAR",
+      "state": "État",
+      "connected": "Connecté. Chaque séance que l'appareil termine est lue sur {{name}}.",
+      "offline": "Non connecté. La nuit est lue quand {{name}} est allumé.",
+      "update": "{{name}} exécute un hms-cpap avec lequel celui-ci ne peut pas communiquer. Mettez à jour hms-cpap sur {{name}}.",
+      "pillUpdate": "Mise à jour",
+      "version": "hms-cpap dessus",
+      "forget": "Oublier",
+      "forgetHint": "Le prochain PC qui se connecte est retenu à sa place. {{name}} est alors refusé jusqu'à ce qu'on lui demande de se reconnecter.",
+      "forgotten": "{{name}} est oublié. Le prochain assistant qui se connecte est retenu."
     },
     "ds2": {
       "notCompiled": "Cette version n'a pas de Bluetooth : la DreamStation 2 ne peut pas être lue depuis cet ordinateur.",

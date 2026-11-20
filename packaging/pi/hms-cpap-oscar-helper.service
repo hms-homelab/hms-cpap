@@ -1,0 +1,21 @@
+[Unit]
+# SDD-081: this computer reads an encrypted DreamStation 2 card with the
+# user's own OSCAR, for an hms-cpap elsewhere. One role per install: this unit
+# or hms-cpap.service, never both. Set up once with
+#   hms_cpap --oscar-helper --setup
+Description=hms-cpap OSCAR helper
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# As the user: OSCAR's files stay theirs (SDD-080 D8).
+User=__USER__
+Environment=HOME=__HOME__
+WorkingDirectory=__HOME__
+ExecStart=/usr/local/bin/hms_cpap --oscar-helper
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

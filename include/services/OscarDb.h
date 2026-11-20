@@ -110,6 +110,17 @@ public:
     bool begin();
     void end();
 
+    /// SDD-081 D5.4: a small oscar.db at `out_file` holding only what read()
+    /// and gate() need, for only the sessions named by `keys` (sessionKey) of
+    /// `profile`: app_preferences' VersionString, schema_version, the
+    /// profile's row, its machines, those sessions' sessions,
+    /// session_summaries, session_channels, event_lists and event_data rows,
+    /// and the channels they name. Each table is made as this database made
+    /// it. Written through a second connection of its own; this one stays
+    /// query-only. An existing `out_file` is replaced. False with `why`.
+    bool writeSlice(const std::string& profile, const std::vector<std::string>& keys, const std::string& out_file,
+                    std::string* why);
+
 private:
     explicit OscarDb(sqlite3* db) : db_(db) {}
     sqlite3* db_{nullptr};

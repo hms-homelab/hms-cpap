@@ -9,6 +9,10 @@
 #
 #   sudo ./install.sh            install or upgrade for the invoking user
 #   sudo ./install.sh --user bob install or upgrade for bob
+#   sudo ./install.sh --oscar-helper
+#                                this computer reads OSCAR for an hms-cpap
+#                                elsewhere (SDD-081): the helper's unit instead
+#                                of the service's, set up on the terminal once
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -45,9 +49,11 @@ die() { echo "install.sh: $*" >&2; exit 1; }
 
 # ── Who this is for ──────────────────────────────────────────────────────────
 SERVICE_USER="${SUDO_USER:-}"
+OSCAR_HELPER=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --user) SERVICE_USER="${2:-}"; shift 2 ;;
+        --oscar-helper) OSCAR_HELPER=1; shift ;;
         *) die "unknown argument: $1" ;;
     esac
 done
@@ -83,6 +89,28 @@ if [ -f "$BIN_DST" ]; then
     echo "Kept the previous binary as $BIN_DST.previous"
 fi
 install -m 755 -o root -g root "$HERE/hms_cpap" "$BIN_DST"
+
+# ── SDD-081: the OSCAR helper role ───────────────────────────────────────────
+# One role per install (F9): the helper's unit, and the service's stopped and
+# disabled. hms_cpap --oscar-helper --setup finds hms-cpap and takes the three
+# OSCAR fields on this terminal, as the user, then the unit runs it.
+if [ "$OSCAR_HELPER" = 1 ]; then
+    [ -f "$HERE/hms-cpap-oscar-helper.service" ] || die "hms-cpap-oscar-helper.service is not beside this script"
+    if systemctl is-enabled --quiet hms-cpap 2>/dev/null; then
+        systemctl disable --now hms-cpap
+        echo "Stopped hms-cpap: this computer is now an OSCAR helper"
+    fi
+    sed -e "s|__USER__|$SERVICE_USER|g" -e "s|__HOME__|$SERVICE_HOME|g" \
+        "$HERE/hms-cpap-oscar-helper.service" > /etc/systemd/system/hms-cpap-oscar-helper.service
+    chmod 644 /etc/systemd/system/hms-cpap-oscar-helper.service
+    systemctl daemon-reload
+    sudo -u "$SERVICE_USER" -H "$BIN_DST" --oscar-helper --setup || true
+    systemctl enable hms-cpap-oscar-helper
+    systemctl restart hms-cpap-oscar-helper
+    echo "The OSCAR helper is running. Its state: $SERVICE_HOME/.hms-cpap/oscar-helper/status.json"
+    echo "Look at: journalctl -u hms-cpap-oscar-helper -n 50"
+    exit 0
+fi
 
 # ── 3. The web UI ────────────────────────────────────────────────────────────
 STATIC_DST="$SERVICE_HOME/static/browser"

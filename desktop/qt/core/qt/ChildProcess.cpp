@@ -169,7 +169,8 @@ void ChildProcess::start() {
     proc_ = std::make_unique<QProcess>();
     proc_->setProgram(exe_path_);
 
-    QStringList args{"--no-browser"};
+    QStringList args = extra_args_;
+    args << "--no-browser";
 #ifndef Q_OS_WIN
     // The die-with-parent half that has no kernel behind it. The child watches
     // its stdin; QProcess holds the write end, so our death closes the pipe and

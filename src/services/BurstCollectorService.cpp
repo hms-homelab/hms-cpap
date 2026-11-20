@@ -790,6 +790,8 @@ void BurstCollectorService::oscarCardSeen(const std::string& card_root) {
                 oscar_publish_due_ = true;
             };
             o.containerised = SetupService::isContainerised();
+            o.remote        = oscar_remote_;      // SDD-081
+            o.slice_dir     = oscar_slice_dir_;
             oscar_reader_ = std::make_shared<oscar::OscarCardReader>(std::move(o));
             oscar_reader_->start();
         }
@@ -808,14 +810,14 @@ void BurstCollectorService::oscarCardWritten(const std::string& card_root, const
     if (reader) reader->noteCloses(card_root, rels);
 }
 
-bool BurstCollectorService::requestOscarRead() {
+bool BurstCollectorService::requestOscarRead(const std::string& why) {
     std::shared_ptr<oscar::OscarCardReader> reader;
     {
         std::lock_guard<std::mutex> lk(oscar_mu_);
         reader = oscar_reader_;
     }
     if (!reader) return false;
-    reader->request("Read now");
+    reader->request(why);
     return true;
 }
 

@@ -110,8 +110,13 @@ enum class Outcome {
     Failed,         ///< any other failure
     NothingNew,     ///< exit 0, the database unchanged
     Imported,       ///< exit 0, the database changed
+    // SDD-081 D6, D8: the read is the helper's and it cannot run.
+    HelperOffline,  ///< no helper connected: read on its next hello
+    HelperUpdate,   ///< the helper speaks another protocol: update hms-cpap on it
 };
 const char* outcomeName(Outcome o);
+/// The name back to the outcome (a helper's result); Failed for any other.
+Outcome outcomeFromName(const std::string& name);
 
 /// D3: the exit, with whether OSCAR's database changed across the run.
 Outcome classifyExit(const ProcessResult& r, bool db_changed);

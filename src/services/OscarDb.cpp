@@ -9,6 +9,7 @@
 #include <iostream>
 #include <limits>
 #include <map>
+#include <set>
 
 namespace hms_cpap::oscar {
 
@@ -169,6 +170,110 @@ void OscarDb::end() {
     if (!in_tx_ || !db_) return;
     sqlite3_exec(db_, "COMMIT", nullptr, nullptr, nullptr);   // a read: nothing to commit
     in_tx_ = false;
+}
+
+bool OscarDb::writeSlice(const std::string& profile, const std::vector<std::string>& keys,
+                         const std::string& out_file, std::string* why) {
+    const auto fail = [&](std::string w) {
+        if (why) *why = std::move(w);
+        return false;
+    };
+    const long long pid = profileId(db_, profile);
+    if (pid < 0) return fail("no profile \"" + profile + "\"");
+
+    // The wanted sessions' row ids: integers only, so the lists below are
+    // built from numbers this file read, never from the wire's text.
+    std::string ids;
+    {
+        const std::set<std::string> want(keys.begin(), keys.end());
+        for (const auto& h : sessions(profile)) {
+            if (!want.count(sessionKey(h))) continue;
+            if (!ids.empty()) ids += ",";
+            ids += std::to_string(h.row_id);
+        }
+    }
+    if (ids.empty()) ids = "-1";
+    const std::string p = std::to_string(pid);
+
+    std::error_code ec;
+    fs::create_directories(fs::path(out_file).parent_path(), ec);
+    for (const char* suffix : {"", "-wal", "-shm", "-journal"}) fs::remove(out_file + suffix, ec);
+
+    sqlite3* out = nullptr;
+    if (sqlite3_open_v2(out_file.c_str(), &out, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, nullptr) != SQLITE_OK) {
+        const std::string e = out ? sqlite3_errmsg(out) : "out of memory";
+        if (out) sqlite3_close(out);
+        return fail("cannot make " + out_file + ": " + e);
+    }
+    struct Closer {
+        sqlite3* d;
+        ~Closer() { sqlite3_close(d); }
+    } closer{out};
+    sqlite3_exec(out, "PRAGMA journal_mode = DELETE", nullptr, nullptr, nullptr);
+    if (sqlite3_exec(out, "BEGIN", nullptr, nullptr, nullptr) != SQLITE_OK) return fail(sqlite3_errmsg(out));
+
+    struct Part {
+        const char* table;
+        std::string where;
+        bool        required;
+    };
+    const std::string lists = "SELECT id FROM event_lists WHERE session_id IN (" + ids + ")";
+    const std::vector<Part> parts{
+        {"app_preferences", "key = 'VersionString'", true},
+        {"schema_version", "1", true},
+        {"profiles", "id = " + p, true},
+        {"machines", "profile_id = " + p, true},
+        {"sessions", "id IN (" + ids + ")", true},
+        {"session_summaries", "session_id IN (" + ids + ")", false},
+        {"session_channels", "session_id IN (" + ids + ")", false},
+        {"event_lists", "session_id IN (" + ids + ")", true},
+        {"event_data", "eventlist_id IN (" + lists + ")", true},
+        {"channels",
+         "profile_id = " + p + " AND (channel_id IN (SELECT channel_id FROM event_lists WHERE session_id IN (" + ids +
+             ")) OR channel_id IN (SELECT channel_id FROM session_channels WHERE session_id IN (" + ids + ")))",
+         true},
+    };
+    for (const auto& part : parts) {
+        std::string create;
+        {
+            Stmt st(db_, "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?1");
+            if (!st) return fail(sqlite3_errmsg(db_));
+            sqlite3_bind_text(st.s, 1, part.table, -1, SQLITE_STATIC);
+            if (st.row()) create = st.text(0);
+        }
+        if (create.empty()) {
+            if (part.required) return fail(std::string("oscar.db has no ") + part.table + " table");
+            continue;
+        }
+        if (sqlite3_exec(out, create.c_str(), nullptr, nullptr, nullptr) != SQLITE_OK)
+            return fail(std::string("cannot make ") + part.table + ": " + sqlite3_errmsg(out));
+
+        // channels' WHERE reads session_channels, which a database may lack.
+        std::string where = part.where;
+        if (std::string(part.table) == "channels") {
+            Stmt has(db_, "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'session_channels'");
+            if (!(has && has.row()))
+                where = "profile_id = " + p +
+                        " AND channel_id IN (SELECT channel_id FROM event_lists WHERE session_id IN (" + ids + "))";
+        }
+        Stmt sel(db_, ("SELECT * FROM " + std::string(part.table) + " WHERE " + where).c_str());
+        if (!sel) return fail(std::string(part.table) + ": " + sqlite3_errmsg(db_));
+        const int cols = sqlite3_column_count(sel.s);
+        std::string ins = "INSERT INTO " + std::string(part.table) + " VALUES (";
+        for (int c = 0; c < cols; ++c) ins += c ? ",?" : "?";
+        ins += ")";
+        Stmt put(out, ins.c_str());
+        if (!put) return fail(std::string(part.table) + ": " + sqlite3_errmsg(out));
+        while (sel.row()) {
+            sqlite3_reset(put.s);
+            sqlite3_clear_bindings(put.s);
+            for (int c = 0; c < cols; ++c) sqlite3_bind_value(put.s, c + 1, sqlite3_column_value(sel.s, c));
+            if (sqlite3_step(put.s) != SQLITE_DONE)
+                return fail(std::string(part.table) + ": " + sqlite3_errmsg(out));
+        }
+    }
+    if (sqlite3_exec(out, "COMMIT", nullptr, nullptr, nullptr) != SQLITE_OK) return fail(sqlite3_errmsg(out));
+    return true;
 }
 
 Gate OscarDb::gate() {

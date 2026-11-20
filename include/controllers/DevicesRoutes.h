@@ -23,6 +23,8 @@
 //   PUT    /api/oscar                      {"program","data_dir","profile"}: checked
 //                                          (D7), saved, and the check answered
 //   POST   /api/oscar/read                 "Read now": one OSCAR read of the card
+//   DELETE /api/oscar/helper               SDD-081 D4: Forget the OSCAR helper; the
+//                                          next helper to connect is remembered
 //
 // The handlers only gather what each service reports and route; what they
 // decide is in devices/Devices.h and the services, which the suite covers.
@@ -50,6 +52,9 @@ namespace sleepbridge {
 class SleepBridgeService;
 class ReleaseFeed;
 }  // namespace sleepbridge
+namespace oscar::helper {
+class Host;
+}  // namespace oscar::helper
 }  // namespace hms_cpap
 
 namespace hms_cpap::devices {
@@ -72,6 +77,7 @@ struct RouteDeps {
     std::shared_ptr<IDatabase>                             db;
     std::function<Json::Value(const std::string&)>         reread;
     std::string                      config_path;         // SDD-080: PUT /api/oscar saves here
+    oscar::helper::Host*             oscar_helper{nullptr};   // SDD-081
 };
 
 /// Registers the routes above. Must precede app().run(); everything in

@@ -9,6 +9,7 @@
 #include "services/BurstCollectorService.h"
 #include "services/GarminService.h"
 #include "services/OscarCardReader.h"
+#include "services/OscarHelperHost.h"
 #include "services/SetupService.h"
 #include "sleepbridge/ReleaseFeed.h"
 #include "sleepbridge/SleepBridgeService.h"
@@ -64,6 +65,9 @@ Json::Value oscarView() {
     v["found_program"] = oscar::findProgram();
     v["containerised"] = SetupService::isContainerised();
     v["reader"] = g.burst ? g.burst->oscarStatus() : Json::Value(Json::nullValue);
+    // SDD-081: the helper, remembered or not, and where it is reached.
+    v["helper"] = g.oscar_helper ? g.oscar_helper->status() : Json::Value(Json::nullValue);
+    v["stream_port"] = g.stream_port;
     return v;
 }
 
@@ -219,6 +223,7 @@ Json::Value currentDevices(bool fresh) {
     if (in.garmin_enabled && g.garmin) in.garmin = g.garmin->status();
     in.ledger_live = ledgerLive();
     if (g.burst) in.oscar = g.burst->oscarStatus();   // SDD-080 D7
+    if (g.oscar_helper) in.oscar_helper = g.oscar_helper->status();   // SDD-081 D4
     Json::Value out = buildDevices(in, *g.store);
     // SDD-074 D10 / decision 10: the setting lives on each machine's card,
     // keyed by the device id its nights are stored under; the ring's card
@@ -470,6 +475,18 @@ void installRoutes(const RouteDeps& deps) {
             cb(json(v, 202));
         },
         {drogon::Post});
+
+    // SDD-081 D4: Forget. The next helper to connect with no token is
+    // remembered; the forgotten PC, still on, is refused and says so.
+    drogon::app().registerHandler(
+        "/api/oscar/helper",
+        [](const drogon::HttpRequestPtr&, Callback&& cb) {
+            if (!g.oscar_helper || !g.oscar_helper->forget()) return cb(error(404, "no OSCAR helper is remembered"));
+            Json::Value v = oscarView();
+            v["ok"] = true;
+            cb(json(v));
+        },
+        {drogon::Delete});
 
     std::cout << "Devices: /api/devices ready" << std::endl;
 }

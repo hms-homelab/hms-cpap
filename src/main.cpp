@@ -7,6 +7,10 @@
 #include "controllers/CleaningController.h"
 #include "controllers/SleepBridgeSocket.h"
 #include "controllers/MuleSocket.h"
+#include "controllers/OscarHelperSocket.h"
+#include "services/OscarHelperMain.h"
+#include "services/OscarHelperDiscovery.h"
+#include "services/OscarHelperHost.h"
 #include "controllers/MuleDs2Routes.h"
 #include "controllers/DevicesRoutes.h"
 #include "controllers/SetupWatch.h"
@@ -108,12 +112,17 @@ std::unique_ptr<hms_cpap::BurstCollectorService> burst_service;
 std::unique_ptr<hms_cpap::AgentService> agent_service;
 std::unique_ptr<hms_cpap::MLTrainingService> ml_service;
 std::unique_ptr<hms_cpap::BackfillService> backfill_service;
+// SDD-081: the OSCAR helper's end here, and the _hms-cpap._tcp advertisement.
+std::shared_ptr<hms_cpap::oscar::helper::Host> oscar_helper_host;
+std::unique_ptr<hms_cpap::oscar::helper::Advertiser> mdns_advertiser;
 
 /**
  * Graceful shutdown logic (shared by all platforms)
  */
 void requestShutdown() {
     shutdown_requested = true;
+    // SDD-081: a read waiting on the helper ends before the reader is joined.
+    if (oscar_helper_host) oscar_helper_host->shutdown();
     if (burst_service) burst_service->stop();
     if (agent_service) agent_service->stop();
     if (ml_service) ml_service->stop();
@@ -499,6 +508,27 @@ int main(int argc, char** argv) {
     // still ending and still holds the web port: wait for its exit before
     // anything checks or binds (utils/ReExec.h). Nothing on POSIX.
     hms_cpap::reexec::waitForReplacedProcess();
+
+    // SDD-081 D1: the OSCAR helper role. `--oscar-helper`, or an install whose
+    // config.json says "role": "oscar_helper" (one role per install, F9): no
+    // web server, no collector, no database.
+    {
+        bool helper_flag = false;
+        bool plain_start = true;   // no other mode asked for (--preflight, --read-card, ...)
+        std::string helper_config;
+        for (int i = 1; i < argc; ++i) {
+            if (std::strcmp(argv[i], "--oscar-helper") == 0) helper_flag = true;
+            if (std::strcmp(argv[i], "--config") == 0 && i + 1 < argc) helper_config = argv[++i];
+            else if (std::strcmp(argv[i], "--no-browser") != 0 && std::strcmp(argv[i], "--exit-with-parent") != 0)
+                plain_start = false;
+        }
+        const std::string helper_dir = hms_cpap::AppConfig::dataDir();
+        if (helper_config.empty()) helper_config = helper_dir + "/config.json";
+        if (helper_flag ||
+            (plain_start && hms_cpap::oscar::helper::configRole(helper_config) == "oscar_helper"))
+            return hms_cpap::oscar::helper::runHelperMain(std::vector<std::string>(argv + 1, argv + argc),
+                                                          helper_dir, helper_config, HMS_CPAP_VERSION);
+    }
 
     // `--ble-scan [seconds]`: list what advertises over this computer's
     // Bluetooth and exit, before any config, log or database is touched. A
@@ -1002,6 +1032,29 @@ int main(int argc, char** argv) {
 
         burst_service = std::make_unique<hms_cpap::BurstCollectorService>(burst_interval);
         burst_service->initialize(&config);
+        // SDD-081: a DreamStation 2 card read by an OSCAR helper on a home
+        // PC. It connects to the Sleep Bridge's port, so it is there while
+        // that stream is; built before the first burst so the reader the
+        // first encrypted card builds knows it. Every helper hello is a read.
+        if (config.sleep_bridge.enabled) {
+            hms_cpap::oscar::helper::Host::Options ho;
+            ho.state_dir  = (std::filesystem::path(data_dir) / "oscar-helper").string();
+            ho.install_id = hms_cpap::CpapDashStreamer::loadOrCreateInstallId(data_dir);
+            ho.version    = HMS_CPAP_VERSION;
+            ho.name       = hms_cpap::oscar::helper::hostName();
+            ho.on_hello   = [](const std::string& why) {
+                if (burst_service) burst_service->requestOscarRead(why);
+            };
+            oscar_helper_host = std::make_shared<hms_cpap::oscar::helper::Host>(ho);
+            burst_service->setOscarRemote(oscar_helper_host,
+                                          (std::filesystem::path(ho.state_dir) / "slice").string());
+            // D3.1: advertised where this process can reach the LAN's mDNS
+            // (native, host network); inside a container's own network it
+            // reaches nobody and the helper finds the host by its probe.
+            mdns_advertiser = std::make_unique<hms_cpap::oscar::helper::Advertiser>(
+                ho.name, config.sleep_bridge.port, ho.install_id, ho.version);
+            mdns_advertiser->start();
+        }
         burst_service->start();
 
         // The night, live, on the house's MQTT: the mask and the events, the
@@ -2043,6 +2096,8 @@ int main(int argc, char** argv) {
                     mule_updater = std::make_unique<hms_cpap::mule::FirmwareUpdater>(
                         *mule_stream, hms_cpap::mule::curlTransport(), fo);
                     hms_cpap::mule::installRoutes(mule_stream.get(), mule_updater.get());
+                    // SDD-081 D2: the OSCAR helper's route, on the same port.
+                    hms_cpap::oscar::helper::installRoutes(oscar_helper_host.get());
                     // SDD-065: its records land where the direct read's do
                     // and the same import turns them into nights; it is read
                     // on the owner's one choice for every DS2 (once a day at
@@ -2114,6 +2169,7 @@ int main(int argc, char** argv) {
                 dd.garmin      = garmin.get();
                 dd.stream_port = config.sleep_bridge.port;
                 dd.config_path = config_path;   // SDD-080
+                dd.oscar_helper = oscar_helper_host.get();   // SDD-081
                 // SDD-074: the clock setting, and "Re-read my nights": the
                 // rows are backed up first, then the archive is read again by
                 // the backfill worker, with the setting in force.
@@ -2220,6 +2276,8 @@ int main(int argc, char** argv) {
             agent_service->stop();
             agent_service.reset();
         }
+        if (oscar_helper_host) oscar_helper_host->shutdown();
+        if (mdns_advertiser) mdns_advertiser->stop();
         if (burst_service) {
             burst_service->stop();
             burst_service.reset();

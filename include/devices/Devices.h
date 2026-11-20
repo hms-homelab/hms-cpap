@@ -84,6 +84,10 @@ struct DeviceInputs {
     // such card is the source. It rides as detail.oscar on the tile of what
     // carries the card: the Sleep Bridge whose folder it is, or the ez Share.
     Json::Value oscar{Json::nullValue};
+    // SDD-081 D4: the OSCAR helper (Host::status), null when this install has
+    // none. Top level ("oscar_helper"): "OSCAR helper: <PC name>" with
+    // Forget shows whether or not an encrypted card was found yet.
+    Json::Value oscar_helper{Json::nullValue};
     // The latest night in the ledger: "yes" while it is live, "no", or
     // "unknown" when the ledger cannot be read.
     std::string ledger_live{"unknown"};

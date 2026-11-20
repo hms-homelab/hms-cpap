@@ -427,7 +427,26 @@
       "state_no_program": "El programa OSCAR no se inició.",
       "state_not_supported": "Esta versión de OSCAR aún no es compatible.",
       "state_no_profile": "Falta el perfil de OSCAR para hms-cpap. Créelo en OSCAR.",
-      "state_not_here": "Necesita OSCAR en el mismo equipo que hms-cpap."
+      "state_not_here": "Necesita OSCAR en el mismo equipo que hms-cpap.",
+      "helper_never": "Lo lee OSCAR en {{name}}. Aún sin leer: cada sesión que termina la máquina se lee allí.",
+      "helper_imported": "OSCAR {{version}} en {{name}}, última lectura {{time}}, {{sessions}} sesión(es)",
+      "helper_nothing_new": "OSCAR {{version}} en {{name}}, última lectura {{time}}, nada nuevo",
+      "helper_busy": "OSCAR estaba ocupado (abierto en {{name}}). La sesión se lee en el próximo cierre, con Leer ahora o cuando {{name}} se vuelva a conectar.",
+      "state_helper_offline": "Esperando a {{name}}: la noche se lee cuando esté encendido.",
+      "state_helper_update": "Actualice hms-cpap en {{name}}."
+    },
+    "oscarHelper": {
+      "title": "Ayudante de OSCAR: {{name}}",
+      "kind": "Lee la tarjeta de la DreamStation 2 con su OSCAR",
+      "state": "Estado",
+      "connected": "Conectado. Cada sesión que termina la máquina se lee en {{name}}.",
+      "offline": "No conectado. La noche se lee cuando {{name}} esté encendido.",
+      "update": "{{name}} ejecuta un hms-cpap con el que este no puede hablar. Actualice hms-cpap en {{name}}.",
+      "pillUpdate": "Actualizar",
+      "version": "hms-cpap en él",
+      "forget": "Olvidar",
+      "forgetHint": "El próximo PC que se conecte quedará recordado en su lugar. {{name}} será rechazado hasta que se le indique que se vuelva a conectar.",
+      "forgotten": "{{name}} se ha olvidado. El próximo ayudante que se conecte quedará recordado."
     },
     "ds2": {
       "notCompiled": "Esta versión no tiene Bluetooth: la DreamStation 2 no se puede leer desde este ordenador.",
