@@ -2240,6 +2240,15 @@ int main(int argc, char** argv) {
             }
 
             drogon::app().run();  // Blocks until quit()
+            // The backfill worker first, while everything it saves through is
+            // still alive. Drogon's own SIGTERM handler ends run() without
+            // requestShutdown(), so nothing else stops it: it used to be
+            // joined only by its static destructor during exit(), and a
+            // re-parse caught mid-save then wrote after the database client's
+            // statics were gone. On PostgreSQL the COMMIT went out empty, the
+            // save printed success and rolled back, and the night it had
+            // already deleted was missing from the database.
+            if (backfill_service) backfill_service->stop();
             // The collector outlives this scope: it no longer calls into the
             // Mule & Miner's DreamStation 2 reads (SDD-065).
             if (burst_service) burst_service->clearDs2NightListeners();
@@ -2262,7 +2271,12 @@ int main(int argc, char** argv) {
         }
 #endif
 
-        // Cleanup
+        // Cleanup. The backfill before the collector: its saved-sessions
+        // callback calls into burst_service.
+        if (backfill_service) {
+            backfill_service->stop();
+            backfill_service.reset();
+        }
         if (ml_service) {
             ml_service->stop();
             ml_service.reset();
