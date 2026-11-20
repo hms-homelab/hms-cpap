@@ -735,7 +735,8 @@ void MuleService::afterPull(const std::string& serial, Command& c) {
 
     if (spool == "Identification") {
         const bool kept = writeIdentification(root, c.bytes);
-        if (kept) card_feed::fileWritten(root, "Identification.json", u.machine);   // platform SDD-059 D3
+        // platform SDD-059 D3; SDD-079 D1: the AirSense 11 root is built from Bluetooth.
+        if (kept) card_feed::fileWritten(root, "Identification.json", u.machine, card_feed::kSourceBleAs11);
         return done(kept ? "Identification.json kept" : "Identification.json not written");
     }
     if (spool == "Settings") {
@@ -751,7 +752,8 @@ void MuleService::afterPull(const std::string& serial, Command& c) {
         save(serial, u);
     }
     const auto str = writeStrFromSummaries(root, strLayoutDir(opt_.data_dir));
-    if (str.written) card_feed::fileWritten(root, "STR.edf", u.machine);   // platform SDD-059 D3
+    if (str.written)   // platform SDD-059 D3, SDD-079 D1
+        card_feed::fileWritten(root, "STR.edf", u.machine, card_feed::kSourceBleAs11);
     done(str.written ? "Summary kept; STR.edf " +
                            (str.created ? "created, " + std::to_string(str.total) + " day(s)"
                                         : std::to_string(str.appended) + " day(s) appended, " +

@@ -13,6 +13,7 @@
 #include "clients/AirSense11Client.h"
 #include "services/As11StrWriter.h"
 #include "services/CardFileFeed.h"
+#include "services/OximetryOutbox.h"
 #ifdef WITH_BLE
 #include "clients/O2RingBleClient.h"
 #include "clients/AirSense11BleClient.h"
@@ -1920,7 +1921,8 @@ bool BurstCollectorService::processSTRFile() {
                 auto dest = std::filesystem::path(archive_dir) / "STR.edf";
                 std::filesystem::copy_file(str_local_path, dest,
                     std::filesystem::copy_options::overwrite_existing);
-                card_feed::fileWritten(archive_dir, "STR.edf", "");   // platform SDD-059 D3
+                card_feed::fileWritten(archive_dir, "STR.edf", "",
+                                       card_feed::kSourceCard);   // platform SDD-059 D3, SDD-079 D1
             }
         }
 
@@ -2373,10 +2375,14 @@ bool BurstCollectorService::executeBurstCycle() {
                 // ring's own file for the night will put it (and where the CPAP
                 // side puts the same minute), whatever zone the database is in.
                 if (live.valid) {
-                    db_service_->saveLiveOximetrySample(
-                        kOximetryDeviceId,
-                        liveOximetryWallClock(std::chrono::system_clock::now()),
-                        live.spo2, live.hr, live.motion);
+                    const auto read_at = std::chrono::system_clock::now();
+                    const auto wall = liveOximetryWallClock(read_at);
+                    if (db_service_->saveLiveOximetrySample(kOximetryDeviceId, wall, live.spo2,
+                                                            live.hr, live.motion)) {
+                        // SDD-079 D4: one line on the live spool, stamped with
+                        // the instant it was read, never the wall-clock shape.
+                        oximetry_outbox::liveSample(read_at, wall, live.spo2, live.hr, live.motion);
+                    }
                 }
             }
             // The ring's own run status, logged whenever it changes, so the
@@ -3241,7 +3247,7 @@ bool BurstCollectorService::executeBurstCycle() {
             // changed there; the burst does not wait on it.
             const std::string card_root =
                 in_place ? (data_source_ ? data_source_->rootPath() : std::string()) : permanent_archive;
-            card_feed::rootWritten(card_root, "");
+            card_feed::rootWritten(card_root, "", card_feed::kSourceCard);   // SDD-079 D1
             // The pass is over, found something or not: said after this
             // burst's files, in order. The burst is the only clock there is.
             // Only for a burst whose card reads all answered (SDD-053 D2).

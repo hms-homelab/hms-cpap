@@ -85,6 +85,7 @@ public:
     std::atomic<int>  bye_retry_s{1};
     std::atomic<int>  ack_delay_ms{0};      // ingest still handling the file_ready
     std::atomic<bool> refuse_range_once{false};   // ok:false to the next range (offset > 0)
+    std::atomic<bool> refuse_oximetry{false};     // an ingest that does not take oximetry (SDD-079 D6)
 
     FakeCpapDashServer() {
         listen_ = static_cast<int>(::socket(AF_INET, SOCK_STREAM, 0));
@@ -172,6 +173,8 @@ public:
     long long chunkBytes() { std::lock_guard<std::mutex> lk(mu_); return chunk_bytes_; }
     /// The file as landed, by machine|date_folder|rel_dir|filename.
     std::map<std::string, std::string> landed() { std::lock_guard<std::mutex> lk(mu_); return landed_; }
+    /// Oximetry kept, by oxi.name (SDD-079).
+    std::map<std::string, std::string> oxiLanded() { std::lock_guard<std::mutex> lk(mu_); return oxi_landed_; }
     static std::string keyOf(const std::string& machine, const std::string& date_folder,
                              const std::string& rel_dir, const std::string& filename) {
         return machine + "|" + date_folder + "|" + rel_dir + "|" + filename;
@@ -412,13 +415,28 @@ private:
                 if (const int d = ack_delay_ms.load(); d > 0)
                     std::this_thread::sleep_for(std::chrono::milliseconds(d));
                 bool keep = whole && ack_ok.load();
-                if (keep && v.get("offset", 0).asUInt64() > 0 && refuse_range_once.exchange(false))
+                // SDD-079: an oximetry frame names no file. An ingest from
+                // before SDD-055 refuses it ("file_ready names no file").
+                const bool oxi = v.get("kind", "").asString() == "oximetry";
+                if (oxi && refuse_oximetry.load()) keep = false;
+                const bool note = !oxi && n == 0 && v.get("size", 0).asUInt64() == 0 &&
+                                  v.get("offset", 0).asUInt64() > 0;
+                if (keep && !note && v.get("offset", 0).asUInt64() > 0 && refuse_range_once.exchange(false))
                     keep = false;   // a range past what ingest holds: nothing kept
                 {
                     std::lock_guard<std::mutex> lk(mu_);
                     readies_.push_back({v, body, keep});
-                    events_.push_back("ready:" + v.get("filename", "").asString() + (keep ? ":kept" : ":not"));
-                    if (keep) {
+                    const std::string label =
+                        oxi ? "oxi:" + v["oxi"].get("name", "").asString()
+                            : (note ? "note:" : "ready:") + v.get("filename", "").asString();
+                    events_.push_back(label + (keep ? ":kept" : ":not"));
+                    if (keep && oxi) {
+                        auto& file = oxi_landed_[v["oxi"].get("name", "").asString()];
+                        const uint64_t off = v.get("offset", 0).asUInt64();
+                        if (off == 0) file.clear();
+                        if (file.size() > off) file.resize(off);
+                        if (file.size() == off) file += body;
+                    } else if (keep) {
                         auto& file = landed_[keyOf(v.get("machine_serial", "").asString(),
                                                    v.get("date_folder", "").asString(),
                                                    v.get("rel_dir", "").asString(),
@@ -463,6 +481,7 @@ private:
     Json::Value last_hello_;
     std::vector<Ready> readies_;
     std::map<std::string, std::string> landed_;
+    std::map<std::string, std::string> oxi_landed_;
 };
 
 }  // namespace cdfake

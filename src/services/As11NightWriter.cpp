@@ -86,7 +86,7 @@ bool writeCardFile(const fs::path& root, const fs::path& path, const std::vector
     if (!writeFileAtomic(path, bytes)) return false;
     std::error_code ec;
     const auto rel = fs::relative(path, root, ec).generic_string();
-    if (!ec) card_feed::fileWritten(root.string(), rel, serial);
+    if (!ec) card_feed::fileWritten(root.string(), rel, serial, card_feed::kSourceBleAs11);   // SDD-079 D1
     return true;
 }
 

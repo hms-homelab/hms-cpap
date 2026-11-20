@@ -1083,7 +1083,14 @@ Json::Value QueryService::getSessionOximetry(const std::string& date, int interv
         }
         timestamps.append(r.get("ts", Json::nullValue));
         spo2.append(r.get("spo2", Json::nullValue));
-        heart_rate.append(r.get("heart_rate", Json::nullValue));
+        // Validity is per field (decided 2026-11-19, SDD-078): a sample kept
+        // for its SpO2 may have no pulse (0, or the ring's 0xFF), which is a
+        // gap in the line, never a 0 bpm reading.
+        {
+            const Json::Value& h = r["heart_rate"];
+            const int bpm = h.isNumeric() ? h.asInt() : h.isString() ? std::atoi(h.asCString()) : 0;
+            heart_rate.append(bpm > 0 && bpm < 255 ? r["heart_rate"] : Json::Value(Json::nullValue));
+        }
         motion.append(r.get("motion", Json::nullValue));
     }
 

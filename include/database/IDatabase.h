@@ -573,6 +573,9 @@ public:
         long long   acked_to{0}; ///< bytes CpapDash acknowledged
         std::string acked_md5;   ///< md5 of the acked bytes after an EDF header, else of [0, acked_to)
         std::string updated_at;  ///< ISO-8601 UTC, written by the caller
+        /// SDD-079 D3: the source the last ok ack delivered (card, ble-as11,
+        /// oximetry); "" is NULL, a row from before 7.0.0 that never said.
+        std::string source;
     };
 
     virtual std::optional<CpapDashSent> getCpapDashSent(const std::string& root,

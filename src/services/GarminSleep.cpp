@@ -204,7 +204,12 @@ GarminNight convertGarminSleep(const json& sleep, long long now_utc,
         cpapdash::parser::OximetrySample smp{};
         smp.timestamp    = wall(t);
         smp.spo2         = static_cast<uint8_t>(static_cast<int>(v));
-        smp.heart_rate   = 0xFF;   // no pulse within 2 minutes: none, not a guess
+        // No pulse within 2 minutes: none, not a guess. Validity is per field
+        // (decided 2026-11-19, SDD-078): the SpO2 reading counts on its own,
+        // so the pulse is left blank as 0 (the CSV writer's "no reading"),
+        // never 0xFF, which OximetrySample::valid() reads as the whole
+        // sample being invalid.
+        smp.heart_rate   = kGarminNoHeartRate;
         smp.invalid_flag = 0;
         smp.motion       = 0;
         smp.vibration    = 0;
@@ -229,6 +234,7 @@ GarminNight convertGarminSleep(const json& sleep, long long now_utc,
             }
         }
         s.samples.push_back(smp);
+        n.sample_utc_s.push_back(t / 1000);   // SDD-079 D4: the instant, for hms-json clock "utc"
     }
 
     // Garmin's SpO2 epoch is a minute; the samples say what this night's is.
@@ -247,6 +253,22 @@ GarminNight convertGarminSleep(const json& sleep, long long now_utc,
     s.duration_seconds = static_cast<int>((*end - *start) / 1000);
     s.sample_interval  = interval;
     s.metrics          = cpapdash::parser::VLDParser::calculateMetrics(s.samples, interval);
+    // Per field: the pulse figures are of the samples that have a pulse, so
+    // a blank one never pulls the average or the minimum down to 0.
+    {
+        long long sum = 0;
+        int count = 0, lo = 300, hi = 0;
+        for (const auto& smp : s.samples) {
+            if (smp.heart_rate == kGarminNoHeartRate || smp.heart_rate == 0xFF) continue;
+            sum += smp.heart_rate;
+            ++count;
+            lo = std::min(lo, static_cast<int>(smp.heart_rate));
+            hi = std::max(hi, static_cast<int>(smp.heart_rate));
+        }
+        s.metrics.avg_hr = count ? static_cast<double>(sum) / count : 0;
+        s.metrics.min_hr = count ? lo : 300;
+        s.metrics.max_hr = hi;
+    }
     n.verdict = GarminNight::Verdict::Ready;
     n.reason  = "ready";
     return n;

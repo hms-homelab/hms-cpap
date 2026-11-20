@@ -193,6 +193,9 @@ set(TEST_SOURCES
     services/test_CpapDashSyncService.cpp
     # platform SDD-059: the uploader, against a local server speaking its frames.
     services/test_CpapDashStream.cpp
+    # SDD-079: each file says its source, and oximetry goes too (the contract
+    # fixtures in tests/fixtures/cpapdash-stream/, the oximetry outbox).
+    services/test_CpapDashOximetry.cpp
     services/test_SleepHqClient.cpp
     services/test_DeviceDiscoveryService.cpp
     services/test_SetupService.cpp

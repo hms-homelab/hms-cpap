@@ -1,6 +1,7 @@
 #include "services/GarminService.h"
 
 #include "database/SqlDialect.h"
+#include "services/OximetryOutbox.h"
 #include "services/RemovedNights.h"
 #include "utils/AppConfig.h"
 #include "utils/MachineClock.h"
@@ -395,6 +396,9 @@ bool GarminService::storeNight(const GarminNight& night) {
         origin.device_name = deps_.config ? deps_.config->garmin.device_name : "";
     }
     if (!deps_.db->saveOximetrySessionFrom(kOximetryDeviceId, night.session, origin)) return false;
+    // SDD-079 D4: hms-json with Garmin's own instants (clock "utc"). A night
+    // fetched again rewrites it under the same name and it goes whole again.
+    oximetry_outbox::stored(night.session, origin, "", &night.sample_utc_s);
 
     // D6: the same night uploaded by an outside importer (the reference's
     // garmin-*.csv as "upload", or one it labelled "garmin") is this one now.

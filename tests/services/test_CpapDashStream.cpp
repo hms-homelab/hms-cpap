@@ -18,6 +18,9 @@
 #include "services/CardFileFeed.h"
 #include "services/CpapDashLink.h"
 #include "services/CpapDashStream.h"
+#include "services/OximetryOutbox.h"
+
+#include <algorithm>
 
 #ifdef BUILD_WITH_WEB
 #include "FakeCpapDashServer.h"
@@ -366,10 +369,11 @@ protected:
         streamer_->setRootsProvider([data_dir] { return CpapDashStreamer::discoverRoots(data_dir, {}); });
         streamer_->apply({on, kToken});
         card_feed::setSinks(
-            [s = streamer_](const std::string& r, const std::string& rel, const std::string& m) {
-                s->fileWritten(r, rel, m);
+            [s = streamer_](const std::string& r, const std::string& rel, const std::string& m,
+                            const std::string& src) { s->fileWritten(r, rel, m, src); },
+            [s = streamer_](const std::string& r, const std::string& m, const std::string& src) {
+                s->rootWritten(r, m, src);
             },
-            [s = streamer_](const std::string& r, const std::string& m) { s->rootWritten(r, m); },
             [s = streamer_](const std::string& r) { s->burstEnded(r); });
         streamer_->start();
     }
@@ -483,7 +487,7 @@ TEST_F(StreamTest, ABurstSendsItsFilesThenItsRound) {
     startStreamer();
     ASSERT_TRUE(waitState("connected"));
     // The burst collector's first pass: the root as it stands, then its end.
-    card_feed::rootWritten(archive.string(), "");
+    card_feed::rootWritten(archive.string(), "", card_feed::kSourceCard);
     card_feed::burstEnded(archive.string());
     ASSERT_TRUE(server_->waitFor([&] { return server_->roundsLocked() >= 1; }));
     const size_t mark = server_->events().size();
@@ -491,7 +495,7 @@ TEST_F(StreamTest, ABurstSendsItsFilesThenItsRound) {
     // A burst that brought two files of tonight.
     writeFile(archive / "DATALOG/20261116/20261116_221502_BRP.edf", edf(40));
     writeFile(archive / "DATALOG/20261116/20261116_221502_EVE.edf", edf(3));
-    card_feed::rootWritten(archive.string(), "");
+    card_feed::rootWritten(archive.string(), "", card_feed::kSourceCard);
     card_feed::burstEnded(archive.string());
     ASSERT_TRUE(server_->waitFor([&] { return server_->roundsLocked() >= 2; }));
     const auto ev = since(server_->events(), mark);
@@ -505,13 +509,13 @@ TEST_F(StreamTest, AnEmptyBurstStillSendsItsRound) {
     const auto archive = archiveWithIdentity(dir_);
     startStreamer();
     ASSERT_TRUE(waitState("connected"));
-    card_feed::rootWritten(archive.string(), "");
+    card_feed::rootWritten(archive.string(), "", card_feed::kSourceCard);
     card_feed::burstEnded(archive.string());
     ASSERT_TRUE(server_->waitFor([&] { return server_->roundsLocked() >= 1; }));
     const size_t mark = server_->events().size();
 
     // Nothing new on the card: the pass still ends, and says so.
-    card_feed::rootWritten(archive.string(), "");
+    card_feed::rootWritten(archive.string(), "", card_feed::kSourceCard);
     card_feed::burstEnded(archive.string());
     ASSERT_TRUE(server_->waitFor([&] { return server_->roundsLocked() >= 2; }));
     EXPECT_EQ(since(server_->events(), mark), std::vector<std::string>{"round"});
@@ -521,7 +525,7 @@ TEST_F(StreamTest, ARoundStaysBehindItsFilesAcrossAReconnect) {
     const auto archive = archiveWithIdentity(dir_);
     startStreamer();
     ASSERT_TRUE(waitState("connected"));
-    card_feed::rootWritten(archive.string(), "");
+    card_feed::rootWritten(archive.string(), "", card_feed::kSourceCard);
     card_feed::burstEnded(archive.string());
     ASSERT_TRUE(server_->waitFor([&] { return server_->roundsLocked() >= 1; }));
     const size_t mark = server_->events().size();
@@ -533,7 +537,7 @@ TEST_F(StreamTest, ARoundStaysBehindItsFilesAcrossAReconnect) {
     writeFile(archive / "DATALOG/20261116/20261116_221502_PLD.edf", pld);
     server_->drop_after_chunks = static_cast<int>((brp.size() + 4095) / 4096) + 3;
     const int hellos = server_->hellos();
-    card_feed::rootWritten(archive.string(), "");
+    card_feed::rootWritten(archive.string(), "", card_feed::kSourceCard);
     card_feed::burstEnded(archive.string());
     ASSERT_TRUE(server_->waitFor([&] { return server_->roundsLocked() >= 2; }, 15000));
     EXPECT_GT(server_->hellos(), hellos);   // it came back
@@ -566,7 +570,7 @@ TEST_F(StreamTest, ABridgeOrBluetoothInstallSendsNoRound) {
             source = s;
         }
         writeFile(archive / "DATALOG/20261116" / (std::string(s) + "_EVE.edf"), edf(2));
-        card_feed::rootWritten(archive.string(), "");
+        card_feed::rootWritten(archive.string(), "", card_feed::kSourceCard);
         card_feed::burstEnded(archive.string());
         ASSERT_TRUE(waitAcked2(archive, std::string("DATALOG/20261116/") + s + "_EVE.edf"));
     }
@@ -615,7 +619,7 @@ TEST_F(StreamTest, ARefusedRangeIsSentAgainWholeFromZeroThenAdvances) {
     server_->refuse_range_once = true;
     const auto later = edf(25);
     writeFile(root() / kBrp, later);
-    card_feed::fileWritten(root().string(), kBrp, kSerial);
+    card_feed::fileWritten(root().string(), kBrp, kSerial, card_feed::kSourceBleAs11);
     ASSERT_TRUE(waitAcked(kBrp, static_cast<long long>(later.size())));
 
     const auto r = server_->readies();
@@ -711,7 +715,7 @@ TEST_F(StreamTest, AGrowingBrpSendsOnlyItsNewRecordsAfterTheAck) {
 
     const auto later = edf(25);
     writeFile(root() / kBrp, later);
-    card_feed::fileWritten(root().string(), kBrp, kSerial);
+    card_feed::fileWritten(root().string(), kBrp, kSerial, card_feed::kSourceBleAs11);
     ASSERT_TRUE(waitAcked(kBrp, static_cast<long long>(later.size())));
 
     const auto r = server_->readies();
@@ -733,7 +737,7 @@ TEST_F(StreamTest, AChangedPrefixResendsTheWholeFile) {
     auto later = edf(12);
     later[700] = '#';
     writeFile(root() / kBrp, later);
-    card_feed::fileWritten(root().string(), kBrp, kSerial);
+    card_feed::fileWritten(root().string(), kBrp, kSerial, card_feed::kSourceBleAs11);
     ASSERT_TRUE(waitAcked(kBrp, static_cast<long long>(later.size())));
     const auto r = server_->readies();
     ASSERT_EQ(r.size(), 2u);
@@ -776,7 +780,7 @@ TEST_F(StreamTest, ADroppedSocketMidRangeResendsOnlyPastTheLastAck) {
     const auto later = edf(150);   // the range is ~14 KB: four chunks
     writeFile(root() / kBrp, later);
     server_->drop_after_chunks = 2 + static_cast<int>((first.size() + 4095) / 4096);
-    card_feed::fileWritten(root().string(), kBrp, kSerial);
+    card_feed::fileWritten(root().string(), kBrp, kSerial, card_feed::kSourceBleAs11);
     ASSERT_TRUE(waitAcked(kBrp, static_cast<long long>(later.size()), 15000));
 
     // After the reconnect the range went again from the acked offset, not 0.
@@ -857,7 +861,7 @@ TEST_F(StreamTest, SwitchedOffItHoldsNoConnection) {
     writeFile(root() / kEve, edf(2));
     startStreamer(false);
     ASSERT_TRUE(waitState("off"));
-    card_feed::fileWritten(root().string(), kEve, kSerial);
+    card_feed::fileWritten(root().string(), kEve, kSerial, card_feed::kSourceBleAs11);
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
     EXPECT_EQ(server_->upgrades(), 0);
 }
@@ -945,6 +949,250 @@ TEST_F(StreamTest, TheBluetoothWriterFeedsTheUploaderAsItWrites) {
     const auto h = cdstream::edfHeaderBytes(last);
     EXPECT_EQ(landed.size(), last.size());
     EXPECT_EQ(landed.substr(h), last.substr(h));
+}
+
+// ── SDD-079: each file says its source, and oximetry goes too ───────────────
+
+namespace {
+
+bool waitRow(IDatabase& db, const fs::path& under, const std::string& rel, long long to, int ms = 10000) {
+    const auto by = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
+    while (std::chrono::steady_clock::now() < by) {
+        auto r = db.getCpapDashSent(under.string(), rel);
+        if (r && r->acked_to == to) return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    return false;
+}
+
+size_t indexOf(const std::vector<std::string>& ev, const std::string& prefix) {
+    for (size_t i = 0; i < ev.size(); ++i)
+        if (ev[i].rfind(prefix, 0) == 0) return i;
+    return ev.size();
+}
+
+size_t lastIndexOf(const std::vector<std::string>& ev, const std::string& prefix) {
+    size_t at = ev.size();
+    for (size_t i = 0; i < ev.size(); ++i)
+        if (ev[i].rfind(prefix, 0) == 0) at = i;
+    return at;
+}
+
+// A row the uploader of an hms-cpap before 7.0.0 wrote: no source.
+void preRow(IDatabase& db, const fs::path& root, const std::string& rel, const std::string& acked_bytes,
+            const std::string& machine) {
+    IDatabase::CpapDashSent r;
+    r.root = root.string();
+    r.path = rel;
+    r.machine = machine;
+    r.acked_to = static_cast<long long>(acked_bytes.size());
+    r.acked_md5 = cdstream::ackedMd5(fs::path(rel).filename().string(), acked_bytes, acked_bytes.size());
+    r.updated_at = "2026-11-01T00:00:00Z";
+    ASSERT_TRUE(db.upsertCpapDashSent(r));
+}
+
+struct OutboxRoot {
+    explicit OutboxRoot(const fs::path& data_dir) { oximetry_outbox::setRoot(oximetry_outbox::rootFor(data_dir.string())); }
+    ~OutboxRoot() { oximetry_outbox::setRoot(""); }
+};
+
+cpapdash::parser::OximetrySession garminRow(const std::string& name, int samples) {
+    cpapdash::parser::OximetrySession s;
+    s.filename = name;
+    s.sample_interval = 60;
+    for (int i = 0; i < samples; ++i) {
+        cpapdash::parser::OximetrySample x{};
+        x.spo2 = 95;
+        x.heart_rate = 60;
+        x.timestamp = std::chrono::system_clock::from_time_t(1795042800 + i * 60);
+        s.samples.push_back(x);
+    }
+    return s;
+}
+
+}  // namespace
+
+TEST_F(StreamTest, EveryFileReadySaysItsRootsSourceAndTheIndexKeepsIt) {
+    writeFile(root() / kEve, edf(2));
+    const fs::path bridge = dir_ / "sleepbridge" / "bridge-1";
+    writeFile(bridge / "Identification.json",
+              R"({"FlowGenerator":{"IdentificationProfiles":{"Product":{"SerialNumber":"22000000009"}}}})");
+    writeFile(bridge / "DATALOG/20261116/20261116_230000_EVE.edf", edf(2));
+    startStreamer();
+    ASSERT_TRUE(waitAcked(kEve, static_cast<long long>(edf(2).size())));
+    ASSERT_TRUE(waitRow(*db_, bridge, "DATALOG/20261116/20261116_230000_EVE.edf", static_cast<long long>(edf(2).size())));
+    for (const auto& r : server_->readies()) {
+        const auto name = r.frame["filename"].asString();
+        if (name == "20261116_220000_EVE.edf") EXPECT_EQ(r.frame["source"].asString(), "ble-as11");
+        if (name == "20261116_230000_EVE.edf") EXPECT_EQ(r.frame["source"].asString(), "card")
+            << "a Sleep Bridge rebuilds the machine's own card; card is sent too, never left out";
+    }
+    EXPECT_EQ(db_->getCpapDashSent(root().string(), kEve)->source, "ble-as11");
+    EXPECT_EQ(db_->getCpapDashSent(bridge.string(), "DATALOG/20261116/20261116_230000_EVE.edf")->source, "card");
+}
+
+TEST_F(StreamTest, FilesAckedBefore700SayTheirSourceOnceBeforeAnyNewBytesOfTheRoot) {
+    // An hms-cpap before 7.0.0 sent these and they were acked, with no source.
+    const auto brp_then = edf(10), brp_now = edf(20);   // tonight's BRP has grown since
+    writeFile(root() / kBrp, brp_now);
+    preRow(*db_, root(), kBrp, brp_then, kSerial);
+    writeFile(root() / kEve, edf(2));
+    preRow(*db_, root(), kEve, edf(2), kSerial);
+    preRow(*db_, root(), "DATALOG/20261116/20261116_220000_PLD.edf", "", kSerial);   // acked at 0
+    const fs::path bridge = dir_ / "sleepbridge" / "bridge-1";   // a card root
+    writeFile(bridge / "Identification.json",
+              R"({"FlowGenerator":{"IdentificationProfiles":{"Product":{"SerialNumber":"22000000009"}}}})");
+    writeFile(bridge / "DATALOG/20261116/20261116_230000_EVE.edf", edf(2));
+    preRow(*db_, bridge, "DATALOG/20261116/20261116_230000_EVE.edf", edf(2), "22000000009");
+
+    startStreamer();
+    ASSERT_TRUE(waitAcked(kBrp, static_cast<long long>(brp_now.size())));
+    const auto ev = server_->events();
+    // One note each for the two files acked above 0 under the Bluetooth root.
+    EXPECT_EQ(std::count(ev.begin(), ev.end(), "note:20261116_220000_BRP.edf:kept"), 1);
+    EXPECT_EQ(std::count(ev.begin(), ev.end(), "note:20261116_220000_EVE.edf:kept"), 1);
+    EXPECT_EQ(indexOf(ev, "note:20261116_220000_PLD.edf"), ev.size()) << "acked at 0: a note would discard it";
+    EXPECT_EQ(indexOf(ev, "note:20261116_230000_EVE.edf"), ev.size()) << "a card root needs none";
+    // Both notes before the night's new bytes (the ingest's ordering need).
+    EXPECT_LT(lastIndexOf(ev, "note:"), indexOf(ev, "ready:20261116_220000_BRP.edf"));
+    for (const auto& r : server_->readies()) {
+        if (r.frame["chunks"].asUInt() != 0) continue;
+        EXPECT_GT(r.frame["offset"].asUInt64(), 0u) << "never at offset 0";
+        EXPECT_EQ(r.frame["offset"].asUInt64(), r.frame["total_size"].asUInt64());
+        EXPECT_EQ(r.frame["source"].asString(), "ble-as11");
+    }
+    // The grown BRP went from its acked offset, after its note.
+    const auto r = server_->readies();
+    const auto brp = std::find_if(r.begin(), r.end(), [](const auto& x) {
+        return x.frame["filename"].asString() == "20261116_220000_BRP.edf" && x.frame["chunks"].asUInt() > 0;
+    });
+    ASSERT_NE(brp, r.end());
+    EXPECT_EQ(brp->frame["offset"].asUInt64(), brp_then.size());
+    // Each note's ack set the source.
+    EXPECT_EQ(db_->getCpapDashSent(root().string(), kEve)->source, "ble-as11");
+    EXPECT_EQ(db_->getCpapDashSent(root().string(), kEve)->acked_to, static_cast<long long>(edf(2).size()));
+    EXPECT_EQ(db_->getCpapDashSent(root().string(), "DATALOG/20261116/20261116_220000_PLD.edf")->source, "");
+
+    // A second connection sends none.
+    const size_t before = server_->events().size();
+    const int hellos = server_->hellos();
+    streamer_->apply({true, std::string(kToken) + "2"});
+    ASSERT_TRUE(server_->waitFor([&] { return server_->hellosLocked() > hellos; }));
+    ASSERT_TRUE(waitState("connected"));
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    const auto after = since(server_->events(), before);
+    EXPECT_EQ(indexOf(after, "note:"), after.size());
+}
+
+TEST_F(StreamTest, OnAWalkTheOximetryOutboxGoesAfterEveryCardFile) {
+    OutboxRoot outbox(dir_);
+    cpapdash::parser::OximetrySession ring;
+    ring.filename = "20261116230512";
+    std::string o2s("\x01\x03\x00\x00\x00\x00\x00\x00\x04\x00", 10);
+    for (int i = 0; i < 3; ++i) o2s += std::string{'\x60', '\x3e', '\0'};
+    o2s += std::string(48, '\0');
+    oximetry_outbox::stored(ring, {"o2ring", "O2Ring-S"}, o2s);
+    oximetry_outbox::stored(garminRow("garmin-1", 5), {"garmin", "Garmin Fenix 7X"}, "");
+    writeFile(root() / kBrp, edf(30));
+    writeFile(root() / kEve, edf(2));
+
+    startStreamer();
+    const fs::path box = oximetry_outbox::rootFor(dir_.string());
+    ASSERT_TRUE(waitRow(*db_, box, "garmin-1.json", static_cast<long long>(fs::file_size(box / "garmin-1.json"))));
+    ASSERT_TRUE(waitRow(*db_, box, "20261116230512", static_cast<long long>(o2s.size())));
+    ASSERT_TRUE(waitAcked(kEve, static_cast<long long>(edf(2).size())));
+    const auto ev = server_->events();
+    EXPECT_LT(lastIndexOf(ev, "ready:"), indexOf(ev, "oxi:")) << "a night's card files are ahead of its oximetry";
+    const auto landed = server_->oxiLanded();
+    EXPECT_EQ(landed.at("20261116230512"), o2s) << "the ring's file, byte for byte";
+    for (const auto& r : server_->readies()) {
+        if (r.frame["kind"].asString() != "oximetry") continue;
+        EXPECT_FALSE(r.frame.isMember("filename"));
+        EXPECT_EQ(r.frame["offset"].asUInt64(), 0u) << "a recording goes whole";
+        EXPECT_TRUE(r.frame["eof"].asBool());
+        if (r.frame["oxi"]["name"].asString() == "garmin-1") {
+            EXPECT_EQ(r.frame["oxi"]["format"].asString(), "hms-json");
+            EXPECT_EQ(r.frame["oxi"]["source"].asString(), "garmin");
+            EXPECT_EQ(r.frame["oxi"]["device_name"].asString(), "Garmin Fenix 7X");
+        }
+    }
+    EXPECT_GE(streamer_->status().oximetry_acked, 2);
+    EXPECT_EQ(streamer_->status().toJson()["oximetry_state"].asString(), "sending");
+}
+
+TEST_F(StreamTest, AnIngestThatTakesNoOximetryHoldsItForTheConnectionAndCardFilesStillGo) {
+    OutboxRoot outbox(dir_);
+    server_->refuse_oximetry = true;
+    oximetry_outbox::stored(garminRow("garmin-1", 5), {"garmin", ""}, "");
+    oximetry_outbox::stored(garminRow("garmin-2", 5), {"garmin", ""}, "");
+    writeFile(root() / kEve, edf(2));
+    startStreamer();
+    ASSERT_TRUE(waitAcked(kEve, static_cast<long long>(edf(2).size())));
+    const fs::path box = oximetry_outbox::rootFor(dir_.string());
+    const auto by = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (streamer_->status().oximetry_state != "held" && std::chrono::steady_clock::now() < by)
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    EXPECT_EQ(streamer_->status().oximetry_state, "held");
+    EXPECT_EQ(streamer_->status().toJson()["oximetry_state"].asString(), "held");
+    // One refusal, then nothing more on this connection, even on a new store.
+    oximetry_outbox::stored(garminRow("garmin-3", 5), {"garmin", ""}, "");
+    writeFile(root() / "DATALOG/20261116/20261116_230000_EVE.edf", edf(3));
+    card_feed::fileWritten(root().string(), "DATALOG/20261116/20261116_230000_EVE.edf", kSerial,
+                           card_feed::kSourceBleAs11);
+    ASSERT_TRUE(waitAcked("DATALOG/20261116/20261116_230000_EVE.edf", static_cast<long long>(edf(3).size())))
+        << "card files carry on";
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    auto ev = server_->events();
+    EXPECT_EQ(std::count_if(ev.begin(), ev.end(), [](const std::string& e) { return e.rfind("oxi:", 0) == 0; }), 1);
+    EXPECT_FALSE(db_->getCpapDashSent(box.string(), "garmin-1.json")) << "the index does not move";
+
+    // The next connection, to an ingest that takes it, sends it all.
+    server_->refuse_oximetry = false;
+    streamer_->apply({true, std::string(kToken) + "2"});
+    ASSERT_TRUE(waitRow(*db_, box, "garmin-1.json",
+                        static_cast<long long>(fs::file_size(box / "garmin-1.json"))));
+    ASSERT_TRUE(waitRow(*db_, box, "garmin-3.json",
+                        static_cast<long long>(fs::file_size(box / "garmin-3.json"))));
+    EXPECT_EQ(streamer_->status().oximetry_state, "sending");
+    EXPECT_EQ(db_->getCpapDashSent(box.string(), "garmin-1.json")->source, "oximetry");
+}
+
+TEST_F(StreamTest, TheLiveSpoolGoesAsRangesOfWholeLines) {
+    OutboxRoot outbox(dir_);
+    startStreamer();
+    ASSERT_TRUE(waitState("connected"));
+    const auto t0 = std::chrono::system_clock::now();
+    const auto file = oximetry_outbox::liveSample(t0, t0, 96, 60, 0);
+    const fs::path box = oximetry_outbox::rootFor(dir_.string());
+    ASSERT_TRUE(waitRow(*db_, box, file, static_cast<long long>(fs::file_size(box / file))));
+    oximetry_outbox::liveSample(t0 + std::chrono::seconds(4), t0, 95, 61, 1);
+    ASSERT_TRUE(waitRow(*db_, box, file, static_cast<long long>(fs::file_size(box / file))));
+    std::vector<Json::Value> live;
+    for (const auto& r : server_->readies())
+        if (r.frame["kind"].asString() == "oximetry") live.push_back(r.frame);
+    ASSERT_EQ(live.size(), 2u);
+    EXPECT_EQ(live[0]["offset"].asUInt64(), 0u);
+    EXPECT_GT(live[1]["offset"].asUInt64(), 0u) << "from the acked offset";
+    EXPECT_EQ(live[1]["oxi"]["format"].asString(), "live-jsonl");
+    EXPECT_EQ(live[1]["oxi"]["name"].asString(), file.substr(0, file.size() - 6));
+    EXPECT_EQ(server_->oxiLanded().at(file.substr(0, file.size() - 6)), readFile(box / file));
+}
+
+TEST(CpapDashStreamRules, EachRootIsFoundWithItsSourceAndTheOutboxLast) {
+    const fs::path dir = fs::temp_directory_path() /
+                         ("cdstream_src_roots_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    fs::create_directories(dir / "as11" / "23000000001");
+    fs::create_directories(dir / "sleepbridge" / "bridge-1");
+    fs::create_directories(dir / "cpap_data");
+    fs::create_directories(oximetry_outbox::rootFor(dir.string()));
+    const auto roots = CpapDashStreamer::discoverRoots(dir.string(), {(dir / "cpap_data").string()});
+    ASSERT_EQ(roots.size(), 4u);
+    EXPECT_EQ(roots[0].source, "card");
+    EXPECT_EQ(roots[1].source, "ble-as11");
+    EXPECT_EQ(roots[2].source, "card");
+    EXPECT_EQ(roots[3].path, oximetry_outbox::rootFor(dir.string()));
+    EXPECT_EQ(roots[3].source, "oximetry");
+    fs::remove_all(dir);
 }
 
 #endif  // BUILD_WITH_WEB

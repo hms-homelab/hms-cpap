@@ -1,6 +1,8 @@
 #include "services/CpapDashStream.h"
 
+#include "services/CardFileFeed.h"
 #include "services/CpapDashSyncService.h"
+#include "services/OximetryOutbox.h"
 #include "utils/MachineIdentity.h"
 
 #include <openssl/evp.h>
@@ -79,7 +81,8 @@ bool isEdfName(const std::string& name) { return endsWith(lower(name), ".edf"); 
 bool isGrowingName(const std::string& name) {
     const auto n = lower(name);
     return endsWith(n, "_brp.edf") || endsWith(n, "_pld.edf") || endsWith(n, "_sad.edf") ||
-           endsWith(n, "_sa2.edf");
+           endsWith(n, "_sa2.edf") ||
+           isGrowingOximetryName(name);   // SDD-079 D5: the live spool is append-only too
 }
 
 std::size_t edfHeaderBytes(const std::string& bytes) {
@@ -119,6 +122,7 @@ Plan planSend(const std::string& name, const std::string& bytes,
 
     if (prefix_same && acked == size) {
         p.why = "acked";
+        p.held = true;
         return p;
     }
     if (prefix_same && isGrowingName(name) && acked > 0 && acked >= edfHeaderBytes(bytes)) {
@@ -239,24 +243,57 @@ std::string sourceKind(bool bluetooth_on, bool bridge_receiver_on, const std::st
     return "ezshare";
 }
 
+namespace {
+
+// The frames are written key by key, in the contract fixtures' order
+// (platform SDD-061 section 7: the same bytes in both repos), not through
+// jsoncpp, which sorts an object's keys.
+std::string q(const std::string& s) { return Json::valueToQuotedString(s.c_str()); }
+std::string n(uint64_t v) { return std::to_string(v); }
+
+// offset .. md5: the part every file_ready shares.
+std::string rangeKeys(uint64_t offset, uint64_t total_size, uint32_t chunks, uint64_t size,
+                      const std::string& md5) {
+    // eof: these bytes reach the file's end as it stands on disk now.
+    return "\"offset\":" + n(offset) + ",\"total_size\":" + n(total_size) +
+           ",\"eof\":" + (offset + size == total_size ? "true" : "false") + ",\"chunks\":" + n(chunks) +
+           ",\"size\":" + n(size) + ",\"md5\":" + q(md5);
+}
+
+}  // namespace
+
 std::string fileReadyFrame(uint32_t req_id, const CardHeaders& h, uint64_t offset,
                            uint64_t total_size, uint32_t chunks, uint64_t size,
-                           const std::string& md5, const std::string& machine_serial) {
-    Json::Value v;
-    v["t"]              = "file_ready";
-    v["req_id"]         = static_cast<Json::UInt64>(req_id);
-    v["date_folder"]    = h.date_folder;
-    v["rel_dir"]        = h.rel_dir;
-    v["filename"]       = h.filename;
-    v["offset"]         = static_cast<Json::UInt64>(offset);
-    v["total_size"]     = static_cast<Json::UInt64>(total_size);
-    // These bytes reach the file's end as it stands on disk now.
-    v["eof"]            = offset + size == total_size;
-    v["chunks"]         = static_cast<Json::UInt64>(chunks);
-    v["size"]           = static_cast<Json::UInt64>(size);
-    v["md5"]            = md5;
-    v["machine_serial"] = machine_serial;
-    return compact(v);
+                           const std::string& md5, const std::string& machine_serial,
+                           const std::string& source) {
+    std::string s = "{\"t\":\"file_ready\",\"req_id\":" + n(req_id) + ",\"date_folder\":" + q(h.date_folder) +
+                    ",\"rel_dir\":" + q(h.rel_dir) + ",\"filename\":" + q(h.filename) + "," +
+                    rangeKeys(offset, total_size, chunks, size, md5) +
+                    ",\"machine_serial\":" + q(machine_serial);
+    if (!source.empty()) s += ",\"source\":" + q(source);   // SDD-079 D2
+    return s + "}";
+}
+
+std::string sourceNoteFrame(uint32_t req_id, const CardHeaders& h, uint64_t acked_to,
+                            const std::string& machine_serial, const std::string& source) {
+    // md5 of the empty string: a whole, empty read.
+    return fileReadyFrame(req_id, h, acked_to, acked_to, 0, 0, md5Hex("", 0, 0), machine_serial, source);
+}
+
+std::string oximetryReadyFrame(uint32_t req_id, const OxiHeaders& oxi, uint64_t offset,
+                               uint64_t total_size, uint32_t chunks, uint64_t size,
+                               const std::string& md5) {
+    std::string o = "{\"name\":" + q(oxi.name) + ",\"format\":" + q(oxi.format);
+    if (!oxi.source.empty()) o += ",\"source\":" + q(oxi.source);
+    if (!oxi.device_name.empty()) o += ",\"device_name\":" + q(oxi.device_name);
+    o += "}";
+    return "{\"t\":\"file_ready\",\"req_id\":" + n(req_id) + ",\"kind\":\"oximetry\"," +
+           rangeKeys(offset, total_size, chunks, size, md5) + ",\"oxi\":" + o + "}";
+}
+
+bool isGrowingOximetryName(const std::string& name) {
+    const auto l = lower(name);
+    return l.rfind("live-", 0) == 0 && endsWith(l, ".jsonl");
 }
 
 std::string isoNowUtc() {
@@ -296,6 +333,25 @@ bool readFile(const fs::path& p, std::string& out) {
     return static_cast<bool>(in) || in.eof();
 }
 
+constexpr uint32_t kChunksLost = UINT32_MAX;
+
+// [bytes] from [from] to the end as binary frames under [req_id]: how many,
+// or kChunksLost when the link dropped.
+uint32_t sendChunks(CpapDashLink& link, uint32_t req_id, const std::string& bytes, std::size_t from,
+                    std::size_t chunk_bytes) {
+    const std::size_t len = bytes.size() - from;
+    const std::size_t chunk = std::max<std::size_t>(chunk_bytes, 1);
+    const uint32_t chunks = static_cast<uint32_t>((len + chunk - 1) / chunk);
+    for (uint32_t i = 0; i < chunks; ++i) {
+        const std::size_t at = from + static_cast<std::size_t>(i) * chunk;
+        const std::size_t n = std::min(chunk, bytes.size() - at);
+        std::string frame = cdstream::binaryHeader(req_id, i, i + 1 == chunks, cdstream::kKindFileBytes);
+        frame.append(bytes, at, n);
+        if (!link.sendBinary(frame)) return kChunksLost;
+    }
+    return chunks;
+}
+
 // Root files first, then SETTINGS, then the nights oldest first.
 int groupOf(const std::string& rel) {
     if (rel.find('/') == std::string::npos) return 0;
@@ -318,6 +374,8 @@ Json::Value CpapDashStreamer::Status::toJson() const {
     v["bytes_acked"] = static_cast<Json::Int64>(bytes_acked);
     v["queued"]      = static_cast<Json::UInt64>(queued);
     v["install_id"]  = install_id;
+    v["oximetry_acked"] = static_cast<Json::Int64>(oximetry_acked);   // SDD-079 D8
+    v["oximetry_state"] = oximetry_state;
     return v;
 }
 
@@ -350,6 +408,11 @@ void CpapDashStreamer::setSourceProvider(std::function<std::string()> p) {
     source_provider_ = std::move(p);
 }
 
+void CpapDashStreamer::setOximetryBackfill(std::function<void()> f) {
+    std::lock_guard<std::mutex> lk(mu_);
+    oximetry_backfill_ = std::move(f);
+}
+
 void CpapDashStreamer::apply(const Settings& s) {
     {
         std::lock_guard<std::mutex> lk(mu_);
@@ -378,25 +441,35 @@ void CpapDashStreamer::stop() {
 }
 
 void CpapDashStreamer::fileWritten(const std::string& root, const std::string& rel,
-                                   const std::string& machine) {
-    if (!cdstream::isCardPath(rel)) return;
+                                   const std::string& machine, const std::string& source) {
+    // The oximetry outbox is flat: its own file names, never a card path.
+    if (source == card_feed::kSourceOximetry ? !oximetry_outbox::metaFor(root, rel)
+                                             : !cdstream::isCardPath(rel))
+        return;
     {
         std::lock_guard<std::mutex> lk(mu_);
         auto& m = roots_[root];
-        if (!machine.empty()) m = machine;
+        if (!machine.empty()) m.machine = machine;
+        if (!source.empty()) m.source = source;
         if (!settings_.stream) return;   // the index is walked in full at switch-on
     }
-    enqueue({root, rel, machine}, false);
+    Work w{root, rel, machine};
+    w.source = source;
+    enqueue(std::move(w), false);
 }
 
-void CpapDashStreamer::rootWritten(const std::string& root, const std::string& machine) {
+void CpapDashStreamer::rootWritten(const std::string& root, const std::string& machine,
+                                   const std::string& source) {
     {
         std::lock_guard<std::mutex> lk(mu_);
         auto& m = roots_[root];
-        if (!machine.empty()) m = machine;
+        if (!machine.empty()) m.machine = machine;
+        if (!source.empty()) m.source = source;
         if (!settings_.stream) return;
     }
-    enqueue({root, "", machine}, false);
+    Work w{root, "", machine};
+    w.source = source;
+    enqueue(std::move(w), false);
 }
 
 void CpapDashStreamer::burstEnded(const std::string& root) {
@@ -451,7 +524,7 @@ std::vector<CpapDashStreamer::Root> CpapDashStreamer::discoverRoots(
     std::set<std::string> seen;
     for (const auto& r : card_roots) {
         if (r.empty() || !fs::is_directory(r, ec) || !seen.insert(r).second) continue;
-        out.push_back({r, ""});
+        out.push_back({r, "", card_feed::kSourceCard});
     }
     if (data_dir.empty()) return out;
     for (const char* sub : {"as11", "sleepbridge"}) {
@@ -463,10 +536,17 @@ std::vector<CpapDashStreamer::Root> CpapDashStreamer::discoverRoots(
             if (name.empty() || name[0] == '.' || name == "unknown") continue;
             const std::string root = e.path().string();
             if (!seen.insert(root).second) continue;
-            // as11/<serial>: the folder is the machine.
-            out.push_back({root, std::string(sub) == "as11" ? name : ""});
+            // as11/<serial>: the folder is the machine, and every file in it
+            // was built from Bluetooth (SDD-079 D1). A Sleep Bridge rebuilds
+            // the machine's own card: card.
+            const bool as11 = std::string(sub) == "as11";
+            out.push_back({root, as11 ? name : "", as11 ? card_feed::kSourceBleAs11 : card_feed::kSourceCard});
         }
     }
+    // SDD-079 D5: the oximetry outbox, after every card root.
+    const std::string outbox = oximetry_outbox::rootFor(data_dir);
+    if (fs::is_directory(outbox, ec) && seen.insert(outbox).second)
+        out.push_back({outbox, "", card_feed::kSourceOximetry});
     return out;
 }
 
@@ -515,22 +595,45 @@ std::optional<CpapDashStreamer::Work> CpapDashStreamer::popWork() {
 void CpapDashStreamer::markAllRootsDirty() {
     std::vector<Root> roots;
     RootsProvider provider;
+    std::function<void()> backfill;
     {
         std::lock_guard<std::mutex> lk(mu_);
         provider = roots_provider_;
-        for (const auto& [r, m] : roots_) roots.push_back({r, m});
+        backfill = oximetry_backfill_;
+    }
+    // SDD-079 D7: recordings stored before 7.0.0 into the outbox first, so
+    // this walk sends them.
+    if (backfill) {
+        try {
+            backfill();
+        } catch (const std::exception& e) {
+            std::cerr << kTag << "oximetry backfill: " << e.what() << std::endl;
+        }
+    }
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        for (const auto& [r, info] : roots_) roots.push_back({r, info.machine, info.source});
     }
     if (provider) {
         for (auto& r : provider()) {
             {
                 std::lock_guard<std::mutex> lk(mu_);
                 auto& m = roots_[r.path];
-                if (!r.machine.empty()) m = r.machine;
+                if (!r.machine.empty()) m.machine = r.machine;
+                if (!r.source.empty()) m.source = r.source;
             }
             roots.push_back(std::move(r));
         }
     }
-    for (auto& r : roots) enqueue({r.path, "", r.machine}, false);
+    // SDD-079 D5: the oximetry outbox after every card root, so a night's
+    // card files are ahead of its oximetry on every walk.
+    std::stable_partition(roots.begin(), roots.end(),
+                          [](const Root& r) { return r.source != card_feed::kSourceOximetry; });
+    for (auto& r : roots) {
+        Work w{r.path, "", r.machine};
+        w.source = r.source;
+        enqueue(std::move(w), false);
+    }
 }
 
 void CpapDashStreamer::doPendingClear() {
@@ -546,6 +649,7 @@ void CpapDashStreamer::doPendingClear() {
     if (!clear) return;
     settled_.clear();
     told_no_serial_.clear();
+    noted_roots_.clear();   // SDD-079 D3: the source marks go with the index
     if (db_ && !db_->clearCpapDashSent("")) std::cerr << kTag << "the index could not be cleared" << std::endl;
     else std::cout << kTag << "index cleared (the switch changed)" << std::endl;
 }
@@ -762,6 +866,12 @@ CpapDashStreamer::SessionEnd CpapDashStreamer::session(CpapDashLink& link, uint6
     end.connected = true;
     std::cout << kTag << "connected to CpapDash" << std::endl;
     setState("connected");
+    // SDD-079 D6: a new connection is the next event a held oximetry waits for.
+    oxi_held_ = false;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        status_.oximetry_state = "sending";
+    }
     // D8, D9: every connection starts from the index, over every root held.
     markAllRootsDirty();
 
@@ -807,7 +917,8 @@ CpapDashStreamer::SessionEnd CpapDashStreamer::session(CpapDashLink& link, uint6
             continue;
         }
         SessionEnd lost;
-        if (sendFile(link, *w, gen, lost) == SendResult::Lost) {
+        const bool oxi = sourceFor(w->root, w->source) == card_feed::kSourceOximetry;
+        if ((oxi ? sendOximetry(link, *w, gen, lost) : sendFile(link, *w, gen, lost)) == SendResult::Lost) {
             // Not acked: it goes again first on the next connection, from
             // the index, so nothing past the last ack is lost.
             enqueue(*w, true);
@@ -823,7 +934,7 @@ std::string CpapDashStreamer::machineFor(const std::string& root, const std::str
     {
         std::lock_guard<std::mutex> lk(mu_);
         auto it = roots_.find(root);
-        if (it != roots_.end() && !it->second.empty()) return it->second;
+        if (it != roots_.end() && !it->second.machine.empty()) return it->second.machine;
     }
     auto it = machines_.find(root);
     if (it != machines_.end() && !it->second.empty()) return it->second;
@@ -832,12 +943,33 @@ std::string CpapDashStreamer::machineFor(const std::string& root, const std::str
     return id.serial;
 }
 
+std::string CpapDashStreamer::sourceFor(const std::string& root, const std::string& given) {
+    if (!given.empty()) return given;
+    std::lock_guard<std::mutex> lk(mu_);
+    auto it = roots_.find(root);
+    if (it != roots_.end() && !it->second.source.empty()) return it->second.source;
+    // A root no collector named: what absent means on the wire (SDD-061 D1).
+    return card_feed::kSourceCard;
+}
+
 void CpapDashStreamer::scanRoot(const Work& w) {
     std::error_code ec;
     if (!fs::is_directory(w.root, ec)) return;
     std::vector<std::string> rels;
     const fs::path base(w.root);
-    for (auto it = fs::recursive_directory_iterator(base, fs::directory_options::skip_permission_denied, ec);
+    const std::string source = sourceFor(w.root, w.source);
+    if (source == card_feed::kSourceOximetry) {
+        // The outbox is flat (SDD-079 D4): every file it would send, by name.
+        for (const auto& e : fs::directory_iterator(base, ec)) {
+            if (!e.is_regular_file(ec)) continue;
+            const std::string name = e.path().filename().string();
+            if (oximetry_outbox::metaFor(w.root, name)) rels.push_back(name);
+        }
+        std::sort(rels.begin(), rels.end());
+    }
+    for (auto it = source == card_feed::kSourceOximetry
+                       ? fs::recursive_directory_iterator()
+                       : fs::recursive_directory_iterator(base, fs::directory_options::skip_permission_denied, ec);
          it != fs::recursive_directory_iterator(); it.increment(ec)) {
         if (ec) break;
         const auto rel = fs::relative(it->path(), base, ec).generic_string();
@@ -867,7 +999,9 @@ void CpapDashStreamer::scanRoot(const Work& w) {
         now.mtime = static_cast<long long>(fs::last_write_time(p, ec).time_since_epoch().count());
         auto s = settled_.find(keyOf(w.root, rel));
         if (s != settled_.end() && s->second == now) continue;
-        changed.push_back({w.root, rel, w.machine});
+        Work f{w.root, rel, w.machine};
+        f.source = source;
+        changed.push_back(std::move(f));
     }
     // In place of the scan, in path order: ahead of anything queued after it,
     // a burst's end above all, so that end goes once these are acked.
@@ -896,6 +1030,18 @@ CpapDashStreamer::SendResult CpapDashStreamer::sendFile(CpapDashLink& link, cons
     }
     const auto headers = cdstream::cardHeadersFor(w.rel);
     if (!headers) return SendResult::Done;
+    const std::string source = sourceFor(w.root, w.source);
+
+    // SDD-079 D3: a constructed root's files acked before 7.0.0 say their
+    // source first, before any new bytes of that root go, or a night still
+    // growing could have its constructed bytes taken as the card's.
+    if (source != card_feed::kSourceCard && !noted_roots_.count(w.root)) {
+        switch (sendSourceNotes(link, w.root, source, machine, gen, end)) {
+            case NotesResult::Lost: return SendResult::Lost;
+            case NotesResult::Refused: return SendResult::Done;   // waits for the next event
+            case NotesResult::Done: break;
+        }
+    }
 
     std::string bytes;
     if (!readFile(p, bytes)) return SendResult::Done;
@@ -908,44 +1054,96 @@ CpapDashStreamer::SendResult CpapDashStreamer::sendFile(CpapDashLink& link, cons
         return SendResult::Done;
     }
 
-    const uint32_t req_id = next_req_++;
-    if (next_req_ == 0) next_req_ = 1;
+    const uint32_t req_id = nextReq();
     const std::size_t from = static_cast<std::size_t>(plan.offset);
     const std::size_t len = bytes.size() - from;
-    const std::size_t chunk = std::max<std::size_t>(t.chunk_bytes, 1);
-    const uint32_t chunks = static_cast<uint32_t>((len + chunk - 1) / chunk);
-    for (uint32_t i = 0; i < chunks; ++i) {
-        const std::size_t at = from + static_cast<std::size_t>(i) * chunk;
-        const std::size_t n = std::min(chunk, bytes.size() - at);
-        std::string frame = cdstream::binaryHeader(req_id, i, i + 1 == chunks, cdstream::kKindFileBytes);
-        frame.append(bytes, at, n);
-        if (!link.sendBinary(frame)) {
-            end.end = End::Closed;
-            end.reason = "";
-            return SendResult::Lost;
-        }
-    }
+    const uint32_t chunks = sendChunks(link, req_id, bytes, from, t.chunk_bytes);
     const std::string md5 = cdstream::md5Hex(bytes, from, bytes.size());
-    if (!link.sendText(cdstream::fileReadyFrame(req_id, *headers, plan.offset, bytes.size(), chunks,
-                                                len, md5, machine))) {
+    if (chunks == kChunksLost ||
+        !link.sendText(cdstream::fileReadyFrame(req_id, *headers, plan.offset, bytes.size(), chunks,
+                                                len, md5, machine, source))) {
         end.end = End::Closed;
+        end.reason = "";
         return SendResult::Lost;
     }
 
+    const auto acked = awaitAck(link, req_id, gen, end);
+    if (!acked) return SendResult::Lost;
+    // ok:true is a complete read that landed, or bytes ingest already holds:
+    // the index advances (D6). ok:false is nothing kept: an incomplete read,
+    // or a range starting past what ingest holds (a purge, say). Then the
+    // file's row is reset so its next attempt goes WHOLE from 0; sending the
+    // same range again would be refused forever.
+    if (!*acked) {
+        std::cerr << kTag << w.rel << " not kept by CpapDash (from byte " << plan.offset
+                  << "); it goes again whole" << std::endl;
+        if (db_) {
+            IDatabase::CpapDashSent reset;
+            reset.root = w.root;
+            reset.path = w.rel;
+            reset.machine = machine;
+            reset.acked_to = 0;
+            reset.acked_md5 = "";   // matches nothing: the plan is whole
+            reset.updated_at = cdstream::isoNowUtc();
+            reset.source = row ? row->source : "";   // not an ok ack: the source mark stays
+            db_->upsertCpapDashSent(reset);
+        }
+        settled_.erase(key);
+        // A refused range is tried again whole straight away; a refused whole
+        // file waits for its next note or the next connection, so a file
+        // CpapDash keeps refusing never loops.
+        if (plan.offset > 0) enqueue(w, false);
+        return SendResult::Done;
+    }
+    IDatabase::CpapDashSent r;
+    r.root = w.root;
+    r.path = w.rel;
+    r.machine = machine;
+    r.acked_to = static_cast<long long>(bytes.size());
+    r.acked_md5 = cdstream::ackedMd5(name, bytes, bytes.size());
+    r.updated_at = cdstream::isoNowUtc();
+    r.source = source;   // SDD-079 D3: the source this ack delivered
+    if (db_ && db_->upsertCpapDashSent(r)) {
+        settled_[key] = stamp;
+    } else {
+        std::cerr << kTag << "the index did not take " << w.rel << std::endl;
+    }
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        status_.files_acked++;
+        status_.bytes_acked += static_cast<long long>(len);
+        status_.last_ack_at = r.updated_at;
+    }
+    return SendResult::Done;
+}
+
+uint32_t CpapDashStreamer::nextReq() {
+    const uint32_t req_id = next_req_++;
+    if (next_req_ == 0) next_req_ = 1;
+    return req_id;
+}
+
+std::optional<bool> CpapDashStreamer::awaitAck(CpapDashLink& link, uint32_t req_id, uint64_t gen,
+                                               SessionEnd& end) {
+    Timing t;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        t = timing_;
+    }
     const auto by = std::chrono::steady_clock::now() + t.ack_timeout;
     while (true) {
         if (stopping()) {
             end.end = End::Stop;
-            return SendResult::Lost;
+            return std::nullopt;
         }
         if (changed(gen)) {
             end.end = End::SettingsChanged;
-            return SendResult::Lost;
+            return std::nullopt;
         }
         if (std::chrono::steady_clock::now() > by) {
             end.end = End::AckTimeout;
             end.reason = "no file_ack";
-            return SendResult::Lost;
+            return std::nullopt;
         }
         auto f = link.next(std::chrono::milliseconds(100));
         if (!f) continue;
@@ -954,61 +1152,139 @@ CpapDashStreamer::SendResult CpapDashStreamer::sendFile(CpapDashLink& link, cons
             Json::CharReaderBuilder rb;
             std::istringstream in(f->text);
             if (Json::parseFromStream(rb, in, &v, nullptr) && v.isObject() &&
-                v.get("t", "").asString() == "file_ack" &&
-                v.get("req_id", 0).asUInt64() == req_id) {
-                // ok:true is a complete read that landed, or bytes ingest
-                // already holds: the index advances (D6). ok:false is nothing
-                // kept: an incomplete read, or a range starting past what
-                // ingest holds (a purge, say). Then the file's row is reset
-                // so its next attempt goes WHOLE from 0; sending the same
-                // range again would be refused forever.
-                const bool ok = v.get("ok", false).asBool();
-                if (!ok) {
-                    std::cerr << kTag << w.rel << " not kept by CpapDash (from byte " << plan.offset
-                              << "); it goes again whole" << std::endl;
-                    if (db_) {
-                        IDatabase::CpapDashSent reset;
-                        reset.root = w.root;
-                        reset.path = w.rel;
-                        reset.machine = machine;
-                        reset.acked_to = 0;
-                        reset.acked_md5 = "";   // matches nothing: the plan is whole
-                        reset.updated_at = cdstream::isoNowUtc();
-                        db_->upsertCpapDashSent(reset);
-                    }
-                    settled_.erase(key);
-                    // A refused range is tried again whole straight away; a
-                    // refused whole file waits for its next note or the next
-                    // connection, so a file CpapDash keeps refusing never loops.
-                    if (plan.offset > 0) enqueue(w, false);
-                    return SendResult::Done;
-                }
-                IDatabase::CpapDashSent r;
-                r.root = w.root;
-                r.path = w.rel;
-                r.machine = machine;
-                r.acked_to = static_cast<long long>(bytes.size());
-                r.acked_md5 = cdstream::ackedMd5(name, bytes, bytes.size());
-                r.updated_at = cdstream::isoNowUtc();
-                if (db_ && db_->upsertCpapDashSent(r)) {
-                    settled_[key] = stamp;
-                } else {
-                    std::cerr << kTag << "the index did not take " << w.rel << std::endl;
-                }
-                {
-                    std::lock_guard<std::mutex> lk(mu_);
-                    status_.files_acked++;
-                    status_.bytes_acked += static_cast<long long>(len);
-                    status_.last_ack_at = r.updated_at;
-                }
-                return SendResult::Done;
-            }
+                v.get("t", "").asString() == "file_ack" && v.get("req_id", 0).asUInt64() == req_id)
+                return v.get("ok", false).asBool();
         }
         if (auto e = handle(link, *f)) {
             end = *e;
-            return SendResult::Lost;
+            return std::nullopt;
         }
     }
+}
+
+CpapDashStreamer::NotesResult CpapDashStreamer::sendSourceNotes(CpapDashLink& link,
+                                                                const std::string& root,
+                                                                const std::string& source,
+                                                                const std::string& machine,
+                                                                uint64_t gen, SessionEnd& end) {
+    if (!db_) return NotesResult::Done;
+    bool all_taken = true;
+    for (auto row : db_->listCpapDashSent(root)) {
+        // A row that already says its source, or one acked at 0 (a note at
+        // offset 0 would make ingest discard the file: SDD-061 D2), needs none.
+        if (!row.source.empty() || row.acked_to <= 0) continue;
+        const auto headers = cdstream::cardHeadersFor(row.path);
+        if (!headers) continue;
+        const uint32_t req_id = nextReq();
+        if (!link.sendText(cdstream::sourceNoteFrame(req_id, *headers,
+                                                     static_cast<uint64_t>(row.acked_to),
+                                                     row.machine.empty() ? machine : row.machine,
+                                                     source))) {
+            end.end = End::Closed;
+            end.reason = "";
+            return NotesResult::Lost;
+        }
+        const auto ok = awaitAck(link, req_id, gen, end);
+        if (!ok) return NotesResult::Lost;
+        if (!*ok) {
+            // Not taken: the row is left as it is (no reset, the bytes are
+            // held), and the note goes again on the next event.
+            std::cerr << kTag << row.path << ": CpapDash did not take its source note" << std::endl;
+            all_taken = false;
+            continue;
+        }
+        row.source = source;
+        row.updated_at = cdstream::isoNowUtc();
+        if (!db_->upsertCpapDashSent(row)) {
+            std::cerr << kTag << "the index did not take the source of " << row.path << std::endl;
+            all_taken = false;
+        }
+    }
+    if (!all_taken) return NotesResult::Refused;
+    noted_roots_.insert(root);
+    return NotesResult::Done;
+}
+
+CpapDashStreamer::SendResult CpapDashStreamer::sendOximetry(CpapDashLink& link, const Work& w,
+                                                           uint64_t gen, SessionEnd& end) {
+    // D6: CpapDash did not take oximetry on this connection. The outbox and
+    // the index stay as they are; the next connection sends it.
+    if (oxi_held_) return SendResult::Done;
+    Timing t;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        t = timing_;
+    }
+    const auto meta = oximetry_outbox::metaFor(w.root, w.rel);
+    if (!meta) return SendResult::Done;
+    const fs::path p = fs::path(w.root) / w.rel;
+    std::error_code ec;
+    Stamp stamp;
+    stamp.size = fs::file_size(p, ec);
+    if (ec) return SendResult::Done;
+    stamp.mtime = static_cast<long long>(fs::last_write_time(p, ec).time_since_epoch().count());
+
+    std::string bytes;
+    if (!readFile(p, bytes)) return SendResult::Done;
+    // The live spool goes in whole lines only (SDD-061 D5): a line being
+    // appended right now waits for the next note.
+    if (meta->format == "live-jsonl") {
+        const auto nl = bytes.rfind('\n');
+        bytes.resize(nl == std::string::npos ? 0 : nl + 1);
+    }
+    const auto row = db_ ? db_->getCpapDashSent(w.root, w.rel) : std::nullopt;
+    const auto plan = cdstream::planSend(w.rel, bytes, row);
+    const std::string key = keyOf(w.root, w.rel);
+    if (!plan.send) {
+        if (bytes.size() == stamp.size) settled_[key] = stamp;
+        return SendResult::Done;
+    }
+
+    cdstream::OxiHeaders oxi{meta->name, meta->format, meta->source, meta->device_name};
+    const uint32_t req_id = nextReq();
+    const std::size_t from = static_cast<std::size_t>(plan.offset);
+    const std::size_t len = bytes.size() - from;
+    const uint32_t chunks = sendChunks(link, req_id, bytes, from, t.chunk_bytes);
+    if (chunks == kChunksLost ||
+        !link.sendText(cdstream::oximetryReadyFrame(req_id, oxi, plan.offset, bytes.size(), chunks, len,
+                                                    cdstream::md5Hex(bytes, from, bytes.size())))) {
+        end.end = End::Closed;
+        end.reason = "";
+        return SendResult::Lost;
+    }
+    const auto acked = awaitAck(link, req_id, gen, end);
+    if (!acked) return SendResult::Lost;
+    if (!*acked) {
+        // D6: not a failure. Oximetry is held for the rest of this connection,
+        // card files carry on, and the index does not move.
+        std::cerr << kTag << "CpapDash did not take oximetry (" << meta->name
+                  << "); held until the next connection" << std::endl;
+        oxi_held_ = true;
+        settled_.erase(key);
+        std::lock_guard<std::mutex> lk(mu_);
+        status_.oximetry_state = "held";
+        return SendResult::Done;
+    }
+    IDatabase::CpapDashSent r;
+    r.root = w.root;
+    r.path = w.rel;
+    r.machine = "";
+    r.acked_to = static_cast<long long>(bytes.size());
+    r.acked_md5 = cdstream::ackedMd5(w.rel, bytes, bytes.size());
+    r.updated_at = cdstream::isoNowUtc();
+    r.source = card_feed::kSourceOximetry;
+    if (db_ && db_->upsertCpapDashSent(r)) {
+        if (bytes.size() == stamp.size) settled_[key] = stamp;
+    } else {
+        std::cerr << kTag << "the index did not take " << w.rel << std::endl;
+    }
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        status_.oximetry_acked++;
+        status_.bytes_acked += static_cast<long long>(len);
+        status_.last_ack_at = r.updated_at;
+    }
+    return SendResult::Done;
 }
 
 }  // namespace hms_cpap

@@ -760,6 +760,10 @@ void SQLiteDatabase::createSchema() {
             PRIMARY KEY (root, path)
         )
     )");
+    // SDD-079 D3: the source CpapDash was told for each file. No default:
+    // NULL is a row from before 7.0.0, which gets one source note. Fails
+    // harmlessly once the column is there.
+    sqlite3_exec(db_, "ALTER TABLE cpapdash_sent ADD COLUMN source TEXT", nullptr, nullptr, nullptr);
 
     // SDD-029: nights an operator removed. Every path that re-reads the card
     // (the STR the local burst re-writes, discovery, the .vld scan, SleepHQ,
@@ -4565,7 +4569,8 @@ bool SQLiteDatabase::upsertSyncFolder(const FolderLedger& f) {
 // ── platform SDD-059 D5: what CpapDash has acknowledged ──────────────────────
 
 namespace {
-constexpr const char* kCpapDashSentCols = "root, path, machine, acked_to, acked_md5, updated_at";
+constexpr const char* kCpapDashSentCols =
+    "root, path, machine, acked_to, acked_md5, updated_at, source";
 
 IDatabase::CpapDashSent parseCpapDashSentRow(sqlite3_stmt* s) {
     IDatabase::CpapDashSent r;
@@ -4575,6 +4580,7 @@ IDatabase::CpapDashSent parseCpapDashSentRow(sqlite3_stmt* s) {
     r.acked_to   = sqlite3_column_int64(s, 3);
     r.acked_md5  = col_text(s, 4);
     r.updated_at = col_text(s, 5);
+    r.source     = col_text(s, 6);   // SDD-079 D3: NULL reads ""
     return r;
 }
 } // namespace
@@ -4610,13 +4616,14 @@ bool SQLiteDatabase::upsertCpapDashSent(const CpapDashSent& row) {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!db_ || row.root.empty() || row.path.empty()) return false;
     const char* sql = R"(
-        INSERT INTO cpapdash_sent (root, path, machine, acked_to, acked_md5, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO cpapdash_sent (root, path, machine, acked_to, acked_md5, updated_at, source)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(root, path) DO UPDATE SET
             machine    = excluded.machine,
             acked_to   = excluded.acked_to,
             acked_md5  = excluded.acked_md5,
-            updated_at = excluded.updated_at
+            updated_at = excluded.updated_at,
+            source     = excluded.source
     )";
     StmtGuard g;
     if (sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr) != SQLITE_OK) return false;
@@ -4626,6 +4633,9 @@ bool SQLiteDatabase::upsertCpapDashSent(const CpapDashSent& row) {
     sqlite3_bind_int64(g.stmt, 4, row.acked_to);
     bind_text(g.stmt, 5, row.acked_md5);
     bind_text(g.stmt, 6, row.updated_at);
+    // SDD-079 D3: "" is NULL, a row that never said its source.
+    if (row.source.empty()) sqlite3_bind_null(g.stmt, 7);
+    else bind_text(g.stmt, 7, row.source);
     if (sqlite3_step(g.stmt) != SQLITE_DONE) {
         std::cerr << "SQLite: upsertCpapDashSent error: " << sqlite3_errmsg(db_) << std::endl;
         return false;
