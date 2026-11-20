@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **A Sleep Bridge is set up entirely in the installer** (SDD-073). Choosing
+  the Sleep Bridge at first run now walks through every step, one a screen,
+  each with a picture of the hardware and a "Skip, I'll do it later": put the
+  machine's card in this computer and HmsCpap reads it (asking for the
+  computer's permission once, for the card's layout; a `.cpapcard` file
+  otherwise); put the bridge together; point it at this computer (its
+  address large, with Copy and a QR code); wait for the bridge, which then
+  becomes the source by itself (Local folder at its folder, its card format)
+  and the card's nights go in; put the extender in the machine and power it
+  off and on, until the machine's mount is seen (and says so if it is another
+  card); and, optionally, the CpapDash token and "Send my nights to
+  CpapDash". Every wait is for an event, never a clock. In the desktop app
+  (Windows, macOS; "Set up your Sleep Bridge..." in the menu brings it back)
+  and in the web wizard (Linux, Docker, Pi), in English, Spanish, French,
+  Hungarian and Portuguese.
+- **The Devices page and Settings > Source show each bridge's folder**, with
+  Copy, and a "Use this bridge as my source" button (SDD-073 D8, D10). No
+  path to type.
+- **Windows: the installer lets the Sleep Bridge through the firewall**: an
+  inbound rule for hms_cpap.exe on TCP 8894, private networks only, added
+  once (the one step that asks for Windows' permission) and removed on
+  uninstall (SDD-073 D7).
+- `hms_cpap --read-card`, `ws://.../api/sleepbridge/watch`, `POST
+  /api/sleepbridge/<bridge>/use` and `GET /api/sleepbridge/qr`, which the
+  setup steps use (docs/SLEEP_BRIDGE_LOCAL_STREAM.md).
+
 ### Fixed
 - **Live O2 Ring samples in bridge mode sit on the same clock as the rest of
   the night.** On PostgreSQL and MySQL they were stamped with the database's

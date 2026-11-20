@@ -1,0 +1,105 @@
+{
+  "setup": {
+    "bridge": {
+      "skip": "Kihagyom, később megcsinálom",
+      "copy": "Másolás",
+      "copied": "Másolva",
+      "tryAgain": "Újra",
+      "closed": "A kapcsolat a HMS-CPAP-pal megszakadt, így ez az oldal most nem hallja a hidat.",
+      "reconnect": "Újracsatlakozás",
+      "toDashboard": "Tovább az irányítópultra",
+      "card": {
+        "title": "Hozza a kártyát",
+        "body": "A készülék SD-kártyáján vannak a már rögzített éjszakák, és az a felépítés, amit a Sleep Bridge-nek ismernie kell.",
+        "where": "Egy CpapDash Desktopot futtató számítógépen tegye be a kártyát, és válassza az Export for HMS CPAP lehetőséget. Ez egy .cpapcard fájlt ment. Itt válassza ki azt a fájlt.",
+        "choose": "A .cpapcard fájl kiválasztása",
+        "picked": "{{name}} készen áll.",
+        "later": "A beállítás végén kerül át. A kártyát most kiveheti a számítógépből.",
+        "sending": "A kártya éjszakáinak és felépítésének küldése...",
+        "sent": "A kártya megérkezett: az éjszakák beolvasása folyik, és a Sleep Bridge ismeri a felépítését.",
+        "sentNoLayout": "A kártya éjszakái megérkeztek, de a felépítése nem maradt meg: {{error}}",
+        "sendFailed": "A kártyát nem sikerült elküldeni ({{error}}). Később töltse fel a Feltöltés oldalon."
+      },
+      "assemble": {
+        "title": "Rakja össze a hidat",
+        "cardIntoBridge": "Csúsztassa a kártyát a Sleep Bridge-be.",
+        "bridgeOntoExtender": "Dugja a hidat a lapos hosszabbító aljzatos végébe.",
+        "power": "Csatlakoztassa az USB-C tápot. A fény kigyullad.",
+        "notYet": "MÉG NE tegye a készülékbe."
+      },
+      "connect": {
+        "title": "Kösse a hidat ehhez a számítógéphez",
+        "body": "A telefonján csatlakozzon a CpapDash- kezdetű WiFi-hálózathoz, válassza az otthoni WiFi-t, válassza a My hms-cpap lehetőséget, és írja be:",
+        "askAddress": "Ennek a számítógépnek a címe az otthoni hálózaton",
+        "askHint": "Az a cím, amelyen a HMS-CPAP-ot megnyitja, például 192.168.1.20. Dockerben a gazdagép címét adja meg, ne a konténerét.",
+        "useAddress": "Ezt a címet használom",
+        "change": "Nem ez az?",
+        "port": "A híd Port mezőjébe írja be: {{port}}."
+      },
+      "wait": {
+        "title": "Várakozás a hídra",
+        "waiting": "Figyelem, mikor csatlakozik a Sleep Bridge...",
+        "alreadyOnline": "Egy híd már csatlakozott. Ez az?",
+        "found": "Megtalálva: {{sender}}",
+        "setting": "A híd mappájának beállítása forrásként...",
+        "sourceSet": "A híd mappája most a forrás (kártyaformátum: {{format}}).",
+        "formatGuessed": "A híd még nem ismerte fel a kártyáját. Ha egy másik készülék kártyája, ez kijavul, amikor a készülék beolvassa.",
+        "sourceFailed": "A forrást nem sikerült beállítani: {{error}}",
+        "unreachable": "Ha a híd saját beállítási tesztje szerint nem éri el ezt a számítógépet, ellenőrizze, hogy a(z) {{port}} port eléri-e (Dockerben tegye közzé: 8894:8894), és hogy tűzfal nem tiltja-e."
+      },
+      "machine": {
+        "title": "A készülékbe",
+        "intoMachine": "Tolja a hosszabbító kártya alakú végét a készülék SD-kártyanyílásába. A hidat fektesse le mellé.",
+        "powerCycle": "Kapcsolja ki, majd be a készüléket egyszer, amikor nem használja.",
+        "waiting": "Várakozás, hogy a készülék beolvassa a kártyát...",
+        "seen": "A készülék látja a kártyát. Minden kész.",
+        "mismatch": "A készülékben más kártya van, mint amit az első lépésben hozott. Tegye azt a kártyát a hídba, vagy hozza ezt a kártyát később."
+      },
+      "online": {
+        "title": "Az éjszakái online (nem kötelező)",
+        "body": "A CpapDash-ben is látná az éjszakáit? Nyissa meg a CpapDash-t, menjen a Settings > hms-cpap részhez, másolja ki a tokent, és illessze be ide.",
+        "open": "A cpapdash.com megnyitása",
+        "token": "Token",
+        "send": "Éjszakáim küldése a CpapDash-be",
+        "save": "Mentés",
+        "saveFailed": "A tokent nem sikerült menteni.",
+        "state": {
+          "off": "A küldés ki van kapcsolva.",
+          "no_token": "Még nincs token.",
+          "connecting": "Csatlakozás a CpapDash-hez...",
+          "connected": "Csatlakozva a CpapDash-hez",
+          "unreachable": "A CpapDash most nem érhető el.",
+          "refused": "A CpapDash nem fogadta el ezt a tokent.",
+          "revoked": "Ezt a tokent visszavonták a CpapDash-ben.",
+          "closed": "A kapcsolat a CpapDash-sel megszakadt.",
+          "unavailable": "Ebben a változatban nincs küldés a CpapDash-be.",
+          "unknown": "Várakozás a CpapDash-re..."
+        }
+      }
+    }
+  },
+  "bridgeSource": {
+    "folder": "Mappa",
+    "noFolder": "Még nincs mappa",
+    "format": "Kártyaformátum",
+    "formatUnknown": "még nem ismert",
+    "copy": "Másolás",
+    "copied": "Másolva",
+    "use": "Ez a híd legyen a forrásom",
+    "inUse": "Ez a híd a forrása",
+    "restarting": "Kész (kártyaformátum: {{format}}). A HMS-CPAP újraindul, hogy beolvassa.",
+    "saved": "Kész (kártyaformátum: {{format}}).",
+    "failed": "A forrást nem sikerült beállítani: {{error}}"
+  },
+  "settings": {
+    "source": {
+      "bridges": {
+        "title": "Az Ön Sleep Bridge-ei",
+        "online": "elérhető",
+        "offline": "nem elérhető",
+        "closed": "A kapcsolat a HMS-CPAP-pal megszakadt, így ez a lista elavult lehet.",
+        "reconnect": "Újracsatlakozás"
+      }
+    }
+  }
+}

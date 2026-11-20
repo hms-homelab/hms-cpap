@@ -280,6 +280,20 @@ export class CpapApiService {
     return this.http.get<SleepBridgeStatus>('/api/sleepbridge');
   }
 
+  /**
+   * SDD-073 D4 / D8: this bridge's folder becomes the source (Local folder,
+   * its card format). restart: true restarts hms-cpap in place (Devices page);
+   * the web wizard sends false, its own finish restarts.
+   */
+  useSleepBridge(sender: string, restart: boolean): Observable<SleepBridgeUse> {
+    return this.http.post<SleepBridgeUse>(`/api/sleepbridge/${encodeURIComponent(sender)}/use`, { restart });
+  }
+
+  /** SDD-073 D3: a QR code of `text`, as rows of '0' and '1' (no quiet zone). */
+  getSleepBridgeQr(text: string): Observable<{ size: number; rows: string[] }> {
+    return this.http.get<{ size: number; rows: string[] }>('/api/sleepbridge/qr', { params: { text } });
+  }
+
   /** A firmware image file to one bridge, sent over its own stream connection. */
   uploadSleepBridgeImage(sender: string, file: File, confirm = false): Observable<any> {
     const fd = new FormData();
@@ -773,6 +787,23 @@ export interface SleepBridge {
   card_format: string;
   /** The card learned on a computer this bridge holds (a .cpapcard), or null. */
   learned: SleepBridgeLearned | null;
+  /** SDD-073: the bridge's folder, read as a Local folder source. */
+  card_root?: string;
+  /** SDD-073: the latest real hello in this run (epoch s), 0 none. */
+  session_started_at?: number;
+  /** SDD-073: the latest card statement in this run (epoch s), 0 none. */
+  card_stated_at?: number;
+}
+
+/** SDD-073: POST /api/sleepbridge/{sender}/use. */
+export interface SleepBridgeUse {
+  ok: boolean;
+  local_dir?: string;
+  format?: string;
+  format_known?: boolean;
+  restarting?: boolean;
+  restart_mode?: string;
+  error?: string;
 }
 
 /** A learned card on one bridge, and whether the bridge latched it. */

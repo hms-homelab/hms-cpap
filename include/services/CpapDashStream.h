@@ -216,6 +216,9 @@ public:
 
     Status status() const;
 
+    /// SDD-073 D6: called, off the lock, each time the state changes.
+    void setStateListener(std::function<void(const Status&)> l);
+
     /// The install id, made once and kept in <data_dir>/cpapdash_install_id.
     static std::string loadOrCreateInstallId(const std::string& data_dir);
 
@@ -282,6 +285,7 @@ private:
     std::set<std::string>   queued_keys_;
     std::map<std::string, std::string> roots_;          // root -> machine, from the collectors
     Status                  status_;
+    std::function<void(const Status&)> state_listener_;
 
     // Worker thread only.
     std::map<std::string, Stamp>       settled_;   // root\npath -> what was on disk when it matched the index

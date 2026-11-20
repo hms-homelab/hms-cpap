@@ -1,11 +1,14 @@
-import { Component, OnInit, OnDestroy } from '@angular/core';
+import { Component, NgZone, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { TranslatePipe, TranslateService } from '@ngx-translate/core';
 import { Subject, Subscription, timer } from 'rxjs';
 import { switchMap, takeUntil, takeWhile, tap } from 'rxjs/operators';
 import { RouterLink } from '@angular/router';
-import { CpapApiService, CpapDashStreamStatus, UpdateStatus } from '../../services/cpap-api.service';
+import { CpapApiService, CpapDashStreamStatus, SleepBridge, UpdateStatus } from '../../services/cpap-api.service';
+import { SleepBridgeWatch } from '../../services/sleepbridge-watch';
+import { BridgeSourceComponent } from '../../components/bridge-source/bridge-source.component';
+import { bridgeInUse } from '../../components/bridge-source/bridge-source-model';
 import { UpdateFlowService } from '../../services/update-flow.service';
 import { AppConfig } from '../../models/config.model';
 import { sourceImage } from '../../utils/source-image';
@@ -13,7 +16,7 @@ import { sourceImage } from '../../utils/source-image';
 @Component({
   selector: 'app-settings',
   standalone: true,
-  imports: [CommonModule, FormsModule, RouterLink, TranslatePipe],
+  imports: [CommonModule, FormsModule, RouterLink, TranslatePipe, BridgeSourceComponent],
   template: `
     <div class="settings">
       <h2>{{ 'settings.title' | translate }}</h2>
@@ -36,6 +39,21 @@ import { sourceImage } from '../../utils/source-image';
             <p class="devices-link" *ngIf="config.transport !== 'local'">
               <a routerLink="/devices">{{ 'settings.devicesLink' | translate }}</a>
             </p>
+            <!-- SDD-073 D10: the Sleep Bridges seen here, each one click from
+                 being the source. Follows the bridges' events on the watch
+                 socket, never a timer. -->
+            <div class="bridges" *ngIf="bridges.length">
+              <b>{{ 'settings.source.bridges.title' | translate }}</b>
+              <app-bridge-source *ngFor="let b of bridges; trackBy: trackBridge"
+                                 [sender]="b.sender" [cardRoot]="b.card_root || ''"
+                                 [cardFormat]="b.card_format || ''" [head]="true" [online]="b.online"
+                                 [inUse]="bridgeInUse(b.card_root)" [restart]="true" />
+              <small class="hint" *ngIf="bridgesWatchClosed">
+                {{ 'settings.source.bridges.closed' | translate }}
+                <button type="button" class="link-btn" (click)="watchBridges()">
+                  {{ 'settings.source.bridges.reconnect' | translate }}</button>
+              </small>
+            </div>
             <label>
               {{ 'settings.source.transport' | translate }}
               <span class="transport-row">
@@ -1142,6 +1160,9 @@ import { sourceImage } from '../../utils/source-image';
     .myair-btn.secondary:hover:not(:disabled) { color: #e0e0e0; border-color: #888; }
     /* SDD-062 D1: a section whose device has a card points there. */
     .devices-link { font-size: 0.82rem; margin: 0.2rem 0 0.6rem; }
+    .bridges { border: 1px solid #333; border-radius: 8px; padding: .6rem .8rem; margin: 0 0 .9rem; }
+    .bridges b { color: #e0e0e0; }
+    .link-btn { background: none; border: none; color: #64b5f6; cursor: pointer; }
     .devices-link a { color: #64b5f6; }
 
     .section-header .restart-tag { margin-left: auto; }
@@ -1538,15 +1559,43 @@ export class SettingsComponent implements OnInit, OnDestroy {
     ['device_id', 'settings.restart.key.deviceId'],
   ];
 
+  // ── SDD-073 D10: the Sleep Bridges, in Source ─────────────────────────────
+  bridges: SleepBridge[] = [];
+  bridgesWatchClosed = false;
+  private bridgeWatch: SleepBridgeWatch;
+
+  /** In use: the SAVED source is a local folder at this bridge's folder. */
+  bridgeInUse(cardRoot: string | undefined): boolean {
+    return bridgeInUse(this.pristine as any, cardRoot);
+  }
+
+  trackBridge(_: number, b: SleepBridge): string { return b.sender; }
+
+  /** The list, then every bridge event the server pushes on the watch socket. */
+  watchBridges(): void {
+    this.bridgesWatchClosed = false;
+    this.bridgeWatch.connect();
+  }
+
   constructor(private api: CpapApiService, private t: TranslateService,
-              public updateFlow: UpdateFlowService) {}
+              public updateFlow: UpdateFlowService, zone: NgZone) {
+    this.bridgeWatch = new SleepBridgeWatch(zone, (f) => {
+      if (f.t === 'sleepbridge' && f.status) this.bridges = (f.status.bridges ?? []) as SleepBridge[];
+    }, () => { this.bridgesWatchClosed = true; });
+  }
 
   ngOnDestroy(): void {
+    this.bridgeWatch.close();
     this.destroy$.next();
     this.destroy$.complete();
   }
 
   ngOnInit(): void {
+    this.api.getSleepBridges().subscribe({
+      next: (s) => { this.bridges = s?.bridges ?? []; },
+      error: () => {},
+    });
+    this.watchBridges();
     this.loadMyAirStatus();
     this.loadUpdateStatus();
     this.loadStreamStatus();

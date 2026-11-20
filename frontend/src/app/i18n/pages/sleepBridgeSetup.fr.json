@@ -1,0 +1,105 @@
+{
+  "setup": {
+    "bridge": {
+      "skip": "Passer, je le ferai plus tard",
+      "copy": "Copier",
+      "copied": "Copié",
+      "tryAgain": "Réessayer",
+      "closed": "La connexion à HMS-CPAP s'est fermée, cette page ne peut donc pas entendre votre pont pour l'instant.",
+      "reconnect": "Se reconnecter",
+      "toDashboard": "Aller au tableau de bord",
+      "card": {
+        "title": "Apportez votre carte",
+        "body": "La carte SD de votre appareil contient les nuits déjà enregistrées, et l'organisation que votre Sleep Bridge doit connaître.",
+        "where": "Sur un ordinateur avec CpapDash Desktop, insérez la carte et utilisez Export for HMS CPAP. Il enregistre un fichier .cpapcard. Choisissez ce fichier ici.",
+        "choose": "Choisir le fichier .cpapcard",
+        "picked": "{{name}} est prêt.",
+        "later": "Il est envoyé à la fin de la configuration. Vous pouvez retirer la carte de l'ordinateur maintenant.",
+        "sending": "Envoi des nuits et de l'organisation de votre carte...",
+        "sent": "Votre carte est arrivée : ses nuits sont en cours de lecture, et votre Sleep Bridge connaît son organisation.",
+        "sentNoLayout": "Les nuits de votre carte sont arrivées, mais son organisation n'a pas été gardée : {{error}}",
+        "sendFailed": "Votre carte n'a pas pu être envoyée ({{error}}). Envoyez-la plus tard sur la page Envoi."
+      },
+      "assemble": {
+        "title": "Assemblez le pont",
+        "cardIntoBridge": "Glissez la carte dans le Sleep Bridge.",
+        "bridgeOntoExtender": "Branchez le pont sur l'extrémité à prise de la rallonge plate.",
+        "power": "Branchez l'alimentation USB-C. Le voyant s'allume.",
+        "notYet": "Ne le mettez PAS encore dans l'appareil."
+      },
+      "connect": {
+        "title": "Reliez le pont à cet ordinateur",
+        "body": "Sur votre téléphone, rejoignez le WiFi dont le nom commence par CpapDash-, choisissez le WiFi de la maison, choisissez My hms-cpap et tapez :",
+        "askAddress": "L'adresse de cet ordinateur sur le réseau de la maison",
+        "askHint": "L'adresse à laquelle vous ouvrez HMS-CPAP, par exemple 192.168.1.20. Dans Docker, utilisez l'adresse de l'hôte, pas celle du conteneur.",
+        "useAddress": "Utiliser cette adresse",
+        "change": "Pas celle-ci ?",
+        "port": "Dans le champ Port du pont, tapez {{port}}."
+      },
+      "wait": {
+        "title": "En attente de votre pont",
+        "waiting": "À l'écoute de votre Sleep Bridge qui se connecte...",
+        "alreadyOnline": "Un pont est déjà connecté. Est-ce celui-ci ?",
+        "found": "{{sender}} trouvé",
+        "setting": "Le dossier de votre pont devient la source...",
+        "sourceSet": "Le dossier de votre pont est maintenant la source (format de carte {{format}}).",
+        "formatGuessed": "Le pont n'a pas encore reconnu sa carte. Si c'est la carte d'un autre appareil, c'est corrigé quand l'appareil la lit.",
+        "sourceFailed": "La source n'a pas pu être définie : {{error}}",
+        "unreachable": "Si le test de configuration du pont dit qu'il n'atteint pas cet ordinateur, vérifiez que le port {{port}} y arrive (dans Docker, publiez 8894:8894) et qu'aucun pare-feu ne le bloque."
+      },
+      "machine": {
+        "title": "Dans l'appareil",
+        "intoMachine": "Enfoncez l'extrémité en forme de carte de la rallonge dans la fente SD de votre appareil. Posez le pont à plat à côté.",
+        "powerCycle": "Éteignez puis rallumez l'appareil une fois, quand vous ne l'utilisez pas.",
+        "waiting": "En attente de la lecture de la carte par votre appareil...",
+        "seen": "Votre appareil voit la carte. Tout est prêt.",
+        "mismatch": "Votre appareil contient une autre carte que celle apportée à la première étape. Mettez cette carte dans le pont, ou apportez cette carte plus tard."
+      },
+      "online": {
+        "title": "Vos nuits en ligne (facultatif)",
+        "body": "Voir aussi vos nuits sur CpapDash ? Ouvrez CpapDash, allez dans Settings > hms-cpap, copiez le jeton et collez-le ici.",
+        "open": "Ouvrir cpapdash.com",
+        "token": "Jeton",
+        "send": "Envoyer mes nuits à CpapDash",
+        "save": "Enregistrer",
+        "saveFailed": "Le jeton n'a pas pu être enregistré.",
+        "state": {
+          "off": "L'envoi est désactivé.",
+          "no_token": "Pas encore de jeton.",
+          "connecting": "Connexion à CpapDash...",
+          "connected": "Connecté à CpapDash",
+          "unreachable": "CpapDash est injoignable pour le moment.",
+          "refused": "CpapDash n'a pas accepté ce jeton.",
+          "revoked": "Ce jeton a été révoqué sur CpapDash.",
+          "closed": "La connexion à CpapDash s'est fermée.",
+          "unavailable": "Cette version ne contient pas l'envoi à CpapDash.",
+          "unknown": "En attente de CpapDash..."
+        }
+      }
+    }
+  },
+  "bridgeSource": {
+    "folder": "Dossier",
+    "noFolder": "Pas encore de dossier",
+    "format": "Format de carte",
+    "formatUnknown": "pas encore connu",
+    "copy": "Copier",
+    "copied": "Copié",
+    "use": "Utiliser ce pont comme source",
+    "inUse": "Ce pont est votre source",
+    "restarting": "C'est fait (format de carte {{format}}). HMS-CPAP redémarre pour le lire.",
+    "saved": "C'est fait (format de carte {{format}}).",
+    "failed": "La source n'a pas pu être définie : {{error}}"
+  },
+  "settings": {
+    "source": {
+      "bridges": {
+        "title": "Vos Sleep Bridges",
+        "online": "en ligne",
+        "offline": "hors ligne",
+        "closed": "La connexion à HMS-CPAP s'est fermée, cette liste n'est peut-être plus à jour.",
+        "reconnect": "Se reconnecter"
+      }
+    }
+  }
+}

@@ -8,6 +8,7 @@
 #include "controllers/MuleSocket.h"
 #include "controllers/MuleDs2Routes.h"
 #include "controllers/DevicesRoutes.h"
+#include "controllers/SetupWatch.h"
 #include "sleepbridge/ReleaseFeed.h"
 #include "mule/LivePublisher.h"
 #include "mqtt/LiveState.h"
@@ -19,6 +20,7 @@
 #include "services/CardUpload.h"
 #include "services/CpapCard.h"
 #include "sleepbridge/LearnedCard.h"
+#include "sleepbridge/CardReadCli.h"
 #include "services/OximetryImport.h"
 #include "services/RemovedNights.h"
 #include "services/SetupService.h"
@@ -495,6 +497,11 @@ int main(int argc, char** argv) {
     // Bluetooth and exit, before any config, log or database is touched. A
     // diagnostic: it never connects to anything.
     for (int i = 1; i < argc; ++i) {
+        // SDD-073 D1: `--read-card <device> --card-root <folder> --out <file>`:
+        // the installer's one elevated step, a read-only read of a card into
+        // a .cpapcard. Nothing else runs (sleepbridge/CardReadCli.h).
+        if (std::strcmp(argv[i], "--read-card") == 0)
+            return hms_cpap::sleepbridge::runReadCard(std::vector<std::string>(argv + 1, argv + argc));
         if (std::strcmp(argv[i], "--ble-scan") == 0) {
             int seconds = 10;
             if (i + 1 < argc) {
@@ -1218,6 +1225,17 @@ int main(int argc, char** argv) {
                     },
                     [s = cpapdash_stream](const std::string& root) { s->burstEnded(root); });
                 hms_cpap::CpapController::setStreamService(cpapdash_stream);
+                // SDD-073 D6: "Connected to CpapDash" as it happens.
+                cpapdash_stream->setStateListener([](const hms_cpap::CpapDashStreamer::Status& st) {
+                    hms_cpap::SetupWatch::streamEvent(st.toJson());
+                });
+                hms_cpap::SetupWatch::setStreamSource(
+                    [w = std::weak_ptr<hms_cpap::CpapDashStreamer>(cpapdash_stream)] {
+                        if (auto s = w.lock()) return s->status().toJson();
+                        Json::Value v(Json::objectValue);
+                        v["state"] = "unavailable";
+                        return v;
+                    });
                 cpapdash_stream->start();
                 if (config.cpapdash.stream && config.cpapdash.token.empty())
                     std::cout << "CpapDash nights: switched on but no token set - nothing is sent"
@@ -1799,6 +1817,10 @@ int main(int argc, char** argv) {
                     sb.jobs_dir = (std::filesystem::path(hms_cpap::AppConfig::dataDir()) / "ota" / "sleepbridge")
                                       .string();
                     sb.fetch = feed_get;
+                    // SDD-073: the setup steps' waits, pushed as they happen.
+                    sb.on_event = [](const std::string& event, const std::string& sender) {
+                        hms_cpap::SetupWatch::bridgeEvent(event, sender);
+                    };
 
                     // The live night. Each rebuild that wrote card files wakes
                     // the burst cycle, so a card folder source pointed at the
@@ -1884,6 +1906,12 @@ int main(int argc, char** argv) {
                     sleep_bridge->setReleaseFeed(release_feed.get());
                     hms_cpap::sleepbridge::installRoutes(sleep_bridge.get(), release_feed.get());
                     sleep_bridge->start();
+                    // SDD-073: "Use this bridge" and the setup watch read the
+                    // bridges from here.
+                    hms_cpap::CpapController::sleepbridge_status_ = [svc = sleep_bridge.get()] {
+                        return svc->status();
+                    };
+                    hms_cpap::SetupWatch::setBridgeSource([svc = sleep_bridge.get()] { return svc->status(); });
                     hms_cpap::CpapController::card_layout_ =
                         [svc = sleep_bridge.get()](const std::string& cbl1, const std::string& file_name,
                                                    const std::string& zip_path) -> Json::Value {

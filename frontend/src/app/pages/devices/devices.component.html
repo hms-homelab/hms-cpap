@@ -164,6 +164,13 @@
               <div class="hint" *ngIf="l.verdict === 'waiting'">{{ 'devices.sleepbridge.learnedWaitingHint' | translate }}</div>
               <div class="hint" *ngIf="l.verdict === 'mismatch'">{{ 'devices.sleepbridge.learnedMismatchHint' | translate }}</div></dd></div>
           <div *ngIf="d.detail.chip_id"><dt>{{ 'devices.sleepbridge.chip' | translate }}</dt><dd class="mono">{{ d.detail.chip_id }}</dd></div>
+          <!-- SDD-073 D8: its folder and card format, and the source set from them. -->
+          <div class="wide"><dd>
+            <app-bridge-source [sender]="d.id" [cardRoot]="d.detail.card_root || ''"
+                               [cardFormat]="d.detail.card_format || ''"
+                               [inUse]="bridgeInUse(d.detail.card_root)" [restart]="true"
+                               (used)="loadConfig()" />
+          </dd></div>
         </ng-container>
 
         <!-- ── O2 ring ── -->

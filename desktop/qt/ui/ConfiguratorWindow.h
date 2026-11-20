@@ -42,6 +42,10 @@ public:
     /// The finished configuration. Read after exec() returns Accepted.
     const ConfigModel& model() const { return model_; }
 
+    /// SDD-073: the Sleep Bridge was chosen, so its setup steps follow once
+    /// the service runs.
+    bool sleepBridgeChosen() const { return sleep_bridge_; }
+
 private:
     ConfigModel model_;
     GateResult  gate_;

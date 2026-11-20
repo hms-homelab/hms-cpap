@@ -17,6 +17,8 @@
 ; the second [Files] line for the exe, and [Code].
 #define OldAppName "CpapDash Desktop"
 #define OldAppExe "CpapDashDesktop.exe"
+; SDD-073 D7: the inbound rule for the Sleep Bridge stream, by this name.
+#define FirewallRule "HmsCpap Sleep Bridge (TCP 8894)"
 #ifndef AppVersion
   #define AppVersion "0.0.0"
 #endif
@@ -129,6 +131,18 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; \
     ValueType: none; ValueName: "CpapDashDesktop"; Flags: uninsdeletevalue
 
 [Run]
+; SDD-073 D7: a Sleep Bridge streams to hms_cpap.exe on TCP 8894, and without
+; a rule the first listen either shows Windows' prompt or is blocked silently,
+; so the bridge's setup test fails with no reason given. One inbound rule for
+; the installed exe, that port, private networks only. The web port gets none.
+; This installer runs per user (no elevation, above), and a firewall rule
+; needs it, so this one command asks for it (the UAC prompt) and only when the
+; rule is not there yet: an update, silent or not, finds it and asks nothing.
+Filename: "{sys}\netsh.exe"; \
+    Parameters: "advfirewall firewall add rule name=""{#FirewallRule}"" dir=in action=allow program=""{app}\hms_cpap.exe"" protocol=TCP localport=8894 profile=private"; \
+    Verb: runas; Flags: shellexec runhidden waituntilterminated; \
+    StatusMsg: "Allowing the Sleep Bridge through Windows Firewall (private networks)..."; \
+    Check: not FirewallRulePresent
 Filename: "{app}\{#AppExe}"; Description: "Start {#AppName} now"; Flags: nowait postinstall skipifsilent
 
 [UninstallRun]
@@ -137,6 +151,11 @@ Filename: "{app}\{#AppExe}"; Description: "Start {#AppName} now"; Flags: nowait 
 Filename: "{cmd}"; Parameters: "/C taskkill /IM {#AppExe} /F /T"; Flags: runhidden; RunOnceId: "StopTray"
 Filename: "{cmd}"; Parameters: "/C taskkill /IM {#OldAppExe} /F /T"; Flags: runhidden; RunOnceId: "StopOldTray"
 Filename: "{cmd}"; Parameters: "/C taskkill /IM hms_cpap.exe /F /T"; Flags: runhidden; RunOnceId: "StopService"
+; SDD-073 D7: the rule goes with the program (the same one elevated command).
+Filename: "{sys}\netsh.exe"; \
+    Parameters: "advfirewall firewall delete rule name=""{#FirewallRule}"""; \
+    Verb: runas; Flags: shellexec runhidden waituntilterminated; RunOnceId: "FirewallRule"; \
+    Check: FirewallRulePresent
 
 ; NOTE, deliberately: nothing here touches %USERPROFILE%\.hms-cpap. That folder
 ; holds the user's config and their entire therapy database. An uninstaller that
@@ -167,6 +186,17 @@ var
 function OldTrayInstalled(): Boolean;
 begin
   Result := OldTrayWasInstalled;
+end;
+
+// SDD-073 D7: whether the Sleep Bridge rule is there. Reading the firewall
+// needs no elevation; netsh answers 0 when a rule by that name exists.
+function FirewallRulePresent(): Boolean;
+var
+  ResultCode: Integer;
+begin
+  Result := Exec(ExpandConstant('{sys}\netsh.exe'),
+                 'advfirewall firewall show rule name="{#FirewallRule}"',
+                 '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0);
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);

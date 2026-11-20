@@ -71,6 +71,9 @@ public:
     ADD_METHOD_TO(CpapController::setupAutostart,"/api/setup/autostart",     drogon::Post);
     ADD_METHOD_TO(CpapController::autostartState,"/api/setup/autostart",     drogon::Get);
     ADD_METHOD_TO(CpapController::configRestart, "/api/config/restart",      drogon::Post);
+    // SDD-073 D4/D8/D10: "Use this bridge as my source", and D3's QR code.
+    ADD_METHOD_TO(CpapController::useSleepBridge, "/api/sleepbridge/{sender}/use", drogon::Post);
+    ADD_METHOD_TO(CpapController::sleepBridgeQr,  "/api/sleepbridge/qr",           drogon::Get);
     ADD_METHOD_TO(CpapController::testEzshare,   "/api/config/test-ezshare", drogon::Get);
     ADD_METHOD_TO(CpapController::testBle,       "/api/config/test-ble",     drogon::Get);
     ADD_METHOD_TO(CpapController::triggerMlTrain, "/api/ml/train",     drogon::Post);
@@ -319,6 +322,11 @@ public:
                            std::function<void(const drogon::HttpResponsePtr&)>&& cb);
     void uploadCpapZip(const drogon::HttpRequestPtr& req,
                        std::function<void(const drogon::HttpResponsePtr&)>&& cb);
+    void useSleepBridge(const drogon::HttpRequestPtr& req,
+                        std::function<void(const drogon::HttpResponsePtr&)>&& cb,
+                        const std::string& sender);
+    void sleepBridgeQr(const drogon::HttpRequestPtr& req,
+                       std::function<void(const drogon::HttpResponsePtr&)>&& cb);
     void sleephqExport(const drogon::HttpRequestPtr& req,
                        std::function<void(const drogon::HttpResponsePtr&)>&& cb,
                        const std::string& date);
@@ -382,6 +390,9 @@ public:
     // (0) must not std::exit from a worker thread: that tore Drogon down under
     // its own loop and died with 139, so the supervisor never restarted it.
     static std::function<void(int)> shutdown_with_code_;
+    // SDD-073: GET /api/sleepbridge's body, for "Use this bridge"; empty
+    // when the Sleep Bridge receiver is off.
+    static std::function<Json::Value()> sleepbridge_status_;
 
 private:
     static std::shared_ptr<QueryService>          qs_;
