@@ -328,7 +328,7 @@ public:
      * Append a live oximetry sample (from burst poll). Source='live'.
      *
      * [wall_clock] is when it was read, on the ring's clock as every other
-     * intake stores it (see liveOximetryWallClock in utils/OximetryDevice.h),
+     * intake stores it (machine_clocks::nowWall in utils/MachineClocks.h),
      * never the database's NOW(). The sample collects in live_<date>.vld, dated
      * from the same clock, created on its first sample.
      *
