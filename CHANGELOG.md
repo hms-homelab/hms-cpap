@@ -274,6 +274,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   night the re-parse had already deleted was missing until the next import
   read it from the card again. The worker is now stopped as soon as the
   server returns, and finishes the session it is saving first.
+- **A re-parse killed halfway no longer loses the night.** A re-parse (the
+  Reparse button, a backfill, `--reparse`) deleted the night and committed,
+  then saved the new parse in a separate transaction, so a process killed in
+  between (docker stop sends SIGKILL after 10 s) left neither the old night
+  nor the new one until the card was read again. The delete and every save
+  of the night are now one transaction on SQLite, MySQL and PostgreSQL: a
+  kill or a failure at any point leaves the old night, a commit the new one.
+  A night is parsed whole before anything is written, a stop during the
+  parse writes nothing, and a session that fails to save keeps the night as
+  it was instead of storing the rest of it. The card still wins a stretch
+  stored from Bluetooth (SDD-077), after the card's copy is committed.
+- **A night saves in well under a second on a network database.** PostgreSQL
+  wrote each breath, event and desaturation as its own statement, and MySQL
+  every row of a night (minutes, breaths, events, SpO2): one network round
+  trip per row. An 8 hour night took 22 s on PostgreSQL and 24 s on MySQL at a
+  2 ms round trip (109 s on MySQL with an oximeter), and the fixture night the
+  7.0.0 test run re-parsed took 30 s over a 20 ms link. The rows now go in
+  multi-row INSERTs: the same 8 hour night saves in 0.14 s on PostgreSQL and
+  0.22 s on MySQL (0.69 s with SpO2), the fixture night in 0.2 s.
 - **The local sleep model is given the night's STR row, as the daily summary
   is (SDD-013).** It was given the stored night alone, so every ResMed night
   reached it as "Therapy mode: CPAP" (no ResMed session stores its mode) and

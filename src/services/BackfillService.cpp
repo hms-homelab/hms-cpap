@@ -338,16 +338,18 @@ void BackfillService::executeBackfill(const std::string& start_date,
                 continue;
             }
 
-            // Delete existing sessions for this date folder
-            int deleted = db_->deleteSessionsByDateFolder(config_.device_id, folder);
-            {
-                std::lock_guard<std::mutex> lock(progress_mutex_);
-                progress_.sessions_deleted += deleted;
-            }
+            // Parse every session of the night first, then write the night
+            // whole: replaceNight() deletes the folder's stored sessions and
+            // saves these in one transaction, so a stop or a kill at any point
+            // leaves the old night or the new one, never neither.
+            std::vector<IDatabase::NightSessionWrite> night;
+            bool stopped = false;
 
-            // Parse each session group
             for (const auto& session : sessions) {
-                if (!running_) break;
+                if (!running_) {
+                    stopped = true;
+                    break;
+                }
 
                 // Stage files to temp dir for isolated parsing
                 std::string temp_dir = (std::filesystem::temp_directory_path() /
@@ -400,41 +402,44 @@ void BackfillService::executeBackfill(const std::string& start_date,
                 // Set relative file paths (same format as normal pipeline)
                 applySessionFilePaths(*parsed, session, folder);
 
-                // Save to DB
-                if (db_->saveSession(*parsed)) {
-                    std::lock_guard<std::mutex> lock(progress_mutex_);
-                    progress_.sessions_saved++;
-
-                    // Backfilled sessions are complete (files aren't growing),
-                    // so session_end is set here and they show as "Done"
-                    // instead of "LIVE". SDD-037 D2: with the end the parse
-                    // measured, not the clock, or a whole history imported in
-                    // one pass would carry the timestamp of the pass.
-                    closeWithDataEnd(*db_, config_.device_id, session.session_start, *parsed);
-
-                    // Record which files the night is actually made of (SDD-014)
-                    db_->replaceSessionFiles(config_.device_id, session.session_start,
-                                             sessionFileRefs(session, folder));
-
-                    // SDD-077 D2: the card's copy replaces a Bluetooth copy of
-                    // the same stretch, whatever its start.
-                    As11NightImport::replaceConstructedFiles(
-                        *db_, config_.device_id, session.session_start,
-                        dataEndOf(*parsed).value_or(session.session_start));
-
-                    // Store checkpoint file sizes. SDD-077 D3: the collector's
-                    // own function, so the next burst reads them as unchanged.
-                    db_->updateCheckpointFileSizes(
-                        config_.device_id, session.session_start, checkpointSizes(session));
-                } else {
-                    spdlog::warn("BackfillService: failed to save session {} in {}",
-                                session.session_prefix, folder);
-                    std::lock_guard<std::mutex> lock(progress_mutex_);
-                    progress_.errors++;
-                }
+                // What the night's write records with the session: which files
+                // the night is made of (SDD-014), and the checkpoint sizes in
+                // the collector's own shape, so the next burst reads them as
+                // unchanged (SDD-077 D3). replaceNight() also closes it at the
+                // end the parse measured (SDD-037 D2): backfilled sessions are
+                // complete, and a whole history imported in one pass must not
+                // carry the timestamp of the pass.
+                IDatabase::NightSessionWrite w;
+                w.session = std::move(*parsed);
+                w.start = session.session_start;
+                w.files = sessionFileRefs(session, folder);
+                w.checkpoint_sizes = checkpointSizes(session);
+                night.push_back(std::move(w));
 
                 // Cleanup temp dir
                 std::filesystem::remove_all(temp_dir);
+            }
+
+            // A stop mid-night writes nothing: the stored night stays.
+            if (stopped) break;
+
+            const auto written = db_->replaceNight(config_.device_id, folder, night);
+            if (written.ok) {
+                {
+                    std::lock_guard<std::mutex> lock(progress_mutex_);
+                    progress_.sessions_deleted += written.deleted;
+                    progress_.sessions_saved += written.saved;
+                }
+                // SDD-077 D2: the card's copy replaces a Bluetooth copy of the
+                // same stretch, whatever its start. After the commit, as
+                // before: the card's row is there before the other goes.
+                for (const auto& w : night)
+                    As11NightImport::replaceConstructedFiles(
+                        *db_, config_.device_id, w.start, dataEndOf(w.session).value_or(w.start));
+            } else {
+                spdlog::warn("BackfillService: could not write night {}, kept as it was", folder);
+                std::lock_guard<std::mutex> lock(progress_mutex_);
+                progress_.errors += std::max(1, static_cast<int>(night.size()));
             }
 
             // SleepHQ export (best-effort, async) — one import per backfilled
