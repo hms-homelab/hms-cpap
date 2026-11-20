@@ -178,6 +178,16 @@ inline std::string nightIndexColumns(const std::string& m, const std::string& s,
 // SUBSTR rather than LIKE 'live\_%': the three engines disagree on LIKE's
 // escape character, and an unescaped '_' matches any character.
 
+/// SDD-078 D3: rows stored before oximetry_sessions had a source (or by a
+/// writer that does not set one, the live ring stream) get one: a CSV only
+/// ever came in through the upload page, everything else is the ring's. Run
+/// on every start; a row the new writers store already has its source. The
+/// same statement on all three engines.
+inline std::string oxiSourceBackfill() {
+    return "UPDATE oximetry_sessions SET source = CASE WHEN LOWER(filename) LIKE '%.csv'"
+           " THEN 'upload' ELSE 'o2ring' END WHERE source IS NULL";
+}
+
 /// True when [col] names a live session (live_<date>.vld).
 inline std::string isLiveOxiFilename(const std::string& col) {
     return "(SUBSTR(" + col + ", 1, 5) = 'live_')";

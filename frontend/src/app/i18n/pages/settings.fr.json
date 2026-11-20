@@ -60,6 +60,15 @@
       "bleRadioOff": "Le Bluetooth est désactivé sur cet ordinateur. Activez-le puis vérifiez à nouveau.",
       "bleUnauthorized": "CpapDash n'est pas autorisé à utiliser le Bluetooth sur ce Mac. Autorisez-le dans Réglages Système, Confidentialité et sécurité, Bluetooth."
     },
+    "garmin": {
+      "heading": "SpO2 Garmin",
+      "desc": "La SpO2, la fréquence cardiaque et les mouvements de chaque nuit depuis Garmin Connect, lus après la nuit : quand une nuit se termine, quand le tableau de bord ou la liste des nuits est ouvert, et avec Récupérer depuis Garmin. L'API de Garmin n'est pas officielle et peut changer.",
+      "enabled": "Récupérer les nuits depuis Garmin Connect",
+      "email": "E-mail Garmin",
+      "password": "Mot de passe Garmin",
+      "passwordPlaceholder": "Votre mot de passe Garmin Connect",
+      "passwordHint": "Stocké masqué, comme le jeton CpapDash : laissez la valeur masquée intacte pour conserver le mot de passe actuel. Il est conservé pour qu'une nouvelle connexion n'ait besoin de personne, sauf si Garmin demande un code."
+    },
     "devicesLink": "État et actions : Appareils",
     "as11": {
       "heading": "AirSense 11 en Bluetooth",

@@ -17,7 +17,8 @@
       "ezshare": "Cartão ez Share",
       "flashair": "Cartão FlashAir",
       "as11_ble": "AirSense 11 (Bluetooth)",
-      "ds2_ble": "DreamStation 2 (Bluetooth)"
+      "ds2_ble": "DreamStation 2 (Bluetooth)",
+      "garmin": "Garmin"
     },
     "presence": {
       "yes": "aqui",
@@ -233,6 +234,34 @@
         "spl_drain": "Fila esvaziada até"
       },
       "nextBoot": "vale na próxima inicialização"
+    },
+    "garmin": {
+      "signedInAs": "Conectado como {{email}}",
+      "notSetUp": "Informe a conta da Garmin nas Configurações para começar.",
+      "signedOut": "Ainda sem login: o hms-cpap entra no próximo evento, ou com Buscar na Garmin agora.",
+      "signingIn": "Entrando na Garmin...",
+      "readAfter": "Lido do Garmin Connect depois da noite, nunca durante.",
+      "watch": "Relógio",
+      "lastFetch": "Última busca",
+      "fetchStored": "Noites guardadas: {{n}}",
+      "fetchNothing": "Nada novo. Uma noite que ainda falta é pedida de novo no próximo evento.",
+      "fetchNow": "Buscar na Garmin agora",
+      "fetching": "Buscando...",
+      "asked": "Pedido. O cartão mostra o resultado.",
+      "mfaNote": "A Garmin enviou um código para terminar o login. Digite-o aqui.",
+      "code": "Código da Garmin",
+      "submitCode": "Entrar",
+      "checking": "Verificando...",
+      "openSettings": "Conta da Garmin: Configurações",
+      "err": {
+        "changed": "A Garmin mudou o login; atualize o hms-cpap",
+        "bad_password": "A Garmin recusou o e-mail ou a senha. Confira-os nas Configurações.",
+        "bad_mfa_code": "A Garmin não aceitou o código. Tente de novo.",
+        "blocked": "A Garmin está recusando este login por enquanto. Ele é tentado de novo no próximo evento.",
+        "unreachable": "A Garmin não respondeu. Isso é tentado de novo no próximo evento.",
+        "expired": "A Garmin precisa de um novo login.",
+        "failed": "Garmin: {{message}}"
+      }
     },
     "o2ring": {
       "throughBridge": "Lido por {{url}}, não pelo Bluetooth deste computador.",

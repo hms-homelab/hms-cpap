@@ -3970,6 +3970,12 @@ int BurstCollectorService::announceQuietNights(std::chrono::system_clock::time_p
                   << kNightQuiet.count() << " min, it is over"
                   << (rec ? "" : " (the STR has no record for it yet)") << std::endl;
 
+        // SDD-078 D2: the night's close is when its Garmin SpO2 is asked for.
+        {
+            std::lock_guard<std::mutex> lk(night_closed_mu_);
+            if (night_closed_) night_closed_(n.date_folder);
+        }
+
         // D5: SleepHQ gets it now, with no second quiet window. Not a night
         // whose transfer never finished (D3): its files are still arriving,
         // and the landing that completes them is growth, which announces the

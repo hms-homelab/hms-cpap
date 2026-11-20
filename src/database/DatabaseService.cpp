@@ -503,6 +503,8 @@ bool DatabaseService::connect() {
                         valid_samples       INT,
                         total_samples       INT,
                         cpap_session_date   TEXT,
+                        source              TEXT,
+                        device_name         TEXT,
                         created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 )");
@@ -523,6 +525,19 @@ bool DatabaseService::connect() {
                 txn.commit();
                 std::cout << "  DB: v2.2.0 migration (oximetry tables) applied" << std::endl;
             } catch (...) {}
+
+            // SDD-078 D3: where each recording came from. A recording stored
+            // before it had a source reads as the ring's, or as an upload
+            // where the upload page stored it.
+            try {
+                pqxx::work txn(*conn_);
+                txn.exec("ALTER TABLE oximetry_sessions ADD COLUMN IF NOT EXISTS source TEXT");
+                txn.exec("ALTER TABLE oximetry_sessions ADD COLUMN IF NOT EXISTS device_name TEXT");
+                txn.exec(sql::oxiSourceBackfill());
+                txn.commit();
+            } catch (const std::exception& e) {
+                std::cerr << "  DB: SDD-078 oximetry source migration failed: " << e.what() << std::endl;
+            }
 
             // Auto-migrate: split ResMed's lifetime PatientHours counter out of
             // patient_hours, which two writers had been filling with two
@@ -3265,6 +3280,12 @@ static std::string fmtTs(std::chrono::system_clock::time_point tp) {
 
 bool DatabaseService::saveOximetrySession(const std::string& device_id,
                                            const cpapdash::parser::OximetrySession& session) {
+    return saveOximetrySessionFrom(device_id, session, OximetryOrigin{});
+}
+
+bool DatabaseService::saveOximetrySessionFrom(const std::string& device_id,
+                                               const cpapdash::parser::OximetrySession& session,
+                                               const OximetryOrigin& origin) {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!ensureConnection()) return false;
 
@@ -3278,9 +3299,11 @@ bool DatabaseService::saveOximetrySession(const std::string& device_id,
                  sample_interval, avg_spo2, min_spo2, spo2_baseline,
                  time_below_90, time_below_88, odi_3pct, desat_count,
                  avg_hr, min_hr, max_hr, valid_samples, total_samples,
-                 cpap_session_date)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+                 cpap_session_date, source, device_name)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
             ON CONFLICT (filename) DO UPDATE SET
+                source = EXCLUDED.source,
+                device_name = EXCLUDED.device_name,
                 start_time = EXCLUDED.start_time,
                 end_time = EXCLUDED.end_time,
                 sample_interval = EXCLUDED.sample_interval,
@@ -3310,7 +3333,7 @@ bool DatabaseService::saveOximetrySession(const std::string& device_id,
             session.metrics.odi_3pct, session.metrics.desat_count_3pct,
             session.metrics.avg_hr, session.metrics.min_hr, session.metrics.max_hr,
             session.metrics.valid_samples, session.metrics.total_samples,
-            session.date_str()
+            session.date_str(), origin.source, origin.device_name
         );
 
         int session_id = r[0][0].as<int>();
@@ -3342,8 +3365,9 @@ bool DatabaseService::saveOximetrySession(const std::string& device_id,
 
         // The ring's own file for this night has landed: it supersedes the
         // live stand-in the bridge polled into, so that one goes, on this
-        // event and in this transaction.
-        if (!isLiveOximetryFilename(session.filename)) {
+        // event and in this transaction. SDD-078: a Garmin night is not the
+        // ring's file and leaves it.
+        if (!isLiveOximetryFilename(session.filename) && oximetryOriginSupersedesLive(origin.source)) {
             const std::string live_of_night =
                 "SELECT id FROM oximetry_sessions WHERE device_id = $1 AND " +
                 sql::isLiveOxiFilename("filename") + " AND " +

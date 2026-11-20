@@ -75,7 +75,7 @@ export class SessionsComponent implements OnInit, OnDestroy {
   }
 
   ngOnInit() {
-    this.loadSessions();
+    this.loadSessions(true);
     this.refreshTimer = setInterval(() => this.loadSessions(), 30000);
     this.api.getConfig().subscribe({
       next: (cfg) => this.sleephqEnabled = !!cfg.sleephq?.enabled,
@@ -97,11 +97,11 @@ export class SessionsComponent implements OnInit, OnDestroy {
     this.openMenu = this.openMenu === day ? null : day;
   }
 
-  private loadSessions() {
+  private loadSessions(opened = false) {
     // Refresh keeps however many pages are already loaded so the 30s poll
     // doesn't snap the list back to the first page.
     const limit = Math.max(this.pageSize, this.sessions.length);
-    this.api.getSessions(limit, 0).subscribe({
+    this.api.getSessions(limit, 0, opened).subscribe({
       next: s => {
         this.sessions = s;
         this.hasMore = s.length === limit;

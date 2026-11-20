@@ -1,6 +1,9 @@
 {
   "sessionDetail": {
     "overview": "Áttekintés",
+    "oximetryFrom": "Oximetria - {{device}}",
+    "oximetryOnly": "Csak oximetria ({{device}}); ezen az éjszakán nem rögzült CPAP-alkalom",
+    "oximetryUpload": "Feltöltés",
     "expandHint": "(kattintson a kibontáshoz)",
     "eventDistribution": "Események megoszlása",
     "notClassified": "Ez a készülék úgy jelenti az apnoékat, hogy nem közli, obstruktívak vagy centrálisak voltak-e, és hypopnoékat egyáltalán nem jelöl. Ehhez az éjszakához nincs megjeleníthető megoszlás.",

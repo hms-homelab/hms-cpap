@@ -316,7 +316,7 @@ bool AirSense11BleClient::recover(ble::RecoveryStep step) {
 void AirSense11BleClient::forgetMachine() {
     // Never wait here for a link to end: the Devices page's request would
     // hang for it. Held, the forget happens on the next connect instead.
-    std::unique_lock<std::mutex> lk(op_mtx_, std::try_to_lock);
+    std::unique_lock<std::timed_mutex> lk(op_mtx_, std::try_to_lock);
     if (!lk.owns_lock()) {
         forget_pending_ = true;
         std::cout << kTag << "the machine's cached object is dropped on the next connect" << std::endl;
@@ -345,7 +345,7 @@ IAirSense11Pairing::BluetoothReset AirSense11BleClient::resetBluetooth() {
         explicit Want(AirSense11BleClient* x) : c(x) { c->want_radio_ = true; c->wake_.notify_all(); }
         ~Want() { c->want_radio_ = false; c->wake_.notify_all(); }
     } want(this);
-    std::lock_guard<std::mutex> lk(op_mtx_);
+    std::lock_guard<std::timed_mutex> lk(op_mtx_);
     if (session_.pairPending()) {
         out.state = BluetoothReset::State::Busy;
         out.detail = "not reset: a pairing is open";
@@ -493,7 +493,7 @@ AirSense11BleClient::SpoolProbe AirSense11BleClient::probeSpool(const std::strin
         explicit Want(AirSense11BleClient* x) : c(x) { c->want_radio_ = true; c->wake_.notify_all(); }
         ~Want() { c->want_radio_ = false; c->wake_.notify_all(); }
     } want(this);
-    std::lock_guard<std::mutex> lk(op_mtx_);
+    std::lock_guard<std::timed_mutex> lk(op_mtx_);
     auto creds = as11::loadCredentials(as11::credentialsPath(data_dir_));
     if (!creds) {
         p.result = as11::Result::NotPaired;

@@ -7,6 +7,7 @@
 #include "mule/MuleFirmware.h"
 #include "mule/MuleService.h"
 #include "services/BurstCollectorService.h"
+#include "services/GarminService.h"
 #include "sleepbridge/ReleaseFeed.h"
 #include "sleepbridge/SleepBridgeService.h"
 #include "utils/AppConfig.h"
@@ -176,6 +177,10 @@ Json::Value currentDevices(bool fresh) {
     if (in.o2_enabled) in.o2 = oximetryStatus();
     if (in.as11_enabled) in.as11 = as11Status();
     if (in.ds2_enabled) in.ds2 = ds2Status();
+    // SDD-078: read for the card only. The page refreshes /api/devices every
+    // few seconds, so this is never a Garmin event (D2).
+    in.garmin_enabled = g.config && g.config->garmin.enabled;
+    if (in.garmin_enabled && g.garmin) in.garmin = g.garmin->status();
     in.ledger_live = ledgerLive();
     return buildDevices(in, *g.store);
 }
@@ -251,6 +256,44 @@ void installRoutes(const RouteDeps& deps) {
     drogon::app().registerHandler(
         "/api/oximetry/status", [](const drogon::HttpRequestPtr&, Callback&& cb) { cb(json(oximetryStatus())); },
         {drogon::Get});
+
+    // SDD-078 D4: the Garmin card.
+    drogon::app().registerHandler(
+        "/api/garmin/status",
+        [](const drogon::HttpRequestPtr&, Callback&& cb) {
+            if (!g.garmin) return cb(error(404, "Garmin is not in this build"));
+            cb(json(g.garmin->status()));
+        },
+        {drogon::Get});
+
+    drogon::app().registerHandler(
+        "/api/garmin/fetch",
+        [](const drogon::HttpRequestPtr&, Callback&& cb) {
+            if (!g.garmin || !g.garmin->fetchNow())
+                return cb(error(409, "Garmin is not set up: turn it on and enter the account in Settings"));
+            Json::Value v(Json::objectValue);
+            v["ok"]       = true;
+            v["accepted"] = true;
+            cb(json(v, 202));
+        },
+        {drogon::Post});
+
+    drogon::app().registerHandler(
+        "/api/garmin/mfa",
+        [](const drogon::HttpRequestPtr& req, Callback&& cb) {
+            const auto body = req->getJsonObject();
+            if (!body || !(*body)["code"].isString()) return cb(error(400, "the body is {\"code\": \"...\"}"));
+            std::string code;
+            for (char c : (*body)["code"].asString())
+                if (c != ' ' && c != '-') code += c;
+            if (!g.garmin || !g.garmin->submitMfaCode(code))
+                return cb(error(409, "no Garmin sign-in is waiting for a code"));
+            Json::Value v(Json::objectValue);
+            v["ok"]       = true;
+            v["accepted"] = true;
+            cb(json(v, 202));
+        },
+        {drogon::Post});
 
     drogon::app().registerHandler(
         "/api/airsense11/ble/pull",

@@ -549,9 +549,17 @@ void SQLiteDatabase::createSchema() {
             avg_hr REAL, min_hr INTEGER, max_hr INTEGER,
             valid_samples INTEGER, total_samples INTEGER,
             cpap_session_date TEXT,
+            source TEXT,
+            device_name TEXT,
             created_at TEXT DEFAULT (datetime('now'))
         )
     )");
+    // SDD-078 D3: where each recording came from. An install that already has
+    // the table gains the columns; its rows read as the ring's, or as an
+    // upload where the upload page stored them.
+    sqlite3_exec(db_, "ALTER TABLE oximetry_sessions ADD COLUMN source TEXT", nullptr, nullptr, nullptr);
+    sqlite3_exec(db_, "ALTER TABLE oximetry_sessions ADD COLUMN device_name TEXT", nullptr, nullptr, nullptr);
+    exec(sql::oxiSourceBackfill());
 
     // oximetry_samples
     exec(R"(
@@ -3190,6 +3198,12 @@ IDatabase::QueryOutcome SQLiteDatabase::executeQueryChecked(
 
 bool SQLiteDatabase::saveOximetrySession(const std::string& device_id,
                                           const cpapdash::parser::OximetrySession& session) {
+    return saveOximetrySessionFrom(device_id, session, OximetryOrigin{});
+}
+
+bool SQLiteDatabase::saveOximetrySessionFrom(const std::string& device_id,
+                                              const cpapdash::parser::OximetrySession& session,
+                                              const OximetryOrigin& origin) {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!db_) { std::cerr << "SQLite: Not connected" << std::endl; return false; }
 
@@ -3203,9 +3217,11 @@ bool SQLiteDatabase::saveOximetrySession(const std::string& device_id,
                  sample_interval, avg_spo2, min_spo2, spo2_baseline,
                  time_below_90, time_below_88, odi_3pct, desat_count,
                  avg_hr, min_hr, max_hr, valid_samples, total_samples,
-                 cpap_session_date)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 cpap_session_date, source, device_name)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (filename) DO UPDATE SET
+                source          = excluded.source,
+                device_name     = excluded.device_name,
                 start_time      = excluded.start_time,
                 end_time        = excluded.end_time,
                 duration_seconds = excluded.duration_seconds,
@@ -3247,6 +3263,8 @@ bool SQLiteDatabase::saveOximetrySession(const std::string& device_id,
         bind_int(g.stmt, 17, session.metrics.valid_samples);
         bind_int(g.stmt, 18, session.metrics.total_samples);
         bind_text(g.stmt, 19, session.date_str());
+        bind_text(g.stmt, 20, origin.source);
+        bind_text(g.stmt, 21, origin.device_name);
 
         if (sqlite3_step(g.stmt) != SQLITE_DONE) {
             std::cerr << "SQLite: saveOximetrySession error: " << sqlite3_errmsg(db_) << std::endl;
@@ -3305,8 +3323,9 @@ bool SQLiteDatabase::saveOximetrySession(const std::string& device_id,
 
         // The ring's own file for this night has landed: it supersedes the
         // live stand-in the bridge polled into, so that one goes, on this
-        // event and in this transaction.
-        if (!isLiveOximetryFilename(session.filename)) {
+        // event and in this transaction. SDD-078: a Garmin night is not the
+        // ring's file and leaves it.
+        if (!isLiveOximetryFilename(session.filename) && oximetryOriginSupersedesLive(origin.source)) {
             const std::string night = oximetrySleepDay(session.start_time);
             const std::string live_of_night =
                 "SELECT id FROM oximetry_sessions WHERE device_id = ? AND " +

@@ -182,6 +182,20 @@
           </ng-container>
         </ng-container>
 
+        <!-- ── Garmin (SDD-078 D4): who is signed in, the last fetch ── -->
+        <ng-container *ngIf="d.kind === 'garmin'">
+          <div class="wide" *ngIf="d.detail.state === 'signed_in'"><dd>{{ 'devices.garmin.signedInAs' | translate:{ email: d.detail.email } }}</dd></div>
+          <div class="wide" *ngIf="d.detail.state === 'not_set_up'"><dd class="quiet">{{ 'devices.garmin.notSetUp' | translate }}</dd></div>
+          <div class="wide" *ngIf="d.detail.state === 'signed_out'"><dd class="quiet">{{ 'devices.garmin.signedOut' | translate }}</dd></div>
+          <div class="wide" *ngIf="d.detail.state === 'signing_in'"><dd class="quiet">{{ 'devices.garmin.signingIn' | translate }}</dd></div>
+          <div class="wide" *ngIf="d.detail.state === 'error'"><dd class="amber">{{ garminError(d) }}</dd></div>
+          <div *ngIf="d.detail.device_name"><dt>{{ 'devices.garmin.watch' | translate }}</dt><dd>{{ d.detail.device_name }}</dd></div>
+          <div><dt>{{ 'devices.garmin.lastFetch' | translate }}</dt>
+            <dd *ngIf="d.detail.last_fetch as f" [class.amber]="!f.ok">{{ ms(f.at) | date:'short' }} · {{ garminFetchLine(d) }}</dd>
+            <dd *ngIf="!d.detail.last_fetch">{{ 'devices.line.never' | translate }}</dd></div>
+          <div class="wide"><dd class="quiet">{{ 'devices.garmin.readAfter' | translate }}</dd></div>
+        </ng-container>
+
         <!-- ── ez Share / FlashAir ── -->
         <ng-container *ngIf="d.kind === 'ezshare' || d.kind === 'flashair'">
           <div><dt>{{ 'devices.source.address' | translate }}</dt><dd class="mono">{{ d.detail.url }}</dd></div>
@@ -333,6 +347,19 @@
         </ng-container>
       </div>
 
+      <!-- SDD-078 D4: Garmin asked for a code: it is entered here, in the card. -->
+      <div class="inline-form" *ngIf="d.kind === 'garmin' && d.detail.state === 'mfa_required'">
+        <div class="hint">{{ 'devices.garmin.mfaNote' | translate }}</div>
+        <label>{{ 'devices.garmin.code' | translate }}
+          <input type="text" inputmode="numeric" autocomplete="one-time-code" [(ngModel)]="garminCode"
+                 placeholder="123456" (keydown.enter)="garminSubmitCode(d)" /></label>
+        <div class="row">
+          <button type="button" class="btn primary" (click)="garminSubmitCode(d)" [disabled]="busy[d.key] || !garminCode">
+            {{ (busy[d.key] ? 'devices.garmin.checking' : 'devices.garmin.submitCode') | translate }}</button>
+        </div>
+        <div class="note-line err" *ngIf="d.detail.error_kind === 'bad_mfa_code'">{{ 'devices.garmin.err.bad_mfa_code' | translate }}</div>
+      </div>
+
       <!-- AirSense 11 pairing in progress: its code field, with its warning. -->
       <div class="inline-form" *ngIf="d.kind === 'as11_ble' && !d.detail.not_compiled && (d.detail.pairing || as11Pairing || as11Message)">
         <div class="hint">{{ 'devices.as11.pairNote' | translate }}</div>
@@ -396,6 +423,18 @@
           <div class="action-line" *ngIf="d.kind === 'o2ring'">
             <a routerLink="/upload" class="btn">{{ 'devices.o2ring.importCsv' | translate }}</a>
           </div>
+
+          <!-- SDD-078: an event that asks Garmin now (D2). -->
+          <ng-container *ngIf="d.kind === 'garmin'">
+            <div class="action-line">
+              <button type="button" class="btn primary" (click)="garminFetch(d)"
+                      [disabled]="busy[d.key] || d.detail.busy || d.detail.state === 'not_set_up' || d.detail.state === 'mfa_required'">
+                {{ (busy[d.key] || d.detail.busy ? 'devices.garmin.fetching' : 'devices.garmin.fetchNow') | translate }}</button>
+            </div>
+            <div class="action-line" *ngIf="d.detail.state === 'not_set_up' || d.detail.error_kind === 'bad_password'">
+              <a routerLink="/settings" class="btn">{{ 'devices.garmin.openSettings' | translate }}</a>
+            </div>
+          </ng-container>
 
           <ng-container *ngIf="d.kind === 'ezshare' || d.kind === 'flashair'">
             <div class="action-line">

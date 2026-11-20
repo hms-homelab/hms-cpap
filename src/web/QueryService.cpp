@@ -1089,6 +1089,30 @@ Json::Value QueryService::getSessionOximetry(const std::string& date, int interv
     // do not count (see recordsMovement), so the UI can hide a movement chart
     // that would show only those.
     result["motion_available"] = motion_available;
+
+    // SDD-078 D3: where the night's recordings came from, so the page can say
+    // "Oximetry - Garmin Fenix 7X" instead of assuming a ring. One entry per
+    // distinct source and device, in the order they started. A row stored
+    // before the column existed and not yet backfilled reads as the ring's.
+    const std::string oq =
+        "SELECT COALESCE(os.source, 'o2ring') AS source, COALESCE(os.device_name, '') AS device_name,"
+        " MIN(os.start_time) AS first_start"
+        " FROM oximetry_sessions os"
+        " WHERE os.device_id = " + sql::param(1, dt_) +
+        " AND " + sql::sleepDay("os.start_time", dt_) + " = " + sql::castDate(2, dt_) +
+        " AND " + sql::oxiNotSuperseded("os", dt_) +
+        " GROUP BY COALESCE(os.source, 'o2ring'), COALESCE(os.device_name, '')"
+        " ORDER BY first_start";
+    Json::Value sources(Json::arrayValue);
+    for (const auto& r : query(oq, {kOximetryDeviceId, sleep_day})) {
+        Json::Value o(Json::objectValue);
+        o["source"]      = r.get("source", "o2ring").asString();
+        o["device_name"] = r.get("device_name", "").asString();
+        sources.append(o);
+    }
+    result["sources"]     = sources;
+    result["source"]      = sources.empty() ? Json::Value(Json::nullValue) : sources[0u]["source"];
+    result["device_name"] = sources.empty() ? Json::Value(Json::nullValue) : sources[0u]["device_name"];
     return result;
 }
 

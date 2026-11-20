@@ -144,6 +144,14 @@ public:
         myair_ = std::move(myair);
     }
 
+    /// SDD-078 D2: told the DATALOG folder (YYYYMMDD) of each night
+    /// announceQuietNights closes, on the burst's thread; it must only take
+    /// the event and return. Empty: nobody listens.
+    void setNightClosedListener(std::function<void(const std::string&)> f) {
+        std::lock_guard<std::mutex> lk(night_closed_mu_);
+        night_closed_ = std::move(f);
+    }
+
     /**
      * Check if service is running
      *
@@ -357,6 +365,8 @@ private:
     /// SDD-004 optional cloud mirror; null when the feature is off.
     std::shared_ptr<CpapDashSyncService> cpapdash_sync_;
     std::shared_ptr<MyAirService> myair_;
+    std::mutex night_closed_mu_;
+    std::function<void(const std::string&)> night_closed_;   // SDD-078 D2
     std::string device_name_;
     /// SDD-010: the card ROOT when CPAP_SOURCE=local. STR.edf and DATALOG are
     /// siblings INSIDE it. Never the DATALOG folder itself: that was the old

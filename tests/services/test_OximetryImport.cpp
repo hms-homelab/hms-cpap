@@ -625,7 +625,13 @@ TEST_F(OximetryImportTest, ARestartedServiceKnowsWhenTheLastRingFileWasStored) {
 }
 
 TEST_F(OximetryImportTest, TheLivePollsOwnRowIsNotAFileRead) {
-    ASSERT_TRUE(db_->saveLiveOximetrySample(kOximetryDeviceId, "20261004", 96, 60, 0));
+    std::tm tm{};
+    tm.tm_year = 2026 - 1900;
+    tm.tm_mon  = 9;
+    tm.tm_mday = 4;
+    tm.tm_hour = 22;
+    const auto at = std::chrono::system_clock::from_time_t(timegm_utc(&tm));   // 2026-10-04 22:00
+    ASSERT_TRUE(db_->saveLiveOximetrySample(kOximetryDeviceId, at, 96, 60, 0));
     std::shared_ptr<IDatabase> shared(std::move(db_));
     OximetryService svc(std::make_shared<IdleRing>(), shared);
     EXPECT_EQ(svc.facts().last_read_at, 0);

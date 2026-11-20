@@ -29,9 +29,9 @@
     "targetVentilation": "Ventilation cible",
     "spo2": "SpO2",
     "heartRate": "Fréquence cardiaque",
-    "o2ringSpo2": "SpO2 de l'O2Ring",
-    "o2ringHeartRate": "Fréquence cardiaque de l'O2Ring",
-    "o2ringMotion": "Mouvement de l'O2Ring"
+    "o2ringSpo2": "SpO2 (oxymétrie)",
+    "o2ringHeartRate": "Fréquence cardiaque (oxymétrie)",
+    "o2ringMotion": "Mouvement (oxymétrie)"
   },
   "nav": {
     "dashboard": "Tableau de bord",

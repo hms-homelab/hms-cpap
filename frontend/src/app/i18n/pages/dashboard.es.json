@@ -51,7 +51,7 @@
     "title": {
       "aiSummary": "Resumen de la sesión con IA",
       "ml": "Inteligencia de ML",
-      "oximetry": "Oximetría del O2 Ring",
+      "oximetry": "Oximetría",
       "realtime": "Estado en tiempo real",
       "events": "Desglose de eventos de sueño",
       "str": "Métricas diarias del STR",
@@ -64,7 +64,8 @@
       "events": "Análisis de apneas e hipopneas",
       "eventsUnclassified": "Solo apneas. Este equipo no las clasifica.",
       "respiratory": "Patrones de respiración y ventilación",
-      "oximetry": "Wellue O2Ring -- SpO2 y frecuencia cardiaca"
+      "oximetry": "Wellue O2Ring -- SpO2 y frecuencia cardiaca",
+      "oximetryFrom": "{{device}} -- SpO2 y frecuencia cardiaca"
     },
     "keyMetrics": {
       "title": "Métricas principales",

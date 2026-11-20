@@ -17,7 +17,8 @@
       "ezshare": "ez Share card",
       "flashair": "FlashAir card",
       "as11_ble": "AirSense 11 (Bluetooth)",
-      "ds2_ble": "DreamStation 2 (Bluetooth)"
+      "ds2_ble": "DreamStation 2 (Bluetooth)",
+      "garmin": "Garmin"
     },
     "presence": {
       "yes": "here",
@@ -233,6 +234,34 @@
         "spl_drain": "Spool drained to"
       },
       "nextBoot": "applies at the next start"
+    },
+    "garmin": {
+      "signedInAs": "Signed in as {{email}}",
+      "notSetUp": "Enter the Garmin account in Settings to start.",
+      "signedOut": "Not signed in yet: hms-cpap signs in on the next event, or with Fetch from Garmin now.",
+      "signingIn": "Signing in to Garmin...",
+      "readAfter": "Read from Garmin Connect after the night, never during it.",
+      "watch": "Watch",
+      "lastFetch": "Last fetch",
+      "fetchStored": "Nights stored: {{n}}",
+      "fetchNothing": "Nothing new. A night still missing is asked for again on the next event.",
+      "fetchNow": "Fetch from Garmin now",
+      "fetching": "Fetching...",
+      "asked": "Asked. The card shows the result.",
+      "mfaNote": "Garmin sent a code to finish signing in. Enter it here.",
+      "code": "Code from Garmin",
+      "submitCode": "Sign in",
+      "checking": "Checking...",
+      "openSettings": "Garmin account: Settings",
+      "err": {
+        "changed": "Garmin changed its sign-in; update hms-cpap",
+        "bad_password": "Garmin refused the email or password. Check them in Settings.",
+        "bad_mfa_code": "Garmin did not accept the code. Try again.",
+        "blocked": "Garmin is refusing this sign-in for now. It is tried again on the next event.",
+        "unreachable": "Garmin did not answer. It is tried again on the next event.",
+        "expired": "Garmin needs a new sign-in.",
+        "failed": "Garmin: {{message}}"
+      }
     },
     "o2ring": {
       "throughBridge": "Read through {{url}}, not by this computer's Bluetooth.",

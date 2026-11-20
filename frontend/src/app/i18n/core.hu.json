@@ -29,9 +29,9 @@
     "targetVentilation": "Célventilláció",
     "spo2": "SpO2",
     "heartRate": "Pulzusszám",
-    "o2ringSpo2": "O2Ring SpO2",
-    "o2ringHeartRate": "O2Ring pulzusszám",
-    "o2ringMotion": "O2Ring mozgás"
+    "o2ringSpo2": "Oximetria SpO2",
+    "o2ringHeartRate": "Oximetria pulzusszám",
+    "o2ringMotion": "Oximetria mozgás"
   },
   "nav": {
     "dashboard": "Irányítópult",
