@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include "TestData.h"
 #include "services/PrismaIngestion.h"
 #include "parsers/CpapdashBridge.h"
 
@@ -14,9 +15,9 @@ static std::string findSampleDir() {
     for (const auto& candidate : {
         std::string("../lowenstein_samples/extracted_therapy"),
         std::string("../../lowenstein_samples/extracted_therapy"),
-        std::string("/home/aamat/maestro_hub/lowenstein_samples/extracted_therapy"),
+        testDataPath("lowenstein_samples/extracted_therapy"),
     }) {
-        if (fs::is_directory(candidate)) return candidate;
+        if (!candidate.empty() && fs::is_directory(candidate)) return candidate;
     }
     return "";
 }

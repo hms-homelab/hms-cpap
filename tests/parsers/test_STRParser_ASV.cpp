@@ -6,6 +6,7 @@
  */
 
 #include <gtest/gtest.h>
+#include "TestData.h"
 #include "parsers/CpapdashBridge.h"
 #include <filesystem>
 #include <cmath>
@@ -21,8 +22,8 @@ static std::string findASVSTRFixture() {
     for (const auto& p : candidates) {
         if (std::filesystem::exists(p)) return p;
     }
-    std::string abs = "/home/aamat/maestro_hub/projects/hms-cpap/tests/fixtures/asv/STR.edf";
-    if (std::filesystem::exists(abs)) return abs;
+    const std::string abs = testDataPath("asv/STR.edf");
+    if (!abs.empty() && std::filesystem::exists(abs)) return abs;
     return "";
 }
 
