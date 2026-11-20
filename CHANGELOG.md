@@ -27,6 +27,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   away.** Each one left a server connection open until the process exited.
   In the test suite that ran the server out of connections and failed the
   later PostgreSQL tests.
+- **A night's Bluetooth stream no longer freezes everything else.** When the
+  AirSense 11 let go mid-night and the stream reconnected, the Summary pull
+  that the night's end had asked for waited on the stream for the rest of the
+  night, and the burst loop and the ring's readings stopped with it (2 h 20 min
+  in one night's log). A Summary pull or a pairing now waits for the radio at
+  most 25 s; a night still streaming keeps it and the Summary is read when the
+  night ends.
+- **A small gap in the stream is laid to the nearest sample.** A gap shorter
+  than one sample (40 ms) was rounded down to none, so every sample after it
+  stood a little earlier than the card has it, about 17 samples over 80
+  minutes. Each streamed second is now laid at its own time.
+- **The O2Ring's Bluetooth link is held** instead of a scan and a connect at
+  every poll, which took the radio from the AirSense 11's stream on the same
+  adapter. The link is checked before each read and made again only when the
+  ring has let go; a request it does not answer drops it for the next poll.
 
 ## [6.4.6] - 2026-11-19
 

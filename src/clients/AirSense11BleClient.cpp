@@ -37,7 +37,7 @@ AirSense11BleClient::AirSense11BleClient(std::string data_dir, std::string addre
 
 AirSense11BleClient::~AirSense11BleClient() {
     stopNightLoop();
-    std::lock_guard<std::mutex> lk(op_mtx_);
+    std::lock_guard<std::timed_mutex> lk(op_mtx_);
     session_.pairCancel();
     dropLink();
     transport_.reset();
@@ -425,7 +425,14 @@ std::vector<uint8_t> AirSense11BleClient::fetchSummary(const std::string& from) 
         explicit Want(AirSense11BleClient* x) : c(x) { c->want_radio_ = true; c->wake_.notify_all(); }
         ~Want() { c->want_radio_ = false; c->wake_.notify_all(); }
     } want(this);
-    std::lock_guard<std::mutex> lk(op_mtx_);
+    // The night loop may have reconnected for a night still in therapy (the
+    // machine let go and came back): it streams until morning and never lets
+    // go. Waiting on it froze the whole burst loop for 2 h 20 min once.
+    std::unique_lock<std::timed_mutex> lk(op_mtx_, std::chrono::milliseconds(kRadioWaitMs));
+    if (!lk.owns_lock()) {
+        note("the machine is streaming a night: the summary is read when it ends");
+        return {};
+    }
     if (session_.pairPending()) {
         note("a pairing is open: the summary waits for it");
         return {};
@@ -516,8 +523,12 @@ as11::Result AirSense11BleClient::pairStart() {
     }
     want_radio_ = true;
     wake_.notify_all();
-    std::lock_guard<std::mutex> lk(op_mtx_);
+    std::unique_lock<std::timed_mutex> lk(op_mtx_, std::chrono::milliseconds(kRadioWaitMs));
     want_radio_ = false;   // the pending pairing itself holds the night loop off now
+    if (!lk.owns_lock()) {
+        note("the machine is in therapy: pair it when the night is over");
+        return as11::Result::Connect;
+    }
     if (session_.pairPending()) {
         session_.pairCancel();
         dropLink();
@@ -535,7 +546,7 @@ as11::Result AirSense11BleClient::pairStart() {
 }
 
 as11::Result AirSense11BleClient::pairConfirm(const std::string& code) {
-    std::lock_guard<std::mutex> lk(op_mtx_);
+    std::lock_guard<std::timed_mutex> lk(op_mtx_);
     as11::Credentials creds;
     as11::Result r = session_.pairConfirm(code, &creds);
     dropLink();
@@ -621,7 +632,7 @@ void AirSense11BleClient::nightLoop() {
 }
 
 bool AirSense11BleClient::streamOnce() {
-    std::unique_lock<std::mutex> op(op_mtx_);
+    std::unique_lock<std::timed_mutex> op(op_mtx_);
     if (want_radio_ || session_.pairPending()) return true;
     auto creds = as11::loadCredentials(as11::credentialsPath(data_dir_));
     if (!creds) return true;
@@ -776,7 +787,10 @@ bool AirSense11BleClient::streamOnce() {
 }
 
 void AirSense11BleClient::pairCancel() {
-    std::lock_guard<std::mutex> lk(op_mtx_);
+    // A pairing holds the night loop off, so a night holding the radio means
+    // no pairing is open: nothing to cancel, and no reason to wait for it.
+    std::unique_lock<std::timed_mutex> lk(op_mtx_, std::chrono::milliseconds(kRadioWaitMs));
+    if (!lk.owns_lock()) return;
     if (!session_.pairPending()) return;
     session_.pairCancel();
     dropLink();

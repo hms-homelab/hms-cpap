@@ -110,6 +110,10 @@ public:
 
     static constexpr int kStallMs = 30000;       // no report this long: the stream is dead
     static constexpr int kRetryMs = 30000;       // after the machine was not found
+    // How long a pull or a pairing waits for the night loop to let go of the
+    // radio: its connect, then the second its wait takes to see the ask. A
+    // night that is streaming does not let go, and the caller gives up.
+    static constexpr int kRadioWaitMs = kConnectMs + 10000;
 
 private:
     void nightLoop();
@@ -160,7 +164,9 @@ private:
     std::unique_ptr<ble::ILink> link_;
 
     as11::Session session_;
-    mutable std::mutex op_mtx_;   // one operation on the machine at a time
+    // One operation on the machine at a time. A night's stream holds it all
+    // night, so a pull or a pairing waits for it no longer than kRadioWaitMs.
+    mutable std::timed_mutex op_mtx_;
     mutable std::mutex err_mtx_;
     std::string last_error_;
     // Why connectLink last failed: Connect (the machine), or RadioOff (this

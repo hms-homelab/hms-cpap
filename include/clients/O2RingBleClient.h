@@ -125,6 +125,12 @@ private:
     bool connect(int timeout_ms = 15000);
     void disconnect();
     bool writeCharacteristic(const std::vector<uint8_t>& data);
+    // The link is held between calls, as the Push-C3 miner holds it: a scan
+    // and a connect every poll took the radio from the AirSense 11's stream
+    // on the same adapter. True when the transport still has the ring linked.
+    bool linkUp();
+    // The held link, or a fresh scan and connect when it is down.
+    bool ensureLink();
     bool sendAndWait(uint8_t cmd, uint16_t block = 0,
                       const std::vector<uint8_t>& payload = {},
                       int timeout_ms = 10000);
