@@ -1,6 +1,7 @@
 #include "database/SQLiteDatabase.h"
 #include "database/SqlDialect.h"
 #include "database/StrPercentile.h"
+#include "utils/Desaturation.h"
 #include "utils/OximetryDevice.h"
 #include "utils/TimeCompat.h"  // timegm_utc() for started_epoch
 #include <algorithm>
@@ -820,8 +821,12 @@ bool SQLiteDatabase::saveSession(const CPAPSession& session) {
             insertEvents(session_id, session.events);
         }
 
-        if (!session.desaturations.empty()) {
-            insertDesaturations(session_id, session.desaturations);
+        // SDD-001: at the threshold set in Settings, from this save's SpO2,
+        // replacing the session's stored ones.
+        const SessionDesaturations desat = desaturationsAt(session, desatDropPct());
+        if (desat.from_vitals) deleteDesaturations(session_id);
+        if (!desat.events.empty()) {
+            insertDesaturations(session_id, desat.events);
         }
 
         if (!session.breaths.empty()) {
@@ -833,7 +838,7 @@ bool SQLiteDatabase::saveSession(const CPAPSession& session) {
         }
 
         if (session.metrics.has_value()) {
-            insertSessionMetrics(session_id, session.metrics.value());
+            insertSessionMetrics(session_id, withDesaturations(session.metrics.value(), desat));
         }
 
         exec("COMMIT");
@@ -1071,6 +1076,18 @@ void SQLiteDatabase::insertDesaturations(int64_t session_id,
         if (sqlite3_step(g.stmt) != SQLITE_DONE) {
             std::cerr << "SQLite: insertDesaturations error: " << sqlite3_errmsg(db_) << std::endl;
         }
+    }
+}
+
+// SDD-001: the session's stored desaturations, before a save writes them again.
+void SQLiteDatabase::deleteDesaturations(int64_t session_id) {
+    StmtGuard g;
+    sqlite3_prepare_v2(db_,
+        "DELETE FROM cpap_events WHERE session_id = ? AND event_type = 'Desaturation'",
+        -1, &g.stmt, nullptr);
+    bind_int64(g.stmt, 1, session_id);
+    if (sqlite3_step(g.stmt) != SQLITE_DONE) {
+        std::cerr << "SQLite: deleteDesaturations error: " << sqlite3_errmsg(db_) << std::endl;
     }
 }
 
@@ -2806,7 +2823,10 @@ std::optional<SessionMetrics> SQLiteDatabase::getNightlyMetrics(
             MAX(COALESCE(sm.index_kind, 'ahi')) AS index_kind,
             -- SDD-030: PLD Press, averaged like the EPR pressure beside it.
             SUM(c.s_therapy) / NULLIF(SUM(c.n_therapy), 0) AS avg_therapy_pressure,
-            SUM(sm.unclassified_apneas)                      AS unclassified_apneas
+            SUM(sm.unclassified_apneas)                      AS unclassified_apneas,
+            -- SDD-001: the night's desaturations and ODI (sql::nightOdi).
+            )" + sql::nightSpo2Drops("sm") + R"(              AS spo2_drops,
+            )" + sql::nightOdi("sm", "s") + R"(               AS odi
         FROM cpap_sessions s
         JOIN cpap_session_metrics sm ON sm.session_id = s.id
         LEFT JOIN (
@@ -2861,7 +2881,7 @@ std::optional<SessionMetrics> SQLiteDatabase::getNightlyMetrics(
     // 24=avg_mask_pressure  25=avg_epr_pressure  26=avg_snore  27=avg_target_ventilation
     // 28=avg_pressure  29=max_pressure  30=min_pressure
     // 31=leak_p50  32=leak_p95_sess  33=therapy_mode  34=index_kind
-    // 35=avg_therapy_pressure  36=unclassified_apneas
+    // 35=avg_therapy_pressure  36=unclassified_apneas  37=spo2_drops  38=odi
     SessionMetrics m;
     m.total_events        = col_int(g.stmt, 1);
     m.ahi                 = col_double(g.stmt, 11);
@@ -2907,6 +2927,8 @@ std::optional<SessionMetrics> SQLiteDatabase::getNightlyMetrics(
                        ? SessionMetrics::IndexKind::Ungraded
                        : SessionMetrics::IndexKind::AHI;
     m.avg_therapy_pressure = col_opt_double(g.stmt, 35);   // SDD-030
+    m.spo2_drops           = col_opt_int(g.stmt, 37);      // SDD-001
+    m.odi                  = col_opt_double(g.stmt, 38);
 
     return m;
 }

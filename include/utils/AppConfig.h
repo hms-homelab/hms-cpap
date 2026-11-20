@@ -166,6 +166,11 @@ struct AppConfig {
     /// one thing their chosen source needs.
     std::string archive_dir;
     int burst_interval = 65;
+    /// SDD-001: how far SpO2 must fall below its rolling baseline, in percent,
+    /// to count as a desaturation (events, count and ODI). 3 is the parser's
+    /// DesatParams default (the AASM rule); 4 is the CMS rule. 1 to 10 accepted.
+    /// Applies to nights saved after it changes. Exported as DESAT_DROP_PCT.
+    double desat_drop_pct = 3.0;
 
     // Web server
     int web_port = 8893;
@@ -666,6 +671,10 @@ struct AppConfig {
             if (j.contains("local_dir"))     config.local_dir = j["local_dir"];
             if (j.contains("archive_dir"))   config.archive_dir = j["archive_dir"];
             if (j.contains("burst_interval")) config.burst_interval = j["burst_interval"];
+            if (j.contains("desat_drop_pct") && j["desat_drop_pct"].is_number()) {   // SDD-001
+                const double pct = j["desat_drop_pct"];
+                if (pct >= 1.0 && pct <= 10.0) config.desat_drop_pct = pct;
+            }
             if (j.contains("web_port"))     config.web_port = j["web_port"];
             if (j.contains("static_dir"))   config.static_dir = j["static_dir"];
             if (j.contains("setup_complete")) config.setup_complete = j["setup_complete"];
@@ -844,6 +853,7 @@ struct AppConfig {
             j["local_dir"] = local_dir;
             j["archive_dir"] = archive_dir;
             j["burst_interval"] = burst_interval;
+            j["desat_drop_pct"] = desat_drop_pct;   // SDD-001
             j["web_port"] = web_port;
             j["static_dir"] = static_dir;
             j["setup_complete"] = setup_complete;
@@ -983,6 +993,7 @@ struct AppConfig {
         j["local_dir"] = local_dir;
         j["archive_dir"] = archive_dir;
         j["burst_interval"] = burst_interval;
+        j["desat_drop_pct"] = desat_drop_pct;   // SDD-001
         j["web_port"] = web_port;
         // SDD-012: save() has always written static_dir, mqtt.client_id and
         // llm.prompt_file, but toJson() did not emit them. That was harmless

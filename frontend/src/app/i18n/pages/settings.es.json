@@ -170,6 +170,11 @@
       "heading": "Ritmo de recogida",
       "burstInterval": "Intervalo de ráfaga (segundos)"
     },
+    "spo2": {
+      "heading": "Desaturaciones de SpO2",
+      "dropPct": "Umbral de desaturación (% bajo la línea base)",
+      "dropHint": "Una caída de este tamaño bajo la línea base reciente de SpO2 cuenta como desaturación, en los eventos, el recuento y el ODI. 3 es la regla habitual (AASM) y 4 la regla de CMS. Se aplica a las noches guardadas a partir de ahora; el gráfico del anillo O2 lo usa de inmediato."
+    },
     "backfill": {
       "heading": "Importar histórico",
       "desc": "Importa a la base de datos las sesiones de terapia de tu directorio DATALOG. Las sesiones ya existentes en el rango de fechas se volverán a analizar.",

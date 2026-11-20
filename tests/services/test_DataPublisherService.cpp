@@ -611,6 +611,32 @@ TEST_F(PayloadTest, PublishSTRState_ABilevelDayCarriesItsPressuresAndNoFakeSpo2)
     EXPECT_EQ(get("/historical/therapy_mode"), "8");
 }
 
+/// SDD-001: a night with SpO2 carries its ODI and desaturation count; a night
+/// without SpO2 carries neither, rather than an ODI of zero.
+TEST_F(PayloadTest, ANightWithSpo2PublishesItsOdi) {
+    if (!connected) GTEST_SKIP() << "MQTT broker not available";
+
+    SessionMetrics m;
+    m.odi = 4.25;
+    m.spo2_drops = 17;
+    auto night = capture("cpap/+/historical/#", [&] { publisher->publishHistoricalState(m); });
+    auto get = [&](const std::string& suffix) -> std::string {
+        for (const auto& [t, v] : night)
+            if (t.size() >= suffix.size() &&
+                t.compare(t.size() - suffix.size(), suffix.size(), suffix) == 0)
+                return v;
+        return "<missing>";
+    };
+    EXPECT_NEAR(std::stod(get("/historical/odi")), 4.25, 1e-6);
+    EXPECT_EQ(get("/historical/spo2_drops"), "17");
+
+    SessionMetrics none;
+    auto bare = capture("cpap/+/historical/#", [&] { publisher->publishHistoricalState(none); });
+    for (const auto& [t, v] : bare)
+        if (t.find("/historical/odi") != std::string::npos)
+            EXPECT_NE(v, "0.000000") << "a night without SpO2 published an ODI of zero";
+}
+
 /// The first bi-level report announces the sensors, and the night then carries
 /// IPAP, EPAP and their difference. An AirSense night gets none of them.
 TEST_F(PayloadTest, ABilevelNightPublishesIpapEpapAndPressureSupport) {
@@ -985,7 +1011,8 @@ TEST_F(PayloadTest, HistoricalDiscovery_SetsStateClassMeasurement) {
 
     for (const std::string& sensor : {"ahi", "usage_hours", "usage_percent",
                                       "avg_leak_rate", "leak_p50", "pressure_p50",
-                                      "pressure_p95", "total_events"}) {
+                                      "pressure_p95", "total_events",
+                                      "odi", "spo2_drops"}) {   // SDD-001
         Json::Value cfg = configFor(sensor);
         ASSERT_FALSE(cfg.isNull()) << "hist_" << sensor << " discovery not published";
         EXPECT_EQ(cfg["state_class"].asString(), "measurement")

@@ -325,6 +325,9 @@ private:
     void insertDesaturations(pqxx::work& work, int session_id,
                              const std::vector<DesatEvent>& desats);
 
+    /// SDD-001: remove the session's stored desaturations before a save writes them again
+    void deleteDesaturations(pqxx::work& work, int session_id);
+
     void insertBreaths(pqxx::work& work, int session_id,
                        const std::vector<Breath>& breaths);
 

@@ -80,6 +80,7 @@ set(TEST_SOURCES
     models/test_CPAPModels.cpp
     utils/test_ConfigManager.cpp
     utils/test_AppConfig.cpp
+    utils/test_Desaturation.cpp
     utils/test_FileUtils.cpp
     utils/test_CardResidue.cpp
     utils/test_CardImport.cpp

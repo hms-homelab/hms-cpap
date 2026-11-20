@@ -26,6 +26,11 @@ export interface AppConfig {
    */
   archive_dir: string;
   burst_interval: number;
+  /**
+   * SDD-001: how far SpO2 must fall below its baseline, in percent, to count as
+   * a desaturation. 3 (the parser's default, the AASM rule) unless set; 1 to 10.
+   */
+  desat_drop_pct?: number;
   web_port: number;
   /** Angular bundle location. A wrong value serves no UI at all. */
   static_dir: string;

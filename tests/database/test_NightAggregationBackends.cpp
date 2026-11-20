@@ -696,6 +696,76 @@ TEST_P(NightAggregationBackendTest, AnOlderRowCountsItsUnclassifiedApneasFromIts
         << engineName(GetParam()) << ": the stored 'Apnea' events were not counted";
 }
 
+// SDD-001: the desaturations are stored at the threshold set in Settings, a
+// night saved again replaces them, and the night's ODI is over the sessions
+// that recorded SpO2.
+TEST_P(NightAggregationBackendTest, DesaturationsFollowTheSettingsThresholdAndTheNightCarriesItsOdi) {
+    auto setDesat = [](const char* v) {
+#ifdef _WIN32
+        _putenv_s("DESAT_DROP_PCT", v ? v : "");
+#else
+        if (v) setenv("DESAT_DROP_PCT", v, 1);
+        else unsetenv("DESAT_DROP_PCT");
+#endif
+    };
+    const auto start = nightStart();
+
+    // Half an hour of 1 Hz SpO2 at 97 %, dipping 4.5 points at minute 5 and
+    // 3.5 at minute 15, 20 s each: two at 3 %, one at 4 %.
+    CPAPSession s;
+    s.device_id = device_;
+    s.device_name = "AirSense 10";
+    s.serial_number = "SDD001";
+    s.session_start = start;
+    s.duration_seconds = 30 * 60;
+    for (int i = 0; i < 30 * 60; ++i) {
+        CPAPVitals v(start + seconds(i));
+        v.spo2 = (i >= 300 && i < 320) ? 92.5 : (i >= 900 && i < 920) ? 93.5 : 97.0;
+        v.heart_rate = 60;
+        s.vitals.push_back(v);
+    }
+    SessionMetrics m;
+    m.usage_hours = 0.5;
+    m.avg_spo2 = 96.9;
+    s.metrics = m;
+
+    const auto p = sql::param(1, db_->dbType());
+    auto desatRows = [&] {
+        const auto rows = db_->executeQuery(
+            "SELECT COUNT(*) AS n FROM cpap_events e JOIN cpap_sessions s ON s.id = e.session_id"
+            " WHERE e.event_type = 'Desaturation' AND s.device_id = " + p,
+            {device_});
+        return rows.isArray() && rows.size() == 1u ? static_cast<int>(num(rows[0u]["n"])) : -1;
+    };
+
+    ASSERT_TRUE(db_->saveSession(s)) << engineName(GetParam());
+    EXPECT_EQ(desatRows(), 2) << engineName(GetParam()) << ": the parser's default, 3 %";
+
+    setDesat("4.000000");
+    const bool saved = db_->saveSession(s);
+    setDesat(nullptr);
+    ASSERT_TRUE(saved) << engineName(GetParam());
+    db_->markSessionCompleted(device_, start);
+    EXPECT_EQ(desatRows(), 1) << engineName(GetParam()) << ": saved again at 4 %, replaced";
+
+    // A second session the same night without SpO2: its hours are not the ODI's.
+    saveSession(start + std::chrono::hours(1), 30, 10.0, 8.0, 0, 0, 20.0);
+
+    const auto night = db_->getNightlyMetrics(device_, start);
+    ASSERT_TRUE(night.has_value()) << engineName(GetParam());
+    EXPECT_EQ(night->spo2_drops, 1) << engineName(GetParam());
+    ASSERT_TRUE(night->odi.has_value()) << engineName(GetParam());
+    EXPECT_NEAR(*night->odi, 2.0, 1e-6) << engineName(GetParam());
+}
+
+TEST_P(NightAggregationBackendTest, ANightWithoutSpo2HasNoOdi) {
+    saveSession(nightStart(), 30, 10.0, 8.0, 0, 0, 20.0);
+    const auto night = db_->getNightlyMetrics(device_, nightStart());
+    ASSERT_TRUE(night.has_value()) << engineName(GetParam());
+    EXPECT_FALSE(night->odi.has_value()) << engineName(GetParam()) << ": not an ODI of zero";
+    EXPECT_FALSE(night->spo2_drops.has_value()) << engineName(GetParam());
+}
+
 INSTANTIATE_TEST_SUITE_P(Engines, NightAggregationBackendTest,
                          ::testing::Values(Engine::SQLite, Engine::MySQL, Engine::Postgres),
                          [](const ::testing::TestParamInfo<Engine>& i) {

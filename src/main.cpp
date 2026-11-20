@@ -758,6 +758,9 @@ int main(int argc, char** argv) {
     std::string port_str  = std::to_string(config.web_port);
     portableSetenv("BURST_INTERVAL", burst_str.c_str());
     portableSetenv("HEALTH_CHECK_PORT", port_str.c_str());
+    // SDD-001: every engine's saveSession reads it at use time (utils/Desaturation.h).
+    std::string desat_str = std::to_string(config.desat_drop_pct);
+    portableSetenv("DESAT_DROP_PCT", desat_str.c_str());
     if (!config.local_dir.empty()) portableSetenv("CPAP_LOCAL_DIR", config.local_dir.c_str());
     // SDD-006: the burst collector and the archive path both read this through
     // ConfigManager, so bridging it here is what makes a wizard-set archive

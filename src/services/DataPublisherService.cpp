@@ -267,7 +267,12 @@ bool DataPublisherService::publishHistoricalDiscovery() {
         {"leak_p50", "L/min", "", "mdi:leak"},
         // ASV-specific
         {"avg_target_ventilation", "L/min", "", "mdi:lungs"},
-        {"therapy_mode", "", "", "mdi:cog", ""}
+        {"therapy_mode", "", "", "mdi:cog", ""},
+
+        // SDD-001: SpO2 desaturations, on a night with SpO2 (2). Numeric
+        // sensors only; an alert on them is an automation's to make.
+        {"odi", "events/h", "", "mdi:arrow-down-bold-circle-outline"},
+        {"spo2_drops", "", "", "mdi:counter"}
     };
 
     for (const auto& sensor : historical_sensors) {
@@ -745,6 +750,10 @@ void DataPublisherService::publishHistoricalState(const SessionMetrics& m) {
     if (m.spo2_drops.has_value()) {
         mqtt_client_->publish("cpap/" + device_id_ + "/historical/spo2_drops",
                              std::to_string(m.spo2_drops.value()), 0, true);
+    }
+    if (m.odi.has_value()) {   // SDD-001
+        mqtt_client_->publish("cpap/" + device_id_ + "/historical/odi",
+                             std::to_string(m.odi.value()), 0, true);
     }
 
     // HEART RATE

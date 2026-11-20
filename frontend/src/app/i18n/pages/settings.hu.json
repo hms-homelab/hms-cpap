@@ -170,6 +170,11 @@
       "heading": "Gyűjtés ütemezése",
       "burstInterval": "Gyűjtési ciklus (másodperc)"
     },
+    "spo2": {
+      "heading": "SpO2-deszaturációk",
+      "dropPct": "Deszaturációs küszöb (% az alapvonal alatt)",
+      "dropHint": "Ekkora esés a közelmúltbeli SpO2-alapvonal alatt deszaturációnak számít az eseményekben, a darabszámban és az ODI-ban. A 3 a szokásos szabály (AASM), a 4 a CMS szabálya. A mostantól mentett éjszakákra érvényes; az O2-gyűrű grafikonja azonnal ezt használja."
+    },
     "backfill": {
       "heading": "Előzmények importálása",
       "desc": "Importálja a DATALOG könyvtárban lévő terápiás munkameneteket az adatbázisba. A dátumtartományban már meglévő munkameneteket újra feldolgozza.",

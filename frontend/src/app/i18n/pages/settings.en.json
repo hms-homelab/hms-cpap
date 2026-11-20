@@ -170,6 +170,11 @@
       "heading": "Collection Timing",
       "burstInterval": "Burst Interval (seconds)"
     },
+    "spo2": {
+      "heading": "SpO2 Desaturations",
+      "dropPct": "Desaturation threshold (% below baseline)",
+      "dropHint": "A fall of this much below the recent SpO2 baseline counts as a desaturation, in the events, the count and the ODI. 3 is the usual rule (AASM), 4 the CMS rule. Applies to nights saved from now on; the O2 ring chart uses it straight away."
+    },
     "backfill": {
       "heading": "Import History",
       "desc": "Import therapy sessions from your DATALOG directory into the database. Existing sessions in the date range will be re-parsed.",

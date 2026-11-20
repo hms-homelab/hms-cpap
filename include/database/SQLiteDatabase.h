@@ -254,6 +254,9 @@ private:
     /// Insert SpO2 desaturations as cpap_events of type "Desaturation"
     void insertDesaturations(int64_t session_id, const std::vector<DesatEvent>& desats);
 
+    /// SDD-001: remove the session's stored desaturations before a save writes them again
+    void deleteDesaturations(int64_t session_id);
+
     /// Insert/upsert session metrics
     void insertSessionMetrics(int64_t session_id, const SessionMetrics& metrics);
 
