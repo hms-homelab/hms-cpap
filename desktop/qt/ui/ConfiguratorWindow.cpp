@@ -113,7 +113,7 @@ private:
 class SourcePage : public QWizardPage {
 public:
     explicit SourcePage(ConfiguratorWindow* wiz) : wiz_(wiz) {
-        setTitle("Where is your CPAP data?");
+        setTitle("Select source");
 
         auto* layout = new QVBoxLayout(this);
         layout->setSpacing(10);

@@ -42,7 +42,7 @@
         "alreadyOnline": "A bridge is already connected. Is it this one?",
         "found": "Found {{sender}}",
         "setting": "Setting your bridge's folder as the source...",
-        "sourceSet": "Your bridge's folder is now the source (card format {{format}}).",
+        "sourceSet": "HMS-CPAP now reads your nights from this bridge ({{format}} card).",
         "formatGuessed": "The bridge has not recognised its card yet. If it is another machine's card, this is corrected when the machine reads it.",
         "sourceFailed": "The source could not be set: {{error}}",
         "unreachable": "If the bridge's own setup test says it cannot reach this computer, check that port {{port}} reaches it (in Docker, publish 8894:8894) and that no firewall blocks it."
@@ -87,7 +87,7 @@
     "copied": "Copied",
     "use": "Use this bridge as my source",
     "inUse": "This bridge is your source",
-    "restarting": "Done (card format {{format}}). HMS-CPAP is restarting to read it.",
+    "restarting": "HMS-CPAP now reads your nights from this bridge ({{format}} card). Restarting to start reading...",
     "saved": "Done (card format {{format}}).",
     "failed": "The source could not be set: {{error}}"
   },

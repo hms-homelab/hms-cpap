@@ -42,7 +42,7 @@
         "alreadyOnline": "Egy híd már csatlakozott. Ez az?",
         "found": "Megtalálva: {{sender}}",
         "setting": "A híd mappájának beállítása forrásként...",
-        "sourceSet": "A híd mappája most a forrás (kártyaformátum: {{format}}).",
+        "sourceSet": "A HMS-CPAP mostantól erről a hídról olvassa az éjszakáit ({{format}} kártya).",
         "formatGuessed": "A híd még nem ismerte fel a kártyáját. Ha egy másik készülék kártyája, ez kijavul, amikor a készülék beolvassa.",
         "sourceFailed": "A forrást nem sikerült beállítani: {{error}}",
         "unreachable": "Ha a híd saját beállítási tesztje szerint nem éri el ezt a számítógépet, ellenőrizze, hogy a(z) {{port}} port eléri-e (Dockerben tegye közzé: 8894:8894), és hogy tűzfal nem tiltja-e."
@@ -87,7 +87,7 @@
     "copied": "Másolva",
     "use": "Ez a híd legyen a forrásom",
     "inUse": "Ez a híd a forrása",
-    "restarting": "Kész (kártyaformátum: {{format}}). A HMS-CPAP újraindul, hogy beolvassa.",
+    "restarting": "A HMS-CPAP mostantól erről a hídról olvassa az éjszakáit ({{format}} kártya). Újraindítás az olvasás megkezdéséhez...",
     "saved": "Kész (kártyaformátum: {{format}}).",
     "failed": "A forrást nem sikerült beállítani: {{error}}"
   },

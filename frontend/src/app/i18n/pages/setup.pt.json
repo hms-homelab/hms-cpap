@@ -36,7 +36,7 @@
       "okFresh": "Conectado. O esquema será criado na primeira inicialização."
     },
     "source": {
-      "title": "Fonte de dados",
+      "title": "Selecionar a origem",
       "formatLabel": "Qual aparelho gravou este cartão?",
       "philips": "Philips Respironics (experimental)",
       "bmc": "BMC / React Health Luna",

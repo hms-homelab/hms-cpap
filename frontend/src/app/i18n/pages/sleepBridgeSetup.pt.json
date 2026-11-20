@@ -42,7 +42,7 @@
         "alreadyOnline": "Já há uma ponte ligada. É esta?",
         "found": "{{sender}} encontrado",
         "setting": "Definindo a pasta da sua ponte como origem...",
-        "sourceSet": "A pasta da sua ponte é agora a origem (formato de cartão {{format}}).",
+        "sourceSet": "O HMS-CPAP agora lê as suas noites desta ponte (cartão {{format}}).",
         "formatGuessed": "A ponte ainda não reconheceu o cartão. Se for o cartão de outro aparelho, isso é corrigido quando o aparelho o ler.",
         "sourceFailed": "Não foi possível definir a origem: {{error}}",
         "unreachable": "Se o teste de configuração da própria ponte disser que não chega a este computador, confirme que a porta {{port}} chega até ele (no Docker, publique 8894:8894) e que nenhum firewall a bloqueia."
@@ -87,7 +87,7 @@
     "copied": "Copiado",
     "use": "Usar esta ponte como a minha origem",
     "inUse": "Esta ponte é a sua origem",
-    "restarting": "Feito (formato do cartão {{format}}). O HMS-CPAP está reiniciando para o ler.",
+    "restarting": "O HMS-CPAP agora lê as suas noites desta ponte (cartão {{format}}). A reiniciar para começar a ler...",
     "saved": "Feito (formato do cartão {{format}}).",
     "failed": "Não foi possível definir a origem: {{error}}"
   },

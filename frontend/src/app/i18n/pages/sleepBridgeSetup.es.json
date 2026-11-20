@@ -42,7 +42,7 @@
         "alreadyOnline": "Ya hay un puente conectado. ¿Es este?",
         "found": "Encontrado {{sender}}",
         "setting": "Poniendo la carpeta de tu puente como origen...",
-        "sourceSet": "La carpeta de tu puente es ahora el origen (formato de tarjeta {{format}}).",
+        "sourceSet": "HMS-CPAP ahora lee tus noches de este puente (tarjeta {{format}}).",
         "formatGuessed": "El puente aún no ha reconocido su tarjeta. Si es la tarjeta de otro equipo, se corrige cuando el equipo la lea.",
         "sourceFailed": "No se pudo poner el origen: {{error}}",
         "unreachable": "Si la prueba de configuración del propio puente dice que no llega a este ordenador, comprueba que el puerto {{port}} llega hasta él (en Docker, publica 8894:8894) y que ningún cortafuegos lo bloquea."
@@ -87,7 +87,7 @@
     "copied": "Copiado",
     "use": "Usar este puente como mi origen",
     "inUse": "Este puente es tu origen",
-    "restarting": "Hecho (formato de tarjeta {{format}}). HMS-CPAP se está reiniciando para leerlo.",
+    "restarting": "HMS-CPAP ahora lee tus noches de este puente (tarjeta {{format}}). Reiniciando para empezar a leer...",
     "saved": "Hecho (formato de tarjeta {{format}}).",
     "failed": "No se pudo poner el origen: {{error}}"
   },
