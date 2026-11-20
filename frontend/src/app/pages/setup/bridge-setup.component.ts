@@ -3,7 +3,7 @@ import { FormsModule } from '@angular/forms';
 import { TranslatePipe, TranslateService } from '@ngx-translate/core';
 import { CpapApiService } from '../../services/cpap-api.service';
 import {
-  BRIDGE_PICTURES, BridgeStep, CardOutcome, QrRect, WatchFrame, WatchedStatus, cardOutcome, cardOutcomeKey,
+  BRIDGE_ANIMATIONS, BRIDGE_PICTURES, BridgeStep, CardOutcome, QrRect, WatchFrame, WatchedStatus, cardOutcome, cardOutcomeKey,
   findBridge, formatChanged, helloBridge, nextBridgeStep, onlineBridges, portNote,
   prefillAddress, previousBridgeStep, qrRects, snapshotMark, streamStateKey, validBridgeAddress,
 } from './bridge-setup';
@@ -42,11 +42,14 @@ import { SleepBridgeWatch } from '../../services/sleepbridge-watch';
         @case ('assemble') {
           <h1>{{ 'setup.bridge.assemble.title' | translate }}</h1>
           <ol class="pics">
-            <li><img class="pic" [src]="pics.cardIntoBridge" alt="" />
+            <li><picture><source [attr.srcset]="anims.cardIntoBridge" type="image/webp" media="(prefers-reduced-motion: no-preference)" />
+              <img class="pic" [src]="pics.cardIntoBridge" alt="" /></picture>
               <span>{{ 'setup.bridge.assemble.cardIntoBridge' | translate }}</span></li>
-            <li><img class="pic" [src]="pics.bridgeOntoExtender" alt="" />
+            <li><picture><source [attr.srcset]="anims.bridgeOntoExtender" type="image/webp" media="(prefers-reduced-motion: no-preference)" />
+              <img class="pic" [src]="pics.bridgeOntoExtender" alt="" /></picture>
               <span>{{ 'setup.bridge.assemble.bridgeOntoExtender' | translate }}</span></li>
-            <li><img class="pic" [src]="pics.power" alt="" />
+            <li><picture><source [attr.srcset]="anims.power" type="image/webp" media="(prefers-reduced-motion: no-preference)" />
+              <img class="pic" [src]="pics.power" alt="" /></picture>
               <span>{{ 'setup.bridge.assemble.power' | translate }}</span></li>
           </ol>
           <p class="warn">{{ 'setup.bridge.assemble.notYet' | translate }}</p>
@@ -54,10 +57,8 @@ import { SleepBridgeWatch } from '../../services/sleepbridge-watch';
 
         @case ('connect') {
           <h1>{{ 'setup.bridge.connect.title' | translate }}</h1>
-          <div class="phone">
-            <img class="pic" [src]="pics.joinWifi" alt="" />
-            <span class="wifi-name">CpapDash-…</span>
-          </div>
+          <picture><source [attr.srcset]="anims.joinWifi" type="image/webp" media="(prefers-reduced-motion: no-preference)" />
+            <img class="pic" [src]="pics.joinWifi" alt="" /></picture>
           <p class="subtitle">{{ 'setup.bridge.connect.body' | translate }}</p>
           @if (addressConfirmed) {
             <div class="address-row">
@@ -89,6 +90,9 @@ import { SleepBridgeWatch } from '../../services/sleepbridge-watch';
             <p class="hint">{{ 'setup.bridge.connect.askHint' | translate }}</p>
             <button class="btn-secondary" [disabled]="!addressValid" (click)="confirmAddress()">
               {{ 'setup.bridge.connect.useAddress' | translate }}</button>
+          }
+          @if (macos) {
+            <p class="info">{{ 'setup.bridge.connect.macFirewall' | translate }}</p>
           }
         }
 
@@ -124,7 +128,8 @@ import { SleepBridgeWatch } from '../../services/sleepbridge-watch';
         @case ('machine') {
           <h1>{{ 'setup.bridge.machine.title' | translate }}</h1>
           <ol class="pics">
-            <li><img class="pic" [src]="pics.intoMachine" alt="" />
+            <li><picture><source [attr.srcset]="anims.intoMachine" type="image/webp" media="(prefers-reduced-motion: no-preference)" />
+              <img class="pic" [src]="pics.intoMachine" alt="" /></picture>
               <span>{{ 'setup.bridge.machine.intoMachine' | translate }}</span></li>
             <li><img class="pic" [src]="pics.powerCycle" alt="" />
               <span>{{ 'setup.bridge.machine.powerCycle' | translate }}</span></li>
@@ -186,18 +191,18 @@ import { SleepBridgeWatch } from '../../services/sleepbridge-watch';
     h1 { font-size: 1.5rem; color: #e0e0e0; margin: 0 0 0.75rem; }
     .subtitle { color: #b0b0b0; line-height: 1.5; margin: 0 0 0.8rem; }
     .hint { font-size: 0.8rem; color: #9e9e9e; line-height: 1.45; margin: 0.5rem 0; }
-    .pic { display: block; width: 100%; max-width: 420px; aspect-ratio: 4 / 3; object-fit: cover;
+    /* Each picture keeps its own shape: the renders are 16:9, the rest 4:3. */
+    picture { display: block; }
+    .pic { display: block; width: 100%; max-width: 420px; height: auto;
            border-radius: 10px; border: 1px solid #333; background: #222; margin: 0 auto 0.75rem; }
     .pics { list-style: none; padding: 0; margin: 0; counter-reset: n; }
     .pics li { counter-increment: n; margin-bottom: 1rem; }
     .pics li span { display: block; color: #e0e0e0; text-align: center; }
     .pics li span::before { content: counter(n) ". "; color: #64b5f6; font-weight: 600; }
+    .info { background: #13263d; border: 1px solid #2f6aa8; color: #cfe3ff; border-radius: 8px;
+            padding: 0.7rem 0.9rem; line-height: 1.45; margin: 0.75rem 0 0; }
     .warn { background: #3a2a10; border: 1px solid #a06800; color: #ffcc80; border-radius: 8px;
             padding: 0.7rem 0.9rem; font-weight: 600; text-align: center; }
-    .phone { position: relative; max-width: 420px; margin: 0 auto; }
-    .wifi-name { position: absolute; left: 50%; top: 46%; transform: translateX(-50%);
-                 background: rgba(255,255,255,0.92); color: #111; font-weight: 700; font-size: 0.95rem;
-                 padding: 0.2rem 0.6rem; border-radius: 4px; }
     .address-row { display: flex; align-items: center; justify-content: center; gap: 1.25rem;
                    flex-wrap: wrap; margin: 0.5rem 0 0.75rem; }
     .address { font-size: 2.4rem; font-weight: 700; color: #fff; letter-spacing: 0.02em;
@@ -238,12 +243,15 @@ import { SleepBridgeWatch } from '../../services/sleepbridge-watch';
 export class BridgeSetupComponent implements OnDestroy {
   /** The receiver's port (GET /api/sleepbridge). */
   @Input() set listen(p: number) { this.listenPort = p; this.port = portNote(p); }
+  /** HmsCpap runs on a Mac: its firewall may ask to let the bridge in (D7). */
+  @Input() macos = false;
   /** The sequence is over: the .cpapcard picked on D1, if any. */
   @Output() finished = new EventEmitter<File | null>();
   /** Back from the first step, to the source step. */
   @Output() leave = new EventEmitter<void>();
 
   readonly pics = BRIDGE_PICTURES;
+  readonly anims = BRIDGE_ANIMATIONS;
   step: BridgeStep = 'card';
 
   // D1

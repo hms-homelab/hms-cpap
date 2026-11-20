@@ -34,7 +34,8 @@
         "askHint": "Az a cím, amelyen a HMS-CPAP-ot megnyitja, például 192.168.1.20. Dockerben a gazdagép címét adja meg, ne a konténerét.",
         "useAddress": "Ezt a címet használom",
         "change": "Nem ez az?",
-        "port": "A híd Port mezőjébe írja be: {{port}}."
+        "port": "A híd Port mezőjébe írja be: {{port}}.",
+        "macFirewall": "Ha a macOS megkérdezi, hogy a HmsCpap fogadhat-e bejövő hálózati kapcsolatokat, kattintson az Engedélyezés gombra. A letöltésünkből származó, aláírt HmsCpap általában kérdés nélkül engedélyt kap."
       },
       "wait": {
         "title": "Várakozás a hídra",

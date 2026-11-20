@@ -1726,6 +1726,12 @@ int main(int argc, char** argv) {
                 // blocked read away from an unresponsive app.
                 .setThreadNum(std::min(8u, std::max(4u, std::thread::hardware_concurrency())))
                 .setDocumentRoot(static_dir)
+                // Drogon's own list of servable types (it replaces, not
+                // adds) plus webp, which it 404s by default: the Sleep Bridge
+                // setup's looping pictures are animated WebP (SDD-073).
+                .setFileTypes({"html", "js", "css", "xml", "xsl", "txt", "svg", "ttf", "otf",
+                               "woff2", "woff", "eot", "png", "jpg", "jpeg", "gif", "bmp",
+                               "ico", "icns", "webp"})
                 .setIdleConnectionTimeout(120)
                 // Allow large CPAP zip / oximetry CSV uploads (default is 1 MB).
                 .setClientMaxBodySize(512 * 1024 * 1024);

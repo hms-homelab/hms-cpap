@@ -34,7 +34,8 @@
         "askHint": "La dirección con la que abres HMS-CPAP, por ejemplo 192.168.1.20. En Docker, usa la dirección del equipo anfitrión, no la del contenedor.",
         "useAddress": "Usar esta dirección",
         "change": "¿No es esta?",
-        "port": "En el campo Port del puente, escribe {{port}}."
+        "port": "En el campo Port del puente, escribe {{port}}.",
+        "macFirewall": "Si macOS pregunta si HmsCpap puede aceptar conexiones de red entrantes, haz clic en Permitir. Un HmsCpap firmado de nuestra descarga normalmente se permite sin preguntar."
       },
       "wait": {
         "title": "Esperando a tu puente",

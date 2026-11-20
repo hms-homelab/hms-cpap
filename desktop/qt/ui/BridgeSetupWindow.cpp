@@ -12,7 +12,6 @@
 #include <QFrame>
 #include <QPen>
 #include <QPolygonF>
-#include <QGridLayout>
 #include <QJsonArray>
 #include <QHBoxLayout>
 #include <QHostAddress>
@@ -75,15 +74,20 @@ QLabel* words(const QString& text, QWidget* parent, double scale = 1.0, bool bol
     return l;
 }
 
-/// One of SDD-073 section 5's pictures (resources/bridge/, 4:3), scaled.
+/// One of SDD-073 section 5's pictures (:/bridge/), scaled to `width` in its
+/// own shape: the renders are 16:9, the rest 4:3. Always the PNG still: the
+/// web wizard's animated WebP needs Qt's WebP plugin (qtimageformats), which
+/// the Windows build does not install, so the desktop shows the still
+/// everywhere rather than animating on one platform only.
 QLabel* picture(const QString& name, int width, QWidget* parent) {
     auto* l = new QLabel(parent);
     const qreal dpr = qApp->devicePixelRatio();
     QPixmap p(":/bridge/" + name);
-    p = p.scaled(QSize(width, width * 3 / 4) * dpr, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    const int height = p.isNull() ? width * 3 / 4 : width * p.height() / p.width();
+    p = p.scaled(QSize(width, height) * dpr, Qt::KeepAspectRatio, Qt::SmoothTransformation);
     p.setDevicePixelRatio(dpr);
     l->setPixmap(p);
-    l->setMinimumSize(width, width * 3 / 4);   // never cropped by a tight layout
+    l->setMinimumSize(width, height);   // never cropped by a tight layout
     l->setAlignment(Qt::AlignCenter);
     return l;
 }
@@ -97,6 +101,9 @@ QWidget* captioned(const QString& name, int width, const QString& caption, QWidg
     auto* c = words(caption, w);
     c->setAlignment(Qt::AlignHCenter | Qt::AlignTop);
     c->setFixedWidth(width);
+    // A wrapped label's size hint does not know its width, so a two-line
+    // caption was given one line's height and drawn over the picture.
+    c->setMinimumHeight(c->heightForWidth(width));
     v->addWidget(c);
     return w;
 }
@@ -264,15 +271,7 @@ public:
     explicit ConnectStep(BridgeSetupWindow* w) : Step(w, 3, Txt::ConnectTitle) {
         body_->addWidget(words(w->t(Txt::ConnectBody), this, 1.05));
         auto* row = new QHBoxLayout;
-        auto* phone = new QWidget(this);
-        auto* pv = new QGridLayout(phone);
-        pv->setContentsMargins(0, 0, 0, 0);
-        pv->addWidget(picture("d3-join-bridge-wifi.png", 280, phone), 0, 0);
-        // The network's name over the blank row of the picture (section 5).
-        auto* ssid = new QLabel("CpapDash-…", phone);
-        ssid->setStyleSheet("background: rgba(255,255,255,0.85); color: #102E54; font-weight: bold; padding: 2px 6px;");
-        pv->addWidget(ssid, 0, 0, Qt::AlignCenter);
-        row->addWidget(phone);
+        row->addWidget(picture("d3-join-bridge-wifi.png", 320, this), 0, Qt::AlignTop);
 
         auto* right = new QVBoxLayout;
         address_ = words(QString(), this, 2.6, true);
@@ -293,10 +292,11 @@ public:
         body_->addLayout(row);
 
 #ifdef Q_OS_MACOS
-        auto* fw = new QHBoxLayout;
-        fw->addWidget(picture("d7-macos-firewall-allow.png", 160, this));
-        fw->addWidget(words(w->t(Txt::ConnectMacFirewall), this), 1);
-        body_->addLayout(fw);
+        // An info notice, no picture (SDD-073 D7).
+        auto* fw = words(w->t(Txt::ConnectMacFirewall), this);
+        fw->setStyleSheet("background: #13263d; border: 1px solid #2f6aa8; color: #cfe3ff;"
+                          " border-radius: 6px; padding: 8px 10px;");
+        body_->addWidget(fw);
 #endif
         body_->addStretch(1);
 

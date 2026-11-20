@@ -26,7 +26,11 @@ export function previousBridgeStep(s: BridgeStep): BridgeStep | null {
   return i > 0 ? BRIDGE_STEPS[i - 1] : null;
 }
 
-/** The pictures, in public/setup/sleep-bridge/, relative to <base href>. */
+/**
+ * The pictures, in public/setup/sleep-bridge/, relative to <base href>. These
+ * are stills: what the desktop setup shows (it decodes PNG on every platform)
+ * and what the web wizard shows to anyone who asked for reduced motion.
+ */
 export const BRIDGE_PICTURES = {
   card: 'setup/sleep-bridge/d1-card-into-computer.png',
   cardIntoBridge: 'setup/sleep-bridge/d2a-card-into-bridge.png',
@@ -36,6 +40,18 @@ export const BRIDGE_PICTURES = {
   intoMachine: 'setup/sleep-bridge/d5a-into-machine.png',
   powerCycle: 'setup/sleep-bridge/d5b-power-cycle.png',
 } as const;
+
+/**
+ * The steps that also have a looping animation (animated WebP) of the same
+ * render as their still. The web wizard plays it unless reduced motion is on.
+ */
+export const BRIDGE_ANIMATIONS: Partial<Record<keyof typeof BRIDGE_PICTURES, string>> = {
+  cardIntoBridge: 'setup/sleep-bridge/d2a-card-into-bridge.webp',
+  bridgeOntoExtender: 'setup/sleep-bridge/d2b-bridge-onto-extender.webp',
+  power: 'setup/sleep-bridge/d2c-power.webp',
+  joinWifi: 'setup/sleep-bridge/d3-join-bridge-wifi.webp',
+  intoMachine: 'setup/sleep-bridge/d5a-into-machine.webp',
+};
 
 /** What one bridge in GET /api/sleepbridge says, as far as these steps read it. */
 export interface WatchedBridge {

@@ -124,7 +124,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   CpapDash". Every wait is for an event, never a clock. In the desktop app
   (Windows, macOS; "Set up your Sleep Bridge..." in the menu brings it back)
   and in the web wizard (Linux, Docker, Pi), in English, Spanish, French,
-  Hungarian and Portuguese.
+  Hungarian and Portuguese. The pictures are renders of the bridge, the
+  extender and the machine: the web wizard plays them as short loops (a
+  still when the system asks for reduced motion), the desktop app shows the
+  still. No picture placeholders remain: on a Mac, the connect step has a
+  notice instead of a picture, to click Allow if macOS asks whether
+  HmsCpap may accept incoming network connections.
 - **The Devices page and Settings > Source show each bridge's folder**, with
   Copy, and a "Use this bridge as my source" button (SDD-073 D8, D10). No
   path to type.
