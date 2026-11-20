@@ -49,6 +49,7 @@ export const BRIDGE_ANIMATIONS: Partial<Record<keyof typeof BRIDGE_PICTURES, str
   cardIntoBridge: 'setup/sleep-bridge/d2a-card-into-bridge.webp',
   bridgeOntoExtender: 'setup/sleep-bridge/d2b-bridge-onto-extender.webp',
   power: 'setup/sleep-bridge/d2c-power.webp',
+  joinWifi: 'setup/sleep-bridge/d3-join-bridge-wifi.webp',
   intoMachine: 'setup/sleep-bridge/d5a-into-machine.webp',
 };
 

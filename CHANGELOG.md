@@ -127,8 +127,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Hungarian and Portuguese. The pictures are renders of the bridge, the
   extender and the machine: the web wizard plays them as short loops (a
   still when the system asks for reduced motion), the desktop app shows the
-  still. The join-the-WiFi step shows a phone screenshot. The macOS
-  firewall picture is still a placeholder.
+  still. The macOS firewall picture is still a placeholder.
 - **The Devices page and Settings > Source show each bridge's folder**, with
   Copy, and a "Use this bridge as my source" button (SDD-073 D8, D10). No
   path to type.

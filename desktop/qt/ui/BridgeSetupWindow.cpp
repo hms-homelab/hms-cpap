@@ -271,8 +271,7 @@ public:
     explicit ConnectStep(BridgeSetupWindow* w) : Step(w, 3, Txt::ConnectTitle) {
         body_->addWidget(words(w->t(Txt::ConnectBody), this, 1.05));
         auto* row = new QHBoxLayout;
-        // A phone screenshot (portrait) that shows the network row itself.
-        row->addWidget(picture("d3-join-bridge-wifi.png", 240, this), 0, Qt::AlignTop);
+        row->addWidget(picture("d3-join-bridge-wifi.png", 320, this), 0, Qt::AlignTop);
 
         auto* right = new QVBoxLayout;
         address_ = words(QString(), this, 2.6, true);
