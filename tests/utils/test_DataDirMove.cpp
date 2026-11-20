@@ -247,6 +247,37 @@ TEST_F(DataDirMove, CatchUpAfterAFallbackRun) {
     EXPECT_NE(slurp(to / "config.json"), R"({"fallback":true})");
 }
 
+// A fresh install in the chosen directory, then a fallback run that stores in
+// /data (run.sh writes the marker naming /data on that run), then a good start:
+// what the fallback run stored moves across, nothing in the chosen directory is
+// overwritten, and the marker then names the chosen directory.
+TEST_F(DataDirMove, FreshInstallThenAFallbackRunThenAGoodStartCatchesUp) {
+    const fs::path chosen = share_ / "fresh";
+    put(home_ / "options.json", R"({"data_dir":"/share/fresh"})");
+    put(chosen / "config.json", R"({"setup_complete":true,"in":"chosen"})");
+    put(chosen / "cpap.db", "CHOSEN DB");
+    put(chosen / "sleepbridge" / "TAP-S3-1" / "bank" / "000001.bin", "FIRST");
+
+    // The fallback run.
+    put(home_ / kMarkerName, home_.string() + "\n");
+    put(home_ / "config.json", R"({"setup_complete":false,"in":"fallback"})");
+    put(home_ / "cpap.db", "FALLBACK DB");
+    put(home_ / "sleepbridge" / "TAP-S3-1" / "bank" / "000002.bin", "SECOND");
+
+    // The next good start.
+    const auto r = moveData(opts(home_, chosen));
+    ASSERT_TRUE(r.ok) << r.error;
+
+    EXPECT_EQ(slurp(chosen / "sleepbridge" / "TAP-S3-1" / "bank" / "000002.bin"), "SECOND");
+    EXPECT_EQ(slurp(chosen / "sleepbridge" / "TAP-S3-1" / "bank" / "000001.bin"), "FIRST");
+    EXPECT_EQ(slurp(chosen / "config.json"), R"({"setup_complete":true,"in":"chosen"})");
+    EXPECT_EQ(slurp(chosen / "cpap.db"), "CHOSEN DB");
+    EXPECT_FALSE(fs::exists(home_ / "sleepbridge"));
+    EXPECT_EQ(slurp(home_ / "cpap.db"), "FALLBACK DB");
+    EXPECT_TRUE(fs::exists(home_ / "options.json"));
+    EXPECT_EQ(readMarker(home_), fs::weakly_canonical(chosen).string());
+}
+
 TEST_F(DataDirMove, NothingToMoveIsCompleteAndWritesNoMarker) {
     put(home_ / "options.json", "{}");
     const auto r = moveData(opts(home_, share_ / "x"));

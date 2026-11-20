@@ -92,17 +92,20 @@ interface ConfigError {
                           display: flex; flex-direction: column; gap: 0.15rem; }
     .config-error strong { color: #ff8a80; }
     .config-error .remedy { color: #ffb3ad; }
+    /* A secondary button: outline in the dashboard blue, as everywhere in hms-cpap. */
     .config-error .action {
       flex-shrink: 0;
       align-self: center;
-      padding: 0.4rem 0.75rem;
-      border: 1px solid rgba(244, 67, 54, 0.5);
-      border-radius: 4px;
-      color: #ff8a80;
+      padding: 0.6rem 1.25rem;
+      border: 1px solid #1976d2;
+      border-radius: 6px;
+      color: #64b5f6;
+      font-weight: 600;
       text-decoration: none;
       white-space: nowrap;
+      transition: all 0.2s;
     }
-    .config-error .action:hover { background: rgba(244, 67, 54, 0.16); }
+    .config-error .action:hover { background: #1565c0; color: #fff; }
 
     .data-dir-fallback {
       max-width: 1200px;

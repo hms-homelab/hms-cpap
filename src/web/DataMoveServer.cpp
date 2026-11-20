@@ -47,8 +47,11 @@ const std::string kPage = R"HTML(<!doctype html>
   .current { font-size: .85rem; min-height: 1.3em; }
   .end { margin-top: 1rem; }
   .end.failed { color: #ffb3ad; }
-  a.open { display: inline-block; margin-top: .75rem; padding: .45rem .9rem; border-radius: 4px;
-           background: #4fc3f7; color: #121212; text-decoration: none; font-weight: 600; }
+  /* The primary button: solid dashboard blue, as everywhere in hms-cpap. */
+  a.open { display: inline-block; margin-top: .75rem; padding: .6rem 1.25rem; border-radius: 6px;
+           border: 1px solid #1976d2; background: #1976d2; color: #fff; text-decoration: none;
+           font-weight: 600; transition: all .2s; }
+  a.open:hover { background: #1565c0; border-color: #1565c0; }
   [hidden] { display: none !important; }
 </style>
 </head>
