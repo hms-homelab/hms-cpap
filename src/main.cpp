@@ -1843,6 +1843,9 @@ int main(int argc, char** argv) {
                             v["source_id"]   = sender;
                             v["bridge"]      = sender;
                             v["file"]        = e.file;
+                            // SDD-058 D3: said only for an event found in the
+                            // flow (never while D6's gate is closed).
+                            if (e.computed) v["computed"] = true;
                             if (live_state) live_state->event(v, e.at);
                             std::cout << "[sleepbridge] " << sender << " event " << e.type << " ("
                                       << e.description << ") at " << at << std::endl;

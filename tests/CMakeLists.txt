@@ -71,6 +71,7 @@ set(TEST_SOURCES
     database/test_CpapDashSentBackends.cpp
     database/test_SessionFilesBackends.cpp
     database/test_SessionEndBackends.cpp
+    database/test_ComputedEventsBackends.cpp
     database/test_UnmeasuredMinuteBackends.cpp
     database/test_DailyHoursBackends.cpp
     database/test_NightAggregationBackends.cpp
@@ -169,6 +170,7 @@ set(TEST_SOURCES
     services/test_PrismaIngestion.cpp
     services/test_SefamIngestion.cpp
     services/test_BmcIngestion.cpp
+    services/test_LunaComputedEvents.cpp
     services/test_PhilipsCardIngestion.cpp
     services/test_CardUpload.cpp
     services/test_CpapCard.cpp
@@ -386,6 +388,8 @@ if(BUILD_WITH_WEB AND NOT WIN32)
         ${CMAKE_SOURCE_DIR}/src/services/Ds2CardTree.cpp
         # The mule's LivePublisher keeps the one live mask every source shares.
         ${CMAKE_SOURCE_DIR}/src/mqtt/LiveState.cpp
+        # SDD-058 D1: the live Luna night reads its card as the burst does.
+        ${CMAKE_SOURCE_DIR}/src/services/BmcIngestion.cpp
         ${STR_LAYOUTS_SOURCE}
     )
     # CURL::libcurl: the Mule & Miner's firmware updater (src/mule/MuleFirmware.cpp)

@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **A Luna night streamed by a Sleep Bridge is live on MQTT and in the log,
+  as a ResMed's is (SDD-058 D1).** The Luna's data file growing on the rebuilt
+  card is the mask on, and the same quiet rule takes it off; the mask change
+  names the session by its start (`YYYYMMDD_HHMMSS`) and says when it began
+  and when its last second was. When the Luna writes its `.evt` (at the
+  stop), its new obstructive and clear airway apneas go out as live events.
+- **Apneas computed from a Luna's flow are stored apart from the machine's,
+  behind a gate that is closed (SDD-058 D3 to D6).** A new table,
+  `cpap_computed_events`, and a new column, `cpap_session_metrics.index_events`
+  (`machine` by default), on SQLite, MySQL and PostgreSQL. With the gate open,
+  the machine's `.evt` wins its night once it is there and the session has
+  stopped; before that the computed apneas are the night's index (apnea-only,
+  so ungraded), never added to the machine's. Hypopneas pair the flow with the
+  O2 Ring's 3% desaturations, the ring's clock put on the machine's. The gate
+  stays closed until the computed index agrees with a reference on real
+  nights: nothing is computed, stored or shown in this release, and no screen
+  reads either.
 - **Each file sent to CpapDash says its source, and oximetry goes too
   (SDD-079, platform SDD-061).** Every `file_ready` now carries `source`:
   `card` for the machine's own card (ez Share, a local folder, a ZIP, a Sleep
@@ -105,6 +122,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every machine; it now grades the AHI only where the data gives one.
 
 ### Fixed
+- **A Luna night takes the events the machine writes at the stop (SDD-058
+  D2).** The Luna writes its `.evt` when therapy stops, after the last second
+  the session grew by, and the night was saved again only when it grew, so the
+  newest night's apneas waited for the next restart. A change in the machine's
+  events now saves the night again, without reopening it as live. A card the
+  machine has not stopped on yet (no `.evt` beside its `.000`) is read from
+  its data files, with no events until the `.evt` arrives.
 - **An SD card import no longer reopens finished nights, and the card's
   files always replace ones built from Bluetooth** (#85, SDD-077). The SD/ZIP
   import and the collector recorded file sizes differently, so every imported

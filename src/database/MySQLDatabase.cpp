@@ -481,6 +481,7 @@ void MySQLDatabase::createSchema() {
             total_events           INT DEFAULT 0,
             ahi                    DOUBLE DEFAULT 0,
             index_kind             VARCHAR(16) DEFAULT 'ahi',   -- SDD-024
+            index_events           VARCHAR(16) DEFAULT 'machine',   -- SDD-058 D4
             obstructive_apneas     INT DEFAULT 0,
             central_apneas         INT DEFAULT 0,
             hypopneas              INT DEFAULT 0,
@@ -538,6 +539,20 @@ void MySQLDatabase::createSchema() {
             duration_seconds  DOUBLE DEFAULT 0,
             details           TEXT,
             UNIQUE KEY uq_session_event_ts (session_id, event_timestamp),
+            FOREIGN KEY (session_id) REFERENCES cpap_sessions(id) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    )");
+
+    // SDD-058 D4: the events computed from the flow, apart from the machine's.
+    exec(R"(
+        CREATE TABLE IF NOT EXISTS cpap_computed_events (
+            id                INT AUTO_INCREMENT PRIMARY KEY,
+            session_id        INT NOT NULL,
+            event_type        VARCHAR(64),
+            event_timestamp   DATETIME NOT NULL,
+            duration_seconds  DOUBLE DEFAULT 0,
+            details           TEXT,
+            KEY idx_computed_events_session (session_id),
             FOREIGN KEY (session_id) REFERENCES cpap_sessions(id) ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     )");
@@ -1042,6 +1057,8 @@ void MySQLDatabase::migrateSchema() {
         // only? DEFAULT 'ahi' so existing rows keep reading as ResMed.
         {"cpap_session_metrics", "index_kind",             "VARCHAR(16) DEFAULT 'ahi'"},
         {"cpap_daily_summary",   "index_kind",             "VARCHAR(16) DEFAULT 'ahi'"},
+        // SDD-058 D4: which set of events the index was counted from.
+        {"cpap_session_metrics", "index_events",           "VARCHAR(16) DEFAULT 'machine'"},
         {"cpap_session_metrics", "avg_mask_pressure",      "DOUBLE"},
         {"cpap_session_metrics", "avg_epr_pressure",       "DOUBLE"},
         {"cpap_session_metrics", "avg_snore",              "DOUBLE"},
@@ -2321,7 +2338,7 @@ IDatabase::SessionKeyReport MySQLDatabase::inspectSessionKey() {
 static const char* const kSessionChildTables[] = {
     "cpap_session_files",  "cpap_session_metrics",   "cpap_breathing_summary",
     "cpap_breaths",        "cpap_events",            "cpap_vitals",
-    "cpap_calculated_metrics", "cpap_sleep_stages",
+    "cpap_calculated_metrics", "cpap_sleep_stages",   "cpap_computed_events",
 };
 
 IDatabase::SessionKeyRepair MySQLDatabase::repairSessionKey() {

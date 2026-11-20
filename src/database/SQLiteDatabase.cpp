@@ -364,6 +364,22 @@ void SQLiteDatabase::createSchema() {
         )
     )");
 
+    // SDD-058 D4: the events computed from the flow, apart from the machine's,
+    // and which of the two sets a session's index was counted from.
+    exec(R"(
+        CREATE TABLE IF NOT EXISTS cpap_computed_events (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id        INTEGER NOT NULL,
+            event_type        TEXT,
+            event_timestamp   TEXT NOT NULL,
+            duration_seconds  REAL DEFAULT 0,
+            details           TEXT,
+            FOREIGN KEY (session_id) REFERENCES cpap_sessions(id) ON DELETE CASCADE
+        )
+    )");
+    sqlite3_exec(db_, "ALTER TABLE cpap_session_metrics ADD COLUMN index_events TEXT DEFAULT 'machine'",
+                 nullptr, nullptr, nullptr);
+
     // SDD-047 D2: the unclassified apnea (ResMed's bare "Apnea") counts toward
     // the AHI and was never stored, so a night's index could not be built from
     // its typed counts. Added without a default: NULL is "not counted yet",
@@ -1849,7 +1865,7 @@ IDatabase::SessionKeyReport SQLiteDatabase::inspectSessionKey() {
 static const char* const kSessionChildTables[] = {
     "cpap_session_files",  "cpap_session_metrics",   "cpap_breathing_summary",
     "cpap_breaths",        "cpap_events",            "cpap_vitals",
-    "cpap_calculated_metrics", "cpap_sleep_stages",
+    "cpap_calculated_metrics", "cpap_sleep_stages",   "cpap_computed_events",
 };
 
 IDatabase::SessionKeyRepair SQLiteDatabase::repairSessionKey() {
