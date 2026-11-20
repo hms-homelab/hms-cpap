@@ -506,6 +506,42 @@
         "hours": "{{n}} h ago",
         "days": "{{n}} d ago"
       }
+    },
+    "clock": {
+      "machineLabel": "Machine clock",
+      "ringLabel": "Ring clock",
+      "choiceLabel": "Which clock",
+      "host": "Same as this computer ({{zone}}, UTC{{offset}} now)",
+      "hostNoZone": "Same as this computer (UTC{{offset}} now)",
+      "fixed": "Fixed offset",
+      "zone": "Time zone",
+      "offsetLabel": "Offset",
+      "zoneSearch": "Search time zones",
+      "zonesLoading": "Loading time zones...",
+      "zoneNone": "No time zone matches.",
+      "zonePick": "Pick a time zone from the list.",
+      "inUse": "In use: UTC{{offset}} now",
+      "help": "The time your CPAP's own screen shows. Change it only if it is not this computer's time.",
+      "ringHelp": "The time your O2 ring's recordings use. Change it only if it is not this computer's time.",
+      "save": "Save",
+      "saving": "Saving...",
+      "saved": "Saved. Nights read from now on use this clock.",
+      "failed": "Not saved: {{error}}",
+      "learned": "Your machine's files say UTC{{offset}} (learned {{date}})",
+      "learnedNoDate": "Your machine's files say UTC{{offset}}",
+      "useThis": "Use this",
+      "warn": "Your machine's files and the clock in use differ by {{diff}}.",
+      "diffMinutes": "{{m}} min",
+      "diffHours": "{{h}} h",
+      "diffHoursMinutes": "{{h}} h {{m}} min",
+      "reread": "Re-read my nights",
+      "rereadHint": "Your stored nights are backed up first. Then every archived night is read again with this clock.",
+      "rereadAsking": "Backing up your nights...",
+      "rereadStarted": "Backed up {{n}} tables. Reading your nights again.",
+      "rereadProgress": "Reading your nights again: {{done}} of {{total}} folders.",
+      "rereadDone": "Done. {{n}} sessions read again with this clock.",
+      "rereadDoneErrors": "Done. {{n}} sessions read again, {{errors}} could not be read.",
+      "rereadFailed": "Not read again: {{error}}"
     }
   }
 }

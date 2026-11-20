@@ -506,6 +506,42 @@
         "hours": "il y a {{n}} h",
         "days": "il y a {{n}} j"
       }
+    },
+    "clock": {
+      "machineLabel": "Horloge de l'appareil",
+      "ringLabel": "Horloge de la bague",
+      "choiceLabel": "Quelle horloge",
+      "host": "Comme cet ordinateur ({{zone}}, UTC{{offset}} maintenant)",
+      "hostNoZone": "Comme cet ordinateur (UTC{{offset}} maintenant)",
+      "fixed": "Décalage fixe",
+      "zone": "Fuseau horaire",
+      "offsetLabel": "Décalage",
+      "zoneSearch": "Chercher un fuseau horaire",
+      "zonesLoading": "Chargement des fuseaux horaires...",
+      "zoneNone": "Aucun fuseau horaire ne correspond.",
+      "zonePick": "Choisissez un fuseau horaire dans la liste.",
+      "inUse": "En service : UTC{{offset}} maintenant",
+      "help": "L'heure affichée sur l'écran de votre CPAP. Ne la changez que si ce n'est pas l'heure de cet ordinateur.",
+      "ringHelp": "L'heure des enregistrements de votre bague O2. Ne la changez que si ce n'est pas l'heure de cet ordinateur.",
+      "save": "Enregistrer",
+      "saving": "Enregistrement...",
+      "saved": "Enregistré. Les nuits lues à partir de maintenant utilisent cette horloge.",
+      "failed": "Non enregistré : {{error}}",
+      "learned": "Les fichiers de votre appareil indiquent UTC{{offset}} (appris le {{date}})",
+      "learnedNoDate": "Les fichiers de votre appareil indiquent UTC{{offset}}",
+      "useThis": "Utiliser",
+      "warn": "Les fichiers de votre appareil et l'horloge utilisée diffèrent de {{diff}}.",
+      "diffMinutes": "{{m}} min",
+      "diffHours": "{{h}} h",
+      "diffHoursMinutes": "{{h}} h {{m}} min",
+      "reread": "Relire mes nuits",
+      "rereadHint": "Vos nuits enregistrées sont d'abord sauvegardées. Puis chaque nuit archivée est relue avec cette horloge.",
+      "rereadAsking": "Sauvegarde de vos nuits...",
+      "rereadStarted": "{{n}} tables sauvegardées. Relecture de vos nuits.",
+      "rereadProgress": "Relecture de vos nuits : {{done}} dossiers sur {{total}}.",
+      "rereadDone": "Terminé. {{n}} séances relues avec cette horloge.",
+      "rereadDoneErrors": "Terminé. {{n}} séances relues, {{errors}} n'ont pas pu être lues.",
+      "rereadFailed": "Pas relu : {{error}}"
     }
   }
 }

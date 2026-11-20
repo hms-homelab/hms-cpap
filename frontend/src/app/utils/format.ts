@@ -105,6 +105,28 @@ function parseNight(dateStr: string): Date | null {
 }
 
 /**
+ * SDD-074 decision 2: a stored wall-clock time ("2026-03-31 23:30:00", the
+ * machine's own clock) moved by `shiftS` seconds, as "HH:MM" (or "HH:MM:SS").
+ *
+ * `shiftS` is the row's `clock_shift_s`: what to ADD to show the time on this
+ * computer's clock. The server sends 0 when times are shown on the machine's
+ * clock, so a caller passes it through without asking which display is on.
+ *
+ * The text is read as a label, in a fixed UTC frame, so neither the browser's
+ * zone nor its DST can move it a second time. A shift of 0 gives back exactly
+ * the stored hour and minute. Unreadable text gives ''.
+ */
+export function shiftedClock(stored: string | null | undefined, shiftS: number | null | undefined, seconds = false): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/.exec(stored ?? '');
+  if (!m) return '';
+  const ms = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] ?? 0)) + (Number(shiftS) || 0) * 1000;
+  const d = new Date(ms);
+  const two = (n: number) => n.toString().padStart(2, '0');
+  const hm = `${two(d.getUTCHours())}:${two(d.getUTCMinutes())}`;
+  return seconds ? `${hm}:${two(d.getUTCSeconds())}` : hm;
+}
+
+/**
  * Whole days between a night and today. Null when the date is unusable.
  *
  * The dashboard headline is whatever the NEWEST row happens to be — the query

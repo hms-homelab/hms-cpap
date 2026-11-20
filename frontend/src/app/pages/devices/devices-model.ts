@@ -17,6 +17,24 @@ export interface DeviceEntry {
   version: string;
   forgettable: boolean;
   detail: any;
+  /** SDD-074: the "Machine clock" (the "Ring clock" on the o2ring card). */
+  clock?: ClockView;
+}
+
+/** SDD-074: a card's clock, as GET /api/devices carries it. */
+export interface ClockView {
+  device_id: string;
+  /** "" = same as this computer, "+10:00" a fixed offset, or a zone name. */
+  setting: string;
+  kind: 'host' | 'fixed' | 'zone';
+  offset_now: number;
+  offset_text: string;
+  host_zone: string;
+  host_offset_now: number;
+  host_offset_text: string;
+  learned: { offset: number; text: string; at: number } | null;
+  difference_s: number;
+  warn: boolean;
 }
 
 export interface DevicesAnswer {
@@ -380,6 +398,137 @@ export function as11ResetRefusalKey(reason: string | null | undefined): string {
     case 'pairing_open':    return 'devices.as11.resetNotPairing';
     default:                return 'devices.as11.resetNotGeneric';
   }
+}
+
+// ── SDD-074: each machine is read on its own clock ────────────────────────
+
+export type ClockChoice = 'host' | 'fixed' | 'zone';
+
+/** Seconds east of UTC as the setting writes it: 36000 -> "+10:00", -16200 -> "-04:30". */
+export function offsetSetting(seconds: number): string {
+  const s = Math.round(Number(seconds) || 0);
+  const a = Math.abs(s);
+  const two = (n: number) => n.toString().padStart(2, '0');
+  return `${s < 0 ? '-' : '+'}${two(Math.floor(a / 3600))}:${two(Math.floor((a % 3600) / 60))}`;
+}
+
+/** Every fixed offset offered, UTC-12:00 to UTC+14:00 in 15 minute steps, as setting text. */
+export function fixedOffsets(): string[] {
+  const out: string[] = [];
+  for (let s = -12 * 3600; s <= 14 * 3600; s += 900) out.push(offsetSetting(s));
+  return out;
+}
+
+/** Which of the three a setting is: "" this computer, "+10:00" a fixed offset, else a zone name. */
+export function clockChoiceOf(setting: string | null | undefined): ClockChoice {
+  const s = (setting ?? '').trim();
+  if (!s) return 'host';
+  return /^[+-]\d{2}:\d{2}$/.test(s) ? 'fixed' : 'zone';
+}
+
+/** What the form edits, per card, until it is saved. */
+export interface ClockDraft {
+  choice: ClockChoice;
+  fixed: string;    // "+10:00"
+  zone: string;     // "Australia/Sydney"
+  query: string;    // the zone search text
+  open: boolean;    // the zone list is showing
+}
+
+/** The form as the saved clock fills it. A fixed offset starts on the learned one, or UTC+00:00. */
+export function clockDraftOf(clock: ClockView): ClockDraft {
+  const choice = clockChoiceOf(clock.setting);
+  const fallback = clock.learned ? offsetSetting(clock.learned.offset) : offsetSetting(clock.host_offset_now);
+  return {
+    choice,
+    fixed: choice === 'fixed' ? clock.setting : fallback,
+    zone: choice === 'zone' ? clock.setting : '',
+    query: '',
+    open: false,
+  };
+}
+
+/** The setting the form sends, or null while it is not complete (a time zone not picked yet). */
+export function clockSettingOf(draft: ClockDraft): string | null {
+  if (draft.choice === 'host') return '';
+  if (draft.choice === 'fixed') return draft.fixed || null;
+  return draft.zone.trim() || null;
+}
+
+/** Save is offered only for a complete form that differs from what is saved. */
+export function clockChanged(draft: ClockDraft, clock: ClockView): boolean {
+  const s = clockSettingOf(draft);
+  return s !== null && s !== (clock.setting ?? '');
+}
+
+/**
+ * The zone names a search shows: every word typed must appear (no case, an
+ * underscore reads as a space), names starting with the text first. Nothing
+ * typed shows the whole list.
+ */
+export function filterZones(zones: string[], query: string, limit = 200): string[] {
+  const words = query.toLowerCase().replace(/_/g, ' ').split(/[\s/]+/).filter(Boolean);
+  if (!words.length) return zones.slice(0, limit);
+  const norm = (z: string) => z.toLowerCase().replace(/_/g, ' ');
+  const hits = zones.filter((z) => words.every((w) => norm(z).includes(w)));
+  const first = words[0];
+  const starts = (z: string) => norm(z).split('/').some((part) => part.startsWith(first));
+  return [...hits.filter(starts), ...hits.filter((z) => !starts(z))].slice(0, limit);
+}
+
+/**
+ * How far apart the machine's files and the clock in use are, as the i18n key
+ * and its numbers: minutes under an hour, else hours (and minutes when any).
+ */
+export function clockDifference(seconds: number): { key: string; params: Record<string, unknown> } {
+  const min = Math.round(Math.abs(Number(seconds) || 0) / 60);
+  if (min < 60) return { key: 'devices.clock.diffMinutes', params: { m: min } };
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return m ? { key: 'devices.clock.diffHoursMinutes', params: { h, m } } : { key: 'devices.clock.diffHours', params: { h } };
+}
+
+/**
+ * What the card says about the clock learned from the machine's files
+ * (decision 1: a suggestion only). Null when nothing was learned. `use` is
+ * the fixed offset "Use this" saves; `offer` is false once that is the
+ * setting already.
+ */
+export function learnedOffer(clock: ClockView | null | undefined): { text: string; at: number; use: string; offer: boolean } | null {
+  const l = clock?.learned;
+  if (!l) return null;
+  const use = offsetSetting(l.offset);
+  return { text: l.text || use, at: Number(l.at) || 0, use, offer: (clock?.setting ?? '') !== use };
+}
+
+/** A "Re-read my nights" in progress on one card. */
+export interface Reread {
+  backup: number;                // tables backed up before the re-read
+  before: string;                // the backfill's completed_at when it was asked
+  seenRunning: boolean;
+  status: any;                   // the latest GET /api/backfill/status
+}
+
+/**
+ * The line a re-read shows, from the backfill worker's own status: reading
+ * (with folders when it counts them) while it runs; done once it ran, or once
+ * it finished after the click (completed_at moved); before that, the backup.
+ */
+export function rereadLine(r: Reread): { key: string; params: Record<string, unknown>; done: boolean; err: boolean } {
+  const s = r.status ?? {};
+  if (s.status === 'running') {
+    return s.folders_total > 0
+      ? { key: 'devices.clock.rereadProgress', params: { done: s.folders_done ?? 0, total: s.folders_total }, done: false, err: false }
+      : { key: 'devices.clock.rereadStarted', params: { n: r.backup }, done: false, err: false };
+  }
+  const finished = r.seenRunning || (!!s.completed_at && s.completed_at !== r.before);
+  if (!finished) return { key: 'devices.clock.rereadStarted', params: { n: r.backup }, done: false, err: false };
+  if (s.status === 'error')
+    return { key: 'devices.clock.rereadFailed', params: { error: s.error_message ?? '' }, done: true, err: true };
+  const params = { n: s.sessions_saved ?? 0, errors: s.errors ?? 0 };
+  return s.errors > 0
+    ? { key: 'devices.clock.rereadDoneErrors', params, done: true, err: true }
+    : { key: 'devices.clock.rereadDone', params, done: true, err: false };
 }
 
 /** The address and port this page reaches the service on, for the empty state. */

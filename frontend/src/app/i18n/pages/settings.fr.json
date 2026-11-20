@@ -170,6 +170,13 @@
       "heading": "Rythme de collecte",
       "burstInterval": "Intervalle de rafale (secondes)"
     },
+    "display": {
+      "heading": "Affichage",
+      "showTimesOn": "Afficher les heures selon",
+      "machine": "l'horloge de l'appareil",
+      "host": "l'horloge de cet ordinateur",
+      "hint": "L'horloge de l'appareil correspond à son propre écran et à OSCAR. L'horloge de chaque appareil se règle sur sa carte, page Appareils."
+    },
     "backfill": {
       "heading": "Importer l'historique",
       "desc": "Importez dans la base de données les sessions de traitement de votre répertoire DATALOG. Les sessions déjà présentes dans la plage de dates seront réanalysées.",

@@ -170,6 +170,13 @@
       "heading": "Collection Timing",
       "burstInterval": "Burst Interval (seconds)"
     },
+    "display": {
+      "heading": "Display",
+      "showTimesOn": "Show times on",
+      "machine": "the machine's clock",
+      "host": "this computer's clock",
+      "hint": "The machine's clock matches its own screen and OSCAR. Each machine's clock is set on its card on the Devices page."
+    },
     "backfill": {
       "heading": "Import History",
       "desc": "Import therapy sessions from your DATALOG directory into the database. Existing sessions in the date range will be re-parsed.",

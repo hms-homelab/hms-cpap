@@ -8,7 +8,10 @@ import {
   CONFIG_KEYS, Confirmations, buildSet, commandState, configRows, costKey, errorText, groupKeys, latestConfigValues,
   recordingWarning, releaseLine, riskyGroups, setTouchesNetwork, switchView,
   groupCode, ds2PairView, ds2PairRunning, ds2RefusalKey, ds2Reads, ds2NextRead, isIsoDay, as11ResetRefusalKey,
+  offsetSetting, fixedOffsets, clockChoiceOf, clockDraftOf, clockSettingOf, clockChanged, filterZones, clockDifference,
+  learnedOffer, rereadLine,
 } from './devices-model.ts';
+import type { ClockView, Reread } from './devices-model.ts';
 
 // ── the in-page confirm and the recording warning ──
 
@@ -262,5 +265,127 @@ test('every Reset Bluetooth line exists in every language (#67)', async () => {
       assert.ok(!v.includes(String.fromCharCode(0x2014)), `${lang} devices.as11.${k} has an em-dash`);
     }
     assert.equal(j.devices.as11.resetFailed, undefined, `${lang}: the raw-error line is gone`);
+  }
+});
+
+// ── SDD-074: the Machine clock and the Ring clock ──
+
+const clock = (over: Partial<ClockView> = {}): ClockView => ({
+  device_id: '23243570851', setting: '', kind: 'host', offset_now: -18000, offset_text: '-05:00',
+  host_zone: 'America/New_York', host_offset_now: -18000, host_offset_text: '-05:00',
+  learned: null, difference_s: 0, warn: false, ...over,
+});
+
+test('offsets are written the setting way, and the list runs UTC-12:00 to UTC+14:00 in 15 min steps', () => {
+  assert.equal(offsetSetting(36000), '+10:00');
+  assert.equal(offsetSetting(-16200), '-04:30');
+  assert.equal(offsetSetting(0), '+00:00');
+  assert.equal(offsetSetting(20700), '+05:45');
+  const all = fixedOffsets();
+  assert.equal(all[0], '-12:00');
+  assert.equal(all[all.length - 1], '+14:00');
+  assert.equal(all.length, 26 * 4 + 1);
+  assert.ok(all.includes('+05:45') && all.includes('-09:30') && all.includes('+00:00'));
+});
+
+test('a setting is one of three: this computer, a fixed offset, a time zone', () => {
+  assert.equal(clockChoiceOf(''), 'host');
+  assert.equal(clockChoiceOf(null), 'host');
+  assert.equal(clockChoiceOf('+10:00'), 'fixed');
+  assert.equal(clockChoiceOf('-03:30'), 'fixed');
+  assert.equal(clockChoiceOf('Australia/Sydney'), 'zone');
+  assert.equal(clockChoiceOf('UTC'), 'zone');
+});
+
+test('the form starts on what is saved; a fixed offset starts on the learned one', () => {
+  assert.deepEqual(clockDraftOf(clock({ setting: '+10:00', kind: 'fixed' })),
+                   { choice: 'fixed', fixed: '+10:00', zone: '', query: '', open: false });
+  assert.equal(clockDraftOf(clock({ setting: 'Australia/Sydney', kind: 'zone' })).zone, 'Australia/Sydney');
+  const learned = clockDraftOf(clock({ learned: { offset: 36000, text: '+10:00', at: 1 } }));
+  assert.equal(learned.choice, 'host');
+  assert.equal(learned.fixed, '+10:00');
+  assert.equal(clockDraftOf(clock()).fixed, '-05:00', 'nothing learned: this computer\'s offset');
+});
+
+test('Save is offered for a complete change only', () => {
+  const c = clock();
+  const d = clockDraftOf(c);
+  assert.equal(clockChanged(d, c), false, 'unchanged');
+  assert.equal(clockChanged({ ...d, choice: 'fixed', fixed: '+10:00' }, c), true);
+  assert.equal(clockSettingOf({ ...d, choice: 'zone', zone: '' }), null, 'no zone picked yet');
+  assert.equal(clockChanged({ ...d, choice: 'zone', zone: '' }, c), false);
+  assert.equal(clockSettingOf({ ...d, choice: 'zone', zone: 'Europe/Budapest' }), 'Europe/Budapest');
+  const fixed = clock({ setting: '+10:00', kind: 'fixed' });
+  assert.equal(clockChanged({ ...clockDraftOf(fixed), choice: 'host' }, fixed), true, 'back to this computer');
+  assert.equal(clockSettingOf({ ...d, choice: 'host' }), '');
+});
+
+test('the zone search matches every word, any case, an underscore as a space, starts first', () => {
+  const zones = ['America/New_York', 'America/Los_Angeles', 'Australia/Sydney', 'Europe/London', 'Pacific/Auckland', 'Europe/Lisbon'];
+  assert.deepEqual(filterZones(zones, ''), zones);
+  assert.deepEqual(filterZones(zones, 'syd'), ['Australia/Sydney']);
+  assert.deepEqual(filterZones(zones, 'new york'), ['America/New_York']);
+  assert.deepEqual(filterZones(zones, 'NEW_YORK'), ['America/New_York']);
+  assert.deepEqual(filterZones(zones, 'europe l'), ['Europe/London', 'Europe/Lisbon']);
+  assert.deepEqual(filterZones(zones, 'land'), ['Pacific/Auckland']);
+  assert.deepEqual(filterZones(zones, 'lo'), ['America/Los_Angeles', 'Europe/London']);
+  assert.deepEqual(filterZones(zones, 'zzz'), []);
+  assert.equal(filterZones(zones, '', 2).length, 2);
+});
+
+test('the difference is said in minutes under an hour, else in hours', () => {
+  assert.deepEqual(clockDifference(900), { key: 'devices.clock.diffMinutes', params: { m: 15 } });
+  assert.deepEqual(clockDifference(-2700), { key: 'devices.clock.diffMinutes', params: { m: 45 } });
+  assert.deepEqual(clockDifference(3600), { key: 'devices.clock.diffHours', params: { h: 1 } });
+  assert.deepEqual(clockDifference(54000), { key: 'devices.clock.diffHours', params: { h: 15 } });
+  assert.deepEqual(clockDifference(5400), { key: 'devices.clock.diffHoursMinutes', params: { h: 1, m: 30 } });
+});
+
+test('the learned clock is a suggestion: Use this saves it as a fixed offset, gone once it is the setting', () => {
+  assert.equal(learnedOffer(clock()), null);
+  assert.equal(learnedOffer(undefined), null);
+  const l = learnedOffer(clock({ learned: { offset: 36000, text: '+10:00', at: 1763500000 } }));
+  assert.deepEqual(l, { text: '+10:00', at: 1763500000, use: '+10:00', offer: true });
+  assert.equal(learnedOffer(clock({ setting: '+10:00', kind: 'fixed', learned: { offset: 36000, text: '+10:00', at: 0 } }))?.offer, false);
+  assert.equal(learnedOffer(clock({ setting: 'Australia/Brisbane', kind: 'zone', learned: { offset: 36000, text: '+10:00', at: 0 } }))?.offer,
+               true, 'a zone is not the fixed offset, so it is still offered');
+});
+
+test('a re-read says the backup, then the worker\'s progress, then done, from its own status', () => {
+  const r: Reread = { backup: 9, before: '2026-11-18 10:00:00', seenRunning: false, status: null };
+  assert.deepEqual(rereadLine(r), { key: 'devices.clock.rereadStarted', params: { n: 9 }, done: false, err: false });
+  r.status = { status: 'complete', completed_at: '2026-11-18 10:00:00' };
+  assert.equal(rereadLine(r).done, false, 'the old run\'s end is not this one');
+  r.status = { status: 'running', folders_total: 0 };
+  assert.equal(rereadLine(r).key, 'devices.clock.rereadStarted');
+  r.status = { status: 'running', folders_total: 120, folders_done: 30 };
+  assert.deepEqual(rereadLine(r), { key: 'devices.clock.rereadProgress', params: { done: 30, total: 120 }, done: false, err: false });
+  r.seenRunning = true;
+  r.status = { status: 'complete', sessions_saved: 118, errors: 0, completed_at: '2026-11-19 09:00:00' };
+  assert.deepEqual(rereadLine(r), { key: 'devices.clock.rereadDone', params: { n: 118, errors: 0 }, done: true, err: false });
+  r.status = { status: 'complete', sessions_saved: 110, errors: 2 };
+  assert.equal(rereadLine(r).key, 'devices.clock.rereadDoneErrors');
+  r.status = { status: 'error', error_message: 'disk full' };
+  assert.deepEqual(rereadLine(r), { key: 'devices.clock.rereadFailed', params: { error: 'disk full' }, done: true, err: true });
+  // Finished between two reads: never seen running, but completed_at moved.
+  const quick: Reread = { backup: 9, before: '', seenRunning: false, status: { status: 'complete', completed_at: '2026-11-19 09:00:00', sessions_saved: 3 } };
+  assert.equal(rereadLine(quick).key, 'devices.clock.rereadDone');
+});
+
+test('every clock line exists in every language, with no em-dash', async () => {
+  const { readFileSync } = await import('node:fs');
+  const en = JSON.parse(readFileSync(new URL('../../i18n/pages/devices.en.json', import.meta.url), 'utf8')).devices.clock;
+  const keys = Object.keys(en);
+  for (const k of ['machineLabel', 'ringLabel', 'host', 'hostNoZone', 'fixed', 'zone', 'help', 'ringHelp', 'learned', 'useThis',
+                   'warn', 'diffMinutes', 'diffHours', 'diffHoursMinutes', 'reread', 'rereadHint', 'rereadStarted',
+                   'rereadProgress', 'rereadDone', 'rereadDoneErrors', 'rereadFailed', 'failed', 'saved'])
+    assert.ok(keys.includes(k), `en devices.clock.${k}`);
+  for (const lang of ['en', 'es', 'fr', 'hu', 'pt']) {
+    const j = JSON.parse(readFileSync(new URL(`../../i18n/pages/devices.${lang}.json`, import.meta.url), 'utf8')).devices.clock;
+    for (const k of keys) {
+      const v = j[k];
+      assert.ok(typeof v === 'string' && v.length > 0, `${lang} devices.clock.${k}`);
+      assert.ok(!v.includes(String.fromCharCode(0x2014)), `${lang} devices.clock.${k} has an em-dash`);
+    }
   }
 });

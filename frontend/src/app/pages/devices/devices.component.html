@@ -250,6 +250,69 @@
             </div>
           </ng-container>
         </ng-container>
+
+        <!-- ── SDD-074: the clock this card's nights are read on (the ring's on its card) ── -->
+        <div class="clock-row wide" *ngIf="d.clock as c">
+          <dt>{{ (d.kind === 'o2ring' ? 'devices.clock.ringLabel' : 'devices.clock.machineLabel') | translate }}</dt>
+          <dd *ngIf="clockDraft(d) as cd">
+            <div class="clock-pick">
+              <select [ngModel]="cd.choice" (ngModelChange)="onClockChoice(d, $event)" [ngModelOptions]="{standalone: true}"
+                      [attr.aria-label]="(d.kind === 'o2ring' ? 'devices.clock.ringLabel' : 'devices.clock.machineLabel') | translate">
+                <option value="host">{{ hostLine(c) }}</option>
+                <option value="fixed">{{ 'devices.clock.fixed' | translate }}</option>
+                <option value="zone">{{ 'devices.clock.zone' | translate }}</option>
+              </select>
+              <select *ngIf="cd.choice === 'fixed'" class="offset" [ngModel]="cd.fixed" (ngModelChange)="onClockFixed(d, $event)"
+                      [ngModelOptions]="{standalone: true}" [attr.aria-label]="'devices.clock.offsetLabel' | translate">
+                <option *ngFor="let o of fixedOffsets" [value]="o">UTC{{ o }}</option>
+              </select>
+            </div>
+            <!-- Time zone: a search over the names this computer knows; the names are not translated. -->
+            <div class="zone-search" *ngIf="cd.choice === 'zone'">
+              <input type="text" autocomplete="off" spellcheck="false" role="combobox" [attr.aria-expanded]="cd.open"
+                     [ngModel]="cd.query || cd.zone" (ngModelChange)="onZoneQuery(d, $event)" [ngModelOptions]="{standalone: true}"
+                     (focus)="openZones(d)" (keydown.escape)="cd.open = false"
+                     [placeholder]="'devices.clock.zoneSearch' | translate" [attr.aria-label]="'devices.clock.zoneSearch' | translate" />
+              <ul class="zone-list" *ngIf="cd.open" role="listbox">
+                <li class="quiet" *ngIf="!zones">{{ 'devices.clock.zonesLoading' | translate }}</li>
+                <li class="quiet" *ngIf="zones && !zoneMatches(cd).length">{{ 'devices.clock.zoneNone' | translate }}</li>
+                <li *ngFor="let z of zoneMatches(cd)">
+                  <button type="button" role="option" [attr.aria-selected]="z === cd.zone" [class.on]="z === cd.zone"
+                          (click)="pickZone(d, z)">{{ z }}</button>
+                </li>
+              </ul>
+              <div class="hint block" *ngIf="!cd.zone && !cd.open">{{ 'devices.clock.zonePick' | translate }}</div>
+            </div>
+            <div class="row" *ngIf="clockChanged(cd, c)">
+              <button type="button" class="btn primary" (click)="saveClock(d)" [disabled]="clockBusy[d.key]">
+                {{ (clockBusy[d.key] ? 'devices.clock.saving' : 'devices.clock.save') | translate }}</button>
+            </div>
+            <div class="hint block">{{ (d.kind === 'o2ring' ? 'devices.clock.ringHelp' : 'devices.clock.help') | translate }}</div>
+            <div class="quiet" *ngIf="c.kind !== 'host'">{{ 'devices.clock.inUse' | translate:{ offset: c.offset_text } }}</div>
+            <div class="note-line" *ngIf="clockNotes[d.key] as n" [class.err]="n.err">{{ n.text }}</div>
+
+            <!-- Decision 1: what the machine's files say, as a suggestion. -->
+            <div class="clock-learned" *ngIf="learnedOffer(c) as l">
+              <span>{{ l.at ? ('devices.clock.learned' | translate:{ offset: l.text, date: (ms(l.at) | date:'mediumDate') })
+                             : ('devices.clock.learnedNoDate' | translate:{ offset: l.text }) }}</span>
+              <button type="button" class="btn" *ngIf="l.offer" (click)="saveClock(d, l.use)" [disabled]="clockBusy[d.key]">
+                {{ 'devices.clock.useThis' | translate }}</button>
+            </div>
+            <div class="clock-warn" *ngIf="c.warn" role="status">
+              <i class="fa-solid fa-triangle-exclamation" aria-hidden="true"></i>
+              {{ 'devices.clock.warn' | translate:{ diff: diffText(c) } }}
+            </div>
+
+            <!-- Decision 3: read this machine's archived nights again with its clock. -->
+            <div class="clock-reread" *ngIf="d.kind !== 'o2ring'">
+              <button type="button" class="btn" (click)="reread(d)" [disabled]="clockBusy[d.key] || rereadRunning(d)">
+                {{ 'devices.clock.reread' | translate }}</button>
+              <div class="hint block">{{ 'devices.clock.rereadHint' | translate }}</div>
+              <div class="note-line" *ngIf="rereadNotes[d.key] as n" [class.err]="n.err">{{ n.text }}</div>
+              <div class="note-line" *ngIf="rereadView(d) as v" [class.err]="v.err" [class.quiet]="!v.done">{{ v.key | translate:v.params }}</div>
+            </div>
+          </dd>
+        </div>
       </dl>
 
       <!-- DreamStation 2 pairing (SDD-064 D3, D4): in the page, never a dialog. -->

@@ -1,0 +1,22 @@
+/* SDD-074: the Machine clock / Ring clock row on a Devices card. Its own file
+   so devices.component.css stays inside the per-stylesheet budget. */
+.clock-row dt { margin-bottom: 0.15rem; }
+.clock-row dd { display: flex; flex-direction: column; gap: 0.4rem; align-items: stretch; }
+.clock-pick { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.clock-pick select { flex: 1 1 14rem; min-width: 0; max-width: 100%; }
+.clock-pick select.offset { flex: 0 0 auto; }
+.clock-row .row { margin: 0; }
+.zone-search { display: flex; flex-direction: column; gap: 0.25rem; }
+.zone-search input { width: 100%; box-sizing: border-box; }
+.zone-list { list-style: none; margin: 0; padding: 0.2rem; max-height: 13rem; overflow-y: auto; background: #10121c;
+  border: 1px solid #3a3d55; border-radius: 5px; }
+.zone-list li.quiet { padding: 0.3rem 0.45rem; }
+.zone-list button { display: block; width: 100%; text-align: left; background: none; border: none; border-radius: 4px;
+  padding: 0.28rem 0.45rem; color: #d6d9e6; font: inherit; font-size: 0.83rem; cursor: pointer; }
+.zone-list button:hover, .zone-list button:focus-visible { background: rgba(149, 117, 205, 0.14); color: #fff; outline: none; }
+.zone-list button.on { color: var(--primary-text); }
+.clock-learned { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.6rem; font-size: 0.83rem; color: #cfd3e2; }
+.clock-warn { font-size: 0.83rem; color: var(--amber); border: 1px solid rgba(240, 180, 90, 0.35); border-radius: 6px;
+  background: rgba(240, 180, 90, 0.06); padding: 0.4rem 0.55rem; line-height: 1.4; }
+.clock-warn i { margin-right: 0.3rem; }
+.clock-reread { display: flex; flex-direction: column; align-items: flex-start; gap: 0.3rem; margin-top: 0.2rem; }

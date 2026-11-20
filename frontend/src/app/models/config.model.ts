@@ -15,6 +15,8 @@ export interface AppConfig {
   ezshare_range: boolean;
   /** SDD-056 */
   flashair_url: string;
+  /** SDD-074 decision 2: show times on the machine's clock (default) or this computer's. */
+  display_clock?: 'machine' | 'host';
   /** SDD-041 D1: apply a newer release without asking, once idle. Off by default. */
   auto_update?: boolean;
   local_dir: string;

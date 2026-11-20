@@ -506,6 +506,42 @@
         "hours": "há {{n}} h",
         "days": "há {{n}} d"
       }
+    },
+    "clock": {
+      "machineLabel": "Relógio do aparelho",
+      "ringLabel": "Relógio do anel",
+      "choiceLabel": "Qual relógio",
+      "host": "Igual a este computador ({{zone}}, UTC{{offset}} agora)",
+      "hostNoZone": "Igual a este computador (UTC{{offset}} agora)",
+      "fixed": "Diferença fixa",
+      "zone": "Fuso horário",
+      "offsetLabel": "Diferença",
+      "zoneSearch": "Procurar fusos horários",
+      "zonesLoading": "Carregando fusos horários...",
+      "zoneNone": "Nenhum fuso horário corresponde.",
+      "zonePick": "Escolha um fuso horário da lista.",
+      "inUse": "Em uso: UTC{{offset}} agora",
+      "help": "A hora que a tela do seu CPAP mostra. Mude somente se não for a hora deste computador.",
+      "ringHelp": "A hora que as gravações do seu anel O2 usam. Mude somente se não for a hora deste computador.",
+      "save": "Salvar",
+      "saving": "Salvando...",
+      "saved": "Salvo. As noites lidas a partir de agora usam este relógio.",
+      "failed": "Não salvo: {{error}}",
+      "learned": "Os arquivos do seu aparelho dizem UTC{{offset}} (detectado em {{date}})",
+      "learnedNoDate": "Os arquivos do seu aparelho dizem UTC{{offset}}",
+      "useThis": "Usar este",
+      "warn": "Os arquivos do seu aparelho e o relógio em uso diferem em {{diff}}.",
+      "diffMinutes": "{{m}} min",
+      "diffHours": "{{h}} h",
+      "diffHoursMinutes": "{{h}} h {{m}} min",
+      "reread": "Ler minhas noites de novo",
+      "rereadHint": "Primeiro é feita uma cópia das suas noites guardadas. Depois cada noite arquivada é lida de novo com este relógio.",
+      "rereadAsking": "Copiando suas noites...",
+      "rereadStarted": "Cópia feita de {{n}} tabelas. Lendo suas noites de novo.",
+      "rereadProgress": "Lendo suas noites de novo: {{done}} de {{total}} pastas.",
+      "rereadDone": "Pronto. {{n}} sessões lidas de novo com este relógio.",
+      "rereadDoneErrors": "Pronto. {{n}} sessões lidas de novo, {{errors}} não puderam ser lidas.",
+      "rereadFailed": "Não foi lido de novo: {{error}}"
     }
   }
 }

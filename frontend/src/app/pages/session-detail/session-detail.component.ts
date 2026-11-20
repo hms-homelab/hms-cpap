@@ -10,7 +10,7 @@ import { MetricCardComponent } from '../../components/metric-card/metric-card.co
 import { SessionDetail, SessionEvent, SignalData, VitalsData, OximetryData } from '../../models/session.model';
 import { formatTimestamps, eventAnnotations, makeDataset, makeFillBand, EVENT_COLORS } from '../../utils/chart-helpers';
 import { detectDesaturations, desatAnnotations, odiPerHour, inferSampleSec } from '../../utils/signal-analysis';
-import { formatIndex } from '../../utils/format';
+import { formatIndex, shiftedClock } from '../../utils/format';
 import { isGradable, indexLabelKey } from '../../utils/index-kind';
 import { nightAhi, sessionSeconds } from './night-ahi';
 import { hasAnyValue, hasReading, sessionPressurePlan, SessionPressurePlan } from './session-pressure';
@@ -331,6 +331,13 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
   private pollTimer: any = null;
   private durationTimer: any = null;
   private sessionStart: Date | null = null;
+  /**
+   * SDD-074 decision 2: seconds added to the machine's stored times to show
+   * them on this computer's clock (the night's `clock_shift_s`; 0 on the
+   * machine's clock). Applied to the start time and to every chart of the
+   * night: the O2 ring's samples are stored on the machine's clock as well.
+   */
+  private clockShiftS = 0;
 
   // Raw data
   signalData: SignalData | null = null;
@@ -517,6 +524,9 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
       // SDD-008: the ledger's night_state is the authority when present, so
       // this banner agrees with the sessions list; the open-session test is
       // the fallback for nights the ledger never tracked.
+      this.clockShiftS = detail.length
+        ? Number(detail.reduce((a, b) => (a.session_start < b.session_start ? a : b)).clock_shift_s) || 0
+        : 0;
       const nightState = detail.find(s => s.night_state)?.night_state;
       this.isLive = nightState
         ? nightState === 'live'
@@ -526,7 +536,9 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
         const earliest = detail.reduce((a, b) =>
           a.session_start < b.session_start ? a : b);
         this.sessionStart = new Date(earliest.session_start.replace(' ', 'T'));
-        this.liveStartTime = this.sessionStart.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        this.liveStartTime = this.clockShiftS
+          ? shiftedClock(earliest.session_start, this.clockShiftS)
+          : this.sessionStart.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
         this.updateLiveDuration();
         this.durationTimer = setInterval(() => this.updateLiveDuration(), 10000);
         this.pollTimer = setInterval(() => this.refreshLiveData(), 65000);
@@ -539,15 +551,15 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
 
       if (signals?.timestamps?.length) {
         this.signalTimestamps = signals.timestamps;
-        this.signalLabels = formatTimestamps(signals.timestamps);
+        this.signalLabels = this.machineLabels(signals.timestamps);
       }
       if (vitals?.timestamps?.length) {
         this.vitalsTimestamps = vitals.timestamps;
-        this.vitalsLabels = formatTimestamps(vitals.timestamps);
+        this.vitalsLabels = this.machineLabels(vitals.timestamps);
       }
       if (oximetry?.timestamps?.length) {
         this.oximetryTimestamps = oximetry.timestamps;
-        this.oximetryLabels = formatTimestamps(oximetry.timestamps);
+        this.oximetryLabels = this.machineLabels(oximetry.timestamps);
       }
 
       // Determine available signals (skip those with no data or wrong mode)
@@ -674,15 +686,15 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
 
       if (signals?.timestamps?.length) {
         this.signalTimestamps = signals.timestamps;
-        this.signalLabels = formatTimestamps(signals.timestamps);
+        this.signalLabels = this.machineLabels(signals.timestamps);
       }
       if (vitals?.timestamps?.length) {
         this.vitalsTimestamps = vitals.timestamps;
-        this.vitalsLabels = formatTimestamps(vitals.timestamps);
+        this.vitalsLabels = this.machineLabels(vitals.timestamps);
       }
       if (oximetry?.timestamps?.length) {
         this.oximetryTimestamps = oximetry.timestamps;
-        this.oximetryLabels = formatTimestamps(oximetry.timestamps);
+        this.oximetryLabels = this.machineLabels(oximetry.timestamps);
       }
 
       // Session completed while we were watching
@@ -711,6 +723,12 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
         }
       }, 50);
     });
+  }
+
+  /** The machine's chart axis, on the display clock (SDD-074 decision 2). */
+  private machineLabels(timestamps: string[]): string[] {
+    const shift = this.clockShiftS;
+    return shift ? timestamps.map(ts => shiftedClock(ts, shift)) : formatTimestamps(timestamps);
   }
 
   private mergeSessions(sessions: SessionDetail[]): SessionDetail {
@@ -893,6 +911,10 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
                 if (idx === undefined) return '';
                 const ts = timestamps[idx];
                 if (!ts) return labels[idx] || '';
+                // The ring's samples are stored on the machine's clock too
+                // (its Ring clock is applied when they are read in).
+                const shift = this.clockShiftS;
+                if (shift) return shiftedClock(ts, shift, true);
                 const d = new Date(ts.replace(' ', 'T'));
                 return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
               }

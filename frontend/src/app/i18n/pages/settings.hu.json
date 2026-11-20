@@ -170,6 +170,13 @@
       "heading": "Gyűjtés ütemezése",
       "burstInterval": "Gyűjtési ciklus (másodperc)"
     },
+    "display": {
+      "heading": "Megjelenítés",
+      "showTimesOn": "Időpontok megjelenítése",
+      "machine": "a gép órája szerint",
+      "host": "ennek a számítógépnek az órája szerint",
+      "hint": "A gép órája egyezik a gép saját kijelzőjével és az OSCAR-ral. Az egyes gépek óráját a Készülékek oldalon, a gép kártyáján lehet beállítani."
+    },
     "backfill": {
       "heading": "Előzmények importálása",
       "desc": "Importálja a DATALOG könyvtárban lévő terápiás munkameneteket az adatbázisba. A dátumtartományban már meglévő munkameneteket újra feldolgozza.",

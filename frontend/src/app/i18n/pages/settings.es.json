@@ -170,6 +170,13 @@
       "heading": "Ritmo de recogida",
       "burstInterval": "Intervalo de ráfaga (segundos)"
     },
+    "display": {
+      "heading": "Visualización",
+      "showTimesOn": "Mostrar las horas en",
+      "machine": "el reloj del equipo",
+      "host": "el reloj de este ordenador",
+      "hint": "El reloj del equipo coincide con su propia pantalla y con OSCAR. El reloj de cada equipo se ajusta en su tarjeta de la página Dispositivos."
+    },
     "backfill": {
       "heading": "Importar histórico",
       "desc": "Importa a la base de datos las sesiones de terapia de tu directorio DATALOG. Las sesiones ya existentes en el rango de fechas se volverán a analizar.",

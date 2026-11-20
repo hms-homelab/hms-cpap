@@ -592,6 +592,28 @@ import { sourceImage } from '../../utils/source-image';
           </div>
         </div>
 
+        <!-- Section: Display. SDD-074 decision 2: times on the machine's clock
+             (the stored text, as its screen and OSCAR show it) or on this
+             computer's. Each machine's own clock is set on its Devices card. -->
+        <div class="section">
+          <div class="section-header" (click)="toggle('display')">
+            <span class="chevron" [class.open]="open['display']">&#9654;</span>
+            {{ 'settings.display.heading' | translate }}
+          </div>
+          <div class="section-body" *ngIf="open['display']">
+            <label>
+              {{ 'settings.display.showTimesOn' | translate }}
+              <select [ngModel]="config.display_clock || 'machine'" (ngModelChange)="config.display_clock = $event" name="display_clock">
+                <option value="machine">{{ 'settings.display.machine' | translate }}</option>
+                <option value="host">{{ 'settings.display.host' | translate }}</option>
+              </select>
+              <small class="hint">
+{{ 'settings.display.hint' | translate }}
+              </small>
+            </label>
+          </div>
+        </div>
+
         <!-- Section: Import History -->
         <div class="section" *ngIf="config.local_dir">
           <div class="section-header" (click)="toggle('backfill')">
