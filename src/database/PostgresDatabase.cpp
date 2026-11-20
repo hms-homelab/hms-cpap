@@ -78,6 +78,12 @@ int PostgresDatabase::deleteSessionsByDateFolder(const std::string& device_id,
     return db_->deleteSessionsByDateFolder(device_id, date_folder);
 }
 
+IDatabase::NightReplaceResult PostgresDatabase::replaceNight(
+    const std::string& device_id, const std::string& date_folder,
+    const std::vector<NightSessionWrite>& sessions) {
+    return db_->replaceNight(device_id, date_folder, sessions);
+}
+
 IDatabase::RemoveNightResult PostgresDatabase::removeNight(const std::string& device_id,
                                                            const std::string& night) {
     return db_->removeNight(device_id, night);

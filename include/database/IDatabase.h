@@ -105,6 +105,44 @@ public:
     virtual int deleteSessionsByDateFolder(const std::string& device_id,
                                            const std::string& date_folder) = 0;
 
+    // -- Re-importing a night --------------------------------------------------
+    //
+    // A reparse, a backfill and the --reparse CLI delete the sessions stored
+    // from a date folder and save the folder parsed again. Done as separate
+    // transactions, a process killed between the delete and the last save
+    // (docker stop sends SIGKILL after 10 s) left neither the old night nor
+    // the new one until the card was read again. replaceNight() is the
+    // delete and every save of the night in ONE transaction: a kill or a
+    // failure at any point leaves the old night, a commit the new one.
+
+    /// One session of the night being written: the parse, the start the
+    /// caller keys it by, and what every import path records after the save.
+    struct NightSessionWrite {
+        CPAPSession session;
+        std::chrono::system_clock::time_point start;
+        std::vector<SessionFileRef> files;             ///< SDD-014
+        std::map<std::string, int> checkpoint_sizes;   ///< SDD-077 D3
+    };
+
+    struct NightReplaceResult {
+        bool ok = false;   ///< committed; false leaves the old night as it was
+        int deleted = 0;   ///< sessions of the old night
+        int saved = 0;     ///< sessions of the new one
+    };
+
+    /// Delete the sessions stored from [date_folder] (deleteSessionsByDateFolder)
+    /// and, for each of [sessions] in order: saveSession, close it at the end
+    /// its data carries (closeWithDataEnd, SDD-037 D2), replaceSessionFiles and
+    /// updateCheckpointFileSizes. All of it commits together or not at all; a
+    /// save that fails rolls the whole night back.
+    ///
+    /// The engines override it with one transaction. This default runs the
+    /// same steps one call at a time, NOT atomically, so a test double that
+    /// mocks the steps still sees them.
+    virtual NightReplaceResult replaceNight(const std::string& device_id,
+                                            const std::string& date_folder,
+                                            const std::vector<NightSessionWrite>& sessions);
+
     // -- SDD-029: removing a night -------------------------------------------
     //
     // A night is `strDayForSessionStart(session_start)` (YYYYMMDD, the start

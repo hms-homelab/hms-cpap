@@ -1,6 +1,7 @@
 #ifdef WITH_POSTGRESQL
 #include "utils/TimeCompat.h"
 #include "database/DatabaseService.h"
+#include "database/NightWrite.h"
 #include "database/SqlDialect.h"
 #include "utils/MachineClocks.h"
 #include "utils/Desaturation.h"
@@ -23,6 +24,36 @@ std::tm* cpapWall(const std::time_t* t) {
     thread_local std::tm out;
     out = wall::fieldsOf(static_cast<long long>(*t));
     return &out;
+}
+
+std::string cpapWallText(const std::chrono::system_clock::time_point& tp) {
+    auto t = std::chrono::system_clock::to_time_t(tp);
+    std::ostringstream oss;
+    oss << std::put_time(cpapWall(&t), "%Y-%m-%d %H:%M:%S");
+    return oss.str();
+}
+
+// Rows per multi-row INSERT. A night's rows used to go one statement each, one
+// network round trip per breath: 7200 breaths took 22 s at a 2 ms round trip,
+// longer than docker stop waits. 1000 rows keep a statement well under any
+// size limit.
+constexpr std::size_t kRowsPerInsert = 1000;
+
+/// [rows] as multi-row INSERTs of kRowsPerInsert: [head] "INSERT ... VALUES ",
+/// [row](i) one "(...)" tuple, [tail] the ON CONFLICT clause.
+template <class Row>
+void insertInBatches(pqxx::work& work, std::size_t n, const std::string& head,
+                     const std::string& tail, Row row) {
+    for (std::size_t from = 0; from < n; from += kRowsPerInsert) {
+        std::string query = head;
+        const std::size_t to = std::min(n, from + kRowsPerInsert);
+        for (std::size_t i = from; i < to; ++i) {
+            if (i > from) query += ", ";
+            query += row(i);
+        }
+        query += tail;
+        work.exec(query);
+    }
 }
 
 }  // namespace
@@ -937,6 +968,9 @@ bool DatabaseService::ensureConnection() {
     if (isConnected()) {
         return true;
     }
+    // Never under replaceNight()'s open transaction: a new connection would
+    // destroy the one it lives on. The night fails and rolls back instead.
+    if (night_txn_) return false;
 
     std::cout << "⚠️  DB: Connection lost, reconnecting..." << std::endl;
     return connect();
@@ -1067,43 +1101,35 @@ void DatabaseService::insertEvents(pqxx::work& work, int session_id,
                                     const std::vector<CPAPEvent>& events) {
     if (events.empty()) return;
 
-    for (const auto& event : events) {
-        auto time_t = std::chrono::system_clock::to_time_t(event.timestamp);
-        std::tm* tm = cpapWall(&time_t);
-        std::ostringstream oss;
-        oss << std::put_time(tm, "%Y-%m-%d %H:%M:%S");
-
-        std::string query = R"(
-            INSERT INTO cpap_events (session_id, event_type, event_timestamp, duration_seconds, details)
-            VALUES ($1, $2, $3, $4, $5)
-            ON CONFLICT (session_id, event_timestamp) DO NOTHING
-        )";
-
-        work.exec_params(query,
-            session_id,
-            eventTypeToString(event.event_type),
-            oss.str(),
-            event.duration_seconds,
-            event.details.value_or("")
-        );
-    }
+    // Batched; every value quoted as the text a bound parameter would carry.
+    insertInBatches(work, events.size(),
+        "INSERT INTO cpap_events (session_id, event_type, event_timestamp, duration_seconds, details) VALUES ",
+        " ON CONFLICT (session_id, event_timestamp) DO NOTHING",
+        [&](std::size_t i) {
+            const auto& event = events[i];
+            return "(" + work.quote(session_id) + ", " +
+                   work.quote(eventTypeToString(event.event_type)) + ", " +
+                   work.quote(cpapWallText(event.timestamp)) + ", " +
+                   work.quote(event.duration_seconds) + ", " +
+                   work.quote(event.details.value_or("")) + ")";
+        });
 }
 
 void DatabaseService::insertDesaturations(pqxx::work& work, int session_id,
                                           const std::vector<DesatEvent>& desats) {
     if (desats.empty()) return;
-    for (const auto& d : desats) {
-        auto tt = std::chrono::system_clock::to_time_t(d.onset);
-        std::ostringstream oss;
-        oss << std::put_time(cpapWall(&tt), "%Y-%m-%d %H:%M:%S");
-        char details[96];
-        std::snprintf(details, sizeof(details), "{\"nadir\":%.1f,\"depth\":%.1f}", d.nadir, d.depth);
-        work.exec_params(R"(
-            INSERT INTO cpap_events (session_id, event_type, event_timestamp, duration_seconds, details)
-            VALUES ($1, 'Desaturation', $2, $3, $4)
-            ON CONFLICT (session_id, event_timestamp) DO NOTHING
-        )", session_id, oss.str(), d.duration_seconds, std::string(details));
-    }
+    insertInBatches(work, desats.size(),
+        "INSERT INTO cpap_events (session_id, event_type, event_timestamp, duration_seconds, details) VALUES ",
+        " ON CONFLICT (session_id, event_timestamp) DO NOTHING",
+        [&](std::size_t i) {
+            const auto& d = desats[i];
+            char details[96];
+            std::snprintf(details, sizeof(details), "{\"nadir\":%.1f,\"depth\":%.1f}", d.nadir, d.depth);
+            return "(" + work.quote(session_id) + ", 'Desaturation', " +
+                   work.quote(cpapWallText(d.onset)) + ", " +
+                   work.quote(d.duration_seconds) + ", " +
+                   work.quote(std::string(details)) + ")";
+        });
 }
 
 // SDD-001: the session's stored desaturations, before a save writes them again.
@@ -1116,17 +1142,17 @@ void DatabaseService::deleteDesaturations(pqxx::work& work, int session_id) {
 void DatabaseService::insertBreaths(pqxx::work& work, int session_id,
                                     const std::vector<Breath>& breaths) {
     if (breaths.empty()) return;
-    for (const auto& b : breaths) {
-        auto tt = std::chrono::system_clock::to_time_t(b.onset);
-        std::ostringstream oss;
-        oss << std::put_time(cpapWall(&tt), "%Y-%m-%d %H:%M:%S");
-        work.exec_params(R"(
-            INSERT INTO cpap_breaths
-                (session_id, onset, tidal_volume, inspiratory_time, expiratory_time, flow_limitation)
-            VALUES ($1, $2, $3, $4, $5, $6)
-            ON CONFLICT (session_id, onset) DO NOTHING
-        )", session_id, oss.str(), b.tidal_volume, b.inspiratory_time, b.expiratory_time, b.flow_limitation);
-    }
+    // Batched: a night's thousands of breaths were one round trip each.
+    insertInBatches(work, breaths.size(),
+        "INSERT INTO cpap_breaths"
+        " (session_id, onset, tidal_volume, inspiratory_time, expiratory_time, flow_limitation) VALUES ",
+        " ON CONFLICT (session_id, onset) DO NOTHING",
+        [&](std::size_t i) {
+            const auto& b = breaths[i];
+            return "(" + work.quote(session_id) + ", " + work.quote(cpapWallText(b.onset)) + ", " +
+                   work.quote(b.tidal_volume) + ", " + work.quote(b.inspiratory_time) + ", " +
+                   work.quote(b.expiratory_time) + ", " + work.quote(b.flow_limitation) + ")";
+        });
 }
 
 void DatabaseService::insertVitals(pqxx::work& work, int session_id,
@@ -1463,7 +1489,8 @@ bool DatabaseService::saveSession(const CPAPSession& session) {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
 
     try {
-        pqxx::work txn(*conn_);
+        WriteTxn t(*this);   // the night's transaction, inside replaceNight()
+        pqxx::work& txn = *t;
 
         std::cout << "💾 DB: Saving session..." << std::endl;
 
@@ -1518,7 +1545,7 @@ bool DatabaseService::saveSession(const CPAPSession& session) {
             std::cout << "   Metrics saved (AHI: " << session.metrics->ahi << ")" << std::endl;
         }
 
-        txn.commit();
+        t.commit();
 
         std::cout << "✅ DB: Session saved successfully" << std::endl;
         return true;
@@ -1846,7 +1873,8 @@ bool DatabaseService::updateCheckpointFileSizes(
     }
 
     try {
-        pqxx::work txn(*conn_);
+        WriteTxn t(*this);   // the night's transaction, inside replaceNight()
+        pqxx::work& txn = *t;
 
         // Format session_start as PostgreSQL timestamp
         auto start_time_t = std::chrono::system_clock::to_time_t(session_start);
@@ -1875,7 +1903,7 @@ bool DatabaseService::updateCheckpointFileSizes(
         )";
 
         txn.exec_params(query, device_id, start_oss.str(), json_oss.str());
-        txn.commit();
+        t.commit();
 
         std::cout << "DB: Updated checkpoint_files (" << file_sizes.size() << " files)" << std::endl;
         return true;
@@ -1898,7 +1926,8 @@ bool DatabaseService::markSessionCompleted(
     }
 
     try {
-        pqxx::work txn(*conn_);
+        WriteTxn t(*this);   // the night's transaction, inside replaceNight()
+        pqxx::work& txn = *t;
 
         // Format session_start as PostgreSQL timestamp
         auto start_time_t = std::chrono::system_clock::to_time_t(session_start);
@@ -1922,7 +1951,7 @@ bool DatabaseService::markSessionCompleted(
         )";
 
         auto result = txn.exec_params(query, device_id, start_oss.str(), end_oss.str());
-        txn.commit();
+        t.commit();
 
         if (result.affected_rows() > 0) {
             std::cout << "✅ DB: Marked session " << start_oss.str() << " as COMPLETED" << std::endl;
@@ -1953,7 +1982,8 @@ bool DatabaseService::markSessionCompletedAt(
     }
 
     try {
-        pqxx::work txn(*conn_);
+        WriteTxn t(*this);   // the night's transaction, inside replaceNight()
+        pqxx::work& txn = *t;
 
         auto fmt = [](const std::chrono::system_clock::time_point& tp) {
             auto t = std::chrono::system_clock::to_time_t(tp);
@@ -1975,7 +2005,7 @@ bool DatabaseService::markSessionCompletedAt(
         )";
 
         auto result = txn.exec_params(query, device_id, start_s, end_s);
-        txn.commit();
+        t.commit();
 
         if (result.affected_rows() > 0) {
             std::cout << "✅ DB: Marked session " << start_s << " as COMPLETED at "
@@ -2003,7 +2033,8 @@ bool DatabaseService::reopenSession(
     }
 
     try {
-        pqxx::work txn(*conn_);
+        WriteTxn t(*this);   // the night's transaction, inside replaceNight()
+        pqxx::work& txn = *t;
 
         auto start_time_t = std::chrono::system_clock::to_time_t(session_start);
         std::tm* start_tm = cpapWall(&start_time_t);
@@ -2020,7 +2051,7 @@ bool DatabaseService::reopenSession(
         )";
 
         auto result = txn.exec_params(query, device_id, start_oss.str());
-        txn.commit();
+        t.commit();
 
         if (result.affected_rows() > 0) {
             std::cout << "DB: Reopened session " << start_oss.str()
@@ -2672,7 +2703,8 @@ int DatabaseService::deleteSessionsByDateFolder(const std::string& device_id,
     if (!ensureConnection()) return -1;
 
     try {
-        pqxx::work work(*conn_);
+        WriteTxn t(*this);   // the night's transaction, inside replaceNight()
+        pqxx::work& work = *t;
 
         // Match sessions whose brp_file_path contains the date folder
         std::string pattern = "%DATALOG/" + date_folder + "/%";
@@ -2691,13 +2723,45 @@ int DatabaseService::deleteSessionsByDateFolder(const std::string& device_id,
             device_id, pattern);
 
         int deleted = static_cast<int>(result.affected_rows());
-        work.commit();
+        t.commit();
         return deleted;
 
     } catch (const std::exception& e) {
         std::cerr << "DB: Failed to delete sessions for " << date_folder
                   << ": " << e.what() << std::endl;
         return -1;
+    }
+}
+
+// The delete and every save of the night in one pqxx::work: the writes it is
+// made of join it through WriteTxn. A failure, a throw or a process killed
+// before the commit leaves the old night; the server rolls an unfinished
+// transaction back when its connection goes.
+IDatabase::NightReplaceResult DatabaseService::replaceNight(
+    const std::string& device_id, const std::string& date_folder,
+    const std::vector<NightSessionWrite>& sessions) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    if (night_txn_ || !ensureConnection()) return {};
+
+    try {
+        pqxx::work work(*conn_);
+        struct Joined {
+            pqxx::work*& slot;
+            ~Joined() { slot = nullptr; }
+        } joined{night_txn_};
+        night_txn_ = &work;
+
+        NightReplaceResult r = writeNightSteps(*this, device_id, date_folder, sessions);
+        if (!r.ok) {
+            std::cerr << "DB: night " << date_folder << " not replaced, kept as it was" << std::endl;
+            return {};   // work's destructor rolls the night back
+        }
+        work.commit();
+        return r;
+    } catch (const std::exception& e) {
+        std::cerr << "DB: night " << date_folder << " not replaced, kept as it was: "
+                  << e.what() << std::endl;
+        return {};
     }
 }
 
@@ -2947,7 +3011,8 @@ bool DatabaseService::replaceSessionFiles(
     start_oss << std::put_time(start_tm, "%Y-%m-%d %H:%M:%S");
 
     try {
-        pqxx::work work(*conn_);
+        WriteTxn t(*this);   // the night's transaction, inside replaceNight()
+        pqxx::work& work = *t;
 
         // +/-5s, matching sessionExists: the stored start can differ from the
         // in-memory one by a rounding, and an exact match would record nothing.
@@ -2970,7 +3035,7 @@ bool DatabaseService::replaceSessionFiles(
                 "VALUES ($1, $2, $3, $4) ON CONFLICT (session_id, rel_path) DO NOTHING",
                 session_id, f.kind, f.rel_path, f.source);
         }
-        work.commit();
+        t.commit();
         return true;
 
     } catch (const std::exception& e) {

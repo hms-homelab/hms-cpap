@@ -70,6 +70,11 @@ public:
     int deleteSessionsByDateFolder(const std::string& device_id,
                                    const std::string& date_folder) override;
 
+    /// The delete and every save of the night in one transaction.
+    NightReplaceResult replaceNight(const std::string& device_id,
+                                    const std::string& date_folder,
+                                    const std::vector<NightSessionWrite>& sessions) override;
+
     // SDD-029
     RemoveNightResult removeNight(const std::string& device_id,
                                   const std::string& night) override;
@@ -217,6 +222,9 @@ private:
     std::string db_path_;
     sqlite3* db_ = nullptr;
     mutable std::recursive_mutex mutex_;
+    /// replaceNight() has the night's transaction open: saveSession joins it
+    /// instead of opening (and committing) its own. Guarded by mutex_.
+    bool night_txn_ = false;
 
     /// Create all tables (called from connect())
     void createSchema();

@@ -404,14 +404,13 @@ int runReparse(const std::string& card_root, const std::string& start_str, const
             continue;
         }
 
-        // Delete existing sessions for this date folder
-        int deleted = db->deleteSessionsByDateFolder(device_id, folder);
-        if (deleted > 0) {
-            std::cout << "  Deleted " << deleted << " existing session(s) from DB" << std::endl;
-            total_deleted += deleted;
-        }
+        // Parse every session of the night first, then write the night whole:
+        // replaceNight() deletes the folder's stored sessions and saves these
+        // in one transaction, so a kill at any point leaves the old night or
+        // the new one, never neither.
+        std::vector<hms_cpap::IDatabase::NightSessionWrite> night;
+        std::vector<std::string> prefixes;
 
-        // Parse each session group
         for (const auto& session : sessions) {
             // Create temp directory with only this session's files (symlinks)
             std::string temp_dir = (std::filesystem::temp_directory_path() / "cpap_reparse" / (folder + "_" + session.session_prefix)).string();
@@ -453,40 +452,44 @@ int runReparse(const std::string& card_root, const std::string& start_str, const
             // Set relative file paths (same format as normal pipeline)
             hms_cpap::applySessionFilePaths(*parsed, session, folder);
 
-            // Save to DB
-            if (db->saveSession(*parsed)) {
-                total_saved++;
-
-                // Reparsed sessions are complete: set session_end, from the
-                // data the reparse just read (SDD-037 D2).
-                hms_cpap::closeWithDataEnd(*db, device_id, session.session_start, *parsed);
-
-                // Record which files the night is actually made of (SDD-014)
-                db->replaceSessionFiles(device_id, session.session_start,
-                                        hms_cpap::sessionFileRefs(session, folder));
-
-                // SDD-077 D2: the card's copy replaces a Bluetooth copy of
-                // the same stretch.
-                hms_cpap::As11NightImport::replaceConstructedFiles(
-                    *db, device_id, session.session_start,
-                    hms_cpap::dataEndOf(*parsed).value_or(session.session_start));
-
-                // Store checkpoint file sizes: the burst cycle's own function
-                // (SDD-077 D3).
-                db->updateCheckpointFileSizes(device_id, session.session_start,
-                                              hms_cpap::checkpointSizes(session));
-
-                double hours = parsed->duration_seconds.value_or(0) / 3600.0;
-                double ahi = parsed->metrics.has_value() ? parsed->metrics->ahi : 0.0;
-                std::cout << "  Saved: " << session.session_prefix
-                          << " (" << std::fixed << std::setprecision(1) << hours << "h"
-                          << ", AHI=" << std::setprecision(2) << ahi << ")" << std::endl;
-            } else {
-                std::cerr << "  Failed to save session " << session.session_prefix << std::endl;
-            }
+            // Saved with the night below, which also closes it at the end the
+            // data carries (SDD-037 D2), records the files it is made of
+            // (SDD-014) and its checkpoint sizes in the burst cycle's own
+            // shape (SDD-077 D3).
+            hms_cpap::IDatabase::NightSessionWrite w;
+            w.session = std::move(*parsed);
+            w.start = session.session_start;
+            w.files = hms_cpap::sessionFileRefs(session, folder);
+            w.checkpoint_sizes = hms_cpap::checkpointSizes(session);
+            night.push_back(std::move(w));
+            prefixes.push_back(session.session_prefix);
 
             // Cleanup temp dir
             std::filesystem::remove_all(temp_dir);
+        }
+
+        const auto written = db->replaceNight(device_id, folder, night);
+        if (!written.ok) {
+            std::cerr << "  Failed to save night " << folder << ", kept as it was" << std::endl;
+            continue;
+        }
+        if (written.deleted > 0) {
+            std::cout << "  Deleted " << written.deleted << " existing session(s) from DB" << std::endl;
+            total_deleted += written.deleted;
+        }
+        total_saved += written.saved;
+        for (std::size_t i = 0; i < night.size(); ++i) {
+            const auto& w = night[i];
+            // SDD-077 D2: the card's copy replaces a Bluetooth copy of the
+            // same stretch, after the card's row is committed.
+            hms_cpap::As11NightImport::replaceConstructedFiles(
+                *db, device_id, w.start, hms_cpap::dataEndOf(w.session).value_or(w.start));
+
+            double hours = w.session.duration_seconds.value_or(0) / 3600.0;
+            double ahi = w.session.metrics.has_value() ? w.session.metrics->ahi : 0.0;
+            std::cout << "  Saved: " << prefixes[i]
+                      << " (" << std::fixed << std::setprecision(1) << hours << "h"
+                      << ", AHI=" << std::setprecision(2) << ahi << ")" << std::endl;
         }
     }
 
