@@ -939,12 +939,41 @@ export class DevicesComponent implements OnInit, OnDestroy {
     const time = o.last_read_at
       ? new Date(o.last_read_at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
     const version = (o.version || '').split('+')[0];
+    // SDD-081: OSCAR on a home PC says which PC.
+    const name = o.helper?.name || '';
+    if (o.where === 'helper' && name) {
+      const state = o.state || 'never';
+      if (['imported', 'nothing_new', 'busy', 'never'].includes(state))
+        return this.t.instant('devices.oscar.helper_' + state, { version, time, sessions: o.sessions ?? 0, name });
+      if (state === 'helper_offline' || state === 'helper_update')
+        return this.t.instant('devices.oscar.state_' + state, { name });
+    }
     return this.t.instant('devices.oscar.state_' + (o.state || 'never'),
                           { version, time, sessions: o.sessions ?? 0 });
   }
 
   oscarWarn(o: any): boolean {
     return !o.reading && !['imported', 'nothing_new', 'never'].includes(o.state);
+  }
+
+  /** SDD-081 D4: Forget the helper, one click; the next PC to connect is remembered. */
+  helperBusy = false;
+  helperNote: Note | null = null;
+  forgetHelper(): void {
+    const name = this.answer?.oscar_helper?.name ?? '';
+    this.helperBusy = true;
+    this.helperNote = null;
+    this.api.forgetOscarHelper().subscribe({
+      next: () => {
+        this.helperBusy = false;
+        this.helperNote = { text: this.t.instant('devices.oscarHelper.forgotten', { name }), err: false };
+        this.load(true);
+      },
+      error: (e) => {
+        this.helperBusy = false;
+        this.helperNote = { text: this.t.instant('devices.result.failed', { error: errorText(e) }), err: true };
+      },
+    });
   }
 
   ds2ReadNow(d: DeviceEntry): void {

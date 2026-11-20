@@ -41,6 +41,17 @@ export interface DevicesAnswer {
   devices: DeviceEntry[];
   stream_port: number;
   now: number;
+  /** SDD-081 D4: the OSCAR helper on a home PC, null when this install has none. */
+  oscar_helper?: OscarHelper | null;
+}
+
+/** SDD-081: the remembered OSCAR helper. */
+export interface OscarHelper {
+  remembered: boolean;
+  name: string;
+  connected: boolean;
+  version?: string;
+  update?: boolean;
 }
 
 /** A command as a device's detail lists it. */
