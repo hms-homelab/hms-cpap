@@ -8,6 +8,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Each machine is read on its own clock (SDD-074, issue #79).** Each
+  machine's card on the Devices page has a "Machine clock": same as this
+  computer (the default, and what every install had), a fixed offset from
+  UTC-12:00 to UTC+14:00 in 15 minute steps, or a named time zone from the
+  computer's own zone database. A machine kept on a fixed UTC+10 next to a
+  computer on Australia/Sydney now has its nights stored, closed, and sent to
+  Home Assistant on its own clock (22:00 is published as 22:00+10:00). When
+  the card's files show the machine on another offset, the card says so and
+  offers "Use this"; it warns when the two differ by 15 minutes or more. The
+  O2 ring's card has a "Ring clock" of the same shape, and a ring on another
+  clock is lined up with the machine's. A setting wins over a Mule & Miner's
+  zone and over the offset an AirSense 11 reports over Bluetooth. Settings
+  has "Show times on": the machine's clock (the default) or this computer's.
+  A "Re-read my nights" button backs the machine's rows up into tables named
+  `<table>_bk_<time>`, then reads every archived night again. Each session
+  now records the offset it was read with (`machine_offset_s`). The CpapDash
+  stream's hello carries the setting (`machine_clock`) when one is set.
+- **A night across a daylight saving change keeps every minute.** Times are
+  held as the machine wrote them, with no zone, on every install: a night
+  across the computer's fall-back hour no longer drops or overwrites the
+  repeated hour, and a start inside the spring-forward hour is no longer
+  moved an hour. A night that ends by the clock ends on the machine's clock
+  on all three databases (it was UTC on SQLite and MySQL, and the database
+  server's zone on PostgreSQL).
 - **A DreamStation 2 card is read through the user's own OSCAR (SDD-080).**
   hms-cpap never decrypts a card and ships no OSCAR. When the machine ends a
   session (a `.B01` landing on the card copy: a Sleep Bridge's rebuild, an ez

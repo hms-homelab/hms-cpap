@@ -12,6 +12,7 @@
 #include <gtest/gtest.h>
 
 #include "database/IDatabase.h"
+#include "utils/TimeCompat.h"
 #include "database/SQLiteDatabase.h"
 #include "database/SqlDialect.h"
 #ifdef WITH_MYSQL
@@ -136,8 +137,7 @@ protected:
         tm.tm_mon = 6;
         tm.tm_mday = 1;
         tm.tm_hour = 23;
-        tm.tm_isdst = -1;
-        return system_clock::from_time_t(std::mktime(&tm));
+        return system_clock::from_time_t(timegm_utc(&tm));   // a label (SDD-074 D4)
     }
     static system_clock::time_point strRecordDate() {
         return nightStart() - std::chrono::hours(12);

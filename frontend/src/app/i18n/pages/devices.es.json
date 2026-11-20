@@ -553,6 +553,42 @@
         "hours": "hace {{n}} h",
         "days": "hace {{n}} d"
       }
+    },
+    "clock": {
+      "machineLabel": "Reloj del equipo",
+      "ringLabel": "Reloj del anillo",
+      "choiceLabel": "Qué reloj",
+      "host": "Igual que este ordenador ({{zone}}, UTC{{offset}} ahora)",
+      "hostNoZone": "Igual que este ordenador (UTC{{offset}} ahora)",
+      "fixed": "Desfase fijo",
+      "zone": "Zona horaria",
+      "offsetLabel": "Desfase",
+      "zoneSearch": "Buscar zonas horarias",
+      "zonesLoading": "Cargando zonas horarias...",
+      "zoneNone": "Ninguna zona horaria coincide.",
+      "zonePick": "Elige una zona horaria de la lista.",
+      "inUse": "En uso: UTC{{offset}} ahora",
+      "help": "La hora que muestra la pantalla de tu CPAP. Cámbiala solo si no es la hora de este ordenador.",
+      "ringHelp": "La hora que usan las grabaciones de tu anillo O2. Cámbiala solo si no es la hora de este ordenador.",
+      "save": "Guardar",
+      "saving": "Guardando...",
+      "saved": "Guardado. Las noches que se lean a partir de ahora usan este reloj.",
+      "failed": "No guardado: {{error}}",
+      "learned": "Los archivos de tu equipo dicen UTC{{offset}} (detectado el {{date}})",
+      "learnedNoDate": "Los archivos de tu equipo dicen UTC{{offset}}",
+      "useThis": "Usar este",
+      "warn": "Los archivos de tu equipo y el reloj en uso difieren en {{diff}}.",
+      "diffMinutes": "{{m}} min",
+      "diffHours": "{{h}} h",
+      "diffHoursMinutes": "{{h}} h {{m}} min",
+      "reread": "Volver a leer mis noches",
+      "rereadHint": "Primero se hace una copia de tus noches guardadas. Luego cada noche archivada se lee de nuevo con este reloj.",
+      "rereadAsking": "Copiando tus noches...",
+      "rereadStarted": "Copia hecha de {{n}} tablas. Leyendo tus noches de nuevo.",
+      "rereadProgress": "Leyendo tus noches de nuevo: {{done}} de {{total}} carpetas.",
+      "rereadDone": "Listo. {{n}} sesiones leídas de nuevo con este reloj.",
+      "rereadDoneErrors": "Listo. {{n}} sesiones leídas de nuevo, {{errors}} no se pudieron leer.",
+      "rereadFailed": "No se leyó de nuevo: {{error}}"
     }
   }
 }

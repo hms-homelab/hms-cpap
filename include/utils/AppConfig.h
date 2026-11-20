@@ -142,6 +142,10 @@ struct AppConfig {
     }
     std::string ezshare_url = "http://192.168.4.1";
     bool ezshare_range = true;
+    /// SDD-074 (Albin's decision 2): the clock times are shown on: "machine"
+    /// (the default: what the machine's own screen shows, as stored) or
+    /// "host" (this computer's clock).
+    std::string display_clock = "machine";
     /// SDD-056: a FlashAir on the home WiFi (APPMODE=5) answers by mDNS.
     std::string flashair_url = "http://flashair.local";
     /// SDD-041 D1: apply a newer release without asking, once the collector is
@@ -706,6 +710,8 @@ struct AppConfig {
             }
             if (j.contains("ezshare_url"))    config.ezshare_url = j["ezshare_url"];
             if (j.contains("ezshare_range")) config.ezshare_range = j["ezshare_range"];
+            if (j.contains("display_clock") && j["display_clock"].is_string())
+                config.display_clock = j["display_clock"] == "host" ? "host" : "machine";
             if (j.contains("flashair_url"))  config.flashair_url = j["flashair_url"];
             if (j.contains("auto_update"))   config.auto_update = j["auto_update"];
             if (j.contains("local_dir"))     config.local_dir = j["local_dir"];
@@ -913,6 +919,7 @@ struct AppConfig {
             j["source"] = legacySource();
             j["ezshare_url"] = ezshare_url;
             j["ezshare_range"] = ezshare_range;
+            j["display_clock"] = display_clock;
             j["flashair_url"] = flashair_url;
             j["auto_update"] = auto_update;
             j["local_dir"] = local_dir;
@@ -1070,6 +1077,7 @@ struct AppConfig {
         j["source"] = legacySource();   // SDD-022 rule 3, one release only
         j["ezshare_url"] = ezshare_url;
         j["ezshare_range"] = ezshare_range;
+        j["display_clock"] = display_clock;
         j["flashair_url"] = flashair_url;
         j["auto_update"] = auto_update;
         j["local_dir"] = local_dir;

@@ -88,6 +88,9 @@ export interface SessionListItem {
   night_state?: string;
   /** '1' when the night exists only as an O2 ring recording (no CPAP session). */
   oximetry_only?: string;
+  /** SDD-074: seconds to add to the stored times to show them on this
+   *  computer's clock; 0 when times are shown on the machine's clock. */
+  clock_shift_s?: number;
 }
 
 export interface SessionDetail extends SessionListItem {

@@ -2,6 +2,7 @@
 
 #include "clients/As11Stream.h"
 #include "services/As11StoredNight.h"
+#include "utils/MachineZone.h"
 
 #include <cpapdash/parser/EDFWriter.h>
 
@@ -38,6 +39,8 @@ public:
 using WallClockFn = std::function<cpapdash::parser::WallClock(int64_t utc_ms)>;
 WallClockFn fixedOffsetClock(int offset_min_east);
 WallClockFn hostLocalClock();
+/// SDD-074: the wall clock of an owner's clock setting.
+WallClockFn zoneClock(const MachineZone& zone);
 /// The machine's offset east of UTC, from a Summary day's start (the
 /// machine's noon as an instant); nullopt unless it falls on a quarter hour.
 std::optional<int> machineOffsetFromDayStart(int64_t day_start_utc_ms);

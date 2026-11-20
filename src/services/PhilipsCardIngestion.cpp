@@ -1,4 +1,6 @@
 #include "services/PhilipsCardIngestion.h"
+#include "utils/MachineClocks.h"
+#include "utils/SessionLabels.h"
 
 #ifdef CPAPDASH_WITH_PHILIPS
 #include <cpapdash/parser/PhilipsParser.h>
@@ -148,6 +150,9 @@ PhilipsCardIngestion::Read PhilipsCardIngestion::readSessions(const std::string&
                                                   info ? &*info : nullptr, device_id,
                                                   device_name, w);
         if (!s || !s->session_start) continue;
+        // SDD-074 D4/D6: the chunks' seconds are instants; held as labels on
+        // the machine's clock (this computer's zone with no setting, as before).
+        putOnMachineClock(*s, machine_clocks::zoneFor(device_id));
         Session one;
         one.number = number;
         one.closed = !summary.empty();

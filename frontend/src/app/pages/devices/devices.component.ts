@@ -12,7 +12,8 @@ import {
   Confirmations, ConfigRow, DeviceCommand, DeviceEntry, DevicesAnswer, buildSet, commandState, configRows, costKey,
   errorText, groupKeys, hostOf, latestCommand, latestConfigValues, recordingWarning, releaseLine, riskyGroups,
   switchView, groupCode, ds2PairView, ds2PairRunning, ds2RefusalKey, ds2Reads, ds2NextRead, isIsoDay,
-  as11ResetRefusalKey,
+  as11ResetRefusalKey, ClockChoice, ClockDraft, ClockView, Reread, clockChanged, clockDifference, clockDraftOf,
+  clockSettingOf, filterZones, fixedOffsets, learnedOffer, rereadLine,
 } from './devices-model';
 import {
   MuleDs2Pairing, muleDs2ErrorKey, muleDs2ModePayload, muleDs2On, muleDs2Pairing, muleDs2Reading, muleDs2RefusalKey,
@@ -46,7 +47,7 @@ interface UpdateWarning {
   standalone: true,
   imports: [CommonModule, FormsModule, RouterLink, TranslatePipe, OtaProgressComponent, BridgeSourceComponent],
   templateUrl: './devices.component.html',
-  styleUrls: ['./devices.component.css'],
+  styleUrls: ['./devices.component.css', './devices-clock.css'],
 })
 export class DevicesComponent implements OnInit, OnDestroy {
   answer: DevicesAnswer | null = null;
@@ -102,6 +103,22 @@ export class DevicesComponent implements OnInit, OnDestroy {
   /** The import day being edited on this card; absent shows the saved one. */
   muleDs2ImportDraft: Record<string, string> = {};
 
+  // SDD-074: the Machine clock (the Ring clock on the ring's card), per card.
+  readonly fixedOffsets = fixedOffsets();
+  readonly clockChanged = clockChanged;
+  readonly learnedOffer = learnedOffer;
+  /** What the person changed and has not saved yet; absent shows the saved clock. */
+  private clockEdits: Record<string, ClockDraft> = {};
+  private clockShown: Record<string, { setting: string; draft: ClockDraft }> = {};
+  clockBusy: Record<string, boolean> = {};
+  clockNotes: Record<string, Note> = {};
+  /** The zone names, read once when Time zone is first chosen. */
+  zones: string[] | null = null;
+  private zonesAsked = false;
+  /** "Re-read my nights" (decision 3), per card, followed on each refresh. */
+  rereads: Record<string, Reread> = {};
+  rereadNotes: Record<string, Note> = {};
+
   private timer: any = null;
   private tables = new Map<string, { src: unknown; table: { rows: ConfigRow[]; read: boolean; risks: any[] } }>();
 
@@ -142,6 +159,7 @@ export class DevicesComponent implements OnInit, OnDestroy {
         this.now = a.now || Math.floor(Date.now() / 1000);
         this.loading = false;
         this.loadError = '';
+        this.followRereads();
       },
       error: (e) => {
         this.loading = false;
@@ -1005,6 +1023,160 @@ export class DevicesComponent implements OnInit, OnDestroy {
         }
       },
       error: () => {},
+    });
+  }
+
+  // ── SDD-074: the Machine clock and the Ring clock ────────────────────────
+
+  /** The form on this card: what was changed, else the saved clock as a form. */
+  clockDraft(d: DeviceEntry): ClockDraft {
+    const edit = this.clockEdits[d.key];
+    if (edit) return edit;
+    const c = d.clock!;
+    const shown = this.clockShown[d.key];
+    if (!shown || shown.setting !== c.setting) this.clockShown[d.key] = { setting: c.setting, draft: clockDraftOf(c) };
+    return this.clockShown[d.key].draft;
+  }
+
+  private editClock(d: DeviceEntry): ClockDraft {
+    if (!this.clockEdits[d.key]) this.clockEdits[d.key] = { ...this.clockDraft(d) };
+    delete this.clockNotes[d.key];
+    return this.clockEdits[d.key];
+  }
+
+  /** "Same as this computer (America/New_York, UTC-05:00 now)". */
+  hostLine(c: ClockView): string {
+    return c.host_zone
+      ? this.t.instant('devices.clock.host', { zone: c.host_zone, offset: c.host_offset_text })
+      : this.t.instant('devices.clock.hostNoZone', { offset: c.host_offset_text });
+  }
+
+  onClockChoice(d: DeviceEntry, choice: ClockChoice): void {
+    const e = this.editClock(d);
+    e.choice = choice;
+    if (choice === 'zone') {
+      e.open = !e.zone;
+      this.loadZones();
+    }
+  }
+
+  onClockFixed(d: DeviceEntry, fixed: string): void {
+    this.editClock(d).fixed = fixed;
+  }
+
+  /** Typing searches; a name typed out in full counts as picked. */
+  onZoneQuery(d: DeviceEntry, q: string): void {
+    const e = this.editClock(d);
+    e.query = q;
+    const exact = (this.zones ?? []).find((z) => z.toLowerCase() === q.trim().toLowerCase());
+    e.zone = exact ?? '';
+    e.open = !exact;
+  }
+
+  openZones(d: DeviceEntry): void {
+    this.editClock(d).open = true;
+    this.loadZones();
+  }
+
+  pickZone(d: DeviceEntry, zone: string): void {
+    const e = this.editClock(d);
+    e.zone = zone;
+    e.query = zone;
+    e.open = false;
+  }
+
+  zoneMatches(cd: ClockDraft): string[] {
+    return this.zones ? filterZones(this.zones, cd.query) : [];
+  }
+
+  private loadZones(): void {
+    if (this.zonesAsked) return;
+    this.zonesAsked = true;
+    this.api.getClockZones().subscribe({
+      next: (r) => (this.zones = Array.isArray(r?.zones) ? r.zones : []),
+      error: () => { this.zones = []; this.zonesAsked = false; },
+    });
+  }
+
+  /** One click: the form's setting, or `setting` itself ("Use this"). No confirm. */
+  saveClock(d: DeviceEntry, setting?: string): void {
+    const c = d.clock;
+    if (!c) return;
+    const value = setting ?? clockSettingOf(this.clockDraft(d));
+    if (value === null) return;
+    this.clockBusy[d.key] = true;
+    delete this.clockNotes[d.key];
+    this.api.setDeviceClock(c.device_id, value).subscribe({
+      next: (r) => {
+        this.clockBusy[d.key] = false;
+        // Every card of this machine shows the one setting again.
+        for (const o of this.devices) {
+          if (o.clock?.device_id !== c.device_id) continue;
+          delete this.clockEdits[o.key];
+          if (r?.clock) o.clock = r.clock;
+        }
+        this.clockNotes[d.key] = { text: this.t.instant('devices.clock.saved'), err: false };
+        this.load(false);
+      },
+      error: (e) => {
+        this.clockBusy[d.key] = false;
+        this.clockNotes[d.key] = { text: this.t.instant('devices.clock.failed', { error: errorText(e) }), err: true };
+      },
+    });
+  }
+
+  diffText(c: ClockView): string {
+    const p = clockDifference(c.difference_s);
+    return this.t.instant(p.key, p.params);
+  }
+
+  /** Decision 3: back up, then read every archived night again. One click, no dialog. */
+  reread(d: DeviceEntry): void {
+    const c = d.clock;
+    if (!c) return;
+    this.clockBusy[d.key] = true;
+    delete this.rereads[d.key];
+    this.rereadNotes[d.key] = { text: this.t.instant('devices.clock.rereadAsking'), err: false };
+    // The worker's last end before asking, so this run's end is told from it.
+    const ask = (before: string) =>
+      this.api.rereadDeviceNights(c.device_id).subscribe({
+        next: (r) => {
+          this.clockBusy[d.key] = false;
+          delete this.rereadNotes[d.key];
+          this.rereads[d.key] = { backup: (r?.backup ?? []).length, before, seenRunning: false, status: null };
+        },
+        error: (e) => {
+          this.clockBusy[d.key] = false;
+          this.rereadNotes[d.key] = { text: this.t.instant('devices.clock.rereadFailed', { error: errorText(e) }), err: true };
+        },
+      });
+    this.api.getBackfillStatus().subscribe({
+      next: (s) => ask(String(s?.completed_at ?? '')),
+      error: () => ask(''),
+    });
+  }
+
+  rereadView(d: DeviceEntry) {
+    const r = this.rereads[d.key];
+    return r ? rereadLine(r) : null;
+  }
+
+  rereadRunning(d: DeviceEntry): boolean {
+    const v = this.rereadView(d);
+    return !!v && !v.done;
+  }
+
+  /** On the page's own refresh: the backfill worker's status, while a re-read is not done. */
+  private followRereads(): void {
+    const open = Object.values(this.rereads).filter((r) => !rereadLine(r).done);
+    if (!open.length) return;
+    this.api.getBackfillStatus().subscribe({
+      next: (s) => {
+        for (const r of open) {
+          r.status = s;
+          if (s?.status === 'running') r.seenRunning = true;
+        }
+      },
     });
   }
 

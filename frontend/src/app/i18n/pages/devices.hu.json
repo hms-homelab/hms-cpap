@@ -553,6 +553,42 @@
         "hours": "{{n}} órája",
         "days": "{{n}} napja"
       }
+    },
+    "clock": {
+      "machineLabel": "A gép órája",
+      "ringLabel": "A gyűrű órája",
+      "choiceLabel": "Melyik óra",
+      "host": "Ugyanaz, mint ezen a számítógépen ({{zone}}, most UTC{{offset}})",
+      "hostNoZone": "Ugyanaz, mint ezen a számítógépen (most UTC{{offset}})",
+      "fixed": "Rögzített eltérés",
+      "zone": "Időzóna",
+      "offsetLabel": "Eltérés",
+      "zoneSearch": "Időzóna keresése",
+      "zonesLoading": "Időzónák betöltése...",
+      "zoneNone": "Nincs ilyen időzóna.",
+      "zonePick": "Válasszon időzónát a listából.",
+      "inUse": "Használatban: most UTC{{offset}}",
+      "help": "Az az idő, amit a CPAP saját kijelzője mutat. Csak akkor módosítsa, ha nem egyezik ennek a számítógépnek az idejével.",
+      "ringHelp": "Az az idő, amit az O2 gyűrű felvételei használnak. Csak akkor módosítsa, ha nem egyezik ennek a számítógépnek az idejével.",
+      "save": "Mentés",
+      "saving": "Mentés...",
+      "saved": "Mentve. A mostantól beolvasott éjszakák ezt az órát használják.",
+      "failed": "Nincs mentve: {{error}}",
+      "learned": "A gép fájljai szerint UTC{{offset}} (megállapítva: {{date}})",
+      "learnedNoDate": "A gép fájljai szerint UTC{{offset}}",
+      "useThis": "Ezt használja",
+      "warn": "A gép fájljai és a használt óra {{diff}} eltérést mutatnak.",
+      "diffMinutes": "{{m}} perc",
+      "diffHours": "{{h}} óra",
+      "diffHoursMinutes": "{{h}} óra {{m}} perc",
+      "reread": "Éjszakáim újraolvasása",
+      "rereadHint": "A tárolt éjszakákról előbb biztonsági másolat készül. Utána minden archivált éjszaka újra beolvasásra kerül ezzel az órával.",
+      "rereadAsking": "Biztonsági másolat készül...",
+      "rereadStarted": "{{n}} tábla mentve. Az éjszakák újraolvasása folyik.",
+      "rereadProgress": "Az éjszakák újraolvasása: {{done}} / {{total}} mappa.",
+      "rereadDone": "Kész. {{n}} munkamenet újraolvasva ezzel az órával.",
+      "rereadDoneErrors": "Kész. {{n}} munkamenet újraolvasva, {{errors}} nem olvasható.",
+      "rereadFailed": "Nem sikerült újraolvasni: {{error}}"
     }
   }
 }

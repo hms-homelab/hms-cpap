@@ -1,18 +1,14 @@
 #include "services/SyncFolderState.h"
 
+#include "utils/MachineZone.h"
+
 #include <ctime>
 
 namespace hms_cpap {
 
 std::string strDayForSessionStart(const std::chrono::system_clock::time_point& start) {
-    const auto shifted = start - std::chrono::hours(12);
-    std::time_t t = std::chrono::system_clock::to_time_t(shifted);
-    std::tm tm{};
-#ifdef _WIN32
-    localtime_s(&tm, &t);
-#else
-    localtime_r(&t, &tm);
-#endif
+    // start is a label (SDD-074 D4): noon to noon on the machine's own clock.
+    const std::tm tm = wall::fieldsOf(wall::seconds(start - std::chrono::hours(12)));
     char buf[9];
     std::strftime(buf, sizeof(buf), "%Y%m%d", &tm);
     return std::string(buf);

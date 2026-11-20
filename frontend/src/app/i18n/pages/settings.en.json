@@ -232,6 +232,13 @@
       "heading": "Collection Timing",
       "burstInterval": "Burst Interval (seconds)"
     },
+    "display": {
+      "heading": "Display",
+      "showTimesOn": "Show times on",
+      "machine": "the machine's clock",
+      "host": "this computer's clock",
+      "hint": "The machine's clock matches its own screen and OSCAR. Each machine's clock is set on its card on the Devices page."
+    },
     "spo2": {
       "heading": "SpO2 Desaturations",
       "dropPct": "Desaturation threshold (% below baseline)",

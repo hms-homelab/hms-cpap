@@ -5,9 +5,11 @@
 #include "services/As11NightWriter.h"
 #include "services/As11StrWriter.h"
 #include "services/StrLayouts.h"
+#include "utils/MachineZone.h"
 
 #include <cpapdash/parser/AirSense11Summary.h>
 #include <cpapdash/parser/EDFWriter.h>
+#include <cpapdash/parser/WallClock.h>
 
 #include <chrono>
 #include <cstdlib>
@@ -454,6 +456,10 @@ TEST_F(StrAppend, ABluetoothDayAndACardDayOfTheSameNightReadTheSameSettings) {
     auto bluetooth = AirSense11SummaryParser::toStrRecords(AirSense11SummaryParser::parse(spool.data(), spool.size()),
                                                            "cpap_test");
     ASSERT_EQ(bluetooth.size(), 4u);
+    // As the pull holds them (SDD-074 D4): the Summary's instants as labels on
+    // the machine's clock, and the card's STR read as labels.
+    AirSense11Pull::onMachineClock(bluetooth, "cpap_test");
+    cpapdash::parser::WallClockLabels labels;
     const auto card = EDFParser::parseSTRFile(str_.string(), "cpap_test");
     ASSERT_EQ(card.size(), 4u);
 

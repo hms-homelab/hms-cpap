@@ -22,6 +22,7 @@
 #include <gtest/gtest.h>
 
 #include "services/CpapCardZip.h"
+#include <cpapdash/parser/WallClock.h>
 #include "sleepbridge/LearnedCardTestUtil.h"
 
 #include "database/IDatabase.h"
@@ -202,6 +203,7 @@ TEST_P(CpapCardBackendTest, TheNightsGoInAsACardZipsDoAndTheLayoutStaysOut) {
     {
         const fs::path pre = dir_ / "pre";
         ASSERT_TRUE(PrismaIngestion::extractZip(file, pre.string()));
+        cpapdash::parser::WallClockLabels labels;   // as hms-cpap reads it (SDD-074 D4)
         SefamIngestion s(pre.string());
         ASSERT_TRUE(s.initialize());
         const auto sessions = s.discoverSessions(std::nullopt);

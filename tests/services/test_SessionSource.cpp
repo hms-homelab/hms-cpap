@@ -17,6 +17,7 @@
 #include "database/IDatabase.h"
 #include "database/SQLiteDatabase.h"
 #include "database/SqlDialect.h"
+#include "utils/TimeCompat.h"
 #ifdef WITH_MYSQL
 #include "database/MySQLDatabase.h"
 #endif
@@ -83,8 +84,7 @@ std::optional<system_clock::time_point> wallFrom(const std::string& text) {
     std::istringstream in(text.substr(0, 19));
     in >> std::get_time(&tm, "%Y-%m-%d %H:%M:%S");
     if (in.fail()) return std::nullopt;
-    tm.tm_isdst = -1;
-    return system_clock::from_time_t(std::mktime(&tm));
+    return system_clock::from_time_t(timegm_utc(&tm));   // a label (SDD-074 D4)
 }
 
 /// "20261016_220000_BRP.edf" moved [by] seconds: "20261016_220003_BRP.edf".
@@ -331,11 +331,7 @@ protected:
         const DbType dt = db_->dbType();
         const std::time_t t = system_clock::to_time_t(start);
         std::tm tm{};
-#ifdef _WIN32
-        localtime_s(&tm, &t);
-#else
-        localtime_r(&t, &tm);
-#endif
+        gmtime_r(&t, &tm);   // starts are labels (SDD-074 D4)
         std::ostringstream wall;
         wall << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");
         std::vector<std::string> out;

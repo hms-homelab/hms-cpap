@@ -3,6 +3,7 @@
 #include "database/MySQLDatabase.h"
 #include "database/SqlDialect.h"
 #include "database/StrPercentile.h"
+#include "utils/MachineClocks.h"
 #include "utils/Desaturation.h"
 #include "utils/OximetryDevice.h"
 #include "utils/TimeCompat.h"  // timegm_utc() for started_epoch
@@ -294,12 +295,10 @@ MySQLDatabase::~MySQLDatabase() {
 // Format timestamp
 // ---------------------------------------------------------------------------
 
+// SDD-074 D4: a CPAP time point is a label (the machine's wall clock counted
+// as UTC), written back with gmtime and no host zone.
 std::string MySQLDatabase::fmtTimestamp(const std::chrono::system_clock::time_point& tp) {
-    auto t = std::chrono::system_clock::to_time_t(tp);
-    std::tm* tm = std::localtime(&t);
-    std::ostringstream oss;
-    oss << std::put_time(tm, "%Y-%m-%d %H:%M:%S");
-    return oss.str();
+    return wall::text(tp);
 }
 
 // Renders an oximetry time_point back to the wall clock the ring displayed.
@@ -1102,6 +1101,9 @@ void MySQLDatabase::migrateSchema() {
         {"cpap_sessions", "csl_file_path",     "VARCHAR(512)"},
         {"cpap_sessions", "checkpoint_files",  "JSON"},
         {"cpap_sessions", "force_completed",   "TINYINT DEFAULT 0"},
+        // SDD-074: the machine's offset each session was read with; NULL for
+        // a session read before the column existed.
+        {"cpap_sessions", "machine_offset_s",  "INT"},
         {"cpap_sessions", "created_at",        "DATETIME DEFAULT NOW()"},
         {"cpap_sessions", "updated_at",        "DATETIME DEFAULT NOW() ON UPDATE NOW()"},
 
@@ -1360,9 +1362,11 @@ int64_t MySQLDatabase::insertSession(const CPAPSession& session) {
     const char* sql = R"(
         INSERT INTO cpap_sessions
             (device_id, session_start, session_end, duration_seconds, data_records,
-             brp_file_path, eve_file_path, sad_file_path, pld_file_path, csl_file_path)
-        VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
+             brp_file_path, eve_file_path, sad_file_path, pld_file_path, csl_file_path,
+             machine_offset_s)
+        VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
+            machine_offset_s = VALUES(machine_offset_s),
             duration_seconds = VALUES(duration_seconds),
             data_records     = VALUES(data_records),
             brp_file_path    = VALUES(brp_file_path),
@@ -1379,7 +1383,7 @@ int64_t MySQLDatabase::insertSession(const CPAPSession& session) {
         return 0;
     }
 
-    ParamBinder p(9);
+    ParamBinder p(10);
     p.bindText(0, session.device_id);
     p.bindText(1, start_str);
     p.bindInt(2, session.duration_seconds.value_or(0));
@@ -1389,6 +1393,8 @@ int64_t MySQLDatabase::insertSession(const CPAPSession& session) {
     p.bindText(6, session.sad_file_path.value_or(""));
     p.bindText(7, session.pld_file_path.value_or(""));
     p.bindText(8, session.csl_file_path.value_or(""));
+    p.bindInt64(9, machine_clocks::offsetAtWall(session.device_id,
+                                                wall::seconds(session.session_start.value())));
 
     mysql_stmt_bind_param(g.stmt, p.data());
     if (mysql_stmt_execute(g.stmt) != 0) {
@@ -1896,8 +1902,7 @@ MySQLDatabase::getLastSessionStart(const std::string& device_id) {
         std::cerr << "MySQL: Failed to parse timestamp: " << ts_str << std::endl;
         return std::nullopt;
     }
-    tm.tm_isdst = -1;
-    auto tp = std::chrono::system_clock::from_time_t(std::mktime(&tm));
+    auto tp = wall::point(wall::labelOf(tm));   // SDD-074 D4
     std::cout << "MySQL: Last session for " << device_id << " at " << ts_str << std::endl;
     return tp;
 }
@@ -1941,8 +1946,7 @@ MySQLDatabase::getSessionStartForSleepDay(const std::string& device_id,
     std::istringstream ss(r.colText(0));
     ss >> std::get_time(&tm, "%Y-%m-%d %H:%M:%S");
     if (ss.fail()) return std::nullopt;
-    tm.tm_isdst = -1;
-    return std::chrono::system_clock::from_time_t(std::mktime(&tm));
+    return wall::point(wall::labelOf(tm));   // SDD-074 D4
 }
 
 // ---------------------------------------------------------------------------
@@ -2058,10 +2062,12 @@ bool MySQLDatabase::markSessionCompleted(const std::string& device_id,
     if (!conn_) return false;
 
     std::string ts = fmtTimestamp(session_start);
+    // SDD-074 D5: the end is the machine's clock now, never the server's NOW().
+    const std::string end = fmtTimestamp(machineEndNow(device_id, session_start));
 
     const char* sql = R"(
         UPDATE cpap_sessions
-        SET session_end = NOW(), updated_at = NOW()
+        SET session_end = CAST(? AS DATETIME), updated_at = NOW()
         WHERE device_id = ?
           AND session_start BETWEEN DATE_SUB(CAST(? AS DATETIME), INTERVAL 5 SECOND)
                                 AND DATE_ADD(CAST(? AS DATETIME), INTERVAL 5 SECOND)
@@ -2072,10 +2078,11 @@ bool MySQLDatabase::markSessionCompleted(const std::string& device_id,
     g.stmt = mysql_stmt_init(conn_);
     mysql_stmt_prepare(g.stmt, sql, std::strlen(sql));
 
-    ParamBinder p(3);
-    p.bindText(0, device_id);
-    p.bindText(1, ts);
+    ParamBinder p(4);
+    p.bindText(0, end);
+    p.bindText(1, device_id);
     p.bindText(2, ts);
+    p.bindText(3, ts);
     mysql_stmt_bind_param(g.stmt, p.data());
     mysql_stmt_execute(g.stmt);
 
@@ -2969,20 +2976,18 @@ bool MySQLDatabase::saveSTRDailyRecords(const std::vector<STRDailyRecord>& recor
 
         for (const auto& rec : records) {
             // Format date
-            auto date_t = std::chrono::system_clock::to_time_t(rec.record_date);
-            std::tm* tm = std::localtime(&date_t);
+            // SDD-074 D4: the STR's days and mask times are labels.
+            const std::tm day_tm = wall::fieldsOf(wall::seconds(rec.record_date));
             std::ostringstream date_oss;
-            date_oss << std::put_time(tm, "%Y-%m-%d");
+            date_oss << std::put_time(&day_tm, "%Y-%m-%d");
 
             // Build mask_pairs JSON
             std::ostringstream pairs_json;
             pairs_json << "[";
             for (size_t i = 0; i < rec.mask_pairs.size(); ++i) {
                 if (i > 0) pairs_json << ",";
-                auto on_t = std::chrono::system_clock::to_time_t(rec.mask_pairs[i].first);
-                auto off_t = std::chrono::system_clock::to_time_t(rec.mask_pairs[i].second);
-                std::tm on_tm = *std::localtime(&on_t);
-                std::tm off_tm = *std::localtime(&off_t);
+                std::tm on_tm = wall::fieldsOf(wall::seconds(rec.mask_pairs[i].first));
+                std::tm off_tm = wall::fieldsOf(wall::seconds(rec.mask_pairs[i].second));
                 std::ostringstream on_oss, off_oss;
                 on_oss << std::put_time(&on_tm, "%Y-%m-%dT%H:%M:%S");
                 off_oss << std::put_time(&off_tm, "%Y-%m-%dT%H:%M:%S");
@@ -3558,7 +3563,8 @@ std::vector<SessionMetrics> MySQLDatabase::getMetricsForDateRange(
     // before the epoch, which fmtTimestamp's put_time then dereferences. 64-bit
     // hours, so a large days_back cannot overflow either.
     const auto cutoff = (std::max)(
-        std::chrono::system_clock::now() - std::chrono::hours(static_cast<long long>(days_back) * 24),
+        machine_clocks::nowWall(device_id, std::chrono::system_clock::now()) -
+            std::chrono::hours(static_cast<long long>(days_back) * 24),
         std::chrono::system_clock::from_time_t(86400));
     std::string cutoff_str = fmtTimestamp(cutoff);
 

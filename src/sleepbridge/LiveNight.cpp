@@ -2,6 +2,9 @@
 
 #include "parsers/CpapdashBridge.h"
 #include "services/BmcIngestion.h"
+#include "utils/MachineClocks.h"
+
+#include <cpapdash/parser/WallClock.h>
 
 #include <algorithm>
 #include <cctype>
@@ -86,8 +89,13 @@ std::string stemOf(const std::string& path) {
     return name.substr(0, 15);
 }
 
-/// The stem as a moment, read in the host's zone (the machine writes its
-/// names in its own, which at home is the host's).
+/// A machine wall time (a label) as a moment, on the machine's clock: its
+/// owner's setting, else the host's zone (at home the machine's).
+std::chrono::system_clock::time_point instantOf(std::chrono::system_clock::time_point label) {
+    return wall::point(machine_clocks::instantOf(machine_clocks::primaryDevice(), wall::seconds(label)));
+}
+
+/// The stem as a moment (SDD-074 D4: a label, then the machine's clock).
 std::optional<std::chrono::system_clock::time_point> stemTime(const std::string& stem) {
     if (stem.size() != 15) return std::nullopt;
     std::tm tm{};
@@ -97,10 +105,7 @@ std::optional<std::chrono::system_clock::time_point> stemTime(const std::string&
     tm.tm_hour  = std::stoi(stem.substr(9, 2));
     tm.tm_min   = std::stoi(stem.substr(11, 2));
     tm.tm_sec   = std::stoi(stem.substr(13, 2));
-    tm.tm_isdst = -1;
-    const std::time_t t = std::mktime(&tm);
-    if (t == static_cast<std::time_t>(-1)) return std::nullopt;
-    return std::chrono::system_clock::from_time_t(t);
+    return instantOf(wall::point(wall::labelOf(tm)));
 }
 
 }  // namespace
@@ -241,7 +246,10 @@ void LiveNight::readEvents(const std::string& path, bool report) {
         seen = annotations.size();
         return;
     }
-    const auto start = edf.getStartTime();
+    const auto start = [&] {
+        cpapdash::parser::WallClockLabels labels;   // SDD-074 D4
+        return instantOf(edf.getStartTime());
+    }();
     for (size_t i = seen; i < annotations.size(); i++) {
         const auto& a    = annotations[i];
         const auto  type = liveEventType(a.description);

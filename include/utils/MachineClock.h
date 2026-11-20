@@ -31,6 +31,7 @@
 #include "clients/EzShareClient.h"
 #include "database/IDatabase.h"
 #include "database/SqlDialect.h"
+#include "utils/MachineZone.h"
 #include "utils/TimeCompat.h"
 
 #include <cstdlib>
@@ -102,6 +103,13 @@ inline long long machineOffset(const MachineClock& c, long long now) {
     return c.drift_s + (c.zone_known ? c.zone_s : hostZoneOffset(now));
 }
 
+/// SDD-074 D7: the same, with the owner's clock setting in place of the zone
+/// part when one is set; the learned drift is still added.
+inline long long machineOffset(const MachineClock& c, const MachineZone& setting, long long now) {
+    if (setting.isHost()) return machineOffset(c, now);
+    return c.drift_s + setting.offsetAt(now);
+}
+
 /// The stamps of one listing, by file name, for the next listing to compare.
 inline std::map<std::string, long long> stampsOf(const std::vector<EzShareFileEntry>& files) {
     std::map<std::string, long long> out;
@@ -156,14 +164,22 @@ inline std::optional<MachineClock> learnMachineClock(
 namespace machine_clock {
 
 inline void ensureTable(IDatabase& db) {
+    // SDD-074 D1: clock_setting is the owner's "Machine clock" ("" = same as
+    // this computer, "+10:00", or a zone name). The O2 ring's "Ring clock" is
+    // the row of its own device id.
     db.executeQuery(
         "CREATE TABLE IF NOT EXISTS cpap_machine_clock ("
         " device_id VARCHAR(128) NOT NULL PRIMARY KEY,"
         " drift_s BIGINT NOT NULL DEFAULT 0,"
         " zone_s BIGINT NOT NULL DEFAULT 0,"
         " zone_known INTEGER NOT NULL DEFAULT 0,"
-        " updated_at BIGINT NOT NULL DEFAULT 0)",
+        " updated_at BIGINT NOT NULL DEFAULT 0,"
+        " clock_setting VARCHAR(64) NOT NULL DEFAULT '')",
         {});
+    // A table from before SDD-074 gains the column, empty for every row.
+    if (!db.executeQueryChecked("SELECT clock_setting FROM cpap_machine_clock WHERE 1 = 0", {}).ok)
+        db.executeQuery(
+            "ALTER TABLE cpap_machine_clock ADD COLUMN clock_setting VARCHAR(64) NOT NULL DEFAULT ''", {});
 }
 
 inline long long asLong(const Json::Value& v) {
@@ -207,6 +223,46 @@ inline bool saveMachineClock(IDatabase& db, const std::string& device_id,
                                   {device_id, std::to_string(c.drift_s), std::to_string(c.zone_s),
                                    c.zone_known ? "1" : "0", std::to_string(now)})
         .ok;
+}
+
+// ── SDD-074: the owner's clock setting, per device ───────────────────────────
+
+/// Every device's stored clock setting, by device id (rows with "" left out).
+inline std::map<std::string, std::string> loadClockSettings(IDatabase& db) {
+    machine_clock::ensureTable(db);
+    std::map<std::string, std::string> out;
+    const auto rows = db.executeQuery("SELECT device_id, clock_setting FROM cpap_machine_clock", {});
+    if (rows.isArray())
+        for (const auto& r : rows) {
+            const std::string s = r["clock_setting"].isNull() ? "" : r["clock_setting"].asString();
+            if (!s.empty()) out[r["device_id"].asString()] = s;
+        }
+    return out;
+}
+
+/// Store one device's clock setting, keeping what SDD-054 learned (and when:
+/// updated_at stays the learning's).
+inline bool saveClockSetting(IDatabase& db, const std::string& device_id, const std::string& setting) {
+    machine_clock::ensureTable(db);
+    const DbType dt = db.dbType();
+    const std::string ins =
+        "INSERT INTO cpap_machine_clock (device_id, clock_setting) VALUES (" + sql::param(1, dt) + ", " +
+        sql::param(2, dt) + ") ";
+    const std::string upsert = dt == DbType::MYSQL
+        ? "ON DUPLICATE KEY UPDATE clock_setting = VALUES(clock_setting)"
+        : "ON CONFLICT (device_id) DO UPDATE SET clock_setting = excluded.clock_setting";
+    return db.executeQueryChecked(ins + upsert, {device_id, setting}).ok;
+}
+
+/// When the clock was learned (the row's updated_at), 0 when never.
+inline long long machineClockLearnedAt(IDatabase& db, const std::string& device_id) {
+    machine_clock::ensureTable(db);
+    const auto rows = db.executeQuery(
+        "SELECT updated_at, zone_known FROM cpap_machine_clock WHERE device_id = " +
+            sql::param(1, db.dbType()),
+        {device_id});
+    if (!rows.isArray() || rows.empty() || machine_clock::asLong(rows[0]["zone_known"]) == 0) return 0;
+    return machine_clock::asLong(rows[0]["updated_at"]);
 }
 
 }  // namespace hms_cpap

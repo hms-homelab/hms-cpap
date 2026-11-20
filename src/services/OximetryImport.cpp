@@ -4,6 +4,7 @@
 #include "services/OximetryOutbox.h"
 #include "services/RemovedNights.h"
 #include "utils/OximetryDevice.h"
+#include "utils/SessionLabels.h"
 
 #include <cpapdash/parser/O2RingSParser.h>
 #include <cpapdash/parser/OximetryCsv.h>
@@ -134,6 +135,7 @@ VldImportResult importVldFile(IDatabase& db, const std::string& bytes,
         r.error = "Not a readable O2 Ring recording: " + filename;
         return r;
     }
+    putRingOnMachineClock(*session);   // SDD-074: the Ring clock
     if (isRemovedOximetryNight(removed_nights, session->start_time)) {
         r.removed_night = true;
         r.error = "On a removed night: " + filename;
@@ -358,6 +360,7 @@ Json::Value importOximetryUpload(IDatabase& db, const std::string& content,
         r["error"] = "No readable rows in CSV (expected a Wellue / O2 Ring export)";
         return r;
     }
+    putRingOnMachineClock(session);   // SDD-074: the Ring clock
     if (!db.saveOximetrySessionFrom(kOximetryDeviceId, session, origin)) {
         r["error"] = "Failed to save oximetry session";
         return r;

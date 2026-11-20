@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 #include "PosixCompat.h"
 #include "services/SessionDiscoveryService.h"
+#include "utils/TimeCompat.h"
+#include <cpapdash/parser/WallClock.h>
 #include "clients/IDataSource.h"
 #include "clients/EzShareClient.h"
 
@@ -552,7 +554,7 @@ TEST(DiscoverNewSessionsTest, FoldersBeforeLastDateAreFilteredOut) {
     tm.tm_mday = 15;
     tm.tm_hour = 12;
     tm.tm_isdst = -1;
-    auto last = std::chrono::system_clock::from_time_t(std::mktime(&tm));
+    auto last = std::chrono::system_clock::from_time_t(timegm_utc(&tm));
 
     SessionDiscoveryService svc(ds);
     auto sessions = svc.discoverNewSessions(last);
@@ -575,7 +577,7 @@ TEST(DiscoverNewSessionsTest, AlreadyStoredOldSessionIsSkipped) {
     tm.tm_mday = 15;
     tm.tm_hour = 12;  // after the 02:00 session
     tm.tm_isdst = -1;
-    auto last = std::chrono::system_clock::from_time_t(std::mktime(&tm));
+    auto last = std::chrono::system_clock::from_time_t(timegm_utc(&tm));
 
     SessionDiscoveryService svc(ds);
     auto sessions = svc.discoverNewSessions(last);
@@ -606,7 +608,7 @@ TEST(DiscoverNewSessionsTest, ACaughtUpFolderIsScannedBehindTheAnchor) {
     tm.tm_mday = 15;
     tm.tm_hour = 12;
     tm.tm_isdst = -1;
-    const auto last = std::chrono::system_clock::from_time_t(std::mktime(&tm));
+    const auto last = std::chrono::system_clock::from_time_t(timegm_utc(&tm));
 
     SessionDiscoveryService svc(ds);
     ASSERT_TRUE(svc.discoverNewSessions(last).empty())
@@ -631,7 +633,7 @@ TEST(DiscoverNewSessionsTest, OnlyTheNamedFoldersAreCaughtUp) {
     tm.tm_mon = 5;
     tm.tm_mday = 15;
     tm.tm_isdst = -1;
-    const auto last = std::chrono::system_clock::from_time_t(std::mktime(&tm));
+    const auto last = std::chrono::system_clock::from_time_t(timegm_utc(&tm));
 
     SessionDiscoveryService svc(ds);
     auto caught = svc.discoverNewSessions(last, std::nullopt, {"20200102"});
@@ -666,7 +668,7 @@ TEST(DiscoverNewSessionsTest, PrevDayFolderIsIncludedForEarlyAmSessions) {
     tm.tm_mday = 15;
     tm.tm_hour = 12;
     tm.tm_isdst = -1;
-    const auto last = std::chrono::system_clock::from_time_t(std::mktime(&tm));
+    const auto last = std::chrono::system_clock::from_time_t(timegm_utc(&tm));
 
     SessionDiscoveryService svc(ds);
     auto sessions = svc.discoverNewSessions(last);
@@ -692,12 +694,12 @@ TEST(DiscoverNewSessionsTest, RetainedSessionSurvivesEvenWhenYearsOld) {
     tm.tm_mday = 15;
     tm.tm_hour = 12;
     tm.tm_isdst = -1;
-    const auto last = std::chrono::system_clock::from_time_t(std::mktime(&tm));
+    const auto last = std::chrono::system_clock::from_time_t(timegm_utc(&tm));
 
     std::tm at = tm;
     at.tm_hour = 2;              // the anchor names the 02:00 session itself
     at.tm_isdst = -1;
-    const auto retain = std::chrono::system_clock::from_time_t(std::mktime(&at));
+    const auto retain = std::chrono::system_clock::from_time_t(timegm_utc(&at));
 
     SessionDiscoveryService svc(ds);
     auto sessions = svc.discoverNewSessions(last, retain);
@@ -722,12 +724,12 @@ TEST(DiscoverNewSessionsTest, RetentionIsInclusiveOfTheAnchorItself) {
     std::tm lt = {};
     lt.tm_year = 2020 - 1900; lt.tm_mon = 5; lt.tm_mday = 15; lt.tm_hour = 23;
     lt.tm_isdst = -1;
-    const auto last = std::chrono::system_clock::from_time_t(std::mktime(&lt));
+    const auto last = std::chrono::system_clock::from_time_t(timegm_utc(&lt));
 
     std::tm rt = {};
     rt.tm_year = 2020 - 1900; rt.tm_mon = 5; rt.tm_mday = 14; rt.tm_hour = 22;
     rt.tm_isdst = -1;
-    const auto retain = std::chrono::system_clock::from_time_t(std::mktime(&rt));
+    const auto retain = std::chrono::system_clock::from_time_t(timegm_utc(&rt));
 
     SessionDiscoveryService svc(ds);
     auto sessions = svc.discoverNewSessions(last, retain);
@@ -752,12 +754,12 @@ TEST(DiscoverNewSessionsTest, RetentionAnchorWidensTheFolderLevelCutToo) {
     std::tm lt = {};
     lt.tm_year = 2020 - 1900; lt.tm_mon = 5; lt.tm_mday = 20; lt.tm_hour = 22;
     lt.tm_isdst = -1;
-    const auto last = std::chrono::system_clock::from_time_t(std::mktime(&lt));
+    const auto last = std::chrono::system_clock::from_time_t(timegm_utc(&lt));
 
     std::tm rt = {};
     rt.tm_year = 2020 - 1900; rt.tm_mon = 5; rt.tm_mday = 10; rt.tm_hour = 22;
     rt.tm_isdst = -1;
-    const auto retain = std::chrono::system_clock::from_time_t(std::mktime(&rt));
+    const auto retain = std::chrono::system_clock::from_time_t(timegm_utc(&rt));
 
     SessionDiscoveryService svc(ds);
     auto sessions = svc.discoverNewSessions(last, retain);
@@ -987,6 +989,8 @@ std::vector<std::unique_ptr<CPAPSession>> parseEachStretch(const std::string& di
         for (const auto* names : {&s.brp_files, &s.pld_files, &s.sad_files,
                                   &s.csl_files, &s.eve_files})
             for (const auto& n : *names) fs::copy_file(fs::path(dir) / n, stage / n);
+        // As every hms-cpap parse runs: labels (SDD-074 D4).
+        cpapdash::parser::WallClockLabels labels;
         auto parsed = EDFParser::parseSession(stage.string(), "sdd047", "AirSense 10",
                                               s.session_start);
         if (parsed) keepOwnEvents(*parsed, s);

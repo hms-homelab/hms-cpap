@@ -232,6 +232,13 @@
       "heading": "Ritmo de recogida",
       "burstInterval": "Intervalo de ráfaga (segundos)"
     },
+    "display": {
+      "heading": "Visualización",
+      "showTimesOn": "Mostrar las horas en",
+      "machine": "el reloj del equipo",
+      "host": "el reloj de este ordenador",
+      "hint": "El reloj del equipo coincide con su propia pantalla y con OSCAR. El reloj de cada equipo se ajusta en su tarjeta de la página Dispositivos."
+    },
     "spo2": {
       "heading": "Desaturaciones de SpO2",
       "dropPct": "Umbral de desaturación (% bajo la línea base)",

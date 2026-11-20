@@ -205,8 +205,8 @@ protected:
     bool fallbackEnabled() { return client.no_listing_; }
     std::time_t time(int day, int hour, int minute) {
         std::tm tm{}; tm.tm_year = 126; tm.tm_mon = 2; tm.tm_mday = day;
-        tm.tm_hour = hour; tm.tm_min = minute; tm.tm_isdst = -1;
-        return std::mktime(&tm);
+        tm.tm_hour = hour; tm.tm_min = minute;
+        return timegm_utc(&tm);   // a label (SDD-074 D4)
     }
     // SDD-069: what the collector tells the client of each burst.
     void burst(long long now, bool full = false, bool growing = false, bool checkpoint = false) {

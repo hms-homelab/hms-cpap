@@ -5,6 +5,9 @@
 #include "services/SessionDiscoveryService.h"
 #include "utils/SessionEnd.h"
 #include "utils/SessionFileRefs.h"
+#include "utils/MachineZone.h"
+
+#include <cpapdash/parser/WallClock.h>
 
 #include <algorithm>
 #include <cctype>
@@ -23,19 +26,9 @@ namespace {
 
 constexpr const char* kTag = "AirSense11 night: ";
 
-/// A timestamp as every backend stores session_start: local wall time.
-std::string wallText(const std::chrono::system_clock::time_point& tp) {
-    const std::time_t t = std::chrono::system_clock::to_time_t(tp);
-    std::tm tm{};
-#ifdef _WIN32
-    localtime_s(&tm, &t);
-#else
-    localtime_r(&t, &tm);
-#endif
-    std::ostringstream out;
-    out << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");
-    return out.str();
-}
+/// A timestamp as every backend stores session_start: the machine's wall
+/// clock, a label (SDD-074 D4).
+std::string wallText(const std::chrono::system_clock::time_point& tp) { return wall::text(tp); }
 
 std::optional<std::chrono::system_clock::time_point> wallFrom(const std::string& text) {
     if (text.size() < 19) return std::nullopt;
@@ -43,8 +36,7 @@ std::optional<std::chrono::system_clock::time_point> wallFrom(const std::string&
     std::istringstream in(text.substr(0, 19));
     in >> std::get_time(&tm, "%Y-%m-%d %H:%M:%S");
     if (in.fail()) return std::nullopt;
-    tm.tm_isdst = -1;
-    return std::chrono::system_clock::from_time_t(std::mktime(&tm));
+    return wall::point(wall::labelOf(tm));
 }
 
 bool isNightName(const std::string& name) {
@@ -261,8 +253,11 @@ As11NightImport::Result As11NightImport::run(const std::set<std::string>& remove
                 continue;   // left to the card last time, and unchanged since
             }
 
-            auto parsed = EDFParser::parseSession(dirToParse(folder, set, st.one_group),
-                                                  device_id_, device_name_, start);
+            auto parsed = [&] {
+                cpapdash::parser::WallClockLabels labels;   // SDD-074 D4
+                return EDFParser::parseSession(dirToParse(folder, set, st.one_group),
+                                               device_id_, device_name_, start);
+            }();
             if (!parsed) {
                 std::cerr << kTag << "could not parse " << serial << " " << st.night << " "
                           << set.session_prefix << std::endl;

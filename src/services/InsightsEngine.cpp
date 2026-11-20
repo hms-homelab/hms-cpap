@@ -1,4 +1,5 @@
 #include "services/InsightsEngine.h"
+#include "utils/MachineZone.h"
 #include <algorithm>
 #include <cmath>
 #include <iomanip>
@@ -296,8 +297,7 @@ std::vector<STRDailyRecord> InsightsEngine::lastN(
 }
 
 std::string InsightsEngine::formatDate(const STRDailyRecord& r) {
-    auto t = std::chrono::system_clock::to_time_t(r.record_date);
-    std::tm tm = *std::localtime(&t);
+    const std::tm tm = wall::fieldsOf(wall::seconds(r.record_date));   // a label (SDD-074 D4)
     std::ostringstream oss;
     oss << std::put_time(&tm, "%m/%d");
     return oss.str();

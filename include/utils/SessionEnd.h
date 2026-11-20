@@ -14,6 +14,7 @@
 #include "database/IDatabase.h"
 #include "database/SqlDialect.h"
 #include "parsers/CpapdashBridge.h"
+#include "utils/MachineZone.h"
 
 #include <chrono>
 #include <ctime>
@@ -40,7 +41,8 @@ inline std::optional<std::chrono::system_clock::time_point> dataEndOf(const CPAP
 /// SDD-037 D1: is a local night old enough that storing it should also close
 /// it? Inside the window the burst's checkpoint path still owns it, because a
 /// local folder can be a mounted card, or the target of a sync that writes on a
-/// lag, and calling that Done mid-night is the worse error.
+/// lag, and calling that Done mid-night is the worse error. [now] is the
+/// machine's clock now (SDD-074 D7), the frame session_start is in.
 inline bool localNightHasSettled(const std::chrono::system_clock::time_point& session_start,
                                  const std::chrono::system_clock::time_point& now,
                                  const std::chrono::seconds& window) {
@@ -70,25 +72,15 @@ inline std::vector<OpenSession> openSessionsStartedBefore(
         "   AND session_start <= " + sql::castTimestamp(2, dt) +
         " ORDER BY session_start";
 
-    const std::time_t t = std::chrono::system_clock::to_time_t(cutoff);
-    std::tm tm{};
-#ifdef _WIN32
-    localtime_s(&tm, &t);
-#else
-    localtime_r(&t, &tm);
-#endif
-    std::ostringstream cut;
-    cut << std::put_time(&tm, "%Y-%m-%d %H:%M:%S");
-
+    // SDD-074 D4: the cutoff and the starts are labels.
     std::vector<OpenSession> out;
-    for (const auto& row : db.executeQuery(sql, {device_id, cut.str()})) {
+    for (const auto& row : db.executeQuery(sql, {device_id, wall::text(cutoff)})) {
         std::tm st{};
         std::istringstream in(row["start"].asString().substr(0, 19));
         in >> std::get_time(&st, "%Y-%m-%d %H:%M:%S");
         if (in.fail()) continue;
-        st.tm_isdst = -1;
         OpenSession s;
-        s.start = std::chrono::system_clock::from_time_t(std::mktime(&st));
+        s.start = wall::point(wall::labelOf(st));
         const Json::Value& d = row["duration_seconds"];
         s.duration_seconds = d.isNull() ? 0 : std::atoll(d.asString().c_str());
         out.push_back(s);

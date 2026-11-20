@@ -12,6 +12,7 @@
 #include <gtest/gtest.h>
 
 #include "services/SyncFolderState.h"
+#include "utils/TimeCompat.h"
 
 using namespace hms_cpap;
 
@@ -268,8 +269,8 @@ TEST(SyncFolderState, StateStringsAreCanonical) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 namespace {
-/// Build a local-time instant, so these tests read as wall clock in whatever
-/// zone they run in rather than assuming UTC.
+/// A machine wall time as hms-cpap holds it: a label (SDD-074 D4), so these
+/// tests read as wall clock in whatever zone they run in.
 std::chrono::system_clock::time_point localTime(int y, int mo, int d, int h, int mi) {
     std::tm tm{};
     tm.tm_year = y - 1900;
@@ -277,8 +278,7 @@ std::chrono::system_clock::time_point localTime(int y, int mo, int d, int h, int
     tm.tm_mday = d;
     tm.tm_hour = h;
     tm.tm_min  = mi;
-    tm.tm_isdst = -1;   // let the library decide; the rule must survive DST
-    return std::chrono::system_clock::from_time_t(std::mktime(&tm));
+    return std::chrono::system_clock::from_time_t(timegm_utc(&tm));
 }
 }  // namespace
 

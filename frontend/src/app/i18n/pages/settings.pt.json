@@ -232,6 +232,13 @@
       "heading": "Ritmo de coleta",
       "burstInterval": "Intervalo da rajada (segundos)"
     },
+    "display": {
+      "heading": "Exibição",
+      "showTimesOn": "Mostrar horários no",
+      "machine": "relógio do aparelho",
+      "host": "relógio deste computador",
+      "hint": "O relógio do aparelho coincide com a tela dele e com o OSCAR. O relógio de cada aparelho é ajustado no cartão dele na página Dispositivos."
+    },
     "spo2": {
       "heading": "Dessaturações de SpO2",
       "dropPct": "Limite de dessaturação (% abaixo da linha de base)",

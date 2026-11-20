@@ -17,6 +17,7 @@
 #include <gtest/gtest.h>
 
 #include "database/IDatabase.h"
+#include "utils/TimeCompat.h"
 #include "database/SQLiteDatabase.h"
 #ifdef WITH_MYSQL
 #include "database/MySQLDatabase.h"
@@ -87,8 +88,8 @@ protected:
         std::tm tm{};
         tm.tm_year = 130; tm.tm_mon = 0; tm.tm_mday = 1;   // 2030-01-01 22:00:00
         tm.tm_hour = 22;  tm.tm_min = 0; tm.tm_sec  = 0;
-        tm.tm_isdst = -1;
-        start_ = system_clock::from_time_t(std::mktime(&tm));
+        // SDD-074 D4: a machine's wall clock is held as a label (timegm).
+        start_ = system_clock::from_time_t(timegm_utc(&tm));
 
         ASSERT_TRUE(db_->saveSession(makeSession()));
     }

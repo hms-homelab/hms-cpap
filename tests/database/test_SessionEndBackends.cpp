@@ -20,6 +20,7 @@
 #include <gtest/gtest.h>
 
 #include "database/IDatabase.h"
+#include "utils/TimeCompat.h"
 #include "database/SQLiteDatabase.h"
 #include "database/SqlDialect.h"
 #include "utils/SessionEnd.h"
@@ -54,7 +55,8 @@ std::string envOr(const char* key, const std::string& fallback) {
     return (v && *v) ? std::string(v) : fallback;
 }
 
-/// A start on the LOCAL clock, as an EDF wall clock is read.
+/// A start on the machine's clock, as an EDF wall clock is read: a label
+/// (SDD-074 D4).
 system_clock::time_point local(int y, int mo, int d, int h, int mi = 0) {
     std::tm tm{};
     tm.tm_year = y - 1900;
@@ -62,8 +64,7 @@ system_clock::time_point local(int y, int mo, int d, int h, int mi = 0) {
     tm.tm_mday = d;
     tm.tm_hour = h;
     tm.tm_min = mi;
-    tm.tm_isdst = -1;
-    return system_clock::from_time_t(std::mktime(&tm));
+    return system_clock::from_time_t(timegm_utc(&tm));
 }
 
 enum class Engine { SQLite, MySQL, Postgres };

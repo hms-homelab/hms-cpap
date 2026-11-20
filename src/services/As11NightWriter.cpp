@@ -1,6 +1,7 @@
 #include "services/As11NightWriter.h"
 #include "services/As11CardEdf.h"
 #include "services/CardFileFeed.h"
+#include "utils/MachineClocks.h"
 
 #include <nlohmann/json.hpp>
 
@@ -210,6 +211,13 @@ WallClockFn hostLocalClock() {
     };
 }
 
+WallClockFn zoneClock(const MachineZone& zone) {
+    return [zone](int64_t utc_ms) {
+        const int64_t s = floorDiv(utc_ms, 1000);
+        return civilFromSeconds(zone.toWall(s));
+    };
+}
+
 std::optional<int> machineOffsetFromDayStart(int64_t day_start_utc_ms) {
     const int64_t mod = floorDiv(day_start_utc_ms, 60000) % 1440;
     int off = 720 - static_cast<int>(mod < 0 ? mod + 1440 : mod);
@@ -239,6 +247,12 @@ void As11NightWriter::setClock(const std::string& serial, WallClockFn clock) {
 }
 
 WallClockFn As11NightWriter::clockFor(const std::string& serial) const {
+    // SDD-074 D6/D7: the owner's clock setting for the machine names its night
+    // from the first byte, over the Summary's offset and a Mule's POSIX TZ.
+    // With none, the chain as before: the clock set for the serial, else the
+    // default.
+    const MachineZone zone = machine_clocks::zoneFor(machine_clocks::primaryDevice());
+    if (!zone.isHost()) return zoneClock(zone);
     auto it = clocks_.find(serial);
     return it != clocks_.end() ? it->second : default_clock_;
 }

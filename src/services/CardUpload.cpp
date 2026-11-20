@@ -10,6 +10,7 @@
 #include "utils/SessionEnd.h"
 
 #include <cpapdash/parser/SefamParser.h>
+#include <cpapdash/parser/WallClock.h>
 
 #include <algorithm>
 #include <cctype>
@@ -222,6 +223,7 @@ std::vector<FoundPrismaSession> lowensteinSessions(const std::string& root) {
 }  // namespace
 
 std::set<std::string> cardNights(UploadedCard kind, const std::string& root) {
+    cpapdash::parser::WallClockLabels labels;   // SDD-074 D4
     std::set<std::string> nights;
     if (kind == UploadedCard::Sefam) {
         SefamIngestion ing(root);
@@ -242,6 +244,7 @@ CardImportCounts importCardSessions(IDatabase& db, UploadedCard kind, const std:
                                     const std::string& device_id,
                                     const std::string& device_name,
                                     const CardImportProgress& progress) {
+    cpapdash::parser::WallClockLabels labels;   // SDD-074 D4
     CardImportCounts c;
     const auto removed = removedNightSet(db, device_id);
 

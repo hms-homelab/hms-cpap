@@ -2,6 +2,8 @@
 
 #include "services/RemovedNights.h"
 #include "utils/SessionEnd.h"
+#include "utils/MachineClocks.h"
+#include "utils/SessionLabels.h"
 
 #ifdef CPAPDASH_WITH_PHILIPS
 #include <cpapdash/parser/PhilipsParser.h>
@@ -66,6 +68,11 @@ std::vector<std::unique_ptr<CPAPSession>> Ds2NightImport::parseMachine(const std
         if (auto s = parser.parseSessionFromBuffers(bufs, device_id_, device_name_)) out.push_back(std::move(s));
     }
 #endif
+    // SDD-074 D4/D6: the chunks' seconds are instants; held as labels on the
+    // machine's clock (this computer's zone with no setting, as before).
+    const MachineZone zone = machine_clocks::zoneFor(device_id_);
+    for (auto& s : out)
+        if (s) putOnMachineClock(*s, zone);
 #else
     (void)serial;
     (void)sizes;
@@ -109,13 +116,13 @@ Ds2NightImport::Result Ds2NightImport::run(const std::set<std::string>& removed)
                 ++r.skipped;
                 continue;
             }
-            if (cutoff > 0 &&
-                std::chrono::duration_cast<std::chrono::seconds>(start.time_since_epoch()).count() < cutoff) {
+            // The cutoff and the summaries' starts are instants, the session's
+            // start a label (SDD-074 D4).
+            const long long start_s = machine_clocks::zoneFor(device_id_).toInstant(wall::seconds(start));
+            if (cutoff > 0 && start_s < cutoff) {
                 ++r.skipped;
                 continue;
             }
-            const long long start_s =
-                std::chrono::duration_cast<std::chrono::seconds>(start.time_since_epoch()).count();
             auto at = summary_start.upper_bound(start_s);
             const uint32_t number = at == summary_start.begin() ? 0 : std::prev(at)->second;
             const std::string key = serial + "/" + std::to_string(number);

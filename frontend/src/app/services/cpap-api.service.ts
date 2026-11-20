@@ -5,7 +5,7 @@ import { DashboardData, SessionListItem, SessionDetail, SessionEvent, EventRow, 
 import { AppConfig, DiscoveredDevice } from '../models/config.model';
 import { EquipmentType, EquipmentProfile, EquipmentItem, EquipmentItemPayload } from '../models/equipment.model';
 import { CleaningTask, CleaningTaskType, CleaningSuggestResult } from '../models/cleaning.model';
-import type { DevicesAnswer } from '../pages/devices/devices-model';
+import type { ClockView, DevicesAnswer } from '../pages/devices/devices-model';
 
 @Injectable({ providedIn: 'root' })
 export class CpapApiService {
@@ -201,6 +201,21 @@ export class CpapApiService {
   /// `fresh` also reads the published versions now (the page's first load).
   getDevices(fresh = false): Observable<DevicesAnswer> {
     return this.http.get<DevicesAnswer>('/api/devices', fresh ? { params: { fresh: '1' } } : {});
+  }
+
+  /// SDD-074: the zone names this computer knows, for the Time zone search.
+  getClockZones(): Observable<{ zones: string[]; source: string }> {
+    return this.http.get<{ zones: string[]; source: string }>('/api/clock/zones');
+  }
+
+  /// SDD-074: a machine's (or the ring's) clock: '' this computer, '+10:00', or a zone name.
+  setDeviceClock(deviceId: string, setting: string): Observable<{ ok: boolean; clock: ClockView }> {
+    return this.http.put<{ ok: boolean; clock: ClockView }>('/api/devices/clock', { device_id: deviceId, setting });
+  }
+
+  /// SDD-074 decision 3: back up the machine's nights, then read every archived night again.
+  rereadDeviceNights(deviceId: string): Observable<{ ok: boolean; backup: string[] }> {
+    return this.http.post<{ ok: boolean; backup: string[] }>('/api/devices/clock/reread', { device_id: deviceId });
   }
 
   /** A local name; '' clears it. Never sent to the device. */

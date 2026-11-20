@@ -7,6 +7,9 @@
 //                                          ?fresh=1 also reads the mule manifest and the
 //                                          bridge release feed now (the page's first load)
 //   PUT    /api/devices/{kind}/{id}/name   {"name"}: a local name; "" clears it
+//   PUT    /api/devices/clock              SDD-074: a machine's (or the ring's) clock
+//   POST   /api/devices/clock/reread       SDD-074: "Re-read my nights"
+//   GET    /api/clock/zones                SDD-074: the zone names to pick from
 //   DELETE /api/devices/{kind}/{id}        forget an away Mule & Miner or Sleep Bridge
 //   GET    /api/source/status              the card source's reachability
 //   GET    /api/oximetry/status            the O2 ring, as last talked to
@@ -28,6 +31,7 @@
 
 #include <json/json.h>
 
+#include <functional>
 #include <memory>
 #include <string>
 
@@ -36,6 +40,7 @@ struct AppConfig;
 class BurstCollectorService;
 class GarminService;
 class QueryService;
+class IDatabase;
 namespace mule {
 class MuleService;
 class FirmwareUpdater;
@@ -61,6 +66,11 @@ struct RouteDeps {
     DevicesStore*                    store{nullptr};
     GarminService*                   garmin{nullptr};     // SDD-078
     int                              stream_port{8894};
+    // SDD-074: each machine's clock setting (web/ClockApi.h), and the
+    // "Re-read my nights" it offers: backs the rows up and reads the archive
+    // again; answers {"ok", "backup": [...]} or {"ok": false, "error"}.
+    std::shared_ptr<IDatabase>                             db;
+    std::function<Json::Value(const std::string&)>         reread;
     std::string                      config_path;         // SDD-080: PUT /api/oscar saves here
 };
 

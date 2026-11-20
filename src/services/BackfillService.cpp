@@ -7,6 +7,7 @@
 #include "utils/CardLayout.h"
 #include "utils/CheckpointSizes.h"
 #include "utils/SessionEnd.h"
+#include <cpapdash/parser/WallClock.h>
 
 #include <spdlog/spdlog.h>
 #include <algorithm>
@@ -90,6 +91,7 @@ uint64_t BackfillService::triggerZipImport(const std::string& zip_path,
 void BackfillService::executeZipImport(
     uint64_t id, const std::string& path,
     const std::function<Json::Value(const std::string&)>& job) {
+    cpapdash::parser::WallClockLabels labels;   // SDD-074 D4
     {
         std::lock_guard<std::mutex> lock(progress_mutex_);
         progress_ = Progress{};
@@ -134,6 +136,7 @@ void BackfillService::executeZipImport(
 }
 
 void BackfillService::executeCardImport(UploadedCard kind, const std::string& root) {
+    cpapdash::parser::WallClockLabels labels;   // SDD-074 D4
     {
         std::lock_guard<std::mutex> lock(progress_mutex_);
         progress_ = Progress{};
@@ -276,6 +279,8 @@ void BackfillService::runLoop() {
 
 void BackfillService::executeBackfill(const std::string& start_date,
                                       const std::string& end_date) {
+    // SDD-074 D4: every machine time this pass parses is a label.
+    cpapdash::parser::WallClockLabels labels;
     // Reset progress
     {
         std::lock_guard<std::mutex> lock(progress_mutex_);
@@ -579,6 +584,7 @@ bool BackfillService::processSTRFile() {
     }
 
     try {
+        cpapdash::parser::WallClockLabels labels;   // SDD-074 D4
         auto records = EDFParser::parseSTRFile(str_path, config_.device_id);
         if (records.empty()) {
             spdlog::warn("BackfillService: STR.edf has no therapy days");

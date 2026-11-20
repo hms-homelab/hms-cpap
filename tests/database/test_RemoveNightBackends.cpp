@@ -63,7 +63,8 @@ long long asCount(const Json::Value& v) {
     return v.asInt64();
 }
 
-/// A CPAP start on the LOCAL clock, as the EDF wall clock is read (mktime).
+/// A CPAP start on the machine's clock, as the EDF wall clock is read: a
+/// label (SDD-074 D4).
 system_clock::time_point local(int y, int mo, int d, int h, int mi = 0) {
     std::tm tm{};
     tm.tm_year = y - 1900;
@@ -71,8 +72,7 @@ system_clock::time_point local(int y, int mo, int d, int h, int mi = 0) {
     tm.tm_mday = d;
     tm.tm_hour = h;
     tm.tm_min = mi;
-    tm.tm_isdst = -1;
-    return system_clock::from_time_t(std::mktime(&tm));
+    return system_clock::from_time_t(timegm_utc(&tm));
 }
 
 /// A ring start: its printed wall clock read AS IF it were UTC (timegm).
@@ -274,8 +274,7 @@ protected:
             tm.tm_mday = std::stoi(s.substr(8, 2));
             tm.tm_hour = std::stoi(s.substr(11, 2));
             tm.tm_min = std::stoi(s.substr(14, 2));
-            tm.tm_isdst = -1;
-            if (strDayForSessionStart(system_clock::from_time_t(std::mktime(&tm))) == night) ++n;
+            if (strDayForSessionStart(system_clock::from_time_t(timegm_utc(&tm))) == night) ++n;
         }
         return n;
     }

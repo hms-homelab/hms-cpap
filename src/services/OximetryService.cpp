@@ -2,6 +2,7 @@
 #include "services/OximetryOutbox.h"
 #include "services/RemovedNights.h"
 #include "utils/OximetryDevice.h"
+#include "utils/SessionLabels.h"
 #include "database/SqlDialect.h"
 #include <cpapdash/parser/O2RingSParser.h>
 #include <cpapdash/parser/VLDParser.h>
@@ -121,6 +122,7 @@ bool OximetryService::collectAndPublish() {
             std::cerr << "O2Ring: Failed to parse " << filename << std::endl;
             continue;
         }
+        putRingOnMachineClock(*session);   // SDD-074: the Ring clock
 
         if (isRemovedOximetryNight(removed, session->start_time)) {
             const auto night = oximetryNightOf(session->start_time);

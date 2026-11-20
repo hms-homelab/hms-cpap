@@ -1,4 +1,6 @@
 #include "web/QueryService.h"
+#include "utils/MachineZone.h"
+#include "utils/MachineClocks.h"
 #include "utils/AppConfig.h"
 #include "web/ArchiveChart.h"
 #include "utils/NightQuiet.h"
@@ -281,6 +283,11 @@ Json::Value QueryService::getDashboard() {
     return result;
 }
 
+long long QueryService::clockShiftOf(const std::string& stored_start) const {
+    const auto label = wall::parseText(stored_start);
+    return label ? machine_clocks::displayShift(device_id_, *label) : 0;
+}
+
 Json::Value QueryService::getSessions(int limit, int offset) {
     // Group by sleep day (date shifted -12h) so multiple mask-on/off
     // events in the same night appear as one row. Returns the most recent
@@ -383,6 +390,10 @@ Json::Value QueryService::getSessions(int limit, int offset) {
         " OFFSET " + std::to_string(archive_enabled ? 0 : offset);
 
     Json::Value rows = query(q, {device_id_, device_id_});
+    // SDD-074 decision 2: what the page adds to show a night on this
+    // computer's clock (0 on the machine's).
+    for (auto& row : rows)
+        row["clock_shift_s"] = static_cast<Json::Int64>(clockShiftOf(row.get("session_start", "").asString()));
 
     // SDD-008: attach the night's transfer state so the frontend does not
     // re-derive it a third time (it already reimplements the live test in
@@ -488,6 +499,7 @@ Json::Value QueryService::getSessionDetail(const std::string& date) {
     Json::Value result(Json::arrayValue);
     for (const auto& sj : sessions) {
         Json::Value row = sj;
+        row["clock_shift_s"] = static_cast<Json::Int64>(clockShiftOf(sj.get("session_start", "").asString()));
         std::string session_id = sj.get("id", "").asString();
         if (!session_id.empty()) {
             std::string q_events =
@@ -782,7 +794,7 @@ Json::Value QueryService::getInsights(int days) {
             tm.tm_mon  = std::stoi(date_str.substr(5, 2)) - 1;
             tm.tm_mday = std::stoi(date_str.substr(8, 2));
             tm.tm_hour = 12;
-            rec.record_date = std::chrono::system_clock::from_time_t(std::mktime(&tm));
+            rec.record_date = wall::point(wall::labelOf(tm));   // a label (SDD-074 D4)
         }
         rec.duration_minutes = jdouble(r, "duration_minutes");
         rec.ahi = jdouble(r, "ahi");

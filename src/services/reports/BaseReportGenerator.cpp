@@ -1,4 +1,5 @@
 #include "services/reports/BaseReportGenerator.h"
+#include "utils/MachineZone.h"
 #include "utils/OximetryDevice.h"
 #include "utils/TherapyPressure.h"
 #include "services/InsightsEngine.h"
@@ -168,7 +169,7 @@ void BaseReportGenerator::addInsightsSection(PdfRenderer& pdf,
             tm.tm_mon  = std::stoi(ds.substr(5,2)) - 1;
             tm.tm_mday = std::stoi(ds.substr(8,2));
             tm.tm_hour = 12;
-            rec.record_date = std::chrono::system_clock::from_time_t(std::mktime(&tm));
+            rec.record_date = wall::point(wall::labelOf(tm));   // a label (SDD-074 D4)
         }
         rec.duration_minutes = jd(r, "duration_minutes");
         rec.ahi       = jd(r, "ahi");

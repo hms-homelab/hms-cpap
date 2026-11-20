@@ -1,5 +1,6 @@
 #include "services/DataPublisherService.h"
 #include "utils/OximetryDevice.h"
+#include "utils/MachineClocks.h"
 #include "utils/TimeCompat.h"
 #include "utils/ConfigManager.h"
 #include "utils/AppConfig.h"
@@ -422,15 +423,13 @@ void DataPublisherService::publishRealtimeState(const CPAPSession& session) {
 
     // Last session time (ISO 8601 with timezone)
     if (session.session_start.has_value()) {
-        auto time_t = std::chrono::system_clock::to_time_t(session.session_start.value());
-        std::tm* tm = std::localtime(&time_t);
-        std::ostringstream oss;
-        oss << std::put_time(tm, "%Y-%m-%dT%H:%M:%S%z");
-        // Insert colon in timezone: +0500 -> +05:00 (ISO 8601)
-        std::string timestamp_str = oss.str();
-        if (timestamp_str.length() >= 5) {
-            timestamp_str.insert(timestamp_str.length() - 2, ":");
-        }
+        // SDD-074 D8: the machine's wall clock with the machine's real offset
+        // at that instant, so Home Assistant places the night where it was.
+        // With no setting: the host's zone, as before.
+        const std::string& dev = session.device_id.empty() ? device_id_ : session.device_id;
+        const long long label = wall::seconds(session.session_start.value());
+        const std::string timestamp_str =
+            machine_clocks::zoneFor(dev).isoText(machine_clocks::instantOf(dev, label));
         mqtt_client_->publish("cpap/" + device_id_ + "/realtime/last_session_time",
                              timestamp_str, 0, true);
     }
