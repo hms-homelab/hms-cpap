@@ -48,6 +48,10 @@
     "configError": {
       "title": "Semmilyen adat nem kerül be.",
       "action": "Beállítások megnyitása"
+    },
+    "dataDirFallback": {
+      "title": "Az adatkönyvtárba nem lehetett írni.",
+      "body": "A CpapDash nem tudott írni ide: {{wanted}}, ezért ez a futás itt tárolja az adatait: {{in_use}}. Tegye írhatóvá a mappát, majd indítsa újra a CpapDash-t a Home Assistantban."
     }
   }
 }

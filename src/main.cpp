@@ -25,6 +25,7 @@
 #include "services/SupplyPublisher.h"
 #include "services/MyAirService.h"
 #include "web/IngressBase.h"
+#include "web/DataMoveServer.h"
 #include "web/QueryService.h"
 #ifndef _WIN32
 #include "services/ReportGeneratorService.h"
@@ -556,15 +557,19 @@ int main(int argc, char** argv) {
     // --test-db and --create-db join --preflight here for the same reason: they
     // are short-lived probes a GUI blocks on, so nothing may hold their exit
     // open, and their whole output is the report the caller reads back.
+    // SDD-067: --move-data too. The support log lives in the data directory,
+    // which is the thing being moved.
     bool preflight_only = false;
     bool db_probe_mode  = false;
     bool db_provision   = false;
+    int  move_data_at   = 0;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--preflight") == 0) preflight_only = true;
         if (std::strcmp(argv[i], "--test-db") == 0)   db_probe_mode  = true;
         if (std::strcmp(argv[i], "--create-db") == 0) { db_probe_mode = true; db_provision = true; }
+        if (std::strcmp(argv[i], "--move-data") == 0) move_data_at = i;
     }
-    if (!preflight_only && !db_probe_mode) {
+    if (!preflight_only && !db_probe_mode && move_data_at == 0) {
         hms_cpap::FileLogger::start(hms_cpap::FileLogger::defaultPath(),
                                     5 * 1024 * 1024, 3);
         std::atexit([] { hms_cpap::FileLogger::stop(); });
@@ -606,6 +611,25 @@ int main(int argc, char** argv) {
         const auto result = hms_cpap::runDbProbeCli(request, db_provision);
         std::cout << result.json;
         return result.exit_code;
+    }
+
+    // SDD-067 D18: `--move-data <from> <to> [--port N]`. The Home Assistant
+    // add-on's run.sh calls it when the data directory has to move, before
+    // the normal start; like --test-db it runs before the configuration and
+    // the database are touched. It moves, serves only the progress page on
+    // the web port, and exits 0 when the move is complete.
+    if (move_data_at > 0) {
+        if (move_data_at + 2 >= argc) {
+            std::cerr << "usage: --move-data <from> <to> [--port N]" << std::endl;
+            return 2;
+        }
+        int port = 8893;
+        for (int i = 1; i + 1 < argc; ++i) {
+            if (std::strcmp(argv[i], "--port") == 0) {
+                try { port = std::stoi(argv[i + 1]); } catch (...) {}
+            }
+        }
+        return hms_cpap::datamove::runMoveDataMode(argv[move_data_at + 1], argv[move_data_at + 2], port);
     }
 
     // ── Load AppConfig ──────────────────────────────────────────────

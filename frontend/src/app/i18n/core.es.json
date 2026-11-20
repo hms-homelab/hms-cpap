@@ -48,6 +48,10 @@
     "configError": {
       "title": "No se está importando nada.",
       "action": "Abrir Ajustes"
+    },
+    "dataDirFallback": {
+      "title": "No se pudo escribir en el directorio de datos.",
+      "body": "CpapDash no pudo escribir en {{wanted}}, así que esta ejecución guarda sus datos en {{in_use}}. Permita la escritura en esa carpeta y reinicie CpapDash en Home Assistant."
     }
   }
 }

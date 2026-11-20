@@ -4,6 +4,7 @@ import { filter } from 'rxjs';
 import { TranslatePipe } from '@ngx-translate/core';
 import { NavBarComponent } from './components/nav-bar/nav-bar.component';
 import { CpapApiService } from './services/cpap-api.service';
+import { DataDirFallback, dataDirFallback } from './utils/data-dir-fallback';
 
 /** SDD-010: what /api/capabilities reports when the local folder is misconfigured. */
 interface ConfigError {
@@ -20,6 +21,20 @@ interface ConfigError {
   template: `
     @if (!isSetup) {
       <app-nav-bar />
+    }
+    <!--
+      SDD-067 D7. The Home Assistant add-on could not write the data directory
+      it was given and this run keeps its data in /data. On every page, the
+      setup wizard included. Gone on the first start that can write there.
+    -->
+    @if (dataDirFallback) {
+      <div class="data-dir-fallback" role="alert">
+        <span class="icon" aria-hidden="true">&#9888;</span>
+        <div class="body">
+          <strong>{{ 'shell.dataDirFallback.title' | translate }}</strong>
+          <span>{{ 'shell.dataDirFallback.body' | translate: dataDirFallback }}</span>
+        </div>
+      </div>
     }
     <!--
       SDD-010. Ingestion has stopped, but the dashboard keeps serving nights
@@ -88,11 +103,33 @@ interface ConfigError {
       white-space: nowrap;
     }
     .config-error .action:hover { background: rgba(244, 67, 54, 0.16); }
+
+    .data-dir-fallback {
+      max-width: 1200px;
+      margin: 0.75rem auto;
+      display: flex;
+      align-items: flex-start;
+      gap: 0.75rem;
+      padding: 0.85rem 1rem;
+      border: 1px solid rgba(255, 183, 77, 0.5);
+      border-left: 4px solid #ffb74d;
+      border-radius: 6px;
+      background: rgba(255, 183, 77, 0.09);
+      color: #ffe0b2;
+      font-size: 0.9rem;
+      line-height: 1.45;
+    }
+    .data-dir-fallback .icon { color: #ffb74d; font-size: 1.1rem; line-height: 1.3; }
+    /* The two directories are paths with no spaces. */
+    .data-dir-fallback .body { flex: 1 1 14rem; min-width: 0; overflow-wrap: anywhere;
+                               display: flex; flex-direction: column; gap: 0.15rem; }
+    .data-dir-fallback strong { color: #ffcc80; }
   `]
 })
 export class AppComponent implements OnInit {
   isSetup = false;
   configError: ConfigError | null = null;
+  dataDirFallback: DataDirFallback | null = null;
 
   constructor(private api: CpapApiService, private router: Router) {
     this.router.events.pipe(
@@ -117,6 +154,7 @@ export class AppComponent implements OnInit {
     this.api.getCapabilities().subscribe({
       next: (caps: any) => {
         this.configError = caps?.config_error ?? null;
+        this.dataDirFallback = dataDirFallback(caps);
       },
       error: () => {
         // Capabilities unavailable. Stay quiet rather than cry wolf.

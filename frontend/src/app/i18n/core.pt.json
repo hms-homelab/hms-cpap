@@ -48,6 +48,10 @@
     "configError": {
       "title": "Nada está sendo importado.",
       "action": "Abrir as Configurações"
+    },
+    "dataDirFallback": {
+      "title": "Não foi possível gravar no diretório de dados.",
+      "body": "O CpapDash não conseguiu gravar em {{wanted}}, então esta execução guarda os dados em {{in_use}}. Libere a gravação nessa pasta e reinicie o CpapDash no Home Assistant."
     }
   }
 }

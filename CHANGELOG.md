@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **The Home Assistant add-on can keep its data directory under `/share`,
+  `/config` or `/media`** (SDD-067). hms-cpap gains a move mode,
+  `hms_cpap --move-data <from> <to> [--port N]`, which the add-on calls when
+  the data has to move. It never overwrites a file that exists at the
+  destination, leaves `options.json`, a copy of `config.json` and the marker
+  `.data_dir_moved` in `/data`, prints its progress to the log, and serves
+  only a progress page on the web port until it is done. When the add-on
+  cannot write the chosen directory, `GET /api/capabilities` reports
+  `data_dir_fallback` and every page shows a banner naming both directories.
+
 ### Fixed
 - **Live O2 Ring samples in bridge mode sit on the same clock as the rest of
   the night.** On PostgreSQL and MySQL they were stamped with the database's

@@ -1317,6 +1317,14 @@ void CpapController::capabilities(const drogon::HttpRequestPtr&,
     result["version"] = caps.version;
     result["platform"] = caps.platform;
     result["data_dir"] = caps.data_dir;
+    // SDD-067 D7: every page shows a banner while this run is a fallback.
+    // Here and not in /api/config, which the Settings page writes back.
+    if (caps.data_dir_fallback) {
+        Json::Value fb;
+        fb["wanted"] = caps.data_dir_fallback->wanted;
+        fb["in_use"] = caps.data_dir_fallback->in_use;
+        result["data_dir_fallback"] = fb;
+    }
 
     Json::Value backends(Json::arrayValue);
     for (const auto& b : caps.backends) backends.append(b);
