@@ -98,6 +98,8 @@ set(TEST_SOURCES
     utils/test_ReExec.cpp
     utils/test_LogTail.cpp
     utils/test_ParentWatch.cpp
+    # SDD-067: the add-on's data directory move and the fallback report.
+    utils/test_DataDirMove.cpp
 
     # SDD-016: the supervisor's Qt-free core. Listed by explicit path, and the
     # sources it tests are added the same way below -- desktop/qt/ is outside

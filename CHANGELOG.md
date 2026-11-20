@@ -49,6 +49,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `hms_cpap --read-card`, `ws://.../api/sleepbridge/watch`, `POST
   /api/sleepbridge/<bridge>/use` and `GET /api/sleepbridge/qr`, which the
   setup steps use (docs/SLEEP_BRIDGE_LOCAL_STREAM.md).
+- **The Home Assistant add-on can keep its data directory under `/share`,
+  `/config` or `/media`** (SDD-067). hms-cpap gains a move mode,
+  `hms_cpap --move-data <from> <to> [--port N]`, which the add-on calls when
+  the data has to move. It never overwrites a file that exists at the
+  destination, leaves `options.json`, a copy of `config.json` and the marker
+  `.data_dir_moved` in `/data`, prints its progress to the log, and serves
+  only a progress page on the web port until it is done. When the add-on
+  cannot write the chosen directory, `GET /api/capabilities` reports
+  `data_dir_fallback` and every page shows a banner naming both directories.
 - **Garmin SpO2 is an oximetry source (SDD-078, #76).** With a Garmin email
   and password in Settings (stored masked, like the CpapDash token), each
   night's SpO2, heart rate and movement are read from Garmin Connect after the

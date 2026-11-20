@@ -18,8 +18,10 @@
 // do rather than offering all three and hoping.
 //
 #include "clients/EzShareClient.h"
+#include "utils/DataDirMove.h"
 
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -36,6 +38,9 @@ public:
         bool mdns_discovery = false;   // SDD-005 LAN browse
         std::string platform;          // e.g. "darwin-arm64"
         std::string data_dir;          // resolved ~/.hms-cpap
+        /// SDD-067 D7, D14: set when the add-on could not write the data
+        /// directory it was given and this run uses /data instead.
+        std::optional<datamove::Fallback> data_dir_fallback;
     };
 
     /// Pure, no I/O beyond reading the data directory path. Safe to call from a

@@ -48,6 +48,10 @@
     "configError": {
       "title": "Nothing is being imported.",
       "action": "Open Settings"
+    },
+    "dataDirFallback": {
+      "title": "The data directory could not be written.",
+      "body": "CpapDash could not write to {{wanted}}, so this run keeps its data in {{in_use}}. Make that folder writable, then restart CpapDash in Home Assistant."
     }
   }
 }
