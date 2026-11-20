@@ -9,6 +9,19 @@ namespace {
 
 constexpr size_t kCommandsShown = 10;
 
+// Where a kind's cards sit: CPAP devices (machines, card readers, bridges)
+// before accessories (the O2 ring).
+int kindRank(const std::string& kind) {
+    if (kind == "as11_ble")  return 0;
+    if (kind == "ds2_ble")   return 1;
+    if (kind == "mule")      return 2;
+    if (kind == "sleepbridge") return 3;
+    if (kind == "ezshare")   return 4;
+    if (kind == "flashair")  return 5;
+    if (kind == "o2ring")    return 100;   // an accessory
+    return 50;                              // a CPAP-side kind this list does not know
+}
+
 Json::Value entry(const std::string& kind, const std::string& id, const std::string& default_name) {
     Json::Value d(Json::objectValue);
     d["kind"]             = kind;
@@ -140,12 +153,17 @@ Json::Value buildDevices(const DeviceInputs& in, DevicesStore& store) {
             detail["through_bridge"] = true;
         } else if (!in.ble_compiled) {
             detail["not_compiled"] = true;
-        } else if (in.o2.isObject() && in.o2.get("checked_at", 0).asInt64() > 0) {
+        } else if (in.o2.isObject()) {
+            // As the AirSense 11 reads: present while it answers, away once it
+            // has been heard or read and does not, unknown until either.
+            // Last seen is the later of the last contact and the last file read.
             const bool connected = in.o2.get("connected", false).asBool();
-            d["present"] = connected ? "yes" : "no";
-            const auto checked = in.o2["checked_at"].asInt64();
-            const auto read    = in.o2.get("last_read_at", 0).asInt64();
-            d["last_heard"]    = static_cast<Json::Int64>(connected ? std::max(checked, read) : read);
+            const long long contact = in.o2.get("last_contact", 0).asInt64();
+            const long long read    = in.o2.get("last_read_at", 0).asInt64();
+            if (connected) d["present"] = "yes";
+            else if (contact > 0 || read > 0) d["present"] = "no";
+            d["last_heard"]        = static_cast<Json::Int64>(std::max(contact, read));
+            detail["last_contact"] = in.o2.get("last_contact", 0);
             detail["battery"]      = in.o2.get("battery", -1);
             detail["last_read_at"] = in.o2.get("last_read_at", 0);
             detail["last_file"]    = in.o2.get("last_file", "");
@@ -267,12 +285,14 @@ Json::Value buildDevices(const DeviceInputs& in, DevicesStore& store) {
         d["own_name"] = own.empty() ? Json::Value(Json::nullValue) : Json::Value(own);
         shown.push_back(d);
     }
+    // A fixed order, so the cards never trade places as devices come and go:
+    // the CPAP side first (the machines, then what reads their cards or relays
+    // them), the accessories after, each kind in a set place and units of one
+    // kind by id.
     std::stable_sort(shown.begin(), shown.end(), [](const Json::Value& a, const Json::Value& b) {
-        const bool ah = a["present"].asString() == "yes", bh = b["present"].asString() == "yes";
-        if (ah != bh) return ah;
-        const auto la = a["last_heard"].asInt64(), lb = b["last_heard"].asInt64();
-        if ((la == 0) != (lb == 0)) return lb == 0;
-        return la > lb;
+        const int ra = kindRank(a["kind"].asString()), rb = kindRank(b["kind"].asString());
+        if (ra != rb) return ra < rb;
+        return a["id"].asString() < b["id"].asString();
     });
 
     Json::Value out(Json::objectValue);

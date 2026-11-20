@@ -99,6 +99,7 @@ Json::Value oximetryStatus() {
     const auto f = svc->facts();
     v["checked_at"]   = static_cast<Json::Int64>(f.checked_at);
     v["connected"]    = f.checked_at ? Json::Value(f.connected) : Json::Value(Json::nullValue);
+    v["last_contact"] = static_cast<Json::Int64>(f.last_contact);
     v["battery"]      = f.battery;
     v["last_read_at"] = static_cast<Json::Int64>(f.last_read_at);
     v["last_file"]    = f.last_file;

@@ -1,6 +1,7 @@
 #include "services/OximetryService.h"
 #include "services/RemovedNights.h"
 #include "utils/OximetryDevice.h"
+#include "database/SqlDialect.h"
 #include <cpapdash/parser/O2RingSParser.h>
 #include <cpapdash/parser/VLDParser.h>
 #include <ctime>
@@ -172,7 +173,8 @@ IO2RingClient::LiveReading OximetryService::pollLive() {
               << " SpO2=" << last_live_.spo2
               << " HR=" << last_live_.hr
               << " Motion=" << last_live_.motion << std::endl;
-    noteFacts(last_live_.valid);
+    // The ring answering is a poll heard, with a finger on it or not.
+    noteFacts(last_live_.answered());
     return last_live_;
 }
 
@@ -181,13 +183,57 @@ void OximetryService::noteFacts(bool connected) {
     std::lock_guard<std::mutex> lk(facts_mtx_);
     facts_.checked_at = static_cast<long long>(std::time(nullptr));
     facts_.connected  = connected;
+    if (connected) facts_.last_contact = facts_.checked_at;
     if (battery >= 0) facts_.battery = battery;
     facts_.live = last_live_;
 }
 
 OximetryService::Facts OximetryService::facts() const {
+    seedLastRead();
     std::lock_guard<std::mutex> lk(facts_mtx_);
     return facts_;
+}
+
+void OximetryService::seedLastRead() const {
+    {
+        std::lock_guard<std::mutex> lk(facts_mtx_);
+        if (last_read_seeded_ || facts_.last_read_at != 0) { last_read_seeded_ = true; return; }
+        last_read_seeded_ = true;
+    }
+    if (!db_) return;
+
+    // How long ago the newest ring file was stored, by the database's own
+    // clock: created_at is written in the server's time on each engine, so
+    // asking the same server for the difference needs no time zone.
+    std::string age;
+    switch (db_->dbType()) {
+        case DbType::SQLITE:
+            age = "CAST(strftime('%s','now') AS INTEGER) - CAST(strftime('%s', created_at) AS INTEGER)";
+            break;
+        case DbType::POSTGRESQL:
+            age = "CAST(EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - created_at)) AS BIGINT)";
+            break;
+        case DbType::MYSQL:
+            age = "TIMESTAMPDIFF(SECOND, created_at, NOW())";
+            break;
+    }
+    // The live poll's own row (live_YYYYMMDD) is not a file read.
+    const std::string q =
+        "SELECT filename, " + age + " AS age FROM oximetry_sessions"
+        " WHERE device_id = " + sql::param(1, db_->dbType()) +
+        " AND filename NOT LIKE 'live%' ORDER BY created_at DESC LIMIT 1";
+    const auto rows = db_->executeQuery(q, {kOximetryDeviceId});
+    if (!rows.isArray() || rows.empty()) return;
+    const auto& row = rows[0u];
+    const auto& a = row["age"];
+    long long secs = -1;
+    if (a.isString()) secs = std::atoll(a.asCString());
+    else if (a.isNumeric()) secs = a.asInt64();
+    if (secs < 0) return;   // no row, or a clock that says the future
+    std::lock_guard<std::mutex> lk(facts_mtx_);
+    if (facts_.last_read_at != 0) return;   // a real read got in first
+    facts_.last_read_at = static_cast<long long>(std::time(nullptr)) - secs;
+    if (row["filename"].isString()) facts_.last_file = row["filename"].asString();
 }
 
 } // namespace hms_cpap

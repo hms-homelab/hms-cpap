@@ -172,11 +172,13 @@
           <div *ngIf="d.detail.not_compiled" class="wide"><dd class="note">{{ 'devices.o2ring.notCompiled' | translate }}</dd></div>
           <ng-container *ngIf="!d.detail.through_bridge && !d.detail.not_compiled">
             <div *ngIf="d.present === 'unknown'" class="wide"><dd class="quiet">{{ 'devices.o2ring.notAsked' | translate }}</dd></div>
+            <div *ngIf="d.present !== 'unknown'"><dt></dt><dd>{{ (d.present === 'yes' ? 'devices.o2ring.connectedNow' : 'devices.o2ring.notConnected') | translate }}</dd></div>
+            <div *ngIf="d.detail.last_contact"><dt>{{ 'devices.o2ring.lastContact' | translate }}</dt><dd>{{ ms(d.detail.last_contact) | date:'short' }}</dd></div>
+            <div *ngIf="d.detail.last_file"><dt>{{ 'devices.o2ring.lastFile' | translate }}</dt>
+              <dd>{{ ms(d.detail.last_read_at) | date:'short' }} · <span class="mono">{{ d.detail.last_file }}</span></dd></div>
             <div *ngIf="d.detail.battery >= 0"><dt>{{ 'devices.o2ring.battery' | translate }}</dt><dd>{{ d.detail.battery }}%</dd></div>
             <div *ngIf="d.detail.live"><dt>{{ 'devices.o2ring.live' | translate }}</dt>
               <dd>{{ d.detail.live.active ? ('devices.o2ring.liveValue' | translate:{ spo2: d.detail.live.spo2, hr: d.detail.live.hr }) : ('devices.o2ring.notRecording' | translate) }}</dd></div>
-            <div *ngIf="d.detail.last_file"><dt>{{ 'devices.o2ring.lastFile' | translate }}</dt>
-              <dd>{{ ms(d.detail.last_read_at) | date:'short' }} · <span class="mono">{{ d.detail.last_file }}</span></dd></div>
           </ng-container>
         </ng-container>
 

@@ -62,6 +62,7 @@ public:
         long long   checked_at = 0;
         bool        connected = false;
         int         battery = -1;          // -1: not known
+        long long   last_contact = 0;      // the last time the ring answered, this run
         long long   last_read_at = 0;      // the last file stored
         std::string last_file;
         IO2RingClient::LiveReading live;
@@ -70,8 +71,13 @@ public:
 
 private:
     void noteFacts(bool connected);
+    /// A restart forgets which file was read last. Takes it from the newest
+    /// ring file in the database, once, so the Devices page can say when the
+    /// ring was last heard before this start's first read.
+    void seedLastRead() const;
     mutable std::mutex facts_mtx_;
-    Facts facts_;
+    mutable Facts facts_;
+    mutable bool last_read_seeded_ = false;
     std::shared_ptr<IO2RingClient> client_;
     std::shared_ptr<IDatabase> db_;
     std::string cpap_device_id_;

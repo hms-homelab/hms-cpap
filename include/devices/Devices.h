@@ -13,8 +13,10 @@
 // Built from what each service already reports (the inputs below), so it is
 // a pure function the suite drives with fakes. Every kind says "unknown"
 // rather than guess. A card for each kind configured or ever connected,
-// nothing for a kind not in use (D2). Order: here now first, then by last
-// heard, never heard last. A forgotten device is left out until it is heard
+// nothing for a kind not in use (D2). Order: fixed, so cards never swap: the
+// CPAP devices first (AirSense 11, DreamStation 2, Mule & Miner, Sleep Bridge,
+// ez Share, FlashAir), the accessories (the O2 ring) after, units of one kind
+// by id. A forgotten device is left out until it is heard
 // from after it was forgotten; then its forgotten mark is cleared.
 //
 // Commands stay on each kind's own routes.
