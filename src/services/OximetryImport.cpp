@@ -1,6 +1,7 @@
 #include "services/OximetryImport.h"
 
 #include "database/IDatabase.h"
+#include "services/OximetryOutbox.h"
 #include "services/RemovedNights.h"
 #include "utils/OximetryDevice.h"
 
@@ -145,6 +146,8 @@ VldImportResult importVldFile(IDatabase& db, const std::string& bytes,
         r.error = "Failed to save oximetry session " + filename;
         return r;
     }
+    // SDD-079 D4: an uploaded or scanned ring file goes to CpapDash as itself.
+    oximetry_outbox::stored(*session, origin, bytes);
     r.ok              = true;
     r.samples         = static_cast<int>(session->samples.size());
     r.valid_samples   = session->metrics.valid_samples;
@@ -359,6 +362,9 @@ Json::Value importOximetryUpload(IDatabase& db, const std::string& content,
         r["error"] = "Failed to save oximetry session";
         return r;
     }
+    // SDD-079 D4: a CSV has no ring file of its own; it goes as hms-json on
+    // the ring's printed wall clock (clock "wall").
+    oximetry_outbox::stored(session, origin, "");
     r["samples"]          = static_cast<int>(session.samples.size());
     r["valid_samples"]    = session.metrics.valid_samples;
     r["avg_spo2"]         = session.metrics.avg_spo2;

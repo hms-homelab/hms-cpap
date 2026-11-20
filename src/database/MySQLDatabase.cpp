@@ -1066,6 +1066,10 @@ void MySQLDatabase::migrateSchema() {
         // "not filled yet" (see below).
         {"cpap_session_files", "source",                   "VARCHAR(16)"},
 
+        // SDD-079 D3: the source CpapDash was told for each file. No default:
+        // NULL is a row from before 7.0.0, which gets one source note.
+        {"cpapdash_sent", "source",                        "VARCHAR(16) NULL"},
+
         // Session bookkeeping the collector and SleepHQ export both read.
         {"cpap_sessions", "session_end",       "DATETIME"},
         {"cpap_sessions", "data_records",      "INT DEFAULT 0"},
@@ -5598,7 +5602,9 @@ bool MySQLDatabase::upsertSyncFolder(const FolderLedger& f) {
 // ── platform SDD-059 D5: what CpapDash has acknowledged ──────────────────────
 
 namespace {
-constexpr const char* kCpapDashSentCols = "root, path, machine, acked_to, acked_md5, updated_at";
+constexpr const char* kCpapDashSentCols =
+    "root, path, machine, acked_to, acked_md5, updated_at, source";
+constexpr int kCpapDashSentColCount = 7;
 
 void bindCpapDashSentCols(ResultBinder& r) {
     r.bindColString(0, 1024);   // root
@@ -5607,6 +5613,7 @@ void bindCpapDashSentCols(ResultBinder& r) {
     r.bindColInt64(3);          // acked_to
     r.bindColString(4, 64);     // acked_md5
     r.bindColString(5, 64);     // updated_at
+    r.bindColString(6, 32);     // source (SDD-079 D3), NULL before 7.0.0
 }
 
 IDatabase::CpapDashSent readCpapDashSentRow(const ResultBinder& r) {
@@ -5617,6 +5624,7 @@ IDatabase::CpapDashSent readCpapDashSentRow(const ResultBinder& r) {
     s.acked_to   = r.colInt64(3);
     s.acked_md5  = r.colText(4);
     s.updated_at = r.colText(5);
+    s.source     = r.colText(6);
     return s;
 }
 } // namespace
@@ -5635,7 +5643,7 @@ std::optional<IDatabase::CpapDashSent> MySQLDatabase::getCpapDashSent(const std:
     p.bindText(1, path);
     mysql_stmt_bind_param(g.stmt, p.data());
     if (mysql_stmt_execute(g.stmt) != 0) return std::nullopt;
-    ResultBinder r(6);
+    ResultBinder r(kCpapDashSentColCount);
     bindCpapDashSentCols(r);
     mysql_stmt_bind_result(g.stmt, r.data());
     mysql_stmt_store_result(g.stmt);
@@ -5658,7 +5666,7 @@ std::vector<IDatabase::CpapDashSent> MySQLDatabase::listCpapDashSent(const std::
         mysql_stmt_bind_param(g.stmt, p.data());
     }
     if (mysql_stmt_execute(g.stmt) != 0) return out;
-    ResultBinder r(6);
+    ResultBinder r(kCpapDashSentColCount);
     bindCpapDashSentCols(r);
     mysql_stmt_bind_result(g.stmt, r.data());
     mysql_stmt_store_result(g.stmt);
@@ -5670,24 +5678,26 @@ bool MySQLDatabase::upsertCpapDashSent(const CpapDashSent& row) {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!conn_ || row.root.empty() || row.path.empty()) return false;
     const char* sql = R"(
-        INSERT INTO cpapdash_sent (root, path, machine, acked_to, acked_md5, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO cpapdash_sent (root, path, machine, acked_to, acked_md5, updated_at, source)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
             machine    = VALUES(machine),
             acked_to   = VALUES(acked_to),
             acked_md5  = VALUES(acked_md5),
-            updated_at = VALUES(updated_at)
+            updated_at = VALUES(updated_at),
+            source     = VALUES(source)
     )";
     MysqlStmtGuard g;
     g.stmt = mysql_stmt_init(conn_);
     if (mysql_stmt_prepare(g.stmt, sql, strlen(sql)) != 0) return false;
-    ParamBinder p(6);
+    ParamBinder p(7);
     p.bindText(0, row.root);
     p.bindText(1, row.path);
     p.bindText(2, row.machine);
     p.bindInt64(3, row.acked_to);
     p.bindText(4, row.acked_md5);
     p.bindText(5, row.updated_at);
+    p.bindTextOrNull(6, row.source);   // SDD-079 D3: "" is NULL
     mysql_stmt_bind_param(g.stmt, p.data());
     if (mysql_stmt_execute(g.stmt) != 0) {
         std::cerr << "MySQL: upsertCpapDashSent error: " << mysql_stmt_error(g.stmt) << std::endl;

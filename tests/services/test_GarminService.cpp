@@ -6,6 +6,7 @@
 #include "FakeGarminServer.h"
 #include "database/SQLiteDatabase.h"
 #include "services/OximetryImport.h"
+#include "services/OximetryOutbox.h"
 #include "utils/AppConfig.h"
 #include "utils/MachineClock.h"
 #include "utils/OximetryDevice.h"
@@ -15,6 +16,7 @@
 #include <chrono>
 #include <ctime>
 #include <filesystem>
+#include <fstream>
 #include <thread>
 #include <unistd.h>
 
@@ -153,6 +155,34 @@ TEST_F(GarminServiceTest, ANightCloseFetchesThatNight) {
     EXPECT_EQ(st["state"].asString(), "signed_in");
     EXPECT_EQ(st["last_fetch"]["stored"].asInt(), 1);
     EXPECT_TRUE(st["last_fetch"]["ok"].asBool());
+}
+
+// SDD-079 D4: the stored night goes to CpapDash as hms-json on Garmin's own
+// instants (clock "utc"), never the machine's wall clock it is stored on.
+TEST_F(GarminServiceTest, AStoredNightIsWrittenToTheOximetryOutboxOnItsUtcInstants) {
+    const fs::path dir = fs::temp_directory_path() / ("hms_garmin_outbox_" + std::to_string(::getpid()));
+    fs::remove_all(dir);
+    oximetry_outbox::setRoot(oximetry_outbox::rootFor(dir.string()));
+    g_.sleep_by_date["2026-11-19"] = sleepJson(kStart);
+    svc().handle(GarminService::Event::NightClosed, "20261118");
+    oximetry_outbox::setRoot("");
+
+    const std::string name = "garmin-" + std::to_string(kStart * 1000);
+    const fs::path file = fs::path(oximetry_outbox::rootFor(dir.string())) / (name + ".json");
+    std::ifstream in(file, std::ios::binary);
+    ASSERT_TRUE(in) << file;
+    Json::Value body;
+    Json::CharReaderBuilder rb;
+    ASSERT_TRUE(Json::parseFromStream(rb, in, &body, nullptr));
+    EXPECT_EQ(body["clock"].asString(), "utc");
+    EXPECT_EQ(body["samples"].size(), 420u);
+    EXPECT_EQ(body["samples"][0u][0u].asInt64(), kStart) << "the instant; stored as 23:00 on the machine";
+    EXPECT_EQ(body["samples"][0u][2u].asInt(), 60) << "the pulse Garmin has goes";
+    const auto meta = oximetry_outbox::metaFor(oximetry_outbox::rootFor(dir.string()), name + ".json");
+    ASSERT_TRUE(meta);
+    EXPECT_EQ(meta->source, "garmin");
+    EXPECT_EQ(meta->device_name, "Garmin fenix 7X");
+    fs::remove_all(dir);
 }
 
 TEST_F(GarminServiceTest, ALaterEventFetchesANightStillMissing) {

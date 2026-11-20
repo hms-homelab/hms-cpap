@@ -102,10 +102,39 @@ TEST(GarminSleep, HeartRateIsPairedToTheNearestEpochWithinTwoMinutes) {
     const auto& smp = n.session.samples;
     EXPECT_EQ(smp[0].heart_rate, 61);
     EXPECT_EQ(smp[2].heart_rate, 61) << "90 s away: within 2 minutes";
-    EXPECT_EQ(smp[3].heart_rate, 0xFF) << "150 s from the first and 425 s from the second";
+    EXPECT_EQ(smp[3].heart_rate, kGarminNoHeartRate) << "150 s from the first and 425 s from the second";
     EXPECT_EQ(smp[12].heart_rate, 70) << "5 s past the second";
-    EXPECT_EQ(smp[20].heart_rate, 0xFF) << "the rates at 20:00 (25) and 21:00 (221) are out of range and dropped";
+    EXPECT_EQ(smp[20].heart_rate, kGarminNoHeartRate)
+        << "the rates at 20:00 (25) and 21:00 (221) are out of range and dropped";
     EXPECT_EQ(n.hr_paired, 7) << "minutes 0, 1, 2 to 0:30; 11, 12, 13, 14 to 12:05";
+}
+
+// Decided 2026-11-19 (SDD-078): validity is per field. An SpO2 reading with
+// no pulse near it still counts; the pulse is only left blank.
+TEST(GarminSleep, AnSpO2ReadingWithNoPulseStillCountsAndThePulseIsBlank) {
+    auto j = night(70);
+    // One pulse, at minute 0: minutes 0 to 2 have it, the rest do not.
+    j["sleepHeartRate"] = json::array({{{"startGMT", kStart * 1000}, {"value", 60}}});
+    const auto n = convertGarminSleep(j, kMorning, kUtc);
+    ASSERT_EQ(n.verdict, GarminNight::Verdict::Ready);
+    const auto& smp = n.session.samples;
+    ASSERT_EQ(smp.size(), 70u);
+    EXPECT_EQ(smp[10].heart_rate, kGarminNoHeartRate);
+    EXPECT_TRUE(smp[10].valid()) << "the SpO2 reading counts on its own";
+    EXPECT_EQ(n.session.metrics.valid_samples, 70) << "every SpO2 reading, pulse or not";
+    EXPECT_DOUBLE_EQ(n.session.metrics.avg_hr, 60.0) << "of the samples with a pulse only";
+    EXPECT_EQ(n.session.metrics.min_hr, 60) << "a blank pulse is not a 0 bpm minimum";
+    EXPECT_EQ(n.session.metrics.max_hr, 60);
+}
+
+TEST(GarminSleep, EachSampleKeepsItsUtcInstant) {
+    // SDD-079 D4: the stored times are the machine's wall clock; the instants
+    // ride beside them for CpapDash.
+    const auto n = convertGarminSleep(night(70), kMorning, [](long long) { return 10 * 3600LL; });
+    ASSERT_EQ(n.verdict, GarminNight::Verdict::Ready);
+    ASSERT_EQ(n.sample_utc_s.size(), n.session.samples.size());
+    EXPECT_EQ(n.sample_utc_s[0], kStart);
+    EXPECT_EQ(n.sample_utc_s[5], kStart + 300);
 }
 
 TEST(GarminSleep, MovementIsGivenByInterval) {
@@ -148,7 +177,8 @@ TEST(GarminSleep, MissingArraysAreEmpty) {
     const auto n = convertGarminSleep(j, kMorning, kUtc);
     ASSERT_EQ(n.verdict, GarminNight::Verdict::Ready);
     EXPECT_EQ(n.hr_paired, 0);
-    EXPECT_EQ(n.session.samples[0].heart_rate, 0xFF);
+    EXPECT_EQ(n.session.samples[0].heart_rate, kGarminNoHeartRate);
+    EXPECT_EQ(n.session.metrics.valid_samples, 420) << "no pulse at all: every SpO2 reading still counts";
 }
 
 TEST(GarminSleep, GmtStringsAreReadAsTheReferenceReadsThem) {

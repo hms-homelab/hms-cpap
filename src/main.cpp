@@ -21,6 +21,7 @@
 #include "services/CpapCard.h"
 #include "sleepbridge/LearnedCard.h"
 #include "services/OximetryImport.h"
+#include "services/OximetryOutbox.h"
 #include "services/RemovedNights.h"
 #include "services/SetupService.h"
 #include "services/SupplyPublisher.h"
@@ -1213,14 +1214,25 @@ int main(int argc, char** argv) {
                         config.sleep_bridge.enabled, data_dir,
                         config.transport == "local" ? config.local_dir : std::string());
                 });
+                // SDD-079 D4: the oximetry outbox, written at every oximetry
+                // store; D7: recordings stored before 7.0.0 join it on every
+                // walk.
+                hms_cpap::oximetry_outbox::setRoot(hms_cpap::oximetry_outbox::rootFor(data_dir));
+                cpapdash_stream->setOximetryBackfill([stream_db, data_dir] {
+                    const std::string archive = hms_cpap::ConfigManager::get(
+                        "CPAP_ARCHIVE_DIR",
+                        (std::filesystem::path(data_dir) / "cpap_data").string());
+                    hms_cpap::oximetry_outbox::backfill(*stream_db, archive);
+                });
                 cpapdash_stream->apply({config.cpapdash.stream, config.cpapdash.token});
                 hms_cpap::card_feed::setSinks(
                     [s = cpapdash_stream](const std::string& root, const std::string& rel,
-                                          const std::string& machine) {
-                        s->fileWritten(root, rel, machine);
+                                          const std::string& machine, const std::string& source) {
+                        s->fileWritten(root, rel, machine, source);
                     },
-                    [s = cpapdash_stream](const std::string& root, const std::string& machine) {
-                        s->rootWritten(root, machine);
+                    [s = cpapdash_stream](const std::string& root, const std::string& machine,
+                                          const std::string& source) {
+                        s->rootWritten(root, machine, source);
                     },
                     [s = cpapdash_stream](const std::string& root) { s->burstEnded(root); });
                 hms_cpap::CpapController::setStreamService(cpapdash_stream);
@@ -1858,7 +1870,8 @@ int main(int argc, char** argv) {
                         // platform SDD-059 D3: the rebuilt files are on disk.
                         const std::string card_root = (std::filesystem::path(sb_root) / sender).string();
                         for (const auto& rel : step.written_paths)
-                            hms_cpap::card_feed::fileWritten(card_root, rel, "");
+                            hms_cpap::card_feed::fileWritten(card_root, rel, "",
+                                                             hms_cpap::card_feed::kSourceCard);   // SDD-079 D1
                         if (burst_service) burst_service->requestSyncNow();
                     };
                     // Issue #57: a batch landing is the stream alive, which

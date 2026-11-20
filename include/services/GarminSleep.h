@@ -6,7 +6,9 @@
 //   - wellnessEpochSPO2DataDTOList: epochTimestamp (a GMT string),
 //     spo2Reading kept from 50 to 100;
 //   - sleepHeartRate: startGMT (epoch ms), value kept from 30 to 220, paired
-//     to the nearest SpO2 epoch within 2 minutes, else no pulse (0xFF);
+//     to the nearest SpO2 epoch within 2 minutes, else no pulse: blank
+//     (kGarminNoHeartRate), and the SpO2 reading still counts (validity is
+//     per field, decided 2026-11-19);
 //   - sleepMovement: startGMT and endGMT (GMT strings), activityLevel, given
 //     to an epoch that falls in [start, end);
 //   - a record that is not well formed is skipped, never filled in;
@@ -29,6 +31,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace hms_cpap {
 
@@ -46,9 +49,16 @@ struct GarminNight {
     int         hr_paired  = 0;
     int         motion_paired = 0;
     cpapdash::parser::OximetrySession session;   ///< set when Ready
+    /// SDD-079 D4: each sample's UTC instant (unix seconds), in
+    /// session.samples order. The samples themselves are on the machine's
+    /// wall clock (D5); these are what goes to CpapDash as clock "utc".
+    std::vector<long long> sample_utc_s;
 };
 
 inline constexpr int kGarminMinSpo2 = 60;
+/// A sample with no pulse within kGarminHrPairSeconds: the pulse is blank and
+/// the SpO2 still counts (validity per field, decided 2026-11-19).
+inline constexpr unsigned char kGarminNoHeartRate = 0;
 inline constexpr int kGarminHrPairSeconds = 120;
 
 /// The recording's name, from its sleep period's start (D6).

@@ -794,6 +794,10 @@ bool DatabaseService::connect() {
                         PRIMARY KEY (root, path)
                     )
                 )");
+                // SDD-079 D3: the source CpapDash was told for each file. No
+                // default: NULL is a row from before 7.0.0, which gets one
+                // source note.
+                txn.exec("ALTER TABLE cpapdash_sent ADD COLUMN IF NOT EXISTS source VARCHAR(16) NULL");
                 // SDD-029: nights an operator removed; every re-ingest path
                 // consults it. night is YYYYMMDD (strDayForSessionStart).
                 // Reparse clears the row.
@@ -4429,7 +4433,8 @@ bool DatabaseService::upsertSyncFolder(const FolderLedger& f) {
 // ── platform SDD-059 D5: what CpapDash has acknowledged ──────────────────────
 
 namespace {
-constexpr const char* kCpapDashSentCols = "root, path, machine, acked_to, acked_md5, updated_at";
+constexpr const char* kCpapDashSentCols =
+    "root, path, machine, acked_to, acked_md5, updated_at, source";
 
 // Templated on the row type as rowToSyncFolder is: row_ref from a range-for,
 // row from operator[].
@@ -4442,6 +4447,7 @@ IDatabase::CpapDashSent rowToCpapDashSent(const Row& r) {
     s.acked_to   = r["acked_to"].template as<long long>(0);
     s.acked_md5  = r["acked_md5"].c_str();
     s.updated_at = r["updated_at"].c_str();
+    s.source     = r["source"].is_null() ? "" : r["source"].c_str();   // SDD-079 D3
     return s;
 }
 } // namespace
@@ -4492,14 +4498,17 @@ bool DatabaseService::upsertCpapDashSent(const CpapDashSent& row) {
     try {
         pqxx::work txn(*conn_);
         txn.exec_params(R"(
-            INSERT INTO cpapdash_sent (root, path, machine, acked_to, acked_md5, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6)
+            INSERT INTO cpapdash_sent (root, path, machine, acked_to, acked_md5, updated_at, source)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
             ON CONFLICT (root, path) DO UPDATE SET
                 machine    = EXCLUDED.machine,
                 acked_to   = EXCLUDED.acked_to,
                 acked_md5  = EXCLUDED.acked_md5,
-                updated_at = EXCLUDED.updated_at
-        )", row.root, row.path, row.machine, row.acked_to, row.acked_md5, row.updated_at);
+                updated_at = EXCLUDED.updated_at,
+                source     = EXCLUDED.source
+        )", row.root, row.path, row.machine, row.acked_to, row.acked_md5, row.updated_at,
+            // SDD-079 D3: "" is NULL, a row that never said its source.
+            row.source.empty() ? std::optional<std::string>{} : std::optional<std::string>{row.source});
         txn.commit();
         return true;
     } catch (const std::exception& e) {

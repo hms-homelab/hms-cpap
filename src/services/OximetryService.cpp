@@ -1,4 +1,5 @@
 #include "services/OximetryService.h"
+#include "services/OximetryOutbox.h"
 #include "services/RemovedNights.h"
 #include "utils/OximetryDevice.h"
 #include "database/SqlDialect.h"
@@ -142,6 +143,9 @@ bool OximetryService::collectAndPublish() {
             processed_files_.insert(filename);
             any_new = true;
             std::cout << "O2Ring: Saved " << filename << " to database" << std::endl;
+            // SDD-079 D4: the ring's own file goes to CpapDash, byte for byte.
+            oximetry_outbox::stored(session.value(), IDatabase::OximetryOrigin{},
+                                    std::string(data.begin(), data.end()));
             {
                 std::lock_guard<std::mutex> lk(facts_mtx_);
                 facts_.last_read_at = static_cast<long long>(std::time(nullptr));

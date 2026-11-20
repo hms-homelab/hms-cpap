@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Each file sent to CpapDash says its source, and oximetry goes too
+  (SDD-079, platform SDD-061).** Every `file_ready` now carries `source`:
+  `card` for the machine's own card (ez Share, a local folder, a ZIP, a Sleep
+  Bridge's rebuild), `ble-as11` for a night built from an AirSense 11's
+  Bluetooth stream. Files sent before this release say theirs once, with a
+  zero-byte source note, before any new bytes of their folder go. Oximetry is
+  sent with "Send my nights to CpapDash" on: a ring's own recording byte for
+  byte, a Garmin night and a CSV upload as `hms-json` (Garmin on its own UTC
+  times), and live samples as they are stored. Each store writes the file
+  first, under `cpapdash/oximetry/` in the data folder, and the uploader sends
+  it after the night's card files; recordings stored before this release are
+  added on the next connection. A CpapDash that does not take oximetry yet is
+  not an error: oximetry waits for the next connection and card files carry
+  on. The CpapDash status gains `oximetry_acked` and `oximetry_state`
+  (`sending` or `held`). The upload index gains a `source` column on SQLite,
+  MySQL and PostgreSQL.
 - **Garmin SpO2 is an oximetry source (SDD-078, #76).** With a Garmin email
   and password in Settings (stored masked, like the CpapDash token), each
   night's SpO2, heart rate and movement are read from Garmin Connect after the
@@ -55,6 +71,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   synthetic tests only: no live night on this card has been logged yet.
 
 ### Changed
+- **A Garmin SpO2 reading counts without a pulse (SDD-078, decided
+  2026-11-19).** Validity is per field: an SpO2 epoch with no heart rate
+  within 2 minutes keeps its SpO2 in the metrics and the chart, and its pulse
+  is left blank (a gap in the chart, never 0 bpm). The night's pulse figures
+  are of the samples that have one.
 - **The AI is given facts that add up, and says only those (SDD-072).** The
   daily summary, the weekly and monthly summaries and the chat agent now read
   one set of facts per night instead of three hand-built ones: the events

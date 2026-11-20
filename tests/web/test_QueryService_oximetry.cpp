@@ -193,6 +193,30 @@ TEST_F(QueryServiceOximetryTest, MovementIsNotAvailableWhenTheRingsRecordingIsAl
     EXPECT_EQ(r["spo2"].size(), 5u) << "the samples themselves are still returned";
 }
 
+// Decided 2026-11-19 (SDD-078): validity is per field. A Garmin SpO2 reading
+// with no pulse near it is charted, and its pulse is a gap, never 0 bpm.
+TEST_F(QueryServiceOximetryTest, AnSpO2ReadingWithABlankPulseIsChartedWithThePulseAGap) {
+    OximetrySession os;
+    os.filename = "garmin-1778020200000";
+    os.start_time = tpFromEpoch(kEveningOf5th);
+    os.end_time = tpFromEpoch(kEveningOf5th + 120);
+    os.duration_seconds = 120;
+    os.sample_interval = 60;
+    for (int i = 0; i < 2; ++i) {
+        OximetrySample s{};
+        s.spo2 = 95;
+        s.heart_rate = i == 0 ? 58 : 0;   // the second has no pulse: blank
+        s.timestamp = tpFromEpoch(kEveningOf5th + i * 60);
+        os.samples.push_back(s);
+    }
+    ASSERT_TRUE(db_->saveOximetrySessionFrom("o2ring", os, {"garmin", ""}));
+    const auto r = qs_->getSessionOximetry("2026-05-05", 1);
+    ASSERT_EQ(r["spo2"].size(), 2u) << "both SpO2 readings count";
+    const auto& first = r["heart_rate"][0u];   // rows may carry numbers as text
+    EXPECT_EQ(first.isString() ? std::stoi(first.asString()) : first.asInt(), 58);
+    EXPECT_TRUE(r["heart_rate"][1u].isNull());
+}
+
 TEST_F(QueryServiceOximetryTest, ANightWithNoRecordingsHasNoMovement) {
     EXPECT_FALSE(qs_->getSessionOximetry("2026-05-05", 1)["motion_available"].asBool());
 }
