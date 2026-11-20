@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 
 import {
   CONFIG_KEYS, Confirmations, buildSet, commandState, configRows, costKey, errorText, groupKeys, latestConfigValues,
-  recordingWarning, releaseLine, riskyGroups, setTouchesNetwork, switchView,
+  recordingWarning, releaseLine, riskyGroups, switchView,
   groupCode, ds2PairView, ds2PairRunning, ds2RefusalKey, ds2Reads, ds2NextRead, isIsoDay, as11ResetRefusalKey,
   offsetSetting, fixedOffsets, clockChoiceOf, clockDraftOf, clockSettingOf, clockChanged, filterZones, clockDifference,
   learnedOffer, rereadLine,
@@ -107,8 +107,8 @@ test('each risky key keeps its own confirm', () => {
   assert.deepEqual(riskyGroups({ o2_on: true }), []);
   assert.deepEqual(riskyGroups({ ssid: 'x', pass: 'y', jwt: 't', spl_head: 1 }), ['network', 'identity', 'sequence']);
   assert.deepEqual(groupKeys({ serial: 'S', boot: 2, spl_drain: 3 }, 'sequence'), ['boot', 'spl_drain']);
-  assert.equal(setTouchesNetwork({ pass: 'p' }), true);
-  assert.equal(setTouchesNetwork({ o2_name: 'r' }), false);
+  assert.deepEqual(riskyGroups({ pass: 'p' }), ['network'], 'a password alone is the network');
+  assert.deepEqual(riskyGroups({ o2_name: 'r' }), []);
 });
 
 test('the newest config answer with values is the table', () => {
