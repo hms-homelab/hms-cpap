@@ -61,6 +61,28 @@ TEST_F(AppConfigTest, DefaultBurstInterval) {
     EXPECT_EQ(config.burst_interval, 65);
 }
 
+// SDD-001: the desaturation threshold set in Settings.
+TEST_F(AppConfigTest, DesatThresholdDefaultsToThreeAndRoundTrips) {
+    AppConfig fresh;
+    EXPECT_DOUBLE_EQ(fresh.desat_drop_pct, 3.0);
+
+    AppConfig original;
+    original.desat_drop_pct = 4.0;
+    original.save(config_path_);
+    AppConfig loaded;
+    ASSERT_TRUE(AppConfig::load(config_path_, loaded));
+    EXPECT_DOUBLE_EQ(loaded.desat_drop_pct, 4.0);
+    EXPECT_DOUBLE_EQ(loaded.toJson()["desat_drop_pct"].get<double>(), 4.0)
+        << "the Settings page reads it from the API";
+}
+
+TEST_F(AppConfigTest, ADesatThresholdOutOfRangeIsNotTaken) {
+    writeConfig(R"({"desat_drop_pct": 40})");
+    AppConfig config;
+    AppConfig::load(config_path_, config);
+    EXPECT_DOUBLE_EQ(config.desat_drop_pct, 3.0);
+}
+
 TEST_F(AppConfigTest, DefaultDbType) {
     AppConfig config;
     EXPECT_EQ(config.database.type, "sqlite");

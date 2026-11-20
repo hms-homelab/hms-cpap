@@ -179,6 +179,11 @@
       "heading": "Rythme de collecte",
       "burstInterval": "Intervalle de rafale (secondes)"
     },
+    "spo2": {
+      "heading": "Désaturations SpO2",
+      "dropPct": "Seuil de désaturation (% sous la ligne de base)",
+      "dropHint": "Une baisse de cette valeur sous la ligne de base récente de la SpO2 compte comme une désaturation, dans les événements, le décompte et l'ODI. 3 est la règle habituelle (AASM), 4 la règle des CMS. S'applique aux nuits enregistrées à partir de maintenant ; le graphique de l'anneau O2 l'utilise tout de suite."
+    },
     "backfill": {
       "heading": "Importer l'historique",
       "desc": "Importez dans la base de données les sessions de traitement de votre répertoire DATALOG. Les sessions déjà présentes dans la plage de dates seront réanalysées.",

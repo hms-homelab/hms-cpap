@@ -101,14 +101,38 @@ export interface SessionDetail extends SessionListItem {
   avg_event_duration: string | null;
   max_event_duration: string | null;
   therapy_mode: string;  // 0=CPAP, 1=APAP, 7=ASV, 8=ASVAuto
+  /** SDD-001: SpO2 desaturations at the Settings threshold, and per hour. Null without SpO2. */
+  spo2_drops?: string | number | null;
+  odi?: string | number | null;
   events: SessionEvent[];
 }
 
+/**
+ * The stored event names (cpapdash::parser::eventTypeToString). SDD-001 adds
+ * 'Desaturation', an SpO2 event; the rest are respiratory or machine events.
+ */
+export type SessionEventType =
+  | 'Obstructive' | 'Central' | 'Hypopnea' | 'Apnea' | 'Clear Airway' | 'RERA'
+  | 'CSR' | 'Flow Limitation' | 'Periodic Breathing' | 'Large Leak'
+  | 'Vibratory Snore' | 'Desaturation' | 'Other';
+
 export interface SessionEvent {
-  event_type: string;
+  /** A SessionEventType, or a name a newer parser emits. */
+  event_type: SessionEventType | string;
   event_timestamp: string;
-  duration_seconds: string;
+  /** Seconds from the onset. SQLite sends it as text; -1 is "not known". */
+  duration_seconds: string | number;
+  /** A Desaturation's carries {"nadir":..,"depth":..}. */
   details: string | null;
+}
+
+/** SDD-001 F3: a night's breaths, column-oriented, from /api/sessions/{date}/breaths. */
+export interface BreathData {
+  onset: string[];
+  tidal_volume: (number | string | null)[];
+  inspiratory_time: (number | string | null)[];
+  expiratory_time: (number | string | null)[];
+  flow_limitation: (number | string | null)[];
 }
 
 /** SDD-009: one row from the cross-night /api/events search. */

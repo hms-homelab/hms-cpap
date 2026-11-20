@@ -1030,7 +1030,16 @@ Json::Value QueryService::getSessionBreaths(const std::string& date) {
         " AND " + sql::sleepDay("s.session_start", dt_) + " = " + sql::castDate(2, dt_) +
         " ORDER BY b.onset";
 
-    return query(q, {device_id_, date});
+    // SDD-001: column-oriented, like the signals and vitals beside it. A night
+    // is some 8,000 breaths, and five arrays carry them in a fraction of the
+    // bytes 8,000 objects would.
+    static const char* const kColumns[] = {
+        "onset", "tidal_volume", "inspiratory_time", "expiratory_time", "flow_limitation"};
+    Json::Value result(Json::objectValue);
+    for (const char* c : kColumns) result[c] = Json::Value(Json::arrayValue);
+    for (const auto& r : query(q, {device_id_, date}))
+        for (const char* c : kColumns) result[c].append(r.get(c, Json::nullValue));
+    return result;
 }
 
 Json::Value QueryService::getSessionOximetry(const std::string& date, int interval) {

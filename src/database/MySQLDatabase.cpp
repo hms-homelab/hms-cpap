@@ -3,6 +3,7 @@
 #include "database/MySQLDatabase.h"
 #include "database/SqlDialect.h"
 #include "database/StrPercentile.h"
+#include "utils/Desaturation.h"
 #include "utils/OximetryDevice.h"
 #include "utils/TimeCompat.h"  // timegm_utc() for started_epoch
 #include <algorithm>
@@ -1055,7 +1056,9 @@ void MySQLDatabase::migrateSchema() {
         {"cpap_calculated_metrics", "target_ventilation",  "DOUBLE"},
         {"cpap_calculated_metrics", "therapy_pressure",    "DOUBLE"},   // SDD-030
 
-        // v2.2.0 — desaturation metrics
+        // v2.2.0 — desaturation metrics. SDD-001: spo2_drops was in the
+        // CREATE TABLE only, so a table older than it never gained the column.
+        {"cpap_session_metrics", "spo2_drops",             "INT"},
         {"cpap_session_metrics", "odi",                    "DOUBLE"},
 
         // SDD-047 D2: the unclassified apnea, counted toward the AHI and never
@@ -1258,8 +1261,12 @@ bool MySQLDatabase::saveSession(const CPAPSession& session) {
             insertEvents(session_id, session.events);
         }
 
-        if (!session.desaturations.empty()) {
-            insertDesaturations(session_id, session.desaturations);
+        // SDD-001: at the threshold set in Settings, from this save's SpO2,
+        // replacing the session's stored ones.
+        const SessionDesaturations desat = desaturationsAt(session, desatDropPct());
+        if (desat.from_vitals) deleteDesaturations(session_id);
+        if (!desat.events.empty()) {
+            insertDesaturations(session_id, desat.events);
         }
 
         if (!session.breaths.empty()) {
@@ -1271,7 +1278,7 @@ bool MySQLDatabase::saveSession(const CPAPSession& session) {
         }
 
         if (session.metrics.has_value()) {
-            insertSessionMetrics(session_id, session.metrics.value());
+            insertSessionMetrics(session_id, withDesaturations(session.metrics.value(), desat));
         }
 
         exec("COMMIT");
@@ -1508,6 +1515,24 @@ void MySQLDatabase::insertDesaturations(int64_t session_id, const std::vector<De
         if (mysql_stmt_execute(g.stmt) != 0) {
             std::cerr << "MySQL: insertDesaturations error: " << mysql_stmt_error(g.stmt) << std::endl;
         }
+    }
+}
+
+// SDD-001: the session's stored desaturations, before a save writes them again.
+void MySQLDatabase::deleteDesaturations(int64_t session_id) {
+    const char* sql =
+        "DELETE FROM cpap_events WHERE session_id = ? AND event_type = 'Desaturation'";
+    MysqlStmtGuard g;
+    g.stmt = mysql_stmt_init(conn_);
+    if (mysql_stmt_prepare(g.stmt, sql, std::strlen(sql)) != 0) {
+        std::cerr << "MySQL: deleteDesaturations prepare error: " << mysql_stmt_error(g.stmt) << std::endl;
+        return;
+    }
+    ParamBinder p(1);
+    p.bindInt64(0, session_id);
+    mysql_stmt_bind_param(g.stmt, p.data());
+    if (mysql_stmt_execute(g.stmt) != 0) {
+        std::cerr << "MySQL: deleteDesaturations error: " << mysql_stmt_error(g.stmt) << std::endl;
     }
 }
 
@@ -3351,7 +3376,10 @@ std::optional<SessionMetrics> MySQLDatabase::getNightlyMetrics(
             -- 'ungraded' sorts after 'ahi', so a night holding ANY ungraded
             -- session reads as ungraded.
             MAX(COALESCE(sm.index_kind, 'ahi')) AS index_kind,
-            SUM(sm.unclassified_apneas)          AS unclassified_apneas
+            SUM(sm.unclassified_apneas)          AS unclassified_apneas,
+            -- SDD-001: the night's desaturations and ODI (sql::nightOdi).
+            )" + sql::nightSpo2Drops("sm") + R"(  AS spo2_drops,
+            )" + sql::nightOdi("sm", "s") + R"(   AS odi
         FROM cpap_sessions s
         JOIN cpap_session_metrics sm ON sm.session_id = s.id
         LEFT JOIN (
@@ -3414,10 +3442,12 @@ std::optional<SessionMetrics> MySQLDatabase::getNightlyMetrics(
         return std::nullopt;
     }
 
-    // 37 output columns (indices 0-36; 35 is index_kind, text)
-    ResultBinder r(37);
+    // 39 output columns (indices 0-38; 35 is index_kind, text)
+    ResultBinder r(39);
     for (int i = 0; i < 35; ++i) r.bindColDouble(i);
     r.bindColString(35);   // SDD-024 index_kind
+    r.bindColDouble(37);   // SDD-001 spo2_drops (a SUM, so a DECIMAL)
+    r.bindColDouble(38);   // SDD-001 odi
     // Override int columns
     r.bindColInt(1);   // total_events
     r.bindColInt(2);   // OA
@@ -3442,7 +3472,7 @@ std::optional<SessionMetrics> MySQLDatabase::getNightlyMetrics(
     // 24=avg_mask_pressure  25=avg_epr_pressure  26=avg_snore  27=avg_target_ventilation
     // 28=avg_pressure  29=max_pressure  30=min_pressure
     // 31=leak_p50  32=leak_p95_sess  33=therapy_mode  34=avg_therapy_pressure
-    // 35=index_kind (text)  36=unclassified_apneas
+    // 35=index_kind (text)  36=unclassified_apneas  37=spo2_drops  38=odi
     SessionMetrics m;
     m.total_events        = r.colInt(1);
     m.ahi                 = r.colDouble(11);
@@ -3481,6 +3511,9 @@ std::optional<SessionMetrics> MySQLDatabase::getNightlyMetrics(
     m.leak_p95              = r.colOptDouble(32);
     m.therapy_mode          = r.colOptInt(33);
     m.avg_therapy_pressure  = r.colOptDouble(34);   // SDD-030
+    if (!r.colIsNull(37))                           // SDD-001
+        m.spo2_drops = static_cast<int>(std::lround(r.colDouble(37)));
+    m.odi                   = r.colOptDouble(38);
     // SDD-024: an apnea-only index must not come back named AHI.
     m.index_kind = (r.colText(35) == "ungraded") ? SessionMetrics::IndexKind::Ungraded
                                                  : SessionMetrics::IndexKind::AHI;

@@ -160,6 +160,24 @@ inline std::string nightAhi(const std::string& m, const std::string& s) {
     return perNightHour(nightApneasAndHypopneas(m), s);
 }
 
+// ── A night's SpO2 desaturations (SDD-001) ──────────────────────────────────
+//
+// Over the night's sessions that recorded SpO2 (avg_spo2 > 0) and no others: a
+// session without SpO2 has no desaturations to count, and its hours are not
+// hours the ODI was measured over. NULL for a night with no SpO2 at all, so a
+// night without an oximeter publishes no ODI rather than an ODI of zero.
+
+/// The night's desaturation count.
+inline std::string nightSpo2Drops(const std::string& m) {
+    return "SUM(CASE WHEN " + m + ".avg_spo2 > 0 THEN " + m + ".spo2_drops END)";
+}
+
+/// The night's ODI: its desaturations per hour of the sessions that recorded SpO2.
+inline std::string nightOdi(const std::string& m, const std::string& s) {
+    return "(" + nightSpo2Drops(m) + ") * 3600.0 / NULLIF(SUM(CASE WHEN " + m +
+           ".avg_spo2 > 0 THEN " + s + ".duration_seconds END), 0)";
+}
+
 /// The daily summary's seven index columns, in its order ahi, hi, ai, oai,
 /// cai, uai, rin, each rounded to the two places it stores. uai is the
 /// unclassified apneas, as in computeIndexes and the STR's own UAI; a

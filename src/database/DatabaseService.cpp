@@ -2,6 +2,7 @@
 #include "utils/TimeCompat.h"
 #include "database/DatabaseService.h"
 #include "database/SqlDialect.h"
+#include "utils/Desaturation.h"
 #include "utils/OximetryDevice.h"
 #include <libpq-fe.h>
 #include <algorithm>
@@ -1052,6 +1053,13 @@ void DatabaseService::insertDesaturations(pqxx::work& work, int session_id,
     }
 }
 
+// SDD-001: the session's stored desaturations, before a save writes them again.
+void DatabaseService::deleteDesaturations(pqxx::work& work, int session_id) {
+    work.exec_params(
+        "DELETE FROM cpap_events WHERE session_id = $1 AND event_type = 'Desaturation'",
+        session_id);
+}
+
 void DatabaseService::insertBreaths(pqxx::work& work, int session_id,
                                     const std::vector<Breath>& breaths) {
     if (breaths.empty()) return;
@@ -1429,10 +1437,14 @@ bool DatabaseService::saveSession(const CPAPSession& session) {
             std::cout << "   Events: " << session.events.size() << std::endl;
         }
 
-        // 4a. Insert SpO2 desaturations (as Desaturation events)
-        if (!session.desaturations.empty()) {
-            insertDesaturations(txn, session_id, session.desaturations);
-            std::cout << "   Desaturations: " << session.desaturations.size() << std::endl;
+        // 4a. Insert SpO2 desaturations (as Desaturation events). SDD-001: at
+        // the threshold set in Settings, from this save's SpO2, replacing the
+        // session's stored ones.
+        const SessionDesaturations desat = desaturationsAt(session, desatDropPct());
+        if (desat.from_vitals) deleteDesaturations(txn, session_id);
+        if (!desat.events.empty()) {
+            insertDesaturations(txn, session_id, desat.events);
+            std::cout << "   Desaturations: " << desat.events.size() << std::endl;
         }
 
         // 4b. Insert breath-by-breath detail
@@ -1449,7 +1461,7 @@ bool DatabaseService::saveSession(const CPAPSession& session) {
 
         // 6. Insert session metrics
         if (session.metrics.has_value()) {
-            insertSessionMetrics(txn, session_id, session.metrics.value());
+            insertSessionMetrics(txn, session_id, withDesaturations(session.metrics.value(), desat));
             std::cout << "   Metrics saved (AHI: " << session.metrics->ahi << ")" << std::endl;
         }
 
@@ -2200,6 +2212,9 @@ std::optional<SessionMetrics> DatabaseService::getNightlyMetrics(
                      ELSE 0 END                                 AS usage_percent,
                 COALESCE()" + sql::round(sql::nightAhi("sm", "s"), 4, DbType::POSTGRESQL) + R"(, 0) AS ahi,
                 SUM(sm.unclassified_apneas)                     AS unclassified_apneas,
+                -- SDD-001: the night's desaturations and ODI (sql::nightOdi).
+                )" + sql::nightSpo2Drops("sm") + R"(             AS spo2_drops,
+                )" + sql::nightOdi("sm", "s") + R"(              AS odi,
                 CASE WHEN SUM(s.duration_seconds) > 0
                           AND SUM(sm.avg_event_duration * sm.total_events) IS NOT NULL
                      THEN round((SUM(sm.avg_event_duration * sm.total_events)
@@ -2291,6 +2306,10 @@ std::optional<SessionMetrics> DatabaseService::getNightlyMetrics(
         m.reras               = row["reras"].as<int>(0);
         m.clear_airway_apneas = row["clear_airway_apneas"].as<int>(0);
         m.unclassified_apneas = row["unclassified_apneas"].as<int>(0);   // SDD-047 D2
+        if (!row["spo2_drops"].is_null())   // SDD-001
+            m.spo2_drops = row["spo2_drops"].as<int>();
+        if (!row["odi"].is_null())
+            m.odi = row["odi"].as<double>();
 
         if (!row["avg_event_duration"].is_null())
             m.avg_event_duration = row["avg_event_duration"].as<double>();

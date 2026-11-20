@@ -10,6 +10,7 @@
 #include "sleepbridge/BridgeSource.h"
 #include "utils/CardLayout.h"
 #include "utils/ConfigManager.h"
+#include "utils/Desaturation.h"
 #include "utils/QrCode.h"
 #include "utils/FileLogger.h"
 #include "utils/LogTail.h"
@@ -420,6 +421,18 @@ void CpapController::updateConfig(const drogon::HttpRequestPtr& req,
     if (j.isMember("auto_update"))   config_->auto_update = j["auto_update"].asBool();
     if (j.isMember("local_dir")) config_->local_dir = j["local_dir"].asString();
     if (j.isMember("burst_interval")) config_->burst_interval = j["burst_interval"].asInt();
+    // SDD-001: the desaturation threshold. Re-exported like archive_dir below,
+    // so the next night saved uses it without a restart.
+    if (j.isMember("desat_drop_pct") && j["desat_drop_pct"].isNumeric() &&
+        hms_cpap::validDesatDropPct(j["desat_drop_pct"].asDouble())) {
+        config_->desat_drop_pct = j["desat_drop_pct"].asDouble();
+        const std::string pct = std::to_string(config_->desat_drop_pct);
+#ifdef _WIN32
+        _putenv_s("DESAT_DROP_PCT", pct.c_str());
+#else
+        setenv("DESAT_DROP_PCT", pct.c_str(), 1);
+#endif
+    }
     // SDD-012: archive_dir was reachable only through setupApply, so it could be
     // set during the wizard and never again. That is the one setting a Mule and
     // Miner install REQUIRES (AppConfig.h), which left onboarded users editing

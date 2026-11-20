@@ -1,7 +1,7 @@
 import { Injectable } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Observable } from 'rxjs';
-import { DashboardData, SessionListItem, SessionDetail, SessionEvent, EventRow, TrendPoint, SignalData, VitalsData, OximetryData, MyAirComparisonRow } from '../models/session.model';
+import { DashboardData, SessionListItem, SessionDetail, SessionEvent, EventRow, TrendPoint, SignalData, VitalsData, OximetryData, MyAirComparisonRow, BreathData } from '../models/session.model';
 import { AppConfig, DiscoveredDevice } from '../models/config.model';
 import { EquipmentType, EquipmentProfile, EquipmentItem, EquipmentItemPayload } from '../models/equipment.model';
 import { CleaningTask, CleaningTaskType, CleaningSuggestResult } from '../models/cleaning.model';
@@ -366,8 +366,9 @@ export class CpapApiService {
     return this.http.get<OximetryData>(`/api/sessions/${date}/oximetry`, { params });
   }
 
-  getSessionBreaths(date: string): Observable<{ onset: string[]; tidal_volume: number[]; inspiratory_time: number[]; expiratory_time: number[]; flow_limitation: number[] }> {
-    return this.http.get<any>(`/api/sessions/${date}/breaths`);
+  /** SDD-001 F3: the night's breaths, column-oriented. */
+  getSessionBreaths(date: string): Observable<BreathData> {
+    return this.http.get<BreathData>(`/api/sessions/${date}/breaths`);
   }
 
   getSessionEvents(date: string): Observable<SessionEvent[]> {

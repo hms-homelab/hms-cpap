@@ -179,6 +179,11 @@
       "heading": "Ritmo de coleta",
       "burstInterval": "Intervalo da rajada (segundos)"
     },
+    "spo2": {
+      "heading": "Dessaturações de SpO2",
+      "dropPct": "Limite de dessaturação (% abaixo da linha de base)",
+      "dropHint": "Uma queda deste tamanho abaixo da linha de base recente de SpO2 conta como dessaturação, nos eventos, na contagem e no ODI. 3 é a regra habitual (AASM) e 4 a regra do CMS. Vale para as noites salvas a partir de agora; o gráfico do anel O2 usa-o de imediato."
+    },
     "backfill": {
       "heading": "Importar histórico",
       "desc": "Importe para o banco de dados as sessões de terapia do seu diretório DATALOG. As sessões já existentes na faixa de datas serão reanalisadas.",

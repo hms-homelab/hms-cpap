@@ -272,6 +272,24 @@ import { sourceImage } from '../../utils/source-image';
           </div>
         </div>
 
+        <!-- Section: SpO2 desaturations (SDD-001). One number, used for the
+             machine's own SpO2 when a night is saved and for the ring's SpO2
+             on the session page. -->
+        <div class="section">
+          <div class="section-header" (click)="toggle('spo2')">
+            <span class="chevron" [class.open]="open['spo2']">&#9654;</span>
+            {{ 'settings.spo2.heading' | translate }}
+          </div>
+          <div class="section-body" *ngIf="open['spo2']">
+            <label>
+              {{ 'settings.spo2.dropPct' | translate }}
+              <input type="number" [(ngModel)]="config.desat_drop_pct" name="desat_drop_pct"
+                     min="1" max="10" step="0.5" />
+              <span class="hint">{{ 'settings.spo2.dropHint' | translate }}</span>
+            </label>
+          </div>
+        </div>
+
         <!-- Section: AirSense 11 over Bluetooth (SDD-057). The switch is
              config; pairing it, its status and its actions are the Devices
              page's card (SDD-062 D1). -->
@@ -1635,6 +1653,8 @@ export class SettingsComponent implements OnInit, OnDestroy {
                           quiet_minutes: 15 };
         }
         if (cfg.sleephq.quiet_minutes == null) cfg.sleephq.quiet_minutes = 15;
+        // SDD-001: a config.json from before the setting reads as the parser's default.
+        if (cfg.desat_drop_pct == null) cfg.desat_drop_pct = 3;
         // SDD-012: an older config.json predates these blocks entirely, and an
         // absent block would otherwise blow up the template's [(ngModel)] paths.
         if (!cfg.agent) {
