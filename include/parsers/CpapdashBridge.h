@@ -98,9 +98,18 @@ enum class SummaryPeriod { DAILY, WEEKLY, MONTHLY };
  * and it is the truth about which files make up a session; the columns are kept
  * as a denormalised convenience for readers that only ever wanted one.
  */
+/// SDD-077 D1: where a session file came from. A file the machine wrote to its
+/// SD card is "card", whatever carried it here (ez Share, Mule & Miner, a local
+/// folder, a ZIP). A file hms-cpap built from a Bluetooth stream is
+/// "ble-as11" or "ble-ds2". Its path used to be the only clue.
+inline constexpr const char* kSourceCard    = "card";
+inline constexpr const char* kSourceBleAs11 = "ble-as11";
+inline constexpr const char* kSourceBleDs2  = "ble-ds2";
+
 struct SessionFileRef {
     std::string kind;      // "brp" | "pld" | "sad" | "eve" | "csl"
     std::string rel_path;  // "DATALOG/20260812/20260812_233427_EVE.edf"
+    std::string source = kSourceCard;   // SDD-077 D1: kSourceCard | kSourceBleAs11 | kSourceBleDs2
 };
 
 struct SessionFileSet {

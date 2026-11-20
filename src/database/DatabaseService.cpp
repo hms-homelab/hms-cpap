@@ -178,6 +178,7 @@ bool DatabaseService::connect() {
                     session_id  INT NOT NULL,
                     kind        VARCHAR(8) NOT NULL,
                     rel_path    TEXT NOT NULL,
+                    source      VARCHAR(16),
                     UNIQUE (session_id, rel_path)
                     )
                 )");
@@ -355,6 +356,27 @@ bool DatabaseService::connect() {
                 txn.commit();
             } catch (const std::exception& e) {
                 std::cerr << "  DB: core schema creation failed: " << e.what() << std::endl;
+            }
+
+            // SDD-077 D1: where each session file came from ('card',
+            // 'ble-as11', 'ble-ds2'). No default: NULL is "not filled yet",
+            // and a row that predates the column is filled from its path,
+            // once; that is the last time the path decides anything. Every
+            // write after this records its source. As on SQLite and MySQL.
+            try {
+                pqxx::work txn(*conn_);
+                txn.exec("ALTER TABLE cpap_session_files ADD COLUMN IF NOT EXISTS source VARCHAR(16)");
+                txn.exec(R"(
+                    UPDATE cpap_session_files
+                       SET source = CASE WHEN rel_path LIKE 'as11/%' THEN 'ble-as11'
+                                         WHEN rel_path LIKE 'ds2/%'  THEN 'ble-ds2'
+                                         ELSE 'card' END
+                     WHERE source IS NULL
+                )");
+                txn.commit();
+            } catch (const std::exception& e) {
+                std::cerr << "  DB: cpap_session_files source migration failed: " << e.what()
+                          << std::endl;
             }
 
             // Auto-migrate: add force_completed column if missing
@@ -2824,10 +2846,13 @@ bool DatabaseService::replaceSessionFiles(
 
         // +/-5s, matching sessionExists: the stored start can differ from the
         // in-memory one by a rounding, and an exact match would record nothing.
+        // The nearest row wins (SDD-077 D2): a card session saved a few
+        // seconds off a Bluetooth row must get its own files.
         auto found = work.exec_params(
             "SELECT id FROM cpap_sessions WHERE device_id = $1 "
             "AND session_start BETWEEN $2::timestamp - interval '5 seconds' "
-            "                      AND $2::timestamp + interval '5 seconds' LIMIT 1",
+            "                      AND $2::timestamp + interval '5 seconds' "
+            "ORDER BY ABS(EXTRACT(EPOCH FROM (session_start - $2::timestamp))) LIMIT 1",
             device_id, start_oss.str());
         if (found.empty()) return false;
         int session_id = found[0][0].as<int>();
@@ -2836,9 +2861,9 @@ bool DatabaseService::replaceSessionFiles(
         work.exec_params("DELETE FROM cpap_session_files WHERE session_id = $1", session_id);
         for (const auto& f : files) {
             work.exec_params(
-                "INSERT INTO cpap_session_files (session_id, kind, rel_path) "
-                "VALUES ($1, $2, $3) ON CONFLICT (session_id, rel_path) DO NOTHING",
-                session_id, f.kind, f.rel_path);
+                "INSERT INTO cpap_session_files (session_id, kind, rel_path, source) "
+                "VALUES ($1, $2, $3, $4) ON CONFLICT (session_id, rel_path) DO NOTHING",
+                session_id, f.kind, f.rel_path, f.source);
         }
         work.commit();
         return true;
@@ -2859,13 +2884,13 @@ std::vector<SessionFileRef> DatabaseService::getSessionFilesForDateFolder(
         pqxx::work work(*conn_);
         std::string pattern = "%DATALOG/" + date_folder + "/%";
         auto rows = work.exec_params(
-            "SELECT f.kind, f.rel_path FROM cpap_session_files f "
+            "SELECT f.kind, f.rel_path, COALESCE(f.source, 'card') FROM cpap_session_files f "
             "JOIN cpap_sessions s ON s.id = f.session_id "
             "WHERE s.device_id = $1 AND f.rel_path::text LIKE $2 "
             "ORDER BY f.rel_path",
             device_id, pattern);
         for (const auto& r : rows) {
-            out.push_back({r[0].as<std::string>(), r[1].as<std::string>()});
+            out.push_back({r[0].as<std::string>(), r[1].as<std::string>(), r[2].as<std::string>()});
         }
     } catch (const std::exception& e) {
         std::cerr << "DB: getSessionFilesForDateFolder failed: " << e.what() << std::endl;

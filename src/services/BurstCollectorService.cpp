@@ -20,6 +20,7 @@
 #include "utils/ConfigManager.h"
 #include "utils/AppConfig.h"
 #include "utils/FileUtils.h"
+#include "utils/CheckpointSizes.h"
 #include "utils/NightQuiet.h"
 #include "utils/SessionEnd.h"
 #include "utils/SessionFileRefs.h"
@@ -131,18 +132,13 @@ constexpr const char* kEventLabelRule =
 
 } // namespace
 
-std::map<std::string, int> BurstCollectorService::checkpointSizes(const SessionFileSet& session) {
-    std::map<std::string, int> sizes;
-    for (const auto& [filename, size_kb] : session.file_sizes_kb) {
-        if (filename.find("_BRP.edf") == std::string::npos &&
-            filename.find("_PLD.edf") == std::string::npos && !isOximetryFile(filename))
-            continue;
-        const auto exact = session.file_sizes_bytes.find(filename);
-        sizes[filename] = exact != session.file_sizes_bytes.end()
-                              ? static_cast<int>(std::min<uint64_t>(exact->second, 0x7fffffff))
-                              : size_kb;
-    }
-    return sizes;
+std::string BurstCollectorService::currentNightFolder(const std::vector<std::string>& card_folders,
+                                                     const std::vector<SessionFileSet>& sessions) {
+    // Date folders are YYYYMMDD, so the newest is the greatest.
+    std::string newest;
+    for (const auto& f : card_folders) newest = std::max(newest, f);
+    for (const auto& s : sessions) newest = std::max(newest, s.date_folder);
+    return newest;
 }
 
 BurstCollectorService::BurstCollectorService(int burst_interval_seconds)
@@ -2470,6 +2466,11 @@ bool BurstCollectorService::executeBurstCycle() {
     std::set<std::chrono::system_clock::time_point> stored_inline;
     std::set<std::chrono::system_clock::time_point> saved_inline;
     int saved_count = 0;
+    // SDD-077 D5: the newest night folder on the source, and the stored
+    // sessions this burst saved again and kept completed (a repair, D4, or an
+    // older night, D5), which Step 8 does not publish as a session in progress.
+    std::string current_night;
+    std::set<std::chrono::system_clock::time_point> kept_completed;
 
     if (prisma_ingestion_) {
         // ===== LOWENSTEIN PRISMA MODE =====
@@ -3319,6 +3320,9 @@ bool BurstCollectorService::executeBurstCycle() {
         bool session_closed = false;
         // SDD-054 D7: an idle burst is not an error; a failed download is.
         int download_failures = 0;
+        // SDD-077 D5: only a session in the night the machine is writing may
+        // reopen. The newest night folder on the source, on the machine's clock.
+        current_night = currentNightFolder(card_folders_, new_sessions);
 
         for (const auto& session : new_sessions) {
             // SDD-029: an operator removed this night; discovery must not store it again.
@@ -3376,25 +3380,11 @@ bool BurstCollectorService::executeBurstCycle() {
 
             const std::map<std::string, int> current_checkpoint_sizes = checkpointSizes(session);
 
-            bool all_unchanged = true;
-            bool has_new_files = false;
-
-            for (const auto& [filename, db_size] : db_checkpoint_sizes) {
-                auto it = current_checkpoint_sizes.find(filename);
-                if (it == current_checkpoint_sizes.end()) {
-                    all_unchanged = false;
-                    break;
-                }
-                if (it->second != db_size) {
-                    all_unchanged = false;
-                    break;
-                }
-            }
-
-            if (current_checkpoint_sizes.size() > db_checkpoint_sizes.size()) {
-                has_new_files = true;
-                all_unchanged = false;
-            }
+            // SDD-077 D3: the one compare, against the one shape every writer
+            // stores. A row written in the old KB shape reads as unchanged once.
+            const auto compared = compareCheckpoints(db_checkpoint_sizes, session);
+            bool all_unchanged = compared.all_unchanged;
+            const bool has_new_files = compared.has_new_files;
 
             // SDD-011: unchanged is not the same as done. Skipping the download
             // also skips the archive, so a session that goes stable while its
@@ -3423,6 +3413,12 @@ bool BurstCollectorService::executeBurstCycle() {
             if (all_unchanged && !has_new_files && archived) {
                 std::cout << "CPAP: Session " << session.session_prefix
                           << " stopped (all checkpoint files unchanged)" << std::endl;
+
+                // SDD-077 D3: a KB-shape row is rewritten in bytes, so it is
+                // read by its KB rounding this once and exactly after.
+                if (compared.legacy_kb)
+                    db_service_->updateCheckpointFileSizes(device_id_, session.session_start,
+                                                           current_checkpoint_sizes);
 
                 // markSessionCompleted returns true only the FIRST time
                 // (when session_end was not yet set). Returns false if already completed.
@@ -3473,19 +3469,45 @@ bool BurstCollectorService::executeBurstCycle() {
                 for (const auto& missed : checkpoints_missed_) checkpoint_sizes.erase(missed);
                 db_service_->updateCheckpointFileSizes(device_id_, session.session_start, checkpoint_sizes);
 
-                // Session resumed (mask put back on) — clear session_end so
-                // markSessionCompleted() can fire again when it truly stops.
-                db_service_->reopenSession(device_id_, session.session_start);
-                // SDD-046: and the night's hour starts again.
-                noteNightGrowth(*db_service_, device_id_, session.date_folder,
-                                session.session_start, std::chrono::system_clock::now());
+                // SDD-077 D4: a download that only repaired the archive is not
+                // the mask going back on; it stores what it fetched and keeps
+                // session_end. D5: growth reopens only in the night the machine
+                // is writing.
+                const bool grew = !all_unchanged || has_new_files;
+                const bool in_current_night = session.date_folder == current_night;
+                if (grew && in_current_night) {
+                    // Session resumed (mask put back on) — clear session_end so
+                    // markSessionCompleted() can fire again when it truly stops.
+                    db_service_->reopenSession(device_id_, session.session_start);
+                    // SDD-046: and the night's hour starts again.
+                    noteNightGrowth(*db_service_, device_id_, session.date_folder,
+                                    session.session_start, std::chrono::system_clock::now());
+                } else if (in_current_night) {
+                    // D4: a repair keeps its session_end, so it is not
+                    // published as a session in progress either.
+                    kept_completed.insert(session.session_start);
+                } else {
+                    // D5: an older night is repaired and reparsed, and stays
+                    // completed, at the end its data now says (SDD-037 D2).
+                    kept_completed.insert(session.session_start);
+                    const auto parsed = std::find_if(
+                        parsed_sessions.begin(), parsed_sessions.end(), [&](const CPAPSession& s) {
+                            return s.session_start.has_value() &&
+                                   *s.session_start == session.session_start;
+                        });
+                    if (saved_inline.count(session.session_start) && parsed != parsed_sessions.end())
+                        closeWithDataEnd(*db_service_, device_id_, session.session_start, *parsed);
+                    std::cout << "CPAP: Session " << session.session_prefix << " is in night "
+                              << session.date_folder << ", not the current one ("
+                              << current_night << "); stored and kept completed" << std::endl;
+                }
 
                 downloaded_sessions.push_back({session_dir, session});
                 stored_inline.insert(session.session_start);
 
                 // The mask, as the card shows it: a session that grew. Not a
-                // download that only repaired the archive.
-                if (!all_unchanged || has_new_files)
+                // download that only repaired the archive, nor an older night.
+                if (grew && in_current_night)
                     observeCardSession(session, session_dir, nowSeconds());
             } else {
                 std::cerr << "CPAP: Failed to download session " << session.session_prefix << std::endl;
@@ -3613,12 +3635,18 @@ bool BurstCollectorService::executeBurstCycle() {
     std::cout << "💾 CPAP: Saved " << saved_count << "/" << parsed_sessions.size()
               << " session(s) to database" << std::endl;
 
-    // Step 8: Publish LATEST session to MQTT (most recent by session_start)
-    if (!parsed_sessions.empty() && data_publisher_) {
+    // Step 8: Publish LATEST session to MQTT (most recent by session_start).
+    // SDD-077 D4/D5: never a session this burst kept completed; publishing
+    // it would say a session is in progress that has ended.
+    std::vector<CPAPSession> publishable;
+    for (const auto& s : parsed_sessions)
+        if (!s.session_start.has_value() || !kept_completed.count(*s.session_start))
+            publishable.push_back(s);
+    if (!publishable.empty() && data_publisher_) {
         // Find latest session
         auto latest = std::max_element(
-            parsed_sessions.begin(),
-            parsed_sessions.end(),
+            publishable.begin(),
+            publishable.end(),
             [](const CPAPSession& a, const CPAPSession& b) {
                 if (!a.session_start.has_value()) return true;
                 if (!b.session_start.has_value()) return false;
@@ -4135,7 +4163,11 @@ void BurstCollectorService::storeCardSessions(std::vector<CardSession> sessions,
         }
         card_seen_[key] = seen_value;
         if (stored) ++grown; else ++imported;
-        // The newest changed night is the one Home Assistant shows.
+        // The newest night is the one Home Assistant shows. SDD-077 D5: an
+        // older session read again is saved and closed above, never published
+        // as one in progress; only the newest may reopen (written_now) or be
+        // published.
+        if (!is_newest) continue;
         card_pending_publish_ = std::shared_ptr<const CPAPSession>(std::move(sessions[i].session));
         card_pending_is_new_ = !stored;
     }
@@ -4294,7 +4326,7 @@ bool BurstCollectorService::parseAndStoreSession(
     // The columns hold one path per kind; cpap_session_files holds every
     // file the night is made of, which is what a merged session needs
     // and what the SleepHQ export reads. See SDD-014.
-    const auto file_refs = recordSessionFiles(session_dir, relative_path_base, *parsed);
+    const auto file_refs = recordSessionFiles(session_dir, relative_path_base, *parsed, kSourceCard);
 
     // One entry per session: a re-parse after the next file replaces the
     // earlier picture of the same night rather than sitting beside it.
@@ -4316,11 +4348,12 @@ bool BurstCollectorService::parseAndStoreSession(
     db_service_->replaceSessionFiles(device_id_, session_start, file_refs);
     std::cout << "💾 CPAP: Saved session " << date_folder << " to database" << std::endl;
 
-    // SDD-057 D5: the card wins the stretch it carries. A Bluetooth copy of
-    // the same therapy (overlapping in time; the machine may cut its card
-    // files where the stream had one) is replaced by this row.
-    As11NightImport::replaceBluetoothRows(*db_service_, device_id_, session_start,
-                                          dataEndOf(*parsed).value_or(session_start));
+    // SDD-057 D5, SDD-077 D2: the card wins the stretch it carries. A copy
+    // built from a Bluetooth stream of the same therapy (overlapping in time;
+    // the machine may cut its card files where the stream had one) is
+    // replaced by this row. The collector and a local folder both save here.
+    As11NightImport::replaceConstructedFiles(*db_service_, device_id_, session_start,
+                                             dataEndOf(*parsed).value_or(session_start));
 
     // SDD-026: the night's row in cpap_daily_summary is ours wherever the
     // night has sessions, so every save re-derives it. Per session, so the

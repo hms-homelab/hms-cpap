@@ -465,6 +465,7 @@ void MySQLDatabase::createSchema() {
             session_id  INT NOT NULL,
             kind        VARCHAR(8) NOT NULL,
             rel_path    VARCHAR(512) NOT NULL,
+            source      VARCHAR(16),
             UNIQUE KEY uq_session_file (session_id, rel_path(255)),
             KEY idx_session_files_session (session_id),
             KEY idx_session_files_path (rel_path(255))
@@ -1059,6 +1060,10 @@ void MySQLDatabase::migrateSchema() {
         // stored before. No default: NULL is "not counted yet" (see below).
         {"cpap_session_metrics", "unclassified_apneas",    "INT"},
 
+        // SDD-077 D1: where each session file came from. No default: NULL is
+        // "not filled yet" (see below).
+        {"cpap_session_files", "source",                   "VARCHAR(16)"},
+
         // Session bookkeeping the collector and SleepHQ export both read.
         {"cpap_sessions", "session_end",       "DATETIME"},
         {"cpap_sessions", "data_records",      "INT DEFAULT 0"},
@@ -1184,6 +1189,15 @@ void MySQLDatabase::migrateSchema() {
          "                                 WHERE e.session_id = m.session_id"
          "                                   AND e.event_type = 'Apnea')"
          " WHERE m.unclassified_apneas IS NULL");
+
+    // SDD-077 D1: a file row that predates source is filled from its path,
+    // once; that is the last time the path decides anything. Idempotent: a
+    // filled row is never NULL again.
+    exec("UPDATE cpap_session_files"
+         "   SET source = CASE WHEN rel_path LIKE 'as11/%' THEN 'ble-as11'"
+         "                     WHEN rel_path LIKE 'ds2/%'  THEN 'ble-ds2'"
+         "                     ELSE 'card' END"
+         " WHERE source IS NULL");
 
     // Split ResMed's lifetime PatientHours counter out of patient_hours, which
     // two writers had been filling with two different quantities. Runs after the
@@ -2446,14 +2460,18 @@ bool MySQLDatabase::replaceSessionFiles(
 
     int session_id = -1;
     {
+        // The nearest row within 5 s wins (SDD-077 D2): a card session saved
+        // a few seconds off a Bluetooth row must get its own files.
         const char* sql = "SELECT id FROM cpap_sessions WHERE device_id = ? "
-                          "AND ABS(TIMESTAMPDIFF(SECOND, session_start, ?)) <= 5 LIMIT 1";
+                          "AND ABS(TIMESTAMPDIFF(SECOND, session_start, ?)) <= 5 "
+                          "ORDER BY ABS(TIMESTAMPDIFF(SECOND, session_start, ?)) LIMIT 1";
         MysqlStmtGuard g;
         g.stmt = mysql_stmt_init(conn_);
         if (mysql_stmt_prepare(g.stmt, sql, std::strlen(sql)) != 0) return false;
-        ParamBinder p(2);
+        ParamBinder p(3);
         p.bindText(0, device_id);
         p.bindText(1, ts);
+        p.bindText(2, ts);
         mysql_stmt_bind_param(g.stmt, p.data());
         if (mysql_stmt_execute(g.stmt) != 0) return false;
         ResultBinder r(1);
@@ -2477,14 +2495,15 @@ bool MySQLDatabase::replaceSessionFiles(
 
     for (const auto& f : files) {
         const char* sql = "INSERT IGNORE INTO cpap_session_files "
-                          "(session_id, kind, rel_path) VALUES (?, ?, ?)";
+                          "(session_id, kind, rel_path, source) VALUES (?, ?, ?, ?)";
         MysqlStmtGuard g;
         g.stmt = mysql_stmt_init(conn_);
         if (mysql_stmt_prepare(g.stmt, sql, std::strlen(sql)) != 0) return false;
-        ParamBinder p(3);
+        ParamBinder p(4);
         p.bindInt(0, session_id);
         p.bindText(1, f.kind);
         p.bindText(2, f.rel_path);
+        p.bindText(3, f.source);
         mysql_stmt_bind_param(g.stmt, p.data());
         if (mysql_stmt_execute(g.stmt) != 0) {
             std::cerr << "MySQL: replaceSessionFiles insert error: "
@@ -2503,7 +2522,7 @@ std::vector<SessionFileRef> MySQLDatabase::getSessionFilesForDateFolder(
 
     const std::string pattern = "%DATALOG/" + date_folder + "/%";
     const char* sql = R"(
-        SELECT f.kind, f.rel_path
+        SELECT f.kind, f.rel_path, COALESCE(f.source, 'card')
         FROM cpap_session_files f
         JOIN cpap_sessions s ON s.id = f.session_id
         WHERE s.device_id = ? AND f.rel_path LIKE ?
@@ -2518,13 +2537,14 @@ std::vector<SessionFileRef> MySQLDatabase::getSessionFilesForDateFolder(
     mysql_stmt_bind_param(g.stmt, p.data());
     if (mysql_stmt_execute(g.stmt) != 0) return out;
 
-    ResultBinder r(2);
+    ResultBinder r(3);
     r.bindColString(0, 16);
     r.bindColStringN(1, 512);
+    r.bindColString(2, 16);
     mysql_stmt_bind_result(g.stmt, r.data());
     if (mysql_stmt_store_result(g.stmt) != 0) return out;
     while (mysql_stmt_fetch(g.stmt) == 0) {
-        out.push_back({r.colText(0), r.colText(1)});
+        out.push_back({r.colText(0), r.colText(1), r.colText(2)});
     }
     return out;
 }
