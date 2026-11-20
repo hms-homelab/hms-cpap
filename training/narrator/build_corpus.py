@@ -58,8 +58,9 @@ CORPUS_INSTRUCTION = """
 Write in English, as plain prose: 3 to 5 sentences, no lists, no headings.
 Describe the night; do not give medical advice and do not tell the reader to
 change settings or equipment. If the data says no AHI is available, do not
-grade the index or the events in any way. Write any date exactly as the data
-writes it."""
+grade the index or the events in any way. Write no number the data does not
+give: name an AHI range in words (for example "the severe range"), never by
+its limits. Write any date exactly as the data writes it."""
 
 # Words that grade an index (counted, not dropped, on Ungraded nights).
 GRADING_WORDS = re.compile(r"\b(mild|moderate|severe|normal|excellent|good|great|"
@@ -141,7 +142,12 @@ class RateLimit:
 
 
 class KeyRejected(Exception):
-    """The API refused the key: no further request can succeed."""
+    """The API refused the key or the account (no credit): no further request
+    can succeed."""
+
+
+def refused(code, detail):
+    return code in (401, 402, 403) or "API_KEY_INVALID" in detail
 
 
 class Teacher:
@@ -187,7 +193,7 @@ class Teacher:
                 if e.code in (429, 500, 502, 503, 504):
                     time.sleep(min(60.0, 2.0 ** attempt + random.random()))
                     continue
-                if e.code in (401, 403) or "API_KEY_INVALID" in detail:
+                if refused(e.code, detail):
                     raise KeyRejected(last)
                 return {"id": rec["id"], "error": last}
             except (urllib.error.URLError, TimeoutError, OSError) as e:
@@ -237,7 +243,7 @@ def stage_teacher(args, out):
             except KeyRejected as e:
                 for f in futures:
                     f.cancel()
-                raise SystemExit(f"teacher: the API rejected the key ({str(e)[:120]})")
+                raise SystemExit(f"teacher: the API refused the key or account ({str(e)[:160]})")
             fh.write(json.dumps(res) + "\n")
             fh.flush()
             done += 1
@@ -277,7 +283,7 @@ def api(key, method, url, body=None, headers=None, raw=False, timeout=300):
             return (payload, resp.headers) if raw else json.loads(payload or b"{}")
     except urllib.error.HTTPError as e:
         detail = e.read().decode(errors="replace")[:300]
-        if e.code in (401, 403) or "API_KEY_INVALID" in detail:
+        if refused(e.code, detail):
             raise KeyRejected(f"http {e.code}: {detail}")
         raise SystemExit(f"{method} {url.split('?')[0]}: http {e.code}: {detail}")
 
@@ -427,7 +433,7 @@ def stage_teacher_batch(args, out):
                 submitted += batch_submit(key, ledger, out, args, teacher)
             active = running()
     except KeyRejected as e:
-        raise SystemExit(f"teacher: the API rejected the key ({str(e)[:120]})")
+        raise SystemExit(f"teacher: the API refused the key or account ({str(e)[:160]})")
     if active:
         log(f"batch: {active} job(s) still running; run again to collect "
             f"({submitted} nights submitted this run)")
