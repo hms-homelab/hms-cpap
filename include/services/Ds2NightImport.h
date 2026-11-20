@@ -19,8 +19,8 @@ namespace hms_cpap {
  * Walks every machine under <data_dir>/ds2/, hands each session's summary and
  * events records to the Philips parser, and saves what it returns the way a
  * BMC session is saved (save, close at its data end, the night's daily row).
- * Rows record their files under "ds2/", which is how a Bluetooth DS2 row is
- * told apart. A session is read once per process while its files are
+ * Rows record their files under "ds2/" with source "ble-ds2" (SDD-077 D1),
+ * which is how a Bluetooth DS2 row is told apart. A session is read once per process while its files are
  * unchanged, and again when they changed (a re-read rewrote them).
  *
  * There is no SleepHQ export of these nights (SDD-064 D8): nothing here marks

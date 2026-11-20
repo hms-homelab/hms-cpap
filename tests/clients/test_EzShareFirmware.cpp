@@ -1,6 +1,9 @@
 #include <gtest/gtest.h>
 #include "clients/EzShareClient.h"
 #include "utils/ArchiveRecordCount.h"
+#include "services/ListingPlan.h"
+#include "utils/MachineClock.h"
+#include "utils/TimeCompat.h"
 #include "TestSocketCompat.h"
 #include "PosixCompat.h"
 #include <mutex>
@@ -39,6 +42,17 @@ public:
     void setListing(const std::string& body) {
         std::lock_guard<std::mutex> lock(mutex);
         listing = body;
+    }
+    void removeFile(const std::string& path) {
+        std::lock_guard<std::mutex> lock(mutex);
+        files.erase(path);
+    }
+    // SDD-069: a file whose transfers stall: any reply longer than a probe's
+    // 16 bytes sends its headers and then nothing.
+    std::set<std::string> dead;
+    void setDead(const std::string& path, bool on) {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (on) dead.insert(path); else dead.erase(path);
     }
     std::atomic<int> cut{0};
     std::atomic<int> short_reply{0};
@@ -134,10 +148,12 @@ public:
                     body = "temporary failure";
                     extra.clear();
                 }
+                const bool silent = found != files.end() && dead.count(path) && body.size() > 16;
                 lock.unlock();
                 std::string response = "HTTP/1.1 " + status + "\r\nContent-Type: " + type +
                     "\r\nContent-Length: " + std::to_string(short_body ? 17 : body.size()) + "\r\n" + extra +
-                    "Connection: close\r\n\r\n" + (truncate || stall || short_body ? body.substr(0, 17) : body);
+                    "Connection: close\r\n\r\n" +
+                    (silent ? std::string() : truncate || stall || short_body ? body.substr(0, 17) : body);
                 size_t sent = 0;
                 while (sent < response.size()) {
 #ifdef MSG_NOSIGNAL
@@ -192,7 +208,28 @@ protected:
         tm.tm_hour = hour; tm.tm_min = minute; tm.tm_isdst = -1;
         return std::mktime(&tm);
     }
+    // SDD-069: what the collector tells the client of each burst.
+    void burst(long long now, bool full = false, bool growing = false, bool checkpoint = false) {
+        IDataSource::BurstScope s;
+        s.now_s = now; s.full_scan = full; s.night_growing = growing; s.str_checkpoint = checkpoint;
+        client.setBurstScope(s);
+        client.listing_attempts_ = 0;   // SDD-076 D2's /dir check is not under test here
+    }
+    bool offset(long long& off) { return client.takeMachineOffset(off); }
 };
+
+namespace {
+// A synthetic EDF: its start (168-183), its record count (236-243) and its
+// record duration (244-251), padded to [size] bytes.
+std::string syntheticEdf(const std::string& start, int records, size_t size) {
+    std::string edf(std::max<size_t>(size, 256), ' ');
+    edf.replace(168, 16, start);
+    const auto count = std::to_string(records);
+    edf.replace(236, count.size(), count);
+    edf.replace(244, 2, "60");
+    return edf;
+}
+}  // namespace
 
 TEST_F(EzShareFirmwareTest, RedirectListingAndHtml200MissUsePlainPathProbes) {
     FirmwareHttp http;
@@ -610,5 +647,273 @@ TEST_F(EzShareFirmwareTest, IdleServerTeardownWakesAcceptWithoutAnHttpRequest) {
     const auto before = std::chrono::steady_clock::now();
     { FirmwareHttp http; http.start(); }
     EXPECT_LT(std::chrono::steady_clock::now() - before, std::chrono::seconds(2));
+}
+
+// ── SDD-069: a live night on a card with no listing ──────────────────────────
+// Synthetic headers only. A session at 22:16:26 has a BRP and a PLD, each
+// served by its long name and by its alias in creation order.
+namespace {
+const std::string kDir = "/DATALOG/20260301/";
+const std::string kBrp = kDir + "20260301_221626_BRP.edf";
+const std::string kStart = "01.03.2622.16.26";
+
+void putFile(FirmwareHttp& http, const std::string& stamp, const std::string& name, int alias,
+             int records, size_t size = 0) {
+    const auto body = syntheticEdf(stamp, records, size ? size : 256 + records * 100);
+    http.setFile(kDir + name, body);
+    http.setFile(kDir + "202603~" + std::to_string(alias) + ".EDF", body);
+}
+
+void putSessionA(FirmwareHttp& http, int records) {
+    putFile(http, kStart, "20260301_221626_BRP.edf", 1, records);
+    putFile(http, kStart, "20260301_221626_PLD.edf", 2, 10);
+}
+}  // namespace
+
+TEST_F(EzShareFirmwareTest, Sdd069BeforeTheNightABurstSendsOneProbePerStem) {
+    FirmwareHttp http;
+    http.start(); client.setBaseURL(http.url); fallback();
+    const long long t0 = time(10, 18, 0);
+    burst(t0);
+    int before = http.requests;
+    EXPECT_TRUE(client.listFiles("20260310").empty());
+    EXPECT_EQ(http.requests - before, 1) << "mid-month both stems share one alias numbering";
+    EXPECT_EQ(http.calls("/DATALOG/20260310/202603~1.EDF"), 1);
+    // A month's last night has two stems: one probe each, and nothing else.
+    burst(t0 + 65);
+    before = http.requests;
+    EXPECT_TRUE(client.listFiles("20260331").empty());
+    EXPECT_EQ(http.requests - before, 2);
+    EXPECT_EQ(http.calls("/DATALOG/20260331/202603~1.EDF"), 1);
+    EXPECT_EQ(http.calls("/DATALOG/20260331/202604~1.EDF"), 1);
+    // The full scan (the index, SDD-054 D6) keeps the three-miss tolerance.
+    burst(t0 + 130, true);
+    before = http.requests;
+    EXPECT_TRUE(client.listFiles("20260310").empty());
+    EXPECT_EQ(http.requests - before, 3);
+}
+
+TEST_F(EzShareFirmwareTest, Sdd069ANewBrpIsTheOpenSessionAndTheOneBeforeWaitsForItsCheckpoint) {
+    FirmwareHttp http;
+    putSessionA(http, 10);
+    http.start(); client.setBaseURL(http.url); fallback();
+    long long now = time(1, 22, 30);
+    burst(now, true);
+    ASSERT_EQ(client.listFiles("20260301").size(), 2u);
+    // The open session grows: its files are probed every burst, and the card
+    // is asked for the next alias once.
+    for (int records = 11; records <= 13; ++records) {
+        putSessionA(http, records);
+        now += 65;
+        burst(now);
+        const int brp = http.calls(kBrp), alias = http.calls(kDir + "202603~3.EDF");
+        EXPECT_EQ(client.listFiles("20260301").size(), 2u);
+        EXPECT_EQ(http.calls(kBrp), brp + 1);
+        EXPECT_EQ(http.calls(kDir + "202603~3.EDF"), alias + 1);
+    }
+    const long long grew = now;
+    // A new BRP mid-night, found by that one alias probe.
+    putFile(http, "01.03.2623.40.00", "20260301_234000_BRP.edf", 3, 2);
+    now += 65;
+    burst(now);
+    auto files = client.listFiles("20260301");
+    ASSERT_EQ(files.size(), 3u);
+    EXPECT_TRUE(std::any_of(files.begin(), files.end(),
+                            [](const auto& e) { return e.name == "20260301_234000_BRP.edf"; }));
+    // Session A is followed by a new BRP: not probed again before its first
+    // checkpoint, 5 min after its last growth. The new session is, every burst.
+    const std::string b = kDir + "20260301_234000_BRP.edf";
+    const int a_calls = http.calls(kBrp);
+    int b_records = 3;
+    for (now = grew + 130; now < grew + 300; now += 65) {
+        putFile(http, "01.03.2623.40.00", "20260301_234000_BRP.edf", 3, b_records++);
+        burst(now);
+        const int b_calls = http.calls(b);
+        EXPECT_EQ(client.listFiles("20260301").size(), 3u);
+        EXPECT_EQ(http.calls(b), b_calls + 1) << "the open session is probed every burst";
+    }
+    EXPECT_EQ(http.calls(kBrp), a_calls) << "a session followed by a new BRP waits for a checkpoint";
+    burst(now);
+    EXPECT_EQ(client.listFiles("20260301").size(), 3u);
+    EXPECT_EQ(http.calls(kBrp), a_calls + 1) << "SDD-054 D4's 5-min checkpoint";
+}
+
+TEST_F(EzShareFirmwareTest, Sdd069AtEofTwoUnchangedBurstsCloseTheSessionAndAMovedCountKeepsItOpen) {
+    FirmwareHttp http;
+    putSessionA(http, 10);
+    http.start(); client.setBaseURL(http.url); fallback();
+    long long now = time(1, 22, 30);
+    burst(now, true);
+    ASSERT_EQ(client.listFiles("20260301").size(), 2u);
+    const auto probedOnce = [&](bool expected, const char* why) {
+        now += 65;
+        burst(now);
+        const int before = http.calls(kBrp);
+        ASSERT_EQ(client.listFiles("20260301").size(), 2u);
+        EXPECT_EQ(http.calls(kBrp) - before, expected ? 1 : 0) << why;
+    };
+    putSessionA(http, 11);
+    probedOnce(true, "a BRP that grows is probed");
+    // Held to its end.
+    const auto local = (std::filesystem::temp_directory_path() / "hms-sdd069-eof_BRP.edf").string();
+    size_t got = 0;
+    ASSERT_TRUE(client.downloadFileRange("20260301", "20260301_221626_BRP.edf", local, 0, got));
+    probedOnce(true, "one unchanged burst is not two");
+    // The record count moves at the same size (a file finalised in place).
+    putFile(http, kStart, "20260301_221626_BRP.edf", 1, 12, 256 + 11 * 100);
+    probedOnce(true, "a moved count is a change");
+    probedOnce(true, "one unchanged burst after it");
+    probedOnce(true, "two unchanged bursts after it: this probe proves it");
+    probedOnce(false, "at EOF and unchanged across two bursts, the session is over");
+    std::filesystem::remove(local);
+}
+
+TEST_F(EzShareFirmwareTest, Sdd069AStalledRangeKeepsTheSessionAsItIsThroughAnHour) {
+    FirmwareHttp http;
+    putSessionA(http, 10);
+    http.start(); client.setBaseURL(http.url); fallback();
+    long long now = time(1, 22, 30);
+    burst(now, true);
+    ASSERT_EQ(client.listFiles("20260301").size(), 2u);
+    putSessionA(http, 11);
+    now += 65;
+    burst(now);
+    client.listFiles("20260301");
+    http.setDead(kBrp, true);
+    const auto local = (std::filesystem::temp_directory_path() / "hms-sdd069-stall_BRP.edf").string();
+    size_t got = 0;
+    EXPECT_FALSE(client.downloadFileRange("20260301", "20260301_221626_BRP.edf", local, 0, got));
+    // An hour of bursts that see nothing move: a copy short of its end keeps
+    // the session open, probed every burst. No clock turns it off.
+    for (int i = 0; i < 56; ++i) {
+        now += 65;
+        burst(now);
+        const int before = http.calls(kBrp);
+        ASSERT_EQ(client.listFiles("20260301").size(), 2u);
+        EXPECT_EQ(http.calls(kBrp), before + 1) << "burst " << i;
+    }
+    // The rest arrives: the unchanged bursts already counted stand (P4).
+    http.setDead(kBrp, false);
+    ASSERT_TRUE(client.downloadFileRange("20260301", "20260301_221626_BRP.edf", local, 0, got));
+    now += 65;
+    burst(now);
+    const int before = http.calls(kBrp);
+    client.listFiles("20260301");
+    EXPECT_EQ(http.calls(kBrp), before);
+    std::filesystem::remove(local);
+}
+
+TEST_F(EzShareFirmwareTest, Sdd069AnHtmlReplyForAKnownFileKeepsItAsItWasThroughAnHour) {
+    FirmwareHttp http;
+    putSessionA(http, 10);
+    http.start(); client.setBaseURL(http.url); fallback();
+    long long now = time(1, 22, 30);
+    burst(now, true);
+    ASSERT_EQ(client.listFiles("20260301").size(), 2u);
+    putSessionA(http, 11);
+    now += 65;
+    burst(now);
+    client.listFiles("20260301");
+    now += 65;
+    burst(now);
+    client.listFiles("20260301");   // one unchanged burst
+    const auto held = http.files[kBrp];
+    http.removeFile(kBrp);           // the card answers its welcome page
+    for (int i = 0; i < 56; ++i) {
+        now += 65;
+        burst(now);
+        const int before = http.calls(kBrp);
+        const auto files = client.listFiles("20260301");
+        ASSERT_EQ(files.size(), 2u) << "a known file that answers HTML is still listed";
+        const auto brp = std::find_if(files.begin(), files.end(),
+                                      [](const auto& e) { return e.name == "20260301_221626_BRP.edf"; });
+        ASSERT_NE(brp, files.end());
+        EXPECT_EQ(brp->size_bytes, held.size()) << "with the size it had";
+        EXPECT_EQ(http.calls(kBrp), before + 1) << "and still open, burst " << i;
+    }
+    // Back as it was: the streak resumes where it stood, so this is the second.
+    http.setFile(kBrp, held);
+    now += 65;
+    burst(now);
+    client.listFiles("20260301");
+    now += 65;
+    burst(now);
+    const int before = http.calls(kBrp);
+    client.listFiles("20260301");
+    EXPECT_EQ(http.calls(kBrp), before);
+}
+
+TEST_F(EzShareFirmwareTest, Sdd069TheMachineClockFromAGrowingBrpMovesTonightsFolder) {
+    // The host's 11:30 on 2 March; the machine runs an hour ahead, so its
+    // 12:30 ends record 150 of a BRP it started at 10:00.
+    std::tm w{};
+    w.tm_year = 126; w.tm_mon = 2; w.tm_mday = 2; w.tm_hour = 11; w.tm_min = 30;
+    const long long wall = timegm_utc(&w);
+    const long long now = wall - hostZoneOffset(wall);
+    FirmwareHttp http;
+    putFile(http, "02.03.2610.00.00", "20260302_100000_BRP.edf", 1, 149);
+    http.start(); client.setBaseURL(http.url); fallback();
+    burst(now, true);
+    ASSERT_EQ(client.listFiles("20260301").size(), 1u);
+    long long off = 0;
+    EXPECT_FALSE(offset(off)) << "a first sighting is no growth";
+    putFile(http, "02.03.2610.00.00", "20260302_100000_BRP.edf", 1, 150);
+    burst(now + 65);
+    client.listFiles("20260301");
+    ASSERT_TRUE(offset(off));
+    EXPECT_EQ(off, 3600 + hostZoneOffset(now));
+    EXPECT_EQ(tonightFolder(now + 65, hostZoneOffset(now)), "20260301") << "the host's zone";
+    EXPECT_EQ(tonightFolder(now + 65, off), "20260302") << "the machine's day";
+    EXPECT_FALSE(offset(off)) << "said once";
+}
+
+TEST_F(EzShareFirmwareTest, Sdd069ASettledSessionIsProbedOnlyAtItsCheckpoints) {
+    FirmwareHttp http;
+    putSessionA(http, 10);
+    http.start(); client.setBaseURL(http.url); fallback();
+    long long now = time(1, 22, 30);
+    burst(now, true);
+    client.listFiles("20260301");
+    putSessionA(http, 11);
+    for (int i = 0; i < 3; ++i) {   // grows, then two unchanged bursts
+        now += 65;
+        burst(now);
+        client.listFiles("20260301");
+    }
+    const long long grew = now - 130;
+    const int settled = http.calls(kBrp);
+    for (now += 65; now <= grew + 70 * 60; now += 65) {
+        burst(now);
+        ASSERT_EQ(client.listFiles("20260301").size(), 2u);
+    }
+    EXPECT_EQ(http.calls(kBrp) - settled, 3) << "once each at 5, 35 and 65 min after its growth";
+}
+
+TEST_F(EzShareFirmwareTest, Sdd069NoStrWhileTheNightGrowsAndOneAtTheSixtyFiveMinuteCheckpoint) {
+    FirmwareHttp http;
+    http.files["/STR.edf"] = std::string(256, ' ');
+    http.start(); client.setBaseURL(http.url); fallback();
+    const auto path = (std::filesystem::temp_directory_path() / "hms-sdd069-str.edf").string();
+    long long now = time(1, 23, 0);
+    for (int i = 0; i < 5; ++i, now += 65) {
+        burst(now, false, true);
+        client.beginRefresh();
+        client.listDateFolders();
+        client.listFiles("20260301");
+        EXPECT_FALSE(client.downloadRootFile("STR.edf", path));
+    }
+    EXPECT_EQ(http.str_transfers, 0) << "no STR while the night grows";
+    // Growth stopped: the bursts before the checkpoint read none of their own.
+    burst(now);
+    client.beginRefresh();
+    client.listFiles("20260301");
+    EXPECT_EQ(http.str_transfers, 0);
+    // The 65-min checkpoint: one read, which the collector's own shares.
+    burst(now + 3900, false, false, true);
+    client.beginRefresh();
+    EXPECT_EQ(http.str_transfers, 1);
+    ASSERT_TRUE(client.downloadRootFile("STR.edf", path));
+    EXPECT_EQ(http.str_transfers, 1);
+    std::filesystem::remove(path);
 }
 } // namespace hms_cpap

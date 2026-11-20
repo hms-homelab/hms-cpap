@@ -125,16 +125,10 @@ TEST(As11NightImportDecision, ACardSessionReplacesTheBluetoothRowsItOverlaps) {
         {at(43138), at(43200), false},   // the card's own row, already stored
         {at(10000), at(20000), true},    // an earlier Bluetooth night
     };
-    const auto replaced = As11NightImport::bluetoothRowsReplacedBy(at(43138), at(43200), stored);
+    const auto replaced = As11NightImport::constructedRowsReplacedBy(at(43138), at(43200), stored);
     ASSERT_EQ(replaced.size(), 1u);
     EXPECT_EQ(replaced[0], at(43128));
-    EXPECT_TRUE(As11NightImport::bluetoothRowsReplacedBy(at(30000), at(40000), stored).empty());
-}
-
-TEST(As11NightImportDecision, ABluetoothRowIsKnownByItsPath) {
-    EXPECT_TRUE(As11NightImport::isBluetoothPath("as11/23000000001/DATALOG/20261016/20261016_220000_BRP.edf"));
-    EXPECT_FALSE(As11NightImport::isBluetoothPath("DATALOG/20261016/20261016_220000_BRP.edf"));
-    EXPECT_FALSE(As11NightImport::isBluetoothPath(""));
+    EXPECT_TRUE(As11NightImport::constructedRowsReplacedBy(at(30000), at(40000), stored).empty());
 }
 
 // ── the import ───────────────────────────────────────────────────────────
@@ -156,7 +150,10 @@ TEST_F(ImportTest, ANightOnDiskBecomesASessionWithItsFilesAndMetrics) {
     EXPECT_TRUE(db_->getNightlyMetrics(kDevice, *s.session_start).has_value());
     const auto files = db_->getSessionFilesForDateFolder(kDevice, "20261016");
     ASSERT_FALSE(files.empty());
-    for (const auto& f : files) EXPECT_TRUE(As11NightImport::isBluetoothPath(f.rel_path)) << f.rel_path;
+    for (const auto& f : files) {
+        EXPECT_EQ(f.rel_path.rfind("as11/", 0), 0u) << f.rel_path;
+        EXPECT_EQ(f.source, kSourceBleAs11) << f.rel_path;   // SDD-077 D1
+    }
     // Closed on its own data (SDD-037), not left open.
     EXPECT_TRUE(openSessionsStartedBefore(*db_, kDevice, *s.session_start + seconds(1)).empty());
 
@@ -194,10 +191,10 @@ TEST_F(ImportTest, TheCardsCopyReplacesTheBluetoothRowItOverlaps) {
     const auto card_start = bt_start + seconds(10);
     saveCardSession(card_start, 50);
     const auto end = card_start + seconds(50);
-    EXPECT_EQ(As11NightImport::replaceBluetoothRows(*db_, kDevice, card_start, end), 1);
+    EXPECT_EQ(As11NightImport::replaceConstructedFiles(*db_, kDevice, card_start, end), 1);
     EXPECT_FALSE(db_->sessionExists(kDevice, bt_start)) << "the Bluetooth row is gone";
     EXPECT_TRUE(db_->sessionExists(kDevice, card_start)) << "the card's row stays";
-    EXPECT_EQ(As11NightImport::replaceBluetoothRows(*db_, kDevice, card_start, end), 0);
+    EXPECT_EQ(As11NightImport::replaceConstructedFiles(*db_, kDevice, card_start, end), 0);
 
     // The next import leaves the stretch to the card.
     auto imp = importer();
