@@ -86,6 +86,7 @@ const SIGNAL_DEFS: SignalDef[] = [
         </div>
       </div>
 
+      <div class="o2-only-note" *ngIf="signalData?.archive_note">{{ signalData?.archive_note }}</div>
       <!-- LIVE BANNER -->
       <div class="live-banner" *ngIf="isLive">
         <span class="live-dot"></span>
@@ -108,7 +109,7 @@ const SIGNAL_DEFS: SignalDef[] = [
           icon="fa-solid fa-heart-pulse" [iconColor]="ahiColor" />
         <app-metric-card label="Duration" [value]="isLive ? liveDuration : fmtDuration(session.duration_hours)" unit=""
           icon="fa-solid fa-clock-rotate-left" iconColor="#60a5fa" />
-        <app-metric-card *ngIf="!oximetryOnly" label="Events" [value]="session.total_events || '0'" unit=""
+        <app-metric-card *ngIf="!oximetryOnly" label="Events" [value]="session.archive_only ? '—' : (session.total_events || '0')" unit=""
           icon="fa-solid fa-triangle-exclamation" [iconColor]="eventsColor" />
         <app-metric-card *ngIf="hasSpo2"
           label="SpO2" [value]="displaySpo2.toFixed(1)" unit="%"
@@ -332,7 +333,7 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
   private sessionStart: Date | null = null;
 
   // Raw data
-  private signalData: SignalData | null = null;
+  signalData: SignalData | null = null;
   private vitalsData: VitalsData | null = null;
   private oximetryData: OximetryData | null = null;
   private events: SessionEvent[] = [];

@@ -49,6 +49,7 @@
           {{ s.sleep_day || sleepDay(s.session_start) }}
         </td>
         <td>
+          <span *ngIf="s.archive_only" class="o2-badge">Stored Bluetooth</span>
           <span *ngIf="isOximetryOnly(s)" class="o2-badge"
                 [title]="'sessions.badge.oxiOnlyTitle' | translate">{{ 'sessions.badge.oxiOnly' | translate }}</span>
           <span *ngIf="!isOximetryOnly(s) && isLive(s)" class="live-badge">{{ 'sessions.badge.live' | translate }}</span>
@@ -95,7 +96,7 @@
         </td>
         <td class="actions-cell" (click)="$event.stopPropagation()">
           <div class="actions-inner">
-            <div class="menu-wrap">
+            <div class="menu-wrap" *ngIf="!s.archive_only">
             <button class="menu-btn" (click)="toggleMenu($event, s.sleep_day || sleepDay(s.session_start))">⋮</button>
             <div class="dropdown" *ngIf="openMenu === (s.sleep_day || sleepDay(s.session_start))">
               <button *ngIf="isLive(s)" class="danger"
