@@ -195,7 +195,7 @@ const std::vector<FieldSpec>& settingsFields() {
             {}, {}, false, enabledBy("o2ring.enabled")});
         f.push_back({"o2ring.mule_url", "o2ring", "Mule URL",
             "Address of the Mule bridging the ring over Bluetooth.",
-            FieldKind::Text, "http://192.168.2.74", {}, {}, {}, false,
+            FieldKind::Text, "http://192.168.1.50", {}, {}, {}, false,
             allOf(enabledBy("o2ring.enabled"),
                   [](const ConfigModel& m) { return m.getString("o2ring.mode") == "http"; })});
 

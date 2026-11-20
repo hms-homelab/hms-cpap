@@ -290,7 +290,7 @@ import { showLocalModelSection } from './local-model';
               <label *ngIf="config.o2ring.mode === 'http'">
                 {{ 'settings.o2ring.muleUrl' | translate }}
                 <input type="text" [(ngModel)]="config.o2ring.mule_url" name="o2ring_mule_url"
-                       placeholder="http://192.168.2.74" />
+                       placeholder="http://192.168.1.50" />
                 <span class="hint">{{ 'settings.o2ring.muleHint' | translate }}</span>
               </label>
               <label *ngIf="config.o2ring.mode === 'ble'">
