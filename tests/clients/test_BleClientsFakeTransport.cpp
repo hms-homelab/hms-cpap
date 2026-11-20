@@ -525,8 +525,12 @@ TEST(O2RingBleLink, TheOriginalRingListsItsFilesOverTheTransport) {
         EXPECT_FALSE(w.with_response);
         EXPECT_LE(w.bytes.size(), 20u) << "the original ring is written 20 bytes at a time";
     }
-    EXPECT_EQ(t->closes(), 1);
-    EXPECT_FALSE(c.isConnected());
+    // The link is held between calls, so the next poll does not scan and
+    // connect again on the adapter the AirSense 11 streams on.
+    EXPECT_EQ(t->closes(), 0);
+    EXPECT_TRUE(c.isConnected());
+    EXPECT_EQ(c.listFiles().size(), 2u);
+    EXPECT_EQ(t->connected_ids.size(), 1u) << "the held link is reused";
 }
 
 TEST(O2RingBleLink, ANotificationSplitAcrossPiecesIsReassembled) {
@@ -594,7 +598,7 @@ TEST(O2RingBleLink, ALivePollAndAFilePullNeverShareTheRing) {
     EXPECT_EQ(files.size(), 1u);
     EXPECT_EQ(live.spo2, 0x60);
     EXPECT_EQ(live.hr, 0x48);
-    EXPECT_EQ(t->connected_ids.size(), 2u);
+    EXPECT_EQ(t->connected_ids.size(), 1u) << "the second call reuses the held link";
 }
 
 TEST(O2RingBleLink, ARememberedRingThatWillNotConnectIsFoundAgainByItsAdvert) {
