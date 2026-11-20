@@ -45,7 +45,8 @@ std::function<Json::Value()> CpapController::ml_status_getter_;
 std::function<void(const std::string&, const std::string&, const std::string&)> CpapController::backfill_trigger_;
 std::function<Json::Value()> CpapController::backfill_status_getter_;
 std::function<Json::Value()> CpapController::sleep_stage_status_getter_;
-std::function<Json::Value(const std::string&, const std::string&)> CpapController::oxi_csv_import_;
+std::function<Json::Value(const std::string&, const std::string&,
+                          const std::string&, const std::string&)> CpapController::oxi_csv_import_;
 std::function<Json::Value(const std::string&)> CpapController::cpap_zip_import_;
 std::function<Json::Value(const std::string&)> CpapController::night_remove_;
 std::function<void(const std::string&)> CpapController::night_restore_;
@@ -69,6 +70,7 @@ void CpapController::setBurstService(BurstCollectorService* svc) { burst_service
 // platform-specific.
 std::shared_ptr<CpapDashSyncService> CpapController::sync_;
 std::shared_ptr<CpapDashStreamer> CpapController::stream_;
+std::shared_ptr<GarminService> CpapController::garmin_;
 std::shared_ptr<hms_cpap::MyAirService> CpapController::myair_;
 
 void CpapController::setStreamService(std::shared_ptr<CpapDashStreamer> stream) {
@@ -149,6 +151,9 @@ void CpapController::health(const drogon::HttpRequestPtr&,
 
 void CpapController::dashboard(const drogon::HttpRequestPtr&,
                                 std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    // SDD-078 D2: the dashboard being opened is an event that asks Garmin for
+    // a night still missing. The dashboard fetches this once per opening.
+    if (garmin_) garmin_->onNightListOpened();
     try {
         cb(jsonResp(qs_->getDashboard()));
     } catch (const std::exception& e) {
@@ -163,6 +168,9 @@ void CpapController::sessions(const drogon::HttpRequestPtr& req,
     if (auto p = req->getOptionalParameter<int>("offset")) offset = *p;
     if (limit < 1) limit = 20;
     if (offset < 0) offset = 0;
+    // SDD-078 D2: the night list being opened (?opened=1, sent by the page's
+    // first load and not by its refresh, which would make it a timer).
+    if (garmin_ && req->getParameter("opened") == "1") garmin_->onNightListOpened();
     try {
         cb(jsonResp(qs_->getSessions(limit, offset)));
     } catch (const std::exception& e) {
@@ -531,6 +539,35 @@ void CpapController::updateConfig(const drogon::HttpRequestPtr& req,
         if (cd.isMember("stream"))    config_->cpapdash.stream = cd["stream"].asBool();
     }
 
+    // SDD-078 D1/D4: the Garmin account, masked as the token is. A changed
+    // email or password drops Garmin's tokens for the old one; the next event
+    // (this save included, below) signs in with the new.
+    bool garmin_changed = false;
+    if (j.isMember("garmin")) {
+        auto& g = j["garmin"];
+        if (g.isMember("enabled")) {
+            garmin_changed |= config_->garmin.enabled != g["enabled"].asBool();
+            config_->garmin.enabled = g["enabled"].asBool();
+        }
+        bool account_changed = false;
+        if (g.isMember("email") && g["email"].asString() != config_->garmin.email) {
+            config_->garmin.email = g["email"].asString();
+            account_changed = true;
+        }
+        if (g.isMember("password") && g["password"].asString() != "********" &&
+            g["password"].asString() != config_->garmin.password) {
+            config_->garmin.password = g["password"].asString();
+            account_changed = true;
+        }
+        if (account_changed) {
+            config_->garmin.access_token.clear();
+            config_->garmin.refresh_token.clear();
+            config_->garmin.client_id.clear();
+            config_->garmin.display_name.clear();
+            garmin_changed = true;
+        }
+    }
+
     // Support log. Saved here but applied on restart: the tee owns fd 1 and 2
     // for the whole process, and swapping those under a running service to
     // satisfy a settings save is not worth the risk of losing output mid-write.
@@ -572,6 +609,8 @@ void CpapController::updateConfig(const drogon::HttpRequestPtr& req,
     // platform SDD-059: the switch and the token reach the running uploader;
     // the switch changing clears its index (D5).
     if (stream_) stream_->apply({config_->cpapdash.stream, config_->cpapdash.token});
+    // SDD-078 D2: saved Garmin settings are an event: sign in, then fetch.
+    if (garmin_ && garmin_changed) garmin_->onSettingsSaved();
 
     // Return redacted config
     auto resp_json = config_->toJson();
@@ -2054,8 +2093,14 @@ void CpapController::uploadOximetryCsv(const drogon::HttpRequestPtr& req,
     const auto& f = parser.getFiles()[0];
     std::string content(f.fileContent());
     std::string filename = f.getFileName();
+    // SDD-078 D3: an outside importer may say where the recording came from.
+    const auto& fields = parser.getParameters();
+    const auto field = [&fields](const char* k) {
+        const auto it = fields.find(k);
+        return it == fields.end() ? std::string() : it->second;
+    };
     try {
-        Json::Value result = oxi_csv_import_(content, filename);
+        Json::Value result = oxi_csv_import_(content, filename, field("source"), field("device_name"));
         if (result.isMember("error")) {
             cb(jsonError(result["error"].asString(), drogon::k400BadRequest));
             return;

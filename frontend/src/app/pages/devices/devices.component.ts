@@ -663,6 +663,49 @@ export class DevicesComponent implements OnInit, OnDestroy {
     });
   }
 
+  // ── Garmin (SDD-078) ─────────────────────────────────────────────────────
+
+  garminCode = '';
+
+  /** "Fetch from Garmin now": an event; the card's refresh shows the result. */
+  garminFetch(d: DeviceEntry): void {
+    this.busy[d.key] = true;
+    delete this.notes[d.key];
+    this.api.garminFetch().subscribe({
+      next: () => { this.busy[d.key] = false; this.note(d, this.t.instant('devices.garmin.asked'), false); this.load(false); },
+      error: (e) => { this.busy[d.key] = false; this.note(d, this.t.instant('devices.result.failed', { error: errorText(e) }), true); },
+    });
+  }
+
+  garminSubmitCode(d: DeviceEntry): void {
+    const code = this.garminCode.trim();
+    if (!code || this.busy[d.key]) return;
+    this.busy[d.key] = true;
+    delete this.notes[d.key];
+    this.api.garminMfa(code).subscribe({
+      next: () => { this.busy[d.key] = false; this.garminCode = ''; this.load(false); },
+      error: (e) => { this.busy[d.key] = false; this.note(d, this.t.instant('devices.result.failed', { error: errorText(e) }), true); },
+    });
+  }
+
+  /** The card's error line, in the page's language where Garmin's kind is known. */
+  garminError(d: DeviceEntry): string {
+    const kind = d.detail?.error_kind || 'failed';
+    const known = ['changed', 'bad_password', 'bad_mfa_code', 'blocked', 'unreachable', 'expired'];
+    return known.includes(kind)
+      ? this.t.instant('devices.garmin.err.' + kind)
+      : this.t.instant('devices.garmin.err.failed', { message: d.detail?.error || '' });
+  }
+
+  /** What the last fetch did. */
+  garminFetchLine(d: DeviceEntry): string {
+    const f = d.detail?.last_fetch;
+    if (!f) return '';
+    if (!f.ok) return this.garminError(d);
+    return f.stored > 0 ? this.t.instant('devices.garmin.fetchStored', { n: f.stored })
+                        : this.t.instant('devices.garmin.fetchNothing');
+  }
+
   checkAdapter(d: DeviceEntry): void {
     this.api.testBle().subscribe({
       next: (r) => {
@@ -994,6 +1037,7 @@ export class DevicesComponent implements OnInit, OnDestroy {
       case 'mule': return 'fa-solid fa-microchip';
       case 'sleepbridge': return 'fa-solid fa-sd-card';
       case 'o2ring': return 'fa-solid fa-heart-pulse';
+      case 'garmin': return 'fa-solid fa-stopwatch';
       case 'ezshare':
       case 'flashair': return 'fa-solid fa-wifi';
       case 'as11_ble':

@@ -60,6 +60,15 @@
       "bleRadioOff": "A Bluetooth ki van kapcsolva ezen a számítógépen. Kapcsolja be, és ellenőrizze újra.",
       "bleUnauthorized": "A CpapDash nem használhatja a Bluetooth-t ezen a Macen. Engedélyezze a Rendszerbeállítások, Adatvédelem és biztonság, Bluetooth menüpontban."
     },
+    "garmin": {
+      "heading": "Garmin SpO2",
+      "desc": "Minden éjszaka SpO2-értéke, pulzusszáma és mozgása a Garmin Connectből, az éjszaka után olvasva: amikor egy éjszaka lezárul, amikor megnyitja az irányítópultot vagy az éjszakák listáját, és a Lekérés a Garmintól most gombbal. A Garmin API-ja nem hivatalos, és változhat.",
+      "enabled": "Éjszakák lekérése a Garmin Connectből",
+      "email": "Garmin e-mail-cím",
+      "password": "Garmin jelszó",
+      "passwordPlaceholder": "A Garmin Connect jelszava",
+      "passwordHint": "Kitakarva tároljuk, mint a CpapDash tokent: hagyja érintetlenül a maszkolt értéket a jelenlegi jelszó megtartásához. Azért tároljuk, hogy egy új bejelentkezéshez ne kelljen senki, hacsak a Garmin nem kér kódot."
+    },
     "devicesLink": "Állapot és műveletek: Készülékek",
     "as11": {
       "heading": "AirSense 11 Bluetooth-on",

@@ -51,7 +51,7 @@
     "title": {
       "aiSummary": "AI Session Summary",
       "ml": "ML Intelligence",
-      "oximetry": "O2 Ring Oximetry",
+      "oximetry": "Oximetry",
       "realtime": "Real-Time Status",
       "events": "Sleep Events Breakdown",
       "str": "STR Daily Metrics",
@@ -64,7 +64,8 @@
       "events": "Apnea & Hypopnea Analysis",
       "eventsUnclassified": "Apneas only. This machine does not classify them.",
       "respiratory": "Breathing Patterns & Ventilation",
-      "oximetry": "Wellue O2Ring -- SpO2 & Heart Rate"
+      "oximetry": "Wellue O2Ring -- SpO2 & Heart Rate",
+      "oximetryFrom": "{{device}} -- SpO2 & Heart Rate"
     },
     "keyMetrics": {
       "title": "Key Metrics",

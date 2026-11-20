@@ -162,6 +162,9 @@ public:
 
     bool saveOximetrySession(const std::string& device_id,
                              const cpapdash::parser::OximetrySession& session) override;
+    bool saveOximetrySessionFrom(const std::string& device_id,
+                                 const cpapdash::parser::OximetrySession& session,
+                                 const OximetryOrigin& origin) override;
 
     bool oximetrySessionExists(const std::string& device_id,
                                const std::string& filename) override;

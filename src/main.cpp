@@ -17,6 +17,7 @@
 #include "services/CpapDashLink.h"
 #include "services/CpapDashStream.h"
 #include "services/CardUpload.h"
+#include "services/GarminService.h"
 #include "services/CpapCard.h"
 #include "sleepbridge/LearnedCard.h"
 #include "services/OximetryImport.h"
@@ -1253,6 +1254,30 @@ int main(int argc, char** argv) {
                               << std::endl;
             }
 
+            // SDD-078: Garmin SpO2 as an oximetry source. Built even when it is
+            // off, so turning it on in Settings needs no restart. Asked only on
+            // events (D2): a night's close, the dashboard or night list being
+            // opened, the Devices page's button, the settings saved.
+            std::shared_ptr<hms_cpap::GarminService> garmin;
+            {
+                std::shared_ptr<hms_cpap::IDatabase> garmin_db = db;
+                if (config.database.type != "sqlite") {
+                    garmin_db = hms_cpap::makeDatabaseFromConfig();
+                    garmin_db->connect();
+                }
+                hms_cpap::GarminService::Deps gd;
+                gd.db             = garmin_db;
+                gd.config         = &config;
+                gd.config_path    = config_path;
+                gd.cpap_device_id = config.device_id;
+                garmin = std::make_shared<hms_cpap::GarminService>(std::move(gd));
+                garmin->start();
+                hms_cpap::CpapController::setGarminService(garmin);
+                if (burst_service)
+                    burst_service->setNightClosedListener(
+                        [g = garmin](const std::string& folder) { g->onNightClosed(folder); });
+            }
+
             // SDD-041: check GitHub for a newer stable release, daily and on
             // demand. It only reports; the supervisor applies. Off by itself in a
             // container (D5), where the image is what updates.
@@ -1373,42 +1398,12 @@ int main(int argc, char** argv) {
             {
                 std::shared_ptr<hms_cpap::IDatabase> oxi_db = web_db ? web_db : db;
                 hms_cpap::CpapController::oxi_csv_import_ =
-                    [oxi_db](const std::string& content, const std::string& filename) -> Json::Value {
-                        Json::Value r;
-                        // SDD-028 (#32): the ring's own .vld is taken too, through
-                        // the importer the card-folder scan uses, so it is the
-                        // same row the live pull would store.
-                        if (hms_cpap::isVldFilename(filename)) {
-                            const auto v = hms_cpap::importVldFile(*oxi_db, content, filename);
-                            if (!v.ok) {
-                                r["error"] = v.error;
-                                return r;
-                            }
-                            r["samples"]         = v.samples;
-                            r["valid_samples"]   = v.valid_samples;
-                            r["avg_spo2"]        = v.avg_spo2;
-                            r["min_spo2"]        = v.min_spo2;
-                            r["sample_interval"] = v.sample_interval;
-                            r["duration_seconds"] = v.duration_seconds;
-                            return r;
-                        }
-                        auto session =
-                            cpapdash::parser::readO2RingCsv(content, filename).session;
-                        if (session.samples.empty()) {
-                            r["error"] = "No readable rows in CSV (expected a Wellue / O2 Ring export)";
-                            return r;
-                        }
-                        if (!oxi_db->saveOximetrySession(hms_cpap::kOximetryDeviceId, session)) {
-                            r["error"] = "Failed to save oximetry session";
-                            return r;
-                        }
-                        r["samples"]          = (int)session.samples.size();
-                        r["valid_samples"]    = session.metrics.valid_samples;
-                        r["avg_spo2"]         = session.metrics.avg_spo2;
-                        r["min_spo2"]         = session.metrics.min_spo2;
-                        r["sample_interval"]  = session.sample_interval;
-                        r["duration_seconds"] = session.duration_seconds;
-                        return r;
+                    [oxi_db](const std::string& content, const std::string& filename,
+                             const std::string& source, const std::string& device_name) -> Json::Value {
+                        // SDD-078 D3: stored with where it came from ("upload"
+                        // unless the sender names a source).
+                        return hms_cpap::importOximetryUpload(
+                            *oxi_db, content, filename, hms_cpap::uploadOrigin(source, device_name));
                     };
             }
 
@@ -2008,6 +2003,7 @@ int main(int argc, char** argv) {
                 dd.bridges     = sleep_bridge.get();
                 dd.feed        = release_feed.get();
                 dd.store       = &devices_store;
+                dd.garmin      = garmin.get();
                 dd.stream_port = config.sleep_bridge.port;
                 hms_cpap::devices::installRoutes(dd);
             }
@@ -2061,6 +2057,9 @@ int main(int argc, char** argv) {
             hms_cpap::card_feed::setSinks({}, {});
             hms_cpap::CpapController::setStreamService(nullptr);
             cpapdash_stream->stop();
+            if (burst_service) burst_service->setNightClosedListener({});
+            hms_cpap::CpapController::setGarminService(nullptr);
+            garmin->stop();
         }
 #else
         // No web UI — simple sleep loop

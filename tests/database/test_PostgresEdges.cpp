@@ -259,6 +259,8 @@ CREATE TABLE IF NOT EXISTS oximetry_sessions (
     valid_samples       INT,
     total_samples       INT,
     cpap_session_date   TEXT,
+    source              TEXT,
+    device_name         TEXT,
     created_at          TIMESTAMP DEFAULT NOW()
 );
 CREATE TABLE IF NOT EXISTS oximetry_samples (

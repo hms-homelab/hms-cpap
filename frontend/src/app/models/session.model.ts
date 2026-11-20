@@ -179,4 +179,8 @@ export interface OximetryData {
   motion: (number | null)[];
   // True once the ring's own recording has movement in it (older servers omit it).
   motion_available?: boolean;
+  // SDD-078 D3: where the night's oximetry came from (older servers omit it).
+  source?: string | null;
+  device_name?: string | null;
+  sources?: { source: string; device_name: string }[];
 }

@@ -125,6 +125,18 @@ export interface AppConfig {
     /** platform SDD-059: "Send my nights to CpapDash", on the same token. */
     stream: boolean;
   };
+  /**
+   * SDD-078: Garmin SpO2 as an oximetry source. The password is masked like
+   * the token above; Garmin's own session tokens are read back masked and
+   * never sent from here.
+   */
+  garmin?: {
+    enabled: boolean;
+    email: string;
+    password: string;   // redacted to '********' on read; resend it to keep
+    signed_in?: boolean;
+    device_name?: string;
+  };
 }
 
 /**
