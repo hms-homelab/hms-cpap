@@ -84,7 +84,10 @@ protected:
         fs::remove_all(dir_);
         fs::create_directories(dir_);
     }
-    void TearDown() override { fs::remove_all(dir_); }
+    void TearDown() override {
+        std::error_code ec;
+        fs::remove_all(dir_, ec);
+    }
 
     std::string path(const std::string& name) const { return (dir_ / name).string(); }
     static std::string read(const std::string& p) {

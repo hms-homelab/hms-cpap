@@ -165,7 +165,8 @@ TEST_F(GarminServiceTest, ANightCloseFetchesThatNight) {
 // instants (clock "utc"), never the machine's wall clock it is stored on.
 TEST_F(GarminServiceTest, AStoredNightIsWrittenToTheOximetryOutboxOnItsUtcInstants) {
     const fs::path dir = fs::temp_directory_path() / ("hms_garmin_outbox_" + std::to_string(::getpid()));
-    fs::remove_all(dir);
+    std::error_code gone;
+    fs::remove_all(dir, gone);
     oximetry_outbox::setRoot(oximetry_outbox::rootFor(dir.string()));
     g_.sleep_by_date["2026-11-19"] = sleepJson(kStart);
     svc().handle(GarminService::Event::NightClosed, "20261118");
@@ -173,11 +174,15 @@ TEST_F(GarminServiceTest, AStoredNightIsWrittenToTheOximetryOutboxOnItsUtcInstan
 
     const std::string name = "garmin-" + std::to_string(kStart * 1000);
     const fs::path file = fs::path(oximetry_outbox::rootFor(dir.string())) / (name + ".json");
-    std::ifstream in(file, std::ios::binary);
-    ASSERT_TRUE(in) << file;
     Json::Value body;
-    Json::CharReaderBuilder rb;
-    ASSERT_TRUE(Json::parseFromStream(rb, in, &body, nullptr));
+    {
+        // Closed before the folder is removed: Windows will not delete a
+        // folder with a file in it still open.
+        std::ifstream in(file, std::ios::binary);
+        ASSERT_TRUE(in) << file;
+        Json::CharReaderBuilder rb;
+        ASSERT_TRUE(Json::parseFromStream(rb, in, &body, nullptr));
+    }
     EXPECT_EQ(body["clock"].asString(), "utc");
     EXPECT_EQ(body["samples"].size(), 420u);
     EXPECT_EQ(body["samples"][0u][0u].asInt64(), kStart) << "the instant; stored as 23:00 on the machine";
@@ -186,7 +191,7 @@ TEST_F(GarminServiceTest, AStoredNightIsWrittenToTheOximetryOutboxOnItsUtcInstan
     ASSERT_TRUE(meta);
     EXPECT_EQ(meta->source, "garmin");
     EXPECT_EQ(meta->device_name, "Garmin fenix 7X");
-    fs::remove_all(dir);
+    fs::remove_all(dir, gone);
 }
 
 TEST_F(GarminServiceTest, ALaterEventFetchesANightStillMissing) {

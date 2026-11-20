@@ -43,7 +43,10 @@ protected:
         write(root / "SETTINGS" / "SET1.tgt", 64);
     }
 
-    void TearDown() override { fs::remove_all(root); }
+    void TearDown() override {
+        std::error_code ec;
+        fs::remove_all(root, ec);
+    }
 
     static void write(const fs::path& p, size_t bytes, char fill = 'a') {
         std::ofstream o(p, std::ios::binary);

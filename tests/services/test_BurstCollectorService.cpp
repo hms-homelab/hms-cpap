@@ -53,12 +53,9 @@ protected:
 
     void TearDown() override {
         // Clean up test directories
-        if (std::filesystem::exists(test_temp_dir)) {
-            std::filesystem::remove_all(test_temp_dir);
-        }
-        if (std::filesystem::exists(test_archive_dir)) {
-            std::filesystem::remove_all(test_archive_dir);
-        }
+        std::error_code ec;
+        std::filesystem::remove_all(test_temp_dir, ec);
+        std::filesystem::remove_all(test_archive_dir, ec);
     }
 
     // Helper: Create test file with specific size
@@ -2024,8 +2021,9 @@ protected:
     }
 
     void TearDown() override {
-        std::filesystem::remove_all(temp_dir);
-        std::filesystem::remove_all(archive_dir);
+        std::error_code ec;
+        std::filesystem::remove_all(temp_dir, ec);
+        std::filesystem::remove_all(archive_dir, ec);
         unsetenv("CPAP_TEMP_DIR");
         unsetenv("CPAP_ARCHIVE_DIR");
     }
@@ -4174,7 +4172,8 @@ protected:
         std::filesystem::create_directories(base / "DATALOG");
     }
     void TearDown() override {
-        std::filesystem::remove_all(base);
+        std::error_code ec;
+        std::filesystem::remove_all(base, ec);
         for (const char* k : {"CPAP_SOURCE", "CPAP_LOCAL_DIR", "DB_TYPE", "SQLITE_PATH",
                               "MQTT_ENABLED", "LLM_ENABLED", "LLM_PROVIDER",
                               "O2RING_MULE_URL", "CPAP_ARCHIVE_DIR"})

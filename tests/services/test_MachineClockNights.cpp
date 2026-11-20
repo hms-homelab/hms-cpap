@@ -108,7 +108,8 @@ protected:
         machine_clocks::clear();
         machine_clocks::setPrimaryDevice("");
         db_->disconnect();
-        fs::remove_all(dir_);
+        std::error_code ec;
+        fs::remove_all(dir_, ec);
     }
 
     void setClock(const std::string& s) {
@@ -171,7 +172,13 @@ TEST_F(ClockNightTest, TheSettingWinsOverAClockSetForTheSerial) {
 }
 
 TEST_F(ClockNightTest, TheIssuesExampleIsStoredPublishedAndClosedOnTheMachinesClock) {
+#ifdef _WIN32
+    // The Windows C runtime reads no IANA name from TZ ("Australia/Sydney" is
+    // UTC there); January's Sydney in the shape it reads.
+    HostZone tz("AEDT-11");
+#else
     HostZone tz("Australia/Sydney");   // AEDT, UTC+11, in January
+#endif
     setClock("+10:00");
     const long long start_utc = L(2026, 1, 15, 12);
     stream(start_utc, 60);

@@ -65,6 +65,14 @@ long long L(int y, int mo, int d, int h, int mi = 0, int s = 0) {
 }
 
 /// The host's zone for one test, put back after.
+///
+/// The Windows C runtime does not read IANA names from TZ: it takes the first
+/// three letters as the zone's name and the rest as an offset, so
+/// "Australia/Sydney" is a host on UTC with no daylight saving. It reads only
+/// "EST5EDT"-shaped values, and any daylight saving in them follows the United
+/// States rules. New York is given in that shape there (the same rules);
+/// a test that needs another zone's daylight saving picks its night per
+/// platform.
 class HostZone {
 public:
     explicit HostZone(const char* tz) {
@@ -78,6 +86,7 @@ public:
 private:
     static void set(const char* tz) {
 #ifdef _WIN32
+        if (std::string(tz) == "America/New_York") tz = "EST5EDT";
         _putenv_s("TZ", tz);
         _tzset();
 #else
@@ -467,8 +476,17 @@ TEST_P(MachineClockBackendTest, OnTheHostsClockTheRepeatedHourFoldsAsSection2ESa
     // zone (no setting, a machine that follows the host) has the repeated hour
     // twice in its text, and the second copy is not stored.
     // Four hours, 00:30 AEDT to 03:30 AEST, so the whole repeated hour is in it.
+#ifdef _WIN32
+    // The C runtime cannot be a Sydney host (see HostZone): the same four
+    // hours across New York's fall back instead, 2026-11-01 00:30 EDT to
+    // 03:30 EST (02:00 EDT is 06:00 UTC), the repeated hour 01:00 to 02:00.
+    HostZone tz("America/New_York");
+    const long long first = L(2026, 11, 1, 4, 30);
+#else
     HostZone tz("Australia/Sydney");
-    CPAPSession s = instantsNight(device_, L(2026, 4, 4, 13, 30), 240);
+    const long long first = L(2026, 4, 4, 13, 30);
+#endif
+    CPAPSession s = instantsNight(device_, first, 240);
     putOnMachineClock(s, MachineZone::host());
     std::set<std::string> texts;
     for (const auto& b : s.breathing_summary) texts.insert(wall::text(b.timestamp));

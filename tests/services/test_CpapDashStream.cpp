@@ -339,7 +339,8 @@ protected:
         streamer_.reset();
         server_.reset();
         db_.reset();
-        fs::remove_all(dir_);
+        std::error_code ec;
+        fs::remove_all(dir_, ec);
     }
 
     fs::path root() const { return dir_ / "as11" / kSerial; }

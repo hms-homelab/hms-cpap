@@ -52,7 +52,10 @@ protected:
                 ("as11_settings_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
         fs::create_directories(root_);
     }
-    void TearDown() override { fs::remove_all(root_); }
+    void TearDown() override {
+        std::error_code ec;
+        fs::remove_all(root_, ec);
+    }
     std::string text() const {
         std::ifstream in(settingsPath(root_.string()));
         std::stringstream ss; ss << in.rdbuf();

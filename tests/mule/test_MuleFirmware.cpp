@@ -304,7 +304,8 @@ protected:
         unit_.reset();
         up_.reset();
         svc_.reset();
-        fs::remove_all(dir_);
+        std::error_code ec;
+        fs::remove_all(dir_, ec);
     }
     // The updater runs each step on the caller's thread: start() runs the
     // first, and the unit's hello (or state) runs what follows.

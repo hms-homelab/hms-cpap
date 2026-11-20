@@ -278,7 +278,8 @@ protected:
     void TearDown() override {
         card_feed::setSinks({}, {});
         ob::setRoot("");
-        fs::remove_all(dir_);
+        std::error_code ec;
+        fs::remove_all(dir_, ec);
     }
     fs::path outbox() const { return ob::rootFor(dir_.string()); }
     std::optional<ob::Meta> meta(const std::string& file) const { return ob::metaFor(outbox().string(), file); }

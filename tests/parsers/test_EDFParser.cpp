@@ -26,9 +26,8 @@ protected:
 
     void TearDown() override {
         // Clean up test directory
-        if (std::filesystem::exists(test_dir)) {
-            std::filesystem::remove_all(test_dir);
-        }
+        std::error_code ec;
+        std::filesystem::remove_all(test_dir, ec);
     }
 
     // Helper: Create minimal valid EDF file header

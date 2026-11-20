@@ -104,7 +104,10 @@ protected:
                                              ::testing::UnitTest::GetInstance()->current_test_info()->name());
         fs::remove_all(root_);
     }
-    void TearDown() override { fs::remove_all(root_); }
+    void TearDown() override {
+        std::error_code ec;
+        fs::remove_all(root_, ec);
+    }
 
     /// Two nights: a 2-minute try in the evening and a 1-hour session that
     /// crosses midnight, with the apnea inside it. [card] is where the files go.

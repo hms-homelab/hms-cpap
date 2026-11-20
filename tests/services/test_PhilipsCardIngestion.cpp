@@ -68,7 +68,8 @@ protected:
         fs::remove_all(root_);
     }
     void TearDown() override {
-        if (!root_.empty()) fs::remove_all(root_);
+        std::error_code ec;
+        if (!root_.empty()) fs::remove_all(root_, ec);
     }
 
     /// The card at [card] as the machine has it after [blocks] blocks of the

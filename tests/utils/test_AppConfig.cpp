@@ -26,7 +26,8 @@ protected:
     }
 
     void TearDown() override {
-        std::filesystem::remove_all(tmp_dir_);
+        std::error_code ec;
+        std::filesystem::remove_all(tmp_dir_, ec);
         // Restore saved env vars
         for (const auto& [name, val] : saved_env_) {
             if (val.empty())

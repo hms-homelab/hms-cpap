@@ -155,7 +155,10 @@ protected:
         ASSERT_TRUE(writeIdentification(root_.string(),
             R"({"IdentificationProfiles":{"Product":{"SerialNumber":"23000000001","ProductCode":"39420"},"Software":{"PlatformIdentifier":"36","VariantIdentifier":"1"}}})"));
     }
-    void TearDown() override { fs::remove_all(dir_); }
+    void TearDown() override {
+        std::error_code ec;
+        fs::remove_all(dir_, ec);
+    }
 
     StrResult run() { return writeStrFromSummaries(root_.string(), layouts_.string()); }
     void summary(const std::string& from, const std::vector<Bytes>& days) {
