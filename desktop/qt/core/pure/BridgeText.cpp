@@ -210,21 +210,25 @@ const Row kRows[] = {
     {Txt::OnlineBody, {"Also see your nights on CpapDash?", "¿Ver también tus noches en CpapDash?",
                        "Voir aussi vos nuits sur CpapDash ?", "Szeretné az éjszakáit a CpapDash-en is látni?",
                        "Ver também as suas noites no CpapDash?"}},
-    {Txt::OnlineOpen, {"Open cpapdash.com (Settings > hms-cpap)", "Abrir cpapdash.com (Ajustes > hms-cpap)",
-                       "Ouvrir cpapdash.com (Réglages > hms-cpap)", "A cpapdash.com megnyitása (Beállítások > hms-cpap)",
-                       "Abrir cpapdash.com (Definições > hms-cpap)"}},
+    {Txt::OnlineOpen, {"Generate a token on CpapDash.com", "Generar un token en CpapDash.com",
+                       "Générer un jeton sur CpapDash.com", "Token létrehozása a CpapDash.com oldalon",
+                       "Gerar um token no CpapDash.com"}},
     {Txt::OnlineToken, {"Paste the token from there", "Pega aquí el token de allí", "Collez le jeton obtenu là-bas",
                         "Illessze be az ott kapott tokent", "Cole aqui o token de lá"}},
     {Txt::OnlineSwitch, {"Send my nights to CpapDash", "Enviar mis noches a CpapDash", "Envoyer mes nuits à CpapDash",
                          "Éjszakáim küldése a CpapDash-re", "Enviar as minhas noites para o CpapDash"}},
     {Txt::OnlineSave, {"Save", "Guardar", "Enregistrer", "Mentés", "Guardar"}},
     {Txt::OnlineSaved, {"Saved.", "Guardado.", "Enregistré.", "Mentve.", "Guardado."}},
-    {Txt::StreamConnected, {"Connected to CpapDash", "Conectado a CpapDash", "Connecté à CpapDash",
-                            "Csatlakozva a CpapDash-hez", "Ligado ao CpapDash"}},
+    {Txt::StreamConnected, {"Sending your nights to CpapDash.", "Enviando tus noches a CpapDash.",
+                            "Vos nuits sont envoyées à CpapDash.", "Az éjszakái a CpapDash-re mennek.",
+                            "A enviar as suas noites para o CpapDash."}},
     {Txt::StreamConnecting, {"Connecting to CpapDash...", "Conectando con CpapDash...", "Connexion à CpapDash...",
                              "Csatlakozás a CpapDash-hez...", "A ligar ao CpapDash..."}},
-    {Txt::StreamNoToken, {"Paste your token to connect.", "Pega tu token para conectar.", "Collez votre jeton pour vous connecter.",
-                          "Illessze be a tokent a csatlakozáshoz.", "Cole o seu token para ligar."}},
+    {Txt::StreamNoToken, {"Not sending yet: paste the token and press Save.",
+                          "Aún no se envía nada: pega el token y pulsa Guardar.",
+                          "Pas encore d'envoi : collez le jeton et appuyez sur Enregistrer.",
+                          "Még nincs küldés: illessze be a tokent, és nyomja meg a Mentés gombot.",
+                          "Ainda não está a enviar: cole o token e carregue em Guardar."}},
     {Txt::StreamUnreachable, {"CpapDash cannot be reached right now. Your nights stay here meanwhile.",
                               "No se puede llegar a CpapDash ahora. Tus noches se quedan aquí mientras tanto.",
                               "CpapDash est injoignable pour le moment. Vos nuits restent ici en attendant.",
@@ -254,6 +258,17 @@ Lang langForLocale(const std::string& name) {
     if (p == "hu") return Lang::Hu;
     if (p == "pt") return Lang::Pt;
     return Lang::En;
+}
+
+Txt streamLine(const std::string& state, Saved saved) {
+    if (state == "connected") return Txt::StreamConnected;
+    if (state == "connecting") return Txt::StreamConnecting;
+    if (state == "off") return saved == Saved::Off ? Txt::StreamOff : Txt::StreamNoToken;
+    if (state == "no_token" || state.empty()) return Txt::StreamNoToken;
+    if (state == "unreachable" || state == "closed") return Txt::StreamUnreachable;
+    if (state == "refused") return Txt::StreamRefused;
+    if (state == "revoked") return Txt::StreamRevoked;
+    return Txt::StreamOther;
 }
 
 const char* text(Txt key, Lang lang) {

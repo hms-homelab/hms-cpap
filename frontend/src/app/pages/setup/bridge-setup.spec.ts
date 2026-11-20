@@ -111,7 +111,18 @@ test('D3: the bridge takes an address or a hostname, nothing else', () => {
 test('D6: each stream state has its own words, an unknown one a fallback', () => {
   assert.equal(streamStateKey('connected'), 'setup.bridge.online.state.connected');
   assert.equal(streamStateKey('weird'), 'setup.bridge.online.state.unknown');
-  assert.equal(streamStateKey(undefined), 'setup.bridge.online.state.unknown');
+  assert.equal(streamStateKey('unreachable'), 'setup.bridge.online.state.unreachable');
+});
+
+test('D6: the line says where the person is, "off" only once they turned it off', () => {
+  const k = (s: string | undefined, off: boolean | null) => streamStateKey(s, off).split('.').pop();
+  assert.equal(k(undefined, null), 'notYet');
+  assert.equal(k('off', null), 'notYet', 'before a save, the switch ticked: not sending yet, not "off"');
+  assert.equal(k('no_token', false), 'notYet');
+  assert.equal(k('connecting', false), 'connecting');
+  assert.equal(k('connected', null), 'connected');
+  assert.equal(k('off', false), 'notYet');
+  assert.equal(k('off', true), 'off');
 });
 
 test('the QR rows become dark modules inside a 4-module quiet zone', () => {

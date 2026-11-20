@@ -141,8 +141,16 @@ import { SleepBridgeWatch } from '../../services/sleepbridge-watch';
         @case ('online') {
           <h1>{{ 'setup.bridge.online.title' | translate }}</h1>
           <p class="subtitle">{{ 'setup.bridge.online.body' | translate }}</p>
-          <a class="btn-secondary link" href="https://cpapdash.com/settings" target="_blank" rel="noopener">
-            {{ 'setup.bridge.online.open' | translate }}</a>
+          <!-- A link, not a button (Albin, 2026-11-19), with the external-link
+               mark after the words: it opens CpapDash (Settings > hms-cpap),
+               the same page as the desktop app's link. -->
+          <p class="token-link">
+            <a href="https://cpapdash.com/settings" target="_blank" rel="noopener">
+              {{ 'setup.bridge.online.open' | translate }}<svg class="ext" viewBox="0 0 24 24" width="14" height="14"
+                aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+                stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                <path d="M15 3h6v6"/><path d="M10 14 21 3"/></svg></a>
+          </p>
           <label class="fld">
             <span>{{ 'setup.bridge.online.token' | translate }}</span>
             <input type="password" [(ngModel)]="token" name="cdtoken" autocomplete="off" />
@@ -151,16 +159,14 @@ import { SleepBridgeWatch } from '../../services/sleepbridge-watch';
             <input type="checkbox" [(ngModel)]="sendNights" name="cdstream" />
             <span>{{ 'setup.bridge.online.send' | translate }}</span>
           </label>
-          <button class="btn-secondary" [disabled]="!token.trim() || saving" (click)="saveToken()">
+          <button class="btn-secondary" [disabled]="(!token.trim() && sendNights) || saving" (click)="saveToken()">
             {{ 'setup.bridge.online.save' | translate }}</button>
           @if (saveError) {
             <p class="err">{{ saveError }}</p>
           }
-          @if (streamState) {
-            <p [class.ok]="streamState === 'connected'" class="state">
-              @if (streamState === 'connected') { &#10003; }
-              {{ streamKey | translate }}</p>
-          }
+          <p [class.ok]="streamState === 'connected'" class="state">
+            @if (streamState === 'connected') { &#10003; }
+            {{ streamKey | translate }}</p>
         }
       }
 
@@ -226,7 +232,9 @@ import { SleepBridgeWatch } from '../../services/sleepbridge-watch';
                      border: 1px solid #64b5f6; border-radius: 8px; padding: 0.55rem 1.1rem;
                      font-size: 0.92rem; cursor: pointer; text-decoration: none; }
     .btn-secondary:disabled { opacity: 0.45; cursor: default; }
-    .link { margin-bottom: 0.4rem; }
+    .token-link { margin: 0 0 0.4rem; }
+    .token-link a { color: #64b5f6; text-decoration: underline; }
+    .token-link .ext { margin-left: 0.3em; vertical-align: -0.1em; }
     .btn-ghost { background: transparent; color: #aaa; border: none; padding: 0.6rem 1rem;
                  font-size: 0.95rem; cursor: pointer; }
     .btn-ghost.inline { padding: 0 0.4rem; color: #64b5f6; }
@@ -290,7 +298,9 @@ export class BridgeSetupComponent implements OnDestroy {
 
   get addressValid(): boolean { return validBridgeAddress(this.address); }
   get cardKey(): string { return cardOutcomeKey(this.outcome); }
-  get streamKey(): string { return streamStateKey(this.streamState); }
+  get streamKey(): string { return streamStateKey(this.streamState, this.savedOff); }
+  /** What the last save here set the switch to (null: not saved yet). */
+  savedOff: boolean | null = null;
 
   /** Next waits only where the step's own event is the point of it. */
   get canNext(): boolean {
@@ -441,8 +451,11 @@ export class BridgeSetupComponent implements OnDestroy {
   saveToken(): void {
     this.saving = true;
     this.saveError = '';
-    this.api.updateConfig({ cpapdash: { token: this.token.trim(), stream: this.sendNights } } as any).subscribe({
-      next: () => { this.saving = false; },
+    // The token only when one was typed: turning sending off keeps the saved one.
+    const cpapdash: Record<string, unknown> = { stream: this.sendNights };
+    if (this.token.trim()) cpapdash['token'] = this.token.trim();
+    this.api.updateConfig({ cpapdash } as any).subscribe({
+      next: () => { this.saving = false; this.savedOff = !this.sendNights; },
       error: (e) => {
         this.saving = false;
         this.saveError = e?.error?.error || this.t.instant('setup.bridge.online.saveFailed');

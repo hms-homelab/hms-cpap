@@ -38,6 +38,18 @@ enum class Txt {
     Count_
 };
 
+/// D6: what the last Save on the step set the switch to.
+enum class Saved { NotYet, On, Off };
+
+/**
+ * D6: the line under the switch says where the person is, from the stream's
+ * state (the watch socket) and their last Save: "Not sending yet" before a
+ * token is saved (the switch's tick is a choice, not the state), connecting,
+ * "Sending your nights", and "Sending is off." only once they turned it off
+ * and saved. StreamOther takes the state as %1.
+ */
+Txt streamLine(const std::string& state, Saved saved);
+
 /// The word in `lang`.
 const char* text(Txt key, Lang lang);
 

@@ -8,7 +8,10 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QEvent>
 #include <QFrame>
+#include <QPen>
+#include <QPolygonF>
 #include <QGridLayout>
 #include <QJsonArray>
 #include <QHBoxLayout>
@@ -38,6 +41,29 @@ namespace cpapdash::supervisor {
 namespace {
 
 constexpr int kPageCount = 6;
+
+/// D6: where the hms-cpap token is made (cpapdash.com, Settings > hms-cpap);
+/// the web wizard's link goes to the same page.
+constexpr const char* kTokenPage = "https://cpapdash.com/settings";
+
+/// The external-link mark: a square open at its top right, an arrow leaving
+/// through it to the top right. Drawn, so it takes the link's colour and
+/// stays sharp at any scale.
+QPixmap externalLinkMark(const QColor& colour, int size) {
+    const qreal dpr = qApp->devicePixelRatio();
+    QPixmap p(QSize(size, size) * dpr);
+    p.setDevicePixelRatio(dpr);
+    p.fill(Qt::transparent);
+    QPainter g(&p);
+    g.setRenderHint(QPainter::Antialiasing);
+    g.setPen(QPen(colour, std::max(1.2, size / 9.0), Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    const qreal s = size, m = s * 0.14, b = s - m;
+    const qreal mid = s * 0.5;
+    g.drawPolyline(QPolygonF({{mid, m + s * 0.12}, {m, m + s * 0.12}, {m, b}, {b - s * 0.12, b}, {b - s * 0.12, mid}}));
+    g.drawLine(QPointF(mid - s * 0.04, mid + s * 0.04), QPointF(b, m));
+    g.drawPolyline(QPolygonF({{b - s * 0.3, m}, {b, m}, {b, m + s * 0.3}}));
+    return p;
+}
 
 QLabel* words(const QString& text, QWidget* parent, double scale = 1.0, bool bold = false) {
     auto* l = new QLabel(text, parent);
@@ -482,9 +508,25 @@ class OnlineStep : public Step {
 public:
     explicit OnlineStep(BridgeSetupWindow* w) : Step(w, 6, Txt::OnlineTitle) {
         body_->addWidget(words(w->t(Txt::OnlineBody), this, 1.3, true));
-        auto* open = new QPushButton(w->t(Txt::OnlineOpen), this);
-        open->setFixedWidth(360);
-        body_->addWidget(open);
+        // A link, not a button (Albin, 2026-11-19), with the external-link
+        // mark after the words: it leaves for the browser.
+        auto* open = new QLabel("<a href=\"" + QString(kTokenPage) + "\">" + w->t(Txt::OnlineOpen).toHtmlEscaped() +
+                                    "</a>",
+                                this);
+        open->setTextFormat(Qt::RichText);
+        open->setOpenExternalLinks(true);
+        open->setCursor(Qt::PointingHandCursor);
+        auto* mark = new QLabel(this);
+        mark->setPixmap(externalLinkMark(open->palette().color(QPalette::Link), open->fontMetrics().height()));
+        mark->setCursor(Qt::PointingHandCursor);
+        mark->installEventFilter(this);
+        mark_ = mark;
+        auto* link_row = new QHBoxLayout;
+        link_row->setSpacing(4);
+        link_row->addWidget(open);
+        link_row->addWidget(mark);
+        link_row->addStretch(1);
+        body_->addLayout(link_row);
         body_->addWidget(words(w->t(Txt::OnlineToken), this));
         token_ = new QLineEdit(this);
         token_->setEchoMode(QLineEdit::Password);
@@ -499,16 +541,18 @@ public:
         body_->addWidget(state_);
         body_->addStretch(1);
 
-        connect(open, &QPushButton::clicked, this, [] { QDesktopServices::openUrl(QUrl("https://cpapdash.com")); });
         connect(save, &QPushButton::clicked, this, [this] {
             QJsonObject cd{{"stream", send_->isChecked()}};
             if (!token_->text().trimmed().isEmpty()) cd["token"] = token_->text().trimmed();
             QNetworkRequest req(QUrl(w_->baseUrl() + "/api/config"));
             req.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
             auto* r = w_->net()->put(req, QJsonDocument(QJsonObject{{"cpapdash", cd}}).toJson());
-            connect(r, &QNetworkReply::finished, this, [this, r] {
+            const bool on = send_->isChecked();
+            connect(r, &QNetworkReply::finished, this, [this, r, on] {
                 r->deleteLater();
-                if (r->error() == QNetworkReply::NoError && state_->text().isEmpty()) state_->setText(w_->t(Txt::OnlineSaved));
+                if (r->error() != QNetworkReply::NoError) return;
+                saved_ = on ? Saved::On : Saved::Off;
+                show(w_->streamState());   // the stream's own event follows
             });
         });
         connect(w, &BridgeSetupWindow::streamChanged, this, [this](const QString& s) { show(s); });
@@ -516,16 +560,21 @@ public:
 
     void initializePage() override { show(w_->streamState()); }
 
+protected:
+    /// The mark opens the page too, as part of the link.
+    bool eventFilter(QObject* o, QEvent* e) override {
+        if (o == mark_ && e->type() == QEvent::MouseButtonRelease) {
+            QDesktopServices::openUrl(QUrl(kTokenPage));
+            return true;
+        }
+        return Step::eventFilter(o, e);
+    }
+
 private:
+    QLabel* mark_ = nullptr;
+    Saved   saved_ = Saved::NotYet;
     void show(const QString& s) {
-        Txt k = Txt::StreamOther;
-        if (s == "connected") k = Txt::StreamConnected;
-        else if (s == "connecting") k = Txt::StreamConnecting;
-        else if (s == "no_token") k = Txt::StreamNoToken;
-        else if (s == "unreachable" || s == "closed") k = Txt::StreamUnreachable;
-        else if (s == "refused") k = Txt::StreamRefused;
-        else if (s == "revoked") k = Txt::StreamRevoked;
-        else if (s == "off" || s.isEmpty()) k = Txt::StreamOff;
+        const Txt k = streamLine(s.toStdString(), saved_);
         state_->setText(k == Txt::StreamOther ? w_->t(k).arg(s) : w_->t(k));
         state_->setStyleSheet(k == Txt::StreamConnected ? "color: #2d7a2d;" : QString());
     }

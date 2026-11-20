@@ -181,11 +181,19 @@ export function validBridgeAddress(a: string): boolean {
   return /^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*$/.test(s);
 }
 
-/** D6: the translation key for the CpapDash stream's state. */
-export function streamStateKey(state: string | undefined): string {
-  const known = ['off', 'no_token', 'connecting', 'connected', 'unreachable', 'refused', 'revoked', 'closed',
-                 'unavailable'];
-  return 'setup.bridge.online.state.' + (known.includes(state ?? '') ? state : 'unknown');
+/**
+ * D6: the translation key for the line under the switch, which says where
+ * the person is, from the stream's state (the watch socket) and what they
+ * saved here: `savedOff` true when they saved with the switch off, false when
+ * on, null before any save. "Sending is off." only after they turned it off
+ * and saved; before a token is saved, "Not sending yet".
+ */
+export function streamStateKey(state: string | undefined, savedOff: boolean | null = null): string {
+  const s = state ?? '';
+  if (s === 'off') return 'setup.bridge.online.state.' + (savedOff === true ? 'off' : 'notYet');
+  if (s === 'no_token' || s === '') return 'setup.bridge.online.state.notYet';
+  const known = ['connecting', 'connected', 'unreachable', 'refused', 'revoked', 'closed', 'unavailable'];
+  return 'setup.bridge.online.state.' + (known.includes(s) ? s : 'unknown');
 }
 
 /** One dark module of a QR code, as an SVG rect. */

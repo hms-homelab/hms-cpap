@@ -110,6 +110,21 @@ TEST(BridgeText, EveryWordHasAllFiveLanguages) {
             EXPECT_NE(std::strstr(text(k, l), "%1"), nullptr) << static_cast<int>(k);
 }
 
+TEST(BridgeText, TheOnlineLineSaysWhereThePersonIs) {
+    EXPECT_EQ(streamLine("", Saved::NotYet), Txt::StreamNoToken);
+    EXPECT_EQ(streamLine("off", Saved::NotYet), Txt::StreamNoToken)
+        << "the ticked switch is a choice: before a save it is not sending yet, never \"off\"";
+    EXPECT_EQ(streamLine("off", Saved::On), Txt::StreamNoToken);
+    EXPECT_EQ(streamLine("off", Saved::Off), Txt::StreamOff) << "only once they turned it off and saved";
+    EXPECT_EQ(streamLine("no_token", Saved::On), Txt::StreamNoToken);
+    EXPECT_EQ(streamLine("connecting", Saved::On), Txt::StreamConnecting);
+    EXPECT_EQ(streamLine("connected", Saved::NotYet), Txt::StreamConnected);
+    EXPECT_EQ(streamLine("refused", Saved::On), Txt::StreamRefused);
+    EXPECT_EQ(streamLine("unavailable", Saved::On), Txt::StreamOther);
+    EXPECT_STREQ(text(Txt::StreamConnected, Lang::En), "Sending your nights to CpapDash.");
+    EXPECT_STREQ(text(Txt::OnlineOpen, Lang::En), "Generate a token on CpapDash.com");
+}
+
 TEST(BridgeText, TheLanguageFollowsTheLocale) {
     EXPECT_EQ(langForLocale("pt_BR"), Lang::Pt);
     EXPECT_EQ(langForLocale("hu-HU"), Lang::Hu);
