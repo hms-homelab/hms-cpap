@@ -55,7 +55,7 @@ public:
     /** Get last live reading (from most recent pollLive call). */
     const IO2RingClient::LiveReading& getLastLive() const { return last_live_; }
 
-    /// What the last talk with the ring found, for GET /api/oximetry/status.
+    /// What the last talk with the ring found, for the Devices page.
     /// Recorded when this service polls or reads the ring; reading it never
     /// talks to the ring. checked_at 0: not asked since this start.
     struct Facts {

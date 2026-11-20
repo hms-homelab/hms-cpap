@@ -99,8 +99,6 @@ public:
     HelperTray(ChildProcess* child, QString service_exe, QString data_dir, QObject* parent = nullptr);
     bool available() const;
     void announcePresence();
-    /// The menu as it stands (the suite's screenshots grab it).
-    QMenu* menu() { return menu_.get(); }
     /// Reads status.json now (also the watch's slot).
     void refresh();
     /// Shows `status` as if the daemon had written it.

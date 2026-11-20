@@ -87,7 +87,6 @@ public:
     ADD_METHOD_TO(CpapController::backfillStatus,  "/api/backfill/status", drogon::Get);
     ADD_METHOD_TO(CpapController::backfillScan,    "/api/backfill/scan",   drogon::Get);
     ADD_METHOD_TO(CpapController::sessionSleepStages, "/api/sessions/{date}/sleep_stages", drogon::Get);
-    ADD_METHOD_TO(CpapController::sleepStageStatus,   "/api/sleep-stages/status",          drogon::Get);
     ADD_METHOD_TO(CpapController::insights,           "/api/insights",                     drogon::Get);
     ADD_METHOD_TO(CpapController::sessionForceComplete,   "/api/sessions/{date}/force-complete",   drogon::Post);
     ADD_METHOD_TO(CpapController::sessionGenerateSummary, "/api/sessions/{date}/generate-summary", drogon::Post);
@@ -284,8 +283,6 @@ public:
     void sessionSleepStages(const drogon::HttpRequestPtr& req,
                             std::function<void(const drogon::HttpResponsePtr&)>&& cb,
                             const std::string& date);
-    void sleepStageStatus(const drogon::HttpRequestPtr& req,
-                          std::function<void(const drogon::HttpResponsePtr&)>&& cb);
     void insights(const drogon::HttpRequestPtr& req,
                   std::function<void(const drogon::HttpResponsePtr&)>&& cb);
     void sessionForceComplete(const drogon::HttpRequestPtr& req,
@@ -371,7 +368,6 @@ public:
     static std::function<Json::Value()> ml_status_getter_;
     static std::function<void(const std::string&, const std::string&, const std::string&)> backfill_trigger_;
     static std::function<Json::Value()> backfill_status_getter_;
-    static std::function<Json::Value()> sleep_stage_status_getter_;
     // CSV content + filename + the optional source and device_name fields
     // (SDD-078 D3) -> result Json ("error" key on failure).
     static std::function<Json::Value(const std::string&, const std::string&,

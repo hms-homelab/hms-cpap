@@ -14,7 +14,6 @@
 
 buildRangeMetricsStringForTest       # include/services/BurstCollectorService.h
 closeSettledOpenLocalNightsForTest   # include/services/BurstCollectorService.h
-configChanged                        # src/services/OscarHelper.cpp -- API surface (SDD-081): "an address typed, connect with it"; nothing calls it yet, left for a decision
 current                              # desktop/qt/core/pure/ConfigModel.h
 cursor                               # src/services/CpapDashSyncService.cpp
 deviceIdForTest                      # include/services/BurstCollectorService.h
@@ -32,7 +31,6 @@ keepSecret                           # desktop/qt/core/pure/ConfigModel.cpp
 loadFromApi                          # desktop/qt/core/pure/ConfigModel.cpp
 machineClockForTest                  # include/services/BurstCollectorService.h -- test seam; BurstOrchestrationTest.Sdd069_TheBrpTheCardIsWritingTeachesTheMachineClock
 markStrReadForTest                  # include/services/BurstCollectorService.h -- test seam; BurstOrchestrationTest.ASessionThatClosesReadsTheStrOnThatBurst (SDD-053)
-menu                                 # desktop/qt/ui/HelperWindows.h -- API surface (SDD-081): the helper tray's menu, documented for screenshots; nothing in the repo calls it yet
 parseDirForNightForTest              # include/services/BurstCollectorService.h
 parsePendingUpdate                   # desktop/qt/core/pure/PendingUpdate.cpp
 pid                                  # desktop/qt/core/qt/ChildProcess.cpp

@@ -1,6 +1,7 @@
 #include "services/ComputedEvents.h"
 
 #include "database/SqlDialect.h"
+#include "utils/MachineZone.h"
 
 #ifdef CPAPDASH_WITH_BMC
 #include "cpapdash/parser/DesatDetector.h"
@@ -9,8 +10,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <ctime>
-#include <iomanip>
 #include <sstream>
 #include <utility>
 
@@ -18,12 +17,10 @@ namespace hms_cpap {
 
 namespace {
 
-/// The local wall clock, as every other session and event row is stored.
-std::string localStamp(std::chrono::system_clock::time_point t) {
-    const std::time_t tt = std::chrono::system_clock::to_time_t(t);
-    std::ostringstream o;
-    o << std::put_time(std::localtime(&tt), "%Y-%m-%d %H:%M:%S");
-    return o.str();
+/// The machine's wall clock as a label (SDD-074 D4), as every other session
+/// and event row is stored; with the host's zone the session lookup missed.
+std::string labelStamp(std::chrono::system_clock::time_point t) {
+    return wall::text(t);
 }
 
 std::string number(double v) {
@@ -76,7 +73,7 @@ bool storeComputedEvents(IDatabase& db, const std::string& device_id,
 
     const auto found = db.executeQueryChecked(
         "SELECT id FROM cpap_sessions WHERE device_id = " + p(1) + " AND session_start = " + p(2),
-        {device_id, localStamp(session_start)});
+        {device_id, labelStamp(session_start)});
     if (!found.ok || !found.rows.isArray() || found.rows.empty()) return false;
     const Json::Value& idv = found.rows[0]["id"];
     const std::string id = idv.isString() ? idv.asString() : std::to_string(idv.asInt64());
@@ -91,7 +88,7 @@ bool storeComputedEvents(IDatabase& db, const std::string& device_id,
                    "INSERT INTO cpap_computed_events"
                    " (session_id, event_type, event_timestamp, duration_seconds, details)"
                    " VALUES (" + p(1) + ", " + p(2) + ", " + p(3) + ", " + p(4) + ", " + p(5) + ")",
-                   {id, eventTypeToString(e.event_type), localStamp(e.timestamp),
+                   {id, eventTypeToString(e.event_type), labelStamp(e.timestamp),
                     number(e.duration_seconds), e.details.value_or("")})
                  .ok;
     }

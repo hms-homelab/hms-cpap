@@ -95,8 +95,6 @@ public:
     /// The tray's "Connect again" (D4): the token is dropped and a hello with
     /// none is sent.
     void connectAgain();
-    /// Settings changed (an address typed): connect with them.
-    void configChanged();
 
     /// {"state","host","port","hms_name","helper","last_import_at","last_outcome","message"}.
     /// state: no_address | connecting | connected | importing | unreachable |
@@ -122,7 +120,7 @@ private:
     mutable std::mutex mu_;
     std::condition_variable cv_;
     bool stop_{false};
-    uint64_t gen_{0};          ///< connectAgain / configChanged
+    uint64_t gen_{0};          ///< connectAgain
     Json::Value state_{Json::objectValue};
     Assembly incoming_;
     bool link_lost_{false};

@@ -6,10 +6,10 @@ INTERFACE="wlan1"
 CONNECTION_NAME="ezshare"
 
 # Home Assistant notification config
-HA_HOST="${HA_HOST:-192.168.2.7}"
+HA_HOST="${HA_HOST:-homeassistant.local}"
 HA_PORT="${HA_PORT:-8123}"
 HA_TOKEN="${HA_TOKEN:-}"
-NOTIFY_SERVICE="${NOTIFY_SERVICE:-notify.mobile_app_albins_iphone}"
+NOTIFY_SERVICE="${NOTIFY_SERVICE:-notify.notify}"
 
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"

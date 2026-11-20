@@ -93,9 +93,9 @@ sudo apt-get install -y g++-arm-linux-gnueabihf sshpass
 mkdir -p sysroot/usr sysroot/lib/arm-linux-gnueabihf
 
 # Sync from Pi (takes 2-3 minutes)
-rsync -avz aamat@192.168.2.73:/usr/include ./sysroot/usr/
-rsync -avz aamat@192.168.2.73:/usr/lib ./sysroot/usr/
-rsync -avz aamat@192.168.2.73:/lib/arm-linux-gnueabihf ./sysroot/lib/
+rsync -avz pi@raspberrypi.local:/usr/include ./sysroot/usr/
+rsync -avz pi@raspberrypi.local:/usr/lib ./sysroot/usr/
+rsync -avz pi@raspberrypi.local:/lib/arm-linux-gnueabihf ./sysroot/lib/
 
 # Verify size (~220MB)
 du -sh sysroot/
@@ -108,13 +108,13 @@ du -sh sysroot/
 ### "Permission denied" when deploying
 ```bash
 # Add your SSH key to Pi
-ssh-copy-id aamat@192.168.2.73
+ssh-copy-id pi@raspberrypi.local
 ```
 
 ### "undefined reference to mqtt::"
 ```bash
 # Re-sync MQTT libraries from Pi
-rsync -avz aamat@192.168.2.73:/lib/arm-linux-gnueabihf/libpaho-mqtt* ./sysroot/lib/arm-linux-gnueabihf/
+rsync -avz pi@raspberrypi.local:/lib/arm-linux-gnueabihf/libpaho-mqtt* ./sysroot/lib/arm-linux-gnueabihf/
 ```
 
 ### x86 build uses ARM libraries
@@ -167,7 +167,7 @@ cd ..
 ./deploy_to_pi.sh
 
 # 4. Watch logs on Pi
-ssh aamat@192.168.2.73 "journalctl -u hms-cpap -f"
+ssh pi@raspberrypi.local "journalctl -u hms-cpap -f"
 ```
 
 ---
@@ -220,13 +220,13 @@ ssh aamat@192.168.2.73 "journalctl -u hms-cpap -f"
 
 ```bash
 # View service logs
-ssh aamat@192.168.2.73 "journalctl -u hms-cpap -f"
+ssh pi@raspberrypi.local "journalctl -u hms-cpap -f"
 
 # Check service status
-ssh aamat@192.168.2.73 "systemctl status hms-cpap"
+ssh pi@raspberrypi.local "systemctl status hms-cpap"
 
 # Test binary without service
-ssh aamat@192.168.2.73
+ssh pi@raspberrypi.local
 cd ~/test-hms-cpap
 ./hms_cpap --help
 ```

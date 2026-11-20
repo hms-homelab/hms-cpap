@@ -16,6 +16,7 @@
 #ifdef WITH_POSTGRESQL
 #include "database/PostgresDatabase.h"
 #endif
+#include "utils/MachineZone.h"
 #include "utils/OximetryDevice.h"
 
 #include <chrono>
@@ -115,7 +116,9 @@ inline std::shared_ptr<IDatabase> openEngine(Engine e, const std::string& sqlite
     return nullptr;
 }
 
-/// [hour]:[min] on the local clock of y-mo-d.
+/// [hour]:[min] on the machine's clock of y-mo-d: a label (SDD-074 D4), as the
+/// parser hands a session over, so it is stored as these six numbers on any
+/// host zone.
 inline system_clock::time_point localAt(int y, int mo, int d, int hour, int min = 0) {
     std::tm tm{};
     tm.tm_year = y - 1900;
@@ -123,8 +126,7 @@ inline system_clock::time_point localAt(int y, int mo, int d, int hour, int min 
     tm.tm_mday = d;
     tm.tm_hour = hour;
     tm.tm_min = min;
-    tm.tm_isdst = -1;
-    return system_clock::from_time_t(std::mktime(&tm));
+    return hms_cpap::wall::point(hms_cpap::wall::labelOf(tm));
 }
 
 /// A night's counts, as the parser stores them on the session.

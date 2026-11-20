@@ -324,6 +324,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 - Unused code (SDD-045): functions nothing calls and 26 translation keys nothing shows; no behaviour change.
+- Six hand-run scripts nothing in hms-cpap runs: `scripts/agent_schema.sql`
+  (the agent's tables are created by the app itself),
+  `scripts/fix_session_ends.py`, `scripts/reparse_sessions.py`,
+  `scripts/str_backfill.py`, and the `scripts/ezshare-monitor.service` unit
+  with its `scripts/ezshare-monitor.conf.example`.
+- Five web routes nothing calls: `GET /api/source/status`,
+  `GET /api/oximetry/status` and `GET /api/garmin/status` (the Devices page
+  reads the same facts from `GET /api/devices`), `GET /api/sleep-stages/status`
+  (it only ever answered "not_configured"), and `POST /api/equipment/cloud-sync`
+  (the equipment mirror still syncs by itself after a local edit when
+  `cpapdash.auto_sync` is on).
 
 ## [6.4.6] - 2026-11-19
 

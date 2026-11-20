@@ -48,7 +48,6 @@ std::function<void()> CpapController::ml_train_trigger_;
 std::function<Json::Value()> CpapController::ml_status_getter_;
 std::function<void(const std::string&, const std::string&, const std::string&)> CpapController::backfill_trigger_;
 std::function<Json::Value()> CpapController::backfill_status_getter_;
-std::function<Json::Value()> CpapController::sleep_stage_status_getter_;
 std::function<Json::Value(const std::string&, const std::string&,
                           const std::string&, const std::string&)> CpapController::oxi_csv_import_;
 std::function<Json::Value(const std::string&)> CpapController::cpap_zip_import_;
@@ -1958,18 +1957,6 @@ void CpapController::sessionSleepStages(
 
     } catch (const std::exception& e) {
         cb(jsonError(e.what(), drogon::k500InternalServerError));
-    }
-}
-
-void CpapController::sleepStageStatus(
-        const drogon::HttpRequestPtr&,
-        std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
-    if (sleep_stage_status_getter_) {
-        cb(jsonResp(sleep_stage_status_getter_()));
-    } else {
-        Json::Value result;
-        result["status"] = "not_configured";
-        cb(jsonResp(result));
     }
 }
 

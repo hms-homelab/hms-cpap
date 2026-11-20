@@ -344,23 +344,7 @@ void installRoutes(const RouteDeps& deps) {
         },
         {drogon::Post});
 
-    drogon::app().registerHandler(
-        "/api/source/status", [](const drogon::HttpRequestPtr&, Callback&& cb) { cb(json(sourceStatus())); },
-        {drogon::Get});
-
-    drogon::app().registerHandler(
-        "/api/oximetry/status", [](const drogon::HttpRequestPtr&, Callback&& cb) { cb(json(oximetryStatus())); },
-        {drogon::Get});
-
     // SDD-078 D4: the Garmin card.
-    drogon::app().registerHandler(
-        "/api/garmin/status",
-        [](const drogon::HttpRequestPtr&, Callback&& cb) {
-            if (!g.garmin) return cb(error(404, "Garmin is not in this build"));
-            cb(json(g.garmin->status()));
-        },
-        {drogon::Get});
-
     drogon::app().registerHandler(
         "/api/garmin/fetch",
         [](const drogon::HttpRequestPtr&, Callback&& cb) {
