@@ -545,6 +545,12 @@ target_link_libraries(hms_cpap_narrator_facts
     cpapdash_parser
     nlohmann_json::nlohmann_json
 )
+# IDatabase.h (through NightFacts) includes jsoncpp, as the main target does.
+if(MSVC)
+    target_link_libraries(hms_cpap_narrator_facts JsonCpp::JsonCpp)
+else()
+    target_link_libraries(hms_cpap_narrator_facts jsoncpp_lib)
+endif()
 
 # Install target
 if(WIN32)

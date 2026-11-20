@@ -12,6 +12,7 @@
 // per-process device_id and removed in TearDown.
 //
 #include <gtest/gtest.h>
+#include "PosixCompat.h"
 
 #include "clients/LocalDataSource.h"
 #include "database/IDatabase.h"
