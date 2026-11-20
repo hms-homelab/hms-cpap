@@ -7,7 +7,9 @@
 #include <gtest/gtest.h>
 
 #include "database/SQLiteDatabase.h"
+#include "clients/IO2RingClient.h"
 #include "services/OximetryImport.h"
+#include "services/OximetryService.h"
 #include "utils/OximetryDevice.h"
 #ifdef WITH_POSTGRESQL
 #include "database/PostgresDatabase.h"
@@ -17,6 +19,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <memory>
 #include <set>
 #include <string>
@@ -542,4 +545,57 @@ TEST(OximetryImportName, OnlyAVldEndingCounts) {
     EXPECT_FALSE(isVldFilename("O2Ring export.csv"));
     EXPECT_FALSE(isVldFilename(".vld"));
     EXPECT_FALSE(isVldFilename("x.vld.bak"));
+}
+
+// ── The ring's own files, through OximetryService::collectAndPublish ──
+
+namespace {
+
+/// A ring that lists and serves whatever it is told to.
+class FakeRing : public IO2RingClient {
+public:
+    bool isConnected() override { return true; }
+    std::vector<std::string> listFiles() override { return names; }
+    std::vector<uint8_t> downloadFile(const std::string& n) override {
+        const auto it = files.find(n);
+        if (it == files.end()) return {};
+        return std::vector<uint8_t>(it->second.begin(), it->second.end());
+    }
+    LiveReading getLive() override { return {}; }
+    int getBattery() const override { return 80; }
+
+    std::vector<std::string> names;
+    std::map<std::string, std::string> files;
+};
+
+}  // namespace
+
+TEST_F(OximetryImportTest, AnO2RingSFileListedBeforeItIsWholeIsNotStored) {
+    auto ring = std::make_shared<FakeRing>();
+    ring->names = {"20261004221500.o2s"};
+    ring->files["20261004221500.o2s"] = o2s(5, /*finished=*/false);
+    std::shared_ptr<IDatabase> shared(std::move(db_));
+    OximetryService svc(ring, shared);
+
+    EXPECT_FALSE(svc.collectAndPublish());
+    EXPECT_EQ(count(*shared, "SELECT COUNT(*) AS n FROM oximetry_sessions"), 0)
+        << "half a night must not be stored";
+    EXPECT_FALSE(shared->oximetrySessionExists(kOximetryDeviceId, "20261004221500.o2s"));
+    shared.reset();
+}
+
+TEST_F(OximetryImportTest, TheSameO2RingSFileIsStoredOnceItIsWhole) {
+    auto ring = std::make_shared<FakeRing>();
+    ring->names = {"20261004221500.o2s"};
+    ring->files["20261004221500.o2s"] = o2s(5, /*finished=*/false);
+    std::shared_ptr<IDatabase> shared(std::move(db_));
+    OximetryService svc(ring, shared);
+
+    EXPECT_FALSE(svc.collectAndPublish());        // listed early: left alone
+    ring->files["20261004221500.o2s"] = o2s(5, /*finished=*/true);
+    EXPECT_TRUE(svc.collectAndPublish());         // the next ask finds it whole
+    EXPECT_EQ(count(*shared, "SELECT COUNT(*) AS n FROM oximetry_sessions"), 1);
+    EXPECT_EQ(count(*shared, "SELECT COUNT(*) AS n FROM oximetry_samples"), 5);
+    EXPECT_FALSE(svc.collectAndPublish()) << "stored once; nothing new the next time";
+    shared.reset();
 }

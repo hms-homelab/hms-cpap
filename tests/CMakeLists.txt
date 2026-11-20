@@ -128,6 +128,7 @@ set(TEST_SOURCES
     services/test_BackfillService.cpp
     services/test_SessionDiscoveryService.cpp
     services/test_OximetryService.cpp
+    services/test_O2RingFileWatch.cpp
     services/test_OximetryImport.cpp
     services/test_BilevelSensors.cpp
     services/test_AiSummaryEvents.cpp
