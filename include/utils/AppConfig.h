@@ -367,6 +367,27 @@ struct AppConfig {
         bool stream = false;
     } cpapdash;
 
+    /// SDD-078: the night's SpO2 from Garmin Connect, as an oximetry source.
+    /// Every credential is a setting, kept and masked the way the CpapDash
+    /// token is (D1): the account's email and password, and Garmin's own
+    /// session tokens beside them, so a refresh or a new sign-in needs nobody
+    /// at the keyboard unless Garmin asks for an MFA code. Garmin's API is
+    /// unofficial; a change there shows on the Devices page's Garmin card.
+    struct Garmin {
+        bool enabled = false;
+        std::string email;
+        std::string password;
+        /// Garmin's bearer token, its refresh token and the client they were
+        /// issued to (the DI OAuth2 exchange).
+        std::string access_token;
+        std::string refresh_token;
+        std::string client_id;
+        /// Garmin's displayName for the account (the sleep URL needs it) and
+        /// the watch it last synced from ("Garmin Fenix 7X").
+        std::string display_name;
+        std::string device_name;
+    } garmin;
+
     bool setup_complete = false;
 
     /// Fill empty config fields from environment variables (fallback).
@@ -782,6 +803,18 @@ struct AppConfig {
                 if (cd.contains("stream"))    config.cpapdash.stream = cd["stream"];
             }
 
+            if (j.contains("garmin")) {
+                auto& g = j["garmin"];
+                if (g.contains("enabled"))       config.garmin.enabled = g["enabled"];
+                if (g.contains("email"))         config.garmin.email = g["email"];
+                if (g.contains("password"))      config.garmin.password = g["password"];
+                if (g.contains("access_token"))  config.garmin.access_token = g["access_token"];
+                if (g.contains("refresh_token")) config.garmin.refresh_token = g["refresh_token"];
+                if (g.contains("client_id"))     config.garmin.client_id = g["client_id"];
+                if (g.contains("display_name"))  config.garmin.display_name = g["display_name"];
+                if (g.contains("device_name"))   config.garmin.device_name = g["device_name"];
+            }
+
             if (j.contains("sleephq")) {
                 auto& sh = j["sleephq"];
                 if (sh.contains("enabled"))           config.sleephq.enabled = sh["enabled"];
@@ -918,6 +951,16 @@ struct AppConfig {
             j["cpapdash"]["token"] = cpapdash.token;
             j["cpapdash"]["auto_sync"] = cpapdash.auto_sync;
             j["cpapdash"]["stream"] = cpapdash.stream;
+
+            // SDD-078: verbatim, as the token above.
+            j["garmin"]["enabled"]       = garmin.enabled;
+            j["garmin"]["email"]         = garmin.email;
+            j["garmin"]["password"]      = garmin.password;
+            j["garmin"]["access_token"]  = garmin.access_token;
+            j["garmin"]["refresh_token"] = garmin.refresh_token;
+            j["garmin"]["client_id"]     = garmin.client_id;
+            j["garmin"]["display_name"]  = garmin.display_name;
+            j["garmin"]["device_name"]   = garmin.device_name;
 
             j["logging"]["enabled"] = logging.enabled;
             j["logging"]["file"]    = logging.file;
@@ -1082,6 +1125,18 @@ struct AppConfig {
         j["cpapdash"]["token"] = cpapdash.token.empty() ? "" : "********";
         j["cpapdash"]["auto_sync"] = cpapdash.auto_sync;
         j["cpapdash"]["stream"] = cpapdash.stream;
+
+        // SDD-078: masked as the token is. Garmin's session tokens are read
+        // back masked and never taken from the page (PUT /api/config).
+        j["garmin"]["enabled"]       = garmin.enabled;
+        j["garmin"]["email"]         = garmin.email;
+        j["garmin"]["password"]      = garmin.password.empty() ? "" : "********";
+        j["garmin"]["access_token"]  = garmin.access_token.empty() ? "" : "********";
+        j["garmin"]["refresh_token"] = garmin.refresh_token.empty() ? "" : "********";
+        j["garmin"]["client_id"]     = garmin.client_id;
+        j["garmin"]["display_name"]  = garmin.display_name;
+        j["garmin"]["device_name"]   = garmin.device_name;
+        j["garmin"]["signed_in"]     = !garmin.refresh_token.empty() || !garmin.access_token.empty();
 
         j["logging"]["enabled"] = logging.enabled;
         j["logging"]["file"]    = logging.file;

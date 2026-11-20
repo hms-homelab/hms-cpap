@@ -4,7 +4,7 @@
 
 /** One device as GET /api/devices lists it. */
 export interface DeviceEntry {
-  kind: 'mule' | 'sleepbridge' | 'o2ring' | 'ezshare' | 'flashair' | 'as11_ble' | 'ds2_ble';
+  kind: 'mule' | 'sleepbridge' | 'o2ring' | 'ezshare' | 'flashair' | 'as11_ble' | 'ds2_ble' | 'garmin';
   id: string;
   key: string;
   name: string;

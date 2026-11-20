@@ -10,6 +10,9 @@
 //   DELETE /api/devices/{kind}/{id}        forget an away Mule & Miner or Sleep Bridge
 //   GET    /api/source/status              the card source's reachability
 //   GET    /api/oximetry/status            the O2 ring, as last talked to
+//   GET    /api/garmin/status              SDD-078: the Garmin card's state
+//   POST   /api/garmin/fetch               "Fetch from Garmin now" (an event, D2)
+//   POST   /api/garmin/mfa                 {"code"}: the code Garmin asked for
 //   POST   /api/airsense11/ble/pull        the machine's summary pulled now
 //   DELETE /api/airsense11/ble/pairing     the saved AirSense 11 pairing removed
 //
@@ -26,6 +29,7 @@
 namespace hms_cpap {
 struct AppConfig;
 class BurstCollectorService;
+class GarminService;
 class QueryService;
 namespace mule {
 class MuleService;
@@ -50,6 +54,7 @@ struct RouteDeps {
     sleepbridge::SleepBridgeService* bridges{nullptr};
     sleepbridge::ReleaseFeed*        feed{nullptr};
     DevicesStore*                    store{nullptr};
+    GarminService*                   garmin{nullptr};     // SDD-078
     int                              stream_port{8894};
 };
 

@@ -30,6 +30,19 @@ namespace hms_cpap {
  */
 inline constexpr const char* kOximetryDeviceId = "o2ring";
 
+/// SDD-078 D3: oximetry_sessions.source, where a recording came from. Every
+/// source is stored under kOximetryDeviceId and read the same way; the source
+/// only says whose it is.
+inline constexpr const char* kOximetrySourceRing   = "o2ring";
+inline constexpr const char* kOximetrySourceGarmin = "garmin";
+inline constexpr const char* kOximetrySourceUpload = "upload";
+
+/// Whether saving a recording from [source] removes the night's live ring
+/// session: only the ring's own file does (read off the ring, or uploaded).
+inline bool oximetryOriginSupersedesLive(const std::string& source) {
+    return source == kOximetrySourceRing || source == kOximetrySourceUpload;
+}
+
 /**
  * The clock a live O2 Ring sample is stamped on.
  *

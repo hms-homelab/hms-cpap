@@ -51,7 +51,7 @@
     "title": {
       "aiSummary": "MI-összefoglaló az alvásidőszakról",
       "ml": "ML-intelligencia",
-      "oximetry": "O2 Ring oximetria",
+      "oximetry": "Oximetria",
       "realtime": "Valós idejű állapot",
       "events": "Alvási események megoszlása",
       "str": "STR napi mérőszámok",
@@ -64,7 +64,8 @@
       "events": "Apnoe- és hypopnoe-elemzés",
       "eventsUnclassified": "Csak apnoék. Ez a készülék nem osztályozza őket.",
       "respiratory": "Légzésminták és ventilláció",
-      "oximetry": "Wellue O2Ring -- SpO2 és pulzusszám"
+      "oximetry": "Wellue O2Ring -- SpO2 és pulzusszám",
+      "oximetryFrom": "{{device}} -- SpO2 és pulzusszám"
     },
     "keyMetrics": {
       "title": "Fő mérőszámok",

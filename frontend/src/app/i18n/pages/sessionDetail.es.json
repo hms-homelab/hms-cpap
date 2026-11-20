@@ -1,6 +1,9 @@
 {
   "sessionDetail": {
     "overview": "Resumen",
+    "oximetryFrom": "Oximetría - {{device}}",
+    "oximetryOnly": "Solo oximetría ({{device}}); no se registró ninguna sesión de CPAP esta noche",
+    "oximetryUpload": "Subida",
     "expandHint": "(haz clic para expandir)",
     "eventDistribution": "Distribución de eventos",
     "notClassified": "Este equipo informa de las apneas sin indicar si fueron obstructivas o centrales, y no marca hipopneas. No hay desglose que mostrar para esta noche.",

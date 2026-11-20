@@ -151,6 +151,12 @@ public:
         if (db_) return db_->saveOximetrySession(device_id, session);
         return false;
     }
+    bool saveOximetrySessionFrom(const std::string& device_id,
+                                 const cpapdash::parser::OximetrySession& session,
+                                 const OximetryOrigin& origin) override {
+        if (db_) return db_->saveOximetrySessionFrom(device_id, session, origin);
+        return false;
+    }
     bool oximetrySessionExists(const std::string& device_id,
                                 const std::string& filename) override {
         if (db_) return db_->oximetrySessionExists(device_id, filename);

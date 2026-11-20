@@ -294,6 +294,26 @@ public:
     virtual bool saveOximetrySession(const std::string& device_id,
                                      const cpapdash::parser::OximetrySession& session) = 0;
 
+    /// SDD-078 D3: where a recording came from. `source` is "o2ring",
+    /// "garmin", "upload" (and room for more); `device_name` names the device
+    /// ("Garmin Fenix 7X"), empty when not known.
+    struct OximetryOrigin {
+        std::string source{"o2ring"};
+        std::string device_name;
+    };
+
+    /// saveOximetrySession, with the recording's origin stored beside it. The
+    /// two-argument save stores {"o2ring", ""}. Only a ring's own recording
+    /// (source "o2ring" or "upload") supersedes the night's live ring session:
+    /// a Garmin night is not the ring's file. The default here ignores the
+    /// origin, for the suite's fakes; every backend overrides it.
+    virtual bool saveOximetrySessionFrom(const std::string& device_id,
+                                         const cpapdash::parser::OximetrySession& session,
+                                         const OximetryOrigin& origin) {
+        (void)origin;
+        return saveOximetrySession(device_id, session);
+    }
+
     /**
      * Check if an oximetry session (by filename) already exists.
      */

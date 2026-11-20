@@ -58,6 +58,8 @@ set(TEST_SOURCES
     database/test_DatabaseService.cpp
     database/test_EquipmentBackends.cpp
     database/test_OximetryBackends.cpp
+    # SDD-078 D3: oximetry knows its source, on every engine.
+    database/test_OximetryOriginBackends.cpp
     database/test_LiveOximetryBackends.cpp
     database/test_RemoveNightBackends.cpp
     database/test_CpapCardBackends.cpp
@@ -182,6 +184,10 @@ set(TEST_SOURCES
     services/test_DataPublisherDeeper.cpp
     services/test_LiveSleepStageRunner.cpp
     services/test_MyAirClient.cpp
+    # SDD-078: Garmin SpO2 as an oximetry source.
+    clients/test_GarminConnectClient.cpp
+    services/test_GarminSleep.cpp
+    services/test_GarminService.cpp
     services/test_MyAirService.cpp
     services/test_SleepHqExportService.cpp
     services/test_CpapDashSyncService.cpp

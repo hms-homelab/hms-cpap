@@ -699,6 +699,8 @@ void MySQLDatabase::createSchema() {
             valid_samples    INT,
             total_samples    INT,
             cpap_session_date VARCHAR(8),
+            source           VARCHAR(32),
+            device_name      VARCHAR(255),
             created_at       DATETIME NOT NULL DEFAULT NOW(),
             -- Every oximetry read path filters on exactly this pair. Declared
             -- inline rather than as a separate CREATE INDEX so re-running the
@@ -1123,6 +1125,9 @@ void MySQLDatabase::migrateSchema() {
         {"oximetry_sessions", "odi_3pct",      "DOUBLE"},
         {"oximetry_sessions", "desat_count",   "INT"},
         {"oximetry_sessions", "cpap_session_date", "VARCHAR(8)"},
+        // SDD-078 D3: where each recording came from (backfilled below).
+        {"oximetry_sessions", "source",        "VARCHAR(32)"},
+        {"oximetry_sessions", "device_name",   "VARCHAR(255)"},
         {"oximetry_samples",  "spo2",          "INT"},
         {"oximetry_samples",  "motion",        "INT"},
         {"oximetry_samples",  "vibration",     "INT"},
@@ -1180,6 +1185,10 @@ void MySQLDatabase::migrateSchema() {
         std::cout << "MySQL: schema migration applied " << applied << " column(s)"
                   << std::endl;
     }
+
+    // SDD-078 D3: a recording stored before it had a source reads as the
+    // ring's, or as an upload where the upload page stored it.
+    if (tableExists("oximetry_sessions")) exec(sql::oxiSourceBackfill());
 
     // SDD-047 D2: a metrics row that predates unclassified_apneas is counted
     // from its own stored events, once; every save after this writes the
@@ -3729,6 +3738,12 @@ bool MySQLDatabase::saveSummary(
 
 bool MySQLDatabase::saveOximetrySession(const std::string& device_id,
                                         const cpapdash::parser::OximetrySession& session) {
+    return saveOximetrySessionFrom(device_id, session, OximetryOrigin{});
+}
+
+bool MySQLDatabase::saveOximetrySessionFrom(const std::string& device_id,
+                                            const cpapdash::parser::OximetrySession& session,
+                                            const OximetryOrigin& origin) {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!conn_) { std::cerr << "MySQL: Not connected" << std::endl; return false; }
 
@@ -3741,9 +3756,11 @@ bool MySQLDatabase::saveOximetrySession(const std::string& device_id,
              sample_interval, avg_spo2, min_spo2, spo2_baseline,
              time_below_90, time_below_88, odi_3pct, desat_count,
              avg_hr, min_hr, max_hr, valid_samples, total_samples,
-             cpap_session_date)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             cpap_session_date, source, device_name)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
+            source            = VALUES(source),
+            device_name       = VALUES(device_name),
             start_time        = VALUES(start_time),
             end_time          = VALUES(end_time),
             duration_seconds  = VALUES(duration_seconds),
@@ -3777,7 +3794,7 @@ bool MySQLDatabase::saveOximetrySession(const std::string& device_id,
         std::string end_str   = fmtOximetryTimestamp(session.end_time);
         std::string date_str  = session.date_str();
 
-        ParamBinder p(19);
+        ParamBinder p(21);
         p.bindText(0, device_id);
         p.bindText(1, session.filename);
         p.bindText(2, start_str);
@@ -3797,6 +3814,8 @@ bool MySQLDatabase::saveOximetrySession(const std::string& device_id,
         p.bindInt(16, session.metrics.valid_samples);
         p.bindInt(17, session.metrics.total_samples);
         p.bindText(18, date_str);
+        p.bindText(19, origin.source);
+        p.bindText(20, origin.device_name);
         mysql_stmt_bind_param(g.stmt, p.data());
 
         if (mysql_stmt_execute(g.stmt) != 0) {
@@ -3886,7 +3905,8 @@ bool MySQLDatabase::saveOximetrySession(const std::string& device_id,
     // stand-in the bridge polled into, so that one goes, on this event and in
     // this transaction. The sessions DELETE filters directly rather than
     // through a subquery: MySQL refuses a subquery on the table being deleted.
-    if (!isLiveOximetryFilename(session.filename)) {
+    // SDD-078: a Garmin night is not the ring's file and leaves it.
+    if (!isLiveOximetryFilename(session.filename) && oximetryOriginSupersedesLive(origin.source)) {
         const std::string night = oximetrySleepDay(session.start_time);
         const std::string live_of_night =
             "device_id = ? AND " + sql::isLiveOxiFilename("filename") + " AND " +

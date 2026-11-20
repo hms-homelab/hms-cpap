@@ -4,6 +4,7 @@ import { RouterLink } from '@angular/router';
 import { TranslatePipe, TranslateService } from '@ngx-translate/core';
 import { CpapApiService } from '../../services/cpap-api.service';
 import { formatIndex, formatNightDate, nightAgeInDays } from '../../utils/format';
+import { oximetryDevices, originsOf } from '../../utils/oximetry-label';
 import { LanguageService } from '../../services/language.service';
 import { KeyMetricsComponent, KeyMetricsData } from '../../components/dashboard/key-metrics.component';
 import { OximetryRowComponent, OximetryRowData } from '../../components/dashboard/oximetry-row.component';
@@ -581,9 +582,13 @@ export class DashboardComponent implements OnInit, AfterViewInit {
                 const odi = odiPerHour(desats.length, validSpo2.length, sampleSec);
                 const avgHr = validHr.length
                   ? validHr.reduce((a, b) => a + b, 0) / validHr.length : 0;
+                // SDD-078 D3: say where it came from.
+                const origins = originsOf(oxi);
                 this.oximetryData = {
                   spo2: avg, heartRate: Math.round(avgHr), odi,
                   active: false,
+                  device: oximetryDevices(origins, this.t.instant('sessionDetail.oximetryUpload')),
+                  ring: !origins.length || origins.some(o => o.source === 'o2ring'),
                 };
               }
             }
