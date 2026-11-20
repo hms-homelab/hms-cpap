@@ -23,6 +23,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on a timer: the pull follows the Summary pull, never while the machine
   records, a night streams or an O2 Ring transfer runs; a night not read to
   the end is asked for again by the next Summary pull.
+- **A live night on an ez Share card with no listing (SDD-069).** On firmware
+  4.4.0, which lists nothing, each burst now asks the card only what can have
+  changed while therapy runs: the next 8.3 alias of tonight's folder (one
+  request per name stem; the three-miss scan stays for the daily index and a
+  re-list), and the files of the open session. A session the card has
+  finished (its BRP held to the end and unchanged in size and record count
+  across two bursts, or followed by a new BRP) is asked about again only 5,
+  35 and 65 minutes after its last growth. A file that answers with the
+  welcome page, or a transfer that stalls, changes nothing. The probe reads
+  the record duration with the record count, and a BRP that grows teaches the
+  machine's clock, so tonight's folder follows the machine's day rather than
+  the host's zone. STR.edf is no longer read on every burst: it is read with
+  the daily index and 65 minutes after the night's growth stops, never while
+  the night grows. This card publishes no mask on or off: it holds no file
+  dates. Its night is complete only when every file is held to its exact
+  size; a BRP the card never lets reach its end leaves the night partial
+  after its hour of quiet, until a later burst gets the rest. Shown on
+  synthetic tests only: no live night on this card has been logged yet.
 
 ### Changed
 - **The AI is given facts that add up, and says only those (SDD-072).** The
