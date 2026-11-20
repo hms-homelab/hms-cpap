@@ -25,6 +25,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the end is asked for again by the next Summary pull.
 
 ### Fixed
+- **An SD card import no longer reopens finished nights, and the card's
+  files always replace ones built from Bluetooth** (#85, SDD-077). The SD/ZIP
+  import and the collector recorded file sizes differently, so every imported
+  session read as changed on the next pass and was reopened. Both now use one
+  rule (exact bytes, the same file types). Each session file now records
+  where it came from (the card, or built from an AirSense 11 or DreamStation 2
+  over Bluetooth), and every card path, the SD/ZIP import included, replaces a
+  Bluetooth-built copy of the same stretch. A download that only repairs the
+  archive never reopens a session, and a session from any night before the
+  current one is read again but stays completed.
 - **Live O2 Ring samples in bridge mode sit on the same clock as the rest of
   the night.** On PostgreSQL and MySQL they were stamped with the database's
   own `NOW()`, which follows the database server's time zone (UTC in most
