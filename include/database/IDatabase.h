@@ -269,6 +269,9 @@ public:
 
     // -- Summaries ------------------------------------------------------------
 
+    /// SDD-013: [source] says what wrote the text. "llm" is the configured
+    /// LLM endpoint (and every row stored before the column existed); "local"
+    /// is the built-in local sleep model's nightly job.
     virtual bool saveSummary(const std::string& device_id,
                              const std::string& period,
                              const std::string& range_start,
@@ -277,7 +280,8 @@ public:
                              double avg_ahi,
                              double avg_usage_hours,
                              double compliance_pct,
-                             const std::string& summary_text) = 0;
+                             const std::string& summary_text,
+                             const std::string& source = "llm") = 0;
 
     // -- Oximetry (O2 Ring) ---------------------------------------------------
 

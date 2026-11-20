@@ -732,7 +732,7 @@ Json::Value QueryService::getStatistics(const std::string& start, const std::str
 Json::Value QueryService::getSummaries(const std::string& period, int limit) {
     std::string q =
         "SELECT id, period, range_start, range_end, nights_count,"
-        " avg_ahi, avg_usage_hours, compliance_pct, summary_text, created_at"
+        " avg_ahi, avg_usage_hours, compliance_pct, summary_text, source, created_at"   // SDD-013
         " FROM cpap_summaries"
         " WHERE device_id = " + sql::param(1, dt_);
 

@@ -500,6 +500,16 @@ bool DatabaseService::connect() {
                 std::cout << "  DB: v2.1.0 migration (cpap_summaries table) applied" << std::endl;
             } catch (...) {}
 
+            // SDD-013: what wrote the summary ('llm' or 'local'). A row stored
+            // before the column existed came from the configured LLM.
+            try {
+                pqxx::work txn(*conn_);
+                txn.exec("ALTER TABLE cpap_summaries ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'llm'");
+                txn.commit();
+            } catch (const std::exception& e) {
+                std::cerr << "  DB: SDD-013 summary source migration failed: " << e.what() << std::endl;
+            }
+
             // Auto-migrate v2.2.0: Oximetry tables (O2 Ring)
             try {
                 pqxx::work txn(*conn_);
@@ -2560,7 +2570,8 @@ bool DatabaseService::saveSummary(
     double avg_ahi,
     double avg_usage_hours,
     double compliance_pct,
-    const std::string& summary_text) {
+    const std::string& summary_text,
+    const std::string& source) {
 
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!ensureConnection()) return false;
@@ -2570,14 +2581,14 @@ bool DatabaseService::saveSummary(
         std::string query =
             "INSERT INTO cpap_summaries"
             " (device_id, period, range_start, range_end, nights_count,"
-            "  avg_ahi, avg_usage_hours, compliance_pct, summary_text)"
+            "  avg_ahi, avg_usage_hours, compliance_pct, summary_text, source)"
             " VALUES (" + txn.quote(device_id) + ", " + txn.quote(period) + ", "
             + txn.quote(range_start) + "::date, " + txn.quote(range_end) + "::date, "
             + std::to_string(nights_count) + ", "
             + std::to_string(avg_ahi) + ", "
             + std::to_string(avg_usage_hours) + ", "
             + std::to_string(compliance_pct) + ", "
-            + txn.quote(summary_text) + ")";
+            + txn.quote(summary_text) + ", " + txn.quote(source) + ")";
         txn.exec(query);
         txn.commit();
         std::cout << "DB: Saved " << period << " summary (" << range_start

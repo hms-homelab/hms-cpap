@@ -544,9 +544,14 @@ void SQLiteDatabase::createSchema() {
             avg_usage_hours REAL,
             compliance_pct  REAL,
             summary_text    TEXT NOT NULL,
+            source          TEXT NOT NULL DEFAULT 'llm',
             created_at      TEXT NOT NULL DEFAULT (datetime('now'))
         )
     )");
+    // SDD-013: what wrote the summary ('llm' or 'local'). A row stored before
+    // the column existed came from the configured LLM.
+    sqlite3_exec(db_, "ALTER TABLE cpap_summaries ADD COLUMN source TEXT NOT NULL DEFAULT 'llm'",
+                 nullptr, nullptr, nullptr);
 
     // oximetry_sessions (O2 Ring)
     exec(R"(
@@ -3126,7 +3131,8 @@ bool SQLiteDatabase::saveSummary(
     double avg_ahi,
     double avg_usage_hours,
     double compliance_pct,
-    const std::string& summary_text) {
+    const std::string& summary_text,
+    const std::string& source) {
 
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!db_) return false;
@@ -3134,8 +3140,8 @@ bool SQLiteDatabase::saveSummary(
     const char* sql = R"(
         INSERT INTO cpap_summaries
             (device_id, period, range_start, range_end, nights_count,
-             avg_ahi, avg_usage_hours, compliance_pct, summary_text)
-        VALUES (?, ?, date(?), date(?), ?, ?, ?, ?, ?)
+             avg_ahi, avg_usage_hours, compliance_pct, summary_text, source)
+        VALUES (?, ?, date(?), date(?), ?, ?, ?, ?, ?, ?)
     )";
 
     StmtGuard g;
@@ -3149,6 +3155,7 @@ bool SQLiteDatabase::saveSummary(
     bind_double(g.stmt, 7, avg_usage_hours);
     bind_double(g.stmt, 8, compliance_pct);
     bind_text(g.stmt, 9, summary_text);
+    bind_text(g.stmt, 10, source);
 
     if (sqlite3_step(g.stmt) != SQLITE_DONE) {
         std::cerr << "SQLite: saveSummary error: " << sqlite3_errmsg(db_) << std::endl;

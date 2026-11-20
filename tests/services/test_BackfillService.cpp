@@ -56,7 +56,7 @@ public:
     MOCK_METHOD(bool, aggregateDailySummaryFromSessions, (const std::string&), (override));
     MOCK_METHOD((std::optional<SessionMetrics>), getNightlyMetrics, (const std::string&, const std::chrono::system_clock::time_point&), (override));
     MOCK_METHOD((std::vector<SessionMetrics>), getMetricsForDateRange, (const std::string&, int), (override));
-    MOCK_METHOD(bool, saveSummary, (const std::string&, const std::string&, const std::string&, const std::string&, int, double, double, double, const std::string&), (override));
+    MOCK_METHOD(bool, saveSummary, (const std::string&, const std::string&, const std::string&, const std::string&, int, double, double, double, const std::string&, const std::string&), (override));
     MOCK_METHOD(void*, rawConnection, (), (override));
     MOCK_METHOD(bool, saveOximetrySession, (const std::string&, const cpapdash::parser::OximetrySession&), (override));
     MOCK_METHOD(bool, oximetrySessionExists, (const std::string&, const std::string&), (override));

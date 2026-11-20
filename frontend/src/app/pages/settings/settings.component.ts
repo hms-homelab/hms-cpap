@@ -577,6 +577,55 @@ import { sourceImage } from '../../utils/source-image';
           </div>
         </div>
 
+        <!-- SDD-013: the local sleep model. Its switch acts at once through its
+             own endpoint, not Save: turning it on downloads and checks the
+             model, and is refused with the reason while none is published. -->
+        <div class="section" *ngIf="localModel">
+          <div class="section-header" (click)="toggle('local_model'); loadLocalModel()">
+            <span class="chevron" [class.open]="open['local_model']">&#9654;</span>
+            {{ 'settings.localModel.heading' | translate }}
+            <span class="badge" *ngIf="!localModel.enabled">{{ 'settings.tag.optional' | translate }}</span>
+          </div>
+          <div class="section-body" *ngIf="open['local_model']">
+            <p class="section-desc">{{ 'settings.localModel.desc' | translate }}</p>
+            <label class="toggle-row">
+              {{ 'settings.localModel.enabled' | translate }}
+              <input type="checkbox" name="local_model_enabled"
+                     [checked]="localModel.enabled || localModel.state === 'downloading'"
+                     [disabled]="localModelBusy"
+                     (change)="toggleLocalModel($any($event.target))" />
+            </label>
+            <div class="ml-status">
+              <div class="status-row">
+                <span class="status-label">{{ 'settings.status.label' | translate }}</span>
+                <span class="status-value" [class.status-active]="localModel.state === 'ready'">
+                  {{ ('settings.localModel.state.' + localModel.state) | translate }}
+                </span>
+              </div>
+              <div class="status-row">
+                <span class="status-label">{{ 'settings.localModel.version' | translate }}</span>
+                <span class="status-value">{{ localModel.version }}</span>
+              </div>
+              <div class="status-row" *ngIf="localModel.last?.night">
+                <span class="status-label">{{ 'settings.localModel.lastNight' | translate }}</span>
+                <span class="status-value">
+                  {{ localModel.last.night }} ·
+                  {{ (localModel.last.how ? 'settings.localModel.how.' + localModel.last.how : 'settings.localModel.how.none') | translate }}
+                </span>
+              </div>
+            </div>
+            <p class="hint warn" *ngIf="localModelNote()">{{ localModelNote() }}</p>
+            <div class="ml-actions">
+              <input #modelFile type="file" accept=".gguf" hidden (change)="loadModelFile($any($event.target))" />
+              <button type="button" class="btn-secondary" (click)="modelFile.click()"
+                      [disabled]="localModelBusy || !localModel.published">
+                {{ 'settings.localModel.loadFile' | translate }}
+              </button>
+              <span class="hint">{{ 'settings.localModel.loadFileHint' | translate }}</span>
+            </div>
+          </div>
+        </div>
+
         <!-- Section: Agent. Needs LLM and PostgreSQL, so it is shown disabled
              with the reason rather than hidden, per SDD-012 decision 5. -->
         <div class="section">
@@ -1288,6 +1337,16 @@ import { sourceImage } from '../../utils/source-image';
     .btn-train:hover { background: #9575cd; }
     .btn-train:disabled { opacity: 0.5; cursor: not-allowed; }
 
+    /* The standard secondary button (setup's): dashboard blue outline. */
+    .btn-secondary {
+      background: transparent; color: #64b5f6; border: 1px solid #64b5f6;
+      border-radius: 6px; padding: 0.5rem 1rem; font-size: 0.9rem;
+      cursor: pointer; transition: all 0.2s;
+    }
+    .btn-secondary:hover:not(:disabled) { background: rgba(100, 181, 246, 0.1); }
+    .btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
+    .ml-actions .hint { display: block; margin-top: 0.4rem; }
+
     /* LLM Prompt */
     textarea {
       background: #15152a; border: 1px solid #444; border-radius: 4px;
@@ -1354,6 +1413,13 @@ export class SettingsComponent implements OnInit, OnDestroy {
   // ML Training state
   mlStatus: any = null;
   mlTraining = false;
+
+  // SDD-013: the local sleep model, as GET /api/local-model/status says.
+  // Read when the page opens, when the section is opened and after each
+  // action: on those events, never on a timer. Null: an older server.
+  localModel: any = null;
+  localModelBusy = false;
+  localModelError = '';
 
   // Backfill state
   backfillStart = '';
@@ -1518,6 +1584,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
     myair: false,
     cpapdash: false,
     sleep_stage: false,
+    local_model: false,
     agent: false,
     timing: false,
     backfill: false,
@@ -1587,6 +1654,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
     this.loadMyAirStatus();
     this.loadUpdateStatus();
     this.loadStreamStatus();
+    this.loadLocalModel();
 
     this.api.getConfig().subscribe({
       next: (cfg) => {
@@ -1826,6 +1894,58 @@ export class SettingsComponent implements OnInit, OnDestroy {
     if (!missing.length) return '';
     const list = missing.join(` ${this.t.instant('settings.restart.and')} `);
     return this.t.instant('settings.agent.blocked', { list });
+  }
+
+  // ── SDD-013: the local sleep model ──────────────────────────────────────
+
+  loadLocalModel(): void {
+    this.api.getLocalModelStatus().subscribe({
+      next: (s) => this.localModel = s,
+      error: () => {},   // an older server: no section
+    });
+  }
+
+  /** The line under the status: no model published yet is said in the page's
+   *  language; anything else is the server's own reason. */
+  localModelNote(): string {
+    const s = this.localModel;
+    if (!s) return '';
+    if (s.state === 'not_published') return this.t.instant('settings.localModel.notPublished');
+    // The state line already says it, in the page's language.
+    if (s.state === 'no_runtime') return this.localModelError;
+    return this.localModelError || s.message || '';
+  }
+
+  toggleLocalModel(box: HTMLInputElement): void {
+    const on = box.checked;
+    this.localModelBusy = true;
+    this.localModelError = '';
+    (on ? this.api.enableLocalModel() : this.api.disableLocalModel()).subscribe({
+      next: (s) => { this.localModel = s; this.localModelBusy = false; },
+      error: (err) => {
+        box.checked = !on;
+        this.localModelBusy = false;
+        if (this.localModel?.state !== 'not_published')
+          this.localModelError = err?.error?.error || this.t.instant('settings.localModel.failed');
+        this.loadLocalModel();
+      },
+    });
+  }
+
+  loadModelFile(input: HTMLInputElement): void {
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file) return;
+    this.localModelBusy = true;
+    this.localModelError = '';
+    this.api.loadLocalModelFile(file).subscribe({
+      next: (s) => { this.localModel = s; this.localModelBusy = false; },
+      error: (err) => {
+        this.localModelBusy = false;
+        this.localModelError = err?.error?.error || this.t.instant('settings.localModel.failed');
+        this.loadLocalModel();
+      },
+    });
   }
 
   loadMlStatus(): void {

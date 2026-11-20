@@ -4043,10 +4043,11 @@ int BurstCollectorService::announceQuietNights(std::chrono::system_clock::time_p
                   << kNightQuiet.count() << " min, it is over"
                   << (rec ? "" : " (the STR has no record for it yet)") << std::endl;
 
-        // SDD-078 D2: the night's close is when its Garmin SpO2 is asked for.
+        // SDD-078 D2: the night's close is when its Garmin SpO2 is asked for;
+        // SDD-013: and when the local sleep model writes its summary.
         {
             std::lock_guard<std::mutex> lk(night_closed_mu_);
-            if (night_closed_) night_closed_(n.date_folder);
+            for (const auto& f : night_closed_) f(n.date_folder);
         }
 
         // D5: SleepHQ gets it now, with no second quiet window. Not a night

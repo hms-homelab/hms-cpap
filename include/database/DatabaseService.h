@@ -150,7 +150,8 @@ public:
                      double avg_ahi,
                      double avg_usage_hours,
                      double compliance_pct,
-                     const std::string& summary_text) override;
+                     const std::string& summary_text,
+                     const std::string& source = "llm") override;
 
     bool saveOximetrySession(const std::string& device_id,
                              const cpapdash::parser::OximetrySession& session) override;

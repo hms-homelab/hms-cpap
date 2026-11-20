@@ -95,7 +95,7 @@ public:
     bool aggregateDailySummaryFromSessions(const std::string&) override { return true; }
     std::optional<SessionMetrics> getNightlyMetrics(const std::string&, const std::chrono::system_clock::time_point&) override { return std::nullopt; }
     std::vector<SessionMetrics> getMetricsForDateRange(const std::string&, int) override { return {}; }
-    bool saveSummary(const std::string&, const std::string&, const std::string&, const std::string&, int, double, double, double, const std::string&) override { return true; }
+    bool saveSummary(const std::string&, const std::string&, const std::string&, const std::string&, int, double, double, double, const std::string&, const std::string&) override { return true; }
     void* rawConnection() override { return nullptr; }
     bool saveOximetrySession(const std::string&, const cpapdash::parser::OximetrySession&) override { return true; }
     bool oximetrySessionExists(const std::string&, const std::string&) override { return false; }

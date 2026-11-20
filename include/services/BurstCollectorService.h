@@ -146,10 +146,15 @@ public:
 
     /// SDD-078 D2: told the DATALOG folder (YYYYMMDD) of each night
     /// announceQuietNights closes, on the burst's thread; it must only take
-    /// the event and return. Empty: nobody listens.
-    void setNightClosedListener(std::function<void(const std::string&)> f) {
+    /// the event and return. SDD-013: more than one listens (Garmin, the
+    /// local sleep model), each told in the order added.
+    void addNightClosedListener(std::function<void(const std::string&)> f) {
         std::lock_guard<std::mutex> lk(night_closed_mu_);
-        night_closed_ = std::move(f);
+        if (f) night_closed_.push_back(std::move(f));
+    }
+    void clearNightClosedListeners() {
+        std::lock_guard<std::mutex> lk(night_closed_mu_);
+        night_closed_.clear();
     }
 
     /**
@@ -362,7 +367,7 @@ private:
     std::shared_ptr<CpapDashSyncService> cpapdash_sync_;
     std::shared_ptr<MyAirService> myair_;
     std::mutex night_closed_mu_;
-    std::function<void(const std::string&)> night_closed_;   // SDD-078 D2
+    std::vector<std::function<void(const std::string&)>> night_closed_;   // SDD-078 D2, SDD-013
     std::string device_name_;
     /// SDD-010: the card ROOT when CPAP_SOURCE=local. STR.edf and DATALOG are
     /// siblings INSIDE it. Never the DATALOG folder itself: that was the old

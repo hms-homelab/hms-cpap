@@ -137,6 +137,8 @@ set(TEST_SOURCES
     services/test_NightFacts.cpp
     services/test_AiGrounding.cpp
     database/test_NightFactsBackends.cpp
+    # SDD-013: the local sleep model's harness, no model file needed.
+    model/test_LocalModel.cpp
     services/test_SummaryPrompt.cpp
     services/test_O2RingCsvParser.cpp
     services/test_O2RingCsvWriter.cpp

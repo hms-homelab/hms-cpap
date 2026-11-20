@@ -191,10 +191,11 @@ bool PostgresDatabase::saveSummary(const std::string& device_id,
                                    double avg_ahi,
                                    double avg_usage_hours,
                                    double compliance_pct,
-                                   const std::string& summary_text) {
+                                   const std::string& summary_text,
+                                   const std::string& source) {
     return db_->saveSummary(device_id, period, range_start, range_end,
                             nights_count, avg_ahi, avg_usage_hours,
-                            compliance_pct, summary_text);
+                            compliance_pct, summary_text, source);
 }
 
 // -- Equipment profiles + supplies (SDD-004) ----------------------------------
