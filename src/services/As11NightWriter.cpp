@@ -422,10 +422,28 @@ std::vector<StoredSpan> As11NightWriter::streamedSpans(const std::string& serial
     return out;
 }
 
+std::string As11NightWriter::nightFor(const std::string& serial, int64_t utc_ms) const {
+    std::lock_guard<std::mutex> lk(mtx_);
+    return sleepDayFolder(clockFor(serial)(utc_ms));
+}
+
 int As11NightWriter::writeStoredGaps(const std::string& serial, const std::string& night,
                                      const std::vector<StoredSpan>& mask_on) {
+    int written = 0;
+    std::function<void(const std::string&)> hook;
+    {
+        std::lock_guard<std::mutex> lk(mtx_);
+        written = fillStoredGaps(serial, night, mask_on);
+        hook = night_ended_;
+    }
+    // Outside the lock, as after onStreamEnd: the night is imported again.
+    if (hook) hook(serial);
+    return written;
+}
+
+int As11NightWriter::fillStoredGaps(const std::string& serial, const std::string& night,
+                                    const std::vector<StoredSpan>& mask_on) {
     using namespace cpapdash::parser;
-    std::lock_guard<std::mutex> lk(mtx_);
     std::vector<StoredSpan> streamed;
     for (const auto& s : machine(serial).segments)
         if (s.night == night && !s.starts.empty()) streamed.push_back({s.start_ms, s.end_ms});

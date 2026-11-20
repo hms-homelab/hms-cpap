@@ -95,9 +95,14 @@ public:
     /// 6.25 Hz) and a <stamp>_PLD.edf (inspiratory pressure, leak, 0.5 Hz),
     /// named by the run's first sample on the machine's wall clock. A file of
     /// that name already there (streamed, a card's, or written before) is
-    /// never replaced. Returns how many files were written.
+    /// never replaced. Returns how many files were written. The night's files
+    /// changed, so the night-ended hook follows (the night is imported again).
     int writeStoredGaps(const std::string& serial, const std::string& night,
                         const std::vector<StoredSpan>& mask_on);
+
+    /// The sleep day folder ("YYYYMMDD") a UTC instant falls in on this
+    /// machine's wall clock, as a streamed segment's is named.
+    std::string nightFor(const std::string& serial, int64_t utc_ms) const;
 
     static constexpr int64_t kSegmentGapMs = 60 * 1000;
     static constexpr int64_t kEventTailMs = 2 * 60 * 1000;
@@ -126,6 +131,8 @@ private:
     WallClockFn clockFor(const std::string& serial) const;
     void writeSegment(const std::string& serial, const Segment& s);
     void writeEvents(const std::string& serial, const std::string& night);
+    int fillStoredGaps(const std::string& serial, const std::string& night,
+                       const std::vector<StoredSpan>& mask_on);   // mtx_ held
     std::vector<as11::StreamBlock> readSegment(const std::string& file) const;
 
     std::string data_dir_;

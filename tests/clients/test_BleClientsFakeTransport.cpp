@@ -473,6 +473,22 @@ TEST(As11BleLink, NoNightLoopWithoutAnAdapter) {
     EXPECT_EQ(t->discover_calls, 0);
 }
 
+// SDD-070 D1/D7: the stored pages wait while the machine records, a night
+// streams or an O2 Ring transfer runs; the next Summary pull asks again.
+TEST(As11StoredPull, WaitsWhileTheMachineRecordsOrTheRadioIsHeld) {
+    EXPECT_EQ(AirSense11BleClient::storedPullHeldBy(false), "");
+    EXPECT_EQ(AirSense11BleClient::storedPullHeldBy(true), "the machine is recording a night");
+    {
+        ble::RadioInUse night("streaming", "an AirSense 11 night streaming");
+        EXPECT_EQ(AirSense11BleClient::storedPullHeldBy(false), "an AirSense 11 night streaming");
+    }
+    {
+        ble::RadioInUse ring("o2ring_transfer", "an O2 Ring transfer");
+        EXPECT_EQ(AirSense11BleClient::storedPullHeldBy(false), "an O2 Ring transfer");
+    }
+    EXPECT_EQ(AirSense11BleClient::storedPullHeldBy(false), "");
+}
+
 // ── the ring ──
 
 TEST(O2RingBleMatch, ProtocolByNameOrService) {

@@ -115,10 +115,20 @@ public:
     // night that is streaming does not let go, and the caller gives up.
     static constexpr int kRadioWaitMs = kConnectMs + 10000;
 
+    /// SDD-070 D1/D7: why the machine's stored pages may not be read now (the
+    /// machine is recording, or a night streaming or an O2 Ring transfer has
+    /// the radio), or empty when they may. A night held off is asked for by
+    /// the next Summary pull.
+    static std::string storedPullHeldBy(bool recording);
+
 private:
     void nightLoop();
     bool streamOnce();                            // false when the machine was not reached
     void afterPull(const std::string& serial, const std::string& from, const std::vector<uint8_t>& bytes);
+    // SDD-070: each night with usage in `summary` not yet done, from the
+    // machine's stored pages, then written into its folder. Under op_mtx_,
+    // on the Summary's open session.
+    void pullStoredNights(const std::string& serial, const std::vector<uint8_t>& summary, bool recording);
 
     std::shared_ptr<As11NightWriter> writer_;
     std::function<void()> night_ended_;

@@ -435,8 +435,11 @@ TEST_F(NightTest, AnUnstreamedNightIsFilledFromItsStoredPagesOnce) {
     fs::rename(root / "stored" / probe, root / "stored" / night);
 
     auto w = writer();
+    int ended = 0;   // the night is imported again once its files changed
+    w.setNightEndedHook([&](const std::string& serial) { EXPECT_EQ(serial, kSerial); ended++; });
     const std::vector<StoredSpan> on = {{t0 - 60 * 60 * 1000LL, t0 + 8 * 60 * 60 * 1000LL}};
     const int n = w.writeStoredGaps(kSerial, night, on);
+    EXPECT_EQ(ended, 1);
     const auto names = files(root / "DATALOG" / night);
     const auto brp = named(names, "BRP"), pld = named(names, "PLD");
     ASSERT_FALSE(brp.empty()) << ::testing::PrintToString(names);
@@ -451,6 +454,11 @@ TEST_F(NightTest, AnUnstreamedNightIsFilledFromItsStoredPagesOnce) {
     }
     EXPECT_EQ(std::atof(head.substr(244, 8).c_str()), 4.0);
     EXPECT_EQ(std::atol(head.substr(256 + 3 * 216, 8).c_str()), 25);   // first signal's samples per record
+    // D4: the recording field says it came from the stored pages, after the
+    // card's own fields.
+    const std::string recording = head.substr(88, 80);
+    EXPECT_NE(recording.find(std::string("SRN=") + kSerial), std::string::npos) << recording;
+    EXPECT_NE(recording.find("STORED=6.25Hz"), std::string::npos) << recording;
 
     // Run again: every name is there already, nothing is written or replaced.
     const auto before = fs::last_write_time(root / "DATALOG" / night / brp.front());
