@@ -19,6 +19,7 @@
 #include "database/IDatabase.h"
 #include "parsers/CpapdashBridge.h"
 #include "services/OscarCard.h"
+#include "services/OscarDb.h"
 
 #include <json/json.h>
 
@@ -30,6 +31,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <string>
 #include <thread>
@@ -37,6 +39,44 @@
 #include <vector>
 
 namespace hms_cpap::oscar {
+
+/// The OSCAR half of a read (SDD-080 D2 to D6, SDD-081 D5.2): the gate, the
+/// profile and the signature on the database, the headless import of
+/// `card_root`, the gate and the signature again, the exit classified. On
+/// Imported and NothingNew `heads` is the profile's sessions. The native
+/// reader and the helper run this same function.
+struct ImportRun {
+    Outcome                  outcome{Outcome::Failed};
+    std::string              version;
+    int                      schema{0};
+    std::string              message;
+    std::vector<SessionHead> heads;
+};
+ImportRun runImport(const Settings& s, const std::string& card_root, IProcessRunner& runner);
+
+/// SDD-081 D5: the second OSCAR half, the helper on a home PC. Used instead of
+/// the OSCAR on this computer while a helper is remembered.
+struct RemoteRead {
+    Outcome     outcome{Outcome::Failed};
+    std::string version;
+    std::string message;
+    std::string slice_dir;   ///< holds the returned oscar.db; "" when none came back
+};
+class IRemoteOscar {
+public:
+    virtual ~IRemoteOscar() = default;
+    /// A helper is remembered: reads are its.
+    virtual bool remembered() const = 0;
+    /// {"remembered","name","connected","version","update"} for the tile.
+    virtual Json::Value status() const = 0;
+    /// The heads OSCAR holds, as {key, start_ms, end_ms}: the keys wanted back.
+    using Want = std::function<std::vector<std::string>(const std::vector<std::string>& keys,
+                                                        const std::vector<std::pair<long long, long long>>& spans)>;
+    /// One read on the helper (D5.1 to D5.4): the changed P-SERIES files of
+    /// `card_root`, the import, `want`, the small oscar.db into `slice_dir`.
+    /// Blocks until the helper answers or its connection ends.
+    virtual RemoteRead read(const std::string& card_root, const Want& want, const std::string& slice_dir) = 0;
+};
 
 class OscarCardReader {
 public:
@@ -52,6 +92,10 @@ public:
         /// reader's thread.
         std::function<void(const CPAPSession& newest, int stored)> on_stored;
         bool containerised{false};   ///< Docker or the HA add-on (D8)
+        /// SDD-081: the helper, and the folder its returned file is kept in
+        /// for one pass. Null: OSCAR on this computer only.
+        std::shared_ptr<IRemoteOscar> remote;
+        std::string                   slice_dir;
     };
 
     struct ReadResult {
@@ -94,6 +138,15 @@ public:
 
 private:
     void run();
+    /// The store half's filter (D4): not stored yet, or grew; not a removed
+    /// night; not already held as a card row (then noted as done).
+    bool wanted(const std::string& key, long long start_ms, long long end_ms, const std::set<std::string>& removed);
+    /// The store half on an open, gated database: every wanted session of
+    /// `profile` read and stored. The count stored.
+    int storeFrom(OscarDb& db, const std::string& profile, const std::string& card_root,
+                  const std::set<std::string>& removed, std::optional<CPAPSession>& newest);
+    ReadResult readRemote(const std::string& root);
+    ReadResult finish(ReadResult r, Outcome o, std::string msg);
     /// Stores one decoded session. True when saved.
     bool storeOne(CPAPSession& s, long long session_number, const std::string& card_root);
 

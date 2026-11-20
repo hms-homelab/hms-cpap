@@ -167,6 +167,11 @@ Json::Value OscarCardReader::status() const {
     v["last_read_at"]  = static_cast<Json::Int64>(last_read_at_);
     v["sessions"]      = last_stored_;
     v["containerised"] = opt_.containerised;
+    // SDD-081: where OSCAR runs, and the helper when one is remembered.
+    const bool remote = opt_.remote && opt_.remote->remembered();
+    v["where"] = remote ? "helper" : "here";
+    if (opt_.remote) v["helper"] = opt_.remote->status();
+    if (remote && last_state_ == "never") v["state"] = "never";
     return v;
 }
 
@@ -196,23 +201,14 @@ void OscarCardReader::run() {
     }
 }
 
-OscarCardReader::ReadResult OscarCardReader::readOnce() {
-    ReadResult r;
+ImportRun runImport(const Settings& s, const std::string& root, IProcessRunner& runner) {
+    ImportRun r;
     const auto finish = [&](Outcome o, std::string msg) {
         r.outcome = o;
         r.message = std::move(msg);
-        std::lock_guard<std::mutex> lk(mu_);
-        last_state_ = outcomeName(r.outcome);
-        last_message_ = r.message;
-        if (!r.version.empty()) last_version_ = r.version;
-        last_read_at_ = std::time(nullptr);
-        last_stored_ = r.stored;
         return r;
     };
-
-    const Settings s = opt_.settings ? opt_.settings() : Settings{};
     if (!s.set_up()) return finish(Outcome::NotSetUp, "the OSCAR fields in Settings are not filled in");
-    const std::string root = opt_.card_root ? opt_.card_root() : "";
     std::error_code ec;
     if (root.empty() || !fs::is_directory(fs::path(root) / "P-SERIES", ec))
         return finish(Outcome::Failed, "no P-SERIES card folder to read");
@@ -227,6 +223,7 @@ OscarCardReader::ReadResult OscarCardReader::readOnce() {
         if (!db) return finish(Outcome::NotSupported, why);
         const auto g = db->gate();
         r.version = g.version;
+        r.schema = g.schema;
         if (!g.ok) return finish(Outcome::NotSupported, g.why);
         const auto ps = db->profiles();
         if (std::find(ps.begin(), ps.end(), s.profile) == ps.end())
@@ -234,13 +231,14 @@ OscarCardReader::ReadResult OscarCardReader::readOnce() {
         before = db->signature(s.profile);
     }
 
-    const auto run = runner_->run(importCommand(s, root), jobLimitSeconds(cardBytes(root)));
+    const auto run = runner.run(importCommand(s, root), jobLimitSeconds(cardBytes(root)));
 
     std::string why;
     auto db = OscarDb::open(s.data_dir, &why);
     if (!db) return finish(Outcome::Failed, why);
     const auto g = db->gate();
     r.version = g.version;
+    r.schema = g.schema;
     // OSCAR was never told to upgrade (E4): a database it changed to another
     // schema is not read.
     if (!g.ok) return finish(Outcome::NotSupported, g.why);
@@ -257,52 +255,147 @@ OscarCardReader::ReadResult OscarCardReader::readOnce() {
         }
         return finish(o, msg);
     }
+    r.heads = db->sessions(s.profile);
+    return finish(o, "");
+}
 
-    // D4: every session not stored yet, or that grew.
-    const auto removed = opt_.removed ? opt_.removed() : std::set<std::string>{};
-    db->begin();
-    const auto heads = db->sessions(s.profile);
-    std::optional<CPAPSession> newest;
-    for (const auto& h : heads) {
-        const std::string key = sessionKey(h);
-        const auto known = done_.find(key);
-        if (known != done_.end() && h.end_ms <= known->second) continue;
-        const auto start = sessionClock(h.start_ms);
-        const auto end = sessionClock(h.end_ms);
-        if (isRemovedNight(removed, start)) continue;   // SDD-029
-        if (known == done_.end() && opt_.db) {
-            // First look in this process: a card row already stored at this
-            // start, as long, is done. A Bluetooth copy is not (D5).
-            bool held = false;
-            for (const auto& sp : As11NightImport::storedSpansOverlapping(*opt_.db, opt_.device_id, start, end)) {
-                const auto ds = sp.start > start ? sp.start - start : start - sp.start;
-                if (!sp.constructed && ds < std::chrono::seconds(1) && sp.end + std::chrono::seconds(1) >= end) {
-                    held = true;
-                    break;
-                }
-            }
-            if (held) {
-                done_[key] = h.end_ms;
-                continue;
+OscarCardReader::ReadResult OscarCardReader::finish(ReadResult r, Outcome o, std::string msg) {
+    r.outcome = o;
+    r.message = std::move(msg);
+    std::lock_guard<std::mutex> lk(mu_);
+    last_state_ = outcomeName(r.outcome);
+    last_message_ = r.message;
+    if (!r.version.empty()) last_version_ = r.version;
+    last_read_at_ = std::time(nullptr);
+    last_stored_ = r.stored;
+    return r;
+}
+
+bool OscarCardReader::wanted(const std::string& key, long long start_ms, long long end_ms,
+                             const std::set<std::string>& removed) {
+    const auto known = done_.find(key);
+    if (known != done_.end() && end_ms <= known->second) return false;
+    const auto start = sessionClock(start_ms);
+    const auto end = sessionClock(end_ms);
+    if (isRemovedNight(removed, start)) return false;   // SDD-029
+    if (known == done_.end() && opt_.db) {
+        // First look in this process: a card row already stored at this
+        // start, as long, is done. A Bluetooth copy is not (D5).
+        for (const auto& sp : As11NightImport::storedSpansOverlapping(*opt_.db, opt_.device_id, start, end)) {
+            const auto ds = sp.start > start ? sp.start - start : start - sp.start;
+            if (!sp.constructed && ds < std::chrono::seconds(1) && sp.end + std::chrono::seconds(1) >= end) {
+                done_[key] = end_ms;
+                return false;
             }
         }
+    }
+    return true;
+}
+
+int OscarCardReader::storeFrom(OscarDb& db, const std::string& profile, const std::string& root,
+                               const std::set<std::string>& removed, std::optional<CPAPSession>& newest) {
+    int stored = 0;
+    db.begin();
+    for (const auto& h : db.sessions(profile)) {
+        const std::string key = sessionKey(h);
+        if (!wanted(key, h.start_ms, h.end_ms, removed)) continue;
         std::string err;
-        auto parsed = db->read(h, opt_.device_id, opt_.device_name, &err);
+        auto parsed = db.read(h, opt_.device_id, opt_.device_name, &err);
         if (!parsed) {
             std::cerr << kTag << err << std::endl;
             continue;
         }
         if (!storeOne(*parsed, h.session_id, root)) continue;
         done_[key] = h.end_ms;
-        ++r.stored;
+        ++stored;
         if (!newest || parsed->session_start > newest->session_start) newest = std::move(*parsed);
     }
-    db->end();
+    db.end();
+    return stored;
+}
+
+OscarCardReader::ReadResult OscarCardReader::readOnce() {
+    ReadResult r;
+    const std::string root = opt_.card_root ? opt_.card_root() : "";
+    // SDD-081 D5: while a helper is remembered, the read is its.
+    if (opt_.remote && opt_.remote->remembered()) return readRemote(root);
+
+    const Settings s = opt_.settings ? opt_.settings() : Settings{};
+    const ImportRun run = runImport(s, root, *runner_);
+    r.version = run.version;
+    if (run.outcome != Outcome::Imported && run.outcome != Outcome::NothingNew)
+        return finish(r, run.outcome, run.message);
+
+    // D4: every session not stored yet, or that grew. Opened and gated again:
+    // the database is read only as it stands after OSCAR's exit.
+    std::string why;
+    auto db = OscarDb::open(s.data_dir, &why);
+    if (!db) return finish(r, Outcome::Failed, why);
+    const auto g = db->gate();
+    if (!g.ok) return finish(r, Outcome::NotSupported, g.why);
+    const auto removed = opt_.removed ? opt_.removed() : std::set<std::string>{};
+    std::optional<CPAPSession> newest;
+    r.stored = storeFrom(*db, s.profile, root, removed, newest);
     if (r.stored > 0 && opt_.db) {
         opt_.db->aggregateDailySummaryFromSessions(opt_.device_id);   // SDD-026
         if (opt_.on_stored && newest) opt_.on_stored(*newest, r.stored);
     }
-    return finish(r.stored > 0 ? Outcome::Imported : o, "");
+    return finish(r, r.stored > 0 ? Outcome::Imported : run.outcome, "");
+}
+
+OscarCardReader::ReadResult OscarCardReader::readRemote(const std::string& root) {
+    ReadResult r;
+    std::error_code ec;
+    if (root.empty() || !fs::is_directory(fs::path(root) / "P-SERIES", ec))
+        return finish(r, Outcome::Failed, "no P-SERIES card folder to read");
+    const auto removed = opt_.removed ? opt_.removed() : std::set<std::string>{};
+    const std::string slice_dir =
+        !opt_.slice_dir.empty() ? opt_.slice_dir : (fs::temp_directory_path() / "hms-cpap-oscar-slice").string();
+
+    // D5.3: the store half's own filter decides what comes back.
+    const IRemoteOscar::Want want = [&](const std::vector<std::string>& keys,
+                                        const std::vector<std::pair<long long, long long>>& spans) {
+        std::vector<std::string> out;
+        for (size_t i = 0; i < keys.size() && i < spans.size(); ++i)
+            if (wanted(keys[i], spans[i].first, spans[i].second, removed)) out.push_back(keys[i]);
+        return out;
+    };
+    const RemoteRead rr = opt_.remote->read(root, want, slice_dir);
+    r.version = rr.version;
+    const auto cleanup = [&] {
+        std::error_code e;
+        if (!rr.slice_dir.empty()) fs::remove_all(rr.slice_dir, e);   // kept for the one pass
+    };
+    if (rr.outcome != Outcome::Imported && rr.outcome != Outcome::NothingNew) {
+        cleanup();
+        return finish(r, rr.outcome, rr.message);
+    }
+    if (rr.slice_dir.empty()) return finish(r, rr.outcome, "");   // nothing wanted
+
+    // D5.5: the store half, unchanged, on the returned file; the gate again.
+    std::string why;
+    auto db = OscarDb::open(rr.slice_dir, &why);
+    if (!db) {
+        cleanup();
+        return finish(r, Outcome::Failed, why);
+    }
+    const auto g = db->gate();
+    r.version = g.version;
+    if (!g.ok) {
+        db.reset();
+        cleanup();
+        return finish(r, Outcome::NotSupported, g.why);
+    }
+    const auto ps = db->profiles();
+    std::optional<CPAPSession> newest;
+    if (!ps.empty()) r.stored = storeFrom(*db, ps.front(), root, removed, newest);
+    db.reset();
+    cleanup();
+    if (r.stored > 0 && opt_.db) {
+        opt_.db->aggregateDailySummaryFromSessions(opt_.device_id);   // SDD-026
+        if (opt_.on_stored && newest) opt_.on_stored(*newest, r.stored);
+    }
+    return finish(r, r.stored > 0 ? Outcome::Imported : rr.outcome, "");
 }
 
 bool OscarCardReader::storeOne(CPAPSession& s, long long session_number, const std::string& card_root) {

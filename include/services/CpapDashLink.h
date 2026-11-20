@@ -17,6 +17,8 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace hms_cpap {
 
@@ -28,6 +30,10 @@ struct CpapDashEndpoint {
     /// A WebSocket ping this often, so an idle socket is never silent: the
     /// gateway closes one that has heard nothing from hms-cpap for 90 s.
     double      ping_every_s = 30.0;
+    /// More headers on the upgrade (SDD-081: the OSCAR helper's PC name and
+    /// probe mark). An empty token sends no Authorization, an empty install
+    /// id no X-Hms-Install.
+    std::vector<std::pair<std::string, std::string>> headers;
 };
 
 class CpapDashLink {
@@ -36,11 +42,12 @@ public:
         bool        ok = false;
         int         http_status = 0;   ///< the upgrade's answer when it was refused, 0 when unknown
         std::string error;             ///< why not, for Settings
+        std::string http_body;         ///< the refused upgrade's body, when it was learned
     };
     struct Frame {
-        enum class Kind { Text, Ping, Closed };
+        enum class Kind { Text, Ping, Closed, Binary };
         Kind        kind = Kind::Text;
-        std::string text;              ///< Text: the frame
+        std::string text;              ///< Text: the frame; Binary: its bytes (SDD-081)
         int         close_code = 0;    ///< Closed: the peer's close code, 0 when none was given
         std::string close_reason;      ///< Closed: the peer's close reason
     };

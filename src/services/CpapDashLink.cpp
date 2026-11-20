@@ -7,6 +7,7 @@
 #include <drogon/WebSocketClient.h>
 #include <trantor/net/EventLoopThread.h>
 
+#include <algorithm>
 #include <condition_variable>
 #include <deque>
 #include <future>
@@ -50,6 +51,13 @@ struct Inbox {
 
 size_t discardBody(char*, size_t size, size_t n, void*) { return size * n; }
 
+// A refused upgrade's body, kept up to 4 KB (SDD-081: who the helper is).
+size_t keepBody(char* p, size_t size, size_t n, void* user) {
+    auto* s = static_cast<std::string*>(user);
+    if (s->size() < 4096) s->append(p, std::min(size * n, 4096 - s->size()));
+    return size * n;
+}
+
 class DrogonLink final : public CpapDashLink {
 public:
     explicit DrogonLink(CpapDashEndpoint ep) : ep_(std::move(ep)), inbox_(std::make_shared<Inbox>()) {}
@@ -67,9 +75,10 @@ public:
 
         auto req = drogon::HttpRequest::newHttpRequest();
         req->setPath(ep_.path);
-        req->addHeader("Authorization", "Bearer " + token);
-        req->addHeader("X-Hms-Install", install_id);
+        if (!token.empty()) req->addHeader("Authorization", "Bearer " + token);
+        if (!install_id.empty()) req->addHeader("X-Hms-Install", install_id);
         req->addHeader("User-Agent", user_agent);
+        for (const auto& [k, v] : ep_.headers) req->addHeader(k, v);
 
         auto inbox = inbox_;
         client_->setMessageHandler([inbox](std::string&& msg, const drogon::WebSocketClientPtr&,
@@ -77,6 +86,11 @@ public:
             if (type == drogon::WebSocketMessageType::Text) {
                 Frame f;
                 f.kind = Frame::Kind::Text;
+                f.text = std::move(msg);
+                inbox->push(std::move(f));
+            } else if (type == drogon::WebSocketMessageType::Binary) {
+                Frame f;
+                f.kind = Frame::Kind::Binary;
                 f.text = std::move(msg);
                 inbox->push(std::move(f));
             } else if (type == drogon::WebSocketMessageType::Ping) {
@@ -132,7 +146,8 @@ public:
         // Drogon does not hand over a refused upgrade's response, so the
         // same request is asked once more over plain HTTP to learn its
         // status: a 401 is the token, which Settings says (SDD-059 D9).
-        if (r == drogon::ReqResult::BadResponse) out.http_status = probe(token, install_id, user_agent);
+        if (r == drogon::ReqResult::BadResponse)
+            out.http_status = probe(token, install_id, user_agent, &out.http_body);
         close();
         return out;
     }
@@ -188,7 +203,8 @@ public:
     }
 
 private:
-    int probe(const std::string& token, const std::string& install_id, const std::string& user_agent) {
+    int probe(const std::string& token, const std::string& install_id, const std::string& user_agent,
+              std::string* body) {
         CURL* c = curl_easy_init();
         if (!c) return 0;
         const std::string url = std::string(ep_.tls ? "https://" : "http://") + ep_.host + ":" +
@@ -197,9 +213,12 @@ private:
         const std::string auth    = "Authorization: Bearer " + token;
         const std::string install = "X-Hms-Install: " + install_id;
         const std::string ua      = "User-Agent: " + user_agent;
-        h = curl_slist_append(h, auth.c_str());
-        h = curl_slist_append(h, install.c_str());
+        if (!token.empty()) h = curl_slist_append(h, auth.c_str());
+        if (!install_id.empty()) h = curl_slist_append(h, install.c_str());
         h = curl_slist_append(h, ua.c_str());
+        std::vector<std::string> more;
+        for (const auto& [k, v] : ep_.headers) more.push_back(k + ": " + v);
+        for (const auto& m : more) h = curl_slist_append(h, m.c_str());
         h = curl_slist_append(h, "Connection: Upgrade");
         h = curl_slist_append(h, "Upgrade: websocket");
         h = curl_slist_append(h, "Sec-WebSocket-Version: 13");
@@ -207,7 +226,12 @@ private:
         curl_easy_setopt(c, CURLOPT_URL, url.c_str());
         curl_easy_setopt(c, CURLOPT_HTTPHEADER, h);
         curl_easy_setopt(c, CURLOPT_HTTP_VERSION, CURL_HTTP_VERSION_1_1);
-        curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, discardBody);
+        if (body) {
+            curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, keepBody);
+            curl_easy_setopt(c, CURLOPT_WRITEDATA, body);
+        } else {
+            curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, discardBody);
+        }
         curl_easy_setopt(c, CURLOPT_TIMEOUT, 10L);
         curl_easy_setopt(c, CURLOPT_NOSIGNAL, 1L);
         curl_easy_perform(c);

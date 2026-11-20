@@ -132,8 +132,18 @@ const char* outcomeName(Outcome o) {
         case Outcome::Failed:       return "failed";
         case Outcome::NothingNew:   return "nothing_new";
         case Outcome::Imported:     return "imported";
+        case Outcome::HelperOffline: return "helper_offline";
+        case Outcome::HelperUpdate:  return "helper_update";
     }
     return "failed";
+}
+
+Outcome outcomeFromName(const std::string& name) {
+    for (Outcome o : {Outcome::NotSetUp, Outcome::NoProgram, Outcome::NotSupported, Outcome::NoProfile, Outcome::Busy,
+                      Outcome::Timeout, Outcome::ReadNothing, Outcome::Failed, Outcome::NothingNew,
+                      Outcome::Imported, Outcome::HelperOffline, Outcome::HelperUpdate})
+        if (name == outcomeName(o)) return o;
+    return Outcome::Failed;
 }
 
 Outcome classifyExit(const ProcessResult& r, bool db_changed) {

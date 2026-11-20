@@ -334,6 +334,7 @@ Json::Value buildDevices(const DeviceInputs& in, DevicesStore& store) {
     for (auto& d : shown) arr.append(d);
     out["devices"]     = arr;
     out["stream_port"] = in.stream_port;
+    out["oscar_helper"] = in.oscar_helper;   // SDD-081 D4
     out["now"]         = static_cast<Json::Int64>(in.now);
     return out;
 }

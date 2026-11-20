@@ -499,6 +499,8 @@ private:
     mutable std::mutex oscar_mu_;
     std::shared_ptr<oscar::OscarCardReader> oscar_reader_;
     std::shared_ptr<oscar::IProcessRunner> oscar_runner_;   // null: the system's
+    std::shared_ptr<oscar::IRemoteOscar> oscar_remote_;      // SDD-081
+    std::string oscar_slice_dir_;
     oscar::Settings oscar_settings_;
     bool oscar_settings_set_ = false;   // setOscarSettings ran: the config's copy is older
     std::string oscar_card_root_;
@@ -663,8 +665,17 @@ public:
     /// A Sleep Bridge's rebuild wrote these card-relative files under
     /// [card_root]: a .B01 among them is a session closing (D2).
     void oscarCardWritten(const std::string& card_root, const std::vector<std::string>& rels);
-    /// "Read now" (D7). False when no encrypted card has been found.
-    bool requestOscarRead();
+    /// "Read now" (D7), or SDD-081 D6's helper hello. False when no encrypted
+    /// card has been found.
+    bool requestOscarRead(const std::string& why = "Read now");
+    /// SDD-081: the OSCAR helper, used for the read while one is remembered,
+    /// and the folder its returned file is kept in for one pass. Before the
+    /// first burst.
+    void setOscarRemote(std::shared_ptr<oscar::IRemoteOscar> remote, std::string slice_dir) {
+        std::lock_guard<std::mutex> lk(oscar_mu_);
+        oscar_remote_ = std::move(remote);
+        oscar_slice_dir_ = std::move(slice_dir);
+    }
     /// The Devices tile's OSCAR line; null when no encrypted card was found.
     Json::Value oscarStatus() const;
     /// The three Settings fields, after PUT /api/oscar saved them.
