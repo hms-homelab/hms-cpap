@@ -104,6 +104,7 @@ set(TEST_SOURCES
     utils/test_DbProbeCli.cpp
     utils/test_FileLogger.cpp
     utils/test_ReExec.cpp
+    utils/test_ShutdownOrder.cpp
     utils/test_LogTail.cpp
     utils/test_ParentWatch.cpp
     # SDD-067: the add-on's data directory move and the fallback report.

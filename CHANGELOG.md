@@ -264,6 +264,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The AI agent's MQTT connection has no built-in user name.** With `MQTT_USER` unset it connects anonymously, as the collector does; a set `MQTT_USER`/`MQTT_PASSWORD` is used as before.
 
 ### Fixed
+- **A stop during a re-parse no longer loses the night.** With the web UI,
+  a SIGTERM (docker stop, a service restart) ends the server through Drogon's
+  own handler, and the backfill worker was left running until a static
+  destructor joined it inside exit(). A re-parse caught mid-save kept writing
+  after the database client's statics were destroyed: on PostgreSQL the
+  COMMIT went out as an empty statement, the save printed "saved
+  successfully" and rolled back on exit, the process then crashed, and the
+  night the re-parse had already deleted was missing until the next import
+  read it from the card again. The worker is now stopped as soon as the
+  server returns, and finishes the session it is saving first.
 - **The local sleep model is given the night's STR row, as the daily summary
   is (SDD-013).** It was given the stored night alone, so every ResMed night
   reached it as "Therapy mode: CPAP" (no ResMed session stores its mode) and
