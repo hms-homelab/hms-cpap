@@ -389,6 +389,28 @@ bool DatabaseService::connect() {
                 // Column may already exist or table not yet created — ignore
             }
 
+            // SDD-058 D4: the events computed from the flow, apart from the
+            // machine's, and which set a session's index was counted from.
+            try {
+                pqxx::work txn(*conn_);
+                txn.exec(R"(
+                    CREATE TABLE IF NOT EXISTS cpap_computed_events (
+                    id                SERIAL PRIMARY KEY,
+                    session_id        INT NOT NULL,
+                    event_type        TEXT,
+                    event_timestamp   TIMESTAMP NOT NULL,
+                    duration_seconds  FLOAT DEFAULT 0,
+                    details           TEXT,
+                    FOREIGN KEY (session_id) REFERENCES cpap_sessions(id) ON DELETE CASCADE
+                    )
+                )");
+                txn.exec("CREATE INDEX IF NOT EXISTS idx_computed_events_session ON cpap_computed_events(session_id)");
+                txn.exec("ALTER TABLE cpap_session_metrics ADD COLUMN IF NOT EXISTS index_events TEXT DEFAULT 'machine'");
+                txn.commit();
+            } catch (const std::exception& e) {
+                std::cerr << "PostgreSQL: SDD-058 computed events table: " << e.what() << std::endl;
+            }
+
             // Auto-migrate v2.0.0: PLD and ASV support
             try {
                 pqxx::work txn(*conn_);
@@ -2777,7 +2799,7 @@ IDatabase::SessionKeyReport DatabaseService::inspectSessionKey() {
 static const char* const kSessionChildTables[] = {
     "cpap_session_files",  "cpap_session_metrics",   "cpap_breathing_summary",
     "cpap_breaths",        "cpap_events",            "cpap_vitals",
-    "cpap_calculated_metrics", "cpap_sleep_stages",
+    "cpap_calculated_metrics", "cpap_sleep_stages",   "cpap_computed_events",
 };
 
 IDatabase::SessionKeyRepair DatabaseService::repairSessionKey() {

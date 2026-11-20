@@ -4,6 +4,7 @@
 #include "clients/EzShareClient.h"
 #include "llm_client.h"
 #include "parsers/CpapdashBridge.h"
+#include "services/ComputedEvents.h"
 #include "services/DataPublisherService.h"
 #include "services/SupplyPublisher.h"
 #include "services/CpapDashSyncService.h"
@@ -306,6 +307,9 @@ public:
     /// SDD-058 D2: how long a live card session may go without growing before
     /// it is closed. Test-only.
     void setCardMaskQuietForTest(std::chrono::seconds quiet) { card_mask_quiet_ = quiet; }
+    /// SDD-058 D6: the gate is closed in every build; only a test opens it,
+    /// to exercise what the computed events would do.
+    void setComputedEventsOpenForTest(bool open) { computed_events_open_ = open; }
 
     /// Test-only: the id nights are being stored under (SDD-042).
     const std::string& deviceIdForTest() const { return device_id_; }
@@ -408,10 +412,22 @@ private:
     //    (SDD-049) and a Philips card with plain files. One source at a time.
 
     /// What this process last saved for each session, by start (epoch
-    /// seconds): its seconds x 2, plus 1 once its summary is on the card. A
-    /// stored session is read again once per process, every one of them, and
-    /// then whenever that changed.
-    std::map<long long, int> card_seen_;
+    /// seconds): its seconds x 2, plus 1 once its summary is on the card, and
+    /// how many machine events it had. A stored session is read again once
+    /// per process, every one of them, and then whenever either changed: a
+    /// Luna writes its .evt at the stop, after the last second it grew by
+    /// (SDD-058 D2, D4), and only growth is the session being written now.
+    struct CardSeen {
+        int growth = 0;
+        size_t events = 0;
+        /// SDD-058 D4: the set its index was saved from (gate open only); a
+        /// session that stops being written is saved again when it changes.
+        IndexEvents index_from = IndexEvents::Machine;
+    };
+    std::map<long long, CardSeen> card_seen_;
+
+    /// SDD-058 D6: kComputedEventsOpen, false.
+    bool computed_events_open_ = kComputedEventsOpen;
 
     /// SDD-058 D2: the session being written now, so its night reads live
     /// (the night page's LIVE banner and its refresh). A session that starts or
@@ -438,6 +454,10 @@ private:
     struct CardSession {
         std::unique_ptr<CPAPSession> session;
         int closed = -1;
+        /// SDD-058 D3: its computed_events were asked for (the gate is open).
+        bool computed = false;
+        /// SDD-058 D4: the card carries the machine's event file.
+        bool card_has_event_file = true;
     };
 
     /// Save what changed, keep the session being written open, close the

@@ -26,10 +26,22 @@
 // after all: it is said on again, for the same session (a real mask-off and
 // on starts a new session file).
 //
+// A BMC / React Health Luna (SDD-058 D1) appends every session, one packet a
+// second, to the same <serial>.000 at the card root, and writes its .evt at
+// the stop. The .000 growing is the mask on, and the same quiet rule takes it
+// off; the session is the packets' own (its start named YYYYMMDD_HHMMSS like
+// a ResMed stem, its end the last packet's second). A .evt written is read
+// as the parser reads it and its new apneas are the live events. The apneas
+// computed from the flow (SDD-058 D3) are live events too, but only with
+// `computed_events` on, which it is not until SDD-058 D6's proof passes
+// (kComputedEventsOpen).
+//
 // Nothing here stores or counts for the night's record: the burst cycle
 // parses the files and owns the numbers. This is the live view, pushed as
 // it happens, to the house's MQTT and the log.
 //
+#include "services/ComputedEvents.h"   // kComputedEventsOpen (SDD-058 D6)
+
 #include <chrono>
 #include <cstdint>
 #include <functional>
@@ -44,7 +56,8 @@ struct LiveEvent {
     std::string description;   // the machine's own label
     std::chrono::system_clock::time_point at;
     double      duration_s{0};
-    std::string file;          // card-relative EVE or CSL it came from
+    std::string file;          // card-relative EVE, CSL, .evt or .000 it came from
+    bool        computed{false};   // SDD-058 D3: found in the flow, not scored by the machine
 };
 
 /// Where the live view goes. Each may be empty.
@@ -70,7 +83,8 @@ public:
 
     LiveNight(std::string card_root, LiveSink sink,
               std::chrono::seconds mask_quiet  = std::chrono::seconds(300),
-              std::chrono::seconds stall_limit = std::chrono::seconds(15 * 60));
+              std::chrono::seconds stall_limit = std::chrono::seconds(15 * 60),
+              bool computed_events = kComputedEventsOpen);
 
     /// How long a batch must have been with us before it counts as the
     /// stream being alive: the rebuild that follows a batch runs within the
@@ -98,11 +112,20 @@ public:
 private:
     void setMask(bool on);
     void readEvents(const std::string& path, bool report);
+    /// SDD-058 D1: the Luna card's new apneas, the machine's (when its .evt
+    /// was written) and the computed ones (when on and the .000 grew).
+    void readLunaEvents(bool machine, bool computed, bool report);
+    void report(LiveEvent e);
 
     std::string                 root_;
     LiveSink                    sink_;
     std::chrono::seconds        mask_quiet_;
     std::chrono::seconds        stall_limit_;
+    bool                        computed_events_{false};
+    std::string                 luna_events_file_;   // the .evt, card-relative
+    // Apneas already reported, per Luna session (its start, civil seconds).
+    std::map<long long, size_t> luna_machine_seen_;
+    std::map<long long, size_t> luna_computed_seen_;
     bool                        mask_on_{false};
     Clock::time_point           last_therapy_write_{};
     Clock::time_point           last_delivery_{};

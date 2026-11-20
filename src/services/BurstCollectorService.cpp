@@ -4114,13 +4114,15 @@ bool BurstCollectorService::executeBmcBurst() {
         }
     }
 
-    auto read = bmc_ingestion_->readSessions(device_id_, device_name_);
+    // SDD-058 D3, D6: the computed apneas only with the gate open.
+    auto read = bmc_ingestion_->readSessions(device_id_, device_name_, computed_events_open_);
     if (!read.ok) {
         std::cerr << "CPAP: " << read.error << std::endl;
         return false;
     }
     std::vector<CardSession> sessions;
-    for (auto& s : read.sessions) sessions.push_back({std::move(s), -1});
+    for (auto& s : read.sessions)
+        sessions.push_back({std::move(s), -1, computed_events_open_, read.has_event_file});
     storeCardSessions(std::move(sessions), "BMC", cycle_start);
     return true;
 }
@@ -4171,16 +4173,26 @@ void BurstCollectorService::storeCardSessions(std::vector<CardSession> sessions,
     bool live_grew = false;
     int imported = 0, grown = 0;
     for (std::size_t i = 0; i < sessions.size(); ++i) {
-        const auto& s = *sessions[i].session;
+        auto& s = *sessions[i].session;
         const int closed = sessions[i].closed;
         const auto start = *s.session_start;
         if (isRemovedNight(removed_nights_, start)) continue;   // SDD-029
 
         const long long key =
             std::chrono::duration_cast<std::chrono::seconds>(start.time_since_epoch()).count();
-        const int seen_value = s.duration_seconds.value_or(0) * 2 + (closed == 1 ? 1 : 0);
+        CardSeen seen_value{s.duration_seconds.value_or(0) * 2 + (closed == 1 ? 1 : 0),
+                            s.events.size()};
         const bool is_newest = i + 1 == sessions.size();
         const bool stored = db_service_->sessionExists(device_id_, start);
+        // SDD-058 D4, gate open: the set the index would be counted from if
+        // the session is not being written now; still live inside the quiet
+        // window, it keeps the computed set.
+        const bool still_live = key == card_live_start_ && now - card_live_grew_at_ < card_mask_quiet_;
+        const auto choose = [&](bool written) {
+            return sessions[i].computed
+                       ? chooseIndexEvents(sessions[i].card_has_event_file, written || still_live)
+                       : IndexEvents::Machine;
+        };
         // SDD-058 D2: the newest session started or grew since this process
         // last looked, so the machine is writing it now; never one the card
         // says has ended.
@@ -4188,19 +4200,33 @@ void BurstCollectorService::storeCardSessions(std::vector<CardSession> sessions,
         if (stored) {
             const auto seen = card_seen_.find(key);
             const bool first_look = seen == card_seen_.end();
-            const bool changed = first_look || seen_value != seen->second;
+            const bool grew = !first_look && seen_value.growth != seen->second.growth;
+            const bool changed = first_look || grew || seen_value.events != seen->second.events ||
+                                 choose(false) != seen->second.index_from;
             if (!changed) {
+                seen_value.index_from = seen->second.index_from;
                 card_seen_[key] = seen_value;
                 continue;
             }
-            written_now = is_newest && !first_look;
+            // Events alone (a Luna's .evt at the stop) are not the machine
+            // writing the session.
+            written_now = is_newest && grew;
         }
         if (closed == 1) written_now = false;
+
+        // SDD-058 D4: with the gate open, the set the index is counted from.
+        const IndexEvents index_from = choose(written_now);
+        seen_value.index_from = index_from;
+        if (index_from == IndexEvents::Computed) indexFromComputed(s);
 
         if (!db_service_->saveSession(s)) {
             std::cerr << "CPAP: " << what << " session could not be saved" << std::endl;
             continue;
         }
+        if (sessions[i].computed &&
+            !storeComputedEvents(*db_service_, device_id_, start, s.computed_events, index_from))
+            std::cerr << "CPAP: " << what << " session's computed events could not be saved"
+                      << std::endl;
         if (written_now) {
             // Open while it grows: the night reads live. Closed below, on its
             // own data end, once it stops growing.
