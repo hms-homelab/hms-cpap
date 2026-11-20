@@ -191,8 +191,8 @@ int runSetup(const std::string& data_dir, const std::string& config_path) {
         std::cerr << "Could not save " << config_path << std::endl;
         return 1;
     }
-    std::cout << "\nSaved to " << config_path << ". Start the helper with:\n"
-              << "  sudo systemctl enable --now hms-cpap-oscar-helper@$USER" << std::endl;
+    std::cout << "\nSaved to " << config_path << ". The helper reads it when it starts:\n"
+              << "  sudo systemctl restart hms-cpap-oscar-helper" << std::endl;
     return v["ok"].asBool() ? 0 : 2;
 }
 

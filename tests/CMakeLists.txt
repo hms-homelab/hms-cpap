@@ -118,6 +118,8 @@ set(TEST_SOURCES
     desktop/test_PendingUpdate.cpp
     desktop/test_SourceChoice.cpp
     desktop/test_BridgeSetup.cpp
+    # SDD-081: the OSCAR helper role, its window's choices and its tray line.
+    desktop/test_HelperSetup.cpp
 
     utils/test_FailureLogThrottle.cpp
     clients/test_EzShareClient.cpp
@@ -278,6 +280,7 @@ set(SUPERVISOR_PURE_SOURCES
     ${CMAKE_SOURCE_DIR}/desktop/qt/core/pure/SourceChoice.cpp
     ${CMAKE_SOURCE_DIR}/desktop/qt/core/pure/BridgeSetup.cpp
     ${CMAKE_SOURCE_DIR}/desktop/qt/core/pure/BridgeText.cpp
+    ${CMAKE_SOURCE_DIR}/desktop/qt/core/pure/HelperSetup.cpp
 )
 
 # Create test executable

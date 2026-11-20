@@ -30,6 +30,8 @@
 #include "ConfigGate.h"
 #include "ConfigModel.h"
 #include "ConfiguratorWindow.h"
+#include "HelperSetup.h"
+#include "HelperWindows.h"
 #include "SingleInstance.h"
 #include "TrayShell.h"
 
@@ -113,6 +115,42 @@ int main(int argc, char** argv) {
     }
 
     ChildProcess child(service);
+
+    // ── SDD-081: the role, asked on a first run (D1, F9) ───────────────────
+    // One role per install: hms-cpap itself, or the OSCAR helper, which runs
+    // `hms_cpap --oscar-helper` and has a tray of its own.
+    {
+        bool failed = false;
+        const auto existing = readConfig(&failed);
+        std::string role = roleOf(existing);
+        if (role.empty() && !existing.has_value() && !failed) {
+            RoleWindow choose;
+            if (choose.exec() == QDialog::Accepted && choose.helperChosen()) role = kRoleHelper;
+        }
+        if (role == kRoleHelper) {
+            nlohmann::json doc = existing.value_or(nlohmann::json::object());
+            bool ready = helperReady(doc);
+            if (!ready) {
+                HelperSetupWindow setup(service, doc);
+                if (setup.exec() == QDialog::Accepted) {
+                    applyHelperInputs(doc, setup.inputs());
+                    ready = writeConfig(doc);
+                } else if (!existing.has_value()) {
+                    // The role is kept, so the next start comes back here.
+                    doc["role"] = kRoleHelper;
+                    writeConfig(doc);
+                }
+            }
+            child.setExtraArguments({"--oscar-helper"});
+            HelperTray helper_tray(&child, service, dataDir());
+            QObject::connect(&instance, &SingleInstance::messageReceived, &helper_tray,
+                             [&helper_tray](const QString&) { helper_tray.announcePresence(); });
+            if (ready) child.start();
+            else helper_tray.showStatus({{"state", "no_address"}});
+            return app.exec();
+        }
+    }
+
     TrayShell tray(&child, service);
 
     QObject::connect(&instance, &SingleInstance::messageReceived,

@@ -62,6 +62,7 @@ qt_add_executable(${SUPERVISOR_TARGET}
     core/pure/SourceChoice.cpp
     core/pure/BridgeSetup.cpp
     core/pure/BridgeText.cpp
+    core/pure/HelperSetup.cpp
 
     core/qt/PreflightRunner.cpp
     core/qt/ChildProcess.cpp
@@ -75,6 +76,7 @@ qt_add_executable(${SUPERVISOR_TARGET}
     ui/ConfiguratorWindow.cpp
     ui/StartupWindow.cpp
     ui/BridgeSetupWindow.cpp
+    ui/HelperWindows.cpp
 )
 
 target_include_directories(${SUPERVISOR_TARGET} PRIVATE

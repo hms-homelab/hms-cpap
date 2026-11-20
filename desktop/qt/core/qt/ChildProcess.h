@@ -59,6 +59,10 @@ public:
     void stop();
     void restart();
 
+    /// SDD-081: arguments put before the supervisor's own on every start
+    /// ("--oscar-helper" when this install is an OSCAR helper).
+    void setExtraArguments(QStringList args) { extra_args_ = std::move(args); }
+
     State state()     const { return state_; }
     bool  isRunning() const { return state_ == State::Starting || state_ == State::Running; }
     qint64 pid()      const;
@@ -84,6 +88,7 @@ private:
     void setState(State s);
 
     QString  exe_path_;
+    QStringList extra_args_;   ///< SDD-081: "--oscar-helper" for the helper role
     std::unique_ptr<QProcess> proc_;
     State    state_ = State::Stopped;
     bool     stopping_ = false;     ///< set by stop(), so an exit is not a surprise

@@ -8,6 +8,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **A DreamStation 2 card is read by an OSCAR helper on a home PC (SDD-081).**
+  hms-cpap in Docker or the Home Assistant add-on cannot run OSCAR. A Windows,
+  macOS or Linux PC at home that has OSCAR 2.1.1 now reads the card for it:
+  install hms-cpap there and choose "Read OSCAR for hms-cpap" (Linux:
+  `install.sh --oscar-helper`, or `hms_cpap --oscar-helper --setup` and the
+  `hms-cpap-oscar-helper` systemd unit). The helper finds hms-cpap by itself
+  (mDNS, then port 8894 on the network) and asks for the address only when
+  it cannot. It connects out to hms-cpap on port 8894; the first one to
+  connect is remembered with no code to type, later ones are refused, and
+  the Devices page shows "OSCAR helper: <PC name>" with Forget. When the
+  machine ends a session, hms-cpap sends the PC the card's changed encrypted
+  `P-SERIES` files, the PC's own OSCAR imports them with no window into
+  hms-cpap's profile, and only the sessions hms-cpap asks for come back, as a
+  small `oscar.db` read exactly as a local one (source `card`). A PC that was
+  off is read when it next connects; no timer. Nothing is decrypted outside
+  OSCAR, and OSCAR is never shipped. Settings > Source offers "On this
+  computer" or "On a home PC"; hms-cpap advertises itself as `_hms-cpap._tcp`.
 - **Each machine is read on its own clock (SDD-074, issue #79).** Each
   machine's card on the Devices page has a "Machine clock": same as this
   computer (the default, and what every install had), a fixed offset from

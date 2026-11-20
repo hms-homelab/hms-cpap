@@ -514,14 +514,18 @@ int main(int argc, char** argv) {
     // web server, no collector, no database.
     {
         bool helper_flag = false;
+        bool plain_start = true;   // no other mode asked for (--preflight, --read-card, ...)
         std::string helper_config;
         for (int i = 1; i < argc; ++i) {
             if (std::strcmp(argv[i], "--oscar-helper") == 0) helper_flag = true;
-            if (std::strcmp(argv[i], "--config") == 0 && i + 1 < argc) helper_config = argv[i + 1];
+            if (std::strcmp(argv[i], "--config") == 0 && i + 1 < argc) helper_config = argv[++i];
+            else if (std::strcmp(argv[i], "--no-browser") != 0 && std::strcmp(argv[i], "--exit-with-parent") != 0)
+                plain_start = false;
         }
         const std::string helper_dir = hms_cpap::AppConfig::dataDir();
         if (helper_config.empty()) helper_config = helper_dir + "/config.json";
-        if (helper_flag || hms_cpap::oscar::helper::configRole(helper_config) == "oscar_helper")
+        if (helper_flag ||
+            (plain_start && hms_cpap::oscar::helper::configRole(helper_config) == "oscar_helper"))
             return hms_cpap::oscar::helper::runHelperMain(std::vector<std::string>(argv + 1, argv + argc),
                                                           helper_dir, helper_config, HMS_CPAP_VERSION);
     }
