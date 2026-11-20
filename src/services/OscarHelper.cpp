@@ -137,14 +137,6 @@ void Helper::connectAgain() {
     cv_.notify_all();
 }
 
-void Helper::configChanged() {
-    {
-        std::lock_guard<std::mutex> lk(mu_);
-        ++gen_;
-    }
-    cv_.notify_all();
-}
-
 Json::Value Helper::state() const {
     std::lock_guard<std::mutex> lk(mu_);
     return state_;
@@ -194,7 +186,7 @@ void Helper::run() {
             case End::Refused:
             case End::Update:
             case End::NoAddress:
-                break;   // until "Connect again", a new address, or a restart
+                break;   // until "Connect again" or a restart (a new address restarts the helper)
         }
         std::unique_lock<std::mutex> lk(mu_);
         const auto done = [&] { return stop_ || gen_ != gen; };
@@ -284,7 +276,7 @@ Helper::End Helper::runOnce() {
                 end = End::Stop;
                 break;
             }
-            if (gen_ != gen) break;   // Connect again, a new address
+            if (gen_ != gen) break;   // Connect again
         }
         const std::string st = state()["state"].asString();
         if (st == "update" || st == "refused") {
