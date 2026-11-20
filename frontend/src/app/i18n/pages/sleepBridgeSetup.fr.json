@@ -42,7 +42,7 @@
         "alreadyOnline": "Un pont est déjà connecté. Est-ce celui-ci ?",
         "found": "{{sender}} trouvé",
         "setting": "Le dossier de votre pont devient la source...",
-        "sourceSet": "Le dossier de votre pont est maintenant la source (format de carte {{format}}).",
+        "sourceSet": "HMS-CPAP lit maintenant vos nuits depuis ce pont (carte {{format}}).",
         "formatGuessed": "Le pont n'a pas encore reconnu sa carte. Si c'est la carte d'un autre appareil, c'est corrigé quand l'appareil la lit.",
         "sourceFailed": "La source n'a pas pu être définie : {{error}}",
         "unreachable": "Si le test de configuration du pont dit qu'il n'atteint pas cet ordinateur, vérifiez que le port {{port}} y arrive (dans Docker, publiez 8894:8894) et qu'aucun pare-feu ne le bloque."
@@ -87,7 +87,7 @@
     "copied": "Copié",
     "use": "Utiliser ce pont comme source",
     "inUse": "Ce pont est votre source",
-    "restarting": "C'est fait (format de carte {{format}}). HMS-CPAP redémarre pour le lire.",
+    "restarting": "HMS-CPAP lit maintenant vos nuits depuis ce pont (carte {{format}}). Redémarrage pour commencer la lecture...",
     "saved": "C'est fait (format de carte {{format}}).",
     "failed": "La source n'a pas pu être définie : {{error}}"
   },

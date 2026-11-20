@@ -417,8 +417,8 @@ public:
             }
             source_->setStyleSheet(QString());
             source_->setText(w_->t(Txt::WaitSourceSet).arg(w_->format_set == "bmc" ? "BMC / Luna" : "ResMed") +
-                             (w_->format_known ? QString() : "\n" + w_->t(Txt::WaitFormatUnknown)) +
-                             (restarting ? "\n" + w_->t(Txt::WaitRestarting) : QString()));
+                             (restarting ? " " + w_->t(Txt::WaitRestarting) : QString()) +
+                             (w_->format_known ? QString() : "\n" + w_->t(Txt::WaitFormatUnknown)));
             emit completeChanged();
         });
         connect(w, &BridgeSetupWindow::sendProgress, this, [this](int pct) {
