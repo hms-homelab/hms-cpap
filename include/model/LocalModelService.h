@@ -25,6 +25,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 
@@ -61,7 +62,11 @@ public:
     // -- The events. Each returns at once; the worker does the work. ---------
 
     /// SDD-046: the night in DATALOG folder [date_folder] (YYYYMMDD) closed.
-    void onNightClosed(const std::string& date_folder);
+    /// [str] is its STR row when the card has one, taken by the caller on the
+    /// burst's thread (BurstCollectorService::strRecordForDay), and rides with
+    /// the event so the model is given the night the daily summary is.
+    void onNightClosed(const std::string& date_folder,
+                       std::optional<STRDailyRecord> str = std::nullopt);
 
     /// The Settings switch turned on. "" when accepted: on at once with a
     /// verified model in place, else the download is queued. Otherwise why
@@ -81,14 +86,16 @@ public:
 
     /// Runs one event now, on the calling thread, as the worker would. For
     /// the suite (and the worker itself).
-    void handle(Event e, const std::string& arg = "");
+    void handle(Event e, const std::string& arg = "",
+                const std::optional<STRDailyRecord>& str = std::nullopt);
 
     /// The model directory (local_model.model_dir, or <data dir>/models).
     std::string dir() const;
 
 private:
     void run();
-    void enqueue(Event e, const std::string& arg);
+    void enqueue(Event e, const std::string& arg,
+                 std::optional<STRDailyRecord> str = std::nullopt);
     bool enabled() const;
     void setEnabled(bool on);
     std::unique_ptr<ILocalModel> makeModel() const;
@@ -98,7 +105,12 @@ private:
 
     mutable std::mutex mu_;   // the state below and the config's local_model block
     std::condition_variable cv_;
-    std::deque<std::pair<Event, std::string>> queue_;
+    struct Queued {
+        Event event;
+        std::string arg;
+        std::optional<STRDailyRecord> str;   ///< NightClosed only
+    };
+    std::deque<Queued> queue_;
     bool stopping_ = false;
     std::thread worker_;
 

@@ -6,7 +6,7 @@
 // must be the runtime's inputs byte for byte. So a synthetic night is not
 // rendered by a second renderer: it is read into the same SessionMetrics,
 // STRDailyRecord and NightOximetryFacts the database gives, and goes through
-// NightFacts::from() and model::factBlock() like a stored night.
+// model::modelNight() and model::factBlock() like a stored night.
 //
 // The shape (every figure optional unless said; an absent key is an absent
 // figure, never 0):
@@ -31,12 +31,13 @@
 
 namespace hms_cpap::model {
 
-/// A night read from JSON: what NightFacts::from() takes.
+/// A night read from JSON: what model::modelNight() takes.
 struct NightInput {
     SessionMetrics metrics;
     std::optional<STRDailyRecord> str;
     std::optional<NightOximetryFacts> oximetry;
 
+    /// The night as the local model is given it (model::modelNight).
     NightFacts facts() const;
 };
 

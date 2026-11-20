@@ -117,23 +117,30 @@ Narration narrate(const NightFacts& night, ILocalModel& model) {
     return r;
 }
 
+NightFacts modelNight(SessionMetrics m, const STRDailyRecord* str,
+                      const std::optional<NightOximetryFacts>& oximetry) {
+    if (!str && m.therapy_mode && *m.therapy_mode == 0) m.therapy_mode.reset();
+    return NightFacts::from(m, str, oximetry);
+}
+
 Narration narrateAndStore(IDatabase& db, const std::string& device_id, const std::string& sleep_day,
-                          ILocalModel& model) {
+                          ILocalModel& model, const STRDailyRecord* str) {
     Narration r;
     if (!model.ready()) {
         r.why = model.whyNotReady();
         return r;
     }
-    const auto night = night_facts::loadNight(db, device_id, sleep_day);
-    if (!night) {
+    const auto metrics = night_facts::nightMetrics(db, device_id, sleep_day);
+    if (!metrics) {
         r.why = "no closed night " + sleep_day + " in the database";
         return r;
     }
-    r = narrate(*night, model);
+    const auto night = modelNight(*metrics, str, night_facts::oximetryForNight(db, sleep_day));
+    r = narrate(night, model);
     if (!r.written) return r;
 
-    const double hours = night->usage_hours.value_or(0.0);
-    if (!db.saveSummary(device_id, "daily", sleep_day, sleep_day, 1, night->index, hours,
+    const double hours = night.usage_hours.value_or(0.0);
+    if (!db.saveSummary(device_id, "daily", sleep_day, sleep_day, 1, night.index, hours,
                         hours >= 4.0 ? 100.0 : 0.0, r.text, kLocalSummarySource)) {
         r.written = false;
         r.why = "the summary could not be stored";

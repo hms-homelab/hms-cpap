@@ -37,12 +37,14 @@ public:
     std::deque<std::optional<std::string>> replies;
     std::vector<double> temperatures;
     std::vector<std::string> prompts;
+    std::vector<std::string>* prompt_sink = nullptr;   ///< also told each prompt
     bool is_ready = true;
 
     bool ready() const override { return is_ready; }
     std::string whyNotReady() const override { return is_ready ? "" : "scripted: not ready"; }
     std::optional<std::string> generate(const std::string& prompt, const GenerateParams& p) override {
         prompts.push_back(prompt);
+        if (prompt_sink) prompt_sink->push_back(prompt);
         temperatures.push_back(p.temperature);
         if (replies.empty()) return std::nullopt;
         auto r = replies.front();
@@ -91,6 +93,32 @@ TEST(LocalModelFactBlock, IsTheNightsDayThenTheSharedRenderingAndStable) {
     EXPECT_EQ(block, "Night: 2099-07-01\n" + night_facts::renderNight(n))
         << "the block is NightFacts' own rendering, not a second one";
     EXPECT_EQ(block, factBlock(aNight())) << "the same night gives the same block";
+}
+
+// -- The night the model is given ----------------------------------------------
+
+TEST(LocalModelNight, TheStrNamesTheModeAndWithoutOneAStoredZeroIsNoMode) {
+    SessionMetrics m;
+    m.sleep_day = "2099-07-01";
+    m.usage_hours = 6.0;
+    m.therapy_mode = 0;   // what every ResMed session stores
+    auto mode = [&](STRDailyRecord::Family family, int str_mode) {
+        STRDailyRecord s;
+        s.family = family;
+        s.mode = str_mode;
+        return modelNight(m, &s, std::nullopt).therapy_mode.value_or("");
+    };
+    EXPECT_EQ(mode(STRDailyRecord::Family::AutoSet, 1), "APAP");
+    EXPECT_EQ(mode(STRDailyRecord::Family::BiLevel, 8), "VAuto");
+    EXPECT_EQ(mode(STRDailyRecord::Family::Asv, 7), "ASV (Fixed EPAP)");
+    EXPECT_EQ(mode(STRDailyRecord::Family::Cpap, 0), "CPAP");
+
+    const auto none = modelNight(m, nullptr, std::nullopt);
+    EXPECT_FALSE(none.therapy_mode) << "0 with no STR to name it is no mode, not CPAP";
+    EXPECT_EQ(factBlock(none).find("Therapy mode"), std::string::npos);
+
+    m.therapy_mode = 1;   // a parser that does fill the session's mode keeps it
+    EXPECT_EQ(modelNight(m, nullptr, std::nullopt).therapy_mode.value_or(""), "APAP");
 }
 
 // -- The validator -------------------------------------------------------------
@@ -303,6 +331,7 @@ protected:
             made_paths_.push_back(path);
             auto m = std::make_unique<ScriptedModel>();
             m->is_ready = ready;
+            m->prompt_sink = &prompts_;
             m->replies.push_back(reply);
             m->replies.push_back(reply);
             return std::unique_ptr<ILocalModel>(std::move(m));
@@ -327,6 +356,7 @@ protected:
     AppConfig config_;
     std::unique_ptr<LocalModelService> svc_;
     std::vector<std::string> made_paths_;
+    std::vector<std::string> prompts_;   ///< every prompt any model was given
     int downloads_ = 0;
 };
 
@@ -407,6 +437,33 @@ TEST_F(LocalModelServiceTest, AClosedNightIsSummarizedWithSourceLocal) {
     const auto last = svc_->status()["last"];
     EXPECT_EQ(last["night"].asString(), "2099-07-01");
     EXPECT_EQ(last["how"].asString(), "model");
+}
+
+TEST_F(LocalModelServiceTest, TheClosedNightsStrRowReachesTheModel) {
+    NightSpec n;
+    n.hypopneas = 6;
+    saveNight(*db_, device_, localAt(2099, 7, 1, 23), n);
+    make(testPin());
+    ASSERT_EQ(svc_->requestEnable(), "");
+    svc_->handle(LocalModelService::Event::Download);
+
+    STRDailyRecord str;
+    str.family = STRDailyRecord::Family::AutoSet;
+    str.mode = 1;
+    str.ahi = 1.0;
+    str.mask_events = 2;
+    str.leak_95 = 7.2;
+    str.mask_press_95 = 10.4;
+    svc_->handle(LocalModelService::Event::NightClosed, "20990701", str);
+    ASSERT_FALSE(prompts_.empty());
+    EXPECT_NE(prompts_.back().find("Therapy mode: APAP"), std::string::npos) << prompts_.back();
+    EXPECT_NE(prompts_.back().find("ResMed official daily summary"), std::string::npos);
+    EXPECT_NE(prompts_.back().find("95th leak: 7.20 L/min"), std::string::npos);
+
+    // A night the card has no STR row for: no STR block, and no "CPAP".
+    svc_->handle(LocalModelService::Event::NightClosed, "20990701");
+    EXPECT_EQ(prompts_.back().find("ResMed official daily summary"), std::string::npos);
+    EXPECT_EQ(prompts_.back().find("Therapy mode: CPAP"), std::string::npos) << prompts_.back();
 }
 
 TEST_F(LocalModelServiceTest, NothingIsWrittenWhenOffOrWhenTheModelCannotRun) {

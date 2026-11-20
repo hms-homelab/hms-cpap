@@ -51,6 +51,15 @@ struct Narration {
     NightFacts night;
 };
 
+/// The night the model is given: [m] with the night's own STR row [str]
+/// (none when the card has no record for it), the way the daily summary is
+/// built. The STR names the mode through the machine's family (SDD-030), so an
+/// AutoSet reads APAP and an AirCurve VAuto. With no STR a stored mode of 0 is
+/// no mode: every engine stores "none" as 0 and no ResMed parser fills it, so
+/// 0 would otherwise reach the model as "CPAP" for every ResMed night.
+NightFacts modelNight(SessionMetrics m, const STRDailyRecord* str,
+                      const std::optional<NightOximetryFacts>& oximetry);
+
 /// The temperatures of the first try and the one retry.
 constexpr double kFirstTemperature = 0.7;
 constexpr double kRetryTemperature = 0.2;
@@ -59,9 +68,10 @@ constexpr double kRetryTemperature = 0.2;
 Narration narrate(const NightFacts& night, ILocalModel& model);
 
 /// The night [sleep_day] (YYYY-MM-DD) of [device_id], narrated and stored
-/// as a daily summary with source "local". Nothing is stored when the night
-/// is not in the database or the model is not ready.
+/// as a daily summary with source "local". [str] is the night's STR row, when
+/// the card has one (modelNight). Nothing is stored when the night is not in
+/// the database or the model is not ready.
 Narration narrateAndStore(IDatabase& db, const std::string& device_id, const std::string& sleep_day,
-                          ILocalModel& model);
+                          ILocalModel& model, const STRDailyRecord* str = nullptr);
 
 }  // namespace hms_cpap::model

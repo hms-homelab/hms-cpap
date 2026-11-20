@@ -135,6 +135,11 @@ std::vector<NightFacts> loadRange(IDatabase& db, const std::string& device_id,
 std::optional<NightFacts> loadNight(IDatabase& db, const std::string& device_id,
                                     const std::string& sleep_day);
 
+/// The stored metrics of one closed night by its sleep day, as loadRange reads
+/// them (SDD-013: the local model builds its night from these and the STR).
+std::optional<SessionMetrics> nightMetrics(IDatabase& db, const std::string& device_id,
+                                           const std::string& sleep_day);
+
 /// YYYY-MM-DD of [now] - [days] days on the local clock (the sleep-day rule:
 /// days=0 is the night that started before now - 12 h).
 std::string sleepDayDaysAgo(int days);

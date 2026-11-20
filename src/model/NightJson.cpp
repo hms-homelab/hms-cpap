@@ -1,5 +1,7 @@
 #include "model/NightJson.h"
 
+#include "model/NarrationService.h"
+
 #include <functional>
 #include <map>
 #include <stdexcept>
@@ -104,7 +106,7 @@ const Setters<NightOximetryFacts>& oximetrySetters() {
 }  // namespace
 
 NightFacts NightInput::facts() const {
-    return NightFacts::from(metrics, str ? &*str : nullptr, oximetry);
+    return modelNight(metrics, str ? &*str : nullptr, oximetry);
 }
 
 NightInput nightFromJson(const json& j) {

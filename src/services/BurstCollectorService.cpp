@@ -4343,7 +4343,17 @@ void BurstCollectorService::republishNewestNight() {
 
 const STRDailyRecord* BurstCollectorService::strRecordForNight(
     const std::chrono::system_clock::time_point& session_start) const {
-    const std::string day = strDayForSessionStart(session_start);
+    return strRecordOf(strDayForSessionStart(session_start));
+}
+
+std::optional<STRDailyRecord> BurstCollectorService::strRecordForDay(
+    const std::string& yyyymmdd) const {
+    const auto* rec = strRecordOf(yyyymmdd);
+    if (!rec) return std::nullopt;
+    return *rec;
+}
+
+const STRDailyRecord* BurstCollectorService::strRecordOf(const std::string& day) const {
     for (auto it = last_str_records_.rbegin(); it != last_str_records_.rend(); ++it) {
         std::time_t t = std::chrono::system_clock::to_time_t(it->record_date);
         std::tm tm{};

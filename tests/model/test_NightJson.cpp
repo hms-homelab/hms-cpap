@@ -85,6 +85,8 @@ TEST(NightJson, AnAbsentFigureIsAbsentNotZero) {
     EXPECT_EQ(block.find("Leak:"), std::string::npos);
     EXPECT_EQ(block.find("SpO2"), std::string::npos);
     EXPECT_EQ(block.find("ResMed official daily summary"), std::string::npos);
+    // The local model's night (model::modelNight): a stored 0 with no STR is no mode.
+    EXPECT_EQ(block.find("Therapy mode"), std::string::npos) << block;
 }
 
 TEST(NightJson, UngradedNightCarriesNoAhi) {

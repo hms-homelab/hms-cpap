@@ -50,7 +50,8 @@ SEVERITY = {"excellent": 0.15, "typical": 0.40, "mild": 0.20, "moderate": 0.13, 
 USAGE = {"typical": 0.62, "short": 0.18, "very_short": 0.07, "long": 0.08, "full": 0.05}
 LEAK = {"typical": 0.62, "none": 0.13, "high": 0.18, "very_high": 0.07}
 P_OXIMETRY = 0.40        # nights with an O2 Ring; the rest are "missing SpO2"
-P_STR_RESMED = 0.60      # ResMed nights with an STR row; the rest "missing STR"
+P_STR_RESMED = 0.85      # ResMed nights with an STR row; the rest "missing STR"
+                         # (the card has no record for the night yet)
 P_PARTIAL = 0.12         # a group of figures was not recorded that night
 P_EVENT_DURATION = 0.30  # parsers that report event durations
 P_OTHER_EVENTS = 0.12    # nights with recorded event types outside the index
