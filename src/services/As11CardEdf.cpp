@@ -200,7 +200,9 @@ std::vector<uint8_t> writeStoredBRP(const WallClock& start, const std::string& s
     const auto n = static_cast<long>(records * kPerRecord);
 
     EDFWriteSpec spec;
-    spec.recording       = resmedRecordingField(start, serial, model_id, vid);
+    // D4: the recording field says where it came from, after the card's own
+    // fields (SRN, MID, VID read as before).
+    spec.recording       = resmedRecordingField(start, serial, model_id, vid) + " " + kStoredBrpNote;
     spec.start           = start;
     spec.record_duration = 4.0;
     spec.signals.push_back(signalOf("Flow.40ms", "L/s", -2.0, 3.0, -1000, 1500, kPerRecord,

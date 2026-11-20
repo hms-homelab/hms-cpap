@@ -366,3 +366,220 @@ TEST_F(NightTest, StrFromTheSummaryInTheModelsLayout) {
     EXPECT_NE(none.why.find("39999"), std::string::npos);
     EXPECT_FALSE(fs::exists(str));
 }
+
+// ── SDD-070: a night the stream missed, from the machine's stored pages ──
+
+namespace {
+
+// One of the bench night's stored pages (the parser's fixtures, copied).
+std::vector<uint8_t> storedFixture(const std::string& name) {
+    for (const char* base : {"tests/fixtures/airsense11_pages/", "../tests/fixtures/airsense11_pages/",
+                             "../../tests/fixtures/airsense11_pages/"}) {
+        std::ifstream in(std::string(base) + name, std::ios::binary);
+        if (in) return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+    }
+    return {};
+}
+
+// Keeps the four signal fixtures as page 0 of their spools; the first flow
+// sample's time, or 0 when a fixture is not found.
+int64_t keepBenchPages(const std::string& root, const std::string& night) {
+    const std::pair<const char*, const char*> spools[] = {
+        {"RespiratoryFlow6p25Hz", "RespiratoryFlow6p25Hz_first4.bin"},
+        {"MaskPressure6p25Hz", "MaskPressure6p25Hz_first4.bin"},
+        {"Leak0p5Hz", "Leak0p5Hz.bin"},
+        {"InspiratoryPressure0p5Hz", "InspiratoryPressure0p5Hz.bin"}};
+    for (const auto& [spool, file] : spools) {
+        const auto bytes = storedFixture(file);
+        if (bytes.empty() || !keepStoredPage(root, night, spool, 0, bytes)) return 0;
+    }
+    const auto flow = storedChunks(keptStoredPages(root, night, "RespiratoryFlow6p25Hz"));
+    return flow.empty() ? 0 : flow.front().start_ms;
+}
+
+// The bench night's stored events as page 0 of their spool; how many fall in
+// [from, to].
+size_t keepBenchEvents(const std::string& root, const std::string& night, int64_t from, int64_t to) {
+    const auto bytes = storedFixture("TherapyEvents-RespiratoryEvents.bin");
+    if (bytes.empty() || !keepStoredPage(root, night, kStoredEventsSpool, 0, bytes)) return 0;
+    size_t n = 0;
+    for (const auto& e : storedEvents({bytes}))
+        if (e.onset_ms >= from && e.onset_ms <= to) n++;
+    return n;
+}
+
+// "2026-11-04T03:00:01.000Z" for a UTC instant, as the stream reports one.
+std::string isoOf(int64_t utc_ms) {
+    const auto wc = fixedOffsetClock(0)(utc_ms);
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ", wc.year, wc.month, wc.day,
+                  wc.hour, wc.minute, wc.second, static_cast<int>(utc_ms % 1000));
+    return buf;
+}
+
+std::vector<std::string> named(const std::vector<std::string>& names, const std::string& kind) {
+    std::vector<std::string> out;
+    for (const auto& n : names) if (n.find("_" + kind + ".edf") != std::string::npos) out.push_back(n);
+    return out;
+}
+
+} // namespace
+
+TEST_F(NightTest, AnUnstreamedNightIsFilledFromItsStoredPagesOnce) {
+    // The bench night's pages, placed in the night the machine's clock puts them.
+    const fs::path root = dir_ / "as11" / kSerial;
+    const std::string probe = "probe";
+    const int64_t t0 = keepBenchPages(root.string(), probe);
+    if (t0 == 0) GTEST_SKIP() << "bench page fixtures not found";
+    const std::string night = sleepDayFolder(fixedOffsetClock(-300)(t0));
+    fs::rename(root / "stored" / probe, root / "stored" / night);
+
+    auto w = writer();
+    int ended = 0;   // the night is imported again once its files changed
+    w.setNightEndedHook([&](const std::string& serial) { EXPECT_EQ(serial, kSerial); ended++; });
+    const std::vector<StoredSpan> on = {{t0 - 60 * 60 * 1000LL, t0 + 8 * 60 * 60 * 1000LL}};
+    const int n = w.writeStoredGaps(kSerial, night, on);
+    EXPECT_EQ(ended, 1);
+    const auto names = files(root / "DATALOG" / night);
+    const auto brp = named(names, "BRP"), pld = named(names, "PLD");
+    ASSERT_FALSE(brp.empty()) << ::testing::PrintToString(names);
+    ASSERT_FALSE(pld.empty()) << ::testing::PrintToString(names);
+    EXPECT_EQ(n, static_cast<int>(brp.size() + pld.size()));
+
+    // The BRP is the stored rate: 4 s records, 25 samples each (6.25 Hz).
+    std::string head(256 + 3 * 256, '\0');
+    {
+        std::ifstream in(root / "DATALOG" / night / brp.front(), std::ios::binary);
+        in.read(head.data(), static_cast<std::streamsize>(head.size()));
+    }
+    EXPECT_EQ(std::atof(head.substr(244, 8).c_str()), 4.0);
+    EXPECT_EQ(std::atol(head.substr(256 + 3 * 216, 8).c_str()), 25);   // first signal's samples per record
+    // D4: the recording field says it came from the stored pages, after the
+    // card's own fields.
+    const std::string recording = head.substr(88, 80);
+    EXPECT_NE(recording.find(std::string("SRN=") + kSerial), std::string::npos) << recording;
+    EXPECT_NE(recording.find("STORED=6.25Hz"), std::string::npos) << recording;
+
+    // Run again: every name is there already, nothing is written or replaced.
+    const auto before = fs::last_write_time(root / "DATALOG" / night / brp.front());
+    EXPECT_EQ(w.writeStoredGaps(kSerial, night, on), 0);
+    EXPECT_EQ(fs::last_write_time(root / "DATALOG" / night / brp.front()), before);
+}
+
+TEST_F(NightTest, AStreamedStretchIsNotFilledFromStoredPages) {
+    const fs::path root = dir_ / "as11" / kSerial;
+    const int64_t t0 = keepBenchPages(root.string(), "probe");
+    if (t0 == 0) GTEST_SKIP() << "bench page fixtures not found";
+    const std::string night = sleepDayFolder(fixedOffsetClock(-300)(t0));
+    fs::rename(root / "stored" / "probe", root / "stored" / night);
+
+    // Two minutes streamed from the first stored sample.
+    auto w = writer();
+    for (int i = 0; i < 120; i++) w.onBlock(second(t0 + i * 1000));
+    w.onStreamEnd(kSerial);
+    const std::string streamed = named(files(root / "DATALOG" / night), "BRP").front();
+    EXPECT_EQ(records(root / "DATALOG" / night / streamed), 120);
+
+    const std::vector<StoredSpan> on = {{t0, t0 + 8 * 60 * 60 * 1000LL}};
+    w.writeStoredGaps(kSerial, night, on);
+    // The streamed BRP is untouched; anything stored starts after it ends.
+    EXPECT_EQ(records(root / "DATALOG" / night / streamed), 120);
+    const std::string after_stream = cpapdash::parser::resmedFileName(fixedOffsetClock(-300)(t0 + 120 * 1000), "BRP");
+    for (const auto& b : named(files(root / "DATALOG" / night), "BRP"))
+        if (b != streamed) EXPECT_GE(b, after_stream) << b;
+}
+
+namespace {
+
+// The bench pages and events placed in the night their first sample falls
+// in; that sample's time (0 when a fixture is missing) and the night.
+std::pair<int64_t, std::string> benchNight(const fs::path& root) {
+    const int64_t t0 = keepBenchPages(root.string(), "probe");
+    if (t0 == 0) return {0, ""};
+    const std::string night = sleepDayFolder(fixedOffsetClock(-300)(t0));
+    fs::rename(root / "stored" / "probe", root / "stored" / night);
+    return {t0, night};
+}
+
+constexpr int64_t kHour = 60 * 60 * 1000LL;
+
+std::string eveOf(const std::string& brp) { return brp.substr(0, brp.find("_BRP")) + "_EVE.edf"; }
+
+} // namespace
+
+// The bench events page holds a later night than the signal pages' first
+// page (2026-11-04 against 11-02): these place the events in their own night,
+// whose first event's time this returns with the night.
+std::pair<int64_t, std::string> benchEventsNight() {
+    const auto stored = storedEvents({storedFixture("TherapyEvents-RespiratoryEvents.bin")});
+    if (stored.empty()) return {0, ""};
+    const int64_t te = stored.front().onset_ms;
+    return {te, sleepDayFolder(fixedOffsetClock(-300)(te))};
+}
+
+TEST_F(NightTest, AnUnstreamedNightWithOnlyStoredEventsGetsAnEve) {
+    const fs::path root = dir_ / "as11" / kSerial;
+    const auto [te, night] = benchEventsNight();
+    if (te == 0) GTEST_SKIP() << "bench events fixture not found";
+    const int64_t on = te - 10 * 60 * 1000LL;
+    const size_t in_night = keepBenchEvents(root.string(), night, on, on + 8 * kHour);
+    ASSERT_GT(in_night, 1u);
+
+    // No waveform page for this night: the EVE goes under its first mask-on gap.
+    auto w = writer();
+    EXPECT_EQ(w.writeStoredGaps(kSerial, night, {{on, on + 8 * kHour}}), 0);
+    const auto names = files(root / "DATALOG" / night);
+    ASSERT_EQ(named(names, "EVE").size(), 1u) << ::testing::PrintToString(names);
+    const auto eve = cpapdash::parser::resmedFileName(fixedOffsetClock(-300)(on), "EVE");
+    EXPECT_EQ(named(names, "EVE").front(), eve);
+    EXPECT_EQ(records(root / "DATALOG" / night / eve), static_cast<long>(1 + in_night));
+}
+
+TEST_F(NightTest, AStoredEventTheStreamAlsoGaveIsKeptOnce) {
+    const fs::path root = dir_ / "as11" / kSerial;
+    const auto [te, night] = benchEventsNight();
+    if (te == 0) GTEST_SKIP() << "bench events fixture not found";
+    const int64_t on = te - 30 * 1000LL;
+    const auto first = storedEvents({storedFixture("TherapyEvents-RespiratoryEvents.bin")}).front();
+
+    // Two minutes streamed around the first stored event, which also came live, 1 s off.
+    auto w = writer();
+    for (int i = 0; i < 120; i++) w.onBlock(second(on + i * 1000));
+    const int dur = static_cast<int>(first.duration_ms / 1000);
+    w.onEvent(kSerial, {storedEventName(first.type), isoOf(first.onset_ms + 1000), dur, dur});
+    w.onStreamEnd(kSerial);
+    const auto streamed_eve = named(files(root / "DATALOG" / night), "EVE");
+    ASSERT_EQ(streamed_eve.size(), 1u);
+    EXPECT_EQ(records(root / "DATALOG" / night / streamed_eve.front()), 2);   // the live one
+
+    // The pages are pulled after the night (D1).
+    const size_t in_night = keepBenchEvents(root.string(), night, on, on + 8 * kHour);
+    ASSERT_GT(in_night, 1u);
+    w.writeStoredGaps(kSerial, night, {{on, on + 8 * kHour}});
+    const auto names = files(root / "DATALOG" / night);
+    ASSERT_EQ(named(names, "EVE").size(), 1u) << ::testing::PrintToString(names);
+    EXPECT_EQ(named(names, "EVE").front(), streamed_eve.front());
+    // Every stored event once: the live one stands for its stored twin.
+    EXPECT_EQ(records(root / "DATALOG" / night / streamed_eve.front()), static_cast<long>(1 + in_night));
+}
+
+TEST_F(NightTest, AStoredRunBeforeTheStreamMovesTheEveAndLeavesOne) {
+    const fs::path root = dir_ / "as11" / kSerial;
+    const auto [t0, night] = benchNight(root);
+    if (t0 == 0) GTEST_SKIP() << "bench page fixtures not found";
+
+    // The stream only started an hour in; its EVE is named by its first block.
+    auto w = writer();
+    for (int i = 0; i < 30; i++) w.onBlock(second(t0 + kHour + i * 1000));
+    w.onStreamEnd(kSerial);
+    const auto streamed_brp = named(files(root / "DATALOG" / night), "BRP").front();
+    ASSERT_TRUE(fs::exists(root / "DATALOG" / night / eveOf(streamed_brp)));
+
+    w.writeStoredGaps(kSerial, night, {{t0, t0 + 2 * kHour}});
+    const auto names = files(root / "DATALOG" / night);
+    const auto eve = named(names, "EVE");
+    ASSERT_EQ(eve.size(), 1u) << ::testing::PrintToString(names);
+    EXPECT_EQ(eve.front(), eveOf(named(names, "BRP").front()));   // the stored BRP, the earlier
+    EXPECT_NE(eve.front(), eveOf(streamed_brp));
+    EXPECT_EQ(named(names, "CSL").size(), 1u);
+}

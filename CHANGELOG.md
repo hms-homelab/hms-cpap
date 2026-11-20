@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **An AirSense 11 night the stream missed is filled from the machine's
+  stored pages (SDD-070, #61, #62).** After a night, the Summary pull also
+  reads the machine's stored pages for each night with usage: its respiratory
+  events, flow and mask pressure (6.25 Hz), leak and inspiratory pressure
+  (0.5 Hz). The pages are kept as they came under
+  `as11/<serial>/stored/<night>/`. The minutes the machine was on the mask and
+  no streamed segment covers are written into the night's folder as card
+  files: a BRP at 6.25 Hz (its EDF recording field ends `STORED=6.25Hz`) and a
+  PLD, named as the card names them, so the charts, the OSCAR export and
+  SleepHQ read them as any other. The stored events go into the night's EVE,
+  an event the stream already gave (same kind, within 2 s) kept once. A file
+  already in the folder, streamed or a card's, is never replaced. Nothing runs
+  on a timer: the pull follows the Summary pull, never while the machine
+  records, a night streams or an O2 Ring transfer runs; a night not read to
+  the end is asked for again by the next Summary pull.
+
 ### Fixed
 - **Live O2 Ring samples in bridge mode sit on the same clock as the rest of
   the night.** On PostgreSQL and MySQL they were stamped with the database's
