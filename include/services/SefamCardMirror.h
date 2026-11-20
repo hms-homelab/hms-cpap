@@ -9,7 +9,7 @@
 //   1263R/24337476/DATA_229/DATA_229.INI   (S.Box AUTO: a folder per session)
 //   <model><serial>/260913/221004.ini      (SleepBox: a folder per day)
 //
-// D4 (Albin): the WHOLE card while the database holds no session for the
+// SDD-031 D4: the WHOLE card while the database holds no session for the
 // device; once there is history, only the session folders of the card's two
 // most recent nights. A file is fetched when it is new or its listed size or
 // card timestamp changed (the card files' rule), remembered in a small manifest

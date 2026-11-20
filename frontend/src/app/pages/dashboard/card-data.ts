@@ -1,7 +1,7 @@
 // Whether a dashboard card has anything to show. Kept free of Angular so
 // `npm test` can run it.
 //
-// The rule (Albin): an empty card is better not shown. A card with no data for
+// The rule: an empty card is better not shown. A card with no data for
 // the night or the source being viewed is left out, never drawn as a frame of
 // zeros, dashes, empty axes or a "not enough data" note. A myAir-only night
 // was the worst case: key metrics read "AHI 0.00 Excellent" for a night with

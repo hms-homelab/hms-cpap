@@ -35,7 +35,7 @@ std::function<bool(const ConfigModel&)> allOf(
 
 /// Mirrors PreflightService::sourceNeedsArchive.
 ///
-/// DELIBERATELY A SECOND COPY, kept rather than removed (Albin, 2026-09-06:
+/// DELIBERATELY A SECOND COPY, kept rather than removed (SDD-022:
 /// "drift dont remove it", "until we know is good"). It exists so the
 /// supervisor's pure core depends on nothing but the standard library, which is
 /// what makes it testable on every platform with no Qt and no display

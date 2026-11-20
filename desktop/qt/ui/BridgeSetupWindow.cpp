@@ -508,7 +508,7 @@ class OnlineStep : public Step {
 public:
     explicit OnlineStep(BridgeSetupWindow* w) : Step(w, 6, Txt::OnlineTitle) {
         body_->addWidget(words(w->t(Txt::OnlineBody), this, 1.3, true));
-        // A link, not a button (Albin, 2026-11-19), with the external-link
+        // A link, not a button (SDD-073 D6), with the external-link
         // mark after the words: it leaves for the browser.
         auto* open = new QLabel("<a href=\"" + QString(kTokenPage) + "\">" + w->t(Txt::OnlineOpen).toHtmlEscaped() +
                                     "</a>",

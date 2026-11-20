@@ -684,7 +684,7 @@ import { showLocalModelSection } from './local-model';
         </div>
 
         <!-- SDD-013: the local sleep model, shown only once a model is
-             published (Albin, 2026-11-19). Its switch acts at once through its
+             published (SDD-013 Status). Its switch acts at once through its
              own endpoint, not Save: turning it on downloads and checks the
              model. -->
         <div class="section" *ngIf="showLocalModelSection(localModel)">

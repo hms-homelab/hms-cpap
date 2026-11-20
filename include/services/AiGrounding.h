@@ -6,7 +6,7 @@
 // prompt with its facts), allowing the rounding a figure takes when it is
 // said with fewer places: 6.25 may come back as 6.3 or 6, never as 7. A
 // sentence that fails is regenerated once; one that fails again is KEPT and
-// the summary is flagged as unverified (Albin, 2026-11-19), not dropped.
+// the summary is flagged as unverified (SDD-072 D3), not dropped.
 //
 // Provider-independent: it reads text, so it works the same for Ollama,
 // Gemini, OpenAI and the small local models self-hosters run.

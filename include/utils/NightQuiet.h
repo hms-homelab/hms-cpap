@@ -31,7 +31,7 @@
 
 namespace hms_cpap {
 
-/// SDD-046 D1 (Albin, 2026-09-24): an hour, ResMed's own idea of a closed night.
+/// SDD-046 D1: an hour, ResMed's own idea of a closed night.
 inline constexpr std::chrono::minutes kNightQuiet{60};
 
 /// One night's row in cpap_night_quiet.

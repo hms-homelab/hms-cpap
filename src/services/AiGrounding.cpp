@@ -199,7 +199,7 @@ Result check(const std::string& summary, const std::string& given, const Generat
                 out += piece.substr(0, lead == std::string::npos ? 0 : lead) + candidate;
                 ++r.regenerated;
             } else {
-                out += piece;   // D3 (Albin): kept, and the summary is flagged
+                out += piece;   // SDD-072 D3: kept, and the summary is flagged
                 ++r.unverified;
             }
         }

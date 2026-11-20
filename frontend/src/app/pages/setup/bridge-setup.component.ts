@@ -146,7 +146,7 @@ import { SleepBridgeWatch } from '../../services/sleepbridge-watch';
         @case ('online') {
           <h1>{{ 'setup.bridge.online.title' | translate }}</h1>
           <p class="subtitle">{{ 'setup.bridge.online.body' | translate }}</p>
-          <!-- A link, not a button (Albin, 2026-11-19), with the external-link
+          <!-- A link, not a button (SDD-073 D6), with the external-link
                mark after the words: it opens CpapDash (Settings > hms-cpap),
                the same page as the desktop app's link. -->
           <p class="token-link">

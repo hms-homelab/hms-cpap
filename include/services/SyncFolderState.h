@@ -114,7 +114,7 @@ FolderLedger clearSidecarDebt(const FolderLedger& in);
 
 /// What the night should report.
 ///
-/// SDD-046 (Albin, 2026-09-24): a night is Live until its hour of quiet has
+/// SDD-046 D1: a night is Live until its hour of quiet has
 /// passed ([hour_passed], utils/NightQuiet.h). Then it is Complete when every
 /// file the card listed is here, and Partial when one is not: the transfer
 /// never finished (D3). Partial no longer means "no STR": the STR is not a

@@ -57,7 +57,7 @@ std::map<std::string, std::string> all();
 void setPrimaryDevice(const std::string& device_id);
 std::string primaryDevice();
 
-/// Albin's decision 2: times are shown on the machine's clock (the default,
+/// SDD-074 decision 2: times are shown on the machine's clock (the default,
 /// the stored text) or on this computer's. Set from config display_clock.
 void setDisplayHost(bool host);
 bool displayHost();

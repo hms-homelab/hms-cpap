@@ -7,8 +7,8 @@
 //                                          "+10:00", or a zone name; 400 with the reason
 //                                          when it is not one
 //   POST /api/devices/clock/reread        {"device_id"}: back up the device's rows, then
-//                                          read every archived night again (D3, Albin's
-//                                          decision 3)
+//                                          read every archived night again (D3,
+//                                          SDD-074 decision 3)
 //
 // and, on GET /api/devices, a "clock" object on each machine's card and on the
 // ring's (view() below). Pure functions over IDatabase, so the suite covers
@@ -24,7 +24,7 @@
 namespace hms_cpap::clockapi {
 
 /// The learned offset and the effective one differ by this much or more: the
-/// Devices page warns (Albin's decision 1).
+/// Devices page warns (SDD-074 decision 1).
 constexpr long long kWarnDifference = 15 * 60;
 
 /// {"device_id", "setting", "kind": "host"|"fixed"|"zone", "offset_now",

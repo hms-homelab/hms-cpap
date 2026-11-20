@@ -1,7 +1,7 @@
 // SDD-072 D3: every number in the model's text is one it was given.
 //
 // A sentence with an invented number is caught and regenerated once; one that
-// fails again is kept and the summary flagged as unverified (Albin's decision:
+// fails again is kept and the summary flagged as unverified (SDD-072 D3:
 // kept, not dropped). Rounded figures pass; a summary with no numbers passes.
 #include <gtest/gtest.h>
 

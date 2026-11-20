@@ -234,7 +234,7 @@ TEST_F(MyAirServiceTest, SweepPollsOnceAndThenWaits) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 TEST_F(MyAirServiceTest, ComparisonPutsBothSidesOnOneRowWithDeltas) {
-    // The real shape from Albin's own account on 2026-08-24: ours said 100
+    // The real shape from one account on 2026-08-24: ours said 100
     // minutes / AHI 1.8 / leak 32.4, myAir said 116 / 1.5 / 31.2.
     addOurNight("2026-08-24", 100, 1.8, 32.4);
     std::string err;
