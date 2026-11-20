@@ -12,7 +12,6 @@
 #include <QFrame>
 #include <QPen>
 #include <QPolygonF>
-#include <QGridLayout>
 #include <QJsonArray>
 #include <QHBoxLayout>
 #include <QHostAddress>
@@ -272,15 +271,8 @@ public:
     explicit ConnectStep(BridgeSetupWindow* w) : Step(w, 3, Txt::ConnectTitle) {
         body_->addWidget(words(w->t(Txt::ConnectBody), this, 1.05));
         auto* row = new QHBoxLayout;
-        auto* phone = new QWidget(this);
-        auto* pv = new QGridLayout(phone);
-        pv->setContentsMargins(0, 0, 0, 0);
-        pv->addWidget(picture("d3-join-bridge-wifi.png", 280, phone), 0, 0);
-        // The network's name over the blank row of the picture (section 5).
-        auto* ssid = new QLabel("CpapDash-…", phone);
-        ssid->setStyleSheet("background: rgba(255,255,255,0.85); color: #102E54; font-weight: bold; padding: 2px 6px;");
-        pv->addWidget(ssid, 0, 0, Qt::AlignCenter);
-        row->addWidget(phone);
+        // A phone screenshot (portrait) that shows the network row itself.
+        row->addWidget(picture("d3-join-bridge-wifi.png", 240, this), 0, Qt::AlignTop);
 
         auto* right = new QVBoxLayout;
         address_ = words(QString(), this, 2.6, true);

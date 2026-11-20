@@ -59,7 +59,6 @@ import { SleepBridgeWatch } from '../../services/sleepbridge-watch';
           <h1>{{ 'setup.bridge.connect.title' | translate }}</h1>
           <div class="phone">
             <img class="pic" [src]="pics.joinWifi" alt="" />
-            <span class="wifi-name">CpapDash-…</span>
           </div>
           <p class="subtitle">{{ 'setup.bridge.connect.body' | translate }}</p>
           @if (addressConfirmed) {
@@ -200,10 +199,8 @@ import { SleepBridgeWatch } from '../../services/sleepbridge-watch';
     .pics li span::before { content: counter(n) ". "; color: #64b5f6; font-weight: 600; }
     .warn { background: #3a2a10; border: 1px solid #a06800; color: #ffcc80; border-radius: 8px;
             padding: 0.7rem 0.9rem; font-weight: 600; text-align: center; }
-    .phone { position: relative; max-width: 420px; margin: 0 auto; }
-    .wifi-name { position: absolute; left: 50%; top: 46%; transform: translateX(-50%);
-                 background: rgba(255,255,255,0.92); color: #111; font-weight: 700; font-size: 0.95rem;
-                 padding: 0.2rem 0.6rem; border-radius: 4px; }
+    /* A phone screenshot, portrait: phone-sized, not the width of the card. */
+    .phone { max-width: 260px; margin: 0 auto; }
     .address-row { display: flex; align-items: center; justify-content: center; gap: 1.25rem;
                    flex-wrap: wrap; margin: 0.5rem 0 0.75rem; }
     .address { font-size: 2.4rem; font-weight: 700; color: #fff; letter-spacing: 0.02em;
