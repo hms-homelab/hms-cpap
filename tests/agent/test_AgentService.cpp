@@ -15,8 +15,16 @@
 #include <thread>
 #include <vector>
 
+#include "database/SQLiteDatabase.h"
 #ifdef WITH_POSTGRESQL
+#include "database/PostgresDatabase.h"
 #include <pqxx/pqxx>
+#endif
+#include <filesystem>
+#ifndef _WIN32
+#include <unistd.h>
+#else
+#include <process.h>
 #endif
 
 using namespace hms_cpap;
@@ -119,6 +127,58 @@ TEST(AgentServiceTest, StopWhenNotRunningIsNoop) {
     AgentService service(config, mqtt, llm);
     EXPECT_NO_THROW(service.stop());
     EXPECT_FALSE(service.isRunning());
+}
+
+// SDD-072 D4: the prompt grades no index for every machine and asks for no
+// number a tool did not give; D2's rules ride with it.
+TEST(AgentServiceTest, PromptDropsAhiGradingAndForbidsFillingGaps) {
+    const std::string p = AgentService::basePrompt();
+    EXPECT_EQ(p.find("AHI > 5"), std::string::npos) << p;
+    EXPECT_NE(p.find("Every number you state must come from a tool result"), std::string::npos);
+    EXPECT_NE(p.find("Never fill a gap"), std::string::npos);
+    EXPECT_NE(p.find("capped"), std::string::npos);
+    EXPECT_NE(p.find("never describe it as obstructive, central or a hypopnea"),
+              std::string::npos);
+    EXPECT_NE(p.find("does not detect hypopneas"), std::string::npos);
+}
+
+// SDD-072 D4: no database, no agent (the tools have nothing to read).
+TEST(AgentServiceTest, StartWithoutDatabaseDoesNotRun) {
+    AgentService::Config config;
+    config.device_id = "test_dev_nodb";
+    MqttConfig mqtt_cfg;
+    mqtt_cfg.client_id = "test_agent_nodb";
+    AgentService service(config, std::make_shared<MqttClient>(mqtt_cfg),
+                         std::make_shared<MockAgentLLM>());
+    EXPECT_NO_THROW(service.start());
+    EXPECT_FALSE(service.isRunning());
+}
+
+// SDD-072 D4: on SQLite the agent starts, with no pgvector memory.
+TEST(AgentServiceTest, StartsOnSqliteWithoutMemory) {
+    const auto path = (std::filesystem::temp_directory_path() /
+                       ("hms_cpap_agent_svc_" + std::to_string(::getpid()) + ".db")).string();
+    std::filesystem::remove(path);
+    auto db = std::make_shared<SQLiteDatabase>(path);
+    ASSERT_TRUE(db->connect());
+
+    AgentService::Config config;
+    config.device_id = "test_dev_sqlite";
+    MqttConfig mqtt_cfg;
+    mqtt_cfg.broker = "127.0.0.1";
+    mqtt_cfg.port = 1;   // no broker: subscribe and publish just fail
+    mqtt_cfg.client_id = "test_agent_sqlite";
+    AgentService service(config, std::make_shared<MqttClient>(mqtt_cfg),
+                         std::make_shared<MockAgentLLM>(), db);
+    EXPECT_NO_THROW(service.start());
+    EXPECT_TRUE(service.isRunning());
+    EXPECT_FALSE(service.hasMemory());
+    service.stop();
+    db.reset();
+    for (const auto* suffix : {"", "-wal", "-shm"}) {
+        std::error_code ec;
+        std::filesystem::remove(path + suffix, ec);
+    }
 }
 
 // ── LLM response parsing tests ─────────────────────────────────────────────
@@ -424,7 +484,10 @@ protected:
         cfg.device_id = device_id_;
         cfg.db_connection_string = conn_str_;
         cfg.max_iterations = 3;
-        service_ = std::make_unique<AgentService>(cfg, svc_mqtt_, llm_);
+        // SDD-072 D4: the tools read through IDatabase.
+        auto db = std::make_shared<PostgresDatabase>(conn_str_);
+        if (!db->connect()) return;
+        service_ = std::make_unique<AgentService>(cfg, svc_mqtt_, llm_, db);
 
         infra_ok_ = true;
     }
@@ -872,7 +935,10 @@ protected:
         cfg.device_id = device_id_;
         cfg.db_connection_string = conn_str_;
         cfg.max_iterations = 3;
-        service_ = std::make_unique<AgentService>(cfg, svc_mqtt_, llm_);
+        // SDD-072 D4: the tools read through IDatabase.
+        auto db = std::make_shared<PostgresDatabase>(conn_str_);
+        if (!db->connect()) return;
+        service_ = std::make_unique<AgentService>(cfg, svc_mqtt_, llm_, db);
 
         infra_ok_ = true;
     }

@@ -7,7 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **The AI is given facts that add up, and says only those (SDD-072).** The
+  daily summary, the weekly and monthly summaries and the chat agent now read
+  one set of facts per night instead of three hand-built ones: the events
+  behind the index by type (obstructive, central, clear airway, unclassified,
+  hypopnea), RERAs and other recorded types beside them, so the parts always
+  equal the night's total. A night from a machine that detects no hypopneas
+  carries no AHI and no per-type zeros anywhere, including the weekly and
+  monthly text, which used to grade and average it. A figure the night does
+  not have is left out, never shown as 0 (a night with no usage recorded
+  reads "Usage: not recorded", not "0.00 hours"). The rules for reporting
+  them travel with the facts, so they reach a custom `LLM_PROMPT_FILE` too.
+- **Every number in a summary is checked against the data it was given.**
+  After the model writes a daily, weekly or monthly summary, each sentence
+  that states a number not in its data (allowing for rounding) is asked for
+  once more. If the second answer still fails, the sentence is kept and the
+  summary ends with a line saying it holds an unverified figure. Works the same
+  with Ollama, Gemini, OpenAI or any other provider.
+- **The chat agent runs on SQLite and MySQL, not only PostgreSQL.** Its seven
+  tools read through the database layer, and their answers are the same night
+  facts the summaries use. Its prompt no longer tells the model to flag
+  "AHI > 5" for every machine; every number it states must come from a tool
+  result, and a list that was cut short says so. Conversation memory
+  (pgvector) is still PostgreSQL's only; on SQLite and MySQL each question is
+  answered on its own.
+- **`llm_prompt.txt` is machine-neutral.** The example prompt for
+  `LLM_PROMPT_FILE` described an AirSense 10 and asked for AHI severity on
+  every machine; it now grades the AHI only where the data gives one.
+
 ### Fixed
+- **A night from a machine with no hypopnea detection is marked so in the
+  daily summary table on MySQL and PostgreSQL**, as it already was on SQLite
+  (SDD-024). Before, those two engines stored it as a gradable AHI.
 - **Live O2 Ring samples in bridge mode sit on the same clock as the rest of
   the night.** On PostgreSQL and MySQL they were stamped with the database's
   own `NOW()`, which follows the database server's time zone (UTC in most

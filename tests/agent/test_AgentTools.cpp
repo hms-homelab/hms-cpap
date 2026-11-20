@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 #include "agent/AgentTools.h"
+#include "AiFactsEngines.h"
 #include <nlohmann/json.hpp>
-#include <pqxx/pqxx>
 #include <cstdlib>
 #include <memory>
 #include <set>
@@ -162,511 +162,243 @@ TEST_F(AgentToolsTest, GetStatisticsRequiresDateRange) {
 }
 
 // ============================================================================
-// execute() dispatch / error branches reachable WITHOUT a usable DB.
+// SDD-072 D4: every tool on every engine, through IDatabase.
 //
-// execute() catches std::exception and returns {"error": ...}. The "unknown
-// tool" branch never touches the connection. get_trend_data validates the
-// metric and early-returns BEFORE opening a pqxx::work, so an unknown metric
-// is also reachable without a working transaction.
+// Seeds through the engines' own writers (saveSession, saveSTRDailyRecords,
+// aggregateDailySummaryFromSessions), so the schema is the real one. SQLite
+// always runs; MySQL and PostgreSQL run when MYSQL_TEST_HOST / PGHOST are set.
 // ============================================================================
 
 namespace {
 
-std::string envOr(const char* key, const std::string& def) {
-    const char* v = std::getenv(key);
-    return (v && *v) ? std::string(v) : def;
-}
+using namespace ai_facts_test;
 
-std::string testDbName() { return envOr("PGDATABASE", "cpap_monitoring"); }
-
-std::string makeConnInfo(const std::string& dbname,
-                         const std::string& search_path = "") {
-    std::string ci = "host=" + envOr("PGHOST", "localhost") +
-                     " port=" + envOr("PGPORT", "5432") +
-                     " user=" + envOr("PGUSER", "maestro") +
-                     " password=" + envOr("PGPASSWORD", "REDACTED") +
-                     " dbname=" + dbname +
-                     " connect_timeout=3";
-    if (!search_path.empty()) {
-        ci += " options=-csearch_path=" + search_path;
-    }
-    return ci;
-}
-
-bool serverUsable() {
-    try {
-        pqxx::connection c(makeConnInfo(testDbName()));
-        return c.is_open();
-    } catch (...) {
-        return false;
-    }
-}
-
-} // namespace
-
-// Unknown-tool dispatch: returns an error envelope and never touches the conn,
-// so we deliberately use a connection that may or may not be open — either way
-// the unknown-tool branch fires first.
-TEST(AgentToolsDispatchTest, UnknownToolReturnsErrorWithoutTouchingDb) {
-    AgentTools tools{"dev"};
-    // A broken/unconnectable conninfo: construction may throw, but if the DB
-    // happens to be reachable the connection is harmless (never used).
-    try {
-        pqxx::connection conn(makeConnInfo("definitely_not_a_real_db_zzz"));
-        auto j = json::parse(tools.execute("totally_made_up", {}, conn));
-        ASSERT_TRUE(j.contains("error"));
-        EXPECT_NE(j["error"].get<std::string>().find("Unknown tool: totally_made_up"),
-                  std::string::npos);
-    } catch (const std::exception&) {
-        // Couldn't even open the bogus connection — that's fine; the dispatch
-        // branch is also exercised in the DB-backed suite below.
-        SUCCEED();
-    }
-}
-
-// ============================================================================
-// DB-backed tool execution. Creates a throwaway schema in cpap_monitoring,
-// seeds deterministic rows, executes each tool, and asserts on the JSON shape.
-// If no usable PostgreSQL is present, the whole suite GTEST_SKIPs.
-// ============================================================================
-
-class AgentToolsDbTest : public ::testing::Test {
+class AgentToolsEngineTest : public ::testing::TestWithParam<Engine> {
 protected:
-    static constexpr const char* kDevice = "agent_tools_test_dev";
-
     void SetUp() override {
-        if (!serverUsable()) {
-            GTEST_SKIP() << "No usable PostgreSQL — skipping AgentTools DB tests.";
-        }
-        static int counter = 0;
-        schema_ = "agt_test_" + std::to_string(::getpid()) + "_" +
-                  std::to_string(counter++);
-
-        // Bootstrap connection (no search_path) to create the schema.
-        {
-            pqxx::connection boot(makeConnInfo(testDbName()));
-            pqxx::work txn(boot);
-            txn.exec("CREATE SCHEMA IF NOT EXISTS " + txn.esc(schema_));
-            txn.commit();
-        }
-
-        conn_ = std::make_unique<pqxx::connection>(makeConnInfo(testDbName(), schema_));
-        applySchema();
+        device_ = "sdd072_agent_" + std::to_string(::getpid());
+        path_ = (std::filesystem::temp_directory_path() /
+                 ("hms_cpap_sdd072_agent_" + std::to_string(::getpid()) + ".db")).string();
+        std::string skip;
+        db_ = openEngine(GetParam(), path_, skip);
+        if (!db_) GTEST_SKIP() << skip;
+        cleanup(*db_, device_);
+        tools_ = std::make_unique<AgentTools>(device_);
         seed();
     }
 
     void TearDown() override {
-        conn_.reset();
-        if (!schema_.empty() && serverUsable()) {
-            try {
-                pqxx::connection c(makeConnInfo(testDbName()));
-                pqxx::work txn(c);
-                txn.exec("DROP SCHEMA IF EXISTS " + txn.esc(schema_) + " CASCADE");
-                txn.commit();
-            } catch (...) { /* best effort */ }
-        }
+        if (db_) cleanup(*db_, device_);
+        db_.reset();
+        if (GetParam() == Engine::SQLite) removeSqlite(path_);
     }
 
-    void applySchema() {
-        pqxx::work txn(*conn_);
-        txn.exec(R"SQL(
-            CREATE TABLE cpap_sessions (
-                id SERIAL PRIMARY KEY,
-                device_id TEXT NOT NULL,
-                session_start TIMESTAMP NOT NULL,
-                session_end TIMESTAMP,
-                duration_seconds INT DEFAULT 0
-            );
-            CREATE TABLE cpap_session_metrics (
-                id SERIAL PRIMARY KEY,
-                session_id INT NOT NULL,
-                total_events INT, ahi FLOAT,
-                obstructive_apneas INT, central_apneas INT, hypopneas INT,
-                reras INT, clear_airway_apneas INT,
-                avg_event_duration FLOAT, max_event_duration FLOAT,
-                time_in_apnea_percent FLOAT,
-                avg_spo2 FLOAT, min_spo2 FLOAT,
-                avg_heart_rate INT, min_heart_rate INT, max_heart_rate INT
-            );
-            CREATE TABLE cpap_events (
-                id SERIAL PRIMARY KEY,
-                session_id INT NOT NULL,
-                event_type TEXT,
-                event_timestamp TIMESTAMP NOT NULL,
-                duration_seconds FLOAT,
-                details TEXT
-            );
-            CREATE TABLE cpap_vitals (
-                id SERIAL PRIMARY KEY,
-                session_id INT NOT NULL,
-                timestamp TIMESTAMP NOT NULL,
-                spo2 FLOAT, heart_rate INT
-            );
-            CREATE TABLE cpap_daily_summary (
-                id SERIAL PRIMARY KEY,
-                device_id TEXT NOT NULL,
-                record_date DATE NOT NULL,
-                duration_minutes FLOAT,
-                ahi FLOAT, hi FLOAT, ai FLOAT, oai FLOAT, cai FLOAT, uai FLOAT, rin FLOAT,
-                leak_50 FLOAT, leak_95 FLOAT, leak_max FLOAT,
-                mask_press_50 FLOAT, mask_press_95 FLOAT, mask_press_max FLOAT,
-                therapy_press_50 FLOAT, therapy_press_95 FLOAT, therapy_press_max FLOAT,
-                spo2_50 FLOAT, spo2_95 FLOAT,
-                resp_rate_50 FLOAT, tid_vol_50 FLOAT, min_vent_50 FLOAT,
-                mode INT, epr_level FLOAT, pressure_setting FLOAT
-            );
-        )SQL");
-        txn.commit();
+    json run(const std::string& tool, const json& args = json::object()) {
+        return json::parse(tools_->execute(tool, args, *db_));
     }
 
-    // Deterministic seed. A recent session (NOW()-1day) so day-window queries
-    // capture it, plus a session on a fixed sleep-day for date lookups, plus
-    // daily_summary rows on fixed dates.
     void seed() {
-        pqxx::work txn(*conn_);
+        // Three recent nights, 24 h apart, the newest the reporter's (#78).
+        const auto now = system_clock::now();
+        NightSpec reporter;
+        reporter.hypopneas = 3;
+        reporter.unclassified = 3;
+        saveNight(*db_, device_, now - std::chrono::hours(30), reporter);
+        NightSpec mid;
+        mid.obstructive = 2;
+        mid.reras = 1;
+        mid.other = 1;
+        saveNight(*db_, device_, now - std::chrono::hours(54), mid);
+        saveNight(*db_, device_, now - std::chrono::hours(78), NightSpec{300, 1});
 
-        // Recent session for get_recent_sessions (uses NOW() window).
-        auto recent = txn.exec_params(
-            "INSERT INTO cpap_sessions(device_id, session_start, session_end, duration_seconds)"
-            " VALUES ($1, NOW() - INTERVAL '1 day', NOW() - INTERVAL '1 day' + INTERVAL '7 hours', 25200)"
-            " RETURNING id", kDevice);
-        int recent_id = recent[0][0].as<int>();
-        txn.exec_params(
-            "INSERT INTO cpap_session_metrics(session_id, total_events, ahi,"
-            " obstructive_apneas, central_apneas, hypopneas, reras, clear_airway_apneas,"
-            " avg_event_duration, max_event_duration, time_in_apnea_percent,"
-            " avg_spo2, min_spo2, avg_heart_rate, min_heart_rate, max_heart_rate)"
-            " VALUES ($1, 12, 3.5, 4, 1, 6, 1, 1, 15.0, 30.0, 2.5, 95.0, 88.0, 60, 52, 78)",
-            recent_id);
-
-        // Fixed sleep-day session: session_start such that
-        // DATE(session_start - INTERVAL '12 hours') = '2025-02-06'.
-        // 2025-02-06 22:00:00 -> minus 12h -> 2025-02-06 10:00:00 -> date 2025-02-06.
-        auto fixed = txn.exec_params(
-            "INSERT INTO cpap_sessions(device_id, session_start, session_end, duration_seconds)"
-            " VALUES ($1, TIMESTAMP '2025-02-06 22:00:00', TIMESTAMP '2025-02-07 05:00:00', 25200)"
-            " RETURNING id", kDevice);
-        int fixed_id = fixed[0][0].as<int>();
-        txn.exec_params(
-            "INSERT INTO cpap_session_metrics(session_id, total_events, ahi,"
-            " obstructive_apneas, central_apneas, hypopneas, reras, clear_airway_apneas,"
-            " avg_spo2, min_spo2, avg_heart_rate, min_heart_rate, max_heart_rate)"
-            " VALUES ($1, 9, 2.1, 3, 0, 5, 1, 0, 96.0, 90.0, 58, 50, 72)",
-            fixed_id);
-
-        // Two events for the fixed session.
-        txn.exec_params(
-            "INSERT INTO cpap_events(session_id, event_type, event_timestamp, duration_seconds, details)"
-            " VALUES ($1, 'Obstructive', TIMESTAMP '2025-02-06 23:10:00', 18.0, 'detail-a'),"
-            "        ($1, 'Hypopnea', TIMESTAMP '2025-02-07 01:20:00', 12.0, NULL)",
-            fixed_id);
-
-        // Vitals for the fixed session (two distinct minutes).
-        txn.exec_params(
-            "INSERT INTO cpap_vitals(session_id, timestamp, spo2, heart_rate) VALUES"
-            " ($1, TIMESTAMP '2025-02-06 23:00:05', 95, 60),"
-            " ($1, TIMESTAMP '2025-02-06 23:00:35', 93, 64),"
-            " ($1, TIMESTAMP '2025-02-06 23:01:10', 97, 58)",
-            fixed_id);
-
-        // Daily summaries: three fixed dates.
-        for (int d = 6; d <= 8; ++d) {
-            txn.exec_params(
-                "INSERT INTO cpap_daily_summary(device_id, record_date, duration_minutes,"
-                " ahi, hi, ai, oai, cai, uai, rin, leak_50, leak_95, leak_max,"
-                " mask_press_50, mask_press_95, mask_press_max, spo2_50, spo2_95,"
-                " resp_rate_50, tid_vol_50, min_vent_50, mode, epr_level, pressure_setting)"
-                " VALUES ($1, $2, $3, 2.5, 1.0, 1.5, 1.0, 0.5, 0.0, 0.5,"
-                " 5.0, 12.0, 20.0, 8.0, 10.5, 12.0, 95.0, 91.0, 14.0, 450.0, 6.3,"
-                " 11, 2.0, 7.5)",
-                kDevice, "2025-02-0" + std::to_string(d), 420.0 + d);
+        // A fixed night with its events and vitals: sleep day 2099-07-01.
+        const auto start = localAt(2099, 7, 1, 23);
+        NightSpec fixed;
+        fixed.obstructive = 1;
+        fixed.hypopneas = 1;
+        std::vector<SleepEvent> events = {
+            SleepEvent(EventType::OBSTRUCTIVE, start + minutes(10), 18.0),
+            SleepEvent(EventType::HYPOPNEA, start + minutes(80), 12.0)};
+        std::vector<VitalSample> vitals;
+        for (auto [sec, spo2, hr] : std::vector<std::tuple<int, double, int>>{
+                 {5, 95, 60}, {35, 93, 64}, {70, 97, 58}}) {
+            VitalSample v(start + std::chrono::seconds(sec));
+            v.spo2 = spo2;
+            v.heart_rate = hr;
+            vitals.push_back(v);
         }
+        saveNight(*db_, device_, start, fixed, events, vitals);
 
-        txn.commit();
+        // An ungraded night (SDD-024), and the daily rows of every night.
+        NightSpec ungraded;
+        ungraded.unclassified = 5;
+        ungraded.ungraded = true;
+        saveNight(*db_, device_, localAt(2099, 9, 1, 23), ungraded);
+        ASSERT_TRUE(db_->aggregateDailySummaryFromSessions(device_));
+
+        // Three STR days with no sessions: the machine's own figures.
+        std::vector<STRDailyRecord> days;
+        for (int d = 6; d <= 8; ++d) {
+            STRDailyRecord r;
+            r.device_id = device_;
+            r.record_date = localAt(2099, 8, d, 12);
+            r.duration_minutes = 420.0 + d;
+            r.ahi = 2.0 + d * 0.25;   // 3.5, 3.75, 4.0
+            r.hi = 1.0;
+            r.leak_95 = 12.0;
+            r.mask_press_95 = 10.5;
+            r.spo2_50 = 95.0;
+            r.resp_rate_50 = 14.0;
+            days.push_back(r);
+        }
+        ASSERT_TRUE(db_->saveSTRDailyRecords(days));
     }
 
-    std::unique_ptr<pqxx::connection> conn_;
-    std::string schema_;
-    AgentTools tools_{kDevice};
+    std::shared_ptr<IDatabase> db_;
+    std::unique_ptr<AgentTools> tools_;
+    std::string device_;
+    std::string path_;
 };
 
-// ── get_recent_sessions ──────────────────────────────────────────────────────
-
-TEST_F(AgentToolsDbTest, GetRecentSessionsDefaultArgsReturnsRecent) {
-    auto out = tools_.execute("get_recent_sessions", json::object(), *conn_);
-    auto j = json::parse(out);
-    ASSERT_TRUE(j.is_array());
-    ASSERT_GE(j.size(), 1u);
-    // Recent session has ahi 3.5 and known event counts; values come back as strings.
-    bool found = false;
-    for (const auto& row : j) {
-        ASSERT_TRUE(row.contains("ahi"));
-        ASSERT_TRUE(row.contains("duration_hours"));
-        if (row["ahi"].is_string() && row["ahi"].get<std::string>().rfind("3.5", 0) == 0)
-            found = true;
-    }
-    EXPECT_TRUE(found);
+void expectNightAddsUp(const json& n) {
+    ASSERT_TRUE(n.contains("events_in_ahi")) << n.dump();
+    const auto& in = n["events_in_ahi"];
+    EXPECT_EQ(in["total"].get<int>(),
+              in["obstructive_apnea"].get<int>() + in["central_apnea"].get<int>() +
+                  in["clear_airway_apnea"].get<int>() + in["unclassified_apnea"].get<int>() +
+                  in["hypopnea"].get<int>());
+    EXPECT_EQ(in["total"].get<int>() + n["events_not_in_ahi"]["total"].get<int>(),
+              n["total_events"].get<int>())
+        << n.dump();
 }
 
-TEST_F(AgentToolsDbTest, GetRecentSessionsRespectsLimit) {
-    auto j = json::parse(tools_.execute(
-        "get_recent_sessions", json{{"days", 3650}, {"limit", 1}}, *conn_));
-    ASSERT_TRUE(j.is_array());
-    EXPECT_EQ(j.size(), 1u);
+TEST_P(AgentToolsEngineTest, RecentSessionsAreNightFactsThatAddUp) {
+    const auto j = run("get_recent_sessions");
+    ASSERT_TRUE(j.contains("nights")) << j.dump();
+    ASSERT_EQ(j["nights"].size(), 3u) << j.dump();
+    EXPECT_FALSE(j["capped"].get<bool>());
+    for (const auto& n : j["nights"]) expectNightAddsUp(n);
+    // Newest first: the reporter's night, its unclassified apneas named.
+    EXPECT_EQ(j["nights"][0]["events_in_ahi"]["unclassified_apnea"], 3);
+    EXPECT_EQ(j["nights"][0]["events_in_ahi"]["hypopnea"], 3);
+    EXPECT_EQ(j["nights"][1]["events_not_in_ahi"]["other_event_types"], 1);
+    ASSERT_TRUE(j["rules"].is_array());
+    EXPECT_NE(j["rules"].dump().find("never describe it as obstructive"), std::string::npos);
 }
 
-TEST_F(AgentToolsDbTest, GetRecentSessionsNarrowWindowExcludesFixedSession) {
-    // days=2 keeps the recent (NOW()-1d) session; the fixed 2025-02-06 session
-    // is far in the past and excluded.
-    auto j = json::parse(tools_.execute(
-        "get_recent_sessions", json{{"days", 2}, {"limit", 50}}, *conn_));
-    ASSERT_TRUE(j.is_array());
-    EXPECT_EQ(j.size(), 1u);
+TEST_P(AgentToolsEngineTest, ACappedListSaysSo) {
+    const auto j = run("get_recent_sessions", {{"days", 7}, {"limit", 2}});
+    ASSERT_EQ(j["nights"].size(), 2u) << j.dump();
+    EXPECT_TRUE(j["capped"].get<bool>());
+    EXPECT_EQ(j["available"], 3);
+    EXPECT_EQ(j["returned"], 2);
+    EXPECT_TRUE(j.contains("capped_note"));
 }
 
-// ── get_session_details ──────────────────────────────────────────────────────
-
-TEST_F(AgentToolsDbTest, GetSessionDetailsReturnsSessionWithEvents) {
-    auto j = json::parse(tools_.execute(
-        "get_session_details", json{{"date", "2025-02-06"}}, *conn_));
-    ASSERT_TRUE(j.is_array());
-    ASSERT_EQ(j.size(), 1u);
-    const auto& s = j[0];
-    EXPECT_TRUE(s.contains("ahi"));
-    ASSERT_TRUE(s.contains("events"));
-    ASSERT_TRUE(s["events"].is_array());
-    EXPECT_EQ(s["events"].size(), 2u);
-    // NULL details column should serialize as JSON null, not the string "null".
-    bool sawNull = false;
-    for (const auto& ev : s["events"]) {
-        ASSERT_TRUE(ev.contains("event_type"));
-        if (ev["details"].is_null()) sawNull = true;
-    }
-    EXPECT_TRUE(sawNull);
-}
-
-TEST_F(AgentToolsDbTest, GetSessionDetailsUnknownDateReturnsEmptyArray) {
-    auto j = json::parse(tools_.execute(
-        "get_session_details", json{{"date", "1999-01-01"}}, *conn_));
-    ASSERT_TRUE(j.is_array());
-    EXPECT_TRUE(j.empty());
-}
-
-TEST_F(AgentToolsDbTest, GetSessionDetailsMissingDateArgReturnsError) {
-    auto j = json::parse(tools_.execute("get_session_details", json::object(), *conn_));
-    ASSERT_TRUE(j.contains("error"));
-}
-
-// ── get_daily_summary ────────────────────────────────────────────────────────
-
-TEST_F(AgentToolsDbTest, GetDailySummaryReturnsRangeOrdered) {
-    auto j = json::parse(tools_.execute(
-        "get_daily_summary",
-        json{{"start_date", "2025-02-06"}, {"end_date", "2025-02-08"}}, *conn_));
-    ASSERT_TRUE(j.is_array());
-    EXPECT_EQ(j.size(), 3u);
-    EXPECT_TRUE(j[0].contains("record_date"));
-    EXPECT_TRUE(j[0].contains("mode"));
-    EXPECT_TRUE(j[0].contains("pressure_setting"));
-}
-
-TEST_F(AgentToolsDbTest, GetDailySummaryNarrowedRange) {
-    auto j = json::parse(tools_.execute(
-        "get_daily_summary",
-        json{{"start_date", "2025-02-07"}, {"end_date", "2025-02-07"}}, *conn_));
-    ASSERT_TRUE(j.is_array());
-    EXPECT_EQ(j.size(), 1u);
-}
-
-TEST_F(AgentToolsDbTest, GetDailySummaryMissingArgReturnsError) {
-    auto j = json::parse(tools_.execute(
-        "get_daily_summary", json{{"start_date", "2025-02-06"}}, *conn_));
-    ASSERT_TRUE(j.contains("error"));
-}
-
-// ── get_trend_data ───────────────────────────────────────────────────────────
-
-TEST_F(AgentToolsDbTest, GetTrendDataAhiColumns) {
-    auto j = json::parse(tools_.execute(
-        "get_trend_data", json{{"metric", "ahi"}, {"days", 3650}}, *conn_));
-    ASSERT_TRUE(j.is_array());
-    EXPECT_EQ(j.size(), 3u);
-    EXPECT_TRUE(j[0].contains("ahi"));
-    EXPECT_TRUE(j[0].contains("oai"));
-    EXPECT_TRUE(j[0].contains("cai"));
-}
-
-TEST_F(AgentToolsDbTest, GetTrendDataPressureColumns) {
-    auto j = json::parse(tools_.execute(
-        "get_trend_data", json{{"metric", "pressure"}, {"days", 3650}}, *conn_));
-    ASSERT_TRUE(j.is_array());
-    ASSERT_GE(j.size(), 1u);
-    EXPECT_TRUE(j[0].contains("mask_press_95"));
-    EXPECT_TRUE(j[0].contains("therapy_press_95"));   // issue #56
-    EXPECT_TRUE(j[0].contains("pressure_setting"));
-}
-
-// Issue #56: the agent's "avg_pressure_95" is the machine's pressure where a
-// night has it, and the mask's only where it does not. The fixture's nights
-// all read mask 10.5; one of them gets a delivered 12.0.
-TEST_F(AgentToolsDbTest, StatisticsPreferTheTherapyPressure) {
-    {
-        pqxx::work txn(*conn_);
-        txn.exec_params("UPDATE cpap_daily_summary SET therapy_press_95 = 12.0"
-                        " WHERE device_id = $1 AND record_date = '2025-02-06'", kDevice);
-        txn.commit();
-    }
-    auto j = json::parse(tools_.execute("get_statistics", json{
-        {"start_date", "2025-02-06"}, {"end_date", "2025-02-08"}}, *conn_));
-    ASSERT_EQ(j.size(), 1u);
-    EXPECT_EQ(j[0]["avg_pressure_95"].get<std::string>(), "11.0");   // (12 + 10.5 + 10.5) / 3
-}
-
-TEST_F(AgentToolsDbTest, GetTrendDataLeakColumns) {
-    auto j = json::parse(tools_.execute(
-        "get_trend_data", json{{"metric", "leak"}, {"days", 3650}}, *conn_));
-    ASSERT_GE(j.size(), 1u);
-    EXPECT_TRUE(j[0].contains("leak_50"));
-    EXPECT_TRUE(j[0].contains("leak_max"));
-}
-
-TEST_F(AgentToolsDbTest, GetTrendDataSpo2Columns) {
-    auto j = json::parse(tools_.execute(
-        "get_trend_data", json{{"metric", "spo2"}, {"days", 3650}}, *conn_));
-    ASSERT_GE(j.size(), 1u);
-    EXPECT_TRUE(j[0].contains("spo2_50"));
-    EXPECT_TRUE(j[0].contains("spo2_95"));
-}
-
-TEST_F(AgentToolsDbTest, GetTrendDataHrColumns) {
-    auto j = json::parse(tools_.execute(
-        "get_trend_data", json{{"metric", "hr"}, {"days", 3650}}, *conn_));
-    ASSERT_GE(j.size(), 1u);
-    EXPECT_TRUE(j[0].contains("resp_rate_50"));
-}
-
-TEST_F(AgentToolsDbTest, GetTrendDataDurationColumns) {
-    auto j = json::parse(tools_.execute(
-        "get_trend_data", json{{"metric", "duration"}, {"days", 3650}}, *conn_));
-    ASSERT_GE(j.size(), 1u);
-    EXPECT_TRUE(j[0].contains("duration_minutes"));
-}
-
-TEST_F(AgentToolsDbTest, GetTrendDataUnknownMetricReturnsError) {
-    auto j = json::parse(tools_.execute(
-        "get_trend_data", json{{"metric", "bogus"}, {"days", 30}}, *conn_));
-    ASSERT_TRUE(j.contains("error"));
-    EXPECT_NE(j["error"].get<std::string>().find("Unknown metric"), std::string::npos);
-}
-
-TEST_F(AgentToolsDbTest, GetTrendDataMissingMetricReturnsError) {
-    auto j = json::parse(tools_.execute("get_trend_data", json::object(), *conn_));
-    ASSERT_TRUE(j.contains("error"));
-}
-
-// ── compare_periods ──────────────────────────────────────────────────────────
-
-TEST_F(AgentToolsDbTest, ComparePeriodsReturnsTwoLabeledPeriods) {
-    auto j = json::parse(tools_.execute("compare_periods", json{
-        {"period1_start", "2025-02-06"}, {"period1_end", "2025-02-07"},
-        {"period2_start", "2025-02-08"}, {"period2_end", "2025-02-08"}}, *conn_));
-    ASSERT_TRUE(j.contains("period1"));
-    ASSERT_TRUE(j.contains("period2"));
-    EXPECT_EQ(j["period1"]["period"], "2025-02-06 to 2025-02-07");
-    EXPECT_EQ(j["period2"]["period"], "2025-02-08 to 2025-02-08");
-    // period1 covers 2 nights, period2 covers 1.
-    EXPECT_EQ(j["period1"]["nights"].get<std::string>(), "2");
-    EXPECT_EQ(j["period2"]["nights"].get<std::string>(), "1");
-    EXPECT_TRUE(j["period1"].contains("avg_ahi"));
-    EXPECT_TRUE(j["period1"].contains("compliance_pct"));
-}
-
-TEST_F(AgentToolsDbTest, ComparePeriodsEmptyPeriodHasZeroNightsNullAverages) {
-    auto j = json::parse(tools_.execute("compare_periods", json{
-        {"period1_start", "1999-01-01"}, {"period1_end", "1999-01-02"},
-        {"period2_start", "2025-02-06"}, {"period2_end", "2025-02-08"}}, *conn_));
-    // Empty range still yields a row: COUNT=0, AVG=NULL, compliance NULL.
-    EXPECT_EQ(j["period1"]["nights"].get<std::string>(), "0");
-    EXPECT_TRUE(j["period1"]["avg_ahi"].is_null());
-    EXPECT_TRUE(j["period1"]["compliance_pct"].is_null());
-    EXPECT_EQ(j["period2"]["nights"].get<std::string>(), "3");
-}
-
-TEST_F(AgentToolsDbTest, ComparePeriodsMissingArgReturnsError) {
-    auto j = json::parse(tools_.execute("compare_periods", json{
-        {"period1_start", "2025-02-06"}, {"period1_end", "2025-02-07"}}, *conn_));
-    ASSERT_TRUE(j.contains("error"));
-}
-
-// ── get_vitals ───────────────────────────────────────────────────────────────
-
-TEST_F(AgentToolsDbTest, GetVitalsReturnsPerMinuteAggregates) {
-    auto j = json::parse(tools_.execute(
-        "get_vitals", json{{"date", "2025-02-06"}}, *conn_));
-    ASSERT_TRUE(j.is_array());
-    // Two distinct minutes (23:00 and 23:01).
-    EXPECT_EQ(j.size(), 2u);
-    EXPECT_TRUE(j[0].contains("avg_spo2"));
-    EXPECT_TRUE(j[0].contains("min_hr"));
-    EXPECT_TRUE(j[0].contains("max_hr"));
-}
-
-TEST_F(AgentToolsDbTest, GetVitalsUnknownDateEmpty) {
-    auto j = json::parse(tools_.execute(
-        "get_vitals", json{{"date", "1990-05-05"}}, *conn_));
-    ASSERT_TRUE(j.is_array());
-    EXPECT_TRUE(j.empty());
-}
-
-TEST_F(AgentToolsDbTest, GetVitalsMissingArgReturnsError) {
-    auto j = json::parse(tools_.execute("get_vitals", json::object(), *conn_));
-    ASSERT_TRUE(j.contains("error"));
-}
-
-// ── get_statistics ───────────────────────────────────────────────────────────
-
-TEST_F(AgentToolsDbTest, GetStatisticsReturnsAggregateRow) {
-    auto j = json::parse(tools_.execute("get_statistics", json{
-        {"start_date", "2025-02-06"}, {"end_date", "2025-02-08"}}, *conn_));
-    ASSERT_TRUE(j.is_array());
-    ASSERT_EQ(j.size(), 1u);
-    const auto& r = j[0];
-    EXPECT_EQ(r["total_nights"].get<std::string>(), "3");
-    EXPECT_TRUE(r.contains("avg_ahi"));
-    EXPECT_TRUE(r.contains("stddev_ahi"));
-    EXPECT_TRUE(r.contains("compliance_pct"));
-    EXPECT_TRUE(r.contains("total_therapy_minutes"));
-}
-
-TEST_F(AgentToolsDbTest, GetStatisticsEmptyRangeZeroNights) {
-    auto j = json::parse(tools_.execute("get_statistics", json{
-        {"start_date", "1980-01-01"}, {"end_date", "1980-01-02"}}, *conn_));
-    ASSERT_EQ(j.size(), 1u);
-    EXPECT_EQ(j[0]["total_nights"].get<std::string>(), "0");
-    // Averages over no rows are NULL; compliance uses NULLIF -> NULL.
-    EXPECT_TRUE(j[0]["avg_ahi"].is_null());
-    EXPECT_TRUE(j[0]["compliance_pct"].is_null());
-}
-
-TEST_F(AgentToolsDbTest, GetStatisticsMissingArgReturnsError) {
-    auto j = json::parse(tools_.execute(
-        "get_statistics", json{{"start_date", "2025-02-06"}}, *conn_));
-    ASSERT_TRUE(j.contains("error"));
-}
-
-// ── dispatch via execute(), DB-backed ────────────────────────────────────────
-
-TEST_F(AgentToolsDbTest, ExecuteUnknownToolReturnsErrorEnvelope) {
-    auto j = json::parse(tools_.execute("no_such_tool", json::object(), *conn_));
-    ASSERT_TRUE(j.contains("error"));
-    EXPECT_NE(j["error"].get<std::string>().find("Unknown tool: no_such_tool"),
+TEST_P(AgentToolsEngineTest, SessionDetailsCarryTheNightAndItsEvents) {
+    const auto j = run("get_session_details", {{"date", "2099-07-01"}});
+    ASSERT_TRUE(j["found"].get<bool>()) << j.dump();
+    expectNightAddsUp(j);
+    EXPECT_EQ(j["total_events"], 2);
+    ASSERT_EQ(j["event_list"].size(), 2u) << j.dump();
+    EXPECT_FALSE(j["event_list_capped"].get<bool>());
+    EXPECT_NEAR(j["event_list"][0]["duration_s"].get<double>(), 18.0, 1e-9);
+    EXPECT_NE(j["event_list"][0]["time"].get<std::string>().find("2099-07-01"),
               std::string::npos);
 }
 
-TEST_F(AgentToolsDbTest, DeviceIsolationOtherDeviceSeesNothing) {
-    AgentTools other{"some_other_device"};
-    auto j = json::parse(other.execute("get_statistics", json{
-        {"start_date", "2025-02-06"}, {"end_date", "2025-02-08"}}, *conn_));
-    ASSERT_EQ(j.size(), 1u);
-    EXPECT_EQ(j[0]["total_nights"].get<std::string>(), "0");
+TEST_P(AgentToolsEngineTest, SessionDetailsSayWhenNoNightIsStored) {
+    const auto j = run("get_session_details", {{"date", "2099-01-15"}});
+    EXPECT_FALSE(j["found"].get<bool>()) << j.dump();
+    EXPECT_FALSE(j.contains("ahi"));
 }
+
+TEST_P(AgentToolsEngineTest, AnUngradedNightIsNotGradedByAnyTool) {
+    const auto night = run("get_session_details", {{"date", "2099-09-01"}});
+    ASSERT_TRUE(night["found"].get<bool>()) << night.dump();
+    EXPECT_TRUE(night["ahi"].is_string()) << night.dump();
+    EXPECT_FALSE(night.contains("events_in_ahi"));
+    EXPECT_EQ(night["total_events"], 5);
+
+    const auto day = run("get_daily_summary", {{"start_date", "2099-09-01"},
+                                               {"end_date", "2099-09-01"}});
+    ASSERT_EQ(day["days"].size(), 1u) << day.dump();
+    EXPECT_TRUE(day["days"][0]["ahi"].is_string())
+        << "the daily row carries the night's kind on every engine: " << day.dump();
+    EXPECT_FALSE(day["days"][0].contains("hypopnea_index"));
+    EXPECT_NE(day["rules"].dump().find("does not detect hypopneas"), std::string::npos);
+
+    const auto stats = run("get_statistics", {{"start_date", "2099-09-01"},
+                                              {"end_date", "2099-09-01"}});
+    EXPECT_TRUE(stats["avg_ahi"].is_string()) << stats.dump();
+}
+
+TEST_P(AgentToolsEngineTest, DailySummaryIsTheMachinesDays) {
+    const auto j = run("get_daily_summary", {{"start_date", "2099-08-06"},
+                                             {"end_date", "2099-08-08"}});
+    ASSERT_EQ(j["days"].size(), 3u) << j.dump();
+    EXPECT_EQ(j["days"][0]["date"], "2099-08-06");
+    EXPECT_NEAR(j["days"][0]["ahi"].get<double>(), 3.5, 1e-9);
+    EXPECT_NEAR(j["days"][2]["duration_minutes"].get<double>(), 428.0, 1e-9);
+    EXPECT_NEAR(j["days"][0]["spo2_median_pct"].get<double>(), 95.0, 1e-9);
+}
+
+TEST_P(AgentToolsEngineTest, TrendDataReadsTheDailyRows) {
+    const auto j = run("get_trend_data", {{"metric", "duration"}, {"days", 7}});
+    ASSERT_TRUE(j["points"].is_array()) << j.dump();
+    // The last 7 days: the three recent nights' rows, none of the 2099 ones.
+    ASSERT_EQ(j["points"].size(), 3u) << j.dump();
+    EXPECT_NEAR(j["points"][0]["duration_minutes"].get<double>(), 300.0, 1e-9);
+    EXPECT_NEAR(j["points"][2]["duration_minutes"].get<double>(), 360.0, 1e-9);
+
+    const auto bad = run("get_trend_data", {{"metric", "bogus"}});
+    ASSERT_TRUE(bad.contains("error"));
+    EXPECT_NE(bad["error"].get<std::string>().find("Unknown metric"), std::string::npos);
+}
+
+TEST_P(AgentToolsEngineTest, ComparePeriodsAndStatisticsAreComputedFromTheRows) {
+    const auto c = run("compare_periods", {{"period1_start", "2099-08-06"},
+                                           {"period1_end", "2099-08-07"},
+                                           {"period2_start", "2099-08-08"},
+                                           {"period2_end", "2099-08-08"}});
+    EXPECT_EQ(c["period1"]["nights"], 2) << c.dump();
+    EXPECT_NEAR(c["period1"]["avg_ahi"].get<double>(), 3.63, 1e-9);   // (3.5 + 3.75) / 2
+    EXPECT_NEAR(c["period1"]["avg_duration_min"].get<double>(), 426.5, 1e-9);
+    EXPECT_NEAR(c["period1"]["compliance_pct"].get<double>(), 100.0, 1e-9);
+    EXPECT_NEAR(c["period1"]["avg_pressure_95"].get<double>(), 10.5, 1e-9);
+    EXPECT_EQ(c["period2"]["nights"], 1);
+    EXPECT_EQ(c["period1"]["period"], "2099-08-06 to 2099-08-07");
+
+    const auto s = run("get_statistics", {{"start_date", "2099-08-06"},
+                                          {"end_date", "2099-08-08"}});
+    EXPECT_EQ(s["total_nights"], 3) << s.dump();
+    EXPECT_NEAR(s["avg_ahi"].get<double>(), 3.75, 1e-9);
+    EXPECT_NEAR(s["min_ahi"].get<double>(), 3.5, 1e-9);
+    EXPECT_NEAR(s["max_ahi"].get<double>(), 4.0, 1e-9);
+    EXPECT_NEAR(s["stddev_ahi"].get<double>(), 0.25, 1e-9);
+    EXPECT_NEAR(s["total_therapy_minutes"].get<double>(), 1281.0, 1e-9);
+}
+
+TEST_P(AgentToolsEngineTest, VitalsAreOneRowPerMinute) {
+    const auto j = run("get_vitals", {{"date", "2099-07-01"}});
+    ASSERT_EQ(j["minutes"].size(), 2u) << j.dump();
+    EXPECT_NEAR(j["minutes"][0]["avg_spo2"].get<double>(), 94.0, 1e-9);
+    EXPECT_NEAR(j["minutes"][0]["max_hr"].get<double>(), 64.0, 1e-9);
+    EXPECT_NE(j["minutes"][0]["minute"].get<std::string>().find(":00:00"), std::string::npos)
+        << j.dump();
+}
+
+TEST_P(AgentToolsEngineTest, BadArgumentsAndUnknownToolsComeBackAsErrors) {
+    EXPECT_TRUE(run("get_vitals", {{"date", "07/01/2099"}}).contains("error"));
+    EXPECT_TRUE(run("get_session_details").contains("error"));
+    const auto u = run("totally_made_up");
+    ASSERT_TRUE(u.contains("error"));
+    EXPECT_NE(u["error"].get<std::string>().find("Unknown tool: totally_made_up"),
+              std::string::npos);
+}
+
+INSTANTIATE_TEST_SUITE_P(Engines, AgentToolsEngineTest,
+                         ::testing::Values(Engine::SQLite, Engine::MySQL, Engine::Postgres),
+                         engineParamName);
+
+}  // namespace

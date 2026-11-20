@@ -3843,7 +3843,9 @@ TEST(BurstMetricsFormatTest, MetricsString_MinimalNoOptionals) {
     std::string out = svc.buildMetricsStringForTest(m, nullptr);
 
     EXPECT_NE(out.find("AHI: 1.00 events/hour"), std::string::npos);
-    EXPECT_NE(out.find("Usage: 0.00 hours"), std::string::npos);
+    // SDD-072 D1: a usage the night does not have is absent, never 0.
+    EXPECT_NE(out.find("Usage: not recorded"), std::string::npos);
+    EXPECT_EQ(out.find("Usage: 0.00 hours"), std::string::npos);
     // None of the optional sections should appear.
     EXPECT_EQ(out.find("Pressure:"), std::string::npos);
     EXPECT_EQ(out.find("Leak:"), std::string::npos);

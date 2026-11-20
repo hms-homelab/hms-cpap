@@ -3029,7 +3029,7 @@ bool MySQLDatabase::aggregateDailySummaryFromSessions(const std::string& device_
             (device_id, record_date, duration_minutes, patient_hours,
              ahi, hi, ai, oai, cai, uai, rin, mask_events, mask_pairs,
              mask_press_50, leak_50, leak_95, spo2_50, epr_level, mode,
-             index_source, updated_at)
+             index_kind, index_source, updated_at)
         SELECT
             s.device_id,
             DATE(DATE_SUB(s.session_start, INTERVAL 12 HOUR)) AS record_date,
@@ -3070,6 +3070,9 @@ bool MySQLDatabase::aggregateDailySummaryFromSessions(const std::string& device_
                     / NULLIF(SUM(CASE WHEN m.avg_epr_pressure > 0 THEN s.duration_seconds END), 0),
                 AVG(NULLIF(m.avg_epr_pressure, 0))), 2),
             MAX(COALESCE(m.therapy_mode, 0)),
+            -- SDD-024 / SDD-072 D1: the night's kind, as on SQLite (MAX over
+            -- text: any ungraded session makes the night ungraded).
+            MAX(COALESCE(m.index_kind, 'ahi')),
             'computed',
             NOW()
         FROM cpap_sessions s
@@ -3515,7 +3518,11 @@ std::vector<SessionMetrics> MySQLDatabase::getMetricsForDateRange(
             MAX(sm.therapy_mode) AS therapy_mode,
             -- Issue #78: the unclassified apnea is in the AHI, so a weekly
             -- summary without it lists types that do not add up to it.
-            SUM(sm.unclassified_apneas)          AS unclassified_apneas
+            SUM(sm.unclassified_apneas)          AS unclassified_apneas,
+            -- SDD-072 D1: what getNightlyMetrics gives the same night, its
+            -- index kind (SDD-024) and its therapy pressure (SDD-030).
+            MAX(COALESCE(sm.index_kind, 'ahi'))  AS index_kind,
+            SUM(c.s_therapy) / NULLIF(SUM(c.n_therapy), 0) AS avg_therapy_pressure
         FROM cpap_sessions s
         JOIN cpap_session_metrics sm ON sm.session_id = s.id
         LEFT JOIN (
@@ -3529,7 +3536,8 @@ std::vector<SessionMetrics> MySQLDatabase::getMetricsForDateRange(
                    SUM(mask_pressure) AS s_mask, COUNT(mask_pressure) AS n_mask,
                    SUM(epr_pressure) AS s_epr, COUNT(epr_pressure) AS n_epr,
                    SUM(snore_index) AS s_snore, COUNT(snore_index) AS n_snore,
-                   SUM(target_ventilation) AS s_tgt, COUNT(target_ventilation) AS n_tgt
+                   SUM(target_ventilation) AS s_tgt, COUNT(target_ventilation) AS n_tgt,
+                   SUM(therapy_pressure) AS s_therapy, COUNT(therapy_pressure) AS n_therapy
             FROM cpap_calculated_metrics GROUP BY session_id
         ) c ON c.session_id = sm.session_id
         LEFT JOIN (
@@ -3572,10 +3580,11 @@ std::vector<SessionMetrics> MySQLDatabase::getMetricsForDateRange(
         return {};
     }
 
-    // 31 output columns (0-30)
-    ResultBinder r(31);
+    // 33 output columns (0-32; 31 is index_kind, text)
+    ResultBinder r(33);
     r.bindColString(0);  // sleep_day
-    for (int i = 1; i < 31; ++i) r.bindColDouble(i);
+    for (int i = 1; i < 33; ++i) r.bindColDouble(i);
+    r.bindColString(31);  // SDD-072 D1: index_kind
     // Override int columns
     r.bindColInt(2);   // total_events
     r.bindColInt(3);   // OA
@@ -3626,6 +3635,9 @@ std::vector<SessionMetrics> MySQLDatabase::getMetricsForDateRange(
         m.leak_p95               = r.colOptDouble(28);
         m.therapy_mode           = r.colOptInt(29);
         m.unclassified_apneas    = r.colIsNull(30) ? 0 : r.colInt(30);   // issue #78
+        m.index_kind = (r.colText(31) == "ungraded") ? SessionMetrics::IndexKind::Ungraded
+                                                     : SessionMetrics::IndexKind::AHI;
+        m.avg_therapy_pressure   = r.colOptDouble(32);   // SDD-072 D1
 
         nights.push_back(std::move(m));
     }

@@ -132,6 +132,9 @@ set(TEST_SOURCES
     services/test_OximetryImport.cpp
     services/test_BilevelSensors.cpp
     services/test_AiSummaryEvents.cpp
+    services/test_NightFacts.cpp
+    services/test_AiGrounding.cpp
+    database/test_NightFactsBackends.cpp
     services/test_SummaryPrompt.cpp
     services/test_O2RingCsvParser.cpp
     services/test_O2RingCsvWriter.cpp

@@ -2382,7 +2382,11 @@ std::vector<SessionMetrics> DatabaseService::getMetricsForDateRange(
                 MAX(sm.therapy_mode) AS therapy_mode,
                 -- Issue #78: the unclassified apnea is in the AHI, so a weekly
                 -- summary without it lists types that do not add up to it.
-                SUM(sm.unclassified_apneas)                     AS unclassified_apneas
+                SUM(sm.unclassified_apneas)                     AS unclassified_apneas,
+                -- SDD-072 D1: what getNightlyMetrics gives the same night, its
+                -- index kind (SDD-024) and its therapy pressure (SDD-030).
+                MAX(COALESCE(sm.index_kind, 'ahi'))             AS index_kind,
+                SUM(c.s_therapy) / NULLIF(SUM(c.n_therapy), 0)  AS avg_therapy_pressure
             FROM cpap_sessions s
             JOIN cpap_session_metrics sm ON sm.session_id = s.id
             LEFT JOIN (
@@ -2396,7 +2400,8 @@ std::vector<SessionMetrics> DatabaseService::getMetricsForDateRange(
                        SUM(mask_pressure) AS s_mask, COUNT(mask_pressure) AS n_mask,
                        SUM(epr_pressure) AS s_epr, COUNT(epr_pressure) AS n_epr,
                        SUM(snore_index) AS s_snore, COUNT(snore_index) AS n_snore,
-                       SUM(target_ventilation) AS s_tgt, COUNT(target_ventilation) AS n_tgt
+                       SUM(target_ventilation) AS s_tgt, COUNT(target_ventilation) AS n_tgt,
+                       SUM(therapy_pressure) AS s_therapy, COUNT(therapy_pressure) AS n_therapy
                 FROM cpap_calculated_metrics GROUP BY session_id
             ) c ON c.session_id = sm.session_id
             LEFT JOIN (
@@ -2485,6 +2490,10 @@ std::vector<SessionMetrics> DatabaseService::getMetricsForDateRange(
             if (!pgNull(r, 28)) m.leak_p95               = pgDbl(r, 28);
             if (!pgNull(r, 29)) m.therapy_mode           = pgInt(r, 29);
             m.unclassified_apneas = pgInt(r, 30);   // issue #78
+            m.index_kind = (pgStr(r, 31) == "ungraded")   // SDD-072 D1
+                               ? SessionMetrics::IndexKind::Ungraded
+                               : SessionMetrics::IndexKind::AHI;
+            if (!pgNull(r, 32)) m.avg_therapy_pressure = pgDbl(r, 32);
 
             nights.push_back(std::move(m));
         }
@@ -3104,7 +3113,7 @@ bool DatabaseService::aggregateDailySummaryFromSessions(const std::string& devic
                 (device_id, record_date, duration_minutes, patient_hours,
                  ahi, hi, ai, oai, cai, uai, rin, mask_events, mask_pairs,
                  mask_press_50, leak_50, leak_95, spo2_50, epr_level, mode,
-                 index_source, updated_at)
+                 index_kind, index_source, updated_at)
             SELECT
                 s.device_id,
                 DATE(s.session_start - INTERVAL '12 hours') AS record_date,
@@ -3146,6 +3155,9 @@ bool DatabaseService::aggregateDailySummaryFromSessions(const std::string& devic
                         / NULLIF(SUM(CASE WHEN m.avg_epr_pressure > 0 THEN s.duration_seconds END), 0),
                     AVG(NULLIF(m.avg_epr_pressure, 0)))::numeric, 2),
                 MAX(COALESCE(m.therapy_mode, 0)),
+                -- SDD-024 / SDD-072 D1: the night's kind, as on SQLite (MAX
+                -- over text: any ungraded session makes the night ungraded).
+                MAX(COALESCE(m.index_kind, 'ahi')),
                 'computed',
                 NOW()
             FROM cpap_sessions s
