@@ -62,15 +62,15 @@ sudo apt-get install -y g++-arm-linux-gnueabihf
 The **sysroot** contains all ARM libraries from the Pi, isolated from your native x86 libraries.
 
 ```bash
-cd /home/aamat/maestro_hub/projects/hms-cpap
+cd ~/hms-cpap
 
 # Create sysroot directory
 mkdir -p sysroot/usr sysroot/lib/arm-linux-gnueabihf
 
 # Sync libraries from Pi
-rsync -avz aamat@192.168.2.73:/usr/include ./sysroot/usr/
-rsync -avz aamat@192.168.2.73:/usr/lib ./sysroot/usr/
-rsync -avz aamat@192.168.2.73:/lib/arm-linux-gnueabihf ./sysroot/lib/
+rsync -avz pi@raspberrypi.local:/usr/include ./sysroot/usr/
+rsync -avz pi@raspberrypi.local:/usr/lib ./sysroot/usr/
+rsync -avz pi@raspberrypi.local:/lib/arm-linux-gnueabihf ./sysroot/lib/
 
 # Verify sysroot size (~220MB)
 du -sh sysroot/
@@ -88,7 +88,7 @@ sudo apt-get install -y sshpass
 
 Edit `deploy_to_pi.sh` if your Pi credentials differ:
 ```bash
-PI_HOST="aamat@192.168.2.73"
+PI_HOST="pi@raspberrypi.local"
 PI_PASSWORD="REDACTED"
 ```
 
@@ -99,28 +99,28 @@ PI_PASSWORD="REDACTED"
 ### Build for ARM
 
 ```bash
-cd /home/aamat/maestro_hub/projects/hms-cpap
+cd ~/hms-cpap
 ./build_arm.sh
 ```
 
 Output:
 ```
 ✅ ARM build successful!
--rwxrwxr-x 1 aamat aamat 841K Feb 21 13:05 build-arm/hms_cpap
+-rwxrwxr-x 1 user user 841K Feb 21 13:05 build-arm/hms_cpap
 hms_cpap: ELF 32-bit LSB pie executable, ARM, EABI5
 ```
 
 ### Build for x86 (Native)
 
 ```bash
-cd /home/aamat/maestro_hub/projects/hms-cpap/build
+cd ~/hms-cpap/build
 cmake ..
 make -j$(nproc)
 ```
 
 Output:
 ```
--rwxrwxr-x 1 aamat aamat 698K Feb 21 13:02 hms_cpap
+-rwxrwxr-x 1 user user 698K Feb 21 13:02 hms_cpap
 hms_cpap: ELF 64-bit LSB pie executable, x86-64
 ```
 
@@ -259,7 +259,7 @@ find_library(PAHO_MQTT3AS_LIB
 
 **Fix:**
 ```bash
-rsync -avz aamat@192.168.2.73:/lib/arm-linux-gnueabihf/libpaho-mqtt* ./sysroot/lib/arm-linux-gnueabihf/
+rsync -avz pi@raspberrypi.local:/lib/arm-linux-gnueabihf/libpaho-mqtt* ./sysroot/lib/arm-linux-gnueabihf/
 ./build_arm.sh
 ```
 
@@ -270,7 +270,7 @@ rsync -avz aamat@192.168.2.73:/lib/arm-linux-gnueabihf/libpaho-mqtt* ./sysroot/l
 **Fix:**
 ```bash
 # Re-sync entire sysroot
-rsync -avz aamat@192.168.2.73:/usr/lib ./sysroot/usr/
+rsync -avz pi@raspberrypi.local:/usr/lib ./sysroot/usr/
 ```
 
 ### Issue: Binary runs on x86 but not on Pi
@@ -323,13 +323,13 @@ ldd build/hms_cpap | grep -i arm
 When you update libraries on the Pi (e.g., `apt-get upgrade`), sync the sysroot:
 
 ```bash
-cd /home/aamat/maestro_hub/projects/hms-cpap
+cd ~/hms-cpap
 
 # Update specific library
-rsync -avz aamat@192.168.2.73:/usr/lib/arm-linux-gnueabihf/libpaho-mqtt* ./sysroot/usr/lib/arm-linux-gnueabihf/
+rsync -avz pi@raspberrypi.local:/usr/lib/arm-linux-gnueabihf/libpaho-mqtt* ./sysroot/usr/lib/arm-linux-gnueabihf/
 
 # Or update everything
-rsync -avz --delete aamat@192.168.2.73:/usr/lib ./sysroot/usr/
+rsync -avz --delete pi@raspberrypi.local:/usr/lib ./sysroot/usr/
 ```
 
 ### Verifying Binary Compatibility
@@ -338,10 +338,10 @@ Before deploying, verify the binary on Pi:
 
 ```bash
 # Copy to test directory
-scp build-arm/hms_cpap aamat@192.168.2.73:~/test/
+scp build-arm/hms_cpap pi@raspberrypi.local:~/test/
 
 # Test without disrupting service
-ssh aamat@192.168.2.73 "cd ~/test && ./hms_cpap --help"
+ssh pi@raspberrypi.local "cd ~/test && ./hms_cpap --help"
 ```
 
 ### Clean Builds
@@ -371,7 +371,7 @@ vim src/mqtt/MqttClient.cpp
 ./deploy_to_pi.sh
 
 # 3. Watch logs
-ssh aamat@192.168.2.73 "journalctl -u hms-cpap -f"
+ssh pi@raspberrypi.local "journalctl -u hms-cpap -f"
 ```
 
 ### Testing Both Architectures
