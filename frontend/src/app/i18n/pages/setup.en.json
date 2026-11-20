@@ -36,7 +36,7 @@
       "okFresh": "Connected. The schema will be created on first start."
     },
     "source": {
-      "title": "Data Source",
+      "title": "Select source",
       "formatLabel": "Which machine wrote this card?",
       "philips": "Philips Respironics (experimental)",
       "bmc": "BMC / React Health Luna",

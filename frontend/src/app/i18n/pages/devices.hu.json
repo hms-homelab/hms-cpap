@@ -17,7 +17,8 @@
       "ezshare": "ez Share kártya",
       "flashair": "FlashAir kártya",
       "as11_ble": "AirSense 11 (Bluetooth)",
-      "ds2_ble": "DreamStation 2 (Bluetooth)"
+      "ds2_ble": "DreamStation 2 (Bluetooth)",
+      "garmin": "Garmin"
     },
     "presence": {
       "yes": "itt van",
@@ -234,6 +235,34 @@
       },
       "nextBoot": "a következő indításkor lép életbe"
     },
+    "garmin": {
+      "signedInAs": "Bejelentkezve mint {{email}}",
+      "notSetUp": "A kezdéshez adja meg a Garmin-fiókot a Beállításokban.",
+      "signedOut": "Még nincs bejelentkezve: a hms-cpap a következő eseménynél jelentkezik be, vagy a Lekérés a Garmintól most gombbal.",
+      "signingIn": "Bejelentkezés a Garminba...",
+      "readAfter": "Az éjszaka után olvassuk a Garmin Connectből, soha nem közben.",
+      "watch": "Óra",
+      "lastFetch": "Utolsó lekérés",
+      "fetchStored": "Tárolt éjszakák: {{n}}",
+      "fetchNothing": "Nincs újdonság. A még hiányzó éjszakát a következő eseménynél újra kérjük.",
+      "fetchNow": "Lekérés a Garmintól most",
+      "fetching": "Lekérés...",
+      "asked": "Kérve. A kártya mutatja az eredményt.",
+      "mfaNote": "A Garmin kódot küldött a bejelentkezés befejezéséhez. Írja be ide.",
+      "code": "Kód a Garmintól",
+      "submitCode": "Bejelentkezés",
+      "checking": "Ellenőrzés...",
+      "openSettings": "Garmin-fiók: Beállítások",
+      "err": {
+        "changed": "A Garmin megváltoztatta a bejelentkezést; frissítse a hms-cpapot",
+        "bad_password": "A Garmin elutasította az e-mail-címet vagy a jelszót. Ellenőrizze őket a Beállításokban.",
+        "bad_mfa_code": "A Garmin nem fogadta el a kódot. Próbálja újra.",
+        "blocked": "A Garmin egyelőre elutasítja ezt a bejelentkezést. A következő eseménynél újra próbáljuk.",
+        "unreachable": "A Garmin nem válaszolt. A következő eseménynél újra próbáljuk.",
+        "expired": "A Garmin új bejelentkezést kér.",
+        "failed": "Garmin: {{message}}"
+      }
+    },
     "o2ring": {
       "throughBridge": "{{url}} címen át olvasva, nem ennek a számítógépnek a Bluetooth-ján.",
       "notCompiled": "Ebben a változatban nincs Bluetooth.",
@@ -381,6 +410,24 @@
         "bad_file": "Az olvasás olyan formátumú, amelyet ez a hms-cpap még nem olvas. Frissítse a hms-cpapot.",
         "other": "Nem sikerült: {{error}}"
       }
+    },
+    "oscar": {
+      "readNow": "Olvasás most",
+      "reading": "Az OSCAR olvassa a kártyát...",
+      "readStarted": "Az OSCAR olvassa a kártyát.",
+      "openSettings": "OSCAR beállítása a Beállításokban",
+      "state_never": "Még nincs beolvasva. A készülék minden befejezett kezelését az OSCAR olvassa be.",
+      "state_imported": "OSCAR {{version}}, utolsó olvasás {{time}}, {{sessions}} kezelés",
+      "state_nothing_new": "OSCAR {{version}}, utolsó olvasás {{time}}, nincs új",
+      "state_read_nothing": "Az OSCAR semmit nem olvasott be erről a kártyáról.",
+      "state_busy": "Az OSCAR foglalt volt (nyitva van ezen a számítógépen). A kezelést a következő befejezéskor vagy az Olvasás most gombbal olvassuk be.",
+      "state_timeout": "Az OSCAR nem végzett időben, ezért leállítottuk.",
+      "state_failed": "Az OSCAR nem tudta beolvasni a kártyát.",
+      "state_not_set_up": "Az OSCAR nincs beállítva (Beállítások, Adatforrás).",
+      "state_no_program": "Az OSCAR program nem indult el.",
+      "state_not_supported": "Ez az OSCAR-verzió még nem támogatott.",
+      "state_no_profile": "Hiányzik a hms-cpap OSCAR-profilja. Hozza létre az OSCAR-ban.",
+      "state_not_here": "Az OSCAR-nak ugyanazon a számítógépen kell lennie, mint a hms-cpap."
     },
     "ds2": {
       "notCompiled": "Ebben a változatban nincs Bluetooth: a DreamStation 2 nem olvasható erről a számítógépről.",

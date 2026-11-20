@@ -4,6 +4,7 @@
 #include "clients/EzShareClient.h"
 #include "llm_client.h"
 #include "parsers/CpapdashBridge.h"
+#include "services/ComputedEvents.h"
 #include "services/DataPublisherService.h"
 #include "services/SupplyPublisher.h"
 #include "services/CpapDashSyncService.h"
@@ -22,6 +23,7 @@
 #include "services/SefamIngestion.h"
 #include "services/BmcIngestion.h"
 #include "services/PhilipsCardIngestion.h"
+#include "services/OscarCardReader.h"
 #include "services/SessionDiscoveryService.h"
 #include "services/ListingPlan.h"
 #include "utils/MachineClock.h"
@@ -143,6 +145,24 @@ public:
     void setMyAirService(std::shared_ptr<MyAirService> myair) {
         myair_ = std::move(myair);
     }
+
+    /// SDD-078 D2: told the DATALOG folder (YYYYMMDD) of each night
+    /// announceQuietNights closes, on the burst's thread; it must only take
+    /// the event and return. SDD-013: more than one listens (Garmin, the
+    /// local sleep model), each told in the order added.
+    void addNightClosedListener(std::function<void(const std::string&)> f) {
+        std::lock_guard<std::mutex> lk(night_closed_mu_);
+        if (f) night_closed_.push_back(std::move(f));
+    }
+    void clearNightClosedListeners() {
+        std::lock_guard<std::mutex> lk(night_closed_mu_);
+        night_closed_.clear();
+    }
+
+    /// SDD-013: the STR row of day [yyyymmdd] from the last STR read, the one
+    /// the daily summary is given, or none. On the burst's thread only (a
+    /// night-closed listener), where that STR is written.
+    std::optional<STRDailyRecord> strRecordForDay(const std::string& yyyymmdd) const;
 
     /**
      * Check if service is running
@@ -298,6 +318,9 @@ public:
     /// SDD-058 D2: how long a live card session may go without growing before
     /// it is closed. Test-only.
     void setCardMaskQuietForTest(std::chrono::seconds quiet) { card_mask_quiet_ = quiet; }
+    /// SDD-058 D6: the gate is closed in every build; only a test opens it,
+    /// to exercise what the computed events would do.
+    void setComputedEventsOpenForTest(bool open) { computed_events_open_ = open; }
 
     /// Test-only: the id nights are being stored under (SDD-042).
     const std::string& deviceIdForTest() const { return device_id_; }
@@ -353,6 +376,8 @@ private:
     /// SDD-004 optional cloud mirror; null when the feature is off.
     std::shared_ptr<CpapDashSyncService> cpapdash_sync_;
     std::shared_ptr<MyAirService> myair_;
+    std::mutex night_closed_mu_;
+    std::vector<std::function<void(const std::string&)>> night_closed_;   // SDD-078 D2, SDD-013
     std::string device_name_;
     /// SDD-010: the card ROOT when CPAP_SOURCE=local. STR.edf and DATALOG are
     /// siblings INSIDE it. Never the DATALOG folder itself: that was the old
@@ -398,10 +423,22 @@ private:
     //    (SDD-049) and a Philips card with plain files. One source at a time.
 
     /// What this process last saved for each session, by start (epoch
-    /// seconds): its seconds x 2, plus 1 once its summary is on the card. A
-    /// stored session is read again once per process, every one of them, and
-    /// then whenever that changed.
-    std::map<long long, int> card_seen_;
+    /// seconds): its seconds x 2, plus 1 once its summary is on the card, and
+    /// how many machine events it had. A stored session is read again once
+    /// per process, every one of them, and then whenever either changed: a
+    /// Luna writes its .evt at the stop, after the last second it grew by
+    /// (SDD-058 D2, D4), and only growth is the session being written now.
+    struct CardSeen {
+        int growth = 0;
+        size_t events = 0;
+        /// SDD-058 D4: the set its index was saved from (gate open only); a
+        /// session that stops being written is saved again when it changes.
+        IndexEvents index_from = IndexEvents::Machine;
+    };
+    std::map<long long, CardSeen> card_seen_;
+
+    /// SDD-058 D6: kComputedEventsOpen, false.
+    bool computed_events_open_ = kComputedEventsOpen;
 
     /// SDD-058 D2: the session being written now, so its night reads live
     /// (the night page's LIVE banner and its refresh). A session that starts or
@@ -428,6 +465,10 @@ private:
     struct CardSession {
         std::unique_ptr<CPAPSession> session;
         int closed = -1;
+        /// SDD-058 D3: its computed_events were asked for (the gate is open).
+        bool computed = false;
+        /// SDD-058 D4: the card carries the machine's event file.
+        bool card_has_event_file = true;
     };
 
     /// Save what changed, keep the session being written open, close the
@@ -451,6 +492,25 @@ private:
     /// An encrypted card is said once per stretch, not every burst.
     bool philips_encrypted_logged_ = false;
     void startPhilipsOverEzShare(const std::string& archive_dir);
+
+    /// SDD-080: an encrypted DreamStation 2 card is read through the user's
+    /// OSCAR. Built on the first burst that finds one; its sessions are
+    /// stored on its own thread, the newest published on the worker.
+    mutable std::mutex oscar_mu_;
+    std::shared_ptr<oscar::OscarCardReader> oscar_reader_;
+    std::shared_ptr<oscar::IProcessRunner> oscar_runner_;   // null: the system's
+    oscar::Settings oscar_settings_;
+    bool oscar_settings_set_ = false;   // setOscarSettings ran: the config's copy is older
+    std::string oscar_card_root_;
+    std::optional<CPAPSession> oscar_pending_publish_;
+    int oscar_pending_count_ = 0;
+    std::atomic<bool> oscar_publish_due_{false};
+    /// The card is encrypted: the reader exists for [card_root], and every
+    /// session close on it not yet noted starts a read.
+    void oscarCardSeen(const std::string& card_root);
+    /// On the worker: the newest stored session is published, as a
+    /// Bluetooth DreamStation 2 night is.
+    void publishOscarNight();
 
     /// SDD-031: a Sefam card behind an ez Share. data_source_ is the ez Share
     /// client; each burst copies the card into sefam_archive_dir_ and the
@@ -598,6 +658,27 @@ public:
     }
     /// SDD-065: records were stored by another reader: import them on the worker.
     void ds2ImportDue() { ds2_import_due_ = true; }
+
+    // ── SDD-080: a DreamStation 2 card read through the user's OSCAR ──
+    /// A Sleep Bridge's rebuild wrote these card-relative files under
+    /// [card_root]: a .B01 among them is a session closing (D2).
+    void oscarCardWritten(const std::string& card_root, const std::vector<std::string>& rels);
+    /// "Read now" (D7). False when no encrypted card has been found.
+    bool requestOscarRead();
+    /// The Devices tile's OSCAR line; null when no encrypted card was found.
+    Json::Value oscarStatus() const;
+    /// The three Settings fields, after PUT /api/oscar saved them.
+    void setOscarSettings(const oscar::Settings& s);
+    /// Test-only: the reader as built for the encrypted card.
+    std::shared_ptr<oscar::OscarCardReader> oscarReaderForTest() const {
+        std::lock_guard<std::mutex> lk(oscar_mu_);
+        return oscar_reader_;
+    }
+    /// Test-only: the process OSCAR runs in (a fake OSCAR).
+    void setOscarRunnerForTest(std::shared_ptr<oscar::IProcessRunner> r) {
+        std::lock_guard<std::mutex> lk(oscar_mu_);
+        oscar_runner_ = std::move(r);
+    }
 
 private:
     mutable std::mutex ds2_mtx_;
@@ -834,6 +915,8 @@ private:
     /// or null when the STR has none for it.
     const STRDailyRecord* strRecordForNight(
         const std::chrono::system_clock::time_point& session_start) const;
+    /// The cached STR record of day [day] (YYYYMMDD), or null.
+    const STRDailyRecord* strRecordOf(const std::string& day) const;
 
     /// Weekly/monthly LLM summaries, on their configured days.
     void runRangeSummariesIfDue();
@@ -882,6 +965,7 @@ public:
         machine_clock_ = c;
         machine_clock_loaded_ = true;
     }
+    const MachineClock& machineClockForTest() const { return machine_clock_; }
     const std::map<std::string, FolderWatch>& folderWatchForTest() const { return folder_watch_; }
     const std::map<std::string, StoredListing>& storedListingsForTest() const { return stored_listings_; }
 private:

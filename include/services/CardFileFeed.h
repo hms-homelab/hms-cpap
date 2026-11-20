@@ -14,14 +14,27 @@
 // machine's serial, or "" when the collector does not know it (the uploader
 // reads it from the card's Identification file).
 //
+// SDD-079 D1: `source` is where the root's files came from, said by the
+// collector that knows it, never read back from a path: kSourceCard for a
+// file the machine wrote to its card (the burst collector, a Sleep Bridge's
+// rebuild), kSourceBleAs11 for a file hms-cpap built from an AirSense 11's
+// Bluetooth stream, kSourceOximetry for the oximetry outbox (SDD-079 D4).
+//
 #include <functional>
 #include <string>
 
 namespace hms_cpap::card_feed {
 
+/// platform SDD-061 D1's values, and the outbox's own (SDD-079 D4).
+inline constexpr const char* kSourceCard     = "card";
+inline constexpr const char* kSourceBleAs11  = "ble-as11";
+inline constexpr const char* kSourceBleDs2   = "ble-ds2";
+inline constexpr const char* kSourceOximetry = "oximetry";
+
 using FileSink = std::function<void(const std::string& root, const std::string& rel_path,
-                                    const std::string& machine)>;
-using RootSink = std::function<void(const std::string& root, const std::string& machine)>;
+                                    const std::string& machine, const std::string& source)>;
+using RootSink = std::function<void(const std::string& root, const std::string& machine,
+                                    const std::string& source)>;
 using BurstSink = std::function<void(const std::string& root)>;
 
 /// Installs (or, with empty functions, removes) where the notes go.
@@ -34,9 +47,10 @@ void setSinks(FileSink file_sink, RootSink root_sink, BurstSink burst_sink = {})
 void burstEnded(const std::string& root);
 
 /// One file under [root] was written.
-void fileWritten(const std::string& root, const std::string& rel_path, const std::string& machine);
+void fileWritten(const std::string& root, const std::string& rel_path, const std::string& machine,
+                 const std::string& source);
 
 /// Something under [root] was written; the uploader looks at the whole root.
-void rootWritten(const std::string& root, const std::string& machine);
+void rootWritten(const std::string& root, const std::string& machine, const std::string& source);
 
 }  // namespace hms_cpap::card_feed

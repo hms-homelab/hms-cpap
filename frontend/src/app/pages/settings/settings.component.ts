@@ -1,19 +1,23 @@
-import { Component, OnInit, OnDestroy } from '@angular/core';
+import { Component, NgZone, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { TranslatePipe, TranslateService } from '@ngx-translate/core';
 import { Subject, Subscription, timer } from 'rxjs';
 import { switchMap, takeUntil, takeWhile, tap } from 'rxjs/operators';
 import { RouterLink } from '@angular/router';
-import { CpapApiService, CpapDashStreamStatus, UpdateStatus } from '../../services/cpap-api.service';
+import { CpapApiService, CpapDashStreamStatus, SleepBridge, UpdateStatus } from '../../services/cpap-api.service';
+import { SleepBridgeWatch } from '../../services/sleepbridge-watch';
+import { BridgeSourceComponent } from '../../components/bridge-source/bridge-source.component';
+import { bridgeInUse } from '../../components/bridge-source/bridge-source-model';
 import { UpdateFlowService } from '../../services/update-flow.service';
 import { AppConfig } from '../../models/config.model';
 import { sourceImage } from '../../utils/source-image';
+import { showLocalModelSection } from './local-model';
 
 @Component({
   selector: 'app-settings',
   standalone: true,
-  imports: [CommonModule, FormsModule, RouterLink, TranslatePipe],
+  imports: [CommonModule, FormsModule, RouterLink, TranslatePipe, BridgeSourceComponent],
   template: `
     <div class="settings">
       <h2>{{ 'settings.title' | translate }}</h2>
@@ -36,6 +40,21 @@ import { sourceImage } from '../../utils/source-image';
             <p class="devices-link" *ngIf="config.transport !== 'local'">
               <a routerLink="/devices">{{ 'settings.devicesLink' | translate }}</a>
             </p>
+            <!-- SDD-073 D10: the Sleep Bridges seen here, each one click from
+                 being the source. Follows the bridges' events on the watch
+                 socket, never a timer. -->
+            <div class="bridges" *ngIf="bridges.length">
+              <b>{{ 'settings.source.bridges.title' | translate }}</b>
+              <app-bridge-source *ngFor="let b of bridges; trackBy: trackBridge"
+                                 [sender]="b.sender" [cardRoot]="b.card_root || ''"
+                                 [cardFormat]="b.card_format || ''" [head]="true" [online]="b.online"
+                                 [inUse]="bridgeInUse(b.card_root)" [restart]="true" />
+              <small class="hint" *ngIf="bridgesWatchClosed">
+                {{ 'settings.source.bridges.closed' | translate }}
+                <button type="button" class="link-btn" (click)="watchBridges()">
+                  {{ 'settings.source.bridges.reconnect' | translate }}</button>
+              </small>
+            </div>
             <label>
               {{ 'settings.source.transport' | translate }}
               <span class="transport-row">
@@ -83,6 +102,46 @@ import { sourceImage } from '../../utils/source-image';
             <small class="hint" *ngIf="config.format === 'philips'">
               {{ 'settings.source.philipsHint' | translate }}
             </small>
+            <!-- SDD-080 D7: an encrypted DreamStation 2 card is read through the
+                 user's own OSCAR. Three fields, each checked on save. -->
+            <div class="oscar-block" *ngIf="config.format === 'philips' && oscar">
+              <b>{{ 'settings.source.oscar.title' | translate }}</b>
+              <small class="hint">{{ 'settings.source.oscar.desc' | translate }}</small>
+              <small class="hint warn" *ngIf="oscarContainerised">{{ 'settings.source.oscar.container' | translate }}</small>
+              <label>
+                {{ 'settings.source.oscar.program' | translate }}
+                <input type="text" [(ngModel)]="oscar.program" name="oscar_program"
+                       [placeholder]="oscarFound || '/usr/bin/OSCAR20'" />
+                <small class="hint" *ngIf="oscarFound && oscar.program === oscarFound && !oscarCheck">
+                  {{ 'settings.source.oscar.found' | translate }}</small>
+                <small class="hint" *ngIf="oscarCheck?.program?.state as st" [class.warn]="st !== 'ok'" [class.ok]="st === 'ok'">
+                  {{ ('settings.source.oscar.program_' + st) | translate }}</small>
+              </label>
+              <label>
+                {{ 'settings.source.oscar.dataDir' | translate }}
+                <input type="text" [(ngModel)]="oscar.data_dir" name="oscar_data_dir"
+                       placeholder="/home/you/Documents/OSCAR_Data" />
+                <small class="hint" *ngIf="!oscarCheck">{{ 'settings.source.oscar.dataDirHint' | translate }}</small>
+                <small class="hint" *ngIf="oscarCheck?.data_dir?.state as st" [class.warn]="st !== 'ok'" [class.ok]="st === 'ok'">
+                  {{ ('settings.source.oscar.dataDir_' + st) | translate:{ version: oscarCheck.data_dir.version || '?', schema: oscarCheck.data_dir.schema || '?' } }}</small>
+              </label>
+              <label>
+                {{ 'settings.source.oscar.profile' | translate }}
+                <input type="text" [(ngModel)]="oscar.profile" name="oscar_profile" list="oscar-profiles" placeholder="hms-cpap" />
+                <datalist id="oscar-profiles">
+                  <option *ngFor="let p of oscarProfiles" [value]="p"></option>
+                </datalist>
+                <small class="hint" *ngIf="!oscarCheck || oscarCheck?.profile?.state === 'ok'">
+                  {{ 'settings.source.oscar.profileHint' | translate }}</small>
+                <small class="hint warn" *ngIf="oscarCheck?.profile?.state && oscarCheck.profile.state !== 'ok'">
+                  {{ ('settings.source.oscar.profile_' + oscarCheck.profile.state) | translate:{ profile: oscar.profile } }}</small>
+              </label>
+              <div class="oscar-actions">
+                <button type="button" class="btn-primary" (click)="saveOscar()" [disabled]="oscarSaving">
+                  {{ (oscarSaving ? 'settings.source.oscar.checking' : 'settings.source.oscar.save') | translate }}</button>
+                <small class="hint ok" *ngIf="oscarCheck?.ok">{{ 'settings.source.oscar.allGood' | translate }}</small>
+              </div>
+            </div>
             <!-- Asked for by the first person to look here for myAir, which will
                  not be the last. myAir cannot BE a source: it returns daily
                  summaries only, with no waveforms, events, sessions or
@@ -215,6 +274,60 @@ import { sourceImage } from '../../utils/source-image';
                 <span class="hint" *ngIf="bleStatus === 'unauthorized'" style="color: #ef4444;">{{ 'settings.o2ring.bleUnauthorized' | translate }}</span>
               </label>
             </ng-container>
+          </div>
+        </div>
+
+        <!-- Section: Garmin SpO2 (SDD-078). The account is a setting, masked
+             as the CpapDash token is (D1); its state, the MFA code and the
+             fetch button are the Devices page's Garmin card (D4). -->
+        <div class="section" *ngIf="config.garmin">
+          <div class="section-header" (click)="toggle('garmin')">
+            <span class="chevron" [class.open]="open['garmin']">&#9654;</span>
+            {{ 'settings.garmin.heading' | translate }}
+            <span class="badge" *ngIf="!config.garmin.enabled">{{ 'settings.tag.optional' | translate }}</span>
+            <span class="badge connected" *ngIf="config.garmin.enabled && config.garmin.signed_in">{{ 'settings.tag.connected' | translate }}</span>
+          </div>
+          <div class="section-body" *ngIf="open['garmin']">
+            <p class="section-desc">{{ 'settings.garmin.desc' | translate }}</p>
+            <label class="toggle-row">
+              <input type="checkbox" [(ngModel)]="config.garmin.enabled" name="garmin_enabled" />
+              {{ 'settings.garmin.enabled' | translate }}
+            </label>
+            <ng-container *ngIf="config.garmin.enabled">
+              <label>
+                {{ 'settings.garmin.email' | translate }}
+                <input type="email" [(ngModel)]="config.garmin.email" name="garmin_email"
+                       autocomplete="off" placeholder="name@example.com" />
+              </label>
+              <label>
+                {{ 'settings.garmin.password' | translate }}
+                <input type="password" [(ngModel)]="config.garmin.password" name="garmin_password"
+                       autocomplete="new-password"
+                       [placeholder]="'settings.garmin.passwordPlaceholder' | translate" />
+                <small class="hint">{{ 'settings.garmin.passwordHint' | translate }}</small>
+              </label>
+              <p class="devices-link">
+                <a routerLink="/devices">{{ 'settings.devicesLink' | translate }}</a>
+              </p>
+            </ng-container>
+          </div>
+        </div>
+
+        <!-- Section: SpO2 desaturations (SDD-001). One number, used for the
+             machine's own SpO2 when a night is saved and for the ring's SpO2
+             on the session page. -->
+        <div class="section">
+          <div class="section-header" (click)="toggle('spo2')">
+            <span class="chevron" [class.open]="open['spo2']">&#9654;</span>
+            {{ 'settings.spo2.heading' | translate }}
+          </div>
+          <div class="section-body" *ngIf="open['spo2']">
+            <label>
+              {{ 'settings.spo2.dropPct' | translate }}
+              <input type="number" [(ngModel)]="config.desat_drop_pct" name="desat_drop_pct"
+                     min="1" max="10" step="0.5" />
+              <span class="hint">{{ 'settings.spo2.dropHint' | translate }}</span>
+            </label>
           </div>
         </div>
 
@@ -399,7 +512,7 @@ import { sourceImage } from '../../utils/source-image';
                   <option value="EU">{{ 'settings.myair.regionEu' | translate }}</option>
                 </select>
               </label>
-              <button type="button" class="myair-btn" (click)="myairConnect()"
+              <button type="button" class="myair-btn btn-primary" (click)="myairConnect()"
                       [disabled]="myairBusy || !myairForm.username || !myairForm.password">
                 {{ (myairBusy ? 'settings.myair.signingIn' : 'settings.myair.connect') | translate }}
               </button>
@@ -414,7 +527,7 @@ import { sourceImage } from '../../utils/source-image';
                        [ngModelOptions]="{standalone: true}"
                        [placeholder]="'settings.myair.codePlaceholder' | translate" />
               </label>
-              <button type="button" class="myair-btn" (click)="myairVerify()"
+              <button type="button" class="myair-btn btn-primary" (click)="myairVerify()"
                       [disabled]="myairBusy || !myairForm.code">
                 {{ (myairBusy ? 'settings.myair.checking' : 'settings.myair.verify') | translate }}
               </button>
@@ -538,6 +651,56 @@ import { sourceImage } from '../../utils/source-image';
                        placeholder="shhs-rf-v1" />
               </label>
             </ng-container>
+          </div>
+        </div>
+
+        <!-- SDD-013: the local sleep model, shown only once a model is
+             published (Albin, 2026-11-19). Its switch acts at once through its
+             own endpoint, not Save: turning it on downloads and checks the
+             model. -->
+        <div class="section" *ngIf="showLocalModelSection(localModel)">
+          <div class="section-header" (click)="toggle('local_model'); loadLocalModel()">
+            <span class="chevron" [class.open]="open['local_model']">&#9654;</span>
+            {{ 'settings.localModel.heading' | translate }}
+            <span class="badge" *ngIf="!localModel.enabled">{{ 'settings.tag.optional' | translate }}</span>
+          </div>
+          <div class="section-body" *ngIf="open['local_model']">
+            <p class="section-desc">{{ 'settings.localModel.desc' | translate }}</p>
+            <label class="toggle-row">
+              {{ 'settings.localModel.enabled' | translate }}
+              <input type="checkbox" name="local_model_enabled"
+                     [checked]="localModel.enabled || localModel.state === 'downloading'"
+                     [disabled]="localModelBusy"
+                     (change)="toggleLocalModel($any($event.target))" />
+            </label>
+            <div class="ml-status">
+              <div class="status-row">
+                <span class="status-label">{{ 'settings.status.label' | translate }}</span>
+                <span class="status-value" [class.status-active]="localModel.state === 'ready'">
+                  {{ ('settings.localModel.state.' + localModel.state) | translate }}
+                </span>
+              </div>
+              <div class="status-row">
+                <span class="status-label">{{ 'settings.localModel.version' | translate }}</span>
+                <span class="status-value">{{ localModel.version }}</span>
+              </div>
+              <div class="status-row" *ngIf="localModel.last?.night">
+                <span class="status-label">{{ 'settings.localModel.lastNight' | translate }}</span>
+                <span class="status-value">
+                  {{ localModel.last.night }} ·
+                  {{ (localModel.last.how ? 'settings.localModel.how.' + localModel.last.how : 'settings.localModel.how.none') | translate }}
+                </span>
+              </div>
+            </div>
+            <p class="hint warn" *ngIf="localModelNote()">{{ localModelNote() }}</p>
+            <div class="ml-actions">
+              <input #modelFile type="file" accept=".gguf" hidden (change)="loadModelFile($any($event.target))" />
+              <button type="button" class="btn-secondary" (click)="modelFile.click()"
+                      [disabled]="localModelBusy || !localModel.published">
+                {{ 'settings.localModel.loadFile' | translate }}
+              </button>
+              <span class="hint">{{ 'settings.localModel.loadFileHint' | translate }}</span>
+            </div>
           </div>
         </div>
 
@@ -678,7 +841,7 @@ import { sourceImage } from '../../utils/source-image';
             </div>
 
             <div class="ml-actions">
-              <button type="button" class="btn-train" (click)="startBackfill()" [disabled]="backfillRunning">
+              <button type="button" class="btn-train btn-primary" (click)="startBackfill()" [disabled]="backfillRunning">
                 {{ (backfillRunning ? 'settings.backfill.importing' : 'settings.backfill.start') | translate }}
               </button>
             </div>
@@ -890,7 +1053,7 @@ import { sourceImage } from '../../utils/source-image';
               </div>
 
               <div class="ml-actions">
-                <button type="button" class="btn-train" (click)="trainNow()" [disabled]="mlTraining">
+                <button type="button" class="btn-train btn-primary" (click)="trainNow()" [disabled]="mlTraining">
                   {{ (mlTraining ? 'settings.ml.training' : 'settings.ml.train') | translate }}
                 </button>
               </div>
@@ -912,10 +1075,10 @@ import { sourceImage } from '../../utils/source-image';
             </label>
             <div class="prompt-path" *ngIf="llmPromptPath">{{ 'settings.prompt.file' | translate:{ path: llmPromptPath } }}</div>
             <div class="prompt-actions">
-              <button type="button" class="btn-save-prompt" (click)="saveLlmPrompt()" [disabled]="savingPrompt">
+              <button type="button" class="btn-save-prompt btn-primary" (click)="saveLlmPrompt()" [disabled]="savingPrompt">
                 {{ (savingPrompt ? 'settings.prompt.saving' : 'settings.prompt.save') | translate }}
               </button>
-              <button type="button" class="btn-reset" (click)="resetLlmPrompt()">{{ 'settings.prompt.reset' | translate }}</button>
+              <button type="button" class="btn-reset btn-secondary" (click)="resetLlmPrompt()">{{ 'settings.prompt.reset' | translate }}</button>
             </div>
           </div>
         </div>
@@ -985,15 +1148,15 @@ import { sourceImage } from '../../utils/source-image';
               </p>
 
               <div class="update-actions">
-                <button type="button" class="btn-train" (click)="checkForUpdate()"
+                <button type="button" class="btn-train btn-primary" (click)="checkForUpdate()"
                         [disabled]="updateChecking || updateFlow.phase === 'applying' || updateFlow.phase === 'restarting'">
                   {{ (updateChecking ? 'settings.updates.checking' : 'settings.updates.checkNow') | translate }}
                 </button>
-                <button type="button" class="btn-train" *ngIf="update.can_apply && updateFlow.phase === 'idle'"
+                <button type="button" class="btn-train btn-primary" *ngIf="update.can_apply && updateFlow.phase === 'idle'"
                         (click)="updateFlow.apply(update)">
                   {{ 'settings.updates.apply' | translate:{ latest: update.latest } }}
                 </button>
-                <button type="button" class="btn-train" *ngIf="updateFlow.phase === 'busy'"
+                <button type="button" class="btn-train btn-primary" *ngIf="updateFlow.phase === 'busy'"
                         (click)="updateFlow.apply(update, true)">
                   {{ 'updateBanner.applyNow' | translate }}
                 </button>
@@ -1059,7 +1222,7 @@ import { sourceImage } from '../../utils/source-image';
         </div>
 
         <div class="actions">
-          <button type="submit" class="btn-save" [disabled]="saving">
+          <button type="submit" class="btn-save btn-primary" [disabled]="saving">
             {{ (saving ? 'settings.actions.saving' : 'settings.actions.save') | translate }}
           </button>
         </div>
@@ -1075,7 +1238,7 @@ import { sourceImage } from '../../utils/source-image';
           <span *ngIf="portMoved"> {{ 'settings.restart.portMove' | translate:{ port: config?.web_port } }}</span>
         </div>
         <div class="restart-actions">
-          <button type="button" class="btn-save" (click)="restartNow()" [disabled]="restarting">
+          <button type="button" class="btn-save btn-primary" (click)="restartNow()" [disabled]="restarting">
             {{ (restarting ? 'settings.restart.restarting' : 'settings.restart.now') | translate }}
           </button>
           <button type="button" class="btn-link" (click)="dismissRestart()" [disabled]="restarting">
@@ -1133,6 +1296,14 @@ import { sourceImage } from '../../utils/source-image';
     }
     /* SDD-020 myAir */
     .source-note { display: block; margin-top: 0.5rem; line-height: 1.5; }
+    /* SDD-080 D7: the OSCAR fields */
+    .oscar-block { border: 1px solid #333; border-radius: 6px; padding: 0.75rem 0.9rem; margin: 0.75rem 0; }
+    .oscar-block > b { display: block; margin-bottom: 0.25rem; }
+    .oscar-block > .hint { display: block; margin-bottom: 0.5rem; line-height: 1.45; }
+    .oscar-block label .hint { display: block; margin-top: 0.25rem; }
+    .oscar-block .hint.ok { color: #4ade80; font-style: normal; }
+    .oscar-actions { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; margin-top: 0.5rem; }
+    .oscar-actions .btn-primary { padding: 0.45rem 1rem; border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 0.8rem; }
     .badge.connected { background: #14532d; color: #4ade80; }
     .myair-note { background: rgba(100, 181, 246, 0.08); border: 1px solid rgba(100, 181, 246, 0.35);
                   border-radius: 6px; padding: 0.6rem 0.8rem; color: #cfe6fb; font-size: 0.8rem;
@@ -1142,13 +1313,11 @@ import { sourceImage } from '../../utils/source-image';
                    margin-bottom: 0.75rem; }
     .myair-connected { color: #ddd; font-size: 0.85rem; margin-bottom: 0.6rem; }
     .myair-msg { color: #9ad0a0; font-size: 0.8rem; margin-top: 0.6rem; }
-    .myair-btn { padding: 0.45rem 1rem; border-radius: 5px; border: 1px solid #1976d2;
-                 background: #1976d2; color: #fff; font-weight: 600; cursor: pointer;
-                 font-size: 0.8rem; }
+    .myair-btn { padding: 0.45rem 1rem; border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 0.8rem; }
     .myair-btn:disabled { opacity: 0.5; cursor: not-allowed; }
     .myair-msg.err { color: #f87171; }
     .hint.inline { display: inline; margin-left: 0.5rem; }
-    .myair-btn.danger { background: transparent; border-color: #f87171; color: #f87171; }
+    .myair-btn.danger { background: transparent; border: 1px solid #f87171; color: #f87171; }
     /* platform SDD-059: the nights' switch and where it stands. */
     .stream-toggle { margin-top: 1rem; }
     .stream-hint { display: block; margin: -0.25rem 0 0.6rem; line-height: 1.5; }
@@ -1160,10 +1329,11 @@ import { sourceImage } from '../../utils/source-image';
                           color: #fde68a; }
     .stream-status.err { background: rgba(248, 113, 113, 0.08); border-color: rgba(248, 113, 113, 0.45);
                          color: #fecaca; }
-    .myair-btn.secondary { background: transparent; border-color: #555; color: #aaa; }
-    .myair-btn.secondary:hover:not(:disabled) { color: #e0e0e0; border-color: #888; }
     /* SDD-062 D1: a section whose device has a card points there. */
     .devices-link { font-size: 0.82rem; margin: 0.2rem 0 0.6rem; }
+    .bridges { border: 1px solid #333; border-radius: 8px; padding: .6rem .8rem; margin: 0 0 .9rem; }
+    .bridges b { color: #e0e0e0; }
+    .link-btn { background: none; border: none; color: #64b5f6; cursor: pointer; }
     .devices-link a { color: #64b5f6; }
 
     .section-header .restart-tag { margin-left: auto; }
@@ -1179,7 +1349,7 @@ import { sourceImage } from '../../utils/source-image';
     .restart-text { flex: 1; min-width: 260px; line-height: 1.45; }
     .restart-actions { display: flex; align-items: center; gap: 0.5rem; }
     .btn-link {
-      background: none; border: none; color: #90a4ae; cursor: pointer;
+      background: none; border: none; color: var(--btn-blue-text); cursor: pointer;
       font-size: 0.8rem; text-decoration: underline; padding: 0.4rem;
     }
     .btn-link:disabled { opacity: 0.5; cursor: default; }
@@ -1232,13 +1402,8 @@ import { sourceImage } from '../../utils/source-image';
     input[type="number"] { max-width: 160px; }
 
     .actions { margin-top: 1.25rem; display: flex; }
-    .btn-save {
-      background: #64b5f6; color: #111; border: none; border-radius: 6px;
-      padding: 0.6rem 2rem; font-size: 0.95rem; font-weight: 600;
-      cursor: pointer; transition: background 0.2s;
-    }
-    .btn-save:hover { background: #90caf9; }
-    .btn-save:disabled { opacity: 0.5; cursor: not-allowed; }
+    /* Button colours: styles.scss (.btn-primary, .btn-secondary); sizes here. */
+    .btn-save { padding: 0.6rem 2rem; font-size: 0.95rem; }
 
     .toast {
       position: fixed; bottom: 1.5rem; right: 1.5rem;
@@ -1266,13 +1431,17 @@ import { sourceImage } from '../../utils/source-image';
     .metric-name { color: #90caf9; }
     .metric-val { font-family: monospace; }
     .ml-actions { margin-top: 0.75rem; }
-    .btn-train {
-      background: #7e57c2; color: #fff; border: none; border-radius: 6px;
-      padding: 0.5rem 1.5rem; font-size: 0.9rem; font-weight: 600;
-      cursor: pointer; transition: background 0.2s;
+    .btn-train { padding: 0.5rem 1.5rem; font-size: 0.9rem; }
+
+    /* The standard secondary button (setup's): dashboard blue outline. */
+    .btn-secondary {
+      background: transparent; color: #64b5f6; border: 1px solid #64b5f6;
+      border-radius: 6px; padding: 0.5rem 1rem; font-size: 0.9rem;
+      cursor: pointer; transition: all 0.2s;
     }
-    .btn-train:hover { background: #9575cd; }
-    .btn-train:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-secondary:hover:not(:disabled) { background: rgba(100, 181, 246, 0.1); }
+    .btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
+    .ml-actions .hint { display: block; margin-top: 0.4rem; }
 
     /* LLM Prompt */
     textarea {
@@ -1284,19 +1453,8 @@ import { sourceImage } from '../../utils/source-image';
     textarea:focus { border-color: #64b5f6; }
     .prompt-path { font-size: 0.75rem; color: #666; margin-top: 0.3rem; }
     .prompt-actions { margin-top: 0.75rem; display: flex; gap: 0.75rem; }
-    .btn-save-prompt {
-      background: #64b5f6; color: #111; border: none; border-radius: 6px;
-      padding: 0.5rem 1.5rem; font-size: 0.9rem; font-weight: 600;
-      cursor: pointer; transition: background 0.2s;
-    }
-    .btn-save-prompt:hover { background: #90caf9; }
-    .btn-save-prompt:disabled { opacity: 0.5; cursor: not-allowed; }
-    .btn-reset {
-      background: transparent; color: #888; border: 1px solid #555; border-radius: 6px;
-      padding: 0.5rem 1rem; font-size: 0.85rem; cursor: pointer;
-      transition: all 0.2s;
-    }
-    .btn-reset:hover { color: #e0e0e0; border-color: #888; }
+    .btn-save-prompt { padding: 0.5rem 1.5rem; font-size: 0.9rem; }
+    .btn-reset { padding: 0.5rem 1rem; font-size: 0.85rem; }
     .hint { font-size: 0.7rem; color: #666; font-style: italic; }
 
     /* Backfill / Import History */
@@ -1340,6 +1498,14 @@ export class SettingsComponent implements OnInit, OnDestroy {
   // ML Training state
   mlStatus: any = null;
   mlTraining = false;
+
+  // SDD-013: the local sleep model, as GET /api/local-model/status says.
+  // Read when the page opens, when the section is opened and after each
+  // action: on those events, never on a timer. Null: an older server.
+  localModel: any = null;
+  localModelBusy = false;
+  localModelError = '';
+  readonly showLocalModelSection = showLocalModelSection;
 
   // Backfill state
   backfillStart = '';
@@ -1498,11 +1664,13 @@ export class SettingsComponent implements OnInit, OnDestroy {
     source: true,
     logging: false,
     o2ring: false,
+    garmin: false,
     as11: false,
     sleephq: false,
     myair: false,
     cpapdash: false,
     sleep_stage: false,
+    local_model: false,
     agent: false,
     timing: false,
     backfill: false,
@@ -1560,18 +1728,87 @@ export class SettingsComponent implements OnInit, OnDestroy {
     ['device_id', 'settings.restart.key.deviceId'],
   ];
 
+  // ── SDD-073 D10: the Sleep Bridges, in Source ─────────────────────────────
+  bridges: SleepBridge[] = [];
+  bridgesWatchClosed = false;
+
+  // SDD-080 D7: the OSCAR fields, saved and checked on their own.
+  oscar: { program: string; data_dir: string; profile: string } | null = null;
+  oscarFound = '';
+  oscarCheck: any = null;
+  oscarProfiles: string[] = [];
+  oscarContainerised = false;
+  oscarSaving = false;
+
+  loadOscar(): void {
+    this.api.getOscar().subscribe({
+      next: (v) => {
+        this.oscarFound = v?.found_program || '';
+        this.oscarContainerised = !!v?.containerised;
+        this.oscarCheck = v?.check || null;
+        this.oscarProfiles = (v?.check?.profiles ?? []) as string[];
+        // The program found where this OS's installer puts it fills an empty field.
+        this.oscar = {
+          program: v?.program || this.oscarFound,
+          data_dir: v?.data_dir || '',
+          profile: v?.profile || 'hms-cpap',
+        };
+      },
+      error: () => { this.oscar = null; },   // an older server: no section
+    });
+  }
+
+  saveOscar(): void {
+    if (!this.oscar) return;
+    this.oscarSaving = true;
+    this.api.saveOscar(this.oscar).subscribe({
+      next: (v) => {
+        this.oscarSaving = false;
+        this.oscarCheck = v?.check || null;
+        this.oscarProfiles = (v?.check?.profiles ?? []) as string[];
+      },
+      error: () => { this.oscarSaving = false; },
+    });
+  }
+  private bridgeWatch: SleepBridgeWatch;
+
+  /** In use: the SAVED source is a local folder at this bridge's folder. */
+  bridgeInUse(cardRoot: string | undefined): boolean {
+    return bridgeInUse(this.pristine as any, cardRoot);
+  }
+
+  trackBridge(_: number, b: SleepBridge): string { return b.sender; }
+
+  /** The list, then every bridge event the server pushes on the watch socket. */
+  watchBridges(): void {
+    this.bridgesWatchClosed = false;
+    this.bridgeWatch.connect();
+  }
+
   constructor(private api: CpapApiService, private t: TranslateService,
-              public updateFlow: UpdateFlowService) {}
+              public updateFlow: UpdateFlowService, zone: NgZone) {
+    this.bridgeWatch = new SleepBridgeWatch(zone, (f) => {
+      if (f.t === 'sleepbridge' && f.status) this.bridges = (f.status.bridges ?? []) as SleepBridge[];
+    }, () => { this.bridgesWatchClosed = true; });
+  }
 
   ngOnDestroy(): void {
+    this.bridgeWatch.close();
     this.destroy$.next();
     this.destroy$.complete();
   }
 
   ngOnInit(): void {
+    this.api.getSleepBridges().subscribe({
+      next: (s) => { this.bridges = s?.bridges ?? []; },
+      error: () => {},
+    });
+    this.watchBridges();
     this.loadMyAirStatus();
     this.loadUpdateStatus();
     this.loadStreamStatus();
+    this.loadLocalModel();
+    this.loadOscar();
 
     this.api.getConfig().subscribe({
       next: (cfg) => {
@@ -1597,6 +1834,8 @@ export class SettingsComponent implements OnInit, OnDestroy {
                           quiet_minutes: 15 };
         }
         if (cfg.sleephq.quiet_minutes == null) cfg.sleephq.quiet_minutes = 15;
+        // SDD-001: a config.json from before the setting reads as the parser's default.
+        if (cfg.desat_drop_pct == null) cfg.desat_drop_pct = 3;
         // SDD-012: an older config.json predates these blocks entirely, and an
         // absent block would otherwise blow up the template's [(ngModel)] paths.
         if (!cfg.agent) {
@@ -1615,6 +1854,8 @@ export class SettingsComponent implements OnInit, OnDestroy {
                            token: '', auto_sync: false, stream: false };
         }
         if (cfg.cpapdash.stream == null) cfg.cpapdash.stream = false;
+        // SDD-078: an older server has no Garmin block; then there is no section.
+        if (cfg.garmin && cfg.garmin.email == null) cfg.garmin.email = '';
         if (cfg.archive_dir == null) cfg.archive_dir = '';
         if (cfg.static_dir == null) cfg.static_dir = '';
         this.config = cfg;
@@ -1809,6 +2050,58 @@ export class SettingsComponent implements OnInit, OnDestroy {
     if (!missing.length) return '';
     const list = missing.join(` ${this.t.instant('settings.restart.and')} `);
     return this.t.instant('settings.agent.blocked', { list });
+  }
+
+  // ── SDD-013: the local sleep model ──────────────────────────────────────
+
+  loadLocalModel(): void {
+    this.api.getLocalModelStatus().subscribe({
+      next: (s) => this.localModel = s,
+      error: () => {},   // an older server: no section
+    });
+  }
+
+  /** The line under the status: no model published yet is said in the page's
+   *  language; anything else is the server's own reason. */
+  localModelNote(): string {
+    const s = this.localModel;
+    if (!s) return '';
+    if (s.state === 'not_published') return this.t.instant('settings.localModel.notPublished');
+    // The state line already says it, in the page's language.
+    if (s.state === 'no_runtime') return this.localModelError;
+    return this.localModelError || s.message || '';
+  }
+
+  toggleLocalModel(box: HTMLInputElement): void {
+    const on = box.checked;
+    this.localModelBusy = true;
+    this.localModelError = '';
+    (on ? this.api.enableLocalModel() : this.api.disableLocalModel()).subscribe({
+      next: (s) => { this.localModel = s; this.localModelBusy = false; },
+      error: (err) => {
+        box.checked = !on;
+        this.localModelBusy = false;
+        if (this.localModel?.state !== 'not_published')
+          this.localModelError = err?.error?.error || this.t.instant('settings.localModel.failed');
+        this.loadLocalModel();
+      },
+    });
+  }
+
+  loadModelFile(input: HTMLInputElement): void {
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file) return;
+    this.localModelBusy = true;
+    this.localModelError = '';
+    this.api.loadLocalModelFile(file).subscribe({
+      next: (s) => { this.localModel = s; this.localModelBusy = false; },
+      error: (err) => {
+        this.localModelBusy = false;
+        this.localModelError = err?.error?.error || this.t.instant('settings.localModel.failed');
+        this.loadLocalModel();
+      },
+    });
   }
 
   loadMlStatus(): void {

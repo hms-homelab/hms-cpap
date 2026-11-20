@@ -1,0 +1,280 @@
+#include "BridgeText.h"
+
+#include <cctype>
+
+namespace cpapdash::supervisor {
+
+namespace {
+
+struct Row {
+    Txt         key;
+    const char* w[5];   // en, es, fr, hu, pt
+};
+
+// One row per word, in Txt order (run_tests checks the order and that none
+// is empty).
+const Row kRows[] = {
+    {Txt::WindowTitle, {"Set up your Sleep Bridge", "Configurar tu Sleep Bridge", "Configurer votre Sleep Bridge",
+                        "A Sleep Bridge beállítása", "Configurar o seu Sleep Bridge"}},
+    {Txt::Skip, {"Skip, I'll do it later", "Omitir, lo haré más tarde", "Passer, je le ferai plus tard",
+                 "Kihagyom, később csinálom", "Saltar, faço mais tarde"}},
+    {Txt::StepOf, {"Step %1 of %2", "Paso %1 de %2", "Étape %1 sur %2", "%1. lépés / %2", "Passo %1 de %2"}},
+    {Txt::Next, {"Next", "Siguiente", "Suivant", "Tovább", "Seguinte"}},
+    {Txt::Back, {"Back", "Atrás", "Retour", "Vissza", "Voltar"}},
+    {Txt::Done, {"Done", "Listo", "Terminé", "Kész", "Concluído"}},
+    {Txt::Close, {"Close", "Cerrar", "Fermer", "Bezárás", "Fechar"}},
+    {Txt::Starting, {"Waiting for HmsCpap to start...", "Esperando a que HmsCpap arranque...",
+                     "En attente du démarrage de HmsCpap...", "Várakozás a HmsCpap indulására...",
+                     "À espera que o HmsCpap arranque..."}},
+    {Txt::ServiceDown, {"HmsCpap is not running right now. These steps carry on as soon as it is.",
+                        "HmsCpap no está funcionando ahora. Estos pasos siguen en cuanto lo esté.",
+                        "HmsCpap ne tourne pas pour le moment. Ces étapes reprennent dès qu'il tourne.",
+                        "A HmsCpap most nem fut. Ezek a lépések folytatódnak, amint elindul.",
+                        "O HmsCpap não está a funcionar agora. Estes passos continuam assim que estiver."}},
+
+    // D1
+    {Txt::CardTitle, {"Bring your card", "Trae tu tarjeta", "Apportez votre carte", "Hozza a kártyát",
+                      "Traga o seu cartão"}},
+    {Txt::CardBody, {"Put your machine's SD card in this computer.",
+                     "Pon la tarjeta SD de tu máquina en este ordenador.",
+                     "Insérez la carte SD de votre appareil dans cet ordinateur.",
+                     "Tegye a készülék SD-kártyáját ebbe a számítógépbe.",
+                     "Coloque o cartão SD da sua máquina neste computador."}},
+    {Txt::CardWaiting, {"Waiting for the card to appear...", "Esperando a que aparezca la tarjeta...",
+                        "En attente de la carte...", "Várakozás a kártya megjelenésére...",
+                        "À espera que o cartão apareça..."}},
+    {Txt::CardFound, {"Found your machine's card (%1).", "Tarjeta de tu máquina encontrada (%1).",
+                      "Carte de votre appareil trouvée (%1).", "Megvan a készülék kártyája (%1).",
+                      "Cartão da sua máquina encontrado (%1)."}},
+    {Txt::CardReading, {"Reading your card...", "Leyendo tu tarjeta...", "Lecture de votre carte...",
+                        "A kártya olvasása...", "A ler o seu cartão..."}},
+    {Txt::CardPermission, {"This computer asks for your permission once: reading the card's layout needs it.",
+                           "Este ordenador te pide permiso una vez: leer la estructura de la tarjeta lo necesita.",
+                           "Cet ordinateur vous demande une fois votre autorisation : lire la structure de la carte en a besoin.",
+                           "A számítógép egyszer engedélyt kér: a kártya szerkezetének olvasásához szükséges.",
+                           "Este computador pede a sua autorização uma vez: ler a estrutura do cartão precisa dela."}},
+    {Txt::CardPhaseLayout, {"Learning the card's layout", "Aprendiendo la estructura de la tarjeta",
+                            "Apprentissage de la structure de la carte", "A kártya szerkezetének megismerése",
+                            "A aprender a estrutura do cartão"}},
+    {Txt::CardPhaseFiles, {"Copying your nights", "Copiando tus noches", "Copie de vos nuits",
+                           "Az éjszakák másolása", "A copiar as suas noites"}},
+    {Txt::CardDone, {"Done. Take the card out.", "Listo. Saca la tarjeta.", "Terminé. Retirez la carte.",
+                     "Kész. Vegye ki a kártyát.", "Concluído. Retire o cartão."}},
+    {Txt::CardDoneNote, {"Its nights go in as soon as your bridge is found.",
+                         "Sus noches entran en cuanto se encuentre tu bridge.",
+                         "Ses nuits sont ajoutées dès que votre bridge est trouvé.",
+                         "Az éjszakái bekerülnek, amint a bridge megvan.",
+                         "As suas noites entram assim que o bridge for encontrado."}},
+    {Txt::CardFailed, {"The card could not be read: %1", "No se pudo leer la tarjeta: %1",
+                       "La carte n'a pas pu être lue : %1", "A kártyát nem sikerült beolvasni: %1",
+                       "Não foi possível ler o cartão: %1"}},
+    {Txt::CardFallback, {"Or use the .cpapcard file that CpapDash Desktop's Export for HMS CPAP saved.",
+                         "O usa el archivo .cpapcard que guardó la exportación para HMS CPAP de CpapDash Desktop.",
+                         "Ou utilisez le fichier .cpapcard enregistré par l'export pour HMS CPAP de CpapDash Desktop.",
+                         "Vagy használja a CpapDash Desktop HMS CPAP exportja által mentett .cpapcard fájlt.",
+                         "Ou use o ficheiro .cpapcard que a exportação para HMS CPAP do CpapDash Desktop guardou."}},
+    {Txt::CardFallbackButton, {"Choose a .cpapcard file...", "Elegir un archivo .cpapcard...",
+                               "Choisir un fichier .cpapcard...", ".cpapcard fájl kiválasztása...",
+                               "Escolher um ficheiro .cpapcard..."}},
+    {Txt::CardChosen, {"Using %1.", "Se usará %1.", "%1 sera utilisé.", "%1 lesz használva.", "Vai ser usado %1."}},
+    {Txt::CardNotCard, {"The drive %1 is not a CPAP machine's card.", "La unidad %1 no es la tarjeta de una máquina CPAP.",
+                        "Le lecteur %1 n'est pas la carte d'un appareil CPAP.", "A(z) %1 meghajtó nem CPAP-készülék kártyája.",
+                        "A unidade %1 não é o cartão de uma máquina CPAP."}},
+
+    // D2
+    {Txt::AssembleTitle, {"Put the bridge together", "Monta el bridge", "Assemblez le bridge",
+                          "Állítsa össze a bridge-et", "Monte o bridge"}},
+    {Txt::AssembleCard, {"1. Slide the card into the bridge.", "1. Mete la tarjeta en el bridge.",
+                         "1. Glissez la carte dans le bridge.", "1. Csúsztassa a kártyát a bridge-be.",
+                         "1. Insira o cartão no bridge."}},
+    {Txt::AssembleExtender, {"2. Plug the bridge into the extender's socket.",
+                             "2. Conecta el bridge al conector del alargador.",
+                             "2. Branchez le bridge dans la prise de la rallonge.",
+                             "2. Dugja a bridge-et a hosszabbító aljzatába.",
+                             "2. Ligue o bridge à ficha da extensão."}},
+    {Txt::AssemblePower, {"3. Plug in USB-C power. The light comes on.",
+                          "3. Conecta la alimentación USB-C. La luz se enciende.",
+                          "3. Branchez l'alimentation USB-C. Le voyant s'allume.",
+                          "3. Csatlakoztassa az USB-C tápot. A jelzőfény kigyullad.",
+                          "3. Ligue a alimentação USB-C. A luz acende."}},
+    {Txt::AssembleNotYet, {"Do NOT put it in the machine yet.", "NO lo pongas todavía en la máquina.",
+                           "Ne le mettez PAS encore dans l'appareil.", "MÉG NE tegye a készülékbe.",
+                           "AINDA NÃO o coloque na máquina."}},
+
+    // D3
+    {Txt::ConnectTitle, {"Connect the bridge to this computer", "Conecta el bridge a este ordenador",
+                         "Reliez le bridge à cet ordinateur", "Kösse a bridge-et ehhez a számítógéphez",
+                         "Ligue o bridge a este computador"}},
+    {Txt::ConnectBody, {"On your phone, join the WiFi whose name starts with CpapDash-, pick your home WiFi, choose My hms-cpap, and type:",
+                        "En tu teléfono, conéctate a la WiFi cuyo nombre empieza por CpapDash-, elige la WiFi de tu casa, escoge My hms-cpap y escribe:",
+                        "Sur votre téléphone, rejoignez le WiFi dont le nom commence par CpapDash-, choisissez votre WiFi, puis My hms-cpap, et tapez :",
+                        "A telefonján csatlakozzon a CpapDash- kezdetű WiFi-hez, válassza az otthoni WiFi-t, majd a My hms-cpap lehetőséget, és írja be:",
+                        "No telemóvel, ligue-se à WiFi cujo nome começa por CpapDash-, escolha a WiFi de casa, escolha My hms-cpap e escreva:"}},
+    {Txt::ConnectCopy, {"Copy", "Copiar", "Copier", "Másolás", "Copiar"}},
+    {Txt::ConnectCopied, {"Copied", "Copiado", "Copié", "Másolva", "Copiado"}},
+    {Txt::ConnectNotThis, {"Not this one?", "¿No es esta?", "Pas celle-ci ?", "Nem ez az?", "Não é este?"}},
+    {Txt::ConnectPort, {"Port: %1 (type it in the bridge's Port field)", "Puerto: %1 (escríbelo en el campo Port del bridge)",
+                        "Port : %1 (tapez-le dans le champ Port du bridge)", "Port: %1 (írja be a bridge Port mezőjébe)",
+                        "Porta: %1 (escreva-a no campo Port do bridge)"}},
+    {Txt::ConnectMacFirewall, {"If this Mac asks \"Accept incoming network connections?\" for hms_cpap, click Allow.",
+                               "Si este Mac pregunta \"¿Aceptar conexiones de red entrantes?\" para hms_cpap, haz clic en Permitir.",
+                               "Si ce Mac demande « Accepter les connexions réseau entrantes ? » pour hms_cpap, cliquez sur Autoriser.",
+                               "Ha a Mac rákérdez, hogy „Engedélyezi a bejövő hálózati kapcsolatokat?” a hms_cpap számára, kattintson az Engedélyezés gombra.",
+                               "Se este Mac perguntar \"Aceitar ligações de rede recebidas?\" para hms_cpap, clique em Permitir."}},
+    {Txt::ConnectNoAddress, {"This computer has no network address yet. Connect it to your home network first.",
+                             "Este ordenador aún no tiene dirección de red. Conéctalo primero a la red de tu casa.",
+                             "Cet ordinateur n'a pas encore d'adresse réseau. Connectez-le d'abord à votre réseau.",
+                             "Ennek a számítógépnek még nincs hálózati címe. Először csatlakoztassa az otthoni hálózathoz.",
+                             "Este computador ainda não tem endereço de rede. Ligue-o primeiro à rede de casa."}},
+
+    // D4
+    {Txt::WaitTitle, {"Waiting for your bridge", "Esperando a tu bridge", "En attente de votre bridge",
+                      "Várakozás a bridge-re", "À espera do seu bridge"}},
+    {Txt::WaitWaiting, {"Waiting for your bridge to connect to this computer...",
+                        "Esperando a que tu bridge se conecte a este ordenador...",
+                        "En attente de la connexion de votre bridge à cet ordinateur...",
+                        "Várakozás, hogy a bridge csatlakozzon ehhez a számítógéphez...",
+                        "À espera que o seu bridge se ligue a este computador..."}},
+    {Txt::WaitFound, {"Found %1", "Encontrado %1", "%1 trouvé", "Megvan: %1", "Encontrado %1"}},
+    {Txt::WaitSourceSet, {"HmsCpap now reads your nights from this bridge (%1 card).",
+                          "HmsCpap ahora lee tus noches de este bridge (tarjeta %1).",
+                          "HmsCpap lit maintenant vos nuits depuis ce bridge (carte %1).",
+                          "A HmsCpap mostantól erről a bridge-ről olvassa az éjszakáit (%1 kártya).",
+                          "O HmsCpap agora lê as suas noites deste bridge (cartão %1)."}},
+    {Txt::WaitFormatUnknown, {"The card format is checked again when the machine reads the card.",
+                              "El formato se vuelve a comprobar cuando la máquina lea la tarjeta.",
+                              "Le format est vérifié à nouveau quand l'appareil lit la carte.",
+                              "A formátumot újra ellenőrzi, amikor a készülék beolvassa a kártyát.",
+                              "O formato volta a ser verificado quando a máquina ler o cartão."}},
+    {Txt::WaitRestarting, {"Restarting to start reading...", "Reiniciando para empezar a leer...",
+                           "Redémarrage pour commencer la lecture...", "Újraindítás az olvasás megkezdéséhez...",
+                           "A reiniciar para começar a ler..."}},
+    {Txt::WaitSending, {"Sending your card's nights: %1%", "Enviando las noches de tu tarjeta: %1%",
+                        "Envoi des nuits de votre carte : %1 %", "A kártya éjszakáinak küldése: %1%",
+                        "A enviar as noites do seu cartão: %1%"}},
+    {Txt::WaitSent, {"Your card's nights are going in.", "Las noches de tu tarjeta se están añadiendo.",
+                     "Les nuits de votre carte sont en cours d'ajout.", "A kártya éjszakái bekerülnek.",
+                     "As noites do seu cartão estão a entrar."}},
+    {Txt::WaitSendFailed, {"Your card could not be sent: %1", "No se pudo enviar tu tarjeta: %1",
+                           "Votre carte n'a pas pu être envoyée : %1", "A kártyát nem sikerült elküldeni: %1",
+                           "Não foi possível enviar o seu cartão: %1"}},
+    {Txt::WaitKeepOpen, {"Keep this window open until it is sent.", "Deja esta ventana abierta hasta que se envíe.",
+                         "Laissez cette fenêtre ouverte jusqu'à la fin de l'envoi.", "Hagyja nyitva ezt az ablakot, amíg elküldi.",
+                         "Mantenha esta janela aberta até ser enviado."}},
+    {Txt::WaitFirewallMac, {"If the bridge's own setup test says it cannot reach this computer, the firewall is the likely cause: allow hms_cpap in System Settings > Network > Firewall.",
+                            "Si la prueba del bridge dice que no llega a este ordenador, la causa probable es el cortafuegos: permite hms_cpap en Ajustes del Sistema > Red > Firewall.",
+                            "Si le test du bridge dit qu'il n'atteint pas cet ordinateur, le pare-feu en est la cause probable : autorisez hms_cpap dans Réglages Système > Réseau > Coupe-feu.",
+                            "Ha a bridge saját tesztje szerint nem éri el ezt a számítógépet, valószínűleg a tűzfal az oka: engedélyezze a hms_cpap-ot a Rendszerbeállítások > Hálózat > Tűzfal alatt.",
+                            "Se o teste do bridge disser que não chega a este computador, a causa provável é a firewall: permita o hms_cpap em Definições do Sistema > Rede > Firewall."}},
+    {Txt::WaitFirewallWin, {"If the bridge's own setup test says it cannot reach this computer, the firewall is the likely cause: HmsCpap is allowed on private networks, so check this network is set to Private in Windows Settings > Network.",
+                            "Si la prueba del bridge dice que no llega a este ordenador, la causa probable es el cortafuegos: HmsCpap está permitido en redes privadas; comprueba que esta red sea Privada en Configuración de Windows > Red.",
+                            "Si le test du bridge dit qu'il n'atteint pas cet ordinateur, le pare-feu en est la cause probable : HmsCpap est autorisé sur les réseaux privés, vérifiez que ce réseau est Privé dans Paramètres Windows > Réseau.",
+                            "Ha a bridge saját tesztje szerint nem éri el ezt a számítógépet, valószínűleg a tűzfal az oka: a HmsCpap magánhálózaton engedélyezett, ellenőrizze, hogy ez a hálózat Magán legyen a Windows Gépház > Hálózat alatt.",
+                            "Se o teste do bridge disser que não chega a este computador, a causa provável é a firewall: o HmsCpap é permitido em redes privadas; confirme que esta rede está como Privada em Definições do Windows > Rede."}},
+    {Txt::WaitFirewallOther, {"If the bridge's own setup test says it cannot reach this computer, the firewall is the likely cause: allow TCP port %1 in.",
+                              "Si la prueba del bridge dice que no llega a este ordenador, la causa probable es el cortafuegos: permite la entrada en el puerto TCP %1.",
+                              "Si le test du bridge dit qu'il n'atteint pas cet ordinateur, le pare-feu en est la cause probable : autorisez le port TCP %1 en entrée.",
+                              "Ha a bridge saját tesztje szerint nem éri el ezt a számítógépet, valószínűleg a tűzfal az oka: engedélyezze a bejövő TCP %1 portot.",
+                              "Se o teste do bridge disser que não chega a este computador, a causa provável é a firewall: permita a entrada na porta TCP %1."}},
+    {Txt::WaitUseFailed, {"Its folder could not be set as the source: %1", "No se pudo poner su carpeta como origen: %1",
+                          "Son dossier n'a pas pu être défini comme source : %1", "A mappáját nem sikerült forrásnak beállítani: %1",
+                          "Não foi possível definir a pasta dele como origem: %1"}},
+
+    // D5
+    {Txt::MachineTitle, {"Into the machine", "En la máquina", "Dans l'appareil", "A készülékbe", "Na máquina"}},
+    {Txt::MachineSlot, {"1. Push the extender's card end into the machine's SD slot.",
+                        "1. Mete el extremo con forma de tarjeta del alargador en la ranura SD de la máquina.",
+                        "1. Poussez l'extrémité en forme de carte de la rallonge dans la fente SD de l'appareil.",
+                        "1. Tolja a hosszabbító kártya alakú végét a készülék SD-nyílásába.",
+                        "1. Empurre a ponta em forma de cartão da extensão para a ranhura SD da máquina."}},
+    {Txt::MachinePower, {"2. Power the machine off and on once, outside therapy.",
+                         "2. Apaga y enciende la máquina una vez, fuera de la terapia.",
+                         "2. Éteignez et rallumez l'appareil une fois, hors thérapie.",
+                         "2. Kapcsolja ki és be egyszer a készüléket, terápián kívül.",
+                         "2. Desligue e ligue a máquina uma vez, fora da terapia."}},
+    {Txt::MachineWaiting, {"Waiting for your machine to read the card...", "Esperando a que tu máquina lea la tarjeta...",
+                           "En attente de la lecture de la carte par votre appareil...", "Várakozás, hogy a készülék beolvassa a kártyát...",
+                           "À espera que a sua máquina leia o cartão..."}},
+    {Txt::MachineSeen, {"Your machine sees the card. You're set up.", "Tu máquina ve la tarjeta. Ya está todo listo.",
+                        "Votre appareil voit la carte. Tout est prêt.", "A készülék látja a kártyát. Minden kész.",
+                        "A sua máquina vê o cartão. Está tudo pronto."}},
+    {Txt::MachineMismatch, {"Your machine has a different card than the one read on this computer. Put the card you read into the bridge, or read this card on this computer again.",
+                            "Tu máquina tiene una tarjeta distinta de la leída en este ordenador. Pon en el bridge la tarjeta que leíste, o vuelve a leer esta tarjeta en este ordenador.",
+                            "Votre appareil a une autre carte que celle lue sur cet ordinateur. Mettez dans le bridge la carte lue, ou relisez cette carte sur cet ordinateur.",
+                            "A készülékben más kártya van, mint amit ezen a számítógépen beolvasott. Tegye a beolvasott kártyát a bridge-be, vagy olvassa be újra ezt a kártyát.",
+                            "A sua máquina tem um cartão diferente do lido neste computador. Coloque no bridge o cartão que leu, ou leia este cartão neste computador outra vez."}},
+
+    // D6
+    {Txt::OnlineTitle, {"Your nights online (optional)", "Tus noches en línea (opcional)", "Vos nuits en ligne (facultatif)",
+                        "Éjszakái online (nem kötelező)", "As suas noites online (opcional)"}},
+    {Txt::OnlineBody, {"Also see your nights on CpapDash?", "¿Ver también tus noches en CpapDash?",
+                       "Voir aussi vos nuits sur CpapDash ?", "Szeretné az éjszakáit a CpapDash-en is látni?",
+                       "Ver também as suas noites no CpapDash?"}},
+    {Txt::OnlineOpen, {"Generate a token on CpapDash.com", "Generar un token en CpapDash.com",
+                       "Générer un jeton sur CpapDash.com", "Token létrehozása a CpapDash.com oldalon",
+                       "Gerar um token no CpapDash.com"}},
+    {Txt::OnlineToken, {"Paste the token from there", "Pega aquí el token de allí", "Collez le jeton obtenu là-bas",
+                        "Illessze be az ott kapott tokent", "Cole aqui o token de lá"}},
+    {Txt::OnlineSwitch, {"Send my nights to CpapDash", "Enviar mis noches a CpapDash", "Envoyer mes nuits à CpapDash",
+                         "Éjszakáim küldése a CpapDash-re", "Enviar as minhas noites para o CpapDash"}},
+    {Txt::OnlineSave, {"Save", "Guardar", "Enregistrer", "Mentés", "Guardar"}},
+    {Txt::OnlineSaved, {"Saved.", "Guardado.", "Enregistré.", "Mentve.", "Guardado."}},
+    {Txt::StreamConnected, {"Sending your nights to CpapDash.", "Enviando tus noches a CpapDash.",
+                            "Vos nuits sont envoyées à CpapDash.", "Az éjszakái a CpapDash-re mennek.",
+                            "A enviar as suas noites para o CpapDash."}},
+    {Txt::StreamConnecting, {"Connecting to CpapDash...", "Conectando con CpapDash...", "Connexion à CpapDash...",
+                             "Csatlakozás a CpapDash-hez...", "A ligar ao CpapDash..."}},
+    {Txt::StreamNoToken, {"Not sending yet: paste the token and press Save.",
+                          "Aún no se envía nada: pega el token y pulsa Guardar.",
+                          "Pas encore d'envoi : collez le jeton et appuyez sur Enregistrer.",
+                          "Még nincs küldés: illessze be a tokent, és nyomja meg a Mentés gombot.",
+                          "Ainda não está a enviar: cole o token e carregue em Guardar."}},
+    {Txt::StreamUnreachable, {"CpapDash cannot be reached right now. Your nights stay here meanwhile.",
+                              "No se puede llegar a CpapDash ahora. Tus noches se quedan aquí mientras tanto.",
+                              "CpapDash est injoignable pour le moment. Vos nuits restent ici en attendant.",
+                              "A CpapDash most nem érhető el. Az éjszakái addig itt maradnak.",
+                              "O CpapDash não está acessível agora. As suas noites ficam aqui entretanto."}},
+    {Txt::StreamRefused, {"CpapDash did not accept this token. Paste a new one.", "CpapDash no aceptó este token. Pega uno nuevo.",
+                          "CpapDash n'a pas accepté ce jeton. Collez-en un nouveau.", "A CpapDash nem fogadta el ezt a tokent. Illesszen be újat.",
+                          "O CpapDash não aceitou este token. Cole um novo."}},
+    {Txt::StreamRevoked, {"This token was revoked on CpapDash. Paste a new one.", "Este token fue revocado en CpapDash. Pega uno nuevo.",
+                          "Ce jeton a été révoqué sur CpapDash. Collez-en un nouveau.", "Ezt a tokent visszavonták a CpapDash-en. Illesszen be újat.",
+                          "Este token foi revogado no CpapDash. Cole um novo."}},
+    {Txt::StreamOff, {"Sending is off.", "El envío está desactivado.", "L'envoi est désactivé.", "A küldés ki van kapcsolva.",
+                      "O envio está desligado."}},
+    {Txt::StreamOther, {"CpapDash: %1", "CpapDash: %1", "CpapDash : %1", "CpapDash: %1", "CpapDash: %1"}},
+};
+
+static_assert(sizeof(kRows) / sizeof(kRows[0]) == static_cast<size_t>(Txt::Count_),
+              "one row per word, in Txt order");
+
+}  // namespace
+
+Lang langForLocale(const std::string& name) {
+    std::string p;
+    for (const char c : name.substr(0, 2)) p.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+    if (p == "es") return Lang::Es;
+    if (p == "fr") return Lang::Fr;
+    if (p == "hu") return Lang::Hu;
+    if (p == "pt") return Lang::Pt;
+    return Lang::En;
+}
+
+Txt streamLine(const std::string& state, Saved saved) {
+    if (state == "connected") return Txt::StreamConnected;
+    if (state == "connecting") return Txt::StreamConnecting;
+    if (state == "off") return saved == Saved::Off ? Txt::StreamOff : Txt::StreamNoToken;
+    if (state == "no_token" || state.empty()) return Txt::StreamNoToken;
+    if (state == "unreachable" || state == "closed") return Txt::StreamUnreachable;
+    if (state == "refused") return Txt::StreamRefused;
+    if (state == "revoked") return Txt::StreamRevoked;
+    return Txt::StreamOther;
+}
+
+const char* text(Txt key, Lang lang) {
+    const auto i = static_cast<size_t>(key);
+    if (i >= static_cast<size_t>(Txt::Count_) || kRows[i].key != key) return "";
+    return kRows[i].w[static_cast<int>(lang)];
+}
+
+}  // namespace cpapdash::supervisor

@@ -26,7 +26,7 @@
       "done": "Completa"
     },
     "actions": {
-      "forceDone": "Forzar cierre",
+      "forceDone": "Cerrar la noche",
       "aiSummary": "Resumen con IA",
       "reparse": "Reprocesar",
       "fetchOxi": "Traer historial de O2",

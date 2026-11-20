@@ -25,6 +25,7 @@
 
 #include <chrono>
 #include <cstdlib>
+#include <ctime>
 #include <filesystem>
 #include <string>
 #ifndef _WIN32
@@ -488,6 +489,8 @@ TEST_F(QueryServiceReadTest, ASavedSummaryComesBack) {
     const auto s = qs_->getSummaries("weekly", 5);
     ASSERT_TRUE(s.isArray());
     ASSERT_GE(s.size(), 1u) << "a saved summary never came back";
+    // SDD-013: and it says what wrote it.
+    EXPECT_EQ(s[0]["source"].asString(), "llm");
 
     // And the period filter is real, not decorative.
     const auto monthly = qs_->getSummaries("monthly", 5);
@@ -580,6 +583,136 @@ TEST_F(QueryServiceReadTest, ANightWithoutTherapyPressureFallsBackToTheMask) {
     const auto st = qs_->getStatistics("2000-01-01", "2099-12-31");
     ASSERT_TRUE(st.isArray() && st.size() == 1u);
     EXPECT_NEAR(numAt(st[0], "avg_pressure_95"), 11.2, 1e-6);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SDD-001: desaturations at the Settings threshold, breath by breath.
+// ─────────────────────────────────────────────────────────────────────────────
+
+namespace {
+void setDesatEnv(const char* value) {
+#ifdef _WIN32
+    _putenv_s("DESAT_DROP_PCT", value ? value : "");
+#else
+    if (value) setenv("DESAT_DROP_PCT", value, 1);
+    else unsetenv("DESAT_DROP_PCT");
+#endif
+}
+
+/// 23:00 local on 2030-07-01, so the night is 2030-07-01 on any runner's clock.
+system_clock::time_point desatNightStart() {
+    std::tm tm{};
+    tm.tm_year = 2030 - 1900;
+    tm.tm_mon = 6;
+    tm.tm_mday = 1;
+    tm.tm_hour = 23;
+    tm.tm_isdst = -1;
+    return system_clock::from_time_t(std::mktime(&tm));
+}
+
+/// Half an hour of 1 Hz SpO2 at 97 %, dipping 4.5 points at minute 5 and 3.5
+/// at minute 15 (20 s each), plus three breaths.
+CPAPSession desatNight() {
+    CPAPSession s;
+    s.device_id = kDevice;
+    s.device_name = "AirSense 10";
+    const auto start = desatNightStart();
+    s.session_start = start;
+    s.duration_seconds = 30 * 60;
+    for (int i = 0; i < 30 * 60; ++i) {
+        CPAPVitals v(start + seconds(i));
+        v.spo2 = (i >= 300 && i < 320) ? 92.5 : (i >= 900 && i < 920) ? 93.5 : 97.0;
+        v.heart_rate = 60;
+        s.vitals.push_back(v);
+    }
+    for (int i = 0; i < 3; ++i) {
+        Breath b;
+        b.onset = start + seconds(60 + 4 * i);
+        b.tidal_volume = 450 + 10 * i;
+        b.inspiratory_time = 1.5;
+        b.expiratory_time = 2.5;
+        b.flow_limitation = 0.1 * i;
+        s.breaths.push_back(b);
+    }
+    SessionMetrics m;
+    m.usage_hours = 0.5;
+    m.avg_spo2 = 96.9;
+    m.spo2_drops = 2;   // the parser's, at its 3 % default
+    m.odi = 4.0;
+    s.metrics = m;
+    return s;
+}
+
+int desatRows(const Json::Value& events) {
+    int n = 0;
+    for (const auto& e : events)
+        if (e["event_type"].asString() == "Desaturation") ++n;
+    return n;
+}
+}  // namespace
+
+TEST_F(QueryServiceReadTest, DesaturationsAreStoredAtTheSettingsThreshold) {
+    setDesatEnv("4.000000");
+    ASSERT_TRUE(db_->saveSession(desatNight()));
+    setDesatEnv(nullptr);
+
+    const auto events = qs_->getSessionEvents("2030-07-01");
+    ASSERT_TRUE(events.isArray());
+    ASSERT_EQ(desatRows(events), 1) << "at 4 % only the deeper dip counts";
+    for (const auto& e : events) {
+        if (e["event_type"].asString() != "Desaturation") continue;
+        EXPECT_NEAR(numAt(e, "duration_seconds"), 20.0, 1e-6);
+        EXPECT_NE(e["details"].asString().find("\"nadir\":92.5"), std::string::npos)
+            << "the span's nadir and depth ride in details: " << e["details"].asString();
+    }
+
+    const auto detail = qs_->getSessionDetail("2030-07-01");
+    ASSERT_TRUE(detail.isArray() && detail.size() >= 1u);
+    EXPECT_NEAR(numAt(detail[0], "spo2_drops"), 1.0, 1e-6);
+    EXPECT_NEAR(numAt(detail[0], "odi"), 2.0, 1e-6) << "one in half an hour";
+}
+
+TEST_F(QueryServiceReadTest, SavingANightAgainReplacesItsDesaturations) {
+    // At the default both dips count; after the owner moves to 4 % and the
+    // night is saved again, the shallower one is gone rather than left beside it.
+    ASSERT_TRUE(db_->saveSession(desatNight()));
+    EXPECT_EQ(desatRows(qs_->getSessionEvents("2030-07-01")), 2);
+
+    setDesatEnv("4.000000");
+    ASSERT_TRUE(db_->saveSession(desatNight()));
+    setDesatEnv(nullptr);
+    EXPECT_EQ(desatRows(qs_->getSessionEvents("2030-07-01")), 1);
+
+    ASSERT_TRUE(db_->saveSession(desatNight()));
+    EXPECT_EQ(desatRows(qs_->getSessionEvents("2030-07-01")), 2) << "and back, idempotent";
+}
+
+TEST_F(QueryServiceReadTest, TheNightsMetricsCarryItsOdi) {
+    ASSERT_TRUE(db_->saveSession(desatNight()));
+    const auto m = db_->getNightlyMetrics(kDevice, desatNightStart());
+    ASSERT_TRUE(m.has_value());
+    EXPECT_EQ(m->spo2_drops, 2);
+    ASSERT_TRUE(m->odi.has_value());
+    EXPECT_NEAR(*m->odi, 4.0, 1e-6);
+}
+
+TEST_F(QueryServiceReadTest, BreathsComeBackColumnOriented) {
+    ASSERT_TRUE(db_->saveSession(desatNight()));
+    const auto b = qs_->getSessionBreaths("2030-07-01");
+    ASSERT_TRUE(b.isObject());
+    for (const char* col : {"onset", "tidal_volume", "inspiratory_time",
+                            "expiratory_time", "flow_limitation"}) {
+        ASSERT_TRUE(b[col].isArray()) << col;
+        EXPECT_EQ(b[col].size(), 3u) << col;
+    }
+    const auto tv = b["tidal_volume"][1];
+    EXPECT_NEAR(tv.isString() ? std::stod(tv.asString()) : tv.asDouble(), 460.0, 1e-6);
+    EXPECT_LT(b["onset"][0].asString(), b["onset"][2].asString()) << "in onset order";
+
+    const auto empty = qs_->getSessionBreaths("1999-01-01");
+    ASSERT_TRUE(empty.isObject());
+    EXPECT_TRUE(empty["onset"].isArray());
+    EXPECT_EQ(empty["onset"].size(), 0u) << "an empty night is empty arrays, not null";
 }
 
 }  // namespace

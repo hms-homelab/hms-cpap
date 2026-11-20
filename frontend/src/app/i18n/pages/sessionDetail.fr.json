@@ -1,6 +1,9 @@
 {
   "sessionDetail": {
     "overview": "Aperçu",
+    "oximetryFrom": "Oxymétrie - {{device}}",
+    "oximetryOnly": "Oxymétrie seule ({{device}}) ; aucune séance de PPC n'a été enregistrée cette nuit",
+    "oximetryUpload": "Import",
     "expandHint": "(cliquez pour développer)",
     "eventDistribution": "Répartition des événements",
     "notClassified": "Cet appareil signale les apnées sans indiquer si elles étaient obstructives ou centrales, et ne marque pas les hypopnées. Il n'y a aucune répartition à afficher pour cette nuit.",
@@ -12,7 +15,25 @@
     "fullScreen": "Plein écran",
     "closeFullScreen": "Quitter le plein écran",
     "close": "Fermer",
-    "odiTitle": "Indice de désaturation en oxygène — désaturations ≥3 % par heure",
+    "odiTitle": "Indice de désaturation en oxygène : désaturations de {{pct}} % ou plus par heure",
+    "desatBadge": "Désat",
+    "breathFlowLimitation": "Limitation de débit par respiration",
+    "breathHint": "Zoomez sur une minute ou moins (molette ou pincement) pour voir chaque respiration.",
+    "eventType": {
+      "obstructive": "Apnée obstructive",
+      "central": "Apnée centrale",
+      "hypopnea": "Hypopnée",
+      "apnea": "Apnée (non classée)",
+      "clearAirway": "Apnée à voies aériennes ouvertes",
+      "rera": "RERA",
+      "csr": "Respiration de Cheyne-Stokes",
+      "flowLimitation": "Limitation de débit",
+      "periodicBreathing": "Respiration périodique",
+      "largeLeak": "Fuite importante",
+      "vibratorySnore": "Ronflement vibratoire",
+      "desaturation": "Désaturation",
+      "other": "Autre"
+    },
     "pressure": {
       "legendTherapy": "Délivrée par l'appareil",
       "legendMask": "Mesurée au masque",

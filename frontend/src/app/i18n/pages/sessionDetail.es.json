@@ -1,6 +1,9 @@
 {
   "sessionDetail": {
     "overview": "Resumen",
+    "oximetryFrom": "Oximetría - {{device}}",
+    "oximetryOnly": "Solo oximetría ({{device}}); no se registró ninguna sesión de CPAP esta noche",
+    "oximetryUpload": "Subida",
     "expandHint": "(haz clic para expandir)",
     "eventDistribution": "Distribución de eventos",
     "notClassified": "Este equipo informa de las apneas sin indicar si fueron obstructivas o centrales, y no marca hipopneas. No hay desglose que mostrar para esta noche.",
@@ -12,7 +15,25 @@
     "fullScreen": "Pantalla completa",
     "closeFullScreen": "Salir de pantalla completa",
     "close": "Cerrar",
-    "odiTitle": "Índice de desaturación de oxígeno — desaturaciones ≥3% por hora",
+    "odiTitle": "Índice de desaturación de oxígeno: desaturaciones de {{pct}}% o más por hora",
+    "desatBadge": "Desat",
+    "breathFlowLimitation": "Limitación de flujo por respiración",
+    "breathHint": "Acerque el zoom a un minuto o menos (rueda del ratón o pellizco) para ver cada respiración.",
+    "eventType": {
+      "obstructive": "Apnea obstructiva",
+      "central": "Apnea central",
+      "hypopnea": "Hipopnea",
+      "apnea": "Apnea (sin clasificar)",
+      "clearAirway": "Apnea de vía aérea abierta",
+      "rera": "RERA",
+      "csr": "Respiración de Cheyne-Stokes",
+      "flowLimitation": "Limitación de flujo",
+      "periodicBreathing": "Respiración periódica",
+      "largeLeak": "Fuga grande",
+      "vibratorySnore": "Ronquido vibratorio",
+      "desaturation": "Desaturación",
+      "other": "Otro"
+    },
     "pressure": {
       "legendTherapy": "Entregada por el equipo",
       "legendMask": "Medida en la mascarilla",

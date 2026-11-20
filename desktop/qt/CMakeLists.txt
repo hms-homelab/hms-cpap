@@ -36,7 +36,8 @@ else()
     set(HMS_CPAP_ROOT "${CMAKE_SOURCE_DIR}")
 endif()
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets Network)
+# WebSockets: SDD-073's setup steps wait on the service's watch socket.
+find_package(Qt6 6.5 REQUIRED COMPONENTS Widgets Network WebSockets)
 
 qt_standard_project_setup()
 
@@ -59,9 +60,12 @@ qt_add_executable(${SUPERVISOR_TARGET}
     core/pure/ConfigGate.cpp
     core/pure/PendingUpdate.cpp
     core/pure/SourceChoice.cpp
+    core/pure/BridgeSetup.cpp
+    core/pure/BridgeText.cpp
 
     core/qt/PreflightRunner.cpp
     core/qt/ChildProcess.cpp
+    core/qt/CardDrive.cpp
 
     app/SingleInstance.cpp
     app/Autostart.cpp
@@ -70,6 +74,7 @@ qt_add_executable(${SUPERVISOR_TARGET}
     ui/SettingsDialog.cpp
     ui/ConfiguratorWindow.cpp
     ui/StartupWindow.cpp
+    ui/BridgeSetupWindow.cpp
 )
 
 target_include_directories(${SUPERVISOR_TARGET} PRIVATE
@@ -110,7 +115,26 @@ endif()
 target_link_libraries(${SUPERVISOR_TARGET} PRIVATE
     Qt6::Widgets
     Qt6::Network
+    Qt6::WebSockets
     nlohmann_json::nlohmann_json
+)
+
+# SDD-073 section 5: one picture per hardware step. ONE copy, in the web
+# app's public folder, so the desktop setup and the web wizard show the same
+# files; Albin's images replace the placeholders under the same names.
+set(BRIDGE_PICTURES_DIR "${HMS_CPAP_ROOT}/frontend/public/setup/sleep-bridge")
+qt_add_resources(${SUPERVISOR_TARGET} "bridge_pictures"
+    PREFIX "/bridge"
+    BASE   "${BRIDGE_PICTURES_DIR}"
+    FILES
+        ${BRIDGE_PICTURES_DIR}/d1-card-into-computer.png
+        ${BRIDGE_PICTURES_DIR}/d2a-card-into-bridge.png
+        ${BRIDGE_PICTURES_DIR}/d2b-bridge-onto-extender.png
+        ${BRIDGE_PICTURES_DIR}/d2c-power.png
+        ${BRIDGE_PICTURES_DIR}/d3-join-bridge-wifi.png
+        ${BRIDGE_PICTURES_DIR}/d5a-into-machine.png
+        ${BRIDGE_PICTURES_DIR}/d5b-power-cycle.png
+        ${BRIDGE_PICTURES_DIR}/d7-macos-firewall-allow.png
 )
 
 # Compiled-in icons: a desktop app that loads its icon off disk shows a blank

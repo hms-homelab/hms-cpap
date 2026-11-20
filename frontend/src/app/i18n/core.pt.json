@@ -29,9 +29,9 @@
     "targetVentilation": "Ventilação alvo",
     "spo2": "SpO2",
     "heartRate": "Frequência cardíaca",
-    "o2ringSpo2": "SpO2 do O2Ring",
-    "o2ringHeartRate": "Frequência cardíaca do O2Ring",
-    "o2ringMotion": "Movimento do O2Ring"
+    "o2ringSpo2": "SpO2 (oximetria)",
+    "o2ringHeartRate": "Frequência cardíaca (oximetria)",
+    "o2ringMotion": "Movimento (oximetria)"
   },
   "nav": {
     "dashboard": "Painel",
@@ -48,6 +48,10 @@
     "configError": {
       "title": "Nada está sendo importado.",
       "action": "Abrir as Configurações"
+    },
+    "dataDirFallback": {
+      "title": "Não foi possível gravar no diretório de dados.",
+      "body": "O CpapDash não conseguiu gravar em {{wanted}}, então esta execução guarda os dados em {{in_use}}. Libere a gravação nessa pasta e reinicie o CpapDash no Home Assistant."
     }
   }
 }

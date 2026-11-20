@@ -20,7 +20,34 @@
       "philips": "Philips Respironics (kísérleti)",
       "bmc": "BMC / React Health Luna",
       "bmcEzshareHint": "ezShare-en keresztül a Luna munkamenete a maszk levétele után jelenik meg, nem közben.",
-      "philipsHint": "A DreamStation kártyája csak akkor olvasható, ha a fájljai nincsenek titkosítva; a hms-cpap nem fejti vissza őket. A folyamatban lévő kezelés áramlása menet közben látszik, a nyomása a végén.",
+      "philipsHint": "A titkosítatlan fájlokat tartalmazó DreamStation kártya közvetlenül olvasható: a folyamatban lévő kezelés áramlása menet közben látszik, a nyomása a végén. A DreamStation 2 titkosítja a kártyáját; a hms-cpap nem fejti vissza, hanem az Ön OSCAR programjával olvassa (lent).",
+      "oscar": {
+        "title": "Titkosított DreamStation 2 éjszakák olvasása OSCAR-ral",
+        "desc": "Amikor a készülék befejez egy kezelést, a hms-cpap ablak nélkül elindítja az ezen a számítógépen telepített OSCAR-t, amely a kártyát egy saját profilba importálja, majd beolvassa, amit az OSCAR eltárolt. Az Ön saját OSCAR-profilja érintetlen marad.",
+        "container": "Az OSCAR-nak ugyanazon a számítógépen kell lennie, mint a hms-cpap. Dockerben vagy a Home Assistant bővítményben innen nem indítható.",
+        "program": "OSCAR program",
+        "found": "Megtalálva ott, ahová az OSCAR telepítője teszi.",
+        "program_ok": "Az OSCAR válaszol, és ablak nélkül is tud importálni.",
+        "program_empty": "Nincs megadva, és az OSCAR nem található ott, ahová a telepítője teszi.",
+        "program_not_found": "Ezen az útvonalon nincs program.",
+        "program_not_runnable": "Ez a program nem indult el, vagy nem válaszolt a --help kérésre.",
+        "program_no_batch": "Ez az OSCAR nem tud ablak nélkül importálni. OSCAR 2.1.1 vagy újabb szükséges.",
+        "program_not_here": "Az OSCAR nincs ezen a számítógépen: a hms-cpap konténerben fut.",
+        "dataDir": "OSCAR adatmappa",
+        "dataDirHint": "Az oscar.db fájlt tartalmazó mappa, amelyet az OSCAR első indításakor választott (gyakran Dokumentumok/OSCAR_Data).",
+        "dataDir_ok": "OSCAR {{version}}, támogatott.",
+        "dataDir_empty": "Nincs megadva.",
+        "dataDir_no_db": "Ebben a mappában nincs oscar.db.",
+        "dataDir_not_supported": "Az OSCAR {{version}} ({{schema}}. adatbázis-séma) még nem támogatott. Támogatott: OSCAR 2.1.1.",
+        "profile": "Profil a hms-cpap számára",
+        "profileHint": "A hms-cpap saját profilja, az Öné mellett. Egyszer hozza létre az OSCAR-ban ezzel a névvel; a hms-cpap soha nem hoz létre és nem módosít profilt.",
+        "profile_empty": "Nincs megadva.",
+        "profile_missing": "Ebben a mappában még nincs \"{{profile}}\" nevű profil. Hozza létre az OSCAR-ban, majd mentse újra.",
+        "profile_unknown": "Akkor ellenőrizzük, ha az adatmappa helyes.",
+        "save": "Mentés és ellenőrzés",
+        "checking": "Ellenőrzés...",
+        "allGood": "Mindhárom rendben van. A készülék minden befejezett kezelését az OSCAR olvassa be."
+      },
       "ezshare": "ezShare WiFi SD-kártya",
       "flashair": "Toshiba FlashAir WiFi SD-kártya",
       "local": "Helyi könyvtár",
@@ -59,6 +86,15 @@
       "bleError": "A Bluetooth nem ellenőrizhető. Ellenőrizze, hogy működik-e a Bluetooth ezen a számítógépen.",
       "bleRadioOff": "A Bluetooth ki van kapcsolva ezen a számítógépen. Kapcsolja be, és ellenőrizze újra.",
       "bleUnauthorized": "A CpapDash nem használhatja a Bluetooth-t ezen a Macen. Engedélyezze a Rendszerbeállítások, Adatvédelem és biztonság, Bluetooth menüpontban."
+    },
+    "garmin": {
+      "heading": "Garmin SpO2",
+      "desc": "Minden éjszaka SpO2-értéke, pulzusszáma és mozgása a Garmin Connectből, az éjszaka után olvasva: amikor egy éjszaka lezárul, amikor megnyitja az irányítópultot vagy az éjszakák listáját, és a Lekérés a Garmintól most gombbal. A Garmin API-ja nem hivatalos, és változhat.",
+      "enabled": "Éjszakák lekérése a Garmin Connectből",
+      "email": "Garmin e-mail-cím",
+      "password": "Garmin jelszó",
+      "passwordPlaceholder": "A Garmin Connect jelszava",
+      "passwordHint": "Kitakarva tároljuk, mint a CpapDash tokent: hagyja érintetlenül a maszkolt értéket a jelenlegi jelszó megtartásához. Azért tároljuk, hogy egy új bejelentkezéshez ne kelljen senki, hacsak a Garmin nem kér kódot."
     },
     "devicesLink": "Állapot és műveletek: Készülékek",
     "as11": {
@@ -155,6 +191,32 @@
       "modelDirPlaceholder": "Hagyja üresen az adatkönyvtár használatához",
       "modelVersion": "Modellverzió"
     },
+    "localModel": {
+      "heading": "Helyi alvásmodell",
+      "desc": "Minden éjszaka összefoglalóját ezen a gépen írja meg, a tárolt adatokból, hálózat nélkül. A modellfájl (kb. 62 MB) az első bekapcsoláskor töltődik le, vagy fájlból tölthető be.",
+      "enabled": "Minden éjszaka összefoglalása a helyi modellel",
+      "version": "Modell",
+      "lastNight": "Utoljára összefoglalt éjszaka",
+      "state": {
+        "off": "Kikapcsolva",
+        "not_published": "Még nem érhető el",
+        "downloading": "A modell letöltése...",
+        "installing": "A modellfájl ellenőrzése...",
+        "ready": "Bekapcsolva",
+        "no_runtime": "Bekapcsolva, de ez a verzió még nem tudja futtatni a modellt",
+        "error": "Nincs bekapcsolva"
+      },
+      "how": {
+        "model": "a modell írta",
+        "model_retry": "a modell írta, második próbálkozásra",
+        "template": "az egyszerű sablonból",
+        "none": "nincs összefoglalva"
+      },
+      "notPublished": "Még nem jelent meg helyi alvásmodell. Bekapcsolható lesz, amint lesz egy.",
+      "loadFile": "Modell betöltése fájlból",
+      "loadFileHint": "Hálózat nélküli telepítéshez: a fájlt használat előtt a közzétett modellhez ellenőrizzük.",
+      "failed": "A helyi modellt nem sikerült módosítani."
+    },
     "agent": {
       "heading": "Ügynök",
       "unavailable": "Nem érhető el: az ügynökhöz bekapcsolt LLM-összefoglalók és PostgreSQL-adatbázis kell.",
@@ -176,6 +238,11 @@
       "machine": "a gép órája szerint",
       "host": "ennek a számítógépnek az órája szerint",
       "hint": "A gép órája egyezik a gép saját kijelzőjével és az OSCAR-ral. Az egyes gépek óráját a Készülékek oldalon, a gép kártyáján lehet beállítani."
+    },
+    "spo2": {
+      "heading": "SpO2-deszaturációk",
+      "dropPct": "Deszaturációs küszöb (% az alapvonal alatt)",
+      "dropHint": "Ekkora esés a közelmúltbeli SpO2-alapvonal alatt deszaturációnak számít az eseményekben, a darabszámban és az ODI-ban. A 3 a szokásos szabály (AASM), a 4 a CMS szabálya. A mostantól mentett éjszakákra érvényes; az O2-gyűrű grafikonja azonnal ezt használja."
     },
     "backfill": {
       "heading": "Előzmények importálása",

@@ -15,6 +15,7 @@
 #include "clients/AirSense11Client.h"
 #include "services/As11StrWriter.h"
 #include "services/CardFileFeed.h"
+#include "services/OximetryOutbox.h"
 #ifdef WITH_BLE
 #include "clients/O2RingBleClient.h"
 #include "clients/AirSense11BleClient.h"
@@ -32,10 +33,13 @@
 #include "services/OximetryImport.h"
 #include "services/O2RingFileWatch.h"
 #include "services/RemovedNights.h"
+#include "services/SetupService.h"
 #include "services/Ds2ReadTime.h"
 #include "services/SefamCardMirror.h"
 #include "services/BmcCardMirror.h"
 #include "services/PhilipsCardMirror.h"
+#include "services/NightFacts.h"
+#include "services/AiGrounding.h"
 #include "database/SQLiteDatabase.h"
 #include "database/DatabaseFactory.h"
 #ifdef WITH_POSTGRESQL
@@ -107,30 +111,20 @@ bool partialCopyIsDamaged(const std::string& local_path, size_t size, int listed
     return f.read(head, sizeof(head)) && std::string(head, sizeof(head)) != "0       ";
 }
 
-// Issue #78: a night's events as the AI summaries give them. in_ahi is every
-// type the AHI counts (the parser's formula: obstructive + central + clear
-// airway + unclassified + hypopnea); other is what total_events holds beyond
-// those and the RERAs (Cheyne-Stokes, flow limitation, large leak, snore,
-// unknown annotations), so in_ahi + reras + other == total_events.
-struct EventSplit {
-    int in_ahi = 0;
-    int other = 0;
-};
-
-EventSplit splitEvents(const SessionMetrics& m) {
-    EventSplit s;
-    s.in_ahi = m.obstructive_apneas + m.central_apneas + m.clear_airway_apneas +
-               m.unclassified_apneas + m.hypopneas;
-    s.other = (std::max)(0, m.total_events - s.in_ahi - m.reras);
-    return s;
+// SDD-072 D3: the summary after the grounding check, logged as it goes.
+// [given] is the whole prompt: every figure the model was handed.
+std::string groundSummary(const std::string& summary, const std::string& given,
+                          hms::LLMClient& llm, const std::string& what) {
+    const auto r = grounding::check(summary, given, [&](const std::string& p) {
+        return llm.generate(p);
+    });
+    if (r.regenerated > 0 || r.unverified > 0) {
+        std::cout << "LLM: " << what << " grounding: " << r.checked
+                  << " sentence(s) with numbers, " << r.regenerated << " regenerated, "
+                  << r.unverified << " kept unverified" << std::endl;
+    }
+    return r.text;
 }
-
-// Rides with the counts, not in the prompt, so it reaches a user's own
-// LLM_PROMPT_FILE too.
-constexpr const char* kEventLabelRule =
-    "Report each event type only under the label it has here. An unclassified "
-    "apnea is an apnea the machine did not classify: never describe it as "
-    "obstructive, central or a hypopnea.";
 
 } // namespace
 
@@ -757,6 +751,119 @@ Ds2NightImport::Result BurstCollectorService::importDs2Nights() {
     return r;
 }
 
+// ── SDD-080: a DreamStation 2 card read through the user's OSCAR ───────────
+
+void BurstCollectorService::oscarCardSeen(const std::string& card_root) {
+    if (card_root.empty() || !db_service_) return;
+    std::shared_ptr<oscar::OscarCardReader> reader;
+    {
+        std::lock_guard<std::mutex> lk(oscar_mu_);
+        oscar_card_root_ = card_root;
+        if (!oscar_settings_set_ && app_config_) {
+            oscar_settings_.program  = app_config_->oscar.program;
+            oscar_settings_.data_dir = app_config_->oscar.data_dir;
+            oscar_settings_.profile  = app_config_->oscar.profile;
+            oscar_settings_set_ = true;
+        }
+        if (!oscar_reader_) {
+            oscar::OscarCardReader::Options o;
+            o.settings = [this] {
+                std::lock_guard<std::mutex> l(oscar_mu_);
+                oscar::Settings s = oscar_settings_;
+                // Left empty: where this OS's installer puts it (D7).
+                if (s.program.empty()) s.program = oscar::findProgram();
+                return s;
+            };
+            o.card_root = [this] {
+                std::lock_guard<std::mutex> l(oscar_mu_);
+                return oscar_card_root_;
+            };
+            o.db          = db_service_;
+            o.device_id   = device_id_;
+            o.device_name = device_name_;
+            o.runner      = oscar_runner_;
+            o.removed     = [db = db_service_, id = device_id_] { return removedNightSet(*db, id); };
+            o.on_stored   = [this](const CPAPSession& newest, int stored) {
+                std::lock_guard<std::mutex> l(oscar_mu_);
+                oscar_pending_publish_ = newest;
+                oscar_pending_count_ += stored;
+                oscar_publish_due_ = true;
+            };
+            o.containerised = SetupService::isContainerised();
+            oscar_reader_ = std::make_shared<oscar::OscarCardReader>(std::move(o));
+            oscar_reader_->start();
+        }
+        reader = oscar_reader_;
+    }
+    reader->noteCloses(card_root);
+}
+
+void BurstCollectorService::oscarCardWritten(const std::string& card_root, const std::vector<std::string>& rels) {
+    std::shared_ptr<oscar::OscarCardReader> reader;
+    {
+        std::lock_guard<std::mutex> lk(oscar_mu_);
+        reader = oscar_reader_;
+    }
+    // No reader yet: the burst the rebuild asks for finds the card and builds it.
+    if (reader) reader->noteCloses(card_root, rels);
+}
+
+bool BurstCollectorService::requestOscarRead() {
+    std::shared_ptr<oscar::OscarCardReader> reader;
+    {
+        std::lock_guard<std::mutex> lk(oscar_mu_);
+        reader = oscar_reader_;
+    }
+    if (!reader) return false;
+    reader->request("Read now");
+    return true;
+}
+
+Json::Value BurstCollectorService::oscarStatus() const {
+    std::shared_ptr<oscar::OscarCardReader> reader;
+    std::string root;
+    {
+        std::lock_guard<std::mutex> lk(oscar_mu_);
+        reader = oscar_reader_;
+        root = oscar_card_root_;
+    }
+    if (!reader) return Json::Value(Json::nullValue);
+    Json::Value v = reader->status();
+    v["card_root"] = root;
+    return v;
+}
+
+void BurstCollectorService::setOscarSettings(const oscar::Settings& s) {
+    std::lock_guard<std::mutex> lk(oscar_mu_);
+    oscar_settings_ = s;
+    oscar_settings_set_ = true;
+}
+
+void BurstCollectorService::publishOscarNight() {
+    std::optional<CPAPSession> latest;
+    int stored = 0;
+    {
+        std::lock_guard<std::mutex> lk(oscar_mu_);
+        latest = std::move(oscar_pending_publish_);
+        oscar_pending_publish_.reset();
+        stored = oscar_pending_count_;
+        oscar_pending_count_ = 0;
+    }
+    if (!latest || !db_service_) return;
+    last_data_at_.store(std::chrono::steady_clock::now().time_since_epoch().count());
+    db_service_->updateDeviceLastSeen(device_id_);
+    // No STR on a Philips card: the daily summary comes from the sessions.
+    processSessionSummary();
+    if (latest->session_start && data_publisher_ && mqtt_client_ && mqtt_client_->isConnected()) {
+        data_publisher_->publishSession(*latest);
+        if (auto metrics = db_service_->getNightlyMetrics(device_id_, *latest->session_start)) {
+            data_publisher_->publishHistoricalState(*metrics);
+            if (stored > 0 && llm_enabled_ && llm_client_) generateAndPublishSummary(*metrics, nullptr);
+        }
+        data_publisher_->publishSessionCompleted();
+    }
+}
+
 // ── the live night's shared topics (mqtt/LiveState.h) ──────────────────────
 
 void BurstCollectorService::setLiveState(std::shared_ptr<LiveState> live) {
@@ -807,6 +914,8 @@ void BurstCollectorService::observeCardSession(const SessionFileSet& session,
                                                const std::string& session_dir, long long now_s) {
     const auto live = liveState();
     if (!live || session.brp_files.empty()) return;
+    // SDD-069 D1: no mask events from a card that cannot hold timestamps.
+    if (data_source_ && !data_source_->givesFileStamps()) return;
     const std::string source = cardMaskSource();
     if (source.empty()) return;
 
@@ -849,6 +958,8 @@ void BurstCollectorService::observeCardListing(
     const std::string& archive, bool in_place, long long now_s) {
     const auto live = liveState();
     if (!live) return;
+    // SDD-069 D1: no mask events from a card that cannot hold timestamps.
+    if (data_source_ && !data_source_->givesFileStamps()) return;
     const std::string source = cardMaskSource();
     if (source.empty()) return;
 
@@ -975,6 +1086,13 @@ BurstCollectorService::~BurstCollectorService() {
     // The live state may outlive this service: its hook must not call into it.
     if (auto live = liveState()) live->setMaskHook(nullptr);
     stop();
+    // SDD-080: its callback calls into this service.
+    std::shared_ptr<oscar::OscarCardReader> reader;
+    {
+        std::lock_guard<std::mutex> lk(oscar_mu_);
+        reader = std::move(oscar_reader_);
+    }
+    if (reader) reader->stop();
 }
 
 void BurstCollectorService::start() {
@@ -1923,7 +2041,8 @@ bool BurstCollectorService::processSTRFile() {
                 auto dest = std::filesystem::path(archive_dir) / "STR.edf";
                 std::filesystem::copy_file(str_local_path, dest,
                     std::filesystem::copy_options::overwrite_existing);
-                card_feed::fileWritten(archive_dir, "STR.edf", "");   // platform SDD-059 D3
+                card_feed::fileWritten(archive_dir, "STR.edf", "",
+                                       card_feed::kSourceCard);   // platform SDD-059 D3, SDD-079 D1
             }
         }
 
@@ -2153,6 +2272,16 @@ void BurstCollectorService::updateFolderLedgers(
                     std::filesystem::file_size(p, ec) == 0) {
                     obs.all_files_stored = false;
                 }
+                // SDD-069 P8: a card with no listing gives the exact size, and
+                // its night is whole only when every file is held to its end.
+                // A BRP the card never lets reach EOF leaves it partial after
+                // the night's hour, until a later burst gets the rest.
+                const auto exact = s->file_sizes_bytes.find(filename);
+                if (data_source_ && !data_source_->givesFileStamps() &&
+                    exact != s->file_sizes_bytes.end() &&
+                    std::filesystem::file_size(p, ec) < exact->second) {
+                    obs.all_files_stored = false;
+                }
             }
         }
 
@@ -2355,10 +2484,14 @@ bool BurstCollectorService::executeBurstCycle() {
                 // SDD-074: the CPAP machine's clock, which the night's
                 // oximetry is lined up on (the host's when it has no setting).
                 if (live.valid) {
-                    db_service_->saveLiveOximetrySample(
-                        kOximetryDeviceId,
-                        machine_clocks::nowWall(device_id_, std::chrono::system_clock::now()),
-                        live.spo2, live.hr, live.motion);
+                    const auto read_at = std::chrono::system_clock::now();
+                    const auto wall = machine_clocks::nowWall(device_id_, read_at);
+                    if (db_service_->saveLiveOximetrySample(kOximetryDeviceId, wall, live.spo2,
+                                                            live.hr, live.motion)) {
+                        // SDD-079 D4: one line on the live spool, stamped with
+                        // the instant it was read, never the wall-clock shape.
+                        oximetry_outbox::liveSample(read_at, wall, live.spo2, live.hr, live.motion);
+                    }
                 }
             }
             // The ring's own run status, logged whenever it changes, so the
@@ -2770,7 +2903,22 @@ bool BurstCollectorService::executeBurstCycle() {
         std::set<std::string> catch_up;
         const std::string tonight = tonightFolder(now_s, offset);
 
+        // SDD-069: what this burst is for, for a card with no listing, which
+        // chooses what to ask from it. All of it from this burst's own state:
+        // the 65-min checkpoint is the burst that first passes the mark.
+        IDataSource::BurstScope scope;
+        scope.now_s = now_s;
+        scope.night_growing = night_growing;
+        for (const auto& [f, w] : folder_watch_) {
+            (void)f;
+            if (w.stopped_at <= 0) continue;
+            const long long at = w.stopped_at +
+                std::chrono::duration_cast<std::chrono::seconds>(std::end(kGrowthCheckpoints)[-1]).count();
+            if (now_s >= at && w.last_listed < at) scope.str_checkpoint = true;
+        }
+
         try {
+            data_source_->setBurstScope(scope);
             data_source_->beginRefresh();
             // D1: the DATALOG index once per start (until one succeeds), once
             // a day at the machine's noon, and on a reason. It used to be
@@ -2884,6 +3032,11 @@ bool BurstCollectorService::executeBurstCycle() {
             };
             for (const auto& p : plan) {
                 std::vector<EzShareFileEntry> files;
+                // SDD-069 P1: the full alias scan with the index and on D6's
+                // reasons; tonight, a live folder and a checkpoint ask less.
+                scope.full_scan = index_listed || p.reason == ListReason::FirstLook ||
+                                  p.reason == ListReason::Relist || p.reason == ListReason::Ceiling;
+                data_source_->setBurstScope(scope);
                 try {
                     files = data_source_->listFiles(p.folder);
                 } catch (const ListingRefused&) {
@@ -3042,6 +3195,19 @@ bool BurstCollectorService::executeBurstCycle() {
             }
         }
 
+        // SDD-069 P5: a card with no stamps teaches the machine's clock from
+        // a BRP its probes saw grow, drift and zone as one offset, into the
+        // same row SDD-054 D3 keeps. It decides which folder is tonight's.
+        long long seen_offset = 0;
+        if (data_source_->takeMachineOffset(seen_offset) &&
+            (!machine_clock_.zone_known ||
+             machine_clock_.drift_s + machine_clock_.zone_s != seen_offset)) {
+            machine_clock_ = MachineClock{0, seen_offset, true};
+            std::cout << "CPAP: the machine's clock is " << seen_offset
+                      << " s from UTC (learned from the BRP it is writing)" << std::endl;
+            if (db_service_) saveMachineClock(*db_service_, device_id_, machine_clock_, now_s);
+        }
+
         // D5: the .crc files the last residue walk left for this burst, before
         // this burst's walks can leave new ones.
         if (!in_place && !pending_residue_.empty()) fetchPendingResidue();
@@ -3189,7 +3355,7 @@ bool BurstCollectorService::executeBurstCycle() {
             // changed there; the burst does not wait on it.
             const std::string card_root =
                 in_place ? (data_source_ ? data_source_->rootPath() : std::string()) : permanent_archive;
-            card_feed::rootWritten(card_root, "");
+            card_feed::rootWritten(card_root, "", card_feed::kSourceCard);   // SDD-079 D1
             // The pass is over, found something or not: said after this
             // burst's files, in order. The burst is the only clock there is.
             // Only for a burst whose card reads all answered (SDD-053 D2).
@@ -3982,6 +4148,13 @@ int BurstCollectorService::announceQuietNights(std::chrono::system_clock::time_p
                   << kNightQuiet.count() << " min, it is over"
                   << (rec ? "" : " (the STR has no record for it yet)") << std::endl;
 
+        // SDD-078 D2: the night's close is when its Garmin SpO2 is asked for;
+        // SDD-013: and when the local sleep model writes its summary.
+        {
+            std::lock_guard<std::mutex> lk(night_closed_mu_);
+            for (const auto& f : night_closed_) f(n.date_folder);
+        }
+
         // D5: SleepHQ gets it now, with no second quiet window. Not a night
         // whose transfer never finished (D3): its files are still arriving,
         // and the landing that completes them is growth, which announces the
@@ -4048,13 +4221,15 @@ bool BurstCollectorService::executeBmcBurst() {
         }
     }
 
-    auto read = bmc_ingestion_->readSessions(device_id_, device_name_);
+    // SDD-058 D3, D6: the computed apneas only with the gate open.
+    auto read = bmc_ingestion_->readSessions(device_id_, device_name_, computed_events_open_);
     if (!read.ok) {
         std::cerr << "CPAP: " << read.error << std::endl;
         return false;
     }
     std::vector<CardSession> sessions;
-    for (auto& s : read.sessions) sessions.push_back({std::move(s), -1});
+    for (auto& s : read.sessions)
+        sessions.push_back({std::move(s), -1, computed_events_open_, read.has_event_file});
     storeCardSessions(std::move(sessions), "BMC", cycle_start);
     return true;
 }
@@ -4074,10 +4249,12 @@ bool BurstCollectorService::executePhilipsBurst() {
             return false;
         }
         if (m.encrypted) {
+            // SDD-080: the copy holds the card as it is; the user's OSCAR reads it.
             if (!philips_encrypted_logged_)
-                std::cerr << "CPAP: the Philips card is encrypted; hms-cpap reads a DreamStation "
-                             "card only when its files are plain" << std::endl;
+                std::cout << "CPAP: the Philips card is encrypted; its sessions are read through "
+                             "OSCAR (Settings > Source)" << std::endl;
             philips_encrypted_logged_ = true;
+            oscarCardSeen(philips_mirror_dir_);
             return false;
         }
     }
@@ -4087,6 +4264,8 @@ bool BurstCollectorService::executePhilipsBurst() {
         // An encrypted card is a fact about the card, said once per stretch.
         if (!read.encrypted || !philips_encrypted_logged_) std::cerr << "CPAP: " << read.error << std::endl;
         philips_encrypted_logged_ = read.encrypted;
+        // SDD-080: an encrypted card is read through the user's OSCAR.
+        if (read.encrypted) oscarCardSeen(oscar::cardRootOf(read.card_dir));
         return false;
     }
     philips_encrypted_logged_ = false;
@@ -4106,16 +4285,26 @@ void BurstCollectorService::storeCardSessions(std::vector<CardSession> sessions,
     bool live_grew = false;
     int imported = 0, grown = 0;
     for (std::size_t i = 0; i < sessions.size(); ++i) {
-        const auto& s = *sessions[i].session;
+        auto& s = *sessions[i].session;
         const int closed = sessions[i].closed;
         const auto start = *s.session_start;
         if (isRemovedNight(removed_nights_, start)) continue;   // SDD-029
 
         const long long key =
             std::chrono::duration_cast<std::chrono::seconds>(start.time_since_epoch()).count();
-        const int seen_value = s.duration_seconds.value_or(0) * 2 + (closed == 1 ? 1 : 0);
+        CardSeen seen_value{s.duration_seconds.value_or(0) * 2 + (closed == 1 ? 1 : 0),
+                            s.events.size()};
         const bool is_newest = i + 1 == sessions.size();
         const bool stored = db_service_->sessionExists(device_id_, start);
+        // SDD-058 D4, gate open: the set the index would be counted from if
+        // the session is not being written now; still live inside the quiet
+        // window, it keeps the computed set.
+        const bool still_live = key == card_live_start_ && now - card_live_grew_at_ < card_mask_quiet_;
+        const auto choose = [&](bool written) {
+            return sessions[i].computed
+                       ? chooseIndexEvents(sessions[i].card_has_event_file, written || still_live)
+                       : IndexEvents::Machine;
+        };
         // SDD-058 D2: the newest session started or grew since this process
         // last looked, so the machine is writing it now; never one the card
         // says has ended.
@@ -4123,19 +4312,33 @@ void BurstCollectorService::storeCardSessions(std::vector<CardSession> sessions,
         if (stored) {
             const auto seen = card_seen_.find(key);
             const bool first_look = seen == card_seen_.end();
-            const bool changed = first_look || seen_value != seen->second;
+            const bool grew = !first_look && seen_value.growth != seen->second.growth;
+            const bool changed = first_look || grew || seen_value.events != seen->second.events ||
+                                 choose(false) != seen->second.index_from;
             if (!changed) {
+                seen_value.index_from = seen->second.index_from;
                 card_seen_[key] = seen_value;
                 continue;
             }
-            written_now = is_newest && !first_look;
+            // Events alone (a Luna's .evt at the stop) are not the machine
+            // writing the session.
+            written_now = is_newest && grew;
         }
         if (closed == 1) written_now = false;
+
+        // SDD-058 D4: with the gate open, the set the index is counted from.
+        const IndexEvents index_from = choose(written_now);
+        seen_value.index_from = index_from;
+        if (index_from == IndexEvents::Computed) indexFromComputed(s);
 
         if (!db_service_->saveSession(s)) {
             std::cerr << "CPAP: " << what << " session could not be saved" << std::endl;
             continue;
         }
+        if (sessions[i].computed &&
+            !storeComputedEvents(*db_service_, device_id_, start, s.computed_events, index_from))
+            std::cerr << "CPAP: " << what << " session's computed events could not be saved"
+                      << std::endl;
         if (written_now) {
             // Open while it grows: the night reads live. Closed below, on its
             // own data end, once it stops growing.
@@ -4252,7 +4455,17 @@ void BurstCollectorService::republishNewestNight() {
 
 const STRDailyRecord* BurstCollectorService::strRecordForNight(
     const std::chrono::system_clock::time_point& session_start) const {
-    const std::string day = strDayForSessionStart(session_start);
+    return strRecordOf(strDayForSessionStart(session_start));
+}
+
+std::optional<STRDailyRecord> BurstCollectorService::strRecordForDay(
+    const std::string& yyyymmdd) const {
+    const auto* rec = strRecordOf(yyyymmdd);
+    if (!rec) return std::nullopt;
+    return *rec;
+}
+
+const STRDailyRecord* BurstCollectorService::strRecordOf(const std::string& day) const {
     for (auto it = last_str_records_.rbegin(); it != last_str_records_.rend(); ++it) {
         const std::tm tm = wall::fieldsOf(wall::seconds(it->record_date));   // SDD-074 D4
         char buf[9];
@@ -4556,6 +4769,8 @@ void BurstCollectorService::runLoop() {
             ds2DailyCheck(std::chrono::duration_cast<std::chrono::seconds>(
                               std::chrono::system_clock::now().time_since_epoch()).count());
             if (ds2_import_due_.exchange(false)) importDs2Nights();
+            // SDD-080: OSCAR's read stored sessions; the newest is published.
+            if (oscar_publish_due_.exchange(false)) publishOscarNight();
 
             std::this_thread::sleep_for(std::chrono::seconds(1));
         }
@@ -4630,14 +4845,17 @@ void BurstCollectorService::generateRangeSummary(SummaryPeriod period, int days_
 
     std::string metrics_str = buildRangeMetricsString(nights, period);
 
-    // Period-specific prompt — the LLM sees all the per-night data and averages
+    // Period-specific prompt — the LLM sees all the per-night data and averages.
+    // SDD-072 D2: the assessment is asked for only where the data gives an
+    // AHI (SDD-024); the rules ride in metrics_str.
     std::string prompt;
     if (period == SummaryPeriod::WEEKLY) {
         prompt =
             "You are a CPAP therapy analyst. Summarize this week of CPAP data "
             "using this exact markdown structure:\n\n"
             "**Overall Trends**\n"
-            "* Average AHI with assessment (good/moderate/elevated)\n"
+            "* Average AHI, with an assessment (good/moderate/elevated) ONLY if "
+            "the data gives an AHI\n"
             "* Average usage hours/night and total hours\n"
             "* Leak control assessment\n\n"
             "**Night-by-Night Highlights**\n"
@@ -4653,7 +4871,8 @@ void BurstCollectorService::generateRangeSummary(SummaryPeriod period, int days_
             "You are a CPAP therapy analyst. Summarize this month of CPAP data "
             "using this exact markdown structure:\n\n"
             "**Overall Trends**\n"
-            "* Average AHI with assessment (good/moderate/elevated)\n"
+            "* Average AHI, with an assessment (good/moderate/elevated) ONLY if "
+            "the data gives an AHI\n"
             "* Average usage hours/night and total hours\n"
             "* Leak control assessment\n\n"
             "**First Half vs Second Half**\n"
@@ -4672,6 +4891,7 @@ void BurstCollectorService::generateRangeSummary(SummaryPeriod period, int days_
         std::cerr << "LLM: " << period_str << " summary generation failed" << std::endl;
         return;
     }
+    summary = groundSummary(*summary, prompt, *llm_client_, period_str);   // SDD-072 D3
 
     std::cout << "LLM: " << period_str << " summary generated ("
               << summary->size() << " chars)" << std::endl;
@@ -4705,99 +4925,17 @@ void BurstCollectorService::generateRangeSummary(SummaryPeriod period, int days_
 std::string BurstCollectorService::buildRangeMetricsString(
     const std::vector<SessionMetrics>& nights, SummaryPeriod period) const {
 
-    std::ostringstream oss;
-    oss << std::fixed << std::setprecision(2);
+    // SDD-072 D1: the nights' facts, rendered once by the shared renderer.
+    std::vector<NightFacts> facts;
+    facts.reserve(nights.size());
+    for (const auto& n : nights) facts.push_back(NightFacts::from(n));
 
-    std::string period_str = (period == SummaryPeriod::WEEKLY) ? "Weekly" : "Monthly";
-    oss << period_str << " CPAP report (" << nights.size() << " nights)\n";
-    oss << "─────────────────────────────────────\n\n";
-
-    // Per-night summary line
-    oss << "Event codes: OA obstructive apnea, CA central apnea, CLR clear airway "
-           "apnea, UA unclassified apnea, H hypopnea (these five make the AHI); "
-           "RERA respiratory effort related arousal, other = every other "
-           "recorded event type (not in the AHI).\n";
-    oss << kEventLabelRule << "\n\n";
-    oss << "Night-by-night:\n";
-    double total_ahi = 0, total_hours = 0, total_leak = 0;
-    int leak_count = 0;
-
-    for (const auto& n : nights) {
-        double hours = n.usage_hours.value_or(0.0);
-        oss << "  " << n.sleep_day
-            << " | " << hours << "h"
-            << " | AHI " << n.ahi
-            << " | events " << n.total_events;
-        {
-            // Issue #78: the same split as the daily summary, so a night's
-            // parts add up to its total (codes in the legend above).
-            const EventSplit split = splitEvents(n);
-            oss << " (in AHI " << split.in_ahi
-                << ": OA=" << n.obstructive_apneas
-                << " CA=" << n.central_apneas
-                << " CLR=" << n.clear_airway_apneas
-                << " UA=" << n.unclassified_apneas
-                << " H=" << n.hypopneas
-                << "; not in AHI " << (n.reras + split.other)
-                << ": RERA=" << n.reras
-                << " other=" << split.other << ")";
-        }
-        if (n.avg_leak_rate.has_value())
-            oss << " | leak avg " << n.avg_leak_rate.value() << " L/min";
-        if (n.avg_pressure.has_value())
-            oss << " | press " << n.avg_pressure.value() << " cmH2O";
-        oss << "\n";
-
-        total_ahi += n.ahi;
-        total_hours += hours;
-        if (n.avg_leak_rate.has_value()) {
-            total_leak += n.avg_leak_rate.value();
-            leak_count++;
-        }
-    }
-
-    // Period averages
-    int count = static_cast<int>(nights.size());
-    oss << "\n" << period_str << " averages:\n";
-    oss << "  Avg AHI: " << (total_ahi / count) << " events/hour\n";
-    oss << "  Avg usage: " << (total_hours / count) << " hours/night\n";
-    oss << "  Total usage: " << total_hours << " hours\n";
-    if (leak_count > 0)
-        oss << "  Avg leak: " << (total_leak / leak_count) << " L/min\n";
-
-    // Compliance: nights >= 4h
-    int compliant = 0;
-    for (const auto& n : nights)
-        if (n.usage_hours.value_or(0.0) >= 4.0) compliant++;
-    oss << "  Compliance (>=4h): " << compliant << "/" << count
-        << " nights (" << (100.0 * compliant / count) << "%)\n";
-
-    // Best and worst nights
-    auto best = std::min_element(nights.begin(), nights.end(),
-        [](const SessionMetrics& a, const SessionMetrics& b) { return a.ahi < b.ahi; });
-    auto worst = std::max_element(nights.begin(), nights.end(),
-        [](const SessionMetrics& a, const SessionMetrics& b) { return a.ahi < b.ahi; });
-    oss << "  Best AHI: " << best->ahi << " (" << best->sleep_day << ")\n";
-    oss << "  Worst AHI: " << worst->ahi << " (" << worst->sleep_day << ")\n";
-
-    // O2 Ring oximetry across the date range
-    if (db_service_) {
-        std::string start_nd = nights.front().sleep_day, end_nd = nights.back().sleep_day;
-        start_nd.erase(std::remove(start_nd.begin(), start_nd.end(), '-'), start_nd.end());
-        end_nd.erase(std::remove(end_nd.begin(), end_nd.end(), '-'), end_nd.end());
-
-        auto oxi = db_service_->getOximetryRangeSummary(kOximetryDeviceId, start_nd, end_nd);
-        if (oxi.found) {
-            oss << "\nO2 Ring Oximetry (" << oxi.nights << " nights with data):\n";
-            oss << "  Avg SpO2: " << oxi.avg_spo2 << "%\n";
-            oss << "  Lowest SpO2: " << oxi.min_spo2 << "%\n";
-            oss << "  Avg ODI (3%): " << oxi.avg_odi << " events/hour\n";
-            oss << "  Avg time below 90%: " << oxi.avg_below_90 << "%\n";
-            oss << "  Avg HR: " << oxi.avg_hr << " bpm\n";
-        }
-    }
-
-    return oss.str();
+    std::optional<RangeOximetryFacts> oxi;
+    if (db_service_ && !nights.empty())
+        oxi = night_facts::oximetryForRange(*db_service_, nights.front().sleep_day,
+                                            nights.back().sleep_day);
+    return night_facts::renderRange(
+        facts, period == SummaryPeriod::WEEKLY ? "Weekly" : "Monthly", oxi);
 }
 
 // --- Daily summary (single night) ---
@@ -4834,6 +4972,7 @@ void BurstCollectorService::generateAndPublishSummary(const SessionMetrics& metr
         std::cerr << "LLM: Summary generation failed (non-fatal)" << std::endl;
         return;
     }
+    summary = groundSummary(*summary, prompt, *llm_client_, "daily");   // SDD-072 D3
 
     std::cout << "LLM: Summary generated (" << summary->size() << " chars)" << std::endl;
 
@@ -4871,218 +5010,22 @@ void BurstCollectorService::generateAndPublishSummary(const SessionMetrics& metr
 std::string BurstCollectorService::buildMetricsString(const SessionMetrics& metrics,
                                                        const STRDailyRecord* str_record,
                                                        const std::string& sleep_day) const {
-    std::ostringstream oss;
-    oss << std::fixed << std::setprecision(2);
-
-    // Usage
-    oss << "Usage: " << metrics.usage_hours.value_or(0.0) << " hours"
-        << " (" << metrics.usage_percent.value_or(0.0) << "% of 8h target)\n";
-
-    // AHI and events.
-    //
-    // The index only goes into the prompt when it IS an AHI. A machine with no
-    // hypopnea detection produces an apnea count per hour, and handing that to
-    // an LLM under the label "AHI" is how a number with no severity meaning
-    // comes back out as "your AHI is excellent". The model has no way to know
-    // the difference and every reason to characterise what it is given.
-    //
-    // The event counts below still go, because they are counts and not an
-    // index -- the model can report them without grading anything.
-    //
-    // This is a suppression and not a deletion: the index is still computed and
-    // still stored, so when there is eventually something to compare it against
-    // it is already there (SDD-081).
-    if (metrics.index_kind == SessionMetrics::IndexKind::AHI) {
-        oss << "AHI: " << metrics.ahi << " events/hour\n";
-    } else {
-        oss << "AHI: not available for this machine -- it does not detect "
-               "hypopneas, so no apnea-hypopnea index can be formed. Do not "
-               "estimate one, and do not describe the events below as mild, "
-               "normal or severe.\n";
-    }
-    // The per-type breakdown goes only when the machine produced one. On a
-    // machine that does not classify, every one of these is 0, and "hypopnea=0"
-    // is a fact the model will faithfully report as "no hypopneas were
-    // recorded" -- which is the same false reassurance the UI was giving before
-    // SDD-024, laundered through a sentence.
-    //
-    // Issue #78: every type the AHI counts is named, and what is not in the
-    // AHI is its own line, so the parts add up to the total. A line that named
-    // three of the night's six events let the model call all six hypopneas.
-    if (metrics.index_kind == SessionMetrics::IndexKind::AHI) {
-        const EventSplit split = splitEvents(metrics);
-        oss << "Apneas and hypopneas (the events counted in the AHI): " << split.in_ahi
-            << " (obstructive apnea=" << metrics.obstructive_apneas
-            << ", central apnea=" << metrics.central_apneas
-            << ", clear airway apnea=" << metrics.clear_airway_apneas
-            << ", unclassified apnea=" << metrics.unclassified_apneas
-            << ", hypopnea=" << metrics.hypopneas << ")\n";
-        oss << "Other recorded events (not counted in the AHI): "
-            << (metrics.reras + split.other)
-            << " (RERA=" << metrics.reras
-            << ", other event types=" << split.other << ")\n";
-        oss << "Total events recorded: " << metrics.total_events << "\n";
-        oss << kEventLabelRule << "\n";
-    } else {
-        oss << "Total events: " << metrics.total_events
-            << " (all apneas; this machine does not classify them as "
-               "obstructive or central and does not mark hypopneas, so no "
-               "per-type breakdown exists. Do not report any type as zero.)\n";
-    }
-
-    if (metrics.avg_event_duration.has_value()) {
-        oss << "Avg event duration: " << metrics.avg_event_duration.value() << "s";
-        if (metrics.max_event_duration.has_value()) {
-            oss << ", max: " << metrics.max_event_duration.value() << "s";
-        }
-        oss << "\n";
-    }
-
-    // Issue #56: the pressure the machine delivered (PLD Press), the number a
-    // user compares with their prescription. The block after it is measured
-    // and, with EPR, sits below the set minimum on every breath out; without
-    // this line the summary reported that as the therapy pressure.
-    if (metrics.avg_therapy_pressure.has_value()) {
-        oss << "Therapy pressure (delivered by the machine): avg="
-            << metrics.avg_therapy_pressure.value() << " cmH2O\n";
-    }
-
-    // Pressure (only include fields that have data)
-    if (metrics.avg_pressure.has_value() || metrics.pressure_p95.has_value()) {
-        oss << "Pressure:";
-        if (metrics.avg_pressure.has_value()) {
-            oss << " avg=" << metrics.avg_pressure.value() << " cmH2O";
-        }
-        if (metrics.min_pressure.has_value()) {
-            oss << ", min=" << metrics.min_pressure.value() << " cmH2O";
-        }
-        if (metrics.max_pressure.has_value()) {
-            oss << ", max=" << metrics.max_pressure.value() << " cmH2O";
-        }
-        if (metrics.pressure_p95.has_value()) {
-            oss << ", 95th=" << metrics.pressure_p95.value() << " cmH2O";
-        }
-        oss << "\n";
-    }
-
-    // Leak (only include fields that have data)
-    if (metrics.avg_leak_rate.has_value() || metrics.max_leak_rate.has_value()) {
-        oss << "Leak:";
-        if (metrics.avg_leak_rate.has_value()) {
-            oss << " avg=" << metrics.avg_leak_rate.value() << " L/min";
-        }
-        if (metrics.max_leak_rate.has_value()) {
-            oss << ", max=" << metrics.max_leak_rate.value() << " L/min";
-        }
-        if (metrics.leak_p95.has_value()) {
-            oss << ", 95th=" << metrics.leak_p95.value() << " L/min";
-        }
-        if (metrics.leak_p50.has_value()) {
-            oss << ", median=" << metrics.leak_p50.value() << " L/min";
-        }
-        oss << "\n";
-    }
-
-    // PLD-derived metrics (machine's own calculations)
-    if (metrics.avg_mask_pressure.has_value()) {
-        oss << "Mask pressure (actual): " << metrics.avg_mask_pressure.value() << " cmH2O\n";
-    }
-    if (metrics.avg_epr_pressure.has_value()) {
-        oss << "EPR/EPAP pressure: " << metrics.avg_epr_pressure.value() << " cmH2O\n";
-    }
-    if (metrics.avg_snore.has_value()) {
-        oss << "Snore index: " << metrics.avg_snore.value() << " (0-5 scale)\n";
-    }
-
-    // ASV-specific metrics
-    if (metrics.avg_target_ventilation.has_value() && metrics.avg_target_ventilation.value() > 0) {
-        oss << "Target ventilation (ASV): " << metrics.avg_target_ventilation.value() << " L/min\n";
-    }
-    // SDD-030, the standing rule: the session's mode first, the STR's when
-    // the session's is 0. No parser fills a ResMed session's mode and every
-    // engine stores "none" as 0, so there it is the STR's (seen on two
-    // AirCurves, which read "CPAP" before). Named through the machine family.
-    {
-        const auto family = str_record ? str_record->family : MachineFamily::Unknown;
-        const auto mode = therapyModeFor(
-            metrics.therapy_mode,
-            str_record ? std::optional<int>(str_record->mode) : std::nullopt);
-        if (mode) oss << "Therapy mode: " << therapyModeName(*mode, family) << "\n";
-    }
-
-    // Respiratory
-    if (metrics.avg_respiratory_rate.has_value()) {
-        oss << "Respiratory rate: " << metrics.avg_respiratory_rate.value() << " breaths/min\n";
-    }
-    if (metrics.avg_tidal_volume.has_value()) {
-        oss << "Tidal volume: " << metrics.avg_tidal_volume.value() << " mL\n";
-    }
-    if (metrics.avg_minute_ventilation.has_value()) {
-        oss << "Minute ventilation: " << metrics.avg_minute_ventilation.value() << " L/min\n";
-    }
-    if (metrics.avg_flow_limitation.has_value()) {
-        oss << "Flow limitation: " << metrics.avg_flow_limitation.value() << " (0-1 scale)\n";
-    }
-
-    // O2 Ring oximetry (if available for this night)
+    // SDD-072 D1: the night's facts, rendered by the shared renderer. The O2
+    // Ring block is the summary's own night (issue #78: a regenerated older
+    // night read today's oximetry); empty = the night that just ended.
+    // SDD-074 D7: "now" on the machine's clock.
+    const std::string day = resolveSleepDay(
+        sleep_day, machine_clocks::nowWall(device_id_, std::chrono::system_clock::now()));
+    std::optional<NightOximetryFacts> oxi;
     if (db_service_) {
-        // The summary's own night (issue #78: a regenerated older night read
-        // today's oximetry). Empty = the night that just ended, now - 12 h.
-        // SDD-074 D7: on the machine's clock.
-        std::tm day = wall::fieldsOf(wall::seconds(
-            machine_clocks::nowWall(device_id_, std::chrono::system_clock::now()) - std::chrono::hours(12)));
-        int y = 0, mo = 0, d = 0;
-        if (sleep_day.size() == 10 &&
-            std::sscanf(sleep_day.c_str(), "%4d-%2d-%2d", &y, &mo, &d) == 3) {
-            day = std::tm{};
-            day.tm_year = y - 1900;
-            day.tm_mon = mo - 1;
-            day.tm_mday = d;
-            day.tm_hour = 12;
-            day = wall::fieldsOf(wall::labelOf(day));
-        }
-        char date_buf[9], next_buf[9];
-        std::strftime(date_buf, sizeof(date_buf), "%Y%m%d", &day);
-        const std::tm next_tm = wall::fieldsOf(wall::labelOf(day) + 86400);
-        std::strftime(next_buf, sizeof(next_buf), "%Y%m%d", &next_tm);
-
-        auto oxi = db_service_->getOximetrySummary(kOximetryDeviceId, date_buf, next_buf);
-        if (oxi.found) {
-            oss << "\nO2 Ring Oximetry (overnight):\n";
-            oss << "  Avg SpO2: " << oxi.avg_spo2 << "%\n";
-            oss << "  Min SpO2: " << oxi.min_spo2 << "%\n";
-            oss << "  SpO2 baseline (P95): " << oxi.spo2_baseline << "%\n";
-            oss << "  ODI (3%): " << oxi.odi_3pct << " events/hour\n";
-            oss << "  Time below 90%: " << oxi.time_below_90 << "%\n";
-            oss << "  Time below 88%: " << oxi.time_below_88 << "%\n";
-            oss << "  Avg HR: " << oxi.avg_hr << " bpm\n";
-            oss << "  HR range: " << oxi.min_hr << "-" << oxi.max_hr << " bpm\n";
-            std::cout << "O2Ring LLM: oximetry included (avg_spo2=" << oxi.avg_spo2 << ")" << std::endl;
-        }
+        oxi = night_facts::oximetryForNight(*db_service_, day);
+        if (oxi)
+            std::cout << "O2Ring LLM: oximetry included (avg_spo2=" << oxi->avg_spo2 << ")"
+                      << std::endl;
     }
-
-    // STR data (if available)
-    if (str_record) {
-        oss << "\nResMed official daily summary:\n";
-        oss << "  STR AHI: " << str_record->ahi << " events/hour\n";
-        oss << "  Mask events: " << (str_record->mask_events / 2) << " (on/off pairs)\n";
-        oss << "  95th leak: " << str_record->leak_95 << " L/min\n";
-        // The STR's MaskPress.95: measured at the mask, not the therapy pressure.
-        oss << "  95th mask pressure: " << str_record->mask_press_95 << " cmH2O\n";
-        // ASV STR settings
-        if (str_record->asv_epap.has_value()) {
-            oss << "  ASV EPAP: " << str_record->asv_epap.value() << " cmH2O\n";
-            oss << "  ASV Pressure Support: " << str_record->asv_min_ps.value_or(0) << "-"
-                << str_record->asv_max_ps.value_or(0) << " cmH2O\n";
-        }
-        if (str_record->tgt_ipap_50.has_value()) {
-            oss << "  Target IPAP (median): " << str_record->tgt_ipap_50.value() << " cmH2O\n";
-            oss << "  Target EPAP (median): " << str_record->tgt_epap_50.value_or(0) << " cmH2O\n";
-            oss << "  Target ventilation (median): " << str_record->tgt_vent_50.value_or(0) << " L/min\n";
-        }
-    }
-
-    return oss.str();
+    NightFacts facts = NightFacts::from(metrics, str_record, oxi);
+    if (facts.sleep_day.empty()) facts.sleep_day = day;
+    return night_facts::renderNight(facts);
 }
 
 std::string BurstCollectorService::loadPromptFile(const std::string& filepath) {

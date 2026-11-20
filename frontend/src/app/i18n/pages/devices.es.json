@@ -17,7 +17,8 @@
       "ezshare": "Tarjeta ez Share",
       "flashair": "Tarjeta FlashAir",
       "as11_ble": "AirSense 11 (Bluetooth)",
-      "ds2_ble": "DreamStation 2 (Bluetooth)"
+      "ds2_ble": "DreamStation 2 (Bluetooth)",
+      "garmin": "Garmin"
     },
     "presence": {
       "yes": "aquí",
@@ -234,6 +235,34 @@
       },
       "nextBoot": "se aplica en el próximo arranque"
     },
+    "garmin": {
+      "signedInAs": "Sesión iniciada como {{email}}",
+      "notSetUp": "Introduce la cuenta de Garmin en Ajustes para empezar.",
+      "signedOut": "Aún sin sesión: hms-cpap la inicia en el próximo evento, o con Traer de Garmin ahora.",
+      "signingIn": "Iniciando sesión en Garmin...",
+      "readAfter": "Se lee de Garmin Connect después de la noche, nunca durante ella.",
+      "watch": "Reloj",
+      "lastFetch": "Última consulta",
+      "fetchStored": "Noches guardadas: {{n}}",
+      "fetchNothing": "Nada nuevo. Una noche que aún falta se vuelve a pedir en el próximo evento.",
+      "fetchNow": "Traer de Garmin ahora",
+      "fetching": "Consultando...",
+      "asked": "Pedido. La tarjeta muestra el resultado.",
+      "mfaNote": "Garmin envió un código para terminar de iniciar sesión. Introdúcelo aquí.",
+      "code": "Código de Garmin",
+      "submitCode": "Iniciar sesión",
+      "checking": "Comprobando...",
+      "openSettings": "Cuenta de Garmin: Ajustes",
+      "err": {
+        "changed": "Garmin cambió su inicio de sesión; actualiza hms-cpap",
+        "bad_password": "Garmin rechazó el correo o la contraseña. Revísalos en Ajustes.",
+        "bad_mfa_code": "Garmin no aceptó el código. Inténtalo de nuevo.",
+        "blocked": "Garmin rechaza este inicio de sesión por ahora. Se vuelve a intentar en el próximo evento.",
+        "unreachable": "Garmin no respondió. Se vuelve a intentar en el próximo evento.",
+        "expired": "Garmin necesita un nuevo inicio de sesión.",
+        "failed": "Garmin: {{message}}"
+      }
+    },
     "o2ring": {
       "throughBridge": "Leído a través de {{url}}, no por el Bluetooth de este ordenador.",
       "notCompiled": "Esta compilación no tiene Bluetooth.",
@@ -381,6 +410,24 @@
         "bad_file": "La lectura tiene un formato que este hms-cpap aún no lee. Actualiza hms-cpap.",
         "other": "No se hizo: {{error}}"
       }
+    },
+    "oscar": {
+      "readNow": "Leer ahora",
+      "reading": "OSCAR está leyendo la tarjeta...",
+      "readStarted": "OSCAR está leyendo la tarjeta.",
+      "openSettings": "Configurar OSCAR en Ajustes",
+      "state_never": "Aún no leída. Cada sesión que termina la máquina se lee con OSCAR.",
+      "state_imported": "OSCAR {{version}}, última lectura {{time}}, {{sessions}} sesión(es)",
+      "state_nothing_new": "OSCAR {{version}}, última lectura {{time}}, nada nuevo",
+      "state_read_nothing": "OSCAR no leyó nada de esta tarjeta.",
+      "state_busy": "OSCAR estaba ocupado (abierto en este equipo). La sesión se lee en el próximo cierre o con Leer ahora.",
+      "state_timeout": "OSCAR no terminó a tiempo y se detuvo.",
+      "state_failed": "OSCAR no pudo leer la tarjeta.",
+      "state_not_set_up": "OSCAR no está configurado (Ajustes, Fuente de datos).",
+      "state_no_program": "El programa OSCAR no se inició.",
+      "state_not_supported": "Esta versión de OSCAR aún no es compatible.",
+      "state_no_profile": "Falta el perfil de OSCAR para hms-cpap. Créelo en OSCAR.",
+      "state_not_here": "Necesita OSCAR en el mismo equipo que hms-cpap."
     },
     "ds2": {
       "notCompiled": "Esta versión no tiene Bluetooth: la DreamStation 2 no se puede leer desde este ordenador.",

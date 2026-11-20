@@ -106,6 +106,10 @@ std::string assetKindFor(Handoff handoff, const std::string& platform);
 /// Lowercase hex SHA-256 of a file, "" when it cannot be read.
 std::string sha256File(const std::string& path);
 
+/// [url] to the file [path] with libcurl, following redirects; aborts only
+/// when the transfer stalls. False on any failure. (Also SDD-013's model.)
+bool downloadFile(const std::string& url, const std::string& path);
+
 /// Read the helper's result.json. `present` is false when there is none.
 UpdateResult readResult(const std::string& path);
 

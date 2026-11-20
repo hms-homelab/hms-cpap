@@ -1,5 +1,6 @@
-import { ChartDataset } from 'chart.js';
-import { SessionEvent } from '../models/session.model';
+// Type-only imports, so `npm test` (Node's own runner) can load this file.
+import type { ChartDataset } from 'chart.js';
+import type { SessionEvent } from '../models/session.model';
 
 export const EVENT_COLORS: Record<string, string> = {
   obstructive_apnea: '#f87171',
@@ -21,7 +22,7 @@ export const EVENT_COLORS: Record<string, string> = {
 };
 
 /** Case-insensitive color lookup ("Obstructive" -> OBSTRUCTIVE). */
-function eventColor(type: string): string {
+export function eventColor(type: string): string {
   if (!type) return '#888';
   return EVENT_COLORS[type]
     || EVENT_COLORS[type.toUpperCase()]
@@ -29,8 +30,30 @@ function eventColor(type: string): string {
     || '#888';
 }
 
+/** SDD-001: an SpO2 desaturation, drawn on the SpO2 chart and no other. */
+export function isDesaturation(e: SessionEvent): boolean {
+  return (e?.event_type || '').toLowerCase() === 'desaturation';
+}
+
+/**
+ * SDD-001 F1: the colour key for a chart's event spans, one entry per event
+ * type present, in the order they first occur. `type` is the stored name
+ * ("Obstructive", "Clear Airway", "Desaturation"); the page translates it.
+ */
+export function eventLegend(events: SessionEvent[]): { type: string; color: string }[] {
+  const seen = new Set<string>();
+  const out: { type: string; color: string }[] = [];
+  for (const e of events || []) {
+    const t = e?.event_type;
+    if (!t || seen.has(t)) continue;
+    seen.add(t);
+    out.push({ type: t, color: eventColor(t) });
+  }
+  return out;
+}
+
 /** Fractional index of an absolute time within a (sorted) per-bucket timeline. */
-function fractionalIndex(timeMs: number, tsMs: number[]): number {
+export function fractionalIndex(timeMs: number, tsMs: number[]): number {
   const n = tsMs.length;
   if (!n) return 0;
   if (timeMs <= tsMs[0]) return 0;
@@ -97,6 +120,56 @@ export function eventAnnotations(events: SessionEvent[], labels: string[], times
     }
   }
   return annotations;
+}
+
+/**
+ * SDD-001 F3: the flow chart shows breath boundaries once its visible window is
+ * this short or shorter. Wider, a night's 15 breaths a minute are a smear.
+ */
+export const BREATH_WINDOW_SEC = 60;
+
+function toMs(ts: string): number {
+  return new Date((ts || '').replace(' ', 'T')).getTime();
+}
+
+/** Seconds between the chart's visible x bounds, read off its timestamps. */
+export function visibleSeconds(timestamps: string[], xMin: number, xMax: number): number {
+  if (!timestamps?.length) return Infinity;
+  const at = (x: number) => {
+    const i = Math.max(0, Math.min(timestamps.length - 1, x));
+    const lo = Math.floor(i), hi = Math.ceil(i);
+    const a = toMs(timestamps[lo]), b = toMs(timestamps[hi]);
+    return a + (b - a) * (i - lo);
+  };
+  return Math.abs(at(xMax) - at(xMin)) / 1000;
+}
+
+/**
+ * SDD-001 F3: a faint line at each breath onset inside [xMin, xMax], and every
+ * other breath shaded, so a run of breaths reads one from the next. Empty when
+ * the window is wider than BREATH_WINDOW_SEC: the overlay is gated on zoom.
+ */
+export function breathAnnotations(onsets: string[], timestamps: string[],
+                                  xMin: number, xMax: number): any[] {
+  if (!onsets?.length || !timestamps?.length) return [];
+  if (visibleSeconds(timestamps, xMin, xMax) > BREATH_WINDOW_SEC) return [];
+  const tsMs = timestamps.map(toMs);
+  const firstMs = tsMs[0], lastMs = tsMs[tsMs.length - 1];
+  const xs: number[] = [];
+  for (const o of onsets) {
+    const ms = toMs(o);
+    if (!(ms >= firstMs && ms <= lastMs)) continue;
+    const x = fractionalIndex(ms, tsMs);
+    if (x >= xMin && x <= xMax) xs.push(x);
+  }
+  const out: any[] = [];
+  xs.forEach((x, i) => {
+    out.push({ type: 'line', xMin: x, xMax: x, borderColor: '#ffffff33', borderWidth: 1 });
+    if (i % 2 === 0 && i + 1 < xs.length) {
+      out.push({ type: 'box', xMin: x, xMax: xs[i + 1], backgroundColor: '#ffffff0d', borderWidth: 0 });
+    }
+  });
+  return out;
 }
 
 export function makeDataset(

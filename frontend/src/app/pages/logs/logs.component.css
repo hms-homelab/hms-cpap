@@ -74,12 +74,14 @@ h1 {
 
 .logs-actions button.on { border-color: #4a7dbd; color: #9cc4f0; }
 
+/* The app's primary button (styles.scss). */
 .logs-actions button.primary {
-  background: #2d4a7a;
-  border-color: #3d5f97;
-  color: #dce8f8;
+  background: var(--btn-blue);
+  border-color: var(--btn-blue);
+  color: #fff;
+  font-weight: 600;
 }
-.logs-actions button.primary:hover:not(:disabled) { background: #35578d; }
+.logs-actions button.primary:hover:not(:disabled) { background: var(--btn-blue-hover); border-color: var(--btn-blue-hover); }
 
 .notice {
   background: #1e1e2e;

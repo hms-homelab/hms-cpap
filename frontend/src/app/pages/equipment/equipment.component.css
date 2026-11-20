@@ -23,9 +23,10 @@ h3 { color: #e0e0e0; font-size: 1rem; font-weight: 600; margin: 0; }
   align-items: center;
   gap: 0.5rem;
   padding: 0.55rem 1.2rem;
-  background: #1976d2;
+  /* The app's primary button (styles.scss). */
+  background: var(--btn-blue);
   color: #fff;
-  border: none;
+  border: 1px solid var(--btn-blue);
   border-radius: 6px;
   font-size: 0.9rem;
   font-weight: 600;
@@ -33,7 +34,7 @@ h3 { color: #e0e0e0; font-size: 1rem; font-weight: 600; margin: 0; }
   transition: background 0.2s;
 }
 
-.primary-btn:hover { background: #1565c0; }
+.primary-btn:hover { background: var(--btn-blue-hover); border-color: var(--btn-blue-hover); }
 
 /* Setup chips */
 .chip-row {
@@ -195,16 +196,18 @@ h3 { color: #e0e0e0; font-size: 1rem; font-weight: 600; margin: 0; }
   align-items: center;
   gap: 0.35rem;
   padding: 0.3rem 0.75rem;
-  background: rgba(100, 181, 246, 0.12);
-  border: 1px solid rgba(100, 181, 246, 0.3);
-  color: #64b5f6;
-  border-radius: 5px;
+  /* The app's secondary button (styles.scss), at card size. */
+  background: transparent;
+  border: 1px solid var(--btn-blue);
+  color: var(--btn-blue-text);
+  border-radius: 6px;
   font-size: 0.78rem;
+  font-weight: 600;
   cursor: pointer;
   transition: all 0.2s;
 }
 
-.mini-btn:hover:not(:disabled) { background: rgba(100, 181, 246, 0.2); border-color: #64b5f6; }
+.mini-btn:hover:not(:disabled) { background: var(--btn-blue-hover); border-color: var(--btn-blue-hover); color: #fff; }
 .mini-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 
 .mini-btn.ghost {

@@ -113,7 +113,7 @@ private:
 class SourcePage : public QWizardPage {
 public:
     explicit SourcePage(ConfiguratorWindow* wiz) : wiz_(wiz) {
-        setTitle("Where is your CPAP data?");
+        setTitle("Select source");
 
         auto* layout = new QVBoxLayout(this);
         layout->setSpacing(10);
@@ -620,7 +620,11 @@ ConfiguratorWindow::ConfiguratorWindow(ConfigModel model, GateResult gate,
     setWizardStyle(QWizard::ModernStyle);
     setMinimumSize(720, 540);
     setOption(QWizard::NoBackButtonOnStartPage, true);
-    setStyleSheet(theme::headerStyle() + theme::accentStyle());
+    setStyleSheet(theme::headerStyle() + theme::buttonStyle());
+    // Next and Finish move the person on: the primary button.
+    theme::primary(button(QWizard::NextButton));
+    theme::primary(button(QWizard::FinishButton));
+    theme::primary(button(QWizard::CommitButton));
 
     // The brand, as the side panel QWizard reserves for exactly this. Building
     // it as a widget rather than a pixmap means it scales with the window and

@@ -6,6 +6,7 @@ import { DiscoveredDevice } from '../../models/config.model';
 import { markSetupComplete } from '../../guards/setup.guard';
 import { TranslatePipe, TranslateService } from '@ngx-translate/core';
 import { LanguageSwitcherComponent } from '../../components/language-switcher/language-switcher.component';
+import { BridgeSetupComponent } from './bridge-setup.component';
 import { switchMap, tap } from 'rxjs';
 import { sourceImage } from '../../utils/source-image';
 import {
@@ -16,7 +17,7 @@ import type { SetupSource } from './setup-source';
 @Component({
   selector: 'app-setup',
   standalone: true,
-  imports: [FormsModule, TranslatePipe, LanguageSwitcherComponent],
+  imports: [FormsModule, TranslatePipe, LanguageSwitcherComponent, BridgeSetupComponent],
   template: `
     <div class="setup-container">
       <div class="setup-card">
@@ -119,9 +120,9 @@ import type { SetupSource } from './setup-source';
             }
 
             <div class="actions">
-              <button class="btn-ghost" (click)="currentStep = 1">{{ 'setup.back' | translate }}</button>
+              <button class="btn-secondary" (click)="currentStep = 1">{{ 'setup.back' | translate }}</button>
               @if (dbType === 'advanced') {
-                <button class="btn-ghost" (click)="checkDb()" [disabled]="dbBusy">
+                <button class="btn-secondary" (click)="checkDb()" [disabled]="dbBusy">
                   {{ (dbBusy ? 'setup.db.checking'
                        : (createIt ? 'setup.db.createAndCheck' : 'setup.db.checkConnection')) | translate }}
                 </button>
@@ -136,7 +137,15 @@ import type { SetupSource } from './setup-source';
           </div>
         }
 
-        @if (currentStep === 3) {
+        <!-- SDD-073 D9: the Sleep Bridge choice runs its own steps (D1 to D6)
+             between the source step and the extras. -->
+        @if (currentStep === 3 && bridgeSteps) {
+          <app-bridge-setup [listen]="sleepBridgePort"
+                            (leave)="bridgeSteps = false"
+                            (finished)="bridgeFinished($event)" />
+        }
+
+        @if (currentStep === 3 && !bridgeSteps) {
           <div class="step">
             <h1>{{ 'setup.source.title' | translate }}</h1>
             <p class="subtitle">{{ 'setup.source.subtitle' | translate }}</p>
@@ -344,8 +353,8 @@ import type { SetupSource } from './setup-source';
             }
 
             <div class="actions">
-              <button class="btn-ghost" (click)="currentStep = 2">{{ 'setup.back' | translate }}</button>
-              <button class="btn-primary" (click)="currentStep = 4"
+              <button class="btn-secondary" (click)="currentStep = 2">{{ 'setup.back' | translate }}</button>
+              <button class="btn-primary" (click)="sourceNext()"
                       [disabled]="source === 'mm' && !archiveDir">{{ 'setup.next' | translate }}</button>
             </div>
 
@@ -472,7 +481,7 @@ import type { SetupSource } from './setup-source';
             }
 
             <div class="actions">
-              <button class="btn-ghost" (click)="currentStep = 3">{{ 'setup.back' | translate }}</button>
+              <button class="btn-secondary" (click)="extrasBack()">{{ 'setup.back' | translate }}</button>
               <button class="btn-primary" (click)="finish()" [disabled]="saving">
                 {{ (saving ? 'setup.extras.saving' : 'setup.extras.finish') | translate }}
               </button>
@@ -488,6 +497,14 @@ import type { SetupSource } from './setup-source';
           <div class="step">
             <h1>{{ 'setup.done.title' | translate }}</h1>
             <p class="subtitle">{{ applyMessage || ('setup.done.redirecting' | translate) }}</p>
+            @if (cardMessage) {
+              <p class="subtitle">{{ cardMessage }}</p>
+              @if (cardDone) {
+                <div class="actions">
+                  <button class="btn-primary" (click)="toDashboard()">{{ 'setup.bridge.toDashboard' | translate }}</button>
+                </div>
+              }
+            }
             @if (bootCommand) {
               <div class="advanced">
                 <p class="hint">{{ 'setup.done.bootHint' | translate }}</p>
@@ -744,60 +761,9 @@ import type { SetupSource } from './setup-source';
       margin-top: 1.5rem;
     }
 
-    .btn-primary {
-      background: #64b5f6;
-      color: #121212;
-      border: none;
-      border-radius: 6px;
-      padding: 0.6rem 1.5rem;
-      font-size: 0.95rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: background 0.2s;
-    }
-
-    .btn-primary:hover:not(:disabled) {
-      background: #90caf9;
-    }
-
-    .btn-primary:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-
-    .btn-secondary {
-      background: transparent;
-      color: #64b5f6;
-      border: 1px solid #64b5f6;
-      border-radius: 6px;
-      padding: 0.6rem 1rem;
-      font-size: 0.95rem;
-      cursor: pointer;
-      transition: all 0.2s;
-    }
-
-    .btn-secondary:hover:not(:disabled) {
-      background: rgba(100, 181, 246, 0.1);
-    }
-
-    .btn-secondary:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-
-    .btn-ghost {
-      background: transparent;
-      color: #aaa;
-      border: none;
-      padding: 0.6rem 1rem;
-      font-size: 0.95rem;
-      cursor: pointer;
-      transition: color 0.2s;
-    }
-
-    .btn-ghost:hover {
-      color: #e0e0e0;
-    }
+    /* Button colours: styles.scss (.btn-primary, .btn-secondary); sizes here. */
+    .btn-primary { padding: 0.6rem 1.5rem; font-size: 0.95rem; }
+    .btn-secondary { padding: 0.6rem 1rem; font-size: 0.95rem; }
   `]
 })
 export class SetupComponent {
@@ -1095,7 +1061,9 @@ export class SetupComponent {
       tap(() => markSetupComplete())
     ).subscribe({
       next: (r) => {
-        this.currentStep = 4;
+        // The done screen is step 5; 4 left the extras page on screen with
+        // nothing saying a restart was under way.
+        this.currentStep = 5;
         this.saving = false;
         if (r && r.restarting === false) {
           // Said plainly rather than spinning forever on a restart that is not
@@ -1126,9 +1094,71 @@ export class SetupComponent {
     }
     setTimeout(() => {
       this.api.health().subscribe({
-        next: () => this.router.navigate(['/dashboard']),
+        next: () => this.afterRestart(),
         error: () => this.waitForRestart(attempt + 1)
       });
     }, 500);
+  }
+
+  // ── SDD-073 D9: the Sleep Bridge steps ───────────────────────────────────
+
+  /** The Sleep Bridge choice is walking its own steps (bridge-setup.component.ts). */
+  bridgeSteps = false;
+  /** The .cpapcard picked on D1, sent once the restarted service has a card folder. */
+  pendingCard: File | null = null;
+  cardMessage: string | null = null;
+  cardDone = false;
+
+  sourceNext(): void {
+    if (this.source === 'sleepbridge') {
+      this.bridgeSteps = true;
+      return;
+    }
+    this.currentStep = 4;
+  }
+
+  extrasBack(): void {
+    this.currentStep = 3;
+    // Back from the extras lands on the source step, not inside the bridge steps.
+    this.bridgeSteps = false;
+  }
+
+  bridgeFinished(card: File | null): void {
+    this.pendingCard = card;
+    this.bridgeSteps = false;
+    this.currentStep = 4;
+  }
+
+  /**
+   * The restarted service answered. A .cpapcard picked on D1 goes in now: the
+   * upload needs a card folder, and the bridge's folder became the source in
+   * D4 and took effect with this restart.
+   */
+  private afterRestart(): void {
+    const card = this.pendingCard;
+    if (!card) {
+      this.router.navigate(['/dashboard']);
+      return;
+    }
+    this.pendingCard = null;
+    this.cardMessage = this.t.instant('setup.bridge.card.sending');
+    this.api.uploadCpapZip(card).subscribe({
+      next: (r: any) => {
+        this.cardDone = true;
+        const layout = r?.card_layout;
+        this.cardMessage = layout?.error
+          ? this.t.instant('setup.bridge.card.sentNoLayout', { error: layout.error })
+          : this.t.instant('setup.bridge.card.sent');
+      },
+      error: (e) => {
+        this.cardDone = true;
+        this.cardMessage = this.t.instant('setup.bridge.card.sendFailed',
+                                          { error: e?.error?.error || ('HTTP ' + (e?.status ?? '?')) });
+      }
+    });
+  }
+
+  toDashboard(): void {
+    this.router.navigate(['/dashboard']);
   }
 }

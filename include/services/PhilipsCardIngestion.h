@@ -24,7 +24,8 @@ namespace hms_cpap {
 // being recorded: it is read as flow only, its pressure not measured.
 //
 // A DreamStation 2 encrypts its card's files. hms-cpap does not decrypt them:
-// an encrypted card is reported and gives no session.
+// an encrypted card gives no session here; it is read through the user's own
+// OSCAR instead (SDD-080, OscarCardReader).
 class PhilipsCardIngestion {
 public:
     explicit PhilipsCardIngestion(std::string card_root);

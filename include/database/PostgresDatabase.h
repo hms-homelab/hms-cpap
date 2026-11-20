@@ -142,13 +142,20 @@ public:
                      double avg_ahi,
                      double avg_usage_hours,
                      double compliance_pct,
-                     const std::string& summary_text) override;
+                     const std::string& summary_text,
+                     const std::string& source = "llm") override;
 
     // -- Oximetry (O2 Ring) ---------------------------------------------------
 
     bool saveOximetrySession(const std::string& device_id,
                               const cpapdash::parser::OximetrySession& session) override {
         if (db_) return db_->saveOximetrySession(device_id, session);
+        return false;
+    }
+    bool saveOximetrySessionFrom(const std::string& device_id,
+                                 const cpapdash::parser::OximetrySession& session,
+                                 const OximetryOrigin& origin) override {
+        if (db_) return db_->saveOximetrySessionFrom(device_id, session, origin);
         return false;
     }
     bool oximetrySessionExists(const std::string& device_id,

@@ -20,6 +20,8 @@ import {
   muleDs2Switch,
 } from './mule-ds2-model';
 import { sourceImage } from '../../utils/source-image';
+import { BridgeSourceComponent } from '../../components/bridge-source/bridge-source.component';
+import { bridgeInUse } from '../../components/bridge-source/bridge-source-model';
 
 /** A line under a card: what the last action did. */
 interface Note {
@@ -43,7 +45,7 @@ interface UpdateWarning {
 @Component({
   selector: 'app-devices',
   standalone: true,
-  imports: [CommonModule, FormsModule, RouterLink, TranslatePipe, OtaProgressComponent],
+  imports: [CommonModule, FormsModule, RouterLink, TranslatePipe, OtaProgressComponent, BridgeSourceComponent],
   templateUrl: './devices.component.html',
   styleUrls: ['./devices.component.css', './devices-clock.css'],
 })
@@ -122,7 +124,22 @@ export class DevicesComponent implements OnInit, OnDestroy {
 
   constructor(private api: CpapApiService, private t: TranslateService) {}
 
+  /** SDD-073 D8: the configured source, to say which bridge's folder is in use. */
+  private sourceConfig: { transport?: string; local_dir?: string } | null = null;
+
+  loadConfig(): void {
+    this.api.getConfig().subscribe({
+      next: (c: any) => { this.sourceConfig = { transport: c?.transport, local_dir: c?.local_dir }; },
+      error: () => {},
+    });
+  }
+
+  bridgeInUse(cardRoot: string | undefined): boolean {
+    return bridgeInUse(this.sourceConfig, cardRoot);
+  }
+
   ngOnInit(): void {
+    this.loadConfig();
     this.load(true);
     // D15: 3 s polling while the page is visible, nothing while hidden.
     this.timer = setInterval(() => {
@@ -681,6 +698,49 @@ export class DevicesComponent implements OnInit, OnDestroy {
     });
   }
 
+  // ── Garmin (SDD-078) ─────────────────────────────────────────────────────
+
+  garminCode = '';
+
+  /** "Fetch from Garmin now": an event; the card's refresh shows the result. */
+  garminFetch(d: DeviceEntry): void {
+    this.busy[d.key] = true;
+    delete this.notes[d.key];
+    this.api.garminFetch().subscribe({
+      next: () => { this.busy[d.key] = false; this.note(d, this.t.instant('devices.garmin.asked'), false); this.load(false); },
+      error: (e) => { this.busy[d.key] = false; this.note(d, this.t.instant('devices.result.failed', { error: errorText(e) }), true); },
+    });
+  }
+
+  garminSubmitCode(d: DeviceEntry): void {
+    const code = this.garminCode.trim();
+    if (!code || this.busy[d.key]) return;
+    this.busy[d.key] = true;
+    delete this.notes[d.key];
+    this.api.garminMfa(code).subscribe({
+      next: () => { this.busy[d.key] = false; this.garminCode = ''; this.load(false); },
+      error: (e) => { this.busy[d.key] = false; this.note(d, this.t.instant('devices.result.failed', { error: errorText(e) }), true); },
+    });
+  }
+
+  /** The card's error line, in the page's language where Garmin's kind is known. */
+  garminError(d: DeviceEntry): string {
+    const kind = d.detail?.error_kind || 'failed';
+    const known = ['changed', 'bad_password', 'bad_mfa_code', 'blocked', 'unreachable', 'expired'];
+    return known.includes(kind)
+      ? this.t.instant('devices.garmin.err.' + kind)
+      : this.t.instant('devices.garmin.err.failed', { message: d.detail?.error || '' });
+  }
+
+  /** What the last fetch did. */
+  garminFetchLine(d: DeviceEntry): string {
+    const f = d.detail?.last_fetch;
+    if (!f) return '';
+    if (!f.ok) return this.garminError(d);
+    return f.stored > 0 ? this.t.instant('devices.garmin.fetchStored', { n: f.stored })
+                        : this.t.instant('devices.garmin.fetchNothing');
+  }
+
   checkAdapter(d: DeviceEntry): void {
     this.api.testBle().subscribe({
       next: (r) => {
@@ -859,6 +919,32 @@ export class DevicesComponent implements OnInit, OnDestroy {
 
   ds2PairCancel(): void {
     this.api.ds2PairCancel().subscribe({ next: () => this.ds2Poll(), error: () => this.ds2Poll() });
+  }
+
+  /** SDD-080 D7: "Read now", one OSCAR read of the card. */
+  oscarReadNow(d: DeviceEntry): void {
+    this.busy[d.key] = true;
+    delete this.notes[d.key];
+    this.api.oscarReadNow().subscribe({
+      next: () => { this.busy[d.key] = false; this.note(d, this.t.instant('devices.oscar.readStarted'), false); this.load(false); },
+      error: (e) => { this.busy[d.key] = false; this.note(d, this.t.instant('devices.result.failed', { error: errorText(e) }), true); },
+    });
+  }
+
+  /** SDD-080 D7: "OSCAR 2.1.1, last read 06:12, 1 session", or why it did not read. */
+  oscarLine(o: any): string {
+    if (o.reading) return this.t.instant('devices.oscar.reading');
+    if (o.containerised && (o.state === 'no_program' || o.state === 'not_set_up'))
+      return this.t.instant('devices.oscar.state_not_here');
+    const time = o.last_read_at
+      ? new Date(o.last_read_at * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+    const version = (o.version || '').split('+')[0];
+    return this.t.instant('devices.oscar.state_' + (o.state || 'never'),
+                          { version, time, sessions: o.sessions ?? 0 });
+  }
+
+  oscarWarn(o: any): boolean {
+    return !o.reading && !['imported', 'nothing_new', 'never'].includes(o.state);
   }
 
   ds2ReadNow(d: DeviceEntry): void {
@@ -1166,6 +1252,7 @@ export class DevicesComponent implements OnInit, OnDestroy {
       case 'mule': return 'fa-solid fa-microchip';
       case 'sleepbridge': return 'fa-solid fa-sd-card';
       case 'o2ring': return 'fa-solid fa-heart-pulse';
+      case 'garmin': return 'fa-solid fa-stopwatch';
       case 'ezshare':
       case 'flashair': return 'fa-solid fa-wifi';
       case 'as11_ble':

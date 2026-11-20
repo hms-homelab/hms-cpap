@@ -269,6 +269,9 @@ public:
 
     // -- Summaries ------------------------------------------------------------
 
+    /// SDD-013: [source] says what wrote the text. "llm" is the configured
+    /// LLM endpoint (and every row stored before the column existed); "local"
+    /// is the built-in local sleep model's nightly job.
     virtual bool saveSummary(const std::string& device_id,
                              const std::string& period,
                              const std::string& range_start,
@@ -277,7 +280,8 @@ public:
                              double avg_ahi,
                              double avg_usage_hours,
                              double compliance_pct,
-                             const std::string& summary_text) = 0;
+                             const std::string& summary_text,
+                             const std::string& source = "llm") = 0;
 
     // -- Oximetry (O2 Ring) ---------------------------------------------------
 
@@ -293,6 +297,26 @@ public:
      */
     virtual bool saveOximetrySession(const std::string& device_id,
                                      const cpapdash::parser::OximetrySession& session) = 0;
+
+    /// SDD-078 D3: where a recording came from. `source` is "o2ring",
+    /// "garmin", "upload" (and room for more); `device_name` names the device
+    /// ("Garmin Fenix 7X"), empty when not known.
+    struct OximetryOrigin {
+        std::string source{"o2ring"};
+        std::string device_name;
+    };
+
+    /// saveOximetrySession, with the recording's origin stored beside it. The
+    /// two-argument save stores {"o2ring", ""}. Only a ring's own recording
+    /// (source "o2ring" or "upload") supersedes the night's live ring session:
+    /// a Garmin night is not the ring's file. The default here ignores the
+    /// origin, for the suite's fakes; every backend overrides it.
+    virtual bool saveOximetrySessionFrom(const std::string& device_id,
+                                         const cpapdash::parser::OximetrySession& session,
+                                         const OximetryOrigin& origin) {
+        (void)origin;
+        return saveOximetrySession(device_id, session);
+    }
 
     /**
      * Check if an oximetry session (by filename) already exists.
@@ -553,6 +577,9 @@ public:
         long long   acked_to{0}; ///< bytes CpapDash acknowledged
         std::string acked_md5;   ///< md5 of the acked bytes after an EDF header, else of [0, acked_to)
         std::string updated_at;  ///< ISO-8601 UTC, written by the caller
+        /// SDD-079 D3: the source the last ok ack delivered (card, ble-as11,
+        /// oximetry); "" is NULL, a row from before 7.0.0 that never said.
+        std::string source;
     };
 
     virtual std::optional<CpapDashSent> getCpapDashSent(const std::string& root,

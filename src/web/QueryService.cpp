@@ -744,7 +744,7 @@ Json::Value QueryService::getStatistics(const std::string& start, const std::str
 Json::Value QueryService::getSummaries(const std::string& period, int limit) {
     std::string q =
         "SELECT id, period, range_start, range_end, nights_count,"
-        " avg_ahi, avg_usage_hours, compliance_pct, summary_text, created_at"
+        " avg_ahi, avg_usage_hours, compliance_pct, summary_text, source, created_at"   // SDD-013
         " FROM cpap_summaries"
         " WHERE device_id = " + sql::param(1, dt_);
 
@@ -1042,7 +1042,16 @@ Json::Value QueryService::getSessionBreaths(const std::string& date) {
         " AND " + sql::sleepDay("s.session_start", dt_) + " = " + sql::castDate(2, dt_) +
         " ORDER BY b.onset";
 
-    return query(q, {device_id_, date});
+    // SDD-001: column-oriented, like the signals and vitals beside it. A night
+    // is some 8,000 breaths, and five arrays carry them in a fraction of the
+    // bytes 8,000 objects would.
+    static const char* const kColumns[] = {
+        "onset", "tidal_volume", "inspiratory_time", "expiratory_time", "flow_limitation"};
+    Json::Value result(Json::objectValue);
+    for (const char* c : kColumns) result[c] = Json::Value(Json::arrayValue);
+    for (const auto& r : query(q, {device_id_, date}))
+        for (const char* c : kColumns) result[c].append(r.get(c, Json::nullValue));
+    return result;
 }
 
 Json::Value QueryService::getSessionOximetry(const std::string& date, int interval) {
@@ -1095,7 +1104,14 @@ Json::Value QueryService::getSessionOximetry(const std::string& date, int interv
         }
         timestamps.append(r.get("ts", Json::nullValue));
         spo2.append(r.get("spo2", Json::nullValue));
-        heart_rate.append(r.get("heart_rate", Json::nullValue));
+        // Validity is per field (decided 2026-11-19, SDD-078): a sample kept
+        // for its SpO2 may have no pulse (0, or the ring's 0xFF), which is a
+        // gap in the line, never a 0 bpm reading.
+        {
+            const Json::Value& h = r["heart_rate"];
+            const int bpm = h.isNumeric() ? h.asInt() : h.isString() ? std::atoi(h.asCString()) : 0;
+            heart_rate.append(bpm > 0 && bpm < 255 ? r["heart_rate"] : Json::Value(Json::nullValue));
+        }
         motion.append(r.get("motion", Json::nullValue));
     }
 
@@ -1107,6 +1123,30 @@ Json::Value QueryService::getSessionOximetry(const std::string& date, int interv
     // do not count (see recordsMovement), so the UI can hide a movement chart
     // that would show only those.
     result["motion_available"] = motion_available;
+
+    // SDD-078 D3: where the night's recordings came from, so the page can say
+    // "Oximetry - Garmin Fenix 7X" instead of assuming a ring. One entry per
+    // distinct source and device, in the order they started. A row stored
+    // before the column existed and not yet backfilled reads as the ring's.
+    const std::string oq =
+        "SELECT COALESCE(os.source, 'o2ring') AS source, COALESCE(os.device_name, '') AS device_name,"
+        " MIN(os.start_time) AS first_start"
+        " FROM oximetry_sessions os"
+        " WHERE os.device_id = " + sql::param(1, dt_) +
+        " AND " + sql::sleepDay("os.start_time", dt_) + " = " + sql::castDate(2, dt_) +
+        " AND " + sql::oxiNotSuperseded("os", dt_) +
+        " GROUP BY COALESCE(os.source, 'o2ring'), COALESCE(os.device_name, '')"
+        " ORDER BY first_start";
+    Json::Value sources(Json::arrayValue);
+    for (const auto& r : query(oq, {kOximetryDeviceId, sleep_day})) {
+        Json::Value o(Json::objectValue);
+        o["source"]      = r.get("source", "o2ring").asString();
+        o["device_name"] = r.get("device_name", "").asString();
+        sources.append(o);
+    }
+    result["sources"]     = sources;
+    result["source"]      = sources.empty() ? Json::Value(Json::nullValue) : sources[0u]["source"];
+    result["device_name"] = sources.empty() ? Json::Value(Json::nullValue) : sources[0u]["device_name"];
     return result;
 }
 

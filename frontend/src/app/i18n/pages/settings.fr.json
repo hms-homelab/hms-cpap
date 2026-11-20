@@ -20,7 +20,34 @@
       "philips": "Philips Respironics (expérimental)",
       "bmc": "BMC / React Health Luna",
       "bmcEzshareHint": "Avec un ezShare, une session de la Luna apparaît une fois le masque retiré, pas pendant qu'elle se déroule.",
-      "philipsHint": "Une carte DreamStation n'est lue que si ses fichiers ne sont pas chiffrés ; hms-cpap ne les déchiffre pas. Une séance en cours montre son débit au fur et à mesure, et sa pression à la fin.",
+      "philipsHint": "Une carte DreamStation aux fichiers non chiffrés est lue directement : une séance en cours montre son débit au fur et à mesure, et sa pression à la fin. Une DreamStation 2 chiffre sa carte ; hms-cpap ne la déchiffre pas et la lit au moyen de votre OSCAR (ci-dessous).",
+      "oscar": {
+        "title": "Lire les nuits chiffrées d'une DreamStation 2 avec OSCAR",
+        "desc": "Quand l'appareil termine une séance, hms-cpap lance l'OSCAR installé sur cet ordinateur, sans fenêtre, pour importer la carte dans un profil à lui, puis lit ce qu'OSCAR a enregistré. Votre propre profil OSCAR n'est pas touché.",
+        "container": "OSCAR doit être installé sur le même ordinateur que hms-cpap. Dans Docker ou le module complémentaire Home Assistant, il ne peut pas être lancé d'ici.",
+        "program": "Programme OSCAR",
+        "found": "Trouvé là où l'installateur d'OSCAR le place.",
+        "program_ok": "OSCAR répond et peut importer sans fenêtre.",
+        "program_empty": "Non renseigné, et OSCAR n'a pas été trouvé là où son installateur le place.",
+        "program_not_found": "Il n'y a aucun programme à cet emplacement.",
+        "program_not_runnable": "Ce programme n'a pas démarré ou n'a pas répondu à --help.",
+        "program_no_batch": "Cet OSCAR ne peut pas importer sans fenêtre. OSCAR 2.1.1 ou plus récent est nécessaire.",
+        "program_not_here": "OSCAR n'est pas sur cet ordinateur : hms-cpap tourne dans un conteneur.",
+        "dataDir": "Dossier de données OSCAR",
+        "dataDirHint": "Le dossier qui contient oscar.db, choisi au premier lancement d'OSCAR (souvent Documents/OSCAR_Data).",
+        "dataDir_ok": "OSCAR {{version}}, pris en charge.",
+        "dataDir_empty": "Non renseigné.",
+        "dataDir_no_db": "Il n'y a pas de oscar.db dans ce dossier.",
+        "dataDir_not_supported": "OSCAR {{version}} (schéma de base {{schema}}) n'est pas encore pris en charge. Pris en charge : OSCAR 2.1.1.",
+        "profile": "Profil pour hms-cpap",
+        "profileHint": "Un profil propre à hms-cpap, à côté du vôtre. Créez-le une fois dans OSCAR sous ce nom ; hms-cpap ne crée ni ne modifie jamais de profil.",
+        "profile_empty": "Non renseigné.",
+        "profile_missing": "Il n'y a pas encore de profil « {{profile}} » dans ce dossier. Créez-le dans OSCAR, puis enregistrez à nouveau.",
+        "profile_unknown": "Vérifié une fois le dossier de données correct.",
+        "save": "Enregistrer et vérifier",
+        "checking": "Vérification...",
+        "allGood": "Les trois sont corrects. Chaque séance que l'appareil termine est lue avec OSCAR."
+      },
       "ezshare": "Carte SD WiFi ezShare",
       "flashair": "Carte SD WiFi Toshiba FlashAir",
       "local": "Répertoire local",
@@ -59,6 +86,15 @@
       "bleError": "Le Bluetooth n'a pas pu être vérifié. Vérifiez que le Bluetooth fonctionne sur cet ordinateur.",
       "bleRadioOff": "Le Bluetooth est désactivé sur cet ordinateur. Activez-le puis vérifiez à nouveau.",
       "bleUnauthorized": "CpapDash n'est pas autorisé à utiliser le Bluetooth sur ce Mac. Autorisez-le dans Réglages Système, Confidentialité et sécurité, Bluetooth."
+    },
+    "garmin": {
+      "heading": "SpO2 Garmin",
+      "desc": "La SpO2, la fréquence cardiaque et les mouvements de chaque nuit depuis Garmin Connect, lus après la nuit : quand une nuit se termine, quand le tableau de bord ou la liste des nuits est ouvert, et avec Récupérer depuis Garmin. L'API de Garmin n'est pas officielle et peut changer.",
+      "enabled": "Récupérer les nuits depuis Garmin Connect",
+      "email": "E-mail Garmin",
+      "password": "Mot de passe Garmin",
+      "passwordPlaceholder": "Votre mot de passe Garmin Connect",
+      "passwordHint": "Stocké masqué, comme le jeton CpapDash : laissez la valeur masquée intacte pour conserver le mot de passe actuel. Il est conservé pour qu'une nouvelle connexion n'ait besoin de personne, sauf si Garmin demande un code."
     },
     "devicesLink": "État et actions : Appareils",
     "as11": {
@@ -155,6 +191,32 @@
       "modelDirPlaceholder": "Laissez vide pour utiliser le répertoire de données",
       "modelVersion": "Version du modèle"
     },
+    "localModel": {
+      "heading": "Modèle de sommeil local",
+      "desc": "Rédige le résumé de chaque nuit sur cette machine, à partir des données enregistrées, sans réseau. Le fichier du modèle (environ 62 Mo) est téléchargé la première fois qu'il est activé, ou chargé depuis un fichier.",
+      "enabled": "Résumer chaque nuit avec le modèle local",
+      "version": "Modèle",
+      "lastNight": "Dernière nuit résumée",
+      "state": {
+        "off": "Désactivé",
+        "not_published": "Pas encore disponible",
+        "downloading": "Téléchargement du modèle...",
+        "installing": "Vérification du fichier du modèle...",
+        "ready": "Activé",
+        "no_runtime": "Activé, mais cette version ne peut pas encore exécuter le modèle",
+        "error": "Non activé"
+      },
+      "how": {
+        "model": "rédigé par le modèle",
+        "model_retry": "rédigé par le modèle, second essai",
+        "template": "rédigé à partir du modèle de texte simple",
+        "none": "non résumée"
+      },
+      "notPublished": "Aucun modèle de sommeil local n'a encore été publié. Il pourra être activé dès qu'il y en aura un.",
+      "loadFile": "Charger le modèle depuis un fichier",
+      "loadFileHint": "Pour une installation sans réseau : le fichier est vérifié par rapport au modèle publié avant d'être utilisé.",
+      "failed": "Le modèle local n'a pas pu être modifié."
+    },
     "agent": {
       "heading": "Agent",
       "unavailable": "Indisponible : l'agent a besoin des Résumés LLM activés et d'une base de données PostgreSQL.",
@@ -176,6 +238,11 @@
       "machine": "l'horloge de l'appareil",
       "host": "l'horloge de cet ordinateur",
       "hint": "L'horloge de l'appareil correspond à son propre écran et à OSCAR. L'horloge de chaque appareil se règle sur sa carte, page Appareils."
+    },
+    "spo2": {
+      "heading": "Désaturations SpO2",
+      "dropPct": "Seuil de désaturation (% sous la ligne de base)",
+      "dropHint": "Une baisse de cette valeur sous la ligne de base récente de la SpO2 compte comme une désaturation, dans les événements, le décompte et l'ODI. 3 est la règle habituelle (AASM), 4 la règle des CMS. S'applique aux nuits enregistrées à partir de maintenant ; le graphique de l'anneau O2 l'utilise tout de suite."
     },
     "backfill": {
       "heading": "Importer l'historique",

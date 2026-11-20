@@ -7,6 +7,9 @@
 #include "mule/MuleFirmware.h"
 #include "mule/MuleService.h"
 #include "services/BurstCollectorService.h"
+#include "services/GarminService.h"
+#include "services/OscarCardReader.h"
+#include "services/SetupService.h"
 #include "sleepbridge/ReleaseFeed.h"
 #include "sleepbridge/SleepBridgeService.h"
 #include "utils/AppConfig.h"
@@ -18,9 +21,11 @@
 
 #include <drogon/HttpAppFramework.h>
 
+#include <cctype>
 #include <ctime>
 #include <iostream>
 #include <mutex>
+#include <thread>
 
 namespace hms_cpap::devices {
 
@@ -29,8 +34,38 @@ namespace {
 RouteDeps   g;
 std::mutex  g_probe_mu;
 Json::Value g_probe{Json::nullValue};
+// SDD-080: the last check on save, shown again on the next GET.
+std::mutex  g_oscar_mu;
+Json::Value g_oscar_check{Json::nullValue};
 
 using Callback = std::function<void(const drogon::HttpResponsePtr&)>;
+
+std::string trimmed(std::string s) {
+    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back()))) s.pop_back();
+    size_t i = 0;
+    while (i < s.size() && std::isspace(static_cast<unsigned char>(s[i]))) ++i;
+    return s.substr(i);
+}
+
+/// GET /api/oscar: the fields as saved, the program found where this OS's
+/// installer puts it, the last check, and the reader (null until an
+/// encrypted card was found on the source).
+Json::Value oscarView() {
+    Json::Value v(Json::objectValue);
+    {
+        std::lock_guard<std::mutex> lk(g_oscar_mu);
+        if (g.config) {
+            v["program"]  = g.config->oscar.program;
+            v["data_dir"] = g.config->oscar.data_dir;
+            v["profile"]  = g.config->oscar.profile;
+        }
+        v["check"] = g_oscar_check;
+    }
+    v["found_program"] = oscar::findProgram();
+    v["containerised"] = SetupService::isContainerised();
+    v["reader"] = g.burst ? g.burst->oscarStatus() : Json::Value(Json::nullValue);
+    return v;
+}
 
 drogon::HttpResponsePtr json(const Json::Value& v, int status = 200) {
     auto resp = drogon::HttpResponse::newHttpJsonResponse(v);
@@ -178,7 +213,12 @@ Json::Value currentDevices(bool fresh) {
     if (in.o2_enabled) in.o2 = oximetryStatus();
     if (in.as11_enabled) in.as11 = as11Status();
     if (in.ds2_enabled) in.ds2 = ds2Status();
+    // SDD-078: read for the card only. The page refreshes /api/devices every
+    // few seconds, so this is never a Garmin event (D2).
+    in.garmin_enabled = g.config && g.config->garmin.enabled;
+    if (in.garmin_enabled && g.garmin) in.garmin = g.garmin->status();
     in.ledger_live = ledgerLive();
+    if (g.burst) in.oscar = g.burst->oscarStatus();   // SDD-080 D7
     Json::Value out = buildDevices(in, *g.store);
     // SDD-074 D10 / decision 10: the setting lives on each machine's card,
     // keyed by the device id its nights are stored under; the ring's card
@@ -307,6 +347,44 @@ void installRoutes(const RouteDeps& deps) {
         "/api/oximetry/status", [](const drogon::HttpRequestPtr&, Callback&& cb) { cb(json(oximetryStatus())); },
         {drogon::Get});
 
+    // SDD-078 D4: the Garmin card.
+    drogon::app().registerHandler(
+        "/api/garmin/status",
+        [](const drogon::HttpRequestPtr&, Callback&& cb) {
+            if (!g.garmin) return cb(error(404, "Garmin is not in this build"));
+            cb(json(g.garmin->status()));
+        },
+        {drogon::Get});
+
+    drogon::app().registerHandler(
+        "/api/garmin/fetch",
+        [](const drogon::HttpRequestPtr&, Callback&& cb) {
+            if (!g.garmin || !g.garmin->fetchNow())
+                return cb(error(409, "Garmin is not set up: turn it on and enter the account in Settings"));
+            Json::Value v(Json::objectValue);
+            v["ok"]       = true;
+            v["accepted"] = true;
+            cb(json(v, 202));
+        },
+        {drogon::Post});
+
+    drogon::app().registerHandler(
+        "/api/garmin/mfa",
+        [](const drogon::HttpRequestPtr& req, Callback&& cb) {
+            const auto body = req->getJsonObject();
+            if (!body || !(*body)["code"].isString()) return cb(error(400, "the body is {\"code\": \"...\"}"));
+            std::string code;
+            for (char c : (*body)["code"].asString())
+                if (c != ' ' && c != '-') code += c;
+            if (!g.garmin || !g.garmin->submitMfaCode(code))
+                return cb(error(409, "no Garmin sign-in is waiting for a code"));
+            Json::Value v(Json::objectValue);
+            v["ok"]       = true;
+            v["accepted"] = true;
+            cb(json(v, 202));
+        },
+        {drogon::Post});
+
     drogon::app().registerHandler(
         "/api/airsense11/ble/pull",
         [](const drogon::HttpRequestPtr&, Callback&& cb) {
@@ -342,6 +420,54 @@ void installRoutes(const RouteDeps& deps) {
             const bool enabled = g.config && g.config->airsense11_ble.enabled;
             const auto r = as11api::resetBluetooth(p.get(), bleCompiled(), enabled);
             cb(json(r.body, r.status));
+        },
+        {drogon::Post});
+
+    // ── SDD-080: a DreamStation 2 card read through the user's OSCAR ──
+    drogon::app().registerHandler(
+        "/api/oscar",
+        [](const drogon::HttpRequestPtr&, Callback&& cb) { cb(json(oscarView())); },
+        {drogon::Get});
+
+    // D7: checked on save. The check runs the program (--help), so it is
+    // answered from its own thread, never the web server's.
+    drogon::app().registerHandler(
+        "/api/oscar",
+        [](const drogon::HttpRequestPtr& req, Callback&& cb) {
+            if (!g.config) return cb(error(500, "no configuration"));
+            const auto body = req->getJsonObject();
+            if (!body || !body->isObject()) return cb(error(400, "the body is {\"program\",\"data_dir\",\"profile\"}"));
+            oscar::Settings s;
+            s.program  = trimmed(body->get("program", "").asString());
+            s.data_dir = trimmed(body->get("data_dir", "").asString());
+            s.profile  = trimmed(body->get("profile", oscar::kDefaultProfile).asString());
+            std::thread([s, cb = std::move(cb)] {
+                oscar::SystemProcessRunner runner;
+                const Json::Value check = oscar::OscarCardReader::check(s, runner, SetupService::isContainerised());
+                {
+                    std::lock_guard<std::mutex> lk(g_oscar_mu);
+                    g.config->oscar.program  = s.program;
+                    g.config->oscar.data_dir = s.data_dir;
+                    g.config->oscar.profile  = s.profile;
+                    if (!g.config_path.empty()) g.config->save(g.config_path);
+                    g_oscar_check = check;
+                }
+                if (g.burst) g.burst->setOscarSettings(s);
+                Json::Value v = oscarView();
+                v["ok"] = true;
+                cb(json(v));
+            }).detach();
+        },
+        {drogon::Put});
+
+    drogon::app().registerHandler(
+        "/api/oscar/read",
+        [](const drogon::HttpRequestPtr&, Callback&& cb) {
+            if (!g.burst || !g.burst->requestOscarRead())
+                return cb(error(409, "no encrypted DreamStation 2 card has been found on the source yet"));
+            Json::Value v = oscarView();
+            v["ok"] = true;
+            cb(json(v, 202));
         },
         {drogon::Post});
 

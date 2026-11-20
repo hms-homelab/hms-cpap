@@ -8,8 +8,11 @@
 #include "services/CpapCard.h"
 #include "services/DeviceDiscoveryService.h"
 #include "services/SetupService.h"
+#include "sleepbridge/BridgeSource.h"
 #include "utils/CardLayout.h"
 #include "utils/ConfigManager.h"
+#include "utils/Desaturation.h"
+#include "utils/QrCode.h"
 #include "utils/FileLogger.h"
 #include "utils/LogTail.h"
 #include "utils/ReExec.h"
@@ -46,12 +49,14 @@ std::function<Json::Value()> CpapController::ml_status_getter_;
 std::function<void(const std::string&, const std::string&, const std::string&)> CpapController::backfill_trigger_;
 std::function<Json::Value()> CpapController::backfill_status_getter_;
 std::function<Json::Value()> CpapController::sleep_stage_status_getter_;
-std::function<Json::Value(const std::string&, const std::string&)> CpapController::oxi_csv_import_;
+std::function<Json::Value(const std::string&, const std::string&,
+                          const std::string&, const std::string&)> CpapController::oxi_csv_import_;
 std::function<Json::Value(const std::string&)> CpapController::cpap_zip_import_;
 std::function<Json::Value(const std::string&)> CpapController::night_remove_;
 std::function<void(const std::string&)> CpapController::night_restore_;
 std::function<std::vector<std::string>()> CpapController::removed_nights_;
 std::function<void(int)> CpapController::shutdown_with_code_;
+std::function<Json::Value()> CpapController::sleepbridge_status_;
 std::function<uint64_t(const std::string&)> CpapController::cpap_zip_queue_;
 std::function<Json::Value(const std::string&, const std::string&, const std::string&)> CpapController::card_layout_;
 
@@ -70,6 +75,7 @@ void CpapController::setBurstService(BurstCollectorService* svc) { burst_service
 // platform-specific.
 std::shared_ptr<CpapDashSyncService> CpapController::sync_;
 std::shared_ptr<CpapDashStreamer> CpapController::stream_;
+std::shared_ptr<GarminService> CpapController::garmin_;
 std::shared_ptr<hms_cpap::MyAirService> CpapController::myair_;
 
 void CpapController::setStreamService(std::shared_ptr<CpapDashStreamer> stream) {
@@ -150,6 +156,9 @@ void CpapController::health(const drogon::HttpRequestPtr&,
 
 void CpapController::dashboard(const drogon::HttpRequestPtr&,
                                 std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    // SDD-078 D2: the dashboard being opened is an event that asks Garmin for
+    // a night still missing. The dashboard fetches this once per opening.
+    if (garmin_) garmin_->onNightListOpened();
     try {
         cb(jsonResp(qs_->getDashboard()));
     } catch (const std::exception& e) {
@@ -164,6 +173,9 @@ void CpapController::sessions(const drogon::HttpRequestPtr& req,
     if (auto p = req->getOptionalParameter<int>("offset")) offset = *p;
     if (limit < 1) limit = 20;
     if (offset < 0) offset = 0;
+    // SDD-078 D2: the night list being opened (?opened=1, sent by the page's
+    // first load and not by its refresh, which would make it a timer).
+    if (garmin_ && req->getParameter("opened") == "1") garmin_->onNightListOpened();
     try {
         cb(jsonResp(qs_->getSessions(limit, offset)));
     } catch (const std::exception& e) {
@@ -415,6 +427,18 @@ void CpapController::updateConfig(const drogon::HttpRequestPtr& req,
     if (j.isMember("auto_update"))   config_->auto_update = j["auto_update"].asBool();
     if (j.isMember("local_dir")) config_->local_dir = j["local_dir"].asString();
     if (j.isMember("burst_interval")) config_->burst_interval = j["burst_interval"].asInt();
+    // SDD-001: the desaturation threshold. Re-exported like archive_dir below,
+    // so the next night saved uses it without a restart.
+    if (j.isMember("desat_drop_pct") && j["desat_drop_pct"].isNumeric() &&
+        hms_cpap::validDesatDropPct(j["desat_drop_pct"].asDouble())) {
+        config_->desat_drop_pct = j["desat_drop_pct"].asDouble();
+        const std::string pct = std::to_string(config_->desat_drop_pct);
+#ifdef _WIN32
+        _putenv_s("DESAT_DROP_PCT", pct.c_str());
+#else
+        setenv("DESAT_DROP_PCT", pct.c_str(), 1);
+#endif
+    }
     // SDD-012: archive_dir was reachable only through setupApply, so it could be
     // set during the wizard and never again. That is the one setting a Mule and
     // Miner install REQUIRES (AppConfig.h), which left onboarded users editing
@@ -537,6 +561,35 @@ void CpapController::updateConfig(const drogon::HttpRequestPtr& req,
         if (cd.isMember("stream"))    config_->cpapdash.stream = cd["stream"].asBool();
     }
 
+    // SDD-078 D1/D4: the Garmin account, masked as the token is. A changed
+    // email or password drops Garmin's tokens for the old one; the next event
+    // (this save included, below) signs in with the new.
+    bool garmin_changed = false;
+    if (j.isMember("garmin")) {
+        auto& g = j["garmin"];
+        if (g.isMember("enabled")) {
+            garmin_changed |= config_->garmin.enabled != g["enabled"].asBool();
+            config_->garmin.enabled = g["enabled"].asBool();
+        }
+        bool account_changed = false;
+        if (g.isMember("email") && g["email"].asString() != config_->garmin.email) {
+            config_->garmin.email = g["email"].asString();
+            account_changed = true;
+        }
+        if (g.isMember("password") && g["password"].asString() != "********" &&
+            g["password"].asString() != config_->garmin.password) {
+            config_->garmin.password = g["password"].asString();
+            account_changed = true;
+        }
+        if (account_changed) {
+            config_->garmin.access_token.clear();
+            config_->garmin.refresh_token.clear();
+            config_->garmin.client_id.clear();
+            config_->garmin.display_name.clear();
+            garmin_changed = true;
+        }
+    }
+
     // Support log. Saved here but applied on restart: the tee owns fd 1 and 2
     // for the whole process, and swapping those under a running service to
     // satisfy a settings save is not worth the risk of losing output mid-write.
@@ -578,6 +631,8 @@ void CpapController::updateConfig(const drogon::HttpRequestPtr& req,
     // platform SDD-059: the switch and the token reach the running uploader;
     // the switch changing clears its index (D5).
     if (stream_) stream_->apply({config_->cpapdash.stream, config_->cpapdash.token});
+    // SDD-078 D2: saved Garmin settings are an event: sign in, then fetch.
+    if (garmin_ && garmin_changed) garmin_->onSettingsSaved();
 
     // Return redacted config
     auto resp_json = config_->toJson();
@@ -832,6 +887,89 @@ void CpapController::configRestart(const drogon::HttpRequestPtr&,
     Json::Value result;
     result["accepted"] = true;
     respondAndRestart(std::move(cb), result);
+}
+
+/// SDD-073 D4, D8, D10: POST /api/sleepbridge/{sender}/use, {"restart": bool}
+/// (true when left out). The one code path behind the installer's waiting
+/// step, the web wizard, the Devices page and Settings > Source: the Local
+/// folder source at the bridge's folder, with its card format
+/// (sleepbridge/BridgeSource.h), saved and applied as PUT /api/config does.
+/// The upload and the re-parse are wired at start from the card folder, so a
+/// first bridge source needs the restart; the web wizard asks for none, since
+/// its own finish restarts.
+void CpapController::useSleepBridge(const drogon::HttpRequestPtr& req,
+                                    std::function<void(const drogon::HttpResponsePtr&)>&& cb,
+                                    const std::string& sender) {
+    if (!config_) {
+        cb(jsonError("Config not initialized", drogon::k500InternalServerError));
+        return;
+    }
+    std::string why;
+    const auto src = sleepbridge::bridgeSource(sleepbridge_status_ ? sleepbridge_status_() : Json::Value(),
+                                               sender, &why);
+    if (!src) {
+        Json::Value v;
+        v["ok"]    = false;
+        v["error"] = why;
+        auto resp  = drogon::HttpResponse::newHttpJsonResponse(v);
+        resp->setStatusCode(drogon::k404NotFound);
+        cb(resp);
+        return;
+    }
+    bool restart = true;
+    if (auto body = req->getJsonObject(); body && body->isMember("restart")) restart = (*body)["restart"].asBool();
+
+    config_->transport = "local";
+    config_->format    = src->format;
+    config_->local_dir = src->local_dir;
+    config_->source    = AppConfig::collectorSource(config_->transport, config_->format);
+#ifdef _WIN32
+    _putenv_s("CPAP_SOURCE", config_->source.c_str());
+    _putenv_s("CPAP_TRANSPORT", config_->transport.c_str());
+    _putenv_s("CPAP_FORMAT", config_->format.c_str());
+#else
+    setenv("CPAP_SOURCE", config_->source.c_str(), 1);
+    setenv("CPAP_TRANSPORT", config_->transport.c_str(), 1);
+    setenv("CPAP_FORMAT", config_->format.c_str(), 1);
+#endif
+    config_->save(config_path_);
+    if (burst_service_) burst_service_->markConfigDirty();
+    std::cout << "Sleep Bridge: " << sender << "'s folder is the source now (" << src->local_dir << ", "
+              << src->format << ")" << std::endl;
+
+    Json::Value result;
+    result["ok"]           = true;
+    result["sender"]       = sender;
+    result["local_dir"]    = src->local_dir;
+    result["format"]       = src->format;
+    result["format_known"] = src->format_known;
+    if (restart) {
+        respondAndRestart(std::move(cb), result);
+        return;
+    }
+    result["restarting"] = false;
+    cb(jsonResp(result));
+}
+
+/// SDD-073 D3: GET /api/sleepbridge/qr?text=... -> {"size":N,"rows":["0101",...]}.
+void CpapController::sleepBridgeQr(const drogon::HttpRequestPtr& req,
+                                   std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
+    const std::string text = req->getParameter("text");
+    if (text.empty() || text.size() > 64) {
+        cb(jsonError("text: 1 to 64 characters", drogon::k400BadRequest));
+        return;
+    }
+    const auto code = qr::encode(text);
+    if (!code) {
+        cb(jsonError("text does not fit a QR code", drogon::k400BadRequest));
+        return;
+    }
+    Json::Value v;
+    v["size"] = code->size;
+    Json::Value rows(Json::arrayValue);
+    for (const auto& r : qr::rows(*code)) rows.append(r);
+    v["rows"] = rows;
+    cb(jsonResp(v));
 }
 
 void CpapController::autostartState(const drogon::HttpRequestPtr&,
@@ -1323,6 +1461,14 @@ void CpapController::capabilities(const drogon::HttpRequestPtr&,
     result["version"] = caps.version;
     result["platform"] = caps.platform;
     result["data_dir"] = caps.data_dir;
+    // SDD-067 D7: every page shows a banner while this run is a fallback.
+    // Here and not in /api/config, which the Settings page writes back.
+    if (caps.data_dir_fallback) {
+        Json::Value fb;
+        fb["wanted"] = caps.data_dir_fallback->wanted;
+        fb["in_use"] = caps.data_dir_fallback->in_use;
+        result["data_dir_fallback"] = fb;
+    }
 
     Json::Value backends(Json::arrayValue);
     for (const auto& b : caps.backends) backends.append(b);
@@ -2052,8 +2198,14 @@ void CpapController::uploadOximetryCsv(const drogon::HttpRequestPtr& req,
     const auto& f = parser.getFiles()[0];
     std::string content(f.fileContent());
     std::string filename = f.getFileName();
+    // SDD-078 D3: an outside importer may say where the recording came from.
+    const auto& fields = parser.getParameters();
+    const auto field = [&fields](const char* k) {
+        const auto it = fields.find(k);
+        return it == fields.end() ? std::string() : it->second;
+    };
     try {
-        Json::Value result = oxi_csv_import_(content, filename);
+        Json::Value result = oxi_csv_import_(content, filename, field("source"), field("device_name"));
         if (result.isMember("error")) {
             cb(jsonError(result["error"].asString(), drogon::k400BadRequest));
             return;

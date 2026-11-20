@@ -82,8 +82,15 @@ computer's own Bluetooth (2 below) or through a Mule & Miner (3 below). You
 get each session's summary and its events: the night's usage, its events and
 its AHI. Bluetooth carries no waveform, so there are no flow or pressure
 charts for these nights. A DreamStation 2 encrypts the files on its card and
-hms-cpap does not decrypt them, so its card through a Sleep Bridge Lite or
-an ez Share gives nothing to chart. A DreamStation card whose files are not
+hms-cpap does not decrypt them. Its card, through a Sleep Bridge Lite, an ez
+Share or a folder, is read through the OSCAR you install yourself on the same
+computer (OSCAR 2.1.1; a later release once it is proven): when the machine ends a session, hms-cpap runs that
+OSCAR with no window to import the card into a profile of its own (create a
+profile named `hms-cpap` in OSCAR once), then reads what OSCAR stored. Set it
+up in Settings, Data Source; the Devices page shows each read and has "Read
+now". hms-cpap ships no OSCAR and never writes to OSCAR's database. This needs
+OSCAR on the same computer, so it does not work from Docker or the Home
+Assistant add-on. A DreamStation card whose files are not
 encrypted (in a folder, on a network share, behind an ez Share or a Mule &
 Miner in proxy mode) is charted live: flow, breathing rate and I:E while the
 session is open, with "Pressure arrives when the session ends", then the
@@ -464,8 +471,9 @@ full night.
   mount, and say which machine wrote it. In `config.json`: `"transport":
   "local"`, `"local_dir"`, and `"format"`: `resmed`, `lowenstein` (a Prisma
   tree, a serial folder with no `DATALOG`), `sefam`, `bmc` for a Luna, or
-  `philips` for a DreamStation card whose files are not encrypted (a
-  DreamStation 2 encrypts its card, and hms-cpap does not decrypt it). A
+  `philips` for a DreamStation card (a DreamStation 2 encrypts its card:
+  hms-cpap does not decrypt it and reads it through your own OSCAR, set in
+  `"oscar": {"program", "data_dir", "profile"}`, see above). A
   path one level too deep is refused rather than guessed. This is also how
   the folders written by a Sleep Bridge Lite (1) and the AirSense 11 streams
   (2 and 3) are read.

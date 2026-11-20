@@ -28,6 +28,11 @@ export interface AppConfig {
    */
   archive_dir: string;
   burst_interval: number;
+  /**
+   * SDD-001: how far SpO2 must fall below its baseline, in percent, to count as
+   * a desaturation. 3 (the parser's default, the AASM rule) unless set; 1 to 10.
+   */
+  desat_drop_pct?: number;
   web_port: number;
   /** Angular bundle location. A wrong value serves no UI at all. */
   static_dir: string;
@@ -126,6 +131,18 @@ export interface AppConfig {
     auto_sync: boolean;
     /** platform SDD-059: "Send my nights to CpapDash", on the same token. */
     stream: boolean;
+  };
+  /**
+   * SDD-078: Garmin SpO2 as an oximetry source. The password is masked like
+   * the token above; Garmin's own session tokens are read back masked and
+   * never sent from here.
+   */
+  garmin?: {
+    enabled: boolean;
+    email: string;
+    password: string;   // redacted to '********' on read; resend it to keep
+    signed_in?: boolean;
+    device_name?: string;
   };
 }
 

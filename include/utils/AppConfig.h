@@ -170,6 +170,11 @@ struct AppConfig {
     /// one thing their chosen source needs.
     std::string archive_dir;
     int burst_interval = 65;
+    /// SDD-001: how far SpO2 must fall below its rolling baseline, in percent,
+    /// to count as a desaturation (events, count and ODI). 3 is the parser's
+    /// DesatParams default (the AASM rule); 4 is the CMS rule. 1 to 10 accepted.
+    /// Applies to nights saved after it changes. Exported as DESAT_DROP_PCT.
+    double desat_drop_pct = 3.0;
 
     // Web server
     int web_port = 8893;
@@ -370,6 +375,46 @@ struct AppConfig {
         /// the record of what was sent is cleared.
         bool stream = false;
     } cpapdash;
+
+    /// SDD-078: the night's SpO2 from Garmin Connect, as an oximetry source.
+    /// Every credential is a setting, kept and masked the way the CpapDash
+    /// token is (D1): the account's email and password, and Garmin's own
+    /// session tokens beside them, so a refresh or a new sign-in needs nobody
+    /// at the keyboard unless Garmin asks for an MFA code. Garmin's API is
+    /// unofficial; a change there shows on the Devices page's Garmin card.
+    struct Garmin {
+        bool enabled = false;
+        std::string email;
+        std::string password;
+        /// Garmin's bearer token, its refresh token and the client they were
+        /// issued to (the DI OAuth2 exchange).
+        std::string access_token;
+        std::string refresh_token;
+        std::string client_id;
+        /// Garmin's displayName for the account (the sleep URL needs it) and
+        /// the watch it last synced from ("Garmin Fenix 7X").
+        std::string display_name;
+        std::string device_name;
+    } garmin;
+
+    /// SDD-080 D7: a DreamStation 2 card is read through the user's own OSCAR.
+    /// The program (found where each OS's installer puts it when left empty),
+    /// OSCAR's data folder, and hms-cpap's own profile in it, beside the
+    /// user's. Saved through PUT /api/oscar, which checks all three.
+    struct Oscar {
+        std::string program;
+        std::string data_dir;
+        std::string profile = "hms-cpap";
+    } oscar;
+
+    /// SDD-013: the local sleep model that writes each closed night's summary
+    /// from the database, with no network. `enabled` is set only through
+    /// POST /api/local-model/enable, which refuses until a model is published
+    /// and verified; PUT /api/config does not change it.
+    struct LocalModel {
+        bool enabled = false;
+        std::string model_dir;          // default: empty (uses dataDir()/models)
+    } local_model;
 
     bool setup_complete = false;
 
@@ -672,6 +717,10 @@ struct AppConfig {
             if (j.contains("local_dir"))     config.local_dir = j["local_dir"];
             if (j.contains("archive_dir"))   config.archive_dir = j["archive_dir"];
             if (j.contains("burst_interval")) config.burst_interval = j["burst_interval"];
+            if (j.contains("desat_drop_pct") && j["desat_drop_pct"].is_number()) {   // SDD-001
+                const double pct = j["desat_drop_pct"];
+                if (pct >= 1.0 && pct <= 10.0) config.desat_drop_pct = pct;
+            }
             if (j.contains("web_port"))     config.web_port = j["web_port"];
             if (j.contains("static_dir"))   config.static_dir = j["static_dir"];
             if (j.contains("setup_complete")) config.setup_complete = j["setup_complete"];
@@ -788,6 +837,31 @@ struct AppConfig {
                 if (cd.contains("stream"))    config.cpapdash.stream = cd["stream"];
             }
 
+            if (j.contains("garmin")) {
+                auto& g = j["garmin"];
+                if (g.contains("enabled"))       config.garmin.enabled = g["enabled"];
+                if (g.contains("email"))         config.garmin.email = g["email"];
+                if (g.contains("password"))      config.garmin.password = g["password"];
+                if (g.contains("access_token"))  config.garmin.access_token = g["access_token"];
+                if (g.contains("refresh_token")) config.garmin.refresh_token = g["refresh_token"];
+                if (g.contains("client_id"))     config.garmin.client_id = g["client_id"];
+                if (g.contains("display_name"))  config.garmin.display_name = g["display_name"];
+                if (g.contains("device_name"))   config.garmin.device_name = g["device_name"];
+            }
+
+            if (j.contains("oscar")) {   // SDD-080
+                auto& o = j["oscar"];
+                if (o.contains("program") && o["program"].is_string())   config.oscar.program = o["program"];
+                if (o.contains("data_dir") && o["data_dir"].is_string()) config.oscar.data_dir = o["data_dir"];
+                if (o.contains("profile") && o["profile"].is_string())   config.oscar.profile = o["profile"];
+            }
+
+            if (j.contains("local_model")) {
+                auto& lm = j["local_model"];
+                if (lm.contains("enabled"))   config.local_model.enabled = lm["enabled"];
+                if (lm.contains("model_dir")) config.local_model.model_dir = lm["model_dir"];
+            }
+
             if (j.contains("sleephq")) {
                 auto& sh = j["sleephq"];
                 if (sh.contains("enabled"))           config.sleephq.enabled = sh["enabled"];
@@ -851,6 +925,7 @@ struct AppConfig {
             j["local_dir"] = local_dir;
             j["archive_dir"] = archive_dir;
             j["burst_interval"] = burst_interval;
+            j["desat_drop_pct"] = desat_drop_pct;   // SDD-001
             j["web_port"] = web_port;
             j["static_dir"] = static_dir;
             j["setup_complete"] = setup_complete;
@@ -926,6 +1001,23 @@ struct AppConfig {
             j["cpapdash"]["auto_sync"] = cpapdash.auto_sync;
             j["cpapdash"]["stream"] = cpapdash.stream;
 
+            // SDD-078: verbatim, as the token above.
+            j["garmin"]["enabled"]       = garmin.enabled;
+            j["garmin"]["email"]         = garmin.email;
+            j["garmin"]["password"]      = garmin.password;
+            j["garmin"]["access_token"]  = garmin.access_token;
+            j["garmin"]["refresh_token"] = garmin.refresh_token;
+            j["garmin"]["client_id"]     = garmin.client_id;
+            j["garmin"]["display_name"]  = garmin.display_name;
+            j["garmin"]["device_name"]   = garmin.device_name;
+
+            j["oscar"]["program"]  = oscar.program;    // SDD-080
+            j["oscar"]["data_dir"] = oscar.data_dir;
+            j["oscar"]["profile"]  = oscar.profile;
+
+            j["local_model"]["enabled"]   = local_model.enabled;     // SDD-013
+            j["local_model"]["model_dir"] = local_model.model_dir;
+
             j["logging"]["enabled"] = logging.enabled;
             j["logging"]["file"]    = logging.file;
             j["logging"]["max_mb"]  = logging.max_mb;
@@ -991,6 +1083,7 @@ struct AppConfig {
         j["local_dir"] = local_dir;
         j["archive_dir"] = archive_dir;
         j["burst_interval"] = burst_interval;
+        j["desat_drop_pct"] = desat_drop_pct;   // SDD-001
         j["web_port"] = web_port;
         // SDD-012: save() has always written static_dir, mqtt.client_id and
         // llm.prompt_file, but toJson() did not emit them. That was harmless
@@ -1090,6 +1183,25 @@ struct AppConfig {
         j["cpapdash"]["token"] = cpapdash.token.empty() ? "" : "********";
         j["cpapdash"]["auto_sync"] = cpapdash.auto_sync;
         j["cpapdash"]["stream"] = cpapdash.stream;
+
+        // SDD-078: masked as the token is. Garmin's session tokens are read
+        // back masked and never taken from the page (PUT /api/config).
+        j["garmin"]["enabled"]       = garmin.enabled;
+        j["garmin"]["email"]         = garmin.email;
+        j["garmin"]["password"]      = garmin.password.empty() ? "" : "********";
+        j["garmin"]["access_token"]  = garmin.access_token.empty() ? "" : "********";
+        j["garmin"]["refresh_token"] = garmin.refresh_token.empty() ? "" : "********";
+        j["garmin"]["client_id"]     = garmin.client_id;
+        j["garmin"]["display_name"]  = garmin.display_name;
+        j["garmin"]["device_name"]   = garmin.device_name;
+        j["garmin"]["signed_in"]     = !garmin.refresh_token.empty() || !garmin.access_token.empty();
+
+        j["oscar"]["program"]  = oscar.program;    // SDD-080
+        j["oscar"]["data_dir"] = oscar.data_dir;
+        j["oscar"]["profile"]  = oscar.profile;
+
+        j["local_model"]["enabled"]   = local_model.enabled;     // SDD-013
+        j["local_model"]["model_dir"] = local_model.model_dir;
 
         j["logging"]["enabled"] = logging.enabled;
         j["logging"]["file"]    = logging.file;

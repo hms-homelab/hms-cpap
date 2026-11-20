@@ -46,7 +46,8 @@ void burstEnded(const std::string& root) {
     }
 }
 
-void fileWritten(const std::string& root, const std::string& rel_path, const std::string& machine) {
+void fileWritten(const std::string& root, const std::string& rel_path, const std::string& machine,
+                 const std::string& source) {
     FileSink s;
     {
         std::lock_guard<std::mutex> lk(mu());
@@ -55,14 +56,14 @@ void fileWritten(const std::string& root, const std::string& rel_path, const std
     if (!s || root.empty() || rel_path.empty()) return;
     // A collector must never fail because the uploader did.
     try {
-        s(root, rel_path, machine);
+        s(root, rel_path, machine, source);
     } catch (const std::exception& e) {
         std::cerr << "[cpapdash-stream] note for " << rel_path << " dropped: " << e.what() << std::endl;
     } catch (...) {
     }
 }
 
-void rootWritten(const std::string& root, const std::string& machine) {
+void rootWritten(const std::string& root, const std::string& machine, const std::string& source) {
     RootSink s;
     {
         std::lock_guard<std::mutex> lk(mu());
@@ -70,7 +71,7 @@ void rootWritten(const std::string& root, const std::string& machine) {
     }
     if (!s || root.empty()) return;
     try {
-        s(root, machine);
+        s(root, machine, source);
     } catch (const std::exception& e) {
         std::cerr << "[cpapdash-stream] note for " << root << " dropped: " << e.what() << std::endl;
     } catch (...) {

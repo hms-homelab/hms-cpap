@@ -150,10 +150,14 @@ public:
                      double avg_ahi,
                      double avg_usage_hours,
                      double compliance_pct,
-                     const std::string& summary_text) override;
+                     const std::string& summary_text,
+                     const std::string& source = "llm") override;
 
     bool saveOximetrySession(const std::string& device_id,
                              const cpapdash::parser::OximetrySession& session) override;
+    bool saveOximetrySessionFrom(const std::string& device_id,
+                                 const cpapdash::parser::OximetrySession& session,
+                                 const OximetryOrigin& origin) override;
 
     bool oximetrySessionExists(const std::string& device_id,
                                const std::string& filename) override;
@@ -324,6 +328,9 @@ private:
 
     void insertDesaturations(pqxx::work& work, int session_id,
                              const std::vector<DesatEvent>& desats);
+
+    /// SDD-001: remove the session's stored desaturations before a save writes them again
+    void deleteDesaturations(pqxx::work& work, int session_id);
 
     void insertBreaths(pqxx::work& work, int session_id,
                        const std::vector<Breath>& breaths);

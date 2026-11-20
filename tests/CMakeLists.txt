@@ -60,6 +60,8 @@ set(TEST_SOURCES
     database/test_DatabaseService.cpp
     database/test_EquipmentBackends.cpp
     database/test_OximetryBackends.cpp
+    # SDD-078 D3: oximetry knows its source, on every engine.
+    database/test_OximetryOriginBackends.cpp
     database/test_LiveOximetryBackends.cpp
     database/test_RemoveNightBackends.cpp
     database/test_CpapCardBackends.cpp
@@ -71,6 +73,7 @@ set(TEST_SOURCES
     database/test_CpapDashSentBackends.cpp
     database/test_SessionFilesBackends.cpp
     database/test_SessionEndBackends.cpp
+    database/test_ComputedEventsBackends.cpp
     database/test_UnmeasuredMinuteBackends.cpp
     database/test_DailyHoursBackends.cpp
     database/test_NightAggregationBackends.cpp
@@ -82,6 +85,7 @@ set(TEST_SOURCES
     models/test_CPAPModels.cpp
     utils/test_ConfigManager.cpp
     utils/test_AppConfig.cpp
+    utils/test_Desaturation.cpp
     utils/test_FileUtils.cpp
     utils/test_CardResidue.cpp
     utils/test_CardImport.cpp
@@ -102,6 +106,8 @@ set(TEST_SOURCES
     utils/test_ReExec.cpp
     utils/test_LogTail.cpp
     utils/test_ParentWatch.cpp
+    # SDD-067: the add-on's data directory move and the fallback report.
+    utils/test_DataDirMove.cpp
 
     # SDD-016: the supervisor's Qt-free core. Listed by explicit path, and the
     # sources it tests are added the same way below -- desktop/qt/ is outside
@@ -111,6 +117,7 @@ set(TEST_SOURCES
     desktop/test_ConfigGate.cpp
     desktop/test_PendingUpdate.cpp
     desktop/test_SourceChoice.cpp
+    desktop/test_BridgeSetup.cpp
 
     utils/test_FailureLogThrottle.cpp
     clients/test_EzShareClient.cpp
@@ -138,6 +145,12 @@ set(TEST_SOURCES
     services/test_OximetryImport.cpp
     services/test_BilevelSensors.cpp
     services/test_AiSummaryEvents.cpp
+    services/test_NightFacts.cpp
+    services/test_AiGrounding.cpp
+    database/test_NightFactsBackends.cpp
+    # SDD-013: the local sleep model's harness, no model file needed.
+    model/test_LocalModel.cpp
+    model/test_NightJson.cpp
     services/test_SummaryPrompt.cpp
     services/test_O2RingCsvParser.cpp
     services/test_O2RingCsvWriter.cpp
@@ -170,7 +183,11 @@ set(TEST_SOURCES
     services/test_PrismaIngestion.cpp
     services/test_SefamIngestion.cpp
     services/test_BmcIngestion.cpp
+    services/test_LunaComputedEvents.cpp
     services/test_PhilipsCardIngestion.cpp
+    # SDD-080: a DreamStation 2 card read through the user's OSCAR (a fake
+    # OSCAR, a synthetic oscar.db built by the test's own SQL).
+    services/test_OscarCard.cpp
     services/test_CardUpload.cpp
     services/test_CpapCard.cpp
     services/test_SefamCardMirror.cpp
@@ -185,11 +202,18 @@ set(TEST_SOURCES
     services/test_DataPublisherDeeper.cpp
     services/test_LiveSleepStageRunner.cpp
     services/test_MyAirClient.cpp
+    # SDD-078: Garmin SpO2 as an oximetry source.
+    clients/test_GarminConnectClient.cpp
+    services/test_GarminSleep.cpp
+    services/test_GarminService.cpp
     services/test_MyAirService.cpp
     services/test_SleepHqExportService.cpp
     services/test_CpapDashSyncService.cpp
     # platform SDD-059: the uploader, against a local server speaking its frames.
     services/test_CpapDashStream.cpp
+    # SDD-079: each file says its source, and oximetry goes too (the contract
+    # fixtures in tests/fixtures/cpapdash-stream/, the oximetry outbox).
+    services/test_CpapDashOximetry.cpp
     services/test_SleepHqClient.cpp
     services/test_DeviceDiscoveryService.cpp
     services/test_SetupService.cpp
@@ -219,6 +243,9 @@ set(TEST_SOURCES
     # The live night's shared MQTT topics, from every source (mqtt/LiveState.h).
     mqtt/test_LiveState.cpp
     sleepbridge/test_SleepBridgeLearnedCard.cpp
+    # SDD-073: the card read in this computer, "Use this bridge", the setup
+    # steps' events and the QR code.
+    sleepbridge/test_SleepBridgeSetup.cpp
     # Empty unless BUILD_WITH_SLEEPBRIDGE linked the component.
     sleepbridge/test_SleepBridgeLinked.cpp
     # The Mule & Miner local stream: a fake unit through the receiver into
@@ -246,6 +273,8 @@ set(SUPERVISOR_PURE_SOURCES
     ${CMAKE_SOURCE_DIR}/desktop/qt/core/pure/ConfigGate.cpp
     ${CMAKE_SOURCE_DIR}/desktop/qt/core/pure/PendingUpdate.cpp
     ${CMAKE_SOURCE_DIR}/desktop/qt/core/pure/SourceChoice.cpp
+    ${CMAKE_SOURCE_DIR}/desktop/qt/core/pure/BridgeSetup.cpp
+    ${CMAKE_SOURCE_DIR}/desktop/qt/core/pure/BridgeText.cpp
 )
 
 # Create test executable
@@ -357,6 +386,9 @@ if(BUILD_WITH_WEB AND NOT WIN32)
     file(GLOB SLEEPBRIDGE_SOURCES "${CMAKE_SOURCE_DIR}/src/sleepbridge/*.cpp"
                                   "${CMAKE_SOURCE_DIR}/src/sleepbridge/library/*.cpp")
     hms_sleepbridge_filter_sources(SLEEPBRIDGE_SOURCES)
+    # SDD-073's card read command line is not on the socket path (and needs
+    # miniz and the card readers): run_tests covers it.
+    list(FILTER SLEEPBRIDGE_SOURCES EXCLUDE REGEX ".*/CardReadCli\\.cpp$")
     # The Mule & Miner's route rides the same listener: its receiver and the
     # night writer it feeds come along, so the test covers both routes.
     file(GLOB MULE_SOURCES "${CMAKE_SOURCE_DIR}/src/mule/*.cpp")
@@ -383,6 +415,8 @@ if(BUILD_WITH_WEB AND NOT WIN32)
         # SDD-074: the night writer names a night on the machine's clock setting.
         ${CMAKE_SOURCE_DIR}/src/utils/MachineZone.cpp
         ${CMAKE_SOURCE_DIR}/src/utils/MachineClocks.cpp
+        # SDD-058 D1: the live Luna night reads its card as the burst does.
+        ${CMAKE_SOURCE_DIR}/src/services/BmcIngestion.cpp
         ${STR_LAYOUTS_SOURCE}
     )
     # CURL::libcurl: the Mule & Miner's firmware updater (src/mule/MuleFirmware.cpp)

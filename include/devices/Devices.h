@@ -3,7 +3,7 @@
 // GET /api/devices: every device this hms-cpap reads or talks to, in one
 // answer, so the Devices page makes one call per refresh (SDD-062 D8).
 //
-//   {"devices": [{"kind": "mule"|"sleepbridge"|"o2ring"|"ezshare"|"flashair"|"as11_ble"|"ds2_ble",
+//   {"devices": [{"kind": "mule"|"sleepbridge"|"o2ring"|"garmin"|"ezshare"|"flashair"|"as11_ble"|"ds2_ble",
 //                 "id", "key", "name", "default_name", "own_name",
 //                 "present": "yes"|"no"|"unknown", "last_heard",
 //                 "recording": "yes"|"no"|"unknown", "recording_reason",
@@ -74,6 +74,16 @@ struct DeviceInputs {
     std::string ds2_address;
     Json::Value ds2{Json::nullValue};
 
+    // SDD-078: Garmin Connect as an oximetry source (Settings), and
+    // GarminService::status(). An accessory, after the ring.
+    bool        garmin_enabled{false};
+    Json::Value garmin{Json::nullValue};
+
+    // SDD-080 D7: the OSCAR read of an encrypted DreamStation 2 card
+    // (BurstCollectorService::oscarStatus, with its card_root), null when no
+    // such card is the source. It rides as detail.oscar on the tile of what
+    // carries the card: the Sleep Bridge whose folder it is, or the ez Share.
+    Json::Value oscar{Json::nullValue};
     // The latest night in the ledger: "yes" while it is live, "no", or
     // "unknown" when the ledger cannot be read.
     std::string ledger_live{"unknown"};

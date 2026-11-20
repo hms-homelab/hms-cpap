@@ -104,7 +104,8 @@ PhilipsCardIngestion::Read PhilipsCardIngestion::readSessions(const std::string&
     if (PhilipsParser::isEncryptedCard(card.string())) {
         out.encrypted = true;
         out.error = "the Philips card in " + *dir +
-                    " is encrypted; hms-cpap reads a DreamStation card only when its files are plain";
+                    " is encrypted; hms-cpap does not decrypt it, and reads it through OSCAR "
+                    "(Settings > Data Source, SDD-080)";
         return out;
     }
 

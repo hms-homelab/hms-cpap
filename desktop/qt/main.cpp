@@ -125,6 +125,7 @@ int main(int argc, char** argv) {
     bool parse_failed = false;
     const auto config = readConfig(&parse_failed);
     const auto gate   = evaluateConfig(config, parse_failed);
+    bool bridge_steps = false;   // SDD-073: the Sleep Bridge was chosen
 
     if (gate.needsSetup()) {
         ConfigModel model;
@@ -144,10 +145,15 @@ int main(int argc, char** argv) {
                 "Could not save your settings to " + configPath());
             return app.exec();
         }
+        bridge_steps = wizard.sleepBridgeChosen();
     }
 
     // Configured, so run it.
     child.start();
+
+    // SDD-073: the bridge's steps need the service running (they wait on its
+    // events), so they open now, beside it.
+    if (bridge_steps) tray.openBridgeSetup();
 
     // The tray warning comes AFTER the service is running, and never blocks.
     //

@@ -244,6 +244,7 @@ CREATE TABLE IF NOT EXISTS cpap_summaries (
     avg_usage_hours DOUBLE,
     compliance_pct  DOUBLE,
     summary_text    TEXT NOT NULL,
+    source          VARCHAR(16) NOT NULL DEFAULT 'llm',   -- SDD-013: 'llm' or 'local'
     created_at      DATETIME NOT NULL DEFAULT NOW()
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 

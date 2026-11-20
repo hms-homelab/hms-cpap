@@ -19,6 +19,7 @@
 
 #include "database/IDatabase.h"
 #include "database/SQLiteDatabase.h"
+#include "database/SqlDialect.h"
 #ifdef WITH_MYSQL
 #include "database/MySQLDatabase.h"
 #endif
@@ -27,6 +28,8 @@
 #include "database/PostgresDatabase.h"
 #include <pqxx/pqxx>
 #endif
+
+#include <sqlite3.h>
 
 #include <cstdlib>
 #include <filesystem>
@@ -223,6 +226,60 @@ TEST_P(CpapDashSentBackend, AnEmptyKeyIsRefused) {
         << engineName(GetParam());
     EXPECT_FALSE(db().upsertCpapDashSent(row(root_a_, "", 1, std::string(32, '0'))))
         << engineName(GetParam());
+}
+
+// SDD-079 D3: the source the last ok ack delivered; NULL ("") is a row from
+// before 7.0.0, which never said.
+TEST_P(CpapDashSentBackend, TheSourceIsKeptAndAbsentReadsAsNull) {
+    auto r = row(root_a_, "DATALOG/20261116/x_BRP.edf", 4096, std::string(32, 'a'));
+    ASSERT_TRUE(db().upsertCpapDashSent(r));
+    EXPECT_EQ(db().getCpapDashSent(root_a_, r.path)->source, "") << engineName(GetParam());
+    auto nulls = db().executeQuery("SELECT COUNT(*) AS n FROM cpapdash_sent WHERE source IS NULL AND root = " +
+                                       sql::param(1, db().dbType()),
+                                   {root_a_});
+    ASSERT_TRUE(nulls.isArray() && !nulls.empty()) << engineName(GetParam());
+    const auto& n = nulls[0u]["n"];
+    EXPECT_EQ(n.isString() ? std::stoll(n.asString()) : n.asInt64(), 1) << "stored as NULL, not ''";
+
+    r.source = "ble-as11";
+    ASSERT_TRUE(db().upsertCpapDashSent(r));
+    EXPECT_EQ(db().getCpapDashSent(root_a_, r.path)->source, "ble-as11") << engineName(GetParam());
+    EXPECT_EQ(db().listCpapDashSent(root_a_)[0].source, "ble-as11") << engineName(GetParam());
+    r.source = "oximetry";
+    ASSERT_TRUE(db().upsertCpapDashSent(r));
+    EXPECT_EQ(db().getCpapDashSent(root_a_, r.path)->source, "oximetry") << "an ack moves it";
+}
+
+// SDD-079 D3: an install from before 7.0.0 gains the column, its rows NULL.
+TEST(CpapDashSentMigration, AnIndexFromBefore700GainsTheSourceColumnWithItsRowsNull) {
+    const auto path = (std::filesystem::temp_directory_path() /
+                       ("hms_cpapdash_sent_old_" + std::to_string(::getpid()) + ".db"))
+                          .string();
+    std::filesystem::remove(path);
+    {
+        sqlite3* raw = nullptr;
+        ASSERT_EQ(sqlite3_open(path.c_str(), &raw), SQLITE_OK);
+        ASSERT_EQ(sqlite3_exec(raw,
+                               "CREATE TABLE cpapdash_sent (root TEXT NOT NULL, path TEXT NOT NULL, "
+                               "machine TEXT NOT NULL, acked_to INTEGER NOT NULL, acked_md5 TEXT NOT NULL, "
+                               "updated_at TEXT NOT NULL, PRIMARY KEY (root, path));"
+                               "INSERT INTO cpapdash_sent VALUES ('/r','STR.edf','2300',10,'x','2026-11-01T00:00:00Z');",
+                               nullptr, nullptr, nullptr),
+                  SQLITE_OK);
+        sqlite3_close(raw);
+    }
+    {
+        SQLiteDatabase db(path);
+        ASSERT_TRUE(db.connect());
+        const auto r = db.getCpapDashSent("/r", "STR.edf");
+        ASSERT_TRUE(r);
+        EXPECT_EQ(r->acked_to, 10);
+        EXPECT_EQ(r->source, "");
+        auto n = db.executeQuery("SELECT COUNT(*) AS n FROM cpapdash_sent WHERE source IS NULL", {});
+        const auto& v = n[0u]["n"];
+        EXPECT_EQ(v.isString() ? std::stoll(v.asString()) : v.asInt64(), 1);
+    }
+    std::filesystem::remove(path);
 }
 
 INSTANTIATE_TEST_SUITE_P(Engines, CpapDashSentBackend,

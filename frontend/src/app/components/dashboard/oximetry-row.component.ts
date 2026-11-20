@@ -7,6 +7,10 @@ export interface OximetryRowData {
   heartRate: number;
   odi: number;
   active: boolean;
+  /** SDD-078 D3: the device(s) the night came from ('' : the ring, as before). */
+  device?: string;
+  /** Whether the ring recorded it: the ring's status card is the ring's only. */
+  ring?: boolean;
 }
 
 @Component({
@@ -17,7 +21,8 @@ export interface OximetryRowData {
     <div class="section" *ngIf="data">
       <div class="section-header">
         <div class="section-title"><i class="fa-solid fa-droplet"></i> {{ 'dashboard.title.oximetry' | translate }}</div>
-        <div class="section-subtitle">{{ 'dashboard.subtitle.oximetry' | translate }}</div>
+        <div class="section-subtitle">{{ data.device ? ('dashboard.subtitle.oximetryFrom' | translate:{ device: data.device })
+                                                     : ('dashboard.subtitle.oximetry' | translate) }}</div>
       </div>
       <div class="metrics-row">
         <div class="mu-card">
@@ -50,7 +55,7 @@ export interface OximetryRowData {
           </div>
         </div>
 
-        <div class="mu-card">
+        <div class="mu-card" *ngIf="data.ring !== false">
           <div class="mu-icon" [style.background]="(data.active ? '#4ade80' : '#888') + '22'"
                [style.color]="data.active ? '#4ade80' : '#888'">
             <i class="fa-regular fa-circle-dot"></i>

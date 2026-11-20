@@ -29,9 +29,9 @@
     "targetVentilation": "Célventilláció",
     "spo2": "SpO2",
     "heartRate": "Pulzusszám",
-    "o2ringSpo2": "O2Ring SpO2",
-    "o2ringHeartRate": "O2Ring pulzusszám",
-    "o2ringMotion": "O2Ring mozgás"
+    "o2ringSpo2": "Oximetria SpO2",
+    "o2ringHeartRate": "Oximetria pulzusszám",
+    "o2ringMotion": "Oximetria mozgás"
   },
   "nav": {
     "dashboard": "Irányítópult",
@@ -48,6 +48,10 @@
     "configError": {
       "title": "Semmilyen adat nem kerül be.",
       "action": "Beállítások megnyitása"
+    },
+    "dataDirFallback": {
+      "title": "Az adatkönyvtárba nem lehetett írni.",
+      "body": "A CpapDash nem tudott írni ide: {{wanted}}, ezért ez a futás itt tárolja az adatait: {{in_use}}. Tegye írhatóvá a mappát, majd indítsa újra a CpapDash-t a Home Assistantban."
     }
   }
 }

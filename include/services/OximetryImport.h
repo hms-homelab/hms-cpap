@@ -8,14 +8,16 @@
 // the SAME row for the same file: parsed by the shared VLDParser, saved under
 // kOximetryDeviceId, known by its filename (UNIQUE, ON CONFLICT DO UPDATE).
 //
+#include "database/IDatabase.h"
+
+#include <json/json.h>
+
 #include <cstdint>
 #include <map>
 #include <set>
 #include <string>
 
 namespace hms_cpap {
-
-class IDatabase;
 
 /// One .vld imported, or why not.
 struct VldImportResult {
@@ -34,10 +36,25 @@ struct VldImportResult {
 /// A file the parser refuses, or one with no samples, is refused by name and
 /// nothing is written. A file whose night is in [removed_nights] (SDD-029,
 /// YYYYMMDD keys) is parsed but not stored; the upload passes none, since an
-/// operator uploading a night is asking for it.
+/// operator uploading a night is asking for it. [origin] (SDD-078 D3) is
+/// stored with the row: the ring's unless the upload names another.
 VldImportResult importVldFile(IDatabase& db, const std::string& bytes,
                               const std::string& filename,
-                              const std::set<std::string>& removed_nights = {});
+                              const std::set<std::string>& removed_nights = {},
+                              const IDatabase::OximetryOrigin& origin = {});
+
+/// SDD-078 D3: the origin POST /api/upload/oximetry stores, from its optional
+/// `source` and `device_name` fields. No source, or one that is not a short
+/// lowercase word (letters, digits, '_' or '-', up to 32), is "upload"; the
+/// device name is kept as sent, trimmed, up to 128 bytes.
+IDatabase::OximetryOrigin uploadOrigin(const std::string& source, const std::string& device_name);
+
+/// POST /api/upload/oximetry: a ring's .vld / .o2s (importVldFile) or a
+/// Wellue CSV export, stored under kOximetryDeviceId with [origin]. The
+/// answer is the samples stored and the origin, or {"error"}.
+Json::Value importOximetryUpload(IDatabase& db, const std::string& content,
+                                 const std::string& filename,
+                                 const IDatabase::OximetryOrigin& origin);
 
 /// A file as the listing shows it: what decides whether it changed (the card
 /// files' own rule: size, and the modified time for a change inside the same

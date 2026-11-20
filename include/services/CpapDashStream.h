@@ -79,6 +79,7 @@ struct Plan {
     uint64_t    offset = 0;       ///< from this byte to the end
     bool        whole  = false;   ///< offset 0 because the file is new or changed before its end
     std::string why;              ///< for the log
+    bool        held   = false;   ///< what is on disk is exactly what was acked
 };
 Plan planSend(const std::string& name, const std::string& bytes,
               const std::optional<IDatabase::CpapDashSent>& row);
@@ -129,10 +130,36 @@ std::string helloFrame(const std::string& version, const std::string& source,
 std::string sourceKind(bool bluetooth_on, bool bridge_receiver_on, const std::string& data_dir,
                        const std::string& local_dir = "");
 
-/// The text frame that closes a file's chunks (D4).
+/// The text frame that closes a file's chunks (D4). SDD-079 D2: `source`
+/// (platform SDD-061 D1) is where the file's bytes came from; the uploader
+/// always passes it, "" leaves the key out (the frame as before 7.0.0).
+/// Keys in the contract fixtures' order (tests/fixtures/cpapdash-stream/).
 std::string fileReadyFrame(uint32_t req_id, const CardHeaders& h, uint64_t offset,
                            uint64_t total_size, uint32_t chunks, uint64_t size,
-                           const std::string& md5, const std::string& machine_serial);
+                           const std::string& md5, const std::string& machine_serial,
+                           const std::string& source = "");
+
+/// platform SDD-061 D2: the source note for a file acked before 7.0.0: zero
+/// chunks, size 0, the md5 of nothing, offset and total_size both [acked_to]
+/// (never 0: an empty body at offset 0 discards the file at ingest).
+std::string sourceNoteFrame(uint32_t req_id, const CardHeaders& h, uint64_t acked_to,
+                            const std::string& machine_serial, const std::string& source);
+
+/// platform SDD-061 D3: an oximetry file_ready: `kind` "oximetry", no
+/// top-level filename (an ingest that does not know it refuses it), and the
+/// `oxi` object. Unset optional keys (source, device_name) are left out.
+struct OxiHeaders {
+    std::string name;
+    std::string format;
+    std::string source;
+    std::string device_name;
+};
+std::string oximetryReadyFrame(uint32_t req_id, const OxiHeaders& oxi, uint64_t offset,
+                               uint64_t total_size, uint32_t chunks, uint64_t size,
+                               const std::string& md5);
+
+/// A live spool (live-*.jsonl) grows: it goes from the acked offset (SDD-079 D5).
+bool isGrowingOximetryName(const std::string& name);
 
 /// An ez Share burst's end, as ingest reads it (its mule card-round rule):
 /// {"t":"round","done":true}. No count, no listing.
@@ -153,10 +180,12 @@ public:
     };
 
     /// A card root and the machine whose card it is ("" = read it from the
-    /// root's Identification file).
+    /// root's Identification file). SDD-079 D1: `source` is where its files
+    /// came from (card_feed::kSource*), set where the root is known.
     struct Root {
         std::string path;
         std::string machine;
+        std::string source{"card"};
     };
 
     struct Timing {
@@ -185,6 +214,11 @@ public:
         long long   bytes_acked = 0;
         std::size_t queued = 0;      ///< roots and files waiting to be looked at
         std::string install_id;
+        /// SDD-079 D8: oximetry files acked since this process started, and
+        /// "sending", or "held" while CpapDash did not take oximetry on this
+        /// connection (D6).
+        long long   oximetry_acked = 0;
+        std::string oximetry_state = "sending";
         Json::Value toJson() const;
     };
 
@@ -204,6 +238,10 @@ public:
     /// The install's source ("ezshare" | "bridge" | "ble"), asked on every
     /// hello so a change of source shows on the next connect.
     void setSourceProvider(std::function<std::string()> p);
+    /// SDD-079 D7: asked at the start of every walk (each connection), before
+    /// the roots are looked at, to put recordings stored before 7.0.0 in the
+    /// oximetry outbox.
+    void setOximetryBackfill(std::function<void()> f);
 
     /// The settings now. The first call only sets them; after that, the switch
     /// going off or on clears the index (D5), and any change reconnects.
@@ -213,8 +251,9 @@ public:
     void stop();
 
     /// The collectors' notes (card_feed). Never block, never fail.
-    void fileWritten(const std::string& root, const std::string& rel, const std::string& machine);
-    void rootWritten(const std::string& root, const std::string& machine);
+    void fileWritten(const std::string& root, const std::string& rel, const std::string& machine,
+                     const std::string& source);
+    void rootWritten(const std::string& root, const std::string& machine, const std::string& source);
     /// An ez Share burst over [root] ended, having reached the card. Queued
     /// behind what that burst wrote, so its frame goes only once those files
     /// are sent and acked, in order. Dropped unless the install's source is
@@ -223,11 +262,16 @@ public:
 
     Status status() const;
 
+    /// SDD-073 D6: called, off the lock, each time the state changes.
+    void setStateListener(std::function<void(const Status&)> l);
+
     /// The install id, made once and kept in <data_dir>/cpapdash_install_id.
     static std::string loadOrCreateInstallId(const std::string& data_dir);
 
     /// The card roots under [data_dir] (as11/<serial>/, sleepbridge/<sender>/)
-    /// plus [card_roots] that exist (the ez Share archive, a local folder).
+    /// plus [card_roots] that exist (the ez Share archive, a local folder),
+    /// each with its source (SDD-079 D1: as11/ is ble-as11, the rest card),
+    /// then the oximetry outbox (cpapdash/oximetry/, source oximetry) last.
     static std::vector<Root> discoverRoots(const std::string& data_dir,
                                            const std::vector<std::string>& card_roots);
 
@@ -237,6 +281,11 @@ private:
         std::string rel;       // "" = look at the whole root
         std::string machine;
         bool        round = false;   // a burst's end: say so once what is ahead of it is acked
+        std::string source;    // SDD-079 D1; "" = the root's, as registered
+    };
+    struct RootInfo {
+        std::string machine;
+        std::string source;
     };
     struct Stamp {
         uint64_t  size  = 0;
@@ -258,8 +307,20 @@ private:
     /// session is over.
     std::optional<SessionEnd> handle(CpapDashLink& link, const CpapDashLink::Frame& f);
     SendResult sendFile(CpapDashLink& link, const Work& w, uint64_t gen, SessionEnd& end);
+    SendResult sendOximetry(CpapDashLink& link, const Work& w, uint64_t gen, SessionEnd& end);
+    /// SDD-079 D3: before any new bytes of a constructed root go, one source
+    /// note for each of its files acked before 7.0.0. Refused when a note was
+    /// not taken: the root's bytes then wait for the next event.
+    enum class NotesResult { Done, Refused, Lost };
+    NotesResult sendSourceNotes(CpapDashLink& link, const std::string& root, const std::string& source,
+                                const std::string& machine, uint64_t gen, SessionEnd& end);
+    /// Waits for the file_ack of [req_id]: its `ok`, or nullopt when the
+    /// connection ended first ([end] says how).
+    std::optional<bool> awaitAck(CpapDashLink& link, uint32_t req_id, uint64_t gen, SessionEnd& end);
+    uint32_t nextReq();
     void scanRoot(const Work& w);
     std::string machineFor(const std::string& root, const std::string& given);
+    std::string sourceFor(const std::string& root, const std::string& given);
 
     void enqueue(Work w, bool front);
     std::optional<Work> popWork();
@@ -277,6 +338,7 @@ private:
     Timing                     timing_;
     RootsProvider              roots_provider_;
     std::function<std::string()> source_provider_;
+    std::function<void()>        oximetry_backfill_;
 
     mutable std::mutex      mu_;
     std::condition_variable cv_;
@@ -287,14 +349,17 @@ private:
     bool                    clear_pending_ = false;
     std::deque<Work>        queue_;
     std::set<std::string>   queued_keys_;
-    std::map<std::string, std::string> roots_;          // root -> machine, from the collectors
+    std::map<std::string, RootInfo> roots_;             // root -> machine and source, from the collectors
     Status                  status_;
+    std::function<void(const Status&)> state_listener_;
 
     // Worker thread only.
     std::map<std::string, Stamp>       settled_;   // root\npath -> what was on disk when it matched the index
     std::map<std::string, std::string> machines_;  // root -> serial read from its card
     std::set<std::string>              told_no_serial_;
     uint32_t                           next_req_ = 1;
+    std::set<std::string>              noted_roots_;    // SDD-079 D3: every note of the root taken
+    bool                               oxi_held_ = false;   // D6: this connection took no oximetry
 
     std::atomic<bool> stop_{false};
     std::thread       worker_;

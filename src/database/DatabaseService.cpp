@@ -3,6 +3,7 @@
 #include "database/DatabaseService.h"
 #include "database/SqlDialect.h"
 #include "utils/MachineClocks.h"
+#include "utils/Desaturation.h"
 #include "utils/OximetryDevice.h"
 #include <libpq-fe.h>
 #include <algorithm>
@@ -405,6 +406,28 @@ bool DatabaseService::connect() {
                 // Column may already exist or table not yet created — ignore
             }
 
+            // SDD-058 D4: the events computed from the flow, apart from the
+            // machine's, and which set a session's index was counted from.
+            try {
+                pqxx::work txn(*conn_);
+                txn.exec(R"(
+                    CREATE TABLE IF NOT EXISTS cpap_computed_events (
+                    id                SERIAL PRIMARY KEY,
+                    session_id        INT NOT NULL,
+                    event_type        TEXT,
+                    event_timestamp   TIMESTAMP NOT NULL,
+                    duration_seconds  FLOAT DEFAULT 0,
+                    details           TEXT,
+                    FOREIGN KEY (session_id) REFERENCES cpap_sessions(id) ON DELETE CASCADE
+                    )
+                )");
+                txn.exec("CREATE INDEX IF NOT EXISTS idx_computed_events_session ON cpap_computed_events(session_id)");
+                txn.exec("ALTER TABLE cpap_session_metrics ADD COLUMN IF NOT EXISTS index_events TEXT DEFAULT 'machine'");
+                txn.commit();
+            } catch (const std::exception& e) {
+                std::cerr << "PostgreSQL: SDD-058 computed events table: " << e.what() << std::endl;
+            }
+
             // Auto-migrate v2.0.0: PLD and ASV support
             try {
                 pqxx::work txn(*conn_);
@@ -517,6 +540,16 @@ bool DatabaseService::connect() {
                 std::cout << "  DB: v2.1.0 migration (cpap_summaries table) applied" << std::endl;
             } catch (...) {}
 
+            // SDD-013: what wrote the summary ('llm' or 'local'). A row stored
+            // before the column existed came from the configured LLM.
+            try {
+                pqxx::work txn(*conn_);
+                txn.exec("ALTER TABLE cpap_summaries ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'llm'");
+                txn.commit();
+            } catch (const std::exception& e) {
+                std::cerr << "  DB: SDD-013 summary source migration failed: " << e.what() << std::endl;
+            }
+
             // Auto-migrate v2.2.0: Oximetry tables (O2 Ring)
             try {
                 pqxx::work txn(*conn_);
@@ -542,6 +575,8 @@ bool DatabaseService::connect() {
                         valid_samples       INT,
                         total_samples       INT,
                         cpap_session_date   TEXT,
+                        source              TEXT,
+                        device_name         TEXT,
                         created_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     )
                 )");
@@ -562,6 +597,19 @@ bool DatabaseService::connect() {
                 txn.commit();
                 std::cout << "  DB: v2.2.0 migration (oximetry tables) applied" << std::endl;
             } catch (...) {}
+
+            // SDD-078 D3: where each recording came from. A recording stored
+            // before it had a source reads as the ring's, or as an upload
+            // where the upload page stored it.
+            try {
+                pqxx::work txn(*conn_);
+                txn.exec("ALTER TABLE oximetry_sessions ADD COLUMN IF NOT EXISTS source TEXT");
+                txn.exec("ALTER TABLE oximetry_sessions ADD COLUMN IF NOT EXISTS device_name TEXT");
+                txn.exec(sql::oxiSourceBackfill());
+                txn.commit();
+            } catch (const std::exception& e) {
+                std::cerr << "  DB: SDD-078 oximetry source migration failed: " << e.what() << std::endl;
+            }
 
             // Auto-migrate: split ResMed's lifetime PatientHours counter out of
             // patient_hours, which two writers had been filling with two
@@ -796,6 +844,10 @@ bool DatabaseService::connect() {
                         PRIMARY KEY (root, path)
                     )
                 )");
+                // SDD-079 D3: the source CpapDash was told for each file. No
+                // default: NULL is a row from before 7.0.0, which gets one
+                // source note.
+                txn.exec("ALTER TABLE cpapdash_sent ADD COLUMN IF NOT EXISTS source VARCHAR(16) NULL");
                 // SDD-029: nights an operator removed; every re-ingest path
                 // consults it. night is YYYYMMDD (strDayForSessionStart).
                 // Reparse clears the row.
@@ -1052,6 +1104,13 @@ void DatabaseService::insertDesaturations(pqxx::work& work, int session_id,
             ON CONFLICT (session_id, event_timestamp) DO NOTHING
         )", session_id, oss.str(), d.duration_seconds, std::string(details));
     }
+}
+
+// SDD-001: the session's stored desaturations, before a save writes them again.
+void DatabaseService::deleteDesaturations(pqxx::work& work, int session_id) {
+    work.exec_params(
+        "DELETE FROM cpap_events WHERE session_id = $1 AND event_type = 'Desaturation'",
+        session_id);
 }
 
 void DatabaseService::insertBreaths(pqxx::work& work, int session_id,
@@ -1431,10 +1490,14 @@ bool DatabaseService::saveSession(const CPAPSession& session) {
             std::cout << "   Events: " << session.events.size() << std::endl;
         }
 
-        // 4a. Insert SpO2 desaturations (as Desaturation events)
-        if (!session.desaturations.empty()) {
-            insertDesaturations(txn, session_id, session.desaturations);
-            std::cout << "   Desaturations: " << session.desaturations.size() << std::endl;
+        // 4a. Insert SpO2 desaturations (as Desaturation events). SDD-001: at
+        // the threshold set in Settings, from this save's SpO2, replacing the
+        // session's stored ones.
+        const SessionDesaturations desat = desaturationsAt(session, desatDropPct());
+        if (desat.from_vitals) deleteDesaturations(txn, session_id);
+        if (!desat.events.empty()) {
+            insertDesaturations(txn, session_id, desat.events);
+            std::cout << "   Desaturations: " << desat.events.size() << std::endl;
         }
 
         // 4b. Insert breath-by-breath detail
@@ -1451,7 +1514,7 @@ bool DatabaseService::saveSession(const CPAPSession& session) {
 
         // 6. Insert session metrics
         if (session.metrics.has_value()) {
-            insertSessionMetrics(txn, session_id, session.metrics.value());
+            insertSessionMetrics(txn, session_id, withDesaturations(session.metrics.value(), desat));
             std::cout << "   Metrics saved (AHI: " << session.metrics->ahi << ")" << std::endl;
         }
 
@@ -2205,6 +2268,9 @@ std::optional<SessionMetrics> DatabaseService::getNightlyMetrics(
                      ELSE 0 END                                 AS usage_percent,
                 COALESCE()" + sql::round(sql::nightAhi("sm", "s"), 4, DbType::POSTGRESQL) + R"(, 0) AS ahi,
                 SUM(sm.unclassified_apneas)                     AS unclassified_apneas,
+                -- SDD-001: the night's desaturations and ODI (sql::nightOdi).
+                )" + sql::nightSpo2Drops("sm") + R"(             AS spo2_drops,
+                )" + sql::nightOdi("sm", "s") + R"(              AS odi,
                 CASE WHEN SUM(s.duration_seconds) > 0
                           AND SUM(sm.avg_event_duration * sm.total_events) IS NOT NULL
                      THEN round((SUM(sm.avg_event_duration * sm.total_events)
@@ -2296,6 +2362,10 @@ std::optional<SessionMetrics> DatabaseService::getNightlyMetrics(
         m.reras               = row["reras"].as<int>(0);
         m.clear_airway_apneas = row["clear_airway_apneas"].as<int>(0);
         m.unclassified_apneas = row["unclassified_apneas"].as<int>(0);   // SDD-047 D2
+        if (!row["spo2_drops"].is_null())   // SDD-001
+            m.spo2_drops = row["spo2_drops"].as<int>();
+        if (!row["odi"].is_null())
+            m.odi = row["odi"].as<double>();
 
         if (!row["avg_event_duration"].is_null())
             m.avg_event_duration = row["avg_event_duration"].as<double>();
@@ -2429,7 +2499,11 @@ std::vector<SessionMetrics> DatabaseService::getMetricsForDateRange(
                 MAX(sm.therapy_mode) AS therapy_mode,
                 -- Issue #78: the unclassified apnea is in the AHI, so a weekly
                 -- summary without it lists types that do not add up to it.
-                SUM(sm.unclassified_apneas)                     AS unclassified_apneas
+                SUM(sm.unclassified_apneas)                     AS unclassified_apneas,
+                -- SDD-072 D1: what getNightlyMetrics gives the same night, its
+                -- index kind (SDD-024) and its therapy pressure (SDD-030).
+                MAX(COALESCE(sm.index_kind, 'ahi'))             AS index_kind,
+                SUM(c.s_therapy) / NULLIF(SUM(c.n_therapy), 0)  AS avg_therapy_pressure
             FROM cpap_sessions s
             JOIN cpap_session_metrics sm ON sm.session_id = s.id
             LEFT JOIN (
@@ -2443,7 +2517,8 @@ std::vector<SessionMetrics> DatabaseService::getMetricsForDateRange(
                        SUM(mask_pressure) AS s_mask, COUNT(mask_pressure) AS n_mask,
                        SUM(epr_pressure) AS s_epr, COUNT(epr_pressure) AS n_epr,
                        SUM(snore_index) AS s_snore, COUNT(snore_index) AS n_snore,
-                       SUM(target_ventilation) AS s_tgt, COUNT(target_ventilation) AS n_tgt
+                       SUM(target_ventilation) AS s_tgt, COUNT(target_ventilation) AS n_tgt,
+                       SUM(therapy_pressure) AS s_therapy, COUNT(therapy_pressure) AS n_therapy
                 FROM cpap_calculated_metrics GROUP BY session_id
             ) c ON c.session_id = sm.session_id
             LEFT JOIN (
@@ -2532,6 +2607,10 @@ std::vector<SessionMetrics> DatabaseService::getMetricsForDateRange(
             if (!pgNull(r, 28)) m.leak_p95               = pgDbl(r, 28);
             if (!pgNull(r, 29)) m.therapy_mode           = pgInt(r, 29);
             m.unclassified_apneas = pgInt(r, 30);   // issue #78
+            m.index_kind = (pgStr(r, 31) == "ungraded")   // SDD-072 D1
+                               ? SessionMetrics::IndexKind::Ungraded
+                               : SessionMetrics::IndexKind::AHI;
+            if (!pgNull(r, 32)) m.avg_therapy_pressure = pgDbl(r, 32);
 
             nights.push_back(std::move(m));
         }
@@ -2557,7 +2636,8 @@ bool DatabaseService::saveSummary(
     double avg_ahi,
     double avg_usage_hours,
     double compliance_pct,
-    const std::string& summary_text) {
+    const std::string& summary_text,
+    const std::string& source) {
 
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!ensureConnection()) return false;
@@ -2567,14 +2647,14 @@ bool DatabaseService::saveSummary(
         std::string query =
             "INSERT INTO cpap_summaries"
             " (device_id, period, range_start, range_end, nights_count,"
-            "  avg_ahi, avg_usage_hours, compliance_pct, summary_text)"
+            "  avg_ahi, avg_usage_hours, compliance_pct, summary_text, source)"
             " VALUES (" + txn.quote(device_id) + ", " + txn.quote(period) + ", "
             + txn.quote(range_start) + "::date, " + txn.quote(range_end) + "::date, "
             + std::to_string(nights_count) + ", "
             + std::to_string(avg_ahi) + ", "
             + std::to_string(avg_usage_hours) + ", "
             + std::to_string(compliance_pct) + ", "
-            + txn.quote(summary_text) + ")";
+            + txn.quote(summary_text) + ", " + txn.quote(source) + ")";
         txn.exec(query);
         txn.commit();
         std::cout << "DB: Saved " << period << " summary (" << range_start
@@ -2755,7 +2835,7 @@ IDatabase::SessionKeyReport DatabaseService::inspectSessionKey() {
 static const char* const kSessionChildTables[] = {
     "cpap_session_files",  "cpap_session_metrics",   "cpap_breathing_summary",
     "cpap_breaths",        "cpap_events",            "cpap_vitals",
-    "cpap_calculated_metrics", "cpap_sleep_stages",
+    "cpap_calculated_metrics", "cpap_sleep_stages",   "cpap_computed_events",
 };
 
 IDatabase::SessionKeyRepair DatabaseService::repairSessionKey() {
@@ -3154,7 +3234,7 @@ bool DatabaseService::aggregateDailySummaryFromSessions(const std::string& devic
                 (device_id, record_date, duration_minutes, patient_hours,
                  ahi, hi, ai, oai, cai, uai, rin, mask_events, mask_pairs,
                  mask_press_50, leak_50, leak_95, spo2_50, epr_level, mode,
-                 index_source, updated_at)
+                 index_kind, index_source, updated_at)
             SELECT
                 s.device_id,
                 DATE(s.session_start - INTERVAL '12 hours') AS record_date,
@@ -3196,6 +3276,9 @@ bool DatabaseService::aggregateDailySummaryFromSessions(const std::string& devic
                         / NULLIF(SUM(CASE WHEN m.avg_epr_pressure > 0 THEN s.duration_seconds END), 0),
                     AVG(NULLIF(m.avg_epr_pressure, 0)))::numeric, 2),
                 MAX(COALESCE(m.therapy_mode, 0)),
+                -- SDD-024 / SDD-072 D1: the night's kind, as on SQLite (MAX
+                -- over text: any ungraded session makes the night ungraded).
+                MAX(COALESCE(m.index_kind, 'ahi')),
                 'computed',
                 NOW()
             FROM cpap_sessions s
@@ -3315,6 +3398,12 @@ static std::string fmtTs(std::chrono::system_clock::time_point tp) {
 
 bool DatabaseService::saveOximetrySession(const std::string& device_id,
                                            const cpapdash::parser::OximetrySession& session) {
+    return saveOximetrySessionFrom(device_id, session, OximetryOrigin{});
+}
+
+bool DatabaseService::saveOximetrySessionFrom(const std::string& device_id,
+                                               const cpapdash::parser::OximetrySession& session,
+                                               const OximetryOrigin& origin) {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!ensureConnection()) return false;
 
@@ -3328,9 +3417,11 @@ bool DatabaseService::saveOximetrySession(const std::string& device_id,
                  sample_interval, avg_spo2, min_spo2, spo2_baseline,
                  time_below_90, time_below_88, odi_3pct, desat_count,
                  avg_hr, min_hr, max_hr, valid_samples, total_samples,
-                 cpap_session_date)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
+                 cpap_session_date, source, device_name)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
             ON CONFLICT (filename) DO UPDATE SET
+                source = EXCLUDED.source,
+                device_name = EXCLUDED.device_name,
                 start_time = EXCLUDED.start_time,
                 end_time = EXCLUDED.end_time,
                 sample_interval = EXCLUDED.sample_interval,
@@ -3360,7 +3451,7 @@ bool DatabaseService::saveOximetrySession(const std::string& device_id,
             session.metrics.odi_3pct, session.metrics.desat_count_3pct,
             session.metrics.avg_hr, session.metrics.min_hr, session.metrics.max_hr,
             session.metrics.valid_samples, session.metrics.total_samples,
-            session.date_str()
+            session.date_str(), origin.source, origin.device_name
         );
 
         int session_id = r[0][0].as<int>();
@@ -3392,8 +3483,9 @@ bool DatabaseService::saveOximetrySession(const std::string& device_id,
 
         // The ring's own file for this night has landed: it supersedes the
         // live stand-in the bridge polled into, so that one goes, on this
-        // event and in this transaction.
-        if (!isLiveOximetryFilename(session.filename)) {
+        // event and in this transaction. SDD-078: a Garmin night is not the
+        // ring's file and leaves it.
+        if (!isLiveOximetryFilename(session.filename) && oximetryOriginSupersedesLive(origin.source)) {
             const std::string live_of_night =
                 "SELECT id FROM oximetry_sessions WHERE device_id = $1 AND " +
                 sql::isLiveOxiFilename("filename") + " AND " +
@@ -4418,7 +4510,8 @@ bool DatabaseService::upsertSyncFolder(const FolderLedger& f) {
 // ── platform SDD-059 D5: what CpapDash has acknowledged ──────────────────────
 
 namespace {
-constexpr const char* kCpapDashSentCols = "root, path, machine, acked_to, acked_md5, updated_at";
+constexpr const char* kCpapDashSentCols =
+    "root, path, machine, acked_to, acked_md5, updated_at, source";
 
 // Templated on the row type as rowToSyncFolder is: row_ref from a range-for,
 // row from operator[].
@@ -4431,6 +4524,7 @@ IDatabase::CpapDashSent rowToCpapDashSent(const Row& r) {
     s.acked_to   = r["acked_to"].template as<long long>(0);
     s.acked_md5  = r["acked_md5"].c_str();
     s.updated_at = r["updated_at"].c_str();
+    s.source     = r["source"].is_null() ? "" : r["source"].c_str();   // SDD-079 D3
     return s;
 }
 } // namespace
@@ -4481,14 +4575,17 @@ bool DatabaseService::upsertCpapDashSent(const CpapDashSent& row) {
     try {
         pqxx::work txn(*conn_);
         txn.exec_params(R"(
-            INSERT INTO cpapdash_sent (root, path, machine, acked_to, acked_md5, updated_at)
-            VALUES ($1, $2, $3, $4, $5, $6)
+            INSERT INTO cpapdash_sent (root, path, machine, acked_to, acked_md5, updated_at, source)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
             ON CONFLICT (root, path) DO UPDATE SET
                 machine    = EXCLUDED.machine,
                 acked_to   = EXCLUDED.acked_to,
                 acked_md5  = EXCLUDED.acked_md5,
-                updated_at = EXCLUDED.updated_at
-        )", row.root, row.path, row.machine, row.acked_to, row.acked_md5, row.updated_at);
+                updated_at = EXCLUDED.updated_at,
+                source     = EXCLUDED.source
+        )", row.root, row.path, row.machine, row.acked_to, row.acked_md5, row.updated_at,
+            // SDD-079 D3: "" is NULL, a row that never said its source.
+            row.source.empty() ? std::optional<std::string>{} : std::optional<std::string>{row.source});
         txn.commit();
         return true;
     } catch (const std::exception& e) {

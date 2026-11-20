@@ -597,7 +597,7 @@ void AirSense11BleClient::afterPull(const std::string& serial, const std::string
                   << " revised, " << str.total << " in the file" << std::endl;
     else std::cout << kTag << "STR.edf unchanged: " << str.why << std::endl;
     // platform SDD-059 D3: STR.edf, Identification and SETTINGS are on disk.
-    card_feed::rootWritten(root, serial);
+    card_feed::rootWritten(root, serial, card_feed::kSourceBleAs11);   // SDD-079 D1
 }
 
 std::string AirSense11BleClient::storedPullHeldBy(bool recording) {
@@ -732,7 +732,8 @@ bool AirSense11BleClient::streamOnce() {
             std::cout << kTag << "settings not read yet (" << session_.lastError()
                       << "): asked again on the next connect" << std::endl;
     }
-    card_feed::rootWritten(writer_->rootFor(serial), serial);   // platform SDD-059 D3
+    card_feed::rootWritten(writer_->rootFor(serial), serial,
+                           card_feed::kSourceBleAs11);   // platform SDD-059 D3, SDD-079 D1
 
     as11::SecondAssembler assembler([this](as11::StreamBlock&& b) { writer_->onBlock(b); });
     assembler.setSerial(serial);

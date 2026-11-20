@@ -32,6 +32,146 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   moved an hour. A night that ends by the clock ends on the machine's clock
   on all three databases (it was UTC on SQLite and MySQL, and the database
   server's zone on PostgreSQL).
+- **A DreamStation 2 card is read through the user's own OSCAR (SDD-080).**
+  hms-cpap never decrypts a card and ships no OSCAR. When the machine ends a
+  session (a `.B01` landing on the card copy: a Sleep Bridge's rebuild, an ez
+  Share's copy, a folder), hms-cpap runs the OSCAR installed on the same
+  computer with no window (`--datadir --profile --import PRS1 <card root>`,
+  never `--upgrade-database`) into a profile of its own, and on its exit reads
+  `oscar.db` query-only with its own SQL (OSCAR 2.1.1, schema 19 only):
+  sessions, events, per-minute rows and breaths from the flow, stored as
+  `card` (a `ble-ds2` copy of the same stretch is replaced). No timer: the
+  close starts a read, OSCAR's exit ends it, a close during a read is one more
+  read. Settings > Data Source gains the three OSCAR fields, checked on save
+  (`GET`/`PUT /api/oscar`); the Devices tile of the bridge or ez Share shows
+  the last read and "Read now" (`POST /api/oscar/read`). Five languages.
+  A Sleep Bridge on a DreamStation 2 is now a Philips source, not ResMed.
+  Docker and the Home Assistant add-on cannot run the host's OSCAR (the tile
+  says so).
+- **A DreamStation 2's encrypted `P-SERIES/` card files are sent to CpapDash
+  as card files (SDD-080, platform SDD-061 D10).** Normal card `file_ready`
+  frames with `source: "card"`, unopened; the open session's `.B05` goes as
+  ranges.
+- **A Luna night streamed by a Sleep Bridge is live on MQTT and in the log,
+  as a ResMed's is (SDD-058 D1).** The Luna's data file growing on the rebuilt
+  card is the mask on, and the same quiet rule takes it off; the mask change
+  names the session by its start (`YYYYMMDD_HHMMSS`) and says when it began
+  and when its last second was. When the Luna writes its `.evt` (at the
+  stop), its new obstructive and clear airway apneas go out as live events.
+- **Apneas computed from a Luna's flow are stored apart from the machine's,
+  behind a gate that is closed (SDD-058 D3 to D6).** A new table,
+  `cpap_computed_events`, and a new column, `cpap_session_metrics.index_events`
+  (`machine` by default), on SQLite, MySQL and PostgreSQL. With the gate open,
+  the machine's `.evt` wins its night once it is there and the session has
+  stopped; before that the computed apneas are the night's index (apnea-only,
+  so ungraded), never added to the machine's. Hypopneas pair the flow with the
+  O2 Ring's 3% desaturations, the ring's clock put on the machine's. The gate
+  stays closed until the computed index agrees with a reference on real
+  nights: nothing is computed, stored or shown in this release, and no screen
+  reads either.
+- **The local sleep model's harness (SDD-013), with no model yet.** A
+  Settings section, "Local Sleep Model", whose switch writes each night's
+  summary on this machine from the stored data, with no network. The section
+  stays hidden until a model is published. The job runs when a night closes (the SDD-046 quiet close),
+  never on a timer: the night is read through the database layer into the
+  shared night facts (SDD-072), the model is given only those facts, every
+  number and date it writes is checked against them, a rejected text is tried
+  once more at a lower temperature, and a second rejection gives a plain
+  template instead. Turning it on downloads the pinned model and checks its
+  SHA-256; "Load model from file" does the same check for an install with no
+  network. No model is published yet, so turning it on is refused with that
+  reason, and this build has no GGUF runtime linked, so no local summary is
+  written yet. Summaries now carry a `source` (`llm` for the configured LLM,
+  `local` for the local model) on SQLite, MySQL and PostgreSQL, and
+  `/api/summaries` returns it. New routes: `GET /api/local-model/status`,
+  `POST /api/local-model/enable`, `/disable` and `/file`.
+- **The local sleep model's training corpus pipeline (SDD-013), offline.**
+  `training/narrator/` generates synthetic nights from aggregate
+  distributions (an install's own nights, widened with published clinical
+  ranges), renders them with the runtime's own fact block, asks a teacher
+  model for each summary, keeps only those that pass the runtime's number and
+  date check, and writes train/val/test JSONL, a token histogram, a BPE
+  tokenizer and a Colab notebook that trains the ~64M model from scratch and
+  exports GGUF Q4. A new build tool, `hms_cpap_narrator_facts` (not
+  installed), runs the fact block and the check for it with no database.
+- **Each file sent to CpapDash says its source, and oximetry goes too
+  (SDD-079, platform SDD-061).** Every `file_ready` now carries `source`:
+  `card` for the machine's own card (ez Share, a local folder, a ZIP, a Sleep
+  Bridge's rebuild), `ble-as11` for a night built from an AirSense 11's
+  Bluetooth stream. Files sent before this release say theirs once, with a
+  zero-byte source note, before any new bytes of their folder go. Oximetry is
+  sent with "Send my nights to CpapDash" on: a ring's own recording byte for
+  byte, a Garmin night and a CSV upload as `hms-json` (Garmin on its own UTC
+  times), and live samples as they are stored. Each store writes the file
+  first, under `cpapdash/oximetry/` in the data folder, and the uploader sends
+  it after the night's card files; recordings stored before this release are
+  added on the next connection. A CpapDash that does not take oximetry yet is
+  not an error: oximetry waits for the next connection and card files carry
+  on. The CpapDash status gains `oximetry_acked` and `oximetry_state`
+  (`sending` or `held`). The upload index gains a `source` column on SQLite,
+  MySQL and PostgreSQL.
+- **A Sleep Bridge is set up entirely in the installer** (SDD-073). Choosing
+  the Sleep Bridge at first run now walks through every step, one a screen,
+  each with a picture of the hardware and a "Skip, I'll do it later": put the
+  machine's card in this computer and HmsCpap reads it (asking for the
+  computer's permission once, for the card's layout; a `.cpapcard` file
+  otherwise); put the bridge together; point it at this computer (its
+  address large, with Copy and a QR code); wait for the bridge, which then
+  becomes the source by itself (Local folder at its folder, its card format)
+  and the card's nights go in; put the extender in the machine and power it
+  off and on, until the machine's mount is seen (and says so if it is another
+  card); and, optionally, the CpapDash token and "Send my nights to
+  CpapDash". Every wait is for an event, never a clock. In the desktop app
+  (Windows, macOS; "Set up your Sleep Bridge..." in the menu brings it back)
+  and in the web wizard (Linux, Docker, Pi), in English, Spanish, French,
+  Hungarian and Portuguese.
+- **The Devices page and Settings > Source show each bridge's folder**, with
+  Copy, and a "Use this bridge as my source" button (SDD-073 D8, D10). No
+  path to type.
+- **Windows: the installer lets the Sleep Bridge through the firewall**: an
+  inbound rule for hms_cpap.exe on TCP 8894, private networks only, added
+  once (the one step that asks for Windows' permission) and removed on
+  uninstall (SDD-073 D7).
+- `hms_cpap --read-card`, `ws://.../api/sleepbridge/watch`, `POST
+  /api/sleepbridge/<bridge>/use` and `GET /api/sleepbridge/qr`, which the
+  setup steps use (docs/SLEEP_BRIDGE_LOCAL_STREAM.md).
+- **The Home Assistant add-on can keep its data directory under `/share`,
+  `/config` or `/media`** (SDD-067). hms-cpap gains a move mode,
+  `hms_cpap --move-data <from> <to> [--port N]`, which the add-on calls when
+  the data has to move. It never overwrites a file that exists at the
+  destination, leaves `options.json`, a copy of `config.json` and the marker
+  `.data_dir_moved` in `/data`, prints its progress to the log, and serves
+  only a progress page on the web port until it is done. When the add-on
+  cannot write the chosen directory, `GET /api/capabilities` reports
+  `data_dir_fallback` and every page shows a banner naming both directories.
+- **Garmin SpO2 is an oximetry source (SDD-078, #76).** With a Garmin email
+  and password in Settings (stored masked, like the CpapDash token), each
+  night's SpO2, heart rate and movement are read from Garmin Connect after the
+  night: when a CPAP night closes, when the dashboard or the night list is
+  opened, or with "Fetch from Garmin now" on the Devices page, which also asks
+  for Garmin's code when it wants one. Nothing runs on a timer. Garmin's API is
+  unofficial and can change; when it does, the Garmin card says so.
+- **Oximetry says where it came from.** Each recording now carries its source
+  (O2 Ring, Garmin, upload) and device name, and a night shows "Oximetry" with
+  the device, for example "Oximetry - Garmin Fenix 7X", instead of "O2 Ring"
+  for every source. `/api/upload/oximetry` accepts optional `source` and
+  `device_name` fields, so an outside importer can label what it sends.
+- **Desaturation threshold, ODI in Home Assistant, breath by breath on the
+  session page (SDD-001).** Settings has a desaturation threshold (how far SpO2
+  must fall below its recent baseline, 3 % by default, the AASM rule; 4 % is
+  the CMS rule). Nights saved after it changes store their desaturations, their
+  count and their ODI at that threshold, replacing the ones stored before, on
+  SQLite, MySQL and PostgreSQL. The night's ODI and desaturation count are new
+  Home Assistant sensors (`hist_odi`, `hist_spo2_drops`), published only for a
+  night with SpO2. On the session page the SpO2 card carries the night's ODI,
+  the event badges a desaturation count, every chart with event spans a colour
+  key, the machine's SpO2 chart its stored desaturations (and the flow, pressure
+  and leak charts no longer draw them), and the flow chart, zoomed to a minute,
+  marks each breath. A new tile charts flow limitation per breath.
+- MySQL: `cpap_session_metrics.spo2_drops` is added to a table created before
+  the column existed.
+- `GET /api/sessions/{date}/breaths` answers column by column (`onset`,
+  `tidal_volume`, `inspiratory_time`, `expiratory_time`, `flow_limitation`).
 - **An AirSense 11 night the stream missed is filled from the machine's
   stored pages (SDD-070, #61, #62).** After a night, the Summary pull also
   reads the machine's stored pages for each night with usage: its respiratory
@@ -47,8 +187,74 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on a timer: the pull follows the Summary pull, never while the machine
   records, a night streams or an O2 Ring transfer runs; a night not read to
   the end is asked for again by the next Summary pull.
+- **A live night on an ez Share card with no listing (SDD-069).** On firmware
+  4.4.0, which lists nothing, each burst now asks the card only what can have
+  changed while therapy runs: the next 8.3 alias of tonight's folder (one
+  request per name stem; the three-miss scan stays for the daily index and a
+  re-list), and the files of the open session. A session the card has
+  finished (its BRP held to the end and unchanged in size and record count
+  across two bursts, or followed by a new BRP) is asked about again only 5,
+  35 and 65 minutes after its last growth. A file that answers with the
+  welcome page, or a transfer that stalls, changes nothing. The probe reads
+  the record duration with the record count, and a BRP that grows teaches the
+  machine's clock, so tonight's folder follows the machine's day rather than
+  the host's zone. STR.edf is no longer read on every burst: it is read with
+  the daily index and 65 minutes after the night's growth stops, never while
+  the night grows. This card publishes no mask on or off: it holds no file
+  dates. Its night is complete only when every file is held to its exact
+  size; a BRP the card never lets reach its end leaves the night partial
+  after its hour of quiet, until a later burst gets the rest. Shown on
+  synthetic tests only: no live night on this card has been logged yet.
+
+### Changed
+- **A Garmin SpO2 reading counts without a pulse (SDD-078, decided
+  2026-11-19).** Validity is per field: an SpO2 epoch with no heart rate
+  within 2 minutes keeps its SpO2 in the metrics and the chart, and its pulse
+  is left blank (a gap in the chart, never 0 bpm). The night's pulse figures
+  are of the samples that have one.
+- **The AI is given facts that add up, and says only those (SDD-072).** The
+  daily summary, the weekly and monthly summaries and the chat agent now read
+  one set of facts per night instead of three hand-built ones: the events
+  behind the index by type (obstructive, central, clear airway, unclassified,
+  hypopnea), RERAs and other recorded types beside them, so the parts always
+  equal the night's total. A night from a machine that detects no hypopneas
+  carries no AHI and no per-type zeros anywhere, including the weekly and
+  monthly text, which used to grade and average it. A figure the night does
+  not have is left out, never shown as 0 (a night with no usage recorded
+  reads "Usage: not recorded", not "0.00 hours"). The rules for reporting
+  them travel with the facts, so they reach a custom `LLM_PROMPT_FILE` too.
+- **Every number in a summary is checked against the data it was given.**
+  After the model writes a daily, weekly or monthly summary, each sentence
+  that states a number not in its data (allowing for rounding) is asked for
+  once more. If the second answer still fails, the sentence is kept and the
+  summary ends with a line saying it holds an unverified figure. Works the same
+  with Ollama, Gemini, OpenAI or any other provider.
+- **The chat agent runs on SQLite and MySQL, not only PostgreSQL.** Its seven
+  tools read through the database layer, and their answers are the same night
+  facts the summaries use. Its prompt no longer tells the model to flag
+  "AHI > 5" for every machine; every number it states must come from a tool
+  result, and a list that was cut short says so. Conversation memory
+  (pgvector) is still PostgreSQL's only; on SQLite and MySQL each question is
+  answered on its own.
+- **`llm_prompt.txt` is machine-neutral.** The example prompt for
+  `LLM_PROMPT_FILE` described an AirSense 10 and asked for AHI severity on
+  every machine; it now grades the AHI only where the data gives one.
 
 ### Fixed
+- **The local sleep model is given the night's STR row, as the daily summary
+  is (SDD-013).** It was given the stored night alone, so every ResMed night
+  reached it as "Therapy mode: CPAP" (no ResMed session stores its mode) and
+  without the machine's own daily figures. The night's STR row now goes with
+  the night-closed event, naming the mode through the machine's family (APAP,
+  VAuto, ASV); a night the card has no STR row for yet has no mode line rather
+  than a wrong one.
+- **A Luna night takes the events the machine writes at the stop (SDD-058
+  D2).** The Luna writes its `.evt` when therapy stops, after the last second
+  the session grew by, and the night was saved again only when it grew, so the
+  newest night's apneas waited for the next restart. A change in the machine's
+  events now saves the night again, without reopening it as live. A card the
+  machine has not stopped on yet (no `.evt` beside its `.000`) is read from
+  its data files, with no events until the `.evt` arrives.
 - **An SD card import no longer reopens finished nights, and the card's
   files always replace ones built from Bluetooth** (#85, SDD-077). The SD/ZIP
   import and the collector recorded file sizes differently, so every imported

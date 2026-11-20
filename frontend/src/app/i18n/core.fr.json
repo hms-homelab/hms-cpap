@@ -29,9 +29,9 @@
     "targetVentilation": "Ventilation cible",
     "spo2": "SpO2",
     "heartRate": "Fréquence cardiaque",
-    "o2ringSpo2": "SpO2 de l'O2Ring",
-    "o2ringHeartRate": "Fréquence cardiaque de l'O2Ring",
-    "o2ringMotion": "Mouvement de l'O2Ring"
+    "o2ringSpo2": "SpO2 (oxymétrie)",
+    "o2ringHeartRate": "Fréquence cardiaque (oxymétrie)",
+    "o2ringMotion": "Mouvement (oxymétrie)"
   },
   "nav": {
     "dashboard": "Tableau de bord",
@@ -48,6 +48,10 @@
     "configError": {
       "title": "Aucune donnée n'est importée.",
       "action": "Ouvrir les paramètres"
+    },
+    "dataDirFallback": {
+      "title": "Le dossier de données n'a pas pu être écrit.",
+      "body": "CpapDash n'a pas pu écrire dans {{wanted}} ; cette exécution garde donc ses données dans {{in_use}}. Rendez ce dossier accessible en écriture, puis redémarrez CpapDash dans Home Assistant."
     }
   }
 }

@@ -1,6 +1,7 @@
 #include "devices/Devices.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <vector>
 
 namespace hms_cpap::devices {
@@ -19,6 +20,7 @@ int kindRank(const std::string& kind) {
     if (kind == "ezshare")   return 4;
     if (kind == "flashair")  return 5;
     if (kind == "o2ring")    return 100;   // an accessory
+    if (kind == "garmin")    return 101;   // SDD-078: an oximetry source, after the ring
     return 50;                              // a CPAP-side kind this list does not know
 }
 
@@ -37,6 +39,17 @@ Json::Value entry(const std::string& kind, const std::string& id, const std::str
     d["forgettable"]      = forgettableKind(kind);
     d["detail"]           = Json::Value(Json::objectValue);
     return d;
+}
+
+/// One folder however it was spelled (a trailing slash, a "./").
+bool samePath(const std::string& a, const std::string& b) {
+    if (a.empty() || b.empty()) return false;
+    auto norm = [](const std::string& p) {
+        std::string s = std::filesystem::path(p).lexically_normal().generic_string();
+        while (s.size() > 1 && s.back() == '/') s.pop_back();
+        return s;
+    };
+    return norm(a) == norm(b);
 }
 
 void ledgerRecording(Json::Value& d, const std::string& live) {
@@ -77,7 +90,7 @@ void trimCommands(Json::Value& detail) {
 
 bool knownKind(const std::string& kind) {
     return kind == "mule" || kind == "sleepbridge" || kind == "o2ring" || kind == "ezshare" || kind == "flashair" ||
-           kind == "as11_ble" || kind == "ds2_ble";
+           kind == "as11_ble" || kind == "ds2_ble" || kind == "garmin";
 }
 
 bool forgettableKind(const std::string& kind) { return kind == "mule" || kind == "sleepbridge"; }
@@ -137,6 +150,9 @@ Json::Value buildDevices(const DeviceInputs& in, DevicesStore& store) {
             d["version"]          = b.get("fw_version", "").asString();
             Json::Value detail = b;
             trimCommands(detail);
+            if (in.oscar.isObject() && samePath(in.oscar.get("card_root", "").asString(),
+                                                b.get("card_root", "").asString()))
+                detail["oscar"] = in.oscar;   // SDD-080 D7
             d["detail"] = detail;
             list.push_back(d);
         }
@@ -179,6 +195,23 @@ Json::Value buildDevices(const DeviceInputs& in, DevicesStore& store) {
         list.push_back(d);
     }
 
+    // ── SDD-078: Garmin Connect, an oximetry source read after the night ──
+    if (in.garmin_enabled) {
+        Json::Value d = entry("garmin", "garmin", "Garmin");
+        Json::Value detail = in.garmin.isObject() ? in.garmin : Json::Value(Json::objectValue);
+        const std::string watch = detail.get("device_name", "").asString();
+        if (!watch.empty()) d["default_name"] = watch;
+        const std::string state = detail.get("state", "").asString();
+        if (state == "signed_in") d["present"] = "yes";
+        else if (state == "error" || state == "not_set_up") d["present"] = "no";   // signed out: unknown
+        if (detail["last_fetch"].isObject()) d["last_heard"] = detail["last_fetch"].get("at", 0);
+        // Read after the night, from Garmin's servers: never recording from here.
+        d["recording"]        = "unknown";
+        d["recording_reason"] = "read from Garmin Connect after the night";
+        d["detail"] = detail;
+        list.push_back(d);
+    }
+
     // ── The card, read by this host over WiFi ──
     if (in.transport == "ezshare" || in.transport == "flashair") {
         const bool flashair = in.transport == "flashair";
@@ -211,6 +244,7 @@ Json::Value buildDevices(const DeviceInputs& in, DevicesStore& store) {
             d["version"]     = in.source_probe.get("bridge_fw", "").asString();
         }
         ledgerRecording(d, in.ledger_live);
+        if (!flashair && in.oscar.isObject()) detail["oscar"] = in.oscar;   // SDD-080 D7
         d["detail"] = detail;
         list.push_back(d);
     }

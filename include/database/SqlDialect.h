@@ -102,6 +102,19 @@ inline std::string tsText(const std::string& col, DbType type) {
     return col;
 }
 
+// A timestamp column cut to its minute, as text: "2026-08-12 07:24:00".
+// SDD-072 D4: the agent's per-minute vitals, on every engine (it was
+// date_trunc, PostgreSQL only).
+inline std::string minuteText(const std::string& col, DbType type) {
+    switch (type) {
+        case DbType::POSTGRESQL:
+            return "to_char(date_trunc('minute', " + col + "), 'YYYY-MM-DD HH24:MI:SS')";
+        case DbType::MYSQL:      return "DATE_FORMAT(" + col + ", '%Y-%m-%d %H:%i:00')";
+        case DbType::SQLITE:     return "strftime('%Y-%m-%d %H:%M:00', " + col + ")";
+    }
+    return col;
+}
+
 // ── A night's respiratory indexes (SDD-047 D2) ──────────────────────────────
 //
 // ONE formula for every reader of a night's index: the night's typed event
@@ -147,6 +160,24 @@ inline std::string nightAhi(const std::string& m, const std::string& s) {
     return perNightHour(nightApneasAndHypopneas(m), s);
 }
 
+// ── A night's SpO2 desaturations (SDD-001) ──────────────────────────────────
+//
+// Over the night's sessions that recorded SpO2 (avg_spo2 > 0) and no others: a
+// session without SpO2 has no desaturations to count, and its hours are not
+// hours the ODI was measured over. NULL for a night with no SpO2 at all, so a
+// night without an oximeter publishes no ODI rather than an ODI of zero.
+
+/// The night's desaturation count.
+inline std::string nightSpo2Drops(const std::string& m) {
+    return "SUM(CASE WHEN " + m + ".avg_spo2 > 0 THEN " + m + ".spo2_drops END)";
+}
+
+/// The night's ODI: its desaturations per hour of the sessions that recorded SpO2.
+inline std::string nightOdi(const std::string& m, const std::string& s) {
+    return "(" + nightSpo2Drops(m) + ") * 3600.0 / NULLIF(SUM(CASE WHEN " + m +
+           ".avg_spo2 > 0 THEN " + s + ".duration_seconds END), 0)";
+}
+
 /// The daily summary's seven index columns, in its order ahi, hi, ai, oai,
 /// cai, uai, rin, each rounded to the two places it stores. uai is the
 /// unclassified apneas, as in computeIndexes and the STR's own UAI; a
@@ -177,6 +208,16 @@ inline std::string nightIndexColumns(const std::string& m, const std::string& s,
 //
 // SUBSTR rather than LIKE 'live\_%': the three engines disagree on LIKE's
 // escape character, and an unescaped '_' matches any character.
+
+/// SDD-078 D3: rows stored before oximetry_sessions had a source (or by a
+/// writer that does not set one, the live ring stream) get one: a CSV only
+/// ever came in through the upload page, everything else is the ring's. Run
+/// on every start; a row the new writers store already has its source. The
+/// same statement on all three engines.
+inline std::string oxiSourceBackfill() {
+    return "UPDATE oximetry_sessions SET source = CASE WHEN LOWER(filename) LIKE '%.csv'"
+           " THEN 'upload' ELSE 'o2ring' END WHERE source IS NULL";
+}
 
 /// True when [col] names a live session (live_<date>.vld).
 inline std::string isLiveOxiFilename(const std::string& col) {

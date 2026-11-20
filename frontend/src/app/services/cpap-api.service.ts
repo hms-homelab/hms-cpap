@@ -1,7 +1,7 @@
 import { Injectable } from '@angular/core';
 import { HttpClient, HttpParams } from '@angular/common/http';
 import { Observable } from 'rxjs';
-import { DashboardData, SessionListItem, SessionDetail, SessionEvent, EventRow, TrendPoint, SignalData, VitalsData, OximetryData, MyAirComparisonRow } from '../models/session.model';
+import { DashboardData, SessionListItem, SessionDetail, SessionEvent, EventRow, TrendPoint, SignalData, VitalsData, OximetryData, MyAirComparisonRow, BreathData } from '../models/session.model';
 import { AppConfig, DiscoveredDevice } from '../models/config.model';
 import { EquipmentType, EquipmentProfile, EquipmentItem, EquipmentItemPayload } from '../models/equipment.model';
 import { CleaningTask, CleaningTaskType, CleaningSuggestResult } from '../models/cleaning.model';
@@ -38,8 +38,14 @@ export class CpapApiService {
     return this.http.get<any>('/api/realtime');
   }
 
-  getSessions(limit = 20, offset = 0): Observable<SessionListItem[]> {
-    const params = new HttpParams().set('limit', limit).set('offset', offset);
+  /**
+   * `opened`: this is the list being opened, not refreshed. SDD-078 D2: the
+   * opening is an event that asks Garmin for a night still missing; a refresh
+   * must not be one, or the refresh timer would become a polling loop.
+   */
+  getSessions(limit = 20, offset = 0, opened = false): Observable<SessionListItem[]> {
+    let params = new HttpParams().set('limit', limit).set('offset', offset);
+    if (opened) params = params.set('opened', 1);
     return this.http.get<SessionListItem[]>('/api/sessions', { params });
   }
 
@@ -295,6 +301,20 @@ export class CpapApiService {
     return this.http.get<SleepBridgeStatus>('/api/sleepbridge');
   }
 
+  /**
+   * SDD-073 D4 / D8: this bridge's folder becomes the source (Local folder,
+   * its card format). restart: true restarts hms-cpap in place (Devices page);
+   * the web wizard sends false, its own finish restarts.
+   */
+  useSleepBridge(sender: string, restart: boolean): Observable<SleepBridgeUse> {
+    return this.http.post<SleepBridgeUse>(`/api/sleepbridge/${encodeURIComponent(sender)}/use`, { restart });
+  }
+
+  /** SDD-073 D3: a QR code of `text`, as rows of '0' and '1' (no quiet zone). */
+  getSleepBridgeQr(text: string): Observable<{ size: number; rows: string[] }> {
+    return this.http.get<{ size: number; rows: string[] }>('/api/sleepbridge/qr', { params: { text } });
+  }
+
   /** A firmware image file to one bridge, sent over its own stream connection. */
   uploadSleepBridgeImage(sender: string, file: File, confirm = false): Observable<any> {
     const fd = new FormData();
@@ -361,8 +381,9 @@ export class CpapApiService {
     return this.http.get<OximetryData>(`/api/sessions/${date}/oximetry`, { params });
   }
 
-  getSessionBreaths(date: string): Observable<{ onset: string[]; tidal_volume: number[]; inspiratory_time: number[]; expiratory_time: number[]; flow_limitation: number[] }> {
-    return this.http.get<any>(`/api/sessions/${date}/breaths`);
+  /** SDD-001 F3: the night's breaths, column-oriented. */
+  getSessionBreaths(date: string): Observable<BreathData> {
+    return this.http.get<BreathData>(`/api/sessions/${date}/breaths`);
   }
 
   getSessionEvents(date: string): Observable<SessionEvent[]> {
@@ -506,6 +527,52 @@ export class CpapApiService {
 
   collectOximetry(): Observable<any> {
     return this.http.post<any>('/api/oximetry/collect', {});
+  }
+
+  /** SDD-078: "Fetch from Garmin now" (an event, D2). 202 accepted, 409 when not set up. */
+  garminFetch(): Observable<any> {
+    return this.http.post<any>('/api/garmin/fetch', {});
+  }
+
+  /** SDD-080 D7: the OSCAR fields, the program found, the last check, the reader. */
+  getOscar(): Observable<any> {
+    return this.http.get<any>('/api/oscar');
+  }
+
+  /** SDD-080 D7: the three fields saved, each checked; the answer carries the check. */
+  saveOscar(s: { program: string; data_dir: string; profile: string }): Observable<any> {
+    return this.http.put<any>('/api/oscar', s);
+  }
+
+  /** SDD-080 D7: "Read now", one OSCAR read of the card. 409 until an encrypted card was found. */
+  oscarReadNow(): Observable<any> {
+    return this.http.post<any>('/api/oscar/read', {});
+  }
+
+  /** SDD-078 D4: the code Garmin asked for, entered on the Devices page. */
+  garminMfa(code: string): Observable<any> {
+    return this.http.post<any>('/api/garmin/mfa', { code });
+  }
+
+  /** SDD-013: the local sleep model's state, for its Settings section. */
+  getLocalModelStatus(): Observable<any> {
+    return this.http.get<any>('/api/local-model/status');
+  }
+
+  /** SDD-013: the switch on. 202 (on, or the download queued); 409 with the reason. */
+  enableLocalModel(): Observable<any> {
+    return this.http.post<any>('/api/local-model/enable', {});
+  }
+
+  disableLocalModel(): Observable<any> {
+    return this.http.post<any>('/api/local-model/disable', {});
+  }
+
+  /** SDD-013: "Load model from file", for an install with no network. */
+  loadLocalModelFile(file: File): Observable<any> {
+    const fd = new FormData();
+    fd.append('file', file, file.name);
+    return this.http.post<any>('/api/local-model/file', fd);
   }
 
   exportSleepHq(date: string): Observable<any> {
@@ -788,6 +855,23 @@ export interface SleepBridge {
   card_format: string;
   /** The card learned on a computer this bridge holds (a .cpapcard), or null. */
   learned: SleepBridgeLearned | null;
+  /** SDD-073: the bridge's folder, read as a Local folder source. */
+  card_root?: string;
+  /** SDD-073: the latest real hello in this run (epoch s), 0 none. */
+  session_started_at?: number;
+  /** SDD-073: the latest card statement in this run (epoch s), 0 none. */
+  card_stated_at?: number;
+}
+
+/** SDD-073: POST /api/sleepbridge/{sender}/use. */
+export interface SleepBridgeUse {
+  ok: boolean;
+  local_dir?: string;
+  format?: string;
+  format_known?: boolean;
+  restarting?: boolean;
+  restart_mode?: string;
+  error?: string;
 }
 
 /** A learned card on one bridge, and whether the bridge latched it. */

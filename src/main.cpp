@@ -9,6 +9,9 @@
 #include "controllers/MuleSocket.h"
 #include "controllers/MuleDs2Routes.h"
 #include "controllers/DevicesRoutes.h"
+#include "controllers/SetupWatch.h"
+#include "controllers/LocalModelRoutes.h"
+#include "model/LocalModelService.h"
 #include "sleepbridge/ReleaseFeed.h"
 #include "mule/LivePublisher.h"
 #include "mqtt/LiveState.h"
@@ -18,14 +21,18 @@
 #include "services/CpapDashLink.h"
 #include "services/CpapDashStream.h"
 #include "services/CardUpload.h"
+#include "services/GarminService.h"
 #include "services/CpapCard.h"
 #include "sleepbridge/LearnedCard.h"
+#include "sleepbridge/CardReadCli.h"
 #include "services/OximetryImport.h"
+#include "services/OximetryOutbox.h"
 #include "services/RemovedNights.h"
 #include "services/SetupService.h"
 #include "services/SupplyPublisher.h"
 #include "services/MyAirService.h"
 #include "web/IngressBase.h"
+#include "web/DataMoveServer.h"
 #include "web/QueryService.h"
 #ifndef _WIN32
 #include "services/ReportGeneratorService.h"
@@ -44,9 +51,7 @@
 #include "database/DatabaseService.h"
 #include "database/PostgresDatabase.h"
 #endif
-#ifdef WITH_POSTGRESQL
 #include "agent/AgentService.h"
-#endif
 #include "services/MLTrainingService.h"
 #include "services/BackfillService.h"
 #include <cpapdash/parser/OximetryCsv.h>
@@ -100,9 +105,7 @@ std::atomic<bool> shutdown_requested(false);
 /// event-loop thread"), and the supervisor saw exit 1 instead of 42.
 std::atomic<int> requested_exit_code(0);
 std::unique_ptr<hms_cpap::BurstCollectorService> burst_service;
-#ifdef WITH_POSTGRESQL
 std::unique_ptr<hms_cpap::AgentService> agent_service;
-#endif
 std::unique_ptr<hms_cpap::MLTrainingService> ml_service;
 std::unique_ptr<hms_cpap::BackfillService> backfill_service;
 
@@ -112,9 +115,7 @@ std::unique_ptr<hms_cpap::BackfillService> backfill_service;
 void requestShutdown() {
     shutdown_requested = true;
     if (burst_service) burst_service->stop();
-#ifdef WITH_POSTGRESQL
     if (agent_service) agent_service->stop();
-#endif
     if (ml_service) ml_service->stop();
     if (backfill_service) backfill_service->stop();
 #ifdef BUILD_WITH_WEB
@@ -503,6 +504,11 @@ int main(int argc, char** argv) {
     // Bluetooth and exit, before any config, log or database is touched. A
     // diagnostic: it never connects to anything.
     for (int i = 1; i < argc; ++i) {
+        // SDD-073 D1: `--read-card <device> --card-root <folder> --out <file>`:
+        // the installer's one elevated step, a read-only read of a card into
+        // a .cpapcard. Nothing else runs (sleepbridge/CardReadCli.h).
+        if (std::strcmp(argv[i], "--read-card") == 0)
+            return hms_cpap::sleepbridge::runReadCard(std::vector<std::string>(argv + 1, argv + argc));
         if (std::strcmp(argv[i], "--ble-scan") == 0) {
             int seconds = 10;
             if (i + 1 < argc) {
@@ -564,15 +570,19 @@ int main(int argc, char** argv) {
     // --test-db and --create-db join --preflight here for the same reason: they
     // are short-lived probes a GUI blocks on, so nothing may hold their exit
     // open, and their whole output is the report the caller reads back.
+    // SDD-067: --move-data too. The support log lives in the data directory,
+    // which is the thing being moved.
     bool preflight_only = false;
     bool db_probe_mode  = false;
     bool db_provision   = false;
+    int  move_data_at   = 0;
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--preflight") == 0) preflight_only = true;
         if (std::strcmp(argv[i], "--test-db") == 0)   db_probe_mode  = true;
         if (std::strcmp(argv[i], "--create-db") == 0) { db_probe_mode = true; db_provision = true; }
+        if (std::strcmp(argv[i], "--move-data") == 0) move_data_at = i;
     }
-    if (!preflight_only && !db_probe_mode) {
+    if (!preflight_only && !db_probe_mode && move_data_at == 0) {
         hms_cpap::FileLogger::start(hms_cpap::FileLogger::defaultPath(),
                                     5 * 1024 * 1024, 3);
         std::atexit([] { hms_cpap::FileLogger::stop(); });
@@ -614,6 +624,25 @@ int main(int argc, char** argv) {
         const auto result = hms_cpap::runDbProbeCli(request, db_provision);
         std::cout << result.json;
         return result.exit_code;
+    }
+
+    // SDD-067 D18: `--move-data <from> <to> [--port N]`. The Home Assistant
+    // add-on's run.sh calls it when the data directory has to move, before
+    // the normal start; like --test-db it runs before the configuration and
+    // the database are touched. It moves, serves only the progress page on
+    // the web port, and exits 0 when the move is complete.
+    if (move_data_at > 0) {
+        if (move_data_at + 2 >= argc) {
+            std::cerr << "usage: --move-data <from> <to> [--port N]" << std::endl;
+            return 2;
+        }
+        int port = 8893;
+        for (int i = 1; i + 1 < argc; ++i) {
+            if (std::strcmp(argv[i], "--port") == 0) {
+                try { port = std::stoi(argv[i + 1]); } catch (...) {}
+            }
+        }
+        return hms_cpap::datamove::runMoveDataMode(argv[move_data_at + 1], argv[move_data_at + 2], port);
     }
 
     // ── Load AppConfig ──────────────────────────────────────────────
@@ -766,6 +795,9 @@ int main(int argc, char** argv) {
     std::string port_str  = std::to_string(config.web_port);
     portableSetenv("BURST_INTERVAL", burst_str.c_str());
     portableSetenv("HEALTH_CHECK_PORT", port_str.c_str());
+    // SDD-001: every engine's saveSession reads it at use time (utils/Desaturation.h).
+    std::string desat_str = std::to_string(config.desat_drop_pct);
+    portableSetenv("DESAT_DROP_PCT", desat_str.c_str());
     if (!config.local_dir.empty()) portableSetenv("CPAP_LOCAL_DIR", config.local_dir.c_str());
     // SDD-006: the burst collector and the archive path both read this through
     // ConfigManager, so bridging it here is what makes a wizard-set archive
@@ -1057,8 +1089,8 @@ int main(int argc, char** argv) {
                       << ", min_days: " << config.ml_training.min_days << ")" << std::endl;
         }
 
-#ifdef WITH_POSTGRESQL
-        // Start Agent module if enabled
+        // Start Agent module if enabled. SDD-072 D4: on every engine; its
+        // tools read through IDatabase.
         std::string agent_enabled = hms_cpap::ConfigManager::get("AGENT_ENABLED", "false");
         if (agent_enabled == "true" || agent_enabled == "1") {
             std::string agent_provider = hms_cpap::ConfigManager::get("AGENT_LLM_PROVIDER", "ollama");
@@ -1095,15 +1127,25 @@ int main(int argc, char** argv) {
                 agent_llm = std::make_shared<hms_cpap::AgentLLM>(llm_client, agent_embed);
             }
 
-            // Build DB connection string for agent
-            std::string a_db_host = hms_cpap::ConfigManager::get("DB_HOST", "localhost");
-            std::string a_db_port = hms_cpap::ConfigManager::get("DB_PORT", "5432");
-            std::string a_db_name = hms_cpap::ConfigManager::get("DB_NAME", "cpap_monitoring");
-            std::string a_db_user = hms_cpap::ConfigManager::get("DB_USER", "maestro");
-            std::string a_db_pass = hms_cpap::ConfigManager::get("DB_PASSWORD", "");
-            std::string a_conn_str = "host=" + a_db_host + " port=" + a_db_port +
-                                     " dbname=" + a_db_name + " user=" + a_db_user +
-                                     " password=" + a_db_pass;
+            // The tools' own connection (client libraries are not thread-safe),
+            // as the ML service does; SQLite shares the service's.
+            std::shared_ptr<hms_cpap::IDatabase> agent_db;
+            if (config.database.type == "sqlite") {
+                agent_db = db;
+            } else {
+                agent_db = hms_cpap::makeDatabaseFromConfig();
+                agent_db->connect();
+            }
+
+            // The pgvector memory's connection: PostgreSQL only.
+            std::string a_conn_str;
+            if (agent_db->dbType() == hms_cpap::DbType::POSTGRESQL) {
+                a_conn_str = "host=" + hms_cpap::ConfigManager::get("DB_HOST", "localhost") +
+                             " port=" + hms_cpap::ConfigManager::get("DB_PORT", "5432") +
+                             " dbname=" + hms_cpap::ConfigManager::get("DB_NAME", "cpap_monitoring") +
+                             " user=" + hms_cpap::ConfigManager::get("DB_USER", "maestro") +
+                             " password=" + hms_cpap::ConfigManager::get("DB_PASSWORD", "");
+            }
 
             std::string device_id = hms_cpap::ConfigManager::get("CPAP_DEVICE_ID", hms_cpap::AppConfig::kDefaultDeviceId);
 
@@ -1125,12 +1167,12 @@ int main(int argc, char** argv) {
             auto agent_mqtt = std::make_shared<hms::MqttClient>(amqtt_cfg);
             agent_mqtt->connect();
 
-            agent_service = std::make_unique<hms_cpap::AgentService>(agent_cfg, agent_mqtt, agent_llm);
+            agent_service = std::make_unique<hms_cpap::AgentService>(agent_cfg, agent_mqtt,
+                                                                     agent_llm, agent_db);
             agent_service->start();
 
             std::cout << "Agent: AI module enabled (model: " << agent_model << ")" << std::endl;
         }
-#endif // WITH_POSTGRESQL
 
 #ifdef BUILD_WITH_WEB
         // Start web UI server (Drogon blocks until shutdown)
@@ -1229,21 +1271,95 @@ int main(int argc, char** argv) {
                         config.sleep_bridge.enabled, data_dir,
                         config.transport == "local" ? config.local_dir : std::string());
                 });
+                // SDD-079 D4: the oximetry outbox, written at every oximetry
+                // store; D7: recordings stored before 7.0.0 join it on every
+                // walk.
+                hms_cpap::oximetry_outbox::setRoot(hms_cpap::oximetry_outbox::rootFor(data_dir));
+                cpapdash_stream->setOximetryBackfill([stream_db, data_dir] {
+                    const std::string archive = hms_cpap::ConfigManager::get(
+                        "CPAP_ARCHIVE_DIR",
+                        (std::filesystem::path(data_dir) / "cpap_data").string());
+                    hms_cpap::oximetry_outbox::backfill(*stream_db, archive);
+                });
                 cpapdash_stream->apply({config.cpapdash.stream, config.cpapdash.token});
                 hms_cpap::card_feed::setSinks(
                     [s = cpapdash_stream](const std::string& root, const std::string& rel,
-                                          const std::string& machine) {
-                        s->fileWritten(root, rel, machine);
+                                          const std::string& machine, const std::string& source) {
+                        s->fileWritten(root, rel, machine, source);
                     },
-                    [s = cpapdash_stream](const std::string& root, const std::string& machine) {
-                        s->rootWritten(root, machine);
+                    [s = cpapdash_stream](const std::string& root, const std::string& machine,
+                                          const std::string& source) {
+                        s->rootWritten(root, machine, source);
                     },
                     [s = cpapdash_stream](const std::string& root) { s->burstEnded(root); });
                 hms_cpap::CpapController::setStreamService(cpapdash_stream);
+                // SDD-073 D6: "Connected to CpapDash" as it happens.
+                cpapdash_stream->setStateListener([](const hms_cpap::CpapDashStreamer::Status& st) {
+                    hms_cpap::SetupWatch::streamEvent(st.toJson());
+                });
+                hms_cpap::SetupWatch::setStreamSource(
+                    [w = std::weak_ptr<hms_cpap::CpapDashStreamer>(cpapdash_stream)] {
+                        if (auto s = w.lock()) return s->status().toJson();
+                        Json::Value v(Json::objectValue);
+                        v["state"] = "unavailable";
+                        return v;
+                    });
                 cpapdash_stream->start();
                 if (config.cpapdash.stream && config.cpapdash.token.empty())
                     std::cout << "CpapDash nights: switched on but no token set - nothing is sent"
                               << std::endl;
+            }
+
+            // SDD-078: Garmin SpO2 as an oximetry source. Built even when it is
+            // off, so turning it on in Settings needs no restart. Asked only on
+            // events (D2): a night's close, the dashboard or night list being
+            // opened, the Devices page's button, the settings saved.
+            std::shared_ptr<hms_cpap::GarminService> garmin;
+            {
+                std::shared_ptr<hms_cpap::IDatabase> garmin_db = db;
+                if (config.database.type != "sqlite") {
+                    garmin_db = hms_cpap::makeDatabaseFromConfig();
+                    garmin_db->connect();
+                }
+                hms_cpap::GarminService::Deps gd;
+                gd.db             = garmin_db;
+                gd.config         = &config;
+                gd.config_path    = config_path;
+                gd.cpap_device_id = config.device_id;
+                garmin = std::make_shared<hms_cpap::GarminService>(std::move(gd));
+                garmin->start();
+                hms_cpap::CpapController::setGarminService(garmin);
+                if (burst_service)
+                    burst_service->addNightClosedListener(
+                        [g = garmin](const std::string& folder) { g->onNightClosed(folder); });
+            }
+
+            // SDD-013: the local sleep model's nightly job. Built even when it
+            // is off, so the Settings switch needs no restart. It runs only on
+            // a night's close (the SDD-046 announce), never on a clock.
+            std::shared_ptr<hms_cpap::model::LocalModelService> local_model;
+            {
+                std::shared_ptr<hms_cpap::IDatabase> lm_db = db;
+                if (config.database.type != "sqlite") {
+                    lm_db = hms_cpap::makeDatabaseFromConfig();
+                    lm_db->connect();
+                }
+                hms_cpap::model::LocalModelService::Deps ld;
+                ld.db          = lm_db;
+                ld.config      = &config;
+                ld.config_path = config_path;
+                ld.device_id   = hms_cpap::ConfigManager::get(
+                    "CPAP_DEVICE_ID", hms_cpap::AppConfig::kDefaultDeviceId);
+                local_model = std::make_shared<hms_cpap::model::LocalModelService>(std::move(ld));
+                local_model->start();
+                hms_cpap::model::installRoutes(local_model.get());
+                // The night's STR row goes with it, read here on the burst's
+                // thread, so the model is given the night the daily summary is.
+                if (burst_service)
+                    burst_service->addNightClosedListener(
+                        [m = local_model, b = burst_service.get()](const std::string& folder) {
+                            m->onNightClosed(folder, b->strRecordForDay(folder));
+                        });
             }
 
             // SDD-041: check GitHub for a newer stable release, daily and on
@@ -1366,43 +1482,12 @@ int main(int argc, char** argv) {
             {
                 std::shared_ptr<hms_cpap::IDatabase> oxi_db = web_db ? web_db : db;
                 hms_cpap::CpapController::oxi_csv_import_ =
-                    [oxi_db](const std::string& content, const std::string& filename) -> Json::Value {
-                        Json::Value r;
-                        // SDD-028 (#32): the ring's own .vld is taken too, through
-                        // the importer the card-folder scan uses, so it is the
-                        // same row the live pull would store.
-                        if (hms_cpap::isVldFilename(filename)) {
-                            const auto v = hms_cpap::importVldFile(*oxi_db, content, filename);
-                            if (!v.ok) {
-                                r["error"] = v.error;
-                                return r;
-                            }
-                            r["samples"]         = v.samples;
-                            r["valid_samples"]   = v.valid_samples;
-                            r["avg_spo2"]        = v.avg_spo2;
-                            r["min_spo2"]        = v.min_spo2;
-                            r["sample_interval"] = v.sample_interval;
-                            r["duration_seconds"] = v.duration_seconds;
-                            return r;
-                        }
-                        auto session =
-                            cpapdash::parser::readO2RingCsv(content, filename).session;
-                        if (session.samples.empty()) {
-                            r["error"] = "No readable rows in CSV (expected a Wellue / O2 Ring export)";
-                            return r;
-                        }
-                        hms_cpap::putRingOnMachineClock(session);   // SDD-074: the Ring clock
-                        if (!oxi_db->saveOximetrySession(hms_cpap::kOximetryDeviceId, session)) {
-                            r["error"] = "Failed to save oximetry session";
-                            return r;
-                        }
-                        r["samples"]          = (int)session.samples.size();
-                        r["valid_samples"]    = session.metrics.valid_samples;
-                        r["avg_spo2"]         = session.metrics.avg_spo2;
-                        r["min_spo2"]         = session.metrics.min_spo2;
-                        r["sample_interval"]  = session.sample_interval;
-                        r["duration_seconds"] = session.duration_seconds;
-                        return r;
+                    [oxi_db](const std::string& content, const std::string& filename,
+                             const std::string& source, const std::string& device_name) -> Json::Value {
+                        // SDD-078 D3: stored with where it came from ("upload"
+                        // unless the sender names a source).
+                        return hms_cpap::importOximetryUpload(
+                            *oxi_db, content, filename, hms_cpap::uploadOrigin(source, device_name));
                     };
             }
 
@@ -1822,6 +1907,10 @@ int main(int argc, char** argv) {
                     sb.jobs_dir = (std::filesystem::path(hms_cpap::AppConfig::dataDir()) / "ota" / "sleepbridge")
                                       .string();
                     sb.fetch = feed_get;
+                    // SDD-073: the setup steps' waits, pushed as they happen.
+                    sb.on_event = [](const std::string& event, const std::string& sender) {
+                        hms_cpap::SetupWatch::bridgeEvent(event, sender);
+                    };
 
                     // The live night. Each rebuild that wrote card files wakes
                     // the burst cycle, so a card folder source pointed at the
@@ -1855,6 +1944,9 @@ int main(int argc, char** argv) {
                             v["source_id"]   = sender;
                             v["bridge"]      = sender;
                             v["file"]        = e.file;
+                            // SDD-058 D3: said only for an event found in the
+                            // flow (never while D6's gate is closed).
+                            if (e.computed) v["computed"] = true;
                             if (live_state) live_state->event(v, e.at);
                             std::cout << "[sleepbridge] " << sender << " event " << e.type << " ("
                                       << e.description << ") at " << at << std::endl;
@@ -1882,7 +1974,11 @@ int main(int argc, char** argv) {
                         // platform SDD-059 D3: the rebuilt files are on disk.
                         const std::string card_root = (std::filesystem::path(sb_root) / sender).string();
                         for (const auto& rel : step.written_paths)
-                            hms_cpap::card_feed::fileWritten(card_root, rel, "");
+                            hms_cpap::card_feed::fileWritten(card_root, rel, "",
+                                                             hms_cpap::card_feed::kSourceCard);   // SDD-079 D1
+                        // SDD-080 D2: a .B01 among them is a DreamStation 2
+                        // closing a session: OSCAR reads the card.
+                        if (burst_service) burst_service->oscarCardWritten(card_root, step.written_paths);
                         if (burst_service) burst_service->requestSyncNow();
                     };
                     // Issue #57: a batch landing is the stream alive, which
@@ -1908,6 +2004,12 @@ int main(int argc, char** argv) {
                     sleep_bridge->setReleaseFeed(release_feed.get());
                     hms_cpap::sleepbridge::installRoutes(sleep_bridge.get(), release_feed.get());
                     sleep_bridge->start();
+                    // SDD-073: "Use this bridge" and the setup watch read the
+                    // bridges from here.
+                    hms_cpap::CpapController::sleepbridge_status_ = [svc = sleep_bridge.get()] {
+                        return svc->status();
+                    };
+                    hms_cpap::SetupWatch::setBridgeSource([svc = sleep_bridge.get()] { return svc->status(); });
                     hms_cpap::CpapController::card_layout_ =
                         [svc = sleep_bridge.get()](const std::string& cbl1, const std::string& file_name,
                                                    const std::string& zip_path) -> Json::Value {
@@ -2003,7 +2105,9 @@ int main(int argc, char** argv) {
                 dd.bridges     = sleep_bridge.get();
                 dd.feed        = release_feed.get();
                 dd.store       = &devices_store;
+                dd.garmin      = garmin.get();
                 dd.stream_port = config.sleep_bridge.port;
+                dd.config_path = config_path;   // SDD-080
                 // SDD-074: the clock setting, and "Re-read my nights": the
                 // rows are backed up first, then the archive is read again by
                 // the backfill worker, with the setting in force.
@@ -2089,6 +2193,10 @@ int main(int argc, char** argv) {
             hms_cpap::card_feed::setSinks({}, {});
             hms_cpap::CpapController::setStreamService(nullptr);
             cpapdash_stream->stop();
+            if (burst_service) burst_service->clearNightClosedListeners();
+            local_model->stop();
+            hms_cpap::CpapController::setGarminService(nullptr);
+            garmin->stop();
         }
 #else
         // No web UI — simple sleep loop
@@ -2102,12 +2210,10 @@ int main(int argc, char** argv) {
             ml_service->stop();
             ml_service.reset();
         }
-#ifdef WITH_POSTGRESQL
         if (agent_service) {
             agent_service->stop();
             agent_service.reset();
         }
-#endif
         if (burst_service) {
             burst_service->stop();
             burst_service.reset();

@@ -1,11 +1,13 @@
 #include "services/OximetryImport.h"
 
 #include "database/IDatabase.h"
+#include "services/OximetryOutbox.h"
 #include "services/RemovedNights.h"
 #include "utils/OximetryDevice.h"
 #include "utils/SessionLabels.h"
 
 #include <cpapdash/parser/O2RingSParser.h>
+#include <cpapdash/parser/OximetryCsv.h>
 #include <cpapdash/parser/VLDParser.h>
 
 #include <algorithm>
@@ -116,7 +118,8 @@ bool isVldHeader(const std::string& head, std::uintmax_t file_size) {
 
 VldImportResult importVldFile(IDatabase& db, const std::string& bytes,
                               const std::string& filename,
-                              const std::set<std::string>& removed_nights) {
+                              const std::set<std::string>& removed_nights,
+                              const IDatabase::OximetryOrigin& origin) {
     VldImportResult r;
     const auto* data = reinterpret_cast<const uint8_t*>(bytes.data());
     // The O2Ring-S has no declared size: its file is finished once the trailer
@@ -141,10 +144,12 @@ VldImportResult importVldFile(IDatabase& db, const std::string& bytes,
     // The name the live path would have stored it under, so the same file
     // pulled off the ring later is the same row, not a second night.
     session->filename = filename;
-    if (!db.saveOximetrySession(kOximetryDeviceId, *session)) {
+    if (!db.saveOximetrySessionFrom(kOximetryDeviceId, *session, origin)) {
         r.error = "Failed to save oximetry session " + filename;
         return r;
     }
+    // SDD-079 D4: an uploaded or scanned ring file goes to CpapDash as itself.
+    oximetry_outbox::stored(*session, origin, bytes);
     r.ok              = true;
     r.samples         = static_cast<int>(session->samples.size());
     r.valid_samples   = session->metrics.valid_samples;
@@ -304,6 +309,74 @@ VldFolderScan importVldFolder(IDatabase& db, const std::string& card_root,
         scan.summary_logged = true;
     }
     return scan;
+}
+
+IDatabase::OximetryOrigin uploadOrigin(const std::string& source, const std::string& device_name) {
+    IDatabase::OximetryOrigin o;
+    o.source = kOximetrySourceUpload;
+    std::string s = lower(source);
+    const bool ok = !s.empty() && s.size() <= 32 &&
+                    std::all_of(s.begin(), s.end(), [](unsigned char c) {
+                        return std::isalnum(c) || c == '_' || c == '-';
+                    });
+    if (ok) o.source = s;
+    // Shown as typed, trimmed, without control characters, at most 128 bytes.
+    std::string n;
+    for (unsigned char c : device_name)
+        if (c >= 0x20 && c != 0x7f) n.push_back(static_cast<char>(c));
+    const auto b = n.find_first_not_of(' ');
+    const auto e = n.find_last_not_of(' ');
+    n = b == std::string::npos ? std::string() : n.substr(b, e - b + 1);
+    if (n.size() > 128) n.resize(128);
+    o.device_name = n;
+    return o;
+}
+
+Json::Value importOximetryUpload(IDatabase& db, const std::string& content,
+                                 const std::string& filename,
+                                 const IDatabase::OximetryOrigin& origin) {
+    Json::Value r;
+    // SDD-028 (#32): the ring's own .vld is taken too, through the importer
+    // the card-folder scan uses, so it is the same row the live pull would
+    // store.
+    if (isVldFilename(filename)) {
+        const auto v = importVldFile(db, content, filename, {}, origin);
+        if (!v.ok) {
+            r["error"] = v.error;
+            return r;
+        }
+        r["samples"]          = v.samples;
+        r["valid_samples"]    = v.valid_samples;
+        r["avg_spo2"]         = v.avg_spo2;
+        r["min_spo2"]         = v.min_spo2;
+        r["sample_interval"]  = v.sample_interval;
+        r["duration_seconds"] = v.duration_seconds;
+        r["source"]           = origin.source;
+        r["device_name"]      = origin.device_name;
+        return r;
+    }
+    auto session = cpapdash::parser::readO2RingCsv(content, filename).session;
+    if (session.samples.empty()) {
+        r["error"] = "No readable rows in CSV (expected a Wellue / O2 Ring export)";
+        return r;
+    }
+    putRingOnMachineClock(session);   // SDD-074: the Ring clock
+    if (!db.saveOximetrySessionFrom(kOximetryDeviceId, session, origin)) {
+        r["error"] = "Failed to save oximetry session";
+        return r;
+    }
+    // SDD-079 D4: a CSV has no ring file of its own; it goes as hms-json on
+    // the ring's printed wall clock (clock "wall").
+    oximetry_outbox::stored(session, origin, "");
+    r["samples"]          = static_cast<int>(session.samples.size());
+    r["valid_samples"]    = session.metrics.valid_samples;
+    r["avg_spo2"]         = session.metrics.avg_spo2;
+    r["min_spo2"]         = session.metrics.min_spo2;
+    r["sample_interval"]  = session.sample_interval;
+    r["duration_seconds"] = session.duration_seconds;
+    r["source"]           = origin.source;
+    r["device_name"]      = origin.device_name;
+    return r;
 }
 
 }  // namespace hms_cpap

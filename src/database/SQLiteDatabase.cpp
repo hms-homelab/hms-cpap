@@ -2,6 +2,7 @@
 #include "database/SqlDialect.h"
 #include "database/StrPercentile.h"
 #include "utils/MachineClocks.h"
+#include "utils/Desaturation.h"
 #include "utils/OximetryDevice.h"
 #include "utils/TimeCompat.h"  // timegm_utc() for started_epoch
 #include <algorithm>
@@ -369,6 +370,22 @@ void SQLiteDatabase::createSchema() {
         )
     )");
 
+    // SDD-058 D4: the events computed from the flow, apart from the machine's,
+    // and which of the two sets a session's index was counted from.
+    exec(R"(
+        CREATE TABLE IF NOT EXISTS cpap_computed_events (
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id        INTEGER NOT NULL,
+            event_type        TEXT,
+            event_timestamp   TEXT NOT NULL,
+            duration_seconds  REAL DEFAULT 0,
+            details           TEXT,
+            FOREIGN KEY (session_id) REFERENCES cpap_sessions(id) ON DELETE CASCADE
+        )
+    )");
+    sqlite3_exec(db_, "ALTER TABLE cpap_session_metrics ADD COLUMN index_events TEXT DEFAULT 'machine'",
+                 nullptr, nullptr, nullptr);
+
     // SDD-047 D2: the unclassified apnea (ResMed's bare "Apnea") counts toward
     // the AHI and was never stored, so a night's index could not be built from
     // its typed counts. Added without a default: NULL is "not counted yet",
@@ -549,9 +566,14 @@ void SQLiteDatabase::createSchema() {
             avg_usage_hours REAL,
             compliance_pct  REAL,
             summary_text    TEXT NOT NULL,
+            source          TEXT NOT NULL DEFAULT 'llm',
             created_at      TEXT NOT NULL DEFAULT (datetime('now'))
         )
     )");
+    // SDD-013: what wrote the summary ('llm' or 'local'). A row stored before
+    // the column existed came from the configured LLM.
+    sqlite3_exec(db_, "ALTER TABLE cpap_summaries ADD COLUMN source TEXT NOT NULL DEFAULT 'llm'",
+                 nullptr, nullptr, nullptr);
 
     // oximetry_sessions (O2 Ring)
     exec(R"(
@@ -569,9 +591,17 @@ void SQLiteDatabase::createSchema() {
             avg_hr REAL, min_hr INTEGER, max_hr INTEGER,
             valid_samples INTEGER, total_samples INTEGER,
             cpap_session_date TEXT,
+            source TEXT,
+            device_name TEXT,
             created_at TEXT DEFAULT (datetime('now'))
         )
     )");
+    // SDD-078 D3: where each recording came from. An install that already has
+    // the table gains the columns; its rows read as the ring's, or as an
+    // upload where the upload page stored them.
+    sqlite3_exec(db_, "ALTER TABLE oximetry_sessions ADD COLUMN source TEXT", nullptr, nullptr, nullptr);
+    sqlite3_exec(db_, "ALTER TABLE oximetry_sessions ADD COLUMN device_name TEXT", nullptr, nullptr, nullptr);
+    exec(sql::oxiSourceBackfill());
 
     // oximetry_samples
     exec(R"(
@@ -757,6 +787,10 @@ void SQLiteDatabase::createSchema() {
             PRIMARY KEY (root, path)
         )
     )");
+    // SDD-079 D3: the source CpapDash was told for each file. No default:
+    // NULL is a row from before 7.0.0, which gets one source note. Fails
+    // harmlessly once the column is there.
+    sqlite3_exec(db_, "ALTER TABLE cpapdash_sent ADD COLUMN source TEXT", nullptr, nullptr, nullptr);
 
     // SDD-029: nights an operator removed. Every path that re-reads the card
     // (the STR the local burst re-writes, discovery, the .vld scan, SleepHQ,
@@ -840,8 +874,12 @@ bool SQLiteDatabase::saveSession(const CPAPSession& session) {
             insertEvents(session_id, session.events);
         }
 
-        if (!session.desaturations.empty()) {
-            insertDesaturations(session_id, session.desaturations);
+        // SDD-001: at the threshold set in Settings, from this save's SpO2,
+        // replacing the session's stored ones.
+        const SessionDesaturations desat = desaturationsAt(session, desatDropPct());
+        if (desat.from_vitals) deleteDesaturations(session_id);
+        if (!desat.events.empty()) {
+            insertDesaturations(session_id, desat.events);
         }
 
         if (!session.breaths.empty()) {
@@ -853,7 +891,7 @@ bool SQLiteDatabase::saveSession(const CPAPSession& session) {
         }
 
         if (session.metrics.has_value()) {
-            insertSessionMetrics(session_id, session.metrics.value());
+            insertSessionMetrics(session_id, withDesaturations(session.metrics.value(), desat));
         }
 
         exec("COMMIT");
@@ -1095,6 +1133,18 @@ void SQLiteDatabase::insertDesaturations(int64_t session_id,
         if (sqlite3_step(g.stmt) != SQLITE_DONE) {
             std::cerr << "SQLite: insertDesaturations error: " << sqlite3_errmsg(db_) << std::endl;
         }
+    }
+}
+
+// SDD-001: the session's stored desaturations, before a save writes them again.
+void SQLiteDatabase::deleteDesaturations(int64_t session_id) {
+    StmtGuard g;
+    sqlite3_prepare_v2(db_,
+        "DELETE FROM cpap_events WHERE session_id = ? AND event_type = 'Desaturation'",
+        -1, &g.stmt, nullptr);
+    bind_int64(g.stmt, 1, session_id);
+    if (sqlite3_step(g.stmt) != SQLITE_DONE) {
+        std::cerr << "SQLite: deleteDesaturations error: " << sqlite3_errmsg(db_) << std::endl;
     }
 }
 
@@ -1846,7 +1896,7 @@ IDatabase::SessionKeyReport SQLiteDatabase::inspectSessionKey() {
 static const char* const kSessionChildTables[] = {
     "cpap_session_files",  "cpap_session_metrics",   "cpap_breathing_summary",
     "cpap_breaths",        "cpap_events",            "cpap_vitals",
-    "cpap_calculated_metrics", "cpap_sleep_stages",
+    "cpap_calculated_metrics", "cpap_sleep_stages",   "cpap_computed_events",
 };
 
 IDatabase::SessionKeyRepair SQLiteDatabase::repairSessionKey() {
@@ -2833,7 +2883,10 @@ std::optional<SessionMetrics> SQLiteDatabase::getNightlyMetrics(
             MAX(COALESCE(sm.index_kind, 'ahi')) AS index_kind,
             -- SDD-030: PLD Press, averaged like the EPR pressure beside it.
             SUM(c.s_therapy) / NULLIF(SUM(c.n_therapy), 0) AS avg_therapy_pressure,
-            SUM(sm.unclassified_apneas)                      AS unclassified_apneas
+            SUM(sm.unclassified_apneas)                      AS unclassified_apneas,
+            -- SDD-001: the night's desaturations and ODI (sql::nightOdi).
+            )" + sql::nightSpo2Drops("sm") + R"(              AS spo2_drops,
+            )" + sql::nightOdi("sm", "s") + R"(               AS odi
         FROM cpap_sessions s
         JOIN cpap_session_metrics sm ON sm.session_id = s.id
         LEFT JOIN (
@@ -2888,7 +2941,7 @@ std::optional<SessionMetrics> SQLiteDatabase::getNightlyMetrics(
     // 24=avg_mask_pressure  25=avg_epr_pressure  26=avg_snore  27=avg_target_ventilation
     // 28=avg_pressure  29=max_pressure  30=min_pressure
     // 31=leak_p50  32=leak_p95_sess  33=therapy_mode  34=index_kind
-    // 35=avg_therapy_pressure  36=unclassified_apneas
+    // 35=avg_therapy_pressure  36=unclassified_apneas  37=spo2_drops  38=odi
     SessionMetrics m;
     m.total_events        = col_int(g.stmt, 1);
     m.ahi                 = col_double(g.stmt, 11);
@@ -2934,6 +2987,8 @@ std::optional<SessionMetrics> SQLiteDatabase::getNightlyMetrics(
                        ? SessionMetrics::IndexKind::Ungraded
                        : SessionMetrics::IndexKind::AHI;
     m.avg_therapy_pressure = col_opt_double(g.stmt, 35);   // SDD-030
+    m.spo2_drops           = col_opt_int(g.stmt, 37);      // SDD-001
+    m.odi                  = col_opt_double(g.stmt, 38);
 
     return m;
 }
@@ -3004,7 +3059,13 @@ std::vector<SessionMetrics> SQLiteDatabase::getMetricsForDateRange(
             MAX(sm.therapy_mode) AS therapy_mode,
             -- Issue #78: the unclassified apnea is in the AHI, so a weekly
             -- summary without it lists types that do not add up to it.
-            SUM(sm.unclassified_apneas)                      AS unclassified_apneas
+            SUM(sm.unclassified_apneas)                      AS unclassified_apneas,
+            -- SDD-072 D1: a range's night carries what getNightlyMetrics
+            -- gives the same night, its index kind (SDD-024) and its therapy
+            -- pressure (SDD-030), so the weekly text cannot grade an index
+            -- the daily one refuses to.
+            MAX(COALESCE(sm.index_kind, 'ahi')) AS index_kind,
+            SUM(c.s_therapy) / NULLIF(SUM(c.n_therapy), 0) AS avg_therapy_pressure
         FROM cpap_sessions s
         JOIN cpap_session_metrics sm ON sm.session_id = s.id
         LEFT JOIN (
@@ -3018,7 +3079,8 @@ std::vector<SessionMetrics> SQLiteDatabase::getMetricsForDateRange(
                    SUM(mask_pressure) AS s_mask, COUNT(mask_pressure) AS n_mask,
                    SUM(epr_pressure) AS s_epr, COUNT(epr_pressure) AS n_epr,
                    SUM(snore_index) AS s_snore, COUNT(snore_index) AS n_snore,
-                   SUM(target_ventilation) AS s_tgt, COUNT(target_ventilation) AS n_tgt
+                   SUM(target_ventilation) AS s_tgt, COUNT(target_ventilation) AS n_tgt,
+                   SUM(therapy_pressure) AS s_therapy, COUNT(therapy_pressure) AS n_therapy
             FROM cpap_calculated_metrics GROUP BY session_id
         ) c ON c.session_id = sm.session_id
         LEFT JOIN (
@@ -3050,6 +3112,7 @@ std::vector<SessionMetrics> SQLiteDatabase::getMetricsForDateRange(
     // 19=pp95  20=avg_mask_pressure  21=avg_epr_pressure  22=avg_snore
     // 23=avg_target_ventilation  24=avg_pressure  25=max_pressure  26=min_pressure
     // 27=leak_p50  28=leak_p95_sess  29=therapy_mode  30=unclassified_apneas
+    // 31=index_kind  32=avg_therapy_pressure
 
     std::vector<SessionMetrics> nights;
     while (sqlite3_step(g.stmt) == SQLITE_ROW) {
@@ -3088,6 +3151,10 @@ std::vector<SessionMetrics> SQLiteDatabase::getMetricsForDateRange(
         m.leak_p95               = col_opt_double(g.stmt, 28);
         m.therapy_mode           = col_opt_int(g.stmt, 29);
         m.unclassified_apneas    = col_int(g.stmt, 30);   // issue #78
+        m.index_kind = (col_text(g.stmt, 31) == "ungraded")   // SDD-072 D1
+                           ? SessionMetrics::IndexKind::Ungraded
+                           : SessionMetrics::IndexKind::AHI;
+        m.avg_therapy_pressure   = col_opt_double(g.stmt, 32);
 
         nights.push_back(std::move(m));
     }
@@ -3110,7 +3177,8 @@ bool SQLiteDatabase::saveSummary(
     double avg_ahi,
     double avg_usage_hours,
     double compliance_pct,
-    const std::string& summary_text) {
+    const std::string& summary_text,
+    const std::string& source) {
 
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!db_) return false;
@@ -3118,8 +3186,8 @@ bool SQLiteDatabase::saveSummary(
     const char* sql = R"(
         INSERT INTO cpap_summaries
             (device_id, period, range_start, range_end, nights_count,
-             avg_ahi, avg_usage_hours, compliance_pct, summary_text)
-        VALUES (?, ?, date(?), date(?), ?, ?, ?, ?, ?)
+             avg_ahi, avg_usage_hours, compliance_pct, summary_text, source)
+        VALUES (?, ?, date(?), date(?), ?, ?, ?, ?, ?, ?)
     )";
 
     StmtGuard g;
@@ -3133,6 +3201,7 @@ bool SQLiteDatabase::saveSummary(
     bind_double(g.stmt, 7, avg_usage_hours);
     bind_double(g.stmt, 8, compliance_pct);
     bind_text(g.stmt, 9, summary_text);
+    bind_text(g.stmt, 10, source);
 
     if (sqlite3_step(g.stmt) != SQLITE_DONE) {
         std::cerr << "SQLite: saveSummary error: " << sqlite3_errmsg(db_) << std::endl;
@@ -3218,6 +3287,12 @@ IDatabase::QueryOutcome SQLiteDatabase::executeQueryChecked(
 
 bool SQLiteDatabase::saveOximetrySession(const std::string& device_id,
                                           const cpapdash::parser::OximetrySession& session) {
+    return saveOximetrySessionFrom(device_id, session, OximetryOrigin{});
+}
+
+bool SQLiteDatabase::saveOximetrySessionFrom(const std::string& device_id,
+                                              const cpapdash::parser::OximetrySession& session,
+                                              const OximetryOrigin& origin) {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!db_) { std::cerr << "SQLite: Not connected" << std::endl; return false; }
 
@@ -3231,9 +3306,11 @@ bool SQLiteDatabase::saveOximetrySession(const std::string& device_id,
                  sample_interval, avg_spo2, min_spo2, spo2_baseline,
                  time_below_90, time_below_88, odi_3pct, desat_count,
                  avg_hr, min_hr, max_hr, valid_samples, total_samples,
-                 cpap_session_date)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 cpap_session_date, source, device_name)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (filename) DO UPDATE SET
+                source          = excluded.source,
+                device_name     = excluded.device_name,
                 start_time      = excluded.start_time,
                 end_time        = excluded.end_time,
                 duration_seconds = excluded.duration_seconds,
@@ -3275,6 +3352,8 @@ bool SQLiteDatabase::saveOximetrySession(const std::string& device_id,
         bind_int(g.stmt, 17, session.metrics.valid_samples);
         bind_int(g.stmt, 18, session.metrics.total_samples);
         bind_text(g.stmt, 19, session.date_str());
+        bind_text(g.stmt, 20, origin.source);
+        bind_text(g.stmt, 21, origin.device_name);
 
         if (sqlite3_step(g.stmt) != SQLITE_DONE) {
             std::cerr << "SQLite: saveOximetrySession error: " << sqlite3_errmsg(db_) << std::endl;
@@ -3333,8 +3412,9 @@ bool SQLiteDatabase::saveOximetrySession(const std::string& device_id,
 
         // The ring's own file for this night has landed: it supersedes the
         // live stand-in the bridge polled into, so that one goes, on this
-        // event and in this transaction.
-        if (!isLiveOximetryFilename(session.filename)) {
+        // event and in this transaction. SDD-078: a Garmin night is not the
+        // ring's file and leaves it.
+        if (!isLiveOximetryFilename(session.filename) && oximetryOriginSupersedesLive(origin.source)) {
             const std::string night = oximetrySleepDay(session.start_time);
             const std::string live_of_night =
                 "SELECT id FROM oximetry_sessions WHERE device_id = ? AND " +
@@ -4542,7 +4622,8 @@ bool SQLiteDatabase::upsertSyncFolder(const FolderLedger& f) {
 // ── platform SDD-059 D5: what CpapDash has acknowledged ──────────────────────
 
 namespace {
-constexpr const char* kCpapDashSentCols = "root, path, machine, acked_to, acked_md5, updated_at";
+constexpr const char* kCpapDashSentCols =
+    "root, path, machine, acked_to, acked_md5, updated_at, source";
 
 IDatabase::CpapDashSent parseCpapDashSentRow(sqlite3_stmt* s) {
     IDatabase::CpapDashSent r;
@@ -4552,6 +4633,7 @@ IDatabase::CpapDashSent parseCpapDashSentRow(sqlite3_stmt* s) {
     r.acked_to   = sqlite3_column_int64(s, 3);
     r.acked_md5  = col_text(s, 4);
     r.updated_at = col_text(s, 5);
+    r.source     = col_text(s, 6);   // SDD-079 D3: NULL reads ""
     return r;
 }
 } // namespace
@@ -4587,13 +4669,14 @@ bool SQLiteDatabase::upsertCpapDashSent(const CpapDashSent& row) {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     if (!db_ || row.root.empty() || row.path.empty()) return false;
     const char* sql = R"(
-        INSERT INTO cpapdash_sent (root, path, machine, acked_to, acked_md5, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO cpapdash_sent (root, path, machine, acked_to, acked_md5, updated_at, source)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(root, path) DO UPDATE SET
             machine    = excluded.machine,
             acked_to   = excluded.acked_to,
             acked_md5  = excluded.acked_md5,
-            updated_at = excluded.updated_at
+            updated_at = excluded.updated_at,
+            source     = excluded.source
     )";
     StmtGuard g;
     if (sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr) != SQLITE_OK) return false;
@@ -4603,6 +4686,9 @@ bool SQLiteDatabase::upsertCpapDashSent(const CpapDashSent& row) {
     sqlite3_bind_int64(g.stmt, 4, row.acked_to);
     bind_text(g.stmt, 5, row.acked_md5);
     bind_text(g.stmt, 6, row.updated_at);
+    // SDD-079 D3: "" is NULL, a row that never said its source.
+    if (row.source.empty()) sqlite3_bind_null(g.stmt, 7);
+    else bind_text(g.stmt, 7, row.source);
     if (sqlite3_step(g.stmt) != SQLITE_DONE) {
         std::cerr << "SQLite: upsertCpapDashSent error: " << sqlite3_errmsg(db_) << std::endl;
         return false;

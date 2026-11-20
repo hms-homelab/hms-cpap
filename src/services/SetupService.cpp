@@ -94,6 +94,7 @@ SetupService::Capabilities SetupService::capabilities() {
 
     c.platform = platformName();
     c.data_dir = AppConfig::dataDir();
+    c.data_dir_fallback = datamove::fallbackFromEnv(c.data_dir);
     return c;
 }
 

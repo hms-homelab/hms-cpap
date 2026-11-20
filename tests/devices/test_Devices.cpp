@@ -96,6 +96,31 @@ TEST(Devices, NothingConfiguredListsNothing) {
     EXPECT_EQ(out["stream_port"].asInt(), 8894);
 }
 
+// SDD-078 D4: the Garmin card, an accessory after the ring.
+TEST(Devices, GarminIsACardNamedForItsWatchAfterTheRing) {
+    DevicesStore store("");
+    auto in = none();
+    in.o2_enabled = true;
+    in.o2_mode = "http";
+    in.garmin_enabled = true;
+    in.garmin["state"] = "signed_in";
+    in.garmin["device_name"] = "Garmin Fenix 7X";
+    in.garmin["last_fetch"]["at"] = static_cast<Json::Int64>(kNow - 60);
+    const auto out = buildDevices(in, store);
+    const auto* g = find(out, "garmin");
+    ASSERT_NE(g, nullptr);
+    EXPECT_EQ((*g)["name"].asString(), "Garmin Fenix 7X");
+    EXPECT_EQ((*g)["present"].asString(), "yes");
+    EXPECT_EQ((*g)["last_heard"].asInt64(), kNow - 60);
+    EXPECT_EQ((*g)["recording"].asString(), "unknown");
+    EXPECT_EQ((*g)["detail"]["state"].asString(), "signed_in");
+    ASSERT_EQ(out["devices"].size(), 2u);
+    EXPECT_EQ(out["devices"][1]["kind"].asString(), "garmin") << "after the ring";
+
+    in.garmin_enabled = false;
+    EXPECT_EQ(find(buildDevices(in, store), "garmin"), nullptr) << "off: no card";
+}
+
 TEST(Devices, AMuleAndMinerHereAwayStreamingLandingNeverHeard) {
     DevicesStore store("");
     auto in = none();

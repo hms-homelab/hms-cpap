@@ -1,0 +1,24 @@
+platform SDD-061 section 7: the hms-cpap stream's wire, pinned by the SAME
+JSON in both repos. This directory and hms-cpap's
+tests/fixtures/cpapdash-stream/ must stay byte-identical; each side has a test
+that its builder (hms-cpap) or reader (ingest, test_HmsStreamContract.cc)
+agrees with every file here.
+
+  file_ready_card.json              a card file as every hms-cpap sends it today (no source)
+  file_ready_ble_as11.json          the same file, built from Bluetooth (D1)
+  file_ready_source_note.json       the zero-byte source note for a file acked before (D2)
+  file_ready_oximetry_o2s.json      a ring recording (D3)
+  file_ready_oximetry_hms_json.json a Garmin recording in hms-json (D3, D4)
+  file_ready_oximetry_live.json     a range of the live spool (D3, D5)
+  hms_oximetry_v1.json              an hms-json v1 body (D4); its third sample's pulse is
+                                    null, unknown (SpO2 and pulse judged per field)
+  file_ready_pseries_prop.json      a DreamStation 2's card file at the card folder's root,
+                                    as a Sleep Bridge rebuilt it (D10, hms-cpap SDD-080):
+                                    the machine's bytes, unchanged, source card
+  file_ready_pseries_summary.json   a closed session's file, Pn/<8 hex>.B01, whole (D10)
+  file_ready_pseries_waveform_range.json
+                                    the open session's file, Pn/<8 hex>.B05, a range from
+                                    the acked offset as the machine appends it (D10)
+
+  The P-SERIES names (folder 1A2B3C4D, session 0000001E) are made up, and
+  machine_serial is empty: for a P-SERIES file it is not read.

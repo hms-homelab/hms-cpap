@@ -1778,7 +1778,7 @@ public:
     MOCK_METHOD(bool, aggregateDailySummaryFromSessions, (const std::string&), (override));
     MOCK_METHOD((std::optional<SessionMetrics>), getNightlyMetrics, (const std::string&, const std::chrono::system_clock::time_point&), (override));
     MOCK_METHOD((std::vector<SessionMetrics>), getMetricsForDateRange, (const std::string&, int), (override));
-    MOCK_METHOD(bool, saveSummary, (const std::string&, const std::string&, const std::string&, const std::string&, int, double, double, double, const std::string&), (override));
+    MOCK_METHOD(bool, saveSummary, (const std::string&, const std::string&, const std::string&, const std::string&, int, double, double, double, const std::string&, const std::string&), (override));
     MOCK_METHOD(void*, rawConnection, (), (override));
     MOCK_METHOD(bool, saveOximetrySession, (const std::string&, const cpapdash::parser::OximetrySession&), (override));
     MOCK_METHOD(bool, oximetrySessionExists, (const std::string&, const std::string&), (override));
@@ -1796,11 +1796,29 @@ public:
     bool fail_refresh = false;
     void beginRefresh() override {
         ++refreshes;
+        refresh_scopes.push_back(scope);
         if (fail_refresh) throw std::runtime_error("synthetic STR refresh failed");
     }
     bool needsFullRefresh(const std::string& path, const std::string&) override {
         return rewritten_files.count(path) > 0;
     }
+    // SDD-069: a card with no listing. The scope each listing was asked
+    // under, the stamps it gives, and a machine clock its probes saw.
+    bool stamps = true;
+    bool givesFileStamps() const override { return stamps; }
+    IDataSource::BurstScope scope;
+    std::vector<IDataSource::BurstScope> refresh_scopes;
+    std::map<std::string, std::vector<IDataSource::BurstScope>> list_scopes;
+    void setBurstScope(const IDataSource::BurstScope& s) override { scope = s; }
+    std::optional<long long> machine_offset;
+    bool takeMachineOffset(long long& off) override {
+        if (!machine_offset) return false;
+        off = *machine_offset;
+        machine_offset.reset();
+        return true;
+    }
+    // Ranged transfers of these files fail at once, writing nothing.
+    std::set<std::string> dead_ranges;
     std::vector<std::string> date_folders;
     std::map<std::string, std::vector<EzShareFileEntry>> folder_files;
     int download_count = 0;
@@ -1833,6 +1851,7 @@ public:
 
     std::vector<EzShareFileEntry> listFiles(const std::string& date_folder) override {
         ++folder_lists[date_folder];
+        list_scopes[date_folder].push_back(scope);
         if (refuse_listing.count(date_folder))
             throw std::runtime_error("ezShare refused " + date_folder);
         if (answer_not_a_listing.count(date_folder))
@@ -1907,6 +1926,7 @@ public:
         ranged_from.emplace_back(filename, start_byte);
         if (on_download) on_download(date_folder, filename);
         std::filesystem::create_directories(std::filesystem::path(local_path).parent_path());
+        if (dead_ranges.count(filename)) return false;
         if (refuse_range) {
             range_supported = false;
             return false;
@@ -3972,7 +3992,9 @@ TEST(BurstMetricsFormatTest, MetricsString_MinimalNoOptionals) {
     std::string out = svc.buildMetricsStringForTest(m, nullptr);
 
     EXPECT_NE(out.find("AHI: 1.00 events/hour"), std::string::npos);
-    EXPECT_NE(out.find("Usage: 0.00 hours"), std::string::npos);
+    // SDD-072 D1: a usage the night does not have is absent, never 0.
+    EXPECT_NE(out.find("Usage: not recorded"), std::string::npos);
+    EXPECT_EQ(out.find("Usage: 0.00 hours"), std::string::npos);
     // None of the optional sections should appear.
     EXPECT_EQ(out.find("Pressure:"), std::string::npos);
     EXPECT_EQ(out.find("Leak:"), std::string::npos);
@@ -5104,3 +5126,127 @@ TEST_F(BurstCollectorServiceTest, ArchivePreservesSameLengthFinalisedHeader) {
     std::string count(8, ' '); input.read(count.data(), count.size());
     EXPECT_EQ(count, "13      ");
 }
+
+// ── SDD-069: a live night on an ez Share card with no listing ───────────────
+// The collector's side: what it tells the card of each burst, the clock the
+// card's BRP teaches, and a night whose last BRP never reaches its end.
+namespace burst_orch {
+
+constexpr long long kSdd069T0 = 1792033200;   // 2026-10-15 03:00:00 UTC
+
+void onMachineClock(BurstCollectorService& svc, long long& now, long long zone_s) {
+    svc.setNowForTest([&now] { return now; });
+    MachineClock c;
+    c.zone_s = zone_s;
+    c.zone_known = true;
+    svc.setMachineClockForTest(c);
+}
+
+TEST_F(BurstOrchestrationTest, Sdd069_EachBurstTellsTheCardWhatItIsFor) {
+    long long now = kSdd069T0;   // the machine's 23:00 on the 14th: tonight is 20261014
+    auto svc = makeService([](FakeDataSource& ds) {
+        ds.stamps = false;
+        ds.date_folders = {"20261014"};
+        ds.folder_files["20261014"] = {mkEntry("notes.txt", 1)};
+    });
+    onMachineClock(*svc, now, -4 * 3600);
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    auto& lists = src_raw->list_scopes["20261014"];
+
+    svc->runBurstCycleForTest();   // the run's first index: a full scan
+    ASSERT_EQ(lists.size(), 1u);
+    EXPECT_TRUE(lists.back().full_scan);
+    EXPECT_EQ(lists.back().now_s, now);
+
+    now += 65;
+    src_raw->folder_files["20261014"][0].size_kb = 2;   // tonight grows
+    svc->runBurstCycleForTest();
+    ASSERT_EQ(lists.size(), 2u);
+    EXPECT_FALSE(lists.back().full_scan) << "tonight's own listing is not a full scan (P1)";
+
+    now += 65;   // unchanged: growth stops on this burst
+    svc->runBurstCycleForTest();
+    EXPECT_TRUE(lists.back().night_growing) << "the last listing grew (P7)";
+    EXPECT_FALSE(lists.back().str_checkpoint);
+
+    now += 65 * 60;   // the first burst past the 65-min mark
+    svc->runBurstCycleForTest();
+    EXPECT_FALSE(lists.back().night_growing);
+    EXPECT_TRUE(lists.back().str_checkpoint) << "the 65-min checkpoint is this burst's";
+    EXPECT_TRUE(src_raw->refresh_scopes.back().str_checkpoint) << "said before beginRefresh";
+
+    now += 65;
+    svc->runBurstCycleForTest();
+    EXPECT_FALSE(lists.back().str_checkpoint) << "once, not on every burst after it";
+}
+
+TEST_F(BurstOrchestrationTest, Sdd069_TheBrpTheCardIsWritingTeachesTheMachineClock) {
+    long long now = kSdd069T0;
+    auto svc = makeService([](FakeDataSource& ds) {
+        ds.stamps = false;
+        ds.machine_offset = 10 * 3600;   // the machine's 13:00 on the 15th
+    });
+    onMachineClock(*svc, now, -4 * 3600);
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+
+    svc->runBurstCycleForTest();
+    EXPECT_EQ(src_raw->folder_lists["20261014"], 1) << "the host's guess, before the BRP said";
+    const auto& c = svc->machineClockForTest();
+    EXPECT_EQ(c.drift_s, 0);
+    EXPECT_EQ(c.zone_s, 10 * 3600);
+    EXPECT_TRUE(c.zone_known);
+
+    now += 65;
+    svc->runBurstCycleForTest();
+    EXPECT_EQ(src_raw->folder_lists["20261015"], 1) << "tonight is the machine's day now";
+}
+
+// P8: on a card that gives exact sizes and no stamps, a BRP the card never
+// lets reach its end leaves the night partial once its hour has passed, and
+// the burst that gets the rest completes it.
+TEST_F(BurstOrchestrationTest, Sdd069_ABrpThatNeverReachesEofLeavesTheNightPartial) {
+    auto svc = makeService([](FakeDataSource& ds) {
+        seedExactSession(ds);
+        ds.stamps = false;
+        ds.dead_ranges = {"20200101_220000_BRP.edf"};
+    });
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, sessionExists(_, _)).WillRepeatedly(Return(false));
+    holdBrp(temp_dir, 102200);   // 700 bytes short of the card's end
+
+    svc->runBurstCycleForTest();
+    svc->runBurstCycleForTest();
+    auto it = db_raw->sync_folders.find("20200101");
+    ASSERT_NE(it, db_raw->sync_folders.end());
+    EXPECT_TRUE(it->second.stable);
+    EXPECT_FALSE(it->second.complete) << "a BRP short of its exact size is not held";
+    EXPECT_EQ(nightState(it->second, /*hour_passed=*/false), NightState::Live);
+    EXPECT_EQ(nightState(it->second, /*hour_passed=*/true), NightState::Partial);
+
+    src_raw->dead_ranges.clear();
+    holdBrp(temp_dir, 102900);   // the rest arrived
+    svc->runBurstCycleForTest();
+    it = db_raw->sync_folders.find("20200101");
+    EXPECT_TRUE(it->second.complete);
+    EXPECT_EQ(nightState(it->second, /*hour_passed=*/true), NightState::Complete);
+}
+
+// A card that lists keeps SDD-046's rule: a stored file is held.
+TEST_F(BurstOrchestrationTest, Sdd069_ACardThatListsKeepsItsLedgerAsBefore) {
+    auto svc = makeService([](FakeDataSource& ds) {
+        seedExactSession(ds);
+        ds.dead_ranges = {"20200101_220000_BRP.edf"};
+    });
+    EXPECT_CALL(*db_raw, getLastSessionStart(_)).WillRepeatedly(Return(std::nullopt));
+    EXPECT_CALL(*db_raw, isForceCompleted(_, _)).WillRepeatedly(Return(false));
+    EXPECT_CALL(*db_raw, sessionExists(_, _)).WillRepeatedly(Return(false));
+    holdBrp(temp_dir, 102200);
+    svc->runBurstCycleForTest();
+    svc->runBurstCycleForTest();
+    auto it = db_raw->sync_folders.find("20200101");
+    ASSERT_NE(it, db_raw->sync_folders.end());
+    EXPECT_TRUE(it->second.complete);
+}
+
+}  // namespace burst_orch

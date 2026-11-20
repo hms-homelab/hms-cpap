@@ -36,7 +36,7 @@
       "okFresh": "Connecté. Le schéma sera créé au premier démarrage."
     },
     "source": {
-      "title": "Source de données",
+      "title": "Choisir la source",
       "formatLabel": "Quelle machine a écrit cette carte ?",
       "philips": "Philips Respironics (expérimental)",
       "bmc": "BMC / React Health Luna",
