@@ -19,6 +19,7 @@ export function sameFolder(localDir: string | undefined | null, cardRoot: string
 export function formatLabel(format: string | undefined | null): string | null {
   if (format === 'resmed') return 'ResMed';
   if (format === 'bmc') return 'BMC / React Health Luna';
+  if (format === 'philips') return 'Philips DreamStation';   // SDD-080 D1
   return format ? format : null;
 }
 

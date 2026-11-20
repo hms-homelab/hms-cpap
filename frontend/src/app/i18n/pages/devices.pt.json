@@ -411,6 +411,24 @@
         "other": "Não feito: {{error}}"
       }
     },
+    "oscar": {
+      "readNow": "Ler agora",
+      "reading": "O OSCAR está lendo o cartão...",
+      "readStarted": "O OSCAR está lendo o cartão.",
+      "openSettings": "Configurar o OSCAR nas Configurações",
+      "state_never": "Ainda não lido. Cada sessão que o aparelho encerra é lida com o OSCAR.",
+      "state_imported": "OSCAR {{version}}, última leitura {{time}}, {{sessions}} sessão(ões)",
+      "state_nothing_new": "OSCAR {{version}}, última leitura {{time}}, nada novo",
+      "state_read_nothing": "O OSCAR não leu nada deste cartão.",
+      "state_busy": "O OSCAR estava ocupado (aberto neste computador). A sessão é lida no próximo encerramento ou com Ler agora.",
+      "state_timeout": "O OSCAR não terminou a tempo e foi interrompido.",
+      "state_failed": "O OSCAR não conseguiu ler o cartão.",
+      "state_not_set_up": "O OSCAR não está configurado (Configurações, Fonte de dados).",
+      "state_no_program": "O programa OSCAR não iniciou.",
+      "state_not_supported": "Esta versão do OSCAR ainda não é compatível.",
+      "state_no_profile": "Falta o perfil do OSCAR para o hms-cpap. Crie-o no OSCAR.",
+      "state_not_here": "Precisa do OSCAR no mesmo computador que o hms-cpap."
+    },
     "ds2": {
       "notCompiled": "Esta versão não tem Bluetooth: a DreamStation 2 não pode ser lida deste computador.",
       "paired": "Emparelhada com o aparelho",

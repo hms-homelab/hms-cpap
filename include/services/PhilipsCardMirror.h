@@ -15,7 +15,8 @@
 //     copy. The open session's .B05 grows by one block every four minutes, so
 //     its listed size moves with it.
 //   - PROP.BIN comes first. When it is not plain text the card is encrypted:
-//     hms-cpap does not decrypt it, so nothing more is copied.
+//     hms-cpap does not decrypt it; the copy is made all the same, byte for
+//     byte, for the user's OSCAR to read (SDD-080).
 //
 #include "clients/EzShareClient.h"   // EzShareFileEntry
 #include "clients/IDataSource.h"
@@ -26,7 +27,7 @@ namespace hms_cpap {
 
 struct PhilipsMirrorResult {
     bool ok = false;          ///< the card answered and the pass finished
-    bool encrypted = false;   ///< PROP.BIN is not plain: nothing else was copied
+    bool encrypted = false;   ///< PROP.BIN is not plain (copied all the same, SDD-080)
     std::string error;
     int dirs_listed = 0;
     int fetched = 0;

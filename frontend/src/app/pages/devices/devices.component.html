@@ -271,6 +271,11 @@
             </div>
           </ng-container>
         </ng-container>
+
+        <!-- SDD-080 D7: an encrypted DreamStation 2 card, read through the user's OSCAR. -->
+        <div class="wide" *ngIf="d.detail.oscar as o"><dt>OSCAR</dt>
+          <dd [class.amber]="oscarWarn(o)">{{ oscarLine(o) }}
+            <div class="hint" *ngIf="o.message && oscarWarn(o)">{{ o.message }}</div></dd></div>
       </dl>
 
       <!-- DreamStation 2 pairing (SDD-064 D3, D4): in the page, never a dialog. -->
@@ -418,6 +423,13 @@
              switch, the Restart group, Reset Wi-Fi, Forget. One action (or one
              labelled group) per line, so nothing wraps under another by chance. -->
         <div class="actions" *ngIf="!confirms.get(d.key)">
+          <!-- SDD-080 D7: one OSCAR read of the card, now. -->
+          <div class="action-line" *ngIf="d.detail.oscar as o">
+            <button type="button" class="btn btn-primary" (click)="oscarReadNow(d)"
+                    [disabled]="busy[d.key] || o.reading || !o.set_up">
+              {{ (o.reading ? 'devices.oscar.reading' : 'devices.oscar.readNow') | translate }}</button>
+            <a routerLink="/settings" *ngIf="!o.set_up">{{ 'devices.oscar.openSettings' | translate }}</a>
+          </div>
           <ng-container *ngIf="d.kind === 'o2ring' && !d.detail.through_bridge">
             <div class="action-line">
               <button type="button" class="btn btn-primary" (click)="readRing(d)" [disabled]="busy[d.key] || d.detail.not_compiled">

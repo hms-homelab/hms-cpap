@@ -12,3 +12,13 @@ agrees with every file here.
   file_ready_oximetry_live.json     a range of the live spool (D3, D5)
   hms_oximetry_v1.json              an hms-json v1 body (D4); its third sample's pulse is
                                     null, unknown (SpO2 and pulse judged per field)
+  file_ready_pseries_prop.json      a DreamStation 2's card file at the card folder's root,
+                                    as a Sleep Bridge rebuilt it (D10, hms-cpap SDD-080):
+                                    the machine's bytes, unchanged, source card
+  file_ready_pseries_summary.json   a closed session's file, Pn/<8 hex>.B01, whole (D10)
+  file_ready_pseries_waveform_range.json
+                                    the open session's file, Pn/<8 hex>.B05, a range from
+                                    the acked offset as the machine appends it (D10)
+
+  The P-SERIES names (folder 1A2B3C4D, session 0000001E) are made up, and
+  machine_serial is empty: for a P-SERIES file it is not read.

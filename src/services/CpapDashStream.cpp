@@ -52,6 +52,12 @@ bool isDate8(const std::string& s) {
     return s.size() == 8 && std::all_of(s.begin(), s.end(), [](char c) { return c >= '0' && c <= '9'; });
 }
 
+/// "P0" .. "P99": a Philips card's folder of session files.
+bool isPFolder(const std::string& s) {
+    return s.size() >= 2 && (s[0] == 'P' || s[0] == 'p') &&
+           std::all_of(s.begin() + 1, s.end(), [](char c) { return c >= '0' && c <= '9'; });
+}
+
 std::string compact(const Json::Value& v) {
     Json::StreamWriterBuilder w;
     w["indentation"] = "";
@@ -82,6 +88,9 @@ bool isGrowingName(const std::string& name) {
     const auto n = lower(name);
     return endsWith(n, "_brp.edf") || endsWith(n, "_pld.edf") || endsWith(n, "_sad.edf") ||
            endsWith(n, "_sa2.edf") ||
+           // SDD-080, platform SDD-061 D10: a DreamStation 2 appends the open
+           // session's .B05 as it records.
+           endsWith(n, ".b05") ||
            isGrowingOximetryName(name);   // SDD-079 D5: the live spool is append-only too
 }
 
@@ -153,6 +162,13 @@ bool isCardPath(const std::string& rel) {
     const auto top = lower(segs[0]);
     if (top == "settings") return true;
     if (top == "datalog") return segs.size() == 3 && isDate8(segs[1]);
+    // SDD-080, platform SDD-061 D10: a DreamStation 2's card, exactly as the
+    // machine wrote it (encrypted, never opened here): P-SERIES/<folder>/
+    // PROP.BIN, LOG.SEQ ..., and P-SERIES/<folder>/Pn/<session>.B01|B02|B05.
+    if (top == "p-series") {
+        if (segs.size() == 3) return true;
+        if (segs.size() == 4) return isPFolder(segs[2]);
+    }
     return false;
 }
 
@@ -235,7 +251,8 @@ std::string sourceKind(bool bluetooth_on, bool bridge_receiver_on, const std::st
                 const auto name = e.path().filename().string();
                 if (!e.is_directory(ec) || name.empty() || name[0] == '.') continue;
                 // A sender's folder holds its card once a rebuild wrote one.
-                if (fs::exists(e.path() / "DATALOG", ec) || fs::exists(e.path() / "STR.edf", ec))
+                if (fs::exists(e.path() / "DATALOG", ec) || fs::exists(e.path() / "STR.edf", ec) ||
+                    fs::exists(e.path() / "P-SERIES", ec))   // SDD-080: a DreamStation 2's card
                     return "bridge";
             }
         }
@@ -993,7 +1010,8 @@ void CpapDashStreamer::scanRoot(const Work& w) {
             if (it.depth() == 0) {
                 std::string top = rel;
                 for (auto& c : top) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-                if (top != "DATALOG" && top != "SETTINGS") it.disable_recursion_pending();
+                // SDD-080: and a DreamStation 2's P-SERIES (platform SDD-061 D10).
+                if (top != "DATALOG" && top != "SETTINGS" && top != "P-SERIES") it.disable_recursion_pending();
             }
             continue;
         }

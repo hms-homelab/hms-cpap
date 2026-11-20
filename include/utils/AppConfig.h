@@ -393,6 +393,16 @@ struct AppConfig {
         std::string device_name;
     } garmin;
 
+    /// SDD-080 D7: a DreamStation 2 card is read through the user's own OSCAR.
+    /// The program (found where each OS's installer puts it when left empty),
+    /// OSCAR's data folder, and hms-cpap's own profile in it, beside the
+    /// user's. Saved through PUT /api/oscar, which checks all three.
+    struct Oscar {
+        std::string program;
+        std::string data_dir;
+        std::string profile = "hms-cpap";
+    } oscar;
+
     /// SDD-013: the local sleep model that writes each closed night's summary
     /// from the database, with no network. `enabled` is set only through
     /// POST /api/local-model/enable, which refuses until a model is published
@@ -833,6 +843,13 @@ struct AppConfig {
                 if (g.contains("device_name"))   config.garmin.device_name = g["device_name"];
             }
 
+            if (j.contains("oscar")) {   // SDD-080
+                auto& o = j["oscar"];
+                if (o.contains("program") && o["program"].is_string())   config.oscar.program = o["program"];
+                if (o.contains("data_dir") && o["data_dir"].is_string()) config.oscar.data_dir = o["data_dir"];
+                if (o.contains("profile") && o["profile"].is_string())   config.oscar.profile = o["profile"];
+            }
+
             if (j.contains("local_model")) {
                 auto& lm = j["local_model"];
                 if (lm.contains("enabled"))   config.local_model.enabled = lm["enabled"];
@@ -986,6 +1003,10 @@ struct AppConfig {
             j["garmin"]["client_id"]     = garmin.client_id;
             j["garmin"]["display_name"]  = garmin.display_name;
             j["garmin"]["device_name"]   = garmin.device_name;
+
+            j["oscar"]["program"]  = oscar.program;    // SDD-080
+            j["oscar"]["data_dir"] = oscar.data_dir;
+            j["oscar"]["profile"]  = oscar.profile;
 
             j["local_model"]["enabled"]   = local_model.enabled;     // SDD-013
             j["local_model"]["model_dir"] = local_model.model_dir;
@@ -1166,6 +1187,10 @@ struct AppConfig {
         j["garmin"]["display_name"]  = garmin.display_name;
         j["garmin"]["device_name"]   = garmin.device_name;
         j["garmin"]["signed_in"]     = !garmin.refresh_token.empty() || !garmin.access_token.empty();
+
+        j["oscar"]["program"]  = oscar.program;    // SDD-080
+        j["oscar"]["data_dir"] = oscar.data_dir;
+        j["oscar"]["profile"]  = oscar.profile;
 
         j["local_model"]["enabled"]   = local_model.enabled;     // SDD-013
         j["local_model"]["model_dir"] = local_model.model_dir;

@@ -8,6 +8,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **A DreamStation 2 card is read through the user's own OSCAR (SDD-080).**
+  hms-cpap never decrypts a card and ships no OSCAR. When the machine ends a
+  session (a `.B01` landing on the card copy: a Sleep Bridge's rebuild, an ez
+  Share's copy, a folder), hms-cpap runs the OSCAR installed on the same
+  computer with no window (`--datadir --profile --import PRS1 <card root>`,
+  never `--upgrade-database`) into a profile of its own, and on its exit reads
+  `oscar.db` query-only with its own SQL (OSCAR 2.1.1, schema 19 only):
+  sessions, events, per-minute rows and breaths from the flow, stored as
+  `card` (a `ble-ds2` copy of the same stretch is replaced). No timer: the
+  close starts a read, OSCAR's exit ends it, a close during a read is one more
+  read. Settings > Data Source gains the three OSCAR fields, checked on save
+  (`GET`/`PUT /api/oscar`); the Devices tile of the bridge or ez Share shows
+  the last read and "Read now" (`POST /api/oscar/read`). Five languages.
+  A Sleep Bridge on a DreamStation 2 is now a Philips source, not ResMed.
+  Docker and the Home Assistant add-on cannot run the host's OSCAR (the tile
+  says so).
+- **A DreamStation 2's encrypted `P-SERIES/` card files are sent to CpapDash
+  as card files (SDD-080, platform SDD-061 D10).** Normal card `file_ready`
+  frames with `source: "card"`, unopened; the open session's `.B05` goes as
+  ranges.
 - **A Luna night streamed by a Sleep Bridge is live on MQTT and in the log,
   as a ResMed's is (SDD-058 D1).** The Luna's data file growing on the rebuilt
   card is the mask on, and the same quiet rule takes it off; the mask change

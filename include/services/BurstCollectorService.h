@@ -23,6 +23,7 @@
 #include "services/SefamIngestion.h"
 #include "services/BmcIngestion.h"
 #include "services/PhilipsCardIngestion.h"
+#include "services/OscarCardReader.h"
 #include "services/SessionDiscoveryService.h"
 #include "services/ListingPlan.h"
 #include "utils/MachineClock.h"
@@ -492,6 +493,25 @@ private:
     bool philips_encrypted_logged_ = false;
     void startPhilipsOverEzShare(const std::string& archive_dir);
 
+    /// SDD-080: an encrypted DreamStation 2 card is read through the user's
+    /// OSCAR. Built on the first burst that finds one; its sessions are
+    /// stored on its own thread, the newest published on the worker.
+    mutable std::mutex oscar_mu_;
+    std::shared_ptr<oscar::OscarCardReader> oscar_reader_;
+    std::shared_ptr<oscar::IProcessRunner> oscar_runner_;   // null: the system's
+    oscar::Settings oscar_settings_;
+    bool oscar_settings_set_ = false;   // setOscarSettings ran: the config's copy is older
+    std::string oscar_card_root_;
+    std::optional<CPAPSession> oscar_pending_publish_;
+    int oscar_pending_count_ = 0;
+    std::atomic<bool> oscar_publish_due_{false};
+    /// The card is encrypted: the reader exists for [card_root], and every
+    /// session close on it not yet noted starts a read.
+    void oscarCardSeen(const std::string& card_root);
+    /// On the worker: the newest stored session is published, as a
+    /// Bluetooth DreamStation 2 night is.
+    void publishOscarNight();
+
     /// SDD-031: a Sefam card behind an ez Share. data_source_ is the ez Share
     /// client; each burst copies the card into sefam_archive_dir_ and the
     /// Sefam ingestion reads it there.
@@ -638,6 +658,27 @@ public:
     }
     /// SDD-065: records were stored by another reader: import them on the worker.
     void ds2ImportDue() { ds2_import_due_ = true; }
+
+    // ── SDD-080: a DreamStation 2 card read through the user's OSCAR ──
+    /// A Sleep Bridge's rebuild wrote these card-relative files under
+    /// [card_root]: a .B01 among them is a session closing (D2).
+    void oscarCardWritten(const std::string& card_root, const std::vector<std::string>& rels);
+    /// "Read now" (D7). False when no encrypted card has been found.
+    bool requestOscarRead();
+    /// The Devices tile's OSCAR line; null when no encrypted card was found.
+    Json::Value oscarStatus() const;
+    /// The three Settings fields, after PUT /api/oscar saved them.
+    void setOscarSettings(const oscar::Settings& s);
+    /// Test-only: the reader as built for the encrypted card.
+    std::shared_ptr<oscar::OscarCardReader> oscarReaderForTest() const {
+        std::lock_guard<std::mutex> lk(oscar_mu_);
+        return oscar_reader_;
+    }
+    /// Test-only: the process OSCAR runs in (a fake OSCAR).
+    void setOscarRunnerForTest(std::shared_ptr<oscar::IProcessRunner> r) {
+        std::lock_guard<std::mutex> lk(oscar_mu_);
+        oscar_runner_ = std::move(r);
+    }
 
 private:
     mutable std::mutex ds2_mtx_;

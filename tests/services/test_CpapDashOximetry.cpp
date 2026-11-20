@@ -133,6 +133,46 @@ TEST(CpapDashOximetryContract, ABluetoothBuiltFileIsTheFixture) {
               fixture("file_ready_ble_as11.json"));
 }
 
+// SDD-080, platform SDD-061 D10: a DreamStation 2's encrypted P-SERIES files
+// are normal card frames, their headers from cardHeadersFor, source "card",
+// machine_serial empty (ingest does not read it for P-SERIES).
+TEST(CpapDashOximetryContract, PSeriesFilesAreCardFramesAndTheFixtures) {
+    const auto prop = cdstream::cardHeadersFor("P-SERIES/1A2B3C4D/PROP.BIN");
+    const auto b01 = cdstream::cardHeadersFor("P-SERIES/1A2B3C4D/P0/0000001E.B01");
+    const auto b05 = cdstream::cardHeadersFor("P-SERIES/1A2B3C4D/P0/0000001E.B05");
+    ASSERT_TRUE(prop && b01 && b05);
+    EXPECT_EQ(cdstream::fileReadyFrame(817, *prop, 0, 1180, 1, 1180, "93e0745e6b1c1f45c187375132329c89", "",
+                                       card_feed::kSourceCard),
+              fixture("file_ready_pseries_prop.json"));
+    EXPECT_EQ(cdstream::fileReadyFrame(818, *b01, 0, 2112, 1, 2112, "aefcea783258463f0f0a22edc6ba27d5", "",
+                                       card_feed::kSourceCard),
+              fixture("file_ready_pseries_summary.json"));
+    // The open session's .B05 grows: a range from the acked offset.
+    EXPECT_EQ(cdstream::fileReadyFrame(819, *b05, 4096, 10240, 2, 6144, "ff1ce2018aa17fe600fca636b126dbe4", "",
+                                       card_feed::kSourceCard),
+              fixture("file_ready_pseries_waveform_range.json"));
+}
+
+TEST(CpapDashOximetryContract, PSeriesFilesAreSentAndTheOpenWaveformGoesAsARange) {
+    for (const char* ok : {"P-SERIES/1A2B3C4D/PROP.BIN", "P-SERIES/1A2B3C4D/LOG.SEQ",
+                           "P-SERIES/1A2B3C4D/P0/0000001E.B01", "P-SERIES/1A2B3C4D/P12/0000001E.B05"})
+        EXPECT_TRUE(cdstream::isCardPath(ok)) << ok;
+    for (const char* no : {"P-SERIES/x", "P-SERIES/1A2B3C4D/D/log.txt", "P-SERIES/1A2B3C4D/P0/a/b.B01",
+                           "P-SERIES/1A2B3C4D/P0/0000001E.B05.part"})
+        EXPECT_FALSE(cdstream::isCardPath(no)) << no;
+    EXPECT_TRUE(cdstream::isGrowingName("0000001E.B05"));
+    EXPECT_FALSE(cdstream::isGrowingName("0000001E.B01"));
+    // An acked prefix that is still the same: the rest from the acked offset.
+    const std::string bytes(10240, 'x');
+    IDatabase::CpapDashSent row;
+    row.acked_to = 4096;
+    row.acked_md5 = cdstream::ackedMd5("0000001E.B05", bytes, 4096);
+    const auto p = cdstream::planSend("0000001E.B05", bytes, row);
+    EXPECT_TRUE(p.send);
+    EXPECT_EQ(p.offset, 4096u);
+    EXPECT_FALSE(p.whole);
+}
+
 TEST(CpapDashOximetryContract, TheSourceNoteIsTheFixtureAndNeverAtOffsetZero) {
     const auto note = cdstream::sourceNoteFrame(813, brpHeaders(), 4096, "23222222222", card_feed::kSourceBleAs11);
     EXPECT_EQ(note, fixture("file_ready_source_note.json"));

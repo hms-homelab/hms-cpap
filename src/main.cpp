@@ -1954,6 +1954,9 @@ int main(int argc, char** argv) {
                         for (const auto& rel : step.written_paths)
                             hms_cpap::card_feed::fileWritten(card_root, rel, "",
                                                              hms_cpap::card_feed::kSourceCard);   // SDD-079 D1
+                        // SDD-080 D2: a .B01 among them is a DreamStation 2
+                        // closing a session: OSCAR reads the card.
+                        if (burst_service) burst_service->oscarCardWritten(card_root, step.written_paths);
                         if (burst_service) burst_service->requestSyncNow();
                     };
                     // Issue #57: a batch landing is the stream alive, which
@@ -2082,6 +2085,7 @@ int main(int argc, char** argv) {
                 dd.store       = &devices_store;
                 dd.garmin      = garmin.get();
                 dd.stream_port = config.sleep_bridge.port;
+                dd.config_path = config_path;   // SDD-080
                 hms_cpap::devices::installRoutes(dd);
             }
 
