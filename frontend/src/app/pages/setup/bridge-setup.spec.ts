@@ -6,7 +6,7 @@ import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import {
-  BRIDGE_PICTURES, BRIDGE_STEPS, cardOutcome, cardOutcomeKey, findBridge, formatChanged, helloBridge,
+  BRIDGE_ANIMATIONS, BRIDGE_PICTURES, BRIDGE_STEPS, cardOutcome, cardOutcomeKey, findBridge, formatChanged, helloBridge,
   nextBridgeStep, onlineBridges, parseWatchFrame, portNote, prefillAddress, previousBridgeStep, qrRects,
   snapshotMark, streamStateKey, validBridgeAddress, watchUrl,
 } from './bridge-setup.ts';
@@ -24,6 +24,14 @@ test('the steps run in the SDD order, and skip walks them one by one', () => {
 
 test('every picture the steps show is in public/', () => {
   for (const p of Object.values(BRIDGE_PICTURES)) assert.ok(existsSync(PUBLIC + p), p);
+  for (const p of Object.values(BRIDGE_ANIMATIONS)) assert.ok(existsSync(PUBLIC + p!), p);
+});
+
+test('an animated step has a still of its own for reduced motion and the desktop', () => {
+  for (const k of Object.keys(BRIDGE_ANIMATIONS) as (keyof typeof BRIDGE_PICTURES)[]) {
+    assert.ok(BRIDGE_PICTURES[k].endsWith('.png'), k);
+    assert.equal(BRIDGE_ANIMATIONS[k], BRIDGE_PICTURES[k].replace(/\.png$/, '.webp'), k);
+  }
 });
 
 test('the watch socket sits under <base href>, ws for http and wss for https', () => {

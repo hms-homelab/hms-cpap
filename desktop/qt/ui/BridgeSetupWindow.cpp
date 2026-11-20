@@ -75,15 +75,20 @@ QLabel* words(const QString& text, QWidget* parent, double scale = 1.0, bool bol
     return l;
 }
 
-/// One of SDD-073 section 5's pictures (resources/bridge/, 4:3), scaled.
+/// One of SDD-073 section 5's pictures (:/bridge/), scaled to `width` in its
+/// own shape: the renders are 16:9, the rest 4:3. Always the PNG still: the
+/// web wizard's animated WebP needs Qt's WebP plugin (qtimageformats), which
+/// the Windows build does not install, so the desktop shows the still
+/// everywhere rather than animating on one platform only.
 QLabel* picture(const QString& name, int width, QWidget* parent) {
     auto* l = new QLabel(parent);
     const qreal dpr = qApp->devicePixelRatio();
     QPixmap p(":/bridge/" + name);
-    p = p.scaled(QSize(width, width * 3 / 4) * dpr, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    const int height = p.isNull() ? width * 3 / 4 : width * p.height() / p.width();
+    p = p.scaled(QSize(width, height) * dpr, Qt::KeepAspectRatio, Qt::SmoothTransformation);
     p.setDevicePixelRatio(dpr);
     l->setPixmap(p);
-    l->setMinimumSize(width, width * 3 / 4);   // never cropped by a tight layout
+    l->setMinimumSize(width, height);   // never cropped by a tight layout
     l->setAlignment(Qt::AlignCenter);
     return l;
 }
@@ -97,6 +102,9 @@ QWidget* captioned(const QString& name, int width, const QString& caption, QWidg
     auto* c = words(caption, w);
     c->setAlignment(Qt::AlignHCenter | Qt::AlignTop);
     c->setFixedWidth(width);
+    // A wrapped label's size hint does not know its width, so a two-line
+    // caption was given one line's height and drawn over the picture.
+    c->setMinimumHeight(c->heightForWidth(width));
     v->addWidget(c);
     return w;
 }

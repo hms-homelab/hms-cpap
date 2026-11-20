@@ -3,7 +3,7 @@ import { FormsModule } from '@angular/forms';
 import { TranslatePipe, TranslateService } from '@ngx-translate/core';
 import { CpapApiService } from '../../services/cpap-api.service';
 import {
-  BRIDGE_PICTURES, BridgeStep, CardOutcome, QrRect, WatchFrame, WatchedStatus, cardOutcome, cardOutcomeKey,
+  BRIDGE_ANIMATIONS, BRIDGE_PICTURES, BridgeStep, CardOutcome, QrRect, WatchFrame, WatchedStatus, cardOutcome, cardOutcomeKey,
   findBridge, formatChanged, helloBridge, nextBridgeStep, onlineBridges, portNote,
   prefillAddress, previousBridgeStep, qrRects, snapshotMark, streamStateKey, validBridgeAddress,
 } from './bridge-setup';
@@ -42,11 +42,14 @@ import { SleepBridgeWatch } from '../../services/sleepbridge-watch';
         @case ('assemble') {
           <h1>{{ 'setup.bridge.assemble.title' | translate }}</h1>
           <ol class="pics">
-            <li><img class="pic" [src]="pics.cardIntoBridge" alt="" />
+            <li><picture><source [attr.srcset]="anims.cardIntoBridge" type="image/webp" media="(prefers-reduced-motion: no-preference)" />
+              <img class="pic" [src]="pics.cardIntoBridge" alt="" /></picture>
               <span>{{ 'setup.bridge.assemble.cardIntoBridge' | translate }}</span></li>
-            <li><img class="pic" [src]="pics.bridgeOntoExtender" alt="" />
+            <li><picture><source [attr.srcset]="anims.bridgeOntoExtender" type="image/webp" media="(prefers-reduced-motion: no-preference)" />
+              <img class="pic" [src]="pics.bridgeOntoExtender" alt="" /></picture>
               <span>{{ 'setup.bridge.assemble.bridgeOntoExtender' | translate }}</span></li>
-            <li><img class="pic" [src]="pics.power" alt="" />
+            <li><picture><source [attr.srcset]="anims.power" type="image/webp" media="(prefers-reduced-motion: no-preference)" />
+              <img class="pic" [src]="pics.power" alt="" /></picture>
               <span>{{ 'setup.bridge.assemble.power' | translate }}</span></li>
           </ol>
           <p class="warn">{{ 'setup.bridge.assemble.notYet' | translate }}</p>
@@ -124,7 +127,8 @@ import { SleepBridgeWatch } from '../../services/sleepbridge-watch';
         @case ('machine') {
           <h1>{{ 'setup.bridge.machine.title' | translate }}</h1>
           <ol class="pics">
-            <li><img class="pic" [src]="pics.intoMachine" alt="" />
+            <li><picture><source [attr.srcset]="anims.intoMachine" type="image/webp" media="(prefers-reduced-motion: no-preference)" />
+              <img class="pic" [src]="pics.intoMachine" alt="" /></picture>
               <span>{{ 'setup.bridge.machine.intoMachine' | translate }}</span></li>
             <li><img class="pic" [src]="pics.powerCycle" alt="" />
               <span>{{ 'setup.bridge.machine.powerCycle' | translate }}</span></li>
@@ -186,7 +190,9 @@ import { SleepBridgeWatch } from '../../services/sleepbridge-watch';
     h1 { font-size: 1.5rem; color: #e0e0e0; margin: 0 0 0.75rem; }
     .subtitle { color: #b0b0b0; line-height: 1.5; margin: 0 0 0.8rem; }
     .hint { font-size: 0.8rem; color: #9e9e9e; line-height: 1.45; margin: 0.5rem 0; }
-    .pic { display: block; width: 100%; max-width: 420px; aspect-ratio: 4 / 3; object-fit: cover;
+    /* Each picture keeps its own shape: the renders are 16:9, the rest 4:3. */
+    picture { display: block; }
+    .pic { display: block; width: 100%; max-width: 420px; height: auto;
            border-radius: 10px; border: 1px solid #333; background: #222; margin: 0 auto 0.75rem; }
     .pics { list-style: none; padding: 0; margin: 0; counter-reset: n; }
     .pics li { counter-increment: n; margin-bottom: 1rem; }
@@ -244,6 +250,7 @@ export class BridgeSetupComponent implements OnDestroy {
   @Output() leave = new EventEmitter<void>();
 
   readonly pics = BRIDGE_PICTURES;
+  readonly anims = BRIDGE_ANIMATIONS;
   step: BridgeStep = 'card';
 
   // D1

@@ -121,7 +121,9 @@ target_link_libraries(${SUPERVISOR_TARGET} PRIVATE
 
 # SDD-073 section 5: one picture per hardware step. ONE copy, in the web
 # app's public folder, so the desktop setup and the web wizard show the same
-# files; Albin's images replace the placeholders under the same names.
+# files; Albin's images replace the placeholders under the same names. Only
+# the PNG stills are compiled in: the animated .webp beside some of them is
+# for the web wizard (no WebP plugin in the Windows Qt install).
 set(BRIDGE_PICTURES_DIR "${HMS_CPAP_ROOT}/frontend/public/setup/sleep-bridge")
 qt_add_resources(${SUPERVISOR_TARGET} "bridge_pictures"
     PREFIX "/bridge"
