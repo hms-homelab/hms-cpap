@@ -7,6 +7,7 @@
 #include "utils/OximetryDevice.h"
 #include "utils/TimeCompat.h"  // timegm_utc() for started_epoch
 #include <algorithm>
+#include <cmath>
 #include <iostream>
 #include <iomanip>
 #include <sstream>
