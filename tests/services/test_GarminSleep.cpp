@@ -6,6 +6,8 @@
 
 #include <ctime>
 
+#include "utils/TimeCompat.h"   // gmtime_r on MSVC
+
 using namespace hms_cpap;
 using nlohmann::json;
 
