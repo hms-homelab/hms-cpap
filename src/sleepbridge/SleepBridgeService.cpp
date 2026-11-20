@@ -299,15 +299,20 @@ StepReport SleepBridgeService::rebuildNow(const std::string& sender) {
                   << r.complete_files << " complete, " << r.held_files << " held"
                   << (r.holding ? " (holding: " + r.holding_reason + ")" : std::string())
                   << std::endl;
+    bool recognised = false;
     {
         std::lock_guard<std::mutex> lk(mu_);
         auto& b     = bridges_[sender];
         b.last_step = r;
         b.stepped   = true;
         b.learned   = learned;
-        if (!r.machine.empty()) b.card_machine = r.machine;
+        if (!r.machine.empty() && r.machine != b.card_machine) {
+            b.card_machine = r.machine;
+            recognised     = true;
+        }
     }
     if (r.written > 0 && opt_.on_rebuilt) opt_.on_rebuilt(sender, r);
+    if ((r.written > 0 || recognised) && opt_.on_event) opt_.on_event("rebuilt", sender);
     return r;
 }
 
@@ -466,6 +471,7 @@ void SleepBridgeService::startSession(const std::string& sender, uint64_t conn) 
         b.chip_id    = who.chip_id;
         b.last_heard = now;
         b.live       = conn;
+        b.session_started_at = now;
     }
     // The bridge's own record: who it said it was. Never a credential.
     const fs::path rec = fs::path(store_.batchesDir(who.sender)) / "bridge.json";
@@ -499,6 +505,7 @@ void SleepBridgeService::apply(const std::string& sender, const Effects& fx) {
         auto& b      = bridges_[sender];
         b.last_heard = std::time(nullptr);
         if (fx.state) b.state = *fx.state;
+        if (fx.card) b.card_stated_at = b.last_heard;   // SDD-073 D5: the machine's mount
         if (fx.banked) {
             b.last_batch      = b.last_heard;
             b.last_batch_mono = monoNow();
@@ -592,21 +599,29 @@ void SleepBridgeService::apply(const std::string& sender, const Effects& fx) {
     if (fx.hello && feed_) feed_->refreshAsync();   // the release check: on a hello, no timer
     if (fx.banked && opt_.on_banked) opt_.on_banked(sender);
     if (fx.banked || fx.card) wake(sender);
+    // SDD-073: what the setup steps wait for, off the locks.
+    if (opt_.on_event) {
+        if (fx.hello) opt_.on_event("hello", sender);
+        if (fx.card) opt_.on_event("card", sender);
+    }
 }
 
 void SleepBridgeService::closed(const Conversation& conv) {
     const std::string& sender = conv.who().sender;
-    std::lock_guard<std::mutex> lk(mu_);
-    auto c = conns_.find(conv.conn());
-    const bool session = c != conns_.end() && c->second.session;
-    if (c != conns_.end()) conns_.erase(c);
-    if (!session) return;   // a test hello, or nothing said: no session to end
-    auto it = bridges_.find(sender);
-    if (it != bridges_.end()) {
-        if (it->second.sessions > 0) --it->second.sessions;
-        if (it->second.live == conv.conn()) it->second.live = 0;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        auto c = conns_.find(conv.conn());
+        const bool session = c != conns_.end() && c->second.session;
+        if (c != conns_.end()) conns_.erase(c);
+        if (!session) return;   // a test hello, or nothing said: no session to end
+        auto it = bridges_.find(sender);
+        if (it != bridges_.end()) {
+            if (it->second.sessions > 0) --it->second.sessions;
+            if (it->second.live == conv.conn()) it->second.live = 0;
+        }
+        std::cout << "[sleepbridge] " << sender << " disconnected" << std::endl;
     }
-    std::cout << "[sleepbridge] " << sender << " disconnected" << std::endl;
+    if (opt_.on_event) opt_.on_event("closed", sender);
 }
 
 void SleepBridgeService::flush(const std::string& sender) {
@@ -1224,6 +1239,10 @@ Json::Value SleepBridgeService::status() const {
         // it as: a Luna's root is read as "bmc", a ResMed's as "resmed".
         v["card_machine"] = b.card_machine;
         v["card_format"]  = formatForMachine(b.card_machine);
+        // SDD-073: when this run heard the bridge's own hello and its card
+        // statement last (epoch s, 0 for not yet), which the setup steps read.
+        v["session_started_at"] = static_cast<Json::Int64>(b.session_started_at);
+        v["card_stated_at"]     = static_cast<Json::Int64>(b.card_stated_at);
         if (b.stepped) v["rebuild"] = stepJson(b.last_step);
         // SDD-061 D8: the card learned on a computer, and whether it latched.
         const Json::Value held = readBridgeLearned(store_.batchesDir(sender));
@@ -1238,6 +1257,7 @@ Json::Value SleepBridgeService::status() const {
             l["boot_sha256"]   = held.get("boot_sha256", "").asString();
             l["read_at"]       = held.get("read_at", "").asString();
             l["fat"]           = held.get("fat", "").asString();
+            l["brand"]         = held.get("brand", "").asString();
             l["state"]         = use.state;
             l["sectors_fed"]   = use.sectors;
             l["verdict"]       = verdict.verdict;

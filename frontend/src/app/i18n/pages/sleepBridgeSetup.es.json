@@ -1,0 +1,105 @@
+{
+  "setup": {
+    "bridge": {
+      "skip": "Omitir, lo haré más tarde",
+      "copy": "Copiar",
+      "copied": "Copiado",
+      "tryAgain": "Intentar de nuevo",
+      "closed": "Se cerró la conexión con HMS-CPAP, así que esta página no puede oír tu puente ahora.",
+      "reconnect": "Volver a conectar",
+      "toDashboard": "Ir al panel",
+      "card": {
+        "title": "Trae tu tarjeta",
+        "body": "La tarjeta SD de tu equipo guarda las noches que ya grabó y la estructura que tu Sleep Bridge necesita conocer.",
+        "where": "En un ordenador con CpapDash Desktop, pon la tarjeta y usa Export for HMS CPAP. Guarda un archivo .cpapcard. Elige ese archivo aquí.",
+        "choose": "Elegir el archivo .cpapcard",
+        "picked": "{{name}} está listo.",
+        "later": "Se envía cuando termine la configuración. Ya puedes sacar la tarjeta del ordenador.",
+        "sending": "Enviando las noches y la estructura de tu tarjeta...",
+        "sent": "Tu tarjeta ya está: se están leyendo sus noches y tu Sleep Bridge conoce su estructura.",
+        "sentNoLayout": "Las noches de tu tarjeta ya están, pero su estructura no se guardó: {{error}}",
+        "sendFailed": "No se pudo enviar tu tarjeta ({{error}}). Súbela más tarde en la página Subir."
+      },
+      "assemble": {
+        "title": "Monta el puente",
+        "cardIntoBridge": "Desliza la tarjeta dentro del Sleep Bridge.",
+        "bridgeOntoExtender": "Conecta el puente al extremo con zócalo del extensor plano.",
+        "power": "Conecta la alimentación USB-C. La luz se enciende.",
+        "notYet": "NO lo pongas todavía en el equipo."
+      },
+      "connect": {
+        "title": "Conecta el puente a este ordenador",
+        "body": "En tu teléfono, únete a la WiFi cuyo nombre empieza por CpapDash-, elige tu WiFi de casa, elige My hms-cpap y escribe:",
+        "askAddress": "La dirección de este ordenador en tu red de casa",
+        "askHint": "La dirección con la que abres HMS-CPAP, por ejemplo 192.168.1.20. En Docker, usa la dirección del equipo anfitrión, no la del contenedor.",
+        "useAddress": "Usar esta dirección",
+        "change": "¿No es esta?",
+        "port": "En el campo Port del puente, escribe {{port}}."
+      },
+      "wait": {
+        "title": "Esperando a tu puente",
+        "waiting": "Escuchando hasta que tu Sleep Bridge se conecte...",
+        "alreadyOnline": "Ya hay un puente conectado. ¿Es este?",
+        "found": "Encontrado {{sender}}",
+        "setting": "Poniendo la carpeta de tu puente como origen...",
+        "sourceSet": "La carpeta de tu puente es ahora el origen (formato de tarjeta {{format}}).",
+        "formatGuessed": "El puente aún no ha reconocido su tarjeta. Si es la tarjeta de otro equipo, se corrige cuando el equipo la lea.",
+        "sourceFailed": "No se pudo poner el origen: {{error}}",
+        "unreachable": "Si la prueba de configuración del propio puente dice que no llega a este ordenador, comprueba que el puerto {{port}} llega hasta él (en Docker, publica 8894:8894) y que ningún cortafuegos lo bloquea."
+      },
+      "machine": {
+        "title": "Al equipo",
+        "intoMachine": "Mete el extremo con forma de tarjeta del extensor en la ranura SD de tu equipo. Deja el puente plano a su lado.",
+        "powerCycle": "Apaga y enciende el equipo una vez, mientras no lo estés usando.",
+        "waiting": "Esperando a que tu equipo lea la tarjeta...",
+        "seen": "Tu equipo ve la tarjeta. Ya está todo listo.",
+        "mismatch": "Tu equipo tiene otra tarjeta distinta de la que trajiste en el primer paso. Pon esa tarjeta en el puente, o trae esta tarjeta más tarde."
+      },
+      "online": {
+        "title": "Tus noches en línea (opcional)",
+        "body": "¿Quieres ver también tus noches en CpapDash? Abre CpapDash, ve a Settings > hms-cpap, copia el token y pégalo aquí.",
+        "open": "Generar un token en CpapDash.com",
+        "token": "Token",
+        "send": "Enviar mis noches a CpapDash",
+        "save": "Guardar",
+        "saveFailed": "No se pudo guardar el token.",
+        "state": {
+          "off": "El envío está apagado.",
+          "notYet": "Aún no se envía nada: pega el token y pulsa Guardar.",
+          "connecting": "Conectando con CpapDash...",
+          "connected": "Enviando tus noches a CpapDash.",
+          "unreachable": "No se puede llegar a CpapDash ahora mismo.",
+          "refused": "CpapDash no aceptó este token.",
+          "revoked": "Este token se revocó en CpapDash.",
+          "closed": "Se cerró la conexión con CpapDash.",
+          "unavailable": "Esta versión no incluye el envío a CpapDash.",
+          "unknown": "Esperando a CpapDash..."
+        }
+      }
+    }
+  },
+  "bridgeSource": {
+    "folder": "Carpeta",
+    "noFolder": "Aún no hay carpeta",
+    "format": "Formato de tarjeta",
+    "formatUnknown": "aún no se sabe",
+    "copy": "Copiar",
+    "copied": "Copiado",
+    "use": "Usar este puente como mi origen",
+    "inUse": "Este puente es tu origen",
+    "restarting": "Hecho (formato de tarjeta {{format}}). HMS-CPAP se está reiniciando para leerlo.",
+    "saved": "Hecho (formato de tarjeta {{format}}).",
+    "failed": "No se pudo poner el origen: {{error}}"
+  },
+  "settings": {
+    "source": {
+      "bridges": {
+        "title": "Tus Sleep Bridges",
+        "online": "conectado",
+        "offline": "desconectado",
+        "closed": "Se cerró la conexión con HMS-CPAP, así que esta lista puede no estar al día.",
+        "reconnect": "Volver a conectar"
+      }
+    }
+  }
+}

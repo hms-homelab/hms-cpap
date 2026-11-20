@@ -19,6 +19,8 @@ import {
   muleDs2Switch,
 } from './mule-ds2-model';
 import { sourceImage } from '../../utils/source-image';
+import { BridgeSourceComponent } from '../../components/bridge-source/bridge-source.component';
+import { bridgeInUse } from '../../components/bridge-source/bridge-source-model';
 
 /** A line under a card: what the last action did. */
 interface Note {
@@ -42,7 +44,7 @@ interface UpdateWarning {
 @Component({
   selector: 'app-devices',
   standalone: true,
-  imports: [CommonModule, FormsModule, RouterLink, TranslatePipe, OtaProgressComponent],
+  imports: [CommonModule, FormsModule, RouterLink, TranslatePipe, OtaProgressComponent, BridgeSourceComponent],
   templateUrl: './devices.component.html',
   styleUrls: ['./devices.component.css'],
 })
@@ -105,7 +107,22 @@ export class DevicesComponent implements OnInit, OnDestroy {
 
   constructor(private api: CpapApiService, private t: TranslateService) {}
 
+  /** SDD-073 D8: the configured source, to say which bridge's folder is in use. */
+  private sourceConfig: { transport?: string; local_dir?: string } | null = null;
+
+  loadConfig(): void {
+    this.api.getConfig().subscribe({
+      next: (c: any) => { this.sourceConfig = { transport: c?.transport, local_dir: c?.local_dir }; },
+      error: () => {},
+    });
+  }
+
+  bridgeInUse(cardRoot: string | undefined): boolean {
+    return bridgeInUse(this.sourceConfig, cardRoot);
+  }
+
   ngOnInit(): void {
+    this.loadConfig();
     this.load(true);
     // D15: 3 s polling while the page is visible, nothing while hidden.
     this.timer = setInterval(() => {

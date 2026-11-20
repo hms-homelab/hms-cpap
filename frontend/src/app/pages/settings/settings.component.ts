@@ -1,11 +1,14 @@
-import { Component, OnInit, OnDestroy } from '@angular/core';
+import { Component, NgZone, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { TranslatePipe, TranslateService } from '@ngx-translate/core';
 import { Subject, Subscription, timer } from 'rxjs';
 import { switchMap, takeUntil, takeWhile, tap } from 'rxjs/operators';
 import { RouterLink } from '@angular/router';
-import { CpapApiService, CpapDashStreamStatus, UpdateStatus } from '../../services/cpap-api.service';
+import { CpapApiService, CpapDashStreamStatus, SleepBridge, UpdateStatus } from '../../services/cpap-api.service';
+import { SleepBridgeWatch } from '../../services/sleepbridge-watch';
+import { BridgeSourceComponent } from '../../components/bridge-source/bridge-source.component';
+import { bridgeInUse } from '../../components/bridge-source/bridge-source-model';
 import { UpdateFlowService } from '../../services/update-flow.service';
 import { AppConfig } from '../../models/config.model';
 import { sourceImage } from '../../utils/source-image';
@@ -13,7 +16,7 @@ import { sourceImage } from '../../utils/source-image';
 @Component({
   selector: 'app-settings',
   standalone: true,
-  imports: [CommonModule, FormsModule, RouterLink, TranslatePipe],
+  imports: [CommonModule, FormsModule, RouterLink, TranslatePipe, BridgeSourceComponent],
   template: `
     <div class="settings">
       <h2>{{ 'settings.title' | translate }}</h2>
@@ -36,6 +39,21 @@ import { sourceImage } from '../../utils/source-image';
             <p class="devices-link" *ngIf="config.transport !== 'local'">
               <a routerLink="/devices">{{ 'settings.devicesLink' | translate }}</a>
             </p>
+            <!-- SDD-073 D10: the Sleep Bridges seen here, each one click from
+                 being the source. Follows the bridges' events on the watch
+                 socket, never a timer. -->
+            <div class="bridges" *ngIf="bridges.length">
+              <b>{{ 'settings.source.bridges.title' | translate }}</b>
+              <app-bridge-source *ngFor="let b of bridges; trackBy: trackBridge"
+                                 [sender]="b.sender" [cardRoot]="b.card_root || ''"
+                                 [cardFormat]="b.card_format || ''" [head]="true" [online]="b.online"
+                                 [inUse]="bridgeInUse(b.card_root)" [restart]="true" />
+              <small class="hint" *ngIf="bridgesWatchClosed">
+                {{ 'settings.source.bridges.closed' | translate }}
+                <button type="button" class="link-btn" (click)="watchBridges()">
+                  {{ 'settings.source.bridges.reconnect' | translate }}</button>
+              </small>
+            </div>
             <label>
               {{ 'settings.source.transport' | translate }}
               <span class="transport-row">
@@ -435,7 +453,7 @@ import { sourceImage } from '../../utils/source-image';
                   <option value="EU">{{ 'settings.myair.regionEu' | translate }}</option>
                 </select>
               </label>
-              <button type="button" class="myair-btn" (click)="myairConnect()"
+              <button type="button" class="myair-btn btn-primary" (click)="myairConnect()"
                       [disabled]="myairBusy || !myairForm.username || !myairForm.password">
                 {{ (myairBusy ? 'settings.myair.signingIn' : 'settings.myair.connect') | translate }}
               </button>
@@ -450,7 +468,7 @@ import { sourceImage } from '../../utils/source-image';
                        [ngModelOptions]="{standalone: true}"
                        [placeholder]="'settings.myair.codePlaceholder' | translate" />
               </label>
-              <button type="button" class="myair-btn" (click)="myairVerify()"
+              <button type="button" class="myair-btn btn-primary" (click)="myairVerify()"
                       [disabled]="myairBusy || !myairForm.code">
                 {{ (myairBusy ? 'settings.myair.checking' : 'settings.myair.verify') | translate }}
               </button>
@@ -692,7 +710,7 @@ import { sourceImage } from '../../utils/source-image';
             </div>
 
             <div class="ml-actions">
-              <button type="button" class="btn-train" (click)="startBackfill()" [disabled]="backfillRunning">
+              <button type="button" class="btn-train btn-primary" (click)="startBackfill()" [disabled]="backfillRunning">
                 {{ (backfillRunning ? 'settings.backfill.importing' : 'settings.backfill.start') | translate }}
               </button>
             </div>
@@ -904,7 +922,7 @@ import { sourceImage } from '../../utils/source-image';
               </div>
 
               <div class="ml-actions">
-                <button type="button" class="btn-train" (click)="trainNow()" [disabled]="mlTraining">
+                <button type="button" class="btn-train btn-primary" (click)="trainNow()" [disabled]="mlTraining">
                   {{ (mlTraining ? 'settings.ml.training' : 'settings.ml.train') | translate }}
                 </button>
               </div>
@@ -926,10 +944,10 @@ import { sourceImage } from '../../utils/source-image';
             </label>
             <div class="prompt-path" *ngIf="llmPromptPath">{{ 'settings.prompt.file' | translate:{ path: llmPromptPath } }}</div>
             <div class="prompt-actions">
-              <button type="button" class="btn-save-prompt" (click)="saveLlmPrompt()" [disabled]="savingPrompt">
+              <button type="button" class="btn-save-prompt btn-primary" (click)="saveLlmPrompt()" [disabled]="savingPrompt">
                 {{ (savingPrompt ? 'settings.prompt.saving' : 'settings.prompt.save') | translate }}
               </button>
-              <button type="button" class="btn-reset" (click)="resetLlmPrompt()">{{ 'settings.prompt.reset' | translate }}</button>
+              <button type="button" class="btn-reset btn-secondary" (click)="resetLlmPrompt()">{{ 'settings.prompt.reset' | translate }}</button>
             </div>
           </div>
         </div>
@@ -999,15 +1017,15 @@ import { sourceImage } from '../../utils/source-image';
               </p>
 
               <div class="update-actions">
-                <button type="button" class="btn-train" (click)="checkForUpdate()"
+                <button type="button" class="btn-train btn-primary" (click)="checkForUpdate()"
                         [disabled]="updateChecking || updateFlow.phase === 'applying' || updateFlow.phase === 'restarting'">
                   {{ (updateChecking ? 'settings.updates.checking' : 'settings.updates.checkNow') | translate }}
                 </button>
-                <button type="button" class="btn-train" *ngIf="update.can_apply && updateFlow.phase === 'idle'"
+                <button type="button" class="btn-train btn-primary" *ngIf="update.can_apply && updateFlow.phase === 'idle'"
                         (click)="updateFlow.apply(update)">
                   {{ 'settings.updates.apply' | translate:{ latest: update.latest } }}
                 </button>
-                <button type="button" class="btn-train" *ngIf="updateFlow.phase === 'busy'"
+                <button type="button" class="btn-train btn-primary" *ngIf="updateFlow.phase === 'busy'"
                         (click)="updateFlow.apply(update, true)">
                   {{ 'updateBanner.applyNow' | translate }}
                 </button>
@@ -1073,7 +1091,7 @@ import { sourceImage } from '../../utils/source-image';
         </div>
 
         <div class="actions">
-          <button type="submit" class="btn-save" [disabled]="saving">
+          <button type="submit" class="btn-save btn-primary" [disabled]="saving">
             {{ (saving ? 'settings.actions.saving' : 'settings.actions.save') | translate }}
           </button>
         </div>
@@ -1089,7 +1107,7 @@ import { sourceImage } from '../../utils/source-image';
           <span *ngIf="portMoved"> {{ 'settings.restart.portMove' | translate:{ port: config?.web_port } }}</span>
         </div>
         <div class="restart-actions">
-          <button type="button" class="btn-save" (click)="restartNow()" [disabled]="restarting">
+          <button type="button" class="btn-save btn-primary" (click)="restartNow()" [disabled]="restarting">
             {{ (restarting ? 'settings.restart.restarting' : 'settings.restart.now') | translate }}
           </button>
           <button type="button" class="btn-link" (click)="dismissRestart()" [disabled]="restarting">
@@ -1156,13 +1174,11 @@ import { sourceImage } from '../../utils/source-image';
                    margin-bottom: 0.75rem; }
     .myair-connected { color: #ddd; font-size: 0.85rem; margin-bottom: 0.6rem; }
     .myair-msg { color: #9ad0a0; font-size: 0.8rem; margin-top: 0.6rem; }
-    .myair-btn { padding: 0.45rem 1rem; border-radius: 5px; border: 1px solid #1976d2;
-                 background: #1976d2; color: #fff; font-weight: 600; cursor: pointer;
-                 font-size: 0.8rem; }
+    .myair-btn { padding: 0.45rem 1rem; border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 0.8rem; }
     .myair-btn:disabled { opacity: 0.5; cursor: not-allowed; }
     .myair-msg.err { color: #f87171; }
     .hint.inline { display: inline; margin-left: 0.5rem; }
-    .myair-btn.danger { background: transparent; border-color: #f87171; color: #f87171; }
+    .myair-btn.danger { background: transparent; border: 1px solid #f87171; color: #f87171; }
     /* platform SDD-059: the nights' switch and where it stands. */
     .stream-toggle { margin-top: 1rem; }
     .stream-hint { display: block; margin: -0.25rem 0 0.6rem; line-height: 1.5; }
@@ -1174,10 +1190,11 @@ import { sourceImage } from '../../utils/source-image';
                           color: #fde68a; }
     .stream-status.err { background: rgba(248, 113, 113, 0.08); border-color: rgba(248, 113, 113, 0.45);
                          color: #fecaca; }
-    .myair-btn.secondary { background: transparent; border-color: #555; color: #aaa; }
-    .myair-btn.secondary:hover:not(:disabled) { color: #e0e0e0; border-color: #888; }
     /* SDD-062 D1: a section whose device has a card points there. */
     .devices-link { font-size: 0.82rem; margin: 0.2rem 0 0.6rem; }
+    .bridges { border: 1px solid #333; border-radius: 8px; padding: .6rem .8rem; margin: 0 0 .9rem; }
+    .bridges b { color: #e0e0e0; }
+    .link-btn { background: none; border: none; color: #64b5f6; cursor: pointer; }
     .devices-link a { color: #64b5f6; }
 
     .section-header .restart-tag { margin-left: auto; }
@@ -1193,7 +1210,7 @@ import { sourceImage } from '../../utils/source-image';
     .restart-text { flex: 1; min-width: 260px; line-height: 1.45; }
     .restart-actions { display: flex; align-items: center; gap: 0.5rem; }
     .btn-link {
-      background: none; border: none; color: #90a4ae; cursor: pointer;
+      background: none; border: none; color: var(--btn-blue-text); cursor: pointer;
       font-size: 0.8rem; text-decoration: underline; padding: 0.4rem;
     }
     .btn-link:disabled { opacity: 0.5; cursor: default; }
@@ -1246,13 +1263,8 @@ import { sourceImage } from '../../utils/source-image';
     input[type="number"] { max-width: 160px; }
 
     .actions { margin-top: 1.25rem; display: flex; }
-    .btn-save {
-      background: #64b5f6; color: #111; border: none; border-radius: 6px;
-      padding: 0.6rem 2rem; font-size: 0.95rem; font-weight: 600;
-      cursor: pointer; transition: background 0.2s;
-    }
-    .btn-save:hover { background: #90caf9; }
-    .btn-save:disabled { opacity: 0.5; cursor: not-allowed; }
+    /* Button colours: styles.scss (.btn-primary, .btn-secondary); sizes here. */
+    .btn-save { padding: 0.6rem 2rem; font-size: 0.95rem; }
 
     .toast {
       position: fixed; bottom: 1.5rem; right: 1.5rem;
@@ -1280,13 +1292,7 @@ import { sourceImage } from '../../utils/source-image';
     .metric-name { color: #90caf9; }
     .metric-val { font-family: monospace; }
     .ml-actions { margin-top: 0.75rem; }
-    .btn-train {
-      background: #7e57c2; color: #fff; border: none; border-radius: 6px;
-      padding: 0.5rem 1.5rem; font-size: 0.9rem; font-weight: 600;
-      cursor: pointer; transition: background 0.2s;
-    }
-    .btn-train:hover { background: #9575cd; }
-    .btn-train:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-train { padding: 0.5rem 1.5rem; font-size: 0.9rem; }
 
     /* LLM Prompt */
     textarea {
@@ -1298,19 +1304,8 @@ import { sourceImage } from '../../utils/source-image';
     textarea:focus { border-color: #64b5f6; }
     .prompt-path { font-size: 0.75rem; color: #666; margin-top: 0.3rem; }
     .prompt-actions { margin-top: 0.75rem; display: flex; gap: 0.75rem; }
-    .btn-save-prompt {
-      background: #64b5f6; color: #111; border: none; border-radius: 6px;
-      padding: 0.5rem 1.5rem; font-size: 0.9rem; font-weight: 600;
-      cursor: pointer; transition: background 0.2s;
-    }
-    .btn-save-prompt:hover { background: #90caf9; }
-    .btn-save-prompt:disabled { opacity: 0.5; cursor: not-allowed; }
-    .btn-reset {
-      background: transparent; color: #888; border: 1px solid #555; border-radius: 6px;
-      padding: 0.5rem 1rem; font-size: 0.85rem; cursor: pointer;
-      transition: all 0.2s;
-    }
-    .btn-reset:hover { color: #e0e0e0; border-color: #888; }
+    .btn-save-prompt { padding: 0.5rem 1.5rem; font-size: 0.9rem; }
+    .btn-reset { padding: 0.5rem 1rem; font-size: 0.85rem; }
     .hint { font-size: 0.7rem; color: #666; font-style: italic; }
 
     /* Backfill / Import History */
@@ -1575,15 +1570,43 @@ export class SettingsComponent implements OnInit, OnDestroy {
     ['device_id', 'settings.restart.key.deviceId'],
   ];
 
+  // ── SDD-073 D10: the Sleep Bridges, in Source ─────────────────────────────
+  bridges: SleepBridge[] = [];
+  bridgesWatchClosed = false;
+  private bridgeWatch: SleepBridgeWatch;
+
+  /** In use: the SAVED source is a local folder at this bridge's folder. */
+  bridgeInUse(cardRoot: string | undefined): boolean {
+    return bridgeInUse(this.pristine as any, cardRoot);
+  }
+
+  trackBridge(_: number, b: SleepBridge): string { return b.sender; }
+
+  /** The list, then every bridge event the server pushes on the watch socket. */
+  watchBridges(): void {
+    this.bridgesWatchClosed = false;
+    this.bridgeWatch.connect();
+  }
+
   constructor(private api: CpapApiService, private t: TranslateService,
-              public updateFlow: UpdateFlowService) {}
+              public updateFlow: UpdateFlowService, zone: NgZone) {
+    this.bridgeWatch = new SleepBridgeWatch(zone, (f) => {
+      if (f.t === 'sleepbridge' && f.status) this.bridges = (f.status.bridges ?? []) as SleepBridge[];
+    }, () => { this.bridgesWatchClosed = true; });
+  }
 
   ngOnDestroy(): void {
+    this.bridgeWatch.close();
     this.destroy$.next();
     this.destroy$.complete();
   }
 
   ngOnInit(): void {
+    this.api.getSleepBridges().subscribe({
+      next: (s) => { this.bridges = s?.bridges ?? []; },
+      error: () => {},
+    });
+    this.watchBridges();
     this.loadMyAirStatus();
     this.loadUpdateStatus();
     this.loadStreamStatus();

@@ -370,6 +370,9 @@ jobs:
           host: windows
           target: desktop
           arch: win64_msvc2022_64
+          # SDD-073: the Sleep Bridge setup steps wait on hms_cpap's watch
+          # socket (Qt WebSockets, an add-on module). windeployqt ships its DLL.
+          modules: 'qtwebsockets'
           cache: true
 
       - name: Build HMS-CPAP (MSVC)

@@ -175,6 +175,12 @@ public:
         /// quiet). Empty: no ticks.
         std::function<void()> on_tick;
         double                tick_s{30.0};
+        /// SDD-073: called off the service's locks when something a setup
+        /// step waits for happened to `sender`: "hello" (its own hello, never
+        /// a probe), "card" (a card statement stored: the machine mounted
+        /// the card), "closed" (its session ended), "rebuilt" (a rebuild
+        /// wrote files or recognised the machine). The setup watch socket.
+        std::function<void(const std::string& event, const std::string& sender)> on_event;
     };
 
     /// `factory` empty (or answering nullptr): this build has no rebuild, and
@@ -314,6 +320,8 @@ private:
         std::time_t first_seen{0};
         std::time_t last_heard{0};
         std::time_t last_batch{0};
+        std::time_t session_started_at{0};   // its latest own hello, this run
+        std::time_t card_stated_at{0};       // its latest card statement, this run
         double      last_batch_mono{0};   // steady clock, for the night rule
         Json::Value state{Json::objectValue};
         StepReport  last_step;

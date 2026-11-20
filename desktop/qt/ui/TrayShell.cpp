@@ -19,8 +19,12 @@
 #include <QPushButton>
 #include <QCryptographicHash>
 #include <QDateTime>
+#include <QLocale>
 
 #include "SettingsDialog.h"
+#include "BridgeSetupWindow.h"
+#include "BridgeText.h"
+#include "SourceChoice.h"
 #include "ConfiguratorWindow.h"
 #include "StartupWindow.h"
 #include "ConfigGate.h"
@@ -177,6 +181,11 @@ void TrayShell::buildMenu() {
     // hidden -- Qt moves ResetRole buttons around per platform, and on macOS it
     // landed somewhere nobody would look.
     menu_->addAction("Start Over...", this, &TrayShell::startOver);
+
+    // SDD-073: the Sleep Bridge steps again, for anyone who skipped them.
+    menu_->addAction(QString::fromUtf8(text(Txt::WindowTitle, langForLocale(QLocale::system().name().toStdString()))) +
+                         "...",
+                     this, &TrayShell::openBridgeSetup);
 
     // Checkable, reflecting what is actually on disk rather than what we last
     // set -- the installer writes the same Windows Run key, so the two must
@@ -613,6 +622,30 @@ void TrayShell::runWizard(bool wipe_first) {
 
     updateActions();
     applyIcon();
+
+    // SDD-073: a bridge chosen goes straight on to its steps.
+    if (wizard.sleepBridgeChosen()) openBridgeSetup();
+}
+
+void TrayShell::openBridgeSetup() {
+    if (bridge_setup_) {
+        bridge_setup_->raise();
+        bridge_setup_->activateWindow();
+        return;
+    }
+    if (!child_->isRunning()) child_->start();
+    int bridge_port = kSleepBridgeDefaultPort;
+    QFile f(dataDir() + "/config.json");
+    if (f.open(QIODevice::ReadOnly)) {
+        const auto o = QJsonDocument::fromJson(f.readAll()).object().value("sleep_bridge").toObject();
+        const int p = o.value("port").toInt(kSleepBridgeDefaultPort);
+        if (p > 0 && p < 65536) bridge_port = p;
+    }
+    auto* w = new BridgeSetupWindow(child_, service_exe_, dataDir(), configuredPort(), bridge_port);
+    bridge_setup_ = w;
+    w->show();
+    w->raise();
+    w->activateWindow();
 }
 
 void TrayShell::syncNow() {

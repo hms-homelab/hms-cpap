@@ -667,12 +667,26 @@ void CpapDashStreamer::waitForChange(uint64_t gen, std::optional<std::chrono::mi
 }
 
 void CpapDashStreamer::setState(const std::string& state, int http_status, const std::string& reason) {
+    bool changed = false;
+    std::function<void(const Status&)> listener;
+    Status now;
+    {
+        std::lock_guard<std::mutex> lk(mu_);
+        changed = status_.state != state || status_.http_status != http_status || status_.reason != reason;
+        if (changed) status_.since = cdstream::isoNowUtc();
+        status_.state = state;
+        status_.http_status = http_status;
+        status_.reason = reason;
+        listener = state_listener_;
+        now = status_;
+    }
+    // SDD-073 D6: the change goes out as it happens (the setup watch socket).
+    if (changed && listener) listener(now);
+}
+
+void CpapDashStreamer::setStateListener(std::function<void(const Status&)> l) {
     std::lock_guard<std::mutex> lk(mu_);
-    if (status_.state != state || status_.http_status != http_status || status_.reason != reason)
-        status_.since = cdstream::isoNowUtc();
-    status_.state = state;
-    status_.http_status = http_status;
-    status_.reason = reason;
+    state_listener_ = std::move(l);
 }
 
 // ── the worker ───────────────────────────────────────────────────────────────

@@ -36,6 +36,34 @@ and hms-cpap reads it with the matching card format (`resmed` or `bmc`).
    the next interval; a file still being written counts as changed by its
    exact size.
 
+### From the installer, step by step
+
+The desktop app (Windows, macOS) and the web wizard (Linux, Docker, Pi) walk
+through all of the above when the Sleep Bridge is chosen at first run, one
+step a screen with a picture of the hardware: the card read in this computer,
+the bridge put together, this computer's address (with Copy and a QR code),
+the bridge's first real hello (which sets the source by itself), the
+machine's mount (its card statement), and the optional CpapDash token. Each
+wait is for an event, never a clock. The Devices page and Settings > Source
+list every bridge with its folder and a **Use this bridge as my source**
+button that sets the same thing. What they use:
+
+| | |
+|---|---|
+| `ws://<host>:<web port>/api/sleepbridge/watch` | On connect, `{"t":"sleepbridge","event":"snapshot","sender":"","status":<GET /api/sleepbridge>}` and `{"t":"cpapdash","event":"snapshot","stream":<GET /api/cpapdash/stream>}`; then one frame per event: `hello` (a bridge's own hello, never a test hello), `card` (a card statement stored), `closed`, `rebuilt` (files written or the machine recognised), and each change of the CpapDash stream's state (`"event":"state"`). Nothing on a clock; a 30 s ping keeps it open. |
+| `POST /api/sleepbridge/<bridge>/use` | `{"restart": true}` (the default) or `false`. Sets the Local folder source at the bridge's folder, with its card format (`card_format`; before the rebuild recognised it, the learned card's brand; else `resmed`), saves it, and restarts unless asked not to (the upload and the re-parse are wired at start from the card folder). `{"ok":true,"local_dir":...,"format":...,"format_known":bool,"restarting":bool}`; 404 for a bridge not heard here or with no folder yet. |
+| `GET /api/sleepbridge/qr?text=<1 to 64 chars>` | `{"size":N,"rows":["0101...",...]}`: the QR code's modules (byte mode, level M), no quiet zone. |
+| `GET /api/sleepbridge` | each bridge also has `session_started_at` and `card_stated_at`: when this run heard its own hello and its card statement last (epoch seconds, 0 for not yet), and `learned.brand`. |
+
+The desktop app reads the card itself, once, with the computer's permission
+(the administrator prompt on macOS, UAC on Windows), the only step that asks
+for it: `hms_cpap --read-card <device> --card-root <mount> --out <file>
+[--progress <file>]` opens the card's disk read-only and writes the same
+`.cpapcard` Export for HMS CPAP writes (below). Its nights go in through the
+Upload route right after the bridge's folder became the source. Declined,
+the step offers the `.cpapcard` file instead. The web wizard takes the
+`.cpapcard` file.
+
 ## The live night
 
 While a bridge streams, the rebuilt card says what is happening before any

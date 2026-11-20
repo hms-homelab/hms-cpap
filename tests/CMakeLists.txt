@@ -107,6 +107,7 @@ set(TEST_SOURCES
     desktop/test_ConfigGate.cpp
     desktop/test_PendingUpdate.cpp
     desktop/test_SourceChoice.cpp
+    desktop/test_BridgeSetup.cpp
 
     utils/test_FailureLogThrottle.cpp
     clients/test_EzShareClient.cpp
@@ -225,6 +226,9 @@ set(TEST_SOURCES
     # The live night's shared MQTT topics, from every source (mqtt/LiveState.h).
     mqtt/test_LiveState.cpp
     sleepbridge/test_SleepBridgeLearnedCard.cpp
+    # SDD-073: the card read in this computer, "Use this bridge", the setup
+    # steps' events and the QR code.
+    sleepbridge/test_SleepBridgeSetup.cpp
     # Empty unless BUILD_WITH_SLEEPBRIDGE linked the component.
     sleepbridge/test_SleepBridgeLinked.cpp
     # The Mule & Miner local stream: a fake unit through the receiver into
@@ -252,6 +256,8 @@ set(SUPERVISOR_PURE_SOURCES
     ${CMAKE_SOURCE_DIR}/desktop/qt/core/pure/ConfigGate.cpp
     ${CMAKE_SOURCE_DIR}/desktop/qt/core/pure/PendingUpdate.cpp
     ${CMAKE_SOURCE_DIR}/desktop/qt/core/pure/SourceChoice.cpp
+    ${CMAKE_SOURCE_DIR}/desktop/qt/core/pure/BridgeSetup.cpp
+    ${CMAKE_SOURCE_DIR}/desktop/qt/core/pure/BridgeText.cpp
 )
 
 # Create test executable
@@ -363,6 +369,9 @@ if(BUILD_WITH_WEB AND NOT WIN32)
     file(GLOB SLEEPBRIDGE_SOURCES "${CMAKE_SOURCE_DIR}/src/sleepbridge/*.cpp"
                                   "${CMAKE_SOURCE_DIR}/src/sleepbridge/library/*.cpp")
     hms_sleepbridge_filter_sources(SLEEPBRIDGE_SOURCES)
+    # SDD-073's card read command line is not on the socket path (and needs
+    # miniz and the card readers): run_tests covers it.
+    list(FILTER SLEEPBRIDGE_SOURCES EXCLUDE REGEX ".*/CardReadCli\\.cpp$")
     # The Mule & Miner's route rides the same listener: its receiver and the
     # night writer it feeds come along, so the test covers both routes.
     file(GLOB MULE_SOURCES "${CMAKE_SOURCE_DIR}/src/mule/*.cpp")

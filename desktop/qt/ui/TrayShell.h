@@ -6,6 +6,8 @@
 #include <QAction>
 #include <QTimer>
 #include <QNetworkAccessManager>
+#include <QPointer>
+#include <QWidget>
 #include <memory>
 
 #include "ChildProcess.h"
@@ -47,6 +49,11 @@ public:
     /// ask for it.
     void showSettings() { openSettings(); }
 
+    /// SDD-073: the Sleep Bridge setup steps, after a first run that chose a
+    /// bridge, and from the menu (its "Skip, I'll do it later" comes back
+    /// here). One window at a time.
+    void openBridgeSetup();
+
 private slots:
     void onChildState(ChildProcess::State state);
     void onChildExited(int exit_code, const QString& stderr_tail);
@@ -86,6 +93,7 @@ private:
     QAction* autostart_action_ = nullptr;
     QTimer   health_timer_;
     std::unique_ptr<QNetworkAccessManager> net_;
+    QPointer<QWidget> bridge_setup_;   ///< SDD-073, while it is open
 
     QString  version_;
     bool     healthy_ = false;

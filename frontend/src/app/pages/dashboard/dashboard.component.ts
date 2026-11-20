@@ -57,8 +57,8 @@ const MODE_LABELS: Record<string, string> = {
         <h3>{{ 'dashboard.empty.title' | translate }}</h3>
         <p>{{ 'dashboard.empty.body' | translate }}</p>
         <div class="empty-actions">
-          <a class="empty-btn primary" routerLink="/upload">{{ 'dashboard.empty.upload' | translate }}</a>
-          <a class="empty-btn" routerLink="/settings">{{ 'dashboard.empty.settings' | translate }}</a>
+          <a class="btn-primary" routerLink="/upload">{{ 'dashboard.empty.upload' | translate }}</a>
+          <a class="btn-secondary" routerLink="/settings">{{ 'dashboard.empty.settings' | translate }}</a>
         </div>
       </div>
 
@@ -130,7 +130,7 @@ const MODE_LABELS: Record<string, string> = {
         <div class="ai-summary-wrapper">
           <div class="ai-summary-header">
             <span class="ai-summary-label" *ngIf="hasCardData(aiSummaryText)">{{ 'dashboard.title.aiSummary' | translate }}</span>
-            <button class="refresh-summary-btn"
+            <button class="refresh-summary-btn btn-secondary"
               [disabled]="summaryRefreshing || !data?.latest_night?.date"
               (click)="refreshAiSummary()"
               [title]="'dashboard.page.regenerateTitle' | translate">
@@ -225,13 +225,8 @@ const MODE_LABELS: Record<string, string> = {
     .ai-summary-wrapper { display: flex; flex-direction: column; }
     .ai-summary-header { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.5rem; flex-wrap: wrap; }
     .ai-summary-label { color: #888; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.5px; }
-    .refresh-summary-btn {
-      font-size: 0.7rem; padding: 0.25rem 0.75rem; border-radius: 4px;
-      border: 1px solid #1976d2; background: transparent; color: #64b5f6;
-      cursor: pointer; font-weight: 600; transition: all 0.2s;
-    }
-    .refresh-summary-btn:hover:not(:disabled) { background: #1976d2; color: #fff; }
-    .refresh-summary-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    /* Colours: styles.scss (.btn-secondary); size here. */
+    .refresh-summary-btn { font-size: 0.7rem; padding: 0.25rem 0.75rem; }
     .refresh-msg { color: #888; font-size: 0.7rem; font-style: italic; }
     .index-card {
       display: flex; align-items: center; justify-content: space-between; gap: 1rem;
@@ -255,12 +250,6 @@ const MODE_LABELS: Record<string, string> = {
     .empty-state h3 { color: #e0e0e0; font-size: 1.3rem; margin: 0.75rem 0 0.4rem; }
     .empty-state p { color: #9aa4b2; max-width: 30rem; line-height: 1.5; margin: 0 0 1.5rem; }
     .empty-actions { display: flex; gap: 0.75rem; flex-wrap: wrap; justify-content: center; }
-    .empty-btn {
-      padding: 0.6rem 1.25rem; border-radius: 6px; border: 1px solid #1976d2;
-      color: #64b5f6; text-decoration: none; font-weight: 600; transition: all 0.2s;
-    }
-    .empty-btn.primary { background: #1976d2; color: #fff; }
-    .empty-btn:hover { background: #1565c0; color: #fff; }
   `]
 })
 export class DashboardComponent implements OnInit, AfterViewInit {
