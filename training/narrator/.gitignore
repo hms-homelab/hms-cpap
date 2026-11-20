@@ -1,0 +1,5 @@
+# SDD-013: everything a run produces stays out of git. distributions.json is
+# an aggregate of one person's own nights: private, never committed.
+.venv/
+data/
+out/
