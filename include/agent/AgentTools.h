@@ -30,9 +30,6 @@ public:
     /// back as {"error": "..."}, never as an exception.
     std::string execute(const std::string& name, const nlohmann::json& arguments, IDatabase& db);
 
-    /// Validate tool name exists
-    bool hasTool(const std::string& name) const;
-
     /// The most nights get_recent_sessions returns, whatever limit is asked.
     static constexpr int kMaxNights = 31;
     /// The most events get_session_details returns per night.

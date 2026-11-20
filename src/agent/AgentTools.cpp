@@ -182,13 +182,6 @@ const std::vector<hms::ToolDefinition>& AgentTools::definitions() const {
     return definitions_;
 }
 
-bool AgentTools::hasTool(const std::string& name) const {
-    for (const auto& d : definitions_) {
-        if (d.name == name) return true;
-    }
-    return false;
-}
-
 std::string AgentTools::execute(const std::string& name, const nlohmann::json& arguments,
                                 IDatabase& db) {
     try {
