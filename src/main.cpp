@@ -55,6 +55,7 @@
 #include "database/DatabaseService.h"
 #include "database/PostgresDatabase.h"
 #endif
+#include "agent/AgentMqttConfig.h"
 #include "agent/AgentService.h"
 #include "services/MLTrainingService.h"
 #include "services/BackfillService.h"
@@ -1211,13 +1212,7 @@ int main(int argc, char** argv) {
             agent_cfg.max_context = hms_cpap::ConfigManager::getInt("AGENT_MAX_CONTEXT", 20);
             agent_cfg.memory_limit = hms_cpap::ConfigManager::getInt("AGENT_MEMORY_LIMIT", 3);
 
-            hms::MqttConfig amqtt_cfg;
-            amqtt_cfg.broker = hms_cpap::ConfigManager::get("MQTT_BROKER", "127.0.0.1");
-            amqtt_cfg.port = std::stoi(hms_cpap::ConfigManager::get("MQTT_PORT", "1883"));
-            amqtt_cfg.username = hms_cpap::ConfigManager::get("MQTT_USER", "aamat");
-            amqtt_cfg.password = hms_cpap::ConfigManager::get("MQTT_PASSWORD", "");
-            amqtt_cfg.client_id = hms_cpap::ConfigManager::get("MQTT_CLIENT_ID", "hms_cpap") + "_agent";
-            auto agent_mqtt = std::make_shared<hms::MqttClient>(amqtt_cfg);
+            auto agent_mqtt = std::make_shared<hms::MqttClient>(hms_cpap::agentMqttConfig());
             agent_mqtt->connect();
 
             agent_service = std::make_unique<hms_cpap::AgentService>(agent_cfg, agent_mqtt,

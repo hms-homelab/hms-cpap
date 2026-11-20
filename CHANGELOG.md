@@ -261,6 +261,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`llm_prompt.txt` is machine-neutral.** The example prompt for
   `LLM_PROMPT_FILE` described an AirSense 10 and asked for AHI severity on
   every machine; it now grades the AHI only where the data gives one.
+- **The AI agent's MQTT connection has no built-in user name.** With `MQTT_USER` unset it connects anonymously, as the collector does; a set `MQTT_USER`/`MQTT_PASSWORD` is used as before.
 
 ### Fixed
 - **The local sleep model is given the night's STR row, as the daily summary
