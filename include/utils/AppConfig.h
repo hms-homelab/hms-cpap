@@ -142,7 +142,7 @@ struct AppConfig {
     }
     std::string ezshare_url = "http://192.168.4.1";
     bool ezshare_range = true;
-    /// SDD-074 (Albin's decision 2): the clock times are shown on: "machine"
+    /// SDD-074 (decision 2): the clock times are shown on: "machine"
     /// (the default: what the machine's own screen shows, as stored) or
     /// "host" (this computer's clock).
     std::string display_clock = "machine";

@@ -7,7 +7,7 @@ export interface LocalModelStatusLike {
 }
 
 /**
- * Albin, 2026-11-19: the section is hidden while no model is published (the
+ * SDD-013 (Status): the section is hidden while no model is published (the
  * pinned URL and hash empty). Shown only when the server says one is; an
  * older server with no status (null) shows nothing either.
  */

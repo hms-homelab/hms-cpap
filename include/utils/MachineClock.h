@@ -18,7 +18,7 @@
 //          teaches it: an old folder carries the zone it was written in.
 //
 // machine_now = host_now + drift + zone. Until a zone is learned the HOST's
-// zone stands in (Albin, 2026-10-15: a home install's own zone is the best
+// zone stands in (SDD-054 D3: a home install's own zone is the best
 // first guess).
 //
 // A local folder learns the same way when its files keep the card's stamps

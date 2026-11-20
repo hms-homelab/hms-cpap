@@ -370,7 +370,7 @@ TEST(SupplyPublisherTest, SlugifyIsStableAndAlnumOnly) {
     EXPECT_EQ(SupplyPublisher::slugify("Travel Setup"), "travel_setup");
     EXPECT_EQ(SupplyPublisher::slugify("travel setup"), "travel_setup");
     EXPECT_EQ(SupplyPublisher::slugify("  Travel   Setup  "), "travel_setup");
-    EXPECT_EQ(SupplyPublisher::slugify("Albin's CPAP #2"), "albin_s_cpap_2");
+    EXPECT_EQ(SupplyPublisher::slugify("Alex's CPAP #2"), "alex_s_cpap_2");
     EXPECT_EQ(SupplyPublisher::slugify("Mask/Tubing"), "mask_tubing");
     EXPECT_EQ(SupplyPublisher::slugify(""), "");
 }

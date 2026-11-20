@@ -35,7 +35,7 @@ std::function<bool(const ConfigModel&)> allOf(
 
 /// Mirrors PreflightService::sourceNeedsArchive.
 ///
-/// DELIBERATELY A SECOND COPY, kept rather than removed (Albin, 2026-09-06:
+/// DELIBERATELY A SECOND COPY, kept rather than removed (SDD-022:
 /// "drift dont remove it", "until we know is good"). It exists so the
 /// supervisor's pure core depends on nothing but the standard library, which is
 /// what makes it testable on every platform with no Qt and no display
@@ -195,7 +195,7 @@ const std::vector<FieldSpec>& settingsFields() {
             {}, {}, false, enabledBy("o2ring.enabled")});
         f.push_back({"o2ring.mule_url", "o2ring", "Mule URL",
             "Address of the Mule bridging the ring over Bluetooth.",
-            FieldKind::Text, "http://192.168.2.74", {}, {}, {}, false,
+            FieldKind::Text, "http://192.168.1.50", {}, {}, {}, false,
             allOf(enabledBy("o2ring.enabled"),
                   [](const ConfigModel& m) { return m.getString("o2ring.mode") == "http"; })});
 

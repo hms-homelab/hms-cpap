@@ -298,7 +298,7 @@ Json::Value QueryService::getSessions(int limit, int offset) {
     // (it counts a mask-on only once it ends, so a live night froze at its
     // first mask-off). The same rule the daily summary follows, so the
     // sessions list and the dashboard read the same number for the same night
-    // (Albin: "latest night and first row are the same, so sessions are
+    // (the report: "latest night and first row are the same, so sessions are
     // wrong").
     const std::string night_minutes = "SUM(s.duration_seconds) / 60.0";
 

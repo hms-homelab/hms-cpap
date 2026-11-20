@@ -59,7 +59,7 @@ test('the note shows the configured receiver port, 8894 when unknown', () => {
 });
 
 test('address:port when the page was opened at a LAN IPv4 address', () => {
-  assert.equal(sleepBridgeTarget('192.168.2.15', 8894), '192.168.2.15:8894');
+  assert.equal(sleepBridgeTarget('192.168.1.15', 8894), '192.168.1.15:8894');
   assert.equal(sleepBridgeTarget('10.0.0.4', 9000), '10.0.0.4:9000');
 });
 

@@ -5,7 +5,7 @@
 // again.
 //
 // ResMed writes only into the folder of the session it is running; an older
-// folder never changes again (Albin, 2026-10-15). So a listing, once taken,
+// folder never changes again (SDD-054 D9). So a listing, once taken,
 // stays true, and keeping it means:
 //
 //   - a card that drops at folder 251 of 300 keeps the 250 listings it gave,
@@ -14,7 +14,7 @@
 //     burst, without listing it again;
 //   - a restart over a card with 300 nights lists a handful, not 300.
 //
-// Done, two passes (Albin): edf_done when every EDF is stored and the night is
+// Done, two passes (SDD-054 D9): edf_done when every EDF is stored and the night is
 // over (the pass that matters), fully_done when the rest of the folder's kept
 // files (the per-night .crc and the like) are stored too.
 //

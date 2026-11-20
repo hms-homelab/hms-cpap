@@ -293,7 +293,7 @@ TEST_P(DailyHoursBackendTest, AZeroUsageDayIsZeroHoursNotACounter) {
 // decimal by the file format), leak p95 20. The night as our sessions add
 // up: 13 index events over a 193-minute recording span, leak p95 99.
 //
-// The rule as amended 2026-09-13, Albin: "the parsed sessions and calculated
+// The rule as amended 2026-09-13 (SDD-026): "the parsed sessions and calculated
 // metrics wins, with the STR fallback". The night's hours are OUR 193
 // minutes, our 13 events divide by them (4.04), and our leak stands. The _str
 // columns keep the STR's 4.2 and 184 beside them. The 09-08 rule, the STR's

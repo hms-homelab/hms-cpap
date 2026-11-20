@@ -261,6 +261,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`llm_prompt.txt` is machine-neutral.** The example prompt for
   `LLM_PROMPT_FILE` described an AirSense 10 and asked for AHI severity on
   every machine; it now grades the AHI only where the data gives one.
+- **The AI agent's MQTT connection has no built-in user name.** With `MQTT_USER` unset it connects anonymously, as the collector does; a set `MQTT_USER`/`MQTT_PASSWORD` is used as before.
 
 ### Fixed
 - **The local sleep model is given the night's STR row, as the daily summary
@@ -324,11 +325,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 - Unused code (SDD-045): functions nothing calls and 26 translation keys nothing shows; no behaviour change.
-- Six hand-run scripts nothing in hms-cpap runs: `scripts/agent_schema.sql`
+- Seven hand-run scripts nothing in hms-cpap runs: `scripts/agent_schema.sql`
   (the agent's tables are created by the app itself),
   `scripts/fix_session_ends.py`, `scripts/reparse_sessions.py`,
-  `scripts/str_backfill.py`, and the `scripts/ezshare-monitor.service` unit
-  with its `scripts/ezshare-monitor.conf.example`.
+  `scripts/str_backfill.py`, and `scripts/ezshare-monitor.sh` with its
+  `scripts/ezshare-monitor.service` unit and
+  `scripts/ezshare-monitor.conf.example`.
 - Five web routes nothing calls: `GET /api/source/status`,
   `GET /api/oximetry/status` and `GET /api/garmin/status` (the Devices page
   reads the same facts from `GET /api/devices`), `GET /api/sleep-stages/status`
@@ -3917,7 +3919,7 @@ unrelated bugs that happened to land on the same user.
 ### Fixed
 - **Live session not shown in realtime API** — `has_live` is a count, not a boolean; fixed comparison from `== "1"` to `> 0` so nights with multiple open sessions display correctly
 - **Range downloads ignored config** — `EZSHARE_SUPPORTS_RANGE=false` env var and `ezshare_range: false` config were set but stale binary still attempted range requests; rebuild enforces correct behavior
-- **ezShare URL pointed at Fysetc** — service env had `EZSHARE_BASE_URL=http://192.168.2.75` (Fysetc) instead of real ezShare `.40`
+- **ezShare URL pointed at Fysetc** — the service's `EZSHARE_BASE_URL` named the Fysetc card's address instead of the ez Share's
 
 ## [4.0.6] - 2026-04-26
 

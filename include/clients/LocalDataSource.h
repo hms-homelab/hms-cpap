@@ -25,7 +25,7 @@ namespace hms_cpap {
  * The "downloads" are reads, and that is the point of filesAreInPlace(): with a
  * local folder the files are ALREADY where the archive would put them, so the
  * cycle skips staging, archiving and the residual walk instead of copying a
- * user's card onto itself (Albin, SDD-040 D1: "local is already a copy", "would
+ * user's card onto itself (SDD-037 D3, SDD-040 D1: "local is already a copy", "would
  * not need to walk on residual since is there already").
  */
 class LocalDataSource : public IDataSource {

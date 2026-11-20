@@ -85,6 +85,10 @@ Be respectful, inclusive, and constructive. We're all here to improve sleep heal
 - New features must include unit tests
 - Aim for >90% code coverage
 - Tests must pass on all platforms (x86_64, ARM64)
+- Tests that need recorded machine data the repository does not carry skip
+  when it is absent. To run them, point `HMS_CPAP_TEST_DATA` at a folder
+  holding `edf/` (STR.edf and the other EDF fixtures), `asv/` (an ASV night)
+  and `lowenstein_samples/extracted_therapy/` (see `tests/TestData.h`).
 
 #### Documentation
 

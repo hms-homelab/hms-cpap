@@ -361,7 +361,7 @@ TEST(PreflightServiceTest, AFileBasedSourceDoesNotNeedAnArchiveDirectory) {
 // desktop/qt/core/pure/FieldSpec.cpp carries a SECOND, hand-written copy of
 // sourceNeedsArchive, kept on purpose so the supervisor's pure core depends on
 // nothing but the standard library and stays testable with no Qt and no display
-// (SDD-016). Albin's call, 2026-09-06: "drift dont remove it".
+// (SDD-016). SDD-022: "drift dont remove it".
 //
 // A duplicated rule is only safe while something notices when the copies
 // disagree. This is that something. It reimplements the supervisor's copy

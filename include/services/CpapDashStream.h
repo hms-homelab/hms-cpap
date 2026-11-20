@@ -105,7 +105,7 @@ std::optional<CardHeaders> cardHeadersFor(const std::string& rel);
 /// flags u16 (bit 0 = last), kind u16.
 std::string binaryHeader(uint32_t req_id, uint32_t seq, bool last, uint16_t kind);
 
-/// SDD-074 (Albin's decision 9): the machine's clock setting, in the hello's
+/// SDD-074 (decision 9): the machine's clock setting, in the hello's
 /// state, so the cloud need not learn it: "+10:00" or a zone name. Optional:
 /// left out when the machine is on this computer's clock (ingest ignores
 /// fields it does not know). One constant, for the platform's stream SDD.

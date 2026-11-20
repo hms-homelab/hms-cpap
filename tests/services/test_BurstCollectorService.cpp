@@ -370,11 +370,11 @@ TEST_F(BurstCollectorServiceTest, ArchiveSessionFiles_DirectoryCreation) {
 TEST_F(BurstCollectorServiceTest, PathConstruction_PermanentArchive) {
     // Date: 20260206
     // File: 20260206_140131_BRP.edf
-    // Verify: /home/aamat/maestro_hub/cpap_data/DATALOG/20260206/20260206_140131_BRP.edf
+    // Verify: /data/cpap_data/DATALOG/20260206/20260206_140131_BRP.edf
 
     std::string date_folder = "20260206";
     std::string filename = "20260206_140131_BRP.edf";
-    std::string archive_base = "/home/aamat/maestro_hub/cpap_data";
+    std::string archive_base = "/data/cpap_data";
 
     std::string expected_path = archive_base + "/DATALOG/" + date_folder + "/" + filename;
     std::string actual_path = archive_base + "/DATALOG/" + date_folder + "/" + filename;
@@ -402,7 +402,7 @@ TEST_F(BurstCollectorServiceTest, PathConstruction_FileTypes) {
 
     std::string date_folder = "20260206";
     std::string timestamp = "20260206_140131";
-    std::string archive_base = "/home/aamat/maestro_hub/cpap_data/DATALOG";
+    std::string archive_base = "/data/cpap_data/DATALOG";
 
     std::vector<std::string> file_types = {"BRP", "EVE", "SAD", "PLD", "CSL"};
 

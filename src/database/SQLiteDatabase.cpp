@@ -2582,7 +2582,7 @@ bool SQLiteDatabase::aggregateDailySummaryFromSessions(const std::string& device
         SELECT
             s.device_id,
             date(s.session_start, '-12 hours') AS record_date,
-            -- SDD-026 as amended 2026-09-13, Albin: "the parsed sessions and
+            -- SDD-026 as amended 2026-09-13: "the parsed sessions and
             -- calculated metrics wins, with the STR fallback". The night's
             -- hours are the sum of OUR session spans and every index divides
             -- by them. Not the STR's Duration: the STR counts a mask-on only

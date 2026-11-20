@@ -7,6 +7,7 @@
  */
 
 #include <gtest/gtest.h>
+#include "TestData.h"
 #include "PosixCompat.h"
 #include "parsers/CpapdashBridge.h"
 #include "database/DatabaseService.h"
@@ -35,8 +36,8 @@ static std::string findFixture(const std::string& name) {
     for (const auto& p : candidates) {
         if (std::filesystem::exists(p)) return p;
     }
-    std::string abs = "/home/aamat/maestro_hub/projects/hms-cpap/tests/fixtures/edf/" + name;
-    if (std::filesystem::exists(abs)) return abs;
+    const std::string abs = testDataPath("edf/" + name);
+    if (!abs.empty() && std::filesystem::exists(abs)) return abs;
     return "";
 }
 

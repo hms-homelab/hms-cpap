@@ -130,6 +130,7 @@ set(TEST_SOURCES
     integration/test_STRIntegration.cpp
     integration/test_ASVIntegration.cpp
     agent/test_AgentTools.cpp
+    agent/test_AgentMqttConfig.cpp
     agent/test_AgentMemory.cpp
     agent/test_AgentService.cpp
     ml/test_StandardScaler.cpp

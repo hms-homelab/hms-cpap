@@ -290,7 +290,7 @@ import { showLocalModelSection } from './local-model';
               <label *ngIf="config.o2ring.mode === 'http'">
                 {{ 'settings.o2ring.muleUrl' | translate }}
                 <input type="text" [(ngModel)]="config.o2ring.mule_url" name="o2ring_mule_url"
-                       placeholder="http://192.168.2.74" />
+                       placeholder="http://192.168.1.50" />
                 <span class="hint">{{ 'settings.o2ring.muleHint' | translate }}</span>
               </label>
               <label *ngIf="config.o2ring.mode === 'ble'">
@@ -684,7 +684,7 @@ import { showLocalModelSection } from './local-model';
         </div>
 
         <!-- SDD-013: the local sleep model, shown only once a model is
-             published (Albin, 2026-11-19). Its switch acts at once through its
+             published (SDD-013 Status). Its switch acts at once through its
              own endpoint, not Save: turning it on downloads and checks the
              model. -->
         <div class="section" *ngIf="showLocalModelSection(localModel)">

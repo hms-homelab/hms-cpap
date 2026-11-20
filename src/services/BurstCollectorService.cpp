@@ -2682,7 +2682,7 @@ bool BurstCollectorService::executeBurstCycle() {
         // layout puts every recording that started on one day in one folder.
 
         // SDD-031: behind an ez Share, copy the card into the archive first.
-        // D4 (Albin): the whole card while the device has no history, then
+        // D4: the whole card while the device has no history, then
         // only the card's last two nights.
         if (sefam_over_ezshare_) {
             if (!data_source_ || sefam_archive_dir_.empty()) {
@@ -3739,7 +3739,7 @@ bool BurstCollectorService::executeBurstCycle() {
         // SDD-040 D1: skipped entirely for a source read in place. Its folder
         // IS the card layout OSCAR reads, so mirroring would copy the user's
         // own files onto themselves, and the residual walk would read them to
-        // write them back unchanged. Albin: "local is already a copy", "would
+        // write them back unchanged. SDD-037 D3: "local is already a copy", "would
         // not need to walk on residual since is there already".
         std::set<std::string> date_folders;
         for (const auto& session : new_sessions) {
@@ -4052,7 +4052,7 @@ std::set<std::string> BurstCollectorService::historyCatchUpFolders(
  * forever. Every other bulk path (backfill, the reparse CLI, the card upload)
  * already closes what it saves.
  *
- * The window is 5 days (Albin): inside it the checkpoint path still owns the
+ * The window is 5 days (SDD-037 D1): inside it the checkpoint path still owns the
  * night, because a local folder can be a mounted card or the target of a sync
  * that writes on a lag, and calling that Done mid-night is the worse error.
  * The end comes from the data (D2), never the clock, so 18 nights imported in
