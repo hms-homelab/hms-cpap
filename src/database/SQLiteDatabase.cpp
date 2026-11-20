@@ -2996,7 +2996,13 @@ std::vector<SessionMetrics> SQLiteDatabase::getMetricsForDateRange(
             MAX(sm.therapy_mode) AS therapy_mode,
             -- Issue #78: the unclassified apnea is in the AHI, so a weekly
             -- summary without it lists types that do not add up to it.
-            SUM(sm.unclassified_apneas)                      AS unclassified_apneas
+            SUM(sm.unclassified_apneas)                      AS unclassified_apneas,
+            -- SDD-072 D1: a range's night carries what getNightlyMetrics
+            -- gives the same night, its index kind (SDD-024) and its therapy
+            -- pressure (SDD-030), so the weekly text cannot grade an index
+            -- the daily one refuses to.
+            MAX(COALESCE(sm.index_kind, 'ahi')) AS index_kind,
+            SUM(c.s_therapy) / NULLIF(SUM(c.n_therapy), 0) AS avg_therapy_pressure
         FROM cpap_sessions s
         JOIN cpap_session_metrics sm ON sm.session_id = s.id
         LEFT JOIN (
@@ -3010,7 +3016,8 @@ std::vector<SessionMetrics> SQLiteDatabase::getMetricsForDateRange(
                    SUM(mask_pressure) AS s_mask, COUNT(mask_pressure) AS n_mask,
                    SUM(epr_pressure) AS s_epr, COUNT(epr_pressure) AS n_epr,
                    SUM(snore_index) AS s_snore, COUNT(snore_index) AS n_snore,
-                   SUM(target_ventilation) AS s_tgt, COUNT(target_ventilation) AS n_tgt
+                   SUM(target_ventilation) AS s_tgt, COUNT(target_ventilation) AS n_tgt,
+                   SUM(therapy_pressure) AS s_therapy, COUNT(therapy_pressure) AS n_therapy
             FROM cpap_calculated_metrics GROUP BY session_id
         ) c ON c.session_id = sm.session_id
         LEFT JOIN (
@@ -3042,6 +3049,7 @@ std::vector<SessionMetrics> SQLiteDatabase::getMetricsForDateRange(
     // 19=pp95  20=avg_mask_pressure  21=avg_epr_pressure  22=avg_snore
     // 23=avg_target_ventilation  24=avg_pressure  25=max_pressure  26=min_pressure
     // 27=leak_p50  28=leak_p95_sess  29=therapy_mode  30=unclassified_apneas
+    // 31=index_kind  32=avg_therapy_pressure
 
     std::vector<SessionMetrics> nights;
     while (sqlite3_step(g.stmt) == SQLITE_ROW) {
@@ -3080,6 +3088,10 @@ std::vector<SessionMetrics> SQLiteDatabase::getMetricsForDateRange(
         m.leak_p95               = col_opt_double(g.stmt, 28);
         m.therapy_mode           = col_opt_int(g.stmt, 29);
         m.unclassified_apneas    = col_int(g.stmt, 30);   // issue #78
+        m.index_kind = (col_text(g.stmt, 31) == "ungraded")   // SDD-072 D1
+                           ? SessionMetrics::IndexKind::Ungraded
+                           : SessionMetrics::IndexKind::AHI;
+        m.avg_therapy_pressure   = col_opt_double(g.stmt, 32);
 
         nights.push_back(std::move(m));
     }

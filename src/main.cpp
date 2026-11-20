@@ -43,9 +43,7 @@
 #include "database/DatabaseService.h"
 #include "database/PostgresDatabase.h"
 #endif
-#ifdef WITH_POSTGRESQL
 #include "agent/AgentService.h"
-#endif
 #include "services/MLTrainingService.h"
 #include "services/BackfillService.h"
 #include <cpapdash/parser/OximetryCsv.h>
@@ -96,9 +94,7 @@ std::atomic<bool> shutdown_requested(false);
 /// event-loop thread"), and the supervisor saw exit 1 instead of 42.
 std::atomic<int> requested_exit_code(0);
 std::unique_ptr<hms_cpap::BurstCollectorService> burst_service;
-#ifdef WITH_POSTGRESQL
 std::unique_ptr<hms_cpap::AgentService> agent_service;
-#endif
 std::unique_ptr<hms_cpap::MLTrainingService> ml_service;
 std::unique_ptr<hms_cpap::BackfillService> backfill_service;
 
@@ -108,9 +104,7 @@ std::unique_ptr<hms_cpap::BackfillService> backfill_service;
 void requestShutdown() {
     shutdown_requested = true;
     if (burst_service) burst_service->stop();
-#ifdef WITH_POSTGRESQL
     if (agent_service) agent_service->stop();
-#endif
     if (ml_service) ml_service->stop();
     if (backfill_service) backfill_service->stop();
 #ifdef BUILD_WITH_WEB
@@ -1036,8 +1030,8 @@ int main(int argc, char** argv) {
                       << ", min_days: " << config.ml_training.min_days << ")" << std::endl;
         }
 
-#ifdef WITH_POSTGRESQL
-        // Start Agent module if enabled
+        // Start Agent module if enabled. SDD-072 D4: on every engine; its
+        // tools read through IDatabase.
         std::string agent_enabled = hms_cpap::ConfigManager::get("AGENT_ENABLED", "false");
         if (agent_enabled == "true" || agent_enabled == "1") {
             std::string agent_provider = hms_cpap::ConfigManager::get("AGENT_LLM_PROVIDER", "ollama");
@@ -1074,15 +1068,25 @@ int main(int argc, char** argv) {
                 agent_llm = std::make_shared<hms_cpap::AgentLLM>(llm_client, agent_embed);
             }
 
-            // Build DB connection string for agent
-            std::string a_db_host = hms_cpap::ConfigManager::get("DB_HOST", "localhost");
-            std::string a_db_port = hms_cpap::ConfigManager::get("DB_PORT", "5432");
-            std::string a_db_name = hms_cpap::ConfigManager::get("DB_NAME", "cpap_monitoring");
-            std::string a_db_user = hms_cpap::ConfigManager::get("DB_USER", "maestro");
-            std::string a_db_pass = hms_cpap::ConfigManager::get("DB_PASSWORD", "");
-            std::string a_conn_str = "host=" + a_db_host + " port=" + a_db_port +
-                                     " dbname=" + a_db_name + " user=" + a_db_user +
-                                     " password=" + a_db_pass;
+            // The tools' own connection (client libraries are not thread-safe),
+            // as the ML service does; SQLite shares the service's.
+            std::shared_ptr<hms_cpap::IDatabase> agent_db;
+            if (config.database.type == "sqlite") {
+                agent_db = db;
+            } else {
+                agent_db = hms_cpap::makeDatabaseFromConfig();
+                agent_db->connect();
+            }
+
+            // The pgvector memory's connection: PostgreSQL only.
+            std::string a_conn_str;
+            if (agent_db->dbType() == hms_cpap::DbType::POSTGRESQL) {
+                a_conn_str = "host=" + hms_cpap::ConfigManager::get("DB_HOST", "localhost") +
+                             " port=" + hms_cpap::ConfigManager::get("DB_PORT", "5432") +
+                             " dbname=" + hms_cpap::ConfigManager::get("DB_NAME", "cpap_monitoring") +
+                             " user=" + hms_cpap::ConfigManager::get("DB_USER", "maestro") +
+                             " password=" + hms_cpap::ConfigManager::get("DB_PASSWORD", "");
+            }
 
             std::string device_id = hms_cpap::ConfigManager::get("CPAP_DEVICE_ID", hms_cpap::AppConfig::kDefaultDeviceId);
 
@@ -1104,12 +1108,12 @@ int main(int argc, char** argv) {
             auto agent_mqtt = std::make_shared<hms::MqttClient>(amqtt_cfg);
             agent_mqtt->connect();
 
-            agent_service = std::make_unique<hms_cpap::AgentService>(agent_cfg, agent_mqtt, agent_llm);
+            agent_service = std::make_unique<hms_cpap::AgentService>(agent_cfg, agent_mqtt,
+                                                                     agent_llm, agent_db);
             agent_service->start();
 
             std::cout << "Agent: AI module enabled (model: " << agent_model << ")" << std::endl;
         }
-#endif // WITH_POSTGRESQL
 
 #ifdef BUILD_WITH_WEB
         // Start web UI server (Drogon blocks until shutdown)
@@ -2046,12 +2050,10 @@ int main(int argc, char** argv) {
             ml_service->stop();
             ml_service.reset();
         }
-#ifdef WITH_POSTGRESQL
         if (agent_service) {
             agent_service->stop();
             agent_service.reset();
         }
-#endif
         if (burst_service) {
             burst_service->stop();
             burst_service.reset();
