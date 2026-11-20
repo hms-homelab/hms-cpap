@@ -88,9 +88,23 @@ public:
     /// one per segment, from what is on disk. Empty when nothing streamed.
     std::vector<StoredSpan> streamedSpans(const std::string& serial, const std::string& night);
 
+    /// SDD-070 D3/D4: the minutes of one sleep day the machine was on the mask
+    /// (mask_on, from its Summary) and no streamed segment covers, written into
+    /// the night's folder from the pages kept under stored/<night>: for each
+    /// contiguous run of samples, a <stamp>_BRP.edf (flow, mask pressure,
+    /// 6.25 Hz) and a <stamp>_PLD.edf (inspiratory pressure, leak, 0.5 Hz),
+    /// named by the run's first sample on the machine's wall clock. A file of
+    /// that name already there (streamed, a card's, or written before) is
+    /// never replaced. Returns how many files were written.
+    int writeStoredGaps(const std::string& serial, const std::string& night,
+                        const std::vector<StoredSpan>& mask_on);
+
     static constexpr int64_t kSegmentGapMs = 60 * 1000;
     static constexpr int64_t kEventTailMs = 2 * 60 * 1000;
     static constexpr int64_t kLiveEveryMs = 10 * 1000;
+    /// A stored event within this of a live one of the same kind is the same
+    /// event (SDD-070: the spool and the card agree to about 0.5 s).
+    static constexpr int64_t kStoredEventMatchMs = 2 * 1000;
 
 private:
     struct Segment {
