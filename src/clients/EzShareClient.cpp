@@ -4,6 +4,8 @@
 #include "utils/ConfigManager.h"
 #include "utils/AppConfig.h"
 #include "utils/ArchiveRecordCount.h"
+#include "utils/MachineZone.h"
+#include <cpapdash/parser/WallClock.h>
 #include <chrono>
 #include <atomic>
 #include <iostream>
@@ -59,8 +61,8 @@ std::chrono::system_clock::time_point EzShareFileEntry::getModTime() const {
     tm.tm_hour = hour;
     tm.tm_min  = minute;
     tm.tm_sec  = second;
-    tm.tm_isdst = -1;
-    return std::chrono::system_clock::from_time_t(std::mktime(&tm));
+    // SDD-074 D4: a label, the frame every machine time is held in.
+    return wall::point(wall::labelOf(tm));
 }
 
 EzShareClient::EzShareClient()
@@ -792,12 +794,9 @@ bool EzShareClient::downloadChunks(const std::string& path, const std::string& l
 }
 
 std::string EzShareClient::folderForStart(std::time_t start) {
-    auto tm = *std::localtime(&start);
-    if (tm.tm_hour < 12) {
-        --tm.tm_mday;
-        tm.tm_isdst = -1;
-        std::mktime(&tm);
-    }
+    // start is a label (SDD-074 D4).
+    auto tm = wall::fieldsOf(static_cast<long long>(start));
+    if (tm.tm_hour < 12) tm = wall::fieldsOf(static_cast<long long>(start) - 86400);
     char folder[16];
     std::strftime(folder, sizeof(folder), "%Y%m%d", &tm);
     return folder;
@@ -820,6 +819,7 @@ void EzShareClient::refreshSessions() {
     const auto path = (dir / "STR.edf").string();
     if (!downloadRootFile("STR.edf", path))
         throw std::runtime_error("ez Share: could not read STR.edf for listing-free discovery");
+    cpapdash::parser::WallClockLabels labels;   // SDD-074 D4
     auto records = EDFParser::parseSTRFile(path, "ezshare");
     starts_.clear();
     for (const auto& record : records) {
@@ -879,8 +879,7 @@ std::set<std::time_t> EzShareClient::scanAliases(const std::string& folder) {
     day.tm_mon = std::stoi(folder.substr(4, 2)) - 1;
     day.tm_mday = std::stoi(folder.substr(6, 2)) + 1;
     day.tm_hour = 12;
-    day.tm_isdst = -1;
-    std::mktime(&day);
+    day = wall::fieldsOf(wall::labelOf(day));   // normalised
     char next[16];
     std::strftime(next, sizeof(next), "%Y%m%d", &day);
     auto& found = alias_starts_[folder];
@@ -909,8 +908,7 @@ std::set<std::time_t> EzShareClient::scanAliases(const std::string& folder) {
             ++alias_generation_[folder];
             tm.tm_mon -= 1;
             tm.tm_year += 100;
-            tm.tm_isdst = -1;
-            found.insert(std::mktime(&tm));
+            found.insert(static_cast<std::time_t>(wall::labelOf(tm)));
         }
     }
     return found;
@@ -920,7 +918,7 @@ std::vector<EzShareFileEntry> EzShareClient::enumerateFiles(const std::string& f
     std::vector<EzShareFileEntry> files;
     std::set<std::string> returned;
     const auto candidate = [](std::time_t at, const std::string& type) {
-        auto tm = *std::localtime(&at);
+        auto tm = wall::fieldsOf(static_cast<long long>(at));
         char prefix[32];
         std::strftime(prefix, sizeof(prefix), "%Y%m%d_%H%M%S_", &tm);
         return std::string(prefix) + type + ".edf";
@@ -1014,9 +1012,9 @@ std::vector<EzShareFileEntry> EzShareClient::enumerateFiles(const std::string& f
         find("BRP", start, 60);
         if (!names.count("BRP")) continue;
         // Recover the BRP's second without interpreting a timestamp as UTC.
-        auto tm = *std::localtime(&start);
+        auto tm = wall::fieldsOf(static_cast<long long>(start));
         tm.tm_sec = std::stoi(names["BRP"].substr(13, 2));
-        const auto brp = std::mktime(&tm);
+        const auto brp = static_cast<std::time_t>(wall::labelOf(tm));
         for (const auto* type : {"PLD", "SA2", "SAD", "EVE", "CSL", "TCV"}) {
             if ((std::string(type) == "SAD" && names.count("SA2")) ||
                 (std::string(type) == "SA2" && names.count("SAD"))) continue;

@@ -540,7 +540,7 @@ TEST(EzShareFileEntryTest, GetModTimeRoundTrip) {
     std::time_t tt = std::chrono::system_clock::to_time_t(tp);
 
     std::tm local{};
-    localtime_r(&tt, &local);
+    gmtime_r(&tt, &local);   // a label since SDD-074 D4
 
     EXPECT_EQ(local.tm_year + 1900, 2026);
     EXPECT_EQ(local.tm_mon + 1, 2);
@@ -987,7 +987,7 @@ TEST(EzShareFileEntryExtTest, DirEntryModTimeStillComputes) {
     auto tp = e.getModTime();
     std::time_t tt = std::chrono::system_clock::to_time_t(tp);
     std::tm local{};
-    localtime_r(&tt, &local);
+    gmtime_r(&tt, &local);   // a label since SDD-074 D4
     EXPECT_EQ(local.tm_year + 1900, 2026);
     EXPECT_EQ(local.tm_mday, 4);
     EXPECT_EQ(local.tm_hour, 20);

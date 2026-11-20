@@ -2,6 +2,7 @@
 #include <drogon/drogon.h>
 #include <fstream>
 #include "controllers/CpapController.h"
+#include "web/ClockApi.h"
 #include "controllers/EquipmentController.h"
 #include "controllers/CleaningController.h"
 #include "controllers/SleepBridgeSocket.h"
@@ -59,6 +60,9 @@
 #include "utils/CardResidue.h"
 #include "utils/CardImport.h"
 #include "utils/SessionEnd.h"
+#include "utils/MachineClocks.h"
+#include "utils/SessionLabels.h"
+#include <cpapdash/parser/WallClock.h>
 #include "utils/CheckpointSizes.h"
 #include "services/As11NightImport.h"
 #include "utils/FileLogger.h"
@@ -239,7 +243,8 @@ void printConfiguration() {
         std::strftime(offset, sizeof(offset), "%z", &local);
         if (std::string(offset) == "+0000")
             std::cout << "  (the machine's clock is read in this zone; if yours is not UTC, set TZ, "
-                         "e.g. TZ=America/New_York in Docker)"
+                         "e.g. TZ=America/New_York in Docker, or set the machine's clock on "
+                         "its card on the Devices page)"
                       << std::endl;
     }
     std::cout << std::endl;
@@ -254,6 +259,7 @@ int runBackfill(const std::string& filepath) {
     std::string device_id = hms_cpap::ConfigManager::get("CPAP_DEVICE_ID", hms_cpap::AppConfig::kDefaultDeviceId);
 
     std::cout << "STR Backfill: Parsing " << filepath << std::endl;
+    cpapdash::parser::WallClockLabels labels;   // SDD-074 D4
     auto records = hms_cpap::EDFParser::parseSTRFile(filepath, device_id);
     if (records.empty()) {
         std::cerr << "STR Backfill: No therapy days found in " << filepath << std::endl;
@@ -280,11 +286,9 @@ int runBackfill(const std::string& filepath) {
     // Print summary
     const auto& first = records.front();
     const auto& last = records.back();
-    auto first_t = std::chrono::system_clock::to_time_t(first.record_date);
-    auto last_t = std::chrono::system_clock::to_time_t(last.record_date);
     std::cout << "STR Backfill: Saved " << records.size() << " days ("
-              << std::put_time(std::localtime(&first_t), "%Y-%m-%d") << " to "
-              << std::put_time(std::localtime(&last_t), "%Y-%m-%d") << ")"
+              << hms_cpap::wall::text(first.record_date).substr(0, 10) << " to "
+              << hms_cpap::wall::text(last.record_date).substr(0, 10) << ")"
               << std::endl;
 
     return 0;
@@ -303,6 +307,7 @@ int runBackfill(const std::string& filepath) {
  * the same session gap logic (SESSION_GAP_MINUTES, default 60), deletes old DB records, and re-parses fresh.
  */
 int runReparse(const std::string& card_root, const std::string& start_str, const std::string& end_str) {
+    cpapdash::parser::WallClockLabels labels;   // SDD-074 D4
     const auto layout = hms_cpap::classifyLocalDir(card_root);
     if (layout != hms_cpap::LocalDirLayout::Root) {
         std::cerr << "hms_cpap --reparse: "
@@ -358,6 +363,8 @@ int runReparse(const std::string& card_root, const std::string& start_str, const
                   << hms_cpap::ConfigManager::get("DB_TYPE", "sqlite") << ")" << std::endl;
         return 1;
     }
+    hms_cpap::machine_clocks::setPrimaryDevice(device_id);   // SDD-074
+    hms_cpap::machine_clocks::loadAll(*db);
 
     int total_deleted = 0;
     int total_parsed = 0;
@@ -825,6 +832,20 @@ int main(int argc, char** argv) {
         return 1;
     }
     db->connect();
+
+    // SDD-074: each machine's clock, before anything reads a night. D11: said
+    // in the startup block's words.
+    hms_cpap::machine_clocks::setPrimaryDevice(config.device_id);
+    hms_cpap::machine_clocks::loadAll(*db);
+    hms_cpap::machine_clocks::setDisplayHost(config.display_clock == "host");
+    {
+        const auto clocks = hms_cpap::machine_clocks::all();
+        if (clocks.empty())
+            std::cout << "  Machine clock:      same as this computer (zone database: "
+                      << hms_cpap::zonedb::source() << ")" << std::endl;
+        for (const auto& [device, setting] : clocks)
+            std::cout << "  Machine clock:      " << device << " on " << setting << std::endl;
+    }
 
     // SDD-034: a cpap_sessions created before the backends declared
     // UNIQUE (device_id, session_start) has no such key, and saveSession's
@@ -1370,6 +1391,7 @@ int main(int argc, char** argv) {
                             r["error"] = "No readable rows in CSV (expected a Wellue / O2 Ring export)";
                             return r;
                         }
+                        hms_cpap::putRingOnMachineClock(session);   // SDD-074: the Ring clock
                         if (!oxi_db->saveOximetrySession(hms_cpap::kOximetryDeviceId, session)) {
                             r["error"] = "Failed to save oximetry session";
                             return r;
@@ -1818,10 +1840,11 @@ int main(int argc, char** argv) {
                         hms_cpap::sleepbridge::LiveSink sink;
                         sink.event = [=](const hms_cpap::sleepbridge::LiveEvent& e) {
                             const auto t = std::chrono::system_clock::to_time_t(e.at);
-                            std::ostringstream iso;
-                            iso << std::put_time(std::localtime(&t), "%Y-%m-%dT%H:%M:%S%z");
-                            std::string at = iso.str();
-                            if (at.size() >= 5) at.insert(at.size() - 2, ":");
+                            // SDD-074 D8: the machine's own offset at that
+                            // instant (the host's when it has no setting).
+                            const std::string at =
+                                hms_cpap::machine_clocks::zoneFor(hms_cpap::machine_clocks::primaryDevice())
+                                    .isoText(static_cast<long long>(t));
                             Json::Value v(Json::objectValue);
                             v["type"]        = e.type;
                             v["description"] = e.description;
@@ -1981,6 +2004,39 @@ int main(int argc, char** argv) {
                 dd.feed        = release_feed.get();
                 dd.store       = &devices_store;
                 dd.stream_port = config.sleep_bridge.port;
+                // SDD-074: the clock setting, and "Re-read my nights": the
+                // rows are backed up first, then the archive is read again by
+                // the backfill worker, with the setting in force.
+                dd.db = web_db ? web_db : db;
+                {
+                    std::shared_ptr<hms_cpap::IDatabase> rr_db = dd.db;
+                    const std::string rr_root =
+                        !config.local_dir.empty() ? config.local_dir : config.archive_dir;
+                    dd.reread = [rr_db, rr_root](const std::string& device) -> Json::Value {
+                        Json::Value r(Json::objectValue);
+                        if (!backfill_service || rr_root.empty()) {
+                            r["ok"]    = false;
+                            r["error"] = "no archive of this machine's files to read again";
+                            return r;
+                        }
+                        std::string why;
+                        const auto made = hms_cpap::clockapi::backupRows(
+                            *rr_db, device, static_cast<long long>(std::time(nullptr)), &why);
+                        if (made.empty()) {
+                            r["ok"]    = false;
+                            r["error"] = why.empty() ? "the rows could not be backed up" : why;
+                            return r;
+                        }
+                        Json::Value list(Json::arrayValue);
+                        for (const auto& t : made) list.append(t);
+                        std::cout << "Clock: " << device << "'s rows backed up (" << made.size()
+                                  << " table(s)); reading every archived night again" << std::endl;
+                        backfill_service->trigger("", "", rr_root);
+                        r["ok"]     = true;
+                        r["backup"] = list;
+                        return r;
+                    };
+                }
                 hms_cpap::devices::installRoutes(dd);
             }
 

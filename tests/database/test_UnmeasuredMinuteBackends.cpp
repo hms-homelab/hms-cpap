@@ -22,6 +22,7 @@
 #include <gtest/gtest.h>
 
 #include "database/IDatabase.h"
+#include "utils/TimeCompat.h"
 #include "database/SQLiteDatabase.h"
 #include "database/SqlDialect.h"
 #ifdef WITH_MYSQL
@@ -62,8 +63,7 @@ system_clock::time_point local(int y, int mo, int d, int h, int mi = 0) {
     tm.tm_mday = d;
     tm.tm_hour = h;
     tm.tm_min = mi;
-    tm.tm_isdst = -1;
-    return system_clock::from_time_t(std::mktime(&tm));
+    return system_clock::from_time_t(timegm_utc(&tm));   // a label (SDD-074 D4)
 }
 
 double num(const Json::Value& v) {

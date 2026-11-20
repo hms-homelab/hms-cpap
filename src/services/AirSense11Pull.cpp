@@ -1,8 +1,11 @@
 #include "services/AirSense11Pull.h"
 
+#include "services/As11NightWriter.h"   // machineOffsetFromDayStart
 #include "services/RemovedNights.h"
+#include "utils/MachineClocks.h"
 
 #include <cpapdash/parser/AirSense11Summary.h>
+#include <cpapdash/parser/WallClock.h>
 
 #include <algorithm>
 #include <ctime>
@@ -25,13 +28,8 @@ std::string AirSense11Pull::fromAfter(const std::vector<STRDailyRecord>& records
     auto newest = records.front().record_date;
     for (const auto& r : records)
         if (r.record_date > newest) newest = r.record_date;
-    const std::time_t t = std::chrono::system_clock::to_time_t(newest - std::chrono::hours(48));
-    std::tm tm{};
-#ifdef _WIN32
-    localtime_s(&tm, &t);
-#else
-    localtime_r(&t, &tm);
-#endif
+    // record_date is a label (SDD-074 D4).
+    const std::tm tm = wall::fieldsOf(wall::seconds(newest - std::chrono::hours(48)));
     char buf[16];
     std::strftime(buf, sizeof(buf), "%Y-%m-%d", &tm);
     return buf;
@@ -41,19 +39,30 @@ namespace {
 
 // The calendar date a record is filed under, as the database keys it.
 std::string dateOf(const std::chrono::system_clock::time_point& tp) {
-    const std::time_t t = std::chrono::system_clock::to_time_t(tp);
-    std::tm tm{};
-#ifdef _WIN32
-    localtime_s(&tm, &t);
-#else
-    localtime_r(&t, &tm);
-#endif
+    const std::tm tm = wall::fieldsOf(wall::seconds(tp));
     char buf[16];
     std::strftime(buf, sizeof(buf), "%Y-%m-%d", &tm);
     return buf;
 }
 
 } // namespace
+
+void AirSense11Pull::onMachineClock(std::vector<STRDailyRecord>& days, const std::string& device_id) {
+    const MachineZone setting = machine_clocks::zoneFor(device_id);
+    for (auto& r : days) {
+        MachineZone zone = setting;
+        if (zone.isHost()) {
+            const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                r.record_date.time_since_epoch()).count();
+            if (const auto off = machineOffsetFromDayStart(ms)) zone = MachineZone::fixed(*off * 60);
+        }
+        auto label = [&](std::chrono::system_clock::time_point tp) {
+            return wall::point(zone.toWall(wall::seconds(tp)));
+        };
+        r.record_date = label(r.record_date);
+        for (auto& p : r.mask_pairs) p = {label(p.first), label(p.second)};
+    }
+}
 
 int AirSense11Pull::withStrSettings(std::vector<STRDailyRecord>& days, const std::vector<STRDailyRecord>& str) {
     std::map<std::string, const STRDailyRecord*> by_date;
@@ -109,27 +118,21 @@ AirSense11Pull::Result AirSense11Pull::pullNow() {
     // All the days, so a window that ends on days off still moves forward.
     std::vector<STRDailyRecord> all;
     for (const auto& d : days) all.push_back(AirSense11SummaryParser::toStrRecord(d, device_id_));
+    onMachineClock(all, device_id_);
     if (!all.empty()) {
         auto newest = all.front().record_date;
         for (const auto& rec : all) newest = std::max(newest, rec.record_date);
-        const std::time_t t = std::chrono::system_clock::to_time_t(newest);
-        std::tm tm{};
-#ifdef _WIN32
-        localtime_s(&tm, &t);
-#else
-        localtime_r(&t, &tm);
-#endif
-        char buf[16];
-        std::strftime(buf, sizeof(buf), "%Y-%m-%d", &tm);
-        r.newest_day = buf;
+        r.newest_day = dateOf(newest);
     }
     auto used = AirSense11SummaryParser::toStrRecords(days, device_id_);
+    onMachineClock(used, device_id_);
     used = withoutRemovedNights(std::move(used), removedNightSet(*db_, device_id_));
     // The Summary carries no settings; the machine's STR.edf does from the day
     // they were read (written just now, from this Summary and those settings).
     if (str_path_ && !used.empty()) {
         const std::string path = str_path_();
         if (!path.empty()) {
+            cpapdash::parser::WallClockLabels labels;   // SDD-074 D4
             const auto str = EDFParser::parseSTRFile(path, device_id_);
             if (const int n = withStrSettings(used, str); n > 0)
                 std::cout << "AirSense11: settings on " << n << " day(s), from the machine's STR" << std::endl;

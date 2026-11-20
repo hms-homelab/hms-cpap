@@ -3,6 +3,8 @@
 #include <thread>
 #include "utils/TimeCompat.h"
 #include "utils/OximetryDevice.h"
+#include "utils/MachineClocks.h"
+#include <cpapdash/parser/WallClock.h>
 #include "services/BurstCollectorService.h"
 #include "services/InsightsEngine.h"
 #include "services/SleepHqExportService.h"
@@ -146,6 +148,7 @@ BurstCollectorService::BurstCollectorService(int burst_interval_seconds)
       running_(false) {
     device_id_ = ConfigManager::get("CPAP_DEVICE_ID", AppConfig::kDefaultDeviceId);
     device_name_ = ConfigManager::get("CPAP_DEVICE_NAME", AppConfig::kDefaultDeviceName);
+    machine_clocks::setPrimaryDevice(device_id_);   // SDD-074
 }
 
 void BurstCollectorService::initialize(AppConfig* cfg) {
@@ -813,8 +816,10 @@ void BurstCollectorService::observeCardSession(const SessionFileSet& session,
     const std::string stem = brp.substr(0, std::min<size_t>(15, brp.size()));
     const long long name_s = machine_clock::nameTimeOf(brp);
     if (name_s == 0) return;
-    // The machine names it on its clock; read on the real one (SDD-054 D3).
-    const long long start_s = name_s - machineOffset(machine_clock_, now_s);
+    // The machine names it on its clock; read on the real one (SDD-054 D3),
+    // the owner's clock setting first (SDD-074).
+    const long long start_s =
+        name_s - machineOffset(machine_clock_, machine_clocks::zoneFor(device_id_), now_s);
     long long end_s = 0;
     long long records = -1;   // not read
     EDFFile edf;
@@ -1054,13 +1059,7 @@ bool BurstCollectorService::forceCompleteSession(const std::string& sleep_day) {
     // SDD-046: a forced night is announced, so its hour does not announce it
     // a second time.
     {
-        const std::time_t t = std::chrono::system_clock::to_time_t(session_start.value());
-        std::tm tm{};
-#ifdef _WIN32
-        localtime_s(&tm, &t);
-#else
-        localtime_r(&t, &tm);
-#endif
+        const std::tm tm = wall::fieldsOf(wall::seconds(session_start.value()));   // SDD-074 D4
         char folder[9];
         std::strftime(folder, sizeof(folder), "%Y%m%d", &tm);
         const auto now = std::chrono::system_clock::now();
@@ -1928,8 +1927,11 @@ bool BurstCollectorService::processSTRFile() {
             }
         }
 
-        // Parse all daily records
-        auto all_records = EDFParser::parseSTRFile(str_local_path, device_id_);
+        // Parse all daily records, as labels (SDD-074 D4)
+        auto all_records = [&] {
+            cpapdash::parser::WallClockLabels labels;
+            return EDFParser::parseSTRFile(str_local_path, device_id_);
+        }();
         if (all_records.empty()) {
             std::cerr << "STR: No therapy days found" << std::endl;
             return false;
@@ -1955,13 +1957,7 @@ bool BurstCollectorService::processSTRFile() {
             std::vector<std::string> parsed_days;
             parsed_days.reserve(all_records.size());
             for (const auto& r : all_records) {
-                std::time_t t = std::chrono::system_clock::to_time_t(r.record_date);
-                std::tm tm{};
-#ifdef _WIN32
-                localtime_s(&tm, &t);
-#else
-                localtime_r(&t, &tm);
-#endif
+                const std::tm tm = wall::fieldsOf(wall::seconds(r.record_date));
                 char buf[9];
                 std::strftime(buf, sizeof(buf), "%Y%m%d", &tm);
                 parsed_days.emplace_back(buf);
@@ -2216,13 +2212,7 @@ bool BurstCollectorService::publishNightOutcome(
 
     if (!data_publisher_ || !db_service_) return false;
 
-    std::time_t t = std::chrono::system_clock::to_time_t(session_start);
-    std::tm tm{};
-#ifdef _WIN32
-    localtime_s(&tm, &t);
-#else
-    localtime_r(&t, &tm);
-#endif
+    const std::tm tm = wall::fieldsOf(wall::seconds(session_start));   // SDD-074 D4
     char buf[9];
     std::strftime(buf, sizeof(buf), "%Y%m%d", &tm);
     const std::string date_folder = buf;
@@ -2262,13 +2252,7 @@ bool BurstCollectorService::isNightPartial(
 
     // The folder is named for the LOCAL calendar date the session started, which
     // is the same derivation downloadSessionFiles and the archive path use.
-    std::time_t t = std::chrono::system_clock::to_time_t(session_start);
-    std::tm tm{};
-#ifdef _WIN32
-    localtime_s(&tm, &t);
-#else
-    localtime_r(&t, &tm);
-#endif
+    const std::tm tm = wall::fieldsOf(wall::seconds(session_start));   // SDD-074 D4
     char buf[9];
     std::strftime(buf, sizeof(buf), "%Y%m%d", &tm);
 
@@ -2317,6 +2301,8 @@ void BurstCollectorService::clearStrDebtForParsedDays(
 }
 
 bool BurstCollectorService::executeBurstCycle() {
+    // SDD-074 D4: every machine time this burst parses is a label.
+    cpapdash::parser::WallClockLabels labels;
     auto cycle_start = std::chrono::steady_clock::now();
 
     std::cout << "\n" << std::string(60, '=') << std::endl;
@@ -2366,10 +2352,12 @@ bool BurstCollectorService::executeBurstCycle() {
                 // wall clock in the ring-file shape, so the sample sits where the
                 // ring's own file for the night will put it (and where the CPAP
                 // side puts the same minute), whatever zone the database is in.
+                // SDD-074: the CPAP machine's clock, which the night's
+                // oximetry is lined up on (the host's when it has no setting).
                 if (live.valid) {
                     db_service_->saveLiveOximetrySample(
                         kOximetryDeviceId,
-                        liveOximetryWallClock(std::chrono::system_clock::now()),
+                        machine_clocks::nowWall(device_id_, std::chrono::system_clock::now()),
                         live.spo2, live.hr, live.motion);
                 }
             }
@@ -2438,9 +2426,7 @@ bool BurstCollectorService::executeBurstCycle() {
     auto retain_from = db_service_->getNthLatestSessionStart(device_id_, 2);
 
     if (last_session_start.has_value()) {
-        auto last_time = std::chrono::system_clock::to_time_t(last_session_start.value());
-        std::cout << "📊 CPAP: Last stored session: "
-                  << std::put_time(std::localtime(&last_time), "%Y-%m-%d %H:%M:%S")
+        std::cout << "📊 CPAP: Last stored session: " << wall::text(last_session_start.value())
                   << std::endl;
     } else {
         std::cout << "📊 CPAP: No previous sessions in DB (first run)" << std::endl;
@@ -2753,7 +2739,8 @@ bool BurstCollectorService::executeBurstCycle() {
                           << " folder listing(s) on record; old folders are not listed again"
                           << std::endl;
         }
-        const long long offset = machineOffset(machine_clock_, now_s);
+        const long long offset =
+            machineOffset(machine_clock_, machine_clocks::zoneFor(device_id_), now_s);   // SDD-074
         if (sync_now_taken_) {
             // D6: a Sync now lists everything recent, the index and SETTINGS.
             index_state_.reason = true;
@@ -3908,7 +3895,8 @@ void BurstCollectorService::closeIfSettledLocalNight(
     const std::vector<CPAPSession>& parsed_sessions) {
 
     if (cpap_source_ != "local") return;
-    if (!localNightHasSettled(session_start, std::chrono::system_clock::now(),
+    if (!localNightHasSettled(session_start,
+                              machine_clocks::nowWall(device_id_, std::chrono::system_clock::now()),
                               kLocalSettledAfter))
         return;
 
@@ -3926,13 +3914,7 @@ void BurstCollectorService::closeIfSettledLocalNight(
         std::cout << "CPAP: Local night settled, closed on its own data" << std::endl;
         if (app_config_ && app_config_->sleephq.auto_on_session) {
             std::ostringstream folder;
-            const std::time_t t = std::chrono::system_clock::to_time_t(session_start);
-            std::tm tm{};
-#ifdef _WIN32
-            localtime_s(&tm, &t);
-#else
-            localtime_r(&t, &tm);
-#endif
+            const std::tm tm = wall::fieldsOf(wall::seconds(session_start));   // SDD-074 D4
             folder << std::put_time(&tm, "%Y%m%d");
             SleepHqExportService::getInstance().markDirty(folder.str());
         }
@@ -3942,7 +3924,9 @@ void BurstCollectorService::closeIfSettledLocalNight(
 int BurstCollectorService::closeSettledOpenLocalNights(std::chrono::system_clock::time_point now) {
     if (cpap_source_ != "local" || !db_service_) return 0;
     int closed = 0;
-    for (const auto& s : openSessionsStartedBefore(*db_service_, device_id_, now - kLocalSettledAfter)) {
+    // The starts are the machine's clock: so is the cutoff (SDD-074 D7).
+    const auto machine_now = machine_clocks::nowWall(device_id_, now);
+    for (const auto& s : openSessionsStartedBefore(*db_service_, device_id_, machine_now - kLocalSettledAfter)) {
         // Nothing the data knows, no invented end (SDD-037).
         if (s.duration_seconds <= 0) continue;
         if (db_service_->markSessionCompletedAt(device_id_, s.start,
@@ -4046,6 +4030,7 @@ void BurstCollectorService::republishRevisedNight() {
 }
 
 bool BurstCollectorService::executeBmcBurst() {
+    cpapdash::parser::WallClockLabels labels;   // SDD-074 D4
     const auto cycle_start = std::chrono::steady_clock::now();
 
     // SDD-060: behind an ez Share, bring the copy of the card up to date first.
@@ -4075,6 +4060,7 @@ bool BurstCollectorService::executeBmcBurst() {
 }
 
 bool BurstCollectorService::executePhilipsBurst() {
+    cpapdash::parser::WallClockLabels labels;   // SDD-074 D4
     const auto cycle_start = std::chrono::steady_clock::now();
 
     if (philips_over_ezshare_) {
@@ -4180,7 +4166,8 @@ void BurstCollectorService::storeCardSessions(std::vector<CardSession> sessions,
     const bool live_quiet = card_live_start_ != 0 && !live_grew &&
                             now - card_live_grew_at_ >= card_mask_quiet_;
     for (const auto& open : openSessionsStartedBefore(
-             *db_service_, device_id_, std::chrono::system_clock::now() + std::chrono::hours(48))) {
+             *db_service_, device_id_,
+             machine_clocks::nowWall(device_id_, std::chrono::system_clock::now()) + std::chrono::hours(48))) {
         const long long at =
             std::chrono::duration_cast<std::chrono::seconds>(open.start.time_since_epoch()).count();
         const bool is_live = card_live_start_ != 0 && std::llabs(at - card_live_start_) <= 5;
@@ -4267,13 +4254,7 @@ const STRDailyRecord* BurstCollectorService::strRecordForNight(
     const std::chrono::system_clock::time_point& session_start) const {
     const std::string day = strDayForSessionStart(session_start);
     for (auto it = last_str_records_.rbegin(); it != last_str_records_.rend(); ++it) {
-        std::time_t t = std::chrono::system_clock::to_time_t(it->record_date);
-        std::tm tm{};
-#ifdef _WIN32
-        localtime_s(&tm, &t);
-#else
-        localtime_r(&t, &tm);
-#endif
+        const std::tm tm = wall::fieldsOf(wall::seconds(it->record_date));   // SDD-074 D4
         char buf[9];
         std::strftime(buf, sizeof(buf), "%Y%m%d", &tm);
         if (day == buf) return &*it;
@@ -4301,8 +4282,11 @@ bool BurstCollectorService::parseAndStoreSession(
     const auto session_start = session.session_start;
     std::cout << "📊 CPAP: Parsing session from " << session_dir << "..." << std::endl;
 
-    // Pass filename timestamp to parser (DB lookup key)
-    auto parsed = EDFParser::parseSession(session_dir, device_id_, device_name_, session_start);
+    // Pass filename timestamp to parser (DB lookup key). SDD-074 D4: labels.
+    auto parsed = [&] {
+        cpapdash::parser::WallClockLabels labels;
+        return EDFParser::parseSession(session_dir, device_id_, device_name_, session_start);
+    }();
     if (!parsed) {
         std::cerr << "⚠️  CPAP: Failed to parse session from " << session_dir << std::endl;
         return false;
@@ -4312,10 +4296,9 @@ bool BurstCollectorService::parseAndStoreSession(
     keepOwnEvents(*parsed, session);
 
     // Set file path references (pointing to permanent archive)
-    auto start_time_t = std::chrono::system_clock::to_time_t(session_start);
-    std::tm* start_tm = std::localtime(&start_time_t);
+    const std::tm start_tm = wall::fieldsOf(wall::seconds(session_start));
     std::ostringstream date_oss;
-    date_oss << std::put_time(start_tm, "%Y%m%d");
+    date_oss << std::put_time(&start_tm, "%Y%m%d");
     std::string date_folder = date_oss.str();
 
     // Store RELATIVE paths in database (DATALOG/20250721/filename.edf)
@@ -4822,10 +4805,10 @@ std::string BurstCollectorService::buildRangeMetricsString(
 std::string BurstCollectorService::resolveSleepDay(
     const std::string& requested, std::chrono::system_clock::time_point now) {
     if (!requested.empty()) return requested;
-    auto t = std::chrono::system_clock::to_time_t(now - std::chrono::hours(12));
-    std::tm* tm = std::localtime(&t);
+    // [now] is the machine's clock now, a label (SDD-074 D7).
+    const std::tm tm = wall::fieldsOf(wall::seconds(now - std::chrono::hours(12)));
     std::ostringstream oss;
-    oss << std::put_time(tm, "%Y-%m-%d");
+    oss << std::put_time(&tm, "%Y-%m-%d");
     return oss.str();
 }
 
@@ -4837,7 +4820,7 @@ void BurstCollectorService::generateAndPublishSummary(const SessionMetrics& metr
     // The night this summary is FOR (see the saveSummary comment below); the
     // O2 Ring block in the metrics reads the same night, not today's.
     const std::string sleep_day = resolveSleepDay(
-        requested_sleep_day, std::chrono::system_clock::now());
+        requested_sleep_day, machine_clocks::nowWall(device_id_, std::chrono::system_clock::now()));
 
     std::string metrics_str = buildMetricsString(metrics, str_record, sleep_day);
     std::string prompt_source;
@@ -5045,9 +5028,9 @@ std::string BurstCollectorService::buildMetricsString(const SessionMetrics& metr
     if (db_service_) {
         // The summary's own night (issue #78: a regenerated older night read
         // today's oximetry). Empty = the night that just ended, now - 12 h.
-        auto now_t = std::chrono::system_clock::to_time_t(
-            std::chrono::system_clock::now() - std::chrono::hours(12));
-        std::tm day = *std::localtime(&now_t);
+        // SDD-074 D7: on the machine's clock.
+        std::tm day = wall::fieldsOf(wall::seconds(
+            machine_clocks::nowWall(device_id_, std::chrono::system_clock::now()) - std::chrono::hours(12)));
         int y = 0, mo = 0, d = 0;
         if (sleep_day.size() == 10 &&
             std::sscanf(sleep_day.c_str(), "%4d-%2d-%2d", &y, &mo, &d) == 3) {
@@ -5056,14 +5039,11 @@ std::string BurstCollectorService::buildMetricsString(const SessionMetrics& metr
             day.tm_mon = mo - 1;
             day.tm_mday = d;
             day.tm_hour = 12;
-            day.tm_isdst = -1;
-            mktime(&day);
+            day = wall::fieldsOf(wall::labelOf(day));
         }
         char date_buf[9], next_buf[9];
         std::strftime(date_buf, sizeof(date_buf), "%Y%m%d", &day);
-        std::tm next_tm = day;
-        next_tm.tm_mday += 1;
-        mktime(&next_tm);
+        const std::tm next_tm = wall::fieldsOf(wall::labelOf(day) + 86400);
         std::strftime(next_buf, sizeof(next_buf), "%Y%m%d", &next_tm);
 
         auto oxi = db_service_->getOximetrySummary(kOximetryDeviceId, date_buf, next_buf);
@@ -5571,9 +5551,10 @@ void BurstCollectorService::markUnparsedNightsForExport() {
 
     // Today's folder is still being written; leave it to the normal session path
     // so we never ship a half-flushed night.
-    const std::time_t now_t = std::time(nullptr);
+    // SDD-074 D7: "today" on the machine's clock, the clock its folders are named on.
+    const std::tm today_tm = wall::fieldsOf(machine_clocks::nowWall(device_id_, std::time(nullptr)));
     char today[16] = {0};
-    std::strftime(today, sizeof(today), "%Y%m%d", std::localtime(&now_t));
+    std::strftime(today, sizeof(today), "%Y%m%d", &today_tm);
 
     // SDD-029: a removed night has no checkpoint rows either, and would read
     // as "files but nothing parsed" below.

@@ -77,6 +77,15 @@ public:
      */
     static int withStrSettings(std::vector<STRDailyRecord>& days, const std::vector<STRDailyRecord>& str);
 
+    /**
+     * SDD-074 D4/D6: a Summary carries real instants; hms-cpap holds a day as
+     * labels on the machine's clock. The owner's clock setting for
+     * [device_id] when there is one; else the machine's own offset, read from
+     * the day's start (its noon), the clock its STR and night files are named
+     * on; else this computer's zone.
+     */
+    static void onMachineClock(std::vector<STRDailyRecord>& days, const std::string& device_id);
+
 private:
     std::shared_ptr<IAirSense11Client> client_;
     std::shared_ptr<IDatabase>         db_;

@@ -16,6 +16,7 @@
 #include "database/IDatabase.h"
 #include "database/SQLiteDatabase.h"
 #include "database/SqlDialect.h"
+#include "utils/MachineZone.h"
 #include "services/As11NightImport.h"
 #include "services/Ds2NightImport.h"
 #include "services/Ds2Store.h"
@@ -146,7 +147,8 @@ TEST_P(Ds2ImportBackend, NightsAreSavedOnceWithTheirFiles) {
     for (const auto& s : r.saved) saved_.push_back(*s.session_start);
     ASSERT_EQ(r.imported, 2);
     EXPECT_EQ(r.failed, 0);
-    const auto start = std::chrono::system_clock::time_point(std::chrono::seconds(kT0 + 1));
+    // The machine's wall clock as a label (SDD-074 D4).
+    const auto start = wall::point(MachineZone::host().toWall(kT0 + 1));
     EXPECT_TRUE(db_->sessionExists(device_, start));
 
     const auto files = db_->executeQuery(

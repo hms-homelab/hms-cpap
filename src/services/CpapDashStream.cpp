@@ -1,6 +1,7 @@
 #include "services/CpapDashStream.h"
 
 #include "services/CpapDashSyncService.h"
+#include "utils/MachineClocks.h"
 #include "utils/MachineIdentity.h"
 
 #include <openssl/evp.h>
@@ -194,7 +195,8 @@ std::string binaryHeader(uint32_t req_id, uint32_t seq, bool last, uint16_t kind
     return h;
 }
 
-std::string helloFrame(const std::string& version, const std::string& source) {
+std::string helloFrame(const std::string& version, const std::string& source,
+                       const std::string& machine_clock) {
     Json::Value v;
     v["t"]      = "hello";
     v["mode"]   = "hms";
@@ -202,6 +204,7 @@ std::string helloFrame(const std::string& version, const std::string& source) {
     // In `state`: the socket passes the hello's state to ingest unchanged
     // (device.connected), and ingest reads the source from there.
     v["state"]["source"] = source;
+    if (!machine_clock.empty()) v["state"][kMachineClockField] = machine_clock;   // SDD-074
     return compact(v);
 }
 
@@ -733,7 +736,10 @@ CpapDashStreamer::SessionEnd CpapDashStreamer::session(CpapDashLink& link, uint6
         source_of = source_provider_;
     }
     // Asked on every hello: a change of source shows on the next connect.
-    link.sendText(cdstream::helloFrame(version_, source_of ? source_of() : "ezshare"));
+    // SDD-074: so is a change of the machine's clock setting.
+    link.sendText(cdstream::helloFrame(
+        version_, source_of ? source_of() : "ezshare",
+        machine_clocks::zoneFor(machine_clocks::primaryDevice()).setting()));
     const auto hello_by = std::chrono::steady_clock::now() + t.hello_timeout;
     bool acked = false;
     while (!acked) {

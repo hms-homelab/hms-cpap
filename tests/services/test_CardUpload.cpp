@@ -9,6 +9,8 @@
 #include "database/SQLiteDatabase.h"
 #include "services/CardUpload.h"
 #include "services/SefamIngestion.h"
+
+#include <cpapdash/parser/WallClock.h>
 #include "utils/AppConfig.h"
 
 #include <chrono>
@@ -157,7 +159,9 @@ TEST_F(CardUploadTest, TheImportCountsEverySessionAndSkipsWhatIsStored) {
     put("1263R/0/DATA_2/DATA_2.INI", manifest(2025, 11, 11, 22, 30));
     put("1263R/0/DATA_3/DATA_3.INI", manifest(2025, 11, 12, 22, 35));
 
-    // Night 11 is already in the database under the same start.
+    // Night 11 is already in the database under the same start, read as
+    // every hms-cpap parse reads it: a label (SDD-074 D4).
+    cpapdash::parser::WallClockLabels labels;
     SefamIngestion probe(root_.string());
     ASSERT_TRUE(probe.initialize());
     const auto sessions = probe.discoverSessions(std::nullopt);

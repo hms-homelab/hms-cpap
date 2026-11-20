@@ -69,6 +69,10 @@ private:
      */
     Json::Value query(const std::string& sql, const std::vector<std::string>& params = {});
 
+    /// SDD-074 decision 2: seconds to add to a stored start to show it on
+    /// the display clock (0 on the machine's clock, or for a blank start).
+    long long clockShiftOf(const std::string& stored_start) const;
+
     std::shared_ptr<IDatabase> db_;
     std::string device_id_;
     DbType dt_;  // cached db type for dialect helpers

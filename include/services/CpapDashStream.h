@@ -104,8 +104,15 @@ std::optional<CardHeaders> cardHeadersFor(const std::string& rel);
 /// flags u16 (bit 0 = last), kind u16.
 std::string binaryHeader(uint32_t req_id, uint32_t seq, bool last, uint16_t kind);
 
-/// {"t":"hello","mode":"hms","fw":<version>,"state":{"source":<source>}}
-std::string helloFrame(const std::string& version, const std::string& source);
+/// SDD-074 (Albin's decision 9): the machine's clock setting, in the hello's
+/// state, so the cloud need not learn it: "+10:00" or a zone name. Optional:
+/// left out when the machine is on this computer's clock (ingest ignores
+/// fields it does not know). One constant, for the platform's stream SDD.
+inline constexpr const char* kMachineClockField = "machine_clock";
+
+/// {"t":"hello","mode":"hms","fw":<version>,"state":{"source":<source>[,"machine_clock":<setting>]}}
+std::string helloFrame(const std::string& version, const std::string& source,
+                       const std::string& machine_clock = "");
 
 /// The one source behind this install, for the hello (ingest closes a night
 /// by it): "ble" when a Bluetooth reader is switched on (AirSense 11 or

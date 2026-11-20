@@ -10,7 +10,9 @@
 #include "sleepbridge/ReleaseFeed.h"
 #include "sleepbridge/SleepBridgeService.h"
 #include "utils/AppConfig.h"
+#include "utils/OximetryDevice.h"
 #include "web/As11PairingApi.h"
+#include "web/ClockApi.h"
 #include "web/Ds2BleApi.h"
 #include "web/QueryService.h"
 
@@ -177,7 +179,19 @@ Json::Value currentDevices(bool fresh) {
     if (in.as11_enabled) in.as11 = as11Status();
     if (in.ds2_enabled) in.ds2 = ds2Status();
     in.ledger_live = ledgerLive();
-    return buildDevices(in, *g.store);
+    Json::Value out = buildDevices(in, *g.store);
+    // SDD-074 D10 / decision 10: the setting lives on each machine's card,
+    // keyed by the device id its nights are stored under; the ring's card
+    // carries the "Ring clock" (decision 8).
+    if (g.db && g.config) {
+        const long long now = static_cast<long long>(std::time(nullptr));
+        for (auto& d : out["devices"]) {
+            const bool ring = d["kind"].asString() == "o2ring";
+            d["clock"] = clockapi::view(*g.db, ring ? std::string(kOximetryDeviceId) : g.config->device_id,
+                                        now, !ring);
+        }
+    }
+    return out;
 }
 
 bool listed(const std::string& kind, const std::string& id) {
@@ -243,6 +257,47 @@ void installRoutes(const RouteDeps& deps) {
             cb(json(body, status));
         },
         {drogon::Delete});
+
+    // SDD-074: the clock setting. Registered before {kind}/{id} would match.
+    drogon::app().registerHandler(
+        "/api/clock/zones", [](const drogon::HttpRequestPtr&, Callback&& cb) { cb(json(clockapi::zones())); },
+        {drogon::Get});
+
+    drogon::app().registerHandler(
+        "/api/devices/clock",
+        [](const drogon::HttpRequestPtr& req, Callback&& cb) {
+            if (!g.db || !g.config) return cb(error(503, "no database"));
+            const auto body = req->getJsonObject();
+            if (!body || !(*body)["device_id"].isString() || !(*body)["setting"].isString())
+                return cb(error(400, "the body is {\"device_id\": \"...\", \"setting\": \"...\"}"));
+            const std::string device = (*body)["device_id"].asString();
+            const bool ring = device == kOximetryDeviceId;
+            if (!ring && device != g.config->device_id) return cb(error(404, "no such machine is stored here"));
+            const auto r = clockapi::set(*g.db, device, (*body)["setting"].asString(),
+                                         static_cast<long long>(std::time(nullptr)), !ring);
+            if (r.status == 200)
+                std::cout << "Clock: " << device << " is now read on "
+                          << (r.body["clock"]["setting"].asString().empty()
+                                  ? std::string("this computer's clock")
+                                  : r.body["clock"]["setting"].asString())
+                          << " (Devices page)" << std::endl;
+            cb(json(r.body, r.status));
+        },
+        {drogon::Put});
+
+    drogon::app().registerHandler(
+        "/api/devices/clock/reread",
+        [](const drogon::HttpRequestPtr& req, Callback&& cb) {
+            if (!g.config) return cb(error(503, "not configured"));
+            const auto body = req->getJsonObject();
+            const std::string device =
+                body && (*body)["device_id"].isString() ? (*body)["device_id"].asString() : g.config->device_id;
+            if (device != g.config->device_id) return cb(error(404, "no such machine is stored here"));
+            if (!g.reread) return cb(error(503, "no archive of this machine's files to read again"));
+            const Json::Value r = g.reread(device);
+            cb(json(r, r.get("ok", false).asBool() ? 202 : 500));
+        },
+        {drogon::Post});
 
     drogon::app().registerHandler(
         "/api/source/status", [](const drogon::HttpRequestPtr&, Callback&& cb) { cb(json(sourceStatus())); },

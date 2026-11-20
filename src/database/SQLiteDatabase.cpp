@@ -1,6 +1,7 @@
 #include "database/SQLiteDatabase.h"
 #include "database/SqlDialect.h"
 #include "database/StrPercentile.h"
+#include "utils/MachineClocks.h"
 #include "utils/OximetryDevice.h"
 #include "utils/TimeCompat.h"  // timegm_utc() for started_epoch
 #include <algorithm>
@@ -115,21 +116,20 @@ SQLiteDatabase::~SQLiteDatabase() {
 // Format timestamp
 // ---------------------------------------------------------------------------
 
+// SDD-074 D4: a CPAP time point is the machine's wall clock held as a label
+// (counted as UTC), so it is written back with gmtime and no host zone, and no
+// host daylight saving change can move or fold it.
 std::string SQLiteDatabase::fmtTimestamp(const std::chrono::system_clock::time_point& tp) {
-    auto t = std::chrono::system_clock::to_time_t(tp);
-    std::tm* tm = std::localtime(&t);
-    std::ostringstream oss;
-    oss << std::put_time(tm, "%Y-%m-%d %H:%M:%S");
-    return oss.str();
+    return wall::text(tp);
 }
 
 // Renders an oximetry time_point back to the wall clock the ring displayed.
 //
 // gmtime, not localtime, and that is not a typo. Every timestamp column in this
-// schema holds bare local wall clock with no zone attached, which each source
-// reaches by a matched parse/render pair:
+// schema holds bare wall clock with no zone attached, which each source
+// reaches by a matched parse/render pair, both as labels since SDD-074:
 //
-//   CPAP      EDF wall clock -> mktime (local) -> localtime  -> same wall clock
+//   CPAP      EDF wall clock -> timegm (label) -> gmtime -> same wall clock
 //   Oximetry  ring wall clock -> timegm (UTC)  -> gmtime     -> same wall clock
 //
 // The oximetry parsers (VLDParser, O2RingCsvParser) deliberately read the ring's
@@ -278,6 +278,11 @@ void SQLiteDatabase::createSchema() {
     // the column is filled from its path, once; that is the last time the
     // path decides anything. Every write after this records its source.
     sqlite3_exec(db_, "ALTER TABLE cpap_session_files ADD COLUMN source TEXT",
+                 nullptr, nullptr, nullptr);
+    // SDD-074: the machine's offset from UTC each session was read with, so a
+    // later change of the clock setting can be applied without guessing.
+    // NULL: read before the column existed.
+    sqlite3_exec(db_, "ALTER TABLE cpap_sessions ADD COLUMN machine_offset_s INTEGER",
                  nullptr, nullptr, nullptr);
     exec(R"(
         UPDATE cpap_session_files
@@ -901,9 +906,11 @@ int64_t SQLiteDatabase::insertSession(const CPAPSession& session) {
     const char* sql = R"(
         INSERT INTO cpap_sessions
             (device_id, session_start, session_end, duration_seconds, data_records,
-             brp_file_path, eve_file_path, sad_file_path, pld_file_path, csl_file_path)
-        VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
+             brp_file_path, eve_file_path, sad_file_path, pld_file_path, csl_file_path,
+             machine_offset_s)
+        VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (device_id, session_start) DO UPDATE SET
+            machine_offset_s = excluded.machine_offset_s,
             duration_seconds = excluded.duration_seconds,
             data_records     = excluded.data_records,
             brp_file_path    = excluded.brp_file_path,
@@ -924,6 +931,8 @@ int64_t SQLiteDatabase::insertSession(const CPAPSession& session) {
     bind_text(g.stmt, 7, session.sad_file_path.value_or(""));
     bind_text(g.stmt, 8, session.pld_file_path.value_or(""));
     bind_text(g.stmt, 9, session.csl_file_path.value_or(""));
+    sqlite3_bind_int64(g.stmt, 10, machine_clocks::offsetAtWall(
+                                       session.device_id, wall::seconds(session.session_start.value())));
 
     if (sqlite3_step(g.stmt) != SQLITE_DONE) {
         std::cerr << "SQLite: insertSession error: " << sqlite3_errmsg(db_) << std::endl;
@@ -1361,8 +1370,7 @@ SQLiteDatabase::getLastSessionStart(const std::string& device_id) {
         std::cerr << "SQLite: Failed to parse timestamp: " << ts_str << std::endl;
         return std::nullopt;
     }
-    tm.tm_isdst = -1;
-    auto tp = std::chrono::system_clock::from_time_t(std::mktime(&tm));
+    auto tp = wall::point(wall::labelOf(tm));   // SDD-074 D4
     std::cout << "SQLite: Last session for " << device_id << " at " << ts_str << std::endl;
     return tp;
 }
@@ -1398,8 +1406,7 @@ SQLiteDatabase::getNthLatestSessionStart(const std::string& device_id, int n) {
         std::cerr << "SQLite: Failed to parse timestamp: " << ts_str << std::endl;
         return std::nullopt;
     }
-    tm.tm_isdst = -1;
-    return std::chrono::system_clock::from_time_t(std::mktime(&tm));
+    return wall::point(wall::labelOf(tm));   // SDD-074 D4
 }
 
 std::optional<std::chrono::system_clock::time_point>
@@ -1431,14 +1438,13 @@ SQLiteDatabase::getSessionStartForSleepDay(const std::string& device_id,
     bind_text(g.stmt, 2, sleep_day);
     if (sqlite3_step(g.stmt) != SQLITE_ROW) return std::nullopt;
 
-    // Same local-time parse the other readers here use, so a timestamp written
-    // by fmtTimestamp comes back as the instant it went in as.
+    // Same label parse the other readers here use, so a timestamp written
+    // by fmtTimestamp comes back as the label it went in as (SDD-074 D4).
     std::tm tm = {};
     std::istringstream ss(col_text(g.stmt, 0));
     ss >> std::get_time(&tm, "%Y-%m-%d %H:%M:%S");
     if (ss.fail()) return std::nullopt;
-    tm.tm_isdst = -1;
-    return std::chrono::system_clock::from_time_t(std::mktime(&tm));
+    return wall::point(wall::labelOf(tm));
 }
 
 // ---------------------------------------------------------------------------
@@ -1538,10 +1544,12 @@ bool SQLiteDatabase::markSessionCompleted(const std::string& device_id,
     if (!db_) return false;
 
     std::string ts = fmtTimestamp(session_start);
+    // SDD-074 D5: the end is the machine's clock now, never the database's.
+    const std::string end = fmtTimestamp(machineEndNow(device_id, session_start));
 
     const char* sql = R"(
         UPDATE cpap_sessions
-        SET session_end = datetime('now'), updated_at = datetime('now')
+        SET session_end = ?, updated_at = datetime('now')
         WHERE device_id = ?
           AND session_start BETWEEN datetime(?, '-5 seconds') AND datetime(?, '+5 seconds')
           AND session_end IS NULL
@@ -1549,9 +1557,10 @@ bool SQLiteDatabase::markSessionCompleted(const std::string& device_id,
 
     StmtGuard g;
     sqlite3_prepare_v2(db_, sql, -1, &g.stmt, nullptr);
-    bind_text(g.stmt, 1, device_id);
-    bind_text(g.stmt, 2, ts);
+    bind_text(g.stmt, 1, end);
+    bind_text(g.stmt, 2, device_id);
     bind_text(g.stmt, 3, ts);
+    bind_text(g.stmt, 4, ts);
 
     sqlite3_step(g.stmt);
     int changes = sqlite3_changes(db_);
@@ -2391,20 +2400,18 @@ bool SQLiteDatabase::saveSTRDailyRecords(const std::vector<STRDailyRecord>& reco
             sqlite3_clear_bindings(g.stmt);
 
             // Format date
-            auto date_t = std::chrono::system_clock::to_time_t(r.record_date);
-            std::tm* tm = std::localtime(&date_t);
+            // SDD-074 D4: the STR's days and mask times are labels.
+            const std::tm day_tm = wall::fieldsOf(wall::seconds(r.record_date));
             std::ostringstream date_oss;
-            date_oss << std::put_time(tm, "%Y-%m-%d");
+            date_oss << std::put_time(&day_tm, "%Y-%m-%d");
 
             // Build mask_pairs JSON
             std::ostringstream pairs_json;
             pairs_json << "[";
             for (size_t i = 0; i < r.mask_pairs.size(); ++i) {
                 if (i > 0) pairs_json << ",";
-                auto on_t = std::chrono::system_clock::to_time_t(r.mask_pairs[i].first);
-                auto off_t = std::chrono::system_clock::to_time_t(r.mask_pairs[i].second);
-                std::tm on_tm = *std::localtime(&on_t);
-                std::tm off_tm = *std::localtime(&off_t);
+                std::tm on_tm = wall::fieldsOf(wall::seconds(r.mask_pairs[i].first));
+                std::tm off_tm = wall::fieldsOf(wall::seconds(r.mask_pairs[i].second));
                 std::ostringstream on_oss, off_oss;
                 on_oss << std::put_time(&on_tm, "%Y-%m-%dT%H:%M:%S");
                 off_oss << std::put_time(&off_tm, "%Y-%m-%dT%H:%M:%S");
@@ -2947,7 +2954,8 @@ std::vector<SessionMetrics> SQLiteDatabase::getMetricsForDateRange(
     // of 36500 days came back empty there). 64-bit hours, so a large days_back
     // cannot overflow either.
     const auto cutoff = (std::max)(
-        std::chrono::system_clock::now() - std::chrono::hours(static_cast<long long>(days_back) * 24),
+        machine_clocks::nowWall(device_id, std::chrono::system_clock::now()) -
+            std::chrono::hours(static_cast<long long>(days_back) * 24),
         std::chrono::system_clock::from_time_t(86400));
     std::string cutoff_str = fmtTimestamp(cutoff);
 

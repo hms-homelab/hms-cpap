@@ -5,6 +5,7 @@
 #include "database/SQLiteDatabase.h"
 #include "services/Ds2NightImport.h"
 #include "services/Ds2Store.h"
+#include "utils/MachineZone.h"
 
 #include <gtest/gtest.h>
 
@@ -21,6 +22,12 @@ namespace {
 
 constexpr uint32_t kT0 = 1893456000;   // 2030-01-01 00:00:00 UTC, made up
 constexpr const char* kDevice = "ds2_import_dev";
+
+/// An instant of the machine's as hms-cpap holds it: the machine's wall clock
+/// (this computer's, with no setting) as a label (SDD-074 D4).
+system_clock::time_point onClock(long long utc) {
+    return hms_cpap::wall::point(hms_cpap::MachineZone::host().toWall(utc));
+}
 constexpr const char* kSerial = "TEST0000000003";
 
 class Ds2Import : public ::testing::Test {
@@ -71,10 +78,10 @@ TEST_F(Ds2Import, RecordsBecomeSessions) {
     const auto& first = r.saved.front();
     ASSERT_TRUE(first.session_start);
     // Mask on one second after the summary's start.
-    EXPECT_EQ(*first.session_start, system_clock::time_point(seconds(kT0 + 1)));
+    EXPECT_EQ(*first.session_start, onClock(kT0 + 1));
     EXPECT_EQ(first.duration_seconds.value_or(0), 3600);
     EXPECT_TRUE(db_->sessionExists(kDevice, *first.session_start));
-    EXPECT_TRUE(db_->sessionExists(kDevice, system_clock::time_point(seconds(kT0 + 86400 + 1))));
+    EXPECT_TRUE(db_->sessionExists(kDevice, onClock(kT0 + 86400 + 1)));
 }
 
 TEST_F(Ds2Import, ARunWithNothingNewSavesNothing) {
@@ -123,7 +130,7 @@ TEST_F(Ds2Import, NoNightBeforeTheImportDate) {
     const auto r = importer().run({});
     EXPECT_EQ(r.imported, 1);
     EXPECT_EQ(r.skipped, 1);
-    EXPECT_FALSE(db_->sessionExists(kDevice, system_clock::time_point(seconds(kT0 + 1))));
+    EXPECT_FALSE(db_->sessionExists(kDevice, onClock(kT0 + 1)));
 }
 
 TEST_F(Ds2Import, LocalDates) {

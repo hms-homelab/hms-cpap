@@ -2983,8 +2983,7 @@ static std::chrono::system_clock::time_point sessionTime(const std::string& pref
     tm.tm_hour = std::stoi(prefix.substr(9, 2));
     tm.tm_min  = std::stoi(prefix.substr(11, 2));
     tm.tm_sec  = std::stoi(prefix.substr(13, 2));
-    tm.tm_isdst = -1;
-    return std::chrono::system_clock::from_time_t(std::mktime(&tm));
+    return std::chrono::system_clock::from_time_t(timegm_utc(&tm));   // a label (SDD-074 D4)
 }
 
 // Two unchanged sessions in one cycle: BOTH get markSessionCompleted (newly
@@ -3886,7 +3885,7 @@ TEST(BurstLocalSweep, ASettledOpenLocalNightClosesOnItsOwnData) {
     ASSERT_EQ(rows.size(), 1u);
     const std::time_t want_t = system_clock::to_time_t(settled + seconds(7 * 3600));
     std::tm want{};
-    localtime_r(&want_t, &want);
+    gmtime_r(&want_t, &want);   // starts are labels (SDD-074 D4)
     char buf[32];
     std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &want);
     EXPECT_EQ(rows[0]["session_end"].asString().substr(0, 19), std::string(buf));
@@ -4216,11 +4215,12 @@ TEST_F(BurstInitTest, Initialize_UnknownDbType_FallsBackToSqlite) {
 // has to live somewhere that touches neither an LLM nor a database.
 
 namespace {
+// SDD-074 D7: "now" is the machine's clock, a label (the wall clock counted as UTC).
 std::chrono::system_clock::time_point atLocal(int y, int mon, int d, int h, int mi) {
     std::tm tm{};
     tm.tm_year = y - 1900; tm.tm_mon = mon - 1; tm.tm_mday = d;
-    tm.tm_hour = h; tm.tm_min = mi; tm.tm_isdst = -1;
-    return std::chrono::system_clock::from_time_t(std::mktime(&tm));
+    tm.tm_hour = h; tm.tm_min = mi;
+    return std::chrono::system_clock::from_time_t(timegm_utc(&tm));
 }
 }  // namespace
 

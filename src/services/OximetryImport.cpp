@@ -3,6 +3,7 @@
 #include "database/IDatabase.h"
 #include "services/RemovedNights.h"
 #include "utils/OximetryDevice.h"
+#include "utils/SessionLabels.h"
 
 #include <cpapdash/parser/O2RingSParser.h>
 #include <cpapdash/parser/VLDParser.h>
@@ -131,6 +132,7 @@ VldImportResult importVldFile(IDatabase& db, const std::string& bytes,
         r.error = "Not a readable O2 Ring recording: " + filename;
         return r;
     }
+    putRingOnMachineClock(*session);   // SDD-074: the Ring clock
     if (isRemovedOximetryNight(removed_nights, session->start_time)) {
         r.removed_night = true;
         r.error = "On a removed night: " + filename;

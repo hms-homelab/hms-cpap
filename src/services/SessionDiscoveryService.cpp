@@ -3,6 +3,7 @@
 #include "clients/LocalDataSource.h"
 #include "utils/ConfigManager.h"
 #include "utils/FileUtils.h"
+#include "utils/MachineClocks.h"
 #include <algorithm>
 #include <regex>
 #include <map>
@@ -24,8 +25,8 @@ static std::string extractSessionPrefix(const std::string& filename) {
     return "";
 }
 
-// The card's wall clock, read on the local clock (mktime) exactly as the
-// parser reads an EDF's start, so a session's start and its events' times
+// The card's wall clock as a label (SDD-074 D4), exactly as the parser reads
+// an EDF's start in that frame, so a session's start and its events' times
 // compare in one frame.
 static std::chrono::system_clock::time_point parseSessionTime(const std::string& prefix) {
     // Parse "20260204_001809" → 2026-02-04 00:18:09
@@ -40,9 +41,8 @@ static std::chrono::system_clock::time_point parseSessionTime(const std::string&
     tm.tm_hour = std::stoi(prefix.substr(9, 2));
     tm.tm_min  = std::stoi(prefix.substr(11, 2));
     tm.tm_sec  = std::stoi(prefix.substr(13, 2));
-    tm.tm_isdst = -1;
 
-    return std::chrono::system_clock::from_time_t(std::mktime(&tm));
+    return wall::point(wall::labelOf(tm));
 }
 
 // Estimate when a checkpoint file STOPPED being written. Session gaps must be
@@ -437,9 +437,9 @@ std::vector<std::string> SessionDiscoveryService::foldersFromAnchor(
     if (!anchor.has_value()) return date_folders;   // first run: everything
 
     std::vector<std::string> relevant_folders;
-    std::time_t last_time = std::chrono::system_clock::to_time_t(anchor.value());
-    std::tm last_tm{};
-    localtime_r(&last_time, &last_tm);
+    // The anchor is a label (SDD-074 D4).
+    const long long last_label = wall::seconds(anchor.value());
+    std::tm last_tm = wall::fieldsOf(last_label);
 
     char last_date_str[9];
     std::strftime(last_date_str, sizeof(last_date_str), "%Y%m%d", &last_tm);
@@ -450,9 +450,7 @@ std::vector<std::string> SessionDiscoveryService::foldersFromAnchor(
         if (folder >= last_date) relevant_folders.push_back(folder);
 
     // ALSO the previous day's folder, because ResMed stores early AM sessions there
-    std::tm prev_tm = last_tm;
-    prev_tm.tm_mday -= 1;
-    std::mktime(&prev_tm);  // Normalize
+    const std::tm prev_tm = wall::fieldsOf(last_label - 86400);
     char prev_date_str[9];
     std::strftime(prev_date_str, sizeof(prev_date_str), "%Y%m%d", &prev_tm);
     const std::string prev_date(prev_date_str);
@@ -473,16 +471,21 @@ void SessionDiscoveryService::keepWanted(
     std::vector<SessionFileSet>& out) {
 
     // Filter sessions: include NEW sessions OR sessions from TODAY (growing files)
-    // Use both localtime and UTC to handle Docker containers that default to UTC
-    auto now = std::chrono::system_clock::now();
-    std::time_t now_time = std::chrono::system_clock::to_time_t(now);
+    // Use both localtime and UTC to handle Docker containers that default to UTC,
+    // and the machine's own date (SDD-074 D7). Wide on purpose.
+    auto real_now = std::chrono::system_clock::now();
+    std::time_t now_time = std::chrono::system_clock::to_time_t(real_now);
+    // Session starts are labels: "now" on the machine's clock, the same frame.
+    const auto now = machine_clocks::nowWall(machine_clocks::primaryDevice(), real_now);
 
-    char today_local[9], today_utc[9];
+    char today_local[9], today_utc[9], today_machine[9];
     std::tm local_tm{}, utc_tm{};
     localtime_r(&now_time, &local_tm);
     std::strftime(today_local, sizeof(today_local), "%Y%m%d", &local_tm);
     gmtime_r(&now_time, &utc_tm);
     std::strftime(today_utc, sizeof(today_utc), "%Y%m%d", &utc_tm);
+    const std::tm machine_tm = wall::fieldsOf(wall::seconds(now));
+    std::strftime(today_machine, sizeof(today_machine), "%Y%m%d", &machine_tm);
 
     // Calculate 48 hours ago (to catch late EVE files that can be written hours later)
     auto forty_eight_hours_ago = now - std::chrono::hours(48);
@@ -493,7 +496,7 @@ void SessionDiscoveryService::keepWanted(
     const bool is_catch_up = catch_up_folders.count(folder) > 0;
 
     for (const auto& session : folder_sessions) {
-        bool is_today = (folder == today_local || folder == today_utc);
+        bool is_today = (folder == today_local || folder == today_utc || folder == today_machine);
         bool is_new = (!last_session_start.has_value() ||
                       session.session_start > last_session_start.value());
         bool is_recent = (session.session_start > forty_eight_hours_ago);

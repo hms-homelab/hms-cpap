@@ -2,6 +2,7 @@
 #include "utils/TimeCompat.h"
 #include "database/DatabaseService.h"
 #include "database/SqlDialect.h"
+#include "utils/MachineClocks.h"
 #include "utils/OximetryDevice.h"
 #include <libpq-fe.h>
 #include <algorithm>
@@ -11,6 +12,19 @@
 #include <sstream>
 
 namespace hms_cpap {
+
+namespace {
+
+// SDD-074 D4: a CPAP time point is the machine's wall clock held as a label
+// (counted as UTC), so its fields come back with gmtime, never the host's
+// localtime: no host daylight saving change can move or fold it.
+std::tm* cpapWall(const std::time_t* t) {
+    thread_local std::tm out;
+    out = wall::fieldsOf(static_cast<long long>(*t));
+    return &out;
+}
+
+}  // namespace
 
 DatabaseService::DatabaseService(const std::string& connection_string)
     : connection_string_(connection_string) {
@@ -383,6 +397,9 @@ bool DatabaseService::connect() {
             try {
                 pqxx::work txn(*conn_);
                 txn.exec("ALTER TABLE cpap_sessions ADD COLUMN IF NOT EXISTS force_completed BOOLEAN DEFAULT FALSE");
+                // SDD-074: the machine's offset each session was read with
+                // (NULL: read before the column existed).
+                txn.exec("ALTER TABLE cpap_sessions ADD COLUMN IF NOT EXISTS machine_offset_s INTEGER");
                 txn.commit();
             } catch (...) {
                 // Column may already exist or table not yet created — ignore
@@ -897,7 +914,7 @@ void DatabaseService::upsertDevice(pqxx::work& work, const CPAPSession& session)
 int DatabaseService::insertSession(pqxx::work& work, const CPAPSession& session) {
     // Convert time_point to string
     auto start_time_t = std::chrono::system_clock::to_time_t(session.session_start.value());
-    std::tm* start_tm = std::localtime(&start_time_t);
+    std::tm* start_tm = cpapWall(&start_time_t);
     std::ostringstream start_oss;
     start_oss << std::put_time(start_tm, "%Y-%m-%d %H:%M:%S");
 
@@ -906,10 +923,12 @@ int DatabaseService::insertSession(pqxx::work& work, const CPAPSession& session)
     // and prevent the LLM summary from firing.
     std::string query = R"(
         INSERT INTO cpap_sessions (device_id, session_start, session_end, duration_seconds, data_records,
-                                   brp_file_path, eve_file_path, sad_file_path, pld_file_path, csl_file_path)
-        VALUES ($1, $2, NULL, $3, $4, $5, $6, $7, $8, $9)
+                                   brp_file_path, eve_file_path, sad_file_path, pld_file_path, csl_file_path,
+                                   machine_offset_s)
+        VALUES ($1, $2, NULL, $3, $4, $5, $6, $7, $8, $9, $10)
         ON CONFLICT (device_id, session_start) DO UPDATE
-        SET duration_seconds = GREATEST(cpap_sessions.duration_seconds, EXCLUDED.duration_seconds),
+        SET machine_offset_s = EXCLUDED.machine_offset_s,
+            duration_seconds = GREATEST(cpap_sessions.duration_seconds, EXCLUDED.duration_seconds),
             data_records = GREATEST(cpap_sessions.data_records, EXCLUDED.data_records),
             brp_file_path = EXCLUDED.brp_file_path,
             eve_file_path = EXCLUDED.eve_file_path,
@@ -928,7 +947,9 @@ int DatabaseService::insertSession(pqxx::work& work, const CPAPSession& session)
         session.eve_file_path.value_or(""),
         session.sad_file_path.value_or(""),
         session.pld_file_path.value_or(""),
-        session.csl_file_path.value_or("")
+        session.csl_file_path.value_or(""),
+        static_cast<long long>(machine_clocks::offsetAtWall(
+            session.device_id, wall::seconds(session.session_start.value())))
     );
 
     return result[0][0].as<int>();
@@ -950,7 +971,7 @@ void DatabaseService::insertBreathingSummaries(pqxx::work& work, int session_id,
     for (size_t i = 0; i < summaries.size(); ++i) {
         auto t = std::chrono::system_clock::to_time_t(summaries[i].timestamp);
         std::ostringstream oss;
-        oss << std::put_time(std::localtime(&t), "%Y-%m-%d %H:%M:%S");
+        oss << std::put_time(cpapWall(&t), "%Y-%m-%d %H:%M:%S");
         last_of_minute[oss.str()] = i;
     }
 
@@ -996,7 +1017,7 @@ void DatabaseService::insertEvents(pqxx::work& work, int session_id,
 
     for (const auto& event : events) {
         auto time_t = std::chrono::system_clock::to_time_t(event.timestamp);
-        std::tm* tm = std::localtime(&time_t);
+        std::tm* tm = cpapWall(&time_t);
         std::ostringstream oss;
         oss << std::put_time(tm, "%Y-%m-%d %H:%M:%S");
 
@@ -1022,7 +1043,7 @@ void DatabaseService::insertDesaturations(pqxx::work& work, int session_id,
     for (const auto& d : desats) {
         auto tt = std::chrono::system_clock::to_time_t(d.onset);
         std::ostringstream oss;
-        oss << std::put_time(std::localtime(&tt), "%Y-%m-%d %H:%M:%S");
+        oss << std::put_time(cpapWall(&tt), "%Y-%m-%d %H:%M:%S");
         char details[96];
         std::snprintf(details, sizeof(details), "{\"nadir\":%.1f,\"depth\":%.1f}", d.nadir, d.depth);
         work.exec_params(R"(
@@ -1039,7 +1060,7 @@ void DatabaseService::insertBreaths(pqxx::work& work, int session_id,
     for (const auto& b : breaths) {
         auto tt = std::chrono::system_clock::to_time_t(b.onset);
         std::ostringstream oss;
-        oss << std::put_time(std::localtime(&tt), "%Y-%m-%d %H:%M:%S");
+        oss << std::put_time(cpapWall(&tt), "%Y-%m-%d %H:%M:%S");
         work.exec_params(R"(
             INSERT INTO cpap_breaths
                 (session_id, onset, tidal_volume, inspiratory_time, expiratory_time, flow_limitation)
@@ -1062,7 +1083,7 @@ void DatabaseService::insertVitals(pqxx::work& work, int session_id,
         const auto& v = vitals[i];
 
         auto time_t = std::chrono::system_clock::to_time_t(v.timestamp);
-        std::tm* tm = std::localtime(&time_t);
+        std::tm* tm = cpapWall(&time_t);
         std::ostringstream oss;
         oss << std::put_time(tm, "%Y-%m-%d %H:%M:%S");
 
@@ -1194,7 +1215,7 @@ void DatabaseService::insertCalculatedMetrics(pqxx::work& work, int session_id,
         for (const auto* s : with_metrics) {
             auto t = std::chrono::system_clock::to_time_t(s->timestamp);
             std::ostringstream oss;
-            oss << std::put_time(std::localtime(&t), "%Y-%m-%d %H:%M:%S");
+            oss << std::put_time(cpapWall(&t), "%Y-%m-%d %H:%M:%S");
             last_of_minute[oss.str()] = s;
         }
         with_metrics.clear();
@@ -1214,7 +1235,7 @@ void DatabaseService::insertCalculatedMetrics(pqxx::work& work, int session_id,
         const auto& s = *with_metrics[i];
 
         auto time_t = std::chrono::system_clock::to_time_t(s.timestamp);
-        std::tm* tm = std::localtime(&time_t);
+        std::tm* tm = cpapWall(&time_t);
         std::ostringstream oss;
         oss << std::put_time(tm, "%Y-%m-%d %H:%M:%S");
 
@@ -1505,8 +1526,7 @@ DatabaseService::getLastSessionStart(const std::string& device_id) {
             return std::nullopt;
         }
 
-        tm.tm_isdst = -1;  // Let mktime auto-detect DST
-        auto tp = std::chrono::system_clock::from_time_t(std::mktime(&tm));
+        auto tp = wall::point(wall::labelOf(tm));   // SDD-074 D4
 
         std::cout << "DB: Last session for " << device_id
                   << " at " << timestamp_str << std::endl;
@@ -1544,8 +1564,7 @@ DatabaseService::getSessionStartForSleepDay(const std::string& device_id,
         std::istringstream ss(ts);
         ss >> std::get_time(&tm, "%Y-%m-%d %H:%M:%S");
         if (ss.fail()) return std::nullopt;
-        tm.tm_isdst = -1;
-        return std::chrono::system_clock::from_time_t(std::mktime(&tm));
+        return wall::point(wall::labelOf(tm));   // SDD-074 D4
     } catch (const std::exception& e) {
         std::cerr << "DB: getSessionStartForSleepDay error: " << e.what() << std::endl;
         return std::nullopt;
@@ -1566,7 +1585,7 @@ bool DatabaseService::sessionExists(const std::string& device_id,
 
         // Format session_start as PostgreSQL timestamp
         auto start_time_t = std::chrono::system_clock::to_time_t(session_start);
-        std::tm* start_tm = std::localtime(&start_time_t);
+        std::tm* start_tm = cpapWall(&start_time_t);
         std::ostringstream start_oss;
         start_oss << std::put_time(start_tm, "%Y-%m-%d %H:%M:%S");
 
@@ -1613,7 +1632,7 @@ std::map<std::string, int> DatabaseService::getCheckpointFileSizes(
 
         // Format session_start as PostgreSQL timestamp
         auto start_time_t = std::chrono::system_clock::to_time_t(session_start);
-        std::tm* start_tm = std::localtime(&start_time_t);
+        std::tm* start_tm = cpapWall(&start_time_t);
         std::ostringstream start_oss;
         start_oss << std::put_time(start_tm, "%Y-%m-%d %H:%M:%S");
 
@@ -1768,7 +1787,7 @@ bool DatabaseService::updateCheckpointFileSizes(
 
         // Format session_start as PostgreSQL timestamp
         auto start_time_t = std::chrono::system_clock::to_time_t(session_start);
-        std::tm* start_tm = std::localtime(&start_time_t);
+        std::tm* start_tm = cpapWall(&start_time_t);
         std::ostringstream start_oss;
         start_oss << std::put_time(start_tm, "%Y-%m-%d %H:%M:%S");
 
@@ -1820,21 +1839,26 @@ bool DatabaseService::markSessionCompleted(
 
         // Format session_start as PostgreSQL timestamp
         auto start_time_t = std::chrono::system_clock::to_time_t(session_start);
-        std::tm* start_tm = std::localtime(&start_time_t);
+        std::tm* start_tm = cpapWall(&start_time_t);
         std::ostringstream start_oss;
         start_oss << std::put_time(start_tm, "%Y-%m-%d %H:%M:%S");
 
-        // Set session_end to now (session stopped growing)
+        // Set session_end to now (session stopped growing). SDD-074 D5: the
+        // machine's clock now, never the server's CURRENT_TIMESTAMP.
+        const auto end_tp = machineEndNow(device_id, session_start);
+        const auto end_t = std::chrono::system_clock::to_time_t(end_tp);
+        std::ostringstream end_oss;
+        end_oss << std::put_time(cpapWall(&end_t), "%Y-%m-%d %H:%M:%S");
         std::string query = R"(
             UPDATE cpap_sessions
-            SET session_end = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP
+            SET session_end = $3::timestamp, updated_at = CURRENT_TIMESTAMP
             WHERE device_id = $1
               AND session_start BETWEEN $2::timestamp - INTERVAL '5 seconds'
                                     AND $2::timestamp + INTERVAL '5 seconds'
               AND session_end IS NULL
         )";
 
-        auto result = txn.exec_params(query, device_id, start_oss.str());
+        auto result = txn.exec_params(query, device_id, start_oss.str(), end_oss.str());
         txn.commit();
 
         if (result.affected_rows() > 0) {
@@ -1870,7 +1894,7 @@ bool DatabaseService::markSessionCompletedAt(
 
         auto fmt = [](const std::chrono::system_clock::time_point& tp) {
             auto t = std::chrono::system_clock::to_time_t(tp);
-            std::tm* tm = std::localtime(&t);
+            std::tm* tm = cpapWall(&t);
             std::ostringstream oss;
             oss << std::put_time(tm, "%Y-%m-%d %H:%M:%S");
             return oss.str();
@@ -1919,7 +1943,7 @@ bool DatabaseService::reopenSession(
         pqxx::work txn(*conn_);
 
         auto start_time_t = std::chrono::system_clock::to_time_t(session_start);
-        std::tm* start_tm = std::localtime(&start_time_t);
+        std::tm* start_tm = cpapWall(&start_time_t);
         std::ostringstream start_oss;
         start_oss << std::put_time(start_tm, "%Y-%m-%d %H:%M:%S");
 
@@ -1958,7 +1982,7 @@ bool DatabaseService::isForceCompleted(
     try {
         pqxx::work txn(*conn_);
         auto start_time_t = std::chrono::system_clock::to_time_t(session_start);
-        std::tm* start_tm = std::localtime(&start_time_t);
+        std::tm* start_tm = cpapWall(&start_time_t);
         std::ostringstream oss;
         oss << std::put_time(start_tm, "%Y-%m-%d %H:%M:%S");
 
@@ -1988,7 +2012,7 @@ bool DatabaseService::setForceCompleted(
     try {
         pqxx::work txn(*conn_);
         auto start_time_t = std::chrono::system_clock::to_time_t(session_start);
-        std::tm* start_tm = std::localtime(&start_time_t);
+        std::tm* start_tm = cpapWall(&start_time_t);
         std::ostringstream oss;
         oss << std::put_time(start_tm, "%Y-%m-%d %H:%M:%S");
 
@@ -2026,7 +2050,7 @@ std::optional<SessionMetrics> DatabaseService::getSessionMetrics(
         pqxx::work txn(*conn_);
 
         auto start_time_t = std::chrono::system_clock::to_time_t(session_start);
-        std::tm* start_tm = std::localtime(&start_time_t);
+        std::tm* start_tm = cpapWall(&start_time_t);
         std::ostringstream start_oss;
         start_oss << std::put_time(start_tm, "%Y-%m-%d %H:%M:%S");
 
@@ -2138,7 +2162,7 @@ std::optional<SessionMetrics> DatabaseService::getNightlyMetrics(
         pqxx::work txn(*conn_);
 
         auto start_time_t = std::chrono::system_clock::to_time_t(session_start);
-        std::tm* start_tm = std::localtime(&start_time_t);
+        std::tm* start_tm = cpapWall(&start_time_t);
         std::ostringstream start_oss;
         start_oss << std::put_time(start_tm, "%Y-%m-%d %H:%M:%S");
 
@@ -2350,10 +2374,11 @@ std::vector<SessionMetrics> DatabaseService::getMetricsForDateRange(
         // before the epoch, and put_time below would dereference it. 64-bit
         // hours, so a large days_back cannot overflow either.
         const auto cutoff = (std::max)(
-            std::chrono::system_clock::now() - std::chrono::hours(static_cast<long long>(days_back) * 24),
+            machine_clocks::nowWall(device_id, std::chrono::system_clock::now()) -
+                std::chrono::hours(static_cast<long long>(days_back) * 24),
             std::chrono::system_clock::from_time_t(86400));
         auto cutoff_t = std::chrono::system_clock::to_time_t(cutoff);
-        std::tm* cutoff_tm = std::localtime(&cutoff_t);
+        std::tm* cutoff_tm = cpapWall(&cutoff_t);
         std::ostringstream cutoff_oss;
         cutoff_oss << std::put_time(cutoff_tm, "%Y-%m-%d %H:%M:%S");
 
@@ -2837,7 +2862,7 @@ bool DatabaseService::replaceSessionFiles(
     if (!ensureConnection()) return false;
 
     auto start_time_t = std::chrono::system_clock::to_time_t(session_start);
-    std::tm* start_tm = std::localtime(&start_time_t);
+    std::tm* start_tm = cpapWall(&start_time_t);
     std::ostringstream start_oss;
     start_oss << std::put_time(start_tm, "%Y-%m-%d %H:%M:%S");
 
@@ -2942,7 +2967,7 @@ bool DatabaseService::saveSTRDailyRecords(const std::vector<STRDailyRecord>& rec
 
         for (const auto& r : records) {
             auto date_t = std::chrono::system_clock::to_time_t(r.record_date);
-            std::tm* tm = std::localtime(&date_t);
+            std::tm* tm = cpapWall(&date_t);
             std::ostringstream date_oss;
             date_oss << std::put_time(tm, "%Y-%m-%d");
 
@@ -2953,8 +2978,8 @@ bool DatabaseService::saveSTRDailyRecords(const std::vector<STRDailyRecord>& rec
                 if (i > 0) pairs_json << ",";
                 auto on_t = std::chrono::system_clock::to_time_t(r.mask_pairs[i].first);
                 auto off_t = std::chrono::system_clock::to_time_t(r.mask_pairs[i].second);
-                std::tm on_tm = *std::localtime(&on_t);
-                std::tm off_tm = *std::localtime(&off_t);
+                std::tm on_tm = *cpapWall(&on_t);
+                std::tm off_tm = *cpapWall(&off_t);
                 std::ostringstream on_oss, off_oss;
                 on_oss << std::put_time(&on_tm, "%Y-%m-%dT%H:%M:%S");
                 off_oss << std::put_time(&off_tm, "%Y-%m-%dT%H:%M:%S");

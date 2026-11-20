@@ -415,12 +415,11 @@ TEST_P(QueryServiceIndexTest, TheSessionsListSurvivesItsOwnSql) {
 TEST_P(QueryServiceIndexTest, TheListTheDailySummaryAndTheNightlyMetricsGiveOneAhi) {
     std::tm tm{};
     const std::time_t base_t = system_clock::to_time_t(noonDaysAgo(20));
-    localtime_r(&base_t, &tm);
+    gmtime_r(&base_t, &tm);   // labels (SDD-074 D4)
     tm.tm_hour = 21;
     tm.tm_min = 0;
     tm.tm_sec = 0;
-    tm.tm_isdst = -1;
-    const auto evening = system_clock::from_time_t(std::mktime(&tm));
+    const auto evening = system_clock::from_time_t(timegm_utc(&tm));
 
     struct Stretch { int start_min, mins, obstructive, unclassified, hypopneas; };
     const Stretch stretches[] = {

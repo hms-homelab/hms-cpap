@@ -1,4 +1,5 @@
 #include "services/PrismaIngestion.h"
+#include "utils/MachineZone.h"
 #include "utils/TimeCompat.h"
 #include "miniz.h"
 #include <filesystem>
@@ -35,7 +36,7 @@ static std::optional<PrismaSessionFile> buildSessionFile(
         tm.tm_year = std::stoi(date.substr(0, 4)) - 1900;
         tm.tm_mon  = std::stoi(date.substr(4, 2)) - 1;
         tm.tm_mday = std::stoi(date.substr(6, 2));
-        sf.session_start = std::chrono::system_clock::from_time_t(mktime(&tm));
+        sf.session_start = wall::point(wall::labelOf(tm));   // a label (SDD-074 D4)
     }
 
     if (last_session_start && sf.session_start <= *last_session_start)
@@ -251,9 +252,7 @@ std::vector<PrismaSessionFile> PrismaIngestion::discoverSessions(
 
     std::string last_date;
     if (last_session_start) {
-        auto tt = std::chrono::system_clock::to_time_t(*last_session_start);
-        std::tm tm{};
-        localtime_r(&tt, &tm);
+        const std::tm tm = wall::fieldsOf(wall::seconds(*last_session_start));   // a label (SDD-074 D4)
         char buf[9];
         std::strftime(buf, sizeof(buf), "%Y%m%d", &tm);
         last_date = buf;

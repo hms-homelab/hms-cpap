@@ -38,6 +38,8 @@ list(APPEND PROJECT_SOURCES "${CMAKE_SOURCE_DIR}/src/web/QueryService.cpp")
 list(APPEND PROJECT_SOURCES "${CMAKE_SOURCE_DIR}/src/web/As11PairingApi.cpp")
 # SDD-064: the DreamStation 2 endpoints' answers, the same way.
 list(APPEND PROJECT_SOURCES "${CMAKE_SOURCE_DIR}/src/web/Ds2BleApi.cpp")
+# SDD-074: the clock setting's answers, the same way.
+list(APPEND PROJECT_SOURCES "${CMAKE_SOURCE_DIR}/src/web/ClockApi.cpp")
 list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/cli/.*\\.cpp$")
 # PDF/report services depend on QueryService (web/) and libhpdf — exclude from test build
 list(FILTER PROJECT_SOURCES EXCLUDE REGEX ".*/PdfRenderer\\.cpp$")
@@ -91,6 +93,10 @@ set(TEST_SOURCES
     services/test_SessionEndOnMqtt.cpp
     utils/test_TherapyPressure.cpp
     utils/test_MachineClock.cpp
+    # SDD-074: each machine is read on its own clock.
+    utils/test_MachineZone.cpp
+    database/test_MachineClockBackends.cpp
+    services/test_MachineClockNights.cpp
     utils/test_DbProbeCli.cpp
     utils/test_FileLogger.cpp
     utils/test_ReExec.cpp
@@ -374,6 +380,9 @@ if(BUILD_WITH_WEB AND NOT WIN32)
         ${CMAKE_SOURCE_DIR}/src/services/Ds2CardTree.cpp
         # The mule's LivePublisher keeps the one live mask every source shares.
         ${CMAKE_SOURCE_DIR}/src/mqtt/LiveState.cpp
+        # SDD-074: the night writer names a night on the machine's clock setting.
+        ${CMAKE_SOURCE_DIR}/src/utils/MachineZone.cpp
+        ${CMAKE_SOURCE_DIR}/src/utils/MachineClocks.cpp
         ${STR_LAYOUTS_SOURCE}
     )
     # CURL::libcurl: the Mule & Miner's firmware updater (src/mule/MuleFirmware.cpp)
