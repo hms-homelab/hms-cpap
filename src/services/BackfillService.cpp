@@ -1,9 +1,11 @@
 #include "utils/TimeCompat.h"
 #include "services/BackfillService.h"
+#include "services/As11NightImport.h"
 #include "services/RemovedNights.h"
 #include "services/SleepHqExportService.h"
 #include "parsers/CpapdashBridge.h"
 #include "utils/CardLayout.h"
+#include "utils/CheckpointSizes.h"
 #include "utils/SessionEnd.h"
 
 #include <spdlog/spdlog.h>
@@ -409,18 +411,16 @@ void BackfillService::executeBackfill(const std::string& start_date,
                     db_->replaceSessionFiles(config_.device_id, session.session_start,
                                              sessionFileRefs(session, folder));
 
-                    // Store checkpoint file sizes
-                    std::map<std::string, int> checkpoint_sizes;
-                    for (const auto& [filename, size_kb] : session.file_sizes_kb) {
-                        if (filename.find("_BRP.edf") != std::string::npos ||
-                            filename.find("_PLD.edf") != std::string::npos ||
-                            filename.find("_SAD.edf") != std::string::npos ||
-                            filename.find("_SA2.edf") != std::string::npos) {
-                            checkpoint_sizes[filename] = size_kb;
-                        }
-                    }
+                    // SDD-077 D2: the card's copy replaces a Bluetooth copy of
+                    // the same stretch, whatever its start.
+                    As11NightImport::replaceConstructedFiles(
+                        *db_, config_.device_id, session.session_start,
+                        dataEndOf(*parsed).value_or(session.session_start));
+
+                    // Store checkpoint file sizes. SDD-077 D3: the collector's
+                    // own function, so the next burst reads them as unchanged.
                     db_->updateCheckpointFileSizes(
-                        config_.device_id, session.session_start, checkpoint_sizes);
+                        config_.device_id, session.session_start, checkpointSizes(session));
                 } else {
                     spdlog::warn("BackfillService: failed to save session {} in {}",
                                 session.session_prefix, folder);

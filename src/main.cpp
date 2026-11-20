@@ -59,6 +59,8 @@
 #include "utils/CardResidue.h"
 #include "utils/CardImport.h"
 #include "utils/SessionEnd.h"
+#include "utils/CheckpointSizes.h"
+#include "services/As11NightImport.h"
 #include "utils/FileLogger.h"
 #include "utils/ReExec.h"
 #include "utils/CardLayout.h"
@@ -445,17 +447,16 @@ int runReparse(const std::string& card_root, const std::string& start_str, const
                 db->replaceSessionFiles(device_id, session.session_start,
                                         hms_cpap::sessionFileRefs(session, folder));
 
-                // Store checkpoint file sizes (same as burst cycle)
-                std::map<std::string, int> checkpoint_sizes;
-                for (const auto& [filename, size_kb] : session.file_sizes_kb) {
-                    if (filename.find("_BRP.edf") != std::string::npos ||
-                        filename.find("_PLD.edf") != std::string::npos ||
-                        filename.find("_SAD.edf") != std::string::npos ||
-                        filename.find("_SA2.edf") != std::string::npos) {
-                        checkpoint_sizes[filename] = size_kb;
-                    }
-                }
-                db->updateCheckpointFileSizes(device_id, session.session_start, checkpoint_sizes);
+                // SDD-077 D2: the card's copy replaces a Bluetooth copy of
+                // the same stretch.
+                hms_cpap::As11NightImport::replaceConstructedFiles(
+                    *db, device_id, session.session_start,
+                    hms_cpap::dataEndOf(*parsed).value_or(session.session_start));
+
+                // Store checkpoint file sizes: the burst cycle's own function
+                // (SDD-077 D3).
+                db->updateCheckpointFileSizes(device_id, session.session_start,
+                                              hms_cpap::checkpointSizes(session));
 
                 double hours = parsed->duration_seconds.value_or(0) / 3600.0;
                 double ahi = parsed->metrics.has_value() ? parsed->metrics->ahi : 0.0;

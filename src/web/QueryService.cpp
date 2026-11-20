@@ -429,7 +429,13 @@ Json::Value QueryService::getSessionDetail(const std::string& date) {
         " m.avg_event_duration, m.max_event_duration, m.time_in_apnea_percent,"
         " m.avg_spo2, m.min_spo2, m.spo2_drops, m.odi,"
         " m.avg_heart_rate, m.min_heart_rate, m.max_heart_rate,"
-        " COALESCE(d.mode, 0) as therapy_mode"
+        " COALESCE(d.mode, 0) as therapy_mode,"
+        // SDD-077 D1: where the session's files came from, so a night says
+        // whether it is the card's or built from a Bluetooth stream. 'card'
+        // when any file is the card's; NULL when no file is recorded.
+        " (SELECT CASE WHEN SUM(CASE WHEN COALESCE(f.source, 'card') = 'card' THEN 1 ELSE 0 END) > 0"
+        "              THEN 'card' ELSE MIN(f.source) END"
+        "    FROM cpap_session_files f WHERE f.session_id = s.id) as source"
         " FROM cpap_sessions s"
         " LEFT JOIN cpap_session_metrics m ON m.session_id = s.id"
         " LEFT JOIN cpap_daily_summary d ON d.device_id = s.device_id"

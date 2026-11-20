@@ -149,6 +149,7 @@ set(TEST_SOURCES
     services/test_As11NightWriter.cpp
     services/test_As11Settings.cpp
     services/test_As11NightImport.cpp
+    services/test_SessionSource.cpp
     services/test_Ds2NightImport.cpp
     services/test_Ds2ReadTime.cpp
     database/test_Ds2ImportBackends.cpp
