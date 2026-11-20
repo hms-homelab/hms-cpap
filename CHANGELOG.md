@@ -50,6 +50,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   tokenizer and a Colab notebook that trains the ~64M model from scratch and
   exports GGUF Q4. A new build tool, `hms_cpap_narrator_facts` (not
   installed), runs the fact block and the check for it with no database.
+  The teacher is Claude Haiku 5.5 by default (`--teacher-provider anthropic`,
+  live or Message Batches, the instruction cached as the system prompt);
+  `--teacher-provider gemini` keeps the Gemini path. The teacher instruction
+  names AHI bands in words only, never their limits, writes no number the
+  facts do not give, and skips zero counts.
 - **Each file sent to CpapDash says its source, and oximetry goes too
   (SDD-079, platform SDD-061).** Every `file_ready` now carries `source`:
   `card` for the machine's own card (ez Share, a local folder, a ZIP, a Sleep

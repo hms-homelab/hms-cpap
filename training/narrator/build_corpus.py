@@ -8,13 +8,14 @@ Stages, each resumable (a half-done run continues where it stopped):
   2. facts    hms_cpap_narrator_facts render: each night through the
               runtime's NightFacts::from() and model::factBlock(), so the
               corpus input is byte for byte what the model sees at runtime.
-  3. teacher  Gemini Flash-Lite, prompt = llm_prompt.txt (the machine-neutral
-              behavioural target) with the fact block as {metrics}, plus the
-              corpus instruction below. Batched concurrency with a
+  3. teacher  --teacher-provider anthropic (default: Claude Haiku 5.5, the
+              instruction below as a cached system prompt, the fact block as
+              the user turn) or gemini (Gemini Flash-Lite, the instruction and
+              the fact block in one turn). Batched concurrency with a
               requests-per-minute limit; every answer is appended to
               teacher.jsonl as it arrives, and a resumed run asks only for the
               nights not yet answered. --teacher-mode batch sends the same
-              requests as Batch API jobs instead (half price, for the full
+              requests as batch jobs instead (half price, for the full
               corpus), tracked in batches.jsonl (see stage_teacher_batch).
   4. check    hms_cpap_narrator_facts check: model::violations(), SDD-072's
               number check plus the ISO date check, the same check the nightly
@@ -22,12 +23,13 @@ Stages, each resumable (a half-done run continues where it stopped):
               rate and reasons go to report.json.
   5. split    train / val / test JSONL by a hash of the night id.
 
-The API key is read from the environment (GOOGLE_AI_API_KEY) and never
-written anywhere.
+The API key is read from the environment (ANTHROPIC_API_KEY or
+GOOGLE_AI_API_KEY) and never written anywhere.
 
 Usage:
     python build_corpus.py --out out/pilot --count 500
     python build_corpus.py --out out/full --count 295000 --teacher-mode batch --wait
+    python build_corpus.py --out out/pilot --count 500 --teacher-provider gemini
 """
 
 import argparse
@@ -50,17 +52,63 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
 DEFAULT_TOOL = REPO / "build" / "hms_cpap_narrator_facts"
-DEFAULT_PROMPT = REPO / "llm_prompt.txt"
-API = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+DEFAULT_MODEL = {"anthropic": "claude-haiku-5-5", "gemini": "gemini-3.5-flash-lite"}
+API ="https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
-# Added after llm_prompt.txt for the corpus: the shape the student must learn.
-CORPUS_INSTRUCTION = """
-Write in English, as plain prose: 3 to 5 sentences, no lists, no headings.
-Describe the night; do not give medical advice and do not tell the reader to
-change settings or equipment. If the data says no AHI is available, do not
-grade the index or the events in any way. Write no number the data does not
-give: name an AHI range in words (for example "the severe range"), never by
-its limits. Write any date exactly as the data writes it."""
+# The teacher's whole instruction, the same for every night (so it caches), with
+# the night's fact block after it. It replaces llm_prompt.txt + a corpus suffix:
+# that prompt gives the AHI band limits and the 4-hour minimum as digits, the
+# fact block does not, and in the pilot 43% of answers repeated them ("5 to 15
+# range", "4-hour minimum") or computed a percentage, and failed the number
+# check. The student sees only the fact block, so it must never learn to write
+# a number that is not in it.
+TEACHER_INSTRUCTION = """You write the short summary of one night of PAP therapy that a person reads the next morning. The night's data comes after these instructions. Your summary becomes training text for a small model that will write these summaries on its own, so every summary must be right and in the same voice.
+
+Form: 3 or 4 plain, warm sentences of English prose in one paragraph. No lists, no headings, no markdown. Speak to the reader as "you". Never use an em dash.
+
+What to say, and only what matters:
+1. The night's date, written exactly as the data writes it.
+2. How long the therapy ran against the target, in words: "past your target", "just short of your target", "well short of your target". You may give the hours as the data writes them. Do not mention any minimum.
+3. The AHI as the data writes it, with its band named in words only: "the normal range", "the mild range", "the moderate range" or "the severe range". Pick the band with the usual adult bands (normal below 5 events per hour, mild from 5 to below 15, moderate from 15 to below 30, severe from 30 up). Those limits are only for choosing the word: never write a band limit or any threshold, in digits or in words.
+4. At most one or two other points that stand out: leak only when it is notable (a high 95th percentile or maximum), SpO2 and ODI when the night has oximetry, an event type only when its count is not zero and it says something (for example most events were hypopneas, or central apneas were a large share).
+
+Numbers: write only figures that appear in the data, exactly as the data writes them, with the same digits and decimals. Never compute anything: no percentages of your own, no sums, differences, ratios or rounding. Skip zero counts and figures that add nothing; a summary is not a list of the data, so never walk through every event type or every leak figure.
+
+When the data says no AHI is available: say so in a few words, give the total events if useful, and do not grade the night, the index or the events in any way (no normal, mild, moderate, severe, good, poor, high or low for them). Never report an event type as zero. Never estimate a figure the data does not give.
+
+Describe the night only. No medical advice, no diagnosis, and do not tell the reader to change settings or equipment or to see anyone.
+
+Three examples of good summaries (shortened data):
+
+Data:
+Night: 2025-03-02
+Usage: 7.42 hours (92.75% of 8h target)
+AHI: 2.10 events/hour
+Apneas and hypopneas (the events counted in the AHI): 16 (obstructive apnea=9, central apnea=0, clear airway apnea=0, unclassified apnea=0, hypopnea=7)
+Other recorded events (not counted in the AHI): 0 (RERA=0, other event types=0)
+Leak: avg=3.10 L/min, max=24.80 L/min, 95th=9.60 L/min, median=1.20 L/min
+Summary: On 2025-03-02 you used your therapy for 7.42 hours, just short of your target. Your AHI was 2.10 events/hour, in the normal range, from a handful of obstructive apneas and hypopneas. Leak stayed low all night, so your mask seal held well.
+
+Data:
+Night: 2025-11-14
+Usage: 5.10 hours (63.75% of 8h target)
+AHI: 18.40 events/hour
+Apneas and hypopneas (the events counted in the AHI): 94 (obstructive apnea=31, central apnea=4, clear airway apnea=0, unclassified apnea=0, hypopnea=59)
+Leak: avg=28.50 L/min, max=96.20 L/min, 95th=61.30 L/min, median=22.00 L/min
+O2 Ring Oximetry (overnight): Avg SpO2: 93.40%, Min SpO2: 84.00%, ODI (3%): 15.70 events/hour
+Summary: On 2025-11-14 you used your therapy for 5.10 hours, well short of your target. Your AHI was 18.40 events/hour, in the moderate range, and most of the 94 apneas and hypopneas were hypopneas. Leak ran high, with a 95th percentile of 61.30 L/min. Your oximeter recorded an average SpO2 of 93.40% and a lowest reading of 84.00%.
+
+Data:
+Night: 2024-06-09
+Usage: 8.35 hours (104.38% of 8h target)
+AHI: not available for this machine -- it does not detect hypopneas, so no apnea-hypopnea index can be formed.
+Total events: 41 (all apneas; this machine does not classify them)
+Therapy pressure (delivered by the machine): avg=9.20 cmH2O
+Summary: On 2024-06-09 you used your therapy for 8.35 hours, past your target. Your machine does not detect hypopneas, so no AHI is available for this night; it recorded 41 apneas. The pressure it delivered averaged 9.20 cmH2O.
+
+Reply with the summary only."""
+
+TEACHER_USER = "Night data:\n{facts}"
 
 # Words that grade an index (counted, not dropped, on Ungraded nights).
 GRADING_WORDS = re.compile(r"\b(mild|moderate|severe|normal|excellent|good|great|"
@@ -150,19 +198,22 @@ def refused(code, detail):
     return code in (401, 402, 403) or "API_KEY_INVALID" in detail
 
 
+def user_text(facts):
+    return TEACHER_USER.replace("{facts}", facts)
+
+
 class Teacher:
+    """Gemini: one user turn, the instruction then the night."""
+
     def __init__(self, args, key):
         self.args = args
         self.key = key
         self.url = API.format(model=args.model)
         self.limit = RateLimit(args.rpm)
         self.thinking = args.thinking_level or None
-        self.template = Path(args.prompt).read_text()
-        if "{metrics}" not in self.template:
-            raise SystemExit(f"{args.prompt} has no {{metrics}} placeholder")
 
     def prompt(self, facts):
-        return self.template.replace("{metrics}", facts) + "\n" + CORPUS_INSTRUCTION.strip() + "\n"
+        return TEACHER_INSTRUCTION + "\n\n" + user_text(facts) + "\n"
 
     def body(self, facts):
         cfg = {"temperature": self.args.temperature, "maxOutputTokens": self.args.max_tokens}
@@ -219,10 +270,115 @@ def answer_of(nid, data, model):
             "usage": usage, "model": data.get("modelVersion", model)}
 
 
-def stage_teacher(args, out):
-    key = os.environ.get("GOOGLE_AI_API_KEY", "")
+# -- 3, Anthropic: Claude through the official SDK ---------------------------------
+#
+# The instruction is the system prompt, one text block marked for caching, and
+# the night's fact block is the user turn, so every request after the first
+# reads the instruction from the cache. Thinking is off for this short
+# summarisation turn; Haiku 5.5 accepts thinking "disabled" only at effort high
+# or below, so effort is sent as low. No temperature (non-default values are a
+# 400 on this model) and no assistant prefill (a 400).
+
+ANTHROPIC_MIN_CACHE_TOKENS = 512   # Haiku 5.5's shortest cacheable prefix
+ANTHROPIC_BATCH_MAX = 100_000      # requests per Message Batch
+ANTHROPIC_OK = ("end_turn", "stop_sequence")
+
+
+def anthropic_params(model, facts, max_tokens, ttl=None):
+    """One night's Messages request (live and batch)."""
+    cache = {"type": "ephemeral"}
+    if ttl:
+        cache["ttl"] = ttl
+    return {
+        "model": model,
+        "max_tokens": max_tokens,
+        "system": [{"type": "text", "text": TEACHER_INSTRUCTION, "cache_control": cache}],
+        "messages": [{"role": "user", "content": user_text(facts)}],
+        "thinking": {"type": "disabled"},
+        "output_config": {"effort": "low"},
+    }
+
+
+def usage_dict(usage):
+    if usage is None:
+        return {}
+    if hasattr(usage, "model_dump"):
+        return usage.model_dump(exclude_none=True)
+    return dict(usage)
+
+
+def anthropic_answer_of(nid, msg, model):
+    """One Message as a teacher.jsonl record (live and batch). A refusal or a
+    cut-off answer keeps its stop reason as finish, and the check stage drops
+    it under that reason."""
+    stop = msg.stop_reason
+    rec = {"id": nid, "finish": stop, "usage": usage_dict(msg.usage),
+           "model": getattr(msg, "model", model) or model}
+    if stop not in ANTHROPIC_OK:
+        rec["text"] = ""
+        return rec
+    rec["text"] = "".join(b.text for b in msg.content if b.type == "text").strip()
+    return rec
+
+
+def anthropic_refused(e):
+    """True when no further request can succeed: a bad key, no permission, or
+    no credit left on the account."""
+    import anthropic
+    if isinstance(e, (anthropic.AuthenticationError, anthropic.PermissionDeniedError)):
+        return True
+    status = getattr(e, "status_code", None)
+    return status == 402 or (status == 400 and "credit balance" in str(e).lower())
+
+
+def anthropic_client(args):
+    key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not key:
-        raise SystemExit("GOOGLE_AI_API_KEY is not set")
+        raise SystemExit("ANTHROPIC_API_KEY is not set")
+    import anthropic
+    return anthropic.Anthropic(api_key=key, max_retries=args.attempts, timeout=args.timeout)
+
+
+def instruction_tokens(client, model):
+    """The cached prefix's size: the system block alone, as count_tokens sees it
+    with a one-word user turn, minus that turn."""
+    sys_block = [{"type": "text", "text": TEACHER_INSTRUCTION}]
+    msgs = [{"role": "user", "content": "x"}]
+    with_sys = client.messages.count_tokens(model=model, system=sys_block, messages=msgs)
+    bare = client.messages.count_tokens(model=model, messages=msgs)
+    return with_sys.input_tokens - bare.input_tokens
+
+
+class AnthropicTeacher:
+    def __init__(self, args, client):
+        self.args = args
+        self.client = client
+        self.limit = RateLimit(args.rpm)
+
+    def params(self, facts, ttl=None):
+        return anthropic_params(self.args.model, facts, self.args.max_tokens, ttl)
+
+    def call(self, rec):
+        """One night's answer: {"id", "text", "finish", "usage"} or {"id", "error"}.
+        The SDK retries 408/409/429/5xx and connection errors (max_retries)."""
+        import anthropic
+        self.limit.wait()
+        t0 = time.monotonic()
+        try:
+            msg = self.client.messages.create(**self.params(rec["facts"]))
+        except anthropic.APIStatusError as e:
+            last = f"http {e.status_code}: {str(e)[:300]}"
+            if anthropic_refused(e):
+                raise KeyRejected(last)
+            return {"id": rec["id"], "error": last}
+        except anthropic.APIConnectionError as e:
+            return {"id": rec["id"], "error": f"network: {e}"}
+        out = anthropic_answer_of(rec["id"], msg, self.args.model)
+        out["seconds"] = round(time.monotonic() - t0, 3)
+        return out
+
+
+def stage_teacher(args, out):
     path = out / "teacher.jsonl"
     facts = read_jsonl(out / "facts.jsonl")
     answered = {r["id"] for r in read_jsonl(path) if "text" in r}
@@ -231,7 +387,20 @@ def stage_teacher(args, out):
         f"concurrency {args.concurrency}, {args.rpm} rpm)")
     if not todo:
         return
-    teacher = Teacher(args, key)
+    run = {}
+    if args.teacher_provider == "anthropic":
+        client = anthropic_client(args)
+        n = instruction_tokens(client, args.model)
+        run["instruction_tokens"] = n
+        log(f"teacher: the cached instruction is {n} tokens")
+        if n < ANTHROPIC_MIN_CACHE_TOKENS:
+            log(f"teacher: under {ANTHROPIC_MIN_CACHE_TOKENS} tokens, the instruction will not cache")
+        teacher = AnthropicTeacher(args, client)
+    else:
+        key = os.environ.get("GOOGLE_AI_API_KEY", "")
+        if not key:
+            raise SystemExit("GOOGLE_AI_API_KEY is not set")
+        teacher = Teacher(args, key)
     done = 0
     t0 = time.monotonic()
     with open(path, "a") as fh, cf.ThreadPoolExecutor(args.concurrency) as pool:
@@ -253,7 +422,7 @@ def stage_teacher(args, out):
     with open(out / "teacher_runs.jsonl", "a") as fh:
         fh.write(json.dumps({"asked": len(todo), "seconds": round(time.monotonic() - t0, 2),
                              "concurrency": args.concurrency, "rpm": args.rpm,
-                             "model": args.model}) + "\n")
+                             "model": args.model, **run}) + "\n")
 
 
 # -- 3b: teacher through the Batch API ---------------------------------------------
@@ -413,6 +582,8 @@ def batch_submit(key, ledger, out, args, teacher):
 
 
 def stage_teacher_batch(args, out):
+    if args.teacher_provider == "anthropic":
+        return stage_teacher_batch_anthropic(args, out)
     key = os.environ.get("GOOGLE_AI_API_KEY", "")
     if not key:
         raise SystemExit("GOOGLE_AI_API_KEY is not set")
@@ -440,7 +611,174 @@ def stage_teacher_batch(args, out):
     return active
 
 
+# -- 3b, Anthropic: the same requests as Message Batches -----------------------------
+#
+# Same ledger as the Gemini path (batches.jsonl). A Message Batch is
+# "in_progress" until "ended"; its results come in any order and are keyed by
+# custom_id (the night id). The system block is cached with the 1-hour TTL:
+# a batch's requests can be processed over a long window, and a 5-minute entry
+# can expire between them.
+
+ANTHROPIC_DONE = "ended"
+
+
+def anthropic_batch_collect(client, ledger, out, model):
+    for bid, j in list(ledger.jobs.items()):
+        if j.get("collected") or j.get("state") in ("FAILED", "CANCELLED", "EXPIRED"):
+            continue
+        batch = client.messages.batches.retrieve(bid)
+        state = batch.processing_status
+        if state != j.get("state"):
+            ledger.note(bid, state=state)
+            log(f"batch {bid}: {state}")
+        if state != ANTHROPIC_DONE:
+            continue
+        n = 0
+        with open(out / "teacher.jsonl", "a") as fh:
+            for res in client.messages.batches.results(bid):
+                kind = res.result.type
+                if kind == "succeeded":
+                    rec = anthropic_answer_of(res.custom_id, res.result.message, model)
+                elif kind == "errored":
+                    rec = {"id": res.custom_id, "error": f"errored: {str(res.result.error)[:300]}"}
+                else:   # canceled, expired: asked again on the next submit
+                    rec = {"id": res.custom_id, "error": kind}
+                rec["batch"] = bid
+                fh.write(json.dumps(rec) + "\n")
+                n += 1
+        ledger.note(bid, collected=True, answers=n,
+                    created=str(batch.created_at), ended=str(batch.ended_at))
+        log(f"batch {bid}: collected {n} answers")
+
+
+def anthropic_batch_submit(client, ledger, out, args, teacher):
+    from anthropic.types.message_create_params import MessageCreateParamsNonStreaming
+    from anthropic.types.messages.batch_create_params import Request
+    facts = read_jsonl(out / "facts.jsonl")
+    records = read_jsonl(out / "teacher.jsonl")
+    answered = {r["id"] for r in records if "text" in r}
+    tries = Counter(r["id"] for r in records if "error" in r)
+    held = ledger.held_ids(out)
+    todo = [f for f in facts if f["id"] not in answered and f["id"] not in held
+            and tries[f["id"]] < args.attempts]
+    if not todo:
+        return 0
+    size = min(args.batch_size, ANTHROPIC_BATCH_MAX)
+    for start in range(0, len(todo), size):
+        chunk = todo[start:start + size]
+        tag = f"{int(time.time())}-{start // size}"
+        ids_path = out / f"batch-{tag}.ids.json"
+        ids_path.write_text(json.dumps([f["id"] for f in chunk]))
+        batch = client.messages.batches.create(requests=[
+            Request(custom_id=f["id"],
+                    params=MessageCreateParamsNonStreaming(**teacher.params(f["facts"], ttl="1h")))
+            for f in chunk])
+        # Recorded at once: creating a batch is not idempotent.
+        ledger.note(batch.id, state=batch.processing_status, model=args.model,
+                    ids_file=ids_path.name, count=len(chunk))
+        log(f"batch {batch.id}: submitted {len(chunk)} nights")
+    return len(todo)
+
+
+def stage_teacher_batch_anthropic(args, out):
+    import anthropic
+    client = anthropic_client(args)
+    teacher = AnthropicTeacher(args, client)
+    ledger = Ledger(out / "batches.jsonl")
+    running = lambda: sum(1 for j in ledger.jobs.values()
+                          if not j.get("collected") and j.get("state") != ANTHROPIC_DONE)
+    try:
+        n = instruction_tokens(client, args.model)
+        log(f"teacher: the cached instruction is {n} tokens")
+        anthropic_batch_collect(client, ledger, out, args.model)
+        submitted = anthropic_batch_submit(client, ledger, out, args, teacher)
+        active = running()
+        while args.wait and active:
+            log(f"batch: {active} batch(es) running; next check in {args.poll_seconds:.0f} s")
+            time.sleep(args.poll_seconds)
+            anthropic_batch_collect(client, ledger, out, args.model)
+            if not running():
+                # Nights whose request errored or expired go again.
+                submitted += anthropic_batch_submit(client, ledger, out, args, teacher)
+            active = running()
+    except anthropic.APIStatusError as e:
+        if anthropic_refused(e):
+            raise SystemExit(f"teacher: the API refused the key or account ({str(e)[:160]})")
+        raise
+    if active:
+        log(f"batch: {active} batch(es) still running; run again to collect "
+            f"({submitted} nights submitted this run)")
+    return active
+
+
 # -- 4, 5: check, split, report ----------------------------------------------------
+
+FINISH_OK = (None, "STOP", "end_turn", "stop_sequence")
+TOKEN_KINDS = ("input", "cache_write_5m", "cache_write_1h", "cache_read", "output")
+
+# Per 1M tokens: standard (live) prices; the Batch APIs take half of each.
+# Anthropic cache prices are multiples of the input price: reads 0.1x,
+# 5-minute writes 1.25x, 1-hour writes 2x.
+PRICES = {
+    "gemini": {"input": 0.30, "output": 2.50},
+    "anthropic": {"input": 0.10, "output": 0.50},   # claude-haiku-5-5, prompts <= 100K
+}
+CACHE_FACTORS = {"cache_read": 0.1, "cache_write_5m": 1.25, "cache_write_1h": 2.0}
+
+
+def token_mix(usage):
+    """A response's usage as billable token kinds, whichever API wrote it."""
+    if "promptTokenCount" in usage or "candidatesTokenCount" in usage:   # Gemini
+        return {"input": usage.get("promptTokenCount", 0), "cache_write_5m": 0,
+                "cache_write_1h": 0, "cache_read": 0,
+                "output": usage.get("candidatesTokenCount", 0) + usage.get("thoughtsTokenCount", 0)}
+    write = usage.get("cache_creation_input_tokens", 0) or 0
+    split = usage.get("cache_creation") or {}
+    w1h = split.get("ephemeral_1h_input_tokens", 0) or 0
+    w5m = split.get("ephemeral_5m_input_tokens", write - w1h) or 0
+    return {"input": usage.get("input_tokens", 0) or 0, "cache_write_5m": w5m,
+            "cache_write_1h": w1h, "cache_read": usage.get("cache_read_input_tokens", 0) or 0,
+            "output": usage.get("output_tokens", 0) or 0}
+
+
+def price_table(args, batch=None, defaults_only=False):
+    """USD per 1M tokens of each kind. --price-* override the defaults for the
+    run's own mode; defaults_only gives the provider's list prices."""
+    batch = (args.teacher_mode == "batch") if batch is None else batch
+    base = PRICES[args.teacher_provider]
+    scale = 0.5 if batch else 1.0
+    p_in = base["input"] * scale
+    p_out = base["output"] * scale
+    if not defaults_only:
+        p_in = args.price_in if args.price_in is not None else p_in
+        p_out = args.price_out if args.price_out is not None else p_out
+    table = {"input": p_in, "output": p_out}
+    for kind, factor in CACHE_FACTORS.items():
+        given = None if defaults_only else getattr(args, f"price_{kind}")
+        table[kind] = given if given is not None else round(p_in * factor, 6)
+    return table
+
+
+def mix_cost(tokens, prices):
+    return sum(tokens[k] * prices[k] for k in TOKEN_KINDS) / 1e6
+
+
+def as_batch_mix(per, args):
+    """The measured live mix as a batch would bill it: Anthropic batches cache
+    with the 1-hour TTL, so a 5-minute write becomes a 1-hour write."""
+    if args.teacher_provider != "anthropic":
+        return per
+    mix = dict(per)
+    mix["cache_write_1h"] += mix["cache_write_5m"]
+    mix["cache_write_5m"] = 0.0
+    return mix
+
+
+def batch_chunk(args):
+    if args.teacher_provider == "anthropic":
+        return min(args.batch_size, ANTHROPIC_BATCH_MAX)
+    return args.batch_size
+
 
 def sentences(text):
     return [s for s in re.split(r"(?<=[.!?])\s+", text.strip()) if s]
@@ -466,12 +804,14 @@ def stage_check_and_split(args, out):
         if "error" in r:
             reasons["teacher_error"] += 1
             dropped.append({"id": nid, "reason": "teacher_error", "detail": r["error"]})
+        elif r.get("finish") not in FINISH_OK:
+            # Before the empty check: a refusal or a max_tokens cut is dropped
+            # under its own reason, with or without text.
+            reasons[f"finish_{r['finish']}"] += 1
+            dropped.append({"id": nid, "reason": f"finish_{r['finish']}", "text": r["text"]})
         elif not r["text"]:
             reasons["empty"] += 1
             dropped.append({"id": nid, "reason": "empty", "detail": r.get("finish")})
-        elif r.get("finish") not in (None, "STOP"):
-            reasons[f"finish_{r['finish']}"] += 1
-            dropped.append({"id": nid, "reason": f"finish_{r['finish']}", "text": r["text"]})
         else:
             candidates.append({"id": nid, "facts": facts[nid], "text": r["text"]})
 
@@ -511,16 +851,19 @@ def stage_check_and_split(args, out):
             fh.write(json.dumps(d) + "\n")
 
     # Cost and time, from what the API reported.
-    answers = [r for r in latest.values() if "usage" in r]
-    tin = sum(r["usage"].get("promptTokenCount", 0) for r in answers)
-    tout = sum(r["usage"].get("candidatesTokenCount", 0) + r["usage"].get("thoughtsTokenCount", 0)
-               for r in answers)
-    cost = tin / 1e6 * args.price_in + tout / 1e6 * args.price_out
+    answers = [r for r in latest.values() if r.get("usage")]
+    mixes = [token_mix(r["usage"]) for r in answers]
+    tok = {k: sum(m[k] for m in mixes) for k in TOKEN_KINDS}
+    prices = price_table(args)
+    cost = mix_cost(tok, prices)
+    tin = tok["input"] + tok["cache_write_5m"] + tok["cache_write_1h"] + tok["cache_read"]
+    tout = tok["output"]
     runs = read_jsonl(out / "teacher_runs.jsonl")
     secs = sum(r["seconds"] for r in runs)
     asked = sum(r["asked"] for r in runs)
     total = len(latest)
     report = {
+        "provider": args.teacher_provider,
         "model": args.model,
         "nights": len(nights), "answered": total,
         "accepted": len(accepted), "dropped": len(dropped),
@@ -528,29 +871,49 @@ def stage_check_and_split(args, out):
         "drop_reasons": dict(reasons),
         "flags_on_accepted": dict(flags),
         "splits": {k: len(v) for k, v in splits.items()},
-        "tokens": {"input": tin, "output_incl_thinking": tout},
-        "price_per_1m": {"input": args.price_in, "output": args.price_out},
+        "tokens": {"input": tin, "output_incl_thinking": tout, **tok},
+        "price_per_1m": prices,
         "cost_usd": round(cost, 4),
         "cost_per_answer_usd": round(cost / len(answers), 6) if answers else None,
         "cost_per_accepted_pair_usd": round(cost / len(accepted), 6) if accepted else None,
         "teacher_seconds": round(secs, 1), "teacher_asked": asked,
         "answers_per_second": round(asked / secs, 3) if secs else None,
     }
+    if args.teacher_provider == "anthropic" and answers:
+        hits = sum(1 for m in mixes if m["cache_read"] > 0)
+        writes = sum(1 for m in mixes if m["cache_write_5m"] or m["cache_write_1h"])
+        report["cache"] = {
+            "requests_reading_cache": hits,
+            "requests_writing_cache": writes,
+            "hit_rate": round(hits / len(mixes), 4),
+            "input_share_read_from_cache": round(tok["cache_read"] / tin, 4) if tin else None,
+        }
     jobs = [j for j in Ledger(out / "batches.jsonl").jobs.values() if j.get("collected")]
     if jobs:
         report["batch_jobs"] = [{k: j.get(k) for k in ("job", "count", "answers", "created", "ended")}
                                 for j in jobs]
     if accepted and answers:
         need = args.project_pairs / (len(accepted) / total)
-        per_in, per_out = tin / len(answers), tout / len(answers)
+        per = {k: tok[k] / len(answers) for k in TOKEN_KINDS}
+        batch_prices = price_table(args, batch=True, defaults_only=True)
         report["projection"] = {
             "pairs": args.project_pairs, "requests": round(need),
-            "tokens_per_answer": {"input": round(per_in, 1), "output_incl_thinking": round(per_out, 1)},
+            "tokens_per_answer": {"input": round(tin / len(answers), 1),
+                                  "output_incl_thinking": round(tout / len(answers), 1),
+                                  **{k: round(v, 1) for k, v in per.items()}},
             "cost_usd_at_these_prices": round(need * cost / len(answers), 2),
-            # The Batch API's gemini-3.5-flash-lite prices: $0.15 in, $1.25 out per 1M.
-            "cost_usd_batch_api": round(need * (per_in * 0.15 + per_out * 1.25) / 1e6, 2),
-            "batch_jobs_needed": math.ceil(need / args.batch_size),
+            "batch_price_per_1m": batch_prices,
+            "cost_usd_batch_api": round(need * mix_cost(as_batch_mix(per, args), batch_prices), 2),
+            "batch_jobs_needed": math.ceil(need / batch_chunk(args)),
         }
+        if args.teacher_provider == "anthropic":
+            # A batch request may miss the cache: the dearest case writes the
+            # whole instruction (1-hour TTL) on every request.
+            worst = dict(per)
+            worst["cache_write_1h"] = per["cache_write_5m"] + per["cache_write_1h"] + per["cache_read"]
+            worst["cache_write_5m"] = worst["cache_read"] = 0.0
+            report["projection"]["cost_usd_batch_api_if_no_cache_hits"] = round(
+                need * mix_cost(worst, batch_prices), 2)
         if secs:
             report["projection"]["hours_live_at_measured_rate"] = round(need / (asked / secs) / 3600, 2)
     with open(out / "report.json", "w") as fh:
@@ -565,11 +928,14 @@ def main():
     ap.add_argument("--seed", type=int, default=13)
     ap.add_argument("--distributions", type=Path, default=HERE / "data" / "distributions.json")
     ap.add_argument("--tool", type=Path, default=DEFAULT_TOOL)
-    ap.add_argument("--prompt", type=Path, default=DEFAULT_PROMPT)
-    ap.add_argument("--model", default="gemini-3.5-flash-lite")
+    ap.add_argument("--teacher-provider", choices=tuple(DEFAULT_MODEL), default="anthropic",
+                    help="anthropic (ANTHROPIC_API_KEY) or gemini (GOOGLE_AI_API_KEY)")
+    ap.add_argument("--model", default=None,
+                    help="default: claude-haiku-5-5 (anthropic), gemini-3.5-flash-lite (gemini)")
     ap.add_argument("--thinking-level", default="minimal",
-                    help="thinkingConfig.thinkingLevel ('' sends none)")
-    ap.add_argument("--temperature", type=float, default=0.7)
+                    help="gemini: thinkingConfig.thinkingLevel ('' sends none)")
+    ap.add_argument("--temperature", type=float, default=0.7,
+                    help="gemini only (Claude Haiku 5.5 takes no sampling parameters)")
     ap.add_argument("--max-tokens", type=int, default=400)
     ap.add_argument("--concurrency", type=int, default=4)
     ap.add_argument("--rpm", type=float, default=300)
@@ -577,27 +943,32 @@ def main():
     ap.add_argument("--timeout", type=float, default=60)
     ap.add_argument("--teacher-mode", choices=("live", "batch"), default="live",
                     help="live calls (the pilot) or Batch API jobs (the full corpus)")
-    ap.add_argument("--batch-size", type=int, default=50_000, help="nights per batch job")
+    ap.add_argument("--batch-size", type=int, default=50_000,
+                    help="nights per batch job (anthropic: at most 100,000 per Message Batch)")
     ap.add_argument("--wait", action="store_true",
                     help="batch: keep checking until every job is collected")
     ap.add_argument("--poll-seconds", type=float, default=600,
                     help="batch: seconds between job checks while --wait runs")
     ap.add_argument("--price-in", type=float, default=None,
-                    help="USD per 1M input tokens (default: 0.30 live, 0.15 batch)")
+                    help="USD per 1M input tokens (default anthropic 0.10 live, 0.05 batch; "
+                         "gemini 0.30 live, 0.15 batch)")
     ap.add_argument("--price-out", type=float, default=None,
-                    help="USD per 1M output tokens (default: 2.50 live, 1.25 batch)")
+                    help="USD per 1M output tokens (default anthropic 0.50 live, 0.25 batch; "
+                         "gemini 2.50 live, 1.25 batch)")
+    ap.add_argument("--price-cache-read", type=float, default=None,
+                    help="USD per 1M cache-read tokens (default 0.1x the input price)")
+    ap.add_argument("--price-cache-write-5m", type=float, default=None,
+                    help="USD per 1M 5-minute cache-write tokens (default 1.25x the input price)")
+    ap.add_argument("--price-cache-write-1h", type=float, default=None,
+                    help="USD per 1M 1-hour cache-write tokens (default 2x the input price)")
     ap.add_argument("--val-frac", type=float, default=0.01)
     ap.add_argument("--test-frac", type=float, default=0.01)
     ap.add_argument("--project-pairs", type=int, default=250_000)
     ap.add_argument("--stages", default="nights,facts,teacher,check",
                     help="comma list of nights,facts,teacher,check")
     args = ap.parse_args()
-    # gemini-3.5-flash-lite, standard and Batch API prices per 1M tokens.
+    args.model = args.model or DEFAULT_MODEL[args.teacher_provider]
     batch = args.teacher_mode == "batch"
-    if args.price_in is None:
-        args.price_in = 0.15 if batch else 0.30
-    if args.price_out is None:
-        args.price_out = 1.25 if batch else 2.50
 
     args.out.mkdir(parents=True, exist_ok=True)
     stages = set(args.stages.split(","))

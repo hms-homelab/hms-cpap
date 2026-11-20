@@ -1,3 +1,4 @@
 numpy>=1.24
 psycopg[binary]>=3.1
 sentencepiece>=0.2
+anthropic>=2.11
