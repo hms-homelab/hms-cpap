@@ -178,6 +178,9 @@ set(TEST_SOURCES
     services/test_BmcIngestion.cpp
     services/test_LunaComputedEvents.cpp
     services/test_PhilipsCardIngestion.cpp
+    # SDD-080: a DreamStation 2 card read through the user's OSCAR (a fake
+    # OSCAR, a synthetic oscar.db built by the test's own SQL).
+    services/test_OscarCard.cpp
     services/test_CardUpload.cpp
     services/test_CpapCard.cpp
     services/test_SefamCardMirror.cpp

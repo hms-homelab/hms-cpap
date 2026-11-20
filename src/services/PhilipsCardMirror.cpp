@@ -121,10 +121,10 @@ struct Pass {
             std::error_code ec;
             for (fs::directory_iterator it(root / rel_dir, ec), end; !ec && it != end; it.increment(ec)) {
                 if (upper(it->path().filename().string()) != name) continue;
-                if (!isPlainIdentity(it->path())) {
-                    r.encrypted = true;
-                    return;   // hms-cpap does not decrypt: nothing more to copy
-                }
+                // SDD-080: an encrypted card is copied all the same, exactly as
+                // it is: the user's OSCAR reads the copy (hms-cpap never
+                // decrypts), and its files go to CpapDash as the card's.
+                if (!isPlainIdentity(it->path())) r.encrypted = true;
             }
         }
         for (const auto& d : folders) {
@@ -168,7 +168,6 @@ PhilipsMirrorResult mirrorPhilipsCard(IDataSource& card, const std::string& loca
             if (!m.is_dir) continue;
             found = true;
             p.machine(e.name + "\\" + m.name, e.name + "/" + m.name);
-            if (p.r.encrypted) break;
         }
     }
     if (!found) {

@@ -31,6 +31,7 @@
 #include "services/OximetryImport.h"
 #include "services/O2RingFileWatch.h"
 #include "services/RemovedNights.h"
+#include "services/SetupService.h"
 #include "services/Ds2ReadTime.h"
 #include "services/SefamCardMirror.h"
 #include "services/BmcCardMirror.h"
@@ -747,6 +748,119 @@ Ds2NightImport::Result BurstCollectorService::importDs2Nights() {
     return r;
 }
 
+// ── SDD-080: a DreamStation 2 card read through the user's OSCAR ───────────
+
+void BurstCollectorService::oscarCardSeen(const std::string& card_root) {
+    if (card_root.empty() || !db_service_) return;
+    std::shared_ptr<oscar::OscarCardReader> reader;
+    {
+        std::lock_guard<std::mutex> lk(oscar_mu_);
+        oscar_card_root_ = card_root;
+        if (!oscar_settings_set_ && app_config_) {
+            oscar_settings_.program  = app_config_->oscar.program;
+            oscar_settings_.data_dir = app_config_->oscar.data_dir;
+            oscar_settings_.profile  = app_config_->oscar.profile;
+            oscar_settings_set_ = true;
+        }
+        if (!oscar_reader_) {
+            oscar::OscarCardReader::Options o;
+            o.settings = [this] {
+                std::lock_guard<std::mutex> l(oscar_mu_);
+                oscar::Settings s = oscar_settings_;
+                // Left empty: where this OS's installer puts it (D7).
+                if (s.program.empty()) s.program = oscar::findProgram();
+                return s;
+            };
+            o.card_root = [this] {
+                std::lock_guard<std::mutex> l(oscar_mu_);
+                return oscar_card_root_;
+            };
+            o.db          = db_service_;
+            o.device_id   = device_id_;
+            o.device_name = device_name_;
+            o.runner      = oscar_runner_;
+            o.removed     = [db = db_service_, id = device_id_] { return removedNightSet(*db, id); };
+            o.on_stored   = [this](const CPAPSession& newest, int stored) {
+                std::lock_guard<std::mutex> l(oscar_mu_);
+                oscar_pending_publish_ = newest;
+                oscar_pending_count_ += stored;
+                oscar_publish_due_ = true;
+            };
+            o.containerised = SetupService::isContainerised();
+            oscar_reader_ = std::make_shared<oscar::OscarCardReader>(std::move(o));
+            oscar_reader_->start();
+        }
+        reader = oscar_reader_;
+    }
+    reader->noteCloses(card_root);
+}
+
+void BurstCollectorService::oscarCardWritten(const std::string& card_root, const std::vector<std::string>& rels) {
+    std::shared_ptr<oscar::OscarCardReader> reader;
+    {
+        std::lock_guard<std::mutex> lk(oscar_mu_);
+        reader = oscar_reader_;
+    }
+    // No reader yet: the burst the rebuild asks for finds the card and builds it.
+    if (reader) reader->noteCloses(card_root, rels);
+}
+
+bool BurstCollectorService::requestOscarRead() {
+    std::shared_ptr<oscar::OscarCardReader> reader;
+    {
+        std::lock_guard<std::mutex> lk(oscar_mu_);
+        reader = oscar_reader_;
+    }
+    if (!reader) return false;
+    reader->request("Read now");
+    return true;
+}
+
+Json::Value BurstCollectorService::oscarStatus() const {
+    std::shared_ptr<oscar::OscarCardReader> reader;
+    std::string root;
+    {
+        std::lock_guard<std::mutex> lk(oscar_mu_);
+        reader = oscar_reader_;
+        root = oscar_card_root_;
+    }
+    if (!reader) return Json::Value(Json::nullValue);
+    Json::Value v = reader->status();
+    v["card_root"] = root;
+    return v;
+}
+
+void BurstCollectorService::setOscarSettings(const oscar::Settings& s) {
+    std::lock_guard<std::mutex> lk(oscar_mu_);
+    oscar_settings_ = s;
+    oscar_settings_set_ = true;
+}
+
+void BurstCollectorService::publishOscarNight() {
+    std::optional<CPAPSession> latest;
+    int stored = 0;
+    {
+        std::lock_guard<std::mutex> lk(oscar_mu_);
+        latest = std::move(oscar_pending_publish_);
+        oscar_pending_publish_.reset();
+        stored = oscar_pending_count_;
+        oscar_pending_count_ = 0;
+    }
+    if (!latest || !db_service_) return;
+    last_data_at_.store(std::chrono::steady_clock::now().time_since_epoch().count());
+    db_service_->updateDeviceLastSeen(device_id_);
+    // No STR on a Philips card: the daily summary comes from the sessions.
+    processSessionSummary();
+    if (latest->session_start && data_publisher_ && mqtt_client_ && mqtt_client_->isConnected()) {
+        data_publisher_->publishSession(*latest);
+        if (auto metrics = db_service_->getNightlyMetrics(device_id_, *latest->session_start)) {
+            data_publisher_->publishHistoricalState(*metrics);
+            if (stored > 0 && llm_enabled_ && llm_client_) generateAndPublishSummary(*metrics, nullptr);
+        }
+        data_publisher_->publishSessionCompleted();
+    }
+}
+
 // ── the live night's shared topics (mqtt/LiveState.h) ──────────────────────
 
 void BurstCollectorService::setLiveState(std::shared_ptr<LiveState> live) {
@@ -967,6 +1081,13 @@ BurstCollectorService::~BurstCollectorService() {
     // The live state may outlive this service: its hook must not call into it.
     if (auto live = liveState()) live->setMaskHook(nullptr);
     stop();
+    // SDD-080: its callback calls into this service.
+    std::shared_ptr<oscar::OscarCardReader> reader;
+    {
+        std::lock_guard<std::mutex> lk(oscar_mu_);
+        reader = std::move(oscar_reader_);
+    }
+    if (reader) reader->stop();
 }
 
 void BurstCollectorService::start() {
@@ -4142,10 +4263,12 @@ bool BurstCollectorService::executePhilipsBurst() {
             return false;
         }
         if (m.encrypted) {
+            // SDD-080: the copy holds the card as it is; the user's OSCAR reads it.
             if (!philips_encrypted_logged_)
-                std::cerr << "CPAP: the Philips card is encrypted; hms-cpap reads a DreamStation "
-                             "card only when its files are plain" << std::endl;
+                std::cout << "CPAP: the Philips card is encrypted; its sessions are read through "
+                             "OSCAR (Settings > Source)" << std::endl;
             philips_encrypted_logged_ = true;
+            oscarCardSeen(philips_mirror_dir_);
             return false;
         }
     }
@@ -4155,6 +4278,8 @@ bool BurstCollectorService::executePhilipsBurst() {
         // An encrypted card is a fact about the card, said once per stretch.
         if (!read.encrypted || !philips_encrypted_logged_) std::cerr << "CPAP: " << read.error << std::endl;
         philips_encrypted_logged_ = read.encrypted;
+        // SDD-080: an encrypted card is read through the user's OSCAR.
+        if (read.encrypted) oscarCardSeen(oscar::cardRootOf(read.card_dir));
         return false;
     }
     philips_encrypted_logged_ = false;
@@ -4651,6 +4776,8 @@ void BurstCollectorService::runLoop() {
             ds2DailyCheck(std::chrono::duration_cast<std::chrono::seconds>(
                               std::chrono::system_clock::now().time_since_epoch()).count());
             if (ds2_import_due_.exchange(false)) importDs2Nights();
+            // SDD-080: OSCAR's read stored sessions; the newest is published.
+            if (oscar_publish_due_.exchange(false)) publishOscarNight();
 
             std::this_thread::sleep_for(std::chrono::seconds(1));
         }

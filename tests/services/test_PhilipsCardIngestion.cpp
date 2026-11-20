@@ -308,10 +308,17 @@ TEST_F(PhilipsCardTest, ThroughAnEzShareTheCopyReadsAsTheCardAndFollowsTheSessio
     EXPECT_TRUE(read.sessions[0].closed);
 }
 
-TEST_F(PhilipsCardTest, ThroughAnEzShareAnEncryptedCardStopsAtItsIdentity) {
+// SDD-080: an encrypted card is copied whole, unopened, for the user's OSCAR.
+TEST_F(PhilipsCardTest, ThroughAnEzShareAnEncryptedCardIsCopiedAsItIs) {
     FolderAsCard ez(src_ / "ds2_encrypted");
-    const auto m = mirrorPhilipsCard(ez, (root_ / "copy").string());
+    const fs::path copy = root_ / "copy";
+    const auto m = mirrorPhilipsCard(ez, copy.string());
     EXPECT_TRUE(m.ok);
     EXPECT_TRUE(m.encrypted);
-    EXPECT_EQ(ez.downloads, 1) << "PROP.BIN only: the session files are not fetched";
+    EXPECT_EQ(ez.downloads, 2) << "PROP.BIN and the session file";
+    const fs::path b05 = "P-SERIES/PXENC001/P0/00000041.B05";
+    ASSERT_TRUE(fs::exists(copy / b05));
+    std::ifstream a(copy / b05, std::ios::binary), b(src_ / "ds2_encrypted" / b05, std::ios::binary);
+    const std::string got((std::istreambuf_iterator<char>(a)), {}), want((std::istreambuf_iterator<char>(b)), {});
+    EXPECT_EQ(got, want) << "byte for byte";
 }

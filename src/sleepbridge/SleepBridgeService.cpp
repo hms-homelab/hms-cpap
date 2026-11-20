@@ -1,5 +1,6 @@
 #include "sleepbridge/SleepBridgeService.h"
 
+#include "sleepbridge/BridgeSource.h"   // holdsPhilipsCard (SDD-080 D1)
 #include "sleepbridge/LearnedFiles.h"
 
 #include "mule/MuleFirmware.h"   // compareVersions, updateAvailable
@@ -1239,6 +1240,9 @@ Json::Value SleepBridgeService::status() const {
         // it as: a Luna's root is read as "bmc", a ResMed's as "resmed".
         v["card_machine"] = b.card_machine;
         v["card_format"]  = formatForMachine(b.card_machine);
+        // SDD-080 D1: a DreamStation 2's rebuilt card is a Philips card.
+        if (v["card_format"].asString().empty() && holdsPhilipsCard(v["card_root"].asString()))
+            v["card_format"] = "philips";
         // SDD-073: when this run heard the bridge's own hello and its card
         // statement last (epoch s, 0 for not yet), which the setup steps read.
         v["session_started_at"] = static_cast<Json::Int64>(b.session_started_at);

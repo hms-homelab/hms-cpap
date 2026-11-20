@@ -79,6 +79,11 @@ struct DeviceInputs {
     bool        garmin_enabled{false};
     Json::Value garmin{Json::nullValue};
 
+    // SDD-080 D7: the OSCAR read of an encrypted DreamStation 2 card
+    // (BurstCollectorService::oscarStatus, with its card_root), null when no
+    // such card is the source. It rides as detail.oscar on the tile of what
+    // carries the card: the Sleep Bridge whose folder it is, or the ez Share.
+    Json::Value oscar{Json::nullValue};
     // The latest night in the ledger: "yes" while it is live, "no", or
     // "unknown" when the ledger cannot be read.
     std::string ledger_live{"unknown"};

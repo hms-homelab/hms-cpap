@@ -1,6 +1,7 @@
 #include "devices/Devices.h"
 
 #include <algorithm>
+#include <filesystem>
 #include <vector>
 
 namespace hms_cpap::devices {
@@ -38,6 +39,17 @@ Json::Value entry(const std::string& kind, const std::string& id, const std::str
     d["forgettable"]      = forgettableKind(kind);
     d["detail"]           = Json::Value(Json::objectValue);
     return d;
+}
+
+/// One folder however it was spelled (a trailing slash, a "./").
+bool samePath(const std::string& a, const std::string& b) {
+    if (a.empty() || b.empty()) return false;
+    auto norm = [](const std::string& p) {
+        std::string s = std::filesystem::path(p).lexically_normal().generic_string();
+        while (s.size() > 1 && s.back() == '/') s.pop_back();
+        return s;
+    };
+    return norm(a) == norm(b);
 }
 
 void ledgerRecording(Json::Value& d, const std::string& live) {
@@ -138,6 +150,9 @@ Json::Value buildDevices(const DeviceInputs& in, DevicesStore& store) {
             d["version"]          = b.get("fw_version", "").asString();
             Json::Value detail = b;
             trimCommands(detail);
+            if (in.oscar.isObject() && samePath(in.oscar.get("card_root", "").asString(),
+                                                b.get("card_root", "").asString()))
+                detail["oscar"] = in.oscar;   // SDD-080 D7
             d["detail"] = detail;
             list.push_back(d);
         }
@@ -229,6 +244,7 @@ Json::Value buildDevices(const DeviceInputs& in, DevicesStore& store) {
             d["version"]     = in.source_probe.get("bridge_fw", "").asString();
         }
         ledgerRecording(d, in.ledger_live);
+        if (!flashair && in.oscar.isObject()) detail["oscar"] = in.oscar;   // SDD-080 D7
         d["detail"] = detail;
         list.push_back(d);
     }
