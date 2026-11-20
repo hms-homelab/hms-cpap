@@ -114,8 +114,6 @@
       "heading": "AirSense 11 en Bluetooth",
       "desc": "Lit le résumé quotidien d'un AirSense 11 directement sur l'appareil, par le Bluetooth de cet ordinateur. À utiliser quand la carte de l'appareil ne peut pas être lue. Quand la carte contient une nuit, c'est la carte qui l'emporte.",
       "enabled": "Activé",
-      "address": "Adresse Bluetooth de l'appareil",
-      "addressHint": "Facultatif. Laissez vide pour utiliser le premier AirSense 11 à portée.",
       "capture": "Enregistrer chaque nuit pour l'assistance",
       "captureHint": "Enregistre dans un fichier tout ce que l'appareil envoie pendant chaque nuit, pour que vous puissiez nous l'envoyer avec le dossier de la carte SD de cette nuit. Vos nuits sont lues comme sans cette option. Désactivez-la quand vous avez terminé.",
       "captureFile": "Enregistrement dans {{path}} ({{size}}).",

@@ -45,9 +45,6 @@ struct BmcMirrorResult {
 /// listed largest (the card in use); nullopt when there is none.
 std::optional<std::string> bmcStemOf(const std::vector<EzShareFileEntry>& root);
 
-/// True for "<stem>.000".."<stem>.999" (any case).
-bool isBmcRawName(const std::string& name, const std::string& stem);
-
 /// One pass: list the card root and bring [local_dir] up to date.
 BmcMirrorResult mirrorBmcCard(IDataSource& card, const std::string& local_dir);
 

@@ -80,10 +80,6 @@ StrResult writeStrFromSummaries(const std::string& root, const std::string& layo
 /// machine's noon as an instant); 0 and false when none tells.
 bool machineOffsetFromSummaries(const std::string& root, int* offset_min);
 
-/// Every day the kept Summaries carry, oldest first, a later pull winning a
-/// day both carry (SDD-070 reads the night's mask-on times from them).
-std::vector<cpapdash::parser::AirSense11Day> keptSummaryDays(const std::string& root);
-
 /// An STR.edf's header as this writer reads it, for whoever needs to look at
 /// one (tests, the status page).
 struct StrHeaderInfo {

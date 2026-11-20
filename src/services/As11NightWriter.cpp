@@ -417,25 +417,6 @@ void As11NightWriter::onStreamEnd(const std::string& serial) {
     if (hook) hook(serial);
 }
 
-void As11NightWriter::writeNight(const std::string& serial, const std::string& night) {
-    std::lock_guard<std::mutex> lk(mtx_);
-    Machine& m = machine(serial);
-    for (auto& s : m.segments) {
-        if (s.night != night) continue;
-        writeSegment(serial, s);
-        s.written_end = s.end_ms;
-    }
-    writeEvents(serial, night);
-}
-
-std::vector<StoredSpan> As11NightWriter::streamedSpans(const std::string& serial, const std::string& night) {
-    std::lock_guard<std::mutex> lk(mtx_);
-    std::vector<StoredSpan> out;
-    for (const auto& s : machine(serial).segments)
-        if (s.night == night && !s.starts.empty()) out.push_back({s.start_ms, s.end_ms});
-    return out;
-}
-
 std::string As11NightWriter::nightFor(const std::string& serial, int64_t utc_ms) const {
     std::lock_guard<std::mutex> lk(mtx_);
     return sleepDayFolder(clockFor(serial)(utc_ms));

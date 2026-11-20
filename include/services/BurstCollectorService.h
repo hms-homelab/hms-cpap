@@ -593,9 +593,6 @@ public:
     /// The one writer every AirSense 11 stream source feeds (SDD-057 step 4):
     /// this host's own Bluetooth now, a bridge's network stream later.
     std::shared_ptr<IAs11NightSink> getAs11NightSink();
-    /// Test-only: the SDD-057 D9 import of the Bluetooth nights on disk, as
-    /// the worker runs it at start and after a night. Returns what it saved.
-    As11NightImport::Result importAs11NightsForTest() { return importAs11Nights(); }
 private:
     std::shared_ptr<IAirSense11Pairing> airsense11_pairing_;
     mutable std::mutex airsense11_mtx_;
@@ -634,8 +631,6 @@ public:
     /// A source says the night ended (a mask went off for the device, the
     /// ring's session ended): the read is started on the worker. Any thread.
     void ds2NightEnded(const std::string& source);
-    /// Test-only: the import as the worker runs it after a read.
-    Ds2NightImport::Result importDs2NightsForTest() { return importDs2Nights(); }
     /// SDD-065: also told when a night ended and no mask is on (on the
     /// worker), e.g. to read a DreamStation 2 through a Mule & Miner.
     void addDs2NightListener(std::function<void(const std::string& by)> listener) {

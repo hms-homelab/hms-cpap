@@ -237,11 +237,6 @@ export function groupKeys(set: Record<string, unknown>, group: 'network' | 'iden
   return Object.keys(set).filter((k) => g.has(k));
 }
 
-/** Whether a set warns while the machine records (it carries the network). */
-export function setTouchesNetwork(set: Record<string, unknown>): boolean {
-  return Object.keys(set).some((k) => NETWORK_KEYS.has(k));
-}
-
 // ── the release line and the commands ─────────────────────────────────────
 
 /** Which sentence the Sleep Bridge's Firmware line says about the release. */

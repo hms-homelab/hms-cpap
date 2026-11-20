@@ -84,12 +84,6 @@ public:
     void setNightEndedHook(std::function<void(const std::string& serial)> hook);
 
     std::string rootFor(const std::string& serial) const;
-    /// Rewrites every file of one sleep day from what is on disk.
-    void writeNight(const std::string& serial, const std::string& night);
-
-    /// SDD-070: the stretches of one sleep day the stream covered, UTC ms,
-    /// one per segment, from what is on disk. Empty when nothing streamed.
-    std::vector<StoredSpan> streamedSpans(const std::string& serial, const std::string& night);
 
     /// SDD-070 D3/D4: the minutes of one sleep day the machine was on the mask
     /// (mask_on, from its Summary) and no streamed segment covers, written into

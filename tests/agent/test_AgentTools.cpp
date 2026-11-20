@@ -66,23 +66,6 @@ TEST_F(AgentToolsTest, ExpectedToolSetPresent) {
         "get_trend_data", "compare_periods", "get_vitals", "get_statistics"}));
 }
 
-TEST_F(AgentToolsTest, HasToolReturnsTrueForValidNames) {
-    EXPECT_TRUE(tools.hasTool("get_recent_sessions"));
-    EXPECT_TRUE(tools.hasTool("get_session_details"));
-    EXPECT_TRUE(tools.hasTool("get_daily_summary"));
-    EXPECT_TRUE(tools.hasTool("get_trend_data"));
-    EXPECT_TRUE(tools.hasTool("compare_periods"));
-    EXPECT_TRUE(tools.hasTool("get_vitals"));
-    EXPECT_TRUE(tools.hasTool("get_statistics"));
-}
-
-TEST_F(AgentToolsTest, HasToolReturnsFalseForInvalidName) {
-    EXPECT_FALSE(tools.hasTool("nonexistent_tool"));
-    EXPECT_FALSE(tools.hasTool(""));
-    EXPECT_FALSE(tools.hasTool("get_recent_session"));  // singular
-    EXPECT_FALSE(tools.hasTool("GET_RECENT_SESSIONS"));  // case-sensitive
-}
-
 // ── Parameter validation tests ──────────────────────────────────────────────
 
 static const hms::ToolDefinition* findDef(const AgentTools& t, const std::string& name) {

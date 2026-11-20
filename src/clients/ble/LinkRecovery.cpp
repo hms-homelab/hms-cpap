@@ -10,16 +10,6 @@ bool countsTowardRecovery(LinkError e) {
     return e == LinkError::Connect || e == LinkError::Resolve || e == LinkError::NoCharacteristics;
 }
 
-const char* recoveryStepText(RecoveryStep s) {
-    switch (s) {
-    case RecoveryStep::None:          return "none";
-    case RecoveryStep::Forget:        return "forget";
-    case RecoveryStep::ResetAdapter:  return "reset_adapter";
-    case RecoveryStep::NotRecovering: return "not_recovering";
-    }
-    return "none";
-}
-
 RecoveryStep LinkRecovery::onFailure() {
     failures_++;
     if (!forgot_) {

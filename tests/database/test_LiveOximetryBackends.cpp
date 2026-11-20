@@ -29,6 +29,7 @@
 #include "database/SQLiteDatabase.h"
 #include "database/SqlDialect.h"
 #include "services/SleepHqExportService.h"
+#include "utils/MachineClocks.h"
 #include "utils/OximetryDevice.h"
 #include "utils/TimeCompat.h"
 #include "web/QueryService.h"
@@ -369,7 +370,8 @@ INSTANTIATE_TEST_SUITE_P(
 
 // ── The host clock a live sample is stamped with ───────────────────────────
 //
-// liveOximetryWallClock must give the host's LOCAL wall clock in the ring-file
+// The live path stamps a sample with machine_clocks::nowWall (SDD-074). With no
+// clock setting it must give the host's LOCAL wall clock in the ring-file
 // shape (read back with gmtime), whatever the zone. Pinned under a zone that is
 // not UTC, because on a UTC runner local and UTC agree and nothing is tested.
 
@@ -379,10 +381,11 @@ TEST(LiveOximetryWallClock, IsTheHostsLocalWallClockInTheRingFileShape) {
     const std::string saved = old ? old : "";
     setenv("TZ", "EST5EDT", 1);
     tzset();
+    machine_clocks::clear();
 
     // 2099-03-02 04:15:00 UTC is 23:15 on the 1st in New York (EST, UTC-5).
     const auto instant = ring(2099, 3, 2, 4, 15);
-    const auto wall = liveOximetryWallClock(instant);
+    const auto wall = machine_clocks::nowWall("live_clock_test_machine", instant);
 
     if (old) setenv("TZ", saved.c_str(), 1); else unsetenv("TZ");
     tzset();

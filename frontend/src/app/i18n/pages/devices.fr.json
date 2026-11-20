@@ -26,15 +26,13 @@
       "unknown": "inconnu"
     },
     "recording": {
-      "badge": "Enregistrement",
-      "unknownBadge": "Enregistrement inconnu"
+      "badge": "Enregistrement"
     },
     "line": {
       "lastHeard": "Vu pour la dernière fois",
       "never": "jamais",
       "firmware": "Firmware",
-      "machine": "Appareil",
-      "ownName": "Son propre nom"
+      "machine": "Appareil"
     },
     "rename": {
       "button": "Renommer",
@@ -45,7 +43,6 @@
       "failed": "Non renommé : {{error}}"
     },
     "more": "Plus",
-    "less": "Moins",
     "cloud": {
       "switching": "Changement en cours...",
       "switched": "C'est fait : il envoie maintenant vers le cloud CpapDash.",
@@ -56,19 +53,16 @@
       "button": "Oublier cet appareil",
       "disabled": "Seul un appareil absent peut être oublié.",
       "confirm": "{{name}} n'est plus listé ici et ses commandes en attente sont abandonnées. Tout ce qu'il a transmis est conservé. S'il se reconnecte, il revient comme une nouvelle fiche.",
-      "yes": "L'oublier",
       "failed": "Non oublié : {{error}}"
     },
     "confirm": {
       "cancel": "Annuler",
-      "recordingTitle": "Votre appareil enregistre.",
       "recordingLine": "Votre CPAP enregistre ({{reason}}).",
       "anyway": "{{verb}} quand même",
       "verb": {
         "change": "Modifier",
         "send": "Envoyer"
       },
-      "recordingAnyway": "Le faire quand même",
       "notNow": "Pas maintenant",
       "costs": {
         "reboot": "Le redémarrer maintenant peut coûter les données de cette nuit ; la carte les garde.",
@@ -77,8 +71,7 @@
         "switch": "Le miner redémarre pour appliquer ce choix ; la carte garde les données.",
         "network": "Le bridge teste le nouveau réseau et suspend sa liaison montante jusqu'à une minute ; la carte garde les données.",
         "generic": "Cela peut coûter les données de cette nuit ; la carte les garde."
-      },
-      "reason": "Pourquoi : {{reason}}"
+      }
     },
     "result": {
       "sending": "Envoi...",
@@ -89,7 +82,6 @@
     },
     "commands": {
       "heading": "Commandes récentes",
-      "none": "Aucune commande pour l'instant.",
       "state": {
         "queued": "en attente de l'appareil",
         "sent": "envoyée",
@@ -99,8 +91,7 @@
       },
       "cancel": "Annuler",
       "cancelled": "Annulée avant l'envoi.",
-      "cancelFailed": "Non annulée : {{error}}",
-      "all": "Toutes les commandes"
+      "cancelFailed": "Non annulée : {{error}}"
     },
     "logs": {
       "heading": "Journaux",
@@ -113,12 +104,10 @@
     },
     "action": {
       "restart": "Redémarrer",
-      "restartTarget": "Que redémarrer",
       "restartGroup": "Redémarrer",
       "whichBoard": "Quelle carte",
       "resetWifi": "Réinitialiser le WiFi",
       "backToCloud": "Passer au cloud CpapDash",
-      "restate": "Redemander son état",
       "offline": "Les commandes attendent l'appareil : elles partent dès qu'il se connecte."
     },
     "mule": {
@@ -129,9 +118,6 @@
       "firmwareLine": "mule {{mule}}, miner {{miner}}",
       "mule": "mule",
       "miner": "miner",
-      "both": "les deux",
-      "updateAvailable": "Mise à jour disponible : mule {{mule}}, miner {{miner}}",
-      "upToDate": "à jour",
       "manifestUnavailable": "Les versions publiées n'ont pas pu être lues. Un fichier que vous avez peut tout de même être envoyé.",
       "fwCodeHint": "Pour chercher un nouveau firmware, saisissez le code d'appairage imprimé sur l'appareil. Il n'est demandé qu'une fois.",
       "fwCodePlaceholder": "Code d'appairage",
@@ -142,7 +128,6 @@
       "boardMinerOnly": "Miner seulement",
       "boardMule": "Mule",
       "boardMiner": "Miner",
-      "update": "Mettre à jour",
       "fileHint": "Envoyez un fichier image que vous avez, au mule ou au miner. Il part dès qu'il est choisi.",
       "as11Bluetooth": "Bluetooth de l'AirSense 11",
       "o2Ring": "Bague O2",
@@ -160,7 +145,6 @@
       "pairHint": "L'appareil affiche un code dès que l'unité commence l'appairage. Saisissez-le tout de suite."
     },
     "sleepbridge": {
-      "writing": "Appareil en écriture",
       "lastWrite": "Dernière écriture",
       "chip": "Puce",
       "files": "Fichiers : {{complete}} complets, {{held}} retenus",
@@ -288,13 +272,11 @@
       "adapterUnchecked": "Le Bluetooth n'a pas pu être vérifié. Vérifiez que le Bluetooth fonctionne sur cet ordinateur.",
       "adapterRadioOff": "Le Bluetooth est désactivé sur cet ordinateur. Activez-le puis vérifiez à nouveau.",
       "adapterUnauthorized": "CpapDash n'est pas autorisé à utiliser le Bluetooth sur ce Mac. Autorisez-le dans Réglages Système, Confidentialité et sécurité, Bluetooth.",
-      "importCsv": "Importer un CSV",
-      "ringRecording": "La bague enregistre"
+      "importCsv": "Importer un CSV"
     },
     "source": {
       "address": "Adresse",
       "health": "État",
-      "lastAnswered": "Dernière réponse",
       "failures": "Lectures échouées d'affilée",
       "format": "Format",
       "range": "Téléchargements par plages",
@@ -332,7 +314,6 @@
       "lastSummary": "Dernier résumé récupéré",
       "summaryDay": "pour le {{day}}",
       "summaryError": "La dernière récupération n'a rien donné : {{error}}",
-      "streaming": "Envoi de la nuit en flux",
       "therapy": "en thérapie",
       "address": "Adresse Bluetooth de l'appareil",
       "anyMachine": "le premier AirSense 11 à portée",
@@ -341,7 +322,6 @@
       "pullFailed": "Non demandé : {{error}}",
       "forgetPairing": "Oublier l'appairage",
       "forgetPairingConfirm": "Cela supprime les clés créées par l'appairage. L'appareil garde cet ordinateur dans sa propre liste d'appareils appairés jusqu'à ce que vous l'en retiriez. Appairer de nouveau remplace l'appairage de l'application myAir.",
-      "forgetPairingYes": "Oublier l'appairage",
       "forgotten": "L'appairage a été supprimé.",
       "forgetFailed": "Non supprimé : {{error}}",
       "pairNote": "L'appairage remplace l'appairage Bluetooth de l'application myAir (et celui de tout pont) par cet ordinateur. Les rapports nocturnes de myAir continuent d'arriver par le modem de l'appareil.",
@@ -520,12 +500,10 @@
       "errRadioOffWin": "Le Bluetooth est désactivé sur ce PC et Windows n'a pas laissé CpapDash l'activer. Activez-le dans Paramètres, Bluetooth et appareils (et vérifiez le mode Avion), puis réessayez."
     },
     "ota": {
-      "current": "Firmware {{current}}",
       "available": "Le firmware {{target}} est disponible.",
       "updateNow": "Mettre à jour maintenant",
       "upToDate": "À jour",
       "updateFromFile": "Mettre à jour depuis un fichier",
-      "warnRecording": "Votre appareil enregistre. Mettre à jour maintenant arrête l'unité environ une minute ; la carte garde la nuit. Mettre à jour quand même ?",
       "anyway": "Mettre à jour quand même",
       "notNow": "Pas maintenant",
       "held": "En attente que l'appareil soit au repos : {{reason}}",
@@ -538,7 +516,6 @@
       "notHeard": "Aucune nouvelle depuis {{time}}. Si elle ne revient pas, débranchez-la dix secondes puis rebranchez-la.",
       "done": "Mis à jour : de {{before}} à {{after}}",
       "cancelled": "Mise à jour annulée. Elle reste en {{before}}.",
-      "skipped": "Déjà à jour, non envoyé",
       "updatedAgo": "mis à jour {{ago}}",
       "confirmedWhileRecording": "Envoyé pendant que l'appareil enregistrait, comme confirmé.",
       "fail": {
@@ -576,7 +553,6 @@
     "clock": {
       "machineLabel": "Horloge de l'appareil",
       "ringLabel": "Horloge de la bague",
-      "choiceLabel": "Quelle horloge",
       "host": "Comme cet ordinateur ({{zone}}, UTC{{offset}} maintenant)",
       "hostNoZone": "Comme cet ordinateur (UTC{{offset}} maintenant)",
       "fixed": "Décalage fixe",

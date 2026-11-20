@@ -43,8 +43,6 @@ enum class RecoveryStep {
     NotRecovering,   // nothing more to try automatically
 };
 
-const char* recoveryStepText(RecoveryStep s);
-
 class LinkRecovery {
 public:
     static constexpr int kForgetAfter = 2;

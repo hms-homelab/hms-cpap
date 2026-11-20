@@ -322,6 +322,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   adapter. The link is checked before each read and made again only when the
   ring has let go; a request it does not answer drops it for the next poll.
 
+### Removed
+- Unused code (SDD-045): functions nothing calls and 26 translation keys nothing shows; no behaviour change.
+
 ## [6.4.6] - 2026-11-19
 
 ### Fixed

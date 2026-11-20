@@ -26,15 +26,13 @@
       "unknown": "ismeretlen"
     },
     "recording": {
-      "badge": "Rögzít",
-      "unknownBadge": "Rögzítés ismeretlen"
+      "badge": "Rögzít"
     },
     "line": {
       "lastHeard": "Utoljára látva",
       "never": "soha",
       "firmware": "Firmware",
-      "machine": "Készülék",
-      "ownName": "Saját neve"
+      "machine": "Készülék"
     },
     "rename": {
       "button": "Átnevezés",
@@ -45,7 +43,6 @@
       "failed": "Nem sikerült átnevezni: {{error}}"
     },
     "more": "Több",
-    "less": "Kevesebb",
     "cloud": {
       "switching": "Átváltás...",
       "switched": "Kész: mostantól a CpapDash felhőbe küld.",
@@ -56,19 +53,16 @@
       "button": "Eszköz elfelejtése",
       "disabled": "Csak olyan eszköz felejthető el, amely nincs itt.",
       "confirm": "{{name}} többé nem szerepel itt, és a várakozó parancsai törlődnek. Minden, amit eddig átadott, megmarad. Ha újra csatlakozik, új elemként tér vissza.",
-      "yes": "Elfelejtés",
       "failed": "Nem sikerült elfelejteni: {{error}}"
     },
     "confirm": {
       "cancel": "Mégse",
-      "recordingTitle": "A készülék éppen rögzít.",
       "recordingLine": "A CPAP éppen rögzít ({{reason}}).",
       "anyway": "{{verb}} mégis",
       "verb": {
         "change": "Módosítás",
         "send": "Küldés"
       },
-      "recordingAnyway": "Mégis végrehajtom",
       "notNow": "Most nem",
       "costs": {
         "reboot": "Ha most újraindítja, elveszhetnek a mai éjszaka adatai; a kártya megőrzi őket.",
@@ -77,8 +71,7 @@
         "switch": "A miner újraindul, hogy ezt alkalmazza; a kártya megőrzi az adatokat.",
         "network": "A bridge kipróbálja az új hálózatot, és legfeljebb egy percre szünetelteti a feltöltést; a kártya megőrzi az adatokat.",
         "generic": "Ez a mai éjszaka adataiba kerülhet; a kártya megőrzi őket."
-      },
-      "reason": "Ok: {{reason}}"
+      }
     },
     "result": {
       "sending": "Küldés...",
@@ -89,7 +82,6 @@
     },
     "commands": {
       "heading": "Legutóbbi parancsok",
-      "none": "Még nincs parancs.",
       "state": {
         "queued": "várakozás az eszközre",
         "sent": "elküldve",
@@ -99,8 +91,7 @@
       },
       "cancel": "Mégse",
       "cancelled": "Elküldés előtt visszavonva.",
-      "cancelFailed": "Nem sikerült visszavonni: {{error}}",
-      "all": "Összes parancs"
+      "cancelFailed": "Nem sikerült visszavonni: {{error}}"
     },
     "logs": {
       "heading": "Naplók",
@@ -113,12 +104,10 @@
     },
     "action": {
       "restart": "Újraindítás",
-      "restartTarget": "Mit indítson újra",
       "restartGroup": "Újraindítás",
       "whichBoard": "Melyik panel",
       "resetWifi": "WiFi visszaállítása",
       "backToCloud": "Átváltás a CpapDash felhőre",
-      "restate": "Állapot újbóli lekérése",
       "offline": "A parancsok megvárják az eszközt: csatlakozáskor mennek el."
     },
     "mule": {
@@ -129,9 +118,6 @@
       "firmwareLine": "mule {{mule}}, miner {{miner}}",
       "mule": "mule",
       "miner": "miner",
-      "both": "mindkettő",
-      "updateAvailable": "Frissítés elérhető: mule {{mule}}, miner {{miner}}",
-      "upToDate": "naprakész",
       "manifestUnavailable": "A közzétett verziókat nem sikerült beolvasni. Egy meglévő fájl így is elküldhető.",
       "fwCodeHint": "Új firmware kereséséhez írja be az egységre nyomtatott párosítási kódot. Csak egyszer kérjük.",
       "fwCodePlaceholder": "Párosítási kód",
@@ -142,7 +128,6 @@
       "boardMinerOnly": "Csak a Miner",
       "boardMule": "Mule",
       "boardMiner": "Miner",
-      "update": "Frissítés",
       "fileHint": "Küldjön egy meglévő képfájlt a mule-nak vagy a minernek. A kiválasztás után azonnal indul.",
       "as11Bluetooth": "AirSense 11 Bluetooth",
       "o2Ring": "O2 gyűrű",
@@ -160,7 +145,6 @@
       "pairHint": "A készülék kódot mutat, amint az egység elkezdi a párosítást. Írja be azonnal."
     },
     "sleepbridge": {
-      "writing": "A készülék ír",
       "lastWrite": "Utolsó írás",
       "chip": "Chip",
       "files": "Fájlok: {{complete}} teljes, {{held}} visszatartva",
@@ -288,13 +272,11 @@
       "adapterUnchecked": "A Bluetooth nem ellenőrizhető. Ellenőrizze, hogy működik-e a Bluetooth ezen a számítógépen.",
       "adapterRadioOff": "A Bluetooth ki van kapcsolva ezen a számítógépen. Kapcsolja be, és ellenőrizze újra.",
       "adapterUnauthorized": "A CpapDash nem használhatja a Bluetooth-t ezen a Macen. Engedélyezze a Rendszerbeállítások, Adatvédelem és biztonság, Bluetooth menüpontban.",
-      "importCsv": "CSV importálása",
-      "ringRecording": "A gyűrű rögzít"
+      "importCsv": "CSV importálása"
     },
     "source": {
       "address": "Cím",
       "health": "Állapot",
-      "lastAnswered": "Utolsó válasz",
       "failures": "Egymás utáni sikertelen olvasások",
       "format": "Formátum",
       "range": "Részleges letöltések",
@@ -332,7 +314,6 @@
       "lastSummary": "Utoljára lekért összesítő",
       "summaryDay": "erre a napra: {{day}}",
       "summaryError": "Az utolsó lekérés nem hozott semmit: {{error}}",
-      "streaming": "Az éjszaka küldése folyamatban",
       "therapy": "terápia folyamatban",
       "address": "A készülék Bluetooth-címe",
       "anyMachine": "a hatótávolságban lévő első AirSense 11",
@@ -341,7 +322,6 @@
       "pullFailed": "Nem sikerült kérni: {{error}}",
       "forgetPairing": "Párosítás elfelejtése",
       "forgetPairingConfirm": "Ez törli a párosítás során létrejött kulcsokat. A készülék a saját párosított listáján megtartja ezt a számítógépet, amíg ott el nem távolítja. Az újbóli párosítás felülírja a myAir alkalmazás párosítását.",
-      "forgetPairingYes": "Párosítás elfelejtése",
       "forgotten": "A párosítás törölve.",
       "forgetFailed": "Nem sikerült törölni: {{error}}",
       "pairNote": "A párosítás a myAir alkalmazás (és bármely híd) Bluetooth-párosítását erre a számítógépre cseréli. A myAir éjszakai jelentései továbbra is a készülék saját modemjén érkeznek.",
@@ -520,12 +500,10 @@
       "errRadioOffWin": "A Bluetooth ki van kapcsolva ezen a PC-n, és a Windows nem engedte, hogy a CpapDash bekapcsolja. Kapcsolja be a Gépházban (Bluetooth és eszközök), ellenőrizze a repülőgépes üzemmódot, és próbálja újra."
     },
     "ota": {
-      "current": "Firmware {{current}}",
       "available": "Elérhető a(z) {{target}} firmware.",
       "updateNow": "Frissítés most",
       "upToDate": "Naprakész",
       "updateFromFile": "Frissítés fájlból",
-      "warnRecording": "A készülék éppen rögzít. A frissítés most körülbelül egy percre leállítja az egységet; a kártya megőrzi az éjszakát. Mégis frissít?",
       "anyway": "Mégis frissítem",
       "notNow": "Most nem",
       "held": "Várakozás, amíg a készülék szabad: {{reason}}",
@@ -538,7 +516,6 @@
       "notHeard": "{{time}} óta nem jelentkezett. Ha nem tér vissza, húzza ki tíz másodpercre, majd dugja vissza.",
       "done": "Frissítve: {{before}} → {{after}}",
       "cancelled": "Frissítés megszakítva. Továbbra is {{before}} fut rajta.",
-      "skipped": "Már naprakész, nem lett elküldve",
       "updatedAgo": "frissítve {{ago}}",
       "confirmedWhileRecording": "Rögzítés közben elküldve, megerősítés után.",
       "fail": {
@@ -576,7 +553,6 @@
     "clock": {
       "machineLabel": "A gép órája",
       "ringLabel": "A gyűrű órája",
-      "choiceLabel": "Melyik óra",
       "host": "Ugyanaz, mint ezen a számítógépen ({{zone}}, most UTC{{offset}})",
       "hostNoZone": "Ugyanaz, mint ezen a számítógépen (most UTC{{offset}})",
       "fixed": "Rögzített eltérés",

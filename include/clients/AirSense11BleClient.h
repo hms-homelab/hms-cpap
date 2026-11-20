@@ -103,7 +103,6 @@ public:
     /// SDD-071: record each night's stream to a capture file
     /// (airsense11_ble.capture). Read at the start of each night's connect.
     void setCapture(bool on) { capture_on_ = on; }
-    bool captureOn() const { return capture_on_; }
     /// The capture file being written, or the last one kept, and its size.
     std::string capturePath() const { return capture_.path(); }
     long long captureBytes() const { return capture_.bytes(); }
