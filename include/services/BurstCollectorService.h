@@ -1052,7 +1052,7 @@ private:
 
 public:
     /// The card source's reachability as the bursts found it: what the MQTT
-    /// card_* topics carry, for GET /api/source/status. last_attempt 0:
+    /// card_* topics carry, for the Devices page. last_attempt 0:
     /// nothing tried yet since this start.
     struct CardFacts {
         long long   last_attempt = 0;

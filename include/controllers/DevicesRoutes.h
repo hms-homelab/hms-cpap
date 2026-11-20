@@ -11,9 +11,6 @@
 //   POST   /api/devices/clock/reread       SDD-074: "Re-read my nights"
 //   GET    /api/clock/zones                SDD-074: the zone names to pick from
 //   DELETE /api/devices/{kind}/{id}        forget an away Mule & Miner or Sleep Bridge
-//   GET    /api/source/status              the card source's reachability
-//   GET    /api/oximetry/status            the O2 ring, as last talked to
-//   GET    /api/garmin/status              SDD-078: the Garmin card's state
 //   POST   /api/garmin/fetch               "Fetch from Garmin now" (an event, D2)
 //   POST   /api/garmin/mfa                 {"code"}: the code Garmin asked for
 //   POST   /api/airsense11/ble/pull        the machine's summary pulled now

@@ -15,9 +15,7 @@ std::shared_ptr<CpapDashSyncService> EquipmentController::sync_;
 void EquipmentController::setDatabase(std::shared_ptr<IDatabase> db) { db_ = std::move(db); }
 // A local edit makes the cloud mirror stale. markDirty() is a no-op unless the
 // user enabled sync AND auto_sync, so calling it after every mutation costs
-// nothing for the majority who never turn it on. Nothing called it before, which
-// meant auto_sync could never fire and the only working path was the explicit
-// cloud-sync endpoint.
+// nothing for the majority who never turn it on.
 void EquipmentController::markMirrorDirty() {
     if (sync_) sync_->markDirty();
 }
@@ -473,41 +471,6 @@ void EquipmentController::supplies(const drogon::HttpRequestPtr&,
     for (auto& p : scored) arr.append(p.second);
     Json::Value j; j["items"] = arr;
     cb(jsonResp(j));
-}
-
-// ── Cloud sync (opt-in) ──────────────────────────────────────────────────────
-
-void EquipmentController::cloudSync(const drogon::HttpRequestPtr&,
-                                    std::function<void(const drogon::HttpResponsePtr&)>&& cb) {
-    // Refuse loudly rather than reporting a successful no-op: a user who pressed
-    // "Sync" must never be told it worked when the feature is off.
-    if (!sync_ || !sync_->enabled()) {
-        cb(jsonError("Cloud sync is disabled - set cpapdash.enabled and a token in settings",
-                     drogon::k409Conflict));
-        return;
-    }
-
-    auto r = sync_->syncNow();
-    Json::Value j;
-    j["ok"]                = r.ok;
-    j["uuids_backfilled"]  = r.uuids_backfilled;
-    j["pushed_profiles"]   = r.pushed_profiles;
-    j["pushed_items"]      = r.pushed_items;
-    j["applied_profiles"]  = r.applied_profiles;
-    j["applied_items"]     = r.applied_items;
-    j["deleted_locally"]   = r.deleted_locally;
-    j["kept_local"]        = r.kept_local;   // remote rows rejected: local was newer
-    // SDD-007 cleaning. Computed since phase 4 but never serialised, so the one
-    // surface that reports what a sync did was silently missing a whole feed.
-    j["pushed_tasks"]      = r.pushed_tasks;
-    j["applied_tasks"]     = r.applied_tasks;
-    j["tasks_held_back"]   = r.tasks_held_back;
-    j["cursor"]            = r.cursor;
-    if (!r.ok) j["error"] = r.error;
-
-    // A transport failure is not a client error: local data is intact and the user
-    // can retry. 502 says "the cloud leg failed", not "your request was bad".
-    cb(jsonResp(j, r.ok ? drogon::k200OK : drogon::k502BadGateway));
 }
 
 } // namespace hms_cpap

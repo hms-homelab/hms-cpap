@@ -329,6 +329,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `scripts/fix_session_ends.py`, `scripts/reparse_sessions.py`,
   `scripts/str_backfill.py`, and the `scripts/ezshare-monitor.service` unit
   with its `scripts/ezshare-monitor.conf.example`.
+- Five web routes nothing calls: `GET /api/source/status`,
+  `GET /api/oximetry/status` and `GET /api/garmin/status` (the Devices page
+  reads the same facts from `GET /api/devices`), `GET /api/sleep-stages/status`
+  (it only ever answered "not_configured"), and `POST /api/equipment/cloud-sync`
+  (the equipment mirror still syncs by itself after a local edit when
+  `cpapdash.auto_sync` is on).
 
 ## [6.4.6] - 2026-11-19
 

@@ -37,8 +37,6 @@ public:
     ADD_METHOD_TO(EquipmentController::deleteItem,    "/api/equipment/{id}",  drogon::Delete);
     // Urgency-sorted wear view
     ADD_METHOD_TO(EquipmentController::supplies,      "/api/supplies",        drogon::Get);
-    // Opt-in cloud mirror. Local is the source of truth; this is the button.
-    ADD_METHOD_TO(EquipmentController::cloudSync,     "/api/equipment/cloud-sync", drogon::Post);
     METHOD_LIST_END
 
     void listTypes(const drogon::HttpRequestPtr& req,
@@ -69,11 +67,6 @@ public:
     void supplies(const drogon::HttpRequestPtr& req,
                   std::function<void(const drogon::HttpResponsePtr&)>&& cb);
 
-    /// Run a cloud sync now. 409 when cpapdash.enabled is false or no token is set —
-    /// the feature must never silently pretend to have synced.
-    void cloudSync(const drogon::HttpRequestPtr& req,
-                   std::function<void(const drogon::HttpResponsePtr&)>&& cb);
-
     /// Injected from main.cpp, same pattern as CpapController::setQueryService.
     static void setDatabase(std::shared_ptr<IDatabase> db);
 
@@ -81,8 +74,7 @@ public:
     /// the user enabled sync and auto_sync.
     static void markMirrorDirty();
 
-    /// Optional. When unset (or cloud sync disabled in config), /cloud-sync 409s
-    /// rather than pretending a sync happened.
+    /// Optional. When unset, a local edit marks nothing stale.
     static void setSyncService(std::shared_ptr<CpapDashSyncService> sync);
 
 private:
