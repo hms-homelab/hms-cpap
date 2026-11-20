@@ -530,6 +530,22 @@ if(NOT MSVC AND NOT APPLE)
     target_link_libraries(hms_cpap_train_sleep_stage stdc++fs pthread)
 endif()
 
+# ── Narrator corpus tool (SDD-013) ───────────────────────────────────────────
+# The runtime's fact block and grounding check for training/narrator/: the same
+# sources the nightly job runs, no database. Not installed.
+add_executable(hms_cpap_narrator_facts
+    src/cli/narrator_facts_main.cpp
+    src/model/NightJson.cpp
+    src/model/NarrationService.cpp
+    src/services/NightFacts.cpp
+    src/services/AiGrounding.cpp
+)
+target_include_directories(hms_cpap_narrator_facts PRIVATE include)
+target_link_libraries(hms_cpap_narrator_facts
+    cpapdash_parser
+    nlohmann_json::nlohmann_json
+)
+
 # Install target
 if(WIN32)
     install(TARGETS ${PROJECT_NAME} hms_cpap_train_sleep_stage DESTINATION bin)

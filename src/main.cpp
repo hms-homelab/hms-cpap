@@ -1332,9 +1332,13 @@ int main(int argc, char** argv) {
                 local_model = std::make_shared<hms_cpap::model::LocalModelService>(std::move(ld));
                 local_model->start();
                 hms_cpap::model::installRoutes(local_model.get());
+                // The night's STR row goes with it, read here on the burst's
+                // thread, so the model is given the night the daily summary is.
                 if (burst_service)
                     burst_service->addNightClosedListener(
-                        [m = local_model](const std::string& folder) { m->onNightClosed(folder); });
+                        [m = local_model, b = burst_service.get()](const std::string& folder) {
+                            m->onNightClosed(folder, b->strRecordForDay(folder));
+                        });
             }
 
             // SDD-041: check GitHub for a newer stable release, daily and on

@@ -41,6 +41,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `local` for the local model) on SQLite, MySQL and PostgreSQL, and
   `/api/summaries` returns it. New routes: `GET /api/local-model/status`,
   `POST /api/local-model/enable`, `/disable` and `/file`.
+- **The local sleep model's training corpus pipeline (SDD-013), offline.**
+  `training/narrator/` generates synthetic nights from aggregate
+  distributions (an install's own nights, widened with published clinical
+  ranges), renders them with the runtime's own fact block, asks a teacher
+  model for each summary, keeps only those that pass the runtime's number and
+  date check, and writes train/val/test JSONL, a token histogram, a BPE
+  tokenizer and a Colab notebook that trains the ~64M model from scratch and
+  exports GGUF Q4. A new build tool, `hms_cpap_narrator_facts` (not
+  installed), runs the fact block and the check for it with no database.
 - **Each file sent to CpapDash says its source, and oximetry goes too
   (SDD-079, platform SDD-061).** Every `file_ready` now carries `source`:
   `card` for the machine's own card (ez Share, a local folder, a ZIP, a Sleep
@@ -188,6 +197,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   every machine; it now grades the AHI only where the data gives one.
 
 ### Fixed
+- **The local sleep model is given the night's STR row, as the daily summary
+  is (SDD-013).** It was given the stored night alone, so every ResMed night
+  reached it as "Therapy mode: CPAP" (no ResMed session stores its mode) and
+  without the machine's own daily figures. The night's STR row now goes with
+  the night-closed event, naming the mode through the machine's family (APAP,
+  VAuto, ASV); a night the card has no STR row for yet has no mode line rather
+  than a wrong one.
 - **A Luna night takes the events the machine writes at the stop (SDD-058
   D2).** The Luna writes its `.evt` when therapy stops, after the last second
   the session grew by, and the night was saved again only when it grew, so the

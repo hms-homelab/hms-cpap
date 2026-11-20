@@ -472,8 +472,11 @@ std::optional<RangeOximetryFacts> oximetryForRange(IDatabase& db, const std::str
     return o;
 }
 
-std::vector<NightFacts> loadRange(IDatabase& db, const std::string& device_id,
-                                  const std::string& start_day, const std::string& end_day) {
+namespace {
+
+// Every closed night's stored metrics with sleep_day in [start_day, end_day].
+std::vector<SessionMetrics> metricsInRange(IDatabase& db, const std::string& device_id,
+                                           const std::string& start_day, const std::string& end_day) {
     std::tm start{};
     if (!noonOf(start_day, start) || !isIsoDay(end_day) || end_day < start_day) return {};
     // getMetricsForDateRange reads back from now; two days of margin cover a
@@ -482,12 +485,29 @@ std::vector<NightFacts> loadRange(IDatabase& db, const std::string& device_id,
     const long long back = static_cast<long long>(
                                std::chrono::duration_cast<std::chrono::hours>(
                                    std::chrono::system_clock::now() - start_t).count()) / 24 + 2;
-    std::vector<NightFacts> out;
-    for (const auto& m : db.getMetricsForDateRange(device_id, static_cast<int>((std::max)(back, 1LL)))) {
+    std::vector<SessionMetrics> out;
+    for (auto& m : db.getMetricsForDateRange(device_id, static_cast<int>((std::max)(back, 1LL)))) {
         if (m.sleep_day < start_day || m.sleep_day > end_day) continue;
-        out.push_back(NightFacts::from(m, nullptr, oximetryForNight(db, m.sleep_day)));
+        out.push_back(std::move(m));
     }
     return out;
+}
+
+}  // namespace
+
+std::vector<NightFacts> loadRange(IDatabase& db, const std::string& device_id,
+                                  const std::string& start_day, const std::string& end_day) {
+    std::vector<NightFacts> out;
+    for (const auto& m : metricsInRange(db, device_id, start_day, end_day))
+        out.push_back(NightFacts::from(m, nullptr, oximetryForNight(db, m.sleep_day)));
+    return out;
+}
+
+std::optional<SessionMetrics> nightMetrics(IDatabase& db, const std::string& device_id,
+                                           const std::string& sleep_day) {
+    auto nights = metricsInRange(db, device_id, sleep_day, sleep_day);
+    if (nights.empty()) return std::nullopt;
+    return std::move(nights.front());
 }
 
 std::optional<NightFacts> loadNight(IDatabase& db, const std::string& device_id,

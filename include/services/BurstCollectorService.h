@@ -158,6 +158,11 @@ public:
         night_closed_.clear();
     }
 
+    /// SDD-013: the STR row of day [yyyymmdd] from the last STR read, the one
+    /// the daily summary is given, or none. On the burst's thread only (a
+    /// night-closed listener), where that STR is written.
+    std::optional<STRDailyRecord> strRecordForDay(const std::string& yyyymmdd) const;
+
     /**
      * Check if service is running
      *
@@ -869,6 +874,8 @@ private:
     /// or null when the STR has none for it.
     const STRDailyRecord* strRecordForNight(
         const std::chrono::system_clock::time_point& session_start) const;
+    /// The cached STR record of day [day] (YYYYMMDD), or null.
+    const STRDailyRecord* strRecordOf(const std::string& day) const;
 
     /// Weekly/monthly LLM summaries, on their configured days.
     void runRangeSummariesIfDue();

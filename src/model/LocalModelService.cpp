@@ -60,7 +60,7 @@ void LocalModelService::stop() {
 
 void LocalModelService::run() {
     for (;;) {
-        std::pair<Event, std::string> next;
+        Queued next;
         {
             std::unique_lock<std::mutex> lk(mu_);
             cv_.wait(lk, [this] { return stopping_ || !queue_.empty(); });
@@ -68,14 +68,15 @@ void LocalModelService::run() {
             next = std::move(queue_.front());
             queue_.pop_front();
         }
-        handle(next.first, next.second);
+        handle(next.event, next.arg, next.str);
     }
 }
 
-void LocalModelService::enqueue(Event e, const std::string& arg) {
+void LocalModelService::enqueue(Event e, const std::string& arg,
+                                std::optional<STRDailyRecord> str) {
     {
         std::lock_guard<std::mutex> lk(mu_);
-        queue_.emplace_back(e, arg);
+        queue_.push_back({e, arg, std::move(str)});
     }
     cv_.notify_one();
 }
@@ -114,8 +115,9 @@ void LocalModelService::noteInstalled() {
 
 // -- The events ---------------------------------------------------------------
 
-void LocalModelService::onNightClosed(const std::string& date_folder) {
-    if (enabled()) enqueue(Event::NightClosed, date_folder);
+void LocalModelService::onNightClosed(const std::string& date_folder,
+                                      std::optional<STRDailyRecord> str) {
+    if (enabled()) enqueue(Event::NightClosed, date_folder, std::move(str));
 }
 
 std::string LocalModelService::requestEnable() {
@@ -173,7 +175,8 @@ std::string LocalModelService::installFile(const std::string& path) {
     return "";
 }
 
-void LocalModelService::handle(Event e, const std::string& arg) {
+void LocalModelService::handle(Event e, const std::string& arg,
+                               const std::optional<STRDailyRecord>& str) {
     std::lock_guard<std::mutex> work(work_mu_);
     struct Busy {
         LocalModelService* s;
@@ -225,7 +228,8 @@ void LocalModelService::handle(Event e, const std::string& arg) {
             const auto day = sleepDayOf(arg);
             if (day.empty()) return;
             auto model = makeModel();
-            const auto r = narrateAndStore(*deps_.db, deps_.device_id, day, *model);
+            const auto r = narrateAndStore(*deps_.db, deps_.device_id, day, *model,
+                                           str ? &*str : nullptr);
             if (r.written)
                 std::cout << "Local model: night " << day << " summarized (" << r.how << ")" << std::endl;
             else
