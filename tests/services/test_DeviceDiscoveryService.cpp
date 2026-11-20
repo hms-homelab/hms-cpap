@@ -117,7 +117,7 @@ std::vector<uint8_t> goodResponse() {
     addRecord(b, kFqdn,     16, txtRdata({"serial=CPD-0007",
                                           "fw=4.1.3",
                                           "mode=proxy"}));            // TXT
-    addRecord(b, kHostname,  1, aRdata(192, 168, 2, 90));             // A
+    addRecord(b, kHostname,  1, aRdata(192, 168, 1,90));             // A
     return b;
 }
 
@@ -144,7 +144,7 @@ TEST(DeviceDiscoveryParse, ParsesFullAdvertisement) {
     EXPECT_EQ(d.mode, "proxy");
     EXPECT_EQ(d.port, 80);
     EXPECT_EQ(d.srv_target, kHostname);
-    EXPECT_EQ(d.host, "192.168.2.90");
+    EXPECT_EQ(d.host, "192.168.1.90");
     EXPECT_TRUE(d.isLocalCapable());
 }
 
@@ -152,12 +152,12 @@ TEST(DeviceDiscoveryParse, BaseUrlOmitsPort80AndKeepsOthers) {
     // Port 80 is the normal case: the mule shares one httpd across control,
     // proxy, OTA and o2ring, so the URL a user sees should stay clean.
     DeviceDiscoveryService::Device d;
-    d.host = "192.168.2.90";
+    d.host = "192.168.1.90";
     d.port = 80;
-    EXPECT_EQ(d.baseUrl(), "http://192.168.2.90");
+    EXPECT_EQ(d.baseUrl(), "http://192.168.1.90");
 
     d.port = 8080;
-    EXPECT_EQ(d.baseUrl(), "http://192.168.2.90:8080");
+    EXPECT_EQ(d.baseUrl(), "http://192.168.1.90:8080");
 
     d.host.clear();
     EXPECT_EQ(d.baseUrl(), "");
@@ -403,7 +403,7 @@ TEST(DeviceDiscoveryParse, RepeatedResponsesDeduplicateToOneDevice) {
     DeviceDiscoveryService::applyAddresses(devices, addresses);
 
     EXPECT_EQ(devices.size(), 1u);
-    EXPECT_EQ(devices.at(kInstance).host, "192.168.2.90");
+    EXPECT_EQ(devices.at(kInstance).host, "192.168.1.90");
 }
 
 TEST(DeviceDiscoveryParse, SrvAndAArriveInSeparateDatagrams) {
@@ -414,7 +414,7 @@ TEST(DeviceDiscoveryParse, SrvAndAArriveInSeparateDatagrams) {
     addRecord(p1, kFqdn, 16, txtRdata({"serial=CPD-0007", "mode=proxy"}));
 
     auto p2 = header(1);
-    addRecord(p2, kHostname, 1, aRdata(192, 168, 2, 91));
+    addRecord(p2, kHostname, 1, aRdata(192, 168, 1,91));
 
     DevMap devices;
     AddrMap addresses;
@@ -422,7 +422,7 @@ TEST(DeviceDiscoveryParse, SrvAndAArriveInSeparateDatagrams) {
     ASSERT_TRUE(DeviceDiscoveryService::parseResponse(p2.data(), p2.size(), devices, addresses));
     DeviceDiscoveryService::applyAddresses(devices, addresses);
 
-    EXPECT_EQ(devices.at(kInstance).host, "192.168.2.91");
+    EXPECT_EQ(devices.at(kInstance).host, "192.168.1.91");
 }
 
 // ── the open-source hms-mm mule ──────────────────────────────────────────
@@ -439,7 +439,7 @@ std::vector<uint8_t> hmsMmResponse() {
     addRecord(b, svc,       12, nameRdata(fqdn));
     addRecord(b, fqdn,      33, srvRdata(80, kHostname));
     addRecord(b, fqdn,      16, txtRdata({"serial=MM-53D2", "fw=1.0.2"}));
-    addRecord(b, kHostname,  1, aRdata(192, 168, 2, 76));
+    addRecord(b, kHostname,  1, aRdata(192, 168, 1,76));
     return b;
 }
 
@@ -457,7 +457,7 @@ TEST(DeviceDiscoveryParse, HmsMmUnitIsFoundAndLocalCapableWithoutAMode) {
     EXPECT_TRUE(d.mode.empty());
     EXPECT_EQ(d.effectiveMode(), "proxy");
     EXPECT_TRUE(d.isLocalCapable());
-    EXPECT_EQ(d.baseUrl(), "http://192.168.2.76");
+    EXPECT_EQ(d.baseUrl(), "http://192.168.1.76");
 }
 
 TEST(DeviceDiscoveryParse, CpapDashAndHmsMmUnitsAreBothListed) {
@@ -552,7 +552,7 @@ TEST(DeviceDiscoveryBrowse, ReturnsParsedDevices) {
 
     ASSERT_EQ(found.size(), 1u);
     EXPECT_EQ(found[0].serial, "CPD-0007");
-    EXPECT_EQ(found[0].baseUrl(), "http://192.168.2.90");
+    EXPECT_EQ(found[0].baseUrl(), "http://192.168.1.90");
 }
 
 TEST(DeviceDiscoveryBrowse, OneBadDatagramDoesNotHideAGoodOne) {

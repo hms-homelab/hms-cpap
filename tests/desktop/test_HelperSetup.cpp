@@ -18,7 +18,7 @@ TEST(HelperSetup, TheHelperStartsOnceItHasAnAddressAndOscarsFolder) {
     nlohmann::json j{{"role", "oscar_helper"}};
     EXPECT_FALSE(helperReady(j));
     HelperInputs in;
-    in.host = "192.168.2.15";
+    in.host = "192.168.1.15";
     in.data_dir = "/home/u/Documents/OSCAR_Data";
     applyHelperInputs(j, in);
     EXPECT_TRUE(helperReady(j));
@@ -44,20 +44,20 @@ TEST(HelperSetup, TheTokenIsKeptForTheSameHmsCpapOnlyAndConnectAgainDropsIt) {
 
 TEST(HelperSetup, TheLookFindsWhatAnswered) {
     const auto f = parseDiscover(
-        R"({"found":[{"address":"192.168.2.15","port":8894,"name":"homeassistant","helper":"ALBIN-PC"},)"
-        R"({"address":"192.168.2.40","name":"hub"}],"pc_name":"X"})");
+        R"({"found":[{"address":"192.168.1.15","port":8894,"name":"homeassistant","helper":"HOME-PC"},)"
+        R"({"address":"192.168.1.40","name":"hub"}],"pc_name":"X"})");
     ASSERT_EQ(f.size(), 2u);
-    EXPECT_EQ(f[0].address, "192.168.2.15");
-    EXPECT_EQ(f[0].helper, "ALBIN-PC");
+    EXPECT_EQ(f[0].address, "192.168.1.15");
+    EXPECT_EQ(f[0].helper, "HOME-PC");
     EXPECT_EQ(f[1].port, 8894);
     EXPECT_TRUE(parseDiscover("not json").empty());
     EXPECT_TRUE(parseDiscover(R"({"found":[]})").empty());
 }
 
 TEST(HelperSetup, TheTrayLineFollowsTheDaemonsState) {
-    auto t = trayLine({{"state", "connected"}, {"host", "192.168.2.15"}}, "06:12");
+    auto t = trayLine({{"state", "connected"}, {"host", "192.168.1.15"}}, "06:12");
     EXPECT_EQ(t.key, HTxt::TrayConnectedLast);
-    EXPECT_EQ(t.arg1, "192.168.2.15");
+    EXPECT_EQ(t.arg1, "192.168.1.15");
     EXPECT_EQ(t.arg2, "06:12");
     EXPECT_FALSE(t.connect_again);
     EXPECT_EQ(trayLine({{"state", "connected"}}, "").key, HTxt::TrayConnected);
@@ -66,9 +66,9 @@ TEST(HelperSetup, TheTrayLineFollowsTheDaemonsState) {
     t = trayLine({{"state", "forgotten"}, {"host", "h"}}, "");
     EXPECT_EQ(t.key, HTxt::TrayForgotten);
     EXPECT_TRUE(t.connect_again) << "D4: Connect again, never by itself";
-    t = trayLine({{"state", "refused"}, {"helper", "ALBIN-PC"}}, "");
+    t = trayLine({{"state", "refused"}, {"helper", "HOME-PC"}}, "");
     EXPECT_EQ(t.key, HTxt::TrayRefused);
-    EXPECT_EQ(t.arg1, "ALBIN-PC");
+    EXPECT_EQ(t.arg1, "HOME-PC");
     EXPECT_TRUE(t.connect_again);
     EXPECT_TRUE(trayLine({{"state", "update"}}, "").problem);
     EXPECT_FALSE(trayLine({{"state", "unreachable"}}, "").connect_again);

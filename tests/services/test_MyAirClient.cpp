@@ -153,7 +153,7 @@ namespace {
 const char* kSleepRecordsBody = R"({
   "data": {
     "getPatientWrapper": {
-      "patient": {"firstName": "Albin"},
+      "patient": {"firstName": "Alex"},
       "sleepRecords": {
         "items": [
           {"startDate":"2026-08-24","totalUsage":432,"sleepScore":91,"usageScore":70,

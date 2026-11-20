@@ -387,14 +387,14 @@ TEST_F(OscarHelperTest, TheSliceHoldsOnlyTheWantedSessionsAndReadsAsTheWholeDoes
 
 TEST_F(OscarHelperTest, TheFirstHelperIsRememberedAndOnlyItsTokenIsLetIn) {
     // A connection that never says hello pairs nothing.
-    const auto first = host_->admit("", "ALBIN-PC", false);
+    const auto first = host_->admit("", "HOME-PC", false);
     EXPECT_EQ(first.as, Admit::Pairing);
     host_->closed(host_->open(first, {[](const std::string&) { return true; }, nullptr, nullptr}));
     EXPECT_FALSE(host_->remembered());
 
     // The hello is what pairs: the token goes in the answer, silently.
     std::vector<std::string> sent;
-    const uint64_t id = host_->open(host_->admit("", "ALBIN-PC", false),
+    const uint64_t id = host_->open(host_->admit("", "HOME-PC", false),
                                     {[&](const std::string& t) { sent.push_back(t); return true; }, nullptr, nullptr});
     host_->onText(id, R"({"t":"hello","proto":1,"version":"7.0.0","files":[]})");
     ASSERT_GE(sent.size(), 2u);
@@ -410,16 +410,16 @@ TEST_F(OscarHelperTest, TheFirstHelperIsRememberedAndOnlyItsTokenIsLetIn) {
     const std::string kept = readFile(dir_ / "hms" / "oscar-helper" / "helper.json");
     EXPECT_EQ(kept.find(token), std::string::npos);
     EXPECT_NE(kept.find(sha256Hex(token)), std::string::npos);
-    EXPECT_NE(kept.find("ALBIN-PC"), std::string::npos);
+    EXPECT_NE(kept.find("HOME-PC"), std::string::npos);
 
     EXPECT_EQ(host_->admit("Bearer " + token, "whatever", false).as, Admit::Helper);
     const auto other = host_->admit("", "OTHER-PC", false);
     EXPECT_EQ(other.as, Admit::Refused);
     EXPECT_EQ(other.status, 401);
     EXPECT_EQ(other.body["error"].asString(), "has_helper");
-    EXPECT_EQ(other.body["helper"].asString(), "ALBIN-PC");
+    EXPECT_EQ(other.body["helper"].asString(), "HOME-PC");
     EXPECT_EQ(host_->admit("Bearer " + std::string(64, 'a'), "OTHER-PC", false).body["helper"].asString(),
-              "ALBIN-PC");
+              "HOME-PC");
     EXPECT_EQ(host_->admit("", "PROBE", true).as, Admit::Probe) << "a probe is always answered";
 
     // A new process remembers it.
@@ -431,7 +431,7 @@ TEST_F(OscarHelperTest, TheFirstHelperIsRememberedAndOnlyItsTokenIsLetIn) {
 
     EXPECT_TRUE(host_->forget());
     EXPECT_FALSE(host_->remembered());
-    const auto forgotten = host_->admit("Bearer " + token, "ALBIN-PC", false);
+    const auto forgotten = host_->admit("Bearer " + token, "HOME-PC", false);
     EXPECT_EQ(forgotten.as, Admit::Refused);
     EXPECT_EQ(forgotten.body["error"].asString(), "forgotten") << "a forgotten PC never takes the place back";
     EXPECT_EQ(host_->admit("", "OTHER-PC", false).as, Admit::Pairing);
@@ -440,7 +440,7 @@ TEST_F(OscarHelperTest, TheFirstHelperIsRememberedAndOnlyItsTokenIsLetIn) {
 TEST_F(OscarHelperTest, AProbeIsAnsweredWithWhoThisIsAndIsNeverASession) {
     std::vector<std::string> sent;
     bool closed = false;
-    const auto a = host_->admit("", "ALBIN-PC", true);
+    const auto a = host_->admit("", "HOME-PC", true);
     const uint64_t id = host_->open(
         a, {[&](const std::string& t) { sent.push_back(t); return true; }, nullptr, [&] { closed = true; }});
     host_->onText(id, R"({"t":"hello","probe":true,"proto":1})");
@@ -457,7 +457,7 @@ TEST_F(OscarHelperTest, AProbeIsAnsweredWithWhoThisIsAndIsNeverASession) {
 
 TEST_F(OscarHelperTest, AnotherProtocolIsRefusedAndTheTileSaysUpdate) {
     std::vector<std::string> sent;
-    const uint64_t id = host_->open(host_->admit("", "ALBIN-PC", false),
+    const uint64_t id = host_->open(host_->admit("", "HOME-PC", false),
                                     {[&](const std::string& t) { sent.push_back(t); return true; }, nullptr, nullptr});
     host_->onText(id, R"({"t":"hello","proto":2,"version":"8.0.0","files":[]})");
     ASSERT_EQ(sent.size(), 1u);
@@ -467,40 +467,40 @@ TEST_F(OscarHelperTest, AnotherProtocolIsRefusedAndTheTileSaysUpdate) {
 
     // The remembered helper, updated to a protocol this hms-cpap does not
     // speak: refused, and the read says what to do.
-    auto albin = pc("ALBIN-PC");
-    albin->helper().start();
-    ASSERT_TRUE(albin->waitFor("connected"));
-    albin->helper().stop();
-    const std::string token = loadHelperConfig(albin->config()).token;
+    auto home_pc = pc("HOME-PC");
+    home_pc->helper().start();
+    ASSERT_TRUE(home_pc->waitFor("connected"));
+    home_pc->helper().stop();
+    const std::string token = loadHelperConfig(home_pc->config()).token;
     sent.clear();
-    const uint64_t id2 = host_->open(host_->admit("Bearer " + token, "ALBIN-PC", false),
+    const uint64_t id2 = host_->open(host_->admit("Bearer " + token, "HOME-PC", false),
                                      {[&](const std::string& t) { sent.push_back(t); return true; }, nullptr, nullptr});
     host_->onText(id2, R"({"t":"hello","proto":2,"version":"8.0.0","files":[]})");
     host_->closed(id2);
     OscarCardReader reader(options());
     const auto r = reader.readOnce();
     EXPECT_EQ(r.outcome, Outcome::HelperUpdate);
-    EXPECT_NE(r.message.find("update hms-cpap on ALBIN-PC"), std::string::npos) << r.message;
+    EXPECT_NE(r.message.find("update hms-cpap on HOME-PC"), std::string::npos) << r.message;
     EXPECT_EQ(reader.status()["state"].asString(), "helper_update");
 }
 
 // ── the read, end to end over the two in-process ends (D5) ────────────────
 
 TEST_F(OscarHelperTest, AReadSendsTheCardImportsOnThePcAndStoresWhatCameBackAsCard) {
-    auto albin = pc("ALBIN-PC");
+    auto home_pc = pc("HOME-PC");
     // The user's OSCAR on the PC, faked: it imports from the helper's copy.
     std::string imported_from;
-    albin->oscar()->on_run = [&](const std::vector<std::string>& argv) {
+    home_pc->oscar()->on_run = [&](const std::vector<std::string>& argv) {
         imported_from = argv.back();
-        if (albin->oscar()->runs.size() == 1) albin->oscarDb().session(albin->oscarDb().hms_, 0x1E, kT0, 10, 2);
+        if (home_pc->oscar()->runs.size() == 1) home_pc->oscarDb().session(home_pc->oscarDb().hms_, 0x1E, kT0, 10, 2);
         return exited(0);
     };
-    albin->helper().start();
-    ASSERT_TRUE(albin->waitFor("connected"));
+    home_pc->helper().start();
+    ASSERT_TRUE(home_pc->waitFor("connected"));
     EXPECT_TRUE(host_->remembered());
-    EXPECT_EQ(host_->status()["name"].asString(), "ALBIN-PC");
-    EXPECT_FALSE(loadHelperConfig(albin->config()).token.empty()) << "the token is kept in config.json";
-    EXPECT_EQ(loadHelperConfig(albin->config()).install_id, "00000000-0000-4000-8000-000000000081");
+    EXPECT_EQ(host_->status()["name"].asString(), "HOME-PC");
+    EXPECT_FALSE(loadHelperConfig(home_pc->config()).token.empty()) << "the token is kept in config.json";
+    EXPECT_EQ(loadHelperConfig(home_pc->config()).install_id, "00000000-0000-4000-8000-000000000081");
     EXPECT_EQ(hellos_.load(), 1);
 
     OscarCardReader reader(options());
@@ -518,9 +518,9 @@ TEST_F(OscarHelperTest, AReadSendsTheCardImportsOnThePcAndStoresWhatCameBackAsCa
     EXPECT_GE(rows[0]["v"].isString() ? std::stoi(rows[0]["v"].asString()) : rows[0]["v"].asInt(), 1);
 
     // The PC's copy is the card, byte for byte, with its times.
-    const fs::path copy = albin->helper().cardRoot("00000000-0000-4000-8000-000000000081");
+    const fs::path copy = home_pc->helper().cardRoot("00000000-0000-4000-8000-000000000081");
     EXPECT_EQ(imported_from, copy.string()) << "OSCAR is pointed at the copy's card root";
-    EXPECT_EQ(albin->oscar()->runs[0], importCommand(loadHelperConfig(albin->config()).oscar, copy.string()));
+    EXPECT_EQ(home_pc->oscar()->runs[0], importCommand(loadHelperConfig(home_pc->config()).oscar, copy.string()));
     for (const char* rel : {"P-SERIES/1A2B3C4D/PROP.BIN", "P-SERIES/1A2B3C4D/P0/0000001E.B01",
                             "P-SERIES/1A2B3C4D/P0/0000001E.B05"}) {
         EXPECT_EQ(readFile(copy / rel), readFile(card_ / rel)) << rel;
@@ -528,9 +528,9 @@ TEST_F(OscarHelperTest, AReadSendsTheCardImportsOnThePcAndStoresWhatCameBackAsCa
     }
     EXPECT_EQ(wire_.file_ready.load(), 3);
     EXPECT_FALSE(fs::exists(dir_ / "hms" / "oscar-helper" / "slice")) << "kept for the one pass";
-    EXPECT_FALSE(fs::exists(dir_ / "ALBIN-PC" / "oscar-helper" / "slice"));
+    EXPECT_FALSE(fs::exists(dir_ / "HOME-PC" / "oscar-helper" / "slice"));
     EXPECT_EQ(reader.status()["where"].asString(), "helper");
-    EXPECT_EQ(reader.status()["helper"]["name"].asString(), "ALBIN-PC");
+    EXPECT_EQ(reader.status()["helper"]["name"].asString(), "HOME-PC");
 
     // Nothing changed: nothing sent, a cheap "nothing new".
     r = reader.readOnce();
@@ -540,8 +540,8 @@ TEST_F(OscarHelperTest, AReadSendsTheCardImportsOnThePcAndStoresWhatCameBackAsCa
 
     // A night: the new files go, and only they.
     cardFile(card_, "P-SERIES/1A2B3C4D/P0/0000001F.B01", "made-up closing bytes, night two");
-    albin->oscar()->on_run = [&](const std::vector<std::string>&) {
-        albin->oscarDb().session(albin->oscarDb().hms_, 0x1F, kT0 + 86400000, 10, 1);
+    home_pc->oscar()->on_run = [&](const std::vector<std::string>&) {
+        home_pc->oscarDb().session(home_pc->oscarDb().hms_, 0x1F, kT0 + 86400000, 10, 1);
         return exited(0);
     };
     r = reader.readOnce();
@@ -553,52 +553,52 @@ TEST_F(OscarHelperTest, AReadSendsTheCardImportsOnThePcAndStoresWhatCameBackAsCa
 
 TEST_F(OscarHelperTest, ThePcOffWaitsAndItsHelloReadsTheNight) {
     // Remembered once, then off.
-    auto albin = pc("ALBIN-PC");
-    albin->helper().start();
-    ASSERT_TRUE(albin->waitFor("connected"));
-    albin->helper().stop();
+    auto home_pc = pc("HOME-PC");
+    home_pc->helper().start();
+    ASSERT_TRUE(home_pc->waitFor("connected"));
+    home_pc->helper().stop();
     ASSERT_TRUE(host_->remembered());
     EXPECT_FALSE(host_->status()["connected"].asBool());
     OscarCardReader reader(options());
     const auto off = reader.readOnce();
     EXPECT_EQ(off.outcome, Outcome::HelperOffline);
-    EXPECT_NE(off.message.find("ALBIN-PC"), std::string::npos);
+    EXPECT_NE(off.message.find("HOME-PC"), std::string::npos);
     EXPECT_EQ(reader.status()["state"].asString(), "helper_offline");
-    EXPECT_EQ(albin->oscar()->runs.size(), 0u) << "nothing read";
+    EXPECT_EQ(home_pc->oscar()->runs.size(), 0u) << "nothing read";
 
     // Switched on: its hello is the event (D6), nothing else.
     const int before = hellos_.load();
-    albin->oscar()->on_run = [&](const std::vector<std::string>&) {
-        albin->oscarDb().session(albin->oscarDb().hms_, 0x1E, kT0, 10);
+    home_pc->oscar()->on_run = [&](const std::vector<std::string>&) {
+        home_pc->oscarDb().session(home_pc->oscarDb().hms_, 0x1E, kT0, 10);
         return exited(0);
     };
-    albin->helper().start();
+    home_pc->helper().start();
     ASSERT_TRUE(waitHellos(before + 1));
     EXPECT_EQ(reader.readOnce().stored, 1);
 }
 
 TEST_F(OscarHelperTest, OscarBusyOnThePcIsSaidAndNothingIsStored) {
-    auto albin = pc("ALBIN-PC");
-    albin->oscar()->on_run = [](const std::vector<std::string>&) { return exited(75); };
-    albin->helper().start();
-    ASSERT_TRUE(albin->waitFor("connected"));
+    auto home_pc = pc("HOME-PC");
+    home_pc->oscar()->on_run = [](const std::vector<std::string>&) { return exited(75); };
+    home_pc->helper().start();
+    ASSERT_TRUE(home_pc->waitFor("connected"));
     OscarCardReader reader(options());
     const auto r = reader.readOnce();
     EXPECT_EQ(r.outcome, Outcome::Busy);
     EXPECT_EQ(sessions(), 0);
     EXPECT_EQ(reader.status()["state"].asString(), "busy");
-    EXPECT_EQ(albin->helper().state()["last_outcome"].asString(), "busy");
+    EXPECT_EQ(home_pc->helper().state()["last_outcome"].asString(), "busy");
 }
 
 TEST_F(OscarHelperTest, ASecondPcIsRefusedThenForgetLetsItInAndTheFirstIsTold) {
-    auto first = pc("ALBIN-PC");
+    auto first = pc("HOME-PC");
     first->helper().start();
     ASSERT_TRUE(first->waitFor("connected"));
 
     auto second = pc("OTHER-PC");
     second->helper().start();
     ASSERT_TRUE(second->waitFor("refused"));
-    EXPECT_EQ(second->last()["helper"].asString(), "ALBIN-PC") << "hms-cpap already reads OSCAR on ALBIN-PC";
+    EXPECT_EQ(second->last()["helper"].asString(), "HOME-PC") << "hms-cpap already reads OSCAR on HOME-PC";
     EXPECT_TRUE(loadHelperConfig(second->config()).token.empty());
 
     // Forget on the Devices page: the first PC, still on, is refused and
@@ -834,13 +834,13 @@ TEST_F(OscarHelperTest, TheHelperConfigKeepsEveryOtherKeyAndSaysItsRole) {
     fs::create_directories(cfg.parent_path());
     std::ofstream(cfg) << R"({"web_port": 8893, "logging": {"enabled": true}})";
     HelperConfig c;
-    c.host = "192.168.2.15";
+    c.host = "192.168.1.15";
     c.token = "secret";
     c.oscar.data_dir = "/home/u/Documents/OSCAR_Data";
     ASSERT_TRUE(saveHelperConfig(cfg.string(), c));
     EXPECT_EQ(configRole(cfg.string()), "oscar_helper");
     const auto back = loadHelperConfig(cfg.string());
-    EXPECT_EQ(back.host, "192.168.2.15");
+    EXPECT_EQ(back.host, "192.168.1.15");
     EXPECT_EQ(back.token, "secret");
     EXPECT_EQ(back.port, 8894);
     EXPECT_EQ(back.oscar.profile, kDefaultProfile);

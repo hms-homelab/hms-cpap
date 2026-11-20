@@ -64,13 +64,13 @@ protected:
 
 TEST_F(ConfigManagerTest, EnvVarExists) {
     // Set environment variable
-    setenv("EZSHARE_HOST", "192.168.2.100", 1);
+    setenv("EZSHARE_HOST", "192.168.1.100", 1);
 
     // Get from environment
     const char* value = std::getenv("EZSHARE_HOST");
 
     ASSERT_NE(value, nullptr);
-    EXPECT_STREQ(value, "192.168.2.100");
+    EXPECT_STREQ(value, "192.168.1.100");
 }
 
 TEST_F(ConfigManagerTest, EnvVarMissing_UsesDefault) {
@@ -234,7 +234,7 @@ TEST_F(ConfigManagerTest, DefaultValues_MQTT) {
 // ============================================================================
 
 TEST_F(ConfigManagerTest, Override_EzShareHost) {
-    const char* override_value = "192.168.2.100";
+    const char* override_value = "192.168.1.100";
     setenv("EZSHARE_HOST", override_value, 1);
 
     std::string host = test_defaults::EZSHARE_HOST;

@@ -147,7 +147,7 @@ TEST_F(AppConfigTest, EnvVarFallbackForEmptyDbFields) {
 TEST_F(AppConfigTest, EnvVarFallbackForMqtt) {
     saveAndSetEnv("MQTT_BROKER", "127.0.0.1");
     saveAndSetEnv("MQTT_PORT", "1883");
-    saveAndSetEnv("MQTT_USER", "aamat");
+    saveAndSetEnv("MQTT_USER", "hms");
     saveAndSetEnv("MQTT_PASSWORD", "pass");
     saveAndSetEnv("MQTT_CLIENT_ID", "hms_cpap_pi");
 
@@ -156,7 +156,7 @@ TEST_F(AppConfigTest, EnvVarFallbackForMqtt) {
 
     EXPECT_TRUE(config.mqtt.enabled);  // auto-enabled
     EXPECT_EQ(config.mqtt.broker, "127.0.0.1");
-    EXPECT_EQ(config.mqtt.username, "aamat");
+    EXPECT_EQ(config.mqtt.username, "hms");
     EXPECT_EQ(config.mqtt.client_id, "hms_cpap_pi");
 }
 
@@ -276,7 +276,7 @@ TEST_F(AppConfigTest, FirstRunWithEnvVarsCreatesCorrectConfig) {
     saveAndSetEnv("DB_USER", "maestro");
     saveAndSetEnv("DB_PASSWORD", "secret");
     saveAndSetEnv("MQTT_BROKER", "127.0.0.1");
-    saveAndSetEnv("MQTT_USER", "aamat");
+    saveAndSetEnv("MQTT_USER", "hms");
     saveAndSetEnv("MQTT_PASSWORD", "pass");
     saveAndSetEnv("BURST_INTERVAL", "65");
 

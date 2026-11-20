@@ -290,7 +290,7 @@ std::string hostName() {
     char buf[256] = {0};
     if (::gethostname(buf, sizeof(buf) - 1) != 0 || !buf[0]) return "PC";
     std::string n(buf);
-    // "albin-pc.local" -> "albin-pc": the name a person gave the PC.
+    // "home-pc.local" -> "home-pc": the name a person gave the PC.
     if (const auto dot = n.find('.'); dot != std::string::npos && dot > 0) n.resize(dot);
     return n;
 #endif

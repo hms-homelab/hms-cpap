@@ -366,6 +366,6 @@ TEST(O2RingHttp, DownloadFileUrlEncodesFilename) {
 // ── getBaseURL passthrough ──────────────────────────────────────────────
 
 TEST(O2RingHttp, GetBaseUrlReturnsConfigured) {
-    O2RingClient client("http://192.168.2.9");
-    EXPECT_EQ(client.getBaseURL(), "http://192.168.2.9");
+    O2RingClient client("http://192.168.1.9");
+    EXPECT_EQ(client.getBaseURL(), "http://192.168.1.9");
 }

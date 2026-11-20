@@ -114,7 +114,7 @@ TEST(SourceChoiceTest, ThePortIsTheConfiguredOne) {
 }
 
 TEST(SourceChoiceTest, TheAddressIsThePrivateLanOne) {
-    EXPECT_EQ(lanAddress({"127.0.0.1", "169.254.3.4", "192.168.2.20"}), "192.168.2.20");
+    EXPECT_EQ(lanAddress({"127.0.0.1", "169.254.3.4", "192.168.1.20"}), "192.168.1.20");
     EXPECT_EQ(lanAddress({"100.64.1.2", "10.0.0.5"}), "10.0.0.5");
     EXPECT_EQ(lanAddress({"172.20.1.1"}), "172.20.1.1");
     // No private address: the first routable one rather than none.
@@ -124,9 +124,9 @@ TEST(SourceChoiceTest, TheAddressIsThePrivateLanOne) {
 }
 
 TEST(SourceChoiceTest, TheNoteGivesAddressAndPort) {
-    const auto note = sleepBridgeNote("192.168.2.20", 8894);
+    const auto note = sleepBridgeNote("192.168.1.20", 8894);
     EXPECT_NE(note.find("already listening"), std::string::npos);
-    EXPECT_NE(note.find("192.168.2.20:8894"), std::string::npos);
+    EXPECT_NE(note.find("192.168.1.20:8894"), std::string::npos);
     EXPECT_NE(note.find("own folder"), std::string::npos);
 }
 
