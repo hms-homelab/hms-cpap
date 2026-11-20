@@ -174,7 +174,10 @@ TEST_F(DataDirMove, InterruptedHalfWayAndRunAgain) {
     o.on_progress = nullptr;
     const auto again = moveData(o);
     ASSERT_TRUE(again.ok) << again.error;
-    EXPECT_EQ(again.left, 0u);
+    // Only config.json: the first run copied it across, and the copy in
+    // /data stays (D8).
+    EXPECT_EQ(again.left, 1u);
+    EXPECT_TRUE(fs::exists(home_ / "config.json"));
     EXPECT_EQ(slurp(to / "cpap.db"), std::string(300000, 'D'));
     EXPECT_TRUE(fs::exists(to / "ota" / "sleepbridge" / "job.json"));
     EXPECT_FALSE(fs::exists(job));
