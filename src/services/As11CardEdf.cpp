@@ -191,6 +191,26 @@ std::vector<uint8_t> writeCardBRP(const StreamedBRP& brp, int model_id, int vid)
     return sealed(writeEDF(spec));
 }
 
+std::vector<uint8_t> writeStoredBRP(const WallClock& start, const std::string& serial,
+                                    const std::vector<double>& flow_lps,
+                                    const std::vector<double>& mask_cmh2o, int model_id, int vid) {
+    constexpr int kPerRecord = 25;              // 25 samples at 6.25 Hz: one 4 s record
+    const size_t records = std::min(flow_lps.size(), mask_cmh2o.size()) / kPerRecord;
+    if (records == 0) return {};
+    const auto n = static_cast<long>(records * kPerRecord);
+
+    EDFWriteSpec spec;
+    spec.recording       = resmedRecordingField(start, serial, model_id, vid);
+    spec.start           = start;
+    spec.record_duration = 4.0;
+    spec.signals.push_back(signalOf("Flow.40ms", "L/s", -2.0, 3.0, -1000, 1500, kPerRecord,
+                                    std::vector<double>(flow_lps.begin(), flow_lps.begin() + n)));
+    spec.signals.push_back(signalOf("Press.40ms", "cmH2O", 0.0, 40.0, 0, 2000, kPerRecord,
+                                    std::vector<double>(mask_cmh2o.begin(), mask_cmh2o.begin() + n)));
+    spec.signals.push_back(crcSignal(records));
+    return sealed(writeEDF(spec));
+}
+
 std::vector<uint8_t> writeCardPLD(const StreamedPLD& pld, int model_id, int vid) {
     struct Chan {
         const char*                label;

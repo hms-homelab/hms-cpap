@@ -134,6 +134,15 @@ public:
     /// A spool by name ("Summary") from `from` ("YYYY-MM-DD", read from
     /// midnight UTC): its fragments joined, in *out.
     Result pullSpool(const std::string& name, const std::string& from, std::vector<uint8_t>* out);
+    /// One page of a spool from `from`: a date ("YYYY-MM-DD", read from
+    /// midnight UTC) or a full fromDateTime as the machine gave it
+    /// ("2026-11-04T11:08:43.000Z"). A page that ends
+    /// SPOOL_COMPLETE_MORE_DATA_PENDING sets *next_from to the machine's
+    /// nextSpoolAddress.<name>.fromDateTime, the cursor of the page after
+    /// it; any other ending leaves it empty. The machine serves the same page
+    /// again for the same cursor, so a pull that fails is simply asked again.
+    Result pullSpoolPage(const std::string& name, const std::string& from,
+                         std::vector<uint8_t>* out, std::string* next_from);
     /// The status the last spool ended on (SPOOL_COMPLETE...,
     /// ERROR_DATA_UNAVAILABLE), empty when it did not end.
     std::string lastSpoolStatus() const;
@@ -226,6 +235,11 @@ private:
     int spool_seq_ = 0;
     std::vector<uint8_t> spool_buf_;
     std::string spool_status_, spool_error_;
+    std::string spool_name_, spool_next_;   // the spool asked for, and its next page's cursor
 };
+
+/// nextSpoolAddress.<name>.fromDateTime in a SpoolFragment's params or the
+/// PullSpoolFragments reply, or empty. Public for the tests.
+std::string nextSpoolCursor(const nlohmann::ordered_json& j, const std::string& name);
 
 } // namespace hms_cpap::as11

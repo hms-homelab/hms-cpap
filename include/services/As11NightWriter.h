@@ -1,6 +1,7 @@
 #pragma once
 
 #include "clients/As11Stream.h"
+#include "services/As11StoredNight.h"
 
 #include <cpapdash/parser/EDFWriter.h>
 
@@ -82,6 +83,10 @@ public:
     std::string rootFor(const std::string& serial) const;
     /// Rewrites every file of one sleep day from what is on disk.
     void writeNight(const std::string& serial, const std::string& night);
+
+    /// SDD-070: the stretches of one sleep day the stream covered, UTC ms,
+    /// one per segment, from what is on disk. Empty when nothing streamed.
+    std::vector<StoredSpan> streamedSpans(const std::string& serial, const std::string& night);
 
     static constexpr int64_t kSegmentGapMs = 60 * 1000;
     static constexpr int64_t kEventTailMs = 2 * 60 * 1000;

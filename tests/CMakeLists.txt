@@ -148,6 +148,7 @@ set(TEST_SOURCES
     clients/test_As11Capture.cpp
     clients/test_As11Stream.cpp
     services/test_As11CardEdf.cpp
+    services/test_As11StoredNight.cpp
     services/test_As11NightWriter.cpp
     services/test_As11Settings.cpp
     services/test_As11NightImport.cpp
@@ -360,6 +361,7 @@ if(BUILD_WITH_WEB AND NOT WIN32)
         ${CMAKE_SOURCE_DIR}/src/controllers/MuleSocket.cpp
         ${CMAKE_SOURCE_DIR}/src/clients/As11Stream.cpp
         ${CMAKE_SOURCE_DIR}/src/services/As11CardEdf.cpp
+        ${CMAKE_SOURCE_DIR}/src/services/As11StoredNight.cpp
         ${CMAKE_SOURCE_DIR}/src/services/As11NightWriter.cpp
         ${CMAKE_SOURCE_DIR}/src/services/As11Settings.cpp
         ${CMAKE_SOURCE_DIR}/src/services/As11StrWriter.cpp

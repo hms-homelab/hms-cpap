@@ -265,8 +265,20 @@ void Session::onSpoolFragment(const json& p) {
     if (status.rfind("SPOOL_COMPLETE", 0) == 0 || status == "ERROR_DATA_UNAVAILABLE") {
         spool_status_ = status;
         spool_state_ = SpoolState::Done;
+        const std::string next = nextSpoolCursor(p, spool_name_);
+        if (!next.empty()) spool_next_ = next;
     }
     cv_.notify_all();
+}
+
+std::string nextSpoolCursor(const nlohmann::ordered_json& j, const std::string& name) {
+    if (!j.is_object()) return "";
+    const auto a = j.find("nextSpoolAddress");
+    if (a == j.end() || !a->is_object()) return "";
+    const auto s = a->find(name);
+    if (s == a->end() || !s->is_object()) return "";
+    const auto f = s->find("fromDateTime");
+    return (f != s->end() && f->is_string()) ? f->get<std::string>() : "";
 }
 
 // EventNotification {"dataId": "FGState", "events": [{"value": "Therapy"}]}, or
@@ -545,12 +557,20 @@ Result Session::open(const Credentials& creds) {
 
 Result Session::pullSpool(const std::string& name, const std::string& from,
                           std::vector<uint8_t>* out) {
+    return pullSpoolPage(name, from, out, nullptr);
+}
+
+Result Session::pullSpoolPage(const std::string& name, const std::string& from,
+                              std::vector<uint8_t>* out, std::string* next_from) {
     if (out) out->clear();
+    if (next_from) next_from->clear();
     int id = 0;
     {
         std::lock_guard<std::mutex> lk(m_);
         last_error_.clear();
         spool_status_.clear();
+        spool_name_ = name;
+        spool_next_.clear();
         if (!cipher_) {
             last_error_ = "no session open";
             return Result::Protocol;
@@ -558,7 +578,8 @@ Result Session::pullSpool(const std::string& name, const std::string& from,
         id = next_id_++;
     }
     ojson addr;
-    addr[name]["fromDateTime"] = from.substr(0, 10) + "T00:00:00.000Z";
+    // A date is read from its midnight UTC; a cursor the machine gave is sent back as it came.
+    addr[name]["fromDateTime"] = from.size() == 10 ? from + "T00:00:00.000Z" : from;
     ojson params;
     params["maxSpoolSize"] = kMaxSpoolSize;
     params["spoolAddress"] = addr;
@@ -594,6 +615,9 @@ Result Session::pullSpool(const std::string& name, const std::string& from,
         last_error_ = "machine refused the pull";
         r = Result::Protocol;
     } else {
+        // The cursor may come with the pull's reply rather than the last fragment.
+        const std::string next = nextSpoolCursor(*res, name);
+        if (!next.empty()) spool_next_ = next;
         // Fragments come back to back; silence means a lost one.
         for (;;) {
             const int before = spool_seq_;
@@ -619,6 +643,8 @@ Result Session::pullSpool(const std::string& name, const std::string& from,
         }
     }
     if (r == Result::Ok && out) *out = std::move(spool_buf_);
+    if (r == Result::Ok && next_from && spool_status_ == "SPOOL_COMPLETE_MORE_DATA_PENDING")
+        *next_from = spool_next_;
     spool_buf_.clear();
     spool_id_ = -1;
     spool_state_ = SpoolState::Idle;

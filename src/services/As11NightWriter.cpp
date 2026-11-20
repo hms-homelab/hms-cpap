@@ -375,6 +375,14 @@ void As11NightWriter::writeNight(const std::string& serial, const std::string& n
     writeEvents(serial, night);
 }
 
+std::vector<StoredSpan> As11NightWriter::streamedSpans(const std::string& serial, const std::string& night) {
+    std::lock_guard<std::mutex> lk(mtx_);
+    std::vector<StoredSpan> out;
+    for (const auto& s : machine(serial).segments)
+        if (s.night == night && !s.starts.empty()) out.push_back({s.start_ms, s.end_ms});
+    return out;
+}
+
 void As11NightWriter::writeSegment(const std::string& serial, const Segment& seg) {
     using namespace cpapdash::parser;
     const auto blocks = readSegment(seg.file);
