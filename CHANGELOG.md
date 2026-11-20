@@ -8,6 +8,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Desaturation threshold, ODI in Home Assistant, breath by breath on the
+  session page (SDD-001).** Settings has a desaturation threshold (how far SpO2
+  must fall below its recent baseline, 3 % by default, the AASM rule; 4 % is
+  the CMS rule). Nights saved after it changes store their desaturations, their
+  count and their ODI at that threshold, replacing the ones stored before, on
+  SQLite, MySQL and PostgreSQL. The night's ODI and desaturation count are new
+  Home Assistant sensors (`hist_odi`, `hist_spo2_drops`), published only for a
+  night with SpO2. On the session page the SpO2 card carries the night's ODI,
+  the event badges a desaturation count, every chart with event spans a colour
+  key, the machine's SpO2 chart its stored desaturations (and the flow, pressure
+  and leak charts no longer draw them), and the flow chart, zoomed to a minute,
+  marks each breath. A new tile charts flow limitation per breath.
+- MySQL: `cpap_session_metrics.spo2_drops` is added to a table created before
+  the column existed.
+- `GET /api/sessions/{date}/breaths` answers column by column (`onset`,
+  `tidal_volume`, `inspiratory_time`, `expiratory_time`, `flow_limitation`).
 - **An AirSense 11 night the stream missed is filled from the machine's
   stored pages (SDD-070, #61, #62).** After a night, the Summary pull also
   reads the machine's stored pages for each night with usage: its respiratory

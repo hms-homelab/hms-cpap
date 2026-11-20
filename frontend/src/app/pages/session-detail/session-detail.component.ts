@@ -172,7 +172,8 @@ const EVENT_TYPE_KEYS: Record<string, string> = {
             </span>
           </h3>
           <div class="detail-controls" *ngIf="!selectedSignal.pressurePlan?.pending">
-            <div class="range-buttons">
+            <!-- The ranges count points, one a minute; a per-breath chart has no minutes. -->
+            <div class="range-buttons" *ngIf="selectedSignal.source !== 'breaths'">
               <button *ngFor="let r of rangeOptions" [class.active]="activeRange === r.value"
                 (click)="setRange(r.value)">{{ r.label }}</button>
             </div>
@@ -395,10 +396,33 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
   private detailChart: Chart | null = null;
   isExpanded = false;
   detailOdi: number | null = null;   // ODI for the selected SpO2 chart (F2)
+  /** SDD-001 F1: the colour key for the selected chart's spans. */
+  detailLegend: { type: string; color: string }[] = [];
+
+  // SDD-001 F2: the night's desaturations (machine SpO2 from the stored
+  // sessions, else the ring's own, found here at the Settings threshold).
+  desatPct = 3;
+  nightOdi: number | null = null;
+  nightDesats = 0;
+
+  // SDD-001 F3: the night's breaths.
+  breathOnsets: string[] = [];
+  private breathSeries: { breath_flow_limitation: (number | null)[] } | null = null;
+  private breathLabels: string[] = [];
 
   get odiColor(): string {
-    const o = this.detailOdi ?? 0;
+    return this.odiColorFor(this.detailOdi);
+  }
+
+  odiColorFor(odi: number | null): string {
+    const o = odi ?? 0;
     return o < 5 ? '#4ade80' : o < 15 ? '#fb923c' : '#ef4444';
+  }
+
+  /** SDD-001 F1: a stored event name in the page's language. */
+  eventTypeLabel(type: string): string {
+    const key = EVENT_TYPE_KEYS[(type || '').toLowerCase()];
+    return key ? this.t.instant('sessionDetail.eventType.' + key) : type;
   }
 
   toggleExpand(): void {
@@ -540,7 +564,11 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
       vitals: this.api.getSessionVitals(this.date).pipe(catchError(() => of(null))),
       oximetry: this.api.getSessionOximetry(this.date).pipe(catchError(() => of(null))),
       events: this.api.getSessionEvents(this.date).pipe(catchError(() => of([]))),
-    }).subscribe(({ detail, signals, vitals, oximetry, events }) => {
+      breaths: this.api.getSessionBreaths(this.date).pipe(catchError(() => of(null))),
+      config: this.api.getConfig().pipe(catchError(() => of(null))),
+    }).subscribe(({ detail, signals, vitals, oximetry, events, breaths, config }) => {
+      this.desatPct = config?.desat_drop_pct ?? 3;
+      this.setBreaths(breaths);
       // Merge all sessions for the night into one combined view
       if (detail.length > 0) {
         this.session = this.mergeSessions(detail);
@@ -593,7 +621,11 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
       // Determine available signals (skip those with no data or wrong mode)
       const therapyMode = +(this.session?.therapy_mode || '0');
       const machineSpo2 = ((vitals as any)?.spo2 || []).some((v: any) => Number(v) > 0 && Number(v) <= 100);
+      this.setNightDesaturations(detail, machineSpo2);
       this.availableSignals = SIGNAL_DEFS.filter(s => {
+        if (s.source === 'breaths') {
+          return !!this.breathSeries?.breath_flow_limitation.some(v => v !== null);
+        }
         if (s.source === 'oximetry') {
           if (!oximetry?.timestamps?.length) return false;
           // Without the ring's own movement the chart would show only the few
@@ -623,7 +655,7 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
       this.availableSignals = this.withPressurePlan(this.availableSignals);
 
       if (!this.signalLabels.length && !this.vitalsLabels.length &&
-          !this.oximetryLabels.length) {
+          !this.oximetryLabels.length && !this.breathLabels.length) {
         this.loadError = this.t.instant('sessionDetail.noSignalData');
         return;
       }
@@ -705,12 +737,16 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
       vitals: this.api.getSessionVitals(this.date).pipe(catchError(() => of(null))),
       oximetry: this.api.getSessionOximetry(this.date).pipe(catchError(() => of(null))),
       events: this.api.getSessionEvents(this.date).pipe(catchError(() => of([]))),
-    }).subscribe(({ detail, signals, vitals, oximetry, events }) => {
+      breaths: this.api.getSessionBreaths(this.date).pipe(catchError(() => of(null))),
+    }).subscribe(({ detail, signals, vitals, oximetry, events, breaths }) => {
       if (detail.length > 0) this.session = this.mergeSessions(detail);
       this.signalData = signals;
       this.vitalsData = vitals;
       this.oximetryData = oximetry;
       this.events = events as SessionEvent[];
+      this.setBreaths(breaths);
+      this.setNightDesaturations(detail,
+        ((vitals as any)?.spo2 || []).some((v: any) => Number(v) > 0 && Number(v) <= 100));
 
       if (signals?.timestamps?.length) {
         this.signalTimestamps = signals.timestamps;
@@ -806,23 +842,73 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
     });
   }
 
+  /** SDD-001 F3: the night's breaths, as a per-breath series for its tile. */
+  private setBreaths(b: BreathData | null) {
+    const onsets = (b?.onset || []).filter(o => !!o);
+    this.breathOnsets = onsets;
+    if (!onsets.length) {
+      this.breathSeries = null;
+      this.breathLabels = [];
+      return;
+    }
+    const num = (v: unknown) => (v === null || v === undefined || v === '' ? null : Number(v));
+    this.breathSeries = { breath_flow_limitation: (b!.flow_limitation || []).map(num) };
+    this.breathLabels = formatTimestamps(onsets);
+  }
+
+  /**
+   * SDD-001 F2: the night's desaturation count and ODI. The machine's SpO2
+   * reads the stored sessions (saved at the Settings threshold); a night with
+   * only the ring's SpO2 finds them here, at the same threshold.
+   */
+  private setNightDesaturations(detail: SessionDetail[], machineSpo2: boolean) {
+    this.nightOdi = null;
+    this.nightDesats = 0;
+    if (machineSpo2) {
+      const night = nightDesaturations(detail);
+      if (night) {
+        this.nightOdi = night.odi;
+        this.nightDesats = night.drops;
+      }
+      return;
+    }
+    const spo2 = (this.oximetryData?.spo2 || []) as (number | null)[];
+    if (!spo2.length) return;
+    const sampleSec = inferSampleSec(this.oximetryData?.timestamps || [], 4);
+    const spans = detectDesaturations(spo2, { sampleSec, dropPct: this.desatPct });
+    this.nightDesats = spans.length;
+    this.nightOdi = odiPerHour(spans.length, spo2.length, sampleSec);
+  }
+
+  private sourceTimestamps(src: SignalDef['source']): string[] {
+    if (src === 'breaths') return this.breathOnsets;
+    if (src === 'oximetry') return this.oximetryTimestamps;
+    return src === 'vitals' ? this.vitalsTimestamps : this.signalTimestamps;
+  }
+
+  private sourceLabels(src: SignalDef['source']): string[] {
+    if (src === 'breaths') return this.breathLabels;
+    if (src === 'oximetry') return this.oximetryLabels;
+    return src === 'vitals' ? this.vitalsLabels : this.signalLabels;
+  }
+
+  private sourceData(src: SignalDef['source']): unknown {
+    if (src === 'breaths') return this.breathSeries;
+    if (src === 'oximetry') return this.oximetryData;
+    return src === 'vitals' ? this.vitalsData : this.signalData;
+  }
+
   private getTimestamps(): string[] {
-    if (!this.selectedSignal) return [];
-    if (this.selectedSignal.source === 'oximetry') return this.oximetryTimestamps;
-    return this.selectedSignal.source === 'vitals' ? this.vitalsTimestamps : this.signalTimestamps;
+    return this.selectedSignal ? this.sourceTimestamps(this.selectedSignal.source) : [];
   }
 
   private getLabels(): string[] {
-    if (!this.selectedSignal) return [];
-    if (this.selectedSignal.source === 'oximetry') return this.oximetryLabels;
-    return this.selectedSignal.source === 'vitals' ? this.vitalsLabels : this.signalLabels;
+    return this.selectedSignal ? this.sourceLabels(this.selectedSignal.source) : [];
   }
 
   private getData(key: string): (number | null)[] {
     if (!this.selectedSignal) return [];
-    const src = this.selectedSignal.source === 'oximetry' ? this.oximetryData
-      : this.selectedSignal.source === 'vitals' ? this.vitalsData : this.signalData;
-    return (src as any)?.[key] || [];
+    return (this.sourceData(this.selectedSignal.source) as any)?.[key] || [];
   }
 
   private updateSliderWindow() {
@@ -885,23 +971,51 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
       datasets.push(...makeFillBand(sigTitle, minD, maxD, sig.color));
     }
 
-    // Event annotations
+    // Event annotations. SDD-001: the machine's SpO2 chart draws the stored
+    // desaturations and nothing else; every other chart draws everything but.
+    this.detailLegend = [];
     if (sig.showEvents && this.events.length) {
-      evtAnns = eventAnnotations(this.events, labels, timestamps);
+      const shown = this.events.filter(e =>
+        sig.desat ? isDesaturation(e) : !isDesaturation(e));
+      evtAnns = eventAnnotations(shown, labels, timestamps);
+      this.detailLegend = eventLegend(shown);
     }
 
-    // F2 — SpO2 desaturation spans + ODI. Runs on whichever SpO2 series this
-    // chart shows: machine EDF SpO2 if present, else the O2Ring fallback.
+    // F2: SpO2 desaturation spans + ODI. The machine's SpO2 uses the night's
+    // stored desaturations above and their ODI; the ring's SpO2 has none
+    // stored, so they are found here at the Settings threshold.
     this.detailOdi = null;
-    if (sig.desat) {
+    if (sig.desat && sig.source === 'vitals') {
+      this.detailOdi = this.nightOdi;
+    } else if (sig.desat) {
       const fullData = this.getData(sig.key);
-      const sampleSec = inferSampleSec(this.getTimestamps(), sig.source === 'oximetry' ? 4 : 1);
+      const sampleSec = inferSampleSec(this.getTimestamps(), 4);
+      const opts = { sampleSec, dropPct: this.desatPct };
       // ODI over the whole recording; spans drawn for the visible window.
-      const allSpans = detectDesaturations(fullData as (number | null)[], { sampleSec });
+      const allSpans = detectDesaturations(fullData as (number | null)[], opts);
       this.detailOdi = odiPerHour(allSpans.length, fullData.length, sampleSec);
-      const viewSpans = detectDesaturations(mainData as (number | null)[], { sampleSec });
+      const viewSpans = detectDesaturations(mainData as (number | null)[], opts);
       evtAnns = evtAnns.concat(desatAnnotations(viewSpans));
+      if (allSpans.length) {
+        this.detailLegend = [{ type: 'Desaturation', color: EVENT_COLORS['desaturation'] }];
+      }
     }
+
+    // F3: the breath overlay, added and removed as the flow chart is zoomed.
+    const baseAnns: Record<string, any> = evtAnns.reduce((acc: any, a: any, i: number) => {
+      acc['evt' + i] = a;
+      return acc;
+    }, {});
+    const withBreaths = sig.breaths && this.breathOnsets.length > 0;
+    const onZoomed = ({ chart }: { chart: Chart }) => {
+      if (!withBreaths) return;
+      const x = chart.scales['x'];
+      const anns = { ...baseAnns };
+      breathAnnotations(this.breathOnsets, timestamps, x.min, x.max)
+        .forEach((a, i) => anns['br' + i] = a);
+      (chart.options.plugins as any).annotation.annotations = anns;
+      chart.update('none');
+    };
 
     const canvas = this.detailCanvasRef.nativeElement;
 
@@ -939,18 +1053,19 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
             }
           },
           annotation: {
-            annotations: evtAnns.reduce((acc: any, a: any, i: number) => {
-              acc['evt' + i] = a;
-              return acc;
-            }, {}),
+            annotations: baseAnns,
           },
           zoom: {
-            pan: { enabled: true, mode: 'x' },
+            pan: { enabled: true, mode: 'x', onPanComplete: onZoomed },
             zoom: {
               wheel: { enabled: true },
               pinch: { enabled: true },
               mode: 'x',
+              onZoomComplete: onZoomed,
             },
+            // SDD-001 F3: the flow chart's minutes zoom no closer than two
+            // adjacent ones, the 60 s at which its breaths are drawn.
+            limits: withBreaths ? { x: { minRange: 1 } } : undefined,
           },
         },
         scales: {
@@ -983,11 +1098,8 @@ export class SessionDetailComponent implements OnInit, OnDestroy {
       const canvas = document.getElementById('ov-' + sig.key) as HTMLCanvasElement;
       if (!canvas) continue;
 
-      const labels = sig.source === 'oximetry' ? this.oximetryLabels
-        : sig.source === 'vitals' ? this.vitalsLabels : this.signalLabels;
-      const src = sig.source === 'oximetry' ? this.oximetryData
-        : sig.source === 'vitals' ? this.vitalsData : this.signalData;
-      const data = (src as any)?.[sig.key] || [];
+      const labels = this.sourceLabels(sig.source);
+      const data = (this.sourceData(sig.source) as any)?.[sig.key] || [];
 
       const chart = new Chart(canvas, {
         type: 'line',

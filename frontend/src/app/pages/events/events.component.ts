@@ -132,7 +132,7 @@ export class EventsComponent implements OnInit {
     return sp >= 0 ? ts.slice(sp + 1) : ts;
   }
 
-  fmtDur(val: string | null): string {
+  fmtDur(val: string | number | null): string {
     const s = Math.round(+(val || 0));
     if (s <= 0) return '-';
     return s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
