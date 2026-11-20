@@ -9,6 +9,7 @@ import { CpapApiService, CpapDashStreamStatus, UpdateStatus } from '../../servic
 import { UpdateFlowService } from '../../services/update-flow.service';
 import { AppConfig } from '../../models/config.model';
 import { sourceImage } from '../../utils/source-image';
+import { showLocalModelSection } from './local-model';
 
 @Component({
   selector: 'app-settings',
@@ -577,10 +578,11 @@ import { sourceImage } from '../../utils/source-image';
           </div>
         </div>
 
-        <!-- SDD-013: the local sleep model. Its switch acts at once through its
+        <!-- SDD-013: the local sleep model, shown only once a model is
+             published (Albin, 2026-11-19). Its switch acts at once through its
              own endpoint, not Save: turning it on downloads and checks the
-             model, and is refused with the reason while none is published. -->
-        <div class="section" *ngIf="localModel">
+             model. -->
+        <div class="section" *ngIf="showLocalModelSection(localModel)">
           <div class="section-header" (click)="toggle('local_model'); loadLocalModel()">
             <span class="chevron" [class.open]="open['local_model']">&#9654;</span>
             {{ 'settings.localModel.heading' | translate }}
@@ -1420,6 +1422,7 @@ export class SettingsComponent implements OnInit, OnDestroy {
   localModel: any = null;
   localModelBusy = false;
   localModelError = '';
+  readonly showLocalModelSection = showLocalModelSection;
 
   // Backfill state
   backfillStart = '';

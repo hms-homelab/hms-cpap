@@ -8,10 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
-- **The local sleep model's harness (SDD-013), with no model yet.** A new
+- **The local sleep model's harness (SDD-013), with no model yet.** A
   Settings section, "Local Sleep Model", whose switch writes each night's
-  summary on this machine from the stored data, with no network, once a model
-  is published. The job runs when a night closes (the SDD-046 quiet close),
+  summary on this machine from the stored data, with no network. The section
+  stays hidden until a model is published. The job runs when a night closes (the SDD-046 quiet close),
   never on a timer: the night is read through the database layer into the
   shared night facts (SDD-072), the model is given only those facts, every
   number and date it writes is checked against them, a rejected text is tried
