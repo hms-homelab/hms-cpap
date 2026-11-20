@@ -75,7 +75,7 @@ import { SleepBridgeWatch } from '../../services/sleepbridge-watch';
             <div class="row-btns">
               <button class="btn-secondary" (click)="copy(address)">
                 {{ (copied ? 'setup.bridge.copied' : 'setup.bridge.copy') | translate }}</button>
-              <button class="btn-ghost" (click)="addressConfirmed = false">
+              <button class="btn-secondary" (click)="addressConfirmed = false">
                 {{ 'setup.bridge.connect.change' | translate }}</button>
             </div>
             @if (port !== null) {
@@ -172,11 +172,11 @@ import { SleepBridgeWatch } from '../../services/sleepbridge-watch';
 
       @if (watchClosed && (step === 'wait' || step === 'machine' || step === 'online')) {
         <p class="err">{{ 'setup.bridge.closed' | translate }}
-          <button class="btn-ghost inline" (click)="openWatch()">{{ 'setup.bridge.reconnect' | translate }}</button></p>
+          <button class="link-inline" (click)="openWatch()">{{ 'setup.bridge.reconnect' | translate }}</button></p>
       }
 
       <div class="actions">
-        <button class="btn-ghost" (click)="goBack()">{{ 'setup.back' | translate }}</button>
+        <button class="btn-secondary" (click)="goBack()">{{ 'setup.back' | translate }}</button>
         <a class="skip" href="" (click)="$event.preventDefault(); goNext()">{{ 'setup.bridge.skip' | translate }}</a>
         <button class="btn-primary" (click)="goNext()" [disabled]="!canNext">{{ 'setup.next' | translate }}</button>
       </div>
@@ -223,21 +223,15 @@ import { SleepBridgeWatch } from '../../services/sleepbridge-watch';
     .switch input { width: 18px; height: 18px; accent-color: #64b5f6; }
     .actions { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem;
                margin-top: 1.5rem; }
-    .skip { color: #9e9e9e; font-size: 0.88rem; margin-left: auto; }
-    .skip:hover { color: #e0e0e0; }
-    .btn-primary { background: #1976d2; color: #fff; border: none; border-radius: 8px;
-                   padding: 0.65rem 1.4rem; font-size: 0.95rem; cursor: pointer; }
-    .btn-primary:disabled { opacity: 0.45; cursor: default; }
-    .btn-secondary { display: inline-block; background: transparent; color: #64b5f6;
-                     border: 1px solid #64b5f6; border-radius: 8px; padding: 0.55rem 1.1rem;
-                     font-size: 0.92rem; cursor: pointer; text-decoration: none; }
-    .btn-secondary:disabled { opacity: 0.45; cursor: default; }
+    .skip { color: var(--btn-blue-text); font-size: 0.88rem; margin-left: auto; text-decoration: underline; }
+    /* Button colours: styles.scss (.btn-primary, .btn-secondary); sizes here. */
+    .btn-primary { padding: 0.65rem 1.4rem; font-size: 0.95rem; }
+    .btn-secondary { padding: 0.55rem 1.1rem; font-size: 0.92rem; }
     .token-link { margin: 0 0 0.4rem; }
-    .token-link a { color: #64b5f6; text-decoration: underline; }
+    .token-link a { color: var(--btn-blue-text); text-decoration: underline; }
     .token-link .ext { margin-left: 0.3em; vertical-align: -0.1em; }
-    .btn-ghost { background: transparent; color: #aaa; border: none; padding: 0.6rem 1rem;
-                 font-size: 0.95rem; cursor: pointer; }
-    .btn-ghost.inline { padding: 0 0.4rem; color: #64b5f6; }
+    .link-inline { background: none; border: none; padding: 0 0.4rem; color: var(--btn-blue-text);
+                   font: inherit; text-decoration: underline; cursor: pointer; }
     @media (max-width: 480px) { .address { font-size: 1.9rem; } }
   `]
 })

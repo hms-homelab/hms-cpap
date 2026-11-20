@@ -120,9 +120,9 @@ import type { SetupSource } from './setup-source';
             }
 
             <div class="actions">
-              <button class="btn-ghost" (click)="currentStep = 1">{{ 'setup.back' | translate }}</button>
+              <button class="btn-secondary" (click)="currentStep = 1">{{ 'setup.back' | translate }}</button>
               @if (dbType === 'advanced') {
-                <button class="btn-ghost" (click)="checkDb()" [disabled]="dbBusy">
+                <button class="btn-secondary" (click)="checkDb()" [disabled]="dbBusy">
                   {{ (dbBusy ? 'setup.db.checking'
                        : (createIt ? 'setup.db.createAndCheck' : 'setup.db.checkConnection')) | translate }}
                 </button>
@@ -353,7 +353,7 @@ import type { SetupSource } from './setup-source';
             }
 
             <div class="actions">
-              <button class="btn-ghost" (click)="currentStep = 2">{{ 'setup.back' | translate }}</button>
+              <button class="btn-secondary" (click)="currentStep = 2">{{ 'setup.back' | translate }}</button>
               <button class="btn-primary" (click)="sourceNext()"
                       [disabled]="source === 'mm' && !archiveDir">{{ 'setup.next' | translate }}</button>
             </div>
@@ -481,7 +481,7 @@ import type { SetupSource } from './setup-source';
             }
 
             <div class="actions">
-              <button class="btn-ghost" (click)="extrasBack()">{{ 'setup.back' | translate }}</button>
+              <button class="btn-secondary" (click)="extrasBack()">{{ 'setup.back' | translate }}</button>
               <button class="btn-primary" (click)="finish()" [disabled]="saving">
                 {{ (saving ? 'setup.extras.saving' : 'setup.extras.finish') | translate }}
               </button>
@@ -761,60 +761,9 @@ import type { SetupSource } from './setup-source';
       margin-top: 1.5rem;
     }
 
-    .btn-primary {
-      background: #64b5f6;
-      color: #121212;
-      border: none;
-      border-radius: 6px;
-      padding: 0.6rem 1.5rem;
-      font-size: 0.95rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: background 0.2s;
-    }
-
-    .btn-primary:hover:not(:disabled) {
-      background: #90caf9;
-    }
-
-    .btn-primary:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-
-    .btn-secondary {
-      background: transparent;
-      color: #64b5f6;
-      border: 1px solid #64b5f6;
-      border-radius: 6px;
-      padding: 0.6rem 1rem;
-      font-size: 0.95rem;
-      cursor: pointer;
-      transition: all 0.2s;
-    }
-
-    .btn-secondary:hover:not(:disabled) {
-      background: rgba(100, 181, 246, 0.1);
-    }
-
-    .btn-secondary:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-
-    .btn-ghost {
-      background: transparent;
-      color: #aaa;
-      border: none;
-      padding: 0.6rem 1rem;
-      font-size: 0.95rem;
-      cursor: pointer;
-      transition: color 0.2s;
-    }
-
-    .btn-ghost:hover {
-      color: #e0e0e0;
-    }
+    /* Button colours: styles.scss (.btn-primary, .btn-secondary); sizes here. */
+    .btn-primary { padding: 0.6rem 1.5rem; font-size: 0.95rem; }
+    .btn-secondary { padding: 0.6rem 1rem; font-size: 0.95rem; }
   `]
 })
 export class SetupComponent {

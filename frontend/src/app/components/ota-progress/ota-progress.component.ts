@@ -36,8 +36,8 @@ import { Dismissed, OtaJob, OtaView, adviceKey, agoParts, barFraction, failKey, 
       <div class="note-warn" *ngIf="warning !== null" role="status">
         <span class="note-text">{{ 'devices.confirm.recordingLine' | translate:{ reason: warning || '' } }}</span>
         <span class="note-actions">
-          <button type="button" class="btn" (click)="notNow.emit()">{{ 'devices.ota.notNow' | translate }}</button>
-          <button type="button" class="btn primary" (click)="updateAnyway.emit()" [disabled]="busy">{{ 'devices.ota.anyway' | translate }}</button>
+          <button type="button" class="btn btn-secondary" (click)="notNow.emit()">{{ 'devices.ota.notNow' | translate }}</button>
+          <button type="button" class="btn btn-primary" (click)="updateAnyway.emit()" [disabled]="busy">{{ 'devices.ota.anyway' | translate }}</button>
         </span>
       </div>
     </ng-container>
@@ -115,17 +115,15 @@ import { Dismissed, OtaJob, OtaView, adviceKey, agoParts, barFraction, failKey, 
     .note-text { flex: 1 1 14rem; }
     .note-actions { display: inline-flex; gap: 0.5rem; }
     /* The same buttons as the card's own questions: Cancel left, the verb right. */
-    .btn { padding: 0.38rem 0.85rem; border-radius: 5px; border: 1px solid #4a4e66; background: transparent;
-      color: #cfd3e2; cursor: pointer; font-size: 0.82rem; line-height: 1.3; font-family: inherit; }
-    .btn.primary { border-color: #9575cd; color: #c5b3ec; }
-    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
-    .btn:focus-visible { outline: 2px solid #9575cd; outline-offset: 2px; }
-    .link { background: none; border: none; padding: 0; margin-left: 0.25rem; color: #b39ddb; cursor: pointer;
+    /* Colours: styles.scss (.btn-secondary, .btn-primary); sizes here. */
+    .btn { padding: 0.38rem 0.85rem; font-size: 0.82rem; line-height: 1.3; }
+    .btn:focus-visible { outline: 2px solid var(--btn-blue-text); outline-offset: 2px; }
+    .link { background: none; border: none; padding: 0; margin-left: 0.25rem; color: var(--btn-blue-text); cursor: pointer;
       font: inherit; text-decoration: underline; text-underline-offset: 2px; }
     .link.muted { color: #9aa0b4; margin-left: 0; }
     .link.warn { color: #f0b45a; margin-left: 0; }
     .link:disabled { color: #666; cursor: not-allowed; text-decoration: none; }
-    .link:focus-visible { outline: 2px solid #9575cd; outline-offset: 2px; }
+    .link:focus-visible { outline: 2px solid var(--btn-blue-text); outline-offset: 2px; }
   `],
 })
 export class OtaProgressComponent {

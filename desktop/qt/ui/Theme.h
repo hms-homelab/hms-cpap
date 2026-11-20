@@ -1,6 +1,8 @@
 #pragma once
 
 #include <QString>
+#include <QStyle>
+#include <QWidget>
 
 namespace cpapdash::supervisor::theme {
 
@@ -89,20 +91,39 @@ inline QString scrollBarStyle() {
     ).arg("rgba(150, 150, 150, 0.55)", kNavyMid, kSky, kNavyDeep);
 }
 
-/// Accent for primary buttons, progress and focus rings.
-inline QString accentStyle() {
+/// The app's two buttons, the same as the web app's (frontend/src/styles.scss):
+/// every button is the secondary, a blue outline; the one that moves the
+/// person on (Next, Done, Save) is the primary, solid blue, marked with the
+/// `accent` property. Anything that only takes the person elsewhere is a
+/// link, not a button. One stylesheet for the setup windows.
+inline constexpr const char* kButtonBlue      = "#1976d2";
+inline constexpr const char* kButtonBlueHover = "#1565c0";
+inline constexpr const char* kButtonBlueText  = "#64b5f6";
+
+inline QString buttonStyle() {
     return QString(
-        "QPushButton[accent=\"true\"] {"
-        "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1,"
-        "      stop:0 %1, stop:1 %2);"
-        "  color: #FFFFFF; border: none; border-radius: 5px;"
+        "QPushButton {"
+        "  background: transparent; color: %3; border: 1px solid %1; border-radius: 6px;"
         "  padding: 6px 18px; font-weight: 600;"
         "}"
-        "QPushButton[accent=\"true\"]:hover:!disabled { background: %3; }"
+        "QPushButton:hover:!disabled { background: %2; border-color: %2; color: #FFFFFF; }"
+        "QPushButton:disabled { color: rgba(100, 181, 246, 0.45); border-color: rgba(25, 118, 210, 0.45); }"
+        "QPushButton[accent=\"true\"] { background: %1; color: #FFFFFF; }"
+        "QPushButton[accent=\"true\"]:hover:!disabled { background: %2; border-color: %2; }"
         "QPushButton[accent=\"true\"]:disabled {"
-        "  background: palette(button); color: palette(mid);"
+        "  background: rgba(25, 118, 210, 0.45); color: rgba(255, 255, 255, 0.6);"
         "}"
-    ).arg(kNavyMid, kNavy, kSky);
+    ).arg(kButtonBlue, kButtonBlueHover, kButtonBlueText);
+}
+
+/// Marks a button as the primary one.
+template <typename Button>
+inline void primary(Button* b) {
+    if (!b) return;
+    b->setProperty("accent", true);
+    // A stylesheet already applied does not see a property set later.
+    b->style()->unpolish(b);
+    b->style()->polish(b);
 }
 
 }  // namespace cpapdash::supervisor::theme

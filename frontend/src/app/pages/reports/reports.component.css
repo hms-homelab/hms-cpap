@@ -47,9 +47,10 @@ h3 { color: #ccc; font-size: 0.95rem; font-weight: 600; margin: 0 0 1rem; }
   align-items: center;
   gap: 0.5rem;
   padding: 0.5rem 1.1rem;
-  background: #1976d2;
+  /* The app's primary button (styles.scss). */
+  background: var(--btn-blue);
   color: #fff;
-  border: none;
+  border: 1px solid var(--btn-blue);
   border-radius: 6px;
   font-size: 0.85rem;
   font-weight: 600;
@@ -58,7 +59,7 @@ h3 { color: #ccc; font-size: 0.95rem; font-weight: 600; margin: 0 0 1rem; }
   height: 36px;
 }
 
-.generate-btn:hover:not(:disabled) { background: #1565c0; }
+.generate-btn:hover:not(:disabled) { background: var(--btn-blue-hover); border-color: var(--btn-blue-hover); }
 .generate-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .error-msg { color: #ef9a9a; font-size: 0.8rem; margin-top: 0.75rem; }
@@ -123,18 +124,21 @@ h3 { color: #ccc; font-size: 0.95rem; font-weight: 600; margin: 0 0 1rem; }
   align-items: center;
   gap: 0.4rem;
   padding: 0.3rem 0.75rem;
-  background: rgba(100, 181, 246, 0.12);
-  border: 1px solid rgba(100, 181, 246, 0.3);
-  color: #64b5f6;
-  border-radius: 5px;
+  /* The app's secondary button (styles.scss), at row size. */
+  background: transparent;
+  border: 1px solid var(--btn-blue);
+  color: var(--btn-blue-text);
+  border-radius: 6px;
   font-size: 0.78rem;
+  font-weight: 600;
   cursor: pointer;
   transition: all 0.2s;
 }
 
 .download-btn:hover:not(:disabled) {
-  background: rgba(100, 181, 246, 0.2);
-  border-color: #64b5f6;
+  background: var(--btn-blue-hover);
+  border-color: var(--btn-blue-hover);
+  color: #fff;
 }
 
 .download-btn:disabled { opacity: 0.35; cursor: not-allowed; }

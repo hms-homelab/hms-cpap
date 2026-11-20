@@ -535,6 +535,7 @@ public:
         send_->setChecked(true);
         body_->addWidget(send_);
         auto* save = new QPushButton(w->t(Txt::OnlineSave), this);
+        theme::primary(save);
         save->setFixedWidth(160);
         body_->addWidget(save);
         state_ = words(QString(), this, 1.15, true);
@@ -601,7 +602,13 @@ BridgeSetupWindow::BridgeSetupWindow(ChildProcess* child, QString service_exe, Q
     setWindowTitle(t(Txt::WindowTitle));
     setWizardStyle(QWizard::ModernStyle);
     setMinimumSize(820, 660);
-    setStyleSheet(theme::headerStyle() + theme::accentStyle());
+    setStyleSheet(theme::headerStyle() + theme::buttonStyle());
+    theme::primary(button(QWizard::NextButton));
+    theme::primary(button(QWizard::FinishButton));
+    // Links (Skip, the token page) in the same blue as the web app's.
+    QPalette links = palette();
+    links.setColor(QPalette::Link, QColor(theme::kButtonBlueText));
+    setPalette(links);
     setButtonText(QWizard::NextButton, t(Txt::Next));
     setButtonText(QWizard::BackButton, t(Txt::Back));
     setButtonText(QWizard::FinishButton, t(Txt::Done));

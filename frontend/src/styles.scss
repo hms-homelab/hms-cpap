@@ -6,3 +6,33 @@ body {
   line-height: 1.5;
 }
 a { color: #64b5f6; }
+
+/*
+ * The app's two buttons, defined here once (Albin, 2026-11-19): the
+ * dashboard's. Primary is solid blue, secondary is a blue outline; anything
+ * that only takes the person elsewhere is a link, not a button. A page sizes
+ * its buttons; it never colours them. The desktop app's setup windows use
+ * the same two (desktop/qt/ui/Theme.h, buttonStyle).
+ */
+:root {
+  --btn-blue: #1976d2;
+  --btn-blue-hover: #1565c0;
+  --btn-blue-text: #64b5f6;
+}
+.btn-secondary, .btn-primary {
+  display: inline-block;
+  padding: 0.6rem 1.25rem;
+  border-radius: 6px;
+  border: 1px solid var(--btn-blue);
+  font-family: inherit;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s, border-color 0.2s;
+}
+.btn-secondary { background: transparent; color: var(--btn-blue-text); }
+.btn-primary { background: var(--btn-blue); color: #fff; }
+.btn-secondary:hover:not(:disabled), .btn-primary:hover:not(:disabled) {
+  background: var(--btn-blue-hover); border-color: var(--btn-blue-hover); color: #fff;
+}
+.btn-secondary:disabled, .btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }

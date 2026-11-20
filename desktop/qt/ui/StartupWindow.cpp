@@ -39,7 +39,7 @@ StartupWindow::StartupWindow(ChildProcess* child, QString service_exe,
       web_port_(web_port) {
     setWindowTitle("Starting HmsCpap");
     setMinimumWidth(520);
-    setStyleSheet(theme::headerStyle() + theme::accentStyle());
+    setStyleSheet(theme::headerStyle() + theme::buttonStyle());
 
     net_ = new QNetworkAccessManager(this);
 

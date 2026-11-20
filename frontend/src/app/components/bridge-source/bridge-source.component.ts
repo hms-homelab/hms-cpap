@@ -27,7 +27,7 @@ import { formatLabel } from './bridge-source-model';
         <span class="k">{{ 'bridgeSource.folder' | translate }}</span>
         <span class="v mono">{{ cardRoot || ('bridgeSource.noFolder' | translate) }}</span>
         @if (cardRoot) {
-          <button type="button" class="mini" (click)="copy(cardRoot, 'folder')">
+          <button type="button" class="mini btn-secondary" (click)="copy(cardRoot, 'folder')">
             {{ (copied === 'folder' ? 'bridgeSource.copied' : 'bridgeSource.copy') | translate }}</button>
         }
       </div>
@@ -35,7 +35,7 @@ import { formatLabel } from './bridge-source-model';
         <span class="k">{{ 'bridgeSource.format' | translate }}</span>
         <span class="v">{{ label ?? ('bridgeSource.formatUnknown' | translate) }}</span>
         @if (cardFormat) {
-          <button type="button" class="mini" (click)="copy(cardFormat, 'format')">
+          <button type="button" class="mini btn-secondary" (click)="copy(cardFormat, 'format')">
             {{ (copied === 'format' ? 'bridgeSource.copied' : 'bridgeSource.copy') | translate }}</button>
         }
       </div>
@@ -46,7 +46,7 @@ import { formatLabel } from './bridge-source-model';
       } @else if (state === 'saved') {
         <div class="note">{{ 'bridgeSource.saved' | translate:{ format: usedFormat } }}</div>
       } @else {
-        <button type="button" class="use" [disabled]="!cardRoot || state === 'busy'" (click)="use()">
+        <button type="button" class="use btn-primary" [disabled]="!cardRoot || state === 'busy'" (click)="use()">
           {{ 'bridgeSource.use' | translate }}</button>
         @if (state === 'failed') {
           <div class="err">{{ 'bridgeSource.failed' | translate:{ error: error } }}</div>
@@ -65,11 +65,9 @@ import { formatLabel } from './bridge-source-model';
     .k { color: #9e9e9e; font-size: 0.82rem; min-width: 6.5rem; }
     .v { color: #e0e0e0; font-size: 0.88rem; word-break: break-all; }
     .mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.82rem; }
-    .mini { background: transparent; border: 1px solid #555; color: #ccc; border-radius: 5px;
-            padding: 0.1rem 0.5rem; font-size: 0.75rem; cursor: pointer; }
-    .use { align-self: flex-start; background: #1976d2; color: #fff; border: none; border-radius: 7px;
-           padding: 0.45rem 0.9rem; font-size: 0.85rem; cursor: pointer; margin-top: 0.2rem; }
-    .use:disabled { opacity: 0.45; cursor: default; }
+    /* Colours: styles.scss (.btn-secondary, .btn-primary); sizes here. */
+    .mini { padding: 0.1rem 0.5rem; font-size: 0.75rem; font-weight: 400; }
+    .use { align-self: flex-start; padding: 0.45rem 0.9rem; font-size: 0.85rem; margin-top: 0.2rem; }
     .inuse { color: #81c784; font-size: 0.88rem; }
     .note { color: #ffcc80; font-size: 0.85rem; }
     .err { color: #ef9a9a; font-size: 0.85rem; }

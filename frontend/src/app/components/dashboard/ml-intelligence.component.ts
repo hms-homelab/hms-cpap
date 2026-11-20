@@ -52,7 +52,7 @@ import { TranslatePipe } from '@ngx-translate/core';
         <span>Last trained: {{ mlStatus?.last_trained || 'never' }}</span>
         <span>Models: {{ mlStatus?.models?.length || 0 }}</span>
         <span>Samples: {{ mlStatus?.models?.[0]?.samples_used || 0 }}</span>
-        <button class="btn-inference" (click)="runInference.emit()" [disabled]="inferring">
+        <button class="btn-inference btn-primary"(click)="runInference.emit()" [disabled]="inferring">
           {{ inferring ? 'Running...' : 'Run Inference' }}
         </button>
       </div>
@@ -89,13 +89,8 @@ import { TranslatePipe } from '@ngx-translate/core';
       display: flex; align-items: center; gap: 1rem; flex-wrap: wrap;
       font-size: 0.8rem; color: #888; margin-top: 0.75rem;
     }
-    .btn-inference {
-      background: #7e57c2; color: #fff; border: none; border-radius: 4px;
-      padding: 0.35rem 1rem; font-size: 0.8rem; font-weight: 600;
-      cursor: pointer; margin-left: auto;
-    }
-    .btn-inference:hover { background: #9575cd; }
-    .btn-inference:disabled { opacity: 0.5; cursor: not-allowed; }
+    /* Colours: styles.scss (.btn-primary); size here. */
+    .btn-inference { padding: 0.35rem 1rem; font-size: 0.8rem; margin-left: auto; }
     .btn-details {
       background: none; border: none; color: #64b5f6; font-size: 0.75rem;
       cursor: pointer; padding: 0; margin-top: 0.5rem;
