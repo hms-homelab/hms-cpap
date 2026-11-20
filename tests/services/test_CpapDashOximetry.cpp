@@ -161,11 +161,12 @@ TEST(CpapDashOximetryContract, OximetryFramesAreTheFixtures) {
 TEST(CpapDashOximetryContract, TheHmsJsonBodyIsTheFixture) {
     cpapdash::parser::OximetrySession s;
     s.sample_interval = 60;
-    cpapdash::parser::OximetrySample a{}, b{};
+    cpapdash::parser::OximetrySample a{}, b{}, c{};
     a.spo2 = 95; a.heart_rate = 58; a.motion = 0;
     b.spo2 = 94; b.heart_rate = 57; b.motion = 1;
-    s.samples = {a, b};
-    const std::vector<long long> utc{1763506800, 1763506860};
+    c.spo2 = 93; c.heart_rate = 0;  c.motion = 0;   // no pulse: sent as null (per field)
+    s.samples = {a, b, c};
+    const std::vector<long long> utc{1763506800, 1763506860, 1763506920};
     EXPECT_EQ(ob::hmsJson(s, &utc), fixture("hms_oximetry_v1.json"));
 }
 

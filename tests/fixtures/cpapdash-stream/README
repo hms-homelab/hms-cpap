@@ -10,4 +10,5 @@ agrees with every file here.
   file_ready_oximetry_o2s.json      a ring recording (D3)
   file_ready_oximetry_hms_json.json a Garmin recording in hms-json (D3, D4)
   file_ready_oximetry_live.json     a range of the live spool (D3, D5)
-  hms_oximetry_v1.json              an hms-json v1 body (D4)
+  hms_oximetry_v1.json              an hms-json v1 body (D4); its third sample's pulse is
+                                    null, unknown (SpO2 and pulse judged per field)
