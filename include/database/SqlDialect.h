@@ -164,4 +164,34 @@ inline std::string nightIndexColumns(const std::string& m, const std::string& s,
            idx(nightCount(m, "reras"), "rin");
 }
 
+// ── The live O2 Ring session, and when a real ring file supersedes it ───────
+//
+// In bridge mode each poll appends one sample to a synthetic session named
+// live_<YYYYMMDD>.vld. That stream stands in for the night until the ring's
+// own file (a .vld, an O2Ring-S file, a CSV, a BLE download) lands for the same
+// night; from then on the file is the night and the live stream is not. The
+// writer removes the live session when the file is saved (saveOximetrySession).
+// The readers also skip one that is still there: a live row written before that
+// removal existed, or one written after the file (a second wear in the same
+// sleep day).
+//
+// SUBSTR rather than LIKE 'live\_%': the three engines disagree on LIKE's
+// escape character, and an unescaped '_' matches any character.
+
+/// True when [col] names a live session (live_<date>.vld).
+inline std::string isLiveOxiFilename(const std::string& col) {
+    return "(SUBSTR(" + col + ", 1, 5) = 'live_')";
+}
+
+/// Keeps the oximetry_sessions row [os] unless it is a live session whose
+/// night (same device, same sleep day) already has a real ring file.
+inline std::string oxiNotSuperseded(const std::string& os, DbType type) {
+    return "NOT (" + isLiveOxiFilename(os + ".filename") +
+           " AND EXISTS (SELECT 1 FROM oximetry_sessions oxr"
+           " WHERE oxr.device_id = " + os + ".device_id"
+           " AND NOT " + isLiveOxiFilename("oxr.filename") +
+           " AND " + sleepDay("oxr.start_time", type) + " = " +
+           sleepDay(os + ".start_time", type) + "))";
+}
+
 }} // namespace hms_cpap::sql

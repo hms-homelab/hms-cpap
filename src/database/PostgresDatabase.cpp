@@ -8,6 +8,11 @@ namespace hms_cpap {
 PostgresDatabase::PostgresDatabase(const std::string& connection_string)
     : db_(std::make_unique<DatabaseService>(connection_string)), conn_str_(connection_string) {}
 
+PostgresDatabase::~PostgresDatabase() {
+    std::lock_guard<std::mutex> lock(query_mutex_);
+    if (query_conn_) { PQfinish(query_conn_); query_conn_ = nullptr; }
+}
+
 // -- Connection management ----------------------------------------------------
 
 bool PostgresDatabase::connect() { return db_->connect(); }

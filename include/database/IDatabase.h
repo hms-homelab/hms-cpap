@@ -285,6 +285,11 @@ public:
      * Save a parsed oximetry session (header + samples) to the database.
      * @param device_id  e.g. "o2ring"
      * @param session    Parsed OximetrySession from VLDParser
+     *
+     * Saving a real ring file (any filename but live_*) also removes the live
+     * session(s) of the same device and sleep day, in the same transaction:
+     * the file is the night from then on, so the live stand-in must not be
+     * charted or exported beside it.
      */
     virtual bool saveOximetrySession(const std::string& device_id,
                                      const cpapdash::parser::OximetrySession& session) = 0;
@@ -296,12 +301,19 @@ public:
                                        const std::string& filename) = 0;
 
     /**
-     * Append a live oximetry sample (from burst poll).
-     * Creates a session for today if none exists. Source='live'.
-     * Overwritten when full VLD file arrives.
+     * Append a live oximetry sample (from burst poll). Source='live'.
+     *
+     * [wall_clock] is when it was read, on the ring's clock as every other
+     * intake stores it (see liveOximetryWallClock in utils/OximetryDevice.h),
+     * never the database's NOW(). The sample collects in live_<date>.vld, dated
+     * from the same clock, created on its first sample.
+     *
+     * Superseded when the ring's own file for that night is saved:
+     * saveOximetrySession removes the night's live session, and the readers
+     * skip one that remains (sql::oxiNotSuperseded).
      */
     virtual bool saveLiveOximetrySample(const std::string& device_id,
-                                         const std::string& date,
+                                         std::chrono::system_clock::time_point wall_clock,
                                          int spo2, int hr, int motion) = 0;
 
     struct OxiSummary {

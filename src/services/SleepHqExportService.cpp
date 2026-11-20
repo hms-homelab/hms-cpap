@@ -390,6 +390,10 @@ SleepHqExportService::oximetrySessionFor(const std::string& date_folder) {
     // Every sample for the night, INCLUDING the unreadable ones. The chart
     // query filters `valid` and is right to; here a dropped row would heal the
     // timeline over and hand the interval detector the wrong cadence (SDD-015).
+    //
+    // Never the bridge's live samples when the ring's own file for the night
+    // is there: the two are the same night recorded twice, and SleepHQ would
+    // get both interleaved.
     const DbType dt = db_->dbType();
     const std::string q =
         "SELECT s.timestamp" + std::string(dt == DbType::POSTGRESQL ? "::text" : "") + " AS ts,"
@@ -398,6 +402,7 @@ SleepHqExportService::oximetrySessionFor(const std::string& date_folder) {
         " JOIN oximetry_samples s ON s.oximetry_session_id = os.id"
         " WHERE os.device_id = " + sql::param(1, dt) +
         " AND " + sql::sleepDay("os.start_time", dt) + " = " + sql::castDate(2, dt) +
+        " AND " + sql::oxiNotSuperseded("os", dt) +
         " ORDER BY s.timestamp";
 
     Json::Value rows;
