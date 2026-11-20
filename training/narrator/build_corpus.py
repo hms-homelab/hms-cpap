@@ -69,8 +69,9 @@ Form: 3 or 4 plain, warm sentences of English prose in one paragraph. No lists, 
 What to say, and only what matters:
 1. The night's date, written exactly as the data writes it.
 2. How long the therapy ran against the target, in words: "past your target", "just short of your target", "well short of your target". You may give the hours as the data writes them. Do not mention any minimum.
-3. The AHI as the data writes it, with its band named in words only: "the normal range", "the mild range", "the moderate range" or "the severe range". Pick the band with the usual adult bands (normal below 5 events per hour, mild from 5 to below 15, moderate from 15 to below 30, severe from 30 up). Those limits are only for choosing the word: never write a band limit or any threshold, in digits or in words.
-4. At most one or two other points that stand out: leak only when it is notable (a high 95th percentile or maximum), SpO2 and ODI when the night has oximetry, an event type only when its count is not zero and it says something (for example most events were hypopneas, or central apneas were a large share).
+3. The AHI as the data writes it, with its band named in words exactly as the "Band for this night" line gives it ("the normal range", "the mild range", "the moderate range" or "the severe range"). Never name any other band, and never write a band limit or any threshold, in digits or in words. When there is no "Band for this night" line, name no band at all. Use the words "normal range", "mild range", "moderate range" and "severe range" for the AHI only, never for another figure.
+4. Compare only within this night. The data holds no other night, so never compare with a usual, previous or earlier night ("than usual", "than last night", "than before").
+5. At most one or two other points that stand out: leak only when it is notable (a high 95th percentile or maximum), SpO2 and ODI when the night has oximetry, an event type only when its count is not zero and it says something (for example most events were hypopneas, or central apneas were a large share).
 
 Numbers: write only figures that appear in the data, exactly as the data writes them, with the same digits and decimals. Never compute anything: no percentages of your own, no sums, differences, ratios or rounding. Skip zero counts and figures that add nothing; a summary is not a list of the data, so never walk through every event type or every leak figure.
 
@@ -82,6 +83,7 @@ Three examples of good summaries (shortened data):
 
 Data:
 Night: 2025-03-02
+Band for this night: the normal range
 Usage: 7.42 hours (92.75% of 8h target)
 AHI: 2.10 events/hour
 Apneas and hypopneas (the events counted in the AHI): 16 (obstructive apnea=9, central apnea=0, clear airway apnea=0, unclassified apnea=0, hypopnea=7)
@@ -91,6 +93,7 @@ Summary: On 2025-03-02 you used your therapy for 7.42 hours, just short of your 
 
 Data:
 Night: 2025-11-14
+Band for this night: the moderate range
 Usage: 5.10 hours (63.75% of 8h target)
 AHI: 18.40 events/hour
 Apneas and hypopneas (the events counted in the AHI): 94 (obstructive apnea=31, central apnea=4, clear airway apnea=0, unclassified apnea=0, hypopnea=59)
@@ -198,8 +201,52 @@ def refused(code, detail):
     return code in (401, 402, 403) or "API_KEY_INVALID" in detail
 
 
+BANDS = ("normal", "mild", "moderate", "severe")
+AHI_LINE = re.compile(r"^AHI: (\d+(?:\.\d+)?) events/hour$", re.M)
+BAND_NAMED = re.compile(r"\b(normal|mild|moderate|severe)\s+range\b", re.I)
+# The fact block has no history, so nothing can be compared with an earlier night.
+UNSUPPORTED_COMPARISON = re.compile(
+    r"\bthan (?:usual|before|last night|the night before|previous(?: nights?)?|"
+    r"(?:your|the) usual|(?:your|the) previous nights?|other nights)\b"
+    r"|\bcompared (?:with|to) (?:last night|before|the night before|previous nights?|"
+    r"(?:your|the) usual)\b", re.I)
+
+
+def ahi_band(facts):
+    """The AHI band word of a fact block (normal < 5, mild 5 to < 15, moderate
+    15 to < 30, severe >= 30), or None when it gives no AHI."""
+    m = AHI_LINE.search(facts)
+    if not m:
+        return None
+    ahi = float(m.group(1))
+    return "normal" if ahi < 5 else "mild" if ahi < 15 else "moderate" if ahi < 30 else "severe"
+
+
 def user_text(facts):
-    return TEACHER_USER.replace("{facts}", facts)
+    """The teacher's user turn. The band line is for the teacher only: the
+    student's prompt is the fact block alone and must learn the band from it."""
+    text = TEACHER_USER.replace("{facts}", facts)
+    band = ahi_band(facts)
+    if band:
+        text = text.rstrip("\n") + f"\nBand for this night: the {band} range\n"
+    return text
+
+
+def band_problem(text, facts):
+    """band_mismatch when the summary names a band other than the night's, or
+    any band on a night with no AHI; None when it is fine."""
+    named = {m.lower() for m in BAND_NAMED.findall(text)}
+    if not named:
+        return None
+    band = ahi_band(facts)
+    if band is None or named != {band}:
+        return {"reason": "band_mismatch", "named": sorted(named), "band": band}
+    return None
+
+
+def comparison_problem(text):
+    m = UNSUPPORTED_COMPARISON.search(text)
+    return {"reason": "unsupported_comparison", "phrase": m.group(0)} if m else None
 
 
 class Teacher:
@@ -836,6 +883,12 @@ def stage_check_and_split(args, out):
             reason = "wrong_date" if any(iso.match(x) for x in v) else "ungrounded_number"
             reasons[reason] += 1
             dropped.append({"id": c["id"], "reason": reason, "violations": v, "text": c["text"]})
+        elif (bad := band_problem(c["text"], c["facts"]) or comparison_problem(c["text"])):
+            # After the runtime's number and date check: the band word against
+            # the band of the night's own AHI, and no comparison with a history
+            # the fact block does not have.
+            reasons[bad["reason"]] += 1
+            dropped.append({"id": c["id"], **bad, "text": c["text"]})
         else:
             accepted.append(c)
 

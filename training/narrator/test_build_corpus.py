@@ -191,6 +191,57 @@ class Batch(unittest.TestCase):
             self.assertTrue(all(j.get("collected") for j in ledger.jobs.values()))
 
 
+UNGRADED = ("Night: 2024-06-09\nUsage: 8.35 hours (104.38% of 8h target)\n"
+            "AHI: not available for this machine -- it does not detect hypopneas, so no "
+            "apnea-hypopnea index can be formed.\nTotal events: 41 (all apneas)\n")
+
+
+def graded(ahi):
+    return f"Night: 2025-01-01\nUsage: 7.00 hours (87.50% of 8h target)\nAHI: {ahi} events/hour\n"
+
+
+class Band(unittest.TestCase):
+    def test_band_from_ahi(self):
+        for ahi, band in (("0.00", "normal"), ("4.99", "normal"), ("5.00", "mild"),
+                          ("14.99", "mild"), ("15.00", "moderate"), ("29.99", "moderate"),
+                          ("30.00", "severe"), ("71.20", "severe")):
+            self.assertEqual(bc.ahi_band(graded(ahi)), band, ahi)
+        self.assertIsNone(bc.ahi_band(UNGRADED))
+        # The STR's own AHI line is not the night's AHI line.
+        self.assertIsNone(bc.ahi_band("  STR AHI: 3.10 events/hour\n"))
+
+    def test_band_line_in_teacher_turn_only(self):
+        self.assertTrue(bc.user_text(graded("12.01")).endswith(
+            "Band for this night: the mild range\n"))
+        self.assertNotIn("Band for this night", bc.user_text(UNGRADED))
+        p = bc.anthropic_params("m", graded("12.01"), 400)
+        self.assertIn("the mild range", p["messages"][0]["content"])
+        g = bc.Teacher(args(teacher_provider="gemini"), "k").prompt(graded("31.00"))
+        self.assertIn("Band for this night: the severe range", g)
+
+    def test_band_check(self):
+        f = graded("12.01")
+        self.assertIsNone(bc.band_problem("Your AHI was 12.01 events/hour, in the mild range.", f))
+        self.assertIsNone(bc.band_problem("Your AHI was 12.01 events/hour.", f))
+        bad = bc.band_problem("Your AHI was 12.01 events/hour, in the moderate range.", f)
+        self.assertEqual(bad["reason"], "band_mismatch")
+        self.assertEqual((bad["named"], bad["band"]), (["moderate"], "mild"))
+        # Two bands named, one of them right, is still a mismatch.
+        self.assertIsNotNone(bc.band_problem("in the mild range, just below the Moderate Range", f))
+        # Any band on a night with no AHI.
+        self.assertEqual(bc.band_problem("Your events were in the normal range.", UNGRADED)["band"], None)
+        self.assertIsNone(bc.band_problem("No AHI is available for this night.", UNGRADED))
+
+    def test_unsupported_comparison(self):
+        for s in ("Leak was higher than usual at times.", "Fewer events than last night.",
+                  "Your AHI was lower than before.", "more than the night before",
+                  "compared with your usual nights", "lower than previous nights"):
+            self.assertEqual(bc.comparison_problem(s)["reason"], "unsupported_comparison", s)
+        for s in ("Leak was higher than the median for most of the night.",
+                  "more hypopneas than obstructive apneas", "Your AHI was 2.10 events/hour."):
+            self.assertIsNone(bc.comparison_problem(s), s)
+
+
 class Cost(unittest.TestCase):
     def test_anthropic_prices(self):
         live = bc.price_table(args())
