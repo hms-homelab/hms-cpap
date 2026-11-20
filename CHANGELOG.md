@@ -3918,7 +3918,7 @@ unrelated bugs that happened to land on the same user.
 ### Fixed
 - **Live session not shown in realtime API** — `has_live` is a count, not a boolean; fixed comparison from `== "1"` to `> 0` so nights with multiple open sessions display correctly
 - **Range downloads ignored config** — `EZSHARE_SUPPORTS_RANGE=false` env var and `ezshare_range: false` config were set but stale binary still attempted range requests; rebuild enforces correct behavior
-- **ezShare URL pointed at Fysetc** — service env had `EZSHARE_BASE_URL=http://192.168.2.75` (Fysetc) instead of real ezShare `.40`
+- **ezShare URL pointed at Fysetc** — the service's `EZSHARE_BASE_URL` named the Fysetc card's address instead of the ez Share's
 
 ## [4.0.6] - 2026-04-26
 

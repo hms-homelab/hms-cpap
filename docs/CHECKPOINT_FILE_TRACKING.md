@@ -351,7 +351,7 @@ psql -d cpap_monitoring -c "SELECT checkpoint_files FROM cpap_sessions WHERE ...
 
 ## License
 
-Part of HMS-CPAP service (maestro_hub project)
+Part of the HMS-CPAP service.
 
 ## See Also
 
