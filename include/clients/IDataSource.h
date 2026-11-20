@@ -18,6 +18,27 @@ public:
     /// Start one collector refresh. Sources may reuse reads until the next call.
     virtual void beginRefresh() {}
 
+    /// SDD-069: what the collector knows of this burst, told to a source that
+    /// has no listing and so chooses what to ask the card. Set before
+    /// beginRefresh(), and again before each folder with that folder's
+    /// full_scan. A source with a listing ignores it.
+    struct BurstScope {
+        long long now_s = 0;          ///< this burst's host time, epoch seconds
+        bool full_scan = false;       ///< the daily index or an SDD-054 D6 reason (P1)
+        bool night_growing = false;   ///< a night folder grew at the last listing (P7)
+        bool str_checkpoint = false;  ///< the 65-min checkpoint after growth stopped (P7)
+    };
+    virtual void setBurstScope(const BurstScope&) {}
+
+    /// SDD-069 D1: does this source give each file a date? A card that cannot
+    /// (an ez Share with no listing) publishes no mask events.
+    virtual bool givesFileStamps() const { return true; }
+
+    /// SDD-069 P5: the machine's clock minus the host's, in seconds, rounded
+    /// to 15 min, from a BRP this burst saw grow. Read once: the next call
+    /// says nothing until another BRP grows. 0 with false when none did.
+    virtual bool takeMachineOffset(long long& /*offset_s*/) { return false; }
+
     virtual bool supportsRange() const { return true; }
 
     /**

@@ -808,6 +808,8 @@ void BurstCollectorService::observeCardSession(const SessionFileSet& session,
                                                const std::string& session_dir, long long now_s) {
     const auto live = liveState();
     if (!live || session.brp_files.empty()) return;
+    // SDD-069 D1: no mask events from a card that cannot hold timestamps.
+    if (data_source_ && !data_source_->givesFileStamps()) return;
     const std::string source = cardMaskSource();
     if (source.empty()) return;
 
@@ -848,6 +850,8 @@ void BurstCollectorService::observeCardListing(
     const std::string& archive, bool in_place, long long now_s) {
     const auto live = liveState();
     if (!live) return;
+    // SDD-069 D1: no mask events from a card that cannot hold timestamps.
+    if (data_source_ && !data_source_->givesFileStamps()) return;
     const std::string source = cardMaskSource();
     if (source.empty()) return;
 
@@ -2161,6 +2165,16 @@ void BurstCollectorService::updateFolderLedgers(
                     std::filesystem::file_size(p, ec) == 0) {
                     obs.all_files_stored = false;
                 }
+                // SDD-069 P8: a card with no listing gives the exact size, and
+                // its night is whole only when every file is held to its end.
+                // A BRP the card never lets reach EOF leaves it partial after
+                // the night's hour, until a later burst gets the rest.
+                const auto exact = s->file_sizes_bytes.find(filename);
+                if (data_source_ && !data_source_->givesFileStamps() &&
+                    exact != s->file_sizes_bytes.end() &&
+                    std::filesystem::file_size(p, ec) < exact->second) {
+                    obs.all_files_stored = false;
+                }
             }
         }
 
@@ -2782,7 +2796,22 @@ bool BurstCollectorService::executeBurstCycle() {
         std::set<std::string> catch_up;
         const std::string tonight = tonightFolder(now_s, offset);
 
+        // SDD-069: what this burst is for, for a card with no listing, which
+        // chooses what to ask from it. All of it from this burst's own state:
+        // the 65-min checkpoint is the burst that first passes the mark.
+        IDataSource::BurstScope scope;
+        scope.now_s = now_s;
+        scope.night_growing = night_growing;
+        for (const auto& [f, w] : folder_watch_) {
+            (void)f;
+            if (w.stopped_at <= 0) continue;
+            const long long at = w.stopped_at +
+                std::chrono::duration_cast<std::chrono::seconds>(std::end(kGrowthCheckpoints)[-1]).count();
+            if (now_s >= at && w.last_listed < at) scope.str_checkpoint = true;
+        }
+
         try {
+            data_source_->setBurstScope(scope);
             data_source_->beginRefresh();
             // D1: the DATALOG index once per start (until one succeeds), once
             // a day at the machine's noon, and on a reason. It used to be
@@ -2896,6 +2925,11 @@ bool BurstCollectorService::executeBurstCycle() {
             };
             for (const auto& p : plan) {
                 std::vector<EzShareFileEntry> files;
+                // SDD-069 P1: the full alias scan with the index and on D6's
+                // reasons; tonight, a live folder and a checkpoint ask less.
+                scope.full_scan = index_listed || p.reason == ListReason::FirstLook ||
+                                  p.reason == ListReason::Relist || p.reason == ListReason::Ceiling;
+                data_source_->setBurstScope(scope);
                 try {
                     files = data_source_->listFiles(p.folder);
                 } catch (const ListingRefused&) {
@@ -3052,6 +3086,19 @@ bool BurstCollectorService::executeBurstCycle() {
                 card_folders_.push_back(p.folder);
                 std::sort(card_folders_.begin(), card_folders_.end());
             }
+        }
+
+        // SDD-069 P5: a card with no stamps teaches the machine's clock from
+        // a BRP its probes saw grow, drift and zone as one offset, into the
+        // same row SDD-054 D3 keeps. It decides which folder is tonight's.
+        long long seen_offset = 0;
+        if (data_source_->takeMachineOffset(seen_offset) &&
+            (!machine_clock_.zone_known ||
+             machine_clock_.drift_s + machine_clock_.zone_s != seen_offset)) {
+            machine_clock_ = MachineClock{0, seen_offset, true};
+            std::cout << "CPAP: the machine's clock is " << seen_offset
+                      << " s from UTC (learned from the BRP it is writing)" << std::endl;
+            if (db_service_) saveMachineClock(*db_service_, device_id_, machine_clock_, now_s);
         }
 
         // D5: the .crc files the last residue walk left for this burst, before

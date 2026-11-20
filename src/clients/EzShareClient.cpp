@@ -4,7 +4,11 @@
 #include "utils/ConfigManager.h"
 #include "utils/AppConfig.h"
 #include "utils/ArchiveRecordCount.h"
+#include "utils/MachineClock.h"
+#include "services/ListingPlan.h"
 #include <chrono>
+#include <cmath>
+#include <cstdlib>
 #include <atomic>
 #include <iostream>
 #include <thread>
@@ -264,10 +268,127 @@ bool EzShareClient::retryListing() {
 void EzShareClient::beginRefresh() {
     cached_str_.clear();
     sessions_loaded_ = false;
-    // Check for recovered listings and acquire this refresh's session index
-    // even when the collector reuses its stored date-folder listing.
+    // Check for recovered listings.
     listing_attempts_ = LISTING_RETRY_ATTEMPTS;
-    if (retryListing()) refreshSessions();
+    // SDD-069 P7: STR.edf is no longer read whole on every refresh. The daily
+    // index reads it (listDateFolders), and so does the 65-min checkpoint after
+    // a night stopped growing, here; never while a night grows.
+    if (retryListing() && scope_.str_checkpoint) refreshSessions();
+}
+
+void EzShareClient::setBurstScope(const BurstScope& scope) {
+    if (scope.now_s != scope_.now_s) scope_set_at_ = std::chrono::steady_clock::now();
+    scope_ = scope;
+}
+
+bool EzShareClient::takeMachineOffset(long long& offset_s) {
+    if (!offset_seen_) return false;
+    offset_seen_ = false;
+    offset_s = offset_s_;
+    return true;
+}
+
+void EzShareClient::observeProbe(const std::string& path, uint64_t size, const std::string& tail) {
+    auto& f = live_[path];
+    const long long now = scope_.now_s;
+    const std::string count = tail.size() >= 8 ? tail.substr(0, 8) : std::string();
+    const long long duration =
+        tail.size() >= 16 ? std::llround(std::atof(tail.substr(8, 8).c_str())) : 0;
+    const bool first = f.size == 0;
+    // SDD-069 P3: the size and the record count, both, unchanged. A count that
+    // moves at the same size is a change (a file finalised in place).
+    const bool moved = !first && (size != f.size || count != f.count);
+    if (first || moved) {
+        const auto slash = path.rfind('/');
+        const std::string name = slash == std::string::npos ? path : path.substr(slash + 1);
+        const long long records = std::atoll(count.c_str());
+        // P5: a BRP that grew was written within the last burst, so the
+        // machine's clock is its start plus its records. Its name is the start
+        // on the machine's clock; the header says the same.
+        if (moved && size > f.size && name.size() > 8 &&
+            name.compare(name.size() - 8, 8, "_BRP.edf") == 0 && records > 0 && duration > 0 &&
+            now > 0) {
+            const long long named = machine_clock::nameTimeOf(name);
+            const long long host_now = now + std::chrono::duration_cast<std::chrono::seconds>(
+                                                 std::chrono::steady_clock::now() - scope_set_at_)
+                                                 .count();
+            if (named > 0) {
+                offset_s_ = machine_clock::roundToStep(named + records * duration - host_now);
+                offset_seen_ = true;
+            }
+        }
+        f.last_growth = now;
+        f.unchanged = 0;
+    } else if (now > f.last_probe) {
+        // Once a burst: a download's own probe in the same burst is no second look.
+        ++f.unchanged;
+    }
+    f.size = size;
+    f.count = count;
+    if (duration > 0) f.duration_s = duration;
+    f.last_probe = now;
+}
+
+bool EzShareClient::settled(const LiveFile& f) const {
+    // P3, read off the probe: held to its end, then two bursts with the same
+    // size and count. A record longer than the burst takes as many bursts as
+    // cover two records. P4: a stalled transfer keeps it open.
+    if (f.short_copy || f.last_probe == 0 || f.unchanged < 2) return false;
+    return f.last_probe - f.last_growth >= 2 * f.duration_s;
+}
+
+std::set<std::string> EzShareClient::probedThisBurst(const std::string& folder) {
+    // The folder's known files by session: a file goes with the BRP named
+    // within 15 s of it (CSL and EVE are named a few seconds before it), or is
+    // a session of its own (a mask-on that wrote no BRP).
+    const std::string prefix = folder + "/";
+    std::vector<std::pair<std::string, long long>> names;
+    std::vector<long long> brps;
+    for (auto it = discovered_.lower_bound(prefix);
+         it != discovered_.end() && it->first.compare(0, prefix.size(), prefix) == 0; ++it) {
+        const std::string name = it->first.substr(prefix.size());
+        const long long t = machine_clock::nameTimeOf(name);
+        if (t == 0) continue;
+        names.emplace_back(name, t);
+        if (name.find("_BRP.edf") != std::string::npos) brps.push_back(t);
+    }
+    std::map<long long, std::vector<std::string>> sessions;
+    for (const auto& [name, t] : names) {
+        long long key = t;
+        for (const auto b : brps)
+            if (std::llabs(b - t) <= 15 && (key == t || std::llabs(b - t) < std::llabs(key - t))) key = b;
+        sessions[key].push_back(name);
+    }
+
+    std::set<std::string> out;
+    const long long now = scope_.now_s;
+    bool later_brp = false;
+    for (auto s = sessions.rbegin(); s != sessions.rend(); ++s) {
+        bool has_brp = false, brp_open = false, any_open = false;
+        long long growth = 0, probed = 0;
+        for (const auto& name : s->second) {
+            const auto& f = live_["DATALOG/" + folder + "/" + name];
+            growth = std::max(growth, f.last_growth);
+            probed = std::max(probed, f.last_probe);
+            const bool open = !settled(f);
+            any_open = any_open || open;
+            if (name.find("_BRP.edf") != std::string::npos) {
+                has_brp = true;
+                brp_open = brp_open || open;
+            }
+        }
+        // P6: the open session is probed every burst. One proven off (P3), or
+        // followed by a new BRP (SDD-053 D3), only at SDD-054 D4's checkpoints
+        // after its last growth, on the burst that first passes each.
+        bool due = !later_brp && (has_brp ? brp_open : any_open);
+        for (const auto cp : kGrowthCheckpoints) {
+            const long long at = growth + std::chrono::duration_cast<std::chrono::seconds>(cp).count();
+            if (now >= at && probed < at) due = true;
+        }
+        if (due) out.insert(s->second.begin(), s->second.end());
+        if (has_brp) later_brp = true;
+    }
+    return out;
 }
 
 bool EzShareClient::needsFullRefresh(const std::string& card_path, const std::string& local_path) {
@@ -315,11 +436,19 @@ bool EzShareClient::needsFullRefresh(const std::string& card_path, const std::st
 }
 
 std::vector<std::string> EzShareClient::listDateFolders() {
+    // The nights STR.edf names, and (SDD-069 P7) the ones found by their
+    // aliases: while a night grows the STR is not read, and tonight's folder
+    // must not look gone from the index.
+    const auto knownFolders = [this] {
+        std::set<std::string> folders;
+        for (const auto& pair : starts_) folders.insert(pair.first);
+        for (const auto& pair : alias_starts_)
+            if (!pair.second.empty()) folders.insert(pair.first);
+        return std::vector<std::string>(folders.begin(), folders.end());
+    };
     if (retryListing()) {
         refreshSessions();
-        std::vector<std::string> folders;
-        for (const auto& pair : starts_) folders.push_back(pair.first);
-        return folders;
+        return knownFolders();
     }
     // GET /dir?dir=A:DATALOG → lists date folders like 20260203, 20260204
     std::string url = base_url_ + "/dir?dir=A:DATALOG";
@@ -333,9 +462,7 @@ std::vector<std::string> EzShareClient::listDateFolders() {
     auto entries = parseDirectoryListing(html);
     if (no_listing_) {
         refreshSessions();
-        std::vector<std::string> folders;
-        for (const auto& pair : starts_) folders.push_back(pair.first);
-        return folders;
+        return knownFolders();
     }
     std::vector<std::string> folders;
 
@@ -467,10 +594,23 @@ bool EzShareClient::downloadRootFile(const std::string& filename,
             output.write(cached_str_.data(), cached_str_.size());
             return static_cast<bool>(output);
         }
+        // SDD-069 P7: no STR.edf while a night grows. At 0.5 to 1 KB/s it is
+        // minutes of the link the night's records need; it is read again once
+        // the growth stops (the session's close, the 65-min checkpoint).
+        if (name == "STR.edf" && scope_.night_growing) {
+            if (str_refused_at_ != scope_.now_s)
+                std::cerr << "ez Share: STR.edf is not read while the night grows" << std::endl;
+            str_refused_at_ = scope_.now_s;
+            return false;
+        }
         if (!downloadChunks(name, local_path, 0, got)) return false;
         if (name == "STR.edf") {
-            std::ifstream input(local_path, std::ios::binary);
-            cached_str_.assign(std::istreambuf_iterator<char>(input), {});
+            {
+                std::ifstream input(local_path, std::ios::binary);
+                cached_str_.assign(std::istreambuf_iterator<char>(input), {});
+            }
+            // Whoever asked for it, it is this refresh's session index too.
+            loadSessions(local_path);
         }
         return true;
     }
@@ -717,10 +857,12 @@ uint64_t EzShareClient::probe(const std::string& path, bool* confirmed_missing) 
     std::string lower = path;
     std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return std::tolower(c); });
     const bool edf = lower.size() >= 4 && lower.substr(lower.size() - 4) == ".edf";
+    // SDD-069 P3: bytes 236 to 251, the record count and the record duration,
+    // in the same one request.
     const unsigned first_byte = edf ? 236 : 0;
-    const unsigned last_byte = edf ? 243 : 0;
+    const unsigned last_byte = edf ? 251 : 0;
     if (edf) record_counts_.erase(path);
-    curl_easy_setopt(curl_, CURLOPT_RANGE, edf ? "236-243" : "0-0");
+    curl_easy_setopt(curl_, CURLOPT_RANGE, edf ? "236-251" : "0-0");
     curl_easy_setopt(curl_, CURLOPT_TIMEOUT, 8L);
     curl_easy_setopt(curl_, CURLOPT_LOW_SPEED_LIMIT, 0L);
     curl_easy_setopt(curl_, CURLOPT_WRITEFUNCTION, WriteCallback);
@@ -762,7 +904,8 @@ uint64_t EzShareClient::probe(const std::string& path, bool* confirmed_missing) 
     if (!hit || at == std::string::npos ||
         std::sscanf(headers.c_str() + at, "content-range: bytes %llu-%llu/%llu",
                     &first, &last, &total) != 3 || first != first_byte || last != last_byte) return 0;
-    if (edf) record_counts_[path] = body;
+    if (edf) record_counts_[path] = body.substr(0, 8);
+    observeProbe(path, total, edf ? body : std::string());
     return total;
 }
 
@@ -781,13 +924,19 @@ bool EzShareClient::downloadChunks(const std::string& path, const std::string& l
         const bool ok = downloadFileRange("", path, local, offset, got);
         chunking_ = false;
         if (!ok || got == 0) {
-            if (++failures >= 5) return false;
+            if (++failures >= 5) {
+                // SDD-069 P4: a transfer that stopped before the end keeps
+                // the file's session open.
+                live_[path].short_copy = true;
+                return false;
+            }
             continue;
         }
         offset += got;
         downloaded += got;
         failures = 0;
     }
+    live_[path].short_copy = false;
     return true;
 }
 
@@ -804,7 +953,8 @@ std::string EzShareClient::folderForStart(std::time_t start) {
 }
 
 void EzShareClient::refreshSessions() {
-    if (sessions_loaded_) return;
+    // SDD-069 P7: not while a night grows; the last STR read stands.
+    if (sessions_loaded_ || scope_.night_growing) return;
     // A private temporary directory keeps concurrent sources and unrelated
     // collector staging files apart. Only a complete STR is parsed.
     static std::atomic<unsigned long> sequence{0};
@@ -820,6 +970,10 @@ void EzShareClient::refreshSessions() {
     const auto path = (dir / "STR.edf").string();
     if (!downloadRootFile("STR.edf", path))
         throw std::runtime_error("ez Share: could not read STR.edf for listing-free discovery");
+    if (!sessions_loaded_) loadSessions(path);
+}
+
+void EzShareClient::loadSessions(const std::string& path) {
     auto records = EDFParser::parseSTRFile(path, "ezshare");
     starts_.clear();
     for (const auto& record : records) {
@@ -869,7 +1023,8 @@ std::string EzShareClient::readRange(const std::string& path, size_t first, size
     return body;
 }
 
-std::set<std::time_t> EzShareClient::scanAliases(const std::string& folder) {
+std::set<std::time_t> EzShareClient::scanAliases(const std::string& folder, int misses_allowed,
+                                                 std::set<std::time_t>* fresh) {
     if (folder.size() != 8 || !std::all_of(folder.begin(), folder.end(), ::isdigit)) return {};
     // Session files in a noon-split folder are named after its own day or
     // the next one. Each name date is its own alias stem; in a month the two
@@ -891,7 +1046,9 @@ std::set<std::time_t> EzShareClient::scanAliases(const std::string& folder) {
         if (number == 0) number = 1;
         // A missing alias ends the run; a short tolerance covers a number
         // freed by a deleted file or taken by a name of the other stem.
-        for (int misses = 0, n = number; misses < 3 && n < 1000000; ++n) {
+        // SDD-069 P1: that tolerance is the full scan's; any other burst asks
+        // for the next number only, and a miss is "nothing new".
+        for (int misses = 0, n = number; misses < misses_allowed && n < 1000000; ++n) {
             const auto digits = std::to_string(n);
             const auto alias = stem.substr(0, 7 - digits.size()) + "~" + digits + ".EDF";
             if (!tried.insert(alias).second) break; // the other stem's numbering
@@ -910,7 +1067,8 @@ std::set<std::time_t> EzShareClient::scanAliases(const std::string& folder) {
             tm.tm_mon -= 1;
             tm.tm_year += 100;
             tm.tm_isdst = -1;
-            found.insert(std::mktime(&tm));
+            const auto start = std::mktime(&tm);
+            if (found.insert(start).second && fresh) fresh->insert(start);
         }
     }
     return found;
@@ -925,21 +1083,47 @@ std::vector<EzShareFileEntry> EzShareClient::enumerateFiles(const std::string& f
         std::strftime(prefix, sizeof(prefix), "%Y%m%d_%H%M%S_", &tm);
         return std::string(prefix) + type + ".edf";
     };
+    // SDD-069 P1, P6: a burst that is not a full scan (the daily index, an
+    // SDD-054 D6 reason) asks the card only what can have changed: the next
+    // alias of each stem, and the files of the open session.
+    const bool full = scope_.full_scan;
+    const auto probed = full ? std::set<std::string>{} : probedThisBurst(folder);
     const auto add = [&](const std::string& name) {
         if (!returned.insert(name).second) return;
+        const auto key = folder + "/" + name;
+        const auto known = discovered_.find(key);
+        const bool held = known != discovered_.end() && known->second.size_bytes > 0;
+        if (held && !full && !probed.count(name)) {
+            files.push_back(known->second);
+            return;
+        }
         const auto size = probe("DATALOG/" + folder + "/" + name);
-        if (!size) return;
-        auto& e = discovered_[folder + "/" + name];
+        if (!size) {
+            // P4: a file found before that does not answer (HTML, a stall, no
+            // reply) decides nothing; it stays as it was.
+            if (held) files.push_back(known->second);
+            return;
+        }
+        auto& e = discovered_[key];
         e.name = name; e.size_bytes = size; e.size_kb = (size + 1023) / 1024;
         files.push_back(e);
     };
     // Every file found through its alias has a known start second, so its
     // long name is one of a few candidates.
-    const auto aliased = scanAliases(folder);
-    if (++alias_scan_attempts_[folder] % LISTING_RETRY_ATTEMPTS == 0)
+    std::set<std::time_t> fresh;
+    const auto aliased = scanAliases(folder, full ? 3 : 1, &fresh);
+    if (full && ++alias_scan_attempts_[folder] % LISTING_RETRY_ATTEMPTS == 0)
         alias_missing_[folder].clear();
     for (auto start : aliased) {
         auto& names = alias_names_[folder][start];
+        // P6: outside a full scan, only a new start or the open session looks
+        // for its other files; a settled one keeps the names it has.
+        if (!full && !fresh.count(start) &&
+            std::none_of(names.begin(), names.end(),
+                         [&](const std::string& n) { return probed.count(n) > 0; })) {
+            for (const auto& name : names) add(name);
+            continue;
+        }
         auto& missing = alias_missing_[folder][start];
         auto& checked = alias_checked_generation_[folder][start];
         if (checked != alias_generation_[folder] || names.empty()) missing.clear();
@@ -975,6 +1159,16 @@ std::vector<EzShareFileEntry> EzShareClient::enumerateFiles(const std::string& f
     }
     const auto it = starts_.find(folder);
     if (it == starts_.end()) return files;
+    if (!full) {
+        // P1: the STR-minute search is the full scan's. What it found stays.
+        std::map<std::time_t, int> seen;
+        for (auto start : it->second) {
+            const auto known = session_names_.find({start, seen[start]++});
+            if (known == session_names_.end()) continue;
+            for (const auto& name : known->second) add(name.second);
+        }
+        return files;
+    }
     // Names already taken by an earlier session of this folder; a session
     // that shares its STR minute with another must find the next file set.
     std::set<std::string> claimed;
@@ -1025,14 +1219,7 @@ std::vector<EzShareFileEntry> EzShareClient::enumerateFiles(const std::string& f
             if (std::string(type) == "TCV") find(type, brp, 1);
             else find(type, brp - 15, 31);
         }
-        for (const auto& name : names) {
-            if (!returned.insert(name.second).second) continue;
-            auto& e = discovered_[folder + "/" + name.second];
-            const auto size = probe("DATALOG/" + folder + "/" + name.second);
-            if (!size) continue;
-            e.size_bytes = size; e.size_kb = (size + 1023) / 1024;
-            files.push_back(e);
-        }
+        for (const auto& name : names) add(name.second);
     }
     return files;
 }

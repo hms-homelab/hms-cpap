@@ -1795,11 +1795,29 @@ public:
     bool fail_refresh = false;
     void beginRefresh() override {
         ++refreshes;
+        refresh_scopes.push_back(scope);
         if (fail_refresh) throw std::runtime_error("synthetic STR refresh failed");
     }
     bool needsFullRefresh(const std::string& path, const std::string&) override {
         return rewritten_files.count(path) > 0;
     }
+    // SDD-069: a card with no listing. The scope each listing was asked
+    // under, the stamps it gives, and a machine clock its probes saw.
+    bool stamps = true;
+    bool givesFileStamps() const override { return stamps; }
+    IDataSource::BurstScope scope;
+    std::vector<IDataSource::BurstScope> refresh_scopes;
+    std::map<std::string, std::vector<IDataSource::BurstScope>> list_scopes;
+    void setBurstScope(const IDataSource::BurstScope& s) override { scope = s; }
+    std::optional<long long> machine_offset;
+    bool takeMachineOffset(long long& off) override {
+        if (!machine_offset) return false;
+        off = *machine_offset;
+        machine_offset.reset();
+        return true;
+    }
+    // Ranged transfers of these files fail at once, writing nothing.
+    std::set<std::string> dead_ranges;
     std::vector<std::string> date_folders;
     std::map<std::string, std::vector<EzShareFileEntry>> folder_files;
     int download_count = 0;
@@ -1832,6 +1850,7 @@ public:
 
     std::vector<EzShareFileEntry> listFiles(const std::string& date_folder) override {
         ++folder_lists[date_folder];
+        list_scopes[date_folder].push_back(scope);
         if (refuse_listing.count(date_folder))
             throw std::runtime_error("ezShare refused " + date_folder);
         if (answer_not_a_listing.count(date_folder))
@@ -1906,6 +1925,7 @@ public:
         ranged_from.emplace_back(filename, start_byte);
         if (on_download) on_download(date_folder, filename);
         std::filesystem::create_directories(std::filesystem::path(local_path).parent_path());
+        if (dead_ranges.count(filename)) return false;
         if (refuse_range) {
             range_supported = false;
             return false;

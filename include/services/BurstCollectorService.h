@@ -886,6 +886,7 @@ public:
         machine_clock_ = c;
         machine_clock_loaded_ = true;
     }
+    const MachineClock& machineClockForTest() const { return machine_clock_; }
     const std::map<std::string, FolderWatch>& folderWatchForTest() const { return folder_watch_; }
     const std::map<std::string, StoredListing>& storedListingsForTest() const { return stored_listings_; }
 private:
