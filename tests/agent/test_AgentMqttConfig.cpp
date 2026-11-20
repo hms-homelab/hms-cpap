@@ -1,9 +1,9 @@
 // The AI agent's MQTT connection: no user unless one is set.
 //
-// The broker cases run when MQTT_TEST_BROKER (host) is set, optionally with
-// MQTT_TEST_PORT, and skip otherwise. MQTT_TEST_AUTH_PORT, MQTT_TEST_AUTH_USER
-// and MQTT_TEST_AUTH_PASSWORD name a listener on the same host that requires
-// that user; that case skips when they are unset.
+// The broker cases follow TestBroker.h: HMS_TEST_MQTT ("host:port" or
+// "host") names a throwaway broker without auth. HMS_TEST_MQTT_AUTH names
+// one that requires HMS_TEST_MQTT_AUTH_USER / HMS_TEST_MQTT_AUTH_PASSWORD.
+// Each case skips when its broker is unset.
 #include <gtest/gtest.h>
 #include "PosixCompat.h"
 
@@ -22,6 +22,13 @@ namespace {
 std::string envOr(const char* key, const std::string& fallback) {
     const char* v = std::getenv(key);
     return (v && *v) ? std::string(v) : fallback;
+}
+
+/// "host:port" or "host" into MQTT_BROKER / MQTT_PORT.
+void pointAt(const std::string& broker) {
+    const auto colon = broker.rfind(':');
+    setenv("MQTT_BROKER", broker.substr(0, colon).c_str(), 1);
+    setenv("MQTT_PORT", colon == std::string::npos ? "1883" : broker.substr(colon + 1).c_str(), 1);
 }
 
 class AgentMqttConfigTest : public ::testing::Test {
@@ -69,10 +76,9 @@ TEST_F(AgentMqttConfigTest, AConfiguredUserIsUsedAsItIs) {
 }
 
 TEST_F(AgentMqttConfigTest, AnEmptyUserConnectsToABrokerWithoutAuth) {
-    const std::string host = envOr("MQTT_TEST_BROKER", "");
-    if (host.empty()) GTEST_SKIP() << "MQTT_TEST_BROKER unset, skipping.";
-    setenv("MQTT_BROKER", host.c_str(), 1);
-    setenv("MQTT_PORT", envOr("MQTT_TEST_PORT", "1883").c_str(), 1);
+    const std::string broker = envOr("HMS_TEST_MQTT", "");
+    if (broker.empty()) GTEST_SKIP() << "HMS_TEST_MQTT unset, skipping.";
+    pointAt(broker);
     setenv("MQTT_CLIENT_ID", "hms_cpap_test_anon", 1);
     hms::MqttClient client(agentMqttConfig());
     EXPECT_TRUE(client.connect());
@@ -80,20 +86,18 @@ TEST_F(AgentMqttConfigTest, AnEmptyUserConnectsToABrokerWithoutAuth) {
 }
 
 TEST_F(AgentMqttConfigTest, AConfiguredUserConnectsToABrokerThatRequiresIt) {
-    const std::string host = envOr("MQTT_TEST_BROKER", "");
-    const std::string port = envOr("MQTT_TEST_AUTH_PORT", "");
-    const std::string user = envOr("MQTT_TEST_AUTH_USER", "");
-    if (host.empty() || port.empty() || user.empty())
-        GTEST_SKIP() << "MQTT_TEST_BROKER / MQTT_TEST_AUTH_* unset, skipping.";
-    setenv("MQTT_BROKER", host.c_str(), 1);
-    setenv("MQTT_PORT", port.c_str(), 1);
+    const std::string broker = envOr("HMS_TEST_MQTT_AUTH", "");
+    const std::string user = envOr("HMS_TEST_MQTT_AUTH_USER", "");
+    if (broker.empty() || user.empty())
+        GTEST_SKIP() << "HMS_TEST_MQTT_AUTH / HMS_TEST_MQTT_AUTH_USER unset, skipping.";
+    pointAt(broker);
     setenv("MQTT_CLIENT_ID", "hms_cpap_test_auth", 1);
     {
         hms::MqttClient anonymous(agentMqttConfig());
         EXPECT_FALSE(anonymous.connect()) << "the broker refuses no user";
     }
     setenv("MQTT_USER", user.c_str(), 1);
-    setenv("MQTT_PASSWORD", envOr("MQTT_TEST_AUTH_PASSWORD", "").c_str(), 1);
+    setenv("MQTT_PASSWORD", envOr("HMS_TEST_MQTT_AUTH_PASSWORD", "").c_str(), 1);
     hms::MqttClient client(agentMqttConfig());
     EXPECT_TRUE(client.connect());
     client.disconnect();
