@@ -213,12 +213,6 @@ bool machineOffsetFromSummaries(const std::string& root, int* offset_min) {
     return false;
 }
 
-std::vector<AirSense11Day> keptSummaryDays(const std::string& root) {
-    std::vector<AirSense11Day> out;
-    for (auto& kv : keptDays(root)) out.push_back(std::move(kv.second));
-    return out;
-}
-
 StrHeaderInfo readStrHeader(const std::vector<uint8_t>& file) {
     StrHeaderInfo h;
     if (file.size() < 256) return h;

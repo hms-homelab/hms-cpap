@@ -145,11 +145,6 @@ struct Pass {
 
 }  // namespace
 
-bool isBmcRawName(const std::string& name, const std::string& stem) {
-    const auto [s, ext] = split(name);
-    return lower(s) == lower(stem) && isRawExt(ext);
-}
-
 std::optional<std::string> bmcStemOf(const std::vector<EzShareFileEntry>& root) {
     struct Seen {
         bool usr = false, other = false;

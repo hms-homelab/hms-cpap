@@ -183,7 +183,6 @@ public:
     size_t readiesLocked() const { return readies_.size(); }
     int hellosLocked() const { return hellos_; }
     int upgradesLocked() const { return upgrades_; }
-    const std::map<std::string, std::string>& landedLocked() const { return landed_; }
 
 private:
     bool readable(int fd, int ms) {

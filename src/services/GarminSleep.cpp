@@ -274,13 +274,4 @@ GarminNight convertGarminSleep(const json& sleep, long long now_utc,
     return n;
 }
 
-const char* garminVerdictName(GarminNight::Verdict v) {
-    switch (v) {
-        case GarminNight::Verdict::Ready:         return "ready";
-        case GarminNight::Verdict::Incomplete:    return "incomplete";
-        case GarminNight::Verdict::TooFewSamples: return "too_few_samples";
-    }
-    return "incomplete";
-}
-
 }  // namespace hms_cpap

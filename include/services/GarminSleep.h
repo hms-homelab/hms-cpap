@@ -78,6 +78,4 @@ std::optional<long long> parseGarminEpochMs(const nlohmann::json& v);
 GarminNight convertGarminSleep(const nlohmann::json& sleep, long long now_utc,
                                const std::function<long long(long long)>& wall_offset);
 
-const char* garminVerdictName(GarminNight::Verdict v);
-
 }  // namespace hms_cpap
