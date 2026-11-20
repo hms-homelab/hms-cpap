@@ -755,6 +755,50 @@ TEST(LiveSources, CardALaterSessionPublishesTheOffBeforeTheOn) {
     EXPECT_EQ(rec.change()["occurred_at"].asString(), "2026-11-05T05:15:02Z");
 }
 
+// SDD-069 D1: an ez Share with no listing gives no file dates, and a card that
+// cannot hold timestamps publishes no mask events, on or off.
+namespace {
+class NoStampsSource : public hms_cpap::IDataSource {
+public:
+    bool givesFileStamps() const override { return false; }
+    std::vector<std::string> listDateFolders() override { return {}; }
+    std::vector<EzShareFileEntry> listFiles(const std::string&) override { return {}; }
+    bool downloadFile(const std::string&, const std::string&, const std::string&) override { return false; }
+    bool downloadFileRange(const std::string&, const std::string&, const std::string&, size_t,
+                           size_t&) override { return false; }
+    bool downloadRootFile(const std::string&, const std::string&) override { return false; }
+};
+}  // namespace
+
+TEST(LiveSources, CardWithoutTimestampsPublishesNoMaskEvents) {
+    TempDir dir;
+    writeEdf(dir.p / "20261105_041502_BRP.edf", 3);
+    Recorder rec;
+    auto live = std::make_shared<LiveState>(rec.publish(), "cpap_test", "Test CPAP", at(kT0));
+    BurstCollectorService svc(300);
+    svc.injectDependenciesForTest(nullptr, std::make_unique<NoStampsSource>(), nullptr);
+    svc.setSourceForTest("ezshare");
+    svc.setMachineClockForTest(MachineClock{0, 0, true});
+    svc.setLiveState(live);
+
+    SessionFileSet s;
+    s.date_folder    = "20261105";
+    s.session_prefix = "20261105_041502";
+    s.brp_files      = {"20261105_041502_BRP.edf"};
+    svc.observeCardSession(s, dir.p.string(), kT0 + 250);   // a BRP that grew
+
+    EzShareFileEntry brp;
+    brp.name = "20261105_041502_BRP.edf";
+    brp.size_kb = 1;
+    brp.size_bytes = std::filesystem::file_size(dir.p / brp.name);
+    const std::map<std::string, std::vector<EzShareFileEntry>> listings{{"20261105", {brp}}};
+    for (int i = 0; i < 4; ++i)
+        svc.observeCardListing(listings, dir.p.string(), true, kT0 + 315 + 65 * i);
+
+    EXPECT_TRUE(rec.on("mask_changed").empty());
+    EXPECT_NE(rec.last("mask"), "ON");
+}
+
 TEST(LiveSources, CardSourcesAndTheFoldersALiveSourceAlreadyReports) {
     BurstCollectorService svc(300);
     svc.setSourceForTest("ezshare");
