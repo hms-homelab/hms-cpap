@@ -8,6 +8,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Garmin SpO2 is an oximetry source (SDD-078, #76).** With a Garmin email
+  and password in Settings (stored masked, like the CpapDash token), each
+  night's SpO2, heart rate and movement are read from Garmin Connect after the
+  night: when a CPAP night closes, when the dashboard or the night list is
+  opened, or with "Fetch from Garmin now" on the Devices page, which also asks
+  for Garmin's code when it wants one. Nothing runs on a timer. Garmin's API is
+  unofficial and can change; when it does, the Garmin card says so.
+- **Oximetry says where it came from.** Each recording now carries its source
+  (O2 Ring, Garmin, upload) and device name, and a night shows "Oximetry" with
+  the device, for example "Oximetry - Garmin Fenix 7X", instead of "O2 Ring"
+  for every source. `/api/upload/oximetry` accepts optional `source` and
+  `device_name` fields, so an outside importer can label what it sends.
 - **An AirSense 11 night the stream missed is filled from the machine's
   stored pages (SDD-070, #61, #62).** After a night, the Summary pull also
   reads the machine's stored pages for each night with usage: its respiratory
